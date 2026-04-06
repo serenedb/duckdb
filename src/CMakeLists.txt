@@ -133,19 +133,21 @@ if(WIN32 AND NOT MINGW)
   target_sources(duckdb PRIVATE version.rc)
 endif()
 
-install(
-  DIRECTORY "${PROJECT_SOURCE_DIR}/src/include/duckdb"
-  DESTINATION "${INSTALL_INCLUDE_DIR}"
-  FILES_MATCHING
-  PATTERN "*.hpp"
-  PATTERN "*.ipp")
-install(FILES "${PROJECT_SOURCE_DIR}/src/include/duckdb.hpp"
-              "${PROJECT_SOURCE_DIR}/src/include/duckdb.h"
-        DESTINATION "${INSTALL_INCLUDE_DIR}")
+if (NOT DUCKDB_SKIP_INSTALL)
+  install(
+    DIRECTORY "${PROJECT_SOURCE_DIR}/src/include/duckdb"
+    DESTINATION "${INSTALL_INCLUDE_DIR}"
+    FILES_MATCHING
+    PATTERN "*.hpp"
+    PATTERN "*.ipp")
+  install(FILES "${PROJECT_SOURCE_DIR}/src/include/duckdb.hpp"
+                "${PROJECT_SOURCE_DIR}/src/include/duckdb.h"
+          DESTINATION "${INSTALL_INCLUDE_DIR}")
 
-install(
-  TARGETS duckdb duckdb_static
-  EXPORT "${DUCKDB_EXPORT_SET}"
-  LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
-  ARCHIVE DESTINATION "${INSTALL_LIB_DIR}"
-  RUNTIME DESTINATION "${INSTALL_BIN_DIR}")
+  install(
+    TARGETS duckdb duckdb_static
+    EXPORT "${DUCKDB_EXPORT_SET}"
+    LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
+    ARCHIVE DESTINATION "${INSTALL_LIB_DIR}"
+    RUNTIME DESTINATION "${INSTALL_BIN_DIR}")
+endif()

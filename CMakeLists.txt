@@ -917,7 +917,7 @@ if(NOT CLANG_TIDY)
 endif()
 
 
-if (NOT ${EXTENSION_CONFIG_BUILD})
+if (NOT ${EXTENSION_CONFIG_BUILD} AND NOT DUCKDB_SKIP_INSTALL)
   # Write the export set for build and install tree
   install(EXPORT "${DUCKDB_EXPORT_SET}" DESTINATION "${INSTALL_CMAKE_DIR}")
   export(EXPORT "${DUCKDB_EXPORT_SET}"
@@ -947,9 +947,11 @@ if(EXISTS ${CMAKE_CONFIG_TEMPLATE} AND EXISTS ${CMAKE_CONFIG_VERSION_TEMPLATE})
   configure_file(${CMAKE_CONFIG_VERSION_TEMPLATE}
                  "${PROJECT_BINARY_DIR}/DuckDBConfigVersion.cmake" @ONLY)
 
-  # Install the cmake package
-  install(
-    FILES "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/DuckDBConfig.cmake"
-          "${PROJECT_BINARY_DIR}/DuckDBConfigVersion.cmake"
-    DESTINATION "${INSTALL_CMAKE_DIR}")
+  if (NOT DUCKDB_SKIP_INSTALL)
+    # Install the cmake package
+    install(
+      FILES "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/DuckDBConfig.cmake"
+            "${PROJECT_BINARY_DIR}/DuckDBConfigVersion.cmake"
+      DESTINATION "${INSTALL_CMAKE_DIR}")
+  endif()
 endif()
