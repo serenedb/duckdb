@@ -266,7 +266,7 @@ void DatabaseManager::DropDatabase(ClientContext &context, const string &name, O
 	if (auto db = GetDatabase(context, name)) {
 		ext = db->GetStorageExtension();
 	}
-	if (ext->drop_database) {
+	if (ext && ext->drop_database) {
 		// Note: drop_database callback is responsible for checking if database is in use
 		if (GetDefaultDatabase(context) != name) {
 			DetachDatabase(context, name, OnEntryNotFound::RETURN_NULL);

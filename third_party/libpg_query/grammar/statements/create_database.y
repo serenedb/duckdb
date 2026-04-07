@@ -30,7 +30,7 @@ CreateDatabaseStmt:
 			{
 				PGDetachStmt *n = makeNode(PGDetachStmt);
 				n->missing_ok = false;
-				n->is_drop = false;
+				n->is_drop = true;
 				n->db_name = $3;
 				$$ = (PGNode *)n;
 			}
@@ -38,7 +38,7 @@ CreateDatabaseStmt:
 			{
 				PGDetachStmt *n = makeNode(PGDetachStmt);
 				n->missing_ok = true;
-				n->is_drop = false;
+				n->is_drop = true;
 				n->db_name = $5;
 				$$ = (PGNode *)n;
 			}

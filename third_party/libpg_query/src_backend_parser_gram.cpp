@@ -30462,7 +30462,7 @@ yyreduce:
                         {
 				PGDetachStmt *n = makeNode(PGDetachStmt);
 				n->missing_ok = false;
-				n->is_drop = false;
+				n->is_drop = true;
 				n->db_name = (yyvsp[0].str);
 				(yyval.node) = (PGNode *)n;
 			}
@@ -30474,7 +30474,7 @@ yyreduce:
                         {
 				PGDetachStmt *n = makeNode(PGDetachStmt);
 				n->missing_ok = true;
-				n->is_drop = false;
+				n->is_drop = true;
 				n->db_name = (yyvsp[0].str);
 				(yyval.node) = (PGNode *)n;
 			}
