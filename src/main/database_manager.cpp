@@ -261,6 +261,22 @@ void DatabaseManager::DetachDatabase(ClientContext &context, const string &name,
 	AttachedDatabase::InvokeCloseIfLastReference(attached_db, context);
 }
 
+void DatabaseManager::DropDatabase(ClientContext &context, const string &name, OnEntryNotFound if_not_found) {
+	optional_ptr<StorageExtension> ext;
+	if (auto db = GetDatabase(context, name)) {
+		ext = db->GetStorageExtension();
+	}
+	if (ext->drop_database) {
+		// Note: drop_database callback is responsible for checking if database is in use
+		if (GetDefaultDatabase(context) != name) {
+			DetachDatabase(context, name, OnEntryNotFound::RETURN_NULL);
+		}
+		ext->drop_database(ext->storage_info.get(), context, name, if_not_found);
+	} else {
+		throw BinderException("Database \"%s\" does not support DROP DATABASE", name);
+	}
+}
+
 void DatabaseManager::Alter(ClientContext &context, AlterInfo &info) {
 	auto &db_info = info.Cast<AlterDatabaseInfo>();
 

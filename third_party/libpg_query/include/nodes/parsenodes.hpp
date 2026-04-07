@@ -2219,6 +2219,7 @@ typedef struct PGDetachStmt
 	PGNodeTag		type;
 	char *db_name;         /* list of names of attached databases */
 	bool missing_ok;
+	bool is_drop;          /* DROP DATABASE vs DETACH */
 } PGDetachStmt;
 
 /* ----------------------
