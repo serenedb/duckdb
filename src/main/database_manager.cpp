@@ -273,7 +273,7 @@ void DatabaseManager::DropDatabase(ClientContext &context, const string &name, O
 		// New connections won't find this database because the extension's catalog
 		// no longer has it. The AttachedDatabase will be cleaned up when the last
 		// reference is released (via MetaTransaction::Finalize).
-		ext->drop_database(ext->storage_info.get(), context, name, if_not_found);
+		ext->drop_database(*this, context, name, if_not_found);
 	} else {
 		throw BinderException("Database \"%s\" does not support DROP DATABASE", name);
 	}
