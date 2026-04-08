@@ -4,13 +4,9 @@
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 
-namespace duckdb {
+extern "C" __attribute__((weak)) const duckdb::DefaultView *duckdb_external_views(duckdb::idx_t *count);
 
-struct DefaultView {
-	const char *schema;
-	const char *name;
-	const char *sql;
-};
+namespace duckdb {
 
 static const DefaultView internal_views[] = {
     {DEFAULT_SCHEMA, "pragma_database_list", "SELECT database_oid AS seq, database_name AS name, path AS file FROM duckdb_databases() WHERE NOT internal ORDER BY 1"},
@@ -61,19 +57,32 @@ static const DefaultView internal_views[] = {
     {"information_schema", "views", "SELECT database_name AS table_catalog, schema_name AS table_schema, view_name AS table_name, sql AS view_definition, 'NONE' AS check_option, 'NO' AS is_updatable, 'NO' AS is_insertable_into, 'NO' AS is_trigger_updatable, 'NO' AS is_trigger_deletable, 'NO' AS is_trigger_insertable_into FROM duckdb_views();"},
     {nullptr, nullptr, nullptr}};
 
+static unique_ptr<CreateViewInfo> MakeViewInfo(ClientContext &context, const string &schema, const string &name, const char *sql) {
+	auto result = make_uniq<CreateViewInfo>();
+	result->schema = schema;
+	result->view_name = name;
+	result->sql = sql;
+	result->temporary = true;
+	result->internal = true;
+
+	return CreateViewInfo::FromSelect(context, std::move(result));
+}
+
 static unique_ptr<CreateViewInfo> GetDefaultView(ClientContext &context, const string &input_schema, const string &input_name) {
 	auto schema = StringUtil::Lower(input_schema);
 	auto name = StringUtil::Lower(input_name);
 	for (idx_t index = 0; internal_views[index].name != nullptr; index++) {
 		if (internal_views[index].schema == schema && internal_views[index].name == name) {
-			auto result = make_uniq<CreateViewInfo>();
-			result->schema = schema;
-			result->view_name = name;
-			result->sql = internal_views[index].sql;
-			result->temporary = true;
-			result->internal = true;
-
-			return CreateViewInfo::FromSelect(context, std::move(result));
+			return MakeViewInfo(context, schema, name, internal_views[index].sql);
+		}
+	}
+	if (duckdb_external_views) {
+		idx_t count = 0;
+		const auto *external_views = duckdb_external_views(&count);
+		for (idx_t index = 0; index < count; index++) {
+			if (external_views[index].schema == schema && external_views[index].name == name) {
+				return MakeViewInfo(context, schema, name, external_views[index].sql);
+			}
 		}
 	}
 	return nullptr;
@@ -96,6 +105,15 @@ vector<string> DefaultViewGenerator::GetDefaultEntries() {
 	for (idx_t index = 0; internal_views[index].name != nullptr; index++) {
 		if (internal_views[index].schema == schema.name) {
 			result.emplace_back(internal_views[index].name);
+		}
+	}
+	if (duckdb_external_views) {
+		idx_t count = 0;
+		const auto *external_views = duckdb_external_views(&count);
+		for (idx_t index = 0; index < count; index++) {
+			if (external_views[index].schema == schema.name) {
+				result.emplace_back(external_views[index].name);
+			}
 		}
 	}
 	return result;

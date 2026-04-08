@@ -1768,6 +1768,7 @@ typedef struct PGFunctionDefinition {
 	PGList *params;
 	PGNode *function;
 	PGNode *query;
+	char *pg_body;    /* PG-style AS 'sql_body' string (parsed in transformer) */
 } PGFunctionDefinition;
 
 typedef struct PGCreateFunctionStmt {

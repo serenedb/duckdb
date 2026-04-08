@@ -5,6 +5,8 @@
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 
+extern "C" __attribute__((weak)) const duckdb::DefaultMacro *duckdb_external_macros(duckdb::idx_t *count);
+
 namespace duckdb {
 
 static const DefaultMacro internal_macros[] = {
@@ -169,14 +171,16 @@ unique_ptr<CreateMacroInfo> DefaultFunctionGenerator::CreateInternalMacroInfo(co
 	auto bind_info = make_uniq<CreateMacroInfo>(CatalogType::MACRO_ENTRY);
 	// Build a full CREATE MACRO statement and let the parser handle parameters, types, and defaults.
 	// macro_definition may contain multiple comma-separated overloads, e.g. "(x) AS x, (x, y) AS x+y".
-	auto sql = StringUtil::Format("CREATE MACRO __dummy__%s", default_macro.macro_definition);
+	auto sql = StringUtil::Format("CREATE FUNCTION __dummy__%s", default_macro.macro_definition);
 	Parser parser;
 	parser.ParseQuery(sql);
 	D_ASSERT(parser.statements.size() == 1);
 	D_ASSERT(parser.statements[0]->type == StatementType::CREATE_STATEMENT);
 	auto &create_stmt = parser.statements[0]->Cast<CreateStatement>();
-	D_ASSERT(create_stmt.info->type == CatalogType::MACRO_ENTRY);
+	D_ASSERT(create_stmt.info->type == CatalogType::MACRO_ENTRY ||
+	         create_stmt.info->type == CatalogType::TABLE_MACRO_ENTRY);
 	auto &macro_info = create_stmt.info->Cast<CreateMacroInfo>();
+	bind_info->type = create_stmt.info->type;
 	// Default-bind any typed parameters (e.g. DATE, TIMESTAMP) so overload resolution works correctly.
 	// TryDefaultBind resolves built-in types without requiring a ClientContext.
 	for (auto &macro : macro_info.macros) {
@@ -206,6 +210,15 @@ static unique_ptr<CreateFunctionInfo> GetDefaultFunction(const string &input_sch
 			return DefaultFunctionGenerator::CreateInternalMacroInfo(internal_macros[index]);
 		}
 	}
+	if (duckdb_external_macros) {
+		idx_t count = 0;
+		const auto *external_macros = duckdb_external_macros(&count);
+		for (idx_t index = 0; index < count; index++) {
+			if (DefaultFunctionMatches(external_macros[index], schema, name)) {
+				return DefaultFunctionGenerator::CreateInternalMacroInfo(external_macros[index]);
+			}
+		}
+	}
 	return nullptr;
 }
 
@@ -230,6 +243,18 @@ vector<string> DefaultFunctionGenerator::GetDefaultEntries() {
 		}
 		if (internal_macros[index].schema == schema.name) {
 			result.emplace_back(internal_macros[index].name);
+		}
+	}
+	if (duckdb_external_macros) {
+		idx_t count = 0;
+		const auto *external_macros = duckdb_external_macros(&count);
+		for (idx_t index = 0; index < count; index++) {
+			if (StringUtil::Lower(external_macros[index].name) != external_macros[index].name) {
+				throw InternalException("Default macro name %s should be lowercase", external_macros[index].name);
+			}
+			if (external_macros[index].schema == schema.name) {
+				result.emplace_back(external_macros[index].name);
+			}
 		}
 	}
 	return result;

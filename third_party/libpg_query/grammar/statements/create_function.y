@@ -68,6 +68,20 @@ table_macro_definition:
 				n->query = $4;
 				$$ = (PGNode *)n;
 			}
+		| param_list pg_function_decorators BEGIN_P ATOMIC select_no_parens ';' END_P
+			{
+				PGFunctionDefinition *n = makeNode(PGFunctionDefinition);
+				n->params = $1;
+				n->query = $5;
+				$$ = (PGNode *)n;
+			}
+		| param_list pg_function_decorators BEGIN_P ATOMIC select_no_parens END_P
+			{
+				PGFunctionDefinition *n = makeNode(PGFunctionDefinition);
+				n->params = $1;
+				n->query = $5;
+				$$ = (PGNode *)n;
+			}
 	;
 
 table_macro_definition_parens:
@@ -107,6 +121,22 @@ macro_definition:
 				n->function = $3;
 				$$ = (PGNode *)n;
 			}
+		| param_list pg_function_decorators RETURN a_expr
+			{
+				PGFunctionDefinition *n = makeNode(PGFunctionDefinition);
+				n->params = $1;
+				n->function = $4;
+				$$ = (PGNode *)n;
+			}
+		| param_list pg_function_decorators AS Sconst
+			{
+				PGFunctionDefinition *n = makeNode(PGFunctionDefinition);
+				n->params = $1;
+				n->function = NULL;
+				n->query = NULL;
+				n->pg_body = $4;
+				$$ = (PGNode *)n;
+			}
 	;
 
 macro_definition_list:
@@ -123,6 +153,39 @@ macro_definition_list:
 macro_alias:
 		FUNCTION
 		| MACRO
+	;
+
+/*****************************************************************************
+ * PG-style function decorators (parsed and ignored)
+ *****************************************************************************/
+pg_function_decorators:
+		pg_function_decorator_list                           {}
+	;
+
+pg_function_decorator_list:
+		pg_function_decorator                                {}
+		| pg_function_decorator_list pg_function_decorator   {}
+	;
+
+pg_function_decorator:
+		RETURNS Typename                                     {}
+		| RETURNS TABLE '(' TableFuncElementList ')'         {}
+		| RETURNS NULL_P ON NULL_P INPUT_P                   {}
+		| CALLED ON NULL_P INPUT_P                           {}
+		| LANGUAGE ColId                                     {}
+		| IMMUTABLE                                          {}
+		| STABLE                                             {}
+		| VOLATILE                                           {}
+		| STRICT                                             {}
+		| LEAKPROOF                                          {}
+		| NOT LEAKPROOF                                      {}
+		| PARALLEL ColId                                     {}
+		| COST NumericOnly                                   {}
+		| ROWS NumericOnly                                   {}
+		| SECURITY INVOKER                                   {}
+		| SECURITY DEFINER                                   {}
+		| EXTERNAL SECURITY INVOKER                          {}
+		| EXTERNAL SECURITY DEFINER                          {}
 	;
 
 
@@ -175,6 +238,46 @@ MacroParameter:
 				n->name = $1;
 				n->typeName = $2;
 				n->defaultValue = (PGExpr *) $4;
+				$$ = (PGNode *) n;
+			}
+		| param_name opt_Typename DEFAULT a_expr
+			{
+				PGFunctionParameter *n = makeNode(PGFunctionParameter);
+				n->name = $1;
+				n->typeName = $2;
+				n->defaultValue = (PGExpr *) $4;
+				$$ = (PGNode *) n;
+			}
+		| param_name opt_Typename '=' a_expr
+			{
+				PGFunctionParameter *n = makeNode(PGFunctionParameter);
+				n->name = $1;
+				n->typeName = $2;
+				n->defaultValue = (PGExpr *) $4;
+				$$ = (PGNode *) n;
+			}
+		| IN_P param_name opt_Typename
+			{
+				PGFunctionParameter *n = makeNode(PGFunctionParameter);
+				n->name = $2;
+				n->typeName = $3;
+				n->defaultValue = NULL;
+				$$ = (PGNode *) n;
+			}
+		| IN_P param_name opt_Typename DEFAULT a_expr
+			{
+				PGFunctionParameter *n = makeNode(PGFunctionParameter);
+				n->name = $2;
+				n->typeName = $3;
+				n->defaultValue = (PGExpr *) $5;
+				$$ = (PGNode *) n;
+			}
+		| IN_P param_name opt_Typename '=' a_expr
+			{
+				PGFunctionParameter *n = makeNode(PGFunctionParameter);
+				n->name = $2;
+				n->typeName = $3;
+				n->defaultValue = (PGExpr *) $5;
 				$$ = (PGNode *) n;
 			}
 	;

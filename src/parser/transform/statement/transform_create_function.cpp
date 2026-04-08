@@ -1,11 +1,48 @@
 #include "duckdb/function/scalar_macro_function.hpp"
 #include "duckdb/function/table_macro_function.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
+#include "duckdb/parser/expression/parameter_expression.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/parser/transformer.hpp"
 
 namespace duckdb {
+
+// Replace $N positional parameter references with named column references.
+// PG uses $1, $2 in function bodies; DuckDB macros use param names directly.
+static void ReplacePositionalParams(unique_ptr<ParsedExpression> &expr, const vector<string> &param_names) {
+	if (!expr) {
+		return;
+	}
+	if (expr->GetExpressionClass() == ExpressionClass::PARAMETER) {
+		auto &param = expr->Cast<ParameterExpression>();
+		// Positional params have numeric identifiers: "1", "2", etc.
+		idx_t idx = 0;
+		try { idx = std::stoull(param.identifier); } catch (...) { return; }
+		if (idx >= 1 && idx <= param_names.size()) {
+			auto replacement = make_uniq<ColumnRefExpression>(param_names[idx - 1]);
+			replacement->alias = expr->alias;
+			expr = std::move(replacement);
+			return;
+		}
+	}
+	ParsedExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<ParsedExpression> &child) {
+		ReplacePositionalParams(child, param_names);
+	});
+}
+
+static void ReplacePositionalParamsInQuery(QueryNode &node, const vector<string> &param_names) {
+	ParsedExpressionIterator::EnumerateQueryNodeChildren(
+		node,
+		[&](unique_ptr<ParsedExpression> &child) { ReplacePositionalParams(child, param_names); },
+		[&](TableRef &ref) {
+			ParsedExpressionIterator::EnumerateTableRefChildren(
+				ref,
+				[&](unique_ptr<ParsedExpression> &child) { ReplacePositionalParams(child, param_names); });
+		});
+}
 
 unique_ptr<MacroFunction> Transformer::TransformMacroFunction(duckdb_libpgquery::PGFunctionDefinition &def) {
 	unique_ptr<MacroFunction> macro_func;
@@ -43,6 +80,23 @@ unique_ptr<MacroFunction> Transformer::TransformMacroFunction(duckdb_libpgquery:
 			macro_func->default_parameters[param.name] = std::move(default_expr);
 		} else if (!macro_func->default_parameters.empty()) {
 			throw ParserException("Parameter without a default follows parameter with a default");
+		}
+	}
+
+	// Replace $N positional params with named params in the function body
+	if (!macro_func->parameters.empty()) {
+		vector<string> param_name_list;
+		for (auto &p : macro_func->parameters) {
+			param_name_list.push_back(p->Cast<ColumnRefExpression>().GetColumnName());
+		}
+		if (macro_func->type == MacroType::SCALAR_MACRO) {
+			auto &scalar = macro_func->Cast<ScalarMacroFunction>();
+			ReplacePositionalParams(scalar.expression, param_name_list);
+		} else {
+			auto &table = macro_func->Cast<TableMacroFunction>();
+			if (table.query_node) {
+				ReplacePositionalParamsInQuery(*table.query_node, param_name_list);
+			}
 		}
 	}
 
