@@ -97,6 +97,23 @@ unique_ptr<ParsedExpression> Transformer::TransformAExprInternal(duckdb_libpgque
 		auto left_expr = TransformExpression(root.lexpr);
 		auto right_expr = TransformExpression(root.rexpr);
 
+		// TODO(mbkkt) move this to binder, but right now in binder is generic unnest
+		if (right_expr->expression_class == ExpressionClass::CONSTANT) {
+			auto &constant = right_expr->Cast<ConstantExpression>();
+			if (constant.value.type() == LogicalType::VARCHAR) {
+				auto elem_type = [&] -> LogicalType {
+					if (left_expr->expression_class == ExpressionClass::CONSTANT) {
+						return left_expr->Cast<ConstantExpression>().value.type();
+					} else if (left_expr->expression_class == ExpressionClass::CAST) {
+						return left_expr->Cast<CastExpression>().cast_type;
+					} else {
+						return LogicalType::VARCHAR;
+					}
+				}();
+				right_expr = make_uniq<CastExpression>(LogicalType::LIST(elem_type), std::move(right_expr));
+			}
+		}
+
 		auto subquery_expr = make_uniq<SubqueryExpression>();
 		auto select_statement = make_uniq<SelectStatement>();
 		auto select_node = make_uniq<SelectNode>();
