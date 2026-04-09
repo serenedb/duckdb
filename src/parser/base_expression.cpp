@@ -45,10 +45,25 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 			strength = FigureColnameInternal(*cast.child, name);
 		}
 		if (strength <= 1) {
-			// Use type name as weak name (PG behavior: SELECT 'x'::text -> "text")
 			name = StringUtil::Lower(cast.cast_type.ToString());
+			while (name.ends_with("[]")) {
+				name = name.substr(0, name.size() - 2);
+			}
 			if (name.starts_with('"') && name.ends_with('"')) {
 				name = name.substr(1, name.size() - 2);
+			}
+			if (name == "varchar") {
+				name = "text";
+			} else if (name == "integer") {
+				name = "int4";
+			} else if (name == "bigint") {
+				name = "int8";
+			} else if (name == "float") {
+				name = "float4";
+			} else if (name == "double") {
+				name = "float8";
+			} else if (name == "boolean") {
+				name = "bool";
 			}
 			return 1;
 		}
