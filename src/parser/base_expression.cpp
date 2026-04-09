@@ -26,7 +26,7 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 	switch (expr.expression_class) {
 	case ExpressionClass::COLUMN_REF: {
 		auto &column_ref = expr.Cast<ColumnRefExpression>();
-		name = column_ref.GetColumnName();
+		name = StringUtil::Lower(column_ref.GetColumnName());
 		return 2;
 	}
 	case ExpressionClass::FUNCTION: {
@@ -47,6 +47,9 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 		if (strength <= 1) {
 			// Use type name as weak name (PG behavior: SELECT 'x'::text -> "text")
 			name = StringUtil::Lower(cast.cast_type.ToString());
+			if (name.starts_with('"') && name.ends_with('"')) {
+				name = name.substr(1, name.size() - 2);
+			}
 			return 1;
 		}
 		return strength;
