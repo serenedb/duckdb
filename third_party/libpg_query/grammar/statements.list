@@ -14,6 +14,7 @@ CreateFunctionStmt
 CreateSchemaStmt
 CreateSeqStmt
 CreateDatabaseStmt
+CreateTSDictionaryStmt
 CreateStmt
 CommentOnStmt
 DeallocateStmt

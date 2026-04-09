@@ -2063,6 +2063,23 @@ typedef struct PGCallStmt {
 } PGCallStmt;
 
 /* ----------------------
+ *		CREATE TEXT SEARCH DICTIONARY (DefineStmt)
+ *
+ * Mapped from PostgreSQL's DefineStmt for TEXT SEARCH DICTIONARY.
+ * ----------------------
+ */
+typedef struct PGDefineStmt {
+	PGNodeTag type;
+	PGObjectType kind;        /* PG_OBJECT_TSDICTIONARY, etc. */
+	bool oldstyle;
+	PGList *defnames;         /* qualified name (list of String) */
+	PGList *args;             /* optional type args */
+	PGList *definition;       /* list of DefElem (the WITH clause options) */
+	bool if_not_exists;
+	bool replace;
+} PGDefineStmt;
+
+/* ----------------------
  *		EXPORT/IMPORT Statements
  * ----------------------
  */

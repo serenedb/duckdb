@@ -372,7 +372,6 @@ static const StaticFunctionDefinition core_functions[] = {
 	DUCKDB_SCALAR_FUNCTION_SET(ToCenturiesFun),
 	DUCKDB_SCALAR_FUNCTION_SET(ToDaysFun),
 	DUCKDB_SCALAR_FUNCTION_SET(ToDecadesFun),
-	DUCKDB_SCALAR_FUNCTION_SET_ALIAS(ToHexFun),
 	DUCKDB_SCALAR_FUNCTION(ToHoursFun),
 	DUCKDB_SCALAR_FUNCTION(ToMicrosecondsFun),
 	DUCKDB_SCALAR_FUNCTION_SET(ToMillenniaFun),
