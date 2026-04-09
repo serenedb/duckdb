@@ -8,8 +8,10 @@
 #include "duckdb/parser/expression/collate_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
+#include "duckdb/parser/query_node/select_node.hpp"
 
 namespace duckdb {
 
@@ -23,17 +25,17 @@ void BaseExpression::Print() const {
 static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 	switch (expr.expression_class) {
 	case ExpressionClass::COLUMN_REF: {
-		auto &col = expr.Cast<ColumnRefExpression>();
-		name = col.GetColumnName();
+		auto &column_ref = expr.Cast<ColumnRefExpression>();
+		name = column_ref.GetColumnName();
 		return 2;
 	}
 	case ExpressionClass::FUNCTION: {
-		auto &func = expr.Cast<FunctionExpression>();
-		if (func.is_operator) {
+		auto &function = expr.Cast<FunctionExpression>();
+		if (function.is_operator) {
 			// PG: operators like +, -, *, / don't produce column names
 			return 0;
 		}
-		name = StringUtil::Lower(func.function_name);
+		name = StringUtil::Lower(function.function_name);
 		return 2;
 	}
 	case ExpressionClass::CAST: {
@@ -43,7 +45,7 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 			strength = FigureColnameInternal(*cast.child, name);
 		}
 		if (strength <= 1) {
-			// Use type name as weak name (PG behavior: SELECT 'x'::text → "text")
+			// Use type name as weak name (PG behavior: SELECT 'x'::text -> "text")
 			name = StringUtil::Lower(cast.cast_type.ToString());
 			return 1;
 		}
@@ -54,7 +56,7 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 		if (collate.child) {
 			return FigureColnameInternal(*collate.child, name);
 		}
-		break;
+		return 0;
 	}
 	case ExpressionClass::CASE: {
 		auto &case_expr = expr.Cast<CaseExpression>();
@@ -69,36 +71,65 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 		return strength;
 	}
 	case ExpressionClass::SUBQUERY: {
-		auto &sub = expr.Cast<SubqueryExpression>();
-		if (sub.subquery_type == SubqueryType::EXISTS) {
+		// PG: T_SubLink
+		auto &subquery = expr.Cast<SubqueryExpression>();
+		switch (subquery.subquery_type) {
+		case SubqueryType::EXISTS:
+		case SubqueryType::NOT_EXISTS:
 			name = "exists";
 			return 2;
-		}
-		if (sub.subquery_type == SubqueryType::SCALAR) {
-			// For scalar subqueries, try to get the column name from the subquery
-			// This matches PG's EXPR_SUBLINK handling
-			name = "?column?";
+		case SubqueryType::SCALAR:
+			// PG: EXPR_SUBLINK — get column name of the subquery's single target
+			if (subquery.subquery && subquery.subquery->node &&
+			    subquery.subquery->node->type == QueryNodeType::SELECT_NODE) {
+				auto &select = subquery.subquery->node->Cast<SelectNode>();
+				if (select.select_list.size() == 1) {
+					auto &target = *select.select_list[0];
+					if (!target.alias.empty()) {
+						name = target.alias;
+						return 2;
+					}
+					return FigureColnameInternal(target, name);
+				}
+			}
+			return 0;
+		// As with other operator-like nodes, these have no names
+		default:
 			return 0;
 		}
-		break;
 	}
 	case ExpressionClass::OPERATOR: {
 		auto &op = expr.Cast<OperatorExpression>();
-		// NULLIF is represented as an operator in DuckDB
-		if (op.type == ExpressionType::OPERATOR_NULLIF) {
+		switch (op.type) {
+		// PG: T_A_Expr AEXPR_NULLIF
+		case ExpressionType::OPERATOR_NULLIF:
 			name = "nullif";
 			return 2;
-		}
-		if (op.type == ExpressionType::OPERATOR_COALESCE) {
+		// PG: T_CoalesceExpr
+		case ExpressionType::OPERATOR_COALESCE:
 			name = "coalesce";
 			return 2;
+		// PG: T_A_ArrayExpr
+		case ExpressionType::ARRAY_CONSTRUCTOR:
+			name = "array";
+			return 2;
+		// PG: T_A_Indirection — find last field name
+		case ExpressionType::STRUCT_EXTRACT:
+			if (op.children.size() == 2 && op.children[1]->expression_class == ExpressionClass::CONSTANT) {
+				auto &constant = op.children[1]->Cast<ConstantExpression>();
+				if (!constant.value.IsNull() && constant.value.type().id() == LogicalTypeId::VARCHAR) {
+					name = StringUtil::Lower(constant.value.GetValue<string>());
+					return 2;
+				}
+			}
+			return FigureColnameInternal(*op.children[0], name);
+		default:
+			return 0;
 		}
-		break;
 	}
 	default:
-		break;
+		return 0;
 	}
-	return 0;
 }
 
 string BaseExpression::GetName() const {
