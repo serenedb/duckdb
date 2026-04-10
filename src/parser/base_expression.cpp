@@ -38,6 +38,8 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 		name = StringUtil::Lower(function.function_name);
 		if (name == "count_star") {
 			name = "count";
+		} else if (name == "trim") {
+			name = "btrim";
 		}
 		return 2;
 	}
