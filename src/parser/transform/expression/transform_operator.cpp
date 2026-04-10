@@ -9,7 +9,9 @@
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/tableref/emptytableref.hpp"
+#include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/parser/parser_options.hpp"
 #include "duckdb/parser/transformer.hpp"
 
@@ -129,6 +131,68 @@ unique_ptr<ParsedExpression> Transformer::TransformAExprInternal(duckdb_libpgque
 		subquery_expr->comparison_type = OperatorToExpressionType(name);
 		SetQueryLocation(*subquery_expr, root.location);
 		if (subquery_expr->comparison_type == ExpressionType::INVALID) {
+			// For LIKE/ILIKE operators (~~, ~~*, !~~, !~~*) in ANY/ALL,
+			// rewrite to EXISTS/NOT EXISTS with WHERE clause since
+			// DuckDB subquery ANY/ALL only supports comparison operators.
+			// x ~~* ANY(arr) → EXISTS (SELECT FROM UNNEST(arr) t(v) WHERE x ILIKE v)
+			// x ~~* ALL(arr) → NOT EXISTS (SELECT FROM UNNEST(arr) t(v) WHERE NOT (x ILIKE v))
+			bool is_like = (name == "~~");
+			bool is_ilike = (name == "~~*");
+			bool is_not_like = (name == "!~~");
+			bool is_not_ilike = (name == "!~~*");
+			if (is_like || is_ilike || is_not_like || is_not_ilike) {
+				// Recover lhs (was moved into subquery_expr->child)
+				auto lhs = std::move(subquery_expr->child);
+				// Recover rhs array (from UNNEST args in the existing subquery)
+				auto &existing_select = subquery_expr->subquery->node->Cast<SelectNode>();
+				auto &unnest_func = existing_select.select_list[0]->Cast<FunctionExpression>();
+				auto rhs_array = std::move(unnest_func.children[0]);
+
+				// Build: EXISTS (SELECT 1 FROM UNNEST(arr) AS t(v) WHERE lhs ILIKE v)
+				auto new_select = make_uniq<SelectNode>();
+				new_select->select_list.push_back(make_uniq<ConstantExpression>(Value::INTEGER(1)));
+
+				// FROM UNNEST(arr) AS t(v)
+				auto table_func = make_uniq<TableFunctionRef>();
+				vector<unique_ptr<ParsedExpression>> unnest_args;
+				unnest_args.push_back(std::move(rhs_array));
+				table_func->function = make_uniq<FunctionExpression>("UNNEST", std::move(unnest_args));
+				table_func->alias = "t";
+				table_func->column_name_alias.push_back("v");
+				new_select->from_table = std::move(table_func);
+
+				// WHERE lhs LIKE/ILIKE v
+				string func_name = (is_ilike || is_not_ilike) ? "ilike_escape" : "like_escape";
+				vector<unique_ptr<ParsedExpression>> like_children;
+				like_children.push_back(std::move(lhs));
+				like_children.push_back(make_uniq<ColumnRefExpression>("v"));
+				like_children.push_back(make_uniq<ConstantExpression>(Value("\\")));
+				unique_ptr<ParsedExpression> where_cond =
+				    make_uniq<FunctionExpression>(func_name, std::move(like_children));
+
+				if (is_not_like || is_not_ilike) {
+					where_cond = make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(where_cond));
+				}
+
+				bool is_all = (root.kind == duckdb_libpgquery::PG_AEXPR_OP_ALL);
+				if (is_all) {
+					where_cond = make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(where_cond));
+				}
+				new_select->where_clause = std::move(where_cond);
+
+				auto new_statement = make_uniq<SelectStatement>();
+				new_statement->node = std::move(new_select);
+
+				auto exists_expr = make_uniq<SubqueryExpression>();
+				exists_expr->subquery = std::move(new_statement);
+				exists_expr->subquery_type = SubqueryType::EXISTS;
+				SetQueryLocation(*exists_expr, root.location);
+
+				if (is_all) {
+					return make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(exists_expr));
+				}
+				return std::move(exists_expr);
+			}
 			throw ParserException("Unsupported comparison \"%s\" for ANY/ALL subquery", name);
 		}
 
