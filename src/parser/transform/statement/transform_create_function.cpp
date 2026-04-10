@@ -2,11 +2,13 @@
 #include "duckdb/function/table_macro_function.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/parameter_expression.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/parser/transformer.hpp"
+#include "parser/parser.hpp"
 
 namespace duckdb {
 
@@ -47,8 +49,30 @@ static void ReplacePositionalParamsInQuery(QueryNode &node, const vector<string>
 unique_ptr<MacroFunction> Transformer::TransformMacroFunction(duckdb_libpgquery::PGFunctionDefinition &def) {
 	unique_ptr<MacroFunction> macro_func;
 	if (def.function) {
-		auto expression = TransformExpression(def.function);
-		macro_func = make_uniq<ScalarMacroFunction>(std::move(expression));
+		// Check if this is a PG-style string body (AS 'body' or AS $$body$$)
+		// matched through the "param_list AS a_expr" path (Sconst as a_expr).
+		// Parse the body string as SQL using raw_parser (which is re-entrant).
+		if (def.function->type == duckdb_libpgquery::T_PGAConst) {
+			auto &constant = PGCast<duckdb_libpgquery::PGAConst>(*def.function);
+			if (constant.val.type == duckdb_libpgquery::T_PGString) {
+				auto body_stmts = duckdb_libpgquery::raw_parser(constant.val.val.str);
+				if (!body_stmts || body_stmts->length != 1) {
+					throw ParserException("Function body must contain exactly one statement");
+				}
+				auto &raw = PGCast<duckdb_libpgquery::PGRawStmt>(
+				    *static_cast<duckdb_libpgquery::PGNode *>(body_stmts->head->data.ptr_value));
+				if (raw.stmt->type == duckdb_libpgquery::T_PGSelectStmt) {
+					auto query_node = TransformSelectNode(*raw.stmt);
+					macro_func = make_uniq<TableMacroFunction>(std::move(query_node));
+				} else {
+					throw ParserException("Only SELECT statements are supported in SQL function/procedure bodies");
+				}
+			}
+		}
+		if (!macro_func) {
+			auto expression = TransformExpression(def.function);
+			macro_func = make_uniq<ScalarMacroFunction>(std::move(expression));
+		}
 	} else if (def.query) {
 		auto query_node = TransformSelectNode(*def.query);
 		macro_func = make_uniq<TableMacroFunction>(std::move(query_node));

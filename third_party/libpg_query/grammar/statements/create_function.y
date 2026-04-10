@@ -34,7 +34,7 @@ CreateFunctionStmt:
 				n->is_procedure = $5;
 				$$ = (PGNode *)n;
 			}
-		| CREATE_P OptTemp macro_alias qualified_name macro_definition_list
+		| CREATE_P OptTemp macro_alias qualified_name macro_definition_list  %prec CREATE_FUNC_BODY
 			{
 					PGCreateFunctionStmt *n = makeNode(PGCreateFunctionStmt);
 					$4->relpersistence = $2;
@@ -44,7 +44,7 @@ CreateFunctionStmt:
 					n->is_procedure = $3;
 					$$ = (PGNode *)n;
 			}
-		| CREATE_P OptTemp macro_alias IF_P NOT EXISTS qualified_name macro_definition_list
+		| CREATE_P OptTemp macro_alias IF_P NOT EXISTS qualified_name macro_definition_list  %prec CREATE_FUNC_BODY
 			 {
 				PGCreateFunctionStmt *n = makeNode(PGCreateFunctionStmt);
 				$7->relpersistence = $2;
@@ -54,7 +54,38 @@ CreateFunctionStmt:
 				n->is_procedure = $3;
 				$$ = (PGNode *)n;
 			 }
-		| CREATE_P OR REPLACE OptTemp macro_alias qualified_name macro_definition_list
+		| CREATE_P OR REPLACE OptTemp macro_alias qualified_name macro_definition_list  %prec CREATE_FUNC_BODY
+			 {
+				PGCreateFunctionStmt *n = makeNode(PGCreateFunctionStmt);
+				$6->relpersistence = $4;
+				n->name = $6;
+				n->functions = $7;
+				n->onconflict = PG_REPLACE_ON_CONFLICT;
+				n->is_procedure = $5;
+				$$ = (PGNode *)n;
+			 }
+		/* PG-style trailing LANGUAGE: CREATE FUNCTION f() AS $$body$$ LANGUAGE SQL */
+		| CREATE_P OptTemp macro_alias qualified_name macro_definition_list LANGUAGE SQL_P
+			{
+					PGCreateFunctionStmt *n = makeNode(PGCreateFunctionStmt);
+					$4->relpersistence = $2;
+					n->name = $4;
+					n->functions = $5;
+					n->onconflict = PG_ERROR_ON_CONFLICT;
+					n->is_procedure = $3;
+					$$ = (PGNode *)n;
+			}
+		| CREATE_P OptTemp macro_alias IF_P NOT EXISTS qualified_name macro_definition_list LANGUAGE SQL_P
+			 {
+				PGCreateFunctionStmt *n = makeNode(PGCreateFunctionStmt);
+				$7->relpersistence = $2;
+				n->name = $7;
+				n->functions = $8;
+				n->onconflict = PG_IGNORE_ON_CONFLICT;
+				n->is_procedure = $3;
+				$$ = (PGNode *)n;
+			 }
+		| CREATE_P OR REPLACE OptTemp macro_alias qualified_name macro_definition_list LANGUAGE SQL_P
 			 {
 				PGCreateFunctionStmt *n = makeNode(PGCreateFunctionStmt);
 				$6->relpersistence = $4;
@@ -134,21 +165,19 @@ macro_definition:
 				n->function = $4;
 				$$ = (PGNode *)n;
 			}
-		| param_list pg_function_decorators AS Sconst opt_function_trailing_language
+		| param_list pg_function_decorators AS Sconst
 			{
 				PGFunctionDefinition *n = makeNode(PGFunctionDefinition);
 				n->params = $1;
-				n->function = NULL;
-				n->query = NULL;
-				n->pg_body = $4;
+				/* Store body as a string constant expression — parsed in transformer
+				 * (same path as "param_list AS a_expr" when Sconst matches a_expr) */
+				PGAConst *c = makeNode(PGAConst);
+				c->val.type = T_PGString;
+				c->val.val.str = $4;
+				c->location = @4;
+				n->function = (PGNode *) c;
 				$$ = (PGNode *)n;
 			}
-	;
-
-/* Trailing LANGUAGE after pg_body (AS $$...$$ LANGUAGE sql) */
-opt_function_trailing_language:
-		/* empty */                                          { $$ = 0; }
-		| LANGUAGE ColId                                     { $$ = 0; }
 	;
 
 macro_definition_list:
