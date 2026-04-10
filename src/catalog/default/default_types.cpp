@@ -455,11 +455,11 @@ LogicalType BindGeometryType(BindLogicalTypeInput &input) {
 // All Types
 //----------------------------------------------------------------------------------------------------------------------
 
-struct DefaultType {
-	const char *name;
-	LogicalTypeId type;
-	bind_logical_type_function_t bind_function;
-};
+} // namespace
+
+extern "C" __attribute__((weak)) const duckdb::DefaultType *duckdb_external_types(duckdb::idx_t *count);
+
+namespace {
 
 using builtin_type_array = std::array<DefaultType, 81>;
 
@@ -552,6 +552,15 @@ optional_ptr<const DefaultType> TryGetDefaultTypeEntry(const string &name) {
 			return &type;
 		}
 	}
+	if (duckdb_external_types) {
+		idx_t count = 0;
+		const auto *external_types = duckdb_external_types(&count);
+		for (idx_t i = 0; i < count; i++) {
+			if (StringUtil::CIEquals(name, external_types[i].name)) {
+				return &external_types[i];
+			}
+		}
+	}
 	return nullptr;
 }
 
@@ -561,11 +570,9 @@ optional_ptr<const DefaultType> TryGetDefaultTypeEntry(const string &name) {
 // Default Type Generator
 //----------------------------------------------------------------------------------------------------------------------
 LogicalTypeId DefaultTypeGenerator::GetDefaultType(const string &name) {
-	auto &internal_types = BUILTIN_TYPES;
-	for (auto &type : internal_types) {
-		if (StringUtil::CIEquals(name, type.name)) {
-			return type.type;
-		}
+	auto entry = TryGetDefaultTypeEntry(name);
+	if (entry) {
+		return entry->type;
 	}
 	return LogicalType::INVALID;
 }
@@ -622,6 +629,13 @@ vector<string> DefaultTypeGenerator::GetDefaultEntries() {
 	auto &internal_types = BUILTIN_TYPES;
 	for (auto &type : internal_types) {
 		result.emplace_back(StringUtil::Lower(type.name));
+	}
+	if (duckdb_external_types) {
+		idx_t count = 0;
+		const auto *external_types = duckdb_external_types(&count);
+		for (idx_t i = 0; i < count; i++) {
+			result.emplace_back(StringUtil::Lower(external_types[i].name));
+		}
 	}
 	return result;
 }

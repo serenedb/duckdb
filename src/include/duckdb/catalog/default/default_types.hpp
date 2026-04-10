@@ -10,9 +10,16 @@
 
 #include "duckdb/common/types.hpp"
 #include "duckdb/catalog/default/default_generator.hpp"
+#include "duckdb/parser/parsed_data/create_type_info.hpp"
 
 namespace duckdb {
 class SchemaCatalogEntry;
+
+struct DefaultType {
+	const char *name;
+	LogicalTypeId type;
+	bind_logical_type_function_t bind_function;
+};
 
 class DefaultTypeGenerator : public DefaultGenerator {
 public:
