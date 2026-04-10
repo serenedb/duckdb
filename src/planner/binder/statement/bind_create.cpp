@@ -267,6 +267,10 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		} else {
 			D_ASSERT(info.type == CatalogType::TABLE_MACRO_ENTRY);
 			auto &table_function = function->Cast<TableMacroFunction>();
+			if (!table_function.query_node) {
+				// pg_body macro that was not finalized - skip parameter check
+				continue;
+			}
 			ParsedExpressionIterator::EnumerateQueryNodeChildren(
 			    *table_function.query_node, [](unique_ptr<ParsedExpression> &child) {
 				    if (child->HasParameter()) {

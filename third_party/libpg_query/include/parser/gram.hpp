@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_BASE_YY_THIRD_PARTY_DUCKDB_THIRD_PARTY_LIBPG_QUERY_GRAMMAR_GRAMMAR_OUT_HPP_INCLUDED
-# define YY_BASE_YY_THIRD_PARTY_DUCKDB_THIRD_PARTY_LIBPG_QUERY_GRAMMAR_GRAMMAR_OUT_HPP_INCLUDED
+#ifndef YY_BASE_YY_THIRD_PARTY_LIBPG_QUERY_GRAMMAR_GRAMMAR_OUT_HPP_INCLUDED
+# define YY_BASE_YY_THIRD_PARTY_LIBPG_QUERY_GRAMMAR_GRAMMAR_OUT_HPP_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -631,7 +631,7 @@ union YYSTYPE
 	PGTransactionStmtType transactiontype;
 	PGMergeAction mergeaction;
 
-#line 635 "third_party/duckdb/third_party/libpg_query/grammar/grammar_out.hpp"
+#line 635 "third_party/libpg_query/grammar/grammar_out.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -659,4 +659,4 @@ struct YYLTYPE
 int base_yyparse (core_yyscan_t yyscanner);
 
 
-#endif /* !YY_BASE_YY_THIRD_PARTY_DUCKDB_THIRD_PARTY_LIBPG_QUERY_GRAMMAR_GRAMMAR_OUT_HPP_INCLUDED  */
+#endif /* !YY_BASE_YY_THIRD_PARTY_LIBPG_QUERY_GRAMMAR_GRAMMAR_OUT_HPP_INCLUDED  */

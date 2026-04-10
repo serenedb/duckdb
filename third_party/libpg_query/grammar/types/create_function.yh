@@ -3,4 +3,6 @@
 %type <list> macro_definition_list table_macro_list table_macro_list_internal
 %type <list> MacroParameterList
 %type <node> MacroParameter
+%type <boolean> macro_alias
 %type <ival> pg_function_decorators pg_function_decorator_list pg_function_decorator
+%type <ival> opt_function_trailing_language

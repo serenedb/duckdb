@@ -140,6 +140,7 @@ unique_ptr<CreateStatement> Transformer::TransformCreateFunction(duckdb_libpgque
 
 	// what to do on conflict
 	info->on_conflict = TransformOnConflict(stmt.onconflict);
+	info->is_procedure = stmt.is_procedure;
 	info->macros = std::move(macros);
 
 	result->info = std::move(info);

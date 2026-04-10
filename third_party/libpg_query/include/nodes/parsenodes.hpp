@@ -1776,6 +1776,7 @@ typedef struct PGCreateFunctionStmt {
 	PGRangeVar *name;
 	PGList *functions;
 	PGOnCreateConflict onconflict;
+	bool is_procedure;
 } PGCreateFunctionStmt;
 
 /* ----------------------

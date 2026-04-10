@@ -11,6 +11,7 @@ CreateFunctionStmt:
 				n->name = $4;
 				n->functions = $5;
 				n->onconflict = PG_ERROR_ON_CONFLICT;
+				n->is_procedure = $3;
 				$$ = (PGNode *)n;
 			}
 		| CREATE_P OptTemp macro_alias IF_P NOT EXISTS qualified_name table_macro_list
@@ -20,6 +21,7 @@ CreateFunctionStmt:
 				n->name = $7;
 				n->functions = $8;
 				n->onconflict = PG_IGNORE_ON_CONFLICT;
+				n->is_procedure = $3;
 				$$ = (PGNode *)n;
 			}
 		| CREATE_P OR REPLACE OptTemp macro_alias qualified_name table_macro_list
@@ -29,6 +31,7 @@ CreateFunctionStmt:
 				n->name = $6;
 				n->functions = $7;
 				n->onconflict = PG_REPLACE_ON_CONFLICT;
+				n->is_procedure = $5;
 				$$ = (PGNode *)n;
 			}
 		| CREATE_P OptTemp macro_alias qualified_name macro_definition_list
@@ -38,6 +41,7 @@ CreateFunctionStmt:
 					n->name = $4;
 					n->functions = $5;
 					n->onconflict = PG_ERROR_ON_CONFLICT;
+					n->is_procedure = $3;
 					$$ = (PGNode *)n;
 			}
 		| CREATE_P OptTemp macro_alias IF_P NOT EXISTS qualified_name macro_definition_list
@@ -47,6 +51,7 @@ CreateFunctionStmt:
 				n->name = $7;
 				n->functions = $8;
 				n->onconflict = PG_IGNORE_ON_CONFLICT;
+				n->is_procedure = $3;
 				$$ = (PGNode *)n;
 			 }
 		| CREATE_P OR REPLACE OptTemp macro_alias qualified_name macro_definition_list
@@ -56,6 +61,7 @@ CreateFunctionStmt:
 				n->name = $6;
 				n->functions = $7;
 				n->onconflict = PG_REPLACE_ON_CONFLICT;
+				n->is_procedure = $5;
 				$$ = (PGNode *)n;
 			 }
 	;
@@ -128,7 +134,7 @@ macro_definition:
 				n->function = $4;
 				$$ = (PGNode *)n;
 			}
-		| param_list pg_function_decorators AS Sconst
+		| param_list pg_function_decorators AS Sconst opt_function_trailing_language
 			{
 				PGFunctionDefinition *n = makeNode(PGFunctionDefinition);
 				n->params = $1;
@@ -137,6 +143,12 @@ macro_definition:
 				n->pg_body = $4;
 				$$ = (PGNode *)n;
 			}
+	;
+
+/* Trailing LANGUAGE after pg_body (AS $$...$$ LANGUAGE sql) */
+opt_function_trailing_language:
+		/* empty */                                          { $$ = 0; }
+		| LANGUAGE ColId                                     { $$ = 0; }
 	;
 
 macro_definition_list:
@@ -151,8 +163,9 @@ macro_definition_list:
 	;
 
 macro_alias:
-		FUNCTION
-		| MACRO
+		FUNCTION    { $$ = false; }
+		| MACRO     { $$ = false; }
+		| PROCEDURE { $$ = true; }
 	;
 
 /*****************************************************************************
