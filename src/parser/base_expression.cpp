@@ -36,6 +36,9 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 			return 0;
 		}
 		name = StringUtil::Lower(function.function_name);
+		if (name == "count_star") {
+			name = "count";
+		}
 		return 2;
 	}
 	case ExpressionClass::CAST: {
