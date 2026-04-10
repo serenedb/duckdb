@@ -4,4 +4,4 @@
 %type <list> MacroParameterList
 %type <node> MacroParameter
 %type <boolean> macro_alias
-%type <ival> pg_function_decorators pg_function_decorator_list pg_function_decorator
+%type <list> pg_function_decorators pg_function_decorator_list pg_function_decorator

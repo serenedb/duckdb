@@ -1768,6 +1768,8 @@ typedef struct PGFunctionDefinition {
 	PGList *params;
 	PGNode *function;
 	PGNode *query;
+	PGList *returns_table_columns;   /* RETURNS TABLE(...) list of PGColumnDef */
+	PGNode *returns_type;            /* RETURNS typename */
 } PGFunctionDefinition;
 
 typedef struct PGCreateFunctionStmt {

@@ -110,6 +110,7 @@ table_macro_definition:
 				PGFunctionDefinition *n = makeNode(PGFunctionDefinition);
 				n->params = $1;
 				n->query = $5;
+				n->returns_table_columns = $2;
 				$$ = (PGNode *)n;
 			}
 		| param_list pg_function_decorators BEGIN_P ATOMIC select_no_parens END_P
@@ -117,6 +118,7 @@ table_macro_definition:
 				PGFunctionDefinition *n = makeNode(PGFunctionDefinition);
 				n->params = $1;
 				n->query = $5;
+				n->returns_table_columns = $2;
 				$$ = (PGNode *)n;
 			}
 	;
@@ -163,12 +165,14 @@ macro_definition:
 				PGFunctionDefinition *n = makeNode(PGFunctionDefinition);
 				n->params = $1;
 				n->function = $4;
+				n->returns_table_columns = $2;
 				$$ = (PGNode *)n;
 			}
 		| param_list pg_function_decorators AS Sconst
 			{
 				PGFunctionDefinition *n = makeNode(PGFunctionDefinition);
 				n->params = $1;
+				n->returns_table_columns = $2;
 				/* Store body as a string constant expression — parsed in transformer
 				 * (same path as "param_list AS a_expr" when Sconst matches a_expr) */
 				PGAConst *c = makeNode(PGAConst);
@@ -200,34 +204,35 @@ macro_alias:
 /*****************************************************************************
  * PG-style function decorators (parsed and ignored)
  *****************************************************************************/
+/* Returns PGList* with RETURNS TABLE columns (or NIL) */
 pg_function_decorators:
-		pg_function_decorator_list                           {}
+		pg_function_decorator_list                           { $$ = $1; }
 	;
 
 pg_function_decorator_list:
-		pg_function_decorator                                {}
-		| pg_function_decorator_list pg_function_decorator   {}
+		pg_function_decorator                                { $$ = $1; }
+		| pg_function_decorator_list pg_function_decorator   { $$ = $1 ? $1 : $2; }
 	;
 
 pg_function_decorator:
-		RETURNS Typename                                     {}
-		| RETURNS TABLE '(' TableFuncElementList ')'         {}
-		| RETURNS NULL_P ON NULL_P INPUT_P                   {}
-		| CALLED ON NULL_P INPUT_P                           {}
-		| LANGUAGE ColId                                     {}
-		| IMMUTABLE                                          {}
-		| STABLE                                             {}
-		| VOLATILE                                           {}
-		| STRICT                                             {}
-		| LEAKPROOF                                          {}
-		| NOT LEAKPROOF                                      {}
-		| PARALLEL ColId                                     {}
-		| COST NumericOnly                                   {}
-		| ROWS NumericOnly                                   {}
-		| SECURITY INVOKER                                   {}
-		| SECURITY DEFINER                                   {}
-		| EXTERNAL SECURITY INVOKER                          {}
-		| EXTERNAL SECURITY DEFINER                          {}
+		RETURNS Typename                                     { $$ = NIL; }
+		| RETURNS TABLE '(' TableFuncElementList ')'         { $$ = $4; }
+		| RETURNS NULL_P ON NULL_P INPUT_P                   { $$ = NIL; }
+		| CALLED ON NULL_P INPUT_P                           { $$ = NIL; }
+		| LANGUAGE ColId                                     { $$ = NIL; }
+		| IMMUTABLE                                          { $$ = NIL; }
+		| STABLE                                             { $$ = NIL; }
+		| VOLATILE                                           { $$ = NIL; }
+		| STRICT                                             { $$ = NIL; }
+		| LEAKPROOF                                          { $$ = NIL; }
+		| NOT LEAKPROOF                                      { $$ = NIL; }
+		| PARALLEL ColId                                     { $$ = NIL; }
+		| COST NumericOnly                                   { $$ = NIL; }
+		| ROWS NumericOnly                                   { $$ = NIL; }
+		| SECURITY INVOKER                                   { $$ = NIL; }
+		| SECURITY DEFINER                                   { $$ = NIL; }
+		| EXTERNAL SECURITY INVOKER                          { $$ = NIL; }
+		| EXTERNAL SECURITY DEFINER                          { $$ = NIL; }
 	;
 
 

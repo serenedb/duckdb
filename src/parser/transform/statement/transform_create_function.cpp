@@ -1,3 +1,5 @@
+#include <charconv>
+
 #include "duckdb/function/scalar_macro_function.hpp"
 #include "duckdb/function/table_macro_function.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -7,6 +9,7 @@
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/query_node/select_node.hpp"
 #include "duckdb/parser/transformer.hpp"
 #include "parser/parser.hpp"
 
@@ -22,7 +25,11 @@ static void ReplacePositionalParams(unique_ptr<ParsedExpression> &expr, const ve
 		auto &param = expr->Cast<ParameterExpression>();
 		// Positional params have numeric identifiers: "1", "2", etc.
 		idx_t idx = 0;
-		try { idx = std::stoull(param.identifier); } catch (...) { return; }
+		auto [ptr, ec] =
+		    std::from_chars(param.identifier.data(), param.identifier.data() + param.identifier.size(), idx);
+		if (ec != std::errc() || ptr != param.identifier.data() + param.identifier.size()) {
+			return;
+		}
 		if (idx >= 1 && idx <= param_names.size()) {
 			auto replacement = make_uniq<ColumnRefExpression>(param_names[idx - 1]);
 			replacement->alias = expr->alias;
@@ -30,20 +37,17 @@ static void ReplacePositionalParams(unique_ptr<ParsedExpression> &expr, const ve
 			return;
 		}
 	}
-	ParsedExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<ParsedExpression> &child) {
-		ReplacePositionalParams(child, param_names);
-	});
+	ParsedExpressionIterator::EnumerateChildren(
+	    *expr, [&](unique_ptr<ParsedExpression> &child) { ReplacePositionalParams(child, param_names); });
 }
 
 static void ReplacePositionalParamsInQuery(QueryNode &node, const vector<string> &param_names) {
 	ParsedExpressionIterator::EnumerateQueryNodeChildren(
-		node,
-		[&](unique_ptr<ParsedExpression> &child) { ReplacePositionalParams(child, param_names); },
-		[&](TableRef &ref) {
-			ParsedExpressionIterator::EnumerateTableRefChildren(
-				ref,
-				[&](unique_ptr<ParsedExpression> &child) { ReplacePositionalParams(child, param_names); });
-		});
+	    node, [&](unique_ptr<ParsedExpression> &child) { ReplacePositionalParams(child, param_names); },
+	    [&](TableRef &ref) {
+		    ParsedExpressionIterator::EnumerateTableRefChildren(
+		        ref, [&](unique_ptr<ParsedExpression> &child) { ReplacePositionalParams(child, param_names); });
+	    });
 }
 
 unique_ptr<MacroFunction> Transformer::TransformMacroFunction(duckdb_libpgquery::PGFunctionDefinition &def) {
@@ -76,6 +80,23 @@ unique_ptr<MacroFunction> Transformer::TransformMacroFunction(duckdb_libpgquery:
 	} else if (def.query) {
 		auto query_node = TransformSelectNode(*def.query);
 		macro_func = make_uniq<TableMacroFunction>(std::move(query_node));
+	}
+
+	// Apply RETURNS TABLE column aliases to the query's SELECT list
+	if (def.returns_table_columns && macro_func && macro_func->type == MacroType::TABLE_MACRO) {
+		auto &table_macro = macro_func->Cast<TableMacroFunction>();
+		if (table_macro.query_node && table_macro.query_node->type == QueryNodeType::SELECT_NODE) {
+			auto &select = table_macro.query_node->Cast<SelectNode>();
+			idx_t col_idx = 0;
+			for (auto cell = def.returns_table_columns->head; cell && col_idx < select.select_list.size();
+			     cell = cell->next, col_idx++) {
+				auto &col_def = PGCast<duckdb_libpgquery::PGColumnDef>(
+				    *static_cast<duckdb_libpgquery::PGNode *>(cell->data.ptr_value));
+				if (col_def.colname) {
+					select.select_list[col_idx]->alias = col_def.colname;
+				}
+			}
+		}
 	}
 
 	if (!def.params) {
@@ -138,6 +159,18 @@ unique_ptr<CreateStatement> Transformer::TransformCreateFunction(duckdb_libpgque
 	for (auto c = stmt.functions->head; c != nullptr; c = lnext(c)) {
 		auto &function_def = *PGPointerCast<duckdb_libpgquery::PGFunctionDefinition>(c->data.ptr_value);
 		macros.push_back(TransformMacroFunction(function_def));
+		// For scalar RETURNS (no returns_table_columns), alias the single output column
+		// to the function name (PG convention)
+		auto &macro = macros.back();
+		if (!function_def.returns_table_columns && macro && macro->type == MacroType::TABLE_MACRO) {
+			auto &table_macro = macro->Cast<TableMacroFunction>();
+			if (table_macro.query_node && table_macro.query_node->type == QueryNodeType::SELECT_NODE) {
+				auto &select = table_macro.query_node->Cast<SelectNode>();
+				if (select.select_list.size() == 1 && select.select_list[0]->alias.empty()) {
+					select.select_list[0]->alias = TransformQualifiedName(*stmt.name).name;
+				}
+			}
+		}
 	}
 	PivotEntryCheck("macro");
 
