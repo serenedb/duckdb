@@ -390,6 +390,10 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 
 	if (func_catalog.type == CatalogType::TABLE_MACRO_ENTRY) {
 		auto &macro_func = func_catalog.Cast<TableMacroCatalogEntry>();
+		if (macro_func.is_procedure && !allow_procedure_call) {
+			throw BinderException("%s() is a procedure\nHINT: To call a procedure, use CALL.",
+			                      fexpr.function_name);
+		}
 		auto query_node = BindTableMacro(fexpr, macro_func, 0);
 		D_ASSERT(query_node);
 
