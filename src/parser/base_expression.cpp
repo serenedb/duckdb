@@ -107,7 +107,7 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 				if (select.select_list.size() == 1) {
 					auto &target = *select.select_list[0];
 					if (!target.alias.empty()) {
-						name = target.alias;
+						name = StringUtil::Lower(target.alias);
 						return 2;
 					}
 					return FigureColnameInternal(target, name);
