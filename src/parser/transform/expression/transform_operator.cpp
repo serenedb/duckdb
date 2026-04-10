@@ -174,6 +174,37 @@ unique_ptr<ParsedExpression> Transformer::TransformAExprInternal(duckdb_libpgque
 			return make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(compare_between));
 		}
 	}
+	// rewrite (NOT) X BETWEEN SYMMETRIC A AND B into
+	// (NOT) BETWEEN(X, LEAST(A, B), GREATEST(A, B))
+	case duckdb_libpgquery::PG_AEXPR_BETWEEN_SYM:
+	case duckdb_libpgquery::PG_AEXPR_NOT_BETWEEN_SYM: {
+		auto between_args = PGPointerCast<duckdb_libpgquery::PGList>(root.rexpr);
+		if (between_args->length != 2 || !between_args->head->data.ptr_value || !between_args->tail->data.ptr_value) {
+			throw InternalException("(NOT) BETWEEN SYMMETRIC needs two args");
+		}
+
+		auto input = TransformExpression(root.lexpr);
+		auto left = TransformExpression(PGPointerCast<duckdb_libpgquery::PGNode>(between_args->head->data.ptr_value));
+		auto right = TransformExpression(PGPointerCast<duckdb_libpgquery::PGNode>(between_args->tail->data.ptr_value));
+
+		vector<unique_ptr<ParsedExpression>> least_args;
+		least_args.push_back(left->Copy());
+		least_args.push_back(right->Copy());
+		auto least_expr = make_uniq<FunctionExpression>("least", std::move(least_args));
+
+		vector<unique_ptr<ParsedExpression>> greatest_args;
+		greatest_args.push_back(std::move(left));
+		greatest_args.push_back(std::move(right));
+		auto greatest_expr = make_uniq<FunctionExpression>("greatest", std::move(greatest_args));
+
+		auto compare_between =
+		    make_uniq<BetweenExpression>(std::move(input), std::move(least_expr), std::move(greatest_expr));
+		if (root.kind == duckdb_libpgquery::PG_AEXPR_BETWEEN_SYM) {
+			return std::move(compare_between);
+		} else {
+			return make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(compare_between));
+		}
+	}
 	// rewrite SIMILAR TO into regexp_full_match('asdf', '.*sd.*')
 	case duckdb_libpgquery::PG_AEXPR_SIMILAR: {
 		auto left_expr = TransformExpression(root.lexpr);
