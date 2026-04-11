@@ -139,6 +139,8 @@ private:
 	unique_ptr<AlterStatement> TransformCommentOn(duckdb_libpgquery::PGCommentOnStmt &stmt);
 	//! Transform a Postgres duckdb_libpgquery::T_PGAlterSeqStmt node into CreateStatement
 	unique_ptr<AlterStatement> TransformAlterSequence(duckdb_libpgquery::PGAlterSeqStmt &stmt);
+	//! Transform a Postgres duckdb_libpgquery::T_PGDefineStmt node (CREATE TEXT SEARCH DICTIONARY)
+	unique_ptr<SQLStatement> TransformDefineStmt(duckdb_libpgquery::PGDefineStmt &stmt);
 	//! Transform a Postgres duckdb_libpgquery::T_PGDropStmt node into a Drop[Table,Schema]Statement
 	unique_ptr<SQLStatement> TransformDrop(duckdb_libpgquery::PGDropStmt &stmt);
 	static unique_ptr<ExtraDropInfo> TransformDropTrigger(duckdb_libpgquery::PGList &obj_list,
@@ -375,7 +377,8 @@ private:
 	Vector PGListToVector(optional_ptr<duckdb_libpgquery::PGList> column_list, idx_t &size);
 	vector<string> TransformConflictTarget(duckdb_libpgquery::PGList &list);
 
-	unique_ptr<MacroFunction> TransformMacroFunction(duckdb_libpgquery::PGFunctionDefinition &function);
+	unique_ptr<MacroFunction> TransformMacroFunction(duckdb_libpgquery::PGFunctionDefinition &function,
+	                                                 bool has_language);
 
 	vector<string> TransformNameList(duckdb_libpgquery::PGList &list);
 
