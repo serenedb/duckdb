@@ -1770,6 +1770,7 @@ typedef struct PGFunctionDefinition {
 	PGNode *query;
 	PGList *returns_table_columns;   /* RETURNS TABLE(...) list of PGColumnDef */
 	PGNode *returns_type;            /* RETURNS typename */
+	bool has_language;               /* LANGUAGE SQL was specified (PG-style body) */
 } PGFunctionDefinition;
 
 typedef struct PGCreateFunctionStmt {
@@ -1778,6 +1779,7 @@ typedef struct PGCreateFunctionStmt {
 	PGList *functions;
 	PGOnCreateConflict onconflict;
 	bool is_procedure;
+	bool has_language;   /* LANGUAGE SQL was specified — body is SQL, not expression */
 } PGCreateFunctionStmt;
 
 /* ----------------------

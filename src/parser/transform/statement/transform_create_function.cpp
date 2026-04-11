@@ -50,13 +50,13 @@ static void ReplacePositionalParamsInQuery(QueryNode &node, const vector<string>
 	    });
 }
 
-unique_ptr<MacroFunction> Transformer::TransformMacroFunction(duckdb_libpgquery::PGFunctionDefinition &def) {
+unique_ptr<MacroFunction> Transformer::TransformMacroFunction(duckdb_libpgquery::PGFunctionDefinition &def,
+                                                              bool has_language) {
 	unique_ptr<MacroFunction> macro_func;
 	if (def.function) {
-		// Check if this is a PG-style string body (AS 'body' or AS $$body$$)
-		// matched through the "param_list AS a_expr" path (Sconst as a_expr).
-		// Parse the body string as SQL using raw_parser (which is re-entrant).
-		if (def.function->type == duckdb_libpgquery::T_PGAConst) {
+		// When LANGUAGE SQL is specified, the body string is SQL to be parsed.
+		// Without LANGUAGE, it's a regular DuckDB macro expression (AS 'string' returns the string).
+		if (has_language && def.function->type == duckdb_libpgquery::T_PGAConst) {
 			auto &constant = PGCast<duckdb_libpgquery::PGAConst>(*def.function);
 			if (constant.val.type == duckdb_libpgquery::T_PGString) {
 				auto body_stmts = duckdb_libpgquery::raw_parser(constant.val.val.str);
@@ -158,7 +158,8 @@ unique_ptr<CreateStatement> Transformer::TransformCreateFunction(duckdb_libpgque
 	vector<unique_ptr<MacroFunction>> macros;
 	for (auto c = stmt.functions->head; c != nullptr; c = lnext(c)) {
 		auto &function_def = *PGPointerCast<duckdb_libpgquery::PGFunctionDefinition>(c->data.ptr_value);
-		macros.push_back(TransformMacroFunction(function_def));
+		bool has_language = stmt.has_language || function_def.has_language;
+		macros.push_back(TransformMacroFunction(function_def, has_language));
 		// For scalar RETURNS (no returns_table_columns), alias the single output column
 		// to the function name (PG convention)
 		auto &macro = macros.back();

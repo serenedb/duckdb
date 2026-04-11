@@ -73,6 +73,7 @@ CreateFunctionStmt:
 					n->functions = $5;
 					n->onconflict = PG_ERROR_ON_CONFLICT;
 					n->is_procedure = $3;
+					n->has_language = true;
 					$$ = (PGNode *)n;
 			}
 		| CREATE_P OptTemp macro_alias IF_P NOT EXISTS qualified_name macro_definition_list LANGUAGE SQL_P
@@ -83,6 +84,7 @@ CreateFunctionStmt:
 				n->functions = $8;
 				n->onconflict = PG_IGNORE_ON_CONFLICT;
 				n->is_procedure = $3;
+				n->has_language = true;
 				$$ = (PGNode *)n;
 			 }
 		| CREATE_P OR REPLACE OptTemp macro_alias qualified_name macro_definition_list LANGUAGE SQL_P
@@ -93,6 +95,7 @@ CreateFunctionStmt:
 				n->functions = $7;
 				n->onconflict = PG_REPLACE_ON_CONFLICT;
 				n->is_procedure = $5;
+				n->has_language = true;
 				$$ = (PGNode *)n;
 			 }
 	;
@@ -173,8 +176,8 @@ macro_definition:
 				PGFunctionDefinition *n = makeNode(PGFunctionDefinition);
 				n->params = $1;
 				n->returns_table_columns = $2;
-				/* Store body as a string constant expression — parsed in transformer
-				 * (same path as "param_list AS a_expr" when Sconst matches a_expr) */
+				n->has_language = true;
+				/* Store body as a string constant expression — parsed in transformer */
 				PGAConst *c = makeNode(PGAConst);
 				c->val.type = T_PGString;
 				c->val.val.str = $4;

@@ -374,7 +374,8 @@ private:
 	Vector PGListToVector(optional_ptr<duckdb_libpgquery::PGList> column_list, idx_t &size);
 	vector<string> TransformConflictTarget(duckdb_libpgquery::PGList &list);
 
-	unique_ptr<MacroFunction> TransformMacroFunction(duckdb_libpgquery::PGFunctionDefinition &function);
+	unique_ptr<MacroFunction> TransformMacroFunction(duckdb_libpgquery::PGFunctionDefinition &function,
+	                                                 bool has_language);
 
 	vector<string> TransformNameList(duckdb_libpgquery::PGList &list);
 
