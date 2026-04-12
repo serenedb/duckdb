@@ -278,7 +278,7 @@ private:
 	//===--------------------------------------------------------------------===//
 	unique_ptr<Constraint> TransformConstraint(duckdb_libpgquery::PGConstraint &constraint);
 	unique_ptr<Constraint> TransformConstraint(duckdb_libpgquery::PGConstraint &constraint, ColumnDefinition &column,
-	                                           idx_t index);
+	                                           idx_t index, const string &table_name = "");
 
 	//===--------------------------------------------------------------------===//
 	// Update transform
