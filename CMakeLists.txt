@@ -891,6 +891,7 @@ if(PREBUILT_BINARY)
   add_subdirectory(tools)
   add_subdirectory(extension)
 elseif (BUILD_MAIN_DUCKDB_LIBRARY)
+  add_extension_definitions()
   add_subdirectory(src)
 
   add_subdirectory(tools)
