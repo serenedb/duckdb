@@ -45,7 +45,8 @@ public:
 
 private:
 	void ResetOption(ExecutionContext &context, DBConfig &config, const ConfigurationOption &option) const;
-	void ResetExtensionVariable(ExecutionContext &context, DBConfig &config, ExtensionOption &extension_option) const;
+	void ResetExtensionVariable(ExecutionContext &context, DBConfig &config, const String &name,
+	                            ExtensionOption &extension_option) const;
 	void ResetAll(ExecutionContext &context, DBConfig &config) const;
 };
 

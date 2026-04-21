@@ -9,7 +9,7 @@
 
 namespace duckdb {
 
-void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &config,
+void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &config, const String &name,
                                            ExtensionOption &extension_option) const {
 	// Resolve AUTOMATIC against the option's default_scope first.
 	SetScope effective_scope = scope == SetScope::AUTOMATIC ? extension_option.default_scope : scope;
@@ -29,10 +29,16 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 	// callbacks (e.g. Readonly guards that reject any write).
 	auto &client_config = ClientConfig::GetConfig(context.client);
 	auto setting_index = extension_option.setting_index.GetIndex();
-	bool is_user_set =
-	    effective_scope == SetScope::GLOBAL || client_config.user_settings.IsSet(setting_index);
+	bool is_user_set = effective_scope == SetScope::GLOBAL || client_config.user_settings.IsSet(setting_index);
 	if (!is_user_set) {
 		return;
+	}
+
+	// The rollback observer only needs to see real changes; gate it with
+	// is_user_set so RESET ALL no-ops don't reach the sdb tracker.
+	if (context.client.setting_change_handler) {
+		context.client.setting_change_handler(context.client, string(name.data(), name.size()), effective_scope,
+		                                      nullptr);
 	}
 
 	if (extension_option.reset_function) {
@@ -47,8 +53,7 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 	}
 }
 
-void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config,
-                                const ConfigurationOption &option) const {
+void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, const ConfigurationOption &option) const {
 	config.CheckLock(option.name);
 	SetScope variable_scope = PhysicalSet::GetSettingScope(option, scope);
 
@@ -57,10 +62,14 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config,
 		// set_callback with default_value (Readonly-style guards would throw).
 		auto &client_config = ClientConfig::GetConfig(context.client);
 		auto setting_index = option.setting_idx.GetIndex();
-		bool is_user_set =
-		    variable_scope == SetScope::GLOBAL || client_config.user_settings.IsSet(setting_index);
+		bool is_user_set = variable_scope == SetScope::GLOBAL || client_config.user_settings.IsSet(setting_index);
 		if (!is_user_set) {
 			return;
+		}
+		// Gate the rollback observer on is_user_set so RESET ALL no-ops don't
+		// reach the sdb tracker.
+		if (context.client.setting_change_handler) {
+			context.client.setting_change_handler(context.client, option.name, variable_scope, nullptr);
 		}
 		if (option.set_callback) {
 			SettingCallbackInfo info(context.client, variable_scope);
@@ -85,12 +94,24 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config,
 		break;
 	}
 	case SetScope::LOCAL:
-	case SetScope::SESSION:
+	case SetScope::SESSION: {
 		if (!option.reset_local) {
 			throw CatalogException("option \"%s\" cannot be reset locally", option.name);
 		}
+		// Custom-impl reset: no is_user_set signal available. Wrap with
+		// pre/post equality and fire the handler only if the reset actually
+		// changed the value.
+		Value pre_value;
+		const bool had_pre = context.client.TryGetCurrentSetting(option.name, pre_value);
 		option.reset_local(context.client);
+		Value post_value;
+		const bool had_post = context.client.TryGetCurrentSetting(option.name, post_value);
+		const bool changed = had_pre != had_post || !Value::NotDistinctFrom(pre_value, post_value);
+		if (changed && context.client.setting_change_handler) {
+			context.client.setting_change_handler(context.client, option.name, variable_scope, nullptr);
+		}
 		break;
+	}
 	default:
 		throw InternalException("Unsupported SetScope for variable");
 	}
@@ -117,12 +138,10 @@ SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataC
 		return SourceResultType::FINISHED;
 	}
 
-	// Single-target RESET: resolve first, then notify + reset.
+	// Single-target RESET: the handler call moved inside ResetOption /
+	// ResetExtensionVariable so no-op RESETs don't reach sdb's tracker.
 	auto option = DBConfig::GetOptionByName(name);
 	if (option) {
-		if (context.client.setting_change_handler) {
-			context.client.setting_change_handler(context.client, option->name, scope);
-		}
 		ResetOption(context, config, *option);
 		return SourceResultType::FINISHED;
 	}
@@ -133,10 +152,7 @@ SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataC
 			throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
 		}
 	}
-	if (context.client.setting_change_handler) {
-		context.client.setting_change_handler(context.client, string(name.data(), name.size()), scope);
-	}
-	ResetExtensionVariable(context, config, extension_option);
+	ResetExtensionVariable(context, config, name, extension_option);
 	return SourceResultType::FINISHED;
 }
 
@@ -154,16 +170,10 @@ void PhysicalReset::ResetAll(ExecutionContext &context, DBConfig &config) const 
 	// the `is_user_set` guard in ResetOption/ResetExtensionVariable.
 	// TODO: track which custom-impl options were user-set and drop the try/catch.
 	auto reset_option = [&](const ConfigurationOption &option) {
-		if (context.client.setting_change_handler) {
-			context.client.setting_change_handler(context.client, option.name, scope);
-		}
 		ResetOption(context, config, option);
 	};
 	auto reset_extension = [&](const String &ext_name, ExtensionOption &ext) {
-		if (context.client.setting_change_handler) {
-			context.client.setting_change_handler(context.client, string(ext_name.data(), ext_name.size()), scope);
-		}
-		ResetExtensionVariable(context, config, ext);
+		ResetExtensionVariable(context, config, ext_name, ext);
 	};
 	auto options_count = DBConfig::GetOptionCount();
 	for (idx_t i = 0; i < options_count; i++) {
