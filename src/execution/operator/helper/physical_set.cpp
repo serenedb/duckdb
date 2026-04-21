@@ -22,7 +22,7 @@ void PhysicalSet::SetExtensionVariable(ClientContext &context, ExtensionOption &
                                        SetScope scope, const Value &value) {
 	// Resolve AUTOMATIC against the option's default_scope first so downstream
 	// checks and callbacks work off the effective scope, not the raw one.
-	SetScope effective_scope = scope == SetScope::AUTOMATIC ? extension_option.default_scope : scope;
+	SetScope effective_scope = GetSettingScope(extension_option, scope);
 
 	// Compatibility: a GLOBAL-only option can't be set locally/session, and a
 	// SESSION-only option can't be set locally.
@@ -102,6 +102,10 @@ void PhysicalSet::SetVariable(ClientContext &context, const String &name, SetSco
 	default:
 		throw InternalException("Unsupported SetScope for variable");
 	}
+}
+
+SetScope PhysicalSet::GetSettingScope(const ExtensionOption &option, SetScope variable_scope) {
+	return variable_scope == SetScope::AUTOMATIC ? option.default_scope : variable_scope;
 }
 
 SetScope PhysicalSet::GetSettingScope(const ConfigurationOption &option, SetScope variable_scope) {

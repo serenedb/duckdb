@@ -10,10 +10,7 @@
 namespace duckdb {
 
 void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &config, const String &name,
-                                           ExtensionOption &extension_option) const {
-	// Resolve AUTOMATIC against the option's default_scope first.
-	SetScope effective_scope = scope == SetScope::AUTOMATIC ? extension_option.default_scope : scope;
-
+                                           ExtensionOption &extension_option, SetScope effective_scope) const {
 	// Compatibility: mirror the checks from PhysicalSet::SetExtensionVariable.
 	if ((extension_option.default_scope == SetScope::GLOBAL && effective_scope != SetScope::GLOBAL) ||
 	    (extension_option.default_scope == SetScope::SESSION && effective_scope == SetScope::LOCAL)) {
@@ -53,9 +50,9 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 	}
 }
 
-void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, const ConfigurationOption &option) const {
+void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, const ConfigurationOption &option,
+                                SetScope variable_scope) const {
 	config.CheckLock(option.name);
-	SetScope variable_scope = PhysicalSet::GetSettingScope(option, scope);
 
 	if (option.default_value) {
 		// RESET on an untouched generic option is a no-op — don't fire
@@ -142,7 +139,7 @@ SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataC
 	// ResetExtensionVariable so no-op RESETs don't reach sdb's tracker.
 	auto option = DBConfig::GetOptionByName(name);
 	if (option) {
-		ResetOption(context, config, *option);
+		ResetOption(context, config, *option, PhysicalSet::GetSettingScope(*option, scope));
 		return SourceResultType::FINISHED;
 	}
 	ExtensionOption extension_option;
@@ -152,7 +149,8 @@ SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataC
 			throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
 		}
 	}
-	ResetExtensionVariable(context, config, name, extension_option);
+	ResetExtensionVariable(context, config, name, extension_option,
+	                       PhysicalSet::GetSettingScope(extension_option, scope));
 	return SourceResultType::FINISHED;
 }
 
@@ -169,32 +167,28 @@ void PhysicalReset::ResetAll(ExecutionContext &context, DBConfig &config) const 
 	// block the rest. Generic and extension options are already no-op'd via
 	// the `is_user_set` guard in ResetOption/ResetExtensionVariable.
 	// TODO: track which custom-impl options were user-set and drop the try/catch.
-	auto reset_option = [&](const ConfigurationOption &option) {
-		ResetOption(context, config, option);
-	};
-	auto reset_extension = [&](const String &ext_name, ExtensionOption &ext) {
-		ResetExtensionVariable(context, config, ext_name, ext);
-	};
 	auto options_count = DBConfig::GetOptionCount();
 	for (idx_t i = 0; i < options_count; i++) {
 		auto option = DBConfig::GetOptionByIndex(i);
 		if (!option) {
 			continue;
 		}
-		if (PhysicalSet::GetSettingScope(*option, scope) == SetScope::GLOBAL) {
+		auto variable_scope = PhysicalSet::GetSettingScope(*option, scope);
+		if (variable_scope == SetScope::GLOBAL) {
 			continue;
 		}
 		try {
-			reset_option(*option);
+			ResetOption(context, config, *option, variable_scope);
 		} catch (const std::exception &) {
 		}
 	}
 	for (auto &ext : config.GetExtensionSettings()) {
-		if (ext.second.default_scope == SetScope::GLOBAL) {
+		auto variable_scope = PhysicalSet::GetSettingScope(ext.second, scope);
+		if (variable_scope == SetScope::GLOBAL) {
 			continue;
 		}
 		try {
-			reset_extension(ext.first, ext.second);
+			ResetExtensionVariable(context, config, ext.first, ext.second, variable_scope);
 		} catch (const std::exception &) {
 		}
 	}
