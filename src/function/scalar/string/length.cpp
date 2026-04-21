@@ -135,7 +135,7 @@ void ListLengthBinaryFunction(DataChunk &args, ExpressionState &, Vector &result
 	dim_vec.ToUnifiedFormat(count, dim_data);
 
 	auto *result_data = FlatVector::GetDataMutable<int64_t>(result);
-	auto &result_validity = FlatVector::Validity(result);
+	auto &result_validity = FlatVector::ValidityMutable(result);
 
 	for (idx_t i = 0; i < count; i++) {
 		auto input_idx = input_data.sel->get_index(i);
