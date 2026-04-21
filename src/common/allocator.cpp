@@ -236,7 +236,7 @@ bool Allocator::SupportsFlush() {
 }
 
 static void MallocTrim(idx_t pad) {
-#ifdef __GLIBC__
+#if defined(__GLIBC__) && !defined(USE_JEMALLOC)
 	static constexpr int64_t TRIM_INTERVAL_MS = 100;
 	static atomic<int64_t> LAST_TRIM_TIMESTAMP_MS {0};
 
