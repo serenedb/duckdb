@@ -39,11 +39,79 @@ SetType ToSetType(duckdb_libpgquery::VariableSetKind pg_kind) {
 
 } // namespace
 
+unique_ptr<SetStatement> Transformer::TransformSetSearchPath(duckdb_libpgquery::PGVariableSetStmt &stmt, string name,
+                                                             SetScope scope) {
+	// Produce one already-PG-quoted element from a single arg node.
+	auto serialize = [&](duckdb_libpgquery::PGNode &arg) -> string {
+		auto expr = TransformExpression(arg);
+		if (expr->GetExpressionType() == ExpressionType::COLUMN_REF) {
+			// ColumnRefExpression::ToString applies PG quoting so names with
+			// commas/dots survive ParseList as one atomic entry.
+			return expr->ToString();
+		}
+		if (expr->GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
+			return expr->Cast<ConstantExpression>().value.ToString();
+		}
+		throw ParserException("SET search_path: expected identifier or string literal");
+	};
+
+	auto make_set = [&](string value) {
+		return make_uniq<SetVariableStatement>(std::move(name), make_uniq<ConstantExpression>(Value(std::move(value))),
+		                                       scope);
+	};
+
+	// Multi-arg: comma-join each element.
+	//   SET search_path TO a, "b,c", cat.s  -> "a,\"b,c\",cat.s"
+	if (stmt.args->length > 1) {
+		string joined;
+		for (auto cell = stmt.args->head; cell; cell = cell->next) {
+			auto node = PGPointerCast<duckdb_libpgquery::PGNode>(cell->data.ptr_value);
+			if (!joined.empty()) {
+				joined += ",";
+			}
+			joined += serialize(*node);
+		}
+		return make_set(std::move(joined));
+	}
+
+	// Single-arg. Four sub-cases:
+	//   - PG_A_Const string literal   -> wrap in double quotes so ParseList
+	//                                    treats it as one atomic entry. Empty
+	//                                    literal -> empty path (no wrap).
+	//   - DEFAULT                     -> RESET.
+	//   - identifier / numeric        -> serialize via the lambda.
+	auto node = PGPointerCast<duckdb_libpgquery::PGNode>(stmt.args->head->data.ptr_value);
+	if (node->type == duckdb_libpgquery::T_PGAConst) {
+		auto const_val = PGPointerCast<duckdb_libpgquery::PGAConst>(node.get());
+		if (const_val->val.type == duckdb_libpgquery::T_PGString) {
+			string raw(const_val->val.val.str);
+			if (raw.empty()) {
+				return make_set(std::move(raw));
+			}
+			string wrapped = "\"" + StringUtil::Replace(raw, "\"", "\"\"") + "\"";
+			return make_set(std::move(wrapped));
+		}
+	}
+	auto expr = TransformExpression(node);
+	if (expr->GetExpressionType() == ExpressionType::VALUE_DEFAULT) {
+		return make_uniq<ResetVariableStatement>(std::move(name), scope);
+	}
+	return make_set(serialize(*node));
+}
+
 unique_ptr<SetStatement> Transformer::TransformSetVariable(duckdb_libpgquery::PGVariableSetStmt &stmt) {
 	string name(stmt.name);
 	D_ASSERT(!name.empty()); // parser protect us!
 	auto scope = ToSetScope(stmt.scope);
 	D_ASSERT(stmt.args->head && stmt.args->head->data.ptr_value);
+
+	if (StringUtil::CIEquals(name, "search_path")) {
+		return TransformSetSearchPath(stmt, std::move(name), scope);
+	}
+
+	if (stmt.args->length > 1) {
+		throw ParserException("SET needs a single scalar value parameter");
+	}
 
 	auto arg_to_expr = [&](optional_ptr<duckdb_libpgquery::PGNode> node) -> unique_ptr<ParsedExpression> {
 		auto expr = TransformExpression(node);
@@ -60,32 +128,8 @@ unique_ptr<SetStatement> Transformer::TransformSetVariable(duckdb_libpgquery::PG
 		return expr;
 	};
 
-	if (stmt.args->length > 1) {
-		// PG's GUC_LIST_INPUT settings accept comma-separated lists. Only
-		// whitelisted settings are allowed multi-arg form; others must be
-		// a single scalar (matches PG behavior).
-		if (!StringUtil::CIEquals(name, "search_path")) {
-			throw ParserException("SET needs a single scalar value parameter");
-		}
-		string joined;
-		for (auto cell = stmt.args->head; cell; cell = cell->next) {
-			auto node = PGPointerCast<duckdb_libpgquery::PGNode>(cell->data.ptr_value);
-			auto expr = arg_to_expr(node);
-			if (expr->GetExpressionType() != ExpressionType::VALUE_CONSTANT) {
-				throw ParserException("SET %s: expected identifier or string literal", name);
-			}
-			auto &const_expr = expr->Cast<ConstantExpression>();
-			if (!joined.empty()) {
-				joined += ",";
-			}
-			joined += const_expr.value.ToString();
-		}
-		return make_uniq<SetVariableStatement>(std::move(name), make_uniq<ConstantExpression>(Value(std::move(joined))),
-		                                       scope);
-	}
-
-	auto const_val = PGPointerCast<duckdb_libpgquery::PGNode>(stmt.args->head->data.ptr_value);
-	auto expr = arg_to_expr(const_val);
+	auto const_node = PGPointerCast<duckdb_libpgquery::PGNode>(stmt.args->head->data.ptr_value);
+	auto expr = arg_to_expr(const_node);
 	if (expr->GetExpressionType() == ExpressionType::VALUE_DEFAULT) {
 		// set to default = reset
 		return make_uniq<ResetVariableStatement>(std::move(name), scope);
