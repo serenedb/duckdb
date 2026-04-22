@@ -10,6 +10,7 @@
 
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/constants.hpp"
+#include "duckdb/common/types/value.hpp"
 #include "duckdb/common/stack_checker.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/unordered_map.hpp"
@@ -292,7 +293,8 @@ private:
 	//===--------------------------------------------------------------------===//
 	vector<unique_ptr<ParsedExpression>> TransformIndexParameters(duckdb_libpgquery::PGList &list,
 	                                                              const string &relation_name,
-	                                                              vector<string> *opclasses = nullptr);
+	                                                              vector<string> *opclasses = nullptr,
+	                                                              vector<case_insensitive_map_t<Value>> *opclass_options = nullptr);
 
 	//===--------------------------------------------------------------------===//
 	// Collation transform

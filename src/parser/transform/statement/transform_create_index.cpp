@@ -10,7 +10,8 @@ namespace duckdb {
 
 vector<unique_ptr<ParsedExpression>> Transformer::TransformIndexParameters(duckdb_libpgquery::PGList &list,
                                                                            const string &relation_name,
-                                                                           vector<string> *opclasses) {
+                                                                           vector<string> *opclasses,
+                                                                           vector<case_insensitive_map_t<Value>> *opclass_options) {
 	vector<unique_ptr<ParsedExpression>> expressions;
 	for (auto cell = list.head; cell != nullptr; cell = cell->next) {
 		auto index_element = PGPointerCast<duckdb_libpgquery::PGIndexElem>(cell->data.ptr_value);
@@ -31,6 +32,27 @@ vector<unique_ptr<ParsedExpression>> Transformer::TransformIndexParameters(duckd
 			}
 		} else if (opclasses) {
 			opclasses->push_back("");
+		}
+
+		if (opclass_options) {
+			case_insensitive_map_t<Value> opts;
+			if (index_element->opclassopts) {
+				for (auto opt_cell = index_element->opclassopts->head; opt_cell != nullptr; opt_cell = opt_cell->next) {
+					auto def_elem = PGPointerCast<duckdb_libpgquery::PGDefElem>(opt_cell->data.ptr_value);
+					Value val;
+					if (def_elem->arg) {
+						auto expr = TransformExpression(def_elem->arg);
+						if (expr->expression_class != ExpressionClass::CONSTANT) {
+							throw InvalidInputException("Opclass option must be a constant value");
+						}
+						val = expr->Cast<ConstantExpression>().value;
+					} else {
+						val = Value::BOOLEAN(true);
+					}
+					opts[StringUtil::Lower(def_elem->defname)] = std::move(val);
+				}
+			}
+			opclass_options->push_back(std::move(opts));
 		}
 
 		if (index_element->name) {
@@ -55,7 +77,8 @@ unique_ptr<CreateStatement> Transformer::TransformCreateIndex(duckdb_libpgquery:
 	}
 
 	info->on_conflict = TransformOnConflict(stmt.onconflict);
-	info->expressions = TransformIndexParameters(*stmt.indexParams, stmt.relation->relname, &info->column_opclasses);
+	info->expressions = TransformIndexParameters(*stmt.indexParams, stmt.relation->relname, &info->column_opclasses,
+	                                             &info->column_opclass_options);
 
 	info->index_type = StringUtil::Upper(string(stmt.accessMethod));
 
