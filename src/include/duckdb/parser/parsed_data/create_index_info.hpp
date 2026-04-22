@@ -41,6 +41,9 @@ struct CreateIndexInfo : public CreateInfo {
 
 	//! The opclass (parameter name) per indexed column; empty string means no opclass was specified
 	vector<string> column_opclasses;
+	//! Optional per-column opclass options, parsed from `col opclass (k = v, ...)`.
+	//! Parallel to column_opclasses; entry is empty when no options were given.
+	vector<case_insensitive_map_t<Value>> column_opclass_options;
 
 	//! The types of the logical columns (necessary for scanning the table during CREATE INDEX)
 	vector<LogicalType> scan_types;
