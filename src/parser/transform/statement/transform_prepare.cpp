@@ -59,13 +59,11 @@ unique_ptr<ExecuteStatement> Transformer::TransformExecute(duckdb_libpgquery::PG
 }
 
 unique_ptr<DropStatement> Transformer::TransformDeallocate(duckdb_libpgquery::PGDeallocateStmt &stmt) {
-	if (!stmt.name) {
-		throw ParserException("DEALLOCATE requires a name");
-	}
-
 	auto result = make_uniq<DropStatement>();
 	result->info->type = CatalogType::PREPARED_STATEMENT;
-	result->info->name = string(stmt.name);
+	// DEALLOCATE ALL: grammar sets name = NULL. Represent that as an empty
+	// info->name and let the executor drop every prepared statement.
+	result->info->name = stmt.name ? string(stmt.name) : string();
 	return result;
 }
 
