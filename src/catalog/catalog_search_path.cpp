@@ -228,8 +228,12 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 			path.catalog = GetDefault().catalog;
 			continue;
 		}
-		// Catalog was explicitly specified and not found — keep the strict
-		// error: an invalid catalog short-circuits all unqualified lookups
+		// Explicit catalog.schema. A valid catalog with an unknown schema is
+		// PG-compliant (the entry is just skipped at lookup). Only reject when
+		// the catalog itself doesn't exist.
+		if (Catalog::GetCatalogEntry(context, path.catalog)) {
+			continue;
+		}
 		throw CatalogException("%s: No catalog + schema named \"%s\" found.", GetSetName(set_type), path.ToString());
 	}
 	if (set_type == CatalogSetPathType::SET_SCHEMA) {

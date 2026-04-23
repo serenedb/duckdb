@@ -210,6 +210,11 @@ private:
 	unique_ptr<SetStatement> TransformSetVariable(duckdb_libpgquery::PGVariableSetStmt &stmt);
 	unique_ptr<SQLStatement> TransformSetTransaction(duckdb_libpgquery::PGVariableSetStmt &stmt);
 	unique_ptr<SetStatement> TransformResetVariable(duckdb_libpgquery::PGVariableSetStmt &stmt);
+	//! SET search_path is GUC_LIST_INPUT: builds a VARCHAR the downstream
+	//! ParseList can unambiguously split back into entries, and maps DEFAULT
+	//! to a ResetVariableStatement.
+	unique_ptr<SetStatement> TransformSetSearchPath(duckdb_libpgquery::PGVariableSetStmt &stmt, string name,
+	                                                SetScope scope);
 
 	unique_ptr<SQLStatement> TransformCheckpoint(duckdb_libpgquery::PGCheckPointStmt &stmt);
 	unique_ptr<LoadStatement> TransformLoad(duckdb_libpgquery::PGLoadStmt &stmt);
