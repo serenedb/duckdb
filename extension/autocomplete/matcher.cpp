@@ -1446,7 +1446,7 @@ Matcher &MatcherFactory::CreateMatcher(const char *grammar, const char *root_rul
 
 shared_ptr<PEGMatcher> PEGMatcherCache::GetMatcher() {
 	{
-		std::unique_lock<std::mutex> lock(mutex);
+		std::unique_lock<mutex> lock(mutex);
 		if (matcher) {
 			return matcher;
 		}
@@ -1463,7 +1463,7 @@ shared_ptr<PEGMatcher> PEGMatcherCache::GetMatcher() {
 #else
 	new_matcher->root = factory.CreateMatcher(const_char_ptr_cast(INLINED_PEG_GRAMMAR), "Statement");
 #endif
-	std::unique_lock<std::mutex> lock(mutex);
+	std::unique_lock<mutex> lock(mutex);
 	if (!matcher) {
 		matcher = std::move(new_matcher);
 	}
@@ -1471,7 +1471,7 @@ shared_ptr<PEGMatcher> PEGMatcherCache::GetMatcher() {
 }
 
 void PEGMatcherCache::Invalidate() {
-	std::unique_lock<std::mutex> lock(mutex);
+	std::unique_lock<mutex> lock(mutex);
 	matcher = nullptr;
 }
 

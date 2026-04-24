@@ -225,7 +225,7 @@ struct PEGMatcherCache : ParserExtensionInfo {
 	void Invalidate();
 
 private:
-	std::mutex mutex;
+	mutex mutex;
 	shared_ptr<PEGMatcher> matcher;
 };
 
