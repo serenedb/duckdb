@@ -65,6 +65,12 @@ struct CSVMultiFileInfo : MultiFileReaderInterface {
 	                   LocalTableFunctionState &local_state) override;
 	unique_ptr<NodeStatistics> GetCardinality(const MultiFileBindData &bind_data, idx_t file_count) override;
 	FileGlobInput GetGlobInput() override;
+	//! Registers `file_row_number` as a virtual column whose value is the byte offset of
+	//! each row's start position in the file. Intended to be used as a stable primary key
+	//! for consumers (e.g. SereneDB's inverted index / FileMaterializer) that need to
+	//! re-locate a specific row on query.
+	void GetVirtualColumns(ClientContext &context, MultiFileBindData &bind_data,
+	                       virtual_column_map_t &result) override;
 };
 
 } // namespace duckdb

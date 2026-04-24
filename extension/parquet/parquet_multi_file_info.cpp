@@ -93,6 +93,16 @@ struct ParquetReadGlobalState : public GlobalTableFunctionState {
 	idx_t batch_index;
 	//! (Optional) pointer to physical operator performing the scan
 	optional_ptr<const PhysicalOperator> op;
+	//! Sorted list of file_row_numbers requested by the caller. When non-empty,
+	//! TryInitializeScan skips row groups whose row range doesn't intersect
+	//! this span, and ParquetReader::Scan narrows each scanned chunk to rows
+	//! whose file_row_number is in the span. Used by SereneDB's
+	//! FileMaterializer for point-lookup scans over an inverted index.
+	std::span<const int64_t> pk_lookups;
+	//! Cumulative row count across row groups 0..row_group_index-1 in the
+	//! current file. Lets TryInitializeScan compute a candidate row group's
+	//! [start, end) range in O(1) -- reset to 0 by FinishFile.
+	idx_t current_row_offset = 0;
 };
 
 struct ParquetReadLocalState : public LocalTableFunctionState {
@@ -700,7 +710,9 @@ shared_ptr<BaseUnionData> ParquetReader::GetUnionData(idx_t file_idx) {
 
 unique_ptr<GlobalTableFunctionState> ParquetMultiFileInfo::InitializeGlobalState(ClientContext &, MultiFileBindData &,
                                                                                  MultiFileGlobalState &global_state) {
-	return make_uniq<ParquetReadGlobalState>(global_state.op);
+	auto result = make_uniq<ParquetReadGlobalState>(global_state.op);
+	result->pk_lookups = global_state.pk_lookups;
+	return std::move(result);
 }
 
 unique_ptr<LocalTableFunctionState> ParquetMultiFileInfo::InitializeLocalState(ExecutionContext &,
@@ -712,14 +724,31 @@ bool ParquetReader::TryInitializeScan(ClientContext &context, GlobalTableFunctio
                                       LocalTableFunctionState &lstate_p) {
 	auto &gstate = gstate_p.Cast<ParquetReadGlobalState>();
 	auto &lstate = lstate_p.Cast<ParquetReadLocalState>();
-	if (gstate.row_group_index >= NumRowGroups()) {
-		// scanned all row groups in this file
-		return false;
+	const auto total_row_groups = NumRowGroups();
+	const auto &row_groups = GetFileMetadata()->row_groups;
+	// pk-lookup mode: walk forward skipping row groups whose file_row_number
+	// range doesn't overlap any requested pk. Because pk_lookups is sorted,
+	// a single lower_bound tells us if any pk falls in [start, end).
+	while (gstate.row_group_index < total_row_groups) {
+		const auto group_rows = NumericCast<idx_t>(row_groups[gstate.row_group_index].num_rows);
+		const auto group_start = gstate.current_row_offset;
+		const auto group_end = group_start + group_rows;
+		bool take = true;
+		if (!gstate.pk_lookups.empty()) {
+			auto it = std::lower_bound(gstate.pk_lookups.begin(), gstate.pk_lookups.end(),
+			                           NumericCast<int64_t>(group_start));
+			take = it != gstate.pk_lookups.end() && *it < NumericCast<int64_t>(group_end);
+		}
+		if (take) {
+			lstate.group_indexes = {gstate.row_group_index};
+			gstate.row_group_index++;
+			gstate.current_row_offset = group_end;
+			return true;
+		}
+		gstate.row_group_index++;
+		gstate.current_row_offset = group_end;
 	}
-	// The current reader has rowgroups left to be scanned
-	lstate.group_indexes = {gstate.row_group_index};
-	gstate.row_group_index++;
-	return true;
+	return false;
 }
 
 void ParquetReader::PrepareScan(ClientContext &context, GlobalTableFunctionState &gstate_p,
@@ -731,6 +760,7 @@ void ParquetReader::PrepareScan(ClientContext &context, GlobalTableFunctionState
 void ParquetReader::FinishFile(ClientContext &context, GlobalTableFunctionState &gstate_p) {
 	auto &gstate = gstate_p.Cast<ParquetReadGlobalState>();
 	gstate.row_group_index = 0;
+	gstate.current_row_offset = 0;
 }
 
 AsyncResult ParquetReader::Scan(ClientContext &context, GlobalTableFunctionState &gstate_p,
@@ -746,6 +776,7 @@ AsyncResult ParquetReader::Scan(ClientContext &context, GlobalTableFunctionState
 	auto &gstate = gstate_p.Cast<ParquetReadGlobalState>();
 	auto &local_state = local_state_p.Cast<ParquetReadLocalState>();
 	local_state.scan_state.op = gstate.op;
+	local_state.scan_state.pk_lookups = gstate.pk_lookups;
 	return Scan(context, local_state.scan_state, chunk);
 }
 

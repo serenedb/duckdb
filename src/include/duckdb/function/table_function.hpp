@@ -23,6 +23,8 @@
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/common/enums/order_preservation_type.hpp"
 
+#include <span>
+
 namespace duckdb {
 
 class BaseStatistics;
@@ -146,6 +148,11 @@ struct TableFunctionInitInput {
 	optional_ptr<TableFilterSet> filters;
 	optional_ptr<SampleOptions> sample_options;
 	optional_ptr<const PhysicalOperator> op;
+
+	//! Optional: we can request readers to get only a specific set of rows
+	// (something like index lookup) ƒor rapid point queries. For CSV it's
+	// file offsets, for Parquet it's row number.
+	std::span<const int64_t> pk_lookups;
 
 	bool CanRemoveFilterColumns() const {
 		if (projection_ids.empty()) {

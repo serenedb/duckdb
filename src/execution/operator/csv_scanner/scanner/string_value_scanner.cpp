@@ -1079,8 +1079,14 @@ void StringValueScanner::Flush(DataChunk &insert_chunk) {
 		D_ASSERT(csv_file_scan);
 
 		auto &names = csv_file_scan->GetNames();
-		// Now Do the cast-aroo
+		// Now Do the cast-aroo. The file_row_number virtual column (if projected) is
+		// skipped here -- it has no parse_chunk entry -- and filled with byte offsets
+		// after the loop.
+		const idx_t row_number_idx = csv_file_scan->file_row_number_idx;
 		for (idx_t i = 0; i < csv_file_scan->column_ids.size(); i++) {
+			if (i == row_number_idx) {
+				continue;
+			}
 			idx_t result_idx = i;
 			if (!csv_file_scan->projection_ids.empty()) {
 				result_idx = csv_file_scan->projection_ids[i].second;
@@ -1175,6 +1181,20 @@ void StringValueScanner::Flush(DataChunk &insert_chunk) {
 				}
 			}
 		}
+		// Fill file_row_number virtual column with byte offsets. Done before the
+		// borked-rows Slice so the offsets are sliced along with the real columns
+		// and stay aligned with the emitted rows.
+		if (row_number_idx != DConstants::INVALID_INDEX) {
+			auto &result_vector = insert_chunk.data[row_number_idx];
+			auto *data = FlatVector::GetDataMutable<int64_t>(result_vector);
+			for (idx_t row = 0; row < parse_chunk.size(); ++row) {
+				bool first_nl = false;
+				auto global_pos =
+				    result.line_positions_per_row[row].begin.GetGlobalPosition(result.result_size, first_nl);
+				data[row] = static_cast<int64_t>(global_pos);
+			}
+		}
+
 		if (!result.borked_rows.empty()) {
 			// We must remove the borked lines from our chunk
 			SelectionVector successful_rows(parse_chunk.size());

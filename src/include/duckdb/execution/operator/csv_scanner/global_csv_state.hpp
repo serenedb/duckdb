@@ -24,7 +24,7 @@ struct MultiFileBindData;
 struct CSVGlobalState : public GlobalTableFunctionState {
 public:
 	CSVGlobalState(ClientContext &context_p, const CSVReaderOptions &options, idx_t total_file_count,
-	               const MultiFileBindData &bind_data);
+	               const MultiFileBindData &bind_data, std::span<const int64_t> pk_lookups);
 
 	~CSVGlobalState() override {
 	}
@@ -44,7 +44,18 @@ public:
 		return single_threaded;
 	}
 
+	//! True when the caller handed us an exact-offset list (offset-seek mode).
+	//! CSVFileScan::Scan uses this to select the batched-offset drain loop
+	//! instead of the normal boundary scan.
+	bool IsPkLookup() const {
+		return !pk_lookups.empty();
+	}
+
 private:
+	//! Build a scanner pinned to a single pre-known row-start offset (exact-offset mode).
+	//! Returns nullptr once every offset in `pk_lookups` has been dispensed.
+	unique_ptr<StringValueScanner> NextPkLookupScanner(shared_ptr<CSVFileScan> &current_file_ptr);
+
 	//! Reference to the client context that created this scan
 	ClientContext &context;
 	const MultiFileBindData &bind_data;
@@ -63,6 +74,16 @@ private:
 	CSVIterator current_boundary;
 
 	vector<idx_t> rejects_file_indexes;
+
+	//! Caller-provided sorted list of exact row-start byte offsets the scan
+	//! should produce (from TableFunctionInitInput::pk_lookups). Empty
+	//! means normal scan; non-empty makes Next() dispense one-per-offset
+	//! scanners pinned to each offset -- O(|offsets|) IO + tokenization, no
+	//! boundary iteration, no filter-expression roundtrip.
+	std::span<const int64_t> pk_lookups;
+	//! Lock-free dispenser for pk_lookups across concurrent Next() calls from
+	//! parallel scanner threads. fetch_add returns a unique index per call.
+	atomic<idx_t> lookup_cursor {0};
 };
 
 } // namespace duckdb

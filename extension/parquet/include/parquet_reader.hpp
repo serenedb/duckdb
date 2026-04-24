@@ -12,6 +12,7 @@
 #include <exception>
 #include <atomic>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -126,6 +127,11 @@ struct ParquetReaderScanState {
 
 	//! (optional) pointer to the PhysicalOperator for logging
 	optional_ptr<const PhysicalOperator> op;
+
+	//! Sorted file_row_numbers driving pk-lookup mode. Set via gstate on each
+	//! outer Scan dispatch; Scan narrows each chunk to rows whose index into
+	//! the current row group lands in this span (see ParquetReader::Scan).
+	std::span<const int64_t> pk_lookups;
 };
 
 struct ParquetColumnDefinition {

@@ -10,8 +10,9 @@
 namespace duckdb {
 
 CSVGlobalState::CSVGlobalState(ClientContext &context_p, const CSVReaderOptions &options, idx_t total_file_count,
-                               const MultiFileBindData &bind_data)
-    : context(context_p), bind_data(bind_data), sniffer_mismatch_error(options.sniffer_user_mismatch_error) {
+                               const MultiFileBindData &bind_data, std::span<const int64_t> file_pk_p)
+    : context(context_p), bind_data(bind_data), sniffer_mismatch_error(options.sniffer_user_mismatch_error),
+      pk_lookups(file_pk_p) {
 	// There are situations where we only support single threaded scanning
 	auto system_threads = context.db->NumberOfThreads();
 	bool many_csv_files = total_file_count > 1 && total_file_count > system_threads * 2;
@@ -35,17 +36,57 @@ void CSVGlobalState::FinishScan(unique_ptr<StringValueScanner> scanner) {
 	if (!scanner) {
 		return;
 	}
-	// We have to insert information for validation
 	auto previous_file = scanner->csv_file_scan;
-	previous_file->validator.Insert(scanner->scanner_idx, scanner->GetValidationLine());
+	// The validator checks that per-thread byte ranges tile the file contiguously.
+	// In exact-offset mode every scanner covers a single non-contiguous offset
+	// (gaps between offsets are the whole point), so the validator's contiguity
+	// check doesn't apply and would false-positive.
+	if (pk_lookups.empty()) {
+		previous_file->validator.Insert(scanner->scanner_idx, scanner->GetValidationLine());
+	}
 	scanner.reset();
 	FinishTask(*previous_file);
+}
+
+// Exact-offset scanner dispatch. Pops the next offset from the shared cursor
+// (fetch_add is the lock-free dispenser for concurrent Next() calls from
+// multiple scanner threads) and hands out a StringValueScanner whose iterator
+// is pinned to [offset, offset + max_row_size) within the appropriate buffer.
+// CSVIterator::SetExactBoundary also sets first_one=true so the scanner trusts
+// the offset as a genuine row boundary (no line-start search). Each scanner
+// parses exactly the one row that starts at its offset -- total work is
+// O(|offsets|) IO and tokenization.
+unique_ptr<StringValueScanner> CSVGlobalState::NextPkLookupScanner(shared_ptr<CSVFileScan> &current_file_ptr) {
+	auto &current_file = *current_file_ptr;
+	const auto i = lookup_cursor.fetch_add(1, std::memory_order_relaxed);
+	if (i >= pk_lookups.size()) {
+		return nullptr;
+	}
+	const idx_t offset = UnsafeNumericCast<idx_t>(pk_lookups[i]);
+	const auto buf_size = current_file.buffer_manager->GetBufferSize();
+	const idx_t buf_idx = offset / buf_size;
+	const idx_t buf_pos = offset % buf_size;
+
+	// Tightest possible boundary: the scanner accepts rows whose START is in
+	// [buf_pos, buf_pos + 1). Only the row at `offset` qualifies -- any row
+	// whose start is past `offset` starts at >= buf_pos + 1 and is excluded.
+	// This lets callers rely on "one scanner -> exactly one row" (no bleed).
+	CSVIterator tight_iter = current_file.start_iterator;
+	tight_iter.SetExactBoundary(buf_idx, buf_pos, buf_pos + 1, i);
+
+	auto buffer_in_use = make_shared_ptr<CSVBufferUsage>(*current_file.buffer_manager, buf_idx);
+	++current_file.started_tasks;
+	auto scanner = make_uniq<StringValueScanner>(scanner_idx++, current_file.buffer_manager, current_file.state_machine,
+	                                             current_file.error_handler, current_file_ptr, false, tight_iter);
+	scanner->buffer_tracker = buffer_in_use;
+	return scanner;
 }
 
 unique_ptr<StringValueScanner> CSVGlobalState::Next(shared_ptr<CSVFileScan> &current_file_ptr) {
 	auto &current_file = *current_file_ptr;
 	if (!initialized) {
-		// initialize the boundary for this file
+		// Initialize the boundary for this file. Kept even in exact-offset mode
+		// because FinishFile and some debug paths still inspect current_boundary.
 		current_boundary = current_file.start_iterator;
 		current_boundary.SetCurrentBoundaryToPosition(single_threaded, current_file.options);
 		if (current_boundary.done && context.client_data->debug_set_max_line_length) {
@@ -55,13 +96,17 @@ unique_ptr<StringValueScanner> CSVGlobalState::Next(shared_ptr<CSVFileScan> &cur
 		current_buffer_in_use =
 		    make_shared_ptr<CSVBufferUsage>(*current_file.buffer_manager, current_boundary.GetBufferIdx());
 		initialized = true;
-	} else {
-		// produce the next boundary for this file
+	} else if (pk_lookups.empty()) {
+		// Subsequent call in boundary mode -- advance to the next boundary.
 		if (current_boundary.done || !current_boundary.Next(*current_file.buffer_manager, current_file.options)) {
-			// finished processing this file - return
 			return nullptr;
 		}
 	}
+
+	if (!pk_lookups.empty()) {
+		return NextPkLookupScanner(current_file_ptr);
+	}
+
 	// create the scanner for this file
 	if (current_buffer_in_use->buffer_idx != current_boundary.GetBufferIdx()) {
 		current_buffer_in_use =
