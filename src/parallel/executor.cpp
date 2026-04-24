@@ -368,7 +368,8 @@ void Executor::VerifyPipeline(Pipeline &pipeline) {
 }
 
 void Executor::VerifyPipelines() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	for (auto &pipeline : pipelines) {
 		VerifyPipeline(*pipeline);
 	}

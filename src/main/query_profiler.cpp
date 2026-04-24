@@ -341,6 +341,9 @@ void QueryProfiler::EndPhase() {
 
 OperatorProfiler::OperatorProfiler(ClientContext &context) : context(context) {
 	enabled = QueryProfiler::Get(context).IsEnabled();
+	if (!enabled) {
+		return;
+	}
 	auto &context_metrics = ClientConfig::GetConfig(context).profiler_settings;
 
 	// Expand.
