@@ -201,7 +201,7 @@ void MetaPipeline::AddFinishEvent(Pipeline &pipeline) {
 	}
 	it++;
 	for (; it != pipelines.end(); it++) {
-		finish_map.emplace(**it, pipeline);
+		finish_map.emplace(**it, &pipeline);
 	}
 }
 
@@ -211,7 +211,7 @@ bool MetaPipeline::HasFinishEvent(Pipeline &pipeline) const {
 
 optional_ptr<Pipeline> MetaPipeline::GetFinishGroup(Pipeline &pipeline) const {
 	auto it = finish_map.find(pipeline);
-	return it == finish_map.end() ? nullptr : &it->second;
+	return it == finish_map.end() ? nullptr : it->second;
 }
 
 Pipeline &MetaPipeline::CreateUnionPipeline(Pipeline &current, bool order_matters) {

@@ -100,7 +100,7 @@ public:
 };
 
 // Unannotated mutex type, which is alias for STL ones.
-using mutex = std::mutex;
+using mutex = absl::Mutex;
 template <typename M = mutex>
 using lock_guard = std::lock_guard<M>;
 template <typename M = mutex>

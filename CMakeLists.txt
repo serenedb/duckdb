@@ -51,10 +51,6 @@ if(CMAKE_EXPORT_COMPILE_COMMANDS AND UNIX)
   )
 endif()
 
-set(CMAKE_CXX_STANDARD "17" CACHE STRING "C++ standard to enforce")
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-
 set(CMAKE_VERBOSE_MAKEFILE OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_MACOSX_RPATH 1)
@@ -771,13 +767,10 @@ endif()
 
 include_directories(src/include)
 include_directories(third_party/fsst)
-include_directories(third_party/fmt/include)
 include_directories(third_party/hyperloglog)
 include_directories(third_party/fastpforlib)
 include_directories(third_party/skiplist)
 include_directories(third_party/ska_sort)
-include_directories(third_party/fast_float)
-include_directories(third_party/re2)
 include_directories(third_party/miniz)
 include_directories(third_party/utf8proc/include)
 include_directories(third_party/concurrentqueue)
@@ -877,8 +870,20 @@ function(add_third_party NAME)
     add_subdirectory(${_DUCKDB_PROJECT_SRC_DIR}/third_party/${NAME} ${_DUCKDB_PROJECT_BIN_DIR}/third_party/${NAME})
 endfunction()
 
+link_libraries(
+  fmt::fmt
+  FastFloat::fast_float
+  re2::re2
+  absl::strings
+  absl::node_hash_set
+  absl::node_hash_map
+  absl::synchronization
+)
+
 # this depends on disable_target_warnings so the order matters
 include(${PROJECT_SOURCE_DIR}/extension/extension_build_tools.cmake)
+
+add_extension_definitions()
 
 if(PREBUILT_BINARY)
   message("Using pre-built static library from file ${PREBUILT_BINARY}")
@@ -891,7 +896,6 @@ if(PREBUILT_BINARY)
   add_subdirectory(tools)
   add_subdirectory(extension)
 elseif (BUILD_MAIN_DUCKDB_LIBRARY)
-  add_extension_definitions()
   add_subdirectory(src)
 
   add_subdirectory(tools)
@@ -899,13 +903,11 @@ elseif (BUILD_MAIN_DUCKDB_LIBRARY)
 endif()
 
 add_third_party(fastpforlib)
-add_third_party(fmt)
 add_third_party(fsst)
 add_third_party(hyperloglog)
 add_third_party(libpg_query)
 add_third_party(mbedtls)
 add_third_party(miniz)
-add_third_party(re2)
 add_third_party(skiplist)
 add_third_party(utf8proc)
 add_third_party(yyjson)

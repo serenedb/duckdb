@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
 #include <mutex>
 
 namespace duckdb {
@@ -34,10 +35,10 @@ struct standard_impl {
 template <typename T>
 using standard_impl_t = typename standard_impl<T>::type;
 
-// Specialization for `std::mutex`.
+// Specialization for `absl::Mutex`.
 template <>
 struct standard_impl<::duckdb::annotated_mutex> {
-	using type = std::mutex;
+	using type = absl::Mutex;
 };
 
 // Type alias for lock types.

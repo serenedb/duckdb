@@ -45,7 +45,7 @@ bool ExtractAll(duckdb_re2::StringPiece &input, duckdb_re2::RE2 &pattern, idx_t 
 	if (!pattern.Match(input, *startpos, input.size(), pattern.UNANCHORED, groups, ngroups + 1)) {
 		return false;
 	}
-	idx_t consumed = static_cast<size_t>(groups[0].end() - (input.begin() + *startpos));
+	idx_t consumed = static_cast<size_t>((groups[0].data() + groups[0].size()) - (input.data() + *startpos));
 	if (!consumed) {
 		// Empty match: advance exactly one UTF-8 codepoint
 		consumed = regexp_util::AdvanceOneUTF8Basic(input, *startpos);
@@ -97,15 +97,15 @@ void ExtractSingleTuple(const string_t &string, duckdb_re2::RE2 &pattern, int32_
 		if (match_group.empty()) {
 			// This group was not matched
 			list_content[child_idx] = string_t(string.GetData(), 0);
-			if (match_group.begin() == nullptr) {
+			if (match_group.data() == nullptr) {
 				// This group is optional
 				child_validity.SetInvalid(child_idx);
 			}
 		} else {
 			// Every group is a substring of the original, we can find out the offset using the pointer
 			// the 'match_group' address is guaranteed to be bigger than that of the source
-			D_ASSERT(const_char_ptr_cast(match_group.begin()) >= string.GetData());
-			auto offset = UnsafeNumericCast<idx_t>(match_group.begin() - string.GetData());
+			D_ASSERT(const_char_ptr_cast(match_group.data()) >= string.GetData()); // NOLINT
+			auto offset = UnsafeNumericCast<idx_t>(match_group.data() - string.GetData());
 			list_content[child_idx] =
 			    string_t(string.GetData() + offset, UnsafeNumericCast<uint32_t>(match_group.size()));
 		}
@@ -231,7 +231,7 @@ static inline bool ExtractAllStruct(duckdb_re2::StringPiece &input, duckdb_re2::
 	if (!re.Match(input, startpos, input.size(), re.UNANCHORED, groups, provided_groups + 1)) {
 		return false;
 	}
-	idx_t consumed = static_cast<idx_t>(groups[0].end() - (input.begin() + startpos));
+	idx_t consumed = static_cast<idx_t>((groups[0].data() + groups[0].size()) - (input.data() + startpos));
 	if (!consumed) {
 		consumed = regexp_util::AdvanceOneUTF8Basic(input, startpos);
 	}
@@ -261,13 +261,13 @@ static void ExtractStructAllSingleTuple(const string_t &string_val, duckdb_re2::
 			auto cdata = FlatVector::GetDataMutable<string_t>(child_vec);
 			auto &span = group_spans[g + 1];
 			if (span.empty()) {
-				if (span.begin() == nullptr) {
+				if (span.data() == nullptr) {
 					// Unmatched optional group -> always NULL
 					FlatVector::ValidityMutable(child_vec).SetInvalid(current_list_size);
 				}
 				cdata[current_list_size] = string_t(string_val.GetData(), 0);
 			} else {
-				auto offset = span.begin() - string_val.GetData();
+				auto offset = span.data() - string_val.GetData();
 				cdata[current_list_size] =
 				    string_t(string_val.GetData() + offset, UnsafeNumericCast<uint32_t>(span.size()));
 			}
