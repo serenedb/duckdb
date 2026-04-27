@@ -368,7 +368,8 @@ void Executor::VerifyPipeline(Pipeline &pipeline) {
 }
 
 void Executor::VerifyPipelines() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	for (auto &pipeline : pipelines) {
 		VerifyPipeline(*pipeline);
 	}
@@ -497,7 +498,7 @@ void Executor::WaitForTask() {
 	}
 
 	blocked_thread_time += ms + WAIT_TIME_MS.count();
-	task_reschedule.wait_for(l, WAIT_TIME_MS);
+	task_reschedule.WaitWithTimeout(l.mutex(), absl::FromChrono(WAIT_TIME_MS));
 #endif
 }
 

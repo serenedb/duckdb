@@ -203,7 +203,7 @@ template struct std::atomic<uint64_t>;
 #endif
 
 template class std::bitset<STANDARD_VECTOR_SIZE>;
-template class duckdb::unordered_map<duckdb::PhysicalOperator *, duckdb::ProfilingNode *>;
+// template class duckdb::unordered_map<duckdb::PhysicalOperator *, duckdb::ProfilingNode *>;
 template class std::stack<duckdb::PhysicalOperator *>;
 
 /* -pedantic does not like this
@@ -215,11 +215,11 @@ using catalog_map = duckdb::unordered_map<duckdb::string, duckdb::unique_ptr<duc
 INSTANTIATE_UNORDERED_MAP(catalog_map)
 */
 
-template class duckdb::unordered_map<duckdb::string, uint64_t>;
-template class duckdb::unordered_map<duckdb::string, duckdb::vector<duckdb::string>>;
-template class duckdb::unordered_map<duckdb::string, std::pair<uint64_t, duckdb::Expression *>>;
+// template class duckdb::unordered_map<duckdb::string, uint64_t>;
+// template class duckdb::unordered_map<duckdb::string, duckdb::vector<duckdb::string>>;
+// template class duckdb::unordered_map<duckdb::string, std::pair<uint64_t, duckdb::Expression *>>;
 // template class duckdb::unordered_map<duckdb::string, duckdb::TableBinding>;
-template class duckdb::unordered_map<duckdb::string, duckdb::SelectStatement *>;
-template class duckdb::unordered_map<uint64_t, uint64_t>;
+// template class duckdb::unordered_map<duckdb::string, duckdb::SelectStatement *>;
+// template class duckdb::unordered_map<uint64_t, uint64_t>;
 
 #endif
