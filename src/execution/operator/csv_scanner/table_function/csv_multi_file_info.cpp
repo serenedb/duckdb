@@ -17,20 +17,20 @@ namespace {
 // reused across every per-batch CSVLookupScan call:
 //   - file_scan: the CSV file scan -- buffer manager, state machine, error
 //     handler, schema, projection. Holds the parsed CSV metadata.
-//   - scanner: a single StringValueScanner repositioned via `Reset(iter)`
-//     per pk. parse_chunk / validity_mask / parse_types / null_str arrays
-//     inside its result are allocated once and reused -- the main perf win.
+//   - scanner: a single StringValueScanner repositioned via ResetForAppend
+//     per pk. The scanner's internal result.parse_chunk accumulates all the
+//     batch's rows; one Reinterpret per output column at end -- ZERO data copy.
 //   - buffer_pin: pinned buffer-usage handle for the scanner's lifetime.
 //     Single-buffer CSVs only -- multi-buffer would need to update this
 //     when pks straddle buffer boundaries.
-//   - parse_chunk: 1-row capacity DataChunk the scanner flushes into.
-//   - output_to_file_col: projection mapping for fan-out at copy time.
+//   - output_to_file_col: per-output-column index into result.parse_chunk
+//     (or DConstants::INVALID_INDEX for virtual slots), built at init from
+//     input.column_indexes.
 // pk_lookups itself is supplied per call via TableFunctionInput::pk_lookups.
 struct CSVLookupGlobalState : public GlobalTableFunctionState {
 	shared_ptr<CSVFileScan> file_scan;
 	unique_ptr<StringValueScanner> scanner;
 	shared_ptr<CSVBufferUsage> buffer_pin;
-	DataChunk parse_chunk;
 	std::vector<idx_t> output_to_file_col;
 };
 
@@ -67,13 +67,10 @@ unique_ptr<GlobalTableFunctionState> CSVLookupInitGlobal(ClientContext &context,
 	}
 	state->file_scan->InitializeFileNamesTypes();
 
-	// parse_chunk is shaped to file_scan->file_types -- after
-	// InitializeFileNamesTypes this is the projected types in the same order
-	// the scanner's Flush will write them (sorted by file column index).
-	state->parse_chunk.Initialize(context, state->file_scan->file_types);
+	// output-slot -> result.parse_chunk source-slot map. parse_chunk slots
+	// are indexed by position in `sorted_file_cols`; build a reverse lookup
+	// from input.column_indexes.
 
-	// output-slot -> parse_chunk source-slot map. parse_chunk slots are
-	// indexed by position in `sorted_file_cols`; we build a reverse lookup.
 	state->output_to_file_col.reserve(input.column_indexes.size());
 	for (auto &col : input.column_indexes) {
 		if (col.IsVirtualColumn()) {
@@ -102,18 +99,42 @@ unique_ptr<GlobalTableFunctionState> CSVLookupInitGlobal(ClientContext &context,
 // Maps a global byte offset to (buffer_idx, buffer_pos) and returns a tight
 // CSVIterator pinned to that offset. SetExactBoundary marks first_one=true
 // so the scanner trusts the offset is a real row start (no SetStart).
+//
+// Quirk: the pk encoding for non-first rows points at the trailing newline of
+// the previous row (pre-existing upstream behavior of
+// line_positions_per_row.begin -- see StringValueResult::AddRowInternal).
+// Peek at the byte; if it's \r and/or \n, advance past it so the parser
+// starts at the actual row start. This lets each pk produce exactly one row
+// (no leading empty record) -- enabling zero-copy Reinterpret accumulation.
 CSVIterator MakeTightIterator(CSVFileScan &file_scan, idx_t global_offset, idx_t boundary_idx) {
 	const auto buf_size = file_scan.buffer_manager->GetBufferSize();
-	const idx_t buf_idx = global_offset / buf_size;
-	const idx_t buf_pos = global_offset % buf_size;
+	idx_t buf_idx = global_offset / buf_size;
+	idx_t buf_pos = global_offset % buf_size;
+	auto handle = file_scan.buffer_manager->GetBuffer(buf_idx);
+	if (handle) {
+		const auto *ptr = handle->Ptr();
+		const idx_t actual = handle->actual_size;
+		if (buf_pos < actual && ptr[buf_pos] == '\r') {
+			++buf_pos;
+		}
+		if (buf_pos < actual && ptr[buf_pos] == '\n') {
+			++buf_pos;
+		}
+	}
 	CSVIterator iter = file_scan.start_iterator;
 	iter.SetExactBoundary(buf_idx, buf_pos, buf_pos + 1, boundary_idx);
 	return iter;
 }
 
-// Per-batch lookup. Caller supplies sorted offsets via `data.pk_lookups`;
-// gstate (scanner, parse_chunk, file_scan) is cached across batches.
-// ZERO heap allocation in steady state.
+// Per-batch lookup -- TRUE zero-copy fan-out:
+//   1. Reset the scanner's parse_chunk row counter (clears prior batch).
+//   2. Per pk: ResetForAppend (re-anchor iter, preserve number_of_rows) +
+//      ParseChunkAppend (parser writes the row at slot number_of_rows, ++).
+//   3. After all pks, Reinterpret each output column at the corresponding
+//      parse_chunk column -- a single pointer rebind per column (NO data copy).
+// MakeTightIterator skips the leading newline (pk encoding quirk), so each
+// pk produces exactly one row -- parse_chunk ends up with N rows at slots
+// [0, N), aligned with the input pk order.
 void CSVLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<CSVLookupGlobalState>();
 	if (data.pk_lookups.empty()) {
@@ -121,33 +142,31 @@ void CSVLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &
 		return;
 	}
 
+	// Clear the scanner's parse_chunk for a fresh batch (previous batch's
+	// rows are still there from the prior call).
+	auto &result = gstate.scanner->GetStringValueResult();
+	if (result.number_of_rows != 0) {
+		result.Reset();
+	}
+
 	const idx_t num_rows = data.pk_lookups.size();
-	idx_t emitted = 0;
 	for (idx_t i = 0; i < num_rows; ++i) {
 		const auto offset = NumericCast<idx_t>(data.pk_lookups[i]);
-		gstate.scanner->Reset(MakeTightIterator(*gstate.file_scan, offset, i));
+		gstate.scanner->ResetForAppend(MakeTightIterator(*gstate.file_scan, offset, i));
+		gstate.scanner->ParseChunkAppend();
+	}
 
-		gstate.parse_chunk.Reset();
-		gstate.scanner->Flush(gstate.parse_chunk);
-		const auto scanned = gstate.parse_chunk.size();
-		if (scanned == 0) {
+	const idx_t parsed = NumericCast<idx_t>(result.number_of_rows);
+	auto &parse_chunk = result.parse_chunk;
+	for (idx_t c = 0; c < gstate.output_to_file_col.size(); ++c) {
+		const auto file_col = gstate.output_to_file_col[c];
+		if (file_col == DConstants::INVALID_INDEX) {
 			continue;
 		}
-		// For non-first rows the pk encoding points at the trailing newline of the
-		// previous row (pre-existing upstream quirk in line_positions_per_row.begin).
-		// The parser consumes that newline as an empty record, then ProcessExtraRow
-		// finds the real row -- chunk has [empty, actual_row]. Take the LAST row.
-		const auto src_idx = scanned - 1;
-		for (idx_t c = 0; c < gstate.output_to_file_col.size(); ++c) {
-			const auto file_col = gstate.output_to_file_col[c];
-			if (file_col == DConstants::INVALID_INDEX) {
-				continue;
-			}
-			VectorOperations::Copy(gstate.parse_chunk.data[file_col], output.data[c], src_idx + 1, src_idx, emitted);
-		}
-		emitted += 1;
+		// Zero-copy: rebind output's vector to parse_chunk's storage.
+		output.data[c].Reinterpret(parse_chunk.data[file_col]);
 	}
-	output.SetCardinality(emitted);
+	output.SetCardinality(parsed);
 }
 
 } // namespace

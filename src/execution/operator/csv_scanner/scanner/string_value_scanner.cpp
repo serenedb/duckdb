@@ -1072,6 +1072,52 @@ void StringValueScanner::Reset(const CSVIterator &new_iterator) {
 	Initialize();
 }
 
+void StringValueScanner::ResetForAppend(const CSVIterator &new_iterator) {
+	// Reposition iterator. Caller must vouch new_iterator.first_one == true
+	// (set by SetExactBoundary) so SetStart skips its line-start search.
+	iterator = new_iterator;
+	iterator.buffer_size = state_machine->options.buffer_size_option.GetValue();
+
+	// Per-row state-machine reset; matches Reset() for everything except we
+	// DO NOT touch result.number_of_rows / parse_chunk content / validity_mask.
+	states = CSVStates {};
+	ever_quoted = false;
+	ever_escaped = false;
+	used_unstrictness = false;
+	previous_buffer_handle = nullptr;
+	start_pos = 0;
+	bytes_read = 0;
+
+	// Per-row parse counters: each row starts at column 0.
+	result.cur_col_id = 0;
+	result.chunk_col_id = 0;
+	result.current_errors.Reset();
+
+	// Reload buffer for the new offset; re-anchor row-position to it (without
+	// touching number_of_rows or already-anchored positions of prior rows --
+	// those live in line_positions_per_row[i] for i < number_of_rows).
+	cur_buffer_handle = buffer_manager->GetBuffer(iterator.GetBufferIdx());
+	buffer_handle_ptr = cur_buffer_handle ? cur_buffer_handle->Ptr() : nullptr;
+	if (cur_buffer_handle) {
+		result.buffer_ptr = cur_buffer_handle->Ptr();
+		result.buffer_size = cur_buffer_handle->actual_size;
+		result.last_position = {iterator.pos.buffer_idx, iterator.pos.buffer_pos, cur_buffer_handle->actual_size};
+		result.current_line_position.begin = result.last_position;
+		result.current_line_position.end = result.current_line_position.begin;
+		result.buffer_handles[cur_buffer_handle->buffer_idx] = cur_buffer_handle;
+	}
+
+	Initialize();
+}
+
+StringValueResult &StringValueScanner::ParseChunkAppend() {
+	// Skip the usual result.Reset() so number_of_rows + parse_chunk's already-
+	// written rows are preserved. The parser writes the next row into slot
+	// `result.number_of_rows` (its internal counter) and increments it.
+	ParseChunkInternal(result);
+	return result;
+}
+
 unique_ptr<StringValueScanner> StringValueScanner::GetCSVScanner(ClientContext &context, CSVReaderOptions &options,
                                                                  const MultiFileOptions &file_options) {
 	auto state_machine = make_shared_ptr<CSVStateMachine>(options, options.dialect_options.state_machine_options,
