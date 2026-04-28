@@ -13,44 +13,30 @@ namespace duckdb {
 
 namespace {
 
-// Cached lookup-mode state for read_csv. Owned across batches:
-//   - file_scan: the parquet/csv-specific file scan -- buffer manager,
-//     state machine, error handler, schema, projection. Built ONCE in
-//     init_global from the caller-provided MultiFileBindData. Holds the
-//     parsed CSV metadata and sniffer results.
-//   - scanner: a single StringValueScanner reused across pks via
-//     `Reset(iter)`. Avoids the per-pk allocation that the old
-//     `NextPkLookupScanner` path did. Constructed lazily on first Read
-//     so we can pin its result_size to 1 (which skips SetStart and
-//     boundary discovery -- we trust the offsets are real row starts).
-//   - parse_chunk: 1-row capacity DataChunk that the scanner flushes
-//     into. Reused.
-//   - pk_lookups: decoded + sorted offsets buffer. Reused.
-//   - column_indexes: projection cache for fan-out at copy time.
+// Cached lookup-mode state for read_csv. Built ONCE per query in init_global,
+// reused across every per-batch CSVLookupScan call:
+//   - file_scan: the CSV file scan -- buffer manager, state machine, error
+//     handler, schema, projection. Holds the parsed CSV metadata.
+//   - scanner: a single StringValueScanner reused across all pks via
+//     `Reset(iter)`. Lazy-built on first row (needs a starting iterator).
+//     parse_chunk / validity_mask / parse_types / null_str arrays inside its
+//     result are allocated once and reused -- this is the main perf win.
+//   - buffer_pin: pinned buffer-usage handle for the scanner's lifetime.
+//   - parse_chunk: 1-row capacity DataChunk the scanner flushes into.
+//   - output_to_file_col: projection mapping for fan-out at copy time.
+// pk_lookups itself is supplied per call via TableFunctionInput::pk_lookups.
 struct CSVLookupGlobalState : public GlobalTableFunctionState {
 	shared_ptr<CSVFileScan> file_scan;
-	// Persistent scanner reused across all pks via Reset(). Lazy-built on
-	// first ReadRowAt because we need a starting iterator. `parse_chunk`,
-	// validity_mask, parse_types, null_str arrays inside its result are all
-	// allocated once and reused -- this is the main perf win.
 	unique_ptr<StringValueScanner> scanner;
-	// Pinned buffer-usage handle for the scanner's lifetime. Single-buffer
-	// CSVs only -- if the file spans multiple buffers we'd need to update
-	// this when crossing boundaries.
 	shared_ptr<CSVBufferUsage> buffer_pin;
 	DataChunk parse_chunk;
 	std::vector<idx_t> output_to_file_col;
-	// pk_lookups span captured from init_input.pk_lookups at init_global time.
-	// Refreshed each batch when the caller re-inits this gstate with a new
-	// sorted offsets span.
-	std::span<const int64_t> pk_lookups;
 };
 
 // Builds the lookup gstate from a caller-bound MultiFileBindData. We only
 // touch the FIRST file in the list -- pk-lookup is a single-file operation.
 // Constructs the CSVFileScan (file open + state machine + schema setup);
-// the scanner itself is lazy (built on first ReadRowAt to know parse_chunk
-// types).
+// the scanner itself is lazy (built on first lookup row to know iter).
 unique_ptr<GlobalTableFunctionState> CSVLookupInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
 	auto &bind_data = input.bind_data->CastNoConst<MultiFileBindData>();
 	auto &csv_data = bind_data.bind_data->Cast<ReadCSVData>();
@@ -98,9 +84,6 @@ unique_ptr<GlobalTableFunctionState> CSVLookupInitGlobal(ClientContext &context,
 		state->output_to_file_col.push_back(NumericCast<idx_t>(it - sorted_file_cols.begin()));
 	}
 
-	// Capture the caller-provided sorted offsets span. Refreshed by the next
-	// init_global call when the caller starts a new batch.
-	state->pk_lookups = input.pk_lookups;
 	return std::move(state);
 }
 
@@ -116,20 +99,20 @@ CSVIterator MakeTightIterator(CSVFileScan &file_scan, idx_t global_offset, idx_t
 	return iter;
 }
 
-// Per-batch lookup. Decodes offsets, then for each one repositions the
-// reusable scanner and copies one row into output. ZERO heap allocation in
-// steady state: parse_chunk, pk_lookups, scanner, file_scan are all cached.
+// Per-batch lookup. Caller supplies sorted offsets via `data.pk_lookups`;
+// gstate (scanner, parse_chunk, file_scan) is cached across batches.
+// ZERO heap allocation in steady state.
 void CSVLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<CSVLookupGlobalState>();
-	if (gstate.pk_lookups.empty()) {
+	if (data.pk_lookups.empty()) {
 		output.SetCardinality(0);
 		return;
 	}
 
-	const idx_t num_rows = gstate.pk_lookups.size();
+	const idx_t num_rows = data.pk_lookups.size();
 	idx_t emitted = 0;
 	for (idx_t i = 0; i < num_rows; ++i) {
-		const auto offset = NumericCast<idx_t>(gstate.pk_lookups[i]);
+		const auto offset = NumericCast<idx_t>(data.pk_lookups[i]);
 		auto iter = MakeTightIterator(*gstate.file_scan, offset, i);
 
 		if (!gstate.scanner) {

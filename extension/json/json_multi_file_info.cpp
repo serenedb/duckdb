@@ -12,10 +12,12 @@ namespace duckdb {
 
 namespace {
 
-// Drain helper for read_json's lookup TableFunction. gstate is a
-// MultiFileGlobalState built by MultiFileInitGlobal -- pk_lookups was
-// propagated from init_input into JSONScanGlobalState during init, where
-// ReadJSONFunctionPkLookup uses it for offset-seek random reads.
+// Drain helper for read_json's lookup TableFunction. The gstate IS a
+// MultiFileGlobalState (built by MultiFileInitGlobal from init_input.pk_lookups,
+// propagated into JSONScanGlobalState::pk_lookups via InitializeGlobalState,
+// where ReadJSONFunctionPkLookup uses it for offset-seek random reads).
+// MultiFileGlobalState scan progress isn't designed to be replayed, so the
+// SereneDB caller re-inits this gstate per batch -- only bind_data is cached.
 void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<MultiFileGlobalState>();
 	if (gstate.pk_lookups.empty()) {
@@ -536,8 +538,8 @@ bool JSONReader::TryInitializeScan(ClientContext &context, GlobalTableFunctionSt
 // position, and drop it into `values[]` -- no buffer iteration, no state
 // machine advancement through the whole file. Total work is O(|offsets|)
 // reads + parses.
-static void ReadJSONFunctionPkLookup(JSONReader &json_reader, JSONScanGlobalState &gstate,
-                                       JSONScanLocalState &lstate, DataChunk &output) {
+static void ReadJSONFunctionPkLookup(JSONReader &json_reader, JSONScanGlobalState &gstate, JSONScanLocalState &lstate,
+                                     DataChunk &output) {
 	auto &scan_state = lstate.GetScanState();
 	// The reader's file handle isn't opened by the normal PrepareReader path
 	// in exact-offset mode (we bypass the buffer iterator that triggers it).
@@ -600,9 +602,8 @@ static void ReadJSONFunctionPkLookup(JSONReader &json_reader, JSONScanGlobalStat
 			result_vectors.emplace_back(&output.data[gstate.column_ids[i]]);
 		}
 		D_ASSERT(gstate.json_data.options.record_type == JSONRecordType::RECORDS);
-		JSONTransform::TransformObject(values, alc, row, gstate.names, result_vectors,
-		                               lstate.transform_options, gstate.column_indices,
-		                               lstate.transform_options.error_unknown_key);
+		JSONTransform::TransformObject(values, alc, row, gstate.names, result_vectors, lstate.transform_options,
+		                               gstate.column_indices, lstate.transform_options.error_unknown_key);
 	}
 
 	// file_row_number output = the original offsets we read from (known good).

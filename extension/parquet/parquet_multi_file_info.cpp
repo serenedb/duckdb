@@ -412,10 +412,11 @@ static vector<PartitionStatistics> ParquetGetPartitionStats(ClientContext &conte
 namespace {
 
 // Drain helper for read_parquet's lookup TableFunction. The gstate IS a
-// MultiFileGlobalState (built by MultiFileInitGlobal from
-// init_input.pk_lookups, which set MultiFileGlobalState::pk_lookups and
-// from there ParquetReadGlobalState::pk_lookups). This callback just spins
-// MultiFileScan until the row-group walker is done -- no internal init.
+// MultiFileGlobalState (built by MultiFileInitGlobal from init_input.pk_lookups,
+// which sets MultiFileGlobalState::pk_lookups and from there
+// ParquetReadGlobalState::pk_lookups). MultiFileGlobalState's per-file
+// scan progress isn't designed to be replayed, so the SereneDB caller
+// re-inits this gstate per batch -- the cached part is bind_data.
 void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<MultiFileGlobalState>();
 	if (gstate.pk_lookups.empty()) {
