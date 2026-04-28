@@ -454,8 +454,7 @@ unique_ptr<GlobalTableFunctionState> CSVMultiFileInfo::InitializeGlobalState(Cli
 		                             csv_data.options.rejects_table_name.GetValue())
 		    ->InitializeTable(context, csv_data);
 	}
-	return make_uniq<CSVGlobalState>(context, csv_data.options, bind_data.file_list->GetTotalFileCount(), bind_data,
-	                                 global_state.pk_lookups);
+	return make_uniq<CSVGlobalState>(context, csv_data.options, bind_data.file_list->GetTotalFileCount(), bind_data);
 }
 
 struct CSVLocalState : public LocalTableFunctionState {
@@ -549,39 +548,9 @@ bool CSVFileScan::TryInitializeScan(ClientContext &context, GlobalTableFunctionS
 	return true;
 }
 
-// Pk-lookup mode: each scanner produces exactly one row (tight boundary).
-// Return that single row straight in `chunk` -- the caller (SereneDB's
-// FileMaterializer) already loop-drains until it has the full batch, so
-// any per-call accumulation here would just be a redundant copy.
-static AsyncResult ScanPkLookup(CSVFileScan &self, CSVGlobalState &gstate, CSVLocalState &lstate,
-                                DataChunk &chunk) {
-	auto self_ptr = shared_ptr_cast<BaseFileReader, CSVFileScan>(self.shared_from_this());
-	while (true) {
-		if (lstate.csv_reader->FinishedIterator()) {
-			gstate.FinishScan(std::move(lstate.csv_reader));
-			lstate.csv_reader = gstate.Next(self_ptr);
-			if (!lstate.csv_reader) {
-				return AsyncResult(SourceResultType::FINISHED);
-			}
-		}
-		lstate.csv_reader->Flush(chunk);
-		if (chunk.size() > 0) {
-			return AsyncResult(SourceResultType::HAVE_MORE_OUTPUT);
-		}
-		// Current scanner produced nothing -- advance to the next.
-	}
-}
-
 AsyncResult CSVFileScan::Scan(ClientContext &context, GlobalTableFunctionState &global_state,
                               LocalTableFunctionState &local_state, DataChunk &chunk) {
-	auto &gstate = global_state.Cast<CSVGlobalState>();
 	auto &lstate = local_state.Cast<CSVLocalState>();
-
-	if (gstate.IsPkLookup()) {
-		return ScanPkLookup(*this, gstate, lstate, chunk);
-	}
-
-	// Normal boundary-scan path: one scanner per Scan() call.
 	if (lstate.csv_reader->FinishedIterator()) {
 		return AsyncResult(SourceResultType::FINISHED);
 	}

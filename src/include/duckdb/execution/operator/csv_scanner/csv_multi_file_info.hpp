@@ -75,9 +75,10 @@ struct CSVMultiFileInfo : MultiFileReaderInterface {
 
 //! Builds a standalone lookup-mode TableFunction for CSV. Shares
 //! MultiFileBindData shape with read_csv (caller passes a pre-bound CSV
-//! bind_data via TableFunctionInput::bind_data). Its `function` reads
-//! pk_bytes from TableFunctionInput::pk_bytes per batch and dispatches
-//! one offset-pinned scanner per pk via CSVGlobalState::NextPkLookupScanner.
+//! bind_data via TableFunctionInput::bind_data). Has its own gstate
+//! (CSVLookupGlobalState) that holds a reusable StringValueScanner pinned
+//! to caller-supplied byte offsets via CSVIterator::SetExactBoundary --
+//! one offset per row, no internal multi-thread dispatch.
 TableFunction MakeCSVLookupTableFunction();
 
 } // namespace duckdb

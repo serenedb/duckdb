@@ -74,10 +74,10 @@ public:
 
 	//! Point this iterator at an exact, known-row-start byte offset covering a
 	//! tight range [buf_pos, end_pos) within buffer buf_idx. Used by the
-	//! exact-offset scan path where the caller (e.g. SereneDB FileMaterializer)
-	//! supplies byte offsets that were recorded at write time and are
-	//! guaranteed row boundaries -- so StringValueScanner::SetStart can skip
-	//! the usual "find a valid row start" search (via first_one=true).
+	//! standalone CSV lookup TableFunction where caller-supplied byte offsets
+	//! are guaranteed row boundaries (recorded at write time), so
+	//! StringValueScanner::SetStart can skip the usual "find a valid row
+	//! start" search (via first_one=true).
 	void SetExactBoundary(idx_t buf_idx, idx_t buf_pos, idx_t end_pos, idx_t boundary_id);
 
 	// Gets the current position for the file

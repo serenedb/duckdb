@@ -66,7 +66,7 @@ unique_ptr<MultiFileReaderInterface> JSONMultiFileInfo::CreateInterface(ClientCo
 void JSONMultiFileInfo::GetVirtualColumns(ClientContext &, MultiFileBindData &, virtual_column_map_t &result) {
 	// Mirrors CSV: file_row_number = byte offset of the JSON record's start in
 	// the file. Unique per row, stable across re-reads, usable as an exact-seek
-	// key by SereneDB's FileMaterializer.
+	// key by the standalone JSON lookup TableFunction.
 	result.insert(make_pair(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
 	                        TableColumn("file_row_number", LogicalType::BIGINT)));
 }
