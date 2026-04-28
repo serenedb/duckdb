@@ -35,6 +35,7 @@ void CSVGlobalState::FinishScan(unique_ptr<StringValueScanner> scanner) {
 	if (!scanner) {
 		return;
 	}
+	// We have to insert information for validation
 	auto previous_file = scanner->csv_file_scan;
 	previous_file->validator.Insert(scanner->scanner_idx, scanner->GetValidationLine());
 	scanner.reset();
@@ -44,7 +45,7 @@ void CSVGlobalState::FinishScan(unique_ptr<StringValueScanner> scanner) {
 unique_ptr<StringValueScanner> CSVGlobalState::Next(shared_ptr<CSVFileScan> &current_file_ptr) {
 	auto &current_file = *current_file_ptr;
 	if (!initialized) {
-		// Initialize the boundary
+		// initialize the boundary for this file
 		current_boundary = current_file.start_iterator;
 		current_boundary.SetCurrentBoundaryToPosition(single_threaded, current_file.options);
 		if (current_boundary.done && context.client_data->debug_set_max_line_length) {
@@ -55,7 +56,9 @@ unique_ptr<StringValueScanner> CSVGlobalState::Next(shared_ptr<CSVFileScan> &cur
 		    make_shared_ptr<CSVBufferUsage>(*current_file.buffer_manager, current_boundary.GetBufferIdx());
 		initialized = true;
 	} else {
+		// produce the next boundary for this file
 		if (current_boundary.done || !current_boundary.Next(*current_file.buffer_manager, current_file.options)) {
+			// finished processing this file - return
 			return nullptr;
 		}
 	}

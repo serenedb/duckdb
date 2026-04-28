@@ -17,11 +17,12 @@ namespace {
 // reused across every per-batch CSVLookupScan call:
 //   - file_scan: the CSV file scan -- buffer manager, state machine, error
 //     handler, schema, projection. Holds the parsed CSV metadata.
-//   - scanner: a single StringValueScanner reused across all pks via
-//     `Reset(iter)`. Lazy-built on first row (needs a starting iterator).
-//     parse_chunk / validity_mask / parse_types / null_str arrays inside its
-//     result are allocated once and reused -- this is the main perf win.
+//   - scanner: a single StringValueScanner repositioned via `Reset(iter)`
+//     per pk. parse_chunk / validity_mask / parse_types / null_str arrays
+//     inside its result are allocated once and reused -- the main perf win.
 //   - buffer_pin: pinned buffer-usage handle for the scanner's lifetime.
+//     Single-buffer CSVs only -- multi-buffer would need to update this
+//     when pks straddle buffer boundaries.
 //   - parse_chunk: 1-row capacity DataChunk the scanner flushes into.
 //   - output_to_file_col: projection mapping for fan-out at copy time.
 // pk_lookups itself is supplied per call via TableFunctionInput::pk_lookups.
@@ -35,8 +36,9 @@ struct CSVLookupGlobalState : public GlobalTableFunctionState {
 
 // Builds the lookup gstate from a caller-bound MultiFileBindData. We only
 // touch the FIRST file in the list -- pk-lookup is a single-file operation.
-// Constructs the CSVFileScan (file open + state machine + schema setup);
-// the scanner itself is lazy (built on first lookup row to know iter).
+// Constructs the CSVFileScan (file open + state machine + schema setup) and
+// the reusable StringValueScanner pinned to the file's start_iterator;
+// per-pk CSVLookupScan repositions it via Reset(MakeTightIterator(...)).
 unique_ptr<GlobalTableFunctionState> CSVLookupInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
 	auto &bind_data = input.bind_data->CastNoConst<MultiFileBindData>();
 	auto &csv_data = bind_data.bind_data->Cast<ReadCSVData>();
@@ -44,7 +46,7 @@ unique_ptr<GlobalTableFunctionState> CSVLookupInitGlobal(ClientContext &context,
 
 	const auto &file = bind_data.file_list->GetFirstFile();
 	auto options = csv_data.options;
-	options.auto_detect = false;  // schema already known
+	options.auto_detect = false; // schema already known
 	state->file_scan = make_shared_ptr<CSVFileScan>(
 	    context, file, std::move(options), bind_data.file_options, bind_data.names, bind_data.types,
 	    csv_data.csv_schema, /*per_file_single_threaded=*/true, /*buffer_manager=*/nullptr, /*fixed_schema=*/true);
@@ -84,6 +86,16 @@ unique_ptr<GlobalTableFunctionState> CSVLookupInitGlobal(ClientContext &context,
 		state->output_to_file_col.push_back(NumericCast<idx_t>(it - sorted_file_cols.begin()));
 	}
 
+	// Build the reusable scanner (pinned to start_iterator's buffer). Per-pk
+	// Reset(iter) repositions it -- no per-pk allocation. Single-buffer CSVs
+	// only; multi-buffer would need buffer_pin updates per cross-buffer pk.
+	state->buffer_pin = make_shared_ptr<CSVBufferUsage>(*state->file_scan->buffer_manager,
+	                                                    state->file_scan->start_iterator.GetBufferIdx());
+	state->scanner = make_uniq<StringValueScanner>(
+	    /*scanner_idx=*/0, state->file_scan->buffer_manager, state->file_scan->state_machine,
+	    state->file_scan->error_handler, state->file_scan, /*sniffing=*/false, state->file_scan->start_iterator);
+	state->scanner->buffer_tracker = state->buffer_pin;
+
 	return std::move(state);
 }
 
@@ -113,20 +125,7 @@ void CSVLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &
 	idx_t emitted = 0;
 	for (idx_t i = 0; i < num_rows; ++i) {
 		const auto offset = NumericCast<idx_t>(data.pk_lookups[i]);
-		auto iter = MakeTightIterator(*gstate.file_scan, offset, i);
-
-		if (!gstate.scanner) {
-			// Lazy-build the scanner (and pin its buffer) on the first pk.
-			// Reused for all subsequent pks via Reset.
-			gstate.buffer_pin =
-			    make_shared_ptr<CSVBufferUsage>(*gstate.file_scan->buffer_manager, iter.GetBufferIdx());
-			gstate.scanner = make_uniq<StringValueScanner>(
-			    /*scanner_idx=*/0, gstate.file_scan->buffer_manager, gstate.file_scan->state_machine,
-			    gstate.file_scan->error_handler, gstate.file_scan, /*sniffing=*/false, iter);
-			gstate.scanner->buffer_tracker = gstate.buffer_pin;
-		} else {
-			gstate.scanner->Reset(iter);
-		}
+		gstate.scanner->Reset(MakeTightIterator(*gstate.file_scan, offset, i));
 
 		gstate.parse_chunk.Reset();
 		gstate.scanner->Flush(gstate.parse_chunk);
@@ -144,8 +143,7 @@ void CSVLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &
 			if (file_col == DConstants::INVALID_INDEX) {
 				continue;
 			}
-			VectorOperations::Copy(gstate.parse_chunk.data[file_col], output.data[c],
-			                        src_idx + 1, src_idx, emitted);
+			VectorOperations::Copy(gstate.parse_chunk.data[file_col], output.data[c], src_idx + 1, src_idx, emitted);
 		}
 		emitted += 1;
 	}
