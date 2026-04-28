@@ -2,11 +2,83 @@
 #include "json_common.hpp"
 #include "json_scan.hpp"
 #include "json_transform.hpp"
+#include "duckdb/common/multi_file/multi_file_function.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
+#include "duckdb/execution/execution_context.hpp"
 #include "duckdb/parallel/async_result.hpp"
+#include "duckdb/parallel/thread_context.hpp"
 
 namespace duckdb {
+
+namespace {
+
+// Cached projection state for the read_json `lookup` sibling. init_global is
+// called once per query and snapshots column_indexes / projection_ids /
+// filters; per-batch `function` re-inits a fresh JSON gstate with the
+// caller-provided sorted pk_lookups span attached.
+struct JSONLookupGlobalState : public GlobalTableFunctionState {
+	vector<ColumnIndex> column_indexes;
+	vector<idx_t> projection_ids;
+	optional_ptr<TableFilterSet> filters;
+	DataChunk scratch;
+};
+
+unique_ptr<GlobalTableFunctionState> JSONLookupInitGlobal(ClientContext &, TableFunctionInitInput &input) {
+	auto state = make_uniq<JSONLookupGlobalState>();
+	state->column_indexes = input.column_indexes;
+	state->projection_ids = input.projection_ids;
+	state->filters = input.filters;
+	return std::move(state);
+}
+
+void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &gstate = data.global_state->Cast<JSONLookupGlobalState>();
+	if (data.pk_lookups.empty()) {
+		output.SetCardinality(0);
+		return;
+	}
+
+	TableFunctionInitInput init(data.bind_data, gstate.column_indexes, gstate.projection_ids, gstate.filters);
+	init.pk_lookups = data.pk_lookups;
+	auto inner_gstate = MultiFileFunction<JSONMultiFileInfo>::MultiFileInitGlobal(context, init);
+	ThreadContext thread_ctx(context);
+	ExecutionContext exec_ctx(context, thread_ctx, nullptr);
+	auto inner_lstate =
+	    MultiFileFunction<JSONMultiFileInfo>::MultiFileInitLocal(exec_ctx, init, inner_gstate.get());
+
+	if (gstate.scratch.ColumnCount() == 0) {
+		gstate.scratch.Initialize(context, output.GetTypes());
+	}
+
+	TableFunctionInput delegated(data.bind_data, inner_lstate.get(), inner_gstate.get());
+	delegated.results_execution_mode = AsyncResultsExecutionMode::SYNCHRONOUS;
+	idx_t total = 0;
+	const idx_t num_rows = data.pk_lookups.size();
+	while (total < num_rows) {
+		gstate.scratch.Reset();
+		MultiFileFunction<JSONMultiFileInfo>::MultiFileScan(context, delegated, gstate.scratch);
+		const auto scanned = gstate.scratch.size();
+		if (scanned == 0) {
+			break;
+		}
+		for (idx_t c = 0; c < gstate.scratch.ColumnCount(); ++c) {
+			VectorOperations::Copy(gstate.scratch.data[c], output.data[c], scanned, 0, total);
+		}
+		total += scanned;
+	}
+	output.SetCardinality(total);
+}
+
+} // namespace
+
+TableFunction MakeJSONLookupTableFunction() {
+	TableFunction fn;
+	fn.init_global = JSONLookupInitGlobal;
+	fn.function = JSONLookupScan;
+	return fn;
+}
 
 unique_ptr<MultiFileReaderInterface> JSONMultiFileInfo::CreateInterface(ClientContext &context) {
 	return make_uniq<JSONMultiFileInfo>();

@@ -182,6 +182,12 @@ public:
 	optional_ptr<GlobalTableFunctionState> global_state;
 	AsyncResult async_result {};
 	AsyncResultsExecutionMode results_execution_mode {AsyncResultsExecutionMode::SYNCHRONOUS};
+	//! Set by callers invoking a lookup TableFunction's `function`. Empty for normal scans.
+	//! Sorted ascending so parquet can skip row groups in O(log) and CSV/JSON dispense offsets
+	//! via a forward-only cursor. Caller owns the storage; lookup TFs only read.
+	//!  - parquet: file_row_number (row index in the file).
+	//!  - csv / json: byte offset of the row/record start in the file.
+	std::span<const int64_t> pk_lookups {};
 };
 
 struct TableFunctionPartitionInput {

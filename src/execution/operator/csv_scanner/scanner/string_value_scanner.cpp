@@ -1030,6 +1030,48 @@ StringValueScanner::StringValueScanner(const shared_ptr<CSVBufferManager> &buffe
 	iterator.buffer_size = state_machine->options.buffer_size_option.GetValue();
 }
 
+void StringValueScanner::Reset(const CSVIterator &new_iterator) {
+	// Reposition to the new boundary. Caller must have set new_iterator.first_one
+	// (typically via CSVIterator::SetExactBoundary) so SetStart is skipped --
+	// we trust the offset is a real row boundary.
+	iterator = new_iterator;
+	iterator.buffer_size = state_machine->options.buffer_size_option.GetValue();
+
+	// Reset the parse state machine and per-batch flags.
+	states = CSVStates {};
+	ever_quoted = false;
+	ever_escaped = false;
+	used_unstrictness = false;
+	previous_buffer_handle = nullptr;
+	start_pos = 0;
+	lines_read = 0;
+	bytes_read = 0;
+
+	// Force result.Reset() to do its work even if number_of_rows == 0
+	// (the early-exit path leaves stale buffer_handles / validity from the
+	// previous batch). Bumping number_of_rows to 1 makes Reset re-anchor
+	// the result to `iterator`'s new buffer_idx and clear per-batch state.
+	if (result.number_of_rows == 0) {
+		result.number_of_rows = 1;  // sentinel so Reset() does its work
+	}
+	result.Reset();
+
+	// Reload the buffer for the new boundary's buffer_idx (Reset cached the
+	// previous iter's buffer; we just updated iterator so re-fetch).
+	cur_buffer_handle = buffer_manager->GetBuffer(iterator.GetBufferIdx());
+	buffer_handle_ptr = cur_buffer_handle ? cur_buffer_handle->Ptr() : nullptr;
+	if (cur_buffer_handle) {
+		result.buffer_ptr = cur_buffer_handle->Ptr();
+		result.buffer_size = cur_buffer_handle->actual_size;
+		result.last_position = {iterator.pos.buffer_idx, iterator.pos.buffer_pos, cur_buffer_handle->actual_size};
+		result.current_line_position.begin = result.last_position;
+		result.current_line_position.end = result.current_line_position.begin;
+		result.buffer_handles[cur_buffer_handle->buffer_idx] = cur_buffer_handle;
+	}
+
+	Initialize();
+}
+
 unique_ptr<StringValueScanner> StringValueScanner::GetCSVScanner(ClientContext &context, CSVReaderOptions &options,
                                                                  const MultiFileOptions &file_options) {
 	auto state_machine = make_shared_ptr<CSVStateMachine>(options, options.dialect_options.state_machine_options,

@@ -56,4 +56,11 @@ struct JSONMultiFileInfo : MultiFileReaderInterface {
 	                       virtual_column_map_t &result) override;
 };
 
+//! Builds a standalone lookup-mode TableFunction for JSON. Shares
+//! MultiFileBindData shape with read_json (caller passes a pre-bound JSON
+//! bind_data via TableFunctionInput::bind_data). Its `function` reads
+//! pk_bytes from TableFunctionInput::pk_bytes per batch and seek-reads
+//! one record per offset via ReadJSONFunctionPkLookup.
+TableFunction MakeJSONLookupTableFunction();
+
 } // namespace duckdb

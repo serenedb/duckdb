@@ -333,6 +333,13 @@ public:
 	//! Flushes the result to the insert_chunk
 	void Flush(DataChunk &insert_chunk);
 
+	//! Reposition the scanner to scan a fresh boundary. Reuses the parse_chunk and all
+	//! per-instance state allocated at construction (state machine, validity masks,
+	//! null_str tables, etc.) -- only the cursor and per-batch counters are reset.
+	//! Used by CSVLookupReader to drive O(|offsets|) point lookups without allocating
+	//! a new StringValueScanner per pk.
+	void Reset(const CSVIterator &new_iterator);
+
 	//! Function that creates and returns a non-boundary CSV Scanner, can be used for internal csv reading.
 	static unique_ptr<StringValueScanner> GetCSVScanner(ClientContext &context, CSVReaderOptions &options,
 	                                                    const MultiFileOptions &file_options);
