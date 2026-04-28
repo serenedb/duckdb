@@ -7,8 +7,6 @@
 
 #include "duckdb/common/multi_file/multi_file_function.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
-#include "duckdb/execution/execution_context.hpp"
-#include "duckdb/parallel/thread_context.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "parquet_crypto.hpp"
@@ -413,71 +411,52 @@ static vector<PartitionStatistics> ParquetGetPartitionStats(ClientContext &conte
 
 namespace {
 
-// Cached projection state for the read_parquet `lookup` sibling. init_global
-// is called once per query and snapshots column_indexes / projection_ids /
-// filters; per-batch `function` re-inits a fresh parquet gstate with the
-// caller-provided sorted pk_lookups span attached.
-struct ParquetLookupGlobalState : public GlobalTableFunctionState {
-	vector<ColumnIndex> column_indexes;
-	vector<idx_t> projection_ids;
-	optional_ptr<TableFilterSet> filters;
-	DataChunk scratch;
-};
-
-unique_ptr<GlobalTableFunctionState> ParquetLookupInitGlobal(ClientContext &, TableFunctionInitInput &input) {
-	auto state = make_uniq<ParquetLookupGlobalState>();
-	state->column_indexes = input.column_indexes;
-	state->projection_ids = input.projection_ids;
-	state->filters = input.filters;
-	return std::move(state);
-}
-
+// Drain helper for read_parquet's lookup TableFunction. The gstate IS a
+// MultiFileGlobalState (built by MultiFileInitGlobal from
+// init_input.pk_lookups, which set MultiFileGlobalState::pk_lookups and
+// from there ParquetReadGlobalState::pk_lookups). This callback just spins
+// MultiFileScan until the row-group walker is done -- no internal init.
 void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-	auto &gstate = data.global_state->Cast<ParquetLookupGlobalState>();
-	if (data.pk_lookups.empty()) {
+	auto &gstate = data.global_state->Cast<MultiFileGlobalState>();
+	if (gstate.pk_lookups.empty()) {
 		output.SetCardinality(0);
 		return;
 	}
 
-	// Caller-provided pk_lookups (already sorted; storage owned by caller).
-	// TryInitializeScan reads the span to skip row groups via lower_bound;
-	// ParquetReader::Scan narrows each chunk via selection vector.
-	TableFunctionInitInput init(data.bind_data, gstate.column_indexes, gstate.projection_ids, gstate.filters);
-	init.pk_lookups = data.pk_lookups;
-	auto inner_gstate = MultiFileFunction<ParquetMultiFileInfo>::MultiFileInitGlobal(context, init);
-	ThreadContext thread_ctx(context);
-	ExecutionContext exec_ctx(context, thread_ctx, nullptr);
-	auto inner_lstate =
-	    MultiFileFunction<ParquetMultiFileInfo>::MultiFileInitLocal(exec_ctx, init, inner_gstate.get());
-
-	if (gstate.scratch.ColumnCount() == 0) {
-		gstate.scratch.Initialize(context, output.GetTypes());
-	}
-
-	TableFunctionInput delegated(data.bind_data, inner_lstate.get(), inner_gstate.get());
-	delegated.results_execution_mode = AsyncResultsExecutionMode::SYNCHRONOUS;
+	DataChunk scratch;
+	scratch.Initialize(context, output.GetTypes());
 	idx_t total = 0;
-	const idx_t num_rows = data.pk_lookups.size();
+	const idx_t num_rows = gstate.pk_lookups.size();
+	auto saved_mode = data.results_execution_mode;
+	data.results_execution_mode = AsyncResultsExecutionMode::SYNCHRONOUS;
 	while (total < num_rows) {
-		gstate.scratch.Reset();
-		MultiFileFunction<ParquetMultiFileInfo>::MultiFileScan(context, delegated, gstate.scratch);
-		const auto scanned = gstate.scratch.size();
+		scratch.Reset();
+		MultiFileFunction<ParquetMultiFileInfo>::MultiFileScan(context, data, scratch);
+		const auto scanned = scratch.size();
 		if (scanned == 0) {
 			break;
 		}
-		for (idx_t c = 0; c < gstate.scratch.ColumnCount(); ++c) {
-			VectorOperations::Copy(gstate.scratch.data[c], output.data[c], scanned, 0, total);
+		for (idx_t c = 0; c < scratch.ColumnCount(); ++c) {
+			VectorOperations::Copy(scratch.data[c], output.data[c], scanned, 0, total);
 		}
 		total += scanned;
 	}
+	data.results_execution_mode = saved_mode;
 	output.SetCardinality(total);
 }
 
 } // namespace
 
+// The lookup TableFunction is a thin specialization of read_parquet:
+//   - init_global = MultiFileInitGlobal (propagates init_input.pk_lookups
+//     into MultiFileGlobalState::pk_lookups; downstream ParquetReadGlobalState
+//     and TryInitializeScan use it for row-group skipping in O(log)).
+//   - function = ParquetLookupScan (drain loop above).
+// Caller passes pk_lookups via init_input each batch (sorted ascending).
 TableFunction MakeParquetLookupTableFunction() {
 	TableFunction fn;
-	fn.init_global = ParquetLookupInitGlobal;
+	fn.init_global = MultiFileFunction<ParquetMultiFileInfo>::MultiFileInitGlobal;
+	fn.init_local = MultiFileFunction<ParquetMultiFileInfo>::MultiFileInitLocal;
 	fn.function = ParquetLookupScan;
 	return fn;
 }

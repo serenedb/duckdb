@@ -36,12 +36,14 @@ struct CSVLookupGlobalState : public GlobalTableFunctionState {
 	unique_ptr<StringValueScanner> scanner;
 	// Pinned buffer-usage handle for the scanner's lifetime. Single-buffer
 	// CSVs only -- if the file spans multiple buffers we'd need to update
-	// this when crossing boundaries (current SereneDB use case is small
-	// single-buffer files; if we ever hit multi-buffer files in lookup mode
-	// the simplest fix is to re-pin per-pk).
+	// this when crossing boundaries.
 	shared_ptr<CSVBufferUsage> buffer_pin;
 	DataChunk parse_chunk;
 	std::vector<idx_t> output_to_file_col;
+	// pk_lookups span captured from init_input.pk_lookups at init_global time.
+	// Refreshed each batch when the caller re-inits this gstate with a new
+	// sorted offsets span.
+	std::span<const int64_t> pk_lookups;
 };
 
 // Builds the lookup gstate from a caller-bound MultiFileBindData. We only
@@ -95,6 +97,10 @@ unique_ptr<GlobalTableFunctionState> CSVLookupInitGlobal(ClientContext &context,
 		D_ASSERT(it != sorted_file_cols.end());
 		state->output_to_file_col.push_back(NumericCast<idx_t>(it - sorted_file_cols.begin()));
 	}
+
+	// Capture the caller-provided sorted offsets span. Refreshed by the next
+	// init_global call when the caller starts a new batch.
+	state->pk_lookups = input.pk_lookups;
 	return std::move(state);
 }
 
@@ -115,15 +121,15 @@ CSVIterator MakeTightIterator(CSVFileScan &file_scan, idx_t global_offset, idx_t
 // steady state: parse_chunk, pk_lookups, scanner, file_scan are all cached.
 void CSVLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<CSVLookupGlobalState>();
-	if (data.pk_lookups.empty()) {
+	if (gstate.pk_lookups.empty()) {
 		output.SetCardinality(0);
 		return;
 	}
 
-	const idx_t num_rows = data.pk_lookups.size();
+	const idx_t num_rows = gstate.pk_lookups.size();
 	idx_t emitted = 0;
 	for (idx_t i = 0; i < num_rows; ++i) {
-		const auto offset = NumericCast<idx_t>(data.pk_lookups[i]);
+		const auto offset = NumericCast<idx_t>(gstate.pk_lookups[i]);
 		auto iter = MakeTightIterator(*gstate.file_scan, offset, i);
 
 		if (!gstate.scanner) {

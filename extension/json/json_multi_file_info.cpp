@@ -6,76 +6,55 @@
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
-#include "duckdb/execution/execution_context.hpp"
 #include "duckdb/parallel/async_result.hpp"
-#include "duckdb/parallel/thread_context.hpp"
 
 namespace duckdb {
 
 namespace {
 
-// Cached projection state for the read_json `lookup` sibling. init_global is
-// called once per query and snapshots column_indexes / projection_ids /
-// filters; per-batch `function` re-inits a fresh JSON gstate with the
-// caller-provided sorted pk_lookups span attached.
-struct JSONLookupGlobalState : public GlobalTableFunctionState {
-	vector<ColumnIndex> column_indexes;
-	vector<idx_t> projection_ids;
-	optional_ptr<TableFilterSet> filters;
-	DataChunk scratch;
-};
-
-unique_ptr<GlobalTableFunctionState> JSONLookupInitGlobal(ClientContext &, TableFunctionInitInput &input) {
-	auto state = make_uniq<JSONLookupGlobalState>();
-	state->column_indexes = input.column_indexes;
-	state->projection_ids = input.projection_ids;
-	state->filters = input.filters;
-	return std::move(state);
-}
-
+// Drain helper for read_json's lookup TableFunction. gstate is a
+// MultiFileGlobalState built by MultiFileInitGlobal -- pk_lookups was
+// propagated from init_input into JSONScanGlobalState during init, where
+// ReadJSONFunctionPkLookup uses it for offset-seek random reads.
 void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-	auto &gstate = data.global_state->Cast<JSONLookupGlobalState>();
-	if (data.pk_lookups.empty()) {
+	auto &gstate = data.global_state->Cast<MultiFileGlobalState>();
+	if (gstate.pk_lookups.empty()) {
 		output.SetCardinality(0);
 		return;
 	}
 
-	TableFunctionInitInput init(data.bind_data, gstate.column_indexes, gstate.projection_ids, gstate.filters);
-	init.pk_lookups = data.pk_lookups;
-	auto inner_gstate = MultiFileFunction<JSONMultiFileInfo>::MultiFileInitGlobal(context, init);
-	ThreadContext thread_ctx(context);
-	ExecutionContext exec_ctx(context, thread_ctx, nullptr);
-	auto inner_lstate =
-	    MultiFileFunction<JSONMultiFileInfo>::MultiFileInitLocal(exec_ctx, init, inner_gstate.get());
-
-	if (gstate.scratch.ColumnCount() == 0) {
-		gstate.scratch.Initialize(context, output.GetTypes());
-	}
-
-	TableFunctionInput delegated(data.bind_data, inner_lstate.get(), inner_gstate.get());
-	delegated.results_execution_mode = AsyncResultsExecutionMode::SYNCHRONOUS;
+	DataChunk scratch;
+	scratch.Initialize(context, output.GetTypes());
 	idx_t total = 0;
-	const idx_t num_rows = data.pk_lookups.size();
+	const idx_t num_rows = gstate.pk_lookups.size();
+	auto saved_mode = data.results_execution_mode;
+	data.results_execution_mode = AsyncResultsExecutionMode::SYNCHRONOUS;
 	while (total < num_rows) {
-		gstate.scratch.Reset();
-		MultiFileFunction<JSONMultiFileInfo>::MultiFileScan(context, delegated, gstate.scratch);
-		const auto scanned = gstate.scratch.size();
+		scratch.Reset();
+		MultiFileFunction<JSONMultiFileInfo>::MultiFileScan(context, data, scratch);
+		const auto scanned = scratch.size();
 		if (scanned == 0) {
 			break;
 		}
-		for (idx_t c = 0; c < gstate.scratch.ColumnCount(); ++c) {
-			VectorOperations::Copy(gstate.scratch.data[c], output.data[c], scanned, 0, total);
+		for (idx_t c = 0; c < scratch.ColumnCount(); ++c) {
+			VectorOperations::Copy(scratch.data[c], output.data[c], scanned, 0, total);
 		}
 		total += scanned;
 	}
+	data.results_execution_mode = saved_mode;
 	output.SetCardinality(total);
 }
 
 } // namespace
 
+// Thin lookup specialization of read_json. init_global / init_local are the
+// regular MultiFileFunction ones (init_input.pk_lookups propagates into
+// JSONScanGlobalState::pk_lookups via InitializeGlobalState). function is
+// the drain loop above.
 TableFunction MakeJSONLookupTableFunction() {
 	TableFunction fn;
-	fn.init_global = JSONLookupInitGlobal;
+	fn.init_global = MultiFileFunction<JSONMultiFileInfo>::MultiFileInitGlobal;
+	fn.init_local = MultiFileFunction<JSONMultiFileInfo>::MultiFileInitLocal;
 	fn.function = JSONLookupScan;
 	return fn;
 }
