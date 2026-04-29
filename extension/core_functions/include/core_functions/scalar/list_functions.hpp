@@ -28,8 +28,7 @@ struct ListFlattenFun {
 struct ListAggregateFun {
 	static constexpr const char *Name = "list_aggregate";
 	static constexpr const char *Parameters = "list,function_name";
-	static constexpr const char *Description =
-	    "Executes the aggregate function `function_name` on the elements of `list`.";
+	static constexpr const char *Description = "Executes the aggregate function `function_name` on the elements of `list`.";
 	static constexpr const char *Example = "list_aggregate([1, 2, NULL], 'min')";
 	static constexpr const char *Categories = "list";
 
@@ -63,8 +62,7 @@ struct AggregateFun {
 struct ListDistinctFun {
 	static constexpr const char *Name = "list_distinct";
 	static constexpr const char *Parameters = "list";
-	static constexpr const char *Description =
-	    "Removes all duplicates and `NULL` values from a list. Does not preserve the original order.";
+	static constexpr const char *Description = "Removes all duplicates and `NULL` values from a list. Does not preserve the original order.";
 	static constexpr const char *Example = "list_distinct([1, 1, NULL, -3, 1, 5])";
 	static constexpr const char *Categories = "list";
 
@@ -112,11 +110,8 @@ struct ListPackFun {
 struct ListSliceFun {
 	static constexpr const char *Name = "list_slice";
 	static constexpr const char *Parameters = "list,begin,end\001list,begin,end,step";
-	static constexpr const char *Description = "Extracts a sublist or substring using slice conventions. Negative "
-	                                           "values are accepted.\001list_slice with added step feature.";
-	static constexpr const char *Example =
-	    "list_slice([4, 5, 6], 2, 3)\002array_slice('DuckDB', 3, 4)\002array_slice('DuckDB', 3, "
-	    "NULL)\002array_slice('DuckDB', 0, -3)\001list_slice([4, 5, 6], 1, 3, 2)";
+	static constexpr const char *Description = "Extracts a sublist or substring using slice conventions. Negative values are accepted.\001list_slice with added step feature.";
+	static constexpr const char *Example = "list_slice([4, 5, 6], 2, 3)\002array_slice('DuckDB', 3, 4)\002array_slice('DuckDB', 3, NULL)\002array_slice('DuckDB', 0, -3)\001list_slice([4, 5, 6], 1, 3, 2)";
 	static constexpr const char *Categories = "list,string\001list";
 
 	static ScalarFunctionSet GetFunctions();
@@ -147,8 +142,7 @@ struct ArraySortFun {
 struct ListGradeUpFun {
 	static constexpr const char *Name = "list_grade_up";
 	static constexpr const char *Parameters = "list";
-	static constexpr const char *Description = "Works like list_sort, but the results are the indexes that correspond "
-	                                           "to the position in the original list instead of the actual values.";
+	static constexpr const char *Description = "Works like list_sort, but the results are the indexes that correspond to the position in the original list instead of the actual values.";
 	static constexpr const char *Example = "list_grade_up([3, 6, 1, 2])";
 	static constexpr const char *Categories = "list";
 
@@ -186,9 +180,7 @@ struct ArrayReverseSortFun {
 struct ListTransformFun {
 	static constexpr const char *Name = "list_transform";
 	static constexpr const char *Parameters = "list,lambda(x)";
-	static constexpr const char *Description =
-	    "Returns a list that is the result of applying the `lambda` function to each element of the input `list`. The "
-	    "return type is defined by the return type of the `lambda` function.";
+	static constexpr const char *Description = "Returns a list that is the result of applying the `lambda` function to each element of the input `list`. The return type is defined by the return type of the `lambda` function.";
 	static constexpr const char *Example = "list_transform([1, 2, 3], lambda x : x + 1)";
 	static constexpr const char *Categories = "list,lambda";
 
@@ -222,10 +214,7 @@ struct ApplyFun {
 struct ListFilterFun {
 	static constexpr const char *Name = "list_filter";
 	static constexpr const char *Parameters = "list,lambda(x)";
-	static constexpr const char *Description =
-	    "Constructs a list from those elements of the input `list` for which the `lambda` function returns `true`. "
-	    "DuckDB must be able to cast the `lambda` function's return type to `BOOL`. The return type of `list_filter` "
-	    "is the same as the input list's.";
+	static constexpr const char *Description = "Constructs a list from those elements of the input `list` for which the `lambda` function returns `true`. DuckDB must be able to cast the `lambda` function's return type to `BOOL`. The return type of `list_filter` is the same as the input list's.";
 	static constexpr const char *Example = "list_filter([3, 4, 5], lambda x : x > 4)";
 	static constexpr const char *Categories = "list,lambda";
 
@@ -247,9 +236,7 @@ struct FilterFun {
 struct ListReduceFun {
 	static constexpr const char *Name = "list_reduce";
 	static constexpr const char *Parameters = "list,lambda(x,y),initial_value";
-	static constexpr const char *Description =
-	    "Reduces all elements of the input `list` into a single scalar value by executing the `lambda` function on a "
-	    "running result and the next list element. The `lambda` function has an optional `initial_value` argument.";
+	static constexpr const char *Description = "Reduces all elements of the input `list` into a single scalar value by executing the `lambda` function on a running result and the next list element. The `lambda` function has an optional `initial_value` argument.";
 	static constexpr const char *Example = "list_reduce([1, 2, 3], lambda x, y : x + y)";
 	static constexpr const char *Categories = "list,lambda";
 
@@ -271,8 +258,7 @@ struct ReduceFun {
 struct GenerateSeriesFun {
 	static constexpr const char *Name = "generate_series";
 	static constexpr const char *Parameters = "start,stop,step";
-	static constexpr const char *Description =
-	    "Creates a list of values between `start` and `stop` - the stop parameter is inclusive.";
+	static constexpr const char *Description = "Creates a list of values between `start` and `stop` - the stop parameter is inclusive.";
 	static constexpr const char *Example = "generate_series(2, 5, 3)";
 	static constexpr const char *Categories = "list";
 
@@ -282,8 +268,7 @@ struct GenerateSeriesFun {
 struct ListRangeFun {
 	static constexpr const char *Name = "range";
 	static constexpr const char *Parameters = "start,stop,step";
-	static constexpr const char *Description =
-	    "Creates a list of values between `start` and `stop` - the stop parameter is exclusive.";
+	static constexpr const char *Description = "Creates a list of values between `start` and `stop` - the stop parameter is exclusive.";
 	static constexpr const char *Example = "range(2, 5, 3)";
 	static constexpr const char *Categories = "list";
 
@@ -313,8 +298,7 @@ struct ListCosineSimilarityFun {
 struct ListDistanceFun {
 	static constexpr const char *Name = "list_distance";
 	static constexpr const char *Parameters = "list1,list2";
-	static constexpr const char *Description = "Calculates the Euclidean distance between two points with coordinates "
-	                                           "given in two inputs lists of equal length.";
+	static constexpr const char *Description = "Calculates the Euclidean distance between two points with coordinates given in two inputs lists of equal length.";
 	static constexpr const char *Example = "list_distance([1, 2, 3], [1, 2, 5])";
 	static constexpr const char *Categories = "list";
 
@@ -356,8 +340,7 @@ struct ListNegativeDotProductFun {
 struct UnpivotListFun {
 	static constexpr const char *Name = "unpivot_list";
 	static constexpr const char *Parameters = "any,...";
-	static constexpr const char *Description =
-	    "Identical to list_value, but generated as part of unpivot for better error messages.";
+	static constexpr const char *Description = "Identical to list_value, but generated as part of unpivot for better error messages.";
 	static constexpr const char *Example = "unpivot_list(4, 5, 6)";
 	static constexpr const char *Categories = "list";
 
@@ -367,8 +350,7 @@ struct UnpivotListFun {
 struct ListHasAnyFun {
 	static constexpr const char *Name = "list_has_any";
 	static constexpr const char *Parameters = "list1,list2";
-	static constexpr const char *Description =
-	    "Returns true if the lists have any element in common. NULLs are ignored.";
+	static constexpr const char *Description = "Returns true if the lists have any element in common. NULLs are ignored.";
 	static constexpr const char *Example = "list_has_any([1, 2, 3], [2, 3, 4])";
 	static constexpr const char *Categories = "list";
 

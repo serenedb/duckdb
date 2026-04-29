@@ -28,8 +28,7 @@ struct ApproxCountDistinctFun {
 struct ArgMinFun {
 	static constexpr const char *Name = "arg_min";
 	static constexpr const char *Parameters = "arg,val";
-	static constexpr const char *Description =
-	    "Finds the row with the minimum val. Calculates the non-NULL arg expression at that row.";
+	static constexpr const char *Description = "Finds the row with the minimum val. Calculates the non-NULL arg expression at that row.";
 	static constexpr const char *Example = "arg_min(A, B)";
 	static constexpr const char *Categories = "";
 
@@ -51,8 +50,7 @@ struct MinByFun {
 struct ArgMinNullFun {
 	static constexpr const char *Name = "arg_min_null";
 	static constexpr const char *Parameters = "arg,val";
-	static constexpr const char *Description =
-	    "Finds the row with the minimum val. Calculates the arg expression at that row.";
+	static constexpr const char *Description = "Finds the row with the minimum val. Calculates the arg expression at that row.";
 	static constexpr const char *Example = "arg_min_null(A, B)";
 	static constexpr const char *Categories = "";
 
@@ -62,8 +60,7 @@ struct ArgMinNullFun {
 struct ArgMinNullsLastFun {
 	static constexpr const char *Name = "arg_min_nulls_last";
 	static constexpr const char *Parameters = "arg,val,N";
-	static constexpr const char *Description =
-	    "Finds the rows with N minimum vals, including nulls. Calculates the arg expression at that row.";
+	static constexpr const char *Description = "Finds the rows with N minimum vals, including nulls. Calculates the arg expression at that row.";
 	static constexpr const char *Example = "arg_min_null_val(A, B, N)";
 	static constexpr const char *Categories = "";
 
@@ -73,8 +70,7 @@ struct ArgMinNullsLastFun {
 struct ArgMaxFun {
 	static constexpr const char *Name = "arg_max";
 	static constexpr const char *Parameters = "arg,val";
-	static constexpr const char *Description =
-	    "Finds the row with the maximum val. Calculates the non-NULL arg expression at that row.";
+	static constexpr const char *Description = "Finds the row with the maximum val. Calculates the non-NULL arg expression at that row.";
 	static constexpr const char *Example = "arg_max(A, B)";
 	static constexpr const char *Categories = "";
 
@@ -96,8 +92,7 @@ struct MaxByFun {
 struct ArgMaxNullFun {
 	static constexpr const char *Name = "arg_max_null";
 	static constexpr const char *Parameters = "arg,val";
-	static constexpr const char *Description =
-	    "Finds the row with the maximum val. Calculates the arg expression at that row.";
+	static constexpr const char *Description = "Finds the row with the maximum val. Calculates the arg expression at that row.";
 	static constexpr const char *Example = "arg_max_null(A, B)";
 	static constexpr const char *Categories = "";
 
@@ -107,8 +102,7 @@ struct ArgMaxNullFun {
 struct ArgMaxNullsLastFun {
 	static constexpr const char *Name = "arg_max_nulls_last";
 	static constexpr const char *Parameters = "arg,val,N";
-	static constexpr const char *Description =
-	    "Finds the rows with N maximum vals, including nulls. Calculates the arg expression at that row.";
+	static constexpr const char *Description = "Finds the rows with N maximum vals, including nulls. Calculates the arg expression at that row.";
 	static constexpr const char *Example = "arg_min_null_val(A, B, N)";
 	static constexpr const char *Categories = "";
 
@@ -210,8 +204,7 @@ struct EntropyFun {
 struct KahanSumFun {
 	static constexpr const char *Name = "kahan_sum";
 	static constexpr const char *Parameters = "arg";
-	static constexpr const char *Description =
-	    "Calculates the sum using a more accurate floating point summation (Kahan Sum).";
+	static constexpr const char *Description = "Calculates the sum using a more accurate floating point summation (Kahan Sum).";
 	static constexpr const char *Example = "kahan_sum(A)";
 	static constexpr const char *Categories = "";
 
@@ -233,8 +226,7 @@ struct SumkahanFun {
 struct KurtosisFun {
 	static constexpr const char *Name = "kurtosis";
 	static constexpr const char *Parameters = "x";
-	static constexpr const char *Description = "Returns the excess kurtosis (Fisher’s definition) of all input values, "
-	                                           "with a bias correction according to the sample size";
+	static constexpr const char *Description = "Returns the excess kurtosis (Fisher’s definition) of all input values, with a bias correction according to the sample size";
 	static constexpr const char *Example = "";
 	static constexpr const char *Categories = "";
 
@@ -244,8 +236,7 @@ struct KurtosisFun {
 struct KurtosisPopFun {
 	static constexpr const char *Name = "kurtosis_pop";
 	static constexpr const char *Parameters = "x";
-	static constexpr const char *Description =
-	    "Returns the excess kurtosis (Fisher’s definition) of all input values, without bias correction";
+	static constexpr const char *Description = "Returns the excess kurtosis (Fisher’s definition) of all input values, without bias correction";
 	static constexpr const char *Example = "";
 	static constexpr const char *Categories = "";
 
@@ -307,8 +298,7 @@ struct SumFun {
 struct SumNoOverflowFun {
 	static constexpr const char *Name = "sum_no_overflow";
 	static constexpr const char *Parameters = "arg";
-	static constexpr const char *Description =
-	    "Internal only. Calculates the sum value for all tuples in arg without overflow checks.";
+	static constexpr const char *Description = "Internal only. Calculates the sum value for all tuples in arg without overflow checks.";
 	static constexpr const char *Example = "sum_no_overflow(A)";
 	static constexpr const char *Categories = "";
 
