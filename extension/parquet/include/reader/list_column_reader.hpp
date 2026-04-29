@@ -21,8 +21,7 @@ public:
 	ListColumnReader(const ParquetReader &reader, const ParquetColumnSchema &schema,
 	                 unique_ptr<ColumnReader> child_column_reader_p);
 
-	idx_t Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result_out,
-	           idx_t result_offset = 0) override;
+	idx_t Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result_out) override;
 
 	void ApplyPendingSkips(data_ptr_t define_out, data_ptr_t repeat_out) override;
 

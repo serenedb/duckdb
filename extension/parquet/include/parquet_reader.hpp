@@ -128,9 +128,9 @@ struct ParquetReaderScanState {
 	//! (optional) pointer to the PhysicalOperator for logging
 	optional_ptr<const PhysicalOperator> op;
 
-	//! Sorted file_row_numbers driving pk-lookup mode. Set via gstate on each
-	//! outer Scan dispatch; Scan narrows each chunk to rows whose index into
-	//! the current row group lands in this span (see ParquetReader::Scan).
+	//! Sorted file_row_numbers driving pk-lookup mode. Set by the lookup TF
+	//! before each Scan; the parquet reader narrows each chunk to rows whose
+	//! row index falls in this span (see ParquetReader::Scan).
 	std::span<const int64_t> pk_lookups;
 };
 
@@ -227,13 +227,7 @@ public:
 
 public:
 	void InitializeScan(ClientContext &context, ParquetReaderScanState &state, vector<idx_t> groups_to_read) const;
-	//! `append_offset > 0` switches Scan into append mode: skips `output.Reset()`,
-	//! threads the offset through the column reader writes (`Read`/`Select`/`Filter`),
-	//! sets cardinality to `append_offset + filter_count`, and skips the post-Select
-	//! `output.Slice(sel, ...)` compact step (the writes already landed compactly at
-	//! `[append_offset, append_offset + filter_count)`). Used by the lookup TF to
-	//! accumulate multiple Scan calls into one output without per-call Copy.
-	AsyncResult Scan(ClientContext &context, ParquetReaderScanState &state, DataChunk &output, idx_t append_offset = 0);
+	AsyncResult Scan(ClientContext &context, ParquetReaderScanState &state, DataChunk &output);
 
 	idx_t NumRows() const;
 	idx_t NumRowGroups() const;

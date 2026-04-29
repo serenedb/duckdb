@@ -216,7 +216,7 @@ void ColumnReader::Plain(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defi
 }
 
 void ColumnReader::PlainSelect(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values,
-                               Vector &result, const SelectionVector &sel, idx_t count, idx_t dst_offset) {
+                               Vector &result, const SelectionVector &sel, idx_t count) {
 	throw NotImplementedException("PlainSelect not implemented");
 }
 
@@ -700,11 +700,10 @@ void ColumnReader::FinishRead(idx_t read_count) {
 	group_rows_available -= read_count;
 }
 
-idx_t ColumnReader::ReadInternal(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result,
-                                 idx_t initial_result_offset) {
-	idx_t result_offset = initial_result_offset;
+idx_t ColumnReader::ReadInternal(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result) {
+	idx_t result_offset = 0;
 	auto to_read = num_values;
-	D_ASSERT(initial_result_offset + to_read <= STANDARD_VECTOR_SIZE);
+	D_ASSERT(to_read <= STANDARD_VECTOR_SIZE);
 
 	while (to_read > 0) {
 		auto read_now = ReadPageHeaders(to_read);
@@ -719,27 +718,22 @@ idx_t ColumnReader::ReadInternal(uint64_t num_values, data_ptr_t define_out, dat
 	return num_values;
 }
 
-idx_t ColumnReader::Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result,
-                         idx_t result_offset) {
+idx_t ColumnReader::Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result) {
 	BeginRead(define_out, repeat_out);
-	return ReadInternal(num_values, define_out, repeat_out, result, result_offset);
+	return ReadInternal(num_values, define_out, repeat_out, result);
 }
 
 void ColumnReader::Select(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result_out,
-                          const SelectionVector &sel, idx_t approved_tuple_count, idx_t dst_offset) {
+                          const SelectionVector &sel, idx_t approved_tuple_count) {
 	if (SupportsDirectSelect() && approved_tuple_count < num_values) {
-		DirectSelect(num_values, define_out, repeat_out, result_out, sel, approved_tuple_count, dst_offset);
+		DirectSelect(num_values, define_out, repeat_out, result_out, sel, approved_tuple_count);
 		return;
 	}
-	// Fallback: read all num_values rows. In append mode we read at dst_offset (the
-	// caller will then pick out the matching rows via sel separately, since this
-	// path can't compact-write at the destination). Default mode reads at slot 0.
-	const idx_t read_offset = (dst_offset == DConstants::INVALID_INDEX) ? 0 : dst_offset;
-	Read(num_values, define_out, repeat_out, result_out, read_offset);
+	Read(num_values, define_out, repeat_out, result_out);
 }
 
 void ColumnReader::DirectSelect(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result,
-                                const SelectionVector &sel, idx_t approved_tuple_count, idx_t dst_offset) {
+                                const SelectionVector &sel, idx_t approved_tuple_count) {
 	auto to_read = num_values;
 
 	// prepare the first read if we haven't yet
@@ -750,32 +744,30 @@ void ColumnReader::DirectSelect(uint64_t num_values, data_ptr_t define_out, data
 	if (read_now == to_read && encoding == ColumnEncoding::PLAIN) {
 		const auto all_valid = PrepareRead(read_now, define_out, repeat_out, 0);
 		const auto define_ptr = all_valid ? nullptr : static_cast<uint8_t *>(define_out);
-		PlainSelect(block, define_ptr, read_now, result, sel, approved_tuple_count, dst_offset);
+		PlainSelect(block, define_ptr, read_now, result, sel, approved_tuple_count);
 
 		page_rows_available -= read_now;
 		FinishRead(num_values);
 		return;
 	}
 	// fallback to regular read + filter
-	const idx_t read_offset = (dst_offset == DConstants::INVALID_INDEX) ? 0 : dst_offset;
-	ReadInternal(num_values, define_out, repeat_out, result, read_offset);
+	ReadInternal(num_values, define_out, repeat_out, result);
 }
 
 void ColumnReader::Filter(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result,
                           const TableFilter &filter, TableFilterState &filter_state, SelectionVector &sel,
-                          idx_t &approved_tuple_count, bool is_first_filter, idx_t dst_offset) {
+                          idx_t &approved_tuple_count, bool is_first_filter) {
 	if (SupportsDirectFilter() && is_first_filter) {
-		DirectFilter(num_values, define_out, repeat_out, result, filter, filter_state, sel, approved_tuple_count,
-		             dst_offset);
+		DirectFilter(num_values, define_out, repeat_out, result, filter, filter_state, sel, approved_tuple_count);
 		return;
 	}
-	Select(num_values, define_out, repeat_out, result, sel, approved_tuple_count, dst_offset);
+	Select(num_values, define_out, repeat_out, result, sel, approved_tuple_count);
 	ApplyFilter(result, filter, filter_state, num_values, sel, approved_tuple_count);
 }
 
 void ColumnReader::DirectFilter(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result,
                                 const TableFilter &filter, TableFilterState &filter_state, SelectionVector &sel,
-                                idx_t &approved_tuple_count, idx_t dst_offset) {
+                                idx_t &approved_tuple_count) {
 	auto to_read = num_values;
 
 	// prepare the first read if we haven't yet
@@ -796,15 +788,10 @@ void ColumnReader::DirectFilter(uint64_t num_values, data_ptr_t define_out, data
 		}
 		page_rows_available -= read_now;
 		FinishRead(num_values);
-		// Note: dictionary direct filter writes scattered at sel[i]; in append mode the
-		// caller would still need a Slice. We intentionally don't take this fast path
-		// when dst_offset is set (the SupportsDirectFilter check + this branch only
-		// kicks in for non-append cases via streaming scan).
 		return;
 	}
 	// fallback to regular read + filter
-	const idx_t read_offset = (dst_offset == DConstants::INVALID_INDEX) ? 0 : dst_offset;
-	ReadInternal(num_values, define_out, repeat_out, result, read_offset);
+	ReadInternal(num_values, define_out, repeat_out, result);
 	ApplyFilter(result, filter, filter_state, num_values, sel, approved_tuple_count);
 }
 

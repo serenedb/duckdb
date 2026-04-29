@@ -452,18 +452,9 @@ struct ParquetLookupGlobalState : public GlobalTableFunctionState {
 	//! streaming's ConstructMapExpression.
 	vector<unique_ptr<Expression>> expressions;
 	ExpressionExecutor executor;
-	//! `true` if any column needs a real cast (i.e., declared != native).
-	bool needs_cast = false;
-	//! Cast destination owning the heap for VARCHAR / nested types. Only
-	//! allocated when at least one column casts to a heap-bearing type.
+	//! Per-call cast destination (owns the heap for VARCHAR/nested). Reset
+	//! per Scan() call; data is Copy'd into output before reset on next call.
 	DataChunk scratch_typed;
-	//! Per-projected-col flag: true if we can cast directly into a non-owning
-	//! view of `output` at offset (primitive types). False for VARCHAR/nested
-	//! where the cast destination needs an owned heap that survives the call.
-	vector<bool> col_in_place_ok;
-	//! Per-projected-col element size in bytes (declared type's PhysicalType).
-	//! Used by the in-place path to compute `output_data + total*size`.
-	vector<idx_t> declared_element_size;
 	ParquetReaderScanState scan_state;
 
 	explicit ParquetLookupGlobalState(ClientContext &context) : executor(context) {
@@ -522,28 +513,19 @@ unique_ptr<GlobalTableFunctionState> ParquetLookupInitGlobal(ClientContext &cont
 	// the declared types (same shape as streaming's
 	// MultiFileColumnMapper::ConstructMapExpression).
 	vector<LogicalType> native_types;
+	vector<LogicalType> declared_types;
 	native_types.reserve(state->file_cols.size());
-	state->declared_element_size.reserve(state->file_cols.size());
-	state->col_in_place_ok.reserve(state->file_cols.size());
-	bool any_owned_heap = false;
+	declared_types.reserve(state->file_cols.size());
 	for (idx_t i = 0; i < state->file_cols.size(); ++i) {
 		const auto file_col = state->file_cols[i];
 		auto &native = state->reader->columns[file_col].type;
 		const auto &declared = bind_data.types[file_col];
-		if (native != declared) {
-			state->needs_cast = true;
-		}
-		const bool needs_owned_heap = declared.IsNested() || declared.InternalType() == PhysicalType::VARCHAR;
-		state->col_in_place_ok.push_back(!needs_owned_heap);
-		any_owned_heap = any_owned_heap || needs_owned_heap;
 		native_types.push_back(native);
-		state->declared_element_size.push_back(GetTypeIdSize(declared.InternalType()));
+		declared_types.push_back(declared);
 
 		// Per-col cast expression: BoundReferenceExpression(local_idx,
 		// native_type) optionally wrapped in BoundCastExpression(declared_type).
-		// Mirrors streaming's ConstructMapExpression
-		// (multi_file_column_mapper.cpp:586) -- AddCastToType is a no-op when
-		// types already match.
+		// AddCastToType is a no-op when types already match.
 		unique_ptr<Expression> expr = make_uniq<BoundReferenceExpression>(native, i);
 		if (native != declared) {
 			expr = BoundCastExpression::AddCastToType(context, std::move(expr), declared);
@@ -551,19 +533,9 @@ unique_ptr<GlobalTableFunctionState> ParquetLookupInitGlobal(ClientContext &cont
 		state->expressions.push_back(std::move(expr));
 	}
 	state->scan_chunk.Initialize(context, native_types);
+	state->scratch_typed.Initialize(context, declared_types);
 	for (auto &expr : state->expressions) {
 		state->executor.AddExpression(*expr);
-	}
-	// Owned typed scratch only allocated when at least one column casts to a
-	// heap-bearing type (VARCHAR/nested). Primitive casts go in-place via a
-	// non-owning Vector view of `output` at offset.
-	if (state->needs_cast && any_owned_heap) {
-		vector<LogicalType> typed_types;
-		typed_types.reserve(state->file_cols.size());
-		for (auto file_col : state->file_cols) {
-			typed_types.push_back(bind_data.types[file_col]);
-		}
-		state->scratch_typed.Initialize(context, typed_types);
 	}
 
 	return std::move(state);
@@ -617,33 +589,14 @@ void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChu
 	gstate.reader->InitializeScan(context, gstate.scan_state, std::move(groups_to_read));
 	gstate.scan_state.pk_lookups = data.pk_lookups;
 
-	// Fast path A -- ALL types match: ParquetReader::Scan writes parquet's
-	// native types directly into `output` at the running offset. ZERO copy,
-	// no executor invocation.
-	if (!gstate.needs_cast) {
-		idx_t total = 0;
-		while (!gstate.scan_state.finished) {
-			gstate.reader->Scan(context, gstate.scan_state, output, /*append_offset=*/total);
-			total = output.size();
-		}
-		output.SetCardinality(total);
-		return;
-	}
-
-	// Cast path -- mirrors streaming (multi_file_function.hpp:614 +
-	// multi_file_reader.cpp:438): ParquetReader::Scan into scan_chunk in
-	// native types; per column, evaluate the BoundCastExpression via the
-	// ExpressionExecutor. For primitive cast destinations the executor writes
-	// directly into a non-owning view of `output` at offset (zero copy beyond
-	// the unavoidable per-element type conversion). For VARCHAR/nested
-	// destinations we evaluate into scratch_typed (whose heap lives across
-	// calls via gstate), then Copy the 16-byte string_t structs into output
-	// at offset -- the strings themselves stay in scratch_typed's heap, and
-	// VectorOperations::Copy adds the heap reference so they outlive the
-	// scratch_typed reset.
+	// Drain the scan: ParquetReader::Scan writes parquet's NATIVE types into
+	// scan_chunk; per-column BoundCastExpression evaluated via ExpressionExecutor
+	// produces the declared type into scratch_typed; VectorOperations::Copy
+	// fans out at the running offset.
 	idx_t total = 0;
 	while (!gstate.scan_state.finished) {
 		gstate.scan_chunk.Reset();
+		gstate.scratch_typed.Reset();
 		gstate.reader->Scan(context, gstate.scan_state, gstate.scan_chunk);
 		const auto scanned = gstate.scan_chunk.size();
 		if (scanned == 0) {
@@ -655,19 +608,8 @@ void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChu
 			if (i == DConstants::INVALID_INDEX) {
 				continue;
 			}
-			if (gstate.col_in_place_ok[i]) {
-				// Primitive cast: ExecuteExpression writes directly into a
-				// non-owning view at output[c][total..total+scanned).
-				auto *base = FlatVector::GetDataMutable(output.data[c]);
-				const auto offset_bytes = total * gstate.declared_element_size[i];
-				Vector view(output.data[c].GetType(), base + offset_bytes, scanned);
-				gstate.executor.ExecuteExpression(i, view);
-			} else {
-				// VARCHAR/nested: writes into scratch_typed (owned heap), then
-				// Copy at offset (heap reference accumulates on output).
-				gstate.executor.ExecuteExpression(i, gstate.scratch_typed.data[i]);
-				VectorOperations::Copy(gstate.scratch_typed.data[i], output.data[c], scanned, 0, total);
-			}
+			gstate.executor.ExecuteExpression(i, gstate.scratch_typed.data[i]);
+			VectorOperations::Copy(gstate.scratch_typed.data[i], output.data[c], scanned, 0, total);
 		}
 		total += scanned;
 	}

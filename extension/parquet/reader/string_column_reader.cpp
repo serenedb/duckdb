@@ -93,10 +93,9 @@ void StringColumnReader::PlainSkip(ByteBuffer &plain_data, uint8_t *defines, idx
 }
 
 void StringColumnReader::PlainSelect(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values,
-                                     Vector &result, const SelectionVector &sel, idx_t count, idx_t dst_offset) {
+                                     Vector &result, const SelectionVector &sel, idx_t count) {
 	ReferenceBlock(result, plain_data);
-	PlainSelectTemplated<string_t, StringParquetValueConversion>(*plain_data, defines, num_values, result, sel, count,
-	                                                             dst_offset);
+	PlainSelectTemplated<string_t, StringParquetValueConversion>(*plain_data, defines, num_values, result, sel, count);
 }
 
 } // namespace duckdb

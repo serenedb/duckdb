@@ -66,7 +66,7 @@ protected:
 	           Vector &result) override;
 	void PlainSkip(ByteBuffer &plain_data, uint8_t *defines, idx_t num_values) override;
 	void PlainSelect(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values, Vector &result,
-	                 const SelectionVector &sel, idx_t count, idx_t dst_offset = DConstants::INVALID_INDEX) override;
+	                 const SelectionVector &sel, idx_t count) override;
 
 	bool SupportsDirectFilter() const override {
 		return true;
