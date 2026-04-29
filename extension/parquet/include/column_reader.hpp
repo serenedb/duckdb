@@ -98,12 +98,22 @@ public:
 public:
 	static unique_ptr<ColumnReader> CreateReader(const ParquetReader &reader, const ParquetColumnSchema &schema);
 	virtual void InitializeRead(idx_t row_group_index, const vector<ColumnChunk> &columns, TProtocol &protocol_p);
-	virtual idx_t Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result_out);
+	//! `result_offset` lets the caller append at a pre-existing position in `result_out`
+	//! (used by lookup-mode scans that drain multiple chunks into one output without
+	//! a per-call Copy). Default 0 keeps the original behavior for the streaming path.
+	virtual idx_t Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result_out,
+	                   idx_t result_offset = 0);
+	//! `dst_offset != INVALID_INDEX` means: write the `approved_tuple_count` selected rows
+	//! compactly at `result_out[dst_offset..dst_offset+approved_tuple_count)` (instead of
+	//! scattered at `sel[i]` positions). Used by lookup-mode scans to skip the post-Select
+	//! `result.Slice(sel, count)` compact step.
 	virtual void Select(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result_out,
-	                    const SelectionVector &sel, idx_t approved_tuple_count);
+	                    const SelectionVector &sel, idx_t approved_tuple_count,
+	                    idx_t dst_offset = DConstants::INVALID_INDEX);
 	virtual void Filter(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result_out,
 	                    const TableFilter &filter, TableFilterState &filter_state, SelectionVector &sel,
-	                    idx_t &approved_tuple_count, bool is_first_filter);
+	                    idx_t &approved_tuple_count, bool is_first_filter,
+	                    idx_t dst_offset = DConstants::INVALID_INDEX);
 	static void ApplyFilter(Vector &v, const TableFilter &filter, TableFilterState &filter_state, idx_t scan_count,
 	                        SelectionVector &sel, idx_t &approved_tuple_count);
 	virtual void Skip(idx_t num_values);
@@ -190,13 +200,14 @@ public:
 
 	template <class VALUE_TYPE, class CONVERSION>
 	void PlainSelectTemplated(ByteBuffer &plain_data, const uint8_t *defines, uint64_t num_values, Vector &result,
-	                          const SelectionVector &sel, idx_t approved_tuple_count) {
+	                          const SelectionVector &sel, idx_t approved_tuple_count,
+	                          idx_t dst_offset = DConstants::INVALID_INDEX) {
 		if (HasDefines() && defines) {
 			PlainSelectTemplatedInternal<VALUE_TYPE, CONVERSION, true, true>(plain_data, defines, num_values, result,
-			                                                                 sel, approved_tuple_count);
+			                                                                 sel, approved_tuple_count, dst_offset);
 		} else {
 			PlainSelectTemplatedInternal<VALUE_TYPE, CONVERSION, false, true>(plain_data, defines, num_values, result,
-			                                                                  sel, approved_tuple_count);
+			                                                                  sel, approved_tuple_count, dst_offset);
 		}
 	}
 
@@ -220,9 +231,10 @@ protected:
 	}
 	void DirectFilter(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result_out,
 	                  const TableFilter &filter, TableFilterState &filter_state, SelectionVector &sel,
-	                  idx_t &approved_tuple_count);
+	                  idx_t &approved_tuple_count, idx_t dst_offset = DConstants::INVALID_INDEX);
 	void DirectSelect(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result,
-	                  const SelectionVector &sel, idx_t approved_tuple_count);
+	                  const SelectionVector &sel, idx_t approved_tuple_count,
+	                  idx_t dst_offset = DConstants::INVALID_INDEX);
 	void ReadEncrypted(duckdb_apache::thrift::TBase &object);
 	void ReadDataEncrypted(const data_ptr_t buffer, const uint32_t buffer_size, PageType::type module);
 	void Read(PageHeader &page_hdr);
@@ -235,7 +247,8 @@ private:
 	void FinishRead(idx_t read_count);
 	idx_t ReadPageHeaders(idx_t max_read, optional_ptr<const TableFilter> filter = nullptr,
 	                      optional_ptr<TableFilterState> filter_state = nullptr);
-	idx_t ReadInternal(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result);
+	idx_t ReadInternal(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result,
+	                   idx_t initial_result_offset = 0);
 	//! Prepare a read of up to "max_read" rows and read the defines/repeats.
 	//! Returns whether all values are valid (i.e., not NULL)
 	bool PrepareRead(idx_t read_count, data_ptr_t define_out, data_ptr_t repeat_out, idx_t result_offset);
@@ -284,7 +297,7 @@ private:
 	template <class VALUE_TYPE, class CONVERSION, bool HAS_DEFINES, bool CHECKED>
 	void PlainSelectTemplatedInternal(ByteBuffer &plain_data, const uint8_t *__restrict defines,
 	                                  const uint64_t num_values, Vector &result, const SelectionVector &sel,
-	                                  idx_t approved_tuple_count) {
+	                                  idx_t approved_tuple_count, idx_t dst_offset = DConstants::INVALID_INDEX) {
 		auto result_ptr = FlatVector::GetDataMutable<VALUE_TYPE>(result);
 		auto &result_mask = FlatVector::ValidityMutable(result);
 		idx_t current_entry = 0;
@@ -294,11 +307,17 @@ private:
 			// perform any skips forward if required
 			PlainSkipTemplatedInternal<CONVERSION, HAS_DEFINES, CHECKED>(plain_data, defines,
 			                                                             next_entry - current_entry, current_entry);
+			// In append mode (dst_offset != INVALID), writes go to dst_offset+i so the
+			// matching rows are compactly placed at [dst_offset, dst_offset+approved_tuple_count)
+			// -- no per-call result.Slice needed downstream. In default mode writes are
+			// scattered at sel[i] and the caller does the Slice as before.
+			const idx_t dst =
+			    (dst_offset == DConstants::INVALID_INDEX) ? next_entry : dst_offset + i;
 			// read this row
 			if (HAS_DEFINES && defines[next_entry] != MaxDefine()) {
-				result_mask.SetInvalid(next_entry);
+				result_mask.SetInvalid(dst);
 			} else {
-				result_ptr[next_entry] = CONVERSION::template PlainRead<CHECKED>(plain_data, *this);
+				result_ptr[dst] = CONVERSION::template PlainRead<CHECKED>(plain_data, *this);
 			}
 			current_entry = next_entry + 1;
 		}
@@ -317,7 +336,8 @@ protected:
 	virtual void Plain(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values,
 	                   idx_t result_offset, Vector &result);
 	virtual void PlainSelect(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values,
-	                         Vector &result, const SelectionVector &sel, idx_t count);
+	                         Vector &result, const SelectionVector &sel, idx_t count,
+	                         idx_t dst_offset = DConstants::INVALID_INDEX);
 
 	// applies any skips that were registered using Skip()
 	virtual void ApplyPendingSkips(data_ptr_t define_out, data_ptr_t repeat_out);

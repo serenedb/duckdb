@@ -1429,8 +1429,11 @@ void ParquetReader::GetPartitionStats(const duckdb_parquet::FileMetaData &metada
 	}
 }
 
-AsyncResult ParquetReader::Scan(ClientContext &context, ParquetReaderScanState &state, DataChunk &result) {
-	result.Reset();
+AsyncResult ParquetReader::Scan(ClientContext &context, ParquetReaderScanState &state, DataChunk &result,
+                                idx_t append_offset) {
+	if (append_offset == 0) {
+		result.Reset();
+	}
 	if (state.finished) {
 		return SourceResultType::FINISHED;
 	}
@@ -1535,14 +1538,22 @@ AsyncResult ParquetReader::Scan(ClientContext &context, ParquetReaderScanState &
 		return SourceResultType::HAVE_MORE_OUTPUT;
 	}
 
-	auto scan_count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, GetGroup(state).num_rows - state.offset_in_group);
-	result.SetCardinality(scan_count);
+	// In append mode, cap scan_count to remaining capacity in `result`. The caller
+	// loops Scan() until state.finished, accumulating into result at append_offset.
+	const idx_t cap = (append_offset >= STANDARD_VECTOR_SIZE) ? 0 : STANDARD_VECTOR_SIZE - append_offset;
+	auto scan_count = MinValue<idx_t>(cap, GetGroup(state).num_rows - state.offset_in_group);
 
 	if (scan_count == 0) {
+		if (append_offset > 0 && append_offset < STANDARD_VECTOR_SIZE) {
+			// Output is full -- caller must drain. Don't mark finished.
+			result.SetCardinality(append_offset);
+			return SourceResultType::HAVE_MORE_OUTPUT;
+		}
 		state.finished = true;
 		// end of last group, we are done
 		return SourceResultType::FINISHED;
 	}
+	result.SetCardinality(append_offset + scan_count);
 
 	auto &deletion_filter = state.root_reader->Reader().deletion_filter;
 
@@ -1555,8 +1566,7 @@ AsyncResult ParquetReader::Scan(ClientContext &context, ParquetReaderScanState &
 	auto &root_reader = state.root_reader->Cast<StructColumnReader>();
 
 	if (filters || deletion_filter || !state.pk_lookups.empty()) {
-		idx_t filter_count = result.size();
-		D_ASSERT(filter_count == scan_count);
+		idx_t filter_count = scan_count;
 		vector<bool> need_to_read(column_ids.size(), true);
 
 		state.sel.Initialize(nullptr);
@@ -1592,6 +1602,11 @@ AsyncResult ParquetReader::Scan(ClientContext &context, ParquetReaderScanState &
 			is_first_filter = false;
 		}
 
+		// In append mode, dst_offset = append_offset so column reads land compactly
+		// at [append_offset, append_offset + filter_count) instead of scattered at sel[i].
+		// Default mode keeps INVALID -- writes at sel[i], compacted via Slice below.
+		const idx_t dst_offset = (append_offset == 0) ? DConstants::INVALID_INDEX : append_offset;
+
 		if (filters) {
 			// first load the columns that are used in filters
 			auto filter_state = state.adaptive_filter->BeginFilter();
@@ -1607,7 +1622,7 @@ AsyncResult ParquetReader::Scan(ClientContext &context, ParquetReaderScanState &
 				auto &result_vector = result.data[local_idx.GetIndex()];
 				auto &child_reader = root_reader.GetChildReader(column_id);
 				child_reader.Filter(scan_count, define_ptr, repeat_ptr, result_vector, scan_filter.filter,
-				                    *scan_filter.filter_state, state.sel, filter_count, is_first_filter);
+				                    *scan_filter.filter_state, state.sel, filter_count, is_first_filter, dst_offset);
 				need_to_read[local_idx.GetIndex()] = false;
 				is_first_filter = false;
 			}
@@ -1622,7 +1637,7 @@ AsyncResult ParquetReader::Scan(ClientContext &context, ParquetReaderScanState &
 			}
 			auto file_col_idx = column_ids[col_idx];
 			if (filter_count == 0) {
-				root_reader.GetChildReader(file_col_idx).Skip(result.size());
+				root_reader.GetChildReader(file_col_idx).Skip(scan_count);
 				continue;
 			}
 			auto &result_vector = result.data[i];
@@ -1631,9 +1646,14 @@ AsyncResult ParquetReader::Scan(ClientContext &context, ParquetReaderScanState &
 				child_reader.InitializeCryptoMetadata(metadata->crypto_metadata->encryption_algorithm,
 				                                      GetGroup(state).ordinal);
 			}
-			child_reader.Select(result.size(), define_ptr, repeat_ptr, result_vector, state.sel, filter_count);
+			child_reader.Select(scan_count, define_ptr, repeat_ptr, result_vector, state.sel, filter_count, dst_offset);
 		}
-		if (scan_count != filter_count) {
+		if (append_offset > 0) {
+			// Append mode: column reads landed compactly at [append_offset,
+			// append_offset + filter_count). Final cardinality reflects that.
+			result.SetCardinality(append_offset + filter_count);
+		} else if (scan_count != filter_count) {
+			// Default mode: scattered writes at sel[i] -- compact via Slice.
 			result.Slice(state.sel, filter_count);
 		}
 	} else {
@@ -1646,7 +1666,7 @@ AsyncResult ParquetReader::Scan(ClientContext &context, ParquetReaderScanState &
 				child_reader.InitializeCryptoMetadata(metadata->crypto_metadata->encryption_algorithm,
 				                                      GetGroup(state).ordinal);
 			}
-			auto rows_read = child_reader.Read(scan_count, define_ptr, repeat_ptr, result_vector);
+			auto rows_read = child_reader.Read(scan_count, define_ptr, repeat_ptr, result_vector, append_offset);
 			if (rows_read != scan_count) {
 				throw InvalidInputException("Mismatch in parquet read for column %llu, expected %llu rows, got %llu",
 				                            file_col_idx, scan_count, rows_read);

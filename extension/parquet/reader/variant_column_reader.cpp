@@ -84,7 +84,11 @@ static LogicalType GetIntermediateGroupType(optional_ptr<ColumnReader> typed_val
 	return LogicalType::STRUCT(std::move(children));
 }
 
-idx_t VariantColumnReader::Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result) {
+idx_t VariantColumnReader::Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result,
+                                idx_t result_offset) {
+	if (result_offset != 0) {
+		throw NotImplementedException("VariantColumnReader does not support reading at offset");
+	}
 	if (pending_skips > 0) {
 		throw InternalException("VariantColumnReader cannot have pending skips");
 	}

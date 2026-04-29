@@ -183,7 +183,11 @@ idx_t ListColumnReader::ReadInternal(uint64_t num_values, data_ptr_t define_out,
 	return result_offset;
 }
 
-idx_t ListColumnReader::Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result_out) {
+idx_t ListColumnReader::Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result_out,
+                             idx_t result_offset) {
+	if (result_offset != 0) {
+		throw NotImplementedException("ListColumnReader does not support reading at offset (lookup-mode append)");
+	}
 	ApplyPendingSkips(define_out, repeat_out);
 	return ReadInternal<TemplatedListReader>(num_values, define_out, repeat_out, result_out);
 }
