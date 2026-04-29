@@ -8,10 +8,10 @@
 
 namespace duckdb {
 
-vector<unique_ptr<ParsedExpression>> Transformer::TransformIndexParameters(duckdb_libpgquery::PGList &list,
-                                                                           const string &relation_name,
-                                                                           vector<string> *opclasses,
-                                                                           vector<case_insensitive_map_t<Value>> *opclass_options) {
+vector<unique_ptr<ParsedExpression>>
+Transformer::TransformIndexParameters(duckdb_libpgquery::PGList &list, const string &relation_name,
+                                      vector<string> *opclasses,
+                                      vector<case_insensitive_map_t<Value>> *opclass_options) {
 	vector<unique_ptr<ParsedExpression>> expressions;
 	for (auto cell = list.head; cell != nullptr; cell = cell->next) {
 		auto index_element = PGPointerCast<duckdb_libpgquery::PGIndexElem>(cell->data.ptr_value);

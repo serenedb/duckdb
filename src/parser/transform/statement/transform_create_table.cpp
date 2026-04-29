@@ -135,14 +135,14 @@ unique_ptr<CreateStatement> Transformer::TransformCreateTable(duckdb_libpgquery:
 					}
 				}
 				if (has_null && (has_not_null || has_primary_key)) {
-					throw ParserException(
-					    "conflicting NULL/NOT NULL declarations for column \"%s\" of table \"%s\"",
-					    col_def.Name(), info->table);
+					throw ParserException("conflicting NULL/NOT NULL declarations for column \"%s\" of table \"%s\"",
+					                      col_def.Name(), info->table);
 				}
 
 				for (auto cell = pg_col_def->constraints->head; cell != nullptr; cell = cell->next) {
 					auto pg_constraint = PGPointerCast<duckdb_libpgquery::PGConstraint>(cell->data.ptr_value);
-					auto constraint = TransformConstraint(*pg_constraint, col_def, info->columns.LogicalColumnCount(), info->table);
+					auto constraint =
+					    TransformConstraint(*pg_constraint, col_def, info->columns.LogicalColumnCount(), info->table);
 					if (constraint) {
 						info->constraints.push_back(std::move(constraint));
 					}

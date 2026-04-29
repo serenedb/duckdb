@@ -233,8 +233,7 @@ public:
 	//! `output.Slice(sel, ...)` compact step (the writes already landed compactly at
 	//! `[append_offset, append_offset + filter_count)`). Used by the lookup TF to
 	//! accumulate multiple Scan calls into one output without per-call Copy.
-	AsyncResult Scan(ClientContext &context, ParquetReaderScanState &state, DataChunk &output,
-	                 idx_t append_offset = 0);
+	AsyncResult Scan(ClientContext &context, ParquetReaderScanState &state, DataChunk &output, idx_t append_offset = 0);
 
 	idx_t NumRows() const;
 	idx_t NumRowGroups() const;

@@ -533,8 +533,7 @@ unique_ptr<GlobalTableFunctionState> ParquetLookupInitGlobal(ClientContext &cont
 		if (native != declared) {
 			state->needs_cast = true;
 		}
-		const bool needs_owned_heap =
-		    declared.IsNested() || declared.InternalType() == PhysicalType::VARCHAR;
+		const bool needs_owned_heap = declared.IsNested() || declared.InternalType() == PhysicalType::VARCHAR;
 		state->col_in_place_ok.push_back(!needs_owned_heap);
 		any_owned_heap = any_owned_heap || needs_owned_heap;
 		native_types.push_back(native);

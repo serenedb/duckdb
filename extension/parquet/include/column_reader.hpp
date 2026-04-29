@@ -311,8 +311,7 @@ private:
 			// matching rows are compactly placed at [dst_offset, dst_offset+approved_tuple_count)
 			// -- no per-call result.Slice needed downstream. In default mode writes are
 			// scattered at sel[i] and the caller does the Slice as before.
-			const idx_t dst =
-			    (dst_offset == DConstants::INVALID_INDEX) ? next_entry : dst_offset + i;
+			const idx_t dst = (dst_offset == DConstants::INVALID_INDEX) ? next_entry : dst_offset + i;
 			// read this row
 			if (HAS_DEFINES && defines[next_entry] != MaxDefine()) {
 				result_mask.SetInvalid(dst);

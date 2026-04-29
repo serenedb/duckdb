@@ -34,7 +34,8 @@ struct StartsWithFun {
 struct ASCIIFun {
 	static constexpr const char *Name = "ascii";
 	static constexpr const char *Parameters = "string";
-	static constexpr const char *Description = "Returns an integer that represents the Unicode code point of the first character of the `string`.";
+	static constexpr const char *Description =
+	    "Returns an integer that represents the Unicode code point of the first character of the `string`.";
 	static constexpr const char *Example = "ascii('Ω')";
 	static constexpr const char *Categories = "string";
 
@@ -44,7 +45,8 @@ struct ASCIIFun {
 struct BarFun {
 	static constexpr const char *Name = "bar";
 	static constexpr const char *Parameters = "x,min,max,width";
-	static constexpr const char *Description = "Draws a band whose width is proportional to (`x - min`) and equal to `width` characters when `x` = `max`. `width` defaults to 80.";
+	static constexpr const char *Description = "Draws a band whose width is proportional to (`x - min`) and equal to "
+	                                           "`width` characters when `x` = `max`. `width` defaults to 80.";
 	static constexpr const char *Example = "bar(5, 0, 20, 10)";
 	static constexpr const char *Categories = "string";
 
@@ -54,7 +56,8 @@ struct BarFun {
 struct BinFun {
 	static constexpr const char *Name = "bin";
 	static constexpr const char *Parameters = "string::VARCHAR\001value::ANY";
-	static constexpr const char *Description = "Converts the `string` to binary representation.\001Converts the `value` to binary representation.";
+	static constexpr const char *Description =
+	    "Converts the `string` to binary representation.\001Converts the `value` to binary representation.";
 	static constexpr const char *Example = "bin('Aa')\001bin(42)";
 	static constexpr const char *Categories = "string\001numeric";
 
@@ -70,7 +73,8 @@ struct ToBinaryFun {
 struct ChrFun {
 	static constexpr const char *Name = "chr";
 	static constexpr const char *Parameters = "code_point";
-	static constexpr const char *Description = "Returns a character which is corresponding the ASCII code value or Unicode code point.";
+	static constexpr const char *Description =
+	    "Returns a character which is corresponding the ASCII code value or Unicode code point.";
 	static constexpr const char *Example = "chr(65)";
 	static constexpr const char *Categories = "string";
 
@@ -80,7 +84,11 @@ struct ChrFun {
 struct DamerauLevenshteinFun {
 	static constexpr const char *Name = "damerau_levenshtein";
 	static constexpr const char *Parameters = "s1,s2";
-	static constexpr const char *Description = "Extension of Levenshtein distance to also include transposition of adjacent characters as an allowed edit operation. In other words, the minimum number of edit operations (insertions, deletions, substitutions or transpositions) required to change one string to another. Characters of different cases (e.g., `a` and `A`) are considered different.";
+	static constexpr const char *Description =
+	    "Extension of Levenshtein distance to also include transposition of adjacent characters as an allowed edit "
+	    "operation. In other words, the minimum number of edit operations (insertions, deletions, substitutions or "
+	    "transpositions) required to change one string to another. Characters of different cases (e.g., `a` and `A`) "
+	    "are considered different.";
 	static constexpr const char *Example = "damerau_levenshtein('duckdb', 'udckbd')";
 	static constexpr const char *Categories = "text_similarity";
 
@@ -100,7 +108,8 @@ struct FormatFun {
 struct FormatBytesFun {
 	static constexpr const char *Name = "format_bytes";
 	static constexpr const char *Parameters = "integer";
-	static constexpr const char *Description = "Converts `integer` to a human-readable representation using units based on powers of 2 (KiB, MiB, GiB, etc.).";
+	static constexpr const char *Description =
+	    "Converts `integer` to a human-readable representation using units based on powers of 2 (KiB, MiB, GiB, etc.).";
 	static constexpr const char *Example = "format_bytes(16_000)";
 	static constexpr const char *Categories = "string,numeric";
 
@@ -116,7 +125,8 @@ struct FormatreadablesizeFun {
 struct ParseFormattedBytesFun {
 	static constexpr const char *Name = "parse_formatted_bytes";
 	static constexpr const char *Parameters = "string";
-	static constexpr const char *Description = "Parses a human-readable representation of a size in bytes into an integer.";
+	static constexpr const char *Description =
+	    "Parses a human-readable representation of a size in bytes into an integer.";
 	static constexpr const char *Example = "parse_formatted_bytes('16 KiB')";
 	static constexpr const char *Categories = "string,numeric";
 
@@ -126,7 +136,8 @@ struct ParseFormattedBytesFun {
 struct FormatreadabledecimalsizeFun {
 	static constexpr const char *Name = "formatReadableDecimalSize";
 	static constexpr const char *Parameters = "integer";
-	static constexpr const char *Description = "Converts `integer` to a human-readable representation using units based on powers of 10 (KB, MB, GB, etc.).";
+	static constexpr const char *Description =
+	    "Converts `integer` to a human-readable representation using units based on powers of 10 (KB, MB, GB, etc.).";
 	static constexpr const char *Example = "formatReadableDecimalSize(16_000)";
 	static constexpr const char *Categories = "string,numeric";
 
@@ -136,7 +147,10 @@ struct FormatreadabledecimalsizeFun {
 struct HammingFun {
 	static constexpr const char *Name = "hamming";
 	static constexpr const char *Parameters = "s1,s2";
-	static constexpr const char *Description = "The Hamming distance between to strings, i.e., the number of positions with different characters for two strings of equal length. Strings must be of equal length. Characters of different cases (e.g., `a` and `A`) are considered different.";
+	static constexpr const char *Description =
+	    "The Hamming distance between to strings, i.e., the number of positions with different characters for two "
+	    "strings of equal length. Strings must be of equal length. Characters of different cases (e.g., `a` and `A`) "
+	    "are considered different.";
 	static constexpr const char *Example = "hamming('duck', 'luck')";
 	static constexpr const char *Categories = "text_similarity";
 
@@ -152,7 +166,9 @@ struct MismatchesFun {
 struct HexFun {
 	static constexpr const char *Name = "hex";
 	static constexpr const char *Parameters = "string::VARCHAR\001blob::BLOB\001value::ANY";
-	static constexpr const char *Description = "Converts the `string` to hexadecimal representation.\001Converts `blob` to `VARCHAR` using hexadecimal encoding.\001Converts the `value` to `VARCHAR` using hexadecimal representation.";
+	static constexpr const char *Description =
+	    "Converts the `string` to hexadecimal representation.\001Converts `blob` to `VARCHAR` using hexadecimal "
+	    "encoding.\001Converts the `value` to `VARCHAR` using hexadecimal representation.";
 	static constexpr const char *Example = "hex('Hello')\001hex('\\xAA\\xBB'::BLOB)\001hex(42)";
 	static constexpr const char *Categories = "string\001blob\001numeric";
 
@@ -162,7 +178,8 @@ struct HexFun {
 struct InstrFun {
 	static constexpr const char *Name = "instr";
 	static constexpr const char *Parameters = "string,search_string";
-	static constexpr const char *Description = "Returns location of first occurrence of `search_string` in `string`, counting from 1. Returns 0 if no match found.";
+	static constexpr const char *Description = "Returns location of first occurrence of `search_string` in `string`, "
+	                                           "counting from 1. Returns 0 if no match found.";
 	static constexpr const char *Example = "instr('test test', 'es')\002position('b' IN 'abc')";
 	static constexpr const char *Categories = "string";
 
@@ -184,7 +201,9 @@ struct PositionFun {
 struct JaccardFun {
 	static constexpr const char *Name = "jaccard";
 	static constexpr const char *Parameters = "s1,s2";
-	static constexpr const char *Description = "The Jaccard similarity between two strings. Characters of different cases (e.g., `a` and `A`) are considered different. Returns a number between 0 and 1.";
+	static constexpr const char *Description =
+	    "The Jaccard similarity between two strings. Characters of different cases (e.g., `a` and `A`) are considered "
+	    "different. Returns a number between 0 and 1.";
 	static constexpr const char *Example = "jaccard('duck', 'luck')";
 	static constexpr const char *Categories = "text_similarity";
 
@@ -194,7 +213,10 @@ struct JaccardFun {
 struct JaroSimilarityFun {
 	static constexpr const char *Name = "jaro_similarity";
 	static constexpr const char *Parameters = "s1,s2,score_cutoff";
-	static constexpr const char *Description = "The Jaro similarity between two strings. Characters of different cases (e.g., `a` and `A`) are considered different. Returns a number between 0 and 1. For similarity < `score_cutoff`, 0 is returned instead. `score_cutoff` defaults to 0.";
+	static constexpr const char *Description =
+	    "The Jaro similarity between two strings. Characters of different cases (e.g., `a` and `A`) are considered "
+	    "different. Returns a number between 0 and 1. For similarity < `score_cutoff`, 0 is returned instead. "
+	    "`score_cutoff` defaults to 0.";
 	static constexpr const char *Example = "jaro_similarity('duck', 'duckdb')";
 	static constexpr const char *Categories = "text_similarity";
 
@@ -204,7 +226,10 @@ struct JaroSimilarityFun {
 struct JaroWinklerSimilarityFun {
 	static constexpr const char *Name = "jaro_winkler_similarity";
 	static constexpr const char *Parameters = "s1,s2,score_cutoff";
-	static constexpr const char *Description = "The Jaro-Winkler similarity between two strings. Characters of different cases (e.g., `a` and `A`) are considered different. Returns a number between 0 and 1. For similarity < `score_cutoff`, 0 is returned instead. `score_cutoff` defaults to 0.";
+	static constexpr const char *Description =
+	    "The Jaro-Winkler similarity between two strings. Characters of different cases (e.g., `a` and `A`) are "
+	    "considered different. Returns a number between 0 and 1. For similarity < `score_cutoff`, 0 is returned "
+	    "instead. `score_cutoff` defaults to 0.";
 	static constexpr const char *Example = "jaro_winkler_similarity('duck', 'duckdb')";
 	static constexpr const char *Categories = "text_similarity";
 
@@ -234,7 +259,9 @@ struct LeftGraphemeFun {
 struct LevenshteinFun {
 	static constexpr const char *Name = "levenshtein";
 	static constexpr const char *Parameters = "s1,s2";
-	static constexpr const char *Description = "The minimum number of single-character edits (insertions, deletions or substitutions) required to change one string to the other. Characters of different cases (e.g., `a` and `A`) are considered different.";
+	static constexpr const char *Description =
+	    "The minimum number of single-character edits (insertions, deletions or substitutions) required to change one "
+	    "string to the other. Characters of different cases (e.g., `a` and `A`) are considered different.";
 	static constexpr const char *Example = "levenshtein('duck', 'db')";
 	static constexpr const char *Categories = "text_similarity";
 
@@ -250,7 +277,9 @@ struct Editdist3Fun {
 struct LpadFun {
 	static constexpr const char *Name = "lpad";
 	static constexpr const char *Parameters = "string,count,character";
-	static constexpr const char *Description = "Pads the `string` with the `character` on the left until it has `count` characters. Truncates the `string` on the right if it has more than `count` characters.";
+	static constexpr const char *Description =
+	    "Pads the `string` with the `character` on the left until it has `count` characters. Truncates the `string` on "
+	    "the right if it has more than `count` characters.";
 	static constexpr const char *Example = "lpad('hello', 8, '>')";
 	static constexpr const char *Categories = "string";
 
@@ -260,7 +289,8 @@ struct LpadFun {
 struct LtrimFun {
 	static constexpr const char *Name = "ltrim";
 	static constexpr const char *Parameters = "string,characters";
-	static constexpr const char *Description = "Removes any occurrences of any of the `characters` from the left side of the `string`. `characters` defaults to `space`.";
+	static constexpr const char *Description = "Removes any occurrences of any of the `characters` from the left side "
+	                                           "of the `string`. `characters` defaults to `space`.";
 	static constexpr const char *Example = "ltrim('    test  ')\002ltrim('>>>>test<<', '><')";
 	static constexpr const char *Categories = "string";
 
@@ -270,7 +300,9 @@ struct LtrimFun {
 struct ParseDirnameFun {
 	static constexpr const char *Name = "parse_dirname";
 	static constexpr const char *Parameters = "path,separator";
-	static constexpr const char *Description = "Returns the top-level directory name from the given `path`. `separator` options: `system`, `both_slash` (default), `forward_slash`, `backslash`.";
+	static constexpr const char *Description =
+	    "Returns the top-level directory name from the given `path`. `separator` options: `system`, `both_slash` "
+	    "(default), `forward_slash`, `backslash`.";
 	static constexpr const char *Example = "parse_dirname('path/to/file.csv', 'system')";
 	static constexpr const char *Categories = "string";
 
@@ -280,7 +312,9 @@ struct ParseDirnameFun {
 struct ParseDirpathFun {
 	static constexpr const char *Name = "parse_dirpath";
 	static constexpr const char *Parameters = "path,separator";
-	static constexpr const char *Description = "Returns the head of the `path` (the pathname until the last slash) similarly to Python's `os.path.dirname`. `separator` options: `system`, `both_slash` (default), `forward_slash`, `backslash`.";
+	static constexpr const char *Description =
+	    "Returns the head of the `path` (the pathname until the last slash) similarly to Python's `os.path.dirname`. "
+	    "`separator` options: `system`, `both_slash` (default), `forward_slash`, `backslash`.";
 	static constexpr const char *Example = "parse_dirpath('path/to/file.csv', 'forward_slash')";
 	static constexpr const char *Categories = "string";
 
@@ -290,7 +324,10 @@ struct ParseDirpathFun {
 struct ParseFilenameFun {
 	static constexpr const char *Name = "parse_filename";
 	static constexpr const char *Parameters = "string,trim_extension,separator";
-	static constexpr const char *Description = "Returns the last component of the `path` similarly to Python's `os.path.basename` function. If `trim_extension` is `true`, the file extension will be removed (defaults to `false`). `separator` options: `system`, `both_slash` (default), `forward_slash`, `backslash`.";
+	static constexpr const char *Description =
+	    "Returns the last component of the `path` similarly to Python's `os.path.basename` function. If "
+	    "`trim_extension` is `true`, the file extension will be removed (defaults to `false`). `separator` options: "
+	    "`system`, `both_slash` (default), `forward_slash`, `backslash`.";
 	static constexpr const char *Example = "parse_filename('path/to/file.csv', true, 'forward_slash')";
 	static constexpr const char *Categories = "string";
 
@@ -300,7 +337,10 @@ struct ParseFilenameFun {
 struct ParsePathFun {
 	static constexpr const char *Name = "parse_path";
 	static constexpr const char *Parameters = "path,separator";
-	static constexpr const char *Description = "Returns a list of the components (directories and filename) in the `path` similarly to Python's `pathlib.parts` function. `separator` options: `system`, `both_slash` (default), `forward_slash`, `backslash`.";
+	static constexpr const char *Description =
+	    "Returns a list of the components (directories and filename) in the `path` similarly to Python's "
+	    "`pathlib.parts` function. `separator` options: `system`, `both_slash` (default), `forward_slash`, "
+	    "`backslash`.";
 	static constexpr const char *Example = "parse_path('path/to/file.csv', 'system')";
 	static constexpr const char *Categories = "string";
 
@@ -319,8 +359,11 @@ struct PrintfFun {
 
 struct RepeatFun {
 	static constexpr const char *Name = "repeat";
-	static constexpr const char *Parameters = "string::VARCHAR,count::BIGINT\001list::ANY[],count::BIGINT\001blob::BLOB,count::BIGINT";
-	static constexpr const char *Description = "Repeats the `string` `count` number of times.\001Repeats the `list` `count` number of times.\001Repeats the `blob` `count` number of times.";
+	static constexpr const char *Parameters =
+	    "string::VARCHAR,count::BIGINT\001list::ANY[],count::BIGINT\001blob::BLOB,count::BIGINT";
+	static constexpr const char *Description =
+	    "Repeats the `string` `count` number of times.\001Repeats the `list` `count` number of times.\001Repeats the "
+	    "`blob` `count` number of times.";
 	static constexpr const char *Example = "repeat('A', 5)\001repeat([1, 2, 3], 5)\001repeat('\\xAA\\xBB'::BLOB, 5)";
 	static constexpr const char *Categories = "string\001list\001blob";
 
@@ -370,7 +413,9 @@ struct RightGraphemeFun {
 struct RpadFun {
 	static constexpr const char *Name = "rpad";
 	static constexpr const char *Parameters = "string,count,character";
-	static constexpr const char *Description = "Pads the `string` with the `character` on the right until it has `count` characters. Truncates the `string` on the right if it has more than `count` characters.";
+	static constexpr const char *Description =
+	    "Pads the `string` with the `character` on the right until it has `count` characters. Truncates the `string` "
+	    "on the right if it has more than `count` characters.";
 	static constexpr const char *Example = "rpad('hello', 10, '<')";
 	static constexpr const char *Categories = "string";
 
@@ -380,7 +425,8 @@ struct RpadFun {
 struct RtrimFun {
 	static constexpr const char *Name = "rtrim";
 	static constexpr const char *Parameters = "string,characters";
-	static constexpr const char *Description = "Removes any occurrences of any of the `characters` from the right side of the `string`. `characters` defaults to `space`.";
+	static constexpr const char *Description = "Removes any occurrences of any of the `characters` from the right side "
+	                                           "of the `string`. `characters` defaults to `space`.";
 	static constexpr const char *Example = "rtrim('    test  ')\002rtrim('>>>>test<<', '><')";
 	static constexpr const char *Categories = "string";
 
@@ -390,7 +436,10 @@ struct RtrimFun {
 struct TranslateFun {
 	static constexpr const char *Name = "translate";
 	static constexpr const char *Parameters = "string,from,to";
-	static constexpr const char *Description = "Replaces each character in `string` that matches a character in the `from` set with the corresponding character in the `to` set. If `from` is longer than `to`, occurrences of the extra characters in `from` are deleted.";
+	static constexpr const char *Description =
+	    "Replaces each character in `string` that matches a character in the `from` set with the corresponding "
+	    "character in the `to` set. If `from` is longer than `to`, occurrences of the extra characters in `from` are "
+	    "deleted.";
 	static constexpr const char *Example = "translate('12345', '143', 'ax')";
 	static constexpr const char *Categories = "string";
 
@@ -400,7 +449,8 @@ struct TranslateFun {
 struct TrimFun {
 	static constexpr const char *Name = "trim";
 	static constexpr const char *Parameters = "string,characters";
-	static constexpr const char *Description = "Removes any occurrences of any of the `characters` from either side of the `string`. `characters` defaults to `space`.";
+	static constexpr const char *Description = "Removes any occurrences of any of the `characters` from either side of "
+	                                           "the `string`. `characters` defaults to `space`.";
 	static constexpr const char *Example = "trim('    test  ')\002trim('>>>>test<<', '><')";
 	static constexpr const char *Categories = "string";
 
@@ -442,7 +492,8 @@ struct FromHexFun {
 struct UnicodeFun {
 	static constexpr const char *Name = "unicode";
 	static constexpr const char *Parameters = "string";
-	static constexpr const char *Description = "Returns an `INTEGER` representing the `unicode` codepoint of the first character in the `string`.";
+	static constexpr const char *Description =
+	    "Returns an `INTEGER` representing the `unicode` codepoint of the first character in the `string`.";
 	static constexpr const char *Example = "[unicode('âbcd'), unicode('â'), unicode(''), unicode(NULL)]";
 	static constexpr const char *Categories = "string";
 
@@ -458,7 +509,8 @@ struct OrdFun {
 struct ToBaseFun {
 	static constexpr const char *Name = "to_base";
 	static constexpr const char *Parameters = "number,radix,min_length";
-	static constexpr const char *Description = "Converts `number` to a string in the given base `radix`, optionally padding with leading zeros to `min_length`.";
+	static constexpr const char *Description = "Converts `number` to a string in the given base `radix`, optionally "
+	                                           "padding with leading zeros to `min_length`.";
 	static constexpr const char *Example = "to_base(42, 16, 5)";
 	static constexpr const char *Categories = "string,numeric";
 

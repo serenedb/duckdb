@@ -52,7 +52,8 @@ CSVFileScan::CSVFileScan(ClientContext &context, const OpenFileInfo &file_p, CSV
 
 CSVFileScan::CSVFileScan(ClientContext &context, const OpenFileInfo &file_p, const CSVReaderOptions &options_p,
                          const MultiFileOptions &file_options)
-    : BaseFileReader(file_p), error_handler(make_shared_ptr<CSVErrorHandler>(options_p.ignore_errors.GetValue(), options_p.rejects_limit)),
+    : BaseFileReader(file_p),
+      error_handler(make_shared_ptr<CSVErrorHandler>(options_p.ignore_errors.GetValue(), options_p.rejects_limit)),
       options(options_p) {
 	buffer_manager = make_shared_ptr<CSVBufferManager>(context, options, file);
 	// Initialize On Disk and Size of file

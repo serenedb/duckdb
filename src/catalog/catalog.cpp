@@ -1210,10 +1210,9 @@ void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	// macro at parse time (mirrors the binder skip in Binder::Bind(AlterStatement)).
 	// Dispatch to the schema without a type-specific lookup so the schema's
 	// Alter implementation can resolve by name across function kinds.
-	const bool is_rename_function =
-	    info.type == AlterType::ALTER_SCALAR_FUNCTION &&
-	    info.Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
-	        AlterScalarFunctionType::RENAME_SCALAR_FUNCTION;
+	const bool is_rename_function = info.type == AlterType::ALTER_SCALAR_FUNCTION &&
+	                                info.Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
+	                                    AlterScalarFunctionType::RENAME_SCALAR_FUNCTION;
 	if (transaction.HasContext() && !is_rename_function) {
 		CatalogEntryRetriever retriever(transaction.GetContext());
 		EntryLookupInfo lookup_info(info.GetCatalogType(), info.name);

@@ -69,8 +69,7 @@ struct CSVMultiFileInfo : MultiFileReaderInterface {
 	//! each row's start position in the file. Intended to be used as a stable primary key
 	//! for consumers (e.g. SereneDB's inverted index / FileMaterializer) that need to
 	//! re-locate a specific row on query.
-	void GetVirtualColumns(ClientContext &context, MultiFileBindData &bind_data,
-	                       virtual_column_map_t &result) override;
+	void GetVirtualColumns(ClientContext &context, MultiFileBindData &bind_data, virtual_column_map_t &result) override;
 };
 
 //! Builds a standalone lookup-mode TableFunction for CSV. Shares

@@ -73,7 +73,9 @@ public:
 	bool GetPositionAndSize(idx_t &position, idx_t &size, idx_t requested_size);
 	bool Read(char *pointer, idx_t &read_size, idx_t requested_size);
 	//! Current file position -- the next sequential Read() will begin at this offset.
-	idx_t GetReadPosition() const { return read_position.load(); }
+	idx_t GetReadPosition() const {
+		return read_position.load();
+	}
 	//! Random-access read that bypasses the requested/actual_reads accounting
 	//! (used by the exact-offset JSON scan path which doesn't participate in
 	//! the normal sequential-buffer scheduling). Returns number of bytes read.

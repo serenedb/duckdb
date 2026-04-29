@@ -1052,7 +1052,7 @@ void StringValueScanner::Reset(const CSVIterator &new_iterator) {
 	// previous batch). Bumping number_of_rows to 1 makes Reset re-anchor
 	// the result to `iterator`'s new buffer_idx and clear per-batch state.
 	if (result.number_of_rows == 0) {
-		result.number_of_rows = 1;  // sentinel so Reset() does its work
+		result.number_of_rows = 1; // sentinel so Reset() does its work
 	}
 	result.Reset();
 
