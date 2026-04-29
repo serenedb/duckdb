@@ -1004,29 +1004,32 @@ bool ParquetReader::TryInitializeScan(ClientContext &context, GlobalTableFunctio
                                       LocalTableFunctionState &lstate_p) {
 	auto &gstate = gstate_p.Cast<ParquetReadGlobalState>();
 	auto &lstate = lstate_p.Cast<ParquetReadLocalState>();
-	const auto total_row_groups = NumRowGroups();
-	const auto &row_groups = GetFileMetadata()->row_groups;
+	if (gstate.pk_lookups.empty()) {
+		if (gstate.row_group_index >= NumRowGroups()) {
+			return false;
+		}
+		lstate.group_indexes = {gstate.row_group_index};
+		gstate.row_group_index++;
+		return true;
+	}
 	// pk-lookup mode: walk forward skipping row groups whose file_row_number
 	// range doesn't overlap any requested pk. Because pk_lookups is sorted,
 	// a single lower_bound tells us if any pk falls in [start, end).
+	const auto total_row_groups = NumRowGroups();
+	const auto &row_groups = GetFileMetadata()->row_groups;
 	while (gstate.row_group_index < total_row_groups) {
 		const auto group_rows = NumericCast<idx_t>(row_groups[gstate.row_group_index].num_rows);
 		const auto group_start = gstate.current_row_offset;
 		const auto group_end = group_start + group_rows;
-		bool take = true;
-		if (!gstate.pk_lookups.empty()) {
-			auto it =
-			    std::lower_bound(gstate.pk_lookups.begin(), gstate.pk_lookups.end(), NumericCast<int64_t>(group_start));
-			take = it != gstate.pk_lookups.end() && *it < NumericCast<int64_t>(group_end);
-		}
-		if (take) {
-			lstate.group_indexes = {gstate.row_group_index};
-			gstate.row_group_index++;
-			gstate.current_row_offset = group_end;
-			return true;
-		}
+		auto it =
+		    std::lower_bound(gstate.pk_lookups.begin(), gstate.pk_lookups.end(), NumericCast<int64_t>(group_start));
+		const bool take = it != gstate.pk_lookups.end() && *it < NumericCast<int64_t>(group_end);
 		gstate.row_group_index++;
 		gstate.current_row_offset = group_end;
+		if (take) {
+			lstate.group_indexes = {gstate.row_group_index - 1};
+			return true;
+		}
 	}
 	return false;
 }

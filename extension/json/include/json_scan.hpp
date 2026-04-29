@@ -86,7 +86,7 @@ public:
 	//! IO instead of a full scan, no filter-expression roundtrip.
 	std::span<const int64_t> pk_lookups;
 	//! Lock-free dispenser for pk_lookups across parallel scanner threads.
-	atomic<idx_t> lookup_cursor {0};
+	atomic<idx_t> lookup_cursor = 0;
 
 	//! Buffer manager allocator
 	Allocator &allocator;
