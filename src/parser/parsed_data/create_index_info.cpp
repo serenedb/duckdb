@@ -12,8 +12,7 @@ CreateIndexInfo::CreateIndexInfo(const duckdb::CreateIndexInfo &info)
     : CreateInfo(CatalogType::INDEX_ENTRY, info.schema), table(info.table), index_name(info.index_name),
       options(info.options), index_type(info.index_type), constraint_type(info.constraint_type),
       column_ids(info.column_ids), column_opclasses(info.column_opclasses),
-      column_opclass_options(info.column_opclass_options), scan_types(info.scan_types),
-      names(info.names) {
+      column_opclass_options(info.column_opclass_options), scan_types(info.scan_types), names(info.names) {
 }
 
 static void RemoveTableQualificationRecursive(unique_ptr<ParsedExpression> &root_expr, const string &table_name) {

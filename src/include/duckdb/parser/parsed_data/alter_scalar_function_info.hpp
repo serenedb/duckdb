@@ -16,11 +16,7 @@ struct CreateScalarFunctionInfo;
 //===--------------------------------------------------------------------===//
 // Alter Scalar Function
 //===--------------------------------------------------------------------===//
-enum class AlterScalarFunctionType : uint8_t {
-	INVALID = 0,
-	ADD_FUNCTION_OVERLOADS = 1,
-	RENAME_SCALAR_FUNCTION = 2
-};
+enum class AlterScalarFunctionType : uint8_t { INVALID = 0, ADD_FUNCTION_OVERLOADS = 1, RENAME_SCALAR_FUNCTION = 2 };
 
 struct AlterScalarFunctionInfo : public AlterInfo {
 	AlterScalarFunctionInfo(AlterScalarFunctionType type, AlterEntryData data);

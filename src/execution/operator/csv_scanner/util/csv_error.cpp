@@ -74,9 +74,8 @@ void CSVErrorHandler::ErrorIfNeeded() {
 	lock_guard<mutex> parallel_lock(main_mutex);
 	// Enforce rejects_limit after the batch accumulates all its errors.
 	if (rejects_limit > 0 && errors.size() > rejects_limit) {
-		throw InvalidInputException(
-		    "skipped more than REJECT_LIMIT (%llu) rows due to data type incompatibility\n%s",
-		    rejects_limit, errors.back().error_message);
+		throw InvalidInputException("skipped more than REJECT_LIMIT (%llu) rows due to data type incompatibility\n%s",
+		                            rejects_limit, errors.back().error_message);
 	}
 	if (ignore_errors || errors.empty()) {
 		// Nothing to error

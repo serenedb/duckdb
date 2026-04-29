@@ -27,44 +27,41 @@ bool DBConfigOptions::debug_print_bindings = false;
 #endif
 
 #define DUCKDB_SETTING(_PARAM)                                                                                         \
-	{_PARAM::Name,      _PARAM::Description,                                                                           \
-	 _PARAM::InputType, nullptr,                                                                                       \
-	 nullptr,           nullptr,                                                                                       \
-	 nullptr,           nullptr,                                                                                       \
-	 _PARAM::Scope,     _PARAM::DefaultValue,                                                                          \
-	 nullptr,           _PARAM::SettingIndex}
+	{                                                                                                                  \
+		_PARAM::Name, _PARAM::Description, _PARAM::InputType, nullptr, nullptr, nullptr, nullptr, nullptr,             \
+		    _PARAM::Scope, _PARAM::DefaultValue, nullptr, _PARAM::SettingIndex                                         \
+	}
 #define DUCKDB_SETTING_CALLBACK(_PARAM)                                                                                \
-	{_PARAM::Name,      _PARAM::Description,                                                                           \
-	 _PARAM::InputType, nullptr,                                                                                       \
-	 nullptr,           nullptr,                                                                                       \
-	 nullptr,           nullptr,                                                                                       \
-	 _PARAM::Scope,     _PARAM::DefaultValue,                                                                          \
-	 _PARAM::OnSet,     _PARAM::SettingIndex}
+	{                                                                                                                  \
+		_PARAM::Name, _PARAM::Description, _PARAM::InputType, nullptr, nullptr, nullptr, nullptr, nullptr,             \
+		    _PARAM::Scope, _PARAM::DefaultValue, _PARAM::OnSet, _PARAM::SettingIndex                                   \
+	}
 #define DUCKDB_GLOBAL(_PARAM)                                                                                          \
-	{_PARAM::Name, _PARAM::Description, _PARAM::InputType,           _PARAM::SetGlobal, nullptr, _PARAM::ResetGlobal,  \
-	 nullptr,      _PARAM::GetSetting,  SettingScopeTarget::INVALID, nullptr,           nullptr, optional_idx()}
+	{                                                                                                                  \
+		_PARAM::Name, _PARAM::Description, _PARAM::InputType, _PARAM::SetGlobal, nullptr, _PARAM::ResetGlobal,         \
+		    nullptr, _PARAM::GetSetting, SettingScopeTarget::INVALID, nullptr, nullptr, optional_idx()                 \
+	}
 #define DUCKDB_LOCAL(_PARAM)                                                                                           \
-	{_PARAM::Name,       _PARAM::Description, _PARAM::InputType,           nullptr, _PARAM::SetLocal, nullptr,         \
-	 _PARAM::ResetLocal, _PARAM::GetSetting,  SettingScopeTarget::INVALID, nullptr, nullptr,          optional_idx()}
+	{                                                                                                                  \
+		_PARAM::Name, _PARAM::Description, _PARAM::InputType, nullptr, _PARAM::SetLocal, nullptr, _PARAM::ResetLocal,  \
+		    _PARAM::GetSetting, SettingScopeTarget::INVALID, nullptr, nullptr, optional_idx()                          \
+	}
 #define DUCKDB_GLOBAL_LOCAL(_PARAM)                                                                                    \
-	{_PARAM::Name,                                                                                                     \
-	 _PARAM::Description,                                                                                              \
-	 _PARAM::InputType,                                                                                                \
-	 _PARAM::SetGlobal,                                                                                                \
-	 _PARAM::SetLocal,                                                                                                 \
-	 _PARAM::ResetGlobal,                                                                                              \
-	 _PARAM::ResetLocal,                                                                                               \
-	 _PARAM::GetSetting,                                                                                               \
-	 SettingScopeTarget::INVALID,                                                                                      \
-	 nullptr,                                                                                                          \
-	 nullptr,                                                                                                          \
-	 optional_idx()}
+	{                                                                                                                  \
+		_PARAM::Name, _PARAM::Description, _PARAM::InputType, _PARAM::SetGlobal, _PARAM::SetLocal,                     \
+		    _PARAM::ResetGlobal, _PARAM::ResetLocal, _PARAM::GetSetting, SettingScopeTarget::INVALID, nullptr,         \
+		    nullptr, optional_idx()                                                                                    \
+	}
 #define FINAL_SETTING                                                                                                  \
-	{nullptr, nullptr, nullptr,       nullptr, nullptr, nullptr, nullptr, nullptr, SettingScopeTarget::INVALID,        \
-	 nullptr, nullptr, optional_idx()}
+	{                                                                                                                  \
+		nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, SettingScopeTarget::INVALID, nullptr,  \
+		    nullptr, optional_idx()                                                                                    \
+	}
 
-#define DUCKDB_SETTING_ALIAS(_ALIAS, _SETTING_INDEX) {_ALIAS, _SETTING_INDEX}
-#define FINAL_ALIAS                                  {nullptr, 0}
+#define DUCKDB_SETTING_ALIAS(_ALIAS, _SETTING_INDEX)                                                                   \
+	{ _ALIAS, _SETTING_INDEX }
+#define FINAL_ALIAS                                                                                                    \
+	{ nullptr, 0 }
 
 static const ConfigurationOption internal_options[] = {
 
@@ -214,16 +211,17 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING(WalAutocheckpointEntriesSetting),
     DUCKDB_SETTING_CALLBACK(WarningsAsErrorsSetting),
     DUCKDB_SETTING(WriteBufferRowGroupCountSetting),
-    DUCKDB_SETTING(ZstdMinStringLengthSetting),    FINAL_SETTING};
+    DUCKDB_SETTING(ZstdMinStringLengthSetting),
+    FINAL_SETTING};
 
 static const ConfigurationAlias setting_aliases[] = {DUCKDB_SETTING_ALIAS("configure_metrics", 27),
-    DUCKDB_SETTING_ALIAS("custom_profiling_settings", 27),
-    DUCKDB_SETTING_ALIAS("memory_limit", 103),
-    DUCKDB_SETTING_ALIAS("null_order", 44),
-    DUCKDB_SETTING_ALIAS("profiling_output", 123),
-    DUCKDB_SETTING_ALIAS("user", 139),
-    DUCKDB_SETTING_ALIAS("wal_autocheckpoint", 26),
-    DUCKDB_SETTING_ALIAS("worker_threads", 137),
+                                                     DUCKDB_SETTING_ALIAS("custom_profiling_settings", 27),
+                                                     DUCKDB_SETTING_ALIAS("memory_limit", 103),
+                                                     DUCKDB_SETTING_ALIAS("null_order", 44),
+                                                     DUCKDB_SETTING_ALIAS("profiling_output", 123),
+                                                     DUCKDB_SETTING_ALIAS("user", 139),
+                                                     DUCKDB_SETTING_ALIAS("wal_autocheckpoint", 26),
+                                                     DUCKDB_SETTING_ALIAS("worker_threads", 137),
                                                      FINAL_ALIAS};
 
 vector<ConfigurationOption> DBConfig::GetOptions() {

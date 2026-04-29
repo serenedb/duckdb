@@ -1,12 +1,76 @@
 #include "json_multi_file_info.hpp"
+#include "json_common.hpp"
 #include "json_scan.hpp"
+#include "json_transform.hpp"
+#include "duckdb/common/multi_file/multi_file_function.hpp"
+#include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/parallel/async_result.hpp"
 
 namespace duckdb {
 
+namespace {
+
+// Drain helper for read_json's lookup TableFunction. The gstate IS a
+// MultiFileGlobalState (built by MultiFileInitGlobal from init_input.pk_lookups,
+// propagated into JSONScanGlobalState::pk_lookups via InitializeGlobalState,
+// where ReadJSONFunctionPkLookup uses it for offset-seek random reads).
+// MultiFileGlobalState scan progress isn't designed to be replayed, so the
+// SereneDB caller re-inits this gstate per batch -- only bind_data is cached.
+void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &gstate = data.global_state->Cast<MultiFileGlobalState>();
+	if (gstate.pk_lookups.empty()) {
+		output.SetCardinality(0);
+		return;
+	}
+
+	DataChunk scratch;
+	scratch.Initialize(context, output.GetTypes());
+	idx_t total = 0;
+	const idx_t num_rows = gstate.pk_lookups.size();
+	auto saved_mode = data.results_execution_mode;
+	data.results_execution_mode = AsyncResultsExecutionMode::SYNCHRONOUS;
+	while (total < num_rows) {
+		scratch.Reset();
+		MultiFileFunction<JSONMultiFileInfo>::MultiFileScan(context, data, scratch);
+		const auto scanned = scratch.size();
+		if (scanned == 0) {
+			break;
+		}
+		for (idx_t c = 0; c < scratch.ColumnCount(); ++c) {
+			VectorOperations::Copy(scratch.data[c], output.data[c], scanned, 0, total);
+		}
+		total += scanned;
+	}
+	data.results_execution_mode = saved_mode;
+	output.SetCardinality(total);
+}
+
+} // namespace
+
+// Thin lookup specialization of read_json. init_global / init_local are the
+// regular MultiFileFunction ones (init_input.pk_lookups propagates into
+// JSONScanGlobalState::pk_lookups via InitializeGlobalState). function is
+// the drain loop above.
+TableFunction MakeJSONLookupTableFunction() {
+	TableFunction fn;
+	fn.init_global = MultiFileFunction<JSONMultiFileInfo>::MultiFileInitGlobal;
+	fn.init_local = MultiFileFunction<JSONMultiFileInfo>::MultiFileInitLocal;
+	fn.function = JSONLookupScan;
+	return fn;
+}
+
 unique_ptr<MultiFileReaderInterface> JSONMultiFileInfo::CreateInterface(ClientContext &context) {
 	return make_uniq<JSONMultiFileInfo>();
+}
+
+void JSONMultiFileInfo::GetVirtualColumns(ClientContext &, MultiFileBindData &, virtual_column_map_t &result) {
+	// Mirrors CSV: file_row_number = byte offset of the JSON record's start in
+	// the file. Unique per row, stable across re-reads, usable as an exact-seek
+	// key by the standalone JSON lookup TableFunction.
+	result.insert(make_pair(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
+	                        TableColumn("file_row_number", LogicalType::BIGINT)));
 }
 
 unique_ptr<BaseFileReaderOptions> JSONMultiFileInfo::InitializeOptions(ClientContext &context,
@@ -386,6 +450,12 @@ unique_ptr<GlobalTableFunctionState> JSONMultiFileInfo::InitializeGlobalState(Cl
 			continue;
 		}
 		if (IsVirtualColumn(col_id)) {
+			// Record the output-chunk slot for file_row_number so ReadJSONFunction
+			// can fill it with byte offsets after the transform. Other virtual
+			// columns (filename, file_index, ...) are still skipped.
+			if (col_id == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+				gstate.file_row_number_idx = col_idx;
+			}
 			continue;
 		}
 		bool skip = false;
@@ -408,6 +478,7 @@ unique_ptr<GlobalTableFunctionState> JSONMultiFileInfo::InitializeGlobalState(Cl
 		// then we don't need to throw an error if we encounter an unseen column
 		gstate.transform_options.error_unknown_key = false;
 	}
+	gstate.pk_lookups = global_state.pk_lookups;
 	return std::move(json_state);
 }
 
@@ -461,20 +532,113 @@ bool JSONReader::TryInitializeScan(ClientContext &context, GlobalTableFunctionSt
 	return lstate.TryInitializeScan(gstate, *this);
 }
 
+// Exact-offset scan path. Each Materialize batch hands us a sorted list of
+// byte offsets (extracted from a `file_row_number IN (...)` filter). For each
+// offset we issue a point read, parse exactly one JSON value starting at that
+// position, and drop it into `values[]` -- no buffer iteration, no state
+// machine advancement through the whole file. Total work is O(|offsets|)
+// reads + parses.
+static void ReadJSONFunctionPkLookup(JSONReader &json_reader, JSONScanGlobalState &gstate, JSONScanLocalState &lstate,
+                                     DataChunk &output) {
+	auto &scan_state = lstate.GetScanState();
+	// The reader's file handle isn't opened by the normal PrepareReader path
+	// in exact-offset mode (we bypass the buffer iterator that triggers it).
+	// Open it lazily on first use so ReadRawAtPosition has something to read.
+	if (!json_reader.HasFileHandle()) {
+		json_reader.OpenJSONFile();
+	}
+	auto &file_handle = json_reader.GetFileHandle();
+	const auto max_row_size = json_reader.GetOptions().maximum_object_size;
+	auto *alc = scan_state.allocator.GetYYAlc();
+
+	// Reuse scan_state.read_buffer -- same pattern as the normal-scan path
+	// (JSONReader::ReadNextBufferSeek): allocate once from global_allocator,
+	// persist across ReadJSONFunctionPkLookup calls on this lstate. yyjson
+	// (without YYJSON_READ_INSITU) copies string payloads out of the buffer
+	// into `alc`, so overwriting the buffer between offsets is safe -- the
+	// already-parsed yyjson_doc objects stay valid.
+	// `read_buffer` is otherwise unused in pk-lookup mode (we don't walk the
+	// file via the buffer iterator).
+	if (!scan_state.read_buffer.IsSet() || scan_state.read_buffer.GetSize() < max_row_size + YYJSON_PADDING_SIZE) {
+		scan_state.read_buffer = scan_state.global_allocator.Allocate(max_row_size + YYJSON_PADDING_SIZE);
+	}
+
+	const auto offsets = gstate.pk_lookups;
+	yyjson_val **values = scan_state.values;
+	int64_t emitted_offsets[STANDARD_VECTOR_SIZE];
+	idx_t row = 0;
+	while (row < STANDARD_VECTOR_SIZE) {
+		const auto i = gstate.lookup_cursor.fetch_add(1, std::memory_order_relaxed);
+		if (i >= offsets.size()) {
+			break;
+		}
+		const idx_t offset = UnsafeNumericCast<idx_t>(offsets[i]);
+		auto *ptr = char_ptr_cast(scan_state.read_buffer.get());
+		const auto read_size = file_handle.ReadRawAtPosition(ptr, max_row_size, offset);
+		if (read_size == 0) {
+			continue;
+		}
+		// YYJSON_READ_STOP_WHEN_DONE stops at the first valid JSON value, so
+		// trailing bytes (next records, unrelated whitespace) don't fail the parse.
+		yyjson_read_err err;
+		auto *doc = JSONCommon::ReadDocumentUnsafe(ptr, read_size, JSONCommon::READ_STOP_FLAG, alc, &err);
+		if (!doc) {
+			continue;
+		}
+		values[row] = doc->root;
+		emitted_offsets[row] = offsets[i];
+		++row;
+	}
+
+	if (row == 0) {
+		output.SetCardinality(0);
+		return;
+	}
+
+	if (!gstate.names.empty()) {
+		vector<Vector *> result_vectors;
+		result_vectors.reserve(gstate.column_ids.size());
+		for (idx_t i = 0; i < gstate.column_ids.size(); i++) {
+			result_vectors.emplace_back(&output.data[gstate.column_ids[i]]);
+		}
+		D_ASSERT(gstate.json_data.options.record_type == JSONRecordType::RECORDS);
+		JSONTransform::TransformObject(values, alc, row, gstate.names, result_vectors, lstate.transform_options,
+		                               gstate.column_indices, lstate.transform_options.error_unknown_key);
+	}
+
+	// file_row_number output = the original offsets we read from (known good).
+	if (gstate.file_row_number_idx != DConstants::INVALID_INDEX) {
+		auto &frn_vec = output.data[gstate.file_row_number_idx];
+		auto *frn_data = FlatVector::GetDataMutable<int64_t>(frn_vec);
+		for (idx_t i = 0; i < row; ++i) {
+			frn_data[i] = emitted_offsets[i];
+		}
+	}
+
+	output.SetCardinality(row);
+}
+
 void ReadJSONFunction(ClientContext &context, JSONReader &json_reader, JSONScanGlobalState &gstate,
                       JSONScanLocalState &lstate, DataChunk &output) {
+	if (!gstate.pk_lookups.empty()) {
+		ReadJSONFunctionPkLookup(json_reader, gstate, lstate, output);
+		return;
+	}
 	auto &scan_state = lstate.GetScanState();
 	D_ASSERT(RefersToSameObject(json_reader, *scan_state.current_reader));
 
 	const auto count = lstate.Read();
 	yyjson_val **values = scan_state.values;
 
-	auto &column_ids = json_reader.column_ids;
+	// Use gstate.column_ids (real-column output slots) rather than
+	// json_reader.column_ids (which may include virtual columns like
+	// file_row_number appended by the multi-file column mapper -- those are
+	// filled post-transform below, not by JSONTransform).
 	if (!gstate.names.empty()) {
 		vector<Vector *> result_vectors;
-		result_vectors.reserve(column_ids.size());
-		for (idx_t i = 0; i < column_ids.size(); i++) {
-			result_vectors.emplace_back(&output.data[i]);
+		result_vectors.reserve(gstate.column_ids.size());
+		for (idx_t i = 0; i < gstate.column_ids.size(); i++) {
+			result_vectors.emplace_back(&output.data[gstate.column_ids[i]]);
 		}
 
 		D_ASSERT(gstate.json_data.options.record_type != JSONRecordType::AUTO_DETECT);
@@ -500,6 +664,23 @@ void ReadJSONFunction(ClientContext &context, JSONReader &json_reader, JSONScanG
 			lstate.AddTransformError(lstate.transform_options.object_index,
 			                         lstate.transform_options.error_message + hint);
 			return;
+		}
+	}
+
+	// If file_row_number is projected, fill that output slot with each record's
+	// absolute file byte offset. units[i].pointer points into the read buffer;
+	// buffer_handle->buffer_start is the buffer-local position of fresh data
+	// and buffer_handle->file_start is the file offset that position maps to.
+	if (gstate.file_row_number_idx != DConstants::INVALID_INDEX) {
+		auto &frn_vec = output.data[gstate.file_row_number_idx];
+		auto *frn_data = FlatVector::GetDataMutable<int64_t>(frn_vec);
+		const auto *buffer_handle = scan_state.current_buffer_handle.get();
+		const auto *data_base =
+		    buffer_handle ? scan_state.buffer_ptr + buffer_handle->buffer_start : scan_state.buffer_ptr;
+		const auto file_base = buffer_handle ? buffer_handle->file_start : idx_t {0};
+		for (idx_t i = 0; i < count; ++i) {
+			const auto local = UnsafeNumericCast<idx_t>(scan_state.units[i].pointer - data_base);
+			frn_data[i] = UnsafeNumericCast<int64_t>(file_base + local);
 		}
 	}
 	output.SetCardinality(count);

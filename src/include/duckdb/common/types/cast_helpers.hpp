@@ -118,8 +118,7 @@ struct DecimalToString {
 		// Length is max of:
 		//   scale + 2 ("0.XXX") — when |value| < 1
 		//   integer_length + 1 — when |value| >= 1 (digits + '.')
-		return MaxValue(scale + 2 + (value < 0 ? 1 : 0),
-		                NumericHelper::SignedLength<SIGNED, UNSIGNED>(value) + 1);
+		return MaxValue(scale + 2 + (value < 0 ? 1 : 0), NumericHelper::SignedLength<SIGNED, UNSIGNED>(value) + 1);
 	}
 
 	template <class SIGNED>
@@ -335,7 +334,7 @@ struct IntervalToStringCast {
 		// append the name together with a potential "s" (for plurals)
 		memcpy(buffer + length, name, name_len);
 		length += name_len;
-		if (value != 1) {  // PG: only value==1 is singular, -1 is plural
+		if (value != 1) { // PG: only value==1 is singular, -1 is plural
 			buffer[length++] = 's';
 		}
 	}

@@ -1,5 +1,7 @@
 #include "json_reader.hpp"
 
+#include "duckdb/common/multi_file/multi_file_reader.hpp"
+
 #include <utility>
 
 #include "duckdb/common/file_opener.hpp"
@@ -12,9 +14,9 @@
 namespace duckdb {
 
 JSONBufferHandle::JSONBufferHandle(JSONReader &reader, idx_t buffer_index_p, idx_t readers_p, AllocatedData &&buffer_p,
-                                   idx_t buffer_size_p, idx_t buffer_start_p)
+                                   idx_t buffer_size_p, idx_t buffer_start_p, idx_t file_start_p)
     : reader(reader), buffer_index(buffer_index_p), readers(readers_p), buffer(std::move(buffer_p)),
-      buffer_size(buffer_size_p), buffer_start(buffer_start_p) {
+      buffer_size(buffer_size_p), buffer_start(buffer_start_p), file_start(file_start_p) {
 }
 
 JSONFileHandle::JSONFileHandle(QueryContext context_p, unique_ptr<FileHandle> file_handle_p, Allocator &allocator_p)
@@ -89,6 +91,20 @@ bool JSONFileHandle::GetPositionAndSize(idx_t &position, idx_t &size, idx_t requ
 	}
 
 	return true;
+}
+
+idx_t JSONFileHandle::ReadRawAtPosition(char *pointer, idx_t size, idx_t position,
+                                        optional_ptr<FileHandle> override_handle) {
+	if (IsPipe()) {
+		throw InternalException("ReadRawAtPosition is not supported for pipes");
+	}
+	if (size == 0 || position >= file_size) {
+		return 0;
+	}
+	const idx_t actual_size = MinValue<idx_t>(size, file_size - position);
+	auto &handle = override_handle ? *override_handle.get() : *file_handle.get();
+	handle.Read(context, pointer, actual_size, position);
+	return actual_size;
 }
 
 void JSONFileHandle::ReadAtPosition(char *pointer, idx_t size, idx_t position,
@@ -180,6 +196,16 @@ idx_t JSONFileHandle::ReadFromCache(char *&pointer, idx_t &size, atomic<idx_t> &
 JSONReader::JSONReader(ClientContext &context, JSONReaderOptions options_p, OpenFileInfo file_p)
     : BaseFileReader(std::move(file_p)), context(context), options(std::move(options_p)), initialized(0),
       next_buffer_index(0), thrown(false) {
+}
+
+void JSONReader::AddVirtualColumn(column_t virtual_column_id) {
+	if (virtual_column_id != MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+		throw InternalException("JSON reader only supports file_row_number as a virtual column (got id %d)",
+		                        virtual_column_id);
+	}
+	// No per-reader state needed: JSONScanGlobalState::file_row_number_idx is set in
+	// JSONMultiFileInfo::InitializeGlobalState by inspecting the column indexes, and
+	// ReadJSONFunction fills that output slot with byte offsets after the transform.
 }
 
 void JSONReader::OpenJSONFile() {
@@ -945,9 +971,12 @@ void JSONReader::FinalizeBufferInternal(JSONReaderScanState &scan_state, Allocat
 		readers = scan_state.is_last ? 1 : 2;
 	}
 
-	// Create an entry and insert it into the map
-	auto json_buffer_handle = make_uniq<JSONBufferHandle>(*this, buffer_index, readers, std::move(buffer),
-	                                                      scan_state.buffer_size, scan_state.buffer_offset);
+	// Create an entry and insert it into the map. `file_start` is the file byte
+	// offset that corresponds to `buffer_ptr + buffer_offset` (see the Read
+	// functions that set scan_state.file_read_start before the read).
+	auto json_buffer_handle =
+	    make_uniq<JSONBufferHandle>(*this, buffer_index, readers, std::move(buffer), scan_state.buffer_size,
+	                                scan_state.buffer_offset, scan_state.file_read_start);
 	scan_state.current_buffer_handle = json_buffer_handle.get();
 	InsertBuffer(buffer_index, std::move(json_buffer_handle));
 
@@ -1045,6 +1074,11 @@ bool JSONReader::PrepareBufferSeek(JSONReaderScanState &scan_state) {
 void JSONReader::ReadNextBufferSeek(JSONReaderScanState &scan_state) {
 	PrepareForReadInternal(scan_state);
 
+	// Seek mode: scan_state.read_position was already set by GetPositionAndSize
+	// and is the file offset where the read will land. Propagate it so the
+	// finalized buffer handle knows the file offset of its fresh data.
+	scan_state.file_read_start = scan_state.read_position;
+
 	// we start reading at "options.maximum_object_size" to leave space for data from the previous buffer
 	idx_t read_offset = options.maximum_object_size;
 	if (scan_state.read_size > 0) {
@@ -1095,6 +1129,10 @@ bool JSONReader::ReadNextBufferNoSeek(JSONReaderScanState &scan_state) {
 	}
 	scan_state.buffer_index = GetBufferIndex();
 	PrepareForReadInternal(scan_state);
+	// No-seek (sequential) mode: capture the file position before the read so
+	// FinalizeBufferInternal can record it on the buffer handle. The file
+	// handle advances its internal read_position by read_size after Read().
+	scan_state.file_read_start = file_handle.GetReadPosition();
 	if (!file_handle.Read(scan_state.buffer_ptr + read_offset, read_size, request_size)) {
 		return false; // Couldn't read anything
 	}

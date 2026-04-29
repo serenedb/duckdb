@@ -514,7 +514,8 @@ static AdbcStatusCode ExecuteQuery(duckdb::Connection *conn, const char *query, 
 	return ADBC_STATUS_OK;
 }
 
-static AdbcStatusCode InternalSetOption(duckdb::Connection &conn, duckdb::unordered_map<std::string, std::string> &options,
+static AdbcStatusCode InternalSetOption(duckdb::Connection &conn,
+                                        duckdb::unordered_map<std::string, std::string> &options,
                                         struct AdbcError *error) {
 	// If we got here, the options have already been validated and are acceptable
 	for (auto &option : options) {

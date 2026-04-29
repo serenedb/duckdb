@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "duckdb/common/multi_file/multi_file_function.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "parquet_crypto.hpp"
@@ -24,9 +25,12 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/function/partition_stats.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/parallel/async_result.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "parquet_column_schema.hpp"
 #include "parquet_file_metadata_cache.hpp"
 #include "parquet_types.h"
@@ -93,6 +97,16 @@ struct ParquetReadGlobalState : public GlobalTableFunctionState {
 	idx_t batch_index;
 	//! (Optional) pointer to physical operator performing the scan
 	optional_ptr<const PhysicalOperator> op;
+	//! Sorted list of file_row_numbers requested by the caller. When non-empty,
+	//! TryInitializeScan skips row groups whose row range doesn't intersect
+	//! this span, and ParquetReader::Scan narrows each scanned chunk to rows
+	//! whose file_row_number is in the span. Used by SereneDB's
+	//! FileMaterializer for point-lookup scans over an inverted index.
+	std::span<const int64_t> pk_lookups;
+	//! Cumulative row count across row groups 0..row_group_index-1 in the
+	//! current file. Lets TryInitializeScan compute a candidate row group's
+	//! [start, end) range in O(1) -- reset to 0 by FinishFile.
+	idx_t current_row_offset = 0;
 };
 
 struct ParquetReadLocalState : public LocalTableFunctionState {
@@ -398,6 +412,282 @@ static vector<PartitionStatistics> ParquetGetPartitionStats(ClientContext &conte
 	return result;
 }
 
+namespace {
+
+// Cached lookup-mode state for read_parquet. Built ONCE per query in
+// init_global (file metadata parsed, ParquetReader opened, projection wired,
+// row-group offset table prebuilt), reused across every per-batch
+// ParquetLookupScan call:
+//   - reader: shared ParquetReader (file_handle + schema + column readers).
+//   - row_group_starts: cumulative row counts, [num_groups + 1]; lets us pick
+//     matching groups for a given pk in O(log num_groups).
+//   - file_cols / output_to_file_col: projection mapping (output slot ->
+//     scratch slot, or DConstants::INVALID_INDEX for virtual slots).
+//   - scratch: same shape as the projected file columns; reused.
+//   - scan_state: ParquetReader's per-scan state. InitializeScan rebuilds its
+//     root_reader / file_handle each batch (cheaper than MultiFileFunction's
+//     full gstate/lstate dance, but still the dominant per-batch cost).
+// pk_lookups is supplied per call via TableFunctionInput::pk_lookups -- the
+// CSV-style per-call channel. We bypass MultiFileFunction entirely; this
+// avoids the per-batch reader-list setup + closed-reader recycling that made
+// the previous implementation force a full re-init per batch.
+// Mirrors DuckDB's parquet streaming-scan cast schema (multi_file_function.hpp
+// + multi_file_column_mapper.cpp): ParquetReader::Scan writes parquet's NATIVE
+// types into `scan_chunk`, then a per-column `BoundCastExpression` evaluated
+// by an `ExpressionExecutor` casts to the declared type. In streaming this
+// writes into a fresh `output_chunk` per call; in our lookup case we
+// accumulate across calls so the executor target is either `output` directly
+// (single-Scan-call lookups) or `scratch_typed` (multi-call, then Copy at
+// offset for VARCHAR/nested where heap continuity matters).
+struct ParquetLookupGlobalState : public GlobalTableFunctionState {
+	shared_ptr<ParquetReader> reader;
+	vector<idx_t> file_cols;
+	vector<idx_t> output_to_file_col;
+	vector<idx_t> row_group_starts;
+	//! ParquetReader::Scan writes here in parquet's NATIVE column types.
+	DataChunk scan_chunk;
+	//! Per-projected-col cast expression: BoundReferenceExpression(local_idx,
+	//! native_type) optionally wrapped in BoundCastExpression(declared_type).
+	//! Built once at init via BoundCastExpression::AddCastToType -- same as
+	//! streaming's ConstructMapExpression.
+	vector<unique_ptr<Expression>> expressions;
+	ExpressionExecutor executor;
+	//! `true` if any column needs a real cast (i.e., declared != native).
+	bool needs_cast = false;
+	//! Cast destination owning the heap for VARCHAR / nested types. Only
+	//! allocated when at least one column casts to a heap-bearing type.
+	DataChunk scratch_typed;
+	//! Per-projected-col flag: true if we can cast directly into a non-owning
+	//! view of `output` at offset (primitive types). False for VARCHAR/nested
+	//! where the cast destination needs an owned heap that survives the call.
+	vector<bool> col_in_place_ok;
+	//! Per-projected-col element size in bytes (declared type's PhysicalType).
+	//! Used by the in-place path to compute `output_data + total*size`.
+	vector<idx_t> declared_element_size;
+	ParquetReaderScanState scan_state;
+
+	explicit ParquetLookupGlobalState(ClientContext &context) : executor(context) {
+	}
+};
+
+unique_ptr<GlobalTableFunctionState> ParquetLookupInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
+	auto &bind_data = input.bind_data->CastNoConst<MultiFileBindData>();
+	auto &parquet_bind = bind_data.bind_data->Cast<ParquetReadBindData>();
+	auto state = make_uniq<ParquetLookupGlobalState>(context);
+
+	// Build the reader directly from the (single, single-file lookup) file in
+	// bind_data. Metadata parsing happens in the constructor; we cache the
+	// reader for the rest of the query.
+	const auto &file = bind_data.file_list->GetFirstFile();
+	state->reader = make_shared_ptr<ParquetReader>(context, file, parquet_bind.GetParquetOptions());
+
+	// Wire reader projection: column_ids drive which file columns ParquetReader::Scan reads.
+	state->file_cols.reserve(input.column_indexes.size());
+	for (auto &col : input.column_indexes) {
+		if (!col.IsVirtualColumn()) {
+			state->file_cols.push_back(col.GetPrimaryIndex());
+		}
+	}
+	for (auto file_col : state->file_cols) {
+		state->reader->column_ids.push_back(MultiFileLocalColumnId(file_col));
+	}
+	state->reader->column_indexes = input.column_indexes;
+
+	// output slot -> scratch slot: scratch slot index = position in file_cols.
+	state->output_to_file_col.reserve(input.column_indexes.size());
+	for (auto &col : input.column_indexes) {
+		if (col.IsVirtualColumn()) {
+			state->output_to_file_col.push_back(DConstants::INVALID_INDEX);
+			continue;
+		}
+		const auto file_col = col.GetPrimaryIndex();
+		auto it = std::find(state->file_cols.begin(), state->file_cols.end(), file_col);
+		D_ASSERT(it != state->file_cols.end());
+		state->output_to_file_col.push_back(NumericCast<idx_t>(it - state->file_cols.begin()));
+	}
+
+	// Prefix-sum of row-group sizes. row_group_starts[i] = global row index of
+	// the first row in group i; row_group_starts[num_groups] = total rows.
+	const auto *meta = state->reader->GetFileMetadata();
+	state->row_group_starts.reserve(meta->row_groups.size() + 1);
+	state->row_group_starts.push_back(0);
+	idx_t cum = 0;
+	for (auto &rg : meta->row_groups) {
+		cum += NumericCast<idx_t>(rg.num_rows);
+		state->row_group_starts.push_back(cum);
+	}
+
+	// scan_chunk holds parquet's NATIVE column types -- what ParquetReader::Scan
+	// writes via its column readers. Per-column cast expressions translate to
+	// the declared types (same shape as streaming's
+	// MultiFileColumnMapper::ConstructMapExpression).
+	vector<LogicalType> native_types;
+	native_types.reserve(state->file_cols.size());
+	state->declared_element_size.reserve(state->file_cols.size());
+	state->col_in_place_ok.reserve(state->file_cols.size());
+	bool any_owned_heap = false;
+	for (idx_t i = 0; i < state->file_cols.size(); ++i) {
+		const auto file_col = state->file_cols[i];
+		auto &native = state->reader->columns[file_col].type;
+		const auto &declared = bind_data.types[file_col];
+		if (native != declared) {
+			state->needs_cast = true;
+		}
+		const bool needs_owned_heap = declared.IsNested() || declared.InternalType() == PhysicalType::VARCHAR;
+		state->col_in_place_ok.push_back(!needs_owned_heap);
+		any_owned_heap = any_owned_heap || needs_owned_heap;
+		native_types.push_back(native);
+		state->declared_element_size.push_back(GetTypeIdSize(declared.InternalType()));
+
+		// Per-col cast expression: BoundReferenceExpression(local_idx,
+		// native_type) optionally wrapped in BoundCastExpression(declared_type).
+		// Mirrors streaming's ConstructMapExpression
+		// (multi_file_column_mapper.cpp:586) -- AddCastToType is a no-op when
+		// types already match.
+		unique_ptr<Expression> expr = make_uniq<BoundReferenceExpression>(native, i);
+		if (native != declared) {
+			expr = BoundCastExpression::AddCastToType(context, std::move(expr), declared);
+		}
+		state->expressions.push_back(std::move(expr));
+	}
+	state->scan_chunk.Initialize(context, native_types);
+	for (auto &expr : state->expressions) {
+		state->executor.AddExpression(*expr);
+	}
+	// Owned typed scratch only allocated when at least one column casts to a
+	// heap-bearing type (VARCHAR/nested). Primitive casts go in-place via a
+	// non-owning Vector view of `output` at offset.
+	if (state->needs_cast && any_owned_heap) {
+		vector<LogicalType> typed_types;
+		typed_types.reserve(state->file_cols.size());
+		for (auto file_col : state->file_cols) {
+			typed_types.push_back(bind_data.types[file_col]);
+		}
+		state->scratch_typed.Initialize(context, typed_types);
+	}
+
+	return std::move(state);
+}
+
+// Per-batch lookup. Scans only the row groups that overlap data.pk_lookups
+// (one group per call to InitializeScan; ParquetReader::Scan walks the list).
+// Inside each scanned chunk, ParquetReader::Scan narrows to matching pks via
+// state.pk_lookups + sel-vec. gstate (reader / row_group_starts / projection /
+// scratch) is cached -- the per-batch cost is just InitializeScan (rebuilds
+// root_reader and per-scan thrift transport).
+void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &gstate = data.global_state->Cast<ParquetLookupGlobalState>();
+	if (data.pk_lookups.empty()) {
+		output.SetCardinality(0);
+		return;
+	}
+
+	// Iterate the sorted pk_lookups, mapping each to its row group via
+	// upper_bound on row_group_starts. Because pks are sorted ascending and
+	// row_group_starts is too, each pk's group is >= the previous pk's group
+	// -- so we narrow the search range by advancing `search_start` after each
+	// hit. Amortized O(num_pks + log num_groups). Last-group dedupe is enough
+	// since the same monotonicity makes the resulting group list ascending.
+	vector<idx_t> groups_to_read;
+	const idx_t num_groups = gstate.row_group_starts.size() - 1;
+	auto search_start = gstate.row_group_starts.begin();
+	idx_t last_group = num_groups;
+	for (auto pk : data.pk_lookups) {
+		auto it = std::upper_bound(search_start, gstate.row_group_starts.end(), NumericCast<idx_t>(pk));
+		if (it == gstate.row_group_starts.begin()) {
+			continue;
+		}
+		const auto g = NumericCast<idx_t>(it - gstate.row_group_starts.begin()) - 1;
+		if (g >= num_groups) {
+			continue;
+		}
+		if (g != last_group) {
+			groups_to_read.push_back(g);
+			last_group = g;
+		}
+		// Next pk >= this pk, so its group is >= g; subsequent searches can
+		// start at row_group_starts[g] (= this group's start).
+		search_start = gstate.row_group_starts.begin() + g;
+	}
+	if (groups_to_read.empty()) {
+		output.SetCardinality(0);
+		return;
+	}
+
+	gstate.reader->InitializeScan(context, gstate.scan_state, std::move(groups_to_read));
+	gstate.scan_state.pk_lookups = data.pk_lookups;
+
+	// Fast path A -- ALL types match: ParquetReader::Scan writes parquet's
+	// native types directly into `output` at the running offset. ZERO copy,
+	// no executor invocation.
+	if (!gstate.needs_cast) {
+		idx_t total = 0;
+		while (!gstate.scan_state.finished) {
+			gstate.reader->Scan(context, gstate.scan_state, output, /*append_offset=*/total);
+			total = output.size();
+		}
+		output.SetCardinality(total);
+		return;
+	}
+
+	// Cast path -- mirrors streaming (multi_file_function.hpp:614 +
+	// multi_file_reader.cpp:438): ParquetReader::Scan into scan_chunk in
+	// native types; per column, evaluate the BoundCastExpression via the
+	// ExpressionExecutor. For primitive cast destinations the executor writes
+	// directly into a non-owning view of `output` at offset (zero copy beyond
+	// the unavoidable per-element type conversion). For VARCHAR/nested
+	// destinations we evaluate into scratch_typed (whose heap lives across
+	// calls via gstate), then Copy the 16-byte string_t structs into output
+	// at offset -- the strings themselves stay in scratch_typed's heap, and
+	// VectorOperations::Copy adds the heap reference so they outlive the
+	// scratch_typed reset.
+	idx_t total = 0;
+	while (!gstate.scan_state.finished) {
+		gstate.scan_chunk.Reset();
+		gstate.reader->Scan(context, gstate.scan_state, gstate.scan_chunk);
+		const auto scanned = gstate.scan_chunk.size();
+		if (scanned == 0) {
+			continue;
+		}
+		gstate.executor.SetChunk(gstate.scan_chunk);
+		for (idx_t c = 0; c < gstate.output_to_file_col.size(); ++c) {
+			const auto i = gstate.output_to_file_col[c];
+			if (i == DConstants::INVALID_INDEX) {
+				continue;
+			}
+			if (gstate.col_in_place_ok[i]) {
+				// Primitive cast: ExecuteExpression writes directly into a
+				// non-owning view at output[c][total..total+scanned).
+				auto *base = FlatVector::GetDataMutable(output.data[c]);
+				const auto offset_bytes = total * gstate.declared_element_size[i];
+				Vector view(output.data[c].GetType(), base + offset_bytes, scanned);
+				gstate.executor.ExecuteExpression(i, view);
+			} else {
+				// VARCHAR/nested: writes into scratch_typed (owned heap), then
+				// Copy at offset (heap reference accumulates on output).
+				gstate.executor.ExecuteExpression(i, gstate.scratch_typed.data[i]);
+				VectorOperations::Copy(gstate.scratch_typed.data[i], output.data[c], scanned, 0, total);
+			}
+		}
+		total += scanned;
+	}
+	output.SetCardinality(total);
+}
+
+} // namespace
+
+// Standalone lookup TableFunction for read_parquet. Bypasses MultiFileFunction
+// entirely: gstate is built once per query (file open + projection wired +
+// row-group offsets prebuilt), pk_lookups arrives per call via
+// TableFunctionInput, ParquetReader's public InitializeScan/Scan API drives
+// the read directly. Caller (SereneDB) caches gstate across batches.
+TableFunction MakeParquetLookupTableFunction() {
+	TableFunction fn;
+	fn.init_global = ParquetLookupInitGlobal;
+	fn.function = ParquetLookupScan;
+	return fn;
+}
+
 TableFunctionSet ParquetScanFunction::GetFunctionSet() {
 	MultiFileFunction<ParquetMultiFileInfo> table_function("parquet_scan");
 	table_function.named_parameters["binary_as_string"] = LogicalType::BOOLEAN;
@@ -700,7 +990,9 @@ shared_ptr<BaseUnionData> ParquetReader::GetUnionData(idx_t file_idx) {
 
 unique_ptr<GlobalTableFunctionState> ParquetMultiFileInfo::InitializeGlobalState(ClientContext &, MultiFileBindData &,
                                                                                  MultiFileGlobalState &global_state) {
-	return make_uniq<ParquetReadGlobalState>(global_state.op);
+	auto result = make_uniq<ParquetReadGlobalState>(global_state.op);
+	result->pk_lookups = global_state.pk_lookups;
+	return std::move(result);
 }
 
 unique_ptr<LocalTableFunctionState> ParquetMultiFileInfo::InitializeLocalState(ExecutionContext &,
@@ -712,14 +1004,34 @@ bool ParquetReader::TryInitializeScan(ClientContext &context, GlobalTableFunctio
                                       LocalTableFunctionState &lstate_p) {
 	auto &gstate = gstate_p.Cast<ParquetReadGlobalState>();
 	auto &lstate = lstate_p.Cast<ParquetReadLocalState>();
-	if (gstate.row_group_index >= NumRowGroups()) {
-		// scanned all row groups in this file
-		return false;
+	if (gstate.pk_lookups.empty()) {
+		if (gstate.row_group_index >= NumRowGroups()) {
+			return false;
+		}
+		lstate.group_indexes = {gstate.row_group_index};
+		gstate.row_group_index++;
+		return true;
 	}
-	// The current reader has rowgroups left to be scanned
-	lstate.group_indexes = {gstate.row_group_index};
-	gstate.row_group_index++;
-	return true;
+	// pk-lookup mode: walk forward skipping row groups whose file_row_number
+	// range doesn't overlap any requested pk. Because pk_lookups is sorted,
+	// a single lower_bound tells us if any pk falls in [start, end).
+	const auto total_row_groups = NumRowGroups();
+	const auto &row_groups = GetFileMetadata()->row_groups;
+	while (gstate.row_group_index < total_row_groups) {
+		const auto group_rows = NumericCast<idx_t>(row_groups[gstate.row_group_index].num_rows);
+		const auto group_start = gstate.current_row_offset;
+		const auto group_end = group_start + group_rows;
+		auto it =
+		    std::lower_bound(gstate.pk_lookups.begin(), gstate.pk_lookups.end(), NumericCast<int64_t>(group_start));
+		const bool take = it != gstate.pk_lookups.end() && *it < NumericCast<int64_t>(group_end);
+		gstate.row_group_index++;
+		gstate.current_row_offset = group_end;
+		if (take) {
+			lstate.group_indexes = {gstate.row_group_index - 1};
+			return true;
+		}
+	}
+	return false;
 }
 
 void ParquetReader::PrepareScan(ClientContext &context, GlobalTableFunctionState &gstate_p,
@@ -731,6 +1043,7 @@ void ParquetReader::PrepareScan(ClientContext &context, GlobalTableFunctionState
 void ParquetReader::FinishFile(ClientContext &context, GlobalTableFunctionState &gstate_p) {
 	auto &gstate = gstate_p.Cast<ParquetReadGlobalState>();
 	gstate.row_group_index = 0;
+	gstate.current_row_offset = 0;
 }
 
 AsyncResult ParquetReader::Scan(ClientContext &context, GlobalTableFunctionState &gstate_p,
@@ -746,6 +1059,7 @@ AsyncResult ParquetReader::Scan(ClientContext &context, GlobalTableFunctionState
 	auto &gstate = gstate_p.Cast<ParquetReadGlobalState>();
 	auto &local_state = local_state_p.Cast<ParquetReadLocalState>();
 	local_state.scan_state.op = gstate.op;
+	local_state.scan_state.pk_lookups = gstate.pk_lookups;
 	return Scan(context, local_state.scan_state, chunk);
 }
 

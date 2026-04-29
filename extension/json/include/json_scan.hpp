@@ -72,6 +72,21 @@ public:
 	vector<string> names;
 	vector<column_t> column_ids;
 	vector<ColumnIndex> column_indices;
+	//! Output-chunk slot that receives file_row_number (byte offset of row start
+	//! in the file). Set by InitializeGlobalState when the virtual column is
+	//! projected; DConstants::INVALID_INDEX otherwise. ReadJSONFunction fills
+	//! this slot with offsets computed from scan_state.units[].
+	idx_t file_row_number_idx = DConstants::INVALID_INDEX;
+
+	//! Caller-provided sorted list of exact byte offsets (view into the
+	//! caller's storage, propagated via
+	//! TableFunctionInitInput::pk_lookups). Empty means normal scan;
+	//! non-empty makes ReadJSONFunction take an offset-seek path that reads
+	//! one record per offset via file_handle->ReadAtPosition -- O(|offsets|)
+	//! IO instead of a full scan, no filter-expression roundtrip.
+	std::span<const int64_t> pk_lookups;
+	//! Lock-free dispenser for pk_lookups across parallel scanner threads.
+	atomic<idx_t> lookup_cursor = 0;
 
 	//! Buffer manager allocator
 	Allocator &allocator;

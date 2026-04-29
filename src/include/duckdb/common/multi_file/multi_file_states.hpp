@@ -167,6 +167,7 @@ struct MultiFileGlobalState : public GlobalTableFunctionState {
 	vector<LogicalType> scanned_types;
 	vector<ColumnIndex> column_indexes;
 	optional_ptr<TableFilterSet> filters;
+	std::span<const int64_t> pk_lookups;
 	atomic<bool> finished {false};
 
 	unique_ptr<GlobalTableFunctionState> global_state;

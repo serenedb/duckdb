@@ -26,7 +26,7 @@ class JSONReader;
 struct JSONBufferHandle {
 public:
 	JSONBufferHandle(JSONReader &reader, idx_t buffer_index, idx_t readers, AllocatedData &&buffer, idx_t buffer_size,
-	                 idx_t buffer_start);
+	                 idx_t buffer_start, idx_t file_start = 0);
 
 public:
 	//! The reader this buffer comes from
@@ -40,8 +40,14 @@ public:
 	AllocatedData buffer;
 	//! The size of the data in the buffer (can be less than buffer.GetSize())
 	const idx_t buffer_size;
-	//! The start position in the buffer
+	//! Buffer-local position where the fresh (just-read) data begins. Bytes
+	//! before this position are reserved padding or copied remainder from the
+	//! previous buffer -- not part of this read.
 	idx_t buffer_start;
+	//! File-level byte offset that corresponds to `buffer_ptr + buffer_start`.
+	//! Used by ReadJSONFunction to translate a record pointer into a stable
+	//! file byte offset for the `file_row_number` virtual column.
+	idx_t file_start;
 };
 
 struct JSONFileHandle {
@@ -66,6 +72,15 @@ public:
 	//! The next two functions return whether the read was successful
 	bool GetPositionAndSize(idx_t &position, idx_t &size, idx_t requested_size);
 	bool Read(char *pointer, idx_t &read_size, idx_t requested_size);
+	//! Current file position -- the next sequential Read() will begin at this offset.
+	idx_t GetReadPosition() const {
+		return read_position.load();
+	}
+	//! Random-access read that bypasses the requested/actual_reads accounting
+	//! (used by the exact-offset JSON scan path which doesn't participate in
+	//! the normal sequential-buffer scheduling). Returns number of bytes read.
+	idx_t ReadRawAtPosition(char *pointer, idx_t size, idx_t position,
+	                        optional_ptr<FileHandle> override_handle = nullptr);
 	//! Read at position optionally allows passing a custom handle to read from, otherwise the default one is used
 	void ReadAtPosition(char *pointer, idx_t size, idx_t position, optional_ptr<FileHandle> override_handle = nullptr);
 
@@ -162,6 +177,12 @@ struct JSONReaderScanState {
 	//! For some filesystems (e.g. S3), using a filehandle per thread increases performance
 	unique_ptr<FileHandle> thread_local_filehandle;
 
+	//! File byte offset that the most recent physical read started at -- i.e.
+	//! the file position corresponding to `buffer_ptr + buffer_offset` after
+	//! FinalizeBuffer. The two Read functions set this before issuing the read;
+	//! FinalizeBufferInternal propagates it into JSONBufferHandle::file_start.
+	idx_t file_read_start = 0;
+
 public:
 	//! Reset for parsing the next batch of JSON from the current buffer
 	void ResetForNextParse();
@@ -214,6 +235,11 @@ public:
 	                 LocalTableFunctionState &local_state, DataChunk &chunk) override;
 	void FinishFile(ClientContext &context, GlobalTableFunctionState &gstate_p) override;
 	double GetProgressInFile(ClientContext &context) override;
+	//! Accepts file_row_number as a virtual column. No per-reader state needed --
+	//! JSON's scan consults gstate.file_row_number_idx (set in InitializeGlobalState)
+	//! to know which output slot to fill with byte offsets. The base class throws,
+	//! so we only need to suppress that for the supported id.
+	void AddVirtualColumn(column_t virtual_column_id) override;
 
 public:
 	//! Get a new buffer index (must hold the lock)

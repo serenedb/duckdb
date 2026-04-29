@@ -208,8 +208,7 @@ unique_ptr<SQLStatement> Transformer::TransformAlter(duckdb_libpgquery::PGAlterT
 		}
 		case duckdb_libpgquery::PG_AT_DropConstraint: {
 			auto cascade = command->behavior == duckdb_libpgquery::PG_DROP_CASCADE;
-			result->info =
-			    make_uniq<DropConstraintInfo>(std::move(data), command->name, command->missing_ok, cascade);
+			result->info = make_uniq<DropConstraintInfo>(std::move(data), command->name, command->missing_ok, cascade);
 			break;
 		}
 		case duckdb_libpgquery::PG_AT_AddConstraint: {

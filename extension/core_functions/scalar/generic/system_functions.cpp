@@ -31,8 +31,7 @@ void CurrentSchemaFunction(DataChunk &input, ExpressionState &state, Vector &res
 		if (entry.catalog != current_catalog) {
 			continue;
 		}
-		auto schema_entry =
-		    Catalog::GetSchema(context, entry.catalog, entry.schema, OnEntryNotFound::RETURN_NULL);
+		auto schema_entry = Catalog::GetSchema(context, entry.catalog, entry.schema, OnEntryNotFound::RETURN_NULL);
 		if (schema_entry) {
 			result.Reference(Value(entry.schema));
 			return;
@@ -112,8 +111,7 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 			if (entry.catalog != current_catalog) {
 				continue;
 			}
-			auto schema_entry =
-			    Catalog::GetSchema(context, entry.catalog, entry.schema, OnEntryNotFound::RETURN_NULL);
+			auto schema_entry = Catalog::GetSchema(context, entry.catalog, entry.schema, OnEntryNotFound::RETURN_NULL);
 			if (!schema_entry) {
 				continue;
 			}
