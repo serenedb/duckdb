@@ -189,6 +189,11 @@ public:
 	unsafe_vector<void *> vector_ptr;
 	unsafe_vector<ValidityMask *> validity_mask;
 
+	//! Repoint parse_chunk's vectors at `external_vectors` so subsequent
+	//! ParseValue writes land in their buffers. One entry per parse_chunk
+	//! column, in parse_chunk's column order.
+	void RebindParseChunkVectors(const vector<Vector *> &external_vectors);
+
 	//! Variables to iterate over the CSV buffers
 
 	char *buffer_ptr;

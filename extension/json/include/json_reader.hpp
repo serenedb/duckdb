@@ -69,18 +69,15 @@ public:
 
 	FileHandle &GetHandle();
 
-	//! The next two functions return whether the read was successful
-	bool GetPositionAndSize(idx_t &position, idx_t &size, idx_t requested_size);
+	//! The next two functions return whether the read was successful.
+	//! `seek_to` makes the request random-access: the sequential cursor is
+	//! left alone, and EOF does not latch `last_read_requested`.
+	bool GetPositionAndSize(idx_t &position, idx_t &size, idx_t requested_size, optional_idx seek_to = optional_idx());
 	bool Read(char *pointer, idx_t &read_size, idx_t requested_size);
 	//! Current file position -- the next sequential Read() will begin at this offset.
 	idx_t GetReadPosition() const {
 		return read_position.load();
 	}
-	//! Random-access read that bypasses the requested/actual_reads accounting
-	//! (used by the exact-offset JSON scan path which doesn't participate in
-	//! the normal sequential-buffer scheduling). Returns number of bytes read.
-	idx_t ReadRawAtPosition(char *pointer, idx_t size, idx_t position,
-	                        optional_ptr<FileHandle> override_handle = nullptr);
 	//! Read at position optionally allows passing a custom handle to read from, otherwise the default one is used
 	void ReadAtPosition(char *pointer, idx_t size, idx_t position, optional_ptr<FileHandle> override_handle = nullptr);
 
@@ -268,6 +265,16 @@ public:
 
 	void DecrementBufferUsage(JSONBufferHandle &handle, idx_t lines_or_object_in_buffer, AllocatedData &buffer);
 
+	//! Read ONE record at `file_offset` into scan_state.units[0] /
+	//! scan_state.values[0]. Caller must consume slot 0 before the next call.
+	//! Returns false on read/parse failure or boundary-crossing record.
+	//! TODO: stitch boundary-crossing records with the next buffer.
+	bool FetchRow(JSONReaderScanState &scan_state, idx_t file_offset);
+
+	//! Drop FetchRow's cached buffers. Call between batches once the prior
+	//! batch's output has been consumed downstream.
+	void ClearLookupBuffers(JSONReaderScanState &scan_state);
+
 private:
 	void SkipOverArrayStart(JSONReaderScanState &scan_state);
 	void AutoDetect(Allocator &allocator, idx_t buffer_size);
@@ -279,6 +286,9 @@ private:
 	void ReadNextBufferSeek(JSONReaderScanState &scan_state);
 	bool ReadNextBufferNoSeek(JSONReaderScanState &scan_state);
 	void FinalizeBuffer(JSONReaderScanState &scan_state);
+	//! Random-access variant of PrepareBufferSeek: caller-supplied offset,
+	//! does not advance the sequential read cursor. False at EOF.
+	bool PrepareBufferSeekAt(JSONReaderScanState &scan_state, idx_t file_offset, idx_t request_size);
 
 	//! Insert/get/remove buffer (grabs the lock)
 	void InsertBuffer(idx_t buffer_idx, unique_ptr<JSONBufferHandle> &&buffer);
