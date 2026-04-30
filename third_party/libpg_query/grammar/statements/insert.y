@@ -201,7 +201,7 @@ index_elem:	ColId opt_collate opt_class opt_asc_desc opt_nulls_order
 					$$->ordering = $4;
 					$$->nulls_ordering = $5;
 				}
-			| ColId opt_collate any_name '(' reloption_list ')' opt_asc_desc opt_nulls_order
+			| ColId opt_collate any_name '(' opt_reloption_list ')' opt_asc_desc opt_nulls_order
 				{
 					$$ = makeNode(PGIndexElem);
 					$$->name = $1;
@@ -225,7 +225,7 @@ index_elem:	ColId opt_collate opt_class opt_asc_desc opt_nulls_order
 					$$->ordering = $4;
 					$$->nulls_ordering = $5;
 				}
-			| func_expr_windowless opt_collate any_name '(' reloption_list ')' opt_asc_desc opt_nulls_order
+			| func_expr_windowless opt_collate any_name '(' opt_reloption_list ')' opt_asc_desc opt_nulls_order
 				{
 					$$ = makeNode(PGIndexElem);
 					$$->name = NULL;
@@ -249,7 +249,7 @@ index_elem:	ColId opt_collate opt_class opt_asc_desc opt_nulls_order
 					$$->ordering = $6;
 					$$->nulls_ordering = $7;
 				}
-			| '(' a_expr ')' opt_collate any_name '(' reloption_list ')' opt_asc_desc opt_nulls_order
+			| '(' a_expr ')' opt_collate any_name '(' opt_reloption_list ')' opt_asc_desc opt_nulls_order
 				{
 					$$ = makeNode(PGIndexElem);
 					$$->name = NULL;
@@ -291,6 +291,12 @@ opt_collate: COLLATE any_name						{ $$ = $2; }
 
 
 opt_class:	any_name								{ $$ = $1; }
+			| /*EMPTY*/								{ $$ = NIL; }
+		;
+
+
+opt_reloption_list:
+			reloption_list							{ $$ = $1; }
 			| /*EMPTY*/								{ $$ = NIL; }
 		;
 
