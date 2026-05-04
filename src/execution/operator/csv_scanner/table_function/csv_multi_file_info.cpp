@@ -126,47 +126,39 @@ CSVIterator MakeTightIterator(CSVFileScan &file_scan, idx_t global_offset, idx_t
 	return iter;
 }
 
-// Per-batch lookup -- TRUE zero-copy fan-out:
-//   1. Reset the scanner's parse_chunk row counter (clears prior batch).
-//   2. Per pk: ResetForAppend (re-anchor iter, preserve number_of_rows) +
-//      ParseChunkAppend (parser writes the row at slot number_of_rows, ++).
-//   3. After all pks, Reinterpret each output column at the corresponding
-//      parse_chunk column -- a single pointer rebind per column (NO data copy).
-// MakeTightIterator skips the leading newline (pk encoding quirk), so each
-// pk produces exactly one row -- parse_chunk ends up with N rows at slots
-// [0, N), aligned with the input pk order.
+// Rebind parse_chunk's vectors to `output`, then per pk set number_of_rows
+// to pk_output_positions[i] so AddRowInternal writes that pk's row directly
+// at the caller's output slot. Glob views reuse the same `output` across
+// per-file calls; disjoint slots per call -> no coordination needed.
 void CSVLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<CSVLookupGlobalState>();
 	if (data.pk_lookups.empty()) {
-		output.SetCardinality(0);
 		return;
 	}
+	D_ASSERT(data.pk_output_positions.size() == data.pk_lookups.size());
 
-	// Clear the scanner's parse_chunk for a fresh batch (previous batch's
-	// rows are still there from the prior call).
 	auto &result = gstate.scanner->GetStringValueResult();
-	if (result.number_of_rows != 0) {
-		result.Reset();
+
+	vector<Vector *> external_vectors(result.parse_chunk.data.size(), nullptr);
+	for (idx_t c = 0; c < gstate.output_to_file_col.size(); ++c) {
+		const auto pc = gstate.output_to_file_col[c];
+		if (pc == DConstants::INVALID_INDEX) {
+			continue;
+		}
+		D_ASSERT(pc < external_vectors.size());
+		external_vectors[pc] = &output.data[c];
 	}
+	result.RebindParseChunkVectors(external_vectors);
+
+	result.Reset();
 
 	const idx_t num_rows = data.pk_lookups.size();
 	for (idx_t i = 0; i < num_rows; ++i) {
 		const auto offset = NumericCast<idx_t>(data.pk_lookups[i]);
 		gstate.scanner->ResetForAppend(MakeTightIterator(*gstate.file_scan, offset, i));
+		result.number_of_rows = NumericCast<int64_t>(data.pk_output_positions[i]);
 		gstate.scanner->ParseChunkAppend();
 	}
-
-	const idx_t parsed = NumericCast<idx_t>(result.number_of_rows);
-	auto &parse_chunk = result.parse_chunk;
-	for (idx_t c = 0; c < gstate.output_to_file_col.size(); ++c) {
-		const auto file_col = gstate.output_to_file_col[c];
-		if (file_col == DConstants::INVALID_INDEX) {
-			continue;
-		}
-		// Zero-copy: rebind output's vector to parse_chunk's storage.
-		output.data[c].Reinterpret(parse_chunk.data[file_col]);
-	}
-	output.SetCardinality(parsed);
 }
 
 } // namespace

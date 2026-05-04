@@ -149,12 +149,6 @@ struct TableFunctionInitInput {
 	optional_ptr<SampleOptions> sample_options;
 	optional_ptr<const PhysicalOperator> op;
 
-	//! Sorted offsets/row-numbers for parquet/JSON lookup mode -- consumed by
-	//! their MultiFileInitGlobal at init time so the row-group / record walker
-	//! can be set up around them. CSV's lookup TF uses TableFunctionInput's
-	//! per-call channel instead (it caches gstate across batches).
-	std::span<const int64_t> pk_lookups;
-
 	bool CanRemoveFilterColumns() const {
 		if (projection_ids.empty()) {
 			// No filter columns to remove.
@@ -184,11 +178,12 @@ public:
 	AsyncResult async_result {};
 	AsyncResultsExecutionMode results_execution_mode {AsyncResultsExecutionMode::SYNCHRONOUS};
 
-	//! Per-call sorted offsets the lookup TF should produce. Set by the caller
-	//! on each `function` invocation; the gstate built by init_global is reused
-	//! across calls -- only this span changes per batch. Parquet uses these as
-	//! row-group skip keys, csv/json as exact byte offsets.
+	//! Per-call sorted file-row-numbers / byte-offsets to look up. Parquet
+	//! treats them as row-group skip keys, csv/json as exact byte offsets.
 	std::span<const int64_t> pk_lookups;
+	//! Output slot for `pk_lookups[i]`. The TF writes directly there; in glob
+	//! mode multiple per-file calls share `output` and write at disjoint slots.
+	std::span<const idx_t> pk_output_positions;
 };
 
 struct TableFunctionPartitionInput {
