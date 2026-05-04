@@ -775,11 +775,8 @@ void ReadJSONFunction(ClientContext &context, JSONReader &json_reader, JSONScanG
 		}
 	}
 
-	// file_row_number = absolute byte offset of the record. The slot is the LAST
-	// local column (non-constant virtual): the global index would mis-address it
-	// when constant virtuals get dropped from the local layout.
-	if (gstate.file_row_number_idx != DConstants::INVALID_INDEX) {
-		auto &frn_vec = output.data[output.ColumnCount() - 1];
+	if (json_reader.file_row_number_local_idx != DConstants::INVALID_INDEX) {
+		auto &frn_vec = output.data[json_reader.file_row_number_local_idx];
 		auto *frn_data = FlatVector::GetDataMutable<int64_t>(frn_vec);
 		const auto *buffer_handle = scan_state.current_buffer_handle.get();
 		const auto *data_base =
@@ -804,9 +801,12 @@ void ReadJSONObjectsFunction(ClientContext &context, JSONReader &json_reader, JS
 	const auto objects = scan_state.values;
 
 	if (!gstate.names.empty()) {
-		// Create the strings without copying them
-		auto strings = FlatVector::GetDataMutable<string_t>(output.data[0]);
-		auto &validity = FlatVector::ValidityMutable(output.data[0]);
+		// gstate.column_ids[0] is the output slot for the json string column;
+		// using output.data[0] would be wrong if file_row_number (or any
+		// other virtual) is projected ahead of json.
+		auto &json_vec = output.data[gstate.column_ids[0]];
+		auto strings = FlatVector::GetDataMutable<string_t>(json_vec);
+		auto &validity = FlatVector::ValidityMutable(json_vec);
 		for (idx_t i = 0; i < count; i++) {
 			if (objects[i]) {
 				strings[i] = string_t(units[i].pointer, units[i].size);
@@ -816,9 +816,8 @@ void ReadJSONObjectsFunction(ClientContext &context, JSONReader &json_reader, JS
 		}
 	}
 
-	// Last local slot, see ReadJSONFunction.
-	if (gstate.file_row_number_idx != DConstants::INVALID_INDEX) {
-		auto &frn_vec = output.data[output.ColumnCount() - 1];
+	if (json_reader.file_row_number_local_idx != DConstants::INVALID_INDEX) {
+		auto &frn_vec = output.data[json_reader.file_row_number_local_idx];
 		auto *frn_data = FlatVector::GetDataMutable<int64_t>(frn_vec);
 		const auto *buffer_handle = scan_state.current_buffer_handle.get();
 		const auto *data_base =

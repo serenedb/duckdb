@@ -200,9 +200,7 @@ void JSONReader::AddVirtualColumn(column_t virtual_column_id) {
 		throw InternalException("JSON reader only supports file_row_number as a virtual column (got id %d)",
 		                        virtual_column_id);
 	}
-	// No per-reader state needed: JSONScanGlobalState::file_row_number_idx is set in
-	// JSONMultiFileInfo::InitializeGlobalState by inspecting the column indexes, and
-	// ReadJSONFunction fills that output slot with byte offsets after the transform.
+	file_row_number_local_idx = column_ids.size();
 }
 
 void JSONReader::OpenJSONFile() {
@@ -1005,10 +1003,18 @@ void JSONReader::FinalizeBuffer(JSONReaderScanState &scan_state) {
 	// skip over the array start if required
 	if (!scan_state.is_last) {
 		if (scan_state.buffer_index.GetIndex() == 0) {
+			const idx_t before_skip = scan_state.buffer_offset;
 			StringUtil::SkipBOM(scan_state.buffer_ptr, scan_state.buffer_size, scan_state.buffer_offset);
 			if (GetFormat() == JSONFormat::ARRAY) {
 				SkipOverArrayStart(scan_state);
 			}
+			// Keep `(buffer_ptr + buffer_offset) == file_start` consistent --
+			// SkipBOM / SkipOverArrayStart move the buffer cursor forward, so
+			// file_read_start has to track them. Otherwise file_row_number
+			// emitted for records inside an ARRAY-format file is off by the
+			// `[` width (position 0 instead of 1), which makes the offset
+			// useless for any caller that wants to seek back to a record.
+			scan_state.file_read_start += scan_state.buffer_offset - before_skip;
 		}
 	}
 	// then finalize the buffer

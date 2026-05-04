@@ -232,11 +232,16 @@ public:
 	                 LocalTableFunctionState &local_state, DataChunk &chunk) override;
 	void FinishFile(ClientContext &context, GlobalTableFunctionState &gstate_p) override;
 	double GetProgressInFile(ClientContext &context) override;
-	//! Accepts file_row_number as a virtual column. No per-reader state needed --
-	//! JSON's scan consults gstate.file_row_number_idx (set in InitializeGlobalState)
-	//! to know which output slot to fill with byte offsets. The base class throws,
-	//! so we only need to suppress that for the supported id.
+	//! Accepts file_row_number as a virtual column and remembers the local
+	//! scan_chunk slot it lands in (column_ids.size() at this point, since
+	//! the framework pushes the local id immediately after this call).
 	void AddVirtualColumn(column_t virtual_column_id) override;
+
+	//! Local slot in scan_chunk for file_row_number when projected, else
+	//! INVALID_INDEX. This is the post-constant-drop position -- using the
+	//! global col_idx from column_indexes would overshoot in glob mode where
+	//! file_index is dropped as a constant from the local layout.
+	idx_t file_row_number_local_idx = DConstants::INVALID_INDEX;
 
 public:
 	//! Get a new buffer index (must hold the lock)
