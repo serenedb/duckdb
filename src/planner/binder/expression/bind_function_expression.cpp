@@ -384,7 +384,7 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 	case CatalogType::TABLE_FUNCTION_ENTRY: {
 		// PG compat: table functions in SELECT -> unnest their results as rows
 		// Routes through SelectBinder::BindUnnest, sharing BoundUnnestNode with other SRFs.
-		auto unnest_func = make_uniq<FunctionExpression>("unnest", vector<unique_ptr<ParsedExpression>>{});
+		auto unnest_func = make_uniq<FunctionExpression>("unnest", vector<unique_ptr<ParsedExpression>> {});
 		unnest_func->children.push_back(WrapTableFuncAsList(function.Copy()));
 		unnest_func->alias = function.alias.empty() ? function.function_name : function.alias;
 		expr_ptr = std::move(unnest_func);

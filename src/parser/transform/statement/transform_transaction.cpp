@@ -57,9 +57,9 @@ unique_ptr<TransactionStatement> Transformer::TransformTransaction(duckdb_libpgq
 				info->isolation_level = TransformIsolationLevel(val->val.val.str);
 			} else if (opt_name == "transaction_read_only") {
 				auto val = PGPointerCast<duckdb_libpgquery::PGAConst>(def->arg);
-				info->modifier = TransformTransactionModifier(
-				    val->val.val.ival ? duckdb_libpgquery::PG_TRANS_TYPE_READ_ONLY
-				                     : duckdb_libpgquery::PG_TRANS_TYPE_READ_WRITE);
+				info->modifier =
+				    TransformTransactionModifier(val->val.val.ival ? duckdb_libpgquery::PG_TRANS_TYPE_READ_ONLY
+				                                                   : duckdb_libpgquery::PG_TRANS_TYPE_READ_WRITE);
 			} else {
 				D_ASSERT(opt_name == "transaction_deferrable");
 				throw NotImplementedException("DEFERRABLE transactions are not supported");

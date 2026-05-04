@@ -13,8 +13,10 @@ namespace duckdb {
 
 void MacroFunction::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<MacroType>(100, "type", type);
-	serializer.WritePropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(101, "parameters", GetPositionalParametersForSerialization(serializer));
-	serializer.WritePropertyWithDefault<InsertionOrderPreservingMap<unique_ptr<ParsedExpression>>>(102, "default_parameters", default_parameters);
+	serializer.WritePropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(
+	    101, "parameters", GetPositionalParametersForSerialization(serializer));
+	serializer.WritePropertyWithDefault<InsertionOrderPreservingMap<unique_ptr<ParsedExpression>>>(
+	    102, "default_parameters", default_parameters);
 	if (serializer.ShouldSerialize(6)) {
 		serializer.WritePropertyWithDefault<vector<LogicalType>>(103, "types", types, vector<LogicalType>());
 	}
@@ -26,15 +28,19 @@ void MacroFunction::Serialize(Serializer &serializer) const {
 unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer) {
 	auto type = deserializer.ReadProperty<MacroType>(100, "type");
 	auto parameters = deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(101, "parameters");
-	auto default_parameters = deserializer.ReadPropertyWithDefault<InsertionOrderPreservingMap<unique_ptr<ParsedExpression>>>(102, "default_parameters");
+	auto default_parameters =
+	    deserializer.ReadPropertyWithDefault<InsertionOrderPreservingMap<unique_ptr<ParsedExpression>>>(
+	        102, "default_parameters");
 	auto types = deserializer.ReadPropertyWithExplicitDefault<vector<LogicalType>>(103, "types", vector<LogicalType>());
 	// Base-class fields 104/105/106 must be read BEFORE dispatching to the
 	// subclass Deserialize (which reads field 200+), otherwise we read out of
 	// order from the stream -- Serialize writes base fields first, then the
 	// subclass adds its own fields after.
-	auto return_types = deserializer.ReadPropertyWithExplicitDefault<vector<LogicalType>>(104, "return_types", vector<LogicalType>());
+	auto return_types =
+	    deserializer.ReadPropertyWithExplicitDefault<vector<LogicalType>>(104, "return_types", vector<LogicalType>());
 	auto is_procedure = deserializer.ReadPropertyWithExplicitDefault<bool>(105, "is_procedure", false);
-	auto return_names = deserializer.ReadPropertyWithExplicitDefault<vector<string>>(106, "return_names", vector<string>());
+	auto return_names =
+	    deserializer.ReadPropertyWithExplicitDefault<vector<string>>(106, "return_names", vector<string>());
 	unique_ptr<MacroFunction> result;
 	switch (type) {
 	case MacroType::SCALAR_MACRO:

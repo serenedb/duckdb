@@ -46,8 +46,7 @@ unique_ptr<SQLStatement> Transformer::TransformVacuum(duckdb_libpgquery::PGVacuu
 		pragma->info->name = "serenedb_vacuum";
 		pragma->info->parameters.push_back(make_uniq<ConstantExpression>(Value(sdb_option)));
 		if (stmt.relation) {
-			pragma->info->parameters.push_back(
-			    make_uniq<ConstantExpression>(Value(string(stmt.relation->relname))));
+			pragma->info->parameters.push_back(make_uniq<ConstantExpression>(Value(string(stmt.relation->relname))));
 			if (stmt.relation->schemaname) {
 				pragma->info->parameters.push_back(
 				    make_uniq<ConstantExpression>(Value(string(stmt.relation->schemaname))));

@@ -597,6 +597,7 @@ typedef struct PGIndexElem {
 	char *indexcolname;           /* name for index column; NULL = default */
 	PGList *collation;            /* name of collation; NIL = default */
 	PGList *opclass;              /* name of desired opclass; NIL = default */
+	PGList *opclassopts;          /* opclass-specific options (list of PGDefElem), or NIL */
 	PGSortByDir ordering;         /* ASC/DESC/default */
 	PGSortByNulls nulls_ordering; /* FIRST/LAST/default */
 } PGIndexElem;

@@ -601,9 +601,8 @@ DropConstraintInfo::DropConstraintInfo() : AlterTableInfo(AlterTableType::DROP_C
 
 DropConstraintInfo::DropConstraintInfo(AlterEntryData data, string constraint_name_p, bool if_constraint_not_found_p,
                                        bool cascade_p)
-    : AlterTableInfo(AlterTableType::DROP_CONSTRAINT, std::move(data)),
-      constraint_name(std::move(constraint_name_p)), if_constraint_not_found(if_constraint_not_found_p),
-      cascade(cascade_p) {
+    : AlterTableInfo(AlterTableType::DROP_CONSTRAINT, std::move(data)), constraint_name(std::move(constraint_name_p)),
+      if_constraint_not_found(if_constraint_not_found_p), cascade(cascade_p) {
 }
 
 DropConstraintInfo::~DropConstraintInfo() {

@@ -38,13 +38,14 @@ unique_ptr<SQLStatement> Transformer::TransformDefineStmt(duckdb_libpgquery::PGD
 		for (auto cell = stmt.definition->head; cell != nullptr; cell = cell->next) {
 			auto def = PGPointerCast<duckdb_libpgquery::PGDefElem>(cell->data.ptr_value);
 
-			unique_ptr<ParsedExpression> param_expr = def->arg
-			    ? TransformValue(*PGPointerCast<duckdb_libpgquery::PGValue>(def->arg))
-			    : make_uniq<ConstantExpression>(Value::BOOLEAN(true));
+			unique_ptr<ParsedExpression> param_expr =
+			    def->arg ? TransformValue(*PGPointerCast<duckdb_libpgquery::PGValue>(def->arg))
+			             : make_uniq<ConstantExpression>(Value::BOOLEAN(true));
 
 			auto [_, inserted] = result->info->named_parameters.emplace(def->defname, std::move(param_expr));
 			if (!inserted) {
-				throw InvalidInputException("conflicting or redundant options: \"%s\" specified more than once", def->defname);
+				throw InvalidInputException("conflicting or redundant options: \"%s\" specified more than once",
+				                            def->defname);
 			}
 		}
 	}
