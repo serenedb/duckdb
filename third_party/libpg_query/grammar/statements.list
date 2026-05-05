@@ -35,7 +35,6 @@ PrepareStmt
 RenameStmt
 SelectStmt
 TransactionStmt
-TruncateStmt
 UpdateStmt
 UpdateExtensionsStmt
 UseStmt

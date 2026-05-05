@@ -1,2 +1,0 @@
-%type <list> relation_expr_list
-%type <boolean> opt_restart_seqs
