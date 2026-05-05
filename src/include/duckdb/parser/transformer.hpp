@@ -168,6 +168,11 @@ private:
 	unique_ptr<TransactionStatement> TransformTransaction(duckdb_libpgquery::PGTransactionStmt &stmt);
 	//! Transform a Postgres T_DeleteStatement node into a DeleteStatement
 	unique_ptr<DeleteStatement> TransformDelete(duckdb_libpgquery::PGDeleteStmt &stmt);
+	//! Transform a Postgres T_PGTruncateStmt node into a (Multi)Statement of
+	//! DeleteStatement(s). Multi-table TRUNCATE produces one DeleteStatement
+	//! per relation wrapped in a MultiStatement; single-table returns just
+	//! the DeleteStatement directly.
+	unique_ptr<SQLStatement> TransformTruncate(duckdb_libpgquery::PGTruncateStmt &stmt);
 	//! Transform a Postgres duckdb_libpgquery::T_PGUpdateStmt node into a UpdateStatement
 	unique_ptr<UpdateStatement> TransformUpdate(duckdb_libpgquery::PGUpdateStmt &stmt);
 	//! Transform a Postgres duckdb_libpgquery::T_PGUpdateExtensionsStmt node into a UpdateExtensionsStatement

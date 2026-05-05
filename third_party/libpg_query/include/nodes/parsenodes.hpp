@@ -1494,6 +1494,17 @@ typedef enum PGAlterTableType {
 	PG_AT_SetSortedBy,               /* SET SORTED BY */
 } PGAlterTableType;
 
+/* ----------------------
+ *		Truncate Statement
+ * ----------------------
+ */
+typedef struct PGTruncateStmt {
+	PGNodeTag type;
+	PGList *relations;       /* relations (PGRangeVar) to truncate */
+	bool restart_seqs;       /* RESTART/CONTINUE IDENTITY (true=RESTART) */
+	PGDropBehavior behavior; /* RESTRICT or CASCADE */
+} PGTruncateStmt;
+
 typedef struct PGAlterTableCmd /* one subcommand of an ALTER TABLE */
 {
 	PGNodeTag type;
