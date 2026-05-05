@@ -69,20 +69,23 @@ unique_ptr<CreateStatement> Transformer::TransformCreateType(duckdb_libpgquery::
 	} break;
 
 	case duckdb_libpgquery::PG_NEWTYPE_COMPOSITE: {
-		// CREATE TYPE name AS (col1 type1, col2 type2, ...)
+		// CREATE TYPE name AS (col1 type1, col2 type2, ...). Reuses the
+		// `colid_type_list` production already used by STRUCT(...) / UNION(...);
+		// each entry is a 2-element list [PGString name, PGTypeName type].
 		info->internal = false;
 		child_list_t<LogicalType> fields;
 		case_insensitive_set_t seen;
 		for (auto c = stmt.vals ? stmt.vals->head : nullptr; c != nullptr;
 		     c = lnext(c)) {
-			auto &col =
-			    *PGPointerCast<duckdb_libpgquery::PGColumnDef>(c->data.ptr_value);
-			string field_name = col.colname ? col.colname : "";
+			auto &pair = *PGPointerCast<duckdb_libpgquery::PGList>(c->data.ptr_value);
+			auto &name_node = *PGPointerCast<duckdb_libpgquery::PGValue>(pair.head->data.ptr_value);
+			auto &type_node = *PGPointerCast<duckdb_libpgquery::PGTypeName>(pair.head->next->data.ptr_value);
+			string field_name = name_node.val.str ? name_node.val.str : "";
 			if (!seen.insert(field_name).second) {
 				throw ParserException("column \"%s\" specified more than once",
 				                      field_name);
 			}
-			LogicalType field_type = TransformTypeName(*col.typeName);
+			LogicalType field_type = TransformTypeName(type_node);
 			fields.emplace_back(std::move(field_name), std::move(field_type));
 		}
 		info->type = LogicalType::STRUCT(std::move(fields));

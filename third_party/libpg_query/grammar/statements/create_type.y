@@ -47,7 +47,7 @@ create_type_value:
 		n->query = NULL;
 		$$ = (PGNode *)n;
 	}
-	| '(' composite_type_field_list ')'
+	| '(' colid_type_list ')'
 	{
 		PGCreateTypeStmt *n = makeNode(PGCreateTypeStmt);
 		n->kind = PG_NEWTYPE_COMPOSITE;
@@ -72,37 +72,6 @@ create_type_value:
 	;
 
 
-composite_type_field:
-	ColId Typename
-	{
-		PGColumnDef *n = makeNode(PGColumnDef);
-		n->category = COL_STANDARD;
-		n->colname = $1;
-		n->typeName = $2;
-		n->inhcount = 0;
-		n->is_local = true;
-		n->is_not_null = false;
-		n->is_from_type = false;
-		n->storage = 0;
-		n->raw_default = NULL;
-		n->cooked_default = NULL;
-		n->collOid = InvalidOid;
-		n->constraints = NULL;
-		n->collClause = NULL;
-		n->location = @1;
-		$$ = (PGNode *)n;
-	}
-	;
-
-
-composite_type_field_list:
-	composite_type_field
-		{ $$ = list_make1($1); }
-	| composite_type_field_list ',' composite_type_field
-		{ $$ = lappend($1, $3); }
-	;
-
-
 opt_enum_val_list:
 			enum_val_list { $$ = $1;}
 			|				{$$ = NIL;}
@@ -117,6 +86,5 @@ enum_val_list: Sconst
 					$$ = lappend($1, makeStringConst($3, @3));
 				}
 				;
-
 
 
