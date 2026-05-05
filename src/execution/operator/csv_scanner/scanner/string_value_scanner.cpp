@@ -497,6 +497,17 @@ DataChunk &StringValueResult::ToChunk() {
 	return parse_chunk;
 }
 
+void StringValueResult::RebindParseChunkVectors(const vector<Vector *> &external_vectors) {
+	D_ASSERT(external_vectors.size() == parse_chunk.data.size());
+	for (idx_t c = 0; c < parse_chunk.data.size(); ++c) {
+		D_ASSERT(external_vectors[c] != nullptr);
+		D_ASSERT(external_vectors[c]->GetType().InternalType() == parse_chunk.data[c].GetType().InternalType());
+		parse_chunk.data[c].Reference(*external_vectors[c]);
+		vector_ptr[c] = FlatVector::GetDataMutable(parse_chunk.data[c]);
+		validity_mask[c] = &FlatVector::ValidityMutable(parse_chunk.data[c]);
+	}
+}
+
 void StringValueResult::Reset() {
 	if (number_of_rows == 0) {
 		return;
