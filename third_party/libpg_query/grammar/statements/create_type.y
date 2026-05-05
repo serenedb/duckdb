@@ -50,8 +50,11 @@ create_type_value:
 	| '(' colid_type_list ')'
 	{
 		PGCreateTypeStmt *n = makeNode(PGCreateTypeStmt);
-		n->kind = PG_NEWTYPE_COMPOSITE;
-		n->vals = $2;
+		n->kind = PG_NEWTYPE_ALIAS;
+		PGTypeName *t = SystemTypeName("struct");
+		t->typmods = $2;
+		t->location = @1;
+		n->ofType = t;
 		n->query = NULL;
 		$$ = (PGNode *)n;
 	}
