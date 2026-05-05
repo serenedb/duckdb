@@ -47,6 +47,14 @@ create_type_value:
 		n->query = NULL;
 		$$ = (PGNode *)n;
 	}
+	| '(' composite_type_field_list ')'
+	{
+		PGCreateTypeStmt *n = makeNode(PGCreateTypeStmt);
+		n->kind = PG_NEWTYPE_COMPOSITE;
+		n->vals = $2;
+		n->query = NULL;
+		$$ = (PGNode *)n;
+	}
 	| Typename
 	{
 		PGCreateTypeStmt *n = makeNode(PGCreateTypeStmt);
@@ -61,6 +69,37 @@ create_type_value:
 		}
 		$$ = (PGNode *)n;
 	}
+	;
+
+
+composite_type_field:
+	ColId Typename
+	{
+		PGColumnDef *n = makeNode(PGColumnDef);
+		n->category = COL_STANDARD;
+		n->colname = $1;
+		n->typeName = $2;
+		n->inhcount = 0;
+		n->is_local = true;
+		n->is_not_null = false;
+		n->is_from_type = false;
+		n->storage = 0;
+		n->raw_default = NULL;
+		n->cooked_default = NULL;
+		n->collOid = InvalidOid;
+		n->constraints = NULL;
+		n->collClause = NULL;
+		n->location = @1;
+		$$ = (PGNode *)n;
+	}
+	;
+
+
+composite_type_field_list:
+	composite_type_field
+		{ $$ = list_make1($1); }
+	| composite_type_field_list ',' composite_type_field
+		{ $$ = lappend($1, $3); }
 	;
 
 

@@ -2215,14 +2215,20 @@ typedef struct PGPositionalReference {
  * ----------------------
  */
 
-typedef enum { PG_NEWTYPE_NONE, PG_NEWTYPE_ENUM, PG_NEWTYPE_ALIAS } PGNewTypeKind;
+typedef enum {
+	PG_NEWTYPE_NONE,
+	PG_NEWTYPE_ENUM,
+	PG_NEWTYPE_ALIAS,
+	PG_NEWTYPE_COMPOSITE
+} PGNewTypeKind;
 
 typedef struct PGCreateTypeStmt
 {
 	PGNodeTag		type;
 	PGNewTypeKind	kind;
 	PGRangeVar	   *typeName;	/* qualified name (list of Value strings) */
-	PGList	   *vals;			/* enum values (list of Value strings) */
+	PGList	   *vals;			/* enum values (list of Value strings) or
+								 * composite-type fields (list of PGColumnDef) */
 	PGTypeName *ofType;			/* original type of alias name */
     PGNode *query;
 	PGOnCreateConflict onconflict;        /* what to do on create conflict */
