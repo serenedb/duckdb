@@ -48,6 +48,12 @@ unique_ptr<ParsedExpression> Transformer::TransformTypeExpressionInternal(duckdb
 
 	D_ASSERT(!unbound_name.empty());
 
+	bool wrap_pg_array_alias = false;
+	if (type_name.names->length == 1 && unbound_name.size() > 1 && unbound_name.front() == '_') {
+		wrap_pg_array_alias = true;
+		unbound_name.erase(0, 1);
+	}
+
 	// The postgres parser emits a bunch of strange type names - we want to normalize them here so that the alias for
 	// columns from expressions containing these types actually use the DuckDB type name.
 	// Eventually we should make the parser emit the correct names directly.
@@ -113,6 +119,16 @@ unique_ptr<ParsedExpression> Transformer::TransformTypeExpressionInternal(duckdb
 	// Assign query location
 	if (type_name.location >= 0) {
 		result->query_location = NumericCast<idx_t>(type_name.location);
+	}
+
+	if (wrap_pg_array_alias) {
+		vector<unique_ptr<ParsedExpression>> outer_params;
+		outer_params.push_back(std::move(result));
+		auto outer = make_uniq<TypeExpression>("list", std::move(outer_params));
+		if (type_name.location >= 0) {
+			outer->query_location = NumericCast<idx_t>(type_name.location);
+		}
+		return std::move(outer);
 	}
 
 	return std::move(result);

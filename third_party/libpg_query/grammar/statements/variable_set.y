@@ -85,6 +85,21 @@ set_rest:	/* Generic SET syntaxes: */
 					n->args = list_make1(makeStringConst($2, @2));
 					$$ = n;
 				}
+			| SESSION AUTHORIZATION NonReservedWord_or_Sconst
+				{
+					PGVariableSetStmt *n = makeNode(PGVariableSetStmt);
+					n->kind = VAR_SET_VALUE;
+					n->name = (char*) "session_authorization";
+					n->args = list_make1(makeStringConst($3, @3));
+					$$ = n;
+				}
+			| SESSION AUTHORIZATION DEFAULT
+				{
+					PGVariableSetStmt *n = makeNode(PGVariableSetStmt);
+					n->kind = VAR_SET_DEFAULT;
+					n->name = (char*) "session_authorization";
+					$$ = n;
+				}
 		;
 
 
