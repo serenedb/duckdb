@@ -60,4 +60,11 @@ reset_rest:
 					n->name = (char*) "transaction_isolation";
 					$$ = n;
 				}
+			| SESSION AUTHORIZATION
+				{
+					PGVariableSetStmt *n = makeNode(PGVariableSetStmt);
+					n->kind = VAR_RESET;
+					n->name = (char*) "session_authorization";
+					$$ = n;
+				}
 		;

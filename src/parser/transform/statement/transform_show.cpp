@@ -42,6 +42,16 @@ unique_ptr<QueryNode> Transformer::TransformShow(duckdb_libpgquery::PGVariableSh
 			tableref->table_name = "pg_settings";
 			result->from_table = std::move(tableref);
 			return std::move(result);
+		} else if (!std::string_view(stmt.set).starts_with("__")) {
+			string var_name = stmt.set;
+			auto result = make_uniq<SelectNode>();
+			vector<unique_ptr<ParsedExpression>> args;
+			args.push_back(make_uniq<ConstantExpression>(Value(var_name)));
+			auto func_expr = make_uniq<FunctionExpression>("current_setting", std::move(args));
+			func_expr->alias = var_name;
+			result->select_list.push_back(std::move(func_expr));
+			result->from_table = make_uniq<EmptyTableRef>();
+			return std::move(result);
 		} else {
 			// describing a set (e.g. SHOW ALL TABLES) - push it in the table name
 			showref->table_name = stmt.set;

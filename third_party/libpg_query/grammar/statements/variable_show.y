@@ -50,6 +50,13 @@ VariableShowStmt:
 				n->is_summary = 0;
 				$$ = (PGNode *) n;
 			}
+		| show_or_describe SESSION AUTHORIZATION
+			{
+				PGVariableShowStmt *n = makeNode(PGVariableShowStmt);
+				n->set = (char*) "session_authorization";
+				n->is_summary = 0;
+				$$ = (PGNode *) n;
+			}
 		| show_or_describe ALL TABLES
 			{
 				PGVariableShowStmt *n = makeNode(PGVariableShowStmt);
