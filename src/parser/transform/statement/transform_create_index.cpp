@@ -11,7 +11,7 @@ namespace duckdb {
 vector<unique_ptr<ParsedExpression>>
 Transformer::TransformIndexParameters(duckdb_libpgquery::PGList &list, const string &relation_name,
                                       vector<string> *opclasses,
-                                      vector<case_insensitive_map_t<Value>> *opclass_options) {
+                                      vector<std::optional<case_insensitive_map_t<Value>>> *opclass_options) {
 	vector<unique_ptr<ParsedExpression>> expressions;
 	for (auto cell = list.head; cell != nullptr; cell = cell->next) {
 		auto index_element = PGPointerCast<duckdb_libpgquery::PGIndexElem>(cell->data.ptr_value);
@@ -35,8 +35,9 @@ Transformer::TransformIndexParameters(duckdb_libpgquery::PGList &list, const str
 		}
 
 		if (opclass_options) {
-			case_insensitive_map_t<Value> opts;
+			std::optional<case_insensitive_map_t<Value>> opts;
 			if (index_element->opclassopts) {
+				opts.emplace();
 				for (auto opt_cell = index_element->opclassopts->head; opt_cell != nullptr; opt_cell = opt_cell->next) {
 					auto def_elem = PGPointerCast<duckdb_libpgquery::PGDefElem>(opt_cell->data.ptr_value);
 					Value val;
@@ -49,7 +50,7 @@ Transformer::TransformIndexParameters(duckdb_libpgquery::PGList &list, const str
 					} else {
 						val = Value::BOOLEAN(true);
 					}
-					opts[StringUtil::Lower(def_elem->defname)] = std::move(val);
+					(*opts)[StringUtil::Lower(def_elem->defname)] = std::move(val);
 				}
 			}
 			opclass_options->push_back(std::move(opts));
