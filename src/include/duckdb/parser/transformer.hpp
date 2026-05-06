@@ -26,6 +26,8 @@
 #include "duckdb/parser/expression/parameter_expression.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
 
+#include <optional>
+
 namespace duckdb {
 
 class ColumnDefinition;
@@ -299,7 +301,7 @@ private:
 	vector<unique_ptr<ParsedExpression>>
 	TransformIndexParameters(duckdb_libpgquery::PGList &list, const string &relation_name,
 	                         vector<string> *opclasses = nullptr,
-	                         vector<case_insensitive_map_t<Value>> *opclass_options = nullptr);
+	                         vector<std::optional<case_insensitive_map_t<Value>>> *opclass_options = nullptr);
 
 	//===--------------------------------------------------------------------===//
 	// Collation transform

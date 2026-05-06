@@ -209,7 +209,7 @@ index_elem:	ColId opt_collate opt_class opt_asc_desc opt_nulls_order
 					$$->indexcolname = NULL;
 					$$->collation = $2;
 					$$->opclass = $3;
-					$$->opclassopts = $5;
+					$$->opclassopts = $5 ? $5 : makeNode(PGList);
 					$$->ordering = $7;
 					$$->nulls_ordering = $8;
 				}
@@ -233,7 +233,7 @@ index_elem:	ColId opt_collate opt_class opt_asc_desc opt_nulls_order
 					$$->indexcolname = NULL;
 					$$->collation = $2;
 					$$->opclass = $3;
-					$$->opclassopts = $5;
+					$$->opclassopts = $5 ? $5 : makeNode(PGList);
 					$$->ordering = $7;
 					$$->nulls_ordering = $8;
 				}
@@ -257,7 +257,7 @@ index_elem:	ColId opt_collate opt_class opt_asc_desc opt_nulls_order
 					$$->indexcolname = NULL;
 					$$->collation = $4;
 					$$->opclass = $5;
-					$$->opclassopts = $7;
+					$$->opclassopts = $7 ? $7 : makeNode(PGList);
 					$$->ordering = $9;
 					$$->nulls_ordering = $10;
 				}

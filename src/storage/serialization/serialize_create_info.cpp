@@ -110,8 +110,17 @@ void CreateIndexInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<case_insensitive_map_t<Value>>(208, "options", options);
 	serializer.WritePropertyWithDefault<string>(209, "index_type_name", index_type);
 	serializer.WritePropertyWithDefault<vector<string>>(210, "column_opclasses", column_opclasses);
+	vector<case_insensitive_map_t<Value>> opt_maps;
+	vector<bool> opt_has;
+	opt_maps.reserve(column_opclass_options.size());
+	opt_has.reserve(column_opclass_options.size());
+	for (auto &opt : column_opclass_options) {
+		opt_has.push_back(opt.has_value());
+		opt_maps.push_back(opt.has_value() ? *opt : case_insensitive_map_t<Value>{});
+	}
 	serializer.WritePropertyWithDefault<vector<case_insensitive_map_t<Value>>>(211, "column_opclass_options",
-	                                                                           column_opclass_options);
+	                                                                           opt_maps);
+	serializer.WritePropertyWithDefault<vector<bool>>(212, "column_opclass_has_options", opt_has);
 }
 
 unique_ptr<CreateInfo> CreateIndexInfo::Deserialize(Deserializer &deserializer) {
@@ -128,8 +137,20 @@ unique_ptr<CreateInfo> CreateIndexInfo::Deserialize(Deserializer &deserializer) 
 	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<Value>>(208, "options", result->options);
 	deserializer.ReadPropertyWithDefault<string>(209, "index_type_name", result->index_type);
 	deserializer.ReadPropertyWithDefault<vector<string>>(210, "column_opclasses", result->column_opclasses);
+	vector<case_insensitive_map_t<Value>> opt_maps;
+	vector<bool> opt_has;
 	deserializer.ReadPropertyWithDefault<vector<case_insensitive_map_t<Value>>>(211, "column_opclass_options",
-	                                                                            result->column_opclass_options);
+	                                                                            opt_maps);
+	deserializer.ReadPropertyWithDefault<vector<bool>>(212, "column_opclass_has_options", opt_has);
+	result->column_opclass_options.reserve(opt_maps.size());
+	for (idx_t i = 0; i < opt_maps.size(); i++) {
+		bool has = i < opt_has.size() ? opt_has[i] : !opt_maps[i].empty();
+		if (has) {
+			result->column_opclass_options.emplace_back(std::move(opt_maps[i]));
+		} else {
+			result->column_opclass_options.emplace_back(std::nullopt);
+		}
+	}
 	return std::move(result);
 }
 

@@ -34970,7 +34970,7 @@ yyreduce:
 					(yyval.ielem)->indexcolname = NULL;
 					(yyval.ielem)->collation = (yyvsp[-6].list);
 					(yyval.ielem)->opclass = (yyvsp[-5].list);
-					(yyval.ielem)->opclassopts = (yyvsp[-3].list);
+					(yyval.ielem)->opclassopts = (yyvsp[-3].list) ? (yyvsp[-3].list) : makeNode(PGList);
 					(yyval.ielem)->ordering = (yyvsp[-1].sortorder);
 					(yyval.ielem)->nulls_ordering = (yyvsp[0].nullorder);
 				}
@@ -35002,7 +35002,7 @@ yyreduce:
 					(yyval.ielem)->indexcolname = NULL;
 					(yyval.ielem)->collation = (yyvsp[-6].list);
 					(yyval.ielem)->opclass = (yyvsp[-5].list);
-					(yyval.ielem)->opclassopts = (yyvsp[-3].list);
+					(yyval.ielem)->opclassopts = (yyvsp[-3].list) ? (yyvsp[-3].list) : makeNode(PGList);
 					(yyval.ielem)->ordering = (yyvsp[-1].sortorder);
 					(yyval.ielem)->nulls_ordering = (yyvsp[0].nullorder);
 				}
@@ -35034,7 +35034,7 @@ yyreduce:
 					(yyval.ielem)->indexcolname = NULL;
 					(yyval.ielem)->collation = (yyvsp[-6].list);
 					(yyval.ielem)->opclass = (yyvsp[-5].list);
-					(yyval.ielem)->opclassopts = (yyvsp[-3].list);
+					(yyval.ielem)->opclassopts = (yyvsp[-3].list) ? (yyvsp[-3].list) : makeNode(PGList);
 					(yyval.ielem)->ordering = (yyvsp[-1].sortorder);
 					(yyval.ielem)->nulls_ordering = (yyvsp[0].nullorder);
 				}
