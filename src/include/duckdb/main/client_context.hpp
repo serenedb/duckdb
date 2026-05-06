@@ -334,9 +334,9 @@ private:
 	unique_ptr<QueryResult> RunStatementInternal(ClientContextLock &lock, const string &query,
 	                                             unique_ptr<SQLStatement> statement,
 	                                             const PendingQueryParameters &parameters, bool verify = true);
-	unique_ptr<PreparedStatement> PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
-	                                              optional_ptr<const case_insensitive_map_t<LogicalType>>
-	                                                  parameter_type_hints = nullptr);
+	unique_ptr<PreparedStatement>
+	PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
+	                optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
 	void LogQueryInternal(ClientContextLock &lock, const string &query);
 
 	unique_ptr<QueryResult> FetchResultInternal(ClientContextLock &lock, PendingQueryResult &pending);

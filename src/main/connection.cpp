@@ -163,8 +163,7 @@ unique_ptr<PendingQueryResult> Connection::PendingQuery(const string &query, Pen
 }
 
 unique_ptr<PreparedStatement>
-Connection::Prepare(const string &query,
-                    optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
+Connection::Prepare(const string &query, optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
 	return context->Prepare(query, parameter_type_hints);
 }
 
