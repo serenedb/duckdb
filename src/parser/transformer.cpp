@@ -181,6 +181,8 @@ unique_ptr<SQLStatement> Transformer::TransformStatementInternal(duckdb_libpgque
 		return TransformTransaction(PGCast<duckdb_libpgquery::PGTransactionStmt>(stmt));
 	case duckdb_libpgquery::T_PGDeleteStmt:
 		return TransformDelete(PGCast<duckdb_libpgquery::PGDeleteStmt>(stmt));
+	case duckdb_libpgquery::T_PGTruncateStmt:
+		return TransformTruncate(PGCast<duckdb_libpgquery::PGTruncateStmt>(stmt));
 	case duckdb_libpgquery::T_PGUpdateStmt:
 		return TransformUpdate(PGCast<duckdb_libpgquery::PGUpdateStmt>(stmt));
 	case duckdb_libpgquery::T_PGUpdateExtensionsStmt:
