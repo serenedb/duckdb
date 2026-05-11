@@ -56,13 +56,9 @@ public:
 	void Initialize(unique_ptr<PhysicalOperator> physical_plan);
 
 	void CancelTasks();
-	PendingExecutionResult ExecuteTask(bool dry_run = false);
+	PendingExecutionResult ExecuteTask(std::function<void()> on_reschedule_arg, bool dry_run);
 	void WaitForTask();
 	void SignalTaskRescheduled(lock_guard<mutex> &);
-
-	//! Set an external callback that is invoked when a blocked task is rescheduled.
-	//! Used by SereneDB to resume PG wire protocol processing without busy-looping.
-	void SetTaskRescheduledCallback(std::function<void()> callback);
 
 	void Reset();
 
@@ -196,7 +192,7 @@ private:
 	atomic<idx_t> executor_tasks;
 
 	//! External callback for task rescheduling notification
-	std::function<void()> on_task_rescheduled;
+	std::function<void()> on_reschedule;
 
 	//! Total time blocked while waiting on tasks. In ticks. One tick corresponds to WAIT_TIME.
 	atomic<idx_t> blocked_thread_time;

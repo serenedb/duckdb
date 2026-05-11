@@ -469,14 +469,9 @@ void Executor::WorkOnTasks() {
 
 void Executor::SignalTaskRescheduled(lock_guard<mutex> &) {
 	task_reschedule.notify_one();
-	if (on_task_rescheduled) {
-		on_task_rescheduled();
+	if (on_reschedule) {
+		std::exchange(on_reschedule, {})();
 	}
-}
-
-void Executor::SetTaskRescheduledCallback(std::function<void()> callback) {
-	lock_guard<mutex> l(executor_lock);
-	on_task_rescheduled = std::move(callback);
 }
 
 void Executor::WaitForTask() {
@@ -561,7 +556,7 @@ bool Executor::ExecutionIsFinished() {
 	return completed_pipelines >= total_pipelines || HasError();
 }
 
-PendingExecutionResult Executor::ExecuteTask(bool dry_run) {
+PendingExecutionResult Executor::ExecuteTask(std::function<void()> on_reschedule_arg, bool dry_run) {
 	// Only executor should return NO_TASKS_AVAILABLE
 	D_ASSERT(execution_result != PendingExecutionResult::NO_TASKS_AVAILABLE);
 	if (execution_result != PendingExecutionResult::RESULT_NOT_READY && ExecutionIsFinished()) {
@@ -592,6 +587,7 @@ PendingExecutionResult Executor::ExecuteTask(bool dry_run) {
 			if (ResultCollectorIsBlocked()) {
 				return PendingExecutionResult::RESULT_READY;
 			}
+			on_reschedule = std::move(on_reschedule_arg);
 			return PendingExecutionResult::BLOCKED;
 		}
 
