@@ -11,6 +11,7 @@ CreateAsStmt
 CreateSecretStmt
 CreateTypeStmt
 CreateFunctionStmt
+CreatePublicationStmt
 CreateSchemaStmt
 CreateSeqStmt
 CreateStmt

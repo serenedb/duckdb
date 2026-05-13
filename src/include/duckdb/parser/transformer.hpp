@@ -133,6 +133,8 @@ private:
 	unique_ptr<CreateStatement> TransformCreateIndex(duckdb_libpgquery::PGIndexStmt &stmt);
 	//! Transform a Postgres duckdb_libpgquery::T_PGCreateFunctionStmt node into CreateStatement
 	unique_ptr<CreateStatement> TransformCreateFunction(duckdb_libpgquery::PGCreateFunctionStmt &stmt);
+	//! Transform a Postgres duckdb_libpgquery::T_PGCreatePublicationStmt node into a PragmaStatement
+	unique_ptr<SQLStatement> TransformCreatePublication(duckdb_libpgquery::PGCreatePublicationStmt &stmt);
 	//! Transform a Postgres duckdb_libpgquery::T_PGCreateTypeStmt node into CreateStatement
 	unique_ptr<CreateStatement> TransformCreateType(duckdb_libpgquery::PGCreateTypeStmt &stmt);
 	//! Transform a Postgres duckdb_libpgquery::T_PGCreateTypeStmt node into CreateStatement

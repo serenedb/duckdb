@@ -1,0 +1,51 @@
+# name: test/sql/create/create_publication.test
+# description: Test CREATE PUBLICATION syntax parsing
+# group: [create]
+
+# bare form — no tables, no for_all_tables
+statement error
+CREATE PUBLICATION mypub;
+----
+Catalog Error: Pragma Function with name create_publication does not exist!
+
+# FOR ALL TABLES
+statement error
+CREATE PUBLICATION mypub FOR ALL TABLES;
+----
+Catalog Error: Pragma Function with name create_publication does not exist!
+
+# FOR TABLE — single table
+statement error
+CREATE PUBLICATION mypub FOR TABLE t1;
+----
+Catalog Error: Pragma Function with name create_publication does not exist!
+
+# FOR TABLE — multiple tables
+statement error
+CREATE PUBLICATION mypub FOR TABLE t1, t2, t3;
+----
+Catalog Error: Pragma Function with name create_publication does not exist!
+
+# FOR TABLE — schema-qualified table name
+statement error
+CREATE PUBLICATION mypub FOR TABLE myschema.mytable;
+----
+Catalog Error: Pragma Function with name create_publication does not exist!
+
+# FOR TABLE — mixed qualified and unqualified
+statement error
+CREATE PUBLICATION mypub FOR TABLE myschema.t1, t2;
+----
+Catalog Error: Pragma Function with name create_publication does not exist!
+
+# publication name as a keyword-like identifier
+statement error
+CREATE PUBLICATION public FOR ALL TABLES;
+----
+Catalog Error: Pragma Function with name create_publication does not exist!
+
+# invalid syntax — FOR TABLE with empty list
+statement error
+CREATE PUBLICATION mypub FOR TABLE;
+----
+<REGEX>:.*syntax error.*
