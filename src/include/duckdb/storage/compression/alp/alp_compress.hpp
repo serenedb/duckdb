@@ -102,7 +102,7 @@ public:
 		const idx_t uncompressed_size = AlpConstants::EXPONENT_SIZE + sizeof(T) * vector_idx;
 		const idx_t compressed_size = compression_data.RequiredSpace();
 
-		const auto storage_version = checkpoint_data.GetStorageManager().GetStorageVersion();
+		const auto storage_version = checkpoint_data.GetStorageVersion();
 		const bool should_compress = compressed_size < uncompressed_size || storage_version < 7;
 
 		const idx_t vector_size = should_compress ? compressed_size : uncompressed_size;
@@ -205,7 +205,6 @@ public:
 	}
 
 	void FlushSegment() {
-		auto &checkpoint_state = checkpoint_data.GetCheckpointState();
 		auto dataptr = handle.Ptr();
 
 		idx_t metadata_offset = AlignValue(UsedSpace());
@@ -238,7 +237,7 @@ public:
 		// Store the offset to the end of metadata (to be used as a backwards pointer in decoding)
 		Store<uint32_t>(NumericCast<uint32_t>(total_segment_size), dataptr);
 
-		checkpoint_state.FlushSegment(std::move(current_segment), std::move(handle), total_segment_size);
+		checkpoint_data.FlushSegment(std::move(current_segment), std::move(handle), total_segment_size);
 		data_bytes_used = 0;
 		vectors_flushed = 0;
 	}

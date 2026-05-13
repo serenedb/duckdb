@@ -21,8 +21,8 @@ struct FixedSizeAnalyzeState : public AnalyzeState {
 	idx_t count;
 };
 
-unique_ptr<AnalyzeState> FixedSizeInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	CompressionInfo info(col_data.GetBlockManager());
+unique_ptr<AnalyzeState> FixedSizeInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
+	CompressionInfo info(ctx.block_manager);
 	return make_uniq<FixedSizeAnalyzeState>(info);
 }
 
@@ -72,8 +72,9 @@ void UncompressedCompressState::CreateEmptySegment() {
 	    ColumnSegment::CreateTransientSegment(db, function, type, info.GetBlockSize(), info.GetBlockManager());
 	if (type.InternalType() == PhysicalType::VARCHAR) {
 		auto &state = compressed_segment->GetSegmentState()->Cast<UncompressedStringSegmentState>();
-		auto &storage_manager = checkpoint_data.GetStorageManager();
-		if (!storage_manager.InMemory()) {
+		if (checkpoint_data.HasOverflowStringWriterFactory()) {
+			state.overflow_writer = checkpoint_data.MakeOverflowStringWriter();
+		} else if (checkpoint_data.HasStorageManager() && !checkpoint_data.GetStorageManager().InMemory()) {
 			auto &partial_block_manager = checkpoint_data.GetCheckpointState().GetPartialBlockManager();
 			state.block_manager = partial_block_manager.GetBlockManager();
 			state.overflow_writer = make_uniq<WriteOverflowStringsToDisk>(partial_block_manager);
@@ -84,7 +85,6 @@ void UncompressedCompressState::CreateEmptySegment() {
 }
 
 void UncompressedCompressState::FlushSegment(idx_t segment_size) {
-	auto &state = checkpoint_data.GetCheckpointState();
 	if (current_segment->type.InternalType() == PhysicalType::VARCHAR) {
 		auto &segment_state = current_segment->GetSegmentState()->Cast<UncompressedStringSegmentState>();
 		if (segment_state.overflow_writer) {
@@ -95,7 +95,7 @@ void UncompressedCompressState::FlushSegment(idx_t segment_size) {
 	append_state.child_appends.clear();
 	append_state.append_state.reset();
 	append_state.lock.reset();
-	state.FlushSegmentInternal(std::move(current_segment), segment_size);
+	checkpoint_data.FlushSegmentInternal(std::move(current_segment), segment_size);
 }
 
 void UncompressedCompressState::Finalize(idx_t segment_size) {

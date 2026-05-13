@@ -65,6 +65,7 @@ ExplainableStmt:
 			| CreateSchemaStmt
 			| CreateSeqStmt
 			| CreateStmt
+			| CreateTSDictionaryStmt
 			| CreateTypeStmt
 			| DeallocateStmt
 			| DeleteStmt

@@ -4,3 +4,5 @@
 %type <str> opt_index_name
 %type <list> opt_reloptions
 %type <boolean> opt_unique
+%type <list> opt_include
+%type <list> index_including_params

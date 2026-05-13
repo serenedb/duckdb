@@ -306,10 +306,10 @@ struct BitpackingAnalyzeState : public AnalyzeState {
 };
 
 template <class T>
-unique_ptr<AnalyzeState> BitpackingInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	CompressionInfo info(col_data.GetBlockManager());
+unique_ptr<AnalyzeState> BitpackingInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
+	CompressionInfo info(ctx.block_manager);
 	auto state = make_uniq<BitpackingAnalyzeState<T>>(info);
-	state->state.mode = Settings::Get<ForceBitpackingModeSetting>(col_data.GetDatabase());
+	state->state.mode = Settings::Get<ForceBitpackingModeSetting>(ctx.db);
 
 	return std::move(state);
 }
@@ -502,7 +502,6 @@ public:
 	}
 
 	void FlushSegment() {
-		auto &state = checkpoint_data.GetCheckpointState();
 		auto base_ptr = handle.Ptr();
 
 		// Compact the segment by moving the metadata next to the data.
@@ -526,7 +525,7 @@ public:
 		// Store the offset of the metadata of the first group (which is at the highest address).
 		Store<idx_t>(metadata_offset + metadata_size, base_ptr);
 
-		state.FlushSegment(std::move(current_segment), std::move(handle), total_segment_size);
+		checkpoint_data.FlushSegment(std::move(current_segment), std::move(handle), total_segment_size);
 	}
 
 	void Finalize() {

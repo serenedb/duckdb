@@ -90,8 +90,8 @@ struct RLEAnalyzeState : public AnalyzeState {
 };
 
 template <class T>
-unique_ptr<AnalyzeState> RLEInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	CompressionInfo info(col_data.GetBlockManager());
+unique_ptr<AnalyzeState> RLEInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
+	CompressionInfo info(ctx.block_manager);
 	return make_uniq<RLEAnalyzeState<T>>(info);
 }
 
@@ -211,8 +211,7 @@ struct RLECompressState : public CompressionState {
 		Store<uint64_t>(aligned_rle_offset, data_ptr);
 		handle.Destroy();
 
-		auto &state = checkpoint_data.GetCheckpointState();
-		state.FlushSegment(std::move(current_segment), std::move(handle), total_segment_size);
+		checkpoint_data.FlushSegment(std::move(current_segment), std::move(handle), total_segment_size);
 	}
 
 	void Finalize() {

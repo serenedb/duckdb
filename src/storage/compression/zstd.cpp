@@ -68,7 +68,7 @@ static idx_t GetVectorMetadataSize(idx_t vector_count) {
 }
 
 struct ZSTDStorage {
-	static unique_ptr<AnalyzeState> StringInitAnalyze(ColumnData &col_data, PhysicalType type);
+	static unique_ptr<AnalyzeState> StringInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type);
 	static bool StringAnalyze(AnalyzeState &state_p, Vector &input, idx_t count);
 	static idx_t StringFinalAnalyze(AnalyzeState &state_p);
 
@@ -135,23 +135,18 @@ public:
 	idx_t values_in_vector = 0;
 };
 
-unique_ptr<AnalyzeState> ZSTDStorage::StringInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	// check if the storage version we are writing to supports sztd
-	auto &storage = col_data.GetStorageManager();
-	auto &block_manager = col_data.GetBlockManager();
-	if (block_manager.InMemory()) {
+unique_ptr<AnalyzeState> ZSTDStorage::StringInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
+	// check if the storage version we are writing to supports zstd
+	if (ctx.block_manager.InMemory()) {
 		//! Can't use ZSTD in in-memory environment
 		return nullptr;
 	}
-	if (storage.GetStorageVersion() < 4) {
+	if (ctx.storage_version < 4) {
 		// compatibility mode with old versions - disable zstd
 		return nullptr;
 	}
-	CompressionInfo info(col_data.GetBlockManager());
-	auto &data_table_info = col_data.info;
-	auto &attached_db = data_table_info.GetDB();
-	auto &config = DBConfig::Get(attached_db);
-
+	CompressionInfo info(ctx.block_manager);
+	auto &config = DBConfig::GetConfig(ctx.db);
 	return make_uniq<ZSTDAnalyzeState>(info, config);
 }
 
@@ -232,8 +227,7 @@ public:
 	explicit ZSTDCompressionState(ColumnDataCheckpointData &checkpoint_data,
 	                              unique_ptr<ZSTDAnalyzeState> &&analyze_state_p)
 	    : CompressionState(analyze_state_p->info), analyze_state(std::move(analyze_state_p)),
-	      checkpoint_data(checkpoint_data),
-	      partial_block_manager(checkpoint_data.GetCheckpointState().GetPartialBlockManager()),
+	      checkpoint_data(checkpoint_data), block_manager(checkpoint_data.GetBlockManager()),
 	      function(checkpoint_data.GetCompressionFunction(CompressionType::COMPRESSION_ZSTD)),
 	      total_tuple_count(analyze_state->count), total_vector_count(GetVectorCount(total_tuple_count)),
 	      total_segment_count(analyze_state->segment_count), vectors_per_segment(analyze_state->vectors_per_segment) {
@@ -269,7 +263,6 @@ public:
 	}
 
 	void GetExtraPageBuffer(block_id_t current_block_id) {
-		auto &block_manager = partial_block_manager.GetBlockManager();
 		auto &buffer_manager = block_manager.buffer_manager;
 
 		auto &current_buffer_state = buffer_collection.GetCurrentBufferState();
@@ -447,8 +440,7 @@ public:
 	}
 
 	block_id_t FinalizePage() {
-		auto &block_manager = partial_block_manager.GetBlockManager();
-		auto new_id = partial_block_manager.GetFreeBlockId();
+		auto new_id = checkpoint_data.GetFreeBlockId();
 
 		auto &state = buffer_collection.segment->GetSegmentState()->Cast<UncompressedStringSegmentState>();
 		state.RegisterBlock(block_manager, new_id);
@@ -468,7 +460,6 @@ public:
 		}
 
 		// Write the current page to disk
-		auto &block_manager = partial_block_manager.GetBlockManager();
 		block_manager.Write(QueryContext(), buffer.GetFileBuffer(), block_id);
 	}
 
@@ -580,9 +571,8 @@ public:
 			}
 		}
 
-		auto &state = checkpoint_data.GetCheckpointState();
-		state.FlushSegment(std::move(buffer_collection.segment), std::move(buffer_collection.segment_handle),
-		                   segment_block_size);
+		checkpoint_data.FlushSegment(std::move(buffer_collection.segment), std::move(buffer_collection.segment_handle),
+		                             segment_block_size);
 		segment_buffer_state.flags.Clear();
 		segment_buffer_state.full = true;
 		segment_buffer_state.offset = 0;
@@ -604,7 +594,7 @@ public:
 public:
 	unique_ptr<ZSTDAnalyzeState> analyze_state;
 	ColumnDataCheckpointData &checkpoint_data;
-	PartialBlockManager &partial_block_manager;
+	BlockManager &block_manager;
 	const CompressionFunction &function;
 
 	//! --- Analyzed Data ---

@@ -181,8 +181,8 @@ struct ValidityAnalyzeState : public AnalyzeState {
 	idx_t count;
 };
 
-unique_ptr<AnalyzeState> ValidityInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	CompressionInfo info(col_data.GetBlockManager());
+unique_ptr<AnalyzeState> ValidityInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
+	CompressionInfo info(ctx.block_manager);
 	return make_uniq<ValidityAnalyzeState>(info);
 }
 

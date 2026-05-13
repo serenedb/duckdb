@@ -43,7 +43,7 @@ struct FSSTStorage {
 	static constexpr double MINIMUM_COMPRESSION_RATIO = 1.2;
 	static constexpr double ANALYSIS_SAMPLE_SIZE = 0.25;
 
-	static unique_ptr<AnalyzeState> StringInitAnalyze(ColumnData &col_data, PhysicalType type);
+	static unique_ptr<AnalyzeState> StringInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type);
 	static bool StringAnalyze(AnalyzeState &state_p, Vector &input, idx_t count);
 	static idx_t StringFinalAnalyze(AnalyzeState &state_p);
 
@@ -101,14 +101,13 @@ struct FSSTAnalyzeState : public AnalyzeState {
 	idx_t empty_strings;
 };
 
-unique_ptr<AnalyzeState> FSSTStorage::StringInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	auto &storage_manager = col_data.GetStorageManager();
-	if (storage_manager.GetStorageVersion() >= 5) {
+unique_ptr<AnalyzeState> FSSTStorage::StringInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
+	if (ctx.storage_version >= 5) {
 		// dict_fsst introduced - disable fsst
 		return nullptr;
 	}
 
-	CompressionInfo info(col_data.GetBlockManager());
+	CompressionInfo info(ctx.block_manager);
 	return make_uniq<FSSTAnalyzeState>(info);
 }
 
@@ -327,8 +326,7 @@ public:
 
 	void Flush(bool final = false) {
 		auto segment_size = Finalize();
-		auto &state = checkpoint_data.GetCheckpointState();
-		state.FlushSegment(std::move(current_segment), std::move(current_handle), segment_size);
+		checkpoint_data.FlushSegment(std::move(current_segment), std::move(current_handle), segment_size);
 
 		if (!final) {
 			CreateEmptySegment();

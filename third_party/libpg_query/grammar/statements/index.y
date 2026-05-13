@@ -7,7 +7,7 @@
  *****************************************************************************/
 IndexStmt:	CREATE_P opt_unique INDEX opt_concurrently opt_index_name
 			ON qualified_name access_method_clause '(' index_params ')'
-			opt_reloptions where_clause
+			opt_include opt_reloptions where_clause
 				{
 					PGIndexStmt *n = makeNode(PGIndexStmt);
 					n->unique = $2;
@@ -15,9 +15,9 @@ IndexStmt:	CREATE_P opt_unique INDEX opt_concurrently opt_index_name
 					n->idxname = $5;
 					n->relation = $7;
 					n->accessMethod = $8;
-					n->indexParams = $10;
-					n->options = $12;
-					n->whereClause = $13;
+					n->indexParams = list_concat($10, $12);
+					n->options = $13;
+					n->whereClause = $14;
 					n->excludeOpNames = NIL;
 					n->idxcomment = NULL;
 					n->indexOid = InvalidOid;
@@ -32,7 +32,7 @@ IndexStmt:	CREATE_P opt_unique INDEX opt_concurrently opt_index_name
 				}
 			| CREATE_P opt_unique INDEX opt_concurrently IF_P NOT EXISTS index_name
 			ON qualified_name access_method_clause '(' index_params ')'
-			opt_reloptions where_clause
+			opt_include opt_reloptions where_clause
 				{
 					PGIndexStmt *n = makeNode(PGIndexStmt);
 					n->unique = $2;
@@ -40,9 +40,9 @@ IndexStmt:	CREATE_P opt_unique INDEX opt_concurrently opt_index_name
 					n->idxname = $8;
 					n->relation = $10;
 					n->accessMethod = $11;
-					n->indexParams = $13;
-					n->options = $15;
-					n->whereClause = $16;
+					n->indexParams = list_concat($13, $15);
+					n->options = $16;
+					n->whereClause = $17;
 					n->excludeOpNames = NIL;
 					n->idxcomment = NULL;
 					n->indexOid = InvalidOid;
@@ -54,6 +54,37 @@ IndexStmt:	CREATE_P opt_unique INDEX opt_concurrently opt_index_name
 					n->transformed = false;
 					n->onconflict = PG_IGNORE_ON_CONFLICT;
 					$$ = (PGNode *)n;
+				}
+		;
+
+
+/*
+ * INCLUDE clause: appends the listed columns to indexParams marked with
+ * opclass "included". The catalog-side handler reads that as a "store the
+ * value, don't tokenize/index for filtering" signal -- routes the column
+ * into the typed columnstore.
+ */
+opt_include:
+			INCLUDE_P '(' index_including_params ')'		{ $$ = $3; }
+			| /* EMPTY */									{ $$ = NIL; }
+		;
+
+index_including_params:
+			index_elem
+				{
+					PGIndexElem *e = $1;
+					if (e->opclass == NULL) {
+						e->opclass = list_make1(makeString("included"));
+					}
+					$$ = list_make1(e);
+				}
+			| index_including_params ',' index_elem
+				{
+					PGIndexElem *e = $3;
+					if (e->opclass == NULL) {
+						e->opclass = list_make1(makeString("included"));
+					}
+					$$ = lappend($1, e);
 				}
 		;
 

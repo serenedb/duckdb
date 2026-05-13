@@ -113,8 +113,7 @@ bool DictionaryCompressionCompressState::CalculateSpaceRequirements(bool new_str
 
 void DictionaryCompressionCompressState::Flush(bool final) {
 	auto segment_size = Finalize();
-	auto &state = checkpoint_data.GetCheckpointState();
-	state.FlushSegment(std::move(current_segment), std::move(current_handle), segment_size);
+	checkpoint_data.FlushSegment(std::move(current_segment), std::move(current_handle), segment_size);
 
 	if (!final) {
 		CreateEmptySegment();

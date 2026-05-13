@@ -303,7 +303,6 @@ void RoaringCompressState::CreateEmptySegment() {
 }
 
 void RoaringCompressState::FlushSegment() {
-	auto &state = checkpoint_data.GetCheckpointState();
 	auto base_ptr = handle.Ptr();
 	// +======================================+
 	// |x|ddddddddddddddd||mmm|               |
@@ -341,7 +340,7 @@ void RoaringCompressState::FlushSegment() {
 
 	Store<idx_t>(metadata_start, handle.Ptr());
 	auto total_segment_size = sizeof(idx_t) + data_size + metadata_size;
-	state.FlushSegment(std::move(current_segment), std::move(handle), total_segment_size);
+	checkpoint_data.FlushSegment(std::move(current_segment), std::move(handle), total_segment_size);
 }
 
 void RoaringCompressState::Finalize() {

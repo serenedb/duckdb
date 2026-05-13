@@ -46,7 +46,7 @@ Data layout per segment:
 namespace duckdb {
 
 struct DictionaryCompressionStorage {
-	static unique_ptr<AnalyzeState> StringInitAnalyze(ColumnData &col_data, PhysicalType type);
+	static unique_ptr<AnalyzeState> StringInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type);
 	static bool StringAnalyze(AnalyzeState &state_p, Vector &input, idx_t count);
 	static idx_t StringFinalAnalyze(AnalyzeState &state_p);
 
@@ -67,14 +67,14 @@ struct DictionaryCompressionStorage {
 //===--------------------------------------------------------------------===//
 // Analyze
 //===--------------------------------------------------------------------===//
-unique_ptr<AnalyzeState> DictionaryCompressionStorage::StringInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	auto &storage_manager = col_data.GetStorageManager();
-	if (storage_manager.GetStorageVersion() >= 5) {
+unique_ptr<AnalyzeState> DictionaryCompressionStorage::StringInitAnalyze(CompressionAnalyzeContext &ctx,
+                                                                         PhysicalType type) {
+	if (ctx.storage_version >= 5) {
 		// dict_fsst introduced - disable dictionary
 		return nullptr;
 	}
 
-	CompressionInfo info(col_data.GetBlockManager());
+	CompressionInfo info(ctx.block_manager);
 	return make_uniq<DictionaryCompressionAnalyzeState>(info);
 }
 
