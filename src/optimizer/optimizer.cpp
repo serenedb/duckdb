@@ -106,7 +106,27 @@ void Optimizer::RunOptimizer(OptimizerType type, const std::function<void()> &ca
 	}
 	auto &profiler = QueryProfiler::Get(context);
 	profiler.StartPhase(MetricsUtils::GetOptimizerMetricByType(type));
+	for (auto &ext : OptimizerExtension::Iterate(context)) {
+		if (ext.anchor != type || !ext.pre_optimize_function) {
+			continue;
+		}
+		OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
+		ext.pre_optimize_function(input, plan);
+		if (plan) {
+			Verify(*plan);
+		}
+	}
 	callback();
+	for (auto &ext : OptimizerExtension::Iterate(context)) {
+		if (ext.anchor != type || !ext.optimize_function) {
+			continue;
+		}
+		OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
+		ext.optimize_function(input, plan);
+		if (plan) {
+			Verify(*plan);
+		}
+	}
 	profiler.EndPhase();
 	if (plan) {
 		Verify(*plan);
@@ -351,6 +371,9 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	this->plan = std::move(plan_p);
 
 	for (auto &pre_optimizer_extension : OptimizerExtension::Iterate(context)) {
+		if (pre_optimizer_extension.anchor != OptimizerType::INVALID) {
+			continue;  // anchored: fires inside RunOptimizer instead
+		}
 		RunOptimizer(OptimizerType::EXTENSION, [&]() {
 			OptimizerExtensionInput input {GetContext(), *this, pre_optimizer_extension.optimizer_info.get()};
 			if (pre_optimizer_extension.pre_optimize_function) {
@@ -362,6 +385,9 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	RunBuiltInOptimizers();
 
 	for (auto &optimizer_extension : OptimizerExtension::Iterate(context)) {
+		if (optimizer_extension.anchor != OptimizerType::INVALID) {
+			continue;  // anchored: fires inside RunOptimizer instead
+		}
 		RunOptimizer(OptimizerType::EXTENSION, [&]() {
 			OptimizerExtensionInput input {GetContext(), *this, optimizer_extension.optimizer_info.get()};
 			if (optimizer_extension.optimize_function) {
