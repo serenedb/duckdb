@@ -807,7 +807,7 @@ at_specifier:
 	;
 
 opt_at_clause:
-		AT '(' at_specifier ')' { $$ = $3; }
+		AT_LA '(' at_specifier ')' { $$ = $3; }
 		| /*EMPTY*/				{ $$ = NULL; }
 	;
 
@@ -2270,7 +2270,7 @@ a_expr:		c_expr									{ $$ = $1; }
 					n->location = @2;
 					$$ = (PGNode *) n;
 				}
-			| a_expr AT TIME ZONE a_expr			%prec AT
+			| a_expr AT_LA TIME ZONE a_expr			%prec AT_LA
 				{
 					$$ = (PGNode *) makeFuncCall(SystemFuncName("timezone"),
 											   list_make2($5, $1),
