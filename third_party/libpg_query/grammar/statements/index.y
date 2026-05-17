@@ -75,6 +75,7 @@ index_including_params:
 					PGIndexElem *e = $1;
 					if (e->opclass == NULL) {
 						e->opclass = list_make1(makeString("included"));
+						e->opclassopts = makeNode(PGList);
 					}
 					$$ = list_make1(e);
 				}
@@ -83,6 +84,7 @@ index_including_params:
 					PGIndexElem *e = $3;
 					if (e->opclass == NULL) {
 						e->opclass = list_make1(makeString("included"));
+						e->opclassopts = makeNode(PGList);
 					}
 					$$ = lappend($1, e);
 				}

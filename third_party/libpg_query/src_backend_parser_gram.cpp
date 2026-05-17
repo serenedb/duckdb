@@ -1947,8 +1947,8 @@ static const yytype_int16 yyrline[] =
       64,    72,    80,    88,    96,   107,   115,   126,   132,   136,
      140,   155,   162,   163,   164,   168,   169,     7,    18,    19,
       23,    24,    25,    26,    27,    28,     7,     9,    18,     7,
-       8,    33,    68,    69,    73,    81,    93,    97,    98,   103,
-     104,   109,   110,   114,   115,   120,   121,     7,    26,    50,
+       8,    33,    68,    69,    73,    82,    95,    99,   100,   105,
+     106,   111,   112,   116,   117,   122,   123,     7,    26,    50,
       73,    80,    85,    86,    87,    88,     2,     6,     3,    10,
       17,    24,    32,    39,    46,    53,    60,    67,    74,    83,
       83,    85,    85,    89,    90,     7,    16,    25,    34,    43,
@@ -31714,88 +31714,90 @@ yyreduce:
 					PGIndexElem *e = (yyvsp[0].ielem);
 					if (e->opclass == NULL) {
 						e->opclass = list_make1(makeString("included"));
+						e->opclassopts = makeNode(PGList);
 					}
 					(yyval.list) = list_make1(e);
 				}
-#line 31721 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31722 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1185: /* index_including_params: index_including_params ',' index_elem  */
-#line 82 "third_party/libpg_query/grammar/statements/index.y"
+#line 83 "third_party/libpg_query/grammar/statements/index.y"
                                 {
 					PGIndexElem *e = (yyvsp[0].ielem);
 					if (e->opclass == NULL) {
 						e->opclass = list_make1(makeString("included"));
+						e->opclassopts = makeNode(PGList);
 					}
 					(yyval.list) = lappend((yyvsp[-2].list), e);
 				}
-#line 31733 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31735 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1186: /* access_method: ColId  */
-#line 93 "third_party/libpg_query/grammar/statements/index.y"
+#line 95 "third_party/libpg_query/grammar/statements/index.y"
                                                                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 31739 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31741 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1187: /* access_method_clause: USING access_method  */
-#line 97 "third_party/libpg_query/grammar/statements/index.y"
+#line 99 "third_party/libpg_query/grammar/statements/index.y"
                                                                                         { (yyval.str) = (yyvsp[0].str); }
-#line 31745 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31747 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1188: /* access_method_clause: %empty  */
-#line 98 "third_party/libpg_query/grammar/statements/index.y"
+#line 100 "third_party/libpg_query/grammar/statements/index.y"
                                                                                                 { (yyval.str) = (char*) DEFAULT_INDEX_TYPE; }
-#line 31751 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31753 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1189: /* opt_concurrently: CONCURRENTLY  */
-#line 103 "third_party/libpg_query/grammar/statements/index.y"
+#line 105 "third_party/libpg_query/grammar/statements/index.y"
                                                                                         { (yyval.boolean) = true; }
-#line 31757 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31759 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1190: /* opt_concurrently: %empty  */
-#line 104 "third_party/libpg_query/grammar/statements/index.y"
+#line 106 "third_party/libpg_query/grammar/statements/index.y"
                                                                                                 { (yyval.boolean) = false; }
-#line 31763 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31765 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1191: /* opt_index_name: index_name  */
-#line 109 "third_party/libpg_query/grammar/statements/index.y"
+#line 111 "third_party/libpg_query/grammar/statements/index.y"
                                                                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 31769 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31771 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1192: /* opt_index_name: %empty  */
-#line 110 "third_party/libpg_query/grammar/statements/index.y"
+#line 112 "third_party/libpg_query/grammar/statements/index.y"
                                                                                                 { (yyval.str) = NULL; }
-#line 31775 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31777 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1193: /* opt_reloptions: WITH reloptions  */
-#line 114 "third_party/libpg_query/grammar/statements/index.y"
+#line 116 "third_party/libpg_query/grammar/statements/index.y"
                                                                         { (yyval.list) = (yyvsp[0].list); }
-#line 31781 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31783 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1194: /* opt_reloptions: %empty  */
-#line 115 "third_party/libpg_query/grammar/statements/index.y"
+#line 117 "third_party/libpg_query/grammar/statements/index.y"
                                                                                                 { (yyval.list) = NIL; }
-#line 31787 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31789 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1195: /* opt_unique: UNIQUE  */
-#line 120 "third_party/libpg_query/grammar/statements/index.y"
+#line 122 "third_party/libpg_query/grammar/statements/index.y"
                                                                                                 { (yyval.boolean) = true; }
-#line 31793 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31795 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1196: /* opt_unique: %empty  */
-#line 121 "third_party/libpg_query/grammar/statements/index.y"
+#line 123 "third_party/libpg_query/grammar/statements/index.y"
                                                                                                 { (yyval.boolean) = false; }
-#line 31799 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31801 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1197: /* CreateSchemaStmt: CREATE_P SCHEMA qualified_name OptSchemaEltList  */
@@ -31818,7 +31820,7 @@ yyreduce:
 					n->onconflict = PG_ERROR_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 31822 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31824 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1198: /* CreateSchemaStmt: CREATE_P SCHEMA IF_P NOT EXISTS qualified_name OptSchemaEltList  */
@@ -31846,7 +31848,7 @@ yyreduce:
 					n->onconflict = PG_IGNORE_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 31850 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31852 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1199: /* CreateSchemaStmt: CREATE_P OR REPLACE SCHEMA qualified_name OptSchemaEltList  */
@@ -31869,7 +31871,7 @@ yyreduce:
 					n->onconflict = PG_REPLACE_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 31873 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31875 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1200: /* OptSchemaEltList: OptSchemaEltList schema_stmt  */
@@ -31879,13 +31881,13 @@ yyreduce:
 						(yyloc) = (yylsp[0]);
 					(yyval.list) = lappend((yyvsp[-1].list), (yyvsp[0].node));
 				}
-#line 31883 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31885 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1201: /* OptSchemaEltList: %empty  */
 #line 80 "third_party/libpg_query/grammar/statements/create_schema.y"
                                 { (yyval.list) = NIL; }
-#line 31889 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31891 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1206: /* UseStmt: USE_P qualified_name  */
@@ -31895,7 +31897,7 @@ yyreduce:
 					n->name = (yyvsp[0].range);
 					(yyval.node) = (PGNode *) n;
 				}
-#line 31899 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31901 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1207: /* CallStmt: CALL_P func_application  */
@@ -31905,7 +31907,7 @@ yyreduce:
 					n->func = (yyvsp[0].node);
 					(yyval.node) = (PGNode *) n;
 				}
-#line 31909 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31911 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1208: /* VariableShowStmt: show_or_describe SelectStmt  */
@@ -31917,7 +31919,7 @@ yyreduce:
 				n->is_summary = 0;
 				(yyval.node) = (PGNode *) n;
 			}
-#line 31921 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31923 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1209: /* VariableShowStmt: SUMMARIZE SelectStmt  */
@@ -31929,7 +31931,7 @@ yyreduce:
 				n->is_summary = 1;
 				(yyval.node) = (PGNode *) n;
 			}
-#line 31933 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31935 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1210: /* VariableShowStmt: SUMMARIZE qualified_name  */
@@ -31940,7 +31942,7 @@ yyreduce:
 				n->is_summary = 1;
 				(yyval.node) = (PGNode *) n;
 			}
-#line 31944 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31946 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1211: /* VariableShowStmt: show_or_describe TABLES FROM qualified_name  */
@@ -31952,7 +31954,7 @@ yyreduce:
 				n->is_summary = 0;
 				(yyval.node) = (PGNode *) n;
 			}
-#line 31956 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31958 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1212: /* VariableShowStmt: show_or_describe qualified_name  */
@@ -31963,7 +31965,7 @@ yyreduce:
 				n->is_summary = 0;
 				(yyval.node) = (PGNode *) n;
 			}
-#line 31967 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31969 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1213: /* VariableShowStmt: show_or_describe TIME ZONE  */
@@ -31974,7 +31976,7 @@ yyreduce:
 				n->is_summary = 0;
 				(yyval.node) = (PGNode *) n;
 			}
-#line 31978 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31980 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1214: /* VariableShowStmt: show_or_describe TRANSACTION ISOLATION LEVEL  */
@@ -31985,7 +31987,7 @@ yyreduce:
 				n->is_summary = 0;
 				(yyval.node) = (PGNode *) n;
 			}
-#line 31989 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 31991 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1215: /* VariableShowStmt: show_or_describe SESSION AUTHORIZATION  */
@@ -31996,7 +31998,7 @@ yyreduce:
 				n->is_summary = 0;
 				(yyval.node) = (PGNode *) n;
 			}
-#line 32000 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32002 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1216: /* VariableShowStmt: show_or_describe ALL TABLES  */
@@ -32007,7 +32009,7 @@ yyreduce:
 				n->is_summary = 0;
 				(yyval.node) = (PGNode *) n;
 			}
-#line 32011 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32013 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1217: /* VariableShowStmt: show_or_describe ALL  */
@@ -32018,7 +32020,7 @@ yyreduce:
 				n->is_summary = 0;
 				(yyval.node) = (PGNode *) n;
 			}
-#line 32022 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32024 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1218: /* VariableShowStmt: show_or_describe  */
@@ -32029,19 +32031,19 @@ yyreduce:
 				n->is_summary = 0;
 				(yyval.node) = (PGNode *) n;
 			}
-#line 32033 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32035 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1223: /* var_name: ColId  */
 #line 89 "third_party/libpg_query/grammar/statements/variable_show.y"
                                                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 32039 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32041 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1224: /* var_name: var_name '.' ColId  */
 #line 91 "third_party/libpg_query/grammar/statements/variable_show.y"
                                 { (yyval.str) = psprintf("%s.%s", (yyvsp[-2].str), (yyvsp[0].str)); }
-#line 32045 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32047 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1225: /* AlterObjectSchemaStmt: ALTER TABLE relation_expr SET SCHEMA name  */
@@ -32054,7 +32056,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32058 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32060 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1226: /* AlterObjectSchemaStmt: ALTER TABLE IF_P EXISTS relation_expr SET SCHEMA name  */
@@ -32067,7 +32069,7 @@ yyreduce:
 					n->missing_ok = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32071 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32073 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1227: /* AlterObjectSchemaStmt: ALTER SEQUENCE qualified_name SET SCHEMA name  */
@@ -32080,7 +32082,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32084 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32086 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1228: /* AlterObjectSchemaStmt: ALTER SEQUENCE IF_P EXISTS qualified_name SET SCHEMA name  */
@@ -32093,7 +32095,7 @@ yyreduce:
 					n->missing_ok = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32097 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32099 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1229: /* AlterObjectSchemaStmt: ALTER VIEW qualified_name SET SCHEMA name  */
@@ -32106,7 +32108,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32110 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32112 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1230: /* AlterObjectSchemaStmt: ALTER VIEW IF_P EXISTS qualified_name SET SCHEMA name  */
@@ -32119,7 +32121,7 @@ yyreduce:
 					n->missing_ok = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32123 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32125 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1231: /* MergeIntoStmt: opt_with_clause MERGE INTO relation_expr_opt_alias USING table_ref join_qual merge_match_list returning_clause  */
@@ -32137,31 +32139,31 @@ yyreduce:
 					n->returningList = (yyvsp[0].list);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32141 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32143 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1232: /* opt_and_clause: AND a_expr  */
 #line 29 "third_party/libpg_query/grammar/statements/merge_into.y"
                                 { (yyval.node) = (yyvsp[0].node); }
-#line 32147 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32149 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1233: /* opt_and_clause: %empty  */
 #line 30 "third_party/libpg_query/grammar/statements/merge_into.y"
                         { (yyval.node) = NULL; }
-#line 32153 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32155 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1234: /* opt_insert_column_list: '(' insert_column_list ')'  */
 #line 34 "third_party/libpg_query/grammar/statements/merge_into.y"
                                                 { (yyval.list) = (yyvsp[-1].list); }
-#line 32159 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32161 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1235: /* opt_insert_column_list: %empty  */
 #line 35 "third_party/libpg_query/grammar/statements/merge_into.y"
                                                         { (yyval.list) = NULL; }
-#line 32165 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32167 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1238: /* matched_clause_action: UPDATE SET set_clause_list_opt_comma  */
@@ -32173,7 +32175,7 @@ yyreduce:
 			n->updateTargets = (yyvsp[0].list);
 			(yyval.node) = (PGNode *)n;
 		}
-#line 32177 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32179 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1239: /* matched_clause_action: UPDATE SET '*'  */
@@ -32184,7 +32186,7 @@ yyreduce:
 			n->insert_column_order = PG_INSERT_BY_POSITION;
 			(yyval.node) = (PGNode *)n;
 		}
-#line 32188 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32190 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1240: /* matched_clause_action: UPDATE opt_by_name_or_position  */
@@ -32195,7 +32197,7 @@ yyreduce:
 			n->insert_column_order = (yyvsp[0].bynameorposition);
 			(yyval.node) = (PGNode *)n;
 		}
-#line 32199 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32201 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1241: /* matched_clause_action: DELETE_P  */
@@ -32205,7 +32207,7 @@ yyreduce:
 			n->actionType = MERGE_ACTION_TYPE_DELETE;
 			(yyval.node) = (PGNode *)n;
 		}
-#line 32209 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32211 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1242: /* matched_clause_action: INSERT opt_insert_column_list VALUES '(' expr_list_opt_comma ')'  */
@@ -32218,7 +32220,7 @@ yyreduce:
 			n->insertValues = (yyvsp[-1].list);
 			(yyval.node) = (PGNode *)n;
 		}
-#line 32222 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32224 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1243: /* matched_clause_action: INSERT opt_by_name_or_position opt_star_expr  */
@@ -32229,7 +32231,7 @@ yyreduce:
 			n->insert_column_order = (yyvsp[-1].bynameorposition);
 			(yyval.node) = (PGNode *)n;
 		}
-#line 32233 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32235 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1244: /* matched_clause_action: INSERT DEFAULT VALUES  */
@@ -32241,7 +32243,7 @@ yyreduce:
 			n->defaultValues = true;
 			(yyval.node) = (PGNode *)n;
 		}
-#line 32245 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32247 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1245: /* matched_clause_action: DO NOTHING  */
@@ -32251,7 +32253,7 @@ yyreduce:
 			n->actionType = MERGE_ACTION_TYPE_DO_NOTHING;
 			(yyval.node) = (PGNode *)n;
 		}
-#line 32255 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32257 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1246: /* matched_clause_action: ERROR_P opt_error_message  */
@@ -32262,19 +32264,19 @@ yyreduce:
 			n->errorMessage = (yyvsp[0].node);
 			(yyval.node) = (PGNode *)n;
 		}
-#line 32266 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32268 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1247: /* opt_error_message: a_expr  */
 #line 111 "third_party/libpg_query/grammar/statements/merge_into.y"
                                                 { (yyval.node) = (yyvsp[0].node); }
-#line 32272 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32274 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1248: /* opt_error_message: %empty  */
 #line 112 "third_party/libpg_query/grammar/statements/merge_into.y"
                                         { (yyval.node) = NULL; }
-#line 32278 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32280 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1249: /* matched_clause: WHEN MATCHED opt_and_clause THEN matched_clause_action  */
@@ -32285,25 +32287,25 @@ yyreduce:
 			n->andClause = (yyvsp[-2].node);
 			(yyval.node) = (PGNode *)n;
 		}
-#line 32289 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32291 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1250: /* opt_source_or_target: BY SOURCE_P  */
 #line 126 "third_party/libpg_query/grammar/statements/merge_into.y"
                                                 { (yyval.mergeaction) = MERGE_ACTION_WHEN_NOT_MATCHED_BY_SOURCE; }
-#line 32295 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32297 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1251: /* opt_source_or_target: BY TARGET_P  */
 #line 127 "third_party/libpg_query/grammar/statements/merge_into.y"
                                         { (yyval.mergeaction) = MERGE_ACTION_WHEN_NOT_MATCHED_BY_TARGET; }
-#line 32301 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32303 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1252: /* opt_source_or_target: %empty  */
 #line 128 "third_party/libpg_query/grammar/statements/merge_into.y"
                                         { (yyval.mergeaction) = MERGE_ACTION_WHEN_NOT_MATCHED_BY_TARGET; }
-#line 32307 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32309 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1253: /* not_matched_clause: WHEN NOT MATCHED opt_source_or_target opt_and_clause THEN matched_clause_action  */
@@ -32314,19 +32316,19 @@ yyreduce:
 			n->andClause = (yyvsp[-2].node);
 			(yyval.node) = (PGNode *)n;
 		}
-#line 32318 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32320 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1256: /* merge_match_list: matched_or_not_matched_clause  */
 #line 146 "third_party/libpg_query/grammar/statements/merge_into.y"
                                                                                 { (yyval.list) = list_make1((yyvsp[0].node)); }
-#line 32324 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32326 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1257: /* merge_match_list: matched_or_not_matched_clause merge_match_list  */
 #line 147 "third_party/libpg_query/grammar/statements/merge_into.y"
                                                                 { (yyval.list) = list_concat(list_make1((yyvsp[-1].node)), (yyvsp[0].list)); }
-#line 32330 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32332 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1258: /* DropSecretStmt: DROP opt_persist SECRET ColId opt_storage_drop_specifier  */
@@ -32339,7 +32341,7 @@ yyreduce:
 					n->missing_ok  = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32343 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32345 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1259: /* DropSecretStmt: DROP opt_persist SECRET IF_P EXISTS ColId opt_storage_drop_specifier  */
@@ -32352,19 +32354,19 @@ yyreduce:
                     n->missing_ok  = true;
                     (yyval.node) = (PGNode *)n;
                 }
-#line 32356 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32358 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1260: /* opt_storage_drop_specifier: %empty  */
 #line 28 "third_party/libpg_query/grammar/statements/drop_secret.y"
                                                     { (yyval.str) = pstrdup(""); }
-#line 32362 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32364 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1261: /* opt_storage_drop_specifier: FROM IDENT  */
 #line 29 "third_party/libpg_query/grammar/statements/drop_secret.y"
                                                     { (yyval.str) = (yyvsp[0].str); }
-#line 32368 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32370 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1262: /* CreateTypeStmt: CREATE_P OptTemp TYPE_P qualified_name AS create_type_value  */
@@ -32376,7 +32378,7 @@ yyreduce:
 					n->onconflict = PG_ERROR_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32380 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32382 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1263: /* CreateTypeStmt: CREATE_P OptTemp TYPE_P IF_P NOT EXISTS qualified_name AS create_type_value  */
@@ -32388,7 +32390,7 @@ yyreduce:
 					n->onconflict = PG_IGNORE_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32392 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32394 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1264: /* CreateTypeStmt: CREATE_P OR REPLACE OptTemp TYPE_P qualified_name AS create_type_value  */
@@ -32400,7 +32402,7 @@ yyreduce:
 					n->onconflict = PG_REPLACE_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32404 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32406 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1265: /* create_type_value: ENUM_P select_with_parens  */
@@ -32412,7 +32414,7 @@ yyreduce:
 		n->vals = NULL;
 		(yyval.node) = (PGNode *)n;
 	}
-#line 32416 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32418 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1266: /* create_type_value: ENUM_P '(' opt_enum_val_list ')'  */
@@ -32424,7 +32426,7 @@ yyreduce:
 		n->query = NULL;
 		(yyval.node) = (PGNode *)n;
 	}
-#line 32428 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32430 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1267: /* create_type_value: '(' colid_type_list ')'  */
@@ -32439,7 +32441,7 @@ yyreduce:
 		n->query = NULL;
 		(yyval.node) = (PGNode *)n;
 	}
-#line 32443 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32445 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1268: /* create_type_value: Typename  */
@@ -32457,19 +32459,19 @@ yyreduce:
 		}
 		(yyval.node) = (PGNode *)n;
 	}
-#line 32461 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32463 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1269: /* opt_enum_val_list: enum_val_list  */
 #line 79 "third_party/libpg_query/grammar/statements/create_type.y"
                                       { (yyval.list) = (yyvsp[0].list);}
-#line 32467 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32469 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1270: /* opt_enum_val_list: %empty  */
 #line 80 "third_party/libpg_query/grammar/statements/create_type.y"
                                                         {(yyval.list) = NIL;}
-#line 32473 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32475 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1271: /* enum_val_list: Sconst  */
@@ -32477,7 +32479,7 @@ yyreduce:
                                 {
 					(yyval.list) = list_make1(makeStringConst((yyvsp[0].str), (yylsp[0])));
 				}
-#line 32481 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32483 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1272: /* enum_val_list: enum_val_list ',' Sconst  */
@@ -32485,7 +32487,7 @@ yyreduce:
                                 {
 					(yyval.list) = lappend((yyvsp[-2].list), makeStringConst((yyvsp[0].str), (yylsp[0])));
 				}
-#line 32489 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32491 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1273: /* LoadStmt: LOAD file_name  */
@@ -32499,7 +32501,7 @@ yyreduce:
 					n->load_type = PG_LOAD_TYPE_LOAD;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32503 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32505 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1274: /* LoadStmt: opt_force INSTALL file_name opt_ext_version  */
@@ -32513,7 +32515,7 @@ yyreduce:
                     n->load_type = (yyvsp[-3].loadinstalltype);
                     (yyval.node) = (PGNode *)n;
 				}
-#line 32517 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32519 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1275: /* LoadStmt: opt_force INSTALL file_name FROM ColId opt_ext_version  */
@@ -32527,7 +32529,7 @@ yyreduce:
                     n->load_type = (yyvsp[-5].loadinstalltype);
                     (yyval.node) = (PGNode *)n;
 				}
-#line 32531 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32533 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1276: /* LoadStmt: opt_force INSTALL file_name FROM Sconst opt_ext_version  */
@@ -32541,49 +32543,49 @@ yyreduce:
                     n->load_type = (yyvsp[-5].loadinstalltype);
                     (yyval.node) = (PGNode *)n;
 				}
-#line 32545 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32547 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1277: /* opt_force: %empty  */
 #line 46 "third_party/libpg_query/grammar/statements/load.y"
                                                                                 { (yyval.loadinstalltype) = PG_LOAD_TYPE_INSTALL; }
-#line 32551 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32553 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1278: /* opt_force: FORCE  */
 #line 47 "third_party/libpg_query/grammar/statements/load.y"
                                                 { (yyval.loadinstalltype) = PG_LOAD_TYPE_FORCE_INSTALL; }
-#line 32557 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32559 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1279: /* file_name: Sconst  */
 #line 49 "third_party/libpg_query/grammar/statements/load.y"
                                                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 32563 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32565 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1280: /* file_name: ColId  */
 #line 50 "third_party/libpg_query/grammar/statements/load.y"
                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 32569 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32571 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1281: /* opt_ext_version: %empty  */
 #line 53 "third_party/libpg_query/grammar/statements/load.y"
                                                 { (yyval.str) = NULL; }
-#line 32575 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32577 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1282: /* opt_ext_version: VERSION_P Sconst  */
 #line 54 "third_party/libpg_query/grammar/statements/load.y"
                                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 32581 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32583 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1283: /* opt_ext_version: VERSION_P ColId  */
 #line 55 "third_party/libpg_query/grammar/statements/load.y"
                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 32587 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32589 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1284: /* AlterDatabaseStmt: ALTER DATABASE ColId SET IDENT TO ColId  */
@@ -32602,7 +32604,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32606 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32608 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1285: /* AlterDatabaseStmt: ALTER DATABASE IF_P EXISTS ColId SET IDENT TO ColId  */
@@ -32621,7 +32623,7 @@ yyreduce:
 					n->missing_ok = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32625 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32627 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1286: /* VacuumStmt: VACUUM opt_full opt_freeze opt_verbose  */
@@ -32639,7 +32641,7 @@ yyreduce:
 					n->va_cols = NIL;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32643 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32645 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1287: /* VacuumStmt: VACUUM opt_full opt_freeze opt_verbose qualified_name opt_name_list  */
@@ -32657,7 +32659,7 @@ yyreduce:
 					n->va_cols = (yyvsp[0].list);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32661 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32663 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1288: /* VacuumStmt: VACUUM opt_full opt_freeze opt_verbose AnalyzeStmt  */
@@ -32673,7 +32675,7 @@ yyreduce:
 						n->options |= PG_VACOPT_VERBOSE;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32677 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32679 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1289: /* VacuumStmt: VACUUM '(' vacuum_option_list ')'  */
@@ -32685,7 +32687,7 @@ yyreduce:
 					n->va_cols = NIL;
 					(yyval.node) = (PGNode *) n;
 				}
-#line 32689 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32691 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1290: /* VacuumStmt: VACUUM '(' vacuum_option_list ')' qualified_name opt_name_list  */
@@ -32699,31 +32701,31 @@ yyreduce:
 						n->options |= PG_VACOPT_ANALYZE;
 					(yyval.node) = (PGNode *) n;
 				}
-#line 32703 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32705 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1291: /* vacuum_option_elem: analyze_keyword  */
 #line 70 "third_party/libpg_query/grammar/statements/vacuum.y"
                                                 { (yyval.ival) = PG_VACOPT_ANALYZE; }
-#line 32709 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32711 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1292: /* vacuum_option_elem: VERBOSE  */
 #line 71 "third_party/libpg_query/grammar/statements/vacuum.y"
                                                         { (yyval.ival) = PG_VACOPT_VERBOSE; }
-#line 32715 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32717 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1293: /* vacuum_option_elem: FREEZE  */
 #line 72 "third_party/libpg_query/grammar/statements/vacuum.y"
                                                         { (yyval.ival) = PG_VACOPT_FREEZE; }
-#line 32721 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32723 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1294: /* vacuum_option_elem: FULL  */
 #line 73 "third_party/libpg_query/grammar/statements/vacuum.y"
                                                         { (yyval.ival) = PG_VACOPT_FULL; }
-#line 32727 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32729 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1295: /* vacuum_option_elem: IDENT  */
@@ -32741,43 +32743,43 @@ yyreduce:
 							 errmsg("unrecognized VACUUM option \"%s\"", (yyvsp[0].str)),
 									 parser_errposition((yylsp[0]))));
 				}
-#line 32745 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32747 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1296: /* opt_full: FULL  */
 #line 91 "third_party/libpg_query/grammar/statements/vacuum.y"
                                                                                         { (yyval.boolean) = true; }
-#line 32751 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32753 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1297: /* opt_full: %empty  */
 #line 92 "third_party/libpg_query/grammar/statements/vacuum.y"
                                                                                                 { (yyval.boolean) = false; }
-#line 32757 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32759 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1298: /* vacuum_option_list: vacuum_option_elem  */
 #line 97 "third_party/libpg_query/grammar/statements/vacuum.y"
                                                                                                         { (yyval.ival) = (yyvsp[0].ival); }
-#line 32763 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32765 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1299: /* vacuum_option_list: vacuum_option_list ',' vacuum_option_elem  */
 #line 98 "third_party/libpg_query/grammar/statements/vacuum.y"
                                                                                 { (yyval.ival) = (yyvsp[-2].ival) | (yyvsp[0].ival); }
-#line 32769 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32771 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1300: /* opt_freeze: FREEZE  */
 #line 102 "third_party/libpg_query/grammar/statements/vacuum.y"
                                                                                         { (yyval.boolean) = true; }
-#line 32775 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32777 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1301: /* opt_freeze: %empty  */
 #line 103 "third_party/libpg_query/grammar/statements/vacuum.y"
                                                                                                 { (yyval.boolean) = false; }
-#line 32781 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32783 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1302: /* CopyStmt: COPY opt_binary qualified_name opt_column_list opt_oids copy_from opt_program copy_file_name copy_delimiter opt_with copy_options where_clause  */
@@ -32816,7 +32818,7 @@ yyreduce:
 					n->whereClause = (yyvsp[0].node);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32820 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32822 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1303: /* CopyStmt: COPY '(' SelectStmt ')' TO opt_program copy_file_name opt_with copy_options  */
@@ -32839,7 +32841,7 @@ yyreduce:
 
 					(yyval.node) = (PGNode *)n;
 				}
-#line 32843 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32845 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1304: /* CopyStmt: COPY FROM DATABASE ColId TO ColId copy_database_flag  */
@@ -32851,37 +32853,37 @@ yyreduce:
 				n->copy_database_flag = (yyvsp[0].conststr);
 				(yyval.node) = (PGNode *)n;
 			}
-#line 32855 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32857 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1305: /* copy_database_flag: %empty  */
 #line 68 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                         { (yyval.conststr) = NULL; }
-#line 32861 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32863 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1306: /* copy_database_flag: '(' SCHEMA ')'  */
 #line 69 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.conststr) = "schema"; }
-#line 32867 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32869 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1307: /* copy_database_flag: '(' DATA_P ')'  */
 #line 70 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.conststr) = "data"; }
-#line 32873 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32875 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1308: /* copy_from: FROM  */
 #line 74 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.boolean) = true; }
-#line 32879 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32881 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1309: /* copy_from: TO  */
 #line 75 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.boolean) = false; }
-#line 32885 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32887 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1310: /* copy_delimiter: opt_using DELIMITERS Sconst  */
@@ -32889,61 +32891,61 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("delimiter", (PGNode *)makeString((yyvsp[0].str)), (yylsp[-1]));
 				}
-#line 32893 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32895 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1311: /* copy_delimiter: %empty  */
 #line 84 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.defelt) = NULL; }
-#line 32899 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32901 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1312: /* opt_using: USING  */
 #line 101 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 {}
-#line 32905 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32907 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1313: /* opt_using: %empty  */
 #line 102 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 {}
-#line 32911 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32913 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1314: /* opt_as: AS  */
 #line 106 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 {}
-#line 32917 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32919 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1315: /* opt_as: %empty  */
 #line 107 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                         {}
-#line 32923 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32925 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1316: /* opt_program: PROGRAM  */
 #line 112 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.boolean) = true; }
-#line 32929 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32931 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1317: /* opt_program: %empty  */
 #line 113 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                         { (yyval.boolean) = false; }
-#line 32935 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32937 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1318: /* copy_options: copy_opt_list  */
 #line 117 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                 { (yyval.list) = (yyvsp[0].list); }
-#line 32941 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32943 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1319: /* copy_options: '(' generic_opt_list ')'  */
 #line 118 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                 { (yyval.list) = (yyvsp[-1].list); }
-#line 32947 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32949 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1320: /* opt_oids: WITH OIDS  */
@@ -32951,25 +32953,25 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("oids", NULL, (yylsp[-1]));
 				}
-#line 32955 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32957 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1321: /* opt_oids: %empty  */
 #line 126 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.defelt) = NULL; }
-#line 32961 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32963 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1322: /* copy_opt_list: copy_opt_list copy_opt_item  */
 #line 131 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                 { (yyval.list) = lappend((yyvsp[-1].list), (yyvsp[0].defelt)); }
-#line 32967 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32969 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1323: /* copy_opt_list: %empty  */
 #line 132 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                         { (yyval.list) = NIL; }
-#line 32973 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32975 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1324: /* opt_binary: BINARY  */
@@ -32977,13 +32979,13 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("format", (PGNode *)makeStringConst("binary", (yylsp[0])), (yylsp[0]));
 				}
-#line 32981 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32983 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1325: /* opt_binary: %empty  */
 #line 141 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.defelt) = NULL; }
-#line 32987 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32989 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1326: /* copy_opt_item: BINARY  */
@@ -32991,7 +32993,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("format", (PGNode *)makeStringConst("binary", (yylsp[0])), (yylsp[0]));
 				}
-#line 32995 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 32997 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1327: /* copy_opt_item: OIDS  */
@@ -32999,7 +33001,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("oids", NULL, (yylsp[0]));
 				}
-#line 33003 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33005 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1328: /* copy_opt_item: FREEZE  */
@@ -33007,7 +33009,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("freeze", NULL, (yylsp[0]));
 				}
-#line 33011 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33013 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1329: /* copy_opt_item: DELIMITER opt_as Sconst  */
@@ -33015,7 +33017,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("delimiter", (PGNode *)makeStringConst((yyvsp[0].str), (yylsp[0])), (yylsp[-2]));
 				}
-#line 33019 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33021 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1330: /* copy_opt_item: NULL_P opt_as Sconst  */
@@ -33023,7 +33025,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("null", (PGNode *)makeStringConst((yyvsp[0].str), (yylsp[0])), (yylsp[-2]));
 				}
-#line 33027 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33029 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1331: /* copy_opt_item: CSV  */
@@ -33031,7 +33033,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("format", (PGNode *)makeStringConst("csv", (yylsp[0])), (yylsp[0]));
 				}
-#line 33035 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33037 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1332: /* copy_opt_item: HEADER_P  */
@@ -33039,7 +33041,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("header", NULL, (yylsp[0]));
 				}
-#line 33043 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33045 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1333: /* copy_opt_item: QUOTE opt_as Sconst  */
@@ -33047,7 +33049,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("quote", (PGNode *)makeStringConst((yyvsp[0].str), (yylsp[0])), (yylsp[-2]));
 				}
-#line 33051 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33053 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1334: /* copy_opt_item: ESCAPE opt_as Sconst  */
@@ -33055,7 +33057,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("escape", (PGNode *)makeStringConst((yyvsp[0].str), (yylsp[0])), (yylsp[-2]));
 				}
-#line 33059 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33061 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1335: /* copy_opt_item: FORCE QUOTE columnList  */
@@ -33063,7 +33065,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("force_quote", (PGNode *)(yyvsp[0].list), (yylsp[-2]));
 				}
-#line 33067 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33069 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1336: /* copy_opt_item: FORCE QUOTE '*'  */
@@ -33071,7 +33073,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("force_quote", (PGNode *)makeNode(PGAStar), (yylsp[-2]));
 				}
-#line 33075 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33077 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1337: /* copy_opt_item: PARTITION BY columnList  */
@@ -33079,7 +33081,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("partition_by", (PGNode *)(yyvsp[0].list), (yylsp[-2]));
 				}
-#line 33083 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33085 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1338: /* copy_opt_item: PARTITION BY '*'  */
@@ -33087,7 +33089,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("partition_by", (PGNode *)makeNode(PGAStar), (yylsp[-2]));
 				}
-#line 33091 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33093 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1339: /* copy_opt_item: FORCE NOT NULL_P columnList  */
@@ -33095,7 +33097,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("force_not_null", (PGNode *)(yyvsp[0].list), (yylsp[-3]));
 				}
-#line 33099 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33101 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1340: /* copy_opt_item: FORCE NULL_P columnList  */
@@ -33103,7 +33105,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("force_null", (PGNode *)(yyvsp[0].list), (yylsp[-2]));
 				}
-#line 33107 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33109 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1341: /* copy_opt_item: ENCODING Sconst  */
@@ -33111,49 +33113,49 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("encoding", (PGNode *)makeStringConst((yyvsp[0].str), (yylsp[0])), (yylsp[-1]));
 				}
-#line 33115 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33117 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1342: /* copy_file_name: Sconst  */
 #line 218 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.node) = makeStringConst((yyvsp[0].str), (yylsp[0])); }
-#line 33121 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33123 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1343: /* copy_file_name: STDIN  */
 #line 219 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.node) = makeStringConst("/dev/stdin", (yylsp[0])); }
-#line 33127 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33129 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1344: /* copy_file_name: STDOUT  */
 #line 220 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.node) = makeStringConst("/dev/stdout", (yylsp[0])); }
-#line 33133 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33135 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1345: /* copy_file_name: IDENT '.' ColId  */
 #line 221 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                         { (yyval.node) = makeStringConst(psprintf("%s.%s", (yyvsp[-2].str), (yyvsp[0].str)), (yylsp[-2])); }
-#line 33139 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33141 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1346: /* copy_file_name: IDENT  */
 #line 222 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                                 { (yyval.node) = makeStringConst((yyvsp[0].str), (yylsp[0])); }
-#line 33145 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33147 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1347: /* copy_file_name: '(' a_expr ')'  */
 #line 223 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                         { (yyval.node) = (yyvsp[-1].node); }
-#line 33151 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33153 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1348: /* copy_file_name: param_expr  */
 #line 224 "third_party/libpg_query/grammar/statements/copy.y"
                                                                                         { (yyval.node) = (yyvsp[0].node); }
-#line 33157 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33159 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1349: /* ExplainStmt: EXPLAIN ExplainableStmt  */
@@ -33164,7 +33166,7 @@ yyreduce:
 					n->options = NIL;
 					(yyval.node) = (PGNode *) n;
 				}
-#line 33168 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33170 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1350: /* ExplainStmt: EXPLAIN analyze_keyword opt_verbose ExplainableStmt  */
@@ -33178,7 +33180,7 @@ yyreduce:
 											 makeDefElem("verbose", NULL, (yylsp[-1])));
 					(yyval.node) = (PGNode *) n;
 				}
-#line 33182 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33184 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1351: /* ExplainStmt: EXPLAIN VERBOSE ExplainableStmt  */
@@ -33189,7 +33191,7 @@ yyreduce:
 					n->options = list_make1(makeDefElem("verbose", NULL, (yylsp[-1])));
 					(yyval.node) = (PGNode *) n;
 				}
-#line 33193 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33195 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1352: /* ExplainStmt: EXPLAIN '(' explain_option_list ')' ExplainableStmt  */
@@ -33200,67 +33202,67 @@ yyreduce:
 					n->options = (yyvsp[-2].list);
 					(yyval.node) = (PGNode *) n;
 				}
-#line 33204 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33206 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1353: /* opt_verbose: VERBOSE  */
 #line 44 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                                 { (yyval.boolean) = true; }
-#line 33210 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33212 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1354: /* opt_verbose: %empty  */
 #line 45 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                                 { (yyval.boolean) = false; }
-#line 33216 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33218 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1355: /* explain_option_arg: opt_boolean_or_string  */
 #line 50 "third_party/libpg_query/grammar/statements/explain.y"
                                                 { (yyval.node) = (PGNode *) makeString((yyvsp[0].str)); }
-#line 33222 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33224 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1356: /* explain_option_arg: NumericOnly  */
 #line 51 "third_party/libpg_query/grammar/statements/explain.y"
                                                         { (yyval.node) = (PGNode *) (yyvsp[0].value); }
-#line 33228 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33230 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1357: /* explain_option_arg: %empty  */
 #line 52 "third_party/libpg_query/grammar/statements/explain.y"
                                                         { (yyval.node) = NULL; }
-#line 33234 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33236 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1391: /* NonReservedWord: IDENT  */
 #line 93 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 33240 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33242 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1392: /* NonReservedWord: unreserved_keyword  */
 #line 94 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                 { (yyval.str) = pstrdup((yyvsp[0].keyword)); }
-#line 33246 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33248 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1393: /* NonReservedWord: other_keyword  */
 #line 95 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                 { (yyval.str) = pstrdup((yyvsp[0].keyword)); }
-#line 33252 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33254 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1394: /* NonReservedWord_or_Sconst: NonReservedWord  */
 #line 100 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                         { (yyval.str) = (yyvsp[0].str); }
-#line 33258 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33260 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1395: /* NonReservedWord_or_Sconst: Sconst  */
 #line 101 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 33264 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33266 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1396: /* explain_option_list: explain_option_elem  */
@@ -33268,7 +33270,7 @@ yyreduce:
                                 {
 					(yyval.list) = list_make1((yyvsp[0].defelt));
 				}
-#line 33272 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33274 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1397: /* explain_option_list: explain_option_list ',' explain_option_elem  */
@@ -33276,43 +33278,43 @@ yyreduce:
                                 {
 					(yyval.list) = lappend((yyvsp[-2].list), (yyvsp[0].defelt));
 				}
-#line 33280 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33282 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1398: /* analyze_keyword: ANALYZE  */
 #line 118 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                                 {}
-#line 33286 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33288 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1399: /* analyze_keyword: ANALYSE  */
 #line 119 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                 {}
-#line 33292 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33294 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1400: /* opt_boolean_or_string: TRUE_P  */
 #line 124 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                                 { (yyval.str) = (char*) "true"; }
-#line 33298 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33300 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1401: /* opt_boolean_or_string: FALSE_P  */
 #line 125 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                                 { (yyval.str) = (char*) "false"; }
-#line 33304 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33306 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1402: /* opt_boolean_or_string: ON  */
 #line 126 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                                 { (yyval.str) = (char*) "on"; }
-#line 33310 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33312 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1403: /* opt_boolean_or_string: NonReservedWord_or_Sconst  */
 #line 132 "third_party/libpg_query/grammar/statements/explain.y"
                                                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 33316 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33318 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1404: /* explain_option_elem: explain_option_name explain_option_arg  */
@@ -33320,19 +33322,19 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem((yyvsp[-1].str), (yyvsp[0].node), (yylsp[-1]));
 				}
-#line 33324 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33326 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1405: /* explain_option_name: NonReservedWord  */
 #line 145 "third_party/libpg_query/grammar/statements/explain.y"
                                                         { (yyval.str) = (yyvsp[0].str); }
-#line 33330 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33332 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1406: /* explain_option_name: analyze_keyword  */
 #line 146 "third_party/libpg_query/grammar/statements/explain.y"
                                                         { (yyval.str) = (char*) "analyze"; }
-#line 33336 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33338 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1407: /* DropStmt: DROP drop_type_any_name IF_P EXISTS any_name_list opt_drop_behavior  */
@@ -33346,7 +33348,7 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33350 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33352 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1408: /* DropStmt: DROP drop_type_any_name any_name_list opt_drop_behavior  */
@@ -33360,7 +33362,7 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33364 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33366 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1409: /* DropStmt: DROP drop_type_name IF_P EXISTS name_list opt_drop_behavior  */
@@ -33374,7 +33376,7 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33378 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33380 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1410: /* DropStmt: DROP drop_type_name name_list opt_drop_behavior  */
@@ -33388,7 +33390,7 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33392 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33394 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1411: /* DropStmt: DROP drop_type_name_on_any_name name ON any_name opt_drop_behavior  */
@@ -33402,7 +33404,7 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *) n;
 				}
-#line 33406 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33408 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1412: /* DropStmt: DROP drop_type_name_on_any_name IF_P EXISTS name ON any_name opt_drop_behavior  */
@@ -33416,7 +33418,7 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *) n;
 				}
-#line 33420 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33422 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1413: /* DropStmt: DROP drop_func_or_proc any_name '(' type_name_list ')' opt_drop_behavior  */
@@ -33432,7 +33434,7 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33436 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33438 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1414: /* DropStmt: DROP drop_func_or_proc IF_P EXISTS any_name '(' type_name_list ')' opt_drop_behavior  */
@@ -33448,7 +33450,7 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33452 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33454 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1415: /* DropStmt: DROP drop_func_or_proc any_name '(' ')' opt_drop_behavior  */
@@ -33464,7 +33466,7 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33468 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33470 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1416: /* DropStmt: DROP drop_func_or_proc IF_P EXISTS any_name '(' ')' opt_drop_behavior  */
@@ -33480,7 +33482,7 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33484 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33486 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1417: /* DropStmt: DROP drop_func_or_proc any_name_list opt_drop_behavior  */
@@ -33496,7 +33498,7 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33500 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33502 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1418: /* DropStmt: DROP drop_func_or_proc IF_P EXISTS any_name_list opt_drop_behavior  */
@@ -33512,217 +33514,217 @@ yyreduce:
 					n->concurrent = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33516 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33518 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1419: /* drop_type_any_name: TABLE  */
 #line 152 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_TABLE; }
-#line 33522 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33524 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1420: /* drop_type_any_name: SEQUENCE  */
 #line 153 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_SEQUENCE; }
-#line 33528 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33530 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1421: /* drop_type_any_name: MACRO  */
 #line 154 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_FUNCTION; }
-#line 33534 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33536 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1422: /* drop_type_any_name: MACRO TABLE  */
 #line 155 "third_party/libpg_query/grammar/statements/drop.y"
                                                                 { (yyval.objtype) = PG_OBJECT_TABLE_MACRO; }
-#line 33540 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33542 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1423: /* drop_type_any_name: VIEW  */
 #line 156 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_VIEW; }
-#line 33546 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33548 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1424: /* drop_type_any_name: MATERIALIZED VIEW  */
 #line 157 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                         { (yyval.objtype) = PG_OBJECT_MATVIEW; }
-#line 33552 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33554 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1425: /* drop_type_any_name: INDEX  */
 #line 158 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_INDEX; }
-#line 33558 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33560 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1426: /* drop_type_any_name: FOREIGN TABLE  */
 #line 159 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                         { (yyval.objtype) = PG_OBJECT_FOREIGN_TABLE; }
-#line 33564 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33566 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1427: /* drop_type_any_name: COLLATION  */
 #line 160 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_COLLATION; }
-#line 33570 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33572 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1428: /* drop_type_any_name: CONVERSION_P  */
 #line 161 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                         { (yyval.objtype) = PG_OBJECT_CONVERSION; }
-#line 33576 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33578 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1429: /* drop_type_any_name: SCHEMA  */
 #line 162 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_SCHEMA; }
-#line 33582 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33584 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1430: /* drop_type_any_name: STATISTICS  */
 #line 163 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                         { (yyval.objtype) = PG_OBJECT_STATISTIC_EXT; }
-#line 33588 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33590 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1431: /* drop_type_any_name: TEXT_P SEARCH PARSER  */
 #line 164 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                 { (yyval.objtype) = PG_OBJECT_TSPARSER; }
-#line 33594 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33596 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1432: /* drop_type_any_name: TEXT_P SEARCH DICTIONARY  */
 #line 165 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                 { (yyval.objtype) = PG_OBJECT_TSDICTIONARY; }
-#line 33600 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33602 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1433: /* drop_type_any_name: TEXT_P SEARCH TEMPLATE  */
 #line 166 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                 { (yyval.objtype) = PG_OBJECT_TSTEMPLATE; }
-#line 33606 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33608 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1434: /* drop_type_any_name: TEXT_P SEARCH CONFIGURATION  */
 #line 167 "third_party/libpg_query/grammar/statements/drop.y"
                                                                         { (yyval.objtype) = PG_OBJECT_TSCONFIGURATION; }
-#line 33612 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33614 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1435: /* drop_type_any_name: TYPE_P  */
 #line 168 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_TYPE; }
-#line 33618 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33620 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1436: /* drop_type_name: ACCESS METHOD  */
 #line 173 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                         { (yyval.objtype) = PG_OBJECT_ACCESS_METHOD; }
-#line 33624 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33626 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1437: /* drop_type_name: EVENT TRIGGER  */
 #line 174 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                         { (yyval.objtype) = PG_OBJECT_EVENT_TRIGGER; }
-#line 33630 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33632 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1438: /* drop_type_name: EXTENSION  */
 #line 175 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_EXTENSION; }
-#line 33636 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33638 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1439: /* drop_type_name: FOREIGN DATA_P WRAPPER  */
 #line 176 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                 { (yyval.objtype) = PG_OBJECT_FDW; }
-#line 33642 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33644 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1440: /* drop_type_name: PUBLICATION  */
 #line 177 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                         { (yyval.objtype) = PG_OBJECT_PUBLICATION; }
-#line 33648 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33650 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1441: /* drop_type_name: SERVER  */
 #line 178 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_FOREIGN_SERVER; }
-#line 33654 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33656 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1442: /* any_name_list: any_name  */
 #line 183 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.list) = list_make1((yyvsp[0].list)); }
-#line 33660 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33662 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1443: /* any_name_list: any_name_list ',' any_name  */
 #line 184 "third_party/libpg_query/grammar/statements/drop.y"
                                                                         { (yyval.list) = lappend((yyvsp[-2].list), (yyvsp[0].list)); }
-#line 33666 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33668 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1444: /* opt_drop_behavior: CASCADE  */
 #line 189 "third_party/libpg_query/grammar/statements/drop.y"
                                                                         { (yyval.dbehavior) = PG_DROP_CASCADE; }
-#line 33672 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33674 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1445: /* opt_drop_behavior: RESTRICT  */
 #line 190 "third_party/libpg_query/grammar/statements/drop.y"
                                                                         { (yyval.dbehavior) = PG_DROP_RESTRICT; }
-#line 33678 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33680 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1446: /* opt_drop_behavior: %empty  */
 #line 191 "third_party/libpg_query/grammar/statements/drop.y"
                                                                 { (yyval.dbehavior) = PG_DROP_RESTRICT; /* default */ }
-#line 33684 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33686 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1447: /* drop_type_name_on_any_name: POLICY  */
 #line 196 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_POLICY; }
-#line 33690 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33692 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1448: /* drop_type_name_on_any_name: RULE  */
 #line 197 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_RULE; }
-#line 33696 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33698 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1449: /* drop_type_name_on_any_name: TRIGGER  */
 #line 198 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_TRIGGER; }
-#line 33702 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33704 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1450: /* type_name_list: Typename  */
 #line 201 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.list) = list_make1((yyvsp[0].typnam)); }
-#line 33708 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33710 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1451: /* type_name_list: type_name_list ',' Typename  */
 #line 202 "third_party/libpg_query/grammar/statements/drop.y"
                                                                         { (yyval.list) = lappend((yyvsp[-2].list), (yyvsp[0].typnam)); }
-#line 33714 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33716 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1452: /* drop_func_or_proc: FUNCTION  */
 #line 205 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_FUNCTION; }
-#line 33720 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33722 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1453: /* drop_func_or_proc: PROCEDURE  */
 #line 206 "third_party/libpg_query/grammar/statements/drop.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_PROCEDURE; }
-#line 33726 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33728 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1454: /* CreateAsStmt: CREATE_P OptTemp TABLE create_as_target AS SelectStmt opt_with_data  */
@@ -33739,7 +33741,7 @@ yyreduce:
 					(yyvsp[-3].into)->skipData = !((yyvsp[0].boolean));
 					(yyval.node) = (PGNode *) ctas;
 				}
-#line 33743 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33745 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1455: /* CreateAsStmt: CREATE_P OptTemp TABLE IF_P NOT EXISTS create_as_target AS SelectStmt opt_with_data  */
@@ -33756,7 +33758,7 @@ yyreduce:
 					(yyvsp[-3].into)->skipData = !((yyvsp[0].boolean));
 					(yyval.node) = (PGNode *) ctas;
 				}
-#line 33760 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33762 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1456: /* CreateAsStmt: CREATE_P OR REPLACE OptTemp TABLE create_as_target AS SelectStmt opt_with_data  */
@@ -33773,25 +33775,25 @@ yyreduce:
 					(yyvsp[-3].into)->skipData = !((yyvsp[0].boolean));
 					(yyval.node) = (PGNode *) ctas;
 				}
-#line 33777 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33779 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1457: /* opt_with_data: WITH DATA_P  */
 #line 54 "third_party/libpg_query/grammar/statements/create_as.y"
                                                                                                 { (yyval.boolean) = true; }
-#line 33783 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33785 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1458: /* opt_with_data: WITH NO DATA_P  */
 #line 55 "third_party/libpg_query/grammar/statements/create_as.y"
                                                                                         { (yyval.boolean) = false; }
-#line 33789 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33791 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1459: /* opt_with_data: %empty  */
 #line 56 "third_party/libpg_query/grammar/statements/create_as.y"
                                                                                                 { (yyval.boolean) = true; }
-#line 33795 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33797 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1460: /* create_as_target: qualified_name opt_column_list OptPartitionSortedOptions OptWith OnCommitOption  */
@@ -33814,7 +33816,7 @@ yyreduce:
 					(yyval.into)->viewQuery = NULL;
 					(yyval.into)->skipData = false;		/* might get changed later */
 				}
-#line 33818 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33820 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1461: /* PragmaStmt: PRAGMA_P ColId  */
@@ -33825,7 +33827,7 @@ yyreduce:
 					n->name = (yyvsp[0].str);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33829 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33831 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1462: /* PragmaStmt: PRAGMA_P ColId '=' var_list  */
@@ -33837,7 +33839,7 @@ yyreduce:
 					n->args = (yyvsp[0].list);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33841 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33843 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1463: /* PragmaStmt: PRAGMA_P ColId '(' func_arg_list ')'  */
@@ -33849,7 +33851,7 @@ yyreduce:
 					n->args = (yyvsp[-1].list);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 33853 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33855 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1464: /* InsertStmt: opt_with_clause INSERT opt_or_action INTO insert_target opt_by_name_or_position insert_rest opt_on_conflict returning_clause  */
@@ -33863,7 +33865,7 @@ yyreduce:
 					(yyvsp[-2].istmt)->insert_column_order = (yyvsp[-3].bynameorposition);
 					(yyval.node) = (PGNode *) (yyvsp[-2].istmt);
 				}
-#line 33867 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33869 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1465: /* insert_rest: SelectStmt  */
@@ -33873,7 +33875,7 @@ yyreduce:
 					(yyval.istmt)->cols = NIL;
 					(yyval.istmt)->selectStmt = (yyvsp[0].node);
 				}
-#line 33877 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33879 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1466: /* insert_rest: OVERRIDING override_kind VALUE_P SelectStmt  */
@@ -33884,7 +33886,7 @@ yyreduce:
 					(yyval.istmt)->override = (yyvsp[-2].override);
 					(yyval.istmt)->selectStmt = (yyvsp[0].node);
 				}
-#line 33888 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33890 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1467: /* insert_rest: '(' insert_column_list ')' SelectStmt  */
@@ -33894,7 +33896,7 @@ yyreduce:
 					(yyval.istmt)->cols = (yyvsp[-2].list);
 					(yyval.istmt)->selectStmt = (yyvsp[0].node);
 				}
-#line 33898 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33900 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1468: /* insert_rest: '(' insert_column_list ')' OVERRIDING override_kind VALUE_P SelectStmt  */
@@ -33905,7 +33907,7 @@ yyreduce:
 					(yyval.istmt)->override = (yyvsp[-2].override);
 					(yyval.istmt)->selectStmt = (yyvsp[0].node);
 				}
-#line 33909 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33911 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1469: /* insert_rest: DEFAULT VALUES  */
@@ -33915,7 +33917,7 @@ yyreduce:
 					(yyval.istmt)->cols = NIL;
 					(yyval.istmt)->selectStmt = NULL;
 				}
-#line 33919 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33921 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1470: /* insert_target: qualified_name  */
@@ -33923,7 +33925,7 @@ yyreduce:
                                 {
 					(yyval.range) = (yyvsp[0].range);
 				}
-#line 33927 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33929 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1471: /* insert_target: qualified_name AS ColId  */
@@ -33932,25 +33934,25 @@ yyreduce:
 					(yyvsp[-2].range)->alias = makeAlias((yyvsp[0].str), NIL);
 					(yyval.range) = (yyvsp[-2].range);
 				}
-#line 33936 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33938 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1472: /* opt_by_name_or_position: BY NAME_P  */
 #line 71 "third_party/libpg_query/grammar/statements/insert.y"
                                                         { (yyval.bynameorposition) = PG_INSERT_BY_NAME; }
-#line 33942 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33944 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1473: /* opt_by_name_or_position: BY POSITION  */
 #line 72 "third_party/libpg_query/grammar/statements/insert.y"
                                                 { (yyval.bynameorposition) = PG_INSERT_BY_POSITION; }
-#line 33948 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33950 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1474: /* opt_by_name_or_position: %empty  */
 #line 73 "third_party/libpg_query/grammar/statements/insert.y"
                                                 { (yyval.bynameorposition) = PG_INSERT_BY_POSITION; }
-#line 33954 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33956 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1475: /* opt_conf_expr: '(' index_params ')' where_clause  */
@@ -33962,7 +33964,7 @@ yyreduce:
 					(yyval.infer)->conname = NULL;
 					(yyval.infer)->location = (yylsp[-3]);
 				}
-#line 33966 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33968 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1476: /* opt_conf_expr: ON CONSTRAINT name  */
@@ -33974,7 +33976,7 @@ yyreduce:
 					(yyval.infer)->conname = (yyvsp[0].str);
 					(yyval.infer)->location = (yylsp[-2]);
 				}
-#line 33978 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33980 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1477: /* opt_conf_expr: %empty  */
@@ -33982,19 +33984,19 @@ yyreduce:
                                 {
 					(yyval.infer) = NULL;
 				}
-#line 33986 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33988 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1478: /* opt_with_clause: with_clause  */
 #line 102 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                         { (yyval.with) = (yyvsp[0].with); }
-#line 33992 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 33994 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1479: /* opt_with_clause: %empty  */
 #line 103 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                         { (yyval.with) = NULL; }
-#line 33998 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34000 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1480: /* insert_column_item: ColId opt_indirection  */
@@ -34006,7 +34008,7 @@ yyreduce:
 					(yyval.target)->val = NULL;
 					(yyval.target)->location = (yylsp[-1]);
 				}
-#line 34010 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34012 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1481: /* set_clause: set_target '=' a_expr  */
@@ -34015,7 +34017,7 @@ yyreduce:
 					(yyvsp[-2].target)->val = (PGNode *) (yyvsp[0].node);
 					(yyval.list) = list_make1((yyvsp[-2].target));
 				}
-#line 34019 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34021 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1482: /* set_clause: '(' set_target_list ')' '=' a_expr  */
@@ -34040,7 +34042,7 @@ yyreduce:
 
 					(yyval.list) = (yyvsp[-3].list);
 				}
-#line 34044 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34046 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1483: /* opt_or_action: OR REPLACE  */
@@ -34048,7 +34050,7 @@ yyreduce:
                                 {
 					(yyval.onconflictshorthand) = PG_ONCONFLICT_ALIAS_REPLACE;
 				}
-#line 34052 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34054 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1484: /* opt_or_action: OR IGNORE_P  */
@@ -34056,7 +34058,7 @@ yyreduce:
                                 {
 					(yyval.onconflictshorthand) = PG_ONCONFLICT_ALIAS_IGNORE;
 				}
-#line 34060 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34062 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1485: /* opt_or_action: %empty  */
@@ -34064,7 +34066,7 @@ yyreduce:
                                 {
 					(yyval.onconflictshorthand) = PG_ONCONFLICT_ALIAS_NONE;
 				}
-#line 34068 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34070 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1486: /* opt_on_conflict: ON CONFLICT opt_conf_expr DO UPDATE SET set_clause_list_opt_comma where_clause  */
@@ -34077,7 +34079,7 @@ yyreduce:
 					(yyval.onconflict)->whereClause = (yyvsp[0].node);
 					(yyval.onconflict)->location = (yylsp[-7]);
 				}
-#line 34081 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34083 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1487: /* opt_on_conflict: ON CONFLICT opt_conf_expr DO NOTHING  */
@@ -34090,7 +34092,7 @@ yyreduce:
 					(yyval.onconflict)->whereClause = NULL;
 					(yyval.onconflict)->location = (yylsp[-4]);
 				}
-#line 34094 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34096 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1488: /* opt_on_conflict: %empty  */
@@ -34098,7 +34100,7 @@ yyreduce:
                                 {
 					(yyval.onconflict) = NULL;
 				}
-#line 34102 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34104 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1489: /* index_elem: ColId opt_collate opt_class opt_asc_desc opt_nulls_order  */
@@ -34114,7 +34116,7 @@ yyreduce:
 					(yyval.ielem)->ordering = (yyvsp[-1].sortorder);
 					(yyval.ielem)->nulls_ordering = (yyvsp[0].nullorder);
 				}
-#line 34118 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34120 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1490: /* index_elem: ColId opt_collate any_name '(' opt_reloption_list ')' opt_asc_desc opt_nulls_order  */
@@ -34130,7 +34132,7 @@ yyreduce:
 					(yyval.ielem)->ordering = (yyvsp[-1].sortorder);
 					(yyval.ielem)->nulls_ordering = (yyvsp[0].nullorder);
 				}
-#line 34134 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34136 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1491: /* index_elem: func_expr_windowless opt_collate opt_class opt_asc_desc opt_nulls_order  */
@@ -34146,7 +34148,7 @@ yyreduce:
 					(yyval.ielem)->ordering = (yyvsp[-1].sortorder);
 					(yyval.ielem)->nulls_ordering = (yyvsp[0].nullorder);
 				}
-#line 34150 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34152 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1492: /* index_elem: func_expr_windowless opt_collate any_name '(' opt_reloption_list ')' opt_asc_desc opt_nulls_order  */
@@ -34162,7 +34164,7 @@ yyreduce:
 					(yyval.ielem)->ordering = (yyvsp[-1].sortorder);
 					(yyval.ielem)->nulls_ordering = (yyvsp[0].nullorder);
 				}
-#line 34166 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34168 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1493: /* index_elem: '(' a_expr ')' opt_collate opt_class opt_asc_desc opt_nulls_order  */
@@ -34178,7 +34180,7 @@ yyreduce:
 					(yyval.ielem)->ordering = (yyvsp[-1].sortorder);
 					(yyval.ielem)->nulls_ordering = (yyvsp[0].nullorder);
 				}
-#line 34182 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34184 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1494: /* index_elem: '(' a_expr ')' opt_collate any_name '(' opt_reloption_list ')' opt_asc_desc opt_nulls_order  */
@@ -34194,127 +34196,127 @@ yyreduce:
 					(yyval.ielem)->ordering = (yyvsp[-1].sortorder);
 					(yyval.ielem)->nulls_ordering = (yyvsp[0].nullorder);
 				}
-#line 34198 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34200 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1495: /* returning_clause: RETURNING target_list  */
 #line 268 "third_party/libpg_query/grammar/statements/insert.y"
                                                         { (yyval.list) = (yyvsp[0].list); }
-#line 34204 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34206 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1496: /* returning_clause: %empty  */
 #line 269 "third_party/libpg_query/grammar/statements/insert.y"
                                                                 { (yyval.list) = NIL; }
-#line 34210 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34212 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1497: /* override_kind: USER  */
 #line 275 "third_party/libpg_query/grammar/statements/insert.y"
                                         { (yyval.override) = PG_OVERRIDING_USER_VALUE; }
-#line 34216 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34218 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1498: /* override_kind: SYSTEM_P  */
 #line 276 "third_party/libpg_query/grammar/statements/insert.y"
                                         { (yyval.override) = OVERRIDING_SYSTEM_VALUE; }
-#line 34222 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34224 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1499: /* set_target_list: set_target  */
 #line 281 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                                 { (yyval.list) = list_make1((yyvsp[0].target)); }
-#line 34228 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34230 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1500: /* set_target_list: set_target_list ',' set_target  */
 #line 282 "third_party/libpg_query/grammar/statements/insert.y"
                                                                         { (yyval.list) = lappend((yyvsp[-2].list),(yyvsp[0].target)); }
-#line 34234 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34236 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1501: /* opt_collate: COLLATE any_name  */
 #line 288 "third_party/libpg_query/grammar/statements/insert.y"
                                                                         { (yyval.list) = (yyvsp[0].list); }
-#line 34240 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34242 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1502: /* opt_collate: %empty  */
 #line 289 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                                 { (yyval.list) = NIL; }
-#line 34246 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34248 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1503: /* opt_class: any_name  */
 #line 293 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                         { (yyval.list) = (yyvsp[0].list); }
-#line 34252 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34254 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1504: /* opt_class: %empty  */
 #line 294 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                                 { (yyval.list) = NIL; }
-#line 34258 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34260 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1505: /* opt_reloption_list: reloption_list  */
 #line 299 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                         { (yyval.list) = (yyvsp[0].list); }
-#line 34264 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34266 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1506: /* opt_reloption_list: %empty  */
 #line 300 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                                 { (yyval.list) = NIL; }
-#line 34270 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34272 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1507: /* insert_column_list: insert_column_item  */
 #line 306 "third_party/libpg_query/grammar/statements/insert.y"
                                         { (yyval.list) = list_make1((yyvsp[0].target)); }
-#line 34276 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34278 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1508: /* insert_column_list: insert_column_list ',' insert_column_item  */
 #line 308 "third_party/libpg_query/grammar/statements/insert.y"
                                         { (yyval.list) = lappend((yyvsp[-2].list), (yyvsp[0].target)); }
-#line 34282 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34284 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1509: /* set_clause_list: set_clause  */
 #line 313 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                         { (yyval.list) = (yyvsp[0].list); }
-#line 34288 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34290 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1510: /* set_clause_list: set_clause_list ',' set_clause  */
 #line 314 "third_party/libpg_query/grammar/statements/insert.y"
                                                                 { (yyval.list) = list_concat((yyvsp[-2].list),(yyvsp[0].list)); }
-#line 34294 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34296 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1511: /* set_clause_list_opt_comma: set_clause_list  */
 #line 318 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                                 { (yyval.list) = (yyvsp[0].list); }
-#line 34300 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34302 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1512: /* set_clause_list_opt_comma: set_clause_list ','  */
 #line 319 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                                 { (yyval.list) = (yyvsp[-1].list); }
-#line 34306 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34308 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1513: /* index_params: index_elem  */
 #line 322 "third_party/libpg_query/grammar/statements/insert.y"
                                                                                 { (yyval.list) = list_make1((yyvsp[0].ielem)); }
-#line 34312 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34314 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1514: /* index_params: index_params ',' index_elem  */
 #line 323 "third_party/libpg_query/grammar/statements/insert.y"
                                                                         { (yyval.list) = lappend((yyvsp[-2].list), (yyvsp[0].ielem)); }
-#line 34318 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34320 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1515: /* set_target: ColId opt_indirection  */
@@ -34326,7 +34328,7 @@ yyreduce:
 					(yyval.target)->val = NULL;	/* upper production sets this */
 					(yyval.target)->location = (yylsp[-1]);
 				}
-#line 34330 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34332 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1516: /* ExportStmt: EXPORT_P DATABASE Sconst copy_options  */
@@ -34341,7 +34343,7 @@ yyreduce:
 					}
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34345 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34347 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1517: /* ExportStmt: EXPORT_P DATABASE ColId TO Sconst copy_options  */
@@ -34356,7 +34358,7 @@ yyreduce:
 					}
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34360 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34362 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1518: /* ImportStmt: IMPORT_P DATABASE Sconst  */
@@ -34366,7 +34368,7 @@ yyreduce:
 					n->filename = (yyvsp[0].str);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34370 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34372 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1519: /* CreateStmt: CREATE_P OptTemp TABLE qualified_name '(' OptTableElementList ')' OptPartitionSortedOptions OptWith OnCommitOption  */
@@ -34393,7 +34395,7 @@ yyreduce:
 					n->onconflict = PG_ERROR_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34397 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34399 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1520: /* CreateStmt: CREATE_P OptTemp TABLE IF_P NOT EXISTS qualified_name '(' OptTableElementList ')' OptPartitionSortedOptions OptWith OnCommitOption  */
@@ -34420,7 +34422,7 @@ yyreduce:
 					n->onconflict = PG_IGNORE_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34424 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34426 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1521: /* CreateStmt: CREATE_P OR REPLACE OptTemp TABLE qualified_name '(' OptTableElementList ')' OptPartitionSortedOptions OptWith OnCommitOption  */
@@ -34447,13 +34449,13 @@ yyreduce:
 					n->onconflict = PG_REPLACE_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34451 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34453 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1522: /* ConstraintAttributeSpec: %empty  */
 #line 86 "third_party/libpg_query/grammar/statements/create.y"
                                 { (yyval.ival) = 0; }
-#line 34457 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34459 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1523: /* ConstraintAttributeSpec: ConstraintAttributeSpec ConstraintAttributeElem  */
@@ -34481,91 +34483,91 @@ yyreduce:
 								 parser_errposition((yylsp[0]))));
 					(yyval.ival) = newspec;
 				}
-#line 34485 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34487 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1524: /* def_arg: func_type  */
 #line 114 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.node) = (PGNode *)(yyvsp[0].typnam); }
-#line 34491 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34493 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1525: /* def_arg: reserved_keyword  */
 #line 115 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.node) = (PGNode *)makeString(pstrdup((yyvsp[0].keyword))); }
-#line 34497 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34499 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1526: /* def_arg: qual_all_Op  */
 #line 116 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.node) = (PGNode *)(yyvsp[0].list); }
-#line 34503 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34505 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1527: /* def_arg: NumericOnly  */
 #line 117 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.node) = (PGNode *)(yyvsp[0].value); }
-#line 34509 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34511 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1528: /* def_arg: Sconst  */
 #line 118 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.node) = (PGNode *)makeString((yyvsp[0].str)); }
-#line 34515 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34517 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1529: /* def_arg: NONE  */
 #line 119 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.node) = (PGNode *)makeString(pstrdup((yyvsp[0].keyword))); }
-#line 34521 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34523 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1530: /* OptParenthesizedSeqOptList: '(' SeqOptList ')'  */
 #line 123 "third_party/libpg_query/grammar/statements/create.y"
                                                         { (yyval.list) = (yyvsp[-1].list); }
-#line 34527 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34529 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1531: /* OptParenthesizedSeqOptList: %empty  */
 #line 124 "third_party/libpg_query/grammar/statements/create.y"
                                                                                                 { (yyval.list) = NIL; }
-#line 34533 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34535 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1532: /* generic_option_arg: Sconst  */
 #line 128 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.node) = (PGNode *) makeString((yyvsp[0].str)); }
-#line 34539 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34541 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1533: /* key_action: NO ACTION  */
 #line 133 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.ival) = PG_FKCONSTR_ACTION_NOACTION; }
-#line 34545 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34547 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1534: /* key_action: RESTRICT  */
 #line 134 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.ival) = PG_FKCONSTR_ACTION_RESTRICT; }
-#line 34551 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34553 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1535: /* key_action: CASCADE  */
 #line 135 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.ival) = PG_FKCONSTR_ACTION_CASCADE; }
-#line 34557 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34559 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1536: /* key_action: SET NULL_P  */
 #line 136 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = PG_FKCONSTR_ACTION_SETNULL; }
-#line 34563 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34565 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1537: /* key_action: SET DEFAULT  */
 #line 137 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = PG_FKCONSTR_ACTION_SETDEFAULT; }
-#line 34569 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34571 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1538: /* ColConstraint: CONSTRAINT name ColConstraintElem  */
@@ -34576,19 +34578,19 @@ yyreduce:
 					n->location = (yylsp[-2]);
 					(yyval.node) = (PGNode *) n;
 				}
-#line 34580 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34582 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1539: /* ColConstraint: ColConstraintElem  */
 #line 149 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.node) = (yyvsp[0].node); }
-#line 34586 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34588 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1540: /* ColConstraint: ConstraintAttr  */
 #line 150 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.node) = (yyvsp[0].node); }
-#line 34592 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34594 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1541: /* ColConstraint: COLLATE any_name  */
@@ -34605,7 +34607,7 @@ yyreduce:
 					n->location = (yylsp[-1]);
 					(yyval.node) = (PGNode *) n;
 				}
-#line 34609 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34611 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1542: /* ColConstraintElem: NOT NULL_P  */
@@ -34616,7 +34618,7 @@ yyreduce:
 					n->location = (yylsp[-1]);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34620 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34622 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1543: /* ColConstraintElem: NULL_P  */
@@ -34627,7 +34629,7 @@ yyreduce:
 					n->location = (yylsp[0]);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34631 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34633 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1544: /* ColConstraintElem: UNIQUE opt_definition  */
@@ -34641,7 +34643,7 @@ yyreduce:
 					n->indexname = NULL;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34645 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34647 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1545: /* ColConstraintElem: PRIMARY KEY opt_definition  */
@@ -34655,7 +34657,7 @@ yyreduce:
 					n->indexname = NULL;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34659 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34661 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1546: /* ColConstraintElem: CHECK_P '(' a_expr ')' opt_no_inherit  */
@@ -34671,7 +34673,7 @@ yyreduce:
 					n->initially_valid = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34675 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34677 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1547: /* ColConstraintElem: USING COMPRESSION name  */
@@ -34683,7 +34685,7 @@ yyreduce:
 					n->compression_name = (yyvsp[0].str);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34687 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34689 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1548: /* ColConstraintElem: DEFAULT b_expr  */
@@ -34696,7 +34698,7 @@ yyreduce:
 					n->cooked_expr = NULL;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34700 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34702 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1549: /* ColConstraintElem: REFERENCES qualified_name opt_column_list key_match key_actions  */
@@ -34715,31 +34717,31 @@ yyreduce:
 					n->initially_valid  = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34719 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34721 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1550: /* GeneratedColumnType: VIRTUAL  */
 #line 249 "third_party/libpg_query/grammar/statements/create.y"
                                 { (yyval.constr) = PG_CONSTR_GENERATED_VIRTUAL; }
-#line 34725 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34727 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1551: /* GeneratedColumnType: STORED  */
 #line 250 "third_party/libpg_query/grammar/statements/create.y"
                                  { (yyval.constr) = PG_CONSTR_GENERATED_STORED; }
-#line 34731 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34733 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1552: /* opt_GeneratedColumnType: GeneratedColumnType  */
 #line 254 "third_party/libpg_query/grammar/statements/create.y"
                                             { (yyval.constr) = (yyvsp[0].constr); }
-#line 34737 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34739 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1553: /* opt_GeneratedColumnType: %empty  */
 #line 255 "third_party/libpg_query/grammar/statements/create.y"
                                       { (yyval.constr) = PG_CONSTR_GENERATED_VIRTUAL; }
-#line 34743 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34745 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1554: /* GeneratedConstraintElem: GENERATED generated_when AS IDENTITY_P OptParenthesizedSeqOptList  */
@@ -34752,7 +34754,7 @@ yyreduce:
 					n->location = (yylsp[-4]);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34756 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34758 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1555: /* GeneratedConstraintElem: GENERATED generated_when AS '(' a_expr ')' opt_GeneratedColumnType  */
@@ -34779,7 +34781,7 @@ yyreduce:
 
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34783 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34785 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1556: /* GeneratedConstraintElem: AS '(' a_expr ')' opt_GeneratedColumnType  */
@@ -34793,7 +34795,7 @@ yyreduce:
 					n->location = (yylsp[-4]);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34797 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34799 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1557: /* generic_option_elem: generic_option_name generic_option_arg  */
@@ -34801,85 +34803,85 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem((yyvsp[-1].str), (yyvsp[0].node), (yylsp[-1]));
 				}
-#line 34805 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34807 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1558: /* key_update: ON UPDATE key_action  */
 #line 312 "third_party/libpg_query/grammar/statements/create.y"
                                                 { (yyval.ival) = (yyvsp[0].ival); }
-#line 34811 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34813 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1559: /* key_actions: key_update  */
 #line 318 "third_party/libpg_query/grammar/statements/create.y"
                                 { (yyval.ival) = ((yyvsp[0].ival) << 8) | (PG_FKCONSTR_ACTION_NOACTION & 0xFF); }
-#line 34817 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34819 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1560: /* key_actions: key_delete  */
 #line 320 "third_party/libpg_query/grammar/statements/create.y"
                                 { (yyval.ival) = (PG_FKCONSTR_ACTION_NOACTION << 8) | ((yyvsp[0].ival) & 0xFF); }
-#line 34823 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34825 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1561: /* key_actions: key_update key_delete  */
 #line 322 "third_party/libpg_query/grammar/statements/create.y"
                                 { (yyval.ival) = ((yyvsp[-1].ival) << 8) | ((yyvsp[0].ival) & 0xFF); }
-#line 34829 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34831 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1562: /* key_actions: key_delete key_update  */
 #line 324 "third_party/libpg_query/grammar/statements/create.y"
                                 { (yyval.ival) = ((yyvsp[0].ival) << 8) | ((yyvsp[-1].ival) & 0xFF); }
-#line 34835 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34837 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1563: /* key_actions: %empty  */
 #line 326 "third_party/libpg_query/grammar/statements/create.y"
                                 { (yyval.ival) = (PG_FKCONSTR_ACTION_NOACTION << 8) | (PG_FKCONSTR_ACTION_NOACTION & 0xFF); }
-#line 34841 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34843 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1564: /* OnCommitOption: ON COMMIT DROP  */
 #line 329 "third_party/libpg_query/grammar/statements/create.y"
                                                         { (yyval.oncommit) = ONCOMMIT_DROP; }
-#line 34847 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34849 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1565: /* OnCommitOption: ON COMMIT DELETE_P ROWS  */
 #line 330 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.oncommit) = PG_ONCOMMIT_DELETE_ROWS; }
-#line 34853 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34855 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1566: /* OnCommitOption: ON COMMIT PRESERVE ROWS  */
 #line 331 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.oncommit) = PG_ONCOMMIT_PRESERVE_ROWS; }
-#line 34859 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34861 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1567: /* OnCommitOption: %empty  */
 #line 332 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.oncommit) = PG_ONCOMMIT_NOOP; }
-#line 34865 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34867 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1568: /* reloptions: '(' reloption_list ')'  */
 #line 337 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.list) = (yyvsp[-1].list); }
-#line 34871 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34873 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1569: /* opt_no_inherit: NO INHERIT  */
 #line 340 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 {  (yyval.boolean) = true; }
-#line 34877 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34879 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1570: /* opt_no_inherit: %empty  */
 #line 341 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         {  (yyval.boolean) = false; }
-#line 34883 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34885 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1571: /* TableConstraint: CONSTRAINT name ConstraintElem  */
@@ -34890,79 +34892,79 @@ yyreduce:
 					n->location = (yylsp[-2]);
 					(yyval.node) = (PGNode *) n;
 				}
-#line 34894 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34896 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1572: /* TableConstraint: ConstraintElem  */
 #line 353 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.node) = (yyvsp[0].node); }
-#line 34900 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34902 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1573: /* TableLikeOption: COMMENTS  */
 #line 358 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = PG_CREATE_TABLE_LIKE_COMMENTS; }
-#line 34906 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34908 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1574: /* TableLikeOption: CONSTRAINTS  */
 #line 359 "third_party/libpg_query/grammar/statements/create.y"
                                                         { (yyval.ival) = PG_CREATE_TABLE_LIKE_CONSTRAINTS; }
-#line 34912 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34914 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1575: /* TableLikeOption: DEFAULTS  */
 #line 360 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = PG_CREATE_TABLE_LIKE_DEFAULTS; }
-#line 34918 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34920 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1576: /* TableLikeOption: IDENTITY_P  */
 #line 361 "third_party/libpg_query/grammar/statements/create.y"
                                                         { (yyval.ival) = PG_CREATE_TABLE_LIKE_IDENTITY; }
-#line 34924 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34926 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1577: /* TableLikeOption: INDEXES  */
 #line 362 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = PG_CREATE_TABLE_LIKE_INDEXES; }
-#line 34930 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34932 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1578: /* TableLikeOption: STATISTICS  */
 #line 363 "third_party/libpg_query/grammar/statements/create.y"
                                                         { (yyval.ival) = PG_CREATE_TABLE_LIKE_STATISTICS; }
-#line 34936 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34938 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1579: /* TableLikeOption: STORAGE  */
 #line 364 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = PG_CREATE_TABLE_LIKE_STORAGE; }
-#line 34942 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34944 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1580: /* TableLikeOption: ALL  */
 #line 365 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = PG_CREATE_TABLE_LIKE_ALL; }
-#line 34948 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34950 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1581: /* reloption_list: reloption_elem  */
 #line 371 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.list) = list_make1((yyvsp[0].defelt)); }
-#line 34954 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34956 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1582: /* reloption_list: reloption_list ',' reloption_elem  */
 #line 372 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.list) = lappend((yyvsp[-2].list), (yyvsp[0].defelt)); }
-#line 34960 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34962 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1583: /* ExistingIndex: USING INDEX index_name  */
 #line 375 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 34966 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34968 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1584: /* ConstraintAttr: DEFERRABLE  */
@@ -34973,7 +34975,7 @@ yyreduce:
 					n->location = (yylsp[0]);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34977 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34979 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1585: /* ConstraintAttr: NOT DEFERRABLE  */
@@ -34984,7 +34986,7 @@ yyreduce:
 					n->location = (yylsp[-1]);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34988 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 34990 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1586: /* ConstraintAttr: INITIALLY DEFERRED  */
@@ -34995,7 +34997,7 @@ yyreduce:
 					n->location = (yylsp[-1]);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 34999 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35001 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1587: /* ConstraintAttr: INITIALLY IMMEDIATE  */
@@ -35006,19 +35008,19 @@ yyreduce:
 					n->location = (yylsp[-1]);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35010 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35012 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1588: /* OptPartitionSortedOptions: OptPartitionSortedOptions OptPartitionSortedOption  */
 #line 412 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.list) = lappend((yyvsp[-1].list), (yyvsp[0].defelt)); }
-#line 35016 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35018 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1589: /* OptPartitionSortedOptions: %empty  */
 #line 413 "third_party/libpg_query/grammar/statements/create.y"
                                                                                                 { (yyval.list) = NIL; }
-#line 35022 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35024 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1590: /* OptPartitionSortedOption: PARTITIONED BY '(' expr_list_opt_comma ')'  */
@@ -35026,7 +35028,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("partitioned_by", (PGNode *)(yyvsp[-1].list), (yylsp[-4]));
 				}
-#line 35030 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35032 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1591: /* OptPartitionSortedOption: SORTED BY '(' expr_list_opt_comma ')'  */
@@ -35034,97 +35036,97 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem("sorted_by", (PGNode *)(yyvsp[-1].list), (yylsp[-4]));
 				}
-#line 35038 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35040 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1592: /* OptWith: WITH reloptions  */
 #line 428 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.list) = (yyvsp[0].list); }
-#line 35044 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35046 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1593: /* OptWith: WITH OIDS  */
 #line 429 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.list) = list_make1(makeDefElem("oids", (PGNode *) makeInteger(true), (yylsp[-1]))); }
-#line 35050 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35052 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1594: /* OptWith: WITHOUT OIDS  */
 #line 430 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.list) = list_make1(makeDefElem("oids", (PGNode *) makeInteger(false), (yylsp[-1]))); }
-#line 35056 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35058 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1595: /* OptWith: %empty  */
 #line 431 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.list) = NIL; }
-#line 35062 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35064 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1596: /* definition: '(' def_list ')'  */
 #line 434 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.list) = (yyvsp[-1].list); }
-#line 35068 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35070 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1597: /* TableLikeOptionList: TableLikeOptionList INCLUDING TableLikeOption  */
 #line 439 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.ival) = (yyvsp[-2].ival) | (yyvsp[0].ival); }
-#line 35074 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35076 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1598: /* TableLikeOptionList: TableLikeOptionList EXCLUDING TableLikeOption  */
 #line 440 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.ival) = (yyvsp[-2].ival) & ~(yyvsp[0].ival); }
-#line 35080 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35082 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1599: /* TableLikeOptionList: %empty  */
 #line 441 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.ival) = 0; }
-#line 35086 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35088 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1600: /* generic_option_name: ColLabel  */
 #line 446 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.str) = (yyvsp[0].str); }
-#line 35092 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35094 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1601: /* ConstraintAttributeElem: NOT DEFERRABLE  */
 #line 451 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.ival) = CAS_NOT_DEFERRABLE; }
-#line 35098 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35100 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1602: /* ConstraintAttributeElem: DEFERRABLE  */
 #line 452 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.ival) = CAS_DEFERRABLE; }
-#line 35104 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35106 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1603: /* ConstraintAttributeElem: INITIALLY IMMEDIATE  */
 #line 453 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = CAS_INITIALLY_IMMEDIATE; }
-#line 35110 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35112 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1604: /* ConstraintAttributeElem: INITIALLY DEFERRED  */
 #line 454 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = CAS_INITIALLY_DEFERRED; }
-#line 35116 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35118 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1605: /* ConstraintAttributeElem: NOT VALID  */
 #line 455 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.ival) = CAS_NOT_VALID; }
-#line 35122 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35124 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1606: /* ConstraintAttributeElem: NO INHERIT  */
 #line 456 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.ival) = CAS_NO_INHERIT; }
-#line 35128 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35130 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1607: /* regularColumnDef: Typename ColQualList  */
@@ -35145,7 +35147,7 @@ yyreduce:
 						 yyscanner);
 		(yyval.node) = (PGNode *) n;
 	}
-#line 35149 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35151 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1608: /* generatedColumnDef: opt_Typename GeneratedConstraintElem ColQualList  */
@@ -35173,7 +35175,7 @@ yyreduce:
 						 yyscanner);
 		(yyval.node) = (PGNode *)n;
 	}
-#line 35177 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35179 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1609: /* columnDef: ColId regularColumnDef  */
@@ -35184,7 +35186,7 @@ yyreduce:
 					n->location = (yylsp[-1]);
 					(yyval.node) = (PGNode *)n;
 			}
-#line 35188 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35190 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1610: /* columnDef: ColId generatedColumnDef  */
@@ -35195,43 +35197,43 @@ yyreduce:
 					n->location = (yylsp[-1]);
 					(yyval.node) = (PGNode *)n;
 			}
-#line 35199 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35201 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1611: /* def_list: def_elem  */
 #line 525 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.list) = list_make1((yyvsp[0].defelt)); }
-#line 35205 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35207 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1612: /* def_list: def_list ',' def_elem  */
 #line 526 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.list) = lappend((yyvsp[-2].list), (yyvsp[0].defelt)); }
-#line 35211 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35213 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1613: /* index_name: ColId  */
 #line 530 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.str) = (yyvsp[0].str); }
-#line 35217 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35219 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1614: /* TableElement: columnDef  */
 #line 534 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.node) = (yyvsp[0].node); }
-#line 35223 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35225 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1615: /* TableElement: TableLikeClause  */
 #line 535 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.node) = (yyvsp[0].node); }
-#line 35229 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35231 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1616: /* TableElement: TableConstraint  */
 #line 536 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.node) = (yyvsp[0].node); }
-#line 35235 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35237 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1617: /* def_elem: ColLabel '=' def_arg  */
@@ -35239,7 +35241,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem((yyvsp[-2].str), (PGNode *) (yyvsp[0].node), (yylsp[-2]));
 				}
-#line 35243 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35245 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1618: /* def_elem: ColLabel  */
@@ -35247,37 +35249,37 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem((yyvsp[0].str), NULL, (yylsp[0]));
 				}
-#line 35251 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35253 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1619: /* opt_definition: WITH definition  */
 #line 552 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.list) = (yyvsp[0].list); }
-#line 35257 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35259 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1620: /* opt_definition: %empty  */
 #line 553 "third_party/libpg_query/grammar/statements/create.y"
                                                                                                 { (yyval.list) = NIL; }
-#line 35263 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35265 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1621: /* OptTableElementList: TableElementList  */
 #line 558 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.list) = (yyvsp[0].list); }
-#line 35269 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35271 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1622: /* OptTableElementList: TableElementList ','  */
 #line 559 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.list) = (yyvsp[-1].list); }
-#line 35275 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35277 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1623: /* OptTableElementList: %empty  */
 #line 560 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.list) = NIL; }
-#line 35281 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35283 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1624: /* columnElem: ColId  */
@@ -35285,37 +35287,37 @@ yyreduce:
                                 {
 					(yyval.node) = (PGNode *) makeString((yyvsp[0].str));
 				}
-#line 35289 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35291 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1625: /* opt_column_list: '(' columnList ')'  */
 #line 572 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.list) = (yyvsp[-1].list); }
-#line 35295 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35297 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1626: /* opt_column_list: %empty  */
 #line 573 "third_party/libpg_query/grammar/statements/create.y"
                                                                                                 { (yyval.list) = NIL; }
-#line 35301 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35303 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1627: /* ColQualList: ColQualList ColConstraint  */
 #line 578 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.list) = lappend((yyvsp[-1].list), (yyvsp[0].node)); }
-#line 35307 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35309 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1628: /* ColQualList: %empty  */
 #line 579 "third_party/libpg_query/grammar/statements/create.y"
                                                                                                 { (yyval.list) = NIL; }
-#line 35313 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35315 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1629: /* key_delete: ON DELETE_P key_action  */
 #line 583 "third_party/libpg_query/grammar/statements/create.y"
                                                 { (yyval.ival) = (yyvsp[0].ival); }
-#line 35319 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35321 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1630: /* reloption_elem: ColLabel '=' a_expr  */
@@ -35323,7 +35325,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem((yyvsp[-2].str), (PGNode *) (yyvsp[0].node), (yylsp[-2]));
 				}
-#line 35327 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35329 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1631: /* reloption_elem: ColLabel  */
@@ -35331,7 +35333,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem((yyvsp[0].str), NULL, (yylsp[0]));
 				}
-#line 35335 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35337 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1632: /* reloption_elem: ColLabel '.' ColLabel '=' def_arg  */
@@ -35340,7 +35342,7 @@ yyreduce:
 					(yyval.defelt) = makeDefElemExtended((yyvsp[-4].str), (yyvsp[-2].str), (PGNode *) (yyvsp[0].node),
 											 PG_DEFELEM_UNSPEC, (yylsp[-4]));
 				}
-#line 35344 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35346 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1633: /* reloption_elem: ColLabel '.' ColLabel  */
@@ -35348,7 +35350,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElemExtended((yyvsp[-2].str), (yyvsp[0].str), NULL, PG_DEFELEM_UNSPEC, (yylsp[-2]));
 				}
-#line 35352 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35354 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1634: /* reloption_elem: Sconst '=' a_expr  */
@@ -35356,7 +35358,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem((yyvsp[-2].str), (PGNode *) (yyvsp[0].node), (yylsp[-2]));
 				}
-#line 35360 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35362 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1635: /* reloption_elem: Sconst  */
@@ -35364,37 +35366,37 @@ yyreduce:
                 {
             		(yyval.defelt) = makeDefElem((yyvsp[0].str), NULL, (yylsp[0]));
             	}
-#line 35368 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35370 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1636: /* columnList: columnElem  */
 #line 616 "third_party/libpg_query/grammar/statements/create.y"
                                                                                                 { (yyval.list) = list_make1((yyvsp[0].node)); }
-#line 35374 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35376 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1637: /* columnList: columnList ',' columnElem  */
 #line 617 "third_party/libpg_query/grammar/statements/create.y"
                                                                                 { (yyval.list) = lappend((yyvsp[-2].list), (yyvsp[0].node)); }
-#line 35380 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35382 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1638: /* columnList_opt_comma: columnList  */
 #line 621 "third_party/libpg_query/grammar/statements/create.y"
                                                                                                 { (yyval.list) = (yyvsp[0].list); }
-#line 35386 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35388 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1639: /* columnList_opt_comma: columnList ','  */
 #line 622 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.list) = (yyvsp[-1].list); }
-#line 35392 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35394 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1640: /* func_type: Typename  */
 #line 626 "third_party/libpg_query/grammar/statements/create.y"
                                                                                         { (yyval.typnam) = (yyvsp[0].typnam); }
-#line 35398 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35400 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1641: /* func_type: type_function_name attrs '%' TYPE_P  */
@@ -35404,7 +35406,7 @@ yyreduce:
 					(yyval.typnam)->pct_type = true;
 					(yyval.typnam)->location = (yylsp[-3]);
 				}
-#line 35408 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35410 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1642: /* func_type: SETOF type_function_name attrs '%' TYPE_P  */
@@ -35415,7 +35417,7 @@ yyreduce:
 					(yyval.typnam)->setof = true;
 					(yyval.typnam)->location = (yylsp[-3]);
 				}
-#line 35419 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35421 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1643: /* ConstraintElem: CHECK_P '(' a_expr ')' ConstraintAttributeSpec  */
@@ -35432,7 +35434,7 @@ yyreduce:
 					n->initially_valid = !n->skip_validation;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35436 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35438 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1644: /* ConstraintElem: UNIQUE '(' columnList_opt_comma ')' opt_definition ConstraintAttributeSpec  */
@@ -35449,7 +35451,7 @@ yyreduce:
 								   NULL, yyscanner);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35453 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35455 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1645: /* ConstraintElem: UNIQUE ExistingIndex ConstraintAttributeSpec  */
@@ -35467,7 +35469,7 @@ yyreduce:
 								   NULL, yyscanner);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35471 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35473 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1646: /* ConstraintElem: PRIMARY KEY '(' columnList_opt_comma ')' opt_definition ConstraintAttributeSpec  */
@@ -35484,7 +35486,7 @@ yyreduce:
 								   NULL, yyscanner);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35488 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35490 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1647: /* ConstraintElem: PRIMARY KEY ExistingIndex ConstraintAttributeSpec  */
@@ -35502,7 +35504,7 @@ yyreduce:
 								   NULL, yyscanner);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35506 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35508 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1648: /* ConstraintElem: FOREIGN KEY '(' columnList_opt_comma ')' REFERENCES qualified_name opt_column_list key_match key_actions ConstraintAttributeSpec  */
@@ -35524,7 +35526,7 @@ yyreduce:
 					n->initially_valid = !n->skip_validation;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35528 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35530 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1649: /* TableElementList: TableElement  */
@@ -35532,7 +35534,7 @@ yyreduce:
                                 {
 					(yyval.list) = list_make1((yyvsp[0].node));
 				}
-#line 35536 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35538 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1650: /* TableElementList: TableElementList ',' TableElement  */
@@ -35540,7 +35542,7 @@ yyreduce:
                                 {
 					(yyval.list) = lappend((yyvsp[-2].list), (yyvsp[0].node));
 				}
-#line 35544 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35546 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1651: /* key_match: MATCH FULL  */
@@ -35548,7 +35550,7 @@ yyreduce:
                         {
 				(yyval.ival) = PG_FKCONSTR_MATCH_FULL;
 			}
-#line 35552 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35554 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1652: /* key_match: MATCH PARTIAL  */
@@ -35560,7 +35562,7 @@ yyreduce:
 						 parser_errposition((yylsp[-1]))));
 				(yyval.ival) = PG_FKCONSTR_MATCH_PARTIAL;
 			}
-#line 35564 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35566 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1653: /* key_match: MATCH SIMPLE  */
@@ -35568,7 +35570,7 @@ yyreduce:
                         {
 				(yyval.ival) = PG_FKCONSTR_MATCH_SIMPLE;
 			}
-#line 35572 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35574 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1654: /* key_match: %empty  */
@@ -35576,7 +35578,7 @@ yyreduce:
                         {
 				(yyval.ival) = PG_FKCONSTR_MATCH_SIMPLE;
 			}
-#line 35580 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35582 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1655: /* TableLikeClause: LIKE qualified_name TableLikeOptionList  */
@@ -35587,31 +35589,31 @@ yyreduce:
 					n->options = (yyvsp[0].ival);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35591 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35593 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1656: /* OptTemp: TEMPORARY  */
 #line 781 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = PG_RELPERSISTENCE_TEMP; }
-#line 35597 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35599 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1657: /* OptTemp: TEMP  */
 #line 782 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.ival) = PG_RELPERSISTENCE_TEMP; }
-#line 35603 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35605 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1658: /* OptTemp: LOCAL TEMPORARY  */
 #line 783 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = PG_RELPERSISTENCE_TEMP; }
-#line 35609 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35611 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1659: /* OptTemp: LOCAL TEMP  */
 #line 784 "third_party/libpg_query/grammar/statements/create.y"
                                                                 { (yyval.ival) = PG_RELPERSISTENCE_TEMP; }
-#line 35615 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35617 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1660: /* OptTemp: GLOBAL TEMPORARY  */
@@ -35622,7 +35624,7 @@ yyreduce:
 							 parser_errposition((yylsp[-1]))));
 					(yyval.ival) = PG_RELPERSISTENCE_TEMP;
 				}
-#line 35626 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35628 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1661: /* OptTemp: GLOBAL TEMP  */
@@ -35633,31 +35635,31 @@ yyreduce:
 							 parser_errposition((yylsp[-1]))));
 					(yyval.ival) = PG_RELPERSISTENCE_TEMP;
 				}
-#line 35637 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35639 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1662: /* OptTemp: UNLOGGED  */
 #line 799 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.ival) = PG_RELPERSISTENCE_UNLOGGED; }
-#line 35643 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35645 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1663: /* OptTemp: %empty  */
 #line 800 "third_party/libpg_query/grammar/statements/create.y"
                                                                         { (yyval.ival) = RELPERSISTENCE_PERMANENT; }
-#line 35649 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35651 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1664: /* generated_when: ALWAYS  */
 #line 804 "third_party/libpg_query/grammar/statements/create.y"
                                                 { (yyval.ival) = PG_ATTRIBUTE_IDENTITY_ALWAYS; }
-#line 35655 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35657 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1665: /* generated_when: BY DEFAULT  */
 #line 805 "third_party/libpg_query/grammar/statements/create.y"
                                         { (yyval.ival) = ATTRIBUTE_IDENTITY_BY_DEFAULT; }
-#line 35661 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35663 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1666: /* AttachStmt: ATTACH opt_database Sconst opt_database_alias opt_attach_options  */
@@ -35670,7 +35672,7 @@ yyreduce:
 					n->onconflict = PG_ERROR_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35674 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35676 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1667: /* AttachStmt: ATTACH IF_P NOT EXISTS opt_database Sconst opt_database_alias opt_attach_options  */
@@ -35683,7 +35685,7 @@ yyreduce:
 					n->onconflict = PG_IGNORE_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35687 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35689 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1668: /* AttachStmt: ATTACH OR REPLACE opt_database Sconst opt_database_alias opt_attach_options  */
@@ -35696,7 +35698,7 @@ yyreduce:
 					n->onconflict = PG_REPLACE_ON_CONFLICT;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35700 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35702 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1669: /* DetachStmt: DETACH ColLabel  */
@@ -35707,7 +35709,7 @@ yyreduce:
 					n->db_name = (yyvsp[0].str);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35711 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35713 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1670: /* DetachStmt: DETACH DATABASE ColLabel  */
@@ -35718,7 +35720,7 @@ yyreduce:
 					n->db_name = (yyvsp[0].str);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35722 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35724 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1671: /* DetachStmt: DETACH DATABASE IF_P EXISTS ColLabel  */
@@ -35729,7 +35731,7 @@ yyreduce:
 					n->db_name = (yyvsp[0].str);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35733 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35735 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1672: /* DetachStmt: DETACH IF_P EXISTS ColLabel  */
@@ -35740,43 +35742,43 @@ yyreduce:
 					n->db_name = (yyvsp[0].str);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35744 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35746 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1673: /* opt_database: DATABASE  */
 #line 67 "third_party/libpg_query/grammar/statements/attach.y"
                                                                                 {}
-#line 35750 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35752 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1674: /* opt_database: %empty  */
 #line 68 "third_party/libpg_query/grammar/statements/attach.y"
                                                                                                 {}
-#line 35756 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35758 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1675: /* opt_database_alias: AS ColId  */
 #line 72 "third_party/libpg_query/grammar/statements/attach.y"
                                                                                                         { (yyval.str) = (yyvsp[0].str); }
-#line 35762 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35764 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1676: /* opt_database_alias: %empty  */
 #line 73 "third_party/libpg_query/grammar/statements/attach.y"
                                                                                                         { (yyval.str) = NULL; }
-#line 35768 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35770 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1677: /* generic_opt_arg: a_expr  */
 #line 84 "third_party/libpg_query/grammar/statements/attach.y"
                                                 { (yyval.node) = (PGNode *) (yyvsp[0].node); }
-#line 35774 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35776 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1678: /* generic_opt_arg: %empty  */
 #line 85 "third_party/libpg_query/grammar/statements/attach.y"
                                         { (yyval.node) = NULL; }
-#line 35780 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35782 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1679: /* generic_opt_elem: ColLabel generic_opt_arg  */
@@ -35784,7 +35786,7 @@ yyreduce:
                                 {
 					(yyval.defelt) = makeDefElem((yyvsp[-1].str), (yyvsp[0].node), (yylsp[-1]));
 				}
-#line 35788 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35790 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1680: /* generic_opt_list: generic_opt_elem  */
@@ -35792,7 +35794,7 @@ yyreduce:
                                 {
 					(yyval.list) = list_make1((yyvsp[0].defelt));
 				}
-#line 35796 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35798 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1681: /* generic_opt_list: generic_opt_list ',' generic_opt_elem  */
@@ -35800,7 +35802,7 @@ yyreduce:
                                 {
 					(yyval.list) = lappend((yyvsp[-2].list), (yyvsp[0].defelt));
 				}
-#line 35804 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35806 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1682: /* opt_attach_options: '(' generic_opt_list ')'  */
@@ -35808,7 +35810,7 @@ yyreduce:
                 {
 			(yyval.list) = (yyvsp[-1].list);
 		}
-#line 35812 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35814 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1683: /* opt_attach_options: %empty  */
@@ -35816,7 +35818,7 @@ yyreduce:
                 {
 			(yyval.list) = NULL;
 		}
-#line 35820 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35822 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1684: /* CommentOnStmt: COMMENT ON comment_on_type_any_name qualified_name IS comment_value  */
@@ -35828,7 +35830,7 @@ yyreduce:
 					n->value = (yyvsp[0].node);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35832 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35834 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1685: /* CommentOnStmt: COMMENT ON COLUMN a_expr IS comment_value  */
@@ -35840,79 +35842,79 @@ yyreduce:
                     n->value = (yyvsp[0].node);
                     (yyval.node) = (PGNode *)n;
                 }
-#line 35844 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35846 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1686: /* comment_value: Sconst  */
 #line 26 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                 { (yyval.node) = makeStringConst((yyvsp[0].str), (yylsp[0])); }
-#line 35850 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35852 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1687: /* comment_value: NULL_P  */
 #line 27 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                             { (yyval.node) = makeNullAConst((yylsp[0])); }
-#line 35856 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35858 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1688: /* comment_on_type_any_name: TABLE  */
 #line 30 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_TABLE; }
-#line 35862 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35864 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1689: /* comment_on_type_any_name: SEQUENCE  */
 #line 31 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_SEQUENCE; }
-#line 35868 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35870 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1690: /* comment_on_type_any_name: FUNCTION  */
 #line 32 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_FUNCTION; }
-#line 35874 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35876 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1691: /* comment_on_type_any_name: MACRO  */
 #line 33 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_FUNCTION; }
-#line 35880 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35882 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1692: /* comment_on_type_any_name: MACRO TABLE  */
 #line 34 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                 { (yyval.objtype) = PG_OBJECT_TABLE_MACRO; }
-#line 35886 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35888 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1693: /* comment_on_type_any_name: VIEW  */
 #line 35 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_VIEW; }
-#line 35892 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35894 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1694: /* comment_on_type_any_name: DATABASE  */
 #line 36 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_DATABASE; }
-#line 35898 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35900 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1695: /* comment_on_type_any_name: INDEX  */
 #line 37 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_INDEX; }
-#line 35904 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35906 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1696: /* comment_on_type_any_name: SCHEMA  */
 #line 38 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_SCHEMA; }
-#line 35910 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35912 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1697: /* comment_on_type_any_name: TYPE_P  */
 #line 39 "third_party/libpg_query/grammar/statements/comment_on.y"
                                                                                                 { (yyval.objtype) = PG_OBJECT_TYPE; }
-#line 35916 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35918 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1698: /* RenameStmt: ALTER SCHEMA name RENAME TO name  */
@@ -35925,7 +35927,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35929 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35931 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1699: /* RenameStmt: ALTER TABLE relation_expr RENAME TO name  */
@@ -35939,7 +35941,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35943 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35945 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1700: /* RenameStmt: ALTER TABLE IF_P EXISTS relation_expr RENAME TO name  */
@@ -35953,7 +35955,7 @@ yyreduce:
 					n->missing_ok = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35957 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35959 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1701: /* RenameStmt: ALTER SEQUENCE qualified_name RENAME TO name  */
@@ -35967,7 +35969,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35971 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35973 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1702: /* RenameStmt: ALTER SEQUENCE IF_P EXISTS qualified_name RENAME TO name  */
@@ -35981,7 +35983,7 @@ yyreduce:
 					n->missing_ok = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35985 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 35987 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1703: /* RenameStmt: ALTER VIEW qualified_name RENAME TO name  */
@@ -35995,7 +35997,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 35999 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36001 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1704: /* RenameStmt: ALTER VIEW IF_P EXISTS qualified_name RENAME TO name  */
@@ -36009,7 +36011,7 @@ yyreduce:
 					n->missing_ok = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 36013 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36015 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1705: /* RenameStmt: ALTER INDEX qualified_name RENAME TO name  */
@@ -36023,7 +36025,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 36027 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36029 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1706: /* RenameStmt: ALTER INDEX IF_P EXISTS qualified_name RENAME TO name  */
@@ -36037,7 +36039,7 @@ yyreduce:
 					n->missing_ok = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 36041 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36043 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1707: /* RenameStmt: ALTER TABLE relation_expr RENAME opt_column qualified_column TO name  */
@@ -36052,7 +36054,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 36056 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36058 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1708: /* RenameStmt: ALTER TABLE IF_P EXISTS relation_expr RENAME opt_column qualified_column TO name  */
@@ -36067,7 +36069,7 @@ yyreduce:
 					n->missing_ok = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 36071 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36073 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1709: /* RenameStmt: ALTER TABLE relation_expr RENAME CONSTRAINT name TO name  */
@@ -36081,7 +36083,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 36085 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36087 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1710: /* RenameStmt: ALTER TABLE IF_P EXISTS relation_expr RENAME CONSTRAINT name TO name  */
@@ -36095,7 +36097,7 @@ yyreduce:
 					n->missing_ok = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 36099 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36101 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1711: /* RenameStmt: ALTER FUNCTION qualified_name RENAME TO name  */
@@ -36109,7 +36111,7 @@ yyreduce:
 					n->missing_ok = false;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 36113 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36115 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1712: /* RenameStmt: ALTER FUNCTION IF_P EXISTS qualified_name RENAME TO name  */
@@ -36123,19 +36125,19 @@ yyreduce:
 					n->missing_ok = true;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 36127 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36129 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1713: /* opt_column: COLUMN  */
 #line 160 "third_party/libpg_query/grammar/statements/rename.y"
                                                                                         { (yyval.ival) = COLUMN; }
-#line 36133 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36135 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1714: /* opt_column: %empty  */
 #line 161 "third_party/libpg_query/grammar/statements/rename.y"
                                                                                                 { (yyval.ival) = 0; }
-#line 36139 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36141 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1715: /* AnalyzeStmt: analyze_keyword opt_verbose  */
@@ -36149,7 +36151,7 @@ yyreduce:
 					n->va_cols = NIL;
 					(yyval.node) = (PGNode *)n;
 				}
-#line 36153 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36155 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1716: /* AnalyzeStmt: analyze_keyword opt_verbose qualified_name opt_name_list  */
@@ -36163,7 +36165,7 @@ yyreduce:
 					n->va_cols = (yyvsp[0].list);
 					(yyval.node) = (PGNode *)n;
 				}
-#line 36167 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36169 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1717: /* DeallocateStmt: DEALLOCATE name  */
@@ -36173,7 +36175,7 @@ yyreduce:
 						n->name = (yyvsp[0].str);
 						(yyval.node) = (PGNode *) n;
 					}
-#line 36177 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36179 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1718: /* DeallocateStmt: DEALLOCATE PREPARE name  */
@@ -36183,7 +36185,7 @@ yyreduce:
 						n->name = (yyvsp[0].str);
 						(yyval.node) = (PGNode *) n;
 					}
-#line 36187 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36189 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1719: /* DeallocateStmt: DEALLOCATE ALL  */
@@ -36193,7 +36195,7 @@ yyreduce:
 						n->name = NULL;
 						(yyval.node) = (PGNode *) n;
 					}
-#line 36197 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36199 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1720: /* DeallocateStmt: DEALLOCATE PREPARE ALL  */
@@ -36203,7 +36205,7 @@ yyreduce:
 						n->name = NULL;
 						(yyval.node) = (PGNode *) n;
 					}
-#line 36207 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36209 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1721: /* DeallocateStmt: DISCARD ALL  */
@@ -36213,7 +36215,7 @@ yyreduce:
 						n->name = NULL;
 						(yyval.node) = (PGNode *) n;
 					}
-#line 36217 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36219 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1722: /* DeallocateStmt: DISCARD PLANS  */
@@ -36223,7 +36225,7 @@ yyreduce:
 						n->name = NULL;
 						(yyval.node) = (PGNode *) n;
 					}
-#line 36227 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36229 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1723: /* DeallocateStmt: DISCARD SEQUENCES  */
@@ -36233,7 +36235,7 @@ yyreduce:
 						n->name = NULL;
 						(yyval.node) = (PGNode *) n;
 					}
-#line 36237 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36239 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1724: /* DeallocateStmt: DISCARD TEMP  */
@@ -36243,7 +36245,7 @@ yyreduce:
 						n->name = NULL;
 						(yyval.node) = (PGNode *) n;
 					}
-#line 36247 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36249 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
   case 1725: /* DeallocateStmt: DISCARD TEMPORARY  */
@@ -36253,11 +36255,11 @@ yyreduce:
 						n->name = NULL;
 						(yyval.node) = (PGNode *) n;
 					}
-#line 36257 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36259 "third_party/libpg_query/grammar/grammar_out.cpp"
     break;
 
 
-#line 36261 "third_party/libpg_query/grammar/grammar_out.cpp"
+#line 36263 "third_party/libpg_query/grammar/grammar_out.cpp"
 
       default: break;
     }
