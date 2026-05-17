@@ -420,8 +420,8 @@ bool StringUtil::IsUpper(const string &str) {
 }
 
 // Jenkins hash function: https://en.wikipedia.org/wiki/Jenkins_hash_function
-uint64_t StringUtil::CIHash(const string &str) {
-	return StringUtil::CIHash(str.c_str(), str.size());
+uint64_t StringUtil::CIHash(std::string_view str) {
+	return StringUtil::CIHash(str.data(), str.size());
 }
 
 uint64_t StringUtil::CIHash(const char *str, idx_t size) {
@@ -441,17 +441,18 @@ bool StringUtil::CIEquals(const char *l1, idx_t l1_size, const char *l2, idx_t l
 	return absl::EqualsIgnoreCase({l1, l1_size}, {l2, l2_size});
 }
 
-bool StringUtil::CIEquals(const string &l1, const string &l2) {
-	return CIEquals(l1.c_str(), l1.size(), l2.c_str(), l2.size());
+bool StringUtil::CIEquals(std::string_view l1, std::string_view l2) {
+	return CIEquals(l1.data(), l1.size(), l2.data(), l2.size());
 }
 
 bool StringUtil::CIStartsWith(const string &str, const string &prefix) {
 	return absl::StartsWithIgnoreCase(str, prefix);
 }
 
-bool StringUtil::CILessThan(const string &s1, const string &s2) {
-	const auto size = std::min(s1.size(), s2.size()) + 1;
-	return absl::strings_internal::memcasecmp(s1.data(), s2.data(), size) < 0;
+bool StringUtil::CILessThan(std::string_view s1, std::string_view s2) {
+	const auto size = std::min(s1.size(), s2.size());
+	const auto r = absl::strings_internal::memcasecmp(s1.data(), s2.data(), size);
+	return r != 0 ? r < 0 : s1.size() < s2.size();
 }
 
 idx_t StringUtil::CIFind(const vector<string> &vector, const string &search_string) {
