@@ -173,14 +173,25 @@ std::vector<PGSimplifiedToken> tokenize(const char *str) {
  * original character and injects '\0' at the end of the newly-scanned token.
  * We then re-inject '\0' at the previous boundary (saving the restored char
  * into hold_char) so error reporting for earlier tokens still works.
+ *
+ * We pass the caller's llocp (bison's yylloc slot) through to core_yylex so
+ * the scanner's internal yylloc_r keeps pointing at stable, parser-owned
+ * storage.  Passing a local YYLTYPE here would leave yylloc_r dangling past
+ * the peek; if bison then fails to shift the active token and calls
+ * yyerror, scanner_yyerror would read garbage when formatting
+ * "syntax error at or near \"...\"".  *llocp is saved and restored around
+ * the call so bison still sees the active token's location, not the peek's.
  */
 static int peek_token(base_yy_extra_type *yyextra,
                       core_yyscan_t yyscanner,
+                      YYLTYPE *llocp,
                       int depth) {
 	while (yyextra->num_lookahead <= depth) {
 		core_YYSTYPE yylval;
-		YYLTYPE yylloc;
-		int token = core_yylex(&yylval, &yylloc, yyscanner);
+		YYLTYPE saved_lloc = *llocp;
+		int token = core_yylex(&yylval, llocp, yyscanner);
+		YYLTYPE peeked_lloc = *llocp;
+		*llocp = saved_lloc;
 
 		/*
 		 * core_yylex restored the '\0' at the previous boundary to its
@@ -198,7 +209,7 @@ static int peek_token(base_yy_extra_type *yyextra,
 		*prev_end = '\0';
 
 		/* Locate end of newly-peeked token: scan to the scanner's '\0'. */
-		char *tok_end = yyextra->core_yy_extra.scanbuf + yylloc;
+		char *tok_end = yyextra->core_yy_extra.scanbuf + peeked_lloc;
 		while (*tok_end != '\0') {
 			++tok_end;
 		}
@@ -206,7 +217,7 @@ static int peek_token(base_yy_extra_type *yyextra,
 		int idx = yyextra->num_lookahead++;
 		yyextra->lookahead[idx].token = token;
 		yyextra->lookahead[idx].yylval = yylval;
-		yyextra->lookahead[idx].yylloc = yylloc;
+		yyextra->lookahead[idx].yylloc = peeked_lloc;
 		yyextra->lookahead[idx].end = tok_end;
 		yyextra->lookahead[idx].hold_char = '\0';  /* placeholder; set when next slot is peeked */
 	}
@@ -290,7 +301,7 @@ int base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner) {
 	switch (cur_token) {
 	case NOT:
 		/* Replace NOT by NOT_LA if it's followed by BETWEEN, IN, etc */
-		switch (peek_token(yyextra, yyscanner, 0)) {
+		switch (peek_token(yyextra, yyscanner, llocp, 0)) {
 		case BETWEEN:
 		case IN_P:
 		case LIKE:
@@ -303,7 +314,7 @@ int base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner) {
 
 	case NULLS_P:
 		/* Replace NULLS_P by NULLS_LA if it's followed by FIRST or LAST */
-		switch (peek_token(yyextra, yyscanner, 0)) {
+		switch (peek_token(yyextra, yyscanner, llocp, 0)) {
 		case FIRST_P:
 		case LAST_P:
 			cur_token = NULLS_LA;
@@ -313,7 +324,7 @@ int base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner) {
 
 	case WITH:
 		/* Replace WITH by WITH_LA if it's followed by TIME or ORDINALITY */
-		switch (peek_token(yyextra, yyscanner, 0)) {
+		switch (peek_token(yyextra, yyscanner, llocp, 0)) {
 		case TIME:
 		case ORDINALITY:
 			cur_token = WITH_LA;
@@ -332,13 +343,13 @@ int base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner) {
 		 * for the time-travel form distinguishes it from the column-rename
 		 * alias form `tbl AS at (col, ...)`.
 		 */
-		int la1 = peek_token(yyextra, yyscanner, 0);
+		int la1 = peek_token(yyextra, yyscanner, llocp, 0);
 		if (la1 == TIME) {
 			cur_token = AT_LA;
 		} else if (la1 == '(') {
-			int la2 = peek_token(yyextra, yyscanner, 1);
+			int la2 = peek_token(yyextra, yyscanner, llocp, 1);
 			if (la2 == VERSION_P || la2 == TIMESTAMP) {
-				if (peek_token(yyextra, yyscanner, 2) == EQUALS_GREATER) {
+				if (peek_token(yyextra, yyscanner, llocp, 2) == EQUALS_GREATER) {
 					cur_token = AT_LA;
 				}
 			}
