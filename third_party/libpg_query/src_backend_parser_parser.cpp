@@ -186,6 +186,13 @@ static int peek_token(base_yy_extra_type *yyextra,
                       core_yyscan_t yyscanner,
                       YYLTYPE *llocp,
                       int depth) {
+	/*
+	 * The lookahead array is sized for the worst case we expect: AT's
+	 * 3-deep peek, optionally preceded by one already-buffered token
+	 * from a prior peek of a deeper-AT scenario.  If we exceed it, a
+	 * new peeker token has been added without enlarging the buffer.
+	 */
+	Assert(depth < (int) (sizeof(yyextra->lookahead) / sizeof(yyextra->lookahead[0])));
 	while (yyextra->num_lookahead <= depth) {
 		core_YYSTYPE yylval;
 		YYLTYPE saved_lloc = *llocp;
