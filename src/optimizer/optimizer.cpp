@@ -106,23 +106,25 @@ void Optimizer::RunOptimizer(OptimizerType type, const std::function<void()> &ca
 	}
 	auto &profiler = QueryProfiler::Get(context);
 	profiler.StartPhase(MetricsUtils::GetOptimizerMetricByType(type));
+	// Fire anchored Before-rules registered for this built-in pass.
 	for (auto &ext : OptimizerExtension::Iterate(context)) {
-		if (ext.anchor != type || !ext.pre_optimize_function) {
+		if (!ext.rule || ext.anchor != type || ext.where != OptimizerHookPosition::Before) {
 			continue;
 		}
 		OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
-		ext.pre_optimize_function(input, plan);
+		ext.rule(input, plan);
 		if (plan) {
 			Verify(*plan);
 		}
 	}
 	callback();
+	// Fire anchored After-rules registered for this built-in pass.
 	for (auto &ext : OptimizerExtension::Iterate(context)) {
-		if (ext.anchor != type || !ext.optimize_function) {
+		if (!ext.rule || ext.anchor != type || ext.where != OptimizerHookPosition::After) {
 			continue;
 		}
 		OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
-		ext.optimize_function(input, plan);
+		ext.rule(input, plan);
 		if (plan) {
 			Verify(*plan);
 		}
@@ -372,7 +374,7 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 
 	for (auto &pre_optimizer_extension : OptimizerExtension::Iterate(context)) {
 		if (pre_optimizer_extension.anchor != OptimizerType::INVALID) {
-			continue;  // anchored: fires inside RunOptimizer instead
+			continue; // anchored: fires inside RunOptimizer instead
 		}
 		RunOptimizer(OptimizerType::EXTENSION, [&]() {
 			OptimizerExtensionInput input {GetContext(), *this, pre_optimizer_extension.optimizer_info.get()};
@@ -386,7 +388,7 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 
 	for (auto &optimizer_extension : OptimizerExtension::Iterate(context)) {
 		if (optimizer_extension.anchor != OptimizerType::INVALID) {
-			continue;  // anchored: fires inside RunOptimizer instead
+			continue; // anchored: fires inside RunOptimizer instead
 		}
 		RunOptimizer(OptimizerType::EXTENSION, [&]() {
 			OptimizerExtensionInput input {GetContext(), *this, optimizer_extension.optimizer_info.get()};
