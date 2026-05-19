@@ -34,4 +34,9 @@ struct ReadFileGlobalState : public GlobalTableFunctionState {
 	unique_ptr<MemoryStream> stream;
 };
 
+//! Per-file lookup TF for the inverted-index fast path. Emits a single row per
+//! pk_lookup (file_row_number is always 0 -- one row per file).
+TableFunction MakeTextLookupTableFunction();
+TableFunction MakeBlobLookupTableFunction();
+
 } // namespace duckdb
