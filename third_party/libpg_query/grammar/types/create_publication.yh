@@ -1,0 +1,1 @@
+%type <list> publication_table_list

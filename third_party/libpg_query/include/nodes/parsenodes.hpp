@@ -1778,6 +1778,18 @@ typedef struct PGCreateFunctionStmt {
 } PGCreateFunctionStmt;
 
 /* ----------------------
+ *		CREATE PUBLICATION Statement
+ * ----------------------
+ */
+typedef struct PGCreatePublicationStmt {
+	PGNodeTag type;
+	char *pubname;       /* name of the publication */
+	PGList *tables;      /* list of tables */
+	bool for_all_tables; /* FOR ALL TABLES */
+	PGList *options;     /* publication options */
+} PGCreatePublicationStmt;
+
+/* ----------------------
  *		Drop Table|Sequence|View|Index|Type|Domain|Conversion|Schema Statement
  * ----------------------
  */

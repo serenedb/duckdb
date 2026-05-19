@@ -156,6 +156,8 @@ unique_ptr<SQLStatement> Transformer::TransformStatementInternal(duckdb_libpgque
 		return TransformCreateSequence(PGCast<duckdb_libpgquery::PGCreateSeqStmt>(stmt));
 	case duckdb_libpgquery::T_PGCreateFunctionStmt:
 		return TransformCreateFunction(PGCast<duckdb_libpgquery::PGCreateFunctionStmt>(stmt));
+	case duckdb_libpgquery::T_PGCreatePublicationStmt:
+		return TransformCreatePublication(PGCast<duckdb_libpgquery::PGCreatePublicationStmt>(stmt));
 	case duckdb_libpgquery::T_PGDropStmt:
 		return TransformDrop(PGCast<duckdb_libpgquery::PGDropStmt>(stmt));
 	case duckdb_libpgquery::T_PGInsertStmt:
