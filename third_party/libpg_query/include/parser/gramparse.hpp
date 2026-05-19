@@ -25,6 +25,20 @@ namespace duckdb_libpgquery {
 #include "parser/gram.hpp"
 
 /*
+ * One slot of buffered lookahead.  base_yylex peeks 1-3 tokens ahead to
+ * disambiguate certain keywords (NOT, NULLS_P, WITH, AT); each peeked token
+ * is captured here so subsequent base_yylex calls can return it without
+ * re-scanning.
+ */
+typedef struct base_yy_lookahead_slot {
+	int token;
+	core_YYSTYPE yylval;
+	YYLTYPE yylloc;
+	char *end;       /* address in scanbuf where this token ends */
+	char hold_char;  /* original char at *end; valid once the next slot is peeked */
+} base_yy_lookahead_slot;
+
+/*
  * The YY_EXTRA data that a flex scanner allows us to pass around.  Private
  * state needed for raw parsing/lexing goes here.
  */
@@ -35,14 +49,16 @@ typedef struct base_yy_extra_type {
 	core_yy_extra_type core_yy_extra;
 
 	/*
-	 * State variables for base_yylex().
+	 * State variables for base_yylex().  Up to three tokens may be buffered
+	 * beyond the currently-active one; slots are consumed FIFO (lookahead[0]
+	 * is returned next).  cur_end is the byte in scanbuf where the active
+	 * token ends; while num_lookahead > 0 that byte holds '\0' (for error
+	 * reporting), with the original character stashed in cur_hold_char.
 	 */
-	bool have_lookahead;           /* is lookahead info valid? */
-	int lookahead_token;           /* one-token lookahead */
-	core_YYSTYPE lookahead_yylval; /* yylval for lookahead token */
-	YYLTYPE lookahead_yylloc;      /* yylloc for lookahead token */
-	char *lookahead_end;           /* end of current token */
-	char lookahead_hold_char;      /* to be put back at *lookahead_end */
+	int num_lookahead;
+	base_yy_lookahead_slot lookahead[3];
+	char *cur_end;
+	char cur_hold_char;
 
 	/*
 	 * State variables that belong to the grammar.

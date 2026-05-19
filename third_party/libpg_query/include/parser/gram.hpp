@@ -568,9 +568,10 @@ extern int base_yydebug;
     NOT_LA = 769,                  /* NOT_LA  */
     NULLS_LA = 770,                /* NULLS_LA  */
     WITH_LA = 771,                 /* WITH_LA  */
-    POSTFIXOP = 772,               /* POSTFIXOP  */
-    UMINUS = 773,                  /* UMINUS  */
-    CREATE_FUNC_BODY = 774         /* CREATE_FUNC_BODY  */
+    AT_LA = 772,                   /* AT_LA  */
+    POSTFIXOP = 773,               /* POSTFIXOP  */
+    UMINUS = 774,                  /* UMINUS  */
+    CREATE_FUNC_BODY = 775         /* CREATE_FUNC_BODY  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -631,7 +632,7 @@ union YYSTYPE
 	PGTransactionStmtType transactiontype;
 	PGMergeAction mergeaction;
 
-#line 635 "third_party/libpg_query/grammar/grammar_out.hpp"
+#line 636 "third_party/libpg_query/grammar/grammar_out.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;

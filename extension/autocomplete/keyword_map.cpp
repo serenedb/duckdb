@@ -99,6 +99,7 @@ void PEGKeywordHelper::InitializeKeywordMaps() { // Renamed for clarity
 	unreserved_keyword_map.insert("always");
 	unreserved_keyword_map.insert("assertion");
 	unreserved_keyword_map.insert("assignment");
+	unreserved_keyword_map.insert("at");
 	unreserved_keyword_map.insert("attach");
 	unreserved_keyword_map.insert("attribute");
 	unreserved_keyword_map.insert("backward");
@@ -476,7 +477,6 @@ void PEGKeywordHelper::InitializeKeywordMaps() { // Renamed for clarity
 	// Populating typefunc_keyword_map
 	typefunc_keyword_map.insert("anti");
 	typefunc_keyword_map.insert("asof");
-	typefunc_keyword_map.insert("at");
 	typefunc_keyword_map.insert("authorization");
 	typefunc_keyword_map.insert("binary");
 	typefunc_keyword_map.insert("by");

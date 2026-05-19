@@ -51,7 +51,7 @@ PGList *raw_parser(const char *str) {
 	yyscanner = scanner_init(str, &yyextra.core_yy_extra, ScanKeywords, NumScanKeywords);
 
 	/* base_yylex() only needs this much initialization */
-	yyextra.have_lookahead = false;
+	yyextra.num_lookahead = 0;
 
 	/* initialize the bison parser */
 	parser_init(&yyextra);
@@ -106,7 +106,7 @@ std::vector<PGSimplifiedToken> tokenize(const char *str) {
 
 	std::vector<PGSimplifiedToken> result;
 	yyscanner = scanner_init(str, &yyextra.core_yy_extra, ScanKeywords, NumScanKeywords);
-	yyextra.have_lookahead = false;
+	yyextra.num_lookahead = 0;
 
 	while(true) {
 		YYSTYPE type;
@@ -164,11 +164,80 @@ std::vector<PGSimplifiedToken> tokenize(const char *str) {
 
 
 /*
+ * peek_token --- ensure at least depth+1 tokens are buffered after the
+ * currently-active one, then return the token kind at that position.
+ *
+ * Caller must have set yyextra->cur_end to the byte in scanbuf where the
+ * active token ends (the byte the scanner has injected '\0' into).  Each
+ * peek lazily calls core_yylex; core_yylex restores the previous boundary's
+ * original character and injects '\0' at the end of the newly-scanned token.
+ * We then re-inject '\0' at the previous boundary (saving the restored char
+ * into hold_char) so error reporting for earlier tokens still works.
+ *
+ * We pass the caller's llocp (bison's yylloc slot) through to core_yylex so
+ * the scanner's internal yylloc_r keeps pointing at stable, parser-owned
+ * storage.  Passing a local YYLTYPE here would leave yylloc_r dangling past
+ * the peek; if bison then fails to shift the active token and calls
+ * yyerror, scanner_yyerror would read garbage when formatting
+ * "syntax error at or near \"...\"".  *llocp is saved and restored around
+ * the call so bison still sees the active token's location, not the peek's.
+ */
+static int peek_token(base_yy_extra_type *yyextra,
+                      core_yyscan_t yyscanner,
+                      YYLTYPE *llocp,
+                      int depth) {
+	/*
+	 * The lookahead array is sized for the worst case we expect: AT's
+	 * 3-deep peek, optionally preceded by one already-buffered token
+	 * from a prior peek of a deeper-AT scenario.  If we exceed it, a
+	 * new peeker token has been added without enlarging the buffer.
+	 */
+	Assert(depth < (int) (sizeof(yyextra->lookahead) / sizeof(yyextra->lookahead[0])));
+	while (yyextra->num_lookahead <= depth) {
+		core_YYSTYPE yylval;
+		YYLTYPE saved_lloc = *llocp;
+		int token = core_yylex(&yylval, llocp, yyscanner);
+		YYLTYPE peeked_lloc = *llocp;
+		*llocp = saved_lloc;
+
+		/*
+		 * core_yylex restored the '\0' at the previous boundary to its
+		 * original char.  Capture it and re-inject '\0' for error reporting.
+		 */
+		char *prev_end;
+		if (yyextra->num_lookahead == 0) {
+			prev_end = yyextra->cur_end;
+			yyextra->cur_hold_char = *prev_end;
+		} else {
+			int last = yyextra->num_lookahead - 1;
+			prev_end = yyextra->lookahead[last].end;
+			yyextra->lookahead[last].hold_char = *prev_end;
+		}
+		*prev_end = '\0';
+
+		/* Locate end of newly-peeked token: scan to the scanner's '\0'. */
+		char *tok_end = yyextra->core_yy_extra.scanbuf + peeked_lloc;
+		while (*tok_end != '\0') {
+			++tok_end;
+		}
+
+		int idx = yyextra->num_lookahead++;
+		yyextra->lookahead[idx].token = token;
+		yyextra->lookahead[idx].yylval = yylval;
+		yyextra->lookahead[idx].yylloc = peeked_lloc;
+		yyextra->lookahead[idx].end = tok_end;
+		yyextra->lookahead[idx].hold_char = '\0';  /* placeholder; set when next slot is peeked */
+	}
+	return yyextra->lookahead[depth].token;
+}
+
+/*
  * Intermediate filter between parser and core lexer (core_yylex in scan.l).
  *
  * This filter is needed because in some cases the standard SQL grammar
- * requires more than one token lookahead.  We reduce these cases to one-token
- * lookahead by replacing tokens here, in order to keep the grammar LALR(1).
+ * requires more than one token lookahead.  We reduce these cases to
+ * single-token productions by replacing tokens here, keeping the grammar
+ * LALR(1).
  *
  * Using a filter is simpler than trying to recognize multiword tokens
  * directly in scan.l, because we'd have to allow for comments between the
@@ -183,26 +252,31 @@ std::vector<PGSimplifiedToken> tokenize(const char *str) {
 int base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner) {
 	base_yy_extra_type *yyextra = pg_yyget_extra(yyscanner);
 	int cur_token;
-	int next_token;
-	int cur_token_length;
-	YYLTYPE cur_yylloc;
 
-	/* Get next token --- we might already have it */
-	if (yyextra->have_lookahead) {
-		cur_token = yyextra->lookahead_token;
-		lvalp->core_yystype = yyextra->lookahead_yylval;
-		*llocp = yyextra->lookahead_yylloc;
-		*(yyextra->lookahead_end) = yyextra->lookahead_hold_char;
-		yyextra->have_lookahead = false;
-	} else
+	/* Get current token: pop buffered slot, or scan fresh. */
+	if (yyextra->num_lookahead > 0) {
+		/* Restore the byte at end of OLD current to its original char. */
+		*(yyextra->cur_end) = yyextra->cur_hold_char;
+		cur_token = yyextra->lookahead[0].token;
+		lvalp->core_yystype = yyextra->lookahead[0].yylval;
+		*llocp = yyextra->lookahead[0].yylloc;
+		yyextra->cur_end = yyextra->lookahead[0].end;
+		yyextra->cur_hold_char = yyextra->lookahead[0].hold_char;
+		for (int i = 0; i + 1 < yyextra->num_lookahead; ++i) {
+			yyextra->lookahead[i] = yyextra->lookahead[i + 1];
+		}
+		yyextra->num_lookahead--;
+	} else {
 		cur_token = core_yylex(&(lvalp->core_yystype), llocp, yyscanner);
+	}
 
 	/*
-	 * If this token isn't one that requires lookahead, just return it.  If it
-	 * does, determine the token length.  (We could get that via strlen(), but
-	 * since we have such a small set of possibilities, hardwiring seems
-	 * feasible and more efficient.)
+	 * Tokens that may need lookahead-based reclassification.  We need the
+	 * length only to initialize cur_end the first time we peek; once
+	 * cur_end is set (either by a previous peek, or below for fresh tokens),
+	 * subsequent peeks operate against the already-known boundary.
 	 */
+	int cur_token_length;
 	switch (cur_token) {
 	case NOT:
 		cur_token_length = 3;
@@ -213,45 +287,28 @@ int base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner) {
 	case WITH:
 		cur_token_length = 4;
 		break;
+	case AT:
+		cur_token_length = 2;
+		break;
 	default:
 		return cur_token;
 	}
 
 	/*
-	 * Identify end+1 of current token.  core_yylex() has temporarily stored a
-	 * '\0' here, and will undo that when we call it again.  We need to redo
-	 * it to fully revert the lookahead call for error reporting purposes.
+	 * If we got cur_token from the lookahead buffer, cur_end was already
+	 * set when this slot was first peeked.  Otherwise initialize it now;
+	 * the scanner's '\0' should currently terminate cur_token.
 	 */
-	yyextra->lookahead_end = yyextra->core_yy_extra.scanbuf + *llocp + cur_token_length;
-	Assert(*(yyextra->lookahead_end) == '\0');
+	if (yyextra->num_lookahead == 0) {
+		yyextra->cur_end = yyextra->core_yy_extra.scanbuf + *llocp + cur_token_length;
+		Assert(*(yyextra->cur_end) == '\0');
+	}
 
-	/*
-	 * Save and restore *llocp around the call.  It might look like we could
-	 * avoid this by just passing &lookahead_yylloc to core_yylex(), but that
-	 * does not work because flex actually holds onto the last-passed pointer
-	 * internally, and will use that for error reporting.  We need any error
-	 * reports to point to the current token, not the next one.
-	 */
-	cur_yylloc = *llocp;
-
-	/* Get next token, saving outputs into lookahead variables */
-	next_token = core_yylex(&(yyextra->lookahead_yylval), llocp, yyscanner);
-	yyextra->lookahead_token = next_token;
-	yyextra->lookahead_yylloc = *llocp;
-
-	*llocp = cur_yylloc;
-
-	/* Now revert the un-truncation of the current token */
-	yyextra->lookahead_hold_char = *(yyextra->lookahead_end);
-	*(yyextra->lookahead_end) = '\0';
-
-	yyextra->have_lookahead = true;
-
-	/* Replace cur_token if needed, based on lookahead */
+	/* Make filter decisions, peeking as needed. */
 	switch (cur_token) {
 	case NOT:
 		/* Replace NOT by NOT_LA if it's followed by BETWEEN, IN, etc */
-		switch (next_token) {
+		switch (peek_token(yyextra, yyscanner, llocp, 0)) {
 		case BETWEEN:
 		case IN_P:
 		case LIKE:
@@ -264,7 +321,7 @@ int base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner) {
 
 	case NULLS_P:
 		/* Replace NULLS_P by NULLS_LA if it's followed by FIRST or LAST */
-		switch (next_token) {
+		switch (peek_token(yyextra, yyscanner, llocp, 0)) {
 		case FIRST_P:
 		case LAST_P:
 			cur_token = NULLS_LA;
@@ -274,13 +331,38 @@ int base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner) {
 
 	case WITH:
 		/* Replace WITH by WITH_LA if it's followed by TIME or ORDINALITY */
-		switch (next_token) {
+		switch (peek_token(yyextra, yyscanner, llocp, 0)) {
 		case TIME:
 		case ORDINALITY:
 			cur_token = WITH_LA;
 			break;
 		}
 		break;
+
+	case AT: {
+		/*
+		 * Replace AT by AT_LA only for the two specific forms that the
+		 * grammar treats as AT-prefixed productions:
+		 *   AT TIME ZONE expr                              (timezone conversion)
+		 *   AT '(' (VERSION|TIMESTAMP) '=>' expr ')'       (time-travel)
+		 * Anywhere else, leave AT as a plain unreserved keyword so it can
+		 * be used as a column name, table alias, etc.  The 3-token peek
+		 * for the time-travel form distinguishes it from the column-rename
+		 * alias form `tbl AS at (col, ...)`.
+		 */
+		int la1 = peek_token(yyextra, yyscanner, llocp, 0);
+		if (la1 == TIME) {
+			cur_token = AT_LA;
+		} else if (la1 == '(') {
+			int la2 = peek_token(yyextra, yyscanner, llocp, 1);
+			if (la2 == VERSION_P || la2 == TIMESTAMP) {
+				if (peek_token(yyextra, yyscanner, llocp, 2) == EQUALS_GREATER) {
+					cur_token = AT_LA;
+				}
+			}
+		}
+		break;
+	}
 	}
 
 	return cur_token;
