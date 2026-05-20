@@ -100,32 +100,22 @@ template <class OP>
 unique_ptr<GlobalTableFunctionState>
 DirectMultiFileInfo<OP>::InitializeGlobalState(ClientContext &context, MultiFileBindData &bind_data,
                                                MultiFileGlobalState &global_state) {
-	auto result = make_uniq<ReadFileGlobalState>();
-
-	result->file_list = bind_data.file_list;
-	// state.column_ids must align with reader.column_ids slot-for-slot. The framework
-	// column mapper handles "constant" virtuals (filename, file_index) via constant_map
-	// and OMITS them from reader.column_ids. Mirror that here: keep file-relative cols
-	// plus the file_row_number virtual which the reader populates itself.
 	vector<idx_t> column_ids;
 	column_ids.reserve(global_state.column_indexes.size());
 	for (idx_t i = 0; i < global_state.column_indexes.size(); i++) {
 		const auto col_id = global_state.column_indexes[i].GetPrimaryIndex();
-		if (col_id == MultiFileReader::COLUMN_IDENTIFIER_FILENAME || col_id == COLUMN_IDENTIFIER_EMPTY ||
-		    col_id == MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
+		if (IsVirtualColumn(col_id) && col_id != MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
 			continue;
 		}
 		column_ids.push_back(col_id);
 	}
 
-	for (const auto &column_id : column_ids) {
-		if (column_id == ReadFileBindData::FILE_CONTENT_COLUMN || column_id == ReadFileBindData::FILE_SIZE_COLUMN ||
-		    column_id == ReadFileBindData::FILE_LAST_MODIFIED_COLUMN) {
-			result->requires_file_open = true;
-			break;
-		}
-	}
-
+	auto result = make_uniq<ReadFileGlobalState>();
+	result->file_list = bind_data.file_list;
+	result->requires_file_open = absl::c_any_of(column_ids, [](idx_t column_id) {
+		return column_id == ReadFileBindData::FILE_CONTENT_COLUMN || column_id == ReadFileBindData::FILE_SIZE_COLUMN ||
+		       column_id == ReadFileBindData::FILE_LAST_MODIFIED_COLUMN;
+	});
 	result->column_ids = std::move(column_ids);
 	return std::move(result);
 }
@@ -175,8 +165,6 @@ FileGlobInput DirectMultiFileInfo<OP>::GetGlobInput() {
 
 template <class OP>
 void DirectMultiFileInfo<OP>::GetVirtualColumns(ClientContext &, MultiFileBindData &, virtual_column_map_t &result) {
-	// One row per file -- file_row_number is always 0. Exposing it lets the inverted-index
-	// fast path build a stable (file_index, 0) PK, matching `iceberg_scan`'s glob shape.
 	result.emplace(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
 	               TableColumn("file_row_number", LogicalType::BIGINT));
 }
@@ -216,17 +204,15 @@ static TableFunction GetFunction() {
 template <class OP>
 struct DirectLookupGlobalState : public GlobalTableFunctionState {
 	OpenFileInfo file;
+	// Per output slot, the column id this slot binds to: a ReadFileBindData::FILE_*_COLUMN,
+	// MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER, or DConstants::INVALID_INDEX for
+	// virtuals we don't handle (filename / file_index / ROW_ID -- those go through the
+	// framework's constant_map or are skipped). DirectLookupScan's switch covers each case.
 	vector<idx_t> output_to_file_col;
-	idx_t file_row_number_idx = DConstants::INVALID_INDEX;
-	bool requires_file_open = false;
-
-	// Opened once in init_global, reused across pk_lookups (CSV pattern).
-	unique_ptr<FileHandle> file_handle;
 	idx_t file_size = 0;
-
-	// Lazily populated on first FILE_CONTENT_COLUMN read, then reused for
-	// subsequent pk_lookups within the same call.
+	unique_ptr<FileHandle> file_handle;
 	unique_ptr<MemoryStream> content_stream;
+	bool requires_file_open = false;
 };
 
 template <class OP>
@@ -236,17 +222,13 @@ unique_ptr<GlobalTableFunctionState> DirectLookupInitGlobal(ClientContext &conte
 	state->file = bind_data.file_list->GetFirstFile();
 
 	state->output_to_file_col.reserve(input.column_indexes.size());
-	for (idx_t i = 0; i < input.column_indexes.size(); i++) {
-		auto &col = input.column_indexes[i];
-		if (col.IsVirtualColumn()) {
-			if (col.GetPrimaryIndex() == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
-				state->file_row_number_idx = i;
-			}
-			state->output_to_file_col.push_back(DConstants::INVALID_INDEX);
-			continue;
-		}
-		const auto col_id = col.GetPrimaryIndex();
-		if (col_id == COLUMN_IDENTIFIER_ROW_ID) {
+	for (idx_t col_idx = 0; col_idx < input.column_indexes.size(); col_idx++) {
+		const auto col_id = input.column_indexes[col_idx].GetPrimaryIndex();
+		// Keep FILE_ROW_NUMBER alongside the real file columns -- DirectLookupScan's
+		// switch handles it as one of the cases (constant 0 per row). All other virtuals
+		// (including ROW_ID, which IsVirtualColumn catches at >= VIRTUAL_COLUMN_START) get
+		// the INVALID_INDEX sentinel and are skipped.
+		if (IsVirtualColumn(col_id) && col_id != MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
 			state->output_to_file_col.push_back(DConstants::INVALID_INDEX);
 			continue;
 		}
@@ -266,9 +248,6 @@ unique_ptr<GlobalTableFunctionState> DirectLookupInitGlobal(ClientContext &conte
 		flags.SetCachingMode(CachingMode::CACHE_REMOTE_ONLY);
 		state->file_handle = fs.OpenFile(state->file, flags);
 		state->file_size = state->file_handle->GetFileSize();
-		// AssertMaxFileSize: max file size enforced by AssertMaxFileSize in the
-		// scan path is also relevant here, but file already passed it at index
-		// build time; reading it again will hit the same byte count.
 	}
 	return std::move(state);
 }
@@ -279,101 +258,106 @@ void DirectLookupScan(ClientContext &context, TableFunctionInput &data, DataChun
 	if (data.pk_lookups.empty()) {
 		return;
 	}
+	D_ASSERT(data.pk_lookups.size() <= STANDARD_VECTOR_SIZE);
 	D_ASSERT(data.pk_output_positions.size() == data.pk_lookups.size());
 
 	auto &fs = FileSystem::GetFileSystem(context);
 	auto &file = gstate.file;
 
-	int64_t *frn_data = nullptr;
-	if (gstate.file_row_number_idx != DConstants::INVALID_INDEX) {
-		frn_data = FlatVector::GetDataMutable<int64_t>(output.data[gstate.file_row_number_idx]);
-	}
-
 	const idx_t count = data.pk_lookups.size();
-	for (idx_t pk_idx = 0; pk_idx < count; pk_idx++) {
-		// read_text/read_blob emit one row per file -> file_row_number is always 0.
-		D_ASSERT(data.pk_lookups[pk_idx] == 0);
-		const idx_t out_idx = data.pk_output_positions[pk_idx];
-		if (frn_data) {
-			frn_data[out_idx] = 0;
-		}
+	const auto out_positions = data.pk_output_positions;
 
-		for (idx_t col_idx = 0; col_idx < gstate.output_to_file_col.size(); col_idx++) {
-			const auto file_col = gstate.output_to_file_col[col_idx];
-			if (file_col == DConstants::INVALID_INDEX) {
-				continue;
-			}
-			try {
-				switch (file_col) {
-				case ReadFileBindData::FILE_NAME_COLUMN: {
-					auto &vec = output.data[col_idx];
-					auto name_string = StringVector::AddString(vec, file.path);
-					FlatVector::GetDataMutable<string_t>(vec)[out_idx] = name_string;
-				} break;
-				case ReadFileBindData::FILE_CONTENT_COLUMN: {
-					if (!gstate.content_stream) {
-						// Lookup TF only sees real seekable files (no pipes; FIFO indexing
-						// is not a meaningful workflow). file_size is known. Allocate once
-						// (MemoryStream requires power-of-two capacity) and read with a
-						// short-read loop.
-						const idx_t cap = MaxValue<idx_t>(NextPowerOfTwo(gstate.file_size), 1);
-						gstate.content_stream = make_uniq<MemoryStream>(BufferAllocator::Get(context), cap);
-						idx_t total = 0;
-						while (total < gstate.file_size) {
-							const idx_t got = NumericCast<idx_t>(gstate.file_handle->Read(
-							    gstate.content_stream->GetData() + total, gstate.file_size - total));
-							if (got == 0) {
-								throw IOException("Failed to read file '%s' at offset %lu, unexpected EOF", file.path,
-								                  total);
-							}
-							total += got;
+	for (idx_t col_idx = 0; col_idx < gstate.output_to_file_col.size(); ++col_idx) {
+		const auto file_col = gstate.output_to_file_col[col_idx];
+		if (file_col == DConstants::INVALID_INDEX) {
+			continue;
+		}
+		auto &vec = output.data[col_idx];
+		try {
+			switch (file_col) {
+			case MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER: {
+				auto *data_ptr = FlatVector::GetDataMutable<int64_t>(vec);
+				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+					// One row per file -> always 0.
+					D_ASSERT(data.pk_lookups[pk_idx] == 0);
+					data_ptr[out_positions[pk_idx]] = 0;
+				}
+			} break;
+			case ReadFileBindData::FILE_NAME_COLUMN: {
+				const auto name_string = StringVector::AddString(vec, file.path);
+				auto *data_ptr = FlatVector::GetDataMutable<string_t>(vec);
+				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+					data_ptr[out_positions[pk_idx]] = name_string;
+				}
+			} break;
+			case ReadFileBindData::FILE_CONTENT_COLUMN: {
+				if (!gstate.content_stream) {
+					const idx_t cap = MaxValue<idx_t>(NextPowerOfTwo(gstate.file_size), 1);
+					gstate.content_stream = make_uniq<MemoryStream>(BufferAllocator::Get(context), cap);
+					idx_t total = 0;
+					while (total < gstate.file_size) {
+						const idx_t read = NumericCast<idx_t>(gstate.file_handle->Read(
+						    gstate.content_stream->GetData() + total, gstate.file_size - total));
+						if (read == 0) {
+							throw IOException("Failed to read file '%s' at offset %lu, unexpected EOF", file.path,
+							                  total);
 						}
-						gstate.content_stream->SetPosition(total);
+						total += read;
 					}
-					auto &vec = output.data[col_idx];
-					auto &dest = FlatVector::GetDataMutable<string_t>(vec)[out_idx];
-					const string_t raw(char_ptr_cast(gstate.content_stream->GetData()),
-					                   NumericCast<uint32_t>(gstate.content_stream->GetPosition()));
-					if (OP::TYPE() == LogicalType::VARCHAR) {
-						if (Utf8Proc::Analyze(raw.GetData(), raw.GetSize()) == UnicodeType::INVALID) {
-							throw InvalidInputException(
-							    "read_text: could not read content of file '%s' as valid UTF-8 encoded text. "
-							    "You may want to use read_blob instead.",
-							    file.path);
+					gstate.content_stream->SetPosition(total);
+				}
+				const string_t raw(char_ptr_cast(gstate.content_stream->GetData()),
+				                   NumericCast<uint32_t>(gstate.content_stream->GetPosition()));
+				if (OP::TYPE() == LogicalType::VARCHAR &&
+				    Utf8Proc::Analyze(raw.GetData(), raw.GetSize()) == UnicodeType::INVALID) {
+					throw InvalidInputException(
+					    "read_text: could not read content of file '%s' as valid UTF-8 encoded text. "
+					    "You may want to use read_blob instead.",
+					    file.path);
+				}
+				const auto stored = OP::TYPE() == LogicalType::VARCHAR ? StringVector::AddString(vec, raw)
+				                                                       : StringVector::AddStringOrBlob(vec, raw);
+				auto *data_ptr = FlatVector::GetDataMutable<string_t>(vec);
+				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+					data_ptr[out_positions[pk_idx]] = stored;
+				}
+			} break;
+			case ReadFileBindData::FILE_SIZE_COLUMN: {
+				const auto sz = NumericCast<int64_t>(gstate.file_size);
+				auto *data_ptr = FlatVector::GetDataMutable<int64_t>(vec);
+				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+					data_ptr[out_positions[pk_idx]] = sz;
+				}
+			} break;
+			case ReadFileBindData::FILE_LAST_MODIFIED_COLUMN: {
+				try {
+					const timestamp_tz_t ts(fs.GetLastModifiedTime(*gstate.file_handle));
+					auto *data_ptr = FlatVector::GetDataMutable<timestamp_tz_t>(vec);
+					for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+						data_ptr[out_positions[pk_idx]] = ts;
+					}
+				} catch (std::exception &ex) {
+					ErrorData error(ex);
+					if (error.Type() == ExceptionType::CONVERSION) {
+						for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+							FlatVector::SetNull(vec, out_positions[pk_idx], true);
 						}
-						dest = StringVector::AddString(vec, raw);
 					} else {
-						dest = StringVector::AddStringOrBlob(vec, raw);
+						throw;
 					}
-				} break;
-				case ReadFileBindData::FILE_SIZE_COLUMN: {
-					FlatVector::GetDataMutable<int64_t>(output.data[col_idx])[out_idx] =
-					    NumericCast<int64_t>(gstate.file_size);
-				} break;
-				case ReadFileBindData::FILE_LAST_MODIFIED_COLUMN: {
-					auto &vec = output.data[col_idx];
-					try {
-						const auto ts = fs.GetLastModifiedTime(*gstate.file_handle);
-						FlatVector::GetDataMutable<timestamp_tz_t>(vec)[out_idx] = timestamp_tz_t(ts);
-					} catch (std::exception &ex) {
-						ErrorData error(ex);
-						if (error.Type() == ExceptionType::CONVERSION) {
-							FlatVector::SetNull(vec, out_idx, true);
-						} else {
-							throw;
-						}
-					}
-				} break;
-				default:
-					break;
 				}
-			} catch (std::exception &ex) {
-				ErrorData error(ex);
-				if (error.Type() == ExceptionType::NOT_IMPLEMENTED) {
-					FlatVector::SetNull(output.data[col_idx], out_idx, true);
-				} else {
-					throw;
+			} break;
+			default:
+				break;
+			}
+		} catch (std::exception &ex) {
+			ErrorData error(ex);
+			if (error.Type() == ExceptionType::NOT_IMPLEMENTED) {
+				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+					FlatVector::SetNull(vec, out_positions[pk_idx], true);
 				}
+			} else {
+				throw;
 			}
 		}
 	}
