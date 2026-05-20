@@ -27,8 +27,6 @@ public:
 	                 LocalTableFunctionState &local_state, DataChunk &chunk) override;
 	void FinishFile(ClientContext &context, GlobalTableFunctionState &gstate) override;
 
-	//! Accepts file_row_number (always 0 -- one row per file). DirectFileReader::Scan
-	//! populates the slot via the column_ids dispatch; no per-reader index is needed.
 	void AddVirtualColumn(column_t virtual_column_id) override;
 
 	string GetReaderType() const override {

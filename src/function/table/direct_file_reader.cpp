@@ -89,12 +89,10 @@ AsyncResult DirectFileReader::Scan(ClientContext &context, GlobalTableFunctionSt
 			continue;
 		}
 		if (proj_idx == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
-			// One row per file -> always 0.
 			FlatVector::GetDataMutable<int64_t>(output.data[col_idx])[out_idx] = 0;
 			continue;
 		}
 		if (IsVirtualColumn(proj_idx)) {
-			// filename / file_index / etc. populated by MultiFileReader constant_map.
 			continue;
 		}
 		try {
@@ -200,7 +198,6 @@ void DirectFileReader::AddVirtualColumn(column_t virtual_column_id) {
 		throw InternalException("read_text/read_blob only supports file_row_number as a virtual column (got id %llu)",
 		                        static_cast<uint64_t>(virtual_column_id));
 	}
-	// No-op: Scan dispatches on column id and writes 0 directly.
 }
 
 } // namespace duckdb
