@@ -72,8 +72,6 @@ add_subdirectory(transaction)
 
 set(DUCKDB_LINK_LIBS
     duckdb_fsst
-    duckdb_fmt
-    duckdb_re2
     duckdb_miniz
     duckdb_utf8proc
     duckdb_hyperloglog

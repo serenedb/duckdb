@@ -419,7 +419,7 @@ void ExtractFromStruct(ClientConfig &config, profiler_settings_t &enabled_metric
 void ExtractFromJSON(ClientConfig &config, profiler_settings_t &enabled_metrics, vector<string> &invalid_settings,
                      const Value &input, const set<OptimizerType> &disabled_optimizers) {
 	// JSON string: parse, then accept entries with value == "true"
-	std::unordered_map<std::string, std::string> json;
+	unordered_map<std::string, std::string> json;
 	try {
 		json = StringUtil::ParseJSONMap(input.ToString())->Flatten();
 	} catch (std::exception &ex) {
@@ -1586,7 +1586,7 @@ void SchemaSetting::ResetLocal(ClientContext &context) {
 
 Value SchemaSetting::GetSetting(const ClientContext &context) {
 	auto &client_data = ClientData::Get(context);
-	return client_data.catalog_search_path->GetDefault().schema;
+	return client_data.catalog_search_path->GetResolvedDefault().schema;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1607,7 +1607,17 @@ void SearchPathSetting::ResetLocal(ClientContext &context) {
 Value SearchPathSetting::GetSetting(const ClientContext &context) {
 	auto &client_data = ClientData::Get(context);
 	auto &set_paths = client_data.catalog_search_path->GetSetPaths();
-	return Value(CatalogSearchEntry::ListToString(set_paths));
+	// PG-compliant: only show schemas from the current database, without catalog prefix.
+	auto &current_catalog = DatabaseManager::GetDefaultDatabase(const_cast<ClientContext &>(context));
+	vector<CatalogSearchEntry> filtered;
+	filtered.reserve(set_paths.size());
+	for (auto &entry : set_paths) {
+		if (entry.catalog != current_catalog) {
+			continue;
+		}
+		filtered.emplace_back(string(), entry.schema);
+	}
+	return Value(CatalogSearchEntry::ListToString(filtered));
 }
 
 //===----------------------------------------------------------------------===//
@@ -1785,4 +1795,36 @@ void CurrentTransactionInvalidationPolicySetting::OnSet(SettingCallbackInfo &inf
 	info.context->transaction.SetInvalidationPolicy(
 	    EnumUtil::FromString<TransactionInvalidationPolicy>(input.GetValue<string>()));
 }
+//===----------------------------------------------------------------------===//
+// Default Transaction Isolation
+//===----------------------------------------------------------------------===//
+void DefaultTransactionIsolationSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
+	auto level = EnumUtil::FromString<TransactionIsolationLevel>(StringValue::Get(parameter));
+	if (info.context && info.context->transaction.IsAutoCommit()) {
+		info.context->transaction.SetIsolationLevel(level);
+	}
+}
+
+//===----------------------------------------------------------------------===//
+// Transaction Isolation
+//===----------------------------------------------------------------------===//
+void TransactionIsolationSetting::SetLocal(ClientContext &context, const Value &input) {
+	if (context.transaction.IsAutoCommit()) {
+		// SET transaction_isolation outside a transaction has no effect;
+		// emit a PG-style warning if a handler is installed.
+		context.EmitWarning("SET TRANSACTION can only be used in transaction blocks");
+		return;
+	}
+	auto level = EnumUtil::FromString<TransactionIsolationLevel>(StringValue::Get(input));
+	context.transaction.SetIsolationLevel(level);
+}
+
+void TransactionIsolationSetting::ResetLocal(ClientContext &context) {
+	throw InvalidInputException("parameter \"transaction_isolation\" cannot be reset");
+}
+
+Value TransactionIsolationSetting::GetSetting(const ClientContext &context) {
+	return Value(EnumUtil::ToChars(context.transaction.GetIsolationLevel()));
+}
+
 } // namespace duckdb

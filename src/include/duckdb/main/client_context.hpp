@@ -61,6 +61,11 @@ struct PendingQueryParameters {
 	optional_ptr<case_insensitive_map_t<BoundParameterData>> parameters;
 	//! Whether a stream/buffer-managed result should be allowed
 	QueryParameters query_parameters;
+	// caller-supplied per-parameter type hints (e.g. PG OIDs from
+	// the Parse message). Type-only -- does not constant-fold the parameter,
+	// so the slot survives for re-bind at execute. Consulted by the binder
+	// only when the identifier is absent from `parameters`.
+	optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints;
 };
 
 //! Interrupt state for the client context
@@ -97,9 +102,46 @@ public:
 	//! Data for the currently running transaction
 	TransactionContext transaction;
 
+	//! Validator called before accepting a new transaction isolation level.
+	//! When set, throws to reject unsupported values. Registered per-connection.
+	typedef void (*isolation_level_validator_t)(ClientContext &context, TransactionIsolationLevel level);
+	isolation_level_validator_t isolation_level_validator = nullptr;
+
+	//! Hook called when a warning needs to be emmitted to the client (e.g. when a transaction state is invalid for a
+	//! given statement, such as COMMIT/ROLLBACK without an active transaction, or BEGIN inside a transaction). If set
+	//! and returns true, the statement is treated as a no-op; otherwise DuckDB throws as usual.
+	typedef bool (*warning_handler_t)(ClientContext &context, const char *message);
+	warning_handler_t warning_handler = nullptr;
+
+	//! PG session_user — the role the connection authenticated as. Used to
+	//! resolve the literal "$user" placeholder in catalog_search_path. Set by
+	//! the wire layer at connect time; updated on SET ROLE if applicable.
+	string session_user;
+
+	//! Filter for settings listings (duckdb_settings(), SHOW ALL, pg_settings).
+	//! Return false to hide the setting from listings. SET / SHOW <name> are
+	//! unaffected. nullptr = show everything.
+	typedef bool (*setting_visibility_t)(ClientContext &context, const string &name);
+	setting_visibility_t setting_visibility = nullptr;
+
+	//! Invoked before a SET/RESET <name> is applied. Used by SereneDB to track
+	//! session-level changes for PG-style rollback inside a transaction.
+	//! new_value != nullptr for SET events (pointer to the about-to-be value);
+	//! new_value == nullptr for RESET events.
+	//! nullptr handler = no tracking.
+	typedef void (*setting_change_handler_t)(ClientContext &context, const string &name, SetScope scope,
+	                                         const Value *new_value);
+	setting_change_handler_t setting_change_handler = nullptr;
+
 public:
 	MetaTransaction &ActiveTransaction() {
 		return transaction.ActiveTransaction();
+	}
+
+	//! Invokes warning_handler if set. Returns true if the caller should
+	//! treat the warned condition as a no-op.
+	bool EmitWarning(const char *message) {
+		return warning_handler && warning_handler(*this, message);
 	}
 
 	//! Interrupt execution of a query
@@ -165,8 +207,14 @@ public:
 	                                                       QueryParameters query_parameters);
 	DUCKDB_API unique_ptr<QueryResult> Execute(const shared_ptr<Relation> &relation);
 
-	//! Prepare a query
-	DUCKDB_API unique_ptr<PreparedStatement> Prepare(const string &query);
+	//! Prepare a query. Optional `parameter_type_hints` declares
+	//! per-parameter bind types (e.g. PG protocol Parse OIDs) without supplying
+	//! a value -- the slot remains a real parameter and is re-bound at Execute.
+	//! Identifiers use the same scheme as named_param_map (positional "1",
+	//! "2", ... or named).
+	DUCKDB_API unique_ptr<PreparedStatement>
+	Prepare(const string &query,
+	        optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
 	//! Directly prepare a SQL statement
 	DUCKDB_API unique_ptr<PreparedStatement> Prepare(unique_ptr<SQLStatement> statement);
 
@@ -285,7 +333,9 @@ private:
 	unique_ptr<QueryResult> RunStatementInternal(ClientContextLock &lock, const string &query,
 	                                             unique_ptr<SQLStatement> statement,
 	                                             const PendingQueryParameters &parameters, bool verify = true);
-	unique_ptr<PreparedStatement> PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement);
+	unique_ptr<PreparedStatement>
+	PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
+	                optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
 	void LogQueryInternal(ClientContextLock &lock, const string &query);
 
 	unique_ptr<QueryResult> FetchResultInternal(ClientContextLock &lock, PendingQueryResult &pending);
@@ -298,7 +348,8 @@ private:
 
 	//! Wait until a task is available to execute
 	void WaitForTask(ClientContextLock &lock, BaseQueryResult &result);
-	PendingExecutionResult ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result, bool dry_run = false);
+	PendingExecutionResult ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result,
+	                                           std::function<void()> on_reschedule_arg, bool dry_run);
 
 	unique_ptr<PendingQueryResult> PendingStatementOrPreparedStatementInternal(
 	    ClientContextLock &lock, const string &query, unique_ptr<SQLStatement> statement,

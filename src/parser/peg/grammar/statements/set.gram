@@ -1,7 +1,9 @@
-SetStatement <- 'SET' (StandardAssignment / SetTimeZone)
+SetStatement <- 'SET' (SetSessionCharacteristics / SetTransactionIsolation / StandardAssignment / SetTimeZone)
 
 StandardAssignment <- (SetVariable / SetSetting) SetAssignment
 SetTimeZone <- 'TIME' 'ZONE' ZoneValue
+SetTransactionIsolation <- 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
+SetSessionCharacteristics <- 'SESSION' 'CHARACTERISTICS' 'AS' 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
 
 ZoneValue <- ZoneIntervalWithPrecision / ZoneIntervalWithInterval / 'LOCAL' / 'DEFAULT' / StringLiteral / Identifier / NumberLiteral
 ZoneIntervalWithInterval <- 'INTERVAL' StringLiteral Interval?
@@ -21,4 +23,7 @@ SetAssignment <- VariableAssign VariableList
 VariableAssign <- '=' / 'TO'
 VariableList <- List(Expression)
 
-ResetStatement <- 'RESET' (SetVariable / SetSetting)
+ResetStatement <- 'RESET' (ResetAll / SetVariable / SetSetting)
+# PG-compat: RESET ALL and RESET LOCAL ALL both reset every user-set option.
+# The LOCAL variant only differs at execution time (transaction-bound).
+ResetAll <- ('LOCAL' 'ALL') / 'ALL'

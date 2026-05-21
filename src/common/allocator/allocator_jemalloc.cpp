@@ -1,5 +1,11 @@
+#include "include/jemalloc_extension.hpp"
+
 #include "duckdb/common/allocator.hpp"
+#include "jemalloc/jemalloc.h"
+#include "include/malloc_ncpus.h"
+
 #include "duckdb/common/numeric_utils.hpp"
+#define DUCKDB_JEMALLOC_DECAY 1
 
 #include <thread>
 #include <cstdint>
@@ -33,7 +39,7 @@ static string PurgeArenaString(idx_t arena_idx) {
 }
 
 static void JemallocCTL(const char *name, void *old_ptr, size_t *old_len, void *new_ptr, size_t new_len) {
-	if (duckdb_je_mallctl(name, old_ptr, old_len, new_ptr, new_len) != 0) {
+	if (mallctl(name, old_ptr, old_len, new_ptr, new_len) != 0) {
 #ifdef DEBUG
 		throw InternalException("je_mallctl failed for setting \"%s\"", name);
 #endif

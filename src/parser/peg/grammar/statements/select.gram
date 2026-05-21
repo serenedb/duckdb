@@ -33,7 +33,8 @@ UsingKey <- 'USING' 'KEY' Parens(TargetList)
 Materialized <- 'NOT'? 'MATERIALIZED'
 WithClause <- 'WITH' Recursive? List(WithStatement)
 Recursive <- 'RECURSIVE'
-SelectClause <- 'SELECT' DistinctClause? TargetList?
+SelectClause <- 'SELECT' DistinctClause? TargetList? SelectIntoClause?
+SelectIntoClause <- 'INTO' BaseTableName
 TargetList <- List(AliasedExpression)
 ColumnAliases <- Parens(List(ColIdOrString))
 
@@ -46,7 +47,12 @@ InnerTableRef <- ValuesRef / TableFunction / TableSubquery / BaseTableRef / Pare
 
 TableRef <- InnerTableRef JoinOrPivot*
 TableSubquery <- Lateral? SubqueryReference TableAlias?
-BaseTableRef <- TableAliasColon? BaseTableName TableAlias? AtClause? SampleClause?
+# AT '(' must win over TableAlias when the bare token after the table is AT:
+# AT is unreserved (serenedb), so Identifier would otherwise consume it as
+# alias, leaving AtClause? with nothing to match. AtClause requires `(`
+# after AT, so trying it FIRST cannot accidentally win on a bare AT alias
+# (e.g. `tbl at ORDER BY at.x`) because the `(` won't match.
+BaseTableRef <- TableAliasColon? BaseTableName AtClause? TableAlias? AtClause? SampleClause?
 TableAliasColon <- ColIdOrString ':'
 ValuesRef <- ValuesClause TableAlias?
 ParensTableRef <- TableAliasColon? Parens(TableRef) TableAlias? SampleClause?

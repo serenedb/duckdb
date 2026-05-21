@@ -4,8 +4,6 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
-#include "duckdb/catalog/catalog_search_path.hpp"
-#include "duckdb/main/settings.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/parser/parsed_data/extra_drop_info.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
@@ -19,29 +17,23 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
                                                OperatorSourceInput &input) const {
 	switch (info->type) {
 	case CatalogType::PREPARED_STATEMENT: {
-		// DEALLOCATE silently ignores errors
+		// DEALLOCATE silently ignores errors. An empty name means DEALLOCATE ALL.
 		auto &statements = ClientData::Get(context.client).prepared_statements;
-		auto stmt_iter = statements.find(info->name);
-		if (stmt_iter != statements.end()) {
-			statements.erase(stmt_iter);
+		if (info->name.empty()) {
+			statements.clear();
+		} else {
+			auto stmt_iter = statements.find(info->name);
+			if (stmt_iter != statements.end()) {
+				statements.erase(stmt_iter);
+			}
 		}
 		break;
 	}
 	case CatalogType::SCHEMA_ENTRY: {
 		auto &catalog = Catalog::GetCatalog(context.client, info->catalog);
 		catalog.DropEntry(context.client, *info);
-
-		// Check if the dropped schema was set as the current schema
-		auto &client_data = ClientData::Get(context.client);
-		auto &default_entry = client_data.catalog_search_path->GetDefault();
-		auto &current_catalog = default_entry.catalog;
-		auto &current_schema = default_entry.schema;
-		D_ASSERT(info->name != DEFAULT_SCHEMA);
-
-		if (info->catalog == current_catalog && current_schema == info->name) {
-			// Reset the schema to default
-			SchemaSetting::SetLocal(context.client, DEFAULT_SCHEMA);
-		}
+		// PG-compatible: leave search_path alone. The dropped schema becomes an
+		// invalid entry that lookups will simply skip (see GetResolvedDefault).
 		break;
 	}
 	case CatalogType::SECRET_ENTRY: {

@@ -46,18 +46,17 @@ public:
 			// Integer division is slow so do it for a group of two digits instead
 			// of for every digit. The idea comes from the talk by Alexandrescu
 			// "Three Optimization Tips for C++".
-			auto index = NumericCast<unsigned>((value % 100) * 2);
+			auto rem = NumericCast<size_t>(value % 100);
 			value /= 100;
-			*--ptr = duckdb_fmt::internal::data::digits[index + 1];
-			*--ptr = duckdb_fmt::internal::data::digits[index];
+			ptr -= 2;
+			memcpy(ptr, fmt::detail::digits2(rem), 2);
 		}
 		if (value < 10) {
 			*--ptr = NumericCast<char>('0' + value);
 			return ptr;
 		}
-		auto index = NumericCast<unsigned>(value * 2);
-		*--ptr = duckdb_fmt::internal::data::digits[index + 1];
-		*--ptr = duckdb_fmt::internal::data::digits[index];
+		ptr -= 2;
+		memcpy(ptr, fmt::detail::digits2(NumericCast<size_t>(value)), 2);
 		return ptr;
 	}
 
@@ -115,16 +114,11 @@ struct DecimalToString {
 			// scale is 0: regular number
 			return NumericHelper::SignedLength<SIGNED, UNSIGNED>(value);
 		}
-		// length is max of either:
-		// scale + 2 OR
-		// integer length + 1
-		// scale + 2 happens when the number is in the range of (-1, 1)
-		// in that case we print "0.XXX", which is the scale, plus "0." (2 chars)
-		// integer length + 1 happens when the number is outside of that range
-		// in that case we print the integer number, but with one extra character ('.')
-		auto extra_characters = width > scale ? 2 : 1;
-		return MaxValue(scale + extra_characters + (value < 0 ? 1 : 0),
-		                NumericHelper::SignedLength<SIGNED, UNSIGNED>(value) + 1);
+		// PG-compatible: always print leading zero for values in (-1, 1).
+		// Length is max of:
+		//   scale + 2 ("0.XXX") — when |value| < 1
+		//   integer_length + 1 — when |value| >= 1 (digits + '.')
+		return MaxValue(scale + 2 + (value < 0 ? 1 : 0), NumericHelper::SignedLength<SIGNED, UNSIGNED>(value) + 1);
 	}
 
 	template <class SIGNED>
@@ -153,12 +147,8 @@ struct DecimalToString {
 			*--dst = '0';
 		}
 		*--dst = '.';
-		// now write the part before the decimal
-		D_ASSERT(width > scale || major == 0);
-		if (width > scale) {
-			// there are numbers after the comma
-			dst = NumericHelper::FormatUnsigned<UNSIGNED>(UnsafeNumericCast<UNSIGNED>(major), dst);
-		}
+		// PG-compatible: always write the integer part (at least "0").
+		dst = NumericHelper::FormatUnsigned<UNSIGNED>(UnsafeNumericCast<UNSIGNED>(major), dst);
 	}
 
 	template <class SIGNED>
@@ -221,14 +211,7 @@ struct DateToStringCast {
 
 	static void FormatComponent(char *&ptr, int32_t number) {
 		ptr[0] = '-';
-		if (number < 10) {
-			ptr[1] = '0';
-			ptr[2] = UnsafeNumericCast<char>('0' + number);
-		} else {
-			auto index = UnsafeNumericCast<idx_t>(number * 2);
-			ptr[1] = duckdb_fmt::internal::data::digits[index];
-			ptr[2] = duckdb_fmt::internal::data::digits[index + 1];
-		}
+		memcpy(ptr + 1, fmt::detail::digits2(UnsafeNumericCast<size_t>(number)), 2);
 		ptr += 3;
 	}
 
@@ -308,14 +291,7 @@ struct TimeToStringCast {
 
 	static void FormatTwoDigits(char *ptr, int32_t value) {
 		D_ASSERT(value >= 0 && value <= 99);
-		if (value < 10) {
-			ptr[0] = '0';
-			ptr[1] = UnsafeNumericCast<char>('0' + value);
-		} else {
-			auto index = UnsafeNumericCast<unsigned>(value * 2);
-			ptr[0] = duckdb_fmt::internal::data::digits[index];
-			ptr[1] = duckdb_fmt::internal::data::digits[index + 1];
-		}
+		memcpy(ptr, fmt::detail::digits2(UnsafeNumericCast<size_t>(value)), 2);
 	}
 
 	static void Format(char *data, idx_t length, int32_t hour, int32_t minute, int32_t second, int32_t unused,
@@ -367,7 +343,7 @@ struct IntervalToStringCast {
 		// append the name together with a potential "s" (for plurals)
 		memcpy(buffer + length, name, name_len);
 		length += name_len;
-		if (value != 1 && value != -1) {
+		if (value != 1) { // PG: only value==1 is singular, -1 is plural
 			buffer[length++] = 's';
 		}
 	}
@@ -387,7 +363,7 @@ struct IntervalToStringCast {
 			int32_t months = interval.months - years * 12;
 			// format the years and months
 			FormatIntervalValue(years, buffer, length, " year", 5);
-			FormatIntervalValue(months, buffer, length, " month", 6);
+			FormatIntervalValue(months, buffer, length, " mon", 4);
 		}
 		if (interval.days != 0) {
 			// format the days
@@ -403,6 +379,12 @@ struct IntervalToStringCast {
 				// negative time: append negative sign
 				buffer[length++] = '-';
 			} else {
+				// PG-compatible: explicit '+' for mixed-sign intervals
+				// (e.g. "-3 days +05:00:00")
+				bool mixed_sign = (interval.months < 0) || (interval.days < 0);
+				if (mixed_sign) {
+					buffer[length++] = '+';
+				}
 				micros = -micros;
 			}
 			int64_t hour = -(micros / Interval::MICROS_PER_HOUR);

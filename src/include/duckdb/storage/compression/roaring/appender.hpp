@@ -46,7 +46,10 @@ public:
 	}
 
 	static void AppendVector(STATE_TYPE &state, const Vector &input) {
-		const idx_t input_size = input.size();
+		AppendVector(state, input, input.size());
+	}
+
+	static void AppendVector(STATE_TYPE &state, const Vector &input, idx_t input_size) {
 		UnifiedVectorFormat unified;
 		input.ToUnifiedFormat(unified);
 		auto &validity = unified.validity;

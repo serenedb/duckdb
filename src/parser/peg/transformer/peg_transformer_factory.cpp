@@ -152,6 +152,8 @@ void PEGTransformerFactory::RegisterAlter() {
 	REGISTER_TRANSFORM(TransformAlterOptions);
 	REGISTER_TRANSFORM(TransformAlterTableStmt);
 	REGISTER_TRANSFORM(TransformAlterViewStmt);
+	REGISTER_TRANSFORM(TransformAlterIndexStmt);
+	REGISTER_TRANSFORM(TransformAlterFunctionStmt);
 	REGISTER_TRANSFORM(TransformAlterSchemaStmt);
 	REGISTER_TRANSFORM(TransformAlterDatabaseStmt);
 	REGISTER_TRANSFORM(TransformAlterSequenceStmt);
@@ -175,6 +177,8 @@ void PEGTransformerFactory::RegisterAlter() {
 	REGISTER_TRANSFORM(TransformRenameColumn);
 	REGISTER_TRANSFORM(TransformRenameAlter);
 	REGISTER_TRANSFORM(TransformAddConstraint);
+	REGISTER_TRANSFORM(TransformDropConstraint);
+	REGISTER_TRANSFORM(TransformRenameConstraint);
 	REGISTER_TRANSFORM(TransformQualifiedSequenceName);
 	REGISTER_TRANSFORM(TransformSequenceName);
 	REGISTER_TRANSFORM(TransformSetSortedBy);
@@ -196,6 +200,7 @@ void PEGTransformerFactory::RegisterCommon() {
 	REGISTER_TRANSFORM(TransformStringLiteral);
 	REGISTER_TRANSFORM(TransformType);
 	REGISTER_TRANSFORM(TransformArrayBounds);
+	REGISTER_TRANSFORM(TransformArrayKeywordBound);
 	REGISTER_TRANSFORM(TransformSquareBracketsArray);
 	REGISTER_TRANSFORM(TransformTimeType);
 	REGISTER_TRANSFORM(TransformTimeZone);
@@ -259,6 +264,7 @@ void PEGTransformerFactory::RegisterCreateIndex() {
 	REGISTER_TRANSFORM(TransformCreateIndexStmt);
 	REGISTER_TRANSFORM(TransformIndexType);
 	REGISTER_TRANSFORM(TransformIndexElement);
+	REGISTER_TRANSFORM(TransformIndexOpclass);
 	REGISTER_TRANSFORM(TransformWithList);
 	REGISTER_TRANSFORM(TransformRelOptionOrOids);
 	REGISTER_TRANSFORM(TransformRelOptionList);
@@ -275,6 +281,9 @@ void PEGTransformerFactory::RegisterCreateMacro() {
 	REGISTER_TRANSFORM(TransformMacroDefinition);
 	REGISTER_TRANSFORM(TransformTableMacroDefinition);
 	REGISTER_TRANSFORM(TransformScalarMacroDefinition);
+	REGISTER_TRANSFORM(TransformAsMacroBody);
+	REGISTER_TRANSFORM(TransformAtomicMacroBody);
+	REGISTER_TRANSFORM(TransformReturnMacroBody);
 	REGISTER_TRANSFORM(TransformMacroParameters);
 	REGISTER_TRANSFORM(TransformMacroParameter);
 	REGISTER_TRANSFORM(TransformSimpleParameter);
@@ -321,6 +330,7 @@ void PEGTransformerFactory::RegisterCreateTable() {
 	REGISTER_TRANSFORM(TransformTopPrimaryKeyConstraint);
 	REGISTER_TRANSFORM(TransformTopUniqueConstraint);
 	REGISTER_TRANSFORM(TransformCheckConstraint);
+	REGISTER_TRANSFORM(TransformConstraintNameClause);
 	REGISTER_TRANSFORM(TransformTopForeignKeyConstraint);
 	REGISTER_TRANSFORM(TransformForeignKeyConstraint);
 	REGISTER_TRANSFORM(TransformDefaultValue);
@@ -371,12 +381,24 @@ void PEGTransformerFactory::RegisterCreateTrigger() {
 	REGISTER_TRANSFORM(TransformTriggerBody);
 }
 
+void PEGTransformerFactory::RegisterCreateTextSearchDictionary() {
+	// create_text_search_dictionary.gram
+	REGISTER_TRANSFORM(TransformCreateTSDictionaryStatement);
+	REGISTER_TRANSFORM(TransformDropTSDictionaryStatement);
+}
+
 void PEGTransformerFactory::RegisterDelete() {
 	// delete.gram
 	REGISTER_TRANSFORM(TransformDeleteStatement);
 	REGISTER_TRANSFORM(TransformTargetOptAlias);
 	REGISTER_TRANSFORM(TransformDeleteUsingClause);
 	REGISTER_TRANSFORM(TransformTruncateStatement);
+	REGISTER_TRANSFORM(TransformTruncateTarget);
+	REGISTER_TRANSFORM(TransformTruncateOnly);
+	REGISTER_TRANSFORM(TransformTruncateStar);
+	REGISTER_TRANSFORM(TransformTruncateIdentityClause);
+	REGISTER_TRANSFORM(TransformTruncateRestart);
+	REGISTER_TRANSFORM(TransformTruncateContinue);
 }
 
 void PEGTransformerFactory::RegisterDescribe() {
@@ -385,6 +407,7 @@ void PEGTransformerFactory::RegisterDescribe() {
 	REGISTER_TRANSFORM(TransformShowSelect);
 	REGISTER_TRANSFORM(TransformShowTables);
 	REGISTER_TRANSFORM(TransformShowAllTables);
+	REGISTER_TRANSFORM(TransformShowAllSettings);
 	REGISTER_TRANSFORM(TransformShowQualifiedName);
 	REGISTER_TRANSFORM(TransformShowOrDescribeOrSummarize);
 	REGISTER_TRANSFORM(TransformShowOrDescribe);
@@ -571,6 +594,7 @@ void PEGTransformerFactory::RegisterExpression() {
 	REGISTER_TRANSFORM(TransformSubstringArguments);
 	REGISTER_TRANSFORM(TransformSubstringExpressionList);
 	REGISTER_TRANSFORM(TransformSubstringParameters);
+	REGISTER_TRANSFORM(TransformSubstringSimilar);
 	REGISTER_TRANSFORM(TransformTrimExpression);
 	REGISTER_TRANSFORM(TransformTrimDirection);
 	REGISTER_TRANSFORM(TransformTrimSource);
@@ -717,6 +741,7 @@ void PEGTransformerFactory::RegisterSelect() {
 	REGISTER_TRANSFORM(TransformFromSelectClause);
 	REGISTER_TRANSFORM(TransformFromClause);
 	REGISTER_TRANSFORM(TransformSelectClause);
+	REGISTER_TRANSFORM(TransformSelectIntoClause);
 	REGISTER_TRANSFORM(TransformDistinctClause);
 	REGISTER_TRANSFORM(TransformDistinctOn);
 	REGISTER_TRANSFORM(TransformDistinctOnTargets);
@@ -840,10 +865,14 @@ void PEGTransformerFactory::RegisterSelect() {
 void PEGTransformerFactory::RegisterSet() {
 	// set.gram
 	REGISTER_TRANSFORM(TransformResetStatement);
+	REGISTER_TRANSFORM(TransformResetAll);
 	REGISTER_TRANSFORM(TransformSetAssignment);
 	REGISTER_TRANSFORM(TransformSetSetting);
 	REGISTER_TRANSFORM(TransformSetStatement);
 	REGISTER_TRANSFORM(TransformSetTimeZone);
+	REGISTER_TRANSFORM(TransformSetTransactionIsolation);
+	REGISTER_TRANSFORM(TransformSetSessionCharacteristics);
+	REGISTER_TRANSFORM(TransformIsolationLevel);
 	REGISTER_TRANSFORM(TransformSetVariable);
 	REGISTER_TRANSFORM(TransformStandardAssignment);
 	REGISTER_TRANSFORM(TransformVariableList);
@@ -951,6 +980,7 @@ void PEGTransformerFactory::RegisterEnums() {
 	RegisterEnum<string>("MinusPrefixOperator", "-");
 	RegisterEnum<string>("PlusPrefixOperator", "+");
 	RegisterEnum<string>("TildePrefixOperator", "~");
+	RegisterEnum<string>("DoubleNotPrefixOperator", "!!");
 
 	RegisterEnum<ShowType>("SummarizeRule", ShowType::SUMMARY);
 	RegisterEnum<ShowType>("ShowRule", ShowType::DESCRIBE);
@@ -988,7 +1018,14 @@ void PEGTransformerFactory::RegisterEnums() {
 	RegisterEnum<string>("LikeToken", "~~");
 	RegisterEnum<string>("ILikeToken", "~~*");
 	RegisterEnum<string>("GlobToken", "~~~");
-	RegisterEnum<string>("SimilarToToken", "regexp_full_match");
+	// PG compat: SIMILAR TO uses SQL wildcards (%, _) that get rewritten to a
+	// real regex via similar_to_escape in TransformLikeClause. The `~` operator
+	// stays a raw regex match. `~*` / `!~*` are case-insensitive variants:
+	// TransformLikeClause appends an "i" flag arg for them.
+	RegisterEnum<string>("SimilarToToken", "regexp_full_match_similar");
+	RegisterEnum<string>("RegexMatchToken", "regexp_full_match");
+	RegisterEnum<string>("IRegexMatchToken", "regexp_full_match_i");
+	RegisterEnum<string>("NotIRegexMatchOp", "!~*");
 	RegisterEnum<string>("NotILikeOp", "!~~*");
 	RegisterEnum<string>("NotLikeOp", "!~~");
 	RegisterEnum<string>("NotSimilarToOp", "!~");
@@ -1033,6 +1070,7 @@ PEGTransformerFactory::PEGTransformerFactory() {
 	RegisterCreateTable();
 	RegisterCreateType();
 	RegisterCreateTrigger();
+	RegisterCreateTextSearchDictionary();
 	RegisterDelete();
 	RegisterDescribe();
 	RegisterDrop();

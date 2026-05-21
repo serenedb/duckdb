@@ -127,8 +127,7 @@ BindResult ExpressionBinder::BindExpression(OperatorExpression &op, idx_t depth)
 		if (b_exp_type.id() == LogicalTypeId::MAP) {
 			function_name = "map_extract_value";
 		} else if (b_exp_type.IsJSONType() && op.children.size() == 2) {
-			function_name = "json_extract";
-			// Make sure we only extract array elements, not fields, by adding the $[] syntax
+			// PG json -> index / -> field: dispatch to our whitespace-preserving functions
 			auto &i_exp = BoundExpression::GetExpression(*op.children[1]);
 			if (i_exp->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT &&
 			    !i_exp->Cast<BoundConstantExpression>().value.IsNull()) {

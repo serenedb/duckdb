@@ -42,6 +42,10 @@ SQLStatement:
     - AlterStatement
     - AnalyzeStatement
     - AttachStatement
+    - CreateDatabaseStatement
+    - DropDatabaseStatement
+    - CreateTSDictionaryStatement
+    - DropTSDictionaryStatement
     - CallStatement
     - CheckpointStatement
     - CommentStatement
@@ -110,6 +114,8 @@ SetStatement:
   rules:
     - SetTimeZone
     - StandardAssignment
+    - SetTransactionIsolation
+    - SetSessionCharacteristics
 
 QueryNode:
   type: "unique_ptr<QueryNode>"
@@ -118,6 +124,7 @@ QueryNode:
     - ShowSelect
     - ShowTables
     - ShowAllTables
+    - ShowAllSettings
     - ShowQualifiedName
 
 SelectNode:
@@ -175,6 +182,8 @@ AlterInfo:
     - AlterTableStmt
     - AlterDatabaseStmt
     - AlterViewStmt
+    - AlterIndexStmt
+    - AlterFunctionStmt
     - AlterSchemaStmt
     - AlterSequenceStmt
     - AlterSequenceOptions
@@ -199,6 +208,8 @@ AlterTableInfo:
     - RenameColumn
     - RenameAlter
     - AddConstraint
+    - DropConstraint
+    - RenameConstraint
     - SetSortedBy
     - ResetSortedBy
     - SetOptions
@@ -491,6 +502,7 @@ BaseTableRef:
     - CatalogReservedSchemaTable
     - TargetOptAlias
     - InsertTarget
+    - SelectIntoClause
 
 # ---------------------------------------------------------------------------
 # vector<T> categories
@@ -756,6 +768,7 @@ SettingInfo:
   rules:
     - SetSetting
     - SetVariable
+    - ResetAll
 
 PartitionSortedOptions:
   type: "PartitionSortedOptions"
@@ -833,6 +846,7 @@ String:
     - DropSecretStorage
     - SeqMinOrMax
     - ConstraintName
+    - ConstraintNameClause
     - ExplainOptionName
     - OperatorLiteral
     - DotIdentifier
@@ -869,6 +883,7 @@ Bool:
     - OrReplace
     - DeallocatePrepare
     - CreateRecursive
+    - DropDatabaseForce
 
 
 Int64:
@@ -891,6 +906,13 @@ TransactionModifierType:
   rules:
     - ReadOnly
     - ReadWrite
+
+TransactionIsolationLevel:
+  type: "TransactionIsolationLevel"
+  by_value: false
+  rules:
+    - IsolationLevel
+    - IsolationLevelClause
 
 # ---------------------------------------------------------------------------
 # Structs passed by value (contain move-only members like unique_ptr<T>)
@@ -1019,6 +1041,12 @@ overrides:
 excluded_rules:
   - Program
   - FunctionType
+  - DropFunctionItem
+  - DropFunctionArgs
+  - IncludeClause
+  - IncludedColumn
+  - IndexOpclassOptions
+  - IndexOpclassOption
   - Database
   - AbortOrRollback
   - CommitOrEnd
@@ -1058,7 +1086,6 @@ excluded_rules:
   - ColumnConstraint
   - AlwaysOrByDefault
   - Lateral
-  - ConstraintNameClause
   - ReservedSchemaQualification
   - UsingSample
   - TableSample

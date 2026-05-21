@@ -799,6 +799,26 @@ private:
 		if (token_text.size() == 1 && token_text[0] == '.') {
 			return false;
 		}
+		// Hex literal `0x...`/`0X...`: accept hex digits after the prefix. Binary `0b...`/`0B...` accepts 0/1.
+		if (token_text.size() >= 2 && token_text[0] == '0' &&
+		    (token_text[1] == 'x' || token_text[1] == 'X' || token_text[1] == 'b' || token_text[1] == 'B')) {
+			bool is_hex = token_text[1] == 'x' || token_text[1] == 'X';
+			for (idx_t i = 2; i < token_text.size(); i++) {
+				char ch = token_text[i];
+				if (is_hex) {
+					if (!StringUtil::CharacterIsHex(ch)) {
+						return false;
+					}
+				} else {
+					if (ch != '0' && ch != '1') {
+						return false;
+					}
+				}
+			}
+			state.token_index++;
+			state.UpdateMaxTokenIndex();
+			return true;
+		}
 		bool scientific_notation = false;
 		for (idx_t i = 1; i < token_text.size(); i++) {
 			if (BaseTokenizer::CharacterIsScientific(token_text[i])) {
@@ -836,6 +856,7 @@ static bool IsOperatorChar(char c) {
 	case '@':
 	case '&':
 	case '|':
+	case '#':
 		return true;
 	default:
 		return false;
@@ -908,7 +929,7 @@ private:
 		}
 		// Exclude LIKE/SIMILAR operators — handled by LikeVariations at a higher precedence level
 		if (token_text == "~~" || token_text == "~~*" || token_text == "~~~" || token_text == "!~~" ||
-		    token_text == "!~~*" || token_text == "!~") {
+		    token_text == "!~~*" || token_text == "!~" || token_text == "~*" || token_text == "!~*") {
 			return false;
 		}
 		for (auto &c : token_text) {
@@ -1472,7 +1493,7 @@ shared_ptr<PEGMatcher> PEGMatcher::Get(DatabaseInstance &db) {
 
 shared_ptr<PEGMatcher> ParserCache::GetMatcher() {
 	{
-		std::unique_lock<std::mutex> lock(mutex);
+		std::unique_lock<duckdb::mutex> lock(mutex);
 		if (matcher) {
 			return matcher;
 		}
@@ -1489,7 +1510,7 @@ shared_ptr<PEGMatcher> ParserCache::GetMatcher() {
 #else
 	new_matcher->root = factory.CreateMatcher(const_char_ptr_cast(INLINED_PEG_GRAMMAR), "Program");
 #endif
-	std::unique_lock<std::mutex> lock(mutex);
+	std::unique_lock<duckdb::mutex> lock(mutex);
 	if (!matcher) {
 		matcher = std::move(new_matcher);
 	}
@@ -1498,13 +1519,13 @@ shared_ptr<PEGMatcher> ParserCache::GetMatcher() {
 
 shared_ptr<PEGTransformerFactory> ParserCache::GetTransformerFactory() {
 	{
-		std::unique_lock<std::mutex> lock(mutex);
+		std::unique_lock<duckdb::mutex> lock(mutex);
 		if (transformer_factory) {
 			return transformer_factory;
 		}
 	}
 	auto new_factory = make_shared_ptr<PEGTransformerFactory>();
-	std::unique_lock<std::mutex> lock(mutex);
+	std::unique_lock<duckdb::mutex> lock(mutex);
 	if (!transformer_factory) {
 		transformer_factory = std::move(new_factory);
 	}
@@ -1512,7 +1533,7 @@ shared_ptr<PEGTransformerFactory> ParserCache::GetTransformerFactory() {
 }
 
 void ParserCache::Invalidate() {
-	std::unique_lock<std::mutex> lock(mutex);
+	std::unique_lock<duckdb::mutex> lock(mutex);
 	matcher = nullptr;
 	transformer_factory = nullptr;
 }

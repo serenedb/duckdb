@@ -1,6 +1,7 @@
 #include "duckdb/execution/column_binding_resolver.hpp"
 
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/logical_any_join.hpp"
@@ -110,11 +111,18 @@ void ColumnBindingResolver::VisitOperator(LogicalOperator &op) {
 		return;
 	}
 	case LogicalOperatorType::LOGICAL_CREATE_INDEX: {
-		// CREATE INDEX statement, add the columns of the table with table index 0 to the binding set
-		// afterwards bind the expressions of the CREATE INDEX statement
+		// Resolve children first; index expressions then reference (TableIndex(0), i).
 		auto &create_index = op.Cast<LogicalCreateIndex>();
-		bindings = LogicalOperator::GenerateColumnBindings(TableIndex(0),
-		                                                   create_index.table.GetColumns().LogicalColumnCount());
+		VisitOperatorChildren(op);
+		idx_t logical_column_count;
+		if (create_index.table.type == CatalogType::VIEW_ENTRY) {
+			auto &view = create_index.table.Cast<ViewCatalogEntry>();
+			auto column_info = view.GetColumnInfo();
+			logical_column_count = column_info ? column_info->types.size() : 0;
+		} else {
+			logical_column_count = create_index.table.Cast<TableCatalogEntry>().GetColumns().LogicalColumnCount();
+		}
+		bindings = LogicalOperator::GenerateColumnBindings(TableIndex(0), logical_column_count);
 		// TODO: fill types in too (clearing skips type checks)
 		types.clear();
 		VisitOperatorExpressions(op);
@@ -246,6 +254,8 @@ unordered_set<TableIndex> ColumnBindingResolver::VerifyInternal(LogicalOperator 
 }
 
 void ColumnBindingResolver::Verify(ClientContext &context, LogicalOperator &op) {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	if (!Settings::Get<DebugVerifyColumnBindingsSetting>(context)) {
 		return;
 	}
@@ -253,6 +263,7 @@ void ColumnBindingResolver::Verify(ClientContext &context, LogicalOperator &op) 
 	ColumnBindingResolver resolver(true);
 	resolver.VisitOperator(op);
 	VerifyInternal(op);
+#endif
 }
 
 } // namespace duckdb

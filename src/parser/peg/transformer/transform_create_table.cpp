@@ -75,6 +75,18 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTableStmt(PEGT
 		info->options = std::move(create_table_as.options);
 	} else {
 		auto column_list = transformer.Transform<ColumnElements>(table_as_or_column_list.GetResult());
+		if (!column_list.null_conflict_columns.empty()) {
+			// PG-compat (port of fa5476910e): "conflicting NULL/NOT NULL
+			// declarations for column \"X\" of table \"T\"".
+			throw ParserException("conflicting NULL/NOT NULL declarations for column \"%s\" of table \"%s\"",
+			                      column_list.null_conflict_columns.front(), table_name.name);
+		}
+		if (!column_list.duplicate_default_columns.empty()) {
+			// PG-compat (port of 93e209f485): "multiple default values specified
+			// for column \"X\" of table \"T\"".
+			throw ParserException("multiple default values specified for column \"%s\" of table \"%s\"",
+			                      column_list.duplicate_default_columns.front(), table_name.name);
+		}
 		info->columns = std::move(column_list.columns);
 		info->constraints = std::move(column_list.constraints);
 		info->partition_keys = std::move(column_list.partition_keys);
@@ -140,10 +152,14 @@ ColumnElements PEGTransformerFactory::TransformCreateColumnList(PEGTransformer &
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto &create_table_column_list =
 	    ExtractResultFromParens(list_pr.Child<ListParseResult>(0)).Cast<OptionalParseResult>();
-	if (!create_table_column_list.HasResult()) {
-		throw ParserException("Table must have at least one column!");
+	ColumnElements result;
+	// PG-compat (port of c79ef78372 from v2026.05.18): allow `CREATE TABLE
+	// t()` with no columns. Indexes / constraints can attach later; the
+	// downstream binder's "at least one physical column" check was removed
+	// in the same patch.
+	if (create_table_column_list.HasResult()) {
+		result = transformer.Transform<ColumnElements>(create_table_column_list.GetResult());
 	}
-	auto result = transformer.Transform<ColumnElements>(create_table_column_list.GetResult());
 	PartitionSortedOptions pso;
 	transformer.TransformOptional<PartitionSortedOptions>(list_pr, 1, pso);
 	result.partition_keys = std::move(pso.partition_keys);
@@ -170,6 +186,16 @@ ColumnElements PEGTransformerFactory::TransformCreateTableColumnList(PEGTransfor
 		    column_elements[col_idx].get().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 		if (column_element_child.name == "ColumnDefinition") {
 			auto column_result = transformer.Transform<ConstraintColumnDefinition>(column_element_child);
+			// PG-compat (port of fa5476910e from v2026.05.18): record any
+			// column whose constraints conflict on nullability. The table
+			// transformer raises the canonical PG error after the table
+			// name is available.
+			if (column_result.has_explicit_null && (column_result.has_not_null || column_result.has_primary_key)) {
+				result.null_conflict_columns.push_back(column_result.column_definition.GetName());
+			}
+			if (column_result.has_duplicate_default) {
+				result.duplicate_default_columns.push_back(column_result.column_definition.GetName());
+			}
 			for (auto &constraint : column_result.constraints) {
 				result.constraints.push_back(std::move(constraint));
 			}
@@ -269,6 +295,11 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(PEGT
 		                      qualified_name.ToString());
 	}
 	transformer.TransformOptional<LogicalType>(list_pr, 1, type);
+	// ConstraintNameClause? at child 3 -- `CONSTRAINT <name> CHECK (...)` applies
+	// to the following column constraint. We capture the name here and apply it
+	// to the next constraint we build.
+	string pending_constraint_name;
+	transformer.TransformOptional<string>(list_pr, 3, pending_constraint_name);
 	auto &constraints_opt = list_pr.Child<OptionalParseResult>(4);
 	CompressionType compression_type = CompressionType::COMPRESSION_AUTO;
 	ColumnConstraint column_constraint;
@@ -279,11 +310,25 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(PEGT
 			auto &constraint = constraint_list.Child<ChoiceParseResult>(0).GetResult();
 			if (constraint.name == "DefaultValue") {
 				if (column_constraint.default_value) {
-					throw ParserException("Cannot define a default value twice");
+					// PG-compat (port of 93e209f485): defer to TransformCreateTableStmt
+					// so the canonical "multiple default values specified for column \"X\"
+					// of table \"Y\"" error has access to the table name.
+					column_constraint.has_duplicate_default = true;
+					continue;
 				}
 				column_constraint.default_value = transformer.Transform<unique_ptr<ParsedExpression>>(constraint);
 			} else if (constraint.name == "NotNullConstraint" || constraint.name == "UniqueConstraint" ||
 			           constraint.name == "PrimaryKeyConstraint") {
+				if (constraint.name == "NotNullConstraint") {
+					auto &nn_list = constraint.Cast<ListParseResult>();
+					if (nn_list.Child<OptionalParseResult>(0).HasResult()) {
+						column_constraint.has_not_null = true;
+					} else {
+						column_constraint.has_explicit_null = true;
+					}
+				} else if (constraint.name == "PrimaryKeyConstraint") {
+					column_constraint.has_primary_key = true;
+				}
 				column_constraint.constraint_types.push_back(
 				    transformer.Transform<pair<bool, ConstraintType>>(constraint));
 			} else if (constraint.name == "ColumnCompression") {
@@ -321,7 +366,12 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(PEGT
 				type_children.push_back(std::move(collation));
 				type = LogicalType::UNBOUND(make_uniq<TypeExpression>("VARCHAR", std::move(type_children)));
 			} else {
-				column_constraint.constraints.push_back(transformer.Transform<unique_ptr<Constraint>>(constraint));
+				auto built_constraint = transformer.Transform<unique_ptr<Constraint>>(constraint);
+				if (!pending_constraint_name.empty()) {
+					built_constraint->constraint_name = pending_constraint_name;
+					pending_constraint_name.clear();
+				}
+				column_constraint.constraints.push_back(std::move(built_constraint));
 			}
 		}
 	}
@@ -339,13 +389,18 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(PEGT
 			                      qualified_name.name);
 		}
 
-		ColumnDefinition col(qualified_name.name, type, std::move(generated.expr), TableColumnType::GENERATED);
+		ColumnDefinition col(qualified_name.name, type, std::move(generated.expr),
+		                     generated.stored ? TableColumnType::GENERATED_STORED : TableColumnType::GENERATED_VIRTUAL);
 		col.SetCompressionType(compression_type);
 		if (column_constraint.default_value) {
 			throw ParserException("Not allowed to set default on a generated column");
 		}
 		ConstraintColumnDefinition result = {std::move(col), column_constraint.constraint_types,
 		                                     std::move(column_constraint.constraints)};
+		result.has_explicit_null = column_constraint.has_explicit_null;
+		result.has_not_null = column_constraint.has_not_null;
+		result.has_primary_key = column_constraint.has_primary_key;
+		result.has_duplicate_default = column_constraint.has_duplicate_default;
 		return result;
 	}
 
@@ -357,19 +412,46 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(PEGT
 	col.SetCompressionType(compression_type);
 	ConstraintColumnDefinition result = {std::move(col), column_constraint.constraint_types,
 	                                     std::move(column_constraint.constraints)};
+	result.has_explicit_null = column_constraint.has_explicit_null;
+	result.has_not_null = column_constraint.has_not_null;
+	result.has_primary_key = column_constraint.has_primary_key;
+	result.has_duplicate_default = column_constraint.has_duplicate_default;
 	return result;
 }
 
 GeneratedColumnDefinition PEGTransformerFactory::TransformGeneratedColumn(PEGTransformer &transformer,
                                                                           ParseResult &parse_result) {
+	// GeneratedColumn <- Generated? 'AS' Parens(Expression) GeneratedColumnType?
+	// Generated <- 'GENERATED' AlwaysOrByDefault?
+	// AlwaysOrByDefault <- 'ALWAYS' / ('BY' 'DEFAULT')
+	// PG-compat: only `GENERATED ALWAYS AS (...)` is allowed; `GENERATED BY
+	// DEFAULT AS (...)` mixes identity and generated-expression syntax.
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	GeneratedColumnDefinition generated;
+	auto &generated_opt = list_pr.Child<OptionalParseResult>(0);
+	if (generated_opt.HasResult()) {
+		auto &gen_list = generated_opt.GetResult().Cast<ListParseResult>();
+		auto &kind_opt = gen_list.Child<OptionalParseResult>(1);
+		if (kind_opt.HasResult()) {
+			auto &kind_choice = kind_opt.GetResult().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+			// `ALWAYS` parses as a single KeywordParseResult; `BY DEFAULT` as a
+			// ListParseResult containing the two keywords. So if it's not ALWAYS,
+			// the user wrote BY DEFAULT.
+			bool is_always = false;
+			if (kind_choice.type == ParseResultType::KEYWORD) {
+				is_always = StringUtil::CIEquals(kind_choice.Cast<KeywordParseResult>().keyword, "ALWAYS");
+			}
+			if (!is_always) {
+				throw ParserException("for a generated column, GENERATED ALWAYS must be specified");
+			}
+		}
+	}
 	auto &extract_parens = ExtractResultFromParens(list_pr.Child<ListParseResult>(2));
 	generated.expr = transformer.Transform<unique_ptr<ParsedExpression>>(extract_parens);
 	VerifyColumnRefs(*generated.expr);
 	auto &generated_column_type = list_pr.Child<OptionalParseResult>(3);
 	if (generated_column_type.HasResult()) {
-		transformer.Transform<bool>(generated_column_type.GetResult());
+		generated.stored = transformer.Transform<bool>(generated_column_type.GetResult());
 	}
 	return generated;
 }
@@ -383,7 +465,15 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformDefaultValue(PEGTra
 unique_ptr<Constraint> PEGTransformerFactory::TransformTopLevelConstraint(PEGTransformer &transformer,
                                                                           ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// TopLevelConstraint <- ConstraintNameClause? TopLevelConstraintList
+	// Capture the optional `CONSTRAINT <name>` clause so the resulting Constraint
+	// carries the user-supplied name (PG surfaces it in error messages).
+	string constraint_name;
+	transformer.TransformOptional<string>(list_pr, 0, constraint_name);
 	auto result = transformer.Transform<unique_ptr<Constraint>>(list_pr.Child<ListParseResult>(1));
+	if (!constraint_name.empty()) {
+		result->constraint_name = std::move(constraint_name);
+	}
 	return result;
 }
 
@@ -406,6 +496,12 @@ unique_ptr<Constraint> PEGTransformerFactory::TransformTopUniqueConstraint(PEGTr
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto column_list = transformer.Transform<vector<string>>(list_pr.Child<ListParseResult>(1));
 	return make_uniq<UniqueConstraint>(column_list, false);
+}
+
+// ConstraintNameClause <- 'CONSTRAINT' Identifier
+string PEGTransformerFactory::TransformConstraintNameClause(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	return list_pr.Child<IdentifierParseResult>(1).identifier;
 }
 
 unique_ptr<Constraint> PEGTransformerFactory::TransformCheckConstraint(PEGTransformer &transformer,
@@ -574,14 +670,13 @@ bool PEGTransformerFactory::TransformPreserveOrDelete(PEGTransformer &transforme
 	return true;
 }
 
+// Returns true for STORED, false for VIRTUAL. Default for the column body is
+// VIRTUAL when no GeneratedColumnType is present.
 bool PEGTransformerFactory::TransformGeneratedColumnType(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0).GetResult();
 	auto &keyword = choice_pr.Cast<KeywordParseResult>().keyword;
-	if (StringUtil::CIEquals(keyword, "stored")) {
-		throw InvalidInputException("Can not create a STORED generated column!");
-	}
-	return true;
+	return StringUtil::CIEquals(keyword, "stored");
 }
 
 void PEGTransformerFactory::VerifyColumnRefs(const ParsedExpression &expr) {

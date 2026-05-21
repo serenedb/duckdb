@@ -62,6 +62,15 @@ public:
 	}
 	virtual void TransactionBegin(MetaTransaction &transaction, ClientContext &context) {
 	}
+	//! Fires before `ClearTransaction()` and the underlying commit/rollback,
+	//! while the transaction is still active. Use this when the hook needs to
+	//! issue catalog/setting operations that require ActiveTransaction (e.g.
+	//! reverting SET LOCAL values for custom-impl settings like search_path).
+	virtual void TransactionPreCommit(MetaTransaction &transaction, ClientContext &context) {
+	}
+	virtual void TransactionPreRollback(MetaTransaction &transaction, ClientContext &context,
+	                                    optional_ptr<ErrorData> error) {
+	}
 	virtual void TransactionCommit(MetaTransaction &transaction, ClientContext &context) {
 	}
 	virtual void TransactionRollback(MetaTransaction &transaction, ClientContext &context) {
@@ -111,7 +120,7 @@ public:
 class RegisteredStateManager {
 public:
 	template <class T, typename... ARGS>
-	shared_ptr<T> GetOrCreate(const string &key, ARGS &&... args) {
+	shared_ptr<T> GetOrCreate(const string &key, ARGS &&...args) {
 		lock_guard<mutex> l(lock);
 		auto lookup = registered_state.find(key);
 		if (lookup != registered_state.end()) {

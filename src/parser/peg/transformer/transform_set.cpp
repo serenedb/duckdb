@@ -1,10 +1,95 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/default_expression.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
 
-// ResetStatement <- 'RESET' (SetVariable / SetSetting)
+namespace {
+
+// Extract the matched isolation level string from an IsolationLevel parse result.
+// Grammar: IsolationLevel <- ('READ' 'COMMITTED') / ('READ' 'UNCOMMITTED') /
+//                            ('REPEATABLE' 'READ') / 'SERIALIZABLE'
+// Returns a value compatible with TransactionIsolationLevel's enum string form
+// (e.g. "read committed", "repeatable read").
+string ExtractIsolationLevelString(ParseResult &parse_result) {
+	// IsolationLevel is a top-level rule whose body is a Choice -> the matcher
+	// wraps a single ChoiceMatcher in the rule's outer ListMatcher.
+	auto &outer = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = outer.Child<ChoiceParseResult>(0);
+	auto &inner = choice_pr.GetResult();
+	if (inner.type == ParseResultType::KEYWORD) {
+		// 'SERIALIZABLE'
+		auto &keyword = inner.Cast<KeywordParseResult>().keyword;
+		return StringUtil::Lower(keyword);
+	}
+	// Sequence of two keywords: ('READ' 'COMMITTED'), ('READ' 'UNCOMMITTED'),
+	// or ('REPEATABLE' 'READ').
+	auto &inner_list = inner.Cast<ListParseResult>();
+	auto &first = inner_list.Child<KeywordParseResult>(0).keyword;
+	auto &second = inner_list.Child<KeywordParseResult>(1).keyword;
+	return StringUtil::Lower(first) + " " + StringUtil::Lower(second);
+}
+
+// PG-compat for serenedb: SET search_path = a, "b,c", cat.s  -> normalize to
+// one comma-joined PG-quoted string so ParseList(...) treats each entry as one
+// atomic name. Mirrors the original libpg_query path.
+unique_ptr<SetStatement> TransformSetSearchPath(const string &name, SetScope scope,
+                                                vector<unique_ptr<ParsedExpression>> values) {
+	auto make_set = [&](string value) {
+		return make_uniq<SetVariableStatement>(name, make_uniq<ConstantExpression>(Value(std::move(value))), scope);
+	};
+	auto serialize = [&](ParsedExpression &expr) -> string {
+		if (expr.GetExpressionType() == ExpressionType::COLUMN_REF) {
+			// ColumnRefExpression::ToString applies PG quoting so names with
+			// commas/dots survive ParseList as one atomic entry.
+			return expr.ToString();
+		}
+		if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
+			return expr.Cast<ConstantExpression>().GetValue().ToString();
+		}
+		throw ParserException("SET search_path: expected identifier or string literal");
+	};
+	if (values.empty()) {
+		return make_set("");
+	}
+	if (values.size() == 1) {
+		auto &expr = *values[0];
+		if (expr.GetExpressionType() == ExpressionType::VALUE_DEFAULT) {
+			return make_uniq<ResetVariableStatement>(name, scope);
+		}
+		// Single string literal: wrap in double quotes so commas in the literal
+		// are not treated as separators by ParseList. Empty literal stays empty.
+		if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
+			auto &const_expr = expr.Cast<ConstantExpression>();
+			auto val = const_expr.GetValue();
+			if (val.type().id() == LogicalTypeId::VARCHAR) {
+				string raw = val.GetValue<string>();
+				if (raw.empty()) {
+					return make_set(raw);
+				}
+				string wrapped = "\"" + StringUtil::Replace(raw, "\"", "\"\"") + "\"";
+				return make_set(std::move(wrapped));
+			}
+		}
+		return make_set(serialize(expr));
+	}
+	// Multi-arg: comma-join each PG-quoted element.
+	string joined;
+	for (auto &value : values) {
+		if (!joined.empty()) {
+			joined += ",";
+		}
+		joined += serialize(*value);
+	}
+	return make_set(std::move(joined));
+}
+
+} // namespace
+
+// ResetStatement <- 'RESET' (ResetAll / SetVariable / SetSetting)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformResetStatement(PEGTransformer &transformer,
                                                                         ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -12,10 +97,54 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformResetStatement(PEGTrans
 	auto &choice_pr = child_pr.Child<ChoiceParseResult>(0);
 
 	SettingInfo setting_info = transformer.Transform<SettingInfo>(choice_pr.GetResult());
-	if (setting_info.scope == SetScope::LOCAL) {
-		throw NotImplementedException("RESET LOCAL is not implemented.");
-	}
+	// PG-compat: RESET LOCAL is handled by PhysicalReset at execution time
+	// (rejected outside a transaction with the canonical PG error). The
+	// upstream PEG transformer's NotImplemented throw is removed to keep
+	// parity with the v2026.05.18 libpg_query path.
 	return make_uniq<ResetVariableStatement>(setting_info.name, setting_info.scope);
+}
+
+// ResetAll <- ('LOCAL' 'ALL') / 'ALL'
+// PhysicalReset::GetDataInternal dispatches to ResetAll(...) when the
+// target name is empty, so emit a SettingInfo with an empty name. The
+// LOCAL variant flags scope=LOCAL so PhysicalReset can transaction-bound it
+// (ported from v2026.05.18 8f5073f067 "Fix RESET LOCAL ALL").
+SettingInfo PEGTransformerFactory::TransformResetAll(PEGTransformer &transformer, ParseResult &parse_result) {
+	SettingInfo result;
+	result.name = "";
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice = list_pr.Child<ChoiceParseResult>(0);
+	if (choice.GetResult().type == ParseResultType::LIST) {
+		// First alternative: 'LOCAL' 'ALL' keywords.
+		result.scope = SetScope::LOCAL;
+	}
+	return result;
+}
+
+// SetTransactionIsolation <- 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
+// Maps to PG's SET TRANSACTION ISOLATION LEVEL ...; we forward the parsed level
+// into serenedb's existing "transaction_isolation" client setting, whose
+// SetLocal callback enforces "must be inside a transaction".
+unique_ptr<SetStatement> PEGTransformerFactory::TransformSetTransactionIsolation(PEGTransformer &transformer,
+                                                                                 ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// children: 'TRANSACTION', 'ISOLATION', 'LEVEL', IsolationLevel
+	auto level = ExtractIsolationLevelString(list_pr.Child<ListParseResult>(3));
+	return make_uniq<SetVariableStatement>("transaction_isolation", make_uniq<ConstantExpression>(Value(level)),
+	                                       SetScope::AUTOMATIC);
+}
+
+// SetSessionCharacteristics <- 'SESSION' 'CHARACTERISTICS' 'AS' 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
+// Maps to PG's SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL ...;
+// forwarded into serenedb's "default_transaction_isolation" setting, which is
+// what BEGIN reads as the default for new transactions.
+unique_ptr<SetStatement> PEGTransformerFactory::TransformSetSessionCharacteristics(PEGTransformer &transformer,
+                                                                                   ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// children: 'SESSION', 'CHARACTERISTICS', 'AS', 'TRANSACTION', 'ISOLATION', 'LEVEL', IsolationLevel
+	auto level = ExtractIsolationLevelString(list_pr.Child<ListParseResult>(6));
+	return make_uniq<SetVariableStatement>("default_transaction_isolation", make_uniq<ConstantExpression>(Value(level)),
+	                                       SetScope::AUTOMATIC);
 }
 
 // SetAssignment <- VariableAssign VariableList
@@ -116,11 +245,18 @@ unique_ptr<SetStatement> PEGTransformerFactory::TransformStandardAssignment(PEGT
 
 	auto &setting_or_var_pr = first_sub_rule.Child<ChoiceParseResult>(0);
 	SettingInfo setting_info = transformer.Transform<SettingInfo>(setting_or_var_pr.GetResult());
-	if (setting_info.scope == SetScope::LOCAL) {
-		throw NotImplementedException("SET LOCAL is not implemented.");
-	}
+	// PG-compat: SET LOCAL is enforced at PhysicalSet::SetVariable
+	// (transaction-bound). Don't reject at parse time -- that's a regression
+	// from the upstream PEG transformer; v2026.05.18's libpg_query path
+	// passed the scope through.
 	auto &set_assignment_pr = list_pr.Child<ListParseResult>(1);
 	auto values = transformer.Transform<vector<unique_ptr<ParsedExpression>>>(set_assignment_pr);
+	// PG-compat for serenedb: SET search_path accepts comma-separated lists
+	// and unquoted/string-literal/DEFAULT shapes. Normalize into a single
+	// already-PG-quoted string before producing the SetVariableStatement.
+	if (StringUtil::CIEquals(setting_info.name, "search_path")) {
+		return TransformSetSearchPath(setting_info.name, setting_info.scope, std::move(values));
+	}
 	if (values.size() > 1) {
 		throw ParserException("SET can only contain a single value");
 	}

@@ -33,14 +33,19 @@ public:
 	template <class T>
 	static bool UpdateState(T &state, const Vector &scan_vector) {
 		state.Verify();
+		UnifiedVectorFormat vdata;
+		scan_vector.ToUnifiedFormat(vdata);
+		auto data = UnifiedVectorFormat::GetData<string_t>(vdata);
 
-		for (auto entry : scan_vector.Values<string_t>()) {
+		const auto count = scan_vector.size();
+		for (idx_t i = 0; i < count; i++) {
+			auto idx = vdata.sel->get_index(i);
 			idx_t string_size = 0;
 			bool new_string = false;
-			auto row_is_valid = entry.IsValid();
+			auto row_is_valid = vdata.validity.RowIsValid(idx);
 
 			if (row_is_valid) {
-				auto &str = entry.GetValue();
+				const auto &str = data[idx];
 				string_size = str.GetSize();
 				if (string_size >= StringUncompressed::GetStringBlockLimit(state.info.GetBlockSize())) {
 					// Big strings not implemented for dictionary compression
@@ -63,7 +68,7 @@ public:
 			if (!row_is_valid) {
 				state.AddNull();
 			} else if (new_string) {
-				state.AddNewString(entry.GetValue());
+				state.AddNewString(data[idx]);
 			} else {
 				state.AddLastLookup();
 			}

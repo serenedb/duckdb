@@ -120,6 +120,8 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING_CALLBACK(DefaultOrderSetting),
     DUCKDB_GLOBAL(DefaultSecretStorageSetting),
     DUCKDB_SETTING_CALLBACK(DefaultTransactionInvalidationPolicySetting),
+    DUCKDB_SETTING_CALLBACK(DefaultTransactionIsolationSetting),
+    DUCKDB_SETTING(DefaultTransactionReadOnlySetting),
     DUCKDB_SETTING_CALLBACK(DeprecatedUsingKeySyntaxSetting),
     DUCKDB_SETTING_CALLBACK(DisableDatabaseInvalidationSetting),
     DUCKDB_SETTING(DisableTimestamptzCastsSetting),
@@ -215,6 +217,7 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_GLOBAL(TempDirectorySetting),
     DUCKDB_SETTING_CALLBACK(TempFileEncryptionSetting),
     DUCKDB_GLOBAL(ThreadsSetting),
+    DUCKDB_LOCAL(TransactionIsolationSetting),
     DUCKDB_SETTING(UsernameSetting),
     DUCKDB_SETTING_CALLBACK(VacuumRebuildIndexesSetting),
     DUCKDB_SETTING_CALLBACK(ValidateExternalFileCacheSetting),
@@ -228,12 +231,12 @@ static const ConfigurationOption internal_options[] = {
 
 static const ConfigurationAlias setting_aliases[] = {DUCKDB_SETTING_ALIAS("configure_metrics", 27),
                                                      DUCKDB_SETTING_ALIAS("custom_profiling_settings", 27),
-                                                     DUCKDB_SETTING_ALIAS("memory_limit", 115),
+                                                     DUCKDB_SETTING_ALIAS("memory_limit", 117),
                                                      DUCKDB_SETTING_ALIAS("null_order", 52),
-                                                     DUCKDB_SETTING_ALIAS("profiling_output", 136),
-                                                     DUCKDB_SETTING_ALIAS("user", 151),
+                                                     DUCKDB_SETTING_ALIAS("profiling_output", 138),
+                                                     DUCKDB_SETTING_ALIAS("user", 154),
                                                      DUCKDB_SETTING_ALIAS("wal_autocheckpoint", 26),
-                                                     DUCKDB_SETTING_ALIAS("worker_threads", 150),
+                                                     DUCKDB_SETTING_ALIAS("worker_threads", 152),
                                                      FINAL_ALIAS};
 
 vector<ConfigurationOption> DBConfig::GetOptions() {
@@ -500,6 +503,25 @@ bool DBConfig::HasExtensionOption(const string &name) const {
 
 bool DBConfig::TryGetExtensionOption(const String &name, ExtensionOption &result) const {
 	return user_settings.TryGetExtensionOption(name, result);
+}
+
+void DBConfig::AddExtensionOption(const string &name, string description, LogicalType parameter,
+                                  const Value &default_value, set_option_callback_t function,
+                                  reset_option_callback_t reset_function, SetScope default_scope) {
+	ExtensionOption extension_option(std::move(description), std::move(parameter), function, default_value,
+	                                 default_scope);
+	extension_option.reset_function = reset_function;
+	auto setting_index = user_settings.AddExtensionOption(name, std::move(extension_option));
+	// copy over unrecognized options, if they match the new extension option
+	auto iter = options.unrecognized_options.find(name);
+	if (iter != options.unrecognized_options.end()) {
+		user_settings.SetUserSetting(setting_index, iter->second);
+		options.unrecognized_options.erase(iter);
+	}
+	if (!default_value.IsNull() && !user_settings.IsSet(setting_index)) {
+		// Default value is set, insert it into the 'set_variables' list
+		user_settings.SetUserSetting(setting_index, default_value);
+	}
 }
 
 void DBConfig::AddExtensionOption(const string &name, string description, LogicalType parameter,

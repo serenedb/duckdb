@@ -83,6 +83,7 @@ void DeleteQueryNode::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<unique_ptr<TableRef>>(201, "table", table);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<TableRef>>>(202, "using_clauses", using_clauses);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(203, "returning_list", returning_list);
+	serializer.WritePropertyWithDefault<bool>(204, "is_truncate", is_truncate, false);
 }
 
 unique_ptr<QueryNode> DeleteQueryNode::Deserialize(Deserializer &deserializer) {
@@ -91,6 +92,7 @@ unique_ptr<QueryNode> DeleteQueryNode::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<unique_ptr<TableRef>>(201, "table", result->table);
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<TableRef>>>(202, "using_clauses", result->using_clauses);
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(203, "returning_list", result->returning_list);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(204, "is_truncate", result->is_truncate, false);
 	return std::move(result);
 }
 

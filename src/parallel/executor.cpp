@@ -273,7 +273,8 @@ void Executor::ScheduleEvents(const vector<shared_ptr<MetaPipeline>> &meta_pipel
 }
 
 void Executor::VerifyScheduledEvents(const ScheduleEventData &event_data) {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	const idx_t count = event_data.events.size();
 	vector<reference<Event>> vertices;
 	vertices.reserve(count);
@@ -367,7 +368,8 @@ void Executor::VerifyPipeline(Pipeline &pipeline) {
 }
 
 void Executor::VerifyPipelines() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	for (auto &pipeline : pipelines) {
 		VerifyPipeline(*pipeline);
 	}
@@ -470,6 +472,9 @@ bool Executor::WorkOnTasks() {
 
 void Executor::SignalTaskRescheduled(lock_guard<mutex> &) {
 	task_reschedule.notify_one();
+	if (on_reschedule) {
+		std::exchange(on_reschedule, {})();
+	}
 }
 
 void Executor::WaitForTask() {
@@ -491,7 +496,7 @@ void Executor::WaitForTask() {
 	}
 
 	blocked_thread_time += ms + WAIT_TIME_MS.count();
-	task_reschedule.wait_for(l, WAIT_TIME_MS);
+	task_reschedule.WaitWithTimeout(l.mutex(), absl::FromChrono(WAIT_TIME_MS));
 #endif
 }
 
@@ -554,7 +559,7 @@ bool Executor::ExecutionIsFinished() {
 	return completed_pipelines >= total_pipelines || HasError();
 }
 
-PendingExecutionResult Executor::ExecuteTask(bool dry_run) {
+PendingExecutionResult Executor::ExecuteTask(std::function<void()> on_reschedule_arg, bool dry_run) {
 	// Only executor should return NO_TASKS_AVAILABLE
 	D_ASSERT(execution_result != PendingExecutionResult::NO_TASKS_AVAILABLE);
 	if (execution_result != PendingExecutionResult::RESULT_NOT_READY && ExecutionIsFinished()) {
@@ -585,6 +590,7 @@ PendingExecutionResult Executor::ExecuteTask(bool dry_run) {
 			if (ResultCollectorIsBlocked()) {
 				return PendingExecutionResult::RESULT_READY;
 			}
+			on_reschedule = std::move(on_reschedule_arg);
 			return PendingExecutionResult::BLOCKED;
 		}
 

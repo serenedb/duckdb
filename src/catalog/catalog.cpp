@@ -12,6 +12,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/main/extension_helper.hpp"
+#include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_aggregate_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_collation_info.hpp"
@@ -330,12 +331,17 @@ optional_ptr<CatalogEntry> Catalog::CreateIndex(ClientContext &context, CreateIn
 	return CreateIndex(GetCatalogTransaction(context), info);
 }
 
-unique_ptr<LogicalOperator> Catalog::BindCreateIndex(Binder &binder, CreateStatement &stmt, TableCatalogEntry &table,
+unique_ptr<LogicalOperator> Catalog::BindCreateIndex(Binder &binder, CreateStatement &stmt, CatalogEntry &table,
                                                      unique_ptr<LogicalOperator> plan) {
+	// Catalogs that support indexing views override this method.
+	if (table.type != CatalogType::TABLE_ENTRY) {
+		throw BinderException("can only create an index on a base table");
+	}
 	D_ASSERT(plan->type == LogicalOperatorType::LOGICAL_GET);
 	auto create_index_info = unique_ptr_cast<CreateInfo, CreateIndexInfo>(std::move(stmt.info));
 	IndexBinder index_binder(binder, binder.context);
-	return index_binder.BindCreateIndex(binder.context, std::move(create_index_info), table, std::move(plan), nullptr);
+	return index_binder.BindCreateIndex(binder.context, std::move(create_index_info), table.Cast<TableCatalogEntry>(),
+	                                    std::move(plan), nullptr);
 }
 
 unique_ptr<LogicalOperator> Catalog::BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
@@ -1205,7 +1211,14 @@ vector<reference<CatalogEntry>> Catalog::GetAllEntries(ClientContext &context, C
 }
 
 void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
-	if (transaction.HasContext()) {
+	// ALTER FUNCTION ... RENAME TO ... cannot disambiguate scalar vs table
+	// macro at parse time (mirrors the binder skip in Binder::Bind(AlterStatement)).
+	// Dispatch to the schema without a type-specific lookup so the schema's
+	// Alter implementation can resolve by name across function kinds.
+	const bool is_rename_function = info.type == AlterType::ALTER_SCALAR_FUNCTION &&
+	                                info.Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
+	                                    AlterScalarFunctionType::RENAME_SCALAR_FUNCTION;
+	if (transaction.HasContext() && !is_rename_function) {
 		CatalogEntryRetriever retriever(transaction.GetContext());
 		EntryLookupInfo lookup_info(info.GetCatalogType(), info.name);
 		auto lookup = LookupEntry(retriever, info.schema, lookup_info, info.if_not_found);
@@ -1214,7 +1227,7 @@ void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		}
 		return lookup.schema->Alter(transaction, info);
 	}
-	D_ASSERT(info.if_not_found == OnEntryNotFound::THROW_EXCEPTION);
+	D_ASSERT(is_rename_function || info.if_not_found == OnEntryNotFound::THROW_EXCEPTION);
 	auto &schema = GetSchema(transaction, info.schema);
 	return schema.Alter(transaction, info);
 }

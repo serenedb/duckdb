@@ -434,6 +434,11 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 			logical_planner.parameter_data.emplace(value.first, BoundParameterData(value.second));
 		}
 	}
+	// copy in caller-supplied type hints so the binder can pin
+	// parameter slot types from PG-protocol OIDs without constant-folding.
+	if (parameters.parameter_type_hints) {
+		logical_planner.parameter_type_hints = *parameters.parameter_type_hints;
+	}
 
 	logical_planner.CreatePlan(std::move(statement));
 	D_ASSERT(logical_planner.plan || !logical_planner.properties.bound_all_parameters);
@@ -685,12 +690,12 @@ bool ClientContext::ErrorInvalidatesTransaction(ExceptionType type) {
 }
 
 PendingExecutionResult ClientContext::ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result,
-                                                          bool dry_run) {
+                                                          std::function<void()> on_reschedule_arg, bool dry_run) {
 	D_ASSERT(active_query);
 	D_ASSERT(active_query->IsOpenResult(result));
 	bool invalidate_transaction = true;
 	try {
-		auto query_result = active_query->executor->ExecuteTask(dry_run);
+		auto query_result = active_query->executor->ExecuteTask(std::move(on_reschedule_arg), dry_run);
 		if (active_query->progress_bar) {
 			auto is_finished = PendingQueryResult::IsResultReady(query_result);
 			active_query->progress_bar->Update(is_finished);
@@ -798,13 +803,15 @@ unique_ptr<LogicalOperator> ClientContext::ExtractPlan(const string &query) {
 	return plan;
 }
 
-unique_ptr<PreparedStatement> ClientContext::PrepareInternal(ClientContextLock &lock,
-                                                             unique_ptr<SQLStatement> statement) {
+unique_ptr<PreparedStatement>
+ClientContext::PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
+                               optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
 	auto named_param_map = statement->named_param_map;
 	auto statement_query = statement->query;
 	shared_ptr<PreparedStatementData> prepared_data;
 	auto unbound_statement = statement->Copy();
 	PendingQueryParameters parameters;
+	parameters.parameter_type_hints = parameter_type_hints;
 	RunFunctionInTransactionInternal(
 	    lock,
 	    [&]() {
@@ -831,7 +838,9 @@ unique_ptr<PreparedStatement> ClientContext::Prepare(unique_ptr<SQLStatement> st
 	}
 }
 
-unique_ptr<PreparedStatement> ClientContext::Prepare(const string &query) {
+unique_ptr<PreparedStatement>
+ClientContext::Prepare(const string &query,
+                       optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
 	auto lock = LockContext();
 	// prepare the query
 	try {
@@ -845,7 +854,7 @@ unique_ptr<PreparedStatement> ClientContext::Prepare(const string &query) {
 		if (statements.size() > 1) {
 			throw InvalidInputException("Cannot prepare multiple statements at once!");
 		}
-		return PrepareInternal(*lock, std::move(statements[0]));
+		return PrepareInternal(*lock, std::move(statements[0]), parameter_type_hints);
 	} catch (std::exception &ex) {
 		return ErrorResult<PreparedStatement>(ErrorData(ex), query);
 	}

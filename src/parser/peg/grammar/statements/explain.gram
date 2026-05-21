@@ -12,6 +12,7 @@ ExplainableStatements <-
     CreateStatement /
     DeallocateStatement /
     DeleteStatement /
+    TruncateStatement /
     DropStatement /
     ExecuteStatement /
     InsertStatement /

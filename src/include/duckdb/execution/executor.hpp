@@ -19,6 +19,7 @@
 #include "duckdb/parallel/pipeline.hpp"
 
 #include <condition_variable>
+#include <functional>
 
 namespace duckdb {
 class ClientContext;
@@ -55,7 +56,7 @@ public:
 	void Initialize(unique_ptr<PhysicalOperator> physical_plan);
 
 	void CancelTasks();
-	PendingExecutionResult ExecuteTask(bool dry_run = false);
+	PendingExecutionResult ExecuteTask(std::function<void()> on_reschedule_arg, bool dry_run);
 	void WaitForTask();
 	void SignalTaskRescheduled(lock_guard<mutex> &);
 
@@ -185,10 +186,13 @@ private:
 	//! Task that have been descheduled
 	unordered_map<Task *, shared_ptr<Task>> to_be_rescheduled_tasks;
 	//! The semaphore to signal task rescheduling
-	std::condition_variable task_reschedule;
+	absl::CondVar task_reschedule;
 
 	//! Currently alive executor tasks
 	atomic<idx_t> executor_tasks;
+
+	//! External callback for task rescheduling notification
+	std::function<void()> on_reschedule;
 
 	//! Total time blocked while waiting on tasks. In ticks. One tick corresponds to WAIT_TIME.
 	atomic<idx_t> blocked_thread_time;

@@ -7,12 +7,17 @@ DictFSSTAnalyzeState::DictFSSTAnalyzeState(BlockManager &block_manager) : Analyz
 }
 
 bool DictFSSTAnalyzeState::Analyze(const Vector &input) {
-	for (auto entry : input.Values<string_t>()) {
-		if (!entry.IsValid()) {
+	UnifiedVectorFormat vdata;
+	input.ToUnifiedFormat(vdata);
+	auto data = UnifiedVectorFormat::GetData<string_t>(vdata);
+	const auto count = input.size();
+	for (idx_t i = 0; i < count; i++) {
+		auto idx = vdata.sel->get_index(i);
+		if (!vdata.validity.RowIsValid(idx)) {
 			contains_nulls = true;
 			continue;
 		}
-		auto &str = entry.GetValue();
+		const auto &str = data[idx];
 		auto str_len = str.GetSize();
 		total_string_length += str_len;
 		if (str_len > max_string_length) {
@@ -23,7 +28,7 @@ bool DictFSSTAnalyzeState::Analyze(const Vector &input) {
 			return false;
 		}
 	}
-	total_count += input.size();
+	total_count += count;
 	return true;
 }
 

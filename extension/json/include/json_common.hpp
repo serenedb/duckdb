@@ -45,6 +45,11 @@ public:
 		arena_allocator.Reset();
 	}
 
+	//! For non-yyjson buffers whose lifetime must match yyjson allocations.
+	ArenaAllocator &GetArena() {
+		return arena_allocator;
+	}
+
 	void AddBuffer(Vector &vector) {
 		if (vector.GetType().InternalType() == PhysicalType::VARCHAR) {
 			StringVector::AddAuxiliaryData(vector, make_uniq<JSONStringVectorBuffer>(shared_from_this()));
