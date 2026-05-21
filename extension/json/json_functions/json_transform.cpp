@@ -183,9 +183,13 @@ static inline bool GetValueString(yyjson_val *val, yyjson_alc *alc, string_t &re
 	switch (unsafe_yyjson_get_tag(val)) {
 	case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NOESC:
 	case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NONE:
-	case YYJSON_TYPE_RAW | YYJSON_SUBTYPE_NONE:
-		result = string_t(unsafe_yyjson_get_str(val), unsafe_yyjson_get_len(val));
+	case YYJSON_TYPE_RAW | YYJSON_SUBTYPE_NONE: {
+		auto len = unsafe_yyjson_get_len(val);
+		auto dst = JSONCommon::AllocateArray<char>(alc, len);
+		memcpy(dst, unsafe_yyjson_get_str(val), len);
+		result = string_t(dst, UnsafeNumericCast<uint32_t>(len));
 		return true;
+	}
 	case YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE:
 	case YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE:
 		result = JSONCommon::WriteVal<yyjson_val>(val, alc);
