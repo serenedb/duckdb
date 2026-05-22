@@ -1285,6 +1285,7 @@ void ColumnData::GetColumnSegmentInfo(const QueryContext &context, idx_t row_gro
 		column_info.segment_type = type.ToString();
 		column_info.segment_start = segment_node.GetRowStart();
 		column_info.segment_count = segment.count;
+		column_info.segment_size = segment.SegmentSize();
 		column_info.compression_type = CompressionTypeToString(segment.GetCompressionFunction().type);
 		{
 			lock_guard<mutex> l(stats_lock);

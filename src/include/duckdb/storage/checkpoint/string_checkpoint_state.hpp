@@ -26,6 +26,31 @@ public:
 	virtual void Flush() = 0;
 };
 
+class OverflowStringReader {
+public:
+	virtual ~OverflowStringReader() = default;
+	virtual string_t ReadString(Vector &result, block_id_t block, int32_t offset) = 0;
+};
+
+//! Append-only byte sink addressed by file position; lets a compression
+//! function stream column data past the segment into an external file instead
+//! of block-manager pages (analogous to OverflowStringWriter).
+class ColumnStreamWriter {
+public:
+	virtual ~ColumnStreamWriter() = default;
+	virtual idx_t Position() const = 0;
+	virtual void Append(const_data_ptr_t data, idx_t size) = 0;
+};
+
+class ColumnStreamReader {
+public:
+	virtual ~ColumnStreamReader() = default;
+	//! Returns a stable pointer to [position, position + size) if the source
+	//! supports zero-copy access (e.g. a memory mapping), nullptr otherwise.
+	virtual const_data_ptr_t TryReadStable(idx_t position, idx_t size) = 0;
+	virtual void Read(idx_t position, data_ptr_t target, idx_t size) = 0;
+};
+
 struct StringBlock {
 	shared_ptr<BlockHandle> block;
 	idx_t offset;
@@ -42,7 +67,13 @@ struct UncompressedStringSegmentState : public CompressedSegmentState {
 	//! Map of block id to string block
 	unordered_map<block_id_t, reference<StringBlock>> overflow_blocks;
 	//! Overflow string writer (if any), if not set overflow strings will be written to memory blocks
-	unique_ptr<OverflowStringWriter> overflow_writer;
+	optional_ptr<OverflowStringWriter> overflow_writer;
+	//! Holds the overflow writer when this state owns it (WriteOverflowStringsToDisk)
+	unique_ptr<OverflowStringWriter> owned_overflow_writer;
+	optional_ptr<OverflowStringReader> overflow_reader;
+	//! Position-addressed reader for column data streamed to an external file
+	//! (if any); its presence selects the streamed layout on scan
+	optional_ptr<ColumnStreamReader> stream_reader;
 	//! The block manager with which to write
 	optional_ptr<BlockManager> block_manager;
 	//! The set of overflow blocks written to disk (if any)
