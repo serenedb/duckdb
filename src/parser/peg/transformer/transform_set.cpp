@@ -1,6 +1,8 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/default_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/common/enum_util.hpp"
 
 namespace duckdb {
 
@@ -11,6 +13,30 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformResetStatement(PEGTrans
 		throw NotImplementedException("RESET LOCAL is not implemented.");
 	}
 	return make_uniq<ResetVariableStatement>(set_variable_or_setting.name, set_variable_or_setting.scope);
+}
+
+// SetTransactionIsolation <- 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
+// Maps to PG's SET TRANSACTION ISOLATION LEVEL ...; we forward the parsed level
+// into serenedb's existing "transaction_isolation" client setting, whose
+// SetLocal callback enforces "must be inside a transaction".
+unique_ptr<SetStatement>
+PEGTransformerFactory::TransformSetTransactionIsolation(PEGTransformer &transformer,
+                                                        const TransactionIsolationLevel &isolation_level) {
+	auto level = EnumUtil::ToChars(isolation_level);
+	return make_uniq<SetVariableStatement>("transaction_isolation", make_uniq<ConstantExpression>(Value(level)),
+	                                       SetScope::AUTOMATIC);
+}
+
+// SetSessionCharacteristics <- 'SESSION' 'CHARACTERISTICS' 'AS' 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
+// Maps to PG's SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL ...;
+// forwarded into serenedb's "default_transaction_isolation" setting, which is
+// what BEGIN reads as the default for new transactions.
+unique_ptr<SetStatement>
+PEGTransformerFactory::TransformSetSessionCharacteristics(PEGTransformer &transformer,
+                                                          const TransactionIsolationLevel &isolation_level) {
+	auto level = EnumUtil::ToChars(isolation_level);
+	return make_uniq<SetVariableStatement>("default_transaction_isolation", make_uniq<ConstantExpression>(Value(level)),
+	                                       SetScope::AUTOMATIC);
 }
 
 // SetAssignment <- VariableAssign VariableList
