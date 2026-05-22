@@ -451,15 +451,17 @@ LogicalType BindGeometryType(BindLogicalTypeInput &input) {
 // All Types
 //----------------------------------------------------------------------------------------------------------------------
 
-struct DefaultType {
-	const char *name;
-	LogicalTypeId type;
-	bind_logical_type_function_t bind_function;
-};
+} // namespace
+
+extern "C" __attribute__((weak)) const duckdb::DefaultType *duckdb_external_types(duckdb::idx_t *count);
+
+namespace {
 
 using builtin_type_array = std::array<DefaultType, 82>;
 
-const builtin_type_array BUILTIN_TYPES = {{{"decimal", LogicalTypeId::DECIMAL, BindDecimalType},
+// Lazy-initialized to avoid static initialization order issues with LogicalType.
+static const builtin_type_array &GetBuiltinTypes() {
+static const builtin_type_array BUILTIN_TYPES = {{{"decimal", LogicalTypeId::DECIMAL, BindDecimalType},
                                            {"dec", LogicalTypeId::DECIMAL, BindDecimalType},
                                            {"numeric", LogicalTypeId::DECIMAL, BindDecimalType},
                                            {"time", LogicalTypeId::TIME, nullptr},
@@ -541,9 +543,21 @@ const builtin_type_array BUILTIN_TYPES = {{{"decimal", LogicalTypeId::DECIMAL, B
                                            {"float8", LogicalTypeId::DOUBLE, nullptr},
                                            {"geometry", LogicalTypeId::GEOMETRY, BindGeometryType},
                                            {"type", LogicalTypeId::TYPE, nullptr}}};
+return BUILTIN_TYPES;
+}
 
-optional_ptr<const DefaultType> TryGetDefaultTypeEntry(const Identifier &name) {
-	auto &internal_types = BUILTIN_TYPES;
+optional_ptr<const DefaultType> TryGetDefaultTypeEntry(const string &name) {
+	// Check external types first so they can override builtins (e.g. oid with alias).
+	if (duckdb_external_types) {
+		idx_t count = 0;
+		const auto *external_types = duckdb_external_types(&count);
+		for (idx_t i = 0; i < count; i++) {
+			if (StringUtil::CIEquals(name, external_types[i].name)) {
+				return &external_types[i];
+			}
+		}
+	}
+	auto &internal_types = GetBuiltinTypes();
 	for (auto &type : internal_types) {
 		if (name == type.name) {
 			return &type;
@@ -557,12 +571,10 @@ optional_ptr<const DefaultType> TryGetDefaultTypeEntry(const Identifier &name) {
 //----------------------------------------------------------------------------------------------------------------------
 // Default Type Generator
 //----------------------------------------------------------------------------------------------------------------------
-LogicalTypeId DefaultTypeGenerator::GetDefaultType(const Identifier &name) {
-	auto &internal_types = BUILTIN_TYPES;
-	for (auto &type : internal_types) {
-		if (name == type.name) {
-			return type.type;
-		}
+LogicalType DefaultTypeGenerator::GetDefaultType(const string &name) {
+	auto entry = TryGetDefaultTypeEntry(name);
+	if (entry) {
+		return entry->type;
 	}
 	return LogicalType::INVALID;
 }
@@ -575,7 +587,7 @@ LogicalType DefaultTypeGenerator::TryDefaultBind(const string &name, const vecto
 
 	if (!entry->bind_function) {
 		if (params.empty()) {
-			return LogicalType(entry->type);
+			return entry->type;
 		} else {
 			throw InvalidInputException("Type '%s' does not take any type parameters", name);
 		}
@@ -586,7 +598,7 @@ LogicalType DefaultTypeGenerator::TryDefaultBind(const string &name, const vecto
 		args.emplace_back(param.first, param.second);
 	}
 
-	BindLogicalTypeInput input {nullptr, LogicalType(entry->type), args};
+	BindLogicalTypeInput input {nullptr, entry->type, args};
 	return entry->bind_function(input);
 }
 
@@ -600,12 +612,12 @@ unique_ptr<CatalogEntry> DefaultTypeGenerator::CreateDefaultEntry(ClientContext 
 		return nullptr;
 	}
 	auto entry = TryGetDefaultTypeEntry(entry_name);
-	if (!entry || entry->type == LogicalTypeId::INVALID) {
+	if (!entry || entry->type.id() == LogicalTypeId::INVALID) {
 		return nullptr;
 	}
 	CreateTypeInfo info;
-	info.SetTypeName(entry_name);
-	info.type = LogicalType(entry->type);
+	info.name = entry_name;
+	info.type = entry->type;
 	info.internal = true;
 	info.temporary = true;
 	info.bind_function = entry->bind_function;
@@ -617,9 +629,16 @@ vector<Identifier> DefaultTypeGenerator::GetDefaultEntries() {
 	if (schema.name != DEFAULT_SCHEMA) {
 		return result;
 	}
-	auto &internal_types = BUILTIN_TYPES;
+	auto &internal_types = GetBuiltinTypes();
 	for (auto &type : internal_types) {
 		result.emplace_back(StringUtil::Lower(type.name));
+	}
+	if (duckdb_external_types) {
+		idx_t count = 0;
+		const auto *external_types = duckdb_external_types(&count);
+		for (idx_t i = 0; i < count; i++) {
+			result.emplace_back(StringUtil::Lower(external_types[i].name));
+		}
 	}
 	return result;
 }

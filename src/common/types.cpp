@@ -531,13 +531,18 @@ string LogicalType::ToString() const {
 // LCOV_EXCL_STOP
 
 LogicalTypeId TransformStringToLogicalTypeId(const string &str) {
-	auto type = DefaultTypeGenerator::GetDefaultType(Identifier(str));
-	if (type == LogicalTypeId::INVALID) {
+	auto type = DefaultTypeGenerator::GetDefaultType(str);
+	if (type.id() == LogicalTypeId::INVALID) {
 		// This is a User Type, at this point we don't know if its one of the User Defined Types or an error
 		// It is checked in the binder
-		type = LogicalTypeId::UNBOUND;
+		return LogicalTypeId::UNBOUND;
 	}
-	return type;
+	// Aliased types (e.g. regclass) must stay UNBOUND so the binder resolves
+	// them via TypeCatalogEntry, preserving the alias for cast dispatch.
+	if (type.HasAlias()) {
+		return LogicalTypeId::UNBOUND;
+	}
+	return type.id();
 }
 
 LogicalType TransformStringToLogicalType(const string &str, ClientContext &context) {
