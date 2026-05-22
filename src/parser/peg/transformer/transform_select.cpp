@@ -1153,11 +1153,15 @@ unique_ptr<TableRef> PEGTransformerFactory::TransformTableSubquery(PEGTransforme
 unique_ptr<TableRef> PEGTransformerFactory::TransformBaseTableRef(PEGTransformer &transformer,
                                                                   const optional<Identifier> &table_alias_colon,
                                                                   unique_ptr<BaseTableRef> base_table_name,
-                                                                  const optional<TableAlias> &table_alias,
                                                                   optional<unique_ptr<AtClause>> at_clause,
+                                                                  const optional<TableAlias> &table_alias,
+                                                                  optional<unique_ptr<AtClause>> at_clause_1,
                                                                   optional<unique_ptr<SampleOptions>> sample_clause) {
 	if (table_alias_colon) {
 		base_table_name->alias = *table_alias_colon;
+	}
+	if (at_clause) {
+		base_table_name->at_clause = std::move(*at_clause);
 	}
 	if (table_alias && table_alias_colon) {
 		throw ParserException("Table reference %s cannot have two aliases", base_table_name->ToString());
@@ -1166,8 +1170,11 @@ unique_ptr<TableRef> PEGTransformerFactory::TransformBaseTableRef(PEGTransformer
 		base_table_name->alias = table_alias->name;
 		base_table_name->column_name_alias = table_alias->column_name_alias;
 	}
-	if (at_clause) {
-		base_table_name->at_clause = std::move(*at_clause);
+	if (at_clause_1) {
+		if (base_table_name->at_clause) {
+			throw ParserException("Table reference %s cannot have two AT clauses", base_table_name->ToString());
+		}
+		base_table_name->at_clause = std::move(*at_clause_1);
 	}
 	if (sample_clause) {
 		base_table_name->sample = std::move(*sample_clause);
