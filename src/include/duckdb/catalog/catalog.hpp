@@ -384,6 +384,8 @@ public:
 	                                        LogicalMergeInto &op, PhysicalOperator &plan);
 	virtual unique_ptr<LogicalOperator> BindCreateIndex(Binder &binder, CreateStatement &stmt, TableCatalogEntry &table,
 	                                                    unique_ptr<LogicalOperator> plan);
+	virtual unique_ptr<LogicalOperator> BindCreateViewIndex(Binder &binder, CreateStatement &stmt,
+	                                                        ViewCatalogEntry &view, unique_ptr<LogicalOperator> plan);
 	virtual unique_ptr<LogicalOperator> BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
 	                                                      unique_ptr<LogicalOperator> plan,
 	                                                      unique_ptr<CreateIndexInfo> create_info,

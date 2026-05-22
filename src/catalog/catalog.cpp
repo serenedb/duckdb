@@ -356,6 +356,11 @@ unique_ptr<LogicalOperator> Catalog::BindCreateIndex(Binder &binder, CreateState
 	return index_binder.BindCreateIndex(binder.context, std::move(create_index_info), table, std::move(plan), nullptr);
 }
 
+unique_ptr<LogicalOperator> Catalog::BindCreateViewIndex(Binder &binder, CreateStatement &stmt, ViewCatalogEntry &view,
+                                                         unique_ptr<LogicalOperator> plan) {
+	throw BinderException("can only create an index on a base table");
+}
+
 unique_ptr<LogicalOperator> Catalog::BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
                                                        unique_ptr<LogicalOperator> plan,
                                                        unique_ptr<CreateIndexInfo> create_info,
