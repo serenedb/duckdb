@@ -14,5 +14,7 @@ struct CreateTableDefinition {
 	vector<unique_ptr<ParsedExpression>> partition_keys;
 	vector<unique_ptr<ParsedExpression>> sort_keys;
 	case_insensitive_map_t<unique_ptr<ParsedExpression>> options;
+	vector<string> null_conflict_columns;
+	vector<string> duplicate_default_columns;
 };
 } // namespace duckdb
