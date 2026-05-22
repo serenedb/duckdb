@@ -19,7 +19,8 @@ class MetaTransaction;
 
 class ValidChecker {
 public:
-	explicit ValidChecker(DatabaseInstance &db);
+	enum class Scope { DATABASE, TRANSACTION };
+	ValidChecker(DatabaseInstance &db, Scope scope);
 
 	DUCKDB_API static ValidChecker &Get(DatabaseInstance &db);
 	DUCKDB_API static ValidChecker &Get(AttachedDatabase &db);
@@ -51,6 +52,9 @@ private:
 	string invalidated_msg;
 	//! The database instance.
 	DatabaseInstance &db;
+	//! Which scope this checker represents — controls whether the
+	//! disable_database_invalidation setting gates IsInvalidated.
+	const Scope scope;
 };
 
 } // namespace duckdb
