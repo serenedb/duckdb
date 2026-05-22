@@ -3,11 +3,11 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/main/attached_database.hpp"
-#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -90,6 +90,13 @@ void TransactionContext::SetAutoCommit(bool value) {
 	}
 }
 
+void TransactionContext::SetIsolationLevel(TransactionIsolationLevel new_isolation_level) {
+	if (context.isolation_level_validator) {
+		context.isolation_level_validator(context, new_isolation_level);
+	}
+	isolation_level = new_isolation_level;
+}
+
 void TransactionContext::SetReadOnly() {
 	current_transaction->SetReadOnly();
 }
@@ -126,6 +133,7 @@ void TransactionContext::Rollback(optional_ptr<ErrorData> error) {
 
 void TransactionContext::ClearTransaction() {
 	SetAutoCommit(true);
+	SetIsolationLevel(Settings::Get<DefaultTransactionIsolationSetting>(context));
 	current_transaction = nullptr;
 }
 

@@ -517,6 +517,23 @@
         "default_value": "ALL_ERRORS_INVALIDATE_TRANSACTION"
     },
     {
+        "name": "default_transaction_isolation",
+        "description": "Sets the transaction isolation level of each new transaction.",
+        "type": "ENUM<TransactionIsolationLevel>",
+        "default_scope": "local",
+        "default_value": "repeatable read",
+        "custom_implementation": [
+            "set"
+        ]
+    },
+    {
+        "name": "default_transaction_read_only",
+        "description": "Sets the default read-only status of new transactions.",
+        "type": "BOOLEAN",
+        "default_scope": "local",
+        "default_value": "false"
+    },
+    {
         "name": "delim_join_as_cte",
         "description": "Rewrite delim joins to materialized CTEs during dependent join flattening",
         "type": "BOOLEAN",
@@ -1329,6 +1346,13 @@
         "name": "tracked_metrics",
         "description": "A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*'])",
         "type": "VARCHAR[]",
+        "scope": "local",
+        "custom_implementation": true
+    },
+    {
+        "name": "transaction_isolation",
+        "description": "Sets the current transaction's isolation level.",
+        "type": "ENUM<TransactionIsolationLevel>",
         "scope": "local",
         "custom_implementation": true
     },
