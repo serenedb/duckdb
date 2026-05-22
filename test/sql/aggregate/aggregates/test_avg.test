@@ -91,7 +91,7 @@ INSERT INTO interval_tbl (f1) VALUES
 query I
 select avg(f1) from interval_tbl;
 ----
-4 years 1 month 10 days 04:18:23
+4 years 1 mon 10 days 04:18:23
 
 # invalid use of average
 statement error

@@ -3340,4 +3340,87 @@ bool TryCastFromDecimal::Operation(hugeint_t input, double &result, CastParamete
 	return TryCastDecimalToFloatingPoint<hugeint_t, double>(input, result, width, scale);
 }
 
+template <>
+bool TryCast::Operation(dtime_ns_t input, dtime_tz_t &result, bool strict) {
+	dtime_t micros;
+	return TryCast::Operation(input, micros, strict) && TryCast::Operation(micros, result, strict);
+}
+
+template <>
+bool TryCast::Operation(dtime_t input, interval_t &result, bool strict) {
+	result.months = 0;
+	result.days = 0;
+	result.micros = input.value;
+	return true;
+}
+
+template <>
+bool TryCast::Operation(dtime_tz_t input, dtime_ns_t &result, bool strict) {
+	return TryCast::Operation(input.time(), result, strict);
+}
+
+template <>
+bool TryCast::Operation(interval_t input, dtime_t &result, bool strict) {
+	// The fractional-day portion; months/days are ignored and negatives wrap
+	// forward (PG semantics: '-2 hours' becomes '22:00:00').
+	auto micros = input.micros % Interval::MICROS_PER_DAY;
+	if (micros < 0) {
+		micros += Interval::MICROS_PER_DAY;
+	}
+	result = dtime_t(micros);
+	return true;
+}
+
+template <>
+bool TryCast::Operation(timestamp_ms_t input, dtime_ns_t &result, bool strict) {
+	if (!input.IsFinite()) {
+		return false;
+	}
+	return TryCast::Operation(Cast::Operation<timestamp_ms_t, dtime_t>(input), result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_ms_t input, dtime_tz_t &result, bool strict) {
+	timestamp_t micros;
+	return TryCast::Operation(input, micros, strict) && TryCast::Operation(micros, result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_ns_t input, dtime_tz_t &result, bool strict) {
+	timestamp_t micros;
+	return TryCast::Operation(input, micros, strict) && TryCast::Operation(micros, result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_ns_t input, timestamp_sec_t &result, bool strict) {
+	return TryCastTimestampBase<timestamp_ns_t, timestamp_sec_t>(input, result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_sec_t input, dtime_ns_t &result, bool strict) {
+	if (!input.IsFinite()) {
+		return false;
+	}
+	return TryCast::Operation(Cast::Operation<timestamp_sec_t, dtime_t>(input), result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_sec_t input, dtime_tz_t &result, bool strict) {
+	timestamp_t micros;
+	return TryCast::Operation(input, micros, strict) && TryCast::Operation(micros, result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_t input, dtime_ns_t &result, bool strict) {
+	if (!input.IsFinite()) {
+		return false;
+	}
+	return TryCast::Operation(Cast::Operation<timestamp_t, dtime_t>(input), result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_tz_t input, timestamp_tz_ns_t &result, bool strict) {
+	return TryCastTimestampBase<timestamp_tz_t, timestamp_tz_ns_t>(input, result, strict);
+}
+
 } // namespace duckdb

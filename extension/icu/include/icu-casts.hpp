@@ -37,6 +37,7 @@ struct ICUToTimeTZ : public ICUDateFunc {
 	                     optional_ptr<string> error_message = nullptr);
 
 	static bool CastToTimeTZ(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
+	static bool CastToTimeTZNs(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
 	static bool CastFromTime(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
 
 	static BoundCastInfo BindCastToTimeTZ(BindCastInput &input, const LogicalType &source, const LogicalType &target);

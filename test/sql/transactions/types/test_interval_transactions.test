@@ -20,8 +20,8 @@ UPDATE interval SET t=INTERVAL '1' MONTH WHERE t=INTERVAL '20' DAY;
 query T con1
 SELECT * FROM interval ORDER BY 1
 ----
-1 month
-1 month
+1 mon
+1 mon
 1 year
 
 query I con1
@@ -34,7 +34,7 @@ query T con2
 SELECT * FROM interval ORDER BY 1
 ----
 20 days
-1 month
+1 mon
 1 year
 
 query I con2
@@ -59,7 +59,7 @@ UPDATE interval SET t=INTERVAL '1' MONTH WHERE t=INTERVAL '20' DAY;
 query TI con1
 SELECT t, COUNT(*) FROM interval GROUP BY t ORDER BY 2 DESC
 ----
-1 month	2
+1 mon	2
 1 year	1
 
 query I con1

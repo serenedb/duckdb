@@ -442,7 +442,7 @@ TEST_CASE("V2: temporal values round-trip through their constructor / getter pai
 	    [](duckdb_v2_value_handle v, duckdb_v2_interval_t *out) {
 		    return duckdb_v2_value_get_interval(v, out, nullptr);
 	    },
-	    iv, "1 month 2 days 00:00:03");
+	    iv, "1 mon 2 days 00:00:03");
 }
 
 TEST_CASE("V2: TIME_TZ carries the packed time and offset", "[capi_v2][value][temporal]") {
@@ -522,7 +522,7 @@ TEST_CASE("V2: temporal and UUID values are built from text", "[capi_v2][value][
 	    {DUCKDB_V2_LOGICAL_TYPE_ID_TIMESTAMP_SEC, "2024-03-15 12:34:56"},
 	    {DUCKDB_V2_LOGICAL_TYPE_ID_TIMESTAMP_MS, "2024-03-15 12:34:56.123"},
 	    {DUCKDB_V2_LOGICAL_TYPE_ID_TIMESTAMP_NS, "2024-03-15 12:34:56.123456789"},
-	    {DUCKDB_V2_LOGICAL_TYPE_ID_INTERVAL, "1 month 2 days 00:00:03"},
+	    {DUCKDB_V2_LOGICAL_TYPE_ID_INTERVAL, "1 mon 2 days 00:00:03"},
 	    {DUCKDB_V2_LOGICAL_TYPE_ID_UUID, "47183823-2574-4bfd-b411-99ed177d3e43"},
 	};
 	for (auto &c : cases) {

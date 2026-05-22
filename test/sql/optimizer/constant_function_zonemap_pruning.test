@@ -134,7 +134,7 @@ statement ok
 CREATE TABLE equal_intervals AS SELECT x FROM (VALUES (INTERVAL '1 month'), (INTERVAL '30 days')) t(x);
 
 query II
-SELECT count(*) FILTER (WHERE x::VARCHAR = '1 month'),
+SELECT count(*) FILTER (WHERE x::VARCHAR = '1 mon'),
        count(*) FILTER (WHERE x::VARCHAR = '30 days') FROM equal_intervals;
 ----
 1	1
