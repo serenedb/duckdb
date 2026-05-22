@@ -28,6 +28,18 @@
         "type": "vector<LogicalType>",
         "default": "vector<LogicalType>()",
         "version": "v1.4.0"
+      },
+      {
+        "id": 16484,
+        "name": "return_types",
+        "type": "vector<LogicalType>",
+        "version": "serenedb_v1"
+      },
+      {
+        "id": 16485,
+        "name": "return_names",
+        "type": "vector<string>",
+        "version": "serenedb_v1"
       }
     ],
     "finalize_deserialization": [

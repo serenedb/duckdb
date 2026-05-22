@@ -353,6 +353,12 @@
         "name": "extra_functions",
         "type": "vector<MacroFunction*>",
         "serialize_property": "GetAllButFirstFunction()"
+      },
+      {
+        "id": 16584,
+        "name": "is_procedure",
+        "type": "bool",
+        "version": "serenedb_v1"
       }
     ],
     "constructor": [

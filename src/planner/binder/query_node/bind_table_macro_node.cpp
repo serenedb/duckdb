@@ -9,15 +9,19 @@
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/expression/star_expression.hpp"
+#include "duckdb/parser/statement/select_statement.hpp"
+#include "duckdb/parser/tableref/emptytableref.hpp"
 #include "duckdb/parser/tableref/joinref.hpp"
+#include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/function/table_macro_function.hpp"
+#include "duckdb/function/scalar_macro_function.hpp"
 
 namespace duckdb {
 
-unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, TableMacroCatalogEntry &macro_func,
-                                             idx_t depth) {
+unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, MacroCatalogEntry &macro_func, idx_t depth) {
 	// validate the arguments and separate positional and default arguments
 	vector<unique_ptr<ParsedExpression>> positional_arguments;
 	InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> named_arguments;
@@ -39,10 +43,41 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Table
 	eb.macro_binding = new_macro_binding.get();
 	vector<identifier_set_t> lambda_params;
 
-	auto node = macro_def.Cast<TableMacroFunction>().query_node->Copy();
+	unique_ptr<QueryNode> node;
+	if (macro_def.type == MacroType::SCALAR_MACRO) {
+		auto select_node = make_uniq<SelectNode>();
+		auto expr = macro_def.Cast<ScalarMacroFunction>().expression->Copy();
+		expr->SetAlias(macro_func.name);
+		select_node->select_list.push_back(std::move(expr));
+		select_node->from_table = make_uniq<EmptyTableRef>();
+		node = std::move(select_node);
+	} else {
+		node = macro_def.Cast<TableMacroFunction>().query_node->Copy();
+		if (macro_def.return_names.empty() && macro_def.return_types.size() == 1 &&
+		    node->type == QueryNodeType::SELECT_NODE) {
+			// PG-compat: scalar RETURNS <type> body re-parsed as SELECT. The
+			// caller expects the column to be named after the function.
+			auto &select_node = node->Cast<SelectNode>();
+			if (select_node.select_list.size() == 1) {
+				select_node.select_list[0]->SetAlias(macro_func.name);
+			}
+		}
+	}
 	ParsedExpressionIterator::EnumerateQueryNodeChildren(
 	    *node, [&](unique_ptr<ParsedExpression> &child) { eb.ReplaceMacroParameters(child, lambda_params); });
 
+	if (macro_def.type == MacroType::TABLE_MACRO && !macro_def.return_names.empty()) {
+		auto body = make_uniq<SelectStatement>();
+		body->node = std::move(node);
+		auto body_ref = make_uniq<SubqueryRef>(std::move(body), macro_func.name);
+		for (auto &name : macro_def.return_names) {
+			body_ref->column_name_alias.emplace_back(name);
+		}
+		auto select_node = make_uniq<SelectNode>();
+		select_node->select_list.push_back(make_uniq<StarExpression>());
+		select_node->from_table = std::move(body_ref);
+		node = std::move(select_node);
+	}
 	return node;
 }
 
