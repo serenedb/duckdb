@@ -119,6 +119,12 @@ public:
 	//! the wire layer at connect time; updated on SET ROLE if applicable.
 	string session_user;
 
+	//! Filter for settings listings (duckdb_settings(), SHOW ALL, pg_settings).
+	//! Return false to hide the setting from listings. SET / SHOW <name> are
+	//! unaffected. nullptr = show everything.
+	typedef bool (*setting_visibility_t)(ClientContext &context, const string &name);
+	setting_visibility_t setting_visibility = nullptr;
+
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
 	//! Catalog::GetConnectFunctionName. Use DisconnectFromCatalog() to revert to LOCAL.
