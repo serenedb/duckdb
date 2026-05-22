@@ -36,6 +36,12 @@ struct ColumnScanState;
 struct PrefetchState;
 struct SegmentScanState;
 
+struct CompressionAnalyzeContext {
+	BlockManager &block_manager;
+	DatabaseInstance &db;
+	StorageVersion storage_version;
+};
+
 struct AnalyzeState {
 	explicit AnalyzeState(BlockManager &block_manager_p) : block_manager(block_manager_p), info(block_manager) {
 	}
@@ -136,7 +142,7 @@ struct CompressionAppendState {
 //! 3. The final_analyze method is called, which should return a score for the compression method
 
 //! The system then decides which compression function to use based on the analyzed score (returned from final_analyze)
-typedef unique_ptr<AnalyzeState> (*compression_init_analyze_t)(ColumnData &col_data, PhysicalType type);
+typedef unique_ptr<AnalyzeState> (*compression_init_analyze_t)(CompressionAnalyzeContext &ctx, PhysicalType type);
 typedef bool (*compression_analyze_t)(AnalyzeState &state, const Vector &input);
 typedef idx_t (*compression_final_analyze_t)(AnalyzeState &state);
 

@@ -38,12 +38,11 @@ public:
 };
 
 template <class T>
-unique_ptr<AnalyzeState> AlpRDInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	auto &storage_manager = col_data.GetStorageManager();
-	auto &block_manager = col_data.GetBlockManager();
+unique_ptr<AnalyzeState> AlpRDInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
+	auto &block_manager = ctx.block_manager;
 
 	if (block_manager.GetBlockSize() + block_manager.GetBlockHeaderSize() < DEFAULT_BLOCK_ALLOC_SIZE) {
-		if (StorageManager::IsPriorToVersion(StorageVersion::V1_5_0, storage_manager.GetStorageVersion())) {
+		if (StorageManager::IsPriorToVersion(StorageVersion::V1_5_0, ctx.storage_version)) {
 			// Before v1.5.0, blocks cannot use uncompressed-vector fallback
 			return nullptr;
 		}
