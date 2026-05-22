@@ -1,4 +1,7 @@
-CreateIndexStmt <- UniqueIndex? 'INDEX' IfNotExists? IndexName? 'ON' BaseTableName InsertColumnList? IndexType? Parens(List(IndexElement))? WithList? WhereClause?
+CreateIndexStmt <- UniqueIndex? 'INDEX' IfNotExists? IndexName? 'ON' BaseTableName InsertColumnList? IndexType? Parens(List(IndexElement))? IncludeClause? WithList? WhereClause?
+
+IncludeClause <- 'INCLUDE' Parens(List(IncludedColumn))
+IncludedColumn <- ColId IndexOpclass?
 
 WithList <- 'WITH' RelOptionOrOids
 RelOptionOrOids <- RelOptionList / Oids
@@ -7,7 +10,10 @@ Oids <- WithOrWithoutOids 'OIDS'
 WithOrWithoutOids <- WithOids / WithoutOids
 WithOids <- 'WITH'
 WithoutOids <- 'WITHOUT'
-IndexElement <- Expression DescOrAsc? NullsFirstOrLast?
+IndexElement <- Expression IndexOpclass? DescOrAsc? NullsFirstOrLast?
+IndexOpclass <- Identifier ('.' Identifier)? IndexOpclassOptions?
+IndexOpclassOptions <- Parens(List(IndexOpclassOption)?)
+IndexOpclassOption <- ColLabel ('=' DefArg)?
 UniqueIndex <- 'UNIQUE'
 IndexType <- 'USING' Identifier
 RelOption <- RelOptionName RelOptionArgumentOpt?

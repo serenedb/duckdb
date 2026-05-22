@@ -7,7 +7,7 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateIndexStmt(
     PEGTransformer &transformer, const optional<bool> &unique_index, const optional<bool> &if_not_exists,
     const optional<Identifier> &index_name, unique_ptr<BaseTableRef> base_table_name,
     const optional<vector<string>> &insert_column_list, const optional<Identifier> &index_type,
-    optional<vector<unique_ptr<ParsedExpression>>> index_element,
+    optional<vector<IndexElementDefinition>> index_element, optional<vector<IncludedColumnDefinition>> include_clause,
     optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
     optional<unique_ptr<ParsedExpression>> where_clause) {
 	auto result = make_uniq<CreateStatement>();
@@ -28,15 +28,32 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateIndexStmt(
 			    make_uniq<ColumnRefExpression>(Identifier(column), base_table_name->Table()));
 			index_info->parsed_expressions.push_back(
 			    make_uniq<ColumnRefExpression>(Identifier(column), base_table_name->Table()));
+			index_info->column_opclasses.push_back("");
+			index_info->column_opclass_options.push_back(std::nullopt);
 		}
 	}
 	if (index_element) {
-		for (auto &expr : *index_element) {
-			if (expr->GetExpressionType() == ExpressionType::COLLATE) {
+		for (auto &element : *index_element) {
+			if (element.expr->GetExpressionType() == ExpressionType::COLLATE) {
 				throw NotImplementedException("Index with collation not supported yet!");
 			}
-			index_info->expressions.push_back(expr->Copy());
-			index_info->parsed_expressions.push_back(std::move(expr));
+			index_info->column_opclasses.push_back(element.opclass);
+			index_info->column_opclass_options.push_back(element.opclass_options);
+			index_info->expressions.push_back(element.expr->Copy());
+			index_info->parsed_expressions.push_back(std::move(element.expr));
+		}
+	}
+	// INCLUDE clause: store payload-only columns with opclass "included" (or the
+	// per-column opclass if specified). The catalog treats "included" as
+	// "store but don't tokenize/index".
+	if (include_clause) {
+		for (auto &included : *include_clause) {
+			index_info->expressions.push_back(
+			    make_uniq<ColumnRefExpression>(Identifier(included.name), base_table_name->Table()));
+			index_info->parsed_expressions.push_back(
+			    make_uniq<ColumnRefExpression>(Identifier(included.name), base_table_name->Table()));
+			index_info->column_opclasses.push_back(included.opclass);
+			index_info->column_opclass_options.push_back(std::move(included.opclass_options));
 		}
 	}
 	if (where_clause) {
@@ -63,16 +80,86 @@ Identifier PEGTransformerFactory::TransformIndexType(PEGTransformer &transformer
 	return identifier;
 }
 
-unique_ptr<ParsedExpression>
+// IndexElement <- Expression IndexOpclass? DescOrAsc? NullsFirstOrLast?
+IndexElementDefinition
 PEGTransformerFactory::TransformIndexElement(PEGTransformer &transformer, unique_ptr<ParsedExpression> expression,
+                                             optional<IndexOpclassDefinition> index_opclass,
                                              const optional<OrderType> &desc_or_asc,
                                              const optional<OrderByNullType> &nulls_first_or_last) {
 	// TODO(Dtenwolde): We currently ignore desc_or_asc and nulls_first_or_last
-	return expression;
+	IndexElementDefinition result;
+	result.expr = std::move(expression);
+	if (index_opclass) {
+		result.opclass = std::move(index_opclass->name);
+		result.opclass_options = std::move(index_opclass->options);
+	}
+	return result;
+}
+
+// IncludedColumn <- ColId IndexOpclass?
+// Payload-only columns default to the "included" opclass sentinel; the catalog
+// requires that opclass to carry an (at least empty) options map.
+IncludedColumnDefinition
+PEGTransformerFactory::TransformIncludedColumn(PEGTransformer &transformer, const Identifier &col_id,
+                                               optional<IndexOpclassDefinition> index_opclass) {
+	IncludedColumnDefinition result;
+	result.name = col_id.GetIdentifierName();
+	if (index_opclass) {
+		result.opclass = std::move(index_opclass->name);
+		result.opclass_options = std::move(index_opclass->options);
+	} else {
+		result.opclass = "included";
+		result.opclass_options = case_insensitive_map_t<Value>();
+	}
+	return result;
 }
 
 bool PEGTransformerFactory::TransformUniqueIndex(PEGTransformer &transformer) {
 	return true;
+}
+
+// IndexOpclass <- Identifier ('.' Identifier)? IndexOpclassOptions?
+IndexOpclassDefinition
+PEGTransformerFactory::TransformIndexOpclass(PEGTransformer &transformer, const Identifier &identifier,
+                                             const optional<Identifier> &identifier_1,
+                                             optional<case_insensitive_map_t<Value>> index_opclass_options) {
+	IndexOpclassDefinition result;
+	result.name = identifier.GetIdentifierName();
+	if (identifier_1) {
+		result.name += ".";
+		result.name += identifier_1->GetIdentifierName();
+	}
+	result.options = std::move(index_opclass_options);
+	return result;
+}
+
+// IndexOpclassOptions <- Parens(List(IndexOpclassOption)?)
+// nullopt is reserved for "no parens"; here parens are present, so an empty
+// list yields an empty map.
+case_insensitive_map_t<Value>
+PEGTransformerFactory::TransformIndexOpclassOptions(PEGTransformer &transformer,
+                                                    const optional<vector<pair<string, Value>>> &index_opclass_option) {
+	case_insensitive_map_t<Value> result;
+	if (index_opclass_option) {
+		for (auto &option : *index_opclass_option) {
+			result[StringUtil::Lower(option.first)] = option.second;
+		}
+	}
+	return result;
+}
+
+// IndexOpclassOption <- ColLabel ('=' DefArg)?
+pair<string, Value> PEGTransformerFactory::TransformIndexOpclassOption(PEGTransformer &transformer,
+                                                                       const string &col_label,
+                                                                       optional<unique_ptr<ParsedExpression>> def_arg) {
+	if (!def_arg) {
+		return {col_label, Value::BOOLEAN(true)};
+	}
+	auto &expr = *def_arg;
+	if (expr->GetExpressionClass() != ExpressionClass::CONSTANT) {
+		throw InvalidInputException("Opclass option must be a constant value");
+	}
+	return {col_label, expr->Cast<ConstantExpression>().GetValue()};
 }
 
 case_insensitive_map_t<unique_ptr<ParsedExpression>>
