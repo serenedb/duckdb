@@ -397,6 +397,24 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformAddConstraint(PEGTran
 	return make_uniq<AddConstraintInfo>(AlterEntryData(), std::move(top_level_constraint));
 }
 
+// DropConstraint <- 'DROP' 'CONSTRAINT' IfExists? Identifier DropBehavior?
+unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformDropConstraint(PEGTransformer &transformer,
+                                                                          const optional<bool> &if_exists,
+                                                                          const Identifier &identifier,
+                                                                          const optional<bool> &drop_behavior) {
+	bool cascade = drop_behavior.has_value() && *drop_behavior;
+	return make_uniq<DropConstraintInfo>(AlterEntryData(), identifier.GetIdentifierName(), if_exists.has_value(),
+	                                     cascade);
+}
+
+// RenameConstraint <- 'RENAME' 'CONSTRAINT' Identifier 'TO' Identifier
+unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformRenameConstraint(PEGTransformer &transformer,
+                                                                            const Identifier &identifier,
+                                                                            const Identifier &identifier_1) {
+	return make_uniq<RenameConstraintInfo>(AlterEntryData(), identifier.GetIdentifierName(),
+	                                       identifier_1.GetIdentifierName());
+}
+
 unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformSetSortedBy(PEGTransformer &transformer,
                                                                        vector<OrderByNode> order_by_expressions) {
 	auto result = make_uniq<SetSortedByInfo>(AlterEntryData(), std::move(order_by_expressions));

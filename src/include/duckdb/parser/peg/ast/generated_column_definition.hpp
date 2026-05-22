@@ -14,5 +14,9 @@ struct ConstraintColumnDefinition {
 	ColumnDefinition column_definition;
 	vector<pair<bool, ConstraintType>> constraint_types;
 	vector<unique_ptr<Constraint>> constraints;
+	// PG-compat: explicit `CONSTRAINT <name>` not consumed by an object constraint
+	// (CHECK/FK); carried so the CreateTable transformer names the PK/UNIQUE/NOT NULL
+	// it materializes from the column flags.
+	string constraint_name;
 };
 } // namespace duckdb
