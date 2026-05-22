@@ -81,7 +81,7 @@ DBConfig::DBConfig(const identifier_map_t<Value> &config_dict, bool read_only) :
 DBConfig::~DBConfig() {
 }
 
-DatabaseInstance::DatabaseInstance() : db_validity(*this) {
+DatabaseInstance::DatabaseInstance() : db_validity(*this, ValidChecker::Scope::DATABASE) {
 	config.is_user_config = false;
 	create_api_v1 = nullptr;
 	invoke_capi_v2 = nullptr;
