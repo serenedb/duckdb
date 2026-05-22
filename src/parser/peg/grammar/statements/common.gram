@@ -7,6 +7,8 @@ Statement <-
 	ExtensionRepositoryStatement /
 	CreateDatabaseStatement /
 	DropDatabaseStatement /
+	CreateTSDictionaryStatement /
+	DropTSDictionaryStatement /
 	CreateStatement /
 	SelectStatement /
 	SetStatement /
