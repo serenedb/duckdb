@@ -68,7 +68,7 @@ ORDER BY ALL;
 
 statement ok
 CREATE OR REPLACE TABLE issue12215 AS
-	SELECT col0 AS starts, col1 AS ends
+	SELECT column1 AS starts, column2 AS ends
 	FROM (VALUES
 		(5, 9),
 		(10, 13),
@@ -92,12 +92,12 @@ ORDER BY ALL
 query II
 WITH t as (
     SELECT
-        t1.col0 AS left_val,
-        t2.col0 AS right_val,
+        t1.column1 AS left_val,
+        t2.column1 AS right_val,
     FROM
         (VALUES (0), (5), (10), (15)) AS t1
         ASOF JOIN (VALUES (1), (6), (11), (16)) AS t2
-        ON t2.col0 > t1.col0
+        ON t2.column1 > t1.column1
 )
 SELECT *
 FROM t
@@ -110,12 +110,12 @@ ORDER BY ALL
 query II
 WITH t as (
     SELECT
-        t1.col0 AS left_val,
-        t2.col0 AS right_val,
+        t1.column1 AS left_val,
+        t2.column1 AS right_val,
     FROM
         (VALUES (0), (5), (10), (15)) AS t1
         ASOF LEFT JOIN (VALUES (1), (6), (11), (16)) AS t2
-        ON t2.col0 > t1.col0
+        ON t2.column1 > t1.column1
 )
 SELECT *
 FROM t

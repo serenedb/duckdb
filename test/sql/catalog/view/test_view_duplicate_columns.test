@@ -25,11 +25,11 @@ query I
 select column_name FROM (describe from duplicate_column_view) order by all;
 ----
 column_a
-column_a_1
+column_a:1
 
 
 query I
 select column_name from duckdb_columns() where table_name = 'duplicate_column_view' order by all;
 ----
 column_a
-column_a_1
+column_a:1
