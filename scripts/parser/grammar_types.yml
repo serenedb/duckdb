@@ -935,6 +935,7 @@ SettingInfo:
     - SetVariableOrSetting
     - SetSetting
     - SetVariable
+    - ResetAll
 
 PartitionSortedOptions:
   type: "PartitionSortedOptions"
@@ -1734,6 +1735,7 @@ excluded_rules:
   - PivotStatement
   - UnpivotStatement
   - ShowQualifiedName
+  - ResetAll
   - CommentValue
   - Program
   - Statement

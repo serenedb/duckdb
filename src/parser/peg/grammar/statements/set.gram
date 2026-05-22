@@ -1,7 +1,10 @@
 SetStatement <- 'SET' SetAssignmentOrTimeZone
 SetAssignmentOrTimeZone <- SetSessionCharacteristics / SetTransactionIsolation / StandardAssignment / SetTimeZone
 
-ResetStatement <- 'RESET' SetVariableOrSetting
+ResetStatement <- 'RESET' (ResetAll / SetVariableOrSetting)
+# PG-compat: RESET ALL and RESET LOCAL ALL both reset every user-set option.
+# The LOCAL variant only differs at execution time (transaction-bound).
+ResetAll <- ('LOCAL' 'ALL') / 'ALL'
 StandardAssignment <- SetVariableOrSetting SetAssignment
 SetVariableOrSetting <- SetVariable / SetSetting
 SetTimeZone <- 'TIME' 'ZONE' ZoneValue
@@ -29,4 +32,3 @@ SetAssignment <- VariableAssign VariableList
 
 VariableAssign <- '=' / 'TO'
 VariableList <- List(Expression)
-
