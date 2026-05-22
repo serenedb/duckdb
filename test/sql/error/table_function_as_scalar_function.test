@@ -5,4 +5,4 @@
 statement error
 SELECT read_csv('test.csv')
 ----
-FROM
+No files found that match the pattern "test.csv"

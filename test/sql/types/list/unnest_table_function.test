@@ -121,10 +121,12 @@ statement error
 SELECT i FROM UNNEST(1) AS tbl(i);
 ----
 
-# multiple parameters
-statement error
+# multiple parameters: PostgreSQL's zip form (ROWS FROM), so the second list is a second column
+query I
 SELECT i FROM UNNEST([1, 2], [3, 4]) AS tbl(i);
 ----
+1
+2
 
 # issue 7927
 
