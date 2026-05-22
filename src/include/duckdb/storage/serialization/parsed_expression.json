@@ -48,6 +48,13 @@
         "version": "v2.0.0",
         "equals_skip": true,
         "hash_skip": true
+      },
+      {
+        "name": "is_named_parameter",
+        "type": "bool",
+        "serialize_skip": true,
+        "equals_skip": true,
+        "hash_skip": true
       }
     ]
   },

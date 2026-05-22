@@ -1387,6 +1387,27 @@ PEGTransformerFactory::TransformInfixOtherOperatorExpression(PEGTransformer &tra
 			vector<unique_ptr<ParsedExpression>> children_function;
 			children_function.push_back(std::move(expr));
 			children_function.push_back(std::move(right_expr));
+			// PG regex operators reached this path via OPERATOR(schema.op); rewrite to the configured regex match call.
+			auto split_operator = StringUtil::Split(other_operator, ".");
+			string regex_function_name;
+			bool regex_negated;
+			bool regex_case_insensitive;
+			if (split_operator.size() <= 2 &&
+			    TryGetRegexMatchOperator(split_operator.back(), transformer, regex_function_name, regex_negated,
+			                             regex_case_insensitive)) {
+				if (regex_case_insensitive) {
+					children_function.push_back(ConstantExpression::String("i"));
+				}
+				auto regex_func_expr =
+				    make_uniq<FunctionExpression>(Identifier(regex_function_name), std::move(children_function));
+				regex_func_expr->IsOperatorMutable() = !regex_negated;
+				if (regex_negated) {
+					expr = make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(regex_func_expr));
+				} else {
+					expr = std::move(regex_func_expr);
+				}
+				continue;
+			}
 			expr = TransformOperatorFunction(other_operator, std::move(children_function));
 		}
 	}
