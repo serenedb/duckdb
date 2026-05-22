@@ -178,7 +178,7 @@ static string CreateGridItemContent(RenderTreeNode &node) {
 			continue;
 		}
 		items.push_back(StringUtil::Format(R"(                <div class="sub-title">%s</div>)", key));
-		auto splits = StringUtil::Split(value, "\n");
+		auto splits = StringUtil::Split(value.ToString(), "\n");
 		for (auto &split : splits) {
 			items.push_back(StringUtil::Format(R"(                <div class="value">%s</div>)", split));
 		}

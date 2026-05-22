@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/enums/operator_result_type.hpp"
+#include "duckdb/common/explain_value.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/execution/physical_operator_states.hpp"
@@ -217,6 +218,12 @@ struct TableFunctionToStringInput {
 	}
 	const TableFunction &table_function;
 	optional_ptr<const FunctionData> bind_data;
+
+	optional_ptr<const vector<ColumnIndex>> projected_column_ids;
+	optional_ptr<const vector<idx_t>> projection_ids;
+	optional_ptr<const vector<string>> projected_names;
+	optional_ptr<const vector<LogicalType>> projected_types;
+	bool projected_filter_prune = false;
 };
 
 struct TableFunctionGetPartitionInput {
@@ -358,6 +365,10 @@ typedef void (*table_function_pushdown_complex_filter_t)(ClientContext &context,
                                                          vector<unique_ptr<Expression>> &filters);
 typedef bool (*table_function_pushdown_expression_t)(ClientContext &context, const LogicalGet &get, Expression &expr);
 typedef InsertionOrderPreservingMap<string> (*table_function_to_string_t)(TableFunctionToStringInput &input);
+//! Structured variant of to_string: when set, EXPLAIN/profiling use it instead of to_string,
+//! so the callback can attach ExplainNode trees (rendered as nested boxes / JSON objects)
+typedef InsertionOrderPreservingMap<ExplainValue> (*table_function_to_string_value_t)(
+    TableFunctionToStringInput &input);
 
 typedef void (*table_function_serialize_t)(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
                                            const TableFunction &function);
@@ -479,6 +490,7 @@ public:
 	table_function_pushdown_expression_t pushdown_expression;
 	//! (Optional) function for rendering the operator to a string in explain/profiling output (invoked pre-execution)
 	table_function_to_string_t to_string;
+	table_function_to_string_value_t to_string_value;
 	//! (Optional) return how much of the table we have scanned up to this point (% of the data)
 	table_function_progress_t table_scan_progress;
 	//! (Optional) returns the partition info of the current scan operator

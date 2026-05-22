@@ -50,6 +50,20 @@ void LogicalOperator::SetParamsEstimatedCardinality(InsertionOrderPreservingMap<
 	}
 }
 
+void LogicalOperator::SetParamsEstimatedCardinality(InsertionOrderPreservingMap<ExplainValue> &result) const {
+	if (has_estimated_cardinality) {
+		result[RenderTreeNode::ESTIMATED_CARDINALITY] = StringUtil::Format("%llu", estimated_cardinality);
+	}
+}
+
+InsertionOrderPreservingMap<ExplainValue> LogicalOperator::ParamsToValue() const {
+	InsertionOrderPreservingMap<ExplainValue> result;
+	for (auto &entry : ParamsToString()) {
+		result[entry.first] = std::move(entry.second);
+	}
+	return result;
+}
+
 void LogicalOperator::SetEstimatedCardinality(idx_t _estimated_cardinality) {
 	estimated_cardinality = _estimated_cardinality;
 	has_estimated_cardinality = true;

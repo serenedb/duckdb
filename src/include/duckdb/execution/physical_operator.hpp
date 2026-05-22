@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/common/explain_value.hpp"
 #include "duckdb/common/arena_linked_list.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/common.hpp"
@@ -74,7 +75,11 @@ public:
 	virtual InsertionOrderPreservingMap<string> ParamsToString() const {
 		return InsertionOrderPreservingMap<string>();
 	}
+	//! Structured operator info: defaults to wrapping ParamsToString; overridden where a
+	//! producer attaches structured values (e.g. table scans with a to_string_value callback)
+	virtual InsertionOrderPreservingMap<ExplainValue> ParamsToValue() const;
 	static void SetEstimatedCardinality(InsertionOrderPreservingMap<string> &result, idx_t estimated_cardinality);
+	static void SetEstimatedCardinality(InsertionOrderPreservingMap<ExplainValue> &result, idx_t estimated_cardinality);
 	virtual string ToString(optional_ptr<ClientContext> context = nullptr,
 	                        const ProfilerPrintFormat &format = ProfilerPrintFormat::Default()) const;
 	void Print() const;

@@ -107,7 +107,7 @@ void YAMLTreeRenderer::RenderRecursive(RenderTree &node, BaseTreeRenderer &ss, i
 	if (!current_node.extra_text.empty()) {
 		for (const auto &info : current_node.extra_text) {
 			auto &key = info.first;
-			auto &value = info.second;
+			auto value = info.second.ToString();
 			auto splits = StringUtil::Split(value, "\n");
 			ss << string(indent, ' ') << EscapedString(key) << ":";
 			if (splits.size() > 1) { // list

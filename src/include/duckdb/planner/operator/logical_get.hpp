@@ -67,6 +67,13 @@ public:
 
 	string GetName() const override;
 	InsertionOrderPreservingMap<string> ParamsToString() const override;
+	InsertionOrderPreservingMap<ExplainValue> ParamsToValue() const override;
+
+private:
+	template <class MAP>
+	void AddScanParams(MAP &result) const;
+
+public:
 	//! Returns the underlying table that is being scanned, or nullptr if there is none
 	optional_ptr<TableCatalogEntry> GetTable() const;
 	//! Returns any column to query - preferably the cheapest column

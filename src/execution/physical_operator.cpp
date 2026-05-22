@@ -60,6 +60,19 @@ void PhysicalOperator::SetEstimatedCardinality(InsertionOrderPreservingMap<strin
 	result[RenderTreeNode::ESTIMATED_CARDINALITY] = StringUtil::Format("%llu", estimated_cardinality);
 }
 
+void PhysicalOperator::SetEstimatedCardinality(InsertionOrderPreservingMap<ExplainValue> &result,
+                                               idx_t estimated_cardinality) {
+	result[RenderTreeNode::ESTIMATED_CARDINALITY] = StringUtil::Format("%llu", estimated_cardinality);
+}
+
+InsertionOrderPreservingMap<ExplainValue> PhysicalOperator::ParamsToValue() const {
+	InsertionOrderPreservingMap<ExplainValue> result;
+	for (auto &entry : ParamsToString()) {
+		result[entry.first] = std::move(entry.second);
+	}
+	return result;
+}
+
 idx_t PhysicalOperator::EstimatedThreadCount() const {
 	idx_t result = 0;
 	if (children.empty()) {
