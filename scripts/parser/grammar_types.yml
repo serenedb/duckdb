@@ -449,6 +449,8 @@ Expression:
     - NullIfExpression
     - RowExpression
     - SubstringExpression
+    - SubstringArguments
+    - SubstringSimilar
     - TrimExpression
     - TrimSource
     - OverlayExpression
@@ -609,7 +611,6 @@ ExpressionList:
     - SubstringFromFor
     - SubstringFromOptionalFor
     - SubstringFor
-    - SubstringArguments
     - SubstringExpressionList
     - OverlayArguments
     - OverlayParameters
@@ -1019,6 +1020,7 @@ String:
     - MinusPrefixOperator
     - PlusPrefixOperator
     - TildePrefixOperator
+    - DoubleNotPrefixOperator
     - Framing
     - RowsFraming
     - RangeFraming
@@ -1101,6 +1103,9 @@ Bool:
     - WithOrdinality
     - Asof
     - Materialized
+    - BetweenSymmetry
+    - BetweenSymmetric
+    - BetweenAsymmetric
     - SampleUnit
     - DropBehavior
     - CascadeDropBehavior
