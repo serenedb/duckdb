@@ -25,6 +25,8 @@
 #include "duckdb/common/enums/order_preservation_type.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
 
+#include <span>
+
 namespace duckdb {
 
 //! Controls how a table function manages parallelism.
@@ -185,6 +187,13 @@ public:
 	optional_ptr<GlobalTableFunctionState> global_state;
 	AsyncResult async_result {};
 	AsyncResultsExecutionMode results_execution_mode {AsyncResultsExecutionMode::SYNCHRONOUS};
+
+	//! Per-call sorted file-row-numbers / byte-offsets to look up. Parquet
+	//! treats them as row-group skip keys, csv/json as exact byte offsets.
+	std::span<const int64_t> pk_lookups;
+	//! Output slot for `pk_lookups[i]`. The TF writes directly there; in glob
+	//! mode multiple per-file calls share `output` and write at disjoint slots.
+	std::span<const idx_t> pk_output_positions;
 };
 
 struct TableFunctionPartitionInput {
