@@ -1297,7 +1297,8 @@ LogicalType LogicalType::MaxLogicalType(ClientContext &context, const LogicalTyp
 }
 
 void LogicalType::Verify() const {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	switch (id()) {
 	case LogicalTypeId::DECIMAL:
 		D_ASSERT(DecimalType::GetWidth(*this) >= 1 && DecimalType::GetWidth(*this) <= Decimal::MAX_WIDTH_DECIMAL);
