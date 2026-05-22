@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/explain_value.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/main/profiler/gathered_metrics.hpp"
 
@@ -43,13 +44,13 @@ struct OperatorMetrics {
 		operator_type = PhysicalOperatorType::INVALID;
 		extra_info.clear();
 	}
-	void AddExtraInfo(string key, string value) {
+	void AddExtraInfo(string key, ExplainValue value) {
 		extra_info.insert(make_pair(std::move(key), std::move(value)));
 	}
-	void SetExtraInfo(InsertionOrderPreservingMap<string> info) {
+	void SetExtraInfo(InsertionOrderPreservingMap<ExplainValue> info) {
 		extra_info = std::move(info);
 	}
-	const InsertionOrderPreservingMap<string> &GetExtraInfo() const {
+	const InsertionOrderPreservingMap<ExplainValue> &GetExtraInfo() const {
 		return extra_info;
 	}
 	void GatherMetrics(ClientContext &context, double elapsed_time, optional_ptr<DataChunk> chunk);
@@ -57,7 +58,7 @@ struct OperatorMetrics {
 	void Accumulate(const OperatorMetrics &other);
 
 private:
-	InsertionOrderPreservingMap<string> extra_info;
+	InsertionOrderPreservingMap<ExplainValue> extra_info;
 	void MergeInternal(const OperatorMetrics &other);
 };
 

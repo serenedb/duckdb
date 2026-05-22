@@ -53,9 +53,8 @@ optional_ptr<TableCatalogEntry> LogicalGet::GetTable() const {
 	return function.get_bind_info(bind_data.get()).table;
 }
 
-InsertionOrderPreservingMap<string> LogicalGet::ParamsToString() const {
-	InsertionOrderPreservingMap<string> result;
-
+template <class MAP>
+void LogicalGet::AddScanParams(MAP &result) const {
 	string filters_info;
 	bool first_item = true;
 	for (auto &kv : table_filters) {
@@ -98,13 +97,32 @@ InsertionOrderPreservingMap<string> LogicalGet::ParamsToString() const {
 			                                              extra_info.total_files.GetIndex());
 		}
 	}
+}
 
+InsertionOrderPreservingMap<string> LogicalGet::ParamsToString() const {
+	InsertionOrderPreservingMap<string> result;
+	AddScanParams(result);
 	if (function.to_string) {
 		TableFunctionToStringInput input(function, bind_data.get());
 		auto to_string_result = function.to_string(input);
 		for (const auto &it : to_string_result) {
 			result[it.first] = it.second;
 		}
+	}
+	SetParamsEstimatedCardinality(result);
+	return result;
+}
+
+InsertionOrderPreservingMap<ExplainValue> LogicalGet::ParamsToValue() const {
+	if (!function.to_string_value) {
+		return LogicalOperator::ParamsToValue();
+	}
+	InsertionOrderPreservingMap<ExplainValue> result;
+	AddScanParams(result);
+	TableFunctionToStringInput input(function, bind_data.get());
+	auto to_string_result = function.to_string_value(input);
+	for (auto &it : to_string_result) {
+		result[it.first] = std::move(it.second);
 	}
 	SetParamsEstimatedCardinality(result);
 	return result;
