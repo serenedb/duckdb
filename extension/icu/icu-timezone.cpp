@@ -220,6 +220,12 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 		AddCast(casts, LogicalType::TIMESTAMP_NS, LogicalType::TIMESTAMP_TZ);
 		AddCast(casts, LogicalType::TIMESTAMP_S, LogicalType::TIMESTAMP_TZ);
 		AddCast(casts, LogicalType::DATE, LogicalType::TIMESTAMP_TZ);
+
+		AddCast(casts, LogicalType::TIMESTAMP, LogicalType::TIMESTAMP_TZ_NS);
+		AddCast(casts, LogicalType::TIMESTAMP_MS, LogicalType::TIMESTAMP_TZ_NS);
+		AddCast(casts, LogicalType::TIMESTAMP_NS, LogicalType::TIMESTAMP_TZ_NS);
+		AddCast(casts, LogicalType::TIMESTAMP_S, LogicalType::TIMESTAMP_TZ_NS);
+		AddCast(casts, LogicalType::DATE, LogicalType::TIMESTAMP_TZ_NS);
 	}
 };
 
@@ -298,19 +304,33 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 		switch (source.id()) {
 		case LogicalTypeId::TIMESTAMP_TZ:
 			switch (target.id()) {
+			case LogicalType::TIME:
+				return BoundCastInfo(CastToNaive<timestamp_tz_t, dtime_t>, std::move(cast_data));
+			case LogicalType::TIME_NS:
+				return BoundCastInfo(CastToNaive<timestamp_tz_t, dtime_ns_t>, std::move(cast_data));
 			case LogicalType::TIMESTAMP:
 				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_t>, std::move(cast_data));
+			case LogicalType::TIMESTAMP_S:
+				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_sec_t>, std::move(cast_data));
 			case LogicalType::TIMESTAMP_MS:
 				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_ms_t>, std::move(cast_data));
 			case LogicalType::TIMESTAMP_NS:
 				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_ns_t>, std::move(cast_data));
-			case LogicalType::TIMESTAMP_S:
-				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_sec_t>, std::move(cast_data));
 			default:
 				throw InternalException("Type %s not handled in BindCastToNaive", LogicalTypeIdToString(target.id()));
 			}
 		case LogicalTypeId::TIMESTAMP_TZ_NS:
 			switch (target.id()) {
+			case LogicalType::TIME:
+				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, dtime_t>, std::move(cast_data));
+			case LogicalType::TIME_NS:
+				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, dtime_ns_t>, std::move(cast_data));
+			case LogicalType::TIMESTAMP:
+				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_t>, std::move(cast_data));
+			case LogicalType::TIMESTAMP_S:
+				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_sec_t>, std::move(cast_data));
+			case LogicalType::TIMESTAMP_MS:
+				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_ms_t>, std::move(cast_data));
 			case LogicalType::TIMESTAMP_NS:
 				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_ns_t>, std::move(cast_data));
 			default:
@@ -334,8 +354,15 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 		AddCast(casts, LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_MS);
 		AddCast(casts, LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_NS);
 		AddCast(casts, LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_S);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ, LogicalType::TIME);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ, LogicalType::TIME_NS);
 
 		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIMESTAMP_NS);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIME_NS);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIMESTAMP);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIMESTAMP_MS);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIMESTAMP_S);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIME);
 	}
 };
 
@@ -464,6 +491,27 @@ bool ICUToTimeTZ::CastToTimeTZ(Vector &source, Vector &result, idx_t count, Cast
 	return true;
 }
 
+bool ICUToTimeTZ::CastToTimeTZNs(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+	auto &cast_data = parameters.cast_data->Cast<CastData>();
+	auto &info = cast_data.info->Cast<BindData>();
+	CalendarPtr calendar(info.calendar->clone());
+
+	UnaryExecutor::Execute<timestamp_tz_ns_t, dtime_tz_t>(
+	    source, result, count, [&](timestamp_tz_ns_t input) -> optional<dtime_tz_t> {
+		    if (!input.IsFinite()) {
+			    return nullopt;
+		    }
+		    const auto micros = Cast::Operation<timestamp_ns_t, timestamp_t>(timestamp_ns_t(input.value));
+		    dtime_tz_t output;
+		    if (ToTimeTZ(calendar.get(), timestamp_tz_t(micros.value), output)) {
+			    return output;
+		    } else {
+			    return nullopt;
+		    }
+	    });
+	return true;
+}
+
 BoundCastInfo ICUToTimeTZ::BindCastToTimeTZ(BindCastInput &input, const LogicalType &source,
                                             const LogicalType &target) {
 	if (!input.context) {
@@ -472,6 +520,9 @@ BoundCastInfo ICUToTimeTZ::BindCastToTimeTZ(BindCastInput &input, const LogicalT
 
 	auto cast_data = make_uniq<CastData>(make_uniq<BindData>(*input.context));
 
+	if (source.id() == LogicalTypeId::TIMESTAMP_TZ_NS) {
+		return BoundCastInfo(CastToTimeTZNs, std::move(cast_data));
+	}
 	return BoundCastInfo(CastToTimeTZ, std::move(cast_data));
 }
 
@@ -507,6 +558,9 @@ BoundCastInfo ICUToTimeTZ::BindCastFromTime(BindCastInput &input, const LogicalT
 void ICUToTimeTZ::AddCasts(ExtensionLoader &loader) {
 	const auto implicit_cost = CastRules::ImplicitCast(LogicalType::TIMESTAMP_TZ, LogicalType::TIME_TZ);
 	loader.RegisterCastFunction(LogicalType::TIMESTAMP_TZ, LogicalType::TIME_TZ, BindCastToTimeTZ, implicit_cost);
+
+	const auto ns_implicit_cost = CastRules::ImplicitCast(LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIME_TZ);
+	loader.RegisterCastFunction(LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIME_TZ, BindCastToTimeTZ, ns_implicit_cost);
 
 	const auto time_implicit_cost = CastRules::ImplicitCast(LogicalType::TIME, LogicalType::TIME_TZ);
 	loader.RegisterCastFunction(LogicalType::TIME, LogicalType::TIME_TZ, BindCastFromTime, time_implicit_cost);
