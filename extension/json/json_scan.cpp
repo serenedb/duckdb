@@ -473,6 +473,23 @@ static bool TransformGeoJSONFeatures(yyjson_val *values[], yyjson_alc *alc, cons
 	return success;
 }
 
+//! file_row_number = byte offset of each record's start in the file, computed from the scanned units
+static void FillFileRowNumbers(JSONReaderScanState &scan_state, JSONScanGlobalState &gstate, idx_t count,
+                               DataChunk &output) {
+	if (gstate.file_row_number_idx == DConstants::INVALID_INDEX) {
+		return;
+	}
+	auto &frn_vec = output.data[gstate.file_row_number_idx];
+	auto *frn_data = FlatVector::GetDataMutable<int64_t>(frn_vec);
+	const auto *buffer_handle = scan_state.current_buffer_handle.get();
+	const auto *data_base = buffer_handle ? scan_state.buffer_ptr + buffer_handle->buffer_start : scan_state.buffer_ptr;
+	const auto file_base = buffer_handle ? buffer_handle->file_start : idx_t {0};
+	for (idx_t i = 0; i < count; ++i) {
+		const auto local = UnsafeNumericCast<idx_t>(scan_state.units[i].pointer - data_base);
+		frn_data[i] = UnsafeNumericCast<int64_t>(file_base + local);
+	}
+}
+
 void ReadJSONFunction(ClientContext &context, JSONReader &json_reader, JSONScanGlobalState &gstate,
                       JSONScanLocalState &lstate, DataChunk &output) {
 	auto &scan_state = lstate.GetScanState();
@@ -484,7 +501,7 @@ void ReadJSONFunction(ClientContext &context, JSONReader &json_reader, JSONScanG
 	if (!gstate.names.empty()) {
 		vector<Vector *> result_vectors;
 		result_vectors.reserve(gstate.names.size());
-		for (idx_t i = 0; i < gstate.names.size(); i++) {
+		for (auto i : gstate.column_ids) {
 			result_vectors.emplace_back(&output.data[i]);
 		}
 
@@ -516,6 +533,7 @@ void ReadJSONFunction(ClientContext &context, JSONReader &json_reader, JSONScanG
 			return;
 		}
 	}
+	FillFileRowNumbers(scan_state, gstate, count, output);
 	output.SetChildCardinality(count);
 }
 
@@ -531,7 +549,7 @@ void ReadJSONObjectsFunction(ClientContext &context, JSONReader &json_reader, JS
 
 	if (!gstate.names.empty()) {
 		// Create the strings without copying them
-		auto strings = FlatVector::Writer<string_t>(output.data[0], count);
+		auto strings = FlatVector::Writer<string_t>(output.data[gstate.column_ids[0]], count);
 		for (idx_t i = 0; i < count; i++) {
 			if (objects[i]) {
 				strings.WriteStringRef(string_t(units[i].pointer, units[i].size));
@@ -541,6 +559,7 @@ void ReadJSONObjectsFunction(ClientContext &context, JSONReader &json_reader, JS
 		}
 	}
 
+	FillFileRowNumbers(scan_state, gstate, count, output);
 	output.SetChildCardinality(count);
 }
 

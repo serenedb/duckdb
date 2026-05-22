@@ -1,7 +1,9 @@
 #include "duckdb/function/table/read_file.hpp"
 #include "duckdb/function/table/direct_file_reader.hpp"
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/table_column.hpp"
 #include "duckdb/function/function_set.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/function/table/range.hpp"
@@ -45,6 +47,7 @@ struct DirectMultiFileInfo : MultiFileReaderInterface {
 	                                        const MultiFileOptions &file_options) override;
 	unique_ptr<NodeStatistics> GetCardinality(const MultiFileBindData &bind_data, idx_t file_count) override;
 	FileGlobInput GetGlobInput() override;
+	void GetVirtualColumns(ClientContext &, MultiFileBindData &, virtual_column_map_t &result) override;
 };
 
 template <class OP>
@@ -98,17 +101,18 @@ template <class OP>
 unique_ptr<GlobalTableFunctionState>
 DirectMultiFileInfo<OP>::InitializeGlobalState(ClientContext &context, MultiFileBindData &bind_data,
                                                MultiFileGlobalState &global_state) {
-	auto result = make_uniq<ReadFileGlobalState>();
-
-	result->file_list = bind_data.file_list;
 	vector<idx_t> column_ids;
+	column_ids.reserve(global_state.column_indexes.size());
 	for (idx_t i = 0; i < global_state.column_indexes.size(); i++) {
-		// We only look at file-related columns
-		if (global_state.column_indexes[i].GetPrimaryIndex() <= ReadFileBindData::FILE_LAST_MODIFIED_COLUMN) {
-			column_ids.push_back(global_state.column_indexes[i].GetPrimaryIndex());
+		const auto col_id = global_state.column_indexes[i].GetPrimaryIndex();
+		if (IsVirtualColumn(col_id) && col_id != MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+			continue;
 		}
+		column_ids.push_back(col_id);
 	}
 
+	auto result = make_uniq<ReadFileGlobalState>();
+	result->file_list = bind_data.file_list;
 	for (const auto &column_id : column_ids) {
 		if (column_id == ReadFileBindData::FILE_CONTENT_COLUMN) {
 			result->requires_file_open = true;
@@ -117,7 +121,6 @@ DirectMultiFileInfo<OP>::InitializeGlobalState(ClientContext &context, MultiFile
 			result->requires_file_metadata = true;
 		}
 	}
-
 	result->column_ids = std::move(column_ids);
 	return std::move(result);
 }
@@ -165,6 +168,12 @@ FileGlobInput DirectMultiFileInfo<OP>::GetGlobInput() {
 	return FileGlobOptions::ALLOW_EMPTY;
 }
 
+template <class OP>
+void DirectMultiFileInfo<OP>::GetVirtualColumns(ClientContext &, MultiFileBindData &, virtual_column_map_t &result) {
+	result.emplace(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
+	               TableColumn("file_row_number", LogicalType::BIGINT));
+}
+
 //------------------------------------------------------------------------------
 // Operations
 //------------------------------------------------------------------------------
@@ -193,7 +202,187 @@ static TableFunction GetFunction() {
 	return table_function;
 }
 
+template <class OP>
+struct DirectLookupGlobalState : public GlobalTableFunctionState {
+	OpenFileInfo file;
+	// Per output slot, the column id this slot binds to: a ReadFileBindData::FILE_*_COLUMN,
+	// MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER, or DConstants::INVALID_INDEX for
+	// virtuals we don't handle (filename / file_index / ROW_ID -- those go through the
+	// framework's constant_map or are skipped). DirectLookupScan's switch covers each case.
+	vector<idx_t> output_to_file_col;
+	idx_t file_size = 0;
+	unique_ptr<FileHandle> file_handle;
+	unique_ptr<MemoryStream> content_stream;
+	bool requires_file_open = false;
+};
+
+template <class OP>
+unique_ptr<GlobalTableFunctionState> DirectLookupInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
+	auto &bind_data = input.bind_data->CastNoConst<MultiFileBindData>();
+	auto state = make_uniq<DirectLookupGlobalState<OP>>();
+	state->file = bind_data.file_list->GetFirstFile();
+
+	state->output_to_file_col.reserve(input.column_indexes.size());
+	for (idx_t col_idx = 0; col_idx < input.column_indexes.size(); col_idx++) {
+		const auto col_id = input.column_indexes[col_idx].GetPrimaryIndex();
+		// Keep FILE_ROW_NUMBER alongside the real file columns -- DirectLookupScan's
+		// switch handles it as one of the cases (constant 0 per row). All other virtuals
+		// (including ROW_ID, which IsVirtualColumn catches at >= VIRTUAL_COLUMN_START) get
+		// the INVALID_INDEX sentinel and are skipped.
+		if (IsVirtualColumn(col_id) && col_id != MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+			state->output_to_file_col.push_back(DConstants::INVALID_INDEX);
+			continue;
+		}
+		state->output_to_file_col.push_back(col_id);
+		if (col_id == ReadFileBindData::FILE_CONTENT_COLUMN || col_id == ReadFileBindData::FILE_SIZE_COLUMN ||
+		    col_id == ReadFileBindData::FILE_LAST_MODIFIED_COLUMN) {
+			state->requires_file_open = true;
+		}
+	}
+
+	if (state->requires_file_open) {
+		auto &fs = FileSystem::GetFileSystem(context);
+		auto flags = FileFlags::FILE_FLAGS_READ;
+		if (FileSystem::IsRemoteFile(state->file.path)) {
+			flags |= FileFlags::FILE_FLAGS_DIRECT_IO;
+		}
+		flags.SetCachingMode(CachingMode::CACHE_REMOTE_ONLY);
+		state->file_handle = fs.OpenFile(state->file, flags);
+		state->file_size = state->file_handle->GetFileSize();
+	}
+	return std::move(state);
+}
+
+template <class OP>
+void DirectLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &gstate = data.global_state->Cast<DirectLookupGlobalState<OP>>();
+	if (data.pk_lookups.empty()) {
+		return;
+	}
+	D_ASSERT(data.pk_lookups.size() <= STANDARD_VECTOR_SIZE);
+
+	auto &fs = FileSystem::GetFileSystem(context);
+	auto &file = gstate.file;
+
+	// read_text/blob is one row per file with no filters, so every requested id
+	// survives; append densely from output's current size (glob accumulates).
+	const idx_t count = data.pk_lookups.size();
+	const idx_t base = output.size();
+
+	for (idx_t col_idx = 0; col_idx < gstate.output_to_file_col.size(); ++col_idx) {
+		const auto file_col = gstate.output_to_file_col[col_idx];
+		if (file_col == DConstants::INVALID_INDEX) {
+			continue;
+		}
+		auto &vec = output.data[col_idx];
+		try {
+			switch (file_col) {
+			case MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER: {
+				auto *data_ptr = FlatVector::GetDataMutable<int64_t>(vec);
+				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+					// One row per file -> always 0.
+					D_ASSERT(data.pk_lookups[pk_idx] == 0);
+					data_ptr[base + pk_idx] = 0;
+				}
+			} break;
+			case ReadFileBindData::FILE_NAME_COLUMN: {
+				const auto name_string = StringVector::AddString(vec, file.path);
+				auto *data_ptr = FlatVector::GetDataMutable<string_t>(vec);
+				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+					data_ptr[base + pk_idx] = name_string;
+				}
+			} break;
+			case ReadFileBindData::FILE_CONTENT_COLUMN: {
+				if (!gstate.content_stream) {
+					const idx_t cap = MaxValue<idx_t>(NextPowerOfTwo(gstate.file_size), 1);
+					gstate.content_stream = make_uniq<MemoryStream>(BufferAllocator::Get(context), cap);
+					idx_t total = 0;
+					while (total < gstate.file_size) {
+						const idx_t read = NumericCast<idx_t>(gstate.file_handle->Read(
+						    gstate.content_stream->GetData() + total, gstate.file_size - total));
+						if (read == 0) {
+							throw IOException("Failed to read file '%s' at offset %lu, unexpected EOF", file.path,
+							                  total);
+						}
+						total += read;
+					}
+					gstate.content_stream->SetPosition(total);
+				}
+				const string_t raw(char_ptr_cast(gstate.content_stream->GetData()),
+				                   NumericCast<uint32_t>(gstate.content_stream->GetPosition()));
+				if (OP::TYPE() == LogicalType::VARCHAR && !Utf8Proc::IsValid(raw.GetData(), raw.GetSize())) {
+					throw InvalidInputException(
+					    "read_text: could not read content of file '%s' as valid UTF-8 encoded text. "
+					    "You may want to use read_blob instead.",
+					    file.path);
+				}
+				const auto stored = OP::TYPE() == LogicalType::VARCHAR ? StringVector::AddString(vec, raw)
+				                                                       : StringVector::AddStringOrBlob(vec, raw);
+				auto *data_ptr = FlatVector::GetDataMutable<string_t>(vec);
+				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+					data_ptr[base + pk_idx] = stored;
+				}
+			} break;
+			case ReadFileBindData::FILE_SIZE_COLUMN: {
+				const auto sz = NumericCast<int64_t>(gstate.file_size);
+				auto *data_ptr = FlatVector::GetDataMutable<int64_t>(vec);
+				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+					data_ptr[base + pk_idx] = sz;
+				}
+			} break;
+			case ReadFileBindData::FILE_LAST_MODIFIED_COLUMN: {
+				try {
+					const timestamp_tz_t ts(fs.GetLastModifiedTime(*gstate.file_handle));
+					auto *data_ptr = FlatVector::GetDataMutable<timestamp_tz_t>(vec);
+					for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+						data_ptr[base + pk_idx] = ts;
+					}
+				} catch (std::exception &ex) {
+					ErrorData error(ex);
+					if (error.Type() == ExceptionType::CONVERSION) {
+						for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+							FlatVector::SetNull(vec, base + pk_idx, true);
+						}
+					} else {
+						throw;
+					}
+				}
+			} break;
+			default:
+				break;
+			}
+		} catch (std::exception &ex) {
+			ErrorData error(ex);
+			if (error.Type() == ExceptionType::NOT_IMPLEMENTED) {
+				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+					FlatVector::SetNull(vec, base + pk_idx, true);
+				}
+			} else {
+				throw;
+			}
+		}
+	}
+	for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+		data.pk_survivors[base + pk_idx] = pk_idx;
+	}
+	output.SetCardinality(base + count);
+}
+
 } // namespace
+
+TableFunction MakeTextLookupTableFunction() {
+	TableFunction fn;
+	fn.init_global = DirectLookupInitGlobal<ReadTextOperation>;
+	fn.function = DirectLookupScan<ReadTextOperation>;
+	return fn;
+}
+
+TableFunction MakeBlobLookupTableFunction() {
+	TableFunction fn;
+	fn.init_global = DirectLookupInitGlobal<ReadBlobOperation>;
+	fn.function = DirectLookupScan<ReadBlobOperation>;
+	return fn;
+}
 
 //------------------------------------------------------------------------------
 // Register

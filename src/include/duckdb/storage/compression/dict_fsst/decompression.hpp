@@ -32,6 +32,10 @@ public:
 
 private:
 	string_t FetchStringFromDict(Vector &result, uint32_t dict_offset, idx_t dict_idx);
+	//! Byte offset of `string_number` in the FSST blob. Forward reads extend the running offset (the
+	//! cheap path every sequential/native scan takes); a backward re-seek materializes the full prefix
+	//! sum once (below) and is O(1) thereafter -- no repeated re-walk from the segment start.
+	uint32_t DecompressOffset(idx_t string_number);
 
 public:
 	ColumnSegment &segment;
@@ -50,6 +54,9 @@ public:
 	// decompress offset/position - used for scanning without a dictionary
 	uint32_t decompress_offset = 0;
 	idx_t decompress_position = 0;
+	// Prefix sum of string_lengths, materialized lazily on the first backward re-seek (empty until then,
+	// so forward-only scans never pay for it). Once built, DecompressOffset is O(1) random access.
+	vector<uint32_t> decompress_offsets;
 
 	vector<uint32_t> string_lengths;
 

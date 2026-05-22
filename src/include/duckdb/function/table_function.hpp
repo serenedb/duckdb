@@ -22,6 +22,8 @@
 #include "duckdb/common/enums/order_preservation_type.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
 
+#include <span>
+
 namespace duckdb {
 enum class TablePartitionInfo : uint8_t;
 struct PartitionStatistics;
@@ -206,6 +208,17 @@ public:
 	AsyncResultsExecutionMode results_execution_mode {AsyncResultsExecutionMode::SYNCHRONOUS};
 	//! Interrupt state of the calling task, so the function might park and wake-up by returning a taskless Blocked res
 	optional_ptr<const InterruptState> interrupt_state;
+
+	//! SereneDB inverted-index row-addressed lookup. `pk_lookups` are ascending
+	//! per-call file-row-numbers / byte-offsets to fetch (parquet: row-group skip
+	//! keys; csv/json: exact byte offsets). The lookup TF appends surviving rows
+	//! DENSELY to `output` from its current size (so glob calls accumulate across
+	//! files), and for each output row w writes `pk_survivors[w]` = the index
+	//! into `pk_lookups` it came from, then sets `output`'s cardinality to the
+	//! survivor count. A row missing from the source or dropped by a pushed
+	//! filter gets no slot -- `output` is always compact.
+	std::span<const int64_t> pk_lookups;
+	std::span<idx_t> pk_survivors;
 };
 
 struct TableFunctionPartitionInput {

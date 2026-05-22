@@ -35,4 +35,7 @@ struct ReadFileGlobalState : public GlobalTableFunctionState {
 	unique_ptr<MemoryStream> stream;
 };
 
+TableFunction MakeTextLookupTableFunction();
+TableFunction MakeBlobLookupTableFunction();
+
 } // namespace duckdb

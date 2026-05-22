@@ -120,4 +120,12 @@ struct ReadCSVTableFunction {
 	static void RegisterFunction(BuiltinFunctions &set);
 };
 
+//! Builds a standalone lookup-mode TableFunction for CSV. Shares
+//! MultiFileBindData shape with read_csv (caller passes a pre-bound CSV
+//! bind_data via TableFunctionInput::bind_data). Has its own gstate
+//! (CSVLookupGlobalState) that holds a reusable StringValueScanner pinned
+//! to caller-supplied byte offsets via CSVIterator::SetExactBoundary --
+//! one offset per row, no internal multi-thread dispatch.
+TableFunction MakeCSVLookupTableFunction();
+
 } // namespace duckdb

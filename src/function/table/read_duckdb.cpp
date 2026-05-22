@@ -12,6 +12,9 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/parser/parsed_data/attach_info.hpp"
+#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/storage/table/scan_state.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
 
 namespace duckdb {
 
@@ -527,6 +530,90 @@ TableFunction ReadDuckDBTableFunction::GetFunction() {
 	read_duckdb.late_materialization = true;
 	ReadDuckDBAddNamedParameters(read_duckdb);
 	return static_cast<TableFunction>(read_duckdb);
+}
+
+namespace {
+
+struct DuckDBLookupGlobalState : GlobalTableFunctionState {
+	shared_ptr<DuckDBReader> reader;
+	vector<StorageIndex> fetch_columns;
+	vector<LogicalType> fetch_types;
+	vector<idx_t> output_to_fetch_col;
+	DataChunk fetch_chunk;
+	optional_ptr<TableFilterSet> pushed_filters;
+	//! Persistent lookup cursor, reused across batches so the scan/decode state stays warm.
+	unique_ptr<TableScanState> lookup_scan_state;
+};
+
+unique_ptr<GlobalTableFunctionState> DuckDBLookupInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
+	auto &bind_data = input.bind_data->CastNoConst<MultiFileBindData>();
+	auto &duck_bind = bind_data.bind_data->Cast<DuckDBReadBindData>();
+	auto state = make_uniq<DuckDBLookupGlobalState>();
+
+	const auto &file = bind_data.file_list->GetFirstFile();
+	state->reader = make_shared_ptr<DuckDBReader>(context, file, *duck_bind.options);
+
+	auto &table_entry = state->reader->GetTableEntry();
+	auto &columns = table_entry.GetColumns();
+	state->output_to_fetch_col.reserve(input.column_indexes.size());
+	for (auto &col : input.column_indexes) {
+		if (col.IsVirtualColumn()) {
+			state->output_to_fetch_col.push_back(DConstants::INVALID_INDEX);
+			continue;
+		}
+		const auto logical_col = col.GetPrimaryIndex();
+		const auto physical_col = columns.LogicalToPhysical(LogicalIndex(logical_col)).index;
+		idx_t fetch_idx = DConstants::INVALID_INDEX;
+		for (idx_t i = 0; i < state->fetch_columns.size(); ++i) {
+			if (state->fetch_columns[i].GetPrimaryIndex() == physical_col) {
+				fetch_idx = i;
+				break;
+			}
+		}
+		if (fetch_idx == DConstants::INVALID_INDEX) {
+			fetch_idx = state->fetch_columns.size();
+			state->fetch_columns.emplace_back(physical_col);
+			state->fetch_types.push_back(columns.GetColumn(LogicalIndex(logical_col)).Type());
+		}
+		state->output_to_fetch_col.push_back(fetch_idx);
+	}
+	state->fetch_chunk.Initialize(context, state->fetch_types);
+	state->pushed_filters = input.filters;
+
+	return std::move(state);
+}
+
+void DuckDBLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &gstate = data.global_state->Cast<DuckDBLookupGlobalState>();
+	if (data.pk_lookups.empty()) {
+		return;
+	}
+	D_ASSERT(data.pk_survivors.size() == data.pk_lookups.size());
+
+	auto &table_entry = gstate.reader->GetTableEntry();
+	auto &storage = table_entry.Cast<DuckTableEntry>().GetStorage();
+	auto &transaction = DuckTransaction::Get(context, table_entry.ParentCatalog());
+
+	const auto w =
+	    storage.LookupScan(transaction, context, gstate.fetch_columns, gstate.pushed_filters, data.pk_lookups.data(),
+	                       data.pk_lookups.data() + data.pk_lookups.size(), data.pk_survivors.data(),
+	                       gstate.output_to_fetch_col.data(), gstate.fetch_chunk, output, gstate.lookup_scan_state);
+	// LookupScan wrote each output row's requested-pk index into pk_survivors and compacted output: a
+	// requested id missing from the source or dropped by a pushed filter gets no slot.
+	output.SetCardinality(w);
+}
+
+} // namespace
+
+//! Standalone lookup TableFunction for read_duckdb: gstate opens the database
+//! once per query, pk_lookups (sorted duckdb row ids) arrive per call via
+//! TableFunctionInput, rows are read through a DataTable::Scan of the row id
+//! range with the caller's transaction.
+TableFunction MakeDuckDBLookupTableFunction() {
+	TableFunction fn;
+	fn.init_global = DuckDBLookupInitGlobal;
+	fn.function = DuckDBLookupScan;
+	return fn;
 }
 
 unique_ptr<TableRef> ReadDuckDBTableFunction::ReplacementScan(ClientContext &context, ReplacementScanInput &input,
