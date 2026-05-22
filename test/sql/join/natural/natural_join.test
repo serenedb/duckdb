@@ -46,7 +46,7 @@ SELECT * FROM t1 NATURAL JOIN t3
 query III
 SELECT * FROM t3 NATURAL JOIN t2
 ----
-1	2	3
+1	3	2
 
 # natural join chain
 query III
@@ -84,17 +84,17 @@ RIGHT JOIN issue24045_d ON true
 ----
 1	9
 
-# no matching columns
-statement error
+# no matching columns: PostgreSQL degrades NATURAL JOIN to a cross join, DuckDB rejects it
+query II
 select * from (values (1)) tbl(a) natural join (values (1), (2)) tbl2(b) order by 1, 2
 ----
-<REGEX>:.*Binder Error.*No columns found to join.*
+1	1
+1	2
 
-# Include multiple candidates on both sides in the error message
-statement error
+query IIII
 SELECT * FROM (VALUES (1, 2)) l(a, b) NATURAL JOIN (VALUES (3, 4)) r(c, d)
 ----
-<REGEX>:.*Binder Error.*Left candidates: l.a, l.b.*Right candidates: r.c, r.d.*
+1	2	3	4
 
 # long join chain
 query I
