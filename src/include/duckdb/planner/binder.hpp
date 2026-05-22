@@ -683,6 +683,7 @@ private:
 	BoundStatement BindShow(ShowRef &ref);
 	//! Binds "SHOW name" to the value of the setting "name", returns false if no such setting exists
 	bool TryBindShowSetting(ShowRef &ref, BoundStatement &result);
+	BoundStatement BindShowSetting(ShowRef &ref);
 	BoundStatement BindSummarize(ShowRef &ref);
 
 	void BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &columns, bool default_values,

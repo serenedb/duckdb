@@ -94,12 +94,12 @@ SHOW threads
 statement error
 SHOW my_table
 ----
-<REGEX>:.*Setting with name "my_table" does not exist.*
+<REGEX>:.*unrecognized configuration parameter "my_table".*
 
 statement error
 SHOW this_does_not_exist
 ----
-<REGEX>:.*Setting with name "this_does_not_exist" does not exist.*
+<REGEX>:.*unrecognized configuration parameter "this_does_not_exist".*
 
 # A qualified name cannot be a setting
 statement error
