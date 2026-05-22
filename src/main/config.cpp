@@ -130,7 +130,8 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING_CALLBACK(DefaultOrderSetting),
     DUCKDB_GLOBAL(DefaultSecretStorageSetting),
     DUCKDB_SETTING_CALLBACK(DefaultTransactionInvalidationPolicySetting),
-    DUCKDB_SETTING(DelimJoinAsCteSetting),
+    DUCKDB_SETTING(DelimJoinAsCteSetting),    DUCKDB_SETTING_CALLBACK(DefaultTransactionIsolationSetting),
+    DUCKDB_SETTING(DefaultTransactionReadOnlySetting),
     DUCKDB_SETTING_CALLBACK(DeprecatedUsingKeySyntaxSetting),
     DUCKDB_SETTING_CALLBACK(DialectCompatibilityModeSetting),
     DUCKDB_SETTING_CALLBACK(DisableDatabaseInvalidationSetting),
@@ -234,6 +235,7 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING_CALLBACK(TempFileEncryptionSetting),
     DUCKDB_GLOBAL(ThreadsSetting),
     DUCKDB_LOCAL(TrackedMetricsSetting),
+    DUCKDB_LOCAL(TransactionIsolationSetting),
     DUCKDB_SETTING(UsernameSetting),
     DUCKDB_SETTING_CALLBACK(VacuumRebuildIndexesSetting),
     DUCKDB_SETTING_CALLBACK(ValidateExternalFileCacheSetting),
@@ -252,8 +254,7 @@ static const ConfigurationAlias setting_aliases[] = {DUCKDB_SETTING_ALIAS("confi
                                                      DUCKDB_SETTING_ALIAS("profile_output", 150),
                                                      DUCKDB_SETTING_ALIAS("user", 168),
                                                      DUCKDB_SETTING_ALIAS("wal_autocheckpoint", 28),
-                                                     DUCKDB_SETTING_ALIAS("worker_threads", 166),
-                                                     FINAL_ALIAS};
+                                                     DUCKDB_SETTING_ALIAS("worker_threads", 166),                                                     FINAL_ALIAS};
 
 vector<ConfigurationOption> DBConfig::GetOptions() {
 	vector<ConfigurationOption> options;

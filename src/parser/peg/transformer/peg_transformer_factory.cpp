@@ -157,6 +157,37 @@ void PEGTransformerFactory::RegisterSelect() {
 	REGISTER_TRANSFORM(TransformTableRef);
 	REGISTER_TRANSFORM(TransformWithClause);
 	REGISTER_TRANSFORM(TransformWindowDefinition);
+	REGISTER_TRANSFORM(TransformUsingKey);
+
+	REGISTER_TRANSFORM(TransformSampleClause);
+	REGISTER_TRANSFORM(TransformSampleEntry);
+	REGISTER_TRANSFORM(TransformSampleEntryFunction);
+	REGISTER_TRANSFORM(TransformSampleEntryCount);
+	REGISTER_TRANSFORM(TransformSampleCount);
+	REGISTER_TRANSFORM(TransformSampleValue);
+	REGISTER_TRANSFORM(TransformSampleUnit);
+	REGISTER_TRANSFORM(TransformSampleProperties);
+	REGISTER_TRANSFORM(TransformSampleSeed);
+	REGISTER_TRANSFORM(TransformSampleFunction);
+	REGISTER_TRANSFORM(TransformRepeatableSample);
+}
+
+void PEGTransformerFactory::RegisterSet() {
+	// set.gram
+	REGISTER_TRANSFORM(TransformResetStatement);
+	REGISTER_TRANSFORM(TransformSetAssignment);
+	REGISTER_TRANSFORM(TransformSetSetting);
+	REGISTER_TRANSFORM(TransformSetStatement);
+	REGISTER_TRANSFORM(TransformSetTimeZone);
+	REGISTER_TRANSFORM(TransformSetTransactionIsolation);
+	REGISTER_TRANSFORM(TransformSetSessionCharacteristics);
+	REGISTER_TRANSFORM(TransformIsolationLevel);
+	REGISTER_TRANSFORM(TransformSetVariable);
+	REGISTER_TRANSFORM(TransformStandardAssignment);
+	REGISTER_TRANSFORM(TransformVariableList);
+	REGISTER_TRANSFORM(TransformZoneValue);
+	REGISTER_TRANSFORM(TransformZoneIntervalWithInterval);
+	REGISTER_TRANSFORM(TransformZoneIntervalWithPrecision);
 }
 
 void PEGTransformerFactory::RegisterKeywordsAndIdentifiers() {

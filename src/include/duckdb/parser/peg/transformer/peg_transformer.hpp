@@ -341,41 +341,41 @@ public:
 
 	static unique_ptr<SQLStatement> TransformStatement(PEGTransformer &, ParseResult &list);
 
-	// comment.gram
-	static Value TransformCommentValue(PEGTransformer &transformer, ParseResult &parse_result);
-
-	// common.gram
-	static unique_ptr<ParsedExpression> TransformNumberLiteral(PEGTransformer &transformer, ParseResult &parse_result);
-	static string TransformStringLiteral(PEGTransformer &transformer, ParseResult &parse_result);
-	static DatePartSpecifier TransformIntervalToIntervalAsType(PEGTransformer &transformer, ParseResult &parse_result);
-
-	static string ExtractFormat(const string &file_path);
-
-	// create_table.gram
-	static string TransformColLabelOrString(PEGTransformer &transformer, ParseResult &parse_result);
-	static string TransformIdentifier(PEGTransformer &transformer, ParseResult &parse_result);
-
-	// expression.gram
-	static unique_ptr<ParsedExpression> TransformExpression(PEGTransformer &transformer, ParseResult &parse_result);
-	static unique_ptr<ParsedExpression> TransformPrefixExpression(PEGTransformer &transformer,
+	static unique_ptr<SampleOptions> TransformSampleClause(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SampleOptions> TransformSampleEntry(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SampleOptions> TransformSampleEntryFunction(PEGTransformer &transformer,
 	                                                              ParseResult &parse_result);
-	static unique_ptr<WindowExpression> TransformOverClause(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SampleOptions> TransformSampleEntryCount(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SampleOptions> TransformSampleCount(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<ParsedExpression> TransformSampleValue(PEGTransformer &transformer, ParseResult &parse_result);
+	static bool TransformSampleUnit(PEGTransformer &transformer, ParseResult &parse_result);
+	static pair<SampleMethod, optional_idx> TransformSampleProperties(PEGTransformer &transformer,
+	                                                                  ParseResult &parse_result);
+	static optional_idx TransformSampleSeed(PEGTransformer &transformer, ParseResult &parse_result);
+	static SampleMethod TransformSampleFunction(PEGTransformer &transformer, ParseResult &parse_result);
+	static optional_idx TransformRepeatableSample(PEGTransformer &transformer, ParseResult &parse_result);
 
-	// pivot.gram
-	static unique_ptr<SelectStatement> TransformPivotStatement(PEGTransformer &transformer, ParseResult &parse_result);
-	static unique_ptr<SelectStatement> TransformUnpivotStatement(PEGTransformer &transformer,
-	                                                             ParseResult &parse_result);
+	// set.gram
+	static unique_ptr<SQLStatement> TransformResetStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static vector<unique_ptr<ParsedExpression>> TransformSetAssignment(PEGTransformer &transformer,
+	                                                                   ParseResult &parse_result);
+	static SettingInfo TransformSetSetting(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformSetStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SetStatement> TransformSetTransactionIsolation(PEGTransformer &transformer,
+	                                                                 ParseResult &parse_result);
+	static unique_ptr<SetStatement> TransformSetSessionCharacteristics(PEGTransformer &transformer,
+	                                                                   ParseResult &parse_result);
+	static unique_ptr<SetStatement> TransformSetTimeZone(PEGTransformer &transformer, ParseResult &parse_result);
+	static SettingInfo TransformSetVariable(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<ParsedExpression> TransformZoneValue(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<ParsedExpression> TransformZoneIntervalWithInterval(PEGTransformer &transformer,
+	                                                                      ParseResult &parse_result);
+	static unique_ptr<ParsedExpression> TransformZoneIntervalWithPrecision(PEGTransformer &transformer,
+	                                                                       ParseResult &parse_result);
+	static unique_ptr<SetStatement> TransformStandardAssignment(PEGTransformer &transformer, ParseResult &parse_result);
+	static vector<unique_ptr<ParsedExpression>> TransformVariableList(PEGTransformer &transformer,
+	                                                                  ParseResult &parse_result);
 
-	// select.gram
-	static unique_ptr<SelectStatement> TransformSelectStatementInternalRule(PEGTransformer &transformer,
-	                                                                        ParseResult &parse_result);
-	static unique_ptr<SelectStatement> TransformSimpleSelect(PEGTransformer &transformer, ParseResult &parse_result);
-
-	static unique_ptr<TableRef> TransformTableRef(PEGTransformer &transformer, ParseResult &parse_result);
-
-	static CommonTableExpressionMap TransformWithClause(PEGTransformer &transformer, ParseResult &parse_result);
-	static unique_ptr<ParsedExpression> TransformWindowDefinition(PEGTransformer &transformer,
-	                                                              ParseResult &parse_result);
 	static string TransformIdentifierOrKeyword(PEGTransformer &transformer, ParseResult &parse_result);
 
 	//===--------------------------------------------------------------------===//

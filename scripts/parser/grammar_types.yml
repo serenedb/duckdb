@@ -125,6 +125,8 @@ SetStatement:
     - SetAssignmentOrTimeZone
     - SetTimeZone
     - StandardAssignment
+    - SetTransactionIsolation
+    - SetSessionCharacteristics
 
 QueryNode:
   type: "unique_ptr<QueryNode>"
@@ -1156,6 +1158,13 @@ TransactionModifierType:
     - ReadWrite
     - ReadOrWrite
     - ReadOnlyOrReadWrite
+
+TransactionIsolationLevel:
+  type: "TransactionIsolationLevel"
+  by_value: false
+  rules:
+    - IsolationLevel
+    - IsolationLevelClause
 
 # ---------------------------------------------------------------------------
 # Structs passed by value (contain move-only members like unique_ptr<T>)

@@ -1,10 +1,12 @@
-SetStatement <- 'SET' SetAssignmentOrTimeZone
+SetStatement <- 'SET' (SetSessionCharacteristics / SetTransactionIsolation / SetAssignmentOrTimeZone)
 SetAssignmentOrTimeZone <- StandardAssignment / SetTimeZone
 
 ResetStatement <- 'RESET' SetVariableOrSetting
 StandardAssignment <- SetVariableOrSetting SetAssignment
 SetVariableOrSetting <- SetVariable / SetSetting
 SetTimeZone <- 'TIME' 'ZONE' ZoneValue
+SetTransactionIsolation <- 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
+SetSessionCharacteristics <- 'SESSION' 'CHARACTERISTICS' 'AS' 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
 
 ZoneValue <- ZoneIntervalWithPrecision / ZoneIntervalWithInterval / ZoneLocal / ZoneDefault / ZoneStringLiteral / ZoneIdentifier / NumberLiteral
 ZoneLocal <- 'LOCAL'
