@@ -298,7 +298,7 @@ exported runtime failure
 statement error
 SELECT 42;
 ----
-Current transaction is aborted
+current transaction is aborted
 
 statement ok
 ROLLBACK;
