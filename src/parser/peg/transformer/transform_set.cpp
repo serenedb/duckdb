@@ -51,6 +51,11 @@ unique_ptr<SetStatement> TransformSetSearchPath(const Identifier &name, SetScope
 				return make_set(std::move(wrapped));
 			}
 		}
+		if (expr.GetExpressionType() != ExpressionType::COLUMN_REF) {
+			// on top of PG's grammar, DuckDB allows any expression here and evaluates it: pass it on,
+			// it produces the same comma-joined form current_setting('search_path') renders
+			return make_uniq<SetVariableStatement>(name, std::move(values[0]), scope);
+		}
 		return make_set(serialize(expr));
 	}
 	// Multi-arg: comma-join each PG-quoted element.
@@ -66,13 +71,30 @@ unique_ptr<SetStatement> TransformSetSearchPath(const Identifier &name, SetScope
 
 } // namespace
 
-// ResetStatement <- 'RESET' SetVariableOrSetting
+// ResetStatement <- 'RESET' (ResetAll / SetVariableOrSetting)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformResetStatement(PEGTransformer &transformer,
-                                                                        const SettingInfo &set_variable_or_setting) {
-	if (set_variable_or_setting.scope == SetScope::LOCAL) {
-		throw NotImplementedException("RESET LOCAL is not implemented.");
+                                                                        const SettingInfo &reset_all) {
+	// PG-compat: RESET LOCAL is handled by PhysicalReset at execution time
+	// (rejected outside a transaction with the canonical PG error). The
+	// upstream PEG transformer's NotImplemented throw is removed to keep
+	// parity with the v2026.05.18 libpg_query path.
+	return make_uniq<ResetVariableStatement>(reset_all.name, reset_all.scope);
+}
+
+// ResetAll <- ('LOCAL' 'ALL') / 'ALL'
+// PhysicalReset::GetDataInternal dispatches to ResetAll(...) when the
+// target name is empty, so emit a SettingInfo with an empty name. The
+// LOCAL variant flags scope=LOCAL so PhysicalReset can transaction-bound it.
+SettingInfo PEGTransformerFactory::TransformResetAll(PEGTransformer &transformer, ParseResult &parse_result) {
+	SettingInfo result;
+	result.name = "";
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice = list_pr.Child<ChoiceParseResult>(0);
+	if (choice.GetResult().type == ParseResultType::LIST) {
+		// First alternative: 'LOCAL' 'ALL' keywords.
+		result.scope = SetScope::LOCAL;
 	}
-	return make_uniq<ResetVariableStatement>(set_variable_or_setting.name, set_variable_or_setting.scope);
+	return result;
 }
 
 // SetTransactionIsolation <- 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
@@ -170,9 +192,10 @@ unique_ptr<SetStatement>
 PEGTransformerFactory::TransformStandardAssignment(PEGTransformer &transformer,
                                                    const SettingInfo &set_variable_or_setting,
                                                    vector<unique_ptr<ParsedExpression>> set_assignment) {
-	if (set_variable_or_setting.scope == SetScope::LOCAL) {
-		throw NotImplementedException("SET LOCAL is not implemented.");
-	}
+	// PG-compat: SET LOCAL is enforced at PhysicalSet::SetVariable
+	// (transaction-bound). Don't reject at parse time -- that's a regression
+	// from the upstream PEG transformer; v2026.05.18's libpg_query path
+	// passed the scope through.
 	// PG-compat for serenedb: SET search_path accepts comma-separated lists
 	// and unquoted/string-literal/DEFAULT shapes. Normalize into a single
 	// already-PG-quoted string before producing the SetVariableStatement.

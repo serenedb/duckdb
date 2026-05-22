@@ -137,6 +137,7 @@ QueryNode:
     - ShowSelect
     - ShowTables
     - ShowAllTables
+    - ShowAllSettings
     - ShowQualifiedName
 
 SelectNode:
@@ -934,6 +935,7 @@ SettingInfo:
     - SetVariableOrSetting
     - SetSetting
     - SetVariable
+    - ResetAll
 
 PartitionSortedOptions:
   type: "PartitionSortedOptions"
@@ -1732,6 +1734,8 @@ matcher_rule_overrides:
 excluded_rules:
   - PivotStatement
   - UnpivotStatement
+  - ShowQualifiedName
+  - ResetAll
   - CommentValue
   - Program
   - Statement

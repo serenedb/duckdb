@@ -1391,7 +1391,8 @@ Value SearchPathSetting::GetSetting(const ClientContext &context) {
 	vector<CatalogSearchEntry> filtered;
 	filtered.reserve(set_paths.size());
 	for (auto &entry : set_paths) {
-		if (entry.GetCatalog() != current_catalog) {
+		// an entry set without a catalog qualifier belongs to whichever database is current
+		if (!entry.GetCatalog().empty() && entry.GetCatalog() != current_catalog) {
 			continue;
 		}
 		filtered.emplace_back(Identifier(), entry.GetSchema());

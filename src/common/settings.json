@@ -250,6 +250,13 @@
         ]
     },
     {
+        "name": "copy_csv_header_default",
+        "description": "Whether COPY ... TO a CSV file writes a header line when HEADER is not specified",
+        "type": "BOOLEAN",
+        "default_scope": "local",
+        "default_value": "true"
+    },
+    {
         "name": "current_transaction_invalidation_policy",
         "description": "Which types of exceptions invalidate the database for the current transaction",
         "type": "VARCHAR",
@@ -677,13 +684,6 @@
         "default_value": "false"
     },
     {
-        "name": "enable_object_cache",
-        "description": "[PLACEHOLDER] Legacy setting - does nothing",
-        "type": "BOOLEAN",
-        "default_scope": "global",
-        "default_value": "false"
-    },
-    {
         "name": "enable_optimizer",
         "description": "Whether or not query optimization is enabled",
         "type": "BOOLEAN",
@@ -1105,13 +1105,6 @@
         "on_callbacks": [
             "set"
         ]
-    },
-    {
-        "name": "parallelize_sequential_sources",
-        "description": "Whether to automatically parallelize sequential sources",
-        "type": "BOOLEAN",
-        "default_scope": "local",
-        "default_value": "true"
     },
     {
         "name": "partitioned_write_flush_threshold",
