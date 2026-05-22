@@ -726,18 +726,22 @@ BoundStatement Binder::BindSelectNode(SelectNode &statement, BoundStatement from
 				bound_columns.push_back(bound_qualify_col);
 			}
 			if (!bound_columns.empty()) {
+				// the message quotes the column itself (PG always quotes it in this error), so
+				// pass the raw name - an Identifier argument self-quotes keywords and would
+				// double up the quotes
+				auto &column_name = bound_columns[0].name.GetIdentifierName();
 				string error;
 				error = "column \"%s\" must appear in the GROUP BY clause or must be part of an aggregate function.";
 				if (statement.aggregate_handling == AggregateHandling::FORCE_AGGREGATES) {
 					error += "\nGROUP BY ALL will only group entries in the SELECT list. Add it to the SELECT list or "
 					         "GROUP BY this entry explicitly.";
-					throw BinderException(bound_columns[0].query_location, error, bound_columns[0].name);
+					throw BinderException(bound_columns[0].query_location, error, column_name);
 				} else {
 					error +=
 					    "\nEither add it to the GROUP BY list, or use \"ANY_VALUE(%s)\" if the exact value of \"%s\" "
 					    "is not important.";
-					throw BinderException(bound_columns[0].query_location, error, bound_columns[0].name,
-					                      bound_columns[0].name, bound_columns[0].name);
+					throw BinderException(bound_columns[0].query_location, error, column_name, column_name,
+					                      column_name);
 				}
 			}
 		}
