@@ -341,6 +341,9 @@ public:
 
 	static unique_ptr<SQLStatement> TransformStatement(PEGTransformer &, ParseResult &list);
 
+	static unique_ptr<MacroFunction> TransformAsMacroBody(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<MacroFunction> TransformAtomicMacroBody(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<MacroFunction> TransformReturnMacroBody(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SampleOptions> TransformSampleClause(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SampleOptions> TransformSampleEntry(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SampleOptions> TransformSampleEntryFunction(PEGTransformer &transformer,

@@ -1720,6 +1720,9 @@ excluded_rules:
   - CommentValue
   - Program
   - Statement
+  - FunctionType
+  - DropFunctionItem
+  - DropFunctionArgs
   - Database
   - AbortOrRollback
   - CommitOrEnd

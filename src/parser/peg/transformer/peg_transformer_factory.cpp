@@ -127,7 +127,105 @@ void PEGTransformerFactory::RegisterCommon() {
 	// common.gram
 	REGISTER_TRANSFORM(TransformNumberLiteral);
 	REGISTER_TRANSFORM(TransformStringLiteral);
-	REGISTER_TRANSFORM(TransformIntervalToIntervalAsType);
+	REGISTER_TRANSFORM(TransformType);
+	REGISTER_TRANSFORM(TransformArrayBounds);
+	REGISTER_TRANSFORM(TransformSquareBracketsArray);
+	REGISTER_TRANSFORM(TransformTimeType);
+	REGISTER_TRANSFORM(TransformTimeZone);
+	REGISTER_TRANSFORM(TransformWithOrWithout);
+	REGISTER_TRANSFORM(TransformTimeOrTimestamp);
+	REGISTER_TRANSFORM(TransformNumericType);
+	REGISTER_TRANSFORM(TransformSimpleNumericType);
+	REGISTER_TRANSFORM(TransformDecimalNumericType);
+	REGISTER_TRANSFORM(TransformFloatType);
+	REGISTER_TRANSFORM(TransformDecimalType);
+	REGISTER_TRANSFORM(TransformTypeModifiers);
+	REGISTER_TRANSFORM(TransformSimpleType);
+	REGISTER_TRANSFORM(TransformQualifiedTypeName);
+	REGISTER_TRANSFORM(TransformCharacterType);
+	REGISTER_TRANSFORM(TransformMapType);
+	REGISTER_TRANSFORM(TransformRowType);
+	REGISTER_TRANSFORM(TransformGeometryType);
+	REGISTER_TRANSFORM(TransformVariantType);
+	REGISTER_TRANSFORM(TransformUnionType);
+	REGISTER_TRANSFORM(TransformColIdTypeList);
+	REGISTER_TRANSFORM(TransformColIdType);
+	REGISTER_TRANSFORM(TransformBitType);
+	REGISTER_TRANSFORM(TransformIntervalType);
+	REGISTER_TRANSFORM(TransformIntervalInterval);
+	REGISTER_TRANSFORM(TransformInterval);
+	REGISTER_TRANSFORM(TransformIntervalToInterval);
+	REGISTER_TRANSFORM(TransformSetofType);
+	Register("NumericModType", &TransformDecimalType);
+	Register("DecType", &TransformDecimalType);
+}
+
+void PEGTransformerFactory::RegisterCopy() {
+	// copy.gram
+	REGISTER_TRANSFORM(TransformCopyStatement);
+	REGISTER_TRANSFORM(TransformCopySelect);
+	REGISTER_TRANSFORM(TransformCopyFromDatabase);
+	REGISTER_TRANSFORM(TransformCopyDatabaseFlag);
+	REGISTER_TRANSFORM(TransformCopyTable);
+	REGISTER_TRANSFORM(TransformFromOrTo);
+	REGISTER_TRANSFORM(TransformCopyFileName);
+	REGISTER_TRANSFORM(TransformCopyOptions);
+	REGISTER_TRANSFORM(TransformSpecializedOptionList);
+	REGISTER_TRANSFORM(TransformSpecializedOption);
+	REGISTER_TRANSFORM(TransformSingleOption);
+	REGISTER_TRANSFORM(TransformEncodingOption);
+	REGISTER_TRANSFORM(TransformForceQuoteOption);
+	REGISTER_TRANSFORM(TransformQuoteAsOption);
+	REGISTER_TRANSFORM(TransformForceNullOption);
+	REGISTER_TRANSFORM(TransformPartitionByOption);
+	REGISTER_TRANSFORM(TransformNullAsOption);
+	REGISTER_TRANSFORM(TransformDelimiterAsOption);
+	REGISTER_TRANSFORM(TransformEscapeAsOption);
+	REGISTER_TRANSFORM(TransformSchemaOrData);
+	REGISTER_TRANSFORM(TransformGenericCopyOptionList);
+	REGISTER_TRANSFORM(TransformGenericCopyOption);
+	REGISTER_TRANSFORM(TransformGenericCopyOptionParenthesizedExpressionList);
+}
+
+void PEGTransformerFactory::RegisterCreateIndex() {
+	// create_index.gram
+	REGISTER_TRANSFORM(TransformCreateIndexStmt);
+	REGISTER_TRANSFORM(TransformIndexType);
+	REGISTER_TRANSFORM(TransformIndexElement);
+	REGISTER_TRANSFORM(TransformWithList);
+	REGISTER_TRANSFORM(TransformRelOptionOrOids);
+	REGISTER_TRANSFORM(TransformRelOptionList);
+	REGISTER_TRANSFORM(TransformOids);
+	REGISTER_TRANSFORM(TransformRelOptionName);
+	REGISTER_TRANSFORM(TransformRelOptionArgumentOpt);
+	REGISTER_TRANSFORM(TransformRelOption);
+	REGISTER_TRANSFORM(TransformIndexName);
+}
+
+void PEGTransformerFactory::RegisterCreateMacro() {
+	// create_macro.gram
+	REGISTER_TRANSFORM(TransformCreateMacroStmt);
+	REGISTER_TRANSFORM(TransformMacroDefinition);
+	REGISTER_TRANSFORM(TransformTableMacroDefinition);
+	REGISTER_TRANSFORM(TransformScalarMacroDefinition);
+	REGISTER_TRANSFORM(TransformAsMacroBody);
+	REGISTER_TRANSFORM(TransformAtomicMacroBody);
+	REGISTER_TRANSFORM(TransformReturnMacroBody);
+	REGISTER_TRANSFORM(TransformMacroParameters);
+	REGISTER_TRANSFORM(TransformMacroParameter);
+	REGISTER_TRANSFORM(TransformSimpleParameter);
+}
+
+void PEGTransformerFactory::RegisterCreateSequence() {
+	REGISTER_TRANSFORM(TransformCreateSequenceStmt);
+	REGISTER_TRANSFORM(TransformSequenceOption);
+	REGISTER_TRANSFORM(TransformSeqSetCycle);
+	REGISTER_TRANSFORM(TransformSeqSetIncrement);
+	REGISTER_TRANSFORM(TransformSeqSetMinMax);
+	REGISTER_TRANSFORM(TransformSeqMinOrMax);
+	REGISTER_TRANSFORM(TransformSeqNoMinMax);
+	REGISTER_TRANSFORM(TransformSeqStartWith);
+	REGISTER_TRANSFORM(TransformSeqOwnedBy);
 }
 
 void PEGTransformerFactory::RegisterCreateTable() {
