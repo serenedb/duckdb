@@ -296,6 +296,13 @@ public:
 	vector<unique_ptr<CreatePivotEntry>> pivot_entries;
 	vector<reference<CommonTableExpressionMap>> stored_cte_map;
 
+	//! When parsing a top-level SELECT ... INTO target, captures the target table.
+	//! Consumed and cleared at the statement boundary. select_depth counts the
+	//! SelectStatementInternal frames currently on the stack; INTO is rejected
+	//! whenever more than one frame is active (i.e. a nested SELECT).
+	unique_ptr<BaseTableRef> select_into_target;
+	idx_t select_depth = 0;
+
 	bool in_window_definition = false;
 	bool has_anonymous_parameters = false;
 

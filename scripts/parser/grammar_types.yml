@@ -580,6 +580,7 @@ BaseTableRef:
     - TargetOptAlias
     - InsertTarget
     - TruncateTarget
+    - SelectIntoClause
 
 # ---------------------------------------------------------------------------
 # vector<T> categories
