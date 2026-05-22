@@ -444,6 +444,8 @@ public:
 	void RegisterCreateTable();
 	void RegisterExpression();
 	void RegisterPivot();
+	void RegisterCreateMacro();
+	void RegisterDrop();
 	void RegisterSelect();
 	void RegisterKeywordsAndIdentifiers();
 	void RegisterGenerated();
@@ -495,6 +497,12 @@ public:
 	static unique_ptr<SelectStatement> TransformPivotStatement(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SelectStatement> TransformUnpivotStatement(PEGTransformer &transformer,
 	                                                             ParseResult &parse_result);
+
+	// create_macro.gram
+	static unique_ptr<MacroFunction> TransformMacroDefinition(PEGTransformer &transformer, ParseResult &parse_result);
+
+	// drop.gram
+	static unique_ptr<DropStatement> TransformDropFunction(PEGTransformer &transformer, ParseResult &parse_result);
 
 	// select.gram
 	static unique_ptr<SelectStatement> TransformSelectStatementInternalRule(PEGTransformer &transformer,
