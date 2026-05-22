@@ -69,8 +69,12 @@ LogicalType PEGTransformerFactory::TransformType(PEGTransformer &transformer,
 	return LogicalType::UNBOUND(std::move(type));
 }
 
-int64_t PEGTransformerFactory::TransformArrayKeyword(PEGTransformer &transformer) {
-	return -1;
+int64_t PEGTransformerFactory::TransformArrayKeyword(PEGTransformer &transformer,
+                                                     const optional<int64_t> &square_brackets_array) {
+	if (!square_brackets_array) {
+		return -1;
+	}
+	return *square_brackets_array;
 }
 
 int64_t PEGTransformerFactory::TransformSquareBracketsArray(PEGTransformer &transformer,
