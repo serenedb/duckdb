@@ -600,6 +600,12 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	BindSchemaOrCatalog(node.qualified_name);
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, node.qualified_name);
 
+	// SereneDB fork: a zero-physical-column table (CREATE TABLE t();) has no columns to
+	// materialize a row into, so INSERT ... DEFAULT VALUES is rejected here (PostgreSQL allows it).
+	if (node.default_values && table.GetColumns().PhysicalColumnCount() == 0) {
+		throw NotImplementedException("cannot insert into table \"%s\" with no columns", table.name);
+	}
+
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::INSERT_EVENT)) {
 		return std::move(*expanded);
 	}
