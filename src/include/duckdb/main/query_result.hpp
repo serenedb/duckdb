@@ -20,6 +20,7 @@
 #include "duckdb/main/result_unit.hpp"
 #include "duckdb/main/retained_result_collection.hpp"
 
+#include <functional>
 #include <type_traits>
 
 namespace duckdb {
@@ -118,7 +119,7 @@ public:
 	//! Executes a single task of the query on the calling thread. Decides nothing: READY means the engine is
 	//! waiting for the retention decision, and every further call returns READY, running nothing, until a
 	//! stream is opened or a retained-side call (Materialize, Complete, Collection, ...) is made.
-	DUCKDB_API QueryResultState ExecuteTask();
+	DUCKDB_API QueryResultState ExecuteTask(std::function<void()> on_reschedule_arg = {});
 	//! Blocks until a task is runnable or the engine is waiting on the caller. Runs no task.
 	DUCKDB_API void WaitForTask();
 	DUCKDB_API const ResultFormat &Format() const;

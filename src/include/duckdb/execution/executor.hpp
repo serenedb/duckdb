@@ -18,6 +18,8 @@
 #include "duckdb/execution/progress_data.hpp"
 #include "duckdb/parallel/pipeline.hpp"
 
+#include <functional>
+
 namespace duckdb {
 class BufferedData;
 class ClientContext;
@@ -61,7 +63,7 @@ public:
 		return task != nullptr;
 	}
 	//! Run one partial task slice on the calling thread and report the resulting state
-	QueryResultState ExecuteTask();
+	QueryResultState ExecuteTask(std::function<void()> on_reschedule_arg = {});
 	//! Report the execution state without running any task
 	QueryResultState Poll();
 	void WaitForTask();
@@ -158,7 +160,7 @@ private:
 
 	bool NextExecutor();
 	//! The state to report when this thread has no task to run
-	QueryResultState IdleState();
+	QueryResultState IdleState(std::function<void()> on_reschedule_arg = {});
 	//! Cancel all tasks and throw the recorded error
 	void FailExecution();
 	//! Advance to the next executor, or record and return FINISHED
@@ -219,6 +221,9 @@ private:
 	mutex result_buffer_lock;
 	//! The buffer of the result this query produces, or null for a query that has none
 	shared_ptr<BufferedData> result_buffer;
+
+	//! External callback for task rescheduling notification
+	std::function<void()> on_reschedule;
 
 	//! Total time blocked while waiting on tasks, in microseconds
 	atomic<idx_t> blocked_thread_time;
