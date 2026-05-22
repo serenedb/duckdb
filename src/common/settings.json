@@ -254,6 +254,13 @@
         ]
     },
     {
+        "name": "copy_csv_header_default",
+        "description": "Whether COPY ... TO a CSV file writes a header line when HEADER is not specified",
+        "type": "BOOLEAN",
+        "default_scope": "local",
+        "default_value": "true"
+    },
+    {
         "name": "current_dialect",
         "description": "The SQL dialect used by the parser.",
         "type": "VARCHAR",
@@ -1502,7 +1509,7 @@
         "name": "show_behavior",
         "description": "Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.",
         "type": "ENUM<ShowBehaviorType>",
-        "default_scope": "global",
+        "default_scope": "local",
         "default_value": "AUTO"
     },
     {
@@ -1579,7 +1586,8 @@
         "description": "Sets the current transaction's isolation level.",
         "type": "ENUM<TransactionIsolationLevel>",
         "scope": "local",
-        "custom_implementation": true
+        "custom_implementation": true,
+        "no_reset_all": true
     },
     {
         "name": "username",

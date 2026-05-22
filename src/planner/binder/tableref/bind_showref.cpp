@@ -1,7 +1,12 @@
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/function/pragma/pragma_functions.hpp"
 #include "duckdb/function/table/system_functions.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/statement/select_statement.hpp"
+#include "duckdb/parser/tableref/emptytableref.hpp"
 #include "duckdb/parser/tableref/showref.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/planner/binder.hpp"
@@ -167,8 +172,8 @@ BoundStatement Binder::BindDescribeTable(ShowRef &ref) {
 		sql = "SELECT "
 		      " schema.database_name, "
 		      " schema.schema_name, "
-		      " ((select current_schema() = schema.schema_name) "
-		      "  and (select current_database() = schema.database_name)) \"current\" "
+		      " coalesce((select current_schema() = schema.schema_name) "
+		      "  and (select current_database() = schema.database_name), false) \"current\" "
 		      "FROM duckdb_schemas() schema "
 		      "JOIN duckdb_databases dbs USING (database_oid) "
 		      "WHERE dbs.internal = false "
@@ -237,24 +242,22 @@ bool Binder::TryBindShowSetting(ShowRef &ref, BoundStatement &result) {
 		Catalog::AutoloadExtensionByConfigName(context, setting_name);
 		context.TryGetCurrentSetting(setting_name, setting_value);
 	}
-
-	vector<LogicalType> types {setting_value.type()};
-	vector<Identifier> names {setting_name};
-
-	DataChunk output;
-	output.Initialize(Allocator::Get(context), types);
-	output.data[0].Append(setting_value);
-	output.CheckCardinality(1);
-
-	auto collection = make_uniq<ColumnDataCollection>(context, types);
-	collection->Append(output);
-
-	auto table_index = GenerateTableIndex();
-	result.names = names;
-	result.types = types;
-	result.plan = make_uniq<LogicalColumnDataGet>(table_index, types, std::move(collection));
-	bind_context.AddGenericBinding(table_index, "__show_setting", names, types);
+	result = BindShowSetting(ref);
 	return true;
+}
+
+BoundStatement Binder::BindShowSetting(ShowRef &ref) {
+	vector<unique_ptr<ParsedExpression>> children;
+	children.push_back(ConstantExpression::String(ref.GetTableName().GetIdentifierName()));
+	auto setting = make_uniq<FunctionExpression>("current_setting", std::move(children));
+	setting->SetAlias(ref.GetTableName());
+	auto node = make_uniq<SelectNode>();
+	node->select_list.push_back(std::move(setting));
+	node->from_table = make_uniq<EmptyTableRef>();
+	auto select = make_uniq<SelectStatement>();
+	select->node = std::move(node);
+	auto subquery = make_uniq<SubqueryRef>(std::move(select));
+	return Bind(*subquery);
 }
 
 //! Warn that using "SHOW name" to describe a table is deprecated in favor of DESCRIBE
@@ -289,8 +292,8 @@ BoundStatement Binder::BindShow(ShowRef &ref) {
 	switch (behavior) {
 	case ShowBehaviorType::SETTING:
 		// "SHOW name" only ever resolves a setting.
-		if (can_be_setting && TryBindShowSetting(ref, result)) {
-			return result;
+		if (can_be_setting) {
+			return BindShowSetting(ref);
 		}
 		throw CatalogException("Setting with name \"%s\" does not exist", name);
 	case ShowBehaviorType::TABLE:

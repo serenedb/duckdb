@@ -1,10 +1,11 @@
-DescribeStatement <- ShowTables / ShowDeprecatedSelect / DescribeSelect / ShowAllTables / ShowByName / DescribeByName
+DescribeStatement <- ShowTables / ShowDeprecatedSelect / DescribeSelect / ShowAllTables / ShowAllSettings / ShowByName / DescribeByName
 
 # "DESCRIBE (query)" and "SUMMARIZE (query)" describe the query's columns. "SHOW (query)" does too but is deprecated,
 # so ShowDeprecatedSelect is parsed yet suppressed from autocomplete (matcher_factory.cpp) - SHOW won't offer to complete a query.
 ShowDeprecatedSelect <- ShowRule SelectStatementInternal
 DescribeSelect <- DescribeOrSummarize SelectStatementInternal
-ShowAllTables <- ShowOrDescribe 'ALL' 'TABLES'?
+ShowAllTables <- ShowOrDescribe 'ALL' 'TABLES'
+ShowAllSettings <- ShowOrDescribe 'ALL'
 ShowTables <- ShowOrDescribe 'TABLES' 'FROM' QualifiedName
 
 # "SHOW name" is settings-first, so its target autocompletes setting names (and the special MySQL forms), not

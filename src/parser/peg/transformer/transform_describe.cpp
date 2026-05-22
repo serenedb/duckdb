@@ -2,6 +2,8 @@
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
+#include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 
 namespace duckdb {
 
@@ -67,11 +69,25 @@ unique_ptr<QueryNode> PEGTransformerFactory::TransformShowTables(PEGTransformer 
 }
 
 unique_ptr<QueryNode> PEGTransformerFactory::TransformShowAllTables(PEGTransformer &transformer,
-                                                                    const ShowType &show_or_describe,
-                                                                    const bool &has_result) {
+                                                                    const ShowType &show_or_describe) {
 	auto showref = make_uniq<ShowRef>();
 	SetShowAllTables(*showref);
 	return WrapShowRef(std::move(showref));
+}
+
+// SHOW ALL -> SELECT name, setting, short_desc AS description FROM pg_settings
+unique_ptr<QueryNode> PEGTransformerFactory::TransformShowAllSettings(PEGTransformer &transformer,
+                                                                      const ShowType &show_or_describe) {
+	auto result = make_uniq<SelectNode>();
+	result->select_list.emplace_back(make_uniq<ColumnRefExpression>("name"));
+	result->select_list.emplace_back(make_uniq<ColumnRefExpression>("setting"));
+	auto desc_col = make_uniq<ColumnRefExpression>("short_desc");
+	desc_col->SetAlias("description");
+	result->select_list.emplace_back(std::move(desc_col));
+	auto tableref = make_uniq<BaseTableRef>();
+	tableref->SetTable("pg_settings");
+	result->from_table = std::move(tableref);
+	return std::move(result);
 }
 
 // The special MySQL-inherited forms - "[SHOW|DESCRIBE] DATABASES|SCHEMAS|TABLES|VARIABLES" - which the binder

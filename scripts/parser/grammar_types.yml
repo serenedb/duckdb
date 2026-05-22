@@ -160,6 +160,7 @@ QueryNode:
     - DescribeSelect
     - ShowTables
     - ShowAllTables
+    - ShowAllSettings
     - ShowByName
     - DescribeByName
 
@@ -1036,6 +1037,8 @@ SettingInfo:
     - SetVariableOrSetting
     - SetSetting
     - SetVariable
+    - ResetTarget
+    - ResetAll
 
 PartitionSortedOptions:
   type: "PartitionSortedOptions"

@@ -26,4 +26,7 @@ BEGIN
 statement error
 RESET LOCAL allowed_paths
 ----
-Not implemented Error: RESET LOCAL is not implemented.
+cannot be reset locally
+
+statement ok
+ROLLBACK
