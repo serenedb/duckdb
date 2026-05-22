@@ -484,6 +484,8 @@ Expression:
     - NullIfExpression
     - RowExpression
     - SubstringExpression
+    - SubstringSimilarExpression
+    - SubstringSimilar
     - TrimExpression
     - TrimSource
     - OverlayExpression
@@ -1121,6 +1123,7 @@ String:
     - MinusPrefixOperator
     - PlusPrefixOperator
     - TildePrefixOperator
+    - DoubleNotPrefixOperator
     - Framing
     - RowsFraming
     - RangeFraming
@@ -1213,6 +1216,9 @@ Bool:
     - NearestApprox
     - NearestExact
     - Materialized
+    - BetweenSymmetry
+    - BetweenSymmetric
+    - BetweenAsymmetric
     - SampleUnit
     - DropBehavior
     - CascadeDropBehavior

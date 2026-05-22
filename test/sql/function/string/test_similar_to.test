@@ -13,27 +13,27 @@ SELECT 'aaa' SIMILAR TO 'aaa'
 1
 
 query T
-SELECT 'aaa' SIMILAR TO '.*'
+SELECT 'aaa' SIMILAR TO '%'
 ----
 1
 
 query T
-SELECT 'aaa' SIMILAR TO 'a.*'
+SELECT 'aaa' SIMILAR TO 'a%'
 ----
 1
 
 query T
-SELECT 'aaa' SIMILAR TO '.*a'
+SELECT 'aaa' SIMILAR TO '%a'
 ----
 1
 
 query T
-SELECT 'aaa' SIMILAR TO '.*b'
+SELECT 'aaa' SIMILAR TO '%b'
 ----
 0
 
 query T
-SELECT 'aaa' SIMILAR TO 'b.*'
+SELECT 'aaa' SIMILAR TO 'b%'
 ----
 0
 
@@ -48,12 +48,12 @@ SELECT 'aaa' SIMILAR TO 'a[a-z]{2}'
 1
 
 query T
-SELECT 'aaa' SIMILAR TO 'a[a-z].*'
+SELECT 'aaa' SIMILAR TO 'a[a-z]%'
 ----
 1
 
 query T
-SELECT 'aaa' SIMILAR TO '[a-z][a-z].*'
+SELECT 'aaa' SIMILAR TO '[a-z][a-z]%'
 ----
 1
 
@@ -109,10 +109,10 @@ statement ok
 CREATE TABLE strings (s STRING, p STRING);
 
 statement ok
-INSERT INTO strings VALUES('aaa', 'a[a-z]a'), ('abab', 'ab.*'), ('aaa', 'a[a-z]a'), ('aaa', '.*b.*');
+INSERT INTO strings VALUES('aaa', 'a[a-z]a'), ('abab', 'ab%'), ('aaa', 'a[a-z]a'), ('aaa', '%b%');
 
 query T
-SELECT s FROM strings WHERE s SIMILAR TO 'ab.*'
+SELECT s FROM strings WHERE s SIMILAR TO 'ab%'
 ----
 abab
 
