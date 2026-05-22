@@ -145,7 +145,29 @@ void Optimizer::RunOptimizer(OptimizerType type, const std::function<void()> &ca
 	auto &profiler = QueryProfiler::Get(context);
 	{
 		auto optimizer_timer = profiler.StartTimerInternal("optimizer." + StringUtil::Lower(EnumUtil::ToString(type)));
+		// Fire anchored Before-rules registered for this built-in pass.
+		for (auto &ext : OptimizerExtension::Iterate(context)) {
+			if (!ext.rule || ext.anchor != type || ext.where != OptimizerHookPosition::Before) {
+				continue;
+			}
+			OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
+			ext.rule(input, plan);
+			if (plan) {
+				Verify(*plan);
+			}
+		}
 		callback();
+		// Fire anchored After-rules registered for this built-in pass.
+		for (auto &ext : OptimizerExtension::Iterate(context)) {
+			if (!ext.rule || ext.anchor != type || ext.where != OptimizerHookPosition::After) {
+				continue;
+			}
+			OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
+			ext.rule(input, plan);
+			if (plan) {
+				Verify(*plan);
+			}
+		}
 	}
 	if (plan) {
 		Verify(*plan);
@@ -582,6 +604,9 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	}
 
 	for (auto &pre_optimizer_extension : OptimizerExtension::Iterate(context)) {
+		if (pre_optimizer_extension.anchor != OptimizerType::INVALID) {
+			continue; // anchored: fires inside RunOptimizer instead
+		}
 		RunOptimizer(OptimizerType::EXTENSION, [&]() {
 			OptimizerExtensionInput input {GetContext(), *this, pre_optimizer_extension.optimizer_info.get()};
 			if (pre_optimizer_extension.pre_optimize_function) {
@@ -594,6 +619,9 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	RunBuiltInOptimizers();
 
 	for (auto &optimizer_extension : OptimizerExtension::Iterate(context)) {
+		if (optimizer_extension.anchor != OptimizerType::INVALID) {
+			continue; // anchored: fires inside RunOptimizer instead
+		}
 		RunOptimizer(OptimizerType::EXTENSION, [&]() {
 			OptimizerExtensionInput input {GetContext(), *this, optimizer_extension.optimizer_info.get()};
 			if (optimizer_extension.optimize_function) {
