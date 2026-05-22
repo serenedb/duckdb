@@ -112,23 +112,27 @@ ColumnList PEGTransformerFactory::TransformIdentifierList(PEGTransformer &transf
 	return result;
 }
 
-CreateTableDefinition PEGTransformerFactory::TransformCreateColumnList(
-    PEGTransformer &transformer, optional<ColumnElements> create_table_column_list,
-    optional<PartitionSortedOptions> partition_sorted_options,
-    optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list) {
-	if (!create_table_column_list || create_table_column_list->columns.empty()) {
-		throw ParserException("Table must have at least one column!");
+ColumnElements PEGTransformerFactory::TransformCreateColumnList(PEGTransformer &transformer,
+                                                                ParseResult &parse_result) {
+	// CreateColumnList <- Parens(CreateTableColumnList?) PartitionSortedOptions? WithList?
+	// child 0: Parens(CreateTableColumnList?)
+	// child 1: PartitionSortedOptions?
+	// child 2: WithList?
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &create_table_column_list =
+	    ExtractResultFromParens(list_pr.Child<ListParseResult>(0)).Cast<OptionalParseResult>();
+	ColumnElements result;
+	// PG-compat: allow `CREATE TABLE t()` with no columns. Indexes /
+	// constraints can attach later; the binder's "at least one physical
+	// column" check is also relaxed.
+	if (create_table_column_list.HasResult()) {
+		result = transformer.Transform<ColumnElements>(create_table_column_list.GetResult());
 	}
-	CreateTableDefinition result;
-	result.columns = std::move(create_table_column_list->columns);
-	result.constraints = std::move(create_table_column_list->constraints);
-	if (partition_sorted_options) {
-		result.partition_keys = std::move(partition_sorted_options->partition_keys);
-		result.sort_keys = std::move(partition_sorted_options->sort_keys);
-	}
-	if (with_list) {
-		result.options = std::move(*with_list);
-	}
+	PartitionSortedOptions pso;
+	transformer.TransformOptional<PartitionSortedOptions>(list_pr, 1, pso);
+	result.partition_keys = std::move(pso.partition_keys);
+	result.sort_keys = std::move(pso.sort_keys);
+	transformer.TransformOptional<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(list_pr, 2, result.options);
 	return result;
 }
 
