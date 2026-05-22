@@ -713,7 +713,7 @@ static Identifier AddColumnNameToBinding(const Identifier &base_name, identifier
 	idx_t index = 1;
 	Identifier name = base_name;
 	while (current_names.find(name) != current_names.end()) {
-		name = Identifier(base_name + "_" + std::to_string(index++));
+		name = Identifier(base_name + ":" + std::to_string(index++));
 	}
 	current_names.insert(name);
 	return name;
