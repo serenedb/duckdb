@@ -440,6 +440,8 @@ void DataChunk::Verify() {
 }
 
 void DataChunk::VerifyInternal(DebugVerificationMode mode, optional_ptr<DatabaseInstance> db) {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	if (mode == DebugVerificationMode::DEFAULT) {
 		mode = DBConfigOptions::global_verification_mode;
 	}
@@ -507,6 +509,7 @@ void DataChunk::VerifyInternal(DebugVerificationMode mode, optional_ptr<Database
 			throw InternalException("Data Chunk Verification: Serialization size mismatch");
 		}
 	}
+#endif
 }
 
 void DataChunk::Print() const {
