@@ -11,8 +11,8 @@ namespace duckdb {
 MetaTransaction::MetaTransaction(ClientContext &context_p, timestamp_t start_timestamp_p,
                                  transaction_t transaction_id_p)
     : context(context_p), start_timestamp(start_timestamp_p), global_transaction_id(transaction_id_p),
-      transaction_validity(*context_p.db), active_query(MAXIMUM_QUERY_ID), modified_database(nullptr),
-      is_read_only(false) {
+      transaction_validity(*context_p.db, ValidChecker::Scope::TRANSACTION), active_query(MAXIMUM_QUERY_ID),
+      modified_database(nullptr), is_read_only(false) {
 }
 
 MetaTransaction &MetaTransaction::Get(ClientContext &context) {
@@ -45,6 +45,9 @@ static void VerifyAllTransactionsUnique(AttachedDatabase &db, vector<reference<A
 
 optional_ptr<Transaction> MetaTransaction::TryGetTransaction(AttachedDatabase &db) {
 	lock_guard<mutex> guard(lock);
+	if (scoped_override_txn && scoped_override_db && RefersToSameObject(*scoped_override_db, db)) {
+		return scoped_override_txn;
+	}
 	auto entry = transactions.find(db);
 	if (entry == transactions.end()) {
 		return nullptr;
@@ -58,6 +61,9 @@ Transaction &MetaTransaction::GetTransaction(AttachedDatabase &db) {
 		throw IOException("%s", ValidChecker::InvalidatedMessage(db));
 	}
 	lock_guard<mutex> guard(lock);
+	if (scoped_override_txn && scoped_override_db && RefersToSameObject(*scoped_override_db, db)) {
+		return *scoped_override_txn;
+	}
 	auto entry = transactions.find(db);
 	if (entry == transactions.end()) {
 		auto &new_transaction = db.GetTransactionManager().StartTransaction(context);
@@ -91,6 +97,24 @@ void MetaTransaction::RemoveTransaction(AttachedDatabase &db) {
 			break;
 		}
 	}
+}
+
+void MetaTransaction::PushTransactionOverride(AttachedDatabase &db, Transaction &transaction) {
+	lock_guard<mutex> guard(lock);
+	if (scoped_override_txn) {
+		throw InternalException("MetaTransaction::PushTransactionOverride called while an override is already active");
+	}
+	scoped_override_db = &db;
+	scoped_override_txn = &transaction;
+}
+
+void MetaTransaction::PopTransactionOverride(AttachedDatabase &db) {
+	lock_guard<mutex> guard(lock);
+	if (!scoped_override_db || !RefersToSameObject(*scoped_override_db, db)) {
+		throw InternalException("MetaTransaction::PopTransactionOverride called without a matching active override");
+	}
+	scoped_override_db = nullptr;
+	scoped_override_txn = nullptr;
 }
 
 void MetaTransaction::SetReadOnly() {
