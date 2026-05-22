@@ -6,7 +6,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <thread>
 
 using namespace duckdb;
@@ -39,26 +38,25 @@ public:
 class ConcurrencyLatch {
 public:
 	void Enter() {
-		unique_lock<mutex> guard(lock);
+		lock_guard<mutex> guard(lock);
 		active++;
 		max_active = MaxValue(max_active, active);
 		entered++;
-		cv.notify_all();
-		cv.wait(guard, [&]() { return released; });
+		lock.Await(absl::Condition(&released));
 		active--;
 	}
 
 	bool WaitForEntered(idx_t count) {
-		unique_lock<mutex> guard(lock);
-		return cv.wait_for(guard, std::chrono::seconds(5), [&]() { return entered >= count; });
+		lock_guard<mutex> guard(lock);
+		auto reached = [&]() {
+			return entered >= count;
+		};
+		return lock.AwaitWithTimeout(absl::Condition(&reached), absl::Seconds(5));
 	}
 
 	void Release() {
-		{
-			lock_guard<mutex> guard(lock);
-			released = true;
-		}
-		cv.notify_all();
+		lock_guard<mutex> guard(lock);
+		released = true;
 	}
 
 	idx_t MaxActive() {
@@ -68,7 +66,6 @@ public:
 
 private:
 	mutex lock;
-	std::condition_variable cv;
 	idx_t active = 0;
 	idx_t max_active = 0;
 	idx_t entered = 0;

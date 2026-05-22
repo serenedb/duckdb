@@ -7,7 +7,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <future>
 
 using namespace duckdb;
@@ -95,28 +94,23 @@ private:
 class AsyncPoolBlockerState {
 public:
 	bool WaitForStarted() {
-		unique_lock<mutex> guard(lock);
-		return cv.wait_for(guard, std::chrono::seconds(5), [&]() { return started; });
+		lock_guard<mutex> guard(lock);
+		return lock.AwaitWithTimeout(absl::Condition(&started), absl::Seconds(5));
 	}
 
 	void Enter() {
-		unique_lock<mutex> guard(lock);
+		lock_guard<mutex> guard(lock);
 		started = true;
-		cv.notify_all();
-		cv.wait(guard, [&]() { return released; });
+		lock.Await(absl::Condition(&released));
 	}
 
 	void Release() {
-		{
-			lock_guard<mutex> guard(lock);
-			released = true;
-		}
-		cv.notify_all();
+		lock_guard<mutex> guard(lock);
+		released = true;
 	}
 
 private:
 	mutex lock;
-	std::condition_variable cv;
 	bool started = false;
 	bool released = false;
 };

@@ -532,8 +532,8 @@ static bool GetCaseInsensitivePrefixBounds(const string &prefix, string &min_pre
 		if (byte & 0x80) {
 			return false;
 		}
-		auto lower_byte = StringUtil::ASCII_TO_LOWER_MAP[byte];
-		min_prefix.push_back(UnsafeNumericCast<char>(StringUtil::ASCII_TO_UPPER_MAP[byte]));
+		auto lower_byte = static_cast<uint8_t>(StringUtil::CharacterToLower(c));
+		min_prefix.push_back(StringUtil::CharacterToUpper(c));
 		switch (lower_byte) {
 		case 'i':
 			max_prefix += "\xC4\xB0"; // U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE

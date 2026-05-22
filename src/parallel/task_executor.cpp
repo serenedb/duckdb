@@ -154,7 +154,7 @@ void TaskExecutor::ScheduleTask(unique_ptr<BaseExecutorTask> task) {
 			// We failed to schedule the task, so we decrement the total number of tasks, instead of incrementing
 			// completed tasks count.
 			--total_tasks;
-			token->producer_cv.notify_one();
+			token->producer_cv.Signal();
 		}
 		scheduled_task->Retire();
 		throw;
@@ -163,7 +163,7 @@ void TaskExecutor::ScheduleTask(unique_ptr<BaseExecutorTask> task) {
 void TaskExecutor::FinishTask() {
 	const annotated_lock_guard<annotated_mutex> lk(token->producer_lock);
 	++completed_tasks;
-	token->producer_cv.notify_one();
+	token->producer_cv.Signal();
 }
 
 void TaskExecutor::DrainTasks() {
@@ -176,7 +176,7 @@ void TaskExecutor::DrainTasks() {
 				break;
 			}
 			if (!scheduler.GetTaskFromProducerLocked(*token, task_from_producer)) {
-				token->producer_cv.wait(lk);
+				token->producer_cv.Wait(lk.mutex());
 				continue;
 			}
 		}

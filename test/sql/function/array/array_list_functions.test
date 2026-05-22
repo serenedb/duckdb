@@ -2,9 +2,10 @@
 # group: [array]
 
 # Just test that arrays are propely cast to lists when calling some list functions with special binding logic
-# Aggregate example
+# Aggregate example. list_distinct does not define an output order, so sort both sides:
+# the array path and the list path build their hash table independently.
 query I
-SELECT list_distinct(array_value(1,1,2,3,3)) = list_distinct([1,1,2,3,3]);
+SELECT list_sort(list_distinct(array_value(1,1,2,3,3))) = list_sort(list_distinct([1,1,2,3,3]));
 ----
 true
 

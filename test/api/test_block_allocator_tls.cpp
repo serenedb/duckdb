@@ -4,7 +4,6 @@
 #include "duckdb/common/allocator.hpp"
 #include "duckdb/common/mutex.hpp"
 
-#include <condition_variable>
 #include <thread>
 
 using namespace duckdb;
@@ -16,7 +15,6 @@ TEST_CASE("BlockAllocator usage and de-allocation on different threads", "[api][
 
 	std::thread worker;
 	mutex mtx;
-	std::condition_variable cv;
 	bool alloc_done = false;
 	bool allocator_destroyed = false;
 
@@ -41,17 +39,16 @@ TEST_CASE("BlockAllocator usage and de-allocation on different threads", "[api][
 				lock_guard<mutex> lk(mtx);
 				alloc_done = true;
 			}
-			cv.notify_one();
 
 			{
-				unique_lock<mutex> lk(mtx);
-				cv.wait(lk, [&] { return allocator_destroyed; });
+				lock_guard<mutex> lk(mtx);
+				mtx.Await(absl::Condition(&allocator_destroyed));
 			}
 		});
 
 		{
-			unique_lock<mutex> lk(mtx);
-			cv.wait(lk, [&] { return alloc_done; });
+			lock_guard<mutex> lk(mtx);
+			mtx.Await(absl::Condition(&alloc_done));
 		}
 	}
 	// BlockAllocator destructs here, which clears thread-local allocation state in thread-B, instead of the one in
@@ -61,7 +58,6 @@ TEST_CASE("BlockAllocator usage and de-allocation on different threads", "[api][
 	{
 		lock_guard<mutex> lk(mtx);
 		allocator_destroyed = true;
-		cv.notify_one();
 	}
 	worker.join();
 }

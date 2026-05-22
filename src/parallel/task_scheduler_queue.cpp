@@ -37,7 +37,7 @@ void TaskSchedulerQueue::Enqueue(ProducerToken &token, shared_ptr<Task> task) {
 	task->token = token;
 	if (queue->q.enqueue(token.GetQueueProducerToken(pool_type).token, std::move(task))) {
 		++tasks_in_queue;
-		token.producer_cv.notify_one();
+		token.producer_cv.Signal();
 	} else {
 		throw InternalException("Could not schedule task!");
 	}
@@ -51,7 +51,7 @@ void TaskSchedulerQueue::EnqueueBulk(ProducerToken &token, vector<shared_ptr<Tas
 	if (queue->q.enqueue_bulk(token.GetQueueProducerToken(pool_type).token, std::make_move_iterator(tasks.begin()),
 	                          tasks.size())) {
 		tasks_in_queue += tasks.size();
-		token.producer_cv.notify_one();
+		token.producer_cv.Signal();
 	} else {
 		throw InternalException("Could not schedule tasks!");
 	}
@@ -120,7 +120,7 @@ void TaskSchedulerQueue::Enqueue(ProducerToken &token, shared_ptr<Task> task) {
 	lock_guard<mutex> lock(qlock);
 	task->token = token;
 	q[token.GetQueueProducerToken(pool_type)].push(std::move(task));
-	token.producer_cv.notify_one();
+	token.producer_cv.Signal();
 }
 
 void TaskSchedulerQueue::EnqueueBulk(ProducerToken &token, vector<shared_ptr<Task>> &tasks) {
@@ -130,7 +130,7 @@ void TaskSchedulerQueue::EnqueueBulk(ProducerToken &token, vector<shared_ptr<Tas
 		task->token = token;
 		q[token.GetQueueProducerToken(pool_type)].push(std::move(task));
 	}
-	token.producer_cv.notify_one();
+	token.producer_cv.Signal();
 }
 
 bool TaskSchedulerQueue::DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task) {

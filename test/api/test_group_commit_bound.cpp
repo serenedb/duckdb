@@ -4,8 +4,6 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/virtual_file_system.hpp"
 
-#include <chrono>
-#include <condition_variable>
 #include <thread>
 
 using namespace duckdb;
@@ -21,11 +19,10 @@ class GatedFsyncFileSystem : public LocalFileSystem {
 public:
 	void FileSync(FileHandle &handle) override {
 		if (StringUtil::Contains(handle.GetPath(), ".wal")) {
-			unique_lock<mutex> guard(lock);
+			lock_guard<mutex> guard(lock);
 			if (armed) {
 				parked = true;
-				cv.notify_all();
-				cv.wait(guard, [&]() { return released; });
+				lock.Await(absl::Condition(&released));
 			}
 		}
 		LocalFileSystem::FileSync(handle);
@@ -37,21 +34,17 @@ public:
 		released = false;
 	}
 	bool WaitUntilParked() {
-		unique_lock<mutex> guard(lock);
-		return cv.wait_for(guard, std::chrono::seconds(60), [&]() { return parked; });
+		lock_guard<mutex> guard(lock);
+		return lock.AwaitWithTimeout(absl::Condition(&parked), absl::Seconds(60));
 	}
 	void Release() {
-		{
-			lock_guard<mutex> guard(lock);
-			released = true;
-			armed = false;
-		}
-		cv.notify_all();
+		lock_guard<mutex> guard(lock);
+		released = true;
+		armed = false;
 	}
 
 private:
 	mutex lock;
-	std::condition_variable cv;
 	bool armed = false;
 	bool parked = false;
 	bool released = false;

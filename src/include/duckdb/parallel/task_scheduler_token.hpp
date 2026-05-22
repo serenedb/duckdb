@@ -13,8 +13,6 @@
 #include "duckdb/common/enums/task_scheduler_type.hpp"
 #include "duckdb/common/mutex.hpp"
 
-#include <condition_variable>
-
 namespace duckdb {
 
 // Forward declarations.
@@ -31,7 +29,7 @@ public:
 
 public:
 	annotated_mutex producer_lock;
-	std::condition_variable producer_cv;
+	absl::CondVar producer_cv;
 
 private:
 	array<unique_ptr<QueueProducerToken>, TASK_SCHEDULER_TYPE_COUNT> tokens;

@@ -31,7 +31,7 @@ GetKnownColumnValues(const string &filename, const HivePartitioningFilterInfo &f
 	if (filter_info.filename_enabled) {
 		auto lookup_column_id = column_map.find("filename");
 		if (lookup_column_id != column_map.end()) {
-			result.insert(make_pair(lookup_column_id->second, PartitioningColumnValue(filename)));
+			result.emplace(lookup_column_id->second, PartitioningColumnValue(filename));
 		}
 	}
 
@@ -40,8 +40,7 @@ GetKnownColumnValues(const string &filename, const HivePartitioningFilterInfo &f
 		for (auto &partition : partitions) {
 			auto lookup_column_id = column_map.find(partition.first);
 			if (lookup_column_id != column_map.end()) {
-				result.insert(
-				    make_pair(lookup_column_id->second, PartitioningColumnValue(partition.first, partition.second)));
+				result.emplace(lookup_column_id->second, PartitioningColumnValue(partition.first, partition.second));
 			}
 		}
 	}

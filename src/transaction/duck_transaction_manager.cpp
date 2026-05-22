@@ -317,8 +317,11 @@ DuckTransactionManager::DurableSnapshot DuckTransactionManager::GetDurableSnapsh
 }
 
 void DuckTransactionManager::WaitForDurability() {
-	unique_lock<mutex> guard(transaction_lock);
-	durability_cv.wait(guard, [&]() { return !HasUnsyncedCommits(); });
+	lock_guard<mutex> guard(transaction_lock);
+	auto durable = [this]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+		return !HasUnsyncedCommits();
+	};
+	transaction_lock.Await(absl::Condition(&durable));
 }
 
 void DuckTransactionManager::CleanupTransactions() {
@@ -536,11 +539,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 			}
 		}
 		QueueCleanup(RemoveTransaction(transaction, store_transaction, CreateCleanupInfo()));
-		bool notify_others = !HasUnsyncedCommits();
 		t_lock.unlock();
-		if (notify_others) {
-			durability_cv.notify_all();
-		}
 	}
 
 	CleanupTransactions();

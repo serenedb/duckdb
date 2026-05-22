@@ -3,7 +3,6 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
-#include <condition_variable>
 
 namespace duckdb {
 
@@ -39,19 +38,15 @@ void InterruptState::Callback() const {
 }
 
 void InterruptDoneSignalState::Signal() {
-	{
-		annotated_lock_guard<annotated_mutex> lck(lock);
-		done = true;
-	}
-	cv.notify_all();
+	lock.Lock();
+	done = true;
+	lock.Unlock();
 }
 
 void InterruptDoneSignalState::Await() {
-	annotated_unique_lock<annotated_mutex> lck(lock);
-	cv.wait(lck, [&]() { return done; });
-
-	// Reset after signal received
+	lock.LockWhen(absl::Condition(&done));
 	done = false;
+	lock.Unlock();
 }
 
 } // namespace duckdb

@@ -9,8 +9,8 @@
 #include "benchmark.hpp"
 #include "duckdb/main/query_result.hpp"
 
-#include <unordered_map>
-#include <unordered_set>
+#include "duckdb/common/unordered_map.hpp"
+#include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/insertion_order_preserving_map.hpp"
 
 namespace duckdb {
@@ -86,10 +86,10 @@ private:
 
 private:
 	bool is_loaded = false;
-	std::unordered_map<string, string> replacement_mapping;
+	unordered_map<string, string> replacement_mapping;
 	unordered_set<string> handled_arguments;
 
-	std::unordered_map<string, string> queries;
+	unordered_map<string, string> queries;
 	string run_query;
 
 	string benchmark_path;

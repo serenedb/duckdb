@@ -115,7 +115,6 @@ struct MockTransportState {
 	std::function<void()> request_callback;
 	std::function<void()> destroy_callback;
 	mutex request_lock;
-	condition_variable request_cv;
 	std::atomic<idx_t> requests_started {0};
 	idx_t requests_allowed = NumericLimits<idx_t>::Maximum();
 	vector<idx_t> request_client_ids;
@@ -199,12 +198,14 @@ public:
 			state->observed_if_none_match = info.headers.GetHeaderValue("If-None-Match");
 		}
 		{
-			unique_lock<mutex> guard(state->request_lock);
+			lock_guard<mutex> guard(state->request_lock);
 			auto request_index = state->requests_started++;
 			state->request_client_ids.push_back(client_id);
 			state->request_urls.push_back(info.url);
-			state->request_cv.notify_all();
-			state->request_cv.wait(guard, [&]() { return request_index < state->requests_allowed; });
+			auto allowed = [&]() {
+				return request_index < state->requests_allowed;
+			};
+			state->request_lock.Await(absl::Condition(&allowed));
 		}
 		auto attempt = state->response_attempt++;
 		auto mode = state->response_sequence.empty()
@@ -498,14 +499,16 @@ static void BlockMockRequests(MockTransportState &state) {
 }
 
 static bool WaitForMockRequests(MockTransportState &state, idx_t count) {
-	unique_lock<mutex> guard(state.request_lock);
-	return state.request_cv.wait_for(guard, std::chrono::seconds(5), [&]() { return state.requests_started >= count; });
+	lock_guard<mutex> guard(state.request_lock);
+	auto reached = [&]() {
+		return state.requests_started >= count;
+	};
+	return state.request_lock.AwaitWithTimeout(absl::Condition(&reached), absl::Seconds(5));
 }
 
 static void AllowMockRequests(MockTransportState &state, idx_t count) {
 	lock_guard<mutex> guard(state.request_lock);
 	state.requests_allowed = count;
-	state.request_cv.notify_all();
 }
 
 static bool WaitForAdmissionWaiters(HTTPTransportManager &manager, idx_t count) {
