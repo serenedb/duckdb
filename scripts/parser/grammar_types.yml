@@ -65,6 +65,8 @@ SQLStatement:
     - AttachStatement
     - CreateDatabaseStatement
     - DropDatabaseStatement
+    - CreateTSDictionaryStatement
+    - DropTSDictionaryStatement
     - CallStatement
     - CheckpointStatement
     - CommentStatement
@@ -1822,6 +1824,7 @@ IdentifierType:
     - ColLabelIdentifier
     - StringLiteralIdentifier
     - TypeFuncName
+    - NamedParameterName
     - IdentifierColId
     - CopyFileNameSuffix
     - ReservedIdentifierOrStringLiteral
@@ -1982,6 +1985,11 @@ excluded_rules:
   - ShowSpecialForm
   - PivotStatement
   - UnpivotStatement
+  - TSDictionaryDefinition
+  - TSDictionaryDefElement
+  - TSDictionaryDefArg
+  - TSDictionaryExpression
+  - TSDictionaryWith
   - Program
   - TopLevelStatement
   - Statement
