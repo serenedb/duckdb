@@ -145,9 +145,9 @@ void Binder::SearchSchema(CreateInfo &info) {
 	}
 	auto &search_path = ClientData::Get(context).catalog_search_path;
 	if (IsInvalidCatalog(info.Catalog()) && IsInvalidSchema(info.Schema())) {
-		auto &default_entry = search_path->GetDefault();
-		info.CatalogMutable() = default_entry.catalog;
-		info.SchemaMutable() = default_entry.schema;
+		auto default_entry = search_path->GetResolvedDefault();
+		info.CatalogMutable() = std::move(default_entry.catalog);
+		info.SchemaMutable() = std::move(default_entry.schema);
 	} else if (IsInvalidSchema(info.Schema())) {
 		info.SchemaMutable() = Identifier(search_path->GetDefaultSchema(context, info.Catalog()));
 	} else if (IsInvalidCatalog(info.Catalog())) {
@@ -155,6 +155,10 @@ void Binder::SearchSchema(CreateInfo &info) {
 	}
 	if (IsInvalidCatalog(info.Catalog())) {
 		info.CatalogMutable() = DatabaseManager::GetDefaultDatabase(context);
+	}
+	if (IsInvalidSchema(info.schema)) {
+		// Empty search_path / no resolvable entry -> PG-style error.
+		throw CatalogException("no schema has been selected to create in");
 	}
 	if (!info.temporary) {
 		// non-temporary create: not read only
