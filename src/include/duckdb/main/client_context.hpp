@@ -114,6 +114,11 @@ public:
 	typedef bool (*warning_handler_t)(ClientContext &context, const char *message);
 	warning_handler_t warning_handler = nullptr;
 
+	//! PG session_user — the role the connection authenticated as. Used to
+	//! resolve the literal "$user" placeholder in catalog_search_path. Set by
+	//! the wire layer at connect time; updated on SET ROLE if applicable.
+	string session_user;
+
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
 	//! Catalog::GetConnectFunctionName. Use DisconnectFromCatalog() to revert to LOCAL.
