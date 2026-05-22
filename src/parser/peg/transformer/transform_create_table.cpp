@@ -64,12 +64,35 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTableStmt(
 	auto info = make_uniq<CreateTableInfo>(qualified_name.Catalog(), qualified_name.Schema(), qualified_name.Name());
 
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
-	info->query = std::move(create_table_definition.select_statement);
-	info->columns = std::move(create_table_definition.columns);
-	info->constraints = std::move(create_table_definition.constraints);
-	info->partition_keys = std::move(create_table_definition.partition_keys);
-	info->sort_keys = std::move(create_table_definition.sort_keys);
-	info->options = std::move(create_table_definition.options);
+	auto &table_as_or_column_list = list_pr.Child<ListParseResult>(3).Child<ChoiceParseResult>(0);
+	if (table_as_or_column_list.name == "CreateTableAs") {
+		auto create_table_as = transformer.Transform<CreateTableAs>(table_as_or_column_list.GetResult());
+		info->query = std::move(create_table_as.select_statement);
+		info->columns = std::move(create_table_as.column_names);
+		info->partition_keys = std::move(create_table_as.partition_keys);
+		info->sort_keys = std::move(create_table_as.sort_keys);
+		info->options = std::move(create_table_as.options);
+	} else {
+		auto column_list = transformer.Transform<ColumnElements>(table_as_or_column_list.GetResult());
+		if (!column_list.null_conflict_columns.empty()) {
+			// PG-compat: "conflicting NULL/NOT NULL declarations for column \"X\" of table \"T\"".
+			throw ParserException("conflicting NULL/NOT NULL declarations for column \"%s\" of table \"%s\"",
+			                      column_list.null_conflict_columns.front(), table_name.name);
+		}
+		if (!column_list.duplicate_default_columns.empty()) {
+			// PG-compat: "multiple default values specified for column \"X\" of table \"T\"".
+			throw ParserException("multiple default values specified for column \"%s\" of table \"%s\"",
+			                      column_list.duplicate_default_columns.front(), table_name.name);
+		}
+		info->columns = std::move(column_list.columns);
+		info->constraints = std::move(column_list.constraints);
+		info->partition_keys = std::move(column_list.partition_keys);
+		info->sort_keys = std::move(column_list.sort_keys);
+		info->options = std::move(column_list.options);
+	}
+	// On COMMIT is unused apart from checking whether it is ON COMMIT DELETE, which is unsupported
+	bool on_commit = false;
+	transformer.TransformOptional<bool>(list_pr, 4, on_commit);
 
 	result->info = std::move(info);
 	return result;
@@ -148,10 +171,20 @@ ColumnElements
 PEGTransformerFactory::TransformCreateTableColumnList(PEGTransformer &transformer,
                                                       vector<CreateTableColumnElement> create_table_column_element) {
 	ColumnElements result;
-	for (idx_t col_idx = 0; col_idx < create_table_column_element.size(); ++col_idx) {
-		auto &column_element = create_table_column_element[col_idx];
-		if (column_element.column_definition) {
-			auto &column_result = *column_element.column_definition;
+	for (idx_t col_idx = 0; col_idx < column_elements.size(); ++col_idx) {
+		auto &column_element_child =
+		    column_elements[col_idx].get().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+		if (column_element_child.name == "ColumnDefinition") {
+			auto column_result = transformer.Transform<ConstraintColumnDefinition>(column_element_child);
+			// PG-compat: record any column whose constraints conflict on nullability;
+			// the table transformer raises the canonical PG error after the table name
+			// is available.
+			if (column_result.has_explicit_null && (column_result.has_not_null || column_result.has_primary_key)) {
+				result.null_conflict_columns.push_back(column_result.column_definition.GetName());
+			}
+			if (column_result.has_duplicate_default) {
+				result.duplicate_default_columns.push_back(column_result.column_definition.GetName());
+			}
 			for (auto &constraint : column_result.constraints) {
 				result.constraints.push_back(std::move(constraint));
 			}
@@ -247,14 +280,27 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 	if (column_constraint) {
 		for (auto &cc_entry : *column_constraint) {
 			if (cc_entry.constraint_name == "DefaultValue") {
-				if (accumulated_constraints.default_value) {
-					throw ParserException("Cannot define a default value twice");
+				if (column_constraint.default_value) {
+					// PG-compat: defer to TransformCreateTableStmt so the canonical
+					// "multiple default values specified for column \"X\" of table \"Y\""
+					// error has access to the table name.
+					column_constraint.has_duplicate_default = true;
+					continue;
 				}
 				accumulated_constraints.default_value = std::move(cc_entry.expression);
 			} else if (cc_entry.constraint_name == "NotNullConstraint" ||
 			           cc_entry.constraint_name == "UniqueConstraint" ||
 			           cc_entry.constraint_name == "PrimaryKeyConstraint") {
-				accumulated_constraints.constraint_types.push_back(cc_entry.constraint_type_info);
+				if (cc_entry.constraint_name == "NotNullConstraint") {
+					if (cc_entry.constraint_type_info.second == ConstraintType::NOT_NULL) {
+						column_constraint.has_not_null = true;
+					} else {
+						column_constraint.has_explicit_null = true;
+					}
+				} else if (cc_entry.constraint_name == "PrimaryKeyConstraint") {
+					column_constraint.has_primary_key = true;
+				}
+				column_constraint.constraint_types.push_back(cc_entry.constraint_type_info);
 			} else if (cc_entry.constraint_name == "ColumnCompression") {
 				compression_type = cc_entry.compression_type;
 				if (compression_type == CompressionType::COMPRESSION_AUTO) {
@@ -318,8 +364,12 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 		if (accumulated_constraints.default_value) {
 			throw ParserException("Not allowed to set default on a generated column");
 		}
-		ConstraintColumnDefinition result = {std::move(col), accumulated_constraints.constraint_types,
-		                                     std::move(accumulated_constraints.constraints)};
+		ConstraintColumnDefinition result = {std::move(col), column_constraint.constraint_types,
+		                                     std::move(column_constraint.constraints)};
+		result.has_explicit_null = column_constraint.has_explicit_null;
+		result.has_not_null = column_constraint.has_not_null;
+		result.has_primary_key = column_constraint.has_primary_key;
+		result.has_duplicate_default = column_constraint.has_duplicate_default;
 		return result;
 	}
 
@@ -329,8 +379,12 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 		col.SetDefaultValue(std::move(accumulated_constraints.default_value));
 	}
 	col.SetCompressionType(compression_type);
-	ConstraintColumnDefinition result = {std::move(col), accumulated_constraints.constraint_types,
-	                                     std::move(accumulated_constraints.constraints)};
+	ConstraintColumnDefinition result = {std::move(col), column_constraint.constraint_types,
+	                                     std::move(column_constraint.constraints)};
+	result.has_explicit_null = column_constraint.has_explicit_null;
+	result.has_not_null = column_constraint.has_not_null;
+	result.has_primary_key = column_constraint.has_primary_key;
+	result.has_duplicate_default = column_constraint.has_duplicate_default;
 	return result;
 }
 
