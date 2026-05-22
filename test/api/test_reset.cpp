@@ -80,6 +80,9 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 	    {"autoinstall_known_extensions", {false}},
 	    {"enable_profiling", {"json"}},
 	    {"explain_output", {{"all", "optimized_only", "physical_only"}}},
+	    {"explain_output_format", {"pg"}},
+	    {"default_transaction_isolation", {"serializable"}},
+	    {"force_dict_fsst_mode", {"AUTO"}},
 	    {"file_search_path", {"test"}},
 	    {"force_compression", {"uncompressed", "uncompressed"}},
 	    {"fsync_mode", {"NONE"}},
@@ -219,6 +222,7 @@ bool OptionIsExcludedFromTest(const string &name) {
 	    "streaming_buffer_size", // alias of max_streaming_buffer_size
 	    "temp_file_encryption",
 	    "tracked_metrics",
+	    "transaction_isolation",
 	    "user",
 	    "username",
 	    "vacuum_rebuild_indexes", // cant change this while db is running

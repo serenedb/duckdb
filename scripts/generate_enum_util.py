@@ -75,6 +75,7 @@ blacklist = [
     "ParquetGroupKind",
     "VariantBasicType",
     "VariantPrimitiveType",
+    "SyncState",
 ]
 
 enum_util_header_file = os.path.join("..", "src", "include", "duckdb", "common", "enum_util.hpp")
@@ -157,6 +158,12 @@ overrides = {
     "TriggerTiming": {"BEFORE": "BEFORE", "AFTER": "AFTER", "INSTEAD_OF": "INSTEAD OF"},
     "TriggerEventType": {"INSERT_EVENT": "INSERT", "DELETE_EVENT": "DELETE", "UPDATE_EVENT": "UPDATE"},
     "TriggerForEach": {"STATEMENT": "STATEMENT", "ROW": "ROW"},
+    "TransactionIsolationLevel": {
+        "READ_UNCOMMITTED": "read uncommitted",
+        "READ_COMMITTED": "read committed",
+        "REPEATABLE_READ": "repeatable read",
+        "SERIALIZABLE": "serializable",
+    },
 }
 
 # get all the headers

@@ -4,11 +4,11 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/main/attached_database.hpp"
-#include "duckdb/main/settings.hpp"
 #include "duckdb/main/database_manager.hpp"
 
 namespace duckdb {
@@ -64,8 +64,46 @@ void TransactionContext::Commit() {
 		throw TransactionException("failed to commit: no transaction active");
 	}
 	autocheckpoint_error = ErrorData();
+	// Pre-commit hooks run while the transaction is still active so they can
+	// issue operations that need ActiveTransaction (e.g. reverting SET LOCAL
+	// values for custom-impl settings). A hook that refuses the commit by
+	// throwing ends the transaction the same way a failed commit does -- leaving
+	// it active would wedge the connection on the next statement.
+	ErrorData precommit_error;
+	std::exception_ptr precommit_exception;
+	try {
+		for (auto &state : context.registered_state->States()) {
+			state->TransactionPreCommit(*current_transaction, context);
+		}
+	} catch (std::exception &ex) {
+		precommit_error = ErrorData(ex);
+		precommit_exception = std::current_exception();
+	}
 	auto transaction = std::move(current_transaction);
 	ClearTransaction();
+	if (precommit_exception) {
+		// The commit never ran, so the rollback is ours to drive. It mirrors
+		// Rollback(): finalize only once the rollback succeeded, and rethrow the
+		// hook's own exception so the refusal keeps the caller's error class.
+		auto rolled_back = false;
+		try {
+			transaction->Rollback();
+			rolled_back = true;
+		} catch (...) { // NOLINT: the refusal is the error worth reporting
+		}
+		for (auto const &s : context.registered_state->States()) {
+			s->TransactionRollback(*transaction, context, precommit_error);
+		}
+
+		// match Rollback behaviour - Finalize only successful rollback.
+		if (rolled_back) {
+			try {
+				transaction->Finalize();
+			} catch (...) { // NOLINT: the refusal is the error worth reporting
+			}
+		}
+		std::rethrow_exception(precommit_exception);
+	}
 	auto error = transaction->Commit();
 	// Notify any registered state of transaction commit
 	if (error.HasError()) {
@@ -96,6 +134,13 @@ void TransactionContext::SetAutoCommit(bool value) {
 	}
 }
 
+void TransactionContext::SetIsolationLevel(TransactionIsolationLevel new_isolation_level) {
+	if (context.isolation_level_validator) {
+		context.isolation_level_validator(context, new_isolation_level);
+	}
+	isolation_level = new_isolation_level;
+}
+
 void TransactionContext::SetReadOnly() {
 	current_transaction->SetReadOnly();
 }
@@ -103,6 +148,12 @@ void TransactionContext::SetReadOnly() {
 void TransactionContext::Rollback(optional_ptr<ErrorData> error) {
 	if (!current_transaction) {
 		throw TransactionException("failed to rollback: no transaction active");
+	}
+	// Pre-rollback hooks run while the transaction is still active so they can
+	// issue operations that need ActiveTransaction (e.g. restoring SET values
+	// for custom-impl settings like search_path).
+	for (auto const &s : context.registered_state->States()) {
+		s->TransactionPreRollback(*current_transaction, context, error);
 	}
 	auto transaction = std::move(current_transaction);
 	ClearTransaction();
@@ -126,6 +177,7 @@ void TransactionContext::Rollback(optional_ptr<ErrorData> error) {
 
 void TransactionContext::ClearTransaction() {
 	SetAutoCommit(true);
+	isolation_level = Settings::Get<DefaultTransactionIsolationSetting>(context);
 	current_transaction = nullptr;
 }
 
