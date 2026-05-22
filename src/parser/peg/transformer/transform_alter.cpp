@@ -4,6 +4,7 @@
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_database_info.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
@@ -80,6 +81,32 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSchemaStmt(PEGTransfo
                                                                       const QualifiedName &qualified_name,
                                                                       unique_ptr<AlterTableInfo> rename_alter) {
 	throw NotImplementedException("Altering schemas is not yet supported");
+}
+
+// AlterIndexStmt <- 'INDEX' IfExists? BaseTableName RenameAlter
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransformer &transformer,
+                                                                     const optional<bool> &if_exists,
+                                                                     unique_ptr<BaseTableRef> base_table_name,
+                                                                     unique_ptr<AlterTableInfo> rename_alter) {
+	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
+	// ALTER INDEX <name> RENAME TO <new_name> uses the same catalog action as
+	// ALTER TABLE rename: the catalog resolves the entry by name across
+	// table/view/index.
+	auto result = make_uniq<RenameTableInfo>(AlterEntryData(), rename_info->new_table_name);
+	result->SetQualifiedName(base_table_name->GetQualifiedName());
+	result->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	return std::move(result);
+}
+
+// AlterFunctionStmt <- 'FUNCTION' IfExists? QualifiedName RenameAlter
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionStmt(PEGTransformer &transformer,
+                                                                        const optional<bool> &if_exists,
+                                                                        const QualifiedName &qualified_name,
+                                                                        unique_ptr<AlterTableInfo> rename_alter) {
+	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
+	auto not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	AlterEntryData data(qualified_name, not_found);
+	return make_uniq<RenameScalarFunctionInfo>(data, rename_info->new_table_name);
 }
 
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSequenceStmt(PEGTransformer &transformer,
