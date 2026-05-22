@@ -28,6 +28,6 @@ statement ok
 CALL check_peg_parser($TEST_PEG_PARSER$SELECT v.col0 FROM v: VALUES (42) ORDER BY v.col0$TEST_PEG_PARSER$);
 
 query I
-SELECT v.col0 FROM v: VALUES (42) ORDER BY v.col0
+SELECT v.column1 FROM v: VALUES (42) ORDER BY v.column1
 ----
 42

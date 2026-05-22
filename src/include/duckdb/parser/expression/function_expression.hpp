@@ -123,6 +123,16 @@ public:
 	bool &IsOperatorMutable() {
 		return is_operator;
 	}
+	//! Whether this call was produced from operator syntax (LIKE / SIMILAR TO / ~ / ~* / GLOB).
+	//! Unlike is_operator (which drives operator rendering and must stay false for functions whose
+	//! name is not a real infix symbol, e.g. regexp_full_match), this only marks the origin so
+	//! PG-compatible target-list naming yields "?column?".
+	bool IsFromOperator() const {
+		return from_operator;
+	}
+	bool &FromOperatorMutable() {
+		return from_operator;
+	}
 	bool Distinct() const {
 		return distinct;
 	}
@@ -179,6 +189,8 @@ private:
 	QualifiedName qualified_name;
 	//! Whether or not the function is an operator, only used for rendering
 	bool is_operator;
+	//! Whether this call originated from operator syntax; only used for "?column?" target-list naming
+	bool from_operator = false;
 	//! List of arguments to the function
 	vector<FunctionArgument> arguments;
 	//! Whether or not the aggregate function is distinct, only used for aggregates

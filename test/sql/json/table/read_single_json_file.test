@@ -375,7 +375,7 @@ statement ok
 COPY (SELECT 2 AS a) TO '{TEST_DIR}/combine_dup_f2.ndjson' (FORMAT json)
 
 query III
-SELECT a, id, Id_1 FROM read_json('{TEST_DIR}/combine_dup_*.ndjson') ORDER BY ALL
+SELECT a, id, "Id:1" FROM read_json('{TEST_DIR}/combine_dup_*.ndjson') ORDER BY ALL
 ----
 1	2	3
 2	NULL	NULL

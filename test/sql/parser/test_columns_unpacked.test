@@ -9,7 +9,7 @@ select COALESCE(*COLUMNS(*)) from (select NULL, 2, 3) t(a, b, c);
 query I
 select column_name from (describe select COALESCE(*COLUMNS(*)) from (select NULL, 2, 3) t(a, b, c));
 ----
-COALESCE(t.a, t.b, t.c)
+coalesce
 
 # Aliasing the result
 query I

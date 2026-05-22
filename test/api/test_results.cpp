@@ -242,7 +242,7 @@ TEST_CASE("Test ARRAY_AGG with ORDER BY", "[api][array_agg]") {
 
 	auto result = con.Query("select a, array_agg(c ORDER BY b) from t2 GROUP BY a");
 	REQUIRE(!result->HasError());
-	REQUIRE(result->ColumnName(1) == "array_agg(c ORDER BY b)");
+	REQUIRE(result->ColumnName(1) == "array_agg");
 }
 
 TEST_CASE("Issue #9417", "[api][.]") {
