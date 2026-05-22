@@ -89,13 +89,35 @@ unique_ptr<SetStatement> TransformSetSearchPath(const string &name, SetScope sco
 
 } // namespace
 
-// ResetStatement <- 'RESET' (SetVariable / SetSetting)
+// ResetStatement <- 'RESET' (ResetAll / SetVariable / SetSetting)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformResetStatement(PEGTransformer &transformer,
-                                                                        const SettingInfo &set_variable_or_setting) {
-	if (set_variable_or_setting.scope == SetScope::LOCAL) {
-		throw NotImplementedException("RESET LOCAL is not implemented.");
+                                                                        ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &child_pr = list_pr.Child<ListParseResult>(1);
+	auto &choice_pr = child_pr.Child<ChoiceParseResult>(0);
+
+	SettingInfo setting_info = transformer.Transform<SettingInfo>(choice_pr.GetResult());
+	// PG-compat: RESET LOCAL is handled by PhysicalReset at execution time
+	// (rejected outside a transaction with the canonical PG error). The
+	// upstream PEG transformer's NotImplemented throw is removed to keep
+	// parity with the v2026.05.18 libpg_query path.
+	return make_uniq<ResetVariableStatement>(setting_info.name, setting_info.scope);
+}
+
+// ResetAll <- ('LOCAL' 'ALL') / 'ALL'
+// PhysicalReset::GetDataInternal dispatches to ResetAll(...) when the
+// target name is empty, so emit a SettingInfo with an empty name. The
+// LOCAL variant flags scope=LOCAL so PhysicalReset can transaction-bound it.
+SettingInfo PEGTransformerFactory::TransformResetAll(PEGTransformer &transformer, ParseResult &parse_result) {
+	SettingInfo result;
+	result.name = "";
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice = list_pr.Child<ChoiceParseResult>(0);
+	if (choice.GetResult().type == ParseResultType::LIST) {
+		// First alternative: 'LOCAL' 'ALL' keywords.
+		result.scope = SetScope::LOCAL;
 	}
-	return make_uniq<ResetVariableStatement>(set_variable_or_setting.name, set_variable_or_setting.scope);
+	return result;
 }
 
 // SetTransactionIsolation <- 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
@@ -190,14 +212,18 @@ SettingInfo PEGTransformerFactory::TransformSetVariable(PEGTransformer &transfor
 	return result;
 }
 
-// StandardAssignment <- SetVariableOrSetting SetAssignment
-unique_ptr<SetStatement>
-PEGTransformerFactory::TransformStandardAssignment(PEGTransformer &transformer,
-                                                   const SettingInfo &set_variable_or_setting,
-                                                   vector<unique_ptr<ParsedExpression>> set_assignment) {
-	if (set_variable_or_setting.scope == SetScope::LOCAL) {
-		throw NotImplementedException("SET LOCAL is not implemented.");
-	}
+// StandardAssignment <- (SetVariable / SetSetting) SetAssignment
+unique_ptr<SetStatement> PEGTransformerFactory::TransformStandardAssignment(PEGTransformer &transformer,
+                                                                            ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &first_sub_rule = list_pr.Child<ListParseResult>(0);
+
+	auto &setting_or_var_pr = first_sub_rule.Child<ChoiceParseResult>(0);
+	SettingInfo setting_info = transformer.Transform<SettingInfo>(setting_or_var_pr.GetResult());
+	// PG-compat: SET LOCAL is enforced at PhysicalSet::SetVariable
+	// (transaction-bound). Don't reject at parse time -- that's a regression
+	// from the upstream PEG transformer; v2026.05.18's libpg_query path
+	// passed the scope through.
 	auto &set_assignment_pr = list_pr.Child<ListParseResult>(1);
 	auto values = transformer.Transform<vector<unique_ptr<ParsedExpression>>>(set_assignment_pr);
 	// PG-compat for serenedb: SET search_path accepts comma-separated lists

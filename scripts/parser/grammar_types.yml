@@ -932,6 +932,7 @@ SettingInfo:
     - SetVariableOrSetting
     - SetSetting
     - SetVariable
+    - ResetAll
 
 PartitionSortedOptions:
   type: "PartitionSortedOptions"
