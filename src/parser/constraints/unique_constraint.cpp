@@ -41,11 +41,15 @@ string UniqueConstraint::ToString() const {
 }
 
 unique_ptr<Constraint> UniqueConstraint::Copy() const {
+	unique_ptr<UniqueConstraint> result;
 	if (!HasIndex()) {
-		return make_uniq<UniqueConstraint>(columns, is_primary_key, timing);
+		result = make_uniq<UniqueConstraint>(columns, is_primary_key, timing);
+	} else {
+		result =
+		    make_uniq<UniqueConstraint>(index, columns.empty() ? Identifier() : columns[0], is_primary_key, timing);
 	}
-
-	return make_uniq<UniqueConstraint>(index, columns.empty() ? Identifier() : columns[0], is_primary_key, timing);
+	result->constraint_name = constraint_name;
+	return std::move(result);
 }
 
 bool UniqueConstraint::IsPrimaryKey() const {

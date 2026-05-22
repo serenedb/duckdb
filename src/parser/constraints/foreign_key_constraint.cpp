@@ -50,7 +50,9 @@ string ForeignKeyConstraint::ToString() const {
 }
 
 unique_ptr<Constraint> ForeignKeyConstraint::Copy() const {
-	return make_uniq<ForeignKeyConstraint>(pk_columns, fk_columns, info);
+	auto result = make_uniq<ForeignKeyConstraint>(pk_columns, fk_columns, info);
+	result->constraint_name = constraint_name;
+	return std::move(result);
 }
 
 } // namespace duckdb

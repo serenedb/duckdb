@@ -247,6 +247,7 @@ AlterTableInfo:
     - RenameColumn
     - RenameAlter
     - AddConstraint
+    - RenameConstraint
     - SetSortedBy
     - ResetSortedBy
     - SetOptions
@@ -1806,6 +1807,7 @@ IdentifierType:
     - TriggerName
     - DropSecretStorage
     - ConstraintName
+    - ConstraintNameClause
     - ExplainOptionName
     - DotIdentifier
     - IdentifierDot
@@ -1980,7 +1982,6 @@ excluded_rules:
   - AtTimeZoneOperator
   - Generated
   - AlwaysOrByDefault
-  - ConstraintNameClause
   - UsingSample
   - TableSample
   - NamedParameterAssignment
