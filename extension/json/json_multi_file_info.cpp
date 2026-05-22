@@ -243,6 +243,11 @@ void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk 
 			    gstate.column_indices.empty() ? nullptr : &gstate.column_indices[0];
 			JSONTransform::Transform(vals, alc, *result_vectors[0], 1, gstate.transform_options, column_index);
 		}
+		for (idx_t c = 0; c < ncols; ++c) {
+			if (!FlatVector::Validity(slices[c]).RowIsValid(0)) {
+				FlatVector::SetNull(output.data[gstate.column_ids[c]], row, true);
+			}
+		}
 	}
 }
 
