@@ -50,7 +50,7 @@ private:
 			return false;
 		}
 		for (auto &c : token_text) {
-			if (!Tokenizer::CharacterIsOperator(c)) {
+			if (c != '#' && !Tokenizer::CharacterIsOperator(c)) {
 				return false;
 			}
 		}

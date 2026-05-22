@@ -75,6 +75,7 @@ private:
 	//! (dirty) based on the return value.
 	bool TokenizeInputInternal(TokenizerBehavior &behavior) const;
 	bool IsCompoundColonToken(const string &sql, idx_t pos, idx_t &token_length) const;
+	static bool IsHashOperatorToken(const string &sql, idx_t pos, idx_t &token_length);
 
 public:
 	static bool IsSingleByteOperator(char c);
