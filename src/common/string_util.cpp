@@ -14,6 +14,11 @@
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 
+#include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/internal/memutil.h>
+#include <absl/strings/match.h>
+#include <absl/strings/str_split.h>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -137,17 +142,11 @@ void StringUtil::Trim(string &str) {
 }
 
 bool StringUtil::StartsWith(const string &str, const string &prefix) {
-	if (prefix.size() > str.size()) {
-		return false;
-	}
-	return equal(prefix.begin(), prefix.end(), str.begin());
+	return str.starts_with(prefix);
 }
 
 bool StringUtil::EndsWith(const string &str, const string &suffix) {
-	if (suffix.size() > str.size()) {
-		return false;
-	}
-	return equal(suffix.rbegin(), suffix.rend(), str.rbegin());
+	return str.ends_with(suffix);
 }
 
 string StringUtil::Repeat(const string &str, idx_t n) {
@@ -389,16 +388,11 @@ idx_t StringUtil::ParseFormattedBytes(const string &arg) {
 }
 
 string StringUtil::Upper(const string &str) {
-	string copy(str);
-	transform(copy.begin(), copy.end(), copy.begin(), [](unsigned char c) { return std::toupper(c); });
-	return (copy);
+	return absl::AsciiStrToUpper(str);
 }
 
 string StringUtil::Lower(const string &str) {
-	string copy(str);
-	transform(copy.begin(), copy.end(), copy.begin(),
-	          [](unsigned char c) { return StringUtil::CharacterToLower(static_cast<char>(c)); });
-	return (copy);
+	return absl::AsciiStrToLower(str);
 }
 
 string StringUtil::Title(const string &str) {
@@ -422,70 +416,18 @@ string StringUtil::Title(const string &str) {
 }
 
 bool StringUtil::IsLower(const string &str) {
-	return str == Lower(str);
+	return absl::c_none_of(str, absl::ascii_isupper);
 }
 
 bool StringUtil::IsUpper(const string &str) {
-	return str == Upper(str);
+	return absl::c_none_of(str, absl::ascii_islower);
+}
 }
 
-// Jenkins hash function: https://en.wikipedia.org/wiki/Jenkins_hash_function
-uint64_t StringUtil::CIHash(const string &str) {
-	return StringUtil::CIHash(str.c_str(), str.size());
-}
-
-uint64_t StringUtil::CIHash(const char *str, idx_t size) {
-	uint32_t hash = 0;
-	for (idx_t i = 0; i < size; i++) {
-		hash += static_cast<uint32_t>(StringUtil::CharacterToLower(static_cast<char>(str[i])));
-		hash += hash << 10;
-		hash ^= hash >> 6;
-	}
-	hash += hash << 3;
-	hash ^= hash >> 11;
-	hash += hash << 15;
-	return hash;
-}
-
-bool StringUtil::CIEquals(const char *l1, idx_t l1_size, const char *l2, idx_t l2_size) {
-	if (l1_size != l2_size) {
-		return false;
-	}
-	const auto charmap = ASCII_TO_LOWER_MAP;
-	for (idx_t c = 0; c < l1_size; c++) {
-		if (charmap[(uint8_t)l1[c]] != charmap[(uint8_t)l2[c]]) {
-			return false;
-		}
-	}
-	return true;
-}
-
-bool StringUtil::CIEquals(const string &l1, const string &l2) {
-	return CIEquals(l1.c_str(), l1.size(), l2.c_str(), l2.size());
-}
-
-bool StringUtil::CIStartsWith(const string &str, const string &prefix) {
-	if (prefix.size() > str.size()) {
-		return false;
-	}
-	return CIEquals(str.c_str(), prefix.size(), prefix.c_str(), prefix.size());
-}
-
-bool StringUtil::CILessThan(const string &s1, const string &s2) {
-	const auto charmap = ASCII_TO_UPPER_MAP;
-
-	unsigned char u1 {}, u2 {};
-
-	idx_t length = MinValue<idx_t>(s1.length(), s2.length());
-	length += s1.length() != s2.length();
-	for (idx_t i = 0; i < length; i++) {
-		u1 = (unsigned char)s1[i];
-		u2 = (unsigned char)s2[i];
-		if (charmap[u1] != charmap[u2]) {
-			break;
-		}
-	}
-	return (charmap[u1] - charmap[u2]) < 0;
+bool StringUtil::CILessThan(std::string_view s1, std::string_view s2) {
+	const auto size = std::min(s1.size(), s2.size());
+	const auto r = absl::strings_internal::memcasecmp(s1.data(), s2.data(), size);
+	return r != 0 ? r < 0 : s1.size() < s2.size();
 }
 
 idx_t StringUtil::CIFind(const vector<Identifier> &vector, const Identifier &search_string) {
@@ -497,7 +439,7 @@ idx_t StringUtil::CIFind(const vector<Identifier> &vector, const Identifier &sea
 	return DConstants::INVALID_INDEX;
 }
 
-idx_t StringUtil::CIFind(vector<string> &vector, const string &search_string) {
+idx_t StringUtil::CIFind(const vector<string> &vector, const string &search_string) {
 	for (idx_t i = 0; i < vector.size(); i++) {
 		const auto &string = vector[i];
 		if (CIEquals(string, search_string)) {
@@ -508,38 +450,11 @@ idx_t StringUtil::CIFind(vector<string> &vector, const string &search_string) {
 }
 
 vector<string> StringUtil::Split(const string &str, char delimiter) {
-	duckdb::stringstream ss(str);
-	vector<string> lines;
-	string temp;
-	while (getline(ss, temp, delimiter)) {
-		lines.push_back(temp);
-	}
-	return (lines);
+	return absl::StrSplit(str, delimiter);
 }
 
 vector<string> StringUtil::Split(const string &input, const string &split) {
-	vector<string> splits;
-
-	idx_t last = 0;
-	idx_t input_len = input.size();
-	idx_t split_len = split.size();
-	while (last <= input_len) {
-		idx_t next = input.find(split, last);
-		if (next == string::npos) {
-			next = input_len;
-		}
-
-		// Push the substring [last, next) on to splits
-		string substr = input.substr(last, next - last);
-		if (!substr.empty()) {
-			splits.push_back(substr);
-		}
-		last = next + split_len;
-	}
-	if (splits.empty()) {
-		splits.push_back(input);
-	}
-	return splits;
+	return absl::StrSplit(input, split);
 }
 
 string StringUtil::Replace(string source, const string &from, const string &to) {
@@ -1003,33 +918,5 @@ const char *StringUtil::EnumToString(const EnumStringLiteral enum_list[], idx_t 
 	}
 	throw NotImplementedException("Enum value: unrecognized enum value \"%d\" for enum \"%s\"", enum_value, enum_name);
 }
-
-const uint8_t StringUtil::ASCII_TO_UPPER_MAP[] = {
-    0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,  17,  18,  19,  20,  21,
-    22,  23,  24,  25,  26,  27,  28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,  39,  40,  41,  42,  43,
-    44,  45,  46,  47,  48,  49,  50,  51,  52,  53,  54,  55,  56,  57,  58,  59,  60,  61,  62,  63,  64,  65,
-    66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,  77,  78,  79,  80,  81,  82,  83,  84,  85,  86,  87,
-    88,  89,  90,  91,  92,  93,  94,  95,  96,  65,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,  77,
-    78,  79,  80,  81,  82,  83,  84,  85,  86,  87,  88,  89,  90,  123, 124, 125, 126, 127, 128, 129, 130, 131,
-    132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153,
-    154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
-    176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197,
-    198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219,
-    220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241,
-    242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255};
-
-const uint8_t StringUtil::ASCII_TO_LOWER_MAP[] = {
-    0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,  17,  18,  19,  20,  21,
-    22,  23,  24,  25,  26,  27,  28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,  39,  40,  41,  42,  43,
-    44,  45,  46,  47,  48,  49,  50,  51,  52,  53,  54,  55,  56,  57,  58,  59,  60,  61,  62,  63,  64,  97,
-    98,  99,  100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
-    120, 121, 122, 91,  92,  93,  94,  95,  96,  97,  98,  99,  100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
-    110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
-    132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153,
-    154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
-    176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197,
-    198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219,
-    220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241,
-    242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255};
 
 } // namespace duckdb

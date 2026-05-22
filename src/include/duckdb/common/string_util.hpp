@@ -17,6 +17,8 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
 
+#include <absl/hash/internal/hash.h>
+#include <absl/strings/match.h>
 #include <cstring>
 
 namespace duckdb {
@@ -213,23 +215,33 @@ public:
 	DUCKDB_API static bool IsUpper(const string &str);
 
 	//! Case insensitive hash
-	DUCKDB_API static uint64_t CIHash(const string &str);
-	DUCKDB_API static uint64_t CIHash(const char *str, idx_t size);
+	static uint64_t CIHash(std::string_view str) {
+		return StringUtil::CIHash(str.data(), str.size());
+	}
+	static uint64_t CIHash(const char *str, idx_t size) {
+		return absl::hash_internal::CaseInsensitiveHash64(str, size);
+	}
 
 	//! Case insensitive equals
-	DUCKDB_API static bool CIEquals(const string &l1, const string &l2);
+	static bool CIEquals(std::string_view l1, std::string_view l2) {
+		return absl::EqualsIgnoreCase(l1, l2);
+	}
 
 	//! Case insensitive equals (null-terminated strings)
-	DUCKDB_API static bool CIEquals(const char *l1, idx_t l1_size, const char *l2, idx_t l2_size);
+	static bool CIEquals(const char *l1, idx_t l1_size, const char *l2, idx_t l2_size) {
+		return absl::EqualsIgnoreCase({l1, l1_size}, {l2, l2_size});
+	}
 
 	//! Case insensitive starts-with
-	DUCKDB_API static bool CIStartsWith(const string &str, const string &prefix);
+	static bool CIStartsWith(std::string_view str, std::string_view prefix) {
+		return absl::StartsWithIgnoreCase(str, prefix);
+	}
 
 	//! Case insensitive compare
-	DUCKDB_API static bool CILessThan(const string &l1, const string &l2);
+	DUCKDB_API static bool CILessThan(std::string_view l1, std::string_view l2);
 
 	//! Case insensitive find, returns DConstants::INVALID_INDEX if not found
-	DUCKDB_API static idx_t CIFind(vector<string> &vec, const string &str);
+	DUCKDB_API static idx_t CIFind(const vector<string> &vec, const string &str);
 	DUCKDB_API static idx_t CIFind(const vector<Identifier> &vec, const Identifier &str);
 
 	//! Format a string using printf semantics
@@ -348,7 +360,5 @@ public:
 	                                        const char *enum_name, const char *str_value);
 	DUCKDB_API static const char *EnumToString(const EnumStringLiteral enum_list[], idx_t enum_count,
 	                                           const char *enum_name, uint32_t enum_value);
-	DUCKDB_API static const uint8_t ASCII_TO_LOWER_MAP[];
-	DUCKDB_API static const uint8_t ASCII_TO_UPPER_MAP[];
 };
 } // namespace duckdb

@@ -7,6 +7,8 @@
 
 #include "duckdb/execution/expression_executor.hpp"
 
+#include <absl/strings/ascii.h>
+
 namespace duckdb {
 
 static bool GlobMatchesBracket(char s, const char *pattern, idx_t plen, idx_t &pidx, bool &valid_pattern) {
@@ -177,7 +179,7 @@ struct ASCIILCaseReader {
 	}
 
 	static char Operation(const char *data, idx_t pos) {
-		return (char)StringUtil::ASCII_TO_LOWER_MAP[(uint8_t)data[pos]];
+		return (char)absl::ascii_tolower((uint8_t)data[pos]);
 	}
 };
 

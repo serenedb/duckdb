@@ -9,6 +9,8 @@
 
 #include "utf8proc_wrapper.hpp"
 
+#include <absl/strings/ascii.h>
+
 #include <string.h>
 
 namespace duckdb {
@@ -18,9 +20,10 @@ static string_t ASCIICaseConvert(StringHeap &heap, const char *input_data, idx_t
 	idx_t output_length = input_length;
 	auto result_str = heap.EmptyString(output_length);
 	auto result_data = result_str.GetDataWriteable();
-	for (idx_t i = 0; i < input_length; i++) {
-		result_data[i] = UnsafeNumericCast<char>(IS_UPPER ? StringUtil::ASCII_TO_UPPER_MAP[uint8_t(input_data[i])]
-		                                                  : StringUtil::ASCII_TO_LOWER_MAP[uint8_t(input_data[i])]);
+	if constexpr (IS_UPPER) {
+		absl::ascii_internal::AsciiStrToUpper(result_data, input_data, input_length);
+	} else {
+		absl::ascii_internal::AsciiStrToLower(result_data, input_data, input_length);
 	}
 	result_str.Finalize();
 	return result_str;
@@ -65,8 +68,8 @@ static void CaseConvert(const char *input_data, idx_t input_length, char *result
 			i += UnsafeNumericCast<idx_t>(sz);
 		} else {
 			// ascii
-			*result_data = UnsafeNumericCast<char>(IS_UPPER ? StringUtil::ASCII_TO_UPPER_MAP[uint8_t(input_data[i])]
-			                                                : StringUtil::ASCII_TO_LOWER_MAP[uint8_t(input_data[i])]);
+			*result_data = UnsafeNumericCast<char>(IS_UPPER ? absl::ascii_toupper(uint8_t(input_data[i]))
+			                                                : absl::ascii_tolower(uint8_t(input_data[i])));
 			result_data++;
 			i++;
 		}
