@@ -54,6 +54,8 @@ SQLStatement:
     - AttachStatement
     - CreateDatabaseStatement
     - DropDatabaseStatement
+    - CreateTSDictionaryStatement
+    - DropTSDictionaryStatement
     - CallStatement
     - CheckpointStatement
     - CommentStatement
@@ -1766,6 +1768,11 @@ matcher_rule_overrides:
 excluded_rules:
   - PivotStatement
   - UnpivotStatement
+  - CreateTSDictionaryStatement
+  - DropTSDictionaryStatement
+  - TSDictionaryDefinition
+  - TSDictionaryDefElement
+  - TSDictionaryDefArg
   - ShowQualifiedName
   - ResetAll
   - CommentValue

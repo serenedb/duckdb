@@ -451,6 +451,7 @@ public:
 	void RegisterCommon();
 	void RegisterCreateTable();
 	void RegisterExpression();
+	void RegisterCreateTextSearchDictionary();
 	void RegisterPivot();
 	void RegisterCreateMacro();
 	void RegisterDrop();
@@ -481,6 +482,12 @@ public:
 	                                                                             ParseResult &parse_result);
 	static const case_insensitive_map_t<const TransformFrameOps *> &GeneratedTrampolineOps();
 
+	// create_text_search_dictionary.gram — both rules walk Parens(List(...)) bodies that the
+	// generator cannot auto-extract; hand-write the entry points.
+	static unique_ptr<SQLStatement> TransformCreateTSDictionaryStatement(PEGTransformer &transformer,
+	                                                                      ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformDropTSDictionaryStatement(PEGTransformer &transformer,
+	                                                                    ParseResult &parse_result);
 	// comment.gram
 	static Value TransformCommentValue(PEGTransformer &transformer, ParseResult &parse_result);
 

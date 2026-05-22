@@ -5,6 +5,8 @@ TopLevelStatement <- Statement? (';'+ / EndOfInput)
 Statement <-
 	CreateDatabaseStatement /
 	DropDatabaseStatement /
+	CreateTSDictionaryStatement /
+	DropTSDictionaryStatement /
 	CreateStatement /
 	SelectStatement /
 	SetStatement /
