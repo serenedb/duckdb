@@ -1,5 +1,6 @@
 #include "duckdb/storage/statistics/geometry_stats.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
@@ -286,16 +287,9 @@ FilterPropagateResult GeometryStats::CheckZonemap(const BaseStatistics &stats, c
 	}
 
 	// The set of geometry predicates that can be optimized using the bounding box
-	static constexpr const char *geometry_predicates[2] = {"&&", "st_intersects_extent"};
+	static const case_insensitive_set_view_t geometry_predicates {"&&", "st_intersects_extent"};
 
-	auto found = false;
-	for (const auto &name : geometry_predicates) {
-		if (func.Function().GetName() == name) {
-			found = true;
-			break;
-		}
-	}
-	if (!found) {
+	if (!geometry_predicates.contains(func.Function().GetName().GetIdentifierName())) {
 		// Not a geometry predicate we can optimize
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}
