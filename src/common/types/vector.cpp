@@ -903,6 +903,8 @@ void Vector::Verify(idx_t) const {
 }
 
 void Vector::Verify() const {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	if (DBConfigOptions::global_verification_mode != DebugVerificationMode::VERIFY_VECTORS) {
 		return;
 	}
@@ -910,9 +912,12 @@ void Vector::Verify() const {
 		return;
 	}
 	buffer->Verify(GetType());
+#endif
 }
 
 void Vector::Verify(const SelectionVector &sel, idx_t count) const {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	if (DBConfigOptions::global_verification_mode != DebugVerificationMode::VERIFY_VECTORS) {
 		return;
 	}
@@ -920,6 +925,7 @@ void Vector::Verify(const SelectionVector &sel, idx_t count) const {
 		return;
 	}
 	buffer->Verify(GetType(), sel, count);
+#endif
 }
 
 void Vector::DebugTransformToDictionary(Vector &vector) {
