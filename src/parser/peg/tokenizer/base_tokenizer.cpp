@@ -35,6 +35,16 @@ bool Tokenizer::IsCompoundColonToken(const string &sql, idx_t pos, idx_t &token_
 	return true;
 }
 
+bool Tokenizer::IsHashOperatorToken(const string &sql, idx_t pos, idx_t &token_length) {
+	for (const std::string_view op : {"<#>", "#>>", "#>", "##"}) {
+		if (sql.compare(pos, op.size(), op) == 0) {
+			token_length = op.size();
+			return true;
+		}
+	}
+	return false;
+}
+
 bool Tokenizer::IsSingleByteOperator(char c) {
 	switch (c) {
 	case '(':
@@ -381,6 +391,12 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 				last_pos = i + 1;
 				break;
 			}
+			if (IsHashOperatorToken(sql, i, token_length)) {
+				tokens.emplace_back(sql.substr(i, token_length), last_pos, TokenType::OPERATOR);
+				i += token_length - 1;
+				last_pos = i + 1;
+				break;
+			}
 			if (IsSingleByteOperator(c)) {
 				// single-byte operator - directly push the token
 				tokens.emplace_back(string(1, c), last_pos, TokenType::OPERATOR);
@@ -414,6 +430,58 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 			last_pos = i;
 			break;
 		case TokenizeState::NUMERIC:
+			// Hex literal `0x...`/`0X...` and binary `0b...`/`0B...`: after a leading `0`, allow the
+			// prefix character and treat subsequent hex/bin digits as part of the same number token.
+			if (i == last_pos + 1 && sql[last_pos] == '0' && (c == 'x' || c == 'X' || c == 'b' || c == 'B')) {
+				break; // consume the prefix; remaining hex/bin digits handled below
+			}
+			if (i > last_pos + 1 && sql[last_pos] == '0' && (sql[last_pos + 1] == 'x' || sql[last_pos + 1] == 'X') &&
+			    StringUtil::CharacterIsHex(c)) {
+				break;
+			}
+			// A second '.' inside the same token, or a '.' that would be followed by an identifier
+			// character (e.g. `$1.x`, `tbl.col`, `1.method()`), is not part of the number.
+			// Stop here so the '.' becomes a separate DotOperator token.
+			if (c == '.') {
+				bool already_has_dot = false;
+				for (idx_t j = last_pos; j < i; j++) {
+					if (sql[j] == '.') {
+						already_has_dot = true;
+						break;
+					}
+				}
+				// What follows the '.' decides whether it is part of the number:
+				//   digit          -> fraction,      `1.5`
+				//   exponent       -> trailing dot,  `1.e5`, `4664.E+5`
+				//   identifier     -> field access,  `tbl.col`, `1.method()`, `$1.x`
+				//   anything else  -> trailing dot,  `42.`, `42.)`, `42.::INT`, `42.` at EOF
+				bool dot_is_part_of_number;
+				if (already_has_dot) {
+					dot_is_part_of_number = false;
+				} else if (i + 1 >= sql.size()) {
+					dot_is_part_of_number = true;
+				} else if (StringUtil::CharacterIsDigit(sql[i + 1])) {
+					dot_is_part_of_number = true;
+				} else if (CharacterIsScientific(sql[i + 1])) {
+					// Only when a real exponent follows, so `1.e5` is a number while
+					// `1.exp` stays a field access.
+					idx_t j = i + 2;
+					if (j < sql.size() && (sql[j] == '+' || sql[j] == '-')) {
+						j++;
+					}
+					dot_is_part_of_number = j < sql.size() && StringUtil::CharacterIsDigit(sql[j]);
+				} else {
+					dot_is_part_of_number = !StringUtil::CharacterIsAlpha(sql[i + 1]) && sql[i + 1] != '_';
+				}
+				if (!dot_is_part_of_number) {
+					behavior.PushToken(last_pos, i, TokenType::NUMBER_LITERAL);
+					state = TokenizeState::STANDARD;
+					last_pos = i;
+					i--;
+					break;
+				}
+				break; // Decimal point inside a number like `1.5`.
+			}
 			// Check for "always allowed" numeric characters
 			if (CharacterIsInitialNumber(c)) {
 				break; // Continue tokenizing
@@ -448,8 +516,17 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 			// --- End of number ---
 			// The character 'c' is not a valid part of the number.
 			// Stop tokenizing and backtrack as per your original logic.
-			while (!CharacterIsInitialNumber(sql[i - 1])) {
-				i--;
+			// Hex/binary tokens keep all consumed chars; the decimal-number backtrack
+			// would otherwise trim through the hex/bin digits and discard them.
+			{
+				bool is_hex_or_bin = i > last_pos + 1 && sql[last_pos] == '0' &&
+				                     (sql[last_pos + 1] == 'x' || sql[last_pos + 1] == 'X' ||
+				                      sql[last_pos + 1] == 'b' || sql[last_pos + 1] == 'B');
+				if (!is_hex_or_bin) {
+					while (!CharacterIsInitialNumber(sql[i - 1])) {
+						i--;
+					}
+				}
 			}
 			behavior.PushToken(last_pos, i, TokenType::NUMBER_LITERAL);
 			state = TokenizeState::STANDARD;
