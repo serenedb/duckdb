@@ -24,6 +24,23 @@ bool BaseTokenizer::IsSpecialOperator(idx_t pos, idx_t &op_len) const {
 		if (OperatorEquals(op_start, "->>", 3, op_len)) {
 			return true;
 		}
+		// Serenedb pgvector-compat distance operators: l2_distance, inner_product,
+		// cosine_distance. These have to be lexed as a single token because `-` and
+		// `#` are single-byte operators that otherwise split inside the operator
+		// state.
+		if (OperatorEquals(op_start, "<->", 3, op_len)) {
+			return true;
+		}
+		if (OperatorEquals(op_start, "<=>", 3, op_len)) {
+			return true;
+		}
+		if (OperatorEquals(op_start, "<#>", 3, op_len)) {
+			return true;
+		}
+		// PG JSON path operators (#>>, #>).
+		if (OperatorEquals(op_start, "#>>", 3, op_len)) {
+			return true;
+		}
 	}
 	if (pos + 1 >= sql.size()) {
 		// 2-byte operators are out-of-bounds
@@ -42,6 +59,15 @@ bool BaseTokenizer::IsSpecialOperator(idx_t pos, idx_t &op_len) const {
 		return true;
 	}
 	if (OperatorEquals(op_start, "//", 2, op_len)) {
+		return true;
+	}
+	if (OperatorEquals(op_start, "#>", 2, op_len)) {
+		return true;
+	}
+	// PG-compat: serenedb tsquery phrase composition operator. `#` is a
+	// single-byte operator (so `##` would otherwise tokenize as two `#`
+	// tokens), wire it up as a multi-byte special operator instead.
+	if (OperatorEquals(op_start, "##", 2, op_len)) {
 		return true;
 	}
 	return false;
@@ -164,6 +190,8 @@ TokenType BaseTokenizer::TokenizeStateToType(TokenizeState state) {
 		return TokenType::IDENTIFIER;
 	case TokenizeState::STRING_LITERAL:
 		return TokenType::STRING_LITERAL;
+	case TokenizeState::ESCAPED_STRING_LITERAL:
+		return TokenType::STRING_LITERAL;
 	case TokenizeState::KEYWORD:
 		return TokenType::KEYWORD;
 	case TokenizeState::NUMERIC:
@@ -213,6 +241,7 @@ bool BaseTokenizer::IsValidDollarTagCharacter(char c) {
 bool BaseTokenizer::IsUnterminatedState(TokenizeState state) {
 	switch (state) {
 	case TokenizeState::STRING_LITERAL:
+	case TokenizeState::ESCAPED_STRING_LITERAL:
 	case TokenizeState::QUOTED_IDENTIFIER:
 	case TokenizeState::DOLLAR_QUOTED_STRING:
 		return true;
@@ -335,7 +364,14 @@ bool BaseTokenizer::TokenizeInputInternal() {
 			if (CharacterIsSpecialStringCharacter(c)) {
 				// Look ahead to see if a quote follows
 				if (i + 1 < sql.size() && sql[i + 1] == '\'') {
-					state = TokenizeState::STRING_LITERAL;
+					// E'...' / e'...' are PG escape-string literals: `\\`, `\'` etc. are
+					// backslash escapes. Use a separate state so `\'` does not terminate
+					// the string. Other prefixes (N, X, B) keep the standard rules.
+					if (c == 'E' || c == 'e') {
+						state = TokenizeState::ESCAPED_STRING_LITERAL;
+					} else {
+						state = TokenizeState::STRING_LITERAL;
+					}
 					last_pos = i;
 					i++;
 					break;
@@ -350,6 +386,58 @@ bool BaseTokenizer::TokenizeInputInternal() {
 			last_pos = i;
 			break;
 		case TokenizeState::NUMERIC:
+			// Hex literal `0x...`/`0X...` and binary `0b...`/`0B...`: after a leading `0`, allow the
+			// prefix character and treat subsequent hex/bin digits as part of the same number token.
+			if (i == last_pos + 1 && sql[last_pos] == '0' && (c == 'x' || c == 'X' || c == 'b' || c == 'B')) {
+				break; // consume the prefix; remaining hex/bin digits handled below
+			}
+			if (i > last_pos + 1 && sql[last_pos] == '0' && (sql[last_pos + 1] == 'x' || sql[last_pos + 1] == 'X') &&
+			    StringUtil::CharacterIsHex(c)) {
+				break;
+			}
+			// A second '.' inside the same token, or a '.' that would be followed by an identifier
+			// character (e.g. `$1.x`, `tbl.col`, `1.method()`), is not part of the number.
+			// Stop here so the '.' becomes a separate DotOperator token.
+			if (c == '.') {
+				bool already_has_dot = false;
+				for (idx_t j = last_pos; j < i; j++) {
+					if (sql[j] == '.') {
+						already_has_dot = true;
+						break;
+					}
+				}
+				// What follows the '.' decides whether it is part of the number:
+				//   digit          -> fraction,      `1.5`
+				//   exponent       -> trailing dot,  `1.e5`, `4664.E+5`
+				//   identifier     -> field access,  `tbl.col`, `1.method()`, `$1.x`
+				//   anything else  -> trailing dot,  `42.`, `42.)`, `42.::INT`, `42.` at EOF
+				bool dot_is_part_of_number;
+				if (already_has_dot) {
+					dot_is_part_of_number = false;
+				} else if (i + 1 >= sql.size()) {
+					dot_is_part_of_number = true;
+				} else if (StringUtil::CharacterIsDigit(sql[i + 1])) {
+					dot_is_part_of_number = true;
+				} else if (CharacterIsScientific(sql[i + 1])) {
+					// Only when a real exponent follows, so `1.e5` is a number while
+					// `1.exp` stays a field access.
+					idx_t j = i + 2;
+					if (j < sql.size() && (sql[j] == '+' || sql[j] == '-')) {
+						j++;
+					}
+					dot_is_part_of_number = j < sql.size() && StringUtil::CharacterIsDigit(sql[j]);
+				} else {
+					dot_is_part_of_number = !StringUtil::CharacterIsAlpha(sql[i + 1]) && sql[i + 1] != '_';
+				}
+				if (!dot_is_part_of_number) {
+					PushToken(last_pos, i, TokenType::NUMBER_LITERAL);
+					state = TokenizeState::STANDARD;
+					last_pos = i;
+					i--;
+					break;
+				}
+				break; // Decimal point inside a number like `1.5`.
+			}
 			// Check for "always allowed" numeric characters
 			if (CharacterIsInitialNumber(c)) {
 				break; // Continue tokenizing
@@ -384,8 +472,17 @@ bool BaseTokenizer::TokenizeInputInternal() {
 			// --- End of number ---
 			// The character 'c' is not a valid part of the number.
 			// Stop tokenizing and backtrack as per your original logic.
-			while (!CharacterIsInitialNumber(sql[i - 1])) {
-				i--;
+			// Hex/binary tokens keep all consumed chars; the decimal-number backtrack
+			// would otherwise trim through the hex/bin digits and discard them.
+			{
+				bool is_hex_or_bin = i > last_pos + 1 && sql[last_pos] == '0' &&
+				                     (sql[last_pos + 1] == 'x' || sql[last_pos + 1] == 'X' ||
+				                      sql[last_pos + 1] == 'b' || sql[last_pos + 1] == 'B');
+				if (!is_hex_or_bin) {
+					while (!CharacterIsInitialNumber(sql[i - 1])) {
+						i--;
+					}
+				}
 			}
 			PushToken(last_pos, i, TokenType::NUMBER_LITERAL);
 			state = TokenizeState::STANDARD;
@@ -439,6 +536,23 @@ bool BaseTokenizer::TokenizeInputInternal() {
 			if (c == '\'') {
 				if (i + 1 < sql.size() && sql[i + 1] == '\'') {
 					// escaped - skip escape
+					i++;
+				} else {
+					PushToken(last_pos, i + 1, TokenType::STRING_LITERAL);
+					last_pos = i + 1;
+					state = TokenizeState::STANDARD;
+				}
+			}
+			break;
+		case TokenizeState::ESCAPED_STRING_LITERAL:
+			// PG E'...' literal: `\<anything>` is an escape that consumes the next char,
+			// `''` is the SQL doubled-quote escape, and a bare `'` terminates the string.
+			if (c == '\\' && i + 1 < sql.size()) {
+				i++;
+				break;
+			}
+			if (c == '\'') {
+				if (i + 1 < sql.size() && sql[i + 1] == '\'') {
 					i++;
 				} else {
 					PushToken(last_pos, i + 1, TokenType::STRING_LITERAL);
