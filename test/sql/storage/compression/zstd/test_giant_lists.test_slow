@@ -27,7 +27,7 @@ set zstd_min_string_length=1;
 # With 1.2m values per segment, this roughly creates 25 segments
 statement ok
 create table tbl as
-select repeat('a', 30_000_000).split('') lst;
+select repeat('a', 30_000_000).split(NULL) lst;
 
 statement ok
 force checkpoint;
