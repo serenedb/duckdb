@@ -2961,49 +2961,6 @@ static bool CanUseDecimalFloatingPointFastPath(SRC input, uint8_t scale) {
 	       IsRepresentableExactly<SRC, DST>(input, DST(0.0));
 }
 
-template <class UNSIGNED>
-static void FillDecimalDigits(UNSIGNED input, duckdb_fast_float::decimal &decimal) {
-	uint8_t digits[DecimalWidth<hugeint_t>::max];
-	while (input > 0) {
-		digits[decimal.num_digits++] = UnsafeNumericCast<uint8_t>(input % 10);
-		input /= 10;
-	}
-	for (uint32_t i = 0; i < decimal.num_digits; i++) {
-		decimal.digits[i] = digits[decimal.num_digits - i - 1];
-	}
-}
-
-template <class SRC>
-static void FillDecimalDigits(SRC input, duckdb_fast_float::decimal &decimal, bool &negative) {
-	using UNSIGNED = typename MakeUnsigned<SRC>::type;
-	if (input < 0) {
-		negative = true;
-		auto unsigned_input = UnsafeNumericCast<UNSIGNED>(-(input + 1));
-		FillDecimalDigits<UNSIGNED>(unsigned_input + 1, decimal);
-	} else {
-		negative = false;
-		FillDecimalDigits<UNSIGNED>(UnsafeNumericCast<UNSIGNED>(input), decimal);
-	}
-}
-
-static void FillDecimalDigits(hugeint_t input, duckdb_fast_float::decimal &decimal, bool &negative) {
-	if (input < 0) {
-		negative = true;
-		Hugeint::NegateInPlace(input);
-	} else {
-		negative = false;
-	}
-	uint8_t digits[DecimalWidth<hugeint_t>::max];
-	while (input > 0) {
-		uint64_t remainder;
-		input = Hugeint::DivModPositive(input, 10, remainder);
-		digits[decimal.num_digits++] = UnsafeNumericCast<uint8_t>(remainder);
-	}
-	for (uint32_t i = 0; i < decimal.num_digits; i++) {
-		decimal.digits[i] = digits[decimal.num_digits - i - 1];
-	}
-}
-
 template <class SRC, class DST>
 bool TryCastDecimalToFloatingPoint(SRC input, DST &result, uint8_t width, uint8_t scale) {
 	if (scale == 0 || CanUseDecimalFloatingPointFastPath<SRC, DST>(input, scale)) {
@@ -3011,21 +2968,13 @@ bool TryCastDecimalToFloatingPoint(SRC input, DST &result, uint8_t width, uint8_
 		result = Cast::Operation<SRC, DST>(input) / DST(NumericHelper::DOUBLE_POWERS_OF_TEN[scale]);
 		return true;
 	}
-
-	duckdb_fast_float::decimal decimal;
-	bool negative;
-	FillDecimalDigits(input, decimal, negative);
-	decimal.decimal_point = UnsafeNumericCast<int32_t>(decimal.num_digits) - UnsafeNumericCast<int32_t>(scale);
-	while (decimal.num_digits > 0 && decimal.digits[decimal.num_digits - 1] == 0) {
-		decimal.num_digits--;
-	}
-	for (uint32_t i = decimal.num_digits; i < duckdb_fast_float::max_digit_without_overflow; i++) {
-		decimal.digits[i] = 0;
-	}
-
-	auto adjusted_mantissa = duckdb_fast_float::compute_float<duckdb_fast_float::binary_format<DST>>(decimal);
-	duckdb_fast_float::detail::to_float(negative, adjusted_mantissa, result);
-	return true;
+	char decimal_buffer[DecimalWidth<hugeint_t>::max + 3];
+	auto len = DecimalToString::DecimalLength<SRC>(input, width, scale);
+	D_ASSERT(len <= static_cast<int>(sizeof(decimal_buffer)));
+	DecimalToString::FormatDecimal<SRC>(input, width, scale, decimal_buffer, UnsafeNumericCast<idx_t>(len));
+	auto parse_result =
+	    duckdb_fast_float::from_chars(decimal_buffer, decimal_buffer + UnsafeNumericCast<idx_t>(len), result);
+	return parse_result.ec == std::errc();
 }
 
 // DECIMAL -> FLOAT
