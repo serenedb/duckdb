@@ -1109,8 +1109,12 @@ void TableScanGetMetrics(TableFunctionGetMetricsInput &input) {
 InsertionOrderPreservingMap<string> TableScanToString(TableFunctionToStringInput &input) {
 	InsertionOrderPreservingMap<string> result;
 	auto &bind_data = input.bind_data->Cast<TableScanBindData>();
-	result["Table"] = bind_data.table.schema.GetQualifiedName(bind_data.table.name)
-	                      .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (!bind_data.display_name.empty()) {
+		result["Table"] = bind_data.display_name;
+	} else {
+		result["Table"] = bind_data.table.schema.GetQualifiedName(bind_data.table.name)
+		                      .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	}
 	result["Type"] = bind_data.is_index_scan ? "Index Scan" : "Sequential Scan";
 	return result;
 }

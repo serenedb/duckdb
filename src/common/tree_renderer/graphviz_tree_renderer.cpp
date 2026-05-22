@@ -87,7 +87,7 @@ digraph G {
 				auto &key = item.first;
 				auto &value_raw = item.second;
 
-				auto value = QueryProfiler::JSONSanitize(value_raw);
+				auto value = QueryProfiler::JSONSanitize(value_raw.ToString());
 				body.push_back(StringUtil::Format("%s:\\n%s", key, value));
 			}
 			nodes.push_back(StringUtil::Format(node_format, x, y, StringUtil::Join(body, "\\n───\\n")));

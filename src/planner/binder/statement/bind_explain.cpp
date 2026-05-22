@@ -2,6 +2,7 @@
 #include "duckdb/parser/statement/explain_statement.hpp"
 #include "duckdb/planner/operator/logical_explain.hpp"
 #include "duckdb/common/tree_renderer.hpp"
+#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -11,27 +12,35 @@ BoundStatement Binder::Bind(ExplainStatement &stmt) {
 		throw NotImplementedException("EXPLAIN (SQL) supports SELECT, VALUES and WITH queries only");
 	}
 
+	auto output_shape = Settings::Get<ExplainOutputFormatSetting>(context);
+
 	// bind the underlying statement
 	auto plan = Bind(*stmt.stmt);
 	// render the unoptimized logical plan, but only when it will be shown: a plain EXPLAIN in a multi-plan format.
 	// (it is unused for EXPLAIN ANALYZE, and single-plan formats like FORMAT WEB render only the final plan)
 	string logical_plan_unopt;
-	if (stmt.explain_type == ExplainType::EXPLAIN_STANDARD) {
+	if (stmt.explain_type == ExplainType::EXPLAIN_STANDARD &&
+	    Settings::Get<ExplainOutputSetting>(context) == ExplainOutputType::ALL) {
 		auto renderer = TreeRenderer::CreateRenderer(context, stmt.format);
 		if (!renderer || !renderer->RendersSinglePlan()) {
 			logical_plan_unopt = plan.plan->ToString(context, stmt.format);
 		}
 	}
-	auto explain = make_uniq<LogicalExplain>(std::move(plan.plan), stmt.explain_type, stmt.format);
-	explain->logical_plan_unopt = logical_plan_unopt;
+	auto explain = make_uniq<LogicalExplain>(std::move(plan.plan), stmt.explain_type, stmt.format, output_shape);
+	explain->logical_plan_unopt = std::move(logical_plan_unopt);
 	if (stmt.explain_type == ExplainType::EXPLAIN_SQL) {
 		explain->sql_output_names = std::move(plan.names);
 		explain->allow_unsupported_sql = stmt.allow_unsupported_sql;
 	}
 
 	result.plan = std::move(explain);
-	result.names = {"explain_key", "explain_value"};
-	result.types = {LogicalType::VARCHAR, LogicalType::VARCHAR};
+	if (output_shape == ExplainFormatShape::PG) {
+		result.names = {"QUERY PLAN"};
+		result.types = {LogicalType::VARCHAR};
+	} else {
+		result.names = {"explain_key", "explain_value"};
+		result.types = {LogicalType::VARCHAR, LogicalType::VARCHAR};
+	}
 
 	auto &properties = GetStatementProperties();
 	properties.return_type = StatementReturnType::QUERY_RESULT;

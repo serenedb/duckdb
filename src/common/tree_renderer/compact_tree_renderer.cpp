@@ -97,10 +97,10 @@ void CompactTreeRenderer::RenderRecursive(RenderTree &tree, BaseTreeRenderer &ss
 	vector<string> properties;
 	for (auto &entry : node.extra_text) {
 		auto &key = entry.first;
-		auto &value = entry.second;
-		if (value.empty()) {
+		if (entry.second.empty()) {
 			continue;
 		}
+		auto value = entry.second.ToString();
 		if (key == RenderTreeNode::CARDINALITY) {
 			stats.push_back("rows=" + value);
 		} else if (key == RenderTreeNode::ESTIMATED_CARDINALITY) {

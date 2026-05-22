@@ -15,9 +15,10 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalExplain &op) {
 	auto renderer = TreeRenderer::CreateRenderer(context, op.format);
 	bool single_plan = renderer && renderer->RendersSinglePlan();
 	bool analyze = op.explain_type == ExplainType::EXPLAIN_ANALYZE;
+	auto explain_output = Settings::Get<ExplainOutputSetting>(context);
 	// render the optimized logical plan before physical planning consumes it - but only when it will be shown
 	string logical_plan_opt;
-	if (!analyze && !single_plan) {
+	if (!analyze && !single_plan && explain_output != ExplainOutputType::PHYSICAL_ONLY) {
 		logical_plan_opt = op.children[0]->ToString(context, op.format);
 	}
 	auto &plan = CreatePlan(*op.children[0]);
@@ -28,41 +29,50 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalExplain &op) {
 	}
 
 	// Format the plan and set the output of the EXPLAIN.
-	op.physical_plan = plan.ToString(context, op.format);
 	vector<string> keys, values;
 	if (single_plan) {
+		op.physical_plan = plan.ToString(context, op.format);
 		keys = {"physical_plan"};
 		values = {op.physical_plan};
 	} else {
-		switch (Settings::Get<ExplainOutputSetting>(context)) {
+		switch (explain_output) {
 		case ExplainOutputType::OPTIMIZED_ONLY:
 			keys = {"logical_opt"};
-			values = {logical_plan_opt};
+			values = {std::move(logical_plan_opt)};
 			break;
 		case ExplainOutputType::PHYSICAL_ONLY:
+			op.physical_plan = plan.ToString(context, op.format);
 			keys = {"physical_plan"};
 			values = {op.physical_plan};
 			break;
 		default:
+			op.physical_plan = plan.ToString(context, op.format);
 			keys = {"logical_plan", "logical_opt", "physical_plan"};
-			values = {op.logical_plan_unopt, logical_plan_opt, op.physical_plan};
+			values = {op.logical_plan_unopt, std::move(logical_plan_opt), op.physical_plan};
 		}
 	}
 
-	// Create a ColumnDataCollection from the output.
+	// Pack the plan strings into the result columns. PG shape: a single "QUERY PLAN"
+	// column with one row per plan line; DuckDB native shape: two columns {key, value}
+	// with one row per plan section.
 	auto &allocator = Allocator::Get(context);
-	vector<LogicalType> plan_types {LogicalType::VARCHAR, LogicalType::VARCHAR};
-	auto collection =
-	    make_uniq<ColumnDataCollection>(context, plan_types, ColumnDataAllocatorType::IN_MEMORY_ALLOCATOR);
+	auto collection = make_uniq<ColumnDataCollection>(context, op.types, ColumnDataAllocatorType::IN_MEMORY_ALLOCATOR);
 
 	DataChunk chunk;
 	chunk.Initialize(allocator, op.types);
-	for (idx_t i = 0; i < keys.size(); i++) {
-		chunk.data[0].Append(Value(keys[i]));
-		chunk.data[1].Append(Value(values[i]));
-		if (chunk.size() == STANDARD_VECTOR_SIZE) {
-			collection->Append(chunk);
-			chunk.Reset();
+	if (op.output_shape == ExplainFormatShape::PG) {
+		for (idx_t i = 0; i < values.size(); i++) {
+			AppendExplainLines(values[i], chunk, *collection);
+		}
+	} else {
+		for (idx_t i = 0; i < keys.size(); i++) {
+			chunk.SetValue(0, chunk.size(), Value(keys[i]));
+			chunk.SetValue(1, chunk.size(), Value(values[i]));
+			chunk.SetCardinality(chunk.size() + 1);
+			if (chunk.size() == STANDARD_VECTOR_SIZE) {
+				collection->Append(chunk);
+				chunk.Reset();
+			}
 		}
 	}
 	collection->Append(chunk);

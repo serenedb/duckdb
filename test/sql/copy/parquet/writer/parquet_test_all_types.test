@@ -38,7 +38,7 @@ query II
 explain select "{type}" from '{TEST_DIR}/all_types.parquet'
 WHERE "{type}" IN (127);
 ----
-physical_plan	<REGEX>:.*PARQUET_SCAN.*Filters.*
+physical_plan	<REGEX>:.*PARQUET_SCAN.*Column Filter.*
 
 endloop
 
@@ -46,10 +46,10 @@ query II
 explain select "VARCHAR" from '{TEST_DIR}/all_types.parquet'
 WHERE "VARCHAR" IN ('🦆🦆🦆🦆🦆🦆');
 ----
-physical_plan	<REGEX>:.*PARQUET_SCAN.*Filters.*
+physical_plan	<REGEX>:.*PARQUET_SCAN.*Column Filter.*
 
 query II
 explain select "bool" from '{TEST_DIR}/all_types.parquet'
 WHERE "bool" IN (true);
 ----
-physical_plan	<REGEX>:.*PARQUET_SCAN.*Filters.*
+physical_plan	<REGEX>:.*PARQUET_SCAN.*Column Filter.*

@@ -1951,7 +1951,7 @@ TEST_CASE("V2 table: partition_data reports declared columns under projection pu
 	// Only "part_col" is scanned, so declared index 1 is scan position 0; reporting 0 would name the INTEGER "pad"
 	// and the BIGINT partition value would be refused.
 	REQUIRE(ExplainContains(fx.conn, "EXPLAIN SELECT part_col, count(*) FROM proj_part_probe(3) GROUP BY part_col",
-	                        "Partitioned Aggregate"));
+	                        "PARTITIONED_AGGREGATE"));
 	auto cells =
 	    QueryCells(fx.conn, "SELECT part_col, count(*) FROM proj_part_probe(3) GROUP BY part_col ORDER BY part_col");
 	REQUIRE(cells == std::vector<int64_t> {0, 3, 1, 3, 2, 3});
@@ -1966,7 +1966,7 @@ TEST_CASE("V2 table: partition_data reports declared columns under projection pu
 
 	// Grouping by "val" is not a partitioning the probe claims, so the plain path still works under pushdown.
 	REQUIRE_FALSE(ExplainContains(fx.conn, "EXPLAIN SELECT val, count(*) FROM proj_part_probe(3) GROUP BY val",
-	                              "Partitioned Aggregate"));
+	                              "PARTITIONED_AGGREGATE"));
 	REQUIRE(QueryI64(fx.conn, "SELECT count(*) FROM (SELECT val FROM proj_part_probe(3) GROUP BY val)") == 9);
 }
 
@@ -2013,9 +2013,9 @@ TEST_CASE("V2 table: partition_data and partitioning feed a partitioned aggregat
 	// partitioning claims the requested column set only for "part_col": GROUP BY part_col unlocks the
 	// partitioned aggregate, GROUP BY val does not.
 	REQUIRE(ExplainContains(fx.conn, "EXPLAIN SELECT part_col, count(*) FROM part_probe(3) GROUP BY part_col",
-	                        "Partitioned Aggregate"));
+	                        "PARTITIONED_AGGREGATE"));
 	REQUIRE_FALSE(ExplainContains(fx.conn, "EXPLAIN SELECT val, count(*) FROM part_probe(3) GROUP BY val",
-	                              "Partitioned Aggregate"));
+	                              "PARTITIONED_AGGREGATE"));
 
 	auto cells =
 	    QueryCells(fx.conn, "SELECT part_col, count(*) FROM part_probe(3) GROUP BY part_col ORDER BY part_col");

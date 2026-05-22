@@ -123,7 +123,7 @@ SELECT count(*)
 FROM read_parquet('{TEST_DIR}/bloom_in.parquet')
 WHERE r IN (NULL);
 ----
-analyzed_plan	<REGEX>:(?s).*Empty Result.*
+analyzed_plan	<REGEX>:(?s).*EMPTY_RESULT.*
 
 # Optional OR filters should also use the bloom filter
 query II

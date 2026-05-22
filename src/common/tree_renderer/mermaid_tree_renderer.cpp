@@ -99,7 +99,7 @@ void MermaidTreeRenderer::ToStreamInternal(RenderTree &root, BaseTreeRenderer &s
 				auto &key = item.first;
 				auto &value_raw = item.second;
 
-				auto value = QueryProfiler::JSONSanitize(value_raw);
+				auto value = QueryProfiler::JSONSanitize(value_raw.ToString());
 				// Add newline and key-value pair
 				extra_info += StringUtil::Format("\n\t%s: %s", key, SanitizeMermaidLabel(value));
 			}

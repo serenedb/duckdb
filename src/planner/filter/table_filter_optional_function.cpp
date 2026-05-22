@@ -63,6 +63,7 @@ ScalarFunction OptionalFilterScalarFun::GetFunction(const LogicalType &input_typ
 	func.SetFilterPruneCallback(OptionalFilterScalarFun::FilterPrune);
 	func.SetSerializeCallback(OptionalFilterSerialize);
 	func.SetDeserializeCallback(OptionalFilterDeserialize);
+	func.SetToStringCallback(TableFilterFunctionToString);
 	return func;
 }
 

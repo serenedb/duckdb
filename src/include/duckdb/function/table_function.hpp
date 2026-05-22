@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/enums/operator_result_type.hpp"
+#include "duckdb/common/explain_value.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/execution/physical_operator_states.hpp"
@@ -243,6 +244,13 @@ struct TableFunctionToStringInput {
 	}
 	const BoundTableFunction &table_function;
 	optional_ptr<const FunctionData> bind_data;
+
+	optional_ptr<const vector<ColumnIndex>> projected_column_ids;
+	optional_ptr<const vector<idx_t>> projection_ids;
+	optional_ptr<const vector<string>> projected_names;
+	optional_ptr<const vector<LogicalType>> projected_types;
+	optional_ptr<const TableFilterSet> filters;
+	bool projected_filter_prune = false;
 };
 
 struct TableFunctionGetPartitionInput {
@@ -387,6 +395,10 @@ typedef void (*table_function_pushdown_complex_filter_t)(ClientContext &context,
                                                          vector<unique_ptr<Expression>> &filters);
 typedef bool (*table_function_pushdown_expression_t)(ClientContext &context, const LogicalGet &get, Expression &expr);
 typedef InsertionOrderPreservingMap<string> (*table_function_to_string_t)(TableFunctionToStringInput &input);
+//! Structured variant of to_string: when set, EXPLAIN/profiling use it instead of to_string,
+//! so the callback can attach ExplainNode trees (rendered as nested boxes / JSON objects)
+typedef InsertionOrderPreservingMap<ExplainValue> (*table_function_to_string_value_t)(
+    TableFunctionToStringInput &input);
 
 struct TableFunctionToSQLResult {
 	unique_ptr<TableRef> source;
@@ -506,6 +518,7 @@ public:
 	table_function_pushdown_expression_t pushdown_expression;
 	//! (Optional) function for rendering the operator to a string in explain/profiling output (invoked pre-execution)
 	table_function_to_string_t to_string;
+	table_function_to_string_value_t to_string_value = nullptr;
 	//! (Optional) reconstruct the source's SQL-visible state without retaining native objects.
 	//! Must not execute the source or perform effects during export.
 	table_function_to_sql_t to_sql = nullptr;

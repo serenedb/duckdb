@@ -57,7 +57,7 @@ FROM range(6144) tbl(i)
 query II
 EXPLAIN ANALYZE SELECT count(*) FROM all_null_map_key WHERE map_extract_value(m, key) IS NOT NULL;
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*
 
 statement ok
 CREATE TABLE null_valued_map(m MAP(VARCHAR, INTEGER))

@@ -61,7 +61,14 @@ public:
 public:
 	string GetName() const override;
 	InsertionOrderPreservingMap<string> ParamsToString() const override;
+	InsertionOrderPreservingMap<ExplainValue> ParamsToValue() const override;
 
+private:
+	template <class MAP>
+	void AddScanParams(MAP &result) const;
+	TableFunctionToStringInput MakeToStringInput() const;
+
+public:
 	bool Equals(const PhysicalOperator &other) const override;
 
 	OrderPreservationType SourceOrder() const override {
