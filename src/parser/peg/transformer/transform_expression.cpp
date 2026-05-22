@@ -1062,6 +1062,11 @@ PEGTransformerFactory::TransformLikeClause(PEGTransformer &transformer, const st
 		like_children.push_back(make_uniq<ConstantExpression>(Value("i")));
 	}
 	auto result = make_uniq<FunctionExpression>(Identifier(like_variation), std::move(like_children));
+	// Whole family (LIKE/ILIKE/GLOB/SIMILAR TO/~/~*) came from operator syntax, so it names as
+	// "?column?" like PG. is_operator additionally drives operator rendering, but only for the ones
+	// whose name is a real infix symbol (~~/~~*/~~~) -- regexp_full_match/regexp_matches must render
+	// as function calls, so they stay is_operator=false but are still from_operator.
+	result->FromOperatorMutable() = true;
 	if (!is_regex_operator) {
 		result->IsOperatorMutable() = true;
 	}

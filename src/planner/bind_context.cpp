@@ -76,7 +76,11 @@ vector<Identifier> BindContext::GetSimilarBindings(const Identifier &column_name
 }
 
 void BindContext::AddUsingBinding(const Identifier &column_name, UsingColumnSet &set) {
-	using_columns[column_name].insert(set);
+	auto &info = using_columns[column_name];
+	if (info.bindings.empty()) {
+		info.order = using_columns.size() - 1;
+	}
+	info.bindings.insert(set);
 }
 
 optional_ptr<UsingColumnSet> BindContext::GetUsingBinding(const Identifier &column_name) {
@@ -84,7 +88,7 @@ optional_ptr<UsingColumnSet> BindContext::GetUsingBinding(const Identifier &colu
 	if (entry == using_columns.end()) {
 		return nullptr;
 	}
-	auto &using_bindings = entry->second;
+	auto &using_bindings = entry->second.bindings;
 	if (using_bindings.empty()) {
 		throw InternalException("Using binding found but no entries");
 	}
@@ -119,7 +123,7 @@ optional_ptr<UsingColumnSet> BindContext::GetUsingBinding(const Identifier &colu
 	if (entry == using_columns.end()) {
 		return nullptr;
 	}
-	auto &using_bindings = entry->second;
+	auto &using_bindings = entry->second.bindings;
 	for (auto &using_set_ref : using_bindings) {
 		auto &using_set = using_set_ref.get();
 		auto &bindings = using_set.bindings;
@@ -137,7 +141,7 @@ void BindContext::RemoveUsingBinding(const Identifier &column_name, UsingColumnS
 	if (entry == using_columns.end()) {
 		throw InternalException("Attempting to remove using binding that is not there");
 	}
-	auto &bindings = entry->second;
+	auto &bindings = entry->second.bindings;
 	if (bindings.find(set) != bindings.end()) {
 		bindings.erase(set);
 	}
@@ -497,55 +501,99 @@ void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
 	ExclusionListInfo exclusion_info(new_select_list);
 	if (expr.RelationName().empty()) {
 		// SELECT * case
-		// bind all expressions of each table in-order
+		// PG convention: within one FROM item the USING columns come first, then the remaining columns in
+		// table order. Independent FROM items are expanded one after another, so two joins that happen to
+		// merge a column of the same name each keep their own copy of it -- `a NATURAL JOIN b, c NATURAL
+		// JOIN d` is a c a c, not a a c c. Group the bindings by which ones a USING set ties together and
+		// run the two passes inside each group.
+		vector<vector<reference<Binding>>> binding_groups;
+		idx_t last_from_item = 0;
+		for (idx_t i = 0; i < bindings_list.size(); i++) {
+			auto from_item = i < binding_from_item.size() ? binding_from_item[i] : 0;
+			if (binding_groups.empty() || from_item != last_from_item) {
+				binding_groups.emplace_back();
+				last_from_item = from_item;
+			}
+			binding_groups.back().push_back(*bindings_list[i]);
+		}
+
 		reference_set_t<UsingColumnSet> handled_using_columns;
-		for (auto &entry : bindings_list) {
-			auto &binding = *entry;
-			auto &column_names = binding.GetColumnNames();
-			auto &binding_alias = binding.GetBindingAlias();
-			for (auto &column_name : column_names) {
-				QualifiedColumnName qualified_column(binding_alias, column_name);
-				if (CheckExclusionList(expr, qualified_column, exclusion_info)) {
+		for (auto &group : binding_groups) {
+			// Pass 1: emit this group's USING columns first, in USING clause order (PG convention)
+			vector<pair<idx_t, Identifier>> ordered_using;
+			for (auto &uc : using_columns) {
+				ordered_using.emplace_back(uc.second.order, uc.first);
+			}
+			std::sort(ordered_using.begin(), ordered_using.end(),
+			          [](const auto &a, const auto &b) { return a.first < b.first; });
+			for (auto &[order, column_name] : ordered_using) {
+				// Find the first binding of this group that has this USING column
+				BindingAlias first_alias;
+				for (auto &entry : group) {
+					auto using_binding_ptr = GetUsingBinding(column_name, entry.get().GetBindingAlias());
+					if (using_binding_ptr &&
+					    handled_using_columns.find(*using_binding_ptr) == handled_using_columns.end()) {
+						first_alias = entry.get().GetBindingAlias();
+						break;
+					}
+				}
+				if (!first_alias.IsSet()) {
 					continue;
 				}
-				// check if this column is a USING column
-				auto using_binding_ptr = GetUsingBinding(column_name, binding_alias);
-				if (using_binding_ptr) {
-					auto &using_binding = *using_binding_ptr;
-					// it is!
-					// check if we have already emitted the using column
-					if (handled_using_columns.find(using_binding) != handled_using_columns.end()) {
-						// we have! bail out
-						continue;
-					}
-					// we have not! output the using column
-					if (!using_binding.primary_binding.IsSet()) {
-						// no primary binding: output a coalesce
-						auto coalesce =
-						    make_uniq_base<ParsedExpression, OperatorExpression>(ExpressionType::OPERATOR_COALESCE);
-						for (auto &child_binding : using_binding.bindings) {
-							coalesce->Cast<OperatorExpression>().GetChildrenMutable().push_back(
-							    make_uniq<ColumnRefExpression>(column_name, child_binding));
-						}
-						coalesce->SetAlias(column_name);
-						if (HandleRename(expr, qualified_column, coalesce, exclusion_info)) {
-							new_select_list.push_back(std::move(coalesce));
-						}
-					} else {
-						// primary binding: output the qualified column ref
-						auto new_expr = make_uniq_base<ParsedExpression, ColumnRefExpression>(
-						    column_name, using_binding.primary_binding);
-						if (HandleRename(expr, qualified_column, new_expr, exclusion_info)) {
-							new_select_list.push_back(std::move(new_expr));
-						}
-					}
+				auto using_binding_ptr = GetUsingBinding(column_name, first_alias);
+				if (!using_binding_ptr) {
+					continue;
+				}
+				auto &using_binding = *using_binding_ptr;
+				if (handled_using_columns.find(using_binding) != handled_using_columns.end()) {
+					continue;
+				}
+				QualifiedColumnName qualified_column(first_alias, column_name);
+				if (CheckExclusionList(expr, qualified_column, exclusion_info)) {
 					handled_using_columns.insert(using_binding);
 					continue;
 				}
-				auto new_expr =
-				    CreateColumnReference(binding_alias, column_name, ColumnBindType::DO_NOT_EXPAND_GENERATED_COLUMNS);
-				if (HandleRename(expr, qualified_column, new_expr, exclusion_info)) {
-					new_select_list.push_back(std::move(new_expr));
+				if (!using_binding.primary_binding.IsSet()) {
+					auto coalesce =
+					    make_uniq_base<ParsedExpression, OperatorExpression>(ExpressionType::OPERATOR_COALESCE);
+					for (auto &child_binding : using_binding.bindings) {
+						coalesce->Cast<OperatorExpression>().GetChildrenMutable().push_back(
+						    make_uniq<ColumnRefExpression>(column_name, child_binding));
+					}
+					coalesce->SetAlias(column_name);
+					if (HandleRename(expr, qualified_column, coalesce, exclusion_info)) {
+						new_select_list.push_back(std::move(coalesce));
+					}
+				} else {
+					auto new_expr = make_uniq_base<ParsedExpression, ColumnRefExpression>(
+					    column_name, using_binding.primary_binding);
+					if (HandleRename(expr, qualified_column, new_expr, exclusion_info)) {
+						new_select_list.push_back(std::move(new_expr));
+					}
+				}
+				handled_using_columns.insert(using_binding);
+			}
+
+			// Pass 2: emit this group's non-USING columns in table order
+			for (auto &entry : group) {
+				auto &binding = entry.get();
+				auto &column_names = binding.GetColumnNames();
+				auto &binding_alias = binding.GetBindingAlias();
+				for (auto &column_name : column_names) {
+					QualifiedColumnName qualified_column(binding_alias, column_name);
+					if (CheckExclusionList(expr, qualified_column, exclusion_info)) {
+						continue;
+					}
+					// skip USING columns (already emitted in pass 1)
+					auto using_binding_ptr = GetUsingBinding(column_name, binding_alias);
+					if (using_binding_ptr) {
+						continue;
+					}
+					auto new_expr = CreateColumnReference(binding_alias, column_name,
+					                                      ColumnBindType::DO_NOT_EXPAND_GENERATED_COLUMNS);
+					if (HandleRename(expr, qualified_column, new_expr, exclusion_info)) {
+						new_select_list.push_back(std::move(new_expr));
+					}
 				}
 			}
 		}
@@ -644,6 +692,7 @@ void BindContext::GetTypesAndNames(vector<Identifier> &result_names, vector<Logi
 }
 
 void BindContext::AddBinding(unique_ptr<Binding> binding) {
+	binding_from_item.push_back(from_item_counter);
 	bindings_list.push_back(std::move(binding));
 }
 
@@ -683,7 +732,7 @@ static Identifier AddColumnNameToBinding(const Identifier &base_name, identifier
 	idx_t index = 1;
 	Identifier name = base_name;
 	while (current_names.find(name) != current_names.end()) {
-		name = Identifier(base_name + "_" + std::to_string(index++));
+		name = Identifier(base_name + ":" + std::to_string(index++));
 	}
 	current_names.insert(name);
 	return name;
@@ -764,8 +813,12 @@ void BindContext::AddContext(BindContext other) {
 		AddBinding(std::move(binding));
 	}
 	for (auto &entry : other.using_columns) {
-		for (auto &alias : entry.second) {
-			using_columns[entry.first].insert(alias);
+		for (auto &alias : entry.second.bindings) {
+			auto &info = using_columns[entry.first];
+			if (info.bindings.empty()) {
+				info.order = using_columns.size() - 1;
+			}
+			info.bindings.insert(alias);
 		}
 	}
 }
@@ -783,7 +836,7 @@ void BindContext::RemoveContext(const vector<BindingAlias> &aliases) {
 		// remove the binding from any USING columns
 		vector<Identifier> removed_using_columns;
 		for (auto &using_sets : using_columns) {
-			for (auto &using_set_ref : using_sets.second) {
+			for (auto &using_set_ref : using_sets.second.bindings) {
 				auto &using_set = using_set_ref.get();
 				auto it = std::remove_if(using_set.bindings.begin(), using_set.bindings.end(),
 				                         [&](const BindingAlias &using_alias) { return using_alias == alias; });

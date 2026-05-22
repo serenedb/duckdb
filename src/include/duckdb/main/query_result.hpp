@@ -91,8 +91,10 @@ public:
 	}
 
 public:
-	//! Deduplicate column names for interop with external libraries
-	static void DeduplicateColumns(vector<Identifier> &names);
+	//! Deduplicate column names for interop with external libraries. `can_rename` restricts which repeated
+	//! names may be renamed - a repeated name it rejects is left alone
+	static void DeduplicateColumns(vector<Identifier> &names,
+	                               const std::function<bool(const Identifier &)> &can_rename = nullptr);
 	static void DeduplicateColumns(vector<string> &names);
 
 public:

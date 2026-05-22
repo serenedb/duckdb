@@ -275,6 +275,14 @@
         "accessor": "IsOperator()"
       },
       {
+        "id": 210,
+        "name": "from_operator",
+        "type": "bool",
+        "equals_skip": true,
+        "accessor_mut": "FromOperatorMutable()",
+        "accessor": "IsFromOperator()"
+      },
+      {
         "id": 207,
         "name": "export_state",
         "type": "bool",

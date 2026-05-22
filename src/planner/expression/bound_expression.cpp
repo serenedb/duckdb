@@ -24,7 +24,7 @@ string BoundExpression::ToString() const {
 }
 
 bool BoundExpression::Equals(const BaseExpression &other) const {
-	return false;
+	return this == &other;
 }
 hash_t BoundExpression::Hash() const {
 	return 0;

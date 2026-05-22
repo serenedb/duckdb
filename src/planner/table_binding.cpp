@@ -31,7 +31,8 @@ void Binding::Initialize() {
 		auto &name = names[i];
 		D_ASSERT(!name.empty());
 		if (name_map.find(name) != name_map.end()) {
-			throw BinderException("table \"%s\" has duplicate column name \"%s\"", alias.GetAlias(), name);
+			throw BinderException("table \"%s\" has duplicate column name \"%s\"", alias.GetAlias(),
+			                      name.GetIdentifierName());
 		}
 		name_map[name] = i;
 	}
