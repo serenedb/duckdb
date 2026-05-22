@@ -32,8 +32,8 @@ public:
 	}
 
 private:
-	mutex m;
-	unordered_set<string> store;
+	duckdb::mutex m;
+	duckdb::unordered_set<string> store;
 };
 
 CustomLogStore my_log_store;

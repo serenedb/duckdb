@@ -58,14 +58,14 @@ ParserCache::~ParserCache() {
 
 shared_ptr<CompiledGrammar> ParserCache::GetMatcher() {
 	{
-		std::unique_lock<std::mutex> lock(mutex);
+		std::unique_lock<duckdb::mutex> lock(mutex);
 		if (matcher) {
 			return matcher;
 		}
 	}
 	auto new_matcher = CompiledGrammar::DefaultGrammar();
 
-	std::unique_lock<std::mutex> lock(mutex);
+	std::unique_lock<duckdb::mutex> lock(mutex);
 	if (!matcher) {
 		matcher = std::move(new_matcher);
 	}
@@ -73,7 +73,7 @@ shared_ptr<CompiledGrammar> ParserCache::GetMatcher() {
 }
 
 shared_ptr<CompiledGrammar> ParserCache::GetPassthroughMatcher(const ClientContext &context) {
-	lock_guard<std::mutex> lock(passthrough_mutex);
+	lock_guard<duckdb::mutex> lock(passthrough_mutex);
 	if (!passthrough_dialect) {
 		passthrough_dialect = make_uniq<PassthroughDialect>();
 	}

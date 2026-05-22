@@ -312,7 +312,7 @@ void Executor::CancelTasks() {
 				}
 				if (!scheduler.GetTaskFromProducerLocked(*producer, task_from_producer)) {
 					// Nothing to execute on this thread: wait until a task completes or is enqueued
-					producer->producer_cv.wait(lk);
+					producer->producer_cv.Wait(lk.mutex());
 					continue;
 				}
 			}
@@ -363,7 +363,7 @@ void Executor::UnregisterTask() {
 	{
 		const annotated_lock_guard<annotated_mutex> producer_lock(producer->producer_lock);
 		executor_tasks--;
-		producer->producer_cv.notify_all();
+		producer->producer_cv.SignalAll();
 	}
 	task_reschedule.notify_all();
 #else
@@ -396,7 +396,7 @@ void Executor::WaitForTask() {
 	// Nothing to run on this thread, all remaining tasks are either running on other threads or descheduled.
 	// Wait (bounded), but wake up on task completion or reschedule.
 	const auto wait_begin = TimePoint::Tick();
-	task_reschedule.wait_for(l, WAIT_TIME_MS);
+	task_reschedule.WaitWithTimeout(l.mutex(), absl::FromChrono(WAIT_TIME_MS));
 	const auto wait_micros = NumericCast<idx_t>(TimePoint::ElapsedMicros(wait_begin, TimePoint::Tick()));
 	blocked_thread_time += blocked_micros + wait_micros;
 #endif

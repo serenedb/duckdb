@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include "duckdb/common/condition_variable.hpp"
 #include "duckdb/common/deque.hpp"
 #include "duckdb/main/http/http_transport_config.hpp"
 #include "duckdb/main/http/http_util.hpp"
@@ -32,9 +31,7 @@ public:
 	};
 
 private:
-	struct AdmissionWaiter {
-		condition_variable availability;
-	};
+	struct AdmissionWaiter {};
 
 	struct ClientKeyHash {
 		hash_t operator()(const ClientKey &key) const;
@@ -121,7 +118,6 @@ public:
 	bool IsEmpty() const;
 
 private:
-	void WakeNextAdmission();
 	void RemoveAdmissionWaiter(AdmissionWaiter &waiter);
 	ClientBucketMap::iterator FindBucket(const ClientKey &key, const string &origin,
 	                                     const HTTPTransportConfig &transport_config);

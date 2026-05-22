@@ -24,7 +24,6 @@
 #include "fmt/format.h"
 
 #include <algorithm>
-#include <condition_variable>
 #include <exception>
 #include <functional>
 #include <type_traits>

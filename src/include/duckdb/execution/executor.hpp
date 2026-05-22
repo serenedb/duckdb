@@ -18,8 +18,6 @@
 #include "duckdb/execution/progress_data.hpp"
 #include "duckdb/parallel/pipeline.hpp"
 
-#include <condition_variable>
-
 namespace duckdb {
 class BufferedData;
 class ClientContext;
@@ -212,7 +210,7 @@ private:
 	//! Task that have been descheduled
 	reference_map_t<Task, shared_ptr<Task>> to_be_rescheduled_tasks;
 	//! The semaphore to signal task rescheduling
-	std::condition_variable task_reschedule;
+	absl::CondVar task_reschedule;
 
 	//! Currently alive executor tasks
 	atomic<idx_t> executor_tasks;

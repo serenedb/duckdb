@@ -80,14 +80,14 @@ struct InterpretedBenchmarkState : public BenchmarkState {
 	}
 };
 
-void ProcessReplacements(string &str, const unordered_map<std::string, std::string> &replacement_map) {
+void ProcessReplacements(string &str, const unordered_map<string, string> &replacement_map) {
 	for (auto &replacement : replacement_map) {
 		str = StringUtil::Replace(str, "${" + replacement.first + "}", replacement.second);
 	}
 }
 
 struct BenchmarkFileReader {
-	BenchmarkFileReader(string path_, const unordered_map<std::string, std::string> &replacement_map)
+	BenchmarkFileReader(string path_, const unordered_map<string, string> &replacement_map)
 	    : path(path_), infile(path), linenr(0), replacements(replacement_map) {
 	}
 
@@ -114,7 +114,7 @@ private:
 	std::string path;
 	std::ifstream infile;
 	int linenr;
-	const unordered_map<std::string, std::string> &replacements;
+	const unordered_map<string, string> &replacements;
 };
 
 InterpretedBenchmark::InterpretedBenchmark(string full_path)

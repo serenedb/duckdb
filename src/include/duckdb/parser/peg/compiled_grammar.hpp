@@ -64,9 +64,9 @@ public:
 	shared_ptr<CompiledGrammar> GetPassthroughMatcher(const ClientContext &context);
 
 private:
-	std::mutex mutex;
+	mutex mutex;
 	shared_ptr<CompiledGrammar> matcher;
-	std::mutex passthrough_mutex;
+	duckdb::mutex passthrough_mutex;
 	unique_ptr<PassthroughDialect> passthrough_dialect;
 };
 

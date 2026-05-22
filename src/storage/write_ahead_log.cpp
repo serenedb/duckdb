@@ -605,7 +605,10 @@ void WriteAheadLog::SyncUpTo(idx_t offset) {
 		}
 		if (sync_in_flight) {
 			// one sync at a time: the next syncer covers every marker flushed meanwhile
-			sync_cv.wait(guard);
+			auto sync_settled = [this]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+				return !sync_in_flight;
+			};
+			sync_lock.Await(absl::Condition(&sync_settled));
 			continue;
 		}
 		// sync everything flushed so far, on behalf of every waiter
@@ -632,7 +635,6 @@ void WriteAheadLog::SyncUpTo(idx_t offset) {
 		} else {
 			durable_offset = target;
 		}
-		sync_cv.notify_all();
 		if (error.HasError()) {
 			error.Throw();
 		}

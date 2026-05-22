@@ -13,8 +13,6 @@
 #include "duckdb/common/enums/checkpoint_type.hpp"
 #include "duckdb/common/queue.hpp"
 
-#include <condition_variable>
-
 namespace duckdb {
 class DuckTransactionManager;
 class DuckTransaction;
@@ -173,8 +171,6 @@ private:
 	//! active_transactions until its commit is durable, so new snapshots are bounded below commits
 	//! that are not yet durable
 	VisibilityBound durable_bound;
-	//! Signalled (under transaction_lock) when no active transaction awaits its WAL sync
-	std::condition_variable durability_cv;
 
 	atomic<idx_t> last_uncommitted_catalog_version = {TRANSACTION_ID_START};
 	idx_t last_committed_version = 0;

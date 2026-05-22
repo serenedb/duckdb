@@ -451,7 +451,7 @@ public:
 			}
 			PushAsyncOpenError(gstate, ErrorData("Unknown exception while opening a file"));
 		} // LCOV_EXCL_STOP
-		gstate.async_open_settled.notify_all();
+		gstate.async_open_settled.SignalAll();
 	}
 
 	//! Schedule async opens for upcoming unopened files on the async pool, ahead of decoding. Lock held on entry.
@@ -483,7 +483,7 @@ public:
 					    [&gstate]() {
 						    // the reader stays in OPENING, so tell every waiter to stop instead of polling forever
 						    gstate.error_opening_file = true;
-						    gstate.async_open_settled.notify_all();
+						    gstate.async_open_settled.SignalAll();
 					    });
 				}
 				progress_guaranteed = true;
@@ -581,7 +581,7 @@ public:
 			}
 			// the open is in flight: sleep until it settles; the timeout bounds interrupt latency and
 			// covers a cancellation that signals without the lock
-			gstate.async_open_settled.wait_for(parallel_lock, std::chrono::milliseconds(10));
+			gstate.async_open_settled.WaitWithTimeout(parallel_lock.mutex(), absl::Milliseconds(10));
 			parallel_lock.unlock();
 			context.InterruptCheck();
 			parallel_lock.lock();

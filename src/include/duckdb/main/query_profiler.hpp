@@ -187,7 +187,7 @@ public:
 	//! Provides access to the root of the query tree, but ensures there are no concurrent modifications
 	//! This can be useful when implementing continuous profiling or making customizations
 	DUCKDB_API void GetRootUnderLock(const std::function<void(optional_ptr<ProfilingNode>)> &callback) {
-		lock_guard<std::mutex> guard(lock);
+		lock_guard<mutex> guard(lock);
 		callback(root.get());
 	}
 
@@ -197,7 +197,7 @@ private:
 	//! Whether or not the query profiler is running
 	bool running;
 	//! The lock used for accessing the global query profiler or flushing information to it from a thread
-	mutable std::mutex lock;
+	mutable mutex lock;
 
 	//! Whether or not the query requires profiling
 	bool query_requires_profiling;
