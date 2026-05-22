@@ -33,7 +33,7 @@ unique_ptr<GlobalTableFunctionState> JSONLookupInitGlobal(ClientContext &context
 	auto &json_data = bind_data.bind_data->Cast<JSONScanData>();
 	auto &allocator = BufferAllocator::Get(context);
 	D_ASSERT(json_data.options.type == JSONScanType::READ_JSON);
-	const idx_t buffer_capacity = json_data.options.maximum_object_size * 2;
+	const idx_t buffer_capacity = json_data.options.maximum_object_size * 2 + YYJSON_PADDING_SIZE;
 
 	auto state = make_uniq<JSONLookupGlobalState>(context, allocator, buffer_capacity);
 	state->transform_options = json_data.transform_options;
@@ -94,7 +94,7 @@ unique_ptr<GlobalTableFunctionState> JSONObjectsLookupInitGlobal(ClientContext &
 	auto &allocator = BufferAllocator::Get(context);
 	D_ASSERT(json_data.options.type == JSONScanType::READ_JSON_OBJECTS);
 
-	const idx_t buffer_capacity = json_data.options.maximum_object_size * 2;
+	const idx_t buffer_capacity = json_data.options.maximum_object_size * 2 + YYJSON_PADDING_SIZE;
 	auto state = make_uniq<JSONObjectsLookupGlobalState>(context, allocator, buffer_capacity);
 
 	const auto &file = bind_data.file_list->GetFirstFile();
