@@ -340,10 +340,19 @@ optional_ptr<const ConfigurationAlias> DBConfig::GetAliasByIndex(idx_t target_in
 }
 
 static optional_ptr<const ConfigurationOption> FindOptionByName(const Identifier &name) {
-	for (idx_t index = 0; internal_options[index].name; index++) {
-		if (internal_options[index].name == name) {
-			return internal_options + index;
+	// option name -> option, built once. Names must be lowercase (asserted at build);
+	// the lookup lowercases the input first. The array stays for index iteration.
+	static const absl::flat_hash_map<std::string_view, const ConfigurationOption *> option_index = [] {
+		absl::flat_hash_map<std::string_view, const ConfigurationOption *> m;
+		for (idx_t index = 0; internal_options[index].name; index++) {
+			D_ASSERT(StringUtil::Lower(internal_options[index].name) == internal_options[index].name);
+			m.emplace(internal_options[index].name, &internal_options[index]);
 		}
+		return m;
+	}();
+	auto lname = StringUtil::Lower(name.GetIdentifierName());
+	if (auto it = option_index.find(lname); it != option_index.end()) {
+		return it->second;
 	}
 	return nullptr;
 }
@@ -642,8 +651,8 @@ void DBConfig::CheckLock(const Identifier &name) {
 		// not locked
 		return;
 	}
-	identifier_set_t allowed_settings {"schema", "search_path"};
-	if (allowed_settings.find(name) != allowed_settings.end()) {
+	static const case_insensitive_set_view_t allowed_settings {"schema", "search_path"};
+	if (allowed_settings.contains(name.GetIdentifierName())) {
 		// we are always allowed to change these settings
 		return;
 	}
@@ -909,8 +918,8 @@ void DBConfig::AddAllowedConfig(const Identifier &config_name) {
 	if (config_name.empty()) {
 		throw InvalidInputException("Cannot provide an empty string for allowed_configs");
 	}
-	duckdb::identifier_set_t always_disallowed_config {"allowed_configs", "lock_configuration"};
-	if (always_disallowed_config.find(config_name) != always_disallowed_config.end()) {
+	static const duckdb::case_insensitive_set_view_t always_disallowed_config {"allowed_configs", "lock_configuration"};
+	if (always_disallowed_config.contains(config_name.GetIdentifierName())) {
 		throw InvalidInputException("Cannot include %s in allowed_configs", config_name);
 	}
 	// Validate that the config name refers to a known setting (built-in or extension)

@@ -12,6 +12,7 @@
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
 
@@ -21,15 +22,10 @@ unique_ptr<FunctionData> TableFilterFunctions::Bind(BindScalarFunctionInput &inp
 }
 
 bool TableFilterFunctions::IsTableFilterFunction(const Identifier &name) {
-	static const char *const TABLE_FILTER_FUNCTIONS[] = {BloomFilterScalarFun::NAME, DynamicFilterScalarFun::NAME,
-	                                                     OptionalFilterScalarFun::NAME, PrefixRangeScalarFun::NAME,
-	                                                     SelectivityOptionalFilterScalarFun::NAME};
-	for (auto function_name : TABLE_FILTER_FUNCTIONS) {
-		if (name == function_name) {
-			return true;
-		}
-	}
-	return false;
+	static const case_insensitive_set_view_t table_filter_functions {
+	    BloomFilterScalarFun::NAME, DynamicFilterScalarFun::NAME, OptionalFilterScalarFun::NAME,
+	    PrefixRangeScalarFun::NAME, SelectivityOptionalFilterScalarFun::NAME};
+	return table_filter_functions.contains(name.GetIdentifierName());
 }
 // LCOV_EXCL_STOP
 
