@@ -7,6 +7,7 @@
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
@@ -136,6 +137,19 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 
 	// resolve the (possibly nested) catalog/schema qualification of the altered entry
 	stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
+
+	// ALTER FUNCTION ... RENAME TO ... skips entry lookup (scalar-vs-table
+	// macro is ambiguous at parse time).
+	if (stmt.info->type == AlterType::ALTER_SCALAR_FUNCTION &&
+	    stmt.info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
+	        AlterScalarFunctionType::RENAME_SCALAR_FUNCTION) {
+		auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
+		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
+		return result;
+	}
 
 	optional_ptr<CatalogEntry> entry;
 	if (stmt.info->type == AlterType::SET_COLUMN_COMMENT) {

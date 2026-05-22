@@ -216,6 +216,8 @@ AlterInfo:
     - AlterTableStmt
     - AlterDatabaseStmt
     - AlterViewStmt
+    - AlterIndexStmt
+    - AlterFunctionStmt
     - AlterSchemaStmt
     - AlterSequenceStmt
     - AlterSequenceOptions
@@ -272,6 +274,9 @@ MacroFunction:
   rules:
     - MacroDefinition
     - MacroDefinitionBody
+    - AsMacroBody
+    - AtomicMacroBody
+    - ReturnMacroBody
     - TableMacroDefinition
     - ScalarMacroDefinition
 
@@ -1225,6 +1230,8 @@ Bool:
     - MacroOrFunction
     - MacroKeyword
     - FunctionKeyword
+    - ProcedureKeyword
+    - FunctionTypeProcedure
     - DeallocatePrepare
     - CreateRecursive
     - CreateSecure
@@ -1939,6 +1946,20 @@ excluded_rules:
   - "%whitespace"
   - List
   - Parens
+  - DropFunctionItem
+  - DropFunctionArgs
+  - FunctionDecorator
+  - ReturnsClause
+  - ReturnsTable
+  - ReturnsNull
+  - VolatilityKeyword
+  - StrictClause
+  - LanguageClause
+  - SecurityClause
+  - CostClause
+  - RowsClause
+  - ParallelClause
+  - LeakproofClause
   - Database
   - AbortOrRollback
   - CommitOrEnd
