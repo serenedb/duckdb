@@ -174,7 +174,7 @@ void Binder::SearchSchema(CreateInfo &info) {
 	}
 	if (IsInvalidCatalog(catalog) && schema_path.empty()) {
 		// no catalog and no schema given: use the search path default for both
-		auto &default_entry = search_path->GetDefault();
+		auto default_entry = search_path->GetResolvedDefault();
 		catalog = default_entry.GetCatalog();
 		schema_path.push_back(default_entry.GetSchema());
 	} else if (schema_path.empty()) {
@@ -190,6 +190,10 @@ void Binder::SearchSchema(CreateInfo &info) {
 	}
 	if (IsInvalidCatalog(catalog)) {
 		catalog = DatabaseManager::GetDefaultDatabase(context);
+	}
+	if (IsInvalidSchema(schema_path.back())) {
+		// Empty search_path / no resolvable entry -> PG-style error.
+		throw CatalogException("no schema has been selected to create in");
 	}
 	if (!info.temporary) {
 		if (catalog == TEMP_CATALOG) {

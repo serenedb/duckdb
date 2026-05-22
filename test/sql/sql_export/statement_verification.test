@@ -170,7 +170,7 @@ statement ok
 CREATE MACRO shadow.prefix(a,b) AS false;
 
 statement ok
-SET search_path='shadow,main';
+SET search_path = shadow, main;
 
 foreach serializer false true
 
