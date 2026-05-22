@@ -18,7 +18,7 @@ INSERT INTO t_nullable SELECT CASE WHEN range % 1024 = 0 THEN NULL ELSE range::V
 query II
 EXPLAIN SELECT count(*) FROM t_strict_null WHERE lower(s) IS NULL;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM t_strict_null WHERE lower(s) IS NULL;

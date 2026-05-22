@@ -95,6 +95,7 @@ BoundTableFunction::BoundTableFunction(shared_ptr<const TableFunction> function_
 	pushdown_complex_filter = function.pushdown_complex_filter;
 	pushdown_expression = function.pushdown_expression;
 	to_string = function.to_string;
+	to_string_value = function.to_string_value;
 	to_sql = function.to_sql;
 	table_scan_progress = function.table_scan_progress;
 	get_partition_data = function.get_partition_data;

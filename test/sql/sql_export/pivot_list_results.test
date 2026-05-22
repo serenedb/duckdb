@@ -42,7 +42,7 @@ SET pivot_filter_threshold=0;
 query TT
 EXPLAIN SELECT a_ok FROM (VALUES ('a',1),('b',2)) t(k,v) PIVOT (sum(v) AS ok,sum(CASE WHEN v=2 THEN error('pivot export error')::INTEGER ELSE v END) AS effect FOR k IN ('a','b','z'));
 ----
-physical_plan	<REGEX>:.*Pivot.*
+physical_plan	<REGEX>:.*PIVOT.*
 
 foreach serializer false true
 

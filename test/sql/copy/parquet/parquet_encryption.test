@@ -132,7 +132,7 @@ query II
 EXPLAIN SELECT count(*), min(i), max(i) FROM read_parquet('{TEST_DIR}/encrypted_metadata_cache.parquet',
 	encryption_config={footer_key: 'key256'})
 ----
-physical_plan	<REGEX>:.*Column Data Scan.*
+physical_plan	<REGEX>:.*COLUMN_DATA_SCAN.*
 
 # without a key, cached metadata statistics must not be used to answer the aggregate
 statement error

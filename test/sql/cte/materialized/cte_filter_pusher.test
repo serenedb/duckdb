@@ -60,7 +60,7 @@ EXPLAIN WITH cte AS MATERIALIZED (
 )
 SELECT * FROM cte WHERE alias = 42;
 ----
-logical_opt	<REGEX>:.*Filters: i = 42.*
+logical_opt	<REGEX>:.*Column Filter: i = 42.*
 
 query I
 WITH cte AS MATERIALIZED (
@@ -103,7 +103,7 @@ FROM (
 ) sq
 WHERE x < 10;
 ----
-logical_opt	<REGEX>:(?s).*Expressions: payload.*Expressions: \(i \+ 1\) < 10.*Range.*
+logical_opt	<REGEX>:(?s).*Expressions: payload.*Expressions: \(i \+ 1\) < 10.*RANGE.*
 
 # Preserve NULLs and duplicates while splitting a computed projection
 statement ok

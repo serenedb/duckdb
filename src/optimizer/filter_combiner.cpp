@@ -151,6 +151,10 @@ void FilterCombiner::GenerateEquivalentFilters(const Expression &filter,
 		auto &col = col_ref.get();
 		auto set_id = equivalence_set_map.find(col)->second;
 		for (auto &item : equivalence_map[set_id]) {
+			if (item.get().Equals(col)) {
+				// substituting the column with itself would just duplicate the original filter
+				continue;
+			}
 			callback(ExpressionIterator::ReplaceExpression(filter, col, item.get()));
 		}
 	}

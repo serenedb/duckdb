@@ -75,7 +75,7 @@ SELECT count(*), min(id), max(id) FROM read_single_parquet_file('{TEST_DIR}/sing
 query II
 EXPLAIN SELECT count(*), min(id), max(id) FROM read_single_parquet_file('{TEST_DIR}/single_rg.parquet')
 ----
-physical_plan	<REGEX>:.*Column Data Scan.*
+physical_plan	<REGEX>:.*COLUMN_DATA_SCAN.*
 
 # virtual columns are produced as columns of their own, appended after the ones the file has
 query I
@@ -140,7 +140,7 @@ SELECT count(*), min(id), max(id) FROM read_parquet('{TEST_DIR}/single_rg.parque
 query II
 EXPLAIN SELECT count(*), min(id), max(id) FROM read_parquet('{TEST_DIR}/single_rg.parquet')
 ----
-physical_plan	<REGEX>:.*Column Data Scan.*
+physical_plan	<REGEX>:.*COLUMN_DATA_SCAN.*
 
 # filters and ordering through the multi file reader
 query I

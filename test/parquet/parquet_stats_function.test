@@ -73,7 +73,7 @@ SELECT stats(f), stats(d) FROM read_parquet('{TEST_DIR}/nan_count_zero.parquet',
 query II
 EXPLAIN SELECT * FROM read_parquet('{TEST_DIR}/nan_count_zero.parquet', can_have_nan=true) WHERE d > 10
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 foreach encoding dict plain bss
 

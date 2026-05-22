@@ -11,7 +11,7 @@ INSERT INTO integers VALUES (1), (2), (NULL);
 query II
 EXPLAIN SELECT count(*) FROM integers WHERE i NOT IN (NULL);
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM integers WHERE i NOT IN (NULL);
@@ -21,7 +21,7 @@ SELECT count(*) FROM integers WHERE i NOT IN (NULL);
 query II
 EXPLAIN SELECT count(*) FROM integers WHERE i NOT IN (NULL) AND i > 0;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM integers WHERE i NOT IN (NULL) AND i > 0;
