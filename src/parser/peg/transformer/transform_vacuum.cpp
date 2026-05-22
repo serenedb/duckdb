@@ -1,5 +1,8 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/statement/vacuum_statement.hpp"
+#include "duckdb/parser/statement/pragma_statement.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 
 namespace duckdb {
 
@@ -9,6 +12,25 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformVacuumStatement(PEGTran
 	VacuumOptions options;
 	if (vacuum_options) {
 		options = *vacuum_options;
+	}
+	// SereneDB extension: VACUUM (REFRESH_*) / VACUUM (COMPACT_*) /
+	// VACUUM (RECOMPUTE_STATS_*) lower to a PRAGMA call instead of the standard
+	// VacuumStatement. Parameters are positional: option, name, schema, catalog.
+	if (!options.serenedb_pragma_option.empty()) {
+		auto pragma = make_uniq<PragmaStatement>();
+		pragma->info->name = "serenedb_vacuum";
+		pragma->info->parameters.push_back(make_uniq<ConstantExpression>(Value(options.serenedb_pragma_option)));
+		if (analyze_target && analyze_target->ref) {
+			auto &base_ref = analyze_target->ref->Cast<BaseTableRef>();
+			auto &qualified_name = base_ref.GetQualifiedName();
+			pragma->info->parameters.push_back(
+			    make_uniq<ConstantExpression>(Value(qualified_name.Name().GetIdentifierName())));
+			pragma->info->parameters.push_back(
+			    make_uniq<ConstantExpression>(Value(qualified_name.Schema().GetIdentifierName())));
+			pragma->info->parameters.push_back(
+			    make_uniq<ConstantExpression>(Value(qualified_name.Catalog().GetIdentifierName())));
+		}
+		return std::move(pragma);
 	}
 	auto result = make_uniq<VacuumStatement>(options);
 	if (analyze_target && analyze_target->ref) {
@@ -41,8 +63,26 @@ VacuumOptions PEGTransformerFactory::TransformVacuumLegacyOptions(PEGTransformer
 
 VacuumOptions PEGTransformerFactory::TransformVacuumParensOptions(PEGTransformer &transformer,
                                                                   const vector<string> &vacuum_option) {
+	static constexpr const char *kSerenedbOptions[] = {
+	    "refresh_database",
+	    "refresh_schema",
+	    "refresh_table",
+	    "refresh_index",
+	    "refresh_all",
+	    "compact_database",
+	    "compact_schema",
+	    "compact_table",
+	    "compact_index",
+	    "compact_all",
+	    "recompute_stats_table",
+	    "recompute_stats_schema",
+	    "recompute_stats_database",
+	    "recompute_stats_all",
+	    "recompute_stats_column",
+	};
 	VacuumOptions options;
 	options.vacuum = true;
+	bool any_standard_option = false;
 	for (auto &option : vacuum_option) {
 		if (StringUtil::CIEquals(option, "disable_page_skipping")) {
 			throw NotImplementedException("Disable Page Skipping vacuum option");
@@ -58,7 +98,28 @@ VacuumOptions PEGTransformerFactory::TransformVacuumParensOptions(PEGTransformer
 		}
 		if (StringUtil::CIEquals(option, "analyze")) {
 			options.analyze = true;
+			any_standard_option = true;
+			continue;
 		}
+		const char *matched = nullptr;
+		for (const auto *candidate : kSerenedbOptions) {
+			if (StringUtil::CIEquals(option, candidate)) {
+				matched = candidate;
+				break;
+			}
+		}
+		if (!matched) {
+			throw ParserException("unrecognized VACUUM option \"%s\"", option);
+		}
+		if (!options.serenedb_pragma_option.empty()) {
+			throw ParserException("VACUUM accepts at most one SereneDB option (got both '%s' and '%s')",
+			                      options.serenedb_pragma_option, matched);
+		}
+		options.serenedb_pragma_option = matched;
+	}
+	if (!options.serenedb_pragma_option.empty() && any_standard_option) {
+		throw ParserException("VACUUM SereneDB option '%s' cannot be combined with standard VACUUM options",
+		                      options.serenedb_pragma_option);
 	}
 	return options;
 }

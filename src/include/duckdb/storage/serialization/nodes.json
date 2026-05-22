@@ -592,6 +592,11 @@
         "id": 101,
         "name": "analyze",
         "type": "bool"
+      },
+      {
+        "id": 102,
+        "name": "serenedb_pragma_option",
+        "type": "string"
       }
     ],
     "pointer_type": "none"
