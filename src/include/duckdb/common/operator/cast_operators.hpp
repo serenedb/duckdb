@@ -24,6 +24,8 @@
 #include "duckdb/common/exception/conversion_exception.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 
+#include <absl/strings/ascii.h>
+
 namespace duckdb {
 struct CastParameters;
 struct ValidityMask;
@@ -483,7 +485,7 @@ DUCKDB_API bool TryCast::Operation(double input, double &result, bool strict);
 static inline bool TryCastStringBool(const char *input_data, idx_t input_size, bool &result, bool strict) {
 	switch (input_size) {
 	case 1: {
-		unsigned char c = static_cast<uint8_t>(std::tolower(*input_data));
+		unsigned char c = absl::ascii_tolower(static_cast<unsigned char>(*input_data));
 		if (c == 't' || (!strict && c == 'y') || (!strict && c == '1')) {
 			result = true;
 			return true;
@@ -494,8 +496,8 @@ static inline bool TryCastStringBool(const char *input_data, idx_t input_size, b
 		return false;
 	}
 	case 2: {
-		unsigned char n = static_cast<uint8_t>(std::tolower(input_data[0]));
-		unsigned char o = static_cast<uint8_t>(std::tolower(input_data[1]));
+		unsigned char n = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
+		unsigned char o = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
 		if (n == 'n' && o == 'o') {
 			result = false;
 			return true;
@@ -503,9 +505,9 @@ static inline bool TryCastStringBool(const char *input_data, idx_t input_size, b
 		return false;
 	}
 	case 3: {
-		unsigned char y = static_cast<uint8_t>(std::tolower(input_data[0]));
-		unsigned char e = static_cast<uint8_t>(std::tolower(input_data[1]));
-		unsigned char s = static_cast<uint8_t>(std::tolower(input_data[2]));
+		unsigned char y = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
+		unsigned char e = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
+		unsigned char s = absl::ascii_tolower(static_cast<unsigned char>(input_data[2]));
 		if (y == 'y' && e == 'e' && s == 's') {
 			result = true;
 			return true;
@@ -513,10 +515,10 @@ static inline bool TryCastStringBool(const char *input_data, idx_t input_size, b
 		return false;
 	}
 	case 4: {
-		unsigned char t = static_cast<uint8_t>(std::tolower(input_data[0]));
-		unsigned char r = static_cast<uint8_t>(std::tolower(input_data[1]));
-		unsigned char u = static_cast<uint8_t>(std::tolower(input_data[2]));
-		unsigned char e = static_cast<uint8_t>(std::tolower(input_data[3]));
+		unsigned char t = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
+		unsigned char r = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
+		unsigned char u = absl::ascii_tolower(static_cast<unsigned char>(input_data[2]));
+		unsigned char e = absl::ascii_tolower(static_cast<unsigned char>(input_data[3]));
 		if (t == 't' && r == 'r' && u == 'u' && e == 'e') {
 			result = true;
 			return true;
@@ -524,11 +526,11 @@ static inline bool TryCastStringBool(const char *input_data, idx_t input_size, b
 		return false;
 	}
 	case 5: {
-		unsigned char f = static_cast<uint8_t>(std::tolower(input_data[0]));
-		unsigned char a = static_cast<uint8_t>(std::tolower(input_data[1]));
-		unsigned char l = static_cast<uint8_t>(std::tolower(input_data[2]));
-		unsigned char s = static_cast<uint8_t>(std::tolower(input_data[3]));
-		unsigned char e = static_cast<uint8_t>(std::tolower(input_data[4]));
+		unsigned char f = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
+		unsigned char a = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
+		unsigned char l = absl::ascii_tolower(static_cast<unsigned char>(input_data[2]));
+		unsigned char s = absl::ascii_tolower(static_cast<unsigned char>(input_data[3]));
+		unsigned char e = absl::ascii_tolower(static_cast<unsigned char>(input_data[4]));
 		if (f == 'f' && a == 'a' && l == 'l' && s == 's' && e == 'e') {
 			result = false;
 			return true;
