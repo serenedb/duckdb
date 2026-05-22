@@ -5,12 +5,39 @@ namespace duckdb {
 
 unique_ptr<SQLStatement>
 PEGTransformerFactory::TransformBeginTransaction(PEGTransformer &transformer, const bool &has_result,
+                                                 const optional<TransactionIsolationLevel> &isolation_level_clause,
                                                  const optional<TransactionModifierType> &read_or_write) {
 	auto info = make_uniq<TransactionInfo>(TransactionType::BEGIN_TRANSACTION);
 	if (read_or_write) {
 		info->modifier = *read_or_write;
 	}
+	if (isolation_level_clause) {
+		info->isolation_level = *isolation_level_clause;
+	}
 	return make_uniq<TransactionStatement>(std::move(info));
+}
+
+// IsolationLevelClause <- 'ISOLATION' 'LEVEL' IsolationLevel
+TransactionIsolationLevel
+PEGTransformerFactory::TransformIsolationLevelClause(PEGTransformer &transformer,
+                                                     const TransactionIsolationLevel &isolation_level) {
+	return isolation_level;
+}
+
+TransactionIsolationLevel PEGTransformerFactory::TransformReadCommitted(PEGTransformer &transformer) {
+	return TransactionIsolationLevel::READ_COMMITTED;
+}
+
+TransactionIsolationLevel PEGTransformerFactory::TransformReadUncommitted(PEGTransformer &transformer) {
+	return TransactionIsolationLevel::READ_UNCOMMITTED;
+}
+
+TransactionIsolationLevel PEGTransformerFactory::TransformRepeatableRead(PEGTransformer &transformer) {
+	return TransactionIsolationLevel::REPEATABLE_READ;
+}
+
+TransactionIsolationLevel PEGTransformerFactory::TransformSerializable(PEGTransformer &transformer) {
+	return TransactionIsolationLevel::SERIALIZABLE;
 }
 
 TransactionModifierType

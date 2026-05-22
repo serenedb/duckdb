@@ -1037,10 +1037,27 @@ void ClientContext::RunTransactionStatementInternal(const TransactionInfo &info)
 	switch (type) {
 	case TransactionType::BEGIN_TRANSACTION: {
 		if (!transaction.IsAutoCommit()) {
-			throw TransactionException("cannot start a transaction within a transaction");
+			const char *msg = "cannot start a transaction within a transaction";
+			if (EmitWarning(msg)) {
+				break;
+			}
+			throw TransactionException(msg);
 		}
-		transaction.SetAutoCommit(false);
+		// Resolve effective isolation level and read-only mode from defaults,
+		// then override with explicit BEGIN options if specified.
+		auto isolation = info.isolation_level != TransactionIsolationLevel::TRANSACTION_DEFAULT_ISOLATION
+		                     ? info.isolation_level
+		                     : Settings::Get<DefaultTransactionIsolationSetting>(*this);
+		bool read_only = Settings::Get<DefaultTransactionReadOnlySetting>(*this);
 		if (info.modifier == TransactionModifierType::TRANSACTION_READ_ONLY) {
+			read_only = true;
+		} else if (info.modifier == TransactionModifierType::TRANSACTION_READ_WRITE) {
+			read_only = false;
+		}
+		// Set isolation level before starting the transaction
+		transaction.SetIsolationLevel(isolation);
+		transaction.SetAutoCommit(false);
+		if (read_only) {
 			transaction.SetReadOnly();
 		}
 		transaction.SetInvalidationPolicy(info.invalidation_policy);
@@ -1058,7 +1075,11 @@ void ClientContext::RunTransactionStatementInternal(const TransactionInfo &info)
 	}
 	case TransactionType::COMMIT:
 		if (transaction.IsAutoCommit()) {
-			throw TransactionException("cannot commit - no transaction is active");
+			const char *msg = "cannot commit - no transaction is active";
+			if (EmitWarning(msg)) {
+				break;
+			}
+			throw TransactionException(msg);
 		}
 		transaction.Commit();
 		// The commit is irreversible, so ignore interrupts until the next query.
@@ -1066,7 +1087,11 @@ void ClientContext::RunTransactionStatementInternal(const TransactionInfo &info)
 		break;
 	case TransactionType::ROLLBACK: {
 		if (transaction.IsAutoCommit()) {
-			throw TransactionException("cannot rollback - no transaction is active");
+			const char *msg = "cannot rollback - no transaction is active";
+			if (EmitWarning(msg)) {
+				break;
+			}
+			throw TransactionException(msg);
 		}
 		auto &valid_checker = ValidChecker::Get(transaction.ActiveTransaction());
 		if (valid_checker.IsInvalidated()) {
