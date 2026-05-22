@@ -12,6 +12,7 @@
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
@@ -88,6 +89,13 @@ unique_ptr<Expression> CreateDynamicFilterExpression(shared_ptr<DynamicFilterDat
 	auto function = DynamicFilterScalarFun::GetFunction(target_type);
 	auto bind_data = make_uniq<DynamicFilterFunctionData>(std::move(filter_data));
 	return CreateSingleArgumentFunctionExpression(function, target_type, std::move(bind_data));
+}
+
+string TableFilterFunctionToString(FunctionToStringInput &input) {
+	// The single argument is the column reference; its ToString() is the column name.
+	const string column_name = input.children.empty() ? string() : input.children[0]->ToString();
+	return ExpressionFilter::InternalFunctionToString(input.bound_function.GetName().GetIdentifierName(),
+	                                                  input.bind_data, column_name);
 }
 
 void TableFilterFunctionSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data,

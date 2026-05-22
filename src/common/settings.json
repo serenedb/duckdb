@@ -752,6 +752,13 @@
         "default_value": "PHYSICAL_ONLY"
     },
     {
+        "name": "explain_output_format",
+        "description": "Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)",
+        "type": "ENUM<ExplainFormatShape>",
+        "default_scope": "local",
+        "default_value": "DUCKDB_NATIVE"
+    },
+    {
         "name": "extension_directories",
         "description": "Set the directories to store extensions in",
         "type": "VARCHAR[]",

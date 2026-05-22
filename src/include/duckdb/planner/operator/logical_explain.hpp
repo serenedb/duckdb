@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/enums/output_type.hpp"
 #include "duckdb/parser/statement/explain_statement.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 
@@ -21,10 +22,12 @@ public:
 	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_EXPLAIN;
 
 public:
-	LogicalExplain(unique_ptr<LogicalOperator> plan, ExplainType explain_type, const ProfilerPrintFormat &format);
+	LogicalExplain(unique_ptr<LogicalOperator> plan, ExplainType explain_type, const ProfilerPrintFormat &format,
+	               ExplainFormatShape output_shape);
 
 	ExplainType explain_type;
 	ProfilerPrintFormat format;
+	ExplainFormatShape output_shape = ExplainFormatShape::DUCKDB_NATIVE;
 	string physical_plan;
 	string logical_plan_unopt;
 	string logical_plan_opt;

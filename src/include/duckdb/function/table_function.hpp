@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/enums/operator_result_type.hpp"
+#include "duckdb/common/explain_value.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/execution/physical_operator_states.hpp"
@@ -221,6 +222,13 @@ struct TableFunctionToStringInput {
 	}
 	const TableFunction &table_function;
 	optional_ptr<const FunctionData> bind_data;
+
+	optional_ptr<const vector<ColumnIndex>> projected_column_ids;
+	optional_ptr<const vector<idx_t>> projection_ids;
+	optional_ptr<const vector<string>> projected_names;
+	optional_ptr<const vector<LogicalType>> projected_types;
+	optional_ptr<const TableFilterSet> filters;
+	bool projected_filter_prune = false;
 };
 
 struct TableFunctionGetPartitionInput {
@@ -349,6 +357,21 @@ typedef unique_ptr<MultiFileReader> (*table_function_get_multi_file_reader_t)(co
 
 typedef bool (*table_function_supports_pushdown_type_t)(const FunctionData &bind_data, idx_t col_idx);
 
+class TableFilter;
+//! Per-filter pushdown decision -- finer than supports_pushdown_type (which is per column).
+//! BeforeLimit: push into the scan, applied before any pushed row-limit (a pushed top-k stays valid).
+//! AfterLimit:  push into the scan, but only applied after the limit -> the scan must run unlimited.
+//! Reject:      do not push; the filter stays a Filter node above the scan.
+//! Drop:        the filter is redundant with what the scan itself enforces (e.g. the dynamic score
+//!              boundary TOP_N pushes back at a top-k collector) -- remove it from the plan entirely.
+enum class TableFilterPushdown : uint8_t { BeforeLimit, AfterLimit, Reject, Drop };
+
+//! (Optional) Decides pushdown per filter. When set, it takes precedence over supports_pushdown_type.
+//! The filter is mutable: the scan may rewrite it to consume the parts it enforces itself (e.g. strip a
+//! conjunct a top-k collector's threshold already guarantees) and return the verdict for the residue.
+typedef TableFilterPushdown (*table_function_supports_pushdown_filter_t)(FunctionData &bind_data, idx_t col_idx,
+                                                                         TableFilter &filter);
+
 typedef bool (*table_function_supports_pushdown_extract_t)(const FunctionData &bind_data, const LogicalIndex &col_idx);
 
 typedef double (*table_function_progress_t)(ClientContext &context, const FunctionData *bind_data,
@@ -362,6 +385,10 @@ typedef void (*table_function_pushdown_complex_filter_t)(ClientContext &context,
                                                          vector<unique_ptr<Expression>> &filters);
 typedef bool (*table_function_pushdown_expression_t)(ClientContext &context, const LogicalGet &get, Expression &expr);
 typedef InsertionOrderPreservingMap<string> (*table_function_to_string_t)(TableFunctionToStringInput &input);
+//! Structured variant of to_string: when set, EXPLAIN/profiling use it instead of to_string,
+//! so the callback can attach ExplainNode trees (rendered as nested boxes / JSON objects)
+typedef InsertionOrderPreservingMap<ExplainValue> (*table_function_to_string_value_t)(
+    TableFunctionToStringInput &input);
 
 typedef void (*table_function_serialize_t)(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
                                            const TableFunction &function);
@@ -483,6 +510,7 @@ public:
 	table_function_pushdown_expression_t pushdown_expression;
 	//! (Optional) function for rendering the operator to a string in explain/profiling output (invoked pre-execution)
 	table_function_to_string_t to_string;
+	table_function_to_string_value_t to_string_value;
 	//! (Optional) return how much of the table we have scanned up to this point (% of the data)
 	table_function_progress_t table_scan_progress;
 	//! (Optional) returns the partition info of the current scan operator
@@ -497,6 +525,9 @@ public:
 	table_function_get_multi_file_reader_t get_multi_file_reader;
 	//! (Optional) If this scanner supports filter pushdown, but not to all data types
 	table_function_supports_pushdown_type_t supports_pushdown_type;
+	//! (Optional) Per-filter pushdown decision (see TableFilterPushdown); when set it takes precedence
+	//! over supports_pushdown_type (per column).
+	table_function_supports_pushdown_filter_t supports_pushdown_filter = nullptr;
 	//! (Optional) If this scanner supports projection pushdown of struct extracts
 	table_function_supports_pushdown_extract_t supports_pushdown_extract;
 	//! Get partition info of the table

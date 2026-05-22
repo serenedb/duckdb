@@ -20,6 +20,7 @@ struct DynamicFilterData;
 
 class BoundFunctionExpression;
 class ClientContext;
+struct FunctionData;
 
 class ExpressionFilter : public TableFilter {
 public:
@@ -78,10 +79,11 @@ public:
 	static unique_ptr<TableFilter> Deserialize(Deserializer &deserializer);
 	static void ReplaceExpressionRecursive(unique_ptr<Expression> &expr, const Expression &column,
 	                                       ExpressionType replace_type = ExpressionType::BOUND_REF);
+	//! Produce human-readable ToString for internal tablefilter functions
+	static string InternalFunctionToString(const string &func_name, optional_ptr<FunctionData> bind_data,
+	                                       const string &column_name);
 
 private:
-	//! Produce human-readable ToString for internal tablefilter functions
-	static string InternalFunctionToString(const BoundFunctionExpression &func_expr, const string &column_name);
 	//! Recursively convert expression to friendly string, handling internal functions
 	static string ExpressionToFriendlyString(const Expression &expression, const string &column_name);
 };
