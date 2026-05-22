@@ -441,6 +441,14 @@
         "type": "scalar_function"
     },
     {
+        "name": "similar_to_escape",
+        "parameters": "pattern,escape_character",
+        "description": "Translates a SQL `SIMILAR TO` pattern into the equivalent regular expression, so that `string SIMILAR TO pattern` can be evaluated as `regexp_full_match(string, similar_to_escape(pattern))`. `escape_character` defaults to a backslash.",
+        "example": "similar_to_escape('a%c')",
+        "categories": ["string"],
+        "type": "scalar_function_set"
+    },
+    {
         "name": "not_like_escape",
         "parameters": "string,like_specifier,escape_character",
         "description": "Returns `false` if the `string` matches the `like_specifier` (see Pattern Matching) using case-sensitive matching. `escape_character` is used to search for wildcard characters in the `string`.",

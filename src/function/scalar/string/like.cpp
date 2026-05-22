@@ -707,4 +707,109 @@ ScalarFunction LikeEscapeFun::GetFunction() {
 	return like_escape;
 }
 
+//===--------------------------------------------------------------------===//
+// similar_to_escape
+//===--------------------------------------------------------------------===//
+// The parser rewrites `x SIMILAR TO y` into
+// `regexp_full_match(x, similar_to_escape(y))`, so this translation has to live
+// beside the parser rather than in a server-side function set -- otherwise the
+// rewrite emits a call that a plain DuckDB has no way to resolve.
+static string SimilarToRegex(const string_t &pattern_str, char escape_char) {
+	auto pattern = pattern_str.GetData();
+	auto plen = pattern_str.GetSize();
+
+	string result;
+	result.reserve(plen + 6);
+	result += "^(?:";
+
+	bool after_escape = false;
+	idx_t nquotes = 0;
+	idx_t bracket_depth = 0;
+	idx_t charclass_pos = 0;
+
+	for (idx_t i = 0; i < plen; i++) {
+		char pchar = pattern[i];
+		if (after_escape) {
+			if (pchar == '"' && bracket_depth < 1) {
+				// escape-double-quote marks the start/end of the captured substring
+				if (nquotes == 0) {
+					result += "){1,1}?(";
+				} else if (nquotes == 1) {
+					result += "){1,1}(?:";
+				} else {
+					throw InvalidInputException(
+					    "SQL regular expression may not contain more than two escape-double-quote separators");
+				}
+				nquotes++;
+			} else {
+				result += '\\';
+				result += pchar;
+				charclass_pos = 3;
+			}
+			after_escape = false;
+		} else if (pchar == escape_char) {
+			after_escape = true;
+		} else if (bracket_depth > 0) {
+			// inside a bracket expression the SIMILAR TO metacharacters are literal
+			if (pchar == '\\') {
+				result += '\\';
+			}
+			result += pchar;
+			if (pchar == ']' && charclass_pos > 2) {
+				bracket_depth--;
+			} else if (pchar == '[') {
+				bracket_depth++;
+				charclass_pos = 3;
+			} else if (pchar == '^') {
+				charclass_pos++;
+			} else {
+				charclass_pos = 3;
+			}
+		} else if (pchar == '[') {
+			result += pchar;
+			bracket_depth = 1;
+			charclass_pos = 1;
+		} else if (pchar == '%') {
+			result += ".*";
+		} else if (pchar == '_') {
+			result += '.';
+		} else if (pchar == '(') {
+			// SIMILAR TO parentheses group without capturing
+			result += "(?:";
+		} else if (pchar == '\\' || pchar == '.' || pchar == '^' || pchar == '$') {
+			result += '\\';
+			result += pchar;
+		} else {
+			result += pchar;
+		}
+	}
+	result += ")$";
+	return result;
+}
+
+static void SimilarToEscapeFunction(DataChunk &args, ExpressionState &, Vector &result) {
+	UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](string_t pattern) {
+		return StringVector::AddString(result, SimilarToRegex(pattern, '\\'));
+	});
+}
+
+static void SimilarToEscapeWithEscapeFunction(DataChunk &args, ExpressionState &, Vector &result) {
+	BinaryExecutor::Execute<string_t, string_t, string_t>(
+	    args.data[0], args.data[1], result, args.size(), [&](string_t pattern, string_t escape) {
+		    if (escape.GetSize() != 1) {
+			    throw InvalidInputException("invalid escape string: must be one character");
+		    }
+		    return StringVector::AddString(result, SimilarToRegex(pattern, escape.GetData()[0]));
+	    });
+}
+
+ScalarFunctionSet SimilarToEscapeFun::GetFunctions() {
+	ScalarFunctionSet similar_to_escape("similar_to_escape");
+	similar_to_escape.AddFunction(
+	    ScalarFunction({LogicalType::VARCHAR}, LogicalType::VARCHAR, SimilarToEscapeFunction));
+	similar_to_escape.AddFunction(ScalarFunction({LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                                             SimilarToEscapeWithEscapeFunction));
+	return similar_to_escape;
+}
+
 } // namespace duckdb
