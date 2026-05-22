@@ -9,8 +9,9 @@ namespace duckdb {
 
 ContainsToInClauseRule::ContainsToInClauseRule(ExpressionRewriter &rewriter) : Rule(rewriter) {
 	auto func = make_uniq<FunctionExpressionMatcher>();
-	identifier_set_t functions = {"contains", "list_contains", "list_has", "array_contains", "array_has"};
-	func->function = make_uniq<ManyFunctionMatcher>(functions);
+	static const case_insensitive_set_view_t functions {"contains", "list_contains", "list_has", "array_contains",
+	                                                    "array_has"};
+	func->function = make_uniq<ManyFunctionMatcher>(&functions);
 	func->matchers.push_back(make_uniq<FoldableConstantMatcher>());
 	func->matchers.push_back(make_uniq<ExpressionMatcher>());
 	func->policy = SetMatcher::Policy::ORDERED;

@@ -9,6 +9,7 @@
 #include "duckdb/parser/expression/positional_reference_expression.hpp"
 #include "duckdb/planner/expression_binder/having_binder.hpp"
 #include "duckdb/planner/planner_extension.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
 
@@ -19,41 +20,23 @@ ColumnQualifier::ColumnQualifier(Binder &binder_p, optional_ptr<vector<DummyBind
       having_binder(having_binder_p) {
 }
 
-static Identifier GetSQLValueFunctionName(const Identifier &column_name) {
-	if (column_name == "current_catalog") {
-		return "current_catalog";
-	}
-	if (column_name == "current_date") {
-		return "current_date";
-	}
-	if (column_name == "current_schema") {
-		return "current_schema";
-	}
-	if (column_name == "current_role") {
-		return "current_role";
-	}
-	if (column_name == "current_time") {
-		return "get_current_time";
-	}
-	if (column_name == "current_timestamp") {
-		return "get_current_timestamp";
-	}
-	if (column_name == "current_user") {
-		return "current_user";
-	}
-	if (column_name == "localtime") {
-		return "current_localtime";
-	}
-	if (column_name == "localtimestamp") {
-		return "current_localtimestamp";
-	}
-	if (column_name == "session_user") {
-		return "session_user";
-	}
-	if (column_name == "user") {
-		return "user";
-	}
-	return Identifier();
+static const case_insensitive_map_view_t<std::string_view> value_functions {
+    {"current_catalog", "current_catalog"},
+    {"current_date", "current_date"},
+    {"current_schema", "current_schema"},
+    {"current_role", "current_role"},
+    {"current_time", "get_current_time"},
+    {"current_timestamp", "get_current_timestamp"},
+    {"current_user", "current_user"},
+    {"localtime", "current_localtime"},
+    {"localtimestamp", "current_localtimestamp"},
+    {"session_user", "session_user"},
+    {"user", "user"},
+};
+
+static std::string_view GetSQLValueFunctionName(const Identifier &column_name) {
+	auto it = value_functions.find(column_name.GetIdentifierName());
+	return it != value_functions.end() ? it->second : std::string_view {};
 }
 
 unique_ptr<ParsedExpression> Binder::GetSQLValueFunction(const Identifier &column_name) {
@@ -74,7 +57,7 @@ unique_ptr<ParsedExpression> Binder::GetSQLValueFunction(const Identifier &colum
 	}
 
 	vector<unique_ptr<ParsedExpression>> children;
-	return make_uniq<FunctionExpression>(value_function, std::move(children));
+	return make_uniq<FunctionExpression>(Identifier(string(value_function)), std::move(children));
 }
 
 unique_ptr<ParsedExpression> ColumnQualifier::CreateStructExtract(unique_ptr<ParsedExpression> base,

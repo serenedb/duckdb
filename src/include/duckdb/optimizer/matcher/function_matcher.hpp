@@ -10,7 +10,7 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/identifier.hpp"
-#include "duckdb/common/unordered_set.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 #include <algorithm>
 
 namespace duckdb {
@@ -45,18 +45,19 @@ private:
 	Identifier name;
 };
 
-//! The ManyFunctionMatcher class matches a set of functions
+//! The ManyFunctionMatcher class matches a set of functions.
+//! It only references the set - pass storage that outlives the matcher (e.g. a function-local static).
 class ManyFunctionMatcher : public FunctionMatcher {
 public:
-	explicit ManyFunctionMatcher(identifier_set_t names_p) : names(std::move(names_p)) {
+	explicit ManyFunctionMatcher(const case_insensitive_set_view_t *names_p) : names(*names_p) {
 	}
 
 	bool Match(const Identifier &name) override {
-		return names.find(name) != names.end();
+		return names.find(name.GetIdentifierName()) != names.end();
 	}
 
 private:
-	identifier_set_t names;
+	const case_insensitive_set_view_t &names;
 };
 
 } // namespace duckdb
