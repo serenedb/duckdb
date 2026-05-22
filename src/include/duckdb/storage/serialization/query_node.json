@@ -261,6 +261,12 @@
         "id": 203,
         "name": "returning_list",
         "type": "vector<ParsedExpression*>"
+      },
+      {
+        "id": 204,
+        "name": "is_truncate",
+        "type": "bool",
+        "default": "false"
       }
     ]
   },
