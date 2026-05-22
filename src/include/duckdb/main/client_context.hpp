@@ -227,10 +227,18 @@ public:
 	//! Blocking. Runs a relation to completion and returns its handle
 	DUCKDB_API unique_ptr<QueryResult> Execute(const shared_ptr<Relation> &relation);
 
-	//! Prepare a query
-	DUCKDB_API unique_ptr<PreparedStatement> Prepare(const string &query);
+	//! Prepare a query. Optional `parameter_type_hints` declares
+	//! per-parameter bind types (e.g. PG protocol Parse OIDs) without supplying
+	//! a value -- the slot remains a real parameter and is re-bound at Execute.
+	//! Identifiers use the same scheme as named_param_map (positional "1",
+	//! "2", ... or named).
+	DUCKDB_API unique_ptr<PreparedStatement>
+	Prepare(const string &query,
+	        optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
 	//! Directly prepare a SQL statement
-	DUCKDB_API unique_ptr<PreparedStatement> Prepare(unique_ptr<SQLStatement> statement);
+	DUCKDB_API unique_ptr<PreparedStatement>
+	Prepare(unique_ptr<SQLStatement> statement,
+	        optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
 	//! Deallocate the prepared statement with the given name - does nothing if it does not exist
 	DUCKDB_API void RemovePreparedStatement(const string &name);
 	//! Bind a statement and return its signature, without building a PreparedStatement, optimizing, or
@@ -352,7 +360,9 @@ private:
 	                                                const QueryParameters &parameters);
 	unique_ptr<QueryResult> RunStatementInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
 	                                             const QueryParameters &parameters, bool verify = true);
-	unique_ptr<PreparedStatement> PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement);
+	unique_ptr<PreparedStatement>
+	PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
+	                optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
 	void LogQueryInternal(ClientContextLock &lock, const string &query);
 
 	unique_ptr<ClientContextLock> LockContext();
