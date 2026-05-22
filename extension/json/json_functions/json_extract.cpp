@@ -2,26 +2,20 @@
 
 namespace duckdb {
 
-static inline string_t ExtractFromVal(yyjson_val *val, yyjson_alc *alc, Vector &vector, ValidityMask &, idx_t) {
-	idx_t len;
-	auto data = JSONCommon::WriteVal<yyjson_val>(val, alc, len);
-	return StringVector::AddStringOrBlob(vector, data, len);
+static inline string_t ExtractFromVal(yyjson_val *val, yyjson_alc *alc, Vector &, ValidityMask &, idx_t) {
+	return JSONCommon::WriteVal<yyjson_val>(val, alc);
 }
 
-static inline string_t ExtractStringFromVal(yyjson_val *val, yyjson_alc *alc, Vector &vector, ValidityMask &mask,
-                                            idx_t idx) {
+static inline string_t ExtractStringFromVal(yyjson_val *val, yyjson_alc *alc, Vector &, ValidityMask &mask, idx_t idx) {
 	switch (yyjson_get_tag(val)) {
 	case YYJSON_TYPE_NULL | YYJSON_SUBTYPE_NONE:
 		mask.SetInvalid(idx);
 		return string_t {};
 	case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NOESC:
 	case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NONE:
-		return StringVector::AddStringOrBlob(vector, unsafe_yyjson_get_str(val), unsafe_yyjson_get_len(val));
-	default: {
-		idx_t len;
-		auto data = JSONCommon::WriteVal<yyjson_val>(val, alc, len);
-		return StringVector::AddStringOrBlob(vector, data, len);
-	}
+		return string_t(unsafe_yyjson_get_str(val), unsafe_yyjson_get_len(val));
+	default:
+		return JSONCommon::WriteVal<yyjson_val>(val, alc);
 	}
 }
 

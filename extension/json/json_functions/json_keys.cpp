@@ -13,13 +13,11 @@ static inline list_entry_t GetJSONKeys(yyjson_val *val, yyjson_alc *, Vector &re
 	}
 
 	// Write the strings to the child vector
-	auto &child = ListVector::GetChildMutable(result);
-	auto keys = FlatVector::GetDataMutable<string_t>(child);
+	auto keys = FlatVector::GetDataMutable<string_t>(ListVector::GetChildMutable(result));
 	size_t idx, max;
 	yyjson_val *key, *child_val;
 	yyjson_obj_foreach(val, idx, max, key, child_val) {
-		keys[current_size + idx] =
-		    StringVector::AddStringOrBlob(child, unsafe_yyjson_get_str(key), unsafe_yyjson_get_len(key));
+		keys[current_size + idx] = string_t(unsafe_yyjson_get_str(key), unsafe_yyjson_get_len(key));
 	}
 
 	// Update size
