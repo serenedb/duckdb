@@ -95,6 +95,11 @@ public:
 	vector<ColumnIndex> column_indices;
 	//! For JSONRecordType::FEATURES: parallel to names, where each of them reads its value from
 	vector<JSONFeatureColumn> feature_columns;
+	//! Output-chunk slot that receives file_row_number (byte offset of row start
+	//! in the file). Set by the init when the virtual column is projected;
+	//! DConstants::INVALID_INDEX otherwise. ReadJSONFunction fills this slot with
+	//! offsets computed from scan_state.units[].
+	idx_t file_row_number_idx = DConstants::INVALID_INDEX;
 
 	//! Buffer manager allocator
 	Allocator &allocator;

@@ -79,11 +79,10 @@ SELECT * FROM t ORDER BY v
 10	1
 20	2
 
-# readers without a row number virtual column do not support the option
 statement ok
 COPY (SELECT 1 AS v) TO '{TEMP_DIR}/frn.csv'
 
-statement error
+query II
 SELECT * FROM read_csv('{TEMP_DIR}/frn.csv', file_row_number=true)
 ----
-Binder Error: The file_row_number option is not supported by this reader
+1	2

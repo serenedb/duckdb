@@ -1,9 +1,13 @@
 #include "duckdb/common/multi_file/multi_file_list.hpp"
+#include "duckdb/common/multi_file/multi_file_reader.hpp"
+#include "duckdb/common/multi_file/multi_file_states.hpp"
 #include "duckdb/common/multi_file/table_function_multi_file.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "json_common.hpp"
 #include "json_functions.hpp"
 #include "json_scan.hpp"
 #include "json_structure.hpp"
+#include "json_transform.hpp"
 
 namespace duckdb {
 
@@ -150,10 +154,24 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleJSONFileInitGlobal(ClientC
 	auto &gstate = result->state;
 
 	// perform projection pushdown - the JSON reader extracts columns by name, so we only need the projected names
+	auto &file_input = TableFunctionFileInitInput::Get(input);
 	for (idx_t col_idx = 0; col_idx < input.column_indexes.size(); col_idx++) {
 		auto &column_index = input.column_indexes[col_idx];
 		const auto col_id = column_index.GetPrimaryIndex();
+		column_t virtual_column_id = DConstants::INVALID_INDEX;
 		if (IsVirtualColumn(col_id)) {
+			virtual_column_id = col_id;
+		} else if (file_input.virtual_columns) {
+			auto entry = file_input.virtual_columns->find(col_id);
+			if (entry != file_input.virtual_columns->end()) {
+				virtual_column_id = entry->second;
+			}
+		}
+		if (virtual_column_id != DConstants::INVALID_INDEX) {
+			// file_row_number is filled with byte offsets after the transform, other virtual columns are skipped
+			if (virtual_column_id == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+				gstate.file_row_number_idx = col_idx;
+			}
 			continue;
 		}
 		gstate.names.push_back(json_data.key_names[col_id]);
@@ -306,6 +324,248 @@ static unique_ptr<NodeStatistics> ReadSingleJSONFileCardinality(ClientContext &c
 	return make_uniq<NodeStatistics>(per_file_cardinality);
 }
 
+static virtual_column_map_t ReadSingleJSONFileGetVirtualColumns(ClientContext &, optional_ptr<FunctionData>) {
+	// file_row_number = byte offset of the record start; usable as an exact-seek key.
+	virtual_column_map_t result;
+	result.insert(make_pair(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
+	                        TableColumn("file_row_number", LogicalType::BIGINT)));
+	return result;
+}
+
+namespace {
+
+//! The bind data of the file the schema of a read_json bind was determined on
+const ReadSingleJSONFileData &GetLookupJSONData(const MultiFileBindData &bind_data) {
+	auto &multi_file_data = bind_data.bind_data->Cast<TableFunctionMultiFileData>();
+	if (!multi_file_data.options.schema_bind_data) {
+		throw InternalException("JSON lookup requires the bind data of the file the schema was determined on");
+	}
+	return multi_file_data.options.schema_bind_data->Cast<ReadSingleJSONFileData>();
+}
+
+// pk-lookup state for read_json -- single file, random access by byte offset.
+struct JSONLookupGlobalState : public GlobalTableFunctionState {
+	JSONLookupGlobalState(ClientContext &context, Allocator &allocator_p, idx_t buffer_capacity)
+	    : scan_state(context, allocator_p, buffer_capacity) {
+	}
+
+	shared_ptr<JSONReader> reader;
+	JSONReaderScanState scan_state;
+	JSONTransformOptions transform_options;
+	vector<yyjson_val *> batch_vals;
+	vector<string> names;
+	vector<column_t> column_ids;
+	vector<ColumnIndex> column_indices;
+	//! INVALID_INDEX when file_row_number is not projected.
+	idx_t file_row_number_idx = DConstants::INVALID_INDEX;
+	JSONRecordType record_type = JSONRecordType::AUTO_DETECT;
+};
+
+unique_ptr<GlobalTableFunctionState> JSONLookupInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
+	auto &bind_data = input.bind_data->CastNoConst<MultiFileBindData>();
+	auto &json_data = GetLookupJSONData(bind_data);
+	auto &allocator = BufferAllocator::Get(context);
+	D_ASSERT(json_data.options.type == JSONScanType::READ_JSON);
+	const idx_t buffer_capacity = json_data.options.maximum_object_size * 2 + YYJSON_PADDING_SIZE;
+
+	auto state = make_uniq<JSONLookupGlobalState>(context, allocator, buffer_capacity);
+	state->transform_options = json_data.transform_options;
+	state->record_type = json_data.options.record_type;
+
+	const auto &file = bind_data.file_list->GetFirstFile();
+	state->reader = make_shared_ptr<JSONReader>(context, json_data.options, file);
+	state->reader->OpenJSONFile();
+
+	for (idx_t col_idx = 0; col_idx < input.column_indexes.size(); col_idx++) {
+		auto &column_index = input.column_indexes[col_idx];
+		const auto col_id = column_index.GetPrimaryIndex();
+		if (bind_data.reader_bind.filename_idx.IsValid() && col_id == bind_data.reader_bind.filename_idx.GetIndex()) {
+			continue;
+		}
+		if (IsVirtualColumn(col_id)) {
+			if (col_id == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+				state->file_row_number_idx = col_idx;
+			}
+			continue;
+		}
+		bool skip = false;
+		for (const auto &hp : bind_data.reader_bind.hive_partitioning_indexes) {
+			if (col_id == hp.index) {
+				skip = true;
+				break;
+			}
+		}
+		if (skip) {
+			continue;
+		}
+		state->names.push_back(json_data.key_names[col_id]);
+		state->column_ids.push_back(col_idx);
+		state->column_indices.push_back(column_index);
+	}
+	if (state->names.size() < json_data.key_names.size() || bind_data.file_options.union_by_name) {
+		state->transform_options.error_unknown_key = false;
+	}
+	return std::move(state);
+}
+
+struct JSONObjectsLookupGlobalState : public GlobalTableFunctionState {
+	JSONObjectsLookupGlobalState(ClientContext &context, Allocator &allocator, idx_t buffer_capacity)
+	    : scan_state(context, allocator, buffer_capacity) {
+	}
+
+	shared_ptr<JSONReader> reader;
+	JSONReaderScanState scan_state;
+	idx_t json_col_idx = DConstants::INVALID_INDEX;
+	idx_t file_row_number_idx = DConstants::INVALID_INDEX;
+};
+
+unique_ptr<GlobalTableFunctionState> JSONObjectsLookupInitGlobal(ClientContext &context,
+                                                                 TableFunctionInitInput &input) {
+	auto &bind_data = input.bind_data->CastNoConst<MultiFileBindData>();
+	auto &json_data = GetLookupJSONData(bind_data);
+	auto &allocator = BufferAllocator::Get(context);
+	D_ASSERT(json_data.options.type == JSONScanType::READ_JSON_OBJECTS);
+
+	const idx_t buffer_capacity = json_data.options.maximum_object_size * 2 + YYJSON_PADDING_SIZE;
+	auto state = make_uniq<JSONObjectsLookupGlobalState>(context, allocator, buffer_capacity);
+
+	const auto &file = bind_data.file_list->GetFirstFile();
+	state->reader = make_shared_ptr<JSONReader>(context, json_data.options, file);
+	state->reader->OpenJSONFile();
+
+	for (idx_t col_idx = 0; col_idx < input.column_indexes.size(); ++col_idx) {
+		const auto col_id = input.column_indexes[col_idx].GetPrimaryIndex();
+		if (IsVirtualColumn(col_id)) {
+			if (col_id == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+				state->file_row_number_idx = col_idx;
+			}
+			continue;
+		}
+		if (state->json_col_idx == DConstants::INVALID_INDEX) {
+			state->json_col_idx = col_idx;
+		}
+	}
+	return std::move(state);
+}
+
+void JSONObjectsLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &gstate = data.global_state->Cast<JSONObjectsLookupGlobalState>();
+	if (data.pk_lookups.empty()) {
+		return;
+	}
+	D_ASSERT(data.pk_lookups.size() <= STANDARD_VECTOR_SIZE);
+
+	const idx_t count = data.pk_lookups.size();
+	auto &reader = *gstate.reader;
+	auto &scan_state = gstate.scan_state;
+	// The prior batch's output has been drained downstream; release the
+	// buffers backing its string_t descriptors before starting a new batch.
+	reader.ClearLookupBuffers(scan_state);
+	scan_state.allocator.Reset();
+
+	string_t *json_strings = nullptr;
+	if (gstate.json_col_idx != DConstants::INVALID_INDEX) {
+		json_strings = FlatVector::GetDataMutable<string_t>(output.data[gstate.json_col_idx]);
+	}
+	int64_t *frn_data = nullptr;
+	if (gstate.file_row_number_idx != DConstants::INVALID_INDEX) {
+		frn_data = FlatVector::GetDataMutable<int64_t>(output.data[gstate.file_row_number_idx]);
+	}
+
+	// Append survivors densely from output's current size (glob accumulates); a
+	// row missing from the source is dropped. pk_survivors[w] = requested index.
+	idx_t w = output.size();
+	for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+		const auto pk = data.pk_lookups[pk_idx];
+		if (!reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(pk))) {
+			continue;
+		}
+		if (json_strings) {
+			json_strings[w] = string_t(scan_state.units[0].pointer, scan_state.units[0].size);
+		}
+		if (frn_data) {
+			frn_data[w] = pk;
+		}
+		data.pk_survivors[w] = pk_idx;
+		++w;
+	}
+	output.SetCardinality(w);
+}
+
+void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &gstate = data.global_state->Cast<JSONLookupGlobalState>();
+	if (data.pk_lookups.empty()) {
+		return;
+	}
+	D_ASSERT(data.pk_lookups.size() <= STANDARD_VECTOR_SIZE);
+	D_ASSERT(gstate.record_type != JSONRecordType::AUTO_DETECT);
+	D_ASSERT(output.size() == 0);
+
+	auto &reader = *gstate.reader;
+	auto &scan_state = gstate.scan_state;
+	reader.ClearLookupBuffers(scan_state);
+	scan_state.allocator.Reset();
+	auto *alc = scan_state.allocator.GetYYAlc();
+
+	int64_t *frn_data = nullptr;
+	if (gstate.file_row_number_idx != DConstants::INVALID_INDEX) {
+		frn_data = FlatVector::GetDataMutable<int64_t>(output.data[gstate.file_row_number_idx]);
+	}
+
+	const idx_t count = data.pk_lookups.size();
+	gstate.batch_vals.resize(count);
+	idx_t w = 0;
+	for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+		const auto pk = data.pk_lookups[pk_idx];
+		if (!reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(pk))) {
+			continue; // missing row -> dropped (compact)
+		}
+		gstate.batch_vals[w] = scan_state.values[0];
+		if (frn_data) {
+			frn_data[w] = pk;
+		}
+		data.pk_survivors[w] = pk_idx;
+		++w;
+	}
+
+	const idx_t ncols = gstate.column_ids.size();
+	if (ncols != 0 && w != 0) {
+		vector<Vector *> result_vectors(ncols);
+		for (idx_t c = 0; c < ncols; ++c) {
+			result_vectors[c] = &output.data[gstate.column_ids[c]];
+		}
+		if (gstate.record_type == JSONRecordType::RECORDS) {
+			JSONTransform::TransformObject(gstate.batch_vals.data(), alc, w, gstate.names, result_vectors,
+			                               gstate.transform_options, gstate.column_indices,
+			                               gstate.transform_options.error_unknown_key);
+		} else {
+			D_ASSERT(gstate.record_type == JSONRecordType::VALUES);
+			D_ASSERT(ncols == 1);
+			optional_ptr<const ColumnIndex> column_index =
+			    gstate.column_indices.empty() ? nullptr : &gstate.column_indices[0];
+			JSONTransform::Transform(gstate.batch_vals.data(), alc, *result_vectors[0], w, gstate.transform_options,
+			                         column_index);
+		}
+	}
+	output.SetCardinality(w);
+}
+
+} // namespace
+
+TableFunction MakeJSONObjectsLookupTableFunction() {
+	TableFunction fn;
+	fn.init_global = JSONObjectsLookupInitGlobal;
+	fn.function = JSONObjectsLookupScan;
+	return fn;
+}
+
+TableFunction MakeJSONLookupTableFunction() {
+	TableFunction fn;
+	fn.init_global = JSONLookupInitGlobal;
+	fn.function = JSONLookupScan;
+	return fn;
+}
+
 TableFunction JSONFunctions::GetReadSingleJSONFileTableFunction(shared_ptr<JSONScanInfo> function_info) {
 	const auto scan_type = function_info->type;
 	TableFunction table_function(
@@ -317,6 +577,7 @@ TableFunction JSONFunctions::GetReadSingleJSONFileTableFunction(shared_ptr<JSONS
 		JSONScan::AddReadJSONParameters(table_function);
 		JSONScan::AddAutoDetectParameters(table_function);
 	}
+	table_function.get_virtual_columns = ReadSingleJSONFileGetVirtualColumns;
 	table_function.table_scan_progress = ReadSingleJSONFileProgress;
 	table_function.cardinality = ReadSingleJSONFileCardinality;
 	table_function.function_info = std::move(function_info);
