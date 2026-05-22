@@ -428,6 +428,10 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		auto &set_not_null_info = table_info.Cast<SetNotNullInfo>();
 		return SetNotNull(context, set_not_null_info);
 	}
+	case AlterTableType::DROP_CONSTRAINT: {
+		auto &drop_constraint_info = table_info.Cast<DropConstraintInfo>();
+		return DropConstraint(context, drop_constraint_info);
+	}
 	case AlterTableType::DROP_NOT_NULL: {
 		auto &drop_not_null_info = table_info.Cast<DropNotNullInfo>();
 		return DropNotNull(context, drop_not_null_info);
@@ -1281,6 +1285,35 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropNotNull(ClientContext &context, Dro
 	auto not_null_constraint = table_info.FindNotNullConstraint(not_null_idx);
 	if (not_null_constraint.IsValid()) {
 		table_info.constraints.erase_at(not_null_constraint.GetIndex());
+	}
+
+	auto binder = Binder::CreateBinder(context);
+	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
+	SetAlterDependencies(*bound_create_info, info);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+}
+
+unique_ptr<CatalogEntry> DuckTableEntry::DropConstraint(ClientContext &context, DropConstraintInfo &info) {
+	auto create_info = GetInfo();
+	auto &table_info = create_info->Cast<CreateTableInfo>();
+
+	// CHECK constraints carry no name in the catalog; the caller identifies
+	// the constraint by its expression text.
+	bool found = false;
+	for (idx_t i = 0; i < table_info.constraints.size(); i++) {
+		auto &constraint = table_info.constraints[i];
+		if (constraint->type != ConstraintType::CHECK) {
+			continue;
+		}
+		auto &check = constraint->Cast<CheckConstraint>();
+		if (check.expression->ToString() == info.constraint_name) {
+			table_info.constraints.erase(table_info.constraints.begin() + static_cast<ptrdiff_t>(i));
+			found = true;
+			break;
+		}
+	}
+	if (!found && !info.if_constraint_not_found) {
+		throw CatalogException("constraint \"%s\" of table %s does not exist", info.constraint_name, name);
 	}
 
 	auto binder = Binder::CreateBinder(context);
