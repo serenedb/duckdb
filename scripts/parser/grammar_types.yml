@@ -1192,6 +1192,10 @@ Bool:
     - GeneratedColumnType
     - VirtualGeneratedColumn
     - StoredGeneratedColumn
+    - Generated
+    - AlwaysOrByDefault
+    - Always
+    - ByDefault
     - NullConstraint
     - NotNullColumnConstraint
     - PreserveRows
@@ -1983,8 +1987,6 @@ excluded_rules:
   - CharacterType
   - IntervalNumber
   - AtTimeZoneOperator
-  - Generated
-  - AlwaysOrByDefault
   - UsingSample
   - TableSample
   - NamedParameterAssignment
