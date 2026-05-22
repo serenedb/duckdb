@@ -118,6 +118,10 @@ public:
 
 	//! Get the name of the expression
 	virtual Identifier GetName() const;
+	//! PG-compatible target-list column name (port of FigureColname). Only
+	//! used when computing SELECT result column headers -- falls back to
+	//! "?column?" when no name can be derived.
+	string GetColumnName() const;
 	//! Convert the Expression to a String
 	virtual string ToString() const = 0;
 	//! Print the expression to stdout
