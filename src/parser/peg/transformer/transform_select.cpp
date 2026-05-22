@@ -25,6 +25,9 @@
 #include "duckdb/parser/statement/update_statement.hpp"
 #include "duckdb/parser/statement/delete_statement.hpp"
 #include "duckdb/parser/statement/copy_statement.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/query_node/insert_query_node.hpp"
 #include "duckdb/parser/query_node/update_query_node.hpp"
 #include "duckdb/parser/query_node/delete_query_node.hpp"
@@ -49,15 +52,25 @@ static void ValidateRecursiveCTEQueryNode(const QueryNode &query_node) {
 unique_ptr<SQLStatement>
 PEGTransformerFactory::TransformSelectStatement(PEGTransformer &transformer,
                                                 unique_ptr<SelectStatement> select_statement_internal) {
-	return std::move(select_statement_internal);
+	if (!transformer.select_into_target) {
+		return std::move(select_statement_internal);
+	}
+	auto into_target = std::move(transformer.select_into_target);
+	auto info = make_uniq<CreateTableInfo>(into_target->GetQualifiedName());
+	info->on_conflict = OnCreateConflict::ERROR_ON_CONFLICT;
+	info->query = std::move(select_statement_internal);
+	auto create_statement = make_uniq<CreateStatement>();
+	create_statement->info = std::move(info);
+	return std::move(create_statement);
 }
 
-static void PushSelectStatementInternalRemainder(GeneratedTransformProcess &process) {
+static void PushSelectStatementInternalRemainder(PEGTransformer &transformer, GeneratedTransformProcess &process) {
 	auto &list_pr = process.parse_result.Cast<ListParseResult>();
 	auto &result_modifiers_opt = list_pr.Child<OptionalParseResult>(2);
 	if (result_modifiers_opt.HasResult()) {
 		process.PushChild({result_modifiers_opt.GetResult()}, 2);
 	}
+	transformer.select_depth++;
 	process.PushChild({list_pr.GetChild(1)}, 1);
 }
 
@@ -72,7 +85,7 @@ void PEGTransformerFactory::InitializeSelectStatementInternalTrampoline(PEGTrans
 		return;
 	}
 	process.manual_state = 1;
-	PushSelectStatementInternalRemainder(process);
+	PushSelectStatementInternalRemainder(transformer, process);
 }
 
 unique_ptr<TransformResultValue>
@@ -84,9 +97,10 @@ PEGTransformerFactory::FinalizeSelectStatementInternalTrampoline(PEGTransformer 
 			transformer.stored_cte_map.push_back(cte_map);
 		}
 		process.manual_state = 1;
-		PushSelectStatementInternalRemainder(process);
+		PushSelectStatementInternalRemainder(transformer, process);
 		return nullptr;
 	}
+	transformer.select_depth--;
 
 	CommonTableExpressionMap cte_map;
 	if (process.child_results[0]) {
@@ -1301,7 +1315,8 @@ PEGTransformerFactory::TransformUsingKey(PEGTransformer &transformer,
 
 unique_ptr<SelectNode>
 PEGTransformerFactory::TransformSelectClause(PEGTransformer &transformer, optional<DistinctClause> distinct_clause,
-                                             optional<vector<unique_ptr<ParsedExpression>>> target_list) {
+                                             optional<vector<unique_ptr<ParsedExpression>>> target_list,
+                                             optional<unique_ptr<BaseTableRef>> select_into_clause) {
 	auto result = make_uniq<SelectNode>();
 	if (distinct_clause && distinct_clause->is_distinct) {
 		auto distinct_modifier = make_uniq<DistinctModifier>();
@@ -1315,6 +1330,12 @@ PEGTransformerFactory::TransformSelectClause(PEGTransformer &transformer, option
 	}
 	for (auto &expr_ptr : *target_list) {
 		result->select_list.push_back(std::move(expr_ptr));
+	}
+	if (select_into_clause) {
+		if (transformer.select_depth > 1 || transformer.select_into_target) {
+			throw ParserException("SELECT ... INTO is not allowed here");
+		}
+		transformer.select_into_target = std::move(*select_into_clause);
 	}
 	return result;
 }
