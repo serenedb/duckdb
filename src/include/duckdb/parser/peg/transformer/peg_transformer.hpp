@@ -501,6 +501,9 @@ public:
 	// describe.gram
 	static unique_ptr<QueryNode> TransformShowQualifiedName(PEGTransformer &transformer, ParseResult &parse_result);
 
+	// set.gram
+	static SettingInfo TransformResetAll(PEGTransformer &transformer, ParseResult &parse_result);
+
 	// create_macro.gram
 	static unique_ptr<MacroFunction> TransformMacroDefinition(PEGTransformer &transformer, ParseResult &parse_result);
 

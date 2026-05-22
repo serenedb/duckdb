@@ -180,6 +180,8 @@ void PEGTransformerFactory::RegisterPivot() {
 	REGISTER_TRANSFORM(TransformUnpivotStatement);
 	// ShowQualifiedName walks the raw keyword node to distinguish PG `SHOW <var>` from `DESC <table>`.
 	REGISTER_TRANSFORM(TransformShowQualifiedName);
+	// ResetAll is a pure-keyword choice ('LOCAL' 'ALL' / 'ALL') whose body inspects the matched alternative.
+	REGISTER_TRANSFORM(TransformResetAll);
 }
 
 void PEGTransformerFactory::RegisterCreateMacro() {

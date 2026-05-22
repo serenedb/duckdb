@@ -125,6 +125,15 @@ public:
 	typedef bool (*setting_visibility_t)(ClientContext &context, const string &name);
 	setting_visibility_t setting_visibility = nullptr;
 
+	//! Invoked before a SET/RESET <name> is applied. Used by SereneDB to track
+	//! session-level changes for PG-style rollback inside a transaction.
+	//! new_value != nullptr for SET events (pointer to the about-to-be value);
+	//! new_value == nullptr for RESET events.
+	//! nullptr handler = no tracking.
+	typedef void (*setting_change_handler_t)(ClientContext &context, const string &name, SetScope scope,
+	                                         const Value *new_value);
+	setting_change_handler_t setting_change_handler = nullptr;
+
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
 	//! Catalog::GetConnectFunctionName. Use DisconnectFromCatalog() to revert to LOCAL.
