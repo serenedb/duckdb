@@ -347,7 +347,8 @@ private:
 	//! Wait until a task is available to execute
 	void WaitForTask(ClientContextLock &lock, BaseQueryResult &result);
 	//! Run one partial task slice of the open result on the calling thread
-	QueryResultState ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result);
+	QueryResultState ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result,
+	                                     std::function<void()> on_reschedule_arg = {});
 	//! Report the execution state of the open result without running any task
 	QueryResultState PollInternal(ClientContextLock &lock, BaseQueryResult &result);
 	//! Record the error on the result, end the query and report EXECUTION_ERROR

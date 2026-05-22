@@ -357,6 +357,9 @@ bool Executor::WorkOnTasks() {
 
 void Executor::SignalTaskRescheduled(lock_guard<mutex> &) {
 	task_reschedule.notify_one();
+	if (on_reschedule) {
+		std::exchange(on_reschedule, {})();
+	}
 }
 
 void Executor::UnregisterTask() {
@@ -443,7 +446,7 @@ bool Executor::ExecutionIsFinished() {
 	return completed_pipelines >= total_pipelines || HasError();
 }
 
-QueryResultState Executor::ExecuteTask() {
+QueryResultState Executor::ExecuteTask(std::function<void()> on_reschedule_arg) {
 	// Only executor should return NO_TASKS_AVAILABLE
 	D_ASSERT(execution_result != QueryResultState::NO_TASKS_AVAILABLE);
 	if (execution_result != QueryResultState::NOT_READY && ExecutionIsFinished()) {
@@ -454,7 +457,7 @@ QueryResultState Executor::ExecuteTask() {
 			TaskScheduler::GetScheduler(context).GetTaskFromProducer(*producer, task);
 		}
 		if (!task && !HasError()) {
-			return IdleState();
+			return IdleState(std::move(on_reschedule_arg));
 		}
 		if (task) {
 			// partially process the task
@@ -501,7 +504,7 @@ QueryResultState Executor::Poll() {
 	return FinishExecution();
 }
 
-QueryResultState Executor::IdleState() {
+QueryResultState Executor::IdleState(std::function<void()> on_reschedule_arg) {
 	lock_guard<mutex> l(executor_lock);
 	if (to_be_rescheduled_tasks.empty()) {
 		return QueryResultState::NO_TASKS_AVAILABLE;
@@ -509,6 +512,9 @@ QueryResultState Executor::IdleState() {
 	// At least one task is blocked
 	if (ResultCollectorIsBlocked()) {
 		return QueryResultState::READY;
+	}
+	if (on_reschedule_arg) {
+		on_reschedule = std::move(on_reschedule_arg);
 	}
 	return QueryResultState::BLOCKED;
 }

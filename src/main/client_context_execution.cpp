@@ -310,7 +310,8 @@ void ClientContext::WaitForTask(ClientContextLock &lock, BaseQueryResult &result
 	executor.WaitForTask();
 }
 
-QueryResultState ClientContext::ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result) {
+QueryResultState ClientContext::ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result,
+                                                    std::function<void()> on_reschedule_arg) {
 	D_ASSERT(active_query);
 	D_ASSERT(active_query->IsOpenResult(result));
 	try {
@@ -320,7 +321,7 @@ QueryResultState ClientContext::ExecuteTaskInternal(ClientContextLock &lock, Bas
 		if (IsInterrupted() && !active_query->executor->HasError()) {
 			throw InterruptException();
 		}
-		auto state = active_query->executor->ExecuteTask();
+		auto state = active_query->executor->ExecuteTask(std::move(on_reschedule_arg));
 		UpdateProgressInternal(state);
 		return state;
 	} catch (std::exception &ex) {
