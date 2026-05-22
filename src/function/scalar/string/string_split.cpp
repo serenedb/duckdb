@@ -8,6 +8,7 @@
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/function/scalar/regexp.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "utf8proc_wrapper.hpp"
 
 namespace duckdb {
 
@@ -15,6 +16,9 @@ namespace {
 
 struct RegularStringSplit {
 	static constexpr bool VERIFY_UTF8 = false;
+	// PG's string_to_array and regexp_split_to_array disagree on both degenerate separators, so the
+	// executor has to know which family it is running as.
+	static constexpr bool IS_REGEX = false;
 
 	static idx_t Find(const char *input_data, idx_t input_size, const char *delim_data, idx_t delim_size,
 	                  idx_t &match_size, void *data) {
@@ -29,6 +33,7 @@ struct RegularStringSplit {
 struct ConstantRegexpStringSplit {
 	//! \C can split a multi-byte character
 	static constexpr bool VERIFY_UTF8 = true;
+	static constexpr bool IS_REGEX = true;
 
 	static idx_t Find(const char *input_data, idx_t input_size, const char *delim_data, idx_t delim_size,
 	                  idx_t &match_size, void *data) {
@@ -45,6 +50,7 @@ struct ConstantRegexpStringSplit {
 
 struct RegexpStringSplit {
 	static constexpr bool VERIFY_UTF8 = true;
+	static constexpr bool IS_REGEX = true;
 
 	static idx_t Find(const char *input_data, idx_t input_size, const char *delim_data, idx_t delim_size,
 	                  idx_t &match_size, void *data) {
@@ -110,9 +116,39 @@ void StringSplitExecutor(DataChunk &args, ExpressionState &state, Vector &result
 			continue;
 		}
 		auto delim_entry = delim_entries[i];
+		if (OP::IS_REGEX && !delim_entry.IsValid()) {
+			// PG compat: regexp_split_to_array(x, NULL) is NULL. Checked before the row's list is
+			// claimed below, since a claimed row cannot be turned back into a NULL.
+			list_writer.WriteNull();
+			continue;
+		}
 		auto list = list_writer.WriteDynamicList();
 		if (!delim_entry.IsValid()) {
-			// delim is NULL: copy the complete entry
+			// PG compat: string_to_array's NULL delim splits the input into individual UTF-8 characters.
+			// Use list.WriteElement() to match upstream's list writer interface.
+			auto input_data = input_entry.GetValue().GetData();
+			auto input_size = input_entry.GetValue().GetSize();
+			idx_t pos = 0;
+			while (pos < input_size) {
+				int char_len = 0;
+				Utf8Proc::UTF8ToCodepoint(input_data + pos, char_len, input_size - pos);
+				if (char_len <= 0 || pos + static_cast<idx_t>(char_len) > input_size) {
+					char_len = 1; // fallback for invalid UTF-8
+				}
+				list.WriteElement().WriteStringRef(string_t(input_data + pos, UnsafeNumericCast<uint32_t>(char_len)));
+				pos += static_cast<idx_t>(char_len);
+			}
+			continue;
+		}
+		if (!OP::IS_REGEX && input_entry.GetValue().GetSize() == 0) {
+			// PG compat: string_to_array('', <any separator>) is an empty list, where
+			// regexp_split_to_array('', <pattern>) keeps the one empty element the splitter emits.
+			continue;
+		}
+		// PG compat: string_to_array's empty delimiter returns the input as a single-element list,
+		// not a per-character split. An empty *regex* keeps matching every position, which is what
+		// PG's regexp_split_to_array does too.
+		if (!OP::IS_REGEX && delim_entry.GetValue().GetSize() == 0) {
 			list.WriteElement().WriteStringRef(input_entry.GetValue());
 			continue;
 		}
