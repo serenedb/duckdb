@@ -2,6 +2,7 @@
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
@@ -919,21 +920,25 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto table_ref = make_uniq<BaseTableRef>(table_description);
 		auto bound_table = Bind(*table_ref);
 		auto plan = std::move(bound_table.plan);
-		if (plan->type != LogicalOperatorType::LOGICAL_GET) {
-			throw BinderException("can only create an index on a base table");
+		// Tables go through the LOGICAL_GET; otherwise resolve a view and let its catalog decide.
+		optional_ptr<TableCatalogEntry> table_ptr;
+		if (plan->type == LogicalOperatorType::LOGICAL_GET) {
+			auto &get = plan->Cast<LogicalGet>();
+			table_ptr = get.GetTable();
 		}
-		auto &get = plan->Cast<LogicalGet>();
-		auto table_ptr = get.GetTable();
-		if (!table_ptr) {
-			throw BinderException("can only create an index on a base table");
+		if (table_ptr) {
+			auto &table = *table_ptr;
+			if (table.temporary) {
+				stmt.info->temporary = true;
+			}
+			properties.RegisterDBModify(table.catalog, context, DatabaseModificationType::CREATE_INDEX);
+			result.plan = table.catalog.BindCreateIndex(*this, stmt, table, std::move(plan));
+		} else {
+			auto &view = Catalog::GetEntry<ViewCatalogEntry>(
+			    context, create_index_info.GetQualifiedName().WithName(create_index_info.table));
+			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
+			result.plan = view.catalog.BindCreateViewIndex(*this, stmt, view, std::move(plan));
 		}
-
-		auto &table = *table_ptr;
-		if (table.temporary) {
-			stmt.info->temporary = true;
-		}
-		properties.RegisterDBModify(table.catalog, context, DatabaseModificationType::CREATE_INDEX);
-		result.plan = table.catalog.BindCreateIndex(*this, stmt, table, std::move(plan));
 		break;
 	}
 	case CatalogType::TABLE_ENTRY: {

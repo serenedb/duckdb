@@ -1,14 +1,16 @@
 #include "duckdb/planner/operator/logical_create_index.hpp"
 
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/function/function_serialization.hpp"
 
 namespace duckdb {
 
 LogicalCreateIndex::LogicalCreateIndex(unique_ptr<CreateIndexInfo> info_p, vector<unique_ptr<Expression>> expressions_p,
-                                       TableCatalogEntry &table_p, unique_ptr<AlterTableInfo> alter_table_info)
-    : LogicalOperator(LogicalOperatorType::LOGICAL_CREATE_INDEX), info(std::move(info_p)), table(table_p),
+                                       CatalogEntry &target_p, unique_ptr<AlterTableInfo> alter_table_info)
+    : LogicalOperator(LogicalOperatorType::LOGICAL_CREATE_INDEX), info(std::move(info_p)), table(target_p),
       alter_table_info(std::move(alter_table_info)) {
 	for (auto &expr : expressions_p) {
 		unbound_expressions.push_back(expr->Copy());
@@ -36,9 +38,15 @@ void LogicalCreateIndex::ResolveTypes() {
 	types.emplace_back(LogicalType::BIGINT);
 }
 
-TableCatalogEntry &LogicalCreateIndex::BindTable(ClientContext &context, CreateIndexInfo &info_p) {
+CatalogEntry &LogicalCreateIndex::BindTable(ClientContext &context, CreateIndexInfo &info_p) {
 	// the table lives in the same (possibly nested) schema as the index
-	return Catalog::GetEntry<TableCatalogEntry>(context, info_p.GetQualifiedName().WithName(info_p.table));
+	auto name = info_p.GetQualifiedName().WithName(info_p.table);
+	// Tables first; fall through to views (only some catalogs index those).
+	auto entry = Catalog::GetEntry<TableCatalogEntry>(context, name, OnEntryNotFound::RETURN_NULL);
+	if (entry) {
+		return *entry;
+	}
+	return Catalog::GetEntry<ViewCatalogEntry>(context, name);
 }
 
 } // namespace duckdb
