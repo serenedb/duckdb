@@ -33,7 +33,7 @@ unique_ptr<GlobalTableFunctionState> JSONLookupInitGlobal(ClientContext &context
 	auto &json_data = bind_data.bind_data->Cast<JSONScanData>();
 	auto &allocator = BufferAllocator::Get(context);
 	D_ASSERT(json_data.options.type == JSONScanType::READ_JSON);
-	const idx_t buffer_capacity = json_data.options.maximum_object_size * 2;
+	const idx_t buffer_capacity = json_data.options.maximum_object_size * 2 + YYJSON_PADDING_SIZE;
 
 	auto state = make_uniq<JSONLookupGlobalState>(context, allocator, buffer_capacity);
 	state->transform_options = json_data.transform_options;
@@ -94,7 +94,7 @@ unique_ptr<GlobalTableFunctionState> JSONObjectsLookupInitGlobal(ClientContext &
 	auto &allocator = BufferAllocator::Get(context);
 	D_ASSERT(json_data.options.type == JSONScanType::READ_JSON_OBJECTS);
 
-	const idx_t buffer_capacity = json_data.options.maximum_object_size * 2;
+	const idx_t buffer_capacity = json_data.options.maximum_object_size * 2 + YYJSON_PADDING_SIZE;
 	auto state = make_uniq<JSONObjectsLookupGlobalState>(context, allocator, buffer_capacity);
 
 	const auto &file = bind_data.file_list->GetFirstFile();
@@ -242,6 +242,11 @@ void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk 
 			optional_ptr<const ColumnIndex> column_index =
 			    gstate.column_indices.empty() ? nullptr : &gstate.column_indices[0];
 			JSONTransform::Transform(vals, alc, *result_vectors[0], 1, gstate.transform_options, column_index);
+		}
+		for (idx_t c = 0; c < ncols; ++c) {
+			if (!FlatVector::Validity(slices[c]).RowIsValid(0)) {
+				FlatVector::SetNull(output.data[gstate.column_ids[c]], row, true);
+			}
 		}
 	}
 }
