@@ -121,7 +121,8 @@ void Executor::ScheduleEvents(const vector<shared_ptr<MetaPipeline>> &meta_pipel
 }
 
 void Executor::VerifyScheduledEvents(const vector<shared_ptr<Event>> &events) {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	const idx_t count = events.size();
 	vector<reference<Event>> vertices;
 	vertices.reserve(count);
@@ -215,7 +216,8 @@ void Executor::VerifyPipeline(Pipeline &pipeline) {
 }
 
 void Executor::VerifyPipelines() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	for (auto &pipeline : pipelines) {
 		VerifyPipeline(*pipeline);
 	}
