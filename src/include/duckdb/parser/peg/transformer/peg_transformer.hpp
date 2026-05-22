@@ -14,6 +14,7 @@
 #include "duckdb/parser/peg/ast/describe_target.hpp"
 #include "duckdb/parser/peg/ast/extension_repository_info.hpp"
 #include "duckdb/parser/peg/ast/generated_column_definition.hpp"
+#include "duckdb/parser/peg/ast/index_element_definition.hpp"
 #include "duckdb/parser/peg/ast/generic_copy_option.hpp"
 #include "duckdb/parser/peg/ast/generic_copy_option_value.hpp"
 #include "duckdb/parser/peg/ast/insert_values.hpp"

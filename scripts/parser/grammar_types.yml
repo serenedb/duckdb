@@ -524,7 +524,6 @@ Expression:
     - CopyFileNameIdentifierColId
     - DatabasePath
     - UsingExpression
-    - IndexElement
     - RelOptionArgumentOpt
     - ExpressionAlias
 
@@ -1559,6 +1558,22 @@ overrides:
   ColIdTypeList: "child_list_t<LogicalType>"
   # create_index.gram
   RelOption: "pair<Identifier, unique_ptr<ParsedExpression>>"
+  IndexElement:
+    type: "IndexElementDefinition"
+    by_value: true
+  IndexOpclass:
+    type: "IndexOpclassDefinition"
+    by_value: true
+  IndexOpclassOptions:
+    type: "case_insensitive_map_t<Value>"
+    by_value: true
+  IndexOpclassOption: "pair<string, Value>"
+  IncludeClause:
+    type: "vector<IncludedColumnDefinition>"
+    by_value: true
+  IncludedColumn:
+    type: "IncludedColumnDefinition"
+    by_value: true
   # create_table.gram
   ColumnDefinition:
     type: "ConstraintColumnDefinition"
