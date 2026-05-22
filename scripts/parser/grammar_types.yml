@@ -190,6 +190,8 @@ AlterInfo:
     - AlterTableStmt
     - AlterDatabaseStmt
     - AlterViewStmt
+    - AlterIndexStmt
+    - AlterFunctionStmt
     - AlterSchemaStmt
     - AlterSequenceStmt
     - AlterSequenceOptions

@@ -12,6 +12,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/main/extension_helper.hpp"
+#include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_aggregate_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_collation_info.hpp"
@@ -1242,7 +1243,14 @@ vector<reference<CatalogEntry>> Catalog::GetAllEntries(ClientContext &context, C
 }
 
 void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
-	if (transaction.HasContext()) {
+	// ALTER FUNCTION ... RENAME TO ... cannot disambiguate scalar vs table
+	// macro at parse time (mirrors the binder skip in Binder::Bind(AlterStatement)).
+	// Dispatch to the schema without a type-specific lookup so the schema's
+	// Alter implementation can resolve by name across function kinds.
+	const bool is_rename_function = info.type == AlterType::ALTER_SCALAR_FUNCTION &&
+	                                info.Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
+	                                    AlterScalarFunctionType::RENAME_SCALAR_FUNCTION;
+	if (transaction.HasContext() && !is_rename_function) {
 		CatalogEntryRetriever retriever(transaction.GetContext());
 		EntryLookupInfo lookup_info(info.GetCatalogType(), info.Name());
 		auto lookup = LookupEntry(retriever, info.Schema().GetIdentifierName(), lookup_info, info.if_not_found);
@@ -1251,7 +1259,7 @@ void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		}
 		return lookup.schema->Alter(transaction, info);
 	}
-	D_ASSERT(info.if_not_found == OnEntryNotFound::THROW_EXCEPTION);
+	D_ASSERT(is_rename_function || info.if_not_found == OnEntryNotFound::THROW_EXCEPTION);
 	auto &schema = GetSchema(transaction, info.Schema());
 	return schema.Alter(transaction, info);
 }
