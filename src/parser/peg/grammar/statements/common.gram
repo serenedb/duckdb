@@ -3,6 +3,8 @@ Program <- TopLevelStatement*
 TopLevelStatement <- Statement? (';'+ / EndOfInput)
 
 Statement <-
+	CreateDatabaseStatement /
+	DropDatabaseStatement /
 	CreateStatement /
 	SelectStatement /
 	SetStatement /
