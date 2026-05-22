@@ -22,6 +22,8 @@
 #include "duckdb/planner/expression_binder/update_binder.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
 #include "duckdb/planner/expression/bound_default_expression.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
@@ -32,6 +34,8 @@
 #include "duckdb/storage/table_storage_info.hpp"
 #include "duckdb/parser/tableref/emptytableref.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
+
+#include <absl/algorithm/container.h>
 
 namespace duckdb {
 
@@ -87,10 +91,57 @@ void Binder::ExpandDefaultInValuesList(InsertQueryNode &node, TableCatalogEntry 
 		expr_list.expected_types[col_idx] = table.GetExpectedTypeForInsert(column);
 		expr_list.expected_names[col_idx] = column.Name();
 
-		// now replace any DEFAULT values with the corresponding default expression
+		// A generated column only accepts DEFAULT (its value is computed, not stored); anything else is an error,
+		// matching PostgreSQL. Otherwise, replace any DEFAULT with the column's default expression.
 		for (idx_t list_idx = 0; list_idx < expr_list.values.size(); list_idx++) {
-			TryReplaceDefaultExpression(expr_list.values[list_idx][col_idx], column);
+			auto &value = expr_list.values[list_idx][col_idx];
+			if (column.Generated() && value->GetExpressionType() != ExpressionType::VALUE_DEFAULT) {
+				throw BinderException("Cannot insert a non-DEFAULT value into generated column \"%s\"",
+				                      column.Name().GetIdentifierName());
+			}
+			TryReplaceDefaultExpression(value, column);
 		}
+	}
+}
+
+void Binder::ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<unique_ptr<Expression>> &column_values) {
+	auto &columns = table.GetColumns();
+	if (!absl::c_any_of(columns.Logical(), [](const ColumnDefinition &col) {
+		    return col.Category() == TableColumnType::GENERATED_STORED;
+	    })) {
+		return;
+	}
+	// column_values holds each physical column's value expression (source ref / DEFAULT), with the generated
+	// slots empty. Bind each stored generated expression against a synthetic binding of the physical columns,
+	// then replace every reference with that column's value expression, so the result references only the source
+	// and generated columns stay in the same projection.
+	vector<Identifier> names;
+	vector<LogicalType> types;
+	names.reserve(columns.PhysicalColumnCount());
+	types.reserve(columns.PhysicalColumnCount());
+	for (auto &col : columns.Physical()) {
+		names.push_back(col.Name());
+		types.push_back(col.Type());
+	}
+	auto column_index = GenerateTableIndex();
+	auto generated_binder = Binder::CreateBinder(context, this);
+	generated_binder->bind_context.AddGenericBinding(column_index, table.name, names, types);
+	ExpressionBinder generated_expr_binder(*generated_binder, context);
+	idx_t pos = 0;
+	for (auto &col : columns.Physical()) {
+		if (col.Category() == TableColumnType::GENERATED_STORED) {
+			auto generated_expr = col.GeneratedExpression().Copy();
+			ExpandStoredGeneratedExpression(generated_expr, table);
+			auto bound = generated_expr_binder.Bind(generated_expr);
+			ExpressionIterator::VisitExpressionMutable<BoundColumnRefExpression>(
+			    bound, [&](BoundColumnRefExpression &colref, unique_ptr<Expression> &child) {
+				    if (colref.Binding().table_index == column_index) {
+					    child = column_values[colref.Binding().column_index]->Copy();
+				    }
+			    });
+			column_values[pos] = BoundCastExpression::AddCastToType(context, std::move(bound), col.Type());
+		}
+		pos++;
 	}
 }
 
@@ -100,14 +151,14 @@ unique_ptr<LogicalOperator> Binder::ResolveInputProjection(LogicalInsert &insert
                                                            const vector<LogicalType> &source_types) {
 	auto &table = insert.table;
 	auto source_bindings = root->GetColumnBindings();
-	vector<unique_ptr<Expression>> select_list;
-	for (auto &col : table.GetColumns().Physical()) {
+
+	// Compute one non-generated physical column: the user value (reordered from the source) or, when unmapped,
+	// its DEFAULT expression. Both are logical-safe (column refs / constants).
+	auto bind_base_column = [&](const ColumnDefinition &col) -> unique_ptr<Expression> {
 		auto storage_idx = col.StorageOid();
 		auto mapped_index = column_index_map.empty() ? storage_idx : column_index_map[col.Physical()];
 		if (mapped_index == DConstants::INVALID_INDEX) {
-			// Push default value
-			select_list.push_back(std::move(insert.bound_defaults[storage_idx]));
-			continue;
+			return std::move(insert.bound_defaults[storage_idx]);
 		}
 		auto &original_type = source_types[mapped_index];
 		auto source_binding = source_bindings[mapped_index];
@@ -116,8 +167,20 @@ unique_ptr<LogicalOperator> Binder::ResolveInputProjection(LogicalInsert &insert
 		if (!expression->HasQueryLocation() && root->type == LogicalOperatorType::LOGICAL_PROJECTION) {
 			expression->SetQueryLocation(root->expressions[mapped_index]->GetQueryLocation());
 		}
-		select_list.push_back(std::move(expression));
+		return expression;
+	};
+
+	// Fill each non-generated physical column's value; stored generated columns are computed from those, so
+	// everything stays in one projection over the source.
+	vector<unique_ptr<Expression>> select_list(table.GetColumns().PhysicalColumnCount());
+	idx_t idx = 0;
+	for (auto &col : table.GetColumns().Physical()) {
+		if (col.Category() != TableColumnType::GENERATED_STORED) {
+			select_list[idx] = bind_base_column(col);
+		}
+		idx++;
 	}
+	ComputeStoredGeneratedColumns(table, select_list);
 
 	bool can_inline_projection = root->type == LogicalOperatorType::LOGICAL_PROJECTION;
 	if (can_inline_projection) {
@@ -295,9 +358,10 @@ void Binder::BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &
 				throw BinderException("Cannot explicitly insert values into rowid column");
 			}
 			auto &col = table.GetColumn(column_index);
-			if (col.Generated()) {
-				throw BinderException("Cannot insert into a generated column");
-			}
+			// A generated column may be named (PostgreSQL allows it, but only with
+			// DEFAULT). The VALUES binder enforces DEFAULT-only, and an INSERT ...
+			// SELECT that names a generated column is rejected by the caller. The
+			// value is then computed by the defaults/generated projection.
 			expected_types.push_back(col.Type());
 			named_column_map.push_back(column_index);
 		}
@@ -600,6 +664,12 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	BindSchemaOrCatalog(node.qualified_name);
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, node.qualified_name);
 
+	// SereneDB fork: a zero-physical-column table (CREATE TABLE t();) has no columns to
+	// materialize a row into, so INSERT ... DEFAULT VALUES is rejected here (PostgreSQL allows it).
+	if (node.default_values && table.GetColumns().PhysicalColumnCount() == 0) {
+		throw NotImplementedException("cannot insert into table \"%s\" with no columns", table.name);
+	}
+
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::INSERT_EVENT)) {
 		return std::move(*expanded);
 	}
@@ -650,6 +720,19 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	vector<LogicalIndex> named_column_map;
 	BindInsertColumnList(table, node.columns, node.default_values, named_column_map, insert->expected_types,
 	                     column_index_map);
+
+	// An INSERT ... SELECT supplies a value for every targeted column, so naming a
+	// generated column there is not allowed -- a generated column only accepts
+	// DEFAULT (handled by the VALUES binder). Matches PostgreSQL. A VALUES insert
+	// is also carried on select_statement, so exclude it via values_list.
+	if (node.select_statement && !values_list) {
+		for (auto &col_idx : named_column_map) {
+			auto &col = table.GetColumn(col_idx);
+			if (col.Generated()) {
+				throw BinderException("Cannot insert into a generated column \"%s\"", col.Name().GetIdentifierName());
+			}
+		}
+	}
 
 	// bind the default values
 	auto &catalog_name = table.ParentCatalog().GetName();

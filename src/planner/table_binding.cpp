@@ -278,7 +278,7 @@ BindResult TableBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 		auto &column_entry = table_entry.GetColumn(LogicalIndex(column_index));
 		(void)table_entry;
 		(void)column_entry;
-		D_ASSERT(column_entry.Category() == TableColumnType::STANDARD);
+		D_ASSERT(column_entry.Category() != TableColumnType::GENERATED_VIRTUAL);
 	}
 	// fetch the type of the column
 	LogicalType col_type;
@@ -302,8 +302,8 @@ optional_ptr<StandardEntry> TableBinding::GetStandardEntry() {
 }
 
 ErrorData TableBinding::ColumnNotFoundError(const Identifier &column_name) const {
-	auto candidate_message = StringUtil::CandidatesErrorMessage(
-	    IdentifiersToStrings(names), column_name.GetIdentifierName(), "Candidate bindings");
+	auto candidate_message = StringUtil::CandidatesErrorMessage(IdentifiersToStrings(names),
+	                                                            column_name.GetIdentifierName(), "Candidate bindings");
 	return ErrorData(ExceptionType::BINDER, StringUtil::Format("Table \"%s\" does not have a column named \"%s\"%s",
 	                                                           alias.GetAlias(), column_name, candidate_message));
 }
