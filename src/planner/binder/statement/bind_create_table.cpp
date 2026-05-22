@@ -379,7 +379,7 @@ static void ExpressionContainsGeneratedColumn(const ParsedExpression &root_expr,
 static bool AnyConstraintReferencesGeneratedColumn(CreateTableInfo &table_info) {
 	identifier_set_t generated_columns;
 	for (auto &col : table_info.columns.Logical()) {
-		if (!col.Generated()) {
+		if (col.Category() != TableColumnType::GENERATED_VIRTUAL) {
 			continue;
 		}
 		generated_columns.insert(col.Name());
@@ -693,7 +693,7 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		BindCreateTableConstraints(base, entry_retriever, schema);
 
 		if (AnyConstraintReferencesGeneratedColumn(base)) {
-			throw BinderException("Constraints on generated columns are not supported yet");
+			throw BinderException("Constraints on virtual generated columns are not supported");
 		}
 		bound_constraints = BindNewConstraints(base.constraints, base.GetTableName(), base.columns);
 		if (bind_mode != AlterBindMode::SKIP_BINDING) {

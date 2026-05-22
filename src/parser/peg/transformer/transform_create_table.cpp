@@ -318,7 +318,8 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 			                      qualified_name.Name());
 		}
 
-		ColumnDefinition col(qualified_name.Name(), column_type, std::move(generated.expr), TableColumnType::GENERATED);
+		ColumnDefinition col(qualified_name.Name(), column_type, std::move(generated.expr),
+		                     generated.stored ? TableColumnType::GENERATED_STORED : TableColumnType::GENERATED_VIRTUAL);
 		col.SetCompressionType(compression_type);
 		if (accumulated_constraints.default_value) {
 			throw ParserException("Not allowed to set default on a generated column");
@@ -341,13 +342,16 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 }
 
 GeneratedColumnDefinition PEGTransformerFactory::TransformGeneratedColumn(PEGTransformer &transformer,
-                                                                          const bool &has_result,
+                                                                          const optional<bool> &generated,
                                                                           unique_ptr<ParsedExpression> expression,
                                                                           const optional<bool> &generated_column_type) {
-	GeneratedColumnDefinition generated;
-	generated.expr = std::move(expression);
-	VerifyColumnRefs(*generated.expr);
-	return generated;
+	GeneratedColumnDefinition result;
+	result.expr = std::move(expression);
+	VerifyColumnRefs(*result.expr);
+	if (generated_column_type.has_value()) {
+		result.stored = generated_column_type.value();
+	}
+	return result;
 }
 
 ColumnConstraintEntry PEGTransformerFactory::TransformDefaultValue(PEGTransformer &transformer,
@@ -550,11 +554,27 @@ bool PEGTransformerFactory::TransformDeleteRows(PEGTransformer &transformer) {
 }
 
 bool PEGTransformerFactory::TransformVirtualGeneratedColumn(PEGTransformer &transformer) {
-	return true;
+	return false;
 }
 
 bool PEGTransformerFactory::TransformStoredGeneratedColumn(PEGTransformer &transformer) {
-	throw InvalidInputException("Can not create a STORED generated column!");
+	return true;
+}
+
+bool PEGTransformerFactory::TransformGenerated(PEGTransformer &transformer,
+                                               const optional<bool> &always_or_by_default) {
+	if (always_or_by_default.has_value() && !always_or_by_default.value()) {
+		throw ParserException("for a generated column, GENERATED ALWAYS must be specified");
+	}
+	return true;
+}
+
+bool PEGTransformerFactory::TransformAlways(PEGTransformer &transformer) {
+	return true;
+}
+
+bool PEGTransformerFactory::TransformByDefault(PEGTransformer &transformer) {
+	return false;
 }
 
 void PEGTransformerFactory::VerifyColumnRefs(const ParsedExpression &expr) {
