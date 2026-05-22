@@ -1,7 +1,9 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -252,18 +254,26 @@ CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
 	ColumnQualifier qualifier(binder);
 	auto func = qualifier.QualifyFunction(function);
 	if (!func) {
-		// function was not found - check if we this is a table function (to throw a more helpful error message)
+		// scalar lookup missed - fall back to table function / table macro so the
+		// outer switch can route to the unnest rewrite (PG-compat SRF in SELECT)
+		// or surface the canonical procedure error.
 		EntryLookupInfo table_function_lookup(CatalogType::TABLE_FUNCTION_ENTRY, QualifiedName(function.FunctionName()),
 		                                      error_context);
 		auto table_func = GetCatalogEntry(function.GetQualifiedName().Catalog(), function.GetQualifiedName().Schema(),
 		                                  table_function_lookup, OnEntryNotFound::RETURN_NULL);
 		if (table_func) {
-			throw BinderException(function,
-			                      "Function \"%s\" is a table function but it was used as a scalar function. This "
-			                      "function has to be called in a FROM clause (similar to a table).",
-			                      function.FunctionName());
+			if (table_func->type == CatalogType::TABLE_MACRO_ENTRY) {
+				auto &macro = table_func->Cast<MacroCatalogEntry>();
+				if (macro.is_procedure) {
+					throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
+					                      function.FunctionName());
+				}
+			}
+			func = table_func;
 		}
-		// not a table function - rebind to throw an error
+	}
+	if (!func) {
+		// not a table function - rebind to throw a real catalog-missing error
 		EntryLookupInfo function_lookup(CatalogType::SCALAR_FUNCTION_ENTRY, QualifiedName(function.FunctionName()),
 		                                error_context);
 		func = GetCatalogEntry(function.GetQualifiedName().Catalog(), function.GetQualifiedName().Schema(),

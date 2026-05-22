@@ -180,6 +180,16 @@ void PEGTransformerFactory::RegisterPivot() {
 	REGISTER_TRANSFORM(TransformUnpivotStatement);
 }
 
+void PEGTransformerFactory::RegisterCreateMacro() {
+	// MacroDefinition navigates its FunctionDecorator* and body alternatives directly, so it remains manual.
+	REGISTER_TRANSFORM(TransformMacroDefinition);
+}
+
+void PEGTransformerFactory::RegisterDrop() {
+	// DropFunction navigates the per-overload signature args directly, so it remains manual.
+	REGISTER_TRANSFORM(TransformDropFunction);
+}
+
 void PEGTransformerFactory::RegisterSelect() {
 	// select.gram rules that remain manual after generated wrappers are registered.
 	Register("SelectStatementInternal", &TransformSelectStatementInternalRule);
@@ -213,6 +223,8 @@ PEGTransformerFactory::PEGTransformerFactory() {
 	RegisterCreateTable();
 	RegisterExpression();
 	RegisterPivot();
+	RegisterCreateMacro();
+	RegisterDrop();
 	RegisterSelect();
 	RegisterKeywordsAndIdentifiers();
 }
