@@ -75,6 +75,14 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTableStmt(
 	auto info = make_uniq<CreateTableInfo>(qualified_name);
 
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
+	if (!create_table_definition.null_conflict_columns.empty()) {
+		throw ParserException("conflicting NULL/NOT NULL declarations for column \"%s\" of table %s",
+		                      create_table_definition.null_conflict_columns.front(), qualified_name.Name());
+	}
+	if (!create_table_definition.duplicate_default_columns.empty()) {
+		throw ParserException("multiple default values specified for column \"%s\" of table %s",
+		                      create_table_definition.duplicate_default_columns.front(), qualified_name.Name());
+	}
 	info->query = std::move(create_table_definition.select_statement);
 	info->columns = std::move(create_table_definition.columns);
 	info->constraints = std::move(create_table_definition.constraints);
@@ -127,12 +135,16 @@ CreateTableDefinition PEGTransformerFactory::TransformCreateColumnList(
     PEGTransformer &transformer, optional<ColumnElements> create_table_column_list,
     optional<PartitionSortedOptions> partition_sorted_options,
     optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list) {
-	if (!create_table_column_list || create_table_column_list->columns.empty()) {
-		throw ParserException("Table must have at least one column!");
-	}
+	// PG-compat: allow `CREATE TABLE t()` with no columns. Indexes /
+	// constraints can attach later; the binder's "at least one physical
+	// column" check is also relaxed.
 	CreateTableDefinition result;
-	result.columns = std::move(create_table_column_list->columns);
-	result.constraints = std::move(create_table_column_list->constraints);
+	if (create_table_column_list) {
+		result.columns = std::move(create_table_column_list->columns);
+		result.constraints = std::move(create_table_column_list->constraints);
+		result.null_conflict_columns = std::move(create_table_column_list->null_conflict_columns);
+		result.duplicate_default_columns = std::move(create_table_column_list->duplicate_default_columns);
+	}
 	if (partition_sorted_options) {
 		result.partition_keys = std::move(partition_sorted_options->partition_keys);
 		result.sort_keys = std::move(partition_sorted_options->sort_keys);
@@ -159,6 +171,13 @@ PEGTransformerFactory::TransformCreateTableColumnList(PEGTransformer &transforme
 		if (column_element.column_definition) {
 			auto &column_result = *column_element.column_definition;
 			auto column_index = LogicalIndex(result.columns.LogicalColumnCount());
+			if (column_result.has_explicit_null && (column_result.has_not_null || column_result.has_primary_key)) {
+				result.null_conflict_columns.push_back(column_result.column_definition.GetName().GetIdentifierName());
+			}
+			if (column_result.has_duplicate_default) {
+				result.duplicate_default_columns.push_back(
+				    column_result.column_definition.GetName().GetIdentifierName());
+			}
 			for (auto &constraint : column_result.constraints) {
 				result.constraints.push_back(std::move(constraint));
 			}
@@ -255,12 +274,22 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 		for (auto &cc_entry : *column_constraint) {
 			if (cc_entry.constraint_name == "DefaultValue") {
 				if (accumulated_constraints.default_value) {
-					throw ParserException("Cannot define a default value twice");
+					accumulated_constraints.has_duplicate_default = true;
+					continue;
 				}
 				accumulated_constraints.default_value = std::move(cc_entry.expression);
 			} else if (cc_entry.constraint_name == "NotNullConstraint" ||
 			           cc_entry.constraint_name == "UniqueConstraint" ||
 			           cc_entry.constraint_name == "PrimaryKeyConstraint") {
+				if (cc_entry.constraint_name == "NotNullConstraint") {
+					if (cc_entry.constraint_type_info.type == ConstraintType::NOT_NULL) {
+						accumulated_constraints.has_not_null = true;
+					} else {
+						accumulated_constraints.has_explicit_null = true;
+					}
+				} else if (cc_entry.constraint_name == "PrimaryKeyConstraint") {
+					accumulated_constraints.has_primary_key = true;
+				}
 				accumulated_constraints.constraint_types.push_back(cc_entry.constraint_type_info);
 			} else if (cc_entry.constraint_name == "ColumnCompression") {
 				compression_type = cc_entry.compression_type;
@@ -313,13 +342,18 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 			                      qualified_name.Name());
 		}
 
-		ColumnDefinition col(qualified_name.Name(), column_type, std::move(generated.expr), TableColumnType::GENERATED);
+		ColumnDefinition col(qualified_name.Name(), column_type, std::move(generated.expr),
+		                     generated.stored ? TableColumnType::GENERATED_STORED : TableColumnType::GENERATED_VIRTUAL);
 		col.SetCompressionType(compression_type);
 		if (accumulated_constraints.default_value) {
 			throw ParserException("Not allowed to set default on a generated column");
 		}
 		ConstraintColumnDefinition result = {std::move(col), accumulated_constraints.constraint_types,
 		                                     std::move(accumulated_constraints.constraints)};
+		result.has_explicit_null = accumulated_constraints.has_explicit_null;
+		result.has_not_null = accumulated_constraints.has_not_null;
+		result.has_primary_key = accumulated_constraints.has_primary_key;
+		result.has_duplicate_default = accumulated_constraints.has_duplicate_default;
 		return result;
 	}
 
@@ -331,6 +365,10 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 	col.SetCompressionType(compression_type);
 	ConstraintColumnDefinition result = {std::move(col), accumulated_constraints.constraint_types,
 	                                     std::move(accumulated_constraints.constraints)};
+	result.has_explicit_null = accumulated_constraints.has_explicit_null;
+	result.has_not_null = accumulated_constraints.has_not_null;
+	result.has_primary_key = accumulated_constraints.has_primary_key;
+	result.has_duplicate_default = accumulated_constraints.has_duplicate_default;
 	result.constraint_name = std::move(pending_constraint_name);
 	return result;
 }
@@ -345,6 +383,9 @@ GeneratedColumnDefinition PEGTransformerFactory::TransformGeneratedColumn(PEGTra
 	GeneratedColumnDefinition generated;
 	generated.expr = std::move(expression);
 	VerifyColumnRefs(*generated.expr);
+	if (generated_column_type.has_value()) {
+		generated.stored = generated_column_type.value();
+	}
 	return generated;
 }
 
@@ -580,11 +621,11 @@ bool PEGTransformerFactory::TransformGeneratedByDefault(PEGTransformer &transfor
 }
 
 bool PEGTransformerFactory::TransformVirtualGeneratedColumn(PEGTransformer &transformer) {
-	return true;
+	return false;
 }
 
 bool PEGTransformerFactory::TransformStoredGeneratedColumn(PEGTransformer &transformer) {
-	throw InvalidInputException("Can not create a STORED generated column!");
+	return true;
 }
 
 void PEGTransformerFactory::VerifyColumnRefs(const ParsedExpression &expr) {

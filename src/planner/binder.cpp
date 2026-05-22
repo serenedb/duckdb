@@ -450,7 +450,7 @@ void Binder::BindDeleteReturningColumns(TableCatalogEntry &table, LogicalGet &ge
 		// Get the column by logical index, then get its storage index
 		auto logical_idx = col_id.GetPrimaryIndex();
 		auto &col = columns.GetColumn(LogicalIndex(logical_idx));
-		if (!col.Generated()) {
+		if (col.Category() != TableColumnType::GENERATED_VIRTUAL) {
 			auto storage_idx = col.StorageOid();
 			return_columns[storage_idx] = chunk_idx;
 		}
@@ -526,7 +526,7 @@ void Binder::BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, v
 		}
 		auto logical_idx = col_id.GetPrimaryIndex();
 		auto &col = columns.GetColumn(LogicalIndex(logical_idx));
-		if (!col.Generated()) {
+		if (col.Category() != TableColumnType::GENERATED_VIRTUAL) {
 			auto storage_idx = col.StorageOid();
 			// Only map if this column is in a unique index
 			if (indexed_column_ids.count(storage_idx)) {
@@ -574,7 +574,7 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	for (auto &col : table.GetColumns().Logical()) {
 		names.emplace_back(col.Name());
 		types.push_back(col.Type());
-		if (!col.Generated()) {
+		if (col.Category() != TableColumnType::GENERATED_VIRTUAL) {
 			bound_columns.emplace_back(column_count);
 		}
 		column_count++;
