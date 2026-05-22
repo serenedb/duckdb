@@ -115,12 +115,14 @@ CreateTableDefinition PEGTransformerFactory::TransformCreateColumnList(
     PEGTransformer &transformer, optional<ColumnElements> create_table_column_list,
     optional<PartitionSortedOptions> partition_sorted_options,
     optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list) {
-	if (!create_table_column_list || create_table_column_list->columns.empty()) {
-		throw ParserException("Table must have at least one column!");
-	}
+	// PG-compat: allow `CREATE TABLE t()` with no columns. Indexes /
+	// constraints can attach later; the binder's "at least one physical
+	// column" check is also relaxed.
 	CreateTableDefinition result;
-	result.columns = std::move(create_table_column_list->columns);
-	result.constraints = std::move(create_table_column_list->constraints);
+	if (create_table_column_list) {
+		result.columns = std::move(create_table_column_list->columns);
+		result.constraints = std::move(create_table_column_list->constraints);
+	}
 	if (partition_sorted_options) {
 		result.partition_keys = std::move(partition_sorted_options->partition_keys);
 		result.sort_keys = std::move(partition_sorted_options->sort_keys);
