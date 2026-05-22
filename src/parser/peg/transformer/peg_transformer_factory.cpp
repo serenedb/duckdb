@@ -178,6 +178,8 @@ void PEGTransformerFactory::RegisterPivot() {
 	// the source table, so their top-level wrappers remain manual.
 	REGISTER_TRANSFORM(TransformPivotStatement);
 	REGISTER_TRANSFORM(TransformUnpivotStatement);
+	// ShowQualifiedName walks the raw keyword node to distinguish PG `SHOW <var>` from `DESC <table>`.
+	REGISTER_TRANSFORM(TransformShowQualifiedName);
 }
 
 void PEGTransformerFactory::RegisterCreateMacro() {

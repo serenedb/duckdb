@@ -1,7 +1,8 @@
-DescribeStatement <- ShowTables / ShowSelect / ShowAllTables / ShowQualifiedName
+DescribeStatement <- ShowTables / ShowSelect / ShowAllTables / ShowAllSettings / ShowQualifiedName
 
 ShowSelect <- ShowOrDescribeOrSummarize SelectStatementInternal
 ShowAllTables <- ShowOrDescribe 'ALL' 'TABLES'
+ShowAllSettings <- ShowOrDescribe 'ALL'
 ShowQualifiedName <- ShowOrDescribeOrSummarize DescribeTarget?
 ShowTables <- ShowOrDescribe 'TABLES' 'FROM' QualifiedName
 DescribeTarget <- DescribeBaseTableName / DescribeStringLiteral

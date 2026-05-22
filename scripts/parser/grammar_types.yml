@@ -137,6 +137,7 @@ QueryNode:
     - ShowSelect
     - ShowTables
     - ShowAllTables
+    - ShowAllSettings
     - ShowQualifiedName
 
 SelectNode:
@@ -1732,6 +1733,7 @@ matcher_rule_overrides:
 excluded_rules:
   - PivotStatement
   - UnpivotStatement
+  - ShowQualifiedName
   - CommentValue
   - Program
   - Statement

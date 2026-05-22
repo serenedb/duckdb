@@ -498,6 +498,9 @@ public:
 	static unique_ptr<SelectStatement> TransformUnpivotStatement(PEGTransformer &transformer,
 	                                                             ParseResult &parse_result);
 
+	// describe.gram
+	static unique_ptr<QueryNode> TransformShowQualifiedName(PEGTransformer &transformer, ParseResult &parse_result);
+
 	// create_macro.gram
 	static unique_ptr<MacroFunction> TransformMacroDefinition(PEGTransformer &transformer, ParseResult &parse_result);
 
