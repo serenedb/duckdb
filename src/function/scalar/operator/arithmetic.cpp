@@ -1390,10 +1390,17 @@ ScalarFunctionSet OperatorIntegerDivideFun::GetFunctions() {
 		} else if (TypeIsIntegral(type.InternalType())) {
 			full_divide.AddFunction(ScalarFunction({type, type}, type, nullptr, BindDivisionByZero<DivideOperator>,
 			                                       PropagateIntegerDivideStats));
+		} else if (type.id() == LogicalTypeId::FLOAT || type.id() == LogicalTypeId::DOUBLE) {
+			full_divide.AddFunction(
+			    ScalarFunction({type, type}, type, nullptr, BindBinaryFloatingPoint<DivideOperator>));
 		} else {
 			full_divide.AddFunction(ScalarFunction({type, type}, type, nullptr, BindDivisionByZero<DivideOperator>));
 		}
 	}
+	// integer_division rewrites every `/` to `//`, including the ones whose operands are not numeric at
+	// all, so `//` has to resolve everything `/` resolves.
+	full_divide.AddFunction(ScalarFunction({LogicalType::INTERVAL, LogicalType::DOUBLE}, LogicalType::INTERVAL, nullptr,
+	                                       BindIntervalDivide));
 	full_divide.SetFallible();
 	full_divide.ApplyToFunctions(NameOperatorParameters);
 	return full_divide;
