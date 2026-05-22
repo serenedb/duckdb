@@ -11,6 +11,7 @@ CreateIndexInfo::CreateIndexInfo() : CreateInfo(CatalogType::INDEX_ENTRY, Identi
 CreateIndexInfo::CreateIndexInfo(const duckdb::CreateIndexInfo &info)
     : CreateInfo(CatalogType::INDEX_ENTRY, info.Schema()), table(info.table), options(info.options),
       index_type(info.index_type), constraint_type(info.constraint_type), column_ids(info.column_ids),
+      column_opclasses(info.column_opclasses), column_opclass_options(info.column_opclass_options),
       scan_types(info.scan_types), names(info.names) {
 	SetIndexName(info.GetIndexName());
 }
@@ -44,11 +45,16 @@ vector<string> CreateIndexInfo::ExpressionsToList() const {
 			}
 		}
 
+		string entry;
 		if (add_parenthesis) {
-			list.push_back(StringUtil::Format("(%s)", copy->ToString()));
+			entry = StringUtil::Format("(%s)", copy->ToString());
 		} else {
-			list.push_back(StringUtil::Format("%s", copy->ToString()));
+			entry = copy->ToString();
 		}
+		if (i < column_opclasses.size() && !column_opclasses[i].empty()) {
+			entry += " " + column_opclasses[i];
+		}
+		list.push_back(std::move(entry));
 	}
 	return list;
 }
