@@ -644,6 +644,7 @@ BaseTableRef:
     - QualifiedTableName
     - TargetOptAlias
     - InsertTarget
+    - TruncateTarget
 
 # ---------------------------------------------------------------------------
 # vector<T> categories
@@ -1214,6 +1215,11 @@ Bool:
     - DropBehavior
     - CascadeDropBehavior
     - RestrictDropBehavior
+    - TruncateOnly
+    - TruncateStar
+    - TruncateIdentityClause
+    - TruncateRestart
+    - TruncateContinue
     - AnyOrAll
     - SubqueryAny
     - SubqueryAll
