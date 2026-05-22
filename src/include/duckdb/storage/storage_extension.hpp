@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 
 namespace duckdb {

@@ -63,6 +63,8 @@ SQLStatement:
     - AlterStatement
     - AnalyzeStatement
     - AttachStatement
+    - CreateDatabaseStatement
+    - DropDatabaseStatement
     - CallStatement
     - CheckpointStatement
     - CommentStatement
@@ -1250,6 +1252,7 @@ Bool:
     - ForceNotNull
     - WithRule
     - WithoutRule
+    - DropDatabaseForce
 
 
 Int64:
