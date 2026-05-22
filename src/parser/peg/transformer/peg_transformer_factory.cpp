@@ -173,6 +173,12 @@ void PEGTransformerFactory::RegisterExpression() {
 	REGISTER_TRANSFORM(TransformOverClause);
 }
 
+void PEGTransformerFactory::RegisterCreateTextSearchDictionary() {
+	// create_text_search_dictionary.gram — Parens(List(...)) bodies are not auto-extractable.
+	REGISTER_TRANSFORM(TransformCreateTSDictionaryStatement);
+	REGISTER_TRANSFORM(TransformDropTSDictionaryStatement);
+}
+
 void PEGTransformerFactory::RegisterPivot() {
 	// PivotStatement and UnpivotStatement measure parameter usage while transforming
 	// the source table, so their top-level wrappers remain manual.
@@ -226,6 +232,7 @@ PEGTransformerFactory::PEGTransformerFactory() {
 	RegisterCommon();
 	RegisterCreateTable();
 	RegisterExpression();
+	RegisterCreateTextSearchDictionary();
 	RegisterPivot();
 	RegisterCreateMacro();
 	RegisterDrop();
