@@ -138,6 +138,11 @@
         "name": "index_type_name",
         "type": "string",
         "property": "index_type"
+      },
+      {
+        "id": 210,
+        "name": "where_clause",
+        "type": "ParsedExpression*"
       }
     ],
     "methods": {
