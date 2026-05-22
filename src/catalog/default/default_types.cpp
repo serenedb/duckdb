@@ -108,6 +108,9 @@ void RegisterTimestampConstructors(TypeConstructorSet &set) {
 // VARCHAR Type
 //----------------------------------------------------------------------------------------------------------------------
 LogicalType BindVarcharType(BindLogicalTypeInput &input) {
+	if (!input.modifiers.empty() && input.modifiers[0].GetValue().GetValue<int64_t>() < 1) {
+		throw BinderException(input.GetLocation(0), "length for type varchar must be at least 1");
+	}
 	return LogicalType::VARCHAR;
 }
 
@@ -141,6 +144,9 @@ void RegisterVarcharConstructors(TypeConstructorSet &set) {
 // BIT Type
 //----------------------------------------------------------------------------------------------------------------------
 LogicalType BindBitType(BindLogicalTypeInput &input) {
+	if (!input.modifiers.empty() && input.modifiers[0].GetValue().GetValue<int64_t>() < 1) {
+		throw BinderException(input.GetLocation(0), "length for type bit must be at least 1");
+	}
 	return LogicalType::BIT;
 }
 
