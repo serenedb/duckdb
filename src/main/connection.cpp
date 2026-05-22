@@ -148,8 +148,9 @@ unique_ptr<PendingQueryResult> Connection::PendingQuery(const string &query, Pen
 	return context->PendingQuery(query, parameters);
 }
 
-unique_ptr<PreparedStatement> Connection::Prepare(const string &query) {
-	return context->Prepare(query);
+unique_ptr<PreparedStatement>
+Connection::Prepare(const string &query, optional_ptr<const identifier_map_t<LogicalType>> parameter_type_hints) {
+	return context->Prepare(query, parameter_type_hints);
 }
 
 unique_ptr<PreparedStatement> Connection::Prepare(unique_ptr<SQLStatement> statement) {
