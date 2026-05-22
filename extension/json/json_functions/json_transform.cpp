@@ -183,17 +183,16 @@ static inline bool GetValueString(yyjson_val *val, yyjson_alc *alc, string_t &re
 	switch (unsafe_yyjson_get_tag(val)) {
 	case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NOESC:
 	case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NONE:
-	case YYJSON_TYPE_RAW | YYJSON_SUBTYPE_NONE: {
-		auto len = unsafe_yyjson_get_len(val);
-		auto dst = JSONCommon::AllocateArray<char>(alc, len);
-		memcpy(dst, unsafe_yyjson_get_str(val), len);
-		result = string_t(dst, UnsafeNumericCast<uint32_t>(len));
+	case YYJSON_TYPE_RAW | YYJSON_SUBTYPE_NONE:
+		result = StringVector::AddStringOrBlob(vector, unsafe_yyjson_get_str(val), unsafe_yyjson_get_len(val));
+		return true;
+	case YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE:
+	case YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE: {
+		idx_t len;
+		auto data = JSONCommon::WriteVal<yyjson_val>(val, alc, len);
+		result = StringVector::AddStringOrBlob(vector, data, len);
 		return true;
 	}
-	case YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE:
-	case YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE:
-		result = JSONCommon::WriteVal<yyjson_val>(val, alc);
-		return true;
 	case YYJSON_TYPE_BOOL | YYJSON_SUBTYPE_TRUE:
 	case YYJSON_TYPE_BOOL | YYJSON_SUBTYPE_FALSE:
 		result = StringCast::Operation<bool>(unsafe_yyjson_get_bool(val), StringVector::GetStringHeap(vector));

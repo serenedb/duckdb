@@ -179,7 +179,8 @@ struct JSONTableInOutResult {
 		const auto arr_el = !recursion_nodes.empty() && unsafe_yyjson_is_arr(recursion_nodes.back().parent_val);
 		if (key.enabled) {
 			if (vkey) { // Object field
-				key.data[count] = string_t(unsafe_yyjson_get_str(vkey.get()), unsafe_yyjson_get_len(vkey.get()));
+				key.data[count] = StringVector::AddStringOrBlob(key.vector, unsafe_yyjson_get_str(vkey.get()),
+				                                                unsafe_yyjson_get_len(vkey.get()));
 			} else if (arr_el) { // Array element
 				key.data[count] = StringVector::AddString(key.vector, to_string(recursion_nodes.back().child_index));
 			} else { // Other
@@ -187,7 +188,9 @@ struct JSONTableInOutResult {
 			}
 		}
 		if (value.enabled) {
-			value.data[count] = JSONCommon::WriteVal(val, lstate.alc);
+			idx_t value_len;
+			auto value_data = JSONCommon::WriteVal<yyjson_val>(val, lstate.alc, value_len);
+			value.data[count] = StringVector::AddStringOrBlob(value.vector, value_data, value_len);
 		}
 		if (type.enabled) {
 			type.data[count] = JSONCommon::ValTypeToStringT(val);
