@@ -147,7 +147,7 @@ void Binder::SearchSchema(CreateInfo &info) {
 	}
 	auto &search_path = ClientData::Get(context).catalog_search_path;
 	if (IsInvalidCatalog(catalog) && IsInvalidSchema(schema)) {
-		auto &default_entry = search_path->GetDefault();
+		auto default_entry = search_path->GetResolvedDefault();
 		catalog = default_entry.GetCatalog();
 		schema = default_entry.GetSchema();
 	} else if (IsInvalidSchema(schema)) {
@@ -157,6 +157,10 @@ void Binder::SearchSchema(CreateInfo &info) {
 	}
 	if (IsInvalidCatalog(catalog)) {
 		catalog = DatabaseManager::GetDefaultDatabase(context);
+	}
+	if (IsInvalidSchema(schema)) {
+		// Empty search_path / no resolvable entry -> PG-style error.
+		throw CatalogException("no schema has been selected to create in");
 	}
 	info.SetQualifiedName(QualifiedName(std::move(catalog), std::move(schema), info.GetQualifiedName().Name()));
 	if (!info.temporary) {
