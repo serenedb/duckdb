@@ -27,7 +27,7 @@ SELECT interval '2' days;
 query IIIIII
 SELECT to_years(2), to_months(2), to_days(2), to_hours(2), to_minutes(2), to_seconds(2);
 ----
-2 years	2 months	2 days	02:00:00	00:02:00	00:00:02
+2 years	2 mons	2 days	02:00:00	00:02:00	00:00:02
 
 # non-constant expression
 query I
@@ -53,7 +53,7 @@ SELECT interval 2 years, interval 2 year;
 query II
 SELECT interval 2 months, interval 2 month;
 ----
-2 months	2 months
+2 mons	2 mons
 
 query II
 SELECT interval 2 days, interval 2 day;
@@ -272,7 +272,7 @@ SELECT INTERVAL '1.5' WEEK;
 query I
 SELECT INTERVAL '1.5' MONTH;
 ----
-1 month
+1 mon
 
 query I
 SELECT INTERVAL '1.5' YEAR;
@@ -322,7 +322,7 @@ SELECT INTERVAL '-1.5' HOUR;
 query I
 SELECT INTERVAL '-1.5' DAY;
 ----
--1 day
+-1 days
 
 query I
 SELECT INTERVAL '-1.5' WEEK;
@@ -332,12 +332,12 @@ SELECT INTERVAL '-1.5' WEEK;
 query I
 SELECT INTERVAL '-1.5' MONTH;
 ----
--1 month
+-1 mons
 
 query I
 SELECT INTERVAL '-1.5' YEAR;
 ----
--1 year
+-1 years
 
 query I
 SELECT INTERVAL '-1.5' DECADE;
@@ -396,17 +396,17 @@ SELECT '1.5 WEEK'::INTERVAL;
 query I
 SELECT '1.5 MONTH'::INTERVAL;
 ----
-1 month 15 days
+1 mon 15 days
 
 query I
 SELECT '1.5 QUARTER'::INTERVAL;
 ----
-4 months 15 days
+4 mons 15 days
 
 query I
 SELECT '1.5 YEAR'::INTERVAL
 ----
-1 year 6 months
+1 year 6 mons
 
 query I
 SELECT '1.5 DECADE'::INTERVAL
@@ -451,7 +451,7 @@ SELECT '-1.5 HOUR'::INTERVAL;
 query I
 SELECT '-1.5 DAY'::INTERVAL;
 ----
--1 day -12:00:00
+-1 days -12:00:00
 
 query I
 SELECT '-1.5 WEEK'::INTERVAL;
@@ -461,17 +461,17 @@ SELECT '-1.5 WEEK'::INTERVAL;
 query I
 SELECT '-1.5 MONTH'::INTERVAL;
 ----
--1 month -15 days
+-1 mons -15 days
 
 query I
 SELECT '-1.5 QUARTER'::INTERVAL;
 ----
--4 months -15 days
+-4 mons -15 days
 
 query I
 SELECT '-1.5 YEAR'::INTERVAL
 ----
--1 year -6 months
+-1 years -6 mons
 
 query I
 SELECT '-1.5 DECADE'::INTERVAL

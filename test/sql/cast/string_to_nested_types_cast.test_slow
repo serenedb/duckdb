@@ -80,7 +80,7 @@ SELECT CAST(LIST(blob)::VARCHAR AS BLOB[]) FROM test_all_types();
 query I
 SELECT CAST(LIST(interval)::VARCHAR AS INTERVAL[]) FROM test_all_types();
 ----
-['00:00:00', '83 years 3 months 999 days 00:16:39.999999', NULL]
+['00:00:00', '83 years 3 mons 999 days 00:16:39.999999', NULL]
 
 
 #               Larger input to List cast
@@ -196,5 +196,5 @@ query I
 SELECT CAST(struct_pack(A=>interval)::VARCHAR AS STRUCT(A INTERVAL)) FROM test_all_types();
 ----
 {'A': '00:00:00'}
-{'A': '83 years 3 months 999 days 00:16:39.999999'}
+{'A': '83 years 3 mons 999 days 00:16:39.999999'}
 {'A': NULL}

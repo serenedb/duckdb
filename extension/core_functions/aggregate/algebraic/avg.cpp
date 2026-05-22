@@ -266,6 +266,11 @@ static AggregateFunction NameXParameter(AggregateFunction fun) {
 
 AggregateFunction GetAverageAggregate(PhysicalType type) {
 	switch (type) {
+	case PhysicalType::INT8: {
+		return NameXParameter(
+		    AggregateFunction::UnaryAggregate<AvgState<int64_t>, int8_t, double, IntegerAverageOperation>(
+		        LogicalType::TINYINT, LogicalType::DOUBLE));
+	}
 	case PhysicalType::INT16: {
 		return NameXParameter(
 		    AggregateFunction::UnaryAggregate<AvgState<int64_t>, int16_t, double, IntegerAverageOperation>(
@@ -318,38 +323,29 @@ AggregateFunctionSet AvgFun::GetFunctions() {
 	                              FunctionNullHandling::DEFAULT_NULL_HANDLING, nullptr, BindDecimalAvg);
 	decimal_avg.GetSignature().AddParameter("x", LogicalTypeId::DECIMAL);
 	avg.AddFunction(decimal_avg);
+	avg.AddFunction(GetAverageAggregate(PhysicalType::INT8));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INT16));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INT32));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INT64));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INT128));
+	avg.AddFunction(
+	    NameXParameter(AggregateFunction::UnaryAggregate<AvgState<double>, float, double, NumericAverageOperation>(
+	        LogicalType::FLOAT, LogicalType::DOUBLE)));
+	avg.AddFunction(
+	    NameXParameter(AggregateFunction::UnaryAggregate<AvgState<double>, double, double, NumericAverageOperation>(
+	        LogicalType::DOUBLE, LogicalType::DOUBLE)));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INTERVAL));
-	auto numeric_avg = AggregateFunction::UnaryAggregate<AvgState<double>, double, double, NumericAverageOperation>(
-	    LogicalType::DOUBLE, LogicalType::DOUBLE);
-	numeric_avg.GetSignature().GetParameter(0).SetName("x");
-	avg.AddFunction(numeric_avg);
 
-	auto timestamp_avg =
-	    AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
-	        LogicalType::TIMESTAMP, LogicalType::TIMESTAMP);
-	timestamp_avg.GetSignature().GetParameter(0).SetName("x");
-	avg.AddFunction(timestamp_avg);
-
-	auto timestamp_tz_avg =
-	    AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
-	        LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_TZ);
-	timestamp_tz_avg.GetSignature().GetParameter(0).SetName("x");
-	avg.AddFunction(timestamp_tz_avg);
-
-	auto time_avg = AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
-	    LogicalType::TIME, LogicalType::TIME);
-	time_avg.GetSignature().GetParameter(0).SetName("x");
-	avg.AddFunction(time_avg);
-
-	auto time_tz_avg =
+	for (auto &type : {LogicalType::TIME, LogicalType::TIME_NS, LogicalType::TIMESTAMP, LogicalType::TIMESTAMP_S,
+	                   LogicalType::TIMESTAMP_MS, LogicalType::TIMESTAMP_NS, LogicalType::TIMESTAMP_TZ,
+	                   LogicalType::TIMESTAMP_TZ_NS}) {
+		avg.AddFunction(NameXParameter(
+		    AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(type,
+		                                                                                                       type)));
+	}
+	avg.AddFunction(NameXParameter(
 	    AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, dtime_tz_t, dtime_tz_t, TimeTZAverageOperation>(
-	        LogicalType::TIME_TZ, LogicalType::TIME_TZ);
-	time_tz_avg.GetSignature().GetParameter(0).SetName("x");
-	avg.AddFunction(time_tz_avg);
+	        LogicalType::TIME_TZ, LogicalType::TIME_TZ)));
 
 	return avg;
 }

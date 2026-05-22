@@ -46,7 +46,7 @@ SELECT
 	'POINT ZM(1.25 -2.5 3.75 4.5)'::GEOMETRY('OGC:CRS84'),
 	typeof('POINT ZM(1.25 -2.5 3.75 4.5)'::GEOMETRY('OGC:CRS84'));
 ----
--0.0	FLOAT	-0.0	DOUBLE	12.345	DECIMAL(9,3)	-178956970 years -8 months -2147483648 days -2562047788:00:54.775808	INTERVAL	[1, 2]	SMALLINT[]	{'n': 7, 'items': [x, y]}	STRUCT(n INTEGER, items VARCHAR[])	{'items': [1, NULL], 'n': 7}	VARIANT	POINT ZM (1.25 -2.5 3.75 4.5)	GEOMETRY('OGC:CRS84')
+-0.0	FLOAT	-0.0	DOUBLE	12.345	DECIMAL(9,3)	-178956970 years -8 mons -2147483648 days -2562047788:00:54.775808	INTERVAL	[1, 2]	SMALLINT[]	{'n': 7, 'items': [x, y]}	STRUCT(n INTEGER, items VARCHAR[])	{'items': [1, NULL], 'n': 7}	VARIANT	POINT ZM (1.25 -2.5 3.75 4.5)	GEOMETRY('OGC:CRS84')
 
 # Preserve the signed-zero constructor itself as well as its observable sign.
 
