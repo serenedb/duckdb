@@ -115,10 +115,16 @@ public:
 	DUCKDB_API unique_ptr<QueryResult> Submit(unique_ptr<SQLStatement> statement, vector<Value> &values,
 	                                          const QueryParameters &query_parameters = {});
 
-	//! Prepare the specified query, returning a prepared statement object
-	DUCKDB_API unique_ptr<PreparedStatement> Prepare(const string &query);
+	//! Prepare the specified query, returning a prepared statement object.
+	//! Optional `parameter_type_hints` pins per-parameter bind types
+	//! (e.g. PG protocol Parse OIDs). See ClientContext::Prepare for semantics.
+	DUCKDB_API unique_ptr<PreparedStatement>
+	Prepare(const string &query,
+	        optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
 	//! Prepare the specified statement, returning a prepared statement object
-	DUCKDB_API unique_ptr<PreparedStatement> Prepare(unique_ptr<SQLStatement> statement);
+	DUCKDB_API unique_ptr<PreparedStatement>
+	Prepare(unique_ptr<SQLStatement> statement,
+	        optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
 
 	//! Get the table info of a specific table, or nullptr if it cannot be found.
 	DUCKDB_API unique_ptr<TableDescription> TableInfo(const Identifier &database_name, const Identifier &schema_name,

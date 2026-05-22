@@ -139,12 +139,15 @@ unique_ptr<QueryResult> Connection::Submit(unique_ptr<SQLStatement> statement, v
 	return context->Submit(std::move(statement), named_params, query_parameters);
 }
 
-unique_ptr<PreparedStatement> Connection::Prepare(const string &query) {
-	return context->Prepare(query);
+unique_ptr<PreparedStatement>
+Connection::Prepare(const string &query, optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
+	return context->Prepare(query, parameter_type_hints);
 }
 
-unique_ptr<PreparedStatement> Connection::Prepare(unique_ptr<SQLStatement> statement) {
-	return context->Prepare(std::move(statement));
+unique_ptr<PreparedStatement>
+Connection::Prepare(unique_ptr<SQLStatement> statement,
+                    optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
+	return context->Prepare(std::move(statement), parameter_type_hints);
 }
 
 unique_ptr<QueryResult> Connection::QueryParamsRecursive(const string &query, vector<Value> &values) {

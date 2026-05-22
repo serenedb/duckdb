@@ -286,7 +286,6 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 			logical_planner.parameter_data.emplace(value.first, BoundParameterData(value.second));
 		}
 	}
-
 	{
 		auto planner_timer = profiler.StartTimer<MetricPlannerTotalTime>();
 		logical_planner.CreatePlan(std::move(statement));
@@ -493,8 +492,9 @@ static PreparedStatementInfo GetPreparedStatementInfo(PreparedStatementData &dat
 	return info;
 }
 
-unique_ptr<PreparedStatement> ClientContext::PrepareInternal(ClientContextLock &lock,
-                                                             unique_ptr<SQLStatement> statement) {
+unique_ptr<PreparedStatement>
+ClientContext::PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
+                               optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
 	auto statement_query = statement->query;
 	// prepare the statement under a generated name - the returned PreparedStatement only refers to that name
 	auto name = "duckdb_prepare_internal_" + UUID::ToString(UUID::GenerateRandomUUID());
@@ -503,6 +503,9 @@ unique_ptr<PreparedStatement> ClientContext::PrepareInternal(ClientContextLock &
 	prepare->query = statement_query;
 	prepare->stmt_location = statement->stmt_location;
 	prepare->statement = std::move(statement);
+	if (parameter_type_hints) {
+		prepare->parameter_type_hints = *parameter_type_hints;
+	}
 
 	QueryParameters parameters;
 	parameters.result_eagerness = ResultEagerness::FORCED;
@@ -521,7 +524,9 @@ void ClientContext::RemovePreparedStatement(const string &name) {
 	client_data->prepared_statements.erase(Identifier(name));
 }
 
-unique_ptr<PreparedStatement> ClientContext::Prepare(unique_ptr<SQLStatement> statement) {
+unique_ptr<PreparedStatement>
+ClientContext::Prepare(unique_ptr<SQLStatement> statement,
+                       optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
 	auto lock = LockContext();
 	// Store the query in case of an error.
 	auto query = statement->query;
@@ -529,7 +534,7 @@ unique_ptr<PreparedStatement> ClientContext::Prepare(unique_ptr<SQLStatement> st
 	// Try to prepare.
 	try {
 		InitialCleanup(*lock);
-		return PrepareInternal(*lock, std::move(statement));
+		return PrepareInternal(*lock, std::move(statement), parameter_type_hints);
 	} catch (std::exception &ex) {
 		return ErrorResult<PreparedStatement>(ErrorData(ex), query);
 	}
@@ -579,7 +584,9 @@ StatementSignature ClientContext::BindStatement(unique_ptr<SQLStatement> stateme
 	return signature;
 }
 
-unique_ptr<PreparedStatement> ClientContext::Prepare(const string &query) {
+unique_ptr<PreparedStatement>
+ClientContext::Prepare(const string &query,
+                       optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
 	auto lock = LockContext();
 	// prepare the query
 	try {
@@ -593,7 +600,7 @@ unique_ptr<PreparedStatement> ClientContext::Prepare(const string &query) {
 		if (statements.size() > 1) {
 			throw InvalidInputException("Cannot prepare multiple statements at once!");
 		}
-		return PrepareInternal(*lock, std::move(statements[0]));
+		return PrepareInternal(*lock, std::move(statements[0]), parameter_type_hints);
 	} catch (std::exception &ex) {
 		return ErrorResult<PreparedStatement>(ErrorData(ex), query);
 	}
