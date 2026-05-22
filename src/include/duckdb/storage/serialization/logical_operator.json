@@ -797,6 +797,12 @@
         "id": 204,
         "name": "return_columns",
         "type": "vector<idx_t>"
+      },
+      {
+        "id": 205,
+        "name": "is_truncate",
+        "type": "bool",
+        "default": "false"
       }
     ],
     "constructor": [
