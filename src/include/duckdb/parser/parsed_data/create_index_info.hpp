@@ -16,6 +16,9 @@
 #include "duckdb/parser/parsed_expression.hpp"
 
 #include "duckdb/common/identifier.hpp"
+
+#include <optional>
+
 namespace duckdb {
 
 struct CreateIndexInfo : public CreateInfo {
@@ -38,12 +41,21 @@ struct CreateIndexInfo : public CreateInfo {
 	//! The index type (ART, B+-tree, Skip-List, ...)
 	string index_type;
 	//! The index constraint type
-	IndexConstraintType constraint_type;
+	IndexConstraintType constraint_type = IndexConstraintType::NONE;
 	//! The column ids of the indexed table
 	vector<column_t> column_ids;
 	//! The set of expressions to index by
 	vector<unique_ptr<ParsedExpression>> expressions;
 	vector<unique_ptr<ParsedExpression>> parsed_expressions;
+	//! The partial-index predicate (CREATE INDEX ... WHERE <predicate>)
+	unique_ptr<ParsedExpression> where_clause;
+
+	//! The opclass (parameter name) per indexed column; empty string means no opclass was specified
+	vector<string> column_opclasses;
+	//! Optional per-column opclass options, parsed from `col opclass (k = v, ...)`.
+	//! Parallel to column_opclasses; entry is nullopt when no parens were given,
+	//! and an (empty or non-empty) map when parens were present in the source SQL.
+	vector<std::optional<case_insensitive_map_t<Value>>> column_opclass_options;
 
 	//! The types of the logical columns (necessary for scanning the table during CREATE INDEX)
 	vector<LogicalType> scan_types;
