@@ -946,8 +946,10 @@ RemotePushdownOptimizer::TryConstantFold(unique_ptr<ParsedExpression> &expr) {
 		return ConstantFoldResult::FOLD_ERROR;
 	}
 	auto folded = make_uniq<ConstantExpression>(std::move(fold_result));
-	// preserve the name DuckDB would generate for the original expression
-	folded->SetAlias(expr->GetAlias().empty() ? Identifier(expr->ToString()) : expr->GetAlias());
+	// preserve the result column name of the original expression (GetColumnName,
+	// the PG-style target-list name -- not ToString, which would rename e.g.
+	// "SELECT f(x)" from "f" to the full expression text)
+	folded->SetAlias(expr->GetAlias().empty() ? Identifier(expr->GetColumnName()) : expr->GetAlias());
 	folded->SetQueryLocation(expr->GetQueryLocation());
 	expr = std::move(folded);
 	return ConstantFoldResult::FOLDED;
