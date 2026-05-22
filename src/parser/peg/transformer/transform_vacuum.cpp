@@ -1,5 +1,8 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/statement/vacuum_statement.hpp"
+#include "duckdb/parser/statement/pragma_statement.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 
 namespace duckdb {
 
@@ -9,6 +12,21 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformVacuumStatement(PEGTran
 	VacuumOptions options;
 	if (vacuum_options) {
 		options = *vacuum_options;
+	}
+	if (!options.serenedb_pragma_option.empty()) {
+		auto pragma = make_uniq<PragmaStatement>();
+		pragma->info->name = "serenedb_vacuum";
+		pragma->info->parameters.push_back(make_uniq<ConstantExpression>(Value(options.serenedb_pragma_option)));
+		if (analyze_target && analyze_target->ref) {
+			auto &base_ref = analyze_target->ref->Cast<BaseTableRef>();
+			pragma->info->parameters.push_back(
+			    make_uniq<ConstantExpression>(Value(base_ref.GetQualifiedName().Name().GetIdentifierName())));
+			if (!base_ref.GetQualifiedName().Schema().GetIdentifierName().empty()) {
+				pragma->info->parameters.push_back(
+				    make_uniq<ConstantExpression>(Value(base_ref.GetQualifiedName().Schema().GetIdentifierName())));
+			}
+		}
+		return std::move(pragma);
 	}
 	auto result = make_uniq<VacuumStatement>(options);
 	if (analyze_target && analyze_target->ref) {
@@ -58,6 +76,12 @@ VacuumOptions PEGTransformerFactory::TransformVacuumParensOptions(PEGTransformer
 		}
 		if (StringUtil::CIEquals(option, "analyze")) {
 			options.analyze = true;
+		}
+		if (StringUtil::CIEquals(option, "update_indexes")) {
+			options.serenedb_pragma_option = "update_indexes";
+		}
+		if (StringUtil::CIEquals(option, "sync_stats")) {
+			options.serenedb_pragma_option = "sync_stats";
 		}
 	}
 	return options;
