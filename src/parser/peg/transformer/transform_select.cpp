@@ -19,6 +19,9 @@
 #include "duckdb/parser/statement/insert_statement.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
 #include "duckdb/parser/statement/delete_statement.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/query_node/insert_query_node.hpp"
 #include "duckdb/parser/query_node/update_query_node.hpp"
 #include "duckdb/parser/query_node/delete_query_node.hpp"
@@ -28,7 +31,16 @@ namespace duckdb {
 unique_ptr<SQLStatement>
 PEGTransformerFactory::TransformSelectStatement(PEGTransformer &transformer,
                                                 unique_ptr<SelectStatement> select_statement_internal) {
-	return std::move(select_statement_internal);
+	if (!transformer.select_into_target) {
+		return std::move(select_statement_internal);
+	}
+	auto into_target = std::move(transformer.select_into_target);
+	auto info = make_uniq<CreateTableInfo>(into_target->GetQualifiedName());
+	info->on_conflict = OnCreateConflict::ERROR_ON_CONFLICT;
+	info->query = std::move(select_statement_internal);
+	auto create_statement = make_uniq<CreateStatement>();
+	create_statement->info = std::move(info);
+	return std::move(create_statement);
 }
 
 unique_ptr<SelectStatement> PEGTransformerFactory::TransformSelectStatementInternalRule(PEGTransformer &transformer,
@@ -39,7 +51,9 @@ unique_ptr<SelectStatement> PEGTransformerFactory::TransformSelectStatementInter
 	if (!cte_map.map.empty()) {
 		transformer.stored_cte_map.push_back(cte_map);
 	}
+	transformer.select_depth++;
 	auto select_statement = transformer.Transform<unique_ptr<SelectStatement>>(list_pr.Child<ListParseResult>(1));
+	transformer.select_depth--;
 
 	if (!cte_map.map.empty()) {
 		select_statement->node->cte_map = std::move(cte_map);
@@ -1062,7 +1076,8 @@ PEGTransformerFactory::TransformUsingKey(PEGTransformer &transformer,
 
 unique_ptr<SelectNode>
 PEGTransformerFactory::TransformSelectClause(PEGTransformer &transformer, optional<DistinctClause> distinct_clause,
-                                             optional<vector<unique_ptr<ParsedExpression>>> target_list) {
+                                             optional<vector<unique_ptr<ParsedExpression>>> target_list,
+                                             optional<unique_ptr<BaseTableRef>> select_into_clause) {
 	auto result = make_uniq<SelectNode>();
 	if (distinct_clause && distinct_clause->is_distinct) {
 		auto distinct_modifier = make_uniq<DistinctModifier>();
@@ -1076,6 +1091,12 @@ PEGTransformerFactory::TransformSelectClause(PEGTransformer &transformer, option
 	}
 	for (auto &expr_ptr : *target_list) {
 		result->select_list.push_back(std::move(expr_ptr));
+	}
+	if (select_into_clause) {
+		if (transformer.select_depth > 1 || transformer.select_into_target) {
+			throw ParserException("SELECT ... INTO is not allowed here");
+		}
+		transformer.select_into_target = std::move(*select_into_clause);
 	}
 	return result;
 }
