@@ -19,11 +19,16 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
                                                OperatorSourceInput &input) const {
 	switch (info->type) {
 	case CatalogType::PREPARED_STATEMENT: {
-		// DEALLOCATE silently ignores errors
+		// DEALLOCATE silently ignores errors. An empty name means DEALLOCATE ALL.
 		auto &statements = ClientData::Get(context.client).prepared_statements;
-		auto stmt_iter = statements.find(info->GetQualifiedName().Name());
-		if (stmt_iter != statements.end()) {
-			statements.erase(stmt_iter);
+		auto &name = info->GetQualifiedName().Name();
+		if (name.empty()) {
+			statements.clear();
+		} else {
+			auto stmt_iter = statements.find(name);
+			if (stmt_iter != statements.end()) {
+				statements.erase(stmt_iter);
+			}
 		}
 		break;
 	}
