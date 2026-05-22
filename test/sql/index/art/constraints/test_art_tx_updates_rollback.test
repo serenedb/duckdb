@@ -25,7 +25,7 @@ INSERT INTO tbl_rollback VALUES (1, ['con1 payload']);
 statement error con1
 SELECT 42;
 ----
-<REGEX>:TransactionContext Error.*Current transaction is aborted.*
+<REGEX>:TransactionContext Error.*current transaction is aborted.*
 
 statement ok con1
 ROLLBACK;
