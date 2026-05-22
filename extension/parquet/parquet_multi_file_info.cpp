@@ -1,11 +1,13 @@
 #include "parquet_multi_file_info.hpp"
 
 #include <stdint.h>
+#include <algorithm>
 #include <atomic>
 #include <unordered_map>
 #include <vector>
 
 #include "duckdb/common/multi_file/multi_file_function.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "parquet_crypto.hpp"
@@ -423,6 +425,177 @@ static vector<PartitionStatistics> ParquetGetPartitionStats(ClientContext &conte
 		ParquetReader::GetPartitionStats(*cache.metadata->metadata, result);
 	}
 	return result;
+}
+
+namespace {
+
+// scan_chunk holds parquet's NATIVE types; we don't cast inside the TF --
+// the caller composes any NATIVE->DECLARED->PROJECTED cast in one pass.
+struct ParquetLookupGlobalState : public GlobalTableFunctionState {
+	shared_ptr<ParquetReader> reader;
+	vector<idx_t> file_cols;
+	vector<idx_t> output_to_file_col;
+	//! row_group_starts[i] = global row index of the first row in group i;
+	//! row_group_starts[num_groups] = total rows.
+	vector<idx_t> row_group_starts;
+	DataChunk scan_chunk;
+	ParquetReadGlobalState reader_gstate;
+	ParquetReadLocalState reader_lstate;
+
+	ParquetLookupGlobalState() : reader_gstate(nullptr) {
+	}
+};
+
+unique_ptr<GlobalTableFunctionState> ParquetLookupInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
+	auto &bind_data = input.bind_data->CastNoConst<MultiFileBindData>();
+	auto &parquet_bind = bind_data.bind_data->Cast<ParquetReadBindData>();
+	auto state = make_uniq<ParquetLookupGlobalState>();
+
+	const auto &file = bind_data.file_list->GetFirstFile();
+	state->reader = make_shared_ptr<ParquetReader>(context, file, parquet_bind.GetParquetOptions());
+
+	state->file_cols.reserve(input.column_indexes.size());
+	for (auto &col : input.column_indexes) {
+		if (!col.IsVirtualColumn()) {
+			state->file_cols.push_back(col.GetPrimaryIndex());
+		}
+	}
+	for (auto file_col : state->file_cols) {
+		state->reader->column_ids.push_back(MultiFileLocalColumnId(file_col));
+	}
+	state->reader->column_indexes.reserve(state->file_cols.size());
+	for (auto file_col : state->file_cols) {
+		state->reader->column_indexes.emplace_back(file_col);
+	}
+
+	state->output_to_file_col.reserve(input.column_indexes.size());
+	for (auto &col : input.column_indexes) {
+		if (col.IsVirtualColumn()) {
+			state->output_to_file_col.push_back(DConstants::INVALID_INDEX);
+			continue;
+		}
+		const auto file_col = col.GetPrimaryIndex();
+		auto it = std::find(state->file_cols.begin(), state->file_cols.end(), file_col);
+		D_ASSERT(it != state->file_cols.end());
+		state->output_to_file_col.push_back(NumericCast<idx_t>(it - state->file_cols.begin()));
+	}
+
+	const auto *meta = state->reader->GetFileMetadata();
+	state->row_group_starts.reserve(meta->row_groups.size() + 1);
+	state->row_group_starts.push_back(0);
+	idx_t cum = 0;
+	for (auto &rg : meta->row_groups) {
+		cum += NumericCast<idx_t>(rg.num_rows);
+		state->row_group_starts.push_back(cum);
+	}
+
+	vector<LogicalType> native_types;
+	native_types.reserve(state->file_cols.size());
+	for (idx_t i = 0; i < state->file_cols.size(); ++i) {
+		native_types.push_back(state->reader->columns[state->file_cols[i]].type);
+	}
+	state->scan_chunk.Initialize(context, native_types);
+
+	return std::move(state);
+}
+
+// Synchronously drain an AsyncResult: while BLOCKED, run the I/O tasks at the
+// call site and continue. The lookup TF has no pipeline to suspend onto.
+void DrainAsync(AsyncResult result) {
+	while (result.GetResultType() == AsyncResultType::BLOCKED) {
+		result.ExecuteTasksSynchronously();
+	}
+}
+
+void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &gstate = data.global_state->Cast<ParquetLookupGlobalState>();
+	if (data.pk_lookups.empty()) {
+		return;
+	}
+	D_ASSERT(data.pk_output_positions.size() == data.pk_lookups.size());
+
+	auto &reader = *gstate.reader;
+	auto &scan_state = gstate.reader_lstate.scan_state;
+	scan_state.op = nullptr;
+
+	// pk_lookups + row_group_starts both sorted ascending: advance pk_idx as we
+	// consume hits -- amortized O(num_pks + num_groups).
+	const idx_t num_groups = gstate.row_group_starts.size() - 1;
+	idx_t pk_idx = 0;
+	for (idx_t g = 0; g < num_groups && pk_idx < data.pk_lookups.size(); ++g) {
+		const auto group_start = gstate.row_group_starts[g];
+		const auto group_end = gstate.row_group_starts[g + 1];
+		// Skip pks that fall before this group (e.g. deleted/compacted rows).
+		while (pk_idx < data.pk_lookups.size() &&
+		       NumericCast<idx_t>(data.pk_lookups[pk_idx]) < group_start) {
+			++pk_idx;
+		}
+		if (pk_idx >= data.pk_lookups.size() ||
+		    NumericCast<idx_t>(data.pk_lookups[pk_idx]) >= group_end) {
+			continue;
+		}
+
+		// Initialize + schedule the I/O for this single row group.
+		gstate.reader_lstate.group_index = g;
+		reader.PrepareScan(context, gstate.reader_gstate, gstate.reader_lstate);
+		DrainAsync(reader.ScheduleIO(context, gstate.reader_gstate, gstate.reader_lstate));
+
+		// Drive Process chunk-by-chunk until the group is exhausted, narrowing
+		// each chunk to the rows whose global index is a requested pk.
+		for (;;) {
+			gstate.scan_chunk.Reset();
+			const idx_t chunk_row_start = group_start + scan_state.offset_in_group;
+			auto res = reader.Scan(context, gstate.reader_gstate, gstate.reader_lstate, gstate.scan_chunk);
+			while (res.GetResultType() == AsyncResultType::BLOCKED) {
+				res.ExecuteTasksSynchronously();
+				res = reader.Scan(context, gstate.reader_gstate, gstate.reader_lstate, gstate.scan_chunk);
+			}
+			const auto scanned = gstate.scan_chunk.size();
+			if (scanned == 0) {
+				if (res.GetResultType() == AsyncResultType::FINISHED) {
+					break;
+				}
+				continue;
+			}
+			const idx_t chunk_row_end = chunk_row_start + scanned;
+			while (pk_idx < data.pk_lookups.size() &&
+			       NumericCast<idx_t>(data.pk_lookups[pk_idx]) < chunk_row_end) {
+				const auto pk = NumericCast<idx_t>(data.pk_lookups[pk_idx]);
+				const idx_t src_row = pk - chunk_row_start;
+				const idx_t dst_row = data.pk_output_positions[pk_idx];
+				// VARCHAR/nested: Copy deep-copies into output's heap so the data
+				// outlives scan_chunk's Reset on the next iteration.
+				for (idx_t c = 0; c < gstate.output_to_file_col.size(); ++c) {
+					const auto i = gstate.output_to_file_col[c];
+					if (i == DConstants::INVALID_INDEX) {
+						continue;
+					}
+					VectorOperations::Copy(gstate.scan_chunk.data[i], output.data[c],
+					                       /*source_count=*/src_row + 1, /*source_offset=*/src_row,
+					                       /*target_offset=*/dst_row);
+				}
+				++pk_idx;
+			}
+			if (res.GetResultType() == AsyncResultType::FINISHED) {
+				break;
+			}
+		}
+		reader.FinishFile(context, gstate.reader_gstate);
+	}
+}
+
+} // namespace
+
+// Standalone lookup TableFunction for read_parquet. Bypasses MultiFileFunction
+// entirely: gstate is built once per query (file open + projection wired +
+// row-group offsets prebuilt), pk_lookups arrives per call via
+// TableFunctionInput, ParquetReader's public PrepareScan/ScheduleIO/Scan API
+// drives the read directly. Caller (SereneDB) caches gstate across batches.
+TableFunction MakeParquetLookupTableFunction() {
+	TableFunction fn;
+	fn.init_global = ParquetLookupInitGlobal;
+	fn.function = ParquetLookupScan;
+	return fn;
 }
 
 TableFunctionSet ParquetScanFunction::GetFunctionSet() {
