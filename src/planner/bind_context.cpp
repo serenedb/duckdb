@@ -204,7 +204,7 @@ unique_ptr<ParsedExpression> BindContext::CreateColumnReference(const Identifier
 	return CreateColumnReference(Identifier(schema_name), table_name, column_name, bind_type);
 }
 
-static bool ColumnIsGenerated(Binding &binding, column_t index) {
+static bool ColumnIsVirtualGenerated(Binding &binding, column_t index) {
 	if (binding.GetBindingType() != BindingType::TABLE) {
 		return false;
 	}
@@ -218,7 +218,7 @@ static bool ColumnIsGenerated(Binding &binding, column_t index) {
 	}
 	D_ASSERT(catalog_entry->type == CatalogType::TABLE_ENTRY);
 	auto &table_entry = catalog_entry->Cast<TableCatalogEntry>();
-	return table_entry.GetColumn(LogicalIndex(index)).Generated();
+	return table_entry.GetColumn(LogicalIndex(index)).Category() == TableColumnType::GENERATED_VIRTUAL;
 }
 
 unique_ptr<ParsedExpression> BindContext::CreateColumnReference(const Identifier &catalog_name,
@@ -244,7 +244,7 @@ unique_ptr<ParsedExpression> BindContext::CreateColumnReference(const Identifier
 		return std::move(result);
 	}
 	auto column_index = binding->GetBindingIndex(column_name);
-	if (bind_type == ColumnBindType::EXPAND_GENERATED_COLUMNS && ColumnIsGenerated(*binding, column_index)) {
+	if (bind_type == ColumnBindType::EXPAND_GENERATED_COLUMNS && ColumnIsVirtualGenerated(*binding, column_index)) {
 		return ExpandGeneratedColumn(binding->Cast<TableBinding>(), column_name);
 	}
 	auto &column_names = binding->GetColumnNames();
