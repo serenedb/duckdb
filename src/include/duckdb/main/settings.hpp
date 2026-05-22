@@ -83,6 +83,9 @@ struct Settings {
 	static void Set(SOURCE &source, SetScope scope, Value target_value) {
 		Set(source, OP::SettingIndex, scope, std::move(target_value));
 	}
+	//! Format a setting's Value as the text users see in SHOW / pg_settings.
+	//! PG-compliant: booleans render as "on"/"off", not "true"/"false".
+	DUCKDB_API static Value FormatDisplayValue(ClientContext &context, const Value &value);
 
 private:
 	static bool TryGetSettingInternal(const DatabaseInstance &db, idx_t setting_index, Value &result);

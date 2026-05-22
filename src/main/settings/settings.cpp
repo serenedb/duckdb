@@ -37,6 +37,11 @@ void Settings::SetSettingInternal(ClientContext &context, idx_t setting_index, S
 	}
 	auto &client_config = ClientConfig::GetConfig(context);
 	client_config.user_settings.SetUserSetting(setting_index, std::move(target_value));
+Value Settings::FormatDisplayValue(ClientContext &context, const Value &value) {
+	if (!value.IsNull() && value.type().id() == LogicalTypeId::BOOLEAN) {
+		return Value(BooleanValue::Get(value) ? "on" : "off");
+	}
+	return value.CastAs(context, LogicalType::VARCHAR);
 }
 
 } // namespace duckdb
