@@ -220,6 +220,8 @@ AlterTableInfo:
     - RenameColumn
     - RenameAlter
     - AddConstraint
+    - DropConstraint
+    - RenameConstraint
     - SetSortedBy
     - ResetSortedBy
     - SetOptions
@@ -1033,6 +1035,9 @@ String:
     - SetNullKeyAction
     - SetDefaultKeyAction
     - SeqMinOrMax
+    - ConstraintName
+    - ConstraintNameClause
+    - ExplainOptionName
     - OperatorLiteral
     - VacuumOption
     - OptAnalyze
@@ -1745,6 +1750,8 @@ excluded_rules:
   - Generated
   - AlwaysOrByDefault
   - ConstraintNameClause
+  - Lateral
+  - ReservedSchemaQualification
   - UsingSample
   - TableSample
   - NamedParameterAssignment

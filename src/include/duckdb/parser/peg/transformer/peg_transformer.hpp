@@ -1391,6 +1391,7 @@ public:
 	static unique_ptr<TransformResultValue> TransformCheckConstraintInternal(PEGTransformer &transformer,
 	                                                                         ParseResult &parse_result);
 	static ColumnConstraintEntry TransformCheckConstraint(PEGTransformer &transformer,
+	static string TransformConstraintNameClause(PEGTransformer &transformer, ParseResult &parse_result);
 	                                                      unique_ptr<ParsedExpression> expression);
 	static unique_ptr<TransformResultValue> TransformForeignKeyConstraintInternal(PEGTransformer &transformer,
 	                                                                              ParseResult &parse_result);
