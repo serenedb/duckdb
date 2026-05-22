@@ -353,7 +353,7 @@ void OperatorProfiler::StartOperator(optional_ptr<const PhysicalOperator> phys_o
 	if (!OperatorMetricsIsInitialized(*active_operator)) {
 		// first time calling into this operator - fetch the info
 		auto &info = GetOperatorMetrics(*active_operator);
-		info.SetExtraInfo(active_operator->ParamsToString());
+		info.SetExtraInfo(active_operator->ParamsToValue());
 	}
 
 	// Start the timing of the current operator.
@@ -550,16 +550,25 @@ void QueryProfiler::RenderQueryTree(BaseTreeRenderer &ss) const {
 	}
 	ss << state_info.str();
 
+	// "deterministic" renderer setting: zero out non-deterministic values (timing, IO bytes) so
+	// EXPLAIN ANALYZE output is byte-stable in tests.
+	auto &render_settings = ClientConfig::GetConfig(context).profiling_renderer_settings;
+	auto det_entry = render_settings.find("deterministic");
+	bool deterministic =
+	    det_entry != render_settings.end() && det_entry->second.DefaultCastAs(LogicalType::BOOLEAN).GetValue<bool>();
+
 	// summary box, styled to match the operator boxes (rounded corners, title in the top border)
 	const string title = "Summary";
 	vector<pair<string, string>> rows;
-	rows.emplace_back("Total Time: ", RenderTiming(query_metrics.GetStringMetricInSeconds("query.total_time")));
+	rows.emplace_back("Total Time: ", deterministic
+	                                      ? RenderTiming(0.0)
+	                                      : RenderTiming(query_metrics.GetStringMetricInSeconds("query.total_time")));
 	auto bytes_read = query_metrics.GetBytesRead();
-	if (bytes_read > 0) {
+	if (!deterministic && bytes_read > 0) {
 		rows.emplace_back("Data Read: ", StringUtil::BytesToHumanReadableString(bytes_read, 1000));
 	}
 	auto bytes_written = query_metrics.GetBytesWritten();
-	if (bytes_written > 0) {
+	if (!deterministic && bytes_written > 0) {
 		rows.emplace_back("Data Written: ", StringUtil::BytesToHumanReadableString(bytes_written, 1000));
 	}
 	idx_t content_width = title.size() + 2;
@@ -667,7 +676,12 @@ profiler_metrics_t OperatorMetrics::GetMetrics(const GatheredMetrics &info) cons
 		result["total_row_groups_to_scan"] = Value::UBIGINT(total_row_groups_to_scan);
 	}
 	if (info.MetricIsTracked<MetricOperatorExtraInfo>()) {
-		result["extra_info"] = QueryProfiler::JSONSanitize(Value::MAP(extra_info));
+		// structured values are flattened here: the metrics MAP schema is MAP(VARCHAR, VARCHAR)
+		InsertionOrderPreservingMap<string> flat_info;
+		for (auto &entry : extra_info) {
+			flat_info[entry.first] = entry.second.ToString();
+		}
+		result["extra_info"] = QueryProfiler::JSONSanitize(Value::MAP(flat_info));
 	}
 	return result;
 }
@@ -941,7 +955,7 @@ unique_ptr<ProfilingNode> QueryProfiler::CreateTree(const PhysicalOperator &root
 
 	info.name = EnumUtil::ToString(root_p.type);
 	info.operator_type = root_p.type;
-	auto params = root_p.ParamsToString();
+	auto params = root_p.ParamsToValue();
 	info.SetExtraInfo(std::move(params));
 
 	tree_map.insert(make_pair(reference<const PhysicalOperator>(root_p), reference<ProfilingNode>(*node)));

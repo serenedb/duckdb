@@ -88,11 +88,11 @@ static void GetTreeWidthHeight(const T &op, idx_t &width, idx_t &height) {
 }
 
 static unique_ptr<RenderTreeNode> CreateNode(const LogicalOperator &op) {
-	return make_uniq<RenderTreeNode>(op.GetName(), op.ParamsToString());
+	return make_uniq<RenderTreeNode>(op.GetName(), op.ParamsToValue());
 }
 
 static unique_ptr<RenderTreeNode> CreateNode(const PhysicalOperator &op) {
-	return make_uniq<RenderTreeNode>(op.GetName(), op.ParamsToString());
+	return make_uniq<RenderTreeNode>(op.GetName(), op.ParamsToValue());
 }
 
 static unique_ptr<RenderTreeNode> CreateNode(const PipelineRenderNode &op) {
@@ -185,7 +185,7 @@ void RenderTree::SanitizeKeyNames() {
 		if (!nodes[i]) {
 			continue;
 		}
-		InsertionOrderPreservingMap<string> new_map;
+		InsertionOrderPreservingMap<ExplainValue> new_map;
 		for (auto &entry : nodes[i]->extra_text) {
 			auto key = entry.first;
 			if (StringUtil::StartsWith(key, "__")) {

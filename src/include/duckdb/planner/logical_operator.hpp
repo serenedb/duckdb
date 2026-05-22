@@ -17,6 +17,7 @@
 #include "duckdb/planner/logical_operator_visitor.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/insertion_order_preserving_map.hpp"
+#include "duckdb/common/explain_value.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -64,6 +65,8 @@ public:
 
 	virtual string GetName() const;
 	virtual InsertionOrderPreservingMap<string> ParamsToString() const;
+	//! Structured operator info: defaults to wrapping ParamsToString (see PhysicalOperator::ParamsToValue)
+	virtual InsertionOrderPreservingMap<ExplainValue> ParamsToValue() const;
 	virtual string ToString(optional_ptr<ClientContext> context = nullptr,
 	                        const ProfilerPrintFormat &format = ProfilerPrintFormat::Default()) const;
 	DUCKDB_API void Print();
@@ -74,6 +77,7 @@ public:
 	virtual idx_t EstimateCardinality(ClientContext &context);
 	void SetEstimatedCardinality(idx_t _estimated_cardinality);
 	void SetParamsEstimatedCardinality(InsertionOrderPreservingMap<string> &result) const;
+	void SetParamsEstimatedCardinality(InsertionOrderPreservingMap<ExplainValue> &result) const;
 
 	virtual void Serialize(Serializer &serializer) const;
 	static unique_ptr<LogicalOperator> Deserialize(Deserializer &deserializer);
