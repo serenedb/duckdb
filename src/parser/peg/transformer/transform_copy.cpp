@@ -53,7 +53,30 @@ void SetCopyOptions(unique_ptr<CopyInfo> &info, vector<GenericCopyOption> &optio
 			if (option.expression) {
 				info->parsed_options[option.name.GetIdentifierName()] = std::move(option.expression);
 			} else {
-				info->options[option.name.GetIdentifierName()] = option.children;
+				// PG-compat aliases for value-form COPY options. Binder::BindCopyOptions
+				// performs the same translations when these arrive via parsed_options,
+				// but the value form (REJECT_LIMIT 1, ON_ERROR IGNORE, ...) lands
+				// directly in info->options and bypasses that path.
+				if (option.name == "reject_limit") {
+					if (!option.children.empty() && option.children[0].GetValue<int64_t>() < 0) {
+						throw ParserException("REJECT_LIMIT (%lld) must be greater than zero",
+						                      option.children[0].GetValue<int64_t>());
+					}
+					info->options["rejects_limit"] = option.children;
+					info->options["store_rejects"] = {Value::BOOLEAN(true)};
+				} else if (option.name == "on_error") {
+					auto val = option.children.empty() ? string() : option.children[0].ToString();
+					if (StringUtil::CIEquals(val, "ignore")) {
+						info->options["ignore_errors"] = {Value::BOOLEAN(true)};
+					} else if (StringUtil::CIEquals(val, "stop")) {
+						// STOP is the default -- drop the option.
+					} else {
+						throw ParserException("invalid value for parameter \"%s\": \"%s\"",
+						                      option.name.GetIdentifierName(), val);
+					}
+				} else {
+					info->options[option.name.GetIdentifierName()] = option.children;
+				}
 			}
 		}
 	}
@@ -150,6 +173,15 @@ PEGTransformerFactory::TransformCopyTable(PEGTransformer &transformer, unique_pt
 	if (copy_options) {
 		auto generic_options = *copy_options;
 		SetCopyOptions(info, generic_options);
+	}
+
+	// PG 12+: COPY t FROM 'f.csv' WHERE expr filters rows during ingest.
+	auto &where_opt = list_pr.Child<OptionalParseResult>(5);
+	if (where_opt.HasResult()) {
+		if (!info->is_from) {
+			throw ParserException("WHERE clause not allowed with COPY TO");
+		}
+		info->where_clause = transformer.Transform<unique_ptr<ParsedExpression>>(where_opt.GetResult());
 	}
 
 	result->info = std::move(info);
