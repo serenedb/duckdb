@@ -90,8 +90,7 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransfor
 	auto if_exists = list_pr.Child<OptionalParseResult>(1).HasResult();
 	auto base_table = transformer.Transform<unique_ptr<BaseTableRef>>(list_pr.Child<ListParseResult>(2));
 	auto alter_table_info = transformer.Transform<unique_ptr<AlterTableInfo>>(list_pr.Child<ListParseResult>(3));
-	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(alter_table_info));
-	// ALTER INDEX <name> RENAME TO <new_name> uses the same catalog action as
+	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(alter_table_info));	// ALTER INDEX <name> RENAME TO <new_name> uses the same catalog action as
 	// ALTER TABLE rename: the catalog resolves the entry by name across
 	// table/view/index.
 	auto result = make_uniq<RenameTableInfo>(AlterEntryData(), rename_info->new_table_name);
