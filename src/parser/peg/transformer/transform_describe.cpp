@@ -132,7 +132,18 @@ unique_ptr<QueryNode> PEGTransformerFactory::TransformShowQualifiedName(PEGTrans
 					vector<unique_ptr<ParsedExpression>> args;
 					args.push_back(make_uniq<ConstantExpression>(Value(base_table.Table().GetIdentifierName())));
 					auto func_expr = make_uniq<FunctionExpression>("current_setting", std::move(args));
-					func_expr->SetAlias(base_table.Table());
+					// PG-compat: PG returns these three GUCs with their CamelCase canonical names as the
+					// column header regardless of how the caller cased the identifier; drivers
+					// compare case-sensitively (pgjdbc parameter_status, Npgsql cache keys).
+					Identifier alias = base_table.Table();
+					if (StringUtil::CIEquals(alias.GetIdentifierName(), "timezone")) {
+						alias = "TimeZone";
+					} else if (StringUtil::CIEquals(alias.GetIdentifierName(), "datestyle")) {
+						alias = "DateStyle";
+					} else if (StringUtil::CIEquals(alias.GetIdentifierName(), "intervalstyle")) {
+						alias = "IntervalStyle";
+					}
+					func_expr->SetAlias(alias);
 					result->select_list.push_back(std::move(func_expr));
 					result->from_table = make_uniq<EmptyTableRef>();
 					return std::move(result);
@@ -174,6 +185,40 @@ DescribeTarget PEGTransformerFactory::TransformDescribeBaseTableName(PEGTransfor
 	DescribeTarget result;
 	result.table_ref = std::move(base_table_name);
 	return result;
+}
+
+// ShowAliasedSetting <- ShowOrDescribe ShowSettingAlias
+// ShowSettingAlias  <- ('TRANSACTION' 'ISOLATION' 'LEVEL') / ('SESSION' 'AUTHORIZATION') / ('TIME' 'ZONE')
+// PG-compat: each alias collapses to SHOW <varname>. Routed through current_setting() so the
+// shape matches the regular SHOW <name> branch in TransformShowQualifiedName.
+unique_ptr<QueryNode> PEGTransformerFactory::TransformShowAliasedSetting(PEGTransformer &transformer,
+                                                                         ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &alias_list = list_pr.Child<ListParseResult>(1);
+	auto &choice_pr = alias_list.Child<ChoiceParseResult>(0);
+	auto &alts = choice_pr.GetResult().Cast<ListParseResult>();
+	auto &first_kw = alts.Child<KeywordParseResult>(0).keyword;
+
+	// PG-compat: PG-canonical GUC names. transaction_isolation / session_authorization are lowercase
+	// in PG; timezone is the rare CamelCase outlier (TimeZone). Drivers compare the
+	// result column header case-sensitively, so emit the canonical case verbatim.
+	string setting_name;
+	if (StringUtil::CIEquals(first_kw, "TRANSACTION")) {
+		setting_name = "transaction_isolation";
+	} else if (StringUtil::CIEquals(first_kw, "SESSION")) {
+		setting_name = "session_authorization";
+	} else {
+		setting_name = "TimeZone";
+	}
+
+	auto result = make_uniq<SelectNode>();
+	vector<unique_ptr<ParsedExpression>> args;
+	args.push_back(make_uniq<ConstantExpression>(Value(setting_name)));
+	auto func_expr = make_uniq<FunctionExpression>("current_setting", std::move(args));
+	func_expr->SetAlias(Identifier(setting_name));
+	result->select_list.push_back(std::move(func_expr));
+	result->from_table = make_uniq<EmptyTableRef>();
+	return std::move(result);
 }
 
 DescribeTarget PEGTransformerFactory::TransformDescribeStringLiteral(PEGTransformer &transformer,

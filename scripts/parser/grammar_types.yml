@@ -69,6 +69,7 @@ SQLStatement:
     - CopyTable
     - CreateStatement
     - DeallocateStatement
+    - DiscardStatement
     - DeleteStatement
     - TruncateStatement
     - DetachStatement
@@ -131,6 +132,8 @@ SetStatement:
     - StandardAssignment
     - SetTransactionIsolation
     - SetSessionCharacteristics
+    - SetRole
+    - SetSessionAuthorization
 
 QueryNode:
   type: "unique_ptr<QueryNode>"
@@ -139,6 +142,7 @@ QueryNode:
     - ShowSelect
     - ShowTables
     - ShowAllTables
+    - ShowAliasedSetting
     - ShowAllSettings
     - ShowQualifiedName
 
@@ -490,6 +494,7 @@ Expression:
     - ZoneDefault
     - ZoneStringLiteral
     - ZoneIdentifier
+    - RoleSpec
     - DefArg
     - DefArgNull
     - DefArgKeyword
@@ -941,6 +946,7 @@ SettingInfo:
     - SetSetting
     - SetVariable
     - ResetAll
+    - ResetAliasedSetting
 
 PartitionSortedOptions:
   type: "PartitionSortedOptions"
@@ -980,6 +986,7 @@ String:
   type: "string"
   by_value: false
   rules:
+    - DeallocateTarget
     - StringLiteral
     - DropOrSet
     - SequenceName
@@ -1832,3 +1839,13 @@ excluded_rules:
   - Expression
   - OverClause
   - PrefixExpression
+  - DiscardTarget
+  - ShowSettingAlias
+  - ShowAliasedSetting
+  - ResetAliasedSetting
+  - DeallocateAll
+  - ChainClause
+  - NoChain
+  - DeferrableClause
+  - Deferrable
+  - NotDeferrable
