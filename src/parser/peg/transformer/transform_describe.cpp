@@ -176,6 +176,37 @@ DescribeTarget PEGTransformerFactory::TransformDescribeBaseTableName(PEGTransfor
 	return result;
 }
 
+// ShowAliasedSetting <- ShowOrDescribe ShowSettingAlias
+// ShowSettingAlias  <- ('TRANSACTION' 'ISOLATION' 'LEVEL') / ('SESSION' 'AUTHORIZATION') / ('TIME' 'ZONE')
+// PG-compat: each alias collapses to SHOW <varname>. Routed through current_setting() so the
+// shape matches the regular SHOW <name> branch in TransformShowQualifiedName.
+unique_ptr<QueryNode> PEGTransformerFactory::TransformShowAliasedSetting(PEGTransformer &transformer,
+                                                                         ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &alias_list = list_pr.Child<ListParseResult>(1);
+	auto &choice_pr = alias_list.Child<ChoiceParseResult>(0);
+	auto &alts = choice_pr.GetResult().Cast<ListParseResult>();
+	auto &first_kw = alts.Child<KeywordParseResult>(0).keyword;
+
+	string setting_name;
+	if (StringUtil::CIEquals(first_kw, "TRANSACTION")) {
+		setting_name = "transaction_isolation";
+	} else if (StringUtil::CIEquals(first_kw, "SESSION")) {
+		setting_name = "session_authorization";
+	} else {
+		setting_name = "timezone";
+	}
+
+	auto result = make_uniq<SelectNode>();
+	vector<unique_ptr<ParsedExpression>> args;
+	args.push_back(make_uniq<ConstantExpression>(Value(setting_name)));
+	auto func_expr = make_uniq<FunctionExpression>("current_setting", std::move(args));
+	func_expr->SetAlias(Identifier(setting_name));
+	result->select_list.push_back(std::move(func_expr));
+	result->from_table = make_uniq<EmptyTableRef>();
+	return std::move(result);
+}
+
 DescribeTarget PEGTransformerFactory::TransformDescribeStringLiteral(PEGTransformer &transformer,
                                                                      const string &string_literal) {
 	DescribeTarget result;
