@@ -76,6 +76,28 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformResetStatement(PEGTrans
 	return make_uniq<ResetVariableStatement>(reset_all.name, reset_all.scope);
 }
 
+// ResetAliasedSetting <- ('TRANSACTION' 'ISOLATION' 'LEVEL') / ('SESSION' 'AUTHORIZATION') / ('TIME' 'ZONE')
+// PG-compat: RESET takes the same multi-word aliases as SHOW. Map each to
+// its underlying GUC name; the case-insensitive setting lookup picks up the
+// canonical-cased registration (TimeZone) on its own.
+SettingInfo PEGTransformerFactory::TransformResetAliasedSetting(PEGTransformer &transformer,
+                                                                ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice = list_pr.Child<ChoiceParseResult>(0);
+	auto &alts = choice.GetResult().Cast<ListParseResult>();
+	auto &first_kw = alts.Child<KeywordParseResult>(0).keyword;
+
+	SettingInfo info;
+	if (StringUtil::CIEquals(first_kw, "TRANSACTION")) {
+		info.name = "transaction_isolation";
+	} else if (StringUtil::CIEquals(first_kw, "SESSION")) {
+		info.name = "session_authorization";
+	} else {
+		info.name = "timezone";
+	}
+	return info;
+}
+
 // ResetAll <- ('LOCAL' 'ALL') / 'ALL'
 // PhysicalReset::GetDataInternal dispatches to ResetAll(...) when the
 // target name is empty, so emit a SettingInfo with an empty name. The
@@ -171,6 +193,30 @@ unique_ptr<SetStatement> PEGTransformerFactory::TransformSetTimeZone(PEGTransfor
 		return make_uniq<ResetVariableStatement>("timezone", SetScope::AUTOMATIC);
 	}
 	return make_uniq<SetVariableStatement>("timezone", std::move(zone_value), SetScope::AUTOMATIC);
+}
+
+// SetRole <- 'ROLE' RoleSpec
+// Routes to the `role` extension setting (registered in serenedb's
+// server/query/config_variables.cpp with a NoOverwrite callback so the
+// value flows into session state but doesn't perform real role-switch).
+unique_ptr<SetStatement> PEGTransformerFactory::TransformSetRole(PEGTransformer &transformer,
+                                                                 unique_ptr<ParsedExpression> role_spec) {
+	if (role_spec->GetExpressionClass() == ExpressionClass::DEFAULT) {
+		return make_uniq<ResetVariableStatement>("role", SetScope::AUTOMATIC);
+	}
+	return make_uniq<SetVariableStatement>("role", std::move(role_spec), SetScope::AUTOMATIC);
+}
+
+// SetSessionAuthorization <- 'SESSION' 'AUTHORIZATION' RoleSpec
+// Routes to the `session_authorization` setting. Same NoOverwrite shape as
+// SET ROLE.
+unique_ptr<SetStatement>
+PEGTransformerFactory::TransformSetSessionAuthorization(PEGTransformer &transformer,
+                                                        unique_ptr<ParsedExpression> role_spec) {
+	if (role_spec->GetExpressionClass() == ExpressionClass::DEFAULT) {
+		return make_uniq<ResetVariableStatement>("session_authorization", SetScope::AUTOMATIC);
+	}
+	return make_uniq<SetVariableStatement>("session_authorization", std::move(role_spec), SetScope::AUTOMATIC);
 }
 
 // SetVariable <- VariableScope Identifier

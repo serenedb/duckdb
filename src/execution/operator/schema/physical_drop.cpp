@@ -17,7 +17,10 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
                                                OperatorSourceInput &input) const {
 	switch (info->type) {
 	case CatalogType::PREPARED_STATEMENT: {
-		// DEALLOCATE silently ignores errors. An empty name means DEALLOCATE ALL.
+		// Empty name == DEALLOCATE ALL / DISCARD <target>: always succeed.
+		// Named DEALLOCATE <name>: honour if_not_found so we match PG, which
+		// errors with "prepared statement \"X\" does not exist" rather than
+		// silently no-op'ing.
 		auto &statements = ClientData::Get(context.client).prepared_statements;
 		auto &name = info->GetQualifiedName().Name();
 		if (name.empty()) {
@@ -26,6 +29,8 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
 			auto stmt_iter = statements.find(name);
 			if (stmt_iter != statements.end()) {
 				statements.erase(stmt_iter);
+			} else if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+				throw CatalogException("prepared statement \"%s\" does not exist", name);
 			}
 		}
 		break;
