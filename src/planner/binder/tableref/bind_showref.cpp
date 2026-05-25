@@ -228,6 +228,18 @@ BoundStatement Binder::BindDescribeTable(ShowRef &ref) {
 	return Bind(*subquery);
 }
 
+static Identifier CanonicalSettingName(ClientContext &context, const Identifier &setting_name) {
+	if (auto option = DBConfig::GetOptionByName(setting_name)) {
+		return Identifier(option->name);
+	}
+	auto extension_settings = DBConfig::GetConfig(context).GetExtensionSettings();
+	auto entry = extension_settings.find(setting_name);
+	if (entry != extension_settings.end()) {
+		return entry->first;
+	}
+	return setting_name;
+}
+
 bool Binder::TryBindShowSetting(ShowRef &ref, BoundStatement &result) {
 	auto setting_name = ref.GetTableName();
 	Value setting_value;
@@ -250,7 +262,7 @@ BoundStatement Binder::BindShowSetting(ShowRef &ref) {
 	vector<unique_ptr<ParsedExpression>> children;
 	children.push_back(ConstantExpression::String(ref.GetTableName().GetIdentifierName()));
 	auto setting = make_uniq<FunctionExpression>("current_setting", std::move(children));
-	setting->SetAlias(ref.GetTableName());
+	setting->SetAlias(CanonicalSettingName(context, ref.GetTableName()));
 	auto node = make_uniq<SelectNode>();
 	node->select_list.push_back(std::move(setting));
 	node->from_table = make_uniq<EmptyTableRef>();
