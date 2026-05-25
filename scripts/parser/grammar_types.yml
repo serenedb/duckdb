@@ -132,6 +132,8 @@ SetStatement:
     - StandardAssignment
     - SetTransactionIsolation
     - SetSessionCharacteristics
+    - SetRole
+    - SetSessionAuthorization
 
 QueryNode:
   type: "unique_ptr<QueryNode>"
@@ -491,6 +493,7 @@ Expression:
     - DefArgKeyword
     - DefArgStringLiteral
     - NoneLiteral
+    - RoleSpec
     - NumberLiteral
     - TypeVariations
     - TimeType
@@ -938,6 +941,7 @@ SettingInfo:
     - SetSetting
     - SetVariable
     - ResetAll
+    - ResetAliasedSetting
 
 PartitionSortedOptions:
   type: "PartitionSortedOptions"
@@ -977,6 +981,8 @@ String:
   type: "string"
   by_value: false
   rules:
+    - AttachAlias
+    - DeallocateTarget
     - StringLiteral
     - DropOrSet
     - SequenceName
@@ -1790,3 +1796,10 @@ excluded_rules:
   - OperatorLiteral
   - DiscardTarget
   - ShowSettingAlias
+  - DeallocateAll
+  - ResetSettingAlias
+  - ChainClause
+  - NoChain
+  - DeferrableClause
+  - Deferrable
+  - NotDeferrable
