@@ -515,6 +515,7 @@ public:
 
 	// describe.gram
 	static unique_ptr<QueryNode> TransformShowQualifiedName(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<QueryNode> TransformShowAliasedSetting(PEGTransformer &transformer, ParseResult &parse_result);
 
 	// set.gram
 	static SettingInfo TransformResetAll(PEGTransformer &transformer, ParseResult &parse_result);
