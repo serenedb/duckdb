@@ -29,9 +29,11 @@ EXECUTE s1('asdf', 'asdf')
 statement ok
 DEALLOCATE s1
 
-# we can deallocate non-existing statements
-statement ok
+# deallocating a non-existing statement is an error
+statement error
 DEALLOCATE s2
+----
+prepared statement "s2" does not exist
 
 # now its gone
 statement error
