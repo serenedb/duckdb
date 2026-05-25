@@ -191,6 +191,8 @@ void PEGTransformerFactory::RegisterPivot() {
 	REGISTER_TRANSFORM(TransformShowAliasedSetting);
 	// ResetAll is a pure-keyword choice ('LOCAL' 'ALL' / 'ALL') whose body inspects the matched alternative.
 	REGISTER_TRANSFORM(TransformResetAll);
+	// ResetAliasedSetting walks the raw keyword node to map each PG alias shape to its setting name.
+	REGISTER_TRANSFORM(TransformResetAliasedSetting);
 }
 
 void PEGTransformerFactory::RegisterCreateMacro() {

@@ -1,15 +1,25 @@
 SetStatement <- 'SET' SetAssignmentOrTimeZone
-SetAssignmentOrTimeZone <- SetSessionCharacteristics / SetTransactionIsolation / StandardAssignment / SetTimeZone
+SetAssignmentOrTimeZone <- SetSessionCharacteristics / SetSessionAuthorization / SetTransactionIsolation / SetRole / StandardAssignment / SetTimeZone
 
-ResetStatement <- 'RESET' (ResetAll / SetVariableOrSetting)
+ResetStatement <- 'RESET' (ResetAll / ResetAliasedSetting / SetVariableOrSetting)
 # PG-compat: RESET ALL and RESET LOCAL ALL both reset every user-set option.
 # The LOCAL variant only differs at execution time (transaction-bound).
 ResetAll <- ('LOCAL' 'ALL') / 'ALL'
+# PG-compat: RESET takes the same multi-word aliases as SHOW. Tried before
+# the generic identifier-style branches so the keywords aren't snatched by
+# SetSetting / SetVariable.
+ResetAliasedSetting <- ('TRANSACTION' 'ISOLATION' 'LEVEL') / ('SESSION' 'AUTHORIZATION') / ('TIME' 'ZONE')
 StandardAssignment <- SetVariableOrSetting SetAssignment
 SetVariableOrSetting <- SetVariable / SetSetting
 SetTimeZone <- 'TIME' 'ZONE' ZoneValue
 SetTransactionIsolation <- 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
 SetSessionCharacteristics <- 'SESSION' 'CHARACTERISTICS' 'AS' 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
+# PG: SET ROLE / SESSION AUTHORIZATION accept NonReservedWord_or_Sconst or DEFAULT.
+# RoleSpec reuses the Zone* leaf rules (DEFAULT -> DefaultExpression, string /
+# identifier -> string-typed ConstantExpression) so the choice auto-forwards.
+SetRole <- 'ROLE' RoleSpec
+SetSessionAuthorization <- 'SESSION' 'AUTHORIZATION' RoleSpec
+RoleSpec <- ZoneDefault / ZoneStringLiteral / ZoneIdentifier
 
 ZoneValue <- ZoneIntervalWithPrecision / ZoneIntervalWithInterval / ZoneLocal / ZoneDefault / ZoneStringLiteral / ZoneIdentifier / NumberLiteral
 ZoneLocal <- 'LOCAL'

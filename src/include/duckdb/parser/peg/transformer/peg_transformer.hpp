@@ -519,6 +519,7 @@ public:
 
 	// set.gram
 	static SettingInfo TransformResetAll(PEGTransformer &transformer, ParseResult &parse_result);
+	static SettingInfo TransformResetAliasedSetting(PEGTransformer &transformer, ParseResult &parse_result);
 
 	// create_macro.gram
 	static unique_ptr<MacroFunction> TransformMacroDefinition(PEGTransformer &transformer, ParseResult &parse_result);
