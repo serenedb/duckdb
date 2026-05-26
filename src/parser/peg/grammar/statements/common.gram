@@ -41,6 +41,8 @@ Statement <-
 	MergeIntoStatement /
 	ConnectStatement /
 	DisconnectStatement /
+	CreatePublicationStatement /
+	CreateSubscriptionStatement /
 	ExpressionStatement
 
 ExpressionStatement <- List(ExpressionAlias)

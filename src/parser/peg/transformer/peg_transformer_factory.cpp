@@ -174,6 +174,17 @@ void PEGTransformerFactory::RegisterExpression() {
 	REGISTER_TRANSFORM(TransformOverClause);
 }
 
+void PEGTransformerFactory::RegisterCreatePublication() {
+	// create_publication.gram — optional FOR clause with an inline list requires a hand-written transformer.
+	REGISTER_TRANSFORM(TransformCreatePublicationStatement);
+}
+
+void PEGTransformerFactory::RegisterCreateSubscription() {
+	// create_subscription.gram — optional CONNECTION clause with nested PUBLICATION list requires a hand-written
+	// transformer.
+	REGISTER_TRANSFORM(TransformCreateSubscriptionStatement);
+}
+
 void PEGTransformerFactory::RegisterCreateTextSearchDictionary() {
 	// create_text_search_dictionary.gram — Parens(List(...)) bodies are not auto-extractable.
 	REGISTER_TRANSFORM(TransformCreateTSDictionaryStatement);
@@ -237,6 +248,8 @@ PEGTransformerFactory::PEGTransformerFactory() {
 	RegisterCommon();
 	RegisterCreateTable();
 	RegisterExpression();
+	RegisterCreatePublication();
+	RegisterCreateSubscription();
 	RegisterCreateTextSearchDictionary();
 	RegisterPivot();
 	RegisterCreateMacro();

@@ -75,6 +75,8 @@ SQLStatement:
     - DetachStatement
     - DisconnectStatement
     - DropStatement
+    - CreatePublicationStatement
+    - CreateSubscriptionStatement
     - ExecuteStatement
     - ExplainStatement
     - ExplainableStatements
@@ -1775,6 +1777,8 @@ matcher_rule_overrides:
 excluded_rules:
   - PivotStatement
   - UnpivotStatement
+  - CreatePublicationStatement
+  - CreateSubscriptionStatement
   - CreateTSDictionaryStatement
   - DropTSDictionaryStatement
   - TSDictionaryDefinition
@@ -1817,6 +1821,11 @@ excluded_rules:
   - CharacterType
   - IntervalNumber
   - AtTimeZoneOperator
+  - PublicationFor
+  - PublicationForAllTables
+  - PublicationForTable
+  - SubscriptionConnection
+  - SubscriptionPublication
   - UsingSample
   - TableSample
   - NamedParameterAssignment
