@@ -75,6 +75,7 @@ SQLStatement:
     - DetachStatement
     - DisconnectStatement
     - DropStatement
+    - CreatePublicationStatement
     - ExecuteStatement
     - ExplainStatement
     - ExplainableStatements
@@ -1765,6 +1766,9 @@ excluded_rules:
   - IntervalNumber
   - AtTimeZoneOperator
   - Generated
+  - PublicationFor
+  - PublicationForAllTables
+  - PublicationForTable
   - AlwaysOrByDefault
   - ConstraintNameClause
   - Lateral
