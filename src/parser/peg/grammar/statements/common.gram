@@ -43,6 +43,8 @@ Statement <-
 	MergeIntoStatement /
 	ConnectStatement /
 	DisconnectStatement /
+	CreatePublicationStatement /
+	CreateSubscriptionStatement /
 	ExpressionStatement
 
 AnalyzeKeyword <- 'ANALYZE' / 'ANALYSE'
