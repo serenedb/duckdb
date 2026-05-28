@@ -39,70 +39,11 @@ else()
                "${PROJECT_BINARY_DIR}/src"
                ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL "${PROJECT_BINARY_DIR}/src")
   duckdb_make_native_lto_archive(duckdb_shell)
-endif()
 
-add_executable(shell shell_main.cpp)
-
-target_link_libraries(shell duckdb_shell duckdb_static
-                      ${DUCKDB_EXTRA_LINK_FLAGS})
-link_threads(shell "")
-if(STATIC_LIBCPP)
-  message("Statically linking CLI")
-  target_link_libraries(shell -static-libstdc++ -static-libgcc)
-endif()
-
-link_extension_libraries(shell "")
-
-if(NOT AMALGAMATION_BUILD AND NOT WIN32)
-  target_link_libraries(shell duckdb_utf8proc)
-endif()
-
-function(ensure_variable_is_number INPUT_VERSION OUT_RESULT)
-  if(NOT "${${INPUT_VERSION}}" MATCHES "^[0-9]+$")
-    message(
-      WARNING
-        "VERSION PARAMETER ${INPUT_VERSION} \"${${INPUT_VERSION}}\" IS NOT A NUMBER - SETTING TO 0"
-    )
-    set(${OUT_RESULT}
-        0
-        PARENT_SCOPE)
-  else()
-    set(${OUT_RESULT}
-        ${${INPUT_VERSION}}
-        PARENT_SCOPE)
+  target_include_directories(duckdb_shell PUBLIC include)
+  target_link_libraries(duckdb_shell duckdb_static ${DUCKDB_EXTRA_LINK_FLAGS})
+  link_threads(duckdb_shell "")
+  if(NOT AMALGAMATION_BUILD AND NOT WIN32)
+    target_link_libraries(duckdb_shell duckdb_utf8proc)
   endif()
-endfunction()
-
-if(WIN32 AND NOT MINGW)
-  string(TIMESTAMP DUCKDB_COPYRIGHT_YEAR "%Y")
-  ensure_variable_is_number(DUCKDB_MAJOR_VERSION RC_MAJOR_VERSION)
-  ensure_variable_is_number(DUCKDB_MINOR_VERSION RC_MINOR_VERSION)
-  ensure_variable_is_number(DUCKDB_PATCH_VERSION RC_PATCH_VERSION)
-  ensure_variable_is_number(DUCKDB_DEV_ITERATION RC_DEV_ITERATION)
-
-  set(CMAKE_RC_FLAGS
-      "${CMAKE_RC_FLAGS} -D DUCKDB_VERSION=\"${DUCKDB_VERSION}\"")
-  set(CMAKE_RC_FLAGS
-      "${CMAKE_RC_FLAGS} -D DUCKDB_MAJOR_VERSION=\"${RC_MAJOR_VERSION}\"")
-  set(CMAKE_RC_FLAGS
-      "${CMAKE_RC_FLAGS} -D DUCKDB_MINOR_VERSION=\"${RC_MINOR_VERSION}\"")
-  set(CMAKE_RC_FLAGS
-      "${CMAKE_RC_FLAGS} -D DUCKDB_PATCH_VERSION=\"${RC_PATCH_VERSION}\"")
-  set(CMAKE_RC_FLAGS
-      "${CMAKE_RC_FLAGS} -D DUCKDB_DEV_ITERATION=\"${RC_DEV_ITERATION}\"")
-  set(CMAKE_RC_FLAGS
-      "${CMAKE_RC_FLAGS} -D DUCKDB_COPYRIGHT_YEAR=\"${DUCKDB_COPYRIGHT_YEAR}\"")
-  target_sources(shell PRIVATE rc/duckdb.rc)
-  # Opt into the Windows Segment Heap to avoid the default NT heap's lock
-  # contention under multi-threaded allocation (see #24027). CMake merges
-  # .manifest sources into the linker manifest via mt.exe.
-  target_sources(shell PRIVATE rc/duckdb.manifest)
 endif()
-
-set_target_properties(shell PROPERTIES OUTPUT_NAME duckdb)
-set_target_properties(shell PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                                       ${PROJECT_BINARY_DIR})
-
-duckdb_codesign_for_debugging(shell)
-
-install(TARGETS shell RUNTIME DESTINATION "${INSTALL_BIN_DIR}")
