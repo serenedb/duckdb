@@ -192,18 +192,24 @@ bool PEGTransformerFactory::TransformCopyFrom(PEGTransformer &transformer) {
 	return true;
 }
 
-bool PEGTransformerFactory::TransformCopyTo(PEGTransformer &transformer) {
-	return false;
-}
-
-unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCopyFileNameStringLiteral(PEGTransformer &transformer,
-                                                                                       const string &string_literal) {
-	return make_uniq<ConstantExpression>(Value(string_literal));
-}
-
-unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCopyFileNameIdentifier(PEGTransformer &transformer,
-                                                                                    const Identifier &identifier) {
-	string file_name = identifier == "stdout" ? "/dev/stdout" : identifier.GetIdentifierName();
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCopyFileName(PEGTransformer &transformer,
+                                                                          ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0).GetResult();
+	if (choice_pr.name == "ParensExpression" || choice_pr.name == "Parameter") {
+		return transformer.Transform<unique_ptr<ParsedExpression>>(choice_pr);
+	}
+	string file_name;
+	if (choice_pr.type == ParseResultType::IDENTIFIER) {
+		file_name = choice_pr.Cast<IdentifierParseResult>().identifier;
+		if (StringUtil::CIEquals(file_name, "stdin")) {
+			file_name = "/dev/stdin";
+		} else if (StringUtil::CIEquals(file_name, "stdout")) {
+			file_name = "/dev/stdout";
+		}
+	} else {
+		file_name = transformer.Transform<string>(choice_pr);
+	}
 	return make_uniq<ConstantExpression>(Value(file_name));
 }
 
