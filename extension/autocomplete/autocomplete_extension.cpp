@@ -460,9 +460,10 @@ static unique_ptr<SQLTokenizeFunctionData> GenerateTokens(ClientContext &context
 
 	// use the parser to annotate any tokens
 	vector<MatcherSuggestion> suggestions;
+	reference_set_t<const Matcher> added_suggestions;
 	ParseResultAllocator parse_allocator;
 	idx_t max_token_index = 0;
-	MatchState state(tokenizer.tokens, suggestions, parse_allocator, max_token_index);
+	MatchState state(tokenizer.tokens, suggestions, added_suggestions, parse_allocator, max_token_index);
 
 	auto peg_matcher = PEGMatcher::Get(context);
 	peg_matcher->ProgramMatcher().Match(state);
@@ -549,9 +550,10 @@ static duckdb::unique_ptr<FunctionData> CheckPEGParserBind(ClientContext &contex
 	}
 
 	vector<MatcherSuggestion> suggestions;
+	reference_set_t<const Matcher> added_suggestions;
 	ParseResultAllocator parse_allocator;
 	idx_t max_token_index = 0;
-	MatchState state(root_tokens, suggestions, parse_allocator, max_token_index);
+	MatchState state(root_tokens, suggestions, added_suggestions, parse_allocator, max_token_index);
 
 	auto peg_matcher = PEGMatcher::Get(context);
 	auto match_result = peg_matcher->ProgramMatcher().Match(state);
