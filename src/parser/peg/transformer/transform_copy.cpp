@@ -202,7 +202,14 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCopyFileNameStringL
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCopyFileNameIdentifier(PEGTransformer &transformer,
                                                                                     const Identifier &identifier) {
-	string file_name = identifier == "stdout" ? "/dev/stdout" : identifier.GetIdentifierName();
+	string file_name;
+	if (identifier == "stdin") {
+		file_name = "/dev/stdin";
+	} else if (identifier == "stdout") {
+		file_name = "/dev/stdout";
+	} else {
+		file_name = identifier.GetIdentifierName();
+	}
 	return make_uniq<ConstantExpression>(Value(file_name));
 }
 
