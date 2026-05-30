@@ -67,8 +67,7 @@ unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	if (key_child->GetReturnType().id() == LogicalTypeId::UNKNOWN) {
 		throw ParameterNotResolvedException();
 	}
-	if (key_child->GetReturnType().id() != LogicalTypeId::VARCHAR ||
-	    key_child->GetReturnType().id() != LogicalTypeId::VARCHAR) {
+	if (key_child->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 		throw ParserException("Key name for current_setting must be of type VARCHAR");
 	}
 	if (!key_child->IsFoldable()) {
