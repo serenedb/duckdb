@@ -184,10 +184,6 @@ string_t StringVector::AddStringOrBlob(Vector &vector, const char *data, idx_t l
 	return StringVector::AddStringOrBlob(vector, string_t(data, UnsafeNumericCast<uint32_t>(len)));
 }
 
-string_t StringVector::AddStringOrBlob(Vector &vector, std::string_view data) {
-	return StringVector::AddStringOrBlob(vector, string_t(data.data(), UnsafeNumericCast<uint32_t>(data.size())));
-}
-
 string_t StringVector::AddString(Vector &vector, const char *data) {
 	return StringVector::AddString(vector, string_t(data, UnsafeNumericCast<uint32_t>(strlen(data))));
 }

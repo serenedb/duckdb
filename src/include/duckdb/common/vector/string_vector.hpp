@@ -84,7 +84,6 @@ struct StringVector {
 	//! Add a string or a blob to the string heap of the vector (auxiliary data)
 	//! This function is the same as ::AddString, except the added data does not need to be valid UTF8
 	DUCKDB_API static string_t AddStringOrBlob(Vector &vector, const char *data, idx_t len);
-	DUCKDB_API static string_t AddStringOrBlob(Vector &vector, std::string_view data);
 	//! Add a string to the string heap of the vector (auxiliary data)
 	DUCKDB_API static string_t AddString(Vector &vector, const char *data);
 	//! Add a string to the string heap of the vector (auxiliary data)
