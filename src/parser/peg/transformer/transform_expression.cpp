@@ -818,7 +818,8 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformBetweenInLikeExpres
 				expr = std::move(func_expr);
 			}
 		} else if (func_expr->function_name == "!~") {
-			func_expr->function_name = "regexp_full_match";
+			// PG `!~` is "does NOT match"; the partial-match counterpart of `~`.
+			func_expr->function_name = "regexp_matches";
 			func_expr->is_operator = false;
 			expr = make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(func_expr));
 		} else {
@@ -968,9 +969,10 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformLikeClause(PEGTrans
 		                                                  std::move(similar_args));
 		like_children[0] = std::move(similar_call);
 		like_variation = "regexp_full_match";
-	} else if (like_variation == "regexp_full_match_i") {
+	} else if (like_variation == "regexp_match_i") {
+		// PG `~*` is unanchored case-insensitive; same target as `~` with 'i'.
 		case_insensitive_regex = true;
-		like_variation = "regexp_full_match";
+		like_variation = "regexp_matches";
 	} else if (like_variation == "!~*") {
 		case_insensitive_regex = true;
 		like_variation = "!~";
