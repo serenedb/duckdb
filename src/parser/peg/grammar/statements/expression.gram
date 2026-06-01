@@ -236,9 +236,9 @@ InetOperator <- '>>=' / '<<='
 JsonOperator <- '->>' / '#>>' / '#>'
 ListOperator <- '&&' / '@>' / '<@'
 StringOperator <- '^@' / '||'
-QualifiedOperator <- 'OPERATOR' Parens(QualifiedOperatorContents)
-QualifiedOperatorContents <- ColIdDot* AnyOp
-AnyOp <- '!~~*' / '>>=' / '<<=' / '->>' / '!~~' / '!~*' / '~~*' / '~~~' / '~*' / '!~' / '^@' / '||' / '&&' / '@>' / '<@' / '<=' / '>=' / '<>' / '!=' / '==' / '<<' / '>>' / '//' / '**' / '->' / '~~' / '+' / '-' / '*' / '/' / '%' / '^' / '<' / '>' / '=' / '&' / '|' / '~' / '!'
+QualifiedOperator <- 'OPERATOR' Parens(OperatorSchemaQualifier? AnyOp)
+OperatorSchemaQualifier <- Identifier '.'
+AnyOp <- '!~~*' / '>>=' / '<<=' / '->>' / '!~~' / '~~*' / '~~~' / '!~' / '^@' / '||' / '&&' / '@>' / '<@' / '<=' / '>=' / '<>' / '!=' / '==' / '<<' / '>>' / '//' / '**' / '->' / '~~' / '+' / '-' / '*' / '/' / '%' / '^' / '<' / '>' / '=' / '&' / '|' / '~' / '!'
 # LEVEL 9
 BitwiseExpression <- AdditiveExpression BitwiseExpressionTail*
 BitwiseExpressionTail <- BitOperator AdditiveExpression
