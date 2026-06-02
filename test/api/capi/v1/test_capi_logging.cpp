@@ -84,10 +84,11 @@ TEST_CASE("Test a custom log storage in the CAPI with extra data", "[capi]") {
 	REQUIRE(state == DuckDBError);
 
 	REQUIRE_NO_FAIL(tester.Query("SET enable_logging = true;"));
+	REQUIRE_NO_FAIL(tester.Query("SET logging_level = 'debug';"));
 	REQUIRE_NO_FAIL(tester.Query("SET logging_storage = 'MyCustomStorage';"));
 	REQUIRE_NO_FAIL(tester.Query("SELECT write_log('HELLO, BRO');"));
 
-	REQUIRE(my_log_store.Contains("INFO, QueryLog, SELECT write_log('HELLO, BRO');"));
+	REQUIRE(my_log_store.Contains("DEBUG, QueryLog, SELECT write_log('HELLO, BRO');"));
 
 	duckdb_destroy_log_storage(&log_storage);
 }

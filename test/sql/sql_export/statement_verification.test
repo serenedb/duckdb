@@ -337,7 +337,7 @@ SELECT 42
 42
 
 statement ok
-CALL enable_logging();
+CALL enable_logging(level='debug');
 
 statement ok
 CALL truncate_duckdb_logs();

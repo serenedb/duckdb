@@ -56,7 +56,7 @@ public:
 class QueryLogType : public LogType {
 public:
 	static constexpr const char *NAME = "QueryLog";
-	static constexpr LogLevel LEVEL = LogLevel::LOG_INFO;
+	static constexpr LogLevel LEVEL = LogLevel::LOG_DEBUG;
 
 	QueryLogType() : LogType(NAME, LEVEL) {};
 
@@ -115,7 +115,7 @@ public:
 class MetricsLogType : public LogType {
 public:
 	static constexpr const char *NAME = "Metrics";
-	static constexpr LogLevel LEVEL = LogLevel::LOG_INFO;
+	static constexpr LogLevel LEVEL = LogLevel::LOG_DEBUG;
 
 	//! Construct the log type
 	MetricsLogType();
