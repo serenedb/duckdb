@@ -11,37 +11,37 @@ statement error
 COPY (SELECT 42::VARIANT AS v) TO '{TEST_DIR}/invalid_nested_shredding.parquet'
 (SHREDDING {v: 'STRUCT(kept INTEGER, raw {invalid_type})'});
 ----
-<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a DuckDB Type.*
+<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a valid type.*
 
 statement error
 COPY (SELECT 42::VARIANT AS v) TO '{TEST_DIR}/invalid_nested_shredding.parquet'
 (SHREDDING {v: '{invalid_type}[]'});
 ----
-<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a DuckDB Type.*
+<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a valid type.*
 
 statement error
 COPY (SELECT 42::VARIANT AS v) TO '{TEST_DIR}/invalid_nested_shredding.parquet'
 (SHREDDING {v: 'STRUCT(nested STRUCT(raw {invalid_type}))'});
 ----
-<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a DuckDB Type.*
+<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a valid type.*
 
 statement error
 COPY (SELECT 42::VARIANT AS v) TO '{TEST_DIR}/invalid_nested_shredding.parquet'
 (SHREDDING {v: '{invalid_type}[][]'});
 ----
-<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a DuckDB Type.*
+<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a valid type.*
 
 statement error
 COPY (SELECT 42::VARIANT AS v) TO '{TEST_DIR}/invalid_nested_shredding.parquet'
 (SHREDDING {v: 'STRUCT(raw {invalid_type})[]'});
 ----
-<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a DuckDB Type.*
+<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a valid type.*
 
 statement error
 COPY (SELECT 42::VARIANT AS v) TO '{TEST_DIR}/invalid_nested_shredding.parquet'
 (SHREDDING {v: 'STRUCT(items STRUCT(raw {invalid_type}[])[])'});
 ----
-<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a DuckDB Type.*
+<REGEX>:(?s)Invalid Input Error: Value .* can not be converted to a valid type.*
 
 endloop
 

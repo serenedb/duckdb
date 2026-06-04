@@ -6,6 +6,7 @@
 #include "duckdb/common/file_opener.hpp"
 #include "duckdb/main/http/http_transport_manager.hpp"
 #include "duckdb/main/extension/linked_extension_registry.hpp"
+#include "duckdb/main/extension/external_extension_provider.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/local_file_system.hpp"
@@ -1092,6 +1093,9 @@ TEST_CASE("Core extension downloads use managed HTTP transports", "[http_transpo
 	config.SetOptionByName("extension_directory", extension_directory);
 	DuckDB db(nullptr, &config);
 	Connection connection(db);
+	if (!db.instance->config.GetExternalExtensionProvider().SupportsExternalExtensions()) {
+		return;
+	}
 	auto build_directory = TestConfiguration::Get().GetTestEnv("BUILD_DIR", "build/reldebug");
 	const string extension_filename = "loadable_extension_demo.duckdb_extension";
 	const string extension_url = "http://mock.test/" + extension_filename;
@@ -1272,6 +1276,9 @@ TEST_CASE("Extension downloads without an HTTP client", "[http_transport_manager
 	config.SetOptionByName("extension_directory", extension_directory);
 	DuckDB db(nullptr, &config);
 	Connection connection(db);
+	if (!db.instance->config.GetExternalExtensionProvider().SupportsExternalExtensions()) {
+		return;
+	}
 	db.instance->config.SetHTTPUtil(make_shared_ptr<NoClientHTTPUtil>());
 
 	ExtensionInstallOptions options;

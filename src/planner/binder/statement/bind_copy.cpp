@@ -32,6 +32,7 @@
 #include "duckdb/common/algorithm.hpp"
 
 #include "duckdb/main/extension_entries.hpp"
+#include "duckdb/main/extension_helper.hpp"
 
 namespace duckdb {
 
@@ -45,13 +46,16 @@ static bool GetBooleanArg(ClientContext &context, const vector<Value> &arg) {
 	return arg.empty() || arg[0].CastAs(context, LogicalType::BOOLEAN).GetValue<bool>();
 }
 
-void IsFormatExtensionKnown(const string &format) {
+void IsFormatExtensionKnown(ClientContext &context, const string &format) {
 	for (auto &file_postfixes : EXTENSION_FILE_POSTFIXES) {
 		if (format == file_postfixes.name + 1) {
 			// It's a match, we must throw
-			throw CatalogException(
-			    "Copy Function with name \"%s\" is not in the catalog, but it exists in the %s extension.", format,
-			    file_postfixes.extension);
+			throw CatalogException(ExtensionHelper::AddExtensionInstallHintToErrorMsg(
+			    context,
+			    StringUtil::Format("Copy Function with name \"%s\" does not exist in SereneDB (DuckDB provides it in "
+			                       "its %s extension).",
+			                       format, file_postfixes.extension),
+			    file_postfixes.extension));
 		}
 	}
 }
@@ -846,7 +850,7 @@ BoundStatement Binder::Bind(CopyStatement &stmt, CopyToType copy_to_type) {
 	    on_entry_do);
 
 	if (!entry) {
-		IsFormatExtensionKnown(stmt.info->format);
+		IsFormatExtensionKnown(context, stmt.info->format);
 		// If we did not find an entry, we default to a CSV
 		entry = catalog.GetEntry(
 		    entry_retriever,

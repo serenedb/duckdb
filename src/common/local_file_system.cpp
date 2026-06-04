@@ -324,7 +324,7 @@ static void TryAcquireFileLock(FileSystem &fs, int fd, const string &path, FileO
 		if (rc == -1) {
 			extended_error = strerror(errno);
 		} else if (fl.l_pid == ProcessUtil::CurrentProcessId()) {
-			extended_error = "Lock is already held in current process, likely another DuckDB instance";
+			extended_error = "Lock is already held in current process, likely another SereneDB instance";
 		} else {
 			auto process = ProcessUtil::GetProcessDescription(fs, fl.l_pid);
 			if (!process.empty()) {
@@ -342,7 +342,6 @@ static void TryAcquireFileLock(FileSystem &fs, int fd, const string &path, FileO
 		}
 	}
 	CloseFileAndAppendError(fd, extended_error);
-	extended_error += ". See also https://duckdb.org/docs/current/connect/concurrency";
 	throw IOException({{"errno", std::to_string(retained_errno)}}, "Could not set lock on file \"%s\": %s", path,
 	                  extended_error);
 }

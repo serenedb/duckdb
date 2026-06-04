@@ -195,8 +195,9 @@ unique_ptr<SecretEntry> SecretManager::RegisterSecretInternal(CatalogTransaction
 	if (!backend) {
 		if (!config.allow_persistent_secrets &&
 		    (persist_type == SecretPersistType::PERSISTENT || storage == LOCAL_FILE_STORAGE_NAME)) {
-			throw InvalidInputException("Persistent secrets are disabled. Restart DuckDB and enable persistent secrets "
-			                            "through 'SET allow_persistent_secrets=true'");
+			throw InvalidInputException(
+			    "Persistent secrets are disabled. Restart SereneDB and enable persistent secrets "
+			    "through 'SET allow_persistent_secrets=true'");
 		}
 		throw InvalidInputException("Secret storage '%s' not found!", resolved_storage);
 	}
@@ -206,7 +207,7 @@ unique_ptr<SecretEntry> SecretManager::RegisterSecretInternal(CatalogTransaction
 		if (backend->persistent) {
 			if (!config.allow_persistent_secrets) {
 				throw InvalidInputException(
-				    "Persistent secrets are currently disabled. To enable them, restart duckdb and "
+				    "Persistent secrets are currently disabled. To enable them, restart SereneDB and "
 				    "run 'SET allow_persistent_secrets=true'");
 			}
 		} else { // backend is temp
@@ -663,7 +664,8 @@ void SecretManager::ThrowTypeNotFoundError(const Identifier &type, const string 
 	string error_message;
 
 	if (!entry.empty() && db) {
-		error_message = "Secret type '" + type + "' does not exist, but it exists in the " + entry + " extension.";
+		error_message = "Secret type '" + type + "' does not exist in SereneDB (DuckDB provides it in its " + entry +
+		                " extension).";
 		error_message = ExtensionHelper::AddExtensionInstallHintToErrorMsg(*db, error_message, entry);
 
 		if (!secret_path.empty()) {
@@ -692,8 +694,9 @@ void SecretManager::ThrowProviderNotFoundError(const Identifier &type, const Ide
 	auto entry = ExtensionHelper::FindExtensionInEntries(SecretProviderKey(type, provider), EXTENSION_SECRET_PROVIDERS);
 	if (!entry.empty() && db) {
 		string error_message = was_default ? "Default secret provider" : "Secret provider";
-		error_message += StringUtil::Format(" %s for type %s does not exist, but it exists in the %s extension.",
-		                                    provider, type, entry);
+		error_message +=
+		    StringUtil::Format(" %s for type %s does not exist in SereneDB (DuckDB provides it in its %s extension).",
+		                       provider, type, entry);
 		error_message = ExtensionHelper::AddExtensionInstallHintToErrorMsg(*db, error_message, entry);
 
 		throw InvalidInputException(error_message);

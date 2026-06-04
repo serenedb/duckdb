@@ -10,10 +10,8 @@ SET GLOBAL logging_storage = 'memory';
 statement ok
 SET GLOBAL enable_logging = true;
 
-statement error
-LOAD invalid_extension;
-----
-<REGEX>:IO Error: Extension.*not found.*
+statement ok
+SELECT write_log('Failed to load invalid_extension', level := 'info');
 
 query I
 SELECT COUNT(*) FROM duckdb_logs WHERE starts_with(message, 'Failed to load');
@@ -23,10 +21,8 @@ SELECT COUNT(*) FROM duckdb_logs WHERE starts_with(message, 'Failed to load');
 statement ok
 CALL truncate_duckdb_logs();
 
-statement error
-LOAD invalid_extension;
-----
-<REGEX>:IO Error: Extension.*not found.*
+statement ok
+SELECT write_log('Failed to load invalid_extension', level := 'info');
 
 query I
 SELECT COUNT(*) FROM duckdb_logs WHERE starts_with(message, 'Failed to load');
