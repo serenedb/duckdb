@@ -1027,6 +1027,22 @@ Value ForceMbedtlsUnsafeSetting::GetSetting(const ClientContext &context) {
 }
 
 //===----------------------------------------------------------------------===//
+// H T T P Logging Output
+//===----------------------------------------------------------------------===//
+void HTTPLoggingOutputSetting::SetLocal(ClientContext &context, const Value &input) {
+	throw NotImplementedException("This setting is deprecated and can no longer be used.");
+}
+
+void HTTPLoggingOutputSetting::ResetLocal(ClientContext &context) {
+	throw NotImplementedException("This setting is deprecated and can no longer be used.");
+}
+
+Value HTTPLoggingOutputSetting::GetSetting(const ClientContext &context) {
+	auto &config = ClientConfig::GetConfig(context);
+	return Value(config.http_logging_output);
+}
+
+//===----------------------------------------------------------------------===//
 // HTTP Proxy
 //===----------------------------------------------------------------------===//
 void HTTPProxySetting::SetGlobal(DatabaseInstance *, DBConfig &config, const Value &input) {
