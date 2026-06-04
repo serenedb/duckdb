@@ -875,7 +875,8 @@ CatalogException Catalog::UnrecognizedConfigurationError(ClientContext &context,
 	auto extension_name = ExtensionHelper::FindExtensionInEntries(name, EXTENSION_SETTINGS);
 	if (!extension_name.empty()) {
 		auto error_message = StringUtil::Format(
-		    "Setting with name %s is not in the catalog, but it exists in the %s extension.", name, extension_name);
+		    "Setting with name %s does not exist in SereneDB (DuckDB provides it in its %s extension).", name,
+		    extension_name);
 		error_message = ExtensionHelper::AddExtensionInstallHintToErrorMsg(context, error_message, extension_name);
 		return CatalogException(error_message);
 	}
@@ -966,7 +967,7 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 	// if we found an extension that can handle this catalog entry, create an error hinting the user
 	if (!extension_name.empty()) {
 		auto error_message =
-		    StringUtil::Format("%s with name %s is not in the catalog, but it exists in the %s extension.",
+		    StringUtil::Format("%s with name %s does not exist in SereneDB (DuckDB provides it in its %s extension).",
 		                       CatalogTypeToString(type), entry_name, extension_name);
 		error_message = ExtensionHelper::AddExtensionInstallHintToErrorMsg(context, error_message, extension_name);
 		return CatalogException(error_message);

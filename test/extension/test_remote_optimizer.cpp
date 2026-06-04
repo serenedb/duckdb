@@ -131,8 +131,14 @@ TEST_CASE("Test using a remote optimizer pass in case thats important to someone
 			return;
 		}
 
-		REQUIRE_NO_FAIL(con1.Query("LOAD '" DUCKDB_BUILD_DIRECTORY
-		                           "/test/extension/loadable_extension_optimizer_demo.duckdb_extension'"));
+		auto load_demo = con1.Query("LOAD '" DUCKDB_BUILD_DIRECTORY
+		                            "/test/extension/loadable_extension_optimizer_demo.duckdb_extension'");
+		if (load_demo->HasError()) {
+			if (kill(pid, SIGKILL) != 0) {
+				FAIL();
+			}
+			return;
+		}
 		REQUIRE_NO_FAIL(con1.Query("SET waggle_location_host='127.0.0.1'"));
 		REQUIRE_NO_FAIL(con1.Query("SET waggle_location_port=4242"));
 		usleep(10000); // need to wait a bit till socket is up

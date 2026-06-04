@@ -72,7 +72,7 @@ static LogicalType TransformStringToUnboundType(const string &str, const ParserO
 		                                      "MAP(INTEGER, VARCHAR)",
 		                                      "UNION(num INTEGER, text VARCHAR)"};
 		std::ostringstream error;
-		error << "Value \"" << str << "\" can not be converted to a DuckDB Type." << '\n';
+		error << "Value \"" << str << "\" can not be converted to a valid type." << '\n';
 		error << "Possible examples as suggestions: " << '\n';
 		auto suggestions = StringUtil::TopNJaroWinkler(suggested_types, str);
 		for (auto &suggestion : suggestions) {
