@@ -52,9 +52,10 @@ static void CheckTypeIsSupported(const LogicalType &logical_type, AttachedDataba
 				auto required = GetStorageVersionName(StorageVersion::V2_0_0, false);
 				auto current = GetStorageVersionName(storage_version, false);
 
-				throw InvalidInputException("Aggregate state columns are not supported in storage versions prior to %s "
-				                            "(database \"%s\" is using storage version %s)",
-				                            required, db.GetName(), current);
+				throw InvalidInputException(
+				    "Aggregate state columns are not supported in DuckDB storage format versions prior to "
+				    "%s (database \"%s\" is using DuckDB storage format version %s)",
+				    required, db.GetName(), current);
 			}
 			return false;
 		}
@@ -69,9 +70,10 @@ static void CheckTypeIsSupported(const LogicalType &logical_type, AttachedDataba
 				auto required = GetStorageVersionName(StorageVersion::V2_0_0, false);
 				auto current = GetStorageVersionName(storage_version, false);
 
-				throw InvalidInputException("Empty STRUCT columns are not supported in storage versions prior to %s "
-				                            "(database \"%s\" is using storage version %s)",
-				                            required, db.GetName(), current);
+				throw InvalidInputException(
+				    "Empty STRUCT columns are not supported in DuckDB storage format versions prior to "
+				    "%s (database \"%s\" is using DuckDB storage format version %s)",
+				    required, db.GetName(), current);
 			}
 		} break;
 		case LogicalTypeId::VARIANT: {
@@ -81,9 +83,10 @@ static void CheckTypeIsSupported(const LogicalType &logical_type, AttachedDataba
 				auto required = GetStorageVersionName(Variant::VERSION_ADDED, false);
 				auto current = GetStorageVersionName(storage_version, false);
 
-				throw InvalidInputException("VARIANT columns are not supported in storage versions prior to %s "
-				                            "(database \"%s\" is using storage version %s)",
-				                            required, db.GetName(), current);
+				throw InvalidInputException(
+				    "VARIANT columns are not supported in DuckDB storage format versions prior to "
+				    "%s (database \"%s\" is using DuckDB storage format version %s)",
+				    required, db.GetName(), current);
 			}
 		} break;
 		case LogicalTypeId::GEOMETRY: {
@@ -97,8 +100,8 @@ static void CheckTypeIsSupported(const LogicalType &logical_type, AttachedDataba
 				auto &logger = Logger::Get(db.GetDatabase());
 				logger.WriteLog(DefaultLogType::NAME, LogLevel::LOG_WARNING,
 				                "GEOMETRY columns with coordinate reference system identifiers are not supported in "
-				                "storage versions prior "
-				                "to %s (database \"%s\" is using storage version %s). CRS will not be persisted.",
+				                "DuckDB storage format versions prior to %s (database \"%s\" is using DuckDB storage "
+				                "format version %s). CRS will not be persisted.",
 				                required, db.GetName(), current);
 			}
 		} break;

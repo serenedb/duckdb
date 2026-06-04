@@ -48,6 +48,7 @@ const vector<string> ExtensionHelper::PathComponents() {
 }
 
 string ExtensionHelper::ExtensionInstallDocumentationLink(const string &extension_name) {
+	D_ASSERT(false);
 	auto components = PathComponents();
 
 	string link = "https://duckdb.org/docs/current/extensions/troubleshooting";
@@ -222,6 +223,7 @@ static unsafe_unique_array<data_t> ReadExtensionFileFromDisk(FileSystem &fs, con
 
 static void WriteExtensionFileToDisk(QueryContext &query_context, FileSystem &fs, const string &path, void *data,
                                      idx_t data_size, DBConfig &config) {
+	D_ASSERT(false);
 	if (!Settings::Get<AllowUnsignedExtensionsSetting>(config)) {
 		const bool signature_valid = ExtensionHelper::CheckExtensionBufferSignature(
 		    static_cast<char *>(data), data_size, Settings::Get<AllowCommunityExtensionsSetting>(config));
@@ -561,7 +563,8 @@ unique_ptr<ExtensionInstallInfo> ExtensionHelper::InstallExtensionInternal(Datab
                                                                            ExtensionInstallOptions &options,
                                                                            optional_ptr<ClientContext> context) {
 #ifdef DUCKDB_DISABLE_EXTENSION_LOAD
-	throw PermissionException("Installing external extensions is disabled through a compile time flag");
+	ExtensionHelper::ThrowExtensionRuntimeUnsupported(
+	    ExtensionHelper::ApplyExtensionAlias(fs.ExtractBaseName(extension)), true);
 #else
 
 	auto extension_name = ApplyExtensionAlias(fs.ExtractBaseName(extension));
