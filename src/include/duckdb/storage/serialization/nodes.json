@@ -1597,6 +1597,12 @@
         "id": 107,
         "name": "leading_null_group_offset",
         "type": "idx_t"
+      },
+      {
+        "id": 108,
+        "name": "single_order_key",
+        "type": "bool",
+        "default": "true"
       }
     ],
     "constructor": [
@@ -1607,7 +1613,8 @@
       "column_type",
       "row_limit",
       "row_group_offset",
-      "leading_null_group_offset"
+      "leading_null_group_offset",
+      "single_order_key"
     ]
   },
   {
