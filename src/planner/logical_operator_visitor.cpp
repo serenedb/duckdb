@@ -49,6 +49,8 @@ optional_ptr<vector<ProjectionIndex>> LogicalOperatorVisitor::GetProjectionMap(L
 	}
 	case LogicalOperatorType::LOGICAL_ORDER_BY:
 		return op.Cast<LogicalOrder>().projection_map;
+	case LogicalOperatorType::LOGICAL_TOP_N:
+		return op.Cast<LogicalTopN>().projection_map;
 	case LogicalOperatorType::LOGICAL_FILTER:
 		return op.Cast<LogicalFilter>().projection_map;
 	default:

@@ -105,7 +105,7 @@ public:
 	//! Estimate cardinality from the source without using this operator's cached estimate.
 	idx_t EstimateSourceCardinality(ClientContext &context);
 	bool TryGetStorageIndex(const ColumnIndex &column_index, StorageIndex &out_index) const;
-	void SetScanOrder(unique_ptr<RowGroupOrderOptions> options);
+	void SetScanOrder(ClientContext &context, unique_ptr<RowGroupOrderOptions> options);
 	void SetPartitionsToScan(vector<idx_t> partition_indices);
 
 	vector<TableIndex> GetTableIndex() const override;
