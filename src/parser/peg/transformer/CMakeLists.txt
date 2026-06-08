@@ -23,6 +23,7 @@ add_library_unity(
   transform_create_publication.cpp
   transform_create_subscription.cpp
   transform_create_text_search_dictionary.cpp
+  transform_rbac.cpp
   transform_create_trigger.cpp
   transform_create_view.cpp
   transform_create_type.cpp

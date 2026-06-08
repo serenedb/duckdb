@@ -608,6 +608,14 @@ void PEGTransformerFactory::RegisterCreateTextSearchDictionary() {
 	REGISTER_TRANSFORM(TransformDropTSDictionaryStatement);
 }
 
+void PEGTransformerFactory::RegisterRbac() {
+	REGISTER_TRANSFORM(TransformCreateRoleStatement);
+	REGISTER_TRANSFORM(TransformDropRoleStatement);
+	REGISTER_TRANSFORM(TransformAlterRoleStatement);
+	REGISTER_TRANSFORM(TransformGrantStatement);
+	REGISTER_TRANSFORM(TransformRevokeStatement);
+}
+
 void PEGTransformerFactory::RegisterMergeInto() {
 	// merge_into.gram
 	REGISTER_TRANSFORM(TransformMergeIntoStatement);
@@ -978,6 +986,7 @@ PEGTransformerFactory::PEGTransformerFactory() {
 	RegisterCreatePublication();
 	RegisterCreateSubscription();
 	RegisterCreateTextSearchDictionary();
+	RegisterRbac();
 	RegisterMergeInto();
 	RegisterPivot();
 	RegisterSelect();
