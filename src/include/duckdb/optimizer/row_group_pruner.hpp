@@ -38,7 +38,8 @@ private:
 	                                                                const BoundOrderByNode &primary_order,
 	                                                                const LogicalGet &logical_get,
 	                                                                const StorageIndex &storage_index,
-	                                                                LogicalLimit &logical_limit) const;
+	                                                                LogicalLimit &logical_limit,
+	                                                                const bool single_order_key) const;
 };
 
 } // namespace duckdb
