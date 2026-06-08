@@ -1,0 +1,34 @@
+# RBAC statements -> serenedb_* pragmas (mirrors CREATE TEXT SEARCH DICTIONARY).
+# USER is an alias for ROLE. Names use ColId/QualifiedName directly: Transform
+# dispatches by rule name, so a wrapper rule would need its own transformer.
+
+CreateRoleStatement <- 'CREATE' RoleOrUser ColId RoleOptionList?
+DropRoleStatement   <- 'DROP' RoleOrUser IfExists? ColId
+AlterRoleStatement  <- 'ALTER' RoleOrUser ColId 'PASSWORD' StringLiteral
+
+# Table form (with 'ON') is tried before the bare 'GRANT role TO member' form.
+GrantStatement  <- 'GRANT'  (GrantTablePrivilege  / GrantRoleMembership)
+RevokeStatement <- 'REVOKE' (RevokeTablePrivilege / RevokeRoleMembership)
+
+GrantTablePrivilege   <- PrivilegeList 'ON' TableKeyword? QualifiedName 'TO'   Grantee WithGrantOption?
+RevokeTablePrivilege  <- PrivilegeList 'ON' TableKeyword? QualifiedName 'FROM' Grantee
+GrantRoleMembership   <- ColId 'TO'   ColId
+RevokeRoleMembership  <- ColId 'FROM' ColId
+
+# Optional WITH GRANT OPTION suffix on a table GRANT: the grantee may re-grant.
+WithGrantOption <- 'WITH' 'GRANT' 'OPTION'
+
+RoleOrUser <- 'ROLE' / 'USER'
+TableKeyword <- 'TABLE'
+# PUBLIC is the pseudo-role; otherwise a normal role identifier.
+Grantee <- 'PUBLIC' / ColId
+
+RoleOptionList <- RoleOption+
+RoleOption <- LoginOption / SuperuserOption / PasswordOption
+LoginOption     <- 'LOGIN' / 'NOLOGIN'
+SuperuserOption <- 'SUPERUSER' / 'NOSUPERUSER'
+PasswordOption  <- 'PASSWORD' StringLiteral
+
+PrivilegeList <- AllPrivileges / List(Privilege)
+AllPrivileges <- 'ALL' 'PRIVILEGES'?
+Privilege <- 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE' / 'TRUNCATE' / 'REFERENCES' / 'TRIGGER'

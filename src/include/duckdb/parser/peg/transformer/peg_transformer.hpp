@@ -455,6 +455,7 @@ public:
 	void RegisterCreateSubscription();
 	void RegisterNotify();
 	void RegisterCreateTextSearchDictionary();
+	void RegisterRbac();
 	void RegisterPivot();
 	void RegisterCreateMacro();
 	void RegisterDrop();
@@ -503,6 +504,12 @@ public:
 	                                                                     ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformDropTSDictionaryStatement(PEGTransformer &transformer,
 	                                                                   ParseResult &parse_result);
+	// rbac.gram
+	static unique_ptr<SQLStatement> TransformCreateRoleStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformDropRoleStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterRoleStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformGrantStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformRevokeStatement(PEGTransformer &transformer, ParseResult &parse_result);
 	// comment.gram
 	static Value TransformCommentValue(PEGTransformer &transformer, ParseResult &parse_result);
 

@@ -7,6 +7,11 @@ Statement <-
 	DropDatabaseStatement /
 	CreateTSDictionaryStatement /
 	DropTSDictionaryStatement /
+	CreateRoleStatement /
+	DropRoleStatement /
+	AlterRoleStatement /
+	GrantStatement /
+	RevokeStatement /
 	CreateStatement /
 	SelectStatement /
 	SetStatement /

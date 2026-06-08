@@ -214,6 +214,14 @@ void PEGTransformerFactory::RegisterPivot() {
 	REGISTER_TRANSFORM(TransformResetAliasedSetting);
 }
 
+void PEGTransformerFactory::RegisterRbac() {
+	REGISTER_TRANSFORM(TransformCreateRoleStatement);
+	REGISTER_TRANSFORM(TransformDropRoleStatement);
+	REGISTER_TRANSFORM(TransformAlterRoleStatement);
+	REGISTER_TRANSFORM(TransformGrantStatement);
+	REGISTER_TRANSFORM(TransformRevokeStatement);
+}
+
 void PEGTransformerFactory::RegisterCreateMacro() {
 	// MacroDefinition navigates its FunctionDecorator* and body alternatives directly, so it remains manual.
 	REGISTER_TRANSFORM(TransformMacroDefinition);
@@ -260,6 +268,7 @@ PEGTransformerFactory::PEGTransformerFactory() {
 	RegisterCreateSubscription();
 	RegisterNotify();
 	RegisterCreateTextSearchDictionary();
+	RegisterRbac();
 	RegisterPivot();
 	RegisterCreateMacro();
 	RegisterDrop();
