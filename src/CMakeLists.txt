@@ -85,9 +85,20 @@ foreach(LINK_LIB ${DUCKDB_LINK_LIBS})
   list(APPEND LINK_OBJECTS $<TARGET_OBJECTS:${LINK_LIB}>)
 endforeach(LINK_LIB)
 
-add_library(duckdb_static STATIC ${ALL_OBJECT_FILES} ${LINK_OBJECTS})
+add_library(duckdb_static STATIC ${ALL_OBJECT_FILES}
+                                 $<TARGET_OBJECTS:duckdb_bind_extension_load>
+                                 ${LINK_OBJECTS})
 target_link_libraries(duckdb_static PUBLIC ${DUCKDB_SYSTEM_LIBS})
 link_threads(duckdb_static PUBLIC)
+
+if(BUILD_UNITTESTS)
+  add_library(
+    duckdb_static_testload STATIC
+    ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_bind_extension_load_testload>
+    ${LINK_OBJECTS})
+  target_link_libraries(duckdb_static_testload PUBLIC ${DUCKDB_SYSTEM_LIBS})
+  link_threads(duckdb_static_testload PUBLIC)
+endif()
 
 #
 # FIXME file(COPY ${CMAKE_SOURCE_DIR}/libduckdb_static.a  DESTINATION
@@ -96,7 +107,9 @@ link_threads(duckdb_static PUBLIC)
 # ${CMAKE_CURRENT_BINARY_DIR}/libduckdb_static.a)
 #
 
-add_library(duckdb SHARED ${ALL_OBJECT_FILES} ${LINK_OBJECTS})
+add_library(duckdb SHARED ${ALL_OBJECT_FILES}
+                          $<TARGET_OBJECTS:duckdb_bind_extension_load>
+                          ${LINK_OBJECTS})
 target_link_libraries(duckdb PUBLIC ${DUCKDB_SYSTEM_LIBS})
 link_extension_libraries(duckdb PRIVATE)
 
