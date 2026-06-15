@@ -326,6 +326,32 @@ void DuckTransactionManager::WaitForDurability() {
 	transaction_lock.Await(absl::Condition(&durable));
 }
 
+void DuckTransactionManager::RefreshStartTime(Transaction &transaction_p) {
+	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	if (transaction.ChangesMade()) {
+		// the transaction has local changes; moving its snapshot would mix
+		// visibility domains
+		return;
+	}
+	AdvanceStartTime(transaction);
+}
+
+void DuckTransactionManager::AdvanceStartTime(DuckTransaction &transaction) {
+	// transaction_lock (not start_transaction_lock) guards current_start_timestamp increments
+	// (see GetCommitTimestamp) and reads of peer snapshots (see RemoveTransaction).
+	lock_guard<mutex> lock(transaction_lock);
+	// the refreshed snapshot is a snapshot acquisition like StartTransaction: bound it at the durable horizon so a
+	// per-statement refresh never observes a commit that is not yet durable
+	auto start_time = current_start_timestamp++;
+	auto durable = GetDurableSnapshot();
+	transaction.start_time = start_time;
+	transaction.view.visibility_bound =
+	    VisibilityBound::Min(VisibilityBound::Before(start_time), durable.visibility_bound);
+	if (transaction.catalog_version < TRANSACTION_ID_START) {
+		transaction.catalog_version = MinValue<idx_t>(last_committed_version, durable.catalog_version);
+	}
+}
+
 void DuckTransactionManager::CleanupTransactions() {
 	lock_guard<mutex> c_lock(cleanup_lock);
 	while (true) {
