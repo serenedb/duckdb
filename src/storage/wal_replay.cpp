@@ -14,6 +14,7 @@
 #include "duckdb/common/enums/checkpoint_abort.hpp"
 #include "duckdb/execution/index/art/art.hpp"
 #include "duckdb/execution/index/index_type_set.hpp"
+#include "duckdb/execution/index/unbound_index.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
@@ -39,6 +40,7 @@
 #include "duckdb/storage/write_ahead_log.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
+#include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table/row_group_collection.hpp"
 #include "duckdb/main/profiler/metrics.hpp"
@@ -636,6 +638,14 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 	// we need to recover from the WAL: actually set up the replay state
 	ReplayState state(database, *con.context, replay_state);
 
+	auto &duck_manager = DuckTransactionManager::Get(database);
+	struct ReplayOffsetGuard {
+		DuckTransactionManager &manager;
+		~ReplayOffsetGuard() {
+			manager.ResetReplayCommitOffset();
+		}
+	} replay_offset_guard {duck_manager};
+
 	// reset the reader - we are going to read the WAL from the beginning again
 	auto &wal_reader = truncated_wal_reader ? *truncated_wal_reader : reader;
 	wal_reader.Reset();
@@ -647,6 +657,7 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 	bool all_succeeded = false;
 	try {
 		while (wal_reader.CurrentOffset() < last_wal_flush_end) {
+			duck_manager.SetReplayCommitOffset(wal_reader.CurrentOffset());
 			// read the current entry
 			auto deserializer = WriteAheadLogDeserializer::GetEntryDeserializer(state, wal_reader);
 			if (deserializer.ReplayEntry()) {

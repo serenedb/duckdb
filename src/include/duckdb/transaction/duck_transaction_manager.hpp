@@ -67,6 +67,17 @@ public:
 	void SetActiveCheckpoint(idx_t checkpoint_id);
 	void ResetActiveCheckpoint();
 
+	//! Byte offset of the WAL entry currently being replayed (0 when not replaying).
+	idx_t GetReplayCommitOffset() const {
+		return replay_commit_offset;
+	}
+	void SetReplayCommitOffset(idx_t offset) {
+		replay_commit_offset = offset;
+	}
+	void ResetReplayCommitOffset() {
+		replay_commit_offset = 0;
+	}
+
 	bool IsDuckTransactionManager() override {
 		return true;
 	}
@@ -156,6 +167,8 @@ private:
 	atomic<idx_t> active_checkpoint;
 	//! Source of checkpoint identities
 	atomic<idx_t> next_checkpoint_id = {0};
+	//! Byte offset of the WAL entry currently being replayed (0 when not replaying)
+	atomic<idx_t> replay_commit_offset {0};
 	//! Set of currently running transactions
 	vector<unique_ptr<DuckTransaction>> active_transactions;
 	//! Set of recently committed transactions
