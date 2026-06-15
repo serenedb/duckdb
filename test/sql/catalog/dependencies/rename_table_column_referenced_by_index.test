@@ -2,12 +2,37 @@
 # group: [dependencies]
 
 statement ok
-create table tbl(a varchar);
+ATTACH '{TEST_DIR}/rename_column_referenced_by_index.db' AS db;
 
 statement ok
-create index idx on tbl(a);
+create table db.tbl(a varchar);
 
-statement error
-alter table tbl rename a to b;
+statement ok
+create index idx on db.tbl(a);
+
+statement ok
+insert into db.tbl values ('x');
+
+# an index over the column does not block renaming it: the index follows the column
+statement ok
+alter table db.tbl rename a to b;
+
+query I
+select sql from duckdb_indexes() where index_name='idx';
 ----
-Cannot alter entry "tbl" because there are entries that depend on it.
+CREATE INDEX idx ON tbl(b);
+
+# and it is still usable after a reload
+statement ok
+DETACH db;
+
+statement ok
+ATTACH '{TEST_DIR}/rename_column_referenced_by_index.db' AS db;
+
+statement ok
+insert into db.tbl values ('y');
+
+query I
+select b from db.tbl where b = 'x';
+----
+x
