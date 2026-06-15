@@ -59,6 +59,7 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 	}
 
 	auto cardinality = op.estimated_cardinality;
+	auto &storage_table = op.table.GetStorageTableEntry(context);
 	switch (action.action_type) {
 	case MergeActionType::MERGE_UPDATE: {
 		vector<unique_ptr<Expression>> defaults;
@@ -66,11 +67,11 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 			defaults.push_back(def->Copy());
 		}
 		auto &action_input = PlanMergeActionSource(planner, plan, condition, *result);
-		result->op = planner.Make<PhysicalUpdate>(std::move(return_types), op.table.Cast<DuckTableEntry>(),
-		                                          op.table.GetStorage(), std::move(action.columns),
-		                                          std::move(action.expressions), std::move(defaults),
-		                                          std::move(bound_constraints), cardinality, op.return_chunk,
-		                                          /*capture_old_rows=*/false, /*old_row_columns=*/vector<idx_t>(),
+		result->op = planner.Make<PhysicalUpdate>(std::move(return_types), storage_table, storage_table.GetStorage(),
+		                                          std::move(action.columns), std::move(action.expressions),
+		                                          std::move(defaults), std::move(bound_constraints), cardinality,
+		                                          op.return_chunk, /*capture_old_rows=*/false,
+		                                          /*old_row_columns=*/vector<idx_t>(),
 		                                          /*row_id_handling=*/RowIdHandling::ASSUME_UNIQUE);
 		auto &cast_update = result->op->Cast<PhysicalUpdate>();
 		cast_update.update_is_del_and_insert = action.update_is_del_and_insert;
@@ -81,9 +82,9 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 		// Use delete_return_columns if available (for optimized RETURNING path)
 		vector<idx_t> return_columns = op.delete_return_columns;
 		auto &action_input = PlanMergeActionSource(planner, plan, condition, *result);
-		result->op = planner.Make<PhysicalDelete>(std::move(return_types), op.table.Cast<DuckTableEntry>(),
-		                                          op.table.GetStorage(), std::move(bound_constraints), op.row_id_start,
-		                                          cardinality, op.return_chunk, std::move(return_columns));
+		result->op = planner.Make<PhysicalDelete>(std::move(return_types), storage_table, storage_table.GetStorage(),
+		                                          std::move(bound_constraints), op.row_id_start, cardinality,
+		                                          op.return_chunk, std::move(return_columns));
 		result->op->children.push_back(action_input);
 		break;
 	}
@@ -114,11 +115,11 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 		result->expressions = std::move(action.expressions);
 		auto &action_input = PlanMergeActionSource(planner, plan, condition, *result);
 
-		result->op = planner.Make<PhysicalInsert>(
-		    std::move(return_types), op.table.Cast<DuckTableEntry>(), std::move(bound_constraints),
-		    std::move(set_expressions), std::move(set_columns), std::move(set_types), cardinality, op.return_chunk,
-		    !op.return_chunk, OnConflictAction::THROW, nullptr, nullptr, std::move(on_conflict_filter),
-		    std::move(columns_to_fetch), false);
+		result->op = planner.Make<PhysicalInsert>(std::move(return_types), storage_table, std::move(bound_constraints),
+		                                          std::move(set_expressions), std::move(set_columns),
+		                                          std::move(set_types), cardinality, op.return_chunk, !op.return_chunk,
+		                                          OnConflictAction::THROW, nullptr, nullptr,
+		                                          std::move(on_conflict_filter), std::move(columns_to_fetch), false);
 		result->op->children.push_back(action_input);
 		break;
 	}

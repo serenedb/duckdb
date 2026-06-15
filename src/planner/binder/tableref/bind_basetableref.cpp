@@ -288,13 +288,13 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		if (entry_at_clause) {
 			logical_get->at_clause = make_uniq<BoundAtClause>(entry_at_clause->Unit(), entry_at_clause->GetValue());
 		}
-		auto table_entry = logical_get->GetTable();
 		auto &col_ids = logical_get->GetMutableColumnIds();
-		if (!table_entry) {
-			bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, ref.Table());
-		} else {
-			bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, *table_entry);
-		}
+		// The binding carries this entry, and column binding reads the table's
+		// column model from it (star-expansion, generated-column expansion,
+		// column validation). A facade catalog delegates the scan to a storage
+		// table in another catalog, so bind the alias to the catalog-resolved
+		// entry the user named -- not the storage table inside the LogicalGet.
+		bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table);
 		BoundStatement result;
 		result.types = table_types;
 		result.names = table_names;

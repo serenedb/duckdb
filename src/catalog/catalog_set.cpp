@@ -467,8 +467,11 @@ bool CatalogSet::DropEntry(ClientContext &context, const Identifier &name, bool 
 void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, CatalogEntry &entry) {
 	auto &duck_catalog = GetCatalog();
 
-	// Make sure that we don't see any uncommitted changes
-	auto transaction_id = MAX_TRANSACTION_ID;
+	// Resolve the dependency target against this transaction's own entries (already stamped with commit_id
+	// by UpdateTimestamp), not only earlier commits. Renaming a table or dropping a column underneath a
+	// secondary index -- which AlterObject lets through -- recreates the index's dependency edge in this same
+	// transaction; with MAX_TRANSACTION_ID the commit-time check sees only the deleted old index and aborts.
+	auto transaction_id = commit_id;
 	D_ASSERT(IsCommitted(commit_id));
 	// This will allow us to see all committed changes made before this COMMIT happened
 	CatalogTransaction commit_transaction(duck_catalog.GetDatabase(), transaction_id,
