@@ -215,6 +215,11 @@ public:
 	unique_ptr<BaseStatistics> GetStatistics() const;
 	const BaseStatistics &GetStatisticsRef() const;
 
+	//! Size (in bytes) of the next transient segment given the previous segment's size (0 = first segment).
+	//! Exposed so writers that bypass the standard append path can reproduce the same segmentation.
+	static idx_t GetTransientSegmentSize(const DBConfig &config, BlockManager &block_manager, const LogicalType &type,
+	                                     idx_t prev_segment_size);
+
 protected:
 	//! Append a transient segment
 	void AppendTransientSegment(SegmentLock &l, idx_t start_row, optional_ptr<ColumnSegment> prev_segment);

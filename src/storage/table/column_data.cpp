@@ -716,17 +716,15 @@ void ColumnData::UpdateColumn(TransactionData transaction, DuckTableEntry &table
 	ColumnData::Update(transaction, table_entry, column_path[0], update_vector, row_ids, update_count, row_group_start);
 }
 
-void ColumnData::AppendTransientSegment(SegmentLock &l, idx_t start_row, optional_ptr<ColumnSegment> prev_segment) {
-	auto &db = GetDatabase();
-	auto &config = DBConfig::GetConfig(db);
-
+idx_t ColumnData::GetTransientSegmentSize(const DBConfig &config, BlockManager &block_manager, const LogicalType &type,
+                                          idx_t prev_segment_size) {
 	idx_t segment_size;
-	if (!prev_segment || prev_segment->GetSegmentType() == ColumnSegmentType::PERSISTENT) {
+	if (prev_segment_size == 0) {
 		// We start with the `initial_bytes` setting, but we ensure that we have enough space for at least one row.
 		const auto initial_bytes = Settings::Get<InitialColumnSegmentSizeSetting>(config);
 		segment_size = MaxValue<idx_t>(GetTypeIdSize(type.InternalType()), initial_bytes);
 	} else {
-		segment_size = prev_segment->SegmentSize() * 2;
+		segment_size = prev_segment_size * 2;
 	}
 
 	// BIT (validity) segments can only hold rows in multiples of STANDARD_VECTOR_SIZE;
@@ -740,13 +738,21 @@ void ColumnData::AppendTransientSegment(SegmentLock &l, idx_t start_row, optiona
 	// FIXME: turn this into the min. temporary buffer size instead of a magical number,
 	// FIXME: once we allow offloading tinier buffers.
 	if (segment_size >= 1024) {
-		const auto block_header_size = block_manager.GetBlockHeaderSize();
-		segment_size = NextPowerOfTwo(segment_size) - block_header_size;
+		segment_size = NextPowerOfTwo(segment_size) - block_manager.GetBlockHeaderSize();
 	}
 
 	// The maximum segment size is always the block size of the corresponding block manager.
-	const auto block_size = block_manager.GetBlockSize();
-	segment_size = MinValue<idx_t>(block_size, segment_size);
+	return MinValue<idx_t>(block_manager.GetBlockSize(), segment_size);
+}
+
+void ColumnData::AppendTransientSegment(SegmentLock &l, idx_t start_row, optional_ptr<ColumnSegment> prev_segment) {
+	auto &db = GetDatabase();
+	auto &config = DBConfig::GetConfig(db);
+
+	const idx_t prev_segment_size =
+	    (prev_segment && prev_segment->GetSegmentType() != ColumnSegmentType::PERSISTENT) ? prev_segment->SegmentSize()
+	                                                                                      : 0;
+	const idx_t segment_size = GetTransientSegmentSize(config, block_manager, type, prev_segment_size);
 	allocation_size += segment_size;
 
 	auto function = config.GetCompressionFunction(CompressionType::COMPRESSION_UNCOMPRESSED, type.InternalType());
