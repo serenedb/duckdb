@@ -1195,7 +1195,12 @@ void SingleFileBlockManager::ReadBlock(Block &block, bool skip_block_header) con
 
 void SingleFileBlockManager::Read(QueryContext context, Block &block) {
 	D_ASSERT(block.id >= 0);
-	D_ASSERT(std::find(free_list.begin(), free_list.end(), block.id) == free_list.end());
+#ifdef D_ASSERT_IS_ENABLED
+	{
+		lock_guard<mutex> guard(single_file_block_lock);
+		D_ASSERT(free_list.find(block.id) == free_list.end());
+	}
+#endif
 	ReadAndChecksum(context, block, GetBlockLocation(block.id));
 }
 

@@ -60,6 +60,7 @@ public:
 	const string &GetPath() const {
 		return wal_path;
 	}
+	idx_t GetCheckpointIteration();
 	//! Gets the total bytes written to the WAL since startup
 	idx_t GetTotalWritten() const;
 

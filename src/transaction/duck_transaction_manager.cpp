@@ -10,10 +10,12 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
+#include "duckdb/storage/block_manager.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/transaction_data.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/client_context_state.hpp"
 #include "duckdb/main/connection_manager.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -465,6 +467,24 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	} else {
 		DUCKDB_LOG(context, TransactionLogType, db, "Commit", info.commit_id);
 		last_commit = info.commit_id;
+		// Let registered client states commit dependent changes (serenedb's out-of-band search-index leg) now that
+		// this commit's WAL entries and flush marker are appended, while the commit lock still orders WAL appends
+		// (so hooks fire in WAL-append order across the database's commits) and before the sync below -- the
+		// dependent state gates its own durability on the WAL becoming durable.
+		if (context.registered_state && db.HasStorageManager()) {
+			auto &storage_manager = db.GetStorageManager();
+			idx_t wal_generation = storage_manager.GetBlockManager().GetCheckpointIteration();
+			idx_t wal_end_offset = 0;
+			if (held_commit_lock.owns_lock()) {
+				if (auto wal = storage_manager.GetWAL()) {
+					wal_generation = wal->GetCheckpointIteration();
+					wal_end_offset = storage_manager.GetWALSize();
+				}
+			}
+			for (auto &state : context.registered_state->States()) {
+				state->TransactionPreCheckpoint(db, context, wal_generation, wal_end_offset);
+			}
+		}
 		if (wal_written && info.wal_sync_offset > 0) {
 			// published but not yet durable: the transaction stays active until the sync below. An offset
 			// of 0 means nothing reached the WAL, or the commit synced under the lock already
