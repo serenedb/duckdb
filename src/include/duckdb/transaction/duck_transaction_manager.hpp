@@ -13,9 +13,12 @@
 #include "duckdb/common/enums/checkpoint_type.hpp"
 #include "duckdb/common/queue.hpp"
 
+#include <thread>
+
 namespace duckdb {
 class DuckTransactionManager;
 class DuckTransaction;
+class WriteAheadLog;
 struct UndoBufferProperties;
 
 //! CleanupInfo collects transactions awaiting cleanup.
@@ -62,6 +65,11 @@ public:
 	}
 	void SetActiveCheckpoint(transaction_t checkpoint_id);
 	void ResetActiveCheckpoint();
+	//! Move a checkpoint transaction's snapshot up to a fresh timestamp: the checkpoint persists every committed
+	//! transaction and truncates the WAL, so it must see even commits whose group fsync is still pending (they
+	//! become durable via the checkpoint). A durability-bounded snapshot (see DurableSnapshotBound) would silently
+	//! drop them. Safe because the checkpoint holds the exclusive checkpoint lock while it runs.
+	void RefreshCheckpointSnapshot(DuckTransaction &transaction);
 
 	bool IsDuckTransactionManager() override {
 		return true;
@@ -96,6 +104,11 @@ protected:
 private:
 	//! Generates a new commit timestamp
 	transaction_t GetCommitTimestamp();
+	//! The snapshot bound for a transaction starting now: normally the passed fresh timestamp, but while commits are
+	//! awaiting their group fsync, just above the last durable commit instead -- the new snapshot then excludes
+	//! exactly the non-durable suffix, so no transaction can ever observe a commit that a crash could still lose,
+	//! and starting a transaction never waits. Must be called with transaction_lock held.
+	transaction_t DurableSnapshotBound(transaction_t fresh_start_time);
 	//! Remove the given transaction from the list of active transactions
 	unique_ptr<DuckCleanupInfo> RemoveTransaction(DuckTransaction &transaction) noexcept;
 	//! Remove the given transaction from the list of active transactions
@@ -109,6 +122,12 @@ private:
 
 	bool HasOtherTransactions(DuckTransaction &transaction);
 	void CleanupTransactions();
+	//! Wait until the group fsyncs of all published commits have completed and raised the durable horizon
+	void WaitForInFlightCommits();
+	//! Raise the durable horizon to (at least) commit_id (raise-only) once its group fsync covers its flush marker,
+	//! and wake a waiting drain. Wakeup is skipped entirely when no drain is waiting -- the common path pays only an
+	//! atomic load, no lock/notify, so a commit is never slower than upstream.
+	void RaiseDurableHorizon(transaction_t commit_id);
 
 private:
 	//! The current start timestamp used by transactions
@@ -135,6 +154,14 @@ private:
 	StorageLock vacuum_lock;
 	//! Lock necessary to start transactions only - used by FORCE CHECKPOINT to prevent new transactions from starting
 	mutex start_transaction_lock;
+	//! Highest commit id that wrote WAL bytes, stored under transaction_lock in the same critical section that
+	//! publishes the commit (so it is monotonic). Durability follows commit order (commit order = WAL order = fsync
+	//! coverage order), so together with last_durable_commit it bounds new snapshots at the durable horizon.
+	atomic<transaction_t> last_pending_commit = 0;
+	//! Highest commit id whose WAL bytes are known durable. Raised (raise-only CAS) by each committer once its group
+	//! fsync covers its flush marker; acknowledgements can race out of commit order, hence the max. A drain
+	//! (WaitForInFlightCommits) parks on this atomic via C++20 atomic-wait; RaiseDurableHorizon notifies it.
+	atomic<transaction_t> last_durable_commit = 0;
 
 	atomic<idx_t> last_uncommitted_catalog_version = {TRANSACTION_ID_START};
 	idx_t last_committed_version = 0;

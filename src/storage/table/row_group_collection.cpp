@@ -693,12 +693,14 @@ void RowGroupCollection::FinalizeAppend(TransactionData transaction, TableAppend
 	state.total_append_count = 0;
 	state.start_row_group = nullptr;
 
-	auto local_stats_lock = state.stats.GetLock();
-	auto global_stats_lock = stats.GetLock();
-	for (idx_t col_idx = 0; col_idx < types.size(); col_idx++) {
-		auto &global_stats = stats.GetStats(*global_stats_lock, col_idx);
-		auto &local_stats = state.stats.GetStats(*local_stats_lock, col_idx);
-		global_stats.Merge(local_stats);
+	{
+		auto local_stats_lock = state.stats.GetLock();
+		auto global_stats_lock = stats.GetLock();
+		for (idx_t col_idx = 0; col_idx < types.size(); col_idx++) {
+			auto &global_stats = stats.GetStats(*global_stats_lock, col_idx);
+			auto &local_stats = state.stats.GetStats(*local_stats_lock, col_idx);
+			global_stats.Merge(local_stats);
+		}
 	}
 
 	Verify();
