@@ -124,6 +124,20 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_co
 
 	// first check if there are any indexes that exist that point to the removed column
 	for (auto &index : info->indexes.Indexes()) {
+		if (index.GetConstraintType() == IndexConstraintType::NONE) {
+			// Plain indexes are always entry-backed; when the entry is no longer
+			// visible the index was dropped earlier in this transaction and only
+			// leaves the storage list at commit - it cannot block the drop.
+			// (Unique CREATE INDEX entries still block: their names are not
+			// distinguishable from constraint-backed indexes here.)
+			auto &index_catalog = db.GetCatalog();
+			EntryLookupInfo lookup_info(CatalogType::INDEX_ENTRY, index.GetIndexName());
+			auto entry =
+			    index_catalog.GetEntry(context, info->GetSchemaName(), lookup_info, OnEntryNotFound::RETURN_NULL);
+			if (!entry) {
+				continue;
+			}
+		}
 		for (auto &column_id : index.GetColumnIds()) {
 			if (column_id == removed_column) {
 				throw CatalogException("Cannot drop this column: an index depends on it!");
@@ -602,8 +616,8 @@ static void VerifyGeneratedExpressionSuccess(ClientContext &context, TableCatalo
 	}
 }
 
-static void VerifyCheckConstraint(ClientContext &context, TableCatalogEntry &table, Expression &expr, DataChunk &chunk,
-                                  CheckConstraint &check) {
+static void VerifyCheckConstraintExpression(ClientContext &context, TableCatalogEntry &table, Expression &expr,
+                                            DataChunk &chunk, const string &check_text) {
 	ExpressionExecutor executor(context, expr);
 	Vector result(LogicalType::INTEGER);
 	try {
@@ -611,18 +625,22 @@ static void VerifyCheckConstraint(ClientContext &context, TableCatalogEntry &tab
 	} catch (std::exception &ex) {
 		ErrorData error(ex);
 		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Error: %s)", table.name,
-		                          check.ToString(), error.RawMessage());
+		                          check_text, error.RawMessage());
 	} catch (...) {
 		// LCOV_EXCL_START
 		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Unknown Error)", table.name,
-		                          check.ToString());
+		                          check_text);
 	} // LCOV_EXCL_STOP
 	for (auto entry : result.Values<int32_t>()) {
 		if (entry.IsValid() && entry.GetValue() == 0) {
-			throw ConstraintException("CHECK constraint failed on table %s with expression %s", table.name,
-			                          check.ToString());
+			throw ConstraintException("CHECK constraint failed on table %s with expression %s", table.name, check_text);
 		}
 	}
+}
+
+static void VerifyCheckConstraint(ClientContext &context, TableCatalogEntry &table, Expression &expr, DataChunk &chunk,
+                                  CheckConstraint &check) {
+	VerifyCheckConstraintExpression(context, table, expr, chunk, check.ToString());
 }
 
 static idx_t FirstMissingMatch(ConflictManager &manager, const idx_t count) {
@@ -925,8 +943,17 @@ void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, Clien
 
 	auto &constraints = table.GetConstraints();
 	for (idx_t i = 0; i < constraint_state.bound_constraints.size(); i++) {
-		auto &base_constraint = constraints[i];
 		auto &constraint = constraint_state.bound_constraints[i];
+		if (i >= constraints.size()) {
+			// Engine-supplied extra constraints carry no parsed counterpart in
+			// this entry (e.g. a facade catalog enforcing its own checks
+			// through a delegated table); they are always CHECK constraints.
+			auto &bound_check = constraint->Cast<BoundCheckConstraint>();
+			VerifyCheckConstraintExpression(context, table, *bound_check.expression, chunk,
+			                                "CHECK(" + bound_check.expression->ToString() + ")");
+			continue;
+		}
+		auto &base_constraint = constraints[i];
 		switch (base_constraint->type) {
 		case ConstraintType::NOT_NULL: {
 			auto &bound_not_null = constraint->Cast<BoundNotNullConstraint>();
@@ -1662,8 +1689,20 @@ void DataTable::VerifyUpdateConstraints(ConstraintState &state, ClientContext &c
 	auto &constraints = table.GetConstraints();
 	auto &bound_constraints = state.bound_constraints;
 	for (idx_t constr_idx = 0; constr_idx < bound_constraints.size(); constr_idx++) {
-		auto &base_constraint = constraints[constr_idx];
 		auto &constraint = bound_constraints[constr_idx];
+		if (constr_idx >= constraints.size()) {
+			// Engine-supplied extra constraints carry no parsed counterpart in
+			// this entry (e.g. a facade catalog enforcing its own checks
+			// through a delegated table); they are always CHECK constraints.
+			auto &bound_check = constraint->Cast<BoundCheckConstraint>();
+			DataChunk mock_chunk;
+			if (CreateMockChunk(table, column_ids, bound_check.bound_columns, chunk, mock_chunk)) {
+				VerifyCheckConstraintExpression(context, table, *bound_check.expression, mock_chunk,
+				                                "CHECK(" + bound_check.expression->ToString() + ")");
+			}
+			continue;
+		}
+		auto &base_constraint = constraints[constr_idx];
 		switch (constraint->type) {
 		case ConstraintType::NOT_NULL: {
 			auto &bound_not_null = constraint->Cast<BoundNotNullConstraint>();

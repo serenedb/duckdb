@@ -1,4 +1,6 @@
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 
 #include "duckdb/common/enum_util.hpp"
@@ -258,6 +260,42 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(CatalogTransaction transacti
 	return AddForeignKeyConstraint(foreign_key_constraint_info);
 }
 
+// The indexes over a table keep the table and its columns by name: in their key expressions, in their
+// dependency list and in the CREATE INDEX SQL. All three are read back when the database is loaded, so a
+// rename has to reach them as well - otherwise the index only resolves until the next restart.
+static void UpdateDependentIndexes(ClientContext &context, DuckTableEntry &table,
+                                   const std::function<void(DuckIndexEntry &)> &update) {
+	auto &data_table_info = table.GetStorage().GetDataTableInfo();
+	table.schema.Scan(context, CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
+		auto &index = entry.Cast<DuckIndexEntry>();
+		if (RefersToSameObject(index.GetDataTableInfo(), *data_table_info)) {
+			update(index);
+			index.sql = index.GetInfo()->ToString();
+		}
+	});
+}
+
+static void RewriteIndexExpressions(DuckIndexEntry &index, const std::function<void(ParsedExpression &)> &rewrite) {
+	for (auto &expr : index.expressions) {
+		rewrite(*expr);
+	}
+	for (auto &expr : index.parsed_expressions) {
+		rewrite(*expr);
+	}
+}
+
+static void RewriteIndexDependencies(DuckIndexEntry &index, const Identifier &old_name, const Identifier &new_name) {
+	LogicalDependencyList updated;
+	for (auto &dependency : index.dependencies.Set()) {
+		auto renamed = dependency;
+		if (renamed.entry.type == CatalogType::TABLE_ENTRY && renamed.entry.name == old_name) {
+			renamed.entry.name = new_name;
+		}
+		updated.AddDependency(renamed);
+	}
+	index.dependencies = std::move(updated);
+}
+
 unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
 	D_ASSERT(!internal);
 
@@ -284,7 +322,24 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		auto &rename_info = table_info.Cast<RenameTableInfo>();
 		auto copied_table = Copy(context);
 		copied_table->name = rename_info.new_table_name;
-		storage->SetTableName(rename_info.new_table_name);
+		auto old_table_name = name;
+		auto &new_table_name = rename_info.new_table_name;
+		// the storage carries the name the index definitions are regenerated with, so rename it first
+		storage->SetTableName(new_table_name);
+		UpdateDependentIndexes(context, *this, [&](DuckIndexEntry &index) {
+			RewriteIndexExpressions(index, [&](ParsedExpression &expr) {
+				ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(
+				    expr, [&](ColumnRefExpression &colref) {
+					    auto &names = colref.ColumnNamesMutable();
+					    for (idx_t i = 0; i + 1 < names.size(); i++) {
+						    if (names[i] == old_table_name) {
+							    names[i] = new_table_name;
+						    }
+					    }
+				    });
+			});
+			RewriteIndexDependencies(index, old_table_name, new_table_name);
+		});
 		return copied_table;
 	}
 	case AlterTableType::ADD_COLUMN: {
@@ -372,6 +427,9 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameColumn(ClientContext &context, Re
 	if (rename_idx.index == COLUMN_IDENTIFIER_ROW_ID) {
 		throw CatalogException("Cannot rename rowid column");
 	}
+	UpdateDependentIndexes(context, *this, [&](DuckIndexEntry &index) {
+		RewriteIndexExpressions(index, [&](ParsedExpression &expr) { RenameExpression(expr, info); });
+	});
 	auto create_info = make_uniq<CreateTableInfo>(schema, name);
 	create_info->temporary = temporary;
 	create_info->comment = comment;
@@ -1243,7 +1301,10 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropForeignKeyConstraint(ClientContext 
 		auto constraint = constraints[i]->Copy();
 		if (constraint->type == ConstraintType::FOREIGN_KEY) {
 			ForeignKeyConstraint &fk = constraint->Cast<ForeignKeyConstraint>();
-			if (fk.info.type == ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE && fk.info.table == info.fk_table) {
+			// Symmetric removal: drops the PK-side back-reference when applied
+			// to the main-key table, and the FK constraint itself when applied
+			// to the referencing table.
+			if (fk.info.table == info.fk_table) {
 				continue;
 			}
 		}
