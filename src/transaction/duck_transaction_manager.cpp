@@ -336,6 +336,21 @@ transaction_t DuckTransactionManager::GetCommitTimestamp() {
 	return current_start_timestamp++;
 }
 
+void DuckTransactionManager::RefreshStartTime(Transaction &transaction_p) {
+	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	if (transaction.ChangesMade()) {
+		// the transaction has local changes; moving its snapshot would mix
+		// visibility domains
+		return;
+	}
+	// transaction_lock (not start_transaction_lock) guards current_start_timestamp increments
+	// (see GetCommitTimestamp) and reads of peer start_time (see RemoveTransaction).
+	lock_guard<mutex> lock(transaction_lock);
+	// the refreshed snapshot is a snapshot acquisition like StartTransaction: bound it at the durable horizon so a
+	// per-statement refresh never observes a commit that is not yet durable
+	transaction.start_time = DurableSnapshotBound(current_start_timestamp++);
+}
+
 void DuckTransactionManager::CleanupTransactions() {
 	lock_guard<mutex> c_lock(cleanup_lock);
 	while (true) {
