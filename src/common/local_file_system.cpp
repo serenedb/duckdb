@@ -869,19 +869,13 @@ bool LocalFileSystem::ListFilesExtended(const string &directory,
 void LocalFileSystem::FileSync(FileHandle &handle) {
 	int fd = handle.Cast<UnixFileHandle>().fd;
 
-#if HAVE_FULLFSYNC
-	// On macOS and iOS, fsync() doesn't guarantee durability past power failures. fcntl(F_FULLFSYNC) is required for
-	// that purpose. Some filesystems don't support fcntl(F_FULLFSYNC), and require a fallback to fsync().
-	if (::fcntl(fd, F_FULLFSYNC) == 0) {
-		return;
-	}
-#endif // HAVE_FULLFSYNC
-
-#if HAVE_FDATASYNC
-	bool sync_success = ::fdatasync(fd) == 0;
-#else
+	// TODO(mbkkt): temporary fix for duckdb incorrect ifdef, will be reverted as soon as upstream will fix this
+	// For SereneDB it's safe because only modern linux supported,
+#if defined(__APPLE__)
 	bool sync_success = ::fsync(fd) == 0;
-#endif // HAVE_FDATASYNC
+#else
+	bool sync_success = ::fdatasync(fd) == 0;
+#endif
 
 	if (sync_success) {
 		return;
