@@ -30,7 +30,6 @@
 #include "duckdb/function/scalar/struct_functions.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
-#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/tableref/emptytableref.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
 
@@ -619,7 +618,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	} else {
 		// inserting into a non-temporary table: alters underlying database
 		DatabaseModificationType modification_type = DatabaseModificationType::INSERT_DATA;
-		GetStatementProperties().RegisterDBModify(table.catalog, context, modification_type);
+		GetStatementProperties().RegisterDBModify(table.GetStorageCatalog(context), context, modification_type);
 	}
 
 	auto insert = make_uniq<LogicalInsert>(table, GenerateTableIndex());
