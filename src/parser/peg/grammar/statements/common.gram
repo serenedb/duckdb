@@ -7,6 +7,8 @@ Statement <-
 	DropTSDictionaryStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
+	AlterOwnerStatement /
+	AlterDefaultPrivilegesStatement /
 	AlterRoleStatement /
 	GrantStatement /
 	RevokeStatement /

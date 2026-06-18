@@ -161,8 +161,18 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 	// unfold the macro expression
 	UnfoldMacroExpression(function, macro_func, expr, depth);
 
-	// bind the unfolded macro
-	return BindExpression(expr, depth);
+	// SereneDB fork: reads issued from the macro body run with the macro's
+	// rights (definer-rights), so bracket the bind to mark them as such.
+	binder.SdbEnterDefinitionBind();
+	try {
+		// bind the unfolded macro
+		auto result = BindExpression(expr, depth);
+		binder.SdbExitDefinitionBind();
+		return result;
+	} catch (...) {
+		binder.SdbExitDefinitionBind();
+		throw;
+	}
 }
 
 } // namespace duckdb

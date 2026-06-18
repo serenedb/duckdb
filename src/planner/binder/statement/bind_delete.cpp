@@ -17,8 +17,9 @@ BoundStatement Binder::Bind(DeleteStatement &stmt) {
 }
 
 BoundStatement Binder::BindNode(DeleteQueryNode &node) {
-	// visit the table reference
-	auto bound_table = Bind(*node.table);
+	// visit the table reference (the DELETE write target; SereneDB defers the
+	// target scan's SELECT-privilege check to plan time -- see SdbBindWriteTarget)
+	auto bound_table = SdbBindWriteTarget(*node.table);
 	auto root = std::move(bound_table.plan);
 	if (root->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only delete from base table");

@@ -7,6 +7,8 @@ Statement <-
 	DropTSDictionaryStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
+	AlterOwnerStatement /
+	AlterDefaultPrivilegesStatement /
 	AlterRoleStatement /
 	GrantStatement /
 	RevokeStatement /
@@ -1551,34 +1553,111 @@ TypeList <- Parens(List(Type))
 
 CreateRoleStatement <- 'CREATE' RoleOrUser ColId RoleOptionList?
 DropRoleStatement   <- 'DROP' RoleOrUser IfExists? ColId
-AlterRoleStatement  <- 'ALTER' RoleOrUser ColId 'PASSWORD' StringLiteral
+# RENAME TO is tried before the per-role GUC and attribute-option lists so
+# 'RENAME'/'SET'/'RESET' are not eaten by the wrong alternative.
+AlterRoleStatement  <- 'ALTER' RoleOrUser ColId (AlterRoleRename / AlterRoleConfig / AlterRoleOptionList)
+AlterRoleRename     <- 'RENAME' 'TO' ColId
+# ALTER ROLE name SET guc (= | TO) value ... | SET guc FROM CURRENT | RESET guc
+# | RESET ALL  -> per-role GUC settings (pg_db_role_setting / rolconfig).
+AlterRoleConfig     <- AlterRoleSet / AlterRoleReset
+AlterRoleSet        <- 'SET' SettingName (AlterRoleSetTo / AlterRoleSetFromCurrent)
+AlterRoleSetTo      <- ('=' / 'TO') List(Expression)
+AlterRoleSetFromCurrent <- 'FROM' 'CURRENT'
+AlterRoleReset      <- 'RESET' (AlterRoleResetAll / SettingName)
+AlterRoleResetAll   <- 'ALL'
+AlterRoleOptionList <- AlterRoleOption+
+# PasswordNullOption before PasswordOption so 'PASSWORD NULL' is matched first.
+AlterRoleOption     <- LoginOption / SuperuserOption / CreateDbOption / CreateRoleOption / InheritOption / ConnLimitOption / ValidUntilOption / PasswordNullOption / PasswordOption
+CreateDbOption      <- 'CREATEDB' / 'NOCREATEDB'
+CreateRoleOption    <- 'CREATEROLE' / 'NOCREATEROLE'
+ConnLimitOption     <- 'CONNECTION' 'LIMIT' NumberLiteral
+ValidUntilOption    <- 'VALID' 'UNTIL' StringLiteral
+PasswordNullOption  <- 'PASSWORD' 'NULL'
+
+# ALTER <objtype> name OWNER TO role -> serenedb_alter_owner pragma. Registered
+# before the native AlterStatement so OWNER TO is intercepted (DuckDB's alter
+# binder does not support ownership changes).
+AlterOwnerStatement <- 'ALTER' OwnerObjectType QualifiedName 'OWNER' 'TO' OwnerRoleSpec
+OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA'
+OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
+
+# ALTER DEFAULT PRIVILEGES [FOR ROLE r,...] [IN SCHEMA s,...] (GRANT|REVOKE) ...
+#   -> serenedb_alter_default_privileges pragma (pg_default_acl rows).
+AlterDefaultPrivilegesStatement <- 'ALTER' 'DEFAULT' 'PRIVILEGES' DefaultPrivForRole? DefaultPrivInSchema? DefaultPrivAction
+DefaultPrivForRole <- 'FOR' RoleOrUser List(ColId)
+DefaultPrivInSchema <- 'IN' 'SCHEMA' List(QualifiedName)
+DefaultPrivAction <- DefaultPrivGrant / DefaultPrivRevoke
+DefaultPrivGrant <- 'GRANT' PrivilegeList 'ON' DefaultPrivObjType 'TO' Grantee WithGrantOption?
+DefaultPrivRevoke <- 'REVOKE' DefaultPrivRevokeGrantOpt? PrivilegeList 'ON' DefaultPrivObjType 'FROM' Grantee DropBehavior?
+DefaultPrivRevokeGrantOpt <- 'GRANT' 'OPTION' 'FOR'
+DefaultPrivObjType <- 'TABLES' / 'SEQUENCES' / 'FUNCTIONS' / 'ROUTINES' / 'TYPES' / 'SCHEMAS'
 
 # Table form (with 'ON') is tried before the bare 'GRANT role TO member' form.
+# The 'OPTION FOR' downgrade forms are tried first in REVOKE so 'GRANT'/'ADMIN'
+# is not consumed by the plain privilege/membership forms.
 GrantStatement  <- 'GRANT'  (GrantTablePrivilege  / GrantRoleMembership)
-RevokeStatement <- 'REVOKE' (RevokeTablePrivilege / RevokeRoleMembership)
+RevokeStatement <- 'REVOKE' (RevokeGrantOptionFor / RevokeAdminOptionFor / RevokeTablePrivilege / RevokeRoleMembership)
 
-GrantTablePrivilege   <- PrivilegeList 'ON' TableKeyword? QualifiedName 'TO'   Grantee WithGrantOption?
-RevokeTablePrivilege  <- PrivilegeList 'ON' TableKeyword? QualifiedName 'FROM' Grantee
-GrantRoleMembership   <- ColId 'TO'   ColId
-RevokeRoleMembership  <- ColId 'FROM' ColId
+GrantTablePrivilege   <- PrivilegeList 'ON' GrantTarget 'TO'   Grantee WithGrantOption? GrantedBy?
+RevokeTablePrivilege  <- PrivilegeList 'ON' GrantTarget 'FROM' Grantee DropBehavior?
+GrantRoleMembership   <- ColId 'TO'   ColId MemberOptionList? GrantedBy?
+RevokeRoleMembership  <- ColId 'FROM' ColId DropBehavior?
+
+# REVOKE [GRANT OPTION FOR <priv> ... | ADMIN OPTION FOR <role> ...]: strip only
+# the grant/admin option, keeping the underlying privilege / membership edge.
+RevokeGrantOptionFor  <- 'GRANT' 'OPTION' 'FOR' PrivilegeList 'ON' GrantTarget 'FROM' Grantee DropBehavior?
+RevokeAdminOptionFor  <- 'ADMIN' 'OPTION' 'FOR' ColId 'FROM' ColId DropBehavior?
+
+# The object(s) a privilege is granted on. ALL ... IN SCHEMA (bulk) is tried
+# first so 'ALL' is not mistaken for a relation name. A FUNCTION/ROUTINE target
+# may carry an argument-type signature -- fn(int) -- to pick a specific
+# overload; PROCEDURE is accepted as a routine synonym too.
+GrantTarget <- GrantAllInSchema / GrantFunctionTarget / GrantNamedTarget
+GrantAllInSchema <- 'ALL' GrantObjTypePlural 'IN' 'SCHEMA' QualifiedName
+GrantObjTypePlural <- 'TABLES' / 'SEQUENCES' / 'FUNCTIONS' / 'ROUTINES' / 'PROCEDURES'
+GrantFunctionTarget <- GrantRoutineKind QualifiedName FuncArgSignature?
+GrantRoutineKind <- 'FUNCTION' / 'ROUTINE' / 'PROCEDURE'
+FuncArgSignature <- Parens(List(FuncArg)?)
+FuncArg <- (FuncArgMode? ColId Type) / (FuncArgMode? Type)
+FuncArgMode <- 'IN' / 'OUT' / 'INOUT' / 'VARIADIC'
+GrantNamedTarget <- GrantObjType? QualifiedName
 
 # Optional WITH GRANT OPTION suffix on a table GRANT: the grantee may re-grant.
 WithGrantOption <- 'WITH' 'GRANT' 'OPTION'
+# Optional GRANTED BY <role>: names the grantor of the privilege/membership.
+GrantedBy <- 'GRANTED' 'BY' ColId
+
+# Per-edge options on GRANT role TO member (PG16): admin/inherit/set. The bare
+# 'WITH ADMIN OPTION' form is the legacy spelling for admin=true. Uses the List
+# combinator so the transformer flattens it with ExtractParseResultsFromList.
+MemberOptionList <- 'WITH' List(MemberOption)
+MemberOption     <- AdminOption / InheritMemberOption / SetMemberOption
+AdminOption         <- 'ADMIN'   OptionBool? 'OPTION'?
+InheritMemberOption <- 'INHERIT' OptionBool?
+SetMemberOption     <- 'SET'     OptionBool?
+OptionBool <- 'TRUE' / 'FALSE'
 
 RoleOrUser <- 'ROLE' / 'USER'
-TableKeyword <- 'TABLE'
+# Object class for GRANT/REVOKE ... ON <type> name. Absent defaults to TABLE.
+GrantObjType <- 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN'
 # PUBLIC is the pseudo-role; otherwise a normal role identifier.
 Grantee <- 'PUBLIC' / ColId
 
 RoleOptionList <- RoleOption+
-RoleOption <- LoginOption / SuperuserOption / PasswordOption
+RoleOption <- LoginOption / SuperuserOption / InheritOption / ConnLimitOption / ValidUntilOption / PasswordOption
 LoginOption     <- 'LOGIN' / 'NOLOGIN'
 SuperuserOption <- 'SUPERUSER' / 'NOSUPERUSER'
+InheritOption   <- 'INHERIT' / 'NOINHERIT'
 PasswordOption  <- 'PASSWORD' StringLiteral
 
 PrivilegeList <- AllPrivileges / List(Privilege)
 AllPrivileges <- 'ALL' 'PRIVILEGES'?
-Privilege <- 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE' / 'TRUNCATE' / 'REFERENCES' / 'TRIGGER'
+# PG parses any identifier in the privilege position and rejects an unknown one
+# SEMANTICALLY (unrecognized privilege type "..."). ParseAclMode validates the
+# keyword against the target object's class. TEMPORARY before TEMP so the PEG
+# ordered-choice matches the longer word greedily; a bare ColId catches all the
+# rest (including invalid names like 'fly').
+Privilege <- 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE' / 'TRUNCATE' / 'REFERENCES' / 'TRIGGER' / 'MAINTAIN' / 'USAGE' / 'EXECUTE' / 'CONNECT' / 'TEMPORARY' / 'TEMP' / 'CREATE' / ColId
 
 SelectStatement <- SelectStatementInternal
 SelectStatementInternal <- WithClause? SelectSetOpChain ResultModifiers?
