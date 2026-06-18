@@ -508,6 +508,8 @@ public:
 	static unique_ptr<SQLStatement> TransformCreateRoleStatement(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformDropRoleStatement(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformAlterRoleStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterOwnerStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterDefaultPrivilegesStatement(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformGrantStatement(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformRevokeStatement(PEGTransformer &transformer, ParseResult &parse_result);
 	// comment.gram
