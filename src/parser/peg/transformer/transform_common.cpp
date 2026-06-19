@@ -1,3 +1,5 @@
+#include <absl/strings/str_replace.h>
+
 #include "duckdb/common/extra_type_info.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/types/decimal.hpp"
@@ -547,6 +549,11 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::ConvertNumberToValue(string 
 		}
 	}
 	// if there is a decimal or the value is too big to cast as either hugeint or bigint
+	if (num_underscores > 0) {
+		absl::StrReplaceAll({{"_", ""}}, &val);
+		double dbl_value = Cast::Operation<string_t, double>(string_t(val));
+		return make_uniq<ConstantExpression>(Value::DOUBLE(dbl_value));
+	}
 	double dbl_value = Cast::Operation<string_t, double>(str_val);
 	return make_uniq<ConstantExpression>(Value::DOUBLE(dbl_value));
 }
