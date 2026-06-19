@@ -17,9 +17,8 @@ BoundStatement Binder::Bind(DeleteStatement &stmt) {
 }
 
 BoundStatement Binder::BindNode(DeleteQueryNode &node) {
-	// visit the table reference (the DELETE write target; SereneDB defers the
-	// target scan's SELECT-privilege check to plan time -- see SdbBindWriteTarget)
-	auto bound_table = SdbBindWriteTarget(*node.table);
+	// visit the table reference
+	auto bound_table = Bind(*node.table);
 	auto root = std::move(bound_table.plan);
 	if (root->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only delete from base table");
@@ -28,6 +27,17 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	auto table_ptr = get.GetTable();
 	if (!table_ptr) {
 		throw BinderException("Can only delete from base table");
+	}
+	if (node.table->type == TableReferenceType::BASE_TABLE) {
+		// A catalog may delegate the scan of its table to a storage table in
+		// another catalog; the delete targets the entry the name resolves to.
+		auto &target_ref = node.table->Cast<BaseTableRef>();
+		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.table_name);
+		auto resolved = Catalog::GetEntry(context, target_ref.catalog_name, target_ref.schema_name, table_lookup,
+		                                  OnEntryNotFound::RETURN_NULL);
+		if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
+			table_ptr = &resolved->Cast<TableCatalogEntry>();
+		}
 	}
 	auto &table = *table_ptr;
 

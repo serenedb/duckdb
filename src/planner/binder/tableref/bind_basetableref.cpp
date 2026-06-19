@@ -2,7 +2,6 @@
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb/main/client_context_state.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
@@ -223,16 +222,6 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		// in catalogs that do not have transactional DDL
 		table_or_view =
 		    entry_retriever.GetEntry(ref.catalog_name, ref.schema_name, table_lookup, OnEntryNotFound::THROW_EXCEPTION);
-	}
-	// SereneDB fork: enforce read access on the referenced relation. Reads that
-	// originate from a view body run with the view's rights in real PostgreSQL;
-	// SereneDB has no definer-rights views, so we let those bypass the check and
-	// only gate relations referenced directly in the user's statement.
-	{
-		const bool inside_view = IsBindingCatalogDefinition();
-		for (auto &state : context.registered_state->States()) {
-			state->CheckCatalogReadAccess(context, *table_or_view, inside_view);
-		}
 	}
 	switch (table_or_view->type) {
 	case CatalogType::TABLE_ENTRY: {

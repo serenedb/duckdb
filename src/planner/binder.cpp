@@ -9,7 +9,6 @@
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/helper.hpp"
-#include "duckdb/main/client_context_state.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
@@ -234,48 +233,6 @@ void Binder::AddBoundView(ViewCatalogEntry &view) {
 		current = current->parent.get();
 	}
 	bound_views.insert(view);
-}
-
-bool Binder::IsBindingCatalogDefinition() const {
-	if (global_binder_state && global_binder_state->sdb_definition_bind_depth > 0) {
-		return true;
-	}
-	auto current = this;
-	while (current) {
-		if (current->binder_type == BinderType::VIEW_BINDER) {
-			return true;
-		}
-		current = current->parent.get();
-	}
-	return false;
-}
-
-void Binder::SdbEnterDefinitionBind() {
-	global_binder_state->sdb_definition_bind_depth++;
-}
-
-void Binder::SdbExitDefinitionBind() {
-	D_ASSERT(global_binder_state->sdb_definition_bind_depth > 0);
-	global_binder_state->sdb_definition_bind_depth--;
-}
-
-BoundStatement Binder::SdbBindWriteTarget(TableRef &ref) {
-	auto states = context.registered_state->States();
-	for (auto &state : states) {
-		state->OnWriteTargetBindBegin(context);
-	}
-	try {
-		auto result = Bind(ref);
-		for (auto &state : states) {
-			state->OnWriteTargetBindEnd(context);
-		}
-		return result;
-	} catch (...) {
-		for (auto &state : states) {
-			state->OnWriteTargetBindEnd(context);
-		}
-		throw;
-	}
 }
 
 TableIndex Binder::GenerateTableIndex() {

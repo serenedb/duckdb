@@ -431,18 +431,13 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 		binder_child->can_contain_nulls = true;
 		binder_child->alias = ref.alias.empty() ? "unnamed_query" : ref.alias;
 		BoundStatement query;
-		// SereneDB fork: bracket the macro body bind so its reads carry the
-		// macro's rights (definer-rights), like a catalog view body.
-		SdbEnterDefinitionBind();
 		try {
 			query = binder_child->BindNode(*query_node);
 		} catch (std::exception &ex) {
-			SdbExitDefinitionBind();
 			ErrorData error(ex);
 			error.AddQueryLocation(ref);
 			error.Throw();
 		}
-		SdbExitDefinitionBind();
 		auto bind_index = query.plan->GetRootIndex();
 		string alias = (ref.alias.empty() ? "unnamed_query" + to_string(bind_index.index) : ref.alias);
 		bind_context.AddSubquery(bind_index, alias, ref, query);
@@ -463,18 +458,13 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 
 		binder->alias = ref.alias.empty() ? "unnamed_query" : ref.alias;
 		BoundStatement query;
-		// SereneDB fork: bracket the table-macro body bind so its reads carry the
-		// macro's rights (definer-rights), like a catalog view body.
-		SdbEnterDefinitionBind();
 		try {
 			query = binder->BindNode(*query_node);
 		} catch (std::exception &ex) {
-			SdbExitDefinitionBind();
 			ErrorData error(ex);
 			error.AddQueryLocation(ref);
 			error.Throw();
 		}
-		SdbExitDefinitionBind();
 
 		auto bind_index = query.plan->GetRootIndex();
 		// string alias;

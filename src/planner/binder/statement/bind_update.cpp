@@ -198,9 +198,8 @@ BoundStatement Binder::Bind(UpdateStatement &stmt) {
 BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	unique_ptr<LogicalOperator> root;
 
-	// visit the table reference (the UPDATE write target; SereneDB defers the
-	// target scan's SELECT-privilege check to plan time -- see SdbBindWriteTarget)
-	auto bound_table = SdbBindWriteTarget(*node.table);
+	// visit the table reference
+	auto bound_table = Bind(*node.table);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only update base table");
 	}
