@@ -29,6 +29,12 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 	auto &table = *table_ptr;
 	vacuum.SetTable(table);
 
+	auto &bindings_list = bind_context.GetBindingsList();
+	if (bindings_list.empty()) {
+		throw BinderException("Can only vacuum or analyze base tables");
+	}
+	auto &table_alias = bindings_list.back()->GetBindingAlias();
+
 	vector<unique_ptr<Expression>> select_list;
 	auto &columns = info.columns;
 	if (columns.empty()) {
@@ -57,7 +63,7 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 			    col.GetName());
 		}
 		non_generated_column_names.push_back(col_name);
-		ColumnRefExpression colref(col_name, table.name);
+		ColumnRefExpression colref(col_name, table_alias);
 		auto result = bind_context.BindColumn(colref, 0);
 		if (result.HasError()) {
 			result.error.Throw();
