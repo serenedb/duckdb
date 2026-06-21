@@ -14,6 +14,7 @@
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/parser/constraints/check_constraint.hpp"
 #include "duckdb/planner/constraints/bound_check_constraint.hpp"
 #include "duckdb/planner/constraints/bound_foreign_key_constraint.hpp"
 #include "duckdb/planner/constraints/bound_not_null_constraint.hpp"
@@ -24,6 +25,7 @@
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/operator/logical_update.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/storage/storage_manager.hpp"
@@ -378,6 +380,10 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		auto &set_not_null_info = table_info.Cast<SetNotNullInfo>();
 		return SetNotNull(context, set_not_null_info);
 	}
+	case AlterTableType::DROP_CONSTRAINT: {
+		auto &drop_constraint_info = table_info.Cast<DropConstraintInfo>();
+		return DropConstraint(context, drop_constraint_info);
+	}
 	case AlterTableType::DROP_NOT_NULL: {
 		auto &drop_not_null_info = table_info.Cast<DropNotNullInfo>();
 		return DropNotNull(context, drop_not_null_info);
@@ -649,7 +655,12 @@ StructMappingInfo AddFieldToStruct(const LogicalType &type, const vector<Identif
 		if (new_field.HasDefaultValue()) {
 			default_value = new_field.DefaultValue().Copy();
 		} else {
-			default_value = make_uniq<ConstantExpression>(Value(new_field.Type()));
+			// CAST(NULL AS <type>), not a typed-NULL constant: this expression is
+			// rendered to SQL text and re-parsed by the serenedb facade's ALTER
+			// COLUMN TYPE USING path, where a bare typed-NULL ToStrings to "NULL"
+			// and loses the field type. Equivalent to a typed NULL for the native
+			// path (which evaluates the expression directly).
+			default_value = make_uniq<CastExpression>(new_field.Type(), make_uniq<ConstantExpression>(Value()));
 		}
 		result.default_value = PackExpression(std::move(default_value), new_field.Name());
 		return result;
@@ -1034,6 +1045,69 @@ DroppedFieldMapping RenameFieldFromStruct(const LogicalType &type, const vector<
 	return result;
 }
 
+StructFieldRemap BuildAddFieldRemap(const LogicalType &column_type, const Identifier &column_name,
+                                    const vector<Identifier> &column_path, const ColumnDefinition &new_field) {
+	auto res = AddFieldToStruct(column_type, column_path, new_field);
+	if (res.error.HasError()) {
+		res.error.Throw();
+	}
+	vector<unique_ptr<ParsedExpression>> children;
+	children.push_back(make_uniq<ColumnRefExpression>(column_path[0]));
+	// CAST(NULL AS <type>) rather than a typed-NULL constant: the facade renders
+	// this expression to SQL text (ChangeColumnType USING ...) and re-parses it,
+	// and a bare typed-NULL constant ToStrings to "NULL", losing the target type
+	// remap_struct needs.
+	children.push_back(make_uniq<CastExpression>(res.new_type, make_uniq<ConstantExpression>(Value())));
+	children.push_back(make_uniq<ConstantExpression>(ConstructMapping(column_name, column_type)));
+	D_ASSERT(res.default_value);
+	children.push_back(std::move(res.default_value));
+	StructFieldRemap result;
+	result.new_type = std::move(res.new_type);
+	result.remap_expression = make_uniq<FunctionExpression>("remap_struct", std::move(children));
+	return result;
+}
+
+StructFieldRemap BuildRemoveFieldRemap(const LogicalType &column_type, const vector<Identifier> &column_path) {
+	auto res = DropFieldFromStruct(column_type, column_path, 1);
+	if (res.error.HasError()) {
+		res.error.Throw();
+	}
+	vector<unique_ptr<ParsedExpression>> children;
+	children.push_back(make_uniq<ColumnRefExpression>(column_path[0]));
+	// CAST(NULL AS <type>) rather than a typed-NULL constant: the facade renders
+	// this expression to SQL text (ChangeColumnType USING ...) and re-parses it,
+	// and a bare typed-NULL constant ToStrings to "NULL", losing the target type
+	// remap_struct needs.
+	children.push_back(make_uniq<CastExpression>(res.new_type, make_uniq<ConstantExpression>(Value())));
+	children.push_back(make_uniq<ConstantExpression>(std::move(res.mapping)));
+	children.push_back(make_uniq<ConstantExpression>(Value()));
+	StructFieldRemap result;
+	result.new_type = std::move(res.new_type);
+	result.remap_expression = make_uniq<FunctionExpression>("remap_struct", std::move(children));
+	return result;
+}
+
+StructFieldRemap BuildRenameFieldRemap(const LogicalType &column_type, const vector<Identifier> &column_path,
+                                       const string &new_name) {
+	auto res = RenameFieldFromStruct(column_type, column_path, new_name, 1);
+	if (res.error.HasError()) {
+		res.error.Throw();
+	}
+	vector<unique_ptr<ParsedExpression>> children;
+	children.push_back(make_uniq<ColumnRefExpression>(column_path[0]));
+	// CAST(NULL AS <type>) rather than a typed-NULL constant: the facade renders
+	// this expression to SQL text (ChangeColumnType USING ...) and re-parses it,
+	// and a bare typed-NULL constant ToStrings to "NULL", losing the target type
+	// remap_struct needs.
+	children.push_back(make_uniq<CastExpression>(res.new_type, make_uniq<ConstantExpression>(Value())));
+	children.push_back(make_uniq<ConstantExpression>(std::move(res.mapping)));
+	children.push_back(make_uniq<ConstantExpression>(Value()));
+	StructFieldRemap result;
+	result.new_type = std::move(res.new_type);
+	result.remap_expression = make_uniq<FunctionExpression>("remap_struct", std::move(children));
+	return result;
+}
+
 unique_ptr<CatalogEntry> DuckTableEntry::RenameField(ClientContext &context, RenameFieldInfo &info) {
 	if (!ColumnExists(info.column_path[0])) {
 		throw CatalogException("Cannot rename field from column \"%s\" - it does not exist", info.column_path[0]);
@@ -1135,6 +1209,34 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropNotNull(ClientContext &context, Dro
 				break;
 			}
 		}
+	}
+
+	auto binder = Binder::CreateBinder(context);
+	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+}
+
+unique_ptr<CatalogEntry> DuckTableEntry::DropConstraint(ClientContext &context, DropConstraintInfo &info) {
+	auto create_info = GetInfo();
+	auto &table_info = create_info->Cast<CreateTableInfo>();
+
+	// CHECK constraints carry no name in the catalog; the caller identifies
+	// the constraint by its expression text.
+	bool found = false;
+	for (idx_t i = 0; i < table_info.constraints.size(); i++) {
+		auto &constraint = table_info.constraints[i];
+		if (constraint->type != ConstraintType::CHECK) {
+			continue;
+		}
+		auto &check = constraint->Cast<CheckConstraint>();
+		if (check.expression->ToString() == info.constraint_name) {
+			table_info.constraints.erase(table_info.constraints.begin() + static_cast<ptrdiff_t>(i));
+			found = true;
+			break;
+		}
+	}
+	if (!found && !info.if_constraint_not_found) {
+		throw CatalogException("constraint \"%s\" of table \"%s\" does not exist", info.constraint_name, name);
 	}
 
 	auto binder = Binder::CreateBinder(context);
@@ -1376,6 +1478,11 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddConstraint(ClientContext &context, A
 			auto existing_name = existing_pk->ToString();
 			throw CatalogException("table \"%s\" can have only one primary key: %s", name, existing_name);
 		}
+		table_info.constraints.push_back(info.constraint->Copy());
+
+	} else if (info.constraint->type == ConstraintType::CHECK) {
+		// The recreate below verifies the CHECK against existing rows (see
+		// RowGroupCollection::VerifyNewConstraint), matching SET NOT NULL.
 		table_info.constraints.push_back(info.constraint->Copy());
 
 	} else {
