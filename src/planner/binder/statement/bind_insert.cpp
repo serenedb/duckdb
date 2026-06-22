@@ -87,9 +87,23 @@ void Binder::ExpandDefaultInValuesList(InsertQueryNode &node, TableCatalogEntry 
 		expr_list.expected_types[col_idx] = table.GetExpectedTypeForInsert(column);
 		expr_list.expected_names[col_idx] = column.Name();
 
-		// now replace any DEFAULT values with the corresponding default expression
-		for (idx_t list_idx = 0; list_idx < expr_list.values.size(); list_idx++) {
-			TryReplaceDefaultExpression(expr_list.values[list_idx][col_idx], column);
+			// A generated column may only receive DEFAULT (its value is computed
+			// from its expression); a literal/expression targeting it is an error,
+			// matching PostgreSQL. This covers both the by-position list (which
+			// includes generated columns) and an explicit list that names one.
+			if (column.Generated()) {
+				for (idx_t list_idx = 0; list_idx < expr_list.values.size(); list_idx++) {
+					if (expr_list.values[list_idx][col_idx]->GetExpressionType() != ExpressionType::VALUE_DEFAULT) {
+						throw BinderException("Cannot insert a non-DEFAULT value into generated column \"%s\"",
+						                      column.Name());
+					}
+				}
+			}
+
+			// now replace any DEFAULT values with the corresponding default expression
+			for (idx_t list_idx = 0; list_idx < expr_list.values.size(); list_idx++) {
+				TryReplaceDefaultExpression(expr_list.values[list_idx][col_idx], column);
+			}
 		}
 	}
 }
@@ -295,9 +309,10 @@ void Binder::BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &
 				throw BinderException("Cannot explicitly insert values into rowid column");
 			}
 			auto &col = table.GetColumn(column_index);
-			if (col.Generated()) {
-				throw BinderException("Cannot insert into a generated column");
-			}
+			// A generated column may be named (PostgreSQL allows it, but only with
+			// DEFAULT). The VALUES binder enforces DEFAULT-only, and an INSERT ...
+			// SELECT that names a generated column is rejected by the caller. The
+			// value is then computed by the defaults/generated projection.
 			expected_types.push_back(col.Type());
 			named_column_map.push_back(column_index);
 		}
@@ -312,11 +327,22 @@ void Binder::BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &
 			}
 		}
 	} else {
-		// insert by position and no columns specified - insertion into all columns of the table
-		// intentionally don't populate 'column_index_map' as an indication of this
+		// insert by position and no columns specified - insertion into all columns of the table.
+		// Normally we leave 'column_index_map' empty as the indication of this. But if the table has
+		// (stored) generated columns we must populate it with the identity mapping so the
+		// defaults/generated projection runs and computes them, instead of storing the by-position
+		// value verbatim. The generated columns themselves only accept DEFAULT (enforced when the
+		// values are bound).
+		bool has_generated = false;
 		for (auto &col : table.GetColumns().Physical()) {
 			named_column_map.push_back(col.Logical());
 			expected_types.push_back(col.Type());
+			has_generated = has_generated || col.Generated();
+		}
+		if (has_generated) {
+			for (auto &col : table.GetColumns().Physical()) {
+				column_index_map.push_back(col.Physical().index);
+			}
 		}
 	}
 }
@@ -650,6 +676,19 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	vector<LogicalIndex> named_column_map;
 	BindInsertColumnList(table, node.columns, node.default_values, named_column_map, insert->expected_types,
 	                     column_index_map);
+
+	// An INSERT ... SELECT supplies a value for every targeted column, so naming a
+	// generated column there is not allowed -- a generated column only accepts
+	// DEFAULT (handled by the VALUES binder). Matches PostgreSQL. A VALUES insert
+	// is also carried on select_statement, so exclude it via values_list.
+	if (node.select_statement && !values_list) {
+		for (auto &col_idx : named_column_map) {
+			auto &col = table.GetColumn(col_idx);
+			if (col.Generated()) {
+				throw BinderException("Cannot insert into a generated column \"%s\"", col.Name());
+			}
+		}
+	}
 
 	// bind the default values
 	auto &catalog_name = table.ParentCatalog().GetName();
