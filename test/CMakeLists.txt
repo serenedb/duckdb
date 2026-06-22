@@ -54,7 +54,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   target_compile_options(unittest PRIVATE -Wno-error=maybe-uninitialized)
 endif()
 
-target_link_libraries(unittest duckdb_static test_helpers)
+target_link_libraries(unittest duckdb_static_testload test_helpers)
 link_extension_libraries(unittest "")
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
