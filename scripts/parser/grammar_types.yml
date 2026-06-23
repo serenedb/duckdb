@@ -532,6 +532,9 @@ Expression:
     - ZoneStringLiteral
     - ZoneIdentifier
     - RoleSpec
+    - SetValue
+    - SetValueOn
+    - SetValueOff
     - DefArg
     - DefArgNull
     - DefArgKeyword
