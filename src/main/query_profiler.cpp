@@ -24,7 +24,7 @@
 
 namespace duckdb {
 
-void QueryProfileResult::AddValue(const string &k, Value val) {
+void QueryProfileResult::AddValue(std::string_view k, Value val) {
 	D_ASSERT(kind == QueryProfileResultKind::OBJECT);
 	auto child = make_uniq<QueryProfileResult>();
 	child->kind = QueryProfileResultKind::VALUE;
@@ -33,7 +33,7 @@ void QueryProfileResult::AddValue(const string &k, Value val) {
 	children.push_back(std::move(child));
 }
 
-QueryProfileResult &QueryProfileResult::AddObject(const string &k) {
+QueryProfileResult &QueryProfileResult::AddObject(std::string_view k) {
 	D_ASSERT(kind == QueryProfileResultKind::OBJECT);
 	auto child = make_uniq<QueryProfileResult>();
 	child->kind = QueryProfileResultKind::OBJECT;
@@ -43,7 +43,7 @@ QueryProfileResult &QueryProfileResult::AddObject(const string &k) {
 	return ref;
 }
 
-QueryProfileResult &QueryProfileResult::AddList(const string &k) {
+QueryProfileResult &QueryProfileResult::AddList(std::string_view k) {
 	D_ASSERT(kind == QueryProfileResultKind::OBJECT);
 	auto child = make_uniq<QueryProfileResult>();
 	child->kind = QueryProfileResultKind::LIST;
@@ -116,7 +116,7 @@ QueryProfiler &QueryProfiler::Get(ClientContext &context) {
 	return *ClientData::Get(context).profiler;
 }
 
-void QueryProfiler::Start(const string &query) {
+void QueryProfiler::Start(std::string_view query) {
 	Reset();
 	running = true;
 	query_metrics.query_sql = query;
@@ -133,7 +133,7 @@ void QueryProfiler::Reset() {
 	metrics_finalized = false;
 }
 
-void QueryProfiler::StartQuery(const string &query, bool is_explain_analyze_p, bool start_at_optimizer) {
+void QueryProfiler::StartQuery(std::string_view query, bool is_explain_analyze_p, bool start_at_optimizer) {
 	lock_guard<mutex> guard(lock);
 	// Always reset byte counters at the start of each query so the progress bar shows per-query values
 	query_metrics.bytes_read = 0;
@@ -258,20 +258,20 @@ void QueryProfiler::TrackTotalMemoryAllocated(const idx_t amount) {
 	query_metrics.UpdateTotalMemoryAllocated(amount);
 }
 
-void QueryProfiler::AddToMetricCounter(const string &key, const idx_t amount) {
+void QueryProfiler::AddToMetricCounter(std::string_view key, const idx_t amount) {
 	if (IsEnabled()) {
 		query_metrics.UpdateMetricCounter(key, amount);
 	}
 }
 
-void QueryProfiler::SetMetric(const string &key, Value new_value) {
+void QueryProfiler::SetMetric(std::string_view key, Value new_value) {
 	if (!IsEnabled()) {
 		return;
 	}
 	metrics->SetMetric(key, std::move(new_value));
 }
 
-bool QueryProfiler::MetricIsTracked(const string &key) const {
+bool QueryProfiler::MetricIsTracked(std::string_view key) const {
 	if (!IsEnabled()) {
 		return false;
 	}
@@ -286,8 +286,8 @@ idx_t QueryProfiler::GetBytesWritten() const {
 	return query_metrics.GetBytesWritten();
 }
 
-MetricsTimer QueryProfiler::StartTimerInternal(const string &key) {
-	return MetricsTimer(query_metrics, key, IsEnabled());
+MetricsTimer QueryProfiler::StartTimerInternal(std::string key) {
+	return MetricsTimer(query_metrics, std::move(key), IsEnabled());
 }
 
 string QueryProfiler::ToString(const ProfilerPrintFormat &format) const {
@@ -500,9 +500,9 @@ void QueryProfiler::SetBlockedTime(const double &blocked_thread_time) {
 	query_metrics.blocked_thread_time = blocked_thread_time;
 }
 
-string QueryProfiler::DrawPadded(const string &str, idx_t width) {
+string QueryProfiler::DrawPadded(std::string_view str, idx_t width) {
 	if (str.size() > width) {
-		return str.substr(0, width);
+		return string(str.substr(0, width));
 	} else {
 		width -= str.size();
 		auto half_spaces = width / 2;
@@ -608,7 +608,7 @@ Value QueryProfiler::JSONSanitize(const Value &input) {
 	return Value::MAP(result);
 }
 
-string QueryProfiler::JSONSanitize(const std::string &text) {
+string QueryProfiler::JSONSanitize(std::string_view text) {
 	string result;
 	result.reserve(text.size());
 	for (char i : text) {
@@ -779,7 +779,7 @@ static LegacyCumulative LegacyOperatorToResultTree(const GatheredMetrics &info, 
                                                    QueryProfileResult &result) {
 	auto operator_metrics = node.GetOperatorMetrics().GetMetrics(info);
 
-	auto emit_as = [&](const string &old_key, const string &new_key) {
+	auto emit_as = [&](std::string_view old_key, std::string_view new_key) {
 		auto it = operator_metrics.find(old_key);
 		if (it != operator_metrics.end()) {
 			result.AddValue(new_key, it->second);
@@ -839,7 +839,7 @@ unique_ptr<QueryProfileResult> QueryProfiler::ToLegacyResultTree() const {
 
 	const auto &gathered = metrics->GetMetrics();
 
-	auto emit = [&](const string &new_key, const string &old_key) {
+	auto emit = [&](std::string_view new_key, std::string_view old_key) {
 		auto it = gathered.find(old_key);
 		if (it != gathered.end()) {
 			result->AddValue(new_key, it->second);

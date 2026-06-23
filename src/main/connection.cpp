@@ -76,7 +76,7 @@ void Connection::ForceParallelism() {
 	ClientConfig::GetConfig(*context).verify_parallelism = true;
 }
 
-unique_ptr<QueryResult> Connection::SendQuery(const string &query, QueryParameters query_parameters) {
+unique_ptr<QueryResult> Connection::SendQuery(std::string_view query, QueryParameters query_parameters) {
 	return context->Query(query, query_parameters);
 }
 
@@ -84,7 +84,7 @@ unique_ptr<QueryResult> Connection::SendQuery(unique_ptr<SQLStatement> statement
 	return context->Query(std::move(statement), query_parameters);
 }
 
-unique_ptr<MaterializedQueryResult> Connection::Query(const string &query) {
+unique_ptr<MaterializedQueryResult> Connection::Query(std::string_view query) {
 	QueryParameters query_parameters;
 	query_parameters.output_type = QueryResultOutputType::FORCE_MATERIALIZED;
 	auto result = context->Query(query, query_parameters);
@@ -102,7 +102,7 @@ unique_ptr<MaterializedQueryResult> Connection::Query(unique_ptr<SQLStatement> s
 	return unique_ptr_cast<QueryResult, MaterializedQueryResult>(std::move(result));
 }
 
-unique_ptr<PendingQueryResult> Connection::PendingQuery(const string &query, QueryParameters query_parameters) {
+unique_ptr<PendingQueryResult> Connection::PendingQuery(std::string_view query, QueryParameters query_parameters) {
 	return context->PendingQuery(query, query_parameters);
 }
 
@@ -111,7 +111,7 @@ unique_ptr<PendingQueryResult> Connection::PendingQuery(unique_ptr<SQLStatement>
 	return context->PendingQuery(std::move(statement), query_parameters);
 }
 
-unique_ptr<PendingQueryResult> Connection::PendingQuery(const string &query,
+unique_ptr<PendingQueryResult> Connection::PendingQuery(std::string_view query,
                                                         identifier_map_t<BoundParameterData> &named_values,
                                                         QueryParameters query_parameters) {
 	return context->PendingQuery(query, named_values, query_parameters);
@@ -132,7 +132,7 @@ static identifier_map_t<BoundParameterData> ConvertParamListToMap(vector<Value> 
 	return named_values;
 }
 
-unique_ptr<PendingQueryResult> Connection::PendingQuery(const string &query, vector<Value> &values,
+unique_ptr<PendingQueryResult> Connection::PendingQuery(std::string_view query, vector<Value> &values,
                                                         QueryParameters query_parameters) {
 	auto named_params = ConvertParamListToMap(values);
 	return context->PendingQuery(query, named_params, query_parameters);
@@ -144,20 +144,23 @@ unique_ptr<PendingQueryResult> Connection::PendingQuery(unique_ptr<SQLStatement>
 	return context->PendingQuery(std::move(statement), named_params, query_parameters);
 }
 
-unique_ptr<PendingQueryResult> Connection::PendingQuery(const string &query, PendingQueryParameters parameters) {
+unique_ptr<PendingQueryResult> Connection::PendingQuery(std::string_view query, PendingQueryParameters parameters) {
 	return context->PendingQuery(query, parameters);
 }
 
 unique_ptr<PreparedStatement>
-Connection::Prepare(const string &query, optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
+Connection::Prepare(std::string_view query,
+                    optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
 	return context->Prepare(query, parameter_type_hints);
 }
 
-unique_ptr<PreparedStatement> Connection::Prepare(unique_ptr<SQLStatement> statement) {
-	return context->Prepare(std::move(statement));
+unique_ptr<PreparedStatement>
+Connection::Prepare(unique_ptr<SQLStatement> statement,
+                    optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
+	return context->Prepare(std::move(statement), parameter_type_hints);
 }
 
-unique_ptr<QueryResult> Connection::QueryParamsRecursive(const string &query, vector<Value> &values) {
+unique_ptr<QueryResult> Connection::QueryParamsRecursive(std::string_view query, vector<Value> &values) {
 	auto named_params = ConvertParamListToMap(values);
 	PendingQueryParameters parameters;
 	parameters.parameters = &named_params;
@@ -183,12 +186,12 @@ unique_ptr<TableDescription> Connection::TableInfo(const Identifier &table_name)
 	return TableInfo(Identifier::InvalidCatalog(), Identifier::DefaultSchema(), table_name);
 }
 
-vector<unique_ptr<SQLStatement>> Connection::ExtractStatements(const string &query, idx_t *raw_statement_count,
+vector<unique_ptr<SQLStatement>> Connection::ExtractStatements(std::string_view query, idx_t *raw_statement_count,
                                                                bool wrap_multi) {
 	return context->ParseStatements(query, raw_statement_count, wrap_multi);
 }
 
-unique_ptr<LogicalOperator> Connection::ExtractPlan(const string &query) {
+unique_ptr<LogicalOperator> Connection::ExtractPlan(std::string_view query) {
 	return context->ExtractPlan(query);
 }
 
@@ -316,11 +319,12 @@ shared_ptr<Relation> Connection::ReadParquet(const string &parquet_file, bool bi
 	return TableFunction("parquet_scan", params, named_parameters)->Alias(parquet_file);
 }
 
-unordered_set<string> Connection::GetTableNames(const string &query, const bool qualified) {
+unordered_set<string> Connection::GetTableNames(std::string_view query, const bool qualified) {
 	return context->GetTableNames(query, qualified);
 }
 
-shared_ptr<Relation> Connection::RelationFromQuery(const string &query, const string &alias, const string &error) {
+shared_ptr<Relation> Connection::RelationFromQuery(std::string_view query, const string &alias,
+                                                   std::string_view error) {
 	return RelationFromQuery(QueryRelation::ParseStatement(*context, query, error), alias);
 }
 
