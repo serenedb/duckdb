@@ -14,7 +14,7 @@ namespace duckdb {
 
 class TableDescription {
 public:
-	TableDescription(const string &database_name, const string &schema_name, const string &table_name)
+	TableDescription(std::string_view database_name, std::string_view schema_name, std::string_view table_name)
 	    : database(database_name), schema(schema_name), table(table_name) {};
 
 	TableDescription() = delete;

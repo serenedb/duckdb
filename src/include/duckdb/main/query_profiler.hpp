@@ -58,11 +58,11 @@ struct QueryProfileResult {
 	vector<unique_ptr<QueryProfileResult>> children;
 
 	//! Add a named VALUE leaf to this OBJECT node
-	void AddValue(const string &k, Value val);
+	void AddValue(std::string_view k, Value val);
 	//! Add a named OBJECT child to this OBJECT node; returns the new child
-	QueryProfileResult &AddObject(const string &k);
+	QueryProfileResult &AddObject(std::string_view k);
 	//! Add a named LIST child to this OBJECT node; returns the new child
-	QueryProfileResult &AddList(const string &k);
+	QueryProfileResult &AddList(std::string_view k);
 	//! Append an anonymous OBJECT item to this LIST node; returns the new item
 	QueryProfileResult &AppendObject();
 	//! Append an anonymous LIST item to this node; returns the new item
@@ -90,9 +90,10 @@ public:
 
 	DUCKDB_API static QueryProfiler &Get(ClientContext &context);
 
-	DUCKDB_API void Start(const string &query);
+	DUCKDB_API void Start(std::string_view query);
 	DUCKDB_API void Reset();
-	DUCKDB_API void StartQuery(const string &query, bool is_explain_analyze = false, bool start_at_optimizer = false);
+	DUCKDB_API void StartQuery(std::string_view query, bool is_explain_analyze = false,
+	                           bool start_at_optimizer = false);
 	DUCKDB_API void EndQuery();
 	//! Finalize query metrics for output; safe to call multiple times.
 	DUCKDB_API void FinalizeMetrics();
@@ -104,13 +105,13 @@ public:
 	//! Track memory allocated (thread-safe; always tracked).
 	DUCKDB_API void TrackTotalMemoryAllocated(idx_t amount);
 	//! Add to a metric counter (profiling-only).
-	DUCKDB_API void AddToMetricCounter(const string &key, idx_t amount);
+	DUCKDB_API void AddToMetricCounter(std::string_view key, idx_t amount);
 
 	//! Set an arbitrary metric value (profiling-only; no-op when profiling is disabled).
-	DUCKDB_API void SetMetric(const string &key, Value new_value);
+	DUCKDB_API void SetMetric(std::string_view key, Value new_value);
 	//! Returns true if the given metric is currently being tracked.
 	//! Always returns false when profiling is disabled.
-	DUCKDB_API bool MetricIsTracked(const string &key) const;
+	DUCKDB_API bool MetricIsTracked(std::string_view key) const;
 
 	//! Start a timer for a metric identified by its struct type.
 	template <class METRIC>
@@ -118,7 +119,7 @@ public:
 		return StartTimerInternal(METRIC::Name);
 	}
 	//! Start a timer for a string-keyed metric (use the template overload when possible).
-	DUCKDB_API MetricsTimer StartTimerInternal(const string &key);
+	DUCKDB_API MetricsTimer StartTimerInternal(std::string key);
 
 	DUCKDB_API void StartExplainAnalyze();
 
@@ -140,8 +141,14 @@ public:
 
 	// Sanitize a Value::MAP
 	static Value JSONSanitize(const Value &input);
-	static string JSONSanitize(const string &text);
-	static string DrawPadded(const string &str, idx_t width);
+	static string JSONSanitize(std::string_view text);
+	static string JSONSanitize(const string &text) {
+		return JSONSanitize(std::string_view(text));
+	}
+	static string JSONSanitize(const char *text) {
+		return JSONSanitize(std::string_view(text));
+	}
+	static string DrawPadded(std::string_view str, idx_t width);
 	DUCKDB_API void ToLog() const;
 	DUCKDB_API string ToJSON() const;
 	DUCKDB_API void WriteToFile(const char *path, string &info) const;

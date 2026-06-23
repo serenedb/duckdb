@@ -106,7 +106,7 @@ struct ActiveQueryGuard {
 	unique_ptr<ActiveQueryContext> &active_query;
 	bool set_active_query;
 
-	ActiveQueryGuard(unique_ptr<ActiveQueryContext> &active_query_p, const string &query)
+	ActiveQueryGuard(unique_ptr<ActiveQueryContext> &active_query_p, std::string_view query)
 	    : active_query(active_query_p), set_active_query(false) {
 		if (!active_query) {
 			active_query = make_uniq<ActiveQueryContext>();
@@ -230,7 +230,7 @@ void ClientContext::Destroy() {
 	CleanupInternal(*lock);
 }
 
-void ClientContext::ProcessError(ErrorData &error, const string &query) const {
+void ClientContext::ProcessError(ErrorData &error, std::string_view query) const {
 	error.FinalizeError();
 	if (Settings::Get<ErrorsAsJSONSetting>(*this)) {
 		error.ConvertErrorToJSON();
@@ -240,12 +240,12 @@ void ClientContext::ProcessError(ErrorData &error, const string &query) const {
 }
 
 template <class T>
-unique_ptr<T> ClientContext::ErrorResult(ErrorData error, const string &query) {
+unique_ptr<T> ClientContext::ErrorResult(ErrorData error, std::string_view query) {
 	ProcessError(error, query);
 	return make_uniq<T>(std::move(error));
 }
 
-void ClientContext::BeginQueryInternal(ClientContextLock &lock, const string &query) {
+void ClientContext::BeginQueryInternal(ClientContextLock &lock, std::string_view query) {
 	// check if we are on AutoCommit. In this case we should start a transaction
 	D_ASSERT(!active_query);
 	auto &db_inst = DatabaseInstance::GetDatabase(*this);
@@ -419,7 +419,7 @@ static bool IsExplainAnalyze(SQLStatement *statement) {
 }
 
 shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal(ClientContextLock &lock,
-                                                                                 const string &query,
+                                                                                 std::string_view query,
                                                                                  unique_ptr<SQLStatement> statement,
                                                                                  PendingQueryParameters parameters) {
 	StatementType statement_type = statement->type;
@@ -499,7 +499,8 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 	return result;
 }
 
-shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatement(ClientContextLock &lock, const string &query,
+shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatement(ClientContextLock &lock,
+                                                                         std::string_view query,
                                                                          unique_ptr<SQLStatement> statement,
                                                                          PendingQueryParameters parameters,
                                                                          PreparedStatementMode mode) {
@@ -562,7 +563,7 @@ void BindPreparedStatementParameters(PreparedStatementData &statement, const Pen
 	statement.Bind(std::move(owned_values));
 }
 
-void ClientContext::RebindPreparedStatement(ClientContextLock &lock, const string &query,
+void ClientContext::RebindPreparedStatement(ClientContextLock &lock, std::string_view query,
                                             shared_ptr<PreparedStatementData> &prepared,
                                             const PendingQueryParameters &parameters) {
 	if (!prepared->unbound_statement) {
@@ -654,7 +655,7 @@ ClientContext::PendingPreparedStatementInternal(ClientContextLock &lock,
 	return pending_result;
 }
 
-unique_ptr<PendingQueryResult> ClientContext::PendingPreparedStatement(ClientContextLock &lock, const string &query,
+unique_ptr<PendingQueryResult> ClientContext::PendingPreparedStatement(ClientContextLock &lock, std::string_view query,
                                                                        shared_ptr<PreparedStatementData> prepared,
                                                                        const PendingQueryParameters &parameters) {
 	CheckIfPreparedStatementIsExecutable(*prepared);
@@ -741,11 +742,12 @@ void ClientContext::InitialCleanup(ClientContextLock &lock) {
 	interrupt_state = ClientInterruptState::NOT_INTERRUPTED;
 }
 
-vector<unique_ptr<SQLStatement>> ClientContext::ParseStatements(const string &query) {
+vector<unique_ptr<SQLStatement>> ClientContext::ParseStatements(std::string_view query) {
 	auto lock = LockContext();
 	return ParseStatementsInternal(*lock, query);
 }
-vector<unique_ptr<SQLStatement>> ClientContext::ParseStatementsInternal(ClientContextLock &lock, const string &query) {
+vector<unique_ptr<SQLStatement>> ClientContext::ParseStatementsInternal(ClientContextLock &lock,
+                                                                        std::string_view query) {
 	try {
 		Parser parser(GetParserOptions());
 		auto &profiler = QueryProfiler::Get(*this);
@@ -776,7 +778,7 @@ void ClientContext::PreprocessStatements(vector<unique_ptr<SQLStatement>> &state
 	preprocessor.Preprocess(*lock, statements, transaction_context_state);
 }
 
-unique_ptr<LogicalOperator> ClientContext::ExtractPlan(const string &query) {
+unique_ptr<LogicalOperator> ClientContext::ExtractPlan(std::string_view query) {
 	auto lock = LockContext();
 
 	auto statements = ParseStatementsInternal(*lock, query);
@@ -827,7 +829,9 @@ ClientContext::PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement>
 	                                    std::move(named_param_map));
 }
 
-unique_ptr<PreparedStatement> ClientContext::Prepare(unique_ptr<SQLStatement> statement) {
+unique_ptr<PreparedStatement>
+ClientContext::Prepare(unique_ptr<SQLStatement> statement,
+                       optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
 	auto lock = LockContext();
 	// Store the query in case of an error.
 	auto query = statement->query;
@@ -835,14 +839,14 @@ unique_ptr<PreparedStatement> ClientContext::Prepare(unique_ptr<SQLStatement> st
 	// Try to prepare.
 	try {
 		InitialCleanup(*lock);
-		return PrepareInternal(*lock, std::move(statement));
+		return PrepareInternal(*lock, std::move(statement), parameter_type_hints);
 	} catch (std::exception &ex) {
 		return ErrorResult<PreparedStatement>(ErrorData(ex), query);
 	}
 }
 
 unique_ptr<PreparedStatement>
-ClientContext::Prepare(const string &query,
+ClientContext::Prepare(std::string_view query,
                        optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
 	auto lock = LockContext();
 	// prepare the query
@@ -863,7 +867,8 @@ ClientContext::Prepare(const string &query,
 	}
 }
 
-unique_ptr<PendingQueryResult> ClientContext::PendingQueryPreparedInternal(ClientContextLock &lock, const string &query,
+unique_ptr<PendingQueryResult> ClientContext::PendingQueryPreparedInternal(ClientContextLock &lock,
+                                                                           std::string_view query,
                                                                            shared_ptr<PreparedStatementData> &prepared,
                                                                            const PendingQueryParameters &parameters) {
 	try {
@@ -874,14 +879,14 @@ unique_ptr<PendingQueryResult> ClientContext::PendingQueryPreparedInternal(Clien
 	return PendingStatementOrPreparedStatementInternal(lock, query, nullptr, prepared, parameters);
 }
 
-unique_ptr<PendingQueryResult> ClientContext::PendingQuery(const string &query,
+unique_ptr<PendingQueryResult> ClientContext::PendingQuery(std::string_view query,
                                                            shared_ptr<PreparedStatementData> &prepared,
                                                            const PendingQueryParameters &parameters) {
 	auto lock = LockContext();
 	return PendingQueryPreparedInternal(*lock, query, prepared, parameters);
 }
 
-unique_ptr<QueryResult> ClientContext::Execute(const string &query, shared_ptr<PreparedStatementData> &prepared,
+unique_ptr<QueryResult> ClientContext::Execute(std::string_view query, shared_ptr<PreparedStatementData> &prepared,
                                                const PendingQueryParameters &parameters) {
 	auto lock = LockContext();
 	auto pending = PendingQueryPreparedInternal(*lock, query, prepared, parameters);
@@ -891,7 +896,7 @@ unique_ptr<QueryResult> ClientContext::Execute(const string &query, shared_ptr<P
 	return pending->ExecuteInternal(*lock);
 }
 
-unique_ptr<QueryResult> ClientContext::Execute(const string &query, shared_ptr<PreparedStatementData> &prepared,
+unique_ptr<QueryResult> ClientContext::Execute(std::string_view query, shared_ptr<PreparedStatementData> &prepared,
                                                case_insensitive_map_t<BoundParameterData> &values,
                                                QueryParameters query_parameters) {
 	PendingQueryParameters parameters;
@@ -900,7 +905,7 @@ unique_ptr<QueryResult> ClientContext::Execute(const string &query, shared_ptr<P
 	return Execute(query, prepared, parameters);
 }
 
-unique_ptr<PendingQueryResult> ClientContext::PendingStatementInternal(ClientContextLock &lock, const string &query,
+unique_ptr<PendingQueryResult> ClientContext::PendingStatementInternal(ClientContextLock &lock, std::string_view query,
                                                                        unique_ptr<SQLStatement> statement,
                                                                        const PendingQueryParameters &parameters) {
 	// prepare the query for execution
@@ -925,7 +930,7 @@ unique_ptr<PendingQueryResult> ClientContext::PendingStatementInternal(ClientCon
 	return PendingPreparedStatementInternal(lock, std::move(prepared), parameters);
 }
 
-unique_ptr<QueryResult> ClientContext::RunStatementInternal(ClientContextLock &lock, const string &query,
+unique_ptr<QueryResult> ClientContext::RunStatementInternal(ClientContextLock &lock, std::string_view query,
                                                             unique_ptr<SQLStatement> statement,
                                                             const PendingQueryParameters &parameters, bool verify) {
 	auto pending = PendingQueryInternal(lock, std::move(statement), parameters, verify);
@@ -943,7 +948,7 @@ bool ClientContext::IsActiveResult(ClientContextLock &lock, BaseQueryResult &res
 }
 
 unique_ptr<PendingQueryResult> ClientContext::PendingStatementOrPreparedStatementInternal(
-    ClientContextLock &lock, const string &query, unique_ptr<SQLStatement> statement,
+    ClientContextLock &lock, std::string_view query, unique_ptr<SQLStatement> statement,
     shared_ptr<PreparedStatementData> &prepared, const PendingQueryParameters &parameters) {
 	if (statement) {
 		StatementVerification(lock, query, statement, parameters);
@@ -952,7 +957,7 @@ unique_ptr<PendingQueryResult> ClientContext::PendingStatementOrPreparedStatemen
 }
 
 unique_ptr<PendingQueryResult> ClientContext::PendingStatementOrPreparedStatement(
-    ClientContextLock &lock, const string &query, unique_ptr<SQLStatement> statement,
+    ClientContextLock &lock, std::string_view query, unique_ptr<SQLStatement> statement,
     shared_ptr<PreparedStatementData> &prepared, const PendingQueryParameters &parameters) {
 	unique_ptr<PendingQueryResult> pending;
 	try {
@@ -996,7 +1001,7 @@ unique_ptr<PendingQueryResult> ClientContext::PendingStatementOrPreparedStatemen
 	return pending;
 }
 
-void ClientContext::LogQueryInternal(ClientContextLock &, const string &query) {
+void ClientContext::LogQueryInternal(ClientContextLock &, std::string_view query) {
 	if (!client_data->log_query_writer) {
 #ifdef DUCKDB_FORCE_QUERY_LOG
 		try {
@@ -1011,7 +1016,7 @@ void ClientContext::LogQueryInternal(ClientContextLock &, const string &query) {
 #endif
 	}
 	// log query path is set: log the query
-	client_data->log_query_writer->WriteData(const_data_ptr_cast(query.c_str()), query.size());
+	client_data->log_query_writer->WriteData(const_data_ptr_cast(query.data()), query.size());
 	client_data->log_query_writer->WriteData(const_data_ptr_cast("\n"), 1);
 	client_data->log_query_writer->Flush();
 	client_data->log_query_writer->Sync();
@@ -1028,7 +1033,7 @@ unique_ptr<QueryResult> ClientContext::Query(unique_ptr<SQLStatement> statement,
 	return pending_query->Execute();
 }
 
-unique_ptr<QueryResult> ClientContext::Query(const string &query, QueryParameters query_parameters) {
+unique_ptr<QueryResult> ClientContext::Query(std::string_view query, QueryParameters query_parameters) {
 	auto lock = LockContext();
 	vector<unique_ptr<SQLStatement>> statements;
 	try {
@@ -1093,13 +1098,13 @@ unique_ptr<QueryResult> ClientContext::Query(const string &query, QueryParameter
 	return result;
 }
 
-vector<unique_ptr<SQLStatement>> ClientContext::ParseStatements(ClientContextLock &lock, const string &query) {
+vector<unique_ptr<SQLStatement>> ClientContext::ParseStatements(ClientContextLock &lock, std::string_view query) {
 	InitialCleanup(lock);
 	// parse the query and transform it into a set of statements
 	return ParseStatementsInternal(lock, query);
 }
 
-unique_ptr<PendingQueryResult> ClientContext::PendingQuery(const string &query, QueryParameters parameters) {
+unique_ptr<PendingQueryResult> ClientContext::PendingQuery(std::string_view query, QueryParameters parameters) {
 	case_insensitive_map_t<BoundParameterData> empty_param_list;
 	return PendingQuery(query, empty_param_list, parameters);
 }
@@ -1110,7 +1115,7 @@ unique_ptr<PendingQueryResult> ClientContext::PendingQuery(unique_ptr<SQLStateme
 	return PendingQuery(std::move(statement), empty_param_list, parameters);
 }
 
-unique_ptr<PendingQueryResult> ClientContext::PendingQuery(const string &query,
+unique_ptr<PendingQueryResult> ClientContext::PendingQuery(std::string_view query,
                                                            case_insensitive_map_t<BoundParameterData> &values,
                                                            QueryParameters parameters) {
 	PendingQueryParameters params;
@@ -1119,7 +1124,7 @@ unique_ptr<PendingQueryResult> ClientContext::PendingQuery(const string &query,
 	return PendingQuery(query, params);
 }
 
-unique_ptr<PendingQueryResult> ClientContext::PendingQuery(const string &query, PendingQueryParameters parameters) {
+unique_ptr<PendingQueryResult> ClientContext::PendingQuery(std::string_view query, PendingQueryParameters parameters) {
 	auto lock = LockContext();
 	try {
 		InitialCleanup(*lock);
@@ -1348,7 +1353,7 @@ void ClientContext::TryBindRelation(Relation &relation, vector<ColumnDefinition>
 	RunFunctionInTransaction([&]() { InternalTryBindRelation(relation, result_columns); });
 }
 
-unordered_set<string> ClientContext::GetTableNames(const string &query, const bool qualified) {
+unordered_set<string> ClientContext::GetTableNames(std::string_view query, const bool qualified) {
 	auto lock = LockContext();
 
 	auto statements = ParseStatementsInternal(*lock, query);
