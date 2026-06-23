@@ -15,6 +15,7 @@
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 
+#include <absl/hash/internal/hash.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/internal/memutil.h>
 #include <absl/strings/match.h>
@@ -435,22 +436,12 @@ bool StringUtil::IsUpper(std::string_view str) {
 	return str == Upper(str);
 }
 
-// Jenkins hash function: https://en.wikipedia.org/wiki/Jenkins_hash_function
 uint64_t StringUtil::CIHash(std::string_view str) {
 	return StringUtil::CIHash(str.data(), str.size());
 }
 
 uint64_t StringUtil::CIHash(const char *str, idx_t size) {
-	uint32_t hash = 0;
-	for (idx_t i = 0; i < size; i++) {
-		hash += static_cast<uint32_t>(StringUtil::CharacterToLower(static_cast<char>(str[i])));
-		hash += hash << 10;
-		hash ^= hash >> 6;
-	}
-	hash += hash << 3;
-	hash ^= hash >> 11;
-	hash += hash << 15;
-	return hash;
+	return absl::hash_internal::CaseInsensitiveHash64(str, size);
 }
 
 bool StringUtil::CIEquals(const char *l1, idx_t l1_size, const char *l2, idx_t l2_size) {
