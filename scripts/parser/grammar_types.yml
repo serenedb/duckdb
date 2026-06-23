@@ -907,6 +907,8 @@ GenericCopyOptionValue:
     - GenericCopyOptionValue
     - GenericCopyOptionOrderList
     - GenericCopyOptionExpression
+    - CopyFormatKeyword
+    - CopyBooleanKeyword
 
 MacroParameter:
   type: "MacroParameter"
