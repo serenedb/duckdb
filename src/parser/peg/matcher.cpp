@@ -625,16 +625,15 @@ private:
 		}
 		// variable matchers match anything except for reserved keywords
 		auto &token_text = state.tokens[state.token_index].text;
-		const auto &keyword_helper = PEGKeywordHelper::Instance();
 		switch (suggestion_type) {
 		case SuggestionState::SUGGEST_TYPE_NAME:
-			if (keyword_helper.KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_UNRESERVED) ||
-			    keyword_helper.KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_TYPE_NAME)) {
+			if (peg::KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_UNRESERVED) ||
+			    peg::KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_TYPE_NAME)) {
 				break;
 			}
-			if (keyword_helper.KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_RESERVED) ||
-			    keyword_helper.KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_TYPE_FUNC) ||
-			    keyword_helper.KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_COL_NAME)) {
+			if (peg::KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_RESERVED) ||
+			    peg::KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_TYPE_FUNC) ||
+			    peg::KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_COL_NAME)) {
 				return false;
 			}
 			break;
@@ -644,14 +643,12 @@ private:
 			                                           ? PEGKeywordCategory::KEYWORD_TYPE_FUNC
 			                                           : PEGKeywordCategory::KEYWORD_COL_NAME;
 
-			const bool is_reserved =
-			    keyword_helper.KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_RESERVED);
-			const bool has_extra_banned_category = keyword_helper.KeywordCategoryType(token_text, banned_category);
+			const bool is_reserved = peg::KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_RESERVED);
+			const bool has_extra_banned_category = peg::KeywordCategoryType(token_text, banned_category);
 			const bool has_banned_flag = is_reserved || has_extra_banned_category;
 
-			const bool is_unreserved =
-			    keyword_helper.KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_UNRESERVED);
-			const bool has_override_flag = keyword_helper.KeywordCategoryType(token_text, allowed_override_category);
+			const bool is_unreserved = peg::KeywordCategoryType(token_text, PEGKeywordCategory::KEYWORD_UNRESERVED);
+			const bool has_override_flag = peg::KeywordCategoryType(token_text, allowed_override_category);
 			const bool has_allowed_flag = is_unreserved || has_override_flag;
 
 			if (has_banned_flag && !has_allowed_flag) {
