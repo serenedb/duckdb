@@ -78,6 +78,15 @@ public:
 	//! Work on tasks for this specific executor, until there are no tasks remaining
 	bool WorkOnTasks();
 
+	//! Hand a single task directly to this executor's driver, bypassing the
+	//! scheduler queue, when the calling thread is currently driving this
+	//! executor (inside Initialize/ExecuteTask/WorkOnTasks) and the slot is
+	//! free. The driver consumes the slot before polling the queue and before
+	//! it can park, so no scheduler wake-up is needed and the shared queue's
+	//! task-per-signal accounting stays intact (see Event::SetTasks). Returns
+	//! false (caller schedules normally) otherwise.
+	bool TrySubmitInlineTask(const shared_ptr<Task> &task);
+
 	//! Flush a thread context into the client context
 	void Flush(ThreadContext &context);
 
@@ -91,7 +100,11 @@ public:
 	idx_t GetPipelinesProgress(ProgressData &progress);
 
 	void CompletePipeline() {
-		completed_pipelines++;
+		if (++completed_pipelines == total_pipelines) {
+			// The query just finished: wake an async driver parked on NO_TASKS so it
+			// can observe completion instead of polling.
+			NotifyDriver();
+		}
 	}
 	ProducerToken &GetToken() {
 		return *producer;
@@ -129,6 +142,8 @@ public:
 private:
 	//! Check if the streaming query result is waiting to be fetched from, must hold the 'executor_lock'
 	bool ResultCollectorIsBlocked();
+	//! Fire on_reschedule (if set) to wake an async driver parked on NO_TASKS_AVAILABLE. Takes executor_lock.
+	void NotifyDriver();
 	void InitializeInternal(PhysicalOperator &physical_plan);
 
 	void ScheduleEvents(const vector<shared_ptr<MetaPipeline>> &meta_pipelines);
@@ -182,6 +197,11 @@ private:
 	PendingExecutionResult execution_result;
 	//! The current task in process (if any)
 	shared_ptr<Task> task;
+	//! Driver-bypass slot (TrySubmitInlineTask). Own lock: submission happens
+	//! under executor_lock (Initialize holds it across ScheduleEvents), so the
+	//! slot lock must nest inside it, never the other way around.
+	mutex inline_task_lock;
+	shared_ptr<Task> inline_task;
 
 	//! Task that have been descheduled
 	unordered_map<Task *, shared_ptr<Task>> to_be_rescheduled_tasks;
