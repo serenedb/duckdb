@@ -316,11 +316,31 @@ unique_ptr<SetStatement> PEGTransformerFactory::TransformStandardAssignment(PEGT
 	                                       set_variable_or_setting.scope);
 }
 
-// VariableList <- List(Expression)
-vector<unique_ptr<ParsedExpression>>
-PEGTransformerFactory::TransformVariableList(PEGTransformer &transformer,
-                                             vector<unique_ptr<ParsedExpression>> expression) {
-	return expression;
+// SetValue <- 'ON' / 'OFF' / Expression
+// PG accepts the bare keywords ON/OFF as boolean SET values; emit them as
+// lowercased string constants so the BOOLEAN cast and SHOW round-trip behave
+// like libpq. Everything else is a normal value expression.
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetValue(PEGTransformer &transformer,
+                                                                      ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto &result = choice_pr.GetResult();
+	if (result.type == ParseResultType::KEYWORD) {
+		return make_uniq<ConstantExpression>(Value(StringUtil::Lower(result.Cast<KeywordParseResult>().keyword)));
+	}
+	return transformer.Transform<unique_ptr<ParsedExpression>>(result);
+}
+
+// VariableList <- List(SetValue)
+vector<unique_ptr<ParsedExpression>> PEGTransformerFactory::TransformVariableList(PEGTransformer &transformer,
+                                                                                  ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto expr_list = ExtractParseResultsFromList(list_pr.Child<ListParseResult>(0));
+	vector<unique_ptr<ParsedExpression>> expressions;
+	for (auto &expr : expr_list) {
+		expressions.push_back(transformer.Transform<unique_ptr<ParsedExpression>>(expr));
+	}
+	return expressions;
 }
 
 // VariableScope <- 'VARIABLE'

@@ -808,6 +808,7 @@ void PEGTransformerFactory::RegisterSet() {
 	REGISTER_TRANSFORM(TransformIsolationLevel);
 	REGISTER_TRANSFORM(TransformSetVariable);
 	REGISTER_TRANSFORM(TransformStandardAssignment);
+	REGISTER_TRANSFORM(TransformSetValue);
 	REGISTER_TRANSFORM(TransformVariableList);
 	REGISTER_TRANSFORM(TransformZoneValue);
 	REGISTER_TRANSFORM(TransformZoneIntervalWithInterval);
