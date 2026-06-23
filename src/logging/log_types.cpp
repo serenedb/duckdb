@@ -26,8 +26,8 @@ constexpr LogLevel AsyncTaskScheduleLogType::LEVEL;
 //===--------------------------------------------------------------------===//
 // QueryLogType
 //===--------------------------------------------------------------------===//
-string QueryLogType::ConstructLogMessage(const string &str) {
-	return str;
+string QueryLogType::ConstructLogMessage(std::string_view str) {
+	return string(str);
 }
 
 //===--------------------------------------------------------------------===//
@@ -37,11 +37,11 @@ FileSystemLogType::FileSystemLogType() : LogType(NAME, LEVEL, GetLogType()) {
 }
 
 // FIXME: Manual JSON strings are not winning any style points
-string FileSystemLogType::ConstructLogMessage(const FileHandle &handle, const string &op, int64_t bytes, idx_t pos) {
+string FileSystemLogType::ConstructLogMessage(const FileHandle &handle, std::string_view op, int64_t bytes, idx_t pos) {
 	return StringUtil::Format("{\"fs\":\"%s\",\"path\":\"%s\",\"op\":\"%s\",\"bytes\":\"%lld\",\"pos\":\"%llu\"}",
 	                          handle.file_system.GetName(), handle.path, op, bytes, pos);
 }
-string FileSystemLogType::ConstructLogMessage(const FileHandle &handle, const string &op) {
+string FileSystemLogType::ConstructLogMessage(const FileHandle &handle, std::string_view op) {
 	return StringUtil::Format("{\"fs\":\"%s\",\"path\":\"%s\",\"op\":\"%s\"}", handle.file_system.GetName(),
 	                          handle.path, op);
 }
@@ -149,8 +149,8 @@ static Value StringPairIterableToMap(const ITERABLE &iterable) {
 	return Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, std::move(keys), std::move(values));
 }
 
-string PhysicalOperatorLogType::ConstructLogMessage(const PhysicalOperator &physical_operator, const string &class_p,
-                                                    const string &event, const vector<pair<string, string>> &info) {
+string PhysicalOperatorLogType::ConstructLogMessage(const PhysicalOperator &physical_operator, std::string_view class_p,
+                                                    std::string_view event, const vector<pair<string, string>> &info) {
 	child_list_t<Value> child_list = {
 	    {"operator_type", EnumUtil::ToString(physical_operator.type)},
 	    {"parameters", StringPairIterableToMap(physical_operator.ParamsToString())},
@@ -176,7 +176,7 @@ LogicalType MetricsLogType::GetLogType() {
 	return LogicalType::STRUCT(child_list);
 }
 
-string MetricsLogType::ConstructLogMessage(const string &metric, const Value &value) {
+string MetricsLogType::ConstructLogMessage(std::string_view metric, const Value &value) {
 	child_list_t<Value> child_list = {
 	    {"metric", metric},
 	    {"value", value.ToString()},
@@ -274,7 +274,7 @@ LogicalType AdaptiveFilterLogType::GetLogType() {
 	return LogicalType::STRUCT(child_list);
 }
 
-string AdaptiveFilterLogType::ConstructLogMessage(const char *event, const string &file_path,
+string AdaptiveFilterLogType::ConstructLogMessage(const char *event, std::string_view file_path,
                                                   const vector<idx_t> &permutation,
                                                   const vector<pair<string, string>> &info) {
 	auto permutation_str =
@@ -307,7 +307,7 @@ LogicalType ParquetPrefetchLogType::GetLogType() {
 	return LogicalType::STRUCT(child_list);
 }
 
-string ParquetPrefetchLogType::ConstructLogMessage(const string &file_path, idx_t row_group_id, bool fully_filtered,
+string ParquetPrefetchLogType::ConstructLogMessage(std::string_view file_path, idx_t row_group_id, bool fully_filtered,
                                                    const char *strategy, const vector<vector<string>> &prefetch_groups,
                                                    const vector<string> &minimal_filters,
                                                    uint64_t accepted_column_gap) {
