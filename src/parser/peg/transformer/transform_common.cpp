@@ -16,7 +16,7 @@ string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &trans
 		return parse_result.Cast<IdentifierParseResult>().identifier.GetIdentifierName();
 	}
 	if (parse_result.type == ParseResultType::KEYWORD) {
-		return parse_result.Cast<KeywordParseResult>().keyword;
+		return string(parse_result.Cast<KeywordParseResult>().keyword);
 	}
 	if (parse_result.type == ParseResultType::CHOICE) {
 		auto &choice_pr = parse_result.Cast<ChoiceParseResult>();
@@ -35,7 +35,7 @@ string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &trans
 					return choice_result.Cast<IdentifierParseResult>().identifier.GetIdentifierName();
 				}
 				if (choice_result.type == ParseResultType::KEYWORD) {
-					return choice_result.Cast<KeywordParseResult>().keyword;
+					return string(choice_result.Cast<KeywordParseResult>().keyword);
 				}
 				return transformer.Transform<string>(choice_result);
 			}
@@ -542,8 +542,8 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TryNegateValue(const Constan
 	}
 }
 
-unique_ptr<ParsedExpression> PEGTransformerFactory::ConvertNumberToValue(string val) {
-	string_t str_val(val);
+unique_ptr<ParsedExpression> PEGTransformerFactory::ConvertNumberToValue(std::string_view val) {
+	string_t str_val(val.data(), val.size());
 	bool try_cast_as_integer = true;
 	bool try_cast_as_decimal = true;
 	optional_idx decimal_position = optional_idx::Invalid();
@@ -634,7 +634,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetofType(PEGTransf
 // StringLiteral <- '\'' [^\']* '\''
 string PEGTransformerFactory::TransformStringLiteral(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &string_literal_pr = parse_result.Cast<StringLiteralParseResult>();
-	return string_literal_pr.result;
+	return string(string_literal_pr.result);
 }
 
 Identifier PEGTransformerFactory::TransformConstraintName(PEGTransformer &transformer,

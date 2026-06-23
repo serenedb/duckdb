@@ -141,7 +141,7 @@ struct ParserOverrideResult {
 	ErrorData error;
 };
 
-typedef ParserOverrideResult (*parser_override_function_t)(ParserExtensionInfo *info, const string &query,
+typedef ParserOverrideResult (*parser_override_function_t)(ParserExtensionInfo *info, std::string_view query,
                                                            ParserOptions &options);
 
 //===--------------------------------------------------------------------===//

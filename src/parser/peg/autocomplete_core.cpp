@@ -199,7 +199,7 @@ vector<AutoCompleteSuggestion> GenerateAutoCompleteSuggestions(AutoCompleteCatal
 	vector<MatcherToken> tokens;
 	vector<MatcherSuggestion> suggestions;
 	MatcherSuggestionScope added_suggestions;
-	ParseResultAllocator parse_allocator;
+	ParseResultAllocator parse_allocator(Allocator::DefaultAllocator());
 	idx_t max_token_index = 0;
 	MatchState state(tokens, suggestions, added_suggestions, parse_allocator, max_token_index);
 	vector<UnicodeSpace> unicode_spaces;

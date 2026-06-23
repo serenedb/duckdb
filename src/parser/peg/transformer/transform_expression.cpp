@@ -1601,7 +1601,7 @@ bool IsNumberLiteral(ParseResult &pr) {
 
 string GetRawText(ParseResult &pr) {
 	if (pr.name == "NumberLiteral") {
-		return pr.Cast<NumberParseResult>().number;
+		return string(pr.Cast<NumberParseResult>().number);
 	}
 	if (pr.name == "BaseExpression") {
 		return GetRawText(pr.Cast<ListParseResult>().GetChild(0));
