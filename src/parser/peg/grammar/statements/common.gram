@@ -45,6 +45,9 @@ Statement <-
 	DisconnectStatement /
 	CreatePublicationStatement /
 	CreateSubscriptionStatement /
+	ListenStatement /
+	NotifyStatement /
+	UnlistenStatement /
 	ExpressionStatement
 
 AnalyzeKeyword <- 'ANALYZE' / 'ANALYSE'
