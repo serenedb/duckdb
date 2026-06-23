@@ -281,6 +281,7 @@ public:
 	void RegisterDelete();
 	void RegisterCreatePublication();
 	void RegisterCreateSubscription();
+	void RegisterNotify();
 	void RegisterCreateTextSearchDictionary();
 	void RegisterMergeInto();
 	void RegisterPivot();
@@ -328,6 +329,11 @@ private:
 	// create_subscription.gram — optional CONNECTION clause with nested PUBLICATION list requires a hand-written transformer.
 	static unique_ptr<SQLStatement> TransformCreateSubscriptionStatement(PEGTransformer &transformer,
 																		 ParseResult &parse_result);
+	// notify.gram — LISTEN/NOTIFY/UNLISTEN parse but are unsupported; the transforms throw, so they are
+	// hand-registered (kept out of grammar_types.yml so the generator does not emit a colliding wrapper).
+	static unique_ptr<SQLStatement> TransformListenStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformNotifyStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformUnlistenStatement(PEGTransformer &transformer, ParseResult &parse_result);
 
 	// delete.gram — TRUNCATE rules use List(TruncateTarget) which the generator
 	// cannot auto-extract; hand-write the entry points.

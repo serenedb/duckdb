@@ -602,6 +602,14 @@ void PEGTransformerFactory::RegisterCreateSubscription() {
 	REGISTER_TRANSFORM(TransformCreateSubscriptionStatement);
 }
 
+void PEGTransformerFactory::RegisterNotify() {
+	// notify.gram — LISTEN/NOTIFY/UNLISTEN parse but are not supported yet; the transforms throw. They are kept out
+	// of grammar_types.yml so the generator skips them (no auto-wrapper), leaving these as the sole registration.
+	REGISTER_TRANSFORM(TransformListenStatement);
+	REGISTER_TRANSFORM(TransformNotifyStatement);
+	REGISTER_TRANSFORM(TransformUnlistenStatement);
+}
+
 void PEGTransformerFactory::RegisterCreateTextSearchDictionary() {
 	// create_text_search_dictionary.gram — Parens(List(...)) bodies are not auto-extractable.
 	REGISTER_TRANSFORM(TransformCreateTSDictionaryStatement);
@@ -978,6 +986,7 @@ PEGTransformerFactory::PEGTransformerFactory() {
 	RegisterDelete();
 	RegisterCreatePublication();
 	RegisterCreateSubscription();
+	RegisterNotify();
 	RegisterCreateTextSearchDictionary();
 	RegisterMergeInto();
 	RegisterPivot();
