@@ -76,7 +76,6 @@ public:
 protected:
 	const string &sql;
 	vector<MatcherToken> &tokens;
-	PEGKeywordHelper keyword_helper;
 };
 
 } // namespace duckdb
