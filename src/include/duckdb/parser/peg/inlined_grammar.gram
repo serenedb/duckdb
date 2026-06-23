@@ -41,6 +41,9 @@ Statement <-
 	DisconnectStatement /
 	CreatePublicationStatement /
 	CreateSubscriptionStatement /
+	ListenStatement /
+	NotifyStatement /
+	UnlistenStatement /
 	ExpressionStatement
 
 ExpressionStatement <- List(ExpressionAlias)
@@ -819,8 +822,15 @@ StarSymbol <- '*'
 
 GenericCopyOptionList <- Parens(List(GenericCopyOption))
 GenericCopyOption <- CopyOptionName GenericCopyOptionValue?
-GenericCopyOptionValue <- GenericCopyOptionParenthesizedExpressionList / Expression
+GenericCopyOptionValue <- GenericCopyOptionParenthesizedExpressionList / CopyFormatKeyword / CopyBooleanKeyword / Expression
 GenericCopyOptionParenthesizedExpressionList <- Parens(OrderByExpressionList)
+# BINARY is a reserved keyword, so unquoted (FORMAT binary) cannot parse as a
+# value Expression; accept it explicitly (the transform maps it to "binary").
+CopyFormatKeyword <- 'BINARY'
+# ON is a reserved keyword, so (HEADER ON) cannot parse as a value Expression;
+# accept it explicitly (the transform maps it to "on", which the binder casts to
+# boolean true). OFF/TRUE/FALSE are not reserved and already parse as Expression.
+CopyBooleanKeyword <- 'ON'
 
 CopyFromDatabase <- 'FROM' 'DATABASE' ColId 'TO' ColId CopyDatabaseFlag?
 
@@ -1504,6 +1514,10 @@ ByTarget <- 'BY' 'TARGET'
 
 
 
+ListenStatement <- 'LISTEN' Identifier
+NotifyStatement <- 'NOTIFY' Identifier (',' StringLiteral)?
+UnlistenStatement <- 'UNLISTEN' (Identifier / '*')
+
 PivotStatement <- PivotKeyword TableRef PivotOn? PivotUsing? PivotGroupByList?
 
 PivotOn <- 'ON' PivotColumnList
@@ -1747,7 +1761,11 @@ GlobalScope <- 'GLOBAL'
 SetAssignment <- VariableAssign VariableList
 
 VariableAssign <- '=' / 'TO'
-VariableList <- List(Expression)
+VariableList <- List(SetValue)
+# PG accepts the bare keywords ON/OFF as boolean SET values (e.g.
+# SET standard_conforming_strings = on). ON is reserved, so it cannot reach the
+# Expression branch as an identifier; match it (and OFF, for symmetry) here.
+SetValue <- 'ON' / 'OFF' / Expression
 
 ResetStatement <- 'RESET' (ResetAll / ResetAliasedSetting / SetVariable / SetSetting)
 # PG-compat: RESET ALL and RESET LOCAL ALL both reset every user-set option.
