@@ -105,6 +105,15 @@ PEGTransformerFactory::TransformGenericCopyOption(PEGTransformer &transformer, c
 		} else {
 			copy_option.expression = CreateExpressionRowFunction(generic_copy_option_value->order_list);
 		}
+	} else if (value_choice.name == "CopyFormatKeyword") {
+		// Unquoted (FORMAT binary): BINARY is a reserved keyword and does not
+		// parse as a value Expression, so the grammar accepts it explicitly.
+		copy_option.children.push_back(Value("binary"));
+	} else if (value_choice.name == "CopyBooleanKeyword") {
+		// (HEADER ON) etc.: ON is a reserved keyword and does not parse as a value
+		// Expression. Mirror PG, which keeps it as the string "on" for the option
+		// binder to cast to boolean true.
+		copy_option.children.push_back(Value("on"));
 	} else {
 		SetGenericCopyOptionExpression(copy_option, std::move(generic_copy_option_value->expression));
 	}

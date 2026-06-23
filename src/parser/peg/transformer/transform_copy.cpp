@@ -107,7 +107,8 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCopySelect(
 		auto options = *copy_options;
 		SetCopyOptions(info, options);
 	}
-	info->select_statement = std::move(select_statement_internal->node);
+	info->format = ResolveCopyFormat(info->format, info->file_path);
+	info->select_statement = std::move(select_statement->node);
 	result->info = std::move(info);
 	return std::move(result);
 }
@@ -149,11 +150,21 @@ string PEGTransformerFactory::ExtractFormat(const string &file_path) {
 	return format.substr(dot_pos + 1);
 }
 
-unique_ptr<SQLStatement>
-PEGTransformerFactory::TransformCopyTable(PEGTransformer &transformer, unique_ptr<BaseTableRef> base_table_name,
-                                          const optional<vector<string>> &insert_column_list, const bool &from_or_to,
-                                          unique_ptr<ParsedExpression> copy_file_name,
-                                          const optional<vector<GenericCopyOption>> &copy_options) {
+string PEGTransformerFactory::ResolveCopyFormat(const string &format, const string &file_path) {
+	// COPY format is resolved at parse (not bind) so the pg-wire COPY-TO-STDOUT
+	// routing sees it: an explicit FORMAT wins; else the file extension; else
+	// PG's text default (STDIN/STDOUT and extensionless paths).
+	if (!format.empty()) {
+		return format;
+	}
+	auto extracted = ExtractFormat(file_path);
+	return extracted.empty() ? "text" : extracted;
+}
+
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformCopyTable(PEGTransformer &transformer,
+                                                                   ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+
 	auto result = make_uniq<CopyStatement>();
 	auto info = make_uniq<CopyInfo>();
 
@@ -168,7 +179,6 @@ PEGTransformerFactory::TransformCopyTable(PEGTransformer &transformer, unique_pt
 	} else {
 		info->file_path_expression = std::move(copy_file_name);
 	}
-	info->format = ExtractFormat(info->file_path);
 
 	if (copy_options) {
 		auto generic_options = *copy_options;
@@ -184,6 +194,7 @@ PEGTransformerFactory::TransformCopyTable(PEGTransformer &transformer, unique_pt
 		info->where_clause = transformer.Transform<unique_ptr<ParsedExpression>>(where_opt.GetResult());
 	}
 
+	info->format = ResolveCopyFormat(info->format, info->file_path);
 	result->info = std::move(info);
 	return std::move(result);
 }

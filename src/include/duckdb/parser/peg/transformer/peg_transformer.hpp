@@ -394,6 +394,7 @@ private:
 	static unique_ptr<SQLStatement> TransformCopyFromDatabase(PEGTransformer &transformer, ParseResult &parse_result);
 	static CopyDatabaseType TransformCopyDatabaseFlag(PEGTransformer &transformer, ParseResult &parse_result);
 	static string ExtractFormat(const string &file_path);
+	static string ResolveCopyFormat(const string &format, const string &file_path);
 	static unique_ptr<SQLStatement> TransformCopyTable(PEGTransformer &transformer, ParseResult &parse_result);
 	static bool TransformFromOrTo(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<ParsedExpression> TransformCopyFileName(PEGTransformer &transformer, ParseResult &parse_result);
