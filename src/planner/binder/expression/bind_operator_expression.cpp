@@ -128,21 +128,13 @@ BindResult ExpressionBinder::BindExpression(OperatorExpression &op, idx_t depth)
 			function_name = "map_extract_value";
 		} else if (b_exp_type.IsJSONType() && op.GetChildrenMutable().size() == 2) {
 			function_name = "json_extract";
-			// Make sure we only extract array elements, not fields, by adding the $[] syntax
-			auto &i_exp = BoundExpression::GetExpression(*op.GetChildrenMutable()[1]);
+			auto &i_exp = BoundExpression::GetExpression(*op.children[1]);
 			if (i_exp->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT &&
 			    !i_exp->Cast<BoundConstantExpression>().GetValue().IsNull()) {
 				auto &const_exp = i_exp->Cast<BoundConstantExpression>();
-				if (const_exp.GetValueMutable().TryCastAs(context, LogicalType::UINTEGER)) {
-					// Array extraction: if the cast fails it's definitely out-of-bounds for a JSON array
-					auto index = UIntegerValue::Get(const_exp.GetValueMutable());
-					const_exp.GetValueMutable() = StringUtil::Format("$[%lld]", index);
-					const_exp.SetReturnType(LogicalType::VARCHAR);
-				} else if (const_exp.GetReturnType().id() == LogicalType::VARCHAR) {
-					// Field extraction
-					const_exp.GetValueMutable() =
-					    StringUtil::Format("$.\"%s\"", const_exp.GetValueMutable().ToString());
-					const_exp.SetReturnType(LogicalType::VARCHAR);
+				if (const_exp.GetReturnType().IsNumeric()) {
+					const_exp.value = const_exp.value.DefaultCastAs(LogicalType::BIGINT);
+					const_exp.SetReturnType(LogicalType::BIGINT);
 				}
 			}
 		} else if (b_exp_type.id() == LogicalTypeId::VARIANT && op.GetChildrenMutable().size() == 2) {
