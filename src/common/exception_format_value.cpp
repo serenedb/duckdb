@@ -91,7 +91,7 @@ ExceptionFormatValue ExceptionFormatValue::CreateFormatValue(const uhugeint_t &v
 	return ExceptionFormatValue(value);
 }
 
-string ExceptionFormatValue::Format(const string &msg, std::vector<ExceptionFormatValue> &values) {
+string ExceptionFormatValue::Format(std::string_view msg, std::vector<ExceptionFormatValue> &values) {
 	try {
 		duckdb_fmt::dynamic_format_arg_store<duckdb_fmt::printf_context> format_args;
 		for (auto &val : values) {
@@ -111,15 +111,15 @@ string ExceptionFormatValue::Format(const string &msg, std::vector<ExceptionForm
 			}
 		}
 		return duckdb_fmt::vsprintf(
-		    duckdb_fmt::string_view(msg),
+		    duckdb_fmt::string_view(msg.data(), msg.size()),
 		    static_cast<duckdb_fmt::basic_format_args<duckdb_fmt::printf_context>>(format_args));
 	} catch (std::exception &ex) { // LCOV_EXCL_START
 		// work-around for oss-fuzz limiting memory which causes issues here
 		if (StringUtil::Contains(ex.what(), "fuzz mode")) {
 			throw InvalidInputException(msg);
 		}
-		throw InternalException(std::string("Primary exception: ") + msg +
-		                        "\nSecondary exception in ExceptionFormatValue: " + ex.what());
+		throw InternalException(
+		    absl::StrCat("Primary exception: ", msg, "\nSecondary exception in ExceptionFormatValue: ", ex.what()));
 	} // LCOV_EXCL_STOP
 }
 

@@ -5,7 +5,7 @@
 namespace duckdb {
 
 // LCOV_EXCL_START
-string StatementTypeToString(StatementType type) {
+std::string_view StatementTypeToString(StatementType type) {
 	switch (type) {
 	case StatementType::SELECT_STATEMENT:
 		return "SELECT";
@@ -77,7 +77,7 @@ string StatementTypeToString(StatementType type) {
 	return "INVALID";
 }
 
-string StatementReturnTypeToString(StatementReturnType type) {
+std::string_view StatementReturnTypeToString(StatementReturnType type) {
 	switch (type) {
 	case StatementReturnType::QUERY_RESULT:
 		return "QUERY_RESULT";

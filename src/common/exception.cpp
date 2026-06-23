@@ -16,21 +16,22 @@
 
 namespace duckdb {
 
-Exception::Exception(ExceptionType exception_type, const string &message)
+Exception::Exception(ExceptionType exception_type, std::string_view message)
     : std::runtime_error(ToJSON(exception_type, message)) {
 }
 
 Exception::Exception(const unordered_map<string, string> &extra_info, ExceptionType exception_type,
-                     const string &message)
+                     std::string_view message)
     : std::runtime_error(ToJSON(extra_info, exception_type, message)) {
 }
 
-string Exception::ToJSON(ExceptionType type, const string &message) {
+string Exception::ToJSON(ExceptionType type, std::string_view message) {
 	unordered_map<string, string> extra_info;
 	return ToJSON(extra_info, type, message);
 }
 
-string Exception::ToJSON(const unordered_map<string, string> &extra_info, ExceptionType type, const string &message) {
+string Exception::ToJSON(const unordered_map<string, string> &extra_info, ExceptionType type,
+                         std::string_view message) {
 #ifndef DUCKDB_DEBUG_STACKTRACE
 	// by default we only enable stack traces for internal exceptions
 	if (type == ExceptionType::INTERNAL)
@@ -83,7 +84,7 @@ string Exception::GetStackTrace(idx_t max_depth) {
 	return StackTrace::GetStackTrace(max_depth);
 }
 
-string Exception::ConstructMessageRecursive(const string &msg, std::vector<ExceptionFormatValue> &values) {
+string Exception::ConstructMessageRecursive(std::string_view msg, std::vector<ExceptionFormatValue> &values) {
 #ifdef DEBUG
 	// Verify that we have the required amount of values for the message
 	idx_t parameter_count = 0;
@@ -100,7 +101,7 @@ string Exception::ConstructMessageRecursive(const string &msg, std::vector<Excep
 	if (parameter_count != values.size()) {
 		throw InternalException("Primary exception: %s\nSecondary exception in ConstructMessageRecursive: Expected %d "
 		                        "parameters, received %d",
-		                        msg.c_str(), parameter_count, values.size());
+		                        string(msg).c_str(), parameter_count, values.size());
 	}
 
 #endif
@@ -164,7 +165,7 @@ string Exception::ExceptionTypeToString(ExceptionType type) {
 	return "Unknown";
 }
 
-ExceptionType Exception::StringToExceptionType(const string &type) {
+ExceptionType Exception::StringToExceptionType(std::string_view type) {
 	for (auto &e : EXCEPTION_MAP) {
 		if (e.text == type) {
 			return e.type;
@@ -206,9 +207,9 @@ bool Exception::IsExecutionError(ExceptionType type) {
 	}
 }
 
-unordered_map<string, string> Exception::InitializeExtraInfo(const string &subtype, optional_idx error_location) {
+unordered_map<string, string> Exception::InitializeExtraInfo(std::string_view subtype, optional_idx error_location) {
 	unordered_map<string, string> result;
-	result["error_subtype"] = subtype;
+	result["error_subtype"] = string(subtype);
 	SetQueryLocation(error_location, result);
 	return result;
 }
@@ -219,42 +220,43 @@ void Exception::SetQueryLocation(optional_idx error_location, unordered_map<stri
 	}
 }
 
-InvalidTypeException::InvalidTypeException(PhysicalType type, const string &msg)
-    : Exception(ExceptionType::INVALID_TYPE, "Invalid Type [" + TypeIdToString(type) + "]: " + msg) {
+InvalidTypeException::InvalidTypeException(PhysicalType type, std::string_view msg)
+    : Exception(ExceptionType::INVALID_TYPE, absl::StrCat("Invalid Type [", TypeIdToString(type), "]: ", msg)) {
 }
 
-InvalidTypeException::InvalidTypeException(const LogicalType &type, const string &msg)
-    : Exception(ExceptionType::INVALID_TYPE, "Invalid Type [" + type.ToString() + "]: " + msg) {
+InvalidTypeException::InvalidTypeException(const LogicalType &type, std::string_view msg)
+    : Exception(ExceptionType::INVALID_TYPE, absl::StrCat("Invalid Type [", type.ToString(), "]: ", msg)) {
 }
 
-InvalidTypeException::InvalidTypeException(const string &msg) : Exception(ExceptionType::INVALID_TYPE, msg) {
+InvalidTypeException::InvalidTypeException(std::string_view msg) : Exception(ExceptionType::INVALID_TYPE, msg) {
 }
 
-TypeMismatchException::TypeMismatchException(const PhysicalType type_1, const PhysicalType type_2, const string &msg)
-    : Exception(ExceptionType::MISMATCH_TYPE,
-                "Type " + TypeIdToString(type_1) + " does not match with " + TypeIdToString(type_2) + ". " + msg) {
+TypeMismatchException::TypeMismatchException(const PhysicalType type_1, const PhysicalType type_2, std::string_view msg)
+    : Exception(ExceptionType::MISMATCH_TYPE, absl::StrCat("Type ", TypeIdToString(type_1), " does not match with ",
+                                                           TypeIdToString(type_2), ". ", msg)) {
 }
 
-TypeMismatchException::TypeMismatchException(const LogicalType &type_1, const LogicalType &type_2, const string &msg)
+TypeMismatchException::TypeMismatchException(const LogicalType &type_1, const LogicalType &type_2, std::string_view msg)
     : TypeMismatchException(optional_idx(), type_1, type_2, msg) {
 }
 
 TypeMismatchException::TypeMismatchException(optional_idx error_location, const LogicalType &type_1,
-                                             const LogicalType &type_2, const string &msg)
+                                             const LogicalType &type_2, std::string_view msg)
     : Exception(Exception::InitializeExtraInfo(error_location), ExceptionType::MISMATCH_TYPE,
-                "Type " + type_1.ToString() + " does not match with " + type_2.ToString() + ". " + msg) {
+                absl::StrCat("Type ", type_1.ToString(), " does not match with ", type_2.ToString(), ". ", msg)) {
 }
 
-TypeMismatchException::TypeMismatchException(const string &msg) : Exception(ExceptionType::MISMATCH_TYPE, msg) {
+TypeMismatchException::TypeMismatchException(std::string_view msg) : Exception(ExceptionType::MISMATCH_TYPE, msg) {
 }
 
-TransactionException::TransactionException(const string &msg) : Exception(ExceptionType::TRANSACTION, msg) {
+TransactionException::TransactionException(std::string_view msg) : Exception(ExceptionType::TRANSACTION, msg) {
 }
 
-NotImplementedException::NotImplementedException(const string &msg) : Exception(ExceptionType::NOT_IMPLEMENTED, msg) {
+NotImplementedException::NotImplementedException(std::string_view msg)
+    : Exception(ExceptionType::NOT_IMPLEMENTED, msg) {
 }
 
-OutOfRangeException::OutOfRangeException(const string &msg) : Exception(ExceptionType::OUT_OF_RANGE, msg) {
+OutOfRangeException::OutOfRangeException(std::string_view msg) : Exception(ExceptionType::OUT_OF_RANGE, msg) {
 }
 
 OutOfRangeException::OutOfRangeException(const int64_t value, const PhysicalType orig_type, const PhysicalType new_type)
@@ -285,105 +287,103 @@ OutOfRangeException::OutOfRangeException(const PhysicalType var_type, const idx_
                 "The value is too long to fit into type " + TypeIdToString(var_type) + "(" + to_string(length) + ")") {
 }
 
-ConnectionException::ConnectionException(const string &msg) : Exception(ExceptionType::CONNECTION, msg) {
+ConnectionException::ConnectionException(std::string_view msg) : Exception(ExceptionType::CONNECTION, msg) {
 }
 
-PermissionException::PermissionException(const string &msg) : Exception(ExceptionType::PERMISSION, msg) {
+PermissionException::PermissionException(std::string_view msg) : Exception(ExceptionType::PERMISSION, msg) {
 }
 
-SyntaxException::SyntaxException(const string &msg) : Exception(ExceptionType::SYNTAX, msg) {
+SyntaxException::SyntaxException(std::string_view msg) : Exception(ExceptionType::SYNTAX, msg) {
 }
 
-ExecutorException::ExecutorException(const string &msg) : Exception(ExceptionType::EXECUTOR, msg) {
+ExecutorException::ExecutorException(std::string_view msg) : Exception(ExceptionType::EXECUTOR, msg) {
 }
 
-ConstraintException::ConstraintException(const string &msg) : Exception(ExceptionType::CONSTRAINT, msg) {
+ConstraintException::ConstraintException(std::string_view msg) : Exception(ExceptionType::CONSTRAINT, msg) {
 }
 
-DependencyException::DependencyException(const string &msg) : Exception(ExceptionType::DEPENDENCY, msg) {
+DependencyException::DependencyException(std::string_view msg) : Exception(ExceptionType::DEPENDENCY, msg) {
 }
 
-IOException::IOException(const string &msg) : Exception(ExceptionType::IO, msg) {
+IOException::IOException(std::string_view msg) : Exception(ExceptionType::IO, msg) {
 }
 
-IOException::IOException(const unordered_map<string, string> &extra_info, const string &msg)
+IOException::IOException(const unordered_map<string, string> &extra_info, std::string_view msg)
     : Exception(extra_info, ExceptionType::IO, msg) {
 }
 
-NotImplementedException::NotImplementedException(const unordered_map<string, string> &extra_info, const string &msg)
+NotImplementedException::NotImplementedException(const unordered_map<string, string> &extra_info, std::string_view msg)
     : Exception(extra_info, ExceptionType::NOT_IMPLEMENTED, msg) {
 }
 
-MissingExtensionException::MissingExtensionException(const string &msg)
+MissingExtensionException::MissingExtensionException(std::string_view msg)
     : Exception(ExceptionType::MISSING_EXTENSION, msg) {
 }
 
-AutoloadException::AutoloadException(const string &extension_name, const string &message)
+AutoloadException::AutoloadException(std::string_view extension_name, std::string_view message)
     : Exception(
           ExceptionType::AUTOLOAD,
           StringUtil::Format("An error occurred while trying to automatically install the required extension '%s:\n%s",
                              extension_name, message)) {
 }
 
-SerializationException::SerializationException(const string &msg) : Exception(ExceptionType::SERIALIZATION, msg) {
+SerializationException::SerializationException(std::string_view msg) : Exception(ExceptionType::SERIALIZATION, msg) {
 }
 
-SequenceException::SequenceException(const string &msg) : Exception(ExceptionType::SEQUENCE, msg) {
+SequenceException::SequenceException(std::string_view msg) : Exception(ExceptionType::SEQUENCE, msg) {
 }
 
 InterruptException::InterruptException() : Exception(ExceptionType::INTERRUPT, INTERRUPT_MESSAGE) {
 }
 
-FatalException::FatalException(ExceptionType type, const string &msg) : Exception(type, msg) {
+FatalException::FatalException(ExceptionType type, std::string_view msg) : Exception(type, msg) {
 	// FIXME: Make any log context available to add error logging.
 }
 
-InternalException::InternalException(const string &msg) : Exception(ExceptionType::INTERNAL, msg) {
+InternalException::InternalException(std::string_view msg) : Exception(ExceptionType::INTERNAL, msg) {
 	// FIXME: Make any log context available to add error logging.
 #ifdef DUCKDB_CRASH_ON_ASSERT
-	Printer::Print("ABORT THROWN BY INTERNAL EXCEPTION: " + msg + "\n" + StackTrace::GetStackTrace());
+	Printer::Print(absl::StrCat("ABORT THROWN BY INTERNAL EXCEPTION: ", msg, "\n", StackTrace::GetStackTrace()));
 	abort();
 #endif
 }
 
-InternalException::InternalException(const unordered_map<string, string> &extra_info, const string &msg)
+InternalException::InternalException(const unordered_map<string, string> &extra_info, std::string_view msg)
     : Exception(extra_info, ExceptionType::INTERNAL, msg) {
 }
 
-InvalidInputException::InvalidInputException(const string &msg) : Exception(ExceptionType::INVALID_INPUT, msg) {
+InvalidInputException::InvalidInputException(std::string_view msg) : Exception(ExceptionType::INVALID_INPUT, msg) {
 }
 
-InvalidInputException::InvalidInputException(const unordered_map<string, string> &extra_info, const string &msg)
+InvalidInputException::InvalidInputException(const unordered_map<string, string> &extra_info, std::string_view msg)
     : Exception(extra_info, ExceptionType::INVALID_INPUT, msg) {
 }
 
-InvalidConfigurationException::InvalidConfigurationException(const string &msg)
+InvalidConfigurationException::InvalidConfigurationException(std::string_view msg)
     : Exception(ExceptionType::INVALID_CONFIGURATION, msg) {
 }
 
 InvalidConfigurationException::InvalidConfigurationException(const unordered_map<string, string> &extra_info,
-                                                             const string &msg)
+                                                             std::string_view msg)
     : Exception(extra_info, ExceptionType::INVALID_CONFIGURATION, msg) {
 }
 
-OutOfMemoryException::OutOfMemoryException(const string &msg)
+OutOfMemoryException::OutOfMemoryException(std::string_view msg)
     : Exception(ExceptionType::OUT_OF_MEMORY, ExtendOutOfMemoryError(msg)) {
 }
 
-string OutOfMemoryException::ExtendOutOfMemoryError(const string &msg) {
+string OutOfMemoryException::ExtendOutOfMemoryError(std::string_view msg) {
 	if (StringUtil::Contains(msg, "Possible solutions:")) {
 		// already extended
-		return msg;
+		return string(msg);
 	}
-	string new_msg = msg;
-	new_msg += "\n\nPossible solutions:\n";
-	new_msg += "* Reducing the number of threads (SET threads=X)\n";
-	new_msg += "* Disabling insertion-order preservation (SET preserve_insertion_order=false)\n";
-	new_msg += "* Increasing the memory limit (SET memory_limit='...GB')";
-	return new_msg;
+	return absl::StrCat(msg, "\n\nPossible solutions:\n"
+	                         "* Reducing the number of threads (SET threads=X)\n"
+	                         "* Disabling insertion-order preservation (SET preserve_insertion_order=false)\n"
+	                         "* Increasing the memory limit (SET memory_limit='...GB')");
 }
 
-ParameterNotAllowedException::ParameterNotAllowedException(const string &msg)
+ParameterNotAllowedException::ParameterNotAllowedException(std::string_view msg)
     : Exception(ExceptionType::PARAMETER_NOT_ALLOWED, msg) {
 }
 
