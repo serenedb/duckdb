@@ -634,8 +634,8 @@ static void WriteLoggingContextsToChunk(DataChunk &chunk, const RegisteredLoggin
 	chunk.SetChildCardinality(size + 1);
 }
 
-void BufferingLogStorage::WriteLogEntry(timestamp_t timestamp, LogLevel level, const string &log_type,
-                                        const string &log_message, const RegisteredLoggingContext &context) {
+void BufferingLogStorage::WriteLogEntry(timestamp_t timestamp, LogLevel level, std::string_view log_type,
+                                        std::string_view log_message, const RegisteredLoggingContext &context) {
 	unique_lock<mutex> lck(lock);
 
 	auto &log_entries_buffer =
@@ -669,14 +669,14 @@ void BufferingLogStorage::WriteLogEntry(timestamp_t timestamp, LogLevel level, c
 	timestamp_data[size] = timestamp;
 
 	auto type_data = FlatVector::GetDataMutable<string_t>(log_entries_buffer->data[col]);
-	type_data[size] = StringVector::AddString(log_entries_buffer->data[col++], log_type);
+	type_data[size] = StringVector::AddString(log_entries_buffer->data[col++], log_type.data(), log_type.size());
 
 	auto level_data = FlatVector::GetDataMutable<string_t>(log_entries_buffer->data[col]);
 	level_data[size] = StringVector::AddString(log_entries_buffer->data[col++],
 	                                           EnumUtil::ToString(level)); // TODO: do cast on write out
 
 	auto message_data = FlatVector::GetDataMutable<string_t>(log_entries_buffer->data[col]);
-	message_data[size] = StringVector::AddString(log_entries_buffer->data[col++], log_message);
+	message_data[size] = StringVector::AddString(log_entries_buffer->data[col++], log_message.data(), log_message.size());
 
 	log_entries_buffer->SetChildCardinality(size + 1);
 
