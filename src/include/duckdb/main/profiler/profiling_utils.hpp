@@ -42,11 +42,11 @@ public:
 	atomic<idx_t> total_memory_allocated;
 
 public:
-	void UpdateMetric(const string &key, idx_t addition) {
+	void UpdateMetric(std::string_view key, idx_t addition) {
 		string_timings[key] += addition;
 	}
 
-	void UpdateMetricCounter(const string &key, idx_t addition) {
+	void UpdateMetricCounter(std::string_view key, idx_t addition) {
 		string_counters[key] += addition;
 	}
 
@@ -62,7 +62,7 @@ public:
 		total_memory_allocated += n;
 	}
 
-	double GetStringMetricInSeconds(const string &key) const {
+	double GetStringMetricInSeconds(std::string_view key) const {
 		auto it = string_timings.find(key);
 		if (it == string_timings.end()) {
 			return 0.0;
@@ -70,7 +70,7 @@ public:
 		return static_cast<double>(it->second) / 1e9;
 	}
 
-	idx_t GetStringCounter(const string &key) const {
+	idx_t GetStringCounter(std::string_view key) const {
 		auto it = string_counters.find(key);
 		if (it == string_counters.end()) {
 			return 0;
