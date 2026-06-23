@@ -28,7 +28,7 @@ enum class TokenizeState {
 
 class BaseTokenizer {
 public:
-	BaseTokenizer(const string &sql, vector<MatcherToken> &tokens);
+	BaseTokenizer(std::string_view sql, vector<MatcherToken> &tokens);
 	virtual ~BaseTokenizer() = default;
 
 public:
@@ -74,7 +74,7 @@ public:
 	static bool IsUnterminatedState(TokenizeState state);
 
 protected:
-	const string &sql;
+	std::string_view sql;
 	vector<MatcherToken> &tokens;
 };
 
