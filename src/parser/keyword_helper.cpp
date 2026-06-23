@@ -55,7 +55,7 @@ string KeywordHelper::EscapeQuotes(const string &text, char quote) {
 	return StringUtil::Replace(text, string(1, quote), string(2, quote));
 }
 
-string KeywordHelper::WriteQuotedAndEscaped(const string &text, char quote) {
+string KeywordHelper::WriteQuotedAndEscaped(std::string_view text, char quote) {
 	string result;
 	result.reserve(text.size() + 2);
 	result += quote;
@@ -70,7 +70,7 @@ string KeywordHelper::WriteQuotedAndEscaped(const string &text, char quote) {
 	return result;
 }
 
-string KeywordHelper::WriteQuoted(const string &text, char quote) {
+string KeywordHelper::WriteQuoted(std::string_view text, char quote) {
 	// 1. Escapes all occurrences of 'quote' by doubling them (escape in SQL)
 	// 2. Adds quotes around the string
 	return WriteQuotedAndEscaped(text, quote);
