@@ -3,6 +3,7 @@
 #include "duckdb/parser/statement/pragma_statement.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
 
@@ -63,7 +64,7 @@ VacuumOptions PEGTransformerFactory::TransformVacuumLegacyOptions(PEGTransformer
 
 VacuumOptions PEGTransformerFactory::TransformVacuumParensOptions(PEGTransformer &transformer,
                                                                   const vector<string> &vacuum_option) {
-	static constexpr const char *kSerenedbOptions[] = {
+	static const case_insensitive_set_view_t kSereneDBOptions {
 	    "refresh_database",
 	    "refresh_schema",
 	    "refresh_table",
@@ -101,16 +102,12 @@ VacuumOptions PEGTransformerFactory::TransformVacuumParensOptions(PEGTransformer
 			any_standard_option = true;
 			continue;
 		}
-		const char *matched = nullptr;
-		for (const auto *candidate : kSerenedbOptions) {
-			if (StringUtil::CIEquals(option, candidate)) {
-				matched = candidate;
-				break;
-			}
-		}
-		if (!matched) {
+		auto it = kSereneDBOptions.find(option);
+		if (it == kSereneDBOptions.end()) {
 			throw ParserException("unrecognized VACUUM option \"%s\"", option);
 		}
+		// The set stores string_views into the null-terminated option literals.
+		const char *matched = it->data();
 		if (!options.serenedb_pragma_option.empty()) {
 			throw ParserException("VACUUM accepts at most one SereneDB option (got both '%s' and '%s')",
 			                      options.serenedb_pragma_option, matched);
