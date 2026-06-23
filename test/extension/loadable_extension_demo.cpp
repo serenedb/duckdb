@@ -362,7 +362,7 @@ public:
 		parser_override = QuackParser;
 	}
 
-	static ParserExtensionParseResult QuackParseFunction(ParserExtensionInfo *info, const string &query) {
+	static ParserExtensionParseResult QuackParseFunction(ParserExtensionInfo *info, std::string_view query) {
 		auto lcase = StringUtil::Lower(query);
 		if (!StringUtil::Contains(lcase, "quack")) {
 			// quack not found!?
@@ -409,7 +409,7 @@ public:
 		return result;
 	}
 
-	static ParserOverrideResult QuackParser(ParserExtensionInfo *info, const string &query, ParserOptions &options) {
+	static ParserOverrideResult QuackParser(ParserExtensionInfo *info, std::string_view query, ParserOptions &options) {
 		vector<string> queries = StringUtil::Split(query, ";");
 		vector<unique_ptr<SQLStatement>> statements;
 		for (const auto &query_input : queries) {

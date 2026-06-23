@@ -33,7 +33,7 @@ ParserCache &Parser::GetCache() {
 	return *local_cache;
 }
 
-static bool ReplaceUnicodeSpaces(const string &query, string &new_query, vector<UnicodeSpace> &unicode_spaces) {
+static bool ReplaceUnicodeSpaces(std::string_view query, string &new_query, vector<UnicodeSpace> &unicode_spaces) {
 	if (unicode_spaces.empty()) {
 		// no unicode spaces found
 		return false;
@@ -58,10 +58,10 @@ static bool IsValidDollarQuotedStringTagSubsequentChar(const unsigned char &c) {
 	return IsValidDollarQuotedStringTagFirstChar(c) || (c >= '0' && c <= '9');
 }
 
-static void ValidateUTF8Query(const string &query) {
+static void ValidateUTF8Query(std::string_view query) {
 	UnicodeInvalidReason reason = UnicodeInvalidReason::INVALID_UNICODE;
 	size_t invalid_pos = 0;
-	auto unicode_type = Utf8Proc::Analyze(query.c_str(), query.size(), &reason, &invalid_pos);
+	auto unicode_type = Utf8Proc::Analyze(query.data(), query.size(), &reason, &invalid_pos);
 	if (unicode_type != UnicodeType::INVALID) {
 		return;
 	}
@@ -74,14 +74,14 @@ static void ValidateUTF8Query(const string &query) {
 // This function strips unicode space characters from the query and replaces them with regular spaces
 // It returns true if any unicode space characters were found and stripped
 // See here for a list of unicode space characters - https://jkorpela.fi/chars/spaces.html
-bool Parser::StripUnicodeSpaces(const string &query_str, string &new_query) {
+bool Parser::StripUnicodeSpaces(std::string_view query_str, string &new_query) {
 	const idx_t NBSP_LEN = 2;
 	const idx_t USP_LEN = 3;
 	idx_t pos = 0;
 	unsigned char quote;
 	string_t dollar_quote_tag;
 	vector<UnicodeSpace> unicode_spaces;
-	auto query = const_uchar_ptr_cast(query_str.c_str());
+	auto query = const_uchar_ptr_cast(query_str.data());
 	auto qsize = query_str.size();
 
 regular:
@@ -183,7 +183,7 @@ end:
 	return ReplaceUnicodeSpaces(query_str, new_query, unicode_spaces);
 }
 
-// vector<string> SplitQueries(const string &input_query) {
+// vector<string> SplitQueries(std::string_view input_query) {
 // 	vector<string> queries;
 // 	auto tokenized_input = Parser::Tokenize(input_query);
 // 	size_t last_split = 0;
@@ -220,7 +220,7 @@ void Parser::ThrowParserOverrideError(ParserOverrideResult &result) {
 	}
 }
 
-void Parser::ParseQuery(const string &query) {
+void Parser::ParseQuery(std::string_view query) {
 	ValidateUTF8Query(query);
 	{
 		string new_query;
@@ -317,7 +317,7 @@ void Parser::ParseQuery(const string &query) {
 	}
 }
 
-vector<SimplifiedToken> Parser::Tokenize(const string &query) {
+vector<SimplifiedToken> Parser::Tokenize(std::string_view query) {
 	HighlightTokenizer tokenizer(query);
 	tokenizer.TokenizeInput();
 
@@ -352,7 +352,7 @@ vector<SimplifiedToken> Parser::Tokenize(const string &query) {
 	return result;
 }
 
-vector<SimplifiedToken> Parser::TokenizeError(const string &error_msg) {
+vector<SimplifiedToken> Parser::TokenizeError(std::string_view error_msg) {
 	idx_t error_start = 0;
 	idx_t error_end = error_msg.size();
 
@@ -458,7 +458,7 @@ vector<SimplifiedToken> Parser::TokenizeError(const string &error_msg) {
 			}
 
 			// tokenize the actual query
-			string query = error_msg.substr(query_start, query_end - query_start);
+			auto query = error_msg.substr(query_start, query_end - query_start);
 			auto query_tokens = Tokenize(query);
 			for (auto &query_token : query_tokens) {
 				if (place_caret) {
@@ -494,34 +494,33 @@ vector<SimplifiedToken> Parser::TokenizeError(const string &error_msg) {
 	return tokens;
 }
 
-KeywordCategory Parser::ToKeywordCategory(const string &text) {
-	auto &helper = PEGKeywordHelper::Instance();
-	if (helper.KeywordCategoryType(text, PEGKeywordCategory::KEYWORD_RESERVED)) {
+KeywordCategory Parser::ToKeywordCategory(std::string_view text) {
+	if (peg::KeywordCategoryType(text, PEGKeywordCategory::KEYWORD_RESERVED)) {
 		return KeywordCategory::KEYWORD_RESERVED;
 	}
-	if (helper.KeywordCategoryType(text, PEGKeywordCategory::KEYWORD_UNRESERVED)) {
+	if (peg::KeywordCategoryType(text, PEGKeywordCategory::KEYWORD_UNRESERVED)) {
 		return KeywordCategory::KEYWORD_UNRESERVED;
 	}
-	if (helper.KeywordCategoryType(text, PEGKeywordCategory::KEYWORD_TYPE_FUNC)) {
+	if (peg::KeywordCategoryType(text, PEGKeywordCategory::KEYWORD_TYPE_FUNC)) {
 		return KeywordCategory::KEYWORD_TYPE_FUNC;
 	}
-	if (helper.KeywordCategoryType(text, PEGKeywordCategory::KEYWORD_COL_NAME)) {
+	if (peg::KeywordCategoryType(text, PEGKeywordCategory::KEYWORD_COL_NAME)) {
 		return KeywordCategory::KEYWORD_COL_NAME;
 	}
 	return KeywordCategory::KEYWORD_NONE;
 }
 
-KeywordCategory Parser::IsKeyword(const string &text) {
+KeywordCategory Parser::IsKeyword(std::string_view text) {
 	return ToKeywordCategory(text);
 }
 
 vector<ParserKeyword> Parser::KeywordList() {
-	return PEGKeywordHelper::Instance().KeywordList();
+	return peg::KeywordList();
 }
 
-vector<unique_ptr<ParsedExpression>> Parser::ParseExpressionList(const string &select_list, ParserOptions options) {
+vector<unique_ptr<ParsedExpression>> Parser::ParseExpressionList(std::string_view select_list, ParserOptions options) {
 	// construct a mock query prefixed with SELECT
-	string mock_query = "SELECT " + select_list;
+	string mock_query = absl::StrCat("SELECT ", select_list);
 	// parse the query
 	Parser parser(options);
 	parser.ParseQuery(mock_query);
@@ -555,7 +554,7 @@ vector<unique_ptr<ParsedExpression>> Parser::ParseExpressionList(const string &s
 	return std::move(select_node.select_list);
 }
 
-GroupByNode Parser::ParseGroupByList(const string &group_by, ParserOptions options) {
+GroupByNode Parser::ParseGroupByList(std::string_view group_by, ParserOptions options) {
 	// construct a mock SELECT query with our group_by expressions
 	string mock_query = StringUtil::Format("SELECT 42 GROUP BY %s", group_by);
 	// parse the query
@@ -571,9 +570,9 @@ GroupByNode Parser::ParseGroupByList(const string &group_by, ParserOptions optio
 	return std::move(select_node.groups);
 }
 
-vector<OrderByNode> Parser::ParseOrderList(const string &select_list, ParserOptions options) {
+vector<OrderByNode> Parser::ParseOrderList(std::string_view select_list, ParserOptions options) {
 	// construct a mock query
-	string mock_query = "SELECT * FROM tbl ORDER BY " + select_list;
+	string mock_query = absl::StrCat("SELECT * FROM tbl ORDER BY ", select_list);
 	// parse the query
 	Parser parser(options);
 	parser.ParseQuery(mock_query);
@@ -592,10 +591,10 @@ vector<OrderByNode> Parser::ParseOrderList(const string &select_list, ParserOpti
 	return std::move(order.orders);
 }
 
-void Parser::ParseUpdateList(const string &update_list, vector<string> &update_columns,
+void Parser::ParseUpdateList(std::string_view update_list, vector<string> &update_columns,
                              vector<unique_ptr<ParsedExpression>> &expressions, ParserOptions options) {
 	// construct a mock query
-	string mock_query = "UPDATE tbl SET " + update_list;
+	string mock_query = absl::StrCat("UPDATE tbl SET ", update_list);
 	// parse the query
 	Parser parser(options);
 	parser.ParseQuery(mock_query);
@@ -608,9 +607,10 @@ void Parser::ParseUpdateList(const string &update_list, vector<string> &update_c
 	expressions = std::move(update.node->set_info->expressions);
 }
 
-vector<vector<unique_ptr<ParsedExpression>>> Parser::ParseValuesList(const string &value_list, ParserOptions options) {
+vector<vector<unique_ptr<ParsedExpression>>> Parser::ParseValuesList(std::string_view value_list,
+                                                                     ParserOptions options) {
 	// construct a mock query
-	string mock_query = "VALUES " + value_list;
+	string mock_query = absl::StrCat("VALUES ", value_list);
 	// parse the query
 	Parser parser(options);
 	parser.ParseQuery(mock_query);
@@ -630,8 +630,8 @@ vector<vector<unique_ptr<ParsedExpression>>> Parser::ParseValuesList(const strin
 	return std::move(values_list.values);
 }
 
-ColumnList Parser::ParseColumnList(const string &column_list, ParserOptions options) {
-	string mock_query = "CREATE TABLE tbl (" + column_list + ")";
+ColumnList Parser::ParseColumnList(std::string_view column_list, ParserOptions options) {
+	string mock_query = absl::StrCat("CREATE TABLE tbl (", column_list, ")");
 	Parser parser(options);
 	parser.ParseQuery(mock_query);
 	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::CREATE_STATEMENT) {
@@ -645,7 +645,7 @@ ColumnList Parser::ParseColumnList(const string &column_list, ParserOptions opti
 	return std::move(info.columns);
 }
 
-ColumnDefinition Parser::ParseColumnDefinition(const string &column_definition, ParserOptions options) {
+ColumnDefinition Parser::ParseColumnDefinition(std::string_view column_definition, ParserOptions options) {
 	auto column_list = ParseColumnList(column_definition, options);
 	return column_list.GetColumn(LogicalIndex(0)).Copy();
 }

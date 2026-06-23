@@ -76,7 +76,7 @@ struct ParserExtensionParseResult {
 	optional_idx error_location;
 };
 
-typedef ParserExtensionParseResult (*parse_function_t)(ParserExtensionInfo *info, const string &query);
+typedef ParserExtensionParseResult (*parse_function_t)(ParserExtensionInfo *info, std::string_view query);
 //===--------------------------------------------------------------------===//
 // Plan
 //===--------------------------------------------------------------------===//
@@ -113,7 +113,7 @@ struct ParserOverrideResult {
 	ErrorData error;
 };
 
-typedef ParserOverrideResult (*parser_override_function_t)(ParserExtensionInfo *info, const string &query,
+typedef ParserOverrideResult (*parser_override_function_t)(ParserExtensionInfo *info, std::string_view query,
                                                            ParserOptions &options);
 
 //===--------------------------------------------------------------------===//
