@@ -104,6 +104,7 @@ SQLStatement:
     - UpdateStatement
     - UseStatement
     - VacuumStatement
+    - ReindexStatement
     - PragmaAssignOrFunction
 
 SelectStatement:
@@ -215,6 +216,7 @@ AlterTableInfo:
   by_value: true
   rules:
     - AlterTableOptions
+    - AlterIndexAlter
     - AddColumn
     - DropColumn
     - SetPartitionedBy
@@ -497,6 +499,9 @@ Expression:
     - ZoneStringLiteral
     - ZoneIdentifier
     - RoleSpec
+    - SetValue
+    - SetValueOn
+    - SetValueOff
     - DefArg
     - DefArgNull
     - DefArgKeyword
@@ -904,6 +909,8 @@ GenericCopyOptionValue:
     - GenericCopyOptionValue
     - GenericCopyOptionOrderList
     - GenericCopyOptionExpression
+    - CopyFormatKeyword
+    - CopyBooleanKeyword
 
 MacroParameter:
   type: "MacroParameter"
@@ -1057,6 +1064,8 @@ String:
     - SeqMinOrMax
     - OperatorLiteral
     - VacuumOption
+    - ReindexKind
+    - ReindexConcurrently
     - OptAnalyze
     - OptFull
     - OptFreeze
@@ -1079,6 +1088,10 @@ Bool:
   type: "bool"
   by_value: false
   rules:
+    - OverridingClause
+    - OverridingKind
+    - OverridingSystem
+    - OverridingUser
     - TimeZone
     - WithOrWithout
     - FromOrTo

@@ -496,20 +496,28 @@ static inline bool TryCastStringBool(const char *input_data, idx_t input_size, b
 		return false;
 	}
 	case 2: {
-		unsigned char n = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
-		unsigned char o = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
-		if (n == 'n' && o == 'o') {
+		unsigned char c0 = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
+		unsigned char c1 = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
+		if (c0 == 'n' && c1 == 'o') {
 			result = false;
+			return true;
+		}
+		if (!strict && c0 == 'o' && c1 == 'n') {
+			result = true;
 			return true;
 		}
 		return false;
 	}
 	case 3: {
-		unsigned char y = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
-		unsigned char e = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
-		unsigned char s = absl::ascii_tolower(static_cast<unsigned char>(input_data[2]));
-		if (y == 'y' && e == 'e' && s == 's') {
+		unsigned char c0 = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
+		unsigned char c1 = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
+		unsigned char c2 = absl::ascii_tolower(static_cast<unsigned char>(input_data[2]));
+		if (c0 == 'y' && c1 == 'e' && c2 == 's') {
 			result = true;
+			return true;
+		}
+		if (!strict && c0 == 'o' && c1 == 'f' && c2 == 'f') {
+			result = false;
 			return true;
 		}
 		return false;
@@ -593,6 +601,8 @@ template <>
 DUCKDB_API bool TryCast::Operation(dtime_t input, dtime_t &result, bool strict);
 template <>
 DUCKDB_API bool TryCast::Operation(dtime_t input, dtime_tz_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(dtime_t input, interval_t &result, bool strict);
 
 //===--------------------------------------------------------------------===//
 // Time (ns) Casts
@@ -603,6 +613,8 @@ template <>
 DUCKDB_API bool TryCast::Operation(dtime_ns_t input, dtime_ns_t &result, bool strict);
 template <>
 DUCKDB_API bool TryCast::Operation(dtime_ns_t input, dtime_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(dtime_ns_t input, dtime_tz_t &result, bool strict);
 
 //===--------------------------------------------------------------------===//
 // Time With Time Zone Casts (Offset)
@@ -611,6 +623,8 @@ template <>
 DUCKDB_API bool TryCast::Operation(dtime_tz_t input, dtime_t &result, bool strict);
 template <>
 DUCKDB_API bool TryCast::Operation(dtime_tz_t input, dtime_tz_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(dtime_tz_t input, dtime_ns_t &result, bool strict);
 
 //===--------------------------------------------------------------------===//
 // Timestamp Casts
@@ -621,6 +635,12 @@ template <>
 DUCKDB_API bool TryCast::Operation(timestamp_t input, dtime_t &result, bool strict);
 template <>
 DUCKDB_API bool TryCast::Operation(timestamp_t input, dtime_tz_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(timestamp_t input, dtime_ns_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(timestamp_sec_t input, dtime_ns_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(timestamp_ms_t input, dtime_ns_t &result, bool strict);
 template <>
 DUCKDB_API bool TryCast::Operation(timestamp_t input, timestamp_t &result, bool strict);
 template <>
@@ -648,6 +668,12 @@ DUCKDB_API bool TryCast::Operation(timestamp_ns_t input, timestamp_tz_ns_t &resu
 template <>
 DUCKDB_API bool TryCast::Operation(timestamp_tz_ns_t input, timestamp_ns_t &result, bool strict);
 template <>
+DUCKDB_API bool TryCast::Operation(timestamp_ns_t input, timestamp_sec_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(timestamp_tz_t input, timestamp_tz_ns_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(timestamp_tz_ns_t input, timestamp_t &result, bool strict);
+template <>
 DUCKDB_API bool TryCast::Operation(timestamp_ms_t input, timestamp_sec_t &result, bool strict);
 template <>
 DUCKDB_API bool TryCast::Operation(timestamp_ns_t input, timestamp_ms_t &result, bool strict);
@@ -657,12 +683,20 @@ template <>
 DUCKDB_API bool TryCast::Operation(timestamp_ms_t input, timestamp_t &result, bool strict);
 template <>
 DUCKDB_API bool TryCast::Operation(timestamp_sec_t input, timestamp_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(timestamp_sec_t input, dtime_tz_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(timestamp_ms_t input, dtime_tz_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(timestamp_ns_t input, dtime_tz_t &result, bool strict);
 
 //===--------------------------------------------------------------------===//
 // Interval Casts
 //===--------------------------------------------------------------------===//
 template <>
 DUCKDB_API bool TryCast::Operation(interval_t input, interval_t &result, bool strict);
+template <>
+DUCKDB_API bool TryCast::Operation(interval_t input, dtime_t &result, bool strict);
 
 //===--------------------------------------------------------------------===//
 // String -> Date Casts
