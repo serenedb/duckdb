@@ -25,7 +25,11 @@ GlobalScope <- 'GLOBAL'
 SetAssignment <- VariableAssign VariableList
 
 VariableAssign <- '=' / 'TO'
-VariableList <- List(Expression)
+VariableList <- List(SetValue)
+# PG accepts the bare keywords ON/OFF as boolean SET values (e.g.
+# SET standard_conforming_strings = on). ON is reserved, so it cannot reach the
+# Expression branch as an identifier; match it (and OFF, for symmetry) here.
+SetValue <- 'ON' / 'OFF' / Expression
 
 ResetStatement <- 'RESET' (ResetAll / ResetAliasedSetting / SetVariable / SetSetting)
 # PG-compat: RESET ALL and RESET LOCAL ALL both reset every user-set option.
