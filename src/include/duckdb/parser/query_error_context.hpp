@@ -23,7 +23,7 @@ public:
 	optional_idx query_location;
 
 public:
-	static string Format(const string &query, const string &error_message, optional_idx error_loc,
+	static string Format(std::string_view query, std::string_view error_message, optional_idx error_loc,
 	                     bool add_line_indicator = true);
 };
 
