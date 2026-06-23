@@ -19,15 +19,15 @@ ErrorData::ErrorData(const std::exception &ex, const std::exception_ptr &ptr) : 
 	this->exception_ptr = ptr;
 }
 
-ErrorData::ErrorData(ExceptionType type, const string &message)
-    : initialized(true), type(type), raw_message(SanitizeErrorMessage(message)) {
+ErrorData::ErrorData(ExceptionType type, std::string message)
+    : initialized(true), type(type), raw_message(SanitizeErrorMessage(std::move(message))) {
 	// In the case of ExceptionType::INTERNAL, the stack trace is part of the final message.
 	// To construct it, we need to access extra_info, which has to be initialized first.
 	// Thus, we only set final_message in the constructor's body.
 	final_message = ConstructFinalMessage();
 }
 
-ErrorData::ErrorData(const string &message)
+ErrorData::ErrorData(std::string_view message)
     : initialized(true), type(ExceptionType::INVALID), raw_message(string()), final_message(string()) {
 	// parse the constructed JSON
 	if (message.empty() || message[0] != '{') {
@@ -82,7 +82,7 @@ string ErrorData::ConstructFinalMessage() const {
 	return error;
 }
 
-void ErrorData::Throw(const string &prepended_message) const {
+void ErrorData::Throw(std::string_view prepended_message) const {
 	D_ASSERT(initialized);
 	if (exception_ptr) {
 		std::rethrow_exception(exception_ptr);
@@ -142,7 +142,7 @@ void ErrorData::FinalizeError() {
 	}
 }
 
-void ErrorData::AddErrorLocation(const string &query) {
+void ErrorData::AddErrorLocation(std::string_view query) {
 	if (!query.empty()) {
 		auto entry = extra_info.find("position");
 		if (entry != extra_info.end()) {
@@ -161,7 +161,8 @@ void ErrorData::AddErrorLocation(const string &query) {
 				}
 				extra_info.erase(location_entry);
 			}
-			raw_message = QueryErrorContext::Format(query, raw_message, std::stoull(entry->second), error_length);
+			raw_message =
+			    QueryErrorContext::Format(string(query), raw_message, std::stoull(entry->second), error_length);
 			extra_info.erase(entry);
 		}
 	}
