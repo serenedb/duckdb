@@ -110,6 +110,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCopySelect(PEGTransform
 		auto options = transformer.Transform<vector<GenericCopyOption>>(options_opt.GetResult());
 		SetCopyOptions(info, options);
 	}
+	info->format = ResolveCopyFormat(info->format, info->file_path);
 	info->select_statement = std::move(select_statement->node);
 	result->info = std::move(info);
 	return std::move(result);
@@ -161,6 +162,17 @@ string PEGTransformerFactory::ExtractFormat(const string &file_path) {
 	return format.substr(dot_pos + 1);
 }
 
+string PEGTransformerFactory::ResolveCopyFormat(const string &format, const string &file_path) {
+	// COPY format is resolved at parse (not bind) so the pg-wire COPY-TO-STDOUT
+	// routing sees it: an explicit FORMAT wins; else the file extension; else
+	// PG's text default (STDIN/STDOUT and extensionless paths).
+	if (!format.empty()) {
+		return format;
+	}
+	auto extracted = ExtractFormat(file_path);
+	return extracted.empty() ? "text" : extracted;
+}
+
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCopyTable(PEGTransformer &transformer,
                                                                    ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -184,7 +196,6 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCopyTable(PEGTransforme
 	} else {
 		info->file_path_expression = std::move(file_name);
 	}
-	info->format = ExtractFormat(info->file_path);
 
 	auto &copy_options_pr = list_pr.Child<OptionalParseResult>(4);
 	if (copy_options_pr.HasResult()) {
@@ -201,6 +212,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCopyTable(PEGTransforme
 		info->where_clause = transformer.Transform<unique_ptr<ParsedExpression>>(where_opt.GetResult());
 	}
 
+	info->format = ResolveCopyFormat(info->format, info->file_path);
 	result->info = std::move(info);
 	return std::move(result);
 }

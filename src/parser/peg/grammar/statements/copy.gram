@@ -29,8 +29,15 @@ StarSymbol <- '*'
 
 GenericCopyOptionList <- Parens(List(GenericCopyOption))
 GenericCopyOption <- CopyOptionName GenericCopyOptionValue?
-GenericCopyOptionValue <- GenericCopyOptionParenthesizedExpressionList / Expression
+GenericCopyOptionValue <- GenericCopyOptionParenthesizedExpressionList / CopyFormatKeyword / CopyBooleanKeyword / Expression
 GenericCopyOptionParenthesizedExpressionList <- Parens(OrderByExpressionList)
+# BINARY is a reserved keyword, so unquoted (FORMAT binary) cannot parse as a
+# value Expression; accept it explicitly (the transform maps it to "binary").
+CopyFormatKeyword <- 'BINARY'
+# ON is a reserved keyword, so (HEADER ON) cannot parse as a value Expression;
+# accept it explicitly (the transform maps it to "on", which the binder casts to
+# boolean true). OFF/TRUE/FALSE are not reserved and already parse as Expression.
+CopyBooleanKeyword <- 'ON'
 
 CopyFromDatabase <- 'FROM' 'DATABASE' ColId 'TO' ColId CopyDatabaseFlag?
 
