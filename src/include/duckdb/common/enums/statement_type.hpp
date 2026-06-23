@@ -55,7 +55,7 @@ enum class StatementType : uint8_t {
 	DISCONNECT_STATEMENT
 };
 
-DUCKDB_API string StatementTypeToString(StatementType type);
+DUCKDB_API std::string_view StatementTypeToString(StatementType type);
 
 enum class StatementReturnType : uint8_t {
 	QUERY_RESULT, // the statement returns a query result (e.g. for display to the user)
@@ -63,7 +63,7 @@ enum class StatementReturnType : uint8_t {
 	NOTHING       // the statement returns nothing
 };
 
-string StatementReturnTypeToString(StatementReturnType type);
+std::string_view StatementReturnTypeToString(StatementReturnType type);
 
 class Catalog;
 class ClientContext;

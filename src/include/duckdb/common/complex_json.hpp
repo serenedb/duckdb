@@ -21,21 +21,21 @@ enum class ComplexJSONType : uint8_t { VALUE = 0, OBJECT = 1, ARRAY = 2 };
 //! Custom struct to handle both strings and nested JSON objects
 struct ComplexJSON {
 	//! Constructor for string values
-	explicit ComplexJSON(const string &str);
+	explicit ComplexJSON(std::string_view str);
 	//! Basic empty constructor
 	ComplexJSON();
 	//! Adds entry to the underlying map, also sets the type to OBJECT
-	void AddObjectEntry(const string &key, unique_ptr<ComplexJSON> object);
+	void AddObjectEntry(std::string_view key, unique_ptr<ComplexJSON> object);
 	//! Adds element to the underlying list, also sets the type to ARRAY
 	void AddArrayElement(unique_ptr<ComplexJSON> object);
 	//! Gets a ComplexJSON object from the map
-	ComplexJSON &GetObject(const string &key);
+	ComplexJSON &GetObject(std::string_view key);
 	//! Gets a ComplexJSON element from the list
-	ComplexJSON &GetArrayElement(const idx_t &index);
+	ComplexJSON &GetArrayElement(idx_t index);
 	//! Gets a string version of the underlying ComplexJSON object from the map
-	string GetValue(const string &key) const;
+	string GetValue(std::string_view key) const;
 	//! Gets a string version of the underlying ComplexJSON array from the list
-	string GetValue(const idx_t &index) const;
+	string GetValue(idx_t index) const;
 	//! Recursive function for GetValue
 	static string GetValueRecursive(const ComplexJSON &child);
 	//! Flattens this json to a top level key -> nested json

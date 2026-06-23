@@ -88,11 +88,11 @@ bool StringUtil::Equals(const char *s1, const string_t &s2) {
 	return StringUtil::Equals(s2, s1);
 }
 
-bool StringUtil::Contains(const string &haystack, const string &needle) {
+bool StringUtil::Contains(std::string_view haystack, std::string_view needle) {
 	return Find(haystack, needle).IsValid();
 }
 
-optional_idx StringUtil::Find(const string &haystack, const string &needle) {
+optional_idx StringUtil::Find(std::string_view haystack, std::string_view needle) {
 	auto index = haystack.find(needle);
 	if (index == string::npos) {
 		return optional_idx();
@@ -100,7 +100,7 @@ optional_idx StringUtil::Find(const string &haystack, const string &needle) {
 	return optional_idx(index);
 }
 
-bool StringUtil::Contains(const string &haystack, const char &needle_char) {
+bool StringUtil::Contains(std::string_view haystack, char needle_char) {
 	return (haystack.find(needle_char) != string::npos);
 }
 
@@ -130,7 +130,7 @@ void StringUtil::RTrim(string &str) {
 	          str.end());
 }
 
-void StringUtil::RTrim(string &str, const string &chars_to_trim) {
+void StringUtil::RTrim(string &str, std::string_view chars_to_trim) {
 	str.erase(find_if(str.rbegin(), str.rend(),
 	                  [&chars_to_trim](char ch) { return ch > 0 && chars_to_trim.find(ch) == string::npos; })
 	              .base(),
@@ -142,15 +142,15 @@ void StringUtil::Trim(string &str) {
 	StringUtil::RTrim(str);
 }
 
-bool StringUtil::StartsWith(const string &str, const string &prefix) {
+bool StringUtil::StartsWith(std::string_view str, std::string_view prefix) {
 	return str.starts_with(prefix);
 }
 
-bool StringUtil::EndsWith(const string &str, const string &suffix) {
+bool StringUtil::EndsWith(std::string_view str, std::string_view suffix) {
 	return str.ends_with(suffix);
 }
 
-string StringUtil::Repeat(const string &str, idx_t n) {
+string StringUtil::Repeat(std::string_view str, idx_t n) {
 	std::ostringstream os;
 	for (idx_t i = 0; i < n; i++) {
 		os << str;
@@ -160,13 +160,13 @@ string StringUtil::Repeat(const string &str, idx_t n) {
 
 namespace string_util_internal {
 
-inline void SkipSpaces(const string &str, idx_t &index) {
+inline void SkipSpaces(std::string_view str, idx_t &index) {
 	while (index < str.size() && StringUtil::CharacterIsSpace(str[index])) {
 		index++;
 	}
 }
 
-inline void ConsumeLetter(const string &str, idx_t &index, char expected) {
+inline void ConsumeLetter(std::string_view str, idx_t &index, char expected) {
 	if (index >= str.size() || str[index] != expected) {
 		throw ParserException("Invalid quoted list: %s", str);
 	}
@@ -175,14 +175,14 @@ inline void ConsumeLetter(const string &str, idx_t &index, char expected) {
 }
 
 template <typename F>
-inline void TakeWhile(const string &str, idx_t &index, const F &cond, string &taker) {
+inline void TakeWhile(std::string_view str, idx_t &index, const F &cond, string &taker) {
 	while (index < str.size() && cond(str[index])) {
 		taker.push_back(str[index]);
 		index++;
 	}
 }
 
-inline string TakePossiblyQuotedItem(const string &str, idx_t &index, char delimiter, char quote) {
+inline string TakePossiblyQuotedItem(std::string_view str, idx_t &index, char delimiter, char quote) {
 	string entry;
 
 	if (str[index] == quote) {
@@ -202,7 +202,7 @@ inline string TakePossiblyQuotedItem(const string &str, idx_t &index, char delim
 
 } // namespace string_util_internal
 
-vector<string> StringUtil::SplitWithQuote(const string &str, char delimiter, char quote) {
+vector<string> StringUtil::SplitWithQuote(std::string_view str, char delimiter, char quote) {
 	vector<string> entries;
 	idx_t i = 0;
 
@@ -219,7 +219,7 @@ vector<string> StringUtil::SplitWithQuote(const string &str, char delimiter, cha
 	return entries;
 }
 
-vector<string> StringUtil::SplitWithParentheses(const string &str, char delimiter, char par_open, char par_close) {
+vector<string> StringUtil::SplitWithParentheses(std::string_view str, char delimiter, char par_open, char par_close) {
 	vector<string> result;
 	string current;
 	stack<char> parentheses;
@@ -256,11 +256,11 @@ vector<string> StringUtil::SplitWithParentheses(const string &str, char delimite
 	return result;
 }
 
-string StringUtil::Join(const vector<string> &input, const string &separator) {
-	return StringUtil::Join(input, input.size(), separator, [](const string &s) { return s; });
+string StringUtil::Join(const vector<string> &input, std::string_view separator) {
+	return StringUtil::Join(input, input.size(), separator, [](std::string_view s) { return s; });
 }
 
-string StringUtil::Join(const set<string> &input, const string &separator) {
+string StringUtil::Join(const set<string> &input, std::string_view separator) {
 	// The result
 	std::string result;
 
@@ -314,11 +314,11 @@ string StringUtil::TryParseFormattedBytes(const string &arg, idx_t &result) {
 	if (idx == num_start) {
 		return "Memory must have a number (e.g. 1GB)";
 	}
-	string number = arg.substr(num_start, idx - num_start);
+	auto number = arg.substr(num_start, idx - num_start);
 
 	// try to parse the number
 	double limit;
-	bool success = TryCast::Operation<string_t, double>(string_t(number), limit);
+	bool success = TryCast::Operation<string_t, double>(string_t(number.data(), number.size()), limit);
 	if (!success) {
 		return StringUtil::Format("Invalid memory limit: '%s'", number);
 	}
@@ -383,15 +383,15 @@ idx_t StringUtil::ParseFormattedBytes(const string &arg) {
 	return result;
 }
 
-string StringUtil::Upper(const string &str) {
+string StringUtil::Upper(std::string_view str) {
 	return absl::AsciiStrToUpper(str);
 }
 
-string StringUtil::Lower(const string &str) {
+string StringUtil::Lower(std::string_view str) {
 	return absl::AsciiStrToLower(str);
 }
 
-string StringUtil::Title(const string &str) {
+string StringUtil::Title(std::string_view str) {
 	string copy;
 	bool first_character = true;
 	for (auto c : str) {
@@ -411,11 +411,11 @@ string StringUtil::Title(const string &str) {
 	return copy;
 }
 
-bool StringUtil::IsLower(const string &str) {
+bool StringUtil::IsLower(std::string_view str) {
 	return str == Lower(str);
 }
 
-bool StringUtil::IsUpper(const string &str) {
+bool StringUtil::IsUpper(std::string_view str) {
 	return str == Upper(str);
 }
 
@@ -445,7 +445,7 @@ bool StringUtil::CIEquals(std::string_view l1, std::string_view l2) {
 	return CIEquals(l1.data(), l1.size(), l2.data(), l2.size());
 }
 
-bool StringUtil::CIStartsWith(const string &str, const string &prefix) {
+bool StringUtil::CIStartsWith(std::string_view str, std::string_view prefix) {
 	return absl::StartsWithIgnoreCase(str, prefix);
 }
 
@@ -455,7 +455,7 @@ bool StringUtil::CILessThan(std::string_view s1, std::string_view s2) {
 	return r != 0 ? r < 0 : s1.size() < s2.size();
 }
 
-idx_t StringUtil::CIFind(const vector<string> &vector, const string &search_string) {
+idx_t StringUtil::CIFind(const vector<string> &vector, std::string_view search_string) {
 	for (idx_t i = 0; i < vector.size(); i++) {
 		const auto &string = vector[i];
 		if (CIEquals(string, search_string)) {
@@ -465,15 +465,15 @@ idx_t StringUtil::CIFind(const vector<string> &vector, const string &search_stri
 	return DConstants::INVALID_INDEX;
 }
 
-vector<string> StringUtil::Split(const string &str, char delimiter) {
+vector<string> StringUtil::Split(std::string_view str, char delimiter) {
 	return absl::StrSplit(str, delimiter);
 }
 
-vector<string> StringUtil::Split(const string &input, const string &split) {
+vector<string> StringUtil::Split(std::string_view input, std::string_view split) {
 	return absl::StrSplit(input, split);
 }
 
-string StringUtil::Replace(string source, const string &from, const string &to) {
+string StringUtil::Replace(string source, std::string_view from, std::string_view to) {
 	if (from.empty()) {
 		throw InternalException("Invalid argument to StringUtil::Replace - empty FROM");
 	}
@@ -547,7 +547,7 @@ private:
 };
 
 // adapted from https://en.wikibooks.org/wiki/Algorithm_Implementation/Strings/Levenshtein_distance#C++
-idx_t StringUtil::LevenshteinDistance(const string &s1_p, const string &s2_p, idx_t not_equal_penalty) {
+idx_t StringUtil::LevenshteinDistance(std::string_view s1_p, std::string_view s2_p, idx_t not_equal_penalty) {
 	auto s1 = StringUtil::Lower(s1_p);
 	auto s2 = StringUtil::Lower(s2_p);
 	idx_t len1 = s1.size();
@@ -583,16 +583,16 @@ idx_t StringUtil::LevenshteinDistance(const string &s1_p, const string &s2_p, id
 	return array.Score(len1, len2);
 }
 
-idx_t StringUtil::SimilarityScore(const string &s1, const string &s2) {
+idx_t StringUtil::SimilarityScore(std::string_view s1, std::string_view s2) {
 	return LevenshteinDistance(s1, s2, 3);
 }
 
-double StringUtil::SimilarityRating(const string &s1, const string &s2) {
+double StringUtil::SimilarityRating(std::string_view s1, std::string_view s2) {
 	return duckdb_jaro_winkler::jaro_winkler_similarity(s1.data(), s1.data() + s1.size(), s2.data(),
 	                                                    s2.data() + s2.size());
 }
 
-vector<string> StringUtil::TopNLevenshtein(const vector<string> &strings, const string &target, idx_t n,
+vector<string> StringUtil::TopNLevenshtein(const vector<string> &strings, std::string_view target, idx_t n,
                                            idx_t threshold) {
 	vector<pair<string, idx_t>> scores;
 	scores.reserve(strings.size());
@@ -606,7 +606,7 @@ vector<string> StringUtil::TopNLevenshtein(const vector<string> &strings, const 
 	return TopNStrings(scores, n, threshold);
 }
 
-vector<string> StringUtil::TopNJaroWinkler(const vector<string> &strings, const string &target, idx_t n,
+vector<string> StringUtil::TopNJaroWinkler(const vector<string> &strings, std::string_view target, idx_t n,
                                            double threshold) {
 	vector<pair<string, double>> scores;
 	scores.reserve(strings.size());
@@ -616,10 +616,10 @@ vector<string> StringUtil::TopNJaroWinkler(const vector<string> &strings, const 
 	return TopNStrings(scores, n, threshold);
 }
 
-string StringUtil::CandidatesMessage(const vector<string> &candidates, const string &candidate) {
+string StringUtil::CandidatesMessage(const vector<string> &candidates, std::string_view candidate) {
 	string result_str;
 	if (!candidates.empty()) {
-		result_str = "\n" + candidate + ": ";
+		result_str = absl::StrCat("\n", candidate, ": ");
 		for (idx_t i = 0; i < candidates.size(); i++) {
 			if (i > 0) {
 				result_str += ", ";
@@ -630,13 +630,13 @@ string StringUtil::CandidatesMessage(const vector<string> &candidates, const str
 	return result_str;
 }
 
-string StringUtil::CandidatesErrorMessage(const vector<string> &strings, const string &target,
-                                          const string &message_prefix, idx_t n) {
+string StringUtil::CandidatesErrorMessage(const vector<string> &strings, std::string_view target,
+                                          std::string_view message_prefix, idx_t n) {
 	auto closest_strings = StringUtil::TopNLevenshtein(strings, target, n);
 	return StringUtil::CandidatesMessage(closest_strings, message_prefix);
 }
 
-static unique_ptr<ComplexJSON> ParseJSON(const string &json, yyjson_doc *doc, yyjson_val *root, bool ignore_errors) {
+static unique_ptr<ComplexJSON> ParseJSON(std::string_view json, yyjson_doc *doc, yyjson_val *root, bool ignore_errors) {
 	auto result = make_uniq<ComplexJSON>();
 	switch (yyjson_get_tag(root)) {
 	case YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE: {
@@ -685,13 +685,13 @@ static unique_ptr<ComplexJSON> ParseJSON(const string &json, yyjson_doc *doc, yy
 	}
 }
 
-unique_ptr<ComplexJSON> StringUtil::ParseJSONMap(const string &json, bool ignore_errors) {
+unique_ptr<ComplexJSON> StringUtil::ParseJSONMap(std::string_view json, bool ignore_errors) {
 	auto result = make_uniq<ComplexJSON>(json);
 	if (json.empty()) {
 		return result;
 	}
 	yyjson_read_flag flags = YYJSON_READ_ALLOW_INVALID_UNICODE;
-	yyjson_doc *doc = yyjson_read(json.c_str(), json.size(), flags);
+	yyjson_doc *doc = yyjson_read(json.data(), json.size(), flags);
 	if (!doc) {
 		if (ignore_errors) {
 			return result;
@@ -748,7 +748,7 @@ string StringUtil::ToJSONMap(const unordered_map<string, string> &map) {
 	return ToJsonMapInternal(map, doc, root);
 }
 
-string ComplexJSON::GetValue(const string &key) const {
+string ComplexJSON::GetValue(std::string_view key) const {
 	if (type == ComplexJSONType::OBJECT) {
 		if (obj_value.find(key) != obj_value.end()) {
 			return GetValueRecursive(*obj_value.at(key));
@@ -758,7 +758,7 @@ string ComplexJSON::GetValue(const string &key) const {
 	return "";
 }
 
-string ComplexJSON::GetValue(const idx_t &index) const {
+string ComplexJSON::GetValue(idx_t index) const {
 	if (type == ComplexJSONType::ARRAY) {
 		if (index >= arr_value.size()) {
 			return "";
@@ -815,7 +815,7 @@ string StringUtil::ValidateJSON(const char *data, const idx_t &len) {
 	return string();
 }
 
-string StringUtil::ExceptionToJSONMap(ExceptionType type, const string &message,
+string StringUtil::ExceptionToJSONMap(ExceptionType type, std::string_view message,
                                       const unordered_map<string, string> &map) {
 	D_ASSERT(map.find("exception_type") == map.end());
 	D_ASSERT(map.find("exception_message") == map.end());
@@ -826,15 +826,15 @@ string StringUtil::ExceptionToJSONMap(ExceptionType type, const string &message,
 
 	auto except_str = Exception::ExceptionTypeToString(type);
 	yyjson_mut_obj_add_strncpy(doc, root, "exception_type", except_str.c_str(), except_str.size());
-	yyjson_mut_obj_add_strncpy(doc, root, "exception_message", message.c_str(), message.size());
+	yyjson_mut_obj_add_strncpy(doc, root, "exception_message", message.data(), message.size());
 
 	return ToJsonMapInternal(map, doc, root);
 }
 
-string StringUtil::GetFileName(const string &file_path) {
+string StringUtil::GetFileName(std::string_view file_path) {
 	idx_t pos = file_path.find_last_of("/\\");
 	if (pos == string::npos) {
-		return file_path;
+		return string(file_path);
 	}
 	auto end = file_path.size() - 1;
 
@@ -848,14 +848,14 @@ string StringUtil::GetFileName(const string &file_path) {
 		// Now find the next slash
 		pos = file_path.find_last_of("/\\", end);
 		if (pos == string::npos) {
-			return file_path.substr(0, end + 1);
+			return string(file_path.substr(0, end + 1));
 		}
 	}
 
-	return file_path.substr(pos + 1, end - pos);
+	return string(file_path.substr(pos + 1, end - pos));
 }
 
-string StringUtil::GetFileExtension(const string &file_name) {
+string StringUtil::GetFileExtension(std::string_view file_name) {
 	auto name = GetFileName(file_name);
 	idx_t pos = name.find_last_of('.');
 	// We dont consider e.g. `.gitignore` to have an extension
@@ -865,7 +865,7 @@ string StringUtil::GetFileExtension(const string &file_name) {
 	return name.substr(pos + 1);
 }
 
-string StringUtil::GetFileStem(const string &file_name) {
+string StringUtil::GetFileStem(std::string_view file_name) {
 	auto name = GetFileName(file_name);
 	if (name.size() > 1 && name[0] == '.') {
 		return name;
@@ -877,7 +877,7 @@ string StringUtil::GetFileStem(const string &file_name) {
 	return name.substr(0, pos);
 }
 
-string StringUtil::GetFilePath(const string &file_path) {
+string StringUtil::GetFilePath(std::string_view file_path) {
 	// Trim the trailing slashes
 	auto end = file_path.size() - 1;
 	while (end > 0 && (file_path[end] == '/' || file_path[end] == '\\')) {
@@ -893,7 +893,7 @@ string StringUtil::GetFilePath(const string &file_path) {
 		pos--;
 	}
 
-	return file_path.substr(0, pos + 1);
+	return string(file_path.substr(0, pos + 1));
 }
 
 struct URLEncodeLength {
@@ -953,10 +953,10 @@ void StringUtil::URLEncodeBuffer(const char *input, idx_t input_size, char *outp
 	URLEncodeInternal<URLEncodeWrite>(input, input_size, output, encode_slash);
 }
 
-string StringUtil::URLEncode(const string &input, bool encode_slash) {
-	idx_t result_size = URLEncodeSize(input.c_str(), input.size(), encode_slash);
+string StringUtil::URLEncode(std::string_view input, bool encode_slash) {
+	idx_t result_size = URLEncodeSize(input.data(), input.size(), encode_slash);
 	auto result_data = make_uniq_array<char>(result_size);
-	URLEncodeBuffer(input.c_str(), input.size(), result_data.get(), encode_slash);
+	URLEncodeBuffer(input.data(), input.size(), result_data.get(), encode_slash);
 	return string(result_data.get(), result_size);
 }
 
@@ -998,10 +998,10 @@ void StringUtil::SkipBOM(const char *buffer_ptr, const idx_t &buffer_size, idx_t
 	}
 }
 
-string StringUtil::URLDecode(const string &input, bool plus_to_space) {
-	idx_t result_size = URLDecodeSize(input.c_str(), input.size(), plus_to_space);
+string StringUtil::URLDecode(std::string_view input, bool plus_to_space) {
+	idx_t result_size = URLDecodeSize(input.data(), input.size(), plus_to_space);
 	auto result_data = make_uniq_array<char>(result_size);
-	URLDecodeBuffer(input.c_str(), input.size(), result_data.get(), plus_to_space);
+	URLDecodeBuffer(input.data(), input.size(), result_data.get(), plus_to_space);
 	return string(result_data.get(), result_size);
 }
 

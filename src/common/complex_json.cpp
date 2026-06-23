@@ -1,13 +1,13 @@
 #include "duckdb/common/complex_json.hpp"
 
 namespace duckdb {
-ComplexJSON::ComplexJSON(const string &str) : str_value(str), type(ComplexJSONType::VALUE) {
+ComplexJSON::ComplexJSON(std::string_view str) : str_value(str), type(ComplexJSONType::VALUE) {
 }
 
 ComplexJSON::ComplexJSON() : type(ComplexJSONType::VALUE) {
 }
 
-void ComplexJSON::AddObjectEntry(const string &key, unique_ptr<ComplexJSON> object) {
+void ComplexJSON::AddObjectEntry(std::string_view key, unique_ptr<ComplexJSON> object) {
 	type = ComplexJSONType::OBJECT;
 	obj_value[key] = std::move(object);
 }
@@ -17,7 +17,7 @@ void ComplexJSON::AddArrayElement(unique_ptr<ComplexJSON> object) {
 	arr_value.push_back(std::move(object));
 }
 
-ComplexJSON &ComplexJSON::GetObject(const string &key) {
+ComplexJSON &ComplexJSON::GetObject(std::string_view key) {
 	if (type == ComplexJSONType::OBJECT) {
 		if (obj_value.find(key) == obj_value.end()) {
 			throw InvalidInputException("Complex JSON Key not found");
@@ -27,7 +27,7 @@ ComplexJSON &ComplexJSON::GetObject(const string &key) {
 	throw InvalidInputException("ComplexJson is not an object");
 }
 
-ComplexJSON &ComplexJSON::GetArrayElement(const idx_t &index) {
+ComplexJSON &ComplexJSON::GetArrayElement(idx_t index) {
 	if (type == ComplexJSONType::ARRAY) {
 		if (index >= arr_value.size()) {
 			throw InvalidInputException("Complex JSON array element out of bounds");
