@@ -52,9 +52,6 @@ struct ConcurrentQueue {
 	bool DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task);
 	bool Dequeue(shared_ptr<Task> &task);
 	idx_t GetTasksInQueue() const;
-	idx_t GetApproxSize() const;
-	idx_t GetProducerCount() const;
-	idx_t GetTaskCountForProducer(ProducerToken &token) const;
 	concurrent_queue_t &GetQueue() {
 		return q;
 	}
@@ -116,17 +113,6 @@ bool ConcurrentQueue::Dequeue(shared_ptr<Task> &task) {
 idx_t ConcurrentQueue::GetTasksInQueue() const {
 	return tasks_in_queue;
 }
-idx_t ConcurrentQueue::GetApproxSize() const {
-	return q.size_approx();
-}
-idx_t ConcurrentQueue::GetProducerCount() const {
-	return q.size_producers_approx();
-}
-
-idx_t ConcurrentQueue::GetTaskCountForProducer(ProducerToken &token) const {
-	lock_guard<mutex> producer_lock(token.producer_lock);
-	return q.size_producer_approx(token.token->queue_token);
-}
 
 #else
 struct ConcurrentQueue {
@@ -138,9 +124,6 @@ struct ConcurrentQueue {
 	bool DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task);
 	bool Dequeue(shared_ptr<Task> &task);
 	idx_t GetTasksInQueue() const;
-	idx_t GetApproxSize() const;
-	idx_t GetProducerCount() const;
-	idx_t GetTaskCountForProducer(ProducerToken &token) const;
 };
 
 void ConcurrentQueue::Enqueue(ProducerToken &token, shared_ptr<Task> task) {
@@ -183,24 +166,6 @@ idx_t ConcurrentQueue::GetTasksInQueue() const {
 		task_count += producer.second.size();
 	}
 	return task_count;
-}
-
-idx_t ConcurrentQueue::GetApproxSize() const {
-	return GetTasksInQueue();
-}
-
-idx_t ConcurrentQueue::GetProducerCount() const {
-	lock_guard<mutex> lock(qlock);
-	return q.size();
-}
-
-idx_t ConcurrentQueue::GetTaskCountForProducer(ProducerToken &token) const {
-	lock_guard<mutex> lock(qlock);
-	const auto it = q.find(std::ref(*token.token));
-	if (it == q.end()) {
-		return 0;
-	}
-	return it->second.size();
 }
 
 struct QueueProducerToken {
@@ -409,18 +374,6 @@ int32_t TaskScheduler::NumberOfThreads() {
 	return current_thread_count.load();
 }
 
-idx_t TaskScheduler::GetNumberOfTasks() const {
-	return queue->GetTasksInQueue();
-}
-
-idx_t TaskScheduler::GetProducerCount() const {
-	return queue->GetProducerCount();
-}
-
-idx_t TaskScheduler::GetTaskCountForProducer(ProducerToken &token) const {
-	return queue->GetTaskCountForProducer(token);
-}
-
 void TaskScheduler::SetThreads(idx_t total_threads, idx_t external_threads) {
 	if (total_threads == 0) {
 		throw SyntaxException("Number of threads must be positive!");
@@ -451,12 +404,6 @@ void TaskScheduler::Signal(idx_t n) {
 #ifndef DUCKDB_NO_THREADS
 	typedef std::make_signed<std::size_t>::type ssize_t;
 	queue->semaphore.signal(NumericCast<ssize_t>(n));
-#endif
-}
-
-void TaskScheduler::YieldThread() {
-#ifndef DUCKDB_NO_THREADS
-	std::this_thread::yield();
 #endif
 }
 
