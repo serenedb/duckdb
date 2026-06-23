@@ -6,6 +6,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
 
@@ -257,20 +258,23 @@ unique_ptr<CreateMacroInfo> DefaultFunctionGenerator::CreateInternalMacroInfo(co
 	return bind_info;
 }
 
-static bool DefaultFunctionMatches(const DefaultMacro &macro, const Identifier &schema, const Identifier &name) {
-	return macro.schema == schema && macro.name == name;
-}
-
 static unique_ptr<CreateFunctionInfo> GetDefaultFunction(const Identifier &input_schema, const Identifier &input_name,
                                                          ParserOptions options) {
-	auto &schema = input_schema;
-	auto &name = input_name;
-	for (idx_t index = 0; internal_macros[index].name != nullptr; index++) {
-		if (DefaultFunctionMatches(internal_macros[index], schema, name)) {
-			return DefaultFunctionGenerator::CreateInternalMacroInfo(internal_macros[index], options);
-		}
+	// (schema, name) -> macro, built once over the static macro literals: no per-call linear scan.
+	using key_t = std::pair<std::string_view, std::string_view>;
+	static const absl::flat_hash_map<key_t, const DefaultMacro *, CaseInsensitivePairHash, CaseInsensitivePairEquality>
+	    macro_index = [] {
+		    absl::flat_hash_map<key_t, const DefaultMacro *, CaseInsensitivePairHash, CaseInsensitivePairEquality> m;
+		    for (idx_t index = 0; internal_macros[index].name != nullptr; index++) {
+			    m.emplace(key_t(internal_macros[index].schema, internal_macros[index].name), &internal_macros[index]);
+		    }
+		    return m;
+	    }();
+	auto it = macro_index.find(key_t(input_schema.GetIdentifierName(), input_name.GetIdentifierName()));
+	if (it == macro_index.end()) {
+		return nullptr;
 	}
-	return nullptr;
+	return DefaultFunctionGenerator::CreateInternalMacroInfo(*it->second, options);
 }
 
 DefaultFunctionGenerator::DefaultFunctionGenerator(Catalog &catalog, SchemaCatalogEntry &schema)
