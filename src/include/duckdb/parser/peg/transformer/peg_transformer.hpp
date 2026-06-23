@@ -1122,6 +1122,7 @@ private:
 	static unique_ptr<ParsedExpression> TransformZoneIntervalWithPrecision(PEGTransformer &transformer,
 	                                                                       ParseResult &parse_result);
 	static unique_ptr<SetStatement> TransformStandardAssignment(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<ParsedExpression> TransformSetValue(PEGTransformer &transformer, ParseResult &parse_result);
 	static vector<unique_ptr<ParsedExpression>> TransformVariableList(PEGTransformer &transformer,
 	                                                                  ParseResult &parse_result);
 
