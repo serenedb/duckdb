@@ -56,7 +56,7 @@ public:
 		const char *ptr = value;
 		return CreateFormatValue<const char *>(ptr);
 	}
-	static string Format(const string &msg, std::vector<ExceptionFormatValue> &values);
+	static string Format(std::string_view msg, std::vector<ExceptionFormatValue> &values);
 };
 
 template <>
