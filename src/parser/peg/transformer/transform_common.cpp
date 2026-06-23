@@ -9,6 +9,8 @@
 #include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/common/types/bignum.hpp"
 
+#include "absl/strings/str_replace.h"
+
 namespace duckdb {
 
 string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &transformer, ParseResult &parse_result) {
@@ -611,6 +613,11 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::ConvertNumberToValue(std::st
 		}
 	}
 	// if there is a decimal or the value is too big to cast as either hugeint or bigint
+	if (num_underscores > 0) {
+		std::string stripped = absl::StrReplaceAll(val, {{"_", ""}});
+		double dbl_value = Cast::Operation<string_t, double>(string_t(stripped.data(), stripped.size()));
+		return make_uniq<ConstantExpression>(Value::DOUBLE(dbl_value));
+	}
 	double dbl_value = Cast::Operation<string_t, double>(str_val);
 	return make_uniq<ConstantExpression>(Value::DOUBLE(dbl_value));
 }
