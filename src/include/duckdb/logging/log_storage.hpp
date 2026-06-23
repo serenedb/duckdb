@@ -72,8 +72,8 @@ public:
 	static vector<string> GetColumnNames(LoggingTargetTable table);
 
 	//! WRITING
-	DUCKDB_API virtual void WriteLogEntry(timestamp_t timestamp, LogLevel level, const string &log_type,
-	                                      const string &log_message, const RegisteredLoggingContext &context) = 0;
+	DUCKDB_API virtual void WriteLogEntry(timestamp_t timestamp, LogLevel level, std::string_view log_type,
+	                                      std::string_view log_message, const RegisteredLoggingContext &context) = 0;
 	DUCKDB_API virtual void WriteLogEntries(DataChunk &chunk, const RegisteredLoggingContext &context) = 0;
 	DUCKDB_API virtual void FlushAll() = 0;
 	DUCKDB_API virtual void Flush(LoggingTargetTable table) = 0;
@@ -107,7 +107,7 @@ public:
 	/// (Partially) Implements  LogStorage API
 
 	//! Write out the entry to the buffers
-	void WriteLogEntry(timestamp_t timestamp, LogLevel level, const string &log_type, const string &log_message,
+	void WriteLogEntry(timestamp_t timestamp, LogLevel level, std::string_view log_type, std::string_view log_message,
 	                   const RegisteredLoggingContext &context) final;
 	//! Write out the chunk to the buffers
 	void WriteLogEntries(DataChunk &chunk, const RegisteredLoggingContext &context) final;
