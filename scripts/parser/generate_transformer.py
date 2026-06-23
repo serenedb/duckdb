@@ -364,7 +364,7 @@ def generate_literal_string_internal(rule_name, literals, return_by_value):
         body = (
             f"\tauto &list_pr = parse_result.Cast<ListParseResult>();\n"
             f"\tauto &choice_pr = list_pr.Child<ChoiceParseResult>(0);\n"
-            f"\tauto result = choice_pr.GetResult().Cast<KeywordParseResult>().keyword;\n"
+            f"\tstring result(choice_pr.GetResult().Cast<KeywordParseResult>().keyword);\n"
         )
     return (
         f"unique_ptr<TransformResultValue> PEGTransformerFactory::Transform{rule_name}Internal(\n"

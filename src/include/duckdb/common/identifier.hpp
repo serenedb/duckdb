@@ -35,6 +35,8 @@ public:
 	}
 	explicit Identifier(string &&str) : value(std::move(str)) {
 	}
+	explicit Identifier(std::string_view str) : value(str) {
+	}
 
 	//! Named constructors for well-known identifiers
 	static Identifier DefaultSchema() {
