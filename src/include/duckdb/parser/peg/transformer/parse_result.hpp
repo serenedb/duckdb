@@ -13,6 +13,8 @@
 #include "duckdb/parser/peg/token_type.hpp"
 #include "duckdb/common/windows_undefs.hpp"
 
+#include <span>
+
 namespace duckdb {
 
 inline string TokenTypeToString(TokenType type) {
@@ -157,8 +159,8 @@ struct IdentifierParseResult : ParseResult {
 	static constexpr ParseResultType TYPE = ParseResultType::IDENTIFIER;
 	Identifier identifier;
 
-	explicit IdentifierParseResult(string identifier_p, optional_idx offset)
-	    : ParseResult(TYPE, offset), identifier(std::move(identifier_p)) {
+	explicit IdentifierParseResult(std::string_view identifier_p, optional_idx offset)
+	    : ParseResult(TYPE, offset), identifier(string(identifier_p)) {
 	}
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
@@ -200,12 +202,12 @@ struct ListParseResult : ParseResult {
 	static constexpr ParseResultType TYPE = ParseResultType::LIST;
 
 public:
-	explicit ListParseResult(vector<reference<ParseResult>> results_p, string name_p, optional_idx offset)
-	    : ParseResult(TYPE, offset), children(std::move(results_p)) {
+	explicit ListParseResult(std::span<reference<ParseResult>> children_p, string name_p, optional_idx offset)
+	    : ParseResult(TYPE, offset), children(children_p) {
 		name = std::move(name_p);
 	}
 
-	vector<reference<ParseResult>> GetChildren() const {
+	std::span<reference<ParseResult>> GetChildren() const {
 		return children;
 	}
 
@@ -244,17 +246,17 @@ public:
 	}
 
 private:
-	vector<reference<ParseResult>> children;
+	std::span<reference<ParseResult>> children;
 };
 
 struct RepeatParseResult : ParseResult {
 	static constexpr ParseResultType TYPE = ParseResultType::REPEAT;
 
-	explicit RepeatParseResult(vector<reference<ParseResult>> results_p, optional_idx offset)
-	    : ParseResult(TYPE, offset), children(std::move(results_p)) {
+	explicit RepeatParseResult(std::span<reference<ParseResult>> children_p, optional_idx offset)
+	    : ParseResult(TYPE, offset), children(children_p) {
 	}
 
-	vector<reference<ParseResult>> GetChildren() const {
+	std::span<reference<ParseResult>> GetChildren() const {
 		return children;
 	}
 
@@ -289,7 +291,7 @@ struct RepeatParseResult : ParseResult {
 	}
 
 private:
-	vector<reference<ParseResult>> children;
+	std::span<reference<ParseResult>> children;
 };
 
 struct OptionalParseResult : ParseResult {
@@ -383,8 +385,9 @@ class StringLiteralParseResult : public ParseResult {
 public:
 	static constexpr ParseResultType TYPE = ParseResultType::STRING;
 
-	explicit StringLiteralParseResult(string string_p, SpecialStringCharacter string_type_p, optional_idx offset)
-	    : ParseResult(TYPE, offset), result(std::move(string_p)), string_type(string_type_p) {
+	explicit StringLiteralParseResult(std::string_view string_p, SpecialStringCharacter string_type_p,
+	                                  optional_idx offset)
+	    : ParseResult(TYPE, offset), result(string_p), string_type(string_type_p) {
 	}
 
 	string GetRawString() const {
