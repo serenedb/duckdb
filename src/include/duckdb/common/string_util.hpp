@@ -159,9 +159,9 @@ public:
 	//! BOM skipping (https://en.wikipedia.org/wiki/Byte_order_mark)
 	DUCKDB_API static void SkipBOM(const char *buffer_ptr, const idx_t &buffer_size, idx_t &buffer_pos);
 
-	DUCKDB_API static idx_t ToUnsigned(const string &str);
-	DUCKDB_API static int64_t ToSigned(const string &str);
-	DUCKDB_API static double ToDouble(const string &str);
+	DUCKDB_API static idx_t ToUnsigned(std::string_view str);
+	DUCKDB_API static int64_t ToSigned(std::string_view str);
+	DUCKDB_API static double ToDouble(std::string_view str);
 
 	template <class T>
 	static string ToString(const vector<T> &input, std::string_view separator) {

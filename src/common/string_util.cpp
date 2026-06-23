@@ -9,6 +9,7 @@
 #include "duckdb/common/exception/parser_exception.hpp"
 #include "duckdb/common/random_engine.hpp"
 #include "duckdb/original/std/sstream.hpp"
+#include "fast_float/fast_float.h"
 #include "jaro_winkler.hpp"
 #include "utf8proc_wrapper.hpp"
 #include "duckdb/common/types/string_type.hpp"
@@ -102,16 +103,31 @@ bool StringUtil::Contains(std::string_view haystack, char needle_char) {
 	return (haystack.find(needle_char) != string::npos);
 }
 
-idx_t StringUtil::ToUnsigned(const string &str) {
-	return std::stoull(str);
+idx_t StringUtil::ToUnsigned(std::string_view str) {
+	uint64_t result;
+	auto res = duckdb_fast_float::from_chars(str.data(), str.data() + str.size(), result);
+	if (res.ec != std::errc()) {
+		throw InternalException("Could not parse '%s' as an unsigned integer", str);
+	}
+	return result;
 }
 
-int64_t StringUtil::ToSigned(const string &str) {
-	return std::stoll(str);
+int64_t StringUtil::ToSigned(std::string_view str) {
+	int64_t result;
+	auto res = duckdb_fast_float::from_chars(str.data(), str.data() + str.size(), result);
+	if (res.ec != std::errc()) {
+		throw InternalException("Could not parse '%s' as a signed integer", str);
+	}
+	return result;
 }
 
-double StringUtil::ToDouble(const string &str) {
-	return std::stod(str);
+double StringUtil::ToDouble(std::string_view str) {
+	double result;
+	auto res = duckdb_fast_float::from_chars(str.data(), str.data() + str.size(), result);
+	if (res.ec != std::errc()) {
+		throw InternalException("Could not parse '%s' as a double", str);
+	}
+	return result;
 }
 
 void StringUtil::LTrim(string &str) {
