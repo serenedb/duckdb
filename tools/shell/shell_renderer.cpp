@@ -1858,8 +1858,8 @@ unique_ptr<ShellRenderer> ShellState::GetRenderer(RenderMode mode) {
 // Shell Logging Storage
 //===--------------------------------------------------------------------===//
 
-void ShellLogStorage::WriteLogEntry(duckdb::timestamp_t timestamp, duckdb::LogLevel level, const string &log_type,
-                                    const string &log_message, const duckdb::RegisteredLoggingContext &context) {
+void ShellLogStorage::WriteLogEntry(duckdb::timestamp_t timestamp, duckdb::LogLevel level, std::string_view log_type,
+                                    std::string_view log_message, const duckdb::RegisteredLoggingContext &context) {
 	duckdb::lock_guard<duckdb::mutex> l(lock);
 
 	HighlightElementType element_type;
@@ -1893,7 +1893,7 @@ void ShellLogStorage::WriteLogEntry(duckdb::timestamp_t timestamp, duckdb::LogLe
 
 	const auto log_level = duckdb::EnumUtil::ToString(level);
 	shell_highlight.PrintText(log_level + ":\n", PrintOutput::STDOUT, element_type);
-	shell_highlight.PrintText(log_message + "\n\n", PrintOutput::STDOUT, element_type);
+	shell_highlight.PrintText(string(log_message).append("\n\n"), PrintOutput::STDOUT, element_type);
 }
 
 } // namespace duckdb_shell

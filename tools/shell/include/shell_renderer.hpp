@@ -167,8 +167,8 @@ public:
 	}
 
 protected:
-	void WriteLogEntry(duckdb::timestamp_t timestamp, duckdb::LogLevel level, const string &log_type,
-	                   const string &log_message, const duckdb::RegisteredLoggingContext &context) override;
+	void WriteLogEntry(duckdb::timestamp_t timestamp, duckdb::LogLevel level, std::string_view log_type,
+	                   std::string_view log_message, const duckdb::RegisteredLoggingContext &context) override;
 	void WriteLogEntries(duckdb::DataChunk &chunk, const duckdb::RegisteredLoggingContext &context) override {};
 	void FlushAll() override {};
 	void Flush(duckdb::LoggingTargetTable table) override {};
