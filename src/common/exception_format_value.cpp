@@ -95,7 +95,7 @@ ExceptionFormatValue ExceptionFormatValue::CreateFormatValue(const uhugeint_t &v
 	return ExceptionFormatValue(value);
 }
 
-string ExceptionFormatValue::Format(const string &msg, std::vector<ExceptionFormatValue> &values) {
+string ExceptionFormatValue::Format(std::string_view msg, std::vector<ExceptionFormatValue> &values) {
 	try {
 		vector<FormatArgument> format_args;
 		format_args.reserve(values.size());
@@ -118,8 +118,8 @@ string ExceptionFormatValue::Format(const string &msg, std::vector<ExceptionForm
 		if (StringUtil::Contains(ex.what(), "fuzz mode")) {
 			throw InvalidInputException(msg);
 		}
-		throw InternalException(std::string("Primary exception: ") + msg +
-		                        "\nSecondary exception in ExceptionFormatValue: " + ex.what());
+		throw InternalException(
+		    absl::StrCat("Primary exception: ", msg, "\nSecondary exception in ExceptionFormatValue: ", ex.what()));
 	} // LCOV_EXCL_STOP
 }
 

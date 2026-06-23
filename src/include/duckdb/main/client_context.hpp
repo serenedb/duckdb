@@ -313,7 +313,7 @@ public:
 	DUCKDB_API bool ExecutionIsFinished();
 
 	//! Process an error for display to the user
-	DUCKDB_API void ProcessError(ErrorData &error, const string &query) const;
+	DUCKDB_API void ProcessError(ErrorData &error, std::string_view query) const;
 
 	DUCKDB_API LogicalType ParseLogicalType(const string &type);
 
@@ -363,7 +363,7 @@ private:
 	unique_ptr<PreparedStatement>
 	PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
 	                optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
-	void LogQueryInternal(ClientContextLock &lock, const string &query);
+	void LogQueryInternal(ClientContextLock &lock, std::string_view query);
 
 	unique_ptr<ClientContextLock> LockContext();
 
@@ -386,7 +386,7 @@ private:
 	                                       const QueryParameters &query_parameters);
 
 	template <class T>
-	unique_ptr<T> ErrorResult(ErrorData error, const string &query = string());
+	unique_ptr<T> ErrorResult(ErrorData error, std::string_view query = string());
 
 	shared_ptr<PreparedStatementData> CreatePreparedStatementInternal(ClientContextLock &lock,
 	                                                                  unique_ptr<SQLStatement> statement,

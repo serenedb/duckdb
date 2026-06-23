@@ -1843,7 +1843,7 @@ int Linenoise::Edit() {
 }
 
 #ifdef LINENOISE_LOGGING
-void Linenoise::LogMessageRecursive(const string &msg, std::vector<ExceptionFormatValue> &values) {
+void Linenoise::LogMessageRecursive(std::string_view msg, std::vector<ExceptionFormatValue> &values) {
 	static FILE *lndebug_fp = NULL;
 	if (!lndebug_fp) {
 		string path;
@@ -1906,7 +1906,7 @@ void Linenoise::LogTokens(const vector<highlightToken> &tokens) {
 #ifdef LINENOISE_EDITOR
 // .edit functionality - code adopted from psql
 
-bool Linenoise::EditFileWithEditor(const string &file_name, const char *editor) {
+bool Linenoise::EditFileWithEditor(std::string_view file_name, const char *editor) {
 	/* Find an editor to use */
 	if (!editor) {
 		editor = getenv("DUCKDB_EDITOR");
