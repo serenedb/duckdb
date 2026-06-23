@@ -499,23 +499,67 @@ void TaskScheduler::RelaunchThreadsInternal(int32_t n, bool destroy) {
 		pin_thread_mode = Settings::Get<PinThreadsSetting>(db);
 	}
 
+	// serenedb drives client sessions on the pool itself, so it always needs at
+	// least one internal worker (the external/io thread never runs query tasks).
+	// Clamp a zero request -- e.g. threads=1 with one external thread -- up to
+	// one, except when tearing down the scheduler. This also keeps a SET threads
+	// issued on a worker from trying to reach zero (it would have to stop the
+	// still-running caller), and avoids per-query relaunch churn at threads=1.
+	if (!destroy && new_thread_count == 0) {
+		new_thread_count = 1;
+	}
+
 	if (threads.size() == new_thread_count) {
 		current_thread_count = NumericCast<int32_t>(threads.size() + external_threads);
 		return;
 	}
-	if (threads.size() != new_thread_count) {
-		// we are changing the number of threads: clear all threads first
-		// we do this even when increasing the number of threads to make sure that all threads follow the current
-		// affinity mask
-		for (idx_t i = 0; i < threads.size(); i++) {
-			*markers[i] = false;
+
+	// Resolve thread pinning once: it applies both to the kept caller (re-pinned
+	// to its new index below) and to the threads spawned afterwards.
+	static constexpr idx_t THREAD_PIN_THRESHOLD = 64;
+	const auto pin_threads =
+	    pin_thread_mode == ThreadPinMode::ON ||
+	    (pin_thread_mode == ThreadPinMode::AUTO && std::thread::hardware_concurrency() > THREAD_PIN_THRESHOLD);
+	const auto available_cpus = pin_threads ? GetProcessCPUMask() : vector<int>();
+	// If we have fewer available cores than threads, do not pin and let the OS schedule.
+	const auto can_pin = pin_threads && new_thread_count <= available_cpus.size();
+
+	// Stop every worker except the calling thread, detecting it in the same pass.
+	// A SET threads runs on the session's own pool worker, which cannot join
+	// itself, so it is kept alive and reconciled by the spawn step below. We stop
+	// even when increasing so the survivors follow the current affinity mask.
+	idx_t self = threads.size();
+	const auto self_id = std::this_thread::get_id();
+	idx_t stopped = 0;
+	for (idx_t i = 0; i < threads.size(); i++) {
+		if (self == threads.size() && threads[i]->internal_thread->get_id() == self_id) {
+			self = i;
+			continue;
 		}
-		Signal(threads.size());
-		// now join the threads to ensure they are fully stopped before erasing them
-		for (idx_t i = 0; i < threads.size(); i++) {
+		*markers[i] = false;
+		stopped++;
+	}
+	Signal(stopped);
+	// now join the stopped threads to ensure they are fully stopped before erasing them
+	for (idx_t i = 0; i < threads.size(); i++) {
+		if (i != self) {
 			threads[i]->internal_thread->join();
 		}
-		// erase the threads/markers
+	}
+	// erase the threads/markers, keeping the calling worker (if any) as thread 0
+	if (self < threads.size()) {
+		auto kept_thread = std::move(threads[self]);
+		auto kept_marker = std::move(markers[self]);
+		threads.clear();
+		markers.clear();
+		// re-pin the survivor to index 0 so the pinned set stays contiguous with
+		// the new threads, which pin to 1..N-1 below
+		if (can_pin) {
+			SetThreadAffinity(*kept_thread->internal_thread, available_cpus, 0);
+		}
+		threads.push_back(std::move(kept_thread));
+		markers.push_back(std::move(kept_marker));
+	} else {
 		threads.clear();
 		markers.clear();
 	}
@@ -523,14 +567,6 @@ void TaskScheduler::RelaunchThreadsInternal(int32_t n, bool destroy) {
 		// we are increasing the number of threads: launch them and run tasks on them
 		idx_t create_new_threads = new_thread_count - threads.size();
 
-		// Whether to pin threads to cores
-		static constexpr idx_t THREAD_PIN_THRESHOLD = 64;
-		const auto pin_threads =
-		    pin_thread_mode == ThreadPinMode::ON ||
-		    (pin_thread_mode == ThreadPinMode::AUTO && std::thread::hardware_concurrency() > THREAD_PIN_THRESHOLD);
-		const auto available_cpus = pin_threads ? GetProcessCPUMask() : vector<int>();
-		// If we have fewer available cores than threads, do not pin and let OS scheduler handle it
-		const auto can_pin = pin_threads && new_thread_count <= available_cpus.size();
 		for (idx_t i = 0; i < create_new_threads; i++) {
 			// launch a thread and assign it a cancellation marker
 			auto marker = unique_ptr<atomic<bool>>(new atomic<bool>(true));
