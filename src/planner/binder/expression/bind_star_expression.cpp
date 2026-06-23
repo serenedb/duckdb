@@ -8,6 +8,7 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/scalar/regexp.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
 
@@ -174,18 +175,18 @@ void TryTransformStarLike(unique_ptr<ParsedExpression> &root) {
 		// COLUMNS(*) has different semantics
 		return;
 	}
-	unordered_set<string> supported_ops {"~~",
-	                                     "!~~",
-	                                     "~~~",
-	                                     "!~~~",
-	                                     "~~*",
-	                                     "!~~*",
-	                                     "regexp_full_match",
-	                                     "regexp_matches",
-	                                     "not_like_escape",
-	                                     "ilike_escape",
-	                                     "not_ilike_escape",
-	                                     "like_escape"};
+	static const case_insensitive_set_view_t supported_ops {"~~",
+	                                                        "!~~",
+	                                                        "~~~",
+	                                                        "!~~~",
+	                                                        "~~*",
+	                                                        "!~~*",
+	                                                        "regexp_full_match",
+	                                                        "regexp_matches",
+	                                                        "not_like_escape",
+	                                                        "ilike_escape",
+	                                                        "not_ilike_escape",
+	                                                        "like_escape"};
 	if (supported_ops.count(function.FunctionName().GetIdentifierName()) == 0) {
 		// unsupported op for * expression
 		throw BinderException(*root, "Function \"%s\" cannot be applied to a star expression", function.FunctionName());
