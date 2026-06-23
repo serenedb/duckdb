@@ -269,12 +269,14 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 	StringCastInputState input_state(buf, pos, len);
 
 	SkipWhitespace(input_state);
-	if (pos == len || buf[pos] != '[') {
+	//! Accept DuckDB list syntax `[...]` and PostgreSQL array syntax `{...}`
+	if (pos == len || (buf[pos] != '[' && buf[pos] != '{')) {
 		//! Does not have a valid list start
 		return false;
 	}
+	const char close_bracket = buf[pos] == '[' ? ']' : '}';
 
-	//! Skip the '['
+	//! Skip the opening bracket
 	pos++;
 	SkipWhitespace(input_state);
 	bool seen_value = false;
@@ -282,7 +284,7 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 		optional_idx start_pos;
 		idx_t end_pos;
 
-		while (pos < len && (buf[pos] != ',' && buf[pos] != ']')) {
+		while (pos < len && (buf[pos] != ',' && buf[pos] != close_bracket)) {
 			if (!ValueStateTransition(input_state, start_pos, end_pos)) {
 				return false;
 			}
@@ -290,7 +292,7 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 		if (pos == len) {
 			return false;
 		}
-		if (buf[pos] != ']' || start_pos.IsValid() || seen_value) {
+		if (buf[pos] != close_bracket || start_pos.IsValid() || seen_value) {
 			if (!start_pos.IsValid()) {
 				state.HandleValue(buf, 0, 0);
 			} else {
@@ -299,7 +301,7 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 			}
 			seen_value = true;
 		}
-		if (buf[pos] == ']') {
+		if (buf[pos] == close_bracket) {
 			break;
 		}
 
