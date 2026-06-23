@@ -116,42 +116,42 @@ public:
 	}
 
 	//! Returns true if the needle string exists in the haystack
-	DUCKDB_API static bool Contains(const string &haystack, const string &needle);
-	DUCKDB_API static bool Contains(const string &haystack, const char &needle_char);
+	DUCKDB_API static bool Contains(std::string_view haystack, std::string_view needle);
+	DUCKDB_API static bool Contains(std::string_view haystack, char needle_char);
 
 	//! Returns the position of needle string within the haystack
-	DUCKDB_API static optional_idx Find(const string &haystack, const string &needle);
+	DUCKDB_API static optional_idx Find(std::string_view haystack, std::string_view needle);
 
 	//! Returns true if the target string starts with the given prefix
-	DUCKDB_API static bool StartsWith(const string &str, const string &prefix);
+	DUCKDB_API static bool StartsWith(std::string_view str, std::string_view prefix);
 
 	//! Returns true if the target string ends with the given suffix
-	DUCKDB_API static bool EndsWith(const string &str, const string &suffix);
+	DUCKDB_API static bool EndsWith(std::string_view str, std::string_view suffix);
 
 	//! Repeat a string multiple times
-	DUCKDB_API static string Repeat(const string &str, const idx_t n);
+	DUCKDB_API static string Repeat(std::string_view str, const idx_t n);
 
 	//! Split the input string based on newline char
-	DUCKDB_API static vector<string> Split(const string &str, char delimiter);
+	DUCKDB_API static vector<string> Split(std::string_view str, char delimiter);
 
 	//! Split the input string, ignore delimiters within parentheses. Note: leading/trailing spaces are NOT stripped
-	DUCKDB_API static vector<string> SplitWithParentheses(const string &str, char delimiter = ',', char par_open = '(',
-	                                                      char par_close = ')');
+	DUCKDB_API static vector<string> SplitWithParentheses(std::string_view str, char delimiter = ',',
+	                                                      char par_open = '(', char par_close = ')');
 
 	//! Split the input string along a quote. Note that any escaping is NOT supported.
-	DUCKDB_API static vector<string> SplitWithQuote(const string &str, char delimiter = ',', char quote = '"');
+	DUCKDB_API static vector<string> SplitWithQuote(std::string_view str, char delimiter = ',', char quote = '"');
 
 	//! Join multiple strings into one string. Components are concatenated by the given separator
-	DUCKDB_API static string Join(const vector<string> &input, const string &separator);
-	DUCKDB_API static string Join(const vector<Identifier> &input, const string &separator);
-	DUCKDB_API static string Join(const set<string> &input, const string &separator);
+	DUCKDB_API static string Join(const vector<string> &input, std::string_view separator);
+	DUCKDB_API static string Join(const vector<Identifier> &input, std::string_view separator);
+	DUCKDB_API static string Join(const set<string> &input, std::string_view separator);
 
 	//! Encode special URL characters in a string
-	DUCKDB_API static string URLEncode(const string &str, bool encode_slash = true);
+	DUCKDB_API static string URLEncode(std::string_view str, bool encode_slash = true);
 	DUCKDB_API static idx_t URLEncodeSize(const char *input, idx_t input_size, bool encode_slash = true);
 	DUCKDB_API static void URLEncodeBuffer(const char *input, idx_t input_size, char *output, bool encode_slash = true);
 	//! Decode URL escape sequences (e.g. %20) in a string
-	DUCKDB_API static string URLDecode(const string &str, bool plus_to_space = false);
+	DUCKDB_API static string URLDecode(std::string_view str, bool plus_to_space = false);
 	DUCKDB_API static idx_t URLDecodeSize(const char *input, idx_t input_size, bool plus_to_space = false);
 	DUCKDB_API static void URLDecodeBuffer(const char *input, idx_t input_size, char *output,
 	                                       bool plus_to_space = false);
@@ -164,7 +164,7 @@ public:
 	DUCKDB_API static double ToDouble(const string &str);
 
 	template <class T>
-	static string ToString(const vector<T> &input, const string &separator) {
+	static string ToString(const vector<T> &input, std::string_view separator) {
 		vector<string> input_list;
 		for (auto &i : input) {
 			input_list.push_back(i.ToString());
@@ -175,7 +175,7 @@ public:
 	//! Join multiple items of container with given size, transformed to string
 	//! using function, into one string using the given separator
 	template <typename C, typename S, typename FUNC>
-	static string Join(const C &input, S count, const string &separator, FUNC f) {
+	static string Join(const C &input, S count, std::string_view separator, FUNC f) {
 		// The result
 		std::string result;
 
@@ -187,7 +187,8 @@ public:
 
 		// Append the remaining input components, after the first
 		for (size_t i = 1; i < count; i++) {
-			result += separator + f(input[i]);
+			result += separator;
+			result += f(input[i]);
 		}
 
 		return result;
@@ -201,16 +202,16 @@ public:
 	DUCKDB_API static idx_t ParseFormattedBytes(const string &arg);
 
 	//! Convert a string to UPPERCASE
-	DUCKDB_API static string Upper(const string &str);
+	DUCKDB_API static string Upper(std::string_view str);
 
 	//! Convert a string to lowercase
-	DUCKDB_API static string Lower(const string &str);
+	DUCKDB_API static string Lower(std::string_view str);
 
 	//! Convert a string to Title Case
-	DUCKDB_API static string Title(const string &str);
+	DUCKDB_API static string Title(std::string_view str);
 
-	DUCKDB_API static bool IsLower(const string &str);
-	DUCKDB_API static bool IsUpper(const string &str);
+	DUCKDB_API static bool IsLower(std::string_view str);
+	DUCKDB_API static bool IsUpper(std::string_view str);
 
 	//! Case insensitive hash
 	DUCKDB_API static uint64_t CIHash(std::string_view str);
@@ -223,34 +224,34 @@ public:
 	DUCKDB_API static bool CIEquals(const char *l1, idx_t l1_size, const char *l2, idx_t l2_size);
 
 	//! Case insensitive starts-with
-	DUCKDB_API static bool CIStartsWith(const string &str, const string &prefix);
+	DUCKDB_API static bool CIStartsWith(std::string_view str, std::string_view prefix);
 
 	//! Case insensitive compare
 	DUCKDB_API static bool CILessThan(std::string_view l1, std::string_view l2);
 
 	//! Case insensitive find, returns DConstants::INVALID_INDEX if not found
-	DUCKDB_API static idx_t CIFind(const vector<string> &vec, const string &str);
+	DUCKDB_API static idx_t CIFind(const vector<string> &vec, std::string_view str);
 	DUCKDB_API static idx_t CIFind(const vector<Identifier> &vec, const Identifier &str);
 
 	//! Format a string using printf semantics
 	template <typename... ARGS>
-	static string Format(const string fmt_str, ARGS... params) {
+	static string Format(std::string_view fmt_str, ARGS... params) {
 		return Exception::ConstructMessage(fmt_str, params...);
 	}
 
 	//! Split the input string into a vector of strings based on the split string
-	DUCKDB_API static vector<string> Split(const string &input, const string &split);
+	DUCKDB_API static vector<string> Split(std::string_view input, std::string_view split);
 
 	//! Remove the whitespace char in the left end of the string
 	DUCKDB_API static void LTrim(string &str);
 	//! Remove the whitespace char in the right end of the string
 	DUCKDB_API static void RTrim(string &str);
 	//! Remove the all chars from chars_to_trim char in the right end of the string
-	DUCKDB_API static void RTrim(string &str, const string &chars_to_trim);
+	DUCKDB_API static void RTrim(string &str, std::string_view chars_to_trim);
 	//! Remove the whitespace char in the left and right end of the string
 	DUCKDB_API static void Trim(string &str);
 
-	DUCKDB_API static string Replace(string source, const string &from, const string &to);
+	DUCKDB_API static string Replace(string source, std::string_view from, std::string_view to);
 
 	//! Get the levenshtein distance from two strings
 	//! The not_equal_penalty is the penalty given when two characters in a string are not equal
@@ -258,12 +259,12 @@ public:
 	//! as adding or removing one For similarity searches we often want to give extra weight to changing a character For
 	//! example: with an equal penalty of 1, "pg_am" is closer to "depdelay" than "depdelay_minutes"
 	//! with an equal penalty of 3, "depdelay_minutes" is closer to "depdelay" than to "pg_am"
-	DUCKDB_API static idx_t LevenshteinDistance(const string &s1, const string &s2, idx_t not_equal_penalty = 1);
+	DUCKDB_API static idx_t LevenshteinDistance(std::string_view s1, std::string_view s2, idx_t not_equal_penalty = 1);
 
 	//! Returns the similarity score between two strings (edit distance metric - lower is more similar)
-	DUCKDB_API static idx_t SimilarityScore(const string &s1, const string &s2);
+	DUCKDB_API static idx_t SimilarityScore(std::string_view s1, std::string_view s2);
 	//! Returns a normalized similarity rating between 0.0 - 1.0 (higher is more similar)
-	DUCKDB_API static double SimilarityRating(const string &s1, const string &s2);
+	DUCKDB_API static double SimilarityRating(std::string_view s1, std::string_view s2);
 	DUCKDB_API static double SimilarityRating(const Identifier &s1, const Identifier &s2);
 	//! Get the top-n strings (sorted by the given score distance) from a set of scores.
 	//! The scores should be normalized between 0.0 and 1.0, where 1.0 is the highest score
@@ -277,21 +278,21 @@ public:
 	                                             idx_t threshold = 5);
 	//! Computes the levenshtein distance of each string in strings, and compares it to target, then returns TopNStrings
 	//! with the given params.
-	DUCKDB_API static vector<string> TopNLevenshtein(const vector<string> &strings, const string &target, idx_t n = 5,
-	                                                 idx_t threshold = 5);
+	DUCKDB_API static vector<string> TopNLevenshtein(const vector<string> &strings, std::string_view target,
+	                                                 idx_t n = 5, idx_t threshold = 5);
 	//! Computes the jaro winkler distance of each string in strings, and compares it to target, then returns
 	//! TopNStrings with the given params.
+	DUCKDB_API static vector<string> TopNJaroWinkler(const vector<string> &strings, std::string_view target,
+	                                                 idx_t n = 5, double threshold = 0.5);
 	DUCKDB_API static vector<string> TopNJaroWinkler(const vector<string> &strings, const Identifier &target,
 	                                                 idx_t n = 5, double threshold = 0.5);
-	DUCKDB_API static vector<string> TopNJaroWinkler(const vector<string> &strings, const string &target, idx_t n = 5,
-	                                                 double threshold = 0.5);
 	DUCKDB_API static string CandidatesMessage(const vector<string> &candidates,
-	                                           const string &candidate = "Candidate bindings");
+	                                           std::string_view candidate = "Candidate bindings");
 
 	//! Generate an error message in the form of "{message_prefix}: nearest_string, nearest_string2, ...
 	//! Equivalent to calling TopNLevenshtein followed by CandidatesMessage
-	DUCKDB_API static string CandidatesErrorMessage(const vector<string> &strings, const string &target,
-	                                                const string &message_prefix, idx_t n = 5);
+	DUCKDB_API static string CandidatesErrorMessage(const vector<string> &strings, std::string_view target,
+	                                                std::string_view message_prefix, idx_t n = 5);
 
 	//! Returns true if two null-terminated strings are equal or point to the same address.
 	//! Returns false if only one of the strings is nullptr
@@ -310,7 +311,7 @@ public:
 	static bool Equals(const char *s1, const string &s2) {
 		return Equals(s1, s2.c_str());
 	}
-	static bool Equals(const string &s1, const string &s2) {
+	static bool Equals(std::string_view s1, std::string_view s2) {
 		return s1 == s2;
 	}
 	static bool Equals(const string_t &s1, const char *s2);
@@ -321,12 +322,13 @@ public:
 	//! NOTE: this method is not efficient
 	//! NOTE: this method is used in Exception construction - as such it does NOT throw on invalid JSON, instead an
 	//! empty map is returned
-	DUCKDB_API static unordered_map<string, string> ParseJSONMap(const string &json, bool ignore_errors = false);
+	//! Parses complex (i.e., nested) Json maps, it also parses invalid JSONs, as a pure string.
+	DUCKDB_API static unique_ptr<ComplexJSON> ParseJSONMap(std::string_view json, bool ignore_errors = false);
 
 	//! JSON method that constructs a { string: value } JSON map
 	//! This is the inverse of ParseJSONMap
 	//! NOTE: this method is not efficient
-	DUCKDB_API static string ExceptionToJSONMap(ExceptionType type, const string &message,
+	DUCKDB_API static string ExceptionToJSONMap(ExceptionType type, std::string_view message,
 	                                            const unordered_map<string, string> &map);
 
 	//! Transforms an unordered map to a JSON string
@@ -334,10 +336,10 @@ public:
 
 	DUCKDB_API static string ValidateJSON(const char *data, const idx_t &len);
 
-	DUCKDB_API static string GetFileName(const string &file_path);
-	DUCKDB_API static string GetFileExtension(const string &file_name);
-	DUCKDB_API static string GetFileStem(const string &file_name);
-	DUCKDB_API static string GetFilePath(const string &file_path);
+	DUCKDB_API static string GetFileName(std::string_view file_path);
+	DUCKDB_API static string GetFileExtension(std::string_view file_name);
+	DUCKDB_API static string GetFileStem(std::string_view file_name);
+	DUCKDB_API static string GetFilePath(std::string_view file_path);
 
 	struct EnumStringLiteral {
 		uint32_t number;
