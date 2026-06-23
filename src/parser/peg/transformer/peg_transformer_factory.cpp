@@ -64,7 +64,7 @@ vector<unique_ptr<SQLStatement>> PEGTransformerFactory::Transform(vector<Matcher
 	}
 	vector<MatcherSuggestion> suggestions;
 	reference_set_t<const Matcher> added_suggestions;
-	ParseResultAllocator parse_result_allocator;
+	ParseResultAllocator parse_result_allocator(options.allocator ? *options.allocator : Allocator::DefaultAllocator());
 	idx_t max_token_index = 0;
 	MatchState state(tokens, suggestions, added_suggestions, parse_result_allocator, max_token_index,
 	                 options.preserve_identifier_case);

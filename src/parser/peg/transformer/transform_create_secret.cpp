@@ -60,9 +60,9 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateSecretStmt(
 	return result;
 }
 
-Identifier PEGTransformerFactory::TransformSecretStorageSpecifier(PEGTransformer &transformer,
-                                                                  const Identifier &identifier) {
-	return identifier;
+string PEGTransformerFactory::TransformSecretStorageSpecifier(PEGTransformer &transformer,
+                                                              std::string_view identifier) {
+	return string(identifier);
 }
 
 Identifier PEGTransformerFactory::TransformSecretName(PEGTransformer &transformer, const Identifier &col_id) {

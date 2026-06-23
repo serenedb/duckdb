@@ -51,8 +51,8 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTriggerStmt(
 	return result;
 }
 
-Identifier PEGTransformerFactory::TransformTriggerName(PEGTransformer &transformer, const Identifier &identifier) {
-	return identifier;
+string PEGTransformerFactory::TransformTriggerName(PEGTransformer &transformer, std::string_view identifier) {
+	return string(identifier);
 }
 
 TriggerTiming PEGTransformerFactory::TransformTriggerBefore(PEGTransformer &transformer) {

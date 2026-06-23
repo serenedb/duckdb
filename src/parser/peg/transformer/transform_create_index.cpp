@@ -110,9 +110,9 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateIndexStmt(PEGT
 	return result;
 }
 
-string PEGTransformerFactory::TransformDottedIdentifierString(PEGTransformer &transformer,
-                                                              const vector<string> &dotted_identifier) {
-	return StringUtil::Join(dotted_identifier, ".");
+string PEGTransformerFactory::TransformIndexType(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	return string(list_pr.Child<IdentifierParseResult>(1).identifier);
 }
 
 Identifier PEGTransformerFactory::TransformIndexType(PEGTransformer &transformer, const Identifier &identifier) {
@@ -236,25 +236,15 @@ PEGTransformerFactory::TransformOids(PEGTransformer &transformer, const bool &wi
 	throw NotImplementedException("OIDS for index are not yet implemented.");
 }
 
-// WithOids <- 'WITH'
-bool PEGTransformerFactory::TransformWithOids(PEGTransformer &transformer) {
-	return true;
-}
-
-// WithoutOids <- 'WITHOUT'
-bool PEGTransformerFactory::TransformWithoutOids(PEGTransformer &transformer) {
-	return false;
-}
-
-Identifier PEGTransformerFactory::TransformRelOptionName(PEGTransformer &transformer, const string &child) {
-	return Identifier(child);
-}
-
-pair<Identifier, unique_ptr<ParsedExpression>>
-PEGTransformerFactory::TransformRelOption(PEGTransformer &transformer, const Identifier &rel_option_name,
-                                          optional<unique_ptr<ParsedExpression>> rel_option_argument_opt) {
-	if (!rel_option_argument_opt) {
-		return {rel_option_name, make_uniq<ConstantExpression>(Value())};
+string PEGTransformerFactory::TransformRelOptionName(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// RelOptionName <- DottedIdentifier / StringLiteral
+	auto &choice = list_pr.Child<ChoiceParseResult>(0).GetResult();
+	if (StringUtil::CIEquals(choice.name, "DottedIdentifier")) {
+		auto dotted_identifier = transformer.Transform<vector<string>>(choice);
+		return StringUtil::Join(dotted_identifier, ".");
+	} else {
+		return string(choice.Cast<StringLiteralParseResult>().GetRawString());
 	}
 	return {rel_option_name, std::move(*rel_option_argument_opt)};
 }
@@ -272,21 +262,9 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformDefArgNull(PEGTrans
 	return make_uniq<ConstantExpression>(Value());
 }
 
-// DefArgKeyword <- ReservedKeyword
-unique_ptr<ParsedExpression> PEGTransformerFactory::TransformDefArgKeyword(PEGTransformer &transformer,
-                                                                           const string &reserved_keyword) {
-	return make_uniq<ConstantExpression>(Value(reserved_keyword));
-}
-
-// DefArgStringLiteral <- StringLiteral
-unique_ptr<ParsedExpression> PEGTransformerFactory::TransformDefArgStringLiteral(PEGTransformer &transformer,
-                                                                                 const string &string_literal) {
-	return make_uniq<ConstantExpression>(Value(string_literal));
-}
-
-// NoneLiteral <- 'NONE'
-unique_ptr<ParsedExpression> PEGTransformerFactory::TransformNoneLiteral(PEGTransformer &transformer) {
-	return make_uniq<ConstantExpression>(Value());
+string PEGTransformerFactory::TransformIndexName(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	return string(list_pr.Child<IdentifierParseResult>(0).identifier);
 }
 
 } // namespace duckdb

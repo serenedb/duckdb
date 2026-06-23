@@ -13,10 +13,10 @@ namespace duckdb {
 
 string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &transformer, ParseResult &parse_result) {
 	if (parse_result.type == ParseResultType::IDENTIFIER) {
-		return parse_result.Cast<IdentifierParseResult>().identifier.GetIdentifierName();
+		return string(parse_result.Cast<IdentifierParseResult>().identifier);
 	}
 	if (parse_result.type == ParseResultType::KEYWORD) {
-		return parse_result.Cast<KeywordParseResult>().keyword;
+		return string(parse_result.Cast<KeywordParseResult>().keyword);
 	}
 	if (parse_result.type == ParseResultType::CHOICE) {
 		auto &choice_pr = parse_result.Cast<ChoiceParseResult>();
@@ -32,15 +32,15 @@ string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &trans
 			if (child.get().type == ParseResultType::CHOICE) {
 				auto &choice_result = child.get().Cast<ChoiceParseResult>().GetResult();
 				if (choice_result.type == ParseResultType::IDENTIFIER) {
-					return choice_result.Cast<IdentifierParseResult>().identifier.GetIdentifierName();
+					return string(choice_result.Cast<IdentifierParseResult>().identifier);
 				}
 				if (choice_result.type == ParseResultType::KEYWORD) {
-					return choice_result.Cast<KeywordParseResult>().keyword;
+					return string(choice_result.Cast<KeywordParseResult>().keyword);
 				}
 				return transformer.Transform<string>(choice_result);
 			}
 			if (child.get().type == ParseResultType::IDENTIFIER) {
-				return child.get().Cast<IdentifierParseResult>().identifier.GetIdentifierName();
+				return string(child.get().Cast<IdentifierParseResult>().identifier);
 			}
 			throw InternalException("Unexpected IdentifierOrKeyword type encountered %s.",
 			                        ParseResultToString(child.get().type));
@@ -302,11 +302,30 @@ QualifiedName PEGTransformerFactory::TransformSchemaReservedTypeName(PEGTransfor
 	return result;
 }
 
-QualifiedName PEGTransformerFactory::TransformCatalogReservedSchemaTypeName(
-    PEGTransformer &transformer, const Identifier &catalog_qualification,
-    const Identifier &reserved_schema_qualification, const Identifier &reserved_type_name) {
-	QualifiedName result(catalog_qualification, reserved_schema_qualification, reserved_type_name);
-	return result;
+QualifiedName PEGTransformerFactory::TransformQualifiedTypeName(PEGTransformer &transformer,
+                                                                ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	vector<string> qualified_typename;
+	auto &opt_identifiers = list_pr.Child<OptionalParseResult>(0);
+	if (opt_identifiers.HasResult()) {
+		auto &repeat_identifiers = opt_identifiers.GetResult().Cast<RepeatParseResult>();
+		for (auto &child : repeat_identifiers.GetChildren()) {
+			auto &repeat_list = child.get().Cast<ListParseResult>();
+			qualified_typename.emplace_back(repeat_list.Child<IdentifierParseResult>(0).identifier);
+		}
+	}
+
+	if (list_pr.GetChild(1).type == ParseResultType::IDENTIFIER) {
+		qualified_typename.emplace_back(list_pr.Child<IdentifierParseResult>(1).identifier);
+	} else {
+		qualified_typename.push_back(transformer.Transform<string>(list_pr.Child<ListParseResult>(2)));
+	}
+	return StringToQualifiedName(qualified_typename);
+}
+
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCharacterType(PEGTransformer &transformer,
+                                                                           ParseResult &parse_result) {
+	return make_uniq<TypeExpression>("VARCHAR", vector<unique_ptr<ParsedExpression>> {});
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformMapType(PEGTransformer &transformer,
@@ -551,8 +570,8 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TryNegateValue(const Constan
 	}
 }
 
-unique_ptr<ParsedExpression> PEGTransformerFactory::ConvertNumberToValue(string val) {
-	string_t str_val(val);
+unique_ptr<ParsedExpression> PEGTransformerFactory::ConvertNumberToValue(std::string_view val) {
+	string_t str_val(val.data(), val.size());
 	bool try_cast_as_integer = true;
 	bool try_cast_as_decimal = true;
 	optional_idx decimal_position = optional_idx::Invalid();
@@ -643,7 +662,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetofType(PEGTransf
 // StringLiteral <- '\'' [^\']* '\''
 string PEGTransformerFactory::TransformStringLiteral(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &string_literal_pr = parse_result.Cast<StringLiteralParseResult>();
-	return string_literal_pr.result;
+	return string(string_literal_pr.result);
 }
 
 Identifier PEGTransformerFactory::TransformConstraintName(PEGTransformer &transformer,

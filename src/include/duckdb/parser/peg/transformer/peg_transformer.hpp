@@ -94,7 +94,7 @@ public:
 
 		auto *typed_result_ptr = dynamic_cast<TypedTransformResult<T> *>(base_result.get());
 		if (!typed_result_ptr) {
-			throw InternalException("Transformer for rule '" + parse_result.name + "' returned an unexpected type.");
+			throw InternalException("Transformer for rule '%s' returned an unexpected type.", parse_result.name);
 		}
 
 		auto result = std::move(typed_result_ptr->value);
@@ -151,7 +151,7 @@ public:
 	void PivotEntryCheck(const string &type);
 	void ExtractCTEsRecursive(CommonTableExpressionMap &cte_map);
 	bool IsWindowFrameDefault(WindowBoundary start, WindowBoundary end);
-	unique_ptr<WindowExpression> GetWindowClause(const string &window_name);
+	unique_ptr<WindowExpression> GetWindowClause(std::string_view window_name);
 	void SetQueryLocation(ParsedExpression &expr, optional_idx query_location);
 	void SetQueryLocation(TableRef &ref, optional_idx query_location);
 
@@ -237,7 +237,7 @@ public:
 	static LogicalType GetIntervalTargetType(DatePartSpecifier date_part);
 	static bool ConstructConstantFromExpression(const ParsedExpression &expr, Value &value);
 	static unique_ptr<ParsedExpression> TryNegateValue(const ConstantExpression &expr);
-	static unique_ptr<ParsedExpression> ConvertNumberToValue(string val);
+	static unique_ptr<ParsedExpression> ConvertNumberToValue(std::string_view val);
 	static void AddGroupByExpression(unique_ptr<ParsedExpression> expression, GroupingExpressionMap &map,
 	                                 GroupByNode &result, vector<ProjectionIndex> &result_set);
 	static vector<GroupingSet> GroupByExpressionUnfolding(PEGTransformer &transformer, ParseResult &group_by_expr,

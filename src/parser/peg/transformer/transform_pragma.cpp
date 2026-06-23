@@ -10,7 +10,7 @@ PEGTransformerFactory::TransformPragmaStatement(PEGTransformer &transformer,
 }
 
 unique_ptr<SQLStatement>
-PEGTransformerFactory::TransformPragmaAssign(PEGTransformer &transformer, const Identifier &setting_name,
+PEGTransformerFactory::TransformPragmaAssign(PEGTransformer &transformer, std::string_view setting_name,
                                              vector<unique_ptr<ParsedExpression>> variable_list) {
 	// Rule: PragmaAssign <- SettingName '=' Expression
 	auto result = make_uniq<PragmaStatement>();
@@ -43,8 +43,8 @@ PEGTransformerFactory::TransformPragmaAssign(PEGTransformer &transformer, const 
 }
 
 unique_ptr<SQLStatement>
-PEGTransformerFactory::TransformPragmaFunction(PEGTransformer &transformer, const Identifier &pragma_name,
-                                               optional<vector<unique_ptr<ParsedExpression>>> pragma_parameters) {
+PEGTransformerFactory::TransformPragmaFunction(PEGTransformer &transformer, std::string_view pragma_name,
+                                               vector<unique_ptr<ParsedExpression>> pragma_parameters) {
 	// Rule: PragmaFunction <- PragmaName PragmaParameters?
 	auto result = make_uniq<PragmaStatement>();
 	result->info->name = pragma_name;

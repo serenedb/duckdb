@@ -34,8 +34,8 @@ PEGTransformerFactory::TransformExportStatement(PEGTransformer &transformer, con
 	return std::move(result);
 }
 
-string PEGTransformerFactory::TransformExportSource(PEGTransformer &transformer, const Identifier &catalog_name) {
-	return catalog_name.GetIdentifierName();
+string PEGTransformerFactory::TransformExportSource(PEGTransformer &transformer, std::string_view catalog_name) {
+	return string(catalog_name);
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformImportStatement(PEGTransformer &transformer,

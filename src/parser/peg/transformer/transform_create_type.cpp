@@ -68,8 +68,15 @@ PEGTransformerFactory::TransformEnumStringLiteralList(PEGTransformer &transforme
 			string_data.WriteValue(string_t(literal));
 		}
 	}
-	result->type = LogicalType::ENUM(enum_vector, enum_count);
-	return result;
+	auto string_literal_list = ExtractParseResultsFromList(string_list_opt.GetResult());
+
+	Vector enum_vector(LogicalType::VARCHAR, string_literal_list.size());
+	auto string_data = FlatVector::Writer<string_t>(enum_vector, string_literal_list.size());
+	for (auto string_literal : string_literal_list) {
+		const auto &r = string_literal.get().Cast<StringLiteralParseResult>().result;
+		string_data.WriteValue(string_t(r.data(), r.size()));
+	}
+	return LogicalType::ENUM(enum_vector, string_literal_list.size());
 }
 
 } // namespace duckdb

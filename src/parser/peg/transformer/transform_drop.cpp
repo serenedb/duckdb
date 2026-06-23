@@ -189,8 +189,9 @@ PEGTransformerFactory::TransformDropSequence(PEGTransformer &transformer, const 
 	return result;
 }
 
-Identifier PEGTransformerFactory::TransformCollationName(PEGTransformer &transformer, const Identifier &identifier) {
-	return identifier;
+string PEGTransformerFactory::TransformCollationName(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	return string(list_pr.Child<IdentifierParseResult>(0).identifier);
 }
 
 unique_ptr<DropStatement> PEGTransformerFactory::TransformDropCollation(PEGTransformer &transformer,
@@ -269,9 +270,9 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropSecret(PEGTransfor
 	return result;
 }
 
-Identifier PEGTransformerFactory::TransformDropSecretStorage(PEGTransformer &transformer,
-                                                             const Identifier &identifier) {
-	return identifier;
+string PEGTransformerFactory::TransformDropSecretStorage(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	return string(list_pr.Child<IdentifierParseResult>(1).identifier);
 }
 
 unique_ptr<DropStatement> PEGTransformerFactory::TransformDropTrigger(PEGTransformer &transformer,

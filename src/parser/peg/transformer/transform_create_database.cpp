@@ -7,7 +7,7 @@ namespace duckdb {
 // CREATE DATABASE foo -> ATTACH '' AS foo (TYPE serenedb)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement(PEGTransformer &transformer,
                                                                                  const bool &if_not_exists,
-                                                                                 const string &catalog_name) {
+                                                                                 std::string_view catalog_name) {
 	auto result = make_uniq<AttachStatement>();
 	auto info = make_uniq<AttachInfo>();
 	info->name = catalog_name;
@@ -24,7 +24,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement
 // currently ignored (serenedb's drop is already synchronous).
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropDatabaseStatement(PEGTransformer &transformer,
                                                                                const bool &if_exists,
-                                                                               const string &catalog_name,
+                                                                               std::string_view catalog_name,
                                                                                const bool &drop_database_force) {
 	(void)drop_database_force;
 	auto result = make_uniq<DetachStatement>();

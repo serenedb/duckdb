@@ -72,8 +72,9 @@ unique_ptr<BaseTableRef> PEGTransformerFactory::TransformInsertTarget(PEGTransfo
 	return base_table_name;
 }
 
-Identifier PEGTransformerFactory::TransformInsertAlias(PEGTransformer &transformer, const Identifier &identifier) {
-	return identifier;
+string PEGTransformerFactory::TransformInsertAlias(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	return string(list_pr.Child<IdentifierParseResult>(1).identifier);
 }
 
 unique_ptr<OnConflictInfo>
