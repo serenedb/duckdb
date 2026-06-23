@@ -6,6 +6,7 @@
 #include "duckdb/logging/log_storage.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/types/hash.hpp"
+#include <absl/strings/str_cat.h>
 #include <stdexcept>
 #include <cstring>
 
@@ -2149,7 +2150,7 @@ string FormatElapsed(int64_t micros) {
 //! Renders a log message on a single line: collapses every run of whitespace (newlines, tabs,
 //! spaces) to one space and drops other control chars. Keeps one entry on one line (QueryLog
 //! messages are raw, often multi-line SQL) and prevents a payload from injecting escape sequences.
-string SanitizeLogMessage(const string &message) {
+string SanitizeLogMessage(std::string_view message) {
 	string result;
 	result.reserve(message.size());
 	bool prev_space = false;
@@ -2178,8 +2179,8 @@ ShellLogStorage::ShellLogStorage(ShellState &state) : shell_highlight(state), st
 	// Elapsed time on compact log lines is measured from here (CLI launch / db open)
 }
 
-void ShellLogStorage::WriteLogEntry(duckdb::timestamp_t, duckdb::LogLevel level, const string &log_type,
-                                    const string &log_message, const duckdb::RegisteredLoggingContext &context) {
+void ShellLogStorage::WriteLogEntry(duckdb::timestamp_t, duckdb::LogLevel level, std::string_view log_type,
+                                    std::string_view log_message, const duckdb::RegisteredLoggingContext &context) {
 	duckdb::lock_guard<duckdb::mutex> l(lock);
 
 	// Warnings/errors keep the original loud, multi-line representation; lower-severity logs
@@ -2222,14 +2223,14 @@ void ShellLogStorage::WriteLogEntry(duckdb::timestamp_t, duckdb::LogLevel level,
 		}
 
 		shell_highlight.PrintText(log_level + ":\n", PrintOutput::STDOUT, element_type);
-		shell_highlight.PrintText(log_message + "\n\n", PrintOutput::STDOUT, element_type);
+		shell_highlight.PrintText(absl::StrCat(log_message, "\n\n"), PrintOutput::STDOUT, element_type);
 		return;
 	}
 
 	// Compact single-line form: "LEVEL:type   <elapsed>  <message>". Elapsed is measured from CLI
 	// launch. No de-duplication - every logged statement is shown.
 	// Colored prefix (the configurable LOG_* palette), then the rest plain
-	const string prefix = log_level + ":" + log_type;
+	const string prefix = absl::StrCat(log_level, ":", log_type);
 	shell_highlight.PrintText(prefix, PrintOutput::STDOUT, element_type);
 
 	string rest;

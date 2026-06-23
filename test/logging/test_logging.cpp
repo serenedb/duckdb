@@ -179,9 +179,9 @@ TEST_CASE("Test thread context logger", "[logging][.]") {
 // Testing pluggable log storage
 class MyLogStorage : public LogStorage {
 public:
-	void WriteLogEntry(timestamp_t timestamp, LogLevel level, const string &log_type, const string &log_message,
+	void WriteLogEntry(timestamp_t timestamp, LogLevel level, std::string_view log_type, std::string_view log_message,
 	                   const RegisteredLoggingContext &context) override {
-		log_store.insert(log_message);
+		log_store.emplace(log_message);
 	};
 	void WriteLogEntries(DataChunk &chunk, const RegisteredLoggingContext &context) override {};
 	void Flush(LoggingTargetTable table) override {};

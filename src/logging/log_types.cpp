@@ -28,8 +28,8 @@ constexpr LogLevel ProgressVerificationLogType::LEVEL;
 //===--------------------------------------------------------------------===//
 // QueryLogType
 //===--------------------------------------------------------------------===//
-string QueryLogType::ConstructLogMessage(const string &str) {
-	return str;
+string QueryLogType::ConstructLogMessage(std::string_view str) {
+	return string(str);
 }
 
 //===--------------------------------------------------------------------===//
@@ -39,11 +39,11 @@ FileSystemLogType::FileSystemLogType() : LogType(NAME, LEVEL, GetLogType()) {
 }
 
 // FIXME: Manual JSON strings are not winning any style points
-string FileSystemLogType::ConstructLogMessage(const FileHandle &handle, const string &op, int64_t bytes, idx_t pos) {
+string FileSystemLogType::ConstructLogMessage(const FileHandle &handle, std::string_view op, int64_t bytes, idx_t pos) {
 	return StringUtil::Format("{\"fs\":\"%s\",\"path\":\"%s\",\"op\":\"%s\",\"bytes\":\"%lld\",\"pos\":\"%llu\"}",
 	                          handle.file_system.GetName(), handle.path, op, bytes, pos);
 }
-string FileSystemLogType::ConstructLogMessage(const FileHandle &handle, const string &op) {
+string FileSystemLogType::ConstructLogMessage(const FileHandle &handle, std::string_view op) {
 	return StringUtil::Format("{\"fs\":\"%s\",\"path\":\"%s\",\"op\":\"%s\"}", handle.file_system.GetName(),
 	                          handle.path, op);
 }
@@ -161,7 +161,7 @@ static Value StringPairIterableToMap(const ITERABLE &iterable) {
 
 template <class PARAMETERS>
 static string ConstructPhysicalOperatorLogMessage(PhysicalOperatorType operator_type, const PARAMETERS &parameters,
-                                                  const string &class_p, const string &event,
+                                                  std::string_view class_p, std::string_view event,
                                                   const vector<pair<string, string>> &info) {
 	child_list_t<Value> child_list = {
 	    {"operator_type", EnumUtil::ToString(operator_type)},
@@ -174,15 +174,15 @@ static string ConstructPhysicalOperatorLogMessage(PhysicalOperatorType operator_
 	return Value::STRUCT(std::move(child_list)).ToString();
 }
 
-string PhysicalOperatorLogType::ConstructLogMessage(const PhysicalOperator &physical_operator, const string &class_p,
-                                                    const string &event, const vector<pair<string, string>> &info) {
+string PhysicalOperatorLogType::ConstructLogMessage(const PhysicalOperator &physical_operator, std::string_view class_p,
+                                                    std::string_view event, const vector<pair<string, string>> &info) {
 	return ConstructPhysicalOperatorLogMessage(physical_operator.type, physical_operator.ParamsToString(), class_p,
 	                                           event, info);
 }
 
 string PhysicalOperatorLogType::ConstructLogMessage(PhysicalOperatorType operator_type,
                                                     const vector<pair<string, string>> &parameters,
-                                                    const string &class_p, const string &event,
+                                                    std::string_view class_p, std::string_view event,
                                                     const vector<pair<string, string>> &info) {
 	return ConstructPhysicalOperatorLogMessage(operator_type, parameters, class_p, event, info);
 }
@@ -201,7 +201,7 @@ LogicalType MetricsLogType::GetLogType() {
 	return LogicalType::STRUCT(child_list);
 }
 
-string MetricsLogType::ConstructLogMessage(const string &metric, const Value &value) {
+string MetricsLogType::ConstructLogMessage(std::string_view metric, const Value &value) {
 	child_list_t<Value> child_list = {
 	    {"metric", metric},
 	    {"value", value.ToString()},
@@ -299,7 +299,7 @@ LogicalType AdaptiveFilterLogType::GetLogType() {
 	return LogicalType::STRUCT(child_list);
 }
 
-string AdaptiveFilterLogType::ConstructLogMessage(const char *event, const string &file_path,
+string AdaptiveFilterLogType::ConstructLogMessage(const char *event, std::string_view file_path,
                                                   const vector<idx_t> &permutation,
                                                   const vector<pair<string, string>> &info) {
 	auto permutation_str =
@@ -332,7 +332,7 @@ LogicalType ParquetPrefetchLogType::GetLogType() {
 	return LogicalType::STRUCT(child_list);
 }
 
-string ParquetPrefetchLogType::ConstructLogMessage(const string &file_path, idx_t row_group_id, bool fully_filtered,
+string ParquetPrefetchLogType::ConstructLogMessage(std::string_view file_path, idx_t row_group_id, bool fully_filtered,
                                                    const char *strategy, const vector<vector<string>> &prefetch_groups,
                                                    const vector<string> &minimal_filters,
                                                    uint64_t accepted_column_gap) {

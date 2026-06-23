@@ -113,7 +113,7 @@ void LogManager::WriteLogEntry(timestamp_t timestamp, std::string_view log_type,
 		throw InvalidInputException(log_message);
 	} else {
 		unique_lock<mutex> lck(lock);
-		log_storage->WriteLogEntry(timestamp, log_level, string(log_type), string(log_message), context);
+		log_storage->WriteLogEntry(timestamp, log_level, log_type, log_message, context);
 		has_buffered_entries.store(true, std::memory_order_relaxed);
 	}
 }
