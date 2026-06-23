@@ -83,12 +83,12 @@ PEGTransformerFactory::TransformUpdateSetElement(PEGTransformer &transformer, co
 	return {update_set_column_target, std::move(expression)};
 }
 
-string PEGTransformerFactory::TransformUpdateSetColumnTarget(PEGTransformer &transformer, const string &column_name,
+string PEGTransformerFactory::TransformUpdateSetColumnTarget(PEGTransformer &transformer, std::string_view column_name,
                                                              const vector<string> &dot_identifier) {
 	if (!dot_identifier.empty()) {
 		throw ParserException("Qualified column names in UPDATE .. SET not supported");
 	}
-	return column_name;
+	return string(column_name);
 }
 
 } // namespace duckdb

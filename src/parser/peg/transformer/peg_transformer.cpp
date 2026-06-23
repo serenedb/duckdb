@@ -149,7 +149,7 @@ bool PEGTransformer::IsWindowFrameDefault(WindowBoundary start, WindowBoundary e
 	return start_is_default && end_is_default;
 }
 
-unique_ptr<WindowExpression> PEGTransformer::GetWindowClause(const string &window_name) {
+unique_ptr<WindowExpression> PEGTransformer::GetWindowClause(std::string_view window_name) {
 	auto it = window_clauses.find(string(window_name));
 	if (it == window_clauses.end()) {
 		throw ParserException("window \"%s\" does not exist", window_name);

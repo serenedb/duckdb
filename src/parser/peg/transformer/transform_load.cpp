@@ -23,8 +23,8 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformLoadStatement(PEGTransf
 	return std::move(result);
 }
 
-string PEGTransformerFactory::TransformExtensionAlias(PEGTransformer &transformer, const string &identifier) {
-	return identifier;
+string PEGTransformerFactory::TransformExtensionAlias(PEGTransformer &transformer, std::string_view identifier) {
+	return string(identifier);
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformInstallStatement(
@@ -47,7 +47,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformInstallStatement(
 }
 
 ExtensionRepositoryInfo PEGTransformerFactory::TransformFromSourceIdentifier(PEGTransformer &transformer,
-                                                                             const string &identifier) {
+                                                                             std::string_view identifier) {
 	ExtensionRepositoryInfo result;
 	result.name = identifier;
 	result.repository_is_alias = true;

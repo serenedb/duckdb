@@ -457,12 +457,12 @@ unique_ptr<BaseTableRef> PEGTransformerFactory::TransformCatalogReservedSchemaTa
 
 string PEGTransformerFactory::TransformSchemaQualification(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	return list_pr.Child<IdentifierParseResult>(0).identifier;
+	return string(list_pr.Child<IdentifierParseResult>(0).identifier);
 }
 
 string PEGTransformerFactory::TransformCatalogQualification(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	return list_pr.Child<IdentifierParseResult>(0).identifier;
+	return string(list_pr.Child<IdentifierParseResult>(0).identifier);
 }
 
 QualifiedName PEGTransformerFactory::TransformQualifiedName(PEGTransformer &transformer, ParseResult &parse_result) {
@@ -506,7 +506,7 @@ string PEGTransformerFactory::TransformReservedIdentifierOrStringLiteral(PEGTran
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
 	if (choice_pr.GetResult().type == ParseResultType::IDENTIFIER) {
-		return choice_pr.GetResult().Cast<IdentifierParseResult>().identifier;
+		return string(choice_pr.GetResult().Cast<IdentifierParseResult>().identifier);
 	}
 	return transformer.Transform<string>(choice_pr.GetResult());
 }
@@ -568,7 +568,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformExpressionOptIdenti
 	auto expr = transformer.Transform<unique_ptr<ParsedExpression>>(list_pr.Child<ListParseResult>(0));
 	auto &opt_identifier = list_pr.Child<OptionalParseResult>(1);
 	if (opt_identifier.HasResult()) {
-		expr->SetAlias(opt_identifier.GetResult().Cast<IdentifierParseResult>().identifier);
+		expr->SetAlias(string(opt_identifier.GetResult().Cast<IdentifierParseResult>().identifier));
 	}
 	return expr;
 }
@@ -937,7 +937,7 @@ JoinQualifier PEGTransformerFactory::TransformUsingClause(PEGTransformer &transf
 		if (col_identifier.empty()) {
 			throw ParserException("Column identifier cannot be empty");
 		}
-		result.using_columns.push_back(col_identifier);
+		result.using_columns.emplace_back(col_identifier);
 	}
 	return result;
 }
@@ -1173,7 +1173,7 @@ unique_ptr<AtClause> PEGTransformerFactory::TransformAtSpecifier(PEGTransformer 
 string PEGTransformerFactory::TransformAtUnit(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
-	return choice_pr.GetResult().Cast<KeywordParseResult>().keyword;
+	return string(choice_pr.GetResult().Cast<KeywordParseResult>().keyword);
 }
 
 unique_ptr<TableRef> PEGTransformerFactory::TransformValuesRef(PEGTransformer &transformer, ParseResult &parse_result) {
@@ -1561,7 +1561,7 @@ vector<GroupingSet> PEGTransformerFactory::GroupByExpressionUnfolding(PEGTransfo
 string PEGTransformerFactory::TransformCubeOrRollup(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0).GetResult();
-	return choice_pr.Cast<KeywordParseResult>().keyword;
+	return string(choice_pr.Cast<KeywordParseResult>().keyword);
 }
 
 GroupByNode PEGTransformerFactory::TransformGroupByList(PEGTransformer &transformer, ParseResult &parse_result) {
@@ -1764,7 +1764,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformWindowDefinition(PE
 	transformer.in_window_definition = true;
 	auto window_function = transformer.Transform<unique_ptr<WindowExpression>>(list_pr.Child<ListParseResult>(2));
 	transformer.in_window_definition = false;
-	window_function->SetAlias(list_pr.Child<IdentifierParseResult>(0).identifier);
+	window_function->SetAlias(string(list_pr.Child<IdentifierParseResult>(0).identifier));
 	return std::move(window_function);
 }
 

@@ -41,8 +41,8 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTriggerStmt(
 	return result;
 }
 
-string PEGTransformerFactory::TransformTriggerName(PEGTransformer &transformer, const string &identifier) {
-	return identifier;
+string PEGTransformerFactory::TransformTriggerName(PEGTransformer &transformer, std::string_view identifier) {
+	return string(identifier);
 }
 
 TriggerForEach PEGTransformerFactory::TransformForEachClause(PEGTransformer &transformer, ParseResult &parse_result) {

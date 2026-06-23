@@ -92,9 +92,9 @@ static string ExtractShowKeyword(ParseResult &parse_result) {
 	if (outer_choice.name == "ShowOrDescribe") {
 		// ShowOrDescribe <- ShowRule / DescribeRule
 		auto &inner_choice = outer_choice.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-		return inner_choice.name;
+		return string(inner_choice.name);
 	}
-	return outer_choice.name;
+	return string(outer_choice.name);
 }
 
 unique_ptr<QueryNode> PEGTransformerFactory::TransformShowQualifiedName(PEGTransformer &transformer,

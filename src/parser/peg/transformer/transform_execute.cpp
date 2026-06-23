@@ -4,7 +4,7 @@
 namespace duckdb {
 
 unique_ptr<SQLStatement>
-PEGTransformerFactory::TransformExecuteStatement(PEGTransformer &transformer, const string &identifier,
+PEGTransformerFactory::TransformExecuteStatement(PEGTransformer &transformer, std::string_view identifier,
                                                  vector<unique_ptr<ParsedExpression>> table_function_arguments) {
 	auto result = make_uniq<ExecuteStatement>();
 	result->name = identifier;

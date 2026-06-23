@@ -281,7 +281,7 @@ UnpivotNameValues PEGTransformerFactory::TransformIntoNameValues(PEGTransformer 
 	result.column = std::move(column);
 	auto unpivot_name_list = ExtractParseResultsFromList(list_pr.GetChild(4));
 	for (auto identifier : unpivot_name_list) {
-		result.unpivot_names.push_back(identifier.get().Cast<IdentifierParseResult>().identifier);
+		result.unpivot_names.emplace_back(identifier.get().Cast<IdentifierParseResult>().identifier);
 	}
 	return result;
 }

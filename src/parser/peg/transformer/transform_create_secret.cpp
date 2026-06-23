@@ -61,8 +61,9 @@ PEGTransformerFactory::TransformCreateSecretStmt(PEGTransformer &transformer, co
 	return result;
 }
 
-string PEGTransformerFactory::TransformSecretStorageSpecifier(PEGTransformer &transformer, const string &identifier) {
-	return identifier;
+string PEGTransformerFactory::TransformSecretStorageSpecifier(PEGTransformer &transformer,
+                                                              std::string_view identifier) {
+	return string(identifier);
 }
 
 string PEGTransformerFactory::TransformSecretName(PEGTransformer &transformer, const string &col_id) {
