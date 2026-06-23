@@ -67,6 +67,9 @@ SQLStatement:
     - DropDatabaseStatement
     - CreateTSDictionaryStatement
     - DropTSDictionaryStatement
+    - ListenStatement
+    - NotifyStatement
+    - UnlistenStatement
     - CallStatement
     - CheckpointStatement
     - CommentStatement
