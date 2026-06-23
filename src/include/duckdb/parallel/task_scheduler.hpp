@@ -92,6 +92,11 @@ public:
 
 	//! Yield to other threads
 	static void YieldThread();
+
+	//! Set the allocator flush threshold
+	void SetAllocatorFlushThreshold(idx_t threshold);
+	//! Sets the allocator background thread
+	void SetAllocatorBackgroundThreads(bool enable);
 	//! Get the number of the CPU on which the calling thread is currently executing.
 	//! Fallback to calling thread id if CPU number is not available.
 	//! Result do not need to be exact 'return 0' is a valid fallback strategy
