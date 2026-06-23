@@ -17,7 +17,6 @@ class TableDescription {
 public:
 	TableDescription(Identifier database_name, Identifier schema_name, Identifier table_name)
 	    : database(std::move(database_name)), schema(std::move(schema_name)), table(std::move(table_name)) {};
-
 	TableDescription() = delete;
 
 public:
