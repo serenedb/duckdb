@@ -372,8 +372,7 @@ public:
 			quacks++;
 		}
 		if (quacks == 0) {
-			// Not our input — let the next extension or the original PEG error surface.
-			return ParserExtensionParseResult();
+			// Not our input — let the next extension or the original PEG error surface.			return ParserExtensionParseResult();
 		}
 		// To be a proper TopLevelStatement (`Statement? (';'+ / EndOfInput)`), the quack run must
 		// be followed by ';' or end-of-input. The tokenizer always appends an END_OF_INPUT
@@ -404,7 +403,7 @@ public:
 		return result;
 	}
 
-	static ParserOverrideResult QuackParser(ParserExtensionInfo *info, const string &query, ParserOptions &options) {
+	static ParserOverrideResult QuackParser(ParserExtensionInfo *info, std::string_view query, ParserOptions &options) {
 		vector<string> queries = StringUtil::Split(query, ";");
 		vector<unique_ptr<SQLStatement>> statements;
 		for (const auto &query_input : queries) {

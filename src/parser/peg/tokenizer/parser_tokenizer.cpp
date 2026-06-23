@@ -3,7 +3,7 @@
 
 namespace duckdb {
 
-ParserTokenizer::ParserTokenizer(const string &sql, vector<MatcherToken> &tokens) : BaseTokenizer(sql, tokens) {
+ParserTokenizer::ParserTokenizer(std::string_view sql, vector<MatcherToken> &tokens) : BaseTokenizer(sql, tokens) {
 }
 
 void ParserTokenizer::OnStatementEnd(idx_t pos) {

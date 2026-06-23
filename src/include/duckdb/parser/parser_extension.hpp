@@ -104,8 +104,7 @@ struct ParserExtensionParseResult {
 //! SimpleToken (text + TokenType) per token, in source order. The extension dispatches on this
 //! token stream and reports, via `ParserExtensionParseResult::consumed_tokens`, how many leading
 //! tokens it claimed (> 0 success, 0 = ran but claimed nothing, < 0 = throw).
-typedef ParserExtensionParseResult (*parse_function_t)(ParserExtensionInfo *info, const vector<SimpleToken> &tokens);
-//===--------------------------------------------------------------------===//
+typedef ParserExtensionParseResult (*parse_function_t)(ParserExtensionInfo *info, const vector<SimpleToken> &tokens);//===--------------------------------------------------------------------===//
 // Plan
 //===--------------------------------------------------------------------===//
 struct ParserExtensionPlanResult { // NOLINT: work-around bug in clang-tidy
@@ -141,7 +140,7 @@ struct ParserOverrideResult {
 	ErrorData error;
 };
 
-typedef ParserOverrideResult (*parser_override_function_t)(ParserExtensionInfo *info, const string &query,
+typedef ParserOverrideResult (*parser_override_function_t)(ParserExtensionInfo *info, std::string_view query,
                                                            ParserOptions &options);
 
 //===--------------------------------------------------------------------===//

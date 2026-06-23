@@ -6,7 +6,7 @@ struct MatcherToken;
 
 class HighlightTokenizer : public BaseTokenizer {
 public:
-	explicit HighlightTokenizer(const string &sql);
+	explicit HighlightTokenizer(std::string_view sql);
 	~HighlightTokenizer() override = default;
 
 	void PushToken(idx_t start, idx_t end, TokenType type, bool unterminated) override;

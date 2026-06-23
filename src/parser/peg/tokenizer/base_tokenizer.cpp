@@ -4,8 +4,7 @@
 
 namespace duckdb {
 
-BaseTokenizer::BaseTokenizer(const string &sql, vector<MatcherToken> &tokens)
-    : sql(sql), tokens(tokens), keyword_helper(PEGKeywordHelper::Instance()) {
+BaseTokenizer::BaseTokenizer(std::string_view sql, vector<MatcherToken> &tokens) : sql(sql), tokens(tokens) {
 }
 
 static bool OperatorEquals(const char *str, const char *op, idx_t len, idx_t &op_len) {
@@ -19,7 +18,7 @@ static bool OperatorEquals(const char *str, const char *op, idx_t len, idx_t &op
 }
 
 bool BaseTokenizer::IsSpecialOperator(idx_t pos, idx_t &op_len) const {
-	const char *op_start = sql.c_str() + pos;
+	const char *op_start = sql.data() + pos;
 	if (pos + 2 < sql.size()) {
 		if (OperatorEquals(op_start, "->>", 3, op_len)) {
 			return true;
@@ -212,8 +211,8 @@ void BaseTokenizer::PushToken(idx_t start, idx_t end, TokenType type, bool unter
 	if (start >= end) {
 		return;
 	}
-	string last_token = sql.substr(start, end - start);
-	tokens.emplace_back(std::move(last_token), start, type, unterminated);
+	auto last_token = sql.substr(start, end - start);
+	tokens.emplace_back(string(last_token), start, type, unterminated);
 }
 
 // Valid characters can be between A-Z, a-z, 0-9, underscore, or \200 - \377
@@ -344,7 +343,7 @@ bool BaseTokenizer::TokenizeInputInternal() {
 			idx_t op_len;
 			if (IsSpecialOperator(i, op_len)) {
 				// special operator - push the special operator
-				tokens.emplace_back(sql.substr(i, op_len), last_pos, TokenType::OPERATOR);
+				tokens.emplace_back(string(sql.substr(i, op_len)), last_pos, TokenType::OPERATOR);
 				i += op_len - 1;
 				last_pos = i + 1;
 				break;
@@ -503,7 +502,7 @@ bool BaseTokenizer::TokenizeInputInternal() {
 			if (c != '$' && !CharacterIsKeyword(c)) {
 				// not a keyword - return to standard state
 				auto word = sql.substr(last_pos, i - last_pos);
-				auto token_type = keyword_helper.IsKeyword(word) ? TokenType::KEYWORD : TokenType::IDENTIFIER;
+				auto token_type = peg::IsKeyword(word) ? TokenType::KEYWORD : TokenType::IDENTIFIER;
 				PushToken(last_pos, i, token_type);
 				state = TokenizeState::STANDARD;
 				last_pos = i;
@@ -595,7 +594,7 @@ bool BaseTokenizer::TokenizeInputInternal() {
 			}
 			// Marker found! Revert to standard state
 			size_t full_marker_len = dollar_quote_marker.size() + 2;
-			string quoted = sql.substr(last_pos, (start + dollar_quote_marker.size() + 1) - last_pos);
+			string quoted = string(sql.substr(last_pos, (start + dollar_quote_marker.size() + 1) - last_pos));
 			string content = quoted.substr(full_marker_len, quoted.size() - 2 * full_marker_len);
 			content = StringUtil::Replace(content, "'", "''");
 			quoted = "'" + content + "'";
@@ -622,7 +621,7 @@ bool BaseTokenizer::TokenizeInputInternal() {
 	default:
 		break;
 	}
-	string last_word = sql.substr(last_pos, sql.size() - last_pos);
+	string last_word = string(sql.substr(last_pos, sql.size() - last_pos));
 	OnLastToken(state, std::move(last_word), last_pos);
 	return true;
 }
@@ -636,7 +635,7 @@ void BaseTokenizer::OnLastToken(TokenizeState state, string last_word, idx_t las
 		return;
 	}
 	if (state == TokenizeState::KEYWORD) {
-		state = keyword_helper.IsKeyword(last_word) ? TokenizeState::KEYWORD : TokenizeState::STANDARD;
+		state = peg::IsKeyword(last_word) ? TokenizeState::KEYWORD : TokenizeState::STANDARD;
 	}
 
 	bool is_unterminated = IsUnterminatedState(state);
