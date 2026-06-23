@@ -6,7 +6,7 @@ struct MatcherToken;
 
 class ParserTokenizer : public BaseTokenizer {
 public:
-	ParserTokenizer(const string &sql, vector<MatcherToken> &tokens);
+	ParserTokenizer(std::string_view sql, vector<MatcherToken> &tokens);
 	~ParserTokenizer() override = default;
 
 	void OnStatementEnd(idx_t pos) override;
