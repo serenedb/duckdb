@@ -118,7 +118,8 @@ template <class T>
 void WriteLogValues(T &LogSource, LogLevel level, const string_t *data, const SelectionVector *sel, idx_t size,
                     const string &type) {
 	for (idx_t i = 0; i < size; i++) {
-		DUCKDB_LOG_INTERNAL(LogSource, type.c_str(), level, data[sel->get_index(i)]);
+		auto &entry = data[sel->get_index(i)];
+		DUCKDB_LOG_INTERNAL(LogSource, type.c_str(), level, std::string_view(entry.GetData(), entry.GetSize()));
 	}
 }
 
