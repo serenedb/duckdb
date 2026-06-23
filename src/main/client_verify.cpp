@@ -66,7 +66,7 @@ void PreparedStatementVerification::ConvertConstants(unique_ptr<ParsedExpression
 	                                            [&](unique_ptr<ParsedExpression> &child) { ConvertConstants(child); });
 }
 
-void ClientContext::StatementVerification(ClientContextLock &lock, const string &query,
+void ClientContext::StatementVerification(ClientContextLock &lock, std::string_view query,
                                           unique_ptr<SQLStatement> &statement,
                                           PendingQueryParameters query_parameters) {
 	auto verification = Settings::Get<DebugVerifyStatementSetting>(*this);
@@ -242,7 +242,7 @@ void ClientContext::StatementVerification(ClientContextLock &lock, const string 
 			// not supported for statements that already have parameters
 			return;
 		}
-		auto explain_q = "EXPLAIN " + query;
+		auto explain_q = absl::StrCat("EXPLAIN ", query);
 		auto explain_stmt = make_uniq<ExplainStatement>(statement->Copy());
 		// Disable the profiler during the verification EXPLAIN to prevent it from consuming the profiler context
 		// (which would lose parser timing captured before StatementVerification was called) and from

@@ -163,12 +163,12 @@ public:
 	//! Issue a query, returning a QueryResult. The QueryResult can be either a StreamQueryResult or a
 	//! MaterializedQueryResult. The StreamQueryResult will only be returned in the case of a successful SELECT
 	//! statement.
-	DUCKDB_API unique_ptr<QueryResult> Query(const string &query, QueryParameters query_parameters);
+	DUCKDB_API unique_ptr<QueryResult> Query(std::string_view query, QueryParameters query_parameters);
 	DUCKDB_API unique_ptr<QueryResult> Query(unique_ptr<SQLStatement> statement, QueryParameters query_parameters);
 
 	//! Issues a query to the database and returns a Pending Query Result. Note that "query" may only contain
 	//! a single statement.
-	DUCKDB_API unique_ptr<PendingQueryResult> PendingQuery(const string &query, QueryParameters query_parameters);
+	DUCKDB_API unique_ptr<PendingQueryResult> PendingQuery(std::string_view query, QueryParameters query_parameters);
 	//! Issues a query to the database and returns a Pending Query Result
 	DUCKDB_API unique_ptr<PendingQueryResult> PendingQuery(unique_ptr<SQLStatement> statement,
 	                                                       QueryParameters query_parameters);
@@ -177,10 +177,10 @@ public:
 	DUCKDB_API unique_ptr<PendingQueryResult> PendingQuery(unique_ptr<SQLStatement> statement,
 	                                                       case_insensitive_map_t<BoundParameterData> &values,
 	                                                       QueryParameters query_parameters);
-	DUCKDB_API unique_ptr<PendingQueryResult> PendingQuery(const string &query,
+	DUCKDB_API unique_ptr<PendingQueryResult> PendingQuery(std::string_view query,
 	                                                       case_insensitive_map_t<BoundParameterData> &values,
 	                                                       QueryParameters query_parameters);
-	DUCKDB_API unique_ptr<PendingQueryResult> PendingQuery(const string &query, PendingQueryParameters parameters);
+	DUCKDB_API unique_ptr<PendingQueryResult> PendingQuery(std::string_view query, PendingQueryParameters parameters);
 
 	//! Destroy the client context
 	DUCKDB_API void Destroy();
@@ -213,15 +213,17 @@ public:
 	//! Identifiers use the same scheme as named_param_map (positional "1",
 	//! "2", ... or named).
 	DUCKDB_API unique_ptr<PreparedStatement>
-	Prepare(const string &query,
+	Prepare(std::string_view query,
 	        optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
-	//! Directly prepare a SQL statement
-	DUCKDB_API unique_ptr<PreparedStatement> Prepare(unique_ptr<SQLStatement> statement);
+	//! Directly prepare a SQL statement, optionally pinning per-parameter bind types.
+	DUCKDB_API unique_ptr<PreparedStatement>
+	Prepare(unique_ptr<SQLStatement> statement,
+	        optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
 
 	//! Create a pending query result from a prepared statement with the given name and set of parameters
 	//! It is possible that the prepared statement will be re-bound. This will generally happen if the catalog is
 	//! modified in between the prepared statement being bound and the prepared statement being run.
-	DUCKDB_API unique_ptr<PendingQueryResult> PendingQuery(const string &query,
+	DUCKDB_API unique_ptr<PendingQueryResult> PendingQuery(std::string_view query,
 	                                                       shared_ptr<PreparedStatementData> &prepared,
 	                                                       const PendingQueryParameters &parameters);
 
@@ -229,10 +231,10 @@ public:
 	//! It is possible that the prepared statement will be re-bound. This will generally happen if the catalog is
 	//! modified in between the prepared statement being bound and the prepared statement being run.
 	DUCKDB_API unique_ptr<QueryResult>
-	Execute(const string &query, shared_ptr<PreparedStatementData> &prepared,
+	Execute(std::string_view query, shared_ptr<PreparedStatementData> &prepared,
 	        case_insensitive_map_t<BoundParameterData> &values,
 	        QueryParameters query_parameters = QueryResultOutputType::ALLOW_STREAMING);
-	DUCKDB_API unique_ptr<QueryResult> Execute(const string &query, shared_ptr<PreparedStatementData> &prepared,
+	DUCKDB_API unique_ptr<QueryResult> Execute(std::string_view query, shared_ptr<PreparedStatementData> &prepared,
 	                                           const PendingQueryParameters &parameters);
 
 	//! Gets current percentage of the query's progress, returns 0 in case the progress bar is disabled.
@@ -242,10 +244,10 @@ public:
 	DUCKDB_API void RegisterFunction(CreateFunctionInfo &info);
 
 	//! Parse statements from a query
-	DUCKDB_API vector<unique_ptr<SQLStatement>> ParseStatements(const string &query);
+	DUCKDB_API vector<unique_ptr<SQLStatement>> ParseStatements(std::string_view query);
 
 	//! Extract the logical plan of a query
-	DUCKDB_API unique_ptr<LogicalOperator> ExtractPlan(const string &query);
+	DUCKDB_API unique_ptr<LogicalOperator> ExtractPlan(std::string_view query);
 	DUCKDB_API void PreprocessStatements(vector<unique_ptr<SQLStatement>> &statements);
 
 	//! Runs a function with a valid transaction context, potentially starting a transaction if the context is in auto
@@ -281,7 +283,7 @@ public:
 	//! Fetch the set of tables names of the query.
 	//! Returns the fully qualified, escaped table names, if qualified is set to true,
 	//! else returns the not qualified, not escaped table names.
-	DUCKDB_API unordered_set<string> GetTableNames(const string &query, const bool qualified = false);
+	DUCKDB_API unordered_set<string> GetTableNames(std::string_view query, const bool qualified = false);
 
 	DUCKDB_API ClientProperties GetClientProperties();
 
@@ -289,32 +291,32 @@ public:
 	DUCKDB_API bool ExecutionIsFinished();
 
 	//! Process an error for display to the user
-	DUCKDB_API void ProcessError(ErrorData &error, const string &query) const;
+	DUCKDB_API void ProcessError(ErrorData &error, std::string_view query) const;
 
 	DUCKDB_API LogicalType ParseLogicalType(const string &type);
 
 private:
 	//! Parse statements and resolve pragmas from a query
-	vector<unique_ptr<SQLStatement>> ParseStatements(ClientContextLock &lock, const string &query);
+	vector<unique_ptr<SQLStatement>> ParseStatements(ClientContextLock &lock, std::string_view query);
 	//! Issues a query to the database and returns a Pending Query Result
 	unique_ptr<PendingQueryResult> PendingQueryInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
 	                                                    const PendingQueryParameters &parameters, bool verify = true);
 	unique_ptr<QueryResult> ExecutePendingQueryInternal(ClientContextLock &lock, PendingQueryResult &query);
 
 	//! Parse statements from a query
-	vector<unique_ptr<SQLStatement>> ParseStatementsInternal(ClientContextLock &lock, const string &query);
-	void StatementVerification(ClientContextLock &lock, const string &query, unique_ptr<SQLStatement> &statement,
+	vector<unique_ptr<SQLStatement>> ParseStatementsInternal(ClientContextLock &lock, std::string_view query);
+	void StatementVerification(ClientContextLock &lock, std::string_view query, unique_ptr<SQLStatement> &statement,
 	                           PendingQueryParameters query_parameters);
 
 	void InitialCleanup(ClientContextLock &lock);
 	//! Internal clean up, does not lock. Caller must hold the context_lock.
 	void CleanupInternal(ClientContextLock &lock, BaseQueryResult *result = nullptr,
 	                     bool invalidate_transaction = false);
-	unique_ptr<PendingQueryResult> PendingStatementOrPreparedStatement(ClientContextLock &lock, const string &query,
+	unique_ptr<PendingQueryResult> PendingStatementOrPreparedStatement(ClientContextLock &lock, std::string_view query,
 	                                                                   unique_ptr<SQLStatement> statement,
 	                                                                   shared_ptr<PreparedStatementData> &prepared,
 	                                                                   const PendingQueryParameters &parameters);
-	unique_ptr<PendingQueryResult> PendingPreparedStatement(ClientContextLock &lock, const string &query,
+	unique_ptr<PendingQueryResult> PendingPreparedStatement(ClientContextLock &lock, std::string_view query,
 	                                                        shared_ptr<PreparedStatementData> statement_p,
 	                                                        const PendingQueryParameters &parameters);
 	unique_ptr<PendingQueryResult> PendingPreparedStatementInternal(ClientContextLock &lock,
@@ -324,25 +326,25 @@ private:
 
 	//! Internally prepare a SQL statement. Caller must hold the context_lock.
 	shared_ptr<PreparedStatementData>
-	CreatePreparedStatement(ClientContextLock &lock, const string &query, unique_ptr<SQLStatement> statement,
+	CreatePreparedStatement(ClientContextLock &lock, std::string_view query, unique_ptr<SQLStatement> statement,
 	                        PendingQueryParameters parameters,
 	                        PreparedStatementMode mode = PreparedStatementMode::PREPARE_ONLY);
-	unique_ptr<PendingQueryResult> PendingStatementInternal(ClientContextLock &lock, const string &query,
+	unique_ptr<PendingQueryResult> PendingStatementInternal(ClientContextLock &lock, std::string_view query,
 	                                                        unique_ptr<SQLStatement> statement,
 	                                                        const PendingQueryParameters &parameters);
-	unique_ptr<QueryResult> RunStatementInternal(ClientContextLock &lock, const string &query,
+	unique_ptr<QueryResult> RunStatementInternal(ClientContextLock &lock, std::string_view query,
 	                                             unique_ptr<SQLStatement> statement,
 	                                             const PendingQueryParameters &parameters, bool verify = true);
 	unique_ptr<PreparedStatement>
 	PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
 	                optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
-	void LogQueryInternal(ClientContextLock &lock, const string &query);
+	void LogQueryInternal(ClientContextLock &lock, std::string_view query);
 
 	unique_ptr<QueryResult> FetchResultInternal(ClientContextLock &lock, PendingQueryResult &pending);
 
 	unique_ptr<ClientContextLock> LockContext();
 
-	void BeginQueryInternal(ClientContextLock &lock, const string &query);
+	void BeginQueryInternal(ClientContextLock &lock, std::string_view query);
 	ErrorData EndQueryInternal(ClientContextLock &lock, bool success, bool invalidate_transaction,
 	                           optional_ptr<ErrorData> previous_error);
 
@@ -352,23 +354,23 @@ private:
 	                                           std::function<void()> on_reschedule_arg, bool dry_run);
 
 	unique_ptr<PendingQueryResult> PendingStatementOrPreparedStatementInternal(
-	    ClientContextLock &lock, const string &query, unique_ptr<SQLStatement> statement,
+	    ClientContextLock &lock, std::string_view query, unique_ptr<SQLStatement> statement,
 	    shared_ptr<PreparedStatementData> &prepared, const PendingQueryParameters &parameters);
 
-	unique_ptr<PendingQueryResult> PendingQueryPreparedInternal(ClientContextLock &lock, const string &query,
+	unique_ptr<PendingQueryResult> PendingQueryPreparedInternal(ClientContextLock &lock, std::string_view query,
 	                                                            shared_ptr<PreparedStatementData> &prepared,
 	                                                            const PendingQueryParameters &parameters);
 
 	unique_ptr<PendingQueryResult> PendingQueryInternal(ClientContextLock &, const shared_ptr<Relation> &relation,
 	                                                    QueryParameters query_parameters);
 
-	void RebindPreparedStatement(ClientContextLock &lock, const string &query,
+	void RebindPreparedStatement(ClientContextLock &lock, std::string_view query,
 	                             shared_ptr<PreparedStatementData> &prepared, const PendingQueryParameters &parameters);
 
 	template <class T>
-	unique_ptr<T> ErrorResult(ErrorData error, const string &query = string());
+	unique_ptr<T> ErrorResult(ErrorData error, std::string_view query = string());
 
-	shared_ptr<PreparedStatementData> CreatePreparedStatementInternal(ClientContextLock &lock, const string &query,
+	shared_ptr<PreparedStatementData> CreatePreparedStatementInternal(ClientContextLock &lock, std::string_view query,
 	                                                                  unique_ptr<SQLStatement> statement,
 	                                                                  PendingQueryParameters parameters);
 

@@ -15,7 +15,7 @@
 namespace duckdb {
 
 QueryRelation::QueryRelation(const shared_ptr<ClientContext> &context, unique_ptr<SelectStatement> select_stmt_p,
-                             string alias_p, const string &query_p)
+                             string alias_p, std::string_view query_p)
     : Relation(context, RelationType::QUERY_RELATION), select_stmt(std::move(select_stmt_p)), query(query_p),
       alias(std::move(alias_p)) {
 	if (query.empty()) {
@@ -27,8 +27,8 @@ QueryRelation::QueryRelation(const shared_ptr<ClientContext> &context, unique_pt
 QueryRelation::~QueryRelation() {
 }
 
-unique_ptr<SelectStatement> QueryRelation::ParseStatement(ClientContext &context, const string &query,
-                                                          const string &error) {
+unique_ptr<SelectStatement> QueryRelation::ParseStatement(ClientContext &context, std::string_view query,
+                                                          std::string_view error) {
 	Parser parser(context.GetParserOptions());
 	parser.ParseQuery(query);
 	if (parser.statements.size() != 1) {

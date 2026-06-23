@@ -39,11 +39,17 @@ public:
 public:
 	void ResetMetrics();
 	//! Returns true if this metric is enabled (and should therefore be collected and output).
-	bool MetricIsTracked(const string &key) const;
-	void SetMetric(const string &key, Value new_value);
-	void SetMetric(const string &key, idx_t value);
-	void SetMetric(const string &key, double value);
-	void SetMetric(const string &key, const string &value);
+	bool MetricIsTracked(std::string_view key) const;
+	void SetMetric(std::string_view key, Value new_value);
+	void SetMetric(std::string_view key, idx_t value);
+	void SetMetric(std::string_view key, double value);
+	void SetMetric(std::string_view key, std::string_view value);
+	void SetMetric(std::string_view key, const string &value) {
+		SetMetric(key, std::string_view(value));
+	}
+	void SetMetric(std::string_view key, const char *value) {
+		SetMetric(key, std::string_view(value));
+	}
 
 	template <class T>
 	bool MetricIsTracked() const {
