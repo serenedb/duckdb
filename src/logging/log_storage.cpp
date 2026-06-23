@@ -727,6 +727,10 @@ void BufferingLogStorage::FlushInternal(LoggingTargetTable table) {
 	if (!IsEnabledInternal(table)) {
 		throw InvalidConfigurationException("Cannot flush disabled logging target");
 	}
+	if (buffers[table]->size() == 0) {
+		// Nothing buffered -- skip the cast + CSV write of an empty chunk.
+		return;
+	}
 	FlushChunk(table, *buffers[table]);
 	buffers[table]->Reset();
 }

@@ -22,7 +22,7 @@ public:
 
 	//! The operator profiler for the individual thread context
 	OperatorProfiler profiler;
-	unique_ptr<Logger> logger;
+	shared_ptr<Logger> logger;
 };
 
 } // namespace duckdb
