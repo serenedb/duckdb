@@ -15,7 +15,8 @@ ArithmeticSimplificationRule::ArithmeticSimplificationRule(ExpressionRewriter &r
 	op->matchers.push_back(make_uniq<ExpressionMatcher>());
 	op->policy = SetMatcher::Policy::SOME;
 	// we only match on simple arithmetic expressions (+, -, *, /)
-	op->function = make_uniq<ManyFunctionMatcher>(identifier_set_t {"+", "-", "*", "//"});
+	static const case_insensitive_set_view_t arithmetic_functions {"+", "-", "*", "//"};
+	op->function = make_uniq<ManyFunctionMatcher>(&arithmetic_functions);
 	// and only with numeric results
 	op->type = make_uniq<IntegerTypeMatcher>();
 	op->matchers[0]->type = make_uniq<IntegerTypeMatcher>();
