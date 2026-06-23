@@ -92,8 +92,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(vecto
 	}
 	vector<MatcherSuggestion> suggestions;
 	reference_set_t<const Matcher> added_suggestions;
-	ParseResultAllocator parse_result_allocator(options.allocator ? *options.allocator
-	                                                               : Allocator::DefaultAllocator());
+	ParseResultAllocator parse_result_allocator(options.allocator ? *options.allocator : Allocator::DefaultAllocator());
 	idx_t max_token_index = token_cursor;
 	MatchState state(tokens, suggestions, added_suggestions, parse_result_allocator, max_token_index,
 	                 options.preserve_identifier_case, token_cursor);
@@ -186,6 +185,14 @@ void PEGTransformerFactory::RegisterCreateSubscription() {
 	REGISTER_TRANSFORM(TransformCreateSubscriptionStatement);
 }
 
+void PEGTransformerFactory::RegisterNotify() {
+	// notify.gram — LISTEN/NOTIFY/UNLISTEN parse but are not supported yet; the transforms throw. They are kept out
+	// of grammar_types.yml so the generator skips them (no auto-wrapper), leaving these as the sole registration.
+	REGISTER_TRANSFORM(TransformListenStatement);
+	REGISTER_TRANSFORM(TransformNotifyStatement);
+	REGISTER_TRANSFORM(TransformUnlistenStatement);
+}
+
 void PEGTransformerFactory::RegisterCreateTextSearchDictionary() {
 	// create_text_search_dictionary.gram — Parens(List(...)) bodies are not auto-extractable.
 	REGISTER_TRANSFORM(TransformCreateTSDictionaryStatement);
@@ -251,6 +258,7 @@ PEGTransformerFactory::PEGTransformerFactory() {
 	RegisterExpression();
 	RegisterCreatePublication();
 	RegisterCreateSubscription();
+	RegisterNotify();
 	RegisterCreateTextSearchDictionary();
 	RegisterPivot();
 	RegisterCreateMacro();

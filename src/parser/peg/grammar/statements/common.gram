@@ -43,6 +43,9 @@ Statement <-
 	DisconnectStatement /
 	CreatePublicationStatement /
 	CreateSubscriptionStatement /
+	ListenStatement /
+	NotifyStatement /
+	UnlistenStatement /
 	ExpressionStatement
 
 ExpressionStatement <- List(ExpressionAlias)
