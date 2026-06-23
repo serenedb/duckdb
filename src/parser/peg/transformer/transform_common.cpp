@@ -12,10 +12,10 @@ namespace duckdb {
 
 string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &transformer, ParseResult &parse_result) {
 	if (parse_result.type == ParseResultType::IDENTIFIER) {
-		return parse_result.Cast<IdentifierParseResult>().identifier;
+		return string(parse_result.Cast<IdentifierParseResult>().identifier);
 	}
 	if (parse_result.type == ParseResultType::KEYWORD) {
-		return parse_result.Cast<KeywordParseResult>().keyword;
+		return string(parse_result.Cast<KeywordParseResult>().keyword);
 	}
 	if (parse_result.type == ParseResultType::CHOICE) {
 		auto &choice_pr = parse_result.Cast<ChoiceParseResult>();
@@ -31,15 +31,15 @@ string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &trans
 			if (child.get().type == ParseResultType::CHOICE) {
 				auto &choice_result = child.get().Cast<ChoiceParseResult>().GetResult();
 				if (choice_result.type == ParseResultType::IDENTIFIER) {
-					return choice_result.Cast<IdentifierParseResult>().identifier;
+					return string(choice_result.Cast<IdentifierParseResult>().identifier);
 				}
 				if (choice_result.type == ParseResultType::KEYWORD) {
-					return choice_result.Cast<KeywordParseResult>().keyword;
+					return string(choice_result.Cast<KeywordParseResult>().keyword);
 				}
 				return transformer.Transform<string>(choice_result);
 			}
 			if (child.get().type == ParseResultType::IDENTIFIER) {
-				return child.get().Cast<IdentifierParseResult>().identifier;
+				return string(child.get().Cast<IdentifierParseResult>().identifier);
 			}
 			throw InternalException("Unexpected IdentifierOrKeyword type encountered %s.",
 			                        ParseResultToString(child.get().type));
@@ -281,12 +281,12 @@ QualifiedName PEGTransformerFactory::TransformQualifiedTypeName(PEGTransformer &
 		auto &repeat_identifiers = opt_identifiers.GetResult().Cast<RepeatParseResult>();
 		for (auto &child : repeat_identifiers.GetChildren()) {
 			auto &repeat_list = child.get().Cast<ListParseResult>();
-			qualified_typename.push_back(repeat_list.Child<IdentifierParseResult>(0).identifier);
+			qualified_typename.emplace_back(repeat_list.Child<IdentifierParseResult>(0).identifier);
 		}
 	}
 
 	if (list_pr.GetChild(1).type == ParseResultType::IDENTIFIER) {
-		qualified_typename.push_back(list_pr.Child<IdentifierParseResult>(1).identifier);
+		qualified_typename.emplace_back(list_pr.Child<IdentifierParseResult>(1).identifier);
 	} else {
 		qualified_typename.push_back(transformer.Transform<string>(list_pr.Child<ListParseResult>(2)));
 	}
@@ -474,8 +474,8 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TryNegateValue(const Constan
 	}
 }
 
-unique_ptr<ParsedExpression> PEGTransformerFactory::ConvertNumberToValue(string val) {
-	string_t str_val(val);
+unique_ptr<ParsedExpression> PEGTransformerFactory::ConvertNumberToValue(std::string_view val) {
+	string_t str_val(val.data(), val.size());
 	bool try_cast_as_integer = true;
 	bool try_cast_as_decimal = true;
 	optional_idx decimal_position = optional_idx::Invalid();
@@ -568,6 +568,6 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetofType(PEGTransf
 // StringLiteral <- '\'' [^\']* '\''
 string PEGTransformerFactory::TransformStringLiteral(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &string_literal_pr = parse_result.Cast<StringLiteralParseResult>();
-	return string_literal_pr.result;
+	return string(string_literal_pr.result);
 }
 } // namespace duckdb

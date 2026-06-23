@@ -13,7 +13,7 @@ string PEGTransformerFactory::TransformDeallocateTarget(PEGTransformer &transfor
 	if (result.name == "DeallocateAll") {
 		return "";
 	}
-	return result.Cast<IdentifierParseResult>().identifier;
+	return string(result.Cast<IdentifierParseResult>().identifier);
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDeallocateStatement(PEGTransformer &transformer,

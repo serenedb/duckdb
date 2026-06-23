@@ -17,7 +17,7 @@ bool IsPrepareableStatement(StatementType type) {
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformPrepareStatement(PEGTransformer &transformer,
-                                                                          const string &identifier,
+                                                                          std::string_view identifier,
                                                                           const vector<LogicalType> &type_list,
                                                                           unique_ptr<SQLStatement> statement) {
 	auto result = make_uniq<PrepareStatement>();

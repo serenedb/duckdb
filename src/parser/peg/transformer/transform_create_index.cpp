@@ -117,7 +117,7 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateIndexStmt(PEGT
 
 string PEGTransformerFactory::TransformIndexType(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	return list_pr.Child<IdentifierParseResult>(1).identifier;
+	return string(list_pr.Child<IdentifierParseResult>(1).identifier);
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformIndexElement(PEGTransformer &transformer,
@@ -250,7 +250,7 @@ string PEGTransformerFactory::TransformRelOptionName(PEGTransformer &transformer
 		auto dotted_identifier = transformer.Transform<vector<string>>(choice);
 		return StringUtil::Join(dotted_identifier, ".");
 	} else {
-		return choice.Cast<StringLiteralParseResult>().GetRawString();
+		return string(choice.Cast<StringLiteralParseResult>().GetRawString());
 	}
 }
 
@@ -293,7 +293,7 @@ pair<string, unique_ptr<ParsedExpression>> PEGTransformerFactory::TransformRelOp
 
 string PEGTransformerFactory::TransformIndexName(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	return list_pr.Child<IdentifierParseResult>(0).identifier;
+	return string(list_pr.Child<IdentifierParseResult>(0).identifier);
 }
 
 } // namespace duckdb
