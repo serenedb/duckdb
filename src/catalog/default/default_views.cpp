@@ -4,6 +4,8 @@
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 
+#include <absl/container/flat_hash_map.h>
+
 namespace duckdb {
 
 struct DefaultView {
@@ -63,21 +65,29 @@ static const DefaultView internal_views[] = {
     {nullptr, nullptr, nullptr}};
 
 static unique_ptr<CreateViewInfo> GetDefaultView(ClientContext &context, const string &input_schema, const string &input_name) {
+	// (schema, name) -> view, built once. Keys are static literals; lookup is
+	// case-sensitive against the lowercased input (the names are already lowercase).
+	static const absl::flat_hash_map<std::pair<std::string_view, std::string_view>, const DefaultView *> view_index = [] {
+		absl::flat_hash_map<std::pair<std::string_view, std::string_view>, const DefaultView *> m;
+		for (idx_t index = 0; internal_views[index].name != nullptr; index++) {
+			m.emplace(std::pair(std::string_view(internal_views[index].schema), std::string_view(internal_views[index].name)),
+			          &internal_views[index]);
+		}
+		return m;
+	}();
 	auto schema = StringUtil::Lower(input_schema);
 	auto name = StringUtil::Lower(input_name);
-	for (idx_t index = 0; internal_views[index].name != nullptr; index++) {
-		if (internal_views[index].schema == schema && internal_views[index].name == name) {
-			auto result = make_uniq<CreateViewInfo>();
-			result->schema = schema;
-			result->view_name = name;
-			result->sql = internal_views[index].sql;
-			result->temporary = true;
-			result->internal = true;
-
-			return CreateViewInfo::FromSelect(context, std::move(result));
-		}
+	auto it = view_index.find(std::pair(std::string_view(schema), std::string_view(name)));
+	if (it == view_index.end()) {
+		return nullptr;
 	}
-	return nullptr;
+	auto result = make_uniq<CreateViewInfo>();
+	result->schema = schema;
+	result->view_name = name;
+	result->sql = it->second->sql;
+	result->temporary = true;
+	result->internal = true;
+	return CreateViewInfo::FromSelect(context, std::move(result));
 }
 
 DefaultViewGenerator::DefaultViewGenerator(Catalog &catalog, SchemaCatalogEntry &schema)

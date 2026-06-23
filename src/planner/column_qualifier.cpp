@@ -18,32 +18,23 @@ ColumnQualifier::ColumnQualifier(Binder &binder_p, optional_ptr<vector<DummyBind
       having_binder(having_binder_p) {
 }
 
-string GetSQLValueFunctionName(const string &column_name) {
-	auto lcase = StringUtil::Lower(column_name);
-	if (lcase == "current_catalog") {
-		return "current_catalog";
-	} else if (lcase == "current_date") {
-		return "current_date";
-	} else if (lcase == "current_schema") {
-		return "current_schema";
-	} else if (lcase == "current_role") {
-		return "current_role";
-	} else if (lcase == "current_time") {
-		return "get_current_time";
-	} else if (lcase == "current_timestamp") {
-		return "get_current_timestamp";
-	} else if (lcase == "current_user") {
-		return "current_user";
-	} else if (lcase == "localtime") {
-		return "current_localtime";
-	} else if (lcase == "localtimestamp") {
-		return "current_localtimestamp";
-	} else if (lcase == "session_user") {
-		return "session_user";
-	} else if (lcase == "user") {
-		return "user";
-	}
-	return string();
+static const case_insensitive_map_view_t<std::string_view> value_functions {
+    {"current_catalog", "current_catalog"},
+    {"current_date", "current_date"},
+    {"current_schema", "current_schema"},
+    {"current_role", "current_role"},
+    {"current_time", "get_current_time"},
+    {"current_timestamp", "get_current_timestamp"},
+    {"current_user", "current_user"},
+    {"localtime", "current_localtime"},
+    {"localtimestamp", "current_localtimestamp"},
+    {"session_user", "session_user"},
+    {"user", "user"},
+};
+
+std::string_view GetSQLValueFunctionName(std::string_view column_name) {
+	auto it = value_functions.find(column_name);
+	return it != value_functions.end() ? it->second : std::string_view {};
 }
 
 unique_ptr<ParsedExpression> Binder::GetSQLValueFunction(const string &column_name) {

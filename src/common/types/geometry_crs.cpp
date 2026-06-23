@@ -1,6 +1,7 @@
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/main/extension_callback_manager.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
@@ -483,18 +484,12 @@ bool CoordinateReferenceSystem::TryParsePROJJSON(const string &text, CoordinateR
 	// Check that the type is one of the PROJJSON CRS types
 	// There are other (derived CRS) types, but they can not be used as root CRS definitions
 	const string type_str = yyjson_get_str(type_val);
-	const auto projjson_crs_types = {"GeographicCRS", "GeodeticCRS",    "ProjectedCRS", "CompoundCRS",  "BoundCRS",
-	                                 "VerticalCRS",   "EngineeringCRS", "TemporalCRS",  "ParametricCRS"};
+	static const case_insensitive_set_view_t projjson_crs_types {
+	    "GeographicCRS", "GeodeticCRS",    "ProjectedCRS", "CompoundCRS",   "BoundCRS",
+	    "VerticalCRS",   "EngineeringCRS", "TemporalCRS",  "ParametricCRS",
+	};
 
-	auto found = false;
-	for (auto &kw : projjson_crs_types) {
-		if (StringUtil::CIEquals(type_str, kw)) {
-			found = true;
-			break;
-		}
-	}
-
-	if (!found) {
+	if (!projjson_crs_types.contains(type_str)) {
 		return false;
 	}
 

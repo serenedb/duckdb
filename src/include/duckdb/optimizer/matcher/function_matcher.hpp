@@ -9,7 +9,7 @@
 #pragma once
 
 #include "duckdb/common/common.hpp"
-#include "duckdb/common/unordered_set.hpp"
+#include <absl/container/flat_hash_set.h>
 #include <algorithm>
 
 namespace duckdb {
@@ -47,7 +47,7 @@ private:
 //! The ManyFunctionMatcher class matches a set of functions
 class ManyFunctionMatcher : public FunctionMatcher {
 public:
-	explicit ManyFunctionMatcher(unordered_set<string> names_p) : names(std::move(names_p)) {
+	explicit ManyFunctionMatcher(absl::flat_hash_set<std::string_view> names_p) : names(std::move(names_p)) {
 	}
 
 	bool Match(const string &name) override {
@@ -55,7 +55,7 @@ public:
 	}
 
 private:
-	unordered_set<string> names;
+	absl::flat_hash_set<std::string_view> names;
 };
 
 } // namespace duckdb
