@@ -142,7 +142,7 @@ unique_ptr<FileHandle> VirtualFileSystem::OpenFileExtended(const OpenFileInfo &f
 	// open the base file handle in UNCOMPRESSED mode
 	flags.SetCompression(FileCompressionType::UNCOMPRESSED);
 
-	auto registry = file_system_registry.atomic_load();
+	auto registry = file_system_registry.plain_load();
 	auto &internal_filesystem = FindFileSystem(registry, file.path, opener);
 
 	// File handle gets created.
@@ -319,7 +319,7 @@ unique_ptr<FileSystem> VirtualFileSystem::ExtractSubSystem(const string &name) {
 }
 
 vector<string> VirtualFileSystem::ListSubSystems() {
-	auto registry = file_system_registry.atomic_load();
+	auto registry = file_system_registry.plain_load();
 	auto &sub_systems = registry->sub_systems;
 	vector<string> names;
 	for (auto &sub_system : sub_systems) {
@@ -333,13 +333,13 @@ std::string VirtualFileSystem::GetName() const {
 }
 
 bool VirtualFileSystem::SubSystemIsDisabled(const string &name) {
-	auto registry = file_system_registry.atomic_load();
+	auto registry = file_system_registry.plain_load();
 	auto &disabled_file_systems = registry->disabled_file_systems;
 	return disabled_file_systems.find(name) != disabled_file_systems.end();
 }
 
 bool VirtualFileSystem::IsDisabledForPath(const string &path) {
-	auto registry = file_system_registry.atomic_load();
+	auto registry = file_system_registry.plain_load();
 	auto &disabled_file_systems = registry->disabled_file_systems;
 	if (disabled_file_systems.empty()) {
 		return false;
@@ -352,7 +352,7 @@ bool VirtualFileSystem::IsDisabledForPath(const string &path) {
 }
 
 FileSystem &VirtualFileSystem::FindFileSystem(const string &path, optional_ptr<FileOpener> opener) {
-	auto registry = file_system_registry.atomic_load();
+	auto registry = file_system_registry.plain_load();
 	return FindFileSystem(registry, path, opener);
 }
 
@@ -381,7 +381,7 @@ FileSystem &VirtualFileSystem::FindFileSystem(shared_ptr<FileSystemRegistry> &re
 			ExtensionHelper::AutoLoadExtension(*db_instance, required_extension);
 		}
 		// refresh the registry after loading extensions
-		registry = file_system_registry.atomic_load();
+		registry = file_system_registry.plain_load();
 
 		// Retry after having autoloaded
 		fs = FindFileSystemInternal(*registry, path);
