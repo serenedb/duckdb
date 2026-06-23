@@ -953,7 +953,7 @@ void DBConfig::SetHTTPUtil(const shared_ptr<HTTPUtil> &new_http_util) {
 }
 
 HTTPUtil &DBConfig::GetHTTPUtil() const {
-	return *http_util.atomic_load();
+	return *http_util.plain_load();
 }
 
 } // namespace duckdb

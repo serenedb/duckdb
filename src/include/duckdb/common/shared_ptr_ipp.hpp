@@ -258,6 +258,19 @@ public:
 		return shared_ptr<T, SAFE>(std::atomic_load_explicit(&internal, order));
 	}
 
+	// Read a read-mostly registry that is only atomic_store()d at startup. When
+	// extension load/install is compiled out the registry is immutable while
+	// serving, so we skip std::atomic_load -- on libc++ that takes a real mutex
+	// from a global __sp_mut pool (hashed by this member's address, so every
+	// caller serializes on one mutex). A plain refcounted copy avoids it.
+	shared_ptr<T, SAFE> plain_load() const {
+#ifdef DUCKDB_DISABLE_EXTENSION_LOAD
+		return shared_ptr<T, SAFE>(internal);
+#else
+		return atomic_load();
+#endif
+	}
+
 	void atomic_store(const shared_ptr<T, SAFE> &new_ptr) {
 		std::atomic_store(&internal, new_ptr.internal);
 	}
