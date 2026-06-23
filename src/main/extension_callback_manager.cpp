@@ -154,7 +154,7 @@ ExtensionCallbackIteratorHelper<T>::~ExtensionCallbackIteratorHelper() {
 }
 
 ExtensionCallbackIteratorHelper<shared_ptr<OperatorExtension>> ExtensionCallbackManager::OperatorExtensions() const {
-	auto registry = callback_registry.atomic_load();
+	auto registry = callback_registry.plain_load();
 	auto &operator_extensions = registry->operator_extensions;
 	return ExtensionCallbackIteratorHelper<shared_ptr<OperatorExtension>>(operator_extensions, std::move(registry));
 }
@@ -165,13 +165,13 @@ case_insensitive_map_t<shared_ptr<GrammarExtension>> ExtensionCallbackManager::G
 }
 
 ExtensionCallbackIteratorHelper<OptimizerExtension> ExtensionCallbackManager::OptimizerExtensions() const {
-	auto registry = callback_registry.atomic_load();
+	auto registry = callback_registry.plain_load();
 	auto &optimizer_extensions = registry->optimizer_extensions;
 	return ExtensionCallbackIteratorHelper<OptimizerExtension>(optimizer_extensions, std::move(registry));
 }
 
 ExtensionCallbackIteratorHelper<ParserExtension> ExtensionCallbackManager::ParserExtensions() const {
-	auto registry = callback_registry.atomic_load();
+	auto registry = callback_registry.plain_load();
 	auto &parser_extensions = registry->parser_extensions;
 	return ExtensionCallbackIteratorHelper<ParserExtension>(parser_extensions, std::move(registry));
 }
@@ -183,13 +183,13 @@ ExtensionCallbackIteratorHelper<shared_ptr<DialectExtension>> ExtensionCallbackM
 }
 
 ExtensionCallbackIteratorHelper<PlannerExtension> ExtensionCallbackManager::PlannerExtensions() const {
-	auto registry = callback_registry.atomic_load();
+	auto registry = callback_registry.plain_load();
 	auto &planner_extensions = registry->planner_extensions;
 	return ExtensionCallbackIteratorHelper<PlannerExtension>(planner_extensions, std::move(registry));
 }
 
 ExtensionCallbackIteratorHelper<shared_ptr<ExtensionCallback>> ExtensionCallbackManager::ExtensionCallbacks() const {
-	auto registry = callback_registry.atomic_load();
+	auto registry = callback_registry.plain_load();
 	auto &extension_callbacks = registry->extension_callbacks;
 	return ExtensionCallbackIteratorHelper<shared_ptr<ExtensionCallback>>(extension_callbacks, std::move(registry));
 }
@@ -204,7 +204,7 @@ optional_ptr<GrammarExtension> ExtensionCallbackManager::FindGrammarExtension(co
 }
 
 optional_ptr<StorageExtension> ExtensionCallbackManager::FindStorageExtension(const string &name) const {
-	auto registry = callback_registry.atomic_load();
+	auto registry = callback_registry.plain_load();
 	auto entry = registry->storage_extensions.find(name);
 	if (entry == registry->storage_extensions.end()) {
 		return nullptr;
@@ -213,7 +213,7 @@ optional_ptr<StorageExtension> ExtensionCallbackManager::FindStorageExtension(co
 }
 
 optional_ptr<ProfilerExtension> ExtensionCallbackManager::FindProfilerExtension(const string &name) const {
-	auto registry = callback_registry.atomic_load();
+	auto registry = callback_registry.plain_load();
 	auto entry = registry->profiler_extensions.find(name);
 	if (entry == registry->profiler_extensions.end()) {
 		return nullptr;
@@ -222,7 +222,7 @@ optional_ptr<ProfilerExtension> ExtensionCallbackManager::FindProfilerExtension(
 }
 
 bool ExtensionCallbackManager::HasParserExtensions() const {
-	auto registry = callback_registry.atomic_load();
+	auto registry = callback_registry.plain_load();
 	return !registry->parser_extensions.empty();
 }
 
