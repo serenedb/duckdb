@@ -519,24 +519,6 @@ vector<Value> BindCopyOption(ClientContext &context, TableFunctionBinder &option
 	return result;
 }
 
-string ExtractFormat(const string &file_path) {
-	auto format = StringUtil::Lower(file_path);
-	// We first remove extension suffixes
-	if (StringUtil::EndsWith(format, CompressionExtensionFromType(FileCompressionType::GZIP))) {
-		format = format.substr(0, format.size() - 3);
-	} else if (StringUtil::EndsWith(format, CompressionExtensionFromType(FileCompressionType::ZSTD))) {
-		format = format.substr(0, format.size() - 4);
-	}
-	// Now lets check for the last .
-	size_t dot_pos = format.rfind('.');
-	if (dot_pos == std::string::npos || dot_pos == format.length() - 1) {
-		// No format found
-		return "";
-	}
-	// We found something
-	return format.substr(dot_pos + 1);
-}
-
 void Binder::BindCopyOptions(CopyInfo &info) {
 	TableFunctionBinder option_binder(*this, context, "Copy", "Copy options");
 	if (info.file_path_expression) {
@@ -559,14 +541,6 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 				throw ParserException("Unsupported parameter type for FORMAT: expected e.g. FORMAT 'csv', 'parquet'");
 			}
 			info.format = StringUtil::Lower(inputs[0].ToString());
-			// PG compat: FORMAT TEXT = tab-delimited, no quoting.
-			if (info.format == "text") {
-				info.format = "csv";
-				info.options["delimiter"] = {Value("\t")};
-				info.options["quote"] = {Value("")};
-				info.options["escape"] = {Value("")};
-				info.options["null"] = {Value("\\N")};
-			}
 			info.is_format_auto_detected = false;
 			continue;
 		}
@@ -595,17 +569,6 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 			continue;
 		}
 		info.options[entry.first] = std::move(inputs);
-	}
-	if (info.is_format_auto_detected && info.format.empty()) {
-		info.format = ExtractFormat(info.file_path);
-	}
-	// Apply PG format translations for auto-detected formats too.
-	if (info.format == "text") {
-		info.format = "csv";
-		info.options.insert({"delimiter", {Value("\t")}});
-		info.options.insert({"quote", {Value("")}});
-		info.options.insert({"escape", {Value("")}});
-		info.options.insert({"null", {Value("\\N")}});
 	}
 	info.parsed_options.clear();
 }
