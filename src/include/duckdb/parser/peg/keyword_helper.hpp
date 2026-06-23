@@ -1,7 +1,8 @@
 #pragma once
 
-#include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/parser/simplified_token.hpp"
+
+#include <string_view>
 
 namespace duckdb {
 enum class PEGKeywordCategory : uint8_t {
@@ -13,27 +14,13 @@ enum class PEGKeywordCategory : uint8_t {
 	KEYWORD_TYPE_NAME
 };
 
-class PEGKeywordHelper {
-public:
-	static PEGKeywordHelper &Instance();
-	bool KeywordCategoryType(const string &text, PEGKeywordCategory type) const;
-	void InitializeKeywordMaps();
-	bool IsKeyword(const string &text) {
-		if (reserved_keyword_map.count(text) != 0 || unreserved_keyword_map.count(text) != 0 ||
-		    colname_keyword_map.count(text) != 0 || typefunc_keyword_map.count(text) != 0) {
-			return true;
-		}
-		return false;
-	};
-	vector<ParserKeyword> KeywordList();
-
-private:
-	PEGKeywordHelper();
-	bool initialized;
-	case_insensitive_set_t reserved_keyword_map;
-	case_insensitive_set_t unreserved_keyword_map;
-	case_insensitive_set_t colname_keyword_map;
-	case_insensitive_set_t typefunc_keyword_map;
-	case_insensitive_set_t typename_keyword_map;
-};
+// Keyword classification. The five keyword categories are case-insensitive
+// membership sets (case_insensitive_set_view_t over the keyword literals); the
+// lookups are defined in the generated keyword_map.cpp. Stateless free functions
+// -- no instance to hold.
+namespace peg {
+bool KeywordCategoryType(std::string_view text, PEGKeywordCategory type);
+bool IsKeyword(std::string_view text);
+vector<ParserKeyword> KeywordList();
+} // namespace peg
 } // namespace duckdb
