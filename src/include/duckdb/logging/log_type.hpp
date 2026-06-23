@@ -25,11 +25,11 @@ struct DataTableInfo;
 class LogType {
 public:
 	//! Construct an unstructured type
-	LogType(const string &name_p, const LogLevel &level_p)
+	LogType(std::string_view name_p, const LogLevel &level_p)
 	    : name(name_p), level(level_p), is_structured(false), type(LogicalType::VARCHAR) {
 	}
 	//! Construct a structured type
-	LogType(const string &name_p, const LogLevel &level_p, LogicalType structured_type)
+	LogType(std::string_view name_p, const LogLevel &level_p, LogicalType structured_type)
 	    : name(name_p), level(level_p), is_structured(true), type(std::move(structured_type)) {
 		if (!type.IsNested()) {
 			throw InternalException("LogType must be nested if the type is explicitly set");
@@ -59,7 +59,7 @@ public:
 
 	QueryLogType() : LogType(NAME, LEVEL) {};
 
-	static string ConstructLogMessage(const string &str);
+	static string ConstructLogMessage(std::string_view str);
 };
 
 class FileSystemLogType : public LogType {
@@ -72,8 +72,8 @@ public:
 
 	static LogicalType GetLogType();
 
-	static string ConstructLogMessage(const FileHandle &handle, const string &op, int64_t bytes, idx_t pos);
-	static string ConstructLogMessage(const FileHandle &handle, const string &op);
+	static string ConstructLogMessage(const FileHandle &handle, std::string_view op, int64_t bytes, idx_t pos);
+	static string ConstructLogMessage(const FileHandle &handle, std::string_view op);
 };
 
 class HTTPLogType : public LogType {
@@ -89,8 +89,8 @@ public:
 	static string ConstructLogMessage(BaseRequest &request, optional_ptr<HTTPResponse> response);
 
 	// FIXME: HTTPLogType should be structured probably
-	static string ConstructLogMessage(const string &str) {
-		return str;
+	static string ConstructLogMessage(std::string_view str) {
+		return string(str);
 	}
 };
 
@@ -104,7 +104,7 @@ public:
 
 	static LogicalType GetLogType();
 
-	static string ConstructLogMessage(const PhysicalOperator &op, const string &class_p, const string &event,
+	static string ConstructLogMessage(const PhysicalOperator &op, std::string_view class_p, std::string_view event,
 	                                  const vector<pair<string, string>> &info);
 };
 
@@ -118,7 +118,7 @@ public:
 
 	static LogicalType GetLogType();
 
-	static string ConstructLogMessage(const string &metric, const Value &value);
+	static string ConstructLogMessage(std::string_view metric, const Value &value);
 };
 
 class CheckpointLogType : public LogType {
@@ -166,7 +166,7 @@ public:
 
 	static LogicalType GetLogType();
 
-	static string ConstructLogMessage(const char *event, const string &file_path, const vector<idx_t> &permutation,
+	static string ConstructLogMessage(const char *event, std::string_view file_path, const vector<idx_t> &permutation,
 	                                  const vector<pair<string, string>> &info);
 };
 
@@ -179,7 +179,7 @@ public:
 
 	static LogicalType GetLogType();
 
-	static string ConstructLogMessage(const string &file_path, idx_t row_group_id, bool fully_filtered,
+	static string ConstructLogMessage(std::string_view file_path, idx_t row_group_id, bool fully_filtered,
 	                                  const char *strategy, const vector<vector<string>> &prefetch_groups,
 	                                  const vector<string> &minimal_filters);
 };

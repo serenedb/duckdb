@@ -18,13 +18,15 @@ public:
 		delete_callback(extra_data);
 	}
 
-	void WriteLogEntry(timestamp_t timestamp, LogLevel level, const string &log_type, const string &log_message,
+	void WriteLogEntry(timestamp_t timestamp, LogLevel level, std::string_view log_type, std::string_view log_message,
 	                   const RegisteredLoggingContext &context) override {
 		if (write_log_entry_fun == nullptr) {
 			return;
 		}
 		auto c_timestamp = reinterpret_cast<duckdb_timestamp *>(&timestamp);
-		write_log_entry_fun(extra_data, c_timestamp, EnumUtil::ToChars(level), log_type.c_str(), log_message.c_str());
+		// C callback takes NUL-terminated strings; the view is not, so materialize.
+		write_log_entry_fun(extra_data, c_timestamp, EnumUtil::ToChars(level), string(log_type).c_str(),
+		                    string(log_message).c_str());
 	};
 
 	void WriteLogEntries(DataChunk &chunk, const RegisteredLoggingContext &context) override {};

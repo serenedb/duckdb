@@ -629,8 +629,8 @@ static void WriteLoggingContextsToChunk(DataChunk &chunk, const RegisteredLoggin
 	chunk.SetCardinality(size + 1);
 }
 
-void BufferingLogStorage::WriteLogEntry(timestamp_t timestamp, LogLevel level, const string &log_type,
-                                        const string &log_message, const RegisteredLoggingContext &context) {
+void BufferingLogStorage::WriteLogEntry(timestamp_t timestamp, LogLevel level, std::string_view log_type,
+                                        std::string_view log_message, const RegisteredLoggingContext &context) {
 	unique_lock<mutex> lck(lock);
 
 	auto &log_entries_buffer =
