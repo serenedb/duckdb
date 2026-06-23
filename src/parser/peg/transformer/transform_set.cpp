@@ -259,11 +259,21 @@ PEGTransformerFactory::TransformStandardAssignment(PEGTransformer &transformer,
 	                                       set_variable_or_setting.scope);
 }
 
-// VariableList <- List(Expression)
+// SetValueOn <- 'ON'
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetValueOn(PEGTransformer &transformer) {
+	return make_uniq<ConstantExpression>(Value("on"));
+}
+
+// SetValueOff <- 'OFF'
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetValueOff(PEGTransformer &transformer) {
+	return make_uniq<ConstantExpression>(Value("off"));
+}
+
+// VariableList <- List(SetValue)
 vector<unique_ptr<ParsedExpression>>
 PEGTransformerFactory::TransformVariableList(PEGTransformer &transformer,
-                                             vector<unique_ptr<ParsedExpression>> expression) {
-	return expression;
+                                             vector<unique_ptr<ParsedExpression>> set_value) {
+	return set_value;
 }
 
 // VariableScope <- 'VARIABLE'
