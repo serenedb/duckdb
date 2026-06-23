@@ -496,20 +496,28 @@ static inline bool TryCastStringBool(const char *input_data, idx_t input_size, b
 		return false;
 	}
 	case 2: {
-		unsigned char n = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
-		unsigned char o = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
-		if (n == 'n' && o == 'o') {
+		unsigned char c0 = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
+		unsigned char c1 = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
+		if (c0 == 'n' && c1 == 'o') {
 			result = false;
+			return true;
+		}
+		if (!strict && c0 == 'o' && c1 == 'n') {
+			result = true;
 			return true;
 		}
 		return false;
 	}
 	case 3: {
-		unsigned char y = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
-		unsigned char e = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
-		unsigned char s = absl::ascii_tolower(static_cast<unsigned char>(input_data[2]));
-		if (y == 'y' && e == 'e' && s == 's') {
+		unsigned char c0 = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
+		unsigned char c1 = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
+		unsigned char c2 = absl::ascii_tolower(static_cast<unsigned char>(input_data[2]));
+		if (c0 == 'y' && c1 == 'e' && c2 == 's') {
 			result = true;
+			return true;
+		}
+		if (!strict && c0 == 'o' && c1 == 'f' && c2 == 'f') {
+			result = false;
 			return true;
 		}
 		return false;
