@@ -21,8 +21,42 @@
 
 #include <algorithm>
 #include <chrono>
+#include <thread>
 
 namespace duckdb {
+
+// The executor a thread is currently driving (Initialize / ExecuteTask /
+// WorkOnTasks). A driver polls its executor's producer queue before it can park
+// or return, so a single task enqueued from the driver thread is guaranteed to
+// be picked up without a scheduler wake (Event::SetTasks).
+static thread_local Executor *driving_executor = nullptr; // NOLINT
+
+namespace {
+struct DriverScope {
+	explicit DriverScope(Executor &executor) : prev(driving_executor) {
+		driving_executor = &executor;
+	}
+	~DriverScope() {
+		driving_executor = prev;
+	}
+	Executor *prev;
+};
+} // namespace
+
+bool Executor::TrySubmitInlineTask(const shared_ptr<Task> &task_p) {
+	if (driving_executor != this) {
+		return false;
+	}
+	lock_guard<mutex> slot_lock(inline_task_lock);
+	if (inline_task) {
+		return false;
+	}
+	inline_task = task_p;
+	// The slot bypasses ConcurrentQueue::Enqueue, which normally stamps the
+	// token (the ProcessPartial reschedule path reads it).
+	inline_task->token = *producer;
+	return true;
+}
 
 Executor::Executor(ClientContext &context) : context(context), executor_tasks(0), blocked_thread_time(0) {
 }
@@ -389,6 +423,9 @@ void Executor::Initialize(PhysicalOperator &plan) {
 
 void Executor::InitializeInternal(PhysicalOperator &plan) {
 	auto &scheduler = TaskScheduler::GetScheduler(context);
+	// Initialize runs synchronously on the query driver's thread; events it
+	// schedules may skip the worker wake (Event::SetTasks).
+	DriverScope driver_scope(*this);
 	{
 		lock_guard<mutex> elock(executor_lock);
 		physical_plan = &plan;
@@ -438,9 +475,14 @@ void Executor::CancelTasks() {
 		to_be_rescheduled_tasks.clear();
 	}
 	// Drain all tasks first — they hold references to pipelines/events/states,
-	// so those must stay alive until all tasks have completed
+	// so those must stay alive until all tasks have completed. When our queue
+	// is empty but a task is still in flight on another worker, yield instead
+	// of hot-rescanning the producer queue (mutex + scan per iteration); the
+	// common exhausted-stream teardown otherwise burns cycles spinning here.
 	while (executor_tasks > 0) {
-		WorkOnTasks();
+		if (!WorkOnTasks()) {
+			std::this_thread::yield();
+		}
 	}
 	// Now safe to destroy pipelines, events and states — no tasks reference them
 	lock_guard<mutex> elock(executor_lock);
@@ -456,10 +498,18 @@ void Executor::CancelTasks() {
 
 bool Executor::WorkOnTasks() {
 	auto &scheduler = TaskScheduler::GetScheduler(context);
+	DriverScope driver_scope(*this);
 
 	bool did_work = false;
-	shared_ptr<Task> task_from_producer;
-	while (scheduler.GetTaskFromProducer(*producer, task_from_producer)) {
+	for (;;) {
+		shared_ptr<Task> task_from_producer;
+		{
+			lock_guard<mutex> slot_lock(inline_task_lock);
+			task_from_producer = std::move(inline_task);
+		}
+		if (!task_from_producer && !scheduler.GetTaskFromProducer(*producer, task_from_producer)) {
+			break;
+		}
 		did_work = true;
 		auto res = task_from_producer->Execute(TaskExecutionMode::PROCESS_ALL);
 		if (res == TaskExecutionResult::TASK_BLOCKED) {
@@ -553,6 +603,18 @@ void Executor::AddToBeRescheduled(shared_ptr<Task> &task_p) {
 	// Save raw pointer before move — evaluation order of operator[] key and assignment value is unspecified pre-C++17
 	auto raw_ptr = task_p.get();
 	to_be_rescheduled_tasks[raw_ptr] = std::move(task_p);
+	if (raw_ptr->TaskBlockedOnResult() && on_reschedule) {
+		// A streaming result chunk is ready (the collector blocked waiting for Fetch): the next
+		// ExecuteTask will return RESULT_READY. Wake an async driver parked on NO_TASKS.
+		std::exchange(on_reschedule, {})();
+	}
+}
+
+void Executor::NotifyDriver() {
+	lock_guard<mutex> l(executor_lock);
+	if (on_reschedule) {
+		std::exchange(on_reschedule, {})();
+	}
 }
 
 bool Executor::ExecutionIsFinished() {
@@ -560,6 +622,7 @@ bool Executor::ExecutionIsFinished() {
 }
 
 PendingExecutionResult Executor::ExecuteTask(std::function<void()> on_reschedule_arg, bool dry_run) {
+	DriverScope driver_scope(*this);
 	// Only executor should return NO_TASKS_AVAILABLE
 	D_ASSERT(execution_result != PendingExecutionResult::NO_TASKS_AVAILABLE);
 	if (execution_result != PendingExecutionResult::RESULT_NOT_READY && ExecutionIsFinished()) {
@@ -575,7 +638,13 @@ PendingExecutionResult Executor::ExecuteTask(std::function<void()> on_reschedule
 			current_task = nullptr;
 		} else {
 			if (!task) {
-				scheduler.GetTaskFromProducer(*producer, task);
+				{
+					lock_guard<mutex> slot_lock(inline_task_lock);
+					task = std::move(inline_task);
+				}
+				if (!task) {
+					scheduler.GetTaskFromProducer(*producer, task);
+				}
 			}
 			current_task = task.get();
 		}
@@ -583,7 +652,30 @@ PendingExecutionResult Executor::ExecuteTask(std::function<void()> on_reschedule
 		if (!current_task && !HasError()) {
 			// there are no tasks to be scheduled and there are tasks blocked
 			lock_guard<mutex> l(executor_lock);
+			{
+				lock_guard<mutex> slot_lock(inline_task_lock);
+				if (inline_task) {
+					// A concurrent driver (e.g. a cancelling thread inside
+					// WorkOnTasks) filled the bypass slot after our fetch; loop
+					// around instead of parking past it.
+					return PendingExecutionResult::RESULT_NOT_READY;
+				}
+			}
 			if (to_be_rescheduled_tasks.empty()) {
+				if (completed_pipelines >= total_pipelines) {
+					// The last pipeline completed between the completed_pipelines check above and
+					// acquiring this lock. Finalize here (mirrors the completion path below) so an
+					// async driver that parks on NO_TASKS is not left waiting for a completion wake
+					// that already fired. CompletePipeline()'s NotifyDriver takes this same lock, so
+					// store-vs-notify cannot interleave to lose the wake.
+					pipelines.clear();
+					NextExecutor();
+					execution_result = PendingExecutionResult::EXECUTION_FINISHED;
+					return execution_result;
+				}
+				// Park the async driver: store its wake callback (fired on completion / result-ready
+				// / error / unblock) instead of returning for the caller to busy-poll NO_TASKS.
+				on_reschedule = std::move(on_reschedule_arg);
 				return PendingExecutionResult::NO_TASKS_AVAILABLE;
 			}
 			// At least one task is blocked
@@ -646,6 +738,10 @@ void Executor::Reset() {
 	lock_guard<mutex> elock(executor_lock);
 	physical_plan = nullptr;
 	cancelled = false;
+	{
+		lock_guard<mutex> slot_lock(inline_task_lock);
+		inline_task.reset();
+	}
 	root_executor.reset();
 	root_pipelines.clear();
 	root_pipeline_idx = 0;
@@ -688,6 +784,9 @@ void Executor::PushError(ErrorData exception) {
 	error_manager.PushError(std::move(exception));
 	// interrupt execution of any other pipelines that belong to this executor
 	context.interrupt_state = ClientInterruptState::INTERRUPTED;
+	// Wake an async driver parked on NO_TASKS so it re-runs ExecuteTask and observes the error
+	// (the query will not complete, so the completion/result-ready wakes would never fire).
+	NotifyDriver();
 }
 
 bool Executor::HasError() {

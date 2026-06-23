@@ -81,6 +81,18 @@ void Event::SetTasks(vector<shared_ptr<Task>> tasks) {
 	D_ASSERT(total_tasks == 0);
 	D_ASSERT(!tasks.empty());
 	this->total_tasks = tasks.size();
+	if (tasks.size() == 1 && executor.TrySubmitInlineTask(tasks[0])) {
+		// Lazy kickoff: a single task born on the driver's own thread goes into
+		// the executor's driver-bypass slot instead of the shared scheduler
+		// queue. The driver consumes the slot before polling the queue and
+		// before it can park, so a trivial query never leaves its driver: no
+		// worker wake for the pipeline-initialize task, none for the pipeline
+		// task, and no completion wake back (the driver never parks). The shared
+		// queue is untouched, so its task-per-signal accounting cannot be skewed
+		// for other producers. Multi-task events schedule normally -- parallel
+		// pipelines want sleeping workers.
+		return;
+	}
 	ts.ScheduleTasks(executor.GetToken(), tasks);
 }
 
