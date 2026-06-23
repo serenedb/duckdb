@@ -506,6 +506,7 @@ public:
 	static DatePartSpecifier TransformIntervalToIntervalAsType(PEGTransformer &transformer, ParseResult &parse_result);
 
 	static string ExtractFormat(const string &file_path);
+	static string ResolveCopyFormat(const string &format, const string &file_path);
 
 	// create_table.gram
 	static string TransformColLabelOrString(PEGTransformer &transformer, ParseResult &parse_result);
