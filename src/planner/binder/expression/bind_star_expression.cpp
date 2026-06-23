@@ -9,6 +9,8 @@
 #include "duckdb/function/scalar/regexp.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 
+#include <absl/container/flat_hash_set.h>
+
 namespace duckdb {
 
 string GetColumnsStringValue(ParsedExpression &expr) {
@@ -174,17 +176,17 @@ void TryTransformStarLike(unique_ptr<ParsedExpression> &root) {
 		// COLUMNS(*) has different semantics
 		return;
 	}
-	unordered_set<string> supported_ops {"~~",
-	                                     "!~~",
-	                                     "~~~",
-	                                     "!~~~",
-	                                     "~~*",
-	                                     "!~~*",
-	                                     "regexp_full_match",
-	                                     "not_like_escape",
-	                                     "ilike_escape",
-	                                     "not_ilike_escape",
-	                                     "like_escape"};
+	static const absl::flat_hash_set<std::string_view> supported_ops {"~~",
+	                                                                  "!~~",
+	                                                                  "~~~",
+	                                                                  "!~~~",
+	                                                                  "~~*",
+	                                                                  "!~~*",
+	                                                                  "regexp_full_match",
+	                                                                  "not_like_escape",
+	                                                                  "ilike_escape",
+	                                                                  "not_ilike_escape",
+	                                                                  "like_escape"};
 	if (supported_ops.count(function.function_name) == 0) {
 		// unsupported op for * expression
 		throw BinderException(*root, "Function \"%s\" cannot be applied to a star expression", function.function_name);

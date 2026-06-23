@@ -15,7 +15,7 @@ ArithmeticSimplificationRule::ArithmeticSimplificationRule(ExpressionRewriter &r
 	op->matchers.push_back(make_uniq<ExpressionMatcher>());
 	op->policy = SetMatcher::Policy::SOME;
 	// we only match on simple arithmetic expressions (+, -, *, /)
-	op->function = make_uniq<ManyFunctionMatcher>(unordered_set<string> {"+", "-", "*", "//"});
+	op->function = make_uniq<ManyFunctionMatcher>(absl::flat_hash_set<std::string_view> {"+", "-", "*", "//"});
 	// and only with numeric results
 	op->type = make_uniq<IntegerTypeMatcher>();
 	op->matchers[0]->type = make_uniq<IntegerTypeMatcher>();

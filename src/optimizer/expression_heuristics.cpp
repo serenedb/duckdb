@@ -7,6 +7,8 @@
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/filter/table_filter_functions.hpp"
 
+#include <absl/container/flat_hash_map.h>
+
 namespace duckdb {
 
 unique_ptr<LogicalOperator> ExpressionHeuristics::Rewrite(unique_ptr<LogicalOperator> op) {
@@ -127,7 +129,7 @@ idx_t ExpressionHeuristics::ExpressionCost(const BoundFunctionExpression &expr) 
 	if (BoundComparisonExpression::IsComparison(expr)) {
 		return ComparisonExpressionCost(expr);
 	}
-	unordered_map<std::string, idx_t> function_costs = {
+	static const absl::flat_hash_map<std::string_view, idx_t> function_costs = {
 	    {"+", 5},       {"-", 5},    {"&", 5},          {"#", 5},
 	    {">>", 5},      {"<<", 5},   {"abs", 5},        {"*", 10},
 	    {"%", 10},      {"/", 15},   {"date_part", 20}, {"year", 20},

@@ -299,15 +299,21 @@ optional_ptr<const ConfigurationAlias> DBConfig::GetAliasByIndex(idx_t target_in
 }
 
 optional_ptr<const ConfigurationOption> DBConfig::GetOptionByName(const String &name) {
-	auto lname = name.Lower();
-	for (idx_t index = 0; internal_options[index].name; index++) {
-		D_ASSERT(StringUtil::Lower(internal_options[index].name) == string(internal_options[index].name));
-		if (internal_options[index].name == lname) {
-			return internal_options + index;
+	// option name -> option, built once. Names must be lowercase (asserted at build);
+	// the lookup lowercases the input first. The array stays for index iteration.
+	static const absl::flat_hash_map<std::string_view, const ConfigurationOption *> option_index = [] {
+		absl::flat_hash_map<std::string_view, const ConfigurationOption *> m;
+		for (idx_t index = 0; internal_options[index].name; index++) {
+			D_ASSERT(StringUtil::Lower(internal_options[index].name) == internal_options[index].name);
+			m.emplace(internal_options[index].name, &internal_options[index]);
 		}
+		return m;
+	}();
+	auto lname = name.Lower();
+	if (auto it = option_index.find(std::string_view(lname.data(), lname.size())); it != option_index.end()) {
+		return it->second;
 	}
 	for (idx_t index = 0; setting_aliases[index].alias; index++) {
-		D_ASSERT(StringUtil::Lower(internal_options[index].name) == string(internal_options[index].name));
 		if (setting_aliases[index].alias == lname) {
 			return GetOptionByIndex(setting_aliases[index].option_index);
 		}
@@ -604,8 +610,8 @@ void DBConfig::CheckLock(const String &name) {
 		// not locked
 		return;
 	}
-	case_insensitive_set_t allowed_settings {"schema", "search_path"};
-	if (allowed_settings.find(name.ToStdString()) != allowed_settings.end()) {
+	static const case_insensitive_set_view_t allowed_settings {"schema", "search_path"};
+	if (allowed_settings.contains(name.ToStdString())) {
 		// we are always allowed to change these settings
 		return;
 	}
@@ -853,8 +859,8 @@ void DBConfig::AddAllowedConfig(const string &config_name) {
 	if (config_name.empty()) {
 		throw InvalidInputException("Cannot provide an empty string for allowed_configs");
 	}
-	duckdb::case_insensitive_set_t always_disallowed_config {"allowed_configs", "lock_configuration"};
-	if (always_disallowed_config.find(config_name) != always_disallowed_config.end()) {
+	static const duckdb::case_insensitive_set_view_t always_disallowed_config {"allowed_configs", "lock_configuration"};
+	if (always_disallowed_config.contains(config_name)) {
 		throw InvalidInputException("Cannot include '%s' in allowed_configs", config_name);
 	}
 	// Validate that the config name refers to a known setting (built-in or extension)

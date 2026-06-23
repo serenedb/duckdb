@@ -5,6 +5,8 @@
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 
+#include <absl/container/flat_hash_map.h>
+
 namespace duckdb {
 
 static const DefaultMacro internal_macros[] = {
@@ -194,19 +196,24 @@ unique_ptr<CreateMacroInfo> DefaultFunctionGenerator::CreateInternalMacroInfo(co
 	return bind_info;
 }
 
-static bool DefaultFunctionMatches(const DefaultMacro &macro, const string &schema, const string &name) {
-	return macro.schema == schema && macro.name == name;
-}
-
 static unique_ptr<CreateFunctionInfo> GetDefaultFunction(const string &input_schema, const string &input_name) {
+	// (schema, name) -> macro, built once. Keys are static literals; lookup is
+	// case-sensitive against the lowercased input (the names are already lowercase).
+	static const absl::flat_hash_map<std::pair<std::string_view, std::string_view>, const DefaultMacro *> macro_index = [] {
+		absl::flat_hash_map<std::pair<std::string_view, std::string_view>, const DefaultMacro *> m;
+		for (idx_t index = 0; internal_macros[index].name != nullptr; index++) {
+			m.emplace(std::pair(std::string_view(internal_macros[index].schema), std::string_view(internal_macros[index].name)),
+			          &internal_macros[index]);
+		}
+		return m;
+	}();
 	auto schema = StringUtil::Lower(input_schema);
 	auto name = StringUtil::Lower(input_name);
-	for (idx_t index = 0; internal_macros[index].name != nullptr; index++) {
-		if (DefaultFunctionMatches(internal_macros[index], schema, name)) {
-			return DefaultFunctionGenerator::CreateInternalMacroInfo(internal_macros[index]);
-		}
+	auto it = macro_index.find(std::pair(std::string_view(schema), std::string_view(name)));
+	if (it == macro_index.end()) {
+		return nullptr;
 	}
-	return nullptr;
+	return DefaultFunctionGenerator::CreateInternalMacroInfo(*it->second);
 }
 
 DefaultFunctionGenerator::DefaultFunctionGenerator(Catalog &catalog, SchemaCatalogEntry &schema)

@@ -2,6 +2,8 @@
 
 #include "duckdb/common/serializer/serializer.hpp"
 
+#include <absl/container/flat_hash_map.h>
+
 namespace duckdb {
 
 WindowExpression::WindowExpression(ExpressionType type, vector<unique_ptr<ParsedExpression>> children_p,
@@ -75,13 +77,17 @@ static const WindowFunctionDefinition internal_window_functions[] = {
 
 ExpressionType WindowExpression::WindowToExpressionType(const string &fun_name) {
 	D_ASSERT(StringUtil::IsLower(fun_name));
-	auto functions = internal_window_functions;
-	for (idx_t i = 0; functions[i].name != nullptr; i++) {
-		if (fun_name == functions[i].name) {
-			return functions[i].expression_type;
+	// fun_name is already lowercase (asserted) and the keys are lowercase literals,
+	// so a plain (case-sensitive) lookup over internal_window_functions suffices.
+	static const absl::flat_hash_map<std::string_view, ExpressionType> functions = [] {
+		absl::flat_hash_map<std::string_view, ExpressionType> m;
+		for (idx_t i = 0; internal_window_functions[i].name != nullptr; i++) {
+			m.emplace(internal_window_functions[i].name, internal_window_functions[i].expression_type);
 		}
-	}
-	return ExpressionType::WINDOW_AGGREGATE;
+		return m;
+	}();
+	auto it = functions.find(fun_name);
+	return it != functions.end() ? it->second : ExpressionType::WINDOW_AGGREGATE;
 }
 
 string WindowExpression::ExpressionTypeToWindow(ExpressionType expression_type) {

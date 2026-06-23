@@ -13,6 +13,8 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 
+#include <absl/container/flat_hash_set.h>
+
 namespace duckdb {
 
 // LCOV_EXCL_START
@@ -21,15 +23,10 @@ unique_ptr<FunctionData> TableFilterFunctions::Bind(BindScalarFunctionInput &inp
 }
 
 bool TableFilterFunctions::IsTableFilterFunction(const string &name) {
-	static const char *const TABLE_FILTER_FUNCTIONS[] = {
+	static const absl::flat_hash_set<std::string_view> table_filter_functions {
 	    BloomFilterScalarFun::NAME,     DynamicFilterScalarFun::NAME, OptionalFilterScalarFun::NAME,
 	    PerfectHashJoinScalarFun::NAME, PrefixRangeScalarFun::NAME,   SelectivityOptionalFilterScalarFun::NAME};
-	for (auto function_name : TABLE_FILTER_FUNCTIONS) {
-		if (name == function_name) {
-			return true;
-		}
-	}
-	return false;
+	return table_filter_functions.contains(name);
 }
 // LCOV_EXCL_STOP
 

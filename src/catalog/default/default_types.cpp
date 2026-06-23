@@ -4,6 +4,7 @@
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/common/types/decimal.hpp"
@@ -552,20 +553,26 @@ return BUILTIN_TYPES;
 
 optional_ptr<const DefaultType> TryGetDefaultTypeEntry(const string &name) {
 	// Check external types first so they can override builtins (e.g. oid with alias).
-	if (duckdb_external_types) {
-		idx_t count = 0;
-		const auto *external_types = duckdb_external_types(&count);
-		for (idx_t i = 0; i < count; i++) {
-			if (StringUtil::CIEquals(name, external_types[i].name)) {
-				return &external_types[i];
+	static const auto type_index = [] {
+		case_insensitive_map_view_t<const DefaultType *> m;
+		auto &internal_types = GetBuiltinTypes();
+		if (duckdb_external_types) {
+			idx_t count = 0;
+			const auto *external_types = duckdb_external_types(&count);
+			m.reserve(internal_types.size() + count);
+			for (idx_t i = 0; i < count; i++) {
+				m.try_emplace(external_types[i].name, &external_types[i]);
 			}
+		} else {
+			m.reserve(internal_types.size());
 		}
-	}
-	auto &internal_types = GetBuiltinTypes();
-	for (auto &type : internal_types) {
-		if (StringUtil::CIEquals(name, type.name)) {
-			return &type;
+		for (auto &type : internal_types) {
+			m.try_emplace(type.name, &type);
 		}
+		return m;
+	}();
+	if (auto it = type_index.find(name); it != type_index.end()) {
+		return it->second;
 	}
 	return nullptr;
 }
