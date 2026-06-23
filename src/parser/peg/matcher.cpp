@@ -1497,11 +1497,13 @@ shared_ptr<PEGMatcher> PEGMatcher::Get(DatabaseInstance &db) {
 }
 
 shared_ptr<PEGMatcher> ParserCache::GetMatcher() {
-	{
-		std::unique_lock<duckdb::mutex> lock(mutex);
-		if (matcher) {
-			return matcher;
-		}
+	// Hold the lock across the build: building the matcher compiles the whole PEG
+	// grammar, so the previous double-checked-locking let every concurrent first
+	// parser (e.g. a burst of new connections) build its own throwaway matcher.
+	// Serializing means exactly one build; the rest wait briefly then reuse it.
+	std::unique_lock<duckdb::mutex> lock(mutex);
+	if (matcher) {
+		return matcher;
 	}
 	auto new_matcher = make_shared_ptr<PEGMatcher>();
 	MatcherFactory factory(new_matcher->allocator);
@@ -1515,25 +1517,18 @@ shared_ptr<PEGMatcher> ParserCache::GetMatcher() {
 #else
 	new_matcher->root = factory.CreateMatcher(const_char_ptr_cast(INLINED_PEG_GRAMMAR), "Program");
 #endif
-	std::unique_lock<duckdb::mutex> lock(mutex);
-	if (!matcher) {
-		matcher = std::move(new_matcher);
-	}
+	matcher = std::move(new_matcher);
 	return matcher;
 }
 
 shared_ptr<PEGTransformerFactory> ParserCache::GetTransformerFactory() {
-	{
-		std::unique_lock<duckdb::mutex> lock(mutex);
-		if (transformer_factory) {
-			return transformer_factory;
-		}
-	}
-	auto new_factory = make_shared_ptr<PEGTransformerFactory>();
+	// Single locked region (see GetMatcher) so concurrent first parsers don't each
+	// build a throwaway factory.
 	std::unique_lock<duckdb::mutex> lock(mutex);
-	if (!transformer_factory) {
-		transformer_factory = std::move(new_factory);
+	if (transformer_factory) {
+		return transformer_factory;
 	}
+	transformer_factory = make_shared_ptr<PEGTransformerFactory>();
 	return transformer_factory;
 }
 
