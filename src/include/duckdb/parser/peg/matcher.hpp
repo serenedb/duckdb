@@ -14,6 +14,9 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/parser_extension.hpp"
 #include "duckdb/parser/peg/transformer/parse_result.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
+#include "duckdb/common/allocator.hpp"
+#include <absl/strings/ascii.h>
 #include <mutex>
 
 namespace duckdb {
@@ -204,10 +207,63 @@ private:
 
 class ParseResultAllocator {
 public:
-	optional_ptr<ParseResult> Allocate(unique_ptr<ParseResult> parse_result);
+	explicit ParseResultAllocator(Allocator &allocator) : arena(allocator) {
+	}
+
+	template <class T, class... ARGS>
+	optional_ptr<ParseResult> Make(ARGS &&...args) {
+		return optional_ptr<ParseResult>(arena.Make<T>(std::forward<ARGS>(args)...));
+	}
+
+	//! Scratch stack the List/Repeat matchers gather child results in before arena-copying them.
+	//! Reused across nodes (mark on entry, pop back to the mark afterwards), so building a node's
+	//! children costs no per-node heap allocation.
+	vector<ParseResult *> &ChildScratch() {
+		return child_scratch;
+	}
+
+	//! Copy a (processed) string into the arena and return a view over it (not null-terminated -- parse
+	//! results are read as string_view). For text that is not a verbatim token (unquoted/case-folded
+	//! identifiers, string literals).
+	std::string_view CopyString(std::string_view str) {
+		if (str.empty()) {
+			return {};
+		}
+		auto *mem = char_ptr_cast(arena.AllocateAligned(str.size()));
+		memcpy(mem, str.data(), str.size());
+		return std::string_view(mem, str.size());
+	}
+
+	//! Like CopyString but ASCII-lowercases while copying (one pass, no temporary). The PG-default
+	//! identifier path (preserve_identifier_case=false) lowercases every unquoted identifier.
+	std::string_view CopyStringLower(std::string_view str) {
+		if (str.empty()) {
+			return {};
+		}
+		auto *mem = char_ptr_cast(arena.AllocateAligned(str.size()));
+		absl::ascii_internal::AsciiStrToLower(mem, str.data(), str.size());
+		return std::string_view(mem, str.size());
+	}
+
+	//! Copy the child references on the scratch from `mark` to the top into an arena array, pop them
+	//! off the scratch, and return a view over the arena copy (empty span when nothing was gathered).
+	std::span<reference<ParseResult>> CopyChildren(idx_t mark) {
+		idx_t count = child_scratch.size() - mark;
+		if (count == 0) {
+			return {};
+		}
+		auto *arr =
+		    reinterpret_cast<reference<ParseResult> *>(arena.AllocateAligned(count * sizeof(reference<ParseResult>)));
+		for (idx_t i = 0; i < count; i++) {
+			new (&arr[i]) reference<ParseResult>(*child_scratch[mark + i]);
+		}
+		child_scratch.resize(mark);
+		return std::span<reference<ParseResult>>(arr, count);
+	}
 
 private:
-	vector<unique_ptr<ParseResult>> parse_results;
+	ArenaAllocator arena;
+	vector<ParseResult *> child_scratch;
 };
 
 struct PEGMatcher {

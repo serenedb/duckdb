@@ -13,6 +13,7 @@
 #include "duckdb/common/optional_ptr.hpp"
 
 namespace duckdb {
+class Allocator;
 class ExtensionCallbackManager;
 class ParserExtension;
 struct ParserCache;
@@ -24,6 +25,9 @@ struct ParserOptions {
 	optional_ptr<const ExtensionCallbackManager> extensions;
 	AllowParserOverride parser_override_setting = AllowParserOverride::DEFAULT_OVERRIDE;
 	optional_ptr<ParserCache> parser_cache;
+	// Allocator the parse-tree arena draws from, so parse memory is accounted to the
+	// database/query. Null -> Allocator::DefaultAllocator() (e.g. context-free parses).
+	optional_ptr<Allocator> allocator;
 };
 
 } // namespace duckdb
