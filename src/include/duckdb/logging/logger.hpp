@@ -12,6 +12,7 @@
 #include "duckdb/logging/log_type.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/string_util.hpp"
+#include <duckdb/common/types/string_type.hpp>
 
 namespace duckdb {
 class TableDescription;
@@ -29,7 +30,7 @@ struct FileHandle;
 #define DUCKDB_LOG_INTERNAL(SOURCE, TYPE, LEVEL, ...)                                                                  \
 	{                                                                                                                  \
 		auto &logger_ref_ = Logger::Get(SOURCE);                                                                       \
-		if (logger_ref_.ShouldLog(TYPE, LEVEL)) {                                                                      \
+		if (logger_ref_.LogEnabled() && logger_ref_.ShouldLog(TYPE, LEVEL)) {                                          \
 			logger_ref_.WriteLog(TYPE, LEVEL, __VA_ARGS__);                                                            \
 		}                                                                                                              \
 	}
@@ -61,18 +62,26 @@ public:
 	DUCKDB_API virtual ~Logger() = default;
 
 	// Main Logging interface. In most cases the macros above should be used instead of calling these directly
-	DUCKDB_API virtual bool ShouldLog(const char *log_type, LogLevel log_level) = 0;
-	DUCKDB_API void WriteLog(const char *log_type, LogLevel log_level, const char *message);
+	DUCKDB_API virtual bool ShouldLog(std::string_view log_type, LogLevel log_level) = 0;
+	DUCKDB_API void WriteLog(std::string_view log_type, LogLevel log_level, std::string_view message);
 
-	// Some more string types for easy logging
-	DUCKDB_API void WriteLog(const char *log_type, LogLevel log_level, const string &message);
-	DUCKDB_API void WriteLog(const char *log_type, LogLevel log_level, const string_t &message);
+	// Inline gate so DUCKDB_LOG_INTERNAL skips the virtual ShouldLog dispatch when this logger is
+	// disabled (the shared NopLogger used when logging is off, the common case).
+	bool LogEnabled() const noexcept {
+		return log_enabled.load(std::memory_order_relaxed);
+	}
+
+	// const char* disambiguates a no-extra-arg call from the format template below; string_view
+	// covers std::string / string_view callers. (string_t callers pass a view explicitly.)
+	DUCKDB_API void WriteLog(std::string_view log_type, LogLevel log_level, const char *message) {
+		WriteLog(log_type, log_level, std::string_view(message));
+	}
 
 	// Syntactic sugar for formatted strings
 	template <typename... ARGS>
-	void WriteLog(const char *log_type, LogLevel log_level, const char *format_string, ARGS... params) {
+	void WriteLog(std::string_view log_type, LogLevel log_level, std::string_view format_string, ARGS... params) {
 		auto formatted_string = StringUtil::Format(format_string, params...);
-		WriteLog(log_type, log_level, formatted_string.c_str());
+		WriteLog(log_type, log_level, std::string_view(formatted_string));
 	}
 
 	DUCKDB_API virtual void Flush() = 0;
@@ -102,32 +111,35 @@ public:
 	DUCKDB_API virtual const LogConfig &GetConfig() const = 0;
 
 protected:
-	virtual void WriteLogInternal(const char *log_type, LogLevel log_level, const char *message) = 0;
+	virtual void WriteLogInternal(std::string_view log_type, LogLevel log_level, std::string_view message) = 0;
 
 protected:
 	LogManager &manager;
+	// Lock-free gate read by LogEnabled(). NopLogger leaves it false; enabled loggers set it true.
+	atomic<bool> log_enabled = false;
 };
 
 // Thread-safe logger
 class ThreadSafeLogger : public Logger {
 public:
-	explicit ThreadSafeLogger(LogConfig &config_p, LoggingContext &context_p, LogManager &manager);
-	explicit ThreadSafeLogger(LogConfig &config_p, RegisteredLoggingContext context_p, LogManager &manager);
+	explicit ThreadSafeLogger(shared_ptr<const LogConfig> config_p, LoggingContext &context_p, LogManager &manager);
+	explicit ThreadSafeLogger(shared_ptr<const LogConfig> config_p, RegisteredLoggingContext context_p,
+	                          LogManager &manager);
 
 	// Main Logger API
-	bool ShouldLog(const char *log_type, LogLevel log_level) override;
-	void WriteLogInternal(const char *log_type, LogLevel log_level, const char *message) override;
+	bool ShouldLog(std::string_view log_type, LogLevel log_level) override;
+	void WriteLogInternal(std::string_view log_type, LogLevel log_level, std::string_view message) override;
 
 	void Flush() override;
 	bool IsThreadSafe() override {
 		return true;
 	}
 	const LogConfig &GetConfig() const override {
-		return config;
+		return *config;
 	}
 
 protected:
-	const LogConfig config;
+	const shared_ptr<const LogConfig> config;
 	mutex lock;
 	const RegisteredLoggingContext context;
 };
@@ -140,8 +152,8 @@ public:
 	explicit ThreadLocalLogger(LogConfig &config_p, RegisteredLoggingContext context_p, LogManager &manager);
 
 	// Main Logger API
-	bool ShouldLog(const char *log_type, LogLevel log_level) override;
-	void WriteLogInternal(const char *log_type, LogLevel log_level, const char *message) override;
+	bool ShouldLog(std::string_view log_type, LogLevel log_level) override;
+	void WriteLogInternal(std::string_view log_type, LogLevel log_level, std::string_view message) override;
 	void Flush() override;
 
 	bool IsThreadSafe() override {
@@ -163,8 +175,8 @@ public:
 	explicit MutableLogger(LogConfig &config_p, RegisteredLoggingContext context_p, LogManager &manager);
 
 	// Main Logger API
-	bool ShouldLog(const char *log_type, LogLevel log_level) override;
-	void WriteLogInternal(const char *log_type, LogLevel log_level, const char *message) override;
+	bool ShouldLog(std::string_view log_type, LogLevel log_level) override;
+	void WriteLogInternal(std::string_view log_type, LogLevel log_level, std::string_view message) override;
 
 	void Flush() override;
 	bool IsThreadSafe() override {
@@ -179,8 +191,7 @@ public:
 	void UpdateConfig(LogConfig &new_config) override;
 
 protected:
-	// Atomics for lock-free log setting checks
-	atomic<bool> enabled;
+	// Atomics for lock-free log setting checks (enabled lives in the base as log_enabled)
 	atomic<LogMode> mode;
 	atomic<LogLevel> level;
 
@@ -194,10 +205,10 @@ class NopLogger : public Logger {
 public:
 	explicit NopLogger(LogManager &manager) : Logger(manager) {
 	}
-	bool ShouldLog(const char *log_type, LogLevel log_level) override {
+	bool ShouldLog(std::string_view log_type, LogLevel log_level) override {
 		return false;
 	}
-	void WriteLogInternal(const char *log_type, LogLevel log_level, const char *message) override {};
+	void WriteLogInternal(std::string_view log_type, LogLevel log_level, std::string_view message) override {};
 	void Flush() override {
 	}
 	bool IsThreadSafe() override {

@@ -12,6 +12,7 @@
 #include "duckdb/logging/log_storage.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/left_right.hpp"
 
 namespace duckdb {
 class LogType;
@@ -33,7 +34,7 @@ public:
 	void Initialize();
 
 	DUCKDB_API static LogManager &Get(ClientContext &context);
-	unique_ptr<Logger> CreateLogger(LoggingContext context, bool thread_safe = true, bool mutable_settings = false);
+	shared_ptr<Logger> CreateLogger(LoggingContext context, bool thread_safe = true, bool mutable_settings = false);
 
 	RegisteredLoggingContext RegisterLoggingContext(LoggingContext &context);
 
@@ -74,7 +75,7 @@ protected:
 	RegisteredLoggingContext RegisterLoggingContextInternal(LoggingContext &context);
 
 	// This is to be called by the Loggers only, it does not verify log_level and log_type
-	void WriteLogEntry(timestamp_t, const char *log_type, LogLevel log_level, const char *log_message,
+	void WriteLogEntry(timestamp_t, std::string_view log_type, LogLevel log_level, std::string_view log_message,
 	                   const RegisteredLoggingContext &context);
 	// This allows efficiently pushing a cached set of log entries into the log manager
 	void FlushCachedLogEntries(DataChunk &chunk, const RegisteredLoggingContext &context);
@@ -85,15 +86,23 @@ protected:
 
 	void SetConfigInternal(LogConfig config);
 
+	void PublishConfigInternal();
+
 protected:
 	mutex lock;
 	LogConfig config;
+	LeftRight<shared_ptr<const LogConfig>> config_snapshot;
+	atomic<bool> any_logging_enabled = false;
+	// Set when an entry is buffered, cleared by Flush -- lets the per-query Flush skip the
+	// lock + storage flush when nothing was logged since the last flush.
+	atomic<bool> has_buffered_entries = false;
 
 	shared_ptr<Logger> global_logger;
+	NopLogger nop_logger;
 	shared_ptr<LogStorage> log_storage;
 	DatabaseInstance &db_instance;
 
-	idx_t next_registered_logging_context_index = 0;
+	atomic<idx_t> next_registered_logging_context_index = 0;
 
 	// Any additional LogStorages registered (by extensions for example)
 	case_insensitive_map_t<shared_ptr<LogStorage>> registered_log_storages;

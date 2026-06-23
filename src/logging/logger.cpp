@@ -10,15 +10,7 @@
 
 namespace duckdb {
 
-void Logger::WriteLog(const char *log_type, LogLevel log_level, const string &message) {
-	WriteLog(log_type, log_level, message.c_str());
-}
-void Logger::WriteLog(const char *log_type, LogLevel log_level, const string_t &message) {
-	string copied_string = message.GetString();
-	WriteLog(log_type, log_level, copied_string.c_str());
-}
-
-void Logger::WriteLog(const char *log_type, LogLevel log_level, const char *message) {
+void Logger::WriteLog(std::string_view log_type, LogLevel log_level, std::string_view message) {
 	WriteLogInternal(log_type, log_level, message);
 }
 
@@ -46,33 +38,34 @@ Logger &Logger::Get(const shared_ptr<Logger> &logger) {
 	return *logger;
 }
 
-ThreadSafeLogger::ThreadSafeLogger(LogConfig &config_p, LoggingContext &context_p, LogManager &manager)
-    : ThreadSafeLogger(config_p, manager.RegisterLoggingContext(context_p), manager) {
+ThreadSafeLogger::ThreadSafeLogger(shared_ptr<const LogConfig> config_p, LoggingContext &context_p, LogManager &manager)
+    : ThreadSafeLogger(std::move(config_p), manager.RegisterLoggingContext(context_p), manager) {
 }
 
-ThreadSafeLogger::ThreadSafeLogger(LogConfig &config_p, RegisteredLoggingContext context_p, LogManager &manager)
-    : Logger(manager), config(config_p), context(context_p) {
+ThreadSafeLogger::ThreadSafeLogger(shared_ptr<const LogConfig> config_p, RegisteredLoggingContext context_p,
+                                   LogManager &manager)
+    : Logger(manager), config(std::move(config_p)), context(context_p) {
 	// NopLogger should be used instead
-	D_ASSERT(config_p.enabled);
+	D_ASSERT(config->enabled);
+	log_enabled = true;
 }
 
-bool ThreadSafeLogger::ShouldLog(const char *log_type, LogLevel log_level) {
-	if (config.level > log_level) {
+bool ThreadSafeLogger::ShouldLog(std::string_view log_type, LogLevel log_level) {
+	if (config->level > log_level) {
 		return false;
 	}
 
-	// TODO: improve these: they are currently fairly expensive due to requiring allocations when looking up const char*
-	//       also, we would ideally do prefix matching, not string matching here
-	if (config.mode == LogMode::ENABLE_SELECTED) {
-		return config.enabled_log_types.find(log_type) != config.enabled_log_types.end();
+	// TODO: we would ideally do prefix matching, not string matching here
+	if (config->mode == LogMode::ENABLE_SELECTED) {
+		return config->enabled_log_types.find(log_type) != config->enabled_log_types.end();
 	}
-	if (config.mode == LogMode::DISABLE_SELECTED) {
-		return config.disabled_log_types.find(log_type) == config.disabled_log_types.end();
+	if (config->mode == LogMode::DISABLE_SELECTED) {
+		return config->disabled_log_types.find(log_type) == config->disabled_log_types.end();
 	}
 	return true;
 }
 
-void ThreadSafeLogger::WriteLogInternal(const char *log_type, LogLevel log_level, const char *log_message) {
+void ThreadSafeLogger::WriteLogInternal(std::string_view log_type, LogLevel log_level, std::string_view log_message) {
 	manager.WriteLogEntry(Timestamp::GetCurrentTimestamp(), log_type, log_level, log_message, context);
 }
 
@@ -89,13 +82,14 @@ ThreadLocalLogger::ThreadLocalLogger(LogConfig &config_p, RegisteredLoggingConte
     : Logger(manager), config(config_p), context(context_p) {
 	// NopLogger should be used instead
 	D_ASSERT(config_p.enabled);
+	log_enabled = true;
 }
 
-bool ThreadLocalLogger::ShouldLog(const char *log_type, LogLevel log_level) {
+bool ThreadLocalLogger::ShouldLog(std::string_view log_type, LogLevel log_level) {
 	throw NotImplementedException("ThreadLocalLogger::ShouldLog");
 }
 
-void ThreadLocalLogger::WriteLogInternal(const char *log_type, LogLevel log_level, const char *log_message) {
+void ThreadLocalLogger::WriteLogInternal(std::string_view log_type, LogLevel log_level, std::string_view log_message) {
 	throw NotImplementedException("ThreadLocalLogger::WriteLogInternal");
 }
 
@@ -109,7 +103,7 @@ MutableLogger::MutableLogger(LogConfig &config_p, LoggingContext &context_p, Log
 
 MutableLogger::MutableLogger(LogConfig &config_p, RegisteredLoggingContext context_p, LogManager &manager)
     : Logger(manager), config(config_p), context(context_p) {
-	enabled = config.enabled;
+	log_enabled = config.enabled;
 	level = config.level;
 	mode = config.mode;
 }
@@ -119,17 +113,17 @@ void MutableLogger::UpdateConfig(LogConfig &new_config) {
 	config = new_config;
 
 	// Update atomics for lock-free access
-	enabled = config.enabled;
+	log_enabled = config.enabled;
 	level = config.level;
 	mode = config.mode;
 }
 
-void MutableLogger::WriteLogInternal(const char *log_type, LogLevel log_level, const char *log_message) {
+void MutableLogger::WriteLogInternal(std::string_view log_type, LogLevel log_level, std::string_view log_message) {
 	manager.WriteLogEntry(Timestamp::GetCurrentTimestamp(), log_type, log_level, log_message, context);
 }
 
-bool MutableLogger::ShouldLog(const char *log_type, LogLevel log_level) {
-	if (!enabled) {
+bool MutableLogger::ShouldLog(std::string_view log_type, LogLevel log_level) {
+	if (!log_enabled) {
 		return false;
 	}
 
