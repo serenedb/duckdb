@@ -45,40 +45,40 @@ public:
 	//! whether or not the parsing was successful. If the parsing was
 	//! successful, the parsed statements will be stored in the statements
 	//! variable.
-	void ParseQuery(const string &query);
+	void ParseQuery(std::string_view query);
 
 	//! Tokenize a query, returning the raw tokens together with their locations
-	static vector<SimplifiedToken> Tokenize(const string &query);
+	static vector<SimplifiedToken> Tokenize(std::string_view query);
 
 	//! Tokenize an error message, returning the raw tokens together with their locations
-	static vector<SimplifiedToken> TokenizeError(const string &error_msg);
+	static vector<SimplifiedToken> TokenizeError(std::string_view error_msg);
 
 	//! Returns true if the given text matches a keyword of the parser
-	static KeywordCategory IsKeyword(const string &text);
+	static KeywordCategory IsKeyword(std::string_view text);
 	//! Returns a list of all keywords in the parser
 	static vector<ParserKeyword> KeywordList();
 	// Returns the Keyword category
-	static KeywordCategory ToKeywordCategory(const string &text);
+	static KeywordCategory ToKeywordCategory(std::string_view text);
 	//! Parses a list of expressions (i.e. the list found in a SELECT clause)
-	DUCKDB_API static vector<unique_ptr<ParsedExpression>> ParseExpressionList(const string &select_list,
+	DUCKDB_API static vector<unique_ptr<ParsedExpression>> ParseExpressionList(std::string_view select_list,
 	                                                                           ParserOptions options = ParserOptions());
 	//! Parses a list of GROUP BY expressions
-	static GroupByNode ParseGroupByList(const string &group_by, ParserOptions options = ParserOptions());
+	static GroupByNode ParseGroupByList(std::string_view group_by, ParserOptions options = ParserOptions());
 	//! Parses a list as found in an ORDER BY expression (i.e. including optional ASCENDING/DESCENDING modifiers)
-	static vector<OrderByNode> ParseOrderList(const string &select_list, ParserOptions options = ParserOptions());
+	static vector<OrderByNode> ParseOrderList(std::string_view select_list, ParserOptions options = ParserOptions());
 	//! Parses an update list (i.e. the list found in the SET clause of an UPDATE statement)
-	static void ParseUpdateList(const string &update_list, vector<string> &update_columns,
+	static void ParseUpdateList(std::string_view update_list, vector<string> &update_columns,
 	                            vector<unique_ptr<ParsedExpression>> &expressions,
 	                            ParserOptions options = ParserOptions());
 	//! Parses a VALUES list (i.e. the list of expressions after a VALUES clause)
-	static vector<vector<unique_ptr<ParsedExpression>>> ParseValuesList(const string &value_list,
+	static vector<vector<unique_ptr<ParsedExpression>>> ParseValuesList(std::string_view value_list,
 	                                                                    ParserOptions options = ParserOptions());
 	//! Parses a column list (i.e. as found in a CREATE TABLE statement)
-	static ColumnList ParseColumnList(const string &column_list, ParserOptions options = ParserOptions());
-	static ColumnDefinition ParseColumnDefinition(const string &column_definition,
+	static ColumnList ParseColumnList(std::string_view column_list, ParserOptions options = ParserOptions());
+	static ColumnDefinition ParseColumnDefinition(std::string_view column_definition,
 	                                              ParserOptions options = ParserOptions());
 
-	static bool StripUnicodeSpaces(const string &query_str, string &new_query);
+	static bool StripUnicodeSpaces(std::string_view query_str, string &new_query);
 
 	void ThrowParserOverrideError(ParserOverrideResult &result);
 

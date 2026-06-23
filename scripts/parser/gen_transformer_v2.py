@@ -355,6 +355,7 @@ class SeqElement:
     var_name: str = ""
     cpp_type: str = ""
     by_value: bool = False  # True for unique_ptr<T> and vector<unique_ptr<T>> (non-copyable)
+    is_identifier: bool = False  # True when the value is a parse-tree string_view (Identifier rule)
     extraction_lines: List[str] = field(default_factory=list)
 
 
@@ -387,7 +388,7 @@ def _classify_reference(name, idx, rule_types, excluded_rules):
     if name in IDENTIFIER_OVERRIDE_RULES:
         var_name = to_snake_case(name)
         lines = [f"\tauto {var_name} = list_pr.Child<IdentifierParseResult>({idx}).identifier;"]
-        return SeqElement(skip=False, var_name=var_name, cpp_type="string", extraction_lines=lines)
+        return SeqElement(skip=False, var_name=var_name, cpp_type="string", is_identifier=True, extraction_lines=lines)
     if name in rule_types:
         cpp_type = rule_types[name].cpp_type
         var_name = to_snake_case(name)
@@ -415,13 +416,13 @@ def _classify_optional_reference(name, idx, rule_types, excluded_rules):
     var_name = to_snake_case(name)
     if name in IDENTIFIER_OVERRIDE_RULES:
         lines = [
-            f"\tstring {var_name};",
+            f"\tstd::string_view {var_name};",
             f"\tauto &{var_name}_opt = list_pr.Child<OptionalParseResult>({idx});",
             f"\tif ({var_name}_opt.HasResult()) {{",
             f"\t\t{var_name} = {var_name}_opt.GetResult().Cast<IdentifierParseResult>().identifier;",
             f"\t}}",
         ]
-        return SeqElement(skip=False, var_name=var_name, cpp_type="string", extraction_lines=lines)
+        return SeqElement(skip=False, var_name=var_name, cpp_type="string", is_identifier=True, extraction_lines=lines)
     if name in rule_types:
         cpp_type = rule_types[name].cpp_type
         lines = [
@@ -517,6 +518,7 @@ def _classify_macro(node, idx, rule_types, optional=False):
             var_name=var_name,
             cpp_type=child_type,
             by_value=False if is_identifier else _is_by_value(leaf_name, rule_types),
+            is_identifier=is_identifier,
             extraction_lines=[line],
         )
 
@@ -533,7 +535,7 @@ def _classify_macro(node, idx, rule_types, optional=False):
         # item_var is reference<ParseResult> (std::reference_wrapper); need .get() when not already
         # unwrapped by ExtractResultFromParens (which returns ParseResult&).
         ident_access = f"{item_access}.get()" if post_parens == 0 else item_access
-        push_content = f"{var_name}.push_back({ident_access}.Cast<IdentifierParseResult>().identifier);"
+        push_content = f"{var_name}.emplace_back({ident_access}.Cast<IdentifierParseResult>().identifier);"
     else:
         push_content = f"{var_name}.push_back(transformer.Transform<{child_type}>({item_access}));"
 
@@ -699,6 +701,9 @@ def _sequence_skip_reason(children, rule_types, excluded_rules):
 
 def _seq_param_decl(e):
     """Format one SeqElement as a C++ parameter declaration."""
+    if e.is_identifier and e.cpp_type == "string":
+        # The extracted value is a parse-tree string_view (lives through Transform); pass it as a view.
+        return f"std::string_view {e.var_name}"
     if e.by_value:
         return f"{e.cpp_type} {e.var_name}"
     return f"const {e.cpp_type} &{e.var_name}"

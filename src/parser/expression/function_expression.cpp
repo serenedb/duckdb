@@ -10,7 +10,7 @@ namespace duckdb {
 FunctionExpression::FunctionExpression() : ParsedExpression(ExpressionType::FUNCTION, ExpressionClass::FUNCTION) {
 }
 
-FunctionExpression::FunctionExpression(string catalog, string schema, const string &function_name,
+FunctionExpression::FunctionExpression(string catalog, string schema, std::string_view function_name,
                                        vector<unique_ptr<ParsedExpression>> children_p,
                                        unique_ptr<ParsedExpression> filter, unique_ptr<OrderModifier> order_bys_p,
                                        bool distinct, bool is_operator, bool export_state_p)
@@ -24,7 +24,7 @@ FunctionExpression::FunctionExpression(string catalog, string schema, const stri
 	}
 }
 
-FunctionExpression::FunctionExpression(const string &function_name, vector<unique_ptr<ParsedExpression>> children_p,
+FunctionExpression::FunctionExpression(std::string_view function_name, vector<unique_ptr<ParsedExpression>> children_p,
                                        unique_ptr<ParsedExpression> filter, unique_ptr<OrderModifier> order_bys,
                                        bool distinct, bool is_operator, bool export_state_p)
     : FunctionExpression(INVALID_CATALOG, INVALID_SCHEMA, function_name, std::move(children_p), std::move(filter),
