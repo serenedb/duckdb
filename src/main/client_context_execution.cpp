@@ -259,6 +259,7 @@ unique_ptr<QueryResult> ClientContext::SubmitPreparedStatementInternal(
 		sink.SetResultBuffer(buffer);
 	}
 	executor.SetResultBuffer(buffer);
+	executor.SetCallerDrives(parameters.caller_drives);
 
 	executor.Initialize(std::move(collector));
 

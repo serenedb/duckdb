@@ -28,6 +28,33 @@
 
 namespace duckdb {
 
+Executor::DriverScope::DriverScope(Executor &executor_p) : executor(executor_p) {
+	lock_guard<mutex> slot_lock(executor.inline_task_lock);
+	executor.drivers.push_back(ThreadUtil::GetThreadId());
+}
+
+Executor::DriverScope::~DriverScope() {
+	lock_guard<mutex> slot_lock(executor.inline_task_lock);
+	auto entry = std::find(executor.drivers.rbegin(), executor.drivers.rend(), ThreadUtil::GetThreadId());
+	D_ASSERT(entry != executor.drivers.rend());
+	executor.drivers.erase(std::next(entry).base());
+}
+
+bool Executor::TrySubmitInlineTask(const shared_ptr<Task> &task_p) {
+	if (!caller_drives) {
+		return false;
+	}
+	lock_guard<mutex> slot_lock(inline_task_lock);
+	if (inline_task || std::find(drivers.begin(), drivers.end(), ThreadUtil::GetThreadId()) == drivers.end()) {
+		return false;
+	}
+	inline_task = task_p;
+	// The slot bypasses ConcurrentQueue::Enqueue, which normally stamps the
+	// token (the ProcessPartial reschedule path reads it).
+	inline_task->token = *producer;
+	return true;
+}
+
 Executor::Executor(ClientContext &context) : context(context), executor_tasks(0), blocked_thread_time(0) {
 }
 
@@ -237,6 +264,9 @@ void Executor::Initialize(PhysicalOperator &plan) {
 
 void Executor::InitializeInternal(PhysicalOperator &plan) {
 	auto &scheduler = TaskScheduler::GetScheduler(context);
+	// Initialize runs synchronously on the query driver's thread; events it
+	// schedules may skip the worker wake (Event::SetTasks).
+	DriverScope driver_scope(*this);
 	{
 		lock_guard<mutex> elock(executor_lock);
 		physical_plan = &plan;
@@ -300,6 +330,12 @@ void Executor::CancelTasks() {
 		to_be_rescheduled_tasks.clear();
 	}
 	to_destroy.clear();
+	shared_ptr<Task> inline_to_destroy;
+	{
+		lock_guard<mutex> slot_lock(inline_task_lock);
+		inline_to_destroy = std::move(inline_task);
+	}
+	inline_to_destroy.reset();
 	// Drain all tasks first — they hold references to pipelines/events/states,
 	// so those must stay alive until all tasks have completed
 #ifndef DUCKDB_NO_THREADS
@@ -341,10 +377,18 @@ void Executor::CancelTasks() {
 
 bool Executor::WorkOnTasks() {
 	auto &scheduler = TaskScheduler::GetScheduler(context);
+	DriverScope driver_scope(*this);
 
 	bool did_work = false;
-	shared_ptr<Task> task_from_producer;
-	while (scheduler.GetTaskFromProducer(*producer, task_from_producer)) {
+	for (;;) {
+		shared_ptr<Task> task_from_producer;
+		{
+			lock_guard<mutex> slot_lock(inline_task_lock);
+			task_from_producer = std::move(inline_task);
+		}
+		if (!task_from_producer && !scheduler.GetTaskFromProducer(*producer, task_from_producer)) {
+			break;
+		}
 		did_work = true;
 		auto res = task_from_producer->Execute(TaskExecutionMode::PROCESS_ALL);
 		if (res == TaskExecutionResult::TASK_BLOCKED) {
@@ -439,6 +483,18 @@ void Executor::AddToBeRescheduled(shared_ptr<Task> &task_p) {
 	// Only a result-sink park needs the consumer, so only a store that can park wakes it
 	if (ResultStoreCanPark()) {
 		task_reschedule.notify_all();
+		if (on_reschedule && ResultCollectorIsBlocked()) {
+			// A streaming result chunk is ready (the collector blocked waiting for Fetch): the next
+			// ExecuteTask will return READY. Wake an async driver parked on NO_TASKS.
+			std::exchange(on_reschedule, {})();
+		}
+	}
+}
+
+void Executor::NotifyDriver() {
+	lock_guard<mutex> l(executor_lock);
+	if (on_reschedule) {
+		std::exchange(on_reschedule, {})();
 	}
 }
 
@@ -447,6 +503,7 @@ bool Executor::ExecutionIsFinished() {
 }
 
 QueryResultState Executor::ExecuteTask(std::function<void()> on_reschedule_arg) {
+	DriverScope driver_scope(*this);
 	// Only executor should return NO_TASKS_AVAILABLE
 	D_ASSERT(execution_result != QueryResultState::NO_TASKS_AVAILABLE);
 	if (execution_result != QueryResultState::NOT_READY && ExecutionIsFinished()) {
@@ -454,7 +511,13 @@ QueryResultState Executor::ExecuteTask(std::function<void()> on_reschedule_arg) 
 	}
 	if (completed_pipelines < total_pipelines) {
 		if (!task) {
-			TaskScheduler::GetScheduler(context).GetTaskFromProducer(*producer, task);
+			{
+				lock_guard<mutex> slot_lock(inline_task_lock);
+				task = std::move(inline_task);
+			}
+			if (!task) {
+				TaskScheduler::GetScheduler(context).GetTaskFromProducer(*producer, task);
+			}
 		}
 		if (!task && !HasError()) {
 			return IdleState(std::move(on_reschedule_arg));
@@ -506,7 +569,24 @@ QueryResultState Executor::Poll() {
 
 QueryResultState Executor::IdleState(std::function<void()> on_reschedule_arg) {
 	lock_guard<mutex> l(executor_lock);
+	{
+		lock_guard<mutex> slot_lock(inline_task_lock);
+		if (inline_task) {
+			// A concurrent driver (e.g. a cancelling thread inside
+			// WorkOnTasks) filled the bypass slot after our fetch; loop
+			// around instead of parking past it.
+			return QueryResultState::NOT_READY;
+		}
+	}
 	if (to_be_rescheduled_tasks.empty()) {
+		if (completed_pipelines >= total_pipelines || HasError()) {
+			return QueryResultState::NOT_READY;
+		}
+		// Park the async driver: store its wake callback (fired on completion / result-ready
+		// / error / unblock) instead of returning for the caller to busy-poll NO_TASKS.
+		if (on_reschedule_arg) {
+			on_reschedule = std::move(on_reschedule_arg);
+		}
 		return QueryResultState::NO_TASKS_AVAILABLE;
 	}
 	// At least one task is blocked
@@ -551,6 +631,10 @@ void Executor::Reset() {
 	lock_guard<mutex> elock(executor_lock);
 	physical_plan = nullptr;
 	cancelled = false;
+	{
+		lock_guard<mutex> slot_lock(inline_task_lock);
+		inline_task.reset();
+	}
 	root_executor.reset();
 	root_pipelines.clear();
 	root_pipeline_idx = 0;
@@ -598,6 +682,9 @@ void Executor::PushError(ErrorData exception) {
 		pipeline->FinishSourceAndPreventBlocking(context);
 		pipeline->PreventSinkBlocking();
 	}
+	// Wake an async driver parked on NO_TASKS so it re-runs ExecuteTask and observes the error
+	// (the query will not complete, so the completion/result-ready wakes would never fire).
+	NotifyDriver();
 }
 
 bool Executor::HasError() {
