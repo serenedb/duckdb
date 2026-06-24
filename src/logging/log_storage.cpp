@@ -190,7 +190,8 @@ void CSVLogStorage::InitializeCastChunk(LoggingTargetTable table) {
 
 	vector<LogicalType> types;
 	types.resize(GetSchema(table).size(), LogicalType::VARCHAR);
-	idx_t buffer_size = MaxValue<idx_t>(GetBufferLimit(), 1);
+	// buffer_limit is the flush cadence, not the chunk capacity; size the cast chunk to a full vector.
+	idx_t buffer_size = MaxValue<idx_t>(GetBufferLimit(), STANDARD_VECTOR_SIZE);
 	cast_buffers[table]->Initialize(Allocator::DefaultAllocator(), types, buffer_size);
 }
 
@@ -403,6 +404,7 @@ void FileLogStorage::UpdateConfigInternal(DatabaseInstance &db, case_insensitive
 	auto config_copy = config;
 
 	string new_path;
+	bool path_provided = false;
 	bool normalize_contexts_new_value = normalize_contexts;
 	bool normalize_set_explicitly = false;
 	bool require_reinitializing_files = false;
@@ -411,6 +413,7 @@ void FileLogStorage::UpdateConfigInternal(DatabaseInstance &db, case_insensitive
 	for (const auto &it : config_copy) {
 		auto key = StringUtil::Lower(it.first);
 		if (key == "path") {
+			path_provided = true;
 			auto path_value = it.second.ToString();
 			//! We implicitly set normalize to false when a path ending in .csv is specified
 			if (!normalize_set_explicitly && StringUtil::EndsWith(path_value, ".csv")) {
@@ -460,8 +463,9 @@ void FileLogStorage::UpdateConfigInternal(DatabaseInstance &db, case_insensitive
 		}
 	}
 
-	// Apply any path change
-	if (new_path != base_path) {
+	// Apply any path change. Only when a path was actually provided -- a config update
+	// without a "path" key (e.g. buffer_size only) must not clobber the existing path with "".
+	if (path_provided && new_path != base_path) {
 		base_path = new_path;
 		SetPaths(new_path);
 	}
@@ -536,7 +540,8 @@ BufferingLogStorage::BufferingLogStorage(DatabaseInstance &db_p, idx_t buffer_si
 }
 
 void BufferingLogStorage::ResetLogBuffers() {
-	idx_t buffer_size = MaxValue<idx_t>(buffer_limit, 1);
+	// Capacity must not be the flush cadence: buffer_limit 0 ("flush each entry") still needs a full vector.
+	idx_t buffer_size = MaxValue<idx_t>(buffer_limit, STANDARD_VECTOR_SIZE);
 	if (normalize_contexts) {
 		buffers[LoggingTargetTable::LOG_ENTRIES] = make_uniq<DataChunk>();
 		buffers[LoggingTargetTable::LOG_CONTEXTS] = make_uniq<DataChunk>();
