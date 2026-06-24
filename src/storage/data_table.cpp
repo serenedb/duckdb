@@ -1688,8 +1688,20 @@ void DataTable::VerifyUpdateConstraints(ConstraintState &state, ClientContext &c
 	auto &constraints = table.GetConstraints();
 	auto &bound_constraints = state.bound_constraints;
 	for (idx_t constr_idx = 0; constr_idx < bound_constraints.size(); constr_idx++) {
-		auto &base_constraint = constraints[constr_idx];
 		auto &constraint = bound_constraints[constr_idx];
+		if (constr_idx >= constraints.size()) {
+			// Engine-supplied extra constraints carry no parsed counterpart in
+			// this entry (e.g. a facade catalog enforcing its own checks
+			// through a delegated table); they are always CHECK constraints.
+			auto &bound_check = constraint->Cast<BoundCheckConstraint>();
+			DataChunk mock_chunk;
+			if (CreateMockChunk(table, column_ids, bound_check.bound_columns, chunk, mock_chunk)) {
+				VerifyCheckConstraintExpression(context, table, *bound_check.expression, mock_chunk,
+				                                "CHECK(" + bound_check.expression->ToString() + ")");
+			}
+			continue;
+		}
+		auto &base_constraint = constraints[constr_idx];
 		switch (constraint->type) {
 		case ConstraintType::NOT_NULL: {
 			auto &bound_not_null = constraint->Cast<BoundNotNullConstraint>();
