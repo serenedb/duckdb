@@ -363,7 +363,7 @@ bool ExtensionHelper::CheckExtensionBufferSignature(const char *buffer, idx_t to
 bool ExtensionHelper::TryInitialLoad(DatabaseInstance &db, FileSystem &fs, const string &extension,
                                      ExtensionInitResult &result, string &error) {
 #ifdef DUCKDB_DISABLE_EXTENSION_LOAD
-	throw PermissionException("Loading external extensions is disabled through a compile time flag");
+	ExtensionHelper::ThrowExtensionRuntimeUnsupported(ExtensionHelper::ApplyExtensionAlias(extension), false);
 #else
 	if (!Settings::Get<EnableExternalAccessSetting>(db)) {
 		throw PermissionException("Loading external extensions is disabled through configuration");
@@ -645,7 +645,7 @@ void ExtensionHelper::LoadExternalExtension(DatabaseInstance &db, FileSystem &fs
 void ExtensionHelper::LoadExternalExtensionInternal(DatabaseInstance &db, FileSystem &fs, const string &extension,
                                                     ExtensionActiveLoad &info) {
 #ifdef DUCKDB_DISABLE_EXTENSION_LOAD
-	throw PermissionException("Loading external extensions is disabled through a compile time flag");
+	ExtensionHelper::ThrowExtensionRuntimeUnsupported(ExtensionHelper::ApplyExtensionAlias(extension), false);
 #else
 	auto extension_init_result = InitialLoad(db, fs, extension);
 

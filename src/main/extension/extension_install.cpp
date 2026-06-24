@@ -563,7 +563,8 @@ unique_ptr<ExtensionInstallInfo> ExtensionHelper::InstallExtensionInternal(Datab
                                                                            ExtensionInstallOptions &options,
                                                                            optional_ptr<ClientContext> context) {
 #ifdef DUCKDB_DISABLE_EXTENSION_LOAD
-	throw PermissionException("Installing external extensions is disabled through a compile time flag");
+	ExtensionHelper::ThrowExtensionRuntimeUnsupported(
+	    ExtensionHelper::ApplyExtensionAlias(fs.ExtractBaseName(extension)), true);
 #else
 
 	auto extension_name = ApplyExtensionAlias(fs.ExtractBaseName(extension));
