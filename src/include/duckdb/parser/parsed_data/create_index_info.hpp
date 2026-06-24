@@ -34,7 +34,7 @@ struct CreateIndexInfo : public CreateInfo {
 	//! The index type (ART, B+-tree, Skip-List, ...)
 	string index_type;
 	//! The index constraint type
-	IndexConstraintType constraint_type;
+	IndexConstraintType constraint_type = IndexConstraintType::NONE;
 	//! The column ids of the indexed table
 	vector<column_t> column_ids;
 	//! The set of expressions to index by
