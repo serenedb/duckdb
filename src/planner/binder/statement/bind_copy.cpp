@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/common/bind_helpers.hpp"
+#include "duckdb/common/enums/file_compression_type.hpp"
 #include "duckdb/common/filename_pattern.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
@@ -519,6 +520,23 @@ vector<Value> BindCopyOption(ClientContext &context, TableFunctionBinder &option
 	return result;
 }
 
+namespace {
+// Derive the COPY format from a file extension (after stripping a .gz/.zst suffix).
+string ExtractFormat(const string &file_path) {
+	auto format = StringUtil::Lower(file_path);
+	if (StringUtil::EndsWith(format, CompressionExtensionFromType(FileCompressionType::GZIP))) {
+		format = format.substr(0, format.size() - 3);
+	} else if (StringUtil::EndsWith(format, CompressionExtensionFromType(FileCompressionType::ZSTD))) {
+		format = format.substr(0, format.size() - 4);
+	}
+	size_t dot_pos = format.rfind('.');
+	if (dot_pos == string::npos || dot_pos == format.length() - 1) {
+		return "";
+	}
+	return format.substr(dot_pos + 1);
+}
+} // namespace
+
 void Binder::BindCopyOptions(CopyInfo &info) {
 	TableFunctionBinder option_binder(*this, context, "Copy", "Copy options");
 	if (info.file_path_expression) {
@@ -569,6 +587,21 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 			continue;
 		}
 		info.options[entry.first] = std::move(inputs);
+	}
+	// An expression source (e.g. getvariable()) only resolves to a path here, so the
+	// parse-time format guess can be wrong (it defaults to "text" for an unknown path).
+	// Re-derive from the resolved extension when the user didn't specify a format.
+	if (info.is_format_auto_detected) {
+		auto derived = ExtractFormat(info.file_path);
+		if (!derived.empty()) {
+			info.format = derived;
+			// PG writes no CSV header unless HEADER is given, while DuckDB's CSV writer
+			// defaults it on. The wire COPY classifier pins this off for paths known at
+			// parse; an expression source only resolves to csv here, so apply it too.
+			if (!info.is_from && info.format == "csv" && !info.options.count("header")) {
+				info.options["header"] = {Value::BOOLEAN(false)};
+			}
+		}
 	}
 	info.parsed_options.clear();
 }
