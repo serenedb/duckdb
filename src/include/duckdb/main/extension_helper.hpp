@@ -235,6 +235,12 @@ public:
 	//! extension_entries.hpp)
 	static bool CanAutoloadExtension(const string &ext_name);
 
+	//! SereneDB compiles extensions into the server binary and does not support runtime INSTALL/LOAD or
+	//! autoinstall/autoload. These build the shared "not supported by SereneDB" message (naming the extension)
+	//! used by the INSTALL/LOAD binder, UPDATE EXTENSIONS, and the autoload/autoinstall code paths.
+	static string ExtensionRuntimeUnsupportedMessage(const string &extension_name, bool is_install);
+	[[noreturn]] static void ThrowExtensionRuntimeUnsupported(const string &extension_name, bool is_install);
+
 	//! Utility functions for creating meaningful error messages regarding missing extensions
 	static string WrapAutoLoadExtensionErrorMsg(ClientContext &context, const string &base_error,
 	                                            const string &extension_name);
