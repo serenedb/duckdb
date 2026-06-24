@@ -18,7 +18,8 @@ LinesPerBoundary::LinesPerBoundary(idx_t boundary_idx_p, idx_t lines_in_batch_p)
     : boundary_idx(boundary_idx_p), lines_in_batch(lines_in_batch_p) {
 }
 
-CSVErrorHandler::CSVErrorHandler(bool ignore_errors_p) : ignore_errors(ignore_errors_p) {
+CSVErrorHandler::CSVErrorHandler(bool ignore_errors_p, idx_t reject_tolerance_p)
+    : ignore_errors(ignore_errors_p), reject_tolerance(reject_tolerance_p) {
 }
 
 void CSVErrorHandler::ThrowError(const CSVError &csv_error) {
@@ -73,6 +74,12 @@ void CSVErrorHandler::Error(const CSVError &csv_error, bool force_error) {
 
 void CSVErrorHandler::ErrorIfNeeded() {
 	lock_guard<mutex> parallel_lock(main_mutex);
+	// PG's REJECT_LIMIT is a tolerance, not a cap on what we record: fail once the batch
+	// accumulated more skipped rows than the caller is willing to accept.
+	if (reject_tolerance > 0 && errors.size() > reject_tolerance) {
+		throw InvalidInputException("skipped more than REJECT_LIMIT (%llu) rows due to data type incompatibility\n%s",
+		                            reject_tolerance, errors.back().error_message);
+	}
 	if (ignore_errors || errors.empty()) {
 		// Nothing to error
 		return;

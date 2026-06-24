@@ -982,6 +982,8 @@ GenericCopyOptionValue:
   rules:
     - GenericCopyOptionValue
     - GenericCopyOptionOrderList
+    - CopyFormatKeyword
+    - CopyBooleanKeyword
     - GenericCopyOptionExpression
 
 MacroParameter:
