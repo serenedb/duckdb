@@ -358,6 +358,7 @@ public:
 	unique_ptr<ShellRenderer> GetRenderer(RenderMode mode);
 	vector<string> TableColumnList(const char *zTab);
 	SuccessState ExecuteStatement(unique_ptr<duckdb::SQLStatement> statement);
+	bool TryForwardDatabaseDdl(const duckdb::SQLStatement &statement, const string &original_sql, SuccessState &result);
 	static bool UseDescribeRenderMode(const duckdb::SQLStatement &stmt, string &describe_table_name);
 	void RenderTableMetadata(vector<ShellTableInfo> &result);
 

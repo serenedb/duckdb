@@ -51,6 +51,8 @@
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/parser/parser.hpp"
+#include "duckdb/parser/statement/attach_statement.hpp"
+#include "duckdb/parser/statement/detach_statement.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "shell_progress_bar.hpp"
 #include "shell_prompt.hpp"
@@ -984,6 +986,34 @@ SuccessState ShellState::ExecuteStatement(unique_ptr<duckdb::SQLStatement> state
 	return RenderQueryResult(*renderer, res);
 }
 
+// In psql mode the parser rewrites CREATE DATABASE -> ATTACH (TYPE serenedb)
+// and DROP DATABASE -> DETACH. The in-process shell has no serenedb storage
+// extension, so binding these locally fails. Forward the original statement to
+// the attached server (the auto-attached pg-wire endpoint) via postgres_execute
+// instead. Returns true when the statement was forwarded (result holds the
+// outcome); false leaves it to run through the normal local path.
+bool ShellState::TryForwardDatabaseDdl(const duckdb::SQLStatement &statement, const string &original_sql,
+                                       SuccessState &result) {
+	if (subcommand != ShellSubcommand::PSQL || psql_dbname.empty()) {
+		return false;
+	}
+	bool forward = false;
+	if (statement.type == duckdb::StatementType::ATTACH_STATEMENT) {
+		auto &info = *statement.Cast<duckdb::AttachStatement>().info;
+		auto entry = info.options.find("type");
+		forward = entry != info.options.end() && !entry->second.IsNull() &&
+		          duckdb::StringUtil::CIEquals(entry->second.ToString(), "serenedb");
+	} else if (statement.type == duckdb::StatementType::DETACH_STATEMENT) {
+		forward = true;
+	}
+	if (!forward) {
+		return false;
+	}
+	auto query = StringUtil::Format("CALL postgres_execute(%s, %s)", SQLString(psql_dbname), SQLString(original_sql));
+	result = ExecuteSQL(query);
+	return true;
+}
+
 /*
 ** Execute a statement or set of statements.  Print
 ** any result rows/columns depending on the current mode
@@ -1017,6 +1047,17 @@ SuccessState ShellState::ExecuteSQL(const string &zSql) {
 
 			// Reset before bind; the `_` replacement scan sets it to true if it fires.
 			last_result_referenced = false;
+			// CREATE/DROP DATABASE are rewritten by the parser to ATTACH (TYPE
+			// serenedb) / DETACH -- local catalog ops the psql client shell cannot
+			// run (it has no serenedb storage extension). Forward the original
+			// statement to the attached server instead of binding it locally.
+			SuccessState forwarded_rc;
+			if (TryForwardDatabaseDdl(*statement, zStmtSql, forwarded_rc)) {
+				if (forwarded_rc != SuccessState::SUCCESS) {
+					return forwarded_rc;
+				}
+				continue;
+			}
 			auto rc = ExecuteStatement(std::move(statement));
 			if (rc != SuccessState::SUCCESS) {
 				return rc;
