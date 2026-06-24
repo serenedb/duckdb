@@ -639,10 +639,14 @@ void BufferingLogStorage::WriteLogEntry(timestamp_t timestamp, LogLevel level, s
 	auto &log_entries_buffer =
 	    normalize_contexts ? buffers[LoggingTargetTable::LOG_ENTRIES] : buffers[LoggingTargetTable::ALL_LOGS];
 
-	auto size = log_entries_buffer->size();
-	if (size >= buffer_limit && buffer_limit != 0) {
-		throw InternalException("Log buffer limit exceeded: code should have flushed before");
+	// The buffer holds at most MaxValue(buffer_limit, 1) rows. It can still be full on entry when
+	// buffer_limit is 0 (capacity 1) or when a previous flush threw (e.g. a file I/O error left the
+	// row un-reset): flush before writing so we never index past the buffer's capacity.
+	if (log_entries_buffer->size() >= MaxValue<idx_t>(buffer_limit, 1)) {
+		FlushInternal(normalize_contexts ? LoggingTargetTable::LOG_ENTRIES : LoggingTargetTable::ALL_LOGS);
 	}
+
+	auto size = log_entries_buffer->size();
 
 	if (registered_contexts.find(context.context_id) == registered_contexts.end()) {
 		WriteLoggingContext(context);
@@ -750,7 +754,10 @@ void BufferingLogStorage::WriteLoggingContext(const RegisteredLoggingContext &co
 
 	auto &log_contexts_buffer = buffers[LoggingTargetTable::LOG_CONTEXTS];
 
-	if (log_contexts_buffer->size() + 1 > buffer_limit) {
+	// Flush before writing whenever the buffer is full so we never index past its capacity
+	// (MaxValue(buffer_limit, 1)). The buffer can be full on entry when buffer_limit is 0 or when a
+	// previous flush threw and left the row un-reset.
+	if (log_contexts_buffer->size() >= MaxValue<idx_t>(buffer_limit, 1)) {
 		FlushInternal(LoggingTargetTable::LOG_CONTEXTS);
 	}
 
