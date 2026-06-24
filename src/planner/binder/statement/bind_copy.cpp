@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/common/bind_helpers.hpp"
+#include "duckdb/common/enums/file_compression_type.hpp"
 #include "duckdb/common/filename_pattern.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
@@ -593,26 +594,26 @@ vector<Value> BindCopyOption(ClientContext &context, TableFunctionBinder &option
 	return result;
 }
 
+namespace {
+// Derive the COPY format from a file extension (after stripping a .gz/.zst suffix).
 string ExtractFormat(const string &file_path) {
 	auto format = StringUtil::Lower(file_path);
-	// We first remove extension suffixes
 	if (StringUtil::EndsWith(format, CompressionExtensionFromType(FileCompressionType::GZIP))) {
 		format = format.substr(0, format.size() - 3);
 	} else if (StringUtil::EndsWith(format, CompressionExtensionFromType(FileCompressionType::ZSTD))) {
 		format = format.substr(0, format.size() - 4);
 	}
-	// Now lets check for the last .
 	size_t dot_pos = format.rfind('.');
-	if (dot_pos == std::string::npos || dot_pos == format.length() - 1) {
-		// No format found
+	if (dot_pos == string::npos || dot_pos == format.length() - 1) {
 		return "";
 	}
-	// We found something
 	return format.substr(dot_pos + 1);
 }
+} // namespace
 
 void Binder::BindCopyOptions(CopyInfo &info) {
 	TableFunctionBinder option_binder(*this, context, "Copy", "Copy options");
+	bool resolved_path_expression = info.file_path_expression != nullptr;
 	if (info.file_path_expression) {
 		auto inputs = BindCopyOption(context, option_binder, "filename", info.file_path_expression);
 		if (inputs.size() != 1 || inputs[0].type().id() != LogicalTypeId::VARCHAR) {
@@ -638,8 +639,23 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 		}
 		info.options[entry.first] = std::move(inputs);
 	}
-	if (info.is_format_auto_detected && info.format.empty()) {
-		info.format = ExtractFormat(info.file_path);
+	// An expression source (e.g. getvariable()) only resolves to a path here, so the
+	// parse-time format guess can be wrong (it defaults to "text" for an unknown path).
+	// Re-derive from the resolved extension when the user didn't specify a format. Limit
+	// this to a just-resolved path expression: a concrete path is already resolved at
+	// parse, and a format plan re-binding its rewritten statement (e.g. JSON COPY routed
+	// through the CSV writer) relies on the format it set surviving this pass.
+	if (resolved_path_expression && info.is_format_auto_detected) {
+		auto derived = ExtractFormat(info.file_path);
+		if (!derived.empty()) {
+			info.format = derived;
+			// PG writes no CSV header unless HEADER is given, while DuckDB's CSV writer
+			// defaults it on. The wire COPY classifier pins this off for paths known at
+			// parse; an expression source only resolves to csv here, so apply it too.
+			if (!info.is_from && info.format == "csv" && !info.options.count("header")) {
+				info.options["header"] = {Value::BOOLEAN(false)};
+			}
+		}
 	}
 	info.parsed_options.clear();
 }
