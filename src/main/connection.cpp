@@ -183,8 +183,9 @@ unique_ptr<TableDescription> Connection::TableInfo(const Identifier &table_name)
 	return TableInfo(Identifier::InvalidCatalog(), Identifier::DefaultSchema(), table_name);
 }
 
-vector<unique_ptr<SQLStatement>> Connection::ExtractStatements(const string &query) {
-	return context->ParseStatements(query);
+vector<unique_ptr<SQLStatement>> Connection::ExtractStatements(const string &query, idx_t *raw_statement_count,
+                                                               bool wrap_multi) {
+	return context->ParseStatements(query, raw_statement_count, wrap_multi);
 }
 
 unique_ptr<LogicalOperator> Connection::ExtractPlan(const string &query) {
