@@ -742,12 +742,13 @@ void ClientContext::InitialCleanup(ClientContextLock &lock) {
 	interrupt_state = ClientInterruptState::NOT_INTERRUPTED;
 }
 
-vector<unique_ptr<SQLStatement>> ClientContext::ParseStatements(std::string_view query) {
+vector<unique_ptr<SQLStatement>> ClientContext::ParseStatements(std::string_view query, idx_t *raw_statement_count,
+                                                                bool wrap_multi) {
 	auto lock = LockContext();
-	return ParseStatementsInternal(*lock, query);
+	return ParseStatementsInternal(*lock, query, raw_statement_count, wrap_multi);
 }
-vector<unique_ptr<SQLStatement>> ClientContext::ParseStatementsInternal(ClientContextLock &lock,
-                                                                        std::string_view query) {
+vector<unique_ptr<SQLStatement>> ClientContext::ParseStatementsInternal(ClientContextLock &lock, std::string_view query,
+                                                                        idx_t *raw_statement_count, bool wrap_multi) {
 	try {
 		Parser parser(GetParserOptions());
 		auto &profiler = QueryProfiler::Get(*this);
@@ -755,11 +756,16 @@ vector<unique_ptr<SQLStatement>> ClientContext::ParseStatementsInternal(ClientCo
 		auto parser_timer = profiler.StartTimer<MetricParserTotalTime>();
 		parser.ParseQuery(query);
 
+		// Raw count: how many statements the user wrote, before the preprocessor expands any one of them.
+		if (raw_statement_count) {
+			*raw_statement_count = parser.statements.size();
+		}
+
 		StatementPreprocessor preprocessor(*this);
 
 		const CurrentTransactionState transaction_context_state =
 		    transaction.HasActiveTransaction() ? IN_ACTIVE_TRANSACTION : NOT_IN_ACTIVE_TRANSACTION;
-		preprocessor.Preprocess(lock, parser.statements, transaction_context_state);
+		preprocessor.Preprocess(lock, parser.statements, transaction_context_state, wrap_multi);
 
 		return std::move(parser.statements);
 	} catch (std::exception &ex) {

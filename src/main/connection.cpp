@@ -187,8 +187,9 @@ unique_ptr<TableDescription> Connection::TableInfo(const string &table_name) {
 	return TableInfo(INVALID_CATALOG, DEFAULT_SCHEMA, table_name);
 }
 
-vector<unique_ptr<SQLStatement>> Connection::ExtractStatements(std::string_view query) {
-	return context->ParseStatements(query);
+vector<unique_ptr<SQLStatement>> Connection::ExtractStatements(std::string_view query, idx_t *raw_statement_count,
+                                                               bool wrap_multi) {
+	return context->ParseStatements(query, raw_statement_count, wrap_multi);
 }
 
 unique_ptr<LogicalOperator> Connection::ExtractPlan(std::string_view query) {
