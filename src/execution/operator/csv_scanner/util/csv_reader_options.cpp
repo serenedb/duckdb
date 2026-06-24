@@ -222,7 +222,18 @@ void CSVReaderOptions::SetRFC4180(bool input) {
 }
 
 bool CSVReaderOptions::IgnoreErrors() const {
-	return ignore_errors.GetValue() && !store_rejects.GetValue();
+	// a rejects table and a REJECT_LIMIT both need the skipped rows materialized: one to store them,
+	// the other to count them against the limit
+	return ignore_errors.GetValue() && !store_rejects.GetValue() && RejectTolerance() == 0;
+}
+
+idx_t CSVReaderOptions::RejectTolerance() const {
+	// with a rejects table the limit caps what we record there (DuckDB); without one there is nothing to
+	// cap, so it is PG's REJECT_LIMIT: how many skipped rows we tolerate before failing
+	if (store_rejects.GetValue()) {
+		return 0;
+	}
+	return rejects_limit;
 }
 
 CSVOption<char> CSVReaderOptions::GetSingleByteDelimiter() const {
@@ -604,9 +615,6 @@ void CSVReaderOptions::Verify(MultiFileOptions &file_options) {
 		if (file_options.union_by_name) {
 			throw BinderException("REJECTS_TABLE option is not supported when UNION_BY_NAME is set to true");
 		}
-	}
-	if (rejects_limit != 0 && !store_rejects.GetValue()) {
-		throw BinderException("REJECTS_LIMIT option is only supported when REJECTS_TABLE is set to a table name");
 	}
 	// Validate CSV Buffer and max_line_size do not conflict.
 	if (buffer_size_option.IsSetByUser() && maximum_line_size.IsSetByUser()) {

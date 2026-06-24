@@ -52,7 +52,29 @@ void SetCopyOptions(unique_ptr<CopyInfo> &info, vector<GenericCopyOption> &optio
 			if (option.expression) {
 				info->parsed_options[option.name.GetIdentifierName()] = std::move(option.expression);
 			} else {
-				info->options[option.name.GetIdentifierName()] = option.children;
+				// PG-compat aliases for value-form COPY options. Binder::BindCopyOptions
+				// performs the same translations when these arrive via parsed_options,
+				// but the value form (REJECT_LIMIT 1, ON_ERROR IGNORE, ...) lands
+				// directly in info->options and bypasses that path.
+				if (option.name == "reject_limit") {
+					if (!option.children.empty() && option.children[0].GetValue<int64_t>() < 0) {
+						throw ParserException("REJECT_LIMIT (%lld) must be greater than zero",
+						                      option.children[0].GetValue<int64_t>());
+					}
+					info->options["rejects_limit"] = option.children;
+				} else if (option.name == "on_error") {
+					auto val = option.children.empty() ? string() : option.children[0].ToString();
+					if (StringUtil::CIEquals(val, "ignore")) {
+						info->options["ignore_errors"] = {Value::BOOLEAN(true)};
+					} else if (StringUtil::CIEquals(val, "stop")) {
+						// STOP is the default -- drop the option.
+					} else {
+						throw ParserException("invalid value for parameter \"%s\": \"%s\"",
+						                      option.name.GetIdentifierName(), val);
+					}
+				} else {
+					info->options[option.name.GetIdentifierName()] = option.children;
+				}
 			}
 		}
 	}
@@ -83,6 +105,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCopySelect(
 		auto options = *copy_options;
 		SetCopyOptions(info, options);
 	}
+	info->format = ResolveCopyFormat(info->format, info->file_path);
 	info->select_statement = std::move(select_statement_internal->node);
 	result->info = std::move(info);
 	return std::move(result);
@@ -125,11 +148,23 @@ string PEGTransformerFactory::ExtractFormat(const string &file_path) {
 	return format.substr(dot_pos + 1);
 }
 
+string PEGTransformerFactory::ResolveCopyFormat(const string &format, const string &file_path) {
+	// COPY format is resolved at parse (not bind) so the pg-wire COPY-TO-STDOUT
+	// routing sees it: an explicit FORMAT wins; else the file extension; else
+	// PG's text default (STDIN/STDOUT and extensionless paths).
+	if (!format.empty()) {
+		return format;
+	}
+	auto extracted = ExtractFormat(file_path);
+	return extracted.empty() ? "text" : extracted;
+}
+
 unique_ptr<SQLStatement>
 PEGTransformerFactory::TransformCopyTable(PEGTransformer &transformer, unique_ptr<BaseTableRef> base_table_name,
                                           const optional<vector<string>> &insert_column_list, const bool &from_or_to,
                                           unique_ptr<ParsedExpression> copy_file_name,
-                                          const optional<vector<GenericCopyOption>> &copy_options) {
+                                          const optional<vector<GenericCopyOption>> &copy_options,
+                                          optional<unique_ptr<ParsedExpression>> where_clause) {
 	auto result = make_uniq<CopyStatement>();
 	auto info = make_uniq<CopyInfo>();
 
@@ -144,13 +179,21 @@ PEGTransformerFactory::TransformCopyTable(PEGTransformer &transformer, unique_pt
 	} else {
 		info->file_path_expression = std::move(copy_file_name);
 	}
-	info->format = ExtractFormat(info->file_path);
 
 	if (copy_options) {
 		auto generic_options = *copy_options;
 		SetCopyOptions(info, generic_options);
 	}
 
+	// PG 12+: COPY t FROM 'f.csv' WHERE expr filters rows during ingest.
+	if (where_clause) {
+		if (!info->is_from) {
+			throw ParserException("WHERE clause not allowed with COPY TO");
+		}
+		info->where_clause = std::move(*where_clause);
+	}
+
+	info->format = ResolveCopyFormat(info->format, info->file_path);
 	result->info = std::move(info);
 	return std::move(result);
 }
@@ -170,7 +213,14 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCopyFileNameStringL
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCopyFileNameIdentifier(PEGTransformer &transformer,
                                                                                     const Identifier &identifier) {
-	string file_name = identifier == "stdout" ? "/dev/stdout" : identifier.GetIdentifierName();
+	string file_name;
+	if (identifier == "stdin") {
+		file_name = "/dev/stdin";
+	} else if (identifier == "stdout") {
+		file_name = "/dev/stdout";
+	} else {
+		file_name = identifier.GetIdentifierName();
+	}
 	return make_uniq<ConstantExpression>(Value(file_name));
 }
 
