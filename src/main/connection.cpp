@@ -171,15 +171,19 @@ unique_ptr<TableDescription> Connection::TableInfo(const Identifier &table_name)
 	return TableInfo(Identifier::InvalidCatalog(), Identifier::DefaultSchema(), table_name);
 }
 
-vector<unique_ptr<SQLStatement>> Connection::ExtractStatements(const string &query) {
+vector<unique_ptr<SQLStatement>> Connection::ExtractStatements(const string &query, vector<idx_t> *raw_statement_ends,
+                                                               bool wrap_multi) {
 	// Eager convenience over the lazy ClientContext::ExtractStatements iterator: drain the
 	// engine-facing statements into a vector.
 	auto &client_context = *context;
-	auto iterator = client_context.IterateStatements(query);
+	auto iterator = client_context.IterateStatements(query, wrap_multi);
 	vector<unique_ptr<SQLStatement>> result;
 	while (iterator.Peek()) {
 		if (auto statement = iterator.GetStatement()) {
 			result.push_back(std::move(statement));
+		}
+		if (raw_statement_ends && iterator.PeelDone()) {
+			raw_statement_ends->push_back(result.size());
 		}
 	}
 	return result;
