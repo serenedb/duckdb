@@ -35,7 +35,7 @@ class StatementIterator {
 public:
 	//! Wrap a lazy parse-facing stream (consumed by move). The context is inherited from the
 	//! wrapped ParseIterator and must outlive this iterator.
-	DUCKDB_API explicit StatementIterator(ParseIterator &&parse_iterator);
+	DUCKDB_API explicit StatementIterator(ParseIterator &&parse_iterator, bool wrap_multi_p = true);
 	DUCKDB_API ~StatementIterator();
 
 	StatementIterator(const StatementIterator &) = delete;
@@ -63,6 +63,7 @@ public:
 	DUCKDB_API unique_ptr<SQLStatement> GetStatementForExecution();
 	//! Same, for callers that already hold the context lock.
 	DUCKDB_API unique_ptr<SQLStatement> GetStatementForExecutionWithLock(ClientContextLock &lock);
+	DUCKDB_API bool PeelDone() const;
 
 private:
 	//! Shared body for both Get variants. `lock` is null for the self-locking path (preprocessing
@@ -83,6 +84,7 @@ private:
 	//! one-at-a-time across GetStatement calls before pulling + preprocessing the next peel.
 	vector<unique_ptr<SQLStatement>> buffer;
 	idx_t buffer_cursor = 0;
+	bool wrap_multi;
 };
 
 } // namespace duckdb
