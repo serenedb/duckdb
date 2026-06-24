@@ -29,6 +29,12 @@ shared_ptr<Logger> LogManager::CreateLogger(LoggingContext context, bool thread_
 		// TODO: implement ThreadLocalLogger and return it here
 	}
 	auto snapshot = config_snapshot.Read([](const shared_ptr<const LogConfig> &cfg) { return cfg; });
+	// The any_logging_enabled gate and the snapshot are read without a lock, so logging may have
+	// been disabled (and the snapshot updated) in between: don't build a ThreadSafeLogger from a
+	// disabled snapshot, fall back to the shared nop logger instead.
+	if (!snapshot->enabled) {
+		return nop();
+	}
 	return make_shared_ptr<ThreadSafeLogger>(std::move(snapshot), RegisterLoggingContextInternal(context), *this);
 }
 
