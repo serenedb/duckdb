@@ -539,6 +539,7 @@ string ExtractFormat(const string &file_path) {
 
 void Binder::BindCopyOptions(CopyInfo &info) {
 	TableFunctionBinder option_binder(*this, context, "Copy", "Copy options");
+	bool resolved_path_expression = info.file_path_expression != nullptr;
 	if (info.file_path_expression) {
 		auto inputs = BindCopyOption(context, option_binder, "filename", info.file_path_expression);
 		if (inputs.size() != 1 || inputs[0].type().id() != LogicalTypeId::VARCHAR) {
@@ -590,8 +591,11 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 	}
 	// An expression source (e.g. getvariable()) only resolves to a path here, so the
 	// parse-time format guess can be wrong (it defaults to "text" for an unknown path).
-	// Re-derive from the resolved extension when the user didn't specify a format.
-	if (info.is_format_auto_detected) {
+	// Re-derive from the resolved extension when the user didn't specify a format. Limit
+	// this to a just-resolved path expression: a concrete path is already resolved at
+	// parse, and a format plan re-binding its rewritten statement (e.g. JSON COPY routed
+	// through the CSV writer) relies on the format it set surviving this pass.
+	if (resolved_path_expression && info.is_format_auto_detected) {
 		auto derived = ExtractFormat(info.file_path);
 		if (!derived.empty()) {
 			info.format = derived;
