@@ -243,8 +243,11 @@ public:
 	//! Register function in the temporary schema
 	DUCKDB_API void RegisterFunction(CreateFunctionInfo &info);
 
-	//! Parse statements from a query
-	DUCKDB_API vector<unique_ptr<SQLStatement>> ParseStatements(std::string_view query);
+	//! Parse statements from a query. When raw_statement_count is set it receives the number of statements the parser
+	//! produced before the StatementPreprocessor expanded them (so one user command that expands -- e.g. ALTER TABLE
+	//! ADD COLUMN ... DEFAULT <volatile> -> [ADD; UPDATE; SET DEFAULT] -- is distinguishable from several commands).
+	DUCKDB_API vector<unique_ptr<SQLStatement>>
+	ParseStatements(std::string_view query, idx_t *raw_statement_count = nullptr, bool wrap_multi = true);
 
 	//! Extract the logical plan of a query
 	DUCKDB_API unique_ptr<LogicalOperator> ExtractPlan(std::string_view query);
@@ -304,7 +307,9 @@ private:
 	unique_ptr<QueryResult> ExecutePendingQueryInternal(ClientContextLock &lock, PendingQueryResult &query);
 
 	//! Parse statements from a query
-	vector<unique_ptr<SQLStatement>> ParseStatementsInternal(ClientContextLock &lock, std::string_view query);
+	vector<unique_ptr<SQLStatement>> ParseStatementsInternal(ClientContextLock &lock, std::string_view query,
+	                                                         idx_t *raw_statement_count = nullptr,
+	                                                         bool wrap_multi = true);
 	void StatementVerification(ClientContextLock &lock, std::string_view query, unique_ptr<SQLStatement> &statement,
 	                           PendingQueryParameters query_parameters);
 

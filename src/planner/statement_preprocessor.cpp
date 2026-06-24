@@ -87,7 +87,7 @@ PreprocessingTransactionHandling GetTransactionHandling(vector<unique_ptr<SQLSta
 }
 
 void UnpackMultiStatement(MultiStatement &multi_statement, const CurrentTransactionState current_transaction_state,
-                          vector<unique_ptr<SQLStatement>> &new_statements) {
+                          vector<unique_ptr<SQLStatement>> &new_statements, bool wrap_multi) {
 #ifdef DEBUG // MultiStatement should not contain transaction statements
 	for (auto &sub_statement : multi_statement.statements) {
 		D_ASSERT(sub_statement->type != StatementType::TRANSACTION_STATEMENT);
@@ -100,7 +100,9 @@ void UnpackMultiStatement(MultiStatement &multi_statement, const CurrentTransact
 			has_select = true;
 		}
 	}
-	auto handling = GetTransactionHandling(multi_statement.statements, current_transaction_state, has_select);
+	// !wrap_multi: the caller owns the transaction (pg-wire extended Parse), so emit the bare body.
+	auto handling =
+	    GetTransactionHandling(multi_statement.statements, current_transaction_state, has_select || !wrap_multi);
 	AddStatements(multi_statement.statements, handling, new_statements);
 }
 
@@ -124,7 +126,7 @@ vector<unique_ptr<SQLStatement>> StatementPreprocessor::TryReparsePragma(unique_
 }
 
 void StatementPreprocessor::Preprocess(ClientContextLock &lock, vector<unique_ptr<SQLStatement>> &statements,
-                                       CurrentTransactionState transaction_context_state) {
+                                       CurrentTransactionState transaction_context_state, bool wrap_multi) {
 	// Quick check: do we need preprocessing at all?
 	bool needs_preprocessing = false;
 	for (auto &stmt : statements) {
@@ -137,12 +139,13 @@ void StatementPreprocessor::Preprocess(ClientContextLock &lock, vector<unique_pt
 		return;
 	}
 
-	context.RunFunctionInTransactionInternal(lock,
-	                                         [&] { PreprocessInternal(lock, statements, transaction_context_state); });
+	context.RunFunctionInTransactionInternal(
+	    lock, [&] { PreprocessInternal(lock, statements, transaction_context_state, wrap_multi); });
 }
 
 void StatementPreprocessor::PreprocessInternal(ClientContextLock &lock, vector<unique_ptr<SQLStatement>> &statements,
-                                               const CurrentTransactionState transaction_context_state) {
+                                               const CurrentTransactionState transaction_context_state,
+                                               bool wrap_multi) {
 	CurrentTransactionState chained_transaction_state = NOT_IN_ACTIVE_TRANSACTION;
 	vector<unique_ptr<SQLStatement>> new_statements;
 	for (idx_t i = 0; i < statements.size(); i++) {
@@ -161,7 +164,7 @@ void StatementPreprocessor::PreprocessInternal(ClientContextLock &lock, vector<u
 		}
 		case StatementType::MULTI_STATEMENT: {
 			auto &multi_statement = statements[i]->Cast<MultiStatement>();
-			UnpackMultiStatement(multi_statement, full_transaction_state, new_statements);
+			UnpackMultiStatement(multi_statement, full_transaction_state, new_statements, wrap_multi);
 			break;
 		}
 		case StatementType::TRANSACTION_STATEMENT: {
