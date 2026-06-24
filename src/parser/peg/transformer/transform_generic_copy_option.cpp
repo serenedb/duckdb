@@ -179,6 +179,20 @@ PEGTransformerFactory::TransformGenericCopyOptionExpression(PEGTransformer &tran
 	return result;
 }
 
+GenericCopyOptionValue PEGTransformerFactory::TransformCopyFormatKeyword(PEGTransformer &transformer) {
+	GenericCopyOptionValue result;
+	result.has_value = true;
+	result.expression = ConstantExpression::String("binary");
+	return result;
+}
+
+GenericCopyOptionValue PEGTransformerFactory::TransformCopyBooleanKeyword(PEGTransformer &transformer) {
+	GenericCopyOptionValue result;
+	result.has_value = true;
+	result.expression = ConstantExpression::String("on");
+	return result;
+}
+
 vector<OrderByNode> PEGTransformerFactory::TransformGenericCopyOptionParenthesizedExpressionList(
     PEGTransformer &transformer, vector<OrderByNode> order_by_expression_list) {
 	return order_by_expression_list;

@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/common/bind_helpers.hpp"
+#include "duckdb/common/enums/file_compression_type.hpp"
 #include "duckdb/common/filename_pattern.hpp"
 #include "duckdb/common/index_vector.hpp"
 #include "duckdb/common/local_file_system.hpp"
@@ -26,6 +27,8 @@
 #include "duckdb/planner/operator/logical_column_data_get.hpp"
 #include "duckdb/planner/operator/logical_copy_to_file.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/planner/expression_binder/where_binder.hpp"
+#include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/expression_binder/table_function_binder.hpp"
 #include "duckdb/planner/bound_result_modifier.hpp"
@@ -702,7 +705,19 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 	for (idx_t i = 0; i < expected_types.size(); i++) {
 		get->AddColumnId(i);
 	}
-	*copy_source = std::move(get);
+	unique_ptr<LogicalOperator> source = std::move(get);
+
+	// COPY FROM ... WHERE: inject a filter between the file scan and insert.
+	if (stmt.info->where_clause) {
+		bind_context.AddGenericBinding(source_bindings[0].table_index, table.name, expected_names, expected_types);
+		WhereBinder where_binder(*this, context);
+		auto condition = where_binder.Bind(stmt.info->where_clause);
+		PlanSubqueries(condition, source);
+		auto filter = make_uniq<LogicalFilter>(std::move(condition));
+		filter->AddChild(std::move(source));
+		source = std::move(filter);
+	}
+	*copy_source = std::move(source);
 	result.plan = std::move(insert_statement.plan);
 	return result;
 }
@@ -749,26 +764,26 @@ vector<Value> BindCopyOption(ClientContext &context, TableFunctionBinder &option
 	return result;
 }
 
+namespace {
+// Derive the COPY format from a file extension (after stripping a .gz/.zst suffix).
 string ExtractFormat(const string &file_path) {
 	auto format = StringUtil::Lower(file_path);
-	// We first remove extension suffixes
 	if (StringUtil::EndsWith(format, CompressionExtensionFromType(FileCompressionType::GZIP))) {
 		format = format.substr(0, format.size() - 3);
 	} else if (StringUtil::EndsWith(format, CompressionExtensionFromType(FileCompressionType::ZSTD))) {
 		format = format.substr(0, format.size() - 4);
 	}
-	// Now lets check for the last .
 	size_t dot_pos = format.rfind('.');
-	if (dot_pos == std::string::npos || dot_pos == format.length() - 1) {
-		// No format found
+	if (dot_pos == string::npos || dot_pos == format.length() - 1) {
 		return "";
 	}
-	// We found something
 	return format.substr(dot_pos + 1);
 }
+} // namespace
 
 void Binder::BindCopyOptions(CopyInfo &info) {
 	TableFunctionBinder option_binder(*this, context, "Copy", "Copy options");
+	bool resolved_path_expression = info.file_path_expression != nullptr;
 	if (info.file_path_expression) {
 		auto inputs = BindCopyOption(context, option_binder, "filename", info.file_path_expression);
 		if (inputs.size() != 1 || inputs[0].type().id() != LogicalTypeId::VARCHAR) {
@@ -801,10 +816,42 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 			info.is_format_auto_detected = false;
 			continue;
 		}
+		// PG compat aliases: ON_ERROR 'ignore' -> ignore_errors true,
+		// REJECT_LIMIT N -> rejects_limit N.
+		if (option_name == "on_error") {
+			auto val = inputs.empty() ? "" : inputs[0].ToString();
+			if (StringUtil::CIEquals(val, "ignore")) {
+				info.options["ignore_errors"] = {Value::BOOLEAN(true)};
+			} else if (StringUtil::CIEquals(val, "stop")) {
+				// STOP is the default — do nothing.
+			} else {
+				throw ParserException("invalid value for parameter \"%s\": \"%s\"", option_name, val);
+			}
+			continue;
+		}
+		if (option_name == "reject_limit") {
+			if (!inputs.empty()) {
+				auto limit = inputs[0].GetValue<int64_t>();
+				if (limit < 0) {
+					throw ParserException("REJECT_LIMIT (%lld) must be greater than zero", limit);
+				}
+			}
+			info.options["rejects_limit"] = std::move(inputs);
+			continue;
+		}
 		info.options[option_name] = std::move(inputs);
 	}
-	if (info.is_format_auto_detected && info.format.empty()) {
-		info.format = ExtractFormat(info.file_path);
+	// An expression source (e.g. getvariable()) only resolves to a path here, so the
+	// parse-time format guess can be wrong (it defaults to "text" for an unknown path).
+	// Re-derive from the resolved extension when the user didn't specify a format. Limit
+	// this to a just-resolved path expression: a concrete path is already resolved at
+	// parse, and a format plan re-binding its rewritten statement (e.g. JSON COPY routed
+	// through the CSV writer) relies on the format it set surviving this pass.
+	if (resolved_path_expression && info.is_format_auto_detected) {
+		auto derived = ExtractFormat(info.file_path);
+		if (!derived.empty()) {
+			info.format = derived;
+		}
 	}
 	info.parsed_options.clear();
 	if (partition_path) {

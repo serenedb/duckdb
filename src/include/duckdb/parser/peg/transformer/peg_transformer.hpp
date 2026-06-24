@@ -6144,6 +6144,7 @@ public:
 	static const case_insensitive_map_t<const TransformFrameOps *> &GeneratedTransformFrameOps();
 
 	static string ExtractFormat(const string &file_path);
+	static string ResolveCopyFormat(const string &format, const string &file_path);
 
 	static string TransformIdentifierOrKeyword(PEGTransformer &transformer, ParseResult &parse_result);
 
