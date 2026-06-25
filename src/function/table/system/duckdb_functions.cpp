@@ -142,7 +142,7 @@ struct ScalarFunctionExtractor {
 		return entry.functions.Size();
 	}
 
-	static Value GetFunctionType() {
+	static Value GetFunctionType(ScalarFunctionCatalogEntry &entry, idx_t offset) {
 		return Value("scalar");
 	}
 
@@ -200,7 +200,7 @@ struct WindowFunctionExtractor {
 		return entry.functions.Size();
 	}
 
-	static Value GetFunctionType() {
+	static Value GetFunctionType(WindowFunctionCatalogEntry &entry, idx_t offset) {
 		return Value("window");
 	}
 
@@ -256,7 +256,7 @@ struct AggregateFunctionExtractor {
 		return entry.functions.Size();
 	}
 
-	static Value GetFunctionType() {
+	static Value GetFunctionType(AggregateFunctionCatalogEntry &entry, idx_t offset) {
 		return Value("aggregate");
 	}
 
@@ -314,8 +314,8 @@ struct MacroExtractor {
 		return entry.macros.size();
 	}
 
-	static Value GetFunctionType() {
-		return Value("macro");
+	static Value GetFunctionType(ScalarMacroCatalogEntry &entry, idx_t offset) {
+		return Value(entry.macros[offset]->type == MacroType::TABLE_MACRO ? "table_macro" : "macro");
 	}
 
 	static Value GetReturnType(ScalarMacroCatalogEntry &entry, idx_t offset) {
@@ -358,9 +358,10 @@ struct MacroExtractor {
 
 	static Value GetMacroDefinition(ScalarMacroCatalogEntry &entry, idx_t offset) {
 		auto &macro_entry = *entry.macros[offset];
-		D_ASSERT(macro_entry.type == MacroType::SCALAR_MACRO);
-		auto &func = macro_entry.Cast<ScalarMacroFunction>();
-		return func.expression->ToString();
+		if (macro_entry.type == MacroType::TABLE_MACRO) {
+			return macro_entry.Cast<TableMacroFunction>().query_node->ToString();
+		}
+		return macro_entry.Cast<ScalarMacroFunction>().expression->ToString();
 	}
 
 	static Value IsVolatile(ScalarMacroCatalogEntry &entry, idx_t offset) {
@@ -377,8 +378,8 @@ struct TableMacroExtractor {
 		return entry.macros.size();
 	}
 
-	static Value GetFunctionType() {
-		return Value("table_macro");
+	static Value GetFunctionType(TableMacroCatalogEntry &entry, idx_t offset) {
+		return Value(entry.macros[offset]->type == MacroType::TABLE_MACRO ? "table_macro" : "macro");
 	}
 
 	static Value GetReturnType(TableMacroCatalogEntry &entry, idx_t offset) {
@@ -422,10 +423,9 @@ struct TableMacroExtractor {
 	static Value GetMacroDefinition(TableMacroCatalogEntry &entry, idx_t offset) {
 		auto &macro_entry = *entry.macros[offset];
 		if (macro_entry.type == MacroType::TABLE_MACRO) {
-			auto &func = macro_entry.Cast<TableMacroFunction>();
-			return func.query_node->ToString();
+			return macro_entry.Cast<TableMacroFunction>().query_node->ToString();
 		}
-		return Value();
+		return macro_entry.Cast<ScalarMacroFunction>().expression->ToString();
 	}
 
 	static Value IsVolatile(TableMacroCatalogEntry &entry, idx_t offset) {
@@ -442,7 +442,7 @@ struct TableFunctionExtractor {
 		return entry.functions.Size();
 	}
 
-	static Value GetFunctionType() {
+	static Value GetFunctionType(TableFunctionCatalogEntry &entry, idx_t offset) {
 		return Value("table");
 	}
 
@@ -503,7 +503,7 @@ struct PragmaFunctionExtractor {
 		return entry.functions.Size();
 	}
 
-	static Value GetFunctionType() {
+	static Value GetFunctionType(PragmaFunctionCatalogEntry &entry, idx_t offset) {
 		return Value("pragma");
 	}
 
@@ -665,7 +665,7 @@ bool ExtractFunctionData(CatalogEntry &entry, idx_t function_idx, DataChunk &out
 	    function.alias_of.empty() || function.alias_of == function.name ? Value() : Value(function.alias_of));
 
 	// function_type, LogicalType::VARCHAR
-	output.data[col++].Append(Value(OP::GetFunctionType()));
+	output.data[col++].Append(Value(OP::GetFunctionType(function, function_idx)));
 
 	// function_description, LogicalType::VARCHAR
 	output.data[col++].Append(function_description.description.empty() ? Value()
