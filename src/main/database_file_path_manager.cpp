@@ -27,6 +27,27 @@ InsertDatabasePathResult DatabaseFilePathManager::InsertDatabasePath(DatabaseMan
 	auto entry = db_paths.emplace(path, DatabasePathInfo(manager, name, options.access_mode));
 	if (!entry.second) {
 		auto &existing = entry.first->second;
+		// The path is registered but no system currently has it attached: this is a stale entry left
+		// behind by a database that has been detached while its cleanup (StoredDatabasePath destruction)
+		// is still pending -- e.g. an attached database that is still pinned by a view or index defined
+		// over it, or by a transaction that has not finalized yet. That database still owns the file and
+		// still writes to it, so we must not open a second one over the same path: hand back the database
+		// that is already there and let the caller re-register it under the requested name.
+		if (existing.reuse_claimed) {
+			// a re-attach of this path is in flight: wait for it to register the database (or to give the
+			// claim back), rather than handing the same database out twice
+			return InsertDatabasePathResult::ALREADY_EXISTS;
+		}
+		if (existing.attached_databases.empty()) {
+			options.reused_database = existing.database.lock();
+			if (options.reused_database) {
+				// whether the database is still usable can only be checked while holding a reference to
+				// it rather than this lock, so the caller decides and gives the claim back if it does not
+				// go through with the re-attach
+				existing.reuse_claimed = true;
+				return InsertDatabasePathResult::REUSE_EXISTING;
+			}
+		}
 		bool already_exists = false;
 		bool attached_in_this_system = false;
 		if (on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT && existing.name == name) {
@@ -58,6 +79,37 @@ InsertDatabasePathResult DatabaseFilePathManager::InsertDatabasePath(DatabaseMan
 	}
 	options.stored_database_path = make_uniq<StoredDatabasePath>(manager, *this, path, name);
 	return InsertDatabasePathResult::SUCCESS;
+}
+
+void DatabaseFilePathManager::CommitReuse(DatabaseManager &manager, const string &path, const Identifier &name) {
+	lock_guard<mutex> path_lock(db_paths_lock);
+	auto entry = db_paths.find(path);
+	if (entry == db_paths.end()) {
+		return;
+	}
+	entry->second.name = name.GetIdentifierName();
+	entry->second.attached_databases.insert(manager);
+	entry->second.reuse_claimed = false;
+}
+
+void DatabaseFilePathManager::ReleaseReuse(const string &path) {
+	lock_guard<mutex> path_lock(db_paths_lock);
+	auto entry = db_paths.find(path);
+	if (entry == db_paths.end()) {
+		return;
+	}
+	entry->second.reuse_claimed = false;
+}
+
+void DatabaseFilePathManager::SetDatabase(const string &path, shared_ptr<AttachedDatabase> database) {
+	if (path.empty() || path == IN_MEMORY_PATH) {
+		return;
+	}
+	lock_guard<mutex> path_lock(db_paths_lock);
+	auto entry = db_paths.find(path);
+	if (entry != db_paths.end()) {
+		entry->second.database = std::move(database);
+	}
 }
 
 void DatabaseFilePathManager::EraseDatabasePath(const string &path) {

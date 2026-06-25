@@ -112,8 +112,11 @@ public:
 	shared_ptr<AttachedDatabase> GetDatabaseInternal(const lock_guard<mutex> &, const Identifier &name);
 
 private:
-	optional_ptr<AttachedDatabase> FinalizeAttach(ClientContext &context, AttachInfo &info,
-	                                              shared_ptr<AttachedDatabase> database);
+	//! Register a database under `name`, renaming it to that name once it is claimed. Returns the database
+	//! that owns the name, which is a different one if IF NOT EXISTS lost a race for it
+	shared_ptr<AttachedDatabase> FinalizeAttach(ClientContext &context, AttachInfo &info,
+	                                            shared_ptr<AttachedDatabase> database, const Identifier &name);
+	shared_ptr<AttachedDatabase> ReattachDatabase(ClientContext &context, AttachInfo &info, AttachOptions &options);
 
 private:
 	DatabaseInstance &db;
