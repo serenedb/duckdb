@@ -456,6 +456,8 @@ public:
 	void RegisterNotify();
 	void RegisterCreateTextSearchDictionary();
 	void RegisterRbac();
+	void RegisterCreateServer();
+	void RegisterCreateUserMapping();
 	void RegisterPivot();
 	void RegisterCreateMacro();
 	void RegisterDrop();
@@ -523,6 +525,18 @@ public:
 	                                                             ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformAlterTableRowSecurityStatement(PEGTransformer &transformer,
 	                                                                        ParseResult &parse_result);
+	// create_server.gram — CREATE/DROP SERVER walk an OPTIONS Parens(List(...)) body that the
+	// generator cannot auto-extract; hand-write the entry points.
+	static unique_ptr<SQLStatement> TransformCreateServerStatement(PEGTransformer &transformer,
+	                                                               ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformDropServerStatement(PEGTransformer &transformer,
+	                                                             ParseResult &parse_result);
+	// create_user_mapping.gram — CREATE/DROP USER MAPPING reuse the OPTIONS Parens(List(...)) body and a
+	// PUBLIC/CURRENT_USER/USER/role choice that the generator cannot auto-extract; hand-write the entry points.
+	static unique_ptr<SQLStatement> TransformCreateUserMappingStatement(PEGTransformer &transformer,
+	                                                                    ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformDropUserMappingStatement(PEGTransformer &transformer,
+	                                                                  ParseResult &parse_result);
 	// comment.gram
 	static Value TransformCommentValue(PEGTransformer &transformer, ParseResult &parse_result);
 

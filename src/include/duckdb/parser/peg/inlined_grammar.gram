@@ -7,6 +7,10 @@ Statement <-
 	DropDatabaseStatement /
 	CreateTSDictionaryStatement /
 	DropTSDictionaryStatement /
+	CreateServerStatement /
+	DropServerStatement /
+	CreateUserMappingStatement /
+	DropUserMappingStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
 	CreatePolicyStatement /
@@ -994,6 +998,11 @@ SeqOwnedBy <- 'OWNED' 'BY' QualifiedName
 SeqMinOrMax <- MinValue / MaxValue
 MinValue <- 'MINVALUE'
 MaxValue <- 'MAXVALUE'
+CreateServerStatement <- 'CREATE' 'SERVER' IfNotExists? QualifiedName 'FOREIGN' 'DATA'? 'WRAPPER' Identifier ServerOptions?
+DropServerStatement <- 'DROP' 'SERVER' IfExists? QualifiedName DropBehavior?
+
+ServerOptions <- 'OPTIONS' Parens(List(ServerOption))
+ServerOption <- ColLabel StringLiteral
 
 CreateSubscriptionStatement <- 'CREATE' 'SUBSCRIPTION' Identifier SubscriptionConnection?
 SubscriptionConnection <- 'CONNECTION' StringLiteral SubscriptionPublication?
@@ -1136,6 +1145,10 @@ CreateTypeComposite <- ColIdTypeList
 CreateTypeFromType <- Type
 EnumSelectType <- 'ENUM' Parens(SelectStatementInternal)
 EnumStringLiteralList <- 'ENUM' Parens(List(StringLiteral)?)
+
+CreateUserMappingStatement <- 'CREATE' 'USER' 'MAPPING' IfNotExists? 'FOR' UserMappingRole 'SERVER' QualifiedName ServerOptions?
+DropUserMappingStatement <- 'DROP' 'USER' 'MAPPING' IfExists? 'FOR' UserMappingRole 'SERVER' QualifiedName
+UserMappingRole <- 'PUBLIC' / 'CURRENT_USER' / 'USER' / ColLabel
 
 CreateViewStmt <- CreateRecursive? 'VIEW' IfNotExists? QualifiedName InsertColumnList? WithList? 'AS' SelectStatementInternal
 CreateRecursive <- 'RECURSIVE'
