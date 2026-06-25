@@ -275,7 +275,6 @@ BindResult TableBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 		// Either there is no table, or the columns category has to be standard
 		auto &table_entry = entry->Cast<TableCatalogEntry>();
 		auto &column_entry = table_entry.GetColumn(LogicalIndex(column_index));
-		(void)table_entry;
 		(void)column_entry;
 		D_ASSERT(column_entry.Category() != TableColumnType::GENERATED_VIRTUAL);
 	}

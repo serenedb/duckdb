@@ -17,9 +17,7 @@ BoundStatement Binder::Bind(DeleteStatement &stmt) {
 }
 
 BoundStatement Binder::BindNode(DeleteQueryNode &node) {
-	// visit the table reference (the DELETE write target; SereneDB defers the
-	// target scan's SELECT-privilege check to plan time -- see SdbBindWriteTarget)
-	auto bound_table = SdbBindWriteTarget(*node.table);
+	auto bound_table = Bind(*node.table);
 	auto root = std::move(bound_table.plan);
 	if (root->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only delete from base table");
@@ -30,6 +28,16 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		throw BinderException("Can only delete from base table");
 	}
 	auto &table = *table_ptr;
+	TableCatalogEntry *delete_target = &table;
+	if (node.table->type == TableReferenceType::BASE_TABLE) {
+		auto &target_ref = node.table->Cast<BaseTableRef>();
+		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.table_name);
+		auto resolved = Catalog::GetEntry(context, target_ref.catalog_name, target_ref.schema_name, table_lookup,
+		                                  OnEntryNotFound::RETURN_NULL);
+		if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
+			delete_target = &resolved->Cast<TableCatalogEntry>();
+		}
+	}
 
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::DELETE_EVENT)) {
 		return std::move(*expanded);
@@ -75,8 +83,7 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		filter->AddChild(std::move(root));
 		root = std::move(filter);
 	}
-	// create the delete node
-	auto del = make_uniq<LogicalDelete>(table, GenerateTableIndex());
+	auto del = make_uniq<LogicalDelete>(*delete_target, GenerateTableIndex());
 	del->bound_constraints = BindConstraints(table);
 	del->is_truncate = node.is_truncate;
 

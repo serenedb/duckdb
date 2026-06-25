@@ -268,7 +268,7 @@ void DatabaseManager::DetachDatabase(ClientContext &context, const Identifier &n
 		                      name.GetIdentifierName());
 	}
 
-	auto attached_db = DetachInternal(name);
+	auto attached_db = GetDatabase(name);
 	if (!attached_db) {
 		if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 			throw BinderException("Failed to detach database with name \"%s\": database not found",
@@ -278,6 +278,8 @@ void DatabaseManager::DetachDatabase(ClientContext &context, const Identifier &n
 	}
 
 	attached_db->OnDetach(context);
+
+	DetachInternal(name);
 
 	// DetachInternal removes the AttachedDatabase from the list of databases that can be referenced.
 	AttachedDatabase::InvokeCloseIfLastReference(attached_db, context);

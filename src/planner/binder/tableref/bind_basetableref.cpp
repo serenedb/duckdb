@@ -234,16 +234,6 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		                                                                         table_lookup.GetEntryIdentifier())),
 		                             OnEntryNotFound::THROW_EXCEPTION);
 	}
-	// SereneDB fork: enforce read access on the referenced relation. Reads that
-	// originate from a view body run with the view's rights in real PostgreSQL;
-	// SereneDB has no definer-rights views, so we let those bypass the check and
-	// only gate relations referenced directly in the user's statement.
-	{
-		const bool inside_view = IsBindingCatalogDefinition();
-		for (auto &state : context.registered_state->States()) {
-			state->CheckCatalogReadAccess(context, *table_or_view, inside_view);
-		}
-	}
 	switch (table_or_view->type) {
 	case CatalogType::TABLE_ENTRY: {
 		// base table
@@ -289,6 +279,12 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		// table in another catalog, so bind the alias to the catalog-resolved
 		// entry the user named -- not the storage table inside the LogicalGet.
 		bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table);
+		{
+			const bool inside_view = IsBindingCatalogDefinition();
+			for (auto &state : context.registered_state->States()) {
+				state->RecordReadRelation(context, table_index.index, table, inside_view);
+			}
+		}
 		BoundStatement result;
 		result.types = table_types;
 		result.names = table_names;
@@ -296,6 +292,12 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		return result;
 	}
 	case CatalogType::VIEW_ENTRY: {
+		{
+			const bool inside_view = IsBindingCatalogDefinition();
+			for (auto &state : context.registered_state->States()) {
+				state->RecordReadRelation(context, 0, *table_or_view, inside_view);
+			}
+		}
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
 		// We need to use a new binder for the view that doesn't reference any CTEs

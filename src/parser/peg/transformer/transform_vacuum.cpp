@@ -104,7 +104,7 @@ VacuumOptions PEGTransformerFactory::TransformVacuumParensOptions(PEGTransformer
 		}
 		auto it = kSereneDBOptions.find(option);
 		if (it == kSereneDBOptions.end()) {
-			continue;
+			throw ParserException("unrecognized VACUUM option \"%s\"", option);
 		}
 		// The set stores string_views into the null-terminated option literals.
 		const char *matched = it->data();

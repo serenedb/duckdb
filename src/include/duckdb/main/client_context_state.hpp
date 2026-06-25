@@ -112,19 +112,7 @@ public:
 	virtual void OnTaskStop(ClientContext &context) {
 	}
 	//! SereneDB fork: invoked at bind time for every catalog relation reference
-	//! (table or view). `inside_view` is true when the reference was expanded
-	//! out of a view body rather than written directly in the user's statement.
-	//! Overridden by SereneDB to deny non-superuser reads of superuser-only
-	//! system catalogs. Default is a no-op so stock DuckDB behavior is unchanged.
-	virtual void CheckCatalogReadAccess(ClientContext &context, CatalogEntry &entry, bool inside_view) {
-	}
-	//! SereneDB fork: bracket the binding of an UPDATE/DELETE write-target table
-	//! reference. SereneDB uses this to defer the base-table SELECT-privilege
-	//! check (which PostgreSQL only requires when a column value is read) from
-	//! bind time to plan time. Default is a no-op.
-	virtual void OnWriteTargetBindBegin(ClientContext &context) {
-	}
-	virtual void OnWriteTargetBindEnd(ClientContext &context) {
+	virtual void RecordReadRelation(ClientContext &context, idx_t table_index, CatalogEntry &entry, bool inside_view) {
 	}
 
 public:

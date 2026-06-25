@@ -249,25 +249,6 @@ void Binder::SdbExitDefinitionBind() {
 	global_binder_state->sdb_definition_bind_depth--;
 }
 
-BoundStatement Binder::SdbBindWriteTarget(TableRef &ref) {
-	auto states = context.registered_state->States();
-	for (auto &state : states) {
-		state->OnWriteTargetBindBegin(context);
-	}
-	try {
-		auto result = Bind(ref);
-		for (auto &state : states) {
-			state->OnWriteTargetBindEnd(context);
-		}
-		return result;
-	} catch (...) {
-		for (auto &state : states) {
-			state->OnWriteTargetBindEnd(context);
-		}
-		throw;
-	}
-}
-
 TableIndex Binder::GenerateTableIndex() {
 	return TableIndex(global_binder_state->bound_tables++);
 }

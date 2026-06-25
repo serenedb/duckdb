@@ -1759,7 +1759,7 @@ PasswordNullOption  <- 'PASSWORD' 'NULL'
 # before the native AlterStatement so OWNER TO is intercepted (DuckDB's alter
 # binder does not support ownership changes).
 AlterOwnerStatement <- 'ALTER' OwnerObjectType QualifiedName 'OWNER' 'TO' OwnerRoleSpec
-OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA'
+OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE'
 OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
 
 # ALTER DEFAULT PRIVILEGES [FOR ROLE r,...] [IN SCHEMA s,...] (GRANT|REVOKE) ...
@@ -1780,14 +1780,14 @@ GrantStatement  <- 'GRANT'  (GrantTablePrivilege  / GrantRoleMembership)
 RevokeStatement <- 'REVOKE' (RevokeGrantOptionFor / RevokeAdminOptionFor / RevokeTablePrivilege / RevokeRoleMembership)
 
 GrantTablePrivilege   <- PrivilegeList 'ON' GrantTarget 'TO'   Grantee WithGrantOption? GrantedBy?
-RevokeTablePrivilege  <- PrivilegeList 'ON' GrantTarget 'FROM' Grantee DropBehavior?
+RevokeTablePrivilege  <- PrivilegeList 'ON' GrantTarget 'FROM' Grantee GrantedBy? DropBehavior?
 GrantRoleMembership   <- ColId 'TO'   ColId MemberOptionList? GrantedBy?
-RevokeRoleMembership  <- ColId 'FROM' ColId DropBehavior?
+RevokeRoleMembership  <- ColId 'FROM' ColId GrantedBy? DropBehavior?
 
 # REVOKE [GRANT OPTION FOR <priv> ... | ADMIN OPTION FOR <role> ...]: strip only
 # the grant/admin option, keeping the underlying privilege / membership edge.
-RevokeGrantOptionFor  <- 'GRANT' 'OPTION' 'FOR' PrivilegeList 'ON' GrantTarget 'FROM' Grantee DropBehavior?
-RevokeAdminOptionFor  <- 'ADMIN' 'OPTION' 'FOR' ColId 'FROM' ColId DropBehavior?
+RevokeGrantOptionFor  <- 'GRANT' 'OPTION' 'FOR' PrivilegeList 'ON' GrantTarget 'FROM' Grantee GrantedBy? DropBehavior?
+RevokeAdminOptionFor  <- 'ADMIN' 'OPTION' 'FOR' ColId 'FROM' ColId GrantedBy? DropBehavior?
 
 # The object(s) a privilege is granted on. ALL ... IN SCHEMA (bulk) is tried
 # first so 'ALL' is not mistaken for a relation name. A FUNCTION/ROUTINE target
@@ -1832,13 +1832,16 @@ InheritOption   <- 'INHERIT' / 'NOINHERIT'
 PasswordOption  <- 'PASSWORD' StringLiteral
 
 PrivilegeList <- AllPrivileges / List(Privilege)
-AllPrivileges <- 'ALL' 'PRIVILEGES'?
+AllPrivileges <- 'ALL' 'PRIVILEGES'? PrivilegeColumns?
 # PG parses any identifier in the privilege position and rejects an unknown one
 # SEMANTICALLY (unrecognized privilege type "..."). ParseAclMode validates the
 # keyword against the target object's class. TEMPORARY before TEMP so the PEG
 # ordered-choice matches the longer word greedily; a bare ColId catches all the
-# rest (including invalid names like 'fly').
-Privilege <- 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE' / 'TRUNCATE' / 'REFERENCES' / 'TRIGGER' / 'MAINTAIN' / 'USAGE' / 'EXECUTE' / 'CONNECT' / 'TEMPORARY' / 'TEMP' / 'CREATE' / ColId
+# rest (including invalid names like 'fly'). An optional (col, ...) list turns
+# it into a column privilege (GRANT SELECT (a, b) ON t).
+Privilege <- PrivilegeKeyword PrivilegeColumns?
+PrivilegeKeyword <- 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE' / 'TRUNCATE' / 'REFERENCES' / 'TRIGGER' / 'MAINTAIN' / 'USAGE' / 'EXECUTE' / 'CONNECT' / 'TEMPORARY' / 'TEMP' / 'CREATE' / ColId
+PrivilegeColumns <- Parens(List(ColId))
 
 SelectStatement <- SelectStatementInternal
 SelectStatementInternal <- WithClause? SelectSetOpChain ResultModifiers?

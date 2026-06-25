@@ -293,23 +293,10 @@ public:
 	//! Add the view to the set of currently bound views - used for detecting recursive view definitions
 	void AddBoundView(ViewCatalogEntry &view);
 
-	//! SereneDB fork: returns true when the relation currently being bound was
-	//! expanded out of a catalog definition rather than written directly in the
-	//! user's statement -- i.e. this binder (or an ancestor) is a view-body
-	//! binder, or a macro / SQL-function body is being bound. Such reads carry
-	//! the definition's rights, matching PostgreSQL's definer-rights behavior
-	//! for catalog views/functions.
 	bool IsBindingCatalogDefinition() const;
 
-	//! SereneDB fork: bracket the binding of a macro / SQL-function body so reads
-	//! issued from it are treated as catalog-definition reads (definer rights).
 	void SdbEnterDefinitionBind();
 	void SdbExitDefinitionBind();
-
-	//! SereneDB fork: bind the write target (table reference) of an UPDATE or
-	//! DELETE, signalling registered client-context states so the base-table
-	//! SELECT-privilege check on the target scan can be deferred to plan time.
-	BoundStatement SdbBindWriteTarget(TableRef &ref);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	ExpressionBinder &GetActiveBinder();

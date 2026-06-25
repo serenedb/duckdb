@@ -689,6 +689,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		// inserting into a non-temporary table: alters underlying database
 		DatabaseModificationType modification_type = DatabaseModificationType::INSERT_DATA;
 		GetStatementProperties().RegisterDBModify(table.GetStorageCatalog(context), context, modification_type);
+		GetStatementProperties().RegisterDBRead(table.ParentCatalog(), context);
 	}
 
 	auto insert = make_uniq<LogicalInsert>(table, GenerateTableIndex());

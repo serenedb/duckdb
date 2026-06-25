@@ -22,6 +22,7 @@
 namespace duckdb {
 class BindContext;
 class BoundQueryNode;
+class ClientContext;
 class ColumnRefExpression;
 class SubqueryRef;
 class LogicalGet;
@@ -123,6 +124,7 @@ public:
 	optional_ptr<StandardEntry> entry;
 	//! Virtual columns
 	virtual_column_map_t virtual_columns;
+	optional_ptr<ClientContext> context;
 
 public:
 	unique_ptr<ParsedExpression> ExpandGeneratedColumn(const Identifier &column_name);
