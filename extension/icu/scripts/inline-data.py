@@ -12,7 +12,7 @@ new_contents = """
 #include "unicode/udata.h"
 #include "unicode/uversion.h"
 
-extern "C" U_EXPORT const unsigned char U_ICUDATA_ENTRY_POINT [] = {
+extern "C" U_EXPORT alignas(16) const unsigned char U_ICUDATA_ENTRY_POINT [] = {
 	%s
 };
 """ % (
