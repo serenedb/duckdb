@@ -266,7 +266,7 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 
 		auto nanos = instant.value % Interval::NANOS_PER_MICRO;
 		timestamp_t micros(instant.value / Interval::NANOS_PER_MICRO);
-		auto cast = Operation(calendar, instant);
+		auto cast = Operation(calendar, timestamp_tz_t(micros));
 
 		return timestamp_ns_t(cast.value * Interval::NANOS_PER_MICRO + nanos);
 	}
