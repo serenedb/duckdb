@@ -18,7 +18,9 @@ string TableRef::AliasToString(const vector<string> &column_name_alias) const {
 		result += StringUtil::Format(" AS %s", SQLIdentifier(alias));
 	}
 	if (!column_name_alias.empty()) {
-		D_ASSERT(!alias.empty());
+		// Some rendered macro bodies (e.g. the built-in `histogram` table macro,
+		// reached via duckdb_functions()) carry column aliases without a table
+		// alias. Non-assert builds render them fine, so don't abort here.
 		result += "(";
 		for (idx_t i = 0; i < column_name_alias.size(); i++) {
 			if (i > 0) {
