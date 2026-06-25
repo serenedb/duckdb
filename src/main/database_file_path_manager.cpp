@@ -26,6 +26,21 @@ InsertDatabasePathResult DatabaseFilePathManager::InsertDatabasePath(DatabaseMan
 	auto entry = db_paths.emplace(path, DatabasePathInfo(manager, name, options.access_mode));
 	if (!entry.second) {
 		auto &existing = entry.first->second;
+		// The path is registered but no system currently has it attached: this is a
+		// stale entry left behind by a database that has been detached while its
+		// cleanup (StoredDatabasePath destruction) is still pending -- e.g. an
+		// attached database that is still pinned by a view or index defined over it.
+		// The file is logically free, so let this attach adopt the entry instead of
+		// reporting a conflict. The reference count keeps the entry alive until both
+		// the pending cleanup and this new attach have released it.
+		if (existing.attached_databases.empty()) {
+			existing.name = name;
+			existing.access_mode = options.access_mode;
+			existing.attached_databases.insert(manager);
+			existing.reference_count++;
+			options.stored_database_path = make_uniq<StoredDatabasePath>(manager, *this, path, name);
+			return InsertDatabasePathResult::SUCCESS;
+		}
 		bool already_exists = false;
 		bool attached_in_this_system = false;
 		if (on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT && existing.name == name) {
