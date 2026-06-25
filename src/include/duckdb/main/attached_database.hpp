@@ -12,6 +12,7 @@
 #include "duckdb/common/prefetched_file_data.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/main/valid_checker.hpp"
 
 namespace duckdb {
@@ -95,6 +96,8 @@ struct AttachOptions {
 	bool ephemeral = false;
 	//! The stored database path (in the path manager)
 	unique_ptr<StoredDatabasePath> stored_database_path;
+	shared_ptr<AttachedDatabase> reused_database;
+	bool borrow_open_database = false;
 	//! Per-database override of vacuum_rebuild_indexes. If not set, the global setting value is used.
 	optional_idx vacuum_rebuild_indexes_threshold;
 	//! Deleter binding (from ATTACH/CONNECT TO EXTERNAL RESOURCE): on detach, `<deleter_function>(<deleter_payload>)`
@@ -161,9 +164,12 @@ public:
 	bool IsSystem() const;
 	bool IsTemporary() const;
 	bool IsReadOnly() const;
+	bool OpenedReadOnly() const {
+		return opened_read_only;
+	}
 	bool IsInitialDatabase() const;
 	void SetInitialDatabase();
-	void SetReadOnlyDatabase();
+	void SetAccessMode(AccessMode access_mode);
 	void OnDetach(ClientContext &context);
 	RecoveryMode GetRecoveryMode() const {
 		return recovery_mode;
@@ -204,6 +210,10 @@ public:
 	static void InvokeCloseIfLastReference(shared_ptr<AttachedDatabase> &attached_database, ClientContext &context);
 	//! Obtain a reference unless closing the database has already started.
 	static shared_ptr<AttachedDatabase> TryGetReference(const weak_ptr<AttachedDatabase> &attached_database);
+	// Whether a detached database can be handed back out instead of opening its file again. The caller must
+	// hold a reference: a close only happens under the same lock, and only when it holds the last one, so a
+	// database that is usable here cannot start closing afterwards.
+	bool TryReuse();
 
 private:
 	DatabaseInstance &db;
@@ -212,7 +222,8 @@ private:
 	unique_ptr<StorageManager> storage;
 	unique_ptr<Catalog> catalog;
 	unique_ptr<TransactionManager> transaction_manager;
-	AttachedDatabaseType type;
+	atomic<AttachedDatabaseType> type;
+	const bool opened_read_only;
 	optional_ptr<Catalog> parent_catalog;
 	optional_ptr<StorageExtension> storage_extension;
 	RecoveryMode recovery_mode = RecoveryMode::DEFAULT;

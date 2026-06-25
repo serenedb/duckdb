@@ -89,6 +89,7 @@ public:
 	void RefreshStartTime();
 	optional_ptr<AttachedDatabase> GetReferencedDatabase(const Identifier &name);
 	shared_ptr<AttachedDatabase> GetReferencedDatabaseOwning(const Identifier &name);
+	bool ReferencesDatabase(AttachedDatabase &database);
 	AttachedDatabase &UseDatabase(shared_ptr<AttachedDatabase> &database);
 	void DetachDatabase(AttachedDatabase &database);
 
