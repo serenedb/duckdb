@@ -756,6 +756,9 @@ void SingleFileStorageManager::CreateCheckpoint(QueryContext context, Checkpoint
 
 		} catch (std::exception &ex) {
 			ErrorData error(ex);
+			if (!InMemory() && !FileSystem::Get(db).FileExists(path)) {
+				return;
+			}
 			throw FatalException("Failed to create checkpoint because of error: %s", error.Message());
 		}
 	}
