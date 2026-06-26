@@ -23,6 +23,9 @@ public:
 	bool contains_nulls = false;
 	idx_t total_string_length = 0;
 	idx_t total_count = 0;
+	//! A string longer than this cannot fit an empty segment even when FSST-encoded, so DICT_FSST is
+	//! declined for the rowgroup; on the default block size this equals STRING_SIZE_LIMIT.
+	idx_t fsst_string_size_limit = 0;
 };
 
 } // namespace dict_fsst
