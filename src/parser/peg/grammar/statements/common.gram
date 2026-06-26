@@ -9,6 +9,10 @@ Statement <-
 	DropTSDictionaryStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
+	CreatePolicyStatement /
+	AlterPolicyStatement /
+	DropPolicyStatement /
+	AlterTableRowSecurityStatement /
 	AlterOwnerStatement /
 	AlterDefaultPrivilegesStatement /
 	AlterRoleStatement /

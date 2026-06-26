@@ -111,9 +111,6 @@ public:
 	}
 	virtual void OnTaskStop(ClientContext &context) {
 	}
-	//! SereneDB fork: invoked at bind time for every catalog relation reference
-	virtual void RecordReadRelation(ClientContext &context, idx_t table_index, CatalogEntry &entry, bool inside_view) {
-	}
 
 public:
 	template <class TARGET>

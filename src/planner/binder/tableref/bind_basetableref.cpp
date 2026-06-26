@@ -245,8 +245,10 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 
 		unique_ptr<FunctionData> bind_data;
 		auto scan_function = table.GetScanFunction(context, bind_data, table_lookup);
-		if (bind_data && !bind_data->SupportStatementCache()) {
-			SetAlwaysRequireRebind();
+		if (bind_data) {
+			if (!bind_data->SupportStatementCache()) {
+				SetAlwaysRequireRebind();
+			}
 		}
 		// TODO: bundle the type and name vector in a struct (e.g PackedColumnMetadata)
 		vector<LogicalType> table_types;
@@ -279,12 +281,6 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		// table in another catalog, so bind the alias to the catalog-resolved
 		// entry the user named -- not the storage table inside the LogicalGet.
 		bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table);
-		{
-			const bool inside_view = IsBindingCatalogDefinition();
-			for (auto &state : context.registered_state->States()) {
-				state->RecordReadRelation(context, table_index.index, table, inside_view);
-			}
-		}
 		BoundStatement result;
 		result.types = table_types;
 		result.names = table_names;
@@ -292,12 +288,6 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		return result;
 	}
 	case CatalogType::VIEW_ENTRY: {
-		{
-			const bool inside_view = IsBindingCatalogDefinition();
-			for (auto &state : context.registered_state->States()) {
-				state->RecordReadRelation(context, 0, *table_or_view, inside_view);
-			}
-		}
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
 		// We need to use a new binder for the view that doesn't reference any CTEs

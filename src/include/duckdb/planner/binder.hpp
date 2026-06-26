@@ -293,11 +293,6 @@ public:
 	//! Add the view to the set of currently bound views - used for detecting recursive view definitions
 	void AddBoundView(ViewCatalogEntry &view);
 
-	bool IsBindingCatalogDefinition() const;
-
-	void SdbEnterDefinitionBind();
-	void SdbExitDefinitionBind();
-
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	ExpressionBinder &GetActiveBinder();
 	bool HasActiveBinder();

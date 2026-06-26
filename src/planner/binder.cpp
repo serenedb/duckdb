@@ -226,29 +226,6 @@ void Binder::AddBoundView(ViewCatalogEntry &view) {
 	bound_views.insert(view);
 }
 
-bool Binder::IsBindingCatalogDefinition() const {
-	if (global_binder_state && global_binder_state->sdb_definition_bind_depth > 0) {
-		return true;
-	}
-	auto current = this;
-	while (current) {
-		if (current->binder_type == BinderType::VIEW_BINDER) {
-			return true;
-		}
-		current = current->parent.get();
-	}
-	return false;
-}
-
-void Binder::SdbEnterDefinitionBind() {
-	global_binder_state->sdb_definition_bind_depth++;
-}
-
-void Binder::SdbExitDefinitionBind() {
-	D_ASSERT(global_binder_state->sdb_definition_bind_depth > 0);
-	global_binder_state->sdb_definition_bind_depth--;
-}
-
 TableIndex Binder::GenerateTableIndex() {
 	return TableIndex(global_binder_state->bound_tables++);
 }
