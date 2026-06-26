@@ -783,6 +783,11 @@ void SingleFileStorageManager::CreateCheckpoint(QueryContext context, Checkpoint
 
 		} catch (std::exception &ex) {
 			ErrorData error(ex);
+			// The backing file is gone (e.g. a detached db whose directory was cleaned up while a
+			// deferred checkpoint still referenced it): nothing is recoverable to flush, skip it.
+			if (!InMemory() && !FileSystem::Get(db).FileExists(path)) {
+				return;
+			}
 			if (db.IsInitialDatabase()) {
 				ValidChecker::Invalidate(db.GetDatabase(), error.RawMessage());
 				throw FatalException("Failed to create checkpoint because of error: %s", error.RawMessage());
