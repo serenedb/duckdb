@@ -76,17 +76,6 @@ bool TaskSchedulerQueue::Dequeue(shared_ptr<Task> &task) {
 idx_t TaskSchedulerQueue::GetTasksInQueue() const {
 	return tasks_in_queue;
 }
-idx_t TaskSchedulerQueue::GetApproxSize() const {
-	return queue->q.size_approx();
-}
-idx_t TaskSchedulerQueue::GetProducerCount() const {
-	return queue->q.size_producers_approx();
-}
-
-idx_t TaskSchedulerQueue::GetTaskCountForProducer(ProducerToken &token) const {
-	lock_guard<mutex> producer_lock(token.producer_lock);
-	return queue->q.size_producer_approx(token.GetQueueProducerToken(pool_type).token);
-}
 
 ConcurrentQueueWrapper &TaskSchedulerQueue::GetQueue() {
 	return *queue;
@@ -149,24 +138,6 @@ idx_t TaskSchedulerQueue::GetTasksInQueue() const {
 		task_count += producer.second.size();
 	}
 	return task_count;
-}
-
-idx_t TaskSchedulerQueue::GetApproxSize() const {
-	return GetTasksInQueue();
-}
-
-idx_t TaskSchedulerQueue::GetProducerCount() const {
-	lock_guard<mutex> lock(qlock);
-	return q.size();
-}
-
-idx_t TaskSchedulerQueue::GetTaskCountForProducer(ProducerToken &token) const {
-	lock_guard<mutex> lock(qlock);
-	const auto it = q.find(token.GetQueueProducerToken(pool_type));
-	if (it == q.end()) {
-		return 0;
-	}
-	return it->second.size();
 }
 
 void TaskSchedulerQueue::RemoveToken(QueueProducerToken &token) {

@@ -5,9 +5,6 @@
 namespace duckdb {
 namespace dict_fsst {
 
-//! Maximum size of an FSST symbol table, see fsst.h
-static constexpr uint16_t FSST_SYMBOL_TABLE_SIZE = sizeof(duckdb_fsst_decoder_t);
-
 //! Worst case is a single string filling an entire empty segment; returns the largest string length that fits.
 static idx_t GetStringSizeLimit(const idx_t available_space, const bool fsst_encoded) {
 	idx_t max_str_len = DictFSSTCompression::STRING_SIZE_LIMIT - 1;

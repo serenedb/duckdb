@@ -35,7 +35,7 @@ InsertDatabasePathResult DatabaseFilePathManager::InsertDatabasePath(DatabaseMan
 		// reporting a conflict. The reference count keeps the entry alive until both
 		// the pending cleanup and this new attach have released it.
 		if (existing.attached_databases.empty()) {
-			existing.name = name;
+			existing.name = name.GetIdentifierName();
 			existing.access_mode = options.access_mode;
 			existing.attached_databases.insert(manager);
 			existing.reference_count++;

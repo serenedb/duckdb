@@ -61,10 +61,10 @@ unique_ptr<AlterInfo> RenameScalarFunctionInfo::Copy() const {
 
 string RenameScalarFunctionInfo::ToString() const {
 	string result = "ALTER FUNCTION ";
-	if (!schema.empty()) {
-		result += KeywordHelper::WriteOptionallyQuoted(schema) + ".";
+	if (!Schema().empty()) {
+		result += KeywordHelper::WriteOptionallyQuoted(Schema().GetIdentifierName()) + ".";
 	}
-	result += KeywordHelper::WriteOptionallyQuoted(name);
+	result += KeywordHelper::WriteOptionallyQuoted(Name().GetIdentifierName());
 	result += " RENAME TO ";
 	result += KeywordHelper::WriteOptionallyQuoted(new_name);
 	result += ";";

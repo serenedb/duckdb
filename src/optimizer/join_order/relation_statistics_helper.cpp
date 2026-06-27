@@ -222,7 +222,7 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 		auto distinct_count = GetDistinctCount(get, context, column_ids[i], base_table_cardinality);
 		if (distinct_count.distinct_count > 0) {
 			return_stats.column_distinct_count.emplace_back(distinct_count.distinct_count, distinct_count.source);
-			return_stats.column_names.push_back(Identifier(name + "." + get.names.at(column_id)));
+			return_stats.column_names.emplace_back(name + "." + get.names.at(column_id));
 		} else {
 			// treat the cardinality as the distinct count.
 			// the cardinality estimator will update these distinct counts based
@@ -233,7 +233,7 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 			if (column_id < get.names.size()) {
 				column_name = get.names.at(column_id).GetIdentifierName();
 			}
-			return_stats.column_names.push_back(Identifier(get.GetName() + "." + column_name));
+			return_stats.column_names.emplace_back(get.GetName() + "." + column_name);
 		}
 	}
 
@@ -284,7 +284,7 @@ RelationStats RelationStatisticsHelper::ExtractDelimGetStats(LogicalDelimGet &de
 	stats.stats_initialized = true;
 	for (auto &binding : delim_get.GetColumnBindings()) {
 		stats.column_distinct_count.emplace_back(1, DistinctCountSource::CARDINALITY);
-		stats.column_names.push_back(Identifier("column" + to_string(binding.column_index)));
+		stats.column_names.emplace_back("column" + to_string(binding.column_index));
 	}
 	return stats;
 }

@@ -27,7 +27,7 @@ normal:
 	}
 	goto end;
 separator:
-	result.push_back(Identifier(entry));
+	result.emplace_back(entry);
 	entry = "";
 	idx++;
 	goto normal;
@@ -44,7 +44,7 @@ quoted:
 	throw ParserException("Unterminated quote in qualified name! (input: %s)", input);
 end:
 	if (!entry.empty()) {
-		result.push_back(Identifier(entry));
+		result.emplace_back(entry);
 	}
 	return result;
 }

@@ -1045,7 +1045,7 @@ unique_ptr<PendingQueryResult> ClientContext::PendingStatementOrPreparedStatemen
 			}
 			// Dispatch via the catalog — Supports(CONNECT) was validated at CONNECT time, so RemoteExecute
 			// is contracted to be implemented. Wrap the returned TableRef into a SelectStatement.
-			auto remote_ref = live->GetCatalog().RemoteExecute(*this, query);
+			auto remote_ref = live->GetCatalog().RemoteExecute(*this, string(query));
 			statement = WrapAsSelect(std::move(remote_ref));
 			// statement is now SELECT * FROM <remote-ref>; fall through.
 		}

@@ -93,7 +93,7 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 				ExpressionIterator::VisitExpressionMutable<BoundReferenceExpression>(
 				    new_expressions[col.StorageOid()],
 				    [&](BoundReferenceExpression &ref, unique_ptr<Expression> &child) {
-					    child = new_expressions[ref.index]->Copy();
+					    child = new_expressions[ref.Index()]->Copy();
 				    });
 			}
 			action.expressions = std::move(new_expressions);

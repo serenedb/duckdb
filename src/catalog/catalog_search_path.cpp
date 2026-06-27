@@ -267,7 +267,7 @@ static string ResolveSchema(ClientContext &context, const CatalogSearchEntry &en
 	if (entry.schema == "$user") {
 		return context.session_user;
 	}
-	return entry.schema;
+	return entry.schema.GetIdentifierName();
 }
 
 vector<CatalogSearchEntry> CatalogSearchPath::Get() const {
@@ -278,7 +278,7 @@ vector<CatalogSearchEntry> CatalogSearchPath::Get() const {
 		if (resolved.empty()) {
 			continue;
 		}
-		res.emplace_back(path.catalog, std::move(resolved));
+		res.emplace_back(path.catalog, Identifier(std::move(resolved)));
 	}
 	return res;
 }
@@ -291,7 +291,7 @@ vector<CatalogSearchEntry> CatalogSearchPath::GetResolvedSetPaths() const {
 		if (resolved.empty()) {
 			continue;
 		}
-		res.emplace_back(path.catalog, std::move(resolved));
+		res.emplace_back(path.catalog, Identifier(std::move(resolved)));
 	}
 	return res;
 }
@@ -301,12 +301,12 @@ Identifier CatalogSearchPath::GetDefaultSchema(const Identifier &catalog) const 
 		if (path.catalog == TEMP_CATALOG) {
 			continue;
 		}
-		if (StringUtil::CIEquals(path.catalog, catalog)) {
+		if (path.catalog == catalog) {
 			auto resolved = ResolveSchema(context, path);
 			if (resolved.empty()) {
 				continue;
 			}
-			return resolved;
+			return Identifier(std::move(resolved));
 		}
 	}
 	return DEFAULT_SCHEMA;
@@ -317,12 +317,12 @@ Identifier CatalogSearchPath::GetDefaultSchema(ClientContext &context_p, const I
 		if (path.catalog == TEMP_CATALOG) {
 			continue;
 		}
-		if (StringUtil::CIEquals(path.catalog, catalog)) {
+		if (path.catalog == catalog) {
 			auto resolved = ResolveSchema(context_p, path);
 			if (resolved.empty()) {
 				continue;
 			}
-			return resolved;
+			return Identifier(std::move(resolved));
 		}
 	}
 	auto catalog_entry = Catalog::GetCatalogEntry(context_p, catalog);
@@ -352,7 +352,7 @@ Identifier CatalogSearchPath::GetDefaultCatalog(const Identifier &schema) const 
 		if (resolved.empty()) {
 			continue;
 		}
-		if (StringUtil::CIEquals(resolved, schema)) {
+		if (resolved == schema) {
 			return path.catalog;
 		}
 	}
@@ -383,7 +383,7 @@ vector<Identifier> CatalogSearchPath::GetCatalogsForSchema(const Identifier &sch
 			if (resolved.empty()) {
 				continue;
 			}
-			if (StringUtil::CIEquals(resolved, schema)) {
+			if (resolved == schema) {
 				catalogs.push_back(path.catalog);
 			}
 		}
@@ -395,7 +395,7 @@ vector<Identifier> CatalogSearchPath::GetSchemasForCatalog(const Identifier &cat
 	vector<Identifier> schemas;
 	schemas.reserve(paths.size());
 	for (auto &path : paths) {
-		if (!StringUtil::CIEquals(path.catalog, catalog)) {
+		if (path.catalog != catalog) {
 			continue;
 		}
 		auto resolved = ResolveSchema(context, path);
@@ -424,7 +424,7 @@ CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
 	// search_path entry when "$user" doesn't match a real schema.
 	auto user_end = 1 + set_paths.size();
 	for (idx_t i = 1; i < user_end; i++) {
-		auto resolved = ResolveSchema(context, paths[i]);
+		Identifier resolved(ResolveSchema(context, paths[i]));
 		if (resolved.empty()) {
 			continue;
 		}
@@ -459,12 +459,12 @@ bool CatalogSearchPath::SchemaInSearchPath(ClientContext &context, const Identif
                                            const Identifier &schema_name) const {
 	for (auto &path : paths) {
 		auto resolved = ResolveSchema(context, path);
-		if (resolved.empty() || !StringUtil::CIEquals(resolved, schema_name)) {
+		if (resolved.empty() || resolved != schema_name) {
 			continue;
 		}
-		bool catalog_matches = StringUtil::CIEquals(path.catalog, catalog_name) ||
+		bool catalog_matches = path.catalog == catalog_name ||
 		                       (IsInvalidCatalog(path.catalog) &&
-		                        StringUtil::CIEquals(catalog_name, DatabaseManager::GetDefaultDatabase(context)));
+		                        catalog_name == DatabaseManager::GetDefaultDatabase(context));
 		if (!catalog_matches) {
 			continue;
 		}

@@ -5,9 +5,14 @@
 #include "duckdb/common/bitpacking.hpp"
 #include "duckdb/storage/string_uncompressed.hpp"
 
+#include "fsst.h"
+
 namespace duckdb {
 
 namespace dict_fsst {
+
+//! Maximum size of an FSST symbol table, see fsst.h
+static constexpr uint16_t FSST_SYMBOL_TABLE_SIZE = sizeof(duckdb_fsst_decoder_t);
 
 //! This enum holds the available compression modes, this can be expanded later by adding to the end (before COUNT)
 enum class DictFSSTMode : uint8_t {

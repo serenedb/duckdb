@@ -92,7 +92,7 @@ std::optional<GetBinding> Resolve(ColumnBinding binding, Analyses &analyses, con
 		return std::nullopt;
 	}
 
-	LogicalProjection &projection = projection_it->second;
+	LogicalProjection &projection = projection_it->second.get();
 	const auto &inner = projection.expressions[binding.column_index];
 	if (inner->GetExpressionType() != ExpressionType::BOUND_COLUMN_REF) {
 		return std::nullopt;

@@ -176,11 +176,11 @@ bool GroupingSetsOptimizer::TryRewriteGroupingSets(unique_ptr<LogicalOperator> &
 		for (auto &group_idx : grouping_set) {
 			level.group_positions[group_idx] = level.output_types.size();
 			level.output_types.push_back(aggr.groups[group_idx]->GetReturnType());
-			level.output_names.push_back(Identifier(StringUtil::Format("group_%llu", group_idx.GetIndex())));
+			level.output_names.emplace_back(StringUtil::Format("group_%llu", group_idx.GetIndex()));
 		}
 		for (idx_t aggr_idx = 0; aggr_idx < aggregate_count; aggr_idx++) {
 			level.output_types.push_back(state_types[aggr_idx]);
-			level.output_names.push_back(Identifier(StringUtil::Format("state_%llu", aggr_idx)));
+			level.output_names.emplace_back(StringUtil::Format("state_%llu", aggr_idx));
 		}
 
 		level.aggregate = make_uniq<LogicalAggregate>(

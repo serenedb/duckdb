@@ -2,6 +2,7 @@
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
@@ -157,7 +158,7 @@ void Binder::SearchSchema(CreateInfo &info) {
 	if (IsInvalidCatalog(info.Catalog())) {
 		info.CatalogMutable() = DatabaseManager::GetDefaultDatabase(context);
 	}
-	if (IsInvalidSchema(info.schema)) {
+	if (IsInvalidSchema(info.Schema())) {
 		// Empty search_path / no resolvable entry -> PG-style error.
 		throw CatalogException("no schema has been selected to create in");
 	}
@@ -453,12 +454,12 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				// instead of DuckDB's generic subquery errors).
 				if (!ret_types.empty() && expression->GetExpressionClass() == ExpressionClass::SUBQUERY) {
 					auto &sub_expr = expression->Cast<SubqueryExpression>();
-					if (sub_expr.subquery && sub_expr.subquery->node) {
+					if (sub_expr.Subquery() && sub_expr.Subquery()->node) {
 						auto dummy_binder = CreateBinder(context, this);
 						if (should_create_dependencies) {
 							dummy_binder->SetCatalogLookupCallback(binder_callback);
 						}
-						auto query_node = sub_expr.subquery->node->Copy();
+						auto query_node = sub_expr.Subquery()->node->Copy();
 						ParsedExpressionIterator::EnumerateQueryNodeChildren(
 						    *query_node, [&dummy_binder](unique_ptr<ParsedExpression> &child) {
 							    ExpressionBinder::QualifyColumnNames(*dummy_binder, child);
@@ -874,7 +875,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			// store catalog and skip the owning catalog's index routing. Resolve
 			// the named entry so dispatch lands on the catalog that owns it.
 			EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, create_index_info.table);
-			auto resolved = Catalog::GetEntry(context, create_index_info.catalog, create_index_info.schema,
+			auto resolved = Catalog::GetEntry(context, create_index_info.Catalog(), create_index_info.Schema(),
 			                                  table_lookup, OnEntryNotFound::RETURN_NULL);
 			if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
 				table_ptr = &resolved->Cast<TableCatalogEntry>();
@@ -888,8 +889,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			properties.RegisterDBModify(table.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = table.catalog.BindCreateIndex(*this, stmt, table, std::move(plan));
 		} else {
-			auto &view = Catalog::GetEntry<ViewCatalogEntry>(context, create_index_info.catalog,
-			                                                 create_index_info.schema, create_index_info.table);
+			auto &view = Catalog::GetEntry<ViewCatalogEntry>(context, create_index_info.Catalog(),
+			                                                 create_index_info.Schema(), create_index_info.table);
 			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = view.catalog.BindCreateIndex(*this, stmt, view, std::move(plan));
 		}

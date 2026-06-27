@@ -424,10 +424,10 @@ static void ExtractStructureObject(yyjson_val *obj, JSONStructureNode &node, con
 		if (!ignore_errors && !insert_result.second) { // Exact match
 			JSONCommon::ThrowValFormatError("Duplicate key \"" + obj_key + "\" in object %s", obj);
 		}
-		insert_result = ci_obj_keys.insert(obj_key);
-		if (!ignore_errors && !insert_result.second) { // Case-insensitive match
+		auto ci_insert_result = ci_obj_keys.insert(obj_key);
+		if (!ignore_errors && !ci_insert_result.second) { // Case-insensitive match
 			JSONCommon::ThrowValFormatError("Duplicate key (different case) \"" + obj_key + "\" and \"" +
-			                                    *insert_result.first + "\" in object %s",
+			                                    *ci_insert_result.first + "\" in object %s",
 			                                obj);
 		}
 		description.GetOrCreateChild(key, val, ignore_errors);

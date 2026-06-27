@@ -13,7 +13,7 @@ PhysicalOperator &DuckCatalog::PlanDelete(ClientContext &context, PhysicalPlanGe
 	auto &bound_ref = op.expressions[0]->Cast<BoundReferenceExpression>();
 	auto &storage_table = op.table.GetStorageTableEntry(context);
 	auto &del = planner.Make<PhysicalDelete>(op.types, storage_table, storage_table.GetStorage(),
-	                                         std::move(op.bound_constraints), bound_ref.index, op.estimated_cardinality,
+	                                         std::move(op.bound_constraints), bound_ref.Index(), op.estimated_cardinality,
 	                                         op.return_chunk, std::move(op.return_columns));
 	del.children.push_back(plan);
 	return del;

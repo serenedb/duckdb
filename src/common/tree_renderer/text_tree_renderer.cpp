@@ -463,7 +463,7 @@ static idx_t NodeContentWidth(const RenderTreeNode &node) {
 	return needed;
 }
 
-void TextTreeRenderer::ToStreamInternal(RenderTree &root, std::ostream &ss) {
+void TextTreeRenderer::ToStreamInternal(RenderTree &root, BaseResultRenderer &ss) {
 	idx_t content_width = 0;
 	for (idx_t y = 0; y < root.height; y++) {
 		for (idx_t x = 0; x < root.width; x++) {

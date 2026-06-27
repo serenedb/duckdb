@@ -15,12 +15,12 @@
 #include "duckdb/common/set.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/common/unordered_map.hpp"
+#include "duckdb/common/complex_json.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
 
 #include <cstring>
 
 namespace duckdb {
-class ComplexJSON;
 
 #ifndef DUCKDB_QUOTE_DEFINE
 // Preprocessor trick to allow text to be converted to C-string / string
@@ -334,6 +334,8 @@ public:
 
 	//! Transforms an unordered map to a JSON string
 	DUCKDB_API static string ToJSONMap(const unordered_map<string, string> &map);
+	//! Transforms an complex JSON to a JSON string
+	DUCKDB_API static string ToComplexJSONMap(const ComplexJSON &complex_json);
 
 	DUCKDB_API static string ValidateJSON(const char *data, const idx_t &len);
 

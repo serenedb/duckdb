@@ -128,12 +128,12 @@ BindResult ExpressionBinder::BindExpression(OperatorExpression &op, idx_t depth)
 			function_name = "map_extract_value";
 		} else if (b_exp_type.IsJSONType() && op.GetChildrenMutable().size() == 2) {
 			function_name = "json_extract";
-			auto &i_exp = BoundExpression::GetExpression(*op.children[1]);
+			auto &i_exp = BoundExpression::GetExpression(*op.GetChildrenMutable()[1]);
 			if (i_exp->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT &&
 			    !i_exp->Cast<BoundConstantExpression>().GetValue().IsNull()) {
 				auto &const_exp = i_exp->Cast<BoundConstantExpression>();
 				if (const_exp.GetReturnType().IsNumeric()) {
-					const_exp.value = const_exp.value.DefaultCastAs(LogicalType::BIGINT);
+					const_exp.GetValueMutable() = const_exp.GetValue().DefaultCastAs(LogicalType::BIGINT);
 					const_exp.SetReturnType(LogicalType::BIGINT);
 				}
 			}

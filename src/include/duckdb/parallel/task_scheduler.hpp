@@ -61,8 +61,6 @@ public:
 	DUCKDB_API idx_t NumberOfAsyncThreads();
 
 	idx_t GetNumberOfTasks() const;
-	idx_t GetProducerCount() const;
-	idx_t GetTaskCountForProducer(ProducerToken &token) const;
 
 	//! Schedule a task to be executed by the task scheduler in the given pool
 	void ScheduleTask(ProducerToken &producer, shared_ptr<Task> task, TaskSchedulerType pool_type);

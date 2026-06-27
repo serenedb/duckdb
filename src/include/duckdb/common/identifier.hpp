@@ -16,6 +16,7 @@
 #include "duckdb/common/vector.hpp"
 
 #include <iosfwd>
+#include <string_view>
 
 namespace duckdb {
 
@@ -34,6 +35,8 @@ public:
 	explicit Identifier(const string &str) : value(str) {
 	}
 	explicit Identifier(string &&str) : value(std::move(str)) {
+	}
+	explicit Identifier(std::string_view str) : value(str) {
 	}
 
 	//! Named constructors for well-known identifiers

@@ -105,7 +105,6 @@ void Binder::ExpandDefaultInValuesList(InsertQueryNode &node, TableCatalogEntry 
 				TryReplaceDefaultExpression(expr_list.values[list_idx][col_idx], column);
 			}
 		}
-	}
 }
 
 unique_ptr<LogicalOperator> Binder::ResolveInputProjection(LogicalInsert &insert,

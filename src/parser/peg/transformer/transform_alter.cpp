@@ -49,9 +49,7 @@ PEGTransformerFactory::TransformAlterTableStmt(PEGTransformer &transformer, cons
 	}
 	auto result = std::move(alter_table_options[0]);
 	result->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	result->catalog = base_table_name->catalog_name;
-	result->schema = base_table_name->schema_name;
-	result->name = base_table_name->table_name;
+	result->GetQualifiedNameMutable() = base_table_name->GetQualifiedName();
 
 	return std::move(result);
 }
@@ -72,9 +70,7 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterViewStmt(PEGTransform
                                                                     unique_ptr<AlterTableInfo> rename_alter) {
 	auto rename_table = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
 	auto result = make_uniq<RenameViewInfo>(AlterEntryData(), rename_table->new_table_name);
-	result->catalog = base_table_name->catalog_name;
-	result->schema = base_table_name->schema_name;
-	result->name = base_table_name->table_name;
+	result->GetQualifiedNameMutable() = base_table_name->GetQualifiedName();
 	result->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	return std::move(result);
 }
@@ -95,9 +91,7 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransfor
 	// ALTER TABLE rename: the catalog resolves the entry by name across
 	// table/view/index.
 	auto result = make_uniq<RenameTableInfo>(AlterEntryData(), rename_info->new_table_name);
-	result->catalog = base_table_name->catalog_name;
-	result->schema = base_table_name->schema_name;
-	result->name = base_table_name->table_name;
+	result->GetQualifiedNameMutable() = base_table_name->GetQualifiedName();
 	result->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	return std::move(result);
 }
@@ -108,11 +102,7 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionStmt(PEGTrans
                                                                         const QualifiedName &qualified_name,
                                                                         unique_ptr<AlterTableInfo> rename_alter) {
 	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
-	AlterEntryData data;
-	data.catalog = qualified_name.catalog;
-	data.schema = qualified_name.schema;
-	data.name = qualified_name.name;
-	data.if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	AlterEntryData data(qualified_name, if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION);
 	return make_uniq<RenameScalarFunctionInfo>(std::move(data), rename_info->new_table_name);
 }
 
@@ -120,22 +110,22 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSequenceStmt(PEGTrans
                                                                         const bool &if_exists,
                                                                         const QualifiedName &qualified_sequence_name,
                                                                         unique_ptr<AlterInfo> alter_sequence_options) {
-	if (qualified_sequence_name.schema.empty()) {
-		alter_sequence_options->schema = qualified_sequence_name.catalog;
+	if (qualified_sequence_name.Schema().empty()) {
+		alter_sequence_options->SchemaMutable() = qualified_sequence_name.Catalog();
 	} else {
-		alter_sequence_options->catalog = qualified_sequence_name.catalog;
-		alter_sequence_options->schema = qualified_sequence_name.schema;
+		alter_sequence_options->CatalogMutable() = qualified_sequence_name.Catalog();
+		alter_sequence_options->SchemaMutable() = qualified_sequence_name.Schema();
 	}
-	alter_sequence_options->name = qualified_sequence_name.name;
+	alter_sequence_options->NameMutable() = qualified_sequence_name.Name();
 	alter_sequence_options->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	return alter_sequence_options;
 }
 
 QualifiedName PEGTransformerFactory::TransformQualifiedSequenceName(PEGTransformer &transformer, const Identifier &catalog_qualification, const Identifier &schema_qualification, std::string_view sequence_name) {
 	QualifiedName result;
-	result.catalog = catalog_qualification.empty() ? INVALID_CATALOG : catalog_qualification;
-	result.schema = schema_qualification.empty() ? INVALID_SCHEMA : schema_qualification;
-	result.name = sequence_name;
+	result.CatalogMutable() = catalog_qualification.empty() ? INVALID_CATALOG : catalog_qualification;
+	result.SchemaMutable() = schema_qualification.empty() ? INVALID_SCHEMA : schema_qualification;
+	result.NameMutable() = Identifier(sequence_name);
 	return result;
 }
 

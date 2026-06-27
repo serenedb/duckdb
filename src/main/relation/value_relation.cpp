@@ -85,7 +85,7 @@ unique_ptr<TableRef> ValueRelation::GetTableRef() {
 	if (columns.empty()) {
 		// no columns yet: only set up names
 		for (idx_t i = 0; i < names.size(); i++) {
-			table_ref->expected_names.push_back(Identifier(names[i]));
+			table_ref->expected_names.emplace_back(names[i]);
 		}
 	} else {
 		for (idx_t i = 0; i < columns.size(); i++) {

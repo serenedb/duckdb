@@ -32,169 +32,6 @@ TaskScheduler::TaskScheduler(DatabaseInstance &db) : db(db) {
 		pools[i] = make_uniq<TaskSchedulerPool>(db, static_cast<TaskSchedulerType>(i));
 		queues[i] = make_uniq<TaskSchedulerQueue>(static_cast<TaskSchedulerType>(i));
 	}
-
-	unique_ptr<thread> internal_thread;
-#endif
-};
-
-#ifndef DUCKDB_NO_THREADS
-typedef duckdb_moodycamel::ConcurrentQueue<shared_ptr<Task>> concurrent_queue_t;
-typedef duckdb_moodycamel::LightweightSemaphore lightweight_semaphore_t;
-
-struct ConcurrentQueue {
-	ConcurrentQueue() : tasks_in_queue(0) {
-	}
-
-	lightweight_semaphore_t semaphore;
-
-	void Enqueue(ProducerToken &token, shared_ptr<Task> task);
-	void EnqueueBulk(ProducerToken &token, vector<shared_ptr<Task>> &tasks);
-	bool DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task);
-	bool Dequeue(shared_ptr<Task> &task);
-	idx_t GetTasksInQueue() const;
-	concurrent_queue_t &GetQueue() {
-		return q;
-	}
-
-private:
-	concurrent_queue_t q;
-	atomic<idx_t> tasks_in_queue;
-};
-
-struct QueueProducerToken {
-	explicit QueueProducerToken(ConcurrentQueue &queue) : queue_token(queue.GetQueue()) {
-	}
-
-	duckdb_moodycamel::ProducerToken queue_token;
-};
-
-void ConcurrentQueue::Enqueue(ProducerToken &token, shared_ptr<Task> task) {
-	lock_guard<mutex> producer_lock(token.producer_lock);
-	task->token = token;
-	if (q.enqueue(token.token->queue_token, std::move(task))) {
-		++tasks_in_queue;
-		semaphore.signal();
-	} else {
-		throw InternalException("Could not schedule task!");
-	}
-}
-
-void ConcurrentQueue::EnqueueBulk(ProducerToken &token, vector<shared_ptr<Task>> &tasks) {
-	typedef std::make_signed<std::size_t>::type ssize_t;
-	lock_guard<mutex> producer_lock(token.producer_lock);
-	for (auto &task : tasks) {
-		task->token = token;
-	}
-	if (q.enqueue_bulk(token.token->queue_token, std::make_move_iterator(tasks.begin()), tasks.size())) {
-		tasks_in_queue += tasks.size();
-		semaphore.signal(NumericCast<ssize_t>(tasks.size()));
-	} else {
-		throw InternalException("Could not schedule tasks!");
-	}
-}
-
-bool ConcurrentQueue::DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task) {
-	lock_guard<mutex> producer_lock(token.producer_lock);
-	if (!q.try_dequeue_from_producer(token.token->queue_token, task)) {
-		return false;
-	}
-	--tasks_in_queue;
-	return true;
-}
-
-bool ConcurrentQueue::Dequeue(shared_ptr<Task> &task) {
-	if (!q.try_dequeue(task)) {
-		return false;
-	}
-	--tasks_in_queue;
-	return true;
-}
-
-idx_t ConcurrentQueue::GetTasksInQueue() const {
-	return tasks_in_queue;
-}
-
-#else
-struct ConcurrentQueue {
-	reference_map_t<QueueProducerToken, std::queue<shared_ptr<Task>>> q;
-	mutable mutex qlock;
-
-	void Enqueue(ProducerToken &token, shared_ptr<Task> task);
-	void EnqueueBulk(ProducerToken &token, vector<shared_ptr<Task>> &tasks);
-	bool DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task);
-	bool Dequeue(shared_ptr<Task> &task);
-	idx_t GetTasksInQueue() const;
-};
-
-void ConcurrentQueue::Enqueue(ProducerToken &token, shared_ptr<Task> task) {
-	lock_guard<mutex> lock(qlock);
-	task->token = token;
-	q[std::ref(*token.token)].push(std::move(task));
-}
-
-void ConcurrentQueue::EnqueueBulk(ProducerToken &token, vector<shared_ptr<Task>> &tasks) {
-	lock_guard<mutex> lock(qlock);
-	for (auto &task : tasks) {
-		task->token = token;
-		q[std::ref(*token.token)].push(std::move(task));
-	}
-}
-
-bool ConcurrentQueue::DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task) {
-	lock_guard<mutex> lock(qlock);
-	D_ASSERT(!q.empty());
-
-	const auto it = q.find(std::ref(*token.token));
-	if (it == q.end() || it->second.empty()) {
-		return false;
-	}
-
-	task = std::move(it->second.front());
-	it->second.pop();
-
-	return true;
-}
-
-bool ConcurrentQueue::Dequeue(shared_ptr<Task> &task) {
-	throw InternalException("Global dequeue not supported for no threads queue");
-}
-
-idx_t ConcurrentQueue::GetTasksInQueue() const {
-	lock_guard<mutex> lock(qlock);
-	idx_t task_count = 0;
-	for (auto &producer : q) {
-		task_count += producer.second.size();
-	}
-	return task_count;
-}
-
-struct QueueProducerToken {
-	explicit QueueProducerToken(ConcurrentQueue &queue) : queue(&queue) {
-	}
-
-	~QueueProducerToken() {
-		lock_guard<mutex> lock(queue->qlock);
-		queue->q.erase(*this);
-	}
-
-private:
-	ConcurrentQueue *queue;
-};
-#endif
-
-ProducerToken::ProducerToken(TaskScheduler &scheduler, unique_ptr<QueueProducerToken> token)
-    : scheduler(scheduler), token(std::move(token)) {
-}
-
-ProducerToken::~ProducerToken() {
-}
-
-TaskScheduler::TaskScheduler(DatabaseInstance &db)
-    : db(db), queue(make_uniq<ConcurrentQueue>()),
-      allocator_flush_threshold(db.config.options.allocator_flush_threshold),
-      allocator_background_threads(Settings::Get<AllocatorBackgroundThreadsSetting>(db)), requested_thread_count(0),
-      current_thread_count(1) {
-	SetAllocatorBackgroundThreads(allocator_background_threads);
 }
 
 TaskScheduler::~TaskScheduler() {
@@ -440,6 +277,14 @@ idx_t TaskScheduler::NumberOfAsyncThreads() {
 	return GetPool(TaskSchedulerType::ASYNC).NumberOfThreads();
 }
 
+idx_t TaskScheduler::GetNumberOfTasks() const {
+	idx_t num_tasks = 0;
+	for (auto &queue : queues) {
+		num_tasks += queue->GetTasksInQueue();
+	}
+	return num_tasks;
+}
+
 void TaskScheduler::SetThreads(idx_t total_threads, idx_t external_threads) {
 	if (total_threads == 0) {
 		throw SyntaxException("Number of threads must be positive!");
@@ -489,6 +334,12 @@ void TaskScheduler::SignalForTaskType(TaskSchedulerType task_type, idx_t n) {
 	}
 }
 
+void TaskScheduler::YieldThread() {
+#ifndef DUCKDB_NO_THREADS
+	std::this_thread::yield();
+#endif
+}
+
 idx_t TaskScheduler::GetEstimatedCPUId() {
 #if defined(__EMSCRIPTEN__)
 	// FIXME: Wasm + multithreads can likely be implemented as
@@ -531,138 +382,6 @@ void TaskScheduler::RelaunchThreads() {
 	for (auto &pool : pools) {
 		pool->RelaunchThreads(*this, false);
 	}
-	vector<int> available_cpus;
-	for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
-		if (CPU_ISSET(cpu, &cpuset)) {
-			available_cpus.push_back(cpu);
-		}
-	}
-	return available_cpus;
-#else
-	return {};
-#endif
-}
-
-static void SetThreadAffinity(thread &thread, const vector<int> &available_cpus, idx_t thread_idx) {
-#if defined(__GLIBC__)
-	if (thread_idx < available_cpus.size()) {
-		const auto cpu_id = available_cpus[thread_idx];
-		cpu_set_t cpuset;
-		CPU_ZERO(&cpuset);
-		CPU_SET(cpu_id, &cpuset);
-
-		// note that we don't care about the return value here
-		// if we did not manage to set affinity, the thread just does not have affinity, which is OK
-		pthread_setaffinity_np(thread.native_handle(), sizeof(cpu_set_t), &cpuset);
-	}
-#endif
-}
-#endif
-
-void TaskScheduler::RelaunchThreadsInternal(int32_t n, bool destroy) {
-#ifndef DUCKDB_NO_THREADS
-	auto &config = DBConfig::GetConfig(db);
-	auto new_thread_count = NumericCast<idx_t>(n);
-
-	idx_t external_threads = 0;
-	ThreadPinMode pin_thread_mode = ThreadPinMode::AUTO;
-	if (!destroy) {
-		// If we are destroying, i.e., calling ~TaskScheduler, we don't want to read the settings
-		external_threads = Settings::Get<ExternalThreadsSetting>(config);
-		pin_thread_mode = Settings::Get<PinThreadsSetting>(db);
-	}
-
-	// serenedb drives client sessions on the pool itself, so it always needs at
-	// least one internal worker (the external/io thread never runs query tasks).
-	// Clamp a zero request -- e.g. threads=1 with one external thread -- up to
-	// one, except when tearing down the scheduler. This also keeps a SET threads
-	// issued on a worker from trying to reach zero (it would have to stop the
-	// still-running caller), and avoids per-query relaunch churn at threads=1.
-	if (!destroy && new_thread_count == 0) {
-		new_thread_count = 1;
-	}
-
-	if (threads.size() == new_thread_count) {
-		current_thread_count = NumericCast<int32_t>(threads.size() + external_threads);
-		return;
-	}
-
-	// Resolve thread pinning once: it applies both to the kept caller (re-pinned
-	// to its new index below) and to the threads spawned afterwards.
-	static constexpr idx_t THREAD_PIN_THRESHOLD = 64;
-	const auto pin_threads =
-	    pin_thread_mode == ThreadPinMode::ON ||
-	    (pin_thread_mode == ThreadPinMode::AUTO && std::thread::hardware_concurrency() > THREAD_PIN_THRESHOLD);
-	const auto available_cpus = pin_threads ? GetProcessCPUMask() : vector<int>();
-	// If we have fewer available cores than threads, do not pin and let the OS schedule.
-	const auto can_pin = pin_threads && new_thread_count <= available_cpus.size();
-
-	// Stop every worker except the calling thread, detecting it in the same pass.
-	// A SET threads runs on the session's own pool worker, which cannot join
-	// itself, so it is kept alive and reconciled by the spawn step below. We stop
-	// even when increasing so the survivors follow the current affinity mask.
-	idx_t self = threads.size();
-	const auto self_id = std::this_thread::get_id();
-	idx_t stopped = 0;
-	for (idx_t i = 0; i < threads.size(); i++) {
-		if (self == threads.size() && threads[i]->internal_thread->get_id() == self_id) {
-			self = i;
-			continue;
-		}
-		*markers[i] = false;
-		stopped++;
-	}
-	Signal(stopped);
-	// now join the stopped threads to ensure they are fully stopped before erasing them
-	for (idx_t i = 0; i < threads.size(); i++) {
-		if (i != self) {
-			threads[i]->internal_thread->join();
-		}
-	}
-	// erase the threads/markers, keeping the calling worker (if any) as thread 0
-	if (self < threads.size()) {
-		auto kept_thread = std::move(threads[self]);
-		auto kept_marker = std::move(markers[self]);
-		threads.clear();
-		markers.clear();
-		// re-pin the survivor to index 0 so the pinned set stays contiguous with
-		// the new threads, which pin to 1..N-1 below
-		if (can_pin) {
-			SetThreadAffinity(*kept_thread->internal_thread, available_cpus, 0);
-		}
-		threads.push_back(std::move(kept_thread));
-		markers.push_back(std::move(kept_marker));
-	} else {
-		threads.clear();
-		markers.clear();
-	}
-	if (threads.size() < new_thread_count) {
-		// we are increasing the number of threads: launch them and run tasks on them
-		idx_t create_new_threads = new_thread_count - threads.size();
-
-		for (idx_t i = 0; i < create_new_threads; i++) {
-			// launch a thread and assign it a cancellation marker
-			auto marker = unique_ptr<atomic<bool>>(new atomic<bool>(true));
-			unique_ptr<thread> worker_thread;
-			try {
-				worker_thread = make_uniq<thread>(ThreadExecuteTasks, this, marker.get());
-				if (can_pin) {
-					SetThreadAffinity(*worker_thread, available_cpus, threads.size());
-				}
-			} catch (std::exception &ex) {
-				// thread constructor failed - this can happen when the system has too many threads allocated
-				// in this case we cannot allocate more threads - stop launching them
-				break;
-			}
-			auto thread_wrapper = make_uniq<SchedulerThread>(std::move(worker_thread));
-
-			threads.push_back(std::move(thread_wrapper));
-			markers.push_back(std::move(marker));
-		}
-	}
-	current_thread_count = NumericCast<int32_t>(threads.size() + external_threads);
-	BlockAllocator::Get(db).FlushAll();
-#endif
 }
 
 } // namespace duckdb

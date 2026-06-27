@@ -45,7 +45,7 @@ static vector<Identifier> GenerateCTEColumnNames(idx_t column_count, const strin
 	vector<Identifier> result;
 	result.reserve(column_count);
 	for (idx_t i = 0; i < column_count; i++) {
-		result.push_back(Identifier(prefix + to_string(i)));
+		result.emplace_back(prefix + to_string(i));
 	}
 	return result;
 }

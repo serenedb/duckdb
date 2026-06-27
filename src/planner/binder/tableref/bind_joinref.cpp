@@ -220,11 +220,11 @@ BoundStatement Binder::Bind(JoinRef &ref) {
 		// first bind the left hand side and get a list of all the tables and column names
 		// Use a vector to preserve left-table column order (PG convention)
 		case_insensitive_set_t lhs_columns_seen;
-		vector<string> lhs_columns;
+		vector<Identifier> lhs_columns;
 		auto &lhs_binding_list = left_binder.bind_context.GetBindingsList();
 		for (auto &binding : lhs_binding_list) {
 			for (auto &column_name : binding->GetColumnNames()) {
-				if (lhs_columns_seen.insert(column_name).second) {
+				if (lhs_columns_seen.insert(column_name.GetIdentifierName()).second) {
 					lhs_columns.push_back(column_name);
 				}
 			}

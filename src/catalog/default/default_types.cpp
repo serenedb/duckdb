@@ -580,7 +580,7 @@ LogicalType DefaultTypeGenerator::GetDefaultType(const string &name) {
 }
 
 LogicalType DefaultTypeGenerator::TryDefaultBind(const string &name, const vector<pair<string, Value>> &params) {
-	auto entry = TryGetDefaultTypeEntry(Identifier(name));
+	auto entry = TryGetDefaultTypeEntry(name);
 	if (!entry) {
 		return LogicalTypeId::INVALID;
 	}
@@ -611,12 +611,12 @@ unique_ptr<CatalogEntry> DefaultTypeGenerator::CreateDefaultEntry(ClientContext 
 	if (schema.name != DEFAULT_SCHEMA) {
 		return nullptr;
 	}
-	auto entry = TryGetDefaultTypeEntry(entry_name);
+	auto entry = TryGetDefaultTypeEntry(entry_name.GetIdentifierName());
 	if (!entry || entry->type.id() == LogicalTypeId::INVALID) {
 		return nullptr;
 	}
 	CreateTypeInfo info;
-	info.name = entry_name;
+	info.SetTypeName(entry_name);
 	info.type = entry->type;
 	info.internal = true;
 	info.temporary = true;

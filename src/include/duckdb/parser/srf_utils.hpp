@@ -33,7 +33,7 @@ inline unique_ptr<ParsedExpression> WrapTableFuncAsList(unique_ptr<ParsedExpress
 	inner_stmt->node = std::move(inner_select);
 
 	// Wrap: (...) __srf_N(__c)
-	auto subquery_ref = make_uniq<SubqueryRef>(std::move(inner_stmt), "__srf_" + to_string(idx));
+	auto subquery_ref = make_uniq<SubqueryRef>(std::move(inner_stmt), Identifier("__srf_" + to_string(idx)));
 	subquery_ref->column_name_alias.push_back("__c");
 
 	// Outer: SELECT list(__c) FROM __srf_N

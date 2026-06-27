@@ -46,10 +46,7 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 	}
 	case ExpressionClass::CAST: {
 		auto &cast = expr.Cast<CastExpression>();
-		int strength = 0;
-		if (cast.ChildMutable()) {
-			strength = FigureColnameInternal(cast.Child(), name);
-		}
+		int strength = FigureColnameInternal(cast.Child(), name);
 		if (strength <= 1) {
 			name = StringUtil::Lower(cast.TargetType().ToString());
 			while (name.ends_with("[]")) {
@@ -81,17 +78,11 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 	}
 	case ExpressionClass::COLLATE: {
 		auto &collate = expr.Cast<CollateExpression>();
-		if (collate.GetChildMutable()) {
-			return FigureColnameInternal(collate.GetChild(), name);
-		}
-		return 0;
+		return FigureColnameInternal(collate.Child(), name);
 	}
 	case ExpressionClass::CASE: {
 		auto &case_expr = expr.Cast<CaseExpression>();
-		int strength = 0;
-		if (case_expr.ElseMutable()) {
-			strength = FigureColnameInternal(case_expr.Else(), name);
-		}
+		int strength = FigureColnameInternal(case_expr.Else(), name);
 		if (strength <= 1) {
 			name = "case";
 			return 1;
@@ -166,7 +157,7 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 	}
 	case ExpressionClass::WINDOW: {
 		auto &window = expr.Cast<WindowExpression>();
-		name = StringUtil::Lower(window.function_name);
+		name = StringUtil::Lower(window.FunctionName().GetIdentifierName());
 		return 2;
 	}
 	default:

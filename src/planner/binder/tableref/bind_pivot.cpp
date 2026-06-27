@@ -260,7 +260,7 @@ static unique_ptr<SelectNode> PivotInitialAggregate(ClientContext &context, Pivo
 		ReplacePivotAggregateExpression(context, aggregate, aggregate_ref);
 
 		bind_state.aggregate_names.emplace_back(std::move(aggr_name));
-		bind_state.internal_aggregate_names.push_back(Identifier(aggregate_alias));
+		bind_state.internal_aggregate_names.emplace_back(aggregate_alias);
 		aggregate_ref->SetAlias(Identifier(std::move(aggregate_alias)));
 		subquery_stage1->select_list.push_back(std::move(aggregate_ref));
 	}
@@ -364,7 +364,7 @@ static unique_ptr<SelectNode> PivotFinalOperator(PivotBindState &bind_state, Piv
 			auto aggr = ref.aggregates[aggr_idx]->Copy();
 			auto &aggr_name = bound_pivot->bound_aggregate_names[aggr_idx];
 			auto pivot_aggr_name = pivot_value.name + aggr_name.GetIdentifierName();
-			aggregate_names.push_back(Identifier(std::move(pivot_aggr_name)));
+			aggregate_names.emplace_back(std::move(pivot_aggr_name));
 		}
 	}
 	QueryResult::DeduplicateColumns(aggregate_names);
@@ -494,7 +494,7 @@ BoundStatement Binder::BindBoundPivot(PivotRef &ref) {
 				}
 			}
 			result.bound_pivot.pivot_values.push_back(std::move(pivot_str));
-			names.push_back(Identifier(std::move(name)));
+			names.emplace_back(std::move(name));
 			types.push_back(aggr->GetReturnType());
 		}
 	}
@@ -536,7 +536,7 @@ static bool TryExtractUnpivotList(ParsedExpression &expr, vector<Identifier> &co
 	}
 	case ExpressionType::VALUE_CONSTANT: {
 		auto &constant = expr.Cast<ConstantExpression>();
-		column_names.push_back(Identifier(constant.GetValue().ToString()));
+		column_names.emplace_back(constant.GetValue().ToString());
 		return true;
 	}
 	case ExpressionType::FUNCTION: {
@@ -926,9 +926,9 @@ unique_ptr<SelectNode> Binder::BindUnpivot(Binder &child_binder, PivotRef &ref,
 	select_names.push_back("unpivot_names");
 	for (idx_t i = 0; i < unpivot_expressions.size(); i++) {
 		if (i > 0) {
-			select_names.push_back(Identifier("unpivot_list_" + std::to_string(i + 1)));
+			select_names.emplace_back("unpivot_list_" + std::to_string(i + 1));
 		} else {
-			select_names.push_back(Identifier("unpivot_list"));
+			select_names.emplace_back("unpivot_list");
 		}
 	}
 

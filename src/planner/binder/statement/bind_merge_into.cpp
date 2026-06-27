@@ -230,12 +230,12 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	if (!table_ptr) {
 		throw BinderException("Can only merge into base tables!");
 	}
-	if (stmt.target->type == TableReferenceType::BASE_TABLE) {
+	if (node.target->type == TableReferenceType::BASE_TABLE) {
 		// A catalog may delegate the scan of its table to a storage table in
 		// another catalog; the merge targets the entry the name resolves to.
-		auto &target_ref = stmt.target->Cast<BaseTableRef>();
-		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.table_name);
-		auto resolved = Catalog::GetEntry(context, target_ref.catalog_name, target_ref.schema_name, table_lookup,
+		auto &target_ref = node.target->Cast<BaseTableRef>();
+		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.Table());
+		auto resolved = Catalog::GetEntry(context, target_ref.Catalog(), target_ref.Schema(), table_lookup,
 		                                  OnEntryNotFound::RETURN_NULL);
 		if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
 			table_ptr = &resolved->Cast<TableCatalogEntry>();

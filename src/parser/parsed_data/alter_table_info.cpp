@@ -617,7 +617,7 @@ unique_ptr<AlterInfo> DropConstraintInfo::Copy() const {
 
 string DropConstraintInfo::ToString() const {
 	string result = "ALTER TABLE ";
-	result += QualifierToString(catalog, schema, name);
+	result += QualifierToString(Catalog(), Schema(), Name());
 	result += " DROP CONSTRAINT ";
 	if (if_constraint_not_found) {
 		result += "IF EXISTS ";
@@ -650,7 +650,7 @@ unique_ptr<AlterInfo> RenameConstraintInfo::Copy() const {
 
 string RenameConstraintInfo::ToString() const {
 	string result = "ALTER TABLE ";
-	result += QualifierToString(catalog, schema, name);
+	result += QualifierToString(Catalog(), Schema(), Name());
 	result += " RENAME CONSTRAINT ";
 	result += KeywordHelper::WriteOptionallyQuoted(old_name);
 	result += " TO ";

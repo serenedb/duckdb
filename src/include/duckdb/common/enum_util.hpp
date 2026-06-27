@@ -496,8 +496,6 @@ enum class SubqueryType : uint8_t;
 
 enum class SuggestionState : uint8_t;
 
-enum class SyncState : uint64_t;
-
 enum class TableColumnType : uint8_t;
 
 enum class TableFilterType : uint8_t;
@@ -1268,9 +1266,6 @@ const char* EnumUtil::ToChars<SubqueryType>(SubqueryType value);
 
 template<>
 const char* EnumUtil::ToChars<SuggestionState>(SuggestionState value);
-
-template<>
-const char* EnumUtil::ToChars<SyncState>(SyncState value);
 
 template<>
 const char* EnumUtil::ToChars<TableColumnType>(TableColumnType value);
@@ -2079,9 +2074,6 @@ SubqueryType EnumUtil::FromString<SubqueryType>(const char *value);
 
 template<>
 SuggestionState EnumUtil::FromString<SuggestionState>(const char *value);
-
-template<>
-SyncState EnumUtil::FromString<SyncState>(const char *value);
 
 template<>
 TableColumnType EnumUtil::FromString<TableColumnType>(const char *value);

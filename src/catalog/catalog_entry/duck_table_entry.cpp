@@ -987,18 +987,18 @@ DroppedFieldMapping RenameFieldFromStruct(const LogicalType &type, const vector<
 
 StructFieldRemap BuildAddFieldRemap(const LogicalType &column_type, const string &column_name,
                                     const vector<string> &column_path, const ColumnDefinition &new_field) {
-	auto res = AddFieldToStruct(column_type, column_path, new_field);
+	auto res = AddFieldToStruct(column_type, StringsToIdentifiers(column_path), new_field);
 	if (res.error.HasError()) {
 		res.error.Throw();
 	}
 	vector<unique_ptr<ParsedExpression>> children;
-	children.push_back(make_uniq<ColumnRefExpression>(column_path[0]));
+	children.push_back(make_uniq<ColumnRefExpression>(Identifier(column_path[0])));
 	// CAST(NULL AS <type>) rather than a typed-NULL constant: the facade renders
 	// this expression to SQL text (ChangeColumnType USING ...) and re-parses it,
 	// and a bare typed-NULL constant ToStrings to "NULL", losing the target type
 	// remap_struct needs.
 	children.push_back(make_uniq<CastExpression>(res.new_type, make_uniq<ConstantExpression>(Value())));
-	children.push_back(make_uniq<ConstantExpression>(ConstructMapping(column_name, column_type)));
+	children.push_back(make_uniq<ConstantExpression>(ConstructMapping(Identifier(column_name), column_type)));
 	D_ASSERT(res.default_value);
 	children.push_back(std::move(res.default_value));
 	StructFieldRemap result;
@@ -1008,12 +1008,12 @@ StructFieldRemap BuildAddFieldRemap(const LogicalType &column_type, const string
 }
 
 StructFieldRemap BuildRemoveFieldRemap(const LogicalType &column_type, const vector<string> &column_path) {
-	auto res = DropFieldFromStruct(column_type, column_path, 1);
+	auto res = DropFieldFromStruct(column_type, StringsToIdentifiers(column_path), 1);
 	if (res.error.HasError()) {
 		res.error.Throw();
 	}
 	vector<unique_ptr<ParsedExpression>> children;
-	children.push_back(make_uniq<ColumnRefExpression>(column_path[0]));
+	children.push_back(make_uniq<ColumnRefExpression>(Identifier(column_path[0])));
 	// CAST(NULL AS <type>) rather than a typed-NULL constant: the facade renders
 	// this expression to SQL text (ChangeColumnType USING ...) and re-parses it,
 	// and a bare typed-NULL constant ToStrings to "NULL", losing the target type
@@ -1029,12 +1029,12 @@ StructFieldRemap BuildRemoveFieldRemap(const LogicalType &column_type, const vec
 
 StructFieldRemap BuildRenameFieldRemap(const LogicalType &column_type, const vector<string> &column_path,
                                        const string &new_name) {
-	auto res = RenameFieldFromStruct(column_type, column_path, new_name, 1);
+	auto res = RenameFieldFromStruct(column_type, StringsToIdentifiers(column_path), new_name, 1);
 	if (res.error.HasError()) {
 		res.error.Throw();
 	}
 	vector<unique_ptr<ParsedExpression>> children;
-	children.push_back(make_uniq<ColumnRefExpression>(column_path[0]));
+	children.push_back(make_uniq<ColumnRefExpression>(Identifier(column_path[0])));
 	// CAST(NULL AS <type>) rather than a typed-NULL constant: the facade renders
 	// this expression to SQL text (ChangeColumnType USING ...) and re-parses it,
 	// and a bare typed-NULL constant ToStrings to "NULL", losing the target type

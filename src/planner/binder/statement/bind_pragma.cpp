@@ -25,7 +25,7 @@ unique_ptr<BoundPragmaInfo> Binder::BindPragma(PragmaInfo &info, QueryErrorConte
 	for (auto &entry : info.named_parameters) {
 		auto bound_value = pragma_binder.Bind(entry.second);
 		auto value = ExpressionExecutor::EvaluateScalar(context, *bound_value, true);
-		named_parameters.insert(make_pair(entry.first, std::move(value)));
+		named_parameters.insert(make_pair(Identifier(entry.first), std::move(value)));
 	}
 
 	// bind the pragma function

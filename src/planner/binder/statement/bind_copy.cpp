@@ -556,7 +556,8 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 	// COPY FROM ... WHERE: inject a filter between the file scan and insert.
 	if (stmt.info->where_clause) {
 		auto get_index = source->Cast<LogicalGet>().table_index;
-		bind_context.AddGenericBinding(get_index, table.name, expected_names, bound_insert.expected_types);
+		bind_context.AddGenericBinding(get_index, table.name, StringsToIdentifiers(expected_names),
+		                               bound_insert.expected_types);
 		WhereBinder where_binder(*this, context);
 		auto condition = where_binder.Bind(stmt.info->where_clause);
 		PlanSubqueries(condition, source);

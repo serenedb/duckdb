@@ -96,29 +96,29 @@ static bool LeftmostChainHasDoubleArrow(const ParsedExpression &expr) {
 	switch (expr.GetExpressionClass()) {
 	case ExpressionClass::FUNCTION: {
 		auto &f = expr.Cast<FunctionExpression>();
-		if (f.is_operator && f.function_name == "->>" && f.children.size() == 2) {
+		if (f.IsOperator() && f.FunctionName() == "->>" && f.GetArguments().size() == 2) {
 			return true;
 		}
-		if (f.is_operator && f.children.size() >= 1) {
-			return LeftmostChainHasDoubleArrow(*f.children[0]);
+		if (f.IsOperator() && f.GetArguments().size() >= 1) {
+			return LeftmostChainHasDoubleArrow(f.GetArguments()[0].GetExpression());
 		}
 		return false;
 	}
 	case ExpressionClass::COMPARISON: {
 		auto &c = expr.Cast<ComparisonExpression>();
-		return c.left && LeftmostChainHasDoubleArrow(*c.left);
+		return LeftmostChainHasDoubleArrow(c.Left());
 	}
 	case ExpressionClass::CONJUNCTION: {
 		auto &c = expr.Cast<ConjunctionExpression>();
-		if (!c.children.empty() && c.children[0]) {
-			return LeftmostChainHasDoubleArrow(*c.children[0]);
+		if (!c.GetChildren().empty() && c.GetChildren()[0]) {
+			return LeftmostChainHasDoubleArrow(*c.GetChildren()[0]);
 		}
 		return false;
 	}
 	case ExpressionClass::OPERATOR: {
 		auto &o = expr.Cast<OperatorExpression>();
-		if (!o.children.empty() && o.children[0]) {
-			return LeftmostChainHasDoubleArrow(*o.children[0]);
+		if (!o.GetChildren().empty() && o.GetChildren()[0]) {
+			return LeftmostChainHasDoubleArrow(*o.GetChildren()[0]);
 		}
 		return false;
 	}
@@ -136,32 +136,34 @@ static unique_ptr<ParsedExpression> PushArrowDown(unique_ptr<ParsedExpression> l
 	switch (node->GetExpressionClass()) {
 	case ExpressionClass::FUNCTION: {
 		auto &f = node->Cast<FunctionExpression>();
-		if (f.is_operator && f.function_name == "->>" && f.children.size() == 2) {
+		if (f.IsOperator() && f.FunctionName() == "->>" && f.GetArguments().size() == 2) {
 			// Wrap the LHS of `->>` with the lambda, mirroring RestructureArrowChain.
-			auto inner_lambda = make_uniq<LambdaExpression>(std::move(lhs), std::move(f.children[0]));
-			inner_lambda->syntax_type = syntax;
-			f.children[0] = std::move(inner_lambda);
+			auto inner_lambda =
+			    make_uniq<LambdaExpression>(std::move(lhs), std::move(f.GetArgumentsMutable()[0].GetExpressionMutable()));
+			inner_lambda->GetLambdaSyntaxTypeMutable() = syntax;
+			f.GetArgumentsMutable()[0].GetExpressionMutable() = std::move(inner_lambda);
 			return node;
 		}
-		if (f.is_operator && f.children.size() >= 1) {
-			f.children[0] = PushArrowDown(std::move(lhs), std::move(f.children[0]), syntax);
+		if (f.IsOperator() && f.GetArguments().size() >= 1) {
+			f.GetArgumentsMutable()[0].GetExpressionMutable() =
+			    PushArrowDown(std::move(lhs), std::move(f.GetArgumentsMutable()[0].GetExpressionMutable()), syntax);
 			return node;
 		}
 		break;
 	}
 	case ExpressionClass::COMPARISON: {
 		auto &c = node->Cast<ComparisonExpression>();
-		c.left = PushArrowDown(std::move(lhs), std::move(c.left), syntax);
+		c.LeftMutable() = PushArrowDown(std::move(lhs), std::move(c.LeftMutable()), syntax);
 		return node;
 	}
 	case ExpressionClass::CONJUNCTION: {
 		auto &c = node->Cast<ConjunctionExpression>();
-		c.children[0] = PushArrowDown(std::move(lhs), std::move(c.children[0]), syntax);
+		c.GetChildrenMutable()[0] = PushArrowDown(std::move(lhs), std::move(c.GetChildrenMutable()[0]), syntax);
 		return node;
 	}
 	case ExpressionClass::OPERATOR: {
 		auto &o = node->Cast<OperatorExpression>();
-		o.children[0] = PushArrowDown(std::move(lhs), std::move(o.children[0]), syntax);
+		o.GetChildrenMutable()[0] = PushArrowDown(std::move(lhs), std::move(o.GetChildrenMutable()[0]), syntax);
 		return node;
 	}
 	default:
@@ -169,7 +171,7 @@ static unique_ptr<ParsedExpression> PushArrowDown(unique_ptr<ParsedExpression> l
 	}
 	// Unreachable when caller checked LeftmostChainHasDoubleArrow.
 	auto fallback = make_uniq<LambdaExpression>(std::move(lhs), std::move(node));
-	fallback->syntax_type = syntax;
+	fallback->GetLambdaSyntaxTypeMutable() = syntax;
 	return std::move(fallback);
 }
 
@@ -191,9 +193,9 @@ BindResult ExpressionBinder::BindExpression(LambdaExpression &expr, idx_t depth,
 		// Generalised case: `col -> 'a' ->> 'b' = 'x'` parses as
 		// `LambdaExpression(col, Comparison(F('->>', ['a', 'b']), '=', 'x'))`.
 		// Push the lambda down so PG-style `(col -> 'a' ->> 'b') = 'x'` binding succeeds.
-		if (LeftmostChainHasDoubleArrow(*expr.expr)) {
+		if (LeftmostChainHasDoubleArrow(expr.Right())) {
 			unique_ptr<ParsedExpression> restructured =
-			    PushArrowDown(std::move(expr.lhs), std::move(expr.expr), expr.syntax_type);
+			    PushArrowDown(std::move(expr.LeftMutable()), std::move(expr.RightMutable()), expr.GetLambdaSyntaxType());
 			return BindExpression(restructured, depth);
 		}
 

@@ -72,7 +72,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 	if (has_stored_generated) {
 		parsed_set_exprs.reserve(set_info.columns.size());
 		for (idx_t i = 0; i < set_info.columns.size(); i++) {
-			parsed_set_exprs[set_info.columns[i]] = set_info.expressions[i]->Copy();
+			parsed_set_exprs[set_info.columns[i].GetIdentifierName()] = set_info.expressions[i]->Copy();
 		}
 	}
 
@@ -82,7 +82,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 		if (!table.ColumnExists(colname)) {
 			vector<string> column_names;
 			for (auto &col : all_columns.Physical()) {
-				column_names.push_back(col.Name());
+				column_names.push_back(col.Name().GetIdentifierName());
 			}
 			auto candidates =
 			    StringUtil::CandidatesErrorMessage(column_names, colname.GetIdentifierName(), "Did you mean");
@@ -120,7 +120,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 				return;
 			}
 			const auto &name = e->Cast<ColumnRefExpression>().GetColumnName();
-			if (auto entry = parsed_set_exprs.find(name); entry != parsed_set_exprs.end()) {
+			if (auto entry = parsed_set_exprs.find(name.GetIdentifierName()); entry != parsed_set_exprs.end()) {
 				// Assigned column: substitute its new value (DEFAULT means the column's
 				// default expression, or NULL when it has none). Its own refs read the
 				// old row, so this is not expanded further.
@@ -216,8 +216,8 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 		// A catalog may delegate the scan of its table to a storage table in
 		// another catalog; the update targets the entry the name resolves to.
 		auto &target_ref = node.table->Cast<BaseTableRef>();
-		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.table_name);
-		auto resolved = Catalog::GetEntry(context, target_ref.catalog_name, target_ref.schema_name, table_lookup,
+		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.Table());
+		auto resolved = Catalog::GetEntry(context, target_ref.Catalog(), target_ref.Schema(), table_lookup,
 		                                  OnEntryNotFound::RETURN_NULL);
 		if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
 			table_ptr = &resolved->Cast<TableCatalogEntry>();

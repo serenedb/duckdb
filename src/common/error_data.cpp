@@ -43,7 +43,7 @@ ErrorData::ErrorData(std::string_view message)
 	}
 
 	// JSON-formatted message.
-	auto info = StringUtil::ParseJSONMap(message);
+	auto info = StringUtil::ParseJSONMap(message)->Flatten();
 	for (auto &entry : info) {
 		if (entry.first == "exception_type") {
 			type = Exception::StringToExceptionType(entry.second);

@@ -1797,7 +1797,6 @@ excluded_rules:
   - PrefixExpression
   - CTEBodyContent
   - SingleArrowPair
-  - OperatorLiteral
   - DiscardTarget
   - ShowSettingAlias
   - DeallocateAll

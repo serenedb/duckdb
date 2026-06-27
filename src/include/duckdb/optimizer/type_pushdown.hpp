@@ -54,7 +54,7 @@ using Analyses = unordered_map<TableIndex, GetAnalysis>;
  *
  * Storing a reference is fine because the plan outlives the optimizer pass.
  */
-using Projections = unordered_map<TableIndex, LogicalProjection &>;
+using Projections = unordered_map<TableIndex, reference<LogicalProjection>>;
 
 /**
  * Collect CAST(col) expressions. If "col" is used without CAST in "plan",

@@ -151,7 +151,7 @@ static void BindSchema(ClientContext &context, vector<LogicalType> &return_types
 
 	for (idx_t i = 0; i < options.schema.size(); i++) {
 		const auto &column = options.schema[i];
-		schema_col_names.push_back(Identifier(column.name));
+		schema_col_names.emplace_back(column.name);
 		schema_col_types.push_back(column.type);
 
 		auto res = MultiFileColumnDefinition(column.name, column.type);
@@ -171,7 +171,7 @@ static void BindSchema(ClientContext &context, vector<LogicalType> &return_types
 	if (options.file_row_number) {
 		MultiFileColumnDefinition res("file_row_number", LogicalType::BIGINT);
 		res.identifier = Value::INTEGER(MultiFileReader::ORDINAL_FIELD_ID);
-		schema_col_names.push_back(Identifier(res.name));
+		schema_col_names.emplace_back(res.name);
 		schema_col_types.push_back(res.type);
 		reader_bind.schema.emplace_back(res);
 	}
@@ -448,7 +448,8 @@ struct ParquetLookupGlobalState : public GlobalTableFunctionState {
 	//! row_group_starts[num_groups] = total rows.
 	vector<idx_t> row_group_starts;
 	DataChunk scan_chunk;
-	ParquetReaderScanState scan_state;
+	ParquetReadGlobalState read_gstate {nullptr};
+	ParquetReadLocalState read_lstate;
 };
 
 unique_ptr<GlobalTableFunctionState> ParquetLookupInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
@@ -533,33 +534,53 @@ void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChu
 		return;
 	}
 
-	gstate.reader->InitializeScan(context, gstate.scan_state, std::move(groups_to_read));
-	gstate.scan_state.pk_lookups = data.pk_lookups;
+	gstate.read_gstate.pk_lookups = data.pk_lookups;
+	auto resolve_blocked = [](AsyncResult &res) {
+		if (res.GetResultType() == AsyncResultType::BLOCKED) {
+			res.ExecuteTasksSynchronously();
+		}
+	};
 
 	idx_t total = 0;
-	while (!gstate.scan_state.finished) {
-		gstate.scan_chunk.Reset();
-		gstate.reader->Scan(context, gstate.scan_state, gstate.scan_chunk);
-		const auto scanned = gstate.scan_chunk.size();
-		if (scanned == 0) {
-			continue;
-		}
-		// VARCHAR/nested: Copy deep-copies into output's heap so the data
-		// outlives scan_chunk's Reset on the next iteration.
-		for (idx_t c = 0; c < gstate.output_to_file_col.size(); ++c) {
-			const auto i = gstate.output_to_file_col[c];
-			if (i == DConstants::INVALID_INDEX) {
+	for (auto group : groups_to_read) {
+		gstate.read_lstate.group_index = group;
+		gstate.reader->InitializeScan(context, gstate.read_lstate.scan_state, group);
+		auto scheduled = gstate.reader->ScheduleIO(context, gstate.read_gstate, gstate.read_lstate);
+		resolve_blocked(scheduled);
+		bool resuming_blocked = false;
+		while (true) {
+			if (!resuming_blocked) {
+				gstate.scan_chunk.Reset();
+			}
+			auto res = gstate.reader->Scan(context, gstate.read_gstate, gstate.read_lstate, gstate.scan_chunk);
+			resuming_blocked = res.GetResultType() == AsyncResultType::BLOCKED;
+			if (resuming_blocked) {
+				resolve_blocked(res);
 				continue;
 			}
-			auto &src = gstate.scan_chunk.data[i];
-			auto &dst = output.data[c];
-			for (idx_t k = 0; k < scanned; ++k) {
-				const auto caller_pos = data.pk_output_positions[total + k];
-				VectorOperations::Copy(src, dst, /*source_count=*/k + 1, /*source_offset=*/k,
-				                       /*target_offset=*/caller_pos);
+			const auto scanned = gstate.scan_chunk.size();
+			if (scanned != 0) {
+				// VARCHAR/nested: Copy deep-copies into output's heap so the data
+				// outlives scan_chunk's Reset on the next iteration.
+				for (idx_t c = 0; c < gstate.output_to_file_col.size(); ++c) {
+					const auto i = gstate.output_to_file_col[c];
+					if (i == DConstants::INVALID_INDEX) {
+						continue;
+					}
+					auto &src = gstate.scan_chunk.data[i];
+					auto &dst = output.data[c];
+					for (idx_t k = 0; k < scanned; ++k) {
+						const auto caller_pos = data.pk_output_positions[total + k];
+						VectorOperations::Copy(src, dst, /*source_count=*/k + 1, /*source_offset=*/k,
+						                       /*target_offset=*/caller_pos);
+					}
+				}
+				total += scanned;
+			}
+			if (res.GetResultType() == AsyncResultType::FINISHED) {
+				break;
 			}
 		}
-		total += scanned;
 	}
 }
 
@@ -911,7 +932,7 @@ bool ParquetReader::TryInitializeScan(ClientContext &context, GlobalTableFunctio
 		if (gstate.row_group_index >= NumRowGroups()) {
 			return false;
 		}
-		lstate.group_indexes = {gstate.row_group_index};
+		lstate.group_index = gstate.row_group_index;
 		gstate.row_group_index++;
 		return true;
 	}
@@ -930,7 +951,7 @@ bool ParquetReader::TryInitializeScan(ClientContext &context, GlobalTableFunctio
 		gstate.row_group_index++;
 		gstate.current_row_offset = group_end;
 		if (take) {
-			lstate.group_indexes = {gstate.row_group_index - 1};
+			lstate.group_index = gstate.row_group_index - 1;
 			return true;
 		}
 	}
@@ -968,6 +989,7 @@ AsyncResult ParquetReader::Scan(ClientContext &context, GlobalTableFunctionState
 		}
 	}
 #endif
+	auto &gstate = gstate_p.Cast<ParquetReadGlobalState>();
 	auto &local_state = local_state_p.Cast<ParquetReadLocalState>();
 	local_state.scan_state.op = gstate.op;
 	local_state.scan_state.pk_lookups = gstate.pk_lookups;

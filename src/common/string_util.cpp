@@ -725,15 +725,47 @@ unique_ptr<ComplexJSON> StringUtil::ParseJSONMap(std::string_view json, bool ign
 		}
 		throw SerializationException("Failed to parse JSON string: %s", json);
 	}
-	auto root = doc->GetRoot();
-	if (!root.IsObject()) {
+	yyjson_val *root = yyjson_doc_get_root(doc);
+	if (!root || yyjson_get_type(root) != YYJSON_TYPE_OBJ) {
+		yyjson_doc_free(doc);
 		if (ignore_errors) {
 			return result;
 		}
 		throw SerializationException("Failed to parse JSON string: %s", json);
 	}
-	root.IterateObject([&](const string &key, JSONValue value) { result[key] = JSONValueToString(json, value); });
+
+	result = ParseJSON(json, doc, root, ignore_errors);
+	yyjson_doc_free(doc);
 	return result;
+}
+
+string WriteJsonToString(yyjson_mut_doc *doc) {
+	yyjson_write_err err;
+	size_t len;
+	constexpr yyjson_write_flag flags = YYJSON_WRITE_ALLOW_INVALID_UNICODE;
+	char *json = yyjson_mut_write_opts(doc, flags, nullptr, &len, &err);
+	if (!json) {
+		yyjson_mut_doc_free(doc);
+		throw SerializationException("Failed to write JSON string: %s", err.msg);
+	}
+	// Create a string from the JSON
+	string result(json, len);
+
+	// Free the JSON and the document
+	free(json);
+	yyjson_mut_doc_free(doc);
+
+	// Return the result
+	return result;
+}
+
+string ToJsonMapInternal(const unordered_map<string, string> &map, yyjson_mut_doc *doc, yyjson_mut_val *root) {
+	for (auto &entry : map) {
+		auto key = yyjson_mut_strncpy(doc, entry.first.c_str(), entry.first.size());
+		auto value = yyjson_mut_strncpy(doc, entry.second.c_str(), entry.second.size());
+		yyjson_mut_obj_add(root, key, value);
+	}
+	return WriteJsonToString(doc);
 }
 
 string StringUtil::ToJSONMap(const unordered_map<string, string> &map) {

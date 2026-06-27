@@ -29,9 +29,8 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
 			if (stmt_iter != statements.end()) {
 				statements.erase(stmt_iter);
 			} else if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-				throw CatalogException("prepared statement \"%s\" does not exist", info->name);
+				throw CatalogException("prepared statement \"%s\" does not exist", info->Name());
 			}
-		}
 		}
 		break;
 	}

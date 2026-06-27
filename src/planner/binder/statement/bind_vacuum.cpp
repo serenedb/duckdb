@@ -35,7 +35,7 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 	// store table (a different, qualified name), so table.name would not match
 	// the binding alias.
 	auto &base_ref = info.ref->Cast<BaseTableRef>();
-	auto &binding_name = info.ref->alias.empty() ? base_ref.table_name : info.ref->alias;
+	auto &binding_name = info.ref->alias.empty() ? base_ref.Table() : info.ref->alias;
 
 	vector<unique_ptr<Expression>> select_list;
 	auto &columns = info.columns;

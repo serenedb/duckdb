@@ -58,7 +58,7 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 			auto &select_node = node->Cast<SelectNode>();
 			if (select_node.select_list.size() == macro_def.return_names.size()) {
 				for (idx_t i = 0; i < macro_def.return_names.size(); i++) {
-					select_node.select_list[i]->SetAlias(macro_def.return_names[i]);
+					select_node.select_list[i]->SetAlias(Identifier(macro_def.return_names[i]));
 				}
 			}
 		} else if (macro_def.return_names.empty() && macro_def.return_types.size() == 1 &&

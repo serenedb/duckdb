@@ -81,8 +81,9 @@ BindResult SelectBinder::BindUnnest(FunctionExpression &function, idx_t depth, b
 	}
 
 	// All unnamed args are list args (come first), named args are keyword params
+	auto &args = function.GetArgumentsMutable();
 	idx_t num_list_args = 0;
-	while (num_list_args < function.children.size() && function.children[num_list_args]->GetAlias().empty()) {
+	while (num_list_args < args.size() && args[num_list_args].GetExpression().GetAlias().empty()) {
 		num_list_args++;
 	}
 	if (num_list_args == 0) {
@@ -93,16 +94,16 @@ BindResult SelectBinder::BindUnnest(FunctionExpression &function, idx_t depth, b
 	bool recursive = false;
 	optional_idx max_depth_opt;
 	bool keep_parent_names = false;
-	for (idx_t i = num_list_args; i < function.children.size(); i++) {
-		if (function.children[i]->HasParameter()) {
+	for (idx_t i = num_list_args; i < args.size(); i++) {
+		if (args[i].GetExpression().HasParameter()) {
 			throw ParameterNotAllowedException("Parameter not allowed in unnest parameter");
 		}
-		auto alias = StringUtil::Lower(function.children[i]->GetAlias());
-		BindChild(function.children[i], depth, error);
+		auto alias = StringUtil::Lower(args[i].GetExpression().GetAlias().GetIdentifierName());
+		BindChild(args[i].GetExpressionMutable(), depth, error);
 		if (error.HasError()) {
 			return BindResult(std::move(error));
 		}
-		auto &const_child = BoundExpression::GetExpression(*function.children[i]);
+		auto &const_child = BoundExpression::GetExpression(*args[i].GetExpressionMutable());
 		auto value = ExpressionExecutor::EvaluateScalar(context, *const_child, true);
 		if (alias == "recursive") {
 			recursive = value.GetValue<bool>();
@@ -129,16 +130,16 @@ BindResult SelectBinder::BindUnnest(FunctionExpression &function, idx_t depth, b
 		vector<unique_ptr<Expression>> result_exprs;
 		for (idx_t i = 0; i < num_list_args; i++) {
 			unnest_level++;
-			BindChild(function.children[i], depth, error);
+			BindChild(args[i].GetExpressionMutable(), depth, error);
 			if (error.HasError()) {
-				auto corr_result = BindCorrelatedColumns(function.children[i], error);
+				auto corr_result = BindCorrelatedColumns(args[i].GetExpressionMutable(), error);
 				if (corr_result.HasError()) {
 					return BindResult(corr_result.error);
 				}
-				auto &bound_expr = BoundExpression::GetExpression(*function.children[i]);
+				auto &bound_expr = BoundExpression::GetExpression(*args[i].GetExpressionMutable());
 				ExtractCorrelatedExpressions(binder, *bound_expr);
 			}
-			auto &bound_child = BoundExpression::GetExpression(*function.children[i]);
+			auto &bound_child = BoundExpression::GetExpression(*args[i].GetExpressionMutable());
 			bound_child = BoundCastExpression::AddArrayCastToList(context, std::move(bound_child));
 			auto &child_type = bound_child->GetReturnType();
 			unnest_level--;
@@ -159,7 +160,7 @@ BindResult SelectBinder::BindUnnest(FunctionExpression &function, idx_t depth, b
 			}
 
 			auto unnest_result = make_uniq<BoundUnnestExpression>(return_type);
-			unnest_result->child = std::move(bound_child);
+			unnest_result->ChildMutable() = std::move(bound_child);
 
 			auto entry = node.unnests.find(unnest_level);
 			TableIndex unnest_table_index;
@@ -177,7 +178,8 @@ BindResult SelectBinder::BindUnnest(FunctionExpression &function, idx_t depth, b
 			}
 			auto col_name = "unnest" + to_string(i + 1);
 			result_exprs.push_back(make_uniq<BoundColumnRefExpression>(
-			    std::move(col_name), return_type, ColumnBinding(unnest_table_index, unnest_column_index), depth));
+			    Identifier(std::move(col_name)), return_type, ColumnBinding(unnest_table_index, unnest_column_index),
+			    depth));
 		}
 		return BindResult(make_uniq<BoundExpandedExpression>(std::move(result_exprs)));
 	}
@@ -306,7 +308,7 @@ BindResult SelectBinder::BindUnnest(FunctionExpression &function, idx_t depth, b
 							vector<string> current_key_path;
 							// During recursive expansion, not all expressions are BoundFunctionExpression
 							if (keep_parent_names && expr->GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
-								current_key_path.emplace_back(expr->GetAlias());
+								current_key_path.emplace_back(expr->GetAlias().GetIdentifierName());
 							}
 							current_key_path.emplace_back(entry.first);
 							new_expressions.push_back(

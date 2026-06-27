@@ -217,7 +217,6 @@
 #include "duckdb/storage/table/segment_tree.hpp"
 #include "duckdb/storage/table/table_index_list.hpp"
 #include "duckdb/storage/temporary_file_manager.hpp"
-#include "duckdb/storage/write_ahead_log.hpp"
 
 namespace duckdb {
 
@@ -5566,25 +5565,6 @@ const char* EnumUtil::ToChars<SuggestionState>(SuggestionState value) {
 template<>
 SuggestionState EnumUtil::FromString<SuggestionState>(const char *value) {
 	return static_cast<SuggestionState>(StringUtil::StringToEnum(GetSuggestionStateValues(), 14, "SuggestionState", value));
-}
-
-const StringUtil::EnumStringLiteral *GetSyncStateValues() {
-	static constexpr StringUtil::EnumStringLiteral values[] {
-		{ static_cast<uint32_t>(SyncState::IDLE), "IDLE" },
-		{ static_cast<uint32_t>(SyncState::SYNCING), "SYNCING" },
-		{ static_cast<uint32_t>(SyncState::SYNC_PENDING), "SYNC_PENDING" }
-	};
-	return values;
-}
-
-template<>
-const char* EnumUtil::ToChars<SyncState>(SyncState value) {
-	return StringUtil::EnumToString(GetSyncStateValues(), 3, "SyncState", static_cast<uint32_t>(value));
-}
-
-template<>
-SyncState EnumUtil::FromString<SyncState>(const char *value) {
-	return static_cast<SyncState>(StringUtil::StringToEnum(GetSyncStateValues(), 3, "SyncState", value));
 }
 
 const StringUtil::EnumStringLiteral *GetTableColumnTypeValues() {

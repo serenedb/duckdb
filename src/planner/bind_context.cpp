@@ -515,7 +515,7 @@ void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
 			// Find the first binding that has this USING column
 			BindingAlias first_alias;
 			for (auto &entry : bindings_list) {
-				auto using_binding_ptr = GetUsingBinding(column_name, entry->GetBindingAlias());
+				auto using_binding_ptr = GetUsingBinding(Identifier(column_name), entry->GetBindingAlias());
 				if (using_binding_ptr) {
 					first_alias = entry->GetBindingAlias();
 					break;
@@ -524,7 +524,7 @@ void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
 			if (!first_alias.IsSet()) {
 				continue;
 			}
-			auto using_binding_ptr = GetUsingBinding(column_name, first_alias);
+			auto using_binding_ptr = GetUsingBinding(Identifier(column_name), first_alias);
 			if (!using_binding_ptr) {
 				continue;
 			}
@@ -532,7 +532,7 @@ void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
 			if (handled_using_columns.find(using_binding) != handled_using_columns.end()) {
 				continue;
 			}
-			QualifiedColumnName qualified_column(first_alias, column_name);
+			QualifiedColumnName qualified_column(first_alias, Identifier(column_name));
 			if (CheckExclusionList(expr, qualified_column, exclusion_info)) {
 				handled_using_columns.insert(using_binding);
 				continue;
@@ -540,16 +540,16 @@ void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
 			if (!using_binding.primary_binding.IsSet()) {
 				auto coalesce = make_uniq_base<ParsedExpression, OperatorExpression>(ExpressionType::OPERATOR_COALESCE);
 				for (auto &child_binding : using_binding.bindings) {
-					coalesce->Cast<OperatorExpression>().children.push_back(
-					    make_uniq<ColumnRefExpression>(column_name, child_binding));
+					coalesce->Cast<OperatorExpression>().GetChildrenMutable().push_back(
+					    make_uniq<ColumnRefExpression>(Identifier(column_name), child_binding));
 				}
-				coalesce->SetAlias(column_name);
+				coalesce->SetAlias(Identifier(column_name));
 				if (HandleRename(expr, qualified_column, coalesce, exclusion_info)) {
 					new_select_list.push_back(std::move(coalesce));
 				}
 			} else {
-				auto new_expr =
-				    make_uniq_base<ParsedExpression, ColumnRefExpression>(column_name, using_binding.primary_binding);
+				auto new_expr = make_uniq_base<ParsedExpression, ColumnRefExpression>(Identifier(column_name),
+				                                                                     using_binding.primary_binding);
 				if (HandleRename(expr, qualified_column, new_expr, exclusion_info)) {
 					new_select_list.push_back(std::move(new_expr));
 				}

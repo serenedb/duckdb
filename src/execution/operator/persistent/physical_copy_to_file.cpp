@@ -118,7 +118,7 @@ private:
 
 private:
 	mutex lock;
-	std::condition_variable condition;
+	std::condition_variable_any condition;
 	unordered_map<string, DirectoryEntry> directories;
 };
 

@@ -351,7 +351,8 @@ unique_ptr<SQLStatement> Parser::ParseTopLevelStatement(vector<MatcherToken> &to
 	                                               token_cursor);
 }
 
-vector<SimplifiedToken> Parser::Tokenize(const string &query) {	HighlightTokenizer tokenizer(query);
+vector<SimplifiedToken> Parser::Tokenize(std::string_view query) {
+	HighlightTokenizer tokenizer(query);
 	tokenizer.TokenizeInput();
 
 	vector<SimplifiedToken> result;
