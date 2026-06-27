@@ -256,8 +256,6 @@ enum class GeometryStorageType : uint8_t;
 
 enum class GeometryType : uint8_t;
 
-enum class GroupByExpressionInfoType : uint8_t;
-
 enum class HLLStorageType : uint8_t;
 
 enum class HTTPStatusCode : uint16_t;
@@ -345,6 +343,8 @@ enum class OperatorFinalResultType : uint8_t;
 enum class OperatorFinalizeResultType : uint8_t;
 
 enum class OperatorResultType : uint8_t;
+
+enum class OptimizerHookPosition : uint8_t;
 
 enum class OptimizerType : uint32_t;
 
@@ -496,6 +496,8 @@ enum class SubqueryType : uint8_t;
 
 enum class SuggestionState : uint8_t;
 
+enum class SyncState : uint64_t;
+
 enum class TableColumnType : uint8_t;
 
 enum class TableFilterType : uint8_t;
@@ -523,6 +525,8 @@ enum class ThreadPinMode : uint8_t;
 enum class TimestampCastResult : uint8_t;
 
 enum class TransactionInvalidationPolicy : uint8_t;
+
+enum class TransactionIsolationLevel : uint8_t;
 
 enum class TransactionModifierType : uint8_t;
 
@@ -906,9 +910,6 @@ template<>
 const char* EnumUtil::ToChars<GeometryType>(GeometryType value);
 
 template<>
-const char* EnumUtil::ToChars<GroupByExpressionInfoType>(GroupByExpressionInfoType value);
-
-template<>
 const char* EnumUtil::ToChars<HLLStorageType>(HLLStorageType value);
 
 template<>
@@ -1039,6 +1040,9 @@ const char* EnumUtil::ToChars<OperatorFinalizeResultType>(OperatorFinalizeResult
 
 template<>
 const char* EnumUtil::ToChars<OperatorResultType>(OperatorResultType value);
+
+template<>
+const char* EnumUtil::ToChars<OptimizerHookPosition>(OptimizerHookPosition value);
 
 template<>
 const char* EnumUtil::ToChars<OptimizerType>(OptimizerType value);
@@ -1266,6 +1270,9 @@ template<>
 const char* EnumUtil::ToChars<SuggestionState>(SuggestionState value);
 
 template<>
+const char* EnumUtil::ToChars<SyncState>(SyncState value);
+
+template<>
 const char* EnumUtil::ToChars<TableColumnType>(TableColumnType value);
 
 template<>
@@ -1306,6 +1313,9 @@ const char* EnumUtil::ToChars<TimestampCastResult>(TimestampCastResult value);
 
 template<>
 const char* EnumUtil::ToChars<TransactionInvalidationPolicy>(TransactionInvalidationPolicy value);
+
+template<>
+const char* EnumUtil::ToChars<TransactionIsolationLevel>(TransactionIsolationLevel value);
 
 template<>
 const char* EnumUtil::ToChars<TransactionModifierType>(TransactionModifierType value);
@@ -1711,9 +1721,6 @@ template<>
 GeometryType EnumUtil::FromString<GeometryType>(const char *value);
 
 template<>
-GroupByExpressionInfoType EnumUtil::FromString<GroupByExpressionInfoType>(const char *value);
-
-template<>
 HLLStorageType EnumUtil::FromString<HLLStorageType>(const char *value);
 
 template<>
@@ -1844,6 +1851,9 @@ OperatorFinalizeResultType EnumUtil::FromString<OperatorFinalizeResultType>(cons
 
 template<>
 OperatorResultType EnumUtil::FromString<OperatorResultType>(const char *value);
+
+template<>
+OptimizerHookPosition EnumUtil::FromString<OptimizerHookPosition>(const char *value);
 
 template<>
 OptimizerType EnumUtil::FromString<OptimizerType>(const char *value);
@@ -2071,6 +2081,9 @@ template<>
 SuggestionState EnumUtil::FromString<SuggestionState>(const char *value);
 
 template<>
+SyncState EnumUtil::FromString<SyncState>(const char *value);
+
+template<>
 TableColumnType EnumUtil::FromString<TableColumnType>(const char *value);
 
 template<>
@@ -2111,6 +2124,9 @@ TimestampCastResult EnumUtil::FromString<TimestampCastResult>(const char *value)
 
 template<>
 TransactionInvalidationPolicy EnumUtil::FromString<TransactionInvalidationPolicy>(const char *value);
+
+template<>
+TransactionIsolationLevel EnumUtil::FromString<TransactionIsolationLevel>(const char *value);
 
 template<>
 TransactionModifierType EnumUtil::FromString<TransactionModifierType>(const char *value);

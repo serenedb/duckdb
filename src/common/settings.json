@@ -510,13 +510,6 @@
         "default_value": "ALL_ERRORS_INVALIDATE_TRANSACTION"
     },
     {
-        "name": "delim_join_as_cte",
-        "description": "Rewrite delim joins to materialized CTEs during dependent join flattening",
-        "type": "BOOLEAN",
-        "default_scope": "local",
-        "default_value": "true"
-    },
-    {
         "name": "default_transaction_isolation",
         "description": "Sets the transaction isolation level of each new transaction.",
         "type": "ENUM<TransactionIsolationLevel>",
@@ -532,6 +525,13 @@
         "type": "BOOLEAN",
         "default_scope": "local",
         "default_value": "false"
+    },
+    {
+        "name": "delim_join_as_cte",
+        "description": "Rewrite delim joins to materialized CTEs during dependent join flattening",
+        "type": "BOOLEAN",
+        "default_scope": "local",
+        "default_value": "true"
     },
     {
         "name": "deprecated_using_key_syntax",
