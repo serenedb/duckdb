@@ -1635,7 +1635,6 @@ IdentifierType:
     - TypeFuncName
     - IdentifierColId
     - ReservedIdentifierOrStringLiteral
-    - AttachAlias
     - CollationName
     - IndexType
     - RelOptionName
@@ -1652,8 +1651,6 @@ IdentifierType:
     - SecretName
     - TriggerName
     - DropSecretStorage
-    - ConstraintName
-    - ExplainOptionName
     - DotIdentifier
     - IdentifierDot
     - ExtensionAlias

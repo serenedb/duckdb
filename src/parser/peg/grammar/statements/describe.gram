@@ -5,9 +5,6 @@ ShowAllTables <- ShowOrDescribe 'ALL' 'TABLES'
 ShowAllSettings <- ShowOrDescribe 'ALL'
 ShowQualifiedName <- ShowOrDescribeOrSummarize (BaseTableName / StringLiteral)?
 ShowTables <- ShowOrDescribe 'TABLES' 'FROM' QualifiedName
-DescribeTarget <- DescribeBaseTableName / DescribeStringLiteral
-DescribeBaseTableName <- BaseTableName
-DescribeStringLiteral <- StringLiteral
 
 # PG-compat aliases for parameter-status style settings. Each form is a fixed
 # multi-keyword shape (TRANSACTION ISOLATION LEVEL / SESSION AUTHORIZATION /
