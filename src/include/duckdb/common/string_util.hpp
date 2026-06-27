@@ -20,6 +20,7 @@
 #include <cstring>
 
 namespace duckdb {
+class ComplexJSON;
 
 #ifndef DUCKDB_QUOTE_DEFINE
 // Preprocessor trick to allow text to be converted to C-string / string

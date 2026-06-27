@@ -259,7 +259,7 @@ CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
 		// scalar lookup missed - fall back to table function / table macro so the
 		// outer switch can route to the unnest rewrite (PG-compat SRF in SELECT)
 		// or surface the canonical procedure error. Matches v2026.05.18 semantics.
-		EntryLookupInfo table_function_lookup(CatalogType::TABLE_FUNCTION_ENTRY, function.function_name, error_context);
+		EntryLookupInfo table_function_lookup(CatalogType::TABLE_FUNCTION_ENTRY, function.FunctionName(), error_context);
 		auto table_func =
 		    GetCatalogEntry(function.Catalog(), function.Schema(), table_function_lookup, OnEntryNotFound::RETURN_NULL);
 		if (table_func) {
@@ -267,7 +267,7 @@ CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
 				auto &macro = table_func->Cast<MacroCatalogEntry>();
 				if (macro.is_procedure) {
 					throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
-					                      function.function_name);
+					                      function.FunctionName());
 				}
 			}
 			func = table_func;
@@ -275,7 +275,7 @@ CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
 	}
 	if (!func) {
 		// not a table function - rebind to throw a real catalog-missing error
-		EntryLookupInfo function_lookup(CatalogType::SCALAR_FUNCTION_ENTRY, function.function_name, error_context);
+		EntryLookupInfo function_lookup(CatalogType::SCALAR_FUNCTION_ENTRY, function.FunctionName(), error_context);
 		func = GetCatalogEntry(function.catalog, function.schema, function_lookup, OnEntryNotFound::THROW_EXCEPTION);
 	}
 	return *func;
@@ -296,9 +296,9 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 	// SELECT list. Other scalar/table dual-name functions like `repeat` keep
 	// their scalar semantics.
 	if (func.get().type == CatalogType::SCALAR_FUNCTION_ENTRY && depth == 0 && select_binder &&
-	    select_binder->unnest_level == 0 && function.function_name == "generate_series") {
+	    select_binder->unnest_level == 0 && function.FunctionName() == "generate_series") {
 		QueryErrorContext error_context(function.GetQueryLocation());
-		EntryLookupInfo tbl_lookup(CatalogType::TABLE_FUNCTION_ENTRY, function.function_name, error_context);
+		EntryLookupInfo tbl_lookup(CatalogType::TABLE_FUNCTION_ENTRY, function.FunctionName(), error_context);
 		auto tbl_func = GetCatalogEntry(function.catalog, function.schema, tbl_lookup, OnEntryNotFound::RETURN_NULL);
 		if (tbl_func && tbl_func->type == CatalogType::TABLE_FUNCTION_ENTRY) {
 			func = *tbl_func;
@@ -313,7 +313,7 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 		if (function.Distinct() || function.Filter() || !function.OrderBy()->orders.empty()) {
 			throw InvalidInputException("Function \"%s\" is a %s. \"DISTINCT\", \"FILTER\", and \"ORDER BY\" are only "
 			                            "applicable to window and aggregate functions.",
-			                            function.function_name, CatalogTypeToString(func.get().type));
+			                            function.FunctionName(), CatalogTypeToString(func.get().type));
 		}
 		break;
 	}
@@ -333,7 +333,7 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 		// the table-function path in bind_table_function.cpp.
 		auto &macro_entry = func.get().Cast<ScalarMacroCatalogEntry>();
 		if (macro_entry.is_procedure) {
-			throw BinderException("%s() is a procedure\nHINT: To call a procedure, use CALL.", function.function_name);
+			throw BinderException("%s() is a procedure\nHINT: To call a procedure, use CALL.", function.FunctionName());
 		}
 		// macro function
 		return BindMacro(function, macro_entry, depth, expr_ptr);
@@ -349,7 +349,7 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 		// Routes through SelectBinder::BindUnnest, sharing BoundUnnestNode with other SRFs.
 		auto unnest_func = make_uniq<FunctionExpression>("unnest", vector<unique_ptr<ParsedExpression>> {});
 		unnest_func->children.push_back(WrapTableFuncAsList(function.Copy()));
-		unnest_func->SetAlias(function.GetAlias().empty() ? function.function_name : function.GetAlias());
+		unnest_func->SetAlias(function.GetAlias().empty() ? function.FunctionName() : function.GetAlias());
 		expr_ptr = std::move(unnest_func);
 		return BindExpression(expr_ptr, depth, false);
 	}
@@ -359,7 +359,7 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 		// PG error rather than the generic "Unsupported catalog type" fallthrough.
 		auto &table_macro = func.get().Cast<TableMacroCatalogEntry>();
 		if (table_macro.is_procedure) {
-			throw BinderException("%s() is a procedure\nHINT: To call a procedure, use CALL.", function.function_name);
+			throw BinderException("%s() is a procedure\nHINT: To call a procedure, use CALL.", function.FunctionName());
 		}
 		throw InvalidInputException("Unsupported catalog type when binding function");
 	}

@@ -38,8 +38,9 @@ inline unique_ptr<ParsedExpression> WrapTableFuncAsList(unique_ptr<ParsedExpress
 
 	// Outer: SELECT list(__c) FROM __srf_N
 	auto outer_select = make_uniq<SelectNode>();
-	auto list_func = make_uniq<FunctionExpression>("list", vector<unique_ptr<ParsedExpression>> {});
-	list_func->children.push_back(make_uniq<ColumnRefExpression>("__c"));
+	vector<unique_ptr<ParsedExpression>> list_args;
+	list_args.push_back(make_uniq<ColumnRefExpression>("__c"));
+	auto list_func = make_uniq<FunctionExpression>("list", std::move(list_args));
 	outer_select->select_list.push_back(std::move(list_func));
 	outer_select->from_table = std::move(subquery_ref);
 	auto outer_stmt = make_uniq<SelectStatement>();
@@ -47,8 +48,8 @@ inline unique_ptr<ParsedExpression> WrapTableFuncAsList(unique_ptr<ParsedExpress
 
 	// Scalar subquery returning LIST
 	auto result = make_uniq<SubqueryExpression>();
-	result->subquery = std::move(outer_stmt);
-	result->subquery_type = SubqueryType::SCALAR;
+	result->SubqueryMutable() = std::move(outer_stmt);
+	result->GetSubqueryTypeMutable() = SubqueryType::SCALAR;
 	return result;
 }
 

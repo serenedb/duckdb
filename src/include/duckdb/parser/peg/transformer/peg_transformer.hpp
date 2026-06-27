@@ -26,6 +26,8 @@
 #include "duckdb/parser/peg/ast/setting_info.hpp"
 #include "duckdb/parser/peg/ast/table_alias.hpp"
 #include "duckdb/parser/peg/ast/trigger_event_info.hpp"
+#include "duckdb/parser/peg/ast/trigger_table_referencing_info.hpp"
+#include "duckdb/parser/parsed_data/connect_info.hpp"
 #include "duckdb/parser/peg/ast/window_frame.hpp"
 #include "duckdb/function/macro_function.hpp"
 #include "duckdb/parser/parser_options.hpp"

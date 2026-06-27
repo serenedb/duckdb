@@ -27,16 +27,16 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 	switch (expr.GetExpressionClass()) {
 	case ExpressionClass::COLUMN_REF: {
 		auto &column_ref = expr.Cast<ColumnRefExpression>();
-		name = StringUtil::Lower(column_ref.GetColumnName());
+		name = StringUtil::Lower(column_ref.GetColumnName().GetIdentifierName());
 		return 2;
 	}
 	case ExpressionClass::FUNCTION: {
 		auto &function = expr.Cast<FunctionExpression>();
-		if (function.is_operator) {
+		if (function.IsOperator()) {
 			// PG: operators like +, -, *, / don't produce column names
 			return 0;
 		}
-		name = StringUtil::Lower(function.function_name);
+		name = StringUtil::Lower(function.FunctionName().GetIdentifierName());
 		if (name == "count_star") {
 			name = "count";
 		} else if (name == "trim") {
@@ -47,11 +47,11 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 	case ExpressionClass::CAST: {
 		auto &cast = expr.Cast<CastExpression>();
 		int strength = 0;
-		if (cast.child) {
-			strength = FigureColnameInternal(*cast.child, name);
+		if (cast.ChildMutable()) {
+			strength = FigureColnameInternal(cast.Child(), name);
 		}
 		if (strength <= 1) {
-			name = StringUtil::Lower(cast.cast_type.ToString());
+			name = StringUtil::Lower(cast.TargetType().ToString());
 			while (name.ends_with("[]")) {
 				name = name.substr(0, name.size() - 2);
 			}
@@ -81,16 +81,16 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 	}
 	case ExpressionClass::COLLATE: {
 		auto &collate = expr.Cast<CollateExpression>();
-		if (collate.child) {
-			return FigureColnameInternal(*collate.child, name);
+		if (collate.GetChildMutable()) {
+			return FigureColnameInternal(collate.GetChild(), name);
 		}
 		return 0;
 	}
 	case ExpressionClass::CASE: {
 		auto &case_expr = expr.Cast<CaseExpression>();
 		int strength = 0;
-		if (case_expr.else_expr) {
-			strength = FigureColnameInternal(*case_expr.else_expr, name);
+		if (case_expr.ElseMutable()) {
+			strength = FigureColnameInternal(case_expr.Else(), name);
 		}
 		if (strength <= 1) {
 			name = "case";
@@ -101,20 +101,20 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 	case ExpressionClass::SUBQUERY: {
 		// PG: T_SubLink
 		auto &subquery = expr.Cast<SubqueryExpression>();
-		switch (subquery.subquery_type) {
+		switch (subquery.GetSubqueryType()) {
 		case SubqueryType::EXISTS:
 		case SubqueryType::NOT_EXISTS:
 			name = "exists";
 			return 2;
 		case SubqueryType::SCALAR:
 			// PG: EXPR_SUBLINK -- get column name of the subquery's single target
-			if (subquery.subquery && subquery.subquery->node &&
-			    subquery.subquery->node->type == QueryNodeType::SELECT_NODE) {
-				auto &select = subquery.subquery->node->Cast<SelectNode>();
+			if (subquery.Subquery() && subquery.Subquery()->node &&
+			    subquery.Subquery()->node->type == QueryNodeType::SELECT_NODE) {
+				auto &select = subquery.Subquery()->node->Cast<SelectNode>();
 				if (select.select_list.size() == 1) {
 					auto &target = *select.select_list[0];
 					if (!target.GetAlias().empty()) {
-						name = StringUtil::Lower(target.GetAlias());
+						name = StringUtil::Lower(target.GetAlias().GetIdentifierName());
 						return 2;
 					}
 					return FigureColnameInternal(target, name);
@@ -146,20 +146,20 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 		// which uses the last string field name (if any) or falls back to
 		// the source expression's name.
 		case ExpressionType::ARRAY_EXTRACT:
-			if (!op.children.empty()) {
-				return FigureColnameInternal(*op.children[0], name);
+			if (!op.GetChildren().empty()) {
+				return FigureColnameInternal(*op.GetChildren()[0], name);
 			}
 			return 0;
 		// PG: T_A_Indirection -- find last field name
 		case ExpressionType::STRUCT_EXTRACT:
-			if (op.children.size() == 2 && op.children[1]->GetExpressionClass() == ExpressionClass::CONSTANT) {
-				auto &constant = op.children[1]->Cast<ConstantExpression>();
+			if (op.GetChildren().size() == 2 && op.GetChildren()[1]->GetExpressionClass() == ExpressionClass::CONSTANT) {
+				auto &constant = op.GetChildren()[1]->Cast<ConstantExpression>();
 				if (!constant.GetValue().IsNull() && constant.GetValue().type().id() == LogicalTypeId::VARCHAR) {
 					name = StringUtil::Lower(constant.GetValue().GetValue<string>());
 					return 2;
 				}
 			}
-			return FigureColnameInternal(*op.children[0], name);
+			return FigureColnameInternal(*op.GetChildren()[0], name);
 		default:
 			return 0;
 		}
@@ -187,7 +187,7 @@ Identifier BaseExpression::GetName() const {
 // Used only when computing SELECT result column headers.
 string BaseExpression::GetColumnName() const {
 	if (!GetAlias().empty()) {
-		return GetAlias();
+		return GetAlias().GetIdentifierName();
 	}
 	string name;
 	if (FigureColnameInternal(*this, name) > 0) {
