@@ -5,17 +5,17 @@
 
 namespace duckdb {
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAnalyzeStatement(PEGTransformer &transformer,
-                                                                          const optional<bool> &analyze_verbose,
-                                                                          optional<AnalyzeTarget> analyze_target) {
+                                                                          const bool &analyze_verbose,
+                                                                          AnalyzeTarget analyze_target) {
 	VacuumOptions vacuum_options;
 	vacuum_options.analyze = true;
 	auto result = make_uniq<VacuumStatement>(vacuum_options);
 	if (analyze_verbose) {
 		throw NotImplementedException("ANALYZE VERBOSE is not implemented yet");
 	}
-	if (analyze_target && analyze_target->ref) {
-		result->info->columns = analyze_target->columns;
-		result->info->ref = std::move(analyze_target->ref);
+	if (analyze_target.ref) {
+		result->info->columns = std::move(analyze_target.columns);
+		result->info->ref = std::move(analyze_target.ref);
 		result->info->has_table = true;
 	}
 	return std::move(result);
@@ -23,12 +23,10 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAnalyzeStatement(PEGTra
 
 AnalyzeTarget PEGTransformerFactory::TransformAnalyzeTarget(PEGTransformer &transformer,
                                                             unique_ptr<BaseTableRef> base_table_name,
-                                                            const optional<vector<string>> &name_list) {
+                                                            const vector<string> &name_list) {
 	AnalyzeTarget result;
 	result.ref = std::move(base_table_name);
-	if (name_list) {
-		result.columns = StringsToIdentifiers(*name_list);
-	}
+	result.columns = name_list;
 	return result;
 }
 

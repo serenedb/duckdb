@@ -18,19 +18,21 @@ unique_ptr<ConnectInfo> PEGTransformerFactory::TransformStringSessionTarget(PEGT
 	return result;
 }
 
-unique_ptr<ConnectInfo> PEGTransformerFactory::TransformCatalogSessionTarget(PEGTransformer &transformer,
-                                                                             const Identifier &catalog_name) {
+unique_ptr<ConnectInfo> PEGTransformerFactory::TransformCatalogSessionTarget(PEGTransformer &transformer, std::string_view catalog_name) {
 	auto result = make_uniq<ConnectInfo>();
 	result->name = catalog_name;
 	return result;
 }
 
-unique_ptr<SQLStatement>
-PEGTransformerFactory::TransformConnectStatement(PEGTransformer &transformer,
-                                                 optional<unique_ptr<ConnectInfo>> session_target) {
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformConnectStatement(PEGTransformer &transformer, unique_ptr<ConnectInfo> session_target) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto info = make_uniq<ConnectInfo>();
-	if (session_target) {
-		info = std::move(*session_target);
+	auto &target_opt = list_pr.Child<OptionalParseResult>(1);
+	if (target_opt.HasResult()) {
+		auto captured = TransformSessionTarget(transformer, target_opt.GetResult());
+		info->name = std::move(captured.name);
+		info->target_is_local = captured.target_is_local;
+		info->name_is_string_literal = captured.name_is_string_literal;
 	}
 	auto result = make_uniq<ConnectStatement>();
 	result->info = std::move(info);

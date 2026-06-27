@@ -60,13 +60,11 @@ TransactionModifierType PEGTransformerFactory::TransformReadWrite(PEGTransformer
 	return TransactionModifierType::TRANSACTION_READ_WRITE;
 }
 
-unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommitTransaction(PEGTransformer &transformer,
-                                                                           const bool &has_result) {
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommitTransaction(PEGTransformer &transformer) {
 	return make_uniq<TransactionStatement>(make_uniq<TransactionInfo>(TransactionType::COMMIT));
 }
 
-unique_ptr<SQLStatement> PEGTransformerFactory::TransformRollbackTransaction(PEGTransformer &transformer,
-                                                                             const bool &has_result) {
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformRollbackTransaction(PEGTransformer &transformer) {
 	return make_uniq<TransactionStatement>(make_uniq<TransactionInfo>(TransactionType::ROLLBACK));
 }
 } // namespace duckdb

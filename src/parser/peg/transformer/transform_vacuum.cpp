@@ -35,21 +35,19 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformVacuumStatement(PEGTran
 	return std::move(result);
 }
 
-VacuumOptions PEGTransformerFactory::TransformVacuumLegacyOptions(PEGTransformer &transformer,
-                                                                  const optional<string> &opt_full,
-                                                                  const optional<string> &opt_freeze,
-                                                                  const optional<string> &opt_verbose,
-                                                                  const optional<string> &opt_analyze) {
+VacuumOptions PEGTransformerFactory::TransformVacuumLegacyOptions(PEGTransformer &transformer, const string &opt_full,
+                                                                  const string &opt_freeze, const string &opt_verbose,
+                                                                  const string &opt_analyze) {
 	VacuumOptions options;
 	options.vacuum = true;
-	options.analyze = opt_analyze.has_value();
-	if (opt_full) {
+	options.analyze = !opt_analyze.empty();
+	if (!opt_full.empty()) {
 		throw NotImplementedException("FULL is not yet implemented");
 	}
-	if (opt_freeze) {
+	if (!opt_freeze.empty()) {
 		throw NotImplementedException("FREEZE is not yet implemented");
 	}
-	if (opt_verbose) {
+	if (!opt_verbose.empty()) {
 		throw NotImplementedException("VERBOSE is not yet implemented");
 	}
 	return options;

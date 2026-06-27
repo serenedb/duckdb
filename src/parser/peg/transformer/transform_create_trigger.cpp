@@ -26,26 +26,16 @@ static unique_ptr<QueryNode> ExtractQueryNode(unique_ptr<SQLStatement> stmt) {
 	}
 }
 
-unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTriggerStmt(
-    PEGTransformer &transformer, const optional<bool> &if_not_exists, const Identifier &trigger_name,
-    const TriggerTiming &trigger_timing, const TriggerEventInfo &trigger_event,
-    unique_ptr<BaseTableRef> base_table_name, const optional<TriggerTableReferencingInfo> &referencing_clause,
-    const optional<TriggerForEach> &for_each_clause, unique_ptr<SQLStatement> trigger_body) {
+unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTriggerStmt(PEGTransformer &transformer, const bool &if_not_exists, const Identifier &trigger_name, const TriggerTiming &trigger_timing, const TriggerEventInfo &trigger_event, unique_ptr<BaseTableRef> base_table_name, const TriggerTableReferencingInfo &referencing_clause, const TriggerForEach &for_each_clause, unique_ptr<SQLStatement> trigger_body) {
 	auto result = make_uniq<CreateStatement>();
 	auto info = make_uniq<CreateTriggerInfo>();
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
-	info->SetTriggerName(trigger_name);
+	info->trigger_name = trigger_name;
 	info->timing = trigger_timing;
 	info->event_type = trigger_event.event_type;
 	info->columns = trigger_event.columns;
 	info->base_table = std::move(base_table_name);
-	if (referencing_clause) {
-		info->referencing_new_table = referencing_clause->new_table;
-		info->referencing_old_table = referencing_clause->old_table;
-	}
-	if (for_each_clause) {
-		info->for_each = *for_each_clause;
-	}
+	info->for_each = for_each_clause;
 	info->trigger_action = ExtractQueryNode(std::move(trigger_body));
 	result->info = std::move(info);
 	return result;
@@ -112,10 +102,7 @@ TriggerTableReferencingInfo PEGTransformerFactory::TransformReferencingOldTableA
 	return info;
 }
 
-TriggerTableReferencingInfo
-PEGTransformerFactory::TransformReferencingClause(PEGTransformer &transformer,
-                                                  const TriggerTableReferencingInfo &referencing_item,
-                                                  const optional<TriggerTableReferencingInfo> &referencing_item_1) {
+TriggerTableReferencingInfo PEGTransformerFactory::TransformReferencingClause(PEGTransformer &transformer, const TriggerTableReferencingInfo &referencing_item, const TriggerTableReferencingInfo &referencing_item_1) {
 	auto result = referencing_item;
 	if (!referencing_item_1) {
 		return result;

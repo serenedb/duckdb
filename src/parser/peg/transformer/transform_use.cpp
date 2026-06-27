@@ -28,19 +28,26 @@ QualifiedName PEGTransformerFactory::TransformUseTarget(PEGTransformer &transfor
 }
 
 // UseTargetCatalogSchema <- CatalogName '.' ReservedSchemaName DotIdentifier*
-QualifiedName PEGTransformerFactory::TransformUseTargetCatalogSchema(PEGTransformer &transformer,
-                                                                     std::string_view catalog_name,
-                                                                     std::string_view reserved_schema_name,
-                                                                     const vector<string> &dot_identifier) {
+QualifiedName PEGTransformerFactory::TransformUseTargetCatalogSchema(PEGTransformer &transformer, std::string_view catalog_name, std::string_view reserved_schema_name, const vector<Identifier> &dot_identifier) {
 	if (!dot_identifier.empty()) {
 		throw ParserException("Expected \"USE database\" or \"USE database.schema\"");
 	}
 	QualifiedName result;
-	result.NameMutable() = schema_name;
+	result.catalog = INVALID_CATALOG;
+	result.schema = catalog_name;
+	result.name = reserved_schema_name;
 	return result;
 }
 
 string PEGTransformerFactory::TransformDotIdentifier(PEGTransformer &transformer, std::string_view identifier) {
 	return string(identifier);
 }
+QualifiedName PEGTransformerFactory::TransformSchemaNameAsUseTarget(PEGTransformer &transformer, std::string_view schema_name) {
+	throw NotImplementedException("TransformSchemaNameAsUseTarget");
+}
+
+QualifiedName PEGTransformerFactory::TransformCatalogNameAsUseTarget(PEGTransformer &transformer, std::string_view catalog_name) {
+	throw NotImplementedException("TransformCatalogNameAsUseTarget");
+}
+
 } // namespace duckdb
