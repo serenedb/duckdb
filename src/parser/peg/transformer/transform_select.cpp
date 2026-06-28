@@ -228,6 +228,10 @@ unique_ptr<SelectStatement> PEGTransformerFactory::TransformSimpleSelect(PEGTran
 FunctionArgument PEGTransformerFactory::TransformNamedFunctionArgument(PEGTransformer &transformer,
                                                                        MacroParameter named_parameter) {
 	named_parameter.expression->SetAlias(named_parameter.name);
+	// Distinguish "user wrote name := value" from "alias set for display"
+	// so the macro binder doesn't misclassify args whose alias is an
+	// auto-derived output label (e.g. ARRAY(subquery) sets alias="array").
+	named_parameter.expression->SetNamedParameter();
 	return FunctionArgument(named_parameter.name, std::move(named_parameter.expression));
 }
 

@@ -38,6 +38,13 @@
         "type": "optional_idx",
         "default": "optional_idx()",
         "equals_skip": true
+      },
+      {
+        "name": "is_named_parameter",
+        "type": "bool",
+        "serialize_skip": true,
+        "equals_skip": true,
+        "hash_skip": true
       }
     ]
   },
