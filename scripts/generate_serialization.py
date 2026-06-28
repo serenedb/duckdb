@@ -685,6 +685,8 @@ def generate_base_class_code(base_class: SerializableClass):
     for entry in base_class.members:
         if entry.serialize_property == base_class.enum_value:
             enum_type = entry.type
+        if entry.serialize_skip:
+            continue
         base_class_serialize += base_class.get_serialize_element(entry)
 
         type_name = replace_pointer(entry.type)
@@ -722,7 +724,7 @@ def generate_base_class_code(base_class: SerializableClass):
 
     assign_entries = []
     for entry in base_class.members:
-        skip = False
+        skip = entry.serialize_skip
         for check_entry in [entry.name, entry.serialize_property]:
             if check_entry in base_class.set_parameter_names:
                 skip = True
@@ -979,6 +981,9 @@ def check_children_for_duplicate_members(node: SerializableClass, parents: list,
                     f"Error: Duplicate member name \"{member.name}\" in class \"{node.name}\" ({' -> '.join(map(lambda x: x.name, parents))} -> {node.name})"
                 )
             seen_names.add(member.name)
+            if member.serialize_skip:
+                # not (de)serialized, so it carries no field id
+                continue
             if member.id in seen_ids:
                 exit(
                     f"Error: Duplicate member id \"{member.id}\" in class \"{node.name}\" ({' -> '.join(map(lambda x: x.name, parents))} -> {node.name})"

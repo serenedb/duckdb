@@ -1339,6 +1339,26 @@ PEGTransformerFactory::TransformOtherOperatorExpression(PEGTransformer &transfor
 				throw ParserException("Too many identifiers found, expected schema.operator or operator");
 			}
 
+			// PG regex operators reached this path via OPERATOR(schema.op); rewrite to the configured regex match call.
+			string regex_function_name;
+			bool regex_negated;
+			bool regex_case_insensitive;
+			if (TryGetRegexMatchOperator(func_name, transformer, regex_function_name, regex_negated,
+			                             regex_case_insensitive)) {
+				if (regex_case_insensitive) {
+					children_function.push_back(make_uniq<ConstantExpression>(Value("i")));
+				}
+				auto regex_func_expr =
+				    make_uniq<FunctionExpression>(Identifier(regex_function_name), std::move(children_function));
+				regex_func_expr->IsOperatorMutable() = !regex_negated;
+				if (regex_negated) {
+					expr = make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(regex_func_expr));
+				} else {
+					expr = std::move(regex_func_expr);
+				}
+				continue;
+			}
+
 			auto func_expr = make_uniq<FunctionExpression>(
 			    QualifiedName(Identifier(), Identifier(std::move(schema_name)), Identifier(std::move(func_name))),
 			    std::move(children_function));
