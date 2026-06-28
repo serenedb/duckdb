@@ -277,27 +277,6 @@ idx_t TaskScheduler::NumberOfAsyncThreads() {
 	return GetPool(TaskSchedulerType::ASYNC).NumberOfThreads();
 }
 
-idx_t TaskScheduler::GetNumberOfTasks() const {
-	idx_t num_tasks = 0;
-	for (auto &queue : queues) {
-		num_tasks += queue->GetTasksInQueue();
-	}
-	return num_tasks;
-}
-
-idx_t TaskScheduler::GetProducerCount() const {
-	// We always create a producer in all queues, so we can just get the producer count of the regular queue here
-	return GetQueue(TaskSchedulerType::REGULAR).GetProducerCount();
-}
-
-idx_t TaskScheduler::GetTaskCountForProducer(ProducerToken &token) const {
-	idx_t task_count = 0;
-	for (uint8_t i = 0; i < TASK_SCHEDULER_TYPE_COUNT; i++) {
-		task_count += GetQueue(static_cast<TaskSchedulerType>(i)).GetTaskCountForProducer(token);
-	}
-	return task_count;
-}
-
 void TaskScheduler::SetThreads(idx_t total_threads, idx_t external_threads) {
 	if (total_threads == 0) {
 		throw SyntaxException("Number of threads must be positive!");
