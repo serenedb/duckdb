@@ -33,6 +33,37 @@ void CurrentSettingFunction(DataChunk &args, ExpressionState &state, Vector &res
 	result.Reference(info.value, count_t(args.size()));
 }
 
+void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &context = state.GetContext();
+	auto count = args.size();
+	UnifiedVectorFormat name_data;
+	args.data[0].ToUnifiedFormat(count, name_data);
+	const auto *name_ptr = UnifiedVectorFormat::GetData<string_t>(name_data);
+	auto *result_ptr = FlatVector::GetDataMutable<string_t>(result);
+	auto &result_validity = FlatVector::ValidityMutable(result);
+	for (idx_t row = 0; row < count; row++) {
+		auto n_idx = name_data.sel->get_index(row);
+		if (!name_data.validity.RowIsValid(n_idx)) {
+			result_validity.SetInvalid(row);
+			continue;
+		}
+		auto key = StringUtil::Lower(name_ptr[n_idx].GetString());
+		Value val;
+		if (!context.TryGetCurrentSetting(key, val)) {
+			Catalog::AutoloadExtensionByConfigName(context, key);
+			if (!context.TryGetCurrentSetting(key, val)) {
+				throw InvalidInputException("unrecognized configuration parameter \"%s\"", key);
+			}
+		}
+		val = Settings::FormatDisplayValue(context, val);
+		if (val.IsNull()) {
+			result_validity.SetInvalid(row);
+			continue;
+		}
+		result_ptr[row] = StringVector::AddString(result, val.ToString());
+	}
+}
+
 unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	auto &context = input.GetClientContext();
 	auto &bound_function = input.GetBoundFunction();
@@ -41,9 +72,13 @@ unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	if (key_child->GetReturnType().id() == LogicalTypeId::UNKNOWN) {
 		throw ParameterNotResolvedException();
 	}
-	if (key_child->GetReturnType().id() != LogicalTypeId::VARCHAR ||
-	    key_child->GetReturnType().id() != LogicalTypeId::VARCHAR || !key_child->IsFoldable()) {
-		throw ParserException("Key name for current_setting needs to be a constant string");
+	if (key_child->GetReturnType().id() != LogicalTypeId::VARCHAR) {
+		throw ParserException("Key name for current_setting must be of type VARCHAR");
+	}
+	if (!key_child->IsFoldable()) {
+		bound_function.SetFunctionCallback(CurrentSettingDynamic);
+		bound_function.SetReturnType(LogicalType::VARCHAR);
+		return nullptr;
 	}
 	Value key_val = ExpressionExecutor::EvaluateScalar(context, *key_child);
 	D_ASSERT(key_val.type().id() == LogicalTypeId::VARCHAR);
