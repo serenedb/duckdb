@@ -1296,6 +1296,7 @@ TEST_CASE("Invalid Grammar extensions fail grammar compilation", "[api][grammar_
 	auto result = con.Query("SET active_grammar_extensions = ['invalid_grammar_extension']");
 	REQUIRE_FAIL(result);
 	CheckGrammarExtensionTestSyntax(con);
-	auto setting = con.Query("SELECT current_setting('active_grammar_extensions')")->Collection().GetValue(0, 0);
+	auto setting =
+	    con.Query("SELECT current_setting('active_grammar_extensions')::VARCHAR[]")->Collection().GetValue(0, 0);
 	REQUIRE(ListValue::GetChildren(setting).size() == 2);
 }
