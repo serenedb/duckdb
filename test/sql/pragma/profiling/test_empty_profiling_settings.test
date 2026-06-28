@@ -22,7 +22,7 @@ PRAGMA disable_profiling;
 # Evaluate results.
 
 query I
-SELECT unnest(current_setting('tracked_metrics')) ORDER BY ALL
+SELECT unnest(current_setting('tracked_metrics')::VARCHAR[]) ORDER BY ALL
 ----
 
 statement ok

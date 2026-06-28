@@ -135,7 +135,7 @@ statement ok
 CALL enable_profiling(metrics = ['operator.intermediate_rows', 'operator.rows_scanned', 'query.total_intermediate_rows', 'query.total_rows_scanned'])
 
 query I
-SELECT UNNEST(CURRENT_SETTING('tracked_metrics')) ORDER BY ALL;
+SELECT UNNEST(CURRENT_SETTING('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 operator.intermediate_rows
 operator.rows_scanned
@@ -147,7 +147,7 @@ statement ok
 CALL enable_profiling(metrics = ['query.sql', 'operator.extra_info'])
 
 query I
-SELECT UNNEST(CURRENT_SETTING('tracked_metrics')) ORDER BY ALL;
+SELECT UNNEST(CURRENT_SETTING('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 operator.extra_info
 query.sql
@@ -157,7 +157,7 @@ statement ok
 CALL enable_profiling(metrics = ['query.total_time', 'operator.intermediate_size_bytes']);
 
 query I
-SELECT UNNEST(CURRENT_SETTING('tracked_metrics')) ORDER BY ALL;
+SELECT UNNEST(CURRENT_SETTING('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 operator.intermediate_size_bytes
 query.total_time
@@ -167,7 +167,7 @@ statement ok
 CALL enable_profiling(metrics = 'query.*');
 
 query I
-SELECT UNNEST(CURRENT_SETTING('tracked_metrics')) ORDER BY ALL;
+SELECT UNNEST(CURRENT_SETTING('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 query.*
 
@@ -176,7 +176,7 @@ statement ok
 CALL enable_profiling(metrics = '*');
 
 query I
-SELECT UNNEST(CURRENT_SETTING('tracked_metrics')) ORDER BY ALL;
+SELECT UNNEST(CURRENT_SETTING('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 *
 
@@ -195,7 +195,7 @@ statement ok
 RESET tracked_metrics;
 
 query I
-SELECT UNNEST(CURRENT_SETTING('tracked_metrics')) ORDER BY ALL;
+SELECT UNNEST(CURRENT_SETTING('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 *
 
@@ -204,7 +204,7 @@ statement ok
 CALL enable_profiling(['query.total_time', 'operator.intermediate_size_bytes']);
 
 query I
-SELECT UNNEST(CURRENT_SETTING('tracked_metrics')) ORDER BY ALL;
+SELECT UNNEST(CURRENT_SETTING('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 operator.intermediate_size_bytes
 query.total_time
@@ -214,7 +214,7 @@ statement ok
 CALL enable_profiling(['io.total_bytes_read', 'io.total_bytes_written'], mode = 'detailed');
 
 query I
-SELECT UNNEST(CURRENT_SETTING('tracked_metrics')) ORDER BY ALL;
+SELECT UNNEST(CURRENT_SETTING('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 io.total_bytes_read
 io.total_bytes_written
@@ -282,7 +282,7 @@ SELECT CURRENT_SETTING('profiling_mode');
 standard
 
 query I
-SELECT UNNEST(CURRENT_SETTING('tracked_metrics')) ORDER BY ALL;
+SELECT UNNEST(CURRENT_SETTING('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 query.sql
 query.total_time

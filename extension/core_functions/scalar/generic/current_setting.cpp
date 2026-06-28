@@ -5,6 +5,8 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
+#include "duckdb/common/vector/vector_iterator.hpp"
+#include "duckdb/common/vector/vector_writer.hpp"
 
 namespace duckdb {
 
@@ -32,9 +34,41 @@ void CurrentSettingFunction(DataChunk &args, ExpressionState &state, Vector &res
 	result.Reference(info.value, count_t(args.size()));
 }
 
+void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &context = state.GetContext();
+	auto names = args.data[0].Values<string_t>();
+	auto writer = FlatVector::Writer<string_t>(result, args.size());
+	for (auto entry : names) {
+		if (!entry.IsValid()) {
+			writer.WriteNull();
+			continue;
+		}
+		Identifier key(entry.GetValue().GetString());
+		Value val;
+		if (!context.TryGetCurrentSetting(key, val)) {
+			Catalog::AutoloadExtensionByConfigName(context, key);
+			if (!context.TryGetCurrentSetting(key, val)) {
+				throw InvalidInputException("unrecognized configuration parameter \"%s\"", key);
+			}
+		}
+		if (val.IsNull()) {
+			writer.WriteNull();
+			continue;
+		}
+		auto text = val.ToString();
+		writer.WriteValue(string_t(text));
+	}
+}
+
 unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	auto &context = input.GetClientContext();
 	auto &bound_function = input.GetBoundFunction();
+	auto &key_child = input.GetArguments()[0];
+	if (!key_child->HasParameter() && !key_child->IsFoldable()) {
+		bound_function.SetFunctionCallback(CurrentSettingDynamic);
+		bound_function.SetReturnType(LogicalType::VARCHAR);
+		return nullptr;
+	}
 
 	auto key_val = input.GetNonNullConstant(0);
 	auto key = key_val.GetValue<Identifier>();
