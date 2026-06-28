@@ -39,9 +39,6 @@ public:
 	bool DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task);
 	bool Dequeue(shared_ptr<Task> &task);
 	idx_t GetTasksInQueue() const;
-	idx_t GetApproxSize() const;
-	idx_t GetProducerCount() const;
-	idx_t GetTaskCountForProducer(ProducerToken &token) const;
 
 #ifndef DUCKDB_NO_THREADS
 	ConcurrentQueueWrapper &GetQueue();
