@@ -58,7 +58,8 @@ PEGTransformerFactory::TransformPragmaFunction(PEGTransformer &transformer, cons
 				throw ParserException("Named parameter requires a column reference on the LHS");
 			}
 			auto &columnref = comp.Left().Cast<ColumnRefExpression>();
-			result->info->named_parameters.insert(make_pair(columnref.GetName(), std::move(comp.RightMutable())));
+			result->info->named_parameters.insert(
+			    make_pair(columnref.GetName().GetIdentifierName(), std::move(comp.RightMutable())));
 		} else if (parameter->GetExpressionType() == ExpressionType::COLUMN_REF) {
 			auto &colref = parameter->Cast<ColumnRefExpression>();
 			if (!colref.IsQualified()) {

@@ -118,7 +118,7 @@ private:
 
 private:
 	mutex lock;
-	std::condition_variable condition;
+	absl::CondVar condition;
 	unordered_map<string, DirectoryEntry> directories;
 };
 
@@ -1601,7 +1601,7 @@ void CopyDirectoryManager::EnsureDirectory(FileSystem &fs, const string &dir_pat
 			if (entry->second.state == CopyDirectoryState::FAILED) {
 				std::rethrow_exception(entry->second.error);
 			}
-			condition.wait(guard);
+			condition.Wait(guard.mutex());
 		}
 	}
 
@@ -1622,7 +1622,7 @@ void CopyDirectoryManager::EnsureDirectory(FileSystem &fs, const string &dir_pat
 		entry->second.state = error ? CopyDirectoryState::FAILED : CopyDirectoryState::COMPLETE;
 		entry->second.error = error;
 	}
-	condition.notify_all();
+	condition.SignalAll();
 
 	if (error) {
 		std::rethrow_exception(error);

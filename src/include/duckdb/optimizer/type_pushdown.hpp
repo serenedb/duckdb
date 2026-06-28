@@ -52,9 +52,9 @@ using Analyses = unordered_map<TableIndex, GetAnalysis>;
  * PROJECTION -> GET (i.e. read from VIEW) is pushed down but VIEW->VIEW->GET
  * or VIEW->CTE->GET is not.
  *
- * Storing a reference is fine because the plan outlives the optimizer pass.
+ * Storing a pointer is fine because the plan outlives the optimizer pass.
  */
-using Projections = unordered_map<TableIndex, LogicalProjection &>;
+using Projections = unordered_map<TableIndex, LogicalProjection *>;
 
 /**
  * Collect CAST(col) expressions. If "col" is used without CAST in "plan",
