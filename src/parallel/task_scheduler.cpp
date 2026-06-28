@@ -34,12 +34,18 @@ TaskScheduler::TaskScheduler(DatabaseInstance &db) : db(db) {
 	}
 }
 
+void TaskScheduler::Join() {
+#ifndef DUCKDB_NO_THREADS
+	for (auto &pool : pools) {
+		pool->RelaunchThreads(*this, true);
+	}
+#endif
+}
+
 TaskScheduler::~TaskScheduler() {
 #ifndef DUCKDB_NO_THREADS
 	try {
-		for (auto &pool : pools) {
-			pool->RelaunchThreads(*this, true);
-		}
+		Join();
 		BlockAllocator::Get(db).FlushAll();
 	} catch (...) {
 		// nothing we can do in the destructor if this fails
