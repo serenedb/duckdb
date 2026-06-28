@@ -91,7 +91,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_VERBOSE_MAKEFILE OFF)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_MACOSX_RPATH 1)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -1065,37 +1064,6 @@ if(NOT MSVC)
     message(WARNING "Please use a recent compiler for debug builds")
   endif()
 
-  set(CMAKE_CXX_FLAGS_DEBUG
-      "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -DDEBUG -Wall ${M32_FLAG} ${CXX_EXTRA}")
-  set(CMAKE_CXX_FLAGS_RELEASE
-      "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG ${M32_FLAG} ${CXX_EXTRA}")
-
-  set(CMAKE_LTO_JOBS
-      ""
-      CACHE STRING "Number of LTO backend jobs")
-  if("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang$" AND CMAKE_LTO)
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -flto=${CMAKE_LTO}")
-    if(CMAKE_LTO_JOBS AND CMAKE_LTO STREQUAL "thin")
-      foreach(LINKER_TYPE EXE SHARED MODULE)
-        set(CMAKE_${LINKER_TYPE}_LINKER_FLAGS_RELEASE
-            "${CMAKE_${LINKER_TYPE}_LINKER_FLAGS_RELEASE} -flto-jobs=${CMAKE_LTO_JOBS}"
-        )
-        set(CMAKE_${LINKER_TYPE}_LINKER_FLAGS_RELWITHDEBINFO
-            "${CMAKE_${LINKER_TYPE}_LINKER_FLAGS_RELWITHDEBINFO} -flto-jobs=${CMAKE_LTO_JOBS}"
-        )
-      endforeach()
-    endif()
-  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_LTO)
-    if(CMAKE_LTO_JOBS)
-      set(CMAKE_CXX_FLAGS_RELEASE
-          "${CMAKE_CXX_FLAGS_RELEASE} -flto=${CMAKE_LTO_JOBS}")
-    else()
-      set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -flto")
-    endif()
-  endif()
-
-  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${CXX_EXTRA_DEBUG}")
-  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELEASE} -g")
 else()
   set(CMAKE_CXX_WINDOWS_FLAGS
       "/wd4244 /wd4267 /wd4200 /wd26451 /wd26495 /D_CRT_SECURE_NO_WARNINGS /utf-8"
@@ -1111,45 +1079,13 @@ endif()
 
 # todo use CHECK_CXX_COMPILER_FLAG(-fsanitize=address SUPPORTS_SANITIZER) etc.
 
-set(CMAKE_C_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
-set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
-
-set(DUCKDB_RELEASE_LINK_JOBS
-    4
-    CACHE STRING "Maximum number of concurrent linker jobs for Release builds")
-set(DUCKDB_DEBUG_LINK_JOBS
-    2
-    CACHE STRING
-          "Maximum number of concurrent linker jobs for non-Release builds")
-
-# Throttle linker concurrency (mainly effective for Ninja) to avoid OOM in
-# debug-like builds.
-set_property(
-  GLOBAL PROPERTY JOB_POOLS release_link_jobs=${DUCKDB_RELEASE_LINK_JOBS}
-                  debug_link_jobs=${DUCKDB_DEBUG_LINK_JOBS})
-if(NOT DEFINED CMAKE_JOB_POOL_LINK)
-  if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(CMAKE_JOB_POOL_LINK release_link_jobs)
-  else()
-    set(CMAKE_JOB_POOL_LINK debug_link_jobs)
-  endif()
-endif()
-message(
-  STATUS
-    "Build workers: compile=$ENV{CMAKE_BUILD_PARALLEL_LEVEL} link_release=${DUCKDB_RELEASE_LINK_JOBS} link_non_release=${DUCKDB_DEBUG_LINK_JOBS}"
-)
-
 include_directories(src/include)
 if(NOT EXTENSION_CONFIG_BUILD)
   include_directories(third_party/fsst)
-  include_directories(third_party/fmt/include)
   include_directories(third_party/hyperloglog)
   include_directories(third_party/fastpforlib)
   include_directories(third_party/skiplist)
   include_directories(third_party/ska_sort)
-  include_directories(third_party/fast_float)
-  include_directories(third_party/re2)
   include_directories(third_party/miniz)
   include_directories(third_party/utf8proc/include)
   include_directories(third_party/concurrentqueue)
@@ -1268,6 +1204,15 @@ function(add_third_party NAME)
                    ${_DUCKDB_PROJECT_BIN_DIR}/third_party/${NAME})
 endfunction()
 
+link_libraries(
+  fmt::fmt
+  FastFloat::fast_float
+  re2::re2
+  absl::strings
+  absl::node_hash_set
+  absl::node_hash_map
+  absl::synchronization)
+
 # this depends on disable_target_warnings so the order matters
 include(${PROJECT_SOURCE_DIR}/extension/extension_build_tools.cmake)
 
@@ -1281,6 +1226,7 @@ add_definitions(-DDUCKDB_PATCH_VERSION=${DUCKDB_PATCH_VERSION})
 
 if(BUILD_MAIN_DUCKDB_LIBRARY
    AND NOT PREBUILT_BINARY
+   AND FOLLY_USE_JEMALLOC
    AND ENABLE_JEMALLOC
    AND CMAKE_SIZEOF_VOID_P EQUAL 8
    AND NOT FORCE_32_BIT
@@ -1294,8 +1240,6 @@ if(BUILD_MAIN_DUCKDB_LIBRARY
    AND NOT ${MUSL_ENABLED})
   set(JEMALLOC_ENABLED TRUE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDUCKDB_ENABLE_JEMALLOC")
-  include_directories(third_party/jemalloc/include)
-  add_third_party(jemalloc)
 endif()
 
 if(PREBUILT_BINARY)
@@ -1402,12 +1346,10 @@ if(NOT EXTENSION_CONFIG_BUILD)
     message(STATUS "Skipping third_party/ because PREBUILT_BINARY is set")
   else()
     add_third_party(fastpforlib)
-    add_third_party(fmt)
     add_third_party(fsst)
     add_third_party(hyperloglog)
     add_third_party(mbedtls)
     add_third_party(miniz)
-    add_third_party(re2)
     add_third_party(skiplist)
     add_third_party(utf8proc)
     add_third_party(yyjson)
@@ -1462,8 +1404,6 @@ duckdb_apply_architecture_flags()
 if(NOT ${EXTENSION_CONFIG_BUILD})
   # Write the export set for build and install tree
   install(EXPORT "${DUCKDB_EXPORT_SET}" DESTINATION "${INSTALL_CMAKE_DIR}")
-  export(EXPORT "${DUCKDB_EXPORT_SET}"
-         FILE "${PROJECT_BINARY_DIR}/${DUCKDB_EXPORT_SET}.cmake")
 endif()
 
 # Only write the cmake package configuration if the templates exist
