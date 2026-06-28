@@ -66,7 +66,7 @@ void FindGetsAndProjections(LogicalOperator &op, Analyses &analyses, Projections
 			break;
 		}
 		if (auto &get = child.Cast<LogicalGet>(); get.function.projection_expression_pushdown != nullptr) {
-			projections.emplace(projection.table_index, projection);
+			projections.emplace(projection.table_index, &projection);
 		}
 		break;
 	}
@@ -92,7 +92,7 @@ std::optional<GetBinding> Resolve(ColumnBinding binding, Analyses &analyses, con
 		return std::nullopt;
 	}
 
-	LogicalProjection &projection = projection_it->second;
+	LogicalProjection &projection = *projection_it->second;
 	const auto &inner = projection.expressions[binding.column_index];
 	if (inner->GetExpressionType() != ExpressionType::BOUND_COLUMN_REF) {
 		return std::nullopt;

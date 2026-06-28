@@ -742,8 +742,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			properties.RegisterDBModify(table.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = table.catalog.BindCreateIndex(*this, stmt, table, std::move(plan));
 		} else {
-			auto &view = Catalog::GetEntry<ViewCatalogEntry>(context, create_index_info.catalog,
-			                                                 create_index_info.schema, create_index_info.table);
+			auto &view = Catalog::GetEntry<ViewCatalogEntry>(
+			    context, QualifiedName(create_index_info.GetQualifiedName().Catalog(),
+			                           create_index_info.GetQualifiedName().Schema(), create_index_info.table));
 			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = view.catalog.BindCreateIndex(*this, stmt, view, std::move(plan));
 		}
