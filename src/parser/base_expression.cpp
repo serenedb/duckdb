@@ -144,7 +144,8 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 			return 0;
 		// PG: T_A_Indirection -- find last field name
 		case ExpressionType::STRUCT_EXTRACT:
-			if (op.GetChildren().size() == 2 && op.GetChildren()[1]->GetExpressionClass() == ExpressionClass::CONSTANT) {
+			if (op.GetChildren().size() == 2 &&
+			    op.GetChildren()[1]->GetExpressionClass() == ExpressionClass::CONSTANT) {
 				auto &constant = op.GetChildren()[1]->Cast<ConstantExpression>();
 				if (!constant.GetValue().IsNull() && constant.GetValue().type().id() == LogicalTypeId::VARCHAR) {
 					name = StringUtil::Lower(constant.GetValue().GetValue<string>());

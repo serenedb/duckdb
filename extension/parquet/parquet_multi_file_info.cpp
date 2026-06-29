@@ -526,12 +526,10 @@ void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChu
 		const auto group_start = gstate.row_group_starts[g];
 		const auto group_end = gstate.row_group_starts[g + 1];
 		// Skip pks that fall before this group (e.g. deleted/compacted rows).
-		while (pk_idx < data.pk_lookups.size() &&
-		       NumericCast<idx_t>(data.pk_lookups[pk_idx]) < group_start) {
+		while (pk_idx < data.pk_lookups.size() && NumericCast<idx_t>(data.pk_lookups[pk_idx]) < group_start) {
 			++pk_idx;
 		}
-		if (pk_idx >= data.pk_lookups.size() ||
-		    NumericCast<idx_t>(data.pk_lookups[pk_idx]) >= group_end) {
+		if (pk_idx >= data.pk_lookups.size() || NumericCast<idx_t>(data.pk_lookups[pk_idx]) >= group_end) {
 			continue;
 		}
 
@@ -558,8 +556,7 @@ void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChu
 				continue;
 			}
 			const idx_t chunk_row_end = chunk_row_start + scanned;
-			while (pk_idx < data.pk_lookups.size() &&
-			       NumericCast<idx_t>(data.pk_lookups[pk_idx]) < chunk_row_end) {
+			while (pk_idx < data.pk_lookups.size() && NumericCast<idx_t>(data.pk_lookups[pk_idx]) < chunk_row_end) {
 				const auto pk = NumericCast<idx_t>(data.pk_lookups[pk_idx]);
 				const idx_t src_row = pk - chunk_row_start;
 				const idx_t dst_row = data.pk_output_positions[pk_idx];
