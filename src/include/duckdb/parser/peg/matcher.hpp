@@ -229,7 +229,7 @@ public:
 	}
 
 	template <class T, class... ARGS>
-	optional_ptr<ParseResult> Make(ARGS &&...args) {
+	optional_ptr<ParseResult> Make(ARGS &&... args) {
 		return optional_ptr<ParseResult>(arena.Make<T>(std::forward<ARGS>(args)...));
 	}
 

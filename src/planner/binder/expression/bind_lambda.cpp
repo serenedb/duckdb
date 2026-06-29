@@ -138,8 +138,8 @@ static unique_ptr<ParsedExpression> PushArrowDown(unique_ptr<ParsedExpression> l
 		auto &f = node->Cast<FunctionExpression>();
 		if (f.IsOperator() && f.FunctionName() == "->>" && f.GetArguments().size() == 2) {
 			// Wrap the LHS of `->>` with the lambda, mirroring RestructureArrowChain.
-			auto inner_lambda =
-			    make_uniq<LambdaExpression>(std::move(lhs), std::move(f.GetArgumentsMutable()[0].GetExpressionMutable()));
+			auto inner_lambda = make_uniq<LambdaExpression>(
+			    std::move(lhs), std::move(f.GetArgumentsMutable()[0].GetExpressionMutable()));
 			inner_lambda->GetLambdaSyntaxTypeMutable() = syntax;
 			f.GetArgumentsMutable()[0].GetExpressionMutable() = std::move(inner_lambda);
 			return node;
@@ -194,8 +194,8 @@ BindResult ExpressionBinder::BindExpression(LambdaExpression &expr, idx_t depth,
 		// `LambdaExpression(col, Comparison(F('->>', ['a', 'b']), '=', 'x'))`.
 		// Push the lambda down so PG-style `(col -> 'a' ->> 'b') = 'x'` binding succeeds.
 		if (LeftmostChainHasDoubleArrow(expr.Right())) {
-			unique_ptr<ParsedExpression> restructured =
-			    PushArrowDown(std::move(expr.LeftMutable()), std::move(expr.RightMutable()), expr.GetLambdaSyntaxType());
+			unique_ptr<ParsedExpression> restructured = PushArrowDown(
+			    std::move(expr.LeftMutable()), std::move(expr.RightMutable()), expr.GetLambdaSyntaxType());
 			return BindExpression(restructured, depth);
 		}
 

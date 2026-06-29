@@ -500,9 +500,9 @@ public:
 	// create_text_search_dictionary.gram — both rules walk Parens(List(...)) bodies that the
 	// generator cannot auto-extract; hand-write the entry points.
 	static unique_ptr<SQLStatement> TransformCreateTSDictionaryStatement(PEGTransformer &transformer,
-	                                                                      ParseResult &parse_result);
+	                                                                     ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformDropTSDictionaryStatement(PEGTransformer &transformer,
-	                                                                    ParseResult &parse_result);
+	                                                                   ParseResult &parse_result);
 	// comment.gram
 	static Value TransformCommentValue(PEGTransformer &transformer, ParseResult &parse_result);
 
