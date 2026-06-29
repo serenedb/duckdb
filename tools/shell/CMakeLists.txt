@@ -27,7 +27,8 @@ add_library(duckdb_shell_static STATIC ${SHELL_SOURCES})
 
 target_include_directories(duckdb_shell_static PUBLIC include)
 
-target_link_libraries(duckdb_shell_static duckdb_static ${DUCKDB_EXTRA_LINK_FLAGS})
+target_link_libraries(duckdb_shell_static duckdb_static
+                      ${DUCKDB_EXTRA_LINK_FLAGS})
 link_threads(duckdb_shell_static "")
 
 link_extension_libraries(duckdb_shell_static "")

@@ -676,7 +676,8 @@ void BufferingLogStorage::WriteLogEntry(timestamp_t timestamp, LogLevel level, s
 	                                           EnumUtil::ToString(level)); // TODO: do cast on write out
 
 	auto message_data = FlatVector::GetDataMutable<string_t>(log_entries_buffer->data[col]);
-	message_data[size] = StringVector::AddString(log_entries_buffer->data[col++], log_message.data(), log_message.size());
+	message_data[size] =
+	    StringVector::AddString(log_entries_buffer->data[col++], log_message.data(), log_message.size());
 
 	log_entries_buffer->SetChildCardinality(size + 1);
 

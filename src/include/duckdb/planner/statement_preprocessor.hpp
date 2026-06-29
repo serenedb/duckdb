@@ -23,9 +23,9 @@ struct PragmaInfo;
 class StatementPreprocessor {
 public:
 	explicit StatementPreprocessor(ClientContext &context);
-	//! wrap_multi: when false, an unpacked multi-statement body is NOT wrapped in a BEGIN/COMMIT (or invalidation-policy)
-	//! block -- the caller takes responsibility for the transaction (the pg-wire extended Parse runs the body in its own
-	//! implicit block, so one user command that expands stays a single prepared unit).
+	//! wrap_multi: when false, an unpacked multi-statement body is NOT wrapped in a BEGIN/COMMIT (or
+	//! invalidation-policy) block -- the caller takes responsibility for the transaction (the pg-wire extended Parse
+	//! runs the body in its own implicit block, so one user command that expands stays a single prepared unit).
 	void Preprocess(ClientContextLock &lock, vector<unique_ptr<SQLStatement>> &statements,
 	                CurrentTransactionState transaction_context_state, bool wrap_multi = true);
 	void PreprocessInternal(ClientContextLock &lock, vector<unique_ptr<SQLStatement>> &statements,
