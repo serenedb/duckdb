@@ -674,7 +674,9 @@ def _emit_extraction(plan, source_expr, target_name=None, indent="\t", declare=T
             plan.child, f"{list_expr}.GetChild({plan.child_index})", target_name, indent, declare, depth
         )
     if plan.kind == ExtractionKind.CHOICE:
-        choice_expr = f"{source_expr}.Cast<ChoiceParseResult>()"
+        # A choice can only nest inside a sequence via a parenthesized group, and the parser wraps every group
+        # in a ListParseResult -- so unwrap the list before reaching the ChoiceParseResult.
+        choice_expr = f"{source_expr}.Cast<ListParseResult>().Child<ChoiceParseResult>(0)"
         return _emit_extraction(plan.child, f"{choice_expr}.GetResult()", target_name, indent, declare, depth)
     if plan.kind == ExtractionKind.OPTIONAL:
         opt_name = _temp_name(target_name, "opt", depth)
