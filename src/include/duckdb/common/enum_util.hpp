@@ -200,6 +200,8 @@ enum class ExceptionFormatValueType : uint8_t;
 
 enum class ExceptionType : uint8_t;
 
+enum class ExplainFormatShape : uint8_t;
+
 enum class ExplainOutputType : uint8_t;
 
 enum class ExplainType : uint8_t;
@@ -345,6 +347,8 @@ enum class OperatorFinalResultType : uint8_t;
 enum class OperatorFinalizeResultType : uint8_t;
 
 enum class OperatorResultType : uint8_t;
+
+enum class OptimizerHookPosition : uint8_t;
 
 enum class OptimizerType : uint32_t;
 
@@ -525,6 +529,8 @@ enum class ThreadPinMode : uint8_t;
 enum class TimestampCastResult : uint8_t;
 
 enum class TransactionInvalidationPolicy : uint8_t;
+
+enum class TransactionIsolationLevel : uint8_t;
 
 enum class TransactionModifierType : uint8_t;
 
@@ -826,6 +832,9 @@ template<>
 const char* EnumUtil::ToChars<ExceptionType>(ExceptionType value);
 
 template<>
+const char* EnumUtil::ToChars<ExplainFormatShape>(ExplainFormatShape value);
+
+template<>
 const char* EnumUtil::ToChars<ExplainOutputType>(ExplainOutputType value);
 
 template<>
@@ -1043,6 +1052,9 @@ const char* EnumUtil::ToChars<OperatorFinalizeResultType>(OperatorFinalizeResult
 
 template<>
 const char* EnumUtil::ToChars<OperatorResultType>(OperatorResultType value);
+
+template<>
+const char* EnumUtil::ToChars<OptimizerHookPosition>(OptimizerHookPosition value);
 
 template<>
 const char* EnumUtil::ToChars<OptimizerType>(OptimizerType value);
@@ -1313,6 +1325,9 @@ const char* EnumUtil::ToChars<TimestampCastResult>(TimestampCastResult value);
 
 template<>
 const char* EnumUtil::ToChars<TransactionInvalidationPolicy>(TransactionInvalidationPolicy value);
+
+template<>
+const char* EnumUtil::ToChars<TransactionIsolationLevel>(TransactionIsolationLevel value);
 
 template<>
 const char* EnumUtil::ToChars<TransactionModifierType>(TransactionModifierType value);
@@ -1637,6 +1652,9 @@ template<>
 ExceptionType EnumUtil::FromString<ExceptionType>(const char *value);
 
 template<>
+ExplainFormatShape EnumUtil::FromString<ExplainFormatShape>(const char *value);
+
+template<>
 ExplainOutputType EnumUtil::FromString<ExplainOutputType>(const char *value);
 
 template<>
@@ -1854,6 +1872,9 @@ OperatorFinalizeResultType EnumUtil::FromString<OperatorFinalizeResultType>(cons
 
 template<>
 OperatorResultType EnumUtil::FromString<OperatorResultType>(const char *value);
+
+template<>
+OptimizerHookPosition EnumUtil::FromString<OptimizerHookPosition>(const char *value);
 
 template<>
 OptimizerType EnumUtil::FromString<OptimizerType>(const char *value);
@@ -2124,6 +2145,9 @@ TimestampCastResult EnumUtil::FromString<TimestampCastResult>(const char *value)
 
 template<>
 TransactionInvalidationPolicy EnumUtil::FromString<TransactionInvalidationPolicy>(const char *value);
+
+template<>
+TransactionIsolationLevel EnumUtil::FromString<TransactionIsolationLevel>(const char *value);
 
 template<>
 TransactionModifierType EnumUtil::FromString<TransactionModifierType>(const char *value);

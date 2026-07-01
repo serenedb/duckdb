@@ -904,6 +904,8 @@ struct DisabledOptimizersSetting {
     static constexpr const char *InputType = "VARCHAR";
     static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
     static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
+    static void SetLocal(ClientContext &context, const Value &parameter);
+    static void ResetLocal(ClientContext &context);
     static Value GetSetting(const ClientContext &context);
 };
 
@@ -1099,6 +1101,17 @@ struct ExplainOutputSetting {
     static constexpr const char *Description = "Output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY)";
     static constexpr const char *InputType = "VARCHAR";
     static constexpr const char *DefaultValue = "PHYSICAL_ONLY";
+    static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
+    static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+    static void OnSet(SettingCallbackInfo &info, Value &input);
+};
+
+struct ExplainOutputFormatSetting {
+    using RETURN_TYPE = ExplainFormatShape;
+    static constexpr const char *Name = "explain_output_format";
+    static constexpr const char *Description = "Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)";
+    static constexpr const char *InputType = "VARCHAR";
+    static constexpr const char *DefaultValue = "DUCKDB_NATIVE";
     static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
     static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
     static void OnSet(SettingCallbackInfo &info, Value &input);
