@@ -108,7 +108,7 @@ public:
 	typedef void (*isolation_level_validator_t)(ClientContext &context, TransactionIsolationLevel level);
 	isolation_level_validator_t isolation_level_validator = nullptr;
 
-	//! Hook called when a warning needs to be emmitted to the client (e.g. when a transaction state is invalid for a
+	//! Hook called when a warning needs to be emitted to the client (e.g. when a transaction state is invalid for a
 	//! given statement, such as COMMIT/ROLLBACK without an active transaction, or BEGIN inside a transaction). If set
 	//! and returns true, the statement is treated as a no-op; otherwise DuckDB throws as usual.
 	typedef bool (*warning_handler_t)(ClientContext &context, const char *message);

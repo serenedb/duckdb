@@ -28,12 +28,12 @@ public:
 	decltype(auto) Read(Fn &&fn) const {
 		const auto vi = version_index.load(std::memory_order_acquire);
 		read_indicator[vi].fetch_add(1, std::memory_order_acq_rel);
-		struct Departer {
+		struct Departure {
 			std::atomic<int64_t> &indicator;
-			~Departer() {
+			~Departure() {
 				indicator.fetch_sub(1, std::memory_order_acq_rel);
 			}
-		} departer {read_indicator[vi]};
+		} departure {read_indicator[vi]};
 		const auto side = left_right.load(std::memory_order_acquire);
 		return fn(instances[side]);
 	}
