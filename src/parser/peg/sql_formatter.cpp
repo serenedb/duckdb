@@ -122,7 +122,7 @@ string SQLFormatter::Format(const string &sql) {
 //! Returns true if kw (already uppercased) is a structural clause keyword that
 //! starts a new line in the formatted output.
 bool SQLFormatter::IsClauseKeyword(const string &kw) {
-	static const std::unordered_set<string> clause_keywords = {
+	static const absl::flat_hash_set<std::string_view> clause_keywords = {
 	    "SELECT",    "FROM",    "WHERE", "HAVING", "LIMIT",    "OFFSET",     "JOIN",  "UNION",
 	    "INTERSECT", "EXCEPT",  "WITH",  "INSERT", "UPDATE",   "DELETE",     "SET",   "RETURNING",
 	    "VALUES",    "CREATE",  "DROP",  "ALTER",  "TRUNCATE", "QUALIFY",    "PIVOT", "UNPIVOT",
@@ -137,7 +137,7 @@ bool SQLFormatter::IsJoinModifier(const string &kw) {
 //! Complete set of clause keyword *strings* as they appear in the formatted
 //! output (single words AND compound forms).  Used by the post-processing pass.
 bool SQLFormatter::IsClauseKeywordLine(const string &trimmed) {
-	static const std::unordered_set<string> all_clause_strings = {
+	static const absl::flat_hash_set<std::string_view> all_clause_strings = {
 	    // Single-word clause starters
 	    "SELECT", "FROM", "WHERE", "HAVING", "LIMIT", "OFFSET", "JOIN", "UNION", "INTERSECT", "EXCEPT", "WITH",
 	    "INSERT", "UPDATE", "DELETE", "SET", "RETURNING", "VALUES", "CREATE", "DROP", "ALTER", "TRUNCATE", "QUALIFY",
@@ -161,7 +161,7 @@ bool SQLFormatter::IsClauseKeywordLine(const string &trimmed) {
 //! as identifiers (e.g. "name", "value", "type") are excluded so their
 //! original casing is preserved.
 bool SQLFormatter::ShouldUppercase(const string &kw) {
-	static const std::unordered_set<string> uppercase_set = {
+	static const absl::flat_hash_set<std::string_view> uppercase_set = {
 	    "SELECT",     "DISTINCT",    "FROM",       "WHERE",       "HAVING",     "LIMIT",    "OFFSET",       "GROUP",
 	    "BY",         "ORDER",       "UNION",      "INTERSECT",   "EXCEPT",     "ALL",      "JOIN",         "INNER",
 	    "LEFT",       "RIGHT",       "FULL",       "OUTER",       "CROSS",      "NATURAL",  "ON",           "USING",
@@ -491,7 +491,7 @@ string SQLFormatter::FormatMultiline(const string &sql, const vector<MatcherToke
 			// Insert a space before '(' for most keywords (e.g. AS, IN, EXISTS,
 			// OVER, FILTER, USING ...) but NOT for function-like keywords or type
 			// names where no space is conventional (COALESCE, CAST, DECIMAL, ...).
-			static const std::unordered_set<string> no_space_before_paren = {
+			static const absl::flat_hash_set<std::string_view> no_space_before_paren = {
 			    "COALESCE",   "NULLIF",    "CAST",          "TRY_CAST",    "EXTRACT", "OVERLAY",       "POSITION",
 			    "SUBSTRING",  "TRIM",      "GROUPING",      "GROUPING_ID", "TREAT",   "XMLATTRIBUTES", "XMLCONCAT",
 			    "XMLELEMENT", "XMLFOREST", "XMLNAMESPACES", "XMLPARSE",    "XMLPI",   "XMLROOT",       "XMLSERIALIZE",
