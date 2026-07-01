@@ -175,8 +175,8 @@ PEGTransformerFactory::TransformCreateTableColumnList(PEGTransformer &transforme
 				if (constraint_type.second == ConstraintType::NOT_NULL) {
 					made = make_uniq<NotNullConstraint>(LogicalIndex(col_idx));
 				} else if (constraint_type.second == ConstraintType::UNIQUE) {
-					made = make_uniq<UniqueConstraint>(LogicalIndex(col_idx),
-					                                   column_result.column_definition.GetName(), constraint_type.first);
+					made = make_uniq<UniqueConstraint>(LogicalIndex(col_idx), column_result.column_definition.GetName(),
+					                                   constraint_type.first);
 				}
 				if (!made) {
 					continue;
