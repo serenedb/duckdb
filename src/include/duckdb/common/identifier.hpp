@@ -199,4 +199,34 @@ inline bool IsInvalidSchema(const Identifier &schema) {
 	return schema.empty();
 }
 
+class IdentifierRef {
+public:
+	IdentifierRef() = default;
+	explicit IdentifierRef(std::string_view value_p) : value(value_p) {
+	}
+
+	const auto &GetIdentifierName() const {
+		return *this;
+	}
+
+	operator string() const { // NOLINT
+		return string(value);
+	}
+
+	operator Identifier() const { // NOLINT
+		return Identifier(value);
+	}
+
+	operator std::string_view() const { // NOLINT
+		return value;
+	}
+
+	friend std::ostream &operator<<(std::ostream &o, const IdentifierRef &i) {
+		return o << i.value;
+	}
+
+private:
+	std::string_view value;
+};
+
 } // namespace duckdb
