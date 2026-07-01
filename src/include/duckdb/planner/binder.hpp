@@ -34,6 +34,8 @@
 #include "duckdb/common/enums/copy_option_mode.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
 
+#include <absl/functional/function_ref.h>
+
 //! fwd declare
 namespace duckdb_re2 {
 class RE2;
@@ -616,6 +618,17 @@ private:
 	                                                   const IndexVector<idx_t, PhysicalIndex> &column_index_map,
 	                                                   unique_ptr<LogicalOperator> root,
 	                                                   const vector<LogicalType> &source_types);
+	//! Expand a stored generated column's expression into a self-contained parsed expression by inlining every
+	//! reference to another generated column, so chains resolve without an ordering pass.
+	static void ExpandStoredGeneratedExpression(unique_ptr<ParsedExpression> &expr, TableCatalogEntry &table);
+	//! As above, but `substitute` may also replace a reference with a caller-supplied value (the assigned value
+	//! in UPDATE); every other reference is left for the caller to bind.
+	static void
+	ExpandStoredGeneratedExpression(unique_ptr<ParsedExpression> &expr, TableCatalogEntry &table,
+	                                absl::FunctionRef<unique_ptr<ParsedExpression>(const Identifier &name)> substitute);
+	//! Fill the stored-generated slots of `column_values` (indexed by physical position; non-generated slots
+	//! already filled) by expanding each generated expression and inlining the surrounding value expressions.
+	void ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<unique_ptr<Expression>> &column_values);
 
 	unique_ptr<BoundMergeIntoAction>
 	BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, LogicalGet &get, TableIndex proj_index,

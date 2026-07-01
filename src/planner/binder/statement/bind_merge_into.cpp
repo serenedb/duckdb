@@ -148,17 +148,25 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 			insert_types.push_back(std::move(insert_type));
 		}
 
+		// Fill the non-generated columns' value expressions, then inline the stored generated ones against them
+		// (same single-projection model as INSERT/COPY -- no BoundReferenceExpression in the plan).
+		result->expressions.resize(table.GetColumns().PhysicalColumnCount());
+		idx_t phys_idx = 0;
 		for (auto &col : table.GetColumns().Physical()) {
-			auto storage_idx = col.StorageOid();
-			auto mapped_index = column_index_map.empty() ? storage_idx : column_index_map[col.Physical()];
-			if (mapped_index == DConstants::INVALID_INDEX) {
-				result->expressions.push_back(merge_into.bound_defaults[storage_idx]->Copy());
-			} else {
-				result->expressions.push_back(table.GetDefaultExpressionForColumn(
-				    context, insert_types[mapped_index], col.Type(), insert_bindings[mapped_index],
-				    *merge_into.bound_defaults[storage_idx]));
+			if (col.Category() != TableColumnType::GENERATED_STORED) {
+				auto storage_idx = col.StorageOid();
+				auto mapped_index = column_index_map.empty() ? storage_idx : column_index_map[col.Physical()];
+				if (mapped_index == DConstants::INVALID_INDEX) {
+					result->expressions[phys_idx] = merge_into.bound_defaults[storage_idx]->Copy();
+				} else {
+					result->expressions[phys_idx] = table.GetDefaultExpressionForColumn(
+					    context, insert_types[mapped_index], col.Type(), insert_bindings[mapped_index],
+					    *merge_into.bound_defaults[storage_idx]);
+				}
 			}
+			phys_idx++;
 		}
+		ComputeStoredGeneratedColumns(table, result->expressions);
 		break;
 	}
 	case MergeActionType::MERGE_ERROR: {

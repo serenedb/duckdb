@@ -114,14 +114,14 @@ public:
 		};
 
 	public:
-		idx_t Size() {
+		idx_t Size() const {
 			return physical ? list.PhysicalColumnCount() : list.LogicalColumnCount();
 		}
 
-		ColumnLogicalIteratorInternal begin() { // NOLINT: match stl API
+		ColumnLogicalIteratorInternal begin() const { // NOLINT: match stl API
 			return ColumnLogicalIteratorInternal(list, physical, 0, Size());
 		}
-		ColumnLogicalIteratorInternal end() { // NOLINT: match stl API
+		ColumnLogicalIteratorInternal end() const { // NOLINT: match stl API
 			return ColumnLogicalIteratorInternal(list, physical, Size(), Size());
 		}
 	};
