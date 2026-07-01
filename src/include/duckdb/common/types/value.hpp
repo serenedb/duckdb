@@ -63,7 +63,8 @@ public:
 	//! Create a VARCHAR value
 	DUCKDB_API Value(String val); // NOLINT: Allow implicit conversion from `string`
 	//! Create a VARCHAR value
-	DUCKDB_API Value(std::string_view val); // NOLINT: Allow implicit conversion from `string`
+	DUCKDB_API Value(std::string_view val);     // NOLINT: Allow implicit conversion from `std::string_view`
+	DUCKDB_API Value(const IdentifierRef &val); // NOLINT: Allow implicit conversion from `IdentifierRef`
 	//! Copy constructor
 	DUCKDB_API Value(const Value &other);
 	//! Move constructor

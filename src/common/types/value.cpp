@@ -155,6 +155,9 @@ Value::Value(double val) : type_(LogicalType::DOUBLE), is_null(false) {
 Value::Value(const Identifier &val) : Value(val.GetIdentifierName()) {
 }
 
+Value::Value(const IdentifierRef &val) : Value(std::string_view(val)) {
+}
+
 Value::Value(const char *val) : Value(val ? string(val) : string()) {
 }
 
