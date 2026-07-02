@@ -629,7 +629,7 @@ string ExtractFormat(const string &file_path) {
 } // namespace
 
 void Binder::BindCopyOptions(CopyInfo &info) {
-	TableFunctionBinder option_binder(*this, context, "Copy", "Copy options");
+	TableFunctionBinder option_binder(*this, context, "Copy", "Copy options", true);
 	bool resolved_path_expression = info.file_path_expression != nullptr;
 	if (info.file_path_expression) {
 		auto inputs = BindCopyOption(context, option_binder, "filename", info.file_path_expression);
