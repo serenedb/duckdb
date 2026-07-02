@@ -37,30 +37,31 @@ StorageCompatibility StorageCompatibility::FromString(const string &input) {
 	return result;
 }
 
-StorageCompatibility StorageCompatibility::Default() {
+const StorageCompatibility &StorageCompatibility::Default() {
 #ifdef DUCKDB_ALTERNATIVE_VERIFY
-	auto res = FromString("latest");
-	res.duckdb_version = "latest";
-	res.manually_set = false;
-	return res;
+	return Latest();
 #else
 #ifdef DUCKDB_LATEST_STORAGE
-	auto res = FromString("latest");
-	res.manually_set = false;
-	return res;
+	return Latest();
 #else
-	auto res = FromIndex(StorageVersionInfo::GetStorageVersionDefault());
-	res.duckdb_version = "latest";
-	res.manually_set = false;
-	return res;
+	static const StorageCompatibility default_compatibility = [] {
+		auto res = FromIndex(StorageVersionInfo::GetStorageVersionDefault());
+		res.duckdb_version = "latest";
+		res.manually_set = false;
+		return res;
+	}();
+	return default_compatibility;
 #endif
 #endif
 }
 
-StorageCompatibility StorageCompatibility::Latest() {
-	auto res = FromString("latest");
-	res.manually_set = false;
-	return res;
+const StorageCompatibility &StorageCompatibility::Latest() {
+	static const StorageCompatibility latest_compatibility = [] {
+		auto res = FromString("latest");
+		res.manually_set = false;
+		return res;
+	}();
+	return latest_compatibility;
 }
 
 bool StorageCompatibility::Compare(StorageVersion property_version) const {
