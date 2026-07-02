@@ -135,7 +135,7 @@ PEGTransformerFactory::TransformTimeType(PEGTransformer &transformer, const Logi
 		if (modifiers[0]->GetExpressionClass() != ExpressionClass::CONSTANT) {
 			throw ParserException("Expected a constant expression for timestamp precision");
 		}
-		auto timestamp_precision = modifiers[0]->Cast<ConstantExpression>().GetValue().GetValue<int64_t>();
+		auto timestamp_precision = TypeModifierAsInteger(modifiers[0]->Cast<ConstantExpression>().GetValue());
 		if (timestamp_precision > 10) {
 			throw ParserException("TIMESTAMP only supports until nano-second precision (9)");
 		}
@@ -372,7 +372,11 @@ pair<Identifier, LogicalType> PEGTransformerFactory::TransformColIdType(PEGTrans
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformBitType(
     PEGTransformer &transformer, const bool &has_result,
     optional<vector<unique_ptr<ParsedExpression>>> expression) { // NOLINT(performance-unnecessary-value-param)
-	return make_uniq<TypeExpression>(Identifier("BIT"), vector<unique_ptr<ParsedExpression>> {});
+	vector<unique_ptr<ParsedExpression>> modifiers;
+	if (expression) {
+		modifiers = std::move(*expression);
+	}
+	return make_uniq<TypeExpression>(Identifier("BIT"), std::move(modifiers));
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformIntervalWithoutSpecifier(PEGTransformer &transformer) {
