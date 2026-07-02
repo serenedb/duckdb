@@ -122,16 +122,15 @@ idx_t StandardBufferManager::GetOperatorMemoryLimit() const {
 	return GetBufferPool().GetOperatorMemoryLimit();
 }
 
-template <typename... ARGS>
 TempBufferPoolReservation StandardBufferManager::EvictBlocksOrThrow(QueryContext context, MemoryTag tag,
                                                                     idx_t memory_delta, unique_ptr<FileBuffer> *buffer,
-                                                                    ARGS... args) {
+                                                                    const char *error_message) {
 	auto r = buffer_pool.EvictBlocks(context, tag, memory_delta, buffer_pool.maximum_memory, buffer);
 	if (!r.success) {
 		string extra_text = StringUtil::Format(" (%s/%s used)", StringUtil::BytesToHumanReadableString(GetUsedMemory()),
 		                                       StringUtil::BytesToHumanReadableString(GetMaxMemory()));
 		extra_text += InMemoryWarning();
-		throw OutOfMemoryException(args..., extra_text);
+		throw OutOfMemoryException(error_message, StringUtil::BytesToHumanReadableString(memory_delta), extra_text);
 	}
 	return std::move(r.reservation);
 }
@@ -152,8 +151,7 @@ shared_ptr<BlockHandle> StandardBufferManager::RegisterTransientMemory(const idx
 
 shared_ptr<BlockHandle> StandardBufferManager::RegisterSmallMemory(MemoryTag tag, const idx_t size) {
 	D_ASSERT(size < GetBlockSize());
-	auto reservation = EvictBlocksOrThrow(QueryContext(), tag, size, nullptr, "could not allocate block of size %s%s",
-	                                      StringUtil::BytesToHumanReadableString(size));
+	auto reservation = EvictBlocksOrThrow(QueryContext(), tag, size, nullptr, "could not allocate block of size %s%s");
 
 	auto buffer = ConstructManagedBuffer(size, DEFAULT_BLOCK_HEADER_STORAGE_SIZE, nullptr, FileBufferType::TINY_BUFFER);
 
@@ -173,8 +171,7 @@ shared_ptr<BlockHandle> StandardBufferManager::RegisterMemory(MemoryTag tag, idx
 
 	// Evict blocks until there is enough memory to store the buffer.
 	unique_ptr<FileBuffer> reusable_buffer;
-	auto res = EvictBlocksOrThrow(context, tag, alloc_size, &reusable_buffer, "could not allocate block of size %s%s",
-	                              StringUtil::BytesToHumanReadableString(alloc_size));
+	auto res = EvictBlocksOrThrow(context, tag, alloc_size, &reusable_buffer, "could not allocate block of size %s%s");
 
 	// Create a new buffer and a block to hold the buffer.
 	const auto file_buffer_type =
@@ -272,8 +269,7 @@ void StandardBufferManager::BatchRead(QueryContext context, vector<shared_ptr<Bl
 		idx_t required_memory = block_memory.GetMemoryUsage();
 		unique_ptr<FileBuffer> reusable_buffer;
 		auto reservation = EvictBlocksOrThrow(context, block_memory.GetMemoryTag(), required_memory, &reusable_buffer,
-		                                      "failed to pin block of size %s%s",
-		                                      StringUtil::BytesToHumanReadableString(required_memory));
+		                                      "failed to pin block of size %s%s");
 		// now load the block from the buffer
 		// note that we discard the buffer handle - we do not keep it around
 		// the prefetching relies on the block handle being pinned again during the actual read before it is evicted
@@ -359,9 +355,8 @@ BufferHandle StandardBufferManager::Pin(const QueryContext &context, shared_ptr<
 
 	// evict blocks until we have space for the current block
 	unique_ptr<FileBuffer> reusable_buffer;
-	auto reservation =
-	    EvictBlocksOrThrow(context, block_memory.GetMemoryTag(), required_memory, &reusable_buffer,
-	                       "failed to pin block of size %s%s", StringUtil::BytesToHumanReadableString(required_memory));
+	auto reservation = EvictBlocksOrThrow(context, block_memory.GetMemoryTag(), required_memory, &reusable_buffer,
+	                                      "failed to pin block of size %s%s");
 
 	// lock the handle again and repeat the check (in case anybody loaded in the meantime)
 	auto lock = block_memory.GetLock();
@@ -716,9 +711,8 @@ void StandardBufferManager::ReserveMemory(idx_t size) {
 	if (size == 0) {
 		return;
 	}
-	auto reservation =
-	    EvictBlocksOrThrow(QueryContext(), MemoryTag::EXTENSION, size, nullptr,
-	                       "failed to reserve memory data of size %s%s", StringUtil::BytesToHumanReadableString(size));
+	auto reservation = EvictBlocksOrThrow(QueryContext(), MemoryTag::EXTENSION, size, nullptr,
+	                                      "failed to reserve memory data of size %s%s");
 	reservation.size = 0;
 }
 
@@ -735,8 +729,7 @@ void StandardBufferManager::FreeReservedMemory(idx_t size) {
 data_ptr_t StandardBufferManager::BufferAllocatorAllocate(PrivateAllocatorData *private_data, idx_t size) {
 	auto &data = private_data->Cast<BufferAllocatorData>();
 	auto reservation = data.manager.EvictBlocksOrThrow(QueryContext(), MemoryTag::ALLOCATOR, size, nullptr,
-	                                                   "failed to allocate data of size %s%s",
-	                                                   StringUtil::BytesToHumanReadableString(size));
+	                                                   "failed to allocate data of size %s%s");
 	// We rely on manual tracking of this one. :(
 	reservation.size = 0;
 	return Allocator::Get(data.manager.db).AllocateData(size);
