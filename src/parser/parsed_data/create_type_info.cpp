@@ -1,7 +1,39 @@
+#include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/common/extra_type_info.hpp"
 
 namespace duckdb {
+
+int64_t TypeModifierAsInteger(const Value &value) {
+	if (value.IsNull()) {
+		throw BinderException("type modifiers must be simple constants or identifiers");
+	}
+	switch (value.type().id()) {
+	case LogicalTypeId::TINYINT:
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+	case LogicalTypeId::UTINYINT:
+	case LogicalTypeId::USMALLINT:
+	case LogicalTypeId::UINTEGER:
+	case LogicalTypeId::UBIGINT:
+	case LogicalTypeId::HUGEINT:
+	case LogicalTypeId::UHUGEINT:
+	case LogicalTypeId::VARCHAR:
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DOUBLE:
+	case LogicalTypeId::DECIMAL: {
+		auto text = value.ToString();
+		int64_t result;
+		if (!TryCast::Operation<string_t, int64_t>(string_t(text), result, true)) {
+			throw BinderException("invalid input syntax for type integer: \"%s\"", text);
+		}
+		return result;
+	}
+	default:
+		throw BinderException("type modifiers must be simple constants or identifiers");
+	}
+}
 
 CreateTypeInfo::CreateTypeInfo() : CreateInfo(CatalogType::TYPE_ENTRY), bind_function(nullptr) {
 }
