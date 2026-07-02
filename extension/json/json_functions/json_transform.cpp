@@ -424,17 +424,25 @@ bool JSONTransform::TransformObject(yyjson_val *objects[], yyjson_alc *alc, cons
 	D_ASSERT(!column_indices || column_indices->size() == names.size());
 	const idx_t column_count = names.size();
 
-	// Build hash map from key to column index so we don't have to linearly search using the key
+	// Build hash map from key to column index so we don't have to linearly search using the key.
+	// Struct keys are case-insensitive everywhere else in the system, so unmatched JSON keys fall
+	// back to a lowercase map (exact matches take priority).
 	json_key_map_t<idx_t> key_map;
+	json_key_map_t<idx_t> lower_key_map;
+	vector<string> lower_names(column_count);
 	vector<yyjson_val **> nested_vals;
 	nested_vals.reserve(column_count);
 	for (idx_t col_idx = 0; col_idx < column_count; col_idx++) {
 		key_map.insert({{names[col_idx].c_str(), names[col_idx].length()}, col_idx});
+		lower_names[col_idx] = StringUtil::Lower(names[col_idx]);
+		lower_key_map.insert({{lower_names[col_idx].c_str(), lower_names[col_idx].length()}, col_idx});
 		nested_vals.push_back(JSONCommon::AllocateArray<yyjson_val *>(alc, count));
 	}
 
 	idx_t found_key_count;
-	auto found_keys = JSONCommon::AllocateArray<bool>(alc, column_count);
+	// 0 = not found, 1 = case-insensitive match, 2 = exact match: an exact match overrides a
+	// case-insensitive one, and only two exact (or two case-insensitive) matches are duplicates
+	auto found_keys = JSONCommon::AllocateArray<uint8_t>(alc, column_count);
 
 	bool success = true;
 
@@ -466,14 +474,26 @@ bool JSONTransform::TransformObject(yyjson_val *objects[], yyjson_alc *alc, cons
 		}
 
 		found_key_count = 0;
-		memset(found_keys, false, column_count);
+		memset(found_keys, 0, column_count);
 		yyjson_obj_foreach(objects[i], idx, max, key, val) {
 			auto key_ptr = unsafe_yyjson_get_str(key);
 			auto key_len = unsafe_yyjson_get_len(key);
+			optional_idx found_col;
+			uint8_t match_strength = 2;
 			auto it = key_map.find({key_ptr, key_len});
 			if (it != key_map.end()) {
-				const auto &col_idx = it->second;
-				if (found_keys[col_idx]) {
+				found_col = it->second;
+			} else {
+				const auto lower_key = StringUtil::Lower(string(key_ptr, key_len));
+				auto lower_it = lower_key_map.find({lower_key.c_str(), lower_key.length()});
+				if (lower_it != lower_key_map.end()) {
+					found_col = lower_it->second;
+					match_strength = 1;
+				}
+			}
+			if (found_col.IsValid()) {
+				const auto col_idx = found_col.GetIndex();
+				if (found_keys[col_idx] == match_strength) {
 					if (success && options.error_duplicate_key) {
 						options.error_message =
 						    StringUtil::Format("Object %s has duplicate key \"%s\"",
@@ -481,10 +501,13 @@ bool JSONTransform::TransformObject(yyjson_val *objects[], yyjson_alc *alc, cons
 						options.object_index = i;
 						success = false;
 					}
-				} else {
+				} else if (found_keys[col_idx] < match_strength) {
+					// first match, or an exact match overriding a case-insensitive one
 					nested_vals[col_idx][i] = val;
-					found_keys[col_idx] = true;
-					found_key_count++;
+					if (found_keys[col_idx] == 0) {
+						found_key_count++;
+					}
+					found_keys[col_idx] = match_strength;
 				}
 			} else if (success && error_unknown_key && options.error_unknown_key) {
 				options.error_message =
