@@ -2172,10 +2172,10 @@ bool RowGroupCollection::ScanColumnSegmentInfo(const QueryContext &context, Colu
 
 bool RowGroupCollection::SupportsPerColumnWrites() {
 	auto version = StorageCompatibility::FromDatabase(GetAttached());
-	if (version.storage_version >= StorageCompatibility::FromString("v2.0.0").storage_version) {
+	if (version.storage_version >= StorageVersion::V2_0_0) {
 		return true;
 	}
-	if (version.storage_version >= StorageCompatibility::FromString("v1.4.0").storage_version) {
+	if (version.storage_version >= StorageVersion::V1_4_0) {
 		return Settings::Get<ForceColumnMetadataReuseSetting>(GetAttached().GetDatabase());
 	}
 	return false;

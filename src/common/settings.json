@@ -604,7 +604,7 @@
         "name": "disabled_optimizers",
         "description": "DEBUG SETTING: disable a specific set of optimizers (comma separated)",
         "type": "VARCHAR",
-        "scope": "global",
+        "scope": "global_local",
         "custom_implementation": true
     },
     {

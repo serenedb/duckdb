@@ -520,7 +520,7 @@ Value DisabledFilesystemsSetting::GetSetting(const ClientContext &context) {
 //===----------------------------------------------------------------------===//
 // Disabled Optimizers
 //===----------------------------------------------------------------------===//
-void DisabledOptimizersSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+static set<OptimizerType> ParseDisabledOptimizers(const Value &input) {
 	auto list = StringUtil::Split(input.ToString(), ",");
 	set<OptimizerType> disabled_optimizers;
 	for (auto &entry : list) {
@@ -531,17 +531,36 @@ void DisabledOptimizersSetting::SetGlobal(DatabaseInstance *db, DBConfig &config
 		}
 		disabled_optimizers.insert(OptimizerTypeFromString(param));
 	}
-	config.options.disabled_optimizers = std::move(disabled_optimizers);
+	return disabled_optimizers;
+}
+
+void DisabledOptimizersSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+	config.options.disabled_optimizers = ParseDisabledOptimizers(input);
 }
 
 void DisabledOptimizersSetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
 	config.options.disabled_optimizers = DBConfigOptions().disabled_optimizers;
 }
 
+void DisabledOptimizersSetting::SetLocal(ClientContext &context, const Value &input) {
+	auto &config = ClientConfig::GetConfig(context);
+	config.disabled_optimizers = ParseDisabledOptimizers(input);
+	config.has_disabled_optimizers = true;
+}
+
+void DisabledOptimizersSetting::ResetLocal(ClientContext &context) {
+	auto &config = ClientConfig::GetConfig(context);
+	config.disabled_optimizers.clear();
+	config.has_disabled_optimizers = false;
+}
+
 Value DisabledOptimizersSetting::GetSetting(const ClientContext &context) {
+	auto &client_config = ClientConfig::GetConfig(context);
 	auto &config = DBConfig::GetConfig(context);
+	auto &disabled =
+	    client_config.has_disabled_optimizers ? client_config.disabled_optimizers : config.options.disabled_optimizers;
 	string result;
-	for (auto &optimizer : config.options.disabled_optimizers) {
+	for (auto &optimizer : disabled) {
 		if (!result.empty()) {
 			result += ",";
 		}
