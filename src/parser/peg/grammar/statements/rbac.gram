@@ -2,8 +2,13 @@
 # USER is an alias for ROLE. Names use ColId/QualifiedName directly: Transform
 # dispatches by rule name, so a wrapper rule would need its own transformer.
 
-CreateRoleStatement <- 'CREATE' RoleOrUser ColId RoleOptionList?
-DropRoleStatement   <- 'DROP' RoleOrUser IfExists? ColId
+CreateRoleStatement <- 'CREATE' RoleOrUser ColId 'WITH'? CreateRoleClause*
+CreateRoleClause <- RoleOption / RoleMembershipClause
+RoleMembershipClause <- InRoleClause / RoleMembersClause / AdminClause
+InRoleClause      <- 'IN' ('ROLE' / 'GROUP') List(ColId)
+RoleMembersClause <- 'ROLE' List(ColId)
+AdminClause       <- 'ADMIN' List(ColId)
+DropRoleStatement   <- 'DROP' RoleOrUser IfExists? List(ColId)
 # RENAME TO is tried before the per-role GUC and attribute-option lists so
 # 'RENAME'/'SET'/'RESET' are not eaten by the wrong alternative.
 AlterRoleStatement  <- 'ALTER' RoleOrUser ColId (AlterRoleRename / AlterRoleConfig / AlterRoleOptionList)
@@ -16,12 +21,14 @@ AlterRoleSetTo      <- ('=' / 'TO') List(Expression)
 AlterRoleSetFromCurrent <- 'FROM' 'CURRENT'
 AlterRoleReset      <- 'RESET' (AlterRoleResetAll / SettingName)
 AlterRoleResetAll   <- 'ALL'
-AlterRoleOptionList <- AlterRoleOption+
+AlterRoleOptionList <- 'WITH'? AlterRoleOption+
 # PasswordNullOption before PasswordOption so 'PASSWORD NULL' is matched first.
-AlterRoleOption     <- LoginOption / SuperuserOption / CreateDbOption / CreateRoleOption / InheritOption / ConnLimitOption / ValidUntilOption / PasswordNullOption / PasswordOption
+AlterRoleOption     <- LoginOption / SuperuserOption / CreateDbOption / CreateRoleOption / InheritOption / ReplicationOption / BypassRlsOption / ConnLimitOption / ValidUntilOption / PasswordNullOption / PasswordOption
 CreateDbOption      <- 'CREATEDB' / 'NOCREATEDB'
 CreateRoleOption    <- 'CREATEROLE' / 'NOCREATEROLE'
-ConnLimitOption     <- 'CONNECTION' 'LIMIT' NumberLiteral
+ReplicationOption   <- 'REPLICATION' / 'NOREPLICATION'
+BypassRlsOption     <- 'BYPASSRLS' / 'NOBYPASSRLS'
+ConnLimitOption     <- 'CONNECTION' 'LIMIT' '-'? NumberLiteral
 ValidUntilOption    <- 'VALID' 'UNTIL' StringLiteral
 PasswordNullOption  <- 'PASSWORD' 'NULL'
 
@@ -95,11 +102,12 @@ GrantObjType <- 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYP
 Grantee <- 'PUBLIC' / ColId
 
 RoleOptionList <- RoleOption+
-RoleOption <- LoginOption / SuperuserOption / InheritOption / ConnLimitOption / ValidUntilOption / PasswordOption
+RoleOption <- LoginOption / SuperuserOption / CreateDbOption / CreateRoleOption / InheritOption / ReplicationOption / BypassRlsOption / ConnLimitOption / ValidUntilOption / SysIdOption / PasswordNullOption / PasswordOption
 LoginOption     <- 'LOGIN' / 'NOLOGIN'
 SuperuserOption <- 'SUPERUSER' / 'NOSUPERUSER'
 InheritOption   <- 'INHERIT' / 'NOINHERIT'
-PasswordOption  <- 'PASSWORD' StringLiteral
+SysIdOption     <- 'SYSID' NumberLiteral
+PasswordOption  <- 'ENCRYPTED'? 'PASSWORD' StringLiteral
 
 # Row-Level Security. CREATE/ALTER/DROP POLICY -> serenedb_*_policy pragmas;
 # ALTER TABLE ... ROW LEVEL SECURITY -> serenedb_alter_table_row_security. The

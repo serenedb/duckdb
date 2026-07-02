@@ -243,6 +243,12 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		auto &properties = GetStatementProperties();
 		properties.RegisterDBRead(table.ParentCatalog(), context);
 
+		// Record this base-relation read for the access-control rule, tagged with
+		// the effective principal (the enclosing definer view's owner, or the
+		// caller). Columns are attributed as their column refs bind.
+		auto &access = RecordAccess(table_index.index, table);
+		access.verb |= AccessVerb::SELECT;
+
 		unique_ptr<FunctionData> bind_data;
 		auto scan_function = table.GetScanFunction(context, bind_data, table_lookup);
 		if (bind_data) {
@@ -290,10 +296,18 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 	case CatalogType::VIEW_ENTRY: {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
+		// PostgreSQL also checks SELECT on the view relation itself, against the
+		// principal in force where the view is referenced (THIS binder's effective
+		// definer). Record it before descending into the body.
+		{
+			auto &access = RecordAccess(GenerateTableIndex().index, view_catalog_entry);
+			access.verb |= AccessVerb::SELECT;
+		}
 		// We need to use a new binder for the view that doesn't reference any CTEs
 		// defined for this binder so there are no collisions between the CTEs defined
 		// for the view and for the current query
 		auto view_binder = Binder::CreateBinder(context, this, BinderType::VIEW_BINDER);
+		view_binder->definition_entry = &view_catalog_entry;
 		view_binder->SetCanContainNulls(true);
 
 		// The view may contain CTEs, but maybe only in the cte_map, so we need create CTE nodes for them

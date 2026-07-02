@@ -87,6 +87,14 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	del->bound_constraints = BindConstraints(table);
 	del->is_truncate = node.is_truncate;
 
+	// Record the DELETE/TRUNCATE access for the access-control rule (a row-level
+	// table privilege, no specific columns). Use the user-named target entry (the
+	// catalog facade), not the store scan table.
+	{
+		auto &access = RecordAccess(del->table_index.index, *delete_target);
+		access.verb |= del->is_truncate ? AccessVerb::TRUNCATE : AccessVerb::DELETE;
+	}
+
 	// Add columns to the scan to avoid fetching by row ID in PhysicalDelete:
 	// - If RETURNING: add all physical columns (for RETURNING projection)
 	// - Else if unique indexes exist: add only indexed columns (for delete index tracking)
@@ -115,7 +123,10 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		unique_ptr<LogicalOperator> del_as_logicaloperator = std::move(del);
 		// Include virtual columns (like rowid) so they can be referenced in RETURNING
 		auto virtual_columns = table.GetVirtualColumns();
-		return BindReturning(std::move(node.returning_list), table, node.table->alias, update_table_index,
+		// Pass the user-named target entry (the catalog facade) so the access-
+		// control rule can resolve it for the RETURNING SELECT check, not the
+		// store scan table.
+		return BindReturning(std::move(node.returning_list), *delete_target, node.table->alias, update_table_index,
 		                     std::move(del_as_logicaloperator), std::move(virtual_columns));
 	}
 	BoundStatement result;

@@ -254,6 +254,7 @@ void CreateViewInfo::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V1_5_0)) {
 		serializer.WritePropertyWithDefault<identifier_map_t<Value>>(206, "column_comments_map", column_comments_map, identifier_map_t<Value>());
 	}
+	serializer.WritePropertyWithDefault<bool>(207, "security_invoker", security_invoker, false);
 }
 
 unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
@@ -269,6 +270,7 @@ unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
 	result->types = std::move(types);
 	result->query = std::move(query);
 	result->SetName(std::move(view_name));
+	result->security_invoker = deserializer.ReadPropertyWithExplicitDefault<bool>(207, "security_invoker", false);
 	return std::move(result);
 }
 

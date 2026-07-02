@@ -293,6 +293,21 @@ public:
 	//! Add the view to the set of currently bound views - used for detecting recursive view definitions
 	void AddBoundView(ViewCatalogEntry &view);
 
+	//! The effective principal for a reference bound by THIS binder -- the
+	//! nearest enclosing view if it is a definer (its owner is checked), else
+	//! null (the caller). Only the innermost enclosing view decides: a definer
+	//! shifts to the owner, an invoker keeps the caller.
+	optional_ptr<CatalogEntry> EffectiveDefiner();
+	//! Record one base-relation access into the statement-wide carrier the
+	//! access-control rule enforces. Returns the requirement so the caller can
+	//! add columns/verb. Keyed by table_index (merges repeated references).
+	AccessRequirement &RecordAccess(idx_t table_index, const CatalogEntry &table);
+	//! Attribute a user-referenced column as a SELECT-read on the base relation
+	//! it belongs to, if one was recorded. Translates the binding's projection
+	//! index to the table-relative logical column id, and ignores refs that do
+	//! not resolve to a base table (subqueries, CTEs, derived).
+	void RecordRead(const ColumnBinding &binding);
+
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	ExpressionBinder &GetActiveBinder();
 	bool HasActiveBinder();
@@ -370,6 +385,9 @@ private:
 	shared_ptr<Binder> parent;
 	//! What kind of node we are binding using this binder
 	BinderType binder_type = BinderType::REGULAR_BINDER;
+	//! When this is a VIEW_BINDER, the view whose body it is binding (else null).
+	//! Lets the binder attribute base scans to their enclosing view.
+	optional_ptr<CatalogEntry> definition_entry;
 	//! Global binder state
 	shared_ptr<GlobalBinderState> global_binder_state;
 	//! Active binders

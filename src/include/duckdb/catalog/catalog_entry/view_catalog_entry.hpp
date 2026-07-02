@@ -45,6 +45,8 @@ public:
 	//! The set of aliases associated with the view
 	vector<Identifier> aliases;
 
+	bool security_invoker = false;
+
 	//! Returns the view column info, if the view is bound. Otherwise returns `nullptr`
 	virtual shared_ptr<ViewColumnInfo> GetColumnInfo() const;
 	//! Bind a view so we know the types / names returned by it

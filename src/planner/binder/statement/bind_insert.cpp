@@ -722,6 +722,24 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	BindInsertColumnList(table, node.columns, node.default_values, named_column_map, insert->expected_types,
 	                     column_index_map);
 
+	// Record the INSERT access (verb + written columns) for the access-control
+	// rule. Written columns are the logical positions the insert targets.
+	{
+		auto &access = RecordAccess(insert->table_index.index, table);
+		access.verb |= AccessVerb::INSERT;
+		if (insert->column_index_map.empty()) {
+			for (idx_t i = 0; i < insert->expected_types.size(); i++) {
+				access.write.insert(i);
+			}
+		} else {
+			for (idx_t i = 0; i < insert->column_index_map.size(); i++) {
+				if (insert->column_index_map[PhysicalIndex(i)] != DConstants::INVALID_INDEX) {
+					access.write.insert(i);
+				}
+			}
+		}
+	}
+
 	// An INSERT ... SELECT supplies a value for every targeted column, so naming a
 	// generated column there is not allowed -- a generated column only accepts
 	// DEFAULT (handled by the VALUES binder). Matches PostgreSQL. A VALUES insert

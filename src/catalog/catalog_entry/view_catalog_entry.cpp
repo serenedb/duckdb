@@ -39,6 +39,7 @@ void ViewCatalogEntry::Initialize(CreateViewInfo &info) {
 	this->comment = info.comment;
 	this->tags = info.tags;
 	this->column_comments = info.column_comments_map;
+	this->security_invoker = info.security_invoker;
 }
 
 ViewCatalogEntry::ViewCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateViewInfo &info)
@@ -62,6 +63,7 @@ unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 	result->comment = comment;
 	result->tags = tags;
 	result->column_comments_map = column_comments;
+	result->security_invoker = security_invoker;
 	return std::move(result);
 }
 
