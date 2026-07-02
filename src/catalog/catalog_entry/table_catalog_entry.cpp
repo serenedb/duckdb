@@ -300,17 +300,8 @@ void TableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, L
 			LogicalUpdate::BindExtraColumns(*this, get, proj, update, check.bound_columns);
 		}
 	}
-	if (update.return_chunk) {
-		physical_index_set_t all_columns;
-		for (auto &column : GetColumns().Physical()) {
-			all_columns.insert(column.Physical());
-		}
-		LogicalUpdate::BindExtraColumns(*this, get, proj, update, all_columns);
-	}
 	// for index updates we always turn any update into an insert and a delete
 	// we thus need all the columns to be available, hence we check if the update touches any index columns
-	// If the returning keyword is used, we need access to the whole row in case the user requests it.
-	// Therefore switch the update to a delete and insert.
 	update.update_is_del_and_insert = Settings::Get<ForceUpdateToDelAndInsertSetting>(context);
 	TableStorageInfo table_storage_info = GetStorageInfo(context);
 	for (auto index : table_storage_info.index_info) {
@@ -331,7 +322,8 @@ void TableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, L
 		}
 	}
 
-	if (update.update_is_del_and_insert) {
+	if (update.update_is_del_and_insert || update.return_chunk) {
+		update.update_column_count = update.update_is_del_and_insert ? 0 : update.columns.size();
 		// the update updates a column required by an index or requires returning the updated rows,
 		// push projections for all columns
 		physical_index_set_t all_columns;
