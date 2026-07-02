@@ -28,28 +28,20 @@ LogicalType BindDecimalType(BindLogicalTypeInput &input) {
 	uint8_t scale = 3;
 
 	if (!modifiers.empty()) {
-		auto width_value = modifiers[0].GetValue();
-		if (width_value.IsNull()) {
-			throw BinderException("DECIMAL type width cannot be NULL");
-		}
-		if (width_value.DefaultTryCastAs(LogicalTypeId::UTINYINT)) {
-			width = width_value.GetValueUnsafe<uint8_t>();
-			scale = 0; // reset scale to 0 if only width is provided
-		} else {
+		auto width_i = TypeModifierAsInteger(modifiers[0].GetValue());
+		if (width_i < 1 || width_i > Decimal::MAX_WIDTH_DECIMAL) {
 			throw BinderException("DECIMAL type width must be between 1 and %d", Decimal::MAX_WIDTH_DECIMAL);
 		}
+		width = NumericCast<uint8_t>(width_i);
+		scale = 0; // reset scale to 0 if only width is provided
 	}
 
 	if (modifiers.size() > 1) {
-		auto scale_value = modifiers[1].GetValue();
-		if (scale_value.IsNull()) {
-			throw BinderException("DECIMAL type scale cannot be NULL");
-		}
-		if (scale_value.DefaultTryCastAs(LogicalTypeId::UTINYINT)) {
-			scale = scale_value.GetValueUnsafe<uint8_t>();
-		} else {
+		auto scale_i = TypeModifierAsInteger(modifiers[1].GetValue());
+		if (scale_i < 0 || scale_i > Decimal::MAX_WIDTH_DECIMAL) {
 			throw BinderException("DECIMAL type scale must be between 0 and %d", Decimal::MAX_WIDTH_DECIMAL);
 		}
+		scale = NumericCast<uint8_t>(scale_i);
 	}
 
 	if (modifiers.size() > 2) {
@@ -80,20 +72,11 @@ LogicalType BindTimestampType(BindLogicalTypeInput &input) {
 		throw BinderException("TIMESTAMP type takes at most one type modifier");
 	}
 
-	auto precision_value = modifiers[0].GetValue();
-	if (precision_value.IsNull()) {
-		throw BinderException("TIMESTAMP type precision cannot be NULL");
-	}
-	uint8_t precision;
-	if (precision_value.DefaultTryCastAs(LogicalTypeId::UTINYINT)) {
-		precision = precision_value.GetValueUnsafe<uint8_t>();
-	} else {
-		throw BinderException("TIMESTAMP type precision must be between 0 and 9");
-	}
-
-	if (precision > 9) {
+	auto precision_i = TypeModifierAsInteger(modifiers[0].GetValue());
+	if (precision_i < 0 || precision_i > 9) {
 		throw BinderException("TIMESTAMP only supports until nano-second precision (9)");
 	}
+	auto precision = NumericCast<uint8_t>(precision_i);
 	if (precision == 0) {
 		return LogicalType::TIMESTAMP_S;
 	}
@@ -134,6 +117,13 @@ LogicalType BindVarcharType(BindLogicalTypeInput &input) {
 	if (modifiers.size() > 1) {
 		throw BinderException("VARCHAR type takes at most one type modifier");
 	}
+	if (!modifiers.empty()) {
+		// The length itself is not enforced, but the modifier must still be a
+		// valid PG type modifier
+		if (TypeModifierAsInteger(modifiers[0].GetValue()) < 1) {
+			throw BinderException("length for type varchar must be at least 1");
+		}
+	}
 
 	return LogicalType::VARCHAR;
 }
@@ -147,6 +137,9 @@ LogicalType BindBitType(BindLogicalTypeInput &input) {
 	if (args.size() > 1) {
 		throw BinderException("BIT type takes at most one type modifier");
 	}
+	if (!args.empty() && TypeModifierAsInteger(args[0].GetValue()) < 1) {
+		throw BinderException("length for type bit must be at least 1");
+	}
 	return LogicalType::BIT;
 }
 
@@ -158,6 +151,9 @@ LogicalType BindIntervalType(BindLogicalTypeInput &input) {
 	auto &modifiers = input.modifiers;
 	if (modifiers.size() > 1) {
 		throw BinderException("INTERVAL type takes at most one type modifier");
+	}
+	if (!modifiers.empty()) {
+		TypeModifierAsInteger(modifiers[0].GetValue());
 	}
 	return LogicalType::INTERVAL;
 }
@@ -462,89 +458,90 @@ using builtin_type_array = std::array<DefaultType, 82>;
 
 // Lazy-initialized to avoid static initialization order issues with LogicalType.
 static const builtin_type_array &GetBuiltinTypes() {
-static const builtin_type_array BUILTIN_TYPES = {{{"decimal", LogicalTypeId::DECIMAL, BindDecimalType},
-                                           {"dec", LogicalTypeId::DECIMAL, BindDecimalType},
-                                           {"numeric", LogicalTypeId::DECIMAL, BindDecimalType},
-                                           {"time", LogicalTypeId::TIME, nullptr},
-                                           {"time_ns", LogicalTypeId::TIME_NS, nullptr},
-                                           {"date", LogicalTypeId::DATE, nullptr},
-                                           {"timestamp", LogicalTypeId::TIMESTAMP, BindTimestampType},
-                                           {"datetime", LogicalTypeId::TIMESTAMP, BindTimestampType},
-                                           {"timestamp_us", LogicalTypeId::TIMESTAMP, nullptr},
-                                           {"timestamp_ms", LogicalTypeId::TIMESTAMP_MS, nullptr},
-                                           {"timestamp_ns", LogicalTypeId::TIMESTAMP_NS, nullptr},
-                                           {"timestamp_s", LogicalTypeId::TIMESTAMP_SEC, nullptr},
-                                           {"timestamptz", LogicalTypeId::TIMESTAMP_TZ, nullptr},
-                                           {"timestamp with time zone", LogicalTypeId::TIMESTAMP_TZ, nullptr},
-                                           {"timestamptz_ns", LogicalTypeId::TIMESTAMP_TZ_NS, nullptr},
-                                           {"timetz", LogicalTypeId::TIME_TZ, nullptr},
-                                           {"time with time zone", LogicalTypeId::TIME_TZ, nullptr},
-                                           {"interval", LogicalTypeId::INTERVAL, BindIntervalType},
-                                           {"varchar", LogicalTypeId::VARCHAR, BindVarcharType},
-                                           {"bpchar", LogicalTypeId::VARCHAR, BindVarcharType},
-                                           {"string", LogicalTypeId::VARCHAR, BindVarcharType},
-                                           {"char", LogicalTypeId::VARCHAR, BindVarcharType},
-                                           {"nvarchar", LogicalTypeId::VARCHAR, BindVarcharType},
-                                           {"text", LogicalTypeId::VARCHAR, BindVarcharType},
-                                           {"blob", LogicalTypeId::BLOB, nullptr},
-                                           {"bytea", LogicalTypeId::BLOB, nullptr},
-                                           {"varbinary", LogicalTypeId::BLOB, nullptr},
-                                           {"binary", LogicalTypeId::BLOB, nullptr},
-                                           {"hugeint", LogicalTypeId::HUGEINT, nullptr},
-                                           {"int128", LogicalTypeId::HUGEINT, nullptr},
-                                           {"uhugeint", LogicalTypeId::UHUGEINT, nullptr},
-                                           {"uint128", LogicalTypeId::UHUGEINT, nullptr},
-                                           {"bigint", LogicalTypeId::BIGINT, nullptr},
-                                           {"oid", LogicalTypeId::BIGINT, nullptr},
-                                           {"long", LogicalTypeId::BIGINT, nullptr},
-                                           {"int8", LogicalTypeId::BIGINT, nullptr},
-                                           {"int64", LogicalTypeId::BIGINT, nullptr},
-                                           {"ubigint", LogicalTypeId::UBIGINT, nullptr},
-                                           {"uint64", LogicalTypeId::UBIGINT, nullptr},
-                                           {"integer", LogicalTypeId::INTEGER, nullptr},
-                                           {"int", LogicalTypeId::INTEGER, nullptr},
-                                           {"int4", LogicalTypeId::INTEGER, nullptr},
-                                           {"signed", LogicalTypeId::INTEGER, nullptr},
-                                           {"integral", LogicalTypeId::INTEGER, nullptr},
-                                           {"int32", LogicalTypeId::INTEGER, nullptr},
-                                           {"uinteger", LogicalTypeId::UINTEGER, nullptr},
-                                           {"uint32", LogicalTypeId::UINTEGER, nullptr},
-                                           {"smallint", LogicalTypeId::SMALLINT, nullptr},
-                                           {"int2", LogicalTypeId::SMALLINT, nullptr},
-                                           {"short", LogicalTypeId::SMALLINT, nullptr},
-                                           {"int16", LogicalTypeId::SMALLINT, nullptr},
-                                           {"usmallint", LogicalTypeId::USMALLINT, nullptr},
-                                           {"uint16", LogicalTypeId::USMALLINT, nullptr},
-                                           {"tinyint", LogicalTypeId::TINYINT, nullptr},
-                                           {"int1", LogicalTypeId::TINYINT, nullptr},
-                                           {"utinyint", LogicalTypeId::UTINYINT, nullptr},
-                                           {"uint8", LogicalTypeId::UTINYINT, nullptr},
-                                           {"struct", LogicalTypeId::STRUCT, BindStructType},
-                                           {"row", LogicalTypeId::STRUCT, BindStructType},
-                                           {"list", LogicalTypeId::LIST, BindListType},
-                                           {"array", LogicalTypeId::ARRAY, BindArrayType},
-                                           {"map", LogicalTypeId::MAP, BindMapType},
-                                           {"union", LogicalTypeId::UNION, BindUnionType},
-                                           {"bit", LogicalTypeId::BIT, BindBitType},
-                                           {"bitstring", LogicalTypeId::BIT, BindBitType},
-                                           {"variant", LogicalTypeId::VARIANT, BindVariantType},
-                                           {"bignum", LogicalTypeId::BIGNUM, nullptr},
-                                           {"varint", LogicalTypeId::BIGNUM, nullptr},
-                                           {"boolean", LogicalTypeId::BOOLEAN, nullptr},
-                                           {"bool", LogicalTypeId::BOOLEAN, nullptr},
-                                           {"logical", LogicalTypeId::BOOLEAN, nullptr},
-                                           {"uuid", LogicalTypeId::UUID, nullptr},
-                                           {"guid", LogicalTypeId::UUID, nullptr},
-                                           {"enum", LogicalTypeId::ENUM, BindEnumType},
-                                           {"null", LogicalTypeId::SQLNULL, nullptr},
-                                           {"float", LogicalTypeId::FLOAT, nullptr},
-                                           {"real", LogicalTypeId::FLOAT, nullptr},
-                                           {"float4", LogicalTypeId::FLOAT, nullptr},
-                                           {"double", LogicalTypeId::DOUBLE, nullptr},
-                                           {"float8", LogicalTypeId::DOUBLE, nullptr},
-                                           {"geometry", LogicalTypeId::GEOMETRY, BindGeometryType},
-                                           {"type", LogicalTypeId::TYPE, nullptr}}};
-return BUILTIN_TYPES;
+	static const builtin_type_array BUILTIN_TYPES = {
+	    {{"decimal", LogicalTypeId::DECIMAL, BindDecimalType},
+	     {"dec", LogicalTypeId::DECIMAL, BindDecimalType},
+	     {"numeric", LogicalTypeId::DECIMAL, BindDecimalType},
+	     {"time", LogicalTypeId::TIME, nullptr},
+	     {"time_ns", LogicalTypeId::TIME_NS, nullptr},
+	     {"date", LogicalTypeId::DATE, nullptr},
+	     {"timestamp", LogicalTypeId::TIMESTAMP, BindTimestampType},
+	     {"datetime", LogicalTypeId::TIMESTAMP, BindTimestampType},
+	     {"timestamp_us", LogicalTypeId::TIMESTAMP, nullptr},
+	     {"timestamp_ms", LogicalTypeId::TIMESTAMP_MS, nullptr},
+	     {"timestamp_ns", LogicalTypeId::TIMESTAMP_NS, nullptr},
+	     {"timestamp_s", LogicalTypeId::TIMESTAMP_SEC, nullptr},
+	     {"timestamptz", LogicalTypeId::TIMESTAMP_TZ, nullptr},
+	     {"timestamp with time zone", LogicalTypeId::TIMESTAMP_TZ, nullptr},
+	     {"timestamptz_ns", LogicalTypeId::TIMESTAMP_TZ_NS, nullptr},
+	     {"timetz", LogicalTypeId::TIME_TZ, nullptr},
+	     {"time with time zone", LogicalTypeId::TIME_TZ, nullptr},
+	     {"interval", LogicalTypeId::INTERVAL, BindIntervalType},
+	     {"varchar", LogicalTypeId::VARCHAR, BindVarcharType},
+	     {"bpchar", LogicalTypeId::VARCHAR, BindVarcharType},
+	     {"string", LogicalTypeId::VARCHAR, BindVarcharType},
+	     {"char", LogicalTypeId::VARCHAR, BindVarcharType},
+	     {"nvarchar", LogicalTypeId::VARCHAR, BindVarcharType},
+	     {"text", LogicalTypeId::VARCHAR, BindVarcharType},
+	     {"blob", LogicalTypeId::BLOB, nullptr},
+	     {"bytea", LogicalTypeId::BLOB, nullptr},
+	     {"varbinary", LogicalTypeId::BLOB, nullptr},
+	     {"binary", LogicalTypeId::BLOB, nullptr},
+	     {"hugeint", LogicalTypeId::HUGEINT, nullptr},
+	     {"int128", LogicalTypeId::HUGEINT, nullptr},
+	     {"uhugeint", LogicalTypeId::UHUGEINT, nullptr},
+	     {"uint128", LogicalTypeId::UHUGEINT, nullptr},
+	     {"bigint", LogicalTypeId::BIGINT, nullptr},
+	     {"oid", LogicalTypeId::BIGINT, nullptr},
+	     {"long", LogicalTypeId::BIGINT, nullptr},
+	     {"int8", LogicalTypeId::BIGINT, nullptr},
+	     {"int64", LogicalTypeId::BIGINT, nullptr},
+	     {"ubigint", LogicalTypeId::UBIGINT, nullptr},
+	     {"uint64", LogicalTypeId::UBIGINT, nullptr},
+	     {"integer", LogicalTypeId::INTEGER, nullptr},
+	     {"int", LogicalTypeId::INTEGER, nullptr},
+	     {"int4", LogicalTypeId::INTEGER, nullptr},
+	     {"signed", LogicalTypeId::INTEGER, nullptr},
+	     {"integral", LogicalTypeId::INTEGER, nullptr},
+	     {"int32", LogicalTypeId::INTEGER, nullptr},
+	     {"uinteger", LogicalTypeId::UINTEGER, nullptr},
+	     {"uint32", LogicalTypeId::UINTEGER, nullptr},
+	     {"smallint", LogicalTypeId::SMALLINT, nullptr},
+	     {"int2", LogicalTypeId::SMALLINT, nullptr},
+	     {"short", LogicalTypeId::SMALLINT, nullptr},
+	     {"int16", LogicalTypeId::SMALLINT, nullptr},
+	     {"usmallint", LogicalTypeId::USMALLINT, nullptr},
+	     {"uint16", LogicalTypeId::USMALLINT, nullptr},
+	     {"tinyint", LogicalTypeId::TINYINT, nullptr},
+	     {"int1", LogicalTypeId::TINYINT, nullptr},
+	     {"utinyint", LogicalTypeId::UTINYINT, nullptr},
+	     {"uint8", LogicalTypeId::UTINYINT, nullptr},
+	     {"struct", LogicalTypeId::STRUCT, BindStructType},
+	     {"row", LogicalTypeId::STRUCT, BindStructType},
+	     {"list", LogicalTypeId::LIST, BindListType},
+	     {"array", LogicalTypeId::ARRAY, BindArrayType},
+	     {"map", LogicalTypeId::MAP, BindMapType},
+	     {"union", LogicalTypeId::UNION, BindUnionType},
+	     {"bit", LogicalTypeId::BIT, BindBitType},
+	     {"bitstring", LogicalTypeId::BIT, BindBitType},
+	     {"variant", LogicalTypeId::VARIANT, BindVariantType},
+	     {"bignum", LogicalTypeId::BIGNUM, nullptr},
+	     {"varint", LogicalTypeId::BIGNUM, nullptr},
+	     {"boolean", LogicalTypeId::BOOLEAN, nullptr},
+	     {"bool", LogicalTypeId::BOOLEAN, nullptr},
+	     {"logical", LogicalTypeId::BOOLEAN, nullptr},
+	     {"uuid", LogicalTypeId::UUID, nullptr},
+	     {"guid", LogicalTypeId::UUID, nullptr},
+	     {"enum", LogicalTypeId::ENUM, BindEnumType},
+	     {"null", LogicalTypeId::SQLNULL, nullptr},
+	     {"float", LogicalTypeId::FLOAT, nullptr},
+	     {"real", LogicalTypeId::FLOAT, nullptr},
+	     {"float4", LogicalTypeId::FLOAT, nullptr},
+	     {"double", LogicalTypeId::DOUBLE, nullptr},
+	     {"float8", LogicalTypeId::DOUBLE, nullptr},
+	     {"geometry", LogicalTypeId::GEOMETRY, BindGeometryType},
+	     {"type", LogicalTypeId::TYPE, nullptr}}};
+	return BUILTIN_TYPES;
 }
 
 optional_ptr<const DefaultType> TryGetDefaultTypeEntry(const Identifier &name) {

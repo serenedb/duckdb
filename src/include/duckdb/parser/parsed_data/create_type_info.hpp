@@ -51,6 +51,12 @@ struct BindLogicalTypeInput {
 //! The type to bind type modifiers to a type
 typedef LogicalType (*bind_logical_type_function_t)(BindLogicalTypeInput &input);
 
+//! PG-style numeric type modifier (transformTypeModifiers + the typmod-in
+//! functions): an integer constant, or a string constant whose text parses as
+//! an integer. Fractional numerics fail the integer parse the way PG fails
+//! "numeric(1.1)"; booleans, NULLs and anything else are not simple constants.
+int64_t TypeModifierAsInteger(const Value &value);
+
 struct CreateTypeInfo : public CreateInfo {
 	CreateTypeInfo();
 	CreateTypeInfo(string name_p, LogicalType type_p, bind_logical_type_function_t bind_function_p = nullptr);
