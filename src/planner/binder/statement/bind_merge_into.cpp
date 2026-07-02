@@ -314,6 +314,12 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 
 	merge_into->bound_constraints = BindConstraints(table);
 
+	// must be set before ANY action is bound: update actions bound with return_chunk
+	// project every table column (PhysicalUpdate builds the full RETURNING row from them)
+	if (!node.returning_list.empty()) {
+		merge_into->return_chunk = true;
+	}
+
 	for (auto &entry : node.actions) {
 		if (entry.first == MergeActionCondition::WHEN_MATCHED) {
 			continue;
