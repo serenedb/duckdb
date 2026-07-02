@@ -19,8 +19,8 @@ public:
 	static StorageCompatibility FromDatabase(AttachedDatabase &db);
 	static StorageCompatibility FromIndex(StorageVersion storage_version_p);
 	static StorageCompatibility FromString(const string &input);
-	static StorageCompatibility Default();
-	static StorageCompatibility Latest();
+	static const StorageCompatibility &Default();
+	static const StorageCompatibility &Latest();
 
 public:
 	bool Compare(StorageVersion property_version) const;
