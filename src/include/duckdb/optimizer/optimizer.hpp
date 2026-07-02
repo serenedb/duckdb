@@ -55,6 +55,10 @@ public:
 
 private:
 	unique_ptr<LogicalOperator> plan;
+	//! Value of the enable_optimizer setting, read once per optimizer
+	bool enable_optimizer;
+	//! Snapshot of the registered optimizer extensions, taken once per optimizer
+	ExtensionCallbackIteratorHelper<OptimizerExtension> optimizer_extensions;
 
 private:
 	unique_ptr<Expression> BindScalarFunction(const Identifier &name, vector<unique_ptr<Expression>> children);

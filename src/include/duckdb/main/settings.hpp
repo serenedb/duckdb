@@ -21,7 +21,8 @@ struct Settings {
 		if (TryGetSettingInternal(source, OP::SettingIndex, result) && !result.IsNull()) {
 			return EnumUtil::FromString<typename OP::RETURN_TYPE>(StringValue::Get(result));
 		}
-		return EnumUtil::FromString<typename OP::RETURN_TYPE>(OP::DefaultValue);
+		static const auto default_value = EnumUtil::FromString<typename OP::RETURN_TYPE>(OP::DefaultValue);
+		return default_value;
 	}
 
 	template <class OP, class SOURCE>
@@ -41,7 +42,8 @@ struct Settings {
 		if (TryGetSettingInternal(source, OP::SettingIndex, result) && !result.IsNull()) {
 			return BooleanValue::Get(result);
 		}
-		return StringUtil::Equals(OP::DefaultValue, "true");
+		static constexpr bool default_value = std::string_view(OP::DefaultValue) == "true";
+		return default_value;
 	}
 
 	template <class OP, class SOURCE>
@@ -51,7 +53,8 @@ struct Settings {
 		if (TryGetSettingInternal(source, OP::SettingIndex, result) && !result.IsNull()) {
 			return UBigIntValue::Get(result);
 		}
-		return StringUtil::ToUnsigned(OP::DefaultValue);
+		static const idx_t default_value = StringUtil::ToUnsigned(OP::DefaultValue);
+		return default_value;
 	}
 
 	template <class OP, class SOURCE>
@@ -61,7 +64,8 @@ struct Settings {
 		if (TryGetSettingInternal(source, OP::SettingIndex, result) && !result.IsNull()) {
 			return BigIntValue::Get(result);
 		}
-		return StringUtil::ToSigned(OP::DefaultValue);
+		static const int64_t default_value = StringUtil::ToSigned(OP::DefaultValue);
+		return default_value;
 	}
 
 	template <class OP, class SOURCE>
@@ -71,7 +75,8 @@ struct Settings {
 		if (TryGetSettingInternal(source, OP::SettingIndex, result) && !result.IsNull()) {
 			return DoubleValue::Get(result);
 		}
-		return StringUtil::ToDouble(OP::DefaultValue);
+		static const double default_value = StringUtil::ToDouble(OP::DefaultValue);
+		return default_value;
 	}
 
 	template <class SOURCE>

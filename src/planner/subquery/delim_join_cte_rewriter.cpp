@@ -13,6 +13,7 @@
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/column_binding_replacer.hpp"
+#include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
@@ -2154,9 +2155,7 @@ static bool SingleJoinRHSIsDeduplicated(LogicalComparisonJoin &join) {
 
 DelimJoinCTERewriter::DelimJoinCTERewriter(Binder &binder) : binder(binder) {
 	auto &config = DBConfig::GetConfig(binder.context);
-	cte_deliminator_enabled =
-	    Settings::Get<EnableOptimizerSetting>(binder.context) &&
-	    config.options.disabled_optimizers.find(OptimizerType::DELIMINATOR) == config.options.disabled_optimizers.end();
+	cte_deliminator_enabled = !Optimizer::OptimizerDisabled(binder.context, OptimizerType::DELIMINATOR);
 }
 
 void DelimJoinCTERewriter::MaterializeDelimJoinAsCTE(unique_ptr<LogicalOperator> &plan, LogicalOperator &rewrite_root,
