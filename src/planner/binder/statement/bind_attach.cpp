@@ -25,7 +25,7 @@ BoundStatement Binder::Bind(AttachStatement &stmt) {
 	}
 
 	// bind the options
-	TableFunctionBinder option_binder(*this, context, "Attach", "Attach parameter");
+	TableFunctionBinder option_binder(*this, context, "Attach", "Attach parameter", true);
 	unordered_map<string, Value> kv_options;
 	for (auto &entry : stmt.info->parsed_options) {
 		auto bound_expr = option_binder.Bind(entry.second);
