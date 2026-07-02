@@ -1,3 +1,4 @@
+#include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/planner/expression_binder/table_function_binder.hpp"
 #include "duckdb/common/enums/table_function_identifier_conversion.hpp"
 #include "duckdb/common/sql_identifier.hpp"
@@ -11,9 +12,9 @@
 namespace duckdb {
 
 TableFunctionBinder::TableFunctionBinder(Binder &binder, ClientContext &context, string table_function_name_p,
-                                         string clause_p)
+                                         string clause_p, bool identifiers_are_strings_p)
     : ExpressionBinder(binder, context), table_function_name(std::move(table_function_name_p)),
-      clause(std::move(clause_p)) {
+      clause(std::move(clause_p)), identifiers_are_strings(identifiers_are_strings_p) {
 }
 
 BindResult TableFunctionBinder::BindLambdaReference(LambdaRefExpression &expr, idx_t depth) {
@@ -76,6 +77,9 @@ BindResult TableFunctionBinder::BindColumnReference(unique_ptr<ParsedExpression>
 		                      result_name);
 	}
 
+	if (identifiers_are_strings || inside_struct_literal) {
+		return BindResult(make_uniq<BoundConstantExpression>(Value(result_name)));
+	}
 	auto setting = Settings::Get<TableFunctionIdentifierConversionSetting>(context);
 	auto implicit_conversion_disabled = setting == TableFunctionIdentifierConversion::DISABLE_IMPLICIT_STRING;
 	auto warn_implicit_conversion = setting == TableFunctionIdentifierConversion::DEFAULT;
@@ -108,6 +112,19 @@ BindResult TableFunctionBinder::BindExpression(unique_ptr<ParsedExpression> &exp
 		return BindResult(clause + " cannot contain DEFAULT clause");
 	case ExpressionClass::WINDOW:
 		return BindResult(clause + " cannot contain window functions!");
+	case ExpressionClass::FUNCTION: {
+		auto &function = expr.Cast<FunctionExpression>();
+		if (function.FunctionName() == "struct_pack") {
+			// bare identifiers in struct-literal values are documented string values
+			// (e.g. hive_types={'release': DATE}, columns={id: UBIGINT})
+			auto saved = inside_struct_literal;
+			inside_struct_literal = true;
+			auto result = ExpressionBinder::BindExpression(expr_ptr, depth);
+			inside_struct_literal = saved;
+			return result;
+		}
+		return ExpressionBinder::BindExpression(expr_ptr, depth);
+	}
 	default:
 		return ExpressionBinder::BindExpression(expr_ptr, depth);
 	}
