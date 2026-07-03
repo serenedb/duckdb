@@ -12,6 +12,7 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/optional_idx.hpp"
+#include "duckdb/common/enums/optimizer_type.hpp"
 #include "duckdb/common/enums/output_type.hpp"
 #include "duckdb/common/progress_bar/progress_bar.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -52,6 +53,11 @@ struct ClientConfig {
 	bool print_progress_bar = true;
 	//! The wait time before showing the progress bar
 	int wait_time = 2000;
+
+	//! Session-scoped override of the disabled_optimizers setting; when unset
+	//! the database-wide DBConfig set applies.
+	bool has_disabled_optimizers = false;
+	set<OptimizerType> disabled_optimizers;
 
 	//! Force parallelism of small tables, used for testing
 	bool verify_parallelism = false;

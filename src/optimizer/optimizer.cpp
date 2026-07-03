@@ -106,14 +106,21 @@ bool Optimizer::OptimizerDisabled(OptimizerType type) {
 		// all optimizers are disabled
 		return true;
 	}
-	auto &config = DBConfig::GetConfig(context);
-	return config.options.disabled_optimizers.contains(type);
+	return OptimizerDisabledInternal(context, type);
 }
 
 bool Optimizer::OptimizerDisabled(ClientContext &context_p, OptimizerType type) {
 	if (!Settings::Get<EnableOptimizerSetting>(context_p)) {
 		// all optimizes are disabled
 		return true;
+	}
+	return OptimizerDisabledInternal(context_p, type);
+}
+
+bool Optimizer::OptimizerDisabledInternal(ClientContext &context_p, OptimizerType type) {
+	auto &client_config = ClientConfig::GetConfig(context_p);
+	if (client_config.has_disabled_optimizers) {
+		return client_config.disabled_optimizers.contains(type);
 	}
 	auto &config = DBConfig::GetConfig(context_p);
 	return config.options.disabled_optimizers.contains(type);
