@@ -37,40 +37,35 @@ StorageCompatibility StorageCompatibility::FromString(const string &input) {
 	return result;
 }
 
-StorageCompatibility StorageCompatibility::Default() {
+const StorageCompatibility &StorageCompatibility::Default() {
 #ifdef DUCKDB_ALTERNATIVE_VERIFY
-	auto res = FromString("latest");
-	res.duckdb_version = "latest";
-	res.manually_set = false;
-	return res;
+	return Latest();
 #else
 #ifdef DUCKDB_LATEST_STORAGE
-	auto res = FromString("latest");
-	res.manually_set = false;
-	return res;
+	return Latest();
 #else
-	auto res = FromString("v0.10.2");
-	res.duckdb_version = "latest";
-	res.manually_set = false;
-	return res;
+	static const StorageCompatibility default_compatibility = [] {
+		auto res = FromIndex(StorageVersion::V0_10_2);
+		res.duckdb_version = "latest";
+		res.manually_set = false;
+		return res;
+	}();
+	return default_compatibility;
 #endif
 #endif
 }
 
-StorageCompatibility StorageCompatibility::Latest() {
-	auto res = FromString("latest");
-	res.manually_set = false;
-	return res;
+const StorageCompatibility &StorageCompatibility::Latest() {
+	static const StorageCompatibility latest_compatibility = [] {
+		auto res = FromString("latest");
+		res.manually_set = false;
+		return res;
+	}();
+	return latest_compatibility;
 }
 
 bool StorageCompatibility::Compare(StorageVersion property_version) const {
 	return property_version <= storage_version;
-}
-
-bool StorageCompatibility::CompareVersionString(const string &property_version) const {
-	auto property_version_val = GetSerializationVersionDeprecated(property_version.c_str());
-	auto deprecated_serialization_version = GetSerializationVersionDeprecated(duckdb_version.c_str());
-	return property_version_val <= deprecated_serialization_version;
 }
 
 StorageVersion StorageCompatibility::GetStorageVersionCompatibility() const {
