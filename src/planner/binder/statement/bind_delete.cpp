@@ -31,9 +31,8 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	TableCatalogEntry *delete_target = &table;
 	if (node.table->type == TableReferenceType::BASE_TABLE) {
 		auto &target_ref = node.table->Cast<BaseTableRef>();
-		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.table_name);
-		auto resolved = Catalog::GetEntry(context, target_ref.catalog_name, target_ref.schema_name, table_lookup,
-		                                  OnEntryNotFound::RETURN_NULL);
+		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.GetQualifiedName());
+		auto resolved = Catalog::GetEntry(context, table_lookup, OnEntryNotFound::RETURN_NULL);
 		if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
 			delete_target = &resolved->Cast<TableCatalogEntry>();
 		}

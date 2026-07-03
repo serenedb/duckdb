@@ -27,13 +27,15 @@ string TransformColIdName(PEGTransformer &transformer, ParseResult &col_id_pr) {
 string QualifiedTableName(PEGTransformer &transformer, ParseResult &qname_pr) {
 	auto name = transformer.Transform<QualifiedName>(qname_pr);
 	string result;
-	if (!name.catalog.empty() && name.catalog != INVALID_CATALOG) {
-		result += name.catalog + ".";
+	if (!name.Catalog().empty()) {
+		result += name.Catalog();
+		result += ".";
 	}
-	if (!name.schema.empty() && name.schema != INVALID_SCHEMA) {
-		result += name.schema + ".";
+	if (!name.Schema().empty()) {
+		result += name.Schema();
+		result += ".";
 	}
-	result += name.name;
+	result += name.Name();
 	return result;
 }
 
@@ -121,7 +123,7 @@ string ConfigValueText(const ParsedExpression &expr) {
 		return val.IsNull() ? string() : val.ToString();
 	}
 	if (expr.GetExpressionType() == ExpressionType::COLUMN_REF) {
-		return expr.Cast<ColumnRefExpression>().GetColumnName();
+		return expr.Cast<ColumnRefExpression>().GetColumnName().GetIdentifierName();
 	}
 	return expr.ToString();
 }

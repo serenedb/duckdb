@@ -289,7 +289,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	// are not threaded through, matching the del-and-insert UPDATE case.
 	{
 		auto verbs = AccessVerb::NONE;
-		for (auto &action_condition : stmt.actions) {
+		for (auto &action_condition : node.actions) {
 			for (auto &action : action_condition.second) {
 				switch (action->action_type) {
 				case MergeActionType::MERGE_UPDATE:

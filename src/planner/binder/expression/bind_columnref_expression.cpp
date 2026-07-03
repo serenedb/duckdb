@@ -121,7 +121,7 @@ BindResult ExpressionBinder::BindExpression(ColumnRefExpression &col_ref_p, idx_
 	// column id (AddBaseTable registers the table's logical columns in order).
 	if (result.expression && result.expression->GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 		auto &bound_col = result.expression->Cast<BoundColumnRefExpression>();
-		binder.RecordRead(bound_col.binding);
+		binder.RecordRead(bound_col.Binding());
 	}
 
 	// we bound the column reference
