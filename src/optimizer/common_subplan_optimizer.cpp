@@ -625,11 +625,6 @@ private:
 
 public:
 	void FindCommonSubplans(reference<unique_ptr<LogicalOperator>> root) {
-		// Find first operator with more than 1 child
-		while (root.get()->children.size() == 1) {
-			root = root.get()->children[0];
-		}
-
 		// Recurse through query plan using stack-based recursion
 		arena_vector<StackNode> stack(state.allocator);
 		stack.emplace_back(root);
@@ -1172,9 +1167,19 @@ CommonSubplanOptimizer::CommonSubplanOptimizer(Optimizer &optimizer_p) : optimiz
 }
 
 unique_ptr<LogicalOperator> CommonSubplanOptimizer::Optimize(unique_ptr<LogicalOperator> op) {
+	// Find first operator with more than 1 child
+	reference<unique_ptr<LogicalOperator>> root(op);
+	while (root.get()->children.size() == 1) {
+		root = root.get()->children[0];
+	}
+	if (root.get()->children.empty()) {
+		// The plan is a single-child chain: identical disjoint subplans require
+		// a branching operator above them, so there is nothing to deduplicate
+		return op;
+	}
 	// Bottom-up identification of identical subplans
 	CommonSubplanFinder finder(optimizer.context);
-	finder.FindCommonSubplans(op);
+	finder.FindCommonSubplans(root);
 	finder.FilterSubplans();
 	finder.ConvertSubplansToCTEs(optimizer, op);
 	return op;
