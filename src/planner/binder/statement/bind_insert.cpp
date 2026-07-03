@@ -723,20 +723,13 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	                     column_index_map);
 
 	// Record the INSERT access (verb + written columns) for the access-control
-	// rule. Written columns are the logical positions the insert targets.
+	// rule. named_column_map holds the logical positions the insert targets
+	// (the explicit column list, or every physical column when none is given).
 	{
 		auto &access = RecordAccess(insert->table_index.index, table);
 		access.verb |= AccessVerb::INSERT;
-		if (insert->column_index_map.empty()) {
-			for (idx_t i = 0; i < insert->expected_types.size(); i++) {
-				access.write.insert(i);
-			}
-		} else {
-			for (idx_t i = 0; i < insert->column_index_map.size(); i++) {
-				if (insert->column_index_map[PhysicalIndex(i)] != DConstants::INVALID_INDEX) {
-					access.write.insert(i);
-				}
-			}
+		for (auto &col_idx : named_column_map) {
+			access.write.insert(col_idx.index);
 		}
 	}
 

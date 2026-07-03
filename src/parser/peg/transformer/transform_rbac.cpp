@@ -80,6 +80,30 @@ int64_t TransformConnLimit(ParseResult &opt) {
 	return negative ? -value : value;
 }
 
+// Walk down through Choice/List/Optional wrappers to the first KEYWORD leaf.
+// Keyword-only rules (e.g. CascadeDropBehavior <- 'CASCADE') resolve to a bare
+// KEYWORD node, so callers cannot assume a fixed List/Choice nesting.
+KeywordParseResult &FirstKeyword(ParseResult &node) {
+	ParseResult *cur = &node;
+	for (;;) {
+		switch (cur->type) {
+		case ParseResultType::KEYWORD:
+			return cur->Cast<KeywordParseResult>();
+		case ParseResultType::CHOICE:
+			cur = &cur->Cast<ChoiceParseResult>().GetResult();
+			break;
+		case ParseResultType::OPTIONAL:
+			cur = &cur->Cast<OptionalParseResult>().GetResult();
+			break;
+		case ParseResultType::LIST:
+			cur = &cur->Cast<ListParseResult>().GetChild(0);
+			break;
+		default:
+			return cur->Cast<KeywordParseResult>();
+		}
+	}
+}
+
 // An optional OptionBool ('TRUE'/'FALSE') child of a member option. Returns a
 // tri-state: -1 unspecified, 0 FALSE, 1 TRUE. `bool_child` is the index of the
 // OptionBool? optional within the option's LIST.
@@ -88,8 +112,7 @@ int32_t TransformOptionBool(ParseResult &option_list, idx_t bool_child) {
 	if (!opt.HasResult()) {
 		return -1;
 	}
-	auto &kw =
-	    opt.GetResult().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>();
+	auto &kw = FirstKeyword(opt.GetResult());
 	return StringUtil::Upper(kw.keyword) == "TRUE" ? 1 : 0;
 }
 
@@ -109,8 +132,7 @@ bool TransformCascade(ParseResult &list, idx_t child) {
 	if (!opt.HasResult()) {
 		return false;
 	}
-	auto &kw =
-	    opt.GetResult().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>();
+	auto &kw = FirstKeyword(opt.GetResult());
 	return StringUtil::Upper(kw.keyword) == "CASCADE";
 }
 
@@ -188,7 +210,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateRoleStatement(PEG
 		}
 	};
 	auto keyword_positive = [](ParseResult &node, const char *positive) {
-		auto &kw = node.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>();
+		auto &kw = FirstKeyword(node);
 		return StringUtil::Upper(kw.keyword) == positive;
 	};
 	auto collect_members = [&](ParseResult &clause, vector<Value> &target) {
