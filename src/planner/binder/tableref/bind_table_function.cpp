@@ -115,8 +115,12 @@ bool Binder::BindTableFunctionParameters(TableFunctionCatalogEntry &table_functi
 					child = std::move(comp.RightMutable());
 				}
 			}
-		} else if (!child->GetAlias().empty()) {
-			// <name> => <expression> will set the alias of <expression> to <name>
+		} else if (child->IsNamedParameter()) {
+			// <name> => <expression> will set the alias of <expression> to <name>.
+			// Check IsNamedParameter() instead of !GetAlias().empty(): aliases are
+			// also set on expressions for display/output-column purposes (e.g.
+			// constant folding preserves the PG-style column label "array"), and
+			// using GetAlias() here misclassifies such positional args as named.
 			parameter_name = child->GetAlias();
 		}
 		if (bind_type == TableFunctionBindType::TABLE_PARAMETER_FUNCTION &&

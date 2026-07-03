@@ -962,6 +962,7 @@ RemotePushdownOptimizer::TryConstantFold(unique_ptr<ParsedExpression> &expr) {
 	// the PG-style target-list name -- not ToString, which would rename e.g.
 	// "SELECT f(x)" from "f" to the full expression text)
 	folded->SetAlias(expr->GetAlias().empty() ? Identifier(expr->GetColumnName()) : expr->GetAlias());
+	folded->SetNamedParameter(expr->IsNamedParameter());
 	folded->SetQueryLocation(expr->GetQueryLocation());
 	expr = std::move(folded);
 	return ConstantFoldResult::FOLDED;
