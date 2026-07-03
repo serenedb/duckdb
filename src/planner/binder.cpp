@@ -9,6 +9,7 @@
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/helper.hpp"
+#include "duckdb/main/client_context_state.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
@@ -223,6 +224,68 @@ void Binder::AddBoundView(ViewCatalogEntry &view) {
 		current = current->parent.get();
 	}
 	bound_views.insert(view);
+}
+
+optional_ptr<CatalogEntry> Binder::EffectiveDefiner() {
+	// Walk out to the nearest enclosing view body. Only that view decides: a
+	// definer view shifts the effective principal to its owner (return the view);
+	// an invoker view keeps the caller (return null).
+	for (auto b = this; b; b = b->parent.get()) {
+		if (b->binder_type == BinderType::VIEW_BINDER && b->definition_entry) {
+			auto &view = b->definition_entry->Cast<ViewCatalogEntry>();
+			return view.security_invoker ? nullptr : b->definition_entry;
+		}
+	}
+	return nullptr;
+}
+
+AccessRequirement &Binder::RecordAccess(idx_t table_index, const CatalogEntry &table) {
+	auto &reqs = GetStatementProperties().access_requirements;
+	for (auto &req : reqs) {
+		if (req.table_index == table_index) {
+			return req;
+		}
+	}
+	AccessRequirement req;
+	req.table_index = table_index;
+	req.table = &table;
+	req.who = EffectiveDefiner().get();
+	reqs.push_back(std::move(req));
+	return reqs.back();
+}
+
+void Binder::RecordRead(const ColumnBinding &binding) {
+	auto &reqs = GetStatementProperties().access_requirements;
+	AccessRequirement *req = nullptr;
+	for (auto &r : reqs) {
+		if (r.table_index == binding.table_index.index) {
+			req = &r;
+			break;
+		}
+	}
+	if (!req) {
+		return;  // not a recorded base relation (subquery/CTE/derived): ignore.
+	}
+	// The binding's column_index is the projection position into the base table's
+	// bound_column_ids; translate it to the table-relative logical column id the
+	// RBAC rule expects. Resolve the TableBinding for this table_index.
+	for (auto &b : bind_context.GetBindingsList()) {
+		if (b->GetIndex() != binding.table_index || b->GetBindingType() != BindingType::TABLE) {
+			continue;
+		}
+		auto &tb = b->Cast<TableBinding>();
+		const auto proj = binding.column_index.GetIndex();
+		const auto &ids = tb.GetBoundColumnIds();
+		if (proj >= ids.size()) {
+			return;
+		}
+		const auto &cid = ids[proj];
+		if (cid.IsRowIdColumn() || cid.IsVirtualColumn()) {
+			return;
+		}
+		req->read.insert(cid.GetPrimaryIndex());
+		return;
+	}
 }
 
 TableIndex Binder::GenerateTableIndex() {
@@ -528,7 +591,10 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	vector<LogicalType> types;
 	vector<Identifier> names;
 
-	auto binder = Binder::CreateBinder(context);
+	// Share this binder's global state (incl. the access_requirements) so columns
+	// referenced in RETURNING are collected like any other read -- RETURNING reads
+	// the affected rows and needs SELECT on the returned columns.
+	auto binder = Binder::CreateBinder(context, this);
 
 	vector<ColumnIndex> bound_columns;
 	idx_t column_count = 0;
@@ -543,6 +609,9 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 
 	binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
 	                                  std::move(virtual_columns));
+	// Record a SELECT access for the RETURNING target so its column refs attribute
+	// here (the DML verb was recorded under the DML node's own table_index).
+	binder->RecordAccess(update_table_index.index, table).verb |= AccessVerb::SELECT;
 	ReturningBinder returning_binder(*binder, context);
 
 	vector<unique_ptr<Expression>> projection_expressions;

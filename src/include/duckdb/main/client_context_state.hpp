@@ -21,6 +21,7 @@
 #include <mutex>
 
 namespace duckdb {
+class CatalogEntry;
 class ClientContext;
 class ErrorData;
 class MetaTransaction;

@@ -48,6 +48,7 @@ class BufferPool;
 class CastFunctionSet;
 class CollationBinding;
 class ClientContext;
+class Binder;
 class ErrorManager;
 class CompressionFunction;
 class TableFunctionRef;
@@ -197,6 +198,9 @@ public:
 	shared_ptr<DatabaseFilePathManager> path_manager;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
+	//! Mandatory per-plan check, run independent of the optimizer so it cannot be
+	//! bypassed via disable_optimizer (security enforcement rides here).
+	void (*access_check_function)(ClientContext &context, Binder &binder) = nullptr;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);
