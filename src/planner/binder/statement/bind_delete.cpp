@@ -79,6 +79,13 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	del->bound_constraints = BindConstraints(table);
 	del->is_truncate = node.is_truncate;
 
+	// Record the DELETE/TRUNCATE access for the access-control rule (a row-level
+	// table privilege, no specific columns).
+	{
+		auto &access = RecordAccess(del->table_index.index, table);
+		access.verb |= del->is_truncate ? AccessVerb::TRUNCATE : AccessVerb::DELETE;
+	}
+
 	// Add columns to the scan to avoid fetching by row ID in PhysicalDelete:
 	// - If RETURNING: add all physical columns (for RETURNING projection)
 	// - Else if unique indexes exist: add only indexed columns (for delete index tracking)

@@ -116,6 +116,14 @@ BindResult ExpressionBinder::BindExpression(ColumnRefExpression &col_ref_p, idx_
 		return result;
 	}
 
+	// Attribute this column to its base relation as a SELECT-read for the access-
+	// control rule. For a base table the binding's column_index is the logical
+	// column id (AddBaseTable registers the table's logical columns in order).
+	if (result.expression && result.expression->GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+		auto &bound_col = result.expression->Cast<BoundColumnRefExpression>();
+		binder.RecordRead(bound_col.Binding());
+	}
+
 	// we bound the column reference
 	BoundColumnReferenceInfo ref;
 	ref.name = col_ref.ColumnNames().back();

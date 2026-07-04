@@ -699,8 +699,10 @@ void BindContext::AddBinding(unique_ptr<Binding> binding) {
 void BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
                                const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
                                TableCatalogEntry &entry, virtual_column_map_t virtual_columns) {
-	AddBinding(
-	    make_uniq<TableBinding>(alias, types, names, bound_column_ids, &entry, index, std::move(virtual_columns)));
+	auto binding =
+	    make_uniq<TableBinding>(alias, types, names, bound_column_ids, &entry, index, std::move(virtual_columns));
+	binding->context = binder.context;
+	AddBinding(std::move(binding));
 }
 
 void BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
