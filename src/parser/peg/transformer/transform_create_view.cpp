@@ -105,10 +105,21 @@ PEGTransformerFactory::TransformCreateViewStmt(PEGTransformer &transformer, cons
 	if (insert_column_list) {
 		info->aliases = StringsToIdentifiers(*insert_column_list);
 	}
+	// A view runs with the owner's rights (definer) by default, matching
+	// PostgreSQL; WITH (security_invoker=true) switches it to the caller's rights.
 	if (with_list) {
 		for (auto &option_entry : *with_list) {
+			if (StringUtil::CIEquals(option_entry.first, "security_invoker")) {
+				if (option_entry.second->GetExpressionClass() != ExpressionClass::CONSTANT) {
+					throw InvalidInputException("security_invoker option must be a constant value");
+				}
+				auto value = StringUtil::Lower(option_entry.second->Cast<ConstantExpression>().GetLiteral().text);
+				info->security_invoker = value == "true" || value == "t" || value == "on" || value == "1";
+				continue;
+			}
 			if (!StringUtil::CIEquals(option_entry.first, "defer_binding")) {
-				throw ParserException("Only DEFER_BINDING is currently supported as option for CREATE VIEW");
+				throw ParserException(
+				    "Only DEFER_BINDING and SECURITY_INVOKER are currently supported as options for CREATE VIEW");
 			}
 			if (option_entry.second->GetExpressionClass() != ExpressionClass::CONSTANT) {
 				throw InvalidInputException("Defer binding option must be a constant value");
