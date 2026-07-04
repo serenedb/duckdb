@@ -55,6 +55,8 @@ struct ClientConfig {
 	int wait_time = 2000;
 	//! Minimum interval between progress recomputations when the bar is not printed
 	int progress_update_interval_ms = 100;
+	//! Called per chunk flowing into a write sink (INSERT, COPY ... TO) so an embedding server can report progress
+	std::function<void(idx_t rows, idx_t bytes)> sink_progress_callback;
 
 	//! Session-scoped override of the disabled_optimizers setting; when unset
 	//! the database-wide DBConfig set applies.

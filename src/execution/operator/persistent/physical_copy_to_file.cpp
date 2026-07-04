@@ -3671,6 +3671,10 @@ SinkResultType PhysicalCopyToFile::Sink(ExecutionContext &context, DataChunk &ch
 		gstate.Initialize();
 	}
 	lstate.total_rows_copied += chunk.size();
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
+	if (progress_callback) {
+		progress_callback(chunk.size(), chunk.GetAllocationSize());
+	}
 
 	if (partition_output) {
 		gstate.partitioned_copy->Sink(context, chunk, *lstate.partitioned_copy_local_state, input.interrupt_state);

@@ -330,6 +330,11 @@ SinkResultType PhysicalMergeInto::Sink(ExecutionContext &context, DataChunk &chu
 	auto &global_state = input.global_state.Cast<MergeIntoGlobalState>();
 	auto &local_state = input.local_state.Cast<MergeIntoLocalState>();
 
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
+	if (progress_callback) {
+		progress_callback(chunk.size(), chunk.GetAllocationSize());
+	}
+
 	auto &match_results = local_state.match_results;
 	auto &computed_matches = local_state.sink_state.computed_matches;
 	auto &match_idx = local_state.sink_state.match_idx;

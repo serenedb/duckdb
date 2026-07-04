@@ -193,6 +193,10 @@ SinkResultType PhysicalBatchCopyToFile::Sink(ExecutionContext &context, DataChun
 	auto &state = input.local_state.Cast<FixedBatchCopyLocalState>();
 	auto &gstate = input.global_state.Cast<FixedBatchCopyGlobalState>();
 	auto &memory_manager = gstate.memory_manager;
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
+	if (progress_callback) {
+		progress_callback(chunk.size(), chunk.GetAllocationSize());
+	}
 	auto batch_index = state.partition_info.batch_index.GetIndex();
 	if (state.current_task == FixedBatchCopyState::PROCESSING_TASKS) {
 		ExecuteTasks(context.client, gstate);
