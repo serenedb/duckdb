@@ -55,6 +55,8 @@ struct ClientConfig {
 	bool print_progress_bar = true;
 	//! The wait time before showing the progress bar
 	int wait_time = 2000;
+	//! Minimum interval between progress recomputations when the bar is not printed
+	int progress_update_interval_ms = 0;
 
 	//! Session-scoped override of the disabled_optimizers setting; when unset
 	//! the database-wide DBConfig set applies.

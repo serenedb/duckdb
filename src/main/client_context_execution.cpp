@@ -205,7 +205,8 @@ unique_ptr<QueryResult> ClientContext::SubmitPreparedStatementInternal(
 			    config.display_create_func ? config.display_create_func : ProgressBar::DefaultProgressBarDisplay;
 		}
 		active_query->progress_bar =
-		    make_uniq<ProgressBar>(executor, NumericCast<idx_t>(config.wait_time), display_create_func);
+		    make_uniq<ProgressBar>(executor, NumericCast<idx_t>(config.wait_time),
+		                           NumericCast<idx_t>(config.progress_update_interval_ms), display_create_func);
 		active_query->progress_bar->Start();
 		query_progress.Restart();
 	}
@@ -351,8 +352,9 @@ void ClientContext::UpdateProgressInternal(QueryResultState state) {
 		return;
 	}
 	// todo: this is not correct for streaming results
-	active_query->progress_bar->Update(IsObservable(state));
-	query_progress = active_query->progress_bar->GetDetailedQueryProgress();
+	if (active_query->progress_bar->Update(IsObservable(state))) {
+		query_progress = active_query->progress_bar->GetDetailedQueryProgress();
+	}
 }
 
 QueryResultState ClientContext::FailQueryInternal(ClientContextLock &lock, BaseQueryResult &result, ErrorData error) {
