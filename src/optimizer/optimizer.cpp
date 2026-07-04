@@ -206,6 +206,7 @@ void Optimizer::OptimizeStatement(unique_ptr<SQLStatement> &statement) {
 		RunOptimizer(OptimizerType::REMOTE_PUSHDOWN, [&]() {
 			RemotePushdownOptimizer optimizer(binder);
 			optimizer.Rewrite(statement);
+			optimizer.RevertUnshippedFolds();
 		});
 	}
 }
