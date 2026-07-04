@@ -177,8 +177,8 @@ public:
 	//! Delete a set of rows from the local storage
 	idx_t Delete(DataTable &table, DuckTableEntry &table_entry, Vector &row_ids, idx_t count);
 	//! Update a set of rows in the local storage
-	void Update(DataTable &table, DuckTableEntry &table_entry, Vector &row_ids, const vector<PhysicalIndex> &column_ids,
-	            DataChunk &data);
+	void Update(DataTable &table, DuckTableEntry &table_entry, Vector &row_ids,
+	            std::span<const PhysicalIndex> column_ids, DataChunk &data);
 
 	//! Commits the local storage, writing it to the WAL and completing the commit
 	void Commit(optional_ptr<StorageCommitState> commit_state);

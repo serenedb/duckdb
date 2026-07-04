@@ -929,7 +929,7 @@ optional_ptr<SegmentNode<RowGroup>> RowGroupCollection::NextUpdateRowGroup(RowGr
 }
 
 void RowGroupCollection::Update(TransactionData transaction, DuckTableEntry &table_entry, row_t *ids,
-                                const vector<PhysicalIndex> &column_ids, DataChunk &updates) {
+                                std::span<const PhysicalIndex> column_ids, DataChunk &updates) {
 	D_ASSERT(updates.size() >= 1);
 	idx_t pos = 0;
 	auto row_groups = GetRowGroups();

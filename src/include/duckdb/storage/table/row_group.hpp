@@ -201,7 +201,7 @@ public:
 	void FinalizeAppend(RowGroupAppendState &append_state);
 
 	void Update(TransactionData transaction, DuckTableEntry &table_entry, DataChunk &updates, row_t *ids, idx_t offset,
-	            idx_t count, const vector<PhysicalIndex> &column_ids, idx_t row_group_start);
+	            idx_t count, std::span<const PhysicalIndex> column_ids, idx_t row_group_start);
 	//! Update a single column; corresponds to DataTable::UpdateColumn
 	//! This method should only be called from the WAL
 	void UpdateColumn(TransactionData transaction, DuckTableEntry &table_entry, DataChunk &updates, Vector &row_ids,
