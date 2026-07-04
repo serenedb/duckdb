@@ -197,6 +197,7 @@ void LogicalUpdate::RewriteInPlaceUpdates(LogicalOperator &update_op) {
 	}
 
 	update.update_is_del_and_insert = true;
+	update.update_column_count = 0;
 	update.ResolveOperatorTypes();
 }
 

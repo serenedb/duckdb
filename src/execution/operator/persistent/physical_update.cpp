@@ -66,7 +66,7 @@ class UpdateLocalState : public LocalSinkState {
 public:
 	UpdateLocalState(ClientContext &context, const vector<unique_ptr<Expression>> &expressions,
 	                 const vector<LogicalType> &table_types, const vector<unique_ptr<Expression>> &bound_defaults,
-	                 const vector<unique_ptr<BoundConstraint>> &bound_constraints)
+	                 const vector<unique_ptr<BoundConstraint>> &bound_constraints, idx_t update_column_count)
 	    : default_executor(context, bound_defaults), bound_constraints(bound_constraints) {
 		// Initialize the update chunk.
 		auto &allocator = Allocator::Get(context);
@@ -77,12 +77,17 @@ public:
 		}
 		update_chunk.Initialize(allocator, update_types);
 
+		if (update_column_count != 0) {
+			write_chunk.Initialize(allocator, {update_types.data(), update_column_count});
+		}
+
 		// Initialize the mock and delete chunk.
 		mock_chunk.Initialize(allocator, table_types);
 		delete_chunk.Initialize(allocator, table_types);
 	}
 
 	DataChunk update_chunk;
+	DataChunk write_chunk;
 	DataChunk mock_chunk;
 	DataChunk delete_chunk;
 	ExpressionExecutor default_executor;
@@ -141,7 +146,17 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 			mock_chunk.CheckCardinality(update_chunk.size());
 		}
 		auto &update_state = l_state.GetUpdateState(table, tableref, context.client);
-		table.Update(update_state, context.client, tableref, row_ids, columns, update_chunk);
+		if (update_column_count == 0) {
+			table.Update(update_state, context.client, tableref, row_ids, columns, update_chunk);
+		} else {
+			l_state.write_chunk.Reset();
+			for (idx_t i = 0; i < update_column_count; i++) {
+				l_state.write_chunk.data[i].Reference(update_chunk.data[i]);
+			}
+			l_state.write_chunk.SetCardinality(update_chunk.size());
+			table.Update(update_state, context.client, tableref, row_ids, {columns.data(), update_column_count},
+			             l_state.write_chunk);
+		}
 
 		if (return_chunk) {
 			lock_guard<mutex> glock(g_state.lock);
@@ -214,8 +229,8 @@ unique_ptr<GlobalSinkState> PhysicalUpdate::GetGlobalSinkState(ClientContext &co
 }
 
 unique_ptr<LocalSinkState> PhysicalUpdate::GetLocalSinkState(ExecutionContext &context) const {
-	return make_uniq<UpdateLocalState>(context.client, expressions, table.GetTypes(), bound_defaults,
-	                                   bound_constraints);
+	return make_uniq<UpdateLocalState>(context.client, expressions, table.GetTypes(), bound_defaults, bound_constraints,
+	                                   update_column_count);
 }
 
 SinkCombineResultType PhysicalUpdate::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {

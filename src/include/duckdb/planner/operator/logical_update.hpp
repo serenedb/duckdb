@@ -34,6 +34,7 @@ public:
 	vector<unique_ptr<Expression>> bound_defaults;
 	vector<unique_ptr<BoundConstraint>> bound_constraints;
 	bool update_is_del_and_insert;
+	idx_t update_column_count = 0;
 
 public:
 	void Serialize(Serializer &serializer) const override;
