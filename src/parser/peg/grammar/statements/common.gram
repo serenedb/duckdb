@@ -7,6 +7,17 @@ Statement <-
 	DropDatabaseStatement /
 	CreateTSDictionaryStatement /
 	DropTSDictionaryStatement /
+	CreateRoleStatement /
+	DropRoleStatement /
+	CreatePolicyStatement /
+	AlterPolicyStatement /
+	DropPolicyStatement /
+	AlterTableRowSecurityStatement /
+	AlterOwnerStatement /
+	AlterDefaultPrivilegesStatement /
+	AlterRoleStatement /
+	GrantStatement /
+	RevokeStatement /
 	CreateStatement /
 	SelectStatement /
 	SetStatement /
