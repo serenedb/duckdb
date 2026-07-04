@@ -1419,7 +1419,7 @@ void RowGroup::CleanupAppend(VisibilityBound lowest_visibility_bound, idx_t star
 }
 
 void RowGroup::Update(TransactionData transaction, DuckTableEntry &table_entry, DataChunk &update_chunk, row_t *ids,
-                      idx_t offset, idx_t count, const vector<PhysicalIndex> &column_ids, idx_t row_group_start) {
+                      idx_t offset, idx_t count, std::span<const PhysicalIndex> column_ids, idx_t row_group_start) {
 #ifdef DEBUG
 	for (size_t i = offset; i < offset + count; i++) {
 		D_ASSERT(ids[i] >= row_t(row_group_start) && ids[i] < row_t(row_group_start + this->count));

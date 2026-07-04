@@ -297,7 +297,7 @@ bool IndexEntry::IsDeferred() const {
 	return check_mode == ConstraintCheckMode::DEFERRED;
 }
 
-bool IndexEntry::IsForeignKeyIndex(const vector<PhysicalIndex> &fk_keys, const ForeignKeyType fk_type) const {
+bool IndexEntry::IsForeignKeyIndex(std::span<const PhysicalIndex> fk_keys, const ForeignKeyType fk_type) const {
 	auto entry_lock = lock.GetSharedLock();
 	if (fk_type == ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE) {
 		// Foreign keys cannot reference a deferred key.
@@ -417,7 +417,7 @@ string IndexEntry::GetConstraintViolationMessage(const VerifyExistenceType verif
 	return owned_index->Cast<BoundIndex>().GetConstraintViolationMessage(verify_type, failed_index, input);
 }
 
-void IndexEntry::VerifyUpdate(const vector<PhysicalIndex> &column_ids) const {
+void IndexEntry::VerifyUpdate(std::span<const PhysicalIndex> column_ids) const {
 #ifdef DEBUG
 	auto entry_lock = lock.GetSharedLock();
 	D_ASSERT(owned_index->IsBound());
