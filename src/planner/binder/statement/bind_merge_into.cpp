@@ -283,6 +283,35 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		properties.RegisterDBModify(table.GetStorageCatalog(context), context, modification);
 	}
 
+	// Record the write access each WHEN action needs for the access-control rule,
+	// ORed onto the target's scan requirement (a SELECT-only role must not be able
+	// to mutate rows via MERGE). Table-level per verb; the SET/INSERT column sets
+	// are not threaded through, matching the del-and-insert UPDATE case.
+	{
+		auto verbs = AccessVerb::NONE;
+		for (auto &action_condition : node.actions) {
+			for (auto &action : action_condition.second) {
+				switch (action->action_type) {
+				case MergeActionType::MERGE_UPDATE:
+					verbs |= AccessVerb::UPDATE;
+					break;
+				case MergeActionType::MERGE_DELETE:
+					verbs |= AccessVerb::DELETE;
+					break;
+				case MergeActionType::MERGE_INSERT:
+					verbs |= AccessVerb::INSERT;
+					break;
+				default:
+					break;
+				}
+			}
+		}
+		if (verbs != AccessVerb::NONE) {
+			auto &access = RecordAccess(bound_table.plan->Cast<LogicalGet>().table_index.index, table);
+			access.verb |= verbs;
+		}
+	}
+
 	// bind the source
 	auto source_binder = Binder::CreateBinder(context, this);
 	auto source_binding = source_binder->Bind(*node.source);
