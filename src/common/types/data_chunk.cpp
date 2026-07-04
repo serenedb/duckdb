@@ -29,28 +29,28 @@ DataChunk::DataChunk() {
 DataChunk::~DataChunk() {
 }
 
-void DataChunk::InitializeEmpty(const vector<LogicalType> &types) {
+void DataChunk::InitializeEmpty(std::span<const LogicalType> types) {
 	D_ASSERT(data.empty());
 	for (idx_t i = 0; i < types.size(); i++) {
 		data.emplace_back(types[i], nullptr);
 	}
 }
 
-void DataChunk::Initialize(ClientContext &context, const vector<LogicalType> &types, idx_t capacity_p) {
+void DataChunk::Initialize(ClientContext &context, std::span<const LogicalType> types, idx_t capacity_p) {
 	Initialize(Allocator::Get(context), types, capacity_p);
 }
 
-void DataChunk::Initialize(Allocator &allocator, const vector<LogicalType> &types, idx_t capacity_p) {
+void DataChunk::Initialize(Allocator &allocator, std::span<const LogicalType> types, idx_t capacity_p) {
 	auto initialize = vector<bool>(types.size(), true);
 	Initialize(allocator, types, initialize, capacity_p);
 }
 
-void DataChunk::Initialize(ClientContext &context, const vector<LogicalType> &types, const vector<bool> &initialize,
+void DataChunk::Initialize(ClientContext &context, std::span<const LogicalType> types, const vector<bool> &initialize,
                            idx_t capacity_p) {
 	Initialize(Allocator::Get(context), types, initialize, capacity_p);
 }
 
-void DataChunk::Initialize(Allocator &allocator, const vector<LogicalType> &types, const vector<bool> &initialize,
+void DataChunk::Initialize(Allocator &allocator, std::span<const LogicalType> types, const vector<bool> &initialize,
                            idx_t capacity) {
 	D_ASSERT(types.size() == initialize.size());
 	D_ASSERT(data.empty());

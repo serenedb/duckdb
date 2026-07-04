@@ -248,7 +248,7 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 	}
 }
 
-bool IsForeignKeyIndex(const vector<PhysicalIndex> &fk_keys, Index &index, ForeignKeyType fk_type) {
+bool IsForeignKeyIndex(std::span<const PhysicalIndex> fk_keys, Index &index, ForeignKeyType fk_type) {
 	if (fk_type == ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE ? !index.IsUnique() : !index.IsForeign()) {
 		return false;
 	}
@@ -272,7 +272,7 @@ bool IsForeignKeyIndex(const vector<PhysicalIndex> &fk_keys, Index &index, Forei
 	return true;
 }
 
-optional_ptr<IndexEntry> TableIndexList::FindForeignKeyIndex(const vector<PhysicalIndex> &fk_keys,
+optional_ptr<IndexEntry> TableIndexList::FindForeignKeyIndex(std::span<const PhysicalIndex> fk_keys,
                                                              const ForeignKeyType fk_type) {
 	lock_guard<mutex> lock(index_entries_lock);
 	for (auto &entry : index_entries) {
@@ -284,7 +284,7 @@ optional_ptr<IndexEntry> TableIndexList::FindForeignKeyIndex(const vector<Physic
 	return nullptr;
 }
 
-void TableIndexList::VerifyForeignKey(optional_ptr<LocalTableStorage> storage, const vector<PhysicalIndex> &fk_keys,
+void TableIndexList::VerifyForeignKey(optional_ptr<LocalTableStorage> storage, std::span<const PhysicalIndex> fk_keys,
                                       DataChunk &chunk, ConflictManager &conflict_manager) {
 	auto fk_type = conflict_manager.GetVerifyExistenceType() == VerifyExistenceType::APPEND_FK
 	                   ? ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE

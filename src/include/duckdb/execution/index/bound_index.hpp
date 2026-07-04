@@ -190,7 +190,7 @@ public:
 	void VerifyBuffers();
 
 	//! Returns true if the index is affected by updates on the specified column IDs, and false otherwise
-	bool IndexIsUpdated(const vector<PhysicalIndex> &column_ids) const;
+	bool IndexIsUpdated(std::span<const PhysicalIndex> column_ids) const;
 
 	//! Serializes index memory to disk and returns the index storage information.
 	virtual IndexStorageInfo SerializeToDisk(QueryContext context, const case_insensitive_map_t<Value> &options);
