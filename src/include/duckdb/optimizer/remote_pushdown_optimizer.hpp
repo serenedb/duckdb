@@ -15,6 +15,8 @@
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/parser/tokens.hpp"
 
+#include <absl/container/flat_hash_map.h>
+
 namespace duckdb {
 class Binder;
 class Catalog;
@@ -81,6 +83,8 @@ struct RemotePushdownState {
 	bool search_path_initialized = false;
 	vector<reference<Catalog>> remote_catalogs_in_search_path;
 	vector<CatalogSearchEntry> local_catalogs_in_search_path;
+	//! Undo log of applied constant folds: the mutated slot to the expression it replaced
+	absl::flat_hash_map<unique_ptr<ParsedExpression> *, unique_ptr<ParsedExpression>> fold_undos;
 };
 
 class RemotePushdownOptimizer {
@@ -89,6 +93,11 @@ public:
 	explicit RemotePushdownOptimizer(optional_ptr<RemotePushdownOptimizer> parent);
 
 	void Rewrite(unique_ptr<SQLStatement> &statement);
+	//! Undo every constant fold that did not end up inside a fragment shipped to a
+	//! remote catalog. Binder stages pattern-match on parse-tree shapes (SELECT-list
+	//! SRFs, explicit casts, MAP constructors, star patterns, ...), so a statement
+	//! that stays local must bind against its original tree. Call once after Rewrite.
+	void RevertUnshippedFolds();
 
 	//! Drop the given catalog qualifier from every name in the tree. A two-part name (e.g. "db1.t") parses as
 	//! schema.name, so the catalog can sit in either slot
@@ -177,6 +186,11 @@ private:
 	ConstantFoldResult TryConstantFold(unique_ptr<ParsedExpression> &expr);
 	//! Rewrite a table function argument, keeping it positional if it was not written as name => value
 	CatalogPushdownResult RewriteTableFunctionArgument(unique_ptr<ParsedExpression> &arg);
+
+	//! Retire the undo records of every fold inside the shipped node, so the
+	//! folded form is what gets sent to the remote
+	void KeepFoldsIn(QueryNode &node);
+	void KeepFoldsInExpression(unique_ptr<ParsedExpression> &expr_slot);
 
 	CatalogPushdownResult CheckCatalogQualification(const ParsedExpression &expr, const QualifiedName &name);
 	CatalogPushdownResult RewriteTableFunctionOnly(TableFunctionRef &ref);
