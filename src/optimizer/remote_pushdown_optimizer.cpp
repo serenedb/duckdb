@@ -10,6 +10,7 @@
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
@@ -303,7 +304,18 @@ CatalogPushdownResult RemotePushdownOptimizer::RewriteNode(SelectNode &node) {
 	// Merge from_table result with all expressions to determine if the whole node can be pushed
 	CatalogPushdownResult result = from_result;
 	for (auto &expr : node.select_list) {
-		result = Merge(result, Rewrite(expr));
+		// UNNEST and set-returning functions at the top level of a SELECT list
+		// expand to rows through the select binder; folding them here would bind
+		// them as scalars and collapse the rows into a single LIST value.
+		auto mode = ExpressionFoldingMode::FOLD_EXPRESSION;
+		if (expr->GetExpressionClass() == ExpressionClass::FUNCTION) {
+			auto &function_name = expr->Cast<FunctionExpression>().FunctionName();
+			if (ExpressionBinder::IsUnnestFunction(function_name) ||
+			    ExpressionBinder::IsSelectListSetReturningFunction(function_name)) {
+				mode = ExpressionFoldingMode::FOLD_CHILDREN_ONLY;
+			}
+		}
+		result = Merge(result, Rewrite(expr, mode));
 	}
 	if (node.where_clause) {
 		result = Merge(result, Rewrite(node.where_clause));
