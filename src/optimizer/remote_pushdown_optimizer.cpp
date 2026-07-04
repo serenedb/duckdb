@@ -964,8 +964,51 @@ RemotePushdownOptimizer::TryConstantFold(unique_ptr<ParsedExpression> &expr) {
 	folded->SetAlias(expr->GetAlias().empty() ? Identifier(expr->GetColumnName()) : expr->GetAlias());
 	folded->SetNamedParameter(expr->IsNamedParameter());
 	folded->SetQueryLocation(expr->GetQueryLocation());
-	expr = std::move(folded);
+	auto original = std::exchange(expr, std::move(folded));
+	[[maybe_unused]] const bool emplaced = pushdown_state.fold_undos.emplace(&expr, std::move(original)).second;
+	D_ASSERT(emplaced);
 	return ConstantFoldResult::FOLDED;
+}
+
+void RemotePushdownOptimizer::KeepFoldsIn(QueryNode &node) {
+	if (pushdown_state.fold_undos.empty()) {
+		return;
+	}
+	ParsedExpressionIterator::EnumerateQueryNodeChildren(
+	    node, [&](unique_ptr<ParsedExpression> &child) { KeepFoldsInExpression(child); });
+}
+
+void RemotePushdownOptimizer::KeepFoldsInExpression(unique_ptr<ParsedExpression> &expr_slot) {
+	auto &undos = pushdown_state.fold_undos;
+	auto it = undos.find(&expr_slot);
+	if (it != undos.end()) {
+		auto original = std::move(it->second);
+		undos.erase(it);
+		// the replaced original may contain earlier-folded slots - retire those too,
+		// they are shipped as part of this fold's constant
+		KeepFoldsInExpression(original);
+		return;
+	}
+	ParsedExpressionIterator::EnumerateChildren(
+	    *expr_slot, [&](unique_ptr<ParsedExpression> &child) { KeepFoldsInExpression(child); });
+	if (expr_slot->GetExpressionClass() == ExpressionClass::SUBQUERY) {
+		auto &subquery = expr_slot->Cast<SubqueryExpression>();
+		if (subquery.Subquery() && subquery.Subquery()->node) {
+			ParsedExpressionIterator::EnumerateQueryNodeChildren(
+			    *subquery.SubqueryMutable()->node,
+			    [&](unique_ptr<ParsedExpression> &child) { KeepFoldsInExpression(child); });
+		}
+	}
+}
+
+void RemotePushdownOptimizer::RevertUnshippedFolds() {
+	auto &undos = pushdown_state.fold_undos;
+	// restore order does not matter: every record writes a distinct slot, and slot
+	// addresses stay valid because moving an expression does not move its children
+	for (auto &[slot, original] : undos) {
+		*slot = std::move(original);
+	}
+	undos.clear();
 }
 
 ExpressionPushdownResult RemotePushdownOptimizer::AnalyzeExpression(const ParsedExpression &expr) {
@@ -1497,6 +1540,7 @@ void RemotePushdownOptimizer::FinishPushdown(unique_ptr<SQLStatement> &statement
 	if (!node) {
 		return;
 	}
+	KeepFoldsIn(*node);
 
 	auto select_node = make_uniq<SelectNode>();
 	select_node->select_list.push_back(make_uniq<StarExpression>());
@@ -1525,6 +1569,7 @@ void RemotePushdownOptimizer::FinishPushdown(unique_ptr<QueryNode> &node, Catalo
 		}
 	}
 	StripCatalogName(*node, result.catalog->GetName());
+	KeepFoldsIn(*node);
 	auto select_node = make_uniq<SelectNode>();
 	select_node->select_list.push_back(make_uniq<StarExpression>());
 	select_node->from_table = CreateRemoteFunctionRef(result, std::move(node));
