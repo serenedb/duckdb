@@ -70,6 +70,17 @@ SQLStatement:
     - ListenStatement
     - NotifyStatement
     - UnlistenStatement
+    - CreateRoleStatement
+    - DropRoleStatement
+    - AlterRoleStatement
+    - AlterOwnerStatement
+    - AlterDefaultPrivilegesStatement
+    - GrantStatement
+    - RevokeStatement
+    - CreatePolicyStatement
+    - AlterPolicyStatement
+    - DropPolicyStatement
+    - AlterTableRowSecurityStatement
     - CallStatement
     - CheckpointStatement
     - CommentStatement
@@ -2011,6 +2022,54 @@ excluded_rules:
   - TSDictionaryDefArg
   - TSDictionaryExpression
   - TSDictionaryWith
+  - CreateRoleClause
+  - RoleMembershipClause
+  - InRoleClause
+  - RoleMembersClause
+  - AdminClause
+  - AlterRoleRename
+  - AlterRoleConfig
+  - AlterRoleSet
+  - AlterRoleSetTo
+  - AlterRoleReset
+  - AlterRoleOptionList
+  - AlterRoleOption
+  - ConnLimitOption
+  - ValidUntilOption
+  - OwnerRoleSpec
+  - DefaultPrivForRole
+  - DefaultPrivInSchema
+  - DefaultPrivAction
+  - DefaultPrivGrant
+  - DefaultPrivRevoke
+  - GrantTablePrivilege
+  - RevokeTablePrivilege
+  - GrantRoleMembership
+  - RevokeRoleMembership
+  - RevokeGrantOptionFor
+  - RevokeAdminOptionFor
+  - GrantTarget
+  - GrantAllInSchema
+  - GrantFunctionTarget
+  - FuncArgSignature
+  - FuncArg
+  - GrantNamedTarget
+  - GrantedBy
+  - MemberOptionList
+  - Grantee
+  - RoleOptionList
+  - RoleOption
+  - SysIdOption
+  - PasswordOption
+  - PolicyRename
+  - PolicyAlterClauses
+  - PolicyToRoles
+  - PolicyUsing
+  - PolicyCheck
+  - PrivilegeList
+  - AllPrivileges
+  - Privilege
+  - PrivilegeColumns
   - Program
   - TopLevelStatement
   - Statement
