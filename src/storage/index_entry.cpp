@@ -281,7 +281,7 @@ bool IndexEntry::IsUnique() const {
 	return owned_index->IsUnique();
 }
 
-bool IndexEntry::IsForeignKeyIndex(const vector<PhysicalIndex> &fk_keys, const ForeignKeyType fk_type) const {
+bool IndexEntry::IsForeignKeyIndex(std::span<const PhysicalIndex> fk_keys, const ForeignKeyType fk_type) const {
 	auto entry_lock = lock.GetSharedLock();
 	if (fk_type == ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE ? !owned_index->IsUnique() : !owned_index->IsForeign()) {
 		return false;
@@ -396,7 +396,7 @@ string IndexEntry::GetConstraintViolationMessage(const VerifyExistenceType verif
 	return owned_index->Cast<BoundIndex>().GetConstraintViolationMessage(verify_type, failed_index, input);
 }
 
-void IndexEntry::VerifyUpdate(const vector<PhysicalIndex> &column_ids) const {
+void IndexEntry::VerifyUpdate(std::span<const PhysicalIndex> column_ids) const {
 #ifdef DEBUG
 	auto entry_lock = lock.GetSharedLock();
 	D_ASSERT(owned_index->IsBound());

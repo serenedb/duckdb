@@ -108,7 +108,7 @@ public:
 	//! Verifies the buffers of all bound indexes and their delete deltas.
 	void VerifyBuffers() const;
 	//! Verifies that no index is updated by the given columns.
-	void VerifyUpdate(const vector<PhysicalIndex> &column_ids) const;
+	void VerifyUpdate(std::span<const PhysicalIndex> column_ids) const;
 	//! Returns table storage metadata for all indexes.
 	vector<IndexInfo> GetStorageInfo() const;
 	//! Returns the combined in-memory size of all bound indexes.
@@ -132,9 +132,9 @@ public:
 	void MergeCheckpointDeltas(optional_idx checkpoint_id) const;
 	//! Returns true, if all indexes
 	//! Find the foreign key matching the keys.
-	shared_ptr<IndexEntry> FindForeignKeyIndex(const vector<PhysicalIndex> &fk_keys, const ForeignKeyType fk_type);
+	shared_ptr<IndexEntry> FindForeignKeyIndex(std::span<const PhysicalIndex> fk_keys, const ForeignKeyType fk_type);
 	//! Verify a foreign key constraint.
-	void VerifyForeignKey(optional_ptr<const TableIndexList> delete_indexes, const vector<PhysicalIndex> &fk_keys,
+	void VerifyForeignKey(optional_ptr<const TableIndexList> delete_indexes, std::span<const PhysicalIndex> fk_keys,
 	                      DataChunk &chunk, ConflictManager &conflict_manager);
 	//! Returns the physical table columns referenced by any index.
 	unordered_set<column_t> GetIndexedColumns() const;

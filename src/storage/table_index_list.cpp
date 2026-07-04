@@ -289,7 +289,7 @@ void TableIndexList::VerifyBuffers() const {
 	}
 }
 
-void TableIndexList::VerifyUpdate(const vector<PhysicalIndex> &column_ids) const {
+void TableIndexList::VerifyUpdate(std::span<const PhysicalIndex> column_ids) const {
 #ifdef DEBUG
 	annotated_lock_guard lock(index_entries_lock);
 	for (const auto &entry : index_entries) {
@@ -502,7 +502,7 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 	}
 }
 
-shared_ptr<IndexEntry> TableIndexList::FindForeignKeyIndex(const vector<PhysicalIndex> &fk_keys,
+shared_ptr<IndexEntry> TableIndexList::FindForeignKeyIndex(std::span<const PhysicalIndex> fk_keys,
                                                            const ForeignKeyType fk_type) {
 	annotated_lock_guard<annotated_mutex> lock(index_entries_lock);
 	for (auto &entry : index_entries) {
@@ -514,7 +514,7 @@ shared_ptr<IndexEntry> TableIndexList::FindForeignKeyIndex(const vector<Physical
 }
 
 void TableIndexList::VerifyForeignKey(optional_ptr<const TableIndexList> delete_indexes,
-                                      const vector<PhysicalIndex> &fk_keys, DataChunk &chunk,
+                                      std::span<const PhysicalIndex> fk_keys, DataChunk &chunk,
                                       ConflictManager &conflict_manager) {
 	const auto fk_type = conflict_manager.GetVerifyExistenceType() == VerifyExistenceType::APPEND_FK
 	                         ? ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE

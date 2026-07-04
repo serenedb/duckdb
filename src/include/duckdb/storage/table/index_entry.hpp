@@ -127,7 +127,7 @@ public:
 	//! Returns whether the physical index enforces a unique constraint.
 	bool IsUnique() const;
 	//! Returns whether the physical index matches the foreign key columns and role.
-	bool IsForeignKeyIndex(const vector<PhysicalIndex> &fk_keys, ForeignKeyType fk_type) const;
+	bool IsForeignKeyIndex(std::span<const PhysicalIndex> fk_keys, ForeignKeyType fk_type) const;
 	//! Returns the name of the physical index.
 	Identifier GetName() const;
 	//! Returns the physical index type.
@@ -149,7 +149,7 @@ public:
 	//! Constructs the physical index's constraint violation message.
 	string GetConstraintViolationMessage(VerifyExistenceType verify_type, idx_t failed_index, DataChunk &input) const;
 	//! Verifies that the physical index is not updated by the given columns.
-	void VerifyUpdate(const vector<PhysicalIndex> &column_ids) const;
+	void VerifyUpdate(std::span<const PhysicalIndex> column_ids) const;
 	//! Vacuums the physical index if it is bound.
 	void Vacuum();
 	//! Rebuilds the bound physical index with chunks supplied by the scan callback.
