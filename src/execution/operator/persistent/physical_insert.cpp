@@ -615,6 +615,11 @@ SinkResultType PhysicalInsert::Sink(ExecutionContext &context, DataChunk &insert
 	auto &storage = table.GetStorage();
 	insert_chunk.Flatten();
 
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
+	if (progress_callback) {
+		progress_callback(insert_chunk.size(), insert_chunk.GetAllocationSize());
+	}
+
 	if (!parallel) {
 		idx_t updated_tuples = OnConflictHandling(table, context, gstate, lstate, insert_chunk);
 

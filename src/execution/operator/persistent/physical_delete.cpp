@@ -89,6 +89,11 @@ SinkResultType PhysicalDelete::Sink(ExecutionContext &context, DataChunk &chunk,
 	auto &g_state = input.global_state.Cast<DeleteGlobalState>();
 	auto &l_state = input.local_state.Cast<DeleteLocalState>();
 
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
+	if (progress_callback) {
+		progress_callback(chunk.size(), chunk.GetAllocationSize());
+	}
+
 	auto &row_ids = chunk.data[row_id_index];
 	row_ids.Flatten();
 
