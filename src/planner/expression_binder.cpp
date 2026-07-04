@@ -395,6 +395,13 @@ bool ExpressionBinder::IsUnnestFunction(const Identifier &function_name) {
 	return function_name == "unnest" || function_name == "unlist";
 }
 
+bool ExpressionBinder::IsSelectListSetReturningFunction(const Identifier &function_name) {
+	// UNNEST is a binder special form with its own dispatch; callers that can
+	// encounter it must check IsUnnestFunction before consulting this predicate
+	D_ASSERT(!IsUnnestFunction(function_name));
+	return function_name == "generate_series";
+}
+
 bool ExpressionBinder::IsPotentialAlias(const ColumnRefExpression &colref) {
 	// traditional alias (unqualified), or qualified with table name "alias"
 	if (!colref.IsQualified()) {

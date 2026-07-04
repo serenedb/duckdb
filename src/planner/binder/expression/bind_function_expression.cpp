@@ -299,7 +299,7 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 	// SELECT list. Other scalar/table dual-name functions like `repeat` keep
 	// their scalar semantics.
 	if (func.get().type == CatalogType::SCALAR_FUNCTION_ENTRY && depth == 0 && select_binder &&
-	    select_binder->unnest_level == 0 && function.FunctionName() == "generate_series") {
+	    select_binder->unnest_level == 0 && IsSelectListSetReturningFunction(function.FunctionName())) {
 		QueryErrorContext error_context(function.GetQueryLocation());
 		EntryLookupInfo tbl_lookup(CatalogType::TABLE_FUNCTION_ENTRY, QualifiedName(function.FunctionName()),
 		                           error_context);

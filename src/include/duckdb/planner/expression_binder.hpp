@@ -166,6 +166,11 @@ public:
 
 	//! Returns true if the function name is an alias for the UNNEST function
 	static bool IsUnnestFunction(const Identifier &function_name);
+	//! Returns true if the catalog function returns a set (expands to rows) at
+	//! the top level of a SELECT list, i.e. the select binder prefers its table
+	//! variant and rewrites it through UNNEST. UNNEST itself is not a catalog
+	//! function - check IsUnnestFunction first where it can occur.
+	static bool IsSelectListSetReturningFunction(const Identifier &function_name);
 
 private:
 	//! Current stack depth
