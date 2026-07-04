@@ -173,7 +173,7 @@ public:
 	                                              const vector<unique_ptr<BoundConstraint>> &bound_constraints);
 	//! Update the entries with the specified row identifier from the table
 	void Update(TableUpdateState &state, ClientContext &context, DuckTableEntry &table_entry, Vector &row_ids,
-	            const vector<PhysicalIndex> &column_ids, DataChunk &data);
+	            std::span<const PhysicalIndex> column_ids, DataChunk &data);
 	//! Update a single (sub-)column along a column path
 	//! The column_path vector is a *path* towards a column within the table
 	//! i.e. if we have a table with a single column S STRUCT(A INT, B INT)
@@ -297,7 +297,7 @@ public:
 	void BindIndexes(ClientContext &context);
 	bool HasIndexes() const;
 	bool HasUniqueIndexes() const;
-	bool HasForeignKeyIndex(const vector<PhysicalIndex> &keys, ForeignKeyType type);
+	bool HasForeignKeyIndex(std::span<const PhysicalIndex> keys, ForeignKeyType type);
 	void SetIndexStorageInfo(vector<IndexStorageInfo> index_storage_info);
 	void VacuumIndexes();
 	void VerifyIndexBuffers();
@@ -330,7 +330,7 @@ private:
 
 	//! Verify constraints with a chunk from the Update containing only the specified column_ids
 	void VerifyUpdateConstraints(ConstraintState &state, ClientContext &context, DataChunk &chunk,
-	                             const vector<PhysicalIndex> &column_ids);
+	                             std::span<const PhysicalIndex> column_ids);
 	//! Verify constraints with a chunk from the Delete containing all columns of the table
 	void VerifyDeleteConstraints(optional_ptr<LocalTableStorage> storage, TableDeleteState &state,
 	                             ClientContext &context, DataChunk &chunk);

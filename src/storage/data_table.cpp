@@ -439,7 +439,7 @@ void DataTable::AddIndex(unique_ptr<Index> index) {
 	info->indexes.AddIndex(std::move(index));
 }
 
-bool DataTable::HasForeignKeyIndex(const vector<PhysicalIndex> &keys, ForeignKeyType type) {
+bool DataTable::HasForeignKeyIndex(std::span<const PhysicalIndex> keys, ForeignKeyType type) {
 	auto index = info->indexes.FindForeignKeyIndex(keys, type);
 	return index != nullptr;
 }
@@ -801,7 +801,7 @@ void DataTable::VerifyForeignKeyConstraint(optional_ptr<LocalTableStorage> stora
 
 	// Global constraint verification.
 	auto &data_table = table_entry.GetStorage();
-	data_table.info->indexes.VerifyForeignKey(storage, dst_keys_ptr, dst_chunk, global_conflict_manager);
+	data_table.info->indexes.VerifyForeignKey(storage, dst_keys_ptr.get(), dst_chunk, global_conflict_manager);
 
 	// Check if we can insert the chunk into the local storage.
 	auto &local_storage = LocalStorage::Get(context, db);
@@ -811,7 +811,7 @@ void DataTable::VerifyForeignKeyConstraint(optional_ptr<LocalTableStorage> stora
 	// Local constraint verification.
 	if (local_verification) {
 		auto &local_indexes = local_storage.GetIndexes(context, data_table);
-		local_indexes.VerifyForeignKey(storage, dst_keys_ptr, dst_chunk, local_conflict_manager);
+		local_indexes.VerifyForeignKey(storage, dst_keys_ptr.get(), dst_chunk, local_conflict_manager);
 		local_error = IsForeignKeyConstraintError(local_conflict_manager, is_append, count);
 	}
 	// Global constraint verification.
@@ -829,7 +829,7 @@ void DataTable::VerifyForeignKeyConstraint(optional_ptr<LocalTableStorage> stora
 	auto fk_type = is_append ? ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE : ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE;
 
 	// Check whether we can insert into the foreign key table, or delete from the reference table.
-	index_entry = data_table.info->indexes.FindForeignKeyIndex(dst_keys_ptr, fk_type);
+	index_entry = data_table.info->indexes.FindForeignKeyIndex(dst_keys_ptr.get(), fk_type);
 	if (!local_verification) {
 		auto conflict = LocateErrorIndex(global_conflict_manager, is_append, count);
 		auto message = ConstructForeignKeyError(conflict, is_append, *index_entry->index, dst_chunk);
@@ -837,7 +837,7 @@ void DataTable::VerifyForeignKeyConstraint(optional_ptr<LocalTableStorage> stora
 	}
 
 	auto &transact_index = local_storage.GetIndexes(context, data_table);
-	transaction_index_entry = transact_index.FindForeignKeyIndex(dst_keys_ptr, fk_type);
+	transaction_index_entry = transact_index.FindForeignKeyIndex(dst_keys_ptr.get(), fk_type);
 
 	if (local_error && global_error && is_append) {
 		// For appends, we throw if the foreign key neither exists in the transaction nor the local storage.
@@ -1722,7 +1722,7 @@ idx_t DataTable::Delete(TableDeleteState &state, ClientContext &context, DuckTab
 //===--------------------------------------------------------------------===//
 // Update
 //===--------------------------------------------------------------------===//
-static void CreateMockChunk(vector<LogicalType> &types, const vector<PhysicalIndex> &column_ids, DataChunk &chunk,
+static void CreateMockChunk(vector<LogicalType> &types, std::span<const PhysicalIndex> column_ids, DataChunk &chunk,
                             DataChunk &mock_chunk) {
 	// construct a mock DataChunk
 	mock_chunk.InitializeEmpty(types);
@@ -1731,7 +1731,7 @@ static void CreateMockChunk(vector<LogicalType> &types, const vector<PhysicalInd
 	}
 }
 
-static bool CreateMockChunk(TableCatalogEntry &table, const vector<PhysicalIndex> &column_ids,
+static bool CreateMockChunk(TableCatalogEntry &table, std::span<const PhysicalIndex> column_ids,
                             physical_index_set_t &desired_column_ids, DataChunk &chunk, DataChunk &mock_chunk) {
 	idx_t found_columns = 0;
 	// check whether the desired columns are present in the UPDATE clause
@@ -1756,7 +1756,7 @@ static bool CreateMockChunk(TableCatalogEntry &table, const vector<PhysicalIndex
 }
 
 void DataTable::VerifyUpdateConstraints(ConstraintState &state, ClientContext &context, DataChunk &chunk,
-                                        const vector<PhysicalIndex> &column_ids) {
+                                        std::span<const PhysicalIndex> column_ids) {
 	auto &table = state.table;
 	auto &constraints = table.GetConstraints();
 	auto &bound_constraints = state.bound_constraints;
@@ -1828,7 +1828,7 @@ unique_ptr<TableUpdateState> DataTable::InitializeUpdate(TableCatalogEntry &tabl
 }
 
 void DataTable::Update(TableUpdateState &state, ClientContext &context, DuckTableEntry &table_entry, Vector &row_ids,
-                       const vector<PhysicalIndex> &column_ids, DataChunk &updates) {
+                       std::span<const PhysicalIndex> column_ids, DataChunk &updates) {
 	D_ASSERT(row_ids.GetType().InternalType() == ROW_TYPE);
 	D_ASSERT(column_ids.size() == updates.ColumnCount());
 	updates.Verify(context.db);

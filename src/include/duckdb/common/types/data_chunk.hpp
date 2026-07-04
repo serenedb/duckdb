@@ -99,17 +99,17 @@ public:
 	DUCKDB_API void Move(DataChunk &chunk);
 
 	//! Initializes a DataChunk with the given types and without any vector data allocation.
-	DUCKDB_API void InitializeEmpty(const vector<LogicalType> &types);
+	DUCKDB_API void InitializeEmpty(std::span<const LogicalType> types);
 
 	//! Initializes a DataChunk with the given types. Then, if the corresponding boolean in the initialize-vector is
 	//! true, it initializes the vector for that data type.
-	DUCKDB_API void Initialize(ClientContext &context, const vector<LogicalType> &types,
+	DUCKDB_API void Initialize(ClientContext &context, std::span<const LogicalType> types,
 	                           idx_t capacity = STANDARD_VECTOR_SIZE);
-	DUCKDB_API void Initialize(Allocator &allocator, const vector<LogicalType> &types,
+	DUCKDB_API void Initialize(Allocator &allocator, std::span<const LogicalType> types,
 	                           idx_t capacity = STANDARD_VECTOR_SIZE);
-	DUCKDB_API void Initialize(ClientContext &context, const vector<LogicalType> &types, const vector<bool> &initialize,
-	                           idx_t capacity = STANDARD_VECTOR_SIZE);
-	DUCKDB_API void Initialize(Allocator &allocator, const vector<LogicalType> &types, const vector<bool> &initialize,
+	DUCKDB_API void Initialize(ClientContext &context, std::span<const LogicalType> types,
+	                           const vector<bool> &initialize, idx_t capacity = STANDARD_VECTOR_SIZE);
+	DUCKDB_API void Initialize(Allocator &allocator, std::span<const LogicalType> types, const vector<bool> &initialize,
 	                           idx_t capacity = STANDARD_VECTOR_SIZE);
 
 	//! Append the other DataChunk to this one. The column count and types of

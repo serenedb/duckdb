@@ -156,7 +156,7 @@ unique_ptr<Expression> BoundIndex::BindExpression(unique_ptr<Expression> root_ex
 	return root_expr;
 }
 
-bool BoundIndex::IndexIsUpdated(const vector<PhysicalIndex> &column_ids_p) const {
+bool BoundIndex::IndexIsUpdated(std::span<const PhysicalIndex> column_ids_p) const {
 	for (auto &column : column_ids_p) {
 		if (column_id_set.find(column.index) != column_id_set.end()) {
 			return true;
