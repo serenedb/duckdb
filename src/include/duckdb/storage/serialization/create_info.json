@@ -290,6 +290,11 @@
         "type": "ViewSecurityType",
         "default": "ViewSecurityType::REGULAR_VIEW",
         "version": "v2.0.0"
+      },
+      {
+        "id": 208,
+        "name": "security_invoker",
+        "type": "bool"
       }
     ],
     "constructor": [
