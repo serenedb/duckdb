@@ -32,6 +32,7 @@ public:
 	physical_index_vector_t<idx_t> column_index_map;
 	//! Whether or not an UPDATE is a DELETE + INSERT
 	bool update_is_del_and_insert = false;
+	idx_t update_column_count = 0;
 
 	void Serialize(Serializer &serializer) const;
 	static unique_ptr<BoundMergeIntoAction> Deserialize(Deserializer &deserializer);
