@@ -504,6 +504,11 @@ SinkResultType PhysicalBatchInsert::Sink(ExecutionContext &context, DataChunk &i
 	auto &table = gstate.table;
 	insert_chunk.Flatten();
 
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
+	if (progress_callback) {
+		progress_callback(insert_chunk.size(), insert_chunk.GetAllocationSize());
+	}
+
 	auto batch_index = lstate.partition_info.batch_index.GetIndex();
 	// check if we should process this batch
 	if (!memory_manager.IsMinimumBatchIndex(batch_index)) {
