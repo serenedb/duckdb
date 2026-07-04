@@ -80,7 +80,7 @@ void LogicalGet::AddScanParams(MAP &result) const {
 			filters_info += filter.ToString(column_name);
 		}
 	}
-	result["Filters"] = filters_info;
+	result["Column Filter"] = filters_info;
 
 	if (extra_info.sample_options) {
 		if (extra_info.sample_options->is_percentage) {

@@ -75,8 +75,9 @@ bool RowGroupPruner::TryOptimize(LogicalOperator &op) const {
 		return false;
 	}
 
-	if (logical_get->table_filters.HasFilters()) {
-		// If there are filters, we only order the row groups but do not prune
+	if (logical_get->table_filters.HasFilters() && !logical_get->function.filters_before_scan_limit) {
+		// Filters present: only reorder the row groups, do not push the limit -- unless the function
+		// applies its filters before the scan limit, in which case pushing the limit stays correct.
 		row_limit.SetInvalid();
 		row_offset.SetInvalid();
 	}

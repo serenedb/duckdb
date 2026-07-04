@@ -530,6 +530,9 @@ public:
 	//! Whether or not the table function supports filter pushdown. If not supported a filter will be added
 	//! that applies the table filter directly.
 	bool filter_pushdown;
+	//! Whether the function applies pushed filters before any pushed-down scan row limit (top-k). When true the
+	//! optimizer may push a LIMIT into the scan even alongside filters, since the scan enforces filter-before-limit.
+	bool filters_before_scan_limit = false;
 	//! Whether or not the table function can immediately prune out filter columns that are unused in the remainder of
 	//! the query plan, e.g., "SELECT i FROM tbl WHERE j = 42;" - j does not need to leave the table function at all
 	bool filter_prune;
