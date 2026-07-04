@@ -125,7 +125,7 @@ public:
 
 	idx_t Delete(TransactionData transaction, DuckTableEntry &table_entry, row_t *ids, idx_t count);
 	void Update(TransactionData transaction, DuckTableEntry &table_entry, row_t *ids,
-	            const vector<PhysicalIndex> &column_ids, DataChunk &updates);
+	            std::span<const PhysicalIndex> column_ids, DataChunk &updates);
 	void UpdateColumn(TransactionData transaction, DuckTableEntry &table_entry, Vector &row_ids,
 	                  const vector<column_t> &column_path, DataChunk &updates);
 

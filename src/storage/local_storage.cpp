@@ -581,7 +581,7 @@ idx_t LocalStorage::Delete(DataTable &table, DuckTableEntry &table_entry, Vector
 }
 
 void LocalStorage::Update(DataTable &table, DuckTableEntry &table_entry, Vector &row_ids,
-                          const vector<PhysicalIndex> &column_ids, DataChunk &updates) {
+                          std::span<const PhysicalIndex> column_ids, DataChunk &updates) {
 	D_ASSERT(updates.size() >= 1);
 	auto storage = table_manager.GetStorage(table);
 	D_ASSERT(storage);
