@@ -666,7 +666,8 @@ ClientContext::PendingPreparedStatementInternal(ClientContextLock &lock,
 			    config.display_create_func ? config.display_create_func : ProgressBar::DefaultProgressBarDisplay;
 		}
 		active_query->progress_bar =
-		    make_uniq<ProgressBar>(executor, NumericCast<idx_t>(config.wait_time), display_create_func);
+		    make_uniq<ProgressBar>(executor, NumericCast<idx_t>(config.wait_time),
+		                           NumericCast<idx_t>(config.progress_update_interval_ms), display_create_func);
 		active_query->progress_bar->Start();
 		query_progress.Restart();
 	}
@@ -752,8 +753,9 @@ PendingExecutionResult ClientContext::ExecuteTaskInternal(ClientContextLock &loc
 		auto query_result = active_query->executor->ExecuteTask(std::move(on_reschedule_arg), dry_run);
 		if (active_query->progress_bar) {
 			auto is_finished = PendingQueryResult::IsResultReady(query_result);
-			active_query->progress_bar->Update(is_finished);
-			query_progress = active_query->progress_bar->GetDetailedQueryProgress();
+			if (active_query->progress_bar->Update(is_finished)) {
+				query_progress = active_query->progress_bar->GetDetailedQueryProgress();
+			}
 		}
 		return query_result;
 	} catch (std::exception &ex) {
