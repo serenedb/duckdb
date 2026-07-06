@@ -18,6 +18,7 @@
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/storage/block_manager.hpp"
 #include "duckdb/storage/checkpoint/checkpoint_options.hpp"
 
 namespace duckdb {
@@ -76,7 +77,7 @@ Transaction &DuckTransactionManager::StartTransaction(ClientContext &context) {
 	} // LCOV_EXCL_STOP
 
 	// obtain the start time and transaction ID of this transaction
-	transaction_t start_time = current_start_timestamp++;
+	transaction_t start_time = DurableSnapshotBound(current_start_timestamp++);
 	transaction_t transaction_id = current_transaction_id++;
 	if (active_transactions.empty()) {
 		lowest_active_start = start_time;
@@ -90,6 +91,18 @@ Transaction &DuckTransactionManager::StartTransaction(ClientContext &context) {
 	// store it in the set of active transactions
 	active_transactions.push_back(std::move(transaction));
 	return transaction_ref;
+}
+
+transaction_t DuckTransactionManager::DurableSnapshotBound(transaction_t fresh_start_time) {
+	// caller must hold transaction_lock: commits store last_pending_commit in the same critical section that makes
+	// them visible, so a snapshot bounded here either misses a commit entirely or sees its durability recorded
+	transaction_t durable = last_durable_commit.load(std::memory_order_acquire);
+	if (durable >= last_pending_commit.load(std::memory_order_acquire)) {
+		return fresh_start_time;
+	}
+	// commit order equals WAL order equals durability order, so the non-durable commits are exactly the suffix
+	// above last_durable_commit: a snapshot just above it sees every durable commit and no non-durable one
+	return durable + 1;
 }
 
 void DuckTransactionManager::SetActiveCheckpoint(transaction_t checkpoint_id) {
@@ -276,7 +289,8 @@ void DuckTransactionManager::RefreshStartTime(Transaction &transaction_p) {
 	// transaction_lock (not start_transaction_lock) guards current_start_timestamp increments
 	// (see GetCommitTimestamp) and reads of peer start_time (see RemoveTransaction).
 	lock_guard<mutex> lock(transaction_lock);
-	transaction.start_time = current_start_timestamp++;
+	// the refreshed snapshot is a snapshot acquisition like StartTransaction: bound it at the durable horizon
+	transaction.start_time = DurableSnapshotBound(current_start_timestamp++);
 }
 
 void DuckTransactionManager::CleanupTransactions() {
@@ -319,6 +333,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	// Pin the WAL object (captured below while holding the WAL lock) so a concurrent checkpoint that resets it cannot
 	// free the object out from under our GroupSync fsync, which runs with the WAL lock released.
 	shared_ptr<WriteAheadLog> wal_ref;
+	idx_t wal_generation = 0;
 	unique_ptr<StorageCommitState> commit_state;
 	bool skip_wal_write_due_to_checkpoint = false;
 	if (checkpoint_decision.can_checkpoint) {
@@ -348,6 +363,9 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		// grab the WAL lock and hold it until the entire commit is finished
 		held_wal_lock = storage_manager.GetWALLock();
 		wal_ref = storage_manager.GetWALShared();
+		// captured under the WAL lock so it matches the WAL object this commit appends to, even if a concurrent
+		// checkpoint swaps the WAL and bumps the iteration before the pre-checkpoint hook below runs
+		wal_generation = storage_manager.GetBlockManager().GetCheckpointIteration();
 
 		// Commit the changes to the WAL.
 		if (!skip_wal_write_due_to_checkpoint) {
@@ -414,6 +432,15 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		if (transaction.catalog_version >= TRANSACTION_ID_START) {
 			transaction.catalog_version = ++last_committed_version;
 		}
+		if (transaction.ChangesMade()) {
+			// The commit is now visible to conflict validation but not yet durable: WAL-writing commits fsync in the
+			// GroupSync below, checkpoint-instead-of-WAL commits become durable when their checkpoint completes.
+			// Record it (still under the transaction AND WAL locks, so the store is monotonic) so new snapshots are
+			// bounded below it until the durability point raises last_durable_commit -- EVERY recorded commit must
+			// raise it eventually, or snapshots stay bounded below this commit for as long as later commits keep a
+			// non-durable window open.
+			last_pending_commit.store(info.commit_id, std::memory_order_release);
+		}
 	}
 	OnCommitCheckpointDecision(checkpoint_decision, transaction);
 
@@ -444,14 +471,28 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		held_wal_lock.unlock();
 	}
 
-	// Flat-combining group commit: this commit appended its entries + WAL_FLUSH marker and pushed them to the page
+	// Raise the durable horizon to this commit so new snapshots include it. Acknowledgements can race out of
+	// commit order (a later commit's fsync may cover an earlier one still parked), hence the raise-only max.
+	auto raise_durable_horizon = [&] {
+		transaction_t durable = last_durable_commit.load(std::memory_order_relaxed);
+		while (durable < info.commit_id &&
+		       !last_durable_commit.compare_exchange_weak(durable, info.commit_id, std::memory_order_release,
+		                                                  std::memory_order_relaxed)) {
+		}
+	};
+	// Group commit: this commit appended its entries + WAL_FLUSH marker and pushed them to the page
 	// cache under the WAL lock (now released), but deferred the fsync. Issue the grouped fsync here, with neither the
-	// transaction lock nor the WAL lock held, so concurrent committers coalesce onto a single physical fsync. We block
+	// transaction lock nor the WAL lock held, so concurrent committers overlap or share fsyncs. We block
 	// until the fsync covering this commit's bytes completes -- so the commit is durable before it is acknowledged and
 	// before the durability-dependent registered-state hook below. Because WAL append order (under the WAL lock) equals
 	// commit order, a later committer's fsync also covers this one, preserving prefix-consistent replay.
 	if (!error.HasError() && info.wal_flush_offset > 0) {
 		wal_ref->GroupSync(info.wal_flush_offset);
+		raise_durable_horizon();
+	} else if (!error.HasError() && !skip_wal_write_due_to_checkpoint) {
+		// no WAL bytes and no checkpoint carrying the changes (in-memory or temporary storage): nothing further to
+		// persist, the commit counts as durable now. Checkpoint-instead-of-WAL commits raise after their checkpoint.
+		raise_durable_horizon();
 	}
 
 	CleanupTransactions();
@@ -464,7 +505,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	// dependent changes must be discarded (via the rollback hook), not flushed.
 	if (!error.HasError() && context.registered_state) {
 		for (auto &state : context.registered_state->States()) {
-			state->TransactionPreCheckpoint(db, context);
+			state->TransactionPreCheckpoint(db, context, wal_generation, info.wal_flush_offset);
 		}
 	}
 
@@ -483,6 +524,11 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		auto &storage_manager = db.GetStorageManager();
 		try {
 			storage_manager.CreateCheckpoint(context, options);
+			// a checkpoint-instead-of-WAL commit is durable once its checkpoint completes: raise the horizon so new
+			// snapshots include it (no-op for WAL-written commits, whose GroupSync above already raised it)
+			if (!error.HasError()) {
+				raise_durable_horizon();
+			}
 		} catch (std::exception &ex) {
 			// a checkpoint failure here should not result in the commit being turned into a rollback
 			// .. UNLESS we have skipped writing to the WAL and there are concurrent transactions active
@@ -492,6 +538,8 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 				// otherwise the failure is dropped here -- log it so it is not silently lost
 				DUCKDB_LOG_WARNING(context, "Checkpoint failed on commit for database \"" + db.GetName() +
 				                                "\": " + ErrorData(ex).Message());
+				// the WAL-written commit is durable regardless of the failed checkpoint
+				raise_durable_horizon();
 			}
 		}
 	}

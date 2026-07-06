@@ -11,6 +11,8 @@
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/checksum.hpp"
 #include "duckdb/common/encryption_functions.hpp"
+#include "duckdb/common/error_data.hpp"
+
 #include "duckdb/common/encryption_key_manager.hpp"
 #include "duckdb/common/serializer/binary_serializer.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
@@ -63,6 +65,9 @@ BufferedFileWriter &WriteAheadLog::Initialize() {
 		} else {
 			storage_manager.SetWALSize(writer->GetFileSize());
 		}
+		sync_lane_cap = writer->handle->file_system.SyncParallelism(*writer->handle) == FileSyncParallelism::PARALLEL
+		                    ? NumericLimits<idx_t>::Maximum()
+		                    : 1;
 		init_state = WALInitState::INITIALIZED;
 	}
 	return *writer;
@@ -89,9 +94,24 @@ void WriteAheadLog::Truncate(idx_t size) {
 	idx_t truncated = writer->GetFileSize();
 	storage_manager.SetWALSize(truncated);
 	// Truncate runs under the WAL lock (the same lock that serializes the FlushAppendNoSync publish), so lower the
-	// published page-cache offset too -- otherwise a later GroupSync leader could snapshot a target beyond the file.
+	// published page-cache offset too -- otherwise a later fsync could snapshot a target beyond the file. The order
+	// below is load-bearing: after the flushed clamp, the generation bump makes the clamped offset visible to every
+	// fsync that starts afterwards (its acquire-load of the generation precedes its target snapshot); an fsync from
+	// before the bump discards its durable_offset raise on the generation mismatch; and the drain guarantees no raise
+	// can land after the final durable clamp.
 	if (truncated < flushed_offset.load(std::memory_order_acquire)) {
 		flushed_offset.store(truncated, std::memory_order_release);
+	}
+	truncate_gen.fetch_add(1, std::memory_order_acq_rel);
+	while (active_syncs.load(std::memory_order_acquire) > 0) {
+		uint64_t epoch = sync_epoch.load(std::memory_order_acquire);
+		if (active_syncs.load(std::memory_order_acquire) == 0) {
+			break;
+		}
+		sync_epoch.wait(epoch, std::memory_order_acquire);
+	}
+	if (truncated < durable_offset.load(std::memory_order_acquire)) {
+		durable_offset.store(truncated, std::memory_order_release);
 	}
 }
 
@@ -603,41 +623,9 @@ idx_t WriteAheadLog::FlushAppendNoSync() {
 	return offset;
 }
 
-void WriteAheadLog::RunSyncLeader(uint64_t round) {
-	for (;;) {
-		// Target the highest flushed offset so this one fsync also covers bytes other committers flushed (under the
-		// WAL lock) after we were elected. Reloaded each iteration so a SYNC_PENDING re-sync picks up the late append.
-		idx_t target = flushed_offset.load(std::memory_order_acquire);
-		bool advanced = false;
-		try {
-			writer->handle->Sync();
-			if (target > durable_offset.load(std::memory_order_relaxed)) {
-				durable_offset.store(target, std::memory_order_release);
-			}
-			uint64_t expected = MakeSyncWord(SyncState::SYNCING, round);
-			uint64_t desired = MakeSyncWord(SyncState::IDLE, round + 1);
-			if (sync_state.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
-			                                       std::memory_order_acquire)) {
-				advanced = true;
-				sync_state.notify_all();
-				return;
-			}
-			// A late committer flipped SYNCING->SYNC_PENDING: its bytes are not covered by this fsync. We are the only
-			// leader (single-writer once SYNCING is set), so consume the flag, bump the round, and re-sync.
-			advanced = true;
-			sync_state.store(MakeSyncWord(SyncState::SYNCING, round + 1), std::memory_order_release);
-			sync_state.notify_all();
-			++round;
-		} catch (...) {
-			// On fsync failure release the SYNCING token so a re-elected committer can retry; without this the word
-			// stays SYNCING forever and the whole commit path deadlocks.
-			if (!advanced) {
-				sync_state.store(MakeSyncWord(SyncState::IDLE, round + 1), std::memory_order_release);
-				sync_state.notify_all();
-			}
-			throw;
-		}
-	}
+void WriteAheadLog::BumpSyncEpochNotify() {
+	sync_epoch.fetch_add(1, std::memory_order_acq_rel);
+	sync_epoch.notify_all();
 }
 
 void WriteAheadLog::GroupSync(idx_t my_offset) {
@@ -645,28 +633,65 @@ void WriteAheadLog::GroupSync(idx_t my_offset) {
 		return;
 	}
 	for (;;) {
+		// the epoch must be read BEFORE the durable/failed checks: a bump between those checks and the park then
+		// makes the park return immediately instead of missing the update
+		uint64_t epoch = sync_epoch.load(std::memory_order_acquire);
 		if (durable_offset.load(std::memory_order_acquire) >= my_offset) {
 			return;
 		}
-		uint64_t w = sync_state.load(std::memory_order_acquire);
-		switch (SyncWordState(w)) {
-		case SyncState::IDLE: {
-			uint64_t want = MakeSyncWord(SyncState::SYNCING, SyncWordRound(w));
-			if (sync_state.compare_exchange_weak(w, want, std::memory_order_acq_rel, std::memory_order_acquire)) {
-				RunSyncLeader(SyncWordRound(w));
-			}
-		} break;
-		case SyncState::SYNCING: {
-			// Record that our (later) bytes need a fsync, then park. The leader's completion CAS will fail on this
-			// flag and force a re-sync that covers us.
-			uint64_t pend = MakeSyncWord(SyncState::SYNC_PENDING, SyncWordRound(w));
-			sync_state.compare_exchange_weak(w, pend, std::memory_order_acq_rel, std::memory_order_acquire);
-			sync_state.wait(pend, std::memory_order_acquire);
-		} break;
-		case SyncState::SYNC_PENDING: {
-			sync_state.wait(w, std::memory_order_acquire);
-		} break;
+		if (sync_failed.load(std::memory_order_acquire)) {
+			throw FatalException("Failed to sync WAL during commit: an earlier WAL sync failed, durability can no "
+			                     "longer be guaranteed");
 		}
+		// A committer fsyncs itself -- overlapping with any fsyncs already in flight, up to the file system's declared
+		// sync parallelism -- unless an in-flight fsync's target already covers its bytes, in which case
+		// it parks until durability advances. Overlapping fsyncs pipeline the device/network round trips (a commit
+		// arriving mid-fsync does not wait out someone else's round trip); committers beyond the cap park, and the
+		// next fsync's late-snapped target covers them (group commit, no delay).
+		idx_t lanes = active_syncs.load(std::memory_order_acquire);
+		if (lanes > 0 && syncing_target.load(std::memory_order_acquire) >= my_offset) {
+			// if the covering fsync completes between the two loads, its epoch bump makes this park return immediately
+			sync_epoch.wait(epoch, std::memory_order_acquire);
+			continue;
+		}
+		if (lanes >= sync_lane_cap || !active_syncs.compare_exchange_strong(lanes, lanes + 1, std::memory_order_acq_rel,
+		                                                                    std::memory_order_acquire)) {
+			sync_epoch.wait(epoch, std::memory_order_acquire);
+			continue;
+		}
+		// cover every byte flushed (under the WAL lock) up to now -- includes our own bytes
+		uint64_t gen = truncate_gen.load(std::memory_order_acquire);
+		idx_t target = flushed_offset.load(std::memory_order_acquire);
+		idx_t prev_syncing = syncing_target.load(std::memory_order_relaxed);
+		while (prev_syncing < target &&
+		       !syncing_target.compare_exchange_weak(prev_syncing, target, std::memory_order_release,
+		                                             std::memory_order_relaxed)) {
+		}
+		try {
+			writer->handle->Sync();
+		} catch (const std::exception &ex) {
+			// A failed fsync is unrecoverable: the OS may have dropped the failed dirty pages as clean, so a
+			// retried fsync could falsely report success for bytes that never reached disk. Poison the WAL so
+			// every pending and future committer fails, and escalate to a fatal error so the database is
+			// invalidated and recovers from the durable WAL prefix on reopen.
+			sync_failed.store(true, std::memory_order_release);
+			active_syncs.fetch_sub(1, std::memory_order_acq_rel);
+			BumpSyncEpochNotify();
+			ErrorData error(ex);
+			throw FatalException("Failed to sync WAL during commit. Cannot continue operation.\nError: %s",
+			                     error.Message());
+		}
+		// raise durable_offset to (at least) this fsync's target; concurrent fsyncs may race, take the max.
+		// If a truncate intervened, the snapshotted target may exceed the truncation point -- discard the raise
+		// and loop; our own marker (if still valid) is covered by a fresh fsync with a fresh target.
+		if (truncate_gen.load(std::memory_order_acquire) == gen) {
+			idx_t durable = durable_offset.load(std::memory_order_relaxed);
+			while (durable < target && !durable_offset.compare_exchange_weak(durable, target, std::memory_order_release,
+			                                                                 std::memory_order_relaxed)) {
+			}
+		}
+		active_syncs.fetch_sub(1, std::memory_order_acq_rel);
+		BumpSyncEpochNotify();
 	}
 }
 

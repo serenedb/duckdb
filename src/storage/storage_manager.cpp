@@ -633,9 +633,9 @@ public:
 private:
 	idx_t initial_wal_size = 0;
 	idx_t initial_written = 0;
-	//! WAL byte offset covering this commit after the buffered append+marker flush (set by FlushCommit). The grouped
-	//! fsync is deferred to WriteAheadLog::GroupSync, which the transaction manager calls once both the transaction and
-	//! WAL locks are released, so the fsync can coalesce across concurrent committers.
+	//! WAL byte offset covering this commit after the buffered append+marker flush (set by FlushCommit). The fsync is
+	//! deferred to WriteAheadLog::GroupSync, which the transaction manager calls once both the transaction and WAL
+	//! locks are released, so fsyncs overlap or coalesce across concurrent committers.
 	idx_t flush_offset = 0;
 	WriteAheadLog &wal;
 	WALCommitState state;
@@ -683,9 +683,9 @@ void SingleFileStorageCommitState::FlushCommit() {
 		return;
 	}
 	// Append the WAL_FLUSH marker and push this commit's bytes into the page cache, but defer the fsync: the
-	// transaction manager issues a flat-combined WriteAheadLog::GroupSync(flush_offset) after dropping the transaction
-	// and WAL locks, so concurrent committers coalesce onto one physical fsync while durability is still guaranteed
-	// before the commit is acknowledged.
+	// transaction manager issues WriteAheadLog::GroupSync(flush_offset) after dropping the transaction and WAL locks,
+	// so concurrent committers overlap or share fsyncs while durability is still guaranteed before the commit is
+	// acknowledged.
 	flush_offset = wal.FlushAppendNoSync();
 	state = WALCommitState::FLUSHED;
 }
