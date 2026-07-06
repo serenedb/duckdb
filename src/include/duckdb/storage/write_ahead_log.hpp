@@ -127,9 +127,9 @@ public:
 	//! Returns the WAL byte offset that covers this commit's entries; the caller must subsequently call GroupSync with
 	//! this offset to make the bytes durable before acknowledging the commit.
 	idx_t FlushAppendNoSync();
-	//! Flat-combining group commit: fsync the WAL so that every byte up to (at least) my_offset is durable. Called with
-	//! the WAL lock NOT held, so multiple committers can coalesce onto a single physical fsync. A committer returns
-	//! from this call only once durable_offset >= my_offset, i.e. its WAL_FLUSH marker is on stable storage.
+	//! Group commit: make every WAL byte up to (at least) my_offset durable. Called with the WAL lock NOT held, so
+	//! concurrent committers overlap their fsyncs or coalesce onto in-flight ones. A committer returns from this call
+	//! only once durable_offset >= my_offset, i.e. its WAL_FLUSH marker is on stable storage.
 	void GroupSync(idx_t my_offset);
 	//! Increment the WAL entry count, which is used for the auto-checkpoint threshold.
 	void IncrementWALEntriesCount();
@@ -144,32 +144,34 @@ protected:
 	optional_idx checkpoint_iteration;
 
 private:
-	//! Group-commit (flat combining) fsync coordination, lock-free on a single futex-backed word.
-	enum class SyncState : uint64_t { IDLE = 0, SYNCING = 1, SYNC_PENDING = 2 };
-	static constexpr uint64_t kStateBits = 2;
-	static constexpr uint64_t kStateMask = (uint64_t(1) << kStateBits) - 1;
-	static uint64_t MakeSyncWord(SyncState s, uint64_t round) {
-		return (round << kStateBits) | static_cast<uint64_t>(s);
-	}
-	static SyncState SyncWordState(uint64_t w) {
-		return static_cast<SyncState>(w & kStateMask);
-	}
-	static uint64_t SyncWordRound(uint64_t w) {
-		return w >> kStateBits;
-	}
-	//! Lead one grouped fsync (plus any SYNC_PENDING re-sync) after winning the IDLE->SYNCING election.
-	void RunSyncLeader(uint64_t round);
-
-	//! Coordination word: [round : 63..2][state : 1..0]. round increments on every word-changing transition so a
-	//! parked follower cannot alias a prior state -- this defeats ABA and lost wakeups (load-bearing, not diagnostic).
-	atomic<uint64_t> sync_state {MakeSyncWord(SyncState::IDLE, 0)};
-	//! Highest WAL byte offset known durable (fsynced). Raise-only; release-stored by the leader strictly AFTER
-	//! writer->handle->Sync() returns, acquire-loaded as the sole durable-before-ack predicate.
-	atomic<idx_t> durable_offset {0};
+	//! Bump sync_epoch and wake every parked committer (called after durable_offset advances or the WAL is poisoned).
+	void BumpSyncEpochNotify();
+	//! Maximum number of concurrent fsyncs worth issuing on this WAL's storage, set at initialization from the file
+	//! system's declared sync semantics (FileSystem::SyncParallelism): unbounded where a sync is a per-call round
+	//! trip that overlaps (network file systems), 1 where a sync commits a shared journal and concurrent syncs only
+	//! add cost (local file systems) -- there the single stream's late-snapped targets batch naturally.
+	idx_t sync_lane_cap = 1;
+	//! Number of fsyncs currently in flight (bounded by sync_lane_cap).
+	atomic<idx_t> active_syncs = 0;
+	//! Raise-only maximum target of any in-flight (or completed) fsync: a committer whose bytes are already covered
+	//! by an in-flight fsync parks instead of claiming a lane for a redundant fsync.
+	atomic<idx_t> syncing_target = 0;
+	//! Bumped by Truncate (under the WAL lock, after draining lanes): a sync lane whose fsync raced a truncate
+	//! discards its durable_offset raise, since its snapshotted target may lie beyond the truncation point.
+	atomic<uint64_t> truncate_gen = 0;
+	//! Parking word for committers waiting on durability: bumped on every durable_offset advance and on failure.
+	atomic<uint64_t> sync_epoch = 0;
+	//! Terminal poison flag: after a failed fsync the OS may have dropped the failed dirty pages as clean, so a
+	//! retried fsync could falsely report success for bytes that never reached disk -- durability can no longer be
+	//! promised for any pending offset.
+	atomic<bool> sync_failed = false;
+	//! Highest WAL byte offset known durable. Raise-only; stored by an fsyncer strictly AFTER its Sync() returns,
+	//! acquire-loaded as the sole durable-before-ack predicate.
+	atomic<idx_t> durable_offset = 0;
 	//! Highest WAL byte offset pushed to the page cache (writer->Flush()). Release-stored under the WAL lock by
-	//! FlushAppendNoSync (so it is monotonic and needs no sync coordination), acquire-loaded by the leader to size
-	//! its fsync, and clamped down by Truncate.
-	atomic<idx_t> flushed_offset {0};
+	//! FlushAppendNoSync (so it is monotonic and needs no sync coordination), acquire-loaded by fsyncers as their
+	//! target, and clamped down by Truncate.
+	atomic<idx_t> flushed_offset = 0;
 };
 
 } // namespace duckdb
