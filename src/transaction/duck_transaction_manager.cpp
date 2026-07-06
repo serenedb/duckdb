@@ -571,6 +571,10 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 			// .. UNLESS we have skipped writing to the WAL and there are concurrent transactions active
 			if (skip_wal_write_due_to_checkpoint) {
 				error.Merge(ErrorData(ex));
+			} else {
+				// otherwise the failure is dropped here -- log it so it is not silently lost
+				DUCKDB_LOG_WARNING(context, "Checkpoint failed on commit for database \"" + db.GetName() +
+				                                "\": " + ErrorData(ex).Message());
 			}
 		}
 		// a commit that skipped the WAL (wal_flush_offset == 0) never set last_pending_commit or raised
