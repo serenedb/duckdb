@@ -73,7 +73,11 @@ public:
 	//! commit dependent state (e.g. an out-of-band search-index leg) synchronously
 	//! with the table changes, so the checkpoint never observes an un-committed
 	//! in-flight batch.
-	virtual void TransactionPreCheckpoint(AttachedDatabase &db, ClientContext &context) {
+	//! wal_generation/wal_end_offset identify the exact WAL position of this commit's bytes (captured under the WAL
+	//! lock, so they are consistent even when a concurrent checkpoint swaps the WAL before this hook runs);
+	//! wal_end_offset is 0 for commits whose changes are carried by their in-commit checkpoint instead of the WAL.
+	virtual void TransactionPreCheckpoint(AttachedDatabase &db, ClientContext &context, idx_t wal_generation,
+	                                      idx_t wal_end_offset) {
 	}
 	virtual void TransactionPreRollback(MetaTransaction &transaction, ClientContext &context,
 	                                    optional_ptr<ErrorData> error) {
