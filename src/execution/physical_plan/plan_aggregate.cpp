@@ -320,20 +320,30 @@ PhysicalOperator &PhysicalPlanGenerator::ExtractAggregateExpressions(PhysicalOpe
 		expressions.push_back(std::move(group));
 		group = std::move(ref);
 	}
+	auto extract = [&](unique_ptr<Expression> &expr, bool dedupe) {
+		idx_t slot = expressions.size();
+		if (dedupe && !expr->IsVolatile()) {
+			for (idx_t i = 0; i < expressions.size(); i++) {
+				if (!expressions[i]->IsVolatile() && expressions[i]->Equals(*expr)) {
+					slot = i;
+					break;
+				}
+			}
+		}
+		if (slot == expressions.size()) {
+			types.push_back(expr->GetReturnType());
+			expressions.push_back(std::move(expr));
+		}
+		expr = make_uniq<BoundReferenceExpression>(types[slot], slot);
+	};
 	for (auto &aggr : aggregates) {
 		auto &bound_aggr = aggr->Cast<BoundAggregateExpression>();
+		const bool dedupe = !bound_aggr.IsDistinct();
 		for (auto &child_expr : bound_aggr.GetChildrenMutable()) {
-			auto ref = make_uniq<BoundReferenceExpression>(child_expr->GetReturnType(), expressions.size());
-			types.push_back(child_expr->GetReturnType());
-			expressions.push_back(std::move(child_expr));
-			child_expr = std::move(ref);
+			extract(child_expr, dedupe);
 		}
 		if (bound_aggr.GetFilter()) {
-			auto &filter = bound_aggr.GetFilterMutable();
-			auto ref = make_uniq<BoundReferenceExpression>(filter->GetReturnType(), expressions.size());
-			types.push_back(filter->GetReturnType());
-			expressions.push_back(std::move(filter));
-			bound_aggr.GetFilterMutable() = std::move(ref);
+			extract(bound_aggr.GetFilterMutable(), dedupe);
 		}
 	}
 	if (expressions.empty()) {
