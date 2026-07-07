@@ -468,6 +468,8 @@ private:
 
 public:
 	vector<unique_ptr<GlobalSourceState>> global_source_states;
+	//! Per radix table: indexes of the distinct aggregates reading that table
+	vector<vector<idx_t>> table_aggregate_indexes;
 };
 
 class UngroupedDistinctAggregateFinalizeTask : public ExecutorTask {
@@ -504,15 +506,8 @@ void UngroupedDistinctAggregateFinalizeEvent::Schedule() {
 	auto &distinct_data = *op.distinct_data;
 
 	idx_t n_tasks = 0;
-	idx_t payload_idx = 0;
-	idx_t next_payload_idx = 0;
+	table_aggregate_indexes.assign(distinct_data.radix_tables.size(), {});
 	for (idx_t agg_idx = 0; agg_idx < aggregates.size(); agg_idx++) {
-		auto &aggregate = aggregates[agg_idx]->Cast<BoundAggregateExpression>();
-
-		// Forward the payload idx
-		payload_idx = next_payload_idx;
-		next_payload_idx = payload_idx + aggregate.GetChildren().size();
-
 		// If aggregate is not distinct, skip it
 		if (!distinct_data.IsDistinct(agg_idx)) {
 			global_source_states.push_back(nullptr);
@@ -520,8 +515,15 @@ void UngroupedDistinctAggregateFinalizeEvent::Schedule() {
 		}
 		D_ASSERT(distinct_data.info.table_map.count(agg_idx));
 
-		// Create global state for scanning
+		// Distinct aggregates with equal inputs share a radix table: the first of them owns the
+		// table and scans it once for all of them, so only the owner gets a global source state
 		auto table_idx = distinct_data.info.table_map.at(agg_idx);
+		auto &table_aggregates = table_aggregate_indexes[table_idx];
+		table_aggregates.push_back(agg_idx);
+		if (table_aggregates.size() > 1) {
+			global_source_states.push_back(nullptr);
+			continue;
+		}
 		auto &radix_table_p = *distinct_data.radix_tables[table_idx];
 		n_tasks += radix_table_p.MaxThreads(*gstate.distinct_state->radix_states[table_idx]);
 		global_source_states.push_back(radix_table_p.GetGlobalSourceState(context));
@@ -567,15 +569,21 @@ TaskExecutionResult UngroupedDistinctAggregateFinalizeTask::AggregateDistinct() 
 	auto &agg_idx = aggregation_idx;
 
 	for (; agg_idx < aggregates.size(); agg_idx++) {
-		auto &aggregate = aggregates[agg_idx]->Cast<BoundAggregateExpression>();
-
 		// If aggregate is not distinct, skip it
 		if (!distinct_data.IsDistinct(agg_idx)) {
 			continue;
 		}
 
+		// Only the owner of a shared radix table scans it; the distinct rows it reads update the
+		// state of every aggregate sharing the table, so non-owners have no global source state
+		auto &global_source = finalize_event.global_source_states[agg_idx];
+		if (!global_source) {
+			continue;
+		}
+
 		const auto table_idx = distinct_data.info.table_map.at(agg_idx);
 		auto &radix_table = *distinct_data.radix_tables[table_idx];
+		auto &aggregate_indexes = finalize_event.table_aggregate_indexes[table_idx];
 		if (!blocked) {
 			// Because we can block, we need to make sure we preserve this state
 			radix_table_lstate = radix_table.GetLocalSourceState(execution_context);
@@ -584,7 +592,7 @@ TaskExecutionResult UngroupedDistinctAggregateFinalizeTask::AggregateDistinct() 
 
 		auto &sink = *distinct_state.radix_states[table_idx];
 		InterruptState interrupt_state(shared_from_this());
-		OperatorSourceInput source_input {*finalize_event.global_source_states[agg_idx], lstate, interrupt_state};
+		OperatorSourceInput source_input {*global_source, lstate, interrupt_state};
 
 		DataChunk output_chunk;
 		output_chunk.Initialize(executor.context, distinct_state.distinct_output_chunks[table_idx]->GetTypes());
@@ -592,6 +600,8 @@ TaskExecutionResult UngroupedDistinctAggregateFinalizeTask::AggregateDistinct() 
 		DataChunk payload_chunk;
 		payload_chunk.InitializeEmpty(distinct_data.grouped_aggregate_data[table_idx]->group_types);
 		payload_chunk.SetChildCardinality(0);
+
+		const idx_t payload_cnt = aggregates[agg_idx]->Cast<BoundAggregateExpression>().GetChildren().size();
 
 		while (true) {
 			output_chunk.Reset();
@@ -606,13 +616,14 @@ TaskExecutionResult UngroupedDistinctAggregateFinalizeTask::AggregateDistinct() 
 			}
 
 			// We dont need to resolve the filter, we already did this in Sink
-			idx_t payload_cnt = aggregate.GetChildren().size();
 			for (idx_t i = 0; i < payload_cnt; i++) {
 				payload_chunk.data[i].Reference(output_chunk.data[i]);
 			}
 
-			// Update the aggregate state
-			state.Sink(payload_chunk, 0, agg_idx, output_chunk.size());
+			// Update the aggregate state of every aggregate that shares this table
+			for (const auto aggregate_index : aggregate_indexes) {
+				state.Sink(payload_chunk, 0, aggregate_index, output_chunk.size());
+			}
 		}
 		blocked = false;
 	}
