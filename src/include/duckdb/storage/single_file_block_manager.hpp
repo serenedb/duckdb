@@ -10,6 +10,7 @@
 
 #include "duckdb/storage/block_manager.hpp"
 #include "duckdb/storage/block.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/storage/storage_options.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
@@ -219,8 +220,9 @@ private:
 	block_id_t max_block;
 	//! The block id where the free list can be found
 	idx_t free_list_id;
-	//! The current header iteration count.
-	uint64_t iteration_count;
+	//! The current header iteration count. Atomic: bumped in WriteHeader under single_file_block_lock, but read
+	//! lock-free by committers capturing the WAL generation for the pre-checkpoint hook.
+	atomic<uint64_t> iteration_count;
 	//! The storage manager options
 	StorageManagerOptions options;
 	//! Lock for performing various operations in the single file block manager
