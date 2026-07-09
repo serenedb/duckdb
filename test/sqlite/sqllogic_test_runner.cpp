@@ -216,6 +216,10 @@ void SQLLogicTestRunner::LoadDatabase(string dbpath, bool load_extensions) {
 
 unique_ptr<Connection> SQLLogicTestRunner::ConnectToDatabase(DuckDB &db_ref) {
 	auto result = make_uniq<Connection>(db_ref);
+	// SereneDB defaults the search path to empty (PG-style: CREATE without a schema prefix errors), whereas the
+	// upstream duckdb regression tests assume the default "main" schema. Select it here so those tests run; this
+	// affects only the unittest runner, not the server (which sets its own search path per connection).
+	result->Query("SET search_path='main'");
 	if (original_sqlite_test) {
 		result->Query("SET integer_division=true");
 	}
