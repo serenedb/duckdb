@@ -33,6 +33,10 @@ static Connection &GetConnection(SQLLogicTestRunner &runner, DuckDB &db,
 	if (entry == named_connection_map.end()) {
 		// not found: create a new connection
 		auto con = make_uniq<Connection>(db);
+		// SereneDB defaults the search path to empty; the upstream regression tests assume the "main" schema.
+		// Select it so tests that use named connections can create objects (unittest runner only, see
+		// SQLLogicTestRunner::ConnectToDatabase).
+		con->Query("SET search_path='main'");
 
 		auto &test_config = TestConfiguration::Get();
 		auto init_cmd = test_config.OnConnectionCommand();
