@@ -34,16 +34,20 @@ TaskScheduler::TaskScheduler(DatabaseInstance &db) : db(db) {
 	}
 }
 
-TaskScheduler::~TaskScheduler() {
+void TaskScheduler::Join() {
 #ifndef DUCKDB_NO_THREADS
+	for (auto &pool : pools) {
+		pool->RelaunchThreads(*this, true);
+	}
+#endif
+}
+
+TaskScheduler::~TaskScheduler() {
 	try {
-		for (auto &pool : pools) {
-			pool->RelaunchThreads(*this, true);
-		}
+		Join();
 	} catch (...) {
 		// nothing we can do in the destructor if this fails
 	}
-#endif
 }
 
 TaskScheduler &TaskScheduler::GetScheduler(ClientContext &context) {
