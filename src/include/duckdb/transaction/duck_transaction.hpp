@@ -14,9 +14,11 @@
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/transaction/undo_buffer.hpp"
 #include "duckdb/common/enums/active_transaction_state.hpp"
+#include "duckdb/common/unordered_map.hpp"
 
 namespace duckdb {
 class CheckpointLock;
+class ColumnData;
 class CommitDropState;
 class DuckTableEntry;
 class RowGroupCollection;
@@ -31,6 +33,10 @@ struct CommitInfo {
 	transaction_t commit_id;
 	ActiveTransactionState active_transactions = ActiveTransactionState::UNSET;
 	optional_ptr<CommitDropState> drop_state;
+	//! WAL byte offset covering this commit's entries after FlushCommit appended+flushed (without fsync), or 0 if no
+	//! WAL bytes were written. The transaction manager passes this to WriteAheadLog::GroupSync to make the bytes
+	//! durable.
+	idx_t wal_flush_offset = 0;
 };
 
 class DuckTransaction : public Transaction {
@@ -87,6 +93,11 @@ public:
 	void PushAppend(DuckTableEntry &table_entry, idx_t row_start, idx_t row_count);
 	UndoBufferReference CreateUpdateInfo(DuckTableEntry &table_entry, idx_t type_size, idx_t entries,
 	                                     idx_t row_group_start);
+	//! Keep the column that owns an UpdateSegment this transaction's undo references alive until the undo is cleaned
+	//! up: a concurrent checkpoint can swap the row-group tree out from under an in-flight scan, and once that scan
+	//! is torn down the old row group -- and its UpdateSegment -- would be freed while our (group-commit) cleanup,
+	//! deferred past the group fsync, still needs to unlink from it
+	void PinUpdateColumn(const ColumnData &column);
 
 	DuckTransactionManager &GetTransactionManager();
 	bool IsDuckTransaction() const override {
@@ -126,6 +137,10 @@ private:
 	reference_map_t<DataTableInfo, unique_ptr<ActiveTableLock>> active_locks;
 	//! Flag to prevent auto-checkpointing inside a checkpoint transaction.
 	bool is_checkpoint_transaction = false;
+	//! Columns kept alive by PinUpdateColumn until this transaction's undo is cleaned up. Keyed by pointer to
+	//! dedupe; a parallel UPDATE fills this from several worker threads, hence the lock.
+	mutex pinned_columns_lock;
+	unordered_map<const ColumnData *, shared_ptr<const ColumnData>> pinned_columns;
 };
 
 } // namespace duckdb

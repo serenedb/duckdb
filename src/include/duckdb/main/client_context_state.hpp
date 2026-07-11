@@ -68,12 +68,15 @@ public:
 	//! reverting SET LOCAL values for custom-impl settings like search_path).
 	virtual void TransactionPreCommit(MetaTransaction &transaction, ClientContext &context) {
 	}
-	//! Fires inside the engine commit of a single database, after that database's
-	//! changes are durable but before the in-commit auto-checkpoint. Use this to
-	//! commit dependent state (e.g. an out-of-band search-index leg) synchronously
-	//! with the table changes, so the checkpoint never observes an un-committed
-	//! in-flight batch.
-	virtual void TransactionPreCheckpoint(AttachedDatabase &db, ClientContext &context) {
+	//! Fires inside the engine commit of a single database, on the committing thread while it still holds the WAL
+	//! lock, right after this commit's WAL flush marker is written and before the group fsync -- so hooks across the
+	//! database's commits fire in WAL-append order even though the group fsyncs complete out of order. Use this to
+	//! commit dependent state (e.g. an out-of-band search-index leg) in WAL-append order; the dependent state gates
+	//! its own durability on the WAL becoming durable (it is not durable when this fires). wal_generation/
+	//! wal_end_offset identify this commit's exact WAL position, captured under the WAL lock; wal_end_offset is 0 for
+	//! commits whose changes are carried by their in-commit checkpoint instead of the WAL.
+	virtual void TransactionPreCheckpoint(AttachedDatabase &db, ClientContext &context, idx_t wal_generation,
+	                                      idx_t wal_end_offset) {
 	}
 	virtual void TransactionPreRollback(MetaTransaction &transaction, ClientContext &context,
 	                                    optional_ptr<ErrorData> error) {
