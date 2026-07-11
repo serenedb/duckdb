@@ -312,6 +312,7 @@ void ParsedExpression::CopyBase(const ParsedExpression &other) {
 	type = other.type;
 	alias = other.alias;
 	query_location = other.query_location;
+	is_named_parameter = other.is_named_parameter;
 }
 
 bool BetweenExpression::Equals(const ParsedExpression &other) const {
@@ -623,6 +624,7 @@ unique_ptr<ParsedExpression> FunctionExpression::Copy() const {
 	copy->order_bys = order_bys ? unique_ptr_cast<ResultModifier, OrderModifier>(order_bys->Copy()) : nullptr;
 	copy->distinct = distinct;
 	copy->is_operator = is_operator;
+	copy->from_operator = from_operator;
 	copy->export_state = export_state;
 	for (auto &arg : arguments) {
 		copy->arguments.emplace_back(arg.Copy());

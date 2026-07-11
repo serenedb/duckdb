@@ -511,6 +511,7 @@ void RowGroupOrderOptions::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<optional_idx>(105, "row_limit", row_limit);
 	serializer.WritePropertyWithDefault<idx_t>(106, "row_group_offset", row_group_offset);
 	serializer.WritePropertyWithDefault<idx_t>(107, "leading_null_group_offset", leading_null_group_offset);
+	serializer.WritePropertyWithDefault<bool>(108, "single_order_key", single_order_key, true);
 }
 
 unique_ptr<RowGroupOrderOptions> RowGroupOrderOptions::Deserialize(Deserializer &deserializer) {
@@ -522,7 +523,8 @@ unique_ptr<RowGroupOrderOptions> RowGroupOrderOptions::Deserialize(Deserializer 
 	auto row_limit = deserializer.ReadProperty<optional_idx>(105, "row_limit");
 	auto row_group_offset = deserializer.ReadPropertyWithDefault<idx_t>(106, "row_group_offset");
 	auto leading_null_group_offset = deserializer.ReadPropertyWithDefault<idx_t>(107, "leading_null_group_offset");
-	auto result = duckdb::unique_ptr<RowGroupOrderOptions>(new RowGroupOrderOptions(column_idx, order_by, order_type, null_order, column_type, row_limit, row_group_offset, leading_null_group_offset));
+	auto single_order_key = deserializer.ReadPropertyWithExplicitDefault<bool>(108, "single_order_key", true);
+	auto result = duckdb::unique_ptr<RowGroupOrderOptions>(new RowGroupOrderOptions(column_idx, order_by, order_type, null_order, column_type, row_limit, row_group_offset, leading_null_group_offset, single_order_key));
 	return result;
 }
 
@@ -765,12 +767,14 @@ TableFilterSet TableFilterSet::Deserialize(Deserializer &deserializer) {
 void VacuumOptions::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<bool>(100, "vacuum", vacuum);
 	serializer.WritePropertyWithDefault<bool>(101, "analyze", analyze);
+	serializer.WritePropertyWithDefault<string>(102, "serenedb_pragma_option", serenedb_pragma_option);
 }
 
 VacuumOptions VacuumOptions::Deserialize(Deserializer &deserializer) {
 	VacuumOptions result;
 	deserializer.ReadPropertyWithDefault<bool>(100, "vacuum", result.vacuum);
 	deserializer.ReadPropertyWithDefault<bool>(101, "analyze", result.analyze);
+	deserializer.ReadPropertyWithDefault<string>(102, "serenedb_pragma_option", result.serenedb_pragma_option);
 	return result;
 }
 
