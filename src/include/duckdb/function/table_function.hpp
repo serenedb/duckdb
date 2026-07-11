@@ -192,9 +192,16 @@ public:
 	//! Per-call sorted file-row-numbers / byte-offsets to look up. Parquet
 	//! treats them as row-group skip keys, csv/json as exact byte offsets.
 	std::span<const int64_t> pk_lookups;
-	//! Output slot for `pk_lookups[i]`. The TF writes directly there; in glob
-	//! mode multiple per-file calls share `output` and write at disjoint slots.
+	//! Output slot for `pk_lookups[i]`, used to map a survivor to its caller-side
+	//! sorted-pk index. The TF writes survivors densely from `output`'s current
+	//! size (so glob calls append), filling `pk_survivors[w]` with the survivor's
+	//! `pk_output_positions` value and setting `output`'s cardinality to the
+	//! survivor count -- rows the pushed filters or a deletion drop get no slot.
 	std::span<const idx_t> pk_output_positions;
+	//! Filled by the lookup TF: for each dense survivor row w, its sorted-pk
+	//! index (== pk_output_positions[pk]) so the caller can gather doc-id-keyed
+	//! columns. Sized by the caller to the pk count.
+	std::span<idx_t> pk_survivors;
 };
 
 struct TableFunctionPartitionInput {

@@ -92,6 +92,21 @@ public:
 
 	void InitializeScan(ClientContext &context, DuckTransaction &transaction, TableScanState &state,
 	                    const vector<StorageIndex> &column_ids, optional_ptr<TableFilterSet> table_filters = nullptr);
+	//! Rowid lookup: fetches `column_ids` for the ascending row ids [pk_begin, pk_end), applies
+	//! `table_filters`, and scatters each surviving row into `output` at `output_positions[i]` (mapped
+	//! fetch column -> output column via `output_to_fetch`; INVALID_INDEX entries skipped). Rows that are
+	//! absent (deleted) or filtered out are simply not written. Reuses the non-compacted scan path;
+	//! `scratch` is a caller-owned chunk typed to `column_ids`. Skips row groups / vectors holding no
+	//! requested id. Without `table_filters`: scatters each pk to `output_positions[pk_idx]`, leaving
+	//! the caller's pre-filled NULL for pks the source dropped (null-on-miss); returns num_pks. With
+	//! `table_filters`: evaluates them in-scan and writes only survivors, densely in pk order, filling
+	//! `out_survivor_idx[w]` with each survivor's index into `pk_begin`; returns the survivor count.
+	//! `state` is a caller-owned persistent cursor (kept across batches so the scan/decode state stays
+	//! warm); pass a default-null unique_ptr that the source holds for the query's lifetime.
+	idx_t LookupScan(DuckTransaction &transaction, ClientContext &context, const vector<StorageIndex> &column_ids,
+	                 optional_ptr<TableFilterSet> table_filters, const row_t *pk_begin, const row_t *pk_end,
+	                 idx_t *out_survivor_idx, const idx_t *output_to_fetch, DataChunk &scratch, DataChunk &output,
+	                 unique_ptr<TableScanState> &state);
 
 	//! Returns the maximum amount of threads that should be assigned to scan this data table
 	idx_t MaxThreads(ClientContext &context) const;

@@ -556,8 +556,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 			transaction.catalog_version = ++last_committed_version;
 		}
 		if (transaction.ChangesMade() &&
-		    (info.wal_flush_offset > 0 ||
-		     (skip_wal_write_due_to_checkpoint && checkpoint_decision.can_checkpoint))) {
+		    (info.wal_flush_offset > 0 || (skip_wal_write_due_to_checkpoint && checkpoint_decision.can_checkpoint))) {
 			// The commit is now visible to conflict validation but not yet durable: WAL-writing commits fsync in the
 			// GroupSync below, checkpoint-instead-of-WAL commits become durable when their checkpoint completes.
 			// Record it (still under the transaction AND WAL locks, so the store is monotonic) so new snapshots are

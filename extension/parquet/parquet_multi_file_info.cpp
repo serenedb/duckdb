@@ -29,6 +29,10 @@
 #include "duckdb/parallel/async_result.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
+#include "duckdb/planner/table_filter_state.hpp"
+#include "duckdb/storage/table/column_segment.hpp"
+#include "duckdb/planner/table_filter_set.hpp"
 #include "parquet_column_schema.hpp"
 #include "parquet_file_metadata_cache.hpp"
 #include "parquet_types.h"
@@ -438,6 +442,8 @@ struct ParquetLookupGlobalState : public GlobalTableFunctionState {
 	//! row_group_starts[i] = global row index of the first row in group i;
 	//! row_group_starts[num_groups] = total rows.
 	vector<idx_t> row_group_starts;
+	//! Fetched columns followed by a trailing file_row_number column (at index file_cols.size()) that
+	//! maps each surviving row back to its requested id. The reader applies the pushed table filters.
 	DataChunk scan_chunk;
 	ParquetReadGlobalState reader_gstate;
 	ParquetReadLocalState reader_lstate;
@@ -468,6 +474,22 @@ unique_ptr<GlobalTableFunctionState> ParquetLookupInitGlobal(ClientContext &cont
 		state->reader->column_indexes.emplace_back(file_col);
 	}
 
+	// Append file_row_number as a trailing output column so the reader emits each surviving row's
+	// absolute file position, which we map back to the requested id.
+	state->reader->AddVirtualColumn(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
+	const idx_t file_row_number_col = state->reader->root_schema->children.size() - 1;
+	state->reader->column_ids.push_back(MultiFileLocalColumnId(file_row_number_col));
+	state->reader->column_indexes.emplace_back(file_row_number_col);
+
+	// Let the reader apply the pushed table filters itself -- row-group zonemap pruning, per-row
+	// filtering, and compaction -- keyed by projected position, exactly like a normal filtered scan.
+	if (input.filters) {
+		state->reader->filters = input.filters->Copy();
+		for (auto &entry : *state->reader->filters) {
+			state->reader->filter_global_indices.emplace_back(entry.GetIndex().GetIndex());
+		}
+	}
+
 	state->output_to_file_col.reserve(input.column_indexes.size());
 	for (auto &col : input.column_indexes) {
 		if (col.IsVirtualColumn()) {
@@ -490,10 +512,11 @@ unique_ptr<GlobalTableFunctionState> ParquetLookupInitGlobal(ClientContext &cont
 	}
 
 	vector<LogicalType> native_types;
-	native_types.reserve(state->file_cols.size());
+	native_types.reserve(state->file_cols.size() + 1);
 	for (idx_t i = 0; i < state->file_cols.size(); ++i) {
 		native_types.push_back(state->reader->columns[state->file_cols[i]].type);
 	}
+	native_types.push_back(LogicalType::BIGINT); // file_row_number
 	state->scan_chunk.Initialize(context, native_types);
 
 	return std::move(state);
@@ -515,17 +538,20 @@ void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChu
 	D_ASSERT(data.pk_output_positions.size() == data.pk_lookups.size());
 
 	auto &reader = *gstate.reader;
-	auto &scan_state = gstate.reader_lstate.scan_state;
-	scan_state.op = nullptr;
+	gstate.reader_lstate.scan_state.op = nullptr;
+	const idx_t file_row_number_col = gstate.file_cols.size();
 
-	// pk_lookups + row_group_starts both sorted ascending: advance pk_idx as we
-	// consume hits -- amortized O(num_pks + num_groups).
+	// pk_lookups + row_group_starts both sorted ascending: advance pk_idx as we consume ids.
 	const idx_t num_groups = gstate.row_group_starts.size() - 1;
 	idx_t pk_idx = 0;
+	// Dense output cursor: survivors are written compactly from output's current size, so glob's
+	// per-file calls append. The reader already applied the pushed filters + compacted.
+	idx_t w = output.size();
 	for (idx_t g = 0; g < num_groups && pk_idx < data.pk_lookups.size(); ++g) {
 		const auto group_start = gstate.row_group_starts[g];
 		const auto group_end = gstate.row_group_starts[g + 1];
-		// Skip pks that fall before this group (e.g. deleted/compacted rows).
+		// Row-group skip driven by row ids: skip whole groups holding none of the requested ids. The
+		// reader's own zonemap pruning (in ScheduleIO) then skips groups the pushed filters exclude.
 		while (pk_idx < data.pk_lookups.size() && NumericCast<idx_t>(data.pk_lookups[pk_idx]) < group_start) {
 			++pk_idx;
 		}
@@ -533,16 +559,14 @@ void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChu
 			continue;
 		}
 
-		// Initialize + schedule the I/O for this single row group.
+		// Normal parquet scan of this one row group: the reader applies the pushed table filters
+		// (zonemap pruning + per-row filtering + compaction) and emits file_row_number per survivor.
 		gstate.reader_lstate.group_index = g;
 		reader.PrepareScan(context, gstate.reader_gstate, gstate.reader_lstate);
 		DrainAsync(reader.ScheduleIO(context, gstate.reader_gstate, gstate.reader_lstate));
 
-		// Drive Process chunk-by-chunk until the group is exhausted, narrowing
-		// each chunk to the rows whose global index is a requested pk.
 		for (;;) {
 			gstate.scan_chunk.Reset();
-			const idx_t chunk_row_start = group_start + scan_state.offset_in_group;
 			auto res = reader.Scan(context, gstate.reader_gstate, gstate.reader_lstate, gstate.scan_chunk);
 			while (res.GetResultType() == AsyncResultType::BLOCKED) {
 				res.ExecuteTasksSynchronously();
@@ -555,22 +579,35 @@ void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChu
 				}
 				continue;
 			}
-			const idx_t chunk_row_end = chunk_row_start + scanned;
-			while (pk_idx < data.pk_lookups.size() && NumericCast<idx_t>(data.pk_lookups[pk_idx]) < chunk_row_end) {
-				const auto pk = NumericCast<idx_t>(data.pk_lookups[pk_idx]);
-				const idx_t src_row = pk - chunk_row_start;
-				const idx_t dst_row = data.pk_output_positions[pk_idx];
-				// VARCHAR/nested: Copy deep-copies into output's heap so the data
-				// outlives scan_chunk's Reset on the next iteration.
+			// Row skip driven by row ids: each surviving row carries its file position; scatter the ones
+			// whose id was requested, advancing past requested ids the filter dropped (left NULL).
+			UnifiedVectorFormat file_rows;
+			gstate.scan_chunk.data[file_row_number_col].ToUnifiedFormat(scanned, file_rows);
+			const auto file_row_data = UnifiedVectorFormat::GetData<int64_t>(file_rows);
+			for (idx_t r = 0; r < scanned; ++r) {
+				const auto file_row = NumericCast<idx_t>(file_row_data[file_rows.sel->get_index(r)]);
+				while (pk_idx < data.pk_lookups.size() && NumericCast<idx_t>(data.pk_lookups[pk_idx]) < file_row) {
+					++pk_idx;
+				}
+				if (pk_idx >= data.pk_lookups.size()) {
+					break;
+				}
+				if (NumericCast<idx_t>(data.pk_lookups[pk_idx]) != file_row) {
+					continue; // survivor passed the filters but its id was not requested
+				}
+				// VARCHAR/nested: Copy deep-copies into output's heap so the data outlives the next Reset.
 				for (idx_t c = 0; c < gstate.output_to_file_col.size(); ++c) {
 					const auto i = gstate.output_to_file_col[c];
 					if (i == DConstants::INVALID_INDEX) {
 						continue;
 					}
 					VectorOperations::Copy(gstate.scan_chunk.data[i], output.data[c],
-					                       /*source_count=*/src_row + 1, /*source_offset=*/src_row,
-					                       /*target_offset=*/dst_row);
+					                       /*source_count=*/r + 1, /*source_offset=*/r, /*target_offset=*/w);
 				}
+				if (!data.pk_survivors.empty()) {
+					data.pk_survivors[w] = data.pk_output_positions[pk_idx];
+				}
+				++w;
 				++pk_idx;
 			}
 			if (res.GetResultType() == AsyncResultType::FINISHED) {
@@ -579,6 +616,7 @@ void ParquetLookupScan(ClientContext &context, TableFunctionInput &data, DataChu
 		}
 		reader.FinishFile(context, gstate.reader_gstate);
 	}
+	output.SetCardinality(w);
 }
 
 } // namespace

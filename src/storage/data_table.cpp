@@ -273,6 +273,77 @@ void DataTable::InitializeScanWithOffset(DuckTransaction &transaction, TableScan
 	row_groups->InitializeScanWithOffset(QueryContext(), state.table_state, column_ids, start_row, end_row);
 }
 
+idx_t DataTable::LookupScan(DuckTransaction &transaction, ClientContext &context, const vector<StorageIndex> &column_ids,
+                            optional_ptr<TableFilterSet> table_filters, const row_t *pk_begin, const row_t *pk_end,
+                            idx_t *out_survivor_idx, const idx_t *output_to_fetch, DataChunk &scratch, DataChunk &output,
+                            unique_ptr<TableScanState> &state) {
+	if (pk_begin == pk_end) {
+		return 0;
+	}
+	const idx_t num_pks = static_cast<idx_t>(pk_end - pk_begin);
+	const auto max_row = static_cast<idx_t>(pk_begin[num_pks - 1]);
+	// Persistent cursor: allocate + initialize the scan state (column scans, pinned blocks, per-segment
+	// decode state incl. FSST dicts) once per query; later batches reuse it so we skip the per-batch
+	// teardown/rebuild. `state` is caller-owned (lives on the lookup source across Materialize calls).
+	if (!state) {
+		state = make_uniq<TableScanState>();
+		state->Initialize(column_ids, &context, table_filters);
+		state->table_state.row_groups = row_groups->GetRowGroups();
+		state->table_state.Initialize(QueryContext(), row_groups->GetTypes());
+	}
+	auto &ts = state->table_state;
+	ts.pk_lookups_it = pk_begin;
+	ts.pk_lookups_end = pk_end;
+	ts.max_row = max_row + 1;
+	// Reposition to this batch's ids exactly as a fresh scan would (correct for gapped/absent ids --
+	// deletions, sparse matches). Only the TableScanState object + its allocations are reused across
+	// batches here; a warm-cursor re-seek that also skips the per-segment decode rebuild is future work.
+	ts.InitializeLookupRowGroup();
+	// Survivors are written compactly in pk order; out_survivor_idx[w] records each output row's requested-pk
+	// index (the doc-id-keyed gather reads it back). A requested pk the source no longer holds is dropped.
+	idx_t pk_idx = 0;
+	idx_t w = 0;
+	for (;;) {
+		scratch.Reset();
+		Scan(transaction, scratch, *state);
+		const idx_t n = scratch.size();
+		if (n == 0) {
+			break;
+		}
+		// scratch holds this vector's survivors compactly in rows [0, n) (row-id order); only survivors
+		// were decoded. Survivor s has row id ts.lookup_base + ts.valid_sel[s].
+		for (idx_t s = 0; s < n;) {
+			const idx_t slot = ts.valid_sel.get_index(s);
+			const auto rid = static_cast<row_t>(ts.lookup_base + slot);
+			while (pk_idx < num_pks && pk_begin[pk_idx] < rid) {
+				++pk_idx;
+			}
+			D_ASSERT(pk_idx < num_pks && pk_begin[pk_idx] == rid);
+			// Run of survivors whose source slot and requested pk both advance by 1 -> one vectorized Copy
+			// into the compact output range [w, w+run).
+			idx_t run = 1;
+			while (s + run < n && pk_idx + run < num_pks && ts.valid_sel.get_index(s + run) == slot + run &&
+			       pk_begin[pk_idx + run] == rid + static_cast<row_t>(run)) {
+				++run;
+			}
+			for (idx_t c = 0; c < output.ColumnCount(); c++) {
+				const idx_t fetch_idx = output_to_fetch[c];
+				if (fetch_idx == DConstants::INVALID_INDEX) {
+					continue;
+				}
+				VectorOperations::Copy(scratch.data[fetch_idx], output.data[c], s + run, s, w);
+			}
+			for (idx_t k = 0; k < run; k++) {
+				out_survivor_idx[w + k] = pk_idx + k;
+			}
+			w += run;
+			s += run;
+			pk_idx += run;
+		}
+	}
+	return w;
+}
+
 idx_t DataTable::GetRowGroupSize() const {
 	return row_groups->GetRowGroupSize();
 }
