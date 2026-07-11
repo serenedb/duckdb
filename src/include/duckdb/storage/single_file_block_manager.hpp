@@ -10,6 +10,8 @@
 
 #include "duckdb/storage/block_manager.hpp"
 #include "duckdb/storage/block.hpp"
+#include "duckdb/common/assert.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/storage/storage_options.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
@@ -62,6 +64,12 @@ struct StorageManagerOptions {
 
 //! SingleFileBlockManager is an implementation for a BlockManager which manages blocks in a single file
 class SingleFileBlockManager : public BlockManager {
+#ifdef D_ASSERT_IS_ENABLED
+	using Mutex = std::recursive_mutex;
+#else
+	using Mutex = mutex;
+#endif
+
 public:
 	//! The location in the file where the block writing starts
 	static constexpr uint64_t BLOCK_START = Storage::FILE_HEADER_SIZE * 3;
@@ -189,7 +197,7 @@ private:
 
 	block_id_t GetFreeBlockIdInternal(FreeBlockType type);
 	//! Adds a free block to the free_list, returns true if it was added to the regular free_list
-	bool AddFreeBlock(unique_lock<mutex> &lock, block_id_t block_id);
+	bool AddFreeBlock(unique_lock<Mutex> &lock, block_id_t block_id);
 
 private:
 	AttachedDatabase &db;
@@ -224,6 +232,6 @@ private:
 	//! The storage manager options
 	StorageManagerOptions options;
 	//! Lock for performing various operations in the single file block manager
-	mutex single_file_block_lock;
+	Mutex single_file_block_lock;
 };
 } // namespace duckdb

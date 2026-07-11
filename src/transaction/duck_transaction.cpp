@@ -142,6 +142,21 @@ UndoBufferReference DuckTransaction::CreateUpdateInfo(DuckTableEntry &table_entr
 	return undo_entry;
 }
 
+void DuckTransaction::PinUpdateColumn(const ColumnData &column) {
+	// only main-table columns are owned by a shared_ptr (in the row group) and can be freed by a concurrent
+	// checkpoint swapping the row-group tree; transaction-local storage lives as long as this transaction anyway
+	if (column.GetDataType() != ColumnDataType::MAIN_TABLE) {
+		return;
+	}
+	// pin the top-level column: nested children are owned by it, and it is the shared_ptr the row group holds
+	const ColumnData *root = &column;
+	while (root->HasParent()) {
+		root = &root->Parent();
+	}
+	lock_guard<mutex> guard(pinned_columns_lock);
+	pinned_columns.try_emplace(root, root->shared_from_this());
+}
+
 void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, const SequenceData &data) {
 	lock_guard<mutex> l(sequence_lock);
 	auto entry = sequence_usage.find(sequence);
@@ -273,7 +288,10 @@ ErrorData DuckTransaction::Commit(AttachedDatabase &db, CommitInfo &commit_info,
 		}
 		if (commit_state) {
 			// if we have written to the WAL - flush after the commit has been successful
+			// this appends the WAL_FLUSH marker and pushes the bytes into the page cache, but defers the fsync; the
+			// transaction manager issues GroupSync once the locks are dropped
 			commit_state->FlushCommit();
+			commit_info.wal_flush_offset = commit_state->GetFlushOffset();
 		}
 		drop_state.FinalizeCommit();
 		return ErrorData();

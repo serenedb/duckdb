@@ -674,7 +674,7 @@ static void CheckForConflicts(UndoBufferPointer next_ptr, TransactionData transa
 		if (info.version_number == transaction.transaction_id) {
 			// this UpdateInfo belongs to the current transaction, set it in the node
 			node_ref = std::move(pin);
-		} else if (info.version_number > transaction.start_time) {
+		} else if (info.version_number >= transaction.start_time) {
 			// potential conflict, check that tuple ids do not conflict
 			// as both ids and info->tuples are sorted, this is similar to a merge join
 			idx_t i = 0, j = 0;
@@ -1465,6 +1465,8 @@ void UpdateSegment::Update(TransactionData transaction, DuckTableEntry &table_en
 				auto &dtransaction = transaction.transaction->Cast<DuckTransaction>();
 				node_ref = dtransaction.CreateUpdateInfo(table_entry, type_size, count, row_group_start);
 				node = &UpdateInfo::Get(node_ref);
+				// keep this column alive until the transaction's undo is cleaned up (see PinUpdateColumn)
+				dtransaction.PinUpdateColumn(column_data);
 			} else {
 				node = CreateEmptyUpdateInfo(transaction, table_entry, type_size, count, update_info_data,
 				                             row_group_start);
@@ -1512,8 +1514,11 @@ void UpdateSegment::Update(TransactionData transaction, DuckTableEntry &table_en
 		UndoBufferReference node_ref;
 		optional_ptr<UpdateInfo> transaction_node;
 		if (transaction.transaction) {
-			node_ref = transaction.transaction->CreateUpdateInfo(table_entry, type_size, count, row_group_start);
+			auto &dtransaction = transaction.transaction->Cast<DuckTransaction>();
+			node_ref = dtransaction.CreateUpdateInfo(table_entry, type_size, count, row_group_start);
 			transaction_node = &UpdateInfo::Get(node_ref);
+			// keep this column alive until the transaction's undo is cleaned up (see PinUpdateColumn)
+			dtransaction.PinUpdateColumn(column_data);
 		} else {
 			transaction_node =
 			    CreateEmptyUpdateInfo(transaction, table_entry, type_size, count, update_info_data, row_group_start);
