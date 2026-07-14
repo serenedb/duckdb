@@ -29,7 +29,20 @@ void ExpressionBinder::ReplaceMacroParametersInLambda(FunctionExpression &functi
 		string error_message;
 		auto column_ref_expressions = lambda_expr.ExtractColumnRefExpressions(error_message);
 
-		if (!error_message.empty()) {
+		// The LHS is not a valid lambda parameter list, or a single-arrow LHS
+		// names a macro parameter: this arrow is a JSON extract, not a lambda.
+		bool treat_as_json_extract = !error_message.empty();
+		if (!treat_as_json_extract &&
+		    lambda_expr.GetLambdaSyntaxType() != LambdaSyntaxType::LAMBDA_KEYWORD) {
+			for (const auto &column_ref_expr : column_ref_expressions) {
+				const auto &column_ref = column_ref_expr.get().Cast<ColumnRefExpression>();
+				if (!column_ref.IsQualified() && macro_binding->HasMatchingBinding(column_ref.GetColumnName())) {
+					treat_as_json_extract = true;
+					break;
+				}
+			}
+		}
+		if (treat_as_json_extract) {
 			// Possibly a JSON function, replace both LHS and RHS.
 			ReplaceMacroParameters(lambda_expr.LeftMutable(), lambda_params);
 			ReplaceMacroParameters(lambda_expr.RightMutable(), lambda_params);
