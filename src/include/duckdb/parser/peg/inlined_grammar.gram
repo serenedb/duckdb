@@ -998,8 +998,9 @@ SeqOwnedBy <- 'OWNED' 'BY' QualifiedName
 SeqMinOrMax <- MinValue / MaxValue
 MinValue <- 'MINVALUE'
 MaxValue <- 'MAXVALUE'
-CreateServerStatement <- 'CREATE' 'SERVER' IfNotExists? QualifiedName 'FOREIGN' 'DATA'? 'WRAPPER' Identifier ServerOptions?
-DropServerStatement <- 'DROP' 'SERVER' IfExists? QualifiedName DropBehavior?
+
+CreateServerStatement <- 'CREATE' 'SERVER' IfNotExists? ColId 'FOREIGN' 'DATA'? 'WRAPPER' Identifier ServerOptions?
+DropServerStatement <- 'DROP' 'SERVER' IfExists? ColId DropBehavior?
 
 ServerOptions <- 'OPTIONS' Parens(List(ServerOption))
 ServerOption <- ColLabel StringLiteral
@@ -1146,8 +1147,8 @@ CreateTypeFromType <- Type
 EnumSelectType <- 'ENUM' Parens(SelectStatementInternal)
 EnumStringLiteralList <- 'ENUM' Parens(List(StringLiteral)?)
 
-CreateUserMappingStatement <- 'CREATE' 'USER' 'MAPPING' IfNotExists? 'FOR' UserMappingRole 'SERVER' QualifiedName ServerOptions?
-DropUserMappingStatement <- 'DROP' 'USER' 'MAPPING' IfExists? 'FOR' UserMappingRole 'SERVER' QualifiedName
+CreateUserMappingStatement <- 'CREATE' 'USER' 'MAPPING' IfNotExists? 'FOR' UserMappingRole 'SERVER' ColId ServerOptions?
+DropUserMappingStatement <- 'DROP' 'USER' 'MAPPING' IfExists? 'FOR' UserMappingRole 'SERVER' ColId
 UserMappingRole <- 'PUBLIC' / 'CURRENT_USER' / 'USER' / ColLabel
 
 CreateViewStmt <- CreateRecursive? 'VIEW' IfNotExists? QualifiedName InsertColumnList? WithList? 'AS' SelectStatementInternal

@@ -1,5 +1,5 @@
-CreateServerStatement <- 'CREATE' 'SERVER' IfNotExists? QualifiedName 'FOREIGN' 'DATA'? 'WRAPPER' Identifier ServerOptions?
-DropServerStatement <- 'DROP' 'SERVER' IfExists? QualifiedName DropBehavior?
+CreateServerStatement <- 'CREATE' 'SERVER' IfNotExists? ColId 'FOREIGN' 'DATA'? 'WRAPPER' Identifier ServerOptions?
+DropServerStatement <- 'DROP' 'SERVER' IfExists? ColId DropBehavior?
 
 ServerOptions <- 'OPTIONS' Parens(List(ServerOption))
 ServerOption <- ColLabel StringLiteral
