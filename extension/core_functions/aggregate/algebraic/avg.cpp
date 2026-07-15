@@ -226,6 +226,10 @@ struct TimeTZAverageOperation : public BaseSumOperation<AverageSetOperation, Add
 
 AggregateFunction GetAverageAggregate(PhysicalType type) {
 	switch (type) {
+	case PhysicalType::INT8: {
+		return AggregateFunction::UnaryAggregate<AvgState<int64_t>, int8_t, double, IntegerAverageOperation>(
+		    LogicalType::TINYINT, LogicalType::DOUBLE);
+	}
 	case PhysicalType::INT16: {
 		return AggregateFunction::UnaryAggregate<AvgState<int64_t>, int16_t, double, IntegerAverageOperation>(
 		    LogicalType::SMALLINT, LogicalType::DOUBLE);
@@ -272,23 +276,37 @@ AggregateFunctionSet AvgFun::GetFunctions() {
 	avg.AddFunction(AggregateFunction({LogicalTypeId::DECIMAL}, LogicalTypeId::DECIMAL, nullptr, nullptr, nullptr,
 	                                  nullptr, nullptr, FunctionNullHandling::DEFAULT_NULL_HANDLING, nullptr,
 	                                  BindDecimalAvg));
+	avg.AddFunction(GetAverageAggregate(PhysicalType::INT8));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INT16));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INT32));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INT64));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INT128));
-	avg.AddFunction(GetAverageAggregate(PhysicalType::INTERVAL));
+	avg.AddFunction(AggregateFunction::UnaryAggregate<AvgState<double>, float, double, NumericAverageOperation>(
+	    LogicalType::FLOAT, LogicalType::DOUBLE));
 	avg.AddFunction(AggregateFunction::UnaryAggregate<AvgState<double>, double, double, NumericAverageOperation>(
 	    LogicalType::DOUBLE, LogicalType::DOUBLE));
+	avg.AddFunction(GetAverageAggregate(PhysicalType::INTERVAL));
+
+	avg.AddFunction(AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
+	    LogicalType::TIME, LogicalType::TIME));
+	avg.AddFunction(AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
+	    LogicalType::TIME_NS, LogicalType::TIME_NS));
+	avg.AddFunction(
+	    AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, dtime_tz_t, dtime_tz_t, TimeTZAverageOperation>(
+	        LogicalType::TIME_TZ, LogicalType::TIME_TZ));
 
 	avg.AddFunction(AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
 	    LogicalType::TIMESTAMP, LogicalType::TIMESTAMP));
 	avg.AddFunction(AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
+	    LogicalType::TIMESTAMP_S, LogicalType::TIMESTAMP_S));
+	avg.AddFunction(AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
+	    LogicalType::TIMESTAMP_MS, LogicalType::TIMESTAMP_MS));
+	avg.AddFunction(AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
+	    LogicalType::TIMESTAMP_NS, LogicalType::TIMESTAMP_NS));
+	avg.AddFunction(AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
 	    LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_TZ));
 	avg.AddFunction(AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
-	    LogicalType::TIME, LogicalType::TIME));
-	avg.AddFunction(
-	    AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, dtime_tz_t, dtime_tz_t, TimeTZAverageOperation>(
-	        LogicalType::TIME_TZ, LogicalType::TIME_TZ));
+	    LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIMESTAMP_TZ_NS));
 
 	return avg;
 }
