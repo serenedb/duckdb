@@ -51,6 +51,18 @@ bool ICUMakeDate::CastToDate(Vector &source, Vector &result, idx_t count, CastPa
 	return true;
 }
 
+bool ICUMakeDate::CastToDateNs(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+	auto &cast_data = parameters.cast_data->Cast<CastData>();
+	auto &info = cast_data.info->Cast<BindData>();
+	CalendarPtr calendar(info.calendar->clone());
+
+	UnaryExecutor::Execute<timestamp_tz_ns_t, date_t>(source, result, count, [&](timestamp_tz_ns_t input) {
+		const auto micros = Cast::Operation<timestamp_ns_t, timestamp_t>(timestamp_ns_t(input.value));
+		return Operation(calendar.get(), timestamp_tz_t(micros.value));
+	});
+	return true;
+}
+
 BoundCastInfo ICUMakeDate::BindCastToDate(BindCastInput &input, const LogicalType &source, const LogicalType &target) {
 	if (!input.context) {
 		throw InternalException("Missing context for TIMESTAMPTZ to DATE cast.");
@@ -62,11 +74,15 @@ BoundCastInfo ICUMakeDate::BindCastToDate(BindCastInput &input, const LogicalTyp
 
 	auto cast_data = make_uniq<CastData>(make_uniq<BindData>(*input.context));
 
+	if (source.id() == LogicalTypeId::TIMESTAMP_TZ_NS) {
+		return BoundCastInfo(CastToDateNs, std::move(cast_data));
+	}
 	return BoundCastInfo(CastToDate, std::move(cast_data));
 }
 
 void ICUMakeDate::AddCasts(ExtensionLoader &loader) {
 	loader.RegisterCastFunction(LogicalType::TIMESTAMP_TZ, LogicalType::DATE, BindCastToDate);
+	loader.RegisterCastFunction(LogicalType::TIMESTAMP_TZ_NS, LogicalType::DATE, BindCastToDate);
 }
 
 struct ICUMakeTimestampTZFunc : public ICUDateFunc {
