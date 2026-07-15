@@ -1,3 +1,3 @@
-CreateUserMappingStatement <- 'CREATE' 'USER' 'MAPPING' IfNotExists? 'FOR' UserMappingRole 'SERVER' QualifiedName ServerOptions?
-DropUserMappingStatement <- 'DROP' 'USER' 'MAPPING' IfExists? 'FOR' UserMappingRole 'SERVER' QualifiedName
+CreateUserMappingStatement <- 'CREATE' 'USER' 'MAPPING' IfNotExists? 'FOR' UserMappingRole 'SERVER' ColId ServerOptions?
+DropUserMappingStatement <- 'DROP' 'USER' 'MAPPING' IfExists? 'FOR' UserMappingRole 'SERVER' ColId
 UserMappingRole <- 'PUBLIC' / 'CURRENT_USER' / 'USER' / ColLabel

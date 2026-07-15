@@ -6,40 +6,23 @@
 
 namespace duckdb {
 
-// Convert a QualifiedName back into a dotted name. Mirrors the helper used by
-// transform_create_text_search_dictionary.cpp.
-static string ServerQualifiedNameToDottedString(const QualifiedName &name) {
-	string result;
-	if (!name.Catalog().empty()) {
-		result += name.Catalog();
-		result += ".";
-	}
-	if (!name.Schema().empty()) {
-		result += name.Schema();
-		result += ".";
-	}
-	result += name.Name();
-	return result;
-}
-
 // CREATE SERVER [IF NOT EXISTS] name FOREIGN DATA WRAPPER fdw OPTIONS (k 'v', ...)
 //   -> PRAGMA create_foreign_server('name', 'fdw', if_not_exists, k := 'v', ...)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateServerStatement(PEGTransformer &transformer,
-                                                                              ParseResult &parse_result) {
+                                                                               ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	// Children:
 	//   0: 'CREATE'
 	//   1: 'SERVER'
 	//   2: IfNotExists?
-	//   3: QualifiedName
+	//   3: ColId (server name -- a bare identifier, PG-style)
 	//   4: 'FOREIGN'
 	//   5: 'DATA'?
 	//   6: 'WRAPPER'
 	//   7: Identifier (fdw name)
 	//   8: ServerOptions?
 	bool if_not_exists = list_pr.Child<OptionalParseResult>(2).HasResult();
-	auto qname = transformer.Transform<QualifiedName>(list_pr.Child<ListParseResult>(3));
-	auto server_name = ServerQualifiedNameToDottedString(qname);
+	auto server_name = transformer.Transform<string>(list_pr.GetChild(3));
 	// The fdw name is a plain Identifier leaf (not a choice/list rule).
 	auto fdw_name = list_pr.Child<IdentifierParseResult>(7).identifier;
 
@@ -76,16 +59,15 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateServerStatement(P
 
 // DROP SERVER [IF EXISTS] name -> PRAGMA drop_foreign_server('name', missing_ok)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropServerStatement(PEGTransformer &transformer,
-                                                                            ParseResult &parse_result) {
+                                                                             ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	// Children:
 	//   0: 'DROP', 1: 'SERVER'
 	//   2: IfExists?
-	//   3: QualifiedName
+	//   3: ColId (server name)
 	//   4: DropBehavior? (CASCADE / RESTRICT; RESTRICT/absent = false)
 	bool missing_ok = list_pr.Child<OptionalParseResult>(2).HasResult();
-	auto qname = transformer.Transform<QualifiedName>(list_pr.Child<ListParseResult>(3));
-	auto server_name = ServerQualifiedNameToDottedString(qname);
+	auto server_name = transformer.Transform<string>(list_pr.GetChild(3));
 	bool cascade = false;
 	auto &behavior = list_pr.Child<OptionalParseResult>(4);
 	if (behavior.HasResult()) {
