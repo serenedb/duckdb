@@ -7,22 +7,6 @@
 
 namespace duckdb {
 
-// Convert a QualifiedName back into a dotted name. Mirrors the helper used by
-// transform_create_server.cpp.
-static string UserMappingQualifiedNameToDottedString(const QualifiedName &name) {
-	string result;
-	if (!name.Catalog().empty()) {
-		result += name.Catalog();
-		result += ".";
-	}
-	if (!name.Schema().empty()) {
-		result += name.Schema();
-		result += ".";
-	}
-	result += name.Name();
-	return result;
-}
-
 // UserMappingRole <- 'PUBLIC' / 'CURRENT_USER' / 'USER' / ColLabel
 // PUBLIC/CURRENT_USER/USER are keyword leaves (emit the lowered keyword text so
 // the handler can recognise current_user/user); anything else is a ColLabel and
@@ -77,12 +61,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateUserMappingStatem
 	//   4: 'FOR'
 	//   5: UserMappingRole
 	//   6: 'SERVER'
-	//   7: QualifiedName
+	//   7: ColId (server name -- a bare identifier, PG-style)
 	//   8: ServerOptions?
 	bool if_not_exists = list_pr.Child<OptionalParseResult>(3).HasResult();
 	auto role = TransformUserMappingRole(transformer, list_pr.GetChild(5));
-	auto qname = transformer.Transform<QualifiedName>(list_pr.Child<ListParseResult>(7));
-	auto server_name = UserMappingQualifiedNameToDottedString(qname);
+	auto server_name = transformer.Transform<string>(list_pr.GetChild(7));
 
 	auto result = make_uniq<PragmaStatement>();
 	result->info->name = "create_user_mapping";
@@ -127,11 +110,10 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropUserMappingStatemen
 	//   4: 'FOR'
 	//   5: UserMappingRole
 	//   6: 'SERVER'
-	//   7: QualifiedName
+	//   7: ColId (server name)
 	bool missing_ok = list_pr.Child<OptionalParseResult>(3).HasResult();
 	auto role = TransformUserMappingRole(transformer, list_pr.GetChild(5));
-	auto qname = transformer.Transform<QualifiedName>(list_pr.Child<ListParseResult>(7));
-	auto server_name = UserMappingQualifiedNameToDottedString(qname);
+	auto server_name = transformer.Transform<string>(list_pr.GetChild(7));
 
 	auto result = make_uniq<PragmaStatement>();
 	result->info->name = "drop_user_mapping";
