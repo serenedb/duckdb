@@ -18,6 +18,7 @@ struct ICUMakeDate : public ICUDateFunc {
 	static date_t Operation(icu::Calendar *calendar, timestamp_tz_t instant);
 
 	static bool CastToDate(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
+	static bool CastToDateNs(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
 
 	static BoundCastInfo BindCastToDate(BindCastInput &input, const LogicalType &source, const LogicalType &target);
 
@@ -32,6 +33,7 @@ struct ICUToTimeTZ : public ICUDateFunc {
 	static bool ToTimeTZ(icu::Calendar *calendar, timestamp_tz_t instant, dtime_tz_t &result);
 
 	static bool CastToTimeTZ(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
+	static bool CastToTimeTZNs(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
 	static bool CastFromTime(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
 
 	static BoundCastInfo BindCastToTimeTZ(BindCastInput &input, const LogicalType &source, const LogicalType &target);

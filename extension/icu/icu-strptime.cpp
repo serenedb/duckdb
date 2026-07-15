@@ -38,8 +38,14 @@ TimestampComponents ICUHelpers::GetComponents(timestamp_tz_t ts, icu::Calendar *
 
 TimestampComponents ICUHelpers::GetComponents(timestamp_tz_ns_t tsns, icu::Calendar *calendar) {
 	// Get the parts in the given time zone
-	auto ts_data = GetComponents(timestamp_tz_t(tsns.value / Interval::NANOS_PER_MICRO), calendar);
-	ts_data.nanosecond = tsns.value % Interval::NANOS_PER_MICRO;
+	int64_t us = tsns.value / Interval::NANOS_PER_MICRO;
+	int64_t ns = tsns.value % Interval::NANOS_PER_MICRO;
+	if (ns < 0) {
+		ns += Interval::NANOS_PER_MICRO;
+		--us;
+	}
+	auto ts_data = GetComponents(timestamp_tz_t(us), calendar);
+	ts_data.nanosecond = UnsafeNumericCast<int16_t>(ns);
 	return ts_data;
 }
 
