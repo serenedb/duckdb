@@ -131,6 +131,7 @@ ScalarFunction DynamicFilterScalarFun::GetFunction(const LogicalType &input_type
 	func.SetFilterPruneCallback(DynamicFilterScalarFun::FilterPrune);
 	func.SetSerializeCallback(TableFilterFunctionSerialize);
 	func.SetDeserializeCallback(TableFilterFunctionDeserialize);
+	func.SetToStringCallback(TableFilterFunctionToString);
 	return func;
 }
 
@@ -150,9 +151,10 @@ FilterPropagateResult DynamicFilterScalarFun::FilterPrune(const FunctionStatisti
 	                                          data.filter_data->constant);
 }
 
-string DynamicFilterScalarFun::ToString(const string &column_name, bool has_filter_data) {
-	if (has_filter_data) {
-		return "Dynamic Filter (" + column_name + ")";
+string DynamicFilterScalarFun::ToString(const string &column_name, optional_ptr<const DynamicFilterData> filter_data) {
+	if (filter_data) {
+		// The comparison operator is fixed at plan time; the bound (?) is filled in at runtime.
+		return "Dynamic Filter (" + column_name + " " + ExpressionTypeToOperator(filter_data->comparison_type) + " ?)";
 	}
 	return "Dynamic Filter";
 }

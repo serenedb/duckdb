@@ -72,6 +72,11 @@ unique_ptr<Expression> CreateSelectivityOptionalFilterExpression(unique_ptr<Expr
 unique_ptr<Expression> CreateDynamicFilterExpression(shared_ptr<DynamicFilterData> filter_data,
                                                      const LogicalType &target_type);
 
+//! Shared to_string callback for the internal tablefilter scalar functions: renders each via
+//! ExpressionFilter::InternalFunctionToString, so a rejected filter in a Filter node reads the same as
+//! when it is pushed into a scan (e.g. "optional: Dynamic Filter (col)" instead of the raw function call).
+string TableFilterFunctionToString(FunctionToStringInput &input);
+
 //! Bind function that prevents user access to internal tablefilter functions
 struct TableFilterFunctions {
 	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input);
@@ -251,7 +256,7 @@ struct DynamicFilterScalarFun : public TableFilterDynamicFun {
 	static constexpr const char *NAME = TableFilterDynamicFun::Name;
 	static ScalarFunction GetFunction(const LogicalType &input_type);
 	static FilterPropagateResult FilterPrune(const FunctionStatisticsPruneInput &input);
-	static string ToString(const string &column_name, bool has_filter_data);
+	static string ToString(const string &column_name, optional_ptr<const DynamicFilterData> filter_data);
 };
 
 //! Factory for optional filter internal function (always returns TRUE)

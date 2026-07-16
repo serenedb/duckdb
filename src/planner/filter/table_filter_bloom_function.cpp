@@ -245,6 +245,7 @@ ScalarFunction BloomFilterScalarFun::GetFunction(const LogicalType &input_type) 
 	func.SetFilterPruneCallback(BloomFilterScalarFun::FilterPrune);
 	func.SetSerializeCallback(TableFilterFunctionSerialize);
 	func.SetDeserializeCallback(TableFilterFunctionDeserialize);
+	func.SetToStringCallback(TableFilterFunctionToString);
 	return func;
 }
 
