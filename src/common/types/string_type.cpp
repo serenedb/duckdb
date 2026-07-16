@@ -4,6 +4,7 @@
 #include "duckdb/common/types/bit.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "utf8proc_wrapper.hpp"
+#include "simdutf.h"
 
 namespace duckdb {
 constexpr idx_t string_t::MAX_STRING_SIZE;
@@ -26,8 +27,7 @@ void string_t::VerifyUTF8() const {
 	(void)dataptr;
 	D_ASSERT(dataptr);
 
-	auto utf_type = Utf8Proc::Analyze(dataptr, GetSize());
-	if (utf_type == UnicodeType::INVALID) {
+	if (!simdutf::validate_utf8(dataptr, GetSize())) {
 		throw InternalException("Invalid UTF8 found in string - %s", string(dataptr, GetSize()));
 	}
 }

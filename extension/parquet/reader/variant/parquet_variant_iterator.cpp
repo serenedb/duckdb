@@ -11,6 +11,7 @@
 #include "duckdb/common/numeric_utils.hpp"
 #include "reader/uuid_column_reader.hpp"
 #include "utf8proc_wrapper.hpp"
+#include "simdutf.h"
 
 #include <algorithm>
 #include <cmath>
@@ -516,7 +517,7 @@ string_t ParquetVariantNode::GetString() const {
 			//! Keep the raw bytes - the value is emitted as a BLOB (base64 conversion happens at JSON time)
 			return str;
 		}
-		if (!Utf8Proc::IsValid(str.GetData(), str.GetSize())) {
+		if (!simdutf::validate_utf8(str.GetData(), str.GetSize())) {
 			throw InternalException("Can't decode Variant string, it isn't valid UTF8");
 		}
 		return str;
@@ -527,7 +528,7 @@ string_t ParquetVariantNode::GetString() const {
 	if (value_metadata.basic_type == VariantBasicType::SHORT_STRING) {
 		auto string_data = const_char_ptr_cast(payload);
 		CheckBinaryRead(payload, value_metadata.string_size, binary_end);
-		if (!Utf8Proc::IsValid(string_data, value_metadata.string_size)) {
+		if (!simdutf::validate_utf8(string_data, value_metadata.string_size)) {
 			throw InternalException("Can't decode Variant short-string, string isn't valid UTF8");
 		}
 		return string_t(string_data, value_metadata.string_size);
@@ -539,7 +540,7 @@ string_t ParquetVariantNode::GetString() const {
 		//! Keep the raw bytes - the value is emitted as a BLOB (base64 conversion happens at JSON time)
 		return string_t(string_data, size);
 	}
-	if (!Utf8Proc::IsValid(string_data, size)) {
+	if (!simdutf::validate_utf8(string_data, size)) {
 		throw InternalException("Can't decode Variant string, it isn't valid UTF8");
 	}
 	return string_t(string_data, size);

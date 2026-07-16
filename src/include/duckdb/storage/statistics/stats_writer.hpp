@@ -15,6 +15,7 @@
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "utf8proc_wrapper.hpp"
 #include "duckdb/main/error_manager.hpp"
+#include "simdutf.h"
 
 namespace duckdb {
 
@@ -165,11 +166,10 @@ struct StatsWriter<string_t> : public BaseStatsWriter {
 			min_string_length = UnsafeNumericCast<uint32_t>(size);
 		}
 		total_string_length += size;
-		if (is_varchar && !has_unicode) {
-			auto unicode = Utf8Proc::Analyze(const_char_ptr_cast(data), size);
-			if (unicode == UnicodeType::UTF8) {
+		if (is_varchar && !has_unicode && !simdutf::validate_ascii(const_char_ptr_cast(data), size)) {
+			if (simdutf::validate_utf8(const_char_ptr_cast(data), size)) {
 				has_unicode = true;
-			} else if (unicode == UnicodeType::INVALID) {
+			} else {
 				throw ErrorManager::InvalidUnicodeError(string(const_char_ptr_cast(data), size),
 				                                        "segment statistics update");
 			}

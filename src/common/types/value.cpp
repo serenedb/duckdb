@@ -9,6 +9,7 @@
 
 #include "duckdb/common/uhugeint.hpp"
 #include "utf8proc_wrapper.hpp"
+#include "simdutf.h"
 #include "duckdb/common/printer.hpp"
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/common/types/date.hpp"
@@ -617,8 +618,7 @@ bool Value::IsFinite(timestamp_tz_ns_t input) {
 }
 
 bool Value::StringIsValid(const char *str, idx_t length) {
-	auto utf_type = Utf8Proc::Analyze(str, length);
-	return utf_type != UnicodeType::INVALID;
+	return simdutf::validate_utf8(str, length);
 }
 
 Value Value::DECIMAL(int16_t value, uint8_t width, uint8_t scale) {

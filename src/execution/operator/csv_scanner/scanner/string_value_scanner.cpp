@@ -14,6 +14,7 @@
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "utf8proc_wrapper.hpp"
+#include "simdutf.h"
 
 #include <algorithm>
 
@@ -482,7 +483,7 @@ void StringValueResult::AddValueToVector(const char *value_ptr, idx_t size, bool
 		// By default, we add a string
 		// We only evaluate if a string is utf8 valid, if it's actually a varchar
 		if (parse_types[chunk_col_id].validate_utf8 &&
-		    !Utf8Proc::IsValid(value_ptr, UnsafeNumericCast<uint32_t>(size))) {
+		    !simdutf::validate_utf8(value_ptr, UnsafeNumericCast<uint32_t>(size))) {
 			bool force_error = !state_machine.options.ignore_errors.GetValue() && sniffing;
 			// Invalid unicode, we must error
 			if (force_error) {
