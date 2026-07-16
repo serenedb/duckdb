@@ -419,6 +419,10 @@ bool RowGroup::InitializeScan(CollectionScanState &state, SegmentNode<RowGroup> 
 	if (!RefersToSameObject(node.GetNode(), *this)) {
 		throw InternalException("RowGroup::InitializeScan segment node mismatch");
 	}
+	// Fast re-init when a new lookup batch lands on the row group the cursor already has loaded (the
+	// common docid~pk-order case, where consecutive batches walk the same row group): keep each
+	// column's warm decode state (pinned block + FSST dict) instead of rebuilding it from scratch.
+	const bool same_row_group = state.row_group && RefersToSameObject(state.row_group->GetNode(), *this);
 	auto row_start = node.GetRowStart();
 	state.row_group = node;
 	state.vector_index = 0;
@@ -430,7 +434,11 @@ bool RowGroup::InitializeScan(CollectionScanState &state, SegmentNode<RowGroup> 
 	for (idx_t i = 0; i < column_ids.size(); i++) {
 		auto column = column_ids[i];
 		auto &column_data = GetColumn(column);
-		column_data.InitializeScan(state.column_scans[i]);
+		if (same_row_group) {
+			column_data.ReinitializeScan(state.column_scans[i]);
+		} else {
+			column_data.InitializeScan(state.column_scans[i]);
+		}
 		state.column_scans[i].scan_options = &state.GetOptions();
 	}
 	return true;
@@ -797,6 +805,29 @@ void RowGroup::Scan(ScanOptions options, CollectionScanState &state, DataChunk &
 			// exceeded the amount of rows to scan
 			return;
 		}
+		if (state.pk_lookups_it) {
+			// rowid lookup: advance to the vector holding the next requested id, skipping vectors that
+			// hold none of them. Requested ids below the scan cursor (rows deleted / never visited) drop.
+			const idx_t scan_pos = state.row_group->GetRowStart() + state.vector_index * STANDARD_VECTOR_SIZE;
+			while (state.pk_lookups_it != state.pk_lookups_end && static_cast<idx_t>(*state.pk_lookups_it) < scan_pos) {
+				++state.pk_lookups_it;
+			}
+			if (state.pk_lookups_it == state.pk_lookups_end) {
+				return;
+			}
+			const idx_t target_vector =
+			    (static_cast<idx_t>(*state.pk_lookups_it) - state.row_group->GetRowStart()) / STANDARD_VECTOR_SIZE;
+			if (target_vector * STANDARD_VECTOR_SIZE >= state.max_row_group_row) {
+				return;
+			}
+			if (target_vector > state.vector_index) {
+				const idx_t skip_rows = (target_vector - state.vector_index) * STANDARD_VECTOR_SIZE;
+				for (idx_t i = 0; i < column_ids.size(); i++) {
+					GetColumn(column_ids[i]).Skip(state.column_scans[i], skip_rows);
+				}
+				state.vector_index = target_vector;
+			}
+		}
 		idx_t current_row = state.vector_index * STANDARD_VECTOR_SIZE;
 		idx_t max_count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, state.max_row_group_row - current_row);
 		bool has_sample_selection = false;
@@ -846,6 +877,30 @@ void RowGroup::Scan(ScanOptions options, CollectionScanState &state, DataChunk &
 		}
 		state.rows_scanned += count;
 
+		// rowid lookup: keep only rows whose id is requested (absent ids advance past and are dropped);
+		// the pushed table filters below then drop the requested rows that fail them.
+		if (state.pk_lookups_it) {
+			const idx_t abs_base = state.row_group->GetRowStart() + current_row;
+			const bool had_sel = count != max_count;
+			idx_t matched = 0;
+			for (idx_t i = 0; i < count; i++) {
+				const idx_t pos = had_sel ? state.valid_sel.get_index(i) : i;
+				const row_t rid = static_cast<row_t>(abs_base + pos);
+				while (state.pk_lookups_it != state.pk_lookups_end && *state.pk_lookups_it < rid) {
+					++state.pk_lookups_it;
+				}
+				if (state.pk_lookups_it != state.pk_lookups_end && *state.pk_lookups_it == rid) {
+					state.valid_sel.set_index(matched++, pos);
+					++state.pk_lookups_it;
+				}
+			}
+			count = matched;
+			if (count == 0) {
+				NextVector(state);
+				continue;
+			}
+		}
+
 		auto &block_manager = GetBlockManager();
 		if (block_manager.Prefetch()) {
 			PrefetchState prefetch_state;
@@ -873,6 +928,12 @@ void RowGroup::Scan(ScanOptions options, CollectionScanState &state, DataChunk &
 			}
 			if (has_sample_selection) {
 				count = sample_count;
+			}
+			if (state.pk_lookups_it) {
+				// every requested row is present and unfiltered, so the whole vector is survivors and is
+				// already compact -- valid_sel holds their slots (identity here).
+				state.lookup_count = count;
+				state.lookup_base = state.row_group->GetRowStart() + current_row;
 			}
 		} else {
 			// partial scan: we have deletions or table filters
@@ -949,6 +1010,7 @@ void RowGroup::Scan(ScanOptions options, CollectionScanState &state, DataChunk &
 				continue;
 			}
 			//! Now we use the selection vector to fetch data for the other columns.
+			const bool whole_vector_survives = approved_tuple_count == max_count;
 			for (idx_t i = 0; i < column_ids.size(); i++) {
 				if (has_filters && filter_info.ColumnHasFilters(i)) {
 					// column has already been scanned as part of the filtering process
@@ -957,13 +1019,31 @@ void RowGroup::Scan(ScanOptions options, CollectionScanState &state, DataChunk &
 				auto &column = column_ids[i];
 				auto &col_data = GetColumn(column);
 				state.column_scans[i].update_scan_type = options.update_type;
-				col_data.Select(transaction, state.vector_index, state.column_scans[i], result.data[i], sel,
-				                approved_tuple_count);
+				if (whole_vector_survives) {
+					// Every row survives (dense filter / match-all lookup): bulk-scan the vector -- the same
+					// fast ScanToFlatVector path a non-lookup scan takes. Select would decode the identical
+					// rows one-at-a-time, which the profile shows is measurably slower for a full vector.
+					col_data.Scan(transaction, state.vector_index, state.column_scans[i], result.data[i], max_count);
+				} else {
+					// Sparse survivors: decode only them, compactly into [0, approved_tuple_count). FSST_ONLY
+					// string columns then decode just the picked rows instead of the whole vector.
+					col_data.Select(transaction, state.vector_index, state.column_scans[i], result.data[i], sel,
+					                approved_tuple_count);
+				}
 			}
 			filter_info.EndFilter(filter_state);
 
 			D_ASSERT(approved_tuple_count > 0);
 			count = approved_tuple_count;
+			if (state.pk_lookups_it) {
+				// compacted lookup: survivors are decoded into [0, approved_tuple_count); record their
+				// in-vector slots so the caller maps each back to its row id (lookup_base + slot).
+				for (idx_t k = 0; k < approved_tuple_count; k++) {
+					state.valid_sel.set_index(k, sel.get_index(k));
+				}
+				state.lookup_count = approved_tuple_count;
+				state.lookup_base = state.row_group->GetRowStart() + current_row;
+			}
 		}
 		result.SetChildCardinality(count);
 		state.vector_index++;

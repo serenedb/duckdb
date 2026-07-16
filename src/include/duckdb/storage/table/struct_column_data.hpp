@@ -39,6 +39,7 @@ public:
 
 	void InitializePrefetch(PrefetchState &prefetch_state, ColumnScanState &scan_state, idx_t rows) override;
 	void InitializeScan(ColumnScanState &state) override;
+	void ReinitializeScan(ColumnScanState &state) override;
 	void InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx) override;
 
 	vector<StructColumnDataChild> GetStructChildren(ColumnScanState &state) const;

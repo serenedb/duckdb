@@ -251,11 +251,50 @@ optional_ptr<SegmentNode<RowGroup>> CollectionScanState::GetRootSegment() const 
 	return row_groups->GetRootSegment();
 }
 
+bool CollectionScanState::InitializeLookupRowGroup() {
+	// Id-driven analogue of the GetNextRowGroup skip loop in InitializeScan: jump to the row group
+	// holding the next requested id and skip any the filter zonemap prunes (their ids are dropped).
+	while (pk_lookups_it != pk_lookups_end) {
+		auto next = row_groups->GetSegment(static_cast<idx_t>(*pk_lookups_it));
+		if (!next || next->GetRowStart() >= max_row) {
+			break;
+		}
+		if (next->GetNode().InitializeScan(*this, *next)) {
+			return true;
+		}
+		const idx_t pruned_end = next->GetRowStart() + next->GetNode().count;
+		while (pk_lookups_it != pk_lookups_end && static_cast<idx_t>(*pk_lookups_it) < pruned_end) {
+			++pk_lookups_it;
+		}
+	}
+	row_group = nullptr;
+	return false;
+}
+
 bool CollectionScanState::Scan(DuckTransaction &transaction, DataChunk &result) {
 	while (row_group) {
 		row_group->GetNode().Scan(TransactionData(transaction), *this, result);
 		if (result.size() > 0) {
 			return true;
+		}
+		if (pk_lookups_it) {
+			// rowid lookup. If this call's requested ids are exhausted, stop but KEEP row_group set: the
+			// next batch still re-positions via InitializeLookupRowGroup (so ids are always scanned
+			// correctly), but a preserved row_group lets that re-init detect "same row group as last
+			// time" and keep the column decode state warm. (Nulling it here would force a cold reinit.)
+			if (pk_lookups_it == pk_lookups_end) {
+				return false;
+			}
+			// Ids remain but none matched here -> this row group is exhausted; drop any still pending
+			// within it (deleted/filtered) and advance to the next row group holding a requested id.
+			const idx_t rg_end = row_group->GetRowStart() + row_group->GetNode().count;
+			while (pk_lookups_it != pk_lookups_end && static_cast<idx_t>(*pk_lookups_it) < rg_end) {
+				++pk_lookups_it;
+			}
+			if (pk_lookups_it == pk_lookups_end || !InitializeLookupRowGroup()) {
+				return false;
+			}
+			continue;
 		}
 		if (max_row <= row_group->GetRowStart() + row_group->GetNode().count) {
 			row_group = nullptr;

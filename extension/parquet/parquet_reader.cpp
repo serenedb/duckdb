@@ -1960,6 +1960,9 @@ AsyncResult ParquetReader::Process(ClientContext &context, ParquetReaderScanStat
 	const bool log_prefetch =
 	    Logger::Get(context).ShouldLog(ParquetPrefetchLogType::NAME, ParquetPrefetchLogType::LEVEL);
 	const idx_t group_num_rows = GetGroup(state).num_rows;
+	// Absolute file row of this chunk's first row, captured before offset_in_group advances below, so lookup
+	// consumers can derive each row's file position positionally instead of decoding a file_row_number column.
+	state.chunk_row_base = state.group_offset + state.offset_in_group;
 	auto scan_count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, group_num_rows - state.offset_in_group);
 	if (!state.resuming_payload) {
 		result.SetChildCardinality(scan_count);
@@ -2009,6 +2012,19 @@ AsyncResult ParquetReader::Process(ClientContext &context, ParquetReaderScanStat
 	state.offset_in_group += scan_count;
 	state.resuming_payload = false;
 	return SourceResultType::HAVE_MORE_OUTPUT;
+}
+
+void ParquetReader::SkipRows(ParquetReaderScanState &state, idx_t num_rows) {
+	if (num_rows == 0) {
+		return;
+	}
+	// Skip in each projected column reader (walks page headers, no decompress) and advance the in-group
+	// cursor so the next Process() decodes from the new position.
+	for (idx_t i = 0; i < column_ids.size(); i++) {
+		auto col_idx = MultiFileLocalIndex(i);
+		state.GetColumnReader(col_idx).Skip(num_rows);
+	}
+	state.offset_in_group += num_rows;
 }
 
 } // namespace duckdb

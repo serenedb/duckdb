@@ -27,6 +27,11 @@ void RowIdColumnData::InitializeScan(ColumnScanState &state) {
 	InitializeScanWithOffset(state, 0);
 }
 
+void RowIdColumnData::ReinitializeScan(ColumnScanState &state) {
+	// generated column: no pinned block or per-segment decode state to keep warm; a fresh init is free.
+	InitializeScan(state);
+}
+
 void RowIdColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx) {
 	if (row_idx > count) {
 		throw InternalException("row_idx in InitializeScanWithOffset out of range");

@@ -96,6 +96,20 @@ void StructColumnData::InitializeScan(ColumnScanState &state) {
 	}
 }
 
+void StructColumnData::ReinitializeScan(ColumnScanState &state) {
+	// no own data segments -- just reset the cursor and warm-keep validity + each scanned sub-column
+	state.offset_in_column = 0;
+	state.current = nullptr;
+	validity->ReinitializeScan(state.child_states[0]);
+	auto struct_children = GetStructChildren(state);
+	for (auto &child : struct_children) {
+		if (!child.should_scan) {
+			continue;
+		}
+		child.col.ReinitializeScan(child.state);
+	}
+}
+
 void StructColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx) {
 	D_ASSERT(row_idx < count);
 	state.offset_in_column = row_idx;

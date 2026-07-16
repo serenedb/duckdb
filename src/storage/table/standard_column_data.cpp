@@ -56,6 +56,17 @@ void StandardColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t 
 	validity->InitializeScanWithOffset(state.child_states[0], row_idx);
 }
 
+void StandardColumnData::ReinitializeScan(ColumnScanState &state) {
+	D_ASSERT(state.child_states.size() == 1);
+	// Keep the main data cursor warm (e.g. the FSST dict/decoder), falling back to an own-only re-init;
+	// then reposition the validity child the same way. Without recursing the child, the base guard would
+	// bail on every string/numeric column (they all carry a validity child) and rebuild the dict per batch.
+	if (!TryReinitializeScan(state)) {
+		ColumnData::InitializeScan(state);
+	}
+	validity->ReinitializeScan(state.child_states[0]);
+}
+
 idx_t StandardColumnData::Scan(TransactionData transaction, idx_t vector_index, ColumnScanState &state, Vector &result,
                                idx_t target_count) {
 	D_ASSERT(state.offset_in_column == state.child_states[0].offset_in_column);

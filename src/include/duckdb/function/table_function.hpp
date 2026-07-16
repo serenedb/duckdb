@@ -189,12 +189,16 @@ public:
 	AsyncResult async_result {};
 	AsyncResultsExecutionMode results_execution_mode {AsyncResultsExecutionMode::SYNCHRONOUS};
 
-	//! Per-call sorted file-row-numbers / byte-offsets to look up. Parquet
-	//! treats them as row-group skip keys, csv/json as exact byte offsets.
+	//! SereneDB inverted-index row-addressed lookup. `pk_lookups` are ascending
+	//! per-call file-row-numbers / byte-offsets to fetch (parquet: row-group skip
+	//! keys; csv/json: exact byte offsets). The lookup TF appends surviving rows
+	//! DENSELY to `output` from its current size (so glob calls accumulate across
+	//! files), and for each output row w writes `pk_survivors[w]` = the index
+	//! into `pk_lookups` it came from, then sets `output`'s cardinality to the
+	//! survivor count. A row missing from the source or dropped by a pushed
+	//! filter gets no slot -- `output` is always compact.
 	std::span<const int64_t> pk_lookups;
-	//! Output slot for `pk_lookups[i]`. The TF writes directly there; in glob
-	//! mode multiple per-file calls share `output` and write at disjoint slots.
-	std::span<const idx_t> pk_output_positions;
+	std::span<idx_t> pk_survivors;
 };
 
 struct TableFunctionPartitionInput {
