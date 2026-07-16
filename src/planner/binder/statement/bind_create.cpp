@@ -368,6 +368,7 @@ void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const
 	}
 	result_types = query_node.types;
 	result_names = query_node.names;
+	QueryResult::DeduplicateColumns(result_names);
 }
 
 void Binder::BindCreateViewInfo(CreateViewInfo &base) {
