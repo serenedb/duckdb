@@ -59,11 +59,25 @@ void ColumnLifetimeAnalyzer::ExtractColumnBindings(const Expression &expr, vecto
 void ColumnLifetimeAnalyzer::VisitOperator(LogicalOperator &op) {
 	Verify(op);
 	if (TopN::CanOptimize(op) && op.children[0]->type == LogicalOperatorType::LOGICAL_ORDER_BY) {
-		// Let's not mess with this, TopN is more important than projection maps
-		// TopN does not support a projection map like Order does
-		VisitOperatorExpressions(op);                        // Visit LIMIT
-		VisitOperatorExpressions(*op.children[0]);           // Visit ORDER
-		StandardVisitOperator(*op.children[0]->children[0]); // Recurse into child of ORDER
+		// The Limit+Order fuses into a TopN, which now carries a projection map
+		// (topn_optimizer moves order_by.projection_map onto it). Prune the
+		// Order's unused output columns via that map, exactly like the standalone
+		// ORDER_BY/TOP_N case below -- without it, columns not needed above (e.g.
+		// a sort key absent from the SELECT list) survive the TopN and force an
+		// extra projection above it.
+		if (everything_referenced) {
+			VisitOperatorExpressions(op);                        // Visit LIMIT
+			VisitOperatorExpressions(*op.children[0]);           // Visit ORDER
+			StandardVisitOperator(*op.children[0]->children[0]); // Recurse into child of ORDER
+			return;
+		}
+		auto &order = op.children[0]->Cast<LogicalOrder>();
+		column_binding_set_t unused_bindings;
+		ExtractUnusedColumnBindings(order.children[0]->GetColumnBindings(), unused_bindings);
+		VisitOperatorExpressions(op);              // Visit LIMIT
+		VisitOperatorExpressions(order);           // Visit ORDER
+		StandardVisitOperator(*order.children[0]); // Recurse into child of ORDER
+		GenerateProjectionMap(order.children[0]->GetColumnBindings(), unused_bindings, order.projection_map);
 		return;
 	}
 	switch (op.type) {
