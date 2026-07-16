@@ -13,6 +13,9 @@
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
+#include "duckdb/planner/operator/logical_projection.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
+#include "duckdb/planner/column_binding_map.hpp"
 
 namespace duckdb {
 
@@ -132,6 +135,82 @@ void TopN::PushdownDynamicFilters(LogicalTopN &op) {
 	}
 }
 
+// Lift the TopN's child projection above the TopN so its computed expressions run
+// on the K survivors instead of every input row. Only fires when every sort key is
+// a plain passthrough (col-ref) output of the projection, so the TopN can sort the
+// projection's child directly. The projection is handed to `projections` so the
+// reconstruction loop rebuilds it above the TopN, alongside the ones it collected
+// from between LIMIT and ORDER BY. Returns true if it lifted.
+static bool LiftProjectionThroughTopN(LogicalTopN &topn, vector<unique_ptr<LogicalOperator>> &projections) {
+	auto &proj = topn.children[0]->Cast<LogicalProjection>();
+
+	for (auto &order : topn.orders) {
+		if (order.expression->GetExpressionType() != ExpressionType::BOUND_COLUMN_REF) {
+			return false; // compound sort key -- cannot rebind onto the child
+		}
+		auto col = order.expression->Cast<BoundColumnRefExpression>().Binding();
+		if (col.table_index != proj.table_index ||
+		    proj.expressions[col.column_index]->GetExpressionType() != ExpressionType::BOUND_COLUMN_REF) {
+			return false; // computed sort-key output -- would need to split the projection (#910)
+		}
+	}
+
+	bool has_computed = false;
+	for (auto &expr : proj.expressions) {
+		if (expr->IsVolatile()) {
+			return false; // a volatile expr must not be evaluated fewer times
+		}
+		has_computed |= expr->GetExpressionType() != ExpressionType::BOUND_COLUMN_REF;
+	}
+	if (!has_computed) {
+		return false; // nothing to defer past the limit
+	}
+
+	// Sort on the projection's inputs directly (the col-refs the keys passed through).
+	for (auto &order : topn.orders) {
+		auto col = order.expression->Cast<BoundColumnRefExpression>().Binding().column_index;
+		order.expression = proj.expressions[col]->Copy();
+	}
+
+	// The TopN's incoming projection_map (from the ORDER BY) lists the outputs actually
+	// needed above it; trailing outputs it omits are the sort-only passthroughs the
+	// binder appended for the ORDER BY (e.g. the raw score), vestigial now that the
+	// sort reads the child directly. Drop them so no dead column is materialized.
+	if (!topn.projection_map.empty()) {
+		idx_t keep = 0;
+		for (auto &pi : topn.projection_map) {
+			if (pi.GetIndex() + 1 > keep) {
+				keep = pi.GetIndex() + 1;
+			}
+		}
+		while (proj.expressions.size() > keep) {
+			proj.expressions.pop_back();
+		}
+	}
+
+	// projection_map forwards exactly the child columns the projection still reads
+	// (the raw score stays here -- pos = score > 0 needs it as an input).
+	auto child_bindings = proj.children[0]->GetColumnBindings();
+	column_binding_set_t needed;
+	for (auto &e : proj.expressions) {
+		ExpressionIterator::VisitExpression<BoundColumnRefExpression>(
+		    *e, [&](const BoundColumnRefExpression &r) { needed.insert(r.Binding()); });
+	}
+	vector<ProjectionIndex> projection_map;
+	for (idx_t i = 0; i < child_bindings.size(); i++) {
+		if (needed.count(child_bindings[i])) {
+			projection_map.emplace_back(i);
+		}
+	}
+	topn.projection_map = std::move(projection_map);
+
+	// Detach the projection and let the reconstruction loop lift it above the TopN.
+	auto projection = std::move(topn.children[0]);
+	topn.children[0] = std::move(projection->children[0]); // TopN now reads the scan directly
+	projections.push_back(std::move(projection));
+	return true;
+}
+
 unique_ptr<LogicalOperator> TopN::Optimize(unique_ptr<LogicalOperator> op) {
 	if (CanOptimize(*op, &context)) {
 		vector<unique_ptr<LogicalOperator>> projections;
@@ -168,6 +247,14 @@ unique_ptr<LogicalOperator> TopN::Optimize(unique_ptr<LogicalOperator> op) {
 		}
 		topn->SetEstimatedCardinality(cardinality);
 		op = std::move(topn);
+
+		// Lift the TopN's child projection above it so its computed expressions
+		// run on the K survivors, not every input row (the ORDER BY + LIMIT case
+		// of what LimitPushdown already does for a bare LIMIT). It joins the
+		// collected projections and is rebuilt above the TopN by the loop below.
+		if (op->children[0]->type == LogicalOperatorType::LOGICAL_PROJECTION) {
+			LiftProjectionThroughTopN(op->Cast<LogicalTopN>(), projections);
+		}
 
 		// reconstruct all projection nodes above limit operator
 		while (!projections.empty()) {
