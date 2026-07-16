@@ -199,14 +199,11 @@ void PEGTransformerFactory::RegisterCreateTextSearchDictionary() {
 	REGISTER_TRANSFORM(TransformDropTSDictionaryStatement);
 }
 
-void PEGTransformerFactory::RegisterCreateServer() {
-	// create_server.gram — OPTIONS Parens(List(...)) body is not auto-extractable.
+void PEGTransformerFactory::RegisterForeignServer() {
+	// create_server.gram / create_user_mapping.gram — the OPTIONS Parens(List(...)) bodies
+	// and the user mapping role choice are not auto-extractable.
 	REGISTER_TRANSFORM(TransformCreateServerStatement);
 	REGISTER_TRANSFORM(TransformDropServerStatement);
-}
-
-void PEGTransformerFactory::RegisterCreateUserMapping() {
-	// create_user_mapping.gram — OPTIONS Parens(List(...)) body and the role choice are not auto-extractable.
 	REGISTER_TRANSFORM(TransformCreateUserMappingStatement);
 	REGISTER_TRANSFORM(TransformDropUserMappingStatement);
 }
@@ -287,8 +284,7 @@ PEGTransformerFactory::PEGTransformerFactory() {
 	RegisterNotify();
 	RegisterCreateTextSearchDictionary();
 	RegisterRbac();
-	RegisterCreateServer();
-	RegisterCreateUserMapping();
+	RegisterForeignServer();
 	RegisterPivot();
 	RegisterCreateMacro();
 	RegisterDrop();
