@@ -24,8 +24,7 @@ add_library_unity(
   transform_create_publication.cpp
   transform_create_subscription.cpp
   transform_notify.cpp
-  transform_create_server.cpp
-  transform_create_user_mapping.cpp
+  transform_foreign_server.cpp
   transform_create_text_search_dictionary.cpp
   transform_rbac.cpp
   transform_create_trigger.cpp

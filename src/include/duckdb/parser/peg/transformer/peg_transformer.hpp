@@ -456,8 +456,7 @@ public:
 	void RegisterNotify();
 	void RegisterCreateTextSearchDictionary();
 	void RegisterRbac();
-	void RegisterCreateServer();
-	void RegisterCreateUserMapping();
+	void RegisterForeignServer();
 	void RegisterPivot();
 	void RegisterCreateMacro();
 	void RegisterDrop();
