@@ -431,3 +431,385 @@ query I
 SELECT count (*) FROM read_csv('{DATA_DIR}/csv/encodings/all_utf16.csv', encoding = 'utf-16', header = 0, quote = '', auto_detect = false, columns = {'a':'varchar'}, delim = '')
 ----
 63489
+
+# UTF-16 with astral (non-BMP) codepoints: surrogate pairs must decode to 4-byte UTF-8
+query I
+SELECT * FROM read_csv('{DATA_DIR}/csv/encodings/utf16_astral.csv', encoding = 'utf-16', header = 0, quote = '', auto_detect = false, columns = {'name':'varchar'}, delim = '')
+----
+Emoji 😀 Test
+Astral 𝕏 Math
+CJK 日本語 end
+
+# ============================================================================
+# utf-16be / utf-32(le|be) input encodings (simdutf-backed), plus aliases
+# ============================================================================
+
+# utf-16le is an alias for the little-endian utf-16 decoder
+query II
+FROM read_csv('{DATA_DIR}/csv/encodings/utf16.csv', encoding = 'utf-16le')
+----
+José Álvarez	30
+Müller	25
+François Dupont	45
+Björn Andersson	50
+Søren Kierkegaard	42
+García López	38
+Élodie Moreau	33
+Håkon Lindberg	28
+Brontë Johnson	47
+Zoë Robinson	21
+André Lefèvre	36
+Léonard Dubois	29
+Dvořák Novak	60
+Iván García	34
+Łukasz Kowalski	27
+Renée Martin	41
+Øystein Olsen	39
+Anaïs Dupuis	24
+Sigurður Jónsson	55
+Krystýna Novák	23
+
+# utf-16be: big-endian sibling
+query II
+FROM read_csv('{DATA_DIR}/csv/encodings/utf16be.csv', encoding = 'utf-16be')
+----
+José Álvarez	30
+Müller	25
+François Dupont	45
+Björn Andersson	50
+Søren Kierkegaard	42
+García López	38
+Élodie Moreau	33
+Håkon Lindberg	28
+Brontë Johnson	47
+Zoë Robinson	21
+André Lefèvre	36
+Léonard Dubois	29
+Dvořák Novak	60
+Iván García	34
+Łukasz Kowalski	27
+Renée Martin	41
+Øystein Olsen	39
+Anaïs Dupuis	24
+Sigurður Jónsson	55
+Krystýna Novák	23
+
+# utf-32 is a default alias for utf-32le
+query II
+FROM read_csv('{DATA_DIR}/csv/encodings/utf32le.csv', encoding = 'utf-32')
+----
+José Álvarez	30
+Müller	25
+François Dupont	45
+Björn Andersson	50
+Søren Kierkegaard	42
+García López	38
+Élodie Moreau	33
+Håkon Lindberg	28
+Brontë Johnson	47
+Zoë Robinson	21
+André Lefèvre	36
+Léonard Dubois	29
+Dvořák Novak	60
+Iván García	34
+Łukasz Kowalski	27
+Renée Martin	41
+Øystein Olsen	39
+Anaïs Dupuis	24
+Sigurður Jónsson	55
+Krystýna Novák	23
+
+# utf-32le
+query II
+FROM read_csv('{DATA_DIR}/csv/encodings/utf32le.csv', encoding = 'utf-32le')
+----
+José Álvarez	30
+Müller	25
+François Dupont	45
+Björn Andersson	50
+Søren Kierkegaard	42
+García López	38
+Élodie Moreau	33
+Håkon Lindberg	28
+Brontë Johnson	47
+Zoë Robinson	21
+André Lefèvre	36
+Léonard Dubois	29
+Dvořák Novak	60
+Iván García	34
+Łukasz Kowalski	27
+Renée Martin	41
+Øystein Olsen	39
+Anaïs Dupuis	24
+Sigurður Jónsson	55
+Krystýna Novák	23
+
+# utf-32be
+query II
+FROM read_csv('{DATA_DIR}/csv/encodings/utf32be.csv', encoding = 'utf-32be')
+----
+José Álvarez	30
+Müller	25
+François Dupont	45
+Björn Andersson	50
+Søren Kierkegaard	42
+García López	38
+Élodie Moreau	33
+Håkon Lindberg	28
+Brontë Johnson	47
+Zoë Robinson	21
+André Lefèvre	36
+Léonard Dubois	29
+Dvořák Novak	60
+Iván García	34
+Łukasz Kowalski	27
+Renée Martin	41
+Øystein Olsen	39
+Anaïs Dupuis	24
+Sigurður Jónsson	55
+Krystýna Novák	23
+
+# encoding names are case-insensitive
+query II
+FROM read_csv('{DATA_DIR}/csv/encodings/utf32be.csv', encoding = 'UTF-32BE')
+----
+José Álvarez	30
+Müller	25
+François Dupont	45
+Björn Andersson	50
+Søren Kierkegaard	42
+García López	38
+Élodie Moreau	33
+Håkon Lindberg	28
+Brontë Johnson	47
+Zoë Robinson	21
+André Lefèvre	36
+Léonard Dubois	29
+Dvořák Novak	60
+Iván García	34
+Łukasz Kowalski	27
+Renée Martin	41
+Øystein Olsen	39
+Anaïs Dupuis	24
+Sigurður Jónsson	55
+Krystýna Novák	23
+
+# Streaming: small buffers force chunk-boundary splits
+loop buffer_size 30 50
+
+query II
+FROM read_csv('{DATA_DIR}/csv/encodings/utf16be.csv', encoding = 'utf-16be', buffer_size = {buffer_size})
+----
+José Álvarez	30
+Müller	25
+François Dupont	45
+Björn Andersson	50
+Søren Kierkegaard	42
+García López	38
+Élodie Moreau	33
+Håkon Lindberg	28
+Brontë Johnson	47
+Zoë Robinson	21
+André Lefèvre	36
+Léonard Dubois	29
+Dvořák Novak	60
+Iván García	34
+Łukasz Kowalski	27
+Renée Martin	41
+Øystein Olsen	39
+Anaïs Dupuis	24
+Sigurður Jónsson	55
+Krystýna Novák	23
+
+endloop
+
+# utf-32 streaming: buffer_size is a multiple of the 4-byte code unit
+foreach buffer_size 40 44 64
+
+query II
+FROM read_csv('{DATA_DIR}/csv/encodings/utf32le.csv', encoding = 'utf-32le', buffer_size = {buffer_size})
+----
+José Álvarez	30
+Müller	25
+François Dupont	45
+Björn Andersson	50
+Søren Kierkegaard	42
+García López	38
+Élodie Moreau	33
+Håkon Lindberg	28
+Brontë Johnson	47
+Zoë Robinson	21
+André Lefèvre	36
+Léonard Dubois	29
+Dvořák Novak	60
+Iván García	34
+Łukasz Kowalski	27
+Renée Martin	41
+Øystein Olsen	39
+Anaïs Dupuis	24
+Sigurður Jónsson	55
+Krystýna Novák	23
+
+query II
+FROM read_csv('{DATA_DIR}/csv/encodings/utf32be.csv', encoding = 'utf-32be', buffer_size = {buffer_size})
+----
+José Álvarez	30
+Müller	25
+François Dupont	45
+Björn Andersson	50
+Søren Kierkegaard	42
+García López	38
+Élodie Moreau	33
+Håkon Lindberg	28
+Brontë Johnson	47
+Zoë Robinson	21
+André Lefèvre	36
+Léonard Dubois	29
+Dvořák Novak	60
+Iván García	34
+Łukasz Kowalski	27
+Renée Martin	41
+Øystein Olsen	39
+Anaïs Dupuis	24
+Sigurður Jónsson	55
+Krystýna Novák	23
+
+endloop
+
+# Astral (non-BMP): utf-16be via surrogate pairs, utf-32 stores the codepoint directly
+query I
+SELECT * FROM read_csv('{DATA_DIR}/csv/encodings/utf16be_astral.csv', encoding = 'utf-16be', header = 0, quote = '', auto_detect = false, columns = {'name':'varchar'}, delim = '')
+----
+Emoji 😀 Test
+Astral 𝕏 Math
+CJK 日本語 end
+
+query I
+SELECT * FROM read_csv('{DATA_DIR}/csv/encodings/utf32le_astral.csv', encoding = 'utf-32le', header = 0, quote = '', auto_detect = false, columns = {'name':'varchar'}, delim = '')
+----
+Emoji 😀 Test
+Astral 𝕏 Math
+CJK 日本語 end
+
+query I
+SELECT * FROM read_csv('{DATA_DIR}/csv/encodings/utf32be_astral.csv', encoding = 'utf-32be', header = 0, quote = '', auto_detect = false, columns = {'name':'varchar'}, delim = '')
+----
+Emoji 😀 Test
+Astral 𝕏 Math
+CJK 日本語 end
+
+# utf-32 default alias on astral data
+query I
+SELECT * FROM read_csv('{DATA_DIR}/csv/encodings/utf32le_astral.csv', encoding = 'utf-32', header = 0, quote = '', auto_detect = false, columns = {'name':'varchar'}, delim = '')
+----
+Emoji 😀 Test
+Astral 𝕏 Math
+CJK 日本語 end
+
+# Astral + streaming: splits fall inside a surrogate pair (utf-16be) / 4-byte unit (utf-32)
+foreach buffer_size 20 24 64
+
+query I
+SELECT * FROM read_csv('{DATA_DIR}/csv/encodings/utf16be_astral.csv', encoding = 'utf-16be', header = 0, quote = '', auto_detect = false, columns = {'name':'varchar'}, delim = '', buffer_size = {buffer_size})
+----
+Emoji 😀 Test
+Astral 𝕏 Math
+CJK 日本語 end
+
+query I
+SELECT * FROM read_csv('{DATA_DIR}/csv/encodings/utf32le_astral.csv', encoding = 'utf-32le', header = 0, quote = '', auto_detect = false, columns = {'name':'varchar'}, delim = '', buffer_size = {buffer_size})
+----
+Emoji 😀 Test
+Astral 𝕏 Math
+CJK 日本語 end
+
+query I
+SELECT * FROM read_csv('{DATA_DIR}/csv/encodings/utf32be_astral.csv', encoding = 'utf-32be', header = 0, quote = '', auto_detect = false, columns = {'name':'varchar'}, delim = '', buffer_size = {buffer_size})
+----
+Emoji 😀 Test
+Astral 𝕏 Math
+CJK 日本語 end
+
+endloop
+
+statement error
+FROM read_csv('{DATA_DIR}/csv/encodings/shift_jis.csv', encoding = 'utf-32')
+----
+File is not utf-32 encoded
+
+statement error
+FROM read_csv('{DATA_DIR}/csv/encodings/shift_jis.csv', encoding = 'utf-16be')
+----
+File is not utf-16 encoded
+
+# large-file decode (utf-32le): whole file, utf-32le code units
+query I
+SELECT count (*) FROM read_csv('{DATA_DIR}/csv/encodings/all_utf32le.csv', encoding = 'utf-32le', header = 0, quote = '', auto_detect = false, columns = {'a':'varchar'}, delim = '')
+----
+63489
+
+# large-file decode (utf-32be): whole file, utf-32be code units
+query I
+SELECT count (*) FROM read_csv('{DATA_DIR}/csv/encodings/all_utf32be.csv', encoding = 'utf-32be', header = 0, quote = '', auto_detect = false, columns = {'a':'varchar'}, delim = '')
+----
+63489
+
+# ============================================================================
+# Encoded-buffer boundary handling: surrogate pairs / code units split across
+# file reads (tiny buffer_size), and truncated files
+# ============================================================================
+
+# utf16(le|be)_astral_run.csv: "ab" header + 50 one-emoji rows. The header is 3
+# code units, so 4-aligned encoded-buffer boundaries land mid-surrogate-pair;
+# the split pair is held back and carried into the next read.
+foreach buffer_size 16 18 34 101
+
+query II
+SELECT count(*), sum(length(ab)) FROM read_csv('{DATA_DIR}/csv/encodings/utf16le_astral_run.csv', encoding = 'utf-16', buffer_size = {buffer_size}, header = 1)
+----
+50	50
+
+query II
+SELECT count(*), sum(length(ab)) FROM read_csv('{DATA_DIR}/csv/encodings/utf16le_astral_run.csv', encoding = 'utf-16le', buffer_size = {buffer_size}, header = 1)
+----
+50	50
+
+query II
+SELECT count(*), sum(length(ab)) FROM read_csv('{DATA_DIR}/csv/encodings/utf16be_astral_run.csv', encoding = 'utf-16be', buffer_size = {buffer_size}, header = 1)
+----
+50	50
+
+endloop
+
+# utf-32 with buffer sizes that are NOT a multiple of the 4-byte code unit:
+# the encoded buffer is rounded down to whole units and the tail carry
+# reunites any split unit.
+foreach buffer_size 42 47 50 64
+
+query II
+SELECT count(*), count(DISTINCT name) FROM read_csv('{DATA_DIR}/csv/encodings/utf32le.csv', encoding = 'utf-32le', buffer_size = {buffer_size})
+----
+20	20
+
+query II
+SELECT count(*), count(DISTINCT name) FROM read_csv('{DATA_DIR}/csv/encodings/utf32be.csv', encoding = 'utf-32be', buffer_size = {buffer_size})
+----
+20	20
+
+endloop
+
+# Truncated inputs fail cleanly at end-of-file instead of silently dropping the
+# tail: a lone high surrogate / a partial 4-byte unit.
+foreach buffer_size 16 1000000
+
+statement error
+FROM read_csv('{DATA_DIR}/csv/encodings/utf16le_truncated.csv', encoding = 'utf-16', buffer_size = {buffer_size}, header = 1)
+----
+File is not utf-16 encoded
+
+statement error
+FROM read_csv('{DATA_DIR}/csv/encodings/utf32le_truncated.csv', encoding = 'utf-32', buffer_size = {buffer_size}, header = 1)
+----
+File is not utf-32 encoded
+
+endloop
