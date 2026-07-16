@@ -42,6 +42,30 @@ string_t CompressedStringScanState::FetchStringFromDict(Vector &result, uint32_t
 	}
 }
 
+uint32_t CompressedStringScanState::DecompressOffset(idx_t string_number) {
+	if (!decompress_offsets.empty()) {
+		// Prefix sum already materialized (a backward re-seek happened earlier): O(1) random access.
+		return decompress_offsets[string_number];
+	}
+	if (string_number >= decompress_position) {
+		// Forward read: extend the running offset. This is the only path sequential/native scans take.
+		for (; decompress_position < string_number; decompress_position++) {
+			decompress_offset += string_lengths[decompress_position];
+		}
+		return decompress_offset;
+	}
+	// Backward re-seek (a warm-kept lookup cursor repositioned to an earlier row): materialize the full
+	// prefix sum once so this and every later lookup is O(1), instead of re-walking from the start.
+	decompress_offsets.resize(dict_count + 1);
+	uint32_t acc = 0;
+	for (uint32_t i = 0; i < dict_count; i++) {
+		decompress_offsets[i] = acc;
+		acc += string_lengths[i];
+	}
+	decompress_offsets[dict_count] = acc;
+	return decompress_offsets[string_number];
+}
+
 void CompressedStringScanState::Initialize(bool initialize_dictionary) {
 	baseptr = handle->GetDataMutable() + segment.GetBlockOffset();
 
@@ -178,13 +202,7 @@ void CompressedStringScanState::ScanToFlatVector(Vector &result, idx_t result_of
 				result_data.WriteNull();
 				continue;
 			}
-			if (decompress_position > string_number) {
-				throw InternalException("DICT_FSST: not performing a sequential scan?");
-			}
-			for (; decompress_position < string_number; decompress_position++) {
-				decompress_offset += string_lengths[decompress_position];
-			}
-			result_data.WriteStringRef(FetchStringFromDict(result, decompress_offset, string_number));
+			result_data.WriteStringRef(FetchStringFromDict(result, DecompressOffset(string_number), string_number));
 		}
 	}
 	result.Verify();
@@ -198,13 +216,7 @@ void CompressedStringScanState::Select(Vector &result, idx_t start, const Select
 	for (idx_t i = 0; i < sel_count; i++) {
 		// Lookup dict offset in index buffer
 		auto string_number = start_offset + sel.get_index(i);
-		if (decompress_position > string_number) {
-			throw InternalException("DICT_FSST: not performing a sequential scan?");
-		}
-		for (; decompress_position < string_number; decompress_position++) {
-			decompress_offset += string_lengths[decompress_position];
-		}
-		result_data.WriteValue(FetchStringFromDict(result, decompress_offset, string_number));
+		result_data.WriteValue(FetchStringFromDict(result, DecompressOffset(string_number), string_number));
 	}
 }
 

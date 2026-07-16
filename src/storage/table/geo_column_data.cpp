@@ -49,6 +49,12 @@ void GeoColumnData::InitializeScan(ColumnScanState &state) {
 	return base_column->InitializeScan(state);
 }
 
+void GeoColumnData::ReinitializeScan(ColumnScanState &state) {
+	// Same row group => same inner layout, so the child scan states are still valid -- skip the rebuild
+	// (InitializeChildScanStates) and warm-keep the base column (its main + validity).
+	base_column->ReinitializeScan(state);
+}
+
 void GeoColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx) {
 	InitializeChildScanStates(state);
 	return base_column->InitializeScanWithOffset(state, row_idx);

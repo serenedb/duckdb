@@ -53,6 +53,15 @@ void ArrayColumnData::InitializeScan(ColumnScanState &state) {
 	child_column->InitializeScan(state.child_states[1]);
 }
 
+void ArrayColumnData::ReinitializeScan(ColumnScanState &state) {
+	// no own data segments (array length is fixed) -- just reset the cursor and warm-keep the children
+	D_ASSERT(state.child_states.size() == 2);
+	state.offset_in_column = 0;
+	state.current = nullptr;
+	validity->ReinitializeScan(state.child_states[0]);
+	child_column->ReinitializeScan(state.child_states[1]);
+}
+
 void ArrayColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx) {
 	D_ASSERT(state.child_states.size() == 2);
 

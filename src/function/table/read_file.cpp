@@ -7,6 +7,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/function/table/range.hpp"
 #include "utf8proc_wrapper.hpp"
+#include "simdutf.h"
 #include "duckdb/storage/external_file_cache/caching_file_system.hpp"
 
 namespace duckdb {
@@ -259,13 +260,14 @@ void DirectLookupScan(ClientContext &context, TableFunctionInput &data, DataChun
 		return;
 	}
 	D_ASSERT(data.pk_lookups.size() <= STANDARD_VECTOR_SIZE);
-	D_ASSERT(data.pk_output_positions.size() == data.pk_lookups.size());
 
 	auto &fs = FileSystem::GetFileSystem(context);
 	auto &file = gstate.file;
 
+	// read_text/blob is one row per file with no filters, so every requested id
+	// survives; append densely from output's current size (glob accumulates).
 	const idx_t count = data.pk_lookups.size();
-	const auto out_positions = data.pk_output_positions;
+	const idx_t base = output.size();
 
 	for (idx_t col_idx = 0; col_idx < gstate.output_to_file_col.size(); ++col_idx) {
 		const auto file_col = gstate.output_to_file_col[col_idx];
@@ -280,14 +282,14 @@ void DirectLookupScan(ClientContext &context, TableFunctionInput &data, DataChun
 				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
 					// One row per file -> always 0.
 					D_ASSERT(data.pk_lookups[pk_idx] == 0);
-					data_ptr[out_positions[pk_idx]] = 0;
+					data_ptr[base + pk_idx] = 0;
 				}
 			} break;
 			case ReadFileBindData::FILE_NAME_COLUMN: {
 				const auto name_string = StringVector::AddString(vec, file.path);
 				auto *data_ptr = FlatVector::GetDataMutable<string_t>(vec);
 				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
-					data_ptr[out_positions[pk_idx]] = name_string;
+					data_ptr[base + pk_idx] = name_string;
 				}
 			} break;
 			case ReadFileBindData::FILE_CONTENT_COLUMN: {
@@ -308,8 +310,7 @@ void DirectLookupScan(ClientContext &context, TableFunctionInput &data, DataChun
 				}
 				const string_t raw(char_ptr_cast(gstate.content_stream->GetData()),
 				                   NumericCast<uint32_t>(gstate.content_stream->GetPosition()));
-				if (OP::TYPE() == LogicalType::VARCHAR &&
-				    Utf8Proc::Analyze(raw.GetData(), raw.GetSize()) == UnicodeType::INVALID) {
+				if (OP::TYPE() == LogicalType::VARCHAR && !simdutf::validate_utf8(raw.GetData(), raw.GetSize())) {
 					throw InvalidInputException(
 					    "read_text: could not read content of file '%s' as valid UTF-8 encoded text. "
 					    "You may want to use read_blob instead.",
@@ -319,14 +320,14 @@ void DirectLookupScan(ClientContext &context, TableFunctionInput &data, DataChun
 				                                                       : StringVector::AddStringOrBlob(vec, raw);
 				auto *data_ptr = FlatVector::GetDataMutable<string_t>(vec);
 				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
-					data_ptr[out_positions[pk_idx]] = stored;
+					data_ptr[base + pk_idx] = stored;
 				}
 			} break;
 			case ReadFileBindData::FILE_SIZE_COLUMN: {
 				const auto sz = NumericCast<int64_t>(gstate.file_size);
 				auto *data_ptr = FlatVector::GetDataMutable<int64_t>(vec);
 				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
-					data_ptr[out_positions[pk_idx]] = sz;
+					data_ptr[base + pk_idx] = sz;
 				}
 			} break;
 			case ReadFileBindData::FILE_LAST_MODIFIED_COLUMN: {
@@ -334,13 +335,13 @@ void DirectLookupScan(ClientContext &context, TableFunctionInput &data, DataChun
 					const timestamp_tz_t ts(fs.GetLastModifiedTime(*gstate.file_handle));
 					auto *data_ptr = FlatVector::GetDataMutable<timestamp_tz_t>(vec);
 					for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
-						data_ptr[out_positions[pk_idx]] = ts;
+						data_ptr[base + pk_idx] = ts;
 					}
 				} catch (std::exception &ex) {
 					ErrorData error(ex);
 					if (error.Type() == ExceptionType::CONVERSION) {
 						for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
-							FlatVector::SetNull(vec, out_positions[pk_idx], true);
+							FlatVector::SetNull(vec, base + pk_idx, true);
 						}
 					} else {
 						throw;
@@ -354,13 +355,17 @@ void DirectLookupScan(ClientContext &context, TableFunctionInput &data, DataChun
 			ErrorData error(ex);
 			if (error.Type() == ExceptionType::NOT_IMPLEMENTED) {
 				for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
-					FlatVector::SetNull(vec, out_positions[pk_idx], true);
+					FlatVector::SetNull(vec, base + pk_idx, true);
 				}
 			} else {
 				throw;
 			}
 		}
 	}
+	for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
+		data.pk_survivors[base + pk_idx] = pk_idx;
+	}
+	output.SetCardinality(base + count);
 }
 
 } // namespace

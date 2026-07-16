@@ -123,7 +123,6 @@ void JSONObjectsLookupScan(ClientContext &context, TableFunctionInput &data, Dat
 		return;
 	}
 	D_ASSERT(data.pk_lookups.size() <= STANDARD_VECTOR_SIZE);
-	D_ASSERT(data.pk_output_positions.size() == data.pk_lookups.size());
 
 	const idx_t count = data.pk_lookups.size();
 	auto &reader = *gstate.reader;
@@ -134,39 +133,32 @@ void JSONObjectsLookupScan(ClientContext &context, TableFunctionInput &data, Dat
 	scan_state.allocator.Reset();
 
 	string_t *json_strings = nullptr;
-	ValidityMask *json_validity = nullptr;
 	if (gstate.json_col_idx != DConstants::INVALID_INDEX) {
-		auto &out_vec = output.data[gstate.json_col_idx];
-		json_strings = FlatVector::GetDataMutable<string_t>(out_vec);
-		json_validity = &FlatVector::ValidityMutable(out_vec);
+		json_strings = FlatVector::GetDataMutable<string_t>(output.data[gstate.json_col_idx]);
 	}
 	int64_t *frn_data = nullptr;
-	ValidityMask *frn_validity = nullptr;
 	if (gstate.file_row_number_idx != DConstants::INVALID_INDEX) {
-		auto &frn_vec = output.data[gstate.file_row_number_idx];
-		frn_data = FlatVector::GetDataMutable<int64_t>(frn_vec);
-		frn_validity = &FlatVector::ValidityMutable(frn_vec);
+		frn_data = FlatVector::GetDataMutable<int64_t>(output.data[gstate.file_row_number_idx]);
 	}
 
+	// Append survivors densely from output's current size (glob accumulates); a
+	// row missing from the source is dropped. pk_survivors[w] = requested index.
+	idx_t w = output.size();
 	for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
-		const idx_t row = data.pk_output_positions[pk_idx];
 		const auto pk = data.pk_lookups[pk_idx];
-		if (reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(pk))) {
-			if (json_strings) {
-				json_strings[row] = string_t(scan_state.units[0].pointer, scan_state.units[0].size);
-			}
-			if (frn_data) {
-				frn_data[row] = pk;
-			}
-		} else {
-			if (json_validity) {
-				json_validity->SetInvalid(row);
-			}
-			if (frn_validity) {
-				frn_validity->SetInvalid(row);
-			}
+		if (!reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(pk))) {
+			continue;
 		}
+		if (json_strings) {
+			json_strings[w] = string_t(scan_state.units[0].pointer, scan_state.units[0].size);
+		}
+		if (frn_data) {
+			frn_data[w] = pk;
+		}
+		data.pk_survivors[w] = pk_idx;
+		++w;
 	}
+	output.SetCardinality(w);
 }
 
 // Per-pk Transform (count=1) rather than one batched Transform: in glob mode
@@ -178,7 +170,6 @@ void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk 
 		return;
 	}
 	D_ASSERT(data.pk_lookups.size() <= STANDARD_VECTOR_SIZE);
-	D_ASSERT(data.pk_output_positions.size() == data.pk_lookups.size());
 	D_ASSERT(gstate.record_type != JSONRecordType::AUTO_DETECT);
 
 	auto &reader = *gstate.reader;
@@ -200,55 +191,48 @@ void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk 
 	}
 
 	int64_t *frn_data = nullptr;
-	ValidityMask *frn_validity = nullptr;
 	if (gstate.file_row_number_idx != DConstants::INVALID_INDEX) {
-		auto &frn_vec = output.data[gstate.file_row_number_idx];
-		frn_data = FlatVector::GetDataMutable<int64_t>(frn_vec);
-		frn_validity = &FlatVector::ValidityMutable(frn_vec);
+		frn_data = FlatVector::GetDataMutable<int64_t>(output.data[gstate.file_row_number_idx]);
 	}
 
+	// Append survivors densely from output's current size (glob accumulates); a
+	// row missing from the source is dropped. pk_survivors[w] = requested index.
 	const idx_t count = data.pk_lookups.size();
+	idx_t w = output.size();
 	for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
-		const idx_t row = data.pk_output_positions[pk_idx];
 		const auto pk = data.pk_lookups[pk_idx];
-
-		yyjson_val *vals[1];
-		if (reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(pk))) {
-			vals[0] = scan_state.values[0];
-			if (frn_data) {
-				frn_data[row] = pk;
+		if (!reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(pk))) {
+			continue; // missing row -> dropped (compact)
+		}
+		yyjson_val *vals[1] = {scan_state.values[0]};
+		const idx_t row = w;
+		if (frn_data) {
+			frn_data[row] = pk;
+		}
+		if (ncols != 0) {
+			for (idx_t c = 0; c < ncols; ++c) {
+				slices[c].Slice(output.data[gstate.column_ids[c]], row, row + 1);
 			}
-		} else {
-			// nullptr -> Transform SetInvalid at the sliced row.
-			vals[0] = nullptr;
-			if (frn_validity) {
-				frn_validity->SetInvalid(row);
+			if (gstate.record_type == JSONRecordType::RECORDS) {
+				JSONTransform::TransformObject(vals, alc, 1, gstate.names, result_vectors, gstate.transform_options,
+				                               gstate.column_indices, gstate.transform_options.error_unknown_key);
+			} else {
+				D_ASSERT(gstate.record_type == JSONRecordType::VALUES);
+				D_ASSERT(ncols == 1);
+				optional_ptr<const ColumnIndex> column_index =
+				    gstate.column_indices.empty() ? nullptr : &gstate.column_indices[0];
+				JSONTransform::Transform(vals, alc, *result_vectors[0], 1, gstate.transform_options, column_index);
 			}
-		}
-
-		if (ncols == 0) {
-			continue;
-		}
-		for (idx_t c = 0; c < ncols; ++c) {
-			slices[c].Slice(output.data[gstate.column_ids[c]], row, row + 1);
-		}
-
-		if (gstate.record_type == JSONRecordType::RECORDS) {
-			JSONTransform::TransformObject(vals, alc, 1, gstate.names, result_vectors, gstate.transform_options,
-			                               gstate.column_indices, gstate.transform_options.error_unknown_key);
-		} else {
-			D_ASSERT(gstate.record_type == JSONRecordType::VALUES);
-			D_ASSERT(ncols == 1);
-			optional_ptr<const ColumnIndex> column_index =
-			    gstate.column_indices.empty() ? nullptr : &gstate.column_indices[0];
-			JSONTransform::Transform(vals, alc, *result_vectors[0], 1, gstate.transform_options, column_index);
-		}
-		for (idx_t c = 0; c < ncols; ++c) {
-			if (!FlatVector::Validity(slices[c]).RowIsValid(0)) {
-				FlatVector::SetNull(output.data[gstate.column_ids[c]], row, true);
+			for (idx_t c = 0; c < ncols; ++c) {
+				if (!FlatVector::Validity(slices[c]).RowIsValid(0)) {
+					FlatVector::SetNull(output.data[gstate.column_ids[c]], row, true);
+				}
 			}
 		}
+		data.pk_survivors[w] = pk_idx;
+		++w;
 	}
+	output.SetCardinality(w);
 }
 
 } // namespace

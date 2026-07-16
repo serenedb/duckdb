@@ -135,6 +135,10 @@ public:
 	virtual void InitializeScan(ColumnScanState &state);
 	//! Initialize a scan starting at the specified offset
 	virtual void InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx);
+	//! Re-seek to the column start for another lookup batch on the same row group, keeping the decode
+	//! state (pinned block + dict) warm for position-independent compressions; full reset otherwise.
+	//! Nested columns (e.g. a string's validity child) recurse so every level stays warm.
+	virtual void ReinitializeScan(ColumnScanState &state);
 	//! Scan the next vector from the column
 	idx_t Scan(TransactionData transaction, idx_t vector_index, ColumnScanState &state, Vector &result);
 	virtual idx_t Scan(TransactionData transaction, idx_t vector_index, ColumnScanState &state, Vector &result,
@@ -226,6 +230,9 @@ protected:
 	void AppendSegment(SegmentLock &l, unique_ptr<ColumnSegment> segment);
 
 	void BeginScanVectorInternal(ColumnScanState &state);
+	//! Keep this column's own root-segment cursor warm for a same-row-group re-seek (no child recursion).
+	//! Returns false when the decode state cannot be reused and a full re-init is required.
+	bool TryReinitializeScan(ColumnScanState &state);
 	//! Scans a base vector from the column
 	idx_t ScanVector(ColumnScanState &state, Vector &result, idx_t remaining, ScanVectorType scan_type,
 	                 idx_t result_offset = 0);
