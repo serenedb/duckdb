@@ -20,6 +20,7 @@ struct JSONLookupGlobalState : public GlobalTableFunctionState {
 	shared_ptr<JSONReader> reader;
 	JSONReaderScanState scan_state;
 	JSONTransformOptions transform_options;
+	vector<yyjson_val *> batch_vals;
 	vector<string> names;
 	vector<column_t> column_ids;
 	vector<ColumnIndex> column_indices;
@@ -123,7 +124,6 @@ void JSONObjectsLookupScan(ClientContext &context, TableFunctionInput &data, Dat
 		return;
 	}
 	D_ASSERT(data.pk_lookups.size() <= STANDARD_VECTOR_SIZE);
-	D_ASSERT(data.pk_output_positions.size() == data.pk_lookups.size());
 
 	const idx_t count = data.pk_lookups.size();
 	auto &reader = *gstate.reader;
@@ -134,121 +134,90 @@ void JSONObjectsLookupScan(ClientContext &context, TableFunctionInput &data, Dat
 	scan_state.allocator.Reset();
 
 	string_t *json_strings = nullptr;
-	ValidityMask *json_validity = nullptr;
 	if (gstate.json_col_idx != DConstants::INVALID_INDEX) {
-		auto &out_vec = output.data[gstate.json_col_idx];
-		json_strings = FlatVector::GetDataMutable<string_t>(out_vec);
-		json_validity = &FlatVector::ValidityMutable(out_vec);
+		json_strings = FlatVector::GetDataMutable<string_t>(output.data[gstate.json_col_idx]);
 	}
 	int64_t *frn_data = nullptr;
-	ValidityMask *frn_validity = nullptr;
 	if (gstate.file_row_number_idx != DConstants::INVALID_INDEX) {
-		auto &frn_vec = output.data[gstate.file_row_number_idx];
-		frn_data = FlatVector::GetDataMutable<int64_t>(frn_vec);
-		frn_validity = &FlatVector::ValidityMutable(frn_vec);
+		frn_data = FlatVector::GetDataMutable<int64_t>(output.data[gstate.file_row_number_idx]);
 	}
 
+	// Append survivors densely from output's current size (glob accumulates); a
+	// row missing from the source is dropped. pk_survivors[w] = requested index.
+	idx_t w = output.size();
 	for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
-		const idx_t row = data.pk_output_positions[pk_idx];
 		const auto pk = data.pk_lookups[pk_idx];
-		if (reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(pk))) {
-			if (json_strings) {
-				json_strings[row] = string_t(scan_state.units[0].pointer, scan_state.units[0].size);
-			}
-			if (frn_data) {
-				frn_data[row] = pk;
-			}
-		} else {
-			if (json_validity) {
-				json_validity->SetInvalid(row);
-			}
-			if (frn_validity) {
-				frn_validity->SetInvalid(row);
-			}
+		if (!reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(pk))) {
+			continue;
 		}
+		if (json_strings) {
+			json_strings[w] = string_t(scan_state.units[0].pointer, scan_state.units[0].size);
+		}
+		if (frn_data) {
+			frn_data[w] = pk;
+		}
+		data.pk_survivors[w] = pk_idx;
+		++w;
 	}
+	output.SetCardinality(w);
 }
 
-// Per-pk Transform (count=1) rather than one batched Transform: in glob mode
-// other files have already written rows we don't own, and a batched call
-// would have to pass vals[i] = nullptr for those, clobbering them with NULLs.
 void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<JSONLookupGlobalState>();
 	if (data.pk_lookups.empty()) {
 		return;
 	}
 	D_ASSERT(data.pk_lookups.size() <= STANDARD_VECTOR_SIZE);
-	D_ASSERT(data.pk_output_positions.size() == data.pk_lookups.size());
 	D_ASSERT(gstate.record_type != JSONRecordType::AUTO_DETECT);
+	D_ASSERT(output.size() == 0);
 
 	auto &reader = *gstate.reader;
 	auto &scan_state = gstate.scan_state;
-	// Prior batch's output drained downstream; release its buffers + yyjson nodes.
 	reader.ClearLookupBuffers(scan_state);
 	scan_state.allocator.Reset();
 	auto *alc = scan_state.allocator.GetYYAlc();
 
-	const idx_t ncols = gstate.column_ids.size();
-	vector<Vector> slices;
-	slices.reserve(ncols);
-	for (idx_t c = 0; c < ncols; ++c) {
-		slices.emplace_back(output.data[gstate.column_ids[c]].GetType());
-	}
-	vector<Vector *> result_vectors(ncols);
-	for (idx_t c = 0; c < ncols; ++c) {
-		result_vectors[c] = &slices[c];
-	}
-
 	int64_t *frn_data = nullptr;
-	ValidityMask *frn_validity = nullptr;
 	if (gstate.file_row_number_idx != DConstants::INVALID_INDEX) {
-		auto &frn_vec = output.data[gstate.file_row_number_idx];
-		frn_data = FlatVector::GetDataMutable<int64_t>(frn_vec);
-		frn_validity = &FlatVector::ValidityMutable(frn_vec);
+		frn_data = FlatVector::GetDataMutable<int64_t>(output.data[gstate.file_row_number_idx]);
 	}
 
 	const idx_t count = data.pk_lookups.size();
+	gstate.batch_vals.resize(count);
+	idx_t w = 0;
 	for (idx_t pk_idx = 0; pk_idx < count; ++pk_idx) {
-		const idx_t row = data.pk_output_positions[pk_idx];
 		const auto pk = data.pk_lookups[pk_idx];
-
-		yyjson_val *vals[1];
-		if (reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(pk))) {
-			vals[0] = scan_state.values[0];
-			if (frn_data) {
-				frn_data[row] = pk;
-			}
-		} else {
-			// nullptr -> Transform SetInvalid at the sliced row.
-			vals[0] = nullptr;
-			if (frn_validity) {
-				frn_validity->SetInvalid(row);
-			}
+		if (!reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(pk))) {
+			continue; // missing row -> dropped (compact)
 		}
-
-		if (ncols == 0) {
-			continue;
+		gstate.batch_vals[w] = scan_state.values[0];
+		if (frn_data) {
+			frn_data[w] = pk;
 		}
+		data.pk_survivors[w] = pk_idx;
+		++w;
+	}
+
+	const idx_t ncols = gstate.column_ids.size();
+	if (ncols != 0 && w != 0) {
+		vector<Vector *> result_vectors(ncols);
 		for (idx_t c = 0; c < ncols; ++c) {
-			slices[c].Slice(output.data[gstate.column_ids[c]], row, row + 1);
+			result_vectors[c] = &output.data[gstate.column_ids[c]];
 		}
-
 		if (gstate.record_type == JSONRecordType::RECORDS) {
-			JSONTransform::TransformObject(vals, alc, 1, gstate.names, result_vectors, gstate.transform_options,
-			                               gstate.column_indices, gstate.transform_options.error_unknown_key);
+			JSONTransform::TransformObject(gstate.batch_vals.data(), alc, w, gstate.names, result_vectors,
+			                               gstate.transform_options, gstate.column_indices,
+			                               gstate.transform_options.error_unknown_key);
 		} else {
 			D_ASSERT(gstate.record_type == JSONRecordType::VALUES);
 			D_ASSERT(ncols == 1);
 			optional_ptr<const ColumnIndex> column_index =
 			    gstate.column_indices.empty() ? nullptr : &gstate.column_indices[0];
-			JSONTransform::Transform(vals, alc, *result_vectors[0], 1, gstate.transform_options, column_index);
-		}
-		for (idx_t c = 0; c < ncols; ++c) {
-			if (!FlatVector::Validity(slices[c]).RowIsValid(0)) {
-				FlatVector::SetNull(output.data[gstate.column_ids[c]], row, true);
-			}
+			JSONTransform::Transform(gstate.batch_vals.data(), alc, *result_vectors[0], w, gstate.transform_options,
+			                         column_index);
 		}
 	}
+	output.SetCardinality(w);
 }
 
 } // namespace

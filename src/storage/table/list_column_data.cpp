@@ -57,6 +57,16 @@ void ListColumnData::InitializeScan(ColumnScanState &state) {
 	child_column->InitializeScan(state.child_states[1]);
 }
 
+void ListColumnData::ReinitializeScan(ColumnScanState &state) {
+	D_ASSERT(state.child_states.size() == 2);
+	// own offset/size data: keep its decode state warm if position-independent, else cold-init this level
+	if (!TryReinitializeScan(state)) {
+		ColumnData::InitializeScan(state);
+	}
+	validity->ReinitializeScan(state.child_states[0]);
+	child_column->ReinitializeScan(state.child_states[1]);
+}
+
 uint64_t ListColumnData::FetchListOffset(idx_t row_idx) {
 	auto segment = data.GetSegment(row_idx);
 	ColumnFetchState fetch_state;

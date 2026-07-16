@@ -126,16 +126,15 @@ CSVIterator MakeTightIterator(CSVFileScan &file_scan, idx_t global_offset, idx_t
 	return iter;
 }
 
-// Rebind parse_chunk's vectors to `output`, then per pk set number_of_rows
-// to pk_output_positions[i] so AddRowInternal writes that pk's row directly
-// at the caller's output slot. Glob views reuse the same `output` across
-// per-file calls; disjoint slots per call -> no coordination needed.
+// Rebind parse_chunk's vectors to `output`, then append each requested row
+// densely from output's current size (glob accumulates across per-file calls).
+// CSV has no pushed filters and every offset is a valid row start, so every
+// requested id survives, in order: pk_survivors[base + i] = i.
 void CSVLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<CSVLookupGlobalState>();
 	if (data.pk_lookups.empty()) {
 		return;
 	}
-	D_ASSERT(data.pk_output_positions.size() == data.pk_lookups.size());
 
 	auto &result = gstate.scanner->GetStringValueResult();
 
@@ -151,14 +150,17 @@ void CSVLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk &
 	result.RebindParseChunkVectors(external_vectors);
 
 	result.Reset();
+	const idx_t base = output.size();
+	result.number_of_rows = NumericCast<int64_t>(base);
 
 	const idx_t num_rows = data.pk_lookups.size();
 	for (idx_t i = 0; i < num_rows; ++i) {
 		const auto offset = NumericCast<idx_t>(data.pk_lookups[i]);
 		gstate.scanner->ResetForAppend(MakeTightIterator(*gstate.file_scan, offset, i));
-		result.number_of_rows = NumericCast<int64_t>(data.pk_output_positions[i]);
 		gstate.scanner->ParseChunkAppend();
+		data.pk_survivors[base + i] = i;
 	}
+	output.SetCardinality(base + num_rows);
 }
 
 } // namespace

@@ -1,5 +1,7 @@
 #include "duckdb/storage/table/column_data.hpp"
 
+#include "duckdb/storage/segment/uncompressed.hpp"
+
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/common/types/validity_mask.hpp"
 #include "duckdb/main/settings.hpp"
@@ -124,6 +126,36 @@ void ColumnData::InitializeScan(ColumnScanState &state) {
 	state.initialized = false;
 	state.scan_state.reset();
 	state.last_offset = 0;
+}
+
+bool ColumnData::TryReinitializeScan(ColumnScanState &state) {
+	// Re-seek to the start of this column for another lookup batch on the SAME row group. When the
+	// (already-loaded) root segment scans by absolute offset -- position-independent compressions like
+	// FSST/dict/uncompressed -- keep its pinned block + decode state (e.g. the FSST symbol table) warm
+	// and just reset the cursor; the next ScanPartial reads at the new absolute offset. Sequential
+	// decoders (bitpacking etc.) or a different/moved segment can't be reused -- the caller re-inits.
+	auto root = data.GetRootSegment();
+	const bool keep = root && state.current.get() == root.get() && state.scan_state && state.initialized &&
+	                  root->GetNode().GetCompressionFunction().skip == UncompressedFunctions::EmptySkip;
+	if (!keep) {
+		return false;
+	}
+	state.segment_tree = &data;
+	state.current = root;
+	state.previous_states.clear();
+	state.offset_in_column = root->GetRowStart();
+	state.internal_index = state.offset_in_column;
+	state.last_offset = 0;
+	// scan_state (pinned block + dict) and initialized are intentionally kept. A dict_fsst FSST_ONLY
+	// cursor that is now behind the next read self-heals (its offset walk restarts from the segment start).
+	return true;
+}
+
+void ColumnData::ReinitializeScan(ColumnScanState &state) {
+	// Leaf column: no child scans to reposition, so only the own cursor matters.
+	if (!state.child_states.empty() || !TryReinitializeScan(state)) {
+		InitializeScan(state);
+	}
 }
 
 void ColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx) {

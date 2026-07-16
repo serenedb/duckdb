@@ -200,6 +200,16 @@ void VariantColumnData::InitializeScan(ColumnScanState &state) {
 	}
 }
 
+void VariantColumnData::ReinitializeScan(ColumnScanState &state) {
+	// Same row group => same variant shape, so the child scan states from InitializeScan are still valid --
+	// keep them (skip CreateScanStates) and just warm-keep each sub-column.
+	state.current = nullptr;
+	validity->ReinitializeScan(state.child_states[0]);
+	for (idx_t i = 0; i < sub_columns.size(); i++) {
+		sub_columns[i]->ReinitializeScan(state.child_states[i + 1]);
+	}
+}
+
 void VariantColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx) {
 	CreateScanStates(state);
 	state.current = nullptr;
