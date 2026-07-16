@@ -68,6 +68,9 @@ struct TopNBoundaryValue {
 			boundary_value = boundary_val.GetString();
 			is_set = true;
 			if (op.dynamic_filter) {
+				// DecodeSortKey only ever clears validity, so the reused vector has to start out valid:
+				// otherwise the first NULL boundary pins every later one to NULL and the filter never arms.
+				FlatVector::ValidityMutable(boundary_vector).SetAllValid(1);
 				CreateSortKeyHelpers::DecodeSortKey(boundary_val, boundary_vector, 0, boundary_modifiers);
 				auto new_dynamic_value = boundary_vector.GetValue(0);
 				l.unlock();

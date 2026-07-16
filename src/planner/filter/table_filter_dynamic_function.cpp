@@ -44,6 +44,11 @@ bool DynamicFilterData::CompareValue(ExpressionType comparison_type, const Value
 
 FilterPropagateResult DynamicFilterData::CheckStatistics(const BaseStatistics &stats, ExpressionType comparison_type,
                                                          const Value &constant) {
+	if (!stats.CanHaveNoNull()) {
+		// the bound is never NULL, so comparing an all-NULL segment against it cannot yield a match
+		// (StringStats::CheckZonemap asserts on such statistics rather than answering)
+		return FilterPropagateResult::FILTER_ALWAYS_FALSE;
+	}
 	switch (constant.type().InternalType()) {
 	case PhysicalType::UINT8:
 	case PhysicalType::UINT16:

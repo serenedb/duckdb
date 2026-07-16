@@ -314,6 +314,11 @@ BoundStatement Binder::Bind(JoinRef &ref) {
 	auto left_bindings = left_binder.bind_context.GetBindingAliases();
 
 	bind_context.AddContext(std::move(left_binder.bind_context));
+	if (ref.is_implicit) {
+		// a comma in the FROM list: what follows is a new top-level FROM item, which `SELECT *` expands
+		// on its own (see BindContext::BeginFromItem)
+		bind_context.BeginFromItem();
+	}
 	bind_context.AddContext(std::move(right_binder.bind_context));
 
 	// Update the correlated columns for the parent binder

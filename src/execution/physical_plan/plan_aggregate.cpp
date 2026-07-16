@@ -1,3 +1,5 @@
+#include <absl/algorithm/container.h>
+
 #include "duckdb/main/settings.hpp"
 
 #include "duckdb/execution/operator/aggregate/physical_hash_aggregate.hpp"
@@ -353,6 +355,20 @@ PhysicalOperator &PhysicalPlanGenerator::ExtractAggregateExpressions(PhysicalOpe
 	}
 	if (expressions.empty()) {
 		return child;
+	}
+	// Skip the projection when it is an identity over the child's output: every
+	// expression is a positional reference to its own column and all columns are
+	// covered. The aggregate then reads the child directly instead of copying it
+	// through a no-op projection (e.g. min(x) over a scan that already emits x).
+	if (expressions.size() == child.types.size()) {
+		idx_t pos = 0;
+		const bool identity = absl::c_all_of(expressions, [&](const unique_ptr<Expression> &expr) {
+			return expr->GetExpressionType() == ExpressionType::BOUND_REF &&
+			       expr->Cast<BoundReferenceExpression>().Index() == pos++;
+		});
+		if (identity) {
+			return child;
+		}
 	}
 	auto &proj = Make<PhysicalProjection>(std::move(types), std::move(expressions), child.estimated_cardinality);
 	proj.children.push_back(child);

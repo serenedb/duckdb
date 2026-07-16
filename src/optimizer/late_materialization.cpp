@@ -74,6 +74,20 @@ vector<ColumnBinding> LateMaterialization::ConstructRHS(unique_ptr<LogicalOperat
 			throw InternalException("Unsupported logical operator in LateMaterialization::ConstructRHS");
 		}
 	}
+	// The stack starts below the root, so the root's own projection map has not been
+	// touched yet. A top-n carries one when the topn optimizer lifted its child
+	// projection above it; the row id we just appended to the get is not in that map,
+	// so it would be projected away again before the join can read it. The row ids sit
+	// last in the child's output, and MapBindings selects child bindings by index, so
+	// the bindings computed above stay valid.
+	if (op->type == LogicalOperatorType::LOGICAL_TOP_N) {
+		auto &top_n = op->Cast<LogicalTopN>();
+		if (top_n.HasProjectionMap()) {
+			for (idx_t r_idx = 0; r_idx < row_id_columns.size(); r_idx++) {
+				top_n.projection_map.emplace_back(column_count - row_id_columns.size() + r_idx);
+			}
+		}
+	}
 	return row_id_bindings;
 }
 
