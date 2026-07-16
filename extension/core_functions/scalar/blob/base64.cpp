@@ -17,11 +17,12 @@ struct Base64EncodeOperator {
 struct Base64DecodeOperator {
 	template <class INPUT_TYPE, class RESULT_TYPE>
 	static RESULT_TYPE Operation(INPUT_TYPE input, StringHeap &heap) {
-		auto result_size = Blob::FromBase64Size(input);
-		auto result_blob = heap.EmptyString(result_size);
-		Blob::FromBase64(input, data_ptr_cast(result_blob.GetDataWriteable()), result_size);
-		result_blob.Finalize();
-		return result_blob;
+		// FromBase64Size is an upper bound (simdutf ignores ASCII whitespace); the exact decoded length
+		// is returned by FromBase64, so re-wrap the buffer with the bytes actually written.
+		auto result_blob = heap.EmptyString(Blob::FromBase64Size(input));
+		auto decoded_size =
+		    Blob::FromBase64(input, data_ptr_cast(result_blob.GetDataWriteable()), result_blob.GetSize());
+		return string_t(result_blob.GetDataWriteable(), UnsafeNumericCast<uint32_t>(decoded_size));
 	}
 };
 

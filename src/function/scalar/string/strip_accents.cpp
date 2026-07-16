@@ -3,6 +3,7 @@
 #include "duckdb/common/swar.hpp"
 
 #include "utf8proc.hpp"
+#include <simdutf.h>
 
 namespace duckdb {
 
@@ -26,7 +27,7 @@ idx_t FirstNonAscii(const char *input, idx_t n) {
 }
 
 bool IsAscii(const char *input, idx_t n) {
-	return FirstNonAscii(input, n) == n;
+	return simdutf::validate_ascii(input, n);
 }
 
 namespace {

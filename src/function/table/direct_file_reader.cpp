@@ -7,6 +7,8 @@
 #include "duckdb/storage/external_file_cache/caching_file_system_wrapper.hpp"
 #include "duckdb/storage/caching_mode.hpp"
 
+#include "simdutf.h"
+
 namespace duckdb {
 
 DirectFileReader::DirectFileReader(OpenFileInfo file_p, const LogicalType &type)
@@ -42,7 +44,7 @@ static void AssertMaxFileSize(const string &file_name, idx_t file_size) {
 }
 
 static inline void VERIFY(const string &filename, const string_t &content) {
-	if (Utf8Proc::Analyze(content.GetData(), content.GetSize()) == UnicodeType::INVALID) {
+	if (!simdutf::validate_utf8(content.GetData(), content.GetSize())) {
 		throw InvalidInputException("read_text: could not read content of file '%s' as valid UTF-8 encoded text. You "
 		                            "may want to use read_blob instead.",
 		                            filename);

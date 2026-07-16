@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "utf8proc_wrapper.hpp"
+#include "simdutf.h"
 #include "parquet_reader.hpp"
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/common/helper.hpp"
@@ -33,12 +34,9 @@ bool StringColumnReader::IsValid(const char *str_data, uint32_t str_len, const b
 	if (!is_varchar) {
 		return true;
 	}
-	// verify if a string is actually UTF8, and if there are no null bytes in the middle of the string
+	// verify the string is valid UTF8 (embedded NUL bytes are permitted, as in duckdb's string type)
 	// technically Parquet should guarantee this, but reality is often disappointing
-	UnicodeInvalidReason reason;
-	size_t pos;
-	auto utf_type = Utf8Proc::Analyze(str_data, str_len, &reason, &pos);
-	return utf_type != UnicodeType::INVALID;
+	return simdutf::validate_utf8(str_data, str_len);
 }
 
 bool StringColumnReader::IsValid(const string &str, bool is_varchar) {
