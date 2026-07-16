@@ -71,7 +71,7 @@ static inline UnicodeType UTF8ExtraByteLoop(const int first_pos_seq, int utf8cha
 	return UnicodeType::UTF8;
 }
 
-UnicodeType Utf8Proc::Analyze(const char *s, size_t len, UnicodeInvalidReason *invalid_reason, size_t *invalid_pos) {
+static UnicodeType AnalyzeScalar(const char *s, size_t len, UnicodeInvalidReason *invalid_reason, size_t *invalid_pos) {
 	UnicodeType type = UnicodeType::ASCII;
 
 	static constexpr uint64_t MASK = 0x8080808080808080U;
@@ -127,6 +127,41 @@ UnicodeType Utf8Proc::Analyze(const char *s, size_t len, UnicodeInvalidReason *i
 	return type;
 }
 
+UnicodeType Utf8Proc::Analyze(const char *s, size_t len, UnicodeInvalidReason *invalid_reason, size_t *invalid_pos) {
+	static constexpr size_t SIMD_ASCII_THRESHOLD = 256;
+	static constexpr uint64_t MASK = 0x8080808080808080U;
+	size_t i = 0;
+	if (len < SIMD_ASCII_THRESHOLD) {
+		for (; i + 4 * sizeof(uint64_t) <= len; i += 4 * sizeof(uint64_t)) {
+			auto acc = Load<uint64_t>(const_data_ptr_cast(s + i)) | Load<uint64_t>(const_data_ptr_cast(s + i + 8)) |
+			           Load<uint64_t>(const_data_ptr_cast(s + i + 16)) | Load<uint64_t>(const_data_ptr_cast(s + i + 24));
+			if (acc & MASK) {
+				break;
+			}
+		}
+		for (; i + sizeof(uint64_t) <= len; i += sizeof(uint64_t)) {
+			if (Load<uint64_t>(const_data_ptr_cast(s + i)) & MASK) {
+				break;
+			}
+		}
+		for (; i < len && (s[i] & 0x80) == 0; i++) {
+		}
+		if (i == len) {
+			return UnicodeType::ASCII;
+		}
+	} else {
+		auto ascii = simdutf::validate_ascii_with_errors(s, len);
+		if (ascii.error == simdutf::error_code::SUCCESS) {
+			return UnicodeType::ASCII;
+		}
+		i = ascii.count;
+	}
+	if (simdutf::validate_utf8(s + i, len - i)) {
+		return UnicodeType::UTF8;
+	}
+	return AnalyzeScalar(s, len, invalid_reason, invalid_pos);
+}
+
 void Utf8Proc::MakeValid(char *s, size_t len, char special_flag) {
 	D_ASSERT(special_flag <= 127);
 	UnicodeType type = UnicodeType::ASCII;
@@ -166,10 +201,6 @@ char *Utf8Proc::Normalize(const char *s, size_t len) {
 	assert(s);
 	assert(Utf8Proc::Analyze(s, len) != UnicodeType::INVALID);
 	return (char *)utf8proc_NFC((const utf8proc_uint8_t *)s, len);
-}
-
-bool Utf8Proc::IsValid(const char *s, size_t len) {
-	return Utf8Proc::Analyze(s, len) != UnicodeType::INVALID;
 }
 
 std::string Utf8Proc::RemoveInvalid(const char *s, size_t len) {

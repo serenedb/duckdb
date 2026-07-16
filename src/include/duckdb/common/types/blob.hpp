@@ -54,9 +54,11 @@ public:
 	DUCKDB_API static void ToBase64(string_t blob, char *output);
 
 	DUCKDB_API static string FromBase64(string_t blob);
-	//! Returns the string size of a base64 string -> blob conversion
+	//! Returns an upper bound on the decoded size of a base64 string -> blob conversion
 	DUCKDB_API static idx_t FromBase64Size(string_t str);
-	//! Converts a base64 string to a blob, output should have space for at least FromBase64Size(blob) bytes
-	DUCKDB_API static void FromBase64(string_t str, data_ptr_t output, idx_t output_size);
+	//! Converts a base64 string to a blob; output must have space for at least FromBase64Size(str) bytes.
+	//! Returns the exact number of bytes written (ASCII whitespace in the input is ignored, so this can be
+	//! smaller than output_size).
+	DUCKDB_API static idx_t FromBase64(string_t str, data_ptr_t output, idx_t output_size);
 };
 } // namespace duckdb

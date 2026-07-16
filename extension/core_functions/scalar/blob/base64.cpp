@@ -19,8 +19,8 @@ struct Base64DecodeOperator {
 	static RESULT_TYPE Operation(INPUT_TYPE input, StringHeap &heap) {
 		auto result_size = Blob::FromBase64Size(input);
 		auto result_blob = heap.EmptyString(result_size);
-		Blob::FromBase64(input, data_ptr_cast(result_blob.GetDataWriteable()), result_size);
-		result_blob.Finalize();
+		auto decoded_size = Blob::FromBase64(input, data_ptr_cast(result_blob.GetDataWriteable()), result_size);
+		result_blob.SetSizeAndFinalize(UnsafeNumericCast<uint32_t>(decoded_size), result_size);
 		return result_blob;
 	}
 };

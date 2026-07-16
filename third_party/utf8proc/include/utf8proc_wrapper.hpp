@@ -13,6 +13,8 @@
 #include <cstring>
 #include <cstdint>
 
+#include "simdutf.h"
+
 namespace duckdb {
 class GraphemeIterator;
 
@@ -26,7 +28,13 @@ public:
 	//! Performs UTF NFC normalization of string, return value needs to be free'd
 	static char* Normalize(const char* s, size_t len);
 	//! Returns whether or not the UTF8 string is valid
-	static bool IsValid(const char *s, size_t len);
+	static bool IsValid(const char *s, size_t len) {
+		return simdutf::validate_utf8(s, len);
+	}
+	static size_t ValidPrefixLength(const char *s, size_t len) {
+		const auto result = simdutf::validate_utf8_with_errors(s, len);
+		return result.error == simdutf::error_code::SUCCESS ? len : result.count;
+	}
 	//! Makes Invalid Unicode valid by replacing invalid parts with a given character
 	static void MakeValid(char *s, size_t len, char special_flag = '?');
 	//! Creates a new string with invalid UTF-8 characters removed

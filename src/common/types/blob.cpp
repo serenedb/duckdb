@@ -8,6 +8,8 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/string_type.hpp"
 
+#include "simdutf.h"
+
 namespace duckdb {
 
 constexpr const char *Blob::HEX_TABLE;
@@ -172,125 +174,38 @@ idx_t Blob::ToBase64Size(string_t blob) {
 }
 
 void Blob::ToBase64(string_t blob, char *output) {
-	auto input_data = const_data_ptr_cast(blob.GetData());
-	auto input_size = blob.GetSize();
-	idx_t out_idx = 0;
-	idx_t i;
-	// convert the bulk of the string to base64
-	// this happens in steps of 3 bytes -> 4 output bytes
-	for (i = 0; i + 2 < input_size; i += 3) {
-		output[out_idx++] = Blob::BASE64_MAP[(input_data[i] >> 2) & 0x3F];
-		output[out_idx++] = Blob::BASE64_MAP[((input_data[i] & 0x3) << 4) | ((input_data[i + 1] & 0xF0) >> 4)];
-		output[out_idx++] = Blob::BASE64_MAP[((input_data[i + 1] & 0xF) << 2) | ((input_data[i + 2] & 0xC0) >> 6)];
-		output[out_idx++] = Blob::BASE64_MAP[input_data[i + 2] & 0x3F];
-	}
-
-	if (i < input_size) {
-		// there are one or two bytes left over: we have to insert padding
-		// first write the first 6 bits of the first byte
-		output[out_idx++] = Blob::BASE64_MAP[(input_data[i] >> 2) & 0x3F];
-		// now check the character count
-		if (i == input_size - 1) {
-			// single byte left over: convert the remainder of that byte and insert padding
-			output[out_idx++] = Blob::BASE64_MAP[((input_data[i] & 0x3) << 4)];
-			output[out_idx++] = Blob::BASE64_PADDING;
-		} else {
-			// two bytes left over: convert the second byte as well
-			output[out_idx++] = Blob::BASE64_MAP[((input_data[i] & 0x3) << 4) | ((input_data[i + 1] & 0xF0) >> 4)];
-			output[out_idx++] = Blob::BASE64_MAP[((input_data[i + 1] & 0xF) << 2)];
-		}
-		output[out_idx++] = Blob::BASE64_PADDING;
-	}
+	simdutf::binary_to_base64(blob.GetData(), blob.GetSize(), output, simdutf::base64_default);
 }
 
-static constexpr int BASE64_DECODING_TABLE[256] = {
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
-    -1, -1, -1, -1, -1, -1, -1, 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-    22, 23, 24, 25, -1, -1, -1, -1, -1, -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-    45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+static bool TryFromBase64(string_t str, char *output, size_t &output_size) {
+	auto result = simdutf::base64_to_binary_safe(str.GetData(), str.GetSize(), output, output_size,
+	                                             simdutf::base64_default, simdutf::last_chunk_handling_options::strict);
+	return result.error == simdutf::error_code::SUCCESS;
+}
 
 string Blob::FromBase64(string_t blob) {
-	auto decoded_size = Blob::FromBase64Size(blob);
-	auto data = make_uniq_array<data_t>(decoded_size);
-	Blob::FromBase64(blob, data.get(), decoded_size);
-	return string(char_ptr_cast(data.get()), decoded_size);
+	string result;
+	bool success = false;
+	result.resize_and_overwrite(FromBase64Size(blob), [&](char *data, size_t size) {
+		success = TryFromBase64(blob, data, size);
+		return success ? size : 0;
+	});
+	if (!success) {
+		throw ConversionException("Could not decode string \"%s\" as base64", blob.GetString());
+	}
+	return result;
 }
 
 idx_t Blob::FromBase64Size(string_t str) {
-	auto input_data = str.GetData();
-	auto input_size = str.GetSize();
-	if (input_size % 4 != 0) {
-		// valid base64 needs to always be cleanly divisible by 4
-		throw ConversionException("Could not decode string \"%s\" as base64: length must be a multiple of 4",
-		                          str.GetString());
-	}
-	if (input_size < 4) {
-		// empty string
-		return 0;
-	}
-	auto base_size = input_size / 4 * 3;
-	// check for padding to figure out the length
-	if (input_data[input_size - 2] == Blob::BASE64_PADDING) {
-		// two bytes of padding
-		return base_size - 2;
-	}
-	if (input_data[input_size - 1] == Blob::BASE64_PADDING) {
-		// one byte of padding
-		return base_size - 1;
-	}
-	// no padding
-	return base_size;
+	return simdutf::maximal_binary_length_from_base64(str.GetData(), str.GetSize());
 }
 
-template <bool ALLOW_PADDING>
-uint32_t DecodeBase64Bytes(const string_t &str, const_data_ptr_t input_data, idx_t base_idx) {
-	int decoded_bytes[4];
-	for (idx_t decode_idx = 0; decode_idx < 4; decode_idx++) {
-		if (ALLOW_PADDING && decode_idx >= 2 && input_data[base_idx + decode_idx] == Blob::BASE64_PADDING) {
-			// the last two bytes of a base64 string can have padding: in this case we set the byte to 0
-			decoded_bytes[decode_idx] = 0;
-		} else {
-			decoded_bytes[decode_idx] = BASE64_DECODING_TABLE[input_data[base_idx + decode_idx]];
-		}
-		if (decoded_bytes[decode_idx] < 0) {
-			throw ConversionException(
-			    "Could not decode string \"%s\" as base64: invalid byte value '%d' at position %d", str.GetString(),
-			    input_data[base_idx + decode_idx], base_idx + decode_idx);
-		}
+idx_t Blob::FromBase64(string_t str, data_ptr_t output, idx_t output_size) {
+	size_t decoded_size = output_size;
+	if (!TryFromBase64(str, char_ptr_cast(output), decoded_size)) {
+		throw ConversionException("Could not decode string \"%s\" as base64", str.GetString());
 	}
-	return UnsafeNumericCast<uint32_t>((decoded_bytes[0] << 3 * 6) + (decoded_bytes[1] << 2 * 6) +
-	                                   (decoded_bytes[2] << 1 * 6) + (decoded_bytes[3] << 0 * 6));
-}
-
-void Blob::FromBase64(string_t str, data_ptr_t output, idx_t output_size) {
-	D_ASSERT(output_size == FromBase64Size(str));
-	auto input_data = const_data_ptr_cast(str.GetData());
-	auto input_size = str.GetSize();
-	if (input_size == 0) {
-		return;
-	}
-	idx_t out_idx = 0;
-	idx_t i = 0;
-	for (i = 0; i + 4 < input_size; i += 4) {
-		auto combined = DecodeBase64Bytes<false>(str, input_data, i);
-		output[out_idx++] = (combined >> 2 * 8) & 0xFF;
-		output[out_idx++] = (combined >> 1 * 8) & 0xFF;
-		output[out_idx++] = (combined >> 0 * 8) & 0xFF;
-	}
-	// decode the final four bytes: padding is allowed here
-	auto combined = DecodeBase64Bytes<true>(str, input_data, i);
-	output[out_idx++] = (combined >> 2 * 8) & 0xFF;
-	if (out_idx < output_size) {
-		output[out_idx++] = (combined >> 1 * 8) & 0xFF;
-	}
-	if (out_idx < output_size) {
-		output[out_idx++] = (combined >> 0 * 8) & 0xFF;
-	}
+	return decoded_size;
 }
 
 } // namespace duckdb
