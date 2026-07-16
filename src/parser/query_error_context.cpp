@@ -3,6 +3,7 @@
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/common/to_string.hpp"
 #include "utf8proc_wrapper.hpp"
+#include "simdutf.h"
 
 namespace duckdb {
 
@@ -62,7 +63,7 @@ string QueryErrorContext::Format(std::string_view query, std::string_view error_
 	vector<idx_t> render_widths;
 	vector<idx_t> positions;
 	vector<idx_t> natural_break;
-	if (Utf8Proc::IsValid(buf, len)) {
+	if (simdutf::validate_utf8(buf, len)) {
 		// for unicode awareness, we traverse the graphemes of the current line and keep track of their render widths
 		// and of their position in the string
 		for (idx_t cpos = 0; cpos < len;) {

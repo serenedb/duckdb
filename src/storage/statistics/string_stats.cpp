@@ -10,6 +10,7 @@
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "utf8proc_wrapper.hpp"
 #include "duckdb/common/types/blob.hpp"
+#include "simdutf.h"
 #include "duckdb/storage/statistics/stats_writer.hpp"
 
 namespace duckdb {
@@ -810,13 +811,13 @@ void StringStats::Verify(const BaseStatistics &stats, const Vector &vector, cons
 			    "Statistics mismatch: string value exceeds minimum string length.\nStatistics: %s\nVector: %s",
 			    stats.ToString(), vector.ToString());
 		}
-		if (stats.GetType().id() == LogicalTypeId::VARCHAR && !string_data.has_unicode) {
-			auto unicode = Utf8Proc::Analyze(data, len);
-			if (unicode == UnicodeType::UTF8) {
+		if (stats.GetType().id() == LogicalTypeId::VARCHAR && !string_data.has_unicode &&
+		    !simdutf::validate_ascii(data, len)) {
+			if (simdutf::validate_utf8(data, len)) {
 				throw InternalException("Statistics mismatch: string value contains unicode, but statistics says it "
 				                        "shouldn't.\nStatistics: %s\nVector: %s",
 				                        stats.ToString(), vector.ToString());
-			} else if (unicode == UnicodeType::INVALID) {
+			} else {
 				throw InternalException("Invalid unicode detected in vector: %s", vector.ToString());
 			}
 		}

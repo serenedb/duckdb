@@ -67,11 +67,12 @@ CSVEncoder::CSVEncoder(ClientContext &context_p, const string &encoding_name_to_
 		throw InvalidInputException(error.str());
 	}
 
-	// We ensure that the encoded buffer size is an even number to make the two byte lookup on utf-16 work
-	idx_t encoded_buffer_size = buffer_size % 2 != 0 ? buffer_size - 1 : buffer_size;
+	// Round the encoded buffer down to a multiple of the encoding's lookup unit (2-byte utf-16 units,
+	// 4-byte utf-32 units are read whole), with one unit as the floor for tiny buffer sizes.
+	const idx_t lookup_bytes = function->GetLookupBytes();
+	idx_t encoded_buffer_size = buffer_size - buffer_size % lookup_bytes;
 	if (encoded_buffer_size == 0) {
-		// This might happen if buffer size = 1
-		encoded_buffer_size = 2;
+		encoded_buffer_size = lookup_bytes;
 	}
 	D_ASSERT(encoded_buffer_size > 0);
 	encoded_buffer.Initialize(encoded_buffer_size);
@@ -103,10 +104,9 @@ idx_t CSVEncoder::Encode(FileHandle &file_handle_input, char *output_buffer, con
 		vector<char> pass_on_buffer;
 		if (encoded_buffer.cur_pos != encoded_buffer.GetSize() &&
 		    encoding_function->GetLookupBytes() > encoded_buffer.GetSize() - encoded_buffer.cur_pos) {
-			// We don't have enough lookup bytes for it, if that's the case, we need to set off these bytes to the next
-			// buffer
-			for (idx_t i = encoded_buffer.GetSize() - encoded_buffer.cur_pos; i < encoding_function->GetLookupBytes();
-			     i++) {
+			// Fewer bytes than one lookup unit remain (e.g. the high half of a utf-16 surrogate pair, or a
+			// partial utf-32 unit): carry the unconsumed tail into the next buffer so the unit can complete.
+			for (idx_t i = encoded_buffer.cur_pos; i < encoded_buffer.GetSize(); i++) {
 				pass_on_buffer.push_back(encoded_buffer.Ptr()[i]);
 			}
 		}
@@ -121,7 +121,9 @@ idx_t CSVEncoder::Encode(FileHandle &file_handle_input, char *output_buffer, con
 		    file_handle_input.Read(context, encoded_buffer.Ptr() + pass_on_buffer.size() + has_pass_on_byte,
 		                           encoded_buffer.GetCapacity() - pass_on_buffer.size() - has_pass_on_byte));
 		encoded_buffer.SetSize(actual_encoded_bytes + pass_on_buffer.size() + has_pass_on_byte);
-		if (actual_encoded_bytes < encoded_buffer.GetCapacity() - pass_on_buffer.size()) {
+		// A full read is one that returned everything requested (capacity minus the carried bytes and the
+		// already-buffered probe byte); anything less means the file is exhausted.
+		if (actual_encoded_bytes < encoded_buffer.GetCapacity() - pass_on_buffer.size() - has_pass_on_byte) {
 			encoded_buffer.last_buffer = true;
 			has_pass_on_byte = false;
 		} else {

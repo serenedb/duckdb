@@ -12,6 +12,7 @@
 #include "fast_float/fast_float.h"
 #include "jaro_winkler.hpp"
 #include "utf8proc_wrapper.hpp"
+#include "simdutf.h"
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 
@@ -896,7 +897,7 @@ idx_t StringUtil::URLDecodeSize(const char *input, idx_t input_size, bool plus_t
 void StringUtil::URLDecodeBuffer(const char *input, idx_t input_size, char *output, bool plus_to_space) {
 	char *output_start = output;
 	URLDecodeInternal<URLEncodeWrite>(input, input_size, output, plus_to_space);
-	if (!Utf8Proc::IsValid(output_start, NumericCast<idx_t>(output - output_start))) {
+	if (!simdutf::validate_utf8(output_start, NumericCast<idx_t>(output - output_start))) {
 		throw InvalidInputException("Failed to decode string \"%s\" using URL decoding - decoded value is invalid UTF8",
 		                            string(input, input_size));
 	}

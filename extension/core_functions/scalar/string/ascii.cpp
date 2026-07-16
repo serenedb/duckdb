@@ -2,13 +2,15 @@
 #include "utf8proc.hpp"
 #include "utf8proc_wrapper.hpp"
 
+#include "simdutf.h"
+
 namespace duckdb {
 
 struct AsciiOperator {
 	template <class TA, class TR>
 	static inline TR Operation(const TA &input) {
 		auto str = input.GetData();
-		if (Utf8Proc::Analyze(str, input.GetSize()) == UnicodeType::ASCII) {
+		if (simdutf::validate_ascii(str, input.GetSize())) {
 			return str[0];
 		}
 		int utf8_bytes = 4;
