@@ -7,6 +7,8 @@
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/transaction/transaction_manager.hpp"
+#include "duckdb/catalog/catalog.hpp"
+#include "duckdb/main/secret/secret_storage.hpp"
 
 namespace duckdb {
 
@@ -16,6 +18,8 @@ MetaTransaction::MetaTransaction(ClientContext &context_p, timestamp_t start_tim
       transaction_validity(*context_p.db, ValidChecker::Scope::TRANSACTION), active_query(MAXIMUM_QUERY_ID),
       modified_database(nullptr), is_read_only(false) {
 }
+
+MetaTransaction::~MetaTransaction() = default;
 
 MetaTransaction &MetaTransaction::Get(ClientContext &context) {
 	return context.transaction.ActiveTransaction();
