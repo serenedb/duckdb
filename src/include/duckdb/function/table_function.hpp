@@ -356,6 +356,19 @@ typedef unique_ptr<MultiFileReader> (*table_function_get_multi_file_reader_t)(co
 
 typedef bool (*table_function_supports_pushdown_type_t)(const FunctionData &bind_data, idx_t col_idx);
 
+class TableFilter;
+//! Per-filter pushdown decision -- finer than supports_pushdown_type (which is per column).
+//! BeforeLimit: push into the scan, applied before any pushed row-limit (a pushed top-k stays valid).
+//! AfterLimit:  push into the scan, but only applied after the limit -> the scan must run unlimited.
+//! Reject:      do not push; the filter stays a Filter node above the scan.
+//! Drop:        the filter is redundant with what the scan itself enforces (e.g. the dynamic score
+//!              boundary TOP_N pushes back at a top-k collector) -- remove it from the plan entirely.
+enum class TableFilterPushdown : uint8_t { BeforeLimit, AfterLimit, Reject, Drop };
+
+//! (Optional) Decides pushdown per filter. When set, it takes precedence over supports_pushdown_type.
+typedef TableFilterPushdown (*table_function_supports_pushdown_filter_t)(const FunctionData &bind_data, idx_t col_idx,
+                                                                         const TableFilter &filter);
+
 typedef bool (*table_function_supports_pushdown_extract_t)(const FunctionData &bind_data, const LogicalIndex &col_idx);
 
 typedef double (*table_function_progress_t)(ClientContext &context, const FunctionData *bind_data,
@@ -509,6 +522,9 @@ public:
 	table_function_get_multi_file_reader_t get_multi_file_reader;
 	//! (Optional) If this scanner supports filter pushdown, but not to all data types
 	table_function_supports_pushdown_type_t supports_pushdown_type;
+	//! (Optional) Per-filter pushdown decision (see TableFilterPushdown); when set it takes precedence
+	//! over supports_pushdown_type (per column).
+	table_function_supports_pushdown_filter_t supports_pushdown_filter = nullptr;
 	//! (Optional) If this scanner supports projection pushdown of struct extracts
 	table_function_supports_pushdown_extract_t supports_pushdown_extract;
 	//! Get partition info of the table
