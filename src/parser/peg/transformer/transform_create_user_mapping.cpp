@@ -7,10 +7,10 @@
 
 namespace duckdb {
 
-// UserMappingRole <- 'PUBLIC' / 'CURRENT_USER' / 'USER' / ColLabel
-// PUBLIC/CURRENT_USER/USER are keyword leaves (emit the lowered keyword text so
-// the handler can recognise current_user/user); anything else is a ColLabel and
-// is transformed via Transform<string>. The referenced rule can materialise as
+// UserMappingRole <- 'PUBLIC' / 'CURRENT_USER' / 'CURRENT_ROLE' / 'SESSION_USER' / 'USER' / ColId
+// The special role keywords are leaves (emit the lowered keyword text so the
+// handler can recognise them); anything else is a ColId and is transformed via
+// Transform<string>. The referenced rule can materialise as
 // a plain leaf, a single-child List, or a Choice depending on how the framework
 // inlines the matched alternative, so unwrap those wrappers before classifying.
 static string TransformUserMappingRole(PEGTransformer &transformer, ParseResult &role_result) {

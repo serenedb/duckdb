@@ -1,4 +1,4 @@
-CreateServerStatement <- 'CREATE' 'SERVER' IfNotExists? ColId 'FOREIGN' 'DATA'? 'WRAPPER' Identifier ServerOptions?
+CreateServerStatement <- 'CREATE' 'SERVER' IfNotExists? ColId 'FOREIGN' 'DATA' 'WRAPPER' Identifier ServerOptions?
 DropServerStatement <- 'DROP' 'SERVER' IfExists? ColId DropBehavior?
 
 ServerOptions <- 'OPTIONS' Parens(List(ServerOption))
