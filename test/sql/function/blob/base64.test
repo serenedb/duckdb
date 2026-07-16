@@ -91,3 +91,42 @@ statement error
 SELECT from_base64('üab');
 ----
 <REGEX>:.*Conversion Error: Could not decode string.*
+
+# ASCII whitespace (spaces and newlines) is ignored -- WHATWG forgiving-base64
+query I
+SELECT from_base64('YQ==    ');
+----
+a
+
+query I
+SELECT from_base64('QQ ==');
+----
+A
+
+query I
+SELECT from_base64('YWJj' || chr(10) || 'ZGVm');
+----
+abcdef
+
+# padding is only accepted at the tail -- a '=' anywhere else is invalid
+statement error
+SELECT from_base64('AB=D');
+----
+<REGEX>:.*Conversion Error: Could not decode string.*
+
+statement error
+SELECT from_base64('=AAA');
+----
+<REGEX>:.*Conversion Error: Could not decode string.*
+
+# a partial, unpadded final chunk is rejected (strict last-chunk handling)
+statement error
+SELECT from_base64('YWI');
+----
+<REGEX>:.*Conversion Error: Could not decode string.*
+
+# round-trip a larger blob through the encoder + decoder
+query I
+SELECT from_base64(to_base64('The quick brown fox jumps over the lazy dog, then does it again.'::BLOB)) = 'The quick brown fox jumps over the lazy dog, then does it again.'::BLOB;
+----
+true
