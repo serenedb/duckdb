@@ -78,9 +78,9 @@ struct VariableReturnBindData : public FunctionData {
 	}
 };
 
-template <class T, class MAP_TYPE = map<T, idx_t>>
+template <class T, class MapType = map<T, idx_t>>
 struct HistogramAggState {
-	MAP_TYPE *hist;
+	MapType *hist;
 };
 
 ScalarFunction GetKeyExtractFunction();
