@@ -102,11 +102,14 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 			auto &column_idx = op.GetColumnIndex(filter_idx);
 			auto column_id = column_idx.GetPrimaryIndex();
 			if (!op.function.supports_pushdown_type(*op.bind_data, column_id)) {
+				Identifier column_name;
 				LogicalType column_type;
 				if (IsVirtualColumn(column_id)) {
 					auto &column = virtual_columns.at(column_id);
+					column_name = column.name;
 					column_type = column.type;
 				} else {
+					column_name = op.names[column_id];
 					column_type = op.returned_types[column_id];
 				}
 				optional_idx column_id_filter;
@@ -120,7 +123,8 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 					projection_ids.push_back(filter_idx);
 					column_id_filter = projection_ids.size() - 1;
 				}
-				auto column = make_uniq<BoundReferenceExpression>(column_type, column_id_filter.GetIndex());
+				auto column =
+				    make_uniq<BoundReferenceExpression>(column_name, column_type, column_id_filter.GetIndex());
 				select_list.push_back(filter_expr.ToExpression(*column));
 				to_remove.insert(filter_idx);
 			}

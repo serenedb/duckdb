@@ -355,12 +355,37 @@ void PhysicalTableScan::AddScanParams(MAP &result) const {
 		}
 		result["Projections"] = projections;
 	}
+	string column_filter;
+	string dynamic_column_filter;
 	if (function.filter_pushdown && table_filters) {
-		result["Filters"] = GetFilterInfo(*table_filters);
+		column_filter = GetFilterInfo(*table_filters);
 	}
-
 	if (function.filter_pushdown && dynamic_filters && dynamic_filters->HasFilters()) {
-		result["Dynamic Filters"] = GetFilterInfo(*dynamic_filters->GetFinalTableFilters(*this, nullptr));
+		dynamic_column_filter = GetFilterInfo(*dynamic_filters->GetFinalTableFilters(*this, nullptr));
+	}
+	if (result.contains("Index Filter") && (!column_filter.empty() || !dynamic_column_filter.empty())) {
+		// Keep the filter entries adjacent: splice the table-filter entries in
+		// right after the function-provided "Index Filter" entry.
+		MAP reordered;
+		for (auto &entry : result) {
+			reordered[entry.first] = std::move(entry.second);
+			if (entry.first == "Index Filter") {
+				if (!column_filter.empty()) {
+					reordered["Column Filter"] = column_filter;
+				}
+				if (!dynamic_column_filter.empty()) {
+					reordered["Dynamic Column Filter"] = dynamic_column_filter;
+				}
+			}
+		}
+		result = std::move(reordered);
+	} else {
+		if (!column_filter.empty()) {
+			result["Column Filter"] = column_filter;
+		}
+		if (!dynamic_column_filter.empty()) {
+			result["Dynamic Column Filter"] = dynamic_column_filter;
+		}
 	}
 
 	if (extra_info.sample_options) {

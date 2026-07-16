@@ -632,22 +632,24 @@ unique_ptr<ExpressionFilter> ExpressionFilter::FromTableFilter(const TableFilter
 	return make_uniq<ExpressionFilter>(std::move(expr));
 }
 
-string ExpressionFilter::InternalFunctionToString(const BoundFunctionExpression &func_expr, const string &column_name) {
-	auto &func_name = func_expr.Function().GetName();
+string ExpressionFilter::InternalFunctionToString(const string &func_name, optional_ptr<FunctionData> bind_data,
+                                                  const string &column_name) {
 	if (func_name == BloomFilterScalarFun::NAME) {
-		auto &data = func_expr.BindInfo()->Cast<BloomFilterFunctionData>();
+		auto &data = bind_data->Cast<BloomFilterFunctionData>();
 		return BloomFilterScalarFun::ToString(column_name, data.key_column_name);
 	} else if (func_name == PrefixRangeScalarFun::NAME) {
-		auto &data = func_expr.BindInfo()->Cast<PrefixRangeFunctionData>();
+		auto &data = bind_data->Cast<PrefixRangeFunctionData>();
 		return PrefixRangeScalarFun::ToString(column_name, data.key_column_name);
 	} else if (func_name == DynamicFilterScalarFun::NAME) {
-		const auto has_filter_data =
-		    func_expr.BindInfo() && func_expr.BindInfo()->Cast<DynamicFilterFunctionData>().filter_data;
-		return DynamicFilterScalarFun::ToString(column_name, has_filter_data);
+		optional_ptr<const DynamicFilterData> filter_data;
+		if (bind_data) {
+			filter_data = bind_data->Cast<DynamicFilterFunctionData>().filter_data.get();
+		}
+		return DynamicFilterScalarFun::ToString(column_name, filter_data);
 	} else if (func_name == OptionalFilterScalarFun::NAME) {
 		string child_filter_string;
-		if (func_expr.BindInfo()) {
-			auto &data = func_expr.BindInfo()->Cast<OptionalFilterFunctionData>();
+		if (bind_data) {
+			auto &data = bind_data->Cast<OptionalFilterFunctionData>();
 			if (data.child_filter_expr) {
 				child_filter_string = ExpressionToFriendlyString(*data.child_filter_expr, column_name);
 			}
@@ -655,8 +657,8 @@ string ExpressionFilter::InternalFunctionToString(const BoundFunctionExpression 
 		return OptionalFilterScalarFun::ToString(child_filter_string);
 	} else if (func_name == SelectivityOptionalFilterScalarFun::NAME) {
 		string child_filter_string;
-		if (func_expr.BindInfo()) {
-			auto &data = func_expr.BindInfo()->Cast<SelectivityOptionalFilterFunctionData>();
+		if (bind_data) {
+			auto &data = bind_data->Cast<SelectivityOptionalFilterFunctionData>();
 			if (data.child_filter_expr) {
 				child_filter_string = ExpressionToFriendlyString(*data.child_filter_expr, column_name);
 			}
@@ -669,7 +671,8 @@ string ExpressionFilter::InternalFunctionToString(const BoundFunctionExpression 
 string ExpressionFilter::ExpressionToFriendlyString(const Expression &expression, const string &column_name) {
 	if (expression.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
 		auto &func_expr = expression.Cast<BoundFunctionExpression>();
-		auto result = InternalFunctionToString(func_expr, column_name);
+		auto result = InternalFunctionToString(func_expr.Function().GetName().GetIdentifierName(), func_expr.BindInfo(),
+		                                       column_name);
 		if (!result.empty()) {
 			return result;
 		}

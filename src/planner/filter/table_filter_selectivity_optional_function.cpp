@@ -161,6 +161,7 @@ ScalarFunction SelectivityOptionalFilterScalarFun::GetFunction(const LogicalType
 	func.SetFilterPruneCallback(SelectivityOptionalFilterScalarFun::FilterPrune);
 	func.SetSerializeCallback(SelectivityOptionalFilterSerialize);
 	func.SetDeserializeCallback(SelectivityOptionalFilterDeserialize);
+	func.SetToStringCallback(TableFilterFunctionToString);
 	return func;
 }
 
