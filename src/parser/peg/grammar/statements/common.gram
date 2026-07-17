@@ -9,8 +9,6 @@ Statement <-
 	DropTSDictionaryStatement /
 	CreateServerStatement /
 	DropServerStatement /
-	CreateUserMappingStatement /
-	DropUserMappingStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
 	CreatePolicyStatement /
