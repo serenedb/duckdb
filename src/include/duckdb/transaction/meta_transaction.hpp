@@ -11,6 +11,7 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/main/valid_checker.hpp"
 #include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/error_data.hpp"
@@ -92,6 +93,7 @@ public:
 	bool ReferencesDatabase(AttachedDatabase &database);
 	AttachedDatabase &UseDatabase(shared_ptr<AttachedDatabase> &database);
 	void DetachDatabase(AttachedDatabase &database);
+	vector<shared_ptr<AttachedDatabase>> &GetStatementDatabases(ClientContext &context);
 
 private:
 	friend class SecretManager;
@@ -117,6 +119,10 @@ private:
 	identifier_map_t<reference<AttachedDatabase>> used_databases;
 	//! Secrets that only live for the duration of this transaction.
 	unique_ptr<SecretStorage> transaction_secret_storage;
+	//! Attached-database set frozen for the current statement, so repeated catalog
+	//! enumerations see one stable, pinned set even under concurrent ATTACH/DETACH.
+	//! Reset at each statement boundary in SetActiveQuery, lazy initialization.
+	vector<shared_ptr<AttachedDatabase>> statement_databases;
 };
 
 } // namespace duckdb
