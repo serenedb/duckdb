@@ -48,14 +48,17 @@ static unique_ptr<FunctionData> DuckDBSchemasBind(ClientContext &context, TableF
 	names.emplace_back("parent_schema_oid");
 	return_types.emplace_back(LogicalType::BIGINT);
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBSchemasInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBSchemasData>();
 
 	// scan all the schemas and collect them
-	result->entries = Catalog::GetAllSchemas(context);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	result->entries = Catalog::GetAllSchemas(context, bind_data.include_hidden);
 
 	return std::move(result);
 }
@@ -117,7 +120,9 @@ void DuckDBSchemasFunction(ClientContext &context, TableFunctionInput &data_p, D
 }
 
 void DuckDBSchemasFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("duckdb_schemas", {}, DuckDBSchemasFunction, DuckDBSchemasBind, DuckDBSchemasInit));
+	TableFunction fn("duckdb_schemas", {}, DuckDBSchemasFunction, DuckDBSchemasBind, DuckDBSchemasInit);
+	fn.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb
