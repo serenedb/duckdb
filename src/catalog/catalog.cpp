@@ -38,6 +38,7 @@
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/function/built_in_functions.hpp"
 #include "duckdb/catalog/similar_catalog_entry.hpp"
 #include "duckdb/storage/database_size.hpp"
@@ -1269,12 +1270,17 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetAllSchemas(ClientContext &cont
 	vector<reference<SchemaCatalogEntry>> result;
 
 	auto &db_manager = DatabaseManager::Get(context);
+	auto &meta_transaction = MetaTransaction::Get(context);
 	auto databases = db_manager.GetDatabases(context);
 	for (auto &database : databases) {
 		if (!include_hidden && database->GetVisibility() == AttachVisibility::HIDDEN) {
 			continue;
 		}
-		auto &catalog = database->GetCatalog();
+		// Pin the database for the meta transaction: the returned schema (and downstream entry) references
+		// outlive this scope, and a catalog whose scan path starts no transaction (e.g. snapshot-backed
+		// catalogs) would otherwise be destroyed by a concurrent DETACH/DROP DATABASE mid-statement.
+		auto &db = meta_transaction.UseDatabase(database);
+		auto &catalog = db.GetCatalog();
 		auto new_schemas = catalog.GetSchemas(context);
 		result.insert(result.end(), new_schemas.begin(), new_schemas.end());
 	}
