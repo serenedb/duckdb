@@ -98,7 +98,9 @@ static unique_ptr<FunctionData> DuckDBFunctionsBind(ClientContext &context, Tabl
 	names.emplace_back("categories");
 	return_types.emplace_back(LogicalType::LIST(LogicalType::VARCHAR));
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 static void ExtractFunctionsFromSchema(ClientContext &context, SchemaCatalogEntry &schema,
@@ -115,7 +117,8 @@ unique_ptr<GlobalTableFunctionState> DuckDBFunctionsInit(ClientContext &context,
 	auto result = make_uniq<DuckDBFunctionsData>();
 
 	// scan all the schemas for tables and collect them and collect them
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden);
 	for (auto &schema : schemas) {
 		ExtractFunctionsFromSchema(context, schema.get(), *result);
 	};
@@ -847,6 +850,7 @@ static double DuckDBFunctionsProgress(ClientContext &context, const FunctionData
 void DuckDBFunctionsFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction functions("duckdb_functions", {}, DuckDBFunctionsFunction, DuckDBFunctionsBind, DuckDBFunctionsInit);
 	functions.table_scan_progress = DuckDBFunctionsProgress;
+	functions.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	set.AddFunction(functions);
 }
 
