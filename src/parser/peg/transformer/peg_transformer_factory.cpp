@@ -200,12 +200,9 @@ void PEGTransformerFactory::RegisterCreateTextSearchDictionary() {
 }
 
 void PEGTransformerFactory::RegisterForeignServer() {
-	// create_server.gram / create_user_mapping.gram — the OPTIONS Parens(List(...)) bodies
-	// and the user mapping role choice are not auto-extractable.
+	// create_server.gram — the OPTIONS Parens(List(...)) body is not auto-extractable.
 	REGISTER_TRANSFORM(TransformCreateServerStatement);
 	REGISTER_TRANSFORM(TransformDropServerStatement);
-	REGISTER_TRANSFORM(TransformCreateUserMappingStatement);
-	REGISTER_TRANSFORM(TransformDropUserMappingStatement);
 }
 
 void PEGTransformerFactory::RegisterPivot() {
