@@ -68,14 +68,17 @@ static unique_ptr<FunctionData> DuckDBSequencesBind(ClientContext &context, Tabl
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBSequencesInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBSequencesData>();
 
 	// scan all the schemas for tables and collect themand collect them
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden);
 	for (auto &schema : schemas) {
 		schema.get().Scan(context, CatalogType::SEQUENCE_ENTRY,
 		                  [&](CatalogEntry &entry) { result->entries.push_back(entry.Cast<SequenceCatalogEntry>()); });
@@ -156,8 +159,9 @@ void DuckDBSequencesFunction(ClientContext &context, TableFunctionInput &data_p,
 }
 
 void DuckDBSequencesFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(
-	    TableFunction("duckdb_sequences", {}, DuckDBSequencesFunction, DuckDBSequencesBind, DuckDBSequencesInit));
+	TableFunction fn("duckdb_sequences", {}, DuckDBSequencesFunction, DuckDBSequencesBind, DuckDBSequencesInit);
+	fn.named_parameters["include_hidden"] = LogicalType::BOOLEAN;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

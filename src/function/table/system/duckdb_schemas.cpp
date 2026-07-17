@@ -42,14 +42,17 @@ static unique_ptr<FunctionData> DuckDBSchemasBind(ClientContext &context, TableF
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBSchemasInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBSchemasData>();
 
 	// scan all the schemas and collect them
-	result->entries = Catalog::GetAllSchemas(context);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	result->entries = Catalog::GetAllSchemas(context, bind_data.include_hidden);
 
 	return std::move(result);
 }
@@ -99,7 +102,9 @@ void DuckDBSchemasFunction(ClientContext &context, TableFunctionInput &data_p, D
 }
 
 void DuckDBSchemasFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("duckdb_schemas", {}, DuckDBSchemasFunction, DuckDBSchemasBind, DuckDBSchemasInit));
+	TableFunction fn("duckdb_schemas", {}, DuckDBSchemasFunction, DuckDBSchemasBind, DuckDBSchemasInit);
+	fn.named_parameters["include_hidden"] = LogicalType::BOOLEAN;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

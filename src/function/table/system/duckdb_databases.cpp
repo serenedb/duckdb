@@ -11,6 +11,7 @@ struct DuckDBDatabasesData : public GlobalTableFunctionState {
 
 	vector<shared_ptr<AttachedDatabase>> entries;
 	idx_t offset;
+	bool include_hidden = false;
 };
 
 static unique_ptr<FunctionData> DuckDBDatabasesBind(ClientContext &context, TableFunctionBindInput &input,
@@ -47,11 +48,14 @@ static unique_ptr<FunctionData> DuckDBDatabasesBind(ClientContext &context, Tabl
 
 	names.emplace_back("options");
 	return_types.emplace_back(LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBDatabasesInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBDatabasesData>();
+	result->include_hidden = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>().include_hidden;
 
 	// scan all the schemas for tables and collect them and collect them
 	auto &db_manager = DatabaseManager::Get(context);
@@ -96,7 +100,7 @@ void DuckDBDatabasesFunction(ClientContext &context, TableFunctionInput &data_p,
 		auto &entry = data.entries[data.offset++];
 		auto &attached = *entry;
 		auto &catalog = attached.GetCatalog();
-		if (attached.GetVisibility() == AttachVisibility::HIDDEN) {
+		if (!data.include_hidden && attached.GetVisibility() == AttachVisibility::HIDDEN) {
 			continue;
 		}
 
@@ -134,8 +138,9 @@ void DuckDBDatabasesFunction(ClientContext &context, TableFunctionInput &data_p,
 }
 
 void DuckDBDatabasesFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(
-	    TableFunction("duckdb_databases", {}, DuckDBDatabasesFunction, DuckDBDatabasesBind, DuckDBDatabasesInit));
+	TableFunction fn("duckdb_databases", {}, DuckDBDatabasesFunction, DuckDBDatabasesBind, DuckDBDatabasesInit);
+	fn.named_parameters["include_hidden"] = LogicalType::BOOLEAN;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

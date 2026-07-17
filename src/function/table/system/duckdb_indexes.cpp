@@ -60,14 +60,17 @@ static unique_ptr<FunctionData> DuckDBIndexesBind(ClientContext &context, TableF
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBIndexesInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBIndexesData>();
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
 
 	// scan all the schemas for tables and collect them
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden);
 	for (auto &schema : schemas) {
 		schema.get().Scan(context, CatalogType::INDEX_ENTRY,
 		                  [&](CatalogEntry &entry) { result->entries.push_back(entry); });
@@ -160,7 +163,9 @@ void DuckDBIndexesFunction(ClientContext &context, TableFunctionInput &data_p, D
 }
 
 void DuckDBIndexesFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("duckdb_indexes", {}, DuckDBIndexesFunction, DuckDBIndexesBind, DuckDBIndexesInit));
+	TableFunction fn("duckdb_indexes", {}, DuckDBIndexesFunction, DuckDBIndexesBind, DuckDBIndexesInit);
+	fn.named_parameters["include_hidden"] = LogicalType::BOOLEAN;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb
