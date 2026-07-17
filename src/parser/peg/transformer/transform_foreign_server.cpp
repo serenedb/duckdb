@@ -33,40 +33,6 @@ static void TransformServerOptionsInto(PEGTransformer &transformer, ListParseRes
 	}
 }
 
-// UserMappingRole <- 'PUBLIC' / 'CURRENT_USER' / 'CURRENT_ROLE' / 'SESSION_USER' / 'USER' / ColId
-// The special role keywords are leaves; emit the lowered keyword text so the handler
-// can recognise them (Transform<string> would return the raw-cased keyword text).
-// Anything else is a ColId identifier. The node always materialises as
-// LIST -> CHOICE -> leaf, so unwrap those wrappers before classifying.
-static string TransformUserMappingRole(ParseResult &role_result) {
-	reference<ParseResult> node = role_result;
-	for (;;) {
-		auto &current = node.get();
-		if (current.type == ParseResultType::CHOICE) {
-			node = current.Cast<ChoiceParseResult>().GetResult();
-			continue;
-		}
-		if (current.type == ParseResultType::LIST) {
-			auto children = current.Cast<ListParseResult>().GetChildren();
-			if (children.size() != 1) {
-				throw InternalException("unexpected UserMappingRole parse shape");
-			}
-			node = children[0];
-			continue;
-		}
-		break;
-	}
-
-	auto &matched = node.get();
-	if (matched.type == ParseResultType::KEYWORD) {
-		return StringUtil::Lower(matched.Cast<KeywordParseResult>().keyword);
-	}
-	if (matched.type == ParseResultType::IDENTIFIER) {
-		return matched.Cast<IdentifierParseResult>().identifier;
-	}
-	throw InternalException("unexpected UserMappingRole parse shape");
-}
-
 // CREATE SERVER [IF NOT EXISTS] name FOREIGN DATA WRAPPER fdw OPTIONS (k 'v', ...)
 //   -> PRAGMA create_foreign_server('name', 'fdw', if_not_exists, k := 'v', ...)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateServerStatement(PEGTransformer &transformer,
@@ -115,60 +81,6 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropServerStatement(PEG
 	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value(server_name)));
 	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value::BOOLEAN(missing_ok)));
 	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value::BOOLEAN(cascade)));
-	return std::move(result);
-}
-
-// CREATE USER MAPPING [IF NOT EXISTS] FOR role SERVER name OPTIONS (k 'v', ...)
-//   -> PRAGMA create_user_mapping('role', 'name', if_not_exists, k := 'v', ...)
-unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateUserMappingStatement(PEGTransformer &transformer,
-                                                                                    ParseResult &parse_result) {
-	auto &list_pr = parse_result.Cast<ListParseResult>();
-	// Children:
-	//   0: 'CREATE'
-	//   1: 'USER'
-	//   2: 'MAPPING'
-	//   3: IfNotExists?
-	//   4: 'FOR'
-	//   5: UserMappingRole
-	//   6: 'SERVER'
-	//   7: ColId (server name -- a bare identifier, PG-style)
-	//   8: ServerOptions?
-	bool if_not_exists = list_pr.Child<OptionalParseResult>(3).HasResult();
-	auto role = TransformUserMappingRole(list_pr.GetChild(5));
-	auto server_name = transformer.Transform<string>(list_pr.GetChild(7));
-
-	auto result = make_uniq<PragmaStatement>();
-	result->info->name = "create_user_mapping";
-	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value(role)));
-	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value(server_name)));
-	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value::BOOLEAN(if_not_exists)));
-	TransformServerOptionsInto(transformer, list_pr, 8, *result->info);
-	return std::move(result);
-}
-
-// DROP USER MAPPING [IF EXISTS] FOR role SERVER name
-//   -> PRAGMA drop_user_mapping('role', 'name', missing_ok)
-unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropUserMappingStatement(PEGTransformer &transformer,
-                                                                                  ParseResult &parse_result) {
-	auto &list_pr = parse_result.Cast<ListParseResult>();
-	// Children:
-	//   0: 'DROP'
-	//   1: 'USER'
-	//   2: 'MAPPING'
-	//   3: IfExists?
-	//   4: 'FOR'
-	//   5: UserMappingRole
-	//   6: 'SERVER'
-	//   7: ColId (server name)
-	bool missing_ok = list_pr.Child<OptionalParseResult>(3).HasResult();
-	auto role = TransformUserMappingRole(list_pr.GetChild(5));
-	auto server_name = transformer.Transform<string>(list_pr.GetChild(7));
-
-	auto result = make_uniq<PragmaStatement>();
-	result->info->name = "drop_user_mapping";
-	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value(role)));
-	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value(server_name)));
-	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value::BOOLEAN(missing_ok)));
 	return std::move(result);
 }
 
