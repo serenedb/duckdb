@@ -13,6 +13,29 @@
 
 namespace duckdb {
 
+//! Bind data for the catalog-enumerating system table functions (duckdb_tables/indexes/databases) carrying
+//! the `include_hidden := true` named parameter, which makes them list HIDDEN attached databases too.
+struct DuckDBSystemIncludeHiddenBindData : public TableFunctionData {
+	bool include_hidden = false;
+
+	unique_ptr<FunctionData> Copy() const override {
+		auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+		result->include_hidden = include_hidden;
+		return std::move(result);
+	}
+	bool Equals(const FunctionData &other_p) const override {
+		auto &other = other_p.Cast<DuckDBSystemIncludeHiddenBindData>();
+		return include_hidden == other.include_hidden;
+	}
+	static bool ReadParameter(const TableFunctionBindInput &input) {
+		auto entry = input.named_parameters.find("include_hidden");
+		if (entry == input.named_parameters.end() || entry->second.IsNull()) {
+			return false;
+		}
+		return BooleanValue::Get(entry->second);
+	}
+};
+
 struct PragmaCollations {
 	static void RegisterFunction(BuiltinFunctions &set);
 };

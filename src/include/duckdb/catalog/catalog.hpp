@@ -455,7 +455,8 @@ public:
 	                                                                   const string &catalog_name);
 	DUCKDB_API static vector<reference<SchemaCatalogEntry>> GetSchemas(CatalogEntryRetriever &retriever,
 	                                                                   const string &catalog_name);
-	DUCKDB_API static vector<reference<SchemaCatalogEntry>> GetAllSchemas(ClientContext &context);
+	DUCKDB_API static vector<reference<SchemaCatalogEntry>> GetAllSchemas(ClientContext &context,
+	                                                                      bool include_hidden = false);
 
 	static vector<reference<CatalogEntry>> GetAllEntries(ClientContext &context, CatalogType catalog_type);
 

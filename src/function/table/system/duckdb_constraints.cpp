@@ -90,14 +90,17 @@ static unique_ptr<FunctionData> DuckDBConstraintsBind(ClientContext &context, Ta
 	names.emplace_back("referenced_column_names");
 	return_types.push_back(LogicalType::LIST(LogicalType::VARCHAR));
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBConstraintsInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBConstraintsData>();
 
 	// scan all the schemas for tables and collect them
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden);
 
 	for (auto &schema : schemas) {
 		vector<reference<CatalogEntry>> entries;
@@ -337,8 +340,9 @@ void DuckDBConstraintsFunction(ClientContext &context, TableFunctionInput &data_
 }
 
 void DuckDBConstraintsFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("duckdb_constraints", {}, DuckDBConstraintsFunction, DuckDBConstraintsBind,
-	                              DuckDBConstraintsInit));
+	TableFunction fn("duckdb_constraints", {}, DuckDBConstraintsFunction, DuckDBConstraintsBind, DuckDBConstraintsInit);
+	fn.named_parameters["include_hidden"] = LogicalType::BOOLEAN;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb
