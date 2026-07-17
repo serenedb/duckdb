@@ -1072,7 +1072,7 @@ void GetIndexRemovalTargets(IndexEntry &entry, IndexRemovalType removal_type, In
 
 void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableIndexList &indexes,
                                            Vector &row_identifiers, idx_t count, IndexRemovalType removal_type,
-                                           optional_idx active_checkpoint) {
+                                           optional_idx active_checkpoint, bool skip_external) {
 	// Collect all Indexed columns on the table.
 	unordered_set<column_t> indexed_column_id_set;
 
@@ -1122,6 +1122,9 @@ void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableInd
 
 	for (auto &entry : indexes.IndexEntries()) {
 		auto &index = *entry.index;
+		if (skip_external && index.IsBound() && index.Cast<BoundIndex>().IsExternal()) {
+			continue;
+		}
 		if (index.IsBound()) {
 			lock_guard<mutex> guard(entry.lock);
 
@@ -2321,8 +2324,11 @@ void RowGroupCollection::VerifyNewConstraint(const QueryContext &context, DataTa
 			executor.ExecuteExpression(scan_chunk, result);
 			for (auto entry : result.Values<int32_t>()) {
 				if (entry.IsValid() && entry.GetValue() == 0) {
+					auto &config = DBConfig::Get(info->GetDB());
+					auto &table_name = info->GetTableName().GetIdentifierName();
 					throw ConstraintException("CHECK constraint failed on table %s with expression CHECK(%s)",
-					                          info->GetTableName(), check.expression->ToString());
+					                          config.MapErrorEntityName(table_name),
+					                          config.MapErrorExpression(table_name, check.expression->ToString()));
 				}
 			}
 		}
@@ -2360,7 +2366,10 @@ void RowGroupCollection::VerifyNewConstraint(const QueryContext &context, DataTa
 		// Verify the NOT NULL constraint.
 		if (VectorOperations::HasNull(scan_chunk.data[0])) {
 			auto name = parent.Columns()[physical_index].GetName();
-			throw ConstraintException("NOT NULL constraint failed: %s.%s", info->GetTableName(), name);
+			auto &config = DBConfig::Get(info->GetDB());
+			auto &table_name = info->GetTableName().GetIdentifierName();
+			throw ConstraintException("NOT NULL constraint failed: %s.%s", config.MapErrorEntityName(table_name),
+			                          config.MapErrorColumnName(table_name, name.GetIdentifierName()));
 		}
 	}
 }

@@ -161,6 +161,18 @@ const DBConfig &DBConfig::GetConfig(const DatabaseInstance &db) {
 	return db.config;
 }
 
+string DBConfig::MapErrorEntityName(string name) const {
+	return error_entity_name_mapper ? error_entity_name_mapper(name) : name;
+}
+
+string DBConfig::MapErrorColumnName(const string &entity, string column) const {
+	return error_column_name_mapper ? error_column_name_mapper(entity, column) : column;
+}
+
+string DBConfig::MapErrorExpression(const string &entity, string expression) const {
+	return error_expression_mapper ? error_expression_mapper(entity, expression) : expression;
+}
+
 const ClientConfig &ClientConfig::GetConfig(const ClientContext &context) {
 	return context.config;
 }

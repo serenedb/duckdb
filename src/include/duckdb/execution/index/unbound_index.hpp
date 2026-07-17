@@ -26,13 +26,8 @@ struct ReplayRange {
 	// buffer for operations to replay for this range.
 	idx_t start;
 	idx_t end;
-	// WAL byte offset of the entry that produced this range (within the current WAL generation). An external
-	// index whose payload lives outside the WAL (e.g. a search index) compares this against its own persisted
-	// durable offset to skip operations it already made durable before the crash.
-	idx_t commit_offset;
-	explicit ReplayRange(const BufferedIndexReplay replay_type, const idx_t start_p, const idx_t end_p,
-	                     const idx_t commit_offset_p = 0)
-	    : type(replay_type), start(start_p), end(end_p), commit_offset(commit_offset_p) {
+	explicit ReplayRange(const BufferedIndexReplay replay_type, const idx_t start_p, const idx_t end_p)
+	    : type(replay_type), start(start_p), end(end_p) {
 	}
 };
 

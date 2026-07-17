@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/planner/table_filter.hpp"
 #include "duckdb/storage/data_table.hpp"
+#include "duckdb/storage/external_index_batch.hpp"
 #include "duckdb/storage/partial_block_manager.hpp"
 #include "duckdb/storage/table/append_state.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
@@ -13,6 +14,21 @@
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 
 namespace duckdb {
+
+namespace {
+
+//! An external index tokenizes on worker threads, so it keeps a chunk alive past the iteration that
+//! produced it -- it cannot be handed a buffer the scan is about to recycle.
+bool HasExternalIndex(TableIndexList &index_list) {
+	for (auto &index : index_list.Indexes()) {
+		if (index.IsBound() && index.Cast<BoundIndex>().IsExternal()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+} // namespace
 
 LocalTableStorage::LocalTableStorage(ClientContext &context, DataTable &table)
     : context(context), table_ref(table), allocator(Allocator::Get(table.db)), deleted_rows(0),
@@ -179,18 +195,73 @@ ErrorData LocalTableStorage::AppendToIndexes(DuckTransaction &transaction, RowGr
 		mapped_column_ids.emplace_back(col);
 	}
 	std::sort(mapped_column_ids.begin(), mapped_column_ids.end());
-	auto active_checkpoint = transaction.GetTransactionManager().Cast<DuckTransactionManager>().GetActiveCheckpoint();
+	auto &duck_manager = transaction.GetTransactionManager().Cast<DuckTransactionManager>();
+	auto active_checkpoint = duck_manager.GetActiveCheckpoint();
 	auto checkpoint_id = active_checkpoint == MAX_TRANSACTION_ID ? optional_idx() : active_checkpoint;
 
-	// However, because the bound expressions of the indexes (and their bound
-	// column references) are in relation to ALL table columns, we create an
-	// empty table chunk based on the table types. It references the indexed columns,
-	// and contains nothing for all non-indexed columns.
+	// During WAL replay, external indexes are fed at entry granularity (wal_replay.cpp publishes each
+	// insert/row-group chunk shared and feeds them there, with the final row ids); skip them in the scan
+	// feed below to avoid double-feeding.
+	// 0 means "not replaying": every WAL starts with an unchecksummed WAL_VERSION header entry, so a real
+	// entry never sits at offset 0 and the sentinel cannot collide with one.
+	const bool skip_external = duck_manager.GetReplayCommitOffset() != 0;
+
+	if (!skip_external && HasExternalIndex(index_list)) {
+		return AppendBatchesToIndexes(transaction, source, index_list, table_types, mapped_column_ids, checkpoint_id,
+		                              start_row);
+	}
+	return AppendChunksToIndexes(transaction, source, index_list, table_types, mapped_column_ids, checkpoint_id,
+	                             skip_external, start_row);
+}
+
+ErrorData LocalTableStorage::AppendBatchesToIndexes(DuckTransaction &transaction, RowGroupCollection &source,
+                                                    TableIndexList &index_list, const vector<LogicalType> &table_types,
+                                                    const vector<StorageIndex> &mapped_column_ids,
+                                                    optional_idx checkpoint_id, row_t &start_row) {
+	vector<LogicalType> scan_types;
+	scan_types.reserve(mapped_column_ids.size());
+	for (auto &id : mapped_column_ids) {
+		scan_types.push_back(source.GetTypes()[id.GetPrimaryIndex()]);
+	}
+	TableScanState scan_state;
+	scan_state.Initialize(mapped_column_ids, nullptr);
+	source.InitializeScan(QueryContext(), scan_state.local_state, mapped_column_ids, nullptr);
+
+	ErrorData error;
+	for (;;) {
+		auto batch = make_shared_ptr<ExternalIndexBatch>();
+		// The batch also holds this storage: LocalStorage::Commit drops it while those readers are still
+		// running, and the scanned strings point into its segments.
+		batch->source = shared_from_this();
+		batch->data.Initialize(source.GetAllocator(), scan_types);
+		scan_state.local_state.Scan(transaction, batch->data);
+		const auto count = batch->data.size();
+		if (count == 0) {
+			break;
+		}
+		batch->Finalize(table_types, mapped_column_ids, start_row);
+		error = DataTable::AppendToIndexes(index_list, delete_indexes, batch->view, batch->data, mapped_column_ids,
+		                                   start_row, index_append_mode, checkpoint_id, false, batch);
+		if (error.HasError()) {
+			break;
+		}
+		start_row += UnsafeNumericCast<row_t>(count);
+	}
+	return error;
+}
+
+ErrorData LocalTableStorage::AppendChunksToIndexes(DuckTransaction &transaction, RowGroupCollection &source,
+                                                   TableIndexList &index_list, const vector<LogicalType> &table_types,
+                                                   const vector<StorageIndex> &mapped_column_ids,
+                                                   optional_idx checkpoint_id, bool skip_external, row_t &start_row) {
+	// Because the bound expressions of the indexes (and their bound column references) are in relation to
+	// ALL table columns, we create an empty table chunk based on the table types. It references the indexed
+	// columns, and contains nothing for all non-indexed columns.
 	DataChunk table_chunk;
 	table_chunk.InitializeEmpty(table_types);
 
-	// index_chunk scans are created here in the mapped_column_ids ordering (see note above).
 	ErrorData error;
+	// index_chunk scans are created here in the mapped_column_ids ordering (see note above).
 	for (auto &index_chunk : source.Chunks(transaction, mapped_column_ids)) {
 		D_ASSERT(index_chunk.ColumnCount() == mapped_column_ids.size());
 		for (idx_t i = 0; i < mapped_column_ids.size(); i++) {
@@ -202,7 +273,7 @@ ErrorData LocalTableStorage::AppendToIndexes(DuckTransaction &transaction, RowGr
 		// We need the table chunk for the bound indexes,
 		// and the index chunk for the unbound indexes (to buffer it).
 		error = DataTable::AppendToIndexes(index_list, delete_indexes, table_chunk, index_chunk, mapped_column_ids,
-		                                   start_row, index_append_mode, checkpoint_id);
+		                                   start_row, index_append_mode, checkpoint_id, skip_external);
 		if (error.HasError()) {
 			break;
 		}

@@ -36,6 +36,7 @@
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/storage/data_table.hpp"
+#include "duckdb/storage/external_index_batch.hpp"
 #include "duckdb/storage/table/row_group_collection.hpp"
 
 namespace duckdb {
@@ -515,6 +516,7 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 
 	// Publish each replayed entry's byte offset on the transaction manager so unbound-index buffering can
 	// stamp its replay ranges; reset to 0 on any exit so live (non-replay) ops never inherit a stale offset.
+	// The shared replay chunk is dropped on exit too -- external indexes hold their own references.
 	auto &duck_manager = DuckTransactionManager::Get(database);
 	struct ReplayOffsetGuard {
 		DuckTransactionManager &manager;
@@ -579,6 +581,7 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 		// replay the checkpoint WAL and return
 		return ReplayLog(std::move(checkpoint_handle), WALReplayState::CHECKPOINT_WAL);
 	}
+	duck_manager.SetReplaySuccessOffset(successful_offset);
 	auto init_state = all_succeeded ? WALInitState::UNINITIALIZED : WALInitState::UNINITIALIZED_REQUIRES_TRUNCATE;
 	return make_uniq<WriteAheadLog>(storage_manager, wal_path, successful_offset, init_state);
 }
@@ -1148,7 +1151,8 @@ void WriteAheadLogDeserializer::ReplayUseTable() {
 }
 
 void WriteAheadLogDeserializer::ReplayInsert() {
-	DataChunk chunk;
+	auto batch = make_shared_ptr<ExternalIndexBatch>();
+	auto &chunk = batch->data;
 	deserializer.ReadObject(101, "chunk", [&](Deserializer &object) { chunk.Deserialize(object); });
 	if (DeserializeOnly()) {
 		return;
@@ -1157,9 +1161,43 @@ void WriteAheadLogDeserializer::ReplayInsert() {
 		throw InternalException("Corrupt WAL: insert without table");
 	}
 
+	// Feed external indexes here, at entry granularity, with the final row ids this append receives at
+	// commit: base next row id plus the rows this transaction already appended (appends only extend the
+	// table and deletes never renumber). WAL v2 batches a whole transaction into one entry, so the
+	// commit-time scan feed would only ever see the last published chunk -- externals are skipped there
+	// instead. The batch is published shared so the index can adopt it from asynchronous tasks -- rows
+	// and row ids both -- without copying either; it only becomes retirable once the entry's commit
+	// offset is passed (torn-tail rollback safety).
+	auto &storage = state.current_table->GetStorage();
+	auto &index_list = storage.GetDataTableInfo()->GetIndexes();
+	bool has_external = false;
+	for (auto &index : index_list.Indexes()) {
+		if (index.IsBound() && index.Cast<BoundIndex>().IsExternal()) {
+			has_external = true;
+			break;
+		}
+	}
+	if (has_external) {
+		auto &local_storage = LocalStorage::Get(context, storage.db);
+		const auto row_start = NumericCast<row_t>(storage.GetNextRowId() + local_storage.AddedRows(storage));
+		batch->FinalizeInTableLayout(row_start);
+		for (auto &index : index_list.Indexes()) {
+			if (!index.IsBound() || !index.Cast<BoundIndex>().IsExternal()) {
+				continue;
+			}
+			auto &bound_index = index.Cast<BoundIndex>();
+			IndexAppendInfo external_append_info(IndexAppendMode::INSERT_DUPLICATES, nullptr);
+			IndexLock l;
+			bound_index.InitializeLock(l);
+			auto external_error = bound_index.Append(l, batch, external_append_info);
+			if (external_error.HasError()) {
+				external_error.Throw();
+			}
+		}
+	}
+
 	// Append to the current table without constraint verification.
 	vector<unique_ptr<BoundConstraint>> bound_constraints;
-	auto &storage = state.current_table->GetStorage();
 	storage.LocalWALAppend(*state.current_table, context, chunk, bound_constraints);
 }
 
@@ -1192,29 +1230,104 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 
 	// if we have any indexes - scan the row groups and add data to the indexes
 	auto &indexes = table_info->GetIndexes();
+	bool only_external = !indexes.Empty();
+	for (auto &index : indexes.Indexes()) {
+		if (!index.IsBound() || !index.Cast<BoundIndex>().IsExternal()) {
+			only_external = false;
+			break;
+		}
+	}
+	if (only_external) {
+		// External indexes are fed by one scan of the merged range over the replay transaction,
+		// partitioned across workers the replay thread help-executes -- no second scan, no copy,
+		// no side connection. Merge first so the scan reads the committed rows in place.
+		const auto range_start = NumericCast<row_t>(storage.GetNextRowId());
+		const auto range_count = new_row_groups.GetTotalRows();
+		storage.MergeStorage(new_row_groups, nullptr);
+		auto &config = DBConfig::GetConfig(context);
+		if (range_count != 0 && config.external_range_replay) {
+			config.external_range_replay(context, storage, range_start, range_count);
+		}
+		return;
+	}
 	if (!indexes.Empty()) {
 		auto &transaction = DuckTransaction::Get(context, db);
 		// we have indexes - append
 		vector<StorageIndex> column_ids;
+		vector<LogicalType> scan_types;
 		for (auto &col : state.current_table->GetColumns().Physical()) {
 			column_ids.emplace_back(col.StorageOid());
 		}
+		auto &types = new_row_groups.GetTypes();
+		for (idx_t i = 0; i < column_ids.size(); i++) {
+			scan_types.push_back(types[column_ids[i].GetPrimaryIndex()]);
+		}
+		bool has_external = false;
+		for (auto &index : indexes.Indexes()) {
+			if (index.IsBound() && index.Cast<BoundIndex>().IsExternal()) {
+				has_external = true;
+				break;
+			}
+		}
+		auto &manager = DuckTransactionManager::Get(db);
 		Vector row_id_vector(LogicalType::ROW_TYPE, STANDARD_VECTOR_SIZE);
 		auto current_row_id = storage.GetNextRowId();
-		for (auto &chunk : new_row_groups.Chunks(transaction, column_ids)) {
-			auto row_id_writer = FlatVector::Writer<row_t>(row_id_vector, chunk.size());
-			for (idx_t r = 0; r < chunk.size(); r++) {
-				row_id_writer.WriteValue(NumericCast<row_t>(current_row_id + r));
+		TableScanState scan_state;
+		scan_state.Initialize(column_ids, nullptr);
+		new_row_groups.InitializeScan(QueryContext(), scan_state.local_state, column_ids, nullptr);
+		DataChunk scan_chunk;
+		scan_chunk.Initialize(new_row_groups.GetAllocator(), scan_types);
+		for (;;) {
+			// External indexes reference the chunk from asynchronous replay tasks, past this scan
+			// iteration's block pins. Rather than scanning into a reused buffer and copying it out,
+			// scan straight into a fresh chunk they can own: one allocation instead of an allocation
+			// plus a full payload copy, and only when such an index is present.
+			shared_ptr<ExternalIndexBatch> batch;
+			DataChunk *target = &scan_chunk;
+			if (has_external) {
+				// No `source` pin, unlike the local-storage producer: scanned strings point into
+				// new_row_groups' segments, and the MergeStorage below *moves* those row groups into
+				// the table (MoveSegments) rather than copying rows out, so the memory outlives this
+				// collection. Only the empty shell is destroyed here.
+				batch = make_shared_ptr<ExternalIndexBatch>();
+				batch->data.Initialize(new_row_groups.GetAllocator(), scan_types);
+				target = &batch->data;
+			} else {
+				scan_chunk.Reset();
 			}
-			current_row_id += chunk.size();
+			scan_state.local_state.Scan(transaction, *target);
+			const auto count = target->size();
+			if (count == 0) {
+				break;
+			}
+			Vector *feed_row_ids = &row_id_vector;
+			if (batch) {
+				// The scan already produces full table layout here, so the batch's view just
+				// references it; row ids are generated into the batch and adopted, not copied.
+				batch->FinalizeInTableLayout(NumericCast<row_t>(current_row_id));
+				feed_row_ids = &batch->row_ids;
+			} else {
+				auto row_id_writer = FlatVector::Writer<row_t>(row_id_vector, count);
+				for (idx_t r = 0; r < count; r++) {
+					row_id_writer.WriteValue(NumericCast<row_t>(current_row_id + r));
+				}
+			}
+			current_row_id += count;
 			for (auto &index : indexes.Indexes()) {
 				if (!index.IsBound()) {
 					auto &unbound_index = index.Cast<UnboundIndex>();
-					unbound_index.BufferChunk(chunk, row_id_vector, column_ids, BufferedIndexReplay::INSERT_ENTRY);
+					unbound_index.BufferChunk(*target, *feed_row_ids, column_ids, BufferedIndexReplay::INSERT_ENTRY);
 					continue;
 				}
 				auto &bound_index = index.Cast<BoundIndex>();
-				bound_index.Append(chunk, row_id_vector);
+				if (batch && bound_index.IsExternal()) {
+					IndexAppendInfo info;
+					IndexLock l;
+					bound_index.InitializeLock(l);
+					bound_index.Append(l, batch, info);
+					continue;
+				}
+				bound_index.Append(*target, *feed_row_ids);
 			}
 		}
 	}
@@ -1242,6 +1355,14 @@ void WriteAheadLogDeserializer::ReplayDelete() {
 	for (idx_t i = 0; i < chunk.size(); i++) {
 		if (source_ids[i] >= UnsafeNumericCast<row_t>(next_row_id)) {
 			throw SerializationException("invalid row ID delete in WAL");
+		}
+	}
+	// Feed external indexes here, at entry granularity and outside any storage or commit locks (their
+	// replay pipeline may block waiting for scheduler tasks, which must never happen under the locks the
+	// commit-time RemoveFromIndexes path holds); that path skips them during replay.
+	for (auto &index : storage.GetDataTableInfo()->GetIndexes().Indexes()) {
+		if (index.IsBound() && index.Cast<BoundIndex>().IsExternal()) {
+			index.Cast<BoundIndex>().Delete(chunk, row_identifiers);
 		}
 	}
 	TableDeleteState delete_state;

@@ -336,6 +336,12 @@ IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, c
 		}
 		// Bound: move new storage info into bound_infos, then reference it
 		auto &bound_index = index.Cast<BoundIndex>();
+		if (bound_index.IsExternal()) {
+			// Externally-stored payload: nothing to write, but the barrier still runs so the
+			// index can force itself durable (or veto) before the checkpoint truncates the WAL.
+			bound_index.CheckpointBarrier();
+			continue;
+		}
 		auto storage_info = bound_index.SerializeToDisk(context, info.options);
 		D_ASSERT(storage_info.IsValid() && !storage_info.name.empty());
 		result.bound_infos.push_back(std::move(storage_info));

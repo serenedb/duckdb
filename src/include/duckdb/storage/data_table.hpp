@@ -52,6 +52,7 @@ struct DataTableInfo;
 struct LocalAppendState;
 struct ParallelTableScanState;
 struct TableAppendState;
+struct ExternalIndexBatch;
 class CommitDropState;
 
 enum class DataTableVersion {
@@ -212,10 +213,13 @@ public:
 
 	//! Appends a chunk with the row ids [row_start, ..., row_start + chunk.size()] to all indexes of the table.
 	//! If an index is bound, it appends table_chunk. Else, it buffers index_chunk.
+	//! `batch`, when given, is table_chunk's owner: it carries the row ids already and an external
+	//! index may keep it past this call, so such an index is handed the batch instead of the chunk.
 	static ErrorData AppendToIndexes(TableIndexList &indexes, optional_ptr<TableIndexList> delete_indexes,
 	                                 DataChunk &table_chunk, DataChunk &index_chunk,
 	                                 const vector<StorageIndex> &mapped_column_ids, row_t row_start,
-	                                 const IndexAppendMode index_append_mode, optional_idx active_checkpoint);
+	                                 const IndexAppendMode index_append_mode, optional_idx active_checkpoint,
+	                                 bool skip_external = false, const shared_ptr<ExternalIndexBatch> &batch = nullptr);
 	ErrorData AppendToIndexes(optional_ptr<TableIndexList> delete_indexes, DataChunk &table_chunk,
 	                          DataChunk &index_chunk, const vector<StorageIndex> &mapped_column_ids, row_t row_start,
 	                          const IndexAppendMode index_append_mode);

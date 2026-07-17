@@ -811,12 +811,15 @@ string ART::GenerateErrorKeyName(DataChunk &input, idx_t row_idx) {
 	expr_chunk.Initialize(Allocator::DefaultAllocator(), logical_types);
 	ExecuteExpressions(input, expr_chunk);
 
+	auto &config = DBConfig::Get(db);
 	string key_name;
 	for (idx_t k = 0; k < expr_chunk.ColumnCount(); k++) {
 		if (k > 0) {
 			key_name += ", ";
 		}
-		key_name += unbound_expressions[k]->GetName() + ": " + expr_chunk.data[k].GetValue(row_idx).ToString();
+		key_name +=
+		    config.MapErrorColumnName(name.GetIdentifierName(), unbound_expressions[k]->GetName().GetIdentifierName()) +
+		    ": " + expr_chunk.data[k].GetValue(row_idx).ToString();
 	}
 	return key_name;
 }

@@ -572,8 +572,9 @@ catalog_entry_set_t DependencyManager::CheckDropDependencies(CatalogTransaction 
 		}
 	});
 	if (!blocking_dependents.empty()) {
-		string error_string =
-		    StringUtil::Format("Cannot drop entry \"%s\" because there are entries that depend on it.\n", object.name);
+		string error_string = StringUtil::Format(
+		    "Cannot drop entry \"%s\" because there are entries that depend on it.\n",
+		    DBConfig::Get(catalog.GetAttached()).MapErrorEntityName(object.name.GetIdentifierName()));
 		error_string += CollectDependents(transaction, blocking_dependents, info);
 		error_string += "Use DROP...CASCADE to drop all dependents.";
 		throw DependencyException(error_string);
@@ -722,9 +723,10 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			break;
 		}
 		if (disallow_alter) {
-			throw DependencyException("Cannot alter entry \"%s\" because there are entries that "
-			                          "depend on it.",
-			                          old_obj.name);
+			throw DependencyException(
+			    "Cannot alter entry \"%s\" because there are entries that "
+			    "depend on it.",
+			    DBConfig::Get(catalog.GetAttached()).MapErrorEntityName(old_obj.name.GetIdentifierName()));
 		}
 
 		auto dep_info = DependencyInfo::FromDependent(dep);

@@ -49,6 +49,7 @@ class CastFunctionSet;
 class CollationBinding;
 class ClientContext;
 class Binder;
+class DataTable;
 class ErrorManager;
 class CompressionFunction;
 class TableFunctionRef;
@@ -201,6 +202,22 @@ public:
 	//! Mandatory per-plan check, run independent of the optimizer so it cannot be
 	//! bypassed via disable_optimizer (security enforcement rides here).
 	void (*access_check_function)(ClientContext &context, Binder &binder) = nullptr;
+	//! Map storage-internal entity/column identifiers and expression texts to
+	//! user-facing names inside constraint-violation messages; identity when
+	//! unset. Only ever called while constructing an error.
+	string (*error_entity_name_mapper)(const string &name) = nullptr;
+	string (*error_column_name_mapper)(const string &entity, const string &column) = nullptr;
+	string (*error_expression_mapper)(const string &entity, const string &expression) = nullptr;
+	//! Called whenever a fresh DataTable comes alive (create, checkpoint load, WAL
+	//! replay) so the host can inject externally-stored indexes into its index list
+	//! before any WAL operations replay against the table.
+	void (*external_index_provider)(DataTable &table) = nullptr;
+	//! Replay a merged ROW_GROUP_DATA range into every external index of the table.
+	//! Called on the replay thread after the row groups are merged, with the replay
+	//! transaction; the host scans the range once over that transaction (partitioned
+	//! across workers it help-executes) and feeds all external indexes in place, then
+	//! returns once the feed is durable-committable. No copy, no side connection.
+	void (*external_range_replay)(ClientContext &context, DataTable &table, row_t row_start, idx_t count) = nullptr;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);
@@ -208,6 +225,10 @@ public:
 	DUCKDB_API static DBConfig &Get(AttachedDatabase &db);
 	DUCKDB_API static const DBConfig &GetConfig(const ClientContext &context);
 	DUCKDB_API static const DBConfig &GetConfig(const DatabaseInstance &db);
+	DUCKDB_API string MapErrorEntityName(string name) const;
+	DUCKDB_API string MapErrorColumnName(const string &entity, string column) const;
+	DUCKDB_API string MapErrorExpression(const string &entity, string expression) const;
+
 	DUCKDB_API static vector<ConfigurationOption> GetOptions();
 	DUCKDB_API static vector<ConfigurationAlias> GetAliases();
 	DUCKDB_API static idx_t GetOptionCount();

@@ -1,4 +1,6 @@
 #include "duckdb/storage/data_table.hpp"
+
+#include "duckdb/storage/external_index_batch.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 
@@ -82,6 +84,11 @@ DataTable::DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_m
 		D_ASSERT(row_groups->GetTotalRows() == 0);
 	}
 	row_groups->Verify();
+
+	auto &config = DBConfig::GetConfig(db.GetDatabase());
+	if (config.external_index_provider) {
+		config.external_index_provider(*this);
+	}
 }
 
 DataTable::DataTable(ClientContext &context, DataTable &parent, ColumnDefinition &new_column, Expression &default_value)
@@ -667,7 +674,10 @@ static void VerifyNotNullConstraint(TableCatalogEntry &table, const Vector &vect
 		return;
 	}
 
-	throw ConstraintException("NOT NULL constraint failed: %s.%s", table.name, col_name);
+	auto &config = DBConfig::Get(table.ParentCatalog().GetAttached());
+	auto &table_name = table.name.GetIdentifierName();
+	throw ConstraintException("NOT NULL constraint failed: %s.%s", config.MapErrorEntityName(table_name),
+	                          config.MapErrorColumnName(table_name, col_name.GetIdentifierName()));
 }
 
 // To avoid throwing an error at SELECT, instead this moves the error detection to INSERT
@@ -692,20 +702,30 @@ static void VerifyCheckConstraintExpression(ClientContext &context, TableCatalog
                                             DataChunk &chunk, const string &check_text) {
 	ExpressionExecutor executor(context, expr);
 	Vector result(LogicalType::INTEGER);
+	auto map_names = [&]() {
+		auto &config = DBConfig::Get(table.ParentCatalog().GetAttached());
+		auto &table_name = table.name.GetIdentifierName();
+		return std::pair<string, string>(config.MapErrorEntityName(table_name),
+		                                 config.MapErrorExpression(table_name, check_text));
+	};
 	try {
 		executor.ExecuteExpression(chunk, result);
 	} catch (std::exception &ex) {
 		ErrorData error(ex);
-		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Error: %s)", table.name,
-		                          check_text, error.RawMessage());
+		auto names = map_names();
+		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Error: %s)", names.first,
+		                          names.second, error.RawMessage());
 	} catch (...) {
 		// LCOV_EXCL_START
-		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Unknown Error)", table.name,
-		                          check_text);
+		auto names = map_names();
+		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Unknown Error)", names.first,
+		                          names.second);
 	} // LCOV_EXCL_STOP
 	for (auto entry : result.Values<int32_t>()) {
 		if (entry.IsValid() && entry.GetValue() == 0) {
-			throw ConstraintException("CHECK constraint failed on table %s with expression %s", table.name, check_text);
+			auto names = map_names();
+			throw ConstraintException("CHECK constraint failed on table %s with expression %s", names.first,
+			                          names.second);
 		}
 	}
 }
@@ -1468,10 +1488,14 @@ void DataTable::RevertAppend(DuckTransaction &transaction, idx_t start_row, idx_
 ErrorData DataTable::AppendToIndexes(TableIndexList &indexes, optional_ptr<TableIndexList> delete_indexes,
                                      DataChunk &table_chunk, DataChunk &index_chunk,
                                      const vector<StorageIndex> &mapped_column_ids, row_t row_start,
-                                     const IndexAppendMode index_append_mode, optional_idx active_checkpoint) {
-	// Generate the vector of row identifiers.
-	Vector row_ids(LogicalType::ROW_TYPE);
-	VectorOperations::GenerateSequence(row_ids, table_chunk.size(), row_start, 1);
+                                     const IndexAppendMode index_append_mode, optional_idx active_checkpoint,
+                                     bool skip_external, const shared_ptr<ExternalIndexBatch> &batch) {
+	// A batch already carries these, generated over the same range.
+	Vector own_row_ids(LogicalType::ROW_TYPE);
+	if (!batch) {
+		VectorOperations::GenerateSequence(own_row_ids, table_chunk.size(), row_start, 1);
+	}
+	Vector &row_ids = batch ? batch->row_ids : own_row_ids;
 
 	vector<reference<BoundIndex>> already_appended;
 	bool append_failed = false;
@@ -1489,6 +1513,10 @@ ErrorData DataTable::AppendToIndexes(TableIndexList &indexes, optional_ptr<Table
 		}
 
 		auto &bound_index = index.Cast<BoundIndex>();
+		if (skip_external && bound_index.IsExternal()) {
+			// Already fed directly from the shared replay chunk by the caller.
+			continue;
+		}
 
 		// Find the matching delete index.
 		optional_ptr<BoundIndex> delete_index;
@@ -1537,7 +1565,13 @@ ErrorData DataTable::AppendToIndexes(TableIndexList &indexes, optional_ptr<Table
 
 			// Append the mock chunk containing empty columns for non-key columns.
 			IndexAppendInfo index_append_info(index_append_mode, delete_index);
-			error = append_index->Append(table_chunk, row_ids, index_append_info);
+			if (batch && append_index->IsExternal()) {
+				IndexLock l;
+				append_index->InitializeLock(l);
+				error = append_index->Append(l, batch, index_append_info);
+			} else {
+				error = append_index->Append(table_chunk, row_ids, index_append_info);
+			}
 		} catch (std::exception &ex) {
 			error = ErrorData(ex);
 		}
@@ -1592,7 +1626,11 @@ void DataTable::RevertIndexAppend(TableAppendState &state, DataChunk &chunk, Vec
 
 void DataTable::RemoveFromIndexes(const QueryContext &context, Vector &row_identifiers, idx_t count,
                                   IndexRemovalType removal_type, optional_idx active_checkpoint) {
-	row_groups->RemoveFromIndexes(context, info->indexes, row_identifiers, count, removal_type, active_checkpoint);
+	// During WAL replay external indexes are fed their deletes at entry granularity (wal_replay.cpp),
+	// outside the locks held here.
+	const bool skip_external = DuckTransactionManager::Get(db).GetReplayCommitOffset() != 0;
+	row_groups->RemoveFromIndexes(context, info->indexes, row_identifiers, count, removal_type, active_checkpoint,
+	                              skip_external);
 }
 
 //===--------------------------------------------------------------------===//

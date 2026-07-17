@@ -93,7 +93,9 @@ SinkResultType PhysicalCreateIndex::Sink(ExecutionContext &context, DataChunk &c
 	if (alter_table_info) {
 		for (idx_t i = 0; i < lstate.key_chunk.ColumnCount(); i++) {
 			if (VectorOperations::HasNull(lstate.key_chunk.data[i])) {
-				throw ConstraintException("NOT NULL constraint failed: %s", info->GetIndexName());
+				throw ConstraintException(
+				    "NOT NULL constraint failed: %s",
+				    DBConfig::GetConfig(context.client).MapErrorEntityName(info->GetIndexName().GetIdentifierName()));
 			}
 		}
 	}

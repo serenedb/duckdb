@@ -156,8 +156,10 @@ private:
 	//! The vector verification (debug setting)
 	DebugVectorVerification debug_vector_verification = DebugVectorVerification::NONE;
 
-private:
-	// it is possible to create an expression executor without a ClientContext - but it should be avoided
+public:
+	// A context-less executor: valid only for already-bound expressions whose
+	// execution needs no ClientContext (e.g. index-expression evaluation, like
+	// BoundIndex). Avoid for anything that may touch the connection.
 	DUCKDB_API ExpressionExecutor();
 	DUCKDB_API explicit ExpressionExecutor(const vector<unique_ptr<Expression>> &exprs);
 };
