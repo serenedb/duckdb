@@ -1265,13 +1265,13 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(ClientContext &context
 	return GetSchemas(retriever, catalog_name);
 }
 
-vector<reference<SchemaCatalogEntry>> Catalog::GetAllSchemas(ClientContext &context) {
+vector<reference<SchemaCatalogEntry>> Catalog::GetAllSchemas(ClientContext &context, bool include_hidden) {
 	vector<reference<SchemaCatalogEntry>> result;
 
 	auto &db_manager = DatabaseManager::Get(context);
 	auto databases = db_manager.GetDatabases(context);
 	for (auto &database : databases) {
-		if (database->GetVisibility() == AttachVisibility::HIDDEN) {
+		if (!include_hidden && database->GetVisibility() == AttachVisibility::HIDDEN) {
 			continue;
 		}
 		auto &catalog = database->GetCatalog();
