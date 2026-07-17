@@ -24,7 +24,7 @@ ScalarMacroCatalogEntry::ScalarMacroCatalogEntry(Catalog &catalog, SchemaCatalog
 unique_ptr<CatalogEntry> ScalarMacroCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateMacroInfo>();
-	auto result = make_uniq<ScalarMacroCatalogEntry>(catalog, schema, cast_info);
+	auto result = make_uniq<ScalarMacroCatalogEntry>(catalog, Schema(), cast_info);
 	return std::move(result);
 }
 
@@ -35,13 +35,13 @@ TableMacroCatalogEntry::TableMacroCatalogEntry(Catalog &catalog, SchemaCatalogEn
 unique_ptr<CatalogEntry> TableMacroCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateMacroInfo>();
-	auto result = make_uniq<TableMacroCatalogEntry>(catalog, schema, cast_info);
+	auto result = make_uniq<TableMacroCatalogEntry>(catalog, Schema(), cast_info);
 	return std::move(result);
 }
 
 unique_ptr<CreateInfo> MacroCatalogEntry::GetInfo() const {
 	auto info = make_uniq<CreateMacroInfo>(type);
-	info->SetQualifiedName(QualifiedName(catalog.GetName(), schema.name, name));
+	info->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchema().name, name));
 	for (auto &function : macros) {
 		info->macros.push_back(function->Copy());
 	}
@@ -50,6 +50,8 @@ unique_ptr<CreateInfo> MacroCatalogEntry::GetInfo() const {
 	info->dependencies = dependencies;
 	info->comment = comment;
 	info->tags = tags;
+	info->oid = oid;
+	info->parent_oid = ParentSchema().oid;
 	return std::move(info);
 }
 

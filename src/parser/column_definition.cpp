@@ -25,6 +25,7 @@ ColumnDefinition ColumnDefinition::Copy() const {
 	copy.category = category;
 	copy.comment = comment;
 	copy.tags = tags;
+	copy.catalog_oid = catalog_oid;
 	return copy;
 }
 
@@ -117,6 +118,14 @@ const column_t &ColumnDefinition::Oid() const {
 
 void ColumnDefinition::SetOid(column_t oid) {
 	this->oid = oid;
+}
+
+const idx_t &ColumnDefinition::CatalogOid() const {
+	return catalog_oid;
+}
+
+void ColumnDefinition::SetCatalogOid(idx_t catalog_oid) {
+	this->catalog_oid = catalog_oid;
 }
 
 const TableColumnType &ColumnDefinition::Category() const {

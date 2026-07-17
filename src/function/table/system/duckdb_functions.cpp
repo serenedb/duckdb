@@ -652,13 +652,13 @@ bool ExtractFunctionData(CatalogEntry &entry, idx_t function_idx, DataChunk &out
 	idx_t col = 0;
 
 	// database_name, LogicalType::VARCHAR
-	output.data[col++].Append(Value(function.schema.catalog.GetName()));
+	output.data[col++].Append(Value(function.ParentSchema().catalog.GetName()));
 
 	// database_oid, BIGINT
-	output.data[col++].Append(Value::BIGINT(NumericCast<int64_t>(function.schema.catalog.GetOid())));
+	output.data[col++].Append(Value::BIGINT(NumericCast<int64_t>(function.ParentSchema().catalog.GetOid())));
 
 	// schema_name, LogicalType::VARCHAR
-	output.data[col++].Append(Value(function.schema.name));
+	output.data[col++].Append(Value(function.ParentSchema().name));
 
 	// function_name, LogicalType::VARCHAR
 	output.data[col++].Append(Value(function.name));

@@ -1,3 +1,4 @@
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/default/default_table_functions.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/parser/parser.hpp"
@@ -88,8 +89,8 @@ SELECT * EXCLUDE(input_type, scope, aliases)
 	};
 // clang-format on
 
-DefaultTableFunctionGenerator::DefaultTableFunctionGenerator(Catalog &catalog, SchemaCatalogEntry &schema)
-    : DefaultGenerator(catalog), schema(schema) {
+DefaultTableFunctionGenerator::DefaultTableFunctionGenerator(Catalog &catalog, SchemaIdentity &identity)
+    : DefaultGenerator(catalog), identity(identity) {
 }
 
 unique_ptr<CreateMacroInfo>
@@ -149,9 +150,10 @@ unique_ptr<CatalogEntry> DefaultTableFunctionGenerator::CreateDefaultEntry(Clien
                                                                            const Identifier &entry_name) {
 	ParserOptions options;
 	options.parser_cache = &context.db->GetParserCache();
-	auto info = GetDefaultTableFunction(schema.name, entry_name, options);
+	auto info = GetDefaultTableFunction(identity.Schema().name, entry_name, options);
 	if (info) {
-		return make_uniq_base<CatalogEntry, TableMacroCatalogEntry>(catalog, schema, info->Cast<CreateMacroInfo>());
+		return make_uniq_base<CatalogEntry, TableMacroCatalogEntry>(catalog, identity.Schema(),
+		                                                            info->Cast<CreateMacroInfo>());
 	}
 	return nullptr;
 }
@@ -162,7 +164,7 @@ vector<Identifier> DefaultTableFunctionGenerator::GetDefaultEntries() {
 		if (StringUtil::Lower(internal_table_macros[index].name) != internal_table_macros[index].name) {
 			throw InternalException("Default macro name %s should be lowercase", internal_table_macros[index].name);
 		}
-		if (internal_table_macros[index].schema == schema.name) {
+		if (internal_table_macros[index].schema == identity.Schema().name) {
 			result.emplace_back(internal_table_macros[index].name);
 		}
 	}

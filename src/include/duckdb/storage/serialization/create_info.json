@@ -69,6 +69,18 @@
         "id": 110,
         "name": "extension_name",
         "type": "Identifier"
+      },
+      {
+        "id": 111,
+        "name": "oid",
+        "type": "idx_t",
+        "default": 0
+      },
+      {
+        "id": 112,
+        "name": "parent_oid",
+        "type": "idx_t",
+        "default": 0
       }
     ],
     "methods": {
@@ -82,6 +94,7 @@
     "class": "CreateIndexInfo",
     "base": "CreateInfo",
     "enum": "INDEX_ENTRY",
+    "custom_switch_code": "result = DeserializeForeignCreateInfo(deserializer, type);\nbreak;",
     "includes": [
       "duckdb/parser/parsed_data/create_index_info.hpp"
     ],
@@ -463,5 +476,29 @@
         "trigger_name"
       ]
     }
+  },
+  {
+    "class": "CreateRoleInfo",
+    "base": "CreateInfo",
+    "enum": "ROLE_ENTRY",
+    "custom_switch_code": "result = DeserializeForeignCreateInfo(deserializer, type);\nbreak;"
+  },
+  {
+    "class": "CreateDatabaseInfo",
+    "base": "CreateInfo",
+    "enum": "DATABASE_ENTRY",
+    "custom_switch_code": "result = DeserializeForeignCreateInfo(deserializer, type);\nbreak;"
+  },
+  {
+    "class": "CreateTokenizerInfo",
+    "base": "CreateInfo",
+    "enum": "TOKENIZER_ENTRY",
+    "custom_switch_code": "result = DeserializeForeignCreateInfo(deserializer, type);\nbreak;"
+  },
+  {
+    "class": "CreateForeignServerInfo",
+    "base": "CreateInfo",
+    "enum": "FOREIGN_SERVER_ENTRY",
+    "custom_switch_code": "result = DeserializeForeignCreateInfo(deserializer, type);\nbreak;"
   }
 ]

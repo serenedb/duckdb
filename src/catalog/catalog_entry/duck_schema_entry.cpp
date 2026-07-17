@@ -71,24 +71,42 @@ static void FindForeignKeyInformation(TableCatalogEntry &table, AlterForeignKeyT
 	}
 }
 
-DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info)
-    : SchemaCatalogEntry(catalog, info),
-      tables(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultViewGenerator>(catalog, *this) : nullptr),
-      indexes(catalog),
+SchemaCatalogSets::SchemaCatalogSets(Catalog &catalog, bool case_sensitive)
+    : tables(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultViewGenerator>(catalog, *this) : nullptr,
+             case_sensitive),
+      indexes(catalog, nullptr, case_sensitive),
       table_functions(catalog,
-                      catalog.IsSystemCatalog() ? make_uniq<DefaultTableFunctionGenerator>(catalog, *this) : nullptr),
-      copy_functions(catalog), pragma_functions(catalog),
-      functions(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultFunctionGenerator>(catalog, *this) : nullptr),
-      sequences(catalog), collations(catalog), types(catalog, make_uniq<DefaultTypeGenerator>(catalog, *this)),
+                      catalog.IsSystemCatalog() ? make_uniq<DefaultTableFunctionGenerator>(catalog, *this) : nullptr,
+                      case_sensitive),
+      copy_functions(catalog, nullptr, case_sensitive), pragma_functions(catalog, nullptr, case_sensitive),
+      functions(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultFunctionGenerator>(catalog, *this) : nullptr,
+                case_sensitive),
+      sequences(catalog, nullptr, case_sensitive), collations(catalog, nullptr, case_sensitive),
+      types(catalog, make_uniq<DefaultTypeGenerator>(catalog, *this), case_sensitive),
       coordinate_systems(
-          catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, *this) : nullptr) {
+          catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, *this) : nullptr,
+          case_sensitive) {
+}
+
+DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info) : DuckSchemaEntry(catalog, info, false) {
+}
+
+DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, bool case_sensitive)
+    : DuckSchemaEntry(catalog, info, make_shared_ptr<SchemaCatalogSets>(catalog, case_sensitive)) {
+}
+
+DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, const shared_ptr<SchemaCatalogSets> &sets_p)
+    : SchemaCatalogEntry(catalog, info, sets_p), sets(*sets_p) {
 }
 
 unique_ptr<CatalogEntry> DuckSchemaEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateSchemaInfo>();
 
-	auto result = make_uniq<DuckSchemaEntry>(catalog, cast_info);
+	// Shares this schema's contents: the copy supersedes it in the same version chain rather than standing for a
+	// second, empty schema of the same name.
+	auto result = unique_ptr<DuckSchemaEntry>(
+	    new DuckSchemaEntry(catalog, cast_info, shared_ptr_cast<SchemaIdentity, SchemaCatalogSets>(GetIdentity())));
 
 	return std::move(result);
 }
@@ -96,9 +114,11 @@ unique_ptr<CatalogEntry> DuckSchemaEntry::Copy(ClientContext &context) const {
 optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction transaction,
                                                              unique_ptr<StandardEntry> entry,
                                                              OnCreateConflict on_conflict,
-                                                             LogicalDependencyList dependencies) {
+                                                             LogicalDependencyList dependencies,
+                                                             optional_ptr<const Identifier> replaces) {
 	auto entry_name = entry->name;
 	auto entry_type = entry->type;
+	auto permissions_of_replacement = entry->permissions;
 	auto result = entry.get();
 
 	if (transaction.context) {
@@ -114,7 +134,11 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 	}
 	// first find the set for this entry
 	auto &set = GetCatalogSet(entry_type);
-	dependencies.AddDependency(*this);
+	// Only for a schema this catalog owns the durability of. A catalog that persists its own schemas records
+	// no edge to them, and one added here would make every DROP SCHEMA a cascade.
+	if (duck_managed) {
+		dependencies.AddDependency(*this);
+	}
 	if (on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 		auto old_entry = set.GetEntry(transaction, entry_name);
 		if (old_entry) {
@@ -123,8 +147,8 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 	}
 
 	if (on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
-		// CREATE OR REPLACE: first try to drop the entry
-		auto old_entry = set.GetEntry(transaction, entry_name);
+		auto &superseded_name = replaces ? *replaces : entry_name;
+		auto old_entry = set.GetEntry(transaction, superseded_name);
 		if (old_entry) {
 			if (dependencies.Contains(*old_entry)) {
 				throw CatalogException("CREATE OR REPLACE is not allowed to depend on itself");
@@ -133,8 +157,18 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 				throw CatalogException("Existing object %s is of type %s, trying to replace with type %s", entry_name,
 				                       CatalogTypeToString(old_entry->type), CatalogTypeToString(entry_type));
 			}
-			OnDropEntry(transaction, *old_entry);
-			(void)set.DropEntry(transaction, entry_name, false, entry->internal);
+			// A same-type replace is an alter of the version it supersedes, not a drop and a create: the
+			// tombstone a drop leaves reaches DependencyManager::VerifyCommitDrop at commit, which refuses it
+			// when any edge on the object committed after the transaction started. An alter also hands the
+			// object's edges over rather than retiring and re-adding them, and takes the rename path, which
+			// knows a rename from a drop.
+			SetPermissionsInfo alter(PermissionsAlterType::REPLACE_DEFINITION, entry_type,
+			                         QualifiedName(superseded_name), permissions_of_replacement);
+			alter.new_dependencies = make_uniq<LogicalDependencyList>(dependencies);
+			if (!set.AlterEntry(transaction, superseded_name, alter, std::move(entry))) {
+				return nullptr;
+			}
+			return result;
 		}
 	}
 	// now try to add the entry
@@ -408,6 +442,10 @@ SimilarCatalogEntry DuckSchemaEntry::GetSimilarEntry(CatalogTransaction transact
 }
 
 CatalogSet &DuckSchemaEntry::GetCatalogSet(CatalogType type) {
+	return sets.Get(type);
+}
+
+CatalogSet &SchemaCatalogSets::Get(CatalogType type) {
 	switch (type) {
 	case CatalogType::VIEW_ENTRY:
 	case CatalogType::TABLE_ENTRY:
@@ -439,9 +477,22 @@ CatalogSet &DuckSchemaEntry::GetCatalogSet(CatalogType type) {
 	}
 }
 
+void DuckSchemaEntry::Rollback(CatalogEntry &prev_entry) {
+	if (prev_entry.type == CatalogType::SCHEMA_ENTRY) {
+		sets.Adopt(prev_entry.Cast<SchemaCatalogEntry>());
+	}
+}
+
+void DuckSchemaEntry::UndoAlter(ClientContext &context, AlterInfo &info) {
+	sets.Adopt(*this);
+}
+
 void DuckSchemaEntry::Verify(Catalog &catalog) {
 	InCatalogEntry::Verify(catalog);
+	sets.Verify(catalog);
+}
 
+void SchemaCatalogSets::Verify(Catalog &catalog) {
 	tables.Verify(catalog);
 	indexes.Verify(catalog);
 	table_functions.Verify(catalog);

@@ -97,7 +97,7 @@ vector<LogicalType> TableCatalogEntry::GetTypes() const {
 
 unique_ptr<CreateInfo> TableCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateTableInfo>();
-	result->SetQualifiedName(QualifiedName(catalog.GetName(), schema.name, name));
+	result->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchema().name, name));
 	result->columns = columns.Copy();
 	result->constraints.reserve(constraints.size());
 	result->dependencies = dependencies;
@@ -107,7 +107,14 @@ unique_ptr<CreateInfo> TableCatalogEntry::GetInfo() const {
 	result->internal = internal;
 	result->comment = comment;
 	result->tags = tags;
+	result->oid = oid;
+	result->parent_oid = ParentSchema().oid;
 	return std::move(result);
+}
+
+string TableCatalogEntry::ScanName() const {
+	return QualifiedName(catalog.GetName(), ParentSchema().name, name)
+	    .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 }
 
 string TableCatalogEntry::ColumnsToSQL(const ColumnList &columns, const vector<unique_ptr<Constraint>> &constraints) {
@@ -232,6 +239,10 @@ DataTable &TableCatalogEntry::GetStorage() {
 	throw InternalException("Calling GetStorage on a TableCatalogEntry that is not a DuckTableEntry");
 }
 // LCOV_EXCL_STOP
+
+optional_ptr<DataTable> TableCatalogEntry::TryGetStorage() {
+	return nullptr;
+}
 
 DuckTableEntry &TableCatalogEntry::GetStorageTableEntry(ClientContext &context) {
 	return Cast<DuckTableEntry>();
@@ -384,6 +395,10 @@ optional_ptr<CatalogEntry> TableCatalogEntry::CreateTrigger(CatalogTransaction t
 void TableCatalogEntry::ScanTriggers(CatalogTransaction transaction,
                                      const std::function<void(CatalogEntry &)> &callback) const {
 	// Default: no triggers (non-DuckDB tables do not support triggers)
+}
+
+bool TableCatalogEntry::DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade) {
+	return false;
 }
 
 vector<const_reference<TriggerCatalogEntry>> TableCatalogEntry::GetTriggersForEvent(CatalogTransaction transaction,

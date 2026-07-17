@@ -52,6 +52,7 @@ struct DataTableInfo;
 struct LocalAppendState;
 struct ParallelTableScanState;
 struct TableAppendState;
+struct ExternalIndexBatch;
 class CommitDropState;
 
 enum class DataTableVersion {
@@ -63,10 +64,14 @@ enum class DataTableVersion {
 //! DataTable represents a physical table on disk
 class DataTable : public enable_shared_from_this<DataTable> {
 public:
+	//! Lets the host re-inject its external indexes after the column layout changed.
+	void RefreshExternalIndexes();
 	//! Constructs a new data table from an (optional) set of persistent segments
+	//! `catalog_id` is the identifier a host catalog knows this table by, zero when the definition is duckdb's own.
+	//! It is what the WAL and the checkpoint manifest file the rows under, so a rename cannot reach it.
 	DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager, const string &schema,
 	          const string &table, vector<ColumnDefinition> column_definitions_p,
-	          unique_ptr<PersistentTableData> data = nullptr);
+	          unique_ptr<PersistentTableData> data = nullptr, idx_t catalog_id = 0);
 	//! Constructs a DataTable as a delta on an existing data table with a newly added column
 	DataTable(ClientContext &context, DataTable &parent, ColumnDefinition &new_column, Expression &default_value);
 	//! Constructs a DataTable as a delta on an existing data table but with one column removed
@@ -74,8 +79,11 @@ public:
 	//! Constructs a DataTable as a delta on an existing data table but with one column changed type
 	DataTable(ClientContext &context, DataTable &parent, idx_t changed_idx, const LogicalType &target_type,
 	          const vector<StorageIndex> &bound_columns, Expression &cast_expr);
-	//! Constructs a DataTable as a delta on an existing data table but with one column added new constraint
-	DataTable(ClientContext &context, DataTable &parent, BoundConstraint &constraint);
+	//! Constructs a DataTable as a delta on an existing data table but with one column added new constraint.
+	//! `columns` and `constraint_text` are the catalog's, and are what a violation among the existing rows is
+	//! reported with: the physical column list is the shape the rows are in, which a rename never reaches.
+	DataTable(ClientContext &context, DataTable &parent, BoundConstraint &constraint, const ColumnList &columns,
+	          const string &constraint_text);
 
 	//! A reference to the database instance
 	AttachedDatabase &db;
@@ -212,10 +220,13 @@ public:
 
 	//! Appends a chunk with the row ids [row_start, ..., row_start + chunk.size()] to all indexes of the table.
 	//! If an index is bound, it appends table_chunk. Else, it buffers index_chunk.
+	//! `batch`, when given, is table_chunk's owner: it carries the row ids already and an external
+	//! index may keep it past this call, so such an index is handed the batch instead of the chunk.
 	static ErrorData AppendToIndexes(TableIndexList &indexes, optional_ptr<TableIndexList> delete_indexes,
 	                                 DataChunk &table_chunk, DataChunk &index_chunk,
 	                                 const vector<StorageIndex> &mapped_column_ids, row_t row_start,
-	                                 const IndexAppendMode index_append_mode, optional_idx active_checkpoint);
+	                                 const IndexAppendMode index_append_mode, optional_idx active_checkpoint,
+	                                 bool skip_external = false, const shared_ptr<ExternalIndexBatch> &batch = nullptr);
 	ErrorData AppendToIndexes(optional_ptr<TableIndexList> delete_indexes, DataChunk &table_chunk,
 	                          DataChunk &index_chunk, const vector<StorageIndex> &mapped_column_ids, row_t row_start,
 	                          const IndexAppendMode index_append_mode);
@@ -326,7 +337,8 @@ public:
 
 private:
 	//! Verify the new added constraints against current persistent&local data
-	void VerifyNewConstraint(LocalStorage &local_storage, DataTable &parent, const BoundConstraint &constraint);
+	void VerifyNewConstraint(LocalStorage &local_storage, DataTable &parent, const BoundConstraint &constraint,
+	                         const ColumnList &columns, const string &constraint_text);
 
 	//! Verify constraints with a chunk from the Update containing only the specified column_ids
 	void VerifyUpdateConstraints(ConstraintState &state, ClientContext &context, DataChunk &chunk,

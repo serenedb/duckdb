@@ -102,7 +102,31 @@ public:
 		return current_transaction_id;
 	}
 	idx_t NextOid() {
-		return next_oid++;
+		return NextOids(1);
+	}
+	//! `count` consecutive object ids, the first of them returned. Every id up to the last is durably spent
+	//! before any of them is handed out: an id can name something that outlives the transaction meant to
+	//! record it -- a directory, a log shard -- so reissuing one after a crash would collide with what is
+	//! already on disk.
+	idx_t NextOids(idx_t count) {
+		auto first = next_oid.fetch_add(count);
+		auto last = first + count - 1;
+		if (last >= reserved_oid.load(std::memory_order_acquire)) {
+			ReserveOids(last);
+		}
+		return first;
+	}
+	//! Raises the allocator past `oid`, for a host reading back ids it did not hand out.
+	void RestoreOid(idx_t oid);
+	//! Raises the durable horizon, for a host reading back one it recorded.
+	void RestoreOidReservation(idx_t horizon);
+	idx_t OidReservation() const {
+		return reserved_oid.load(std::memory_order_acquire);
+	}
+	//! Records that every id up to its argument is spent. Set by a host that persists the allocator; without
+	//! one the ids are process-local and nothing is written down.
+	void SetOidReservationSink(void (*sink)(idx_t)) {
+		oid_reservation_sink.store(sink, std::memory_order_release);
 	}
 	bool HasDefaultDatabase() {
 		return !default_database.empty();
@@ -117,8 +141,13 @@ public:
 private:
 	optional_ptr<AttachedDatabase> FinalizeAttach(ClientContext &context, AttachInfo &info,
 	                                              shared_ptr<AttachedDatabase> database);
+	void ReserveOids(idx_t oid);
 
 private:
+	//! How far past the allocator one reservation reaches. Overshooting only costs the ids in between, which
+	//! are never reused anyway, so this is one write per a few hundred statements.
+	static constexpr idx_t OID_RESERVE_BLOCK = 1024;
+
 	DatabaseInstance &db;
 	//! The system database is a special database that holds system entries (e.g. functions)
 	shared_ptr<AttachedDatabase> system;
@@ -128,6 +157,11 @@ private:
 	identifier_map_t<shared_ptr<AttachedDatabase>> databases;
 	//! The next object id handed out by the NextOid method
 	atomic<idx_t> next_oid;
+	//! The highest id the sink has been told is spent, and the lock that serializes telling it. Deliberately
+	//! not databases_lock: an id is allocated while building objects, which is outside every lock here.
+	atomic<idx_t> reserved_oid;
+	mutex oid_reservation_lock;
+	atomic<void (*)(idx_t)> oid_reservation_sink;
 	//! The current query number
 	atomic<transaction_t> current_query_number;
 	//! The current transaction number

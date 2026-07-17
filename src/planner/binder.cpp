@@ -606,6 +606,17 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 		}
 		column_count++;
 	}
+	// RETURNING is written against the names the target exposed when it was bound.
+	// Those are the entry's own only when the ref resolved to it directly: a facade
+	// table resolves to a store table whose columns are named after ids, and the
+	// user never sees those.
+	if (!alias.GetIdentifierName().empty()) {
+		ErrorData binding_error;
+		auto bound_target = bind_context.GetBinding(alias, binding_error);
+		if (bound_target && bound_target->GetColumnNames().size() == names.size()) {
+			names = bound_target->GetColumnNames();
+		}
+	}
 
 	binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
 	                                  std::move(virtual_columns));

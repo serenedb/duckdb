@@ -28,6 +28,14 @@ enum class CatalogType : uint8_t {
 	DATABASE_ENTRY = 9,
 	COORDINATE_SYSTEM_ENTRY = 10,
 	TRIGGER_ENTRY = 11,
+	// serenedb: a text-search tokenizer, a foreign server (SQL/MED) and a
+	// cluster-global role
+	TOKENIZER_ENTRY = 12,
+	FOREIGN_SERVER_ENTRY = 13,
+	ROLE_ENTRY = 14,
+	// serenedb: where the entry of one stable object id currently lives, so a
+	// lookup by oid is one GetEntry rather than a walk of every schema
+	OBJECT_INDEX_ENTRY = 15,
 
 	// functions
 	TABLE_FUNCTION_ENTRY = 25,

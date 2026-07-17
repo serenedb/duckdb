@@ -13,10 +13,16 @@
 
 namespace duckdb {
 
-//! A schema in the catalog
-class DuckSchemaEntry : public SchemaCatalogEntry {
+//! Everything a schema holds, shared by every version of the schema entry. Altering a schema chains a new entry,
+//! and its contents must not move with it -- the same handover a table rename makes with its DataTable.
+//! `case_sensitive` keys every set by the exact name, for a catalog that folds identifiers by its own rules.
+class SchemaCatalogSets : public SchemaIdentity {
 public:
-	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info);
+	SchemaCatalogSets(Catalog &catalog, bool case_sensitive);
+
+	//! Get the catalog set for the specified type
+	virtual CatalogSet &Get(CatalogType type);
+	void Verify(Catalog &catalog);
 
 private:
 	//! The catalog set holding the tables
@@ -39,12 +45,28 @@ private:
 	CatalogSet types;
 	//! The catalog set holding the coordinate systems
 	CatalogSet coordinate_systems;
+};
+
+//! A schema in the catalog
+class DuckSchemaEntry : public SchemaCatalogEntry {
+public:
+	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info);
+
+protected:
+	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, bool case_sensitive);
+	//! Supersede the version that currently holds `sets`, taking the schema's whole contents over
+	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, const shared_ptr<SchemaCatalogSets> &sets);
+
+	SchemaCatalogSets &sets;
 
 public:
 	optional_ptr<CatalogEntry> AddEntry(CatalogTransaction transaction, unique_ptr<StandardEntry> entry,
 	                                    OnCreateConflict on_conflict);
+	//! `replaces` is the name the entry a REPLACE_ON_CONFLICT supersedes is filed under, when that is not the
+	//! name the new entry carries -- a rename that is also a redefinition.
 	optional_ptr<CatalogEntry> AddEntryInternal(CatalogTransaction transaction, unique_ptr<StandardEntry> entry,
-	                                            OnCreateConflict on_conflict, LogicalDependencyList dependencies);
+	                                            OnCreateConflict on_conflict, LogicalDependencyList dependencies,
+	                                            optional_ptr<const Identifier> replaces = nullptr);
 
 	optional_ptr<CatalogEntry> CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) override;
 	optional_ptr<CatalogEntry> CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) override;
@@ -73,12 +95,18 @@ public:
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
 
+	//! This version is about to be destroyed: hand the schema's contents back to the version it superseded,
+	//! which every entry inside the schema resolves through.
+	void Rollback(CatalogEntry &prev_entry) override;
+	//! The alter that produced a superseding version was refused: reclaim the contents for this one.
+	void UndoAlter(ClientContext &context, AlterInfo &info) override;
+
 	void Verify(Catalog &catalog) override;
 
 	//! Get the catalog set for the specified type
-	CatalogSet &GetCatalogSet(CatalogType type);
+	virtual CatalogSet &GetCatalogSet(CatalogType type);
 
-private:
+protected:
 	void OnDropEntry(CatalogTransaction transaction, CatalogEntry &entry);
 };
 } // namespace duckdb

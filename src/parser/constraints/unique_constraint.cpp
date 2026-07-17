@@ -40,6 +40,8 @@ unique_ptr<Constraint> UniqueConstraint::Copy() const {
 		result = make_uniq<UniqueConstraint>(index, columns.empty() ? Identifier() : columns[0], is_primary_key);
 	}
 	result->constraint_name = constraint_name;
+	result->oid = oid;
+	result->host_index_id = host_index_id;
 	return std::move(result);
 }
 

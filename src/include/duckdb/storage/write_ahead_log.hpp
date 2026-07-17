@@ -85,6 +85,15 @@ public:
 	void WriteCreateSequence(const SequenceCatalogEntry &entry);
 	void WriteDropSequence(const SequenceCatalogEntry &entry);
 	void WriteSequenceValue(SequenceValue val);
+	//! SereneDB only: a create or a drop of a kind duckdb keeps no entry class for. Replay hands the info back to
+	//! the catalog that owns the kind, which is the only thing that knows what applying it means.
+	void WriteCreateEntry(const CatalogEntry &entry);
+	//! The same record from a definition that has no entry yet: the first boot of a data directory writes down
+	//! the database every connection defaults to before there is a catalog to hold it.
+	void WriteCreateEntry(const CreateInfo &info, const CatalogPermissions &permissions);
+	void WriteDropEntry(const CatalogEntry &entry);
+	//! SereneDB only: catalog state that is not an entry, written and read back by that catalog alone.
+	void WriteCatalogState(const_data_ptr_t data, idx_t size);
 
 	void WriteCreateMacro(const ScalarMacroCatalogEntry &entry);
 	void WriteDropMacro(const ScalarMacroCatalogEntry &entry);
@@ -100,10 +109,15 @@ public:
 
 	void WriteCreateTrigger(const TriggerCatalogEntry &entry);
 	void WriteDropTrigger(const TriggerCatalogEntry &entry);
-	//! Sets the table used for subsequent insert/delete/update commands
-	void WriteSetTable(const Identifier &schema, const Identifier &table);
+	//! Sets the table used for subsequent insert/delete/update commands. A non-zero catalog_id
+	//! (DataTableInfo::GetCatalogId) identifies the table instead of its qualified name, so a rename between the
+	//! write and the replay cannot move it.
+	void WriteSetTable(const Identifier &schema, const Identifier &table, idx_t catalog_id);
 
 	void WriteAlter(CatalogEntry &entry, const AlterInfo &info);
+	//! An alter that carries everything it needs. Only one kind does not -- adding an indexed constraint, whose index
+	//! data is written from the entry -- and that one takes the overload above.
+	void WriteAlter(const AlterInfo &info);
 
 	void WriteInsert(DataChunk &chunk);
 	void WriteRowGroupData(const PersistentCollectionData &data);

@@ -154,9 +154,25 @@ IndexRemovalType CommitState::GetIndexRemovalType(ActiveTransactionState transac
 	return IndexRemovalType::REVERT_MAIN_INDEX;
 }
 
+//! Whether a newer version of `table` invalidates row work this transaction recorded against it. A newer entry
+//! alone does not: a catalog that keeps its own definitions rewrites a table's entry for reasons that leave the
+//! rows alone -- an index created over it, a comment, a grant -- and those must not conflict with concurrent DML.
+//! What conflicts is the rows moving out from under the append, which is exactly what the storage version says.
+static bool RowWorkWasInvalidated(DataTable &storage, CatalogEntry &table, transaction_t transaction_id) {
+	if (!table.HasParent() || table.Parent().timestamp == transaction_id) {
+		return false;
+	}
+	return storage.TableModification() != "no changes";
+}
+
 void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, CommitInfo &info) {
 	auto &drop_state = *info.drop_state;
 	if (entry.temporary || entry.Parent().temporary) {
+		return;
+	}
+	if (!entry.duck_managed || !entry.Parent().duck_managed) {
+		// No DataTable and no duckdb-owned blocks behind it: the storage half is reclaimed by the catalog
+		// implementation that owns the entry.
 		return;
 	}
 
@@ -260,6 +276,9 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 	case CatalogType::SECRET_ENTRY:
 	case CatalogType::SECRET_TYPE_ENTRY:
 	case CatalogType::SECRET_FUNCTION_ENTRY:
+	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::ROLE_ENTRY:
 		// do nothing, these entries are not persisted to disk
 		break;
 	default:
@@ -277,7 +296,10 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		D_ASSERT(catalog.IsDuckCatalog());
 
 		auto &new_entry = old_entry.Parent();
-		if (new_entry.type == CatalogType::DEPENDENCY_ENTRY) {
+		// duck_managed is what tells one of the dependency manager's own edges from an edge a foreign
+		// catalog hosts in a set of its own: only the former is a DependencyEntry, and only the former
+		// has a subject whose existence this manager can verify.
+		if (new_entry.type == CatalogType::DEPENDENCY_ENTRY && new_entry.duck_managed) {
 			auto &dep = new_entry.Cast<DependencyEntry>();
 			if (dep.Side() == DependencyEntryType::SUBJECT) {
 				new_entry.set->VerifyExistenceOfDependency(commit_id, new_entry);
@@ -292,19 +314,25 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		// Set the timestamp of the catalog entry to the given commit_id, marking it as committed
 		CatalogSet::UpdateTimestamp(old_entry.Parent(), commit_id);
 
+		auto extra_data = data + sizeof(CatalogEntry *);
+		// A catalog that keeps its own log is told what changed, in commit order. This walk rather than the WAL
+		// write: that one is skipped whenever the database has no WAL of its own, and a catalog whose log is not
+		// any database's -- serenedb's, shared across all of them -- would never be told. Still inside the try and
+		// ahead of FlushCommit, so a refused append reverts the commit.
+		if (!old_entry.temporary && !new_entry.temporary) {
+			catalog.WriteCatalogChange(transaction, old_entry, extra_data);
+		}
 		// drop any blocks associated with the catalog entry if possible (e.g. in case of a DROP or ALTER)
-		CommitEntryDrop(old_entry, data + sizeof(CatalogEntry *), info);
+		CommitEntryDrop(old_entry, extra_data, info);
 		break;
 	}
 	case UndoFlags::INSERT_TUPLE: {
 		// append:
 		auto info = reinterpret_cast<AppendInfo *>(data);
-		if (info->table->HasParent() && info->table->Parent().timestamp != transaction.transaction_id) {
+		if (RowWorkWasInvalidated(info->table->GetStorage(), *info->table, transaction.transaction_id)) {
 			auto &storage = info->table->GetStorage();
-			auto table_name = storage.GetTableName();
-			auto table_modification = storage.TableModification();
 			throw TransactionException("Attempting to modify table %s but another transaction has %s this table",
-			                           table_name, table_modification);
+			                           storage.GetTableName(), storage.TableModification());
 		}
 		// mark the tuples as committed
 		info->table->GetStorage().CommitAppend(commit_id, info->start_row, info->count);
@@ -313,12 +341,10 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 	case UndoFlags::DELETE_TUPLE: {
 		// deletion:
 		auto info = reinterpret_cast<DeleteInfo *>(data);
-		if (info->table->HasParent() && info->table->Parent().timestamp != transaction.transaction_id) {
+		if (RowWorkWasInvalidated(info->table->GetStorage(), *info->table, transaction.transaction_id)) {
 			auto &storage = info->table->GetStorage();
-			auto table_name = storage.GetTableName();
-			auto table_modification = storage.TableModification();
 			throw TransactionException("Attempting to modify table %s but another transaction has %s this table",
-			                           table_name, table_modification);
+			                           storage.GetTableName(), storage.TableModification());
 		}
 		CommitDelete(*info);
 		break;
@@ -326,12 +352,10 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 	case UndoFlags::UPDATE_TUPLE: {
 		// update:
 		auto info = reinterpret_cast<UpdateInfo *>(data);
-		if (info->table->HasParent() && info->table->Parent().timestamp != transaction.transaction_id) {
+		if (RowWorkWasInvalidated(info->table->GetStorage(), *info->table, transaction.transaction_id)) {
 			auto &storage = info->table->GetStorage();
-			auto table_name = storage.GetTableName();
-			auto table_modification = storage.TableModification();
 			throw TransactionException("Attempting to modify table %s but another transaction has %s this table",
-			                           table_name, table_modification);
+			                           storage.GetTableName(), storage.TableModification());
 		}
 		info->version_number = commit_id;
 		break;

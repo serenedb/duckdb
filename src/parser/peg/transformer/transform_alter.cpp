@@ -7,6 +7,7 @@
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
+#include "duckdb/parser/parsed_data/alter_schema_info.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_database_info.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
@@ -82,7 +83,15 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSchemaStmt(PEGTransfo
                                                                       const optional<bool> &if_exists,
                                                                       const QualifiedName &qualified_name,
                                                                       unique_ptr<AlterTableInfo> rename_alter) {
-	throw NotImplementedException("Altering schemas is not yet supported");
+	auto &rename_table = rename_alter->Cast<RenameTableInfo>();
+	OnEntryNotFound not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	auto result = make_uniq<RenameSchemaInfo>(qualified_name.Name(), rename_table.new_table_name, not_found);
+	if (!qualified_name.Schema().empty()) {
+		// "catalog.schema": a schema's own name is the qualified name's schema half, so both parts arrive one slot
+		// over.
+		result->SetQualifiedName(QualifiedName(qualified_name.Schema(), qualified_name.Name(), Identifier()));
+	}
+	return std::move(result);
 }
 
 // AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter

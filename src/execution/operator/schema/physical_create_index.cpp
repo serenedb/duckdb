@@ -93,7 +93,7 @@ SinkResultType PhysicalCreateIndex::Sink(ExecutionContext &context, DataChunk &c
 	if (alter_table_info) {
 		for (idx_t i = 0; i < lstate.key_chunk.ColumnCount(); i++) {
 			if (VectorOperations::HasNull(lstate.key_chunk.data[i])) {
-				throw ConstraintException("NOT NULL constraint failed: %s", info->GetIndexName());
+				throw ConstraintException("NOT NULL constraint failed: %s", info->GetIndexName().GetIdentifierName());
 			}
 		}
 	}
@@ -138,25 +138,29 @@ SinkFinalizeType PhysicalCreateIndex::Finalize(Pipeline &pipeline, Event &event,
 		    "Transaction conflict: cannot add an index to a table that has been altered or dropped");
 	}
 
-	auto &schema = table.schema;
+	auto &schema = table.ParentSchema();
 	info->column_ids = storage_ids;
 
 	if (!alter_table_info) {
 		// Ensure that the index does not yet exist in the catalog.
-		auto entry =
-		    schema.GetEntry(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, info->GetIndexName());
-		if (entry) {
-			if (info->on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT) {
-				throw CatalogException("Index with name \"%s\" already exists!", info->GetIndexName());
+		if (!schema.catalog.OwnsIndexNames()) {
+			auto entry =
+			    schema.GetEntry(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, info->GetIndexName());
+			if (entry) {
+				if (info->on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT) {
+					throw CatalogException("Index with name \"%s\" already exists!", info->GetIndexName());
+				}
+				// IF NOT EXISTS on existing index. We are done.
+				return SinkFinalizeType::READY;
 			}
-			// IF NOT EXISTS on existing index. We are done.
-			return SinkFinalizeType::READY;
 		}
 
-		auto index_entry = schema.CreateIndex(schema.GetCatalogTransaction(context), *info, table).get();
-		D_ASSERT(index_entry);
-		auto &index = index_entry->Cast<DuckIndexEntry>();
-		index.initial_index_size = bound_index->GetInMemorySize();
+		// A catalog that keeps its own index definitions makes no entry here; the index then lives only on the
+		// table's index list, which is where it is checkpointed and where a drop takes it from.
+		auto index_entry = schema.CreateIndex(schema.GetCatalogTransaction(context), *info, table);
+		if (index_entry) {
+			index_entry->Cast<DuckIndexEntry>().initial_index_size = bound_index->GetInMemorySize();
+		}
 
 	} else {
 		// Ensure that there are no other indexes with that name on this table.

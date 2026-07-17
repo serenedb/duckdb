@@ -606,13 +606,13 @@ LogicalType DefaultTypeGenerator::TryDefaultBind(const string &name, const vecto
 	return entry->bind_function(input);
 }
 
-DefaultTypeGenerator::DefaultTypeGenerator(Catalog &catalog, SchemaCatalogEntry &schema)
-    : DefaultGenerator(catalog), schema(schema) {
+DefaultTypeGenerator::DefaultTypeGenerator(Catalog &catalog, SchemaIdentity &identity)
+    : DefaultGenerator(catalog), identity(identity) {
 }
 
 unique_ptr<CatalogEntry> DefaultTypeGenerator::CreateDefaultEntry(ClientContext &context,
                                                                   const Identifier &entry_name) {
-	if (schema.name != DEFAULT_SCHEMA) {
+	if (identity.Schema().name != DEFAULT_SCHEMA) {
 		return nullptr;
 	}
 	auto entry = TryGetDefaultTypeEntry(entry_name);
@@ -625,12 +625,12 @@ unique_ptr<CatalogEntry> DefaultTypeGenerator::CreateDefaultEntry(ClientContext 
 	info.internal = true;
 	info.temporary = true;
 	info.bind_function = entry->bind_function;
-	return make_uniq_base<CatalogEntry, TypeCatalogEntry>(catalog, schema, info);
+	return make_uniq_base<CatalogEntry, TypeCatalogEntry>(catalog, identity.Schema(), info);
 }
 
 vector<Identifier> DefaultTypeGenerator::GetDefaultEntries() {
 	vector<Identifier> result;
-	if (schema.name != DEFAULT_SCHEMA) {
+	if (identity.Schema().name != DEFAULT_SCHEMA) {
 		return result;
 	}
 	auto &internal_types = GetBuiltinTypes();

@@ -31,7 +31,7 @@ unique_ptr<CatalogEntry> SequenceCatalogEntry::Copy(ClientContext &context) cons
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateSequenceInfo>();
 
-	auto result = make_uniq<SequenceCatalogEntry>(catalog, schema, cast_info);
+	auto result = make_uniq<SequenceCatalogEntry>(catalog, Schema(), cast_info);
 	result->data = GetData();
 
 	return std::move(result);
@@ -93,7 +93,7 @@ unique_ptr<CreateInfo> SequenceCatalogEntry::GetInfo() const {
 	auto seq_data = GetData();
 
 	auto result = make_uniq<CreateSequenceInfo>();
-	result->SetQualifiedName(QualifiedName(catalog.GetName(), schema.name, name));
+	result->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchema().name, name));
 	result->usage_count = seq_data.usage_count;
 	result->increment = seq_data.increment;
 	result->min_value = seq_data.min_value;
@@ -104,6 +104,8 @@ unique_ptr<CreateInfo> SequenceCatalogEntry::GetInfo() const {
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->oid = oid;
+	result->parent_oid = ParentSchema().oid;
 	return std::move(result);
 }
 

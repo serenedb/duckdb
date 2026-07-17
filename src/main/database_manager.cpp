@@ -19,7 +19,8 @@ namespace duckdb {
 // Oids are started at 20000 to avoid colliding with Postgres builtin types, which end at 16383:
 // https://github.com/postgres/postgres/blob/db93988ab0e78396f2ed9e96c826ff988d12b9f2/src/include/access/transam.h#L156-L197
 DatabaseManager::DatabaseManager(DatabaseInstance &db)
-    : db(db), next_oid(20000), current_query_number(1), current_transaction_id(0), remote_catalog_count(0) {
+    : db(db), next_oid(20000), reserved_oid(0), oid_reservation_sink(nullptr), current_query_number(1),
+      current_transaction_id(0), remote_catalog_count(0) {
 	system = make_shared_ptr<AttachedDatabase>(db);
 	auto &config = DBConfig::GetConfig(db);
 	path_manager = config.path_manager;
@@ -30,6 +31,35 @@ DatabaseManager::DatabaseManager(DatabaseInstance &db)
 }
 
 DatabaseManager::~DatabaseManager() {
+}
+
+void DatabaseManager::RestoreOid(idx_t oid) {
+	auto current = next_oid.load(std::memory_order_relaxed);
+	while (current <= oid &&
+	       !next_oid.compare_exchange_weak(current, oid + 1, std::memory_order_release, std::memory_order_relaxed)) {
+	}
+}
+
+void DatabaseManager::RestoreOidReservation(idx_t horizon) {
+	auto current = reserved_oid.load(std::memory_order_relaxed);
+	while (current < horizon && !reserved_oid.compare_exchange_weak(current, horizon, std::memory_order_release,
+	                                                                std::memory_order_relaxed)) {
+	}
+}
+
+void DatabaseManager::ReserveOids(idx_t oid) {
+	auto sink = oid_reservation_sink.load(std::memory_order_acquire);
+	if (!sink) {
+		// Nobody is writing the allocator down, so nothing bounds it.
+		return;
+	}
+	lock_guard<mutex> lock(oid_reservation_lock);
+	if (oid < reserved_oid.load(std::memory_order_relaxed)) {
+		return;
+	}
+	auto horizon = oid + OID_RESERVE_BLOCK;
+	sink(horizon);
+	reserved_oid.store(horizon, std::memory_order_release);
 }
 
 DatabaseManager &DatabaseManager::Get(AttachedDatabase &db) {

@@ -13,7 +13,7 @@
 #include "duckdb/parser/parser_options.hpp"
 
 namespace duckdb {
-class SchemaCatalogEntry;
+class SchemaIdentity;
 
 struct DefaultMacro {
 	const char *schema;
@@ -23,9 +23,10 @@ struct DefaultMacro {
 
 class DefaultFunctionGenerator : public DefaultGenerator {
 public:
-	DefaultFunctionGenerator(Catalog &catalog, SchemaCatalogEntry &schema);
+	DefaultFunctionGenerator(Catalog &catalog, SchemaIdentity &identity);
 
-	SchemaCatalogEntry &schema;
+	//! Not a schema entry: an alter chains a new one, and this generator outlives the version that built it
+	SchemaIdentity &identity;
 
 	DUCKDB_API static unique_ptr<CreateMacroInfo> CreateInternalMacroInfo(const DefaultMacro &default_macro);
 	//! Overload taking ParserOptions, so the caller's ParserCache is reused instead of rebuilt per macro.

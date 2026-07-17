@@ -88,6 +88,9 @@ public:
 	DUCKDB_API const ColumnList &GetColumns() const;
 	//! Returns the underlying storage of the table
 	virtual DataTable &GetStorage();
+	//! The underlying storage, or null for a table that owns none. Answerable without a client context, which is
+	//! what the checkpoint needs to decide whether an entry has rows to write.
+	virtual optional_ptr<DataTable> TryGetStorage();
 	//! Returns the DuckTableEntry whose storage backs this table. A catalog that
 	//! delegates storage to a hidden table (e.g. a facade) overrides this so the
 	//! physical insert/update/delete/merge operators target the real table.
@@ -119,6 +122,11 @@ public:
 	}
 	virtual TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
 	                                      const EntryLookupInfo &lookup_info);
+
+	//! The name a query plan shows for a scan of this table. Qualified by default, because a plan over several
+	//! attached catalogs has to say which one it read; a catalog whose relations are all in one database names
+	//! them the way the user wrote them instead.
+	virtual string ScanName() const;
 
 	virtual bool IsDuckTable() const {
 		return false;
@@ -165,6 +173,8 @@ public:
 	//! Scan all triggers on this table (default: no-op - non-DuckDB tables have no triggers)
 	virtual void ScanTriggers(CatalogTransaction transaction,
 	                          const std::function<void(CatalogEntry &)> &callback) const;
+	//! Drop a trigger by name; false when this table has no trigger by that name (default: it has none at all)
+	virtual bool DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade);
 	//! Collect triggers matching the given event type and for_each granularity, regardless of timing
 	vector<const_reference<TriggerCatalogEntry>>
 	GetTriggersForEvent(CatalogTransaction transaction, TriggerEventType event_type, TriggerForEach for_each) const;

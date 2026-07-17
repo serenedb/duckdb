@@ -399,7 +399,6 @@ struct DatabaseHeader {
 	idx_t vector_size = 0;
 	//! The storage compatibility version
 	StorageVersion storage_compatibility = StorageVersion::INVALID;
-
 	void Write(WriteStream &ser);
 	static DatabaseHeader Read(const MainHeader &header, ReadStream &source);
 	static void SetStorageVersionInDatabaseHeader(DatabaseHeader &header, StorageVersion main_version,

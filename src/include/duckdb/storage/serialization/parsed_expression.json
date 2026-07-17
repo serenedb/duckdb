@@ -45,6 +45,14 @@
         "serialize_skip": true,
         "equals_skip": true,
         "hash_skip": true
+      },
+      {
+        "id": 104,
+        "name": "oid",
+        "type": "idx_t",
+        "default": 0,
+        "equals_skip": true,
+        "hash_skip": true
       }
     ]
   },

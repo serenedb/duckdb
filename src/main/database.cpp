@@ -208,13 +208,18 @@ shared_ptr<AttachedDatabase> DatabaseInstance::CreateAttachedDatabase(ClientCont
 
 void DatabaseInstance::CreateMainDatabase() {
 	AttachInfo info;
-	info.name = Identifier(AttachedDatabase::ExtractDatabaseName(config.options.database_path, GetFileSystem()));
+	info.name = config.options.database_name.empty()
+	                ? Identifier(AttachedDatabase::ExtractDatabaseName(config.options.database_path, GetFileSystem()))
+	                : Identifier(config.options.database_name);
 	info.path = config.options.database_path;
 
 	Connection con(*this);
 	con.BeginTransaction();
 	AttachOptions options(config.options);
 	options.is_main_database = true;
+	if (config.options.database_hidden) {
+		options.visibility = AttachVisibility::HIDDEN;
+	}
 	db_manager->AttachDatabase(*con.context, info, options);
 	con.Commit();
 }

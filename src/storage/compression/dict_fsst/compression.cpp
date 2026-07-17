@@ -145,8 +145,8 @@ inline uint32_t CleaveDP(const CleaveView<IDENTITY> &v, uint32_t m, CleaveScratc
 //! raises the budget to cover exactly that before anything emits -- which is what keeps the clamp here a backstop
 //! rather than load-bearing).
 template <typename PLAIN, typename GROUP>
-inline void CleaveWalk(CleaveScratch &scratch, const vector<uint32_t> &lcp, uint32_t m, uint32_t root,
-                       idx_t prefix_cap, PLAIN &&plain, GROUP &&group) {
+inline void CleaveWalk(CleaveScratch &scratch, const vector<uint32_t> &lcp, uint32_t m, uint32_t root, idx_t prefix_cap,
+                       PLAIN &&plain, GROUP &&group) {
 	auto &lc = scratch.lc;
 	auto &rc = scratch.rc;
 	auto &take_whole = scratch.take_whole;
@@ -264,11 +264,10 @@ inline void CleaveMeasureImpl(CleaveStats &out, const vector<string_t> &encoded,
 inline idx_t CleavedSizeFromStats(const CleaveStats &s, idx_t entry_n, idx_t tuple_count,
                                   bitpacking_width_t indices_width, idx_t symbol_table_size) {
 	const idx_t dict_count = entry_n + 1;
-	auto l = DictFSSTPlusLayout::Compute(tuple_count, dict_count, s.pc, indices_width,
-	                                     BitpackingPrimitives::MinimumBitWidth(s.max_prefix_len),
-	                                     BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(s.pc)),
-	                                     BitpackingPrimitives::MinimumBitWidth(s.max_suffix_len), symbol_table_size,
-	                                     s.prefix_bytes, s.suffix_bytes);
+	auto l = DictFSSTPlusLayout::Compute(
+	    tuple_count, dict_count, s.pc, indices_width, BitpackingPrimitives::MinimumBitWidth(s.max_prefix_len),
+	    BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(s.pc)),
+	    BitpackingPrimitives::MinimumBitWidth(s.max_suffix_len), symbol_table_size, s.prefix_bytes, s.suffix_bytes);
 	return l.total;
 }
 

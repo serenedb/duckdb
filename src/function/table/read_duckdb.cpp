@@ -202,7 +202,8 @@ DuckDBReader::DuckDBReader(ClientContext &context_p, OpenFileInfo file_p, const 
     : BaseFileReader(std::move(file_p)), context(context_p), finished(false) {
 	auto &attached = GetAttachedDatabase();
 	auto &catalog = attached.GetCatalog();
-	if (!catalog.IsDuckCatalog()) {
+	// Keyed on the catalog type, not IsDuckCatalog(): a DuckCatalog subclass may keep its entries elsewhere.
+	if (catalog.GetCatalogType() != "duckdb") {
 		throw NotImplementedException("read_duckdb can only be used to read DuckDB files - \"%s\" is of type \"%s\"",
 		                              catalog.GetDBPath(), catalog.GetCatalogType());
 	}

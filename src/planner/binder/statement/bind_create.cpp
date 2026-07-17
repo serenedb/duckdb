@@ -59,7 +59,7 @@ static unique_ptr<CommonTableExpressionInfo> MakeTriggerValidationCTE(const Tabl
 	auto alias_select = make_uniq<SelectNode>();
 	alias_select->select_list.push_back(make_uniq<StarExpression>());
 	auto alias_table_ref = make_uniq<BaseTableRef>();
-	alias_table_ref->SetQualifiedName(QualifiedName(table.catalog.GetName(), table.schema.name, table.name));
+	alias_table_ref->SetQualifiedName(QualifiedName(table.catalog.GetName(), table.ParentSchema().name, table.name));
 	alias_select->from_table = std::move(alias_table_ref);
 	auto alias_cte = make_uniq<CommonTableExpressionInfo>();
 	alias_cte->query_node = std::move(alias_select);
@@ -656,8 +656,8 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	auto &table = *table_ptr;
 
 	// Trigger inherits catalog/schema from the base table
-	create_trigger_info.SetQualifiedName(
-	    QualifiedName(table.catalog.GetName(), table.schema.name, create_trigger_info.GetQualifiedName().Name()));
+	create_trigger_info.SetQualifiedName(QualifiedName(table.catalog.GetName(), table.ParentSchema().name,
+	                                                   create_trigger_info.GetQualifiedName().Name()));
 
 	auto &schema = BindCreateSchema(create_trigger_info);
 

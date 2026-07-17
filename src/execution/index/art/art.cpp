@@ -816,7 +816,8 @@ string ART::GenerateErrorKeyName(DataChunk &input, idx_t row_idx) {
 		if (k > 0) {
 			key_name += ", ";
 		}
-		key_name += unbound_expressions[k]->GetName() + ": " + expr_chunk.data[k].GetValue(row_idx).ToString();
+		key_name += unbound_expressions[k]->GetName().GetIdentifierName() + ": " +
+		            expr_chunk.data[k].GetValue(row_idx).ToString();
 	}
 	return key_name;
 }

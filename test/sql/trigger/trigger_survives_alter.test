@@ -1,0 +1,99 @@
+# name: test/sql/trigger/trigger_survives_alter.test
+# description: Triggers survive every ALTER TABLE that rebuilds the table entry
+# group: [trigger]
+
+statement ok
+CREATE TABLE log_table (id INTEGER);
+
+# --- ADD COLUMN ---
+statement ok
+CREATE TABLE add_col (id INTEGER, x INTEGER);
+
+statement ok
+CREATE TRIGGER tr_add_col AFTER INSERT ON add_col INSERT INTO log_table VALUES (1);
+
+statement ok
+ALTER TABLE add_col ADD COLUMN extra INTEGER;
+
+query I
+SELECT COUNT(*) FROM duckdb_triggers() WHERE table_name = 'add_col';
+----
+1
+
+# --- DROP COLUMN (non-generated, so the storage is rebuilt) ---
+statement ok
+CREATE TABLE drop_col (id INTEGER, x INTEGER);
+
+statement ok
+CREATE TRIGGER tr_drop_col AFTER INSERT ON drop_col INSERT INTO log_table VALUES (1);
+
+statement ok
+ALTER TABLE drop_col DROP COLUMN x;
+
+query I
+SELECT COUNT(*) FROM duckdb_triggers() WHERE table_name = 'drop_col';
+----
+1
+
+# --- SET NOT NULL ---
+statement ok
+CREATE TABLE set_nn (id INTEGER, x INTEGER);
+
+statement ok
+CREATE TRIGGER tr_set_nn AFTER INSERT ON set_nn INSERT INTO log_table VALUES (1);
+
+statement ok
+ALTER TABLE set_nn ALTER COLUMN x SET NOT NULL;
+
+query I
+SELECT COUNT(*) FROM duckdb_triggers() WHERE table_name = 'set_nn';
+----
+1
+
+# --- ALTER COLUMN TYPE ---
+statement ok
+CREATE TABLE alter_type (id INTEGER, x INTEGER);
+
+statement ok
+CREATE TRIGGER tr_alter_type AFTER INSERT ON alter_type INSERT INTO log_table VALUES (1);
+
+statement ok
+ALTER TABLE alter_type ALTER COLUMN x TYPE BIGINT;
+
+query I
+SELECT COUNT(*) FROM duckdb_triggers() WHERE table_name = 'alter_type';
+----
+1
+
+# --- ADD CONSTRAINT ---
+statement ok
+CREATE TABLE add_con (id INTEGER, x INTEGER);
+
+statement ok
+CREATE TRIGGER tr_add_con AFTER INSERT ON add_con INSERT INTO log_table VALUES (1);
+
+statement ok
+ALTER TABLE add_con ADD CONSTRAINT add_con_u UNIQUE (id);
+
+query I
+SELECT COUNT(*) FROM duckdb_triggers() WHERE table_name = 'add_con';
+----
+1
+
+# --- the surviving trigger still fires ---
+statement ok
+INSERT INTO add_col VALUES (1, 2, 3);
+
+query I
+SELECT COUNT(*) FROM log_table;
+----
+1
+
+# --- and can still be dropped through its table ---
+statement ok
+DROP TRIGGER tr_add_col ON add_col;
+
+query I
+SELECT COUNT(*) FROM duckdb_triggers() WHERE table_name = 'add_col';
+----
+0

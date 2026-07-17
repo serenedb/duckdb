@@ -83,6 +83,16 @@ public:
 		replay_commit_offset = 0;
 	}
 
+	//! End-of-replay WAL offset below which every entry committed successfully. Unlike the per-entry
+	//! offset above it survives replay exit: recovery finalization uses it to drop external-index feed
+	//! that belonged to a rolled-back torn tail.
+	idx_t GetReplaySuccessOffset() const {
+		return replay_success_offset;
+	}
+	void SetReplaySuccessOffset(idx_t offset) {
+		replay_success_offset = offset;
+	}
+
 	bool IsDuckTransactionManager() override {
 		return true;
 	}
@@ -170,6 +180,7 @@ private:
 	atomic<transaction_t> active_checkpoint;
 	//! Byte offset of the WAL entry currently being replayed (0 when not replaying)
 	atomic<idx_t> replay_commit_offset {0};
+	atomic<idx_t> replay_success_offset {0};
 	//! Set of currently running transactions
 	vector<unique_ptr<DuckTransaction>> active_transactions;
 	//! Set of recently committed transactions

@@ -1,5 +1,8 @@
 #include "duckdb/storage/table/table_index_list.hpp"
 
+#include "duckdb/parallel/task_executor.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
+
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/common/types/conflict_manager.hpp"
 #include "duckdb/execution/index/art/art.hpp"
@@ -110,6 +113,17 @@ void TableIndexList::RemoveIndex(const Identifier &name) {
 	}
 }
 
+void TableIndexList::RenameIndex(const Identifier &name, Identifier new_name) {
+	lock_guard<mutex> lock(index_entries_lock);
+	for (auto &entry : index_entries) {
+		auto &index = *entry->index;
+		if (index.GetIndexName() == name) {
+			index.SetIndexName(std::move(new_name));
+			return;
+		}
+	}
+}
+
 unordered_set<string> TableIndexList::DistinctIndexTypes() const {
 	lock_guard<mutex> lock(index_entries_lock);
 	unordered_set<string> result;
@@ -164,10 +178,10 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 	auto &table = table_entry.Cast<DuckTableEntry>();
 
 	vector<LogicalType> column_types;
-	vector<string> column_names;
+	vector<Identifier> column_names;
 	for (auto &col : table.GetColumns().Logical()) {
 		column_types.push_back(col.Type());
-		column_names.emplace_back(col.Name());
+		column_names.push_back(col.Name());
 	}
 
 	unique_lock<mutex> lock(index_entries_lock);
@@ -206,15 +220,15 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 
 		// Add the table to the binder.
 		vector<ColumnIndex> dummy_column_ids;
-		binder->bind_context.AddBaseTable(TableIndex(0), Identifier(), StringsToIdentifiers(column_names), column_types,
-		                                  dummy_column_ids, table);
+		binder->bind_context.AddBaseTable(TableIndex(0), Identifier(), column_names, column_types, dummy_column_ids,
+		                                  table);
 
 		// Create an IndexBinder to bind the index
 		IndexBinder idx_binder(*binder, context);
 
 		// Apply any outstanding buffered replays and replace the unbound index with a bound index.
 		auto &unbound_index = index_entry->index->Cast<UnboundIndex>();
-		auto bound_idx = idx_binder.BindIndex(unbound_index);
+		auto bound_idx = idx_binder.BindIndex(unbound_index, dummy_column_ids, column_names);
 		if (unbound_index.HasBufferedReplays()) {
 			// For replaying buffered index operations, we only want the physical column types (skip over
 			// generated column types).
@@ -313,11 +327,71 @@ unordered_set<column_t> TableIndexList::GetRequiredColumns() {
 	return column_ids;
 }
 
+namespace {
+
+//! Makes every externally-stored index durable. Each barrier flushes and refreshes its own index and
+//! touches nothing shared, so with more than one they run together rather than one after another.
+struct CheckpointBarrierTask final : BaseExecutorTask {
+	CheckpointBarrierTask(TaskExecutor &executor, BoundIndex &index_p) : BaseExecutorTask(executor), index(index_p) {
+	}
+
+	void ExecuteTask() override {
+		index.CheckpointBarrier();
+	}
+	string TaskType() const override {
+		return "CheckpointBarrierTask";
+	}
+
+	BoundIndex &index;
+};
+
+void RunCheckpointBarriers(vector<reference<BoundIndex>> &barriers) {
+	if (barriers.empty()) {
+		return;
+	}
+	if (barriers.size() == 1) {
+		barriers[0].get().CheckpointBarrier();
+		return;
+	}
+	TaskExecutor executor(TaskScheduler::GetScheduler(barriers[0].get().db.GetDatabase()));
+	for (auto &barrier : barriers) {
+		executor.ScheduleTask(make_uniq<CheckpointBarrierTask>(executor, barrier.get()));
+	}
+	// Rethrows: a veto from any index must still abort the checkpoint.
+	executor.WorkOnTasks();
+}
+
+} // namespace
+
+bool TableIndexList::HasExternal() const {
+	lock_guard<mutex> lock(index_entries_lock);
+	for (auto &entry : index_entries) {
+		if (entry->index->IsBound() && entry->index->Cast<BoundIndex>().IsExternal()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool TableIndexList::AllExternal() const {
+	lock_guard<mutex> lock(index_entries_lock);
+	if (index_entries.empty()) {
+		return false;
+	}
+	for (auto &entry : index_entries) {
+		if (!entry->index->IsBound() || !entry->index->Cast<BoundIndex>().IsExternal()) {
+			return false;
+		}
+	}
+	return true;
+}
+
 IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, const IndexSerializationInfo &info) {
 	lock_guard<mutex> lock(index_entries_lock);
 
 	IndexSerializationResult result;
 
+	vector<reference<BoundIndex>> external_barriers;
 	idx_t bound_count = 0;
 	for (auto &entry : index_entries) {
 		if (entry->index->IsBound()) {
@@ -336,12 +410,25 @@ IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, c
 		}
 		// Bound: move new storage info into bound_infos, then reference it
 		auto &bound_index = index.Cast<BoundIndex>();
+		if (bound_index.IsExternal()) {
+			// Externally-stored payload: no blocks to write, but the index is still recorded by name so
+			// the load builds it back through the index registry rather than needing a second pass to
+			// re-attach it. The barrier still runs so the index can force itself durable (or veto)
+			// before the checkpoint truncates the WAL. Collected rather than run here: a barrier makes
+			// its index durable, which is the slow part of a checkpoint, and one index's barrier does
+			// not depend on another's.
+			external_barriers.push_back(bound_index);
+			result.bound_infos.push_back(IndexStorageInfo(bound_index.GetIndexName()));
+			result.ordered_infos.push_back(result.bound_infos.back());
+			continue;
+		}
 		auto storage_info = bound_index.SerializeToDisk(context, info.options);
 		D_ASSERT(storage_info.IsValid() && !storage_info.name.empty());
 		result.bound_infos.push_back(std::move(storage_info));
 		result.ordered_infos.push_back(result.bound_infos.back());
 	}
 
+	RunCheckpointBarriers(external_barriers);
 	return result;
 }
 

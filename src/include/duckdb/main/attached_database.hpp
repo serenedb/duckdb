@@ -83,6 +83,10 @@ struct AttachOptions {
 	unique_ptr<StoredDatabasePath> stored_database_path;
 	//! Per-database override of vacuum_rebuild_indexes. If not set, the global setting value is used.
 	optional_idx vacuum_rebuild_indexes_threshold;
+	//! Attach the catalog without loading the storage. The caller is then the
+	//! one that calls AttachedDatabase::InitializeStorage, once whatever it has
+	//! to put in the catalog first is there.
+	bool defer_storage_load = false;
 };
 
 //! The AttachedDatabase represents an attached database instance.
@@ -97,11 +101,22 @@ public:
 	                 Identifier name, AttachInfo &info, AttachOptions &options);
 	~AttachedDatabase() override;
 
-	//! Initializes the catalog and storage of the attached database.
+	//! Initializes the catalog and storage of the attached database. The storage
+	//! half is skipped when the attach deferred it.
 	void Initialize(optional_ptr<ClientContext> context = nullptr);
+	//! Opens the database file and replays its WAL. Separate from Initialize so
+	//! that a catalog which has to be populated first can be, and so that the
+	//! WAL replays against a catalog that is already whole.
+	void InitializeStorage(optional_ptr<ClientContext> context = nullptr);
 	void FinalizeLoad(optional_ptr<ClientContext> context);
 	//! Close the database before shutting it down.
 	void Close(const DatabaseCloseAction action);
+	//! Whether Close() has run. A catalog that hosts state for other attachments
+	//! needs this: shutdown closes attachments in an arbitrary order, so a peer
+	//! still checkpointing must not reach into one that is already down.
+	bool IsClosed() const {
+		return is_closed;
+	}
 
 	Catalog &ParentCatalog() override;
 	const Catalog &ParentCatalog() const override;
@@ -153,6 +168,10 @@ public:
 	// Invoke Close() on an attached database, if its use count is 1.
 	// Only call this in places where you know that the (last) shared pointer is about to go out of scope.
 	static void InvokeCloseIfLastReference(shared_ptr<AttachedDatabase> &attached_database, ClientContext &context);
+	// The same, for a caller that already knows what the close does: a database being dropped has nothing to write
+	// back, and no session to read a checkpoint-on-detach setting from.
+	static void InvokeCloseIfLastReference(shared_ptr<AttachedDatabase> &attached_database,
+	                                       DatabaseCloseAction close_action);
 
 private:
 	DatabaseInstance &db;
@@ -168,6 +187,7 @@ private:
 	AttachVisibility visibility = AttachVisibility::SHOWN;
 	bool is_initial_database = false;
 	bool is_closed = false;
+	bool defer_storage_load = false;
 	shared_ptr<mutex> close_lock;
 	optional_idx vacuum_rebuild_threshold;
 	unordered_map<string, Value> attach_options;

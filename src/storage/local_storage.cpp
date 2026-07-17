@@ -1,4 +1,5 @@
 #include "duckdb/transaction/local_storage.hpp"
+#include "duckdb/main/config.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
@@ -179,18 +180,44 @@ ErrorData LocalTableStorage::AppendToIndexes(DuckTransaction &transaction, RowGr
 		mapped_column_ids.emplace_back(col);
 	}
 	std::sort(mapped_column_ids.begin(), mapped_column_ids.end());
-	auto active_checkpoint = transaction.GetTransactionManager().Cast<DuckTransactionManager>().GetActiveCheckpoint();
+	auto &duck_manager = transaction.GetTransactionManager().Cast<DuckTransactionManager>();
+	auto active_checkpoint = duck_manager.GetActiveCheckpoint();
 	auto checkpoint_id = active_checkpoint == MAX_TRANSACTION_ID ? optional_idx() : active_checkpoint;
 
-	// However, because the bound expressions of the indexes (and their bound
-	// column references) are in relation to ALL table columns, we create an
-	// empty table chunk based on the table types. It references the indexed columns,
-	// and contains nothing for all non-indexed columns.
+	// During WAL replay, external indexes are fed at entry granularity (wal_replay.cpp publishes each
+	// insert/row-group chunk shared and feeds them there, with the final row ids); skip them in the scan
+	// feed below to avoid double-feeding.
+	// 0 means "not replaying": every WAL starts with an unchecksummed WAL_VERSION header entry, so a real
+	// entry never sits at offset 0 and the sentinel cannot collide with one.
+	const bool skip_external = duck_manager.GetReplayCommitOffset() != 0;
+
+	if (!skip_external && index_list.HasExternal()) {
+		// Only worth partitioning an append that has something to partition: below this the host feeds the
+		// chunks inline off the loop below, which costs no scan state of its own.
+		static constexpr idx_t MIN_PARTITIONED_APPEND = 4096;
+		auto external_local_append = DBConfig::GetConfig(source.GetDatabase()).external_local_append;
+		if (external_local_append && index_list.AllExternal() && source.GetTotalRows() >= MIN_PARTITIONED_APPEND) {
+			auto error = external_local_append(transaction, index_list, source, mapped_column_ids, start_row);
+			start_row += NumericCast<row_t>(source.GetTotalRows());
+			return error;
+		}
+	}
+	return AppendChunksToIndexes(transaction, source, index_list, table_types, mapped_column_ids, checkpoint_id,
+	                             skip_external, start_row);
+}
+
+ErrorData LocalTableStorage::AppendChunksToIndexes(DuckTransaction &transaction, RowGroupCollection &source,
+                                                   TableIndexList &index_list, const vector<LogicalType> &table_types,
+                                                   const vector<StorageIndex> &mapped_column_ids,
+                                                   optional_idx checkpoint_id, bool skip_external, row_t &start_row) {
+	// Because the bound expressions of the indexes (and their bound column references) are in relation to
+	// ALL table columns, we create an empty table chunk based on the table types. It references the indexed
+	// columns, and contains nothing for all non-indexed columns.
 	DataChunk table_chunk;
 	table_chunk.InitializeEmpty(table_types);
 
-	// index_chunk scans are created here in the mapped_column_ids ordering (see note above).
 	ErrorData error;
+	// index_chunk scans are created here in the mapped_column_ids ordering (see note above).
 	for (auto &index_chunk : source.Chunks(transaction, mapped_column_ids)) {
 		D_ASSERT(index_chunk.ColumnCount() == mapped_column_ids.size());
 		for (idx_t i = 0; i < mapped_column_ids.size(); i++) {
@@ -202,7 +229,7 @@ ErrorData LocalTableStorage::AppendToIndexes(DuckTransaction &transaction, RowGr
 		// We need the table chunk for the bound indexes,
 		// and the index chunk for the unbound indexes (to buffer it).
 		error = DataTable::AppendToIndexes(index_list, delete_indexes, table_chunk, index_chunk, mapped_column_ids,
-		                                   start_row, index_append_mode, checkpoint_id);
+		                                   start_row, index_append_mode, checkpoint_id, skip_external);
 		if (error.HasError()) {
 			break;
 		}
@@ -756,12 +783,13 @@ optional_ptr<LocalTableStorage> LocalStorage::GetStorage(DataTable &table) {
 	return table_manager.GetStorage(table);
 }
 
-void LocalStorage::VerifyNewConstraint(DataTable &parent, const BoundConstraint &constraint) {
+void LocalStorage::VerifyNewConstraint(DataTable &parent, const BoundConstraint &constraint, const ColumnList &columns,
+                                       const string &constraint_text) {
 	auto storage = table_manager.GetStorage(parent);
 	if (!storage) {
 		return;
 	}
-	storage->GetCollection().VerifyNewConstraint(context, parent, constraint);
+	storage->GetCollection().VerifyNewConstraint(context, parent, constraint, columns, constraint_text);
 }
 
 } // namespace duckdb

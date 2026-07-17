@@ -1,4 +1,6 @@
 #include "duckdb/storage/data_table.hpp"
+
+#include "duckdb/storage/external_index_batch.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 
@@ -40,8 +42,9 @@
 namespace duckdb {
 
 DataTableInfo::DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, Identifier schema,
-                             Identifier table)
-    : db(db), table_io_manager(std::move(table_io_manager_p)), schema(std::move(schema)), table(std::move(table)) {
+                             Identifier table, idx_t catalog_id)
+    : db(db), table_io_manager(std::move(table_io_manager_p)), schema(std::move(schema)), table(std::move(table)),
+      catalog_id(catalog_id) {
 }
 
 void DataTableInfo::BindIndexes(ClientContext &context, const char *index_type) {
@@ -64,11 +67,20 @@ IndexStorageInfo DataTableInfo::ExtractIndexStorageInfo(const Identifier &name) 
 	                        name.GetIdentifierName());
 }
 
+bool DataTableInfo::HasIndexStorageInfo(const Identifier &name) const {
+	for (auto &info : index_storage_infos) {
+		if (info.name == name) {
+			return true;
+		}
+	}
+	return false;
+}
+
 DataTable::DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, const string &schema,
                      const string &table, vector<ColumnDefinition> column_definitions_p,
-                     unique_ptr<PersistentTableData> data)
-    : db(db),
-      info(make_shared_ptr<DataTableInfo>(db, std::move(table_io_manager_p), Identifier(schema), Identifier(table))),
+                     unique_ptr<PersistentTableData> data, idx_t catalog_id)
+    : db(db), info(make_shared_ptr<DataTableInfo>(db, std::move(table_io_manager_p), Identifier(schema),
+                                                  Identifier(table), catalog_id)),
       column_definitions(std::move(column_definitions_p)), version(DataTableVersion::MAIN_TABLE) {
 	// initialize the table with the existing data from disk, if any
 	auto types = GetTypes();
@@ -82,6 +94,15 @@ DataTable::DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_m
 		D_ASSERT(row_groups->GetTotalRows() == 0);
 	}
 	row_groups->Verify();
+
+	RefreshExternalIndexes();
+}
+
+void DataTable::RefreshExternalIndexes() {
+	auto &config = DBConfig::GetConfig(db.GetDatabase());
+	if (config.external_index_provider) {
+		config.external_index_provider(*this);
+	}
 }
 
 DataTable::DataTable(ClientContext &context, DataTable &parent, ColumnDefinition &new_column, Expression &default_value)
@@ -169,9 +190,12 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_co
 
 	// this table replaces the previous table, hence the parent is no longer the root DataTable
 	parent.version = DataTableVersion::ALTERED;
+
+	RefreshExternalIndexes();
 }
 
-DataTable::DataTable(ClientContext &context, DataTable &parent, BoundConstraint &constraint)
+DataTable::DataTable(ClientContext &context, DataTable &parent, BoundConstraint &constraint, const ColumnList &columns,
+                     const string &constraint_text)
     : db(parent.db), info(parent.info), row_groups(parent.row_groups), version(DataTableVersion::MAIN_TABLE) {
 	// ALTER COLUMN to add a new constraint.
 
@@ -185,7 +209,7 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, BoundConstraint 
 	}
 
 	if (constraint.type != ConstraintType::UNIQUE) {
-		VerifyNewConstraint(local_storage, parent, constraint);
+		VerifyNewConstraint(local_storage, parent, constraint, columns, constraint_text);
 	}
 	local_storage.MoveStorage(parent, *this);
 	parent.version = DataTableVersion::ALTERED;
@@ -667,7 +691,8 @@ static void VerifyNotNullConstraint(TableCatalogEntry &table, const Vector &vect
 		return;
 	}
 
-	throw ConstraintException("NOT NULL constraint failed: %s.%s", table.name, col_name);
+	throw ConstraintException("NOT NULL constraint failed: %s.%s", table.name.GetIdentifierName(),
+	                          col_name.GetIdentifierName());
 }
 
 // To avoid throwing an error at SELECT, instead this moves the error detection to INSERT
@@ -692,20 +717,21 @@ static void VerifyCheckConstraintExpression(ClientContext &context, TableCatalog
                                             DataChunk &chunk, const string &check_text) {
 	ExpressionExecutor executor(context, expr);
 	Vector result(LogicalType::INTEGER);
+	auto &table_name = table.name.GetIdentifierName();
 	try {
 		executor.ExecuteExpression(chunk, result);
 	} catch (std::exception &ex) {
 		ErrorData error(ex);
-		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Error: %s)", table.name,
+		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Error: %s)", table_name,
 		                          check_text, error.RawMessage());
 	} catch (...) {
 		// LCOV_EXCL_START
-		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Unknown Error)", table.name,
+		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Unknown Error)", table_name,
 		                          check_text);
 	} // LCOV_EXCL_STOP
 	for (auto entry : result.Values<int32_t>()) {
 		if (entry.IsValid() && entry.GetValue() == 0) {
-			throw ConstraintException("CHECK constraint failed on table %s with expression %s", table.name, check_text);
+			throw ConstraintException("CHECK constraint failed on table %s with expression %s", table_name, check_text);
 		}
 	}
 }
@@ -897,13 +923,15 @@ void DataTable::VerifyDeleteForeignKeyConstraint(optional_ptr<LocalTableStorage>
 	VerifyForeignKeyConstraint(storage, bound_foreign_key, context, chunk, VerifyExistenceType::DELETE_FK);
 }
 
-void DataTable::VerifyNewConstraint(LocalStorage &local_storage, DataTable &parent, const BoundConstraint &constraint) {
+void DataTable::VerifyNewConstraint(LocalStorage &local_storage, DataTable &parent, const BoundConstraint &constraint,
+                                    const ColumnList &columns, const string &constraint_text) {
 	if (constraint.type != ConstraintType::NOT_NULL && constraint.type != ConstraintType::CHECK) {
 		throw NotImplementedException("FIXME: ALTER COLUMN with such constraint is not supported yet");
 	}
 
-	parent.row_groups->VerifyNewConstraint(local_storage.GetClientContext(), parent, constraint);
-	local_storage.VerifyNewConstraint(parent, constraint);
+	parent.row_groups->VerifyNewConstraint(local_storage.GetClientContext(), parent, constraint, columns,
+	                                       constraint_text);
+	local_storage.VerifyNewConstraint(parent, constraint, columns, constraint_text);
 }
 
 void DataTable::VerifyUniqueIndexes(TableIndexList &indexes, optional_ptr<LocalTableStorage> storage, DataChunk &chunk,
@@ -1370,7 +1398,7 @@ void DataTable::MergeStorage(RowGroupCollection &data, optional_ptr<StorageCommi
 
 void DataTable::WriteToLog(DuckTransaction &transaction, WriteAheadLog &log, idx_t row_start, idx_t count,
                            optional_ptr<StorageCommitState> commit_state) {
-	log.WriteSetTable(info->schema, info->table);
+	log.WriteSetTable(info->schema, info->table, info->GetCatalogId());
 	if (!commit_state) {
 		ScanTableSegment(transaction, row_start, count, [&](DataChunk &chunk) { log.WriteInsert(chunk); });
 		return;
@@ -1468,10 +1496,14 @@ void DataTable::RevertAppend(DuckTransaction &transaction, idx_t start_row, idx_
 ErrorData DataTable::AppendToIndexes(TableIndexList &indexes, optional_ptr<TableIndexList> delete_indexes,
                                      DataChunk &table_chunk, DataChunk &index_chunk,
                                      const vector<StorageIndex> &mapped_column_ids, row_t row_start,
-                                     const IndexAppendMode index_append_mode, optional_idx active_checkpoint) {
-	// Generate the vector of row identifiers.
-	Vector row_ids(LogicalType::ROW_TYPE);
-	VectorOperations::GenerateSequence(row_ids, table_chunk.size(), row_start, 1);
+                                     const IndexAppendMode index_append_mode, optional_idx active_checkpoint,
+                                     bool skip_external, const shared_ptr<ExternalIndexBatch> &batch) {
+	// A batch already carries these, generated over the same range.
+	Vector own_row_ids(LogicalType::ROW_TYPE);
+	if (!batch) {
+		VectorOperations::GenerateSequence(own_row_ids, table_chunk.size(), row_start, 1);
+	}
+	Vector &row_ids = batch ? batch->row_ids : own_row_ids;
 
 	vector<reference<BoundIndex>> already_appended;
 	bool append_failed = false;
@@ -1489,6 +1521,10 @@ ErrorData DataTable::AppendToIndexes(TableIndexList &indexes, optional_ptr<Table
 		}
 
 		auto &bound_index = index.Cast<BoundIndex>();
+		if (skip_external && bound_index.IsExternal()) {
+			// Already fed directly from the shared replay chunk by the caller.
+			continue;
+		}
 
 		// Find the matching delete index.
 		optional_ptr<BoundIndex> delete_index;
@@ -1537,7 +1573,13 @@ ErrorData DataTable::AppendToIndexes(TableIndexList &indexes, optional_ptr<Table
 
 			// Append the mock chunk containing empty columns for non-key columns.
 			IndexAppendInfo index_append_info(index_append_mode, delete_index);
-			error = append_index->Append(table_chunk, row_ids, index_append_info);
+			if (batch && append_index->IsExternal()) {
+				IndexLock l;
+				append_index->InitializeLock(l);
+				error = append_index->Append(l, batch, index_append_info);
+			} else {
+				error = append_index->Append(table_chunk, row_ids, index_append_info);
+			}
 		} catch (std::exception &ex) {
 			error = ErrorData(ex);
 		}
@@ -1592,7 +1634,11 @@ void DataTable::RevertIndexAppend(TableAppendState &state, DataChunk &chunk, Vec
 
 void DataTable::RemoveFromIndexes(const QueryContext &context, Vector &row_identifiers, idx_t count,
                                   IndexRemovalType removal_type, optional_idx active_checkpoint) {
-	row_groups->RemoveFromIndexes(context, info->indexes, row_identifiers, count, removal_type, active_checkpoint);
+	// During WAL replay external indexes are fed their deletes at entry granularity (wal_replay.cpp),
+	// outside the locks held here.
+	const bool skip_external = DuckTransactionManager::Get(db).GetReplayCommitOffset() != 0;
+	row_groups->RemoveFromIndexes(context, info->indexes, row_identifiers, count, removal_type, active_checkpoint,
+	                              skip_external);
 }
 
 //===--------------------------------------------------------------------===//

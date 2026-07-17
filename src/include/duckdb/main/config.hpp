@@ -49,6 +49,12 @@ class CastFunctionSet;
 class CollationBinding;
 class ClientContext;
 class Binder;
+class DataTable;
+class TableCatalogEntry;
+class DuckTransaction;
+class TableIndexList;
+class RowGroupCollection;
+struct StorageIndex;
 class ErrorManager;
 class CompressionFunction;
 class TableFunctionRef;
@@ -76,6 +82,10 @@ struct DBConfigOptions {
 	string database_path;
 	//! Database type. If empty, automatically extracted from `database_path`, where a `type:path` syntax is expected
 	string database_type;
+	//! Name of the main database. If empty, it is extracted from `database_path`
+	string database_name;
+	//! Whether the main database is kept out of the database list and the unqualified lookup fallback
+	bool database_hidden = false;
 	//! Access mode of the database (AUTOMATIC, READ_ONLY or READ_WRITE)
 	AccessMode access_mode = AccessMode::AUTOMATIC;
 	//! Checkpoint when WAL reaches this size (default: 16MiB)
@@ -201,6 +211,28 @@ public:
 	//! Mandatory per-plan check, run independent of the optimizer so it cannot be
 	//! bypassed via disable_optimizer (security enforcement rides here).
 	void (*access_check_function)(ClientContext &context, Binder &binder) = nullptr;
+	//! Called whenever a fresh DataTable comes alive (create, checkpoint load, WAL
+	//! replay) so the host can inject externally-stored indexes into its index list
+	//! before any WAL operations replay against the table.
+	void (*external_index_provider)(DataTable &table) = nullptr;
+	//! The table the host catalog knows by this identifier. A checkpoint records only the rows of such a table,
+	//! so the load reads the definition off the entry the host has already built and hands it the rows. Null when
+	//! the host holds no table under that identifier -- it was dropped after the checkpoint was taken.
+	optional_ptr<TableCatalogEntry> (*host_table_provider)(AttachedDatabase &db, idx_t catalog_id) = nullptr;
+	//! Replay a merged ROW_GROUP_DATA range into every external index of the table.
+	//! Called on the replay thread after the row groups are merged, with the replay
+	//! transaction; the host scans the range once over that transaction (partitioned
+	//! across workers it help-executes) and feeds all external indexes in place, then
+	//! returns once the feed is durable-committable. No copy, no side connection.
+	void (*external_range_replay)(ClientContext &context, DataTable &table, row_t row_start, idx_t count) = nullptr;
+	//! Feed every external index of a table with the rows a commit is about to append, before the row groups
+	//! are merged. `row_start` is the row id the append begins at. The host scans `source` once, partitioned
+	//! across workers it help-executes, and feeds the indexes in place -- so nothing outlives the scan that
+	//! produced it. Only called when every index is external; a native index still needs the ordered serial
+	//! append, and that path feeds external indexes inline instead.
+	ErrorData (*external_local_append)(DuckTransaction &transaction, TableIndexList &index_list,
+	                                   RowGroupCollection &source, const vector<StorageIndex> &mapped_column_ids,
+	                                   row_t row_start) = nullptr;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);
@@ -208,6 +240,7 @@ public:
 	DUCKDB_API static DBConfig &Get(AttachedDatabase &db);
 	DUCKDB_API static const DBConfig &GetConfig(const ClientContext &context);
 	DUCKDB_API static const DBConfig &GetConfig(const DatabaseInstance &db);
+
 	DUCKDB_API static vector<ConfigurationOption> GetOptions();
 	DUCKDB_API static vector<ConfigurationAlias> GetAliases();
 	DUCKDB_API static idx_t GetOptionCount();

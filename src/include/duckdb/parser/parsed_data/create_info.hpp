@@ -20,6 +20,8 @@
 namespace duckdb {
 struct AlterInfo;
 
+unique_ptr<CreateInfo> DeserializeForeignCreateInfo(Deserializer &deserializer, CatalogType type);
+
 struct CreateInfo : public ParseInfo {
 public:
 	static constexpr const ParseInfoType TYPE = ParseInfoType::CREATE_INFO;
@@ -51,6 +53,12 @@ public:
 	Value comment;
 	//! Key-value tags with additional metadata
 	InsertionOrderPreservingMap<string> tags;
+	//! The entry's oid, and its parent's. Zero for an entry duckdb owns outright, whose oids are handed out by
+	//! NextOid() on load and are therefore not stable across a restart. A catalog that persists its own
+	//! definitions needs them to be, so the oid rides the info -- the one thing every version of an entry
+	//! carries, and the thing a record round-trips. CatalogEntry::oid is where the entry keeps it.
+	idx_t oid = 0;
+	idx_t parent_oid = 0;
 
 public:
 	const QualifiedName &GetQualifiedName() const {

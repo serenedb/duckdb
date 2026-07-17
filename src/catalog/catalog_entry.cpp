@@ -44,7 +44,7 @@ unique_ptr<CatalogEntry> CatalogEntry::Copy(ClientContext &context) const {
 }
 
 unique_ptr<CreateInfo> CatalogEntry::GetInfo() const {
-	throw InternalException("Unsupported type for CatalogEntry::GetInfo!");
+	throw InternalException("Unsupported type for CatalogEntry::GetInfo: %s", EnumUtil::ToString(type));
 }
 
 string CatalogEntry::ToSQL() const {

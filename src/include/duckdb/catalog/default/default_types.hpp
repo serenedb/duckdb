@@ -13,7 +13,7 @@
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 
 namespace duckdb {
-class SchemaCatalogEntry;
+class SchemaIdentity;
 
 struct DefaultType {
 	const char *name;
@@ -23,9 +23,10 @@ struct DefaultType {
 
 class DefaultTypeGenerator : public DefaultGenerator {
 public:
-	DefaultTypeGenerator(Catalog &catalog, SchemaCatalogEntry &schema);
+	DefaultTypeGenerator(Catalog &catalog, SchemaIdentity &identity);
 
-	SchemaCatalogEntry &schema;
+	//! Not a schema entry: an alter chains a new one, and this generator outlives the version that built it
+	SchemaIdentity &identity;
 
 public:
 	DUCKDB_API static LogicalType GetDefaultType(const Identifier &name);

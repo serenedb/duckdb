@@ -85,8 +85,8 @@ optional_ptr<CatalogEntry> CatalogEntryMap::GetEntry(const Identifier &name) {
 	return entry->second.get();
 }
 
-CatalogSet::CatalogSet(Catalog &catalog_p, unique_ptr<DefaultGenerator> defaults)
-    : catalog(catalog_p.Cast<DuckCatalog>()), defaults(std::move(defaults)) {
+CatalogSet::CatalogSet(Catalog &catalog_p, unique_ptr<DefaultGenerator> defaults, bool case_sensitive)
+    : catalog(catalog_p.Cast<DuckCatalog>()), map(case_sensitive), defaults(std::move(defaults)) {
 	D_ASSERT(catalog_p.IsDuckCatalog());
 }
 CatalogSet::~CatalogSet() {
@@ -203,7 +203,10 @@ bool CatalogSet::CreateEntry(CatalogTransaction transaction, const Identifier &n
 	// Mark this entry as being created by the current active transaction
 	value->timestamp = transaction.transaction_id;
 	value->set = this;
-	catalog.GetDependencyManager()->AddObject(transaction, *value, dependencies);
+	auto dependency_manager = catalog.GetDependencyManager();
+	if (dependency_manager) {
+		dependency_manager->AddObject(transaction, *value, dependencies);
+	}
 
 	// lock the catalog for writing
 	lock_guard<mutex> write_lock(catalog.GetWriteLock());
@@ -265,7 +268,10 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 		                       info.owner_name.GetIdentifierName());
 	}
 	write_lock.unlock();
-	catalog.GetDependencyManager()->AddOwnership(transaction, *owner_entry, *entry);
+	auto dependency_manager = catalog.GetDependencyManager();
+	if (dependency_manager) {
+		dependency_manager->AddOwnership(transaction, *owner_entry, *entry);
+	}
 	return true;
 }
 
@@ -273,13 +279,15 @@ bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntr
                                      AlterInfo &alter_info, unique_lock<mutex> &read_lock) {
 	auto &original_name = old.name;
 
-	auto &context = *transaction.context;
 	auto entry_value = map.GetEntry(new_name);
 	if (entry_value) {
 		auto &existing_entry = GetEntryForTransaction(transaction, *entry_value);
 		if (!existing_entry.deleted) {
 			// There exists an entry by this name that is not deleted
-			old.UndoAlter(context, alter_info);
+			if (transaction.context) {
+				// Boot replay and the background paths have no statement to undo against
+				old.UndoAlter(*transaction.context, alter_info);
+			}
 			throw CatalogException("Could not rename \"%s\" to \"%s\": another entry with this name already exists!",
 			                       original_name, new_name);
 		}
@@ -309,6 +317,11 @@ bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntr
 }
 
 bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info) {
+	return AlterEntry(transaction, name, alter_info, nullptr);
+}
+
+bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info,
+                            unique_ptr<CatalogEntry> value) {
 	// If the entry does not exist, we error
 	auto entry = GetEntry(transaction, name);
 	if (!entry) {
@@ -318,20 +331,22 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 		throw CatalogException("Cannot alter entry \"%s\" because it is an internal system entry", entry->name);
 	}
 
-	unique_ptr<CatalogEntry> value;
-	if (alter_info.type == AlterType::SET_COMMENT) {
-		// Copy the existing entry; we are only changing metadata here
-		if (!transaction.context) {
-			throw InternalException("Cannot AlterEntry::SET_COMMENT without client context");
-		}
-		value = entry->Copy(*transaction.context);
-		value->comment = alter_info.Cast<SetCommentInfo>().comment_value;
-	} else {
-		// Use the existing entry to create the altered entry
-		value = entry->AlterEntry(transaction, alter_info);
-		if (!value) {
-			// alter failed, but did not result in an error
-			return true;
+	// A caller-supplied value is the altered entry already; only derive one when there is none.
+	if (!value) {
+		if (alter_info.type == AlterType::SET_COMMENT) {
+			// Copy the existing entry; we are only changing metadata here
+			if (!transaction.context) {
+				throw InternalException("Cannot AlterEntry::SET_COMMENT without client context");
+			}
+			value = entry->Copy(*transaction.context);
+			value->comment = alter_info.Cast<SetCommentInfo>().comment_value;
+		} else {
+			// Use the existing entry to create the altered entry
+			value = entry->AlterEntry(transaction, alter_info);
+			if (!value) {
+				// alter failed, but did not result in an error
+				return true;
+			}
 		}
 	}
 
@@ -364,7 +379,12 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	// Preserve the oid across the alter: an altered entry is the same logical object as before
 	value->oid = entry->oid;
 
-	if (!(value->name == entry->name)) {
+	// A case-sensitive set is keyed on the exact name, so a rename that changes only case does move the entry --
+	// where duckdb's own case-insensitive comparison would call it the same name and leave the chain keyed
+	// under the old one.
+	const bool renamed = map.IsCaseSensitive() ? entry->name.GetIdentifierName() != value->name.GetIdentifierName()
+	                                           : !(value->name == entry->name);
+	if (renamed) {
 		if (!RenameEntryInternal(transaction, *entry, value->name, alter_info, read_lock)) {
 			return false;
 		}
@@ -395,7 +415,10 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	write_lock.unlock();
 
 	// Check the dependency manager to verify that there are no conflicting dependencies with this alter
-	catalog.GetDependencyManager()->AlterObject(transaction, *entry, *new_entry, alter_info);
+	auto dependency_manager = catalog.GetDependencyManager();
+	if (dependency_manager) {
+		dependency_manager->AlterObject(transaction, *entry, *new_entry, alter_info);
+	}
 	return true;
 }
 
@@ -411,7 +434,10 @@ bool CatalogSet::DropDependencies(CatalogTransaction transaction, const Identifi
 	// check any dependencies of this object
 	D_ASSERT(entry->ParentCatalog().IsDuckCatalog());
 	auto &duck_catalog = entry->ParentCatalog().Cast<DuckCatalog>();
-	duck_catalog.GetDependencyManager()->DropObject(transaction, *entry, cascade);
+	auto dependency_manager = duck_catalog.GetDependencyManager();
+	if (dependency_manager) {
+		dependency_manager->DropObject(transaction, *entry, cascade);
+	}
 	return true;
 }
 
@@ -461,6 +487,11 @@ bool CatalogSet::DropEntry(ClientContext &context, const Identifier &name, bool 
 //! Verify that the object referenced by the dependency still exists when we commit the dependency
 void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, CatalogEntry &entry) {
 	auto &duck_catalog = GetCatalog();
+	auto dependency_manager = duck_catalog.GetDependencyManager();
+	if (!dependency_manager) {
+		// Without a manager no DEPENDENCY_ENTRY was ever created, so there is nothing to verify
+		return;
+	}
 
 	// Resolve the dependency target against this transaction's own entries (already stamped with commit_id
 	// by UpdateTimestamp), not only earlier commits. Renaming a table or dropping a column underneath a
@@ -473,7 +504,7 @@ void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, CatalogEnt
 
 	D_ASSERT(entry.type == CatalogType::DEPENDENCY_ENTRY);
 	auto &dep = entry.Cast<DependencyEntry>();
-	duck_catalog.GetDependencyManager()->VerifyExistence(commit_transaction, dep);
+	dependency_manager->VerifyExistence(commit_transaction, dep);
 }
 
 //! Verify that no dependencies creations were committed since our transaction started, that reference the entry we're
@@ -482,13 +513,17 @@ void CatalogSet::CommitDrop(transaction_t commit_id, transaction_t start_time, C
 	auto &duck_catalog = GetCatalog();
 
 	entry.OnDrop();
+	auto dependency_manager = duck_catalog.GetDependencyManager();
+	if (!dependency_manager) {
+		return;
+	}
 	// Make sure that we don't see any uncommitted changes
 	auto transaction_id = MAX_TRANSACTION_ID;
 	// This will allow us to see all committed changes made before this COMMIT happened
 	auto tx_start_time = commit_id;
 	CatalogTransaction commit_transaction(duck_catalog.GetDatabase(), transaction_id, tx_start_time);
 
-	duck_catalog.GetDependencyManager()->VerifyCommitDrop(commit_transaction, start_time, entry);
+	dependency_manager->VerifyCommitDrop(commit_transaction, start_time, entry);
 }
 
 DuckCatalog &CatalogSet::GetCatalog() {

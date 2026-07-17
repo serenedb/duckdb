@@ -23,6 +23,9 @@ struct ConstraintEntry {
 			return;
 		}
 		auto binder = Binder::CreateBinder(context);
+		// In the table's own catalog and schema, not the reader's: a CHECK may call a function of the schema it was
+		// written in, and this scan walks every attached database.
+		binder->SetSearchPath(table.ParentSchema().catalog, table.ParentSchema().name);
 		bound_constraints = binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 	}
 
@@ -283,10 +286,10 @@ void DuckDBConstraintsFunction(ClientContext &context, TableFunctionInput &data_
 				throw NotImplementedException("Unimplemented constraint for duckdb_constraints");
 			}
 
-			database_name.Append(Value(table.schema.catalog.GetName()));
-			database_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.schema.catalog.GetOid())));
-			schema_name.Append(Value(table.schema.name));
-			schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.schema.oid)));
+			database_name.Append(Value(table.ParentSchema().catalog.GetName()));
+			database_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.ParentSchema().catalog.GetOid())));
+			schema_name.Append(Value(table.ParentSchema().name));
+			schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.ParentSchema().oid)));
 			table_name.Append(Value(table.name));
 			table_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.oid)));
 

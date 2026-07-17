@@ -22,7 +22,7 @@ struct DataTableInfo {
 
 public:
 	DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, Identifier schema,
-	              Identifier table);
+	              Identifier table, idx_t catalog_id = 0);
 
 	//! Bind unknown indexes throwing an exception if binding fails.
 	//! Only binds the specified index type, or all, if nullptr.
@@ -44,6 +44,9 @@ public:
 	}
 	//! Find and move out an IndexStorageInfo by name from the stored collection.
 	IndexStorageInfo ExtractIndexStorageInfo(const Identifier &name);
+	//! Whether the stored collection holds data for this index. A definition rebuilt from a host catalog can name
+	//! an index this file predates -- the index was created after the checkpoint and comes back with the WAL.
+	bool HasIndexStorageInfo(const Identifier &name) const;
 	unique_ptr<StorageLockKey> GetSharedLock() {
 		return checkpoint_lock.GetSharedLock();
 	}
@@ -54,6 +57,12 @@ public:
 	Identifier GetSchemaName();
 	Identifier GetTableName();
 	void SetTableName(Identifier name);
+
+	//! The host catalog's identifier for this table, or zero when the host owns none.
+	//! Fixed at construction, so a rename does not move it.
+	idx_t GetCatalogId() const {
+		return catalog_id;
+	}
 
 private:
 	//! The database instance of the table
@@ -66,6 +75,8 @@ private:
 	Identifier schema;
 	//! The name of the table
 	Identifier table;
+	//! The host catalog's identifier for this table
+	idx_t catalog_id = 0;
 	//! The physical list of indexes of this table
 	TableIndexList indexes;
 	//! Index storage information of the indexes created by this table

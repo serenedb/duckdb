@@ -108,6 +108,13 @@ public:
 	OptimisticWriteCollection &GetPrimaryCollection();
 
 private:
+	//! Feed path for ordinary indexes: they consume each chunk before the next scan, so the scan buffer and
+	//! the table-layout view over it are both reused.
+	ErrorData AppendChunksToIndexes(DuckTransaction &transaction, RowGroupCollection &source,
+	                                TableIndexList &index_list, const vector<LogicalType> &table_types,
+	                                const vector<StorageIndex> &mapped_column_ids, optional_idx checkpoint_id,
+	                                bool skip_external, row_t &start_row);
+
 	mutex collections_lock;
 };
 
@@ -208,7 +215,8 @@ public:
 	TableIndexList &GetIndexes(ClientContext &context, DataTable &table);
 	optional_ptr<LocalTableStorage> GetStorage(DataTable &table);
 
-	void VerifyNewConstraint(DataTable &parent, const BoundConstraint &constraint);
+	void VerifyNewConstraint(DataTable &parent, const BoundConstraint &constraint, const ColumnList &columns,
+	                         const string &constraint_text);
 
 	ClientContext &GetClientContext() const {
 		return context;

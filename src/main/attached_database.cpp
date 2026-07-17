@@ -167,6 +167,7 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, Sto
 	recovery_mode = options.recovery_mode;
 	visibility = options.visibility;
 	vacuum_rebuild_threshold = options.vacuum_rebuild_indexes_threshold;
+	defer_storage_load = options.defer_storage_load;
 
 	optional_ptr<StorageExtensionInfo> storage_info = storage_extension->storage_info.get();
 	catalog = storage_extension->attach(storage_info, context, *this, name.GetIdentifierName(), info, options);
@@ -252,6 +253,11 @@ void AttachedDatabase::InvokeCloseIfLastReference(shared_ptr<AttachedDatabase> &
 		close_action = DatabaseCloseAction::SKIP_CHECKPOINT;
 	}
 
+	InvokeCloseIfLastReference(attached_db, close_action);
+}
+
+void AttachedDatabase::InvokeCloseIfLastReference(shared_ptr<AttachedDatabase> &attached_db,
+                                                  DatabaseCloseAction close_action) {
 	auto close_lock = attached_db->close_lock;
 	lock_guard<mutex> guard(*close_lock);
 	if (attached_db.use_count() == 1) {
@@ -266,6 +272,12 @@ void AttachedDatabase::Initialize(optional_ptr<ClientContext> context) {
 	} else {
 		catalog->Initialize(context, false);
 	}
+	if (!defer_storage_load) {
+		InitializeStorage(context);
+	}
+}
+
+void AttachedDatabase::InitializeStorage(optional_ptr<ClientContext> context) {
 	if (storage) {
 		storage->Initialize(context);
 	}
@@ -348,7 +360,7 @@ void AttachedDatabase::Close(const DatabaseCloseAction action) {
 		auto create_checkpoint = true;
 		if (action == DatabaseCloseAction::TRY_CHECKPOINT && Exception::UncaughtException()) {
 			create_checkpoint = false;
-		} else if (!storage || storage->InMemory() || ValidChecker::IsInvalidated(db) ||
+		} else if (!storage || !storage->IsLoaded() || storage->InMemory() || ValidChecker::IsInvalidated(db) ||
 		           ValidChecker::IsInvalidated(*this)) {
 			create_checkpoint = false;
 		}
