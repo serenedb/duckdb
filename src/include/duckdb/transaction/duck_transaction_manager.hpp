@@ -135,6 +135,19 @@ private:
 
 	bool HasOtherTransactions(DuckTransaction &transaction);
 	void CleanupTransactions();
+	//! Floor the version-cleanup horizon at last_durable_commit + 1 while any published commit is not yet durable:
+	//! DurableSnapshotBound can still hand out snapshots there, so versions above the floor must survive.
+	transaction_t ApplyDurableFloor(transaction_t lowest_start_time) const;
+	//! Move the prefix of recently_committed_transactions below the horizon into cleanup_info. Must be called with
+	//! transaction_lock held.
+	void MoveExpiredRecentlyCommitted(transaction_t lowest_start_time, DuckCleanupInfo &cleanup_info);
+	//! Move recently committed transactions whose commit is below the current cleanup horizon to the cleanup queue.
+	//! Needed by the checkpoint paths: a commit parked by the durable floor in RemoveTransaction keeps its shared
+	//! checkpoint lock and uncleaned undo, and only RemoveTransaction re-evaluates the parked list -- with no other
+	//! transaction in flight, nothing would ever release it once its group fsync lands.
+	void PurgeRecentlyCommitted();
+	//! PurgeRecentlyCommitted for callers that already hold transaction_lock (e.g. CanCheckpoint during commit).
+	void PurgeRecentlyCommittedInternal();
 	//! Wait until the group fsyncs of all published commits have completed and raised the durable horizon
 	void WaitForInFlightCommits();
 	//! Raise the durable horizon to (at least) commit_id (raise-only) once its group fsync covers its flush marker,
