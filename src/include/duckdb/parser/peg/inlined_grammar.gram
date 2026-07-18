@@ -737,7 +737,8 @@ AlterStatement <- 'ALTER' AlterOptions
 
 AlterOptions <- AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt
 
-AlterIndexStmt <- 'INDEX' IfExists? BaseTableName RenameAlter
+AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter
+AlterIndexAlter <- RenameAlter / SetOptions / ResetOptions
 AlterFunctionStmt <- 'FUNCTION' IfExists? QualifiedName RenameAlter
 
 AlterTableStmt <- 'TABLE' IfExists? BaseTableName List(AlterTableOptions)
