@@ -1007,6 +1007,10 @@ shared_ptr<DynamicFilterData> ExpressionFilter::GetOptionalDynamicFilterData(con
 	return TryGetOptionalDynamicFilterData(*expr_filter.expr);
 }
 
+shared_ptr<DynamicFilterData> ExpressionFilter::GetOptionalDynamicFilterData(const Expression &expr) {
+	return TryGetOptionalDynamicFilterData(expr);
+}
+
 unique_ptr<ExpressionFilter> ExpressionFilter::FromTableFilter(const TableFilter &filter, const LogicalType &col_type) {
 	if (filter.filter_type == TableFilterType::EXPRESSION_FILTER) {
 		auto &expr_filter = filter.Cast<ExpressionFilter>();
