@@ -37,6 +37,17 @@ AdaptiveFilter::AdaptiveFilter(const TableFilterSet &table_filters, vector<idx_t
 	right_random_border = 100 * (table_filters.FilterCount() - 1);
 }
 
+AdaptiveFilter::AdaptiveFilter(idx_t filter_count) : observe_interval(10), execute_interval(20), warmup(true) {
+	D_ASSERT(filter_count > 1);
+	for (idx_t idx = 0; idx < filter_count; idx++) {
+		permutation.push_back(idx);
+		if (idx != filter_count - 1) {
+			swap_likeliness.push_back(100);
+		}
+	}
+	right_random_border = 100 * (filter_count - 1);
+}
+
 bool AdaptiveFilter::Remap(const TableFilterSet &new_filters, vector<idx_t> new_ids) {
 	if (new_ids.size() != filter_global_pos.size() || new_ids.size() != new_filters.FilterCount()) {
 		// missing filter cant remap
