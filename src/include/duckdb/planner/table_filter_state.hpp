@@ -44,6 +44,11 @@ public:
 	}
 
 	unique_ptr<ExpressionExecutor> executor;
+	//! Scratch selections reused across FilterSelection calls: the result is
+	//! repointed into the caller's selection, which is always consumed before
+	//! this filter runs again.
+	buffer_ptr<SelectionData> result_scratch;
+	buffer_ptr<SelectionData> chunk_scratch;
 };
 
 } // namespace duckdb
