@@ -42,6 +42,9 @@ public:
 	//! Access a runtime ExpressionFilter, failing fast if a legacy filter somehow reached an active code path.
 	static const ExpressionFilter &GetExpressionFilter(const TableFilter &filter, const char *context);
 	static ExpressionFilter &GetExpressionFilter(TableFilter &filter, const char *context);
+	//! The shared runtime bound of an optional-wrapped dynamic filter expression, null when the
+	//! expression is not one. Expression-level counterpart of GetRootOptionalDynamicFilterData.
+	static shared_ptr<DynamicFilterData> GetOptionalDynamicFilterData(const Expression &expr);
 	//! Build a COMPARE_IN expression over a single-column filter subject.
 	static unique_ptr<Expression> CreateInExpression(unique_ptr<Expression> column, vector<Value> values);
 	//! Build an IS NULL/IS NOT NULL expression over a single-column filter subject.
