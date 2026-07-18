@@ -32,6 +32,8 @@ class AdaptiveFilter {
 public:
 	explicit AdaptiveFilter(const Expression &expr);
 	explicit AdaptiveFilter(const TableFilterSet &table_filters, vector<idx_t> filter_global_pos = {});
+	//! An identity permutation over an externally owned filter list.
+	explicit AdaptiveFilter(idx_t filter_count);
 
 public:
 	void AdaptRuntimeStatistics(double duration);
