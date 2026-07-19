@@ -71,6 +71,9 @@ public:
 	bool all_values_inlined = false;
 
 	unsafe_unique_array<bool> filter_result;
+	//! How many dictionary entries pass the filter (valid when filter_result is set): 0 makes the
+	//! whole segment a miss, dict_count makes every candidate row pass without the per-row walk
+	idx_t filter_match_count = 0;
 };
 
 } // namespace dict_fsst

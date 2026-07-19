@@ -199,24 +199,46 @@ static void DictFSSTFilter(ColumnSegment &segment, ColumnScanState &state, idx_t
 				auto idx = dict_sel.get_index(i);
 				scan_state.filter_result[idx] = true;
 			}
+			scan_state.filter_match_count = filter_count;
+		}
+		if (scan_state.filter_match_count == 0) {
+			// early-out, no dictionary entry matches the filter so the filter can never pass
+			sel_count = 0;
+			return;
 		}
 		auto &dict_sel = scan_state.GetSelVec(start, vector_count);
-		SelectionVector new_sel(sel_count);
-		idx_t approved_tuple_count = 0;
-		for (idx_t idx = 0; idx < sel_count; idx++) {
-			auto row_idx = sel.get_index(idx);
-			auto dict_offset = dict_sel.get_index(row_idx);
-			if (!scan_state.filter_result[dict_offset]) {
-				// does not pass the filter
-				continue;
+		if (scan_state.filter_match_count == scan_state.dict_count) {
+			// every dictionary entry matches (nulls live in the dictionary too, so a
+			// null-rejecting filter never takes this path): all candidate rows pass as-is
+			result.Dictionary(scan_state.dictionary, dict_sel, vector_count);
+			return;
+		}
+		// the selection is only rebuilt from the first entry that actually drops - a window
+		// whose candidate rows all land on matching dictionary entries costs no copy
+		idx_t idx = 0;
+		for (; idx < sel_count; idx++) {
+			if (!scan_state.filter_result[dict_sel.get_index(sel.get_index(idx))]) {
+				break;
 			}
-			new_sel.set_index(approved_tuple_count++, row_idx);
 		}
-		if (approved_tuple_count < vector_count) {
-			sel.Initialize(new_sel);
+		if (idx < sel_count) {
+			// materialize the kept prefix, then rebuild from the first dropped entry
+			SelectionVector matching_sel(sel_count);
+			auto out_sel = matching_sel.data();
+			idx_t approved_tuple_count = idx;
+			for (idx_t i = 0; i < idx; i++) {
+				out_sel[i] = UnsafeNumericCast<sel_t>(sel.get_index(i));
+			}
+			for (idx++; idx < sel_count; idx++) {
+				auto row_idx = sel.get_index(idx);
+				auto dict_offset = dict_sel.get_index(row_idx);
+				if (scan_state.filter_result[dict_offset]) {
+					out_sel[approved_tuple_count++] = UnsafeNumericCast<sel_t>(row_idx);
+				}
+			}
+			sel.Initialize(matching_sel);
+			sel_count = approved_tuple_count;
 		}
-		sel_count = approved_tuple_count;
-
 		result.Dictionary(scan_state.dictionary, dict_sel, vector_count);
 		return;
 	}
