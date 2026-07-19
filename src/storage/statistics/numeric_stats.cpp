@@ -726,6 +726,32 @@ void NumericStats::Verify(const BaseStatistics &stats, const Vector &vector, con
 	}
 }
 
+template bool NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template bool NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template int8_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template int8_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template int16_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template int16_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template int32_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template int32_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template int64_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template int64_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template uint8_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template uint8_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template uint16_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template uint16_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
 template uint32_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
 template uint32_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template uint64_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template uint64_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template hugeint_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template hugeint_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template uhugeint_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template uhugeint_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template float NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template float NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template double NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template double NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
+template interval_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
+template interval_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
 } // namespace duckdb

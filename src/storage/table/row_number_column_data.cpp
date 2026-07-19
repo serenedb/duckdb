@@ -14,6 +14,7 @@ idx_t RowNumberColumnData::GetRowNumberBase(ColumnScanState &state) {
 }
 
 FilterPropagateResult RowNumberColumnData::CheckZonemap(ColumnScanState &state, TableFilter &filter,
+                                                        TableFilterState &filter_state,
                                                         optional_ptr<SegmentNode<ColumnSegment>> &checked_segment) {
 	// row_number columns don't have zonemaps - we cannot prune based on row number
 	checked_segment = nullptr;

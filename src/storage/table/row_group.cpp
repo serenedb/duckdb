@@ -728,7 +728,8 @@ static BaseStatistics CreateRowIdStats(idx_t beg_row, idx_t end_row) {
 	return result;
 }
 
-FilterPropagateResult RowGroup::CheckRowIdFilter(const TableFilter &filter, idx_t beg_row, idx_t end_row) {
+FilterPropagateResult RowGroup::CheckRowIdFilter(const TableFilter &filter, TableFilterState &filter_state,
+                                                 idx_t beg_row, idx_t end_row) {
 	if (end_row <= beg_row) {
 		return FilterPropagateResult::FILTER_ALWAYS_FALSE;
 	}
@@ -736,7 +737,7 @@ FilterPropagateResult RowGroup::CheckRowIdFilter(const TableFilter &filter, idx_
 	auto rowid_stats = CreateRowIdStats(beg_row, end_row);
 
 	auto &expr_filter = ExpressionFilter::GetExpressionFilter(filter, "RowGroup::CheckRowIdFilter");
-	return expr_filter.CheckStatistics(rowid_stats);
+	return expr_filter.CheckStatistics(rowid_stats, filter_state);
 }
 
 bool RowGroup::CheckZonemap(optional_ptr<ClientContext> context, ScanFilterInfo &filters, idx_t row_start) {
@@ -791,9 +792,9 @@ bool RowGroup::CheckZonemap(optional_ptr<ClientContext> context, ScanFilterInfo 
 		FilterPropagateResult prune_result;
 		if (base_column_index.IsRowIdColumn()) {
 			// the row ids in this row group span exactly [row_start, row_start + count)
-			prune_result = CheckRowIdFilter(filter, row_start, row_start + count);
+			prune_result = CheckRowIdFilter(filter, *entry.filter_state, row_start, row_start + count);
 		} else {
-			prune_result = GetColumn(base_column_index).CheckZonemap(context, base_column_index, filter);
+			prune_result = GetColumn(base_column_index).CheckZonemap(base_column_index, filter, *entry.filter_state);
 		}
 		if (prune_result == FilterPropagateResult::FILTER_ALWAYS_FALSE ||
 		    prune_result == FilterPropagateResult::FILTER_FALSE_OR_NULL) {
@@ -825,7 +826,8 @@ bool RowGroup::CheckZonemapSegments(CollectionScanState &state) {
 		auto &column_data = GetColumn(base_column_idx);
 
 		optional_ptr<SegmentNode<ColumnSegment>> current_segment;
-		auto prune_result = column_data.CheckZonemap(state.column_scans[column_idx], filter, current_segment);
+		auto prune_result =
+		    column_data.CheckZonemap(state.column_scans[column_idx], filter, *entry.filter_state, current_segment);
 		if (prune_result != FilterPropagateResult::FILTER_ALWAYS_FALSE &&
 		    prune_result != FilterPropagateResult::FILTER_FALSE_OR_NULL) {
 			continue;
@@ -900,13 +902,13 @@ vector<unique_ptr<AsyncTask>> RowGroup::CollectScanIOTasks(CollectionScanState &
 idx_t RowGroup::PrefetchRowCount(CollectionScanState &state) {
 	const idx_t start_row = state.vector_index * STANDARD_VECTOR_SIZE;
 	idx_t end_row = state.max_row_group_row;
-	auto context = state.context.GetClientContext();
 	for (auto &entry : state.GetFilterInfo().GetFilterList()) {
 		if (entry.IsAlwaysTrue() || entry.table_column_index.IsPushdownExtract()) {
 			continue;
 		}
 		auto &column_data = GetColumn(entry.table_column_index);
-		end_row = MinValue<idx_t>(end_row, column_data.ZonemapScanEnd(context, start_row, end_row, entry.filter));
+		end_row =
+		    MinValue<idx_t>(end_row, column_data.ZonemapScanEnd(start_row, end_row, entry.filter, *entry.filter_state));
 	}
 	return end_row > start_row ? end_row - start_row : 0;
 }

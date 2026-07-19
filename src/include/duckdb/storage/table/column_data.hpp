@@ -83,6 +83,7 @@ public:
 
 public:
 	virtual FilterPropagateResult CheckZonemap(ColumnScanState &state, TableFilter &filter,
+	                                           TableFilterState &filter_state,
 	                                           optional_ptr<SegmentNode<ColumnSegment>> &checked_segment);
 
 	BlockManager &GetBlockManager() const {
@@ -220,10 +221,9 @@ public:
 	                                  vector<ColumnSegmentInfo> &result, const ColumnSegmentInfoScanOptions &options);
 	virtual void Verify(RowGroup &parent);
 
-	FilterPropagateResult CheckZonemap(optional_ptr<ClientContext> context, const StorageIndex &index,
-	                                   TableFilter &filter);
+	FilterPropagateResult CheckZonemap(const StorageIndex &index, TableFilter &filter, TableFilterState &filter_state);
 	//! End of the last vector in [start_row, end_row) that the segment zonemaps do not reject for the filter
-	idx_t ZonemapScanEnd(optional_ptr<ClientContext> context, idx_t start_row, idx_t end_row, TableFilter &filter);
+	idx_t ZonemapScanEnd(idx_t start_row, idx_t end_row, TableFilter &filter, TableFilterState &filter_state);
 
 	static shared_ptr<ColumnData> CreateColumn(BlockManager &block_manager, DataTableInfo &info, idx_t column_index,
 	                                           const LogicalType &type,
@@ -270,9 +270,10 @@ protected:
 
 	static bool IsDirectNullCheckFilter(const TableFilter &filter);
 	//! Checks the filter against the statistics of one segment
-	FilterPropagateResult CheckSegmentStatistics(optional_ptr<ClientContext> context,
-	                                             SegmentNode<ColumnSegment> &segment, ExpressionFilter &expr_filter);
+	FilterPropagateResult CheckSegmentStatistics(SegmentNode<ColumnSegment> &segment, ExpressionFilter &expr_filter,
+	                                             TableFilterState &filter_state);
 	FilterPropagateResult CheckValidityZonemap(ColumnScanState &state, TableFilter &filter,
+	                                           TableFilterState &filter_state,
 	                                           optional_ptr<SegmentNode<ColumnSegment>> &checked_segment,
 	                                           ColumnData &validity_column);
 

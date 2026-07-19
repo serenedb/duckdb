@@ -2,6 +2,8 @@
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/function/arg_properties.hpp"
+#include "duckdb/planner/filter/zonemap_checker.hpp"
+#include "duckdb/planner/table_filter_state.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/function/cast/cast_statistics.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -194,6 +196,11 @@ FilterPropagateResult ExpressionFilter::CheckStatistics(const BaseStatistics &st
 
 FilterPropagateResult ExpressionFilter::CheckStatistics(ClientContext &context, const BaseStatistics &stats) const {
 	return CheckExpressionStatistics(&context, *expr, stats);
+}
+
+FilterPropagateResult ExpressionFilter::CheckStatistics(const BaseStatistics &stats, TableFilterState &state) const {
+	auto &expr_state = state.Cast<ExpressionFilterState>();
+	return expr_state.zonemap_checker->Check(stats, &expr_state.GetContext());
 }
 
 static FilterPropagateResult CheckZonemapAgainstConstants(const BaseStatistics &stats, ExpressionType comparison_type,
