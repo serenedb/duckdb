@@ -12,6 +12,7 @@
 
 #include "duckdb/common/limits.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/storage/statistics/base_statistics.hpp"
 
 #include "duckdb/storage/table/column_segment.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
@@ -77,6 +78,8 @@ public:
 	data_ptr_t segment_data;
 	idx_t total_value_count = 0;
 	AlpVectorState<T> vector_state;
+	//! Reusable statistics shell for AlpFilter's vector-bounds checks
+	unique_ptr<BaseStatistics> filter_group_stats;
 
 	ColumnSegment &segment;
 	idx_t count;
