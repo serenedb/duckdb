@@ -588,7 +588,9 @@ public:
 	                                                                        ParseResult &parse_result);
 	static unique_ptr<AlterInfo> TransformAlterIndexStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                     unique_ptr<BaseTableRef> base_table_name,
-	                                                     unique_ptr<AlterTableInfo> rename_alter);
+	                                                     unique_ptr<AlterTableInfo> alter_index_alter);
+	static unique_ptr<TransformResultValue> TransformAlterIndexAlterInternal(PEGTransformer &transformer,
+	                                                                         ParseResult &parse_result);
 	static unique_ptr<TransformResultValue> TransformAlterFunctionStmtInternal(PEGTransformer &transformer,
 	                                                                           ParseResult &parse_result);
 	static unique_ptr<AlterInfo> TransformAlterFunctionStmt(PEGTransformer &transformer,

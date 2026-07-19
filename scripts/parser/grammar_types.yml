@@ -215,6 +215,7 @@ AlterTableInfo:
   by_value: true
   rules:
     - AlterTableOptions
+    - AlterIndexAlter
     - AddColumn
     - DropColumn
     - SetPartitionedBy

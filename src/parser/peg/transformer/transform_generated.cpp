@@ -29,9 +29,18 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterIndexStmtI
 		if_exists = if_exists_value;
 	}
 	auto base_table_name = transformer.Transform<unique_ptr<BaseTableRef>>(list_pr.GetChild(2));
-	auto rename_alter = transformer.Transform<unique_ptr<AlterTableInfo>>(list_pr.GetChild(3));
-	auto result = TransformAlterIndexStmt(transformer, if_exists, std::move(base_table_name), std::move(rename_alter));
+	auto alter_index_alter = transformer.Transform<unique_ptr<AlterTableInfo>>(list_pr.GetChild(3));
+	auto result =
+	    TransformAlterIndexStmt(transformer, if_exists, std::move(base_table_name), std::move(alter_index_alter));
 	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterIndexAlterInternal(PEGTransformer &transformer,
+                                                                                         ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<unique_ptr<AlterTableInfo>>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<unique_ptr<AlterTableInfo>>>(std::move(result));
 }
 
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterFunctionStmtInternal(PEGTransformer &transformer,
@@ -10568,6 +10577,7 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"AlterStatement", &PEGTransformerFactory::TransformAlterStatementInternal},
 	    {"AlterOptions", &PEGTransformerFactory::TransformAlterOptionsInternal},
 	    {"AlterIndexStmt", &PEGTransformerFactory::TransformAlterIndexStmtInternal},
+	    {"AlterIndexAlter", &PEGTransformerFactory::TransformAlterIndexAlterInternal},
 	    {"AlterFunctionStmt", &PEGTransformerFactory::TransformAlterFunctionStmtInternal},
 	    {"AlterTableStmt", &PEGTransformerFactory::TransformAlterTableStmtInternal},
 	    {"AlterSchemaStmt", &PEGTransformerFactory::TransformAlterSchemaStmtInternal},
