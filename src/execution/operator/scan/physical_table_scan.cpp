@@ -409,6 +409,7 @@ TableFunctionToStringInput PhysicalTableScan::MakeToStringInput() const {
 	input.projection_ids = &projection_ids;
 	input.projected_names = &names;
 	input.projected_types = &returned_types;
+	input.filters = table_filters.get();
 	input.projected_filter_prune = function.filter_prune;
 	return input;
 }
