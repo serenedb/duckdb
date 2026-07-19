@@ -104,6 +104,10 @@ string CreateIndexInfo::ToString() const {
 		}
 		result += " )";
 	}
+	if (where_clause) {
+		result += " WHERE ";
+		result += where_clause->ToString();
+	}
 	result += ";";
 	return result;
 }
@@ -117,6 +121,9 @@ unique_ptr<CreateInfo> CreateIndexInfo::Copy() const {
 	}
 	for (auto &expr : parsed_expressions) {
 		result->parsed_expressions.push_back(expr->Copy());
+	}
+	if (where_clause) {
+		result->where_clause = where_clause->Copy();
 	}
 	return std::move(result);
 }
