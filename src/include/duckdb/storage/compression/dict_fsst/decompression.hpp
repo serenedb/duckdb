@@ -72,6 +72,7 @@ public:
 
 	unsafe_unique_array<bool> filter_result;
 	bool null_filter_result_initialized = false;
+	idx_t filter_match_count = 0;
 };
 
 } // namespace dict_fsst

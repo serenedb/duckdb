@@ -176,6 +176,20 @@ void DictFSSTSelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector
 //===--------------------------------------------------------------------===//
 // Filter
 //===--------------------------------------------------------------------===//
+static bool DictFSSTFilterPasses(CompressedStringScanState &scan_state, TableFilterState &filter_state,
+                                 idx_t dict_offset) {
+	// Evaluate NULL only when slot zero is referenced by an actual row.
+	if (dict_offset == 0 && !scan_state.null_filter_result_initialized) {
+		Vector null_data(scan_state.dictionary->data, /*offset=*/0, /*end=*/1);
+		SelectionVector null_sel;
+		idx_t null_filter_count = 1;
+		ColumnSegment::FilterSelection(null_sel, null_data, filter_state, 1, null_filter_count);
+		scan_state.filter_result[0] = null_filter_count == 1;
+		scan_state.null_filter_result_initialized = true;
+	}
+	return scan_state.filter_result[dict_offset];
+}
+
 static void DictFSSTFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_count, Vector &result,
                            SelectionVector &sel, idx_t &sel_count, const TableFilter &filter,
                            TableFilterState &filter_state) {
@@ -200,35 +214,49 @@ static void DictFSSTFilter(ColumnSegment &segment, ColumnScanState &state, idx_t
 				auto idx = dict_sel.get_index(i) + 1;
 				scan_state.filter_result[idx] = true;
 			}
+			scan_state.filter_match_count = filter_count;
 		}
 		// Till now, we have a filter result for all non-NULL values.
+		if (scan_state.null_filter_result_initialized) {
+			const idx_t match_count = scan_state.filter_match_count + scan_state.filter_result[0];
+			if (match_count == 0) {
+				// early-out, no dictionary entry matches the filter so the filter can never pass
+				sel_count = 0;
+				return;
+			}
+			if (match_count == scan_state.dict_count) {
+				// every dictionary entry matches (nulls live in the dictionary too, so a
+				// null-rejecting filter never takes this path): all candidate rows pass as-is
+				result.Dictionary(scan_state.dictionary, scan_state.GetSelVec(start, vector_count), vector_count);
+				return;
+			}
+		}
 		auto &dict_sel = scan_state.GetSelVec(start, vector_count);
-		SelectionVector new_sel(sel_count);
-		idx_t approved_tuple_count = 0;
-		for (idx_t idx = 0; idx < sel_count; idx++) {
-			auto row_idx = sel.get_index(idx);
-			auto dict_offset = dict_sel.get_index(row_idx);
-			// Evaluate NULL only when slot zero is referenced by an actual row.
-			if (dict_offset == 0 && !scan_state.null_filter_result_initialized) {
-				Vector null_data(scan_state.dictionary->data, /*offset=*/0, /*end=*/1);
-				SelectionVector null_sel;
-				idx_t null_filter_count = 1;
-				ColumnSegment::FilterSelection(null_sel, null_data, filter_state, 1, null_filter_count);
-				scan_state.filter_result[0] = null_filter_count == 1;
-				scan_state.null_filter_result_initialized = true;
+		// the selection is only rebuilt from the first entry that actually drops - a window
+		// whose candidate rows all land on matching dictionary entries costs no copy
+		idx_t idx = 0;
+		for (; idx < sel_count; idx++) {
+			if (!DictFSSTFilterPasses(scan_state, filter_state, dict_sel.get_index(sel.get_index(idx)))) {
+				break;
 			}
-			// Check filter result for the value at the offset and assign selection vector.
-			if (!scan_state.filter_result[dict_offset]) {
-				// does not pass the filter
-				continue;
+		}
+		if (idx < sel_count) {
+			// materialize the kept prefix, then rebuild from the first dropped entry
+			SelectionVector matching_sel(sel_count);
+			auto out_sel = matching_sel.data();
+			idx_t approved_tuple_count = idx;
+			for (idx_t i = 0; i < idx; i++) {
+				out_sel[i] = UnsafeNumericCast<sel_t>(sel.get_index(i));
 			}
-			new_sel.set_index(approved_tuple_count++, row_idx);
+			for (idx++; idx < sel_count; idx++) {
+				auto row_idx = sel.get_index(idx);
+				if (DictFSSTFilterPasses(scan_state, filter_state, dict_sel.get_index(row_idx))) {
+					out_sel[approved_tuple_count++] = UnsafeNumericCast<sel_t>(row_idx);
+				}
+			}
+			sel.Initialize(matching_sel);
+			sel_count = approved_tuple_count;
 		}
-		if (approved_tuple_count < vector_count) {
-			sel.Initialize(new_sel);
-		}
-		sel_count = approved_tuple_count;
-
 		result.Dictionary(scan_state.dictionary, dict_sel, vector_count);
 		return;
 	}
