@@ -4,13 +4,18 @@
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/optional.hpp"
+#include "duckdb/common/operator/add.hpp"
+#include "duckdb/common/operator/multiply.hpp"
 #include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/planner/filter/zonemap_checker.hpp"
+#include "duckdb/planner/table_filter_state.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/storage/statistics/numeric_stats.hpp"
 #include "duckdb/storage/compression/bitpacking.hpp"
 #include "duckdb/storage/compression/compression_segment_reader.hpp"
 #include "duckdb/storage/compression/standard_compression_state.hpp"
@@ -736,6 +741,8 @@ public:
 
 	//! Current scan state, with group data present only while a validated metadata group is active.
 	std::variant<Initial, CurrentGroup, Finished> group_state = Initial {};
+	//! Reusable statistics shell for BitpackingFilter's group-bounds checks
+	unique_ptr<BaseStatistics> filter_group_stats;
 
 public:
 	//! Get a group descriptor from the reverse metadata table.
@@ -770,8 +777,8 @@ public:
 		group_state = Finished {};
 	}
 
-	//! Loads the selected group's mode-specific header and validates its packed payload range.
-	void LoadGroup(idx_t group_index) {
+	//! Reads the selected group's mode-specific header and validates its packed payload range.
+	CurrentGroup ReadGroup(idx_t group_index) const {
 		auto current_group = GetGroupMetadata(group_index);
 
 		// Group boundaries come from metadata read from disk, so load and validate them.
@@ -845,20 +852,22 @@ public:
 		if (expected_payload_size > 0) {
 			payload = group_reader.template ReadBytesAligned<T_PACKED>(expected_payload_size);
 		}
-		CurrentGroup loaded_group {group_index,
-		                           0,
-		                           group_row_count,
-		                           current_group,
-		                           current_width,
-		                           current_frame_of_reference,
-		                           current_constant,
-		                           current_delta_offset,
-		                           payload,
-		                           algorithm_group_count,
-		                           algorithm_group_size};
+		return CurrentGroup {group_index,
+		                     0,
+		                     group_row_count,
+		                     current_group,
+		                     current_width,
+		                     current_frame_of_reference,
+		                     current_constant,
+		                     current_delta_offset,
+		                     payload,
+		                     algorithm_group_count,
+		                     algorithm_group_size};
+	}
 
+	void LoadGroup(idx_t group_index) {
 		// Publish the group only after all disk-derived values and payload bounds have been validated.
-		group_state = std::move(loaded_group);
+		group_state = ReadGroup(group_index);
 	}
 
 	void Skip(idx_t skip_count) {
@@ -1138,6 +1147,179 @@ void BitpackingSkip(ColumnSegment &segment, ColumnScanState &state, idx_t skip_c
 }
 
 //===--------------------------------------------------------------------===//
+// Group bounds
+//===--------------------------------------------------------------------===//
+//! Conservative [min, max] of one metadata group, read from its header. Returns false when the
+//! mode's bounds are unknowable without decoding.
+template <class T, class T_S = typename MakeSigned<T>::type, class T_U = typename MakeUnsigned<T>::type>
+static bool BitpackingGroupBounds(const typename BitpackingScanState<T>::CurrentGroup &group, T &minimum, T &maximum) {
+	if constexpr (sizeof(T) > sizeof(uint64_t)) {
+		return false;
+	} else {
+		switch (group.metadata.mode) {
+		case BitpackingMode::CONSTANT: {
+			minimum = group.constant;
+			maximum = minimum;
+			return true;
+		}
+		case BitpackingMode::CONSTANT_DELTA: {
+			// value[o] = constant * o + frame_of_reference, with the same wrapping arithmetic as
+			// the scan; both endpoints are true row values, so the bounds are exact
+			T frame_of_reference = group.frame_of_reference;
+			T constant = group.constant;
+			idx_t last = group.count - 1;
+			T first_value = frame_of_reference;
+			T last_value = static_cast<T>((static_cast<T_U>(constant) * last) + static_cast<T_U>(frame_of_reference));
+			minimum = MinValue(first_value, last_value);
+			maximum = MaxValue(first_value, last_value);
+			return true;
+		}
+		case BitpackingMode::FOR: {
+			// value = frame_of_reference + packed, packed in [0, 2^width); the compressor sets the
+			// frame of reference to the group minimum. The width is rounded up, so the upper bound
+			// saturates instead of wrapping.
+			T frame_of_reference = group.frame_of_reference;
+			auto width = group.width;
+			minimum = frame_of_reference;
+			maximum = NumericLimits<T>::Maximum();
+			if (width < sizeof(T) * 8) {
+				uint64_t packed_span = (uint64_t(1) << width) - 1;
+				T span;
+				if (packed_span > static_cast<uint64_t>(NumericLimits<T>::Maximum()) ||
+				    !TryAddOperator::Operation(minimum, span = static_cast<T>(packed_span), maximum)) {
+					maximum = NumericLimits<T>::Maximum();
+				}
+			}
+			return true;
+		}
+		case BitpackingMode::DELTA_FOR: {
+			// delta[i] = delta_frame_of_reference + packed, packed in [0, 2^width); values are the
+			// running sum seeded from the header. Bounded by the k-step extremes; only for signed
+			// types - the running sum is signed arithmetic, whose interval has no sound unsigned
+			// reinterpretation once it crosses zero.
+			if (!NumericLimits<T>::IsSigned()) {
+				return false;
+			}
+			T delta_frame_of_reference = group.frame_of_reference;
+			auto width = group.width;
+			T delta_offset = group.delta_offset;
+			if (width >= sizeof(T) * 8) {
+				return false;
+			}
+			int64_t delta_min = static_cast<int64_t>(static_cast<T_S>(delta_frame_of_reference));
+			uint64_t packed_span = (uint64_t(1) << width) - 1;
+			if (packed_span > static_cast<uint64_t>(NumericLimits<int64_t>::Maximum())) {
+				return false;
+			}
+			int64_t delta_max;
+			if (!TryAddOperator::Operation(delta_min, static_cast<int64_t>(packed_span), delta_max)) {
+				return false;
+			}
+			int64_t base = static_cast<int64_t>(static_cast<T_S>(delta_offset));
+			int64_t steps = static_cast<int64_t>(group.count);
+			int64_t lo = delta_min;
+			int64_t hi = delta_max;
+			if (delta_min < 0 && !TryMultiplyOperator::Operation(delta_min, steps, lo)) {
+				return false;
+			}
+			if (delta_max > 0 && !TryMultiplyOperator::Operation(delta_max, steps, hi)) {
+				return false;
+			}
+			if (!TryAddOperator::Operation(base, lo, lo) || !TryAddOperator::Operation(base, hi, hi)) {
+				return false;
+			}
+			if (lo < static_cast<int64_t>(NumericLimits<T>::Minimum()) ||
+			    hi > static_cast<int64_t>(NumericLimits<T>::Maximum())) {
+				return false;
+			}
+			minimum = static_cast<T>(lo);
+			maximum = static_cast<T>(hi);
+			return true;
+		}
+		default:
+			return false;
+		}
+	}
+}
+
+//===--------------------------------------------------------------------===//
+// Filter
+//===--------------------------------------------------------------------===//
+template <class T>
+void BitpackingFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_count, Vector &result,
+                      SelectionVector &sel, idx_t &sel_count, const TableFilter &filter,
+                      TableFilterState &filter_state) {
+	auto &scan_state = state.scan_state->Cast<BitpackingScanState<T>>();
+	auto &checker = *filter_state.Cast<ExpressionFilterState>().zonemap_checker;
+	auto verdict = FilterPropagateResult::NO_PRUNING_POSSIBLE;
+	// Combine the verdicts of the metadata groups the window touches: the group bounds decide
+	// whether the whole window skips the decode (ALWAYS_FALSE) or the predicate (ALWAYS_TRUE);
+	// anything else decodes and evaluates as usual. Probes run per window, so only a fully
+	// compiled check stays cheap enough.
+	if (checker.IsFullyCompiled() && !scan_state.IsFinished()) {
+		idx_t group_index = 0;
+		idx_t offset_in_group = 0;
+		if (scan_state.HasCurrentGroup()) {
+			auto &current_group = scan_state.GetCurrentGroup();
+			group_index = current_group.index;
+			offset_in_group = current_group.offset;
+			if (current_group.AtEnd()) {
+				// the scan exhausted the group but has not loaded the next one yet
+				group_index++;
+				offset_in_group = 0;
+			}
+		}
+		if (!scan_state.filter_group_stats) {
+			scan_state.filter_group_stats = NumericStats::CreateEmpty(segment.GetType()).ToUnique();
+			scan_state.filter_group_stats->SetHasNoNullFast();
+		}
+		auto &group_stats = *scan_state.filter_group_stats;
+		idx_t remaining = vector_count;
+		bool first = true;
+		while (remaining > 0 && group_index < scan_state.group_count) {
+			auto group = scan_state.ReadGroup(group_index);
+			auto group_verdict = FilterPropagateResult::NO_PRUNING_POSSIBLE;
+			T minimum;
+			T maximum;
+			if (BitpackingGroupBounds<T>(group, minimum, maximum)) {
+				NumericStats::SetMin<T>(group_stats, minimum);
+				NumericStats::SetMax<T>(group_stats, maximum);
+				group_verdict = checker.Check(group_stats, nullptr);
+			}
+			if (first) {
+				verdict = group_verdict;
+				first = false;
+			} else if (group_verdict != verdict) {
+				verdict = FilterPropagateResult::NO_PRUNING_POSSIBLE;
+			}
+			if (verdict == FilterPropagateResult::NO_PRUNING_POSSIBLE) {
+				break;
+			}
+			remaining -= MinValue<idx_t>(remaining, group.count - offset_in_group);
+			group_index++;
+			offset_in_group = 0;
+		}
+		if (remaining > 0) {
+			verdict = FilterPropagateResult::NO_PRUNING_POSSIBLE;
+		}
+	}
+	if (verdict == FilterPropagateResult::FILTER_ALWAYS_FALSE ||
+	    verdict == FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+		// nothing in the window can pass: advance the cursor without decoding (whole-group skips
+		// jump the metadata directly, even for DELTA_FOR)
+		scan_state.Skip(vector_count);
+		sel_count = 0;
+		return;
+	}
+	BitpackingScanPartial<T>(segment, state, vector_count, result, 0);
+	FlatVector::SetSize(result, count_t(vector_count));
+	if (verdict == FilterPropagateResult::FILTER_ALWAYS_TRUE) {
+		return;
+	}
+	ColumnSegment::FilterSelection(sel, result, filter_state, vector_count, sel_count);
+}
+
+//===--------------------------------------------------------------------===//
 // GetSegmentInfo
 //===--------------------------------------------------------------------===//
 template <class T>
@@ -1171,13 +1353,18 @@ CompressionFunction GetBitpackingFunction(PhysicalType data_type) {
 	    BitpackingFinalAnalyze<T>, BitpackingInitCompression<T, WRITE_STATISTICS>,
 	    BitpackingCompress<T, WRITE_STATISTICS>, BitpackingFinalizeCompress<T, WRITE_STATISTICS>, BitpackingInitScan<T>,
 	    BitpackingScan<T>, BitpackingScanPartial<T>, BitpackingFetchRow<T>, BitpackingSkip<T>);
+	bitpacking.filter = BitpackingFilter<T>;
 	bitpacking.get_segment_info = BitpackingGetSegmentInfo<T>;
 	return bitpacking;
 }
 
 CompressionFunction BitpackingFun::GetFunction(PhysicalType type) {
 	switch (type) {
-	case PhysicalType::BOOL:
+	case PhysicalType::BOOL: {
+		auto function = GetBitpackingFunction<int8_t>(type);
+		function.filter = nullptr;
+		return function;
+	}
 	case PhysicalType::INT8:
 		return GetBitpackingFunction<int8_t>(type);
 	case PhysicalType::INT16:
@@ -1198,8 +1385,11 @@ CompressionFunction BitpackingFun::GetFunction(PhysicalType type) {
 		return GetBitpackingFunction<hugeint_t>(type);
 	case PhysicalType::UINT128:
 		return GetBitpackingFunction<uhugeint_t>(type);
-	case PhysicalType::LIST:
-		return GetBitpackingFunction<uint64_t, false>(type);
+	case PhysicalType::LIST: {
+		auto function = GetBitpackingFunction<uint64_t, false>(type);
+		function.filter = nullptr;
+		return function;
+	}
 	default:
 		throw InternalException("Unsupported type for Bitpacking");
 	}
