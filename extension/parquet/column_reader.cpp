@@ -273,7 +273,8 @@ void ColumnReader::InitializeRead(idx_t row_group_idx_p, idx_t row_group_num_row
 	group_rows_available = NumericCast<idx_t>(chunk->meta_data.num_values);
 }
 
-bool ColumnReader::PageIsFilteredOut(PageHeader &page_hdr, optional_ptr<const TableFilter> filter) {
+bool ColumnReader::PageIsFilteredOut(PageHeader &page_hdr, optional_ptr<const TableFilter> filter,
+                                     optional_ptr<TableFilterState> filter_state) {
 	if (page_hdr.type != PageType::DATA_PAGE && page_hdr.type != PageType::DATA_PAGE_V2) {
 		// we can only filter out data pages
 		return false;
@@ -305,8 +306,8 @@ bool ColumnReader::PageIsFilteredOut(PageHeader &page_hdr, optional_ptr<const Ta
 		auto stats =
 		    ParquetStatisticsUtils::TransformParquetStatistics(Type(), Schema(), *page_stats, /*can_have_nan=*/true);
 		auto &expr_filter = filter->Cast<ExpressionFilter>();
-		if (stats) {
-			auto prune_result = expr_filter.CheckStatistics(*stats);
+		if (stats && filter_state) {
+			auto prune_result = expr_filter.CheckStatistics(*stats, *filter_state);
 			if (prune_result == FilterPropagateResult::FILTER_ALWAYS_FALSE ||
 			    prune_result == FilterPropagateResult::FILTER_FALSE_OR_NULL) {
 				page_is_filtered_out = true;
@@ -380,7 +381,7 @@ void ColumnReader::PrepareRead(optional_ptr<const TableFilter> filter, optional_
 		throw InvalidInputException("Failed to read file \"%s\": Page sizes must be >= 0", Reader().GetFileName());
 	}
 
-	if (PageIsFilteredOut(page_hdr, filter)) {
+	if (PageIsFilteredOut(page_hdr, filter, filter_state)) {
 		return;
 	}
 

@@ -202,6 +202,7 @@ struct ParquetPrefetchMetrics {
 struct ParquetReaderScanState {
 public:
 	ColumnReader &GetColumnReader(idx_t i);
+	optional_ptr<ParquetScanFilter> GetScanFilter(idx_t column);
 
 public:
 	//! The row group index this scan state decodes
@@ -235,6 +236,8 @@ public:
 	MultiFileAdaptiveFilterCache adaptive_filter_cache;
 	//! Table filter list
 	vector<ParquetScanFilter> scan_filters;
+	//! The position in scan_filters of the filter on each column
+	vector<optional_idx> column_scan_filters;
 	//! true once the filter at this index has driven the surviving row count to zero
 	vector<bool> filter_eliminated_all_rows;
 

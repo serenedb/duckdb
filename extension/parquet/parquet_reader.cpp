@@ -1491,8 +1491,8 @@ idx_t ParquetReader::GetGroupOffset(ParquetReaderScanState &state) {
 	return min_offset;
 }
 
-static FilterPropagateResult CheckParquetFloatFilter(ClientContext &context, ColumnReader &reader,
-                                                     const Statistics &pq_col_stats, const TableFilter &filter) {
+static FilterPropagateResult CheckParquetFloatFilter(ColumnReader &reader, const Statistics &pq_col_stats,
+                                                     const TableFilter &filter, TableFilterState &filter_state) {
 	// floating point values can have values in the [min, max] domain AND nan values
 	// check both stats against the filter
 	auto &expr_filter = ExpressionFilter::GetExpressionFilter(filter, "CheckParquetFloatFilter");
@@ -1501,10 +1501,10 @@ static FilterPropagateResult CheckParquetFloatFilter(ClientContext &context, Col
 	auto nan_value = Value("nan").DefaultCastAs(type);
 	NumericStats::SetMin(nan_stats, nan_value);
 	NumericStats::SetMax(nan_stats, nan_value);
-	auto nan_prune = expr_filter.CheckStatistics(context, nan_stats);
+	auto nan_prune = expr_filter.CheckStatistics(nan_stats, filter_state);
 
 	auto min_max_stats = ParquetStatisticsUtils::CreateNumericStats(reader.Type(), reader.Schema(), pq_col_stats);
-	auto prune = expr_filter.CheckStatistics(context, *min_max_stats);
+	auto prune = expr_filter.CheckStatistics(*min_max_stats, filter_state);
 
 	// if EITHER of them cannot be pruned - we cannot prune
 	if (prune == FilterPropagateResult::NO_PRUNING_POSSIBLE ||
@@ -1686,6 +1686,13 @@ ColumnReader &ParquetReaderScanState::GetColumnReader(idx_t i) {
 	return *column_readers[i];
 }
 
+optional_ptr<ParquetScanFilter> ParquetReaderScanState::GetScanFilter(idx_t column) {
+	if (column >= column_scan_filters.size() || !column_scan_filters[column].IsValid()) {
+		return nullptr;
+	}
+	return scan_filters[column_scan_filters[column].GetIndex()];
+}
+
 void ParquetReader::PrepareRowGroupBuffer(ClientContext &context, ParquetReaderScanState &state, idx_t i) {
 	auto &group = GetGroup(state);
 	auto col_idx = MultiFileLocalIndex(i);
@@ -1706,9 +1713,10 @@ void ParquetReader::PrepareRowGroupBuffer(ClientContext &context, ParquetReaderS
 
 	if (filters) {
 		// filters contain output chunk index, not file col idx!
-		auto filter_entry = filters->TryGetFilterByColumnIndex(col_idx);
-		if (filter_entry) {
-			auto &filter = *filter_entry;
+		auto scan_filter = state.GetScanFilter(col_idx);
+		if (scan_filter) {
+			auto &filter = scan_filter->filter;
+			auto &filter_state = *scan_filter->filter_state;
 
 			auto schema_column_index = column_reader.ColumnIndex();
 			auto prune_result = FilterPropagateResult::NO_PRUNING_POSSIBLE;
@@ -1730,11 +1738,11 @@ void ParquetReader::PrepareRowGroupBuffer(ClientContext &context, ParquetReaderS
 					// in order to do optimal pruning - we prune based on the [min, max] of the file followed by pruning
 					// based on nan
 					prune_result = CheckParquetFloatFilter(
-					    context, column_reader, group.columns[schema_column_index].meta_data.statistics, filter);
+					    column_reader, group.columns[schema_column_index].meta_data.statistics, filter, filter_state);
 				} else {
 					auto &expr_filter =
 					    ExpressionFilter::GetExpressionFilter(filter, "ParquetReader::PrepareRowGroupBuffer");
-					prune_result = expr_filter.CheckStatistics(context, *stats);
+					prune_result = expr_filter.CheckStatistics(*stats, filter_state);
 				}
 			}
 			// check the bloom filter if present
@@ -1846,10 +1854,16 @@ void ParquetReader::InitializeScan(ClientContext &context, ParquetReaderScanStat
 		state.file_handle = shared_scan_handle;
 	}
 	state.scan_filters.clear();
+	state.column_scan_filters.clear();
 	if (filters) {
 		state.adaptive_filter_cache.InitializeAdaptiveFilter(*filters, filter_global_indices, context.logger,
 		                                                     file.path);
 		for (auto &entry : *filters) {
+			const idx_t column = entry.GetIndex();
+			if (column >= state.column_scan_filters.size()) {
+				state.column_scan_filters.resize(column + 1);
+			}
+			state.column_scan_filters[column] = state.scan_filters.size();
 			state.scan_filters.emplace_back(context, entry.GetIndex(), entry.Filter());
 		}
 	}

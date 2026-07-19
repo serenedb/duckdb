@@ -21,7 +21,7 @@ public:
 
 public:
 	void SetDataType(ColumnDataType data_type) override;
-	FilterPropagateResult CheckZonemap(ColumnScanState &state, TableFilter &filter,
+	FilterPropagateResult CheckZonemap(ColumnScanState &state, TableFilter &filter, TableFilterState &filter_state,
 	                                   optional_ptr<SegmentNode<ColumnSegment>> &checked_segment) override;
 
 	void InitializePrefetch(PrefetchState &prefetch_state, ColumnScanState &scan_state, idx_t rows) override;

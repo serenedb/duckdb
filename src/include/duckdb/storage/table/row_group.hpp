@@ -35,6 +35,7 @@ struct DataTableInfo;
 class ExpressionExecutor;
 class RowGroupCollection;
 class RowGroupWriter;
+struct TableFilterState;
 class UpdateSegment;
 class TableStatistics;
 struct ColumnSegmentInfo;
@@ -276,7 +277,8 @@ public:
 
 	idx_t GetRowGroupSize() const;
 
-	static FilterPropagateResult CheckRowIdFilter(const TableFilter &filter, idx_t beg_row, idx_t end_row);
+	static FilterPropagateResult CheckRowIdFilter(const TableFilter &filter, TableFilterState &filter_state,
+	                                              idx_t beg_row, idx_t end_row);
 	idx_t GetColumnCount() const;
 
 	vector<MetaBlockPointer> CheckpointDeletes(RowGroupWriter &writer);
