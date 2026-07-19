@@ -479,66 +479,61 @@ void RLEFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 		sel_count = 0;
 		return;
 	}
-	// scan (the subset of) the matching runs AND set the output selection vector with the rows that match
+	// scan the matching runs like the plain scan would (one vectorized fill per run) and narrow
+	// the selection to the rows they cover. The selection is only rebuilt from the first entry
+	// that actually drops - a window whose candidate rows all land in matching runs costs exactly
+	// a scan plus one flag check per run.
 	auto result_data = FlatVector::GetDataMutable<T>(result);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
 
+	SelectionVector matching_sel;
+	sel_t *out_sel = nullptr;
 	idx_t matching_count = 0;
-	SelectionVector matching_sel(sel_count);
-	if (!sel.IsSet()) {
-		// no selection vector yet - fast path
-		// this is essentially the normal scan, but we apply the filter and fill the selection vector
-		idx_t result_offset = 0;
-		idx_t result_end = sel_count;
-		while (result_offset < result_end) {
-			rle_count_t run_end = index_pointer[scan_state.entry_pos];
-			idx_t run_count = run_end - scan_state.position_in_entry;
-			idx_t remaining_scan_count = result_end - result_offset;
-			// the run is scanned - scan it
+	idx_t pos = 0;
+	idx_t sel_idx = 0;
+	idx_t prev_row = 0;
+	while (pos < vector_count) {
+		rle_count_t run_end = index_pointer[scan_state.entry_pos];
+		idx_t run_count = run_end - scan_state.position_in_entry;
+		idx_t take = MinValue<idx_t>(vector_count - pos, run_count);
+		const bool match = scan_state.matching_runs[scan_state.entry_pos];
+		if (match) {
 			T element = data_pointer[scan_state.entry_pos];
-			if (DUCKDB_UNLIKELY(run_count > remaining_scan_count)) {
-				if (scan_state.matching_runs[scan_state.entry_pos]) {
-					for (idx_t i = 0; i < remaining_scan_count; i++) {
-						result_data[result_offset + i] = element;
-						matching_sel.set_index(matching_count++, result_offset + i);
-					}
-				}
-				scan_state.position_in_entry += remaining_scan_count;
-				break;
-			}
-
-			if (scan_state.matching_runs[scan_state.entry_pos]) {
-				for (idx_t i = 0; i < run_count; i++) {
-					result_data[result_offset + i] = element;
-					matching_sel.set_index(matching_count++, result_offset + i);
-				}
-			}
-
-			result_offset += run_count;
-			scan_state.ForwardToNextRun();
+			std::fill(result_data + pos, result_data + pos + take, element);
 		}
-	} else {
-		// we already have a selection applied - this is more complex since we need to merge it with our filter
-		// use a simpler (but slower) approach
-		idx_t prev_idx = 0;
-		for (idx_t i = 0; i < sel_count; i++) {
-			auto read_idx = sel.get_index(i);
-			if (read_idx < prev_idx) {
+		// consume the selection entries that fall into this run slice
+		idx_t run_begin_sel = sel_idx;
+		while (sel_idx < sel_count && sel.get_index(sel_idx) < pos + take) {
+			auto row = sel.get_index(sel_idx);
+			if (row < prev_row) {
 				throw InternalException("Error in RLEFilter - selection vector indices are not ordered");
 			}
-			// skip forward to the next index
-			scan_state.SkipInternal(read_idx - prev_idx);
-			prev_idx = read_idx;
-			if (!scan_state.matching_runs[scan_state.entry_pos]) {
-				// this run is filtered out - we don't need to scan it
-				continue;
-			}
-			// the run is not filtered out - read the element
-			result_data[read_idx] = data_pointer[scan_state.entry_pos];
-			matching_sel.set_index(matching_count++, read_idx);
+			prev_row = row;
+			sel_idx++;
 		}
-		// skip the tail
-		scan_state.SkipInternal(vector_count - prev_idx);
+		if (match) {
+			if (out_sel) {
+				for (idx_t i = run_begin_sel; i < sel_idx; i++) {
+					out_sel[matching_count++] = UnsafeNumericCast<sel_t>(sel.get_index(i));
+				}
+			} else {
+				// no entry dropped yet: the kept prefix is sel[0..sel_idx)
+				matching_count = sel_idx;
+			}
+		} else if (sel_idx != run_begin_sel && !out_sel) {
+			// first dropped entries: materialize the kept prefix and rebuild from here
+			matching_sel.Initialize(sel_count);
+			out_sel = matching_sel.data();
+			for (idx_t i = 0; i < run_begin_sel; i++) {
+				out_sel[i] = UnsafeNumericCast<sel_t>(sel.get_index(i));
+			}
+			matching_count = run_begin_sel;
+		}
+		scan_state.position_in_entry += take;
+		if (scan_state.ExhaustedRun()) {
+			scan_state.ForwardToNextRun();
+		}
+		pos += take;
 	}
 
 	// set up the filter result
