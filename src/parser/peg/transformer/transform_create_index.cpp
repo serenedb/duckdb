@@ -57,7 +57,7 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateIndexStmt(
 		}
 	}
 	if (where_clause) {
-		throw NotImplementedException("Creating partial indexes is not supported currently");
+		index_info->where_clause = std::move(*where_clause);
 	}
 	if (with_list) {
 		for (auto &option_entry : *with_list) {

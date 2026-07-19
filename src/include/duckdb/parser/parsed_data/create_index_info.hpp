@@ -47,6 +47,8 @@ struct CreateIndexInfo : public CreateInfo {
 	//! The set of expressions to index by
 	vector<unique_ptr<ParsedExpression>> expressions;
 	vector<unique_ptr<ParsedExpression>> parsed_expressions;
+	//! The partial-index predicate (CREATE INDEX ... WHERE <predicate>)
+	unique_ptr<ParsedExpression> where_clause;
 
 	//! The opclass (parameter name) per indexed column; empty string means no opclass was specified
 	vector<string> column_opclasses;
