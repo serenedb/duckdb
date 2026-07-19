@@ -15,6 +15,7 @@ namespace duckdb {
 
 struct SelectionVector;
 class Vector;
+class ZonemapChecker;
 
 struct ExpressionFilterExecutor {
 	virtual ~ExpressionFilterExecutor() = default;
@@ -56,6 +57,9 @@ public:
 
 	unique_ptr<ExpressionExecutor> executor;
 	unique_ptr<ExpressionFilterExecutor> fast_executor;
+	//! The expression's statistics check compiled once with the state: every scan-time
+	//! CheckStatistics probe routes through it instead of re-walking the expression
+	unique_ptr<ZonemapChecker> zonemap_checker;
 	//! Scratch selections reused across FilterSelection calls: the result is
 	//! repointed into the caller's selection, which is always consumed before
 	//! this filter runs again.
