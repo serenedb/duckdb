@@ -728,6 +728,16 @@ int8_t CompareStringStats(string_t input, string_t stats, StringStatsType type) 
 	return Comparator::Operation(input, stats);
 }
 
+FilterPropagateResult StringStats::CheckZonemap(const BaseStatistics &stats, ExpressionType comparison_type,
+                                                string_t constant) {
+	if (!HasMinMax(stats)) {
+		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+	}
+	auto &string_data = GetDataUnsafe(stats);
+	return CheckZonemap(string_data.min, string_data.min_type, string_data.max, string_data.max_type, comparison_type,
+	                    constant);
+}
+
 FilterPropagateResult StringStats::CheckZonemap(string_t min, StringStatsType min_type, string_t max,
                                                 StringStatsType max_type, ExpressionType comparison_type,
                                                 string_t constant) {

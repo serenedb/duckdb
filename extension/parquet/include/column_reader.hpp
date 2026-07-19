@@ -255,7 +255,8 @@ private:
 	//! this function tries to skip a page in the below conditions:
 	//! 1. a previous table filter has filtered out this page
 	//! 2. page statistics can be used to skip page
-	bool PageIsFilteredOut(PageHeader &page_hdr, optional_ptr<const TableFilter> filter);
+	bool PageIsFilteredOut(PageHeader &page_hdr, optional_ptr<const TableFilter> filter,
+	                       optional_ptr<TableFilterState> filter_state);
 	void BeginRead(data_ptr_t define_out, data_ptr_t repeat_out);
 	void FinishRead(idx_t read_count);
 	idx_t ReadPageHeaders(idx_t max_read, optional_ptr<const TableFilter> filter = nullptr,

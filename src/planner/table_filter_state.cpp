@@ -9,6 +9,7 @@
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/filter/table_filter_functions.hpp"
+#include "duckdb/planner/filter/zonemap_checker.hpp"
 
 namespace duckdb {
 
@@ -22,6 +23,7 @@ static void InitializeExecutor(ClientContext &context, const Expression &express
 
 ExpressionFilterState::ExpressionFilterState(ClientContext &context, const Expression &expression) {
 	fast_executor = TryCreateFastExecutor(expression, false);
+	zonemap_checker = ZonemapChecker::Compile(expression);
 	InitializeExecutor(context, expression, *this);
 }
 

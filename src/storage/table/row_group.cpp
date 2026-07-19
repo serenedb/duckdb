@@ -384,7 +384,7 @@ void CollectionScanState::Initialize(const QueryContext &context_p, const vector
 bool RowGroup::InitializeScanWithOffset(CollectionScanState &state, SegmentNode<RowGroup> &node, idx_t vector_offset) {
 	auto &column_ids = state.GetColumnIds();
 	auto &filters = state.GetFilterInfo();
-	if (!CheckZonemap(state.context.GetClientContext(), filters)) {
+	if (!CheckZonemap(filters)) {
 		return false;
 	}
 	if (!RefersToSameObject(node.GetNode(), *this)) {
@@ -413,7 +413,7 @@ bool RowGroup::InitializeScanWithOffset(CollectionScanState &state, SegmentNode<
 bool RowGroup::InitializeScan(CollectionScanState &state, SegmentNode<RowGroup> &node) {
 	auto &column_ids = state.GetColumnIds();
 	auto &filters = state.GetFilterInfo();
-	if (!CheckZonemap(state.context.GetClientContext(), filters)) {
+	if (!CheckZonemap(filters)) {
 		return false;
 	}
 	if (!RefersToSameObject(node.GetNode(), *this)) {
@@ -702,7 +702,8 @@ static idx_t IntersectSelections(const SelectionVector &left, idx_t left_count, 
 	return result_count;
 }
 
-FilterPropagateResult RowGroup::CheckRowIdFilter(const TableFilter &filter, idx_t beg_row, idx_t end_row) {
+FilterPropagateResult RowGroup::CheckRowIdFilter(const TableFilter &filter, TableFilterState &filter_state,
+                                                 idx_t beg_row, idx_t end_row) {
 	// RowId columns dont have a zonemap, but we can trivially create stats to check the filter against.
 	BaseStatistics dummy_stats = NumericStats::CreateEmpty(LogicalType::ROW_TYPE);
 	dummy_stats.SetHasNoNullFast();
@@ -710,10 +711,10 @@ FilterPropagateResult RowGroup::CheckRowIdFilter(const TableFilter &filter, idx_
 	NumericStats::SetMax(dummy_stats, UnsafeNumericCast<row_t>(end_row));
 
 	auto &expr_filter = ExpressionFilter::GetExpressionFilter(filter, "RowGroup::CheckRowIdFilter");
-	return expr_filter.CheckStatistics(dummy_stats);
+	return expr_filter.CheckStatistics(dummy_stats, filter_state);
 }
 
-bool RowGroup::CheckZonemap(optional_ptr<ClientContext> context, ScanFilterInfo &filters) {
+bool RowGroup::CheckZonemap(ScanFilterInfo &filters) {
 	auto &filter_list = filters.GetFilterList();
 	// new row group - label all filters as up for grabs again
 	filters.CheckAllFilters();
@@ -722,7 +723,7 @@ bool RowGroup::CheckZonemap(optional_ptr<ClientContext> context, ScanFilterInfo 
 		auto &filter = entry.filter;
 		const auto &base_column_index = entry.table_column_index;
 
-		auto prune_result = GetColumn(base_column_index).CheckZonemap(context, base_column_index, filter);
+		auto prune_result = GetColumn(base_column_index).CheckZonemap(base_column_index, filter, *entry.filter_state);
 		if (prune_result == FilterPropagateResult::FILTER_ALWAYS_FALSE) {
 			return false;
 		}
@@ -750,7 +751,8 @@ bool RowGroup::CheckZonemapSegments(CollectionScanState &state) {
 		auto base_column_idx = entry.table_column_index;
 		auto &filter = entry.filter;
 
-		auto prune_result = GetColumn(base_column_idx).CheckZonemap(state.column_scans[column_idx], filter);
+		auto prune_result =
+		    GetColumn(base_column_idx).CheckZonemap(state.column_scans[column_idx], filter, *entry.filter_state);
 		if (prune_result != FilterPropagateResult::FILTER_ALWAYS_FALSE) {
 			continue;
 		}
