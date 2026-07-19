@@ -83,19 +83,33 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSchemaStmt(PEGTransfo
 	throw NotImplementedException("Altering schemas is not yet supported");
 }
 
-// AlterIndexStmt <- 'INDEX' IfExists? BaseTableName RenameAlter
+// AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransformer &transformer,
                                                                      const optional<bool> &if_exists,
                                                                      unique_ptr<BaseTableRef> base_table_name,
-                                                                     unique_ptr<AlterTableInfo> rename_alter) {
-	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
-	// ALTER INDEX <name> RENAME TO <new_name> uses the same catalog action as
-	// ALTER TABLE rename: the catalog resolves the entry by name across
-	// table/view/index.
-	auto result = make_uniq<RenameTableInfo>(AlterEntryData(), rename_info->new_table_name);
-	result->SetQualifiedName(base_table_name->GetQualifiedName());
-	result->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	return std::move(result);
+                                                                     unique_ptr<AlterTableInfo> alter_index_alter) {
+	auto not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	switch (alter_index_alter->alter_table_type) {
+	case AlterTableType::RENAME_TABLE: {
+		auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(alter_index_alter));
+		// ALTER INDEX <name> RENAME TO <new_name> uses the same catalog action as
+		// ALTER TABLE rename: the catalog resolves the entry by name across
+		// table/view/index.
+		auto result = make_uniq<RenameTableInfo>(AlterEntryData(), rename_info->new_table_name);
+		result->SetQualifiedName(base_table_name->GetQualifiedName());
+		result->if_not_found = not_found;
+		return std::move(result);
+	}
+	case AlterTableType::SET_TABLE_OPTIONS:
+	case AlterTableType::RESET_TABLE_OPTIONS:
+		// ALTER INDEX <name> SET/RESET (options): same by-name catalog resolution
+		// as the rename above; the catalog decides which options are valid.
+		alter_index_alter->SetQualifiedName(base_table_name->GetQualifiedName());
+		alter_index_alter->if_not_found = not_found;
+		return std::move(alter_index_alter);
+	default:
+		throw NotImplementedException("unsupported ALTER INDEX action");
+	}
 }
 
 // AlterFunctionStmt <- 'FUNCTION' IfExists? QualifiedName RenameAlter
