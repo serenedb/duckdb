@@ -227,6 +227,7 @@ struct TableFunctionToStringInput {
 	optional_ptr<const vector<idx_t>> projection_ids;
 	optional_ptr<const vector<string>> projected_names;
 	optional_ptr<const vector<LogicalType>> projected_types;
+	optional_ptr<const TableFilterSet> filters;
 	bool projected_filter_prune = false;
 };
 
