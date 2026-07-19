@@ -1,0 +1,99 @@
+# name: test/sql/storage/compression/dict_fsst/dict_fsst_filter_fast_paths.test
+# description: Dictionary filters over segments with and without NULLs agree with an uncompressed copy
+# group: [dict_fsst]
+
+load {TEST_DIR}/dict_fsst_filter_fast_paths.db
+
+statement ok
+PRAGMA force_compression='DICT_FSST'
+
+statement ok
+CREATE TABLE t AS
+    SELECT i AS id, CASE WHEN i % 7 = 3 THEN NULL ELSE 'v' || (i % 11)::VARCHAR END AS with_nulls,
+        'v' || (i % 11)::VARCHAR AS without_nulls, (i % 11)::VARCHAR AS digits
+    FROM range(300000) r(i)
+
+statement ok
+PRAGMA force_compression='uncompressed'
+
+statement ok
+CREATE TABLE u AS FROM t
+
+statement ok
+CHECKPOINT
+
+restart
+
+query I
+SELECT count(*) FROM pragma_storage_info('t') WHERE segment_type = 'VARCHAR' AND compression <> 'DICT_FSST'
+----
+0
+
+foreach tbl t u
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE with_nulls = 'absent'
+----
+0	NULL
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE without_nulls = 'absent'
+----
+0	NULL
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE with_nulls <> 'absent'
+----
+257143	38571342857
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE without_nulls <> 'absent'
+----
+300000	44999850000
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE coalesce(with_nulls, 'null') = 'null'
+----
+42857	6428507143
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE coalesce(without_nulls, 'null') = 'null'
+----
+0	NULL
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE coalesce(with_nulls, 'null') <> 'absent'
+----
+300000	44999850000
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE coalesce(without_nulls, 'null') <> 'absent'
+----
+300000	44999850000
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE with_nulls = 'v3'
+----
+23376	3506376624
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE without_nulls = 'v3'
+----
+27273	4090922727
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE with_nulls IS NULL
+----
+42857	6428507143
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE with_nulls IS NOT NULL
+----
+257143	38571342857
+
+query II
+SELECT count(*), sum(id) FROM {tbl} WHERE coalesce(digits, 'x')::INTEGER > 5
+----
+136362	20454395457
+
+endloop

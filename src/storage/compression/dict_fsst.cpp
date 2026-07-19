@@ -188,47 +188,62 @@ static void DictFSSTFilter(ColumnSegment &segment, ColumnScanState &state, idx_t
 			// initialize the filter result - setting everything to false
 			scan_state.filter_result = make_unsafe_uniq_array<bool>(scan_state.dict_count);
 
-			// Slot zero represents NULL and is not necessarily referenced by any row.
-			idx_t non_null_count = scan_state.dict_count - 1;
-			Vector dict_data(scan_state.dictionary->data, /*offset=*/1, scan_state.dict_count);
+			// apply the filter
+			auto &dict_data = scan_state.dictionary->data;
 			SelectionVector dict_sel;
-			idx_t filter_count = non_null_count;
-			ColumnSegment::FilterSelection(dict_sel, dict_data, filter_state, non_null_count, filter_count);
+			idx_t filter_count = scan_state.dict_count;
+			ColumnSegment::FilterSelection(dict_sel, dict_data, filter_state, scan_state.dict_count, filter_count);
 
 			// now set all matching tuples to true
 			for (idx_t i = 0; i < filter_count; i++) {
-				auto idx = dict_sel.get_index(i) + 1;
+				auto idx = dict_sel.get_index(i);
 				scan_state.filter_result[idx] = true;
 			}
+			scan_state.filter_match_count = filter_count;
 		}
-		// Till now, we have a filter result for all non-NULL values.
+		if (scan_state.filter_match_count == 0) {
+			// early-out, no dictionary entry matches the filter so the filter can never pass
+			sel_count = 0;
+			return;
+		}
 		auto &dict_sel = scan_state.GetSelVec(start, vector_count);
-		SelectionVector new_sel(sel_count);
-		idx_t approved_tuple_count = 0;
-		for (idx_t idx = 0; idx < sel_count; idx++) {
-			auto row_idx = sel.get_index(idx);
-			auto dict_offset = dict_sel.get_index(row_idx);
-			// Evaluate NULL only when slot zero is referenced by an actual row.
-			if (dict_offset == 0 && !scan_state.null_filter_result_initialized) {
-				Vector null_data(scan_state.dictionary->data, /*offset=*/0, /*end=*/1);
-				SelectionVector null_sel;
-				idx_t null_filter_count = 1;
-				ColumnSegment::FilterSelection(null_sel, null_data, filter_state, 1, null_filter_count);
-				scan_state.filter_result[0] = null_filter_count == 1;
-				scan_state.null_filter_result_initialized = true;
-			}
-			// Check filter result for the value at the offset and assign selection vector.
-			if (!scan_state.filter_result[dict_offset]) {
-				// does not pass the filter
-				continue;
-			}
-			new_sel.set_index(approved_tuple_count++, row_idx);
+		if (scan_state.filter_match_count == scan_state.dict_count) {
+			// every dictionary entry matches (nulls live in the dictionary too, so a
+			// null-rejecting filter never takes this path): all candidate rows pass as-is
+			result.Dictionary(scan_state.dictionary, dict_sel, vector_count);
+			return;
 		}
-		if (approved_tuple_count < vector_count) {
-			sel.Initialize(new_sel);
+		const sel_t *codes = dict_sel.data();
+		const sel_t *rows = sel.data();
+		const bool *passes = scan_state.filter_result.get();
+		auto row_at = [rows](idx_t i) {
+			return rows ? idx_t(rows[i]) : i;
+		};
+		// the selection is only rebuilt from the first entry that actually drops - a window
+		// whose candidate rows all land on matching dictionary entries costs no copy
+		idx_t idx = 0;
+		for (; idx < sel_count; idx++) {
+			if (!passes[codes[row_at(idx)]]) {
+				break;
+			}
 		}
-		sel_count = approved_tuple_count;
-
+		if (idx < sel_count) {
+			// materialize the kept prefix, then rebuild from the first dropped entry
+			SelectionVector matching_sel(sel_count);
+			auto out_sel = matching_sel.data();
+			idx_t approved_tuple_count = idx;
+			for (idx_t i = 0; i < idx; i++) {
+				out_sel[i] = UnsafeNumericCast<sel_t>(row_at(i));
+			}
+			for (idx++; idx < sel_count; idx++) {
+				auto row_idx = row_at(idx);
+				if (passes[codes[row_idx]]) {
+					out_sel[approved_tuple_count++] = UnsafeNumericCast<sel_t>(row_idx);
+				}
+			}
+			sel.Initialize(matching_sel);
+			sel_count = approved_tuple_count;
+		}
 		result.Dictionary(scan_state.dictionary, dict_sel, vector_count);
 		return;
 	}
