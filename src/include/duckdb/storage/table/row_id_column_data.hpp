@@ -39,7 +39,8 @@ public:
 
 	void Skip(ColumnScanState &state, idx_t count = STANDARD_VECTOR_SIZE) override;
 
-	FilterPropagateResult CheckZonemap(ColumnScanState &state, TableFilter &filter) override;
+	FilterPropagateResult CheckZonemap(ColumnScanState &state, TableFilter &filter,
+	                                   TableFilterState &filter_state) override;
 
 	void InitializeAppend(ColumnAppendState &state) override;
 	void Append(ColumnAppendState &state, const Vector &vector, idx_t count) override;

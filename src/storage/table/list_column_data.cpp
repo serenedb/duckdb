@@ -27,7 +27,8 @@ void ListColumnData::SetDataType(ColumnDataType data_type) {
 	validity->SetDataType(data_type);
 }
 
-FilterPropagateResult ListColumnData::CheckZonemap(ColumnScanState &state, TableFilter &filter) {
+FilterPropagateResult ListColumnData::CheckZonemap(ColumnScanState &state, TableFilter &filter,
+                                                   TableFilterState &filter_state) {
 	// table filters are not supported yet for list columns
 	return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 }

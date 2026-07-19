@@ -236,22 +236,13 @@ const GeometryStatsFlags &GeometryStats::GetFlags(const BaseStatistics &stats) {
 }
 
 // Expression comparison pruning
-static FilterPropagateResult CheckIntersectionFilter(const GeometryStatsData &data, const Value &constant) {
-	if (constant.IsNull() || constant.type().id() != LogicalTypeId::GEOMETRY) {
-		// Cannot prune against NULL
+FilterPropagateResult GeometryStats::CheckZonemap(const BaseStatistics &stats, const GeometryExtent &extent) {
+	auto &data = GetDataUnsafe(stats);
+	if (!data.extent.CanPruneXY()) {
+		// If neither axis is set (the extent is empty or fully unknown), we cannot prune.
+		// A single known axis is enough: the unknown axis is an infinite range that
+		// intersects everything, so pruning degrades to the known axis.
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
-	}
-
-	// This has been checked before and needs to be true for the checks below to be valid.
-	// Note: only one axis needs to be set; an unknown axis is an infinite range that
-	// intersects everything, so the IntersectsXY/ContainsXY math below stays valid.
-	D_ASSERT(data.extent.CanPruneXY());
-
-	const auto &geom = StringValue::Get(constant);
-	auto extent = GeometryExtent::Empty();
-	if (Geometry::GetExtent(string_t(geom), extent) == 0) {
-		// If the geometry is empty, the predicate will never match
-		return FilterPropagateResult::FILTER_ALWAYS_FALSE;
 	}
 
 	// Check if the bounding boxes intersect
@@ -269,14 +260,14 @@ static FilterPropagateResult CheckIntersectionFilter(const GeometryStatsData &da
 	return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 }
 
-FilterPropagateResult GeometryStats::CheckZonemap(const BaseStatistics &stats, const unique_ptr<Expression> &expr) {
-	if (expr->GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
+FilterPropagateResult GeometryStats::CheckZonemap(const BaseStatistics &stats, const Expression &expr) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}
-	if (expr->GetReturnType() != LogicalType::BOOLEAN) {
+	if (expr.GetReturnType() != LogicalType::BOOLEAN) {
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}
-	const auto &func = expr->Cast<BoundFunctionExpression>();
+	const auto &func = expr.Cast<BoundFunctionExpression>();
 	if (func.GetChildren().size() != 2) {
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}
@@ -319,23 +310,25 @@ FilterPropagateResult GeometryStats::CheckZonemap(const BaseStatistics &stats, c
 		return FilterPropagateResult::FILTER_ALWAYS_FALSE;
 	}
 
-	auto &data = GetDataUnsafe(stats);
-
-	if (!data.extent.CanPruneXY()) {
-		// If neither axis is set (the extent is empty or fully unknown), we cannot prune.
-		// A single known axis is enough: the unknown axis is an infinite range that
-		// intersects everything, so pruning degrades to the known axis.
+	const Expression *constant_expr = lhs_is_const ? &lhs : (rhs_is_const ? &rhs : nullptr);
+	if (!constant_expr) {
+		// Else, no constant argument
+		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+	}
+	auto &constant = constant_expr->Cast<BoundConstantExpression>().GetValue();
+	if (constant.IsNull() || constant.type().id() != LogicalTypeId::GEOMETRY) {
+		// Cannot prune against NULL
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}
 
-	if (lhs_is_const) {
-		return CheckIntersectionFilter(data, lhs.Cast<BoundConstantExpression>().GetValue());
+	const auto &geom = StringValue::Get(constant);
+	auto extent = GeometryExtent::Empty();
+	if (Geometry::GetExtent(string_t(geom), extent) == 0) {
+		// If the geometry is empty, the predicate will never match
+		return FilterPropagateResult::FILTER_ALWAYS_FALSE;
 	}
-	if (rhs_is_const) {
-		return CheckIntersectionFilter(data, rhs.Cast<BoundConstantExpression>().GetValue());
-	}
-	// Else, no constant argument
-	return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+
+	return CheckZonemap(stats, extent);
 }
 
 } // namespace duckdb

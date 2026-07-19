@@ -342,8 +342,9 @@ struct GeometryStats {
 	                              idx_t count);
 
 	//! Check if a spatial predicate check with a constant could possibly be satisfied by rows given the statistics
-	DUCKDB_API static FilterPropagateResult CheckZonemap(const BaseStatistics &stats,
-	                                                     const unique_ptr<Expression> &expr);
+	DUCKDB_API static FilterPropagateResult CheckZonemap(const BaseStatistics &stats, const Expression &expr);
+	//! Check the statistics' extent against a predicate constant's extent
+	DUCKDB_API static FilterPropagateResult CheckZonemap(const BaseStatistics &stats, const GeometryExtent &extent);
 
 	DUCKDB_API static GeometryExtent &GetExtent(BaseStatistics &stats);
 	DUCKDB_API static const GeometryExtent &GetExtent(const BaseStatistics &stats);

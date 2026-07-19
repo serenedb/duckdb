@@ -1,6 +1,8 @@
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/planner/filter/zonemap_checker.hpp"
+#include "duckdb/planner/table_filter_state.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
@@ -164,19 +166,16 @@ bool ExpressionFilter::EvaluateWithConstant(ExpressionExecutor &executor, const 
 }
 
 FilterPropagateResult ExpressionFilter::CheckStatistics(const BaseStatistics &stats) const {
-	if (stats.GetStatsType() == StatisticsType::GEOMETRY_STATS) {
-		// Delegate to GeometryStats for geometry types
-		return GeometryStats::CheckZonemap(stats, expr);
-	}
-	return CheckExpressionStatistics(*expr, stats);
+	return CheckExpressionStatistics(nullptr, *expr, stats);
 }
 
 FilterPropagateResult ExpressionFilter::CheckStatistics(ClientContext &context, const BaseStatistics &stats) const {
-	if (stats.GetStatsType() == StatisticsType::GEOMETRY_STATS) {
-		// Delegate to GeometryStats for geometry types
-		return GeometryStats::CheckZonemap(stats, expr);
-	}
-	return CheckExpressionStatistics(&context, *expr, stats);
+	return CheckExpressionStatistics(context, *expr, stats);
+}
+
+FilterPropagateResult ExpressionFilter::CheckStatistics(const BaseStatistics &stats, TableFilterState &state) const {
+	auto &expr_state = state.Cast<ExpressionFilterState>();
+	return expr_state.zonemap_checker->Check(stats, &expr_state.GetContext());
 }
 
 static FilterPropagateResult CheckZonemapAgainstConstants(const BaseStatistics &stats, ExpressionType comparison_type,
@@ -393,6 +392,10 @@ static FilterPropagateResult CheckFunctionStatistics(optional_ptr<ClientContext>
 		return CheckComparisonStatistics(context_p, func_expr, stats);
 	}
 	if (!func_expr.Function().HasFilterPruneCallback()) {
+		if (stats.GetStatsType() == StatisticsType::GEOMETRY_STATS) {
+			// the geometry bounding-box predicates are recognized structurally
+			return GeometryStats::CheckZonemap(stats, func_expr);
+		}
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}
 	vector<unique_ptr<BaseStatistics>> owned_stats;

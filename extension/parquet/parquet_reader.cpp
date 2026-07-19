@@ -1326,8 +1326,8 @@ idx_t ParquetReader::GetGroupOffset(ParquetReaderScanState &state) {
 	return min_offset;
 }
 
-static FilterPropagateResult CheckParquetFloatFilter(ClientContext &context, ColumnReader &reader,
-                                                     const Statistics &pq_col_stats, const TableFilter &filter) {
+static FilterPropagateResult CheckParquetFloatFilter(ColumnReader &reader, const Statistics &pq_col_stats,
+                                                     const TableFilter &filter, TableFilterState &filter_state) {
 	// floating point values can have values in the [min, max] domain AND nan values
 	// check both stats against the filter
 	auto &expr_filter = ExpressionFilter::GetExpressionFilter(filter, "CheckParquetFloatFilter");
@@ -1336,10 +1336,10 @@ static FilterPropagateResult CheckParquetFloatFilter(ClientContext &context, Col
 	auto nan_value = Value("nan").DefaultCastAs(type);
 	NumericStats::SetMin(nan_stats, nan_value);
 	NumericStats::SetMax(nan_stats, nan_value);
-	auto nan_prune = expr_filter.CheckStatistics(context, nan_stats);
+	auto nan_prune = expr_filter.CheckStatistics(nan_stats, filter_state);
 
 	auto min_max_stats = ParquetStatisticsUtils::CreateNumericStats(reader.Type(), reader.Schema(), pq_col_stats);
-	auto prune = expr_filter.CheckStatistics(context, *min_max_stats);
+	auto prune = expr_filter.CheckStatistics(*min_max_stats, filter_state);
 
 	// if EITHER of them cannot be pruned - we cannot prune
 	if (prune == FilterPropagateResult::NO_PRUNING_POSSIBLE ||
@@ -1372,10 +1372,17 @@ void ParquetReader::PrepareRowGroupBuffer(ClientContext &context, ParquetReaderS
 
 	if (filters) {
 		auto stats = column_reader.Stats(state.group_index, group.columns);
-		// filters contain output chunk index, not file col idx!
-		auto filter_entry = filters->TryGetFilterByColumnIndex(col_idx);
-		if (stats && filter_entry) {
-			auto &filter = *filter_entry;
+		// scan_filters are keyed by output chunk index, not file col idx!
+		optional_ptr<ParquetScanFilter> scan_filter;
+		for (auto &entry : state.scan_filters) {
+			if (entry.filter_idx == col_idx) {
+				scan_filter = &entry;
+				break;
+			}
+		}
+		if (stats && scan_filter) {
+			auto &filter = scan_filter->filter;
+			auto &filter_state = *scan_filter->filter_state;
 
 			auto schema_column_index = column_reader.ColumnIndex();
 			FilterPropagateResult prune_result;
@@ -1397,12 +1404,12 @@ void ParquetReader::PrepareRowGroupBuffer(ClientContext &context, ParquetReaderS
 				// floating point columns can have NaN values in addition to the min/max bounds defined in the file
 				// in order to do optimal pruning - we prune based on the [min, max] of the file followed by pruning
 				// based on nan
-				prune_result = CheckParquetFloatFilter(context, column_reader,
-				                                       group.columns[schema_column_index].meta_data.statistics, filter);
+				prune_result = CheckParquetFloatFilter(
+				    column_reader, group.columns[schema_column_index].meta_data.statistics, filter, filter_state);
 			} else {
 				auto &expr_filter =
 				    ExpressionFilter::GetExpressionFilter(filter, "ParquetReader::PrepareRowGroupBuffer");
-				prune_result = expr_filter.CheckStatistics(context, *stats);
+				prune_result = expr_filter.CheckStatistics(*stats, filter_state);
 			}
 			// check the bloom filter if present
 			if (prune_result == FilterPropagateResult::NO_PRUNING_POSSIBLE && !column_reader.Type().IsNested() &&
