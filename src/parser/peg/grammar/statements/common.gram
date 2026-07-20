@@ -54,6 +54,8 @@ Statement <-
 	DisconnectStatement /
 	CreatePublicationStatement /
 	CreateSubscriptionStatement /
+	DropSubscriptionStatement /
+	AlterSubscriptionStatement /
 	ListenStatement /
 	NotifyStatement /
 	UnlistenStatement /

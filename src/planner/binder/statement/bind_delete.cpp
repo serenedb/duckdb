@@ -88,14 +88,14 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 
 	// Add columns to the scan to avoid fetching by row ID in PhysicalDelete:
 	// - If RETURNING: add all physical columns (for RETURNING projection)
-	// - Else if unique indexes exist: add only indexed columns (for delete index tracking)
+	// - Else if delete-tracked indexes exist: add only their columns (for delete index tracking)
 	if (!node.returning_list.empty()) {
 		// Add all physical columns for RETURNING
 		BindDeleteReturningColumns(table, get, del->return_columns);
 	} else if (table.IsDuckTable()) {
 		// Only optimize for DuckDB tables (not attached external tables like SQLite)
 		auto &storage = table.GetStorage();
-		if (storage.HasUniqueIndexes()) {
+		if (storage.HasDeleteIndexes()) {
 			BindDeleteIndexColumns(table, get, del->return_columns);
 		}
 	}

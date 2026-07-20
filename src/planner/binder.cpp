@@ -522,10 +522,13 @@ void Binder::BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, v
 	auto &info = storage.GetDataTableInfo();
 	auto &indexes = info->GetIndexes();
 
-	// Collect column IDs from unique indexes
+	// Collect column IDs from indexes whose deletes we track: unique indexes (to
+	// re-insert a key in the same transaction) and foreign-key indexes (to clear
+	// a referenced parent after its children in the same transaction). Without
+	// the FK columns here they arrive as NULL and the FK delete index is empty.
 	unordered_set<column_t> indexed_column_ids;
 	for (auto &index : indexes.Indexes()) {
-		if (index.IsUnique()) {
+		if (index.IsUnique() || index.IsForeign()) {
 			auto &col_ids = index.GetColumnIdSet();
 			indexed_column_ids.insert(col_ids.begin(), col_ids.end());
 		}

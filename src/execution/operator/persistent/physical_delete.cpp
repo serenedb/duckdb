@@ -30,12 +30,12 @@ class DeleteGlobalState : public GlobalSinkState {
 public:
 	explicit DeleteGlobalState(ClientContext &context, const vector<LogicalType> &return_types, DuckTableEntry &table,
 	                           const vector<unique_ptr<BoundConstraint>> &bound_constraints)
-	    : deleted_count(0), return_collection(context, return_types), has_unique_indexes(false) {
-		// We need to append deletes to the local delete-ART.
+	    : deleted_count(0), return_collection(context, return_types), has_delete_indexes(false) {
+		// We need to append deletes to the local delete-ART (unique and FK indexes).
 		auto &storage = table.GetStorage();
-		if (storage.HasUniqueIndexes()) {
+		if (storage.HasDeleteIndexes()) {
 			storage.InitializeLocalStorage(delete_index_append_state, table, context, bound_constraints);
-			has_unique_indexes = true;
+			has_delete_indexes = true;
 		}
 	}
 
@@ -49,7 +49,7 @@ public:
 	//! Global set of deleted row_ids (for cross-thread dedup in Sink; only accessed under return_lock)
 	unordered_set<row_t> deleted_row_ids DUCKDB_GUARDED_BY(return_lock);
 	LocalAppendState delete_index_append_state;
-	bool has_unique_indexes;
+	bool has_delete_indexes;
 };
 
 class DeleteLocalState : public LocalSinkState {
@@ -97,8 +97,8 @@ SinkResultType PhysicalDelete::Sink(ExecutionContext &context, DataChunk &chunk,
 	auto &row_ids = chunk.data[row_id_index];
 	row_ids.Flatten();
 
-	// Fast path: no RETURNING and no unique indexes
-	if (!return_chunk && !g_state.has_unique_indexes) {
+	// Fast path: no RETURNING and no delete-tracked (unique/FK) indexes
+	if (!return_chunk && !g_state.has_delete_indexes) {
 		auto deleted = table.Delete(*l_state.delete_state, context.client, tableref, row_ids, chunk.size());
 		g_state.deleted_count.fetch_add(deleted);
 		return SinkResultType::NEED_MORE_INPUT;
@@ -181,7 +181,7 @@ SinkResultType PhysicalDelete::Sink(ExecutionContext &context, DataChunk &chunk,
 	}
 
 	// Append the deleted row IDs to the delete indexes.
-	if (g_state.has_unique_indexes && l_state.delete_chunk.size() != 0) {
+	if (g_state.has_delete_indexes && l_state.delete_chunk.size() != 0) {
 		annotated_lock_guard<annotated_mutex> index_guard(g_state.index_lock);
 		auto &local_storage = LocalStorage::Get(context.client, table.db);
 		auto storage = local_storage.GetStorage(table);

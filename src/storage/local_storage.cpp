@@ -464,9 +464,10 @@ void LocalTableStorage::AppendToDeleteIndexes(Vector &row_ids, DataChunk &delete
 
 	for (auto &index : delete_indexes.Indexes()) {
 		D_ASSERT(index.IsBound());
-		if (!index.IsUnique()) {
-			continue;
-		}
+		// delete_indexes only holds constraint indexes (PK/UNIQUE/FK). Unique ones
+		// track deletes so a key can be re-inserted in the same transaction; FK
+		// (non-unique) ones track deletes so a referenced parent can be cleared
+		// after its children in the same transaction.
 		IndexAppendInfo index_append_info(IndexAppendMode::IGNORE_DUPLICATES, nullptr);
 		auto result = index.Cast<BoundIndex>().Append(committed_chunk, committed_row_ids, index_append_info);
 		if (result.HasError()) {

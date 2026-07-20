@@ -435,6 +435,21 @@ bool DataTable::HasUniqueIndexes() const {
 	return false;
 }
 
+bool DataTable::HasDeleteIndexes() const {
+	if (!HasIndexes()) {
+		return false;
+	}
+	// Deletes are tracked in transaction-local delete indexes for unique indexes
+	// (to re-insert a key in the same transaction) and for foreign-key indexes
+	// (to clear a referenced parent after its children in the same transaction).
+	for (auto &index : info->indexes.Indexes()) {
+		if (index.IsUnique() || index.IsForeign()) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void DataTable::AddIndex(unique_ptr<Index> index) {
 	info->indexes.AddIndex(std::move(index));
 }
@@ -799,19 +814,25 @@ void DataTable::VerifyForeignKeyConstraint(optional_ptr<LocalTableStorage> stora
 	ConflictManager local_conflict_manager(verify_type, count, &empty_conflict_info);
 	local_conflict_manager.SetMode(ConflictManagerMode::SCAN);
 
-	// Global constraint verification.
+	// The delete index consulted during verification belongs to the table whose
+	// index we check (data_table: the referenced table on append, the
+	// referencing table on delete), not the mutated table. Its transaction-local
+	// storage is what records rows deleted earlier in this transaction, so pass
+	// that -- otherwise an FK cluster cleared in one transaction (delete/truncate
+	// child then parent) wrongly sees the child rows as still referencing.
 	auto &data_table = table_entry.GetStorage();
-	data_table.info->indexes.VerifyForeignKey(storage, dst_keys_ptr.get(), dst_chunk, global_conflict_manager);
-
-	// Check if we can insert the chunk into the local storage.
 	auto &local_storage = LocalStorage::Get(context, db);
-	bool local_error = false;
-	auto local_verification = local_storage.Find(data_table);
+	auto local_verification = local_storage.GetStorage(data_table);
+
+	// Global constraint verification.
+	data_table.info->indexes.VerifyForeignKey(local_verification, dst_keys_ptr.get(), dst_chunk,
+	                                          global_conflict_manager);
 
 	// Local constraint verification.
+	bool local_error = false;
 	if (local_verification) {
 		auto &local_indexes = local_storage.GetIndexes(context, data_table);
-		local_indexes.VerifyForeignKey(storage, dst_keys_ptr.get(), dst_chunk, local_conflict_manager);
+		local_indexes.VerifyForeignKey(local_verification, dst_keys_ptr.get(), dst_chunk, local_conflict_manager);
 		local_error = IsForeignKeyConstraintError(local_conflict_manager, is_append, count);
 	}
 	// Global constraint verification.

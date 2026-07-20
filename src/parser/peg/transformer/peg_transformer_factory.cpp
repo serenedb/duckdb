@@ -183,6 +183,8 @@ void PEGTransformerFactory::RegisterCreateSubscription() {
 	// create_subscription.gram — optional CONNECTION clause with nested PUBLICATION list requires a hand-written
 	// transformer.
 	REGISTER_TRANSFORM(TransformCreateSubscriptionStatement);
+	REGISTER_TRANSFORM(TransformDropSubscriptionStatement);
+	REGISTER_TRANSFORM(TransformAlterSubscriptionStatement);
 }
 
 void PEGTransformerFactory::RegisterNotify() {

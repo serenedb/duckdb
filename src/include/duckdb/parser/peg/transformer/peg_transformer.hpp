@@ -493,6 +493,12 @@ public:
 	// transformer.
 	static unique_ptr<SQLStatement> TransformCreateSubscriptionStatement(PEGTransformer &transformer,
 	                                                                     ParseResult &parse_result);
+	// drop_subscription: DROP SUBSCRIPTION [IF EXISTS] name -> PRAGMA drop_subscription(name, if_exists).
+	static unique_ptr<SQLStatement> TransformDropSubscriptionStatement(PEGTransformer &transformer,
+	                                                                   ParseResult &parse_result);
+	// alter_subscription: ALTER SUBSCRIPTION name ENABLE|DISABLE -> PRAGMA alter_subscription(name, enabled).
+	static unique_ptr<SQLStatement> TransformAlterSubscriptionStatement(PEGTransformer &transformer,
+	                                                                    ParseResult &parse_result);
 	// notify.gram — LISTEN/NOTIFY/UNLISTEN parse but are unsupported; the transforms throw, so they are
 	// hand-registered (kept out of grammar_types.yml so the generator does not emit a colliding wrapper).
 	static unique_ptr<SQLStatement> TransformListenStatement(PEGTransformer &transformer, ParseResult &parse_result);

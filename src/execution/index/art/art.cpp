@@ -848,50 +848,52 @@ string ART::GenerateConstraintErrorMessage(VerifyExistenceType verify_type, cons
 
 void ART::VerifyLeaf(const Node &leaf, const ARTKey &key, DeleteIndexInfo delete_index_info, ConflictManager &manager,
                      optional_idx &conflict_idx, idx_t i) {
-	// Get the set of deleted row ids for this value if we have any delete indexes
-	vector<row_t> deleted_row_ids;
+	// Collect the row ids deleted in this transaction for this key. The delete
+	// index mirrors this index, so for a foreign key it is non-unique (a key maps
+	// to many row ids): SearchEqual gathers every deleted row id for the key,
+	// whether the delete leaf is inlined or gated.
+	set<row_t> deleted_row_ids;
 	if (delete_index_info.delete_indexes) {
+		ARTKey lookup_key = key;
 		for (auto &index : *delete_index_info.delete_indexes) {
 			auto &delete_art = index.get().Cast<ART>();
-			auto deleted_leaf = ARTOperator::Lookup(delete_art, delete_art.tree, key, 0);
-			if (!deleted_leaf) {
-				continue;
-			}
-			// All leaves in the delete ART are inlined.
-			if (deleted_leaf->GetType() != NType::LEAF_INLINED) {
-				throw InternalException("Non-inlined leaf?");
-			}
-			auto deleted_row_id = deleted_leaf->GetRowId();
-			deleted_row_ids.push_back(deleted_row_id);
+			delete_art.SearchEqual(lookup_key, NumericLimits<idx_t>::Maximum(), deleted_row_ids);
 		}
 	}
 
 	if (leaf.GetType() == NType::LEAF_INLINED) {
 		auto this_row_id = leaf.GetRowId();
-		if (!deleted_row_ids.empty()) {
-			// The leaf is inlined, and the same key exists in the delete ART.
-			// check if the row-id matches - if it does there is no conflict
-			for (auto &deleted_row_id : deleted_row_ids) {
-				if (deleted_row_id == this_row_id) {
-					return;
-				}
-			}
+		// The only row for this key was deleted in this transaction: no conflict.
+		if (deleted_row_ids.count(this_row_id)) {
+			return;
 		}
-
 		if (manager.AddHit(i, this_row_id)) {
 			conflict_idx = i;
 		}
 		return;
 	}
 
-	// Fast path for FOREIGN KEY constraints.
-	// Up to here, the above code paths work implicitly for FKs, as the leaf is inlined.
-	// FIXME: proper foreign key + delete ART support.
+	// Foreign keys: the leaf holds every row referencing this key. Deleting the
+	// referenced key is valid only if every referencing row was also deleted in
+	// this transaction; otherwise a live reference remains.
 	if (index_constraint_type == IndexConstraintType::FOREIGN) {
-		D_ASSERT(deleted_row_ids.empty());
-		// We don't handle FK conflicts in UPSERT, so the row ID should not matter.
-		if (manager.AddHit(i, MAX_ROW_ID)) {
-			conflict_idx = i;
+		if (deleted_row_ids.empty()) {
+			// Nothing deleted this transaction, so the references stand.
+			if (manager.AddHit(i, MAX_ROW_ID)) {
+				conflict_idx = i;
+			}
+			return;
+		}
+		set<row_t> referencing_row_ids;
+		ARTKey lookup_key = key;
+		SearchEqual(lookup_key, NumericLimits<idx_t>::Maximum(), referencing_row_ids);
+		for (auto row_id : referencing_row_ids) {
+			if (!deleted_row_ids.count(row_id)) {
+				if (manager.AddHit(i, row_id)) {
+					conflict_idx = i;
+				}
+				return;
+			}
 		}
 		return;
 	}
@@ -907,13 +909,9 @@ void ART::VerifyLeaf(const Node &leaf, const ARTKey &key, DeleteIndexInfo delete
 		throw InternalException("VerifyLeaf expects exactly two row IDs to be scanned");
 	}
 
-	if (!deleted_row_ids.empty()) {
-		for (const auto row_id : row_ids) {
-			for (auto deleted_row_id : deleted_row_ids) {
-				if (deleted_row_id == row_id) {
-					return;
-				}
-			}
+	for (const auto row_id : row_ids) {
+		if (deleted_row_ids.count(row_id)) {
+			return;
 		}
 	}
 

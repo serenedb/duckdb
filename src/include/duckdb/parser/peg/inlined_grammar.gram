@@ -54,6 +54,8 @@ Statement <-
 	DisconnectStatement /
 	CreatePublicationStatement /
 	CreateSubscriptionStatement /
+	DropSubscriptionStatement /
+	AlterSubscriptionStatement /
 	ListenStatement /
 	NotifyStatement /
 	UnlistenStatement /
@@ -998,7 +1000,20 @@ MaxValue <- 'MAXVALUE'
 
 CreateSubscriptionStatement <- 'CREATE' 'SUBSCRIPTION' Identifier SubscriptionConnection?
 SubscriptionConnection <- 'CONNECTION' StringLiteral SubscriptionPublication?
-SubscriptionPublication <- 'PUBLICATION' List(Identifier)
+SubscriptionPublication <- 'PUBLICATION' List(Identifier) SubscriptionWith?
+SubscriptionWith <- 'WITH' Parens(List(SubscriptionOption))
+SubscriptionOption <- ColLabel SubscriptionOptionArg?
+SubscriptionOptionArg <- '=' DefArg
+DropSubscriptionStatement <- 'DROP' 'SUBSCRIPTION' IfExists? Identifier
+AlterSubscriptionStatement <- 'ALTER' 'SUBSCRIPTION' Identifier SubscriptionAlterAction
+SubscriptionAlterAction <- SubscriptionEnableAction / SubscriptionConnectionAction / SubscriptionPublicationAction / SubscriptionRenameAction / SubscriptionOwnerAction / SubscriptionSetOptions
+SubscriptionEnableAction <- 'ENABLE' / 'DISABLE'
+SubscriptionConnectionAction <- 'CONNECTION' StringLiteral
+SubscriptionPublicationAction <- SubscriptionPublicationMode 'PUBLICATION' List(Identifier)
+SubscriptionPublicationMode <- 'SET' / 'ADD' / 'DROP'
+SubscriptionRenameAction <- 'RENAME' 'TO' Identifier
+SubscriptionOwnerAction <- 'OWNER' 'TO' Identifier
+SubscriptionSetOptions <- 'SET' Parens(List(SubscriptionOption))
 
 CreateStatement <- 'CREATE' OrReplace? Temporary? CreateStatementVariation
 CreateStatementVariation <- CreateTableStmt / CreateMacroStmt / CreateSequenceStmt / CreateTypeStmt / CreateSchemaStmt / CreateViewStmt / CreateIndexStmt / CreateSecretStmt / CreateTriggerStmt
