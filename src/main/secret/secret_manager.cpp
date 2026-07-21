@@ -236,8 +236,10 @@ optional_ptr<CreateSecretFunction> SecretManager::LookupFunctionInternal(const I
 }
 
 unique_ptr<SecretEntry> SecretManager::CreateSecret(ClientContext &context, const CreateSecretInput &input) {
-	// Note that a context is required for CreateSecret, as the CreateSecretFunction expects one
-	auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
+	// Secrets are global, instance-scoped objects created outside any client's MVCC snapshot, so use the system
+	// transaction: two connections concurrently running CREATE OR REPLACE SECRET on the same name then don't
+	// produce a catalog write-write conflict. The CreateSecretFunction still evaluates against the client context.
+	auto transaction = CatalogTransaction::GetSystemTransaction(*db);
 	InitializeSecrets(transaction);
 
 	// Make a copy to set the provider to default if necessary

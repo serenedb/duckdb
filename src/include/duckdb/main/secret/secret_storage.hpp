@@ -16,6 +16,7 @@
 #include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/mutex.hpp"
 
 namespace duckdb {
 
@@ -130,6 +131,9 @@ protected:
 	unique_ptr<CatalogSet> secrets;
 	//! DB instance for accessing the system catalog transaction
 	DatabaseInstance &db;
+	//! Serializes StoreSecret's existence-check/drop/create/readback sequence. Secrets are written under the
+	//! system transaction (id 1), so MVCC no longer serializes concurrent same-name writers for us.
+	mutex store_lock;
 };
 
 class TemporarySecretStorage : public CatalogSetSecretStorage {

@@ -46,6 +46,10 @@ SecretMatch SecretStorage::SelectBestMatch(SecretEntry &secret_entry, const stri
 unique_ptr<SecretEntry> CatalogSetSecretStorage::StoreSecret(unique_ptr<const BaseSecret> secret,
                                                              OnCreateConflict on_conflict,
                                                              optional_ptr<CatalogTransaction> transaction) {
+	// Secrets are written under the system transaction (id 1), so the catalog's per-call MVCC lock no longer
+	// serializes concurrent writers to the same name -- a racing REPLACE could drop the entry between our
+	// CreateEntry and readback. Hold store_lock across the whole sequence to make it atomic.
+	lock_guard<mutex> store_guard(store_lock);
 	if (secrets->GetEntry(GetTransactionOrDefault(transaction), secret->GetName())) {
 		if (on_conflict == OnCreateConflict::ERROR_ON_CONFLICT) {
 			string persist_string = persistent ? "Persistent" : "Temporary";
