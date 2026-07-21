@@ -461,7 +461,7 @@ uint64_t MurmurHash64A (const void * key, int len, unsigned int seed) {
  * of the pattern 000..1 of the element hash. As a side effect 'regp' is
  * set to the register index this element hashes to. */
 int hllPatLen(unsigned char *ele, size_t elesize, long *regp) {
-    uint64_t hash, bit, index;
+    uint64_t hash, index;
     int count;
 
     /* Count the number of zeroes starting from bit HLL_REGISTERS
@@ -478,14 +478,9 @@ int hllPatLen(unsigned char *ele, size_t elesize, long *regp) {
     hash = MurmurHash64A(ele,elesize,0xadc83b19ULL);
     index = hash & HLL_P_MASK; /* Register index. */
     hash >>= HLL_P; /* Remove bits used to address the register. */
-    hash |= ((uint64_t)1<<HLL_Q); /* Make sure the loop terminates
-                                     and count will be <= Q+1. */
-    bit = 1;
+    hash |= ((uint64_t)1<<HLL_Q); /* Make sure count will be <= Q+1. */
     count = 1; /* Initialized to 1 since we count the "00000...1" pattern. */
-    while((hash & bit) == 0) {
-        count++;
-        bit <<= 1;
-    }
+    count += __builtin_ctzll(hash);
     *regp = (int) index;
     return count;
 }
@@ -598,6 +593,7 @@ int hllSparseToDense(robj *o) {
     struct hllhdr *hdr, *oldhdr = (struct hllhdr*)sparse;
     int idx = 0, runlen, regval;
     uint8_t *p = (uint8_t*)sparse, *end = p+sdslen(sparse);
+    int valid = 1;
 
     /* If the representation is already the right one return ASAP. */
     hdr = (struct hllhdr*) sparse;
@@ -617,15 +613,27 @@ int hllSparseToDense(robj *o) {
     while(p < end) {
         if (HLL_SPARSE_IS_ZERO(p)) {
             runlen = HLL_SPARSE_ZERO_LEN(p);
+            if ((runlen + idx) > HLL_REGISTERS) { /* Overflow. */
+                valid = 0;
+                break;
+            }
             idx += runlen;
             p++;
         } else if (HLL_SPARSE_IS_XZERO(p)) {
             runlen = HLL_SPARSE_XZERO_LEN(p);
+            if ((runlen + idx) > HLL_REGISTERS) { /* Overflow. */
+                valid = 0;
+                break;
+            }
             idx += runlen;
             p += 2;
         } else {
             runlen = HLL_SPARSE_VAL_LEN(p);
             regval = HLL_SPARSE_VAL_VALUE(p);
+            if ((runlen + idx) > HLL_REGISTERS) { /* Overflow. */
+                valid = 0;
+                break;
+            }
             while(runlen--) {
                 HLL_DENSE_SET_REGISTER(hdr->registers + 1,idx,regval);
                 idx++;
@@ -636,7 +644,7 @@ int hllSparseToDense(robj *o) {
 
     /* If the sparse representation was valid, we expect to find idx
      * set to HLL_REGISTERS. */
-    if (idx != HLL_REGISTERS) {
+    if (!valid || idx != HLL_REGISTERS) {
         sdsfree(dense);
         return HLL_C_ERR;
     }
@@ -717,7 +725,7 @@ int hllSparseSet(robj *o, long index, uint8_t count) {
         p += oplen;
         first += span;
     }
-    if (span == 0) return -1; /* Invalid format. */
+    if (span == 0 || p >= end) return -1; /* Invalid format. */
 
     next = HLL_SPARSE_IS_XZERO(p) ? p+2 : p+1;
     if (next >= end) next = NULL;
@@ -927,27 +935,40 @@ int hllSparseAdd(robj *o, unsigned char *ele, size_t elesize) {
 void hllSparseRegHisto(uint8_t *sparse, int sparselen, int *invalid, int* reghisto) {
     int idx = 0, runlen, regval;
     uint8_t *end = sparse+sparselen, *p = sparse;
+    int valid = 1;
 
     while(p < end) {
         if (HLL_SPARSE_IS_ZERO(p)) {
             runlen = HLL_SPARSE_ZERO_LEN(p);
+            if ((runlen + idx) > HLL_REGISTERS) { /* Overflow. */
+                valid = 0;
+                break;
+            }
             idx += runlen;
             reghisto[0] += runlen;
             p++;
         } else if (HLL_SPARSE_IS_XZERO(p)) {
             runlen = HLL_SPARSE_XZERO_LEN(p);
+            if ((runlen + idx) > HLL_REGISTERS) { /* Overflow. */
+                valid = 0;
+                break;
+            }
             idx += runlen;
             reghisto[0] += runlen;
             p += 2;
         } else {
             runlen = HLL_SPARSE_VAL_LEN(p);
             regval = HLL_SPARSE_VAL_VALUE(p);
+            if ((runlen + idx) > HLL_REGISTERS) { /* Overflow. */
+                valid = 0;
+                break;
+            }
             idx += runlen;
             reghisto[regval] += runlen;
             p++;
         }
     }
-    if (idx != HLL_REGISTERS && invalid) *invalid = 1;
+    if ((!valid || idx != HLL_REGISTERS) && invalid) *invalid = 1;
 }
 
 /* ========================= HyperLogLog Count ==============================
@@ -1037,7 +1058,12 @@ uint64_t hllCount(struct hllhdr *hdr, int *invalid) {
     double m = HLL_REGISTERS;
     double E;
     int j;
-    int reghisto[HLL_Q+2] = {0};
+    /* Note that reghisto size could be just HLL_Q+2, because HLL_Q+1 is
+     * the maximum frequency of the "000...1" sequence the hash function is
+     * able to return. However it is slow to check for sanity of the
+     * input: instead we size the array at a safe size: overflows will
+     * just write data to wrong, but correctly allocated, places. */
+    int reghisto[64] = {0};
 
     /* Compute register histogram */
     if (hdr->encoding == HLL_DENSE) {
@@ -1099,21 +1125,34 @@ int hllMerge(uint8_t *max, robj *hll) {
     } else {
         uint8_t *p = (uint8_t *) hll->ptr, *end = p + sdslen((sds) hll->ptr);
         long runlen, regval;
+        int valid = 1;
 
         p += HLL_HDR_SIZE;
         i = 0;
         while(p < end) {
             if (HLL_SPARSE_IS_ZERO(p)) {
                 runlen = HLL_SPARSE_ZERO_LEN(p);
+                if ((runlen + i) > HLL_REGISTERS) { /* Overflow. */
+                    valid = 0;
+                    break;
+                }
                 i += runlen;
                 p++;
             } else if (HLL_SPARSE_IS_XZERO(p)) {
                 runlen = HLL_SPARSE_XZERO_LEN(p);
+                if ((runlen + i) > HLL_REGISTERS) { /* Overflow. */
+                    valid = 0;
+                    break;
+                }
                 i += runlen;
                 p += 2;
             } else {
                 runlen = HLL_SPARSE_VAL_LEN(p);
                 regval = HLL_SPARSE_VAL_VALUE(p);
+                if ((runlen + i) > HLL_REGISTERS) { /* Overflow. */
+                    valid = 0;
+                    break;
+                }
                 while(runlen--) {
                     if (regval > max[i]) max[i] = regval;
                     i++;
@@ -1121,7 +1160,7 @@ int hllMerge(uint8_t *max, robj *hll) {
                 p++;
             }
         }
-        if (i != HLL_REGISTERS) return HLL_C_ERR;
+        if (!valid || i != HLL_REGISTERS) return HLL_C_ERR;
     }
     return HLL_C_OK;
 }
