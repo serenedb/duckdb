@@ -46,14 +46,8 @@ endif()
 
 build_extension_library(parquet ${PARQUET_EXTENSION_FILES})
 target_link_libraries(parquet_extension snappy lz4_static brotlienc brotlidec)
-target_link_libraries(
-  parquet_loadable_extension
-  duckdb_mbedtls
-  duckdb_zstd
-  snappy
-  lz4_static
-  brotlienc
-  brotlidec)
+target_link_libraries(parquet_loadable_extension duckdb_mbedtls snappy
+                      lz4_static brotlienc brotlidec)
 
 install(
   TARGETS parquet_extension
