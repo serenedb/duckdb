@@ -1192,6 +1192,7 @@ link_libraries(
   FastFloat::fast_float
   re2::re2
   zstd::zstd
+  ZLIB::ZLIB
   absl::strings
   absl::node_hash_set
   absl::node_hash_map
@@ -1333,7 +1334,6 @@ if(NOT EXTENSION_CONFIG_BUILD)
     add_third_party(fsst)
     add_third_party(hyperloglog)
     add_third_party(mbedtls)
-    add_third_party(miniz)
     add_third_party(skiplist)
     add_third_party(utf8proc)
     add_third_party(yyjson)
