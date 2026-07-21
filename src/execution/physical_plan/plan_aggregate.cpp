@@ -11,6 +11,7 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/parser/expression_map.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 
@@ -316,30 +317,41 @@ PhysicalOperator &PhysicalPlanGenerator::ExtractAggregateExpressions(PhysicalOpe
 			FunctionBinder::BindSortedAggregate(context, bound_aggr, groups, grouping_sets);
 		}
 	}
+	expression_map_t<idx_t> dedupe_slots;
+	auto add_slot = [&](unique_ptr<Expression> &expr) {
+		const idx_t slot = expressions.size();
+		types.push_back(expr->GetReturnType());
+		if (!expr->IsVolatile()) {
+			dedupe_slots.emplace(*expr, slot);
+		}
+		expressions.push_back(std::move(expr));
+		return slot;
+	};
 	for (auto &group : groups) {
-		auto ref = make_uniq<BoundReferenceExpression>(group->GetReturnType(), expressions.size());
-		types.push_back(group->GetReturnType());
-		expressions.push_back(std::move(group));
-		group = std::move(ref);
+		const idx_t slot = add_slot(group);
+		group = make_uniq<BoundReferenceExpression>(types[slot], slot);
 	}
 	auto extract = [&](unique_ptr<Expression> &expr, bool dedupe) {
 		idx_t slot = expressions.size();
 		if (dedupe && !expr->IsVolatile()) {
-			for (idx_t i = 0; i < expressions.size(); i++) {
-				if (!expressions[i]->IsVolatile() && expressions[i]->Equals(*expr)) {
-					slot = i;
-					break;
-				}
+			auto entry = dedupe_slots.find(*expr);
+			if (entry != dedupe_slots.end()) {
+				slot = entry->second;
 			}
 		}
 		if (slot == expressions.size()) {
-			types.push_back(expr->GetReturnType());
-			expressions.push_back(std::move(expr));
+			slot = add_slot(expr);
 		}
 		expr = make_uniq<BoundReferenceExpression>(types[slot], slot);
 	};
 	for (auto &aggr : aggregates) {
 		auto &bound_aggr = aggr->Cast<BoundAggregateExpression>();
+		// Workaround, not a semantic constraint: deduping distinct inputs is correct
+		// in principle, but a shared slot gives two distinct aggregates equal child
+		// indices, so the distinct collection merges them onto one radix table. That
+		// shared-table path is broken (it drains the table for the second reader and
+		// sizes per-table state for a single aggregate), so skip distinct until it is
+		// fixed.
 		const bool dedupe = !bound_aggr.IsDistinct();
 		for (auto &child_expr : bound_aggr.GetChildrenMutable()) {
 			extract(child_expr, dedupe);
