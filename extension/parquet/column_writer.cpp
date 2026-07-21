@@ -18,7 +18,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "brotli/encode.h"
-#include "lz4.hpp"
+#include "lz4.h"
 #include "miniz_wrapper.hpp"
 #include "snappy.h"
 #include "zstd.h"
