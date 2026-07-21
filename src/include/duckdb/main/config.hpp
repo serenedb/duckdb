@@ -30,6 +30,7 @@
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/function/replacement_scan.hpp"
 #include "duckdb/storage/compression/bitpacking.hpp"
+#include "duckdb/storage/compression/compression_options.hpp"
 #include "duckdb/function/encoding_function.hpp"
 #include "duckdb/main/setting_info.hpp"
 #include "duckdb/logging/log_manager.hpp"
@@ -261,6 +262,8 @@ public:
 	DUCKDB_API void SetDisabledCompressionMethods(const vector<CompressionType> &disabled_compression_methods);
 	//! Returns a list of disabled compression methods
 	DUCKDB_API vector<CompressionType> GetDisabledCompressionMethods() const;
+	//! Resolves the compression knobs (dictionary/level/scope) from global settings.
+	DUCKDB_API CompressionOptions GetCompressionOptions() const;
 
 	//! Returns the encode function matching the encoding name.
 	DUCKDB_API optional_ptr<EncodingFunction> GetEncodeFunction(const string &name) const;

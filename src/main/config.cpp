@@ -94,6 +94,8 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING(CacheLocalFilesSetting),
     DUCKDB_SETTING(CatalogErrorMaxSchemasSetting),
     DUCKDB_SETTING_CALLBACK(CheckpointOnDetachSetting),
+    DUCKDB_SETTING(CompressionDictionarySetting),
+    DUCKDB_SETTING(CompressionDictionaryScopeSetting),
     DUCKDB_GLOBAL(CheckpointThresholdSetting),
     DUCKDB_LOCAL(ConfigureProfilingSetting),
     DUCKDB_SETTING_CALLBACK(CurrentTransactionInvalidationPolicySetting),
@@ -191,6 +193,7 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING(LegacyDisableNullTypeSetting),
     DUCKDB_SETTING(LegacyMetricsFormatSetting),
     DUCKDB_SETTING(LockConfigurationSetting),
+    DUCKDB_SETTING(Lz4CompressionLevelSetting),
     DUCKDB_SETTING_CALLBACK(LogQueryPathSetting),
     DUCKDB_GLOBAL(LoggingLevel),
     DUCKDB_GLOBAL(LoggingMode),
@@ -247,6 +250,7 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING_CALLBACK(WarningsAsErrorsSetting),
     DUCKDB_SETTING(WriteBufferRowGroupCountSetting),
     DUCKDB_GLOBAL(WriteBufferRowGroupMemoryLimitSetting),
+    DUCKDB_SETTING(ZstdCompressionLevelSetting),
     DUCKDB_SETTING(ZstdMinStringLengthSetting),
     FINAL_SETTING};
 

@@ -60,6 +60,12 @@ public:
 	unique_ptr<OverflowStringWriter> MakeOverflowStringWriter() const {
 		return overflow_writer_factory();
 	}
+	const CompressionOptions &GetCompressionOptions() const {
+		return options;
+	}
+	void SetCompressionOptions(const CompressionOptions &options_p) {
+		options = options_p;
+	}
 	void FlushSegment(unique_ptr<ColumnSegment> segment, BufferHandle handle, idx_t segment_size);
 	void FlushSegmentInternal(unique_ptr<ColumnSegment> segment, idx_t segment_size);
 	BlockManager &GetBlockManager();
@@ -75,6 +81,7 @@ private:
 	FlushSegmentFn flush_segment_fn;
 	FlushSegmentInternalFn flush_segment_internal_fn;
 	optional_ptr<BlockManager> block_manager;
+	CompressionOptions options;
 };
 
 struct CheckpointAnalyzeResult {
@@ -106,7 +113,7 @@ private:
 	void WriteToDisk();
 	void WritePersistentSegments(ColumnCheckpointState &state);
 	bool HasChanges(ColumnData &col_data);
-	void InitAnalyze();
+	void InitAnalyze(const vector<CompressionType> &forced_methods);
 	void DropSegments();
 	bool ValidityCoveredByBasedata(vector<CheckpointAnalyzeResult> &result);
 

@@ -70,8 +70,8 @@ struct DictFSSTCompressionStorage {
 //===--------------------------------------------------------------------===//
 unique_ptr<AnalyzeState> DictFSSTCompressionStorage::StringInitAnalyze(CompressionAnalyzeContext &ctx,
                                                                        PhysicalType type) {
-	if (StorageManager::IsPriorToVersion(StorageVersion::V1_3_0, ctx.storage_version)) {
-		// dict_fsst not introduced yet, disable it
+	if (!ctx.force_selection && StorageManager::IsPriorToVersion(StorageVersion::V1_3_0, ctx.storage_version)) {
+		// dict_fsst not introduced yet, disable it for auto-selection (still forceable)
 		return nullptr;
 	}
 

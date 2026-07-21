@@ -45,6 +45,11 @@ struct DictFSSTCompressionFun {
 	static bool TypeIsSupported(const PhysicalType physical_type);
 };
 
+struct FSSTPlusCompressionFun {
+	static CompressionFunction GetFunction(PhysicalType type);
+	static bool TypeIsSupported(const PhysicalType physical_type);
+};
+
 struct ChimpCompressionFun {
 	static CompressionFunction GetFunction(PhysicalType type);
 	static bool TypeIsSupported(const PhysicalType physical_type);
@@ -71,6 +76,11 @@ struct FSSTFun {
 };
 
 struct ZSTDFun {
+	static CompressionFunction GetFunction(PhysicalType type);
+	static bool TypeIsSupported(PhysicalType type);
+};
+
+struct LZ4Fun {
 	static CompressionFunction GetFunction(PhysicalType type);
 	static bool TypeIsSupported(PhysicalType type);
 };

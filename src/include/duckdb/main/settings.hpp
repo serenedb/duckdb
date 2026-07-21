@@ -2116,6 +2116,48 @@ struct ZstdMinStringLengthSetting {
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
 };
 
+struct CompressionDictionarySetting {
+	using RETURN_TYPE = bool;
+	static constexpr const char *Name = "compression_dictionary";
+	static constexpr const char *Description =
+	    "Whether dictionary encoding is allowed for string compression codecs";
+	static constexpr const char *InputType = "BOOLEAN";
+	static constexpr const char *DefaultValue = "false";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
+struct CompressionDictionaryScopeSetting {
+	using RETURN_TYPE = string;
+	static constexpr const char *Name = "compression_dictionary_scope";
+	static constexpr const char *Description =
+	    "Scope at which a compression dictionary is shared: none, row_group or column";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr const char *DefaultValue = "none";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
+struct Lz4CompressionLevelSetting {
+	using RETURN_TYPE = int64_t;
+	static constexpr const char *Name = "lz4_compression_level";
+	static constexpr const char *Description = "The LZ4 compression level to use; 0 = default, >0 = HC level";
+	static constexpr const char *InputType = "BIGINT";
+	static constexpr const char *DefaultValue = "0";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
+struct ZstdCompressionLevelSetting {
+	using RETURN_TYPE = int64_t;
+	static constexpr const char *Name = "zstd_compression_level";
+	static constexpr const char *Description = "The ZSTD compression level to use; 0 = zstd default (3)";
+	static constexpr const char *InputType = "BIGINT";
+	static constexpr const char *DefaultValue = "0";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
 struct GeneratedSettingInfo {
 	static constexpr idx_t MaxSettingIndex = NEXT_SETTING_INDEX();
 };

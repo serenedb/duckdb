@@ -3,6 +3,7 @@ add_subdirectory(alp)
 add_subdirectory(roaring)
 add_subdirectory(dictionary)
 add_subdirectory(dict_fsst)
+add_subdirectory(fsst_plus)
 
 add_library_unity(
   duckdb_storage_compression
@@ -18,9 +19,11 @@ add_library_unity(
   bitpacking_hugeint.cpp
   patas.cpp
   zstd.cpp
+  lz4.cpp
   alprd.cpp
   fsst.cpp
   dict_fsst.cpp
+  fsst_plus.cpp
   empty_validity.cpp
   standard_compression_state.cpp)
 set(ALL_OBJECT_FILES

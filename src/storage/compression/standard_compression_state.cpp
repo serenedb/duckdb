@@ -6,6 +6,7 @@ namespace duckdb {
 CompressionState::CompressionState(ColumnDataCheckpointData &checkpoint_data_p, CompressionType compression_type)
     : checkpoint_data(checkpoint_data_p), function(checkpoint_data.GetCompressionFunction(compression_type)),
       block_manager(checkpoint_data.GetBlockManager()), info(block_manager) {
+	info.SetCompressionOptions(checkpoint_data.GetCompressionOptions());
 }
 
 unique_ptr<ColumnSegment> CompressionState::CreateNewSegment() {

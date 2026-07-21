@@ -96,8 +96,8 @@ struct FSSTAnalyzeState : public AnalyzeState {
 };
 
 unique_ptr<AnalyzeState> FSSTStorage::StringInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
-	if (StorageManager::TargetAtLeastVersion(StorageVersion::V1_3_0, ctx.storage_version)) {
-		// dict_fsst introduced - disable fsst
+	if (!ctx.force_selection && StorageManager::TargetAtLeastVersion(StorageVersion::V1_3_0, ctx.storage_version)) {
+		// dict_fsst introduced - disable fsst for auto-selection (still forceable)
 		return nullptr;
 	}
 

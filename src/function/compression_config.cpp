@@ -1,7 +1,9 @@
 #include "duckdb/common/pair.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -27,11 +29,14 @@ static const DefaultCompressionMethod internal_compression_methods[] = {
     {CompressionType::COMPRESSION_ALPRD, AlpRDCompressionFun::GetFunction, AlpRDCompressionFun::TypeIsSupported},
     {CompressionType::COMPRESSION_FSST, FSSTFun::GetFunction, FSSTFun::TypeIsSupported},
     {CompressionType::COMPRESSION_ZSTD, ZSTDFun::GetFunction, ZSTDFun::TypeIsSupported},
+    {CompressionType::COMPRESSION_LZ4, LZ4Fun::GetFunction, LZ4Fun::TypeIsSupported},
     {CompressionType::COMPRESSION_ROARING, RoaringCompressionFun::GetFunction, RoaringCompressionFun::TypeIsSupported},
     {CompressionType::COMPRESSION_EMPTY, EmptyValidityCompressionFun::GetFunction,
      EmptyValidityCompressionFun::TypeIsSupported},
     {CompressionType::COMPRESSION_DICT_FSST, DictFSSTCompressionFun::GetFunction,
      DictFSSTCompressionFun::TypeIsSupported},
+    {CompressionType::COMPRESSION_FSST_PLUS, FSSTPlusCompressionFun::GetFunction,
+     FSSTPlusCompressionFun::TypeIsSupported},
     {CompressionType::COMPRESSION_AUTO, nullptr, nullptr}};
 
 idx_t CompressionFunctionSet::GetCompressionIndex(PhysicalType physical_type) {
@@ -123,8 +128,10 @@ bool EmitCompressionFunction(CompressionType type) {
 	case CompressionType::COMPRESSION_ALPRD:
 	case CompressionType::COMPRESSION_FSST:
 	case CompressionType::COMPRESSION_ZSTD:
+	case CompressionType::COMPRESSION_LZ4:
 	case CompressionType::COMPRESSION_ROARING:
 	case CompressionType::COMPRESSION_DICT_FSST:
+	case CompressionType::COMPRESSION_FSST_PLUS:
 		return true;
 	default:
 		return false;
@@ -185,6 +192,22 @@ vector<CompressionType> CompressionFunctionSet::GetDisabledCompressionMethods() 
 
 vector<CompressionType> DBConfig::GetDisabledCompressionMethods() const {
 	return compression_functions->GetDisabledCompressionMethods();
+}
+
+CompressionOptions DBConfig::GetCompressionOptions() const {
+	CompressionOptions result;
+	result.zstd_level = static_cast<int32_t>(Settings::Get<ZstdCompressionLevelSetting>(*this));
+	result.lz4_level = static_cast<int32_t>(Settings::Get<Lz4CompressionLevelSetting>(*this));
+	result.use_dictionary = Settings::Get<CompressionDictionarySetting>(*this);
+	auto scope = StringUtil::Lower(Settings::Get<CompressionDictionaryScopeSetting>(*this));
+	if (scope == "row_group") {
+		result.dict_scope = DictScope::ROW_GROUP;
+	} else if (scope == "column") {
+		result.dict_scope = DictScope::COLUMN;
+	} else {
+		result.dict_scope = DictScope::NONE;
+	}
+	return result;
 }
 
 void CompressionFunctionSet::ResetDisabledMethods() {

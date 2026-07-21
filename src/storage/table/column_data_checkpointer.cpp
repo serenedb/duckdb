@@ -172,7 +172,10 @@ CompressionType ForceCompression(StorageManager &storage_manager,
 	return compression_type;
 }
 
-void ColumnDataCheckpointer::InitAnalyze() {
+void ColumnDataCheckpointer::InitAnalyze(const vector<CompressionType> &forced_methods) {
+	auto &db = storage_manager.GetDatabase();
+	auto &config = DBConfig::GetConfig(db);
+	const auto options = config.GetCompressionOptions();
 	analyze_states.resize(checkpoint_states.size());
 	for (idx_t i = 0; i < checkpoint_states.size(); i++) {
 		auto &functions = compression_functions[i];
@@ -182,12 +185,17 @@ void ColumnDataCheckpointer::InitAnalyze() {
 		states.resize(functions.size());
 		CompressionAnalyzeContext ctx(coldata.GetBlockManager(), coldata.GetDatabase(),
 		                              coldata.GetStorageManager().GetStorageVersion());
+		ctx.options = options;
+		ctx.force_selection = forced_methods[i] != CompressionType::COMPRESSION_AUTO;
 		for (idx_t j = 0; j < functions.size(); j++) {
 			auto &func = functions[j];
 			if (!func) {
 				continue;
 			}
 			states[j] = func->init_analyze(ctx, coldata.type.InternalType());
+			if (states[j]) {
+				states[j]->info.SetCompressionOptions(options);
+			}
 		}
 	}
 }
@@ -212,7 +220,7 @@ vector<CheckpointAnalyzeResult> ColumnDataCheckpointer::DetectBestCompressionMet
 		}
 	}
 
-	InitAnalyze();
+	InitAnalyze(forced_methods);
 
 	// scan over all the segments and run the analyze step
 	ScanSegments([&](Vector &scan_vector) {
@@ -346,6 +354,7 @@ void ColumnDataCheckpointer::WriteToDisk() {
 
 	// Initialize the compression for the selected function
 	D_ASSERT(analyze_result.size() == checkpoint_states.size());
+	const auto options = DBConfig::GetConfig(storage_manager.GetDatabase()).GetCompressionOptions();
 	vector<ColumnDataCheckpointData> checkpoint_data(checkpoint_states.size());
 	vector<unique_ptr<CompressionState>> compression_states(checkpoint_states.size());
 	for (idx_t i = 0; i < analyze_result.size(); i++) {
@@ -357,6 +366,7 @@ void ColumnDataCheckpointer::WriteToDisk() {
 
 		checkpoint_data[i] =
 		    ColumnDataCheckpointData(checkpoint_state, col_data.type, col_data.GetDatabase(), storage_manager);
+		checkpoint_data[i].SetCompressionOptions(options);
 		compression_states[i] = function->init_compression(checkpoint_data[i], std::move(analyze_state));
 	}
 

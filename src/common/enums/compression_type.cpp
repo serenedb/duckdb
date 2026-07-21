@@ -39,6 +39,8 @@ CompressionAvailabilityResult CompressionTypeIsAvailable(CompressionType compres
 	     {CompressionType::COMPRESSION_ROARING, StorageVersion::V1_2_0, StorageVersion::LATEST},
 	     {CompressionType::COMPRESSION_ZSTD, StorageVersion::V1_2_0, StorageVersion::LATEST},
 	     {CompressionType::COMPRESSION_DICT_FSST, StorageVersion::V1_3_0, StorageVersion::LATEST},
+	     {CompressionType::COMPRESSION_LZ4, StorageVersion::V1_2_0, StorageVersion::LATEST},
+	     {CompressionType::COMPRESSION_FSST_PLUS, StorageVersion::V1_3_0, StorageVersion::LATEST},
 	     // Not implemented yet
 	     {CompressionType::COMPRESSION_PFOR_DELTA, (StorageVersion)((int)StorageVersion::LATEST + 1),
 	      StorageVersion::INVALID}});
@@ -114,6 +116,10 @@ string CompressionTypeToString(CompressionType type) {
 		return "Roaring";
 	case CompressionType::COMPRESSION_DICT_FSST:
 		return "DICT_FSST";
+	case CompressionType::COMPRESSION_LZ4:
+		return "LZ4";
+	case CompressionType::COMPRESSION_FSST_PLUS:
+		return "FSST_PLUS";
 	case CompressionType::COMPRESSION_EMPTY:
 		return "Empty Validity";
 	default:

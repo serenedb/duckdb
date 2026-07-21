@@ -12,7 +12,11 @@
 #include "duckdb/storage/table/data_table_info.hpp"
 
 #include "duckdb/storage/compression/zstd/zstd.hpp"
+#include "duckdb/storage/compression/compression_options.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/common/serializer/serializer.hpp"
 #include "zstd.h"
+#include "zdict.h"
 
 /*
 Data layout per segment:
@@ -35,13 +39,49 @@ Data layout per segment:
 +--------------------------------------------+
 */
 
-static int32_t GetCompressionLevel() {
-	return duckdb_zstd::ZSTD_defaultCLevel();
-}
-
 static constexpr idx_t ZSTD_VECTOR_SIZE = STANDARD_VECTOR_SIZE > 2048 ? STANDARD_VECTOR_SIZE : 2048;
 
 namespace duckdb {
+
+//! Compression level used for the MERGE effort when no explicit level is set.
+static constexpr int32_t ZSTD_MERGE_COMPRESSION_LEVEL = 19;
+//! How many bytes of samples to gather per byte of target dictionary size.
+static constexpr idx_t ZSTD_DICT_SAMPLE_MULTIPLIER = 100;
+//! Minimum viable dictionary size (equals zdict's ZDICT_DICTSIZE_MIN, which is
+//! only exposed under ZDICT_STATIC_LINKING_ONLY).
+static constexpr idx_t ZSTD_MIN_DICT_SIZE = 256;
+
+//! Read the compression knobs from the global settings. Mirrors how
+//! zstd_min_string_length is read; the orchestrator reconciles this with the
+//! foundation's CompressionOptions accessor (state.GetCompressionOptions()).
+static CompressionOptions ResolveZstdOptions(DBConfig &config) {
+	CompressionOptions options;
+	options.zstd_level = UnsafeNumericCast<int32_t>(Settings::Get<ZstdCompressionLevelSetting>(config));
+	options.use_dictionary = Settings::Get<CompressionDictionarySetting>(config);
+	auto scope_str = StringUtil::Lower(Settings::Get<CompressionDictionaryScopeSetting>(config));
+	if (scope_str == "row_group") {
+		options.dict_scope = DictScope::ROW_GROUP;
+	} else if (scope_str == "column") {
+		options.dict_scope = DictScope::COLUMN;
+	} else {
+		options.dict_scope = DictScope::NONE;
+	}
+	return options;
+}
+
+static bool UseDictionary(const CompressionOptions &options) {
+	return options.use_dictionary && options.dict_scope != DictScope::NONE;
+}
+
+static int32_t ResolveCompressionLevel(const CompressionOptions &options) {
+	if (options.zstd_level != 0) {
+		return options.zstd_level;
+	}
+	if (options.effort == CompressEffort::MERGE) {
+		return ZSTD_MERGE_COMPRESSION_LEVEL;
+	}
+	return duckdb_zstd::ZSTD_defaultCLevel();
+}
 
 static idx_t GetWritableSpace(const CompressionInfo &info) {
 	return info.GetBlockSize() - sizeof(block_id_t);
@@ -99,6 +139,69 @@ struct ZSTDStorage {
 };
 
 //===--------------------------------------------------------------------===//
+// Segment state (holds the optional shared dictionary)
+//===--------------------------------------------------------------------===//
+
+//! Runtime segment state. Extends the uncompressed string state (whose
+//! on_disk_blocks tracks every extra page, including the dictionary block) with
+//! the location of this segment's shared dictionary (if any).
+struct ZSTDSegmentState : public UncompressedStringSegmentState {
+	~ZSTDSegmentState() override {
+		if (ddict) {
+			duckdb_zstd::ZSTD_freeDDict(ddict);
+		}
+	}
+
+	//! Lazily load + cache the decompression dictionary for this segment.
+	duckdb_zstd::ZSTD_DDict *GetDDict(BlockManager &manager, BufferManager &buffer_manager) {
+		if (!has_dict) {
+			return nullptr;
+		}
+		lock_guard<mutex> guard(dict_lock);
+		if (ddict) {
+			return ddict;
+		}
+		auto block = GetHandle(manager, dict_block);
+		auto handle = buffer_manager.Pin(block);
+		ddict = duckdb_zstd::ZSTD_createDDict(handle.GetDataMutable(), dict_size);
+		if (!ddict) {
+			throw InternalException("(ZSTDSegmentState::GetDDict) Failed to create ZSTD decompression dictionary");
+		}
+		return ddict;
+	}
+
+	bool has_dict = false;
+	block_id_t dict_block = INVALID_BLOCK;
+	idx_t dict_size = 0;
+
+private:
+	mutex dict_lock;
+	duckdb_zstd::ZSTD_DDict *ddict = nullptr;
+};
+
+//! Serialized segment state: the overflow block list plus the dictionary
+//! location. Backwards compatible with SerializedStringSegmentState (segments
+//! without a dictionary only ever wrote "overflow_blocks").
+struct ZSTDSerializedSegmentState : public ColumnSegmentState {
+	ZSTDSerializedSegmentState() {
+	}
+	explicit ZSTDSerializedSegmentState(vector<block_id_t> blocks_p) : blocks(std::move(blocks_p)) {
+	}
+
+	void Serialize(Serializer &serializer) const override {
+		serializer.WriteProperty(1, "overflow_blocks", blocks);
+		serializer.WritePropertyWithDefault<bool>(100, "zstd_has_dict", has_dict, false);
+		serializer.WritePropertyWithDefault<block_id_t>(101, "zstd_dict_block", dict_block, INVALID_BLOCK);
+		serializer.WritePropertyWithDefault<idx_t>(102, "zstd_dict_size", dict_size, 0);
+	}
+
+	vector<block_id_t> blocks;
+	bool has_dict = false;
+	block_id_t dict_block = INVALID_BLOCK;
+	idx_t dict_size = 0;
+};
+
+//===--------------------------------------------------------------------===//
 // Analyze
 //===--------------------------------------------------------------------===//
 
@@ -107,6 +210,9 @@ public:
 	ZSTDAnalyzeState(BlockManager &block_manager, DBConfig &config)
 	    : AnalyzeState(block_manager), config(config), context(nullptr) {
 		context = duckdb_zstd::ZSTD_createCCtx();
+		options = ResolveZstdOptions(config);
+		collect_dict_samples = UseDictionary(options);
+		dict_sample_budget = options.max_dict_size * ZSTD_DICT_SAMPLE_MULTIPLIER;
 	}
 	~ZSTDAnalyzeState() override {
 		duckdb_zstd::ZSTD_freeCCtx(context);
@@ -118,8 +224,31 @@ public:
 		total_size += string_size;
 	}
 
+	//! Retain a bounded sample of the (non-empty) strings for dictionary training.
+	inline void MaybeSample(const string_t &str) {
+		if (!collect_dict_samples) {
+			return;
+		}
+		auto size = str.GetSize();
+		if (size == 0 || dict_sample_buffer.size() >= dict_sample_budget) {
+			return;
+		}
+		dict_sample_buffer.append(str.GetData(), size);
+		dict_sample_sizes.push_back(size);
+	}
+
 public:
 	DBConfig &config;
+
+	//! Resolved compression knobs (level, dictionary on/off, scope, effort).
+	CompressionOptions options;
+	//! Whether we are gathering samples to train a dictionary.
+	bool collect_dict_samples = false;
+	//! Concatenated sample bytes + per-sample sizes for ZDICT_trainFromBuffer.
+	string dict_sample_buffer;
+	vector<size_t> dict_sample_sizes;
+	//! Upper bound on the amount of sample bytes to retain.
+	idx_t dict_sample_budget = 0;
 
 	duckdb_zstd::ZSTD_CCtx *context = nullptr;
 	//! The combined string lengths for all values in the segment
@@ -166,6 +295,7 @@ bool ZSTDStorage::StringAnalyze(AnalyzeState &state_p, const Vector &input) {
 		auto &str = data[idx];
 		auto string_size = str.GetSize();
 		state.total_size += string_size;
+		state.MaybeSample(str);
 	}
 	state.values_in_vector += count;
 	while (state.values_in_vector >= ZSTD_VECTOR_SIZE) {
@@ -236,12 +366,89 @@ public:
 		vector_count = 0;
 		vector_state.tuple_count = 0;
 
+		options = analyze_state->options;
+		TrainDictionary();
+
 		NewSegment();
 		if (!(buffer_collection.GetCurrentOffset() <= GetWritableSpace(info))) {
 			throw InternalException(
 			    "(ZSTDCompressionState::ZSTDCompressionState) Offset (%d) exceeds writable space! (%d)",
 			    buffer_collection.GetCurrentOffset(), GetWritableSpace(info));
 		}
+	}
+
+	~ZSTDCompressionState() override {
+		if (cdict) {
+			duckdb_zstd::ZSTD_freeCDict(cdict);
+		}
+	}
+
+public:
+	//! Largest dictionary that still fits on a single dedicated block.
+	idx_t MaxUsableDictBytes() const {
+		return info.GetBlockSize() - info.GetBlockHeaderSize();
+	}
+
+	//! Train (or fall back to a raw-content) shared dictionary from the samples
+	//! gathered during analyze. On success `cdict` is set and `dict_bytes` holds
+	//! the dictionary that is stored once per segment.
+	// TODO(column-scope): DictScope::COLUMN currently behaves like ROW_GROUP -- a
+	// self-contained per-checkpoint dictionary. A true column-wide dictionary
+	// needs cross-checkpoint plumbing from the foundation (train once, share
+	// across row groups); this is the hook where that dictionary would be
+	// injected instead of training locally.
+	void TrainDictionary() {
+		auto &a = *analyze_state;
+		if (!a.collect_dict_samples || a.dict_sample_sizes.empty()) {
+			return;
+		}
+		idx_t capacity = MinValue<idx_t>(options.max_dict_size, MaxUsableDictBytes());
+		if (capacity < ZSTD_MIN_DICT_SIZE) {
+			return;
+		}
+		string trained_dict;
+		trained_dict.resize(capacity);
+		size_t trained = duckdb_zstd::ZDICT_trainFromBuffer(
+		    reinterpret_cast<void *>(&trained_dict[0]), capacity,
+		    reinterpret_cast<const void *>(a.dict_sample_buffer.data()), a.dict_sample_sizes.data(),
+		    UnsafeNumericCast<unsigned>(a.dict_sample_sizes.size()));
+		if (!duckdb_zstd::ZDICT_isError(trained) && trained >= ZSTD_MIN_DICT_SIZE) {
+			trained_dict.resize(trained);
+			dict_bytes = std::move(trained_dict);
+		} else {
+			// Fall back to a raw-content dictionary built from the sample bytes.
+			idx_t raw_size = MinValue<idx_t>(capacity, a.dict_sample_buffer.size());
+			if (raw_size == 0) {
+				return;
+			}
+			dict_bytes = a.dict_sample_buffer.substr(0, raw_size);
+		}
+		if (dict_bytes.empty()) {
+			return;
+		}
+		cdict = duckdb_zstd::ZSTD_createCDict(dict_bytes.data(), dict_bytes.size(), ResolveCompressionLevel(options));
+		if (!cdict) {
+			// Could not build a dictionary -- compress without one.
+			dict_bytes.clear();
+		}
+	}
+
+	//! Persist the shared dictionary on a dedicated block owned by the current
+	//! segment and record its location so scans can rebuild the DDict.
+	void WriteDictBlock() {
+		if (dict_bytes.empty()) {
+			return;
+		}
+		auto &zstate = buffer_collection.segment->GetSegmentState()->Cast<ZSTDSegmentState>();
+		auto &buffer_manager = BufferManager::GetBufferManager(checkpoint_data.GetDatabase());
+		block_id_t dict_id = checkpoint_data.GetFreeBlockId();
+		zstate.RegisterBlock(block_manager, dict_id);
+		auto handle = buffer_manager.Allocate(MemoryTag::OVERFLOW_STRINGS, &block_manager);
+		memcpy(handle.GetDataMutable(), dict_bytes.data(), dict_bytes.size());
+		block_manager.Write(QueryContext(), handle.GetFileBuffer(), dict_id);
+		zstate.has_dict = true;
+		zstate.dict_block = dict_id;
+		zstate.dict_size = dict_bytes.size();
 	}
 
 public:
@@ -369,9 +576,14 @@ public:
 
 		// Initialize the context for streaming compression
 		duckdb_zstd::ZSTD_CCtx_reset(analyze_state->context, duckdb_zstd::ZSTD_reset_session_only);
-		duckdb_zstd::ZSTD_CCtx_refCDict(analyze_state->context, nullptr);
-		duckdb_zstd::ZSTD_CCtx_setParameter(analyze_state->context, duckdb_zstd::ZSTD_c_compressionLevel,
-		                                    GetCompressionLevel());
+		if (cdict) {
+			// The level is baked into the CDict; refCDict overrides it.
+			duckdb_zstd::ZSTD_CCtx_refCDict(analyze_state->context, cdict);
+		} else {
+			duckdb_zstd::ZSTD_CCtx_refCDict(analyze_state->context, nullptr);
+			duckdb_zstd::ZSTD_CCtx_setParameter(analyze_state->context, duckdb_zstd::ZSTD_c_compressionLevel,
+			                                    ResolveCompressionLevel(options));
+		}
 		vector_state.in_vector = true;
 	}
 
@@ -532,6 +744,9 @@ public:
 
 		auto &buffer_manager = BufferManager::GetBufferManager(checkpoint_data.GetDatabase());
 		buffer_collection.segment_handle = buffer_manager.Pin(buffer_collection.segment->GetBlockHandle());
+
+		// Persist the shared dictionary (if any) on this segment's own block.
+		WriteDictBlock();
 	}
 
 	void FlushSegment() {
@@ -593,6 +808,14 @@ public:
 public:
 	unique_ptr<ZSTDAnalyzeState> analyze_state;
 	StatsWriter<string_t> stats_writer;
+
+	//! Resolved compression knobs for this checkpoint.
+	CompressionOptions options;
+	//! The trained (or raw-content) dictionary shared across every frame; empty
+	//! when no dictionary is used.
+	string dict_bytes;
+	//! Compression dictionary handle (null when no dictionary is used).
+	duckdb_zstd::ZSTD_CDict *cdict = nullptr;
 
 	//! --- Analyzed Data ---
 	//! The amount of tuples we're writing
@@ -693,11 +916,12 @@ public:
 struct ZSTDScanState : public SegmentScanState {
 public:
 	explicit ZSTDScanState(ColumnSegment &segment)
-	    : state(segment.GetSegmentState()->Cast<UncompressedStringSegmentState>()),
+	    : state(segment.GetSegmentState()->Cast<ZSTDSegmentState>()),
 	      block_manager(segment.GetBlockHandle()->GetBlockManager()),
 	      buffer_manager(BufferManager::GetBufferManager(segment.GetDatabase())),
 	      segment_block_offset(segment.GetBlockOffset()), segment(segment) {
 		decompression_context = duckdb_zstd::ZSTD_createDCtx();
+		ddict = state.GetDDict(block_manager, buffer_manager);
 		segment_handle = buffer_manager.Pin(segment.GetBlockHandle());
 
 		auto data = segment_handle.GetDataMutable() + segment.GetBlockOffset();
@@ -816,7 +1040,7 @@ public:
 
 		// Initialize the context for streaming decompression
 		duckdb_zstd::ZSTD_DCtx_reset(decompression_context, duckdb_zstd::ZSTD_reset_session_only);
-		duckdb_zstd::ZSTD_DCtx_refDDict(decompression_context, nullptr);
+		duckdb_zstd::ZSTD_DCtx_refDDict(decompression_context, ddict);
 
 		if (internal_offset) {
 			Skip(scan_state, internal_offset);
@@ -954,11 +1178,13 @@ public:
 	}
 
 public:
-	UncompressedStringSegmentState &state;
+	ZSTDSegmentState &state;
 	BlockManager &block_manager;
 	BufferManager &buffer_manager;
 
 	duckdb_zstd::ZSTD_DCtx *decompression_context = nullptr;
+	//! Shared decompression dictionary for this segment (null when unused).
+	duckdb_zstd::ZSTD_DDict *ddict = nullptr;
 
 	idx_t segment_block_offset;
 	BufferHandle segment_handle;
@@ -1019,31 +1245,41 @@ void ZSTDStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state
 
 unique_ptr<CompressedSegmentState> ZSTDStorage::StringInitSegment(ColumnSegment &segment, block_id_t block_id,
                                                                   optional_ptr<ColumnSegmentState> segment_state) {
-	auto result = make_uniq<UncompressedStringSegmentState>();
+	auto result = make_uniq<ZSTDSegmentState>();
 	if (segment_state) {
-		auto &serialized_state = segment_state->Cast<SerializedStringSegmentState>();
+		auto &serialized_state = segment_state->Cast<ZSTDSerializedSegmentState>();
 		result->on_disk_blocks = std::move(serialized_state.blocks);
+		result->has_dict = serialized_state.has_dict;
+		result->dict_block = serialized_state.dict_block;
+		result->dict_size = serialized_state.dict_size;
 	}
 	return std::move(result);
 }
 
 unique_ptr<ColumnSegmentState> ZSTDStorage::SerializeState(ColumnSegment &segment) {
-	auto &state = segment.GetSegmentState()->Cast<UncompressedStringSegmentState>();
-	if (state.on_disk_blocks.empty()) {
-		// no on-disk blocks - nothing to write
+	auto &state = segment.GetSegmentState()->Cast<ZSTDSegmentState>();
+	if (state.on_disk_blocks.empty() && !state.has_dict) {
+		// no on-disk blocks and no dictionary - nothing to write
 		return nullptr;
 	}
-	return make_uniq<SerializedStringSegmentState>(state.on_disk_blocks);
+	auto result = make_uniq<ZSTDSerializedSegmentState>(state.on_disk_blocks);
+	result->has_dict = state.has_dict;
+	result->dict_block = state.dict_block;
+	result->dict_size = state.dict_size;
+	return std::move(result);
 }
 
 unique_ptr<ColumnSegmentState> ZSTDStorage::DeserializeState(Deserializer &deserializer) {
-	auto result = make_uniq<SerializedStringSegmentState>();
+	auto result = make_uniq<ZSTDSerializedSegmentState>();
 	deserializer.ReadProperty(1, "overflow_blocks", result->blocks);
+	result->has_dict = deserializer.ReadPropertyWithExplicitDefault<bool>(100, "zstd_has_dict", false);
+	result->dict_block = deserializer.ReadPropertyWithExplicitDefault<block_id_t>(101, "zstd_dict_block", INVALID_BLOCK);
+	result->dict_size = deserializer.ReadPropertyWithExplicitDefault<idx_t>(102, "zstd_dict_size", 0);
 	return std::move(result);
 }
 
 void ZSTDStorage::VisitBlockIds(const ColumnSegment &segment, BlockIdVisitor &visitor) {
-	auto &state = segment.GetSegmentState()->Cast<UncompressedStringSegmentState>();
+	auto &state = segment.GetSegmentState()->Cast<ZSTDSegmentState>();
 	for (auto &block_id : state.on_disk_blocks) {
 		visitor.Visit(block_id);
 	}

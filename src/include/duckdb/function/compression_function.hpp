@@ -10,6 +10,7 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/enums/compression_type.hpp"
+#include "duckdb/storage/compression/compression_options.hpp"
 #include "duckdb/common/map.hpp"
 #include "duckdb/common/insertion_order_preserving_map.hpp"
 #include "duckdb/common/mutex.hpp"
@@ -38,6 +39,15 @@ struct CompressionAnalyzeContext {
 	BlockManager &block_manager;
 	DatabaseInstance &db;
 	StorageVersion storage_version;
+	//! Resolved codec knobs for the column being analyzed.
+	CompressionOptions options {};
+	//! True when a codec is explicitly forced/named for this column, which lets
+	//! version-gated codecs (fsst/dict_fsst) bypass their auto-disable check.
+	bool force_selection = false;
+
+	const CompressionOptions &GetCompressionOptions() const {
+		return options;
+	}
 };
 
 class CompressionInfo {
@@ -64,8 +74,17 @@ public:
 		return block_manager;
 	}
 
+	//! The resolved codec knobs for the column being (de)compressed.
+	const CompressionOptions &GetCompressionOptions() const {
+		return options;
+	}
+	void SetCompressionOptions(const CompressionOptions &options_p) {
+		options = options_p;
+	}
+
 private:
 	BlockManager &block_manager;
+	CompressionOptions options;
 };
 
 struct AnalyzeState {
@@ -83,6 +102,11 @@ struct AnalyzeState {
 	const TARGET &Cast() const {
 		DynamicCastCheck<TARGET>(this);
 		return reinterpret_cast<const TARGET &>(*this);
+	}
+
+	//! Resolved codec knobs; read by analyze/final_analyze callbacks.
+	const CompressionOptions &GetCompressionOptions() const {
+		return info.GetCompressionOptions();
 	}
 
 	BlockManager &block_manager;
@@ -107,6 +131,11 @@ struct CompressionState {
 	const LogicalType &GetType();
 
 	unique_ptr<ColumnSegment> CreateNewSegment();
+
+	//! Resolved codec knobs; read by compress/compress_finalize callbacks.
+	const CompressionOptions &GetCompressionOptions() const {
+		return info.GetCompressionOptions();
+	}
 
 public:
 	ColumnDataCheckpointData &checkpoint_data;
@@ -346,7 +375,7 @@ public:
 
 //! The set of compression functions
 struct CompressionFunctionSet {
-	static constexpr idx_t COMPRESSION_TYPE_COUNT = 16;
+	static constexpr idx_t COMPRESSION_TYPE_COUNT = 18;
 	static constexpr idx_t PHYSICAL_TYPE_COUNT = 19;
 
 public:

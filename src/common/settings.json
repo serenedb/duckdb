@@ -239,6 +239,20 @@
         ]
     },
     {
+        "name": "compression_dictionary",
+        "description": "Whether dictionary encoding is allowed for string compression codecs",
+        "type": "BOOLEAN",
+        "scope": "global",
+        "default_value": "false"
+    },
+    {
+        "name": "compression_dictionary_scope",
+        "description": "Scope at which a compression dictionary is shared: none, row_group or column",
+        "type": "VARCHAR",
+        "scope": "global",
+        "default_value": "none"
+    },
+    {
         "name": "configure_profiling",
         "description": "Accepts a JSON enabling custom metrics",
         "type": "VARCHAR",
@@ -1031,6 +1045,13 @@
         "custom_implementation": true
     },
     {
+        "name": "lz4_compression_level",
+        "description": "The LZ4 compression level to use; 0 = default, >0 = HC level",
+        "type": "BIGINT",
+        "scope": "global",
+        "default_value": "0"
+    },
+    {
         "name": "max_execution_time",
         "description": "The maximum execution time per query in milliseconds (0 = no limit)",
         "type": "BIGINT",
@@ -1427,6 +1448,13 @@
         "type": "VARCHAR",
         "scope": "global",
         "custom_implementation": true
+    },
+    {
+        "name": "zstd_compression_level",
+        "description": "The ZSTD compression level to use; 0 = zstd default (3)",
+        "type": "BIGINT",
+        "scope": "global",
+        "default_value": "0"
     },
     {
         "name": "zstd_min_string_length",

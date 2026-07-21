@@ -33,6 +33,8 @@ enum class CompressionType : uint8_t {
 	COMPRESSION_ROARING = 13,
 	COMPRESSION_EMPTY = 14, // internal only
 	COMPRESSION_DICT_FSST = 15,
+	COMPRESSION_LZ4 = 16,
+	COMPRESSION_FSST_PLUS = 17,
 	COMPRESSION_COUNT // This has to stay the last entry of the type!
 };
 
