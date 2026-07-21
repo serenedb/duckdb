@@ -78,8 +78,7 @@ set(DUCKDB_LINK_LIBS
     duckdb_fastpforlib
     duckdb_skiplistlib
     duckdb_mbedtls
-    duckdb_yyjson
-    duckdb_zstd)
+    duckdb_yyjson)
 
 foreach(LINK_LIB ${DUCKDB_LINK_LIBS})
   list(APPEND LINK_OBJECTS $<TARGET_OBJECTS:${LINK_LIB}>)
