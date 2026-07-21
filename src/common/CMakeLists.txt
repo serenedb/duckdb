@@ -70,6 +70,7 @@ add_library_unity(
   re2_regex.cpp
   random_engine.cpp
   stacktrace.cpp
+  string_format.cpp
   string_util.cpp
   enum_util.cpp
   storage_compatibility.cpp

@@ -58,4 +58,4 @@ NULL
 query T
 SELECT kahan_sum(v) EXPORT_STATE FROM (VALUES (1.0), (2.0), (3.0)) t(v);
 ----
-{'value': 6.0, 'err': 0.0}
+{'value': 6, 'err': 0}

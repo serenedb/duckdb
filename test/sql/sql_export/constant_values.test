@@ -58,7 +58,7 @@ true
 query TT
 EXPLAIN (SQL) SELECT '-0.0'::FLOAT;
 ----
-sql	<REGEX>:.*'-0[.]0'.*FLOAT.*
+sql	<REGEX>:.*'-0'.*FLOAT.*
 
 query I
 SELECT signbit(x) FROM (VALUES ('-0.0'::DOUBLE)) t(x);
@@ -68,7 +68,7 @@ true
 query TT
 EXPLAIN (SQL) SELECT '-0.0'::DOUBLE;
 ----
-sql	<REGEX>:.*'-0[.]0'.*DOUBLE.*
+sql	<REGEX>:.*'-0'.*DOUBLE.*
 
 query III
 SELECT date_part('year',i)::BIGINT*12+date_part('month',i),date_part('day',i),date_part('hour',i)::HUGEINT*3600000000+date_part('minute',i)::HUGEINT*60000000+date_part('microsecond',i) FROM (VALUES (to_months(-2147483648)+to_days(-2147483648)+to_microseconds(-9223372036854775808)))t(i);

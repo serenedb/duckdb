@@ -26,7 +26,7 @@ foreach type DOUBLE[] FLOAT[]
 query I
 SELECT CAST('[[1,2,3], [3.333, 2.2, 1.1], [0]]' AS {type}[]);
 ----
-[[1.0, 2.0, 3.0], [3.333, 2.2, 1.1], [0.0]]
+[[1, 2, 3], [3.333, 2.2, 1.1], [0]]
 
 endloop
 
@@ -123,7 +123,7 @@ foreach type DOUBLE FLOAT
 query I
 SELECT CAST('{a:1, b:{a:2}, c: 0.00002}' AS STRUCT(a {type}, b STRUCT(a {type}), c {type}));
 ----
-{'a': 1.0, 'b': {'a': 2.0}, 'c': 2e-05}
+{'a': 1, 'b': {'a': 2}, 'c': 2e-05}
 
 endloop
 

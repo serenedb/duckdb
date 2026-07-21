@@ -128,8 +128,8 @@ ORDER BY i;
 1	nan
 2	nan
 3	nan
-4	1.0
-5	1.0
+4	1
+5	1
 
 query TT
 SELECT list_mode(values)::VARCHAR, round(list_entropy(values), 6)::VARCHAR

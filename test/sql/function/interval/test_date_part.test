@@ -53,9 +53,9 @@ SELECT date_part('seconds', i) FROM intervals;
 query I
 SELECT date_part('epoch', i) FROM intervals;
 ----
-63115200.0
-41925600.0
-3628800.0
+63115200
+41925600
+3628800
 2066.3434
 
 

@@ -1,8 +1,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types.hpp"
-#include "duckdb/common/helper.hpp" // defines DUCKDB_EXPLICIT_FALLTHROUGH which fmt will use to annotate
-#include "fmt/format.h"
-#include "fmt/printf.h"
+#include "duckdb/common/helper.hpp"
+#include "duckdb/common/string_format.hpp"
 #include "duckdb/common/types/hugeint.hpp"
 #include "duckdb/common/types/uhugeint.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -80,6 +79,10 @@ ExceptionFormatValue ExceptionFormatValue::CreateFormatValue(char *const &value)
 	return ExceptionFormatValue(string(value));
 }
 template <>
+ExceptionFormatValue ExceptionFormatValue::CreateFormatValue(const std::string_view &value) {
+	return ExceptionFormatValue(string(value));
+}
+template <>
 ExceptionFormatValue ExceptionFormatValue::CreateFormatValue(const idx_t &value) {
 	return ExceptionFormatValue(value);
 }
@@ -94,22 +97,22 @@ ExceptionFormatValue ExceptionFormatValue::CreateFormatValue(const uhugeint_t &v
 
 string ExceptionFormatValue::Format(const string &msg, std::vector<ExceptionFormatValue> &values) {
 	try {
-		std::vector<duckdb_fmt::basic_format_arg<duckdb_fmt::printf_context>> format_args;
+		vector<FormatArgument> format_args;
+		format_args.reserve(values.size());
 		for (auto &val : values) {
 			switch (val.type) {
 			case ExceptionFormatValueType::FORMAT_VALUE_TYPE_DOUBLE:
-				format_args.push_back(duckdb_fmt::internal::make_arg<duckdb_fmt::printf_context>(val.dbl_val));
+				format_args.emplace_back(val.dbl_val);
 				break;
 			case ExceptionFormatValueType::FORMAT_VALUE_TYPE_INTEGER:
-				format_args.push_back(duckdb_fmt::internal::make_arg<duckdb_fmt::printf_context>(val.int_val));
+				format_args.emplace_back(val.int_val);
 				break;
 			case ExceptionFormatValueType::FORMAT_VALUE_TYPE_STRING:
-				format_args.push_back(duckdb_fmt::internal::make_arg<duckdb_fmt::printf_context>(val.str_val));
+				format_args.emplace_back(std::string_view(val.str_val));
 				break;
 			}
 		}
-		return duckdb_fmt::vsprintf(msg, duckdb_fmt::basic_format_args<duckdb_fmt::printf_context>(
-		                                     format_args.data(), static_cast<int>(format_args.size())));
+		return StringFormat::Printf(msg, format_args);
 	} catch (std::exception &ex) { // LCOV_EXCL_START
 		// work-around for oss-fuzz limiting memory which causes issues here
 		if (StringUtil::Contains(ex.what(), "fuzz mode")) {

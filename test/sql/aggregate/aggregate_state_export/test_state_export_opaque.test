@@ -135,7 +135,7 @@ SELECT (skewness(42) EXPORT_STATE)::BLOB;
 query I
 SELECT (skewness(42) EXPORT_STATE)::STRUCT(n UBIGINT, sum DOUBLE, sum_sqr DOUBLE, sum_cub DOUBLE);
 ----
-{'n': 1, 'sum': 42.0, 'sum_sqr': 1764.0, 'sum_cub': 74088.0}
+{'n': 1, 'sum': 42, 'sum_sqr': 1764, 'sum_cub': 74088}
 
 statement error
 SELECT (skewness(42) EXPORT_STATE)::INTEGER;

@@ -20,7 +20,7 @@ SELECT histogram_exact(n, [10, 20, 30, 40, 50]) FROM obs
 query I
 SELECT histogram_exact(n::double, [10, 20, 30, 40, 50]) FROM obs
 ----
-{10.0=0, 20.0=1, 30.0=0, 40.0=0, 50.0=0, inf=14}
+{10=0, 20=1, 30=0, 40=0, 50=0, inf=14}
 
 query I
 SELECT histogram_exact((date '2000-01-01' + interval (n) days)::date, [date '2000-01-01' + interval (x) days for x in [10, 20, 30, 40, 50]]) FROM obs

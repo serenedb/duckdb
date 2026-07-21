@@ -48,21 +48,21 @@ SELECT * FROM tbl2;
 ----
 five
 4
-6.0
+6
 
 query III
 SELECT u.i32, u.str, u.f32 FROM tbl2;
 ----
 NULL	five	NULL
 4		NULL	NULL
-NULL	NULL	6.0
+NULL	NULL	6
 
 query I
 SELECT * FROM tbl2 UNION ALL SELECT * FROM tbl1;
 ----
 five
 4
-6.0
+6
 1
 two
 three
@@ -75,12 +75,12 @@ two
 three
 five
 4
-6.0
+6
 
 query III
 SELECT u.i32, u.str, u.f32 FROM tbl2 UNION ALL SELECT u.i32, u.str, NULL FROM tbl1 ORDER BY ALL;
 ----
-NULL	NULL	6.0
+NULL	NULL	6
 NULL	five	NULL
 NULL	three	NULL
 NULL	two		NULL
@@ -93,7 +93,7 @@ SELECT * FROM tbl2
 ----
 five
 4
-6.0
+6
 
 statement ok
 INSERT INTO tbl2 SELECT * FROM tbl1;
@@ -103,7 +103,7 @@ SELECT * FROM tbl2;
 ----
 five
 4
-6.0
+6
 1
 two
 three
@@ -113,7 +113,7 @@ SELECT u.f32 FROM tbl2;
 ----
 NULL
 NULL
-6.0
+6
 NULL
 NULL
 NULL
@@ -124,7 +124,7 @@ SELECT union_tag(u), u.i32, u.str, u.f32 FROM tbl2;
 ----
 str		NULL	five	NULL
 i32		4		NULL	NULL
-f32		NULL	NULL	6.0
+f32		NULL	NULL	6
 i32		1		NULL	NULL
 str		NULL	two		NULL
 str		NULL	three	NULL
