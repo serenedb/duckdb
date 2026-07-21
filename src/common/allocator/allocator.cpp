@@ -10,7 +10,7 @@
 
 #include <cstdint>
 
-#ifdef __GLIBC__
+#if defined(__GLIBC__) && !defined(DUCKDB_ENABLE_JEMALLOC)
 #include <malloc.h>
 #endif
 
@@ -180,7 +180,7 @@ Allocator &Allocator::DefaultAllocator() {
 }
 
 void Allocator::MallocTrim(idx_t pad) {
-#ifdef __GLIBC__
+#if defined(__GLIBC__) && !defined(DUCKDB_ENABLE_JEMALLOC)
 	static constexpr int64_t TRIM_INTERVAL_MS = 100;
 	static atomic<int64_t> LAST_TRIM_TIMESTAMP_MS {0};
 
