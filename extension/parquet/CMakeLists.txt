@@ -2,9 +2,7 @@ cmake_minimum_required(VERSION 3.5...3.29)
 
 project(ParquetExtension)
 
-include_directories(
-  include ../../third_party/parquet
-  ../../third_party/thrift)
+include_directories(include ../../third_party/parquet ../../third_party/thrift)
 
 add_subdirectory(decoder)
 add_subdirectory(reader)
@@ -46,7 +44,8 @@ target_link_libraries(parquet_extension snappy lz4_static brotlienc brotlidec)
 set(PARAMETERS "-warnings")
 
 build_loadable_extension(parquet ${PARAMETERS} ${PARQUET_EXTENSION_FILES})
-target_link_libraries(parquet_loadable_extension duckdb_mbedtls duckdb_zstd snappy lz4_static brotlienc brotlidec)
+target_link_libraries(parquet_loadable_extension duckdb_mbedtls snappy
+                      lz4_static brotlienc brotlidec)
 
 install(
   TARGETS parquet_extension
