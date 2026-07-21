@@ -68,7 +68,7 @@ COPY (SELECT i::FLOAT f, i::DOUBLE d, i::HUGEINT h, i FROM range(10) t(i)) TO '{
 query II
 SELECT stats(f), stats(d) FROM read_parquet('{TEST_DIR}/nan_count_zero.parquet', can_have_nan=true) LIMIT 1
 ----
-{'has_no_null': true, 'has_null': false, 'max': 9.0, 'min': 0.0}	{'has_no_null': true, 'has_null': false, 'max': 9.0, 'min': 0.0}
+{'has_no_null': true, 'has_null': false, 'max': 9, 'min': 0}	{'has_no_null': true, 'has_null': false, 'max': 9, 'min': 0}
 
 query II
 EXPLAIN SELECT * FROM read_parquet('{TEST_DIR}/nan_count_zero.parquet', can_have_nan=true) WHERE d > 10
@@ -92,12 +92,12 @@ endloop
 query II
 SELECT stats(f), stats(d) FROM read_parquet('{DATA_DIR}/parquet-testing/arrow_nan.parquet', can_have_nan=false) LIMIT 1
 ----
-{'has_no_null': true, 'has_null': false, 'max': 1.0, 'min': -1.0}	{'has_no_null': true, 'has_null': false, 'max': 1.0, 'min': -1.0}
+{'has_no_null': true, 'has_null': false, 'max': 1, 'min': -1}	{'has_no_null': true, 'has_null': false, 'max': 1, 'min': -1}
 
 query II
 SELECT stats(f), stats(d) FROM read_parquet('{DATA_DIR}/parquet-testing/arrow_nan.parquet', can_have_nan=true) LIMIT 1
 ----
-{'has_no_null': true, 'has_null': false, 'max': nan, 'min': -1.0}	{'has_no_null': true, 'has_null': false, 'max': nan, 'min': -1.0}
+{'has_no_null': true, 'has_null': false, 'max': nan, 'min': -1}	{'has_no_null': true, 'has_null': false, 'max': nan, 'min': -1}
 
 # Positive nan_count with finite bounds must retain NaN in the optimizer statistics
 foreach column f d
@@ -106,6 +106,6 @@ foreach column f d
 query I
 SELECT stats({column}) FROM read_parquet('{DATA_DIR}/parquet-testing/nan_count_bounds.parquet', can_have_nan=false) LIMIT 1
 ----
-{'has_no_null': true, 'has_null': true, 'max': nan, 'min': 1.0}
+{'has_no_null': true, 'has_null': true, 'max': nan, 'min': 1}
 
 endloop

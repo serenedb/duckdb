@@ -20,7 +20,7 @@ query I
 SELECT * FROM tbl;
 ----
 1
-2.0
+2
 
 query I
 SELECT u.i FROM tbl;

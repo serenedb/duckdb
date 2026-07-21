@@ -171,12 +171,12 @@ INSERT INTO pts VALUES ('POINT(1 2)'), ('POINT(5 8)'), ('POINT(-3 4)');
 query I
 SELECT stats(geom.x) FROM pts LIMIT 1;
 ----
-{'has_no_null': true, 'has_null': false, 'max': 5.0, 'min': -3.0}
+{'has_no_null': true, 'has_null': false, 'max': 5, 'min': -3}
 
 query I
 SELECT stats(geom.y) FROM pts LIMIT 1;
 ----
-{'has_no_null': true, 'has_null': false, 'max': 8.0, 'min': 2.0}
+{'has_no_null': true, 'has_null': false, 'max': 8, 'min': 2}
 
 # Z is absent from every point, so extraction always yields NULL: the stats
 # recognise this and report "always NULL" (folded to a constant).
@@ -195,12 +195,12 @@ INSERT INTO pts_zm VALUES ('POINT ZM (1 2 3 4)'), ('POINT ZM (5 6 7 8)');
 query I
 SELECT stats(geom.z) FROM pts_zm LIMIT 1;
 ----
-{'has_no_null': true, 'has_null': false, 'max': 7.0, 'min': 3.0}
+{'has_no_null': true, 'has_null': false, 'max': 7, 'min': 3}
 
 query I
 SELECT stats(geom.m) FROM pts_zm LIMIT 1;
 ----
-{'has_no_null': true, 'has_null': false, 'max': 8.0, 'min': 4.0}
+{'has_no_null': true, 'has_null': false, 'max': 8, 'min': 4}
 
 # When the requested ordinate is absent from some (but not all) points, the
 # result can contain NULLs that the input column did not - so the stats must
@@ -214,7 +214,7 @@ INSERT INTO pts_mixed_dim VALUES ('POINT(1 2)'), ('POINT M (3 4 9)');
 query I
 SELECT stats(geom.m) FROM pts_mixed_dim LIMIT 1;
 ----
-{'has_no_null': true, 'has_null': true, 'max': 9.0, 'min': 9.0}
+{'has_no_null': true, 'has_null': true, 'max': 9, 'min': 9}
 
 # Likewise, mixing point and non-point geometries makes extraction nullable
 statement ok
@@ -226,7 +226,7 @@ INSERT INTO pts_and_lines VALUES ('POINT(1 2)'), ('LINESTRING(0 0, 10 10)');
 query I
 SELECT stats(geom.x) FROM pts_and_lines LIMIT 1;
 ----
-{'has_no_null': true, 'has_null': true, 'max': 10.0, 'min': 0.0}
+{'has_no_null': true, 'has_null': true, 'max': 10, 'min': 0}
 
 # A column of only non-empty 2D points keeps the no-NULL guarantee for x / y
 statement ok
@@ -238,7 +238,7 @@ INSERT INTO pts_2d_only VALUES ('POINT(1 2)'), ('POINT(5 8)');
 query I
 SELECT stats(geom.x) FROM pts_2d_only LIMIT 1;
 ----
-{'has_no_null': true, 'has_null': false, 'max': 5.0, 'min': 1.0}
+{'has_no_null': true, 'has_null': false, 'max': 5, 'min': 1}
 
 # When the column can contain no non-empty points, extraction is folded to a
 # constant NULL: the stats reflect "always NULL".

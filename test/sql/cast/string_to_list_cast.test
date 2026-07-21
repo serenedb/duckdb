@@ -435,7 +435,7 @@ SELECT col::STRUCT(a VARCHAR)[] FROM struct_tbl1;
 query I
 SELECT CAST('[ [{a:[12,13,14], b:"🦆"}], [{a:[12,13,14], b:"🦆", c:100}] ]' AS STRUCT(a INT[], b VARCHAR, c FLOAT)[][]);
 ----
-[[{'a': [12, 13, 14], 'b': 🦆, 'c': NULL}], [{'a': [12, 13, 14], 'b': 🦆, 'c': 100.0}]]
+[[{'a': [12, 13, 14], 'b': 🦆, 'c': NULL}], [{'a': [12, 13, 14], 'b': 🦆, 'c': 100}]]
 
 query I
 SELECT CAST('[{a:[12,13,14], b:"🦆", c:{a:[[a], [b, c]], b:[123]}}]' AS STRUCT(a INT[], b VARCHAR, c STRUCT(a VARCHAR[][], b INT[]))[]);

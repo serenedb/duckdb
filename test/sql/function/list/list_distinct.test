@@ -160,7 +160,7 @@ endloop
 query T
 SELECT unnest(list_sort(list_distinct([1.0, 'nan'::DOUBLE, 'nan'::DOUBLE])))::VARCHAR;
 ----
-1.0
+1
 nan
 
 # TEMPORAL types

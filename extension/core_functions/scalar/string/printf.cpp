@@ -1,25 +1,20 @@
 #include "core_functions/scalar/string_functions.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/common/limits.hpp"
-#include "fmt/format.h"
-#include "fmt/printf.h"
+#include "duckdb/common/string_format.hpp"
 #include "utf8proc_wrapper.hpp"
 
 namespace duckdb {
 
 struct FMTPrintf {
-	template <class CTX>
-	static string OP(const char *format_str, vector<duckdb_fmt::basic_format_arg<CTX>> &format_args) {
-		return duckdb_fmt::vsprintf(
-		    format_str, duckdb_fmt::basic_format_args<CTX>(format_args.data(), static_cast<int>(format_args.size())));
+	static string OP(const string &format_str, const vector<FormatArgument> &format_args) {
+		return StringFormat::Printf(format_str, format_args);
 	}
 };
 
 struct FMTFormat {
-	template <class CTX>
-	static string OP(const char *format_str, vector<duckdb_fmt::basic_format_arg<CTX>> &format_args) {
-		return duckdb_fmt::vformat(
-		    format_str, duckdb_fmt::basic_format_args<CTX>(format_args.data(), static_cast<int>(format_args.size())));
+	static string OP(const string &format_str, const vector<FormatArgument> &format_args) {
+		return StringFormat::Format(format_str, format_args);
 	}
 };
 
@@ -73,24 +68,23 @@ static unique_ptr<FunctionData> BindPrintfFunction(BindScalarFunctionInput &inpu
 	return nullptr;
 }
 
+template <class ARG>
 struct StandardConstructArgument {
-	template <class T, class CTX>
-	static void ConstructArgument(const T &input, vector<duckdb_fmt::basic_format_arg<CTX>> &result) {
-		result.emplace_back(duckdb_fmt::internal::make_arg<CTX>(input));
+	template <class T>
+	static void ConstructArgument(const T &input, vector<FormatArgument> &result) {
+		result.emplace_back(static_cast<ARG>(input));
 	}
 };
 
 struct StringConstructArgument {
-	template <class T, class CTX>
-	static void ConstructArgument(const T &input, vector<duckdb_fmt::basic_format_arg<CTX>> &result) {
-		auto string_view = duckdb_fmt::basic_string_view<char>(input.GetData(), input.GetSize());
-		result.emplace_back(duckdb_fmt::internal::make_arg<CTX>(string_view));
+	template <class T>
+	static void ConstructArgument(const T &input, vector<FormatArgument> &result) {
+		result.emplace_back(std::string_view(input.GetData(), input.GetSize()));
 	}
 };
 
-template <class T, class OP = StandardConstructArgument, class CTX>
-static void ConvertArguments(const Vector &input, idx_t arg_idx,
-                             vector<vector<duckdb_fmt::basic_format_arg<CTX>>> &result_args) {
+template <class T, class OP>
+static void ConvertArguments(const Vector &input, idx_t arg_idx, vector<vector<FormatArgument>> &result_args) {
 	auto result = input.Values<T>();
 	for (idx_t i = 0; i < input.size(); i++) {
 		auto &args = result_args[i];
@@ -107,12 +101,12 @@ static void ConvertArguments(const Vector &input, idx_t arg_idx,
 	}
 }
 
-template <class FORMAT_FUN, class CTX>
+template <class FORMAT_FUN>
 static void PrintfFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	idx_t count = args.size();
 
 	// convert all format arguments
-	vector<vector<duckdb_fmt::basic_format_arg<CTX>>> format_args;
+	vector<vector<FormatArgument>> format_args;
 	format_args.resize(count);
 
 	auto format_data = args.data[0].Values<string_t>();
@@ -121,34 +115,34 @@ static void PrintfFunction(DataChunk &args, ExpressionState &state, Vector &resu
 		const auto &col = args.data[i];
 		switch (col.GetType().id()) {
 		case LogicalTypeId::BOOLEAN:
-			ConvertArguments<bool>(col, i, format_args);
+			ConvertArguments<bool, StandardConstructArgument<bool>>(col, i, format_args);
 			break;
 		case LogicalTypeId::TINYINT:
-			ConvertArguments<int8_t>(col, i, format_args);
+			ConvertArguments<int8_t, StandardConstructArgument<int64_t>>(col, i, format_args);
 			break;
 		case LogicalTypeId::SMALLINT:
-			ConvertArguments<int16_t>(col, i, format_args);
+			ConvertArguments<int16_t, StandardConstructArgument<int64_t>>(col, i, format_args);
 			break;
 		case LogicalTypeId::INTEGER:
-			ConvertArguments<int32_t>(col, i, format_args);
+			ConvertArguments<int32_t, StandardConstructArgument<int64_t>>(col, i, format_args);
 			break;
 		case LogicalTypeId::BIGINT:
-			ConvertArguments<int64_t>(col, i, format_args);
+			ConvertArguments<int64_t, StandardConstructArgument<int64_t>>(col, i, format_args);
 			break;
 		case LogicalTypeId::UBIGINT:
-			ConvertArguments<uint64_t>(col, i, format_args);
+			ConvertArguments<uint64_t, StandardConstructArgument<uint64_t>>(col, i, format_args);
 			break;
 		case LogicalTypeId::FLOAT:
-			ConvertArguments<float>(col, i, format_args);
+			ConvertArguments<float, StandardConstructArgument<double>>(col, i, format_args);
 			break;
 		case LogicalTypeId::HUGEINT:
-			ConvertArguments<hugeint_t>(col, i, format_args);
+			ConvertArguments<hugeint_t, StandardConstructArgument<hugeint_t>>(col, i, format_args);
 			break;
 		case LogicalTypeId::UHUGEINT:
-			ConvertArguments<uhugeint_t>(col, i, format_args);
+			ConvertArguments<uhugeint_t, StandardConstructArgument<uhugeint_t>>(col, i, format_args);
 			break;
 		case LogicalTypeId::DOUBLE:
-			ConvertArguments<double>(col, i, format_args);
+			ConvertArguments<double, StandardConstructArgument<double>>(col, i, format_args);
 			break;
 		case LogicalTypeId::VARCHAR:
 			ConvertArguments<string_t, StringConstructArgument>(col, i, format_args);
@@ -172,7 +166,7 @@ static void PrintfFunction(DataChunk &args, ExpressionState &state, Vector &resu
 		auto format_string = entry.GetValue().GetString();
 
 		// finally actually perform the format
-		string dynamic_result = FORMAT_FUN::template OP<CTX>(format_string.c_str(), current_args);
+		string dynamic_result = FORMAT_FUN::OP(format_string, current_args);
 		if (!Utf8Proc::IsValid(dynamic_result.c_str(), dynamic_result.size())) {
 			throw InvalidInputException("Invalid UTF8 produced by format string \"%s\" - note that %%c writes a "
 			                            "single byte, use chr(...) to write a Unicode code point",
@@ -183,9 +177,7 @@ static void PrintfFunction(DataChunk &args, ExpressionState &state, Vector &resu
 }
 
 ScalarFunction PrintfFun::GetFunction() {
-	// duckdb_fmt::printf_context, duckdb_fmt::vsprintf
-	ScalarFunction printf_fun({}, LogicalType::VARCHAR, PrintfFunction<FMTPrintf, duckdb_fmt::printf_context>,
-	                          BindPrintfFunction);
+	ScalarFunction printf_fun({}, LogicalType::VARCHAR, PrintfFunction<FMTPrintf>, BindPrintfFunction);
 	printf_fun.GetSignature().AddParameter("format", LogicalType::VARCHAR);
 	printf_fun.GetSignature().AddArgs("args", LogicalType::ANY);
 	printf_fun.SetFallible();
@@ -193,9 +185,7 @@ ScalarFunction PrintfFun::GetFunction() {
 }
 
 ScalarFunction FormatFun::GetFunction() {
-	// duckdb_fmt::format_context, duckdb_fmt::vformat
-	ScalarFunction format_fun({}, LogicalType::VARCHAR, PrintfFunction<FMTFormat, duckdb_fmt::format_context>,
-	                          BindPrintfFunction);
+	ScalarFunction format_fun({}, LogicalType::VARCHAR, PrintfFunction<FMTFormat>, BindPrintfFunction);
 	format_fun.GetSignature().AddParameter("format", LogicalType::VARCHAR);
 	format_fun.GetSignature().AddArgs("args", LogicalType::ANY);
 	format_fun.SetFallible();
