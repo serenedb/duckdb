@@ -42,3 +42,4 @@
 #define duckdb_snappy     snappy
 #define duckdb_lz4
 #define duckdb_brotli
+#define duckdb_zstd
