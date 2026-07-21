@@ -878,6 +878,7 @@ link_libraries(
   re2::re2
   zstd::zstd
   ZLIB::ZLIB
+  ada::ada
   absl::strings
   absl::node_hash_set
   absl::node_hash_map
