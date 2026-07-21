@@ -40,3 +40,4 @@
 #define duckdb_fmt        fmt
 #define duckdb_re2        re2
 #define duckdb_snappy     snappy
+#define duckdb_lz4

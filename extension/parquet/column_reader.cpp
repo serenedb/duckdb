@@ -15,7 +15,7 @@
 #include "brotli/decode.h"
 #include "reader/callback_column_reader.hpp"
 #include "reader/interval_column_reader.hpp"
-#include "lz4.hpp"
+#include "lz4.h"
 #include "miniz_wrapper.hpp"
 #include "reader/null_column_reader.hpp"
 #include "parquet_reader.hpp"

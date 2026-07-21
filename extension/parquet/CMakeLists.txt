@@ -6,8 +6,8 @@ project(ParquetExtension)
 # directory-wide definition
 set_extension_version_sources(parquet parquet_extension.cpp)
 
-include_directories(include ../../third_party/lz4 ../../third_party/parquet
-                    ../../third_party/thrift ../../third_party/brotli/include)
+include_directories(include ../../third_party/parquet ../../third_party/thrift
+                    ../../third_party/brotli/include)
 
 add_subdirectory(decoder)
 add_subdirectory(reader)
@@ -43,9 +43,6 @@ if(NOT CLANG_TIDY)
       ../../third_party/thrift/thrift/protocol/TProtocol.cpp
       ../../third_party/thrift/thrift/transport/TTransportException.cpp
       ../../third_party/thrift/thrift/transport/TBufferTransports.cpp)
-  # lz4
-  set(PARQUET_EXTENSION_FILES ${PARQUET_EXTENSION_FILES}
-                              ../../third_party/lz4/lz4.cpp)
   # brotli
   set(PARQUET_EXTENSION_FILES
       ${PARQUET_EXTENSION_FILES}
@@ -83,9 +80,9 @@ if(NOT CLANG_TIDY)
 endif()
 
 build_extension_library(parquet ${PARQUET_EXTENSION_FILES})
-target_link_libraries(parquet_extension snappy)
+target_link_libraries(parquet_extension snappy lz4_static)
 target_link_libraries(parquet_loadable_extension duckdb_mbedtls duckdb_zstd
-                      snappy)
+                      snappy lz4_static)
 
 install(
   TARGETS parquet_extension
