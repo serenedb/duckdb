@@ -33,7 +33,7 @@ COPY (select 'foo'::BLOB) TO '{TEST_DIR}/test.blob.gz' (FORMAT BLOB);
 query II
 select filename LIKE '%test.blob.gz', size from read_blob('{TEST_DIR}/test.blob.gz');
 ----
-true	26
+true	23
 
 # With explicit compression
 statement ok
@@ -42,4 +42,4 @@ COPY (select 'foo'::BLOB) TO '{TEST_DIR}/test2.blob' (FORMAT BLOB, COMPRESSION '
 query II
 select filename LIKE '%test2.blob', size from read_blob('{TEST_DIR}/test2.blob');
 ----
-true	26
+true	23

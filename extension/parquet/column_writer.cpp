@@ -33,7 +33,6 @@
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/types/validity_mask.hpp"
 #include "duckdb/common/uhugeint.hpp"
-#include "miniz.hpp"
 #include "parquet_field_id.hpp"
 #include "parquet_shredding.hpp"
 #include "parquet_timestamp.hpp"
@@ -46,7 +45,6 @@ class ClientContext;
 struct GeometryStatsData;
 
 using namespace duckdb_parquet; // NOLINT
-using namespace duckdb_miniz;   // NOLINT
 
 using duckdb_parquet::CompressionCodec;
 using duckdb_parquet::ConvertedType;
