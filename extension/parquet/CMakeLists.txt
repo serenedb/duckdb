@@ -6,8 +6,7 @@ project(ParquetExtension)
 # directory-wide definition
 set_extension_version_sources(parquet parquet_extension.cpp)
 
-include_directories(include ../../third_party/parquet ../../third_party/thrift
-                    ../../third_party/brotli/include)
+include_directories(include ../../third_party/parquet ../../third_party/thrift)
 
 add_subdirectory(decoder)
 add_subdirectory(reader)
@@ -43,46 +42,18 @@ if(NOT CLANG_TIDY)
       ../../third_party/thrift/thrift/protocol/TProtocol.cpp
       ../../third_party/thrift/thrift/transport/TTransportException.cpp
       ../../third_party/thrift/thrift/transport/TBufferTransports.cpp)
-  # brotli
-  set(PARQUET_EXTENSION_FILES
-      ${PARQUET_EXTENSION_FILES}
-      ../../third_party/brotli/enc/dictionary_hash.cpp
-      ../../third_party/brotli/enc/backward_references_hq.cpp
-      ../../third_party/brotli/enc/histogram.cpp
-      ../../third_party/brotli/enc/memory.cpp
-      ../../third_party/brotli/enc/entropy_encode.cpp
-      ../../third_party/brotli/enc/compound_dictionary.cpp
-      ../../third_party/brotli/enc/compress_fragment_two_pass.cpp
-      ../../third_party/brotli/enc/block_splitter.cpp
-      ../../third_party/brotli/enc/command.cpp
-      ../../third_party/brotli/enc/encode.cpp
-      ../../third_party/brotli/enc/encoder_dict.cpp
-      ../../third_party/brotli/enc/cluster.cpp
-      ../../third_party/brotli/enc/backward_references.cpp
-      ../../third_party/brotli/enc/utf8_util.cpp
-      ../../third_party/brotli/enc/compress_fragment.cpp
-      ../../third_party/brotli/enc/fast_log.cpp
-      ../../third_party/brotli/enc/brotli_bit_stream.cpp
-      ../../third_party/brotli/enc/bit_cost.cpp
-      ../../third_party/brotli/enc/static_dict.cpp
-      ../../third_party/brotli/enc/literal_cost.cpp
-      ../../third_party/brotli/enc/metablock.cpp
-      ../../third_party/brotli/common/dictionary.cpp
-      ../../third_party/brotli/common/constants.cpp
-      ../../third_party/brotli/common/transform.cpp
-      ../../third_party/brotli/common/platform.cpp
-      ../../third_party/brotli/common/shared_dictionary.cpp
-      ../../third_party/brotli/common/context.cpp
-      ../../third_party/brotli/dec/state.cpp
-      ../../third_party/brotli/dec/decode.cpp
-      ../../third_party/brotli/dec/huffman.cpp
-      ../../third_party/brotli/dec/bit_reader.cpp)
 endif()
 
 build_extension_library(parquet ${PARQUET_EXTENSION_FILES})
-target_link_libraries(parquet_extension snappy lz4_static)
-target_link_libraries(parquet_loadable_extension duckdb_mbedtls duckdb_zstd
-                      snappy lz4_static)
+target_link_libraries(parquet_extension snappy lz4_static brotlienc brotlidec)
+target_link_libraries(
+  parquet_loadable_extension
+  duckdb_mbedtls
+  duckdb_zstd
+  snappy
+  lz4_static
+  brotlienc
+  brotlidec)
 
 install(
   TARGETS parquet_extension
