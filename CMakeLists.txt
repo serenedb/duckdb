@@ -783,7 +783,6 @@ if (NOT EXTENSION_CONFIG_BUILD)
   include_directories(third_party/jaro_winkler)
   include_directories(third_party/vergesort)
   include_directories(third_party/yyjson/include)
-  include_directories(third_party/zstd/include)
 endif()
 
 # todo only regenerate ub file if one of the input files changed hack alert
@@ -877,6 +876,7 @@ link_libraries(
   fmt::fmt
   FastFloat::fast_float
   re2::re2
+  zstd::zstd
   absl::strings
   absl::node_hash_set
   absl::node_hash_map
@@ -926,7 +926,6 @@ if (NOT EXTENSION_CONFIG_BUILD)
   add_third_party(skiplist)
   add_third_party(utf8proc)
   add_third_party(yyjson)
-  add_third_party(zstd)
   if(NOT DUCKDB_EXPLICIT_PLATFORM)
     set(VERSION_SOURCES tools/utils/test_platform.cpp)
 
