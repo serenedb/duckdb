@@ -39,3 +39,4 @@
 #define duckdb_fast_float fast_float
 #define duckdb_fmt        fmt
 #define duckdb_re2        re2
+#define duckdb_snappy     snappy
