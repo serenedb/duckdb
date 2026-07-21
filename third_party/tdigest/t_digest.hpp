@@ -298,7 +298,7 @@ public:
 				return 0.0;
 			} else if (x > max_) {
 				return 1.0;
-			} else if (x - min_ <= width) {
+			} else if (width <= 0) {
 				// min_ and max_ are too close together to do any viable interpolation
 				return 0.5;
 			} else {
@@ -389,8 +389,8 @@ public:
 			// LOG(INFO) << "z2 " << z2 << " index " << index << " z1 " << z1;
 			return weightedAverage(mean(i - 1), z2, mean(i), z1);
 		}
-		auto z1 = index - processedWeight_ - weight(n - 1) / 2.0;
-		auto z2 = weight(n - 1) / 2 - z1;
+		auto z1 = index - (processedWeight_ - weight(n - 1) / 2.0);
+		auto z2 = weight(n - 1) / 2.0 - z1;
 		return weightedAverage(mean(n - 1), z1, max_, z2);
 	}
 
@@ -548,6 +548,11 @@ private:
 	// merges unprocessed_ centroids and processed_ centroids together and processes them
 	// when complete, unprocessed_ will be empty and processed_ will have at most maxProcessed_ centroids
 	inline void process() {
+		// Guard against processing when there's no data
+		if (unprocessed_.size() == 0 && processed_.size() == 0) {
+			return;
+		}
+
 		CentroidComparator cc;
 		std::sort(unprocessed_.begin(), unprocessed_.end(), cc);
 		auto count = unprocessed_.size();
