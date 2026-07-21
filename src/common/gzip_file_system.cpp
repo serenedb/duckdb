@@ -3,7 +3,6 @@
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 
-#include "miniz.hpp"
 #include "miniz_wrapper.hpp"
 
 #include "duckdb/common/limits.hpp"
@@ -72,9 +71,9 @@ struct MiniZStreamWrapper : public StreamWrapper {
 	~MiniZStreamWrapper() override;
 
 	CompressedFile *file = nullptr;
-	unique_ptr<duckdb_miniz::mz_stream> mz_stream_ptr;
+	unique_ptr<z_stream> mz_stream_ptr;
 	bool writing = false;
-	duckdb_miniz::mz_ulong crc;
+	uLong crc;
 	idx_t total_size;
 
 public:
@@ -114,22 +113,21 @@ MiniZStreamWrapper::~MiniZStreamWrapper() {
 void MiniZStreamWrapper::Initialize(QueryContext context, CompressedFile &file, bool write) {
 	D_ASSERT(mz_stream_ptr == nullptr);
 	this->file = &file;
-	mz_stream_ptr = make_uniq<duckdb_miniz::mz_stream>();
-	memset(mz_stream_ptr.get(), 0, sizeof(duckdb_miniz::mz_stream));
+	mz_stream_ptr = make_uniq<z_stream>();
+	memset(mz_stream_ptr.get(), 0, sizeof(z_stream));
 	this->writing = write;
 
 	// TODO use custom alloc/free methods in miniz to throw exceptions on OOM
 	uint8_t gzip_hdr[GZIP_HEADER_MINSIZE];
 	if (write) {
-		crc = MZ_CRC32_INIT;
+		crc = 0;
 		total_size = 0;
 
 		MiniZStream::InitializeGZIPHeader(gzip_hdr);
 		file.child_handle->Write(context, gzip_hdr, GZIP_HEADER_MINSIZE);
 
-		auto ret = mz_deflateInit2(mz_stream_ptr.get(), duckdb_miniz::MZ_DEFAULT_LEVEL, MZ_DEFLATED,
-		                           -MZ_DEFAULT_WINDOW_BITS, 1, 0);
-		if (ret != duckdb_miniz::MZ_OK) {
+		auto ret = deflateInit2(mz_stream_ptr.get(), Z_DEFAULT_COMPRESSION, Z_DEFLATED, -MAX_WBITS, 1, 0);
+		if (ret != Z_OK) {
 			throw InternalException("Failed to initialize miniz");
 		}
 	} else {
@@ -151,8 +149,8 @@ void MiniZStreamWrapper::Initialize(QueryContext context, CompressedFile &file, 
 		}
 		file.child_handle->Seek(data_start);
 		// stream is now set to beginning of payload data
-		auto ret = duckdb_miniz::mz_inflateInit2(mz_stream_ptr.get(), -MZ_DEFAULT_WINDOW_BITS);
-		if (ret != duckdb_miniz::MZ_OK) {
+		auto ret = inflateInit2(mz_stream_ptr.get(), -MAX_WBITS);
+		if (ret != Z_OK) {
 			throw InternalException("Failed to initialize miniz");
 		}
 	}
@@ -198,9 +196,9 @@ bool MiniZStreamWrapper::Read(StreamData &sd) {
 			Close();
 			return true;
 		}
-		duckdb_miniz::mz_inflateEnd(mz_stream_ptr.get());
-		auto sta = duckdb_miniz::mz_inflateInit2(mz_stream_ptr.get(), -MZ_DEFAULT_WINDOW_BITS);
-		if (sta != duckdb_miniz::MZ_OK) {
+		inflateEnd(mz_stream_ptr.get());
+		auto sta = inflateInit2(mz_stream_ptr.get(), -MAX_WBITS);
+		if (sta != Z_OK) {
 			throw InternalException("Failed to initialize miniz");
 		}
 	}
@@ -211,9 +209,9 @@ bool MiniZStreamWrapper::Read(StreamData &sd) {
 	mz_stream_ptr->avail_in = static_cast<uint32_t>(sd.in_buff_end - sd.in_buff_start);
 	mz_stream_ptr->next_out = data_ptr_cast(sd.out_buff_end);
 	mz_stream_ptr->avail_out = static_cast<uint32_t>((sd.out_buff.get() + sd.out_buf_size) - sd.out_buff_end);
-	auto ret = duckdb_miniz::mz_inflate(mz_stream_ptr.get(), duckdb_miniz::MZ_NO_FLUSH);
-	if (ret != duckdb_miniz::MZ_OK && ret != duckdb_miniz::MZ_STREAM_END) {
-		throw IOException("Failed to decode gzip stream: %s", duckdb_miniz::mz_error(ret));
+	auto ret = inflate(mz_stream_ptr.get(), Z_NO_FLUSH);
+	if (ret != Z_OK && ret != Z_STREAM_END) {
+		throw IOException("Failed to decode gzip stream: %s", zError(ret));
 	}
 	// update pointers following inflate()
 	sd.in_buff_start = (data_ptr_t)mz_stream_ptr->next_in; // NOLINT
@@ -222,7 +220,7 @@ bool MiniZStreamWrapper::Read(StreamData &sd) {
 	D_ASSERT(sd.out_buff_end + mz_stream_ptr->avail_out == sd.out_buff.get() + sd.out_buf_size);
 
 	// if stream ended, deallocate inflator
-	if (ret == duckdb_miniz::MZ_STREAM_END) {
+	if (ret == Z_STREAM_END) {
 		// Concatenated GZIP potentially coming up - refresh input buffer
 		sd.refresh = true;
 	}
@@ -232,8 +230,8 @@ bool MiniZStreamWrapper::Read(StreamData &sd) {
 void MiniZStreamWrapper::Write(CompressedFile &file, StreamData &sd, data_ptr_t uncompressed_data,
                                int64_t uncompressed_size) {
 	// update the src and the total size
-	crc = duckdb_miniz::mz_crc32(crc, reinterpret_cast<const unsigned char *>(uncompressed_data),
-	                             UnsafeNumericCast<size_t>(uncompressed_size));
+	crc = crc32(crc, reinterpret_cast<const unsigned char *>(uncompressed_data),
+	            UnsafeNumericCast<size_t>(uncompressed_size));
 	total_size += UnsafeNumericCast<idx_t>(uncompressed_size);
 
 	auto remaining = uncompressed_size;
@@ -248,9 +246,9 @@ void MiniZStreamWrapper::Write(CompressedFile &file, StreamData &sd, data_ptr_t 
 		mz_stream_ptr->next_out = sd.out_buff_start;
 		mz_stream_ptr->avail_out = NumericCast<unsigned int>(output_remaining);
 
-		auto res = mz_deflate(mz_stream_ptr.get(), duckdb_miniz::MZ_NO_FLUSH);
-		if (res != duckdb_miniz::MZ_OK) {
-			D_ASSERT(res != duckdb_miniz::MZ_STREAM_END);
+		auto res = deflate(mz_stream_ptr.get(), Z_NO_FLUSH);
+		if (res != Z_OK) {
+			D_ASSERT(res != Z_STREAM_END);
 			throw InternalException("Failed to compress GZIP block");
 		}
 		sd.out_buff_start += output_remaining - mz_stream_ptr->avail_out;
@@ -275,17 +273,17 @@ void MiniZStreamWrapper::FlushStream() const {
 		mz_stream_ptr->next_out = sd.out_buff_start;
 		mz_stream_ptr->avail_out = NumericCast<unsigned int>(output_remaining);
 
-		auto res = mz_deflate(mz_stream_ptr.get(), duckdb_miniz::MZ_FINISH);
+		auto res = deflate(mz_stream_ptr.get(), Z_FINISH);
 		sd.out_buff_start += (output_remaining - mz_stream_ptr->avail_out);
 		if (sd.out_buff_start > sd.out_buff.get()) {
 			file->child_handle->Write(file->context, sd.out_buff.get(),
 			                          UnsafeNumericCast<idx_t>(sd.out_buff_start - sd.out_buff.get()));
 			sd.out_buff_start = sd.out_buff.get();
 		}
-		if (res == duckdb_miniz::MZ_STREAM_END) {
+		if (res == Z_STREAM_END) {
 			break;
 		}
-		if (res != duckdb_miniz::MZ_OK) {
+		if (res != Z_OK) {
 			throw InternalException("Failed to compress GZIP block");
 		}
 	}
@@ -304,9 +302,9 @@ void MiniZStreamWrapper::Close() {
 		MiniZStream::InitializeGZIPFooter(gzip_footer, crc, total_size);
 		file->child_handle->Write(file->context, gzip_footer, MiniZStream::GZIP_FOOTER_SIZE);
 
-		duckdb_miniz::mz_deflateEnd(mz_stream_ptr.get());
+		deflateEnd(mz_stream_ptr.get());
 	} else {
-		duckdb_miniz::mz_inflateEnd(mz_stream_ptr.get());
+		inflateEnd(mz_stream_ptr.get());
 	}
 	mz_stream_ptr = nullptr;
 	file = nullptr;
@@ -373,8 +371,8 @@ string GZipFileSystem::UncompressGZIPString(const char *data, idx_t size) {
 	// decompress file
 	auto body_ptr = data;
 
-	auto mz_stream_ptr = make_uniq<duckdb_miniz::mz_stream>();
-	memset(mz_stream_ptr.get(), 0, sizeof(duckdb_miniz::mz_stream));
+	auto mz_stream_ptr = make_uniq<z_stream>();
+	memset(mz_stream_ptr.get(), 0, sizeof(z_stream));
 
 	uint8_t gzip_hdr[GZIP_HEADER_MINSIZE];
 
@@ -401,8 +399,8 @@ string GZipFileSystem::UncompressGZIPString(const char *data, idx_t size) {
 	}
 
 	// stream is now set to beginning of payload data
-	auto status = duckdb_miniz::mz_inflateInit2(mz_stream_ptr.get(), -MZ_DEFAULT_WINDOW_BITS);
-	if (status != duckdb_miniz::MZ_OK) {
+	auto status = inflateInit2(mz_stream_ptr.get(), -MAX_WBITS);
+	if (status != Z_OK) {
 		throw InternalException("Failed to initialize miniz");
 	}
 
@@ -412,17 +410,17 @@ string GZipFileSystem::UncompressGZIPString(const char *data, idx_t size) {
 
 	string decompressed;
 
-	while (status == duckdb_miniz::MZ_OK) {
+	while (status == Z_OK) {
 		unsigned char decompress_buffer[BUFSIZ];
 		mz_stream_ptr->next_out = decompress_buffer;
 		mz_stream_ptr->avail_out = sizeof(decompress_buffer);
-		status = mz_inflate(mz_stream_ptr.get(), duckdb_miniz::MZ_NO_FLUSH);
-		if (status != duckdb_miniz::MZ_STREAM_END && status != duckdb_miniz::MZ_OK) {
+		status = inflate(mz_stream_ptr.get(), Z_NO_FLUSH);
+		if (status != Z_STREAM_END && status != Z_OK) {
 			throw IOException("Failed to uncompress");
 		}
 		decompressed.append(char_ptr_cast(decompress_buffer), mz_stream_ptr->total_out - decompressed.size());
 	}
-	duckdb_miniz::mz_inflateEnd(mz_stream_ptr.get());
+	inflateEnd(mz_stream_ptr.get());
 
 	if (decompressed.empty()) {
 		throw IOException("Failed to uncompress");
