@@ -689,7 +689,7 @@ static void VerifyGeneratedExpressionSuccess(ClientContext &context, TableCatalo
 }
 
 static void VerifyCheckConstraintExpression(ClientContext &context, TableCatalogEntry &table, Expression &expr,
-                                            DataChunk &chunk, const string &check_text) {
+                                            DataChunk &chunk, const string &check_text, bool is_rls = false) {
 	ExpressionExecutor executor(context, expr);
 	Vector result(LogicalType::INTEGER);
 	try {
@@ -705,6 +705,9 @@ static void VerifyCheckConstraintExpression(ClientContext &context, TableCatalog
 	} // LCOV_EXCL_STOP
 	for (auto entry : result.Values<int32_t>()) {
 		if (entry.IsValid() && entry.GetValue() == 0) {
+			if (is_rls) {
+				throw ConstraintException("new row violates row-level security policy for table %s", table.name);
+			}
 			throw ConstraintException("CHECK constraint failed on table %s with expression %s", table.name, check_text);
 		}
 	}
@@ -1022,7 +1025,7 @@ void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, Clien
 			// through a delegated table); they are always CHECK constraints.
 			auto &bound_check = constraint->Cast<BoundCheckConstraint>();
 			VerifyCheckConstraintExpression(context, table, *bound_check.expression, chunk,
-			                                "CHECK(" + bound_check.expression->ToString() + ")");
+			                                "CHECK(" + bound_check.expression->ToString() + ")", bound_check.is_rls);
 			continue;
 		}
 		auto &base_constraint = constraints[i];
@@ -1770,7 +1773,7 @@ void DataTable::VerifyUpdateConstraints(ConstraintState &state, ClientContext &c
 			DataChunk mock_chunk;
 			if (CreateMockChunk(table, column_ids, bound_check.bound_columns, chunk, mock_chunk)) {
 				VerifyCheckConstraintExpression(context, table, *bound_check.expression, mock_chunk,
-				                                "CHECK(" + bound_check.expression->ToString() + ")");
+				                                "CHECK(" + bound_check.expression->ToString() + ")", bound_check.is_rls);
 			}
 			continue;
 		}
