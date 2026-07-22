@@ -1030,7 +1030,7 @@ void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, Clien
 		}
 	}
 
-	if (HasUniqueIndexes()) {
+	if (HasUniqueIndexes() && !constraint_state.defer_unique) {
 		VerifyUniqueIndexes(info->indexes, storage, chunk, manager);
 	}
 
@@ -1202,6 +1202,11 @@ void DataTable::LocalAppend(DuckTableEntry &table, ClientContext &context, DataC
 	LocalAppendState append_state;
 	auto &storage = table.GetStorage();
 	storage.InitializeLocalAppend(append_state, table, context, bound_constraints);
+	// UPDATE del+insert: defer unique verification to the commit-time index merge.
+	// A shifted key (e.g. SET id=id+1) can transiently collide with a row a later
+	// chunk deletes, which would otherwise fail depending on the vector-chunk
+	// boundary; the commit merge re-checks with all deletes visible.
+	append_state.constraint_state->defer_unique = true;
 	append_state.storage->AppendToDeleteIndexes(row_ids, delete_chunk);
 
 	storage.LocalAppend(append_state, table, context, chunk, false);

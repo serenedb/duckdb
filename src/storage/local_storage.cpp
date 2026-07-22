@@ -494,9 +494,15 @@ void LocalStorage::Append(LocalAppendState &state, DuckTableEntry &table_entry, 
 			TableIndexList::ReferenceIndexChunk(table_chunk, index_chunk, mapped_column_ids);
 		}
 
+		// A deferred UPDATE (see ConstraintState::defer_unique) allows transient
+		// duplicates in the local index: a shifted key may briefly coexist with a
+		// row a later chunk deletes. The local->base merge at commit re-verifies.
+		auto append_mode = (state.constraint_state && state.constraint_state->defer_unique)
+		                       ? IndexAppendMode::INSERT_DUPLICATES
+		                       : storage->index_append_mode;
 		auto error = DataTable::AppendToIndexes(storage->append_indexes, storage->delete_indexes, table_chunk,
 		                                        index_chunk, mapped_column_ids, NumericCast<row_t>(base_id),
-		                                        storage->index_append_mode, optional_idx());
+		                                        append_mode, optional_idx());
 		if (error.HasError()) {
 			error.Throw();
 		}

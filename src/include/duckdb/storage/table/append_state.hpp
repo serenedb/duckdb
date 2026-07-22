@@ -112,6 +112,14 @@ struct ConstraintState {
 
 	TableCatalogEntry &table;
 	const vector<unique_ptr<BoundConstraint>> &bound_constraints;
+	//! Set by the UPDATE del+insert path. A new key can transiently collide with a
+	//! row a later chunk of the same statement deletes (a chunk-order-dependent
+	//! false conflict). When set, the per-chunk unique-index checks are skipped
+	//! (both the base pre-check and the local append-index insert, which uses
+	//! INSERT_DUPLICATES); uniqueness is instead verified by the local->base index
+	//! merge at commit, when every delete of this statement is visible. NOT NULL
+	//! and CHECK constraints are still verified per chunk.
+	bool defer_unique = false;
 };
 
 struct LocalAppendState {
