@@ -185,7 +185,8 @@ inline void CleaveRun(CleavedDictionary &dict, const vector<const unsigned char 
 //! FSST-encode `entries_in` and cleave them into `dict`. Returns false (graceful,
 //! no throw) if any entry is >= STRING_SIZE_LIMIT or FSST could not encode all
 //! entries into the conservative buffer -- the caller then opts out to dict_fsst.
-inline bool BuildCleavedDictionary(CleavedDictionary &dict, const vector<string_t> &entries_in) {
+inline bool BuildCleavedDictionary(CleavedDictionary &dict, const vector<string_t> &entries_in,
+                                   bool enable_prefix = true) {
 	idx_t n = entries_in.size();
 	if (n == 0) {
 		return true;
@@ -221,9 +222,24 @@ inline bool BuildCleavedDictionary(CleavedDictionary &dict, const vector<string_
 		enc_len[i] = NumericCast<uint32_t>(out_len[i]);
 	}
 	dict.entries.reserve(n);
-	for (idx_t base = 0; base < n; base += FSSTPlusCompression::CLEAVE_RUN) {
-		idx_t run = MinValue<idx_t>(FSSTPlusCompression::CLEAVE_RUN, n - base);
-		CleaveRun(dict, enc_ptr, enc_len, base, run);
+	if (enable_prefix) {
+		for (idx_t base = 0; base < n; base += FSSTPlusCompression::CLEAVE_RUN) {
+			idx_t run = MinValue<idx_t>(FSSTPlusCompression::CLEAVE_RUN, n - base);
+			CleaveRun(dict, enc_ptr, enc_len, base, run);
+		}
+	} else {
+		for (idx_t i = 0; i < n; i++) {
+			PlusEntry e;
+			e.prefix_id = 0xFFFFFFFFu; // no prefix; fixed to sentinel below
+			e.suffix = enc_ptr[i];
+			e.suffix_len = enc_len[i];
+			e.original_index = NumericCast<uint32_t>(i);
+			dict.suffix_bytes += e.suffix_len;
+			if (e.suffix_len > dict.max_suffix_len) {
+				dict.max_suffix_len = e.suffix_len;
+			}
+			dict.entries.push_back(e);
+		}
 	}
 	// fix up the "no prefix" sentinel now that prefix_count is known
 	uint32_t sentinel = dict.NoPrefixSentinel();

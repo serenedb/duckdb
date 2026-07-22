@@ -2158,6 +2158,17 @@ struct ZstdCompressionLevelSetting {
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
 };
 
+struct FsstModeSetting {
+	using RETURN_TYPE = string;
+	static constexpr const char *Name = "fsst_mode";
+	static constexpr const char *Description =
+	    "FSST+ family form: fsst, dict_fsst, fsst_plus, dict_fsst_plus or sorted_dict_fsst_plus";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr const char *DefaultValue = "dict_fsst_plus";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
 struct GeneratedSettingInfo {
 	static constexpr idx_t MaxSettingIndex = NEXT_SETTING_INDEX();
 };

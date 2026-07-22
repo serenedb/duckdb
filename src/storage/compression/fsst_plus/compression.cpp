@@ -11,6 +11,10 @@ FSSTPlusCompressionState::FSSTPlusCompressionState(ColumnDataCheckpointData &che
                                                    unique_ptr<FSSTPlusAnalyzeState> &&analyze_p)
     : StandardCompressionState(checkpoint_data_p, CompressionType::COMPRESSION_FSST_PLUS), stats_writer(GetType()),
       analyze(std::move(analyze_p)) {
+	auto raw_mode = GetCompressionOptions().fsst_mode;
+	if (raw_mode < static_cast<uint8_t>(FSSTPlusMode::COUNT)) {
+		mode = static_cast<FSSTPlusMode>(raw_mode);
+	}
 	CreateEmptySegment();
 }
 
@@ -46,7 +50,7 @@ void FSSTPlusCompressionState::Compress(const Vector &scan_vector) {
 	scan_vector.ToUnifiedFormat(vdata);
 	auto strings = UnifiedVectorFormat::GetData<string_t>(vdata);
 	const auto count = scan_vector.size();
-	const bool dedup_mode = mode != FSSTPlusMode::FSST_PLUS;
+	const bool dedup_mode = mode != FSSTPlusMode::FSST_PLUS && mode != FSSTPlusMode::FSST;
 	const idx_t block_size = info.GetBlockSize();
 
 	for (idx_t i = 0; i < count; i++) {
@@ -118,8 +122,10 @@ idx_t FSSTPlusCompressionState::Finalize() {
 		ordered[i] = entries[ordered_to_old[i]];
 	}
 
+	const bool enable_prefix = mode == FSSTPlusMode::FSST_PLUS || mode == FSSTPlusMode::DICT_FSST_PLUS ||
+	                           mode == FSSTPlusMode::SORTED_DICT_FSST_PLUS;
 	CleavedDictionary dict;
-	if (!BuildCleavedDictionary(dict, ordered)) {
+	if (!BuildCleavedDictionary(dict, ordered, enable_prefix)) {
 		throw FatalException("FSST+ compression could not encode the dictionary (string too long for FSST+); "
 		                     "select dict_fsst for this column");
 	}

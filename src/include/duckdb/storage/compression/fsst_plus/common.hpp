@@ -21,6 +21,8 @@ enum class FSSTPlusMode : uint8_t {
 	FSST_PLUS = 0,
 	DICT_FSST_PLUS = 1,
 	SORTED_DICT_FSST_PLUS = 2,
+	FSST = 3,
+	DICT_FSST = 4,
 	COUNT //! Always last
 };
 

@@ -207,6 +207,18 @@ CompressionOptions DBConfig::GetCompressionOptions() const {
 	} else {
 		result.dict_scope = DictScope::NONE;
 	}
+	auto fsst_form = StringUtil::Lower(Settings::Get<FsstModeSetting>(*this));
+	if (fsst_form == "fsst_plus") {
+		result.fsst_mode = 0;
+	} else if (fsst_form == "sorted_dict_fsst_plus") {
+		result.fsst_mode = 2;
+	} else if (fsst_form == "fsst") {
+		result.fsst_mode = 3;
+	} else if (fsst_form == "dict_fsst") {
+		result.fsst_mode = 4;
+	} else {
+		result.fsst_mode = 1;
+	}
 	return result;
 }
 

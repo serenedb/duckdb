@@ -35,6 +35,9 @@ struct CompressionOptions {
 	idx_t max_dict_size = 112640;
 	//! Effort hint; duckdb is always FLUSH, iresearch may set MERGE.
 	CompressEffort effort = CompressEffort::FLUSH;
+	//! FSST+ family form (raw FSSTPlusMode value): 0=fsst_plus, 1=dict_fsst_plus,
+	//! 2=sorted_dict_fsst_plus, 3=fsst, 4=dict_fsst.
+	uint8_t fsst_mode = 1;
 };
 
 } // namespace duckdb

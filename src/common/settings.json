@@ -253,6 +253,13 @@
         "default_value": "none"
     },
     {
+        "name": "fsst_mode",
+        "description": "FSST+ family form: fsst, dict_fsst, fsst_plus, dict_fsst_plus or sorted_dict_fsst_plus",
+        "type": "VARCHAR",
+        "scope": "global",
+        "default_value": "dict_fsst_plus"
+    },
+    {
         "name": "configure_profiling",
         "description": "Accepts a JSON enabling custom metrics",
         "type": "VARCHAR",
