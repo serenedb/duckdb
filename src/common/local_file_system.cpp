@@ -871,7 +871,11 @@ void LocalFileSystem::FileSync(FileHandle &handle) {
 
 	// TODO(mbkkt): temporary fix for duckdb incorrect ifdef, will be reverted as soon as upstream will fix this
 	// For SereneDB it's safe because only modern linux supported,
+#if defined(__APPLE__)
+	bool sync_success = ::fsync(fd) == 0;
+#else
 	bool sync_success = ::fdatasync(fd) == 0;
+#endif
 
 	if (sync_success) {
 		return;
