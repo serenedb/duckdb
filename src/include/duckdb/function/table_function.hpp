@@ -216,7 +216,9 @@ public:
 	//! 0's int64 value BEFORE the row is materialized; returning false skips
 	//! the row entirely (it is never written). Rows whose column 0 is NULL
 	//! are always skipped. Called exactly once per result row, in stream
-	//! order -- the gate may carry state.
+	//! order -- the gate may carry state. When set, result column 0 is the
+	//! gate key: it is consumed, never emitted, so the output chunk carries
+	//! result columns [1, N] in positions [0, N-1].
 	bool (*lookup_gate)(void *state, int64_t value) = nullptr;
 	void *lookup_gate_state = nullptr;
 };
