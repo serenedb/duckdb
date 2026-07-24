@@ -150,6 +150,10 @@ void BlockManager::Write(QueryContext context, FileBuffer &block, block_id_t blo
 	Write(block, block_id);
 }
 
+void BlockManager::Write(QueryContext context, FileBuffer &block, block_id_t block_id, idx_t used_size) {
+	Write(context, block, block_id);
+}
+
 void BlockManager::Truncate() {
 }
 

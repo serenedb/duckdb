@@ -74,6 +74,7 @@ public:
 	//! Writes the block to disk.
 	virtual void Write(FileBuffer &block, block_id_t block_id) = 0;
 	virtual void Write(QueryContext context, FileBuffer &block, block_id_t block_id);
+	virtual void Write(QueryContext context, FileBuffer &block, block_id_t block_id, idx_t used_size);
 	//! Writes the block to disk.
 	void Write(Block &block) {
 		Write(block, block.id);
