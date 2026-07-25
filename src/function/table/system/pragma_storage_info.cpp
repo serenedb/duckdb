@@ -144,6 +144,7 @@ static void PragmaStorageInfoFunction(ClientContext &context, TableFunctionInput
 	auto &gstate = data_p.global_state->Cast<PragmaStorageGlobalState>();
 	auto &lstate = data_p.local_state->Cast<PragmaStorageLocalState>();
 	auto &columns = bind_data.table_entry.GetColumns();
+	auto virtual_columns = bind_data.table_entry.GetVirtualColumns();
 	QueryContext query_context(context);
 
 	idx_t count = 0;
@@ -194,9 +195,16 @@ static void PragmaStorageInfoFunction(ClientContext &context, TableFunctionInput
 		lstate.batch_index = entry.row_group_index;
 
 		row_group_id.Append(Value::BIGINT(NumericCast<int64_t>(entry.row_group_index)));
-		auto &col = columns.GetColumn(PhysicalIndex(entry.column_id));
-		column_name.Append(Value(col.Name()));
-		column_id.Append(Value::BIGINT(NumericCast<int64_t>(entry.column_id)));
+		if (entry.column_id >= VIRTUAL_COLUMN_START) {
+			// virtual column (e.g. row identity on external table formats) - it has no physical column id
+			auto vc_entry = virtual_columns.find(entry.column_id);
+			column_name.Append(vc_entry == virtual_columns.end() ? Value() : Value(vc_entry->second.name));
+			column_id.Append(Value());
+		} else {
+			auto &col = columns.GetColumn(PhysicalIndex(entry.column_id));
+			column_name.Append(Value(col.Name()));
+			column_id.Append(Value::BIGINT(NumericCast<int64_t>(entry.column_id)));
+		}
 		column_path.Append(Value(entry.column_path));
 		segment_id.Append(Value::BIGINT(NumericCast<int64_t>(entry.segment_idx)));
 		segment_type.Append(Value(entry.segment_type));
