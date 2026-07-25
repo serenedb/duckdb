@@ -1143,6 +1143,16 @@ idx_t ART::GetInMemorySize(IndexLock &index_lock) {
 	return in_memory_size;
 }
 
+idx_t ART::GetAllocationSize(IndexLock &index_lock) {
+	D_ASSERT(owns_data);
+
+	idx_t allocation_size = 0;
+	for (auto &allocator : *allocators) {
+		allocation_size += allocator->GetSegmentCount() * allocator->GetSegmentSize();
+	}
+	return allocation_size;
+}
+
 bool ART::SupportsDeltaIndexes() const {
 	return true;
 }

@@ -143,6 +143,12 @@ idx_t BoundIndex::GetInMemorySize() {
 	return GetInMemorySize(state);
 }
 
+idx_t BoundIndex::GetAllocationSize() {
+	IndexLock state;
+	InitializeLock(state);
+	return GetAllocationSize(state);
+}
+
 void BoundIndex::ExecuteExpressions(DataChunk &input, DataChunk &result) {
 	executor.Execute(input, result);
 }

@@ -168,6 +168,13 @@ public:
 	virtual idx_t GetInMemorySize(IndexLock &state) = 0;
 	//! Returns the in-memory usage of the index
 	idx_t GetInMemorySize();
+	//! Returns the total allocated size of the index in bytes, including data serialized to disk.
+	//! The lock obtained from InitializeLock must be held
+	virtual idx_t GetAllocationSize(IndexLock &state) {
+		return GetInMemorySize(state);
+	}
+	//! Returns the total allocated size of the index in bytes, including data serialized to disk
+	idx_t GetAllocationSize();
 
 	//! Returns the string representation of an index, or only traverses and verifies the index.
 	virtual void Verify(IndexLock &l) = 0;
