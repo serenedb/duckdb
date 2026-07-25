@@ -1,3 +1,5 @@
+#include "duckdb/catalog/default/default_types.hpp"
+#include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/parser/peg/ast/add_column_entry.hpp"
 #include "duckdb/parser/peg/ast/column_constraint_entry.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
@@ -249,6 +251,10 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformAddColumn(PEGTransfor
 	if (add_column_entry.default_value) {
 		column_definition.SetDefaultValue(std::move(add_column_entry.default_value));
 	}
+	column_definition.SetCompressionType(add_column_entry.compression);
+	if (add_column_entry.column_path.size() > 1 && add_column_entry.compression != CompressionType::COMPRESSION_AUTO) {
+		throw ParserException("USING COMPRESSION is not supported when adding a struct field");
+	}
 
 	unique_ptr<AlterTableInfo> result;
 	auto if_not_exists_value = if_not_exists.has_value();
@@ -288,6 +294,33 @@ AddColumnEntry PEGTransformerFactory::TransformAddColumnEntry(
 					throw ParserException("Cannot define a default value twice");
 				}
 				new_column.default_value = std::move(constraint.expression);
+			} else if (constraint.constraint_name == "ColumnCompression") {
+				new_column.compression = constraint.compression_type;
+				if (new_column.compression == CompressionType::COMPRESSION_AUTO) {
+					throw ParserException("Unrecognized option for column compression, expected none, uncompressed, "
+					                      "rle, dictionary, pfor, bitpacking, fsst, chimp, patas, zstd, alp, alprd or "
+					                      "roaring");
+				}
+			} else if (constraint.constraint_name == "ColumnCollation") {
+				if (new_column.type.id() == LogicalTypeId::ANY) {
+					throw ParserException("Specify the VARCHAR type for column \"%s\" with collation.",
+					                      new_column.column_path.back().GetIdentifierName());
+				} else if (new_column.type.IsUnbound()) {
+					auto &expr = UnboundType::GetTypeExpression(new_column.type);
+					if (expr->GetExpressionClass() != ExpressionClass::TYPE) {
+						throw InternalException("Expected a type expression");
+					}
+					auto &type_expr = expr->Cast<TypeExpression>();
+					if (DefaultTypeGenerator::GetDefaultType(type_expr.GetTypeName()) != LogicalTypeId::VARCHAR) {
+						throw ParserException("Only VARCHAR columns can have collations!");
+					}
+				} else {
+					throw InternalException("Expected only unbound types here");
+				}
+				vector<unique_ptr<ParsedExpression>> type_children;
+				type_children.push_back(std::move(constraint.expression));
+				new_column.type =
+				    LogicalType::UNBOUND(make_uniq<TypeExpression>(Identifier("VARCHAR"), std::move(type_children)));
 			} else if (constraint.constraint_name == "NotNullConstraint" ||
 			           constraint.constraint_name == "UniqueConstraint" ||
 			           constraint.constraint_name == "PrimaryKeyConstraint" ||
