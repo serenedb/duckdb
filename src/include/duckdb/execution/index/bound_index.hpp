@@ -172,6 +172,13 @@ public:
 	virtual idx_t GetInMemorySize(IndexLock &state) const DUCKDB_REQUIRES(state) = 0;
 	//! Returns the in-memory usage of the index
 	idx_t GetInMemorySize() const DUCKDB_EXCLUDES(lock);
+	//! Returns the total allocated size of the index in bytes, including data serialized to disk.
+	//! The index lock must be held
+	virtual idx_t GetAllocationSize(IndexLock &state) const DUCKDB_REQUIRES(state) {
+		return GetInMemorySize(state);
+	}
+	//! Returns the total allocated size of the index in bytes, including data serialized to disk
+	idx_t GetAllocationSize() const DUCKDB_EXCLUDES(lock);
 
 	//! Returns the string representation of an index, or only traverses and verifies the index.
 	virtual void Verify(IndexLock &l) DUCKDB_REQUIRES(l) = 0;

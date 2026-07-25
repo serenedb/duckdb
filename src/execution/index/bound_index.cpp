@@ -135,6 +135,11 @@ idx_t BoundIndex::GetInMemorySize() const {
 	return GetInMemorySize(state);
 }
 
+idx_t BoundIndex::GetAllocationSize() const {
+	IndexLock state(*this);
+	return GetAllocationSize(state);
+}
+
 void BoundIndex::ExecuteExpressions(DataChunk &input, DataChunk &result) const {
 	executor.Execute(input, result);
 }

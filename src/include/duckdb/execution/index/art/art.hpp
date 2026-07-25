@@ -149,6 +149,7 @@ public:
 
 	//! Returns the in-memory usage of the ART.
 	idx_t GetInMemorySize(IndexLock &index_lock) const override DUCKDB_REQUIRES(index_lock);
+	idx_t GetAllocationSize(IndexLock &index_lock) const override DUCKDB_REQUIRES(index_lock);
 
 	bool SupportsDeltaIndexes() const override;
 
