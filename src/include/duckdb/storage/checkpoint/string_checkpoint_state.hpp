@@ -48,8 +48,10 @@ struct UncompressedStringSegmentState : public CompressedSegmentState {
 	//! Map of block id to string block
 	unordered_map<block_id_t, reference<StringBlock>> overflow_blocks;
 	//! Overflow string writer (if any), if not set overflow strings will be written to memory blocks
-	unique_ptr<OverflowStringWriter> overflow_writer;
-	unique_ptr<OverflowStringReader> overflow_reader;
+	optional_ptr<OverflowStringWriter> overflow_writer;
+	//! Holds the overflow writer when this state owns it (WriteOverflowStringsToDisk)
+	unique_ptr<OverflowStringWriter> owned_overflow_writer;
+	optional_ptr<OverflowStringReader> overflow_reader;
 	//! The block manager with which to write
 	optional_ptr<BlockManager> block_manager;
 	//! The set of overflow blocks written to disk (if any)

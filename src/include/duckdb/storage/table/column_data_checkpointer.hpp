@@ -31,15 +31,14 @@ public:
 	}
 
 public:
-	using OverflowStringWriterFactory = std::function<unique_ptr<OverflowStringWriter>()>;
 	using FlushSegmentFn = std::function<void(unique_ptr<ColumnSegment>, BufferHandle, idx_t)>;
 	using FlushSegmentInternalFn = std::function<void(unique_ptr<ColumnSegment>, idx_t)>;
 
 	ColumnDataCheckpointData(LogicalType type, DatabaseInstance &db, StorageVersion storage_version,
-	                         OverflowStringWriterFactory overflow_writer_factory, FlushSegmentFn flush_segment_fn,
+	                         optional_ptr<OverflowStringWriter> overflow_writer, FlushSegmentFn flush_segment_fn,
 	                         FlushSegmentInternalFn flush_segment_internal_fn, BlockManager &block_manager)
-	    : type(std::move(type)), db(db), storage_version(storage_version),
-	      overflow_writer_factory(std::move(overflow_writer_factory)), flush_segment_fn(std::move(flush_segment_fn)),
+	    : type(std::move(type)), db(db), storage_version(storage_version), overflow_writer(overflow_writer),
+	      flush_segment_fn(std::move(flush_segment_fn)),
 	      flush_segment_internal_fn(std::move(flush_segment_internal_fn)), block_manager(block_manager) {
 	}
 
@@ -54,11 +53,8 @@ public:
 	StorageVersion GetStorageVersion() const {
 		return storage_version;
 	}
-	bool HasOverflowStringWriterFactory() const noexcept {
-		return static_cast<bool>(overflow_writer_factory);
-	}
-	unique_ptr<OverflowStringWriter> MakeOverflowStringWriter() const {
-		return overflow_writer_factory();
+	optional_ptr<OverflowStringWriter> GetOverflowStringWriter() const {
+		return overflow_writer;
 	}
 	void FlushSegment(unique_ptr<ColumnSegment> segment, BufferHandle handle, idx_t segment_size);
 	void FlushSegmentInternal(unique_ptr<ColumnSegment> segment, idx_t segment_size);
@@ -71,7 +67,7 @@ private:
 	optional_ptr<DatabaseInstance> db;
 	optional_ptr<StorageManager> storage_manager;
 	StorageVersion storage_version;
-	OverflowStringWriterFactory overflow_writer_factory;
+	optional_ptr<OverflowStringWriter> overflow_writer;
 	FlushSegmentFn flush_segment_fn;
 	FlushSegmentInternalFn flush_segment_internal_fn;
 	optional_ptr<BlockManager> block_manager;
