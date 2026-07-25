@@ -628,6 +628,7 @@ public:
 			}
 		}
 
+		stats_writer.Merge(buffer_collection.segment->GetStatsMutable());
 		checkpoint_data.FlushSegment(std::move(buffer_collection.segment), std::move(buffer_collection.segment_handle),
 		                             segment_block_size);
 		segment_buffer_state.flags.Clear();
