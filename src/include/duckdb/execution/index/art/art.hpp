@@ -139,6 +139,7 @@ public:
 
 	//! Returns the in-memory usage of the ART.
 	idx_t GetInMemorySize(IndexLock &index_lock) override;
+	idx_t GetAllocationSize(IndexLock &index_lock) override;
 
 	bool SupportsDeltaIndexes() const override;
 	unique_ptr<BoundIndex> CreateDeltaIndex(DeltaIndexType delta_index_type) const override;
