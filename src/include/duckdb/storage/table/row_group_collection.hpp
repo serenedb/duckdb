@@ -51,6 +51,8 @@ class TableScanState;
 struct ColumnSegmentInfoScanState {
 	shared_ptr<RowGroupSegmentTree> row_groups;
 	optional_ptr<SegmentNode<RowGroup>> current_row_group;
+	//! Scan position for table implementations that do not iterate row groups.
+	idx_t position = 0;
 	ColumnSegmentInfoScanOptions options;
 };
 
