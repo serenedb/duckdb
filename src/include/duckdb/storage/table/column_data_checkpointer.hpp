@@ -35,10 +35,11 @@ public:
 	using FlushSegmentInternalFn = std::function<void(unique_ptr<ColumnSegment>, idx_t)>;
 
 	ColumnDataCheckpointData(LogicalType type, DatabaseInstance &db, StorageVersion storage_version,
-	                         optional_ptr<OverflowStringWriter> overflow_writer, FlushSegmentFn flush_segment_fn,
+	                         optional_ptr<OverflowStringWriter> overflow_writer,
+	                         optional_ptr<ColumnStreamWriter> stream_writer, FlushSegmentFn flush_segment_fn,
 	                         FlushSegmentInternalFn flush_segment_internal_fn, BlockManager &block_manager)
 	    : type(std::move(type)), db(db), storage_version(storage_version), overflow_writer(overflow_writer),
-	      flush_segment_fn(std::move(flush_segment_fn)),
+	      stream_writer(stream_writer), flush_segment_fn(std::move(flush_segment_fn)),
 	      flush_segment_internal_fn(std::move(flush_segment_internal_fn)), block_manager(block_manager) {
 	}
 
@@ -56,6 +57,9 @@ public:
 	optional_ptr<OverflowStringWriter> GetOverflowStringWriter() const {
 		return overflow_writer;
 	}
+	optional_ptr<ColumnStreamWriter> GetColumnStreamWriter() const {
+		return stream_writer;
+	}
 	void FlushSegment(unique_ptr<ColumnSegment> segment, BufferHandle handle, idx_t segment_size);
 	void FlushSegmentInternal(unique_ptr<ColumnSegment> segment, idx_t segment_size);
 	BlockManager &GetBlockManager();
@@ -68,6 +72,7 @@ private:
 	optional_ptr<StorageManager> storage_manager;
 	StorageVersion storage_version;
 	optional_ptr<OverflowStringWriter> overflow_writer;
+	optional_ptr<ColumnStreamWriter> stream_writer;
 	FlushSegmentFn flush_segment_fn;
 	FlushSegmentInternalFn flush_segment_internal_fn;
 	optional_ptr<BlockManager> block_manager;
