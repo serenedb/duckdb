@@ -486,8 +486,17 @@ vector<SimilarCatalogEntry> Catalog::SimilarEntriesInSchemas(ClientContext &cont
 	vector<SimilarCatalogEntry> results;
 	for (auto schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		auto transaction = schema.catalog.GetCatalogTransaction(context);
-		auto entry = schema.GetSimilarEntry(transaction, lookup_info);
+		SimilarCatalogEntry entry;
+		try {
+			auto transaction = schema.catalog.GetCatalogTransaction(context);
+			entry = schema.GetSimilarEntry(transaction, lookup_info);
+		} catch (const std::exception &) {
+			// Suggestions are best effort. Enumerating an attached remote catalog can
+			// fail on its own terms (loading table metadata, starting a transaction),
+			// and that must not replace the caller's "does not exist" with an
+			// unrelated error from a catalog the user never named.
+			continue;
+		}
 		if (!entry.Found()) {
 			// no similar entry found
 			continue;
