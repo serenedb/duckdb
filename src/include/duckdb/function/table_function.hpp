@@ -174,49 +174,6 @@ struct TableFunctionInitInput {
 	}
 };
 
-//! A remote key lookup: the statement is prepared once per scan and executed
-//! once per batch of keys, then drained over as many calls as the executor asks
-//! for. The batch always crosses as a duckdb Vector -- never as per-row Values --
-//! so a TF can encode it straight into wire form.
-struct LookupRequest {
-	//! The batch: a STRUCT vector whose child k carries key column k for `count`
-	//! rows, bound as statement parameter $k+1 (postgres) or column `k<k>` of the
-	//! external table `lookup` (clickhouse). Set to execute; null on the
-	//! continuation calls that drain the result.
-	optional_ptr<Vector> keys;
-	idx_t count = 0;
-	//! Optional per-row gate, called with the gate column's int64 value BEFORE the
-	//! row is materialized; false skips the row entirely (it is never written), as
-	//! does a NULL gate value. Called exactly once per result row in stream order,
-	//! so it may carry state.
-	bool (*gate)(void *state, int64_t value) = nullptr;
-	void *gate_state = nullptr;
-
-	//! Whether this call executes a new batch rather than draining the current one.
-	bool Executing() const {
-		return keys != nullptr;
-	}
-	bool HasGate() const {
-		return gate != nullptr;
-	}
-	bool Accept(int64_t value) const {
-		return gate(gate_state, value);
-	}
-	//! Leading result columns the gate consumes: the gate key is read and dropped,
-	//! never emitted, so the output carries the remaining columns shifted down by
-	//! this much.
-	idx_t GateColumns() const {
-		return HasGate() ? 1 : 0;
-	}
-	//! Results are appended DENSELY from `output`'s current size (like pk_lookups
-	//! readers), so a caller stops when a call appends nothing AND the request is
-	//! drained -- a call can legitimately append nothing while more rows remain,
-	//! when every row it saw was gated out.
-	void Drained() {
-		keys = nullptr;
-	}
-};
-
 struct TableFunctionInput {
 public:
 	TableFunctionInput(optional_ptr<const FunctionData> bind_data_p,
@@ -243,10 +200,27 @@ public:
 	std::span<const int64_t> pk_lookups;
 	std::span<idx_t> pk_survivors;
 
-	//! SereneDB remote-key lookup, for TFs bound with lookup := true
-	//! (postgres_query / clickhouse_query). One statement is prepared per scan
-	//! and executed once per key batch; see LookupRequest.
-	LookupRequest lookup;
+	//! SereneDB remote-key lookup transport, for TFs bound with lookup := true
+	//! (postgres_query / clickhouse_query). When set, the call starts a new
+	//! remote request: `lookup_keys` is a STRUCT vector of `lookup_count`
+	//! rows whose child k carries the values of statement parameter $k+1
+	//! (postgres) or column `k<k>` of the external table `lookup`
+	//! (clickhouse). Like pk_lookups readers, the TF appends result rows
+	//! DENSELY to `output` from its current size; pass nullptr on
+	//! continuation calls and stop when a call appends nothing while the
+	//! request is drained (a call may append nothing when every row was
+	//! gated out but more results remain -- the TF keeps consuming).
+	optional_ptr<Vector> lookup_keys;
+	idx_t lookup_count = 0;
+	//! Optional per-row gate for lookup results: called with result column
+	//! 0's int64 value BEFORE the row is materialized; returning false skips
+	//! the row entirely (it is never written). Rows whose column 0 is NULL
+	//! are always skipped. Called exactly once per result row, in stream
+	//! order -- the gate may carry state. When set, result column 0 is the
+	//! gate key: it is consumed, never emitted, so the output chunk carries
+	//! result columns [1, N] in positions [0, N-1].
+	bool (*lookup_gate)(void *state, int64_t value) = nullptr;
+	void *lookup_gate_state = nullptr;
 };
 
 struct TableFunctionPartitionInput {
