@@ -786,12 +786,19 @@ static GrantTargetInfo TransformGrantTarget(PEGTransformer &transformer, ParseRe
 	string objtype = "TABLE";
 	auto &objtype_opt = named.Child<OptionalParseResult>(0);
 	if (objtype_opt.HasResult()) {
-		auto &kw = objtype_opt.GetResult()
-		               .Cast<ListParseResult>()
-		               .Child<ChoiceParseResult>(0)
-		               .GetResult()
-		               .Cast<KeywordParseResult>();
-		objtype = StringUtil::Upper(kw.keyword);
+		auto &chosen =
+		    objtype_opt.GetResult().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+		if (chosen.type == ParseResultType::KEYWORD) {
+			objtype = StringUtil::Upper(chosen.Cast<KeywordParseResult>().keyword);
+		} else {
+			// A multi-keyword object type (e.g. FOREIGN SERVER) is a rule whose
+			// body is a keyword sequence; join them into one space-separated word.
+			vector<string> words;
+			for (auto &child : chosen.Cast<ListParseResult>().GetChildren()) {
+				words.push_back(StringUtil::Upper(child.get().Cast<KeywordParseResult>().keyword));
+			}
+			objtype = StringUtil::Join(words, " ");
+		}
 	}
 	return {objtype, QualifiedTableName(transformer, named.GetChild(1))};
 }

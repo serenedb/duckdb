@@ -199,6 +199,12 @@ void PEGTransformerFactory::RegisterCreateTextSearchDictionary() {
 	REGISTER_TRANSFORM(TransformDropTSDictionaryStatement);
 }
 
+void PEGTransformerFactory::RegisterForeignServer() {
+	// create_server.gram — the OPTIONS Parens(List(...)) body is not auto-extractable.
+	REGISTER_TRANSFORM(TransformCreateServerStatement);
+	REGISTER_TRANSFORM(TransformDropServerStatement);
+}
+
 void PEGTransformerFactory::RegisterPivot() {
 	// PivotStatement and UnpivotStatement measure parameter usage while transforming
 	// the source table, so their top-level wrappers remain manual.
@@ -275,6 +281,7 @@ PEGTransformerFactory::PEGTransformerFactory() {
 	RegisterNotify();
 	RegisterCreateTextSearchDictionary();
 	RegisterRbac();
+	RegisterForeignServer();
 	RegisterPivot();
 	RegisterCreateMacro();
 	RegisterDrop();
