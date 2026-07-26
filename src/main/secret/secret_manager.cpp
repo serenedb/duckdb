@@ -119,7 +119,7 @@ unique_ptr<BaseSecret> SecretManager::DeserializeSecret(Deserializer &deserializ
 	}
 
 	SecretType deserialized_type;
-	if (!TryLookupTypeInternal(type, deserialized_type)) {
+	if (!TryLookupTypeInternalUnsafe(type, deserialized_type)) {
 		ThrowTypeNotFoundError(Identifier(type), secret_path);
 	}
 
@@ -205,6 +205,12 @@ unique_ptr<SecretEntry> SecretManager::RegisterSecretInternal(CatalogTransaction
 			throw InvalidInputException("Cannot create temporary secrets in a persistent secret storage!");
 		}
 	}
+	// Serialize the store under manager_lock so concurrent CREATE OR REPLACE SECRET on the same global name
+	// cannot interleave (secrets use the system transaction, so MVCC no longer serializes writers). Held only
+	// around StoreSecret: the type/function/storage lookups above already ran and released, so no self-deadlock.
+	// The lazy DefaultSecretGenerator path reachable from StoreSecret's readback must not re-take manager_lock
+	// -- DeserializeSecret uses TryLookupTypeInternalUnsafe for that reason.
+	lock_guard<mutex> lck(manager_lock);
 	return backend->StoreSecret(std::move(secret), on_conflict, &transaction);
 }
 
@@ -236,8 +242,10 @@ optional_ptr<CreateSecretFunction> SecretManager::LookupFunctionInternal(const I
 }
 
 unique_ptr<SecretEntry> SecretManager::CreateSecret(ClientContext &context, const CreateSecretInput &input) {
-	// Note that a context is required for CreateSecret, as the CreateSecretFunction expects one
-	auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
+	// Secrets are global, instance-scoped objects created outside any client's MVCC snapshot, so use the system
+	// transaction: two connections concurrently running CREATE OR REPLACE SECRET on the same name then don't
+	// produce a catalog write-write conflict. The CreateSecretFunction still evaluates against the client context.
+	auto transaction = CatalogTransaction::GetSystemTransaction(*db);
 	InitializeSecrets(transaction);
 
 	// Make a copy to set the provider to default if necessary
@@ -426,6 +434,10 @@ void SecretManager::DropSecretByName(CatalogTransaction transaction, const Ident
 		}
 		// Do nothing on OnEntryNotFound::RETURN_NULL...
 	} else {
+		// Serialize the drop under manager_lock (same lock CreateSecret holds around StoreSecret) so a concurrent
+		// create and drop of the same name are mutually excluded. Held only here: the storage lookups above already
+		// ran and released, and the drop's lazy DefaultSecretGenerator path uses TryLookupTypeInternalUnsafe.
+		lock_guard<mutex> lck(manager_lock);
 		matches[0].get().DropSecretByName(Identifier(name), on_entry_not_found, &transaction);
 	}
 }
@@ -461,6 +473,24 @@ bool SecretManager::TryLookupTypeInternal(const string &type, SecretType &type_o
 		return true;
 	}
 
+	return false;
+}
+
+bool SecretManager::TryLookupTypeInternalUnsafe(const string &type, SecretType &type_out) {
+	// Assumes the caller already holds manager_lock (used from the DefaultSecretGenerator deserialize path,
+	// which can run while CreateSecret holds manager_lock -- re-locking would self-deadlock). Autoloading is a
+	// compile-time no-op under -DDUCKDB_DISABLE_EXTENSION_LOAD, so this is just the map lookup.
+	auto lookup = secret_types.find(Identifier(type));
+	if (lookup != secret_types.end()) {
+		type_out = lookup->second;
+		return true;
+	}
+	AutoloadExtensionForType(type);
+	lookup = secret_types.find(Identifier(type));
+	if (lookup != secret_types.end()) {
+		type_out = lookup->second;
+		return true;
+	}
 	return false;
 }
 
@@ -748,7 +778,9 @@ SecretManager &SecretManager::Get(DatabaseInstance &db) {
 
 void SecretManager::DropSecretByName(ClientContext &context, const Identifier &name, OnEntryNotFound on_entry_not_found,
                                      SecretPersistType persist_type, const Identifier &storage) {
-	auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
+	// Secrets are global, instance-scoped objects: drop under the system transaction (matching CreateSecret) so a
+	// concurrent CREATE OR REPLACE + DROP on the same name don't collide as an MVCC write-write conflict.
+	auto transaction = CatalogTransaction::GetSystemTransaction(*db);
 	return DropSecretByName(transaction, name, on_entry_not_found, persist_type, storage);
 }
 

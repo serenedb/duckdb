@@ -69,12 +69,12 @@ unique_ptr<SecretEntry> CatalogSetSecretStorage::StoreSecret(unique_ptr<const Ba
 	secret_entry->temporary = !persistent;
 	secret_entry->secret->storage_mode = storage_name;
 	secret_entry->secret->persist_type = persistent ? SecretPersistType::PERSISTENT : SecretPersistType::TEMPORARY;
+	// Snapshot the return value before handing the entry to the catalog, so we never read it back
+	// (a concurrent REPLACE could drop it between the write and a readback).
+	auto result = make_uniq<SecretEntry>(*secret_entry->secret);
 	LogicalDependencyList l;
 	secrets->CreateEntry(GetTransactionOrDefault(transaction), secret_name, std::move(secret_entry), l);
-
-	auto secret_catalog_entry =
-	    &secrets->GetEntry(GetTransactionOrDefault(transaction), secret_name)->Cast<SecretCatalogEntry>();
-	return make_uniq<SecretEntry>(*secret_catalog_entry->secret);
+	return result;
 }
 
 vector<SecretEntry> CatalogSetSecretStorage::AllSecrets(optional_ptr<CatalogTransaction> transaction) {

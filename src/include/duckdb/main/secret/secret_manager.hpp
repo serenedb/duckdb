@@ -166,6 +166,8 @@ private:
 	SecretType LookupTypeInternal(const Identifier &type);
 	//! Try to lookup a SecretType
 	bool TryLookupTypeInternal(const string &type, SecretType &type_out);
+	//! Like TryLookupTypeInternal but assumes manager_lock is already held (see RegisterSecretInternal).
+	bool TryLookupTypeInternalUnsafe(const string &type, SecretType &type_out);
 	//! Register a secret provider
 	void RegisterSecretFunctionInternal(CreateSecretFunction function, OnCreateConflict on_conflict);
 	//! Lookup a CreateSecretFunction
