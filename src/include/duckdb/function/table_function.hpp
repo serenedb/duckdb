@@ -199,6 +199,28 @@ public:
 	//! filter gets no slot -- `output` is always compact.
 	std::span<const int64_t> pk_lookups;
 	std::span<idx_t> pk_survivors;
+
+	//! SereneDB remote-key lookup transport, for TFs bound with lookup := true
+	//! (postgres_query / clickhouse_query). When set, the call starts a new
+	//! remote request: `lookup_keys` is a STRUCT vector of `lookup_count`
+	//! rows whose child k carries the values of statement parameter $k+1
+	//! (postgres) or column `k<k>` of the external table `lookup`
+	//! (clickhouse). Like pk_lookups readers, the TF appends result rows
+	//! DENSELY to `output` from its current size; pass nullptr on
+	//! continuation calls and stop when a call appends nothing while the
+	//! request is drained (a call may append nothing when every row was
+	//! gated out but more results remain -- the TF keeps consuming).
+	optional_ptr<Vector> lookup_keys;
+	idx_t lookup_count = 0;
+	//! Optional per-row gate for lookup results: called with result column
+	//! 0's int64 value BEFORE the row is materialized; returning false skips
+	//! the row entirely (it is never written). Rows whose column 0 is NULL
+	//! are always skipped. Called exactly once per result row, in stream
+	//! order -- the gate may carry state. When set, result column 0 is the
+	//! gate key: it is consumed, never emitted, so the output chunk carries
+	//! result columns [1, N] in positions [0, N-1].
+	bool (*lookup_gate)(void *state, int64_t value) = nullptr;
+	void *lookup_gate_state = nullptr;
 };
 
 struct TableFunctionPartitionInput {
