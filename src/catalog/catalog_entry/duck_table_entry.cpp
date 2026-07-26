@@ -1532,7 +1532,14 @@ optional_ptr<CatalogEntry> DuckTableEntry::CreateTrigger(CatalogTransaction tran
 	if (!triggers->CreateEntry(transaction, entry_name, std::move(trigger), dependencies)) {
 		throw CatalogException::EntryAlreadyExists(CatalogType::TRIGGER_ENTRY, entry_name);
 	}
-	return triggers->GetEntry(transaction, entry_name);
+	// The readback can miss if a concurrent writer dropped the entry between CreateEntry and here (only
+	// reachable if triggers ever move off the client transaction, which serializes this today). Guard the
+	// lookup rather than returning a null that a caller may dereference.
+	auto created = triggers->GetEntry(transaction, entry_name);
+	if (!created) {
+		throw InternalException("Failed to read back trigger '%s' after creation", entry_name);
+	}
+	return created;
 }
 
 void DuckTableEntry::ScanTriggers(CatalogTransaction transaction,
