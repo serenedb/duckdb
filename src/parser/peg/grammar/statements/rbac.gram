@@ -97,7 +97,8 @@ OptionBool <- 'TRUE' / 'FALSE'
 
 RoleOrUser <- 'ROLE' / 'USER'
 # Object class for GRANT/REVOKE ... ON <type> name. Absent defaults to TABLE.
-GrantObjType <- 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN'
+GrantObjType <- ForeignServerObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN'
+ForeignServerObjType <- 'FOREIGN' 'SERVER'
 # PUBLIC is the pseudo-role; otherwise a normal role identifier.
 Grantee <- 'PUBLIC' / ColId
 

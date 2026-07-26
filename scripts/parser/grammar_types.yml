@@ -81,6 +81,8 @@ SQLStatement:
     - AlterPolicyStatement
     - DropPolicyStatement
     - AlterTableRowSecurityStatement
+    - CreateServerStatement
+    - DropServerStatement
     - CallStatement
     - CheckpointStatement
     - CommentStatement
@@ -2065,6 +2067,8 @@ excluded_rules:
   - AllPrivileges
   - Privilege
   - PrivilegeColumns
+  - ServerOptions
+  - ServerOption
   - Program
   - TopLevelStatement
   - Statement
