@@ -455,6 +455,8 @@ public:
 	void RegisterCreateSubscription();
 	void RegisterNotify();
 	void RegisterCreateTextSearchDictionary();
+	void RegisterRbac();
+	void RegisterForeignServer();
 	void RegisterPivot();
 	void RegisterCreateMacro();
 	void RegisterDrop();
@@ -503,6 +505,31 @@ public:
 	                                                                     ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformDropTSDictionaryStatement(PEGTransformer &transformer,
 	                                                                   ParseResult &parse_result);
+	// rbac.gram
+	static unique_ptr<SQLStatement> TransformCreateRoleStatement(PEGTransformer &transformer,
+	                                                             ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformDropRoleStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterRoleStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterOwnerStatement(PEGTransformer &transformer,
+	                                                             ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterDefaultPrivilegesStatement(PEGTransformer &transformer,
+	                                                                         ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformGrantStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformRevokeStatement(PEGTransformer &transformer, ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformCreatePolicyStatement(PEGTransformer &transformer,
+	                                                               ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterPolicyStatement(PEGTransformer &transformer,
+	                                                              ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformDropPolicyStatement(PEGTransformer &transformer,
+	                                                             ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterTableRowSecurityStatement(PEGTransformer &transformer,
+	                                                                        ParseResult &parse_result);
+	// create_server.gram — CREATE/DROP SERVER walk an OPTIONS Parens(List(...)) body that the
+	// generator cannot auto-extract; hand-write the entry points.
+	static unique_ptr<SQLStatement> TransformCreateServerStatement(PEGTransformer &transformer,
+	                                                               ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformDropServerStatement(PEGTransformer &transformer,
+	                                                             ParseResult &parse_result);
 	// comment.gram
 	static Value TransformCommentValue(PEGTransformer &transformer, ParseResult &parse_result);
 

@@ -7,6 +7,8 @@ Statement <-
 	DropDatabaseStatement /
 	CreateTSDictionaryStatement /
 	DropTSDictionaryStatement /
+	CreateServerStatement /
+	DropServerStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
 	CreatePolicyStatement /
