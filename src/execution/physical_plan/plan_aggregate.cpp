@@ -331,9 +331,9 @@ PhysicalOperator &PhysicalPlanGenerator::ExtractAggregateExpressions(PhysicalOpe
 		const idx_t slot = add_slot(group);
 		group = make_uniq<BoundReferenceExpression>(types[slot], slot);
 	}
-	auto extract = [&](unique_ptr<Expression> &expr, bool dedupe) {
+	auto extract = [&](unique_ptr<Expression> &expr) {
 		idx_t slot = expressions.size();
-		if (dedupe && !expr->IsVolatile()) {
+		if (!expr->IsVolatile()) {
 			auto entry = dedupe_slots.find(*expr);
 			if (entry != dedupe_slots.end()) {
 				slot = entry->second;
@@ -346,18 +346,11 @@ PhysicalOperator &PhysicalPlanGenerator::ExtractAggregateExpressions(PhysicalOpe
 	};
 	for (auto &aggr : aggregates) {
 		auto &bound_aggr = aggr->Cast<BoundAggregateExpression>();
-		// Workaround, not a semantic constraint: deduping distinct inputs is correct
-		// in principle, but a shared slot gives two distinct aggregates equal child
-		// indices, so the distinct collection merges them onto one radix table. That
-		// shared-table path is broken (it drains the table for the second reader and
-		// sizes per-table state for a single aggregate), so skip distinct until it is
-		// fixed.
-		const bool dedupe = !bound_aggr.IsDistinct();
 		for (auto &child_expr : bound_aggr.GetChildrenMutable()) {
-			extract(child_expr, dedupe);
+			extract(child_expr);
 		}
 		if (bound_aggr.GetFilter()) {
-			extract(bound_aggr.GetFilterMutable(), dedupe);
+			extract(bound_aggr.GetFilterMutable());
 		}
 	}
 	if (expressions.empty()) {
