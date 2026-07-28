@@ -17,7 +17,7 @@
 // You can contact the authors via the FSST source repository : https://github.com/cwida/fsst
 #include "libfsst.hpp"
 #include "duckdb/common/unique_ptr.hpp"
-#include "duckdb/common/unordered_set.hpp"
+#include <absl/container/flat_hash_set.h>
 
 namespace libfsst {
 Symbol concat(Symbol a, Symbol b) {
@@ -30,28 +30,6 @@ Symbol concat(Symbol a, Symbol b) {
 }
 }  // namespace libfsst
 
-namespace std {
-template <>
-class hash<libfsst::QSymbol> {
-	public:
-	size_t operator()(const libfsst::QSymbol& q) const {
-		uint64_t k = q.symbol.load_num();
-		const uint64_t m = 0xc6a4a7935bd1e995;
-		const int r = 47;
-		uint64_t h = 0x8445d61a4e774912 ^ (8*m);
-		k *= m;
-		k ^= k >> r;
-		k *= m;
-		h ^= k;
-		h *= m;
-		h ^= h >> r;
-		h *= m;
-		h ^= h >> r;
-		return h;
-	}
-};
-}
-
 namespace libfsst {
 bool isEscapeCode(u16 pos) { return pos < FSST_CODE_BASE; }
 
@@ -62,7 +40,7 @@ std::ostream& operator<<(std::ostream& out, const Symbol& s) {
 }
 
 SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, const size_t len[], bool zeroTerminated=false) {
-	SymbolTable *st = new SymbolTable(), *bestTable = new SymbolTable();
+	SymbolTable *st = new SymbolTable();
 	int bestGain = (int) -FSST_SAMPLEMAXSZ; // worst case (everything exception)
 	size_t sampleFrac = 128;
 
@@ -162,23 +140,21 @@ SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, c
 
 	auto makeTable = [&](SymbolTable *st, Counters &counters) {
 		// hashmap of c (needed because we can generate duplicate candidates)
-		duckdb::unordered_set<QSymbol> cands;
+		absl::flat_hash_set<QSymbol> cands;
 
 		// artificially make terminater the most frequent symbol so it gets included
 		u16 terminator = st->nSymbols?FSST_CODE_BASE:st->terminator;
 		counters.count1Set(terminator,65535);
 
-		auto addOrInc = [&](duckdb::unordered_set<QSymbol> &cands, Symbol s, u64 count) {
+		auto addOrInc = [&](absl::flat_hash_set<QSymbol> &cands, Symbol s, u64 count) {
 			if (count < (5*sampleFrac)/128) return; // improves both compression speed (less candidates), but also quality!!
 			QSymbol q;
 			q.symbol = s;
 			q.gain = count * s.length();
-			auto it = cands.find(q);
-			if (it != cands.end()) {
-				q.gain += (*it).gain;
-				cands.erase(*it);
+			auto it = cands.insert(q);
+			if (!it.second) {
+				it.first->gain += q.gain;
 			}
-			cands.insert(q);
 		};
 
 		// add candidate symbols based on counted frequency
@@ -209,10 +185,13 @@ SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, c
 		}
 
 		// insert candidates into priority queue (by gain)
-		auto cmpGn = [](const QSymbol& q1, const QSymbol& q2) { return (q1.gain < q2.gain) || (q1.gain == q2.gain && q1.symbol.load_num() > q2.symbol.load_num()); };
-		std::priority_queue<QSymbol,std::vector<QSymbol>,decltype(cmpGn)> pq(cmpGn);
-		for (auto& q : cands)
-			pq.push(q);
+		auto cmpGn = [](const QSymbol& q1, const QSymbol& q2) {
+			if (q1.gain != q2.gain) return q1.gain < q2.gain;
+			if (q1.symbol.load_num() != q2.symbol.load_num()) return q1.symbol.load_num() > q2.symbol.load_num();
+			return q1.symbol.length() < q2.symbol.length();
+		};
+		std::priority_queue<QSymbol,std::vector<QSymbol>,decltype(cmpGn)> pq(
+		    cmpGn, std::vector<QSymbol>(cands.begin(), cands.end()));
 
 		// Create new symbol map using best candidates
 		st->clear();
@@ -224,21 +203,34 @@ SymbolTable *buildSymbolTable(Counters& counters, std::vector<const u8*> line, c
 	};
 
 	u8 bestCounters[512*sizeof(u16)];
+	Symbol bestSymbols[FSST_CODE_MAX-FSST_CODE_BASE];
+	u16 bestNSymbols = 0;
 #ifdef NONOPT_FSST
 	for(size_t frac : {127, 127, 127, 127, 127, 127, 127, 127, 127, 128}) {
 		sampleFrac = frac;
 #else
 	for(sampleFrac=8; true; sampleFrac += 30) {
 #endif
-		memset(&counters, 0, sizeof(Counters));
+		if (sampleFrac < 128) {
+			memset(&counters, 0, sizeof(Counters));
+		} else {
+			counters.clear1();
+		}
 		long gain = compressCount(st, counters);
 		if (gain >= bestGain) { // a new best solution!
 			counters.backup1(bestCounters);
-			*bestTable = *st; bestGain = gain;
+			bestNSymbols = st->nSymbols;
+			memcpy(bestSymbols, st->symbols+FSST_CODE_BASE, bestNSymbols*sizeof(Symbol));
+			bestGain = gain;
 		}
 		if (sampleFrac >= 128) break; // we do 5 rounds (sampleFrac=8,38,68,98,128)
 		makeTable(st, counters);
 	}
+	SymbolTable *bestTable = new SymbolTable();
+	bestTable->zeroTerminated = st->zeroTerminated;
+	bestTable->terminator = st->terminator;
+	bestTable->nSymbols = bestNSymbols;
+	memcpy(bestTable->symbols+FSST_CODE_BASE, bestSymbols, bestNSymbols*sizeof(Symbol));
 	delete st;
 	counters.restore1(bestCounters);
 	makeTable(bestTable, counters);
@@ -252,7 +244,7 @@ static inline size_t compressBulk(SymbolTable &symbolTable, size_t nlines, size_
 	size_t curLine, suffixLim = symbolTable.suffixLim;
 	u8 byteLim = symbolTable.nSymbols + symbolTable.zeroTerminated - symbolTable.lenHisto[0];
 
-	u8 buf[512+8] = {}; /* +8 sentinel is to avoid 8-byte unaligned-loads going beyond 511 out-of-bounds */
+	u8 buf[512+8]; /* +8 sentinel is to avoid 8-byte unaligned-loads going beyond 511 out-of-bounds */
 
 	// three variants are possible. dead code falls away since the bool arguments are constants
 	auto compressVariant = [&](bool noSuffixOpt, bool avoidBranch) {
@@ -303,6 +295,7 @@ static inline size_t compressBulk(SymbolTable &symbolTable, size_t nlines, size_
 			}
 			// copy the string to the 511-byte buffer
 			memcpy(buf, cur, chunk);
+			memset(buf+chunk, 0, 8);
 			buf[chunk] = (u8) symbolTable.terminator;
 			cur = buf;
 			end = cur + chunk;
@@ -496,7 +489,7 @@ using namespace libfsst;
 // the main compression function (everything automatic)
 extern "C" size_t duckdb_fsst_compress(duckdb_fsst_encoder_t *encoder, size_t nlines, size_t lenIn[], u8 *strIn[], size_t size, u8 *output, size_t *lenOut, u8 *strOut[]) {
 	// to be faster than scalar, simd needs 64 lines or more of length >=12; or fewer lines, but big ones (totLen > 32KB)
-	size_t totLen = std::accumulate(lenIn, lenIn+nlines, 0);
+	size_t totLen = std::accumulate(lenIn, lenIn+nlines, (size_t) 0);
 	int simd = totLen > nlines*12 && (nlines > 64 || totLen > (size_t) 1<<15);
 	return _compressAuto((Encoder*) encoder, nlines, lenIn, strIn, size, output, lenOut, strOut, 3*simd);
 }
