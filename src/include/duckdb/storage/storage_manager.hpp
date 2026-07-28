@@ -126,9 +126,6 @@ public:
 	void SetStorageVersion(const StorageVersion &version) {
 		storage_version = version;
 	}
-	StorageVersion GetLatestStorageVersion() const {
-		return StorageVersion::LATEST;
-	}
 	StorageVersion GetStorageVersion() const {
 		D_ASSERT(HasStorageVersion());
 		return storage_version;

@@ -495,7 +495,7 @@ void DataChunk::VerifyInternal(DebugVerificationMode mode, optional_ptr<Database
 		// ensure that all valid in-memory states can be verified.
 
 		SerializationOptions options;
-		options.storage_compatibility = StorageCompatibility::Latest();
+		options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 
 		if (db) {
 			DBConfig &config = DBConfig::GetConfig(*db);

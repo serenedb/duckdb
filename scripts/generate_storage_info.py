@@ -14,19 +14,67 @@ def to_enum_name(version_name):
     return version_name.upper().replace('.', '_')
 
 
+# A StorageVersion is <duckdb version number> * 2^32 + <serenedb sequence>, so a plain
+# duckdb version has a zero low half and a serenedb version carries the duckdb base it
+# was built on. That keeps every ordinary `>=` comparison correct without rewriting it:
+# a serenedb version compares above every duckdb version up to its base and below the
+# next one, which a flat number could not express. The on-disk form drops the shift when
+# the low half is zero, so duckdb files keep duckdb's numbers.
+#
+# In version_map.json duckdb versions keep their real numbers and a serenedb entry holds
+# just its sequence; the shifting happens here. A serenedb entry is built on the duckdb
+# version listed above it, so entries interleave in the order they were added:
+#     "v2.0.0": 69, "serenedb_v1": 1, "serenedb_v2": 2, "v2.1.0": 70, "serenedb_v3": 3
+# Appending never disturbs an earlier entry's value, which matters because those values are
+# on disk -- re-basing serenedb_v1 on a duckdb bump would leave every existing datadir
+# holding a number that no longer matches any enumerator.
+STORAGE_VERSION_SHIFT = 32
+
+
+def is_serenedb_version(version_name):
+    return version_name.startswith('serenedb')
+
+
+# "the latest version" is two different things, so the enum names both: DUCKDB_LATEST is
+# what the "latest" string resolves to (a database duckdb can still read), while
+# SERENEDB_LATEST is what our own writers target. Anything meaning "through the newest
+# version we support" must name SERENEDB_LATEST.
+def shifted_value(duckdb_version):
+    return f"{duckdb_version}ULL << {STORAGE_VERSION_SHIFT}"
+
+
 def generate_storage_enum(storage_versions):
     result = []
     result.append("enum class StorageVersion : uint64_t {")
-    current = ""
-    for version_name, storage_version in storage_versions.items():
+    # The first enumerator to reach a duckdb version number spells the shift out; every later one
+    # with the same number aliases it, and a serenedb version names the base it is built on. So each
+    # value appears once and the relationships are visible rather than arithmetic to redo by hand.
+    first_with_version = {}
+    duckdb_base = ""
+    duckdb_latest = ""
+    duckdb_latest_at = 1
+    serenedb_latest = ""
+    # json order, so every enumerator is greater than the one before it, and each "latest"
+    # sits right after the newest member of its family and reads as what it points at
+    for version_name, number in storage_versions.items():
         if version_name == 'latest':
             continue
-        result.append(f"    {to_enum_name(version_name)} = {storage_version},")
-        current = storage_version
-
-    latest = "LATEST"
-    result.append(f"    {to_enum_name(latest)} = {current},")
-    result.append("    DEPRECATED = 999,")
+        if is_serenedb_version(version_name):
+            serenedb_latest = to_enum_name(version_name)
+            result.append(f"    {serenedb_latest} = {duckdb_base} + {number},")
+            continue
+        duckdb_latest = to_enum_name(version_name)
+        if number not in first_with_version:
+            first_with_version[number] = duckdb_latest
+            value = shifted_value(number)
+        else:
+            value = first_with_version[number]
+        duckdb_base = first_with_version[number]
+        result.append(f"    {duckdb_latest} = {value},")
+        duckdb_latest_at = len(result)
+    result.insert(duckdb_latest_at, f"    DUCKDB_LATEST = {duckdb_latest},")
+    result.append(f"    SERENEDB_LATEST = {serenedb_latest or 'DUCKDB_LATEST'},")
+    result.append(f"    DEPRECATED = {shifted_value(999)},")
     result.append("    INVALID = 0")
     result.append("};")
     return "\n".join(result)
@@ -53,15 +101,16 @@ def generate_storage_array(storage_versions):
     result = []
     result.append("static const StorageVersionInfo storage_version_info[] = {")
 
-    current = ""
+    # json order, with each "latest" after the newest member of its family, matching the enum
+    latest_at = 1
     for version_name, _ in storage_versions.items():
         if version_name == 'latest':
             continue
         result.append(f'\t{{"{version_name}", StorageVersion::{to_enum_name(version_name)}}},')
-        current = version_name
-
-    latest = "latest"
-    result.append(f'\t{{"{latest}", StorageVersion::{to_enum_name(current)}}},')
+        if not is_serenedb_version(version_name):
+            latest_at = len(result)
+    result.insert(latest_at, '\t{"latest", StorageVersion::DUCKDB_LATEST},')
+    result.append('\t{"serenedb_latest", StorageVersion::SERENEDB_LATEST},')
     result.append("\t{nullptr, StorageVersion::INVALID}")
     result.append("};")
     return "\n".join(result)

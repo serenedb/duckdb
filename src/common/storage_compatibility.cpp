@@ -27,7 +27,7 @@ StorageCompatibility StorageCompatibility::FromString(const string &input) {
 	auto storage_version = GetStorageVersion(input.c_str());
 	if (storage_version == StorageVersion::INVALID) {
 		auto candidates = GetStorageCandidates();
-		throw InvalidInputException("The version string '%s' is not a known DuckDB version, valid options are: %s",
+		throw InvalidInputException("The version string '%s' is not a known storage version, valid options are: %s",
 		                            input, StringUtil::Join(candidates, ", "));
 	}
 	StorageCompatibility result;
@@ -37,15 +37,15 @@ StorageCompatibility StorageCompatibility::FromString(const string &input) {
 	return result;
 }
 
-const StorageCompatibility &StorageCompatibility::Default() {
+const StorageCompatibility &StorageCompatibility::DuckDBDefault() {
 #ifdef DUCKDB_ALTERNATIVE_VERIFY
-	return Latest();
+	return DuckDBLatest();
 #else
 #ifdef DUCKDB_LATEST_STORAGE
-	return Latest();
+	return DuckDBLatest();
 #else
 	static const StorageCompatibility default_compatibility = [] {
-		auto res = FromIndex(StorageVersion::V0_10_2);
+		auto res = FromIndex(DUCKDB_VERSION_DEFAULT);
 		res.duckdb_version = "latest";
 		res.manually_set = false;
 		return res;
@@ -55,9 +55,18 @@ const StorageCompatibility &StorageCompatibility::Default() {
 #endif
 }
 
-const StorageCompatibility &StorageCompatibility::Latest() {
+const StorageCompatibility &StorageCompatibility::DuckDBLatest() {
 	static const StorageCompatibility latest_compatibility = [] {
 		auto res = FromString("latest");
+		res.manually_set = false;
+		return res;
+	}();
+	return latest_compatibility;
+}
+
+const StorageCompatibility &StorageCompatibility::SereneDBLatest() {
+	static const StorageCompatibility latest_compatibility = [] {
+		auto res = FromString("serenedb_latest");
 		res.manually_set = false;
 		return res;
 	}();

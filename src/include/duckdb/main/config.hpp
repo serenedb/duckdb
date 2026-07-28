@@ -104,7 +104,7 @@ struct DBConfigOptions {
 	//! Run a checkpoint on successful shutdown and delete the WAL, to leave only a single database file behind
 	bool checkpoint_on_shutdown = true;
 	//! Serialize the metadata on checkpoint with compatibility for a given DuckDB version.
-	StorageCompatibility storage_compatibility = StorageCompatibility::Default();
+	StorageCompatibility storage_compatibility = StorageCompatibility::DuckDBDefault();
 	//! Initialize the database with the standard set of DuckDB functions
 	//! You should probably not touch this unless you know what you are doing
 	bool initialize_default_database = true;
