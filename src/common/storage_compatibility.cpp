@@ -37,15 +37,15 @@ StorageCompatibility StorageCompatibility::FromString(const string &input) {
 	return result;
 }
 
-const StorageCompatibility &StorageCompatibility::Default() {
+const StorageCompatibility &StorageCompatibility::DuckDBDefault() {
 #ifdef DUCKDB_ALTERNATIVE_VERIFY
-	return Latest();
+	return DuckDBLatest();
 #else
 #ifdef DUCKDB_LATEST_STORAGE
-	return Latest();
+	return DuckDBLatest();
 #else
 	static const StorageCompatibility default_compatibility = [] {
-		auto res = FromIndex(StorageVersion::V0_10_2);
+		auto res = FromIndex(StorageVersionInfo::GetStorageVersionDefault());
 		res.duckdb_version = "latest";
 		res.manually_set = false;
 		return res;
@@ -55,9 +55,18 @@ const StorageCompatibility &StorageCompatibility::Default() {
 #endif
 }
 
-const StorageCompatibility &StorageCompatibility::Latest() {
+const StorageCompatibility &StorageCompatibility::DuckDBLatest() {
 	static const StorageCompatibility latest_compatibility = [] {
 		auto res = FromString("latest");
+		res.manually_set = false;
+		return res;
+	}();
+	return latest_compatibility;
+}
+
+const StorageCompatibility &StorageCompatibility::SereneDBLatest() {
+	static const StorageCompatibility latest_compatibility = [] {
+		auto res = FromString("serenedb_latest");
 		res.manually_set = false;
 		return res;
 	}();

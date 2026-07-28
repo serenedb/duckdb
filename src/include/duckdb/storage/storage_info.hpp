@@ -77,72 +77,74 @@ struct Storage {
 // clang-format off
 // START OF ENUM VERSION INFO
 enum class StorageVersion : uint64_t {
-    V0_0_4 = 1,
-    V0_1_0 = 1,
-    V0_1_1 = 1,
-    V0_1_2 = 1,
-    V0_1_3 = 1,
-    V0_1_4 = 1,
-    V0_1_5 = 1,
-    V0_1_6 = 1,
-    V0_1_7 = 1,
-    V0_1_8 = 1,
-    V0_1_9 = 1,
-    V0_2_0 = 1,
-    V0_2_1 = 1,
-    V0_2_2 = 4,
-    V0_2_3 = 6,
-    V0_2_4 = 11,
-    V0_2_5 = 13,
-    V0_2_6 = 15,
-    V0_2_7 = 17,
-    V0_2_8 = 18,
-    V0_2_9 = 21,
-    V0_3_0 = 25,
-    V0_3_1 = 27,
-    V0_3_2 = 31,
-    V0_3_3 = 33,
-    V0_3_4 = 33,
-    V0_3_5 = 33,
-    V0_4_0 = 33,
-    V0_5_0 = 38,
-    V0_5_1 = 38,
-    V0_6_0 = 39,
-    V0_6_1 = 39,
-    V0_7_0 = 43,
-    V0_7_1 = 43,
-    V0_8_0 = 51,
-    V0_8_1 = 51,
-    V0_9_0 = 64,
-    V0_9_1 = 64,
-    V0_9_2 = 64,
-    V0_10_0 = 64,
-    V0_10_1 = 64,
-    V0_10_2 = 64,
-    V0_10_3 = 64,
-    V1_0_0 = 64,
-    V1_1_0 = 64,
-    V1_1_1 = 64,
-    V1_1_2 = 64,
-    V1_1_3 = 64,
-    V1_2_0 = 65,
-    V1_2_1 = 65,
-    V1_2_2 = 65,
-    V1_3_0 = 66,
-    V1_3_1 = 66,
-    V1_3_2 = 66,
-    V1_4_0 = 67,
-    V1_4_1 = 67,
-    V1_4_2 = 67,
-    V1_4_3 = 67,
-    V1_4_4 = 67,
-    V1_5_0 = 68,
-    V1_5_1 = 68,
-    V1_5_2 = 68,
-    V1_5_3 = 68,
-    V2_0_0 = 69,
-    LATEST = 69,
-    DEPRECATED = 999,
+    V0_0_4 = 1ULL << 32,
+    V0_1_0 = V0_0_4,
+    V0_1_1 = V0_0_4,
+    V0_1_2 = V0_0_4,
+    V0_1_3 = V0_0_4,
+    V0_1_4 = V0_0_4,
+    V0_1_5 = V0_0_4,
+    V0_1_6 = V0_0_4,
+    V0_1_7 = V0_0_4,
+    V0_1_8 = V0_0_4,
+    V0_1_9 = V0_0_4,
+    V0_2_0 = V0_0_4,
+    V0_2_1 = V0_0_4,
+    V0_2_2 = 4ULL << 32,
+    V0_2_3 = 6ULL << 32,
+    V0_2_4 = 11ULL << 32,
+    V0_2_5 = 13ULL << 32,
+    V0_2_6 = 15ULL << 32,
+    V0_2_7 = 17ULL << 32,
+    V0_2_8 = 18ULL << 32,
+    V0_2_9 = 21ULL << 32,
+    V0_3_0 = 25ULL << 32,
+    V0_3_1 = 27ULL << 32,
+    V0_3_2 = 31ULL << 32,
+    V0_3_3 = 33ULL << 32,
+    V0_3_4 = V0_3_3,
+    V0_3_5 = V0_3_3,
+    V0_4_0 = V0_3_3,
+    V0_5_0 = 38ULL << 32,
+    V0_5_1 = V0_5_0,
+    V0_6_0 = 39ULL << 32,
+    V0_6_1 = V0_6_0,
+    V0_7_0 = 43ULL << 32,
+    V0_7_1 = V0_7_0,
+    V0_8_0 = 51ULL << 32,
+    V0_8_1 = V0_8_0,
+    V0_9_0 = 64ULL << 32,
+    V0_9_1 = V0_9_0,
+    V0_9_2 = V0_9_0,
+    V0_10_0 = V0_9_0,
+    V0_10_1 = V0_9_0,
+    V0_10_2 = V0_9_0,
+    V0_10_3 = V0_9_0,
+    V1_0_0 = V0_9_0,
+    V1_1_0 = V0_9_0,
+    V1_1_1 = V0_9_0,
+    V1_1_2 = V0_9_0,
+    V1_1_3 = V0_9_0,
+    V1_2_0 = 65ULL << 32,
+    V1_2_1 = V1_2_0,
+    V1_2_2 = V1_2_0,
+    V1_3_0 = 66ULL << 32,
+    V1_3_1 = V1_3_0,
+    V1_3_2 = V1_3_0,
+    V1_4_0 = 67ULL << 32,
+    V1_4_1 = V1_4_0,
+    V1_4_2 = V1_4_0,
+    V1_4_3 = V1_4_0,
+    V1_4_4 = V1_4_0,
+    V1_5_0 = 68ULL << 32,
+    V1_5_1 = V1_5_0,
+    V1_5_2 = V1_5_0,
+    V1_5_3 = V1_5_0,
+    V2_0_0 = 69ULL << 32,
+    DUCKDB_LATEST = V2_0_0,
+    SERENEDB_V1 = V2_0_0 + 1,
+    SERENEDB_LATEST = SERENEDB_V1,
+    DEPRECATED = 999ULL << 32,
     INVALID = 0
 };
 // END OF ENUM VERSION INFO
@@ -182,7 +184,7 @@ enum class SerializationVersionDeprecated : uint64_t {
 
 struct StorageVersionInfo {
 	// When the default storage version has to be updated, do it here
-	static constexpr StorageVersion DEFAULT_STORAGE_VERSION_INFO = StorageVersion::V0_10_2;
+	static constexpr StorageVersion DEFAULT_STORAGE_VERSION_INFO = StorageVersion::V2_0_0;
 
 	const char *version_name;
 	StorageVersion storage_version;
@@ -219,10 +221,51 @@ struct SerializationVersionInfo {
 	};
 };
 
-//! The version number default, lower and upper bounds of the database storage format
-extern const uint64_t VERSION_NUMBER;
-extern const uint64_t VERSION_NUMBER_LOWER;
-extern const uint64_t VERSION_NUMBER_UPPER;
+//! A StorageVersion is <duckdb version number> * 2^32 + <serenedb sequence>: a plain duckdb version
+//! has a zero low half, a serenedb version carries the duckdb base it was built on. Ordinary `<` and
+//! `>=` on the whole value are therefore still correct -- a serenedb version sorts above every duckdb
+//! version up to its base and below the next one -- which is why the 49 ShouldSerialize gates and the
+//! TargetAtLeastVersion/IsPriorToVersion helpers need no range logic.
+static constexpr uint64_t STORAGE_VERSION_SHIFT = 32;
+static constexpr uint64_t STORAGE_VERSION_SEQUENCE_MASK = (1ULL << STORAGE_VERSION_SHIFT) - 1;
+
+//! The duckdb version this version is built on.
+constexpr uint64_t DuckdbVersionNumber(StorageVersion version) {
+	return static_cast<uint64_t>(version) >> STORAGE_VERSION_SHIFT;
+}
+//! The serenedb sequence within that duckdb base; 0 for a plain duckdb version.
+constexpr uint64_t SerenedbVersionNumber(StorageVersion version) {
+	return static_cast<uint64_t>(version) & STORAGE_VERSION_SEQUENCE_MASK;
+}
+constexpr bool IsSerenedbStorageVersion(StorageVersion version) {
+	return SerenedbVersionNumber(version) != 0;
+}
+//! The first version of the duckdb release after this one. Names a bound no existing version can
+//! reach, which is how a not-yet-implemented feature says "never available".
+constexpr StorageVersion NextDuckdbStorageVersion(StorageVersion version) {
+	return static_cast<StorageVersion>((DuckdbVersionNumber(version) + 1) << STORAGE_VERSION_SHIFT);
+}
+
+//! On disk the shift is dropped whenever the low half is zero, so a duckdb database still stores
+//! duckdb's own number and stays readable by duckdb; only a serenedb version stores the full value,
+//! which duckdb rejects as out of range.
+constexpr uint64_t StorageVersionToDisk(StorageVersion version) {
+	return IsSerenedbStorageVersion(version) ? static_cast<uint64_t>(version) : DuckdbVersionNumber(version);
+}
+constexpr StorageVersion StorageVersionFromDisk(uint64_t on_disk) {
+	return static_cast<StorageVersion>(on_disk <= STORAGE_VERSION_SEQUENCE_MASK ? on_disk << STORAGE_VERSION_SHIFT
+	                                                                            : on_disk);
+}
+
+//! The version number default, lower and upper bounds of the database storage format. These are
+//! duckdb version numbers (the high half), not whole StorageVersion values.
+extern const uint64_t DUCKDB_VERSION_NUMBER_DEFAULT;
+extern const uint64_t DUCKDB_VERSION_NUMBER_LOWER;
+extern const uint64_t DUCKDB_VERSION_NUMBER_UPPER;
+//! Highest serenedb sequence this build knows (the low half).
+extern const uint64_t SERENEDB_VERSION_NUMBER_UPPER;
+//! Whether both halves of a version are within what this build can read
+bool IsReadableStorageVersion(StorageVersion version);
 string GetDuckDBVersions(const StorageVersion version_number);
 string GetStorageVersionNameInternal(const idx_t storage_version);
 string GetStorageVersionName(const StorageVersion storage_version, const bool add_suffix);
@@ -385,8 +428,10 @@ struct DatabaseHeader {
 
 	void Write(WriteStream &ser);
 	static DatabaseHeader Read(const MainHeader &header, ReadStream &source);
+	//! `read_version` is the raw database header field: a storage version from v2.0.0 onwards,
+	//! a deprecated serialization version before that
 	static void SetStorageVersionInDatabaseHeader(DatabaseHeader &header, StorageVersion main_version,
-	                                              StorageVersion read_version);
+	                                              idx_t read_version);
 };
 
 //! Detect mismatching constant values when compiling

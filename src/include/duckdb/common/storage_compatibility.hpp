@@ -19,8 +19,15 @@ public:
 	static StorageCompatibility FromDatabase(AttachedDatabase &db);
 	static StorageCompatibility FromIndex(StorageVersion storage_version_p);
 	static StorageCompatibility FromString(const string &input);
-	static const StorageCompatibility &Default();
-	static const StorageCompatibility &Latest();
+	//! The version a database gets when no STORAGE_VERSION was named: duckdb's, so the file stays
+	//! readable by duckdb.
+	static const StorageCompatibility &DuckDBDefault();
+	//! The newest duckdb version. Names a storage format, so it belongs on anything that writes a
+	//! database file duckdb should still be able to open.
+	static const StorageCompatibility &DuckDBLatest();
+	//! The newest version this engine implements. Belongs on in-memory serialization, which has no
+	//! compatibility constraint and should use every capability the engine has.
+	static const StorageCompatibility &SereneDBLatest();
 
 public:
 	bool Compare(StorageVersion property_version) const;

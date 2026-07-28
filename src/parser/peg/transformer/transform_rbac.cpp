@@ -786,8 +786,7 @@ static GrantTargetInfo TransformGrantTarget(PEGTransformer &transformer, ParseRe
 	string objtype = "TABLE";
 	auto &objtype_opt = named.Child<OptionalParseResult>(0);
 	if (objtype_opt.HasResult()) {
-		auto &chosen =
-		    objtype_opt.GetResult().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+		auto &chosen = objtype_opt.GetResult().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 		if (chosen.type == ParseResultType::KEYWORD) {
 			objtype = StringUtil::Upper(chosen.Cast<KeywordParseResult>().keyword);
 		} else {

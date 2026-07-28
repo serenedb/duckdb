@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb/storage/compression/dict_fsst/common.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
 
 namespace duckdb {
 
@@ -31,11 +32,17 @@ public:
 	bool AllowDictionaryScan(idx_t scan_count);
 
 private:
-	string_t FetchStringFromDict(Vector &result, uint32_t dict_offset, idx_t dict_idx);
-	//! Byte offset of `string_number` in the FSST blob. Forward reads extend the running offset (the
-	//! cheap path every sequential/native scan takes); a backward re-seek materializes the full prefix
-	//! sum once (below) and is O(1) thereafter -- no repeated re-walk from the segment start.
+	//! Byte offset of entry `string_number` in dict_ptr. Forward reads extend the running offset (the cheap path
+	//! every sequential scan takes); a backward re-seek materializes the full prefix sum once and is O(1) thereafter.
 	uint32_t DecompressOffset(idx_t string_number);
+
+	//! Reconstruct one entry from its parts: an optional shared prefix (when pid < prefix_count) followed by `len`
+	//! encoded bytes at `src`. Covers every mode -- raw (DICTIONARY, decoder == nullptr), whole-string FSST (native),
+	//! and prefix + suffix (plus) -- and decodes straight into an inline string_t when the whole segment inlines.
+	string_t ReconstructEntry(ArenaAllocator &allocator, uint32_t pid, uint32_t len, const char *src);
+	//! Reconstruct entry `entry_index` on demand, sourcing its parts from the full metadata arrays + DecompressOffset
+	//! (the counterpart to the streamed materialize loop, which sources the same parts sequentially).
+	string_t FetchEntry(ArenaAllocator &allocator, idx_t entry_index);
 
 public:
 	ColumnSegment &segment;
@@ -43,32 +50,54 @@ public:
 	optional_ptr<BufferHandle> handle;
 
 	DictFSSTMode mode;
-	idx_t dictionary_size;
 	uint32_t dict_count;
 	bitpacking_width_t dictionary_indices_width;
-	bitpacking_width_t string_lengths_width;
 
 	buffer_ptr<SelectionVector> sel_vec;
 	idx_t sel_vec_size = 0;
 
-	// decompress offset/position - used for scanning without a dictionary
+	//===------------------------------------------------------------------===//
+	// The generic entry model, shared by every mode.
+	//
+	// An entry is decoded from `dict_ptr + DecompressOffset(i)` for `entry_lengths[i]` encoded bytes, then
+	// (optionally) prefixed by a shared prefix. Native modes (DICTIONARY / DICT_FSST / FSST_ONLY) store whole
+	// strings, so they have no prefix indirection (prefix_count == 0); the plus modes cleave each entry into a
+	// shared prefix + suffix, and the "entry bytes" are the suffixes. Nothing below is mode-specific except the
+	// prefix pool, which is simply empty when prefix_count == 0.
+	//===------------------------------------------------------------------===//
+
+	//! Byte offset cursor into dict_ptr: a forward running sum of entry_lengths, promoted to a full prefix sum
+	//! (decompress_offsets, null until then) on the first backward re-seek so random access is O(1) thereafter.
 	uint32_t decompress_offset = 0;
 	idx_t decompress_position = 0;
-	// Prefix sum of string_lengths, materialized lazily on the first backward re-seek (empty until then,
-	// so forward-only scans never pay for it). Once built, DecompressOffset is O(1) random access.
-	vector<uint32_t> decompress_offsets;
+	unsafe_unique_array<uint32_t> decompress_offsets;
 
-	vector<uint32_t> string_lengths;
+	//! Per-entry encoded byte length, dict_count values with index 0 the null slot (every mode, native and plus).
+	//! Fully overwritten by UnPackBuffer, so allocated uninitialized -- a zero-initializing resize would just dirty
+	//! cold cache lines per segment that the unpack immediately clobbers.
+	unsafe_unique_array<uint32_t> entry_lengths;
 
-	//! Start of the block (pointing to the dictionary_header)
+	//! Start of the block (dictionary_header), the encoded entry byte source, and the row->entry selection buffer.
 	data_ptr_t baseptr;
 	data_ptr_t dict_ptr;
 	data_ptr_t dictionary_indices_ptr;
-	data_ptr_t string_lengths_ptr;
 
 	buffer_ptr<DictionaryEntry> dictionary;
 	void *decoder = nullptr;
 	bool all_values_inlined = false;
+
+	//! Optional shared-prefix indirection (plus modes only; prefix_count == 0 for native). Entry i carries a
+	//! prefix_ids[i]; ids >= prefix_count mean "no prefix". Every distinct prefix is FSST-decoded once at Initialize
+	//! into one contiguous buffer so a per-entry reconstruct is a memcpy + one suffix decode.
+	uint32_t prefix_count = 0;
+	unsafe_unique_array<uint32_t> prefix_ids;
+	unsafe_unique_array<char> prefix_decoded;
+	//! Per-prefix {byte offset into prefix_decoded, decoded length}, one cache line per lookup in the hot reconstruct.
+	struct PrefixSlot {
+		uint32_t off;
+		uint32_t len;
+	};
+	unsafe_unique_array<PrefixSlot> prefix_slots;
 
 	unsafe_unique_array<bool> filter_result;
 	//! How many dictionary entries pass the filter (valid when filter_result is set): 0 makes the

@@ -1269,6 +1269,21 @@ struct ForceCompressionSetting {
 	static void OnSet(SettingCallbackInfo &info, Value &input);
 };
 
+struct ForceDictFsstModeSetting {
+	using RETURN_TYPE = string;
+	static constexpr const char *Name = "force_dict_fsst_mode";
+	static constexpr const char *Description =
+	    "DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage "
+	    "ownership (serenedb-owned -> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto "
+	    "across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); "
+	    "or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr const char *DefaultValue = "DEFAULT";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+	static void OnSet(SettingCallbackInfo &info, Value &input);
+};
+
 struct ForceMbedtlsUnsafeSetting {
 	using RETURN_TYPE = bool;
 	static constexpr const char *Name = "force_mbedtls_unsafe";

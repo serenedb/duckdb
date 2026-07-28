@@ -56,6 +56,11 @@ optional_ptr<AttachedDatabase> DatabaseManager::GetDatabase(ClientContext &conte
 		// we do! return it
 		return database;
 	}
+	return LookupDatabase(context, name, meta_transaction).get();
+}
+
+shared_ptr<AttachedDatabase> DatabaseManager::LookupDatabase(ClientContext &context, const Identifier &name,
+                                                             optional_ptr<MetaTransaction> meta_transaction) {
 	lock_guard<mutex> guard(databases_lock);
 	shared_ptr<AttachedDatabase> db;
 	if (name == TEMP_CATALOG) {
@@ -63,10 +68,10 @@ optional_ptr<AttachedDatabase> DatabaseManager::GetDatabase(ClientContext &conte
 	} else {
 		db = GetDatabaseInternal(guard, name);
 	}
-	if (!db) {
-		return nullptr;
+	if (db && meta_transaction) {
+		meta_transaction->UseDatabase(db);
 	}
-	return meta_transaction.UseDatabase(db);
+	return db;
 }
 
 shared_ptr<AttachedDatabase> DatabaseManager::GetDatabase(const Identifier &name) {
@@ -429,7 +434,7 @@ Identifier DatabaseManager::GetDefaultDatabase(ClientContext &context) {
 
 // LCOV_EXCL_START
 void DatabaseManager::SetDefaultDatabase(ClientContext &context, const string &new_value) {
-	auto db_entry = GetDatabase(context, Identifier(new_value));
+	auto db_entry = LookupDatabase(context, Identifier(new_value), nullptr);
 
 	if (!db_entry) {
 		throw InternalException("Database \"%s\" not found", new_value);

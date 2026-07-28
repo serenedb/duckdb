@@ -194,6 +194,8 @@ enum class DestroyBufferUpon : uint8_t;
 
 enum class DialectCompatibilityMode : uint8_t;
 
+enum class DictFSSTMode : uint8_t;
+
 enum class DistinctCountSource : uint8_t;
 
 enum class DistinctType : uint8_t;
@@ -497,8 +499,6 @@ enum class StatsInfo : uint8_t;
 enum class StorageBlockPrefetch : uint8_t;
 
 enum class StorageIndexType : uint8_t;
-
-enum class StorageVersion : uint64_t;
 
 enum class StrTimeSpecifier : uint8_t;
 
@@ -829,6 +829,9 @@ const char* EnumUtil::ToChars<DestroyBufferUpon>(DestroyBufferUpon value);
 
 template<>
 const char* EnumUtil::ToChars<DialectCompatibilityMode>(DialectCompatibilityMode value);
+
+template<>
+const char* EnumUtil::ToChars<DictFSSTMode>(DictFSSTMode value);
 
 template<>
 const char* EnumUtil::ToChars<DistinctCountSource>(DistinctCountSource value);
@@ -1287,9 +1290,6 @@ template<>
 const char* EnumUtil::ToChars<StorageIndexType>(StorageIndexType value);
 
 template<>
-const char* EnumUtil::ToChars<StorageVersion>(StorageVersion value);
-
-template<>
 const char* EnumUtil::ToChars<StrTimeSpecifier>(StrTimeSpecifier value);
 
 template<>
@@ -1661,6 +1661,9 @@ DestroyBufferUpon EnumUtil::FromString<DestroyBufferUpon>(const char *value);
 
 template<>
 DialectCompatibilityMode EnumUtil::FromString<DialectCompatibilityMode>(const char *value);
+
+template<>
+DictFSSTMode EnumUtil::FromString<DictFSSTMode>(const char *value);
 
 template<>
 DistinctCountSource EnumUtil::FromString<DistinctCountSource>(const char *value);
@@ -2117,9 +2120,6 @@ StorageBlockPrefetch EnumUtil::FromString<StorageBlockPrefetch>(const char *valu
 
 template<>
 StorageIndexType EnumUtil::FromString<StorageIndexType>(const char *value);
-
-template<>
-StorageVersion EnumUtil::FromString<StorageVersion>(const char *value);
 
 template<>
 StrTimeSpecifier EnumUtil::FromString<StrTimeSpecifier>(const char *value);

@@ -23,6 +23,7 @@ class CatalogEntryRetriever;
 class CatalogSet;
 class ClientContext;
 class DatabaseInstance;
+class MetaTransaction;
 class TaskScheduler;
 struct AttachOptions;
 struct AlterInfo;
@@ -110,6 +111,8 @@ public:
 	vector<string> GetAttachedDatabasePaths();
 
 	shared_ptr<AttachedDatabase> GetDatabaseInternal(const lock_guard<mutex> &, const Identifier &name);
+	shared_ptr<AttachedDatabase> LookupDatabase(ClientContext &context, const Identifier &name,
+	                                            optional_ptr<MetaTransaction> meta_transaction);
 
 private:
 	optional_ptr<AttachedDatabase> FinalizeAttach(ClientContext &context, AttachInfo &info,

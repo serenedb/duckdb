@@ -134,6 +134,9 @@ struct QSymbol{
    Symbol symbol;
    mutable u32 gain; // mutable because gain value should be ignored in find() on unordered_set of QSymbols
    bool operator==(const QSymbol& other) const { return symbol.val.num == other.symbol.val.num && symbol.length() == other.symbol.length(); }
+   template <typename H> friend H AbslHashValue(H h, const QSymbol& q) {
+      return H::combine(std::move(h), q.symbol.val.num, q.symbol.length());
+   }
 };
 
 // we construct FSST symbol tables using a random sample of about 16KB (1<<14) 
@@ -372,6 +375,10 @@ struct Counters {
    u32 count2GetNext(u32 pos1, u32 &pos2) { 
       return count2[pos1][pos2];
    }
+   //! Clear only the single-symbol counters; the pair counters are untouched (see the clear in buildSymbolTable).
+   void clear1() {
+      memset(count1, 0, sizeof(count1));
+   }
    void backup1(u8 *buf) {
       memcpy(buf, count1, FSST_CODE_MAX*sizeof(u16));
    }
@@ -430,6 +437,12 @@ struct Counters {
       u32 low = count2Low[pos1][pos2];
       if (low) high--; // high is incremented early and low late, so decrement high (unless low==0)
       return (u32) ((high << 8) + low);
+   }
+   //! Clear only the single-symbol counters; the 384KB of pair counters are untouched (see the clear in
+   //! buildSymbolTable).
+   void clear1() {
+      memset(count1High, 0, sizeof(count1High));
+      memset(count1Low, 0, sizeof(count1Low));
    }
    void backup1(u8 *buf) {
       memcpy(buf, count1High, FSST_CODE_MAX);

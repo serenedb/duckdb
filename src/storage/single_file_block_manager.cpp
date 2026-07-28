@@ -179,7 +179,7 @@ void MainHeader::Write(WriteStream &ser) {
 		// from v2.0.0 we write 999, to indicate that the version number is deprecated
 		version_number = static_cast<idx_t>(StorageVersion::DEPRECATED);
 	}
-	ser.Write<idx_t>(version_number);
+	ser.Write<idx_t>(StorageVersionToDisk(static_cast<StorageVersion>(version_number)));
 	for (idx_t i = 0; i < FLAG_COUNT; i++) {
 		ser.Write<uint64_t>(flags[i]);
 	}
@@ -223,12 +223,12 @@ MainHeader MainHeader::Read(ReadStream &source) {
 		throw IOException("The file is not a valid DuckDB database file!");
 	}
 
-	header.version_number = source.Read<idx_t>();
+	header.version_number = static_cast<idx_t>(StorageVersionFromDisk(source.Read<idx_t>()));
 
 	if (static_cast<StorageVersion>(header.version_number) == DEPRECATED_VERSION_NUMBER) {
 		// if the version number in the main header is deprecated, then we just ignore the main header version number
 		// TODO: if we are confident, we can remove the check below
-	} else if (header.version_number < VERSION_NUMBER_LOWER || header.version_number > VERSION_NUMBER_UPPER) {
+	} else if (!IsReadableStorageVersion(static_cast<StorageVersion>(header.version_number))) {
 		// Check the version number to determine if we can read this file.
 		auto version = GetDuckDBVersions(static_cast<StorageVersion>(header.version_number));
 		string version_text;
@@ -236,15 +236,18 @@ MainHeader MainHeader::Read(ReadStream &source) {
 			// Known version.
 			version_text = "DuckDB version " + string(version);
 		} else {
+			const auto duckdb_version = DuckdbVersionNumber(static_cast<StorageVersion>(header.version_number));
 			version_text = string("an ") +
-			               (VERSION_NUMBER_UPPER > header.version_number ? "older development" : "newer") +
+			               (duckdb_version < DUCKDB_VERSION_NUMBER_UPPER ? "older development" : "newer") +
 			               string(" version of DuckDB");
 		}
 		throw IOException(
-		    "This database file uses DuckDB storage format version %lld, but this version of SereneDB can only read "
-		    "versions %lld through %lld.\n"
+		    "This database file uses DuckDB storage format version %llu (serenedb revision %llu), but this version of "
+		    "SereneDB can only read versions %llu through %llu, up to serenedb revision %llu.\n"
 		    "The file was created with %s.",
-		    header.version_number, VERSION_NUMBER_LOWER, VERSION_NUMBER_UPPER, version_text);
+		    DuckdbVersionNumber(static_cast<StorageVersion>(header.version_number)),
+		    SerenedbVersionNumber(static_cast<StorageVersion>(header.version_number)), DUCKDB_VERSION_NUMBER_LOWER,
+		    DUCKDB_VERSION_NUMBER_UPPER, SERENEDB_VERSION_NUMBER_UPPER, version_text);
 	}
 
 	// Read the flags.
@@ -277,22 +280,27 @@ void DatabaseHeader::Write(WriteStream &ser) {
 		auto ser_version = GetSerializationVersionDeprecated(storage_version_string.c_str());
 		ser.Write<idx_t>(ser_version);
 	} else {
-		ser.Write<idx_t>(static_cast<idx_t>(storage_compatibility));
+		ser.Write<idx_t>(StorageVersionToDisk(storage_compatibility));
 	}
 }
 
 void DatabaseHeader::SetStorageVersionInDatabaseHeader(DatabaseHeader &header, StorageVersion main_version,
-                                                       StorageVersion read_version) {
-	if ((main_version == MainHeader::DEPRECATED_VERSION_NUMBER) || (read_version >= StorageVersion::V2_0_0)) {
+                                                       idx_t read_version) {
+	// `read_version` is the raw database header field, which is polymorphic: a storage version from
+	// v2.0.0 onwards, a deprecated serialization version before that. Only the former is shifted.
+	if ((main_version == MainHeader::DEPRECATED_VERSION_NUMBER) ||
+	    (read_version >= StorageVersionToDisk(StorageVersion::V2_0_0))) {
 		// From v2.0.0 onwards, we use and store only the storage version number
-		switch (read_version) {
+		switch (StorageVersionFromDisk(read_version)) {
 		case StorageVersion::V2_0_0:
 			header.storage_compatibility = StorageVersion::V2_0_0;
 			break;
+		case StorageVersion::SERENEDB_V1:
+			header.storage_compatibility = StorageVersion::SERENEDB_V1;
+			break;
 			// new versions should be added here
 		default:
-			throw InvalidInputException("Unsupported DuckDB storage format version '%d'",
-			                            static_cast<idx_t>(read_version));
+			throw InvalidInputException("Unsupported DuckDB storage format version '%llu'", read_version);
 		}
 	} else {
 		// Before V2.0.0 the Storage Version in the main header could be written in two different ways
@@ -311,7 +319,7 @@ void DatabaseHeader::SetStorageVersionInDatabaseHeader(DatabaseHeader &header, S
 		case static_cast<idx_t>(StorageVersion::INVALID):
 			// If read version is 0
 		case static_cast<idx_t>(SerializationVersionDeprecated::V0_10_2):
-		case static_cast<idx_t>(StorageVersion::V0_10_2):
+		case DuckdbVersionNumber(StorageVersion::V0_10_2):
 		case static_cast<idx_t>(SerializationVersionDeprecated::V1_0_0):
 		case static_cast<idx_t>(SerializationVersionDeprecated::V1_1_0):
 			header.storage_compatibility = StorageVersion::V0_10_2;
@@ -359,11 +367,10 @@ DatabaseHeader DatabaseHeader::Read(const MainHeader &main_header, ReadStream &s
 		                  STANDARD_VECTOR_SIZE, header.vector_size);
 	}
 
-	// storage version from the database header
+	// storage version from the database header, still in its raw on-disk form
 	auto h_storage_version = source.Read<idx_t>();
-	auto database_header_storage_version = static_cast<StorageVersion>(h_storage_version);
 	SetStorageVersionInDatabaseHeader(header, static_cast<StorageVersion>(main_header.version_number),
-	                                  database_header_storage_version);
+	                                  h_storage_version);
 
 	return header;
 }
@@ -523,7 +530,7 @@ void SingleFileBlockManager::CreateNewDatabase(QueryContext context) {
 	header_buffer.Clear();
 
 	if (options.storage_version == StorageVersion::INVALID) {
-		options.storage_version = StorageCompatibility::Latest().storage_version;
+		options.storage_version = StorageCompatibility::DuckDBLatest().storage_version;
 	}
 
 	options.version_number = GetVersionNumber();
@@ -828,7 +835,7 @@ void SingleFileBlockManager::Initialize(const DatabaseHeader &header, const opti
 		// load storage version from header
 		options.storage_version = header.storage_compatibility;
 	}
-	if (header.storage_compatibility > StorageCompatibility::Latest().storage_version) {
+	if (header.storage_compatibility > StorageVersion::SERENEDB_LATEST) {
 		throw InvalidInputException(
 		    "Error opening \"%s\": the file uses a DuckDB storage format version newer than this version of SereneDB "
 		    "supports. Upgrade to a newer version of SereneDB to open it.",

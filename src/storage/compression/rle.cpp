@@ -1,8 +1,12 @@
+#include "duckdb/common/bitpacking.hpp"
+#include "duckdb/common/numeric_utils.hpp"
+#include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/common/types/null_value.hpp"
 #include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/compression/standard_compression_state.hpp"
+#include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/storage/table/column_data_checkpointer.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
@@ -12,6 +16,105 @@
 namespace duckdb {
 
 using rle_count_t = uint16_t;
+
+static constexpr idx_t RLE_GROUP_SIZE = BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
+
+//! Native layout: [uint64 counts_offset][T values[n]][pad][rle_count_t counts[n]] -- both
+//! streams raw. SereneDB storage instead FOR+bitpacks them, which needs a wider header.
+//! Both start with that same uint64, so the marker bit distinguishes them on read: it is
+//! free natively because the field is a byte offset within one block.
+static constexpr uint64_t RLE_PACKED_MARKER = 1ULL << 63;
+static constexpr idx_t RLE_NATIVE_HEADER_SIZE = sizeof(uint64_t);
+
+template <class T>
+struct RLEHeader {
+	uint64_t counts_offset;
+	uint32_t entry_count;
+	rle_count_t count_frame;
+	bitpacking_width_t value_width;
+	bitpacking_width_t count_width;
+	T value_frame;
+};
+
+template <class T, bool INTEGRAL = NumericLimits<T>::IsIntegral()>
+struct RLEValueCodec;
+
+template <class T>
+struct RLEValueCodec<T, true> {
+	using T_U = typename MakeUnsigned<T>::type;
+
+	static bitpacking_width_t WidthForRange(T minimum, T maximum, T &frame) {
+		T min_max_diff;
+		if (!TrySubtractOperator::Operation(maximum, minimum, min_max_diff)) {
+			frame = 0;
+			return sizeof(T) * 8;
+		}
+		frame = minimum;
+		return BitpackingPrimitives::MinimumBitWidth<T, false>(min_max_diff);
+	}
+
+	static bitpacking_width_t Analyze(const T *values, idx_t count, T &frame) {
+		if (!count) {
+			frame = 0;
+			return 0;
+		}
+		T minimum = values[0];
+		T maximum = values[0];
+		for (idx_t i = 1; i < count; i++) {
+			minimum = MinValue<T>(minimum, values[i]);
+			maximum = MaxValue<T>(maximum, values[i]);
+		}
+		return WidthForRange(minimum, maximum, frame);
+	}
+
+	static idx_t PackedSize(idx_t count, bitpacking_width_t width) {
+		return BitpackingPrimitives::GetRequiredSize(count, width);
+	}
+
+	static void Pack(data_ptr_t dst, T *values, idx_t count, T frame, bitpacking_width_t width) {
+		if (frame) {
+			for (idx_t i = 0; i < count; i++) {
+				reinterpret_cast<T_U *>(values)[i] -= static_cast<T_U>(frame);
+			}
+		}
+		BitpackingPrimitives::PackBuffer<T>(dst, values, count, width);
+	}
+
+	static void Unpack(T *dst, data_ptr_t src, idx_t count, T frame, bitpacking_width_t width) {
+		BitpackingPrimitives::UnPackBuffer<T>(data_ptr_cast(dst), src, count, width, true);
+		if (frame) {
+			for (idx_t i = 0; i < count; i++) {
+				reinterpret_cast<T_U *>(dst)[i] += static_cast<T_U>(frame);
+			}
+		}
+	}
+};
+
+template <class T>
+struct RLEValueCodec<T, false> {
+	static bitpacking_width_t WidthForRange(T minimum, T maximum, T &frame) {
+		frame = 0;
+		return sizeof(T) * 8;
+	}
+
+	static bitpacking_width_t Analyze(const T *values, idx_t count, T &frame) {
+		frame = 0;
+		return sizeof(T) * 8;
+	}
+
+	static idx_t PackedSize(idx_t count, bitpacking_width_t width) {
+		return BitpackingPrimitives::RoundUpToAlgorithmGroupSize(count) * sizeof(T);
+	}
+
+	static void Pack(data_ptr_t dst, T *values, idx_t count, T frame, bitpacking_width_t width) {
+		memcpy(dst, values, count * sizeof(T));
+		memset(dst + count * sizeof(T), 0, PackedSize(count, width) - count * sizeof(T));
+	}
+
+	static void Unpack(T *dst, data_ptr_t src, idx_t count, T frame, bitpacking_width_t width) {
+		memcpy(dst, src, count * sizeof(T));
+	}
+};
 
 //===--------------------------------------------------------------------===//
 // Analyze
@@ -84,15 +187,44 @@ public:
 
 template <class T>
 struct RLEAnalyzeState : public AnalyzeState {
-	explicit RLEAnalyzeState(BlockManager &block_manager) : AnalyzeState(block_manager) {
+	RLEAnalyzeState(BlockManager &block_manager, bool packed_p) : AnalyzeState(block_manager), packed(packed_p) {
+		state.dataptr = this;
+	}
+
+	struct RLEAnalyzeWriter {
+		template <class VALUE_TYPE>
+		static void Operation(VALUE_TYPE value, rle_count_t count, void *dataptr, bool is_null) {
+			reinterpret_cast<RLEAnalyzeState<T> *>(dataptr)->Observe(value, count);
+		}
+	};
+
+	void Observe(T value, rle_count_t count) {
+		if (!run_count) {
+			min_value = max_value = value;
+			min_count = max_count = count;
+		} else {
+			min_value = MinValue<T>(min_value, value);
+			max_value = MaxValue<T>(max_value, value);
+			min_count = MinValue<rle_count_t>(min_count, count);
+			max_count = MaxValue<rle_count_t>(max_count, count);
+		}
+		run_count++;
 	}
 
 	RLEState<T> state;
+	const bool packed;
+	idx_t total_count = 0;
+	idx_t run_count = 0;
+	T min_value;
+	T max_value;
+	rle_count_t min_count;
+	rle_count_t max_count;
 };
 
 template <class T>
 unique_ptr<AnalyzeState> RLEInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
-	return make_uniq<RLEAnalyzeState<T>>(ctx.block_manager);
+	const auto packed = StorageManager::TargetAtLeastVersion(StorageVersion::SERENEDB_V1, ctx.storage_version);
+	return make_uniq<RLEAnalyzeState<T>>(ctx.block_manager, packed);
 }
 
 template <class T>
@@ -104,28 +236,58 @@ bool RLEAnalyze(AnalyzeState &state, const Vector &input) {
 	auto data = UnifiedVectorFormat::GetData<T>(vdata);
 	for (idx_t i = 0; i < input.size(); i++) {
 		auto idx = vdata.sel->get_index(i);
-		rle_state.state.Update(data, vdata.validity, idx);
+		rle_state.state.template Update<typename RLEAnalyzeState<T>::RLEAnalyzeWriter>(data, vdata.validity, idx);
 	}
+	rle_state.total_count += input.size();
 	return true;
 }
 
 template <class T>
 idx_t RLEFinalAnalyze(AnalyzeState &state) {
 	auto &rle_state = state.template Cast<RLEAnalyzeState<T>>();
-	return (sizeof(rle_count_t) + sizeof(T)) * rle_state.state.seen_count;
+	if (rle_state.state.last_seen_count > 0) {
+		rle_state.state.template Flush<typename RLEAnalyzeState<T>::RLEAnalyzeWriter>();
+	}
+	auto count = rle_state.run_count;
+	if (!count) {
+		return 0;
+	}
+	if (!rle_state.packed) {
+		return (sizeof(rle_count_t) + sizeof(T)) * count;
+	}
+	if (count >= rle_state.total_count) {
+		// every run is a single value, so there is nothing for the counts to amortize: RLE can only
+		// match a plain bitpack of the values, and it fragments into far more segments doing it
+		return DConstants::INVALID_INDEX;
+	}
+
+	// the range observed here spans the whole column while each segment packs against its own range,
+	// so this is an upper bound on what the compressor will actually write
+	T value_frame;
+	rle_count_t count_frame;
+	auto value_width = RLEValueCodec<T>::WidthForRange(rle_state.min_value, rle_state.max_value, value_frame);
+	auto count_width = RLEValueCodec<rle_count_t>::WidthForRange(rle_state.min_count, rle_state.max_count, count_frame);
+
+	return RLEValueCodec<T>::PackedSize(count, value_width) +
+	       RLEValueCodec<rle_count_t>::PackedSize(count, count_width);
 }
 
 //===--------------------------------------------------------------------===//
 // Compress
 //===--------------------------------------------------------------------===//
-struct RLEConstants {
-	static constexpr const idx_t RLE_HEADER_SIZE = sizeof(uint64_t);
-};
-
 template <class T, bool WRITE_STATISTICS>
 struct RLECompressState : public StandardCompressionState {
+	using ValueCodec = RLEValueCodec<T>;
+	using CountCodec = RLEValueCodec<rle_count_t>;
+
 	explicit RLECompressState(ColumnDataCheckpointData &checkpoint_data_p)
-	    : StandardCompressionState(checkpoint_data_p, CompressionType::COMPRESSION_RLE) {
+	    : StandardCompressionState(checkpoint_data_p, CompressionType::COMPRESSION_RLE),
+	      packed(
+	          StorageManager::TargetAtLeastVersion(StorageVersion::SERENEDB_V1, checkpoint_data_p.GetStorageVersion())),
+	      header_size(packed ? sizeof(RLEHeader<T>) : RLE_NATIVE_HEADER_SIZE) {
+		if (packed) {
+			pack_buffer = make_unsafe_uniq_array<data_t>(checkpoint_data_p.GetBlockManager().GetBlockSize());
+		}
 		CreateEmptySegment();
 
 		state.dataptr = (void *)this;
@@ -142,7 +304,13 @@ struct RLECompressState : public StandardCompressionState {
 
 	idx_t MaxRLECount() {
 		auto entry_size = sizeof(T) + sizeof(rle_count_t);
-		return AlignValueFloor((info.GetBlockSize() - RLEConstants::RLE_HEADER_SIZE) / entry_size);
+		auto staged = AlignValueFloor((info.GetBlockSize() - header_size) / entry_size);
+		if (!packed) {
+			return staged;
+		}
+		// both packed streams round their length up to a full bitpacking group, so the packed form can
+		// exceed the staged form by up to one group per stream
+		return staged - 2 * RLE_GROUP_SIZE;
 	}
 
 	void CreateEmptySegment() {
@@ -161,12 +329,9 @@ struct RLECompressState : public StandardCompressionState {
 	}
 
 	void WriteValue(T value, rle_count_t count, bool is_null) {
-		// write the RLE entry
-		auto handle_ptr = handle.GetDataMutable() + RLEConstants::RLE_HEADER_SIZE;
-		auto data_pointer = reinterpret_cast<T *>(handle_ptr);
-		auto index_pointer = reinterpret_cast<rle_count_t *>(handle_ptr + max_rle_count * sizeof(T));
-		data_pointer[entry_count] = value;
-		index_pointer[entry_count] = count;
+		// stage the RLE entry raw - on serenedb storage both streams are packed at flush
+		StagedValues()[entry_count] = value;
+		StagedCounts()[entry_count] = count;
 		entry_count++;
 
 		// update meta data
@@ -187,23 +352,57 @@ struct RLECompressState : public StandardCompressionState {
 		}
 	}
 
-	void FlushSegment() {
-		// flush the segment
-		// we compact the segment by moving the counts so they are directly next to the values
-		idx_t counts_size = sizeof(rle_count_t) * entry_count;
-		idx_t original_rle_offset = RLEConstants::RLE_HEADER_SIZE + max_rle_count * sizeof(T);
-		idx_t minimal_rle_offset = RLEConstants::RLE_HEADER_SIZE + sizeof(T) * entry_count;
-		idx_t aligned_rle_offset = AlignValue(minimal_rle_offset);
-		idx_t total_segment_size = aligned_rle_offset + counts_size;
+	//! Staged values, and the staged counts a fixed max_rle_count entries further on.
+	T *StagedValues() {
+		return reinterpret_cast<T *>(handle.GetDataMutable() + header_size);
+	}
+	rle_count_t *StagedCounts() {
+		return reinterpret_cast<rle_count_t *>(handle.GetDataMutable() + header_size + max_rle_count * sizeof(T));
+	}
+
+	//! Native layout: keep the raw streams, just move the counts up against the values.
+	void FlushNative() {
 		auto data_ptr = handle.GetDataMutable();
+		idx_t counts_size = sizeof(rle_count_t) * entry_count;
+		idx_t minimal_rle_offset = RLE_NATIVE_HEADER_SIZE + sizeof(T) * entry_count;
+		idx_t aligned_rle_offset = AlignValue(minimal_rle_offset);
 		if (aligned_rle_offset > minimal_rle_offset) {
 			memset(data_ptr + minimal_rle_offset, 0, aligned_rle_offset - minimal_rle_offset);
 		}
-		memmove(data_ptr + aligned_rle_offset, data_ptr + original_rle_offset, counts_size);
-		// store the final RLE offset within the segment
+		memmove(data_ptr + aligned_rle_offset, StagedCounts(), counts_size);
 		Store<uint64_t>(aligned_rle_offset, data_ptr);
+		FlushCurrentSegment(stats_writer, aligned_rle_offset + counts_size);
+	}
 
-		FlushCurrentSegment(stats_writer, total_segment_size);
+	//! SereneDB layout: FOR+bitpack both streams. Packing runs out of line because each packed
+	//! stream lands on top of the staged one it is built from.
+	void FlushPacked() {
+		auto values = StagedValues();
+		auto counts = StagedCounts();
+
+		RLEHeader<T> header;
+		header.entry_count = NumericCast<uint32_t>(entry_count);
+		header.value_width = ValueCodec::Analyze(values, entry_count, header.value_frame);
+		header.count_width = CountCodec::Analyze(counts, entry_count, header.count_frame);
+		auto values_size = ValueCodec::PackedSize(entry_count, header.value_width);
+		auto counts_size = CountCodec::PackedSize(entry_count, header.count_width);
+		header.counts_offset = RLE_PACKED_MARKER | (header_size + values_size);
+
+		ValueCodec::Pack(pack_buffer.get(), values, entry_count, header.value_frame, header.value_width);
+		CountCodec::Pack(pack_buffer.get() + values_size, counts, entry_count, header.count_frame, header.count_width);
+
+		auto data_ptr = handle.GetDataMutable();
+		Store<RLEHeader<T>>(header, data_ptr);
+		memcpy(data_ptr + header_size, pack_buffer.get(), values_size + counts_size);
+		FlushCurrentSegment(stats_writer, header_size + values_size + counts_size);
+	}
+
+	void FlushSegment() {
+		if (packed) {
+			FlushPacked();
+		} else {
+			FlushNative();
+		}
 	}
 
 	void Finalize() {
@@ -215,6 +414,9 @@ struct RLECompressState : public StandardCompressionState {
 
 	RLEState<T> state;
 	StatsWriter<T> stats_writer;
+	const bool packed;
+	const idx_t header_size;
+	unsafe_unique_array<data_t> pack_buffer;
 	idx_t entry_count = 0;
 	idx_t max_rle_count;
 };
@@ -243,36 +445,116 @@ void RLEFinalizeCompress(CompressionState &state_p) {
 //===--------------------------------------------------------------------===//
 // Scan
 //===--------------------------------------------------------------------===//
+//! Both layouts, normalized and validated once per segment. The native one leaves the widths and
+//! frames unset -- its streams are read directly; the packed one carries what LoadGroup needs.
+template <class T>
+struct RLELayout {
+	bool packed;
+	idx_t entry_count;
+	data_ptr_t values;
+	data_ptr_t counts;
+	T value_frame;
+	rle_count_t count_frame;
+	bitpacking_width_t value_width;
+	bitpacking_width_t count_width;
+
+	static RLELayout Parse(ColumnSegment &segment, data_ptr_t segment_data) {
+		const auto marked = Load<uint64_t>(segment_data);
+		const auto counts_offset = marked & ~RLE_PACKED_MARKER;
+		RLELayout layout;
+		layout.packed = (marked & RLE_PACKED_MARKER) != 0;
+		const idx_t header_size = layout.packed ? sizeof(RLEHeader<T>) : RLE_NATIVE_HEADER_SIZE;
+		if (counts_offset < header_size) {
+			//! This would make the counts stream point into the header
+			throw IOException("Corrupted RLE segment: counts_offset is corrupted");
+		}
+		if (segment.GetBlockOffset() + counts_offset > segment.GetBlockSize()) {
+			//! This would make the counts stream start outside of the segment
+			throw IOException("Corrupted RLE segment: counts_offset is corrupted");
+		}
+		layout.values = segment_data + header_size;
+		layout.counts = segment_data + counts_offset;
+		const auto counts_room = segment.GetBlockSize() - segment.GetBlockOffset() - counts_offset;
+
+		if (!layout.packed) {
+			// the native layout stores no entry count: it is implied by where the counts begin
+			layout.entry_count = (counts_offset - header_size) / sizeof(T);
+			layout.value_frame = 0;
+			layout.count_frame = 0;
+			layout.value_width = sizeof(T) * 8;
+			layout.count_width = sizeof(rle_count_t) * 8;
+			if (layout.entry_count > counts_room / sizeof(rle_count_t)) {
+				//! This would make the indexing of Count() reach outside of the segment
+				throw IOException("Corrupted RLE segment: counts_offset is corrupted");
+			}
+			return layout;
+		}
+
+		const auto header = Load<RLEHeader<T>>(segment_data);
+		layout.entry_count = header.entry_count;
+		layout.value_frame = header.value_frame;
+		layout.count_frame = header.count_frame;
+		layout.value_width = header.value_width;
+		layout.count_width = header.count_width;
+		if (layout.value_width > sizeof(T) * 8 || layout.count_width > sizeof(rle_count_t) * 8) {
+			throw IOException("Corrupted RLE segment: bitpacking width exceeds the value width");
+		}
+		if (counts_offset < header_size + RLEValueCodec<T>::PackedSize(layout.entry_count, layout.value_width)) {
+			//! This would make the counts stream overlap the values stream
+			throw IOException("Corrupted RLE segment: counts_offset is corrupted");
+		}
+		if (RLEValueCodec<rle_count_t>::PackedSize(layout.entry_count, layout.count_width) > counts_room) {
+			//! This would make the counts stream reach outside of the segment
+			throw IOException("Corrupted RLE segment: counts_offset is corrupted");
+		}
+		return layout;
+	}
+};
+
 template <class T>
 struct RLEScanState : public SegmentScanState {
+	using ValueCodec = RLEValueCodec<T>;
+	using CountCodec = RLEValueCodec<rle_count_t>;
+
 	explicit RLEScanState(ColumnSegment &segment)
 	    : handle(BufferManager::GetBufferManager(segment.GetDatabase()).Pin(segment.GetBlockHandle())), entry_pos(0),
 	      position_in_entry(0),
-	      rle_count_offset(UnsafeNumericCast<uint32_t>(Load<uint64_t>(handle.Ptr() + segment.GetBlockOffset()))),
-	      data_pointer(
-	          reinterpret_cast<const T *>(handle.Ptr() + segment.GetBlockOffset() + RLEConstants::RLE_HEADER_SIZE)),
-	      index_pointer(
-	          reinterpret_cast<const rle_count_t *>(handle.Ptr() + segment.GetBlockOffset() + rle_count_offset)),
-	      max_entry_pos(static_cast<idx_t>(reinterpret_cast<const_data_ptr_t>(handle.Ptr() + segment.GetBlockSize()) -
-	                                       reinterpret_cast<const_data_ptr_t>(index_pointer)) /
-	                    static_cast<idx_t>(sizeof(rle_count_t))) {
-		if (rle_count_offset < RLEConstants::RLE_HEADER_SIZE) {
-			//! This would make the index_pointer point into a region reserved for the header data
-			throw IOException("Corrupted RLE segment: rle_count_offset is corrupted");
+	      layout(RLELayout<T>::Parse(segment, handle.GetDataMutable() + segment.GetBlockOffset())),
+	      max_entry_pos(layout.entry_count) {
+		if (layout.packed && max_entry_pos) {
+			LoadGroup();
 		}
-		if (segment.GetBlockOffset() + rle_count_offset > segment.GetBlockSize()) {
-			//! This would make the index_pointer start outside of the segment
-			throw IOException("Corrupted RLE segment: rle_count_offset is corrupted");
+	}
+
+	//! Decode the bitpacking group that entry_pos currently sits in. entry_pos only ever moves forward one
+	//! entry at a time, so this is the single point where either stream needs to be touched.
+	void LoadGroup() {
+		idx_t group_start = entry_pos & ~(RLE_GROUP_SIZE - 1);
+		ValueCodec::Unpack(value_window, layout.values + group_start * layout.value_width / 8, RLE_GROUP_SIZE,
+		                   layout.value_frame, layout.value_width);
+		CountCodec::Unpack(count_window, layout.counts + group_start * layout.count_width / 8, RLE_GROUP_SIZE,
+		                   layout.count_frame, layout.count_width);
+	}
+
+	//! The layout is fixed per segment, so this branch is perfectly predicted -- and the native layout stays
+	//! a direct load out of the block, exactly as it was before the packed one existed.
+	inline T Value() const {
+		if (!layout.packed) {
+			return reinterpret_cast<const T *>(layout.values)[entry_pos];
 		}
-		if ((rle_count_offset - RLEConstants::RLE_HEADER_SIZE) / sizeof(T) > max_entry_pos) {
-			//! This would make the indexing of the index_pointer[entry_pos] reach outside of the segment
-			throw IOException("Corrupted RLE segment: rle_count_offset is corrupted");
+		return value_window[entry_pos & (RLE_GROUP_SIZE - 1)];
+	}
+
+	inline rle_count_t Count() const {
+		if (!layout.packed) {
+			return reinterpret_cast<const rle_count_t *>(layout.counts)[entry_pos];
 		}
+		return count_window[entry_pos & (RLE_GROUP_SIZE - 1)];
 	}
 
 	inline void SkipInternal(idx_t skip_count) {
 		while (skip_count > 0) {
-			rle_count_t run_end = index_pointer[entry_pos];
+			rle_count_t run_end = Count();
 			idx_t skip_amount = MinValue<idx_t>(skip_count, run_end - position_in_entry);
 
 			skip_count -= skip_amount;
@@ -292,27 +574,29 @@ struct RLEScanState : public SegmentScanState {
 		// move to the next entry
 		entry_pos++;
 		if (entry_pos > max_entry_pos) {
-			throw IOException(
-			    "Corrupted RLE segment: index_pointer[entry_pos] would reach outside of the blocks memory");
+			throw IOException("Corrupted RLE segment: entry_pos would reach outside of the blocks memory");
+		}
+		if (layout.packed && !(entry_pos & (RLE_GROUP_SIZE - 1)) && entry_pos < max_entry_pos) {
+			LoadGroup();
 		}
 		position_in_entry = 0;
 	}
 
 	inline bool ExhaustedRun() {
-		return position_in_entry >= index_pointer[entry_pos];
+		return position_in_entry >= Count();
 	}
 
 	BufferHandle handle;
 	idx_t entry_pos;
 	idx_t position_in_entry;
-	const uint32_t rle_count_offset;
+	const RLELayout<T> layout;
 	//! If we are running a filter over the column - the runs that match the filter
 	unsafe_unique_array<bool> matching_runs;
 	idx_t matching_run_count = 0;
 
-	const T *data_pointer;
-	const rle_count_t *index_pointer;
 	const idx_t max_entry_pos;
+	T value_window[RLE_GROUP_SIZE];
+	rle_count_t count_window[RLE_GROUP_SIZE];
 };
 
 template <class T>
@@ -351,7 +635,7 @@ static void RLEScanConstant(RLEScanState<T> &scan_state, idx_t scan_count, Vecto
 	result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	FlatVector::SetSize(result, count_t(scan_count));
 	auto result_data = ConstantVector::GetData<T>(result);
-	result_data[0] = scan_state.data_pointer[scan_state.entry_pos];
+	result_data[0] = scan_state.Value();
 	scan_state.position_in_entry += scan_count;
 	if (scan_state.ExhaustedRun()) {
 		scan_state.ForwardToNextRun();
@@ -364,8 +648,7 @@ void RLEScanPartialInternal(ColumnSegment &segment, ColumnScanState &state, idx_
 	auto &scan_state = state.scan_state->Cast<RLEScanState<T>>();
 
 	// If we are scanning an entire Vector and it contains only a single run
-	if (CanEmitConstantVector<ENTIRE_VECTOR>(scan_state.position_in_entry,
-	                                         scan_state.index_pointer[scan_state.entry_pos], scan_count)) {
+	if (CanEmitConstantVector<ENTIRE_VECTOR>(scan_state.position_in_entry, scan_state.Count(), scan_count)) {
 		RLEScanConstant<T>(scan_state, scan_count, result);
 		return;
 	}
@@ -374,10 +657,10 @@ void RLEScanPartialInternal(ColumnSegment &segment, ColumnScanState &state, idx_
 
 	const idx_t result_end = result_offset + scan_count;
 	while (result_offset < result_end) {
-		rle_count_t run_end = scan_state.index_pointer[scan_state.entry_pos];
+		rle_count_t run_end = scan_state.Count();
 		idx_t run_count = run_end - scan_state.position_in_entry;
 		idx_t remaining_scan_count = result_end - result_offset;
-		T element = scan_state.data_pointer[scan_state.entry_pos];
+		T element = scan_state.Value();
 		if (DUCKDB_UNLIKELY(run_count > remaining_scan_count)) {
 			for (idx_t i = 0; i < remaining_scan_count; i++) {
 				result_data[result_offset + i] = element;
@@ -415,8 +698,7 @@ void RLESelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 	auto &scan_state = state.scan_state->Cast<RLEScanState<T>>();
 
 	// If we are scanning an entire Vector and it contains only a single run we don't need to select at all
-	if (CanEmitConstantVector<true>(scan_state.position_in_entry, scan_state.index_pointer[scan_state.entry_pos],
-	                                vector_count)) {
+	if (CanEmitConstantVector<true>(scan_state.position_in_entry, scan_state.Count(), vector_count)) {
 		RLEScanConstant<T>(scan_state, vector_count, result);
 		return;
 	}
@@ -432,7 +714,7 @@ void RLESelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 		// skip forward to the next index
 		scan_state.SkipInternal(next_idx - prev_idx);
 		// read the element
-		result_data.WriteValue(scan_state.data_pointer[scan_state.entry_pos]);
+		result_data.WriteValue(scan_state.Value());
 		// move the next to the prev
 		prev_idx = next_idx;
 	}
@@ -448,10 +730,7 @@ void RLEFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
                idx_t &sel_count, const TableFilter &filter, TableFilterState &filter_state) {
 	auto &scan_state = state.scan_state->Cast<RLEScanState<T>>();
 
-	auto data_pointer = const_cast<T *>(scan_state.data_pointer);
-	auto index_pointer = const_cast<rle_count_t *>(scan_state.index_pointer);
-
-	auto total_run_count = (scan_state.rle_count_offset - RLEConstants::RLE_HEADER_SIZE) / sizeof(T);
+	auto total_run_count = scan_state.max_entry_pos;
 	if (!scan_state.matching_runs) {
 		// we haven't applied the filter yet
 		// apply the filter to all RLE values at once
@@ -460,8 +739,21 @@ void RLEFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 		scan_state.matching_runs = make_unsafe_uniq_array<bool>(total_run_count);
 		memset(scan_state.matching_runs.get(), 0, sizeof(bool) * total_run_count);
 
+		// this is the one path that needs every run value at once rather than the sequential window;
+		// the native layout already has them contiguous in the block, so it filters in place
+		unsafe_unique_array<T> run_values;
+		auto &layout = scan_state.layout;
+		auto values_ptr = layout.values;
+		if (layout.packed) {
+			auto padded_run_count = BitpackingPrimitives::RoundUpToAlgorithmGroupSize(total_run_count);
+			run_values = make_unsafe_uniq_array<T>(padded_run_count);
+			RLEScanState<T>::ValueCodec::Unpack(run_values.get(), values_ptr, padded_run_count, layout.value_frame,
+			                                    layout.value_width);
+			values_ptr = data_ptr_cast(run_values.get());
+		}
+
 		// execute the filter over all runs at once
-		Vector run_vector(result.GetType(), data_ptr_cast(data_pointer), total_run_count);
+		Vector run_vector(result.GetType(), values_ptr, total_run_count);
 
 		SelectionVector run_matches;
 		scan_state.matching_run_count = total_run_count;
@@ -493,12 +785,12 @@ void RLEFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 	idx_t sel_idx = 0;
 	idx_t prev_row = 0;
 	while (pos < vector_count) {
-		rle_count_t run_end = index_pointer[scan_state.entry_pos];
+		rle_count_t run_end = scan_state.Count();
 		idx_t run_count = run_end - scan_state.position_in_entry;
 		idx_t take = MinValue<idx_t>(vector_count - pos, run_count);
 		const bool match = scan_state.matching_runs[scan_state.entry_pos];
 		if (match) {
-			T element = data_pointer[scan_state.entry_pos];
+			T element = scan_state.Value();
 			std::fill(result_data + pos, result_data + pos + take, element);
 		}
 		// consume the selection entries that fall into this run slice
@@ -551,10 +843,8 @@ void RLEFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, 
 	RLEScanState<T> scan_state(segment);
 	scan_state.Skip(segment, NumericCast<idx_t>(row_id));
 
-	auto data = scan_state.handle.GetDataMutable() + segment.GetBlockOffset();
-	auto data_pointer = reinterpret_cast<T *>(data + RLEConstants::RLE_HEADER_SIZE);
 	auto result_data = FlatVector::GetDataMutable<T>(result);
-	result_data[result_idx] = data_pointer[scan_state.entry_pos];
+	result_data[result_idx] = scan_state.Value();
 }
 
 //===--------------------------------------------------------------------===//

@@ -206,6 +206,7 @@
 #include "duckdb/storage/buffer/buffer_pool_reservation.hpp"
 #include "duckdb/storage/caching_mode.hpp"
 #include "duckdb/storage/compression/bitpacking.hpp"
+#include "duckdb/storage/compression/dict_fsst/common.hpp"
 #include "duckdb/storage/external_file_cache/external_file_cache_block_state.hpp"
 #include "duckdb/storage/magic_bytes.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
@@ -1880,6 +1881,28 @@ const char* EnumUtil::ToChars<DialectCompatibilityMode>(DialectCompatibilityMode
 template<>
 DialectCompatibilityMode EnumUtil::FromString<DialectCompatibilityMode>(const char *value) {
 	return static_cast<DialectCompatibilityMode>(StringUtil::StringToEnum(GetDialectCompatibilityModeValues(), 2, "DialectCompatibilityMode", value));
+}
+
+const StringUtil::EnumStringLiteral *GetDictFSSTModeValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(DictFSSTMode::DICTIONARY), "DICTIONARY" },
+		{ static_cast<uint32_t>(DictFSSTMode::DICT_FSST), "DICT_FSST" },
+		{ static_cast<uint32_t>(DictFSSTMode::FSST_ONLY), "FSST_ONLY" },
+		{ static_cast<uint32_t>(DictFSSTMode::DICT_FSST_PLUS), "DICT_FSST_PLUS" },
+		{ static_cast<uint32_t>(DictFSSTMode::FSST_PLUS), "FSST_PLUS" },
+		{ static_cast<uint32_t>(DictFSSTMode::COUNT), "COUNT" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<DictFSSTMode>(DictFSSTMode value) {
+	return StringUtil::EnumToString(GetDictFSSTModeValues(), 6, "DictFSSTMode", static_cast<uint32_t>(value));
+}
+
+template<>
+DictFSSTMode EnumUtil::FromString<DictFSSTMode>(const char *value) {
+	return static_cast<DictFSSTMode>(StringUtil::StringToEnum(GetDictFSSTModeValues(), 6, "DictFSSTMode", value));
 }
 
 const StringUtil::EnumStringLiteral *GetDistinctCountSourceValues() {
@@ -5475,89 +5498,6 @@ const char* EnumUtil::ToChars<StorageIndexType>(StorageIndexType value) {
 template<>
 StorageIndexType EnumUtil::FromString<StorageIndexType>(const char *value) {
 	return static_cast<StorageIndexType>(StringUtil::StringToEnum(GetStorageIndexTypeValues(), 2, "StorageIndexType", value));
-}
-
-const StringUtil::EnumStringLiteral *GetStorageVersionValues() {
-	static constexpr StringUtil::EnumStringLiteral values[] {
-		{ static_cast<uint32_t>(StorageVersion::V0_0_4), "V0_0_4" },
-		{ static_cast<uint32_t>(StorageVersion::V0_1_0), "V0_1_0" },
-		{ static_cast<uint32_t>(StorageVersion::V0_1_1), "V0_1_1" },
-		{ static_cast<uint32_t>(StorageVersion::V0_1_2), "V0_1_2" },
-		{ static_cast<uint32_t>(StorageVersion::V0_1_3), "V0_1_3" },
-		{ static_cast<uint32_t>(StorageVersion::V0_1_4), "V0_1_4" },
-		{ static_cast<uint32_t>(StorageVersion::V0_1_5), "V0_1_5" },
-		{ static_cast<uint32_t>(StorageVersion::V0_1_6), "V0_1_6" },
-		{ static_cast<uint32_t>(StorageVersion::V0_1_7), "V0_1_7" },
-		{ static_cast<uint32_t>(StorageVersion::V0_1_8), "V0_1_8" },
-		{ static_cast<uint32_t>(StorageVersion::V0_1_9), "V0_1_9" },
-		{ static_cast<uint32_t>(StorageVersion::V0_2_0), "V0_2_0" },
-		{ static_cast<uint32_t>(StorageVersion::V0_2_1), "V0_2_1" },
-		{ static_cast<uint32_t>(StorageVersion::V0_2_2), "V0_2_2" },
-		{ static_cast<uint32_t>(StorageVersion::V0_2_3), "V0_2_3" },
-		{ static_cast<uint32_t>(StorageVersion::V0_2_4), "V0_2_4" },
-		{ static_cast<uint32_t>(StorageVersion::V0_2_5), "V0_2_5" },
-		{ static_cast<uint32_t>(StorageVersion::V0_2_6), "V0_2_6" },
-		{ static_cast<uint32_t>(StorageVersion::V0_2_7), "V0_2_7" },
-		{ static_cast<uint32_t>(StorageVersion::V0_2_8), "V0_2_8" },
-		{ static_cast<uint32_t>(StorageVersion::V0_2_9), "V0_2_9" },
-		{ static_cast<uint32_t>(StorageVersion::V0_3_0), "V0_3_0" },
-		{ static_cast<uint32_t>(StorageVersion::V0_3_1), "V0_3_1" },
-		{ static_cast<uint32_t>(StorageVersion::V0_3_2), "V0_3_2" },
-		{ static_cast<uint32_t>(StorageVersion::V0_3_3), "V0_3_3" },
-		{ static_cast<uint32_t>(StorageVersion::V0_3_4), "V0_3_4" },
-		{ static_cast<uint32_t>(StorageVersion::V0_3_5), "V0_3_5" },
-		{ static_cast<uint32_t>(StorageVersion::V0_4_0), "V0_4_0" },
-		{ static_cast<uint32_t>(StorageVersion::V0_5_0), "V0_5_0" },
-		{ static_cast<uint32_t>(StorageVersion::V0_5_1), "V0_5_1" },
-		{ static_cast<uint32_t>(StorageVersion::V0_6_0), "V0_6_0" },
-		{ static_cast<uint32_t>(StorageVersion::V0_6_1), "V0_6_1" },
-		{ static_cast<uint32_t>(StorageVersion::V0_7_0), "V0_7_0" },
-		{ static_cast<uint32_t>(StorageVersion::V0_7_1), "V0_7_1" },
-		{ static_cast<uint32_t>(StorageVersion::V0_8_0), "V0_8_0" },
-		{ static_cast<uint32_t>(StorageVersion::V0_8_1), "V0_8_1" },
-		{ static_cast<uint32_t>(StorageVersion::V0_9_0), "V0_9_0" },
-		{ static_cast<uint32_t>(StorageVersion::V0_9_1), "V0_9_1" },
-		{ static_cast<uint32_t>(StorageVersion::V0_9_2), "V0_9_2" },
-		{ static_cast<uint32_t>(StorageVersion::V0_10_0), "V0_10_0" },
-		{ static_cast<uint32_t>(StorageVersion::V0_10_1), "V0_10_1" },
-		{ static_cast<uint32_t>(StorageVersion::V0_10_2), "V0_10_2" },
-		{ static_cast<uint32_t>(StorageVersion::V0_10_3), "V0_10_3" },
-		{ static_cast<uint32_t>(StorageVersion::V1_0_0), "V1_0_0" },
-		{ static_cast<uint32_t>(StorageVersion::V1_1_0), "V1_1_0" },
-		{ static_cast<uint32_t>(StorageVersion::V1_1_1), "V1_1_1" },
-		{ static_cast<uint32_t>(StorageVersion::V1_1_2), "V1_1_2" },
-		{ static_cast<uint32_t>(StorageVersion::V1_1_3), "V1_1_3" },
-		{ static_cast<uint32_t>(StorageVersion::V1_2_0), "V1_2_0" },
-		{ static_cast<uint32_t>(StorageVersion::V1_2_1), "V1_2_1" },
-		{ static_cast<uint32_t>(StorageVersion::V1_2_2), "V1_2_2" },
-		{ static_cast<uint32_t>(StorageVersion::V1_3_0), "V1_3_0" },
-		{ static_cast<uint32_t>(StorageVersion::V1_3_1), "V1_3_1" },
-		{ static_cast<uint32_t>(StorageVersion::V1_3_2), "V1_3_2" },
-		{ static_cast<uint32_t>(StorageVersion::V1_4_0), "V1_4_0" },
-		{ static_cast<uint32_t>(StorageVersion::V1_4_1), "V1_4_1" },
-		{ static_cast<uint32_t>(StorageVersion::V1_4_2), "V1_4_2" },
-		{ static_cast<uint32_t>(StorageVersion::V1_4_3), "V1_4_3" },
-		{ static_cast<uint32_t>(StorageVersion::V1_4_4), "V1_4_4" },
-		{ static_cast<uint32_t>(StorageVersion::V1_5_0), "V1_5_0" },
-		{ static_cast<uint32_t>(StorageVersion::V1_5_1), "V1_5_1" },
-		{ static_cast<uint32_t>(StorageVersion::V1_5_2), "V1_5_2" },
-		{ static_cast<uint32_t>(StorageVersion::V1_5_3), "V1_5_3" },
-		{ static_cast<uint32_t>(StorageVersion::V2_0_0), "V2_0_0" },
-		{ static_cast<uint32_t>(StorageVersion::LATEST), "LATEST" },
-		{ static_cast<uint32_t>(StorageVersion::DEPRECATED), "DEPRECATED" },
-		{ static_cast<uint32_t>(StorageVersion::INVALID), "INVALID" }
-	};
-	return values;
-}
-
-template<>
-const char* EnumUtil::ToChars<StorageVersion>(StorageVersion value) {
-	return StringUtil::EnumToString(GetStorageVersionValues(), 67, "StorageVersion", static_cast<uint32_t>(value));
-}
-
-template<>
-StorageVersion EnumUtil::FromString<StorageVersion>(const char *value) {
-	return static_cast<StorageVersion>(StringUtil::StringToEnum(GetStorageVersionValues(), 67, "StorageVersion", value));
 }
 
 const StringUtil::EnumStringLiteral *GetStrTimeSpecifierValues() {

@@ -220,7 +220,7 @@ void LogicalOperator::Verify(ClientContext &context) {
 			if (config.options.storage_compatibility.manually_set) {
 				options.storage_compatibility = config.options.storage_compatibility;
 			} else {
-				options.storage_compatibility = StorageCompatibility::Latest();
+				options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 			}
 
 			BinarySerializer::Serialize(*expressions[expr_idx], stream, options);
@@ -276,7 +276,7 @@ vector<TableIndex> LogicalOperator::GetTableIndex() const {
 unique_ptr<LogicalOperator> LogicalOperator::Copy(ClientContext &context) const {
 	MemoryStream stream(Allocator::Get(context));
 	SerializationOptions options;
-	options.storage_compatibility = StorageCompatibility::Latest();
+	options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 	BinarySerializer serializer(stream, options);
 	try {
 		serializer.Begin();

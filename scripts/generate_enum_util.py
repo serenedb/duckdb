@@ -12,9 +12,7 @@ blacklist = [
     "Flags",
     "ContainerType",
     "Type",
-    "DictionaryAppendState",
-    "DictFSSTMode",
-    "ComplexJSONType",
+    "CutCommit",
     "UnavailableReason",
     "VirtualColumnBindingType",
     "Slot",
@@ -23,9 +21,8 @@ blacklist = [
     "SchedulePolicy",
     "DrainMode",
     "BatchDrainMode",
-    "PendingTaskCountMode",
     "PartitionKeyTrackerState",
-    "SyncState",
+    "StorageVersion",
 ]
 
 enum_util_header_file = os.path.join("..", "src", "include", "duckdb", "common", "enum_util.hpp")
