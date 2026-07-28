@@ -36,11 +36,11 @@ CompressionAvailabilityResult CompressionTypeIsAvailable(CompressionType compres
 	     {CompressionType::COMPRESSION_CHIMP, StorageVersion::INVALID, StorageVersion::V0_10_2}, // phased out
 	     {CompressionType::COMPRESSION_DICTIONARY, StorageVersion::V0_10_2, StorageVersion::V1_2_0},
 	     {CompressionType::COMPRESSION_FSST, StorageVersion::V0_10_2, StorageVersion::V1_2_0},
-	     {CompressionType::COMPRESSION_ROARING, StorageVersion::V1_2_0, StorageVersion::LATEST},
-	     {CompressionType::COMPRESSION_ZSTD, StorageVersion::V1_2_0, StorageVersion::LATEST},
-	     {CompressionType::COMPRESSION_DICT_FSST, StorageVersion::V1_3_0, StorageVersion::LATEST},
+	     {CompressionType::COMPRESSION_ROARING, StorageVersion::V1_2_0, StorageVersion::DUCKDB_LATEST},
+	     {CompressionType::COMPRESSION_ZSTD, StorageVersion::V1_2_0, StorageVersion::DUCKDB_LATEST},
+	     {CompressionType::COMPRESSION_DICT_FSST, StorageVersion::V1_3_0, StorageVersion::DUCKDB_LATEST},
 	     // Not implemented yet
-	     {CompressionType::COMPRESSION_PFOR_DELTA, (StorageVersion)((int)StorageVersion::LATEST + 1),
+	     {CompressionType::COMPRESSION_PFOR_DELTA, NextDuckDBStorageVersion(StorageVersion::DUCKDB_LATEST),
 	      StorageVersion::INVALID}});
 
 	StorageVersion current_storage_version = StorageVersion::INVALID;
@@ -65,14 +65,14 @@ CompressionAvailabilityResult CompressionTypeIsAvailable(CompressionType compres
 			return CompressionAvailabilityResult();
 		}
 
-		auto current_version = current_storage_version;
+		auto current_version = DuckDBVersionNumber(current_storage_version);
 		D_ASSERT(min != StorageVersion::INVALID);
-		if (min > current_version) {
+		if (DuckDBVersionNumber(min) > current_version) {
 			//! Minimum required storage version is higher than the current storage version, this method isn't available
 			//! yet
 			return CompressionAvailabilityResult::NotAvailableYet();
 		}
-		if (max != StorageVersion::INVALID && max < current_version) {
+		if (max != StorageVersion::INVALID && DuckDBVersionNumber(max) < current_version) {
 			//! Maximum supported storage version is lower than the current storage version, this method is no longer
 			//! available
 			return CompressionAvailabilityResult::Deprecated();

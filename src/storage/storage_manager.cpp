@@ -417,7 +417,7 @@ void SingleFileStorageManager::LoadDatabase(QueryContext context) {
 		                                                DEFAULT_BLOCK_HEADER_STORAGE_SIZE);
 		table_io_manager = make_uniq<SingleFileTableIOManager>(*block_manager, DEFAULT_ROW_GROUP_SIZE);
 		// in-memory databases can always use the latest storage version
-		storage_version = GetLatestStorageVersion();
+		storage_version = StorageVersion::SERENEDB_LATEST;
 		load_complete = true;
 		return;
 	}

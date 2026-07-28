@@ -181,21 +181,10 @@ enum class SerializationVersionDeprecated : uint64_t {
 // clang-format on
 
 struct StorageVersionInfo {
-	// When the default storage version has to be updated, do it here
-	static constexpr StorageVersion DEFAULT_STORAGE_VERSION_INFO = StorageVersion::V0_10_2;
-
 	const char *version_name;
 	StorageVersion storage_version;
 
 	static string GetStorageVersionString(const StorageVersion &version);
-
-	static constexpr StorageVersion GetStorageVersionDefault() {
-		return DEFAULT_STORAGE_VERSION_INFO;
-	};
-
-	static constexpr idx_t GetStorageVersionDefaultInt() {
-		return static_cast<idx_t>(DEFAULT_STORAGE_VERSION_INFO);
-	};
 
 	static constexpr StorageVersion Invalid() {
 		return StorageVersion::INVALID;
@@ -219,12 +208,38 @@ struct SerializationVersionInfo {
 	};
 };
 
+static constexpr idx_t STORAGE_VERSION_SHIFT = 32;
+static constexpr idx_t STORAGE_VERSION_SEQUENCE_MASK = (1ULL << STORAGE_VERSION_SHIFT) - 1;
+constexpr idx_t DuckDBVersionNumber(StorageVersion version) {
+	return static_cast<idx_t>(version) >> STORAGE_VERSION_SHIFT;
+}
+constexpr idx_t SereneDBVersionNumber(StorageVersion version) {
+	return static_cast<idx_t>(version) & STORAGE_VERSION_SEQUENCE_MASK;
+}
+constexpr bool IsSereneDBStorageVersion(StorageVersion version) {
+	return SereneDBVersionNumber(version) != 0;
+}
+constexpr StorageVersion NextDuckDBStorageVersion(StorageVersion version) {
+	return static_cast<StorageVersion>((DuckDBVersionNumber(version) + 1) << STORAGE_VERSION_SHIFT);
+}
+
+constexpr idx_t StorageVersionToDisk(StorageVersion version) {
+	return IsSereneDBStorageVersion(version) ? static_cast<idx_t>(version) : DuckDBVersionNumber(version);
+}
+constexpr StorageVersion StorageVersionFromDisk(idx_t on_disk) {
+	return static_cast<StorageVersion>(on_disk <= STORAGE_VERSION_SEQUENCE_MASK ? on_disk << STORAGE_VERSION_SHIFT
+	                                                                            : on_disk);
+}
+bool IsReadableStorageVersion(StorageVersion version);
+
 //! The version number default, lower and upper bounds of the database storage format
-extern const uint64_t VERSION_NUMBER;
-extern const uint64_t VERSION_NUMBER_LOWER;
-extern const uint64_t VERSION_NUMBER_UPPER;
+inline constexpr auto DUCKDB_VERSION_DEFAULT = StorageVersion::V2_0_0;
+inline constexpr auto DUCKDB_VERSION_LOWER = StorageVersion::V0_9_0;
+inline constexpr auto DUCKDB_VERSION_UPPER = StorageVersion::DUCKDB_LATEST;
+inline constexpr auto SERENEDB_VERSION_LOWER = StorageVersion::SERENEDB_V1;
+inline constexpr auto SERENEDB_VERSION_UPPER = StorageVersion::SERENEDB_LATEST;
 string GetDuckDBVersions(const StorageVersion version_number);
-string GetStorageVersionNameInternal(const idx_t storage_version);
+string GetStorageVersionNameInternal(const StorageVersion storage_version);
 string GetStorageVersionName(const StorageVersion storage_version, const bool add_suffix);
 idx_t GetSerializationVersionDeprecated(const char *version_string);
 StorageVersion GetStorageVersion(const char *version_string);
@@ -251,7 +266,7 @@ public:
 	//! The main header storage version is now deprecated
 	static constexpr StorageVersion DEPRECATED_VERSION_NUMBER = StorageVersion::DEPRECATED;
 
-	idx_t version_number;
+	StorageVersion version_number;
 	//! The set of flags used by the database.
 	uint64_t flags[FLAG_COUNT];
 	//! Encryption version
@@ -386,7 +401,7 @@ struct DatabaseHeader {
 	void Write(WriteStream &ser);
 	static DatabaseHeader Read(const MainHeader &header, ReadStream &source);
 	static void SetStorageVersionInDatabaseHeader(DatabaseHeader &header, StorageVersion main_version,
-	                                              StorageVersion read_version);
+	                                              idx_t read_version);
 };
 
 //! Detect mismatching constant values when compiling

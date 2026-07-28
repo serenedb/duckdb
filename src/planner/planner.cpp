@@ -242,7 +242,7 @@ void Planner::VerifyPlan(ClientContext &context, unique_ptr<LogicalOperator> &op
 			// Override the default of 'latest' if this was manually set (for testing, mostly)
 			options.storage_compatibility = config.options.storage_compatibility;
 		} else {
-			options.storage_compatibility = StorageCompatibility::Latest();
+			options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 		}
 
 		BinarySerializer::Serialize(*op, stream, options);
