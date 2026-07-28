@@ -12,9 +12,7 @@ blacklist = [
     "Flags",
     "ContainerType",
     "Type",
-    "DictionaryAppendState",
-    "DictFSSTMode",
-    "ComplexJSONType",
+    "CutCommit",
     "UnavailableReason",
     "VirtualColumnBindingType",
     "Slot",
@@ -23,9 +21,7 @@ blacklist = [
     "SchedulePolicy",
     "DrainMode",
     "BatchDrainMode",
-    "PendingTaskCountMode",
     "PartitionKeyTrackerState",
-    "SyncState",
     "StorageVersion",
 ]
 

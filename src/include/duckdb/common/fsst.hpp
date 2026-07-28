@@ -68,6 +68,43 @@ public:
 		result.str.SetSizeAndFinalize(UnsafeNumericCast<uint32_t>(decompressed_string_size), string_t::INLINE_LENGTH);
 		return result.str;
 	}
+	static string_t DecompressValueWithPrefix(void *duckdb_fsst_decoder, ArenaAllocator &str_allocator,
+	                                          const char *prefix, idx_t prefix_len, const char *compressed_suffix,
+	                                          const idx_t compressed_suffix_len) {
+		const auto max_uncompressed_length = prefix_len + compressed_suffix_len * 8;
+		const auto target_ptr = StringVector::AllocateShrinkableBuffer(str_allocator, max_uncompressed_length);
+		memcpy(target_ptr, prefix, prefix_len);
+		idx_t decompressed_string_size = prefix_len;
+		if (compressed_suffix_len > 0) {
+			const auto fsst_decoder = static_cast<duckdb_fsst_decoder_t *>(duckdb_fsst_decoder);
+			const auto suffix_ptr = (const unsigned char *)compressed_suffix; // NOLINT
+			decompressed_string_size +=
+			    duckdb_fsst_decompress(fsst_decoder, compressed_suffix_len, suffix_ptr,
+			                           max_uncompressed_length - prefix_len, target_ptr + prefix_len);
+		}
+		return StringVector::FinalizeShrinkableBuffer(str_allocator, target_ptr, max_uncompressed_length,
+		                                              decompressed_string_size);
+	}
+	static string_t DecompressInlinedValueWithPrefix(void *duckdb_fsst_decoder, const char *prefix, idx_t prefix_len,
+	                                                 const char *compressed_suffix, idx_t compressed_suffix_len) {
+		StringWithExtraSpace result;
+		const auto target_ptr = (unsigned char *)result.str.GetPrefixWriteable(); // NOLINT
+		memcpy(target_ptr, prefix, prefix_len);
+		idx_t decompressed_string_size = prefix_len;
+		if (compressed_suffix_len > 0) {
+			const auto fsst_decoder = static_cast<duckdb_fsst_decoder_t *>(duckdb_fsst_decoder);
+			const auto suffix_ptr = (const unsigned char *)compressed_suffix; // NOLINT
+			const auto cap = string_t::INLINE_LENGTH + sizeof(StringWithExtraSpace::extra_space) - prefix_len;
+			decompressed_string_size +=
+			    duckdb_fsst_decompress(fsst_decoder, compressed_suffix_len, suffix_ptr, cap, target_ptr + prefix_len);
+		}
+		if (decompressed_string_size > string_t::INLINE_LENGTH) {
+			throw IOException("Corrupt database file: decoded FSST string of >=%llu bytes (should be <=%llu bytes)",
+			                  decompressed_string_size, string_t::INLINE_LENGTH);
+		}
+		result.str.SetSizeAndFinalize(UnsafeNumericCast<uint32_t>(decompressed_string_size), string_t::INLINE_LENGTH);
+		return result.str;
+	}
 	static string DecompressValue(void *duckdb_fsst_decoder, const char *compressed_string,
 	                              const idx_t compressed_string_len, vector<unsigned char> &decompress_buffer);
 };

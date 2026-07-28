@@ -988,6 +988,19 @@ void ForceCompressionSetting::OnSet(SettingCallbackInfo &info, Value &input) {
 }
 
 //===----------------------------------------------------------------------===//
+// Force Dict FSST Mode
+//===----------------------------------------------------------------------===//
+void ForceDictFsstModeSetting::OnSet(SettingCallbackInfo &info, Value &input) {
+	auto mode = StringUtil::Upper(input.ToString());
+	if (mode != "DEFAULT" && mode != "AUTO" && mode != "AUTO_NATIVE" && mode != "DICTIONARY" && mode != "DICT_FSST" &&
+	    mode != "FSST_ONLY" && mode != "DICT_FSST_PLUS" && mode != "FSST_PLUS") {
+		throw ParserException("force_dict_fsst_mode must be one of: DEFAULT, AUTO, AUTO_NATIVE, DICTIONARY, DICT_FSST, "
+		                      "FSST_ONLY, DICT_FSST_PLUS, FSST_PLUS");
+	}
+	input = Value(mode);
+}
+
+//===----------------------------------------------------------------------===//
 // Home Directory
 //===----------------------------------------------------------------------===//
 void HomeDirectorySetting::OnSet(SettingCallbackInfo &info, Value &input) {

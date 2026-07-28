@@ -840,6 +840,16 @@
         ]
     },
     {
+        "name": "force_dict_fsst_mode",
+        "description": "DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage ownership (serenedb-owned -> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'",
+        "type": "VARCHAR",
+        "scope": "global",
+        "default_value": "DEFAULT",
+        "on_callbacks": [
+            "set"
+        ]
+    },
+    {
         "name": "force_mbedtls_unsafe",
         "description": "Enable mbedtls for encryption (WARNING: unsafe to use)",
         "type": "BOOLEAN",
