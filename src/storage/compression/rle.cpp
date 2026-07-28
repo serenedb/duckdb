@@ -1,3 +1,6 @@
+#include "duckdb/common/bitpacking.hpp"
+#include "duckdb/common/numeric_utils.hpp"
+#include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/common/types/null_value.hpp"
 #include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
@@ -30,6 +33,120 @@ bool RLEValueEqual(const double &lhs, const double &rhs) {
 	return Load<uint64_t>(const_data_ptr_cast(&lhs)) == Load<uint64_t>(const_data_ptr_cast(&rhs));
 }
 
+static constexpr idx_t RLE_GROUP_SIZE = BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
+
+//! Native layout: [uint64 counts_offset][T values[n]][pad][rle_count_t counts[n]] -- both
+//! streams raw. SereneDB storage instead FOR+bitpacks them, which needs a wider header.
+//! Both start with that same uint64, so the marker bit distinguishes them on read: it is
+//! free natively because the field is a byte offset within one block.
+static constexpr uint64_t RLE_PACKED_MARKER = 1ULL << 63;
+static constexpr idx_t RLE_NATIVE_HEADER_SIZE = sizeof(uint64_t);
+
+template <class T>
+struct RLEHeader {
+	uint64_t counts_offset;
+	uint32_t entry_count;
+	rle_count_t count_frame;
+	bitpacking_width_t value_width;
+	bitpacking_width_t count_width;
+	T value_frame;
+};
+
+template <class T>
+static constexpr idx_t RLEHeaderSize(bool packed) {
+	return packed ? sizeof(RLEHeader<T>) : RLE_NATIVE_HEADER_SIZE;
+}
+
+template <class T>
+static idx_t RLEMaxEntryCount(idx_t block_size, bool packed) {
+	auto entry_size = sizeof(T) + sizeof(rle_count_t);
+	auto staged = AlignValueFloor((block_size - RLEHeaderSize<T>(packed)) / entry_size);
+	if (!packed) {
+		return staged;
+	}
+	return staged - 2 * RLE_GROUP_SIZE;
+}
+
+template <class T, bool INTEGRAL = NumericLimits<T>::IsIntegral()>
+struct RLEValueCodec;
+
+template <class T>
+struct RLEValueCodec<T, true> {
+	using T_U = typename MakeUnsigned<T>::type;
+
+	static bitpacking_width_t WidthForRange(T minimum, T maximum, T &frame) {
+		T min_max_diff;
+		if (!TrySubtractOperator::Operation(maximum, minimum, min_max_diff)) {
+			frame = 0;
+			return sizeof(T) * 8;
+		}
+		frame = minimum;
+		return BitpackingPrimitives::MinimumBitWidth<T, false>(min_max_diff);
+	}
+
+	static bitpacking_width_t Analyze(const T *values, idx_t count, T &frame) {
+		if (!count) {
+			frame = 0;
+			return 0;
+		}
+		T minimum = values[0];
+		T maximum = values[0];
+		for (idx_t i = 1; i < count; i++) {
+			minimum = MinValue<T>(minimum, values[i]);
+			maximum = MaxValue<T>(maximum, values[i]);
+		}
+		return WidthForRange(minimum, maximum, frame);
+	}
+
+	static idx_t PackedSize(idx_t count, bitpacking_width_t width) {
+		return BitpackingPrimitives::GetRequiredSize(count, width);
+	}
+
+	static void Pack(data_ptr_t dst, T *values, idx_t count, T frame, bitpacking_width_t width) {
+		if (frame) {
+			for (idx_t i = 0; i < count; i++) {
+				reinterpret_cast<T_U *>(values)[i] -= static_cast<T_U>(frame);
+			}
+		}
+		BitpackingPrimitives::PackBuffer<T>(dst, values, count, width);
+	}
+
+	static void Unpack(T *dst, const_data_ptr_t src, idx_t count, T frame, bitpacking_width_t width) {
+		BitpackingPrimitives::UnPackBuffer<T>(data_ptr_cast(dst), const_cast<data_ptr_t>(src), count, width, true);
+		if (frame) {
+			for (idx_t i = 0; i < count; i++) {
+				reinterpret_cast<T_U *>(dst)[i] += static_cast<T_U>(frame);
+			}
+		}
+	}
+};
+
+template <class T>
+struct RLEValueCodec<T, false> {
+	static bitpacking_width_t WidthForRange(T minimum, T maximum, T &frame) {
+		frame = 0;
+		return sizeof(T) * 8;
+	}
+
+	static bitpacking_width_t Analyze(const T *values, idx_t count, T &frame) {
+		frame = 0;
+		return sizeof(T) * 8;
+	}
+
+	static idx_t PackedSize(idx_t count, bitpacking_width_t width) {
+		return BitpackingPrimitives::RoundUpToAlgorithmGroupSize(count) * sizeof(T);
+	}
+
+	static void Pack(data_ptr_t dst, T *values, idx_t count, T frame, bitpacking_width_t width) {
+		memcpy(dst, values, count * sizeof(T));
+		memset(dst + count * sizeof(T), 0, PackedSize(count, width) - count * sizeof(T));
+	}
+
+	static void Unpack(T *dst, const_data_ptr_t src, idx_t count, T frame, bitpacking_width_t width) {
+		memcpy(dst, src, count * sizeof(T));
+	}
+};
+
 //===--------------------------------------------------------------------===//
 // Analyze
 //===--------------------------------------------------------------------===//
@@ -54,6 +171,48 @@ public:
 	template <class OP>
 	void Flush() {
 		OP::template Operation<T>(last_value, last_seen_count, dataptr, all_null);
+	}
+
+	template <class OP = EmptyRLEWriter>
+	void UpdateFlatValid(const T *data, idx_t count) {
+		static constexpr rle_count_t MAX_COUNT = NumericLimits<rle_count_t>::Maximum();
+		if (!count) {
+			return;
+		}
+		if (DUCKDB_UNLIKELY(all_null)) {
+			last_value = data[0];
+			seen_count++;
+			all_null = false;
+		}
+		idx_t i = 0;
+		while (i < count) {
+			idx_t j = i;
+			while (j < count && RLEValueEqual(data[j], last_value)) {
+				j++;
+			}
+			if (j == i) {
+				if (last_seen_count > 0) {
+					Flush<OP>();
+					seen_count++;
+				}
+				last_value = data[i];
+				last_seen_count = 1;
+				i++;
+				continue;
+			}
+			idx_t run = j - i;
+			while (run > 0) {
+				const idx_t take = MinValue<idx_t>(MAX_COUNT - last_seen_count, run);
+				last_seen_count = UnsafeNumericCast<rle_count_t>(last_seen_count + take);
+				run -= take;
+				if (last_seen_count == MAX_COUNT) {
+					Flush<OP>();
+					last_seen_count = 0;
+					seen_count++;
+				}
+			}
+			i = j;
+		}
 	}
 
 	template <class OP = EmptyRLEWriter>
@@ -101,15 +260,45 @@ public:
 
 template <class T>
 struct RLEAnalyzeState : public AnalyzeState {
-	explicit RLEAnalyzeState(BlockManager &block_manager) : AnalyzeState(block_manager) {
+	explicit RLEAnalyzeState(BlockManager &block_manager, bool packed_p)
+	    : AnalyzeState(block_manager), packed(packed_p) {
+		state.dataptr = this;
+	}
+
+	struct RLEAnalyzeWriter {
+		template <class VALUE_TYPE>
+		static void Operation(VALUE_TYPE value, rle_count_t count, void *dataptr, bool is_null) {
+			reinterpret_cast<RLEAnalyzeState<T> *>(dataptr)->Observe(value, count);
+		}
+	};
+
+	void Observe(T value, rle_count_t count) {
+		if (!run_count) {
+			min_value = max_value = value;
+			min_count = max_count = count;
+		} else {
+			min_value = MinValue<T>(min_value, value);
+			max_value = MaxValue<T>(max_value, value);
+			min_count = MinValue<rle_count_t>(min_count, count);
+			max_count = MaxValue<rle_count_t>(max_count, count);
+		}
+		run_count++;
 	}
 
 	RLEState<T> state;
+	const bool packed;
+	idx_t total_count = 0;
+	idx_t run_count = 0;
+	T min_value;
+	T max_value;
+	rle_count_t min_count;
+	rle_count_t max_count;
 };
 
 template <class T>
 unique_ptr<AnalyzeState> RLEInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
-	return make_uniq<RLEAnalyzeState<T>>(ctx.block_manager);
+	const auto packed = IsSereneDBStorageVersion(ctx.storage_version);
+	return make_uniq<RLEAnalyzeState<T>>(ctx.block_manager, packed);
 }
 
 template <class T>
@@ -119,35 +308,69 @@ bool RLEAnalyze(AnalyzeState &state, const Vector &input) {
 	input.ToUnifiedFormat(vdata);
 
 	auto data = UnifiedVectorFormat::GetData<T>(vdata);
-	const auto count = input.size();
-	for (idx_t i = 0; i < count; i++) {
-		auto idx = vdata.sel->get_index(i);
-		rle_state.state.Update(data, vdata.validity, idx);
+	using Writer = typename RLEAnalyzeState<T>::RLEAnalyzeWriter;
+	const idx_t count = input.size();
+	if (!vdata.sel->IsSet() && vdata.validity.CannotHaveNull()) {
+		rle_state.state.template UpdateFlatValid<Writer>(data, count);
+	} else {
+		for (idx_t i = 0; i < count; i++) {
+			auto idx = vdata.sel->get_index(i);
+			rle_state.state.template Update<Writer>(data, vdata.validity, idx);
+		}
 	}
+	rle_state.total_count += count;
 	return true;
 }
 
 template <class T>
 idx_t RLEFinalAnalyze(AnalyzeState &state) {
 	auto &rle_state = state.template Cast<RLEAnalyzeState<T>>();
-	return (sizeof(rle_count_t) + sizeof(T)) * rle_state.state.seen_count;
+	if (rle_state.state.last_seen_count > 0) {
+		rle_state.state.template Flush<typename RLEAnalyzeState<T>::RLEAnalyzeWriter>();
+	}
+	auto count = rle_state.run_count;
+	if (!count) {
+		return 0;
+	}
+	if (!rle_state.packed) {
+		return (sizeof(rle_count_t) + sizeof(T)) * count;
+	}
+	if (count >= rle_state.total_count) {
+		return DConstants::INVALID_INDEX;
+	}
+
+	T value_frame;
+	rle_count_t count_frame;
+	auto value_width = RLEValueCodec<T>::WidthForRange(rle_state.min_value, rle_state.max_value, value_frame);
+	auto count_width = RLEValueCodec<rle_count_t>::WidthForRange(rle_state.min_count, rle_state.max_count, count_frame);
+
+	auto max_entry_count = RLEMaxEntryCount<T>(rle_state.info.GetBlockSize(), true);
+	auto full_size = RLEValueCodec<T>::PackedSize(max_entry_count, value_width) +
+	                 RLEValueCodec<rle_count_t>::PackedSize(max_entry_count, count_width);
+	auto rest = count % max_entry_count;
+	return (count / max_entry_count) * full_size + RLEValueCodec<T>::PackedSize(rest, value_width) +
+	       RLEValueCodec<rle_count_t>::PackedSize(rest, count_width);
 }
 
 //===--------------------------------------------------------------------===//
 // Compress
 //===--------------------------------------------------------------------===//
-struct RLEConstants {
-	static constexpr const idx_t RLE_HEADER_SIZE = sizeof(uint64_t);
-};
-
 template <class T, bool WRITE_STATISTICS>
 struct RLECompressState : public StandardCompressionState {
+	using ValueCodec = RLEValueCodec<T>;
+	using CountCodec = RLEValueCodec<rle_count_t>;
+
 	explicit RLECompressState(ColumnDataCheckpointData &checkpoint_data_p)
-	    : StandardCompressionState(checkpoint_data_p, CompressionType::COMPRESSION_RLE) {
+	    : StandardCompressionState(checkpoint_data_p, CompressionType::COMPRESSION_RLE),
+	      packed(IsSereneDBStorageVersion(checkpoint_data_p.GetStorageVersion())),
+	      header_size(RLEHeaderSize<T>(packed)) {
+		if (packed) {
+			pack_buffer = make_unsafe_uniq_array<data_t>(checkpoint_data_p.GetBlockManager().GetBlockSize());
+		}
 		CreateEmptySegment();
 
 		state.dataptr = (void *)this;
-		max_rle_count = MaxRLECount();
+		max_rle_count = RLEMaxEntryCount<T>(info.GetBlockSize(), packed);
 	}
 
 	struct RLEWriter {
@@ -158,33 +381,29 @@ struct RLECompressState : public StandardCompressionState {
 		}
 	};
 
-	idx_t MaxRLECount() {
-		auto entry_size = sizeof(T) + sizeof(rle_count_t);
-		return AlignValueFloor((info.GetBlockSize() - RLEConstants::RLE_HEADER_SIZE) / entry_size);
-	}
-
 	void CreateEmptySegment() {
 		CreateAndPinNewSegment();
 	}
 
 	void Append(UnifiedVectorFormat &vdata, idx_t count) {
 		auto data = UnifiedVectorFormat::GetData<T>(vdata);
+		using Writer = RLECompressState<T, WRITE_STATISTICS>::RLEWriter;
+		if (!vdata.sel->IsSet() && vdata.validity.CannotHaveNull()) {
+			state.template UpdateFlatValid<Writer>(data, count);
+			return;
+		}
 		for (idx_t i = 0; i < count; i++) {
 			auto idx = vdata.sel->get_index(i);
 			if (WRITE_STATISTICS && !vdata.validity.RowIsValid(idx)) {
 				stats_writer.SetHasNull();
 			}
-			state.template Update<RLECompressState<T, WRITE_STATISTICS>::RLEWriter>(data, vdata.validity, idx);
+			state.template Update<Writer>(data, vdata.validity, idx);
 		}
 	}
 
 	void WriteValue(T value, rle_count_t count, bool is_null) {
-		// write the RLE entry
-		auto handle_ptr = handle.GetDataMutable() + RLEConstants::RLE_HEADER_SIZE;
-		auto data_pointer = reinterpret_cast<T *>(handle_ptr);
-		auto index_pointer = reinterpret_cast<rle_count_t *>(handle_ptr + max_rle_count * sizeof(T));
-		data_pointer[entry_count] = value;
-		index_pointer[entry_count] = count;
+		StagedValues()[entry_count] = value;
+		StagedCounts()[entry_count] = count;
 		entry_count++;
 
 		// update meta data
@@ -205,23 +424,55 @@ struct RLECompressState : public StandardCompressionState {
 		}
 	}
 
+	T *StagedValues() {
+		return reinterpret_cast<T *>(handle.GetDataMutable() + header_size);
+	}
+	rle_count_t *StagedCounts() {
+		return reinterpret_cast<rle_count_t *>(handle.GetDataMutable() + header_size + max_rle_count * sizeof(T));
+	}
+
 	void FlushSegment() {
+		if (packed) {
+			FlushPacked();
+		} else {
+			FlushNative();
+		}
+	}
+
+	void FlushNative() {
 		// flush the segment
 		// we compact the segment by moving the counts so they are directly next to the values
-		idx_t counts_size = sizeof(rle_count_t) * entry_count;
-		idx_t original_rle_offset = RLEConstants::RLE_HEADER_SIZE + max_rle_count * sizeof(T);
-		idx_t minimal_rle_offset = RLEConstants::RLE_HEADER_SIZE + sizeof(T) * entry_count;
-		idx_t aligned_rle_offset = AlignValue(minimal_rle_offset);
-		idx_t total_segment_size = aligned_rle_offset + counts_size;
 		auto data_ptr = handle.GetDataMutable();
+		idx_t counts_size = sizeof(rle_count_t) * entry_count;
+		idx_t minimal_rle_offset = RLE_NATIVE_HEADER_SIZE + sizeof(T) * entry_count;
+		idx_t aligned_rle_offset = AlignValue(minimal_rle_offset);
 		if (aligned_rle_offset > minimal_rle_offset) {
 			memset(data_ptr + minimal_rle_offset, 0, aligned_rle_offset - minimal_rle_offset);
 		}
-		memmove(data_ptr + aligned_rle_offset, data_ptr + original_rle_offset, counts_size);
-		// store the final RLE offset within the segment
+		memmove(data_ptr + aligned_rle_offset, StagedCounts(), counts_size);
 		Store<uint64_t>(aligned_rle_offset, data_ptr);
+		FlushCurrentSegment(stats_writer, aligned_rle_offset + counts_size);
+	}
 
-		FlushCurrentSegment(stats_writer, total_segment_size);
+	void FlushPacked() {
+		auto values = StagedValues();
+		auto counts = StagedCounts();
+
+		RLEHeader<T> header;
+		header.entry_count = NumericCast<uint32_t>(entry_count);
+		header.value_width = ValueCodec::Analyze(values, entry_count, header.value_frame);
+		header.count_width = CountCodec::Analyze(counts, entry_count, header.count_frame);
+		auto values_size = ValueCodec::PackedSize(entry_count, header.value_width);
+		auto counts_size = CountCodec::PackedSize(entry_count, header.count_width);
+		header.counts_offset = RLE_PACKED_MARKER | (header_size + values_size);
+
+		ValueCodec::Pack(pack_buffer.get(), values, entry_count, header.value_frame, header.value_width);
+		CountCodec::Pack(pack_buffer.get() + values_size, counts, entry_count, header.count_frame, header.count_width);
+
+		auto data_ptr = handle.GetDataMutable();
+		Store<RLEHeader<T>>(header, data_ptr);
+		memcpy(data_ptr + header_size, pack_buffer.get(), values_size + counts_size);
+		FlushCurrentSegment(stats_writer, header_size + values_size + counts_size);
 	}
 
 	void Finalize() {
@@ -233,6 +484,9 @@ struct RLECompressState : public StandardCompressionState {
 
 	RLEState<T> state;
 	StatsWriter<T> stats_writer;
+	const bool packed;
+	const idx_t header_size;
+	unsafe_unique_array<data_t> pack_buffer;
 	idx_t entry_count = 0;
 	idx_t max_rle_count;
 };
@@ -265,6 +519,10 @@ void RLEFinalizeCompress(CompressionState &state_p) {
 	throw DataCorruptionException("Corrupted RLE segment: rle_count_offset is corrupted");
 }
 
+[[noreturn]] static void ThrowRLEWidthInvalid() {
+	throw DataCorruptionException("Corrupted RLE segment: bitpacking width exceeds the value width");
+}
+
 [[noreturn]] static void ThrowRLERunCountArrayExhausted() {
 	throw DataCorruptionException("Corrupted RLE segment: run counts do not cover the segment row count");
 }
@@ -275,111 +533,179 @@ void RLEFinalizeCompress(CompressionState &state_p) {
 }
 
 template <class T>
-struct RLEScanState : public SegmentScanState {
-	struct ValidatedRun {
-		T value;
-		rle_count_t length;
-	};
+struct RLELayout {
+	bool packed;
+	//! Number of value/run-count pairs the segment regions hold.
+	idx_t entry_capacity;
+	const_data_ptr_t values;
+	const_data_ptr_t counts;
+	T value_frame;
+	rle_count_t count_frame;
+	bitpacking_width_t value_width;
+	bitpacking_width_t count_width;
 
-	struct SegmentLayout {
-		SegmentLayout(unsafe_array_ptr<const T> values_p, unsafe_array_ptr<const rle_count_t> run_counts_p,
-		              idx_t entry_capacity_p, idx_t segment_count)
-		    : values(values_p), run_counts(run_counts_p), entry_capacity(entry_capacity_p), validated_entry_count(0),
-		      unvalidated_row_count(segment_count) {
-		}
-
-		//! Validate enough runs to cover every row in the segment.
-		idx_t ValidateAllRuns() {
-			while (unvalidated_row_count > 0) {
-				ValidateThrough(validated_entry_count);
-			}
-			return validated_entry_count;
-		}
-
-		//! Validate through entry_index and return that run.
-		ValidatedRun ValidateAndGetRun(idx_t entry_index) {
-			ValidateThrough(entry_index);
-			return {values[entry_index], run_counts[entry_index]};
-		}
-
-		//! Return the first validated_run_count run values.
-		unsafe_array_ptr<const T> GetRunValues(idx_t validated_run_count) const {
-			D_ASSERT(validated_run_count <= validated_entry_count);
-			return values.SubArray(0, validated_run_count);
-		}
-
-		idx_t GetEntryCapacity() const {
-			return entry_capacity;
-		}
-
-	private:
-		//! Validate through entry_index without advancing the scan.
-		void ValidateThrough(idx_t entry_index) {
-			while (validated_entry_count <= entry_index) {
-				if (validated_entry_count >= entry_capacity) {
-					ThrowRLERunCountArrayExhausted();
-				}
-				auto run_count = run_counts[validated_entry_count];
-				if (run_count > unvalidated_row_count) {
-					ThrowRLERunCountExceedsRemaining(run_count, unvalidated_row_count);
-				}
-				unvalidated_row_count -= run_count;
-				validated_entry_count++;
-			}
-		}
-
-		//! Values read from the segment between RLE_HEADER_SIZE and rle_count_offset.
-		unsafe_array_ptr<const T> values;
-		//! Run counts read from the segment between rle_count_offset and the segment end.
-		unsafe_array_ptr<const rle_count_t> run_counts;
-		//! Number of value/run-count pairs that fit in both segment regions.
-		idx_t entry_capacity;
-		//! Number of run counts already validated against the segment row count.
-		idx_t validated_entry_count;
-		//! Segment rows not yet covered by validated run counts.
-		idx_t unvalidated_row_count;
-	};
-
-	static SegmentLayout ReadSegmentLayout(const BufferHandle &handle, ColumnSegment &segment, idx_t segment_count) {
+	static RLELayout Parse(const BufferHandle &handle, ColumnSegment &segment) {
 		auto reader = CompressionSegmentReader::FromSegment(handle, segment, "RLE segment");
-		auto rle_count_offset = reader.Read<uint64_t>();
-		if (rle_count_offset < RLEConstants::RLE_HEADER_SIZE || rle_count_offset > reader.Size()) {
+		const auto marked = reader.Read<uint64_t>();
+		RLELayout layout;
+		layout.packed = (marked & RLE_PACKED_MARKER) != 0;
+		const auto counts_offset = marked & ~RLE_PACKED_MARKER;
+		const idx_t header_size = RLEHeaderSize<T>(layout.packed);
+		if (counts_offset < header_size || counts_offset > reader.Size()) {
 			ThrowRLECountOffsetInvalid();
 		}
 
-		auto value_capacity = (rle_count_offset - RLEConstants::RLE_HEADER_SIZE) / sizeof(T);
-		auto count_capacity = (reader.Size() - rle_count_offset) / sizeof(rle_count_t);
-		auto entry_capacity = MinValue<idx_t>(value_capacity, count_capacity);
-		auto values = reader.template GetArray<T>(RLEConstants::RLE_HEADER_SIZE, value_capacity);
-		auto run_counts = reader.template GetArray<rle_count_t>(rle_count_offset, count_capacity);
-		return SegmentLayout(values, run_counts, entry_capacity, segment_count);
-	}
-
-	explicit RLEScanState(BufferHandle handle_p, ColumnSegment &segment)
-	    : handle(std::move(handle_p)), segment_count(segment.count.load()),
-	      layout(ReadSegmentLayout(handle, segment, segment_count)), entry_pos(0), position_in_entry(0) {
-	}
-
-	//! Advances past empty entries while validating the current run.
-	ValidatedRun ValidateAndGetCurrentRun() {
-		auto run = layout.ValidateAndGetRun(entry_pos);
-		// Empty runs do not represent rows.
-		while (run.length == 0) {
-			ForwardToNextRun();
-			run = layout.ValidateAndGetRun(entry_pos);
+		if (!layout.packed) {
+			auto value_capacity = (counts_offset - header_size) / sizeof(T);
+			auto count_capacity = (reader.Size() - counts_offset) / sizeof(rle_count_t);
+			layout.entry_capacity = MinValue<idx_t>(value_capacity, count_capacity);
+			layout.values = const_data_ptr_cast(reader.template GetArray<T>(header_size, value_capacity).data());
+			layout.counts =
+			    const_data_ptr_cast(reader.template GetArray<rle_count_t>(counts_offset, count_capacity).data());
+			layout.value_frame = 0;
+			layout.count_frame = 0;
+			layout.value_width = sizeof(T) * 8;
+			layout.count_width = sizeof(rle_count_t) * 8;
+			return layout;
 		}
-		return run;
+
+		const auto header = reader.template Get<RLEHeader<T>>(0);
+		layout.entry_capacity = header.entry_count;
+		layout.value_frame = header.value_frame;
+		layout.count_frame = header.count_frame;
+		layout.value_width = header.value_width;
+		layout.count_width = header.count_width;
+		if (layout.value_width > sizeof(T) * 8 || layout.count_width > sizeof(rle_count_t) * 8) {
+			ThrowRLEWidthInvalid();
+		}
+		const auto values_size = RLEValueCodec<T>::PackedSize(layout.entry_capacity, layout.value_width);
+		const auto counts_size = RLEValueCodec<rle_count_t>::PackedSize(layout.entry_capacity, layout.count_width);
+		if (counts_offset - header_size < values_size || reader.Size() - counts_offset < counts_size) {
+			ThrowRLECountOffsetInvalid();
+		}
+		layout.values = reader.GetBytes(header_size, values_size).data();
+		layout.counts = reader.GetBytes(counts_offset, counts_size).data();
+		return layout;
+	}
+};
+
+template <class T>
+struct RLEScanState : public SegmentScanState {
+	using ValueCodec = RLEValueCodec<T>;
+	using CountCodec = RLEValueCodec<rle_count_t>;
+
+	RLEScanState(BufferHandle handle_p, ColumnSegment &segment)
+	    : handle(std::move(handle_p)), layout(RLELayout<T>::Parse(handle, segment)),
+	      max_entry_pos(layout.entry_capacity), unvalidated_row_count(segment.count.load()) {
+		if (layout.packed && max_entry_pos) {
+			LoadGroup();
+		}
+	}
+
+	void LoadGroup() {
+		idx_t group_start = entry_pos & ~(RLE_GROUP_SIZE - 1);
+		ValueCodec::Unpack(value_window, layout.values + group_start * layout.value_width / 8, RLE_GROUP_SIZE,
+		                   layout.value_frame, layout.value_width);
+		CountCodec::Unpack(count_window, layout.counts + group_start * layout.count_width / 8, RLE_GROUP_SIZE,
+		                   layout.count_frame, layout.count_width);
+	}
+
+	template <bool PACKED>
+	inline rle_count_t RawCount(idx_t entry_index) const {
+		if (PACKED) {
+			D_ASSERT((entry_index & ~(RLE_GROUP_SIZE - 1)) == (entry_pos & ~(RLE_GROUP_SIZE - 1)));
+			return count_window[entry_index & (RLE_GROUP_SIZE - 1)];
+		}
+		return reinterpret_cast<const rle_count_t *>(layout.counts)[entry_index];
+	}
+
+	template <bool PACKED>
+	inline T RawValue() const {
+		if (PACKED) {
+			return value_window[entry_pos & (RLE_GROUP_SIZE - 1)];
+		}
+		return reinterpret_cast<const T *>(layout.values)[entry_pos];
+	}
+
+	inline T Value() const {
+		return layout.packed ? RawValue<true>() : RawValue<false>();
+	}
+
+	inline void ValidateRun(rle_count_t run_count) {
+		if (run_count > unvalidated_row_count) {
+			ThrowRLERunCountExceedsRemaining(run_count, unvalidated_row_count);
+		}
+		unvalidated_row_count -= run_count;
+		validated_entry_count++;
+	}
+
+	//! Validate through entry_index; runs are validated in order, before the scan first reads them.
+	template <bool PACKED>
+	void ValidateThrough(idx_t entry_index) {
+		while (validated_entry_count <= entry_index) {
+			if (validated_entry_count >= max_entry_pos) {
+				ThrowRLERunCountArrayExhausted();
+			}
+			ValidateRun(RawCount<PACKED>(validated_entry_count));
+		}
+	}
+
+	template <bool PACKED>
+	inline rle_count_t Count() {
+		if (entry_pos >= validated_entry_count) {
+			ValidateThrough<PACKED>(entry_pos);
+		}
+		return RawCount<PACKED>(entry_pos);
+	}
+
+	inline rle_count_t Count() {
+		return layout.packed ? Count<true>() : Count<false>();
+	}
+
+	//! Advances past empty entries, which do not represent rows, and returns the current run length.
+	inline rle_count_t CurrentRunLength() {
+		auto run_length = Count();
+		while (run_length == 0) {
+			ForwardToNextRun();
+			run_length = Count();
+		}
+		return run_length;
+	}
+
+	inline T CurrentValue() {
+		CurrentRunLength();
+		return Value();
+	}
+
+	//! Validate enough runs to cover every row in the segment, returning how many that takes.
+	idx_t ValidateAllRuns() {
+		if (!layout.packed) {
+			while (unvalidated_row_count > 0) {
+				ValidateThrough<false>(validated_entry_count);
+			}
+			return validated_entry_count;
+		}
+		auto padded_count = BitpackingPrimitives::RoundUpToAlgorithmGroupSize(max_entry_pos);
+		auto counts = make_unsafe_uniq_array_uninitialized<rle_count_t>(padded_count);
+		CountCodec::Unpack(counts.get(), layout.counts, padded_count, layout.count_frame, layout.count_width);
+		while (unvalidated_row_count > 0) {
+			if (validated_entry_count >= max_entry_pos) {
+				ThrowRLERunCountArrayExhausted();
+			}
+			ValidateRun(counts[validated_entry_count]);
+		}
+		return validated_entry_count;
 	}
 
 	inline void SkipInternal(idx_t skip_count) {
 		while (skip_count > 0) {
-			auto run_count = ValidateAndGetCurrentRun().length;
-			D_ASSERT(position_in_entry < run_count);
-			idx_t skip_amount = MinValue<idx_t>(skip_count, run_count - position_in_entry);
+			auto run_length = CurrentRunLength();
+			D_ASSERT(position_in_entry < run_length);
+			idx_t skip_amount = MinValue<idx_t>(skip_count, run_length - position_in_entry);
 
 			skip_count -= skip_amount;
 			position_in_entry += skip_amount;
-			if (ExhaustedRun(run_count)) {
+			if (ExhaustedRun(run_length)) {
 				ForwardToNextRun();
 			}
 		}
@@ -393,8 +719,11 @@ struct RLEScanState : public SegmentScanState {
 		// handled all entries in this RLE value
 		// move to the next entry
 		entry_pos++;
-		if (entry_pos > layout.GetEntryCapacity()) {
+		if (entry_pos > max_entry_pos) {
 			ThrowRLERunCountArrayExhausted();
+		}
+		if (layout.packed && !(entry_pos & (RLE_GROUP_SIZE - 1)) && entry_pos < max_entry_pos) {
+			LoadGroup();
 		}
 		position_in_entry = 0;
 	}
@@ -403,15 +732,78 @@ struct RLEScanState : public SegmentScanState {
 		return position_in_entry >= run_length;
 	}
 
+	//! Fill `result` with the runs starting at the cursor, with the layout resolved by the caller so
+	//! nothing in the loop re-tests it.
+	template <bool PACKED>
+	void FillRuns(T *result, idx_t scan_count) {
+		idx_t written = 0;
+		while (written < scan_count) {
+			if (PACKED && position_in_entry == 0) {
+				const idx_t lane = entry_pos & (RLE_GROUP_SIZE - 1);
+				const idx_t runs = MinValue<idx_t>(RLE_GROUP_SIZE - lane, max_entry_pos - entry_pos);
+				idx_t total = 0;
+				for (idx_t r = 0; r < runs; r++) {
+					total += count_window[lane + r];
+				}
+				if (total && total <= scan_count - written) {
+					ValidateThrough<true>(entry_pos + runs - 1);
+					for (idx_t r = 0; r < runs; r++) {
+						const T element = value_window[lane + r];
+						const idx_t run_count = count_window[lane + r];
+						for (idx_t i = 0; i < run_count; i++) {
+							result[written + i] = element;
+						}
+						written += run_count;
+					}
+					entry_pos += runs;
+					if (entry_pos < max_entry_pos) {
+						LoadGroup();
+					}
+					continue;
+				}
+			}
+			const rle_count_t run_end = Count<PACKED>();
+			const T element = RawValue<PACKED>();
+			const idx_t run_count = run_end - position_in_entry;
+			const idx_t remaining = scan_count - written;
+			if (DUCKDB_UNLIKELY(run_count > remaining)) {
+				for (idx_t i = 0; i < remaining; i++) {
+					result[written + i] = element;
+				}
+				position_in_entry += remaining;
+				return;
+			}
+			for (idx_t i = 0; i < run_count; i++) {
+				result[written + i] = element;
+			}
+			written += run_count;
+			ForwardToNextRun();
+		}
+	}
+
+	void Fill(T *result, idx_t scan_count) {
+		if (layout.packed) {
+			FillRuns<true>(result, scan_count);
+		} else {
+			FillRuns<false>(result, scan_count);
+		}
+	}
+
 	BufferHandle handle;
-	//! Segment row count loaded from the file and used to validate runs as they are reached.
-	const idx_t segment_count;
-	SegmentLayout layout;
-	idx_t entry_pos;
-	idx_t position_in_entry;
+	const RLELayout<T> layout;
+	const idx_t max_entry_pos;
+	idx_t entry_pos = 0;
+	idx_t position_in_entry = 0;
+	//! Number of runs already validated against the segment row count.
+	idx_t validated_entry_count = 0;
+	//! Segment rows not yet covered by validated runs.
+	idx_t unvalidated_row_count;
 	//! If we are running a filter over the column - the runs that match the filter
 	unsafe_unique_array<bool> matching_runs;
 	idx_t matching_run_count = 0;
+
+	T value_window[RLE_GROUP_SIZE];
+	rle_count_t count_window[RLE_GROUP_SIZE];
 };
 
 template <class T>
@@ -451,14 +843,13 @@ static bool CanEmitConstantVector(idx_t position, idx_t run_length, idx_t scan_c
 }
 
 template <class T>
-static void RLEScanConstant(RLEScanState<T> &scan_state, const typename RLEScanState<T>::ValidatedRun &run,
-                            idx_t scan_count, Vector &result) {
+static void RLEScanConstant(RLEScanState<T> &scan_state, rle_count_t run_length, idx_t scan_count, Vector &result) {
 	result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	FlatVector::SetSize(result, count_t(scan_count));
 	auto result_data = ConstantVector::GetData<T>(result);
-	result_data[0] = run.value;
+	result_data[0] = scan_state.Value();
 	scan_state.position_in_entry += scan_count;
-	if (scan_state.ExhaustedRun(run.length)) {
+	if (scan_state.ExhaustedRun(run_length)) {
 		scan_state.ForwardToNextRun();
 	}
 }
@@ -471,36 +862,15 @@ void RLEScanPartialInternal(ColumnSegment &segment, ColumnScanState &state, idx_
 	auto &scan_state = state.scan_state->Cast<RLEScanState<T>>();
 
 	// If we are scanning an entire Vector and it contains only a single run
-	auto current_run = scan_state.ValidateAndGetCurrentRun();
-	if (scan_state.position_in_entry < current_run.length &&
-	    CanEmitConstantVector<ENTIRE_VECTOR>(scan_state.position_in_entry, current_run.length, scan_count)) {
-		RLEScanConstant<T>(scan_state, current_run, scan_count, result);
+	auto run_length = scan_state.CurrentRunLength();
+	if (scan_state.position_in_entry < run_length &&
+	    CanEmitConstantVector<ENTIRE_VECTOR>(scan_state.position_in_entry, run_length, scan_count)) {
+		RLEScanConstant<T>(scan_state, run_length, scan_count, result);
 		return;
 	}
 
 	auto result_data = FlatVector::GetDataMutable<T>(result);
-
-	const idx_t result_end = result_offset + scan_count;
-	while (result_offset < result_end) {
-		auto run = scan_state.ValidateAndGetCurrentRun();
-		auto run_count = run.length - scan_state.position_in_entry;
-		idx_t remaining_scan_count = result_end - result_offset;
-		T element = run.value;
-		if (DUCKDB_UNLIKELY(run_count > remaining_scan_count)) {
-			for (idx_t i = 0; i < remaining_scan_count; i++) {
-				result_data[result_offset + i] = element;
-			}
-			scan_state.position_in_entry += remaining_scan_count;
-			break;
-		}
-
-		for (idx_t i = 0; i < run_count; i++) {
-			result_data[result_offset + i] = element;
-		}
-
-		result_offset += run_count;
-		scan_state.ForwardToNextRun();
-	}
+	scan_state.Fill(result_data + result_offset, scan_count);
 }
 
 template <class T>
@@ -523,10 +893,10 @@ void RLESelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 	auto &scan_state = state.scan_state->Cast<RLEScanState<T>>();
 
 	// If we are scanning an entire Vector and it contains only a single run we don't need to select at all
-	auto current_run = scan_state.ValidateAndGetCurrentRun();
-	if (scan_state.position_in_entry < current_run.length &&
-	    CanEmitConstantVector<true>(scan_state.position_in_entry, current_run.length, vector_count)) {
-		RLEScanConstant<T>(scan_state, current_run, vector_count, result);
+	auto run_length = scan_state.CurrentRunLength();
+	if (scan_state.position_in_entry < run_length &&
+	    CanEmitConstantVector<true>(scan_state.position_in_entry, run_length, vector_count)) {
+		RLEScanConstant<T>(scan_state, run_length, vector_count, result);
 		return;
 	}
 
@@ -542,7 +912,7 @@ void RLESelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 		// skip forward to the next index
 		scan_state.SkipInternal(next_idx - prev_idx);
 		// read the element
-		result_data.WriteValue(scan_state.ValidateAndGetCurrentRun().value);
+		result_data.WriteValue(scan_state.CurrentValue());
 		// move the next to the prev
 		prev_idx = next_idx;
 	}
@@ -561,16 +931,27 @@ void RLEFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 	if (!scan_state.matching_runs) {
 		// we haven't applied the filter yet
 		// apply the filter to all RLE values at once
-		auto total_run_count = scan_state.layout.ValidateAllRuns();
-		auto run_values = scan_state.layout.GetRunValues(total_run_count);
-		auto data_pointer = const_cast<T *>(run_values.data());
+		auto total_run_count = scan_state.ValidateAllRuns();
 
 		// initialize the filter set to all false (all runs are filtered out)
 		scan_state.matching_runs = make_unsafe_uniq_array<bool>(total_run_count);
 		memset(scan_state.matching_runs.get(), 0, sizeof(bool) * total_run_count);
 
+		// this is the one path that needs every run value at once rather than the sequential window;
+		// the native layout already has them contiguous in the block, so it filters in place
+		unsafe_unique_array<T> run_values;
+		auto &layout = scan_state.layout;
+		auto values_ptr = const_cast<data_ptr_t>(layout.values);
+		if (layout.packed) {
+			auto padded_run_count = BitpackingPrimitives::RoundUpToAlgorithmGroupSize(total_run_count);
+			run_values = make_unsafe_uniq_array<T>(padded_run_count);
+			RLEScanState<T>::ValueCodec::Unpack(run_values.get(), layout.values, padded_run_count, layout.value_frame,
+			                                    layout.value_width);
+			values_ptr = data_ptr_cast(run_values.get());
+		}
+
 		// execute the filter over all runs at once
-		Vector run_vector(result.GetType(), data_ptr_cast(data_pointer), total_run_count);
+		Vector run_vector(result.GetType(), values_ptr, total_run_count);
 
 		SelectionVector run_matches;
 		scan_state.matching_run_count = total_run_count;
@@ -602,12 +983,12 @@ void RLEFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 	idx_t sel_idx = 0;
 	idx_t prev_row = 0;
 	while (pos < vector_count) {
-		auto run = scan_state.ValidateAndGetCurrentRun();
-		idx_t run_count = run.length - scan_state.position_in_entry;
+		auto run_length = scan_state.CurrentRunLength();
+		idx_t run_count = run_length - scan_state.position_in_entry;
 		idx_t take = MinValue<idx_t>(vector_count - pos, run_count);
 		const bool match = scan_state.matching_runs[scan_state.entry_pos];
 		if (match) {
-			std::fill(result_data + pos, result_data + pos + take, run.value);
+			std::fill(result_data + pos, result_data + pos + take, scan_state.Value());
 		}
 		// consume the selection entries that fall into this run slice
 		idx_t run_begin_sel = sel_idx;
@@ -638,7 +1019,7 @@ void RLEFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 			matching_count = run_begin_sel;
 		}
 		scan_state.position_in_entry += take;
-		if (scan_state.ExhaustedRun(run.length)) {
+		if (scan_state.ExhaustedRun(run_length)) {
 			scan_state.ForwardToNextRun();
 		}
 		pos += take;
@@ -665,7 +1046,7 @@ void RLEFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, 
 	scan_state.Skip(segment, row_index);
 
 	auto result_data = FlatVector::GetDataMutable<T>(result);
-	result_data[result_idx] = scan_state.ValidateAndGetCurrentRun().value;
+	result_data[result_idx] = scan_state.CurrentValue();
 }
 
 //===--------------------------------------------------------------------===//
