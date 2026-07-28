@@ -34,7 +34,7 @@ public:
 
 	bool serialize_enum_as_string = false;
 	bool serialize_default_values = false;
-	StorageCompatibility storage_compatibility = StorageCompatibility::Default();
+	StorageCompatibility storage_compatibility = StorageCompatibility::DuckDBDefault();
 };
 
 class Serializer {

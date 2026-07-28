@@ -120,7 +120,7 @@ void ClientContext::StatementVerification(ClientContextLock &lock, unique_ptr<SQ
 		Allocator allocator;
 		MemoryStream stream(allocator);
 		SerializationOptions options;
-		options.storage_compatibility = StorageCompatibility::Latest();
+		options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 		optional_ptr<SelectStatement> to_serialize_stmt;
 		optional_ptr<QueryNode> to_serialize_node;
 		switch (statement->type) {

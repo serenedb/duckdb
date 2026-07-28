@@ -19,8 +19,9 @@ public:
 	static StorageCompatibility FromDatabase(AttachedDatabase &db);
 	static StorageCompatibility FromIndex(StorageVersion storage_version_p);
 	static StorageCompatibility FromString(const string &input);
-	static const StorageCompatibility &Default();
-	static const StorageCompatibility &Latest();
+	static const StorageCompatibility &DuckDBDefault();
+	static const StorageCompatibility &DuckDBLatest();
+	static const StorageCompatibility &SereneDBLatest();
 
 public:
 	bool Compare(StorageVersion property_version) const;
