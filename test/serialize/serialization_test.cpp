@@ -306,7 +306,7 @@ TEST_CASE("Constraint timing survives serialization", "[serialization][deferred]
 			Allocator allocator;
 			MemoryStream stream(allocator);
 			SerializationOptions options;
-			options.storage_compatibility = StorageCompatibility::Latest();
+			options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 			BinarySerializer::Serialize(constraint, stream, options);
 			stream.Rewind();
 			auto restored = BinaryDeserializer::Deserialize<Constraint>(stream);

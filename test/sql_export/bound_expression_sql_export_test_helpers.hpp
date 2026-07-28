@@ -34,8 +34,9 @@ void RequireIssue(const ExportResult &result, LogicalPlanVerificationIssueCode c
 
 unique_ptr<Expression> Constant(Value value);
 
-unique_ptr<Expression> BinaryRoundTrip(ClientContext &context, const Expression &expression,
-                                       const StorageCompatibility &compatibility = StorageCompatibility::Latest());
+unique_ptr<Expression>
+BinaryRoundTrip(ClientContext &context, const Expression &expression,
+                const StorageCompatibility &compatibility = StorageCompatibility::SereneDBLatest());
 
 struct SQLBindingEntry {
 	ColumnBinding binding;

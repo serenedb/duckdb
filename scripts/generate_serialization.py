@@ -112,7 +112,7 @@ def version_string_to_storage_version_enum(version: str) -> str:
     """Convert a version string like 'v0.10.3' to 'StorageVersion::V0_10_3'."""
     versions = version_map["serialization"]["values"]
     if version not in versions:
-        return "StorageVersion::LATEST"
+        return "StorageVersion::DUCKDB_LATEST"
     # "v0.10.3" -> "V0_10_3"
     enum_name = "V" + version[1:].replace(".", "_")
     return f"StorageVersion::{enum_name}"

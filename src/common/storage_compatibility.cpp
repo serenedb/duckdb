@@ -27,8 +27,15 @@ StorageCompatibility StorageCompatibility::FromString(const string &input) {
 	auto storage_version = GetStorageVersion(input.c_str());
 	if (storage_version == StorageVersion::INVALID) {
 		auto candidates = GetStorageCandidates();
-		throw InvalidInputException("The version string '%s' is not a known DuckDB version, valid options are: %s",
+		throw InvalidInputException("The version string '%s' is not a known storage version, valid options are: %s",
 		                            input, StringUtil::Join(candidates, ", "));
+	}
+	if (IsSereneDBStorageVersion(storage_version) && !IsReadableStorageVersion(storage_version)) {
+		throw InvalidInputException(
+		    "The storage version '%s' can no longer be read by this version of SereneDB, which reads serenedb "
+		    "versions %s through %s",
+		    input, StorageVersionInfo::GetStorageVersionString(SERENEDB_VERSION_LOWER),
+		    StorageVersionInfo::GetStorageVersionString(SERENEDB_VERSION_UPPER));
 	}
 	StorageCompatibility result;
 	result.duckdb_version = input;
@@ -37,12 +44,12 @@ StorageCompatibility StorageCompatibility::FromString(const string &input) {
 	return result;
 }
 
-const StorageCompatibility &StorageCompatibility::Default() {
+const StorageCompatibility &StorageCompatibility::DuckDBDefault() {
 #ifdef DUCKDB_ALTERNATIVE_VERIFY
-	return Latest();
+	return DuckDBLatest();
 #else
 #ifdef DUCKDB_LATEST_STORAGE
-	return Latest();
+	return DuckDBLatest();
 #else
 	static const StorageCompatibility default_compatibility = [] {
 		auto res = FromIndex(StorageVersionInfo::GetStorageVersionDefault());
@@ -55,9 +62,18 @@ const StorageCompatibility &StorageCompatibility::Default() {
 #endif
 }
 
-const StorageCompatibility &StorageCompatibility::Latest() {
+const StorageCompatibility &StorageCompatibility::DuckDBLatest() {
 	static const StorageCompatibility latest_compatibility = [] {
 		auto res = FromString("latest");
+		res.manually_set = false;
+		return res;
+	}();
+	return latest_compatibility;
+}
+
+const StorageCompatibility &StorageCompatibility::SereneDBLatest() {
+	static const StorageCompatibility latest_compatibility = [] {
+		auto res = FromString("serenedb_latest");
 		res.manually_set = false;
 		return res;
 	}();
