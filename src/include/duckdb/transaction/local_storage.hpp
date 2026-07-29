@@ -94,10 +94,6 @@ public:
 	                          const vector<LogicalType> &table_types, row_t &start_row);
 	//! Feed path when an external index is present: one owned batch per scanned chunk, published for the
 	//! index to adopt, because it tokenizes on worker threads and outlives the iteration.
-	ErrorData AppendBatchesToIndexes(DuckTransaction &transaction, RowGroupCollection &source,
-	                                 TableIndexList &index_list, const vector<LogicalType> &table_types,
-	                                 const vector<StorageIndex> &mapped_column_ids, optional_idx checkpoint_id,
-	                                 row_t &start_row);
 	//! Feed path for ordinary indexes: they consume each chunk before the next scan, so the scan buffer and
 	//! the table-layout view over it are both reused.
 	ErrorData AppendChunksToIndexes(DuckTransaction &transaction, RowGroupCollection &source,

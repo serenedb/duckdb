@@ -50,6 +50,10 @@ class CollationBinding;
 class ClientContext;
 class Binder;
 class DataTable;
+class DuckTransaction;
+class TableIndexList;
+class RowGroupCollection;
+class StorageIndex;
 class ErrorManager;
 class CompressionFunction;
 class TableFunctionRef;
@@ -218,6 +222,14 @@ public:
 	//! across workers it help-executes) and feeds all external indexes in place, then
 	//! returns once the feed is durable-committable. No copy, no side connection.
 	void (*external_range_replay)(ClientContext &context, DataTable &table, row_t row_start, idx_t count) = nullptr;
+	//! Feed every external index of a table with the rows a commit is about to append, before the row groups
+	//! are merged. `row_start` is the row id the append begins at. The host scans `source` once, partitioned
+	//! across workers it help-executes, and feeds the indexes in place -- so nothing outlives the scan that
+	//! produced it. Only called when every index is external; a native index still needs the ordered serial
+	//! append, and that path feeds external indexes inline instead.
+	ErrorData (*external_local_append)(DuckTransaction &transaction, TableIndexList &index_list,
+	                                  RowGroupCollection &source, const vector<StorageIndex> &mapped_column_ids,
+	                                  row_t row_start) = nullptr;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);

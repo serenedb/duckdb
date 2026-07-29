@@ -1,10 +1,10 @@
 #include "duckdb/transaction/local_storage.hpp"
+#include "duckdb/main/config.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/planner/table_filter.hpp"
 #include "duckdb/storage/data_table.hpp"
-#include "duckdb/storage/external_index_batch.hpp"
 #include "duckdb/storage/partial_block_manager.hpp"
 #include "duckdb/storage/table/append_state.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
@@ -26,6 +26,17 @@ bool HasExternalIndex(TableIndexList &index_list) {
 		}
 	}
 	return false;
+}
+
+//! Every index is external, so the append carries no constraint to check and no order to keep: the whole
+//! feed can be handed to the host to scan in parallel.
+bool AllIndexesExternal(TableIndexList &index_list) {
+	for (auto &index : index_list.Indexes()) {
+		if (!index.IsBound() || !index.Cast<BoundIndex>().IsExternal()) {
+			return false;
+		}
+	}
+	return true;
 }
 
 } // namespace
@@ -207,47 +218,15 @@ ErrorData LocalTableStorage::AppendToIndexes(DuckTransaction &transaction, RowGr
 	const bool skip_external = duck_manager.GetReplayCommitOffset() != 0;
 
 	if (!skip_external && HasExternalIndex(index_list)) {
-		return AppendBatchesToIndexes(transaction, source, index_list, table_types, mapped_column_ids, checkpoint_id,
-		                              start_row);
+		auto external_local_append = DBConfig::GetConfig(source.GetDatabase()).external_local_append;
+		if (external_local_append && AllIndexesExternal(index_list)) {
+			auto error = external_local_append(transaction, index_list, source, mapped_column_ids, start_row);
+			start_row += NumericCast<row_t>(source.GetTotalRows());
+			return error;
+		}
 	}
 	return AppendChunksToIndexes(transaction, source, index_list, table_types, mapped_column_ids, checkpoint_id,
 	                             skip_external, start_row);
-}
-
-ErrorData LocalTableStorage::AppendBatchesToIndexes(DuckTransaction &transaction, RowGroupCollection &source,
-                                                    TableIndexList &index_list, const vector<LogicalType> &table_types,
-                                                    const vector<StorageIndex> &mapped_column_ids,
-                                                    optional_idx checkpoint_id, row_t &start_row) {
-	vector<LogicalType> scan_types;
-	scan_types.reserve(mapped_column_ids.size());
-	for (auto &id : mapped_column_ids) {
-		scan_types.push_back(source.GetTypes()[id.GetPrimaryIndex()]);
-	}
-	TableScanState scan_state;
-	scan_state.Initialize(mapped_column_ids, nullptr);
-	source.InitializeScan(QueryContext(), scan_state.local_state, mapped_column_ids, nullptr);
-
-	ErrorData error;
-	for (;;) {
-		auto batch = make_shared_ptr<ExternalIndexBatch>();
-		// The batch also holds this storage: LocalStorage::Commit drops it while those readers are still
-		// running, and the scanned strings point into its segments.
-		batch->source = shared_from_this();
-		batch->data.Initialize(source.GetAllocator(), scan_types);
-		scan_state.local_state.Scan(transaction, batch->data);
-		const auto count = batch->data.size();
-		if (count == 0) {
-			break;
-		}
-		batch->Finalize(table_types, mapped_column_ids, start_row);
-		error = DataTable::AppendToIndexes(index_list, delete_indexes, batch->view, batch->data, mapped_column_ids,
-		                                   start_row, index_append_mode, checkpoint_id, false, batch);
-		if (error.HasError()) {
-			break;
-		}
-		start_row += UnsafeNumericCast<row_t>(count);
-	}
-	return error;
 }
 
 ErrorData LocalTableStorage::AppendChunksToIndexes(DuckTransaction &transaction, RowGroupCollection &source,
