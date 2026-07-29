@@ -516,14 +516,6 @@ public:
 	                                                                         ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformGrantStatement(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformRevokeStatement(PEGTransformer &transformer, ParseResult &parse_result);
-	static unique_ptr<SQLStatement> TransformCreatePolicyStatement(PEGTransformer &transformer,
-	                                                               ParseResult &parse_result);
-	static unique_ptr<SQLStatement> TransformAlterPolicyStatement(PEGTransformer &transformer,
-	                                                              ParseResult &parse_result);
-	static unique_ptr<SQLStatement> TransformDropPolicyStatement(PEGTransformer &transformer,
-	                                                             ParseResult &parse_result);
-	static unique_ptr<SQLStatement> TransformAlterTableRowSecurityStatement(PEGTransformer &transformer,
-	                                                                        ParseResult &parse_result);
 	// create_server.gram — CREATE/DROP SERVER walk an OPTIONS Parens(List(...)) body that the
 	// generator cannot auto-extract; hand-write the entry points.
 	static unique_ptr<SQLStatement> TransformCreateServerStatement(PEGTransformer &transformer,

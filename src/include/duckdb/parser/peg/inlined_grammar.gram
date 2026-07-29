@@ -11,10 +11,6 @@ Statement <-
 	DropServerStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
-	CreatePolicyStatement /
-	AlterPolicyStatement /
-	DropPolicyStatement /
-	AlterTableRowSecurityStatement /
 	AlterOwnerStatement /
 	AlterDefaultPrivilegesStatement /
 	AlterRoleStatement /
@@ -1852,26 +1848,6 @@ SuperuserOption <- 'SUPERUSER' / 'NOSUPERUSER'
 InheritOption   <- 'INHERIT' / 'NOINHERIT'
 SysIdOption     <- 'SYSID' NumberLiteral
 PasswordOption  <- 'ENCRYPTED'? 'PASSWORD' StringLiteral
-
-# Row-Level Security. CREATE/ALTER/DROP POLICY -> serenedb_*_policy pragmas;
-# ALTER TABLE ... ROW LEVEL SECURITY -> serenedb_alter_table_row_security. The
-# USING/WITH CHECK predicate is rendered to text in the transformer (a pragma
-# arg cannot carry a live column-referencing expression) and re-parsed at
-# enforcement time. Registered before the native Create/Alter statements.
-CreatePolicyStatement <- 'CREATE' 'POLICY' ColId 'ON' QualifiedName PolicyPermissive? PolicyForCmd? PolicyToRoles? PolicyUsing? PolicyCheck?
-AlterPolicyStatement  <- 'ALTER' 'POLICY' ColId 'ON' QualifiedName (PolicyRename / PolicyAlterClauses)
-DropPolicyStatement   <- 'DROP' 'POLICY' IfExists? ColId 'ON' QualifiedName DropBehavior?
-AlterTableRowSecurityStatement <- 'ALTER' 'TABLE' IfExists? QualifiedName RowSecurityAction
-
-PolicyRename       <- 'RENAME' 'TO' ColId
-PolicyAlterClauses <- PolicyToRoles? PolicyUsing? PolicyCheck?
-PolicyPermissive   <- 'AS' ('PERMISSIVE' / 'RESTRICTIVE')
-PolicyForCmd       <- 'FOR' ('ALL' / 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE')
-PolicyToRoles      <- 'TO' List(Grantee)
-PolicyUsing        <- 'USING' Parens(Expression)
-PolicyCheck        <- 'WITH' 'CHECK' Parens(Expression)
-RowSecurityAction  <- RowSecurityVerb 'ROW' 'LEVEL' 'SECURITY'
-RowSecurityVerb    <- 'ENABLE' / 'DISABLE' / ('NO' 'FORCE') / 'FORCE'
 
 PrivilegeList <- AllPrivileges / List(Privilege)
 AllPrivileges <- 'ALL' 'PRIVILEGES'? PrivilegeColumns?

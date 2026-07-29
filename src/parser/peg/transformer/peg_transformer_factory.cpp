@@ -228,10 +228,6 @@ void PEGTransformerFactory::RegisterRbac() {
 	REGISTER_TRANSFORM(TransformAlterDefaultPrivilegesStatement);
 	REGISTER_TRANSFORM(TransformGrantStatement);
 	REGISTER_TRANSFORM(TransformRevokeStatement);
-	REGISTER_TRANSFORM(TransformCreatePolicyStatement);
-	REGISTER_TRANSFORM(TransformAlterPolicyStatement);
-	REGISTER_TRANSFORM(TransformDropPolicyStatement);
-	REGISTER_TRANSFORM(TransformAlterTableRowSecurityStatement);
 }
 
 void PEGTransformerFactory::RegisterCreateMacro() {
