@@ -11,6 +11,10 @@ Statement <-
 	DropServerStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
+	CreatePolicyStatement /
+	AlterPolicyStatement /
+	DropPolicyStatement /
+	AlterTableRowSecurityStatement /
 	AlterOwnerStatement /
 	AlterDefaultPrivilegesStatement /
 	AlterRoleStatement /

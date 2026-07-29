@@ -324,6 +324,193 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropRoleStatement(PEGTr
 	return std::move(result);
 }
 
+namespace {
+
+// An optional clause `KW ( A / B / ... )` at `child`: the keyword precedes an
+// inline ordered-choice group. The group is wrapped in its own single-child
+// LIST at `group_idx` of the clause (mirrors AlterOwner's OwnerObjectType read).
+string OptionalKeyword(ParseResult &list, idx_t child, idx_t group_idx, std::string_view dflt) {
+	auto &opt = list.Cast<ListParseResult>().Child<OptionalParseResult>(child);
+	if (!opt.HasResult()) {
+		return string(dflt);
+	}
+	auto &kw = opt.GetResult()
+	               .Cast<ListParseResult>()
+	               .Child<ListParseResult>(group_idx)
+	               .Child<ChoiceParseResult>(0)
+	               .GetResult()
+	               .Cast<KeywordParseResult>();
+	return StringUtil::Upper(kw.keyword);
+}
+
+// Optional Parens(Expression) clause at `child` (e.g. PolicyUsing/PolicyCheck).
+// Returns {has, text}: the predicate rendered to SQL text for re-parse at
+// enforcement time (a pragma arg cannot carry a live column-referencing AST).
+// The Parens node sits at `parens_idx` of the clause LIST; descend into it for
+// the wrapped expression. USING ( e ) -> LIST: 0:'USING' 1:Parens.
+std::pair<bool, string> OptionalPolicyExpr(PEGTransformer &transformer, ParseResult &list, idx_t child,
+                                           idx_t parens_idx) {
+	auto &opt = list.Cast<ListParseResult>().Child<OptionalParseResult>(child);
+	if (!opt.HasResult()) {
+		return {false, string()};
+	}
+	auto &parens = opt.GetResult().Cast<ListParseResult>().GetChild(parens_idx);
+	auto &inner = PEGTransformerFactory::ExtractResultFromParens(parens);
+	auto expr = transformer.Transform<unique_ptr<ParsedExpression>>(inner);
+	return {true, expr->ToString()};
+}
+
+// PolicyToRoles? at `child`: 'TO' List(Grantee). Empty (absent) -> PUBLIC, which
+// the command layer encodes as the empty role set. Each grantee is a role name
+// or the literal "PUBLIC".
+unique_ptr<ParsedExpression> OptionalPolicyRoles(PEGTransformer &transformer, ParseResult &list, idx_t child) {
+	vector<Value> roles;
+	auto &opt = list.Cast<ListParseResult>().Child<OptionalParseResult>(child);
+	if (opt.HasResult()) {
+		// LIST(PolicyToRoles): 0:'TO' 1:List(Grantee)
+		for (auto &g :
+		     PEGTransformerFactory::ExtractParseResultsFromList(opt.GetResult().Cast<ListParseResult>().GetChild(1))) {
+			roles.push_back(Value(TransformGrantee(transformer, g.get())));
+		}
+	}
+	return make_uniq<ConstantExpression>(Value::LIST(LogicalType::VARCHAR, std::move(roles)));
+}
+
+} // namespace
+
+// CREATE POLICY name ON table [AS PERMISSIVE|RESTRICTIVE] [FOR cmd] [TO roles]
+//   [USING (expr)] [WITH CHECK (expr)]
+//   -> PRAGMA serenedb_create_policy('name', 'table', permissive, 'cmd',
+//          [roles], has_using, 'using_text', has_check, 'check_text')
+// AS defaults PERMISSIVE; FOR defaults ALL; TO defaults PUBLIC (empty list).
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreatePolicyStatement(PEGTransformer &transformer,
+                                                                               ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// 0:'CREATE' 1:'POLICY' 2:ColId 3:'ON' 4:QualifiedName 5:Permissive? 6:For? 7:To? 8:Using? 9:Check?
+	auto name = TransformColIdName(transformer, list_pr.GetChild(2));
+	auto table = QualifiedTableName(transformer, list_pr.GetChild(4));
+	bool permissive = OptionalKeyword(list_pr, 5, 1, "PERMISSIVE") != "RESTRICTIVE";
+	string cmd = OptionalKeyword(list_pr, 6, 1, "ALL");
+	auto roles = OptionalPolicyRoles(transformer, list_pr, 7);
+	auto [has_using, using_text] = OptionalPolicyExpr(transformer, list_pr, 8, 1);
+	auto [has_check, check_text] = OptionalPolicyExpr(transformer, list_pr, 9, 2);
+
+	auto result = make_uniq<PragmaStatement>();
+	result->info->name = "serenedb_create_policy";
+	result->info->parameters.push_back(StrConst(name));
+	result->info->parameters.push_back(StrConst(table));
+	result->info->parameters.push_back(BoolConst(permissive));
+	result->info->parameters.push_back(StrConst(cmd));
+	result->info->parameters.push_back(std::move(roles));
+	result->info->parameters.push_back(BoolConst(has_using));
+	result->info->parameters.push_back(StrConst(using_text));
+	result->info->parameters.push_back(BoolConst(has_check));
+	result->info->parameters.push_back(StrConst(check_text));
+	return std::move(result);
+}
+
+// ALTER POLICY name ON table ( RENAME TO new | [TO roles] [USING (e)] [WITH CHECK (e)] )
+//   rename  -> PRAGMA serenedb_alter_policy('name', 'table', true, 'new', false, "", false, "", false, "")
+//   alter   -> PRAGMA serenedb_alter_policy('name', 'table', false, "", has_roles,
+//                  [roles], has_using, 'using', has_check, 'check')
+// FOR and PERMISSIVE/RESTRICTIVE are NOT alterable (PG: drop & recreate). Each
+// clause is tri-stated via a has_* flag so "unspecified" != "set".
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterPolicyStatement(PEGTransformer &transformer,
+                                                                              ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// 0:'ALTER' 1:'POLICY' 2:ColId 3:'ON' 4:QualifiedName 5:(PolicyRename / PolicyAlterClauses)
+	auto name = TransformColIdName(transformer, list_pr.GetChild(2));
+	auto table = QualifiedTableName(transformer, list_pr.GetChild(4));
+	auto &chosen = list_pr.GetChild(5).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+
+	auto result = make_uniq<PragmaStatement>();
+	result->info->name = "serenedb_alter_policy";
+	result->info->parameters.push_back(StrConst(name));
+	result->info->parameters.push_back(StrConst(table));
+
+	if (chosen.name == "PolicyRename") {
+		// LIST(PolicyRename): 0:'RENAME' 1:'TO' 2:ColId
+		auto new_name = TransformColIdName(transformer, chosen.Cast<ListParseResult>().GetChild(2));
+		result->info->parameters.push_back(BoolConst(true)); // is_rename
+		result->info->parameters.push_back(StrConst(new_name));
+		result->info->parameters.push_back(BoolConst(false)); // has_roles
+		result->info->parameters.push_back(make_uniq<ConstantExpression>(Value::LIST(LogicalType::VARCHAR, {})));
+		result->info->parameters.push_back(BoolConst(false)); // has_using
+		result->info->parameters.push_back(StrConst(string()));
+		result->info->parameters.push_back(BoolConst(false)); // has_check
+		result->info->parameters.push_back(StrConst(string()));
+		return std::move(result);
+	}
+
+	// LIST(PolicyAlterClauses): 0:PolicyToRoles? 1:PolicyUsing? 2:PolicyCheck?
+	auto &clauses = chosen.Cast<ListParseResult>();
+	bool has_roles = clauses.Child<OptionalParseResult>(0).HasResult();
+	auto roles = OptionalPolicyRoles(transformer, clauses, 0);
+	auto [has_using, using_text] = OptionalPolicyExpr(transformer, clauses, 1, 1);
+	auto [has_check, check_text] = OptionalPolicyExpr(transformer, clauses, 2, 2);
+
+	result->info->parameters.push_back(BoolConst(false)); // is_rename
+	result->info->parameters.push_back(StrConst(string()));
+	result->info->parameters.push_back(BoolConst(has_roles));
+	result->info->parameters.push_back(std::move(roles));
+	result->info->parameters.push_back(BoolConst(has_using));
+	result->info->parameters.push_back(StrConst(using_text));
+	result->info->parameters.push_back(BoolConst(has_check));
+	result->info->parameters.push_back(StrConst(check_text));
+	return std::move(result);
+}
+
+// DROP POLICY [IF EXISTS] name ON table [CASCADE|RESTRICT]
+//   -> PRAGMA serenedb_drop_policy('name', 'table', if_exists)
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropPolicyStatement(PEGTransformer &transformer,
+                                                                             ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// 0:'DROP' 1:'POLICY' 2:IfExists? 3:ColId 4:'ON' 5:QualifiedName 6:DropBehavior?
+	bool if_exists = list_pr.Child<OptionalParseResult>(2).HasResult();
+	auto name = TransformColIdName(transformer, list_pr.GetChild(3));
+	auto table = QualifiedTableName(transformer, list_pr.GetChild(5));
+
+	auto result = make_uniq<PragmaStatement>();
+	result->info->name = "serenedb_drop_policy";
+	result->info->parameters.push_back(StrConst(name));
+	result->info->parameters.push_back(StrConst(table));
+	result->info->parameters.push_back(BoolConst(if_exists));
+	return std::move(result);
+}
+
+// ALTER TABLE [IF EXISTS] table {ENABLE|DISABLE|FORCE|NO FORCE} ROW LEVEL SECURITY
+//   -> PRAGMA serenedb_alter_table_row_security('table', 'ENABLE'|'DISABLE'|'FORCE'|'NOFORCE')
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterTableRowSecurityStatement(PEGTransformer &transformer,
+                                                                                        ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// 0:'ALTER' 1:'TABLE' 2:IfExists? 3:QualifiedName 4:RowSecurityAction
+	auto table = QualifiedTableName(transformer, list_pr.GetChild(3));
+	// LIST(RowSecurityAction): 0:RowSecurityVerb 1:'ROW' 2:'LEVEL' 3:'SECURITY'
+	auto &verb = list_pr.GetChild(4).Cast<ListParseResult>().Child<ListParseResult>(0).Child<ChoiceParseResult>(0);
+	auto &chosen = verb.GetResult();
+	// 'NO' 'FORCE' is a LIST of two keywords; the others are a single keyword.
+	string action;
+	if (chosen.type == ParseResultType::LIST) {
+		action = "NOFORCE";
+	} else {
+		action = StringUtil::Upper(chosen.Cast<KeywordParseResult>().keyword);
+	}
+
+	auto result = make_uniq<PragmaStatement>();
+	result->info->name = "serenedb_alter_table_row_security";
+	result->info->parameters.push_back(StrConst(table));
+	result->info->parameters.push_back(StrConst(action));
+	return std::move(result);
+}
+
+// ALTER ROLE/USER name ( RENAME TO new | <option>+ )
+//   RENAME TO new  -> PRAGMA serenedb_rename_role('name', 'new')
+//   <option>+      -> PRAGMA serenedb_alter_role('name', login, super, createdb,
+//                            createrole, inherit, has_password, has_conn_limit,
+//                            has_valid_until)
+// Attribute flags are tri-state ints (-1 unspecified / 0 false / 1 true).
+// PASSWORD / CONNECTION LIMIT / VALID UNTIL are parsed but unsupported; only a
+// "was given" flag is forwarded so the command can reject them.
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGTransformer &transformer,
                                                                             ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
