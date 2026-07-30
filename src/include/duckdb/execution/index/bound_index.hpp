@@ -165,6 +165,11 @@ public:
 
 	//! Whether or not the index supports the creation of delta indexes
 	virtual bool SupportsDeltaIndexes() const;
+	//! Whether removing rows needs the values of the indexed columns. An index keyed purely on row ids does
+	//! not, and fetching them means decompressing every indexed column of every deleted row for nothing.
+	virtual bool RemovalNeedsColumnValues() const {
+		return true;
+	}
 	//! Creates a delta index - an empty copy of the index with the same schema, etc
 	//! This will only be called if SupportsDeltaIndexes returns true
 	virtual unique_ptr<BoundIndex> CreateDeltaIndex(DeltaIndexType delta_index_type) const;

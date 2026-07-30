@@ -53,7 +53,7 @@ class DataTable;
 class DuckTransaction;
 class TableIndexList;
 class RowGroupCollection;
-class StorageIndex;
+struct StorageIndex;
 class ErrorManager;
 class CompressionFunction;
 class TableFunctionRef;
