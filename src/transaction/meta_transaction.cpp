@@ -235,6 +235,7 @@ idx_t MetaTransaction::GetActiveQuery() {
 }
 
 void MetaTransaction::SetActiveQuery(transaction_t query_number) {
+	lock_guard<mutex> guard(lock);
 	active_query = query_number;
 	statement_databases_ready.store(false, std::memory_order_release);
 	statement_databases.reset();
@@ -288,7 +289,7 @@ vector<shared_ptr<AttachedDatabase>> &MetaTransaction::GetStatementDatabases(Cli
 	if (statement_databases_ready.load(std::memory_order_acquire)) {
 		return *statement_databases;
 	}
-	lock_guard<mutex> guard(statement_databases_lock);
+	lock_guard<mutex> guard(lock);
 	if (!statement_databases.has_value()) {
 		statement_databases = DatabaseManager::Get(context).GetDatabases(context);
 		statement_databases_ready.store(true, std::memory_order_release);
