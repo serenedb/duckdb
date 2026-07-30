@@ -53,7 +53,7 @@ ErrorData BoundIndex::Append(DataChunk &chunk, Vector &row_ids, IndexAppendInfo 
 }
 
 ErrorData BoundIndex::Append(IndexLock &l, const shared_ptr<ExternalIndexBatch> &batch, IndexAppendInfo &info) {
-	return Append(l, batch->view, batch->row_ids, info);
+	return Append(l, batch->data, batch->row_ids, info);
 }
 
 void BoundIndex::VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager) {

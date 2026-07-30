@@ -16,8 +16,6 @@
 #include <thread>
 
 namespace duckdb {
-class DataChunk;
-struct ExternalIndexBatch;
 class DuckTransactionManager;
 class DuckTransaction;
 class WriteAheadLog;

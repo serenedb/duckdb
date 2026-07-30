@@ -1180,7 +1180,7 @@ void WriteAheadLogDeserializer::ReplayInsert() {
 	if (has_external) {
 		auto &local_storage = LocalStorage::Get(context, storage.db);
 		const auto row_start = NumericCast<row_t>(storage.GetNextRowId() + local_storage.AddedRows(storage));
-		batch->FinalizeInTableLayout(row_start);
+		batch->Finalize(row_start);
 		for (auto &index : index_list.Indexes()) {
 			if (!index.IsBound() || !index.Cast<BoundIndex>().IsExternal()) {
 				continue;
@@ -1304,7 +1304,7 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 			if (batch) {
 				// The scan already produces full table layout here, so the batch's view just
 				// references it; row ids are generated into the batch and adopted, not copied.
-				batch->FinalizeInTableLayout(NumericCast<row_t>(current_row_id));
+				batch->Finalize(NumericCast<row_t>(current_row_id));
 				feed_row_ids = &batch->row_ids;
 			} else {
 				auto row_id_writer = FlatVector::Writer<row_t>(row_id_vector, count);
@@ -1324,7 +1324,12 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 					IndexAppendInfo info;
 					IndexLock l;
 					bound_index.InitializeLock(l);
-					bound_index.Append(l, batch, info);
+					auto external_error = bound_index.Append(l, batch, info);
+					if (external_error.HasError()) {
+						// Swallowing it would let recovery report success with an
+						// index that is permanently missing these rows.
+						external_error.Throw();
+					}
 					continue;
 				}
 				bound_index.Append(*target, *feed_row_ids);
@@ -1357,9 +1362,10 @@ void WriteAheadLogDeserializer::ReplayDelete() {
 			throw SerializationException("invalid row ID delete in WAL");
 		}
 	}
-	// Feed external indexes here, at entry granularity and outside any storage or commit locks (their
-	// replay pipeline may block waiting for scheduler tasks, which must never happen under the locks the
-	// commit-time RemoveFromIndexes path holds); that path skips them during replay.
+	// Feed external indexes here, at entry granularity rather than through the commit-time
+	// RemoveFromIndexes path (which skips them during replay). Their replay pipeline may block waiting
+	// for scheduler tasks; that is safe under the index-list lock this loop holds only because the
+	// waiter help-executes its own producer's tasks.
 	for (auto &index : storage.GetDataTableInfo()->GetIndexes().Indexes()) {
 		if (index.IsBound() && index.Cast<BoundIndex>().IsExternal()) {
 			index.Cast<BoundIndex>().Delete(chunk, row_identifiers);

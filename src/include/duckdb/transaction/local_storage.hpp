@@ -92,14 +92,6 @@ public:
 	void AppendToTable(DuckTransaction &transaction, TableAppendState &append_state);
 	ErrorData AppendToIndexes(DuckTransaction &transaction, RowGroupCollection &source, TableIndexList &index_list,
 	                          const vector<LogicalType> &table_types, row_t &start_row);
-	//! Feed path when an external index is present: one owned batch per scanned chunk, published for the
-	//! index to adopt, because it tokenizes on worker threads and outlives the iteration.
-	//! Feed path for ordinary indexes: they consume each chunk before the next scan, so the scan buffer and
-	//! the table-layout view over it are both reused.
-	ErrorData AppendChunksToIndexes(DuckTransaction &transaction, RowGroupCollection &source,
-	                                TableIndexList &index_list, const vector<LogicalType> &table_types,
-	                                const vector<StorageIndex> &mapped_column_ids, optional_idx checkpoint_id,
-	                                bool skip_external, row_t &start_row);
 	void AppendToDeleteIndexes(Vector &row_ids, DataChunk &delete_chunk);
 
 	//! Create an optimistic row group collection for this table.
@@ -116,6 +108,13 @@ public:
 	OptimisticWriteCollection &GetPrimaryCollection();
 
 private:
+	//! Feed path for ordinary indexes: they consume each chunk before the next scan, so the scan buffer and
+	//! the table-layout view over it are both reused.
+	ErrorData AppendChunksToIndexes(DuckTransaction &transaction, RowGroupCollection &source,
+	                                TableIndexList &index_list, const vector<LogicalType> &table_types,
+	                                const vector<StorageIndex> &mapped_column_ids, optional_idx checkpoint_id,
+	                                bool skip_external, row_t &start_row);
+
 	mutex collections_lock;
 };
 

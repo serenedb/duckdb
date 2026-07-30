@@ -6,7 +6,6 @@
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
-#include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
