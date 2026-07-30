@@ -1,5 +1,8 @@
 #include "duckdb/storage/table/table_index_list.hpp"
 
+#include "duckdb/parallel/task_executor.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
+
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/common/types/conflict_manager.hpp"
 #include "duckdb/execution/index/art/art.hpp"
@@ -313,11 +316,48 @@ unordered_set<column_t> TableIndexList::GetRequiredColumns() {
 	return column_ids;
 }
 
+namespace {
+
+//! Makes every externally-stored index durable. Each barrier flushes and refreshes its own index and
+//! touches nothing shared, so with more than one they run together rather than one after another.
+struct CheckpointBarrierTask final : BaseExecutorTask {
+	CheckpointBarrierTask(TaskExecutor &executor, BoundIndex &index_p) : BaseExecutorTask(executor), index(index_p) {
+	}
+
+	void ExecuteTask() override {
+		index.CheckpointBarrier();
+	}
+	string TaskType() const override {
+		return "CheckpointBarrierTask";
+	}
+
+	BoundIndex &index;
+};
+
+void RunCheckpointBarriers(vector<reference<BoundIndex>> &barriers) {
+	if (barriers.empty()) {
+		return;
+	}
+	if (barriers.size() == 1) {
+		barriers[0].get().CheckpointBarrier();
+		return;
+	}
+	TaskExecutor executor(TaskScheduler::GetScheduler(barriers[0].get().db.GetDatabase()));
+	for (auto &barrier : barriers) {
+		executor.ScheduleTask(make_uniq<CheckpointBarrierTask>(executor, barrier.get()));
+	}
+	// Rethrows: a veto from any index must still abort the checkpoint.
+	executor.WorkOnTasks();
+}
+
+} // namespace
+
 IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, const IndexSerializationInfo &info) {
 	lock_guard<mutex> lock(index_entries_lock);
 
 	IndexSerializationResult result;
 
+	vector<reference<BoundIndex>> external_barriers;
 	idx_t bound_count = 0;
 	for (auto &entry : index_entries) {
 		if (entry->index->IsBound()) {
@@ -339,7 +379,9 @@ IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, c
 		if (bound_index.IsExternal()) {
 			// Externally-stored payload: nothing to write, but the barrier still runs so the
 			// index can force itself durable (or veto) before the checkpoint truncates the WAL.
-			bound_index.CheckpointBarrier();
+			// Collected rather than run here: a barrier makes its index durable, which is the
+			// slow part of a checkpoint, and one index's barrier does not depend on another's.
+			external_barriers.push_back(bound_index);
 			continue;
 		}
 		auto storage_info = bound_index.SerializeToDisk(context, info.options);
@@ -348,6 +390,7 @@ IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, c
 		result.ordered_infos.push_back(result.bound_infos.back());
 	}
 
+	RunCheckpointBarriers(external_barriers);
 	return result;
 }
 
