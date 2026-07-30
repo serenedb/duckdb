@@ -11,6 +11,7 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/main/valid_checker.hpp"
 #include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/error_data.hpp"
@@ -88,6 +89,7 @@ public:
 	shared_ptr<AttachedDatabase> GetReferencedDatabaseOwning(const Identifier &name);
 	AttachedDatabase &UseDatabase(shared_ptr<AttachedDatabase> &database);
 	void DetachDatabase(AttachedDatabase &database);
+	vector<shared_ptr<AttachedDatabase>> &GetStatementDatabases(ClientContext &context);
 
 private:
 	//! Lock to prevent all_transactions and transactions from getting out of sync.
@@ -109,6 +111,10 @@ private:
 	reference_map_t<AttachedDatabase, shared_ptr<AttachedDatabase>> referenced_databases;
 	//! Map of name -> database for databases that are in-use by this transaction.
 	identifier_map_t<reference<AttachedDatabase>> used_databases;
+	//! Attached-database set frozen for the current statement, so repeated catalog
+	//! enumerations see one stable, pinned set even under concurrent ATTACH/DETACH.
+	//! Reset at each statement boundary in SetActiveQuery, lazy initialization.
+	optional<vector<shared_ptr<AttachedDatabase>>> statement_databases;
 };
 
 } // namespace duckdb
