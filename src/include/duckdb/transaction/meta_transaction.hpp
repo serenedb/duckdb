@@ -111,6 +111,8 @@ private:
 	reference_map_t<AttachedDatabase, shared_ptr<AttachedDatabase>> referenced_databases;
 	//! Map of name -> database for databases that are in-use by this transaction.
 	identifier_map_t<reference<AttachedDatabase>> used_databases;
+	mutex statement_databases_lock;
+	atomic<bool> statement_databases_ready {false};
 	//! Attached-database set frozen for the current statement, so repeated catalog
 	//! enumerations see one stable, pinned set even under concurrent ATTACH/DETACH.
 	//! Reset at each statement boundary in SetActiveQuery, lazy initialization.
