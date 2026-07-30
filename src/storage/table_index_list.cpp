@@ -352,6 +352,29 @@ void RunCheckpointBarriers(vector<reference<BoundIndex>> &barriers) {
 
 } // namespace
 
+bool TableIndexList::HasExternal() const {
+	lock_guard<mutex> lock(index_entries_lock);
+	for (auto &entry : index_entries) {
+		if (entry->index->IsBound() && entry->index->Cast<BoundIndex>().IsExternal()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool TableIndexList::AllExternal() const {
+	lock_guard<mutex> lock(index_entries_lock);
+	if (index_entries.empty()) {
+		return false;
+	}
+	for (auto &entry : index_entries) {
+		if (!entry->index->IsBound() || !entry->index->Cast<BoundIndex>().IsExternal()) {
+			return false;
+		}
+	}
+	return true;
+}
+
 IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, const IndexSerializationInfo &info) {
 	lock_guard<mutex> lock(index_entries_lock);
 

@@ -15,32 +15,6 @@
 
 namespace duckdb {
 
-namespace {
-
-//! An external index tokenizes on worker threads, so it keeps a chunk alive past the iteration that
-//! produced it -- it cannot be handed a buffer the scan is about to recycle.
-bool HasExternalIndex(TableIndexList &index_list) {
-	for (auto &index : index_list.Indexes()) {
-		if (index.IsBound() && index.Cast<BoundIndex>().IsExternal()) {
-			return true;
-		}
-	}
-	return false;
-}
-
-//! Every index is external, so the append carries no constraint to check and no order to keep: the whole
-//! feed can be handed to the host to scan in parallel.
-bool AllIndexesExternal(TableIndexList &index_list) {
-	for (auto &index : index_list.Indexes()) {
-		if (!index.IsBound() || !index.Cast<BoundIndex>().IsExternal()) {
-			return false;
-		}
-	}
-	return true;
-}
-
-} // namespace
-
 LocalTableStorage::LocalTableStorage(ClientContext &context, DataTable &table)
     : context(context), table_ref(table), allocator(Allocator::Get(table.db)), deleted_rows(0),
       optimistic_writer(context, table) {
@@ -217,12 +191,12 @@ ErrorData LocalTableStorage::AppendToIndexes(DuckTransaction &transaction, RowGr
 	// entry never sits at offset 0 and the sentinel cannot collide with one.
 	const bool skip_external = duck_manager.GetReplayCommitOffset() != 0;
 
-	if (!skip_external && HasExternalIndex(index_list)) {
+	if (!skip_external && index_list.HasExternal()) {
 		// Only worth partitioning an append that has something to partition: below this the host feeds the
 		// chunks inline off the loop below, which costs no scan state of its own.
 		static constexpr idx_t MIN_PARTITIONED_APPEND = 4096;
 		auto external_local_append = DBConfig::GetConfig(source.GetDatabase()).external_local_append;
-		if (external_local_append && AllIndexesExternal(index_list) &&
+		if (external_local_append && index_list.AllExternal() &&
 		    source.GetTotalRows() >= MIN_PARTITIONED_APPEND) {
 			auto error = external_local_append(transaction, index_list, source, mapped_column_ids, start_row);
 			start_row += NumericCast<row_t>(source.GetTotalRows());

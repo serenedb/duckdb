@@ -42,6 +42,22 @@
 namespace duckdb {
 enum class WALReplayState { MAIN_WAL, CHECKPOINT_WAL };
 
+namespace {
+
+//! Feed one batch into an external index. Replay is the only producer of batches; an error here must
+//! abort recovery, because swallowing it reports success with an index permanently missing the rows.
+void AppendExternalBatch(BoundIndex &bound_index, const shared_ptr<ExternalIndexBatch> &batch) {
+	IndexAppendInfo info(IndexAppendMode::INSERT_DUPLICATES, nullptr);
+	IndexLock l;
+	bound_index.InitializeLock(l);
+	auto error = bound_index.Append(l, batch, info);
+	if (error.HasError()) {
+		error.Throw();
+	}
+}
+
+} // namespace
+
 class ReplayState {
 public:
 	ReplayState(AttachedDatabase &db, ClientContext &context, WALReplayState replay_state_p)
@@ -1170,14 +1186,7 @@ void WriteAheadLogDeserializer::ReplayInsert() {
 	// offset is passed (torn-tail rollback safety).
 	auto &storage = state.current_table->GetStorage();
 	auto &index_list = storage.GetDataTableInfo()->GetIndexes();
-	bool has_external = false;
-	for (auto &index : index_list.Indexes()) {
-		if (index.IsBound() && index.Cast<BoundIndex>().IsExternal()) {
-			has_external = true;
-			break;
-		}
-	}
-	if (has_external) {
+	if (index_list.HasExternal()) {
 		auto &local_storage = LocalStorage::Get(context, storage.db);
 		const auto row_start = NumericCast<row_t>(storage.GetNextRowId() + local_storage.AddedRows(storage));
 		batch->Finalize(row_start);
@@ -1185,14 +1194,7 @@ void WriteAheadLogDeserializer::ReplayInsert() {
 			if (!index.IsBound() || !index.Cast<BoundIndex>().IsExternal()) {
 				continue;
 			}
-			auto &bound_index = index.Cast<BoundIndex>();
-			IndexAppendInfo external_append_info(IndexAppendMode::INSERT_DUPLICATES, nullptr);
-			IndexLock l;
-			bound_index.InitializeLock(l);
-			auto external_error = bound_index.Append(l, batch, external_append_info);
-			if (external_error.HasError()) {
-				external_error.Throw();
-			}
+			AppendExternalBatch(index.Cast<BoundIndex>(), batch);
 		}
 	}
 
@@ -1230,14 +1232,7 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 
 	// if we have any indexes - scan the row groups and add data to the indexes
 	auto &indexes = table_info->GetIndexes();
-	bool only_external = !indexes.Empty();
-	for (auto &index : indexes.Indexes()) {
-		if (!index.IsBound() || !index.Cast<BoundIndex>().IsExternal()) {
-			only_external = false;
-			break;
-		}
-	}
-	if (only_external) {
+	if (indexes.AllExternal()) {
 		// External indexes are fed by one scan of the merged range over the replay transaction,
 		// partitioned across workers the replay thread help-executes -- no second scan, no copy,
 		// no side connection. Merge first so the scan reads the committed rows in place.
@@ -1262,13 +1257,7 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 		for (idx_t i = 0; i < column_ids.size(); i++) {
 			scan_types.push_back(types[column_ids[i].GetPrimaryIndex()]);
 		}
-		bool has_external = false;
-		for (auto &index : indexes.Indexes()) {
-			if (index.IsBound() && index.Cast<BoundIndex>().IsExternal()) {
-				has_external = true;
-				break;
-			}
-		}
+		const bool has_external = indexes.HasExternal();
 		auto &manager = DuckTransactionManager::Get(db);
 		Vector row_id_vector(LogicalType::ROW_TYPE, STANDARD_VECTOR_SIZE);
 		auto current_row_id = storage.GetNextRowId();
@@ -1321,15 +1310,7 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 				}
 				auto &bound_index = index.Cast<BoundIndex>();
 				if (batch && bound_index.IsExternal()) {
-					IndexAppendInfo info;
-					IndexLock l;
-					bound_index.InitializeLock(l);
-					auto external_error = bound_index.Append(l, batch, info);
-					if (external_error.HasError()) {
-						// Swallowing it would let recovery report success with an
-						// index that is permanently missing these rows.
-						external_error.Throw();
-					}
+					AppendExternalBatch(bound_index, batch);
 					continue;
 				}
 				bound_index.Append(*target, *feed_row_ids);
