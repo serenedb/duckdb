@@ -114,7 +114,11 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		unique_ptr<LogicalOperator> del_as_logicaloperator = std::move(del);
 		// Include virtual columns (like rowid) so they can be referenced in RETURNING
 		auto virtual_columns = table.GetVirtualColumns();
-		return BindReturning(std::move(node.returning_list), table, node.table->alias, update_table_index,
+		// The ref's own name when it carries no alias: that is what the RETURNING
+		// list refers to, and for a facade table it is not the entry's name.
+		auto &delete_ref = node.table->Cast<BaseTableRef>();
+		auto &returning_alias = node.table->alias.GetIdentifierName().empty() ? delete_ref.Table() : node.table->alias;
+		return BindReturning(std::move(node.returning_list), table, returning_alias, update_table_index,
 		                     std::move(del_as_logicaloperator), std::move(virtual_columns));
 	}
 	BoundStatement result;
