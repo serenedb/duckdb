@@ -64,6 +64,8 @@ enum class DataTableVersion {
 //! DataTable represents a physical table on disk
 class DataTable : public enable_shared_from_this<DataTable> {
 public:
+	//! Lets the host re-inject its external indexes after the column layout changed.
+	void RefreshExternalIndexes();
 	//! Constructs a new data table from an (optional) set of persistent segments
 	DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager, const string &schema,
 	          const string &table, vector<ColumnDefinition> column_definitions_p,

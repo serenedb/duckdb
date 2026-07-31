@@ -85,6 +85,10 @@ DataTable::DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_m
 	}
 	row_groups->Verify();
 
+	RefreshExternalIndexes();
+}
+
+void DataTable::RefreshExternalIndexes() {
 	auto &config = DBConfig::GetConfig(db.GetDatabase());
 	if (config.external_index_provider) {
 		config.external_index_provider(*this);
@@ -176,6 +180,8 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_co
 
 	// this table replaces the previous table, hence the parent is no longer the root DataTable
 	parent.version = DataTableVersion::ALTERED;
+
+	RefreshExternalIndexes();
 }
 
 DataTable::DataTable(ClientContext &context, DataTable &parent, BoundConstraint &constraint)
