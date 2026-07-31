@@ -235,7 +235,6 @@ idx_t MetaTransaction::GetActiveQuery() {
 }
 
 void MetaTransaction::SetActiveQuery(transaction_t query_number) {
-	lock_guard<mutex> guard(lock);
 	active_query = query_number;
 	statement_databases_ready.store(false, std::memory_order_release);
 	statement_databases.reset();
