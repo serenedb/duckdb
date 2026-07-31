@@ -1076,14 +1076,23 @@ void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableInd
 	// Collect the indexed columns that some index actually reads while removing. An index keyed on row ids
 	// alone (an external full-text index, say) reads none, and fetching them would decompress every indexed
 	// column of every deleted row for nothing.
+	//
+	// Unless something is buffering: while an index is unbound its operations go into a buffer whose layout
+	// is the canonical union mapping recorded on the first buffered chunk (see unbound_index.hpp), and the
+	// insert side records exactly that union. The minimal removal set is a different set of columns -- it
+	// drops those of the indexes that read none -- so a buffering removal has to describe the union too, or
+	// the same index ends up with two layouts in one buffer.
 	unordered_set<column_t> indexed_column_id_set;
-
-	for (auto &index : indexes.Indexes()) {
-		if (index.IsBound() && !index.Cast<BoundIndex>().RemovalNeedsColumnValues()) {
-			continue;
+	if (indexes.HasUnbound()) {
+		indexed_column_id_set = indexes.GetRequiredColumns();
+	} else {
+		for (auto &index : indexes.Indexes()) {
+			if (index.IsBound() && !index.Cast<BoundIndex>().RemovalNeedsColumnValues()) {
+				continue;
+			}
+			auto &set = index.GetColumnIdSet();
+			indexed_column_id_set.insert(set.begin(), set.end());
 		}
-		auto &set = index.GetColumnIdSet();
-		indexed_column_id_set.insert(set.begin(), set.end());
 	}
 
 	// If we are in WAL replay, delete data will be buffered, and so we sort the column_ids
