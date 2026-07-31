@@ -196,8 +196,7 @@ ErrorData LocalTableStorage::AppendToIndexes(DuckTransaction &transaction, RowGr
 		// chunks inline off the loop below, which costs no scan state of its own.
 		static constexpr idx_t MIN_PARTITIONED_APPEND = 4096;
 		auto external_local_append = DBConfig::GetConfig(source.GetDatabase()).external_local_append;
-		if (external_local_append && index_list.AllExternal() &&
-		    source.GetTotalRows() >= MIN_PARTITIONED_APPEND) {
+		if (external_local_append && index_list.AllExternal() && source.GetTotalRows() >= MIN_PARTITIONED_APPEND) {
 			auto error = external_local_append(transaction, index_list, source, mapped_column_ids, start_row);
 			start_row += NumericCast<row_t>(source.GetTotalRows());
 			return error;

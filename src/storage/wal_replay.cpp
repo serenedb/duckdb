@@ -1258,6 +1258,15 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 			scan_types.push_back(types[column_ids[i].GetPrimaryIndex()]);
 		}
 		const bool has_external = indexes.HasExternal();
+		// An unbound index buffers its key columns in the canonical sorted form (see
+		// unbound_index.hpp), which is what the row-level entries of this same table buffer
+		// through AppendToIndexes. One buffer cannot describe two layouts, so this path must
+		// project the full scan chunk down to that form rather than hand over every column.
+		DataChunk index_chunk;
+		vector<StorageIndex> mapped_column_ids;
+		if (indexes.HasUnbound()) {
+			TableIndexList::InitializeIndexChunk(index_chunk, scan_types, mapped_column_ids, *table_info);
+		}
 		auto &manager = DuckTransactionManager::Get(db);
 		Vector row_id_vector(LogicalType::ROW_TYPE, STANDARD_VECTOR_SIZE);
 		auto current_row_id = storage.GetNextRowId();
@@ -1305,7 +1314,10 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 			for (auto &index : indexes.Indexes()) {
 				if (!index.IsBound()) {
 					auto &unbound_index = index.Cast<UnboundIndex>();
-					unbound_index.BufferChunk(*target, *feed_row_ids, column_ids, BufferedIndexReplay::INSERT_ENTRY);
+					TableIndexList::ReferenceIndexChunk(*target, index_chunk, mapped_column_ids);
+					index_chunk.SetCardinality(*target);
+					unbound_index.BufferChunk(index_chunk, *feed_row_ids, mapped_column_ids,
+					                          BufferedIndexReplay::INSERT_ENTRY);
 					continue;
 				}
 				auto &bound_index = index.Cast<BoundIndex>();

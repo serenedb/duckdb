@@ -228,8 +228,8 @@ public:
 	//! produced it. Only called when every index is external; a native index still needs the ordered serial
 	//! append, and that path feeds external indexes inline instead.
 	ErrorData (*external_local_append)(DuckTransaction &transaction, TableIndexList &index_list,
-	                                  RowGroupCollection &source, const vector<StorageIndex> &mapped_column_ids,
-	                                  row_t row_start) = nullptr;
+	                                   RowGroupCollection &source, const vector<StorageIndex> &mapped_column_ids,
+	                                   row_t row_start) = nullptr;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);

@@ -56,6 +56,9 @@ void UnboundIndex::BufferChunk(DataChunk &index_column_chunk, Vector &row_ids,
 		combined_chunk.data[i].Reference(index_column_chunk.data[i]);
 	}
 	combined_chunk.data.back().Reference(row_ids);
+	// Referencing vectors does not carry a row count, and a chunk starts empty: without this the
+	// buffered range is [start, start) and the replay hands the index no rows at all.
+	combined_chunk.SetCardinality(index_column_chunk);
 
 	auto &buffer = buffered_replays.GetBuffer(replay_type);
 	if (buffer == nullptr) {
