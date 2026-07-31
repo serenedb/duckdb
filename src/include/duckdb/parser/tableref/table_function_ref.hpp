@@ -30,6 +30,10 @@ public:
 	//! Whether or not WITH ORDINALITY has been invoked
 	OrdinalityType with_ordinality = OrdinalityType::WITHOUT_ORDINALITY;
 
+	//! Alias was synthesized (e.g. by a replacement scan from a file name) rather
+	//! than written by the user; PG-style single-column alias renaming must skip it
+	bool implicit_alias = false;
+
 public:
 	string ToString() const override;
 

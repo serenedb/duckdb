@@ -297,8 +297,10 @@ BoundStatement Binder::BindTableFunctionInternal(TableFunction &table_function, 
 		return_names[i] = column_name_alias[i];
 	}
 	// PG compat: single-column function with a table alias but no explicit
-	// column aliases -> output column takes the table alias name.
-	if (column_name_alias.empty() && return_names.size() == 1 && !ref.alias.empty()) {
+	// column aliases -> output column takes the table alias name. Skipped for
+	// aliases synthesized by replacement scans (FROM 'file.parquet'), where the
+	// file stem must not rename the column.
+	if (column_name_alias.empty() && return_names.size() == 1 && !ref.alias.empty() && !ref.implicit_alias) {
 		return_names[0] = ref.alias;
 	}
 	for (idx_t i = 0; i < return_names.size(); i++) {

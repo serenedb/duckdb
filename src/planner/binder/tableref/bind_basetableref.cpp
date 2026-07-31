@@ -66,6 +66,8 @@ BoundStatement Binder::BindWithReplacementScan(ClientContext &context, BaseTable
 		if (replacement_function->type == TableReferenceType::TABLE_FUNCTION) {
 			auto &table_function = replacement_function->Cast<TableFunctionRef>();
 			table_function.column_name_alias = ref.column_name_alias;
+			// without a user-written alias the alias above is synthesized (file stem / path)
+			table_function.implicit_alias = ref.alias.empty();
 		} else if (replacement_function->type == TableReferenceType::SUBQUERY) {
 			auto &subquery = replacement_function->Cast<SubqueryRef>();
 			subquery.column_name_alias = ref.column_name_alias;
