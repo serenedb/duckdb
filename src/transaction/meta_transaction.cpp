@@ -4,6 +4,7 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/transaction/transaction_manager.hpp"
 
 namespace duckdb {
@@ -235,6 +236,7 @@ idx_t MetaTransaction::GetActiveQuery() {
 
 void MetaTransaction::SetActiveQuery(transaction_t query_number) {
 	active_query = query_number;
+	statement_databases.clear();
 	for (auto &entry : transactions) {
 		entry.second.transaction.active_query = query_number;
 	}
@@ -279,6 +281,14 @@ AttachedDatabase &MetaTransaction::UseDatabase(shared_ptr<AttachedDatabase> &dat
 		referenced_databases.emplace(reference<AttachedDatabase>(db_ref), database);
 	}
 	return db_ref;
+}
+
+vector<shared_ptr<AttachedDatabase>> &MetaTransaction::GetStatementDatabases(ClientContext &context) {
+	lock_guard<mutex> guard(lock);
+	if (statement_databases.empty()) {
+		statement_databases = DatabaseManager::Get(context).GetDatabases(context);
+	}
+	return statement_databases;
 }
 
 void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationType modification) {
