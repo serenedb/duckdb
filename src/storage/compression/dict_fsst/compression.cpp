@@ -542,6 +542,7 @@ void DictFSSTCompressionState::ResetSegment() {
 	entry_at_cleave = 0;
 	flat_at_cleave = 0;
 	sel_at_cleave = 0;
+	enc_width_at_cleave = 0;
 	null_count = 0;
 	rows_since_new = 0;
 	committed = allow_plus ? CutCommit::UNDECIDED : CutCommit::PLAIN;
@@ -627,6 +628,7 @@ idx_t DictFSSTCompressionState::RefreshCleave() {
 	entry_at_cleave = n;
 	flat_at_cleave = dict.flat_encoded;
 	sel_at_cleave = CurSelBytes();
+	enc_width_at_cleave = BitpackingPrimitives::MinimumBitWidth(dict.max_enc_len);
 	return chosen_size;
 }
 
@@ -853,8 +855,13 @@ bool DictFSSTCompressionState::NearBlock(bool was_new) const {
 	bool sel_width_bumped = was_new && entry_n >= 2 &&
 	                        BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(entry_n)) !=
 	                            BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(entry_n - 1));
+	//! The string-lengths field is dict_count wide entries, so one longer entry re-prices all of them.
+	bool enc_width_bumped = BitpackingPrimitives::MinimumBitWidth(dict.max_enc_len) != enc_width_at_cleave;
+	//! Exactly one row can end all-unique: the first that adds no entry (duplicate or null), leaving one more tuple
+	//! than entries. That loses FSST_ONLY, which costs a selection buffer for every row already in the segment.
+	bool unique_broken = !was_new && entry_n + 1 == tuple_count;
 	idx_t grown = (dict.flat_encoded - flat_at_cleave) + (CurSelBytes() - sel_at_cleave);
-	return grown >= CLEAVE_GAP || sel_width_bumped;
+	return grown >= CLEAVE_GAP || sel_width_bumped || enc_width_bumped || unique_broken;
 }
 
 void DictFSSTCompressionState::CutPlain(UnifiedVectorFormat &vf, const string_t *strings, idx_t i, bool was_new,
@@ -864,6 +871,7 @@ void DictFSSTCompressionState::CutPlain(UnifiedVectorFormat &vf, const string_t 
 	if (plain_c + margin < block_size) {
 		flat_at_cleave = dict.flat_encoded;
 		sel_at_cleave = CurSelBytes();
+		enc_width_at_cleave = BitpackingPrimitives::MinimumBitWidth(dict.max_enc_len);
 		return;
 	}
 	if (plain_c <= block_size || tuple_count == 1) {

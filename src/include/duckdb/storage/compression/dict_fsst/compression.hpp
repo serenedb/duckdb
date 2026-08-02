@@ -344,6 +344,10 @@ public:
 	idx_t entry_at_cleave = 0;
 	idx_t flat_at_cleave = 0;
 	idx_t sel_at_cleave = 0;
+	//! Layout properties at that same baseline. One row can change either and re-price the WHOLE segment (the
+	//! string-lengths field widens for every entry; losing all-unique adds a selection buffer for every row), so the
+	//! byte counters above cannot see it coming -- NearBlock watches these for a change instead.
+	bitpacking_width_t enc_width_at_cleave = 0;
 	//! Last cleave that comfortably fit the block; FlushRewind rewinds an overshoot here and moves the excess rows on.
 	idx_t fit_rows = 0;
 	idx_t fit_raw_count = 0;
