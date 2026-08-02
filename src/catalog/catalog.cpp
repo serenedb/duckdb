@@ -1244,6 +1244,9 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(ClientContext &context
 	return schemas;
 }
 
+void Catalog::ScanHiddenSchemas(ClientContext &, std::function<void(SchemaCatalogEntry &)>) {
+}
+
 vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(CatalogEntryRetriever &retriever,
                                                           const string &catalog_name) {
 	vector<reference<Catalog>> catalogs;
@@ -1292,6 +1295,9 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetAllSchemas(ClientContext &cont
 		auto &catalog = db.GetCatalog();
 		auto new_schemas = catalog.GetSchemas(context);
 		result.insert(result.end(), new_schemas.begin(), new_schemas.end());
+		if (include_hidden) {
+			catalog.ScanHiddenSchemas(context, [&](SchemaCatalogEntry &entry) { result.push_back(entry); });
+		}
 	}
 	sort(result.begin(), result.end(),
 	     [&](reference<SchemaCatalogEntry> left_p, reference<SchemaCatalogEntry> right_p) {

@@ -203,7 +203,10 @@ bool CatalogSet::CreateEntry(CatalogTransaction transaction, const Identifier &n
 	// Mark this entry as being created by the current active transaction
 	value->timestamp = transaction.transaction_id;
 	value->set = this;
-	catalog.GetDependencyManager()->AddObject(transaction, *value, dependencies);
+	auto dependency_manager = catalog.GetDependencyManager();
+	if (dependency_manager) {
+		dependency_manager->AddObject(transaction, *value, dependencies);
+	}
 
 	// lock the catalog for writing
 	lock_guard<mutex> write_lock(catalog.GetWriteLock());
@@ -265,7 +268,10 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 		                       info.owner_name.GetIdentifierName());
 	}
 	write_lock.unlock();
-	catalog.GetDependencyManager()->AddOwnership(transaction, *owner_entry, *entry);
+	auto dependency_manager = catalog.GetDependencyManager();
+	if (dependency_manager) {
+		dependency_manager->AddOwnership(transaction, *owner_entry, *entry);
+	}
 	return true;
 }
 
@@ -395,7 +401,10 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	write_lock.unlock();
 
 	// Check the dependency manager to verify that there are no conflicting dependencies with this alter
-	catalog.GetDependencyManager()->AlterObject(transaction, *entry, *new_entry, alter_info);
+	auto dependency_manager = catalog.GetDependencyManager();
+	if (dependency_manager) {
+		dependency_manager->AlterObject(transaction, *entry, *new_entry, alter_info);
+	}
 	return true;
 }
 
@@ -411,7 +420,10 @@ bool CatalogSet::DropDependencies(CatalogTransaction transaction, const Identifi
 	// check any dependencies of this object
 	D_ASSERT(entry->ParentCatalog().IsDuckCatalog());
 	auto &duck_catalog = entry->ParentCatalog().Cast<DuckCatalog>();
-	duck_catalog.GetDependencyManager()->DropObject(transaction, *entry, cascade);
+	auto dependency_manager = duck_catalog.GetDependencyManager();
+	if (dependency_manager) {
+		dependency_manager->DropObject(transaction, *entry, cascade);
+	}
 	return true;
 }
 
@@ -461,6 +473,11 @@ bool CatalogSet::DropEntry(ClientContext &context, const Identifier &name, bool 
 //! Verify that the object referenced by the dependency still exists when we commit the dependency
 void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, CatalogEntry &entry) {
 	auto &duck_catalog = GetCatalog();
+	auto dependency_manager = duck_catalog.GetDependencyManager();
+	if (!dependency_manager) {
+		// Without a manager no DEPENDENCY_ENTRY was ever created, so there is nothing to verify
+		return;
+	}
 
 	// Resolve the dependency target against this transaction's own entries (already stamped with commit_id
 	// by UpdateTimestamp), not only earlier commits. Renaming a table or dropping a column underneath a
@@ -473,7 +490,7 @@ void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, CatalogEnt
 
 	D_ASSERT(entry.type == CatalogType::DEPENDENCY_ENTRY);
 	auto &dep = entry.Cast<DependencyEntry>();
-	duck_catalog.GetDependencyManager()->VerifyExistence(commit_transaction, dep);
+	dependency_manager->VerifyExistence(commit_transaction, dep);
 }
 
 //! Verify that no dependencies creations were committed since our transaction started, that reference the entry we're
@@ -482,13 +499,17 @@ void CatalogSet::CommitDrop(transaction_t commit_id, transaction_t start_time, C
 	auto &duck_catalog = GetCatalog();
 
 	entry.OnDrop();
+	auto dependency_manager = duck_catalog.GetDependencyManager();
+	if (!dependency_manager) {
+		return;
+	}
 	// Make sure that we don't see any uncommitted changes
 	auto transaction_id = MAX_TRANSACTION_ID;
 	// This will allow us to see all committed changes made before this COMMIT happened
 	auto tx_start_time = commit_id;
 	CatalogTransaction commit_transaction(duck_catalog.GetDatabase(), transaction_id, tx_start_time);
 
-	duck_catalog.GetDependencyManager()->VerifyCommitDrop(commit_transaction, start_time, entry);
+	dependency_manager->VerifyCommitDrop(commit_transaction, start_time, entry);
 }
 
 DuckCatalog &CatalogSet::GetCatalog() {

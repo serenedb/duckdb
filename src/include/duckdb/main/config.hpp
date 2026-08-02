@@ -216,6 +216,11 @@ public:
 	//! replay) so the host can inject externally-stored indexes into its index list
 	//! before any WAL operations replay against the table.
 	void (*external_index_provider)(DataTable &table) = nullptr;
+	//! The host catalog's identifier for a storage table, resolved once when its
+	//! DataTableInfo is constructed and readable from it thereafter. Zero means the
+	//! host owns no such table, which is the answer for every table it did not create.
+	idx_t (*table_identity_provider)(AttachedDatabase &db, const Identifier &schema,
+	                                 const Identifier &table) = nullptr;
 	//! Replay a merged ROW_GROUP_DATA range into every external index of the table.
 	//! Called on the replay thread after the row groups are merged, with the replay
 	//! transaction; the host scans the range once over that transaction (partitioned

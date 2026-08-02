@@ -243,9 +243,13 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 
 	D_ASSERT(catalog.IsDuckCatalog());
 
-	auto &dependency_manager = *catalog.GetDependencyManager();
 	catalog_entries = GetCatalogEntries(schemas);
-	dependency_manager.ReorderEntries(catalog_entries);
+	// A catalog that tracks dependencies elsewhere reports no manager; reordering is
+	// what the manager contributes here, and entries with no tracked edges need none.
+	auto dependency_manager = catalog.GetDependencyManager();
+	if (dependency_manager) {
+		dependency_manager->ReorderEntries(catalog_entries);
+	}
 
 	// write the actual data into the database
 

@@ -274,6 +274,10 @@ public:
 	          OnEntryNotFound if_not_found);
 	//! Scans all the schemas in the system one-by-one, invoking the callback for each entry
 	DUCKDB_API virtual void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) = 0;
+	//! The schemas a catalog keeps out of ScanSchemas because they hold its own internals. Reached only by
+	//! introspection that asked for hidden objects, which is how a hidden attached database is treated as well.
+	DUCKDB_API virtual void ScanHiddenSchemas(ClientContext &context,
+	                                          std::function<void(SchemaCatalogEntry &)> callback);
 
 	//! Gets the entry described by the (optionally catalog/schema-qualified) EntryLookupInfo. If the entry does not
 	//! exist behavior depends on OnEntryNotFound
@@ -409,7 +413,9 @@ public:
 	DUCKDB_API string GetDefaultTable() const;
 	DUCKDB_API string GetDefaultTableSchema() const;
 
-	//! Returns the dependency manager of this catalog - if the catalog has any
+	//! Returns the dependency manager of this catalog - if the catalog has any.
+	//! Null means the catalog tracks dependencies itself: CatalogSet then records no edges and runs no
+	//! dependency check, leaving cascade and drop-conflict decisions entirely to the catalog.
 	virtual optional_ptr<DependencyManager> GetDependencyManager();
 
 	//! Whether attaching a catalog with the given path and attach options would be considered a conflict

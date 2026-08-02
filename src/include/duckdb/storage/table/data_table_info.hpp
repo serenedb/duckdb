@@ -55,6 +55,12 @@ public:
 	Identifier GetTableName();
 	void SetTableName(Identifier name);
 
+	//! The host catalog's identifier for this table, or zero when the host owns none.
+	//! Fixed at construction, so a rename does not move it.
+	idx_t GetCatalogId() const {
+		return catalog_id;
+	}
+
 private:
 	//! The database instance of the table
 	AttachedDatabase &db;
@@ -66,6 +72,8 @@ private:
 	Identifier schema;
 	//! The name of the table
 	Identifier table;
+	//! The host catalog's identifier for this table
+	idx_t catalog_id = 0;
 	//! The physical list of indexes of this table
 	TableIndexList indexes;
 	//! Index storage information of the indexes created by this table

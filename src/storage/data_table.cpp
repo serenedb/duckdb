@@ -44,6 +44,10 @@ namespace duckdb {
 DataTableInfo::DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, Identifier schema,
                              Identifier table)
     : db(db), table_io_manager(std::move(table_io_manager_p)), schema(std::move(schema)), table(std::move(table)) {
+	auto &config = DBConfig::GetConfig(db.GetDatabase());
+	if (config.table_identity_provider) {
+		catalog_id = config.table_identity_provider(db, this->schema, this->table);
+	}
 }
 
 void DataTableInfo::BindIndexes(ClientContext &context, const char *index_type) {
