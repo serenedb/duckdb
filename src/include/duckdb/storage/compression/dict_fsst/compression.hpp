@@ -89,6 +89,18 @@ struct CleavedDictionary {
 	}
 };
 
+//! What a cleave would produce, without producing it. RefreshCleave runs once per near-block row and only ever
+//! consumes sizes; the entry lists it used to materialize are consumed once per segment, at flush. Everything a
+//! DictFSSTPlusLayout::Compute needs is here.
+struct CleaveStats {
+	//! Prefix groups the DP wants (the emission is never clamped below this, see prefix_cap).
+	idx_t pc = 0;
+	idx_t prefix_bytes = 0;
+	idx_t suffix_bytes = 0;
+	uint32_t max_prefix_len = 0;
+	uint32_t max_suffix_len = 0;
+};
+
 //! Reused scratch buffers for CleaveEncoded (one owned by Dictionary, see Dictionary::cleave_scratch), so repeated
 //! trial cleaves (RefreshCleave) do not heap-allocate. Every buffer is assign/resize/clear()'d each call to exactly
 //! the range it needs before anything reads it, so a previous (possibly larger) call's contents are never observed.
@@ -160,7 +172,11 @@ public:
 	void SyncSortedOrder();
 	//! Cleave the current encoded entries into `out` (reset first, reusing its capacity), stamping the symbol-table
 	//! size. `order` is the sorted order (DICT_FSST_PLUS); null uses the identity/row order (FSST_PLUS).
-	void Cleave(CleavedDictionary &out, const uint32_t *order);
+	//! `prefix_cap` bounds how many prefix groups may be emitted; ranges past it are emitted plain.
+	void Cleave(CleavedDictionary &out, const uint32_t *order, idx_t prefix_cap);
+	//! Size a cleave without materializing it: same LCP/tree/DP as Cleave, then a counting walk instead of the
+	//! entry-emitting one. What every RefreshCleave uses; Cleave itself runs once per segment, at flush.
+	void CleaveMeasure(const uint32_t *order, CleaveStats &out);
 
 public:
 	//! Owns the raw (uncompressed) entry bytes; raw[j] borrows into this and is dict entry j+1 (entry 0 == NULL).
@@ -194,6 +210,11 @@ public:
 	vector<uint32_t> sorted_order;
 	//! Destination of SyncSortedOrder's merge, swapped into sorted_order (member only to reuse the allocation).
 	vector<uint32_t> merge_result;
+	//! Adjacent-LCP array of the encoded entries in ROW order. Row order only ever appends, so unlike the sorted
+	//! cleave's LCP (recomputed each time, positions shift under the merge) this persists across cleaves and each
+	//! one extends it by just the new pairs. row_lcp_valid = how many leading pairs are current.
+	vector<uint32_t> row_lcp;
+	idx_t row_lcp_valid = 0;
 	//! Reused CleaveEncoded scratch (cut_dict / cut_dict_row cleaves run sequentially, so one scratch suffices).
 	CleaveScratch cleave_scratch;
 	//! Reused EncodeAll scratch.
@@ -292,7 +313,8 @@ public:
 	bool AddScanRow(UnifiedVectorFormat &vf, const string_t *strings, idx_t j);
 	//! Not yet FSST-encoded: check the encode trigger (raw dictionary big enough and either near a block or stopped
 	//! growing) or, for a tiny selection-dominated dictionary, cut a plain DICTIONARY once it fills the block.
-	void MaybeEncodeOrCutSmall(idx_t block_size);
+	void MaybeEncodeOrCutSmall(UnifiedVectorFormat &vf, const string_t *strings, idx_t i, bool was_new_i,
+	                           idx_t block_size);
 	//! Cheap gate before the (still cheap, but less so) cut checks: true once the segment has grown by CLEAVE_GAP
 	//! since the last cleave baseline, or the just-added entry crossed a selection-bitpacking width (which can
 	//! overshoot by more than one row, so it cannot wait for the next gap).
@@ -311,7 +333,6 @@ public:
 	//! the block fills UNDER the prefix-factored encoding. One entry list (raw + FSST-encoded), one row->entry
 	//! selection, cleaved once per segment at flush.
 	void Compress(const Vector &scan_vector);
-	void FinalizeCompress();
 	//! use_cached_cleave: reuse cut_dict/cut_mode from the triggering RefreshCleave (common flush path,
 	//! no entry change since) instead of re-cleaving from scratch.
 	void Flush(bool final, bool use_cached_cleave = false);
@@ -332,21 +353,39 @@ public:
 	//! built only for all-unique/no-null segments).
 	CleavedDictionary cut_dict;
 	CleavedDictionary cut_dict_row;
+	//! The chosen candidate's measured shape from the last RefreshCleave; CachedCutSize re-sizes it for a changed
+	//! tuple_count, and CleavedUpperBound anchors its dictionary terms to it.
+	CleaveStats cut_stats;
 	DictFSSTMode cut_mode = DictFSSTMode::COUNT;
 	//! The segment's cut commitment (see CutCommit): fixed to PLAIN from the start for native-only policies, else
 	//! decided at the first near-block cleave so later cuts skip the loser's candidate.
 	CutCommit committed = CutCommit::UNDECIDED;
-	//! Between-cleave upper-bound baselines: CleavedUpperBound resets to these EXACT counts at each cleave then adds
-	//! only bounded growth, so most rows cost arithmetic and a real cleave runs only when that (tight) bound nears the
-	//! block.
+	//! Dictionary-bytes baseline for CleavedUpperBound: a cleave repartitions bytes without adding
+	//! any, so growth since the last cleave is exactly the flat bytes added. cl_prefix_count is the
+	//! group count of that same anchor layout, charged at GROUP_COST each (see CleavedUpperBound).
 	idx_t cl_dict_bytes = 0;
 	idx_t cl_prefix_count = 0;
-	idx_t entry_at_cleave = 0;
 	idx_t flat_at_cleave = 0;
 	idx_t sel_at_cleave = 0;
+	//! Layout properties at that same baseline. One row can change either and re-price the WHOLE segment (the
+	//! string-lengths field widens for every entry; losing all-unique adds a selection buffer for every row), so the
+	//! byte counters above cannot see it coming -- NearBlock watches these for a change instead.
+	bitpacking_width_t enc_width_at_cleave = 0;
 	//! Last cleave that comfortably fit the block; FlushRewind rewinds an overshoot here and moves the excess rows on.
 	idx_t fit_rows = 0;
 	idx_t fit_raw_count = 0;
+	//! The commitment fit_rows was measured under. A certified size only holds for that candidate, so FlushRewind
+	//! restores it rather than flushing under whatever the commitment has since become.
+	CutCommit fit_commit = CutCommit::UNDECIDED;
+	//! Floor for the budget below, and where a fresh column starts.
+	static constexpr idx_t MIN_PREFIX_CAP = 64;
+	//! Prefix-group budget: what CleavedUpperBound prices the prefix-id width at. Every RefreshCleave raises it to
+	//! at least the group count the meta-priced DP wants (with a doubling of headroom), and the flush emission runs
+	//! at the same budget -- so the written layout never holds more groups than the measurement that admitted it,
+	//! and the emit-side clamp is unreachable rather than load-bearing. Deliberately NOT reset per segment:
+	//! successive segments of one column hold similar dictionaries. Correctness never rests on this value; every
+	//! written layout is measured first (see the certificate rewind and the write-time guards).
+	idx_t prefix_cap = MIN_PREFIX_CAP;
 
 	// ---- Mode (resolved once from force_dict_fsst_mode) ----
 	//! Whether the cut may cleave to a plus mode (DICT_FSST_PLUS / FSST_PLUS); false forces the native modes only.
