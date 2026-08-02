@@ -38,8 +38,7 @@ class VacuumLocalSinkState : public LocalSinkState {
 public:
 	VacuumLocalSinkState(VacuumInfo &info, optional_ptr<TableCatalogEntry> table,
 	                     const unordered_map<idx_t, idx_t> &column_id_map)
-	    : column_distinct_stats(BuildDistinctStats(info, table, column_id_map)), hashes(LogicalType::HASH) {
-	};
+	    : column_distinct_stats(BuildDistinctStats(info, table, column_id_map)), hashes(LogicalType::HASH) {};
 
 	vector<unique_ptr<DistinctStatistics>> column_distinct_stats;
 	Vector hashes;
@@ -53,8 +52,7 @@ class VacuumGlobalSinkState : public GlobalSinkState {
 public:
 	VacuumGlobalSinkState(VacuumInfo &info, optional_ptr<TableCatalogEntry> table,
 	                      const unordered_map<idx_t, idx_t> &column_id_map)
-	    : column_distinct_stats(BuildDistinctStats(info, table, column_id_map)) {
-	};
+	    : column_distinct_stats(BuildDistinctStats(info, table, column_id_map)) {};
 
 	mutex stats_lock;
 	vector<unique_ptr<DistinctStatistics>> column_distinct_stats;
