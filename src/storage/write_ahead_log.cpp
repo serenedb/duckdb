@@ -370,6 +370,15 @@ void WriteAheadLog::WriteSequenceValue(SequenceValue val) {
 }
 
 //===--------------------------------------------------------------------===//
+// SERENEDB CATALOG POSITION
+//===--------------------------------------------------------------------===//
+void WriteAheadLog::WriteCatalogPosition(uint64_t position) {
+	WriteAheadLogSerializer serializer(*this, WALType::CATALOG_POSITION);
+	serializer.WriteProperty(101, "catalog_position", position);
+	serializer.End();
+}
+
+//===--------------------------------------------------------------------===//
 // MACROS
 //===--------------------------------------------------------------------===//
 void WriteAheadLog::WriteCreateMacro(const ScalarMacroCatalogEntry &entry) {

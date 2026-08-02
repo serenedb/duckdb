@@ -55,6 +55,12 @@ enum class WALType : uint8_t {
 
 	CREATE_TRIGGER = 30,
 	DROP_TRIGGER = 31,
+
+	// -----------------------------
+	// SereneDB
+	// -----------------------------
+	//! The serenedb catalog log position this commit brings the database up to.
+	CATALOG_POSITION = 40,
 	// -----------------------------
 	// Flush
 	// -----------------------------

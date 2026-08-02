@@ -399,6 +399,9 @@ struct DatabaseHeader {
 	idx_t vector_size = 0;
 	//! The storage compatibility version
 	StorageVersion storage_compatibility = StorageVersion::INVALID;
+	//! SereneDB only: the catalog log position this database's contents are in step with. Folded in here at
+	//! checkpoint, before the WAL that carried the intervening CATALOG_POSITION records is truncated.
+	uint64_t catalog_position = 0;
 
 	void Write(WriteStream &ser);
 	static DatabaseHeader Read(const MainHeader &header, ReadStream &source);

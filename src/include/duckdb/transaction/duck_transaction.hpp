@@ -69,6 +69,15 @@ public:
 
 	void SetModifications(DatabaseModificationType type) override;
 
+	//! SereneDB only: the catalog log position this commit brings the database up to. Set once the catalog half is
+	//! durable, so the WAL record that carries it lands in the same commit as the store change it describes.
+	void SetCatalogPosition(uint64_t position) {
+		catalog_position = position;
+	}
+	uint64_t GetCatalogPosition() const {
+		return catalog_position;
+	}
+
 	bool ShouldWriteToWAL(AttachedDatabase &db);
 	ErrorData WriteToWAL(ClientContext &context, AttachedDatabase &db,
 	                     unique_ptr<StorageCommitState> &commit_state) noexcept;
@@ -137,6 +146,8 @@ private:
 	reference_map_t<DataTableInfo, unique_ptr<ActiveTableLock>> active_locks;
 	//! Flag to prevent auto-checkpointing inside a checkpoint transaction.
 	bool is_checkpoint_transaction = false;
+	//! SereneDB only: see SetCatalogPosition. Zero when this commit carries no catalog work.
+	uint64_t catalog_position = 0;
 	//! Columns kept alive by PinUpdateColumn until this transaction's undo is cleaned up. Keyed by pointer to
 	//! dedupe; a parallel UPDATE fills this from several worker threads, hence the lock.
 	mutex pinned_columns_lock;

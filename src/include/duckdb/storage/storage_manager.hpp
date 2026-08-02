@@ -163,6 +163,16 @@ public:
 		return storage_options.encryption_version;
 	}
 
+	//! SereneDB only: the catalog log position this database's contents are in step with. Raised by a commit that
+	//! carries catalog work, folded into the database header at checkpoint, restored from the header plus the
+	//! CATALOG_POSITION records of the replayed WAL tail at load.
+	uint64_t GetCatalogPosition() const {
+		return catalog_position.load(std::memory_order_acquire);
+	}
+	void SetCatalogPosition(uint64_t position) {
+		catalog_position.store(position, std::memory_order_release);
+	}
+
 protected:
 	virtual void LoadDatabase(QueryContext context) = 0;
 
@@ -189,6 +199,8 @@ protected:
 	//! WAL.
 	atomic<idx_t> wal_size;
 	atomic<idx_t> wal_entries_count;
+	//! SereneDB only: see GetCatalogPosition.
+	atomic<uint64_t> catalog_position {0};
 	//! Storage options passed in through configuration
 	StorageOptions storage_options;
 

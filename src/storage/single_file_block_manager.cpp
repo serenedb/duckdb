@@ -283,6 +283,9 @@ void DatabaseHeader::Write(WriteStream &ser) {
 	} else {
 		ser.Write<idx_t>(StorageVersionToDisk(storage_compatibility));
 	}
+	if (IsSereneDBStorageVersion(storage_compatibility)) {
+		ser.Write<uint64_t>(catalog_position);
+	}
 }
 
 void DatabaseHeader::SetStorageVersionInDatabaseHeader(DatabaseHeader &header, StorageVersion main_version,
@@ -369,6 +372,10 @@ DatabaseHeader DatabaseHeader::Read(const MainHeader &main_header, ReadStream &s
 	// storage version from the database header
 	auto database_header_storage_version = source.Read<idx_t>();
 	SetStorageVersionInDatabaseHeader(header, main_header.version_number, database_header_storage_version);
+
+	if (IsSereneDBStorageVersion(header.storage_compatibility)) {
+		header.catalog_position = source.Read<uint64_t>();
+	}
 
 	return header;
 }
@@ -836,6 +843,7 @@ void SingleFileBlockManager::Initialize(const DatabaseHeader &header, const opti
 	}
 
 	db.GetStorageManager().SetStorageVersion(options.storage_version);
+	db.GetStorageManager().SetCatalogPosition(header.catalog_position);
 
 	if (block_alloc_size.IsValid() && block_alloc_size.GetIndex() != header.block_alloc_size) {
 		throw InvalidInputException(

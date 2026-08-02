@@ -204,7 +204,9 @@ bool DuckTransaction::AutomaticCheckpoint(AttachedDatabase &db, const UndoBuffer
 }
 
 bool DuckTransaction::ShouldWriteToWAL(AttachedDatabase &db) {
-	if (!ChangesMade()) {
+	// A serenedb catalog position rides this commit even when the store half made no row or entry change of its
+	// own: the position is what tells boot the database is in step with the catalog log.
+	if (!ChangesMade() && catalog_position == 0) {
 		return false;
 	}
 	if (db.IsSystem()) {
@@ -237,6 +239,9 @@ ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &
 
 		auto wal_timer = profiler.StartTimer<MetricStorageWriteToWALLatency>();
 		undo_buffer.WriteToWAL(*wal, commit_state.get());
+		if (catalog_position != 0) {
+			wal->WriteCatalogPosition(catalog_position);
+		}
 		if (commit_state->HasRowGroupData()) {
 			// if we have optimistically written any data AND we are writing to the WAL, we have written references to
 			// optimistically written blocks
@@ -265,7 +270,7 @@ ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &
 ErrorData DuckTransaction::Commit(AttachedDatabase &db, CommitInfo &commit_info,
                                   unique_ptr<StorageCommitState> commit_state) noexcept {
 	this->commit_id = commit_info.commit_id;
-	if (!ChangesMade()) {
+	if (!ChangesMade() && !commit_state) {
 		// no need to flush anything if we made no changes
 		return ErrorData();
 	}
@@ -292,6 +297,9 @@ ErrorData DuckTransaction::Commit(AttachedDatabase &db, CommitInfo &commit_info,
 			// transaction manager issues GroupSync once the locks are dropped
 			commit_state->FlushCommit();
 			commit_info.wal_flush_offset = commit_state->GetFlushOffset();
+		}
+		if (catalog_position != 0 && db.HasStorageManager()) {
+			db.GetStorageManager().SetCatalogPosition(catalog_position);
 		}
 		drop_state.FinalizeCommit();
 		return ErrorData();

@@ -259,6 +259,8 @@ protected:
 	void ReplayDropSequence();
 	void ReplaySequenceValue();
 
+	void ReplayCatalogPosition();
+
 	void ReplayCreateMacro();
 	void ReplayDropMacro();
 
@@ -639,6 +641,9 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 		break;
 	case WALType::SEQUENCE_VALUE:
 		ReplaySequenceValue();
+		break;
+	case WALType::CATALOG_POSITION:
+		ReplayCatalogPosition();
 		break;
 	case WALType::CREATE_MACRO:
 		ReplayCreateMacro();
@@ -1043,6 +1048,23 @@ void WriteAheadLogDeserializer::ReplaySequenceValue() {
 	auto &seq = catalog.GetEntry<SequenceCatalogEntry>(
 	    context, QualifiedName(catalog.GetName(), Identifier(schema), Identifier(name)));
 	seq.ReplayValue(usage_count, counter, last_value);
+}
+
+//===--------------------------------------------------------------------===//
+// Replay SereneDB Catalog Position
+//===--------------------------------------------------------------------===//
+void WriteAheadLogDeserializer::ReplayCatalogPosition() {
+	auto position = deserializer.ReadProperty<uint64_t>(101, "catalog_position");
+
+	if (DeserializeOnly()) {
+		return;
+	}
+
+	// Raise-only: the records of a replayed tail arrive in commit order, and a torn tail simply stops earlier.
+	auto &storage_manager = db.GetStorageManager();
+	if (position > storage_manager.GetCatalogPosition()) {
+		storage_manager.SetCatalogPosition(position);
+	}
 }
 
 //===--------------------------------------------------------------------===//

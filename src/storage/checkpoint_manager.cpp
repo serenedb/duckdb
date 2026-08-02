@@ -295,6 +295,9 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 	header.meta_block = meta_block.block_pointer;
 	header.block_alloc_size = block_manager.GetBlockAllocSize();
 	header.vector_size = STANDARD_VECTOR_SIZE;
+	// The WAL is truncated once this header lands, so the position its CATALOG_POSITION records carried has to be
+	// folded in here or it is lost.
+	header.catalog_position = storage_manager.GetCatalogPosition();
 	block_manager.WriteHeader(context, header);
 
 	auto debug_verify_blocks = Settings::Get<DebugVerifyBlocksSetting>(db.GetDatabase());

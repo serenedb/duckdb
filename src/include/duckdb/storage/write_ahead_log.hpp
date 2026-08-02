@@ -85,6 +85,8 @@ public:
 	void WriteCreateSequence(const SequenceCatalogEntry &entry);
 	void WriteDropSequence(const SequenceCatalogEntry &entry);
 	void WriteSequenceValue(SequenceValue val);
+	//! SereneDB only: the catalog log position this commit brings the database up to.
+	void WriteCatalogPosition(uint64_t position);
 
 	void WriteCreateMacro(const ScalarMacroCatalogEntry &entry);
 	void WriteDropMacro(const ScalarMacroCatalogEntry &entry);
