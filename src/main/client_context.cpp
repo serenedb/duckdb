@@ -517,7 +517,7 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 	// independent of) the optimizer so it cannot be bypassed via
 	// disable_optimizer / a plan that opts out of optimization.
 	if (auto &db_config = DBConfig::GetConfig(*this); db_config.access_check_function) {
-		db_config.access_check_function(*this, *logical_planner.binder);
+		db_config.access_check_function(*this, *logical_planner.binder, logical_plan);
 	}
 
 	bool optimize = Settings::Get<EnableOptimizerSetting>(*this);
