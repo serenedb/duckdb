@@ -77,6 +77,7 @@ void Binder::ExpandDefaultInValuesList(InsertQueryNode &node, TableCatalogEntry 
 	auto &expr_list = values_list->Cast<ExpressionListRef>();
 	expr_list.expected_types.resize(expected_columns);
 	expr_list.expected_names.resize(expected_columns);
+	expr_list.case_sensitive_names = table.GetColumns().IsCaseSensitive();
 
 	D_ASSERT(!expr_list.values.empty());
 	CheckInsertColumnCountMismatch(expected_columns, expr_list.values[0].size(), !node.columns.empty(), table.name);
@@ -125,7 +126,7 @@ void Binder::ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<uniq
 	}
 	auto column_index = GenerateTableIndex();
 	auto generated_binder = Binder::CreateBinder(context, this);
-	generated_binder->bind_context.AddGenericBinding(column_index, table.name, names, types);
+	generated_binder->bind_context.AddGenericBinding(column_index, table.name, names, types, columns.IsCaseSensitive());
 	ExpressionBinder generated_expr_binder(*generated_binder, context);
 	idx_t pos = 0;
 	for (auto &col : columns.Physical()) {
@@ -347,7 +348,9 @@ void Binder::BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &
 		// insertion statement specifies column list
 
 		// create a mapping of (list index) -> (column index)
-		identifier_map_t<idx_t> column_name_map;
+		const auto case_sensitive = table.GetColumns().IsCaseSensitive();
+		identifier_map_t<idx_t> column_name_map(0, IdentifierHashFunction(case_sensitive),
+		                                        IdentifierEquality(case_sensitive));
 		for (idx_t i = 0; i < columns.size(); i++) {
 			auto entry = column_name_map.insert(make_pair(columns[i], i));
 			if (!entry.second) {

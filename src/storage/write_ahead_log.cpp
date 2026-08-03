@@ -518,8 +518,16 @@ void WriteAheadLog::WriteDropSchema(const SchemaCatalogEntry &entry) {
 //===--------------------------------------------------------------------===//
 // DATA
 //===--------------------------------------------------------------------===//
-void WriteAheadLog::WriteSetTable(const Identifier &schema, const Identifier &table) {
+void WriteAheadLog::WriteSetTable(const Identifier &schema, const Identifier &table, idx_t catalog_id) {
 	WriteAheadLogSerializer serializer(*this, WALType::USE_TABLE);
+	// The identifier replaces the name rather than accompanying it: a name written beside it would be the one
+	// thing in the record a rename can invalidate, and nothing reads it once the id is there.
+	if (catalog_id != 0 &&
+	    StorageManager::TargetAtLeastVersion(StorageVersion::SERENEDB_V1, storage_manager.GetStorageVersion())) {
+		serializer.WriteProperty(103, "catalog_id", catalog_id);
+		serializer.End();
+		return;
+	}
 	serializer.WriteProperty(101, "schema", schema);
 	serializer.WriteProperty(102, "table", table);
 	serializer.End();
@@ -577,7 +585,7 @@ void WriteAheadLog::WriteAlter(CatalogEntry &entry, const AlterInfo &info) {
 	WriteAheadLogSerializer serializer(*this, WALType::ALTER_INFO);
 	serializer.WriteProperty(101, "info", &info);
 
-	if (!info.IsAddPrimaryKey()) {
+	if (!info.IsAddIndexedConstraint()) {
 		return serializer.End();
 	}
 

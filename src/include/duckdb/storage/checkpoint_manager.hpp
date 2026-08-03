@@ -9,6 +9,8 @@
 #pragma once
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/common/unordered_set.hpp"
+#include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/partial_block_manager.hpp"
 
 namespace duckdb {
@@ -84,6 +86,9 @@ protected:
 	virtual void WriteEntry(CatalogEntry &entry, Serializer &serializer);
 	virtual void WriteSchema(SchemaCatalogEntry &schema, Serializer &serializer);
 	virtual void WriteTable(TableCatalogEntry &table, Serializer &serializer) = 0;
+	//! The rows of a table whose definition this file does not hold: the catalog that owns the entry persists
+	//! that itself, so the record is the entry's identifier plus its data.
+	virtual void WriteDataManifest(TableCatalogEntry &table, Serializer &serializer);
 	virtual void WriteView(ViewCatalogEntry &table, Serializer &serializer);
 	virtual void WriteSequence(SequenceCatalogEntry &table, Serializer &serializer);
 	virtual void WriteMacro(ScalarMacroCatalogEntry &table, Serializer &serializer);
@@ -108,6 +113,12 @@ protected:
 	virtual void ReadEntry(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadSchema(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadTable(CatalogTransaction transaction, Deserializer &deserializer);
+	//! Reads the rows of `catalog_id`'s table and creates it from the definition the host catalog holds.
+	virtual void ReadDataManifest(CatalogTransaction transaction, Deserializer &deserializer, idx_t catalog_id);
+	//! Reads past a table's rows without attaching them, for a table the host catalog no longer has.
+	void SkipTableData(Deserializer &deserializer);
+	void CreateIndexEntry(CatalogTransaction transaction, unique_ptr<CreateInfo> create_info,
+	                      BlockPointer root_block_pointer);
 	virtual void ReadView(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadSequence(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadMacro(CatalogTransaction transaction, Deserializer &deserializer);
@@ -157,6 +168,7 @@ public:
 
 public:
 	void WriteTable(TableCatalogEntry &table, Serializer &serializer) override;
+	void WriteDataManifest(TableCatalogEntry &table, Serializer &serializer) override;
 
 private:
 	optional_ptr<ClientContext> context;

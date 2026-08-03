@@ -91,6 +91,11 @@ bool DependencyManager::IsSystemEntry(CatalogEntry &entry) const {
 	switch (entry.type) {
 	case CatalogType::DEPENDENCY_ENTRY:
 	case CatalogType::DATABASE_ENTRY:
+	// A foreign server and a role hang off the catalog, not a schema, so they
+	// have no CatalogEntryInfo to key a dependency on -- the same reason a
+	// database is on this list.
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::ROLE_ENTRY:
 	case CatalogType::RENAMED_ENTRY:
 		return true;
 	default:
@@ -715,7 +720,9 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			break;
 		}
 		case AlterType::SET_COLUMN_COMMENT:
-		case AlterType::SET_COMMENT: {
+		case AlterType::SET_COMMENT:
+		// An owner or ACL change leaves the shape a dependent bound against untouched.
+		case AlterType::SET_PERMISSIONS: {
 			disallow_alter = false;
 			break;
 		}

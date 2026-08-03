@@ -1244,7 +1244,14 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(ClientContext &context
 	return schemas;
 }
 
+void Catalog::ScanSchemas(std::function<void(SchemaCatalogEntry &)>) {
+}
+
 void Catalog::ScanHiddenSchemas(ClientContext &, std::function<void(SchemaCatalogEntry &)>) {
+}
+
+optional_ptr<TableCatalogEntry> Catalog::LookupTableById(CatalogTransaction, idx_t) {
+	return nullptr;
 }
 
 vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(CatalogEntryRetriever &retriever,

@@ -144,22 +144,52 @@ inline string &operator+=(string &a, const Identifier &b) {
 	return a;
 }
 
+//! Hashing and equality for identifier-keyed hash maps. Case-insensitive by default, which is duckdb's identifier
+//! semantics; a catalog whose names are already folded by its own rules (postgres folds unquoted identifiers and then
+//! matches exactly, so "A" and "a" are two columns) opts into the case-sensitive pair. Both halves carry the flag:
+//! a case-insensitive hash under a case-sensitive comparison is correct but files every casing of one name in a
+//! single bucket, and the reverse combination is simply wrong.
 struct IdentifierHashFunction {
-	uint64_t operator()(const Identifier &id) const {
-		return id.Hash();
+	IdentifierHashFunction() = default;
+	explicit IdentifierHashFunction(bool case_sensitive_p) : case_sensitive(case_sensitive_p) {
 	}
+
+	DUCKDB_API uint64_t operator()(const Identifier &id) const;
+
+	bool case_sensitive = false;
 };
 
 struct IdentifierEquality {
+	IdentifierEquality() = default;
+	explicit IdentifierEquality(bool case_sensitive_p) : case_sensitive(case_sensitive_p) {
+	}
+
 	bool operator()(const Identifier &a, const Identifier &b) const {
+		if (case_sensitive) {
+			return a.GetIdentifierName() == b.GetIdentifierName();
+		}
 		return a == b;
 	}
+
+	bool case_sensitive = false;
 };
 
+//! Ordering for identifier-keyed containers. Case-insensitive by default, which is duckdb's identifier
+//! semantics; a catalog whose names are already folded by its own rules (postgres folds unquoted identifiers and
+//! then matches exactly, so "Foo" and "foo" are two relations) opts into the case-sensitive ordering instead.
 struct IdentifierCompare {
+	IdentifierCompare() = default;
+	explicit IdentifierCompare(bool case_sensitive_p) : case_sensitive(case_sensitive_p) {
+	}
+
 	bool operator()(const Identifier &a, const Identifier &b) const {
+		if (case_sensitive) {
+			return a.GetIdentifierName() < b.GetIdentifierName();
+		}
 		return a < b;
 	}
+
+	bool case_sensitive = false;
 };
 
 template <typename T>

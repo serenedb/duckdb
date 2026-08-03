@@ -85,8 +85,8 @@ optional_ptr<CatalogEntry> CatalogEntryMap::GetEntry(const Identifier &name) {
 	return entry->second.get();
 }
 
-CatalogSet::CatalogSet(Catalog &catalog_p, unique_ptr<DefaultGenerator> defaults)
-    : catalog(catalog_p.Cast<DuckCatalog>()), defaults(std::move(defaults)) {
+CatalogSet::CatalogSet(Catalog &catalog_p, unique_ptr<DefaultGenerator> defaults, bool case_sensitive)
+    : catalog(catalog_p.Cast<DuckCatalog>()), map(case_sensitive), defaults(std::move(defaults)) {
 	D_ASSERT(catalog_p.IsDuckCatalog());
 }
 CatalogSet::~CatalogSet() {
@@ -315,6 +315,11 @@ bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntr
 }
 
 bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info) {
+	return AlterEntry(transaction, name, alter_info, nullptr);
+}
+
+bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info,
+                            unique_ptr<CatalogEntry> value) {
 	// If the entry does not exist, we error
 	auto entry = GetEntry(transaction, name);
 	if (!entry) {
@@ -324,20 +329,22 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 		throw CatalogException("Cannot alter entry \"%s\" because it is an internal system entry", entry->name);
 	}
 
-	unique_ptr<CatalogEntry> value;
-	if (alter_info.type == AlterType::SET_COMMENT) {
-		// Copy the existing entry; we are only changing metadata here
-		if (!transaction.context) {
-			throw InternalException("Cannot AlterEntry::SET_COMMENT without client context");
-		}
-		value = entry->Copy(*transaction.context);
-		value->comment = alter_info.Cast<SetCommentInfo>().comment_value;
-	} else {
-		// Use the existing entry to create the altered entry
-		value = entry->AlterEntry(transaction, alter_info);
-		if (!value) {
-			// alter failed, but did not result in an error
-			return true;
+	// A caller-supplied value is the altered entry already; only derive one when there is none.
+	if (!value) {
+		if (alter_info.type == AlterType::SET_COMMENT) {
+			// Copy the existing entry; we are only changing metadata here
+			if (!transaction.context) {
+				throw InternalException("Cannot AlterEntry::SET_COMMENT without client context");
+			}
+			value = entry->Copy(*transaction.context);
+			value->comment = alter_info.Cast<SetCommentInfo>().comment_value;
+		} else {
+			// Use the existing entry to create the altered entry
+			value = entry->AlterEntry(transaction, alter_info);
+			if (!value) {
+				// alter failed, but did not result in an error
+				return true;
+			}
 		}
 	}
 

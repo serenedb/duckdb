@@ -159,6 +159,11 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 	if (entry.temporary || entry.Parent().temporary) {
 		return;
 	}
+	if (!entry.duck_managed || !entry.Parent().duck_managed) {
+		// No DataTable and no duckdb-owned blocks behind it: the storage half is reclaimed by the catalog
+		// implementation that owns the entry.
+		return;
+	}
 
 	// look at the type of the parent entry
 	auto &parent = entry.Parent();
@@ -260,6 +265,9 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 	case CatalogType::SECRET_ENTRY:
 	case CatalogType::SECRET_TYPE_ENTRY:
 	case CatalogType::SECRET_FUNCTION_ENTRY:
+	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::ROLE_ENTRY:
 		// do nothing, these entries are not persisted to disk
 		break;
 	default:
@@ -277,7 +285,10 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		D_ASSERT(catalog.IsDuckCatalog());
 
 		auto &new_entry = old_entry.Parent();
-		if (new_entry.type == CatalogType::DEPENDENCY_ENTRY) {
+		// duck_managed is what tells one of the dependency manager's own edges from an edge a foreign
+		// catalog hosts in a set of its own: only the former is a DependencyEntry, and only the former
+		// has a subject whose existence this manager can verify.
+		if (new_entry.type == CatalogType::DEPENDENCY_ENTRY && new_entry.duck_managed) {
 			auto &dep = new_entry.Cast<DependencyEntry>();
 			if (dep.Side() == DependencyEntryType::SUBJECT) {
 				new_entry.set->VerifyExistenceOfDependency(commit_id, new_entry);

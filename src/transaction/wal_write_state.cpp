@@ -34,13 +34,18 @@ WALWriteState::WALWriteState(DuckTransaction &transaction_p, WriteAheadLog &log,
 void WALWriteState::SwitchTable(DuckTableEntry &table_entry, UndoFlags new_op) {
 	if (current_table_entry.get() != &table_entry) {
 		// write the current table to the log
-		log.WriteSetTable(table_entry.schema.name, table_entry.name);
+		log.WriteSetTable(table_entry.schema.name, table_entry.name,
+		                  table_entry.GetStorage().GetDataTableInfo()->GetCatalogId());
 		current_table_entry = table_entry;
 	}
 }
 
 void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 	if (entry.temporary || entry.Parent().temporary) {
+		return;
+	}
+	if (!entry.duck_managed || !entry.Parent().duck_managed) {
+		// Persisted by the catalog implementation that owns it, not by this WAL.
 		return;
 	}
 
@@ -157,6 +162,9 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 		case CatalogType::SECRET_ENTRY:
 		case CatalogType::SECRET_TYPE_ENTRY:
 		case CatalogType::SECRET_FUNCTION_ENTRY:
+		case CatalogType::TOKENIZER_ENTRY:
+		case CatalogType::FOREIGN_SERVER_ENTRY:
+		case CatalogType::ROLE_ENTRY:
 			// do nothing, prepared statements and scalar functions aren't persisted to disk
 			break;
 		default:
@@ -175,6 +183,9 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 	case CatalogType::SECRET_ENTRY:
 	case CatalogType::SECRET_TYPE_ENTRY:
 	case CatalogType::SECRET_FUNCTION_ENTRY:
+	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::ROLE_ENTRY:
 		// do nothing, these entries are not persisted to disk
 		break;
 	default:

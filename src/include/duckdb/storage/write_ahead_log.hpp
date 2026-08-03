@@ -102,8 +102,10 @@ public:
 
 	void WriteCreateTrigger(const TriggerCatalogEntry &entry);
 	void WriteDropTrigger(const TriggerCatalogEntry &entry);
-	//! Sets the table used for subsequent insert/delete/update commands
-	void WriteSetTable(const Identifier &schema, const Identifier &table);
+	//! Sets the table used for subsequent insert/delete/update commands. A non-zero catalog_id
+	//! (DataTableInfo::GetCatalogId) identifies the table instead of its qualified name, so a rename between the
+	//! write and the replay cannot move it.
+	void WriteSetTable(const Identifier &schema, const Identifier &table, idx_t catalog_id);
 
 	void WriteAlter(CatalogEntry &entry, const AlterInfo &info);
 

@@ -130,6 +130,13 @@ public:
 		return false;
 	}
 
+	//! Whether this catalog matches identifiers exactly rather than case-insensitively. A catalog that folds
+	//! unquoted names itself, as postgres does, holds `t("A" int, "a" int)` as two columns; duckdb's own
+	//! semantics collapse the two.
+	virtual bool MatchesNamesExactly() const {
+		return false;
+	}
+
 	virtual void Initialize(bool load_builtin) = 0;
 	virtual void Initialize(optional_ptr<ClientContext> context, bool load_builtin);
 	virtual void FinalizeLoad(optional_ptr<ClientContext> context);
@@ -274,10 +281,19 @@ public:
 	          OnEntryNotFound if_not_found);
 	//! Scans all the schemas in the system one-by-one, invoking the callback for each entry
 	DUCKDB_API virtual void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) = 0;
+	//! The same without a client context, over what is committed. This is what the checkpoint enumerates, so a
+	//! catalog whose schemas live outside the inherited schema set has to answer here or its storage is never
+	//! written.
+	DUCKDB_API virtual void ScanSchemas(std::function<void(SchemaCatalogEntry &)> callback);
 	//! The schemas a catalog keeps out of ScanSchemas because they hold its own internals. Reached only by
 	//! introspection that asked for hidden objects, which is how a hidden attached database is treated as well.
 	DUCKDB_API virtual void ScanHiddenSchemas(ClientContext &context,
 	                                          std::function<void(SchemaCatalogEntry &)> callback);
+	//! The table this catalog gave `catalog_id` to (DataTableInfo::GetCatalogId). The data WAL names tables by
+	//! that identifier rather than by a qualified name, so that a rename between the write and the replay cannot
+	//! move them. Null for a catalog that hands out no identifiers.
+	DUCKDB_API virtual optional_ptr<TableCatalogEntry> LookupTableById(CatalogTransaction transaction,
+	                                                                   idx_t catalog_id);
 
 	//! Gets the entry described by the (optionally catalog/schema-qualified) EntryLookupInfo. If the entry does not
 	//! exist behavior depends on OnEntryNotFound

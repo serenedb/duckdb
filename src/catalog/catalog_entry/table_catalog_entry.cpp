@@ -233,6 +233,10 @@ DataTable &TableCatalogEntry::GetStorage() {
 }
 // LCOV_EXCL_STOP
 
+optional_ptr<DataTable> TableCatalogEntry::TryGetStorage() {
+	return nullptr;
+}
+
 DuckTableEntry &TableCatalogEntry::GetStorageTableEntry(ClientContext &context) {
 	return Cast<DuckTableEntry>();
 }

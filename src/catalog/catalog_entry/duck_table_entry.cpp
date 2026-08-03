@@ -33,11 +33,16 @@
 
 namespace duckdb {
 
+//! `constraint_name` is the name the constraint was declared with, empty when it has none. A named constraint
+//! names its index too; the generated form is positional, so it only survives a reload as long as the definition
+//! read back is the one that was written. A host catalog that rebuilds the definition from its own records can
+//! order the constraints differently, and then only the name ties an index to the storage that belongs to it.
 IndexStorageInfo GetIndexInfo(const IndexConstraintType type, const bool v1_0_0_storage, unique_ptr<CreateInfo> &info,
-                              const idx_t id) {
+                              const idx_t id, const string &constraint_name) {
 	auto &table_info = info->Cast<CreateTableInfo>();
-	auto constraint_name = EnumUtil::ToString(type) + "_";
-	auto name = constraint_name + table_info.GetTableName() + "_" + to_string(id);
+	auto name = constraint_name.empty()
+	                ? EnumUtil::ToString(type) + "_" + table_info.GetTableName() + "_" + to_string(id)
+	                : constraint_name;
 	IndexStorageInfo index_info {Identifier(name)};
 	if (!v1_0_0_storage) {
 		index_info.options.emplace("v1_0_0_storage", v1_0_0_storage);
@@ -147,7 +152,37 @@ DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, Bou
 	                                     std::move(column_defs), std::move(info.data));
 
 	// Create the unique indexes for the UNIQUE, PRIMARY KEY, and FOREIGN KEY constraints.
+	//
+	// A constraint takes its stored index by name where the file has one, and by position otherwise, which is what
+	// an older file (whose infos carry no name) and this definition's own generated names amount to. Name first
+	// matters for a definition rebuilt outside this file: the constraint order need not be the one that was
+	// written, and only the name says which index holds which constraint's data.
 	idx_t indexes_idx = 0;
+	vector<bool> consumed(info.indexes.size(), false);
+	auto take_index_info = [&](IndexConstraintType constraint_type, idx_t constraint_idx) {
+		auto &constraint_name = constraints[constraint_idx]->constraint_name;
+		auto named = GetIndexInfo(constraint_type, false, info.base, constraint_idx, constraint_name);
+		for (idx_t j = 0; j < info.indexes.size(); j++) {
+			if (!consumed[j] && info.indexes[j].name == named.name) {
+				consumed[j] = true;
+				return std::move(info.indexes[j]);
+			}
+		}
+		while (indexes_idx < info.indexes.size() && consumed[indexes_idx]) {
+			indexes_idx++;
+		}
+		if (indexes_idx == info.indexes.size()) {
+			throw IOException("corrupt database file - no index data for constraint %llu of table \"%s\"",
+			                  constraint_idx, name.GetIdentifierName());
+		}
+		consumed[indexes_idx] = true;
+		auto result = std::move(info.indexes[indexes_idx++]);
+		if (result.name.empty()) {
+			result.name = GetIndexInfo(constraint_type, true, info.base, constraint_idx, constraint_name).name;
+		}
+		return result;
+	};
+
 	for (idx_t i = 0; i < constraints.size(); i++) {
 		auto &constraint = constraints[i];
 		if (constraint->type == ConstraintType::UNIQUE) {
@@ -160,19 +195,12 @@ DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, Bou
 
 			auto column_indexes = unique.GetLogicalIndexes(columns);
 			if (info.indexes.empty()) {
-				auto index_info = GetIndexInfo(constraint_type, false, info.base, i);
+				auto index_info = GetIndexInfo(constraint_type, false, info.base, i, constraint->constraint_name);
 				storage->AddIndex(columns, column_indexes, constraint_type, std::move(index_info));
 				continue;
 			}
 
-			// We read the index from an old storage version applying a dummy name.
-			auto index_storage_info = std::move(info.indexes[indexes_idx++]);
-			if (index_storage_info.name.empty()) {
-				auto name_info = GetIndexInfo(constraint_type, true, info.base, i);
-				index_storage_info.name = name_info.name;
-			}
-
-			storage->AddIndex(columns, column_indexes, constraint_type, std::move(index_storage_info));
+			storage->AddIndex(columns, column_indexes, constraint_type, take_index_info(constraint_type, i));
 			continue;
 		}
 
@@ -189,19 +217,13 @@ DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, Bou
 
 				if (info.indexes.empty()) {
 					auto constraint_type = IndexConstraintType::FOREIGN;
-					auto index_info = GetIndexInfo(constraint_type, false, info.base, i);
+					auto index_info = GetIndexInfo(constraint_type, false, info.base, i, constraint->constraint_name);
 					storage->AddIndex(columns, column_indexes, constraint_type, std::move(index_info));
 					continue;
 				}
 
-				// We read the index from an old storage version applying a dummy name.
-				auto index_storage_info = std::move(info.indexes[indexes_idx++]);
-				if (index_storage_info.name.empty()) {
-					auto name_info = GetIndexInfo(IndexConstraintType::FOREIGN, true, info.base, i);
-					index_storage_info.name = name_info.name;
-				}
-
-				storage->AddIndex(columns, column_indexes, IndexConstraintType::FOREIGN, std::move(index_storage_info));
+				storage->AddIndex(columns, column_indexes, IndexConstraintType::FOREIGN,
+				                  take_index_info(IndexConstraintType::FOREIGN, i));
 			}
 		}
 	}
@@ -209,11 +231,25 @@ DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, Bou
 	// Move any remaining unused IndexStorageInfos to storage.
 	// These are non-constraint indexes that are still unbound at this point.
 	vector<IndexStorageInfo> remaining_indexes;
-	while (indexes_idx < info.indexes.size()) {
-		remaining_indexes.push_back(std::move(info.indexes[indexes_idx++]));
+	for (idx_t j = 0; j < info.indexes.size(); j++) {
+		if (!consumed[j]) {
+			remaining_indexes.push_back(std::move(info.indexes[j]));
+		}
 	}
 	if (!remaining_indexes.empty()) {
 		storage->SetIndexStorageInfo(std::move(remaining_indexes));
+	}
+}
+
+DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info, StorageAsGiven,
+                               shared_ptr<DataTable> storage_p, shared_ptr<CatalogSet> inherited_triggers)
+    : TableCatalogEntry(catalog, schema, info.Base()), storage(std::move(storage_p)),
+      triggers(std::move(inherited_triggers)), column_dependency_manager(std::move(info.column_dependency_manager)) {
+	if (!triggers) {
+		triggers = make_shared_ptr<CatalogSet>(catalog);
+	}
+	if (storage && !info.indexes.empty()) {
+		storage->SetIndexStorageInfo(std::move(info.indexes));
 	}
 }
 
@@ -235,7 +271,7 @@ unique_ptr<BaseStatistics> DuckTableEntry::GetStatistics(ClientContext &context,
 }
 
 unique_ptr<BlockingSample> DuckTableEntry::GetSample() {
-	return storage->GetSample();
+	return storage ? storage->GetSample() : nullptr;
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &info) {
@@ -382,6 +418,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameColumn(ClientContext &context, Re
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 	for (auto &col : columns.Logical()) {
 		auto copy = col.Copy();
 		if (rename_idx == col.Logical()) {
@@ -456,6 +493,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddColumn(ClientContext &context, AddCo
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	for (auto &col : columns.Logical()) {
 		create_info->columns.AddColumn(col.Copy());
@@ -776,6 +814,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	logical_index_set_t removed_columns;
 	if (column_dependency_manager.HasDependents(removed_index)) {
@@ -1197,6 +1236,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	// Bind the USING expression.
 	auto binder = Binder::CreateBinder(context);
@@ -1371,6 +1411,9 @@ void DuckTableEntry::Rollback(CatalogEntry &prev_entry) {
 
 	auto &table = Cast<DuckTableEntry>();
 	auto &prev_table = prev_entry.Cast<DuckTableEntry>();
+	if (!prev_table.TryGetStorage()) {
+		return;
+	}
 	auto &prev_info = prev_table.GetStorage().GetDataTableInfo();
 	auto &prev_indexes = prev_info->GetIndexes();
 
@@ -1405,6 +1448,9 @@ void DuckTableEntry::Rollback(CatalogEntry &prev_entry) {
 }
 
 void DuckTableEntry::OnDrop() {
+	if (!storage) {
+		return;
+	}
 	storage->SetAsDropped();
 }
 
@@ -1452,12 +1498,18 @@ unique_ptr<CatalogEntry> DuckTableEntry::Copy(ClientContext &context) const {
 }
 
 void DuckTableEntry::SetAsRoot() {
+	if (!storage) {
+		return;
+	}
 	storage->SetAsMainTable();
 	storage->SetTableName(name);
 }
 
 void DuckTableEntry::CommitAlter(string &column_name, CommitDropState &drop_state) {
 	D_ASSERT(!column_name.empty());
+	if (!storage) {
+		return;
+	}
 	optional_idx logical_column_idx;
 	auto column_path = StringUtil::Split(column_name, '.');
 	D_ASSERT(!column_path.empty());
@@ -1484,10 +1536,16 @@ void DuckTableEntry::CommitAlter(string &column_name, CommitDropState &drop_stat
 }
 
 void DuckTableEntry::CommitDrop(CommitDropState &drop_state) {
+	if (!storage) {
+		return;
+	}
 	storage->CommitDropTable(drop_state);
 }
 
 DataTable &DuckTableEntry::GetStorage() {
+	if (!storage) {
+		throw InternalException("table \"%s\" has no row store", name.GetIdentifierName());
+	}
 	return *storage;
 }
 

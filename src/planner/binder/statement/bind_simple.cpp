@@ -48,7 +48,9 @@ BoundStatement Binder::BindAlterAddIndex(BoundStatement &result, CatalogEntry &e
 	auto create_index_info = make_uniq<CreateIndexInfo>();
 	create_index_info->table = table_info.GetQualifiedName().Name();
 	create_index_info->index_type = ART::TYPE_NAME;
-	create_index_info->constraint_type = IndexConstraintType::PRIMARY;
+	create_index_info->constraint_type = constraint_info.constraint->Cast<UniqueConstraint>().IsPrimaryKey()
+	                                         ? IndexConstraintType::PRIMARY
+	                                         : IndexConstraintType::UNIQUE;
 
 	for (const auto &physical_index : bound_unique.keys) {
 		auto &col = column_list.GetColumn(physical_index);
@@ -179,7 +181,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	stmt.info->SetQualifiedName(
 	    QualifiedName(catalog.GetName(), entry->ParentSchema().name, stmt.info->GetQualifiedName().Name()));
 
-	if (!stmt.info->IsAddPrimaryKey()) {
+	if (!stmt.info->IsAddIndexedConstraint()) {
 		result.plan = make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_ALTER, std::move(stmt.info));
 		return result;
 	}

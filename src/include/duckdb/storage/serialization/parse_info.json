@@ -334,6 +334,28 @@
     ]
   },
   {
+    "class": "SetPermissionsInfo",
+    "base": "AlterInfo",
+    "enum": "SET_PERMISSIONS",
+    "members": [
+      {
+        "id": 300,
+        "name": "permissions_alter_type",
+        "type": "PermissionsAlterType"
+      },
+      {
+        "id": 301,
+        "name": "entry_catalog_type",
+        "type": "CatalogType"
+      },
+      {
+        "id": 302,
+        "name": "owner",
+        "type": "idx_t"
+      }
+    ]
+  },
+  {
     "class": "ChangeOwnershipInfo",
     "base": "AlterInfo",
     "enum": "CHANGE_OWNERSHIP",

@@ -2345,8 +2345,7 @@ void RowGroupCollection::VerifyNewConstraint(const QueryContext &context, DataTa
 					auto &config = DBConfig::Get(info->GetDB());
 					auto &table_name = info->GetTableName().GetIdentifierName();
 					throw ConstraintException("CHECK constraint failed on table %s with expression CHECK(%s)",
-					                          config.MapErrorEntityName(table_name),
-					                          config.MapErrorExpression(table_name, check.expression->ToString()));
+					                          config.MapErrorEntityName(table_name), check.expression->ToString());
 				}
 			}
 		}
@@ -2387,7 +2386,7 @@ void RowGroupCollection::VerifyNewConstraint(const QueryContext &context, DataTa
 			auto &config = DBConfig::Get(info->GetDB());
 			auto &table_name = info->GetTableName().GetIdentifierName();
 			throw ConstraintException("NOT NULL constraint failed: %s.%s", config.MapErrorEntityName(table_name),
-			                          config.MapErrorColumnName(table_name, name.GetIdentifierName()));
+			                          name.GetIdentifierName());
 		}
 	}
 }

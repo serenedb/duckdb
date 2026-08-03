@@ -2,6 +2,7 @@
 
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/constraints/unique_constraint.hpp"
+#include "duckdb/common/to_string.hpp"
 
 namespace duckdb {
 
@@ -20,7 +21,7 @@ AlterEntryData AlterInfo::GetAlterEntryData() const {
 	return AlterEntryData(GetQualifiedName(), if_not_found);
 }
 
-bool AlterInfo::IsAddPrimaryKey() const {
+bool AlterInfo::IsAddIndexedConstraint() const {
 	if (type != AlterType::ALTER_TABLE) {
 		return false;
 	}
@@ -31,16 +32,40 @@ bool AlterInfo::IsAddPrimaryKey() const {
 	}
 
 	auto &constraint_info = table_info.Cast<AddConstraintInfo>();
-	if (constraint_info.constraint->type != ConstraintType::UNIQUE) {
-		return false;
-	}
+	return constraint_info.constraint->type == ConstraintType::UNIQUE;
+}
 
-	auto &unique_info = constraint_info.constraint->Cast<UniqueConstraint>();
-	if (!unique_info.IsPrimaryKey()) {
-		return false;
-	}
+SetPermissionsInfo::SetPermissionsInfo(PermissionsAlterType permissions_alter_type_p, CatalogType entry_catalog_type_p,
+                                       QualifiedName name_p, idx_t owner_p)
+    : AlterInfo(AlterType::SET_PERMISSIONS, std::move(name_p), OnEntryNotFound::THROW_EXCEPTION),
+      permissions_alter_type(permissions_alter_type_p), entry_catalog_type(entry_catalog_type_p), owner(owner_p) {
+}
 
-	return true;
+SetPermissionsInfo::SetPermissionsInfo()
+    : AlterInfo(AlterType::SET_PERMISSIONS), permissions_alter_type(PermissionsAlterType::INVALID),
+      entry_catalog_type(CatalogType::INVALID), owner(0) {
+}
+
+CatalogType SetPermissionsInfo::GetCatalogType() const {
+	return entry_catalog_type;
+}
+
+unique_ptr<AlterInfo> SetPermissionsInfo::Copy() const {
+	return make_uniq_base<AlterInfo, SetPermissionsInfo>(permissions_alter_type, entry_catalog_type, GetQualifiedName(),
+	                                                     owner);
+}
+
+string SetPermissionsInfo::ToString() const {
+	switch (permissions_alter_type) {
+	case PermissionsAlterType::GRANT_PRIVILEGES:
+		return "GRANT ON " + qualified_name.ToString();
+	case PermissionsAlterType::REVOKE_PRIVILEGES:
+		return "REVOKE ON " + qualified_name.ToString();
+	case PermissionsAlterType::CHANGE_ROLE_OWNER:
+		return "ALTER " + qualified_name.ToString() + " OWNER TO " + to_string(owner);
+	default:
+		throw InternalException("Unsupported permissions alter type");
+	}
 }
 
 } // namespace duckdb

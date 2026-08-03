@@ -788,6 +788,10 @@ void WriteAheadLogDeserializer::ReplayDropTable() {
 	                                              }),
 	                               state.replay_index_infos.end());
 
+	// A table whose definition another catalog holds is not restored from the checkpoint once that catalog has
+	// forgotten it -- which is exactly the state this record puts it in. Nothing to drop, and refusing the record
+	// would make the database unopenable.
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	catalog.DropEntry(context, info);
 }
 
@@ -832,7 +836,7 @@ void WriteAheadLogDeserializer::ReplayAlter() {
 	auto info = deserializer.ReadProperty<unique_ptr<ParseInfo>>(101, "info");
 	auto &alter_info = info->Cast<AlterInfo>();
 	alter_info.bind_mode = AlterBindMode::SKIP_BINDING;
-	if (!alter_info.IsAddPrimaryKey()) {
+	if (!alter_info.IsAddIndexedConstraint()) {
 		return ReplayWithoutIndex(context, catalog, alter_info, DeserializeOnly());
 	}
 
@@ -884,7 +888,8 @@ void WriteAheadLogDeserializer::ReplayAlter() {
 	}
 
 	auto &storage = table.GetStorage();
-	CreateIndexInput input(context, TableIOManager::Get(storage), storage.db, IndexConstraintType::PRIMARY,
+	CreateIndexInput input(context, TableIOManager::Get(storage), storage.db,
+	                       unique_info.IsPrimaryKey() ? IndexConstraintType::PRIMARY : IndexConstraintType::UNIQUE,
 	                       index_storage_info.name, column_ids, unbound_expressions, index_storage_info,
 	                       index_storage_info.options);
 
@@ -1179,9 +1184,18 @@ void WriteAheadLogDeserializer::ReplayDropIndex() {
 // Replay Data
 //===--------------------------------------------------------------------===//
 void WriteAheadLogDeserializer::ReplayUseTable() {
-	auto schema_name = deserializer.ReadProperty<Identifier>(101, "schema");
-	auto table_name = deserializer.ReadProperty<Identifier>(102, "table");
+	auto schema_name = deserializer.ReadPropertyWithExplicitDefault<Identifier>(101, "schema", Identifier());
+	auto table_name = deserializer.ReadPropertyWithExplicitDefault<Identifier>(102, "table", Identifier());
+	auto catalog_id = deserializer.ReadPropertyWithExplicitDefault<idx_t>(103, "catalog_id", 0);
 	if (DeserializeOnly()) {
+		return;
+	}
+	if (catalog_id != 0) {
+		auto entry = catalog.LookupTableById(catalog.GetCatalogTransaction(context), catalog_id);
+		if (!entry) {
+			throw IOException("Corrupt WAL: no table with catalog identifier %llu", catalog_id);
+		}
+		state.current_table = &entry->Cast<DuckTableEntry>();
 		return;
 	}
 	state.current_table =

@@ -88,6 +88,9 @@ public:
 	DUCKDB_API const ColumnList &GetColumns() const;
 	//! Returns the underlying storage of the table
 	virtual DataTable &GetStorage();
+	//! The underlying storage, or null for a table that owns none. Answerable without a client context, which is
+	//! what the checkpoint needs to decide whether an entry has rows to write.
+	virtual optional_ptr<DataTable> TryGetStorage();
 	//! Returns the DuckTableEntry whose storage backs this table. A catalog that
 	//! delegates storage to a hidden table (e.g. a facade) overrides this so the
 	//! physical insert/update/delete/merge operators target the real table.

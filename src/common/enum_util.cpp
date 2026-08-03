@@ -606,19 +606,20 @@ const StringUtil::EnumStringLiteral *GetAlterTypeValues() {
 		{ static_cast<uint32_t>(AlterType::ALTER_TABLE_FUNCTION), "ALTER_TABLE_FUNCTION" },
 		{ static_cast<uint32_t>(AlterType::SET_COMMENT), "SET_COMMENT" },
 		{ static_cast<uint32_t>(AlterType::SET_COLUMN_COMMENT), "SET_COLUMN_COMMENT" },
-		{ static_cast<uint32_t>(AlterType::ALTER_DATABASE), "ALTER_DATABASE" }
+		{ static_cast<uint32_t>(AlterType::ALTER_DATABASE), "ALTER_DATABASE" },
+		{ static_cast<uint32_t>(AlterType::SET_PERMISSIONS), "SET_PERMISSIONS" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<AlterType>(AlterType value) {
-	return StringUtil::EnumToString(GetAlterTypeValues(), 10, "AlterType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterTypeValues(), 11, "AlterType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterType EnumUtil::FromString<AlterType>(const char *value) {
-	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 10, "AlterType", value));
+	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 11, "AlterType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAlterViewTypeValues() {
@@ -1118,6 +1119,9 @@ const StringUtil::EnumStringLiteral *GetCatalogTypeValues() {
 		{ static_cast<uint32_t>(CatalogType::DATABASE_ENTRY), "DATABASE_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::COORDINATE_SYSTEM_ENTRY), "COORDINATE_SYSTEM_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::TRIGGER_ENTRY), "TRIGGER_ENTRY" },
+		{ static_cast<uint32_t>(CatalogType::TOKENIZER_ENTRY), "TOKENIZER_ENTRY" },
+		{ static_cast<uint32_t>(CatalogType::FOREIGN_SERVER_ENTRY), "FOREIGN_SERVER_ENTRY" },
+		{ static_cast<uint32_t>(CatalogType::ROLE_ENTRY), "ROLE_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::TABLE_FUNCTION_ENTRY), "TABLE_FUNCTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::SCALAR_FUNCTION_ENTRY), "SCALAR_FUNCTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::AGGREGATE_FUNCTION_ENTRY), "AGGREGATE_FUNCTION_ENTRY" },
@@ -1138,12 +1142,12 @@ const StringUtil::EnumStringLiteral *GetCatalogTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<CatalogType>(CatalogType value) {
-	return StringUtil::EnumToString(GetCatalogTypeValues(), 26, "CatalogType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetCatalogTypeValues(), 29, "CatalogType", static_cast<uint32_t>(value));
 }
 
 template<>
 CatalogType EnumUtil::FromString<CatalogType>(const char *value) {
-	return static_cast<CatalogType>(StringUtil::StringToEnum(GetCatalogTypeValues(), 26, "CatalogType", value));
+	return static_cast<CatalogType>(StringUtil::StringToEnum(GetCatalogTypeValues(), 29, "CatalogType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetCheckpointAbortValues() {
@@ -4220,6 +4224,26 @@ const char* EnumUtil::ToChars<PendingExecutionResult>(PendingExecutionResult val
 template<>
 PendingExecutionResult EnumUtil::FromString<PendingExecutionResult>(const char *value) {
 	return static_cast<PendingExecutionResult>(StringUtil::StringToEnum(GetPendingExecutionResultValues(), 6, "PendingExecutionResult", value));
+}
+
+const StringUtil::EnumStringLiteral *GetPermissionsAlterTypeValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(PermissionsAlterType::INVALID), "INVALID" },
+		{ static_cast<uint32_t>(PermissionsAlterType::GRANT_PRIVILEGES), "GRANT_PRIVILEGES" },
+		{ static_cast<uint32_t>(PermissionsAlterType::REVOKE_PRIVILEGES), "REVOKE_PRIVILEGES" },
+		{ static_cast<uint32_t>(PermissionsAlterType::CHANGE_ROLE_OWNER), "CHANGE_ROLE_OWNER" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<PermissionsAlterType>(PermissionsAlterType value) {
+	return StringUtil::EnumToString(GetPermissionsAlterTypeValues(), 4, "PermissionsAlterType", static_cast<uint32_t>(value));
+}
+
+template<>
+PermissionsAlterType EnumUtil::FromString<PermissionsAlterType>(const char *value) {
+	return static_cast<PermissionsAlterType>(StringUtil::StringToEnum(GetPermissionsAlterTypeValues(), 4, "PermissionsAlterType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetPhysicalOperatorTypeValues() {

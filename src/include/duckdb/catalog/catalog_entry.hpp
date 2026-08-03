@@ -53,6 +53,11 @@ public:
 	bool temporary;
 	//! Whether or not the entry is an internal entry (cannot be deleted, not dumped, etc)
 	bool internal;
+	//! Whether duckdb owns this entry's durability and storage cleanup. False for entries whose catalog
+	//! implementation persists and reclaims them itself: the commit path must neither write them to the WAL nor
+	//! cast them to a duck entry to release its blocks. Versioning, visibility and conflicts still come from
+	//! CatalogSet -- only the storage half is foreign.
+	bool duck_managed = true;
 	//! The name of the extension that registered this entry (empty for core entries)
 	Identifier extension_name;
 	//! Timestamp at which the catalog entry was created

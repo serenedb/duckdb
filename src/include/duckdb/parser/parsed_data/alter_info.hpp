@@ -27,7 +27,16 @@ enum class AlterType : uint8_t {
 	ALTER_TABLE_FUNCTION = 6,
 	SET_COMMENT = 7,
 	SET_COLUMN_COMMENT = 8,
-	ALTER_DATABASE = 9
+	ALTER_DATABASE = 9,
+	SET_PERMISSIONS = 10
+};
+
+//! GRANT, REVOKE and OWNER TO, for a catalog that models postgres' owner + ACL on its entries.
+enum class PermissionsAlterType : uint8_t {
+	INVALID = 0,
+	GRANT_PRIVILEGES = 1,
+	REVOKE_PRIVILEGES = 2,
+	CHANGE_ROLE_OWNER = 3
 };
 
 enum class AlterBindMode { BIND_ON_ALTER, SKIP_BINDING };
@@ -95,13 +104,39 @@ public:
 	};
 
 	AlterEntryData GetAlterEntryData() const;
-	bool IsAddPrimaryKey() const;
+	//! ADD PRIMARY KEY or ADD UNIQUE: the constraint is backed by an index, so the ALTER has to build one over the
+	//! existing rows. Without it the constraint is recorded and never rejects anything.
+	bool IsAddIndexedConstraint() const;
 
 protected:
 	explicit AlterInfo(AlterType type);
 
 	//! Qualified name of the entry to alter (catalog.schema.name)
 	QualifiedName qualified_name;
+};
+
+//! A change to an entry's owner or its access control list. The privileges themselves stay with the catalog
+//! implementation that models them: it hands CatalogSet::AlterEntry the replacement entry, and this record is
+//! what the undo buffer and any log carry about the change.
+struct SetPermissionsInfo : public AlterInfo {
+	SetPermissionsInfo(PermissionsAlterType permissions_alter_type, CatalogType entry_catalog_type, QualifiedName name,
+	                   idx_t owner);
+
+	PermissionsAlterType permissions_alter_type;
+	CatalogType entry_catalog_type;
+	//! The oid of the role owning the entry after this alter
+	idx_t owner;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	SetPermissionsInfo();
 };
 
 } // namespace duckdb

@@ -19,7 +19,8 @@ IndexBinder::IndexBinder(Binder &binder, ClientContext &context, optional_ptr<Ta
     : ExpressionBinder(binder, context), table(table), info(info) {
 }
 
-unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index) {
+unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index,
+                                              optional_ptr<const vector<ColumnIndex>> bound_column_ids) {
 	auto &index_type_name = unbound_index.GetIndexType();
 	// Do we know the type of this index now?
 	auto index_type = context.db->config.GetIndexTypes().FindByName(index_type_name);
@@ -41,8 +42,16 @@ unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index)
 		unbound_expressions.push_back(Bind(copy));
 	}
 
+	auto column_ids = create_info.column_ids;
+	if (column_ids.empty() && bound_column_ids) {
+		column_ids.reserve(bound_column_ids->size());
+		for (auto &column_id : *bound_column_ids) {
+			column_ids.push_back(column_id.GetPrimaryIndex());
+		}
+	}
+
 	CreateIndexInput input(context, unbound_index.table_io_manager, unbound_index.db, create_info.constraint_type,
-	                       create_info.GetIndexName(), create_info.column_ids, unbound_expressions, storage_info,
+	                       create_info.GetIndexName(), column_ids, unbound_expressions, storage_info,
 	                       create_info.options);
 
 	return index_type->create_instance(input);

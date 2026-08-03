@@ -812,7 +812,13 @@ void SingleFileStorageManager::Destroy() {
 	vector<reference<SchemaCatalogEntry>> schemas;
 	// we scan the set of committed schemas
 	auto &catalog = Catalog::GetCatalog(db).Cast<DuckCatalog>();
-	catalog.ScanSchemas([&](SchemaCatalogEntry &entry) { schemas.push_back(entry); });
+	catalog.ScanSchemas([&](SchemaCatalogEntry &entry) {
+		// A schema whose entries another catalog owns has no DuckTableEntry to destroy; its storage hangs off the
+		// duck-managed table behind it, which this walk reaches on its own.
+		if (entry.duck_managed) {
+			schemas.push_back(entry);
+		}
+	});
 
 	vector<reference<DuckTableEntry>> tables;
 	for (auto &schema : schemas) {

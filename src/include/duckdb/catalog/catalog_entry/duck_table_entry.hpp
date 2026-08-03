@@ -47,7 +47,21 @@ public:
 	               shared_ptr<DataTable> inherited_storage = nullptr,
 	               shared_ptr<CatalogSet> inherited_triggers = nullptr);
 
+protected:
+	//! Tag for an entry that takes the storage it is handed and nothing else: a null one means the table has no
+	//! DataTable at all, rather than "create one". An external catalog whose rows live in an index of its own is
+	//! the case this exists for; GetStorage() throws for such a table.
+	struct StorageAsGiven {};
+	DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info, StorageAsGiven,
+	               shared_ptr<DataTable> storage, shared_ptr<CatalogSet> inherited_triggers);
+
 public:
+	//! The trigger set this entry carries; a replacement version has to inherit it, since the set is shared rather
+	//! than versioned.
+	const shared_ptr<CatalogSet> &GetTriggerSet() const {
+		return triggers;
+	}
+
 	unique_ptr<CatalogEntry> AlterEntry(ClientContext &context, AlterInfo &info) override;
 	unique_ptr<CatalogEntry> AlterEntry(CatalogTransaction, AlterInfo &info) override;
 	void UndoAlter(ClientContext &context, AlterInfo &info) override;
@@ -56,6 +70,9 @@ public:
 
 	//! Returns the underlying storage of the table
 	DataTable &GetStorage() override;
+	optional_ptr<DataTable> TryGetStorage() override {
+		return storage.get();
+	}
 
 	//! Get statistics of a column (physical or virtual) within the table
 	unique_ptr<BaseStatistics> GetStatistics(ClientContext &context, const StorageIndex &storage_index);

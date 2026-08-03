@@ -723,13 +723,13 @@ static Identifier AddColumnNameToBinding(const Identifier &base_name, identifier
 }
 
 vector<Identifier> BindContext::AliasColumnNames(const Identifier &table_name, const vector<Identifier> &names,
-                                                 const vector<Identifier> &column_aliases) {
+                                                 const vector<Identifier> &column_aliases, bool case_sensitive) {
 	vector<Identifier> result;
 	if (column_aliases.size() > names.size()) {
 		throw BinderException("table \"%s\" has %lld columns available but %lld columns specified", table_name,
 		                      names.size(), column_aliases.size());
 	}
-	identifier_set_t current_names;
+	identifier_set_t current_names(0, IdentifierHashFunction(case_sensitive), IdentifierEquality(case_sensitive));
 	// use any provided column aliases first
 	for (idx_t i = 0; i < column_aliases.size(); i++) {
 		result.push_back(AddColumnNameToBinding(column_aliases[i], current_names));
@@ -764,8 +764,8 @@ void BindContext::AddSubquery(TableIndex index, const Identifier &alias, TableFu
 }
 
 void BindContext::AddGenericBinding(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-                                    const vector<LogicalType> &types) {
-	AddBinding(make_uniq<Binding>(BindingType::BASE, BindingAlias(alias), types, names, index));
+                                    const vector<LogicalType> &types, bool case_sensitive) {
+	AddBinding(make_uniq<Binding>(BindingType::BASE, BindingAlias(alias), types, names, index, case_sensitive));
 }
 
 void BindContext::AddCTEBinding(unique_ptr<CTEBinding> binding) {

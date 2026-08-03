@@ -217,7 +217,7 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 
 		// Apply any outstanding buffered replays and replace the unbound index with a bound index.
 		auto &unbound_index = index_entry->index->Cast<UnboundIndex>();
-		auto bound_idx = idx_binder.BindIndex(unbound_index);
+		auto bound_idx = idx_binder.BindIndex(unbound_index, dummy_column_ids);
 		if (unbound_index.HasBufferedReplays()) {
 			// For replaying buffered index operations, we only want the physical column types (skip over
 			// generated column types).

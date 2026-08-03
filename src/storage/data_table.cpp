@@ -70,6 +70,15 @@ IndexStorageInfo DataTableInfo::ExtractIndexStorageInfo(const Identifier &name) 
 	                        name.GetIdentifierName());
 }
 
+bool DataTableInfo::HasIndexStorageInfo(const Identifier &name) const {
+	for (auto &info : index_storage_infos) {
+		if (info.name == name) {
+			return true;
+		}
+	}
+	return false;
+}
+
 DataTable::DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, const string &schema,
                      const string &table, vector<ColumnDefinition> column_definitions_p,
                      unique_ptr<PersistentTableData> data)
@@ -687,7 +696,7 @@ static void VerifyNotNullConstraint(TableCatalogEntry &table, const Vector &vect
 	auto &config = DBConfig::Get(table.ParentCatalog().GetAttached());
 	auto &table_name = table.name.GetIdentifierName();
 	throw ConstraintException("NOT NULL constraint failed: %s.%s", config.MapErrorEntityName(table_name),
-	                          config.MapErrorColumnName(table_name, col_name.GetIdentifierName()));
+	                          col_name.GetIdentifierName());
 }
 
 // To avoid throwing an error at SELECT, instead this moves the error detection to INSERT
@@ -715,8 +724,7 @@ static void VerifyCheckConstraintExpression(ClientContext &context, TableCatalog
 	auto map_names = [&]() {
 		auto &config = DBConfig::Get(table.ParentCatalog().GetAttached());
 		auto &table_name = table.name.GetIdentifierName();
-		return std::pair<string, string>(config.MapErrorEntityName(table_name),
-		                                 config.MapErrorExpression(table_name, check_text));
+		return std::pair<string, string>(config.MapErrorEntityName(table_name), check_text);
 	};
 	try {
 		executor.ExecuteExpression(chunk, result);
@@ -1400,7 +1408,7 @@ void DataTable::MergeStorage(RowGroupCollection &data, optional_ptr<StorageCommi
 
 void DataTable::WriteToLog(DuckTransaction &transaction, WriteAheadLog &log, idx_t row_start, idx_t count,
                            optional_ptr<StorageCommitState> commit_state) {
-	log.WriteSetTable(info->schema, info->table);
+	log.WriteSetTable(info->schema, info->table, info->GetCatalogId());
 	if (!commit_state) {
 		ScanTableSegment(transaction, row_start, count, [&](DataChunk &chunk) { log.WriteInsert(chunk); });
 		return;

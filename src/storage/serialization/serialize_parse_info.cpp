@@ -119,6 +119,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	case AlterType::SET_COMMENT:
 		result = SetCommentInfo::Deserialize(deserializer);
 		break;
+	case AlterType::SET_PERMISSIONS:
+		result = SetPermissionsInfo::Deserialize(deserializer);
+		break;
 	default:
 		throw SerializationException("Unsupported type for deserialization of AlterInfo!");
 	}
@@ -683,6 +686,21 @@ void SetPartitionedByInfo::Serialize(Serializer &serializer) const {
 unique_ptr<AlterTableInfo> SetPartitionedByInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<SetPartitionedByInfo>(new SetPartitionedByInfo());
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(400, "partition_keys", result->partition_keys);
+	return std::move(result);
+}
+
+void SetPermissionsInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<PermissionsAlterType>(300, "permissions_alter_type", permissions_alter_type);
+	serializer.WriteProperty<CatalogType>(301, "entry_catalog_type", entry_catalog_type);
+	serializer.WritePropertyWithDefault<idx_t>(302, "owner", owner);
+}
+
+unique_ptr<AlterInfo> SetPermissionsInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<SetPermissionsInfo>(new SetPermissionsInfo());
+	deserializer.ReadProperty<PermissionsAlterType>(300, "permissions_alter_type", result->permissions_alter_type);
+	deserializer.ReadProperty<CatalogType>(301, "entry_catalog_type", result->entry_catalog_type);
+	deserializer.ReadPropertyWithDefault<idx_t>(302, "owner", result->owner);
 	return std::move(result);
 }
 

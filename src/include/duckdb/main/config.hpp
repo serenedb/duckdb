@@ -70,6 +70,7 @@ class TypeManager;
 
 struct CompressionFunctionSet;
 struct DatabaseCacheEntry;
+struct HostTableDefinition;
 struct DBConfig;
 struct SettingLookupResult;
 
@@ -206,12 +207,10 @@ public:
 	//! Mandatory per-plan check, run independent of the optimizer so it cannot be
 	//! bypassed via disable_optimizer (security enforcement rides here).
 	void (*access_check_function)(ClientContext &context, Binder &binder) = nullptr;
-	//! Map storage-internal entity/column identifiers and expression texts to
-	//! user-facing names inside constraint-violation messages; identity when
-	//! unset. Only ever called while constructing an error.
+	//! Map a storage-internal relation identifier to the user-facing name inside
+	//! constraint-violation messages; identity when unset. Only ever called
+	//! while constructing an error.
 	string (*error_entity_name_mapper)(const string &name) = nullptr;
-	string (*error_column_name_mapper)(const string &entity, const string &column) = nullptr;
-	string (*error_expression_mapper)(const string &entity, const string &expression) = nullptr;
 	//! Called whenever a fresh DataTable comes alive (create, checkpoint load, WAL
 	//! replay) so the host can inject externally-stored indexes into its index list
 	//! before any WAL operations replay against the table.
@@ -220,6 +219,12 @@ public:
 	//! DataTableInfo is constructed and readable from it thereafter. Zero means the
 	//! host owns no such table, which is the answer for every table it did not create.
 	idx_t (*table_identity_provider)(AttachedDatabase &db, const Identifier &schema, const Identifier &table) = nullptr;
+	//! The definition of the storage table the host catalog knows by this identifier, rebuilt from that catalog.
+	//! A checkpoint records only the rows of such a table, so this is what the load reads the definition from.
+	//! `with_checks` is false on the retry the load makes when the CHECK constraints do not bind, mirroring the
+	//! host's own create. Null when the host has no table under that identifier.
+	unique_ptr<HostTableDefinition> (*table_definition_provider)(AttachedDatabase &db, idx_t catalog_id,
+	                                                             bool with_checks) = nullptr;
 	//! Replay a merged ROW_GROUP_DATA range into every external index of the table.
 	//! Called on the replay thread after the row groups are merged, with the replay
 	//! transaction; the host scans the range once over that transaction (partitioned
@@ -242,8 +247,6 @@ public:
 	DUCKDB_API static const DBConfig &GetConfig(const ClientContext &context);
 	DUCKDB_API static const DBConfig &GetConfig(const DatabaseInstance &db);
 	DUCKDB_API string MapErrorEntityName(string name) const;
-	DUCKDB_API string MapErrorColumnName(const string &entity, string column) const;
-	DUCKDB_API string MapErrorExpression(const string &entity, string expression) const;
 
 	DUCKDB_API static vector<ConfigurationOption> GetOptions();
 	DUCKDB_API static vector<ConfigurationAlias> GetAliases();
