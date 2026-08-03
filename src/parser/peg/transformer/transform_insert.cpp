@@ -10,7 +10,8 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformInsertStatement(
     PEGTransformer &transformer, optional<CommonTableExpressionMap> with_clause,
     const optional<OnConflictAction> &or_action, unique_ptr<BaseTableRef> insert_target,
     const optional<InsertColumnOrder> &by_name_or_position, const optional<vector<string>> &insert_column_list,
-    InsertValues insert_values, optional<unique_ptr<OnConflictInfo>> on_conflict_clause,
+    const optional<bool> &overriding_clause, InsertValues insert_values,
+    optional<unique_ptr<OnConflictInfo>> on_conflict_clause,
     optional<vector<unique_ptr<ParsedExpression>>> returning_clause) {
 	auto result = make_uniq<InsertStatement>();
 	auto &node = *result->node;
@@ -51,6 +52,14 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformInsertStatement(
 		node.returning_list = std::move(*returning_clause);
 	}
 	return std::move(result);
+}
+
+bool PEGTransformerFactory::TransformOverridingSystem(PEGTransformer &transformer) {
+	return true;
+}
+
+bool PEGTransformerFactory::TransformOverridingUser(PEGTransformer &transformer) {
+	return false;
 }
 
 OnConflictAction PEGTransformerFactory::TransformInsertOrReplace(PEGTransformer &transformer) {
