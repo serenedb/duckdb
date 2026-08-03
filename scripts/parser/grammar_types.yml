@@ -1085,6 +1085,10 @@ Bool:
   type: "bool"
   by_value: false
   rules:
+    - OverridingClause
+    - OverridingKind
+    - OverridingSystem
+    - OverridingUser
     - TimeZone
     - WithOrWithout
     - FromOrTo
