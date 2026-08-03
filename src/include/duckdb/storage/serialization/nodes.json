@@ -480,6 +480,12 @@
         "name": "tags",
         "type": "InsertionOrderPreservingMap<string>",
         "default": "InsertionOrderPreservingMap<string>()"
+      },
+      {
+        "id": 107,
+        "name": "host_id",
+        "type": "idx_t",
+        "default": 0
       }
     ],
     "constructor": [

@@ -25,6 +25,7 @@ ColumnDefinition ColumnDefinition::Copy() const {
 	copy.category = category;
 	copy.comment = comment;
 	copy.tags = tags;
+	copy.host_id = host_id;
 	return copy;
 }
 
@@ -117,6 +118,14 @@ const column_t &ColumnDefinition::Oid() const {
 
 void ColumnDefinition::SetOid(column_t oid) {
 	this->oid = oid;
+}
+
+const idx_t &ColumnDefinition::HostId() const {
+	return host_id;
+}
+
+void ColumnDefinition::SetHostId(idx_t host_id) {
+	this->host_id = host_id;
 }
 
 const TableColumnType &ColumnDefinition::Category() const {

@@ -203,6 +203,7 @@ void ColumnDefinition::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<duckdb::CompressionType>(104, "compression_type", compression_type);
 	serializer.WritePropertyWithDefault<Value>(105, "comment", comment, Value());
 	serializer.WritePropertyWithDefault<InsertionOrderPreservingMap<string>>(106, "tags", tags, InsertionOrderPreservingMap<string>());
+	serializer.WritePropertyWithDefault<idx_t>(107, "host_id", host_id, 0);
 }
 
 ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
@@ -214,6 +215,7 @@ ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadProperty<duckdb::CompressionType>(104, "compression_type", result.compression_type);
 	deserializer.ReadPropertyWithExplicitDefault<Value>(105, "comment", result.comment, Value());
 	deserializer.ReadPropertyWithExplicitDefault<InsertionOrderPreservingMap<string>>(106, "tags", result.tags, InsertionOrderPreservingMap<string>());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(107, "host_id", result.host_id, 0);
 	return result;
 }
 

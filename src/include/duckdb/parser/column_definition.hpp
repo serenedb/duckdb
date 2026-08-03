@@ -66,6 +66,13 @@ public:
 	const column_t &Oid() const;
 	void SetOid(column_t oid);
 
+	//! host_id -- an identity the hosting catalog assigns to the column and keeps
+	//! stable across every rewrite of the table. Zero means "none"; duckdb's own
+	//! catalog never sets it. A plain integer rather than a host type, so the
+	//! member Serialize below carries it with no dependency either way.
+	const idx_t &HostId() const;
+	void SetHostId(idx_t host_id);
+
 	//! category
 	const TableColumnType &Category() const;
 	//! Whether this column is a Generated Column
@@ -102,6 +109,8 @@ private:
 	storage_t storage_oid = DConstants::INVALID_INDEX;
 	//! The index of the column in the table
 	idx_t oid = DConstants::INVALID_INDEX;
+	//! Identity assigned by the hosting catalog, stable across table rewrites
+	idx_t host_id = 0;
 	//! The category of the column
 	TableColumnType category = TableColumnType::STANDARD;
 	//! The default value of the column (for non-generated columns)

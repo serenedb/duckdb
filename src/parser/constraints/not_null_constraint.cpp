@@ -17,6 +17,7 @@ string NotNullConstraint::ToString() const {
 unique_ptr<Constraint> NotNullConstraint::Copy() const {
 	auto result = make_uniq<NotNullConstraint>(index);
 	result->constraint_name = constraint_name;
+	result->host_id = host_id;
 	return std::move(result);
 }
 

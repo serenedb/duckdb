@@ -65,6 +65,10 @@ public:
 	ConstraintType type;
 	//! User-specified constraint name (from CONSTRAINT name ...), or empty.
 	string constraint_name;
+	//! Identity assigned by the hosting catalog, stable across table rewrites.
+	//! Zero means "none"; duckdb's own catalog never sets it. A plain integer
+	//! rather than a host type, so Serialize carries it with no dependency.
+	idx_t host_id = 0;
 
 public:
 	DUCKDB_API virtual string ToString() const = 0;
