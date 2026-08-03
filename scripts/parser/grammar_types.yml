@@ -1257,6 +1257,10 @@ Bool:
     - TruncateIdentityClause
     - TruncateRestart
     - TruncateContinue
+    - OverridingClause
+    - OverridingKind
+    - OverridingSystem
+    - OverridingUser
     - AnyOrAll
     - SubqueryAny
     - SubqueryAll
