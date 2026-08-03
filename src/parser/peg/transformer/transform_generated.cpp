@@ -7397,24 +7397,31 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformInsertStatement
 		auto insert_column_list_value = transformer.Transform<vector<string>>(insert_column_list_opt.GetResult());
 		insert_column_list = insert_column_list_value;
 	}
-	auto insert_values = transformer.Transform<InsertValues>(list_pr.GetChild(7));
+	optional<bool> overriding_clause {};
+	auto &overriding_clause_opt = list_pr.GetChild(7).Cast<OptionalParseResult>();
+	if (overriding_clause_opt.HasResult()) {
+		auto overriding_clause_value = transformer.Transform<bool>(overriding_clause_opt.GetResult());
+		overriding_clause = overriding_clause_value;
+	}
+	auto insert_values = transformer.Transform<InsertValues>(list_pr.GetChild(8));
 	optional<unique_ptr<OnConflictInfo>> on_conflict_clause {};
-	auto &on_conflict_clause_opt = list_pr.GetChild(8).Cast<OptionalParseResult>();
+	auto &on_conflict_clause_opt = list_pr.GetChild(9).Cast<OptionalParseResult>();
 	if (on_conflict_clause_opt.HasResult()) {
 		auto on_conflict_clause_value =
 		    transformer.Transform<unique_ptr<OnConflictInfo>>(on_conflict_clause_opt.GetResult());
 		on_conflict_clause = std::move(on_conflict_clause_value);
 	}
 	optional<vector<unique_ptr<ParsedExpression>>> returning_clause {};
-	auto &returning_clause_opt = list_pr.GetChild(9).Cast<OptionalParseResult>();
+	auto &returning_clause_opt = list_pr.GetChild(10).Cast<OptionalParseResult>();
 	if (returning_clause_opt.HasResult()) {
 		auto returning_clause_value =
 		    transformer.Transform<vector<unique_ptr<ParsedExpression>>>(returning_clause_opt.GetResult());
 		returning_clause = std::move(returning_clause_value);
 	}
-	auto result = TransformInsertStatement(transformer, std::move(with_clause), or_action, std::move(insert_target),
-	                                       by_name_or_position, insert_column_list, std::move(insert_values),
-	                                       std::move(on_conflict_clause), std::move(returning_clause));
+	auto result =
+	    TransformInsertStatement(transformer, std::move(with_clause), or_action, std::move(insert_target),
+	                             by_name_or_position, insert_column_list, overriding_clause, std::move(insert_values),
+	                             std::move(on_conflict_clause), std::move(returning_clause));
 	return make_uniq<TypedTransformResult<unique_ptr<SQLStatement>>>(std::move(result));
 }
 
@@ -7515,6 +7522,34 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformInsertColumnLis
 	auto column_list = transformer.Transform<vector<string>>(ExtractResultFromParens(list_pr.GetChild(0)));
 	auto result = TransformInsertColumnList(transformer, column_list);
 	return make_uniq<TypedTransformResult<vector<string>>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformOverridingClauseInternal(PEGTransformer &transformer,
+                                                                                          ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto overriding_kind = transformer.Transform<bool>(list_pr.GetChild(1));
+	auto result = overriding_kind;
+	return make_uniq<TypedTransformResult<bool>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformOverridingKindInternal(PEGTransformer &transformer,
+                                                                                        ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<bool>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<bool>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformOverridingSystemInternal(PEGTransformer &transformer,
+                                                                                          ParseResult &parse_result) {
+	auto result = TransformOverridingSystem(transformer);
+	return make_uniq<TypedTransformResult<bool>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformOverridingUserInternal(PEGTransformer &transformer,
+                                                                                        ParseResult &parse_result) {
+	auto result = TransformOverridingUser(transformer);
+	return make_uniq<TypedTransformResult<bool>>(result);
 }
 
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformInsertValuesInternal(PEGTransformer &transformer,
@@ -11293,6 +11328,10 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"InsertAlias", &PEGTransformerFactory::TransformInsertAliasInternal},
 	    {"ColumnList", &PEGTransformerFactory::TransformColumnListInternal},
 	    {"InsertColumnList", &PEGTransformerFactory::TransformInsertColumnListInternal},
+	    {"OverridingClause", &PEGTransformerFactory::TransformOverridingClauseInternal},
+	    {"OverridingKind", &PEGTransformerFactory::TransformOverridingKindInternal},
+	    {"OverridingSystem", &PEGTransformerFactory::TransformOverridingSystemInternal},
+	    {"OverridingUser", &PEGTransformerFactory::TransformOverridingUserInternal},
 	    {"InsertValues", &PEGTransformerFactory::TransformInsertValuesInternal},
 	    {"SelectInsertValues", &PEGTransformerFactory::TransformSelectInsertValuesInternal},
 	    {"DefaultValues", &PEGTransformerFactory::TransformDefaultValuesInternal},

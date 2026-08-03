@@ -1630,7 +1630,7 @@ ExtractDatePart <-
     MillisecondKeyword / MicrosecondKeyword / WeekKeyword / QuarterKeyword / DecadeKeyword /
     CenturyKeyword / MillenniumKeyword
 
-InsertStatement <- WithClause? 'INSERT' OrAction? 'INTO' InsertTarget ByNameOrPosition? InsertColumnList? InsertValues OnConflictClause? ReturningClause?
+InsertStatement <- WithClause? 'INSERT' OrAction? 'INTO' InsertTarget ByNameOrPosition? InsertColumnList? OverridingClause? InsertValues OnConflictClause? ReturningClause?
 
 OrAction <- InsertOrReplace / InsertOrIgnore
 InsertOrReplace <- 'OR' 'REPLACE'
@@ -1646,6 +1646,11 @@ InsertAlias <- 'AS' Identifier
 
 ColumnList <- List(ColId)
 InsertColumnList <- Parens(ColumnList)
+
+OverridingClause <- 'OVERRIDING' OverridingKind 'VALUE'
+OverridingKind <- OverridingSystem / OverridingUser
+OverridingSystem <- 'SYSTEM'
+OverridingUser <- 'USER'
 
 InsertValues <- SelectInsertValues / DefaultValues
 SelectInsertValues <- SelectStatementInternal
