@@ -431,7 +431,6 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterPolicyStatement(PE
 	if (chosen.name == "PolicyRename") {
 		// LIST(PolicyRename): 0:'RENAME' 1:'TO' 2:ColId
 		auto new_name = TransformColIdName(transformer, chosen.Cast<ListParseResult>().GetChild(2));
-		result->info->parameters.push_back(BoolConst(true)); // is_rename
 		result->info->parameters.push_back(StrConst(new_name));
 		result->info->parameters.push_back(BoolConst(false)); // has_roles
 		result->info->parameters.push_back(make_uniq<ConstantExpression>(Value::LIST(LogicalType::VARCHAR, {})));
@@ -449,7 +448,6 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterPolicyStatement(PE
 	auto [has_using, using_text] = OptionalPolicyExpr(transformer, clauses, 1, 1);
 	auto [has_check, check_text] = OptionalPolicyExpr(transformer, clauses, 2, 2);
 
-	result->info->parameters.push_back(BoolConst(false)); // is_rename
 	result->info->parameters.push_back(StrConst(string()));
 	result->info->parameters.push_back(BoolConst(has_roles));
 	result->info->parameters.push_back(std::move(roles));
