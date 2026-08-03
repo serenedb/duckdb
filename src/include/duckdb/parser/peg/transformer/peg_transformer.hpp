@@ -3126,7 +3126,8 @@ public:
 	TransformInsertStatement(PEGTransformer &transformer, optional<CommonTableExpressionMap> with_clause,
 	                         const optional<OnConflictAction> &or_action, unique_ptr<BaseTableRef> insert_target,
 	                         const optional<InsertColumnOrder> &by_name_or_position,
-	                         const optional<vector<string>> &insert_column_list, InsertValues insert_values,
+	                         const optional<vector<string>> &insert_column_list,
+	                         const optional<bool> &overriding_clause, InsertValues insert_values,
 	                         optional<unique_ptr<OnConflictInfo>> on_conflict_clause,
 	                         optional<vector<unique_ptr<ParsedExpression>>> returning_clause);
 	static unique_ptr<TransformResultValue> TransformOrActionInternal(PEGTransformer &transformer,
@@ -3163,6 +3164,16 @@ public:
 	static unique_ptr<TransformResultValue> TransformInsertColumnListInternal(PEGTransformer &transformer,
 	                                                                          ParseResult &parse_result);
 	static vector<string> TransformInsertColumnList(PEGTransformer &transformer, const vector<string> &column_list);
+	static unique_ptr<TransformResultValue> TransformOverridingClauseInternal(PEGTransformer &transformer,
+	                                                                          ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformOverridingKindInternal(PEGTransformer &transformer,
+	                                                                        ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformOverridingSystemInternal(PEGTransformer &transformer,
+	                                                                          ParseResult &parse_result);
+	static bool TransformOverridingSystem(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformOverridingUserInternal(PEGTransformer &transformer,
+	                                                                        ParseResult &parse_result);
+	static bool TransformOverridingUser(PEGTransformer &transformer);
 	static unique_ptr<TransformResultValue> TransformInsertValuesInternal(PEGTransformer &transformer,
 	                                                                      ParseResult &parse_result);
 	static unique_ptr<TransformResultValue> TransformSelectInsertValuesInternal(PEGTransformer &transformer,
