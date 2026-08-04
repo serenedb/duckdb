@@ -20,6 +20,8 @@ struct JSONLookupGlobalState : public GlobalTableFunctionState {
 	shared_ptr<JSONReader> reader;
 	JSONReaderScanState scan_state;
 	JSONTransformOptions transform_options;
+	//! One-row transform target, copied into the output row (see JSONLookupScan).
+	DataChunk row_chunk;
 	vector<string> names;
 	vector<column_t> column_ids;
 	vector<ColumnIndex> column_indices;
@@ -180,14 +182,22 @@ void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk 
 	auto *alc = scan_state.allocator.GetYYAlc();
 
 	const idx_t ncols = gstate.column_ids.size();
-	vector<Vector> slices;
-	slices.reserve(ncols);
-	for (idx_t c = 0; c < ncols; ++c) {
-		slices.emplace_back(output.data[gstate.column_ids[c]].GetType());
+	// Transform one row at a time into a scratch row at offset 0, then copy it to
+	// its output row. Transforming into a Slice(output, row, row + 1) instead only
+	// works for flat fixed-width columns: for nested types the slice gets its own
+	// child/validity buffers, so a LIST row lands with a child offset relative to
+	// the slice and every output row ends up pointing at the same child data.
+	if (ncols != 0 && gstate.row_chunk.ColumnCount() == 0) {
+		vector<LogicalType> row_types;
+		row_types.reserve(ncols);
+		for (idx_t c = 0; c < ncols; ++c) {
+			row_types.push_back(output.data[gstate.column_ids[c]].GetType());
+		}
+		gstate.row_chunk.Initialize(BufferAllocator::Get(context), row_types);
 	}
 	vector<Vector *> result_vectors(ncols);
 	for (idx_t c = 0; c < ncols; ++c) {
-		result_vectors[c] = &slices[c];
+		result_vectors[c] = &gstate.row_chunk.data[c];
 	}
 
 	int64_t *frn_data = nullptr;
@@ -210,9 +220,7 @@ void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk 
 			frn_data[row] = pk;
 		}
 		if (ncols != 0) {
-			for (idx_t c = 0; c < ncols; ++c) {
-				slices[c].Slice(output.data[gstate.column_ids[c]], row, row + 1);
-			}
+			gstate.row_chunk.Reset();
 			if (gstate.record_type == JSONRecordType::RECORDS) {
 				JSONTransform::TransformObject(vals, alc, 1, gstate.names, result_vectors, gstate.transform_options,
 				                               gstate.column_indices, gstate.transform_options.error_unknown_key);
@@ -224,9 +232,7 @@ void JSONLookupScan(ClientContext &context, TableFunctionInput &data, DataChunk 
 				JSONTransform::Transform(vals, alc, *result_vectors[0], 1, gstate.transform_options, column_index);
 			}
 			for (idx_t c = 0; c < ncols; ++c) {
-				if (!FlatVector::Validity(slices[c]).RowIsValid(0)) {
-					FlatVector::SetNull(output.data[gstate.column_ids[c]], row, true);
-				}
+				VectorOperations::Copy(gstate.row_chunk.data[c], output.data[gstate.column_ids[c]], 1, 0, row);
 			}
 		}
 		data.pk_survivors[w] = pk_idx;
