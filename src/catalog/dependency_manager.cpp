@@ -96,6 +96,9 @@ bool DependencyManager::IsSystemEntry(CatalogEntry &entry) const {
 	// database is on this list.
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::ROLE_ENTRY:
+	// An id-index entry names where another entry lives; it hangs off the
+	// catalog and depends on nothing.
+	case CatalogType::OBJECT_INDEX_ENTRY:
 	case CatalogType::RENAMED_ENTRY:
 		return true;
 	default:

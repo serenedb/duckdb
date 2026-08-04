@@ -51,6 +51,8 @@ string CatalogTypeToString(CatalogType type) {
 		return "Foreign Server";
 	case CatalogType::ROLE_ENTRY:
 		return "Role";
+	case CatalogType::OBJECT_INDEX_ENTRY:
+		return "Object Index";
 	case CatalogType::SECRET_ENTRY:
 		return "Secret";
 	case CatalogType::SECRET_TYPE_ENTRY:
