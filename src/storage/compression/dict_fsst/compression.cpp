@@ -538,8 +538,6 @@ void DictFSSTCompressionState::ResetSegment() {
 	dict.Clear();
 	dictionary_indices.clear();
 	cl_dict_bytes = 0;
-	cl_prefix_count = 0;
-	entry_at_cleave = 0;
 	flat_at_cleave = 0;
 	sel_at_cleave = 0;
 	enc_width_at_cleave = 0;
@@ -624,8 +622,6 @@ idx_t DictFSSTCompressionState::RefreshCleave() {
 	}
 	const CleavedDictionary &base = cut_mode == DictFSSTMode::FSST_PLUS ? cut_dict_row : cut_dict;
 	cl_dict_bytes = base.prefix_bytes + base.suffix_bytes;
-	cl_prefix_count = base.prefixes.size();
-	entry_at_cleave = n;
 	flat_at_cleave = dict.flat_encoded;
 	sel_at_cleave = CurSelBytes();
 	enc_width_at_cleave = BitpackingPrimitives::MinimumBitWidth(dict.max_enc_len);
@@ -655,14 +651,29 @@ idx_t DictFSSTCompressionState::CurSelBytes() const {
 idx_t DictFSSTCompressionState::CleavedUpperBound() const {
 	const idx_t entry_n = dict.encoded.size();
 	const idx_t dict_count = entry_n + 1;
-	idx_t pc_ub = cl_prefix_count + (entry_n - entry_at_cleave);
-	pc_ub += pc_ub / 2 + 64;
-	pc_ub = MinValue<idx_t>(pc_ub, entry_n ? entry_n : 1);
+	//! Half the entries bounds the prefix count of ANY cleave: CleaveEncoded emits a prefix group
+	//! only for a take_whole range, ranges of one entry are emitted plain, so every group covers at
+	//! least two entries. Nothing tighter is sound between cleaves. The cleave is an optimal-savings
+	//! DP over the LCP Cartesian tree, and a single inserted entry can flip take_whole decisions
+	//! anywhere in the tree, so the count at the next cleave has no incremental relation to the
+	//! count at the last one -- extrapolating it (the previous formula) under-counted, the gate then
+	//! skipped the real measurement, and the segment outgrew its block.
+	const idx_t pc_ub = MaxValue<idx_t>(entry_n / 2, 1);
 	const auto pid_w = BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(pc_ub));
 	const auto len_w = BitpackingPrimitives::MinimumBitWidth(dict.max_enc_len);
 	const idx_t meta_ub = BitpackingPrimitives::GetRequiredSize(pc_ub, len_w) +
 	                      BitpackingPrimitives::GetRequiredSize(dict_count, pid_w) +
 	                      BitpackingPrimitives::GetRequiredSize(dict_count, len_w);
+	//! The dictionary half IS incrementally boundable, which is what keeps this bound tight. The
+	//! DP's objective is exactly the flat bytes a grouping saves, and the optimal savings cannot
+	//! shrink when entries are added: for sorted strings x < e < y, lcp(x, y) = min(lcp(x, e),
+	//! lcp(e, y)), so an entry landing inside a group's range shares that group's prefix and the
+	//! previous grouping stays feasible with the newcomer absorbed; entries landing outside leave
+	//! it feasible untouched (the row-order cleave only ever sees appends). Hence dict bytes at the
+	//! next cleave <= dict bytes at the last cleave + flat bytes added since -- for the candidate
+	//! the baseline was anchored to. RefreshCleave anchors it to the chosen candidate, which covers
+	//! every candidate still live under `committed`; the one case where a dead candidate revives
+	//! (PLUS_ROW losing all-unique) bypasses this bound in CutCleaved.
 	const idx_t dict_ub = cl_dict_bytes + (dict.flat_encoded - flat_at_cleave);
 	const bool all_unique = null_count == 0 && entry_n == tuple_count;
 	const idx_t sel_ub = all_unique && committed == CutCommit::PLUS_ROW ? 0 : CurSelBytes();
@@ -822,6 +833,13 @@ void DictFSSTCompressionState::FlushRewind() {
 		dict.PopLastEntry();
 	}
 	tuple_count = fit_rows;
+	//! fit_rows is a certificate for the CANDIDATE it was measured under. The rewind restores that
+	//! exact state -- including, when the flip row is among the moved rows, all-unique itself -- but
+	//! a commit poisoned by the flip would keep the blessed candidate dead and flush a layout the
+	//! certificate never priced (sorted needs a selection buffer the row cut did not). Re-open the
+	//! decision: at this state the blessed candidate measures its blessed size, so the min over live
+	//! candidates can only fit.
+	committed = CutCommit::UNDECIDED;
 	StringHeap saved;
 	saved.Move(dict.raw_heap);
 	Flush(false);
@@ -885,7 +903,15 @@ void DictFSSTCompressionState::CutPlain(UnifiedVectorFormat &vf, const string_t 
 
 void DictFSSTCompressionState::CutCleaved(UnifiedVectorFormat &vf, const string_t *strings, idx_t i, bool was_new,
                                           idx_t margin, idx_t block_size) {
-	if (CleavedUpperBound() + margin < block_size) {
+	//! A PLUS_ROW segment that loses all-unique revives the sorted candidate, and the dict-bytes
+	//! baseline under CleavedUpperBound was anchored to the row candidate -- row savings do not
+	//! provably bound sorted savings, so the bound cannot be trusted for the revived candidate.
+	//! Cleave for real instead: RefreshCleave resets `committed` to UNDECIDED and re-anchors the
+	//! baseline from the freshly chosen candidate. NearBlock fires on exactly this flip
+	//! (unique_broken), so this is reached on the row that breaks uniqueness.
+	const bool row_commit_broken =
+	    committed == CutCommit::PLUS_ROW && (null_count != 0 || dict.encoded.size() != tuple_count);
+	if (!row_commit_broken && CleavedUpperBound() + margin < block_size) {
 		return;
 	}
 	idx_t true_c = RefreshCleave();

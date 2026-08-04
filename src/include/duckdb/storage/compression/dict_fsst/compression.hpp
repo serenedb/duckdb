@@ -336,12 +336,9 @@ public:
 	//! The segment's cut commitment (see CutCommit): fixed to PLAIN from the start for native-only policies, else
 	//! decided at the first near-block cleave so later cuts skip the loser's candidate.
 	CutCommit committed = CutCommit::UNDECIDED;
-	//! Between-cleave upper-bound baselines: CleavedUpperBound resets to these EXACT counts at each cleave then adds
-	//! only bounded growth, so most rows cost arithmetic and a real cleave runs only when that (tight) bound nears the
-	//! block.
+	//! Dictionary-bytes baseline for CleavedUpperBound: a cleave repartitions bytes without adding
+	//! any, so growth since the last cleave is exactly the flat bytes added.
 	idx_t cl_dict_bytes = 0;
-	idx_t cl_prefix_count = 0;
-	idx_t entry_at_cleave = 0;
 	idx_t flat_at_cleave = 0;
 	idx_t sel_at_cleave = 0;
 	//! Layout properties at that same baseline. One row can change either and re-price the WHOLE segment (the
