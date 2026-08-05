@@ -2,6 +2,7 @@
 
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/column_binding.hpp"
 #include "duckdb/execution/index/bound_index.hpp"
@@ -19,8 +20,40 @@ IndexBinder::IndexBinder(Binder &binder, ClientContext &context, optional_ptr<Ta
     : ExpressionBinder(binder, context), table(table), info(info) {
 }
 
+//! Old spelling -> current spelling for every key column of `info` whose name moved. The key's position in the
+//! table is the identity that a rename leaves alone: an ALTER that would shift it is refused while the index
+//! exists, so `column_ids` still points at the same column and the name there is what the key is called now.
+static case_insensitive_map_t<Identifier> RenamedKeyColumns(const CreateIndexInfo &info,
+                                                            const vector<Identifier> &table_column_names) {
+	case_insensitive_map_t<Identifier> renames;
+	if (info.names.empty() || table_column_names.empty()) {
+		return renames;
+	}
+	for (auto column_id : info.column_ids) {
+		if (column_id >= info.names.size() || column_id >= table_column_names.size()) {
+			continue;
+		}
+		auto &was = info.names[column_id];
+		auto &is = table_column_names[column_id];
+		if (was.GetIdentifierName() != is.GetIdentifierName()) {
+			renames.emplace(was.GetIdentifierName(), is);
+		}
+	}
+	return renames;
+}
+
+static void ApplyRenames(ParsedExpression &expr, const case_insensitive_map_t<Identifier> &renames) {
+	ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(expr, [&](ColumnRefExpression &colref) {
+		auto entry = renames.find(colref.ColumnNames().back().GetIdentifierName());
+		if (entry != renames.end()) {
+			colref.ColumnNamesMutable().back() = entry->second;
+		}
+	});
+}
+
 unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index,
-                                              optional_ptr<const vector<ColumnIndex>> bound_column_ids) {
+                                              optional_ptr<const vector<ColumnIndex>> bound_column_ids,
+                                              const vector<Identifier> &table_column_names) {
 	auto &index_type_name = unbound_index.GetIndexType();
 	// Do we know the type of this index now?
 	auto index_type = context.db->config.GetIndexTypes().FindByName(index_type_name);
@@ -35,10 +68,14 @@ unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index,
 	auto &parsed_expressions = unbound_index.GetParsedExpressions();
 
 	// bind the parsed expressions to create unbound expressions
+	auto renames = RenamedKeyColumns(create_info, table_column_names);
 	vector<unique_ptr<Expression>> unbound_expressions;
 	unbound_expressions.reserve(parsed_expressions.size());
 	for (auto &expr : parsed_expressions) {
 		auto copy = expr->Copy();
+		if (!renames.empty()) {
+			ApplyRenames(*copy, renames);
+		}
 		unbound_expressions.push_back(Bind(copy));
 	}
 
