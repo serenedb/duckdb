@@ -61,6 +61,8 @@ void ForeignKeyConstraint::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<Identifier>(204, "table", info.table);
 	serializer.WritePropertyWithDefault<vector<PhysicalIndex>>(205, "pk_keys", info.pk_keys);
 	serializer.WritePropertyWithDefault<vector<PhysicalIndex>>(206, "fk_keys", info.fk_keys);
+	serializer.WritePropertyWithDefault<idx_t>(207, "host_referenced_id", host_referenced_id, 0);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(208, "host_pk_column_ids", host_pk_column_ids);
 }
 
 unique_ptr<Constraint> ForeignKeyConstraint::Deserialize(Deserializer &deserializer) {
@@ -72,6 +74,8 @@ unique_ptr<Constraint> ForeignKeyConstraint::Deserialize(Deserializer &deseriali
 	deserializer.ReadPropertyWithDefault<Identifier>(204, "table", result->info.table);
 	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(205, "pk_keys", result->info.pk_keys);
 	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(206, "fk_keys", result->info.fk_keys);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(207, "host_referenced_id", result->host_referenced_id, 0);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(208, "host_pk_column_ids", result->host_pk_column_ids);
 	return std::move(result);
 }
 

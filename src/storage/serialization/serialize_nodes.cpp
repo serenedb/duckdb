@@ -253,11 +253,15 @@ ColumnInfo ColumnInfo::Deserialize(Deserializer &deserializer) {
 
 void ColumnList::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<ColumnDefinition>>(100, "columns", columns);
+	serializer.WritePropertyWithDefault<bool>(101, "allow_duplicate_names", allow_duplicate_names, false);
+	serializer.WritePropertyWithDefault<bool>(102, "case_sensitive", case_sensitive, false);
 }
 
 ColumnList ColumnList::Deserialize(Deserializer &deserializer) {
 	auto columns = deserializer.ReadPropertyWithDefault<vector<ColumnDefinition>>(100, "columns");
-	ColumnList result(std::move(columns));
+	auto allow_duplicate_names = deserializer.ReadPropertyWithExplicitDefault<bool>(101, "allow_duplicate_names", false);
+	auto case_sensitive = deserializer.ReadPropertyWithExplicitDefault<bool>(102, "case_sensitive", false);
+	ColumnList result(std::move(columns), allow_duplicate_names, case_sensitive);
 	return result;
 }
 

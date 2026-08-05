@@ -506,10 +506,24 @@
         "id": 100,
         "name": "columns",
         "type": "vector<ColumnDefinition>"
+      },
+      {
+        "id": 101,
+        "name": "allow_duplicate_names",
+        "type": "bool",
+        "default": false
+      },
+      {
+        "id": 102,
+        "name": "case_sensitive",
+        "type": "bool",
+        "default": false
       }
     ],
     "constructor": [
-      "columns"
+      "columns",
+      "allow_duplicate_names",
+      "case_sensitive"
     ],
     "pointer_type": "none"
   },

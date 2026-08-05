@@ -94,6 +94,17 @@
         "name": "fk_keys",
         "type": "vector<PhysicalIndex>",
         "property":  "info.fk_keys"
+      },
+      {
+        "id": 207,
+        "name": "host_referenced_id",
+        "type": "idx_t",
+        "default": 0
+      },
+      {
+        "id": 208,
+        "name": "host_pk_column_ids",
+        "type": "vector<idx_t>"
       }
     ]
   },
