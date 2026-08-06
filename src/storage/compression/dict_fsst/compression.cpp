@@ -21,6 +21,10 @@ constexpr idx_t ENCODE_HEADROOM = 16 * 1024;
 constexpr idx_t DICT_STABLE_ROWS = 4096;
 constexpr idx_t CLEAVE_GAP = 2 * 1024;
 constexpr idx_t MODE_TIE_TOL = 2 * 1024;
+//! What one prefix group costs in metadata: its prefix-lengths entry plus the amortized prefix-id width growth,
+//! rounded up. Charged inside the DP so a group must SAVE more than it costs to form at all -- which both kills
+//! net-negative junk groups and is what lets CleavedUpperBound charge anchored groups at a flat constant.
+constexpr idx_t GROUP_COST = 2;
 
 inline idx_t GuardedLcp(const unsigned char *a, idx_t la, const unsigned char *b, idx_t lb) {
 	idx_t l = absl::FindLongestCommonPrefix(absl::string_view(reinterpret_cast<const char *>(a), la),
@@ -35,144 +39,183 @@ inline idx_t GuardedLcp(const unsigned char *a, idx_t la, const unsigned char *b
 	return l;
 }
 
+constexpr uint32_t CLEAVE_NONE = 0xFFFFFFFFu;
+
+//! Entry accessors over one cleave order: identity (row order, FSST_PLUS) or a permutation (sorted order,
+//! DICT_FSST_PLUS). The one place the order indirection lives.
 template <bool IDENTITY>
-inline void CleaveEncoded(CleavedDictionary &dict, const vector<string_t> &encoded, idx_t n, const uint32_t *order,
-                          CleaveScratch &scratch) {
-	auto O = [&](uint32_t k) -> uint32_t {
+struct CleaveView {
+	const vector<string_t> &encoded;
+	const uint32_t *order;
+
+	uint32_t O(uint32_t k) const {
 		if constexpr (IDENTITY) {
 			return k;
 		} else {
 			return order[k];
 		}
-	};
-	auto EP = [&](uint32_t k) -> const unsigned char * {
+	}
+	const unsigned char *EP(uint32_t k) const {
 		return reinterpret_cast<const unsigned char *>(encoded[O(k)].GetData());
-	};
-	auto EL = [&](uint32_t k) -> uint32_t {
-		return encoded[O(k)].GetSize();
-	};
+	}
+	uint32_t EL(uint32_t k) const {
+		return NumericCast<uint32_t>(encoded[O(k)].GetSize());
+	}
+};
+
+//! LCP + Cartesian tree + optimal-savings DP, shared by the emitting and the measuring walks. lcp[0, lcp_valid) is
+//! trusted as already computed for this order: the identity caller persists it across cleaves (row order only ever
+//! appends), the sorted caller passes 0 (the merge shifts positions). Groups are priced: a subtree is taken whole
+//! only when the shared prefix saves at least GROUP_COST more than its children manage separately, so a group that
+//! cannot pay for its own metadata never forms.
+template <bool IDENTITY>
+inline uint32_t CleaveDP(const CleaveView<IDENTITY> &v, uint32_t m, CleaveScratch &scratch, vector<uint32_t> &lcp,
+                         idx_t lcp_valid) {
+	lcp.resize(m);
+	for (uint32_t i = NumericCast<uint32_t>(lcp_valid); i < m; i++) {
+		lcp[i] = NumericCast<uint32_t>(GuardedLcp(v.EP(i), v.EL(i), v.EP(i + 1), v.EL(i + 1)));
+	}
+	auto &lc = scratch.lc;
+	auto &rc = scratch.rc;
+	lc.resize(m);
+	rc.assign(m, CLEAVE_NONE);
+	auto &mono = scratch.mono;
+	mono.clear();
+	mono.reserve(m);
+	uint32_t root = 0;
+	for (uint32_t i = 0; i < m; i++) {
+		uint32_t last = CLEAVE_NONE;
+		while (!mono.empty() && lcp[mono.back()] > lcp[i]) {
+			last = mono.back();
+			mono.pop_back();
+		}
+		lc[i] = last;
+		if (mono.empty()) {
+			root = i;
+		} else {
+			rc[mono.back()] = i;
+		}
+		mono.push_back(i);
+	}
+	auto &value = scratch.value;
+	auto &sz = scratch.sz;
+	auto &take_whole = scratch.take_whole;
+	value.resize(m);
+	sz.resize(m);
+	take_whole.assign(m, 0);
+	using DFrame = CleaveScratch::DFrame;
+	auto &dstk = scratch.dstk;
+	dstk.clear();
+	dstk.push_back({root, false});
+	while (!dstk.empty()) {
+		const DFrame f = dstk.back();
+		dstk.pop_back();
+		const uint32_t i = f.node;
+		if (!f.done) {
+			dstk.push_back({i, true});
+			if (lc[i] != CLEAVE_NONE) {
+				dstk.push_back({lc[i], false});
+			}
+			if (rc[i] != CLEAVE_NONE) {
+				dstk.push_back({rc[i], false});
+			}
+		} else {
+			const idx_t vl = (lc[i] != CLEAVE_NONE) ? value[lc[i]] : 0;
+			const idx_t vr = (rc[i] != CLEAVE_NONE) ? value[rc[i]] : 0;
+			const uint32_t szl = (lc[i] != CLEAVE_NONE) ? sz[lc[i]] : 0;
+			const uint32_t szr = (rc[i] != CLEAVE_NONE) ? sz[rc[i]] : 0;
+			sz[i] = 1 + szl + szr;
+			const idx_t whole = idx_t(sz[i]) * idx_t(lcp[i]);
+			if (whole >= vl + vr + GROUP_COST) {
+				value[i] = whole - GROUP_COST;
+				take_whole[i] = 1;
+			} else {
+				value[i] = vl + vr;
+			}
+		}
+	}
+	return root;
+}
+
+//! One traversal for both consumers of the DP: entry ranges reach `plain(k)` one entry at a time or
+//! `group(a, b, plen)` as a whole take_whole range. The emitting caller materializes in the callbacks and passes
+//! its group budget; the measuring caller counts, with no budget (it reports what the DP wants, and RefreshCleave
+//! raises the budget to cover exactly that before anything emits -- which is what keeps the clamp here a backstop
+//! rather than load-bearing).
+template <typename PLAIN, typename GROUP>
+inline void CleaveWalk(CleaveScratch &scratch, const vector<uint32_t> &lcp, uint32_t m, uint32_t root,
+                       idx_t prefix_cap, PLAIN &&plain, GROUP &&group) {
+	auto &lc = scratch.lc;
+	auto &rc = scratch.rc;
+	auto &take_whole = scratch.take_whole;
+	idx_t groups = 0;
+	using EFrame = CleaveScratch::EFrame;
+	auto &estk = scratch.estk;
+	estk.clear();
+	estk.push_back({0u, m, root});
+	while (!estk.empty()) {
+		const EFrame f = estk.back();
+		estk.pop_back();
+		const uint32_t a = f.a;
+		const uint32_t b = f.b;
+		if (a == b) {
+			plain(a);
+			continue;
+		}
+		const uint32_t mid = f.node;
+		if (!take_whole[mid]) {
+			estk.push_back({mid + 1, b, rc[mid]});
+			estk.push_back({a, mid, lc[mid]});
+			continue;
+		}
+		if (lcp[mid] == 0 || groups >= prefix_cap) {
+			for (uint32_t k = a; k <= b; k++) {
+				plain(k);
+			}
+			continue;
+		}
+		groups++;
+		group(a, b, lcp[mid]);
+	}
+}
+
+template <bool IDENTITY>
+inline void CleaveEncoded(CleavedDictionary &dict, const vector<string_t> &encoded, idx_t n, const uint32_t *order,
+                          CleaveScratch &scratch, vector<uint32_t> &lcp, idx_t lcp_valid, idx_t prefix_cap) {
+	const CleaveView<IDENTITY> v {encoded, order};
 	dict.entries.reserve(n);
 
 	auto emit_plain = [&](uint32_t k) {
 		PlusEntry e;
 		e.prefix_id = 0xFFFFFFFFu; // temporary "no prefix" marker, fixed to the sentinel below
-		e.suffix = EP(k);
-		e.suffix_len = EL(k);
-		e.original_index = O(k);
+		e.suffix = v.EP(k);
+		e.suffix_len = v.EL(k);
+		e.original_index = v.O(k);
 		dict.suffix_bytes += e.suffix_len;
 		dict.max_suffix_len = MaxValue<uint32_t>(dict.max_suffix_len, e.suffix_len);
 		dict.entries.push_back(e);
 	};
+	auto emit_group = [&](uint32_t a, uint32_t b, uint32_t plen) {
+		const uint32_t prefix_id = NumericCast<uint32_t>(dict.prefixes.size());
+		dict.prefixes.push_back({v.EP(a), plen});
+		dict.prefix_bytes += plen;
+		dict.max_prefix_len = MaxValue<uint32_t>(dict.max_prefix_len, plen);
+		for (uint32_t k = a; k <= b; k++) {
+			PlusEntry e;
+			e.prefix_id = prefix_id;
+			e.suffix = v.EP(k) + plen;
+			e.suffix_len = v.EL(k) - plen;
+			e.original_index = v.O(k);
+			dict.suffix_bytes += e.suffix_len;
+			dict.max_suffix_len = MaxValue<uint32_t>(dict.max_suffix_len, e.suffix_len);
+			dict.entries.push_back(e);
+		}
+	};
 
 	if (n >= 2) {
 		const uint32_t m = NumericCast<uint32_t>(n - 1);
-		static constexpr uint32_t NONE = 0xFFFFFFFFu;
-		auto &lcp = scratch.lcp;
-		lcp.resize(m);
-		for (uint32_t i = 0; i < m; i++) {
-			lcp[i] = NumericCast<uint32_t>(GuardedLcp(EP(i), EL(i), EP(i + 1), EL(i + 1)));
-		}
-		auto &lc = scratch.lc;
-		auto &rc = scratch.rc;
-		lc.resize(m);
-		rc.assign(m, NONE);
-		auto &mono = scratch.mono;
-		mono.clear();
-		mono.reserve(m);
-		uint32_t root = 0;
-		for (uint32_t i = 0; i < m; i++) {
-			uint32_t last = NONE;
-			while (!mono.empty() && lcp[mono.back()] > lcp[i]) {
-				last = mono.back();
-				mono.pop_back();
-			}
-			lc[i] = last;
-			if (mono.empty()) {
-				root = i;
-			} else {
-				rc[mono.back()] = i;
-			}
-			mono.push_back(i);
-		}
-		auto &value = scratch.value;
-		auto &sz = scratch.sz;
-		auto &take_whole = scratch.take_whole;
-		value.resize(m);
-		sz.resize(m);
-		take_whole.assign(m, 0);
-		using DFrame = CleaveScratch::DFrame;
-		auto &dstk = scratch.dstk;
-		dstk.clear();
-		dstk.push_back({root, false});
-		while (!dstk.empty()) {
-			const DFrame f = dstk.back();
-			dstk.pop_back();
-			const uint32_t i = f.node;
-			if (!f.done) {
-				dstk.push_back({i, true});
-				if (lc[i] != NONE) {
-					dstk.push_back({lc[i], false});
-				}
-				if (rc[i] != NONE) {
-					dstk.push_back({rc[i], false});
-				}
-			} else {
-				const idx_t vl = (lc[i] != NONE) ? value[lc[i]] : 0;
-				const idx_t vr = (rc[i] != NONE) ? value[rc[i]] : 0;
-				const uint32_t szl = (lc[i] != NONE) ? sz[lc[i]] : 0;
-				const uint32_t szr = (rc[i] != NONE) ? sz[rc[i]] : 0;
-				sz[i] = 1 + szl + szr;
-				const idx_t whole = idx_t(sz[i]) * idx_t(lcp[i]);
-				if (whole >= vl + vr) {
-					value[i] = whole;
-					take_whole[i] = 1;
-				} else {
-					value[i] = vl + vr;
-				}
-			}
-		}
-
-		using EFrame = CleaveScratch::EFrame;
-		auto &estk = scratch.estk;
-		estk.clear();
-		estk.push_back({0u, m, root});
-		while (!estk.empty()) {
-			const EFrame f = estk.back();
-			estk.pop_back();
-			const uint32_t a = f.a;
-			const uint32_t b = f.b;
-			if (a == b) {
-				emit_plain(a);
-				continue;
-			}
-			const uint32_t mid = f.node;
-			if (!take_whole[mid]) {
-				estk.push_back({mid + 1, b, rc[mid]});
-				estk.push_back({a, mid, lc[mid]});
-				continue;
-			}
-			if (lcp[mid] == 0) {
-				for (uint32_t k = a; k <= b; k++) {
-					emit_plain(k);
-				}
-				continue;
-			}
-			const uint32_t plen = lcp[mid];
-			const uint32_t prefix_id = NumericCast<uint32_t>(dict.prefixes.size());
-			dict.prefixes.push_back({EP(a), plen});
-			dict.prefix_bytes += plen;
-			dict.max_prefix_len = MaxValue<uint32_t>(dict.max_prefix_len, plen);
-			for (uint32_t k = a; k <= b; k++) {
-				PlusEntry e;
-				e.prefix_id = prefix_id;
-				e.suffix = EP(k) + plen;
-				e.suffix_len = EL(k) - plen;
-				e.original_index = O(k);
-				dict.suffix_bytes += e.suffix_len;
-				dict.max_suffix_len = MaxValue<uint32_t>(dict.max_suffix_len, e.suffix_len);
-				dict.entries.push_back(e);
-			}
-		}
+		const uint32_t root = CleaveDP(v, m, scratch, lcp, lcp_valid);
+		CleaveWalk(scratch, lcp, m, root, prefix_cap, emit_plain, emit_group);
 	} else if (n == 1) {
 		emit_plain(0);
 	}
@@ -185,11 +228,45 @@ inline void CleaveEncoded(CleavedDictionary &dict, const vector<string_t> &encod
 	}
 }
 
-inline idx_t CleavedDictionarySize(const CleavedDictionary &dict, idx_t tuple_count, bitpacking_width_t indices_width) {
-	idx_t dict_count = dict.entries.size() + 1;
-	auto l = DictFSSTPlusLayout::Compute(tuple_count, dict_count, dict.prefixes.size(), indices_width,
-	                                     dict.PrefixLengthsWidth(), dict.PrefixIdWidth(), dict.SuffixLengthsWidth(),
-	                                     dict.symbol_table_size, dict.prefix_bytes, dict.suffix_bytes);
+//! The measuring twin of CleaveEncoded: same DP, same walk, counting callbacks, nothing materialized.
+template <bool IDENTITY>
+inline void CleaveMeasureImpl(CleaveStats &out, const vector<string_t> &encoded, idx_t n, const uint32_t *order,
+                              CleaveScratch &scratch, vector<uint32_t> &lcp, idx_t lcp_valid) {
+	const CleaveView<IDENTITY> v {encoded, order};
+
+	auto count_plain = [&](uint32_t k) {
+		const uint32_t l = v.EL(k);
+		out.suffix_bytes += l;
+		out.max_suffix_len = MaxValue<uint32_t>(out.max_suffix_len, l);
+	};
+	auto count_group = [&](uint32_t a, uint32_t b, uint32_t plen) {
+		out.pc++;
+		out.prefix_bytes += plen;
+		out.max_prefix_len = MaxValue<uint32_t>(out.max_prefix_len, plen);
+		for (uint32_t k = a; k <= b; k++) {
+			const uint32_t sl = v.EL(k) - plen;
+			out.suffix_bytes += sl;
+			out.max_suffix_len = MaxValue<uint32_t>(out.max_suffix_len, sl);
+		}
+	};
+
+	if (n >= 2) {
+		const uint32_t m = NumericCast<uint32_t>(n - 1);
+		const uint32_t root = CleaveDP(v, m, scratch, lcp, lcp_valid);
+		CleaveWalk(scratch, lcp, m, root, NumericLimits<idx_t>::Maximum(), count_plain, count_group);
+	} else if (n == 1) {
+		count_plain(0);
+	}
+}
+
+inline idx_t CleavedSizeFromStats(const CleaveStats &s, idx_t entry_n, idx_t tuple_count,
+                                  bitpacking_width_t indices_width, idx_t symbol_table_size) {
+	const idx_t dict_count = entry_n + 1;
+	auto l = DictFSSTPlusLayout::Compute(tuple_count, dict_count, s.pc, indices_width,
+	                                     BitpackingPrimitives::MinimumBitWidth(s.max_prefix_len),
+	                                     BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(s.pc)),
+	                                     BitpackingPrimitives::MinimumBitWidth(s.max_suffix_len), symbol_table_size,
+	                                     s.prefix_bytes, s.suffix_bytes);
 	return l.total;
 }
 
@@ -346,6 +423,8 @@ void Dictionary::Clear() {
 	raw.clear();
 	encoded.clear();
 	sorted_order.clear();
+	row_lcp.clear();
+	row_lcp_valid = 0;
 	dedup.clear();
 	raw_bytes = 0;
 	flat_encoded = 0;
@@ -384,6 +463,7 @@ void Dictionary::PopLastEntry() {
 	if (EncodedReady()) {
 		flat_encoded -= UnsafeNumericCast<idx_t>(encoded.back().GetSize());
 		encoded.pop_back();
+		row_lcp_valid = MinValue<idx_t>(row_lcp_valid, encoded.empty() ? 0 : encoded.size() - 1);
 		if (sorted_order.size() > encoded.size()) {
 			sorted_order.clear();
 		}
@@ -478,14 +558,26 @@ void Dictionary::SyncSortedOrder() {
 	sorted_order.swap(merge_result);
 }
 
-void Dictionary::Cleave(CleavedDictionary &out, const uint32_t *order) {
+void Dictionary::Cleave(CleavedDictionary &out, const uint32_t *order, idx_t prefix_cap) {
 	idx_t n = encoded.size();
 	out.Reset();
 	out.symbol_table_size = symbol_table_size;
 	if (order) {
-		CleaveEncoded<false>(out, encoded, n, order, cleave_scratch);
+		CleaveEncoded<false>(out, encoded, n, order, cleave_scratch, cleave_scratch.lcp, 0, prefix_cap);
 	} else {
-		CleaveEncoded<true>(out, encoded, n, nullptr, cleave_scratch);
+		CleaveEncoded<true>(out, encoded, n, nullptr, cleave_scratch, row_lcp, row_lcp_valid, prefix_cap);
+		row_lcp_valid = n >= 2 ? n - 1 : 0;
+	}
+}
+
+void Dictionary::CleaveMeasure(const uint32_t *order, CleaveStats &out) {
+	idx_t n = encoded.size();
+	out = CleaveStats();
+	if (order) {
+		CleaveMeasureImpl<false>(out, encoded, n, order, cleave_scratch, cleave_scratch.lcp, 0);
+	} else {
+		CleaveMeasureImpl<true>(out, encoded, n, nullptr, cleave_scratch, row_lcp, row_lcp_valid);
+		row_lcp_valid = n >= 2 ? n - 1 : 0;
 	}
 }
 
@@ -538,6 +630,8 @@ void DictFSSTCompressionState::ResetSegment() {
 	dict.Clear();
 	dictionary_indices.clear();
 	cl_dict_bytes = 0;
+	cl_prefix_count = 0;
+	cut_stats = CleaveStats();
 	flat_at_cleave = 0;
 	sel_at_cleave = 0;
 	enc_width_at_cleave = 0;
@@ -546,6 +640,7 @@ void DictFSSTCompressionState::ResetSegment() {
 	committed = allow_plus ? CutCommit::UNDECIDED : CutCommit::PLAIN;
 	fit_rows = 0;
 	fit_raw_count = 0;
+	fit_commit = committed;
 	cut_mode = DictFSSTMode::COUNT;
 	cut_dict.Reset();
 	cut_dict_row.Reset();
@@ -600,14 +695,16 @@ idx_t DictFSSTCompressionState::RefreshCleave() {
 	auto indices_width = BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(n));
 	idx_t sorted_size = DConstants::INVALID_INDEX;
 	idx_t row_size = DConstants::INVALID_INDEX;
+	CleaveStats s_sorted;
+	CleaveStats s_row;
 	if (do_sorted) {
 		dict.SyncSortedOrder();
-		dict.Cleave(cut_dict, dict.sorted_order.data());
-		sorted_size = CleavedDictionarySize(cut_dict, tuple_count, indices_width);
+		dict.CleaveMeasure(dict.sorted_order.data(), s_sorted);
+		sorted_size = CleavedSizeFromStats(s_sorted, n, tuple_count, indices_width, dict.symbol_table_size);
 	}
 	if (do_row) {
-		dict.Cleave(cut_dict_row, nullptr);
-		row_size = CleavedDictionarySize(cut_dict_row, tuple_count, 0);
+		dict.CleaveMeasure(nullptr, s_row);
+		row_size = CleavedSizeFromStats(s_row, n, tuple_count, 0, dict.symbol_table_size);
 	}
 	idx_t chosen_size;
 	if (forced_mode == DictFSSTMode::DICT_FSST_PLUS || committed == CutCommit::PLUS_SORTED) {
@@ -620,8 +717,14 @@ idx_t DictFSSTCompressionState::RefreshCleave() {
 	} else {
 		chosen_size = ChooseMode(sorted_size, row_size, cut_mode);
 	}
-	const CleavedDictionary &base = cut_mode == DictFSSTMode::FSST_PLUS ? cut_dict_row : cut_dict;
-	cl_dict_bytes = base.prefix_bytes + base.suffix_bytes;
+	cut_stats = cut_mode == DictFSSTMode::FSST_PLUS ? s_row : s_sorted;
+	cl_dict_bytes = cut_stats.prefix_bytes + cut_stats.suffix_bytes;
+	cl_prefix_count = cut_stats.pc;
+	//! The flush emission runs at this budget: at least a doubling above what either candidate's DP wants, so the
+	//! emit-side clamp cannot bind and the written layout is exactly the measured one. It is also the count
+	//! CleavedUpperBound prices the prefix-id width at until the next cleave.
+	const idx_t want = MaxValue(s_sorted.pc, s_row.pc);
+	prefix_cap = MinValue(MaxValue<idx_t>(MIN_PREFIX_CAP, 2 * want + 1), MaxValue<idx_t>(n / 2, 1));
 	flat_at_cleave = dict.flat_encoded;
 	sel_at_cleave = CurSelBytes();
 	enc_width_at_cleave = BitpackingPrimitives::MinimumBitWidth(dict.max_enc_len);
@@ -629,12 +732,13 @@ idx_t DictFSSTCompressionState::RefreshCleave() {
 }
 
 idx_t DictFSSTCompressionState::CachedCutSize() const {
+	const idx_t n = dict.encoded.size();
 	if (cut_mode == DictFSSTMode::DICT_FSST_PLUS) {
-		auto indices_width = BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(dict.encoded.size()));
-		return CleavedDictionarySize(cut_dict, tuple_count, indices_width);
+		auto indices_width = BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(n));
+		return CleavedSizeFromStats(cut_stats, n, tuple_count, indices_width, dict.symbol_table_size);
 	}
 	if (cut_mode == DictFSSTMode::FSST_PLUS) {
-		return CleavedDictionarySize(cut_dict_row, tuple_count, 0);
+		return CleavedSizeFromStats(cut_stats, n, tuple_count, 0, dict.symbol_table_size);
 	}
 	return NativeSize(cut_mode);
 }
@@ -651,30 +755,20 @@ idx_t DictFSSTCompressionState::CurSelBytes() const {
 idx_t DictFSSTCompressionState::CleavedUpperBound() const {
 	const idx_t entry_n = dict.encoded.size();
 	const idx_t dict_count = entry_n + 1;
-	//! Half the entries bounds the prefix count of ANY cleave: CleaveEncoded emits a prefix group
-	//! only for a take_whole range, ranges of one entry are emitted plain, so every group covers at
-	//! least two entries. Nothing tighter is sound between cleaves. The cleave is an optimal-savings
-	//! DP over the LCP Cartesian tree, and a single inserted entry can flip take_whole decisions
-	//! anywhere in the tree, so the count at the next cleave has no incremental relation to the
-	//! count at the last one -- extrapolating it (the previous formula) under-counted, the gate then
-	//! skipped the real measurement, and the segment outgrew its block.
-	const idx_t pc_ub = MaxValue<idx_t>(entry_n / 2, 1);
+	//! The prefix-id width is priced at the budget the emission is held to. The DP's group count cannot be
+	//! predicted between cleaves (one entry can restructure the LCP tree anywhere), but every write is measured
+	//! before it happens, so a pathological jump past the budget costs a rewind, never an overflow.
+	const idx_t pc_ub = MinValue(MaxValue<idx_t>(prefix_cap, 1), MaxValue<idx_t>(entry_n / 2, 1));
 	const auto pid_w = BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(pc_ub));
 	const auto len_w = BitpackingPrimitives::MinimumBitWidth(dict.max_enc_len);
-	const idx_t meta_ub = BitpackingPrimitives::GetRequiredSize(pc_ub, len_w) +
-	                      BitpackingPrimitives::GetRequiredSize(dict_count, pid_w) +
+	const idx_t meta_ub = BitpackingPrimitives::GetRequiredSize(dict_count, pid_w) +
 	                      BitpackingPrimitives::GetRequiredSize(dict_count, len_w);
-	//! The dictionary half IS incrementally boundable, which is what keeps this bound tight. The
-	//! DP's objective is exactly the flat bytes a grouping saves, and the optimal savings cannot
-	//! shrink when entries are added: for sorted strings x < e < y, lcp(x, y) = min(lcp(x, e),
-	//! lcp(e, y)), so an entry landing inside a group's range shares that group's prefix and the
-	//! previous grouping stays feasible with the newcomer absorbed; entries landing outside leave
-	//! it feasible untouched (the row-order cleave only ever sees appends). Hence dict bytes at the
-	//! next cleave <= dict bytes at the last cleave + flat bytes added since -- for the candidate
-	//! the baseline was anchored to. RefreshCleave anchors it to the chosen candidate, which covers
-	//! every candidate still live under `committed`; the one case where a dead candidate revives
-	//! (PLUS_ROW losing all-unique) bypasses this bound in CutCleaved.
-	const idx_t dict_ub = cl_dict_bytes + (dict.flat_encoded - flat_at_cleave);
+	//! Dictionary terms. The anchored layout stays feasible as entries arrive: for sorted x < e < y,
+	//! lcp(x, y) = min(lcp(x, e), lcp(e, y)), so a newcomer inside a group's range shares that group's prefix and
+	//! the old grouping absorbs it (the row cleave only ever appends). The meta-priced DP nets at least as much as
+	//! any feasible grouping, so the anchor's groups are charged GROUP_COST each in place of a separate
+	//! prefix-lengths term -- the only per-group field, which GROUP_COST covers by construction.
+	const idx_t dict_ub = cl_dict_bytes + GROUP_COST * cl_prefix_count + (dict.flat_encoded - flat_at_cleave);
 	const bool all_unique = null_count == 0 && entry_n == tuple_count;
 	const idx_t sel_ub = all_unique && committed == CutCommit::PLUS_ROW ? 0 : CurSelBytes();
 	return DictFSSTCompression::PLUS_HEADER_SIZE + dict.symbol_table_size + sel_ub + dict_ub + meta_ub + 6 * 7;
@@ -770,7 +864,6 @@ idx_t DictFSSTCompressionState::FinalizeSegment(bool use_cached) {
 		return WriteNative(DictFSSTMode::DICTIONARY);
 	}
 	auto symbol_table = dict.symbol_table.get();
-	bool all_unique = null_count == 0 && entry_n == tuple_count;
 
 	if (committed == CutCommit::PLAIN && forced_mode == DictFSSTMode::COUNT) {
 		DictFSSTMode plain_mode;
@@ -778,30 +871,20 @@ idx_t DictFSSTCompressionState::FinalizeSegment(bool use_cached) {
 		return WriteNative(plain_mode);
 	}
 
-	if (IsPlusMode(forced_mode)) {
-		if (forced_mode == DictFSSTMode::FSST_PLUS && all_unique) {
-			dict.Cleave(cut_dict_row, nullptr);
-			return WriteCleavedSegment(*this, DictFSSTMode::FSST_PLUS, cut_dict_row, {}, symbol_table,
-			                           dict.symbol_table_size);
-		}
-		if (forced_mode != DictFSSTMode::FSST_PLUS) {
-			dict.SyncSortedOrder();
-			dict.Cleave(cut_dict, dict.sorted_order.data());
-			BuildSelNew(*this, cut_dict, entry_n);
-			return WriteCleavedSegment(*this, DictFSSTMode::DICT_FSST_PLUS, cut_dict, serialize_scratch.sel,
-			                           symbol_table, dict.symbol_table_size);
-		}
-	}
-
+	//! Forced plus modes go through the same measure-then-materialize path as auto: RefreshCleave honours
+	//! forced_mode when picking cut_mode, and this is what keeps every written layout one a measuring pass saw.
 	if (!use_cached || forced_mode != DictFSSTMode::COUNT) {
 		RefreshCleave();
 	}
 	if (cut_mode == DictFSSTMode::DICT_FSST_PLUS) {
+		dict.SyncSortedOrder();
+		dict.Cleave(cut_dict, dict.sorted_order.data(), prefix_cap);
 		BuildSelNew(*this, cut_dict, entry_n);
 		return WriteCleavedSegment(*this, cut_mode, cut_dict, serialize_scratch.sel, symbol_table,
 		                           dict.symbol_table_size);
 	}
 	if (cut_mode == DictFSSTMode::FSST_PLUS) {
+		dict.Cleave(cut_dict_row, nullptr, prefix_cap);
 		return WriteCleavedSegment(*this, cut_mode, cut_dict_row, {}, symbol_table, dict.symbol_table_size);
 	}
 	return WriteNative(cut_mode);
@@ -833,13 +916,13 @@ void DictFSSTCompressionState::FlushRewind() {
 		dict.PopLastEntry();
 	}
 	tuple_count = fit_rows;
-	//! fit_rows is a certificate for the CANDIDATE it was measured under. The rewind restores that
-	//! exact state -- including, when the flip row is among the moved rows, all-unique itself -- but
-	//! a commit poisoned by the flip would keep the blessed candidate dead and flush a layout the
-	//! certificate never priced (sorted needs a selection buffer the row cut did not). Re-open the
-	//! decision: at this state the blessed candidate measures its blessed size, so the min over live
-	//! candidates can only fit.
-	committed = CutCommit::UNDECIDED;
+	//! fit_rows certifies a size for the CANDIDATE it was measured under, so restore that candidate with it. The
+	//! rewind rebuilds the exact state the certificate was taken in -- including, when the flip row is among the moved
+	//! rows, all-unique itself -- but the commit in force may have been poisoned since (the flip kills the row
+	//! candidate), and flushing under it writes a layout the certificate never priced: sorted needs a selection buffer
+	//! the row cut did not pay for. Restoring fit_commit makes the flush write back exactly what was measured, rather
+	//! than relying on the re-measurement to rediscover it.
+	committed = fit_commit;
 	StringHeap saved;
 	saved.Move(dict.raw_heap);
 	Flush(false);
@@ -854,16 +937,40 @@ bool DictFSSTCompressionState::AddScanRow(UnifiedVectorFormat &vf, const string_
 	return AddValue(is_null ? string_t() : strings[jdx], is_null);
 }
 
-void DictFSSTCompressionState::MaybeEncodeOrCutSmall(idx_t block_size) {
+void DictFSSTCompressionState::MaybeEncodeOrCutSmall(UnifiedVectorFormat &vf, const string_t *strings, idx_t i,
+                                                     bool was_new, idx_t block_size) {
 	if (forced_mode != DictFSSTMode::DICTIONARY && dict.raw_bytes >= ENCODE_THRESHOLD) {
 		if (NativeSize(DictFSSTMode::DICTIONARY) + ENCODE_HEADROOM >= block_size ||
 		    rows_since_new >= DICT_STABLE_ROWS) {
 			dict.EncodeAll();
-			RefreshCleave();
-			fit_rows = tuple_count;
-			fit_raw_count = dict.raw.size();
+			//! Only certify a state the cleave just proved fits. This path fires when the native size is already
+			//! within ENCODE_HEADROOM of the block, so the cleave can come back over it, and an uncertified fit_rows
+			//! is a rewind target nothing ever priced -- the same defect FlushRewind's restore guards against.
+			if (RefreshCleave() + dict.max_enc_len + ROW_HEADROOM < block_size) {
+				fit_rows = tuple_count;
+				fit_raw_count = dict.raw.size();
+				fit_commit = committed;
+			}
 		}
-	} else if (NativeSize(DictFSSTMode::DICTIONARY) + dict.max_raw_len + ROW_HEADROOM >= block_size) {
+		return;
+	}
+	//! A never-encoded segment can be half a million rows wide at a few bits of selection each, and one NEW entry
+	//! that crosses a bitpacking width boundary re-prices every one of those rows at once -- the same
+	//! whole-segment re-price NearBlock watches for on the encoded path, and far larger than ROW_HEADROOM. The
+	//! byte trigger below only sees it after the fact, so handle the jump exactly like CutPlain's overshoot:
+	//! exclude the bumping row, flush the pre-bump segment (which passed the trigger and so fits), re-add.
+	if (was_new && tuple_count > 1) {
+		const idx_t entry_n = dict.raw.size();
+		const bool sel_width_bumped = BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(entry_n)) !=
+		                              BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(entry_n - 1));
+		if (sel_width_bumped && NativeSize(DictFSSTMode::DICTIONARY) + dict.max_raw_len + ROW_HEADROOM >= block_size) {
+			PopRow(true);
+			Flush(false);
+			AddScanRow(vf, strings, i);
+			return;
+		}
+	}
+	if (NativeSize(DictFSSTMode::DICTIONARY) + dict.max_raw_len + ROW_HEADROOM >= block_size) {
 		Flush(false);
 	}
 }
@@ -925,6 +1032,7 @@ void DictFSSTCompressionState::CutCleaved(UnifiedVectorFormat &vf, const string_
 	if (true_c + margin < block_size) {
 		fit_rows = tuple_count;
 		fit_raw_count = dict.raw.size();
+		fit_commit = committed;
 		return;
 	}
 	if (true_c <= block_size || tuple_count == 1) {
@@ -953,7 +1061,7 @@ void DictFSSTCompressionState::Compress(const Vector &scan_vector) {
 		const bool was_new = AddScanRow(vector_format, strings, i);
 
 		if (!dict.EncodedReady()) {
-			MaybeEncodeOrCutSmall(block_size);
+			MaybeEncodeOrCutSmall(vector_format, strings, i, was_new, block_size);
 			continue;
 		}
 		if (!NearBlock(was_new)) {
@@ -969,6 +1077,14 @@ void DictFSSTCompressionState::Compress(const Vector &scan_vector) {
 }
 
 void DictFSSTCompressionState::FinalizeCompress() {
+	//! The final segment is the one write no cut guarded, so measure it for real before flushing. If it no longer
+	//! fits -- the between-cleave estimate is a cadence heuristic, not a guarantee -- rewind to the last certified
+	//! state and move the excess on, exactly like an ordinary cut.
+	const idx_t block_size = info.GetBlockSize();
+	while (tuple_count && dict.EncodedReady() && !IsNativeMode(forced_mode) && committed != CutCommit::PLAIN &&
+	       fit_rows && fit_rows < tuple_count && RefreshCleave() > block_size) {
+		FlushRewind();
+	}
 	Flush(true);
 }
 
