@@ -99,6 +99,21 @@ public:
 	void ReorderEntries(catalog_entry_vector_t &entries);
 	void ReorderEntries(catalog_entry_vector_t &entries, ClientContext &context);
 
+	using dependency_callback_t = const std::function<void(DependencyEntry &)>;
+	//! The recorded halves of the graph, for a catalog that draws its own conclusions from them.
+	void ScanDependents(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
+	void ScanSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
+	//! Every recorded edge exactly once, as the half that names both of its endpoints -- SourceInfo() is
+	//! the subject and EntryInfo() the dependent. Unlike Scan(), which reaches an edge only when its
+	//! subject is itself the dependent of something else, this is the whole graph.
+	void ScanAllEdges(CatalogTransaction transaction, dependency_callback_t &callback);
+
+	//! Replaces everything `object` depends on, leaving the entries that depend on it alone. Addressed by
+	//! info rather than by entry: the caller has just written the new version, and an edge belongs to the
+	//! object rather than to any one version of it.
+	void ReplaceSubjects(CatalogTransaction transaction, const CatalogEntryInfo &object,
+	                     const LogicalDependencyList &dependencies);
+
 private:
 	DuckCatalog &catalog;
 	CatalogSet subjects;
@@ -109,6 +124,9 @@ private:
 	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const LogicalDependency &dependency);
 	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, CatalogEntry &dependency);
 	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const CatalogEntryInfo &info);
+	//! The catalog an info names. Null when it names an attachment this
+	//! transaction cannot reach.
+	optional_ptr<Catalog> ResolveCatalog(CatalogTransaction transaction, const CatalogEntryInfo &info);
 	string CollectDependents(CatalogTransaction transaction, catalog_entry_set_t &entries, CatalogEntryInfo &info);
 	void CleanupDependencies(CatalogTransaction transaction, CatalogEntry &entry);
 
@@ -135,15 +153,14 @@ private:
 	void CreateDependency(CatalogTransaction transaction, DependencyInfo &info);
 	void CreateDependencies(CatalogTransaction transaction, const CatalogEntry &object,
 	                        const LogicalDependencyList &dependencies);
+	void CreateDependencies(CatalogTransaction transaction, const CatalogEntryInfo &object_info,
+	                        const LogicalDependencyList &dependencies);
 	using dependency_entry_func_t = const std::function<unique_ptr<DependencyEntry>(
 	    Catalog &catalog, const DependencyDependent &dependent, const DependencySubject &dependency)>;
 
 	void CreateSubject(CatalogTransaction transaction, const DependencyInfo &info);
 	void CreateDependent(CatalogTransaction transaction, const DependencyInfo &info);
 
-	using dependency_callback_t = const std::function<void(DependencyEntry &)>;
-	void ScanDependents(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
-	void ScanSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
 	void ScanSetInternal(CatalogTransaction transaction, const CatalogEntryInfo &info, bool subjects,
 	                     dependency_callback_t &callback);
 	void PrintSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info);

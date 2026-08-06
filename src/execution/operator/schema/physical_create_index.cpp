@@ -155,10 +155,12 @@ SinkFinalizeType PhysicalCreateIndex::Finalize(Pipeline &pipeline, Event &event,
 			return SinkFinalizeType::READY;
 		}
 
-		auto index_entry = schema.CreateIndex(schema.GetCatalogTransaction(context), *info, table).get();
-		D_ASSERT(index_entry);
-		auto &index = index_entry->Cast<DuckIndexEntry>();
-		index.initial_index_size = bound_index->GetInMemorySize();
+		// A catalog that keeps its own index definitions makes no entry here; the index then lives only on the
+		// table's index list, which is where it is checkpointed and where a drop takes it from.
+		auto index_entry = schema.CreateIndex(schema.GetCatalogTransaction(context), *info, table);
+		if (index_entry) {
+			index_entry->Cast<DuckIndexEntry>().initial_index_size = bound_index->GetInMemorySize();
+		}
 
 	} else {
 		// Ensure that there are no other indexes with that name on this table.

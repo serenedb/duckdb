@@ -4232,19 +4232,20 @@ const StringUtil::EnumStringLiteral *GetPermissionsAlterTypeValues() {
 		{ static_cast<uint32_t>(PermissionsAlterType::INVALID), "INVALID" },
 		{ static_cast<uint32_t>(PermissionsAlterType::GRANT_PRIVILEGES), "GRANT_PRIVILEGES" },
 		{ static_cast<uint32_t>(PermissionsAlterType::REVOKE_PRIVILEGES), "REVOKE_PRIVILEGES" },
-		{ static_cast<uint32_t>(PermissionsAlterType::CHANGE_ROLE_OWNER), "CHANGE_ROLE_OWNER" }
+		{ static_cast<uint32_t>(PermissionsAlterType::CHANGE_ROLE_OWNER), "CHANGE_ROLE_OWNER" },
+		{ static_cast<uint32_t>(PermissionsAlterType::REPLACE_DEFINITION), "REPLACE_DEFINITION" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<PermissionsAlterType>(PermissionsAlterType value) {
-	return StringUtil::EnumToString(GetPermissionsAlterTypeValues(), 4, "PermissionsAlterType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetPermissionsAlterTypeValues(), 5, "PermissionsAlterType", static_cast<uint32_t>(value));
 }
 
 template<>
 PermissionsAlterType EnumUtil::FromString<PermissionsAlterType>(const char *value) {
-	return static_cast<PermissionsAlterType>(StringUtil::StringToEnum(GetPermissionsAlterTypeValues(), 4, "PermissionsAlterType", value));
+	return static_cast<PermissionsAlterType>(StringUtil::StringToEnum(GetPermissionsAlterTypeValues(), 5, "PermissionsAlterType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetPhysicalOperatorTypeValues() {

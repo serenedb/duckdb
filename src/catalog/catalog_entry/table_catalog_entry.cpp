@@ -107,6 +107,7 @@ unique_ptr<CreateInfo> TableCatalogEntry::GetInfo() const {
 	result->internal = internal;
 	result->comment = comment;
 	result->tags = tags;
+	result->host_id = GetHostId();
 	return std::move(result);
 }
 
@@ -388,6 +389,10 @@ optional_ptr<CatalogEntry> TableCatalogEntry::CreateTrigger(CatalogTransaction t
 void TableCatalogEntry::ScanTriggers(CatalogTransaction transaction,
                                      const std::function<void(CatalogEntry &)> &callback) const {
 	// Default: no triggers (non-DuckDB tables do not support triggers)
+}
+
+bool TableCatalogEntry::DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade) {
+	return false;
 }
 
 vector<const_reference<TriggerCatalogEntry>> TableCatalogEntry::GetTriggersForEvent(CatalogTransaction transaction,

@@ -44,6 +44,9 @@ public:
 	void DropEntry(CatalogEntry &entry);
 	identifier_tree_t<unique_ptr<CatalogEntry>> &Entries();
 	optional_ptr<CatalogEntry> GetEntry(const Identifier &name);
+	bool IsCaseSensitive() const {
+		return entries.key_comp().case_sensitive;
+	}
 
 private:
 	//! Mapping of identifier to catalog entry

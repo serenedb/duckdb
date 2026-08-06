@@ -62,14 +62,9 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
 		}
 		auto &base_table_ref = trigger_extra.base_table->Cast<BaseTableRef>();
 		auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context.client, base_table_ref.GetQualifiedName());
-		// Only a DuckTableEntry owns a trigger set; any other table type carries no triggers at all,
-		// so the named one is missing rather than the entry being castable.
-		auto dropped = false;
-		if (table_entry.IsDuckTable()) {
-			auto &duck_table = table_entry.Cast<DuckTableEntry>();
-			auto transaction = duck_table.catalog.GetCatalogTransaction(context.client);
-			dropped = duck_table.DropTrigger(transaction, info->GetQualifiedName().Name(), info->cascade);
-		}
+		// A table type that owns no trigger set reports no trigger by that name, which is what a missing one is.
+		auto transaction = table_entry.ParentCatalog().GetCatalogTransaction(context.client);
+		auto dropped = table_entry.DropTrigger(transaction, info->GetQualifiedName().Name(), info->cascade);
 		if (!dropped && info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 			throw CatalogException("Trigger with name \"%s\" does not exist on table \"%s\"",
 			                       info->GetQualifiedName().Name(), base_table_ref.Table());

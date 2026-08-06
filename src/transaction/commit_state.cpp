@@ -154,6 +154,17 @@ IndexRemovalType CommitState::GetIndexRemovalType(ActiveTransactionState transac
 	return IndexRemovalType::REVERT_MAIN_INDEX;
 }
 
+//! Whether a newer version of `table` invalidates row work this transaction recorded against it. A newer entry
+//! alone does not: a catalog that keeps its own definitions rewrites a table's entry for reasons that leave the
+//! rows alone -- an index created over it, a comment, a grant -- and those must not conflict with concurrent DML.
+//! What conflicts is the rows moving out from under the append, which is exactly what the storage version says.
+static bool RowWorkWasInvalidated(DataTable &storage, CatalogEntry &table, transaction_t transaction_id) {
+	if (!table.HasParent() || table.Parent().timestamp == transaction_id) {
+		return false;
+	}
+	return storage.TableModification() != "no changes";
+}
+
 void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, CommitInfo &info) {
 	auto &drop_state = *info.drop_state;
 	if (entry.temporary || entry.Parent().temporary) {
@@ -310,12 +321,10 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 	case UndoFlags::INSERT_TUPLE: {
 		// append:
 		auto info = reinterpret_cast<AppendInfo *>(data);
-		if (info->table->HasParent() && info->table->Parent().timestamp != transaction.transaction_id) {
+		if (RowWorkWasInvalidated(info->table->GetStorage(), *info->table, transaction.transaction_id)) {
 			auto &storage = info->table->GetStorage();
-			auto table_name = storage.GetTableName();
-			auto table_modification = storage.TableModification();
 			throw TransactionException("Attempting to modify table %s but another transaction has %s this table",
-			                           table_name, table_modification);
+			                           storage.GetTableName(), storage.TableModification());
 		}
 		// mark the tuples as committed
 		info->table->GetStorage().CommitAppend(commit_id, info->start_row, info->count);
@@ -324,12 +333,10 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 	case UndoFlags::DELETE_TUPLE: {
 		// deletion:
 		auto info = reinterpret_cast<DeleteInfo *>(data);
-		if (info->table->HasParent() && info->table->Parent().timestamp != transaction.transaction_id) {
+		if (RowWorkWasInvalidated(info->table->GetStorage(), *info->table, transaction.transaction_id)) {
 			auto &storage = info->table->GetStorage();
-			auto table_name = storage.GetTableName();
-			auto table_modification = storage.TableModification();
 			throw TransactionException("Attempting to modify table %s but another transaction has %s this table",
-			                           table_name, table_modification);
+			                           storage.GetTableName(), storage.TableModification());
 		}
 		CommitDelete(*info);
 		break;
@@ -337,12 +344,10 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 	case UndoFlags::UPDATE_TUPLE: {
 		// update:
 		auto info = reinterpret_cast<UpdateInfo *>(data);
-		if (info->table->HasParent() && info->table->Parent().timestamp != transaction.transaction_id) {
+		if (RowWorkWasInvalidated(info->table->GetStorage(), *info->table, transaction.transaction_id)) {
 			auto &storage = info->table->GetStorage();
-			auto table_name = storage.GetTableName();
-			auto table_modification = storage.TableModification();
 			throw TransactionException("Attempting to modify table %s but another transaction has %s this table",
-			                           table_name, table_modification);
+			                           storage.GetTableName(), storage.TableModification());
 		}
 		info->version_number = commit_id;
 		break;

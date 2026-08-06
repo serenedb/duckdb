@@ -22,19 +22,14 @@ void InMemoryCheckpointer::CreateCheckpoint() {
 	vector<reference<SchemaCatalogEntry>> schemas;
 	// we scan the set of committed schemas
 	auto &catalog = Catalog::GetCatalog(db).Cast<DuckCatalog>();
-	catalog.ScanSchemas([&](SchemaCatalogEntry &entry) {
-		// An in-memory database has no manifest: a table whose entry another catalog owns is reached through the
-		// duck-managed table that holds its rows.
-		if (entry.duck_managed) {
-			schemas.push_back(entry);
-		}
-	});
+	catalog.ScanSchemas([&](SchemaCatalogEntry &entry) { schemas.push_back(entry); });
 
 	vector<reference<TableCatalogEntry>> tables;
 	for (const auto &schema_ref : schemas) {
 		auto &schema = schema_ref.get();
 		schema.Scan(CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
-			if (entry.type == CatalogType::TABLE_ENTRY) {
+			// A table whose rows are an index of its own -- a search table -- has nothing to checkpoint here.
+			if (entry.type == CatalogType::TABLE_ENTRY && entry.Cast<TableCatalogEntry>().TryGetStorage()) {
 				tables.push_back(entry.Cast<TableCatalogEntry>());
 			}
 		});

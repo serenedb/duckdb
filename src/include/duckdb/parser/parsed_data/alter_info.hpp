@@ -36,7 +36,9 @@ enum class PermissionsAlterType : uint8_t {
 	INVALID = 0,
 	GRANT_PRIVILEGES = 1,
 	REVOKE_PRIVILEGES = 2,
-	CHANGE_ROLE_OWNER = 3
+	CHANGE_ROLE_OWNER = 3,
+	//! The whole definition was replaced, owner and ACL with it. Nothing a dependent bound against moves.
+	REPLACE_DEFINITION = 4
 };
 
 enum class AlterBindMode { BIND_ON_ALTER, SKIP_BINDING };
@@ -65,6 +67,10 @@ public:
 	~AlterInfo() override;
 
 	AlterType type;
+	//! The identifier the catalog that owns this entry knows it by, zero when it owns none. A rename cannot reach
+	//! it, so it is what a replay resolves the target by -- the name in this record is the one at the time of the
+	//! alter, and the owning catalog has since moved on. Same role host_id serves on CreateInfo.
+	idx_t host_id = 0;
 	//! if exists
 	OnEntryNotFound if_not_found;
 	//! Allow altering internal entries

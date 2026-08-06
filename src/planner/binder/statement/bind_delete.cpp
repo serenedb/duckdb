@@ -30,10 +30,12 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	}
 	auto &table = *table_ptr;
 
-	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::DELETE_EVENT)) {
+	auto &trigger_table = table;
+	if (auto expanded = TryExpandTriggers(node, trigger_table, TriggerEventType::DELETE_EVENT)) {
 		return std::move(*expanded);
 	}
-	if (auto expanded = TryExpandRowTriggers(node, node.returning_list, table, TriggerEventType::DELETE_EVENT)) {
+	if (auto expanded =
+	        TryExpandRowTriggers(node, node.returning_list, trigger_table, TriggerEventType::DELETE_EVENT)) {
 		return std::move(*expanded);
 	}
 

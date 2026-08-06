@@ -68,6 +68,9 @@ public:
 	ClientContext &context;
 	Catalog &catalog;
 	optional_ptr<DuckTableEntry> current_table;
+	//! The table these records name is one the owning catalog has since dropped, so the rows in them have nowhere
+	//! to go. Distinct from a null current_table with no record before it, which is a corrupt file.
+	bool current_table_dropped = false;
 	MetaBlockPointer checkpoint_id;
 	idx_t wal_version = 1;
 	optional_idx current_position;
@@ -762,8 +765,14 @@ void WriteAheadLogDeserializer::ReplayCreateTable() {
 	}
 	// bind the constraints to the table again
 	auto binder = Binder::CreateBinder(context);
-	auto &schema = catalog.GetSchema(context, info->GetQualifiedName().Schema());
-	auto bound_info = Binder::BindCreateTableCheckpoint(std::move(info), schema);
+	// The schema may be gone: a catalog that keeps its own definitions decided a cascade drop before the crash, so
+	// this record describes rows whose relation that catalog no longer holds. Nothing to restore them onto, and
+	// refusing the record would make the database unopenable.
+	auto schema = catalog.GetSchema(context, info->GetQualifiedName().Schema(), OnEntryNotFound::RETURN_NULL);
+	if (!schema) {
+		return;
+	}
+	auto bound_info = Binder::BindCreateTableCheckpoint(std::move(info), *schema);
 
 	catalog.CreateTable(context, *bound_info);
 }
@@ -1190,10 +1199,15 @@ void WriteAheadLogDeserializer::ReplayUseTable() {
 	if (DeserializeOnly()) {
 		return;
 	}
+	state.current_table_dropped = false;
 	if (catalog_id != 0) {
 		auto entry = catalog.LookupTableById(catalog.GetCatalogTransaction(context), catalog_id);
 		if (!entry) {
-			throw IOException("Corrupt WAL: no table with catalog identifier %llu", catalog_id);
+			// A catalog that keeps its own definitions decided this table's drop before the crash, so its
+			// create was skipped above and the rows that follow have nothing to attach to.
+			state.current_table = nullptr;
+			state.current_table_dropped = true;
+			return;
 		}
 		state.current_table = &entry->Cast<DuckTableEntry>();
 		return;
@@ -1207,6 +1221,9 @@ void WriteAheadLogDeserializer::ReplayInsert() {
 	auto &chunk = batch->data;
 	deserializer.ReadObject(101, "chunk", [&](Deserializer &object) { chunk.Deserialize(object); });
 	if (DeserializeOnly()) {
+		return;
+	}
+	if (state.current_table_dropped) {
 		return;
 	}
 	if (!state.current_table) {
@@ -1255,6 +1272,9 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 		for (auto &block_id : data.GetBlockIds()) {
 			block_manager.MarkBlockAsUsed(block_id);
 		}
+		return;
+	}
+	if (state.current_table_dropped) {
 		return;
 	}
 	if (!state.current_table) {
@@ -1374,6 +1394,9 @@ void WriteAheadLogDeserializer::ReplayDelete() {
 	if (DeserializeOnly()) {
 		return;
 	}
+	if (state.current_table_dropped) {
+		return;
+	}
 	if (!state.current_table) {
 		throw SerializationException("delete without a table");
 	}
@@ -1411,6 +1434,9 @@ void WriteAheadLogDeserializer::ReplayUpdate() {
 	deserializer.ReadObject(102, "chunk", [&](Deserializer &object) { chunk.Deserialize(object); });
 
 	if (DeserializeOnly()) {
+		return;
+	}
+	if (state.current_table_dropped) {
 		return;
 	}
 	if (!state.current_table) {

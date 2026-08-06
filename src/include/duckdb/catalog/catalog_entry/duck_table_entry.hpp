@@ -55,6 +55,31 @@ protected:
 	DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info, StorageAsGiven,
 	               shared_ptr<DataTable> storage, shared_ptr<CatalogSet> inherited_triggers);
 
+	//! Builds this table's rows from `info`: a fresh DataTable over `info.data`, with an index per
+	//! index-backed constraint. `tolerate_missing_index_data` skips a constraint the file holds no index for --
+	//! it was added to the owning catalog after the checkpoint, and the ALTER that added it is in the WAL.
+	void CreateStorage(BoundCreateTableInfo &info, bool tolerate_missing_index_data = false);
+
+public:
+	//! Takes the rows `info` describes, for a table whose definition another catalog holds: that catalog builds
+	//! the entry, and this file's manifest supplies the rows it was checkpointed with.
+	void AdoptStorage(BoundCreateTableInfo &info) {
+		D_ASSERT(!storage);
+		CreateStorage(info, /*tolerate_missing_index_data=*/true);
+	}
+	//! Takes rows built elsewhere -- the reshape an ALTER produced, or a boot that supplies them after the entry.
+	void AdoptStorage(shared_ptr<DataTable> storage_p) {
+		storage = std::move(storage_p);
+	}
+	//! The rows an ALTER of this table produces, with no entry to hold them: a catalog that keeps the definition
+	//! itself reshapes the rows here and hands them to its own install. Null when `info` leaves the rows alone.
+	shared_ptr<DataTable> AlterStorage(ClientContext &context, AlterInfo &info);
+
+protected:
+	//! The entry an ALTER of this one produces. A catalog whose table entries carry state of their own overrides
+	//! it, so an alter replaces the entry with its own kind rather than degrading it to a plain table.
+	virtual unique_ptr<CatalogEntry> AlteredEntry(BoundCreateTableInfo &info, shared_ptr<DataTable> new_storage) const;
+
 public:
 	//! The trigger set this entry carries; a replacement version has to inherit it, since the set is shared rather
 	//! than versioned.
@@ -67,6 +92,8 @@ public:
 	void UndoAlter(ClientContext &context, AlterInfo &info) override;
 	void Rollback(CatalogEntry &prev_entry) override;
 	void OnDrop() override;
+
+	idx_t GetHostId() const override;
 
 	//! Returns the underlying storage of the table
 	DataTable &GetStorage() override;
@@ -111,7 +138,7 @@ public:
 	//! Scan all triggers without a transaction (used by checkpoint writer)
 	void ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback);
 	//! Drop a trigger by name
-	bool DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade);
+	bool DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade) override;
 
 private:
 	unique_ptr<CatalogEntry> RenameColumn(ClientContext &context, RenameColumnInfo &info);

@@ -78,6 +78,13 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 			deserializer.End();
 
 			auto &alter_info = parse_info->Cast<AlterInfo>();
+			// The name in the record is the one the alter named; a catalog that keeps its own definitions has
+			// since renamed the entry, and only the identifier still resolves at replay.
+			if (parent.type == CatalogType::TABLE_ENTRY) {
+				if (auto storage = parent.Cast<TableCatalogEntry>().TryGetStorage()) {
+					alter_info.host_id = storage->GetDataTableInfo()->GetCatalogId();
+				}
+			}
 			log.WriteAlter(entry, alter_info);
 		} else {
 			switch (parent.type) {

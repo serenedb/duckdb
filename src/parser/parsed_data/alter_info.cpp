@@ -63,6 +63,8 @@ string SetPermissionsInfo::ToString() const {
 		return "REVOKE ON " + qualified_name.ToString();
 	case PermissionsAlterType::CHANGE_ROLE_OWNER:
 		return "ALTER " + qualified_name.ToString() + " OWNER TO " + to_string(owner);
+	case PermissionsAlterType::REPLACE_DEFINITION:
+		return "ALTER " + qualified_name.ToString();
 	default:
 		throw InternalException("Unsupported permissions alter type");
 	}

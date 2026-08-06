@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/partial_block_manager.hpp"
@@ -83,6 +84,13 @@ public:
 	virtual unique_ptr<TableDataWriter> GetTableDataWriter(TableCatalogEntry &table) = 0;
 
 protected:
+	//! Whether the definition of `entry` is another catalog's, so this file records only its rows. It is the
+	//! schema that says so: the entries of a schema a catalog of its own persists are that catalog's.
+	bool DefinitionElsewhere(const CatalogEntry &entry) const;
+
+	//! The schemas whose definitions a catalog of its own persists.
+	reference_set_t<SchemaCatalogEntry> foreign_schemas;
+
 	virtual void WriteEntry(CatalogEntry &entry, Serializer &serializer);
 	virtual void WriteSchema(SchemaCatalogEntry &schema, Serializer &serializer);
 	virtual void WriteTable(TableCatalogEntry &table, Serializer &serializer) = 0;

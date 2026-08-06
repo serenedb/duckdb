@@ -279,13 +279,15 @@ bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntr
                                      AlterInfo &alter_info, unique_lock<mutex> &read_lock) {
 	auto &original_name = old.name;
 
-	auto &context = *transaction.context;
 	auto entry_value = map.GetEntry(new_name);
 	if (entry_value) {
 		auto &existing_entry = GetEntryForTransaction(transaction, *entry_value);
 		if (!existing_entry.deleted) {
 			// There exists an entry by this name that is not deleted
-			old.UndoAlter(context, alter_info);
+			if (transaction.context) {
+				// Boot replay and the background paths have no statement to undo against
+				old.UndoAlter(*transaction.context, alter_info);
+			}
 			throw CatalogException("Could not rename \"%s\" to \"%s\": another entry with this name already exists!",
 			                       original_name, new_name);
 		}
@@ -377,7 +379,12 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	// Preserve the oid across the alter: an altered entry is the same logical object as before
 	value->oid = entry->oid;
 
-	if (!(value->name == entry->name)) {
+	// A case-sensitive set is keyed on the exact name, so a rename that changes only case does move the entry --
+	// where duckdb's own case-insensitive comparison would call it the same name and leave the chain keyed
+	// under the old one.
+	const bool renamed = map.IsCaseSensitive() ? entry->name.GetIdentifierName() != value->name.GetIdentifierName()
+	                                           : !(value->name == entry->name);
+	if (renamed) {
 		if (!RenameEntryInternal(transaction, *entry, value->name, alter_info, read_lock)) {
 			return false;
 		}

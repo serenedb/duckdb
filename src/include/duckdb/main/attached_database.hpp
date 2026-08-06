@@ -102,6 +102,12 @@ public:
 	void FinalizeLoad(optional_ptr<ClientContext> context);
 	//! Close the database before shutting it down.
 	void Close(const DatabaseCloseAction action);
+	//! Whether Close() has run. A catalog that hosts state for other attachments
+	//! needs this: shutdown closes attachments in an arbitrary order, so a peer
+	//! still checkpointing must not reach into one that is already down.
+	bool IsClosed() const {
+		return is_closed;
+	}
 
 	Catalog &ParentCatalog() override;
 	const Catalog &ParentCatalog() const override;

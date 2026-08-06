@@ -123,6 +123,13 @@ public:
 	virtual TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
 	                                      const EntryLookupInfo &lookup_info);
 
+	//! The identifier a catalog that keeps its own definitions knows this table by, zero when the definition is
+	//! duckdb's own. It rides the CreateInfo, so a record of this table resolves by identity rather than by a name
+	//! the owning catalog may since have changed.
+	virtual idx_t GetHostId() const {
+		return 0;
+	}
+
 	virtual bool IsDuckTable() const {
 		return false;
 	}
@@ -168,6 +175,8 @@ public:
 	//! Scan all triggers on this table (default: no-op - non-DuckDB tables have no triggers)
 	virtual void ScanTriggers(CatalogTransaction transaction,
 	                          const std::function<void(CatalogEntry &)> &callback) const;
+	//! Drop a trigger by name; false when this table has no trigger by that name (default: it has none at all)
+	virtual bool DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade);
 	//! Collect triggers matching the given event type and for_each granularity, regardless of timing
 	vector<const_reference<TriggerCatalogEntry>>
 	GetTriggersForEvent(CatalogTransaction transaction, TriggerEventType event_type, TriggerForEach for_each) const;

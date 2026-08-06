@@ -51,6 +51,12 @@ public:
 	Value comment;
 	//! Key-value tags with additional metadata
 	InsertionOrderPreservingMap<string> tags;
+	//! Identity assigned by the catalog that owns the entry, and the identity of its parent. Zero for an entry
+	//! duckdb owns outright. A host catalog whose names are mutable needs the entry and everything reached from it
+	//! to be addressable by something a rename cannot move, and the info is the one thing every version of an
+	//! entry carries -- the same role host_id serves on ColumnDefinition and Constraint.
+	idx_t host_id = 0;
+	idx_t host_parent_id = 0;
 
 public:
 	const QualifiedName &GetQualifiedName() const {

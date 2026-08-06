@@ -42,12 +42,9 @@
 namespace duckdb {
 
 DataTableInfo::DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, Identifier schema,
-                             Identifier table)
-    : db(db), table_io_manager(std::move(table_io_manager_p)), schema(std::move(schema)), table(std::move(table)) {
-	auto &config = DBConfig::GetConfig(db.GetDatabase());
-	if (config.table_identity_provider) {
-		catalog_id = config.table_identity_provider(db, this->schema, this->table);
-	}
+                             Identifier table, idx_t catalog_id)
+    : db(db), table_io_manager(std::move(table_io_manager_p)), schema(std::move(schema)), table(std::move(table)),
+      catalog_id(catalog_id) {
 }
 
 void DataTableInfo::BindIndexes(ClientContext &context, const char *index_type) {
@@ -81,9 +78,9 @@ bool DataTableInfo::HasIndexStorageInfo(const Identifier &name) const {
 
 DataTable::DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, const string &schema,
                      const string &table, vector<ColumnDefinition> column_definitions_p,
-                     unique_ptr<PersistentTableData> data)
-    : db(db),
-      info(make_shared_ptr<DataTableInfo>(db, std::move(table_io_manager_p), Identifier(schema), Identifier(table))),
+                     unique_ptr<PersistentTableData> data, idx_t catalog_id)
+    : db(db), info(make_shared_ptr<DataTableInfo>(db, std::move(table_io_manager_p), Identifier(schema),
+                                                  Identifier(table), catalog_id)),
       column_definitions(std::move(column_definitions_p)), version(DataTableVersion::MAIN_TABLE) {
 	// initialize the table with the existing data from disk, if any
 	auto types = GetTypes();

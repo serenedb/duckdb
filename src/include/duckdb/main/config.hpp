@@ -50,6 +50,7 @@ class CollationBinding;
 class ClientContext;
 class Binder;
 class DataTable;
+class TableCatalogEntry;
 class DuckTransaction;
 class TableIndexList;
 class RowGroupCollection;
@@ -70,7 +71,6 @@ class TypeManager;
 
 struct CompressionFunctionSet;
 struct DatabaseCacheEntry;
-struct HostTableDefinition;
 struct DBConfig;
 struct SettingLookupResult;
 
@@ -215,16 +215,10 @@ public:
 	//! replay) so the host can inject externally-stored indexes into its index list
 	//! before any WAL operations replay against the table.
 	void (*external_index_provider)(DataTable &table) = nullptr;
-	//! The host catalog's identifier for a storage table, resolved once when its
-	//! DataTableInfo is constructed and readable from it thereafter. Zero means the
-	//! host owns no such table, which is the answer for every table it did not create.
-	idx_t (*table_identity_provider)(AttachedDatabase &db, const Identifier &schema, const Identifier &table) = nullptr;
-	//! The definition of the storage table the host catalog knows by this identifier, rebuilt from that catalog.
-	//! A checkpoint records only the rows of such a table, so this is what the load reads the definition from.
-	//! `with_checks` is false on the retry the load makes when the CHECK constraints do not bind, mirroring the
-	//! host's own create. Null when the host has no table under that identifier.
-	unique_ptr<HostTableDefinition> (*table_definition_provider)(AttachedDatabase &db, idx_t catalog_id,
-	                                                             bool with_checks) = nullptr;
+	//! The table the host catalog knows by this identifier. A checkpoint records only the rows of such a table,
+	//! so the load reads the definition off the entry the host has already built and hands it the rows. Null when
+	//! the host holds no table under that identifier -- it was dropped after the checkpoint was taken.
+	optional_ptr<TableCatalogEntry> (*host_table_provider)(AttachedDatabase &db, idx_t catalog_id) = nullptr;
 	//! Replay a merged ROW_GROUP_DATA range into every external index of the table.
 	//! Called on the replay thread after the row groups are merged, with the replay
 	//! transaction; the host scans the range once over that transaction (partitioned

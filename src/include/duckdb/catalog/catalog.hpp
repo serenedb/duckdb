@@ -45,6 +45,7 @@ struct CreateTypeInfo;
 struct CreateTableInfo;
 struct DatabaseSize;
 struct MetadataBlockInfo;
+struct CatalogEntryInfo;
 
 class AttachedDatabase;
 class ClientContext;
@@ -360,7 +361,7 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> AddFunction(ClientContext &context, CreateFunctionInfo &info);
 
 	//! Alter an existing entry in the catalog.
-	DUCKDB_API void Alter(CatalogTransaction transaction, AlterInfo &info);
+	DUCKDB_API virtual void Alter(CatalogTransaction transaction, AlterInfo &info);
 	DUCKDB_API void Alter(ClientContext &context, AlterInfo &info);
 
 	virtual PhysicalOperator &PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
@@ -433,6 +434,18 @@ public:
 	//! Null means the catalog tracks dependencies itself: CatalogSet then records no edges and runs no
 	//! dependency check, leaving cascade and drop-conflict decisions entirely to the catalog.
 	virtual optional_ptr<DependencyManager> GetDependencyManager();
+
+	//! How an entry of this catalog is addressed in the dependency graph, and how such an address is
+	//! resolved back to an entry. The default pair is schema plus name; a catalog whose entries carry a
+	//! stable identity of their own overrides both, and then a rename never has to rewrite an edge.
+	virtual CatalogEntryInfo GetDependencyInfo(const CatalogEntry &entry) const;
+	virtual optional_ptr<CatalogEntry> GetDependencyEntry(CatalogTransaction transaction, const CatalogEntryInfo &info);
+
+	//! Whether dropping an entry lets the dependency manager drop the dependents it finds. A catalog that
+	//! plans its own cascade says no and keeps the edge bookkeeping.
+	virtual bool CascadeDropsThroughDependencies() const {
+		return true;
+	}
 
 	//! Whether attaching a catalog with the given path and attach options would be considered a conflict
 	virtual bool HasConflictingAttachOptions(const string &path, const AttachOptions &options);

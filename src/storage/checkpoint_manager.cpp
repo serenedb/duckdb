@@ -36,7 +36,6 @@
 #include "duckdb/transaction/transaction_manager.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/storage/data_table.hpp"
-#include "duckdb/storage/host_table_definition.hpp"
 
 namespace duckdb {
 
@@ -238,34 +237,19 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 	}
 
 	vector<reference<SchemaCatalogEntry>> schemas;
-	// The schemas whose definitions a catalog of its own persists. Their tables still keep their rows here, so
-	// the checkpoint writes those as a manifest: an identifier and the data, no CreateInfo.
-	vector<reference<SchemaCatalogEntry>> foreign_schemas;
 	// we scan the set of committed schemas
 	auto &catalog = Catalog::GetCatalog(db).Cast<DuckCatalog>();
-	catalog.ScanSchemas(
-	    [&](SchemaCatalogEntry &entry) { (entry.duck_managed ? schemas : foreign_schemas).push_back(entry); });
+	catalog.ScanSchemas([&](SchemaCatalogEntry &entry) {
+		// A schema whose definitions a catalog of its own persists. Its tables still keep their rows here, so
+		// the checkpoint writes those as a manifest: an identifier and the data, no CreateInfo.
+		if (entry.duck_managed) {
+			schemas.push_back(entry);
+		} else {
+			foreign_schemas.insert(entry);
+		}
+	});
 
 	D_ASSERT(catalog.IsDuckCatalog());
-
-	catalog_entry_vector_t manifest_entries;
-	unordered_map<idx_t, reference<CatalogEntry>> manifest_by_id;
-	for (auto &schema : foreign_schemas) {
-		schema.get().Scan(CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
-			if (entry.type != CatalogType::TABLE_ENTRY) {
-				return;
-			}
-			auto storage = entry.Cast<TableCatalogEntry>().TryGetStorage();
-			if (!storage) {
-				return;
-			}
-			auto catalog_id = storage->GetDataTableInfo()->GetCatalogId();
-			if (catalog_id == 0) {
-				return;
-			}
-			manifest_by_id.emplace(catalog_id, entry);
-		});
-	}
 
 	catalog_entries = GetCatalogEntries(schemas);
 	// A catalog that tracks dependencies elsewhere reports no manager; reordering is
@@ -275,57 +259,21 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 		dependency_manager->ReorderEntries(catalog_entries);
 	}
 
-	// The manifest records create their tables, so they inherit the foreign-key ordering the reorder above
-	// established rather than the order the owning schemas happened to hand them out in. The definitions of those
-	// tables, and of the indexes on them, are the owning catalog's and are rebuilt from there at load, so this
-	// file writes no record for them -- they stay in `catalog_entries` because the delta merge below still has to
-	// see them.
-	auto qualified_name_of = [](const StandardEntry &entry, const Identifier &table) {
-		return entry.schema.name.GetIdentifierName() + "." + table.GetIdentifierName();
-	};
-	unordered_set<string> manifest_tables;
-	unordered_set<idx_t> definitions_elsewhere;
-	manifest_entries.reserve(manifest_by_id.size());
-	if (!manifest_by_id.empty()) {
-		for (idx_t i = 0; i < catalog_entries.size(); i++) {
-			auto &entry = catalog_entries[i].get();
+	// The manifests come last, and in no particular order: each one is rows filed under an identifier, and the
+	// entry they attach to is the owning catalog's to rebuild -- and so are the indexes over those rows, which
+	// this file keeps as index data on the manifest rather than as entries of its own.
+	auto &written_entries = catalog_entries;
+	for (auto &schema : foreign_schemas) {
+		schema.get().Scan(CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.type != CatalogType::TABLE_ENTRY) {
-				continue;
+				return;
 			}
 			auto storage = entry.Cast<TableCatalogEntry>().TryGetStorage();
-			if (!storage) {
-				continue;
+			if (!storage || storage->GetDataTableInfo()->GetCatalogId() == 0) {
+				return;
 			}
-			auto owner = manifest_by_id.find(storage->GetDataTableInfo()->GetCatalogId());
-			if (owner == manifest_by_id.end()) {
-				continue;
-			}
-			manifest_entries.push_back(owner->second);
-			manifest_tables.insert(qualified_name_of(entry.Cast<StandardEntry>(), entry.name));
-			definitions_elsewhere.insert(i);
-		}
-		for (idx_t i = 0; i < catalog_entries.size(); i++) {
-			auto &entry = catalog_entries[i].get();
-			if (entry.type != CatalogType::INDEX_ENTRY) {
-				continue;
-			}
-			auto &index = entry.Cast<IndexCatalogEntry>();
-			if (manifest_tables.count(qualified_name_of(index, index.GetTableName())) != 0) {
-				definitions_elsewhere.insert(i);
-			}
-		}
-	}
-
-	catalog_entry_vector_t written_entries;
-	written_entries.reserve(catalog_entries.size() - definitions_elsewhere.size() + manifest_entries.size());
-	for (idx_t i = 0; i < catalog_entries.size(); i++) {
-		if (definitions_elsewhere.count(i) == 0) {
-			written_entries.push_back(catalog_entries[i]);
-		}
-	}
-	// The manifests come last: each one creates a table the entries before it may reference.
-	for (auto &entry : manifest_entries) {
-		written_entries.push_back(entry);
+			written_entries.push_back(entry);
+		});
 	}
 
 	// write the actual data into the database
@@ -494,8 +442,15 @@ void CheckpointWriter::WriteDataManifest(TableCatalogEntry &table, Serializer &s
 	throw InternalException("Unsupported method WriteDataManifest for this checkpoint writer");
 }
 
+bool CheckpointWriter::DefinitionElsewhere(const CatalogEntry &entry) const {
+	if (foreign_schemas.empty() || entry.type != CatalogType::TABLE_ENTRY) {
+		return false;
+	}
+	return foreign_schemas.count(entry.Cast<StandardEntry>().schema) != 0;
+}
+
 void CheckpointWriter::WriteEntry(CatalogEntry &entry, Serializer &serializer) {
-	if (!entry.duck_managed) {
+	if (DefinitionElsewhere(entry)) {
 		// The definition is the owning catalog's to persist; what is this file's is the rows, filed under the
 		// identifier that catalog knows the table by.
 		auto &table = entry.Cast<TableCatalogEntry>();
@@ -832,75 +787,25 @@ void CheckpointReader::ReadTable(CatalogTransaction transaction, Deserializer &d
 
 void CheckpointReader::ReadDataManifest(CatalogTransaction transaction, Deserializer &deserializer, idx_t catalog_id) {
 	auto &config = DBConfig::GetConfig(catalog.GetDatabase());
-	if (!config.table_definition_provider) {
+	if (!config.host_table_provider) {
 		throw IOException("corrupt database file - data manifest for table %llu, whose definition no catalog holds",
 		                  catalog_id);
 	}
-	auto definition = config.table_definition_provider(catalog.GetAttached(), catalog_id, /*with_checks=*/true);
-	if (!definition) {
+	auto host_table = config.host_table_provider(catalog.GetAttached(), catalog_id);
+	if (!host_table) {
 		// The table was dropped after this checkpoint was taken. Its rows are still here and the drop is in the WAL
 		// about to replay, so there is nothing to attach them to and nothing to keep: read past them and let the
 		// next checkpoint stop referencing the blocks.
 		SkipTableData(deserializer);
 		return;
 	}
-	auto &schema = catalog.GetSchema(transaction, definition->table->GetQualifiedName().Schema());
-
-	unique_ptr<BoundCreateTableInfo> bound_info;
-	try {
-		bound_info = Binder::BindCreateTableCheckpoint(std::move(definition->table), schema);
-	} catch (const std::exception &) {
-		// The CHECK constraints of a host definition do not always bind here -- one naming a function of the host's
-		// own catalog does not, which is why the host creates such a table without them and enforces them itself.
-		// Retry the way it did rather than refuse to open the database.
-		definition = config.table_definition_provider(catalog.GetAttached(), catalog_id, /*with_checks=*/false);
-		if (!definition) {
-			throw;
-		}
-		bound_info = Binder::BindCreateTableCheckpoint(std::move(definition->table), schema);
-	}
-
-	for (auto &dep : bound_info->Base().dependencies.Set()) {
-		bound_info->dependencies.AddDependency(dep);
-	}
-
+	auto &table = host_table->Cast<DuckTableEntry>();
+	auto bound_info = Binder::BindCreateTableCheckpoint(table.GetInfo(), table.ParentSchema());
 	ReadTableData(transaction, deserializer, *bound_info);
-
-	// A named constraint this file has no index for was added to the host catalog after the checkpoint. Leave it
-	// out of the table: the ALTER that added it is in the WAL about to replay, and replaying it is what builds the
-	// index over the rows -- attaching an empty one here would present it as complete.
-	auto &table_base = bound_info->Base().Cast<CreateTableInfo>();
-	auto has_index_data = [&](const string &index_name) {
-		for (auto &index : bound_info->indexes) {
-			if (index.name == index_name) {
-				return true;
-			}
-		}
-		return false;
-	};
-	for (idx_t i = table_base.constraints.size(); i > 0; i--) {
-		auto &constraint = table_base.constraints[i - 1];
-		const bool indexed =
-		    constraint->type == ConstraintType::UNIQUE || constraint->type == ConstraintType::FOREIGN_KEY;
-		if (!indexed || constraint->constraint_name.empty() || has_index_data(constraint->constraint_name)) {
-			continue;
-		}
-		table_base.constraints.erase_at(i - 1);
-	}
-
-	auto entry = catalog.CreateTable(transaction, *bound_info);
-	if (!entry) {
-		return;
-	}
-	auto &table_info = entry->Cast<DuckTableEntry>().GetStorage().GetDataTableInfo();
-	for (auto &index : definition->indexes) {
-		// An index the catalog holds but this file does not: it was created after the checkpoint, so its build is
-		// in the WAL that replays next. Attaching it here with no data would present it as complete and empty.
-		if (!table_info->HasIndexStorageInfo(index->GetQualifiedName().Name())) {
-			continue;
-		}
-		CreateIndexEntry(transaction, std::move(index), BlockPointer());
-	}
+	// A named constraint this file has no index for was added to the owning catalog after the checkpoint. The
+	// ALTER that added it is in the WAL about to replay, and replaying it is what builds the index over the rows,
+	// so AdoptStorage leaves it out rather than attaching an empty one that would look complete.
+	table.AdoptStorage(*bound_info);
 }
 
 void CheckpointReader::SkipTableData(Deserializer &deserializer) {

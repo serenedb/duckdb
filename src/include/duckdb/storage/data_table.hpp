@@ -67,9 +67,11 @@ public:
 	//! Lets the host re-inject its external indexes after the column layout changed.
 	void RefreshExternalIndexes();
 	//! Constructs a new data table from an (optional) set of persistent segments
+	//! `catalog_id` is the identifier a host catalog knows this table by, zero when the definition is duckdb's own.
+	//! It is what the WAL and the checkpoint manifest file the rows under, so a rename cannot reach it.
 	DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager, const string &schema,
 	          const string &table, vector<ColumnDefinition> column_definitions_p,
-	          unique_ptr<PersistentTableData> data = nullptr);
+	          unique_ptr<PersistentTableData> data = nullptr, idx_t catalog_id = 0);
 	//! Constructs a DataTable as a delta on an existing data table with a newly added column
 	DataTable(ClientContext &context, DataTable &parent, ColumnDefinition &new_column, Expression &default_value);
 	//! Constructs a DataTable as a delta on an existing data table but with one column removed

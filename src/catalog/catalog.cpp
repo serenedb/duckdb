@@ -1,6 +1,7 @@
 #include "duckdb/catalog/catalog.hpp"
 
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/catalog_entry/list.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
@@ -1364,6 +1365,19 @@ vector<MetadataBlockInfo> Catalog::GetMetadataInfo(ClientContext &context) {
 
 optional_ptr<DependencyManager> Catalog::GetDependencyManager() {
 	return nullptr;
+}
+
+CatalogEntryInfo Catalog::GetDependencyInfo(const CatalogEntry &entry) const {
+	return CatalogEntryInfo {entry.type, DependencyManager::GetSchema(entry), entry.name,
+	                         Identifier(entry.ParentCatalog().GetName())};
+}
+
+optional_ptr<CatalogEntry> Catalog::GetDependencyEntry(CatalogTransaction transaction, const CatalogEntryInfo &info) {
+	auto schema_entry = GetSchema(transaction, info.schema, OnEntryNotFound::RETURN_NULL);
+	if (info.type == CatalogType::SCHEMA_ENTRY || !schema_entry) {
+		return reinterpret_cast<CatalogEntry *>(schema_entry.get());
+	}
+	return schema_entry->GetEntry(transaction, info.type, info.name);
 }
 
 ErrorData Catalog::SupportsCreateTable(BoundCreateTableInfo &info) {

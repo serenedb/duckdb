@@ -22,7 +22,7 @@ struct DataTableInfo {
 
 public:
 	DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, Identifier schema,
-	              Identifier table);
+	              Identifier table, idx_t catalog_id = 0);
 
 	//! Bind unknown indexes throwing an exception if binding fails.
 	//! Only binds the specified index type, or all, if nullptr.
