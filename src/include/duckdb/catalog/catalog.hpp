@@ -447,6 +447,13 @@ public:
 		return true;
 	}
 
+	//! Whether `alter_info` leaves a dependent of this kind unusable, asked only for the alters the dependency
+	//! manager would otherwise refuse. A catalog whose dependents bind by position rather than by name survives
+	//! renames its dependents would not survive here.
+	virtual bool AlterBreaksDependent(const AlterInfo &alter_info, CatalogType dependent_type) const {
+		return true;
+	}
+
 	//! Whether attaching a catalog with the given path and attach options would be considered a conflict
 	virtual bool HasConflictingAttachOptions(const string &path, const AttachOptions &options);
 

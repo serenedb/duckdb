@@ -456,6 +456,10 @@ void CheckpointWriter::WriteEntry(CatalogEntry &entry, Serializer &serializer) {
 		auto &table = entry.Cast<TableCatalogEntry>();
 		serializer.WriteProperty(98, "manifest_catalog_id", table.GetStorage().GetDataTableInfo()->GetCatalogId());
 		serializer.WriteProperty(99, "catalog_type", entry.type);
+		// The shape these rows are in, so they can be read back without asking the owning catalog what the
+		// table looks like now: a crash between a definition change and the reshape that follows it leaves the
+		// two apart, and the reshape replays over these rows afterwards.
+		serializer.WriteProperty(100, "manifest_table", &table);
 		WriteDataManifest(table, serializer);
 		return;
 	}
@@ -791,6 +795,7 @@ void CheckpointReader::ReadDataManifest(CatalogTransaction transaction, Deserial
 		throw IOException("corrupt database file - data manifest for table %llu, whose definition no catalog holds",
 		                  catalog_id);
 	}
+	auto manifest_info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "manifest_table");
 	auto host_table = config.host_table_provider(catalog.GetAttached(), catalog_id);
 	if (!host_table) {
 		// The table was dropped after this checkpoint was taken. Its rows are still here and the drop is in the WAL
@@ -800,7 +805,9 @@ void CheckpointReader::ReadDataManifest(CatalogTransaction transaction, Deserial
 		return;
 	}
 	auto &table = host_table->Cast<DuckTableEntry>();
-	auto bound_info = Binder::BindCreateTableCheckpoint(table.GetInfo(), table.ParentSchema());
+	// At the shape the rows were written in, which the owning catalog's definition need not still be.
+	manifest_info->SetQualification(table.ParentSchema().ParentCatalog().GetName(), table.ParentSchema().name);
+	auto bound_info = Binder::BindCreateTableCheckpoint(std::move(manifest_info), table.ParentSchema());
 	ReadTableData(transaction, deserializer, *bound_info);
 	// A named constraint this file has no index for was added to the owning catalog after the checkpoint. The
 	// ALTER that added it is in the WAL about to replay, and replaying it is what builds the index over the rows,

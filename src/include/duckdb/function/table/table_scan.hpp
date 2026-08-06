@@ -33,6 +33,9 @@ struct TableScanBindData : public TableFunctionData {
 	unique_ptr<RowGroupOrderOptions> order_options;
 	//! Subset of partition indices to scan, if null, scan all
 	unique_ptr<unordered_set<idx_t>> partitions_to_scan;
+	//! The name a plan shows for this scan, when the relation the user named is not the one holding the rows.
+	//! Selecting from an index by name is the case: the rows are the table's, the name is the index's.
+	string display_name;
 
 public:
 	bool Equals(const FunctionData &other_p) const override {
@@ -47,6 +50,7 @@ public:
 		bind_data->order_options = order_options ? make_uniq<RowGroupOrderOptions>(*order_options) : nullptr;
 		bind_data->partitions_to_scan =
 		    partitions_to_scan ? make_uniq<unordered_set<idx_t>>(*partitions_to_scan) : nullptr;
+		bind_data->display_name = display_name;
 		return std::move(bind_data);
 	}
 };

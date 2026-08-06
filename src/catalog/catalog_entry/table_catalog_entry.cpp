@@ -111,6 +111,10 @@ unique_ptr<CreateInfo> TableCatalogEntry::GetInfo() const {
 	return std::move(result);
 }
 
+string TableCatalogEntry::ScanName() const {
+	return QualifiedName(catalog.GetName(), schema.name, name).ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+}
+
 string TableCatalogEntry::ColumnsToSQL(const ColumnList &columns, const vector<unique_ptr<Constraint>> &constraints) {
 	duckdb::stringstream ss;
 

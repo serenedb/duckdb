@@ -54,6 +54,12 @@
         "id": 205,
         "name": "allow_internal",
         "type": "bool"
+      },
+      {
+        "id": 206,
+        "name": "host_id",
+        "type": "idx_t",
+        "default": 0
       }
     ],
     "methods": {

@@ -69,6 +69,12 @@
         "id": 110,
         "name": "extension_name",
         "type": "Identifier"
+      },
+      {
+        "id": 111,
+        "name": "host_id",
+        "type": "idx_t",
+        "default": 0
       }
     ],
     "methods": {

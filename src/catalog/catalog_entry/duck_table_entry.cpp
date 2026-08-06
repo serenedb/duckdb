@@ -144,8 +144,13 @@ DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, Bou
 
 void DuckTableEntry::CreateStorage(BoundCreateTableInfo &info, bool tolerate_missing_index_data) {
 	// create the physical storage
+	//
+	// At the shape `info` describes while it still has one: an adopted manifest carries the shape the rows are
+	// actually in, and the definition in front of them can be a reshape ahead of that. The constructor path has
+	// already moved its columns onto this entry, which is what the fallback is for.
+	auto &shape = info.Base().columns.empty() ? columns : info.Base().columns;
 	vector<ColumnDefinition> column_defs;
-	for (auto &col_def : columns.Physical()) {
+	for (auto &col_def : shape.Physical()) {
 		CheckTypeIsSupported(col_def.Type(), catalog.GetAttached());
 
 		column_defs.push_back(col_def.Copy());
@@ -1350,8 +1355,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context
 	auto new_storage =
 	    make_shared_ptr<DataTable>(context, *storage, columns.LogicalToPhysical(LogicalIndex(change_idx)).index,
 	                               info.target_type, std::move(storage_oids), *bound_expression);
-	auto result = AlteredEntry(*bound_create_info, new_storage);
-	return std::move(result);
+	return AlteredEntry(*bound_create_info, new_storage);
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::SetColumnComment(ClientContext &context, SetColumnCommentInfo &info) {
@@ -1508,8 +1512,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddConstraint(ClientContext &context, A
 	const auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
 
 	auto new_storage = make_shared_ptr<DataTable>(context, *storage, *bound_constraint);
-	auto new_entry = AlteredEntry(*bound_create_info, new_storage);
-	return std::move(new_entry);
+	return AlteredEntry(*bound_create_info, new_storage);
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::Copy(ClientContext &context) const {

@@ -123,6 +123,11 @@ public:
 	virtual TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
 	                                      const EntryLookupInfo &lookup_info);
 
+	//! The name a query plan shows for a scan of this table. Qualified by default, because a plan over several
+	//! attached catalogs has to say which one it read; a catalog whose relations are all in one database names
+	//! them the way the user wrote them instead.
+	virtual string ScanName() const;
+
 	//! The identifier a catalog that keeps its own definitions knows this table by, zero when the definition is
 	//! duckdb's own. It rides the CreateInfo, so a record of this table resolves by identity rather than by a name
 	//! the owning catalog may since have changed.

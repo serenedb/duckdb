@@ -786,8 +786,12 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			case AlterTableType::RENAME_COLUMN: {
 				// Secondary indexes reference their table by catalog entry and
 				// their key columns by storage position, so a rename underneath
-				// them does not affect index lookups.
-				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
+				// them does not affect index lookups. A sequence a table owns --
+				// the counter behind a generated key -- is bound to the table
+				// rather than to any name in it, so a rename cannot reach it
+				// either.
+				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY ||
+				    dep.EntryInfo().type == CatalogType::SEQUENCE_ENTRY) {
 					disallow_alter = false;
 				}
 				break;
@@ -806,6 +810,9 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		}
 		default:
 			break;
+		}
+		if (disallow_alter) {
+			disallow_alter = catalog.AlterBreaksDependent(alter_info, dep.EntryInfo().type);
 		}
 		if (disallow_alter) {
 			throw DependencyException(
