@@ -665,7 +665,13 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	result.types = {LogicalType::BIGINT};
 
 	BindSchemaOrCatalog(node.qualified_name);
-	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, node.qualified_name);
+	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, node.qualified_name);
+	auto &table_entry = *entry_retriever.GetEntry(table_lookup, OnEntryNotFound::THROW_EXCEPTION);
+	if (table_entry.type != CatalogType::TABLE_ENTRY) {
+		throw CatalogException("%s is not an %s", node.qualified_name.Name().GetIdentifierName(),
+		                       TableCatalogEntry::Name);
+	}
+	auto &table = table_entry.Cast<TableCatalogEntry>();
 
 	// SereneDB fork: a zero-physical-column table (CREATE TABLE t();) has no columns to
 	// materialize a row into, so INSERT ... DEFAULT VALUES is rejected here (PostgreSQL allows it).

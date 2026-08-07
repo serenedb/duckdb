@@ -166,6 +166,7 @@ public:
 
 	optional_ptr<CatalogEntry> CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info);
 	void ScanTriggers(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback) const;
+	optional_ptr<CatalogEntry> GetTrigger(CatalogTransaction transaction, const Identifier &name) const;
 	void ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback);
 	bool DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade);
 	//! Collect triggers matching the given event type and for_each granularity, regardless of timing

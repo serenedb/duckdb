@@ -426,6 +426,13 @@ bool TableCatalogEntry::DropTrigger(CatalogTransaction transaction, const Identi
 	return triggers && triggers->DropEntry(transaction, name, cascade);
 }
 
+optional_ptr<CatalogEntry> TableCatalogEntry::GetTrigger(CatalogTransaction transaction, const Identifier &name) const {
+	if (!triggers) {
+		return nullptr;
+	}
+	return triggers->GetEntry(transaction, name);
+}
+
 vector<const_reference<TriggerCatalogEntry>> TableCatalogEntry::GetTriggersForEvent(CatalogTransaction transaction,
                                                                                     TriggerEventType event_type,
                                                                                     TriggerForEach for_each) const {

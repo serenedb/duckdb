@@ -167,6 +167,8 @@ public:
 	CatalogType type;
 	Identifier schema;
 	Identifier name;
+	//! The table that owns this entry, for entries that are not unique within their schema (triggers)
+	Identifier table;
 
 public:
 	bool operator==(const CatalogEntryInfo &other) const {
@@ -177,6 +179,9 @@ public:
 			return false;
 		}
 		if (other.name != name) {
+			return false;
+		}
+		if (other.table != table) {
 			return false;
 		}
 		return true;

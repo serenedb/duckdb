@@ -13,6 +13,7 @@
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/common/queue.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
 #include "duckdb/catalog/dependency_catalog_set.hpp"
@@ -35,14 +36,30 @@ MangledEntryName::MangledEntryName(const CatalogEntryInfo &info) {
 	auto &type = info.type;
 	auto &schema = info.schema;
 	auto &name = info.name;
+	auto &table = info.table;
 
-	this->name = Identifier(CatalogTypeToString(type) + '\0' + schema + '\0' + name);
-	AssertMangledName(this->name.GetIdentifierName(), 2);
+	string mangled = CatalogTypeToString(type) + '\0' + schema + '\0' + name;
+	idx_t expected_null_bytes = 2;
+	if (!table.empty()) {
+		mangled += '\0' + table.GetIdentifierName();
+		expected_null_bytes++;
+	}
+	this->name = Identifier(mangled);
+	AssertMangledName(this->name.GetIdentifierName(), expected_null_bytes);
 }
 
 MangledDependencyName::MangledDependencyName(const MangledEntryName &from, const MangledEntryName &to) {
 	this->name = Identifier(from.name + '\0' + to.name);
-	AssertMangledName(this->name.GetIdentifierName(), 5);
+#ifdef DEBUG
+	auto count_nulls = [](const Identifier &id) {
+		idx_t count = 0;
+		for (auto ch : id.GetIdentifierName()) {
+			count += ch == '\0';
+		}
+		return count;
+	};
+	AssertMangledName(this->name.GetIdentifierName(), count_nulls(from.name) + count_nulls(to.name) + 1);
+#endif
 }
 
 DependencyManager::DependencyManager(DuckCatalog &catalog) : catalog(catalog), subjects(catalog), dependents(catalog) {
@@ -70,12 +87,7 @@ MangledEntryName DependencyManager::MangleName(const CatalogEntry &entry) {
 		auto &dependency_entry = entry.Cast<DependencyEntry>();
 		return dependency_entry.EntryMangledName();
 	}
-	auto type = entry.type;
-	auto schema = GetSchema(entry);
-	auto name = entry.name;
-	CatalogEntryInfo info {type, Identifier(schema), name};
-
-	return MangleName(info);
+	return MangleName(GetLookupProperties(entry));
 }
 
 DependencyInfo DependencyInfo::FromSubject(DependencyEntry &dep) {
@@ -271,6 +283,14 @@ void DependencyManager::CreateDependency(CatalogTransaction transaction, Depende
 	CreateSubject(transaction, info);
 }
 
+//! Whether the subject is the table that the dependent trigger is defined on
+static bool IsOwningTableOfTrigger(const CatalogEntryInfo &dependent, const CatalogEntryInfo &subject) {
+	if (dependent.type != CatalogType::TRIGGER_ENTRY || subject.type != CatalogType::TABLE_ENTRY) {
+		return false;
+	}
+	return subject.schema == dependent.schema && subject.name == dependent.table;
+}
+
 void DependencyManager::CreateDependencies(CatalogTransaction transaction, const CatalogEntry &object,
                                            const LogicalDependencyList &dependencies) {
 	DependencyDependentFlags dependency_flags;
@@ -302,7 +322,11 @@ void DependencyManager::CreateDependencies(CatalogTransaction transaction, const
 		if (index_blocks_non_relations && !relation) {
 			flags.SetBlocking();
 		}
-		DependencyInfo info {DependencyDependent {GetLookupProperties(object), flags, dependency.subdependencies},
+		if (IsOwningTableOfTrigger(object_info, dependency.entry)) {
+			// a trigger is dropped along with the table it is defined on, so it must not block dropping that table
+			flags = DependencyDependentFlags();
+		}
+		DependencyInfo info {DependencyDependent {object_info, flags, dependency.subdependencies},
 		                     DependencySubject {dependency.entry, DependencySubjectFlags(), optional_idx()}};
 		CreateDependency(transaction, info);
 	}
@@ -332,11 +356,16 @@ CatalogEntryInfo DependencyManager::GetLookupProperties(const CatalogEntry &entr
 	if (entry.type == CatalogType::DEPENDENCY_ENTRY) {
 		auto &dependency_entry = entry.Cast<DependencyEntry>();
 		return dependency_entry.EntryInfo();
+	} else if (entry.type == CatalogType::TRIGGER_ENTRY) {
+		// triggers live in the catalog set of the table they are defined on, and are only unique within that table
+		auto &trigger = entry.Cast<TriggerCatalogEntry>();
+		return CatalogEntryInfo {entry.type, DependencyManager::GetSchema(entry), entry.name,
+		                         trigger.base_table->Table()};
 	} else {
 		auto schema = DependencyManager::GetSchema(entry);
 		auto &name = entry.name;
 		auto &type = entry.type;
-		return CatalogEntryInfo {type, Identifier(schema), name};
+		return CatalogEntryInfo {type, Identifier(schema), name, Identifier()};
 	}
 }
 
@@ -355,7 +384,21 @@ optional_ptr<CatalogEntry> DependencyManager::LookupEntry(CatalogTransaction tra
 		// This is a schema entry, perform the callback only providing the schema
 		return reinterpret_cast<CatalogEntry *>(schema_entry.get());
 	}
+	if (type == CatalogType::TRIGGER_ENTRY) {
+		// triggers are not stored in the schema, look them up through the table they are defined on
+		return LookupTrigger(transaction, *schema_entry, info);
+	}
 	return schema_entry->GetEntry(transaction, type, name);
+}
+
+optional_ptr<CatalogEntry> DependencyManager::LookupTrigger(CatalogTransaction transaction,
+                                                            SchemaCatalogEntry &schema_entry,
+                                                            const CatalogEntryInfo &info) {
+	auto table_entry = schema_entry.GetEntry(transaction, CatalogType::TABLE_ENTRY, info.table);
+	if (!table_entry || table_entry->type != CatalogType::TABLE_ENTRY) {
+		return nullptr;
+	}
+	return table_entry->Cast<TableCatalogEntry>().GetTrigger(transaction, info.name);
 }
 
 optional_ptr<CatalogEntry> DependencyManager::LookupEntry(CatalogTransaction transaction, CatalogEntry &dependency) {
@@ -510,7 +553,7 @@ static string EntryToString(CatalogEntryInfo &info) {
 		return StringUtil::Format("secret function \"%s\"", info.name);
 	}
 	case CatalogType::TRIGGER_ENTRY: {
-		return StringUtil::Format("trigger \"%s\"", info.name);
+		return StringUtil::Format("trigger \"%s\" on table \"%s\"", info.name, info.table);
 	}
 	case CatalogType::TOKENIZER_ENTRY: {
 		return StringUtil::Format("tokenizer \"%s\"", info.name);
@@ -868,6 +911,10 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		}
 		default:
 			break;
+		}
+		if (IsOwningTableOfTrigger(dep.EntryInfo(), old_info)) {
+			// a trigger does not prevent altering the table it is defined on, only referencing its body
+			disallow_alter = false;
 		}
 		if (disallow_alter) {
 			throw DependencyException("Cannot alter entry \"%s\" because there are entries that "
