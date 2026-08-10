@@ -93,7 +93,8 @@ struct CleavedDictionary {
 //! consumes sizes; the entry lists it used to materialize are consumed once per segment, at flush. Everything a
 //! DictFSSTPlusLayout::Compute needs is here.
 struct CleaveStats {
-	idx_t pc = 0; //! prefix groups the DP wants (the emission is never clamped below this, see prefix_cap)
+	//! Prefix groups the DP wants (the emission is never clamped below this, see prefix_cap).
+	idx_t pc = 0;
 	idx_t prefix_bytes = 0;
 	idx_t suffix_bytes = 0;
 	uint32_t max_prefix_len = 0;

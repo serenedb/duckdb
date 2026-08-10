@@ -111,19 +111,21 @@ inline uint32_t CleaveDP(const CleaveView<IDENTITY> &v, uint32_t m, CleaveScratc
 		const DFrame f = dstk.back();
 		dstk.pop_back();
 		const uint32_t i = f.node;
+		const uint32_t l = lc[i];
+		const uint32_t r = rc[i];
 		if (!f.done) {
 			dstk.push_back({i, true});
-			if (lc[i] != CLEAVE_NONE) {
-				dstk.push_back({lc[i], false});
+			if (l != CLEAVE_NONE) {
+				dstk.push_back({l, false});
 			}
-			if (rc[i] != CLEAVE_NONE) {
-				dstk.push_back({rc[i], false});
+			if (r != CLEAVE_NONE) {
+				dstk.push_back({r, false});
 			}
 		} else {
-			const idx_t vl = (lc[i] != CLEAVE_NONE) ? value[lc[i]] : 0;
-			const idx_t vr = (rc[i] != CLEAVE_NONE) ? value[rc[i]] : 0;
-			const uint32_t szl = (lc[i] != CLEAVE_NONE) ? sz[lc[i]] : 0;
-			const uint32_t szr = (rc[i] != CLEAVE_NONE) ? sz[rc[i]] : 0;
+			const idx_t vl = (l != CLEAVE_NONE) ? value[l] : 0;
+			const idx_t vr = (r != CLEAVE_NONE) ? value[r] : 0;
+			const uint32_t szl = (l != CLEAVE_NONE) ? sz[l] : 0;
+			const uint32_t szr = (r != CLEAVE_NONE) ? sz[r] : 0;
 			sz[i] = 1 + szl + szr;
 			const idx_t whole = idx_t(sz[i]) * idx_t(lcp[i]);
 			if (whole >= vl + vr + GROUP_COST) {
