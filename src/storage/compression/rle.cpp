@@ -179,8 +179,12 @@ public:
 					Flush<OP>();
 					seen_count++;
 				}
+				//! Count this element as the first of its new run instead of re-scanning it: for a
+				//! self-equal value the rescan would count it identically, and for NaN it never would
+				//! (NaN != NaN), which left this loop spinning on the same element forever.
 				last_value = data[i];
-				last_seen_count = 0;
+				last_seen_count = 1;
+				i++;
 				continue;
 			}
 			idx_t run = j - i;
