@@ -322,7 +322,10 @@ idx_t WriteCleavedSegment(DictFSSTCompressionState &state, DictFSSTMode mode, co
 	auto layout = DictFSSTPlusLayout::Compute(tuple_count, dict_count, prefix_count, indices_width,
 	                                          prefix_lengths_width, prefix_id_width, suffix_lengths_width,
 	                                          symbol_table_size, dict.prefix_bytes, dict.suffix_bytes);
-	D_ASSERT(layout.total <= state.info.GetBlockSize());
+	if (layout.total > state.info.GetBlockSize()) {
+		throw InternalException("dict_fsst: cleaved segment layout (%llu bytes) exceeds the block size (%llu)",
+		                        layout.total, state.info.GetBlockSize());
+	}
 
 	auto base_ptr = state.handle.GetDataMutable();
 	auto header = reinterpret_cast<dict_fsst_compression_header_t *>(base_ptr);
@@ -817,7 +820,12 @@ idx_t DictFSSTCompressionState::WriteNative(DictFSSTMode mode) {
 	const bool has_selection = mode != DictFSSTMode::FSST_ONLY;
 	const vector<string_t> &src = encoded ? dict.encoded : dict.raw;
 	auto layout = ComputeNativeLayout(dict, tuple_count, mode);
-	D_ASSERT(layout.total <= info.GetBlockSize());
+	//! A real check, not just an assert: with asserts compiled out an oversized layout writes past the
+	//! block buffer. Failing the checkpoint is recoverable; the corruption is not.
+	if (layout.total > info.GetBlockSize()) {
+		throw InternalException("dict_fsst: native segment layout (%llu bytes) exceeds the block size (%llu)",
+		                        layout.total, info.GetBlockSize());
+	}
 
 	auto base_ptr = handle.GetDataMutable();
 	auto header = reinterpret_cast<dict_fsst_compression_header_t *>(base_ptr);
