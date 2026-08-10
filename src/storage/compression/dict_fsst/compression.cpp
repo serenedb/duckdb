@@ -323,8 +323,9 @@ idx_t WriteCleavedSegment(DictFSSTCompressionState &state, DictFSSTMode mode, co
 	                                          prefix_lengths_width, prefix_id_width, suffix_lengths_width,
 	                                          symbol_table_size, dict.prefix_bytes, dict.suffix_bytes);
 	if (layout.total > state.info.GetBlockSize()) {
-		throw InternalException("dict_fsst: cleaved segment layout (%llu bytes) exceeds the block size (%llu)",
-		                        layout.total, state.info.GetBlockSize());
+		throw IOException("dict_fsst: refusing to write a cleaved segment layout of %llu bytes past the %llu-byte "
+		                  "block",
+		                  layout.total, state.info.GetBlockSize());
 	}
 
 	auto base_ptr = state.handle.GetDataMutable();
@@ -821,10 +822,14 @@ idx_t DictFSSTCompressionState::WriteNative(DictFSSTMode mode) {
 	const vector<string_t> &src = encoded ? dict.encoded : dict.raw;
 	auto layout = ComputeNativeLayout(dict, tuple_count, mode);
 	//! A real check, not just an assert: with asserts compiled out an oversized layout writes past the
-	//! block buffer. Failing the checkpoint is recoverable; the corruption is not.
+	//! block buffer. Failing the checkpoint is recoverable; the corruption is not. Deliberately NOT an
+	//! InternalException: that type invalidates the whole DatabaseInstance when it surfaces through a
+	//! commit-time auto-checkpoint, while an IOException stops at the per-database invalidation --
+	//! detach and reattach recovers, and the other attached databases keep serving.
 	if (layout.total > info.GetBlockSize()) {
-		throw InternalException("dict_fsst: native segment layout (%llu bytes) exceeds the block size (%llu)",
-		                        layout.total, info.GetBlockSize());
+		throw IOException("dict_fsst: refusing to write a native segment layout of %llu bytes past the %llu-byte "
+		                  "block",
+		                  layout.total, info.GetBlockSize());
 	}
 
 	auto base_ptr = handle.GetDataMutable();
