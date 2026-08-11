@@ -3400,6 +3400,15 @@ public:
 	static unique_ptr<TransformResultValue> TransformTypeListInternal(PEGTransformer &transformer,
 	                                                                  ParseResult &parse_result);
 	static vector<LogicalType> TransformTypeList(PEGTransformer &transformer, const vector<LogicalType> &type);
+	static unique_ptr<TransformResultValue> TransformReindexStatementInternal(PEGTransformer &transformer,
+	                                                                          ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformReindexStatement(PEGTransformer &transformer, const string &reindex_kind,
+	                                                          const optional<string> &reindex_concurrently,
+	                                                          unique_ptr<BaseTableRef> base_table_name);
+	static unique_ptr<TransformResultValue> TransformReindexKindInternal(PEGTransformer &transformer,
+	                                                                     ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformReindexConcurrentlyInternal(PEGTransformer &transformer,
+	                                                                             ParseResult &parse_result);
 	static unique_ptr<TransformResultValue> TransformSelectStatementInternal(PEGTransformer &transformer,
 	                                                                         ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformSelectStatement(PEGTransformer &transformer,

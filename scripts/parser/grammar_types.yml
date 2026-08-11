@@ -104,6 +104,7 @@ SQLStatement:
     - UpdateStatement
     - UseStatement
     - VacuumStatement
+    - ReindexStatement
     - PragmaAssignOrFunction
 
 SelectStatement:
@@ -1063,6 +1064,8 @@ String:
     - SeqMinOrMax
     - OperatorLiteral
     - VacuumOption
+    - ReindexKind
+    - ReindexConcurrently
     - OptAnalyze
     - OptFull
     - OptFreeze
