@@ -186,7 +186,9 @@ unique_ptr<LogicalOperator> Binder::BindUpdateSet(LogicalOperator &op, unique_pt
 
 void Binder::BindRowIdColumns(TableCatalogEntry &table, LogicalGet &get, vector<unique_ptr<Expression>> &expressions) {
 	auto row_id_columns = table.GetRowIdColumns();
-	auto virtual_columns = table.GetVirtualColumns();
+	// The LogicalGet holds the scan-declared virtual columns, which may
+	// extend the catalog entry's static set.
+	auto &virtual_columns = get.virtual_columns;
 	auto &column_ids = get.GetColumnIds();
 	for (auto &row_id_column : row_id_columns) {
 		auto row_id_entry = virtual_columns.find(row_id_column);
