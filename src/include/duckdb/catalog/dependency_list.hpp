@@ -27,6 +27,8 @@ struct LogicalDependency {
 public:
 	CatalogEntryInfo entry;
 	Identifier catalog;
+	//! Whether this dependency is automatically satisfied and must never block a DROP/ALTER of the entry it depends on
+	DependencyDependentFlags flags = DependencyDependentFlags().SetBlocking();
 	bool owned_by = false;
 	subdependency_set_t subdependencies;
 
@@ -56,6 +58,7 @@ class LogicalDependencyList {
 
 public:
 	DUCKDB_API void AddDependency(CatalogEntry &entry);
+	DUCKDB_API void AddDependency(CatalogEntry &entry, DependencyDependentFlags flags);
 	DUCKDB_API void AddOwnedDependency(CatalogEntry &entry);
 	DUCKDB_API void AddDependency(const LogicalDependency &entry);
 	DUCKDB_API bool Contains(CatalogEntry &entry);

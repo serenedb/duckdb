@@ -367,7 +367,8 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction trans
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
                                                         CatalogEntry &relation) {
-	info.dependencies.AddDependency(relation);
+	// indexes do not require CASCADE to be dropped, they are simply always dropped along with the table
+	info.dependencies.AddDependency(relation, DependencyDependentFlags());
 
 	// currently, we can not alter PK/FK/UNIQUE constraints
 	// concurrency-safe name checks against other INDEX catalog entries happens in the catalog

@@ -1,5 +1,21 @@
 [
 	{
+		"class": "DependencyDependentFlags",
+		"includes": [
+			"duckdb/catalog/dependency.hpp"
+		],
+		"members": [
+			{
+				"id": 100,
+				"name": "value",
+				"type": "uint8_t",
+				"serialize_property": "RawValue()"
+			}
+		],
+		"pointer_type": "none",
+		"constructor": ["value"]
+	},
+	{
 		"class": "CatalogEntryInfo",
 		"includes": [
 			"duckdb/catalog/dependency.hpp"
@@ -77,6 +93,13 @@
 				"name": "subdependencies",
 				"type": "subdependency_set_t",
 				"default": "subdependency_set_t()"
+			},
+			{
+				"id": 104,
+				"name": "flags",
+				"type": "DependencyDependentFlags",
+				"default": "DependencyDependentFlags().SetBlocking()",
+				"version": "v2.0.0"
 			}
 		],
 		"pointer_type": "none",

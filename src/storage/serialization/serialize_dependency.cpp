@@ -29,11 +29,24 @@ CatalogEntryInfo CatalogEntryInfo::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
+void DependencyDependentFlags::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<uint8_t>(100, "value", RawValue());
+}
+
+DependencyDependentFlags DependencyDependentFlags::Deserialize(Deserializer &deserializer) {
+	auto value = deserializer.ReadPropertyWithDefault<uint8_t>(100, "value");
+	DependencyDependentFlags result(value);
+	return result;
+}
+
 void LogicalDependency::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<CatalogEntryInfo>(100, "entry", entry);
 	serializer.WritePropertyWithDefault<Identifier>(101, "catalog", catalog);
 	serializer.WritePropertyWithDefault<bool>(102, "owned_by", owned_by, false);
 	serializer.WritePropertyWithDefault<subdependency_set_t>(103, "subdependencies", subdependencies, subdependency_set_t());
+	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
+		serializer.WritePropertyWithDefault<DependencyDependentFlags>(104, "flags", flags, DependencyDependentFlags().SetBlocking());
+	}
 }
 
 LogicalDependency LogicalDependency::Deserialize(Deserializer &deserializer) {
@@ -42,6 +55,7 @@ LogicalDependency LogicalDependency::Deserialize(Deserializer &deserializer) {
 	LogicalDependency result(deserializer.TryGet<Catalog>(), entry, std::move(catalog));
 	deserializer.ReadPropertyWithExplicitDefault<bool>(102, "owned_by", result.owned_by, false);
 	deserializer.ReadPropertyWithExplicitDefault<subdependency_set_t>(103, "subdependencies", result.subdependencies, subdependency_set_t());
+	deserializer.ReadPropertyWithExplicitDefault<DependencyDependentFlags>(104, "flags", result.flags, DependencyDependentFlags().SetBlocking());
 	return result;
 }
 
