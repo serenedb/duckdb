@@ -27,6 +27,10 @@ struct MultiFileReaderBindData {
 	vector<MultiFileColumnDefinition> schema;
 	//! The method used to map local -> global columns
 	MultiFileColumnMappingMode mapping = MultiFileColumnMappingMode::BY_NAME;
+	//! Offset added to the file_index virtual column: a caller that narrowed
+	//! the file list can keep the original numbering (like schema/mapping,
+	//! set at bind time and never serialized)
+	idx_t file_index_offset = 0;
 
 	DUCKDB_API void Serialize(Serializer &serializer) const;
 	DUCKDB_API static MultiFileReaderBindData Deserialize(Deserializer &deserializer);
