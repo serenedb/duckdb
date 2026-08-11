@@ -29,12 +29,16 @@ public:
 	unique_ptr<Expression> expression;
 	//! The columns used by the CHECK constraint
 	physical_index_set_t bound_columns;
+	//! SereneDB: set when this is a Row-Level Security WITH CHECK constraint, so a
+	//! violation reports the RLS-policy error instead of the generic CHECK error.
+	bool is_rls = false;
 
 public:
 	unique_ptr<BoundConstraint> Copy() const override {
 		auto result = make_uniq<BoundCheckConstraint>();
 		result->expression = expression->Copy();
 		result->bound_columns = bound_columns;
+		result->is_rls = is_rls;
 		return std::move(result);
 	}
 };

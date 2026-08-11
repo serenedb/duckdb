@@ -49,6 +49,7 @@ class CastFunctionSet;
 class CollationBinding;
 class ClientContext;
 class Binder;
+class LogicalOperator;
 class ErrorManager;
 class CompressionFunction;
 class TableFunctionRef;
@@ -200,7 +201,8 @@ public:
 	GlobalUserSettings user_settings;
 	//! Mandatory per-plan check, run independent of the optimizer so it cannot be
 	//! bypassed via disable_optimizer (security enforcement rides here).
-	void (*access_check_function)(ClientContext &context, Binder &binder) = nullptr;
+	void (*access_check_function)(ClientContext &context, Binder &binder,
+	                              unique_ptr<LogicalOperator> &plan) = nullptr;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);
