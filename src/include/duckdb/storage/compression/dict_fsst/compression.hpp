@@ -333,7 +333,6 @@ public:
 	//! the block fills UNDER the prefix-factored encoding. One entry list (raw + FSST-encoded), one row->entry
 	//! selection, cleaved once per segment at flush.
 	void Compress(const Vector &scan_vector);
-	void FinalizeCompress();
 	//! use_cached_cleave: reuse cut_dict/cut_mode from the triggering RefreshCleave (common flush path,
 	//! no entry change since) instead of re-cleaving from scratch.
 	void Flush(bool final, bool use_cached_cleave = false);
@@ -385,7 +384,7 @@ public:
 	//! at the same budget -- so the written layout never holds more groups than the measurement that admitted it,
 	//! and the emit-side clamp is unreachable rather than load-bearing. Deliberately NOT reset per segment:
 	//! successive segments of one column hold similar dictionaries. Correctness never rests on this value; every
-	//! written layout is measured first (see FinalizeCompress and the certificate rewind).
+	//! written layout is measured first (see the certificate rewind and the write-time guards).
 	idx_t prefix_cap = MIN_PREFIX_CAP;
 
 	// ---- Mode (resolved once from force_dict_fsst_mode) ----

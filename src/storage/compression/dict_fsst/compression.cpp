@@ -1092,17 +1092,5 @@ void DictFSSTCompressionState::Compress(const Vector &scan_vector) {
 	}
 }
 
-void DictFSSTCompressionState::FinalizeCompress() {
-	//! The final segment is the one write no cut guarded, so measure it for real before flushing. If it no longer
-	//! fits -- the between-cleave estimate is a cadence heuristic, not a guarantee -- rewind to the last certified
-	//! state and move the excess on, exactly like an ordinary cut.
-	const idx_t block_size = info.GetBlockSize();
-	while (tuple_count && dict.EncodedReady() && !IsNativeMode(forced_mode) && committed != CutCommit::PLAIN &&
-	       fit_rows && fit_rows < tuple_count && RefreshCleave() > block_size) {
-		FlushRewind();
-	}
-	Flush(true);
-}
-
 } // namespace dict_fsst
 } // namespace duckdb
