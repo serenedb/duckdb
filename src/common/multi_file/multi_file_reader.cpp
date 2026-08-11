@@ -311,7 +311,7 @@ static bool TryResolvePreOpenConstant(column_t column_id, const string &file_pat
 		return true;
 	}
 	if (column_id == MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
-		out_constant = Value::UBIGINT(file_list_idx);
+		out_constant = Value::UBIGINT(file_list_idx + reader_bind.file_index_offset);
 		return true;
 	}
 	auto &hive = reader_bind.hive_partitioning_indexes;
