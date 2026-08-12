@@ -40,6 +40,7 @@ Statement <-
 	DetachStatement /
 	CheckpointStatement /
 	VacuumStatement /
+	ReindexStatement /
 	ResetStatement /
 	ExportStatement /
 	ImportStatement /
