@@ -51,6 +51,7 @@ add_library_unity(
   transform_transaction.cpp
   transform_update.cpp
   transform_use.cpp
+  transform_reindex.cpp
   transform_vacuum.cpp)
 
 set(ALL_OBJECT_FILES
