@@ -142,6 +142,7 @@ SQLStatement:
     - ExtensionRepositoryStatement
     - CreateExtensionRepositoryStmt
     - DropExtensionRepositoryStmt
+    - ReindexStatement
 
 SelectStatement:
   type: "unique_ptr<SelectStatement>"
@@ -1195,6 +1196,8 @@ String:
     - BooleanType
     - DoubleType
     - UpdateSetColumnTarget
+    - ReindexKind
+    - ReindexConcurrently
 
 ConstraintCheckMode:
   type: "ConstraintCheckMode"
