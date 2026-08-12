@@ -8220,6 +8220,34 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformTypeListInterna
 	return make_uniq<TypedTransformResult<vector<LogicalType>>>(result);
 }
 
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformReindexStatementInternal(PEGTransformer &transformer,
+                                                                                          ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto reindex_kind = transformer.Transform<string>(list_pr.GetChild(1));
+	optional<string> reindex_concurrently {};
+	auto &reindex_concurrently_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	if (reindex_concurrently_opt.HasResult()) {
+		auto reindex_concurrently_value = transformer.Transform<string>(reindex_concurrently_opt.GetResult());
+		reindex_concurrently = reindex_concurrently_value;
+	}
+	auto base_table_name = transformer.Transform<unique_ptr<BaseTableRef>>(list_pr.GetChild(3));
+	auto result =
+	    TransformReindexStatement(transformer, reindex_kind, reindex_concurrently, std::move(base_table_name));
+	return make_uniq<TypedTransformResult<unique_ptr<SQLStatement>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformReindexKindInternal(PEGTransformer &transformer,
+                                                                                     ParseResult &parse_result) {
+	string result = "INDEX";
+	return make_uniq<TypedTransformResult<string>>(result);
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformReindexConcurrentlyInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	string result = "CONCURRENTLY";
+	return make_uniq<TypedTransformResult<string>>(result);
+}
+
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSelectStatementInternal(PEGTransformer &transformer,
                                                                                          ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -11395,6 +11423,9 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"PragmaParameters", &PEGTransformerFactory::TransformPragmaParametersInternal},
 	    {"PrepareStatement", &PEGTransformerFactory::TransformPrepareStatementInternal},
 	    {"TypeList", &PEGTransformerFactory::TransformTypeListInternal},
+	    {"ReindexStatement", &PEGTransformerFactory::TransformReindexStatementInternal},
+	    {"ReindexKind", &PEGTransformerFactory::TransformReindexKindInternal},
+	    {"ReindexConcurrently", &PEGTransformerFactory::TransformReindexConcurrentlyInternal},
 	    {"SelectStatement", &PEGTransformerFactory::TransformSelectStatementInternal},
 	    {"SelectSetOpChain", &PEGTransformerFactory::TransformSelectSetOpChainInternal},
 	    {"SelectSetOpChainTail", &PEGTransformerFactory::TransformSelectSetOpChainTailInternal},

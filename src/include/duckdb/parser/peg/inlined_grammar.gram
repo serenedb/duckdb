@@ -40,6 +40,7 @@ Statement <-
 	DetachStatement /
 	CheckpointStatement /
 	VacuumStatement /
+	ReindexStatement /
 	ResetStatement /
 	ExportStatement /
 	ImportStatement /
@@ -1889,6 +1890,10 @@ AllPrivileges <- 'ALL' 'PRIVILEGES'? PrivilegeColumns?
 Privilege <- PrivilegeKeyword PrivilegeColumns?
 PrivilegeKeyword <- 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE' / 'TRUNCATE' / 'REFERENCES' / 'TRIGGER' / 'MAINTAIN' / 'USAGE' / 'EXECUTE' / 'CONNECT' / 'TEMPORARY' / 'TEMP' / 'CREATE'
 PrivilegeColumns <- Parens(List(ColId))
+
+ReindexStatement <- 'REINDEX' ReindexKind ReindexConcurrently? BaseTableName
+ReindexKind <- 'INDEX'
+ReindexConcurrently <- 'CONCURRENTLY'
 
 SelectStatement <- SelectStatementInternal
 SelectStatementInternal <- WithClause? SelectSetOpChain ResultModifiers?
