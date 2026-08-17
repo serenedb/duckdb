@@ -89,12 +89,14 @@ void LogicalDependencyList::AddOwnedDependency(CatalogEntry &entry) {
 }
 
 void LogicalDependencyList::AddDependency(const LogicalDependency &entry) {
-	auto existing = entry.subdependencies.empty() ? set.end() : set.find(entry);
+	auto existing = set.find(entry);
 	if (existing == set.end()) {
 		set.insert(entry);
 		return;
 	}
+	// Merge flags instead of discarding the new ones - the same subject can be depended on for multiple reasons
 	auto merged = *existing;
+	merged.flags.Apply(entry.flags);
 	merged.subdependencies.insert(entry.subdependencies.begin(), entry.subdependencies.end());
 	set.erase(existing);
 	set.insert(std::move(merged));

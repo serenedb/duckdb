@@ -96,6 +96,7 @@ struct DependencyDependentFlags : public DependencyFlags {
 private:
 	static constexpr uint8_t BLOCKING = 0;
 	static constexpr uint8_t OWNED_BY = 1;
+	static constexpr uint8_t ALTER_BLOCKING = 2;
 
 public:
 	DependencyDependentFlags() = default;
@@ -116,6 +117,10 @@ public:
 	bool IsOwnedBy() const {
 		return IsSet<OWNED_BY>();
 	}
+	//! Whether this dependency should block ALTER of the entry it depends on (independent of whether it blocks DROP)
+	bool IsAlterBlocking() const {
+		return IsSet<ALTER_BLOCKING>();
+	}
 
 public:
 	DependencyDependentFlags &SetBlocking() {
@@ -124,6 +129,10 @@ public:
 	}
 	DependencyDependentFlags &SetOwnedBy() {
 		Set<OWNED_BY>();
+		return *this;
+	}
+	DependencyDependentFlags &SetAlterBlocking() {
+		Set<ALTER_BLOCKING>();
 		return *this;
 	}
 
@@ -156,6 +165,10 @@ public:
 		result += " | ";
 		if (IsOwnedBy()) {
 			result += "OWNED BY";
+		}
+		result += " | ";
+		if (IsAlterBlocking()) {
+			result += "ALTER BLOCKING";
 		}
 		return result;
 	}
