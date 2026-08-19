@@ -203,6 +203,7 @@ void ColumnDefinition::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<duckdb::CompressionType>(104, "compression_type", compression_type);
 	serializer.WritePropertyWithDefault<Value>(105, "comment", comment, Value());
 	serializer.WritePropertyWithDefault<InsertionOrderPreservingMap<string>>(106, "tags", tags, InsertionOrderPreservingMap<string>());
+	serializer.WritePropertyWithDefault<idx_t>(107, "catalog_oid", catalog_oid, 0);
 }
 
 ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
@@ -214,6 +215,7 @@ ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadProperty<duckdb::CompressionType>(104, "compression_type", result.compression_type);
 	deserializer.ReadPropertyWithExplicitDefault<Value>(105, "comment", result.comment, Value());
 	deserializer.ReadPropertyWithExplicitDefault<InsertionOrderPreservingMap<string>>(106, "tags", result.tags, InsertionOrderPreservingMap<string>());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(107, "catalog_oid", result.catalog_oid, 0);
 	return result;
 }
 
@@ -251,11 +253,15 @@ ColumnInfo ColumnInfo::Deserialize(Deserializer &deserializer) {
 
 void ColumnList::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<ColumnDefinition>>(100, "columns", columns);
+	serializer.WritePropertyWithDefault<bool>(101, "allow_duplicate_names", allow_duplicate_names, false);
+	serializer.WritePropertyWithDefault<bool>(102, "case_sensitive", case_sensitive, false);
 }
 
 ColumnList ColumnList::Deserialize(Deserializer &deserializer) {
 	auto columns = deserializer.ReadPropertyWithDefault<vector<ColumnDefinition>>(100, "columns");
-	ColumnList result(std::move(columns));
+	auto allow_duplicate_names = deserializer.ReadPropertyWithExplicitDefault<bool>(101, "allow_duplicate_names", false);
+	auto case_sensitive = deserializer.ReadPropertyWithExplicitDefault<bool>(102, "case_sensitive", false);
+	ColumnList result(std::move(columns), allow_duplicate_names, case_sensitive);
 	return result;
 }
 

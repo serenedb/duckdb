@@ -10,6 +10,7 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/parser/parsed_data/alter_database_info.hpp"
+#include "duckdb/parser/parsed_data/alter_schema_info.hpp"
 #include "duckdb/parser/parsed_data/attach_info.hpp"
 #include "duckdb/parser/parsed_data/copy_database_info.hpp"
 #include "duckdb/parser/parsed_data/copy_info.hpp"
@@ -90,6 +91,7 @@ void AlterInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<Identifier>(203, "name", qualified_name.Name());
 	serializer.WriteProperty<OnEntryNotFound>(204, "if_not_found", if_not_found);
 	serializer.WritePropertyWithDefault<bool>(205, "allow_internal", allow_internal);
+	serializer.WritePropertyWithDefault<idx_t>(206, "oid", oid, 0);
 }
 
 unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
@@ -99,10 +101,14 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(203, "name");
 	auto if_not_found = deserializer.ReadProperty<OnEntryNotFound>(204, "if_not_found");
 	auto allow_internal = deserializer.ReadPropertyWithDefault<bool>(205, "allow_internal");
+	auto oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(206, "oid", 0);
 	unique_ptr<AlterInfo> result;
 	switch (type) {
 	case AlterType::ALTER_DATABASE:
 		result = AlterDatabaseInfo::Deserialize(deserializer);
+		break;
+	case AlterType::ALTER_SCHEMA:
+		result = RenameSchemaInfo::Deserialize(deserializer);
 		break;
 	case AlterType::ALTER_TABLE:
 		result = AlterTableInfo::Deserialize(deserializer);
@@ -119,11 +125,15 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	case AlterType::SET_COMMENT:
 		result = SetCommentInfo::Deserialize(deserializer);
 		break;
+	case AlterType::SET_PERMISSIONS:
+		result = SetPermissionsInfo::Deserialize(deserializer);
+		break;
 	default:
 		throw SerializationException("Unsupported type for deserialization of AlterInfo!");
 	}
 	result->if_not_found = if_not_found;
 	result->allow_internal = allow_internal;
+	result->oid = oid;
 	result->SetQualifiedName(std::move(catalog), std::move(schema), std::move(name));
 	return std::move(result);
 }
@@ -586,6 +596,17 @@ unique_ptr<AlterTableInfo> RenameFieldInfo::Deserialize(Deserializer &deserializ
 	return std::move(result);
 }
 
+void RenameSchemaInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(300, "new_name", new_name);
+}
+
+unique_ptr<AlterInfo> RenameSchemaInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<RenameSchemaInfo>(new RenameSchemaInfo());
+	deserializer.ReadPropertyWithDefault<Identifier>(300, "new_name", result->new_name);
+	return std::move(result);
+}
+
 void RenameTableInfo::Serialize(Serializer &serializer) const {
 	AlterTableInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<Identifier>(400, "new_table_name", new_table_name);
@@ -683,6 +704,21 @@ void SetPartitionedByInfo::Serialize(Serializer &serializer) const {
 unique_ptr<AlterTableInfo> SetPartitionedByInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<SetPartitionedByInfo>(new SetPartitionedByInfo());
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(400, "partition_keys", result->partition_keys);
+	return std::move(result);
+}
+
+void SetPermissionsInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<PermissionsAlterType>(300, "permissions_alter_type", permissions_alter_type);
+	serializer.WriteProperty<CatalogType>(301, "entry_catalog_type", entry_catalog_type);
+	serializer.WriteProperty<CatalogPermissions>(302, "permissions", permissions);
+}
+
+unique_ptr<AlterInfo> SetPermissionsInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<SetPermissionsInfo>(new SetPermissionsInfo());
+	deserializer.ReadProperty<PermissionsAlterType>(300, "permissions_alter_type", result->permissions_alter_type);
+	deserializer.ReadProperty<CatalogType>(301, "entry_catalog_type", result->entry_catalog_type);
+	deserializer.ReadProperty<CatalogPermissions>(302, "permissions", result->permissions);
 	return std::move(result);
 }
 
