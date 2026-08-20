@@ -606,6 +606,7 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 		}
 		column_count++;
 	}
+
 	binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
 	                                  std::move(virtual_columns));
 	// Record a SELECT access for the RETURNING target so its column refs attribute
