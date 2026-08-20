@@ -19,12 +19,6 @@
 				"id": 102,
 				"name": "name",
 				"type": "Identifier"
-			},
-			{
-				"id": 103,
-				"name": "catalog",
-				"type": "Identifier",
-				"default": "Identifier()"
 			}
 		],
 		"pointer_type": "none"
