@@ -21,6 +21,7 @@ namespace duckdb {
 TableDataWriter::TableDataWriter(TableCatalogEntry &table_p, QueryContext context)
     : table(table_p.Cast<DuckTableEntry>()), context(context.GetClientContext()) {
 	D_ASSERT(table_p.IsDuckTable());
+
 	auto storage_compatibility = StorageCompatibility::FromDatabase(table_p.ParentCatalog().GetAttached());
 	if (storage_compatibility.storage_version < StorageVersion::V1_4_4) {
 		// older storage versions require legacy start row to be written

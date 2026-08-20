@@ -39,7 +39,10 @@ public:
 public:
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) override;
 	DUCKDB_API void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) override;
-	DUCKDB_API void ScanSchemas(std::function<void(SchemaCatalogEntry &)> callback) override;
+	//! The same without a client context, over what is committed. This is what the checkpoint enumerates, so a
+	//! catalog whose schemas live outside the inherited schema set has to answer here or its storage is never
+	//! written.
+	DUCKDB_API virtual void ScanSchemas(std::function<void(SchemaCatalogEntry &)> callback);
 
 	DUCKDB_API optional_ptr<SchemaCatalogEntry> LookupSchema(CatalogTransaction transaction,
 	                                                         const EntryLookupInfo &schema_lookup,

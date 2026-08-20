@@ -328,8 +328,10 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		auto info = reinterpret_cast<AppendInfo *>(data);
 		if (RowWorkWasInvalidated(info->table->GetStorage(), *info->table, transaction.transaction_id)) {
 			auto &storage = info->table->GetStorage();
+			auto table_name = storage.GetTableName();
+			auto table_modification = storage.TableModification();
 			throw TransactionException("Attempting to modify table %s but another transaction has %s this table",
-			                           storage.GetTableName(), storage.TableModification());
+			                           table_name, table_modification);
 		}
 		// mark the tuples as committed
 		info->table->GetStorage().CommitAppend(commit_id, info->start_row, info->count);
@@ -340,8 +342,10 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		auto info = reinterpret_cast<DeleteInfo *>(data);
 		if (RowWorkWasInvalidated(info->table->GetStorage(), *info->table, transaction.transaction_id)) {
 			auto &storage = info->table->GetStorage();
+			auto table_name = storage.GetTableName();
+			auto table_modification = storage.TableModification();
 			throw TransactionException("Attempting to modify table %s but another transaction has %s this table",
-			                           storage.GetTableName(), storage.TableModification());
+			                           table_name, table_modification);
 		}
 		CommitDelete(*info);
 		break;
@@ -351,8 +355,10 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		auto info = reinterpret_cast<UpdateInfo *>(data);
 		if (RowWorkWasInvalidated(info->table->GetStorage(), *info->table, transaction.transaction_id)) {
 			auto &storage = info->table->GetStorage();
+			auto table_name = storage.GetTableName();
+			auto table_modification = storage.TableModification();
 			throw TransactionException("Attempting to modify table %s but another transaction has %s this table",
-			                           storage.GetTableName(), storage.TableModification());
+			                           table_name, table_modification);
 		}
 		info->version_number = commit_id;
 		break;

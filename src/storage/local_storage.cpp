@@ -216,8 +216,8 @@ ErrorData LocalTableStorage::AppendChunksToIndexes(DuckTransaction &transaction,
 	DataChunk table_chunk;
 	table_chunk.InitializeEmpty(table_types);
 
-	ErrorData error;
 	// index_chunk scans are created here in the mapped_column_ids ordering (see note above).
+	ErrorData error;
 	for (auto &index_chunk : source.Chunks(transaction, mapped_column_ids)) {
 		D_ASSERT(index_chunk.ColumnCount() == mapped_column_ids.size());
 		for (idx_t i = 0; i < mapped_column_ids.size(); i++) {

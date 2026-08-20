@@ -52,7 +52,7 @@ static void ApplyRenames(ParsedExpression &expr, const case_insensitive_map_t<Id
 }
 
 unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index,
-                                              optional_ptr<const vector<ColumnIndex>> bound_column_ids,
+                                              const vector<ColumnIndex> &bound_column_ids,
                                               const vector<Identifier> &table_column_names) {
 	auto &index_type_name = unbound_index.GetIndexType();
 	// Do we know the type of this index now?
@@ -80,9 +80,9 @@ unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index,
 	}
 
 	auto column_ids = create_info.column_ids;
-	if (column_ids.empty() && bound_column_ids) {
-		column_ids.reserve(bound_column_ids->size());
-		for (auto &column_id : *bound_column_ids) {
+	if (column_ids.empty()) {
+		column_ids.reserve(bound_column_ids.size());
+		for (auto &column_id : bound_column_ids) {
 			column_ids.push_back(column_id.GetPrimaryIndex());
 		}
 	}

@@ -32,8 +32,7 @@ public:
 	//! its keys as they were spelled when the index was built, and RENAME COLUMN does not rewrite it -- so the
 	//! recorded position of each key is what says which column it is, and the current name at that position is what
 	//! the expressions are re-spelled with before binding. Empty leaves the definition alone.
-	unique_ptr<BoundIndex> BindIndex(const UnboundIndex &index,
-	                                 optional_ptr<const vector<ColumnIndex>> bound_column_ids,
+	unique_ptr<BoundIndex> BindIndex(const UnboundIndex &index, const vector<ColumnIndex> &bound_column_ids,
 	                                 const vector<Identifier> &table_column_names);
 	unique_ptr<LogicalOperator> BindCreateIndex(ClientContext &context, unique_ptr<CreateIndexInfo> create_index_info,
 	                                            TableCatalogEntry &table_entry, unique_ptr<LogicalOperator> plan,

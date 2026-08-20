@@ -100,9 +100,8 @@ public:
 	void ReorderEntries(catalog_entry_vector_t &entries, ClientContext &context);
 
 	using dependency_callback_t = const std::function<void(DependencyEntry &)>;
-	//! The recorded halves of the graph, for a catalog that draws its own conclusions from them.
+	//! The recorded dependents of one object, for a catalog that draws its own conclusions from them.
 	void ScanDependents(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
-	void ScanSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
 	//! Every recorded edge exactly once, as the half that names both of its endpoints -- SourceInfo() is
 	//! the subject and EntryInfo() the dependent. Unlike Scan(), which reaches an edge only when its
 	//! subject is itself the dependent of something else, this is the whole graph.
@@ -120,6 +119,7 @@ private:
 	CatalogSet dependents;
 
 private:
+	void ScanSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
 	bool IsSystemEntry(CatalogEntry &entry) const;
 	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const LogicalDependency &dependency);
 	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, CatalogEntry &dependency);

@@ -63,8 +63,6 @@ enum class DataTableVersion {
 //! DataTable represents a physical table on disk
 class DataTable : public enable_shared_from_this<DataTable> {
 public:
-	//! Lets the host re-inject its external indexes after the column layout changed.
-	void RefreshExternalIndexes();
 	//! Constructs a new data table from an (optional) set of persistent segments
 	//! `catalog_id` is the identifier a host catalog knows this table by, zero when the definition is duckdb's own.
 	//! It is what the WAL and the checkpoint manifest file the rows under, so a rename cannot reach it.
@@ -333,6 +331,8 @@ public:
 	vector<PartitionStatistics> GetPartitionStats(ClientContext &context);
 
 private:
+	//! Lets the host re-inject its external indexes after the column layout changed.
+	void RefreshExternalIndexes();
 	//! Verify the new added constraints against current persistent&local data
 	void VerifyNewConstraint(LocalStorage &local_storage, DataTable &parent, const BoundConstraint &constraint,
 	                         const ColumnList &columns, const string &constraint_text);

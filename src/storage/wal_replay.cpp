@@ -17,7 +17,6 @@
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
-#include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -536,8 +535,8 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 	// we need to recover from the WAL: actually set up the replay state
 	ReplayState state(database, *con.context, replay_state);
 
-	// Publish each replayed entry's byte offset on the transaction manager so unbound-index buffering can
-	// stamp its replay ranges; reset to 0 on any exit so live (non-replay) ops never inherit a stale offset.
+	// Publish each replayed entry's byte offset on the transaction manager, which is also what marks the
+	// index feeds as replaying; reset to 0 on any exit so live (non-replay) ops never inherit a stale offset.
 	// The shared replay chunk is dropped on exit too -- external indexes hold their own references.
 	auto &duck_manager = DuckTransactionManager::Get(database);
 	struct ReplayOffsetGuard {
@@ -557,8 +556,8 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 	bool all_succeeded = false;
 	try {
 		while (true) {
-			// Publish the byte offset of the entry we are about to replay so any unbound index buffering this
-			// entry's ops can stamp it onto its replay ranges (used to skip already-durable ops at bind time).
+			// Publish the byte offset of the entry we are about to replay; the index feeds compare it
+			// against their durable cursor to skip ops they already hold.
 			duck_manager.SetReplayCommitOffset(reader.CurrentOffset());
 			// read the current entry
 			auto deserializer = WriteAheadLogDeserializer::GetEntryDeserializer(state, reader);

@@ -1,5 +1,4 @@
 #include "duckdb/storage/data_table.hpp"
-
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 
@@ -64,15 +63,6 @@ IndexStorageInfo DataTableInfo::ExtractIndexStorageInfo(const Identifier &name) 
 	}
 	throw InternalException("ExtractIndexStorageInfo: index storage info with name '%s' not found",
 	                        name.GetIdentifierName());
-}
-
-bool DataTableInfo::HasIndexStorageInfo(const Identifier &name) const {
-	for (auto &info : index_storage_infos) {
-		if (info.name == name) {
-			return true;
-		}
-	}
-	return false;
 }
 
 DataTable::DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, const string &schema,
@@ -1497,6 +1487,7 @@ ErrorData DataTable::AppendToIndexes(TableIndexList &indexes, optional_ptr<Table
                                      const vector<StorageIndex> &mapped_column_ids, row_t row_start,
                                      const IndexAppendMode index_append_mode, optional_idx active_checkpoint,
                                      bool skip_external) {
+	// Generate the vector of row identifiers.
 	Vector row_ids(LogicalType::ROW_TYPE);
 	VectorOperations::GenerateSequence(row_ids, table_chunk.size(), row_start, 1);
 

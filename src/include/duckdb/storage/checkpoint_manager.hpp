@@ -120,7 +120,7 @@ protected:
 	virtual void ReadSchema(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadTable(CatalogTransaction transaction, Deserializer &deserializer);
 	//! Reads the rows of `catalog_id`'s table and creates it from the definition the host catalog holds.
-	virtual void ReadDataManifest(CatalogTransaction transaction, Deserializer &deserializer, idx_t catalog_id);
+	void ReadDataManifest(CatalogTransaction transaction, Deserializer &deserializer, idx_t catalog_id);
 	//! Reads past a table's rows without attaching them, for a table the host catalog no longer has.
 	void SkipTableData(Deserializer &deserializer);
 	virtual void ReadView(CatalogTransaction transaction, Deserializer &deserializer);

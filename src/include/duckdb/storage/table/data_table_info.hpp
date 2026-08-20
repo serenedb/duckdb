@@ -44,9 +44,6 @@ public:
 	}
 	//! Find and move out an IndexStorageInfo by name from the stored collection.
 	IndexStorageInfo ExtractIndexStorageInfo(const Identifier &name);
-	//! Whether the stored collection holds data for this index. A definition rebuilt from a host catalog can name
-	//! an index this file predates -- the index was created after the checkpoint and comes back with the WAL.
-	bool HasIndexStorageInfo(const Identifier &name) const;
 	unique_ptr<StorageLockKey> GetSharedLock() {
 		return checkpoint_lock.GetSharedLock();
 	}

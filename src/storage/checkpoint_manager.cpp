@@ -251,8 +251,8 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 
 	D_ASSERT(catalog.IsDuckCatalog());
 
-	catalog_entries = GetCatalogEntries(schemas);
 	auto &dependency_manager = *catalog.GetDependencyManager();
+	catalog_entries = GetCatalogEntries(schemas);
 	dependency_manager.ReorderEntries(catalog_entries);
 
 	// The manifests come last, and in no particular order: each one is rows filed under an identifier, and the
@@ -638,13 +638,12 @@ void CheckpointWriter::WriteIndex(IndexCatalogEntry &index_catalog_entry, Serial
 void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &deserializer) {
 	// we need to keep the tag "index", even though it is slightly misleading.
 	auto create_info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "index");
+	auto &info = create_info->Cast<CreateIndexInfo>();
 
 	// also, we have to read the root_block_pointer, which will not be valid for newer storage versions.
 	// This leads to different code paths in this function.
 	auto root_block_pointer =
 	    deserializer.ReadPropertyWithExplicitDefault<BlockPointer>(101, "root_block_pointer", BlockPointer());
-
-	auto &info = create_info->Cast<CreateIndexInfo>();
 
 	// create the index in the catalog
 

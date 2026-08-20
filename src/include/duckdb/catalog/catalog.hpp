@@ -290,10 +290,6 @@ public:
 	          OnEntryNotFound if_not_found);
 	//! Scans all the schemas in the system one-by-one, invoking the callback for each entry
 	DUCKDB_API virtual void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) = 0;
-	//! The same without a client context, over what is committed. This is what the checkpoint enumerates, so a
-	//! catalog whose schemas live outside the inherited schema set has to answer here or its storage is never
-	//! written.
-	DUCKDB_API virtual void ScanSchemas(std::function<void(SchemaCatalogEntry &)> callback);
 	//! The table this catalog gave `catalog_id` to (DataTableInfo::GetCatalogId). The data WAL names tables by
 	//! that identifier rather than by a qualified name, so that a rename between the write and the replay cannot
 	//! move them. Null for a catalog that hands out no identifiers.
