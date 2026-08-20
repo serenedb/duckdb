@@ -6,9 +6,13 @@
 
 namespace duckdb {
 
-// Weak default for binaries without a host catalog (unittest, benchmarks); the host's definition overrides it.
-__attribute__((weak)) unique_ptr<CreateInfo> DeserializeForeignCreateInfo(Deserializer &, CatalogType type) {
-	throw NotImplementedException("Cannot deserialize a foreign create info of type %s", CatalogTypeToString(type));
+unique_ptr<CreateInfo> (*foreign_create_info_deserializer)(Deserializer &, CatalogType) = nullptr;
+
+unique_ptr<CreateInfo> DeserializeForeignCreateInfo(Deserializer &deserializer, CatalogType type) {
+	if (!foreign_create_info_deserializer) {
+		throw NotImplementedException("Cannot deserialize a foreign create info of type %s", CatalogTypeToString(type));
+	}
+	return foreign_create_info_deserializer(deserializer, type);
 }
 
 void CreateInfo::CopyProperties(CreateInfo &other) const {

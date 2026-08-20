@@ -20,6 +20,9 @@
 namespace duckdb {
 struct AlterInfo;
 
+//! Set by a hosting catalog at startup: decodes the entry kinds duckdb has no CreateInfo class for.
+extern unique_ptr<CreateInfo> (*foreign_create_info_deserializer)(Deserializer &deserializer, CatalogType type);
+
 unique_ptr<CreateInfo> DeserializeForeignCreateInfo(Deserializer &deserializer, CatalogType type);
 
 struct CreateInfo : public ParseInfo {
