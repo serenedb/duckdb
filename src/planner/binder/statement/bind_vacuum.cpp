@@ -36,49 +36,35 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 	// the binding alias.
 	auto &base_ref = info.ref->Cast<BaseTableRef>();
 	auto &binding_name = info.ref->alias.empty() ? base_ref.Table() : info.ref->alias;
-	ErrorData binding_error;
-	auto binding = bind_context.GetBinding(binding_name, binding_error);
-	if (!binding) {
-		binding_error.Throw();
-	}
+
 	vector<unique_ptr<Expression>> select_list;
 	auto &columns = info.columns;
-	// A generated column of this entry has no statistics to gather: ColumnList
-	// leaves every one of them out of the physical columns, STORED included, so
-	// LogicalToPhysical below would throw for it and the column bind rejects a
-	// virtual one outright. A facade table's names belong to no column of the
-	// entry the ref resolved to -- that is the hidden store table underneath,
-	// where every facade column, however the facade reports it, is a stored
-	// column of its own.
-	auto analyzable = [&table](const Identifier &name) {
-		return !table.ColumnExists(name) || !table.GetColumn(name).Generated();
-	};
 	if (columns.empty()) {
-		// Empty means ALL columns should be vacuumed/analyzed. Take the names from
-		// the binding rather than the entry, for the same reason the columns bind
-		// against the alias: a facade table resolves to the store table, whose
-		// columns carry id-derived names the binding does not expose.
-		for (auto &name : binding->GetColumnNames()) {
-			if (analyzable(name)) {
-				columns.emplace_back(name);
-			}
+		// Empty means ALL columns should be vacuumed/analyzed
+		for (auto &col : table.GetColumns().Physical()) {
+			columns.emplace_back(col.GetName());
 		}
 	}
 
 	identifier_set_t column_name_set;
-	vector<Identifier> analyzed_column_names;
+	vector<Identifier> non_generated_column_names;
 	for (auto &col_name : columns) {
 		if (column_name_set.count(col_name) > 0) {
 			throw BinderException("cannot vacuum or analyze the same column twice, i.e., there is a duplicate entry in "
 			                      "the list of column names");
 		}
 		column_name_set.insert(col_name);
-		if (!analyzable(col_name)) {
-			throw BinderException("cannot vacuum or analyze generated column \"%s\" - it has no storage of its own; "
-			                      "specify columns that are stored",
-			                      col_name);
+		if (!table.ColumnExists(col_name)) {
+			throw BinderException("Column with name \"%s\" does not exist", col_name);
 		}
-		analyzed_column_names.emplace_back(col_name);
+		auto &col = table.GetColumn(col_name);
+		// ignore generated column
+		if (col.Generated()) {
+			throw BinderException(
+			    "cannot vacuum or analyze generated column \"%s\" - specify non-generated columns to vacuum or analyze",
+			    col.GetName());
+		}
+		non_generated_column_names.emplace_back(col_name);
 		ColumnRefExpression colref(col_name, binding_name);
 		auto result = bind_context.BindColumn(colref, 0);
 		if (result.HasError()) {
@@ -86,7 +72,7 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 		}
 		select_list.push_back(std::move(result.expression));
 	}
-	info.columns = analyzed_column_names;
+	info.columns = non_generated_column_names;
 
 	auto &column_ids = get.GetColumnIds();
 	D_ASSERT(select_list.size() == column_ids.size());

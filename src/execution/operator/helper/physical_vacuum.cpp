@@ -14,52 +14,46 @@ PhysicalVacuum::PhysicalVacuum(PhysicalPlan &physical_plan, unique_ptr<VacuumInf
       info(std::move(info_p)), table(table), column_id_map(std::move(column_id_map)) {
 }
 
-//! Which analyzed columns carry distinct stats. Keyed through the binder's index
-//! map rather than by name: the analyzed names are the ones the table ref
-//! exposed, which for a facade table are not the entry's own column names.
-static vector<unique_ptr<DistinctStatistics>> BuildDistinctStats(const VacuumInfo &info,
-                                                                 optional_ptr<TableCatalogEntry> table,
-                                                                 const unordered_map<idx_t, idx_t> &column_id_map) {
-	vector<unique_ptr<DistinctStatistics>> stats;
-	stats.reserve(info.columns.size());
-	auto &columns = table->GetColumns();
-	for (idx_t i = 0; i < info.columns.size(); i++) {
-		auto &column = columns.GetColumn(PhysicalIndex(column_id_map.at(i)));
-		if (DistinctStatistics::TypeIsSupported(column.GetType())) {
-			stats.push_back(make_uniq<DistinctStatistics>());
-		} else {
-			stats.push_back(nullptr);
-		}
-	}
-	return stats;
-}
-
 class VacuumLocalSinkState : public LocalSinkState {
 public:
-	VacuumLocalSinkState(VacuumInfo &info, optional_ptr<TableCatalogEntry> table,
-	                     const unordered_map<idx_t, idx_t> &column_id_map)
-	    : column_distinct_stats(BuildDistinctStats(info, table, column_id_map)), hashes(LogicalType::HASH) {};
+	explicit VacuumLocalSinkState(VacuumInfo &info, optional_ptr<TableCatalogEntry> table) : hashes(LogicalType::HASH) {
+		for (const auto &column_name : info.columns) {
+			auto &column = table->GetColumn(column_name);
+			if (DistinctStatistics::TypeIsSupported(column.GetType())) {
+				column_distinct_stats.push_back(make_uniq<DistinctStatistics>());
+			} else {
+				column_distinct_stats.push_back(nullptr);
+			}
+		}
+	};
 
 	vector<unique_ptr<DistinctStatistics>> column_distinct_stats;
 	Vector hashes;
 };
 
 unique_ptr<LocalSinkState> PhysicalVacuum::GetLocalSinkState(ExecutionContext &context) const {
-	return make_uniq<VacuumLocalSinkState>(*info, table, column_id_map);
+	return make_uniq<VacuumLocalSinkState>(*info, table);
 }
 
 class VacuumGlobalSinkState : public GlobalSinkState {
 public:
-	VacuumGlobalSinkState(VacuumInfo &info, optional_ptr<TableCatalogEntry> table,
-	                      const unordered_map<idx_t, idx_t> &column_id_map)
-	    : column_distinct_stats(BuildDistinctStats(info, table, column_id_map)) {};
+	explicit VacuumGlobalSinkState(VacuumInfo &info, optional_ptr<TableCatalogEntry> table) {
+		for (const auto &column_name : info.columns) {
+			auto &column = table->GetColumn(column_name);
+			if (DistinctStatistics::TypeIsSupported(column.GetType())) {
+				column_distinct_stats.push_back(make_uniq<DistinctStatistics>());
+			} else {
+				column_distinct_stats.push_back(nullptr);
+			}
+		}
+	};
 
 	mutex stats_lock;
 	vector<unique_ptr<DistinctStatistics>> column_distinct_stats;
 };
 
 unique_ptr<GlobalSinkState> PhysicalVacuum::GetGlobalSinkState(ClientContext &context) const {
-	return make_uniq<VacuumGlobalSinkState>(*info, table, column_id_map);
+	return make_uniq<VacuumGlobalSinkState>(*info, table);
 }
 
 SinkResultType PhysicalVacuum::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
