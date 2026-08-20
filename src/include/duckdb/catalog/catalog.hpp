@@ -455,9 +455,7 @@ public:
 	DUCKDB_API string GetDefaultTable() const;
 	DUCKDB_API string GetDefaultTableSchema() const;
 
-	//! Returns the dependency manager of this catalog - if the catalog has any.
-	//! Null means the catalog tracks dependencies itself: CatalogSet then records no edges and runs no
-	//! dependency check, leaving cascade and drop-conflict decisions entirely to the catalog.
+	//! Returns the dependency manager of this catalog - if the catalog has any
 	virtual optional_ptr<DependencyManager> GetDependencyManager();
 
 	//! How an entry of this catalog is addressed in the dependency graph, and how such an address is

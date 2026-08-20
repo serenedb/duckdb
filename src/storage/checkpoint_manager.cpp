@@ -252,17 +252,12 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 	D_ASSERT(catalog.IsDuckCatalog());
 
 	catalog_entries = GetCatalogEntries(schemas);
-	// A catalog that tracks dependencies elsewhere reports no manager; reordering is
-	// what the manager contributes here, and entries with no tracked edges need none.
-	auto dependency_manager = catalog.GetDependencyManager();
-	if (dependency_manager) {
-		dependency_manager->ReorderEntries(catalog_entries);
-	}
+	auto &dependency_manager = *catalog.GetDependencyManager();
+	dependency_manager.ReorderEntries(catalog_entries);
 
 	// The manifests come last, and in no particular order: each one is rows filed under an identifier, and the
 	// entry they attach to is the owning catalog's to rebuild -- and so are the indexes over those rows, which
 	// this file keeps as index data on the manifest rather than as entries of its own.
-	auto &written_entries = catalog_entries;
 	for (auto &schema : foreign_schemas) {
 		schema.get().Scan(CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.type != CatalogType::TABLE_ENTRY) {
@@ -272,7 +267,7 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 			if (!storage || storage->GetDataTableInfo()->GetCatalogId() == 0) {
 				return;
 			}
-			written_entries.push_back(entry);
+			catalog_entries.push_back(entry);
 		});
 	}
 
@@ -298,8 +293,9 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 	 */
 	BinarySerializer serializer(*metadata_writer, SerializationOptions(db));
 	serializer.Begin();
-	serializer.WriteList(100, "catalog_entries", written_entries.size(), [&](Serializer::List &list, idx_t i) {
-		list.WriteObject([&](Serializer &obj) { WriteEntry(written_entries[i].get(), obj); });
+	serializer.WriteList(100, "catalog_entries", catalog_entries.size(), [&](Serializer::List &list, idx_t i) {
+		auto &entry = catalog_entries[i];
+		list.WriteObject([&](Serializer &obj) { WriteEntry(entry.get(), obj); });
 	});
 	serializer.End();
 
@@ -648,11 +644,6 @@ void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &d
 	auto root_block_pointer =
 	    deserializer.ReadPropertyWithExplicitDefault<BlockPointer>(101, "root_block_pointer", BlockPointer());
 
-	CreateIndexEntry(transaction, std::move(create_info), root_block_pointer);
-}
-
-void CheckpointReader::CreateIndexEntry(CatalogTransaction transaction, unique_ptr<CreateInfo> create_info,
-                                        BlockPointer root_block_pointer) {
 	auto &info = create_info->Cast<CreateIndexInfo>();
 
 	// create the index in the catalog

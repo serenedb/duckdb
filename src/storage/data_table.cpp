@@ -1,6 +1,5 @@
 #include "duckdb/storage/data_table.hpp"
 
-#include "duckdb/storage/external_index_batch.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 
@@ -1497,13 +1496,9 @@ ErrorData DataTable::AppendToIndexes(TableIndexList &indexes, optional_ptr<Table
                                      DataChunk &table_chunk, DataChunk &index_chunk,
                                      const vector<StorageIndex> &mapped_column_ids, row_t row_start,
                                      const IndexAppendMode index_append_mode, optional_idx active_checkpoint,
-                                     bool skip_external, const shared_ptr<ExternalIndexBatch> &batch) {
-	// A batch already carries these, generated over the same range.
-	Vector own_row_ids(LogicalType::ROW_TYPE);
-	if (!batch) {
-		VectorOperations::GenerateSequence(own_row_ids, table_chunk.size(), row_start, 1);
-	}
-	Vector &row_ids = batch ? batch->row_ids : own_row_ids;
+                                     bool skip_external) {
+	Vector row_ids(LogicalType::ROW_TYPE);
+	VectorOperations::GenerateSequence(row_ids, table_chunk.size(), row_start, 1);
 
 	vector<reference<BoundIndex>> already_appended;
 	bool append_failed = false;
@@ -1573,13 +1568,7 @@ ErrorData DataTable::AppendToIndexes(TableIndexList &indexes, optional_ptr<Table
 
 			// Append the mock chunk containing empty columns for non-key columns.
 			IndexAppendInfo index_append_info(index_append_mode, delete_index);
-			if (batch && append_index->IsExternal()) {
-				IndexLock l;
-				append_index->InitializeLock(l);
-				error = append_index->Append(l, batch, index_append_info);
-			} else {
-				error = append_index->Append(table_chunk, row_ids, index_append_info);
-			}
+			error = append_index->Append(table_chunk, row_ids, index_append_info);
 		} catch (std::exception &ex) {
 			error = ErrorData(ex);
 		}

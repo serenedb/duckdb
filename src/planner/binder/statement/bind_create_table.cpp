@@ -650,7 +650,6 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 				}
 			}
 			ColumnList new_columns(/*allow_duplicate_names=*/false, base.columns.IsCaseSensitive());
-			new_columns.SetAllowDuplicates(true);
 			for (idx_t i = 0; i < target_col_names.size(); i++) {
 				new_columns.AddColumn(ColumnDefinition(Identifier(target_col_names[i]), sql_types[i]));
 			}

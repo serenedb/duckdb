@@ -71,10 +71,6 @@ public:
 	void AdoptStorage(shared_ptr<DataTable> storage_p) {
 		storage = std::move(storage_p);
 	}
-	//! The rows an ALTER of this table produces, with no entry to hold them: a catalog that keeps the definition
-	//! itself reshapes the rows here and hands them to its own install. Null when `info` leaves the rows alone.
-	shared_ptr<DataTable> AlterStorage(ClientContext &context, AlterInfo &info);
-
 protected:
 	//! The entry an ALTER of this one produces. A catalog whose table entries carry state of their own overrides
 	//! it, so an alter replaces the entry with its own kind rather than degrading it to a plain table.

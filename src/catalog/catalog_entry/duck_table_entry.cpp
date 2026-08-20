@@ -408,14 +408,6 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlteredEntry(BoundCreateTableInfo &info
 	return make_uniq<DuckTableEntry>(catalog, Schema(), info, std::move(new_storage), triggers);
 }
 
-shared_ptr<DataTable> DuckTableEntry::AlterStorage(ClientContext &context, AlterInfo &info) {
-	auto altered = AlterEntry(context, info);
-	if (!altered || altered->type != CatalogType::TABLE_ENTRY) {
-		return nullptr;
-	}
-	return altered->Cast<DuckTableEntry>().storage;
-}
-
 void DuckTableEntry::UndoAlter(ClientContext &context, AlterInfo &info) {
 	D_ASSERT(!internal);
 	D_ASSERT(info.type == AlterType::ALTER_TABLE);

@@ -10,8 +10,6 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/reference_map.hpp"
-#include "duckdb/common/unordered_set.hpp"
-#include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/partial_block_manager.hpp"
 
 namespace duckdb {
@@ -125,8 +123,6 @@ protected:
 	virtual void ReadDataManifest(CatalogTransaction transaction, Deserializer &deserializer, idx_t catalog_id);
 	//! Reads past a table's rows without attaching them, for a table the host catalog no longer has.
 	void SkipTableData(Deserializer &deserializer);
-	void CreateIndexEntry(CatalogTransaction transaction, unique_ptr<CreateInfo> create_info,
-	                      BlockPointer root_block_pointer);
 	virtual void ReadView(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadSequence(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadMacro(CatalogTransaction transaction, Deserializer &deserializer);

@@ -1372,7 +1372,7 @@ CatalogEntryInfo Catalog::GetDependencyInfo(const CatalogEntry &entry) const {
 optional_ptr<CatalogEntry> Catalog::GetDependencyEntry(CatalogTransaction transaction, const CatalogEntryInfo &info) {
 	auto schema_entry = GetSchema(transaction, info.schema, OnEntryNotFound::RETURN_NULL);
 	if (info.type == CatalogType::SCHEMA_ENTRY || !schema_entry) {
-		return reinterpret_cast<CatalogEntry *>(schema_entry.get());
+		return schema_entry.get();
 	}
 	return schema_entry->GetEntry(transaction, info.type, info.name);
 }

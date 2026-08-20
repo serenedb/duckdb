@@ -53,7 +53,6 @@ public:
 	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info);
 
 protected:
-	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, bool case_sensitive);
 	//! Supersede the version that currently holds `sets`, taking the schema's whole contents over
 	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, const shared_ptr<SchemaCatalogSets> &sets);
 
@@ -104,7 +103,7 @@ public:
 	void Verify(Catalog &catalog) override;
 
 	//! Get the catalog set for the specified type
-	virtual CatalogSet &GetCatalogSet(CatalogType type);
+	CatalogSet &GetCatalogSet(CatalogType type);
 
 protected:
 	void OnDropEntry(CatalogTransaction transaction, CatalogEntry &entry);

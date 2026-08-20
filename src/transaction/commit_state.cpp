@@ -162,7 +162,7 @@ static bool RowWorkWasInvalidated(DataTable &storage, CatalogEntry &table, trans
 	if (!table.HasParent() || table.Parent().timestamp == transaction_id) {
 		return false;
 	}
-	return storage.TableModification() != "no changes";
+	return !storage.IsMainTable();
 }
 
 void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, CommitInfo &info) {
@@ -276,9 +276,6 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 	case CatalogType::SECRET_ENTRY:
 	case CatalogType::SECRET_TYPE_ENTRY:
 	case CatalogType::SECRET_FUNCTION_ENTRY:
-	case CatalogType::TOKENIZER_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::ROLE_ENTRY:
 		// do nothing, these entries are not persisted to disk
 		break;
 	default:

@@ -71,9 +71,7 @@ public:
 	optional_ptr<ClientContext> TryGetClientContext() const;
 
 protected:
-	//! Not a DuckTableEntry: a catalog whose entries are its own can still hold duckdb storage, and its rows are
-	//! written through the entry that owns them.
-	TableCatalogEntry &table;
+	DuckTableEntry &table;
 	optional_ptr<ClientContext> context;
 	//! Pointers to the start of each row group.
 	vector<RowGroupPointer> row_group_pointers;

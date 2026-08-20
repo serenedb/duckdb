@@ -50,12 +50,6 @@ inline constexpr AclMode operator|(AclMode lhs, AclMode rhs) noexcept {
 inline constexpr AclMode &operator|=(AclMode &lhs, AclMode rhs) noexcept {
 	return lhs = lhs | rhs;
 }
-inline constexpr AclMode operator^(AclMode lhs, AclMode rhs) noexcept {
-	return static_cast<AclMode>(static_cast<uint64_t>(lhs) ^ static_cast<uint64_t>(rhs));
-}
-inline constexpr AclMode &operator^=(AclMode &lhs, AclMode rhs) noexcept {
-	return lhs = lhs ^ rhs;
-}
 inline constexpr AclMode operator~(AclMode v) noexcept {
 	return static_cast<AclMode>(~static_cast<uint64_t>(v));
 }
@@ -75,10 +69,6 @@ struct AclItem {
 	static AclItem Deserialize(Deserializer &deserializer);
 };
 
-//! Who owns a catalog entry and what has been granted on it. It sits on the
-//! entry because CatalogSet versioning is what makes a grant transactional: a
-//! second home beside the entry would need an MVCC of its own, and every reader
-//! that needs an ACL already holds the entry.
 //! One column's grants. A column has no entry of its own to keep an ACL on, and
 //! postgres gives it no owner either -- the relation's own owner answers for all
 //! of them -- so the grants sit with the rest of the entry's permissions.
@@ -92,6 +82,10 @@ struct ColumnAclItem {
 	static ColumnAclItem Deserialize(Deserializer &deserializer);
 };
 
+//! Who owns a catalog entry and what has been granted on it. It sits on the
+//! entry because CatalogSet versioning is what makes a grant transactional: a
+//! second home beside the entry would need an MVCC of its own, and every reader
+//! that needs an ACL already holds the entry.
 struct CatalogPermissions {
 	idx_t owner = 0;
 	vector<AclItem> acl;

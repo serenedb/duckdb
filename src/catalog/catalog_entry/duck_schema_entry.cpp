@@ -88,11 +88,8 @@ SchemaCatalogSets::SchemaCatalogSets(Catalog &catalog, bool case_sensitive)
           case_sensitive) {
 }
 
-DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info) : DuckSchemaEntry(catalog, info, false) {
-}
-
-DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, bool case_sensitive)
-    : DuckSchemaEntry(catalog, info, make_shared_ptr<SchemaCatalogSets>(catalog, case_sensitive)) {
+DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info)
+    : DuckSchemaEntry(catalog, info, make_shared_ptr<SchemaCatalogSets>(catalog, false)) {
 }
 
 DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, const shared_ptr<SchemaCatalogSets> &sets_p)
