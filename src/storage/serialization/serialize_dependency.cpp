@@ -14,7 +14,6 @@ void CatalogEntryInfo::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<CatalogType>(100, "type", type);
 	serializer.WritePropertyWithDefault<Identifier>(101, "schema", schema);
 	serializer.WritePropertyWithDefault<Identifier>(102, "name", name);
-	serializer.WritePropertyWithDefault<Identifier>(103, "catalog", catalog, Identifier());
 }
 
 CatalogEntryInfo CatalogEntryInfo::Deserialize(Deserializer &deserializer) {
@@ -22,7 +21,6 @@ CatalogEntryInfo CatalogEntryInfo::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadProperty<CatalogType>(100, "type", result.type);
 	deserializer.ReadPropertyWithDefault<Identifier>(101, "schema", result.schema);
 	deserializer.ReadPropertyWithDefault<Identifier>(102, "name", result.name);
-	deserializer.ReadPropertyWithExplicitDefault<Identifier>(103, "catalog", result.catalog, Identifier());
 	return result;
 }
 
