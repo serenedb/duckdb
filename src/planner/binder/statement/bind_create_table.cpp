@@ -710,9 +710,6 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		}
 	}
 
-	// SereneDB fork: allow zero-physical-column tables (e.g. CREATE TABLE t();)
-	// so that indexes / constraints can still be attached later.
-
 #ifdef DEBUG
 	// Ensure all types are bound
 	for (idx_t i = 0; i < base.columns.LogicalColumnCount(); i++) {
