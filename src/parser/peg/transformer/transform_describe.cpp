@@ -93,6 +93,19 @@ static string ExtractShowKeyword(ParseResult &parse_result) {
 	return string(outer_choice.name);
 }
 
+unique_ptr<QueryNode> PEGTransformerFactory::TransformDescribePropertyGraph(PEGTransformer &transformer,
+                                                                            const ShowType &describe_rule,
+                                                                            const QualifiedName &qualified_name) {
+	auto showref = make_uniq<ShowRef>();
+	showref->show_type = ShowType::DESCRIBE;
+	showref->SetTableName(qualified_name.Name());
+
+	auto select_node = make_uniq<SelectNode>();
+	select_node->select_list.push_back(make_uniq<StarExpression>());
+	select_node->from_table = std::move(showref);
+	return std::move(select_node);
+}
+
 unique_ptr<QueryNode> PEGTransformerFactory::TransformShowQualifiedName(PEGTransformer &transformer,
                                                                         ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
