@@ -88,7 +88,11 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
-	return BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
+	// In the table's own catalog and schema, not the caller's: a CHECK may call a function of the schema it was
+	// written in, like a DEFAULT (BindDefaultValues) or a view body. A child binder scopes the path to this bind.
+	auto binder = Binder::CreateBinder(context);
+	binder->SetSearchPath(table.ParentSchema().catalog, table.ParentSchema().name);
+	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const vector<unique_ptr<Constraint>> &constraints,

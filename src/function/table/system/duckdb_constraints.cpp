@@ -23,10 +23,7 @@ struct ConstraintEntry {
 			return;
 		}
 		auto binder = Binder::CreateBinder(context);
-		// In the table's own catalog and schema, not the reader's: a CHECK may call a function of the schema it was
-		// written in, and this scan walks every attached database.
-		binder->SetSearchPath(table.ParentSchema().catalog, table.ParentSchema().name);
-		bound_constraints = binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
+		bound_constraints = binder->BindConstraints(table);
 	}
 
 	TableCatalogEntry &table;
