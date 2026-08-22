@@ -31,6 +31,9 @@ public:
 	Identifier table_name;
 	Identifier table_name_alias;
 
+	//! Explicit element KEY columns; must match the table's primary key (checked at bind).
+	vector<Identifier> element_key;
+
 	//! The stack of names in order of which they appear (column_names[0], column_names[1], column_names[2], ...)
 	vector<Identifier> column_names;
 	vector<Identifier> column_aliases;

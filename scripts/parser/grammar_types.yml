@@ -1606,6 +1606,21 @@ overrides:
   ColIdType: "pair<Identifier, LogicalType>"
   ColIdTypeList: "child_list_t<LogicalType>"
   # create_property_graph.gram
+  PropertyGraphElementKey:
+    type: "vector<Identifier>"
+    by_value: true
+  PropertyGraphLabelProperties:
+    type: "PropertyGraphLabelProperties"
+    by_value: true
+  PropertyGraphLabelFirst:
+    type: "PropertyGraphLabelProperties"
+    by_value: true
+  PropertyGraphPropertiesFirst:
+    type: "PropertyGraphLabelProperties"
+    by_value: true
+  PropertyGraphDefaultLabel:
+    type: "PropertyGraphLabel"
+    by_value: true
   PropertyGraphProperties:
     type: "PropertyGraphProperties"
     by_value: true
@@ -1740,9 +1755,21 @@ overrides:
     by_value: true
   GraphVertexReference:
     type: "unique_ptr<PathReference>"
+  GraphNamedVertex:
+    type: "unique_ptr<PathReference>"
+  GraphLabeledVertex:
+    type: "unique_ptr<PathReference>"
+  GraphAnonymousVertex:
+    type: "unique_ptr<PathReference>"
   GraphEdgePattern:
     type: "unique_ptr<PathReference>"
   GraphEdgeBody:
+    type: "unique_ptr<PathReference>"
+  GraphNamedEdgeBody:
+    type: "unique_ptr<PathReference>"
+  GraphLabeledEdgeBody:
+    type: "unique_ptr<PathReference>"
+  GraphAnonymousEdgeBody:
     type: "unique_ptr<PathReference>"
   GraphEdgeLeftEndpoint:
     type: "string"

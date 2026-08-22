@@ -170,28 +170,77 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropPropertyGraph(PEGT
 
 shared_ptr<PropertyGraphTable> PEGTransformerFactory::TransformPropertyGraphVertexTable(
     PEGTransformer &transformer, unique_ptr<BaseTableRef> base_table_name, const optional<TableAlias> &table_alias_as,
-    optional<PropertyGraphProperties> property_graph_properties, optional<PropertyGraphLabel> property_graph_label) {
+    optional<vector<Identifier>> property_graph_element_key,
+    optional<PropertyGraphLabelProperties> property_graph_label_properties) {
 	auto result = make_shared_ptr<PropertyGraphTable>();
 	result->is_vertex_table = true;
 	PGQApplyBaseTableName(*result, *base_table_name);
 	PGQApplyTableAlias(*result, table_alias_as);
-	PGQApplyProperties(*result, property_graph_properties);
-	PGQApplyLabel(*result, property_graph_label);
+	if (property_graph_element_key) {
+		result->element_key = std::move(*property_graph_element_key);
+	}
+	optional<PropertyGraphProperties> properties;
+	optional<PropertyGraphLabel> label;
+	if (property_graph_label_properties) {
+		properties = std::move(property_graph_label_properties->properties);
+		label = std::move(property_graph_label_properties->label);
+	}
+	PGQApplyProperties(*result, properties);
+	PGQApplyLabel(*result, label);
 	return result;
+}
+
+vector<Identifier> PEGTransformerFactory::TransformPropertyGraphElementKey(PEGTransformer &transformer,
+                                                                           const vector<Identifier> &col_id) {
+	return col_id;
+}
+
+PropertyGraphLabelProperties
+PEGTransformerFactory::TransformPropertyGraphLabelFirst(PEGTransformer &transformer,
+                                                        PropertyGraphLabel property_graph_label,
+                                                        optional<PropertyGraphProperties> property_graph_properties) {
+	PropertyGraphLabelProperties result;
+	result.label = std::move(property_graph_label);
+	result.properties = std::move(property_graph_properties);
+	return result;
+}
+
+PropertyGraphLabelProperties
+PEGTransformerFactory::TransformPropertyGraphPropertiesFirst(PEGTransformer &transformer,
+                                                             PropertyGraphProperties property_graph_properties,
+                                                             optional<PropertyGraphLabel> property_graph_label) {
+	PropertyGraphLabelProperties result;
+	result.properties = std::move(property_graph_properties);
+	result.label = std::move(property_graph_label);
+	return result;
+}
+
+PropertyGraphLabel PEGTransformerFactory::TransformPropertyGraphDefaultLabel(PEGTransformer &transformer) {
+	return PropertyGraphLabel();
 }
 
 shared_ptr<PropertyGraphTable> PEGTransformerFactory::TransformPropertyGraphEdgeTable(
     PEGTransformer &transformer, unique_ptr<BaseTableRef> base_table_name, const optional<TableAlias> &table_alias_as,
-    PropertyGraphTableReference source_key_reference, PropertyGraphTableReference destination_key_reference,
-    optional<PropertyGraphProperties> property_graph_properties, optional<PropertyGraphLabel> property_graph_label) {
+    optional<vector<Identifier>> property_graph_element_key, PropertyGraphTableReference source_key_reference,
+    PropertyGraphTableReference destination_key_reference,
+    optional<PropertyGraphLabelProperties> property_graph_label_properties) {
 	auto result = make_shared_ptr<PropertyGraphTable>();
 	result->is_vertex_table = false;
 	PGQApplyBaseTableName(*result, *base_table_name);
 	PGQApplyTableAlias(*result, table_alias_as);
+	if (property_graph_element_key) {
+		result->element_key = std::move(*property_graph_element_key);
+	}
 	PGQApplyReference(*result, source_key_reference, true);
 	PGQApplyReference(*result, destination_key_reference, false);
-	PGQApplyProperties(*result, property_graph_properties);
-	PGQApplyLabel(*result, property_graph_label);
+	optional<PropertyGraphProperties> properties;
+	optional<PropertyGraphLabel> label;
+	if (property_graph_label_properties) {
+		properties = std::move(property_graph_label_properties->properties);
+		label = std::move(property_graph_label_properties->label);
+	}
+	PGQApplyProperties(*result, properties);
+	PGQApplyLabel(*result, label);
 	return result;
 }
 
@@ -286,11 +335,13 @@ PEGTransformerFactory::TransformDestinationTableReference(PEGTransformer &transf
 PropertyGraphTableReference
 PEGTransformerFactory::TransformPropertyGraphKeyReference(PEGTransformer &transformer, const vector<Identifier> &col_id,
                                                           unique_ptr<BaseTableRef> base_table_name,
-                                                          const vector<Identifier> &col_id_1) {
+                                                          const optional<vector<Identifier>> &col_id_1) {
 	PropertyGraphTableReference result;
 	result.foreign_keys = col_id;
 	result.table = std::move(base_table_name);
-	result.primary_keys = col_id_1;
+	if (col_id_1) {
+		result.primary_keys = *col_id_1;
+	}
 	return result;
 }
 
@@ -568,15 +619,35 @@ string PEGTransformerFactory::TransformGraphRangeQuantifier(PEGTransformer &tran
 	return lower_value + "," + upper_value;
 }
 
+static string PGQAnonymousBinding(PEGTransformer &transformer) {
+	return "__pgq_anon_" + std::to_string(++transformer.pgq_anonymous_counter);
+}
+
 unique_ptr<PathReference>
-PEGTransformerFactory::TransformGraphVertexReference(PEGTransformer &transformer, const Identifier &identifier,
-                                                     optional<Identifier> graph_table_label,
-                                                     optional<unique_ptr<ParsedExpression>> where_clause) {
+PEGTransformerFactory::TransformGraphNamedVertex(PEGTransformer &transformer, const Identifier &identifier,
+                                                 optional<Identifier> graph_table_label,
+                                                 optional<unique_ptr<ParsedExpression>> where_clause) {
 	auto result = make_uniq<PathElement>(PGQPathReferenceType::PATH_ELEMENT);
 	result->match_type = PGQMatchType::MATCH_VERTEX;
 	result->variable_binding = PGQIdentifierName(identifier);
 	result->label = graph_table_label ? PGQIdentifierName(*graph_table_label) : result->variable_binding;
 	return PGQWrapPathElementWithWhere(std::move(result), std::move(where_clause).value_or(nullptr));
+}
+
+unique_ptr<PathReference>
+PEGTransformerFactory::TransformGraphLabeledVertex(PEGTransformer &transformer, Identifier graph_table_label,
+                                                   optional<unique_ptr<ParsedExpression>> where_clause) {
+	auto result = make_uniq<PathElement>(PGQPathReferenceType::PATH_ELEMENT);
+	result->match_type = PGQMatchType::MATCH_VERTEX;
+	result->variable_binding = PGQAnonymousBinding(transformer);
+	result->label = PGQIdentifierName(graph_table_label);
+	return PGQWrapPathElementWithWhere(std::move(result), std::move(where_clause).value_or(nullptr));
+}
+
+unique_ptr<PathReference>
+PEGTransformerFactory::TransformGraphAnonymousVertex(PEGTransformer &transformer,
+                                                     optional<unique_ptr<ParsedExpression>> where_clause) {
+	throw NotImplementedException("Graph elements without a label are not supported yet");
 }
 
 unique_ptr<PathReference> PEGTransformerFactory::TransformGraphEdgePattern(PEGTransformer &transformer,
@@ -599,13 +670,28 @@ unique_ptr<PathReference> PEGTransformerFactory::TransformGraphEdgePattern(PEGTr
 }
 
 unique_ptr<PathReference>
-PEGTransformerFactory::TransformGraphEdgeBody(PEGTransformer &transformer, const Identifier &identifier,
-                                              optional<Identifier> graph_table_label,
-                                              optional<unique_ptr<ParsedExpression>> where_clause) {
+PEGTransformerFactory::TransformGraphNamedEdgeBody(PEGTransformer &transformer, const Identifier &identifier,
+                                                   optional<Identifier> graph_table_label,
+                                                   optional<unique_ptr<ParsedExpression>> where_clause) {
 	auto result = make_uniq<PathElement>(PGQPathReferenceType::PATH_ELEMENT);
 	result->variable_binding = PGQIdentifierName(identifier);
 	result->label = graph_table_label ? PGQIdentifierName(*graph_table_label) : result->variable_binding;
 	return PGQWrapPathElementWithWhere(std::move(result), std::move(where_clause).value_or(nullptr));
+}
+
+unique_ptr<PathReference>
+PEGTransformerFactory::TransformGraphLabeledEdgeBody(PEGTransformer &transformer, Identifier graph_table_label,
+                                                     optional<unique_ptr<ParsedExpression>> where_clause) {
+	auto result = make_uniq<PathElement>(PGQPathReferenceType::PATH_ELEMENT);
+	result->variable_binding = PGQAnonymousBinding(transformer);
+	result->label = PGQIdentifierName(graph_table_label);
+	return PGQWrapPathElementWithWhere(std::move(result), std::move(where_clause).value_or(nullptr));
+}
+
+unique_ptr<PathReference>
+PEGTransformerFactory::TransformGraphAnonymousEdgeBody(PEGTransformer &transformer,
+                                                       optional<unique_ptr<ParsedExpression>> where_clause) {
+	throw NotImplementedException("Graph elements without a label are not supported yet");
 }
 
 string PEGTransformerFactory::TransformGraphEdgeLeftArrow(PEGTransformer &transformer) {

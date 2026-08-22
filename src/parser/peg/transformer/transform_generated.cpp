@@ -7803,20 +7803,69 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPropertyGraphVe
 		auto table_alias_as_value = transformer.Transform<TableAlias>(table_alias_as_opt.GetResult());
 		table_alias_as = table_alias_as_value;
 	}
+	optional<vector<Identifier>> property_graph_element_key {};
+	auto &property_graph_element_key_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	if (property_graph_element_key_opt.HasResult()) {
+		auto property_graph_element_key_value = transformer.Transform<vector<Identifier>>(property_graph_element_key_opt.GetResult());
+		property_graph_element_key = std::move(property_graph_element_key_value);
+	}
+	optional<PropertyGraphLabelProperties> property_graph_label_properties {};
+	auto &property_graph_label_properties_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	if (property_graph_label_properties_opt.HasResult()) {
+		auto property_graph_label_properties_value = transformer.Transform<PropertyGraphLabelProperties>(property_graph_label_properties_opt.GetResult());
+		property_graph_label_properties = std::move(property_graph_label_properties_value);
+	}
+	auto result = TransformPropertyGraphVertexTable(transformer, std::move(base_table_name), table_alias_as, std::move(property_graph_element_key), std::move(property_graph_label_properties));
+	return make_uniq<TypedTransformResult<shared_ptr<PropertyGraphTable>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPropertyGraphElementKeyInternal(
+    PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	vector<Identifier> col_id;
+	auto col_id_items = ExtractParseResultsFromList(ExtractResultFromParens(list_pr.GetChild(1)));
+	for (auto &col_id_item : col_id_items) {
+		auto col_id_value = transformer.Transform<Identifier>(col_id_item.get());
+		col_id.push_back(col_id_value);
+	}
+	auto result = TransformPropertyGraphElementKey(transformer, col_id);
+	return make_uniq<TypedTransformResult<vector<Identifier>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPropertyGraphLabelPropertiesInternal(
+    PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<PropertyGraphLabelProperties>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<PropertyGraphLabelProperties>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPropertyGraphLabelFirstInternal(
+    PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto property_graph_label = transformer.Transform<PropertyGraphLabel>(list_pr.GetChild(0));
 	optional<PropertyGraphProperties> property_graph_properties {};
-	auto &property_graph_properties_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	auto &property_graph_properties_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
 	if (property_graph_properties_opt.HasResult()) {
 		auto property_graph_properties_value = transformer.Transform<PropertyGraphProperties>(property_graph_properties_opt.GetResult());
 		property_graph_properties = std::move(property_graph_properties_value);
 	}
+	auto result = TransformPropertyGraphLabelFirst(transformer, std::move(property_graph_label), std::move(property_graph_properties));
+	return make_uniq<TypedTransformResult<PropertyGraphLabelProperties>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPropertyGraphPropertiesFirstInternal(
+    PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto property_graph_properties = transformer.Transform<PropertyGraphProperties>(list_pr.GetChild(0));
 	optional<PropertyGraphLabel> property_graph_label {};
-	auto &property_graph_label_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	auto &property_graph_label_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
 	if (property_graph_label_opt.HasResult()) {
 		auto property_graph_label_value = transformer.Transform<PropertyGraphLabel>(property_graph_label_opt.GetResult());
 		property_graph_label = std::move(property_graph_label_value);
 	}
-	auto result = TransformPropertyGraphVertexTable(transformer, std::move(base_table_name), table_alias_as, std::move(property_graph_properties), std::move(property_graph_label));
-	return make_uniq<TypedTransformResult<shared_ptr<PropertyGraphTable>>>(std::move(result));
+	auto result = TransformPropertyGraphPropertiesFirst(transformer, std::move(property_graph_properties), std::move(property_graph_label));
+	return make_uniq<TypedTransformResult<PropertyGraphLabelProperties>>(std::move(result));
 }
 
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPropertyGraphEdgeTableInternal(
@@ -7829,21 +7878,21 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPropertyGraphEd
 		auto table_alias_as_value = transformer.Transform<TableAlias>(table_alias_as_opt.GetResult());
 		table_alias_as = table_alias_as_value;
 	}
-	auto source_key_reference = transformer.Transform<PropertyGraphTableReference>(list_pr.GetChild(2));
-	auto destination_key_reference = transformer.Transform<PropertyGraphTableReference>(list_pr.GetChild(3));
-	optional<PropertyGraphProperties> property_graph_properties {};
-	auto &property_graph_properties_opt = list_pr.GetChild(4).Cast<OptionalParseResult>();
-	if (property_graph_properties_opt.HasResult()) {
-		auto property_graph_properties_value = transformer.Transform<PropertyGraphProperties>(property_graph_properties_opt.GetResult());
-		property_graph_properties = std::move(property_graph_properties_value);
+	optional<vector<Identifier>> property_graph_element_key {};
+	auto &property_graph_element_key_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	if (property_graph_element_key_opt.HasResult()) {
+		auto property_graph_element_key_value = transformer.Transform<vector<Identifier>>(property_graph_element_key_opt.GetResult());
+		property_graph_element_key = std::move(property_graph_element_key_value);
 	}
-	optional<PropertyGraphLabel> property_graph_label {};
-	auto &property_graph_label_opt = list_pr.GetChild(5).Cast<OptionalParseResult>();
-	if (property_graph_label_opt.HasResult()) {
-		auto property_graph_label_value = transformer.Transform<PropertyGraphLabel>(property_graph_label_opt.GetResult());
-		property_graph_label = std::move(property_graph_label_value);
+	auto source_key_reference = transformer.Transform<PropertyGraphTableReference>(list_pr.GetChild(3));
+	auto destination_key_reference = transformer.Transform<PropertyGraphTableReference>(list_pr.GetChild(4));
+	optional<PropertyGraphLabelProperties> property_graph_label_properties {};
+	auto &property_graph_label_properties_opt = list_pr.GetChild(5).Cast<OptionalParseResult>();
+	if (property_graph_label_properties_opt.HasResult()) {
+		auto property_graph_label_properties_value = transformer.Transform<PropertyGraphLabelProperties>(property_graph_label_properties_opt.GetResult());
+		property_graph_label_properties = std::move(property_graph_label_properties_value);
 	}
-	auto result = TransformPropertyGraphEdgeTable(transformer, std::move(base_table_name), table_alias_as, std::move(source_key_reference), std::move(destination_key_reference), std::move(property_graph_properties), std::move(property_graph_label));
+	auto result = TransformPropertyGraphEdgeTable(transformer, std::move(base_table_name), table_alias_as, std::move(property_graph_element_key), std::move(source_key_reference), std::move(destination_key_reference), std::move(property_graph_label_properties));
 	return make_uniq<TypedTransformResult<shared_ptr<PropertyGraphTable>>>(std::move(result));
 }
 
@@ -7933,6 +7982,12 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPropertyGraphLa
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
 	auto result = transformer.Transform<PropertyGraphLabel>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<PropertyGraphLabel>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPropertyGraphDefaultLabelInternal(
+    PEGTransformer &transformer, ParseResult &parse_result) {
+	auto result = TransformPropertyGraphDefaultLabel(transformer);
 	return make_uniq<TypedTransformResult<PropertyGraphLabel>>(std::move(result));
 }
 
@@ -8030,11 +8085,16 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPropertyGraphKe
 		col_id.push_back(col_id_value);
 	}
 	auto base_table_name = transformer.Transform<unique_ptr<BaseTableRef>>(list_pr.GetChild(3));
-	vector<Identifier> col_id_1;
-	auto col_id_1_items = ExtractParseResultsFromList(ExtractResultFromParens(list_pr.GetChild(4)));
-	for (auto &col_id_1_item : col_id_1_items) {
-		auto col_id_1_value = transformer.Transform<Identifier>(col_id_1_item.get());
-		col_id_1.push_back(col_id_1_value);
+	optional<vector<Identifier>> col_id_1 {};
+	auto &col_id_1_opt = list_pr.GetChild(4).Cast<OptionalParseResult>();
+	if (col_id_1_opt.HasResult()) {
+		vector<Identifier> col_id_1_value;
+		auto col_id_1_value_items_1 = ExtractParseResultsFromList(ExtractResultFromParens(col_id_1_opt.GetResult()));
+		for (auto &col_id_1_value_item_1 : col_id_1_value_items_1) {
+			auto col_id_1_value_value_1 = transformer.Transform<Identifier>(col_id_1_value_item_1.get());
+			col_id_1_value.push_back(col_id_1_value_value_1);
+		}
+		col_id_1 = col_id_1_value;
 	}
 	auto result = TransformPropertyGraphKeyReference(transformer, col_id, std::move(base_table_name), col_id_1);
 	return make_uniq<TypedTransformResult<PropertyGraphTableReference>>(std::move(result));
@@ -8317,6 +8377,14 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphRangeQuant
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphVertexReferenceInternal(
     PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<unique_ptr<PathReference>>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<unique_ptr<PathReference>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphNamedVertexInternal(
+    PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto identifier = list_pr.GetChild(1).Cast<IdentifierParseResult>().identifier;
 	optional<Identifier> graph_table_label {};
 	auto &graph_table_label_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
@@ -8330,7 +8398,34 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphVertexRefe
 		auto where_clause_value = transformer.Transform<unique_ptr<ParsedExpression>>(where_clause_opt.GetResult());
 		where_clause = std::move(where_clause_value);
 	}
-	auto result = TransformGraphVertexReference(transformer, identifier, std::move(graph_table_label), std::move(where_clause));
+	auto result = TransformGraphNamedVertex(transformer, identifier, std::move(graph_table_label), std::move(where_clause));
+	return make_uniq<TypedTransformResult<unique_ptr<PathReference>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphLabeledVertexInternal(
+    PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto graph_table_label = transformer.Transform<Identifier>(list_pr.GetChild(1));
+	optional<unique_ptr<ParsedExpression>> where_clause {};
+	auto &where_clause_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	if (where_clause_opt.HasResult()) {
+		auto where_clause_value = transformer.Transform<unique_ptr<ParsedExpression>>(where_clause_opt.GetResult());
+		where_clause = std::move(where_clause_value);
+	}
+	auto result = TransformGraphLabeledVertex(transformer, std::move(graph_table_label), std::move(where_clause));
+	return make_uniq<TypedTransformResult<unique_ptr<PathReference>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphAnonymousVertexInternal(
+    PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	optional<unique_ptr<ParsedExpression>> where_clause {};
+	auto &where_clause_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
+	if (where_clause_opt.HasResult()) {
+		auto where_clause_value = transformer.Transform<unique_ptr<ParsedExpression>>(where_clause_opt.GetResult());
+		where_clause = std::move(where_clause_value);
+	}
+	auto result = TransformGraphAnonymousVertex(transformer, std::move(where_clause));
 	return make_uniq<TypedTransformResult<unique_ptr<PathReference>>>(std::move(result));
 }
 
@@ -8387,6 +8482,14 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphEdgeDashIn
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphEdgeBodyInternal(
     PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<unique_ptr<PathReference>>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<unique_ptr<PathReference>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphNamedEdgeBodyInternal(
+    PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto identifier = list_pr.GetChild(1).Cast<IdentifierParseResult>().identifier;
 	optional<Identifier> graph_table_label {};
 	auto &graph_table_label_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
@@ -8400,7 +8503,34 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphEdgeBodyIn
 		auto where_clause_value = transformer.Transform<unique_ptr<ParsedExpression>>(where_clause_opt.GetResult());
 		where_clause = std::move(where_clause_value);
 	}
-	auto result = TransformGraphEdgeBody(transformer, identifier, std::move(graph_table_label), std::move(where_clause));
+	auto result = TransformGraphNamedEdgeBody(transformer, identifier, std::move(graph_table_label), std::move(where_clause));
+	return make_uniq<TypedTransformResult<unique_ptr<PathReference>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphLabeledEdgeBodyInternal(
+    PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto graph_table_label = transformer.Transform<Identifier>(list_pr.GetChild(1));
+	optional<unique_ptr<ParsedExpression>> where_clause {};
+	auto &where_clause_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	if (where_clause_opt.HasResult()) {
+		auto where_clause_value = transformer.Transform<unique_ptr<ParsedExpression>>(where_clause_opt.GetResult());
+		where_clause = std::move(where_clause_value);
+	}
+	auto result = TransformGraphLabeledEdgeBody(transformer, std::move(graph_table_label), std::move(where_clause));
+	return make_uniq<TypedTransformResult<unique_ptr<PathReference>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformGraphAnonymousEdgeBodyInternal(
+    PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	optional<unique_ptr<ParsedExpression>> where_clause {};
+	auto &where_clause_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
+	if (where_clause_opt.HasResult()) {
+		auto where_clause_value = transformer.Transform<unique_ptr<ParsedExpression>>(where_clause_opt.GetResult());
+		where_clause = std::move(where_clause_value);
+	}
+	auto result = TransformGraphAnonymousEdgeBody(transformer, std::move(where_clause));
 	return make_uniq<TypedTransformResult<unique_ptr<PathReference>>>(std::move(result));
 }
 
@@ -11728,6 +11858,10 @@ void PEGTransformerFactory::RegisterGenerated() {
 		{"VertexTablesClause", &PEGTransformerFactory::TransformVertexTablesClauseInternal},
 		{"EdgeTablesClause", &PEGTransformerFactory::TransformEdgeTablesClauseInternal},
 		{"PropertyGraphVertexTable", &PEGTransformerFactory::TransformPropertyGraphVertexTableInternal},
+		{"PropertyGraphElementKey", &PEGTransformerFactory::TransformPropertyGraphElementKeyInternal},
+		{"PropertyGraphLabelProperties", &PEGTransformerFactory::TransformPropertyGraphLabelPropertiesInternal},
+		{"PropertyGraphLabelFirst", &PEGTransformerFactory::TransformPropertyGraphLabelFirstInternal},
+		{"PropertyGraphPropertiesFirst", &PEGTransformerFactory::TransformPropertyGraphPropertiesFirstInternal},
 		{"PropertyGraphEdgeTable", &PEGTransformerFactory::TransformPropertyGraphEdgeTableInternal},
 		{"PropertyGraphProperties", &PEGTransformerFactory::TransformPropertyGraphPropertiesInternal},
 		{"PropertyGraphAllColumns", &PEGTransformerFactory::TransformPropertyGraphAllColumnsInternal},
@@ -11738,6 +11872,7 @@ void PEGTransformerFactory::RegisterGenerated() {
 		{"PropertyGraphProperty", &PEGTransformerFactory::TransformPropertyGraphPropertyInternal},
 		{"PropertyGraphPropertyAlias", &PEGTransformerFactory::TransformPropertyGraphPropertyAliasInternal},
 		{"PropertyGraphLabel", &PEGTransformerFactory::TransformPropertyGraphLabelInternal},
+		{"PropertyGraphDefaultLabel", &PEGTransformerFactory::TransformPropertyGraphDefaultLabelInternal},
 		{"PropertyGraphExplicitLabel", &PEGTransformerFactory::TransformPropertyGraphExplicitLabelInternal},
 		{"PropertyGraphImplicitLabel", &PEGTransformerFactory::TransformPropertyGraphImplicitLabelInternal},
 		{"PropertyGraphSubLabels", &PEGTransformerFactory::TransformPropertyGraphSubLabelsInternal},
@@ -11776,6 +11911,9 @@ void PEGTransformerFactory::RegisterGenerated() {
 		{"GraphFixedQuantifier", &PEGTransformerFactory::TransformGraphFixedQuantifierInternal},
 		{"GraphRangeQuantifier", &PEGTransformerFactory::TransformGraphRangeQuantifierInternal},
 		{"GraphVertexReference", &PEGTransformerFactory::TransformGraphVertexReferenceInternal},
+		{"GraphNamedVertex", &PEGTransformerFactory::TransformGraphNamedVertexInternal},
+		{"GraphLabeledVertex", &PEGTransformerFactory::TransformGraphLabeledVertexInternal},
+		{"GraphAnonymousVertex", &PEGTransformerFactory::TransformGraphAnonymousVertexInternal},
 		{"GraphEdgePattern", &PEGTransformerFactory::TransformGraphEdgePatternInternal},
 		{"GraphEdgeLeftEndpoint", &PEGTransformerFactory::TransformGraphEdgeLeftEndpointInternal},
 		{"GraphEdgeRightEndpoint", &PEGTransformerFactory::TransformGraphEdgeRightEndpointInternal},
@@ -11784,6 +11922,9 @@ void PEGTransformerFactory::RegisterGenerated() {
 		{"GraphEdgeSpacedRightArrow", &PEGTransformerFactory::TransformGraphEdgeSpacedRightArrowInternal},
 		{"GraphEdgeDash", &PEGTransformerFactory::TransformGraphEdgeDashInternal},
 		{"GraphEdgeBody", &PEGTransformerFactory::TransformGraphEdgeBodyInternal},
+		{"GraphNamedEdgeBody", &PEGTransformerFactory::TransformGraphNamedEdgeBodyInternal},
+		{"GraphLabeledEdgeBody", &PEGTransformerFactory::TransformGraphLabeledEdgeBodyInternal},
+		{"GraphAnonymousEdgeBody", &PEGTransformerFactory::TransformGraphAnonymousEdgeBodyInternal},
 		{"GraphTableLabel", &PEGTransformerFactory::TransformGraphTableLabelInternal},
 		{"PivotOn", &PEGTransformerFactory::TransformPivotOnInternal},
 		{"PivotUsing", &PEGTransformerFactory::TransformPivotUsingInternal},

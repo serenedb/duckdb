@@ -1,8 +1,12 @@
 CreatePropertyGraphStmt <- 'PROPERTY' 'GRAPH' IfNotExists? QualifiedName VertexTablesClause EdgeTablesClause?
-VertexTablesClause <- 'VERTEX' 'TABLES' Parens(List(PropertyGraphVertexTable))
-EdgeTablesClause <- 'EDGE' 'TABLES' Parens(List(PropertyGraphEdgeTable))
-PropertyGraphVertexTable <- BaseTableName TableAliasAs? PropertyGraphProperties? PropertyGraphLabel?
-PropertyGraphEdgeTable <- BaseTableName TableAliasAs? SourceKeyReference DestinationKeyReference PropertyGraphProperties? PropertyGraphLabel?
+VertexTablesClause <- ('VERTEX' / 'NODE') 'TABLES' Parens(List(PropertyGraphVertexTable))
+EdgeTablesClause <- ('EDGE' / 'RELATIONSHIP') 'TABLES' Parens(List(PropertyGraphEdgeTable))
+PropertyGraphVertexTable <- BaseTableName TableAliasAs? PropertyGraphElementKey? PropertyGraphLabelProperties?
+PropertyGraphElementKey <- 'KEY' Parens(List(ColId))
+PropertyGraphLabelProperties <- PropertyGraphLabelFirst / PropertyGraphPropertiesFirst
+PropertyGraphLabelFirst <- PropertyGraphLabel PropertyGraphProperties?
+PropertyGraphPropertiesFirst <- PropertyGraphProperties PropertyGraphLabel?
+PropertyGraphEdgeTable <- BaseTableName TableAliasAs? PropertyGraphElementKey? SourceKeyReference DestinationKeyReference PropertyGraphLabelProperties?
 PropertyGraphProperties <- PropertyGraphAllColumnsExcept / PropertyGraphAllColumns / PropertyGraphAllProperties / PropertyGraphNoProperties / PropertyGraphPropertyList
 PropertyGraphAllColumns <- 'PROPERTIES' 'ARE'? 'ALL' 'COLUMNS'
 PropertyGraphAllColumnsExcept <- 'PROPERTIES' 'ARE'? 'ALL' 'COLUMNS' 'EXCEPT' Parens(List(ColId))
@@ -11,7 +15,8 @@ PropertyGraphNoProperties <- 'NO' 'PROPERTIES'
 PropertyGraphPropertyList <- 'PROPERTIES' Parens(List(PropertyGraphProperty))
 PropertyGraphProperty <- ColId PropertyGraphPropertyAlias?
 PropertyGraphPropertyAlias <- 'AS' ColId
-PropertyGraphLabel <- PropertyGraphExplicitLabel / PropertyGraphImplicitLabel
+PropertyGraphLabel <- PropertyGraphExplicitLabel / PropertyGraphDefaultLabel / PropertyGraphImplicitLabel
+PropertyGraphDefaultLabel <- 'DEFAULT' 'LABEL'
 PropertyGraphExplicitLabel <- 'LABEL' ColId PropertyGraphSubLabels?
 PropertyGraphImplicitLabel <- PropertyGraphSubLabels
 PropertyGraphSubLabels <- 'IN' Identifier Parens(List(ColId))
@@ -21,7 +26,7 @@ SourceTableReference <- 'SOURCE' BaseTableName
 DestinationKeyReference <- DestinationKeyFullReference / DestinationTableReference
 DestinationKeyFullReference <- 'DESTINATION' PropertyGraphKeyReference
 DestinationTableReference <- 'DESTINATION' BaseTableName
-PropertyGraphKeyReference <- 'KEY' Parens(List(ColId)) 'REFERENCES' BaseTableName Parens(List(ColId))
+PropertyGraphKeyReference <- 'KEY' Parens(List(ColId)) 'REFERENCES' BaseTableName Parens(List(ColId))?
 
 DropPropertyGraph <- 'PROPERTY' 'GRAPH' IfExists? QualifiedName
 
@@ -51,7 +56,10 @@ GraphPlusQuantifier <- '+'
 GraphQuestionQuantifier <- '?'
 GraphFixedQuantifier <- '{' NumberLiteral '}'
 GraphRangeQuantifier <- '{' NumberLiteral? ',' NumberLiteral? '}'
-GraphVertexReference <- '(' Identifier GraphTableLabel? WhereClause? ')'
+GraphVertexReference <- GraphNamedVertex / GraphLabeledVertex / GraphAnonymousVertex
+GraphNamedVertex <- '(' Identifier GraphTableLabel? WhereClause? ')'
+GraphLabeledVertex <- '(' GraphTableLabel WhereClause? ')'
+GraphAnonymousVertex <- '(' WhereClause? ')'
 GraphEdgePattern <- GraphEdgeLeftEndpoint GraphEdgeBody GraphEdgeRightEndpoint
 GraphEdgeLeftEndpoint <- GraphEdgeLeftArrow / GraphEdgeDash
 GraphEdgeRightEndpoint <- GraphEdgeSpacedRightArrow / GraphEdgeRightArrow / GraphEdgeDash
@@ -59,5 +67,8 @@ GraphEdgeLeftArrow <- '<' '-'
 GraphEdgeRightArrow <- '->'
 GraphEdgeSpacedRightArrow <- '-' '>'
 GraphEdgeDash <- '-'
-GraphEdgeBody <- '[' Identifier GraphTableLabel? WhereClause? ']'
+GraphEdgeBody <- GraphNamedEdgeBody / GraphLabeledEdgeBody / GraphAnonymousEdgeBody
+GraphNamedEdgeBody <- '[' Identifier GraphTableLabel? WhereClause? ']'
+GraphLabeledEdgeBody <- '[' GraphTableLabel WhereClause? ']'
+GraphAnonymousEdgeBody <- '[' WhereClause? ']'
 GraphTableLabel <- (':' / 'IS') ColId

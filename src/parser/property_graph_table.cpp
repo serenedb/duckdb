@@ -248,6 +248,7 @@ void PropertyGraphTable::Serialize(Serializer &serializer) const {
 
 	serializer.WriteProperty(102, "table_name", table_name);
 	serializer.WriteProperty(103, "table_name_alias", table_name_alias); // alias (not used for now)
+	serializer.WritePropertyWithDefault(124, "element_key", element_key, vector<Identifier>());
 	serializer.WriteProperty(104, "column_names", column_names);
 	serializer.WriteProperty(105, "column_aliases", column_aliases);
 	serializer.WriteProperty(106, "except_columns", except_columns);
@@ -283,6 +284,7 @@ shared_ptr<PropertyGraphTable> PropertyGraphTable::Deserialize(Deserializer &des
 
 	deserializer.ReadProperty(102, "table_name", pg_table->table_name);
 	deserializer.ReadProperty(103, "table_name_alias", pg_table->table_name_alias);
+	deserializer.ReadPropertyWithExplicitDefault(124, "element_key", pg_table->element_key, vector<Identifier>());
 	deserializer.ReadProperty(104, "column_names", pg_table->column_names);
 	deserializer.ReadProperty(105, "column_aliases", pg_table->column_aliases);
 	deserializer.ReadProperty(106, "except_columns", pg_table->except_columns);
@@ -332,6 +334,7 @@ shared_ptr<PropertyGraphTable> PropertyGraphTable::Copy() const {
 		result->sub_labels.push_back(label);
 	}
 
+	result->element_key = element_key;
 	result->main_label = main_label;
 	result->is_vertex_table = is_vertex_table;
 	result->all_columns = all_columns;
