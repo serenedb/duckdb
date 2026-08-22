@@ -40,7 +40,10 @@
 #include "duckdb/common/enums/debug_verification_mode.hpp"
 #include "duckdb/common/enums/debug_order_verification.hpp"
 
+#include <functional>
+
 namespace duckdb {
+class Connection;
 
 class BlockAllocator;
 class BufferManager;
@@ -170,6 +173,11 @@ public:
 
 	//! Replacement table scans are automatically attempted when a table name cannot be found in the schema
 	vector<ReplacementScan> replacement_scans;
+
+	//! Factory for extension-internal helper connections. When set, an extension that opens a helper
+	//! connection on behalf of a running context obtains it here, so the host system can attach the
+	//! per-context state its catalog implementation requires. Unset: extensions use a plain Connection.
+	std::function<shared_ptr<Connection>(ClientContext &parent)> internal_connection_factory;
 
 	//! The FileSystem to use, can be overwritten to allow for injecting custom file systems for testing purposes (e.g.
 	//! RamFS or something similar)

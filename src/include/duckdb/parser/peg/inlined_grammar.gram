@@ -1010,7 +1010,7 @@ SubscriptionConnection <- 'CONNECTION' StringLiteral SubscriptionPublication?
 SubscriptionPublication <- 'PUBLICATION' List(Identifier)
 
 CreateStatement <- 'CREATE' OrReplace? Temporary? CreateStatementVariation
-CreateStatementVariation <- CreateTableStmt / CreateMacroStmt / CreateSequenceStmt / CreateTypeStmt / CreateSchemaStmt / CreateViewStmt / CreateIndexStmt / CreateSecretStmt / CreateTriggerStmt
+CreateStatementVariation <- CreatePropertyGraphStmt / CreateTableStmt / CreateMacroStmt / CreateSequenceStmt / CreateTypeStmt / CreateSchemaStmt / CreateViewStmt / CreateIndexStmt / CreateSecretStmt / CreateTriggerStmt
 OrReplace <- 'OR' 'REPLACE'
 Temporary <- Persistent / TempPersistent / TemporaryPersistent
 Persistent <- 'PERSISTENT'
@@ -1175,7 +1175,9 @@ TruncateContinue <- 'CONTINUE' 'IDENTITY'
 TargetOptAlias <- BaseTableName 'AS'? ColId?
 DeleteUsingClause <- 'USING' List(TableRef)
 
-DescribeStatement <- ShowTables / ShowSelect / ShowAllTables / ShowAliasedSetting / ShowAllSettings / ShowQualifiedName
+DescribeStatement <- DescribePropertyGraph / ShowTables / ShowSelect / ShowAllTables / ShowAliasedSetting / ShowAllSettings / ShowQualifiedName
+
+DescribePropertyGraph <- DescribeRule 'PROPERTY' 'GRAPH' QualifiedName
 
 ShowSelect <- ShowOrDescribeOrSummarize SelectStatementInternal
 ShowAllTables <- ShowOrDescribe 'ALL' 'TABLES'
@@ -1208,6 +1210,7 @@ DetachStatement <- 'DETACH' Database? IfExists? CatalogName
 DropStatement <- 'DROP' DropEntries DropBehavior?
 
 DropEntries <-
+	DropPropertyGraph /
 	DropTable /
 	DropTableFunction /
 	DropFunction /
@@ -1711,6 +1714,81 @@ ListenStatement <- 'LISTEN' Identifier
 NotifyStatement <- 'NOTIFY' Identifier (',' StringLiteral)?
 UnlistenStatement <- 'UNLISTEN' (Identifier / '*')
 
+CreatePropertyGraphStmt <- 'PROPERTY' 'GRAPH' IfNotExists? QualifiedName VertexTablesClause EdgeTablesClause?
+VertexTablesClause <- ('VERTEX' / 'NODE') 'TABLES' Parens(List(PropertyGraphVertexTable))
+EdgeTablesClause <- ('EDGE' / 'RELATIONSHIP') 'TABLES' Parens(List(PropertyGraphEdgeTable))
+PropertyGraphVertexTable <- BaseTableName TableAliasAs? PropertyGraphElementKey? PropertyGraphLabelProperties?
+PropertyGraphElementKey <- 'KEY' Parens(List(ColId))
+PropertyGraphLabelProperties <- PropertyGraphLabelFirst / PropertyGraphPropertiesFirst
+PropertyGraphLabelFirst <- PropertyGraphLabel PropertyGraphProperties?
+PropertyGraphPropertiesFirst <- PropertyGraphProperties PropertyGraphLabel?
+PropertyGraphEdgeTable <- BaseTableName TableAliasAs? PropertyGraphElementKey? SourceKeyReference DestinationKeyReference PropertyGraphLabelProperties?
+PropertyGraphProperties <- PropertyGraphAllColumnsExcept / PropertyGraphAllColumns / PropertyGraphAllProperties / PropertyGraphNoProperties / PropertyGraphPropertyList
+PropertyGraphAllColumns <- 'PROPERTIES' 'ARE'? 'ALL' 'COLUMNS'
+PropertyGraphAllColumnsExcept <- 'PROPERTIES' 'ARE'? 'ALL' 'COLUMNS' 'EXCEPT' Parens(List(ColId))
+PropertyGraphAllProperties <- 'ALL' 'PROPERTIES'
+PropertyGraphNoProperties <- 'NO' 'PROPERTIES'
+PropertyGraphPropertyList <- 'PROPERTIES' Parens(List(PropertyGraphProperty))
+PropertyGraphProperty <- ColId PropertyGraphPropertyAlias?
+PropertyGraphPropertyAlias <- 'AS' ColId
+PropertyGraphLabel <- PropertyGraphExplicitLabel / PropertyGraphDefaultLabel / PropertyGraphImplicitLabel
+PropertyGraphDefaultLabel <- 'DEFAULT' 'LABEL'
+PropertyGraphExplicitLabel <- 'LABEL' ColId PropertyGraphSubLabels?
+PropertyGraphImplicitLabel <- PropertyGraphSubLabels
+PropertyGraphSubLabels <- 'IN' Identifier Parens(List(ColId))
+SourceKeyReference <- SourceKeyFullReference / SourceTableReference
+SourceKeyFullReference <- 'SOURCE' PropertyGraphKeyReference
+SourceTableReference <- 'SOURCE' BaseTableName
+DestinationKeyReference <- DestinationKeyFullReference / DestinationTableReference
+DestinationKeyFullReference <- 'DESTINATION' PropertyGraphKeyReference
+DestinationTableReference <- 'DESTINATION' BaseTableName
+PropertyGraphKeyReference <- 'KEY' Parens(List(ColId)) 'REFERENCES' BaseTableName Parens(List(ColId))?
+
+DropPropertyGraph <- 'PROPERTY' 'GRAPH' IfExists? QualifiedName
+
+GraphTableRef <- GraphTableKeyword '(' QualifiedName 'MATCH' GraphPathPatternList WhereClause? GraphTableColumnsClause? ')' TableAlias?
+GraphTableColumnsClause <- 'COLUMNS' '(' TargetList ')'
+GraphTableKeyword <- GraphTableSpacedKeyword / GraphTableUnderscoreKeyword
+GraphTableUnderscoreKeyword <- Identifier
+GraphTableSpacedKeyword <- 'GRAPH' 'TABLE'
+GraphPathPattern <- GraphPathVariable? GraphPathSearchPrefix? GraphPathModePrefix? GraphPathSequence
+GraphPathPatternList <- List(GraphPathPattern)
+GraphPathVariable <- Identifier '='
+GraphPathSearchPrefix <- GraphAllShortestPrefix / GraphAnyShortestPrefix / GraphTopKShortestPrefix
+GraphAllShortestPrefix <- 'ALL' 'SHORTEST'
+GraphAnyShortestPrefix <- 'ANY' 'SHORTEST'
+GraphTopKShortestPrefix <- 'SHORTEST' NumberLiteral
+GraphPathModePrefix <- GraphWalkPathMode / GraphTrailPathMode / GraphSimplePathMode / GraphAcyclicPathMode
+GraphWalkPathMode <- 'WALK'
+GraphTrailPathMode <- 'TRAIL'
+GraphSimplePathMode <- 'SIMPLE'
+GraphAcyclicPathMode <- 'ACYCLIC'
+GraphPathSequence <- GraphVertexReference GraphEdgeVertexPattern*
+GraphEdgeVertexPattern <- GraphQuantifiedEdgePattern GraphVertexReference
+GraphQuantifiedEdgePattern <- GraphEdgePattern GraphEdgeQuantifier?
+GraphEdgeQuantifier <- GraphStarQuantifier / GraphPlusQuantifier / GraphQuestionQuantifier / GraphFixedQuantifier / GraphRangeQuantifier
+GraphStarQuantifier <- '*'
+GraphPlusQuantifier <- '+'
+GraphQuestionQuantifier <- '?'
+GraphFixedQuantifier <- '{' NumberLiteral '}'
+GraphRangeQuantifier <- '{' NumberLiteral? ',' NumberLiteral? '}'
+GraphVertexReference <- GraphNamedVertex / GraphLabeledVertex / GraphAnonymousVertex
+GraphNamedVertex <- '(' Identifier GraphTableLabel? WhereClause? ')'
+GraphLabeledVertex <- '(' GraphTableLabel WhereClause? ')'
+GraphAnonymousVertex <- '(' WhereClause? ')'
+GraphEdgePattern <- GraphEdgeLeftEndpoint GraphEdgeBody GraphEdgeRightEndpoint
+GraphEdgeLeftEndpoint <- GraphEdgeLeftArrow / GraphEdgeDash
+GraphEdgeRightEndpoint <- GraphEdgeSpacedRightArrow / GraphEdgeRightArrow / GraphEdgeDash
+GraphEdgeLeftArrow <- '<' '-'
+GraphEdgeRightArrow <- '->'
+GraphEdgeSpacedRightArrow <- '-' '>'
+GraphEdgeDash <- '-'
+GraphEdgeBody <- GraphNamedEdgeBody / GraphLabeledEdgeBody / GraphAnonymousEdgeBody
+GraphNamedEdgeBody <- '[' Identifier GraphTableLabel? WhereClause? ']'
+GraphLabeledEdgeBody <- '[' GraphTableLabel WhereClause? ']'
+GraphAnonymousEdgeBody <- '[' WhereClause? ']'
+GraphTableLabel <- (':' / 'IS') ColId
+
 PivotStatement <- PivotKeyword TableRef PivotOn? PivotUsing? PivotGroupByList?
 
 PivotOn <- 'ON' PivotColumnList
@@ -1943,7 +2021,7 @@ DistinctAll <- 'ALL'
 DistinctOn <- 'DISTINCT' DistinctOnTargets?
 DistinctOnTargets <- 'ON' Parens(List(Expression))
 
-InnerTableRef <- ValuesRef / TableFunction / TableSubquery / BaseTableRef / ParensTableRef
+InnerTableRef <- GraphTableRef / ValuesRef / TableFunction / TableSubquery / BaseTableRef / ParensTableRef
 
 TableRef <- InnerTableRef JoinOrPivot*
 TableSubquery <- Lateral? SubqueryReference TableAlias?

@@ -17,12 +17,17 @@ add_library_unity(
   expression_util.cpp
   keyword_helper.cpp
   parsed_expression.cpp
+  path_element.cpp
+  path_pattern.cpp
+  path_reference.cpp
   parsed_expression_iterator.cpp
   parser.cpp
+  property_graph_table.cpp
   qualified_name.cpp
   query_error_context.cpp
   query_node.cpp
   result_modifier.cpp
+  subpath_element.cpp
   tableref.cpp)
 set(ALL_OBJECT_FILES
     ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_parser>

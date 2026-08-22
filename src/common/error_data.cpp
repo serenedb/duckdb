@@ -14,8 +14,32 @@ namespace duckdb {
 ErrorData::ErrorData() : initialized(false), type(ExceptionType::INVALID) {
 }
 
+namespace {
+
+// Whether `ptr` holds exactly `ex`. The ErrorData(ex) constructor defaults its exception_ptr to
+// std::current_exception(), which is only `ex` when the caller sits in the catch handler for `ex`.
+// Constructing ErrorData from a locally built exception while some outer handler is active would
+// otherwise capture the outer in-flight exception, and Throw() would resurrect that unrelated
+// error instead of `ex`.
+bool IsPointerToException(const std::exception &ex, const std::exception_ptr &ptr) {
+	if (!ptr) {
+		return false;
+	}
+	try {
+		std::rethrow_exception(ptr);
+	} catch (const std::exception &active) {
+		return &active == &ex;
+	} catch (...) {
+		return false;
+	}
+}
+
+} // namespace
+
 ErrorData::ErrorData(const std::exception &ex, const std::exception_ptr &ptr) : ErrorData(ex.what()) {
-	this->exception_ptr = ptr;
+	if (IsPointerToException(ex, ptr)) {
+		this->exception_ptr = ptr;
+	}
 }
 
 ErrorData::ErrorData(ExceptionType type, std::string message)

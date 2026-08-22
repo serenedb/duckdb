@@ -142,6 +142,7 @@ QueryNode:
   type: "unique_ptr<QueryNode>"
   by_value: true
   rules:
+    - DescribePropertyGraph
     - ShowSelect
     - ShowTables
     - ShowAllTables
@@ -173,6 +174,7 @@ CreateStatement:
     - CreateSecretStmt
     - CreateSequenceStmt
     - CreateStatementVariation
+    - CreatePropertyGraphStmt
     - CreateTableStmt
     - CreateIndexStmt
     - CreateMacroStmt
@@ -185,6 +187,7 @@ DropStatement:
   by_value: true
   rules:
     - DropEntries
+    - DropPropertyGraph
     - DropTable
     - DropTableFunction
     - DropFunction
@@ -569,6 +572,7 @@ TableRef:
     - TablePivotClause
     - TablePivotClauseBody
     - InnerTableRef
+    - GraphTableRef
     - TableFunction
     - TableFunctionLateralOpt
     - TableFunctionAliasColon
@@ -597,6 +601,20 @@ BaseTableRef:
     - InsertTarget
     - TruncateTarget
     - SelectIntoClause
+
+PropertyGraphTable:
+  type: "shared_ptr<PropertyGraphTable>"
+  by_value: true
+  rules:
+    - PropertyGraphVertexTable
+    - PropertyGraphEdgeTable
+
+PropertyGraphTableList:
+  type: "vector<shared_ptr<PropertyGraphTable>>"
+  by_value: true
+  rules:
+    - VertexTablesClause
+    - EdgeTablesClause
 
 # ---------------------------------------------------------------------------
 # vector<T> categories
@@ -1587,6 +1605,190 @@ overrides:
   # common.gram
   ColIdType: "pair<Identifier, LogicalType>"
   ColIdTypeList: "child_list_t<LogicalType>"
+  # create_property_graph.gram
+  PropertyGraphElementKey:
+    type: "vector<Identifier>"
+    by_value: true
+  PropertyGraphLabelProperties:
+    type: "PropertyGraphLabelProperties"
+    by_value: true
+  PropertyGraphLabelFirst:
+    type: "PropertyGraphLabelProperties"
+    by_value: true
+  PropertyGraphPropertiesFirst:
+    type: "PropertyGraphLabelProperties"
+    by_value: true
+  PropertyGraphDefaultLabel:
+    type: "PropertyGraphLabel"
+    by_value: true
+  PropertyGraphProperties:
+    type: "PropertyGraphProperties"
+    by_value: true
+  PropertyGraphAllColumns:
+    type: "PropertyGraphProperties"
+    by_value: true
+  PropertyGraphAllColumnsExcept:
+    type: "PropertyGraphProperties"
+    by_value: true
+  PropertyGraphAllProperties:
+    type: "PropertyGraphProperties"
+    by_value: true
+  PropertyGraphNoProperties:
+    type: "PropertyGraphProperties"
+    by_value: true
+  PropertyGraphPropertyList:
+    type: "PropertyGraphProperties"
+    by_value: true
+  PropertyGraphProperty:
+    type: "Identifier"
+    by_value: true
+  PropertyGraphPropertyAlias:
+    type: "Identifier"
+    by_value: true
+  PropertyGraphLabel:
+    type: "PropertyGraphLabel"
+    by_value: true
+  PropertyGraphExplicitLabel:
+    type: "PropertyGraphLabel"
+    by_value: true
+  PropertyGraphImplicitLabel:
+    type: "PropertyGraphLabel"
+    by_value: true
+  PropertyGraphSubLabels:
+    type: "PropertyGraphSubLabels"
+    by_value: true
+  SourceKeyReference:
+    type: "PropertyGraphTableReference"
+    by_value: true
+  SourceKeyFullReference:
+    type: "PropertyGraphTableReference"
+    by_value: true
+  SourceTableReference:
+    type: "PropertyGraphTableReference"
+    by_value: true
+  DestinationKeyReference:
+    type: "PropertyGraphTableReference"
+    by_value: true
+  DestinationKeyFullReference:
+    type: "PropertyGraphTableReference"
+    by_value: true
+  DestinationTableReference:
+    type: "PropertyGraphTableReference"
+    by_value: true
+  PropertyGraphKeyReference:
+    type: "PropertyGraphTableReference"
+    by_value: true
+  GraphTableLabel:
+    type: "Identifier"
+    by_value: true
+  GraphTableKeyword:
+    type: "string"
+    by_value: true
+  GraphTableUnderscoreKeyword:
+    type: "string"
+    by_value: true
+  GraphTableSpacedKeyword:
+    type: "string"
+    by_value: true
+  GraphTableColumnsClause:
+    type: "vector<unique_ptr<ParsedExpression>>"
+    by_value: true
+  GraphPathPattern:
+    type: "unique_ptr<PathPattern>"
+  GraphPathPatternList:
+    type: "vector<unique_ptr<PathPattern>>"
+    by_value: true
+  GraphPathVariable:
+    type: "Identifier"
+    by_value: true
+  GraphPathSearchPrefix:
+    type: "string"
+    by_value: true
+  GraphAllShortestPrefix:
+    type: "string"
+    by_value: true
+  GraphAnyShortestPrefix:
+    type: "string"
+    by_value: true
+  GraphTopKShortestPrefix:
+    type: "string"
+    by_value: true
+  GraphPathModePrefix:
+    type: "string"
+    by_value: true
+  GraphWalkPathMode:
+    type: "string"
+    by_value: true
+  GraphTrailPathMode:
+    type: "string"
+    by_value: true
+  GraphSimplePathMode:
+    type: "string"
+    by_value: true
+  GraphAcyclicPathMode:
+    type: "string"
+    by_value: true
+  GraphPathSequence:
+    type: "unique_ptr<PathPattern>"
+  GraphEdgeVertexPattern:
+    type: "vector<unique_ptr<PathReference>>"
+    by_value: true
+  GraphQuantifiedEdgePattern:
+    type: "unique_ptr<PathReference>"
+  GraphEdgeQuantifier:
+    type: "string"
+    by_value: true
+  GraphStarQuantifier:
+    type: "string"
+    by_value: true
+  GraphPlusQuantifier:
+    type: "string"
+    by_value: true
+  GraphQuestionQuantifier:
+    type: "string"
+    by_value: true
+  GraphFixedQuantifier:
+    type: "string"
+    by_value: true
+  GraphRangeQuantifier:
+    type: "string"
+    by_value: true
+  GraphVertexReference:
+    type: "unique_ptr<PathReference>"
+  GraphNamedVertex:
+    type: "unique_ptr<PathReference>"
+  GraphLabeledVertex:
+    type: "unique_ptr<PathReference>"
+  GraphAnonymousVertex:
+    type: "unique_ptr<PathReference>"
+  GraphEdgePattern:
+    type: "unique_ptr<PathReference>"
+  GraphEdgeBody:
+    type: "unique_ptr<PathReference>"
+  GraphNamedEdgeBody:
+    type: "unique_ptr<PathReference>"
+  GraphLabeledEdgeBody:
+    type: "unique_ptr<PathReference>"
+  GraphAnonymousEdgeBody:
+    type: "unique_ptr<PathReference>"
+  GraphEdgeLeftEndpoint:
+    type: "string"
+    by_value: true
+  GraphEdgeRightEndpoint:
+    type: "string"
+    by_value: true
+  GraphEdgeLeftArrow:
+    type: "string"
+    by_value: true
+  GraphEdgeRightArrow:
+    type: "string"
+    by_value: true
+  GraphEdgeSpacedRightArrow:
+    type: "string"
+    by_value: true
+  GraphEdgeDash:
+    type: "string"
+    by_value: true
   # create_index.gram
   RelOption: "pair<Identifier, unique_ptr<ParsedExpression>>"
   IndexElement:

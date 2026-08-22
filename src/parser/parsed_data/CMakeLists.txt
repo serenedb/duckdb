@@ -27,11 +27,13 @@ add_library_unity(
   create_table_function_info.cpp
   create_table_info.cpp
   create_type_info.cpp
+  create_property_graph_info.cpp
   create_view_info.cpp
   create_window_function_info.cpp
   detach_info.cpp
   disconnect_info.cpp
   drop_info.cpp
+  drop_property_graph_info.cpp
   exported_table_data.cpp
   extra_drop_info.cpp
   load_info.cpp
