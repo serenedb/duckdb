@@ -232,27 +232,27 @@ insert into intervals values
 query I
 select mode(v) from intervals;
 ----
-5 months 2 days 12:11:49
+5 mons 2 days 12:11:49
 
 query II
 select k, mode(v) from intervals group by k ORDER BY ALL;
 ----
-1	5 months 2 days 12:11:49
-2	2 months 29 days 06:30:00
-3	9 months 1 day 21:15:22
+1	5 mons 2 days 12:11:49
+2	2 mons 29 days 06:30:00
+3	9 mons 1 day 21:15:22
 
 query III
 select k, v, mode(v) over (partition by k)
     from intervals
     order by k, v;
 ----
-1	NULL	5 months 2 days 12:11:49
-1	5 months 2 days 12:11:49	5 months 2 days 12:11:49
-1	5 months 2 days 12:11:49	5 months 2 days 12:11:49
-2	2 months 29 days 06:30:00	2 months 29 days 06:30:00
-2	2 months 29 days 06:30:00	2 months 29 days 06:30:00
-2	5 months 2 days 12:11:49	2 months 29 days 06:30:00
-3	9 months 1 day 21:15:22	9 months 1 day 21:15:22
+1	NULL	5 mons 2 days 12:11:49
+1	5 mons 2 days 12:11:49	5 mons 2 days 12:11:49
+1	5 mons 2 days 12:11:49	5 mons 2 days 12:11:49
+2	2 mons 29 days 06:30:00	2 mons 29 days 06:30:00
+2	2 mons 29 days 06:30:00	2 mons 29 days 06:30:00
+2	5 mons 2 days 12:11:49	2 mons 29 days 06:30:00
+3	9 mons 1 day 21:15:22	9 mons 1 day 21:15:22
 
 # Huge integers
 

@@ -70,8 +70,8 @@ SELECT i FROM issue14384 ORDER BY ALL;
 2 days
 3 days
 13 days
-1 month
-2 years 3 months
+1 mon
+2 years 3 mons
 
 # PiecewiseMergeJoin
 query II 
@@ -107,18 +107,18 @@ ORDER BY ALL;
 13 days	1000 days
 13 days	1000 days
 13 days	1000 days
-1 month	1000 days
-1 month	1000 days
-1 month	1000 days
-1 month	1000 days
-1 month	1000 days
-1 month	1000 days
-2 years 3 months	1000 days
-2 years 3 months	1000 days
-2 years 3 months	1000 days
-2 years 3 months	1000 days
-2 years 3 months	1000 days
-2 years 3 months	1000 days
+1 mon	1000 days
+1 mon	1000 days
+1 mon	1000 days
+1 mon	1000 days
+1 mon	1000 days
+1 mon	1000 days
+2 years 3 mons	1000 days
+2 years 3 mons	1000 days
+2 years 3 mons	1000 days
+2 years 3 mons	1000 days
+2 years 3 mons	1000 days
+2 years 3 mons	1000 days
 
 # NestedLoopJoin
 query II
@@ -154,18 +154,18 @@ ORDER BY ALL;
 13 days	1000 days
 13 days	1000 days
 13 days	1000 days
-1 month	1000 days
-1 month	1000 days
-1 month	1000 days
-1 month	1000 days
-1 month	1000 days
-1 month	1000 days
-2 years 3 months	1000 days
-2 years 3 months	1000 days
-2 years 3 months	1000 days
-2 years 3 months	1000 days
-2 years 3 months	1000 days
-2 years 3 months	1000 days
+1 mon	1000 days
+1 mon	1000 days
+1 mon	1000 days
+1 mon	1000 days
+1 mon	1000 days
+1 mon	1000 days
+2 years 3 mons	1000 days
+2 years 3 mons	1000 days
+2 years 3 mons	1000 days
+2 years 3 mons	1000 days
+2 years 3 mons	1000 days
+2 years 3 mons	1000 days
 
 
 statement ok
@@ -181,15 +181,15 @@ INSERT INTO issue14384(i) VALUES
 query I
 SELECT i FROM issue14384 ORDER BY ALL;
 ----
--178956970 years -8 months -2147483648 days -2562047788:00:54.775807
+-178956970 years -8 mons -2147483648 days -2562047788:00:54.775807
 -1734799452 days
 2 days
 3 days
 13 days
-1 month
+1 mon
 28 days 120:00:00
-1 month 3 days
-2 years 3 months
+1 mon 3 days
+2 years 3 mons
 1000 days
-178956970 years 7 months 2147483647 days 2562047788:00:54.775807
+178956970 years 7 mons 2147483647 days 2562047788:00:54.775807
 NULL
