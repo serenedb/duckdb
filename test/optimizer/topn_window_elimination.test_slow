@@ -315,8 +315,8 @@ INSERT INTO b VALUES (ARRAY[4.0, 5.0, 6.0], 'b'), (ARRAY[1.0, 2.0, 3.0], 'a')
 query IIIII
 SELECT * FROM a, LATERAL (SELECT *, a_id AS id_dup FROM b ORDER BY array_distance(a.a_vec, b.b_vec) LIMIT 1) ORDER BY ALL
 ----
-[1.0, 2.0, 3.0]	1	[1.0, 2.0, 3.0]	a	1
-[4.0, 5.0, 6.0]	2	[4.0, 5.0, 6.0]	b	2
+[1, 2, 3]	1	[1, 2, 3]	a	1
+[4, 5, 6]	2	[4, 5, 6]	b	2
 
 statement ok
 CREATE TABLE t(a INT, b INT, c VARCHAR);

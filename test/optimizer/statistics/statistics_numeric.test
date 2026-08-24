@@ -126,7 +126,7 @@ INSERT INTO doubles VALUES (1.5), (9.7);
 query II
 SELECT s.min, s.max FROM (SELECT STATS(floor(x)) s FROM doubles LIMIT 1)
 ----
-1.0	9.0
+1	9
 
 # year(date) is non-decreasing: corner eval succeeds when min/max are finite dates
 statement ok
@@ -178,4 +178,4 @@ NULL	NULL
 query II
 SELECT s.min, s.max FROM (SELECT STATS(exp(x)) s FROM mixed LIMIT 1)
 ----
-1.0	2.718281828459045
+1	2.718281828459045

@@ -11,5 +11,5 @@ FROM all_types AS t43(c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c1
 ORDER BY ALL NULLS LAST
 ----
 []
-[42.0, nan, inf, -inf, NULL, -42.0]
+[42, nan, inf, -inf, NULL, -42]
 NULL

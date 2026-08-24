@@ -42,7 +42,7 @@ SELECT unnest(array_value(1, 2, 3)::INT[])
 query I
 SELECT array_value('1.0', '2.0', '3.0')::DOUBLE[3]
 ----
-[1.0, 2.0, 3.0]
+[1, 2, 3]
 
 # Should not be able to cast arrays of different lengths
 statement error
@@ -66,7 +66,7 @@ SELECT [1,2,3]::INT[3]
 query I
 SELECT ['1.0', '2.0', '3.0']::DOUBLE[3]
 ----
-[1.0, 2.0, 3.0]
+[1, 2, 3]
 
 # Should not be able to cast from list to array if child types are not castable
 statement error
