@@ -35,7 +35,7 @@ SELECT 'hallo' as value;
 query IIII
 SELECT type, log_level, scope, message FROM duckdb_logs_parsed('QueryLog') ORDER BY timestamp
 ----
-QueryLog	INFO	CONNECTION	SELECT 'hallo' as value;
+QueryLog	DEBUG	CONNECTION	SELECT 'hallo' as value;
 
 statement ok
 SELECT type, log_level, scope, message FROM duckdb_logs WHERE type='QueryLog';

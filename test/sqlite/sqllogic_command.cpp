@@ -400,6 +400,10 @@ static void ParallelExecuteLoop(ParallelExecuteContext *execute_context) {
 
 		// construct a new connection to the database
 		Connection con(*runner.db);
+		// SereneDB defaults the search path to empty, so select "main" the way the other two connection
+		// sites do (SQLLogicTestRunner::ConnectToDatabase and GetConnection) -- without it every unqualified
+		// CREATE inside a concurrentloop fails to bind before the concurrency under test can happen.
+		con.Query("SET search_path='main'");
 		// create a new parallel execute context
 		auto &running_loops = execute_context->active_loops;
 		ExecuteContext context(con, std::move(running_loops));

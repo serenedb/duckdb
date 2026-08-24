@@ -62,7 +62,5 @@ INSERT INTO t1 VALUES (1);
 statement ok
 CREATE INDEX i1 ON t1 USING ART (c1);
 
-statement error
+statement ok
 create index i2 ON t1(c1) WHERE c1 != TRUE;
-----
-Creating partial indexes is not supported currently

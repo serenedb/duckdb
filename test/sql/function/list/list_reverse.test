@@ -140,7 +140,7 @@ statement ok
 INSERT INTO palindromes VALUES ('racecar'), ('civic'), ('defied'), ('repaper'), ('kayak'), ('rotator'), ('tattarrattat'), ('saippuakivikauppias'), ('malayalam');
 
 query I
-SELECT list_aggr(list_reverse(str_split(s, '')), 'string_agg', '') FROM palindromes ORDER BY s;
+SELECT list_aggr(list_reverse(str_split(s, NULL)), 'string_agg', '') FROM palindromes ORDER BY s;
 ----
 civic
 deifed

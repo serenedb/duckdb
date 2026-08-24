@@ -74,7 +74,7 @@ static void RunSQLLogicTest(const string &name, optional_ptr<std::istream> input
 	if (!input && AUTO_SWITCH_TEST_DIR) {
 		prev_directory = TestGetCurrentDirectory();
 
-		std::size_t found = name.rfind("/test/sql");
+		auto found = name.rfind("/test/");
 		if (found == std::string::npos) {
 			throw InvalidInputException("Failed to auto detect working dir for test '" + name +
 			                            "' because a non-standard path was used!");

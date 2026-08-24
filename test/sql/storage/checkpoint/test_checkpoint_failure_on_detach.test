@@ -20,4 +20,4 @@ CREATE TABLE fail_detach.integers AS SELECT * FROM range(100) tbl(i);
 statement error
 DETACH fail_detach;
 ----
-but CHECKPOINT during DETACH failed
+Checkpoint failed for database "fail_detach". The database has been invalidated and must be detached and reattached.

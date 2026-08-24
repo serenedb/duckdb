@@ -19,7 +19,7 @@ drop macro m;
 statement error
 select m();
 ----
-is a table function but it was used as a scalar function
+Unsupported catalog type when binding function
 
 # table macro is still available
 query I

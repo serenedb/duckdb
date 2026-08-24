@@ -23,48 +23,48 @@ SELECT INTERVAL '2Y 1 M';
 query T
 SELECT INTERVAL '2Y 1 month 1 M 3S 20mS 16uS';
 ----
-2 years 1 month 00:01:03.020016
+2 years 1 mon 00:01:03.020016
 
 query T
 SELECT INTERVAL '2Y 1 month 02:01:03.020016';
 ----
-2 years 1 month 02:01:03.020016
+2 years 1 mon 02:01:03.020016
 
 query T
 SELECT INTERVAL '2Y 1 month 1M 3S 20mS 16uS'::VARCHAR;
 ----
-2 years 1 month 00:01:03.020016
+2 years 1 mon 00:01:03.020016
 
 query T
 SELECT INTERVAL '2 yr 1 mon 1 min 3 sec 20 msec 16 usec';
 ----
-2 years 1 month 00:01:03.020016
+2 years 1 mon 00:01:03.020016
 
 query T
 SELECT INTERVAL '2 yrs 1 mons 1 mins 3 secs 20 msecs 16 usecs';
 ----
-2 years 1 month 00:01:03.020016
+2 years 1 mon 00:01:03.020016
 
 # -2 years +4 days 5 hours 1 minute 3 seconds 20 milliseconds 16 microseconds
 query T
 SELECT INTERVAL '-2Y 4 days 5 Hours 1 MinUteS 3S 20mS 16uS';
 ----
--2 years 4 days 05:01:03.020016
+-2 years +4 days 05:01:03.020016
 
 query T
 SELECT INTERVAL '-2Y 4 days 5 Hours 1 MinUteS 3S 20mS 16uS'::VARCHAR;
 ----
--2 years 4 days 05:01:03.020016
+-2 years +4 days 05:01:03.020016
 
 query T
 SELECT INTERVAL '-2yr 4 d 5 hr 1 min 3 second 20 msecond 16 usecond';
 ----
--2 years 4 days 05:01:03.020016
+-2 years +4 days 05:01:03.020016
 
 query T
 SELECT INTERVAL '-2yrs 4 d 5 hrs 1 mins 3 seconds 20 mseconds 16 useconds'::VARCHAR;
 ----
--2 years 4 days 05:01:03.020016
+-2 years +4 days 05:01:03.020016
 
 # test ago usage
 query T
@@ -88,7 +88,7 @@ AGO interval value is out of range
 query T
 SELECT INTERVAL '@2mons 1H';
 ----
-2 months 01:00:00
+2 mons 01:00:00
 
 # Parse hms format
 query I
@@ -131,11 +131,11 @@ select '-9999999999:54:32.101234'::INTERVAL;
 ----
 <REGEX>:Conversion Error.*Could not convert string.*
 
-# FIXME: we can also use the ISO 8601 interval format
-statement error
+# the ISO 8601 interval format is accepted, as in PostgreSQL
+query I
 SELECT INTERVAL 'P2MT1H1M';
 ----
-<REGEX>:Conversion Error.*Could not convert string.*
+2 mons 01:01:00
 
 # FIXME: or this format
 statement error
@@ -156,12 +156,12 @@ SELECT INTERVAL '90' YEAR;
 query T
 SELECT INTERVAL '90' QUARTER;
 ----
-22 years 6 months
+22 years 6 mons
 
 query T
 SELECT INTERVAL '90' MONTH;
 ----
-7 years 6 months
+7 years 6 mons
 
 query T
 SELECT INTERVAL '90' SECOND;
@@ -182,13 +182,13 @@ SELECT INTERVAL '90' HOUR;
 query T
 SELECT INTERVAL '2 month' + INTERVAL '1 month 3 days';
 ----
-3 months 3 days
+3 mons 3 days
 
 # or subtract them
 query T
 SELECT INTERVAL '2 month' - INTERVAL '1 month 3 days';
 ----
-1 month -3 days
+1 mon -3 days
 
 # but not multiply
 statement error
@@ -211,7 +211,7 @@ SELECT 2 * INTERVAL '1 year 2 days 2 seconds';
 query T
 SELECT INTERVAL '1 year 2 days 2 seconds' / 2;
 ----
-6 months 1 day 00:00:01
+6 mons 1 day 00:00:01
 
 # division cannot!
 statement error
@@ -274,7 +274,7 @@ SELECT INTERVAL '4294967296months';
 query T
 SELECT INTERVAL '1294967296months';
 ----
-107913941 years 4 months
+107913941 years 4 mons
 
 statement error
 SELECT INTERVAL '1294967296months 1294967296months';
@@ -341,32 +341,32 @@ SELECT INTERVAL '1 week';
 query T
 SELECT INTERVAL '1 millennium 2 centuries 1 decade 3 quarter';
 ----
-1210 years 9 months
+1210 years 9 mons
 
 query T
 SELECT INTERVAL '1 millenniums 2 century 1 dec 3 quarter';
 ----
-1210 years 9 months
+1210 years 9 mons
 
 query T
 SELECT INTERVAL '1 mil 2 cent 1 decs 3 quarter';
 ----
-1210 years 9 months
+1210 years 9 mons
 
 query T
 SELECT INTERVAL '1 mils 2 c 1 decades 3 quarter';
 ----
-1210 years 9 months
+1210 years 9 mons
 
 query T
 SELECT INTERVAL '-2147483647 months -2147483647 days -9223372036854775msecs';
 ----
--178956970 years -7 months -2147483647 days -2562047788:00:54.775
+-178956970 years -7 mons -2147483647 days -2562047788:00:54.775
 
 query T
 SELECT INTERVAL '2147483647 months 2147483647 days 9223372036854775msecs';
 ----
-178956970 years 7 months 2147483647 days 2562047788:00:54.775
+178956970 years 7 mons 2147483647 days 2562047788:00:54.775
 
 statement error
 SELECT INTERVAL '9223372036854775810msecs';

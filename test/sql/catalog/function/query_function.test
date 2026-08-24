@@ -125,16 +125,16 @@ Parser Error: PIVOT statements without explicit IN clauses are not supported in 
 
 # test query_table()
 statement ok
-CREATE TABLE tbl_int AS SELECT 42;
+CREATE TABLE tbl_int AS SELECT 42 AS c_int;
 
 statement ok
-CREATE TABLE tbl_varchar AS SELECT 'duckdb';
+CREATE TABLE tbl_varchar AS SELECT 'duckdb' AS c_varchar;
 
 statement ok
-CREATE TABLE tbl2_varchar AS SELECT '1?ch@racter$';
+CREATE TABLE tbl2_varchar AS SELECT '1?ch@racter$' AS c2_varchar;
 
 statement ok
-CREATE TABLE tbl_empty AS SELECT '';
+CREATE TABLE tbl_empty AS SELECT '' AS c_empty;
 
 query I
 FROM query_table('tbl_int');

@@ -145,10 +145,10 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 	    {"current_transaction_invalidation_policy", {"SYNTACTIC_ERRORS_DO_NOT_INVALIDATE"}},
 	    {"default_transaction_invalidation_policy", {"SYNTACTIC_ERRORS_DO_NOT_INVALIDATE"}},
 	    {"checkpoint_on_detach", {"ENABLED"}},
+	    {"copy_csv_header_default", {false}},
 	    {"debug_verify_statement", {"copy_statement"}},
 	    {"enable_caching_operators", {false}},
 	    {"enable_optimizer", {false}},
-	    {"parallelize_sequential_sources", {false}},
 	    {"initial_column_segment_size", {4096}},
 	    {"delim_join_as_cte", {false}}};
 	// Every option that's not excluded has to be part of this map
@@ -193,7 +193,6 @@ bool OptionIsExcludedFromTest(const string &name) {
 	    "disable_database_invalidation", // cant change this while db is running
 	    "vacuum_rebuild_indexes",        // cant change this while db is running
 	    "temp_file_encryption",
-	    "enable_object_cache",
 	    "force_variant_shredding",
 	    "streaming_buffer_size",
 	    "log_query_path",

@@ -84,7 +84,7 @@ FROM log_settings;
 disabled_log_types	(empty)
 enable_logging	1
 enabled_log_types	QueryLog
-logging_level	INFO
+logging_level	DEBUG
 logging_mode	ENABLE_SELECTED
 logging_storage	memory
 
@@ -99,7 +99,7 @@ CALL enable_logging(['QueryLog', 'filesystem']);
 query II
 SELECT name, list_sort(split(value, ',')) FROM log_settings;
 ----
-disabled_log_types	['']
+disabled_log_types	[]
 enable_logging	[1]
 enabled_log_types	[FileSystem, QueryLog]
 logging_level	[TRACE]

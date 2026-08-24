@@ -17,7 +17,7 @@ statement ok
 USE my_db;
 
 statement ok
-call enable_logging();
+call enable_logging(level='DEBUG');
 
 statement ok
 CREATE TABLE small AS FROM range(100);

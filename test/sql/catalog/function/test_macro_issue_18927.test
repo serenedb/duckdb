@@ -3,7 +3,7 @@
 # group: [function]
 
 statement ok
-CREATE OR REPLACE MACRO my(s) AS s.lower().split('').aggregate('count');
+CREATE OR REPLACE MACRO my(s) AS s.lower().split(NULL).aggregate('count');
 
 query I
 SELECT my('AA');

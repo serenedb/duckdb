@@ -19,7 +19,7 @@ FROM (
     ) tmp
 WHERE id1=10;
 ----
-logical_opt	<REGEX>:.*UNNEST.*SEQ_SCAN.*Filters.*
+logical_opt	<REGEX>:.*UNNEST.*SEQ_SCAN.*Column Filter.*
 
 
 query II
@@ -31,4 +31,4 @@ SELECT id1, index, element
 FROM tmp
 WHERE id1=10;
 ----
-logical_opt	<REGEX>:.*UNNEST.*SEQ_SCAN.*Filters.*
+logical_opt	<REGEX>:.*UNNEST.*SEQ_SCAN.*Column Filter.*

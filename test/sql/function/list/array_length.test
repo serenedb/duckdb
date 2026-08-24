@@ -22,13 +22,16 @@ SELECT array_length(ARRAY[1, 2, 3], 1)
 ----
 3
 
-statement error
+# PostgreSQL's multi-dimensional introspection: a dimension the array does not have is NULL, not an error
+query I
 SELECT array_length(ARRAY[1, 2, 3], 2)
 ----
+NULL
 
-statement error
+query I
 SELECT array_length(ARRAY[1, 2, 3], 0)
 ----
+NULL
 
 query I
 SELECT len([1]) FROM range(3)

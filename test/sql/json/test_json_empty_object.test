@@ -29,7 +29,7 @@ MAP(VARCHAR, JSON)
 statement error
 select * from read_json('{TEST_DIR}/my.json', columns={a: 'STRUCT()'})
 ----
-Invalid Input Error: Value "STRUCT()" can not be converted to a DuckDB Type.
+Invalid Input Error: Value "STRUCT()" can not be converted to a valid type.
 
 # test issue 6443
 statement ok

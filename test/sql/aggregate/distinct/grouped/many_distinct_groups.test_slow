@@ -25,17 +25,17 @@ create table mostly_nulls as select CASE WHEN i%7=0 THEN i ELSE NULL END as valu
 # Perform the checks
 
 query IIII
-select avg(distinct value), sum(distinct value), avg(value), count(distinct value) from all_valid group by groups order by groups;
+select avg(distinct value), sum(distinct value), avg(value) as avg_all, count(distinct value) from all_valid group by groups order by groups;
 ----
 <FILE>:test/sql/aggregate/distinct/grouped/results/all_valid.csv
 
 query IIII
-select avg(distinct value), sum(distinct value), avg(value), count(distinct value) from with_nulls group by groups order by groups;
+select avg(distinct value), sum(distinct value), avg(value) as avg_all, count(distinct value) from with_nulls group by groups order by groups;
 ----
 <FILE>:test/sql/aggregate/distinct/grouped/results/with_nulls.csv
 
 query IIII
-select avg(distinct value), sum(distinct value), avg(value), count(distinct value) from mostly_nulls group by groups order by groups;
+select avg(distinct value), sum(distinct value), avg(value) as avg_all, count(distinct value) from mostly_nulls group by groups order by groups;
 ----
 <FILE>:test/sql/aggregate/distinct/grouped/results/mostly_nulls.csv
 
@@ -45,9 +45,9 @@ statement ok
 create table all_distinct as select 1 as value, i as groups from range(200000) tbl(i);
 
 query I nosort q1
-select sum(distinct value), count(distinct value), avg(distinct value), sum(distinct value) from all_distinct group by groups order by groups;
+select sum(distinct value), count(distinct value), avg(distinct value), sum(distinct value) as sum_distinct_again from all_distinct group by groups order by groups;
 ----
 
 query I nosort q1
-select sum(value), count(value), avg(value), sum(value) from all_distinct group by groups order by groups;
+select sum(value), count(value), avg(value), sum(value) as sum_all_again from all_distinct group by groups order by groups;
 ----
