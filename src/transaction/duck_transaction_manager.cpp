@@ -164,8 +164,11 @@ DuckTransactionManager::CanCheckpoint(DuckTransaction &transaction, unique_ptr<S
 		return CheckpointDecision("checkpointing on commit disabled through configuration");
 	}
 	// let the in-flight group fsyncs land so the WAL truncation below cannot drop a commit that is published but
-	// not yet durable, and so committed-but-not-yet-cleaned transactions release their shared checkpoint lock
+	// not yet durable, and so committed-but-not-yet-cleaned transactions release their shared checkpoint lock.
+	// Purge commits parked by the durable floor (we hold transaction_lock): a parked predecessor keeps its shared
+	// checkpoint lock and would fail the exclusive upgrade below on every subsequent commit.
 	WaitForInFlightCommits();
+	PurgeRecentlyCommittedInternal();
 	CleanupTransactions();
 	// try to lock the checkpoint lock
 	lock = transaction.TryGetCheckpointLock();
@@ -277,6 +280,7 @@ void DuckTransactionManager::Checkpoint(ClientContext &context, bool force) {
 	// run pending cleanups: committed-but-not-yet-cleaned transactions keep their shared checkpoint lock and would
 	// block the exclusive acquisition below
 	WaitForInFlightCommits();
+	PurgeRecentlyCommitted();
 	CleanupTransactions();
 	if (!force) {
 		// not a force checkpoint
@@ -296,6 +300,7 @@ void DuckTransactionManager::Checkpoint(ClientContext &context, bool force) {
 		while (!lock) {
 			context.InterruptCheck();
 			WaitForInFlightCommits();
+			PurgeRecentlyCommitted();
 			CleanupTransactions();
 			lock = checkpoint_lock.TryGetExclusiveLock();
 		}
@@ -349,6 +354,63 @@ void DuckTransactionManager::RefreshStartTime(Transaction &transaction_p) {
 	// the refreshed snapshot is a snapshot acquisition like StartTransaction: bound it at the durable horizon so a
 	// per-statement refresh never observes a commit that is not yet durable
 	transaction.start_time = DurableSnapshotBound(current_start_timestamp++);
+}
+
+transaction_t DuckTransactionManager::ApplyDurableFloor(transaction_t lowest_start_time) const {
+	// While a published commit is not yet durable, DurableSnapshotBound floors NEW snapshots at
+	// last_durable_commit + 1 -- below such commits. Treat that floor as an implicit active reader: a
+	// version-cleanup horizon above it would destroy catalog/row versions that a snapshot starting a
+	// moment later can still legally read (start times are not monotone under the durable bound).
+	const auto durable_commit = last_durable_commit.load(std::memory_order_acquire);
+	if (durable_commit < last_pending_commit.load(std::memory_order_acquire)) {
+		lowest_start_time = MinValue<transaction_t>(lowest_start_time, MaxValue<transaction_t>(durable_commit + 1, 2));
+	}
+	return lowest_start_time;
+}
+
+void DuckTransactionManager::MoveExpiredRecentlyCommitted(transaction_t lowest_start_time,
+                                                          DuckCleanupInfo &cleanup_info) {
+	idx_t i = 0;
+	for (; i < recently_committed_transactions.size(); i++) {
+		D_ASSERT(recently_committed_transactions[i]);
+		if (recently_committed_transactions[i]->commit_id >= lowest_start_time) {
+			// recently_committed_transactions is ordered on commit_id.
+			// Thus, if the current commit_id is greater than
+			// lowest_start_time, any subsequent commit IDs are also greater.
+			break;
+		}
+		recently_committed_transactions[i]->awaiting_cleanup = true;
+		cleanup_info.transactions.push_back(std::move(recently_committed_transactions[i]));
+	}
+	if (i > 0) {
+		auto start = recently_committed_transactions.begin();
+		auto end = recently_committed_transactions.begin() + static_cast<int64_t>(i);
+		recently_committed_transactions.erase(start, end);
+	}
+}
+
+void DuckTransactionManager::PurgeRecentlyCommittedInternal() {
+	auto cleanup_info = make_uniq<DuckCleanupInfo>();
+	auto lowest_start_time = TRANSACTION_ID_START;
+	auto lowest_transaction_id = MAX_TRANSACTION_ID;
+	for (auto &active : active_transactions) {
+		lowest_start_time = MinValue(lowest_start_time, active->start_time);
+		lowest_transaction_id = MinValue(lowest_transaction_id, active->transaction_id);
+	}
+	lowest_start_time = ApplyDurableFloor(lowest_start_time);
+	lowest_active_start = lowest_start_time;
+	lowest_active_id = lowest_transaction_id;
+	cleanup_info->lowest_start_time = lowest_start_time;
+	MoveExpiredRecentlyCommitted(lowest_start_time, *cleanup_info);
+	if (cleanup_info->ScheduleCleanup()) {
+		lock_guard<mutex> q_lock(cleanup_queue_lock);
+		cleanup_queue.emplace(std::move(cleanup_info));
+	}
+}
+
+void DuckTransactionManager::PurgeRecentlyCommitted() {
+	lock_guard<mutex> t_lock(transaction_lock);
+	PurgeRecentlyCommittedInternal();
 }
 
 void DuckTransactionManager::CleanupTransactions() {
@@ -462,7 +524,10 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 
 	// commit the UndoBuffer of the transaction
 	if (!error.HasError()) {
-		if (HasOtherTransactions(transaction)) {
+		// a WAL-writing commit is published before its group fsync, so DurableSnapshotBound floors snapshots taken
+		// meanwhile below it: those readers still see the deleted rows and need them kept in deleted_rows_in_use,
+		// exactly as a concurrently active transaction would
+		if (HasOtherTransactions(transaction) || commit_state) {
 			info.active_transactions = ActiveTransactionState::OTHER_TRANSACTIONS;
 		} else {
 			info.active_transactions = ActiveTransactionState::NO_OTHER_TRANSACTIONS;
@@ -557,6 +622,11 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		// must first be durable in the WAL -- otherwise a crash mid-checkpoint would lose a commit a reader could have
 		// observed. Wait for any in-flight group fsyncs to complete before truncating.
 		WaitForInFlightCommits();
+		// This commit (and any predecessor) parked by the durable floor is durable now: release and clean it, like
+		// the pre-floor traverse in RemoveTransaction did. The checkpoint below cannot run with this transaction's
+		// own undo outstanding ("Cannot create index with outstanding updates").
+		PurgeRecentlyCommitted();
+		CleanupTransactions();
 		// we can unlock the transaction lock while checkpointing
 		// checkpoint the database to disk
 		CheckpointOptions options;
@@ -637,6 +707,7 @@ unique_ptr<DuckCleanupInfo> DuckTransactionManager::RemoveTransaction(DuckTransa
 		lowest_start_time = MinValue(lowest_start_time, active_transactions[i]->start_time);
 		lowest_transaction_id = MinValue(lowest_transaction_id, active_transactions[i]->transaction_id);
 	}
+	lowest_start_time = ApplyDurableFloor(lowest_start_time);
 	lowest_active_start = lowest_start_time;
 	lowest_active_id = lowest_transaction_id;
 	D_ASSERT(t_index != active_transactions.size());
@@ -665,26 +736,7 @@ unique_ptr<DuckCleanupInfo> DuckTransactionManager::RemoveTransaction(DuckTransa
 
 	// Traverse the recently_committed transactions to see if we can move any
 	// to the list of transactions awaiting GC.
-	idx_t i = 0;
-	for (; i < recently_committed_transactions.size(); i++) {
-		D_ASSERT(recently_committed_transactions[i]);
-		if (recently_committed_transactions[i]->commit_id >= lowest_start_time) {
-			// recently_committed_transactions is ordered on commit_id.
-			// Thus, if the current commit_id is greater than
-			// lowest_start_time, any subsequent commit IDs are also greater.
-			break;
-		}
-
-		recently_committed_transactions[i]->awaiting_cleanup = true;
-		cleanup_info->transactions.push_back(std::move(recently_committed_transactions[i]));
-	}
-
-	if (i > 0) {
-		// We moved these transactions to the list of transactions awaiting GC.
-		auto start = recently_committed_transactions.begin();
-		auto end = recently_committed_transactions.begin() + static_cast<int64_t>(i);
-		recently_committed_transactions.erase(start, end);
-	}
+	MoveExpiredRecentlyCommitted(lowest_start_time, *cleanup_info);
 
 	return cleanup_info;
 }
