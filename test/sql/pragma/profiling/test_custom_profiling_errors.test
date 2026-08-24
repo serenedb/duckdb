@@ -29,7 +29,7 @@ statement ok
 SET tracked_metrics = ['*'];
 
 query I
-SELECT unnest(current_setting('tracked_metrics'));
+SELECT unnest(current_setting('tracked_metrics')::VARCHAR[]);
 ----
 *
 
