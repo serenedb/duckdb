@@ -162,6 +162,10 @@ void OptimisticWriteCollection::MergeStorage(OptimisticWriteCollection &merge_co
 	for (auto &flushed_idx : merge_collection.flushed_row_groups) {
 		flushed_row_groups.insert(current_row_group_count + flushed_idx);
 	}
+	for (auto &merge_partial_manager : merge_collection.partial_block_managers) {
+		partial_block_managers.push_back(std::move(merge_partial_manager));
+	}
+	merge_collection.partial_block_managers.clear();
 	unflushed_data_size += merge_collection.unflushed_data_size;
 	// finally perform the actual merge
 	collection->MergeStorage(merge_row_groups, nullptr, nullptr);
