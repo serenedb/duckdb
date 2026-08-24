@@ -15,7 +15,7 @@ SELECT * FROM t1 where rowid = 6;
 query II
 EXPLAIN SELECT * FROM t1 where rowid = 6;
 ----
-physical_plan	<REGEX>:.*Filters:.*rowid = 6.*
+physical_plan	<REGEX>:.*Column Filter:.*rowid = 6.*
 
 query I
 SELECT * FROM t1 where rowid = 200000;
@@ -25,7 +25,7 @@ SELECT * FROM t1 where rowid = 200000;
 query II
 EXPLAIN SELECT * FROM t1 where rowid = 200000;
 ----
-physical_plan	<REGEX>:.*Filters:.*rowid = 200000.*
+physical_plan	<REGEX>:.*Column Filter:.*rowid = 200000.*
 
 query I
 SELECT * FROM t1 where rowid IN (SELECT rowid FROM t1 ORDER BY rowid DESC LIMIT 10) ORDER BY rowid;
@@ -51,7 +51,7 @@ SELECT * FROM t1 where rowid IN (6, 9) ORDER BY ALL;
 query II
 EXPLAIN SELECT * FROM t1 where rowid IN (6, 9);
 ----
-physical_plan	<REGEX>:.*Filters:.*rowid.*IN.*(6.*9).*
+physical_plan	<REGEX>:.*Column Filter:.*rowid.*IN.*(6.*9).*
 
 # OR clause
 query I
@@ -63,4 +63,4 @@ SELECT * FROM t1 where rowid = 6 OR rowid = 9 ORDER BY ALL;
 query II
 EXPLAIN SELECT * FROM t1 where rowid = 6 OR rowid = 9 ORDER BY ALL;
 ----
-physical_plan	<REGEX>:(?s).*Filters.*rowid.*6.*rowid.*9.*
+physical_plan	<REGEX>:(?s).*Column Filter.*rowid.*6.*rowid.*9.*

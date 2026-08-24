@@ -16,8 +16,15 @@ CREATE TABLE db1.tbl(i INTEGER);
 statement ok con2
 DETACH db1
 
-# upon attaching we should fail
-statement error con2
+# con1 still holds the file open, so attaching hands that same database back instead of opening it twice
+statement ok con2
 ATTACH IF NOT EXISTS '{TEST_DIR}/attach_if_not_exists_detach.db' AS db1
+
+statement ok con1
+COMMIT
+
+# con2 sees what con1 committed, i.e. it got the same database rather than a second one over the file
+query I con2
+SELECT count(*) FROM db1.tbl
 ----
-the process of being detached
+0

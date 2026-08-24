@@ -10,6 +10,7 @@
 #include "duckdb/function/table/read_csv.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
@@ -674,7 +675,6 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 				}
 			}
 			info.options["rejects_limit"] = std::move(inputs);
-			info.options["store_rejects"] = {Value::BOOLEAN(true)};
 			continue;
 		}
 		info.options[entry.first] = std::move(inputs);
@@ -689,13 +689,14 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 		auto derived = ExtractFormat(info.file_path);
 		if (!derived.empty()) {
 			info.format = derived;
-			// PG writes no CSV header unless HEADER is given, while DuckDB's CSV writer
-			// defaults it on. The wire COPY classifier pins this off for paths known at
-			// parse; an expression source only resolves to csv here, so apply it too.
-			if (!info.is_from && info.format == "csv" && !info.options.count("header")) {
-				info.options["header"] = {Value::BOOLEAN(false)};
-			}
 		}
+	}
+	// Whether an unqualified CSV write gets a header line. Decided here because this is the first point
+	// where the format is known for every target shape -- a path that only resolves during binding (a
+	// parameter or getvariable()) included -- so all of them agree.
+	if (!info.is_from && info.format == "csv" && !info.options.count("header") &&
+	    !Settings::Get<CopyCsvHeaderDefaultSetting>(context)) {
+		info.options["header"] = {Value::BOOLEAN(false)};
 	}
 	info.parsed_options.clear();
 }

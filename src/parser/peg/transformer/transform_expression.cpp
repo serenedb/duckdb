@@ -1202,13 +1202,14 @@ PEGTransformerFactory::TransformOtherOperatorExpression(PEGTransformer &transfor
 					return make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(subquery_expr));
 				}
 				expr = std::move(subquery_expr);
-			} else if (expression_type == ExpressionType::INVALID) {
+			} else {
 				// Ported from v2026.05.18's TransformAExprInternal: LIKE-family
 				// (~~, ~~*, !~~, !~~*) against an array doesn't fit SubqueryExpression
 				// (no comparison_type slot for a function call), so rewrite
 				//   `lhs LIKE/ILIKE ANY(arr)` to EXISTS (... WHERE lhs LIKE v)
 				//   `lhs LIKE/ILIKE ALL(arr)` to NOT EXISTS (... WHERE NOT (lhs LIKE v))
-				// Other operators (regex `~`/`~*`/SIMILAR TO/etc.) keep raising as before.
+				// Operators that are neither LIKE-family nor regex fall through to the
+				// generic comparison path below, which reports the unsupported ones.
 				const bool is_like = (op_string == "~~");
 				const bool is_ilike = (op_string == "~~*");
 				const bool is_not_like = (op_string == "!~~");
@@ -1259,8 +1260,6 @@ PEGTransformerFactory::TransformOtherOperatorExpression(PEGTransformer &transfor
 					}
 					return std::move(exists_expr);
 				}
-				throw ParserException("Unsupported comparison \"%s\" for ANY/ALL subquery", op_string);
-			} else {
 				string regex_function_name;
 				bool regex_negated;
 				bool regex_case_insensitive;
@@ -1269,6 +1268,11 @@ PEGTransformerFactory::TransformOtherOperatorExpression(PEGTransformer &transfor
 					expr = TransformRegexAnyAllList(std::move(expr), std::move(right_expr), regex_function_name,
 					                                regex_negated, regex_case_insensitive, is_any);
 					continue;
+				}
+				if (expression_type == ExpressionType::INVALID) {
+					// not a comparison, so the generic `left=ANY((SELECT UNNEST(right)))` rewrite below cannot
+					// represent it either
+					throw ParserException("Unsupported comparison \"%s\" for ANY/ALL subquery", op_string);
 				}
 				// left=ANY(right)
 				// we turn this into left=ANY((SELECT UNNEST(right)))

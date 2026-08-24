@@ -196,6 +196,10 @@ public:
 		if (view_columns) {
 			column_names = view_columns->names;
 			types = view_columns->types;
+			// an explicit alias list names the view's columns, and it is not required to be unique
+			for (idx_t i = 0; i < column_names.size() && i < entry.aliases.size(); i++) {
+				column_names[i] = entry.aliases[i];
+			}
 			QueryResult::DeduplicateColumns(column_names);
 			bound_view = true;
 		} else {
@@ -214,7 +218,7 @@ public:
 		if (types[0].id() == LogicalTypeId::INVALID) {
 			return Value();
 		}
-		return Value(col < entry.aliases.size() ? entry.aliases[col] : column_names[col]);
+		return Value(column_names[col]);
 	}
 	const LogicalType &ColumnType(idx_t col) override {
 		return types[col];

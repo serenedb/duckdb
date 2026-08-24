@@ -230,16 +230,21 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 					continue;
 				}
 			}
-			// PG-compliant: silently accept unknown schemas. Default the catalog
-			// to the current DB; later lookups against the missing schema will
-			// just be skipped during search-path resolution.
+			// PG-compliant: silently accept unknown schemas in the search path. Default the catalog to
+			// the current DB; later lookups against the missing schema will just be skipped during
+			// search-path resolution. SET schema / USE name a single target, which PostgreSQL has no
+			// equivalent of, so those keep DuckDB's check that the target exists.
+			if (set_type == CatalogSetPathType::SET_SCHEMA) {
+				throw CatalogException("%s: No catalog + schema named \"%s\" found.", GetSetName(set_type),
+				                       path.ToString());
+			}
 			path.SetCatalog(GetDefault().GetCatalog());
 			continue;
 		}
 		// Explicit catalog.schema. A valid catalog with an unknown schema is
 		// PG-compliant (the entry is just skipped at lookup). Only reject when
 		// the catalog itself doesn't exist.
-		if (Catalog::GetCatalogEntry(context, path.GetCatalog())) {
+		if (set_type != CatalogSetPathType::SET_SCHEMA && Catalog::GetCatalogEntry(context, path.GetCatalog())) {
 			continue;
 		}
 		throw CatalogException("%s: No catalog + schema named \"%s\" found.", GetSetName(set_type), path.ToString());

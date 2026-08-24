@@ -1,3 +1,4 @@
+#include "duckdb/main/query_result.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression_map.hpp"
@@ -122,6 +123,11 @@ void Binder::BuildUnionByNameInfo(BoundSetOperationNode &result) {
 	D_ASSERT(result.names.empty());
 	for (auto &child : result.bound_children) {
 		auto &child_names = child.names;
+		// `?column?` is the placeholder for a column the user did not name, so several of them are not a
+		// duplicate-name conflict: they only need distinct keys to line up positionally
+		QueryResult::DeduplicateColumns(child_names, [](const Identifier &name) {
+			return name.GetIdentifierName() == BaseExpression::ANONYMOUS_COLUMN_NAME;
+		});
 		identifier_map_t<ProjectionIndex> node_name_map;
 		for (idx_t i = 0; i < child_names.size(); ++i) {
 			auto &col_name = child_names[i];
@@ -129,7 +135,7 @@ void Binder::BuildUnionByNameInfo(BoundSetOperationNode &result) {
 				throw BinderException(
 				    "UNION (ALL) BY NAME operation doesn't support duplicate names in the SELECT list - "
 				    "the name \"%s\" occurs multiple times",
-				    col_name);
+				    col_name.GetIdentifierName());
 			}
 			if (global_name_set.find(col_name) == global_name_set.end()) {
 				// column is not yet present in the result

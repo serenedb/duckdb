@@ -185,15 +185,6 @@ void TaskSchedulerPool::RelaunchThreads(TaskScheduler &scheduler, bool destroy) 
 		pin_thread_mode = Settings::Get<PinThreadsSetting>(db);
 	}
 
-	// serenedb drives client sessions on the regular pool itself, so it always needs at least one internal worker
-	// (the external/io thread never runs query tasks). Clamp a zero request -- e.g. threads=1 with one external thread
-	// -- up to one, except when tearing down the scheduler. This also keeps a SET threads issued on a worker from
-	// trying to reach zero (it would have to stop the still-running caller), and avoids per-query relaunch churn at
-	// threads=1. Async (and other non-regular) pools may legitimately have zero threads.
-	if (!destroy && pool_type == TaskSchedulerType::REGULAR && new_thread_count == 0) {
-		new_thread_count = 1;
-	}
-
 	if (threads.size() == new_thread_count) {
 		current_thread_count = threads.size() + (pool_type == TaskSchedulerType::REGULAR ? external_threads : 0);
 		return;

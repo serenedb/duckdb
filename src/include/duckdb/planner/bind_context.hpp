@@ -172,10 +172,20 @@ private:
 	void AddBinding(unique_ptr<Binding> binding);
 	static string AmbiguityException(const BindingAlias &alias, const vector<reference<Binding>> &bindings);
 
+public:
+	//! Starts a new top-level FROM item (the operands of an implicit, i.e. comma, cross join). `SELECT *`
+	//! expands one item at a time, so a USING column merged inside one item stays with that item.
+	void BeginFromItem() {
+		from_item_counter++;
+	}
+
 private:
 	Binder &binder;
 	//! The list of bindings in insertion order
 	vector<unique_ptr<Binding>> bindings_list;
+	//! The FROM item each entry of bindings_list belongs to
+	vector<idx_t> binding_from_item;
+	idx_t from_item_counter = 0;
 	//! The set of columns used in USING join conditions (order = USING clause order)
 	struct UsingColumnInfo {
 		reference_set_t<UsingColumnSet> bindings;

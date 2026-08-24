@@ -455,6 +455,17 @@ struct ConfigureProfilingSetting {
 	static Value GetSetting(const ClientContext &context);
 };
 
+struct CopyCsvHeaderDefaultSetting {
+	using RETURN_TYPE = bool;
+	static constexpr const char *Name = "copy_csv_header_default";
+	static constexpr const char *Description =
+	    "Whether COPY ... TO a CSV file writes a header line when HEADER is not specified";
+	static constexpr const char *InputType = "BOOLEAN";
+	static constexpr const char *DefaultValue = "true";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
 struct CurrentTransactionInvalidationPolicySetting {
 	using RETURN_TYPE = string;
 	static constexpr const char *Name = "current_transaction_invalidation_policy";
@@ -1045,16 +1056,6 @@ struct EnableMacroDependenciesSetting {
 	static constexpr const char *Name = "enable_macro_dependencies";
 	static constexpr const char *Description =
 	    "Enable created MACROs to create dependencies on the referenced objects (such as tables)";
-	static constexpr const char *InputType = "BOOLEAN";
-	static constexpr const char *DefaultValue = "false";
-	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
-	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
-};
-
-struct EnableObjectCacheSetting {
-	using RETURN_TYPE = bool;
-	static constexpr const char *Name = "enable_object_cache";
-	static constexpr const char *Description = "[PLACEHOLDER] Legacy setting - does nothing";
 	static constexpr const char *InputType = "BOOLEAN";
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
@@ -1664,16 +1665,6 @@ struct OrderedAggregateThresholdSetting {
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
 	static void OnSet(SettingCallbackInfo &info, Value &input);
-};
-
-struct ParallelizeSequentialSourcesSetting {
-	using RETURN_TYPE = bool;
-	static constexpr const char *Name = "parallelize_sequential_sources";
-	static constexpr const char *Description = "Whether to automatically parallelize sequential sources";
-	static constexpr const char *InputType = "BOOLEAN";
-	static constexpr const char *DefaultValue = "true";
-	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
-	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
 };
 
 struct PartitionedWriteFlushThresholdSetting {

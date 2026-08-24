@@ -78,7 +78,7 @@ SELECT {"small": 1, "big": 999999999}::MAP(VARCHAR, BIGINT);
 query I
 SELECT {"pi": 3, "e": 2}::MAP(VARCHAR, DOUBLE);
 ----
-{pi=3.0, e=2.0}
+{pi=3, e=2}
 
 # Mixed type casting - both keys and values
 query I

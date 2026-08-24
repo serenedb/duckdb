@@ -62,7 +62,6 @@ void SetCopyOptions(unique_ptr<CopyInfo> &info, vector<GenericCopyOption> &optio
 						                      option.children[0].GetValue<int64_t>());
 					}
 					info->options["rejects_limit"] = option.children;
-					info->options["store_rejects"] = {Value::BOOLEAN(true)};
 				} else if (option.name == "on_error") {
 					auto val = option.children.empty() ? string() : option.children[0].ToString();
 					if (StringUtil::CIEquals(val, "ignore")) {

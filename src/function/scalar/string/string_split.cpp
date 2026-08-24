@@ -15,6 +15,10 @@ namespace duckdb {
 namespace {
 
 struct RegularStringSplit {
+	// PG's string_to_array and regexp_split_to_array disagree on both degenerate separators, so the
+	// executor has to know which family it is running as.
+	static constexpr bool IS_REGEX = false;
+
 	static idx_t Find(const char *input_data, idx_t input_size, const char *delim_data, idx_t delim_size,
 	                  idx_t &match_size, void *data) {
 		match_size = delim_size;
@@ -26,6 +30,8 @@ struct RegularStringSplit {
 };
 
 struct ConstantRegexpStringSplit {
+	static constexpr bool IS_REGEX = true;
+
 	static idx_t Find(const char *input_data, idx_t input_size, const char *delim_data, idx_t delim_size,
 	                  idx_t &match_size, void *data) {
 		D_ASSERT(data);
@@ -40,6 +46,8 @@ struct ConstantRegexpStringSplit {
 };
 
 struct RegexpStringSplit {
+	static constexpr bool IS_REGEX = true;
+
 	static idx_t Find(const char *input_data, idx_t input_size, const char *delim_data, idx_t delim_size,
 	                  idx_t &match_size, void *data) {
 		duckdb_re2::RE2 regex(duckdb_re2::StringPiece(delim_data, delim_size));
@@ -104,9 +112,15 @@ void StringSplitExecutor(DataChunk &args, ExpressionState &state, Vector &result
 			continue;
 		}
 		auto delim_entry = delim_entries[i];
+		if (OP::IS_REGEX && !delim_entry.IsValid()) {
+			// PG compat: regexp_split_to_array(x, NULL) is NULL. Checked before the row's list is
+			// claimed below, since a claimed row cannot be turned back into a NULL.
+			list_writer.WriteNull();
+			continue;
+		}
 		auto list = list_writer.WriteDynamicList();
 		if (!delim_entry.IsValid()) {
-			// PG compat: NULL delim splits the input into individual UTF-8 characters.
+			// PG compat: string_to_array's NULL delim splits the input into individual UTF-8 characters.
 			// Use list.WriteElement() to match upstream's list writer interface.
 			auto input_data = input_entry.GetValue().GetData();
 			auto input_size = input_entry.GetValue().GetSize();
@@ -122,12 +136,16 @@ void StringSplitExecutor(DataChunk &args, ExpressionState &state, Vector &result
 			}
 			continue;
 		}
-		// PG compat: empty delimiter returns the input as a single-element list
-		// (or empty list if input is also empty), not a per-character split.
-		if (delim_entry.GetValue().GetSize() == 0) {
-			if (input_entry.GetValue().GetSize() > 0) {
-				list.WriteElement().WriteStringRef(input_entry.GetValue());
-			}
+		if (!OP::IS_REGEX && input_entry.GetValue().GetSize() == 0) {
+			// PG compat: string_to_array('', <any separator>) is an empty list, where
+			// regexp_split_to_array('', <pattern>) keeps the one empty element the splitter emits.
+			continue;
+		}
+		// PG compat: string_to_array's empty delimiter returns the input as a single-element list,
+		// not a per-character split. An empty *regex* keeps matching every position, which is what
+		// PG's regexp_split_to_array does too.
+		if (!OP::IS_REGEX && delim_entry.GetValue().GetSize() == 0) {
+			list.WriteElement().WriteStringRef(input_entry.GetValue());
 			continue;
 		}
 		StringSplitter::Split<OP>(

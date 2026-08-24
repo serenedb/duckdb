@@ -5,7 +5,7 @@
 query I
 SELECT current_setting('lock_configuration')
 ----
-false
+off
 
 statement ok
 SET memory_limit='8GB';
@@ -48,4 +48,4 @@ configuration has been locked
 query I
 SELECT current_setting('lock_configuration')
 ----
-true
+on

@@ -18,7 +18,7 @@ SELECT '{key_A: 2, key_B: 46, key_C: -3000}'::STRUCT(key_A INT, key_B INT, key_C
 query I
 SELECT '{key_A: 2, key_B: 3, key_C: 8}'::STRUCT(key_A INT, key_B DOUBLE, key_C FLOAT);
 ----
-{'key_A': 2, 'key_B': 3.0, 'key_C': 8.0}
+{'key_A': 2, 'key_B': 3, 'key_C': 8}
 
 query I
 SELECT '{"key_A": 2, "key_B": hello world}'::STRUCT(key_A INT, key_B VARCHAR);
@@ -234,12 +234,12 @@ SELECT '{a:{c: NULL}, b: NULL, c:{d: "Ducky", e: NULL}}'::STRUCT(a STRUCT(c INT)
 query I
 SELECT '{key_A: 2, key_C: 8}'::STRUCT(key_A INT, key_B INT, key_C FLOAT);
 ----
-{'key_A': 2, 'key_B': NULL, 'key_C': 8.0}
+{'key_A': 2, 'key_B': NULL, 'key_C': 8}
 
 query I
 SELECT '{key_C: 8, key_A: 2}'::STRUCT(key_A INT, key_B DOUBLE, key_C FLOAT);
 ----
-{'key_A': 2, 'key_B': NULL, 'key_C': 8.0}
+{'key_A': 2, 'key_B': NULL, 'key_C': 8}
 
 query I
 SELECT '{key_C: Quack}'::STRUCT(key_A INT, key_B VARCHAR, key_C VARCHAR);
@@ -303,11 +303,11 @@ INSERT INTO try_cast_tbl (VALUES ('{a:{d:1}, b:100, c:"🦆"}'), ('{a:{X:1}, b:1
 query I
 SELECT TRY_CAST(col AS STRUCT(a STRUCT(d INT), b DOUBLE, c VARCHAR)) FROM try_cast_tbl;
 ----
-{'a': {'d': 1}, 'b': 100.0, 'c': 🦆}
-{'a': NULL, 'b': 100.0, 'c': 🦆}
+{'a': {'d': 1}, 'b': 100, 'c': 🦆}
+{'a': NULL, 'b': 100, 'c': 🦆}
 NULL
-{'a': NULL, 'b': 100.0, 'c': 🦆}
-{'a': {'d': NULL}, 'b': 100.0, 'c': 🦆}
+{'a': NULL, 'b': 100, 'c': 🦆}
+{'a': {'d': NULL}, 'b': 100, 'c': 🦆}
 NULL
 
 
@@ -476,7 +476,7 @@ INSERT INTO json_tbl2 (VALUES   ('{"A": "Ducky", "B": [3, 50, 8, 43], "C":{"A": 
 query I
 SELECT col1::VARCHAR::STRUCT(A VARCHAR, B INT[], C STRUCT(A VARCHAR, B FLOAT, C DOUBLE[])) FROM json_tbl2;
 ----
-{'A': Ducky, 'B': [3, 50, 8, 43], 'C': {'A': TEST, 'B': 0.9, 'C': [0.0, 9.0, 30.2]}}
+{'A': Ducky, 'B': [3, 50, 8, 43], 'C': {'A': TEST, 'B': 0.9, 'C': [0, 9, 30.2]}}
 {'A': TESTY, 'B': [4], 'C': {'A': 🦆, 'B': 6.12, 'C': [0.099, 1.6]}}
-{'A': Hello World, 'B': [0, 0, 2, 500, 0, 8], 'C': {'A': DuckieDuck !, 'B': 3000.0, 'C': [0.0]}}
-{'A': '', 'B': [], 'C': {'A': '', 'B': 0.0, 'C': []}}
+{'A': Hello World, 'B': [0, 0, 2, 500, 0, 8], 'C': {'A': DuckieDuck !, 'B': 3000, 'C': [0]}}
+{'A': '', 'B': [], 'C': {'A': '', 'B': 0, 'C': []}}

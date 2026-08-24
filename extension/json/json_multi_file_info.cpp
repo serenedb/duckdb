@@ -616,6 +616,7 @@ unique_ptr<GlobalTableFunctionState> JSONMultiFileInfo::InitializeGlobalState(Cl
 
 	auto &gstate = json_state->state;
 	// Perform projection pushdown
+	idx_t chunk_slot = 0;
 	for (idx_t col_idx = 0; col_idx < global_state.column_indexes.size(); col_idx++) {
 		auto &column_index = global_state.column_indexes[col_idx];
 		const auto &col_id = column_index.GetPrimaryIndex();
@@ -625,11 +626,8 @@ unique_ptr<GlobalTableFunctionState> JSONMultiFileInfo::InitializeGlobalState(Cl
 			continue;
 		}
 		if (IsVirtualColumn(col_id)) {
-			// Record the output-chunk slot for file_row_number so ReadJSONFunction
-			// can fill it with byte offsets after the transform. Other virtual
-			// columns (filename, file_index, ...) are still skipped.
 			if (col_id == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
-				gstate.file_row_number_idx = col_idx;
+				gstate.file_row_number_idx = chunk_slot++;
 			}
 			continue;
 		}
@@ -645,7 +643,7 @@ unique_ptr<GlobalTableFunctionState> JSONMultiFileInfo::InitializeGlobalState(Cl
 		}
 
 		gstate.names.push_back(json_data.key_names[col_id]);
-		gstate.column_ids.push_back(col_idx);
+		gstate.column_ids.push_back(chunk_slot++);
 		gstate.column_indices.push_back(column_index);
 	}
 	if (gstate.names.size() < json_data.key_names.size() || bind_data.file_options.union_by_name) {

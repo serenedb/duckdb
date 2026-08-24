@@ -103,10 +103,11 @@ SELECT regexp_extract(NULL, 'b..')
 ----
 NULL
 
-statement error
+# SereneDB resolves an overload here (the VARCHAR group argument is cast), DuckDB refuses to pick a candidate
+query T
 SELECT regexp_extract('foobarbaz', 'b..', '1')
 ----
-<REGEX>:.*Binder Error.*Could not choose a best candidate.*
+(empty)
 
 # 'k' option: keep (return) the input on no match instead of an empty string
 query T

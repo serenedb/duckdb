@@ -21,7 +21,7 @@ SELECT filtered, last_element, pos, true
 from
 (
 	SELECT
-		list_distinct(c) as filtered,
+		list_sort(list_distinct(c)) as filtered,
 		filtered[-1] as last_element,
 		CASE
 			WHEN last_element IS NULL
@@ -48,7 +48,7 @@ SELECT
 from
 (
 	SELECT
-		list_distinct(c) as filtered,
+		list_sort(list_distinct(c)) as filtered,
 		map(filtered, range(1, len(filtered)+1)) as mymap,
 		filtered[-1] as last_element,
 		CASE

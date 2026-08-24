@@ -186,7 +186,7 @@ string BaseExpression::GetColumnName() const {
 	if (FigureColnameInternal(*this, name) > 0) {
 		return name;
 	}
-	return "?column?";
+	return ANONYMOUS_COLUMN_NAME;
 }
 
 bool BaseExpression::Equals(const BaseExpression &other) const {

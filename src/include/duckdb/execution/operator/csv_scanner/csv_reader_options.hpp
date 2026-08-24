@@ -173,6 +173,9 @@ struct CSVReaderOptions {
 	//! If we can safely ignore errors (i.e., they are being ignored and not being stored in a rejects table)
 	bool IgnoreErrors() const;
 
+	//! How many skipped rows we tolerate before failing the scan (0 = no limit)
+	idx_t RejectTolerance() const;
+
 	string GetNewline() const;
 	void SetNewline(const string &input);
 

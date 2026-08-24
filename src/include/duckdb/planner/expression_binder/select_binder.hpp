@@ -26,6 +26,11 @@ protected:
 
 public:
 	idx_t unnest_level = 0;
+	//! how deep we are inside another function's arguments. PostgreSQL only expands a
+	//! set-returning function at the top level of the select list; nested in an
+	//! argument the value is wanted, so generate_series must stay the scalar
+	//! LIST-returning overload there (`list_apply(generate_series(1, n), ...)`).
+	idx_t function_arg_level = 0;
 };
 
 } // namespace duckdb

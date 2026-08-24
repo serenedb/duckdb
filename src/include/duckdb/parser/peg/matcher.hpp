@@ -123,23 +123,40 @@ struct MatcherSuggestion {
 	char extra_char = '\0';
 };
 
+//! Dedup bookkeeping for the suggestion walk. Suggestions are deduped per
+//! sub-match: a matcher already suggested in THIS scope is mandatory, but the
+//! same matcher reached through a sibling branch must still be offered --
+//! sharing one flat set across scopes lets the first branch silence the rest.
+//! Scopes are distinguished by an epoch instead of a per-scope container, so a
+//! stale stamp from a dead scope simply never compares equal and there is
+//! nothing to clean up. Only the suggestion path touches this; parsing carries
+//! one uint32_t.
+struct MatcherSuggestionScope {
+	//! stamp per Matcher::Index(), grown on demand (suggestion path only)
+	vector<uint32_t> stamps;
+	//! last handed-out epoch; 0 is never used so the zero-initialized stamps miss
+	uint32_t epoch = 0;
+};
+
 struct MatchState {
 	MatchState(vector<MatcherToken> &tokens, vector<MatcherSuggestion> &suggestions,
-	           reference_set_t<const Matcher> &added_suggestions, ParseResultAllocator &allocator,
-	           idx_t &max_token_index, bool preserve_identifier_case_p = true, idx_t starting_token_index = 0)
+	           MatcherSuggestionScope &added_suggestions, ParseResultAllocator &allocator, idx_t &max_token_index,
+	           bool preserve_identifier_case_p = true, idx_t starting_token_index = 0)
 	    : tokens(tokens), suggestions(suggestions), added_suggestions(added_suggestions),
-	      token_index(starting_token_index), allocator(allocator), max_token_index(max_token_index),
-	      preserve_identifier_case(preserve_identifier_case_p) {
+	      epoch(++added_suggestions.epoch), token_index(starting_token_index), allocator(allocator),
+	      max_token_index(max_token_index), preserve_identifier_case(preserve_identifier_case_p) {
 	}
+
 	MatchState(MatchState &state)
 	    : tokens(state.tokens), suggestions(state.suggestions), added_suggestions(state.added_suggestions),
-	      token_index(state.token_index), allocator(state.allocator), max_token_index(state.max_token_index),
-	      preserve_identifier_case(state.preserve_identifier_case) {
+	      epoch(++state.added_suggestions.epoch), token_index(state.token_index), allocator(state.allocator),
+	      max_token_index(state.max_token_index), preserve_identifier_case(state.preserve_identifier_case) {
 	}
 
 	vector<MatcherToken> &tokens;
 	vector<MatcherSuggestion> &suggestions;
-	reference_set_t<const Matcher> &added_suggestions;
+	MatcherSuggestionScope &added_suggestions;
+	uint32_t epoch;
 	idx_t token_index;
 	ParseResultAllocator &allocator;
 	idx_t &max_token_index;
@@ -188,6 +205,9 @@ public:
 	MatcherType Type() const {
 		return type;
 	}
+	uint32_t Index() const {
+		return matcher_index;
+	}
 	void SetName(string name_p) {
 		name = std::move(name_p);
 	}
@@ -213,6 +233,10 @@ public:
 protected:
 	MatcherType type;
 	string name;
+
+private:
+	friend class MatcherAllocator;
+	uint32_t matcher_index = 0;
 };
 
 class MatcherAllocator {

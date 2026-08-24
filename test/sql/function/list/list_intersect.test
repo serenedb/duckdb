@@ -211,7 +211,7 @@ INTEGER[]
 query I
 SELECT list_sort(list_intersect([1::INT, 2::INT, 3::INT], [2.0::DOUBLE, 3.0::DOUBLE, 4.0::DOUBLE]));
 ----
-[2.0, 3.0]
+[2, 3]
 
 query I
 SELECT typeof(list_intersect([1::INT, 2::INT], [2.0::DOUBLE, 3.0::DOUBLE]));

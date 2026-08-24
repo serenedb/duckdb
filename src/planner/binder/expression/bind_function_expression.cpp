@@ -284,6 +284,27 @@ CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
 	return *func;
 }
 
+//! Runs `fun` with the select-list set-returning rewrite disabled, so a nested
+//! generate_series resolves to its scalar LIST-returning overload instead of being
+//! expanded into rows. Ordinary expression nesting (`generate_series(1,3) + 1`,
+//! `abs(generate_series(1,3))`) is unaffected -- PostgreSQL expands those.
+template <class FUN>
+static BindResult BindWithoutSetReturningExpansionImpl(ExpressionBinder &binder, FUN &&fun) {
+	auto *select_binder = dynamic_cast<SelectBinder *>(&binder);
+	if (!select_binder) {
+		return fun();
+	}
+	select_binder->function_arg_level++;
+	try {
+		auto result = fun();
+		select_binder->function_arg_level--;
+		return result;
+	} catch (...) {
+		select_binder->function_arg_level--;
+		throw;
+	}
+}
+
 BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t depth,
                                             unique_ptr<ParsedExpression> &expr_ptr) {
 	reference<CatalogEntry> func = BindFunction(function);
@@ -299,7 +320,8 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 	// SELECT list. Other scalar/table dual-name functions like `repeat` keep
 	// their scalar semantics.
 	if (func.get().type == CatalogType::SCALAR_FUNCTION_ENTRY && depth == 0 && select_binder &&
-	    select_binder->unnest_level == 0 && IsSelectListSetReturningFunction(function.FunctionName())) {
+	    select_binder->unnest_level == 0 && select_binder->function_arg_level == 0 &&
+	    IsSelectListSetReturningFunction(function.FunctionName())) {
 		QueryErrorContext error_context(function.GetQueryLocation());
 		EntryLookupInfo tbl_lookup(CatalogType::TABLE_FUNCTION_ENTRY, QualifiedName(function.FunctionName()),
 		                           error_context);
@@ -328,7 +350,11 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 		auto child = function.IsLambdaFunction();
 		if (child) {
 			auto syntax_type = child->Cast<LambdaExpression>().GetLambdaSyntaxType();
-			return TryBindLambdaOrJson(function, depth, func, syntax_type);
+			// A lambda function consumes its argument as a LIST, so a set-returning
+			// function there has to stay scalar -- list_apply(generate_series(1, n), ...)
+			auto result = BindWithoutSetReturningExpansionImpl(
+			    *this, [&]() { return TryBindLambdaOrJson(function, depth, func, syntax_type); });
+			return result;
 		}
 		return BindFunction(function, func.get().Cast<ScalarFunctionCatalogEntry>(), depth);
 	}
@@ -345,8 +371,10 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 		return BindMacro(function, macro_entry, depth, expr_ptr);
 	}
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
-		// aggregate function
-		return BindAggregate(function, func.get().Cast<AggregateFunctionCatalogEntry>(), depth);
+		// aggregate function -- PostgreSQL forbids a set-returning function in an
+		// aggregate argument, so generate_series stays the scalar LIST overload there
+		return BindWithoutSetReturningExpansionImpl(
+		    *this, [&]() { return BindAggregate(function, func.get().Cast<AggregateFunctionCatalogEntry>(), depth); });
 	case CatalogType::WINDOW_FUNCTION_ENTRY:
 		// window function
 		return BindWindow(function, func.get().Cast<WindowFunctionCatalogEntry>(), depth);

@@ -9,7 +9,7 @@ SELECT COUNT(DISTINCT 42) OVER ()
 
 query IIII
 WITH t AS (
-	SELECT col0 AS a, col1 AS b 
+	SELECT column1 AS a, column2 AS b 
 	FROM (VALUES
 		(1,2),
 		(1,1),

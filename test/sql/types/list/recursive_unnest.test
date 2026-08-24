@@ -110,10 +110,12 @@ SELECT UNNEST();
 ----
 requires at lease one argument
 
+# the second argument is a second unnest target (PostgreSQL), not DuckDB's `recursive` flag, so it is
+# rejected for not being a list -- PostgreSQL rejects it too, as unnest(integer[], unknown)
 statement error
 SELECT UNNEST([1, 2, 3], 'hello');
 ----
-unnest only supports recursive
+UNNEST() can only be applied to lists, arrays and NULL, not VARCHAR
 
 statement error
 SELECT UNNEST([1, 2, 3], recursive := 'hello');

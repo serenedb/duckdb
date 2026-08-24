@@ -1,4 +1,5 @@
 #include "duckdb/execution/operator/helper/physical_load.hpp"
+#include "duckdb/main/database.hpp"
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
@@ -30,6 +31,21 @@ static void InstallFromRepository(ClientContext &context, const LoadInfo &info) 
 
 SourceResultType PhysicalLoad::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                OperatorSourceInput &input) const {
+	// The binder only lets a statement reach here when the extension is compiled
+	// into the binary. INSTALL then has nothing to do; LOAD still has to register
+	// it with this database, which LoadStaticExtension does from the linked-in
+	// registry -- no download, and a no-op when it is already loaded. The upstream
+	// paths below stay for builds that allow runtime loading; here they would only
+	// turn an accepted statement back into an error.
+	if (ExtensionHelper::IsLinkedExtension(ExtensionHelper::GetExtensionName(info->filename))) {
+		if (info->load_type == LoadType::LOAD) {
+			DuckDB db_wrapper(*context.client.db);
+			ExtensionHelper::LoadExtension(db_wrapper, ExtensionHelper::GetExtensionName(info->filename));
+			ExtensionLoader::RefreshSearchPath(context.client);
+		}
+		return SourceResultType::FINISHED;
+	}
+
 	if (info->load_type == LoadType::INSTALL || info->load_type == LoadType::FORCE_INSTALL) {
 		if (info->repository.empty()) {
 			ExtensionInstallOptions options;

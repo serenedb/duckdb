@@ -27,7 +27,7 @@ select count(*) from aaa where name like '红%';
 query II
 explain select * from aaa where name like concat(chr('0xD7FF'),'%');
 ----
-physical_plan	<!REGEX>:.*Filters.*prefix.*
+physical_plan	<!REGEX>:.*Column Filter.*prefix.*
 
 query I
 select count(*) from aaa where name like concat(chr('0xD7FF'),'%');
@@ -38,7 +38,7 @@ select count(*) from aaa where name like concat(chr('0xD7FF'),'%');
 query II
 explain select * from aaa where name like concat(chr('0x10FFFF'),'%');
 ----
-physical_plan	<REGEX>:.*Filters.*prefix.*
+physical_plan	<REGEX>:.*Column Filter.*prefix.*
 
 query I
 select count(*) from aaa where name like concat(chr('0x10FFFF'),'%');

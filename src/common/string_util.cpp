@@ -466,11 +466,21 @@ idx_t StringUtil::CIFind(const vector<string> &vector, std::string_view search_s
 }
 
 vector<string> StringUtil::Split(std::string_view str, char delimiter) {
-	return absl::StrSplit(str, delimiter);
+	vector<string> result = absl::StrSplit(str, delimiter);
+	// getline semantics: interior empty fields are kept, but an empty input yields no field at all and a
+	// trailing delimiter does not add one
+	if (!result.empty() && result.back().empty()) {
+		result.pop_back();
+	}
+	return result;
 }
 
 vector<string> StringUtil::Split(std::string_view input, std::string_view split) {
-	return absl::StrSplit(input, split);
+	vector<string> result = absl::StrSplit(input, split, absl::SkipEmpty());
+	if (result.empty()) {
+		result.emplace_back(input);
+	}
+	return result;
 }
 
 string StringUtil::Replace(string source, std::string_view from, std::string_view to) {

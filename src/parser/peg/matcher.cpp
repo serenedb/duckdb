@@ -23,11 +23,14 @@
 namespace duckdb {
 
 SuggestionType Matcher::AddSuggestion(MatchState &state) const {
-	auto entry = state.added_suggestions.find(*this);
-	if (entry != state.added_suggestions.end()) {
+	auto &stamps = state.added_suggestions.stamps;
+	if (stamps.size() <= matcher_index) {
+		stamps.resize(matcher_index + 1, 0);
+	}
+	if (stamps[matcher_index] == state.epoch) {
 		return SuggestionType::MANDATORY;
 	}
-	state.added_suggestions.insert(*this);
+	stamps[matcher_index] = state.epoch;
 	return AddSuggestionInternal(state);
 }
 
@@ -1062,6 +1065,7 @@ private:
 
 Matcher &MatcherAllocator::Allocate(unique_ptr<Matcher> matcher) {
 	auto &result = *matcher;
+	result.matcher_index = NumericCast<uint32_t>(matchers.size());
 	matchers.push_back(std::move(matcher));
 	return result;
 }

@@ -7,6 +7,7 @@
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/common/limits.hpp"
+#include "duckdb/main/query_result.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/catalog/catalog.hpp"
 
@@ -26,6 +27,7 @@ void ViewCatalogEntry::Initialize(CreateViewInfo &info) {
 			// DuckDB v0.9.2 and below store their names in the "aliases" field
 			view_columns->names = info.aliases;
 		}
+		QueryResult::DeduplicateColumns(view_columns->names);
 		if (view_columns->types.size() != view_columns->names.size()) {
 			throw InvalidInputException(
 			    "Error creating view %s - view types / names size mismatch (%d types, %d names)", name,
@@ -189,6 +191,7 @@ void ViewCatalogEntry::UpdateBinding(const vector<LogicalType> &types_p, const v
 	auto new_columns = make_shared_ptr<ViewColumnInfo>();
 	new_columns->types = types_p;
 	new_columns->names = names_p;
+	QueryResult::DeduplicateColumns(new_columns->names);
 	view_columns.atomic_store(new_columns);
 	bind_state = ViewBindState::BOUND;
 }

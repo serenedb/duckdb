@@ -9,7 +9,7 @@ SELECT string_split(NULL, NULL)
 NULL
 
 query T
-SELECT * FROM (VALUES (string_split('hello world', ' ')), (string_split(NULL, ' ')), (string_split('a b c', NULL)), (string_split('a b c', ' '))) tbl(i)
+SELECT * FROM (VALUES (string_split('hello world', ' ')), (string_split(NULL, ' ')), (string_split('a b c', '')), (string_split('a b c', ' '))) tbl(i)
 ----
 [hello, world]
 NULL
@@ -91,10 +91,9 @@ SELECT UNNEST(string_split('🦆🐈🐈🦆🐈🐈🦆🐈🐈🦆🐈🐈🦆
 query T
 SELECT UNNEST(string_split('', 'delim'))
 ----
-(empty)
 
 query T
-SELECT UNNEST(string_split('aaaaa', ''))
+SELECT UNNEST(string_split('aaaaa', NULL))
 ----
 a
 a
@@ -103,7 +102,7 @@ a
 a
 
 query T
-SELECT UNNEST(string_split('🦆🦆🦆🦆🦆', ''))
+SELECT UNNEST(string_split('🦆🦆🦆🦆🦆', NULL))
 ----
 🦆
 🦆
@@ -190,7 +189,7 @@ a
 a
 
 query T
-SELECT UNNEST(string_split('aaaaa', NULL))
+SELECT UNNEST(string_split('aaaaa', ''))
 ----
 aaaaa
 
@@ -218,7 +217,7 @@ select UNNEST(string_split('1||2|3||', '||'))
 (empty)
 
 query T
-select UNNEST(string_split('1|2|3', ''))
+select UNNEST(string_split('1|2|3', NULL))
 ----
 1
 |
@@ -229,10 +228,9 @@ select UNNEST(string_split('1|2|3', ''))
 query T
 select UNNEST(string_split('', '|'))
 ----
-(empty)
 
 query T
-select UNNEST(string_split('1|2|3', NULL))
+select UNNEST(string_split('1|2|3', ''))
 ----
 1|2|3
 
@@ -242,7 +240,7 @@ select string_split(NULL, '|') IS NULL
 1
 
 query T
-select UNNEST(string_split('abc', ''))
+select UNNEST(string_split('abc', NULL))
 ----
 a
 b

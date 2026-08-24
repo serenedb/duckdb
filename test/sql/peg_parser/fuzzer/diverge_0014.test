@@ -1,13 +1,32 @@
 # name: test/sql/peg_parser/fuzzer/diverge_0014.test
-# description: PEG should reject (currently accepts): Not implemented Error: RESET LOCAL is not implemented.
+# description: RESET LOCAL is implemented, and rejected outside a transaction block
 # group: [fuzzer]
 
-statement error
+statement ok
 EXPLAIN RESET LOCAL result
-----
-Not implemented Error: RESET LOCAL is not implemented.
 
 statement error
 RESET LOCAL allowed_paths
 ----
-Not implemented Error: RESET LOCAL is not implemented.
+RESET LOCAL can only be used in transaction blocks
+
+statement ok
+BEGIN
+
+statement ok
+RESET LOCAL search_path
+
+statement ok
+COMMIT
+
+# a global-only option cannot be reset for the transaction alone
+statement ok
+BEGIN
+
+statement error
+RESET LOCAL allowed_paths
+----
+cannot be reset locally
+
+statement ok
+ROLLBACK

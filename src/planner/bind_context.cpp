@@ -501,82 +501,99 @@ void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
 	ExclusionListInfo exclusion_info(new_select_list);
 	if (expr.RelationName().empty()) {
 		// SELECT * case
-		// PG convention: USING columns come first, then remaining columns in table order
+		// PG convention: within one FROM item the USING columns come first, then the remaining columns in
+		// table order. Independent FROM items are expanded one after another, so two joins that happen to
+		// merge a column of the same name each keep their own copy of it -- `a NATURAL JOIN b, c NATURAL
+		// JOIN d` is a c a c, not a a c c. Group the bindings by which ones a USING set ties together and
+		// run the two passes inside each group.
+		vector<vector<reference<Binding>>> binding_groups;
+		idx_t last_from_item = 0;
+		for (idx_t i = 0; i < bindings_list.size(); i++) {
+			auto from_item = i < binding_from_item.size() ? binding_from_item[i] : 0;
+			if (binding_groups.empty() || from_item != last_from_item) {
+				binding_groups.emplace_back();
+				last_from_item = from_item;
+			}
+			binding_groups.back().push_back(*bindings_list[i]);
+		}
+
 		reference_set_t<UsingColumnSet> handled_using_columns;
-
-		// Pass 1: emit USING columns first in USING clause order (PG convention)
-		// Collect and sort by insertion order
-		vector<pair<idx_t, Identifier>> ordered_using;
-		for (auto &uc : using_columns) {
-			ordered_using.emplace_back(uc.second.order, uc.first);
-		}
-		std::sort(ordered_using.begin(), ordered_using.end(),
-		          [](const auto &a, const auto &b) { return a.first < b.first; });
-		for (auto &[order, column_name] : ordered_using) {
-			// Find the first binding that has this USING column
-			BindingAlias first_alias;
-			for (auto &entry : bindings_list) {
-				auto using_binding_ptr = GetUsingBinding(column_name, entry->GetBindingAlias());
-				if (using_binding_ptr) {
-					first_alias = entry->GetBindingAlias();
-					break;
+		for (auto &group : binding_groups) {
+			// Pass 1: emit this group's USING columns first, in USING clause order (PG convention)
+			vector<pair<idx_t, Identifier>> ordered_using;
+			for (auto &uc : using_columns) {
+				ordered_using.emplace_back(uc.second.order, uc.first);
+			}
+			std::sort(ordered_using.begin(), ordered_using.end(),
+			          [](const auto &a, const auto &b) { return a.first < b.first; });
+			for (auto &[order, column_name] : ordered_using) {
+				// Find the first binding of this group that has this USING column
+				BindingAlias first_alias;
+				for (auto &entry : group) {
+					auto using_binding_ptr = GetUsingBinding(column_name, entry.get().GetBindingAlias());
+					if (using_binding_ptr &&
+					    handled_using_columns.find(*using_binding_ptr) == handled_using_columns.end()) {
+						first_alias = entry.get().GetBindingAlias();
+						break;
+					}
 				}
-			}
-			if (!first_alias.IsSet()) {
-				continue;
-			}
-			auto using_binding_ptr = GetUsingBinding(column_name, first_alias);
-			if (!using_binding_ptr) {
-				continue;
-			}
-			auto &using_binding = *using_binding_ptr;
-			if (handled_using_columns.find(using_binding) != handled_using_columns.end()) {
-				continue;
-			}
-			QualifiedColumnName qualified_column(first_alias, column_name);
-			if (CheckExclusionList(expr, qualified_column, exclusion_info)) {
-				handled_using_columns.insert(using_binding);
-				continue;
-			}
-			if (!using_binding.primary_binding.IsSet()) {
-				auto coalesce = make_uniq_base<ParsedExpression, OperatorExpression>(ExpressionType::OPERATOR_COALESCE);
-				for (auto &child_binding : using_binding.bindings) {
-					coalesce->Cast<OperatorExpression>().GetChildrenMutable().push_back(
-					    make_uniq<ColumnRefExpression>(column_name, child_binding));
+				if (!first_alias.IsSet()) {
+					continue;
 				}
-				coalesce->SetAlias(column_name);
-				if (HandleRename(expr, qualified_column, coalesce, exclusion_info)) {
-					new_select_list.push_back(std::move(coalesce));
+				auto using_binding_ptr = GetUsingBinding(column_name, first_alias);
+				if (!using_binding_ptr) {
+					continue;
 				}
-			} else {
-				auto new_expr =
-				    make_uniq_base<ParsedExpression, ColumnRefExpression>(column_name, using_binding.primary_binding);
-				if (HandleRename(expr, qualified_column, new_expr, exclusion_info)) {
-					new_select_list.push_back(std::move(new_expr));
+				auto &using_binding = *using_binding_ptr;
+				if (handled_using_columns.find(using_binding) != handled_using_columns.end()) {
+					continue;
 				}
-			}
-			handled_using_columns.insert(using_binding);
-		}
-
-		// Pass 2: emit non-USING columns in table order
-		for (auto &entry : bindings_list) {
-			auto &binding = *entry;
-			auto &column_names = binding.GetColumnNames();
-			auto &binding_alias = binding.GetBindingAlias();
-			for (auto &column_name : column_names) {
-				QualifiedColumnName qualified_column(binding_alias, column_name);
+				QualifiedColumnName qualified_column(first_alias, column_name);
 				if (CheckExclusionList(expr, qualified_column, exclusion_info)) {
+					handled_using_columns.insert(using_binding);
 					continue;
 				}
-				// skip USING columns (already emitted in pass 1)
-				auto using_binding_ptr = GetUsingBinding(column_name, binding_alias);
-				if (using_binding_ptr) {
-					continue;
+				if (!using_binding.primary_binding.IsSet()) {
+					auto coalesce =
+					    make_uniq_base<ParsedExpression, OperatorExpression>(ExpressionType::OPERATOR_COALESCE);
+					for (auto &child_binding : using_binding.bindings) {
+						coalesce->Cast<OperatorExpression>().GetChildrenMutable().push_back(
+						    make_uniq<ColumnRefExpression>(column_name, child_binding));
+					}
+					coalesce->SetAlias(column_name);
+					if (HandleRename(expr, qualified_column, coalesce, exclusion_info)) {
+						new_select_list.push_back(std::move(coalesce));
+					}
+				} else {
+					auto new_expr = make_uniq_base<ParsedExpression, ColumnRefExpression>(
+					    column_name, using_binding.primary_binding);
+					if (HandleRename(expr, qualified_column, new_expr, exclusion_info)) {
+						new_select_list.push_back(std::move(new_expr));
+					}
 				}
-				auto new_expr =
-				    CreateColumnReference(binding_alias, column_name, ColumnBindType::DO_NOT_EXPAND_GENERATED_COLUMNS);
-				if (HandleRename(expr, qualified_column, new_expr, exclusion_info)) {
-					new_select_list.push_back(std::move(new_expr));
+				handled_using_columns.insert(using_binding);
+			}
+
+			// Pass 2: emit this group's non-USING columns in table order
+			for (auto &entry : group) {
+				auto &binding = entry.get();
+				auto &column_names = binding.GetColumnNames();
+				auto &binding_alias = binding.GetBindingAlias();
+				for (auto &column_name : column_names) {
+					QualifiedColumnName qualified_column(binding_alias, column_name);
+					if (CheckExclusionList(expr, qualified_column, exclusion_info)) {
+						continue;
+					}
+					// skip USING columns (already emitted in pass 1)
+					auto using_binding_ptr = GetUsingBinding(column_name, binding_alias);
+					if (using_binding_ptr) {
+						continue;
+					}
+					auto new_expr = CreateColumnReference(binding_alias, column_name,
+					                                      ColumnBindType::DO_NOT_EXPAND_GENERATED_COLUMNS);
+					if (HandleRename(expr, qualified_column, new_expr, exclusion_info)) {
+						new_select_list.push_back(std::move(new_expr));
+					}
 				}
 			}
 		}
@@ -675,6 +692,7 @@ void BindContext::GetTypesAndNames(vector<Identifier> &result_names, vector<Logi
 }
 
 void BindContext::AddBinding(unique_ptr<Binding> binding) {
+	binding_from_item.push_back(from_item_counter);
 	bindings_list.push_back(std::move(binding));
 }
 

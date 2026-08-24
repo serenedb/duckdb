@@ -36,14 +36,13 @@ SELECT * FROM read_csv(
 ----
 UNION_BY_NAME is set to true
 
-statement error
+# without a rejects table, rejects_limit is PostgreSQL's REJECT_LIMIT: at most this many skipped rows
+statement ok
 SELECT * FROM read_csv(
     '{DATA_DIR}/csv/error/mismatch/bad.csv',
     columns = {'col0': 'INTEGER', 'col1': 'INTEGER', 'col2': 'VARCHAR'},
     ignore_errors=true,
     rejects_limit=10)
-----
-REJECTS_LIMIT option is only supported when REJECTS_TABLE is set to a table name
 
 statement error
 SELECT * FROM read_csv(
@@ -82,13 +81,11 @@ SELECT * FROM read_csv_auto(
 ----
 UNION_BY_NAME is set to true
 
-statement error
+statement ok
 SELECT * FROM read_csv_auto(
     '{DATA_DIR}/csv/error/mismatch/bad.csv',
     ignore_errors=true,
     rejects_limit=10)
-----
-REJECTS_LIMIT option is only supported when REJECTS_TABLE is set to a table name
 
 statement error
 SELECT * FROM read_csv_auto(

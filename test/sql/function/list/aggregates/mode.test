@@ -84,7 +84,7 @@ insert into intervals values
 query I
 select list_mode(v) from intervals;
 ----
-5 months 2 days 12:11:49
+5 mons 2 days 12:11:49
 
 # huge integers
 statement ok

@@ -18,7 +18,7 @@ CREATE TABLE tbl (
 	amount_sold AS (price) CHECK (amount_sold > 5)
 );
 ----
-<REGEX>:.*Binder Error.*Constraints on generated columns.*
+<REGEX>:.*Binder Error.*Constraints on virtual generated columns are not supported.*
 
 # Also when used in this way
 statement error
@@ -28,7 +28,7 @@ CREATE TABLE tbl (
 	CHECK (amount_sold > price)
 );
 ----
-<REGEX>:.*Binder Error.*Constraints on generated columns.*
+<REGEX>:.*Binder Error.*Constraints on virtual generated columns are not supported.*
 
 statement ok
 CREATE TABLE chk (

@@ -74,23 +74,31 @@ void QueryResult::DeduplicateColumns(vector<string> &names) {
 	names = IdentifiersToStrings(identifiers);
 }
 
-void QueryResult::DeduplicateColumns(vector<Identifier> &names) {
-	identifier_map_t<idx_t> name_map;
+void QueryResult::DeduplicateColumns(vector<Identifier> &names,
+                                     const std::function<bool(const Identifier &)> &can_rename) {
+	// every original name is reserved up front, so a generated name never takes one a later column still needs
+	identifier_set_t taken_names;
 	for (auto &column_name : names) {
-		if (name_map.find(column_name) == name_map.end()) {
-			// Name does not exist yet
-			name_map[column_name]++;
-		} else {
-			// Name already exists, we add _x where x is the repetition number
-			Identifier new_column_name(column_name + "_" + std::to_string(name_map[column_name]));
-			while (name_map.find(new_column_name) != name_map.end()) {
-				// This name is already here due to a previous definition
-				name_map[column_name]++;
-				new_column_name = Identifier(column_name + "_" + std::to_string(name_map[column_name]));
-			}
-			column_name = new_column_name;
-			name_map[new_column_name]++;
+		taken_names.insert(column_name);
+	}
+	identifier_set_t seen_names;
+	for (auto &column_name : names) {
+		if (seen_names.insert(column_name).second) {
+			// first occurrence - keeps its name
+			continue;
 		}
+		if (can_rename && !can_rename(column_name)) {
+			continue;
+		}
+		// we add :x where x is the repetition number. `:` cannot appear in an unquoted identifier, so the
+		// disambiguated name can never collide with a real column name
+		idx_t index = 1;
+		Identifier new_column_name(column_name + ":" + std::to_string(index));
+		while (!taken_names.insert(new_column_name).second) {
+			new_column_name = Identifier(column_name + ":" + std::to_string(++index));
+		}
+		seen_names.insert(new_column_name);
+		column_name = new_column_name;
 	}
 }
 

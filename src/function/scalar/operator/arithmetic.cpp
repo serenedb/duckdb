@@ -1224,12 +1224,6 @@ unique_ptr<FunctionData> BindBinaryFloatingPoint(BindScalarFunctionInput &input)
 } // namespace
 ScalarFunctionSet OperatorFloatDivideFun::GetFunctions() {
 	ScalarFunctionSet fp_divide("/");
-	// Integer types: PG-compatible integer division (truncation toward zero)
-	for (auto &type : LogicalType::Integral()) {
-		fp_divide.AddFunction(
-		    ScalarFunction({type, type}, type, GetBinaryFunctionIgnoreZero<DivideOperator>(type.InternalType())));
-	}
-	// Float/double: float division
 	fp_divide.AddFunction(ScalarFunction({LogicalType::FLOAT, LogicalType::FLOAT}, LogicalType::FLOAT, nullptr,
 	                                     BindBinaryFloatingPoint<DivideOperator>));
 	fp_divide.AddFunction(ScalarFunction({LogicalType::DOUBLE, LogicalType::DOUBLE}, LogicalType::DOUBLE, nullptr,
@@ -1248,11 +1242,19 @@ ScalarFunctionSet OperatorIntegerDivideFun::GetFunctions() {
 	for (auto &type : LogicalType::Numeric()) {
 		if (type.id() == LogicalTypeId::DECIMAL) {
 			continue;
+		} else if (type.id() == LogicalTypeId::FLOAT || type.id() == LogicalTypeId::DOUBLE) {
+			full_divide.AddFunction(
+			    ScalarFunction({type, type}, type, nullptr, BindBinaryFloatingPoint<DivideOperator>));
 		} else {
 			full_divide.AddFunction(
 			    ScalarFunction({type, type}, type, GetBinaryFunctionIgnoreZero<DivideOperator>(type.InternalType())));
 		}
 	}
+	// integer_division rewrites every `/` to `//`, including the ones whose operands are not numeric at
+	// all, so `//` has to resolve everything `/` resolves.
+	full_divide.AddFunction(
+	    ScalarFunction({LogicalType::INTERVAL, LogicalType::DOUBLE}, LogicalType::INTERVAL,
+	                   BinaryScalarFunctionIgnoreZero<interval_t, double, interval_t, DivideOperator>));
 	for (auto &func : full_divide.functions) {
 		func.SetFallible();
 	}

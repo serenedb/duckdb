@@ -8,7 +8,7 @@ require parquet
 query I
 select current_setting('__delta_only_variant_encoding_enabled')
 ----
-false
+off
 
 statement error
 set __delta_only_variant_encoding_enabled = true;

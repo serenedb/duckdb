@@ -51,6 +51,11 @@ unique_ptr<SetStatement> TransformSetSearchPath(const Identifier &name, SetScope
 				return make_set(std::move(wrapped));
 			}
 		}
+		if (expr.GetExpressionType() != ExpressionType::COLUMN_REF) {
+			// on top of PG's grammar, DuckDB allows any expression here and evaluates it: pass it on,
+			// it produces the same comma-joined form current_setting('search_path') renders
+			return make_uniq<SetVariableStatement>(name, std::move(values[0]), scope);
+		}
 		return make_set(serialize(expr));
 	}
 	// Multi-arg: comma-join each PG-quoted element.

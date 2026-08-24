@@ -260,6 +260,11 @@ void AttachedDatabase::InvokeCloseIfLastReference(shared_ptr<AttachedDatabase> &
 	attached_db.reset();
 }
 
+bool AttachedDatabase::TryReuse() {
+	lock_guard<mutex> guard(*close_lock);
+	return !is_closed;
+}
+
 void AttachedDatabase::Initialize(optional_ptr<ClientContext> context) {
 	if (IsSystem()) {
 		catalog->Initialize(context, true);

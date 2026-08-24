@@ -139,6 +139,7 @@ void AlpFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 		return;
 	}
 	AlpScanPartial<T>(segment, state, vector_count, result, 0);
+	FlatVector::SetSize(result, count_t(vector_count));
 	if (verdict == FilterPropagateResult::FILTER_ALWAYS_TRUE) {
 		return;
 	}

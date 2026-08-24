@@ -121,7 +121,7 @@ SELECT (avg(42) export_state)::struct(count ubigint, "value" integer);
 query T
 SELECT (avg(42) export_state)::struct(count ubigint, "value" double);
 ----
-{'count': 1, 'value': 42.0}
+{'count': 1, 'value': 42}
 
 # Casting count state to underlying type should work
 query T
@@ -214,7 +214,7 @@ SELECT finalize(combine(state, state)) FROM t3_product ORDER BY 1;
 query R
 SELECT (product(2.0) export_state)::double;
 ----
-2.0
+2
 
 # Test product with empty result (should be NULL when no rows)
 query T
@@ -298,4 +298,4 @@ SELECT (regr_count(1.0, 2.0) export_state)::ubigint;
 query T
 SELECT (regr_avgx(1.0, 2.0) export_state)::struct(sum double, count ubigint);
 ----
-{'sum': 2.0, 'count': 1}
+{'sum': 2, 'count': 1}

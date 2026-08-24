@@ -508,7 +508,7 @@ EXECUTE sw1(2);
 query I
 from (values ({'key': 'A'}), ({'key': 'B'}), ({'key': 'C'}))
 select
-   list(col0) over (rows between unbounded preceding and current row) as result
+   list(column1) over (rows between unbounded preceding and current row) as result
 ----
 [{'key': A}]
 [{'key': A}, {'key': B}]

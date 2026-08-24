@@ -524,7 +524,10 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 
 	// commit the UndoBuffer of the transaction
 	if (!error.HasError()) {
-		if (HasOtherTransactions(transaction)) {
+		// a WAL-writing commit is published before its group fsync, so DurableSnapshotBound floors snapshots taken
+		// meanwhile below it: those readers still see the deleted rows and need them kept in deleted_rows_in_use,
+		// exactly as a concurrently active transaction would
+		if (HasOtherTransactions(transaction) || commit_state) {
 			info.active_transactions = ActiveTransactionState::OTHER_TRANSACTIONS;
 		} else {
 			info.active_transactions = ActiveTransactionState::NO_OTHER_TRANSACTIONS;

@@ -9,7 +9,7 @@ CREATE TABLE unit (
 	amount_sold AS (price) PRIMARY KEY,
 );
 ----
-<REGEX>:.*Binder Error.*Constraints on generated columns.*
+<REGEX>:.*Binder Error.*Constraints on virtual generated columns are not supported.*
 
 # Also not as a column list
 statement error
@@ -19,7 +19,7 @@ CREATE TABLE unit (
 	PRIMARY KEY (amount_sold),
 );
 ----
-<REGEX>:.*Binder Error.*Constraints on generated columns.*
+<REGEX>:.*Binder Error.*Constraints on virtual generated columns are not supported.*
 
 # Show that proper PRIMARY KEY constraints still work when mixed in when generated columns
 statement ok

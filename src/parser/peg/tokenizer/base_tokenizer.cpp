@@ -405,8 +405,30 @@ bool BaseTokenizer::TokenizeInputInternal() {
 						break;
 					}
 				}
-				bool next_is_digit = i + 1 < sql.size() && StringUtil::CharacterIsDigit(sql[i + 1]);
-				if (already_has_dot || !next_is_digit) {
+				// What follows the '.' decides whether it is part of the number:
+				//   digit          -> fraction,      `1.5`
+				//   exponent       -> trailing dot,  `1.e5`, `4664.E+5`
+				//   identifier     -> field access,  `tbl.col`, `1.method()`, `$1.x`
+				//   anything else  -> trailing dot,  `42.`, `42.)`, `42.::INT`, `42.` at EOF
+				bool dot_is_part_of_number;
+				if (already_has_dot) {
+					dot_is_part_of_number = false;
+				} else if (i + 1 >= sql.size()) {
+					dot_is_part_of_number = true;
+				} else if (StringUtil::CharacterIsDigit(sql[i + 1])) {
+					dot_is_part_of_number = true;
+				} else if (CharacterIsScientific(sql[i + 1])) {
+					// Only when a real exponent follows, so `1.e5` is a number while
+					// `1.exp` stays a field access.
+					idx_t j = i + 2;
+					if (j < sql.size() && (sql[j] == '+' || sql[j] == '-')) {
+						j++;
+					}
+					dot_is_part_of_number = j < sql.size() && StringUtil::CharacterIsDigit(sql[j]);
+				} else {
+					dot_is_part_of_number = !StringUtil::CharacterIsAlpha(sql[i + 1]) && sql[i + 1] != '_';
+				}
+				if (!dot_is_part_of_number) {
 					PushToken(last_pos, i, TokenType::NUMBER_LITERAL);
 					state = TokenizeState::STANDARD;
 					last_pos = i;

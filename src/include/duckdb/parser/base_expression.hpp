@@ -118,6 +118,8 @@ public:
 
 	//! Get the name of the expression
 	virtual Identifier GetName() const;
+	//! The name a SELECT result column gets when no name can be derived from the expression
+	static constexpr const char *ANONYMOUS_COLUMN_NAME = "?column?";
 	//! PG-compatible target-list column name (port of FigureColname).  Only
 	//! used when computing SELECT result column headers — falls back to
 	//! "?column?" when no name can be derived.

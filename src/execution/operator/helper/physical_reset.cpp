@@ -23,7 +23,7 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 
 	// RESET on an option the user never SET is a no-op — don't reapply the
 	// default via set_function, which would needlessly trigger side-effect
-	// callbacks (e.g. Readonly guards that reject any write).
+	// callbacks (e.g. guards that reject any write).
 	auto &client_config = ClientConfig::GetConfig(context.client);
 	auto setting_index = extension_option.setting_index.GetIndex();
 	bool is_user_set = effective_scope == SetScope::GLOBAL || client_config.user_settings.IsSet(setting_index);
@@ -56,7 +56,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 
 	if (option.default_value) {
 		// RESET on an untouched generic option is a no-op — don't fire
-		// set_callback with default_value (Readonly-style guards would throw).
+		// set_callback with default_value (write-rejecting guards would throw).
 		auto &client_config = ClientConfig::GetConfig(context.client);
 		auto setting_index = option.setting_idx.GetIndex();
 		bool is_user_set = variable_scope == SetScope::GLOBAL || client_config.user_settings.IsSet(setting_index);

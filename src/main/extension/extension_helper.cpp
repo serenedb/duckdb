@@ -186,8 +186,19 @@ string ExtensionHelper::AddExtensionInstallHintToErrorMsg([[maybe_unused]] Datab
 	// file an issue instead.
 	return base_error + "\n\nThis feature relies on the \"" + extension_name +
 	       "\" extension which is not built into this SereneDB binary. "
-	       "Please open an issue at https://github.com/serenedb/serenedb/issues "
+	       "Please open an issue at https://github.com/serenedb/serenedb/issues/887 "
 	       "if you need it.";
+}
+
+bool ExtensionHelper::IsLinkedExtension(const string &extension_name) {
+#if defined(GENERATED_EXTENSION_HEADERS) && GENERATED_EXTENSION_HEADERS
+	for (auto &linked : LinkedExtensions()) {
+		if (linked == extension_name) {
+			return true;
+		}
+	}
+#endif
+	return false;
 }
 
 string ExtensionHelper::ExtensionRuntimeUnsupportedMessage(const string &extension_name, bool is_install) {
@@ -195,7 +206,7 @@ string ExtensionHelper::ExtensionRuntimeUnsupportedMessage(const string &extensi
 	const string verb = is_install ? "installed" : "loaded";
 	return action + " is not supported by SereneDB: extensions are compiled into the server binary and cannot be " +
 	       verb + " at runtime.\nIf you need the \"" + extension_name +
-	       "\" extension, please open an issue at https://github.com/serenedb/serenedb/issues.";
+	       "\" extension, please open an issue at https://github.com/serenedb/serenedb/issues/887.";
 }
 
 void ExtensionHelper::ThrowExtensionRuntimeUnsupported(const string &extension_name, bool is_install) {

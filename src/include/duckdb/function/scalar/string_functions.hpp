@@ -461,6 +461,16 @@ struct LikeEscapeFun {
 	static ScalarFunction GetFunction();
 };
 
+struct SimilarToEscapeFun {
+	static constexpr const char *Name = "similar_to_escape";
+	static constexpr const char *Parameters = "pattern,escape_character";
+	static constexpr const char *Description = "Translates a SQL `SIMILAR TO` pattern into the equivalent regular expression, so that `string SIMILAR TO pattern` can be evaluated as `regexp_full_match(string, similar_to_escape(pattern))`. `escape_character` defaults to a backslash.";
+	static constexpr const char *Example = "similar_to_escape('a%c')";
+	static constexpr const char *Categories = "string";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
 struct NotLikeEscapeFun {
 	static constexpr const char *Name = "not_like_escape";
 	static constexpr const char *Parameters = "string,like_specifier,escape_character";

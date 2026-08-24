@@ -27,14 +27,29 @@ void CurrentSchemaFunction(DataChunk &input, ExpressionState &state, Vector &res
 	auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
 	// Only user-set entries, with "$user" resolved — no implicit/temp/system.
 	auto entries = ClientData::Get(context).catalog_search_path->GetResolvedSetPaths();
+	bool searched_current_catalog = false;
 	for (auto &entry : entries) {
-		if (entry.GetCatalog() != current_catalog) {
+		// an entry set without a catalog qualifier belongs to whichever database is current
+		if (!entry.GetCatalog().empty() && entry.GetCatalog() != current_catalog) {
 			continue;
 		}
+		searched_current_catalog = true;
 		auto schema_entry =
 		    Catalog::GetSchema(context, entry.GetCatalog(), entry.GetSchema(), OnEntryNotFound::RETURN_NULL);
 		if (schema_entry) {
 			result.Reference(Value(entry.GetSchema()), count_t(input.size()));
+			return;
+		}
+	}
+	// Only when the search path names no schema in the current catalog at all -- an
+	// embedded DuckDB rather than a serened session, which always sets one. A search
+	// path that DOES name one which happens not to exist must still report NULL, as
+	// PostgreSQL does (`SET search_path = nonexistent` -> current_schema() IS NULL),
+	// so the fallback must not swallow that case.
+	if (!searched_current_catalog) {
+		auto default_schema = ClientData::Get(context).catalog_search_path->GetDefaultSchema(context, current_catalog);
+		if (Catalog::GetSchema(context, current_catalog, default_schema, OnEntryNotFound::RETURN_NULL)) {
+			result.Reference(Value(default_schema), count_t(input.size()));
 			return;
 		}
 	}
@@ -109,7 +124,8 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 		// PG-compliant: only include user-set schemas that actually exist,
 		// with "$user" resolved via the current session user.
 		for (auto &entry : catalog_search_path->GetResolvedSetPaths()) {
-			if (entry.GetCatalog() != current_catalog) {
+			// an entry set without a catalog qualifier belongs to whichever database is current
+			if (!entry.GetCatalog().empty() && entry.GetCatalog() != current_catalog) {
 				continue;
 			}
 			auto schema_entry =

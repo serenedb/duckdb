@@ -236,7 +236,7 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 			auto val = const_expr.GetValue();
 			if (val.type().id() == LogicalTypeId::VARCHAR && !val.IsNull()) {
 				auto body_string = val.GetValue<string>();
-				Parser parser;
+				Parser parser(transformer.options);
 				parser.ParseQuery(body_string);
 				if (parser.statements.size() != 1) {
 					throw ParserException("Function body must contain exactly one statement");

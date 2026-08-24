@@ -28,7 +28,7 @@ NULL
 00:00:00
 00:00:01
 1 day
-1 month
+1 mon
 
 statement error
 COPY (SELECT -interval '1 day') TO '{TEST_DIR}/intervals.parquet'

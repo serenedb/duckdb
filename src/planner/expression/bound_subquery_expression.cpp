@@ -14,7 +14,7 @@ string BoundSubqueryExpression::ToString() const {
 
 bool BoundSubqueryExpression::Equals(const BaseExpression &other_p) const {
 	// equality between bound subqueries not implemented currently
-	return false;
+	return this == &other_p;
 }
 
 unique_ptr<Expression> BoundSubqueryExpression::Copy() const {

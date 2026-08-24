@@ -331,7 +331,8 @@ struct IntervalToStringCast {
 		length += 2;
 	}
 
-	static void FormatIntervalValue(int32_t value, char buffer[], idx_t &length, const char *name, idx_t name_len) {
+	static void FormatIntervalValue(int32_t value, char buffer[], idx_t &length, const char *name, idx_t name_len,
+	                                bool &last_was_negative) {
 		if (value == 0) {
 			return;
 		}
@@ -339,6 +340,11 @@ struct IntervalToStringCast {
 			// space if there is already something in the buffer
 			buffer[length++] = ' ';
 		}
+		if (value > 0 && last_was_negative) {
+			// PG marks the flip back to positive: "-2 years +4 days 05:01:03"
+			buffer[length++] = '+';
+		}
+		last_was_negative = value < 0;
 		FormatSignedNumber(value, buffer, length);
 		// append the name together with a potential "s" (for plurals)
 		memcpy(buffer + length, name, name_len);
@@ -358,16 +364,17 @@ struct IntervalToStringCast {
 	//! Returns the length of the interval
 	static idx_t Format(interval_t interval, char buffer[]) {
 		idx_t length = 0;
+		bool last_was_negative = false;
 		if (interval.months != 0) {
 			int32_t years = interval.months / 12;
 			int32_t months = interval.months - years * 12;
 			// format the years and months
-			FormatIntervalValue(years, buffer, length, " year", 5);
-			FormatIntervalValue(months, buffer, length, " mon", 4);
+			FormatIntervalValue(years, buffer, length, " year", 5, last_was_negative);
+			FormatIntervalValue(months, buffer, length, " mon", 4, last_was_negative);
 		}
 		if (interval.days != 0) {
 			// format the days
-			FormatIntervalValue(interval.days, buffer, length, " day", 4);
+			FormatIntervalValue(interval.days, buffer, length, " day", 4, last_was_negative);
 		}
 		if (interval.micros != 0) {
 			if (length != 0) {
@@ -380,9 +387,8 @@ struct IntervalToStringCast {
 				buffer[length++] = '-';
 			} else {
 				// PG-compatible: explicit '+' for mixed-sign intervals
-				// (e.g. "-3 days +05:00:00")
-				bool mixed_sign = (interval.months < 0) || (interval.days < 0);
-				if (mixed_sign) {
+				// (e.g. "-3 days +05:00:00"), on the field where the sign flips back
+				if (last_was_negative) {
 					buffer[length++] = '+';
 				}
 				micros = -micros;
