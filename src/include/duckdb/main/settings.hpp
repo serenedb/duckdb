@@ -21,7 +21,8 @@ struct Settings {
 		if (TryGetSettingInternal(source, OP::SettingIndex, result) && !result.IsNull()) {
 			return EnumUtil::FromString<typename OP::RETURN_TYPE>(StringValue::Get(result));
 		}
-		return EnumUtil::FromString<typename OP::RETURN_TYPE>(OP::DefaultValue);
+		static const auto default_value = EnumUtil::FromString<typename OP::RETURN_TYPE>(OP::DefaultValue);
+		return default_value;
 	}
 
 	template <class OP, class SOURCE>
@@ -41,7 +42,8 @@ struct Settings {
 		if (TryGetSettingInternal(source, OP::SettingIndex, result) && !result.IsNull()) {
 			return BooleanValue::Get(result);
 		}
-		return StringUtil::Equals(OP::DefaultValue, "true");
+		static constexpr bool default_value = std::string_view(OP::DefaultValue) == "true";
+		return default_value;
 	}
 
 	template <class OP, class SOURCE>
@@ -51,7 +53,8 @@ struct Settings {
 		if (TryGetSettingInternal(source, OP::SettingIndex, result) && !result.IsNull()) {
 			return UBigIntValue::Get(result);
 		}
-		return StringUtil::ToUnsigned(OP::DefaultValue);
+		static const idx_t default_value = StringUtil::ToUnsigned(OP::DefaultValue);
+		return default_value;
 	}
 
 	template <class OP, class SOURCE>
@@ -61,7 +64,8 @@ struct Settings {
 		if (TryGetSettingInternal(source, OP::SettingIndex, result) && !result.IsNull()) {
 			return BigIntValue::Get(result);
 		}
-		return StringUtil::ToSigned(OP::DefaultValue);
+		static const int64_t default_value = StringUtil::ToSigned(OP::DefaultValue);
+		return default_value;
 	}
 
 	template <class OP, class SOURCE>
@@ -71,7 +75,8 @@ struct Settings {
 		if (TryGetSettingInternal(source, OP::SettingIndex, result) && !result.IsNull()) {
 			return DoubleValue::Get(result);
 		}
-		return StringUtil::ToDouble(OP::DefaultValue);
+		static const double default_value = StringUtil::ToDouble(OP::DefaultValue);
+		return default_value;
 	}
 
 	template <class SOURCE>
@@ -83,6 +88,10 @@ struct Settings {
 	static void Set(SOURCE &source, SetScope scope, Value target_value) {
 		Set(source, OP::SettingIndex, scope, std::move(target_value));
 	}
+
+	//! Format a setting's Value as the text users see in SHOW / pg_settings.
+	//! PG-compliant: booleans render as "on"/"off", not "true"/"false".
+	DUCKDB_API static Value FormatDisplayValue(ClientContext &context, const Value &value);
 
 private:
 	static bool TryGetSettingInternal(const DatabaseInstance &db, idx_t setting_index, Value &result);
@@ -444,6 +453,17 @@ struct ConfigureProfilingSetting {
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
+};
+
+struct CopyCsvHeaderDefaultSetting {
+	using RETURN_TYPE = bool;
+	static constexpr const char *Name = "copy_csv_header_default";
+	static constexpr const char *Description =
+	    "Whether COPY ... TO a CSV file writes a header line when HEADER is not specified";
+	static constexpr const char *InputType = "BOOLEAN";
+	static constexpr const char *DefaultValue = "true";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
 };
 
 struct CurrentTransactionInvalidationPolicySetting {
@@ -824,6 +844,27 @@ struct DefaultTransactionInvalidationPolicySetting {
 	static void OnSet(SettingCallbackInfo &info, Value &input);
 };
 
+struct DefaultTransactionIsolationSetting {
+	using RETURN_TYPE = TransactionIsolationLevel;
+	static constexpr const char *Name = "default_transaction_isolation";
+	static constexpr const char *Description = "Sets the transaction isolation level of each new transaction.";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr const char *DefaultValue = "repeatable read";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+	static void OnSet(SettingCallbackInfo &info, Value &input);
+};
+
+struct DefaultTransactionReadOnlySetting {
+	using RETURN_TYPE = bool;
+	static constexpr const char *Name = "default_transaction_read_only";
+	static constexpr const char *Description = "Sets the default read-only status of new transactions.";
+	static constexpr const char *InputType = "BOOLEAN";
+	static constexpr const char *DefaultValue = "false";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
 struct DelimJoinAsCteSetting {
 	using RETURN_TYPE = bool;
 	static constexpr const char *Name = "delim_join_as_cte";
@@ -918,6 +959,8 @@ struct DisabledOptimizersSetting {
 	static constexpr const char *InputType = "VARCHAR";
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
+	static void SetLocal(ClientContext &context, const Value &parameter);
+	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
 };
 
@@ -1013,16 +1056,6 @@ struct EnableMacroDependenciesSetting {
 	static constexpr const char *Name = "enable_macro_dependencies";
 	static constexpr const char *Description =
 	    "Enable created MACROs to create dependencies on the referenced objects (such as tables)";
-	static constexpr const char *InputType = "BOOLEAN";
-	static constexpr const char *DefaultValue = "false";
-	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
-	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
-};
-
-struct EnableObjectCacheSetting {
-	using RETURN_TYPE = bool;
-	static constexpr const char *Name = "enable_object_cache";
-	static constexpr const char *Description = "[PLACEHOLDER] Legacy setting - does nothing";
 	static constexpr const char *InputType = "BOOLEAN";
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
@@ -1126,6 +1159,18 @@ struct ExplainOutputSetting {
 	static void OnSet(SettingCallbackInfo &info, Value &input);
 };
 
+struct ExplainOutputFormatSetting {
+	using RETURN_TYPE = ExplainFormatShape;
+	static constexpr const char *Name = "explain_output_format";
+	static constexpr const char *Description = "Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column "
+	                                           "key/value, PG = single QUERY PLAN column with one row per line)";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr const char *DefaultValue = "DUCKDB_NATIVE";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+	static void OnSet(SettingCallbackInfo &info, Value &input);
+};
+
 struct ExtensionDirectoriesSetting {
 	using RETURN_TYPE = vector<string>;
 	static constexpr const char *Name = "extension_directories";
@@ -1220,6 +1265,21 @@ struct ForceCompressionSetting {
 	static constexpr const char *Description = "DEBUG SETTING: forces a specific compression method to be used";
 	static constexpr const char *InputType = "VARCHAR";
 	static constexpr const char *DefaultValue = "auto";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+	static void OnSet(SettingCallbackInfo &info, Value &input);
+};
+
+struct ForceDictFsstModeSetting {
+	using RETURN_TYPE = string;
+	static constexpr const char *Name = "force_dict_fsst_mode";
+	static constexpr const char *Description =
+	    "DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage "
+	    "ownership (serenedb-owned -> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto "
+	    "across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); "
+	    "or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr const char *DefaultValue = "DEFAULT";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
 	static void OnSet(SettingCallbackInfo &info, Value &input);
@@ -1607,16 +1667,6 @@ struct OrderedAggregateThresholdSetting {
 	static void OnSet(SettingCallbackInfo &info, Value &input);
 };
 
-struct ParallelizeSequentialSourcesSetting {
-	using RETURN_TYPE = bool;
-	static constexpr const char *Name = "parallelize_sequential_sources";
-	static constexpr const char *Description = "Whether to automatically parallelize sequential sources";
-	static constexpr const char *InputType = "BOOLEAN";
-	static constexpr const char *DefaultValue = "true";
-	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
-	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
-};
-
 struct PartitionedWriteFlushThresholdSetting {
 	using RETURN_TYPE = idx_t;
 	static constexpr const char *Name = "partitioned_write_flush_threshold";
@@ -1952,6 +2002,16 @@ struct TrackedMetricsSetting {
 	static constexpr const char *Description =
 	    "A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*'])";
 	static constexpr const char *InputType = "VARCHAR[]";
+	static void SetLocal(ClientContext &context, const Value &parameter);
+	static void ResetLocal(ClientContext &context);
+	static Value GetSetting(const ClientContext &context);
+};
+
+struct TransactionIsolationSetting {
+	using RETURN_TYPE = TransactionIsolationLevel;
+	static constexpr const char *Name = "transaction_isolation";
+	static constexpr const char *Description = "Sets the current transaction's isolation level.";
+	static constexpr const char *InputType = "VARCHAR";
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);

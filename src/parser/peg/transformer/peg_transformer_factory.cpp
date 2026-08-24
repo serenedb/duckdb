@@ -91,10 +91,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(vecto
 		return nullptr;
 	}
 	vector<MatcherSuggestion> suggestions;
-	ParseResultAllocator parse_result_allocator;
+	MatcherSuggestionScope suggestion_scope;
+	ParseResultAllocator parse_result_allocator(options.allocator ? *options.allocator : Allocator::DefaultAllocator());
 	idx_t max_token_index = token_cursor;
-	MatchState state(tokens, suggestions, parse_result_allocator, max_token_index, options.preserve_identifier_case,
-	                 token_cursor);
+	MatchState state(tokens, suggestions, suggestion_scope, parse_result_allocator, max_token_index,
+	                 options.preserve_identifier_case, token_cursor);
 	auto match_result = root_matcher.MatchParseResult(state);
 	if (match_result == nullptr) {
 		// syntax error — surface as a parser exception in the same shape as Transform()
@@ -173,11 +174,74 @@ void PEGTransformerFactory::RegisterExpression() {
 	REGISTER_TRANSFORM(TransformOverClause);
 }
 
+void PEGTransformerFactory::RegisterCreatePublication() {
+	// create_publication.gram — optional FOR clause with an inline list requires a hand-written transformer.
+	REGISTER_TRANSFORM(TransformCreatePublicationStatement);
+}
+
+void PEGTransformerFactory::RegisterCreateSubscription() {
+	// create_subscription.gram — optional CONNECTION clause with nested PUBLICATION list requires a hand-written
+	// transformer.
+	REGISTER_TRANSFORM(TransformCreateSubscriptionStatement);
+}
+
+void PEGTransformerFactory::RegisterNotify() {
+	// notify.gram — LISTEN/NOTIFY/UNLISTEN parse but are not supported yet; the transforms throw. They are kept out
+	// of grammar_types.yml so the generator skips them (no auto-wrapper), leaving these as the sole registration.
+	REGISTER_TRANSFORM(TransformListenStatement);
+	REGISTER_TRANSFORM(TransformNotifyStatement);
+	REGISTER_TRANSFORM(TransformUnlistenStatement);
+}
+
+void PEGTransformerFactory::RegisterCreateTextSearchDictionary() {
+	// create_text_search_dictionary.gram — Parens(List(...)) bodies are not auto-extractable.
+	REGISTER_TRANSFORM(TransformCreateTSDictionaryStatement);
+	REGISTER_TRANSFORM(TransformDropTSDictionaryStatement);
+}
+
+void PEGTransformerFactory::RegisterForeignServer() {
+	// create_server.gram — the OPTIONS Parens(List(...)) body is not auto-extractable.
+	REGISTER_TRANSFORM(TransformCreateServerStatement);
+	REGISTER_TRANSFORM(TransformDropServerStatement);
+}
+
 void PEGTransformerFactory::RegisterPivot() {
 	// PivotStatement and UnpivotStatement measure parameter usage while transforming
 	// the source table, so their top-level wrappers remain manual.
 	REGISTER_TRANSFORM(TransformPivotStatement);
 	REGISTER_TRANSFORM(TransformUnpivotStatement);
+	// ShowQualifiedName walks the raw keyword node to distinguish PG `SHOW <var>` from `DESC <table>`.
+	REGISTER_TRANSFORM(TransformShowQualifiedName);
+	// ShowAliasedSetting walks the raw keyword node to map each PG alias shape to its setting name.
+	REGISTER_TRANSFORM(TransformShowAliasedSetting);
+	// ResetAll is a pure-keyword choice ('LOCAL' 'ALL' / 'ALL') whose body inspects the matched alternative.
+	REGISTER_TRANSFORM(TransformResetAll);
+	// ResetAliasedSetting walks the raw keyword node to map each PG alias shape to its setting name.
+	REGISTER_TRANSFORM(TransformResetAliasedSetting);
+}
+
+void PEGTransformerFactory::RegisterRbac() {
+	REGISTER_TRANSFORM(TransformCreateRoleStatement);
+	REGISTER_TRANSFORM(TransformDropRoleStatement);
+	REGISTER_TRANSFORM(TransformAlterRoleStatement);
+	REGISTER_TRANSFORM(TransformAlterOwnerStatement);
+	REGISTER_TRANSFORM(TransformAlterDefaultPrivilegesStatement);
+	REGISTER_TRANSFORM(TransformGrantStatement);
+	REGISTER_TRANSFORM(TransformRevokeStatement);
+	REGISTER_TRANSFORM(TransformCreatePolicyStatement);
+	REGISTER_TRANSFORM(TransformAlterPolicyStatement);
+	REGISTER_TRANSFORM(TransformDropPolicyStatement);
+	REGISTER_TRANSFORM(TransformAlterTableRowSecurityStatement);
+}
+
+void PEGTransformerFactory::RegisterCreateMacro() {
+	// MacroDefinition navigates its FunctionDecorator* and body alternatives directly, so it remains manual.
+	REGISTER_TRANSFORM(TransformMacroDefinition);
+}
+
+void PEGTransformerFactory::RegisterDrop() {
+	// DropFunction navigates the per-overload signature args directly, so it remains manual.
+	REGISTER_TRANSFORM(TransformDropFunction);
 }
 
 void PEGTransformerFactory::RegisterSelect() {
@@ -212,7 +276,15 @@ PEGTransformerFactory::PEGTransformerFactory() {
 	RegisterCommon();
 	RegisterCreateTable();
 	RegisterExpression();
+	RegisterCreatePublication();
+	RegisterCreateSubscription();
+	RegisterNotify();
+	RegisterCreateTextSearchDictionary();
+	RegisterRbac();
+	RegisterForeignServer();
 	RegisterPivot();
+	RegisterCreateMacro();
+	RegisterDrop();
 	RegisterSelect();
 	RegisterKeywordsAndIdentifiers();
 }

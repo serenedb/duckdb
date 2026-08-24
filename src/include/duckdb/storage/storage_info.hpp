@@ -77,72 +77,74 @@ struct Storage {
 // clang-format off
 // START OF ENUM VERSION INFO
 enum class StorageVersion : uint64_t {
-    V0_0_4 = 1,
-    V0_1_0 = 1,
-    V0_1_1 = 1,
-    V0_1_2 = 1,
-    V0_1_3 = 1,
-    V0_1_4 = 1,
-    V0_1_5 = 1,
-    V0_1_6 = 1,
-    V0_1_7 = 1,
-    V0_1_8 = 1,
-    V0_1_9 = 1,
-    V0_2_0 = 1,
-    V0_2_1 = 1,
-    V0_2_2 = 4,
-    V0_2_3 = 6,
-    V0_2_4 = 11,
-    V0_2_5 = 13,
-    V0_2_6 = 15,
-    V0_2_7 = 17,
-    V0_2_8 = 18,
-    V0_2_9 = 21,
-    V0_3_0 = 25,
-    V0_3_1 = 27,
-    V0_3_2 = 31,
-    V0_3_3 = 33,
-    V0_3_4 = 33,
-    V0_3_5 = 33,
-    V0_4_0 = 33,
-    V0_5_0 = 38,
-    V0_5_1 = 38,
-    V0_6_0 = 39,
-    V0_6_1 = 39,
-    V0_7_0 = 43,
-    V0_7_1 = 43,
-    V0_8_0 = 51,
-    V0_8_1 = 51,
-    V0_9_0 = 64,
-    V0_9_1 = 64,
-    V0_9_2 = 64,
-    V0_10_0 = 64,
-    V0_10_1 = 64,
-    V0_10_2 = 64,
-    V0_10_3 = 64,
-    V1_0_0 = 64,
-    V1_1_0 = 64,
-    V1_1_1 = 64,
-    V1_1_2 = 64,
-    V1_1_3 = 64,
-    V1_2_0 = 65,
-    V1_2_1 = 65,
-    V1_2_2 = 65,
-    V1_3_0 = 66,
-    V1_3_1 = 66,
-    V1_3_2 = 66,
-    V1_4_0 = 67,
-    V1_4_1 = 67,
-    V1_4_2 = 67,
-    V1_4_3 = 67,
-    V1_4_4 = 67,
-    V1_5_0 = 68,
-    V1_5_1 = 68,
-    V1_5_2 = 68,
-    V1_5_3 = 68,
-    V2_0_0 = 69,
-    LATEST = 69,
-    DEPRECATED = 999,
+    V0_0_4 = 1ULL << 32,
+    V0_1_0 = V0_0_4,
+    V0_1_1 = V0_0_4,
+    V0_1_2 = V0_0_4,
+    V0_1_3 = V0_0_4,
+    V0_1_4 = V0_0_4,
+    V0_1_5 = V0_0_4,
+    V0_1_6 = V0_0_4,
+    V0_1_7 = V0_0_4,
+    V0_1_8 = V0_0_4,
+    V0_1_9 = V0_0_4,
+    V0_2_0 = V0_0_4,
+    V0_2_1 = V0_0_4,
+    V0_2_2 = 4ULL << 32,
+    V0_2_3 = 6ULL << 32,
+    V0_2_4 = 11ULL << 32,
+    V0_2_5 = 13ULL << 32,
+    V0_2_6 = 15ULL << 32,
+    V0_2_7 = 17ULL << 32,
+    V0_2_8 = 18ULL << 32,
+    V0_2_9 = 21ULL << 32,
+    V0_3_0 = 25ULL << 32,
+    V0_3_1 = 27ULL << 32,
+    V0_3_2 = 31ULL << 32,
+    V0_3_3 = 33ULL << 32,
+    V0_3_4 = V0_3_3,
+    V0_3_5 = V0_3_3,
+    V0_4_0 = V0_3_3,
+    V0_5_0 = 38ULL << 32,
+    V0_5_1 = V0_5_0,
+    V0_6_0 = 39ULL << 32,
+    V0_6_1 = V0_6_0,
+    V0_7_0 = 43ULL << 32,
+    V0_7_1 = V0_7_0,
+    V0_8_0 = 51ULL << 32,
+    V0_8_1 = V0_8_0,
+    V0_9_0 = 64ULL << 32,
+    V0_9_1 = V0_9_0,
+    V0_9_2 = V0_9_0,
+    V0_10_0 = V0_9_0,
+    V0_10_1 = V0_9_0,
+    V0_10_2 = V0_9_0,
+    V0_10_3 = V0_9_0,
+    V1_0_0 = V0_9_0,
+    V1_1_0 = V0_9_0,
+    V1_1_1 = V0_9_0,
+    V1_1_2 = V0_9_0,
+    V1_1_3 = V0_9_0,
+    V1_2_0 = 65ULL << 32,
+    V1_2_1 = V1_2_0,
+    V1_2_2 = V1_2_0,
+    V1_3_0 = 66ULL << 32,
+    V1_3_1 = V1_3_0,
+    V1_3_2 = V1_3_0,
+    V1_4_0 = 67ULL << 32,
+    V1_4_1 = V1_4_0,
+    V1_4_2 = V1_4_0,
+    V1_4_3 = V1_4_0,
+    V1_4_4 = V1_4_0,
+    V1_5_0 = 68ULL << 32,
+    V1_5_1 = V1_5_0,
+    V1_5_2 = V1_5_0,
+    V1_5_3 = V1_5_0,
+    V2_0_0 = 69ULL << 32,
+    DUCKDB_LATEST = V2_0_0,
+    SERENEDB_V1 = V2_0_0 + 1,
+    SERENEDB_LATEST = SERENEDB_V1,
+    DEPRECATED = 999ULL << 32,
     INVALID = 0
 };
 // END OF ENUM VERSION INFO
@@ -181,21 +183,10 @@ enum class SerializationVersionDeprecated : uint64_t {
 // clang-format on
 
 struct StorageVersionInfo {
-	// When the default storage version has to be updated, do it here
-	static constexpr StorageVersion DEFAULT_STORAGE_VERSION_INFO = StorageVersion::V0_10_2;
-
 	const char *version_name;
 	StorageVersion storage_version;
 
 	static string GetStorageVersionString(const StorageVersion &version);
-
-	static constexpr StorageVersion GetStorageVersionDefault() {
-		return DEFAULT_STORAGE_VERSION_INFO;
-	};
-
-	static constexpr idx_t GetStorageVersionDefaultInt() {
-		return static_cast<idx_t>(DEFAULT_STORAGE_VERSION_INFO);
-	};
 
 	static constexpr StorageVersion Invalid() {
 		return StorageVersion::INVALID;
@@ -219,12 +210,38 @@ struct SerializationVersionInfo {
 	};
 };
 
+static constexpr idx_t STORAGE_VERSION_SHIFT = 32;
+static constexpr idx_t STORAGE_VERSION_SEQUENCE_MASK = (1ULL << STORAGE_VERSION_SHIFT) - 1;
+constexpr idx_t DuckDBVersionNumber(StorageVersion version) {
+	return static_cast<idx_t>(version) >> STORAGE_VERSION_SHIFT;
+}
+constexpr idx_t SereneDBVersionNumber(StorageVersion version) {
+	return static_cast<idx_t>(version) & STORAGE_VERSION_SEQUENCE_MASK;
+}
+constexpr bool IsSereneDBStorageVersion(StorageVersion version) {
+	return SereneDBVersionNumber(version) != 0;
+}
+constexpr StorageVersion NextDuckDBStorageVersion(StorageVersion version) {
+	return static_cast<StorageVersion>((DuckDBVersionNumber(version) + 1) << STORAGE_VERSION_SHIFT);
+}
+
+constexpr idx_t StorageVersionToDisk(StorageVersion version) {
+	return IsSereneDBStorageVersion(version) ? static_cast<idx_t>(version) : DuckDBVersionNumber(version);
+}
+constexpr StorageVersion StorageVersionFromDisk(idx_t on_disk) {
+	return static_cast<StorageVersion>(on_disk <= STORAGE_VERSION_SEQUENCE_MASK ? on_disk << STORAGE_VERSION_SHIFT
+	                                                                            : on_disk);
+}
+bool IsReadableStorageVersion(StorageVersion version);
+
 //! The version number default, lower and upper bounds of the database storage format
-extern const uint64_t VERSION_NUMBER;
-extern const uint64_t VERSION_NUMBER_LOWER;
-extern const uint64_t VERSION_NUMBER_UPPER;
+inline constexpr auto DUCKDB_VERSION_DEFAULT = StorageVersion::V2_0_0;
+inline constexpr auto DUCKDB_VERSION_LOWER = StorageVersion::V0_9_0;
+inline constexpr auto DUCKDB_VERSION_UPPER = StorageVersion::DUCKDB_LATEST;
+inline constexpr auto SERENEDB_VERSION_LOWER = StorageVersion::SERENEDB_V1;
+inline constexpr auto SERENEDB_VERSION_UPPER = StorageVersion::SERENEDB_LATEST;
 string GetDuckDBVersions(const StorageVersion version_number);
-string GetStorageVersionNameInternal(const idx_t storage_version);
+string GetStorageVersionNameInternal(const StorageVersion storage_version);
 string GetStorageVersionName(const StorageVersion storage_version, const bool add_suffix);
 idx_t GetSerializationVersionDeprecated(const char *version_string);
 StorageVersion GetStorageVersion(const char *version_string);
@@ -251,7 +268,7 @@ public:
 	//! The main header storage version is now deprecated
 	static constexpr StorageVersion DEPRECATED_VERSION_NUMBER = StorageVersion::DEPRECATED;
 
-	idx_t version_number;
+	StorageVersion version_number;
 	//! The set of flags used by the database.
 	uint64_t flags[FLAG_COUNT];
 	//! Encryption version
@@ -386,7 +403,7 @@ struct DatabaseHeader {
 	void Write(WriteStream &ser);
 	static DatabaseHeader Read(const MainHeader &header, ReadStream &source);
 	static void SetStorageVersionInDatabaseHeader(DatabaseHeader &header, StorageVersion main_version,
-	                                              StorageVersion read_version);
+	                                              idx_t read_version);
 };
 
 //! Detect mismatching constant values when compiling
