@@ -227,8 +227,11 @@ BlockAllocator::BlockAllocator(Allocator &allocator_p, const idx_t block_size_p,
 }
 
 BlockAllocator::~BlockAllocator() {
+	// Do NOT touch the thread-local state here: when the destructor runs from an exit handler (e.g. a static
+	// DuckDB), the calling thread's thread_local has already been destroyed, and resurrecting it is UB. Thread-local
+	// states clean up after themselves: their destructor returns cached blocks while the allocator is alive, and
+	// alive_token/uuid make them no-ops or re-initialize once it is gone.
 	alive_token->store(false);
-	GetBlockAllocatorThreadLocalState(*this).Clear();
 	if (IsActive()) {
 		try {
 			FreeVirtualMemory(virtual_memory_space, virtual_memory_size);
