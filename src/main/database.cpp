@@ -34,6 +34,7 @@
 #include "duckdb/storage/compression/empty_validity.hpp"
 #include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 #include "duckdb/storage/object_cache.hpp"
+#include "duckdb/storage/shared_object_cache.hpp"
 #include "duckdb/storage/standard_buffer_manager.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/storage/storage_manager.hpp"
@@ -92,6 +93,7 @@ DatabaseInstance::~DatabaseInstance() {
 	// destroy child elements
 	connection_manager.reset();
 	object_cache.reset();
+	shared_object_cache.reset();
 	scheduler.reset();
 	db_manager.reset();
 
@@ -316,6 +318,7 @@ void DatabaseInstance::Initialize(const char *database_path, DBConfig *user_conf
 	scheduler = make_uniq<TaskScheduler>(*this);
 	object_cache = make_uniq<ObjectCache>(*config.buffer_pool);
 	config.buffer_pool->SetObjectCache(object_cache.get());
+	shared_object_cache = make_uniq<SharedObjectCache>(*config.buffer_pool);
 	connection_manager = make_uniq<ConnectionManager>();
 	extension_manager = make_uniq<ExtensionManager>(*this);
 
@@ -395,6 +398,10 @@ DatabaseManager &DatabaseManager::Get(ClientContext &db) {
 
 TaskScheduler &DatabaseInstance::GetScheduler() {
 	return *scheduler;
+}
+
+SharedObjectCache &DatabaseInstance::GetSharedObjectCache() {
+	return *shared_object_cache;
 }
 
 ObjectCache &DatabaseInstance::GetObjectCache() {
