@@ -93,7 +93,7 @@ SinkResultType PhysicalCreateIndex::Sink(ExecutionContext &context, DataChunk &c
 	if (alter_table_info) {
 		for (idx_t i = 0; i < lstate.key_chunk.ColumnCount(); i++) {
 			if (VectorOperations::HasNull(lstate.key_chunk.data[i])) {
-				throw ConstraintException("NOT NULL constraint failed: %s", info->GetIndexName());
+				throw ConstraintException("NOT NULL constraint failed: %s", info->GetIndexName().GetIdentifierName());
 			}
 		}
 	}
@@ -138,25 +138,30 @@ SinkFinalizeType PhysicalCreateIndex::Finalize(Pipeline &pipeline, Event &event,
 		    "Transaction conflict: cannot add an index to a table that has been altered or dropped");
 	}
 
-	auto &schema = table.schema;
+	auto &schema = table.ParentSchema();
 	info->column_ids = storage_ids;
 
 	if (!alter_table_info) {
-		// Ensure that the index does not yet exist in the catalog.
-		auto entry =
-		    schema.GetEntry(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, info->GetIndexName());
-		if (entry) {
-			if (info->on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT) {
-				throw CatalogException("Index with name \"%s\" already exists!", info->GetIndexName());
+		// A catalog that arbitrates its own index names does all checking in CreateIndex.
+		if (!schema.catalog.OwnsIndexNames()) {
+			// Ensure that the index does not yet exist in the catalog.
+			auto entry =
+			    schema.GetEntry(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, info->GetIndexName());
+			if (entry) {
+				if (info->on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT) {
+					throw CatalogException("Index with name \"%s\" already exists!", info->GetIndexName());
+				}
+				// IF NOT EXISTS on existing index. We are done.
+				return SinkFinalizeType::READY;
 			}
-			// IF NOT EXISTS on existing index. We are done.
-			return SinkFinalizeType::READY;
 		}
 
-		auto index_entry = schema.CreateIndex(schema.GetCatalogTransaction(context), *info, table).get();
-		D_ASSERT(index_entry);
-		auto &index = index_entry->Cast<DuckIndexEntry>();
-		index.initial_index_size = bound_index->GetInMemorySize();
+		auto index_entry = schema.CreateIndex(schema.GetCatalogTransaction(context), *info, table);
+		if (!index_entry) {
+			// No entry, nothing to attach to.
+			return SinkFinalizeType::READY;
+		}
+		index_entry->Cast<DuckIndexEntry>().initial_index_size = bound_index->GetInMemorySize();
 
 	} else {
 		// Ensure that there are no other indexes with that name on this table.

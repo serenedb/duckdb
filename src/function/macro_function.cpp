@@ -291,6 +291,17 @@ void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.return_types = return_types;
 	other.return_names = return_names;
 	other.is_procedure = is_procedure;
+	other.dependencies = dependencies;
+}
+
+LogicalDependencyList MacroFunction::UnionDependencies(const vector<unique_ptr<MacroFunction>> &macro_functions) {
+	LogicalDependencyList result;
+	for (auto &function : macro_functions) {
+		for (auto &dep : function->dependencies.Set()) {
+			result.AddDependency(dep);
+		}
+	}
+	return result;
 }
 
 vector<unique_ptr<ParsedExpression>>

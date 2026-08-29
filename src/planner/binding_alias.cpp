@@ -16,7 +16,7 @@ BindingAlias::BindingAlias(Identifier schema_p, Identifier alias_p)
 }
 
 BindingAlias::BindingAlias(const StandardEntry &entry)
-    : qualified_name(entry.ParentCatalog().GetName(), entry.schema.name, entry.name) {
+    : qualified_name(entry.ParentCatalog().GetName(), entry.ParentSchema().name, entry.name) {
 }
 
 BindingAlias::BindingAlias(Identifier catalog_p, Identifier schema_p, Identifier alias_p)

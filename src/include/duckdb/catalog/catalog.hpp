@@ -9,7 +9,9 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry_map.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
+#include "duckdb/catalog/dependency.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/enums/catalog_lookup_behavior.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
@@ -28,6 +30,7 @@
 
 namespace duckdb {
 struct AttachOptions;
+class DuckTransaction;
 struct CreateSchemaInfo;
 struct DropInfo;
 struct BoundCreateTableInfo;
@@ -45,6 +48,7 @@ struct CreateTypeInfo;
 struct CreateTableInfo;
 struct DatabaseSize;
 struct MetadataBlockInfo;
+struct CatalogEntryInfo;
 
 class AttachedDatabase;
 class ClientContext;
@@ -127,6 +131,19 @@ public:
 	DUCKDB_API DatabaseInstance &GetDatabase();
 
 	virtual bool IsDuckCatalog() {
+		return false;
+	}
+
+	//! Whether this catalog arbitrates its own index names. The engine's name pre-checks are skipped for it:
+	//! CreateIndex on its schema decides, and a build must not refuse a name the catalog has already accepted.
+	virtual bool OwnsIndexNames() const {
+		return false;
+	}
+
+	//! Whether this catalog matches identifiers exactly rather than case-insensitively. A catalog that folds
+	//! unquoted names itself, as postgres does, holds `t("A" int, "a" int)` as two columns; duckdb's own
+	//! semantics collapse the two.
+	virtual bool MatchesNamesExactly() const {
 		return false;
 	}
 
@@ -274,6 +291,16 @@ public:
 	          OnEntryNotFound if_not_found);
 	//! Scans all the schemas in the system one-by-one, invoking the callback for each entry
 	DUCKDB_API virtual void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) = 0;
+	//! The table this catalog gave `catalog_id` to (DataTableInfo::GetCatalogId). The data WAL names tables by
+	//! that identifier rather than by a qualified name, so that a rename between the write and the replay cannot
+	//! move them. Null for a catalog that hands out no identifiers.
+	DUCKDB_API virtual optional_ptr<TableCatalogEntry> LookupTableById(CatalogTransaction transaction,
+	                                                                   idx_t catalog_id);
+	//! The schema this catalog gave `catalog_id` to, for the same reason: a record in the data file names the
+	//! schema its rows were written under, which a rename has since moved. Null for a catalog that hands out no
+	//! identifiers.
+	DUCKDB_API virtual optional_ptr<SchemaCatalogEntry> LookupSchemaById(CatalogTransaction transaction,
+	                                                                     idx_t catalog_id);
 
 	//! Gets the entry described by the (optionally catalog/schema-qualified) EntryLookupInfo. If the entry does not
 	//! exist behavior depends on OnEntryNotFound
@@ -340,7 +367,7 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> AddFunction(ClientContext &context, CreateFunctionInfo &info);
 
 	//! Alter an existing entry in the catalog.
-	DUCKDB_API void Alter(CatalogTransaction transaction, AlterInfo &info);
+	DUCKDB_API virtual void Alter(CatalogTransaction transaction, AlterInfo &info);
 	DUCKDB_API void Alter(ClientContext &context, AlterInfo &info);
 
 	virtual PhysicalOperator &PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
@@ -365,12 +392,33 @@ public:
 	virtual DatabaseSize GetDatabaseSize(ClientContext &context) = 0;
 	virtual vector<MetadataBlockInfo> GetMetadataInfo(ClientContext &context);
 
+	//! One committed catalog change, for a catalog that keeps its own log rather than the attached database's WAL.
+	//! Written from the same pre-commit walk over the undo records that writes that WAL, so a refused append still
+	//! reverts the commit. `entry` is the version being replaced, `entry.Parent()` the one now in the set, and
+	//! `extra_data` the alter the record carried, in the form CatalogSet::AlterEntry wrote it.
+	virtual void WriteCatalogChange(DuckTransaction &transaction, CatalogEntry &entry, data_ptr_t extra_data);
+
+	//! Replays a create or a drop of a kind this catalog keeps that duckdb has no entry class for. The counterpart
+	//! of WriteCreateEntry/WriteDropEntry: what applying one means is the owning catalog's to say -- a serenedb
+	//! database record, for one, attaches the database so the records after it have somewhere to land.
+	virtual void ReplayCatalogEntry(ClientContext &context, CreateInfo &info, const CatalogPermissions &permissions,
+	                                bool dropped);
+
+	//! The counterpart of WriteCatalogState: state this catalog keeps that is not an entry, in whatever form it
+	//! wrote it.
+	virtual void ReplayCatalogState(ClientContext &context, const_data_ptr_t data, idx_t size);
+
 	virtual bool InMemory() = 0;
 	virtual string GetDBPath() = 0;
 	virtual bool SupportsTimeTravel() const {
 		return false;
 	}
 	virtual bool SupportsMultipleDMLCTEs() const {
+		return false;
+	}
+	//! Whether this catalog can record dependency edges whose subject lives in another catalog, so that
+	//! a drop elsewhere must consult it for dependents. Stock catalogs never record such edges.
+	virtual bool SupportsForeignDependencies() const {
 		return false;
 	}
 	virtual bool IsEncrypted() const {
@@ -411,6 +459,38 @@ public:
 
 	//! Returns the dependency manager of this catalog - if the catalog has any
 	virtual optional_ptr<DependencyManager> GetDependencyManager();
+
+	//! How an entry of this catalog is addressed in the dependency graph, and how such an address is
+	//! resolved back to an entry. The default pair is schema plus name; a catalog whose entries carry a
+	//! stable identity of their own overrides both, and then a rename never has to rewrite an edge.
+	virtual CatalogEntryInfo GetDependencyInfo(const CatalogEntry &entry) const;
+	virtual optional_ptr<CatalogEntry> GetDependencyEntry(CatalogTransaction transaction, const CatalogEntryInfo &info);
+
+	//! One cascade victim, offered to the dependent's own catalog before the generic entry drop. A host
+	//! whose dependent needs more than the entry removed handles it here and answers true; false lets
+	//! the set drop the entry. `pieces` are the dependent's sub-objects that bound the dropped object,
+	//! as its edges recorded them.
+	virtual bool DropDependent(CatalogTransaction transaction, CatalogEntry &object, CatalogEntry &dependent,
+	                           bool cascade, const vector<DependencyPiece> &pieces) {
+		return false;
+	}
+	//! Applies one alter to a cascade victim, outside any statement: the trim of a dependent bound by
+	//! pieces -- a table losing one DEFAULT rather than being dropped whole. The default is the set's
+	//! own alter; a host with more behind an alter than the entry overrides.
+	virtual void AlterDependent(CatalogTransaction transaction, CatalogEntry &dependent, AlterInfo &info);
+	//! Whether the dependents this catalog records resolve their references at use rather than binding them once.
+	//! Such a dependent survives an alter it could re-resolve after (AlterInfo::DependentCanRebind), degrading
+	//! instead of blocking it, as in postgres. Dependents that bind at creation do not, which is duckdb's own.
+	virtual bool DependentsResolveByName() const {
+		return false;
+	}
+
+	//! Whether a dependent whose lifetime this catalog owns -- one a plain DROP of the object would take along --
+	//! is reshaped along with the object rather than invalidated by it (AlterDependent). Such a dependent never
+	//! blocks an alter, because what it needs of the object is enforced where the object is reshaped.
+	virtual bool ReshapesOwnedDependents() const {
+		return false;
+	}
 
 	//! Whether attaching a catalog with the given path and attach options would be considered a conflict
 	virtual bool HasConflictingAttachOptions(const string &path, const AttachOptions &options);

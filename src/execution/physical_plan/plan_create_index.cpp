@@ -97,14 +97,16 @@ static PhysicalOperator &AddSort(PhysicalPlanGenerator &plan, LogicalCreateIndex
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalCreateIndex &op) {
 	// op.table is either a table or a view; for views, index_type->create_plan must be set.
-	auto &schema = op.table.Cast<StandardEntry>().schema;
-	auto entry =
-	    schema.GetEntry(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, op.info->GetIndexName());
-	if (entry) {
-		if (op.info->on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT) {
-			throw CatalogException("Index with name \"%s\" already exists!", op.info->GetIndexName());
+	auto &schema = op.table.Cast<StandardEntry>().ParentSchema();
+	if (!schema.catalog.OwnsIndexNames()) {
+		auto entry =
+		    schema.GetEntry(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, op.info->GetIndexName());
+		if (entry) {
+			if (op.info->on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT) {
+				throw CatalogException("Index with name \"%s\" already exists!", op.info->GetIndexName());
+			}
+			return Make<PhysicalDummyScan>(op.types, op.estimated_cardinality);
 		}
-		return Make<PhysicalDummyScan>(op.types, op.estimated_cardinality);
 	}
 
 	// Ensure that all expressions contain valid scalar functions.

@@ -40,6 +40,8 @@ unique_ptr<Constraint> UniqueConstraint::Copy() const {
 		result = make_uniq<UniqueConstraint>(index, columns.empty() ? Identifier() : columns[0], is_primary_key);
 	}
 	result->constraint_name = constraint_name;
+	result->oid = oid;
+	result->host_index_id = host_index_id;
 	return std::move(result);
 }
 
@@ -89,6 +91,11 @@ vector<LogicalIndex> UniqueConstraint::GetLogicalIndexes(const ColumnList &colum
 }
 
 Identifier UniqueConstraint::GetName(const Identifier &table_name) const {
+	// The constraint's own name first, matching GetIndexInfo's choice at CREATE TABLE: the ART built for a
+	// constraint answers to one name whichever statement built it.
+	if (!constraint_name.empty()) {
+		return Identifier(constraint_name);
+	}
 	auto type = IsPrimaryKey() ? IndexConstraintType::PRIMARY : IndexConstraintType::UNIQUE;
 	auto type_name = EnumUtil::ToString(type);
 

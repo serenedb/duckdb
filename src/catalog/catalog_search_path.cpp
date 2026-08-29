@@ -10,7 +10,6 @@
 #include "duckdb/main/extension_callback_manager.hpp"
 
 #include "duckdb/common/exception/parser_exception.hpp"
-#include <algorithm>
 
 namespace duckdb {
 
@@ -28,33 +27,17 @@ string CatalogSearchEntry::ToString() const {
 
 string CatalogSearchEntry::WriteOptionallyQuoted(const Identifier &input_p) {
 	auto &input = input_p.GetIdentifierName();
-	// PG-compliant: always quote the "$user" placeholder so it is visually
-	// distinct from a schema literally named $user.
-	if (input == "$user") {
-		return "\"$user\"";
+	// Postgres writes an entry unquoted only if it is a run of digits (a numeric SET value) or a
+	// lower-case identifier [a-z_][a-z0-9_]* - uppercase, `$user`, `.`, `,`, `"`, spaces are quoted.
+	bool all_digits = !input.empty();
+	bool lower_identifier = !input.empty();
+	for (idx_t i = 0; i < input.size(); i++) {
+		const char c = input[i];
+		const bool is_digit = c >= '0' && c <= '9';
+		all_digits = all_digits && is_digit;
+		lower_identifier = lower_identifier && ((c >= 'a' && c <= 'z') || c == '_' || (is_digit && i > 0));
 	}
-	// PG-compliant: leave unquoted only if the identifier is either a run of digits
-	// or a lower-case identifier [a-z_][a-z0-9_]*. Anything else (uppercase,
-	// leading digit followed by letters, `.`, `,`, `"`, `$`, spaces, ...)
-	// needs quoting.
-	bool needs_quote = input.empty();
-	if (!needs_quote) {
-		const bool all_digits = std::all_of(input.begin(), input.end(), [](char c) { return c >= '0' && c <= '9'; });
-		if (!all_digits) {
-			char first = input.front();
-			if (!((first >= 'a' && first <= 'z') || first == '_')) {
-				needs_quote = true;
-			} else {
-				for (idx_t i = 1; i < input.size() && !needs_quote; i++) {
-					char c = input[i];
-					if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
-						needs_quote = true;
-					}
-				}
-			}
-		}
-	}
-	if (needs_quote) {
+	if (!all_digits && !lower_identifier) {
 		return "\"" + StringUtil::Replace(input, "\"", "\"\"") + "\"";
 	}
 	return input;
@@ -77,7 +60,7 @@ CatalogSearchEntry CatalogSearchEntry::ParseInternal(const string &input, idx_t 
 	string entry;
 	bool finished = false;
 normal:
-	// PG-compliant: skip leading whitespace (e.g. after a comma in a list).
+	// skip whitespace in front of an entry (e.g. after a comma in a list)
 	while (idx < input.size() && entry.empty() && StringUtil::CharacterIsSpace(input[idx])) {
 		idx++;
 	}
@@ -112,7 +95,7 @@ quoted:
 	}
 	throw ParserException("Unterminated quote in qualified name!");
 separator:
-	// Trim trailing whitespace for unquoted identifiers.
+	// trim whitespace between the entry and its separator
 	while (!entry.empty() && StringUtil::CharacterIsSpace(entry.back())) {
 		entry.pop_back();
 	}
@@ -170,7 +153,6 @@ CatalogSearchPath::CatalogSearchPath(ClientContext &context_p) : CatalogSearchPa
 }
 
 void CatalogSearchPath::Reset() {
-	// Restore to the connection-level defaults (empty if never configured).
 	SetPathsInternal(default_paths);
 }
 
@@ -230,10 +212,9 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 					continue;
 				}
 			}
-			// PG-compliant: silently accept unknown schemas in the search path. Default the catalog to
-			// the current DB; later lookups against the missing schema will just be skipped during
-			// search-path resolution. SET schema / USE name a single target, which PostgreSQL has no
-			// equivalent of, so those keep DuckDB's check that the target exists.
+			// unknown schemas are accepted silently (as in Postgres) - lookups skip the missing entry.
+			// SET schema / USE name a single target, which Postgres has no equivalent of, so those keep
+			// duckdb's existence check
 			if (set_type == CatalogSetPathType::SET_SCHEMA) {
 				throw CatalogException("%s: No catalog + schema named \"%s\" found.", GetSetName(set_type),
 				                       path.ToString());
@@ -241,9 +222,7 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 			path.SetCatalog(GetDefault().GetCatalog());
 			continue;
 		}
-		// Explicit catalog.schema. A valid catalog with an unknown schema is
-		// PG-compliant (the entry is just skipped at lookup). Only reject when
-		// the catalog itself doesn't exist.
+		// for an explicit catalog.schema only an unknown catalog is an error
 		if (set_type != CatalogSetPathType::SET_SCHEMA && Catalog::GetCatalogEntry(context, path.GetCatalog())) {
 			continue;
 		}
@@ -263,9 +242,8 @@ void CatalogSearchPath::Set(CatalogSearchEntry new_value, CatalogSetPathType set
 	Set(std::move(new_paths), set_type);
 }
 
-// Resolves the literal "$user" placeholder to the current session user.
-// Returns empty when the entry has no schema, or when it is "$user" but no
-// session user is set — caller should skip such entries.
+// Resolves the "$user" placeholder to the session user. Returns empty when the entry has no schema,
+// or when it is "$user" and no session user is set - callers skip such entries.
 static string ResolveSchema(ClientContext &context, const CatalogSearchEntry &entry) {
 	if (entry.GetSchema().empty()) {
 		return {};
@@ -276,10 +254,10 @@ static string ResolveSchema(ClientContext &context, const CatalogSearchEntry &en
 	return entry.GetSchema().GetIdentifierName();
 }
 
-vector<CatalogSearchEntry> CatalogSearchPath::Get() const {
+static vector<CatalogSearchEntry> ResolveEntries(ClientContext &context, const vector<CatalogSearchEntry> &entries) {
 	vector<CatalogSearchEntry> res;
-	res.reserve(paths.size());
-	for (auto &path : paths) {
+	res.reserve(entries.size());
+	for (auto &path : entries) {
 		auto resolved = ResolveSchema(context, path);
 		if (resolved.empty()) {
 			continue;
@@ -287,35 +265,18 @@ vector<CatalogSearchEntry> CatalogSearchPath::Get() const {
 		res.emplace_back(path.GetCatalog(), Identifier(std::move(resolved)));
 	}
 	return res;
+}
+
+vector<CatalogSearchEntry> CatalogSearchPath::Get() const {
+	return ResolveEntries(context, paths);
 }
 
 vector<CatalogSearchEntry> CatalogSearchPath::GetResolvedSetPaths() const {
-	vector<CatalogSearchEntry> res;
-	res.reserve(set_paths.size());
-	for (auto &path : set_paths) {
-		auto resolved = ResolveSchema(context, path);
-		if (resolved.empty()) {
-			continue;
-		}
-		res.emplace_back(path.GetCatalog(), Identifier(std::move(resolved)));
-	}
-	return res;
+	return ResolveEntries(context, set_paths);
 }
 
 Identifier CatalogSearchPath::GetDefaultSchema(const Identifier &catalog) const {
-	for (auto &path : paths) {
-		if (path.GetCatalog() == TEMP_CATALOG) {
-			continue;
-		}
-		if (path.GetCatalog() == catalog) {
-			auto resolved = ResolveSchema(context, path);
-			if (resolved.empty()) {
-				continue;
-			}
-			return Identifier(std::move(resolved));
-		}
-	}
-	return DEFAULT_SCHEMA;
+	return GetDefaultSchema(context, catalog);
 }
 
 Identifier CatalogSearchPath::GetDefaultSchema(ClientContext &context_p, const Identifier &catalog) const {
@@ -340,15 +301,7 @@ Identifier CatalogSearchPath::GetDefaultSchema(ClientContext &context_p, const I
 
 Identifier CatalogSearchPath::GetDefaultCatalog(const Identifier &schema) const {
 	if (DefaultSchemaGenerator::IsDefaultSchema(schema)) {
-		// Check attached catalogs first -- they may override system schemas
-		// (e.g. SereneDB serves its own pg_catalog/information_schema)
-		for (auto &path : paths) {
-			if (path.GetCatalog() == TEMP_CATALOG || path.GetCatalog() == SYSTEM_CATALOG || path.GetCatalog().empty()) {
-				continue;
-			}
-			return path.GetCatalog();
-		}
-		return Identifier::SystemCatalog();
+		return GetCatalogsForSchema(schema).front();
 	}
 	for (auto &path : paths) {
 		if (path.GetCatalog() == TEMP_CATALOG) {
@@ -368,9 +321,8 @@ Identifier CatalogSearchPath::GetDefaultCatalog(const Identifier &schema) const 
 vector<Identifier> CatalogSearchPath::GetCatalogsForSchema(const Identifier &schema) const {
 	vector<Identifier> catalogs;
 	if (DefaultSchemaGenerator::IsDefaultSchema(schema)) {
-		// Check attached catalogs first, system catalog as fallback.
-		// This lets attached catalogs (e.g. SereneDB) serve pg_catalog/information_schema
-		// while keeping DuckDB's versions accessible via explicit system.pg_catalog.*
+		// an attached catalog can serve a default schema itself - it takes precedence over the system
+		// catalog, whose version stays reachable as system.<schema>
 		for (auto &path : paths) {
 			if (path.GetCatalog() == TEMP_CATALOG || path.GetCatalog() == SYSTEM_CATALOG || path.GetCatalog().empty()) {
 				continue;
@@ -419,25 +371,19 @@ const CatalogSearchEntry &CatalogSearchPath::GetDefault() const {
 }
 
 CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
-	D_ASSERT(paths.size() >= set_paths.size() + 2);
-	// No user-set entries -> no default schema (PG: current_schema is NULL,
-	// CREATE without schema prefix errors with "no schema has been selected").
+	// no user-set entries -> no default schema (in PG current_schema is NULL and a CREATE without a
+	// schema prefix errors out with "no schema has been selected")
 	if (set_paths.empty()) {
 		return CatalogSearchEntry(Identifier(), Identifier());
 	}
-	// Walk the user-set range and return the first entry whose schema resolves
-	// AND actually exists in the target catalog. PG falls through to the next
-	// search_path entry when "$user" doesn't match a real schema.
-	auto user_end = 1 + set_paths.size();
-	for (idx_t i = 1; i < user_end; i++) {
-		auto resolved = ResolveSchema(context, paths[i]);
+	// PG falls through to the next search_path entry when "$user" does not name an existing schema
+	for (auto &path : set_paths) {
+		auto resolved = ResolveSchema(context, path);
 		if (resolved.empty()) {
 			continue;
 		}
-		auto schema =
-		    Catalog::GetSchema(context, paths[i].GetCatalog(), Identifier(resolved), OnEntryNotFound::RETURN_NULL);
-		if (schema) {
-			return CatalogSearchEntry(paths[i].GetCatalog(), Identifier(std::move(resolved)));
+		if (Catalog::GetSchema(context, path.GetCatalog(), Identifier(resolved), OnEntryNotFound::RETURN_NULL)) {
+			return CatalogSearchEntry(path.GetCatalog(), Identifier(std::move(resolved)));
 		}
 	}
 	return GetDefault();
@@ -447,7 +393,7 @@ void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 	this->set_paths = std::move(new_paths);
 
 	paths.clear();
-	paths.reserve(set_paths.size() + 4);
+	paths.reserve(set_paths.size() + 5);
 	paths.emplace_back(TEMP_CATALOG, DEFAULT_SCHEMA);
 	for (auto &path : set_paths) {
 		paths.push_back(path);
@@ -475,11 +421,9 @@ bool CatalogSearchPath::SchemaInSearchPath(ClientContext &context, const Identif
 		if (!catalog_matches) {
 			continue;
 		}
-		// PG-compliant: silently-accepted invalid entries (set via SET
-		// search_path = 'nonexistent') are effectively ignored — confirm the
-		// schema actually exists before reporting it as in the path.
-		auto schema_entry = Catalog::GetSchema(context, catalog_name, schema_name, OnEntryNotFound::RETURN_NULL);
-		if (schema_entry) {
+		// entries accepted for a schema that does not exist are ignored at lookup - they must not
+		// report as being in the path either
+		if (Catalog::GetSchema(context, catalog_name, schema_name, OnEntryNotFound::RETURN_NULL)) {
 			return true;
 		}
 	}

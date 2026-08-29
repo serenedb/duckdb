@@ -46,6 +46,13 @@ public:
 	//! Get the name of the constraint.
 	Identifier GetName(const Identifier &table_name) const;
 
+public:
+	//! Identity of the index that enforces this constraint, assigned by the hosting
+	//! catalog. Distinct from Constraint::oid, which identifies the constraint
+	//! itself; the two are separate objects with separate identities. Zero means
+	//! "none"; duckdb's own catalog never sets it.
+	idx_t host_index_id = 0;
+
 private:
 	UniqueConstraint();
 

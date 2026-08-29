@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/common/operator/add.hpp"
@@ -31,10 +32,25 @@ unique_ptr<CatalogEntry> SequenceCatalogEntry::Copy(ClientContext &context) cons
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateSequenceInfo>();
 
-	auto result = make_uniq<SequenceCatalogEntry>(catalog, schema, cast_info);
+	auto result = make_uniq<SequenceCatalogEntry>(catalog, Schema(), cast_info);
 	result->data = GetData();
 
 	return std::move(result);
+}
+
+unique_ptr<CatalogEntry> SequenceCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
+	// The grammar shares one RENAME alter across the relation kinds, so a sequence rename arrives as an
+	// ALTER TABLE -- the same conversion views make.
+	if (info.type == AlterType::ALTER_TABLE) {
+		auto &table_info = info.Cast<AlterTableInfo>();
+		if (table_info.alter_table_type == AlterTableType::RENAME_TABLE) {
+			auto &rename_info = table_info.Cast<RenameTableInfo>();
+			auto copied = Copy(context);
+			copied->name = rename_info.new_table_name;
+			return copied;
+		}
+	}
+	throw CatalogException("Can only rename a sequence with ALTER statement");
 }
 
 SequenceData SequenceCatalogEntry::GetData() const {
@@ -93,7 +109,7 @@ unique_ptr<CreateInfo> SequenceCatalogEntry::GetInfo() const {
 	auto seq_data = GetData();
 
 	auto result = make_uniq<CreateSequenceInfo>();
-	result->SetQualifiedName(QualifiedName(catalog.GetName(), schema.name, name));
+	result->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchema().name, name));
 	result->usage_count = seq_data.usage_count;
 	result->increment = seq_data.increment;
 	result->min_value = seq_data.min_value;
@@ -104,6 +120,8 @@ unique_ptr<CreateInfo> SequenceCatalogEntry::GetInfo() const {
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->oid = oid;
+	result->parent_oid = ParentSchema().oid;
 	return std::move(result);
 }
 

@@ -26,9 +26,11 @@ CatalogType ChangeOwnershipInfo::GetCatalogType() const {
 }
 
 unique_ptr<AlterInfo> ChangeOwnershipInfo::Copy() const {
-	return make_uniq_base<AlterInfo, ChangeOwnershipInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
-	                                                      GetQualifiedName().Schema(), GetQualifiedName().Name(),
-	                                                      owner_schema, owner_name, if_not_found);
+	auto result = make_uniq_base<AlterInfo, ChangeOwnershipInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
+	                                                             GetQualifiedName().Schema(), GetQualifiedName().Name(),
+	                                                             owner_schema, owner_name, if_not_found);
+	result->oid = oid;
+	return result;
 }
 
 string ChangeOwnershipInfo::ToString() const {
@@ -64,9 +66,11 @@ CatalogType SetCommentInfo::GetCatalogType() const {
 }
 
 unique_ptr<AlterInfo> SetCommentInfo::Copy() const {
-	return make_uniq_base<AlterInfo, SetCommentInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
-	                                                 GetQualifiedName().Schema(), GetQualifiedName().Name(),
-	                                                 comment_value, if_not_found);
+	auto result = make_uniq_base<AlterInfo, SetCommentInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
+	                                                        GetQualifiedName().Schema(), GetQualifiedName().Name(),
+	                                                        comment_value, if_not_found);
+	result->oid = oid;
+	return result;
 }
 
 string SetCommentInfo::ToString() const {
@@ -116,7 +120,9 @@ RenameColumnInfo::~RenameColumnInfo() {
 }
 
 unique_ptr<AlterInfo> RenameColumnInfo::Copy() const {
-	return make_uniq_base<AlterInfo, RenameColumnInfo>(GetAlterEntryData(), old_name, new_name);
+	auto result = make_uniq_base<AlterInfo, RenameColumnInfo>(GetAlterEntryData(), old_name, new_name);
+	result->oid = oid;
+	return result;
 }
 
 string RenameColumnInfo::ToString() const {
@@ -149,7 +155,9 @@ RenameFieldInfo::~RenameFieldInfo() {
 }
 
 unique_ptr<AlterInfo> RenameFieldInfo::Copy() const {
-	return make_uniq_base<AlterInfo, RenameFieldInfo>(GetAlterEntryData(), column_path, new_name);
+	auto result = make_uniq_base<AlterInfo, RenameFieldInfo>(GetAlterEntryData(), column_path, new_name);
+	result->oid = oid;
+	return result;
 }
 
 string RenameFieldInfo::ToString() const {
@@ -186,7 +194,9 @@ RenameTableInfo::~RenameTableInfo() {
 }
 
 unique_ptr<AlterInfo> RenameTableInfo::Copy() const {
-	return make_uniq_base<AlterInfo, RenameTableInfo>(GetAlterEntryData(), new_table_name);
+	auto result = make_uniq_base<AlterInfo, RenameTableInfo>(GetAlterEntryData(), new_table_name);
+	result->oid = oid;
+	return result;
 }
 
 string RenameTableInfo::ToString() const {
@@ -218,7 +228,10 @@ AddColumnInfo::~AddColumnInfo() {
 }
 
 unique_ptr<AlterInfo> AddColumnInfo::Copy() const {
-	return make_uniq_base<AlterInfo, AddColumnInfo>(GetAlterEntryData(), new_column.Copy(), if_column_not_exists);
+	auto result =
+	    make_uniq_base<AlterInfo, AddColumnInfo>(GetAlterEntryData(), new_column.Copy(), if_column_not_exists);
+	result->oid = oid;
+	return result;
 }
 
 string AddColumnInfo::ToString() const {
@@ -259,8 +272,10 @@ AddFieldInfo::~AddFieldInfo() {
 }
 
 unique_ptr<AlterInfo> AddFieldInfo::Copy() const {
-	return make_uniq_base<AlterInfo, AddFieldInfo>(GetAlterEntryData(), column_path, new_field.Copy(),
-	                                               if_field_not_exists);
+	auto result = make_uniq_base<AlterInfo, AddFieldInfo>(GetAlterEntryData(), column_path, new_field.Copy(),
+	                                                      if_field_not_exists);
+	result->oid = oid;
+	return result;
 }
 
 string AddFieldInfo::ToString() const {
@@ -297,8 +312,10 @@ RemoveColumnInfo::~RemoveColumnInfo() {
 }
 
 unique_ptr<AlterInfo> RemoveColumnInfo::Copy() const {
-	return make_uniq_base<AlterInfo, RemoveColumnInfo>(GetAlterEntryData(), removed_column.GetIdentifierName(),
-	                                                   if_column_exists, cascade);
+	auto result = make_uniq_base<AlterInfo, RemoveColumnInfo>(GetAlterEntryData(), removed_column.GetIdentifierName(),
+	                                                          if_column_exists, cascade);
+	result->oid = oid;
+	return result;
 }
 
 string RemoveColumnInfo::ToString() const {
@@ -335,7 +352,10 @@ RemoveFieldInfo::~RemoveFieldInfo() {
 }
 
 unique_ptr<AlterInfo> RemoveFieldInfo::Copy() const {
-	return make_uniq_base<AlterInfo, RemoveFieldInfo>(GetAlterEntryData(), column_path, if_column_exists, cascade);
+	auto result =
+	    make_uniq_base<AlterInfo, RemoveFieldInfo>(GetAlterEntryData(), column_path, if_column_exists, cascade);
+	result->oid = oid;
+	return result;
 }
 
 string RemoveFieldInfo::ToString() const {
@@ -377,8 +397,10 @@ ChangeColumnTypeInfo::~ChangeColumnTypeInfo() {
 }
 
 unique_ptr<AlterInfo> ChangeColumnTypeInfo::Copy() const {
-	return make_uniq_base<AlterInfo, ChangeColumnTypeInfo>(GetAlterEntryData(), column_name, target_type,
-	                                                       expression->Copy());
+	auto result = make_uniq_base<AlterInfo, ChangeColumnTypeInfo>(GetAlterEntryData(), column_name, target_type,
+	                                                              expression->Copy());
+	result->oid = oid;
+	return result;
 }
 
 string ChangeColumnTypeInfo::ToString() const {
@@ -424,8 +446,10 @@ SetDefaultInfo::~SetDefaultInfo() {
 }
 
 unique_ptr<AlterInfo> SetDefaultInfo::Copy() const {
-	return make_uniq_base<AlterInfo, SetDefaultInfo>(GetAlterEntryData(), column_name,
-	                                                 expression ? expression->Copy() : nullptr);
+	auto result = make_uniq_base<AlterInfo, SetDefaultInfo>(GetAlterEntryData(), column_name,
+	                                                        expression ? expression->Copy() : nullptr);
+	result->oid = oid;
+	return result;
 }
 
 string SetDefaultInfo::ToString() const {
@@ -460,7 +484,9 @@ SetNotNullInfo::~SetNotNullInfo() {
 }
 
 unique_ptr<AlterInfo> SetNotNullInfo::Copy() const {
-	return make_uniq_base<AlterInfo, SetNotNullInfo>(GetAlterEntryData(), column_name);
+	auto result = make_uniq_base<AlterInfo, SetNotNullInfo>(GetAlterEntryData(), column_name);
+	result->oid = oid;
+	return result;
 }
 
 string SetNotNullInfo::ToString() const {
@@ -490,7 +516,9 @@ DropNotNullInfo::~DropNotNullInfo() {
 }
 
 unique_ptr<AlterInfo> DropNotNullInfo::Copy() const {
-	return make_uniq_base<AlterInfo, DropNotNullInfo>(GetAlterEntryData(), column_name);
+	auto result = make_uniq_base<AlterInfo, DropNotNullInfo>(GetAlterEntryData(), column_name);
+	result->oid = oid;
+	return result;
 }
 
 string DropNotNullInfo::ToString() const {
@@ -524,8 +552,10 @@ AlterForeignKeyInfo::~AlterForeignKeyInfo() {
 }
 
 unique_ptr<AlterInfo> AlterForeignKeyInfo::Copy() const {
-	return make_uniq_base<AlterInfo, AlterForeignKeyInfo>(GetAlterEntryData(), fk_table, pk_columns, fk_columns,
-	                                                      pk_keys, fk_keys, type);
+	auto result = make_uniq_base<AlterInfo, AlterForeignKeyInfo>(GetAlterEntryData(), fk_table, pk_columns, fk_columns,
+	                                                             pk_keys, fk_keys, type);
+	result->oid = oid;
+	return result;
 }
 
 string AlterForeignKeyInfo::ToString() const {
@@ -560,7 +590,9 @@ RenameViewInfo::~RenameViewInfo() {
 }
 
 unique_ptr<AlterInfo> RenameViewInfo::Copy() const {
-	return make_uniq_base<AlterInfo, RenameViewInfo>(GetAlterEntryData(), new_view_name);
+	auto result = make_uniq_base<AlterInfo, RenameViewInfo>(GetAlterEntryData(), new_view_name);
+	result->oid = oid;
+	return result;
 }
 
 string RenameViewInfo::ToString() const {
@@ -590,7 +622,13 @@ AddConstraintInfo::~AddConstraintInfo() {
 }
 
 unique_ptr<AlterInfo> AddConstraintInfo::Copy() const {
-	return make_uniq_base<AlterInfo, AddConstraintInfo>(GetAlterEntryData(), constraint->Copy());
+	auto result = make_uniq_base<AlterInfo, AddConstraintInfo>(GetAlterEntryData(), constraint->Copy());
+	result->oid = oid;
+	auto &add_info = result->Cast<AddConstraintInfo>();
+	for (auto &implied : implied_not_nulls) {
+		add_info.implied_not_nulls.push_back(implied->Copy());
+	}
+	return result;
 }
 
 string AddConstraintInfo::ToString() const {
@@ -618,8 +656,10 @@ DropConstraintInfo::~DropConstraintInfo() {
 }
 
 unique_ptr<AlterInfo> DropConstraintInfo::Copy() const {
-	return make_uniq_base<AlterInfo, DropConstraintInfo>(GetAlterEntryData(), constraint_name, if_constraint_not_found,
-	                                                     cascade);
+	auto result = make_uniq_base<AlterInfo, DropConstraintInfo>(GetAlterEntryData(), constraint_name,
+	                                                            if_constraint_not_found, cascade);
+	result->oid = oid;
+	return result;
 }
 
 string DropConstraintInfo::ToString() const {
@@ -652,7 +692,9 @@ RenameConstraintInfo::~RenameConstraintInfo() {
 }
 
 unique_ptr<AlterInfo> RenameConstraintInfo::Copy() const {
-	return make_uniq_base<AlterInfo, RenameConstraintInfo>(GetAlterEntryData(), old_name, new_name);
+	auto result = make_uniq_base<AlterInfo, RenameConstraintInfo>(GetAlterEntryData(), old_name, new_name);
+	result->oid = oid;
+	return result;
 }
 
 string RenameConstraintInfo::ToString() const {
@@ -685,7 +727,10 @@ unique_ptr<AlterInfo> SetPartitionedByInfo::Copy() const {
 	for (auto &partition_key : partition_keys) {
 		copied_partition_keys.push_back(partition_key->Copy());
 	}
-	return make_uniq_base<AlterInfo, SetPartitionedByInfo>(GetAlterEntryData(), std::move(copied_partition_keys));
+	auto result =
+	    make_uniq_base<AlterInfo, SetPartitionedByInfo>(GetAlterEntryData(), std::move(copied_partition_keys));
+	result->oid = oid;
+	return result;
 }
 
 string SetPartitionedByInfo::ToString() const {
@@ -724,7 +769,9 @@ unique_ptr<AlterInfo> SetSortedByInfo::Copy() const {
 	for (auto &order_key : orders) {
 		copied_orders.emplace_back(order_key.type, order_key.null_order, order_key.expression->Copy());
 	}
-	return make_uniq_base<AlterInfo, SetSortedByInfo>(GetAlterEntryData(), std::move(copied_orders));
+	auto result = make_uniq_base<AlterInfo, SetSortedByInfo>(GetAlterEntryData(), std::move(copied_orders));
+	result->oid = oid;
+	return result;
 }
 
 string SetSortedByInfo::ToString() const {
@@ -764,7 +811,9 @@ unique_ptr<AlterInfo> SetTableOptionsInfo::Copy() const {
 	for (auto &option : table_options) {
 		table_options_copy.emplace(option.first, option.second->Copy());
 	}
-	return make_uniq<SetTableOptionsInfo>(GetAlterEntryData(), std::move(table_options_copy));
+	auto result = make_uniq<SetTableOptionsInfo>(GetAlterEntryData(), std::move(table_options_copy));
+	result->oid = oid;
+	return result;
 }
 
 string SetTableOptionsInfo::ToString() const {
@@ -801,7 +850,9 @@ unique_ptr<AlterInfo> ResetTableOptionsInfo::Copy() const {
 	for (auto &option : table_options) {
 		table_options_copy.emplace(option);
 	}
-	return make_uniq<ResetTableOptionsInfo>(GetAlterEntryData(), table_options_copy);
+	auto result = make_uniq<ResetTableOptionsInfo>(GetAlterEntryData(), table_options_copy);
+	result->oid = oid;
+	return result;
 }
 
 string ResetTableOptionsInfo::ToString() const {

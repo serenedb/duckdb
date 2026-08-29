@@ -117,7 +117,7 @@ public:
 	                     const vector<LogicalType> &types, StandardEntry &entry);
 	//! Adds a base table with the given alias to the BindContext.
 	void AddGenericBinding(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-	                       const vector<LogicalType> &types);
+	                       const vector<LogicalType> &types, bool case_sensitive = false);
 
 	//! Adds a base table with the given alias to the CTE BindContext.
 	//! We need this to correctly bind recursive CTEs with multiple references.
@@ -149,8 +149,10 @@ public:
 
 	//! Alias a set of column names for the specified table, using the original names if there are not enough aliases
 	//! specified.
+	//! `case_sensitive` decides when two names collide and the later one has to be suffixed: a relation whose
+	//! catalog matches names exactly holds both "A" and "a", and neither may be renamed away.
 	static vector<Identifier> AliasColumnNames(const Identifier &table_name, const vector<Identifier> &names,
-	                                           const vector<Identifier> &column_aliases);
+	                                           const vector<Identifier> &column_aliases, bool case_sensitive = false);
 
 	//! Add all the bindings from a BindContext to this BindContext. The other BindContext is destroyed in the process.
 	void AddContext(BindContext other);

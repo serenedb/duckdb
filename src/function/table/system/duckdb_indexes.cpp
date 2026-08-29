@@ -138,13 +138,14 @@ void DuckDBIndexesFunction(ClientContext &context, TableFunctionInput &data_p, D
 
 		database_name.Append(Value(index.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(index.catalog.GetOid())));
-		schema_name.Append(Value(index.schema.name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(index.schema.oid)));
+		schema_name.Append(Value(index.ParentSchema().name));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(index.ParentSchema().oid)));
 		index_name.Append(Value(index.name));
 		index_oid.Append(Value::BIGINT(NumericCast<int64_t>(index.oid)));
 		table_name.Append(Value(index.GetTableName()));
-		auto table_entry = index.schema.catalog.GetEntry(context, CatalogType::TABLE_ENTRY, index.GetSchemaName(),
-		                                                 index.GetTableName(), OnEntryNotFound::RETURN_NULL);
+		auto table_entry =
+		    index.ParentSchema().catalog.GetEntry(context, CatalogType::TABLE_ENTRY, index.GetSchemaName(),
+		                                          index.GetTableName(), OnEntryNotFound::RETURN_NULL);
 		if (table_entry && table_entry->type == CatalogType::TABLE_ENTRY) {
 			table_oid.Append(Value::BIGINT(NumericCast<int64_t>(table_entry->oid)));
 		} else {

@@ -28,7 +28,8 @@ void InMemoryCheckpointer::CreateCheckpoint() {
 	for (const auto &schema_ref : schemas) {
 		auto &schema = schema_ref.get();
 		schema.Scan(CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
-			if (entry.type == CatalogType::TABLE_ENTRY) {
+			// A table whose rows are an index of its own -- a search table -- has nothing to checkpoint here.
+			if (entry.type == CatalogType::TABLE_ENTRY && entry.Cast<TableCatalogEntry>().TryGetStorage()) {
 				tables.push_back(entry.Cast<TableCatalogEntry>());
 			}
 		});

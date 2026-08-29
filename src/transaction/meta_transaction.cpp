@@ -5,6 +5,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/transaction/transaction_manager.hpp"
 
 namespace duckdb {
@@ -149,9 +150,22 @@ ErrorData MetaTransaction::Commit() {
 #ifdef DEBUG
 	reference_set_t<AttachedDatabase> committed_tx;
 #endif
-	// commit transactions in reverse order
-	for (idx_t i = all_transactions.size(); i > 0; i--) {
-		auto &db = all_transactions[i - 1].get();
+	// Commit in reverse order, except that an attachment with no storage of its own goes first: it has no rows and
+	// only appends to the catalog log another attachment shares, so committing it first is what makes those records
+	// durable ahead of the database whose commit they belong with.
+	vector<reference<AttachedDatabase>> order;
+	order.reserve(all_transactions.size());
+	for (idx_t pass = 0; pass < 2; pass++) {
+		for (idx_t i = all_transactions.size(); i > 0; i--) {
+			auto &db = all_transactions[i - 1].get();
+			const bool storage_less = !db.HasStorageManager() || db.GetStorageManager().InMemory();
+			if (storage_less == (pass == 0)) {
+				order.emplace_back(db);
+			}
+		}
+	}
+	for (auto &next : order) {
+		auto &db = next.get();
 		auto entry = transactions.find(db);
 		if (entry == transactions.end()) {
 			throw InternalException("Could not find transaction corresponding to database in MetaTransaction");
@@ -305,9 +319,15 @@ void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationT
 		// we can always modify the system and temp databases
 		return;
 	}
-	if (db.GetTransactionManager().ForwardWrites()) {
-		// forwards its writes to another database, so it never occupies the single-writable-db slot
-		return;
+	// An attachment with no storage of its own is not a second writer: it has no log to commit to, and what it
+	// changes is recorded in a log another attachment shares. The rule protects the absence of a commit across two
+	// logs, not the number of databases.
+	if (!db.HasStorageManager() || db.GetStorageManager().InMemory()) {
+		auto log = db.GetTransactionManager().CatalogLog();
+		auto shared = !modified_database || modified_database->GetTransactionManager().CatalogLog().get() == log.get();
+		if (log && shared) {
+			return;
+		}
 	}
 	if (!modified_database) {
 		modified_database = &db;

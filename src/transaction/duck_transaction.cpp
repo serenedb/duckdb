@@ -265,7 +265,7 @@ ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &
 ErrorData DuckTransaction::Commit(AttachedDatabase &db, CommitInfo &commit_info,
                                   unique_ptr<StorageCommitState> commit_state) noexcept {
 	this->commit_id = commit_info.commit_id;
-	if (!ChangesMade()) {
+	if (!ChangesMade() && !commit_state) {
 		// no need to flush anything if we made no changes
 		return ErrorData();
 	}
@@ -286,6 +286,10 @@ ErrorData DuckTransaction::Commit(AttachedDatabase &db, CommitInfo &commit_info,
 		if (!db.IsSystem() && !db.IsTemporary() && Settings::Get<DebugForceCommitFailureSetting>(db.GetDatabase())) {
 			throw InvalidInputException("Forced commit failure (debug_force_commit_failure)");
 		}
+		// The catalog changes this commit wrote to a log that is not this attachment's own are made durable here:
+		// before the rows they describe, because that is the direction a boot can repair, and while nothing of that
+		// log is held any more -- what follows waits on other committers, which must never wait on this one.
+		db.GetTransactionManager().FlushCatalogLog();
 		if (commit_state) {
 			// if we have written to the WAL - flush after the commit has been successful
 			// this appends the WAL_FLUSH marker and pushes the bytes into the page cache, but defers the fsync; the

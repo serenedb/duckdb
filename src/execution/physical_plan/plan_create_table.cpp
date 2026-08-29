@@ -15,20 +15,24 @@
 
 namespace duckdb {
 
-PhysicalOperator &DuckCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
-                                                 LogicalCreateTable &op, PhysicalOperator &plan) {
+PhysicalOperator &DuckCatalog::PlanCreateTableAsInsert(ClientContext &context, PhysicalPlanGenerator &planner,
+                                                       LogicalCreateTable &op, SchemaCatalogEntry &schema,
+                                                       unique_ptr<BoundCreateTableInfo> info, PhysicalOperator &plan,
+                                                       idx_t estimated_cardinality) {
 	bool parallel_streaming_insert = !PhysicalPlanGenerator::PreserveInsertionOrder(context, plan);
 	bool use_batch_index = PhysicalPlanGenerator::UseBatchIndex(context, plan);
 	auto num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
 	if (!parallel_streaming_insert && use_batch_index) {
-		auto &insert = planner.Make<PhysicalBatchInsert>(op, op.schema, std::move(op.info), 0U);
-		D_ASSERT(op.children.size() == 1);
-		insert.children.push_back(plan);
-		return insert;
+		return planner.Make<PhysicalBatchInsert>(op, schema, std::move(info), estimated_cardinality);
 	}
 
 	auto parallel = parallel_streaming_insert && num_threads > 1;
-	auto &insert = planner.Make<PhysicalInsert>(op, op.schema, std::move(op.info), 0U, parallel);
+	return planner.Make<PhysicalInsert>(op, schema, std::move(info), estimated_cardinality, parallel);
+}
+
+PhysicalOperator &DuckCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
+                                                 LogicalCreateTable &op, PhysicalOperator &plan) {
+	auto &insert = PlanCreateTableAsInsert(context, planner, op, op.schema, std::move(op.info), plan, 0U);
 	D_ASSERT(op.children.size() == 1);
 	insert.children.push_back(plan);
 	return insert;

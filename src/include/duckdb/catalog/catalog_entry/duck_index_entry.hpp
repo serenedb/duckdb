@@ -47,6 +47,7 @@ public:
 	Identifier GetTableName() const override;
 
 	DataTableInfo &GetDataTableInfo() const;
+	optional_ptr<DataTableInfo> TryGetDataTableInfo() const;
 
 	//! Saves index removal into drop_state to be removed after FlushCommit().
 	void CommitDrop(CommitDropState &drop_state);

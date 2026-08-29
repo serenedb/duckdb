@@ -917,9 +917,7 @@ InsertionOrderPreservingMap<string> TableScanToString(TableFunctionToStringInput
 	if (!bind_data.display_name.empty()) {
 		result["Table"] = bind_data.display_name;
 	} else {
-		result["Table"] =
-		    QualifiedName(bind_data.table.schema.catalog.GetName(), bind_data.table.schema.name, bind_data.table.name)
-		        .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+		result["Table"] = bind_data.table.ScanName();
 	}
 	result["Type"] = bind_data.is_index_scan ? "Index Scan" : "Sequential Scan";
 	return result;
@@ -928,8 +926,8 @@ InsertionOrderPreservingMap<string> TableScanToString(TableFunctionToStringInput
 static void TableScanSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
                                const TableFunction &function) {
 	auto &bind_data = bind_data_p->Cast<TableScanBindData>();
-	serializer.WriteProperty(100, "catalog", bind_data.table.schema.catalog.GetName());
-	serializer.WriteProperty(101, "schema", bind_data.table.schema.name);
+	serializer.WriteProperty(100, "catalog", bind_data.table.ParentSchema().catalog.GetName());
+	serializer.WriteProperty(101, "schema", bind_data.table.ParentSchema().name);
 	serializer.WriteProperty(102, "table", bind_data.table.name);
 	serializer.WriteProperty(103, "is_index_scan", bind_data.is_index_scan);
 	serializer.WriteProperty(104, "is_create_index", bind_data.is_create_index);

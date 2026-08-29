@@ -48,7 +48,9 @@ BoundStatement Binder::BindAlterAddIndex(BoundStatement &result, CatalogEntry &e
 	auto create_index_info = make_uniq<CreateIndexInfo>();
 	create_index_info->table = table_info.GetQualifiedName().Name();
 	create_index_info->index_type = ART::TYPE_NAME;
-	create_index_info->constraint_type = IndexConstraintType::PRIMARY;
+	create_index_info->constraint_type = constraint_info.constraint->Cast<UniqueConstraint>().IsPrimaryKey()
+	                                         ? IndexConstraintType::PRIMARY
+	                                         : IndexConstraintType::UNIQUE;
 
 	for (const auto &physical_index : bound_unique.keys) {
 		auto &col = column_list.GetColumn(physical_index);
@@ -117,6 +119,20 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		return result;
 	}
 
+	// ALTER SCHEMA renames the schema itself, which the entry lookup below cannot name: a schema is qualified by the
+	// slot the lookup takes the entry name from.
+	if (stmt.info->type == AlterType::ALTER_SCHEMA) {
+		auto catalog_name = BindCatalog(stmt.info->GetQualifiedName().Catalog());
+		auto schema_name = stmt.info->GetQualifiedName().Schema();
+		stmt.info->SetQualifiedName(QualifiedName(catalog_name, schema_name, Identifier()));
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog_name), context,
+		                            DatabaseModificationType::ALTER_TABLE);
+		result.plan = make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_ALTER, std::move(stmt.info));
+		return result;
+	}
+
 	BindSchemaOrCatalog(stmt.info->GetQualifiedNameMutable());
 
 	// ALTER FUNCTION ... RENAME TO ... skips entry lookup (scalar-vs-table
@@ -126,6 +142,8 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	        AlterScalarFunctionType::RENAME_SCALAR_FUNCTION) {
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
+		properties.RegisterDBModify(Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog()), context,
+		                            DatabaseModificationType::ALTER_TABLE);
 		result.plan = make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_ALTER, std::move(stmt.info));
 		return result;
 	}
@@ -143,11 +161,16 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	} else {
 		// For any other ALTER, we retrieve the catalog entry directly.
 		EntryLookupInfo lookup_info(stmt.info->GetCatalogType(), QualifiedName(stmt.info->GetQualifiedName().Name()));
+		// A rename says nothing about the kind it renames: the grammar shares one RenameAlter across tables, views,
+		// indexes and sequences, so the info arrives typed as a relation whatever the statement said. A miss here is
+		// therefore not an error -- the catalog resolves the name across the kinds it keeps, and reports it.
+		auto rename_any_kind = stmt.info->type == AlterType::ALTER_TABLE &&
+		                       stmt.info->Cast<AlterTableInfo>().alter_table_type == AlterTableType::RENAME_TABLE;
 		entry =
 		    entry_retriever.GetEntry(EntryLookupInfo(lookup_info, QualifiedName(stmt.info->GetQualifiedName().Catalog(),
 		                                                                        stmt.info->GetQualifiedName().Schema(),
 		                                                                        lookup_info.GetEntryIdentifier())),
-		                             stmt.info->if_not_found);
+		                             rename_any_kind ? OnEntryNotFound::RETURN_NULL : stmt.info->if_not_found);
 	}
 
 	auto &properties = GetStatementProperties();
@@ -156,6 +179,10 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		// Bind types in this binder
 		BindAlterTypes(*this, stmt);
 
+		// The name may still resolve to a kind the lookup above cannot see (a sequence under the shared
+		// RENAME alter), and that alter writes the catalog.
+		properties.RegisterDBModify(Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog()), context,
+		                            DatabaseModificationType::ALTER_TABLE);
 		result.plan = make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_ALTER, std::move(stmt.info));
 		return result;
 	}
@@ -179,7 +206,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	stmt.info->SetQualifiedName(
 	    QualifiedName(catalog.GetName(), entry->ParentSchema().name, stmt.info->GetQualifiedName().Name()));
 
-	if (!stmt.info->IsAddPrimaryKey()) {
+	if (!stmt.info->IsAddIndexedConstraint()) {
 		result.plan = make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_ALTER, std::move(stmt.info));
 		return result;
 	}

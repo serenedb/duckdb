@@ -9,7 +9,9 @@
 namespace duckdb {
 struct CreateTableDefinition {
 	unique_ptr<SelectStatement> select_statement;
-	ColumnList columns;
+	//! Case-sensitive, as ColumnElements is: unquoted names are folded by the matcher, so two that still differ
+	//! were quoted and are two columns.
+	ColumnList columns {false, true};
 	vector<unique_ptr<Constraint>> constraints;
 	vector<unique_ptr<ParsedExpression>> partition_keys;
 	vector<unique_ptr<ParsedExpression>> sort_keys;

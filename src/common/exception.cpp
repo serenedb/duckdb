@@ -305,6 +305,10 @@ ConstraintException::ConstraintException(std::string_view msg) : Exception(Excep
 DependencyException::DependencyException(std::string_view msg) : Exception(ExceptionType::DEPENDENCY, msg) {
 }
 
+DependencyException::DependencyException(const unordered_map<string, string> &extra_info, std::string_view msg)
+    : Exception(extra_info, ExceptionType::DEPENDENCY, msg) {
+}
+
 IOException::IOException(std::string_view msg) : Exception(ExceptionType::IO, msg) {
 }
 

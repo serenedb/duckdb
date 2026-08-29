@@ -53,6 +53,9 @@ public:
 
 	//! The name of the index
 	virtual const Identifier &GetIndexName() const = 0;
+	//! Renames the index in place. A host catalog whose index names are mutable owns the name; the physical
+	//! index only mirrors it, so a rename must not go through a drop and a rebuild.
+	virtual void SetIndexName(Identifier name) = 0;
 
 	//! The index constraint type
 	virtual IndexConstraintType GetConstraintType() const = 0;

@@ -60,6 +60,11 @@ public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
 
+	//! A comment is not part of the shape a dependent bound against.
+	bool BreaksDependent(CatalogType dependent_type) const override {
+		return false;
+	}
+
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 
@@ -125,6 +130,16 @@ public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
 
+	//! Secondary indexes reference their table by catalog entry and their key columns by storage position, so a
+	//! rename underneath them does not affect index lookups. A sequence a table owns -- the counter behind a
+	//! generated key -- is bound to the table rather than to any name in it, so a rename cannot reach it either.
+	bool BreaksDependent(CatalogType dependent_type) const override {
+		return dependent_type != CatalogType::INDEX_ENTRY && dependent_type != CatalogType::SEQUENCE_ENTRY;
+	}
+	bool DependentCanRebind() const override {
+		return true;
+	}
+
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
 
@@ -172,6 +187,14 @@ public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
 
+	//! As for a column rename: an index binds its table by entry and a sequence a table owns binds the table.
+	bool BreaksDependent(CatalogType dependent_type) const override {
+		return dependent_type != CatalogType::INDEX_ENTRY && dependent_type != CatalogType::SEQUENCE_ENTRY;
+	}
+	bool DependentCanRebind() const override {
+		return true;
+	}
+
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
 
@@ -194,6 +217,11 @@ struct AddColumnInfo : public AlterTableInfo {
 public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+
+	//! A dependent bound against the columns that were already there is unaffected by one more.
+	bool BreaksDependent(CatalogType dependent_type) const override {
+		return false;
+	}
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
@@ -252,6 +280,15 @@ public:
 	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
 	Identifier GetColumnName() const override {
 		return removed_column;
+	}
+
+	//! Index dependents are checked precisely by the storage layer: the DataTable constructor refuses the drop
+	//! when any index references the removed column (or one after it).
+	bool BreaksDependent(CatalogType dependent_type) const override {
+		return dependent_type != CatalogType::INDEX_ENTRY;
+	}
+	bool DependentCanRebind() const override {
+		return true;
 	}
 
 private:
@@ -331,6 +368,11 @@ public:
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
 
+	//! A default is consulted per insert rather than bound into a dependent.
+	bool BreaksDependent(CatalogType dependent_type) const override {
+		return false;
+	}
+
 private:
 	SetDefaultInfo();
 };
@@ -356,6 +398,12 @@ public:
 	string ToString() const override;
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
+
+	//! Made as part of a CREATE or DROP TABLE statement when a foreign key column is present, either adding or
+	//! removing a reference to the referenced primary key table.
+	bool BreaksDependent(CatalogType dependent_type) const override {
+		return false;
+	}
 
 private:
 	AlterForeignKeyInfo();
@@ -434,6 +482,9 @@ struct RenameViewInfo : public AlterViewInfo {
 public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+	bool DependentCanRebind() const override {
+		return true;
+	}
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterViewInfo> Deserialize(Deserializer &deserializer);
 
@@ -450,6 +501,9 @@ struct AddConstraintInfo : public AlterTableInfo {
 
 	//! The constraint to add.
 	unique_ptr<Constraint> constraint;
+	//! Constraints the added one implies, added to the definition with it in the same alter -- the NOT NULL a
+	//! PRIMARY KEY puts on each of its key columns. Filled by a catalog whose dialect materializes them.
+	vector<unique_ptr<Constraint>> implied_not_nulls;
 
 public:
 	unique_ptr<AlterInfo> Copy() const override;
@@ -481,6 +535,11 @@ public:
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
 
+	//! Nothing binds a constraint by identity, so a dependent that re-resolves finds the table without it.
+	bool DependentCanRebind() const override {
+		return true;
+	}
+
 private:
 	DropConstraintInfo();
 };
@@ -500,6 +559,13 @@ struct RenameConstraintInfo : public AlterTableInfo {
 public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
+
+	//! As for dropping one: a constraint carries no identity a dependent could have bound.
+	bool DependentCanRebind() const override {
+		return true;
+	}
 
 private:
 	RenameConstraintInfo();

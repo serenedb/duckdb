@@ -32,6 +32,11 @@ public:
 	//! default_value
 	const ParsedExpression &DefaultValue() const;
 	bool HasDefaultValue() const;
+	//! The DEFAULT or the generated-column body -- one member holds whichever this column has -- for a
+	//! caller that has to write into the expression in place. Null when the column has neither.
+	ParsedExpression *ExpressionMutable() {
+		return expression.get();
+	}
 	void SetDefaultValue(unique_ptr<ParsedExpression> default_value);
 
 	//! type
@@ -65,6 +70,14 @@ public:
 	//! oid
 	const column_t &Oid() const;
 	void SetOid(column_t oid);
+
+	//! catalog_oid -- an identity the hosting catalog assigns to the column and
+	//! keeps stable across every rewrite of the table, unlike the two positions
+	//! above. Zero means "none"; duckdb's own catalog never sets it. A plain
+	//! integer rather than a host type, so the member Serialize below carries it
+	//! with no dependency either way.
+	const idx_t &CatalogOid() const;
+	void SetCatalogOid(idx_t catalog_oid);
 
 	//! category
 	const TableColumnType &Category() const;
@@ -102,6 +115,8 @@ private:
 	storage_t storage_oid = DConstants::INVALID_INDEX;
 	//! The index of the column in the table
 	idx_t oid = DConstants::INVALID_INDEX;
+	//! Identity assigned by the hosting catalog, stable across table rewrites
+	idx_t catalog_oid = 0;
 	//! The category of the column
 	TableColumnType category = TableColumnType::STANDARD;
 	//! The default value of the column (for non-generated columns)

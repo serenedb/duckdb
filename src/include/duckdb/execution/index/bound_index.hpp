@@ -28,6 +28,7 @@ class ConflictManager;
 
 struct IndexLock;
 struct IndexScanState;
+struct ExternalIndexBatch;
 
 enum class IndexAppendMode : uint8_t { DEFAULT = 0, IGNORE_DUPLICATES = 1, INSERT_DUPLICATES = 2 };
 
@@ -100,6 +101,9 @@ public:
 	const Identifier &GetIndexName() const override {
 		return name;
 	}
+	void SetIndexName(Identifier name_p) override {
+		name = std::move(name_p);
+	}
 	IndexConstraintType GetConstraintType() const override {
 		return index_constraint_type;
 	}
@@ -115,6 +119,10 @@ public:
 	virtual ErrorData Append(IndexLock &l, DataChunk &chunk, Vector &row_ids, IndexAppendInfo &info);
 	//! Obtains a lock and calls Append while holding that lock.
 	ErrorData Append(DataChunk &chunk, Vector &row_ids, IndexAppendInfo &info);
+	//! Appends a batch that carries its own row ids. Passed as a shared pointer because an external
+	//! index tokenizes on worker threads and keeps the batch past this call; ordinary indexes consume
+	//! it here and fall through to the chunk form.
+	virtual ErrorData Append(IndexLock &l, const shared_ptr<ExternalIndexBatch> &batch, IndexAppendInfo &info);
 
 	//! Verify that data can be appended to the index without a constraint violation.
 	virtual void VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager);
@@ -160,6 +168,11 @@ public:
 
 	//! Whether or not the index supports the creation of delta indexes
 	virtual bool SupportsDeltaIndexes() const;
+	//! Whether removing rows needs the values of the indexed columns. An index keyed purely on row ids does
+	//! not, and fetching them means decompressing every indexed column of every deleted row for nothing.
+	virtual bool RemovalNeedsColumnValues() const {
+		return true;
+	}
 	//! Creates a delta index - an empty copy of the index with the same schema, etc
 	//! This will only be called if SupportsDeltaIndexes returns true
 	virtual unique_ptr<BoundIndex> CreateDeltaIndex(DeltaIndexType delta_index_type) const;
@@ -218,15 +231,18 @@ public:
 	void ApplyBufferedReplays(const vector<LogicalType> &table_types, BufferedIndexReplays &buffered_replays,
 	                          const vector<StorageIndex> &mapped_column_ids);
 
-	//! Called before ApplyBufferedReplays delivers each buffered range, with that range's WAL byte offset
-	//! (ReplayRange::commit_offset). An index whose payload is durable outside the WAL uses this to skip ranges
-	//! it already persisted before the crash. Default: ignore (in-WAL indexes replay every buffered op).
-	virtual void OnReplayRange(idx_t commit_offset) {
-	}
-
 	//! Called once after ApplyBufferedReplays has delivered every buffered insert/delete for this bind.
 	//! Lets an index that batches replayed operations (e.g. an external-segment index) commit them in one shot.
 	virtual void FinishReplay() {
+	}
+
+	//! True for indexes whose payload is stored and recovered entirely outside duckdb storage. The
+	//! checkpoint writes no storage info for them (they are re-injected by the host at attach) but
+	//! still runs CheckpointBarrier so such an index can veto WAL truncation until it is durable.
+	virtual bool IsExternal() const {
+		return false;
+	}
+	virtual void CheckpointBarrier() {
 	}
 
 protected:

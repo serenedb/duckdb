@@ -85,11 +85,52 @@ optional_ptr<CatalogEntry> CatalogEntryMap::GetEntry(const Identifier &name) {
 	return entry->second.get();
 }
 
-CatalogSet::CatalogSet(Catalog &catalog_p, unique_ptr<DefaultGenerator> defaults)
-    : catalog(catalog_p.Cast<DuckCatalog>()), defaults(std::move(defaults)) {
+CatalogSet::CatalogSet(Catalog &catalog_p, unique_ptr<DefaultGenerator> defaults, bool case_sensitive)
+    : catalog(catalog_p.Cast<DuckCatalog>()), map(case_sensitive), defaults(std::move(defaults)) {
 	D_ASSERT(catalog_p.IsDuckCatalog());
 }
 CatalogSet::~CatalogSet() {
+}
+
+void CatalogSet::EnableOidLookup(optional_ptr<SchemaIdentity> owner, CatalogType slot) {
+	oid_owner = owner;
+	oid_slot = slot;
+}
+
+//! Chain bookkeeping nodes carry no object of their own; only real entries are filed by id
+static bool OidLookupEntry(const CatalogEntry &entry) {
+	switch (entry.type) {
+	case CatalogType::INVALID:
+	case CatalogType::DELETED_ENTRY:
+	case CatalogType::RENAMED_ENTRY:
+	case CatalogType::DEPENDENCY_ENTRY:
+		return false;
+	default:
+		return true;
+	}
+}
+
+void CatalogSet::AddOidLocation(CatalogEntry &entry) {
+	if (oid_slot == CatalogType::INVALID || !OidLookupEntry(entry)) {
+		return;
+	}
+	if (oid_owner && oid_schema == DConstants::INVALID_INDEX) {
+		// Cached at the first placement, which always happens under a live schema version -- a removal can
+		// run at cleanup after the last version is destroyed, when the identity must not be dereferenced.
+		oid_schema = oid_owner->Schema().oid;
+	}
+	catalog.AddOidLocation(entry.oid, oid_schema, oid_slot, entry.name);
+}
+
+void CatalogSet::RemoveOidLocation(CatalogEntry &entry) {
+	if (oid_slot == CatalogType::INVALID || !OidLookupEntry(entry)) {
+		return;
+	}
+	if (oid_owner && oid_schema == DConstants::INVALID_INDEX) {
+		// Nothing was ever filed from this set
+		return;
+	}
+	catalog.RemoveOidLocation(entry.oid, oid_schema, oid_slot, entry.name);
 }
 
 bool CatalogSet::StartChain(CatalogTransaction transaction, const Identifier &name, unique_lock<mutex> &read_lock) {
@@ -165,6 +206,7 @@ optional_ptr<CatalogEntry> CatalogSet::CreateCommittedEntry(unique_ptr<CatalogEn
 	// Give the entry commit id 0, so it is visible to all transactions
 	entry->timestamp = 0;
 	map.AddEntry(std::move(entry));
+	AddOidLocation(*catalog_entry);
 
 	return catalog_entry;
 }
@@ -188,6 +230,7 @@ bool CatalogSet::CreateEntryInternal(CatalogTransaction transaction, const Ident
 	// Finally add the new entry to the chain
 	auto value_ptr = value.get();
 	map.UpdateEntry(std::move(value));
+	AddOidLocation(*value_ptr);
 	// Push the old entry in the undo buffer for this transaction, so it can be restored in the event of failure
 	if (transaction.transaction) {
 		DuckTransactionManager::Get(GetCatalog().GetAttached())
@@ -216,6 +259,50 @@ bool CatalogSet::CreateEntry(CatalogTransaction transaction, const Identifier &n
 bool CatalogSet::CreateEntry(ClientContext &context, const Identifier &name, unique_ptr<CatalogEntry> value,
                              const LogicalDependencyList &dependencies) {
 	return CreateEntry(catalog.GetCatalogTransaction(context), name, std::move(value), dependencies);
+}
+
+bool CatalogSet::CreateOrReplaceEntry(CatalogTransaction transaction, const Identifier &replaces,
+                                      unique_ptr<CatalogEntry> value, const LogicalDependencyList &dependencies) {
+	auto entry_name = value->name;
+	auto entry_type = value->type;
+	auto old_entry = GetEntry(transaction, replaces);
+	if (old_entry) {
+		// An id-addressed self-dependency is deliberate -- the host states it so a drop of the entry
+		// is refused while its own definition still references it -- so only a name-addressed one is
+		// the accidental self-reference this refuses.
+		if (LogicalDependency(*old_entry).entry.oid == 0 && dependencies.Contains(*old_entry)) {
+			throw CatalogException("CREATE OR REPLACE is not allowed to depend on itself");
+		}
+		// The two macro types are one kind whose overload set decides the type: replacing a scalar macro
+		// with a table one (or back) is an ordinary redefinition.
+		auto is_macro = [](CatalogType type) {
+			return type == CatalogType::MACRO_ENTRY || type == CatalogType::TABLE_MACRO_ENTRY;
+		};
+		if (old_entry->type != entry_type && !(is_macro(old_entry->type) && is_macro(entry_type))) {
+			throw CatalogException("Existing object %s is of type %s, trying to replace with type %s", entry_name,
+			                       CatalogTypeToString(old_entry->type), CatalogTypeToString(entry_type));
+		}
+		// A same-type replace is an alter of the version it supersedes, not a drop and a create: the
+		// tombstone a drop leaves reaches DependencyManager::VerifyCommitDrop at commit, which refuses it
+		// when any edge on the object committed after the transaction started. An alter also hands the
+		// object's edges over rather than retiring and re-adding them, and takes the rename path, which
+		// knows a rename from a drop.
+		SetPermissionsInfo alter(PermissionsAlterType::REPLACE_DEFINITION, entry_type, QualifiedName(replaces),
+		                         value->permissions);
+		alter.new_dependencies = make_uniq<LogicalDependencyList>(dependencies);
+		return AlterEntry(transaction, replaces, alter, std::move(value));
+	}
+	return CreateEntry(transaction, entry_name, std::move(value), dependencies);
+}
+
+bool CatalogSet::CommittedVersionVanished(CatalogTransaction transaction, const Identifier &name) {
+	auto entry = GetEntry(transaction, name);
+	if (!entry || entry->timestamp >= TRANSACTION_ID_START) {
+		// Nothing under that name, or this transaction's own uncommitted version: neither can have been
+		// dropped out from under it.
+		return false;
+	}
+	return !GetEntry(CatalogTransaction::GetCommittedTransaction(catalog.GetDatabase()), name);
 }
 
 //! This method is used to retrieve an entry for the purpose of making a new version, through an alter/drop/create
@@ -273,13 +360,15 @@ bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntr
                                      AlterInfo &alter_info, unique_lock<mutex> &read_lock) {
 	auto &original_name = old.name;
 
-	auto &context = *transaction.context;
 	auto entry_value = map.GetEntry(new_name);
 	if (entry_value) {
 		auto &existing_entry = GetEntryForTransaction(transaction, *entry_value);
 		if (!existing_entry.deleted) {
 			// There exists an entry by this name that is not deleted
-			old.UndoAlter(context, alter_info);
+			if (transaction.context) {
+				// Boot replay and the background paths have no statement to undo against
+				old.UndoAlter(*transaction.context, alter_info);
+			}
 			throw CatalogException("Could not rename \"%s\" to \"%s\": another entry with this name already exists!",
 			                       original_name, new_name);
 		}
@@ -309,6 +398,11 @@ bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntr
 }
 
 bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info) {
+	return AlterEntry(transaction, name, alter_info, nullptr);
+}
+
+bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info,
+                            unique_ptr<CatalogEntry> value) {
 	// If the entry does not exist, we error
 	auto entry = GetEntry(transaction, name);
 	if (!entry) {
@@ -318,20 +412,22 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 		throw CatalogException("Cannot alter entry \"%s\" because it is an internal system entry", entry->name);
 	}
 
-	unique_ptr<CatalogEntry> value;
-	if (alter_info.type == AlterType::SET_COMMENT) {
-		// Copy the existing entry; we are only changing metadata here
-		if (!transaction.context) {
-			throw InternalException("Cannot AlterEntry::SET_COMMENT without client context");
-		}
-		value = entry->Copy(*transaction.context);
-		value->comment = alter_info.Cast<SetCommentInfo>().comment_value;
-	} else {
-		// Use the existing entry to create the altered entry
-		value = entry->AlterEntry(transaction, alter_info);
-		if (!value) {
-			// alter failed, but did not result in an error
-			return true;
+	// A caller-supplied value is the altered entry already; only derive one when there is none.
+	if (!value) {
+		if (alter_info.type == AlterType::SET_COMMENT) {
+			// Copy the existing entry; we are only changing metadata here
+			if (!transaction.context) {
+				throw InternalException("Cannot AlterEntry::SET_COMMENT without client context");
+			}
+			value = entry->CopyPreservingIdentity(*transaction.context);
+			value->comment = alter_info.Cast<SetCommentInfo>().comment_value;
+		} else {
+			// Use the existing entry to create the altered entry
+			value = entry->AlterEntry(transaction, alter_info);
+			if (!value) {
+				// alter failed, but did not result in an error
+				return true;
+			}
 		}
 	}
 
@@ -364,13 +460,19 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	// Preserve the oid across the alter: an altered entry is the same logical object as before
 	value->oid = entry->oid;
 
-	if (!(value->name == entry->name)) {
+	// A case-sensitive set is keyed on the exact name, so a rename that changes only case does move the entry --
+	// where duckdb's own case-insensitive comparison would call it the same name and leave the chain keyed
+	// under the old one.
+	const bool renamed = map.IsCaseSensitive() ? entry->name.GetIdentifierName() != value->name.GetIdentifierName()
+	                                           : !(value->name == entry->name);
+	if (renamed) {
 		if (!RenameEntryInternal(transaction, *entry, value->name, alter_info, read_lock)) {
 			return false;
 		}
 	}
 	auto new_entry = value.get();
 	map.UpdateEntry(std::move(value));
+	AddOidLocation(*new_entry);
 
 	// push the old entry in the undo buffer for this transaction
 	unique_ptr<CatalogEntry> entry_to_destroy;
@@ -389,6 +491,10 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 		// if we don't have a transaction this alter is non-transactional
 		// in that case we are able to just directly destroy the child (if there is any)
 		entry_to_destroy = new_entry->TakeChild();
+		// The whole discarded subchain dies with it
+		for (auto node = entry_to_destroy.get(); node; node = node->HasChild() ? &node->Child() : nullptr) {
+			RemoveOidLocation(*node);
+		}
 	}
 
 	read_lock.unlock();
@@ -444,11 +550,27 @@ bool CatalogSet::DropEntryInternal(CatalogTransaction transaction, const Identif
 	return true;
 }
 
+void CatalogSet::ClearLocalStorage(CatalogTransaction transaction, const Identifier &name) {
+	if (!transaction.transaction) {
+		return;
+	}
+	auto entry = GetEntry(transaction, name);
+	if (!entry || entry->type != CatalogType::TABLE_ENTRY) {
+		return;
+	}
+	auto storage = entry->Cast<TableCatalogEntry>().TryGetStorage();
+	if (!storage) {
+		return;
+	}
+	LocalStorage::Get(transaction.transaction->Cast<DuckTransaction>()).DropTable(*storage);
+}
+
 bool CatalogSet::DropEntry(CatalogTransaction transaction, const Identifier &name, bool cascade,
                            bool allow_drop_internal) {
 	if (!DropDependencies(transaction, name, cascade, allow_drop_internal)) {
 		return false;
 	}
+	ClearLocalStorage(transaction, name);
 	lock_guard<mutex> write_lock(catalog.GetWriteLock());
 	lock_guard<mutex> read_lock(catalog_lock);
 	return DropEntryInternal(transaction, name, allow_drop_internal);
@@ -500,6 +622,7 @@ void CatalogSet::CleanupEntry(CatalogEntry &catalog_entry) {
 	lock_guard<mutex> write_lock(catalog.GetWriteLock());
 	lock_guard<mutex> lock(catalog_lock);
 	auto &parent = catalog_entry.Parent();
+	RemoveOidLocation(catalog_entry);
 	map.DropEntry(catalog_entry);
 	if (parent.deleted && !parent.HasChild() && !parent.HasParent()) {
 		// The entry's parent is a tombstone and the entry had no child
@@ -682,6 +805,7 @@ void CatalogSet::Undo(CatalogEntry &entry) {
 	if (!to_be_removed_node.HasParent()) {
 		to_be_removed_node.Child().SetAsRoot();
 	}
+	RemoveOidLocation(to_be_removed_node);
 	map.DropEntry(to_be_removed_node);
 
 	if (entry.type == CatalogType::INVALID) {

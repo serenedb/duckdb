@@ -6,6 +6,20 @@
 
 namespace duckdb {
 
+unique_ptr<CreateInfo> (*foreign_create_info_deserializer)(Deserializer &, CatalogType) = nullptr;
+
+unique_ptr<CreateInfo> DeserializeForeignCreateInfo(Deserializer &deserializer, CatalogType type) {
+	if (foreign_create_info_deserializer) {
+		return foreign_create_info_deserializer(deserializer, type);
+	}
+	// No host catalog is registered, so nothing but duckdb itself wrote these bytes: read back the types it
+	// still owns a reader for. The rest exist only in a host catalog's records and cannot be reached from here.
+	if (type == CatalogType::INDEX_ENTRY) {
+		return CreateIndexInfo::Deserialize(deserializer);
+	}
+	throw NotImplementedException("Cannot deserialize a foreign create info of type %s", CatalogTypeToString(type));
+}
+
 void CreateInfo::CopyProperties(CreateInfo &other) const {
 	other.type = type;
 	other.SetQualifiedName(GetQualifiedName());
@@ -17,6 +31,8 @@ void CreateInfo::CopyProperties(CreateInfo &other) const {
 	other.dependencies = dependencies;
 	other.comment = comment;
 	other.tags = tags;
+	other.oid = oid;
+	other.parent_oid = parent_oid;
 }
 
 unique_ptr<AlterInfo> CreateInfo::GetAlterInfo() const {

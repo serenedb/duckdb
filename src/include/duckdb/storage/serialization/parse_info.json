@@ -54,6 +54,12 @@
         "id": 205,
         "name": "allow_internal",
         "type": "bool"
+      },
+      {
+        "id": 206,
+        "name": "oid",
+        "type": "idx_t",
+        "default": 0
       }
     ],
     "methods": {
@@ -334,6 +340,28 @@
     ]
   },
   {
+    "class": "SetPermissionsInfo",
+    "base": "AlterInfo",
+    "enum": "SET_PERMISSIONS",
+    "members": [
+      {
+        "id": 300,
+        "name": "permissions_alter_type",
+        "type": "PermissionsAlterType"
+      },
+      {
+        "id": 301,
+        "name": "entry_catalog_type",
+        "type": "CatalogType"
+      },
+      {
+        "id": 302,
+        "name": "permissions",
+        "type": "CatalogPermissions"
+      }
+    ]
+  },
+  {
     "class": "ChangeOwnershipInfo",
     "base": "AlterInfo",
     "enum": "CHANGE_OWNERSHIP",
@@ -376,6 +404,34 @@
       {
         "id": 302,
         "name": "column_name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "AlterScalarFunctionInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_SCALAR_FUNCTION",
+    "class_type": "alter_scalar_function_type",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_scalar_function_type",
+        "type": "AlterScalarFunctionType"
+      }
+    ]
+  },
+  {
+    "class": "RenameScalarFunctionInfo",
+    "base": "AlterScalarFunctionInfo",
+    "enum": "RENAME_SCALAR_FUNCTION",
+    "members": [
+      {
+        "id": 400,
+        "name": "new_name",
         "type": "Identifier"
       }
     ]
@@ -428,6 +484,21 @@
     "members": [
       {
         "id": 400,
+        "name": "new_name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "RenameSchemaInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_SCHEMA",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_schema_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
         "name": "new_name",
         "type": "Identifier"
       }
@@ -836,6 +907,28 @@
         "id": 400,
         "name": "constraint",
         "type": "unique_ptr<Constraint>"
+      },
+      {
+        "id": 401,
+        "name": "implied_not_nulls",
+        "type": "vector<unique_ptr<Constraint>>"
+      }
+    ]
+  },
+  {
+    "class": "RenameConstraintInfo",
+    "base": "AlterTableInfo",
+    "enum": "RENAME_CONSTRAINT",
+    "members": [
+      {
+        "id": 400,
+        "name": "old_name",
+        "type": "string"
+      },
+      {
+        "id": 401,
+        "name": "new_name",
+        "type": "string"
       }
     ]
   },

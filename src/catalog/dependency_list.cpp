@@ -9,6 +9,9 @@
 namespace duckdb {
 
 uint64_t LogicalDependencyHashFunction::operator()(const LogicalDependency &a) const {
+	if (a.entry.oid != 0) {
+		return duckdb::Hash<idx_t>(a.entry.oid);
+	}
 	auto &name = a.entry.name;
 	auto &schema = a.entry.schema;
 	auto &type = a.entry.type;
@@ -22,6 +25,9 @@ uint64_t LogicalDependencyHashFunction::operator()(const LogicalDependency &a) c
 }
 
 bool LogicalDependencyEquality::operator()(const LogicalDependency &a, const LogicalDependency &b) const {
+	if (a.entry.oid != 0 || b.entry.oid != 0) {
+		return a.entry.oid == b.entry.oid;
+	}
 	if (a.entry.type != b.entry.type) {
 		return false;
 	}
@@ -40,13 +46,6 @@ bool LogicalDependencyEquality::operator()(const LogicalDependency &a, const Log
 LogicalDependency::LogicalDependency() : entry(), catalog() {
 }
 
-static string GetSchema(CatalogEntry &entry) {
-	if (entry.type == CatalogType::SCHEMA_ENTRY) {
-		return entry.name.GetIdentifierName();
-	}
-	return entry.ParentSchema().name.GetIdentifierName();
-}
-
 LogicalDependency::LogicalDependency(CatalogEntry &entry) {
 	catalog = Identifier::InvalidCatalog();
 	if (entry.type == CatalogType::DEPENDENCY_ENTRY) {
@@ -54,9 +53,7 @@ LogicalDependency::LogicalDependency(CatalogEntry &entry) {
 
 		this->entry = dependency_entry.EntryInfo();
 	} else {
-		this->entry.schema = Identifier(GetSchema(entry));
-		this->entry.name = entry.name;
-		this->entry.type = entry.type;
+		this->entry = entry.ParentCatalog().GetDependencyInfo(entry);
 		catalog = entry.ParentCatalog().GetName();
 	}
 }
@@ -66,9 +63,17 @@ LogicalDependency::LogicalDependency(optional_ptr<Catalog> catalog_p, CatalogEnt
 	if (catalog_p) {
 		catalog = catalog_p->GetName();
 	}
+	// The catalog is part of entry identity now; an older serialized dependency
+	// carries it only in the sibling field.
+	if (entry.catalog.empty()) {
+		entry.catalog = catalog;
+	}
 }
 
 bool LogicalDependency::operator==(const LogicalDependency &other) const {
+	if (entry.oid != 0 || other.entry.oid != 0) {
+		return entry.oid == other.entry.oid;
+	}
 	return other.entry.name == entry.name && other.entry.schema == entry.schema && other.entry.type == entry.type;
 }
 
@@ -78,23 +83,24 @@ void LogicalDependencyList::AddDependency(CatalogEntry &entry) {
 }
 
 void LogicalDependencyList::AddDependency(const LogicalDependency &entry) {
+	auto existing = set.find(entry);
+	if (existing != set.end()) {
+		// One edge per (dependent, subject) pair: a second reference to the same subject merges its
+		// pieces into the edge instead of creating a duplicate.
+		for (auto &piece : entry.pieces) {
+			existing->pieces.push_back(piece);
+		}
+		// A subject also bound by a reference that is not automatic blocks: only an edge that is
+		// nothing but automatic lets the dependent fall silently.
+		existing->automatic = existing->automatic && entry.automatic;
+		return;
+	}
 	set.insert(entry);
 }
 
-bool LogicalDependencyList::Contains(CatalogEntry &entry_p) {
+bool LogicalDependencyList::Contains(CatalogEntry &entry_p) const {
 	LogicalDependency logical_entry(entry_p);
 	return set.count(logical_entry);
-}
-
-void LogicalDependencyList::VerifyDependencies(Catalog &catalog, const Identifier &name) {
-	for (auto &dep : set) {
-		if (dep.catalog != catalog.GetName()) {
-			throw DependencyException(
-			    "Error adding dependency for object \"%s\" - dependency \"%s\" is in catalog "
-			    "\"%s\", which does not match the catalog \"%s\".\nCross catalog dependencies are not supported.",
-			    name, dep.entry.name, dep.catalog, catalog.GetName());
-		}
-	}
 }
 
 const LogicalDependencyList::create_info_set_t &LogicalDependencyList::Set() const {

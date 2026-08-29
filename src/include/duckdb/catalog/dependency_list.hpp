@@ -27,6 +27,12 @@ struct LogicalDependency {
 public:
 	CatalogEntryInfo entry;
 	Identifier catalog;
+	//! The dependent's pieces binding this entry (see DependencyPiece). Mutable because pieces of a
+	//! duplicate-entry add merge into the member already in the set; hash and equality ignore them.
+	mutable vector<DependencyPiece> pieces;
+	//! Whether the dependent falls with this subject instead of blocking its drop. Mutable and ignored
+	//! by hash and equality for the same reason pieces are; never persisted.
+	mutable bool automatic = false;
 
 public:
 	explicit LogicalDependency(CatalogEntry &entry);
@@ -55,10 +61,9 @@ class LogicalDependencyList {
 public:
 	DUCKDB_API void AddDependency(CatalogEntry &entry);
 	DUCKDB_API void AddDependency(const LogicalDependency &entry);
-	DUCKDB_API bool Contains(CatalogEntry &entry);
+	DUCKDB_API bool Contains(CatalogEntry &entry) const;
 
 public:
-	DUCKDB_API void VerifyDependencies(Catalog &catalog, const Identifier &name);
 	void Serialize(Serializer &serializer) const;
 	static LogicalDependencyList Deserialize(Deserializer &deserializer);
 	bool operator==(const LogicalDependencyList &other) const;

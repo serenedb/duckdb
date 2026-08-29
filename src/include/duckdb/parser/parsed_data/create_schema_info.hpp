@@ -15,6 +15,10 @@ namespace duckdb {
 struct CreateSchemaInfo : public CreateInfo {
 	CreateSchemaInfo();
 
+	//! CREATE SCHEMA ... AUTHORIZATION: the role that is to own the schema, empty for the creating role. Read when
+	//! the schema is created and not written down -- what the entry keeps is the owner it produced.
+	Identifier authorization;
+
 public:
 	DUCKDB_API void Serialize(Serializer &serializer) const override;
 	DUCKDB_API static unique_ptr<CreateInfo> Deserialize(Deserializer &deserializer);

@@ -19,7 +19,8 @@ namespace duckdb {
 // Oids are started at 20000 to avoid colliding with Postgres builtin types, which end at 16383:
 // https://github.com/postgres/postgres/blob/db93988ab0e78396f2ed9e96c826ff988d12b9f2/src/include/access/transam.h#L156-L197
 DatabaseManager::DatabaseManager(DatabaseInstance &db)
-    : db(db), next_oid(20000), current_query_number(1), current_transaction_id(0), remote_catalog_count(0) {
+    : db(db), next_oid(20000), reserved_oid(0), oid_reservation_sink(nullptr), current_query_number(1),
+      current_transaction_id(0), remote_catalog_count(0) {
 	system = make_shared_ptr<AttachedDatabase>(db);
 	auto &config = DBConfig::GetConfig(db);
 	path_manager = config.path_manager;
@@ -30,6 +31,44 @@ DatabaseManager::DatabaseManager(DatabaseInstance &db)
 }
 
 DatabaseManager::~DatabaseManager() {
+}
+
+void DatabaseManager::RestoreOid(idx_t oid) {
+	auto current = next_oid.load(std::memory_order_relaxed);
+	while (current <= oid &&
+	       !next_oid.compare_exchange_weak(current, oid + 1, std::memory_order_release, std::memory_order_relaxed)) {
+	}
+}
+
+void DatabaseManager::RestoreOidReservation(idx_t horizon) {
+	// Allocation resumes at the horizon, not wherever replay's own constructions left the counter:
+	// every id below it may already name something durable, and an id is never reissued.
+	if (horizon > 0) {
+		RestoreOid(horizon - 1);
+	}
+	auto current = reserved_oid.load(std::memory_order_relaxed);
+	while (current < horizon && !reserved_oid.compare_exchange_weak(current, horizon, std::memory_order_release,
+	                                                                std::memory_order_relaxed)) {
+	}
+}
+
+void DatabaseManager::ReserveOids(idx_t oid) {
+	auto sink = oid_reservation_sink.load(std::memory_order_acquire);
+	if (!sink) {
+		// Nobody is writing the allocator down, so nothing bounds it.
+		return;
+	}
+	lock_guard<mutex> lock(oid_reservation_lock);
+	if (oid < reserved_oid.load(std::memory_order_relaxed)) {
+		return;
+	}
+	auto horizon = oid + OID_RESERVE_BLOCK;
+	if (!sink(horizon)) {
+		// The record did not land -- the host's log is not up yet. The horizon stays where it was, so
+		// the next allocation asks again once it is.
+		return;
+	}
+	reserved_oid.store(horizon, std::memory_order_release);
 }
 
 DatabaseManager &DatabaseManager::Get(AttachedDatabase &db) {
@@ -112,10 +151,19 @@ static void VerifyReattachOptions(AttachedDatabase &database, const AttachInfo &
 		throw BinderException("Attached database name \"%s\" cannot be used because it is a reserved name",
 		                      info.name.GetIdentifierName());
 	}
-	if (database.IsReadOnly() != (options.access_mode == AccessMode::READ_ONLY)) {
+	// One exception to keeping the options: a hidden read-only attach is the engine's own reader
+	// (read_duckdb over a file a user may also have attached), and it only reads, so the database that
+	// already has the file open serves it whichever mode that was opened in. A user's READ_ONLY attach
+	// is still refused, or writes through it would be allowed.
+	const auto reader_takes_what_is_open =
+	    options.visibility == AttachVisibility::HIDDEN && options.access_mode == AccessMode::READ_ONLY;
+	if (!reader_takes_what_is_open && database.IsReadOnly() != (options.access_mode == AccessMode::READ_ONLY)) {
 		auto existing_mode = database.IsReadOnly() ? AccessMode::READ_ONLY : AccessMode::READ_WRITE;
-		throw BinderException("Database \"%s\" is already attached in %s mode, cannot re-attach in %s mode", info.name,
-		                      EnumUtil::ToString(existing_mode), EnumUtil::ToString(options.access_mode));
+		// The database that holds the file, not the name being attached: a re-attach by path finds it
+		// under whatever name it was opened with, and naming the requested one points at the wrong db.
+		throw BinderException("Database \"%s\" is already attached in %s mode, cannot re-attach in %s mode",
+		                      database.GetName(), EnumUtil::ToString(existing_mode),
+		                      EnumUtil::ToString(options.access_mode));
 	}
 	if (options.vacuum_rebuild_indexes_threshold.IsValid()) {
 		auto previous_setting = database.GetVacuumRebuildIndexThreshold();

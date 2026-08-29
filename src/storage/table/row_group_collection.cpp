@@ -1072,13 +1072,27 @@ void GetIndexRemovalTargets(IndexEntry &entry, IndexRemovalType removal_type, In
 
 void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableIndexList &indexes,
                                            Vector &row_identifiers, idx_t count, IndexRemovalType removal_type,
-                                           optional_idx active_checkpoint) {
-	// Collect all Indexed columns on the table.
+                                           optional_idx active_checkpoint, bool skip_external) {
+	// Collect the indexed columns that some index actually reads while removing. An index keyed on row ids
+	// alone (an external full-text index, say) reads none, and fetching them would decompress every indexed
+	// column of every deleted row for nothing.
+	//
+	// Unless something is buffering: while an index is unbound its operations go into a buffer whose layout
+	// is the canonical union mapping recorded on the first buffered chunk (see unbound_index.hpp), and the
+	// insert side records exactly that union. The minimal removal set is a different set of columns -- it
+	// drops those of the indexes that read none -- so a buffering removal has to describe the union too, or
+	// the same index ends up with two layouts in one buffer.
 	unordered_set<column_t> indexed_column_id_set;
-
-	for (auto &index : indexes.Indexes()) {
-		auto &set = index.GetColumnIdSet();
-		indexed_column_id_set.insert(set.begin(), set.end());
+	if (indexes.HasUnbound()) {
+		indexed_column_id_set = indexes.GetRequiredColumns();
+	} else {
+		for (auto &index : indexes.Indexes()) {
+			if (index.IsBound() && !index.Cast<BoundIndex>().RemovalNeedsColumnValues()) {
+				continue;
+			}
+			auto &set = index.GetColumnIdSet();
+			indexed_column_id_set.insert(set.begin(), set.end());
+		}
 	}
 
 	// If we are in WAL replay, delete data will be buffered, and so we sort the column_ids
@@ -1093,12 +1107,16 @@ void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableInd
 	}
 
 	DataChunk fetch_chunk;
-	fetch_chunk.Initialize(GetAllocator(), column_types);
+	const bool fetch_values = !column_ids.empty();
+	if (fetch_values) {
+		fetch_chunk.Initialize(GetAllocator(), column_types);
 
-	ColumnFetchState state;
-	state.fetch_type = FetchType::FORCE_FETCH;
-	TransactionData commit_transaction(MAX_TRANSACTION_ID, TRANSACTION_ID_START - 1);
-	Fetch(commit_transaction, fetch_chunk, column_ids, row_identifiers, count, state);
+		ColumnFetchState state;
+		state.fetch_type = FetchType::FORCE_FETCH;
+		TransactionData commit_transaction(MAX_TRANSACTION_ID, TRANSACTION_ID_START - 1);
+		Fetch(commit_transaction, fetch_chunk, column_ids, row_identifiers, count, state);
+	}
+	const idx_t result_count = fetch_values ? fetch_chunk.size() : count;
 
 	// Used for index value removal.
 	// Contains all columns but only initializes indexed ones.
@@ -1117,11 +1135,14 @@ void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableInd
 			result_chunk.data[j].Reference(fetch_chunk.data[fetch_idx++]);
 			continue;
 		}
-		result_chunk.data[j].Reference(Value(types[j]), count_t(fetch_chunk.size()));
+		result_chunk.data[j].Reference(Value(types[j]), count_t(result_count));
 	}
 
 	for (auto &entry : indexes.IndexEntries()) {
 		auto &index = *entry.index;
+		if (skip_external && index.IsBound() && index.Cast<BoundIndex>().IsExternal()) {
+			continue;
+		}
 		if (index.IsBound()) {
 			lock_guard<mutex> guard(entry.lock);
 
@@ -2285,7 +2306,8 @@ shared_ptr<RowGroupCollection> RowGroupCollection::AlterType(ClientContext &cont
 }
 
 void RowGroupCollection::VerifyNewConstraint(const QueryContext &context, DataTable &parent,
-                                             const BoundConstraint &constraint) {
+                                             const BoundConstraint &constraint, const ColumnList &columns,
+                                             const string &constraint_text) {
 	if (total_rows == 0) {
 		return;
 	}
@@ -2321,8 +2343,9 @@ void RowGroupCollection::VerifyNewConstraint(const QueryContext &context, DataTa
 			executor.ExecuteExpression(scan_chunk, result);
 			for (auto entry : result.Values<int32_t>()) {
 				if (entry.IsValid() && entry.GetValue() == 0) {
-					throw ConstraintException("CHECK constraint failed on table %s with expression CHECK(%s)",
-					                          info->GetTableName(), check.expression->ToString());
+					const auto table_name = info->GetTableName();
+					throw ConstraintException("CHECK constraint failed on table %s with expression %s",
+					                          table_name.GetIdentifierName(), constraint_text);
 				}
 			}
 		}
@@ -2359,8 +2382,12 @@ void RowGroupCollection::VerifyNewConstraint(const QueryContext &context, DataTa
 
 		// Verify the NOT NULL constraint.
 		if (VectorOperations::HasNull(scan_chunk.data[0])) {
-			auto name = parent.Columns()[physical_index].GetName();
-			throw ConstraintException("NOT NULL constraint failed: %s.%s", info->GetTableName(), name);
+			// The catalog's name for the column, not the physical list's: a rename moves no rows, so what the
+			// rows carry is the name the column had when they were written.
+			const auto &name = columns.GetColumn(PhysicalIndex(physical_index)).Name();
+			const auto table_name = info->GetTableName();
+			throw ConstraintException("NOT NULL constraint failed: %s.%s", table_name.GetIdentifierName(),
+			                          name.GetIdentifierName());
 		}
 	}
 }

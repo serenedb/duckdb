@@ -1,6 +1,7 @@
 #include "duckdb/catalog/catalog.hpp"
 
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/catalog_entry/list.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
@@ -358,6 +359,11 @@ unique_ptr<TableRef> Catalog::RemoteExecute(ClientContext &context, unique_ptr<Q
 
 unique_ptr<TableRef> Catalog::RemoteExecute(ClientContext &context, const string &sql) {
 	throw NotImplementedException("RemoteExecute(string) not supported by this catalog");
+}
+
+void Catalog::AlterDependent(CatalogTransaction transaction, CatalogEntry &dependent, AlterInfo &info) {
+	D_ASSERT(dependent.set);
+	dependent.set->AlterEntry(transaction, dependent.name, info);
 }
 
 bool Catalog::SupportsPushdown(const ParsedExpression &expression) {
@@ -1244,6 +1250,14 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(ClientContext &context
 	return schemas;
 }
 
+optional_ptr<TableCatalogEntry> Catalog::LookupTableById(CatalogTransaction, idx_t) {
+	return nullptr;
+}
+
+optional_ptr<SchemaCatalogEntry> Catalog::LookupSchemaById(CatalogTransaction, idx_t) {
+	return nullptr;
+}
+
 vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(CatalogEntryRetriever &retriever,
                                                           const string &catalog_name) {
 	vector<reference<Catalog>> catalogs;
@@ -1352,6 +1366,19 @@ optional_ptr<DependencyManager> Catalog::GetDependencyManager() {
 	return nullptr;
 }
 
+CatalogEntryInfo Catalog::GetDependencyInfo(const CatalogEntry &entry) const {
+	return CatalogEntryInfo {entry.type, DependencyManager::GetSchema(entry), entry.name,
+	                         Identifier(entry.ParentCatalog().GetName())};
+}
+
+optional_ptr<CatalogEntry> Catalog::GetDependencyEntry(CatalogTransaction transaction, const CatalogEntryInfo &info) {
+	auto schema_entry = GetSchema(transaction, info.schema, OnEntryNotFound::RETURN_NULL);
+	if (info.type == CatalogType::SCHEMA_ENTRY || !schema_entry) {
+		return schema_entry.get();
+	}
+	return schema_entry->GetEntry(transaction, info.type, info.name);
+}
+
 ErrorData Catalog::SupportsCreateTable(BoundCreateTableInfo &info) {
 	auto &base = info.Base().Cast<CreateTableInfo>();
 	if (!base.partition_keys.empty()) {
@@ -1391,6 +1418,17 @@ string Catalog::GetDefaultTable() const {
 
 string Catalog::GetDefaultTableSchema() const {
 	return !default_table_schema.empty() ? default_table_schema : DEFAULT_SCHEMA;
+}
+
+void Catalog::WriteCatalogChange(DuckTransaction &, CatalogEntry &, data_ptr_t) {
+}
+
+void Catalog::ReplayCatalogState(ClientContext &, const_data_ptr_t, idx_t) {
+	throw IOException("Catalog log holds state this catalog cannot replay");
+}
+
+void Catalog::ReplayCatalogEntry(ClientContext &, CreateInfo &info, const CatalogPermissions &, bool) {
+	throw IOException("Catalog log holds a %s entry, which this catalog cannot replay", CatalogTypeToString(info.type));
 }
 
 void Catalog::Verify() {
