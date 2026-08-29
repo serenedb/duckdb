@@ -313,6 +313,7 @@ void ParsedExpression::CopyBase(const ParsedExpression &other) {
 	alias = other.alias;
 	query_location = other.query_location;
 	is_named_parameter = other.is_named_parameter;
+	oid = other.oid;
 }
 
 bool BetweenExpression::Equals(const ParsedExpression &other) const {
