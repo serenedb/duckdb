@@ -2471,9 +2471,28 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformCreateSchemaStm
 		auto if_not_exists_value = transformer.Transform<bool>(if_not_exists_opt.GetResult());
 		if_not_exists = if_not_exists_value;
 	}
-	auto qualified_name = transformer.Transform<QualifiedName>(list_pr.GetChild(2));
-	auto result = TransformCreateSchemaStmt(transformer, if_not_exists, qualified_name);
+	optional<QualifiedName> qualified_name {};
+	auto &qualified_name_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	if (qualified_name_opt.HasResult()) {
+		auto qualified_name_value = transformer.Transform<QualifiedName>(qualified_name_opt.GetResult());
+		qualified_name = qualified_name_value;
+	}
+	optional<Identifier> schema_authorization {};
+	auto &schema_authorization_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	if (schema_authorization_opt.HasResult()) {
+		auto schema_authorization_value = transformer.Transform<Identifier>(schema_authorization_opt.GetResult());
+		schema_authorization = schema_authorization_value;
+	}
+	auto result = TransformCreateSchemaStmt(transformer, if_not_exists, qualified_name, schema_authorization);
 	return make_uniq<TypedTransformResult<unique_ptr<CreateStatement>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformSchemaAuthorizationInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto col_id = transformer.Transform<Identifier>(list_pr.GetChild(1));
+	auto result = col_id;
+	return make_uniq<TypedTransformResult<Identifier>>(result);
 }
 
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformCreateSecretStmtInternal(PEGTransformer &transformer,
@@ -10876,6 +10895,7 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"ScalarMacroDefinition", &PEGTransformerFactory::TransformScalarMacroDefinitionInternal},
 	    {"TableMacroDefinition", &PEGTransformerFactory::TransformTableMacroDefinitionInternal},
 	    {"CreateSchemaStmt", &PEGTransformerFactory::TransformCreateSchemaStmtInternal},
+	    {"SchemaAuthorization", &PEGTransformerFactory::TransformSchemaAuthorizationInternal},
 	    {"CreateSecretStmt", &PEGTransformerFactory::TransformCreateSecretStmtInternal},
 	    {"SecretStorageSpecifier", &PEGTransformerFactory::TransformSecretStorageSpecifierInternal},
 	    {"SecretName", &PEGTransformerFactory::TransformSecretNameInternal},

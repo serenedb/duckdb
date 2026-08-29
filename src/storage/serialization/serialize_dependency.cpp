@@ -22,33 +22,19 @@ CatalogEntryInfo CatalogEntryInfo::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadProperty<CatalogType>(100, "type", result.type);
 	deserializer.ReadPropertyWithDefault<Identifier>(101, "schema", result.schema);
 	deserializer.ReadPropertyWithDefault<Identifier>(102, "name", result.name);
-	result.oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(103, "oid", 0);
-	return result;
-}
-
-void DependencyPiece::Serialize(Serializer &serializer) const {
-	serializer.WritePropertyWithDefault<uint8_t>(100, "kind", static_cast<uint8_t>(kind), 0);
-	serializer.WritePropertyWithDefault<idx_t>(101, "sub_object", sub_object, DConstants::INVALID_INDEX);
-}
-
-DependencyPiece DependencyPiece::Deserialize(Deserializer &deserializer) {
-	DependencyPiece result;
-	result.kind = static_cast<DependencyPieceKind>(deserializer.ReadPropertyWithExplicitDefault<uint8_t>(100, "kind", 0));
-	result.sub_object = deserializer.ReadPropertyWithExplicitDefault<idx_t>(101, "sub_object", DConstants::INVALID_INDEX);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(103, "oid", result.oid, 0);
 	return result;
 }
 
 void LogicalDependency::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<CatalogEntryInfo>(100, "entry", entry);
 	serializer.WritePropertyWithDefault<Identifier>(101, "catalog", catalog);
-	serializer.WritePropertyWithDefault<vector<DependencyPiece>>(102, "pieces", pieces, vector<DependencyPiece>());
 }
 
 LogicalDependency LogicalDependency::Deserialize(Deserializer &deserializer) {
 	auto entry = deserializer.ReadProperty<CatalogEntryInfo>(100, "entry");
 	auto catalog = deserializer.ReadPropertyWithDefault<Identifier>(101, "catalog");
 	LogicalDependency result(deserializer.TryGet<Catalog>(), entry, std::move(catalog));
-	result.pieces = deserializer.ReadPropertyWithExplicitDefault<vector<DependencyPiece>>(102, "pieces", vector<DependencyPiece>());
 	return result;
 }
 

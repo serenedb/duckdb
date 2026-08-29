@@ -11,10 +11,14 @@ namespace duckdb {
 
 void Constraint::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<ConstraintType>(100, "type", type);
+	serializer.WritePropertyWithDefault<string>(101, "constraint_name", constraint_name);
+	serializer.WritePropertyWithDefault<idx_t>(102, "oid", oid, 0);
 }
 
 unique_ptr<Constraint> Constraint::Deserialize(Deserializer &deserializer) {
 	auto type = deserializer.ReadProperty<ConstraintType>(100, "type");
+	auto constraint_name = deserializer.ReadPropertyWithDefault<string>(101, "constraint_name");
+	auto oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(102, "oid", 0);
 	unique_ptr<Constraint> result;
 	switch (type) {
 	case ConstraintType::CHECK:
@@ -32,6 +36,8 @@ unique_ptr<Constraint> Constraint::Deserialize(Deserializer &deserializer) {
 	default:
 		throw SerializationException("Unsupported type for deserialization of Constraint!");
 	}
+	result->constraint_name = std::move(constraint_name);
+	result->oid = oid;
 	return result;
 }
 
@@ -55,6 +61,8 @@ void ForeignKeyConstraint::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<Identifier>(204, "table", info.table);
 	serializer.WritePropertyWithDefault<vector<PhysicalIndex>>(205, "pk_keys", info.pk_keys);
 	serializer.WritePropertyWithDefault<vector<PhysicalIndex>>(206, "fk_keys", info.fk_keys);
+	serializer.WritePropertyWithDefault<idx_t>(207, "host_referenced_id", host_referenced_id, 0);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(208, "host_pk_column_ids", host_pk_column_ids);
 }
 
 unique_ptr<Constraint> ForeignKeyConstraint::Deserialize(Deserializer &deserializer) {
@@ -66,6 +74,8 @@ unique_ptr<Constraint> ForeignKeyConstraint::Deserialize(Deserializer &deseriali
 	deserializer.ReadPropertyWithDefault<Identifier>(204, "table", result->info.table);
 	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(205, "pk_keys", result->info.pk_keys);
 	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(206, "fk_keys", result->info.fk_keys);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(207, "host_referenced_id", result->host_referenced_id, 0);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(208, "host_pk_column_ids", result->host_pk_column_ids);
 	return std::move(result);
 }
 
@@ -85,6 +95,7 @@ void UniqueConstraint::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<bool>(200, "is_primary_key", is_primary_key);
 	serializer.WriteProperty<LogicalIndex>(201, "index", index);
 	serializer.WritePropertyWithDefault<vector<Identifier>>(202, "columns", columns);
+	serializer.WritePropertyWithDefault<idx_t>(203, "host_index_id", host_index_id, 0);
 }
 
 unique_ptr<Constraint> UniqueConstraint::Deserialize(Deserializer &deserializer) {
@@ -92,6 +103,7 @@ unique_ptr<Constraint> UniqueConstraint::Deserialize(Deserializer &deserializer)
 	deserializer.ReadPropertyWithDefault<bool>(200, "is_primary_key", result->is_primary_key);
 	deserializer.ReadProperty<LogicalIndex>(201, "index", result->index);
 	deserializer.ReadPropertyWithDefault<vector<Identifier>>(202, "columns", result->columns);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(203, "host_index_id", result->host_index_id, 0);
 	return std::move(result);
 }
 

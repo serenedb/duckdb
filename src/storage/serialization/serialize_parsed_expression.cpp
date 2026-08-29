@@ -14,6 +14,7 @@ void ParsedExpression::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<ExpressionType>(101, "type", type);
 	serializer.WritePropertyWithDefault<Identifier>(102, "alias", alias);
 	serializer.WritePropertyWithDefault<optional_idx>(103, "query_location", query_location, optional_idx());
+	serializer.WritePropertyWithDefault<idx_t>(104, "oid", oid, 0);
 }
 
 unique_ptr<ParsedExpression> ParsedExpression::Deserialize(Deserializer &deserializer) {
@@ -21,6 +22,7 @@ unique_ptr<ParsedExpression> ParsedExpression::Deserialize(Deserializer &deseria
 	auto type = deserializer.ReadProperty<ExpressionType>(101, "type");
 	auto alias = deserializer.ReadPropertyWithDefault<Identifier>(102, "alias");
 	auto query_location = deserializer.ReadPropertyWithExplicitDefault<optional_idx>(103, "query_location", optional_idx());
+	auto oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(104, "oid", 0);
 	deserializer.Set<ExpressionType>(type);
 	unique_ptr<ParsedExpression> result;
 	switch (expression_class) {
@@ -87,6 +89,7 @@ unique_ptr<ParsedExpression> ParsedExpression::Deserialize(Deserializer &deseria
 	deserializer.Unset<ExpressionType>();
 	result->alias = std::move(alias);
 	result->query_location = query_location;
+	result->oid = oid;
 	return result;
 }
 

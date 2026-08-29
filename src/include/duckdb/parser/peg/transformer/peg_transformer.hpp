@@ -1453,7 +1453,10 @@ public:
 	                                                                          ParseResult &parse_result);
 	static unique_ptr<CreateStatement> TransformCreateSchemaStmt(PEGTransformer &transformer,
 	                                                             const optional<bool> &if_not_exists,
-	                                                             const QualifiedName &qualified_name);
+	                                                             const optional<QualifiedName> &qualified_name,
+	                                                             const optional<Identifier> &schema_authorization);
+	static unique_ptr<TransformResultValue> TransformSchemaAuthorizationInternal(PEGTransformer &transformer,
+	                                                                             ParseResult &parse_result);
 	static unique_ptr<TransformResultValue> TransformCreateSecretStmtInternal(PEGTransformer &transformer,
 	                                                                          ParseResult &parse_result);
 	static unique_ptr<CreateStatement>
