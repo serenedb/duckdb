@@ -57,6 +57,7 @@ public:
 
 public:
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
+	unique_ptr<CatalogEntry> AlterEntry(ClientContext &context, AlterInfo &info) override;
 	unique_ptr<CreateInfo> GetInfo() const override;
 
 	SequenceData GetData() const;

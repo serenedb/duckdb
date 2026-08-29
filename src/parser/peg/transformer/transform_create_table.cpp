@@ -112,7 +112,7 @@ PEGTransformerFactory::TransformCreateTableAs(PEGTransformer &transformer, optio
 
 ColumnList PEGTransformerFactory::TransformIdentifierList(PEGTransformer &transformer,
                                                           const vector<Identifier> &identifier) {
-	ColumnList result;
+	ColumnList result(/*allow_duplicate_names=*/false, /*case_sensitive=*/true);
 	for (auto &name : identifier) {
 		result.AddColumn(ColumnDefinition(name, LogicalType::UNKNOWN));
 	}

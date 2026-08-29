@@ -69,6 +69,8 @@ public:
 	void AddIndex(unique_ptr<Index> index);
 	//! Removes an index entry from the list of index entries and release any storage the index owns.
 	void RemoveIndex(const Identifier &name);
+	//! Renames the index filed under `name`. Does nothing when no index answers to it.
+	void RenameIndex(const Identifier &name, Identifier new_name);
 	//! Returns true, if the index name does not exist.
 	bool NameIsUnique(const string &name);
 	//! Returns an optional pointer to the index matching the name.
@@ -84,6 +86,13 @@ public:
 		lock_guard<mutex> lock(index_entries_lock);
 		return index_entries.size();
 	}
+	//! Returns true, if any bound index is externally stored. An external index tokenizes on worker
+	//! threads, so it keeps a chunk alive past the iteration that produced it and cannot be handed a
+	//! buffer the scan is about to recycle.
+	bool HasExternal() const;
+	//! Returns true, if the list is non-empty and every index is externally stored: the append then
+	//! carries no constraint to check and no order to keep, so the whole feed can be scanned in parallel.
+	bool AllExternal() const;
 	//! Returns true, if there are unbound indexes.
 	bool HasUnbound() const {
 		lock_guard<mutex> lock(index_entries_lock);

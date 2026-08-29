@@ -100,8 +100,12 @@ static unique_ptr<GlobalTableFunctionState> DuckDBColumnsInit(ClientContext &con
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
 	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden);
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::TABLE_ENTRY,
-		                  [&](CatalogEntry &entry) { result->entries.push_back(entry); });
+		schema.get().Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+			if (entry.type != CatalogType::TABLE_ENTRY && entry.type != CatalogType::VIEW_ENTRY) {
+				return;
+			}
+			result->entries.push_back(entry);
+		});
 	}
 	return std::move(result);
 }
@@ -311,8 +315,8 @@ void ColumnHelper::WriteColumns(idx_t start_col, idx_t end_col, DataChunk &outpu
 
 		database_name.Append(Value(entry.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.catalog.GetOid())));
-		schema_name.Append(Value(entry.schema.name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.schema.oid)));
+		schema_name.Append(Value(entry.ParentSchema().name));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.ParentSchema().oid)));
 		table_name.Append(Value(entry.name));
 		table_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.oid)));
 		column_name.Append(ColumnName(i));

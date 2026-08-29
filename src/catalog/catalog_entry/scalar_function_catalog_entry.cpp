@@ -39,7 +39,7 @@ unique_ptr<CatalogEntry> ScalarFunctionCatalogEntry::AlterEntry(CatalogTransacti
 	new_info.descriptions = descriptions;
 	new_info.descriptions.insert(new_info.descriptions.end(), add_overloads.new_overloads->descriptions.begin(),
 	                             add_overloads.new_overloads->descriptions.end());
-	return make_uniq<ScalarFunctionCatalogEntry>(catalog, schema, new_info);
+	return make_uniq<ScalarFunctionCatalogEntry>(catalog, ParentSchema(), new_info);
 }
 
 } // namespace duckdb

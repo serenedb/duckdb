@@ -19,6 +19,12 @@
 				"id": 102,
 				"name": "name",
 				"type": "Identifier"
+			},
+			{
+				"id": 103,
+				"name": "oid",
+				"type": "idx_t",
+				"default": "0"
 			}
 		],
 		"pointer_type": "none"

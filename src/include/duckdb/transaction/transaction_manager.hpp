@@ -16,6 +16,7 @@
 #include "duckdb/common/atomic.hpp"
 
 namespace duckdb {
+class WriteAheadLog;
 
 class AttachedDatabase;
 class ClientContext;
@@ -50,11 +51,17 @@ public:
 	//! default; managers without MVCC snapshots have nothing to refresh.
 	virtual void RefreshStartTime(Transaction &transaction) {
 	}
-	//! Whether this manager forwards its writes to another database (e.g. a
-	//! storage-less catalog facade); such databases never occupy the
-	//! single-writable-db slot.
-	virtual bool ForwardWrites() const {
-		return false;
+	//! The write-ahead log this manager's catalog changes are recorded in, when that is not the attachment's own.
+	//! Two attachments answering with the same log share it, so one transaction may make catalog changes to both:
+	//! the single-writable-database rule is there because a commit cannot span two logs, not because of the number
+	//! of databases.
+	virtual optional_ptr<WriteAheadLog> CatalogLog() {
+		return nullptr;
+	}
+	//! Make everything this transaction wrote to that log durable, and stop holding it. Called inside the commit as
+	//! soon as the commit walk is done: ahead of this attachment's own rows, so the two logs can only ever diverge in
+	//! the repairable direction, and before anything that waits on another committer.
+	virtual void FlushCatalogLog() {
 	}
 
 	AttachedDatabase &GetDB() {

@@ -123,7 +123,8 @@ public:
 	bool IsPersistent() const;
 
 	void RemoveFromIndexes(const QueryContext &context, TableIndexList &indexes, Vector &row_identifiers, idx_t count,
-	                       IndexRemovalType removal_type, optional_idx active_checkpoint = optional_idx());
+	                       IndexRemovalType removal_type, optional_idx active_checkpoint = optional_idx(),
+	                       bool skip_external = false);
 
 	idx_t Delete(TransactionData transaction, DuckTableEntry &table_entry, row_t *ids, idx_t count);
 	void Update(TransactionData transaction, DuckTableEntry &table_entry, row_t *ids,
@@ -166,7 +167,8 @@ public:
 	shared_ptr<RowGroupCollection> RemoveColumn(idx_t col_idx);
 	shared_ptr<RowGroupCollection> AlterType(ClientContext &context, idx_t changed_idx, const LogicalType &target_type,
 	                                         vector<StorageIndex> bound_columns, Expression &cast_expr);
-	void VerifyNewConstraint(const QueryContext &context, DataTable &parent, const BoundConstraint &constraint);
+	void VerifyNewConstraint(const QueryContext &context, DataTable &parent, const BoundConstraint &constraint,
+	                         const ColumnList &columns, const string &constraint_text);
 
 	void SetStats(TableStatistics &new_stats);
 	void CopyStats(TableStatistics &stats);

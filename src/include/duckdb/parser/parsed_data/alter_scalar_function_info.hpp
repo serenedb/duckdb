@@ -26,6 +26,8 @@ struct AlterScalarFunctionInfo : public AlterInfo {
 
 public:
 	CatalogType GetCatalogType() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 };
 
 //===--------------------------------------------------------------------===//
@@ -44,6 +46,12 @@ struct RenameScalarFunctionInfo : public AlterScalarFunctionInfo {
 public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterScalarFunctionInfo> Deserialize(Deserializer &deserializer);
+
+	bool DependentCanRebind() const override {
+		return true;
+	}
 
 private:
 	RenameScalarFunctionInfo();

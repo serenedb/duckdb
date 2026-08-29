@@ -23,6 +23,7 @@ unique_ptr<AlterInfo> SetColumnCommentInfo::Copy() const {
 	auto result = make_uniq<SetColumnCommentInfo>(GetQualifiedName().Catalog(), GetQualifiedName().Schema(),
 	                                              GetQualifiedName().Name(), column_name, comment_value, if_not_found);
 	result->type = type;
+	result->oid = oid;
 	return std::move(result);
 }
 

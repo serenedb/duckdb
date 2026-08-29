@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_permissions.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
@@ -53,6 +54,11 @@ public:
 	bool temporary;
 	//! Whether or not the entry is an internal entry (cannot be deleted, not dumped, etc)
 	bool internal;
+	//! Whether duckdb owns this entry's durability and storage cleanup. False for entries whose catalog
+	//! implementation persists and reclaims them itself: the commit path must neither write them to the WAL nor
+	//! cast them to a duck entry to release its blocks. Versioning, visibility and conflicts still come from
+	//! CatalogSet -- only the storage half is foreign.
+	bool duck_managed = true;
 	//! The name of the extension that registered this entry (empty for core entries)
 	Identifier extension_name;
 	//! Timestamp at which the catalog entry was created
@@ -61,6 +67,9 @@ public:
 	Value comment;
 	//! (optional) extra data associated with this entry
 	InsertionOrderPreservingMap<string> tags;
+	//! Owner and grants. Empty for a catalog that enforces nothing; a catalog that does keeps them here so that
+	//! every version of an entry carries the ACL the version committing it saw.
+	CatalogPermissions permissions;
 
 private:
 	//! Child entry
@@ -76,6 +85,7 @@ public:
 	virtual void OnDrop();
 
 	virtual unique_ptr<CatalogEntry> Copy(ClientContext &context) const;
+	unique_ptr<CatalogEntry> CopyPreservingIdentity(ClientContext &context) const;
 
 	virtual unique_ptr<CreateInfo> GetInfo() const;
 
@@ -90,6 +100,9 @@ public:
 	virtual const Catalog &ParentCatalog() const;
 	virtual SchemaCatalogEntry &ParentSchema();
 	virtual const SchemaCatalogEntry &ParentSchema() const;
+	//! The schema this entry belongs to, or null for a kind that belongs to none -- a schema itself, or
+	//! an object a catalog holds cluster-wide.
+	virtual optional_ptr<const SchemaCatalogEntry> TryGetParentSchema() const;
 
 	virtual void Verify(Catalog &catalog);
 

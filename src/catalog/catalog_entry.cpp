@@ -44,7 +44,7 @@ unique_ptr<CatalogEntry> CatalogEntry::Copy(ClientContext &context) const {
 }
 
 unique_ptr<CreateInfo> CatalogEntry::GetInfo() const {
-	throw InternalException("Unsupported type for CatalogEntry::GetInfo!");
+	throw InternalException("Unsupported type for CatalogEntry::GetInfo: %s", EnumUtil::ToString(type));
 }
 
 string CatalogEntry::ToSQL() const {
@@ -99,7 +99,19 @@ SchemaCatalogEntry &CatalogEntry::ParentSchema() {
 const SchemaCatalogEntry &CatalogEntry::ParentSchema() const {
 	throw InternalException("CatalogEntry::ParentSchema called on catalog entry without schema");
 }
+
+optional_ptr<const SchemaCatalogEntry> CatalogEntry::TryGetParentSchema() const {
+	return nullptr;
+}
 // LCOV_EXCL_STOP
+
+unique_ptr<CatalogEntry> CatalogEntry::CopyPreservingIdentity(ClientContext &context) const {
+	auto result = Copy(context);
+	result->oid = oid;
+	result->duck_managed = duck_managed;
+	result->permissions = permissions;
+	return result;
+}
 
 void CatalogEntry::Serialize(Serializer &serializer) const {
 	const auto info = GetInfo();

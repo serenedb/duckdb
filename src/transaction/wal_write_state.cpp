@@ -26,6 +26,53 @@
 
 namespace duckdb {
 
+namespace {
+
+//! A same-type CREATE OR REPLACE supersedes one version of an entry with another, which CatalogSet records as an
+//! alter of the version it replaces rather than as a drop and a create.
+bool IsReplaceDefinition(const AlterInfo &info) {
+	if (info.type != AlterType::SET_PERMISSIONS) {
+		return false;
+	}
+	return info.Cast<SetPermissionsInfo>().permissions_alter_type == PermissionsAlterType::REPLACE_DEFINITION;
+}
+
+//! An alter carries no definition, so the log gets the drop and the create the statement performed on the catalog:
+//! replay rebuilds the new version from those, as it did before a replace became an alter.
+void WriteReplaceDefinition(WriteAheadLog &log, CatalogEntry &replaced, CatalogEntry &replacement) {
+	switch (replacement.type) {
+	case CatalogType::TABLE_ENTRY:
+		log.WriteDropTable(replaced.Cast<DuckTableEntry>());
+		log.WriteCreateTable(replacement.Cast<TableCatalogEntry>());
+		break;
+	case CatalogType::VIEW_ENTRY:
+		log.WriteDropView(replaced.Cast<ViewCatalogEntry>());
+		log.WriteCreateView(replacement.Cast<ViewCatalogEntry>());
+		break;
+	case CatalogType::SEQUENCE_ENTRY:
+		log.WriteDropSequence(replaced.Cast<SequenceCatalogEntry>());
+		log.WriteCreateSequence(replacement.Cast<SequenceCatalogEntry>());
+		break;
+	case CatalogType::TYPE_ENTRY:
+		log.WriteDropType(replaced.Cast<TypeCatalogEntry>());
+		log.WriteCreateType(replacement.Cast<TypeCatalogEntry>());
+		break;
+	case CatalogType::MACRO_ENTRY:
+		log.WriteDropMacro(replaced.Cast<ScalarMacroCatalogEntry>());
+		log.WriteCreateMacro(replacement.Cast<ScalarMacroCatalogEntry>());
+		break;
+	case CatalogType::TABLE_MACRO_ENTRY:
+		log.WriteDropTableMacro(replaced.Cast<TableMacroCatalogEntry>());
+		log.WriteCreateTableMacro(replacement.Cast<TableMacroCatalogEntry>());
+		break;
+	case CatalogType::INDEX_ENTRY:
+	default:
+		throw InternalException("Don't know how to replace this type!");
+	}
+}
+
+} // namespace
+
 WALWriteState::WALWriteState(DuckTransaction &transaction_p, WriteAheadLog &log,
                              optional_ptr<StorageCommitState> commit_state)
     : transaction(transaction_p), log(log), commit_state(commit_state), current_table_entry(nullptr) {
@@ -34,13 +81,17 @@ WALWriteState::WALWriteState(DuckTransaction &transaction_p, WriteAheadLog &log,
 void WALWriteState::SwitchTable(DuckTableEntry &table_entry, UndoFlags new_op) {
 	if (current_table_entry.get() != &table_entry) {
 		// write the current table to the log
-		log.WriteSetTable(table_entry.schema.name, table_entry.name);
+		log.WriteSetTable(table_entry.ParentSchema().name, table_entry.name,
+		                  table_entry.GetStorage().GetDataTableInfo()->GetCatalogId());
 		current_table_entry = table_entry;
 	}
 }
 
 void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 	if (entry.temporary || entry.Parent().temporary) {
+		return;
+	}
+	if (!entry.duck_managed || !entry.Parent().duck_managed) {
 		return;
 	}
 
@@ -73,6 +124,17 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 			deserializer.End();
 
 			auto &alter_info = parse_info->Cast<AlterInfo>();
+			// The name in the record is the one the alter named; a catalog that keeps its own definitions has
+			// since renamed the entry, and only the identifier still resolves at replay.
+			if (parent.type == CatalogType::TABLE_ENTRY) {
+				if (auto storage = parent.Cast<TableCatalogEntry>().TryGetStorage()) {
+					alter_info.oid = storage->GetDataTableInfo()->GetCatalogId();
+				}
+			}
+			if (IsReplaceDefinition(alter_info)) {
+				WriteReplaceDefinition(log, entry, parent);
+				break;
+			}
 			log.WriteAlter(entry, alter_info);
 		} else {
 			switch (parent.type) {

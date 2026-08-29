@@ -71,24 +71,51 @@ static void FindForeignKeyInformation(TableCatalogEntry &table, AlterForeignKeyT
 	}
 }
 
+SchemaCatalogSets::SchemaCatalogSets(Catalog &catalog, bool case_sensitive)
+    : identity(make_shared_ptr<SchemaIdentity>()),
+      tables(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultViewGenerator>(catalog, *identity) : nullptr,
+             case_sensitive),
+      indexes(catalog, nullptr, case_sensitive),
+      table_functions(
+          catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultTableFunctionGenerator>(catalog, *identity) : nullptr,
+          case_sensitive),
+      copy_functions(catalog, nullptr, case_sensitive), pragma_functions(catalog, nullptr, case_sensitive),
+      functions(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultFunctionGenerator>(catalog, *identity) : nullptr,
+                case_sensitive),
+      sequences(catalog, nullptr, case_sensitive), collations(catalog, nullptr, case_sensitive),
+      types(catalog, make_uniq<DefaultTypeGenerator>(catalog, *identity), case_sensitive),
+      coordinate_systems(catalog,
+                         catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, *identity)
+                                                   : nullptr,
+                         case_sensitive) {
+	// Each set files its entries by id under the slot Get resolves back to the same set
+	tables.EnableOidLookup(*identity, CatalogType::TABLE_ENTRY);
+	indexes.EnableOidLookup(*identity, CatalogType::INDEX_ENTRY);
+	table_functions.EnableOidLookup(*identity, CatalogType::TABLE_FUNCTION_ENTRY);
+	copy_functions.EnableOidLookup(*identity, CatalogType::COPY_FUNCTION_ENTRY);
+	pragma_functions.EnableOidLookup(*identity, CatalogType::PRAGMA_FUNCTION_ENTRY);
+	functions.EnableOidLookup(*identity, CatalogType::SCALAR_FUNCTION_ENTRY);
+	sequences.EnableOidLookup(*identity, CatalogType::SEQUENCE_ENTRY);
+	collations.EnableOidLookup(*identity, CatalogType::COLLATION_ENTRY);
+	types.EnableOidLookup(*identity, CatalogType::TYPE_ENTRY);
+	coordinate_systems.EnableOidLookup(*identity, CatalogType::COORDINATE_SYSTEM_ENTRY);
+}
+
 DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info)
-    : SchemaCatalogEntry(catalog, info),
-      tables(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultViewGenerator>(catalog, *this) : nullptr),
-      indexes(catalog),
-      table_functions(catalog,
-                      catalog.IsSystemCatalog() ? make_uniq<DefaultTableFunctionGenerator>(catalog, *this) : nullptr),
-      copy_functions(catalog), pragma_functions(catalog),
-      functions(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultFunctionGenerator>(catalog, *this) : nullptr),
-      sequences(catalog), collations(catalog), types(catalog, make_uniq<DefaultTypeGenerator>(catalog, *this)),
-      coordinate_systems(
-          catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, *this) : nullptr) {
+    : DuckSchemaEntry(catalog, info, make_shared_ptr<SchemaCatalogSets>(catalog, false)) {
+}
+
+DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, const shared_ptr<SchemaCatalogSets> &sets_p)
+    : SchemaCatalogEntry(catalog, info, sets_p->GetIdentity()), sets(sets_p) {
 }
 
 unique_ptr<CatalogEntry> DuckSchemaEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateSchemaInfo>();
 
-	auto result = make_uniq<DuckSchemaEntry>(catalog, cast_info);
+	// Shares this schema's contents: the copy supersedes it in the same version chain rather than standing for a
+	// second, empty schema of the same name.
+	auto result = unique_ptr<DuckSchemaEntry>(new DuckSchemaEntry(catalog, cast_info, sets));
 
 	return std::move(result);
 }
@@ -96,7 +123,8 @@ unique_ptr<CatalogEntry> DuckSchemaEntry::Copy(ClientContext &context) const {
 optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction transaction,
                                                              unique_ptr<StandardEntry> entry,
                                                              OnCreateConflict on_conflict,
-                                                             LogicalDependencyList dependencies) {
+                                                             LogicalDependencyList dependencies,
+                                                             optional_ptr<const Identifier> replaces) {
 	auto entry_name = entry->name;
 	auto entry_type = entry->type;
 	auto result = entry.get();
@@ -114,6 +142,8 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 	}
 	// first find the set for this entry
 	auto &set = GetCatalogSet(entry_type);
+	// The containment edge: DROP SCHEMA refuses or cascades through the dependency walk like any
+	// other referenced object.
 	dependencies.AddDependency(*this);
 	if (on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 		auto old_entry = set.GetEntry(transaction, entry_name);
@@ -123,19 +153,11 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 	}
 
 	if (on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
-		// CREATE OR REPLACE: first try to drop the entry
-		auto old_entry = set.GetEntry(transaction, entry_name);
-		if (old_entry) {
-			if (dependencies.Contains(*old_entry)) {
-				throw CatalogException("CREATE OR REPLACE is not allowed to depend on itself");
-			}
-			if (old_entry->type != entry_type) {
-				throw CatalogException("Existing object %s is of type %s, trying to replace with type %s", entry_name,
-				                       CatalogTypeToString(old_entry->type), CatalogTypeToString(entry_type));
-			}
-			OnDropEntry(transaction, *old_entry);
-			(void)set.DropEntry(transaction, entry_name, false, entry->internal);
+		auto &superseded_name = replaces ? *replaces : entry_name;
+		if (!set.CreateOrReplaceEntry(transaction, superseded_name, std::move(entry), dependencies)) {
+			return nullptr;
 		}
+		return result;
 	}
 	// now try to add the entry
 	if (!set.CreateEntry(transaction, entry_name, std::move(entry), dependencies)) {
@@ -408,6 +430,10 @@ SimilarCatalogEntry DuckSchemaEntry::GetSimilarEntry(CatalogTransaction transact
 }
 
 CatalogSet &DuckSchemaEntry::GetCatalogSet(CatalogType type) {
+	return sets->Get(type);
+}
+
+CatalogSet &SchemaCatalogSets::Get(CatalogType type) {
 	switch (type) {
 	case CatalogType::VIEW_ENTRY:
 	case CatalogType::TABLE_ENTRY:
@@ -439,9 +465,22 @@ CatalogSet &DuckSchemaEntry::GetCatalogSet(CatalogType type) {
 	}
 }
 
+void DuckSchemaEntry::Rollback(CatalogEntry &prev_entry) {
+	if (prev_entry.type == CatalogType::SCHEMA_ENTRY) {
+		GetIdentity()->Adopt(prev_entry.Cast<SchemaCatalogEntry>());
+	}
+}
+
+void DuckSchemaEntry::UndoAlter(ClientContext &context, AlterInfo &info) {
+	GetIdentity()->Adopt(*this);
+}
+
 void DuckSchemaEntry::Verify(Catalog &catalog) {
 	InCatalogEntry::Verify(catalog);
+	sets->Verify(catalog);
+}
 
+void SchemaCatalogSets::Verify(Catalog &catalog) {
 	tables.Verify(catalog);
 	indexes.Verify(catalog);
 	table_functions.Verify(catalog);

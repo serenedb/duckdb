@@ -34,6 +34,8 @@ struct CatalogTransaction {
 
 	static CatalogTransaction GetSystemCatalogTransaction(ClientContext &context);
 	static CatalogTransaction GetSystemTransaction(DatabaseInstance &db);
+	//! A transaction reading everything committed so far and nothing in flight
+	static CatalogTransaction GetCommittedTransaction(DatabaseInstance &db);
 };
 
 } // namespace duckdb

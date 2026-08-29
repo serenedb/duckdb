@@ -27,10 +27,10 @@
 namespace duckdb {
 
 class DataTable;
-class DuckTableEntry;
 struct CreateTriggerInfo;
 
 struct RenameColumnInfo;
+struct RenameConstraintInfo;
 struct RenameFieldInfo;
 struct AddColumnInfo;
 struct AddFieldInfo;
@@ -88,10 +88,9 @@ public:
 	DUCKDB_API const ColumnList &GetColumns() const;
 	//! Returns the underlying storage of the table
 	virtual DataTable &GetStorage();
-	//! Returns the DuckTableEntry whose storage backs this table. A catalog that
-	//! delegates storage to a hidden table (e.g. a facade) overrides this so the
-	//! physical insert/update/delete/merge operators target the real table.
-	virtual DuckTableEntry &GetStorageTableEntry(ClientContext &context);
+	//! The underlying storage, or null for a table that owns none. Answerable without a client context, which is
+	//! what the checkpoint needs to decide whether an entry has rows to write.
+	virtual optional_ptr<DataTable> TryGetStorage();
 
 	//! Returns a list of the constraints of the table
 	DUCKDB_API const vector<unique_ptr<Constraint>> &GetConstraints() const;
@@ -111,14 +110,13 @@ public:
 
 	//! Returns the scan function that can be used to scan the given table
 	virtual TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) = 0;
-	//! The catalog whose database is modified when writing this table; a
-	//! catalog that delegates storage to another catalog overrides this so
-	//! binders register the correct database for the transaction.
-	virtual Catalog &GetStorageCatalog(ClientContext &context) {
-		return catalog;
-	}
 	virtual TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
 	                                      const EntryLookupInfo &lookup_info);
+
+	//! The name a query plan shows for a scan of this table. Qualified by default, because a plan over several
+	//! attached catalogs has to say which one it read; a catalog whose relations are all in one database names
+	//! them the way the user wrote them instead.
+	virtual string ScanName() const;
 
 	virtual bool IsDuckTable() const {
 		return false;
@@ -142,6 +140,10 @@ public:
 	//! Returns the storage info of this table
 	virtual TableStorageInfo GetStorageInfo(ClientContext &context) = 0;
 
+	//! Whether every UPDATE of this table runs as a delete + insert regardless of which columns it touches
+	virtual bool ForceUpdateDelAndInsert() const {
+		return false;
+	}
 	virtual void BindUpdateConstraints(Binder &binder, LogicalGet &get, LogicalProjection &proj, LogicalUpdate &update,
 	                                   ClientContext &context);
 
@@ -149,6 +151,10 @@ public:
 	optional_ptr<Constraint> GetPrimaryKey() const;
 	//! Returns true, if the table has a primary key, else false.
 	bool HasPrimaryKey() const;
+	DUCKDB_API static bool IsNotNull(const vector<unique_ptr<Constraint>> &constraints, LogicalIndex index);
+	bool IsNotNull(LogicalIndex index) const {
+		return IsNotNull(constraints, index);
+	}
 
 	virtual LogicalType GetExpectedTypeForInsert(const ColumnDefinition &column) const;
 	virtual unique_ptr<Expression> GetDefaultExpressionForColumn(ClientContext &context, const LogicalType &input_type,
@@ -165,6 +171,8 @@ public:
 	//! Scan all triggers on this table (default: no-op - non-DuckDB tables have no triggers)
 	virtual void ScanTriggers(CatalogTransaction transaction,
 	                          const std::function<void(CatalogEntry &)> &callback) const;
+	//! Drop a trigger by name; false when this table has no trigger by that name (default: it has none at all)
+	virtual bool DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade);
 	//! Collect triggers matching the given event type and for_each granularity, regardless of timing
 	vector<const_reference<TriggerCatalogEntry>>
 	GetTriggersForEvent(CatalogTransaction transaction, TriggerEventType event_type, TriggerForEach for_each) const;

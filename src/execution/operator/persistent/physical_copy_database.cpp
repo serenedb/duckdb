@@ -66,6 +66,10 @@ SourceResultType PhysicalCopyDatabase::GetDataInternal(ExecutionContext &context
 		}
 	}
 
+	if (catalog.OwnsIndexNames()) {
+		return SourceResultType::FINISHED;
+	}
+
 	// Create the indexes after table creation.
 	for (auto &create_info : info->entries) {
 		if (!create_info || create_info->type != CatalogType::INDEX_ENTRY) {

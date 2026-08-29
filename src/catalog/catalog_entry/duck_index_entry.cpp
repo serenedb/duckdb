@@ -11,14 +11,15 @@ IndexDataTableInfo::IndexDataTableInfo(shared_ptr<DataTableInfo> info_p, const I
     : info(std::move(info_p)), index_name(index_name_p) {
 }
 
-void DuckIndexEntry::Rollback(CatalogEntry &) {
-	if (!info) {
+void DuckIndexEntry::Rollback(CatalogEntry &prev_entry) {
+	if (!prev_entry.deleted) {
 		return;
 	}
-	if (!info->info) {
+	auto table_info = TryGetDataTableInfo();
+	if (!table_info) {
 		return;
 	}
-	info->info->GetIndexes().RemoveIndex(name);
+	table_info->GetIndexes().RemoveIndex(name);
 }
 
 DuckIndexEntry::DuckIndexEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateIndexInfo &create_info,
@@ -38,7 +39,7 @@ unique_ptr<CatalogEntry> DuckIndexEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateIndexInfo>();
 
-	auto result = make_uniq<DuckIndexEntry>(catalog, schema, cast_info, info);
+	auto result = make_uniq<DuckIndexEntry>(catalog, Schema(), cast_info, info);
 	result->initial_index_size = initial_index_size;
 
 	return std::move(result);
@@ -56,9 +57,19 @@ DataTableInfo &DuckIndexEntry::GetDataTableInfo() const {
 	return *info->info;
 }
 
+optional_ptr<DataTableInfo> DuckIndexEntry::TryGetDataTableInfo() const {
+	if (!info) {
+		return nullptr;
+	}
+	return info->info.get();
+}
+
 void DuckIndexEntry::CommitDrop(CommitDropState &drop_state) {
-	D_ASSERT(info);
-	drop_state.RemoveIndex(GetDataTableInfo().GetIndexes(), name);
+	auto table_info = TryGetDataTableInfo();
+	if (!table_info) {
+		return;
+	}
+	drop_state.RemoveIndex(table_info->GetIndexes(), name);
 }
 
 } // namespace duckdb

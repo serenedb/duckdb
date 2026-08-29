@@ -72,24 +72,19 @@ unique_ptr<GlobalTableFunctionState> DuckDBTriggersInit(ClientContext &context, 
 	auto result = make_uniq<DuckDBTriggersData>();
 
 	auto schemas = Catalog::GetAllSchemas(context);
-	vector<reference<DuckTableEntry>> tables;
+	vector<reference<TableCatalogEntry>> tables;
 	for (auto &schema : schemas) {
 		schema.get().Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.type != CatalogType::TABLE_ENTRY) {
 				return;
 			}
-			auto &table = entry.Cast<TableCatalogEntry>();
-			if (!table.IsDuckTable()) {
-				return;
-			}
-			auto &duck_table = entry.Cast<DuckTableEntry>();
-			tables.push_back(duck_table);
+			tables.push_back(entry.Cast<TableCatalogEntry>());
 		});
 	}
 	for (auto &table : tables) {
-		auto &duck_table = table.get();
-		auto transaction = CatalogTransaction(duck_table.ParentCatalog(), context);
-		duck_table.ScanTriggers(transaction, [&](CatalogEntry &trigger) {
+		auto &table_entry = table.get();
+		auto transaction = CatalogTransaction(table_entry.ParentCatalog(), context);
+		table_entry.ScanTriggers(transaction, [&](CatalogEntry &trigger) {
 			result->entries.push_back(trigger.Cast<TriggerCatalogEntry>());
 		});
 	}
@@ -125,8 +120,8 @@ void DuckDBTriggersFunction(ClientContext &context, TableFunctionInput &data_p, 
 
 		database_name.Append(Value(trigger.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.catalog.GetOid())));
-		schema_name.Append(Value(trigger.schema.name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.schema.oid)));
+		schema_name.Append(Value(trigger.ParentSchema().name));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.ParentSchema().oid)));
 		trigger_name.Append(Value(trigger.name));
 		trigger_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.oid)));
 		table_name.Append(Value(trigger.base_table->Table()));

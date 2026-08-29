@@ -1,7 +1,6 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception.hpp"
@@ -97,7 +96,7 @@ vector<LogicalType> TableCatalogEntry::GetTypes() const {
 
 unique_ptr<CreateInfo> TableCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateTableInfo>();
-	result->SetQualifiedName(QualifiedName(catalog.GetName(), schema.name, name));
+	result->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchema().name, name));
 	result->columns = columns.Copy();
 	result->constraints.reserve(constraints.size());
 	result->dependencies = dependencies;
@@ -107,7 +106,14 @@ unique_ptr<CreateInfo> TableCatalogEntry::GetInfo() const {
 	result->internal = internal;
 	result->comment = comment;
 	result->tags = tags;
+	result->oid = oid;
+	result->parent_oid = ParentSchema().oid;
 	return std::move(result);
+}
+
+string TableCatalogEntry::ScanName() const {
+	return QualifiedName(catalog.GetName(), ParentSchema().name, name)
+	    .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 }
 
 string TableCatalogEntry::ColumnsToSQL(const ColumnList &columns, const vector<unique_ptr<Constraint>> &constraints) {
@@ -233,8 +239,8 @@ DataTable &TableCatalogEntry::GetStorage() {
 }
 // LCOV_EXCL_STOP
 
-DuckTableEntry &TableCatalogEntry::GetStorageTableEntry(ClientContext &context) {
-	return Cast<DuckTableEntry>();
+optional_ptr<DataTable> TableCatalogEntry::TryGetStorage() {
+	return nullptr;
 }
 
 void LogicalUpdate::BindExtraColumns(TableCatalogEntry &table, LogicalGet &get, LogicalProjection &proj,
@@ -292,7 +298,7 @@ void TableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, L
 	// suppose we have a constraint CHECK(i + j < 10); now we need both i and j to check the constraint
 	// if we are only updating one of the two columns we add the other one to the UPDATE set
 	// with a "useless" update (i.e. i=i) so we can verify that the CHECK constraint is not violated
-	auto bound_constraints = binder.BindConstraints(constraints, name, columns);
+	auto bound_constraints = binder.BindConstraints(*this);
 	for (auto &constraint : bound_constraints) {
 		if (constraint->type == ConstraintType::CHECK) {
 			auto &check = constraint->Cast<BoundCheckConstraint>();
@@ -302,7 +308,8 @@ void TableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, L
 	}
 	// for index updates we always turn any update into an insert and a delete
 	// we thus need all the columns to be available, hence we check if the update touches any index columns
-	update.update_is_del_and_insert = Settings::Get<ForceUpdateToDelAndInsertSetting>(context);
+	update.update_is_del_and_insert =
+	    ForceUpdateDelAndInsert() || Settings::Get<ForceUpdateToDelAndInsertSetting>(context);
 	TableStorageInfo table_storage_info = GetStorageInfo(context);
 	for (auto index : table_storage_info.index_info) {
 		for (auto &column : update.columns) {
@@ -350,6 +357,18 @@ bool TableCatalogEntry::HasPrimaryKey() const {
 	return GetPrimaryKey() != nullptr;
 }
 
+bool TableCatalogEntry::IsNotNull(const vector<unique_ptr<Constraint>> &constraints, LogicalIndex index) {
+	for (const auto &constraint : constraints) {
+		if (constraint->type != ConstraintType::NOT_NULL) {
+			continue;
+		}
+		if (constraint->Cast<NotNullConstraint>().index == index) {
+			return true;
+		}
+	}
+	return false;
+}
+
 LogicalType TableCatalogEntry::GetExpectedTypeForInsert(const ColumnDefinition &column) const {
 	return column.Type();
 }
@@ -384,6 +403,10 @@ optional_ptr<CatalogEntry> TableCatalogEntry::CreateTrigger(CatalogTransaction t
 void TableCatalogEntry::ScanTriggers(CatalogTransaction transaction,
                                      const std::function<void(CatalogEntry &)> &callback) const {
 	// Default: no triggers (non-DuckDB tables do not support triggers)
+}
+
+bool TableCatalogEntry::DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade) {
+	return false;
 }
 
 vector<const_reference<TriggerCatalogEntry>> TableCatalogEntry::GetTriggersForEvent(CatalogTransaction transaction,

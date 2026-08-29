@@ -10,6 +10,7 @@
 
 #include "duckdb/parser/column_definition.hpp"
 #include "duckdb/common/identifier.hpp"
+#include "duckdb/common/optional_ptr.hpp"
 
 namespace duckdb {
 
@@ -19,8 +20,11 @@ public:
 	class ColumnListIterator;
 
 public:
-	DUCKDB_API explicit ColumnList(bool allow_duplicate_names = false);
-	DUCKDB_API explicit ColumnList(vector<ColumnDefinition> columns, bool allow_duplicate_names = false);
+	//! `case_sensitive` keys the columns by the exact name rather than by duckdb's case-insensitive identifier
+	//! semantics, for a catalog that folds unquoted names itself: postgres accepts `t("A" int, "a" int)`.
+	DUCKDB_API explicit ColumnList(bool allow_duplicate_names = false, bool case_sensitive = false);
+	DUCKDB_API explicit ColumnList(vector<ColumnDefinition> columns, bool allow_duplicate_names = false,
+	                               bool case_sensitive = false);
 
 	DUCKDB_API void AddColumn(ColumnDefinition column);
 	void Finalize();
@@ -28,6 +32,7 @@ public:
 	DUCKDB_API const ColumnDefinition &GetColumn(LogicalIndex index) const;
 	DUCKDB_API const ColumnDefinition &GetColumn(PhysicalIndex index) const;
 	DUCKDB_API const ColumnDefinition &GetColumn(const Identifier &name) const;
+	DUCKDB_API optional_ptr<const ColumnDefinition> TryGetColumn(const Identifier &name) const;
 	DUCKDB_API ColumnDefinition &GetColumnMutable(LogicalIndex index);
 	DUCKDB_API ColumnDefinition &GetColumnMutable(PhysicalIndex index);
 	DUCKDB_API ColumnDefinition &GetColumnMutable(const Identifier &name);
@@ -61,6 +66,13 @@ public:
 		allow_duplicate_names = allow_duplicates;
 	}
 
+	bool IsCaseSensitive() const {
+		return case_sensitive;
+	}
+	//! Re-key the list. Rebuilding a definition column by column has to carry the source's keying over, or a table
+	//! holding both "A" and "a" loses one the first time it is altered.
+	DUCKDB_API void SetCaseSensitive(bool case_sensitive);
+
 private:
 	vector<ColumnDefinition> columns;
 	//! A map of column name to column index
@@ -69,6 +81,8 @@ private:
 	vector<idx_t> physical_columns;
 	//! Allow duplicate names or not
 	bool allow_duplicate_names;
+	//! Match column names exactly rather than case-insensitively
+	bool case_sensitive;
 
 private:
 	void AddToNameMap(ColumnDefinition &column);

@@ -127,7 +127,7 @@ void PhysicalExport::ExtractEntries(ClientContext &context, vector<reference<Sch
 			if (entry.internal) {
 				return;
 			}
-			if (entry.type != CatalogType::TABLE_ENTRY) {
+			if (entry.type == CatalogType::VIEW_ENTRY) {
 				result.views.push_back(entry);
 			}
 			if (entry.type == CatalogType::TABLE_ENTRY) {
@@ -135,7 +135,7 @@ void PhysicalExport::ExtractEntries(ClientContext &context, vector<reference<Sch
 			}
 		});
 		schema.Scan(context, CatalogType::SEQUENCE_ENTRY, [&](CatalogEntry &entry) {
-			if (entry.internal) {
+			if (entry.internal || entry.type != CatalogType::SEQUENCE_ENTRY) {
 				return;
 			}
 			result.sequences.push_back(entry);

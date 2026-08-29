@@ -64,9 +64,11 @@ enum class DataTableVersion {
 class DataTable : public enable_shared_from_this<DataTable> {
 public:
 	//! Constructs a new data table from an (optional) set of persistent segments
+	//! `catalog_id` is the identifier a host catalog knows this table by, zero when the definition is duckdb's own.
+	//! It is what the WAL and the checkpoint manifest file the rows under, so a rename cannot reach it.
 	DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager, const string &schema,
 	          const string &table, vector<ColumnDefinition> column_definitions_p,
-	          unique_ptr<PersistentTableData> data = nullptr);
+	          unique_ptr<PersistentTableData> data = nullptr, idx_t catalog_id = 0);
 	//! Constructs a DataTable as a delta on an existing data table with a newly added column
 	DataTable(ClientContext &context, DataTable &parent, ColumnDefinition &new_column, Expression &default_value);
 	//! Constructs a DataTable as a delta on an existing data table but with one column removed
@@ -74,8 +76,11 @@ public:
 	//! Constructs a DataTable as a delta on an existing data table but with one column changed type
 	DataTable(ClientContext &context, DataTable &parent, idx_t changed_idx, const LogicalType &target_type,
 	          const vector<StorageIndex> &bound_columns, Expression &cast_expr);
-	//! Constructs a DataTable as a delta on an existing data table but with one column added new constraint
-	DataTable(ClientContext &context, DataTable &parent, BoundConstraint &constraint);
+	//! Constructs a DataTable as a delta on an existing data table but with one column added new constraint.
+	//! `columns` and `constraint_text` are the catalog's, and are what a violation among the existing rows is
+	//! reported with: the physical column list is the shape the rows are in, which a rename never reaches.
+	DataTable(ClientContext &context, DataTable &parent, BoundConstraint &constraint, const ColumnList &columns,
+	          const string &constraint_text);
 
 	//! A reference to the database instance
 	AttachedDatabase &db;
@@ -215,7 +220,8 @@ public:
 	static ErrorData AppendToIndexes(TableIndexList &indexes, optional_ptr<TableIndexList> delete_indexes,
 	                                 DataChunk &table_chunk, DataChunk &index_chunk,
 	                                 const vector<StorageIndex> &mapped_column_ids, row_t row_start,
-	                                 const IndexAppendMode index_append_mode, optional_idx active_checkpoint);
+	                                 const IndexAppendMode index_append_mode, optional_idx active_checkpoint,
+	                                 bool skip_external = false);
 	ErrorData AppendToIndexes(optional_ptr<TableIndexList> delete_indexes, DataChunk &table_chunk,
 	                          DataChunk &index_chunk, const vector<StorageIndex> &mapped_column_ids, row_t row_start,
 	                          const IndexAppendMode index_append_mode);
@@ -325,8 +331,11 @@ public:
 	vector<PartitionStatistics> GetPartitionStats(ClientContext &context);
 
 private:
+	//! Lets the host re-inject its external indexes after the column layout changed.
+	void RefreshExternalIndexes();
 	//! Verify the new added constraints against current persistent&local data
-	void VerifyNewConstraint(LocalStorage &local_storage, DataTable &parent, const BoundConstraint &constraint);
+	void VerifyNewConstraint(LocalStorage &local_storage, DataTable &parent, const BoundConstraint &constraint,
+	                         const ColumnList &columns, const string &constraint_text);
 
 	//! Verify constraints with a chunk from the Update containing only the specified column_ids
 	void VerifyUpdateConstraints(ConstraintState &state, ClientContext &context, DataChunk &chunk,

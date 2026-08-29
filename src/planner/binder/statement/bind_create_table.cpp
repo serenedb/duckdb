@@ -88,7 +88,11 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
-	return BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
+	// In the table's own catalog and schema, not the caller's: a CHECK may call a function of the schema it was
+	// written in, like a DEFAULT (BindDefaultValues) or a view body. A child binder scopes the path to this bind.
+	auto binder = Binder::CreateBinder(context);
+	binder->SetSearchPath(table.ParentSchema().catalog, table.ParentSchema().name);
+	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const vector<unique_ptr<Constraint>> &constraints,
@@ -267,7 +271,8 @@ void Binder::BindGeneratedColumns(BoundCreateTableInfo &info) {
 	// Create a new binder because we dont need (or want) these bindings in this scope
 	auto binder = Binder::CreateBinder(context);
 	binder->SetCatalogLookupCallback(entry_retriever.GetCallback());
-	binder->bind_context.AddGenericBinding(table_index, base.GetTableName(), names, types);
+	binder->bind_context.AddGenericBinding(table_index, base.GetTableName(), names, types,
+	                                       base.columns.IsCaseSensitive());
 	auto expr_binder = ExpressionBinder(*binder, context);
 	ErrorData ignore;
 	auto table_binding = binder->bind_context.GetBinding(base.GetTableName(), ignore);
@@ -580,8 +585,8 @@ static void BindCreateTableConstraints(CreateTableInfo &create_info, CatalogEntr
 		}
 
 		auto &pk_table_entry_ptr = table_entry->Cast<TableCatalogEntry>();
-		fk.info.schema = pk_table_entry_ptr.schema.name;
-		if (&pk_table_entry_ptr.schema != &schema) {
+		fk.info.schema = pk_table_entry_ptr.ParentSchema().name;
+		if (&pk_table_entry_ptr.ParentSchema() != &schema) {
 			throw BinderException("Creating foreign keys across different schemas or catalogs is not supported");
 		}
 		FindMatchingPrimaryKeyColumns(pk_table_entry_ptr.GetColumns(), pk_table_entry_ptr.GetConstraints(), fk);
@@ -611,6 +616,9 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 	auto result = make_uniq<BoundCreateTableInfo>(schema, std::move(info));
 	auto &dependencies = result->dependencies;
 	auto &catalog = schema.ParentCatalog();
+	// The parser keeps every column it read, distinguishing them exactly; which of them are actually one column
+	// is the destination catalog's rule, and this is the first point that knows which catalog that is.
+	base.columns.SetCaseSensitive(catalog.MatchesNamesExactly());
 	optional_ptr<StorageManager> storage_manager;
 	if (catalog.IsDuckCatalog() && !catalog.InMemory()) {
 		storage_manager = StorageManager::Get(catalog);
@@ -645,7 +653,7 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 					target_col_names.emplace_back(names[i]);
 				}
 			}
-			ColumnList new_columns;
+			ColumnList new_columns(/*allow_duplicate_names=*/false, base.columns.IsCaseSensitive());
 			for (idx_t i = 0; i < target_col_names.size(); i++) {
 				new_columns.AddColumn(ColumnDefinition(Identifier(target_col_names[i]), sql_types[i]));
 			}
@@ -704,11 +712,6 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 			                  schema_name.GetIdentifierName());
 		}
 	}
-
-	// SereneDB fork: allow zero-physical-column tables (e.g. CREATE TABLE t();)
-	// so that indexes / constraints can still be attached later.
-
-	result->dependencies.VerifyDependencies(schema.catalog, result->Base().GetTableName());
 
 #ifdef DEBUG
 	// Ensure all types are bound

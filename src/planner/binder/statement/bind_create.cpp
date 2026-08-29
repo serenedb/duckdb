@@ -59,7 +59,7 @@ static unique_ptr<CommonTableExpressionInfo> MakeTriggerValidationCTE(const Tabl
 	auto alias_select = make_uniq<SelectNode>();
 	alias_select->select_list.push_back(make_uniq<StarExpression>());
 	auto alias_table_ref = make_uniq<BaseTableRef>();
-	alias_table_ref->SetQualifiedName(QualifiedName(table.catalog.GetName(), table.schema.name, table.name));
+	alias_table_ref->SetQualifiedName(QualifiedName(table.catalog.GetName(), table.ParentSchema().name, table.name));
 	alias_select->from_table = std::move(alias_table_ref);
 	auto alias_cte = make_uniq<CommonTableExpressionInfo>();
 	alias_cte->query_node = std::move(alias_select);
@@ -303,7 +303,22 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 	// try to bind each of the included functions
 	vector_of_logical_type_set_t type_overloads;
 	auto &base = info.Cast<CreateMacroInfo>();
+	const auto collect_dependencies = Settings::Get<EnableMacroDependenciesSetting>(context);
 	for (auto &function : base.macros) {
+		// Each overload records what its own bind resolves -- parameter and
+		// return types on this binder, bodies on the child binders that
+		// inherit the callback at creation. The entry's list is the union
+		// over the set, so a later merge or per-signature drop never has to
+		// re-bind the others.
+		if (collect_dependencies) {
+			entry_retriever.SetCallback([&function, &catalog](CatalogEntry &entry) {
+				if (&catalog != &entry.ParentCatalog()) {
+					// Don't register any cross-catalog dependencies
+					return;
+				}
+				function->dependencies.AddDependency(entry);
+			});
+		}
 		if (!store_types) {
 			for (const auto &type : function->types) {
 				if (type.id() != LogicalTypeId::UNKNOWN) {
@@ -396,8 +411,8 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		    make_uniq<DummyBinding>(dummy_types, dummy_names, base.GetFunctionName().GetIdentifierName());
 		macro_binding = this_macro_binding.get();
 
-		auto &dependencies = base.dependencies;
-		const auto should_create_dependencies = Settings::Get<EnableMacroDependenciesSetting>(context);
+		auto &dependencies = function->dependencies;
+		const auto should_create_dependencies = collect_dependencies;
 		const auto binder_callback = [&dependencies, &catalog](CatalogEntry &entry) {
 			if (&catalog != &entry.ParentCatalog()) {
 				// Don't register any cross-catalog dependencies
@@ -587,6 +602,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			error.Throw();
 		}
 	}
+	entry_retriever.SetCallback(nullptr);
 
 	return BindCreateSchema(info);
 }
@@ -657,8 +673,8 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	auto &table = *table_ptr;
 
 	// Trigger inherits catalog/schema from the base table
-	create_trigger_info.SetQualifiedName(
-	    QualifiedName(table.catalog.GetName(), table.schema.name, create_trigger_info.GetQualifiedName().Name()));
+	create_trigger_info.SetQualifiedName(QualifiedName(table.catalog.GetName(), table.ParentSchema().name,
+	                                                   create_trigger_info.GetQualifiedName().Name()));
 
 	auto &schema = BindCreateSchema(create_trigger_info);
 

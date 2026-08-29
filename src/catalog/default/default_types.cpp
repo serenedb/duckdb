@@ -454,120 +454,125 @@ extern "C" __attribute__((weak)) const duckdb::DefaultType *duckdb_external_type
 
 namespace {
 
-using builtin_type_array = std::array<DefaultType, 82>;
+struct BuiltinType {
+	const char *name;
+	LogicalTypeId type;
+	bind_logical_type_function_t bind_function;
+};
 
-// Lazy-initialized to avoid static initialization order issues with LogicalType.
-static const builtin_type_array &GetBuiltinTypes() {
-	static const builtin_type_array BUILTIN_TYPES = {
-	    {{"decimal", LogicalTypeId::DECIMAL, BindDecimalType},
-	     {"dec", LogicalTypeId::DECIMAL, BindDecimalType},
-	     {"numeric", LogicalTypeId::DECIMAL, BindDecimalType},
-	     {"time", LogicalTypeId::TIME, nullptr},
-	     {"time_ns", LogicalTypeId::TIME_NS, nullptr},
-	     {"date", LogicalTypeId::DATE, nullptr},
-	     {"timestamp", LogicalTypeId::TIMESTAMP, BindTimestampType},
-	     {"datetime", LogicalTypeId::TIMESTAMP, BindTimestampType},
-	     {"timestamp_us", LogicalTypeId::TIMESTAMP, nullptr},
-	     {"timestamp_ms", LogicalTypeId::TIMESTAMP_MS, nullptr},
-	     {"timestamp_ns", LogicalTypeId::TIMESTAMP_NS, nullptr},
-	     {"timestamp_s", LogicalTypeId::TIMESTAMP_SEC, nullptr},
-	     {"timestamptz", LogicalTypeId::TIMESTAMP_TZ, nullptr},
-	     {"timestamp with time zone", LogicalTypeId::TIMESTAMP_TZ, nullptr},
-	     {"timestamptz_ns", LogicalTypeId::TIMESTAMP_TZ_NS, nullptr},
-	     {"timetz", LogicalTypeId::TIME_TZ, nullptr},
-	     {"time with time zone", LogicalTypeId::TIME_TZ, nullptr},
-	     {"interval", LogicalTypeId::INTERVAL, BindIntervalType},
-	     {"varchar", LogicalTypeId::VARCHAR, BindVarcharType},
-	     {"bpchar", LogicalTypeId::VARCHAR, BindVarcharType},
-	     {"string", LogicalTypeId::VARCHAR, BindVarcharType},
-	     {"char", LogicalTypeId::VARCHAR, BindVarcharType},
-	     {"nvarchar", LogicalTypeId::VARCHAR, BindVarcharType},
-	     {"text", LogicalTypeId::VARCHAR, BindVarcharType},
-	     {"blob", LogicalTypeId::BLOB, nullptr},
-	     {"bytea", LogicalTypeId::BLOB, nullptr},
-	     {"varbinary", LogicalTypeId::BLOB, nullptr},
-	     {"binary", LogicalTypeId::BLOB, nullptr},
-	     {"hugeint", LogicalTypeId::HUGEINT, nullptr},
-	     {"int128", LogicalTypeId::HUGEINT, nullptr},
-	     {"uhugeint", LogicalTypeId::UHUGEINT, nullptr},
-	     {"uint128", LogicalTypeId::UHUGEINT, nullptr},
-	     {"bigint", LogicalTypeId::BIGINT, nullptr},
-	     {"oid", LogicalTypeId::BIGINT, nullptr},
-	     {"long", LogicalTypeId::BIGINT, nullptr},
-	     {"int8", LogicalTypeId::BIGINT, nullptr},
-	     {"int64", LogicalTypeId::BIGINT, nullptr},
-	     {"ubigint", LogicalTypeId::UBIGINT, nullptr},
-	     {"uint64", LogicalTypeId::UBIGINT, nullptr},
-	     {"integer", LogicalTypeId::INTEGER, nullptr},
-	     {"int", LogicalTypeId::INTEGER, nullptr},
-	     {"int4", LogicalTypeId::INTEGER, nullptr},
-	     {"signed", LogicalTypeId::INTEGER, nullptr},
-	     {"integral", LogicalTypeId::INTEGER, nullptr},
-	     {"int32", LogicalTypeId::INTEGER, nullptr},
-	     {"uinteger", LogicalTypeId::UINTEGER, nullptr},
-	     {"uint32", LogicalTypeId::UINTEGER, nullptr},
-	     {"smallint", LogicalTypeId::SMALLINT, nullptr},
-	     {"int2", LogicalTypeId::SMALLINT, nullptr},
-	     {"short", LogicalTypeId::SMALLINT, nullptr},
-	     {"int16", LogicalTypeId::SMALLINT, nullptr},
-	     {"usmallint", LogicalTypeId::USMALLINT, nullptr},
-	     {"uint16", LogicalTypeId::USMALLINT, nullptr},
-	     {"tinyint", LogicalTypeId::TINYINT, nullptr},
-	     {"int1", LogicalTypeId::TINYINT, nullptr},
-	     {"utinyint", LogicalTypeId::UTINYINT, nullptr},
-	     {"uint8", LogicalTypeId::UTINYINT, nullptr},
-	     {"struct", LogicalTypeId::STRUCT, BindStructType},
-	     {"row", LogicalTypeId::STRUCT, BindStructType},
-	     {"list", LogicalTypeId::LIST, BindListType},
-	     {"array", LogicalTypeId::ARRAY, BindArrayType},
-	     {"map", LogicalTypeId::MAP, BindMapType},
-	     {"union", LogicalTypeId::UNION, BindUnionType},
-	     {"bit", LogicalTypeId::BIT, BindBitType},
-	     {"bitstring", LogicalTypeId::BIT, BindBitType},
-	     {"variant", LogicalTypeId::VARIANT, BindVariantType},
-	     {"bignum", LogicalTypeId::BIGNUM, nullptr},
-	     {"varint", LogicalTypeId::BIGNUM, nullptr},
-	     {"boolean", LogicalTypeId::BOOLEAN, nullptr},
-	     {"bool", LogicalTypeId::BOOLEAN, nullptr},
-	     {"logical", LogicalTypeId::BOOLEAN, nullptr},
-	     {"uuid", LogicalTypeId::UUID, nullptr},
-	     {"guid", LogicalTypeId::UUID, nullptr},
-	     {"enum", LogicalTypeId::ENUM, BindEnumType},
-	     {"null", LogicalTypeId::SQLNULL, nullptr},
-	     {"float", LogicalTypeId::FLOAT, nullptr},
-	     {"real", LogicalTypeId::FLOAT, nullptr},
-	     {"float4", LogicalTypeId::FLOAT, nullptr},
-	     {"double", LogicalTypeId::DOUBLE, nullptr},
-	     {"float8", LogicalTypeId::DOUBLE, nullptr},
-	     {"geometry", LogicalTypeId::GEOMETRY, BindGeometryType},
-	     {"type", LogicalTypeId::TYPE, nullptr}}};
-	return BUILTIN_TYPES;
-}
+using builtin_type_array = std::array<BuiltinType, 82>;
 
-optional_ptr<const DefaultType> TryGetDefaultTypeEntry(const Identifier &name) {
+const builtin_type_array BUILTIN_TYPES = {{{"decimal", LogicalTypeId::DECIMAL, BindDecimalType},
+                                           {"dec", LogicalTypeId::DECIMAL, BindDecimalType},
+                                           {"numeric", LogicalTypeId::DECIMAL, BindDecimalType},
+                                           {"time", LogicalTypeId::TIME, nullptr},
+                                           {"time_ns", LogicalTypeId::TIME_NS, nullptr},
+                                           {"date", LogicalTypeId::DATE, nullptr},
+                                           {"timestamp", LogicalTypeId::TIMESTAMP, BindTimestampType},
+                                           {"datetime", LogicalTypeId::TIMESTAMP, BindTimestampType},
+                                           {"timestamp_us", LogicalTypeId::TIMESTAMP, nullptr},
+                                           {"timestamp_ms", LogicalTypeId::TIMESTAMP_MS, nullptr},
+                                           {"timestamp_ns", LogicalTypeId::TIMESTAMP_NS, nullptr},
+                                           {"timestamp_s", LogicalTypeId::TIMESTAMP_SEC, nullptr},
+                                           {"timestamptz", LogicalTypeId::TIMESTAMP_TZ, nullptr},
+                                           {"timestamp with time zone", LogicalTypeId::TIMESTAMP_TZ, nullptr},
+                                           {"timestamptz_ns", LogicalTypeId::TIMESTAMP_TZ_NS, nullptr},
+                                           {"timetz", LogicalTypeId::TIME_TZ, nullptr},
+                                           {"time with time zone", LogicalTypeId::TIME_TZ, nullptr},
+                                           {"interval", LogicalTypeId::INTERVAL, BindIntervalType},
+                                           {"varchar", LogicalTypeId::VARCHAR, BindVarcharType},
+                                           {"bpchar", LogicalTypeId::VARCHAR, BindVarcharType},
+                                           {"string", LogicalTypeId::VARCHAR, BindVarcharType},
+                                           {"char", LogicalTypeId::VARCHAR, BindVarcharType},
+                                           {"nvarchar", LogicalTypeId::VARCHAR, BindVarcharType},
+                                           {"text", LogicalTypeId::VARCHAR, BindVarcharType},
+                                           {"blob", LogicalTypeId::BLOB, nullptr},
+                                           {"bytea", LogicalTypeId::BLOB, nullptr},
+                                           {"varbinary", LogicalTypeId::BLOB, nullptr},
+                                           {"binary", LogicalTypeId::BLOB, nullptr},
+                                           {"hugeint", LogicalTypeId::HUGEINT, nullptr},
+                                           {"int128", LogicalTypeId::HUGEINT, nullptr},
+                                           {"uhugeint", LogicalTypeId::UHUGEINT, nullptr},
+                                           {"uint128", LogicalTypeId::UHUGEINT, nullptr},
+                                           {"bigint", LogicalTypeId::BIGINT, nullptr},
+                                           {"oid", LogicalTypeId::BIGINT, nullptr},
+                                           {"long", LogicalTypeId::BIGINT, nullptr},
+                                           {"int8", LogicalTypeId::BIGINT, nullptr},
+                                           {"int64", LogicalTypeId::BIGINT, nullptr},
+                                           {"ubigint", LogicalTypeId::UBIGINT, nullptr},
+                                           {"uint64", LogicalTypeId::UBIGINT, nullptr},
+                                           {"integer", LogicalTypeId::INTEGER, nullptr},
+                                           {"int", LogicalTypeId::INTEGER, nullptr},
+                                           {"int4", LogicalTypeId::INTEGER, nullptr},
+                                           {"signed", LogicalTypeId::INTEGER, nullptr},
+                                           {"integral", LogicalTypeId::INTEGER, nullptr},
+                                           {"int32", LogicalTypeId::INTEGER, nullptr},
+                                           {"uinteger", LogicalTypeId::UINTEGER, nullptr},
+                                           {"uint32", LogicalTypeId::UINTEGER, nullptr},
+                                           {"smallint", LogicalTypeId::SMALLINT, nullptr},
+                                           {"int2", LogicalTypeId::SMALLINT, nullptr},
+                                           {"short", LogicalTypeId::SMALLINT, nullptr},
+                                           {"int16", LogicalTypeId::SMALLINT, nullptr},
+                                           {"usmallint", LogicalTypeId::USMALLINT, nullptr},
+                                           {"uint16", LogicalTypeId::USMALLINT, nullptr},
+                                           {"tinyint", LogicalTypeId::TINYINT, nullptr},
+                                           {"int1", LogicalTypeId::TINYINT, nullptr},
+                                           {"utinyint", LogicalTypeId::UTINYINT, nullptr},
+                                           {"uint8", LogicalTypeId::UTINYINT, nullptr},
+                                           {"struct", LogicalTypeId::STRUCT, BindStructType},
+                                           {"row", LogicalTypeId::STRUCT, BindStructType},
+                                           {"list", LogicalTypeId::LIST, BindListType},
+                                           {"array", LogicalTypeId::ARRAY, BindArrayType},
+                                           {"map", LogicalTypeId::MAP, BindMapType},
+                                           {"union", LogicalTypeId::UNION, BindUnionType},
+                                           {"bit", LogicalTypeId::BIT, BindBitType},
+                                           {"bitstring", LogicalTypeId::BIT, BindBitType},
+                                           {"variant", LogicalTypeId::VARIANT, BindVariantType},
+                                           {"bignum", LogicalTypeId::BIGNUM, nullptr},
+                                           {"varint", LogicalTypeId::BIGNUM, nullptr},
+                                           {"boolean", LogicalTypeId::BOOLEAN, nullptr},
+                                           {"bool", LogicalTypeId::BOOLEAN, nullptr},
+                                           {"logical", LogicalTypeId::BOOLEAN, nullptr},
+                                           {"uuid", LogicalTypeId::UUID, nullptr},
+                                           {"guid", LogicalTypeId::UUID, nullptr},
+                                           {"enum", LogicalTypeId::ENUM, BindEnumType},
+                                           {"null", LogicalTypeId::SQLNULL, nullptr},
+                                           {"float", LogicalTypeId::FLOAT, nullptr},
+                                           {"real", LogicalTypeId::FLOAT, nullptr},
+                                           {"float4", LogicalTypeId::FLOAT, nullptr},
+                                           {"double", LogicalTypeId::DOUBLE, nullptr},
+                                           {"float8", LogicalTypeId::DOUBLE, nullptr},
+                                           {"geometry", LogicalTypeId::GEOMETRY, BindGeometryType},
+                                           {"type", LogicalTypeId::TYPE, nullptr}}};
+
+const case_insensitive_map_view_t<DefaultType> &GetTypeIndex() {
 	// Check external types first so they can override builtins (e.g. oid with alias).
 	static const auto type_index = [] {
-		case_insensitive_map_view_t<const DefaultType *> m;
-		auto &internal_types = GetBuiltinTypes();
+		case_insensitive_map_view_t<DefaultType> m;
+		idx_t count = 0;
+		const DefaultType *external_types = nullptr;
 		if (duckdb_external_types) {
-			idx_t count = 0;
-			const auto *external_types = duckdb_external_types(&count);
-			m.reserve(internal_types.size() + count);
-			for (idx_t i = 0; i < count; i++) {
-				m.try_emplace(external_types[i].name, &external_types[i]);
-			}
-		} else {
-			m.reserve(internal_types.size());
+			external_types = duckdb_external_types(&count);
 		}
-		for (auto &type : internal_types) {
-			m.try_emplace(type.name, &type);
+		m.reserve(BUILTIN_TYPES.size() + count);
+		for (idx_t i = 0; i < count; i++) {
+			m.try_emplace(external_types[i].name, external_types[i]);
+		}
+		for (auto &type : BUILTIN_TYPES) {
+			m.try_emplace(type.name, DefaultType {type.name, type.type, type.bind_function});
 		}
 		return m;
 	}();
-	if (auto it = type_index.find(name.GetIdentifierName()); it != type_index.end()) {
-		return it->second;
+	return type_index;
+}
+
+optional_ptr<const DefaultType> TryGetDefaultTypeEntry(const Identifier &name) {
+	auto &type_index = GetTypeIndex();
+	auto entry = type_index.find(name.GetIdentifierName());
+	if (entry == type_index.end()) {
+		return nullptr;
 	}
-	return nullptr;
+	return &entry->second;
 }
 
 } // namespace
@@ -606,13 +611,13 @@ LogicalType DefaultTypeGenerator::TryDefaultBind(const string &name, const vecto
 	return entry->bind_function(input);
 }
 
-DefaultTypeGenerator::DefaultTypeGenerator(Catalog &catalog, SchemaCatalogEntry &schema)
-    : DefaultGenerator(catalog), schema(schema) {
+DefaultTypeGenerator::DefaultTypeGenerator(Catalog &catalog, SchemaIdentity &identity)
+    : DefaultGenerator(catalog), identity(identity) {
 }
 
 unique_ptr<CatalogEntry> DefaultTypeGenerator::CreateDefaultEntry(ClientContext &context,
                                                                   const Identifier &entry_name) {
-	if (schema.name != DEFAULT_SCHEMA) {
+	if (identity.Schema().name != DEFAULT_SCHEMA) {
 		return nullptr;
 	}
 	auto entry = TryGetDefaultTypeEntry(entry_name);
@@ -625,24 +630,16 @@ unique_ptr<CatalogEntry> DefaultTypeGenerator::CreateDefaultEntry(ClientContext 
 	info.internal = true;
 	info.temporary = true;
 	info.bind_function = entry->bind_function;
-	return make_uniq_base<CatalogEntry, TypeCatalogEntry>(catalog, schema, info);
+	return make_uniq_base<CatalogEntry, TypeCatalogEntry>(catalog, identity.Schema(), info);
 }
 
 vector<Identifier> DefaultTypeGenerator::GetDefaultEntries() {
 	vector<Identifier> result;
-	if (schema.name != DEFAULT_SCHEMA) {
+	if (identity.Schema().name != DEFAULT_SCHEMA) {
 		return result;
 	}
-	auto &internal_types = GetBuiltinTypes();
-	for (auto &type : internal_types) {
-		result.emplace_back(StringUtil::Lower(type.name));
-	}
-	if (duckdb_external_types) {
-		idx_t count = 0;
-		const auto *external_types = duckdb_external_types(&count);
-		for (idx_t i = 0; i < count; i++) {
-			result.emplace_back(StringUtil::Lower(external_types[i].name));
-		}
+	for (auto &type : GetTypeIndex()) {
+		result.emplace_back(StringUtil::Lower(type.second.name));
 	}
 	return result;
 }

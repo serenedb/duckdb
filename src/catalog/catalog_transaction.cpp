@@ -39,4 +39,11 @@ CatalogTransaction CatalogTransaction::GetSystemTransaction(DatabaseInstance &db
 	return CatalogTransaction(db, 1, 1);
 }
 
+CatalogTransaction CatalogTransaction::GetCommittedTransaction(DatabaseInstance &db) {
+	// Reads everything committed so far and nothing in flight: one below the first transaction id.
+	// Writes keep the system transaction's id, so an entry written through this is committed from the
+	// start rather than stamped at the read horizon, where no ordinary reader would see it.
+	return CatalogTransaction(db, 1, TRANSACTION_ID_START - 1);
+}
+
 } // namespace duckdb

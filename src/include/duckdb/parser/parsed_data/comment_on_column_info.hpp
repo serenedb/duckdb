@@ -41,6 +41,11 @@ public:
 	CatalogType GetCatalogType() const override;
 	string ToString() const override;
 
+	//! A comment is not part of the shape a dependent bound against.
+	bool BreaksDependent(CatalogType dependent_type) const override {
+		return false;
+	}
+
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 };

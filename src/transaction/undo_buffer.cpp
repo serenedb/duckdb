@@ -157,6 +157,10 @@ UndoBufferProperties UndoBuffer::GetProperties() {
 				properties.has_dropped_entries = true;
 				break;
 			case CatalogType::INDEX_ENTRY: {
+				if (!parent.duck_managed) {
+					// Not a duckdb index: its storage is not sized in blocks this transaction wrote.
+					break;
+				}
 				auto &index = parent.Cast<DuckIndexEntry>();
 				properties.estimated_size += index.initial_index_size;
 				break;

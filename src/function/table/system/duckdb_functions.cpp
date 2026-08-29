@@ -102,10 +102,20 @@ static unique_ptr<FunctionData> DuckDBFunctionsBind(ClientContext &context, Tabl
 
 static void ExtractFunctionsFromSchema(ClientContext &context, SchemaCatalogEntry &schema,
                                        DuckDBFunctionsData &result) {
-	schema.Scan(context, CatalogType::SCALAR_FUNCTION_ENTRY,
-	            [&](CatalogEntry &entry) { result.entries.push_back(entry); });
-	schema.Scan(context, CatalogType::TABLE_FUNCTION_ENTRY,
-	            [&](CatalogEntry &entry) { result.entries.push_back(entry); });
+	// A catalog may key both macro kinds in one set, so each scan takes only its own kind
+	// or every entry of the shared set would be listed twice.
+	schema.Scan(context, CatalogType::SCALAR_FUNCTION_ENTRY, [&](CatalogEntry &entry) {
+		if (entry.type == CatalogType::TABLE_MACRO_ENTRY) {
+			return;
+		}
+		result.entries.push_back(entry);
+	});
+	schema.Scan(context, CatalogType::TABLE_FUNCTION_ENTRY, [&](CatalogEntry &entry) {
+		if (entry.type == CatalogType::MACRO_ENTRY) {
+			return;
+		}
+		result.entries.push_back(entry);
+	});
 	schema.Scan(context, CatalogType::PRAGMA_FUNCTION_ENTRY,
 	            [&](CatalogEntry &entry) { result.entries.push_back(entry); });
 }
@@ -652,13 +662,13 @@ bool ExtractFunctionData(CatalogEntry &entry, idx_t function_idx, DataChunk &out
 	idx_t col = 0;
 
 	// database_name, LogicalType::VARCHAR
-	output.data[col++].Append(Value(function.schema.catalog.GetName()));
+	output.data[col++].Append(Value(function.ParentSchema().catalog.GetName()));
 
 	// database_oid, BIGINT
-	output.data[col++].Append(Value::BIGINT(NumericCast<int64_t>(function.schema.catalog.GetOid())));
+	output.data[col++].Append(Value::BIGINT(NumericCast<int64_t>(function.ParentSchema().catalog.GetOid())));
 
 	// schema_name, LogicalType::VARCHAR
-	output.data[col++].Append(Value(function.schema.name));
+	output.data[col++].Append(Value(function.ParentSchema().name));
 
 	// function_name, LogicalType::VARCHAR
 	output.data[col++].Append(Value(function.name));

@@ -31,7 +31,9 @@ RenameDatabaseInfo::RenameDatabaseInfo(Identifier catalog_p, Identifier new_name
 }
 
 unique_ptr<AlterInfo> RenameDatabaseInfo::Copy() const {
-	return make_uniq<RenameDatabaseInfo>(GetQualifiedName().Catalog(), new_name, if_not_found);
+	auto result = make_uniq<RenameDatabaseInfo>(GetQualifiedName().Catalog(), new_name, if_not_found);
+	result->oid = oid;
+	return result;
 }
 
 string RenameDatabaseInfo::ToString() const {
