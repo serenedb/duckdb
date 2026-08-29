@@ -17,6 +17,8 @@ void MacroFunction::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>>>(102, "default_parameters", default_parameters);
 	if (serializer.ShouldSerialize(StorageVersion::V1_4_0)) {
 		serializer.WritePropertyWithDefault<vector<LogicalType>>(103, "types", types, vector<LogicalType>());
+	}
+	if (serializer.ShouldSerialize(StorageVersion::V1_4_0)) {
 		serializer.WritePropertyWithDefault<LogicalDependencyList>(104, "dependencies", dependencies, LogicalDependencyList());
 	}
 }
@@ -41,7 +43,7 @@ unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer)
 	result->parameters = std::move(parameters);
 	result->default_parameters = std::move(default_parameters);
 	result->types = std::move(types);
-	result->dependencies = std::move(dependencies);
+	result->dependencies = dependencies;
 	result->FinalizeDeserialization();
 	return result;
 }

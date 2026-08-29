@@ -31,6 +31,8 @@ void CreateInfo::Serialize(Serializer &serializer) const {
 		serializer.WritePropertyWithDefault<LogicalDependencyList>(109, "dependencies", dependencies, LogicalDependencyList());
 	}
 	serializer.WritePropertyWithDefault<Identifier>(110, "extension_name", extension_name);
+	serializer.WritePropertyWithDefault<idx_t>(111, "oid", oid, 0);
+	serializer.WritePropertyWithDefault<idx_t>(112, "parent_oid", parent_oid, 0);
 }
 
 unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
@@ -45,14 +47,25 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 	auto tags = deserializer.ReadPropertyWithExplicitDefault<InsertionOrderPreservingMap<string>>(108, "tags", InsertionOrderPreservingMap<string>());
 	auto dependencies = deserializer.ReadPropertyWithExplicitDefault<LogicalDependencyList>(109, "dependencies", LogicalDependencyList());
 	auto extension_name = deserializer.ReadPropertyWithDefault<Identifier>(110, "extension_name");
+	auto oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(111, "oid", 0);
+	auto parent_oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(112, "parent_oid", 0);
 	deserializer.Set<CatalogType>(type);
 	unique_ptr<CreateInfo> result;
 	switch (type) {
+	case CatalogType::DATABASE_ENTRY:
+		result = DeserializeForeignCreateInfo(deserializer, type);
+		break;
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+		result = DeserializeForeignCreateInfo(deserializer, type);
+		break;
 	case CatalogType::INDEX_ENTRY:
-		result = CreateIndexInfo::Deserialize(deserializer);
+		result = DeserializeForeignCreateInfo(deserializer, type);
 		break;
 	case CatalogType::MACRO_ENTRY:
 		result = CreateMacroInfo::Deserialize(deserializer);
+		break;
+	case CatalogType::ROLE_ENTRY:
+		result = DeserializeForeignCreateInfo(deserializer, type);
 		break;
 	case CatalogType::SCHEMA_ENTRY:
 		result = CreateSchemaInfo::Deserialize(deserializer);
@@ -65,6 +78,9 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 		break;
 	case CatalogType::TABLE_MACRO_ENTRY:
 		result = CreateMacroInfo::Deserialize(deserializer);
+		break;
+	case CatalogType::TOKENIZER_ENTRY:
+		result = DeserializeForeignCreateInfo(deserializer, type);
 		break;
 	case CatalogType::TRIGGER_ENTRY:
 		result = CreateTriggerInfo::Deserialize(deserializer);
@@ -87,6 +103,8 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 	result->tags = std::move(tags);
 	result->dependencies = dependencies;
 	result->extension_name = std::move(extension_name);
+	result->oid = oid;
+	result->parent_oid = parent_oid;
 	result->SetQualification(std::move(catalog), std::move(schema));
 	return result;
 }
