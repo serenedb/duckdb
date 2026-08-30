@@ -68,6 +68,10 @@ struct DecodeSortKeyFun {
 	static constexpr const char *Categories = "";
 
 	static ScalarFunction GetFunction();
+	//! Bind from bound types directly. The SQL form spells each type as a string, which re-resolves it
+	//! by name: an alias type (e.g. an enum) in a schema off the search path does not come back.
+	static unique_ptr<Expression> Bind(unique_ptr<Expression> sort_key, child_list_t<LogicalType> columns,
+	                                   vector<OrderModifiers> modifiers);
 };
 
 } // namespace duckdb

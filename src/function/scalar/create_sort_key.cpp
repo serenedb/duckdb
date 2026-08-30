@@ -1521,4 +1521,17 @@ ScalarFunction DecodeSortKeyFun::GetFunction() {
 	return sort_key_function;
 }
 
+unique_ptr<Expression> DecodeSortKeyFun::Bind(unique_ptr<Expression> sort_key, child_list_t<LogicalType> columns,
+                                              vector<OrderModifiers> modifiers) {
+	D_ASSERT(columns.size() == modifiers.size());
+	D_ASSERT(sort_key->GetReturnType() == LogicalType::BIGINT || sort_key->GetReturnType() == LogicalType::BLOB);
+	BoundScalarFunction bound_function(GetFunction());
+	bound_function.SetReturnType(LogicalType::STRUCT(std::move(columns)));
+	auto bind_data = make_uniq<SortKeyBindData>();
+	bind_data->modifiers = std::move(modifiers);
+	vector<unique_ptr<Expression>> children;
+	children.push_back(std::move(sort_key));
+	return make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(children), std::move(bind_data));
+}
+
 } // namespace duckdb
