@@ -116,6 +116,12 @@ public:
 		}
 		return first;
 	}
+	//! Raises the durable horizon far enough ahead that `headroom` further ids can be handed out without
+	//! another record. Meant to be called where no catalog lock is held: the record goes to the host's log,
+	//! whose lock has to stay outside the catalog locks, so an allocation that has to write while holding
+	//! one cannot wait for it. Returns false if the horizon could not be raised.
+	bool EnsureOidHeadroom(idx_t headroom);
+
 	//! Raises the allocator past `oid`, for a host reading back ids it did not hand out.
 	void RestoreOid(idx_t oid);
 	//! Raises the durable horizon, for a host reading back one it recorded.

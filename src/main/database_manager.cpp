@@ -52,6 +52,28 @@ void DatabaseManager::RestoreOidReservation(idx_t horizon) {
 	}
 }
 
+bool DatabaseManager::EnsureOidHeadroom(idx_t headroom) {
+	auto sink = oid_reservation_sink.load(std::memory_order_acquire);
+	if (!sink) {
+		// Nobody is writing the allocator down, so nothing bounds it.
+		return true;
+	}
+	auto wanted = next_oid.load(std::memory_order_acquire) + headroom;
+	if (wanted < reserved_oid.load(std::memory_order_acquire)) {
+		return true;
+	}
+	lock_guard<mutex> lock(oid_reservation_lock);
+	if (wanted < reserved_oid.load(std::memory_order_relaxed)) {
+		return true;
+	}
+	auto horizon = wanted + OID_RESERVE_BLOCK;
+	if (!sink(horizon)) {
+		return false;
+	}
+	reserved_oid.store(horizon, std::memory_order_release);
+	return true;
+}
+
 void DatabaseManager::ReserveOids(idx_t oid) {
 	auto sink = oid_reservation_sink.load(std::memory_order_acquire);
 	if (!sink) {
