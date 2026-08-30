@@ -398,6 +398,13 @@ public:
 	//! `extra_data` the alter the record carried, in the form CatalogSet::AlterEntry wrote it.
 	virtual void WriteCatalogChange(DuckTransaction &transaction, CatalogEntry &entry, data_ptr_t extra_data);
 
+	//! Announced before the per-catalog and per-set locks are taken for an entry WriteCatalogChange will be called
+	//! for. A catalog whose log is shared across databases takes a global lock and holds it for the rest of the
+	//! transaction; acquiring it here rather than inside the write keeps it outside those locks, so two commits
+	//! walking several entries cannot take the two in opposite orders.
+	virtual void PrepareCatalogChange(DuckTransaction &transaction) {
+	}
+
 	//! Replays a create or a drop of a kind this catalog keeps that duckdb has no entry class for. The counterpart
 	//! of WriteCreateEntry/WriteDropEntry: what applying one means is the owning catalog's to say -- a serenedb
 	//! database record, for one, attaches the database so the records after it have somewhere to land.
