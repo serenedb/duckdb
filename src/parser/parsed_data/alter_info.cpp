@@ -20,6 +20,21 @@ AlterInfo::AlterInfo(AlterType type) : ParseInfo(TYPE), type(type) {
 AlterInfo::~AlterInfo() {
 }
 
+bool AlterInfo::TargetsSharedRelationGrammar() const {
+	switch (type) {
+	case AlterType::ALTER_TABLE: {
+		auto alter_table_type = Cast<AlterTableInfo>().alter_table_type;
+		return alter_table_type == AlterTableType::RENAME_TABLE ||
+		       alter_table_type == AlterTableType::SET_TABLE_OPTIONS ||
+		       alter_table_type == AlterTableType::RESET_TABLE_OPTIONS;
+	}
+	case AlterType::ALTER_VIEW:
+		return Cast<AlterViewInfo>().alter_view_type == AlterViewType::RENAME_VIEW;
+	default:
+		return false;
+	}
+}
+
 AlterEntryData AlterInfo::GetAlterEntryData() const {
 	return AlterEntryData(GetQualifiedName(), if_not_found);
 }
