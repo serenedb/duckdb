@@ -81,7 +81,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 			}
 		} else {
 			EntryLookupInfo entry_lookup(stmt.info->type, stmt.info->GetQualifiedName());
-			entry = Catalog::GetEntry(context, entry_lookup, stmt.info->if_not_found);
+			entry = Catalog::GetRelationEntry(context, entry_lookup, stmt.info->if_not_found);
 		}
 		if (!entry) {
 			break;

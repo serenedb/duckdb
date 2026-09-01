@@ -59,6 +59,9 @@ enum class CatalogType : uint8_t {
 };
 
 DUCKDB_API string CatalogTypeToString(CatalogType type);
+//! Whether entries of this kind hold their names in the one namespace tables, views, sequences and indexes share,
+//! so a name stated for one of them may be held by another.
+DUCKDB_API bool CatalogTypeInRelationNamespace(CatalogType type);
 CatalogType CatalogTypeFromString(const string &type);
 
 } // namespace duckdb

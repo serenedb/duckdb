@@ -124,6 +124,11 @@ public:
 		return false;
 	}
 
+	//! Whether the statement's grammar is the one every relation kind shares: a rename, and SET / RESET of storage
+	//! options, arrive typed as a relation whether the statement said TABLE, VIEW or INDEX, so the kind stated here
+	//! does not say which kind holds the name.
+	bool TargetsSharedRelationGrammar() const;
+
 	AlterEntryData GetAlterEntryData() const;
 	//! ADD PRIMARY KEY or ADD UNIQUE: the constraint is backed by an index, so the ALTER has to build one over the
 	//! existing rows. Without it the constraint is recorded and never rejects anything.

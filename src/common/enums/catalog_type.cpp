@@ -5,6 +5,18 @@
 namespace duckdb {
 
 // LCOV_EXCL_START
+bool CatalogTypeInRelationNamespace(CatalogType type) {
+	switch (type) {
+	case CatalogType::TABLE_ENTRY:
+	case CatalogType::VIEW_ENTRY:
+	case CatalogType::SEQUENCE_ENTRY:
+	case CatalogType::INDEX_ENTRY:
+		return true;
+	default:
+		return false;
+	}
+}
+
 string CatalogTypeToString(CatalogType type) {
 	switch (type) {
 	case CatalogType::COLLATION_ENTRY:
