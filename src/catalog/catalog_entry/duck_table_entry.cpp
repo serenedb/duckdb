@@ -316,6 +316,12 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(CatalogTransaction transacti
 // rename has to reach them as well - otherwise the index only resolves until the next restart.
 static void UpdateDependentIndexes(ClientContext &context, DuckTableEntry &table,
                                    const std::function<void(DuckIndexEntry &)> &update) {
+	// A catalog that reshapes its owned dependents republishes each dependent index as a new version of it.
+	// Rewriting the live entry here would mutate a published version under concurrent readers, so only a catalog
+	// whose in-place entries a single writer owns takes this road.
+	if (table.ParentCatalog().ReshapesOwnedDependents()) {
+		return;
+	}
 	auto rows = table.TryGetStorage();
 	if (!rows) {
 		return;
