@@ -92,6 +92,7 @@ public:
 	//! the database every connection defaults to before there is a catalog to hold it.
 	void WriteCreateEntry(const CreateInfo &info, const CatalogPermissions &permissions);
 	void WriteDropEntry(const CatalogEntry &entry);
+	void WriteDropEntry(const CreateInfo &info);
 	//! Catalog state that is not an entry, written and read back by that catalog alone.
 	void WriteCatalogState(const_data_ptr_t data, idx_t size);
 

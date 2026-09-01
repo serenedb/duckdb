@@ -110,6 +110,21 @@ static bool OidLookupEntry(const CatalogEntry &entry) {
 	}
 }
 
+//! The markers a mutation leaves in the version chain: a drop leaves a DELETED_ENTRY, and a rename leaves a
+//! RENAMED_ENTRY under both the name it moved from and the one it moved to. A name whose entry a transaction
+//! cannot see bottoms out at one of these rather than at nothing, so a scan must not hand it out as an
+//! object -- unlike a dependency entry, which is what the dependency sets are scanned for.
+static bool IsChainMarker(const CatalogEntry &entry) {
+	switch (entry.type) {
+	case CatalogType::INVALID:
+	case CatalogType::DELETED_ENTRY:
+	case CatalogType::RENAMED_ENTRY:
+		return true;
+	default:
+		return false;
+	}
+}
+
 void CatalogSet::AddOidLocation(CatalogEntry &entry) {
 	if (oid_slot == CatalogType::INVALID || !OidLookupEntry(entry)) {
 		return;
@@ -791,15 +806,18 @@ void CatalogSet::UpdateTimestamp(CatalogEntry &entry, transaction_t timestamp) {
 }
 
 void CatalogSet::Undo(CatalogEntry &entry) {
-	lock_guard<mutex> write_lock(catalog.GetWriteLock());
-	lock_guard<mutex> lock(catalog_lock);
-
 	// entry has to be restored
 	// and entry->parent has to be removed ("rolled back")
 
 	// i.e. we have to place (entry) as (entry->parent) again
+	// The rollback tears down what the version built outside the catalog (an index leaves the table's storage
+	// list), which takes locks of its own -- so it runs before this set's. The chain is the rolling-back
+	// transaction's alone until the surgery below publishes the restore.
 	auto &to_be_removed_node = entry.Parent();
 	to_be_removed_node.Rollback(entry);
+
+	lock_guard<mutex> write_lock(catalog.GetWriteLock());
+	lock_guard<mutex> lock(catalog_lock);
 
 	D_ASSERT(entry.name == to_be_removed_node.name);
 	if (!to_be_removed_node.HasParent()) {
@@ -851,7 +869,9 @@ void CatalogSet::Scan(CatalogTransaction transaction, const std::function<void(C
 	for (auto &kv : map.Entries()) {
 		auto &entry = *kv.second;
 		auto &entry_for_transaction = GetEntryForTransaction(transaction, entry);
-		if (!entry_for_transaction.deleted) {
+		// A bookkeeping node is what a name whose entry this transaction cannot see resolves to -- the
+		// chain bottoms out at the marker a rename or a drop left -- and it is not an object to hand out.
+		if (!entry_for_transaction.deleted && !IsChainMarker(entry_for_transaction)) {
 			callback(entry_for_transaction);
 		}
 	}
@@ -865,7 +885,7 @@ void CatalogSet::ScanWithReturn(CatalogTransaction transaction, const std::funct
 	for (auto &kv : map.Entries()) {
 		auto &entry = *kv.second;
 		auto &entry_for_transaction = GetEntryForTransaction(transaction, entry);
-		if (!entry_for_transaction.deleted) {
+		if (!entry_for_transaction.deleted && !IsChainMarker(entry_for_transaction)) {
 			if (!callback(entry_for_transaction)) {
 				return;
 			}
@@ -893,7 +913,7 @@ void CatalogSet::ScanWithPrefix(CatalogTransaction transaction, const std::funct
 	for (; it != end; it++) {
 		auto &entry = *it->second;
 		auto &entry_for_transaction = GetEntryForTransaction(transaction, entry);
-		if (!entry_for_transaction.deleted) {
+		if (!entry_for_transaction.deleted && !IsChainMarker(entry_for_transaction)) {
 			callback(entry_for_transaction);
 		}
 	}
@@ -905,7 +925,7 @@ void CatalogSet::Scan(const std::function<void(CatalogEntry &)> &callback) {
 	for (auto &kv : map.Entries()) {
 		auto &entry = *kv.second;
 		auto &committed_entry = GetCommittedEntry(entry);
-		if (!committed_entry.deleted) {
+		if (!committed_entry.deleted && !IsChainMarker(committed_entry)) {
 			callback(committed_entry);
 		}
 	}
