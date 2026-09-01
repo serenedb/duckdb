@@ -913,9 +913,17 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			properties.RegisterDBModify(table.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = table.catalog.BindCreateIndex(*this, stmt, table, std::move(plan));
 		} else {
-			auto &view = Catalog::GetEntry<ViewCatalogEntry>(
-			    context, QualifiedName(create_index_info.GetQualifiedName().Catalog(),
-			                           create_index_info.GetQualifiedName().Schema(), create_index_info.table));
+			EntryLookupInfo view_lookup(CatalogType::VIEW_ENTRY,
+			                            QualifiedName(create_index_info.GetQualifiedName().Catalog(),
+			                                          create_index_info.GetQualifiedName().Schema(),
+			                                          create_index_info.table));
+			auto view_ptr = Catalog::GetEntry(context, view_lookup, OnEntryNotFound::RETURN_NULL);
+			if (!view_ptr) {
+				// The scan bound, so the name exists -- but no table or view answers for it: it is an index.
+				throw BinderException("cannot create index on relation \"%s\": it is an index",
+				                      create_index_info.table.GetIdentifierName());
+			}
+			auto &view = view_ptr->Cast<ViewCatalogEntry>();
 			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = view.catalog.BindCreateIndex(*this, stmt, view, std::move(plan));
 		}

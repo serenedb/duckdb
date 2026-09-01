@@ -403,6 +403,44 @@ struct CatalogLookup {
 //===--------------------------------------------------------------------===//
 // Generic
 //===--------------------------------------------------------------------===//
+static EntryLookupInfo SiblingRelationLookup(const EntryLookupInfo &lookup_info) {
+	auto sibling =
+	    lookup_info.GetCatalogType() == CatalogType::INDEX_ENTRY ? CatalogType::TABLE_ENTRY : CatalogType::INDEX_ENTRY;
+	return EntryLookupInfo(sibling, lookup_info.GetQualifiedName());
+}
+
+CatalogEntryLookup Catalog::LookupRelationEntry(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info,
+                                                OnEntryNotFound if_not_found) {
+	if (!CatalogTypeInRelationNamespace(lookup_info.GetCatalogType())) {
+		return LookupEntry(retriever, lookup_info, if_not_found);
+	}
+	auto lookup = LookupEntry(retriever, lookup_info, OnEntryNotFound::RETURN_NULL);
+	if (lookup.Found()) {
+		return lookup;
+	}
+	lookup = LookupEntry(retriever, SiblingRelationLookup(lookup_info), OnEntryNotFound::RETURN_NULL);
+	if (lookup.Found()) {
+		return lookup;
+	}
+	return LookupEntry(retriever, lookup_info, if_not_found);
+}
+
+optional_ptr<CatalogEntry> Catalog::GetRelationEntry(ClientContext &context, const EntryLookupInfo &lookup_info,
+                                                     OnEntryNotFound if_not_found) {
+	if (!CatalogTypeInRelationNamespace(lookup_info.GetCatalogType())) {
+		return GetEntry(context, lookup_info, if_not_found);
+	}
+	auto entry = GetEntry(context, lookup_info, OnEntryNotFound::RETURN_NULL);
+	if (entry) {
+		return entry;
+	}
+	entry = GetEntry(context, SiblingRelationLookup(lookup_info), OnEntryNotFound::RETURN_NULL);
+	if (entry) {
+		return entry;
+	}
+	return GetEntry(context, lookup_info, if_not_found);
+}
+
 void Catalog::DropEntry(ClientContext &context, DropInfo &info) {
 	if (info.type == CatalogType::SCHEMA_ENTRY) {
 		// DROP SCHEMA
@@ -412,7 +450,7 @@ void Catalog::DropEntry(ClientContext &context, DropInfo &info) {
 
 	CatalogEntryRetriever retriever(context);
 	EntryLookupInfo lookup_info(info.type, info.GetQualifiedName());
-	auto lookup = LookupEntry(retriever, lookup_info, info.if_not_found);
+	auto lookup = LookupRelationEntry(retriever, lookup_info, info.if_not_found);
 	if (!lookup.Found()) {
 		return;
 	}
@@ -1343,7 +1381,10 @@ void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	if (transaction.HasContext() && !is_rename_function) {
 		CatalogEntryRetriever retriever(transaction.GetContext());
 		EntryLookupInfo lookup_info(info.GetCatalogType(), info.GetQualifiedName());
-		auto lookup = LookupEntry(retriever, lookup_info, info.if_not_found);
+		// The shared relation grammar arrives typed as a relation whatever kind the statement named.
+		auto lookup = info.TargetsSharedRelationGrammar()
+		                  ? LookupRelationEntry(retriever, lookup_info, info.if_not_found)
+		                  : LookupEntry(retriever, lookup_info, info.if_not_found);
 		if (!lookup.Found()) {
 			return;
 		}
