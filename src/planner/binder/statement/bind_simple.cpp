@@ -161,16 +161,14 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	} else {
 		// For any other ALTER, we retrieve the catalog entry directly.
 		EntryLookupInfo lookup_info(stmt.info->GetCatalogType(), QualifiedName(stmt.info->GetQualifiedName().Name()));
-		// A rename says nothing about the kind it renames: the grammar shares one RenameAlter across tables, views,
-		// indexes and sequences, so the info arrives typed as a relation whatever the statement said. A miss here is
-		// therefore not an error -- the catalog resolves the name across the kinds it keeps, and reports it.
-		auto rename_any_kind = stmt.info->type == AlterType::ALTER_TABLE &&
-		                       stmt.info->Cast<AlterTableInfo>().alter_table_type == AlterTableType::RENAME_TABLE;
-		entry =
-		    entry_retriever.GetEntry(EntryLookupInfo(lookup_info, QualifiedName(stmt.info->GetQualifiedName().Catalog(),
-		                                                                        stmt.info->GetQualifiedName().Schema(),
-		                                                                        lookup_info.GetEntryIdentifier())),
-		                             rename_any_kind ? OnEntryNotFound::RETURN_NULL : stmt.info->if_not_found);
+		// The shared relation grammar says nothing about the kind it names, so the info arrives typed as a relation
+		// whatever the statement said. A miss here is therefore not an error -- the catalog resolves the name across
+		// the kinds it keeps, and reports it.
+		entry = entry_retriever.GetEntry(
+		    EntryLookupInfo(lookup_info,
+		                    QualifiedName(stmt.info->GetQualifiedName().Catalog(),
+		                                  stmt.info->GetQualifiedName().Schema(), lookup_info.GetEntryIdentifier())),
+		    stmt.info->TargetsSharedRelationGrammar() ? OnEntryNotFound::RETURN_NULL : stmt.info->if_not_found);
 	}
 
 	auto &properties = GetStatementProperties();

@@ -565,6 +565,16 @@ public:
 	//! Lookup an entry using TryLookupEntry, throws if entry not found and if_not_found == THROW_EXCEPTION
 	CatalogEntryLookup LookupEntry(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info,
 	                               OnEntryNotFound if_not_found);
+	//! The same, for the kinds that share one relation namespace: tables, views, sequences and indexes hold their
+	//! names in it, and a statement's grammar does not say which kind holds the one it named. A miss of the stated
+	//! kind retries as the sibling kind, so the road that resolves the entry refuses it by kind rather than
+	//! reporting it missing; a name no kind holds is reported the way the stated kind would have. A kind that holds
+	//! its names elsewhere is looked up as it always is.
+	CatalogEntryLookup LookupRelationEntry(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info,
+	                                       OnEntryNotFound if_not_found);
+	//! The same retry across every catalog the search path reaches, for a statement that has not resolved one yet.
+	DUCKDB_API static optional_ptr<CatalogEntry>
+	GetRelationEntry(ClientContext &context, const EntryLookupInfo &lookup_info, OnEntryNotFound if_not_found);
 	[[deprecated(
 	    "Fold the schema into the EntryLookupInfo and use LookupEntry(retriever, EntryLookupInfo)")]] DUCKDB_API
 	    CatalogEntryLookup
