@@ -396,8 +396,12 @@ void WriteAheadLog::WriteCatalogState(const_data_ptr_t data, idx_t size) {
 }
 
 void WriteAheadLog::WriteDropEntry(const CatalogEntry &entry) {
+	WriteDropEntry(*entry.GetInfo());
+}
+
+void WriteAheadLog::WriteDropEntry(const CreateInfo &info) {
 	WriteAheadLogSerializer serializer(*this, WALType::DROP_ENTRY);
-	serializer.WriteProperty(101, "entry", entry.GetInfo());
+	serializer.WriteProperty(101, "entry", &info);
 	serializer.End();
 }
 

@@ -121,64 +121,84 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, ColumnDefinition
 
 DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_column)
     : db(parent.db), info(parent.info), version(DataTableVersion::MAIN_TABLE) {
-	// prevent any new tuples from being added to the parent
 	auto &local_storage = LocalStorage::Get(context, db);
-	lock_guard<mutex> parent_lock(parent.append_lock);
 
-	for (auto &column_def : parent.column_definitions) {
-		column_definitions.emplace_back(column_def.Copy());
-	}
-
-	// Bind all indexes.
+	// Bind all indexes. Binding resolves catalog entries and may open a connection of its own, so it runs before
+	// the append lock below: a committer holds that lock while waiting on locks binding takes.
 	info->BindIndexes(context);
 
-	// first check if there are any indexes that exist that point to the removed column
-	for (auto &index : info->indexes.Indexes()) {
-		if (index.GetConstraintType() == IndexConstraintType::NONE) {
-			// Plain indexes are always entry-backed; when the entry is no longer
-			// visible the index was dropped earlier in this transaction and only
-			// leaves the storage list at commit - it cannot block the drop.
-			// (Unique CREATE INDEX entries still block: their names are not
-			// distinguishable from constraint-backed indexes here.)
-			auto &index_catalog = db.GetCatalog();
-			EntryLookupInfo lookup_info(CatalogType::INDEX_ENTRY, index.GetIndexName());
-			auto entry =
-			    index_catalog.GetEntry(context, info->GetSchemaName(), lookup_info, OnEntryNotFound::RETURN_NULL);
-			if (!entry) {
+	// prevent any new tuples from being added to the parent. The scope ends before the external-index refresh:
+	// injecting reaches the catalog through a connection of its own, and a committer holds this lock while
+	// waiting on locks that road takes.
+	{
+		lock_guard<mutex> parent_lock(parent.append_lock);
+
+		for (auto &column_def : parent.column_definitions) {
+			column_definitions.emplace_back(column_def.Copy());
+		}
+
+		// first check if there are any indexes that exist that point to the removed column.
+		// The list is snapshotted first: probing the catalog below takes its locks, and iterating holds the index
+		// list's
+		// -- nesting the two here would order them against a commit's index maintenance, which nests them the other
+		// way.
+		struct IndexColumnCheck {
+			Identifier name;
+			bool entry_backed;
+			vector<column_t> column_ids;
+		};
+		vector<IndexColumnCheck> checks;
+		for (auto &index : info->indexes.Indexes()) {
+			checks.push_back(
+			    {index.GetIndexName(), index.GetConstraintType() == IndexConstraintType::NONE, index.GetColumnIds()});
+		}
+		for (auto &check : checks) {
+			if (check.entry_backed) {
+				// Plain indexes are always entry-backed; when the entry is no longer
+				// visible the index was dropped earlier in this transaction and only
+				// leaves the storage list at commit - it cannot block the drop.
+				// (Unique CREATE INDEX entries still block: their names are not
+				// distinguishable from constraint-backed indexes here.)
+				auto &index_catalog = db.GetCatalog();
+				EntryLookupInfo lookup_info(CatalogType::INDEX_ENTRY, check.name);
+				auto entry =
+				    index_catalog.GetEntry(context, info->GetSchemaName(), lookup_info, OnEntryNotFound::RETURN_NULL);
+				if (!entry) {
+					continue;
+				}
+			}
+			for (auto &column_id : check.column_ids) {
+				if (column_id == removed_column) {
+					throw CatalogException("Cannot drop this column: an index depends on it!");
+				} else if (column_id > removed_column) {
+					throw CatalogException("Cannot drop this column: an index depends on a column after it!");
+				}
+			}
+		}
+
+		// erase the column definitions from this DataTable
+		D_ASSERT(removed_column < column_definitions.size());
+		column_definitions.erase_at(removed_column);
+
+		storage_t storage_idx = 0;
+		for (idx_t i = 0; i < column_definitions.size(); i++) {
+			auto &col = column_definitions[i];
+			col.SetOid(i);
+			if (col.Generated()) {
 				continue;
 			}
+			col.SetStorageOid(storage_idx++);
 		}
-		for (auto &column_id : index.GetColumnIds()) {
-			if (column_id == removed_column) {
-				throw CatalogException("Cannot drop this column: an index depends on it!");
-			} else if (column_id > removed_column) {
-				throw CatalogException("Cannot drop this column: an index depends on a column after it!");
-			}
-		}
+
+		// alter the row_groups and remove the column from each of them
+		this->row_groups = parent.row_groups->RemoveColumn(removed_column);
+
+		// scan the original table, and fill the new column with the transformed value
+		local_storage.DropColumn(parent, *this, removed_column);
+
+		// this table replaces the previous table, hence the parent is no longer the root DataTable
+		parent.version = DataTableVersion::ALTERED;
 	}
-
-	// erase the column definitions from this DataTable
-	D_ASSERT(removed_column < column_definitions.size());
-	column_definitions.erase_at(removed_column);
-
-	storage_t storage_idx = 0;
-	for (idx_t i = 0; i < column_definitions.size(); i++) {
-		auto &col = column_definitions[i];
-		col.SetOid(i);
-		if (col.Generated()) {
-			continue;
-		}
-		col.SetStorageOid(storage_idx++);
-	}
-
-	// alter the row_groups and remove the column from each of them
-	this->row_groups = parent.row_groups->RemoveColumn(removed_column);
-
-	// scan the original table, and fill the new column with the transformed value
-	local_storage.DropColumn(parent, *this, removed_column);
-
-	// this table replaces the previous table, hence the parent is no longer the root DataTable
-	parent.version = DataTableVersion::ALTERED;
 
 	RefreshExternalIndexes();
 }
@@ -208,14 +228,16 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t changed_id
                      const vector<StorageIndex> &bound_columns, Expression &cast_expr)
     : db(parent.db), info(parent.info), version(DataTableVersion::MAIN_TABLE) {
 	auto &local_storage = LocalStorage::Get(context, db);
+
+	// Bind all indexes. Before the append lock, as in the removed-column constructor: binding resolves catalog
+	// entries and may open a connection of its own.
+	info->BindIndexes(context);
+
 	// prevent any tuples from being added to the parent
 	lock_guard<mutex> lock(append_lock);
 	for (auto &column_def : parent.column_definitions) {
 		column_definitions.emplace_back(column_def.Copy());
 	}
-
-	// Bind all indexes.
-	info->BindIndexes(context);
 
 	// first check if there are any indexes that exist that point to the changed column
 	for (auto &index : info->indexes.Indexes()) {

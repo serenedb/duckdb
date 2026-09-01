@@ -26,13 +26,21 @@ ValidChecker &ValidChecker::Get(MetaTransaction &transaction) {
 }
 
 void MetaTransaction::RefreshStartTime() {
-	lock_guard<mutex> guard(lock);
-	for (auto &db : all_transactions) {
-		auto entry = transactions.find(db.get());
-		if (entry == transactions.end()) {
-			continue;
+	// Refreshing takes each attachment's manager locks, so it runs outside this transaction's own lock, off a copy:
+	// the map only changes on this transaction's own thread.
+	vector<std::pair<reference<AttachedDatabase>, reference<Transaction>>> to_refresh;
+	{
+		lock_guard<mutex> guard(lock);
+		for (auto &db : all_transactions) {
+			auto entry = transactions.find(db.get());
+			if (entry == transactions.end()) {
+				continue;
+			}
+			to_refresh.emplace_back(db, entry->second.transaction);
 		}
-		db.get().GetTransactionManager().RefreshStartTime(entry->second.transaction);
+	}
+	for (auto &entry : to_refresh) {
+		entry.first.get().GetTransactionManager().RefreshStartTime(entry.second.get());
 	}
 }
 
@@ -73,27 +81,39 @@ Transaction &MetaTransaction::GetTransaction(AttachedDatabase &db) {
 	if (ValidChecker::IsInvalidated(db)) {
 		throw IOException("%s", ValidChecker::InvalidatedMessage(db));
 	}
-	lock_guard<mutex> guard(lock);
-	if (scoped_override_txn && scoped_override_db && RefersToSameObject(*scoped_override_db, db)) {
-		return *scoped_override_txn;
+	{
+		lock_guard<mutex> guard(lock);
+		if (scoped_override_txn && scoped_override_db && RefersToSameObject(*scoped_override_db, db)) {
+			return *scoped_override_txn;
+		}
+		auto entry = transactions.find(db);
+		if (entry != transactions.end()) {
+			D_ASSERT(entry->second.transaction.active_query == active_query);
+			return entry->second.transaction;
+		}
 	}
-	auto entry = transactions.find(db);
-	if (entry == transactions.end()) {
-		auto &new_transaction = db.GetTransactionManager().StartTransaction(context);
-		new_transaction.active_query = active_query.load();
+	// Starting takes the attachment's manager locks, so it runs outside this transaction's own lock: holding one
+	// across the other orders them against every path that resolves a transaction while a catalog lock is held, and
+	// that order closes into a cycle. Two racers may both start one; the loser rolls its fresh transaction back.
+	auto &new_transaction = db.GetTransactionManager().StartTransaction(context);
+	new_transaction.active_query = active_query.load();
+	unique_lock<mutex> guard(lock);
+	auto existing = transactions.find(db);
+	if (existing != transactions.end()) {
+		auto &transaction = existing->second.transaction;
+		guard.unlock();
+		db.GetTransactionManager().RollbackTransaction(new_transaction);
+		return transaction;
+	}
 #ifdef DEBUG
-		VerifyAllTransactionsUnique(db, all_transactions);
+	VerifyAllTransactionsUnique(db, all_transactions);
 #endif
-		all_transactions.push_back(db);
-		transactions.insert(make_pair(reference<AttachedDatabase>(db), TransactionReference(new_transaction)));
-		auto shared_db = db.shared_from_this();
-		UseDatabase(shared_db);
+	all_transactions.push_back(db);
+	transactions.insert(make_pair(reference<AttachedDatabase>(db), TransactionReference(new_transaction)));
+	auto shared_db = db.shared_from_this();
+	UseDatabase(shared_db);
 
-		return new_transaction;
-	} else {
-		D_ASSERT(entry->second.transaction.active_query == active_query);
-		return entry->second.transaction;
-	}
+	return new_transaction;
 }
 
 void MetaTransaction::RemoveTransaction(AttachedDatabase &db) {
@@ -285,13 +305,10 @@ AttachedDatabase &MetaTransaction::UseDatabase(shared_ptr<AttachedDatabase> &dat
 	lock_guard<mutex> guard(referenced_database_lock);
 	auto entry = referenced_databases.find(db_ref);
 	if (entry == referenced_databases.end()) {
-		auto used_entry = used_databases.emplace(db_ref.GetName(), db_ref);
-		if (!used_entry.second) {
-			// return used_entry.first->second.get();
-			throw InternalException(
-			    "Database name %s was already used by a different database for this meta transaction",
-			    db_ref.GetName());
-		}
+		// The name index answers name lookups; a reference is keyed by identity. A name whose holder
+		// changed under this transaction (a concurrent DROP and CREATE) keeps the database that claimed
+		// it first, and the other stays reachable as the object it is.
+		used_databases.emplace(db_ref.GetName(), db_ref);
 		referenced_databases.emplace(reference<AttachedDatabase>(db_ref), database);
 	}
 	return db_ref;

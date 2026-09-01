@@ -293,6 +293,11 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		D_ASSERT(catalog.IsDuckCatalog());
 
 		auto &new_entry = old_entry.Parent();
+		// Grab a write lock on the catalog: the whole per-entry step runs under it, including the dependency
+		// verification below -- that one walks other sets, and taking their locks without the write lock would
+		// order them against a writer that takes the write lock first.
+		auto &duck_catalog = catalog.Cast<DuckCatalog>();
+		lock_guard<mutex> write_lock(duck_catalog.GetWriteLock());
 		// duck_managed is what tells one of the dependency manager's own edges from an edge a foreign
 		// catalog hosts in a set of its own: only the former is a DependencyEntry, and only the former
 		// has a subject whose existence this manager can verify.
@@ -304,9 +309,6 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		} else if (new_entry.type == CatalogType::DELETED_ENTRY && old_entry.set) {
 			old_entry.set->CommitDrop(commit_id, transaction.start_time, old_entry);
 		}
-		// Grab a write lock on the catalog
-		auto &duck_catalog = catalog.Cast<DuckCatalog>();
-		lock_guard<mutex> write_lock(duck_catalog.GetWriteLock());
 		lock_guard<mutex> read_lock(old_entry.set->GetCatalogLock());
 		// Set the timestamp of the catalog entry to the given commit_id, marking it as committed
 		CatalogSet::UpdateTimestamp(old_entry.Parent(), commit_id);
