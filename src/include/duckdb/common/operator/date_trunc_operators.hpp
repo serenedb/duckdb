@@ -20,6 +20,31 @@
 
 namespace duckdb {
 
+struct DateTruncTable {
+	static constexpr int32_t FIRST_YEAR = 1900;
+	static constexpr int32_t FIRST_DAY = -25567;
+	static constexpr int32_t YEAR_COUNT = Date::YEAR_INTERVAL;
+	static constexpr int32_t DAY_COUNT = Date::DAYS_PER_YEAR_INTERVAL;
+	static constexpr int32_t MONTH_COUNT = YEAR_COUNT * Interval::MONTHS_PER_YEAR;
+
+	DateTruncTable();
+
+	static inline bool Contains(int64_t days) {
+		return uint64_t(days - FIRST_DAY) < uint64_t(DAY_COUNT);
+	}
+	inline int32_t Month(int64_t days) const {
+		return day_month[days - FIRST_DAY];
+	}
+	inline int64_t MonthStart(int32_t month) const {
+		return month_start[month];
+	}
+
+	uint16_t day_month[DAY_COUNT];
+	int32_t month_start[MONTH_COUNT + 1];
+
+	DUCKDB_API static const DateTruncTable INSTANCE;
+};
+
 struct DateTrunc {
 	static constexpr int64_t MAX_TIMESTAMP_DAYS = NumericLimits<int64_t>::Maximum() / Interval::MICROS_PER_DAY;
 	static constexpr int64_t EPOCH_MONDAY = -3;
@@ -92,7 +117,11 @@ struct DateTrunc {
 		return yd.year_start + (yd.leap ? Date::CUMULATIVE_LEAP_DAYS : Date::CUMULATIVE_DAYS)[month - 1];
 	}
 	static inline int64_t MonthIndex(timestamp_t input) {
-		const auto yd = ToYearDay(ToDays(input));
+		const auto days = ToDays(input);
+		if (DateTruncTable::Contains(days)) {
+			return int64_t(DateTruncTable::FIRST_YEAR) * Interval::MONTHS_PER_YEAR + DateTruncTable::INSTANCE.Month(days);
+		}
+		const auto yd = ToYearDay(days);
 		return yd.year * Interval::MONTHS_PER_YEAR + MonthOf(yd) - 1;
 	}
 	static inline timestamp_t MonthIndexStart(int64_t months) {
@@ -118,6 +147,11 @@ struct DateTrunc {
 
 	struct CenturyOperator {
 		static inline int64_t Days(int32_t days) {
+			if (DateTruncTable::Contains(days)) {
+				auto &table = DateTruncTable::INSTANCE;
+				const auto year = table.Month(days) / Interval::MONTHS_PER_YEAR;
+				return table.MonthStart((year - year % 100) * Interval::MONTHS_PER_YEAR);
+			}
 			return YearStart((ToYearDay(days).year / 100) * 100);
 		}
 
@@ -129,6 +163,11 @@ struct DateTrunc {
 
 	struct DecadeOperator {
 		static inline int64_t Days(int32_t days) {
+			if (DateTruncTable::Contains(days)) {
+				auto &table = DateTruncTable::INSTANCE;
+				const auto year = table.Month(days) / Interval::MONTHS_PER_YEAR;
+				return table.MonthStart((year - year % 10) * Interval::MONTHS_PER_YEAR);
+			}
 			return YearStart((ToYearDay(days).year / 10) * 10);
 		}
 
@@ -140,6 +179,11 @@ struct DateTrunc {
 
 	struct YearOperator {
 		static inline int64_t Days(int32_t days) {
+			if (DateTruncTable::Contains(days)) {
+				auto &table = DateTruncTable::INSTANCE;
+				const auto month = table.Month(days);
+				return table.MonthStart(month - month % Interval::MONTHS_PER_YEAR);
+			}
 			return ToYearDay(days).year_start;
 		}
 
@@ -151,6 +195,11 @@ struct DateTrunc {
 
 	struct QuarterOperator {
 		static inline int64_t Days(int32_t days) {
+			if (DateTruncTable::Contains(days)) {
+				auto &table = DateTruncTable::INSTANCE;
+				const auto month = table.Month(days);
+				return table.MonthStart(month - month % Interval::MONTHS_PER_QUARTER);
+			}
 			const auto yd = ToYearDay(days);
 			return MonthStart(yd, 1 + ((MonthOf(yd) - 1) / 3) * 3);
 		}
@@ -163,6 +212,10 @@ struct DateTrunc {
 
 	struct MonthOperator {
 		static inline int64_t Days(int32_t days) {
+			if (DateTruncTable::Contains(days)) {
+				auto &table = DateTruncTable::INSTANCE;
+				return table.MonthStart(table.Month(days));
+			}
 			const auto yd = ToYearDay(days);
 			return MonthStart(yd, MonthOf(yd));
 		}
