@@ -28,8 +28,18 @@ bool TryGetConstant(const Expression &expr, int64_t &value) {
 }
 
 template <class INPUT>
+int64_t Micros(INPUT ts) {
+	return ts.value;
+}
+
+template <>
+int64_t Micros(timestamp_ns_t ts) {
+	return DateTrunc::FloorDiv(ts.value, Interval::NANOS_PER_MICRO);
+}
+
+template <class INPUT>
 int64_t Bucket(INPUT ts, int64_t width, int64_t anchor) {
-	return DateTrunc::FloorDiv(ts.value - anchor, width);
+	return DateTrunc::FloorDiv(Micros(ts) - anchor, width);
 }
 
 template <class RESULT>
@@ -39,7 +49,7 @@ RESULT Unbucket(int64_t bucket, int64_t width, int64_t anchor) {
 
 template <class INPUT>
 int64_t MonthBucket(INPUT ts, int64_t width, int64_t anchor) {
-	return DateTrunc::FloorDiv(DateTrunc::MonthIndex(timestamp_t(ts.value)) - anchor, width);
+	return DateTrunc::FloorDiv(DateTrunc::MonthIndex(timestamp_t(Micros(ts))) - anchor, width);
 }
 
 template <class RESULT>
@@ -119,6 +129,8 @@ ScalarFunction FunctionFor(const ScalarFunctionSet &set, LogicalTypeId input) {
 		return set.functions[0];
 	case LogicalTypeId::TIMESTAMP_TZ:
 		return set.functions[1];
+	case LogicalTypeId::TIMESTAMP_NS:
+		return set.functions[2];
 	default:
 		throw InternalException("No bucket function for input type %s", LogicalTypeIdToString(input));
 	}
@@ -353,12 +365,13 @@ struct StrfTimeInspector : public StrfTimeFormat {
 
 } // namespace
 
-bool TryGetStrfTimeGranularity(const string &format_string, bool sub_day_constant, DatePartSpecifier &part) {
+bool TryGetStrfTimeGranularity(const string &format_string, bool sub_day_constant, DatePartSpecifier &part,
+                               bool &two_digit_year) {
 	StrfTimeInspector format;
 	if (!StrTimeFormat::ParseFormatSpecifier(format_string, format).empty()) {
 		return false;
 	}
-	enum class Level : uint8_t { NONE, YEAR, MONTH, DAY, HOUR, MINUTE, SECOND };
+	enum class Level : uint8_t { NONE, YEAR, MONTH, WEEK, DAY, HOUR, MINUTE, SECOND };
 	auto finest = Level::NONE;
 	auto raise = [&](Level level) {
 		if (level > finest) {
@@ -369,16 +382,34 @@ bool TryGetStrfTimeGranularity(const string &format_string, bool sub_day_constan
 	bool month = false;
 	bool day = false;
 	bool day_of_year = false;
+	bool iso_year = false;
+	bool iso_week = false;
+	bool weekday = false;
 	bool hour24 = false;
 	bool hour12 = false;
 	bool am_pm = false;
 	bool minute = false;
 	bool second = false;
+	two_digit_year = false;
 	for (const auto specifier : format.specifiers) {
 		switch (specifier) {
 		case StrTimeSpecifier::YEAR_DECIMAL:
 			year = true;
 			raise(Level::YEAR);
+			break;
+		case StrTimeSpecifier::YEAR_WITHOUT_CENTURY_PADDED:
+		case StrTimeSpecifier::YEAR_WITHOUT_CENTURY:
+			year = true;
+			two_digit_year = true;
+			raise(Level::YEAR);
+			break;
+		case StrTimeSpecifier::YEAR_ISO:
+			iso_year = true;
+			raise(Level::YEAR);
+			break;
+		case StrTimeSpecifier::WEEK_NUMBER_ISO:
+			iso_week = true;
+			raise(Level::WEEK);
 			break;
 		case StrTimeSpecifier::ABBREVIATED_MONTH_NAME:
 		case StrTimeSpecifier::FULL_MONTH_NAME:
@@ -401,6 +432,7 @@ bool TryGetStrfTimeGranularity(const string &format_string, bool sub_day_constan
 		case StrTimeSpecifier::FULL_WEEKDAY_NAME:
 		case StrTimeSpecifier::WEEKDAY_DECIMAL:
 		case StrTimeSpecifier::WEEKDAY_ISO:
+			weekday = true;
 			raise(Level::DAY);
 			break;
 		case StrTimeSpecifier::HOUR_24_PADDED:
@@ -434,13 +466,23 @@ bool TryGetStrfTimeGranularity(const string &format_string, bool sub_day_constan
 	if (sub_day_constant && finest > Level::DAY) {
 		finest = Level::DAY;
 	}
-	if (finest == Level::NONE || !year) {
+	if (finest == Level::NONE || (!year && !iso_year)) {
 		return false;
 	}
-	if (finest >= Level::MONTH && !month && !day_of_year) {
+	const bool iso = iso_year || iso_week;
+	if (iso && (year || month || day || day_of_year)) {
 		return false;
 	}
-	if (finest >= Level::DAY && !(month && day) && !day_of_year) {
+	if (iso && finest < Level::DAY && !(iso_year && iso_week && finest == Level::WEEK)) {
+		return false;
+	}
+	if (!iso && finest == Level::WEEK) {
+		return false;
+	}
+	if (!iso && finest >= Level::MONTH && !month && !day_of_year) {
+		return false;
+	}
+	if (finest >= Level::DAY && !(month && day) && !day_of_year && !(iso_year && iso_week && weekday)) {
 		return false;
 	}
 	if (finest >= Level::HOUR && !hour24 && !(hour12 && am_pm)) {
@@ -458,6 +500,9 @@ bool TryGetStrfTimeGranularity(const string &format_string, bool sub_day_constan
 		return true;
 	case Level::MONTH:
 		part = DatePartSpecifier::MONTH;
+		return true;
+	case Level::WEEK:
+		part = DatePartSpecifier::WEEK;
 		return true;
 	case Level::DAY:
 		part = DatePartSpecifier::DAY;
@@ -482,7 +527,7 @@ unique_ptr<BucketRewrite> StrfTimeBucketRewrite(ClientContext &context, const Bo
 	idx_t input_index = 0;
 	for (; input_index < 2; input_index++) {
 		const auto id = children[input_index]->GetReturnType().id();
-		if (id == LogicalTypeId::TIMESTAMP || id == LogicalTypeId::DATE) {
+		if (id == LogicalTypeId::TIMESTAMP || id == LogicalTypeId::DATE || id == LogicalTypeId::TIMESTAMP_NS) {
 			break;
 		}
 	}
@@ -501,11 +546,16 @@ unique_ptr<BucketRewrite> StrfTimeBucketRewrite(ClientContext &context, const Bo
 	const auto &input_type = children[input_index]->GetReturnType();
 	DatePartSpecifier part;
 	DateBucketSpec spec;
-	if (!TryGetStrfTimeGranularity(StringValue::Get(format_value), input_type.id() == LogicalTypeId::DATE, part) ||
+	bool two_digit_year = false;
+	if (!TryGetStrfTimeGranularity(StringValue::Get(format_value), input_type.id() == LogicalTypeId::DATE, part,
+	                               two_digit_year) ||
 	    !TryGetDateTruncSpec(part, spec)) {
 		return nullptr;
 	}
 	auto inner = make_uniq<DateBucketRewrite>(context, spec, input_index, input_type, input_type, false);
+	if (two_digit_year) {
+		inner->RequireYearSpanBelow(100);
+	}
 	return make_uniq<FunctionBucketRewrite>(std::move(inner), expr, input_index);
 }
 
@@ -661,13 +711,13 @@ idx_t DateBucketRewrite::InputIndex() const {
 	return input_index;
 }
 
-bool DateBucketRewrite::TryBucketRange(const BaseStatistics &stats, int64_t &min_bucket, int64_t &max_bucket) const {
-	if (!NumericStats::HasMinMax(stats)) {
+bool TryGetMicrosRange(const BaseStatistics &stats, int64_t &min, int64_t &max, bool &zoned) {
+	if (stats.GetStatsType() != StatisticsType::NUMERIC_STATS || !NumericStats::HasMinMax(stats)) {
 		return false;
 	}
-	int64_t min = 0;
-	int64_t max = 0;
-	switch (input_type.id()) {
+	const auto limit = NumericLimits<int64_t>::Maximum() - 2 * Interval::MICROS_PER_WEEK;
+	zoned = stats.GetType().id() == LogicalTypeId::TIMESTAMP_TZ;
+	switch (stats.GetType().id()) {
 	case LogicalTypeId::TIMESTAMP: {
 		const auto lo = NumericStats::GetMin<timestamp_t>(stats);
 		const auto hi = NumericStats::GetMax<timestamp_t>(stats);
@@ -698,13 +748,65 @@ bool DateBucketRewrite::TryBucketRange(const BaseStatistics &stats, int64_t &min
 		max = int64_t(hi.days) * Interval::MICROS_PER_DAY;
 		break;
 	}
+	case LogicalTypeId::TIMESTAMP_NS: {
+		const auto lo = NumericStats::GetMin<timestamp_ns_t>(stats);
+		const auto hi = NumericStats::GetMax<timestamp_ns_t>(stats);
+		if (!Value::IsFinite(lo) || !Value::IsFinite(hi)) {
+			return false;
+		}
+		min = DateTrunc::FloorDiv(lo.value, Interval::NANOS_PER_MICRO);
+		max = -DateTrunc::FloorDiv(-hi.value, Interval::NANOS_PER_MICRO);
+		break;
+	}
+	case LogicalTypeId::TIMESTAMP_MS: {
+		const auto lo = NumericStats::GetMin<timestamp_ms_t>(stats);
+		const auto hi = NumericStats::GetMax<timestamp_ms_t>(stats);
+		if (!Value::IsFinite(lo) || !Value::IsFinite(hi) || lo.value < -limit / Interval::MICROS_PER_MSEC ||
+		    hi.value > limit / Interval::MICROS_PER_MSEC) {
+			return false;
+		}
+		min = lo.value * Interval::MICROS_PER_MSEC;
+		max = hi.value * Interval::MICROS_PER_MSEC;
+		break;
+	}
+	case LogicalTypeId::TIMESTAMP_SEC: {
+		const auto lo = NumericStats::GetMin<timestamp_sec_t>(stats);
+		const auto hi = NumericStats::GetMax<timestamp_sec_t>(stats);
+		if (!Value::IsFinite(lo) || !Value::IsFinite(hi) || lo.value < -limit / Interval::MICROS_PER_SEC ||
+		    hi.value > limit / Interval::MICROS_PER_SEC) {
+			return false;
+		}
+		min = lo.value * Interval::MICROS_PER_SEC;
+		max = hi.value * Interval::MICROS_PER_SEC;
+		break;
+	}
 	default:
 		return false;
 	}
-	const auto limit = NumericLimits<int64_t>::Maximum() - 2 * Interval::MICROS_PER_WEEK;
+	return min <= max && min >= -limit && max <= limit;
+}
+
+bool DateBucketRewrite::TryBucketRange(const BaseStatistics &stats, int64_t &min_bucket, int64_t &max_bucket) const {
+	int64_t min = 0;
+	int64_t max = 0;
+	bool zoned = false;
+	if (!TryGetMicrosRange(stats, min, max, zoned)) {
+		return false;
+	}
+	if (zoned != (input_type.id() == LogicalTypeId::TIMESTAMP_TZ)) {
+		min -= Interval::MICROS_PER_DAY;
+		max += Interval::MICROS_PER_DAY;
+	}
+	const auto limit = NumericLimits<int64_t>::Maximum() - Interval::MICROS_PER_WEEK;
 	const auto lower =
 	    anno_domini_only && spec.calendar ? DateTrunc::YearStart(1) * Interval::MICROS_PER_DAY : -limit;
-	if (min > max || min < lower || max > limit) {
+	if (min < lower || max > limit) {
+		return false;
+	}
+	if (max_year_span &&
+	    DateTrunc::ToYearDay(DateTrunc::ToDays(timestamp_t(max))).year -
+	            DateTrunc::ToYearDay(DateTrunc::ToDays(timestamp_t(min))).year >=
+	        max_year_span) {
 		return false;
 	}
 	min_bucket = spec.Bucket(min);
@@ -714,7 +816,7 @@ bool DateBucketRewrite::TryBucketRange(const BaseStatistics &stats, int64_t &min
 
 unique_ptr<Expression> DateBucketRewrite::Bucket(unique_ptr<Expression> input) const {
 	auto type = input_type.id();
-	if (type == LogicalTypeId::DATE) {
+	if (type != LogicalTypeId::TIMESTAMP && type != LogicalTypeId::TIMESTAMP_TZ && type != LogicalTypeId::TIMESTAMP_NS) {
 		input = BoundCastExpression::AddCastToType(context, std::move(input), LogicalType::TIMESTAMP);
 		type = LogicalTypeId::TIMESTAMP;
 	}
@@ -730,8 +832,8 @@ unique_ptr<Expression> DateBucketRewrite::Unbucket(unique_ptr<Expression> bucket
 	                                        : (zoned ? InternalDateTruncUnbucketTzFun::GetFunction()
 	                                                 : InternalDateTruncUnbucketFun::GetFunction());
 	auto expr = MakeCall(std::move(function), std::move(bucket), spec);
-	if (result_type.id() == LogicalTypeId::DATE) {
-		expr = BoundCastExpression::AddCastToType(context, std::move(expr), LogicalType::DATE);
+	if (result_type.id() != LogicalTypeId::TIMESTAMP && result_type.id() != LogicalTypeId::TIMESTAMP_TZ) {
+		expr = BoundCastExpression::AddCastToType(context, std::move(expr), result_type);
 	}
 	return expr;
 }
@@ -742,6 +844,8 @@ ScalarFunctionSet InternalDateTruncBucketFun::GetFunctions() {
 	                                                                          LogicalType::BIGINT));
 	set.AddFunction(BucketFunction<timestamp_tz_t, int64_t, Bucket<timestamp_tz_t>>(Name, LogicalType::TIMESTAMP_TZ,
 	                                                                                LogicalType::BIGINT));
+	set.AddFunction(BucketFunction<timestamp_ns_t, int64_t, Bucket<timestamp_ns_t>>(Name, LogicalType::TIMESTAMP_NS,
+	                                                                                LogicalType::BIGINT));
 	return set;
 }
 
@@ -751,6 +855,8 @@ ScalarFunctionSet InternalDateTruncMonthBucketFun::GetFunctions() {
 	                                                                               LogicalType::BIGINT));
 	set.AddFunction(BucketFunction<timestamp_tz_t, int64_t, MonthBucket<timestamp_tz_t>>(
 	    Name, LogicalType::TIMESTAMP_TZ, LogicalType::BIGINT));
+	set.AddFunction(BucketFunction<timestamp_ns_t, int64_t, MonthBucket<timestamp_ns_t>>(
+	    Name, LogicalType::TIMESTAMP_NS, LogicalType::BIGINT));
 	return set;
 }
 

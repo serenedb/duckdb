@@ -129,18 +129,26 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 		return;
 	}
 
+	auto usable = [](optional_ptr<const BaseStatistics> stats) {
+		return stats && stats->GetStatsType() == StatisticsType::NUMERIC_STATS && NumericStats::HasMinMax(*stats);
+	};
+	auto column_stats = [&](const Expression &expr) -> optional_ptr<const BaseStatistics> {
+		if (expr.GetExpressionType() != ExpressionType::BOUND_COLUMN_REF) {
+			return nullptr;
+		}
+		auto it = statistics_map.find(expr.Cast<BoundColumnRefExpression>().Binding());
+		return it == statistics_map.end() ? nullptr : it->second.get();
+	};
 	auto input_stats = [&](const Expression &input,
 	                       optional_ptr<const BaseStatistics> fallback) -> optional_ptr<const BaseStatistics> {
-		if (input.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
-			auto it = statistics_map.find(input.Cast<BoundColumnRefExpression>().Binding());
-			if (it != statistics_map.end() && it->second && NumericStats::HasMinMax(*it->second)) {
-				return it->second.get();
-			}
+		auto stats = column_stats(input);
+		if (!usable(stats) && input.GetExpressionClass() == ExpressionClass::BOUND_CAST) {
+			stats = column_stats(input.Cast<BoundCastExpression>().Child());
 		}
-		if (fallback && NumericStats::HasMinMax(*fallback)) {
-			return fallback;
+		if (usable(stats)) {
+			return stats;
 		}
-		return nullptr;
+		return usable(fallback) ? fallback : nullptr;
 	};
 	idx_t total_bits = 0;
 	vector<BucketedGroup> bucketed;

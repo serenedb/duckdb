@@ -33,6 +33,9 @@ public:
 	bool TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket, int64_t &max_bucket) const override;
 	unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const override;
 	unique_ptr<Expression> Unbucket(unique_ptr<Expression> bucket) const override;
+	void RequireYearSpanBelow(int64_t years) {
+		max_year_span = years;
+	}
 
 private:
 	ClientContext &context;
@@ -41,6 +44,7 @@ private:
 	LogicalType input_type;
 	LogicalType result_type;
 	bool anno_domini_only;
+	int64_t max_year_span = 0;
 };
 
 class FunctionBucketRewrite : public BucketRewrite {
@@ -74,7 +78,9 @@ protected:
 	int64_t max_bucket;
 };
 
-bool TryGetStrfTimeGranularity(const string &format, bool sub_day_constant, DatePartSpecifier &part);
+bool TryGetStrfTimeGranularity(const string &format, bool sub_day_constant, DatePartSpecifier &part,
+                               bool &two_digit_year);
+bool TryGetMicrosRange(const BaseStatistics &stats, int64_t &min, int64_t &max, bool &zoned);
 
 unique_ptr<BucketRewrite> DateTruncBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 unique_ptr<BucketRewrite> TimeBucketBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);

@@ -112,6 +112,40 @@ struct ICUTimeBucketFast {
 		return covered;
 	}
 
+	static bool Dispatch(Kind kind, interval_t width, int64_t origin, Vector &ts_arg, Vector &result, idx_t count) {
+		if (!InRange(origin)) {
+			return false;
+		}
+		switch (kind) {
+		case Kind::MICROS:
+		case Kind::DAYS: {
+			const int64_t w = kind == Kind::MICROS ? width.micros : int64_t(width.days) * Interval::MICROS_PER_DAY;
+			return Execute(ts_arg, result, count, [&](int64_t ts, int64_t &bucket) {
+				if (!InRange(ts)) {
+					return false;
+				}
+				bucket = origin + DateTrunc::FloorDiv(ts - origin, w) * w;
+				return true;
+			});
+		}
+		case Kind::MONTHS: {
+			const auto origin_month = DateTrunc::MonthIndex(timestamp_t(origin));
+			const int64_t w = width.months;
+			return Execute(ts_arg, result, count, [&](int64_t ts, int64_t &bucket) {
+				if (!InRange(ts)) {
+					return false;
+				}
+				const auto months =
+				    DateTrunc::FloorDiv(DateTrunc::MonthIndex(timestamp_t(ts)) - origin_month, w) * w + origin_month;
+				bucket = DateTrunc::MonthIndexStart(months).value;
+				return true;
+			});
+		}
+		default:
+			return false;
+		}
+	}
+
 	static bool TryBinary(DataChunk &args, Vector &result) {
 		interval_t width;
 		Kind kind;
@@ -119,8 +153,7 @@ struct ICUTimeBucketFast {
 			return false;
 		}
 		const auto origin = kind == Kind::MONTHS ? DEFAULT_ORIGIN_MICROS_2 : DEFAULT_ORIGIN_MICROS_1;
-		return Execute(args.data[1], result, args.size(),
-		               [&](int64_t ts, int64_t &bucket) { return TryBucket(kind, width, ts, origin, bucket); });
+		return Dispatch(kind, width, origin, args.data[1], result, args.size());
 	}
 
 	static bool TryOffset(DataChunk &args, Vector &result) {
@@ -161,8 +194,7 @@ struct ICUTimeBucketFast {
 		if (!origin.IsFinite()) {
 			return false;
 		}
-		return Execute(args.data[1], result, args.size(),
-		               [&](int64_t ts, int64_t &bucket) { return TryBucket(kind, width, ts, origin.value, bucket); });
+		return Dispatch(kind, width, origin.value, args.data[1], result, args.size());
 	}
 };
 

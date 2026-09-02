@@ -279,13 +279,25 @@ struct ICUBucket : public ICUDateFunc {
 		idx_t InputIndex() const override {
 			return 1;
 		}
+		void RequireYearSpanBelow(int64_t years) {
+			max_year_span = years;
+		}
 		bool TryBucketRange(const BaseStatistics &stats, int64_t &min_bucket, int64_t &max_bucket) const override {
-			if (!NumericStats::HasMinMax(stats)) {
+			int64_t min_micros = 0;
+			int64_t max_micros = 0;
+			bool zoned = false;
+			if (!TryGetMicrosRange(stats, min_micros, max_micros, zoned)) {
 				return false;
 			}
-			const auto min = NumericStats::GetMin<timestamp_tz_t>(stats);
-			const auto max = NumericStats::GetMax<timestamp_tz_t>(stats);
-			if (min > max || !min.IsFinite() || !max.IsFinite()) {
+			if (!zoned) {
+				min_micros -= Interval::MICROS_PER_DAY;
+				max_micros += Interval::MICROS_PER_DAY;
+			}
+			const timestamp_tz_t min(min_micros);
+			const timestamp_tz_t max(max_micros);
+			if (max_year_span && DateTrunc::ToYearDay(DateTrunc::ToDays(timestamp_t(max.value))).year -
+			                             DateTrunc::ToYearDay(DateTrunc::ToDays(timestamp_t(min.value))).year >=
+			                         max_year_span - 1) {
 				return false;
 			}
 			const auto &lut = *info->lut;
@@ -319,6 +331,7 @@ struct ICUBucket : public ICUDateFunc {
 		BucketSpec spec;
 		unique_ptr<BindData> info;
 		Value part;
+		int64_t max_year_span = 0;
 	};
 
 	class DateCastRewrite : public Rewrite {
@@ -416,6 +429,8 @@ struct ICUBucket : public ICUDateFunc {
 			return "year";
 		case DatePartSpecifier::MONTH:
 			return "month";
+		case DatePartSpecifier::WEEK:
+			return "week";
 		case DatePartSpecifier::DAY:
 			return "day";
 		case DatePartSpecifier::HOUR:
@@ -443,10 +458,15 @@ struct ICUBucket : public ICUDateFunc {
 		}
 		DatePartSpecifier part;
 		BucketSpec spec;
-		if (!TryGetStrfTimeGranularity(StringValue::Get(format_value), false, part) || !TryGetBucketSpec(part, spec)) {
+		bool two_digit_year = false;
+		if (!TryGetStrfTimeGranularity(StringValue::Get(format_value), false, part, two_digit_year) ||
+		    !TryGetBucketSpec(part, spec)) {
 			return nullptr;
 		}
 		auto inner = make_uniq<Rewrite>(spec, info, Value(PartName(part)));
+		if (two_digit_year) {
+			inner->RequireYearSpanBelow(100);
+		}
 		return make_uniq<FunctionBucketRewrite>(std::move(inner), expr, 0);
 	}
 
