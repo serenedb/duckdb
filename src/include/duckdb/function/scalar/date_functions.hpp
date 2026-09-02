@@ -105,4 +105,44 @@ struct InternalDateTruncMonthUnbucketTzFun {
 	static ScalarFunction GetFunction();
 };
 
+struct InternalMonthOfYearFun {
+	static constexpr const char *Name = "__internal_month_of_year";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct InternalDayOfWeekFun {
+	static constexpr const char *Name = "__internal_day_of_week";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct InternalMonthNameFun {
+	static constexpr const char *Name = "__internal_month_name";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
+struct InternalDayNameFun {
+	static constexpr const char *Name = "__internal_day_name";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
 } // namespace duckdb

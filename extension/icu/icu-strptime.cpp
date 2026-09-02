@@ -12,6 +12,7 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "include/icu-bucket.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -631,6 +632,9 @@ struct ICUStrftime : public ICUDateFunc {
 		                               ICUStrftimeFunction<timestamp_tz_t>, Bind));
 		set.AddFunction(ScalarFunction({LogicalType::TIMESTAMP_TZ_NS, LogicalType::VARCHAR}, LogicalType::VARCHAR,
 		                               ICUStrftimeFunction<timestamp_tz_ns_t>, Bind));
+		for (auto &function : set.functions) {
+			function.SetBucketRewriteCallback(ICUStrfTimeBucketRewrite);
+		}
 		loader.RegisterFunction(set);
 	}
 

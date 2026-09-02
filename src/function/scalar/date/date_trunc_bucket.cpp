@@ -1,9 +1,11 @@
 #include "duckdb/common/enums/date_part_specifier.hpp"
 #include "duckdb/common/operator/date_trunc_operators.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/function/scalar/date_bucket_rewrite.hpp"
 #include "duckdb/function/scalar/date_functions.hpp"
+#include "duckdb/function/scalar/strftime_format.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -288,6 +290,346 @@ unique_ptr<BucketRewrite> TimeBucketBucketRewrite(ClientContext &context, const 
 		return nullptr;
 	}
 	return make_uniq<DateBucketRewrite>(context, spec, 1, input_type, expr.GetReturnType(), false);
+}
+
+FunctionBucketRewrite::FunctionBucketRewrite(unique_ptr<BucketRewrite> inner_p, const BoundFunctionExpression &expr,
+                                             idx_t input_index_p)
+    : inner(std::move(inner_p)), function(expr.Function()),
+      bind_info(expr.BindInfo() ? expr.BindInfo()->Copy() : nullptr), input_index(input_index_p) {
+	for (auto &child : expr.GetChildren()) {
+		arguments.push_back(child->Copy());
+	}
+}
+
+idx_t FunctionBucketRewrite::InputIndex() const {
+	return input_index;
+}
+
+bool FunctionBucketRewrite::TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket,
+                                           int64_t &max_bucket) const {
+	return inner->TryBucketRange(input_stats, min_bucket, max_bucket);
+}
+
+unique_ptr<Expression> FunctionBucketRewrite::Bucket(unique_ptr<Expression> input) const {
+	return inner->Bucket(std::move(input));
+}
+
+unique_ptr<Expression> FunctionBucketRewrite::Unbucket(unique_ptr<Expression> bucket) const {
+	vector<unique_ptr<Expression>> children;
+	for (idx_t i = 0; i < arguments.size(); i++) {
+		children.push_back(i == input_index ? inner->Unbucket(std::move(bucket)) : arguments[i]->Copy());
+	}
+	return make_uniq<BoundFunctionExpression>(function, std::move(children), bind_info ? bind_info->Copy() : nullptr);
+}
+
+CyclicBucketRewrite::CyclicBucketRewrite(ScalarFunction unbucket_function_p, int64_t min_bucket_p,
+                                         int64_t max_bucket_p)
+    : unbucket_function(std::move(unbucket_function_p)), min_bucket(min_bucket_p), max_bucket(max_bucket_p) {
+}
+
+idx_t CyclicBucketRewrite::InputIndex() const {
+	return 0;
+}
+
+bool CyclicBucketRewrite::TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket_p,
+                                         int64_t &max_bucket_p) const {
+	min_bucket_p = min_bucket;
+	max_bucket_p = max_bucket;
+	return true;
+}
+
+unique_ptr<Expression> CyclicBucketRewrite::Unbucket(unique_ptr<Expression> bucket) const {
+	vector<unique_ptr<Expression>> arguments;
+	arguments.push_back(std::move(bucket));
+	BoundScalarFunction bound_function(unbucket_function);
+	return make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(arguments), nullptr);
+}
+
+namespace {
+
+struct StrfTimeInspector : public StrfTimeFormat {
+	using StrfTimeFormat::specifiers;
+};
+
+} // namespace
+
+bool TryGetStrfTimeGranularity(const string &format_string, bool sub_day_constant, DatePartSpecifier &part) {
+	StrfTimeInspector format;
+	if (!StrTimeFormat::ParseFormatSpecifier(format_string, format).empty()) {
+		return false;
+	}
+	enum class Level : uint8_t { NONE, YEAR, MONTH, DAY, HOUR, MINUTE, SECOND };
+	auto finest = Level::NONE;
+	auto raise = [&](Level level) {
+		if (level > finest) {
+			finest = level;
+		}
+	};
+	bool year = false;
+	bool month = false;
+	bool day = false;
+	bool day_of_year = false;
+	bool hour24 = false;
+	bool hour12 = false;
+	bool am_pm = false;
+	bool minute = false;
+	bool second = false;
+	for (const auto specifier : format.specifiers) {
+		switch (specifier) {
+		case StrTimeSpecifier::YEAR_DECIMAL:
+			year = true;
+			raise(Level::YEAR);
+			break;
+		case StrTimeSpecifier::ABBREVIATED_MONTH_NAME:
+		case StrTimeSpecifier::FULL_MONTH_NAME:
+		case StrTimeSpecifier::MONTH_DECIMAL_PADDED:
+		case StrTimeSpecifier::MONTH_DECIMAL:
+			month = true;
+			raise(Level::MONTH);
+			break;
+		case StrTimeSpecifier::DAY_OF_MONTH_PADDED:
+		case StrTimeSpecifier::DAY_OF_MONTH:
+			day = true;
+			raise(Level::DAY);
+			break;
+		case StrTimeSpecifier::DAY_OF_YEAR_PADDED:
+		case StrTimeSpecifier::DAY_OF_YEAR_DECIMAL:
+			day_of_year = true;
+			raise(Level::DAY);
+			break;
+		case StrTimeSpecifier::ABBREVIATED_WEEKDAY_NAME:
+		case StrTimeSpecifier::FULL_WEEKDAY_NAME:
+		case StrTimeSpecifier::WEEKDAY_DECIMAL:
+		case StrTimeSpecifier::WEEKDAY_ISO:
+			raise(Level::DAY);
+			break;
+		case StrTimeSpecifier::HOUR_24_PADDED:
+		case StrTimeSpecifier::HOUR_24_DECIMAL:
+			hour24 = true;
+			raise(Level::HOUR);
+			break;
+		case StrTimeSpecifier::HOUR_12_PADDED:
+		case StrTimeSpecifier::HOUR_12_DECIMAL:
+			hour12 = true;
+			raise(Level::HOUR);
+			break;
+		case StrTimeSpecifier::AM_PM:
+			am_pm = true;
+			raise(Level::HOUR);
+			break;
+		case StrTimeSpecifier::MINUTE_PADDED:
+		case StrTimeSpecifier::MINUTE_DECIMAL:
+			minute = true;
+			raise(Level::MINUTE);
+			break;
+		case StrTimeSpecifier::SECOND_PADDED:
+		case StrTimeSpecifier::SECOND_DECIMAL:
+			second = true;
+			raise(Level::SECOND);
+			break;
+		default:
+			return false;
+		}
+	}
+	if (sub_day_constant && finest > Level::DAY) {
+		finest = Level::DAY;
+	}
+	if (finest == Level::NONE || !year) {
+		return false;
+	}
+	if (finest >= Level::MONTH && !month && !day_of_year) {
+		return false;
+	}
+	if (finest >= Level::DAY && !(month && day) && !day_of_year) {
+		return false;
+	}
+	if (finest >= Level::HOUR && !hour24 && !(hour12 && am_pm)) {
+		return false;
+	}
+	if (finest >= Level::MINUTE && !minute) {
+		return false;
+	}
+	if (finest >= Level::SECOND && !second) {
+		return false;
+	}
+	switch (finest) {
+	case Level::YEAR:
+		part = DatePartSpecifier::YEAR;
+		return true;
+	case Level::MONTH:
+		part = DatePartSpecifier::MONTH;
+		return true;
+	case Level::DAY:
+		part = DatePartSpecifier::DAY;
+		return true;
+	case Level::HOUR:
+		part = DatePartSpecifier::HOUR;
+		return true;
+	case Level::MINUTE:
+		part = DatePartSpecifier::MINUTE;
+		return true;
+	default:
+		part = DatePartSpecifier::SECOND;
+		return true;
+	}
+}
+
+unique_ptr<BucketRewrite> StrfTimeBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
+	auto &children = expr.GetChildren();
+	if (children.size() != 2) {
+		return nullptr;
+	}
+	idx_t input_index = 0;
+	for (; input_index < 2; input_index++) {
+		const auto id = children[input_index]->GetReturnType().id();
+		if (id == LogicalTypeId::TIMESTAMP || id == LogicalTypeId::DATE) {
+			break;
+		}
+	}
+	if (input_index == 2) {
+		return nullptr;
+	}
+	auto &format_expr = *children[1 - input_index];
+	if (format_expr.GetExpressionClass() != ExpressionClass::BOUND_CONSTANT ||
+	    format_expr.GetReturnType().id() != LogicalTypeId::VARCHAR) {
+		return nullptr;
+	}
+	const auto &format_value = format_expr.Cast<BoundConstantExpression>().GetValue();
+	if (format_value.IsNull()) {
+		return nullptr;
+	}
+	const auto &input_type = children[input_index]->GetReturnType();
+	DatePartSpecifier part;
+	DateBucketSpec spec;
+	if (!TryGetStrfTimeGranularity(StringValue::Get(format_value), input_type.id() == LogicalTypeId::DATE, part) ||
+	    !TryGetDateTruncSpec(part, spec)) {
+		return nullptr;
+	}
+	auto inner = make_uniq<DateBucketRewrite>(context, spec, input_index, input_type, input_type, false);
+	return make_uniq<FunctionBucketRewrite>(std::move(inner), expr, input_index);
+}
+
+namespace {
+
+template <class INPUT>
+int64_t DaysOf(INPUT input);
+
+template <>
+int64_t DaysOf(date_t input) {
+	return input.days;
+}
+
+template <>
+int64_t DaysOf(timestamp_t input) {
+	return DateTrunc::ToDays(input);
+}
+
+template <class INPUT>
+void MonthOfYearFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	UnaryExecutor::Execute<INPUT, int64_t>(args.data[0], result, args.size(), [&](INPUT input) -> optional<int64_t> {
+		if (!Value::IsFinite(input)) {
+			return nullopt;
+		}
+		const auto month = DateTrunc::MonthIndex(DaysOf(input));
+		return month - DateTrunc::FloorDiv(month, int64_t(12)) * 12 + 1;
+	});
+}
+
+template <class INPUT>
+void DayOfWeekFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	UnaryExecutor::Execute<INPUT, int64_t>(args.data[0], result, args.size(), [&](INPUT input) -> optional<int64_t> {
+		if (!Value::IsFinite(input)) {
+			return nullopt;
+		}
+		return int64_t(Date::ExtractISODayOfTheWeek(date_t(UnsafeNumericCast<int32_t>(DaysOf(input)))) % 7);
+	});
+}
+
+void MonthNameFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	UnaryExecutor::Execute<int64_t, string_t>(args.data[0], result, args.size(), [&](int64_t month) {
+		if (month < 1 || month > 12) {
+			throw InvalidInputException("Month bucket %d outside 1..12", month);
+		}
+		return Date::MONTH_NAMES[month - 1];
+	});
+}
+
+void DayNameFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	UnaryExecutor::Execute<int64_t, string_t>(args.data[0], result, args.size(), [&](int64_t day) {
+		if (day < 0 || day > 6) {
+			throw InvalidInputException("Day bucket %d outside 0..6", day);
+		}
+		return Date::DAY_NAMES[day];
+	});
+}
+
+class DateCyclicBucketRewrite : public CyclicBucketRewrite {
+public:
+	DateCyclicBucketRewrite(ScalarFunction bucket_function_p, ScalarFunction unbucket_function_p, int64_t min_bucket_p,
+	                        int64_t max_bucket_p)
+	    : CyclicBucketRewrite(std::move(unbucket_function_p), min_bucket_p, max_bucket_p),
+	      bucket_function(std::move(bucket_function_p)) {
+	}
+
+	unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const override {
+		vector<unique_ptr<Expression>> arguments;
+		arguments.push_back(std::move(input));
+		BoundScalarFunction bound_function(bucket_function);
+		return make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(arguments), nullptr);
+	}
+
+private:
+	ScalarFunction bucket_function;
+};
+
+unique_ptr<BucketRewrite> CyclicRewrite(const BoundFunctionExpression &expr, const ScalarFunctionSet &buckets,
+                                        ScalarFunction unbucket, int64_t min_bucket, int64_t max_bucket) {
+	auto &children = expr.GetChildren();
+	if (children.size() != 1) {
+		return nullptr;
+	}
+	switch (children[0]->GetReturnType().id()) {
+	case LogicalTypeId::DATE:
+		return make_uniq<DateCyclicBucketRewrite>(buckets.functions[0], std::move(unbucket), min_bucket, max_bucket);
+	case LogicalTypeId::TIMESTAMP:
+		return make_uniq<DateCyclicBucketRewrite>(buckets.functions[1], std::move(unbucket), min_bucket, max_bucket);
+	default:
+		return nullptr;
+	}
+}
+
+} // namespace
+
+unique_ptr<BucketRewrite> MonthNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
+	return CyclicRewrite(expr, InternalMonthOfYearFun::GetFunctions(), InternalMonthNameFun::GetFunction(), 1, 12);
+}
+
+unique_ptr<BucketRewrite> DayNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
+	return CyclicRewrite(expr, InternalDayOfWeekFun::GetFunctions(), InternalDayNameFun::GetFunction(), 0, 6);
+}
+
+ScalarFunctionSet InternalMonthOfYearFun::GetFunctions() {
+	ScalarFunctionSet set(Name);
+	set.AddFunction(ScalarFunction(Identifier(Name), {LogicalType::DATE}, LogicalType::BIGINT, MonthOfYearFunction<date_t>));
+	set.AddFunction(
+	    ScalarFunction(Identifier(Name), {LogicalType::TIMESTAMP}, LogicalType::BIGINT, MonthOfYearFunction<timestamp_t>));
+	return set;
+}
+
+ScalarFunctionSet InternalDayOfWeekFun::GetFunctions() {
+	ScalarFunctionSet set(Name);
+	set.AddFunction(ScalarFunction(Identifier(Name), {LogicalType::DATE}, LogicalType::BIGINT, DayOfWeekFunction<date_t>));
+	set.AddFunction(
+	    ScalarFunction(Identifier(Name), {LogicalType::TIMESTAMP}, LogicalType::BIGINT, DayOfWeekFunction<timestamp_t>));
+	return set;
+}
+
+ScalarFunction InternalMonthNameFun::GetFunction() {
+	return ScalarFunction(Identifier(Name), {LogicalType::BIGINT}, LogicalType::VARCHAR, MonthNameFunction);
+}
+
+ScalarFunction InternalDayNameFun::GetFunction() {
+	return ScalarFunction(Identifier(Name), {LogicalType::BIGINT}, LogicalType::VARCHAR, DayNameFunction);
 }
 
 int64_t DateBucketSpec::Bucket(int64_t micros) const {

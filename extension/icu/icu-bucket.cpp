@@ -21,17 +21,22 @@
 #include "include/icu-bucket.hpp"
 
 #include "duckdb/common/operator/date_trunc_operators.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/function/scalar/date_bucket_rewrite.hpp"
+#include "duckdb/function/scalar/date_functions.hpp"
+#include "duckdb/function/scalar/strftime_format.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/storage/statistics/numeric_stats.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-datepart-lut.hpp"
 #include "include/icu-datetrunc-lut.hpp"
 #include "include/icu-timebucket-fast.hpp"
 #include "include/icu-zone-lut.hpp"
+#include "unicode/ucal.h"
 
 namespace duckdb {
 
@@ -333,6 +338,118 @@ struct ICUBucket : public ICUDateFunc {
 		ClientContext &context;
 	};
 
+	static void CyclicFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &info = GetBucketBindData(state);
+		auto &part_arg = args.data[0];
+		if (part_arg.GetVectorType() != VectorType::CONSTANT_VECTOR || ConstantVector::IsNull(part_arg)) {
+			throw InvalidInputException("Time zone cyclic buckets need a constant part");
+		}
+		const auto part = ConstantVector::GetData<string_t>(part_arg)->GetString();
+		const bool month = part == "month";
+		if (!month && part != "dow") {
+			throw InvalidInputException("Time zone cyclic buckets support month and dow");
+		}
+		const auto &lut = *info.lut;
+		CalendarPtr calendar;
+		UnaryExecutor::Execute<timestamp_tz_t, int64_t>(
+		    args.data[1], result, args.size(), [&](timestamp_tz_t input) -> optional<int64_t> {
+			    if (!input.IsFinite()) {
+				    return nullopt;
+			    }
+			    ICUDatePartLUT::LocalTime local;
+			    if (ICUDatePartLUT::TryLocalTime(lut, input, local)) {
+				    return month ? ICUDatePartLUT::LocalMonth(local) : ICUDatePartLUT::LocalDayOfWeek(local);
+			    }
+			    if (!calendar) {
+				    calendar.reset(info.calendar->clone());
+			    }
+			    SetTime(calendar.get(), input);
+			    return month ? int64_t(ExtractField(calendar.get(), UCAL_MONTH)) + 1
+			                 : int64_t(ExtractField(calendar.get(), UCAL_DAY_OF_WEEK)) - 1;
+		    });
+	}
+
+	static ScalarFunction GetCyclicFunction() {
+		return ScalarFunction(Identifier("__internal_icu_cyclic_bucket"),
+		                      {LogicalType::VARCHAR, LogicalType::TIMESTAMP_TZ}, LogicalType::BIGINT, CyclicFunction,
+		                      Bind);
+	}
+
+	class CyclicRewrite : public CyclicBucketRewrite {
+	public:
+		CyclicRewrite(const BindData &info_p, string part_p, ScalarFunction unbucket, int64_t lo, int64_t hi)
+		    : CyclicBucketRewrite(std::move(unbucket), lo, hi), info(make_uniq<BindData>(info_p)),
+		      part(std::move(part_p)) {
+		}
+
+		unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const override {
+			vector<unique_ptr<Expression>> arguments;
+			arguments.push_back(make_uniq<BoundConstantExpression>(Value(part)));
+			arguments.push_back(std::move(input));
+			BoundScalarFunction bound_function(GetCyclicFunction());
+			return make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(arguments),
+			                                          make_uniq<BindData>(*info));
+		}
+
+	private:
+		unique_ptr<BindData> info;
+		string part;
+	};
+
+	static unique_ptr<BucketRewrite> NameRewrite(const BoundFunctionExpression &expr, const string &part,
+	                                             ScalarFunction unbucket, int64_t lo, int64_t hi) {
+		auto &children = expr.GetChildren();
+		if (children.size() != 1 || children[0]->GetReturnType().id() != LogicalTypeId::TIMESTAMP_TZ ||
+		    !expr.BindInfo()) {
+			return nullptr;
+		}
+		auto &info = expr.BindInfo()->Cast<BindData>();
+		if (!info.lut || !info.lut->IsValid()) {
+			return nullptr;
+		}
+		return make_uniq<CyclicRewrite>(info, part, std::move(unbucket), lo, hi);
+	}
+
+	static const char *PartName(DatePartSpecifier part) {
+		switch (part) {
+		case DatePartSpecifier::YEAR:
+			return "year";
+		case DatePartSpecifier::MONTH:
+			return "month";
+		case DatePartSpecifier::DAY:
+			return "day";
+		case DatePartSpecifier::HOUR:
+			return "hour";
+		case DatePartSpecifier::MINUTE:
+			return "minute";
+		default:
+			return "second";
+		}
+	}
+
+	static unique_ptr<BucketRewrite> StrfTimeRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
+		auto &children = expr.GetChildren();
+		if (children.size() != 2 || children[0]->GetReturnType().id() != LogicalTypeId::TIMESTAMP_TZ ||
+		    children[1]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT || !expr.BindInfo()) {
+			return nullptr;
+		}
+		auto &info = expr.BindInfo()->Cast<BindData>();
+		if (!info.lut || !info.lut->IsValid()) {
+			return nullptr;
+		}
+		const auto &format_value = children[1]->Cast<BoundConstantExpression>().GetValue();
+		if (format_value.IsNull() || format_value.type().id() != LogicalTypeId::VARCHAR) {
+			return nullptr;
+		}
+		DatePartSpecifier part;
+		BucketSpec spec;
+		if (!TryGetStrfTimeGranularity(StringValue::Get(format_value), false, part) || !TryGetBucketSpec(part, spec)) {
+			return nullptr;
+		}
+		auto inner = make_uniq<Rewrite>(spec, info, Value(PartName(part)));
+		return make_uniq<FunctionBucketRewrite>(std::move(inner), expr, 0);
+	}
+
 	static unique_ptr<BucketRewrite> DateTruncRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
 		auto &children = expr.GetChildren();
 		if (children.size() != 2 || children[0]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT ||
@@ -449,9 +566,22 @@ unique_ptr<BucketRewrite> ICUDateCastBucketRewrite(ClientContext &context, const
 	return ICUBucket::DateCastRewriteCallback(context, cast);
 }
 
+unique_ptr<BucketRewrite> ICUStrfTimeBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
+	return ICUBucket::StrfTimeRewrite(context, expr);
+}
+
+unique_ptr<BucketRewrite> ICUMonthNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
+	return ICUBucket::NameRewrite(expr, "month", InternalMonthNameFun::GetFunction(), 1, 12);
+}
+
+unique_ptr<BucketRewrite> ICUDayNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
+	return ICUBucket::NameRewrite(expr, "dow", InternalDayNameFun::GetFunction(), 0, 6);
+}
+
 void RegisterICUBucketFunctions(ExtensionLoader &loader) {
 	loader.RegisterFunction(ICUBucket::GetBucketFunction());
 	loader.RegisterFunction(ICUBucket::GetUnbucketFunction());
+	loader.RegisterFunction(ICUBucket::GetCyclicFunction());
 }
 
 } // namespace duckdb

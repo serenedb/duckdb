@@ -1,5 +1,6 @@
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "include/icu-bucket.hpp"
 #include "include/icu-datepart.hpp"
 #include "include/icu-datepart-lut.hpp"
 #include "include/icu-datepart-stats.hpp"
@@ -634,8 +635,10 @@ struct ICUDatePart : public ICUDateFunc {
 
 	template <typename INPUT_TYPE>
 	static ScalarFunction GetMonthNameFunction(const LogicalType &temporal_type) {
-		return ScalarFunction({temporal_type}, LogicalType::VARCHAR, UnaryTimestampFunction<INPUT_TYPE, string_t>,
-		                      BindMonthName);
+		ScalarFunction function({temporal_type}, LogicalType::VARCHAR, UnaryTimestampFunction<INPUT_TYPE, string_t>,
+		                        BindMonthName);
+		function.SetBucketRewriteCallback(ICUMonthNameBucketRewrite);
+		return function;
 	}
 	static void AddMonthNameFunctions(const Identifier &name, ExtensionLoader &loader) {
 		ScalarFunctionSet set {name};
@@ -653,8 +656,10 @@ struct ICUDatePart : public ICUDateFunc {
 
 	template <typename INPUT_TYPE>
 	static ScalarFunction GetDayNameFunction(const LogicalType &temporal_type) {
-		return ScalarFunction({temporal_type}, LogicalType::VARCHAR, UnaryTimestampFunction<INPUT_TYPE, string_t>,
-		                      BindDayName);
+		ScalarFunction function({temporal_type}, LogicalType::VARCHAR, UnaryTimestampFunction<INPUT_TYPE, string_t>,
+		                        BindDayName);
+		function.SetBucketRewriteCallback(ICUDayNameBucketRewrite);
+		return function;
 	}
 	static void AddDayNameFunctions(const Identifier &name, ExtensionLoader &loader) {
 		ScalarFunctionSet set {name};

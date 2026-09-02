@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/enums/date_part_specifier.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/function/scalar_function.hpp"
 
@@ -42,7 +43,43 @@ private:
 	bool anno_domini_only;
 };
 
+class FunctionBucketRewrite : public BucketRewrite {
+public:
+	FunctionBucketRewrite(unique_ptr<BucketRewrite> inner, const BoundFunctionExpression &expr, idx_t input_index);
+
+	idx_t InputIndex() const override;
+	bool TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket, int64_t &max_bucket) const override;
+	unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const override;
+	unique_ptr<Expression> Unbucket(unique_ptr<Expression> bucket) const override;
+
+private:
+	unique_ptr<BucketRewrite> inner;
+	BoundScalarFunction function;
+	vector<unique_ptr<Expression>> arguments;
+	unique_ptr<FunctionData> bind_info;
+	idx_t input_index;
+};
+
+class CyclicBucketRewrite : public BucketRewrite {
+public:
+	CyclicBucketRewrite(ScalarFunction unbucket_function, int64_t min_bucket, int64_t max_bucket);
+
+	idx_t InputIndex() const override;
+	bool TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket, int64_t &max_bucket) const override;
+	unique_ptr<Expression> Unbucket(unique_ptr<Expression> bucket) const override;
+
+protected:
+	ScalarFunction unbucket_function;
+	int64_t min_bucket;
+	int64_t max_bucket;
+};
+
+bool TryGetStrfTimeGranularity(const string &format, bool sub_day_constant, DatePartSpecifier &part);
+
 unique_ptr<BucketRewrite> DateTruncBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 unique_ptr<BucketRewrite> TimeBucketBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
+unique_ptr<BucketRewrite> StrfTimeBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
+unique_ptr<BucketRewrite> MonthNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
+unique_ptr<BucketRewrite> DayNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 
 } // namespace duckdb
