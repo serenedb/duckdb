@@ -89,6 +89,9 @@ ZoneLUT::ZoneLUT(const icu::BasicTimeZone &tz) {
 		offset_max_input = limit - MaxValue<int64_t>(fixed_offset, 0);
 		resolve_min_wall = -limit + MaxValue<int64_t>(fixed_offset, 0);
 		resolve_max_wall = limit + MinValue<int64_t>(fixed_offset, 0);
+		hour_bucket_first_day = fixed_offset % Interval::MICROS_PER_HOUR == 0 ? 0 : DAY_COUNT;
+		minute_bucket_first_day = fixed_offset % Interval::MICROS_PER_MINUTE == 0 ? 0 : DAY_COUNT;
+		day_bucket_first_day = 0;
 		return;
 	}
 
@@ -131,6 +134,27 @@ ZoneLUT::ZoneLUT(const icu::BasicTimeZone &tz) {
 	}
 	Fill(instants, next_instant, DAY_COUNT, current);
 	Fill(walls, next_wall, DAY_COUNT, current);
+	hour_bucket_first_day = 0;
+	minute_bucket_first_day = 0;
+	day_bucket_first_day = 0;
+	for (int64_t day = 0; day < DAY_COUNT; day++) {
+		const auto &entry = instants[UnsafeNumericCast<idx_t>(day)];
+		const auto &wall = walls[UnsafeNumericCast<idx_t>(day)];
+		const bool multiple = entry.transition == MULTIPLE_TRANSITIONS || wall.transition == MULTIPLE_TRANSITIONS;
+		const bool whole_hours = entry.before % Interval::SECS_PER_HOUR == 0 && entry.after % Interval::SECS_PER_HOUR == 0 &&
+		                         (entry.transition == NO_TRANSITION || entry.transition % Interval::MICROS_PER_HOUR == 0);
+		const bool whole_minutes =
+		    entry.before % Interval::SECS_PER_MINUTE == 0 && entry.after % Interval::SECS_PER_MINUTE == 0;
+		if (multiple) {
+			day_bucket_first_day = day + 1;
+		}
+		if (multiple || !whole_hours) {
+			hour_bucket_first_day = day + 1;
+		}
+		if (multiple || !whole_minutes) {
+			minute_bucket_first_day = day + 1;
+		}
+	}
 }
 
 shared_ptr<const ZoneLUT> ZoneLUT::Get(const icu::TimeZone &tz) {

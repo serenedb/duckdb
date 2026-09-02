@@ -116,22 +116,27 @@ struct DateTrunc {
 	static inline int64_t MonthStart(const YearDay &yd, int32_t month) {
 		return yd.year_start + (yd.leap ? Date::CUMULATIVE_LEAP_DAYS : Date::CUMULATIVE_DAYS)[month - 1];
 	}
-	static inline int64_t MonthIndex(timestamp_t input) {
-		const auto days = ToDays(input);
+	static inline int64_t MonthIndex(int64_t days) {
 		if (DateTruncTable::Contains(days)) {
 			return int64_t(DateTruncTable::FIRST_YEAR) * Interval::MONTHS_PER_YEAR + DateTruncTable::INSTANCE.Month(days);
 		}
-		const auto yd = ToYearDay(days);
+		const auto yd = ToYearDay(UnsafeNumericCast<int32_t>(days));
 		return yd.year * Interval::MONTHS_PER_YEAR + MonthOf(yd) - 1;
 	}
-	static inline timestamp_t MonthIndexStart(int64_t months) {
+	static inline int64_t MonthIndex(timestamp_t input) {
+		return MonthIndex(int64_t(ToDays(input)));
+	}
+	static inline int64_t MonthIndexStartDays(int64_t months) {
 		const auto year = FloorDiv(months, int64_t(Interval::MONTHS_PER_YEAR));
 		const auto month = months - year * Interval::MONTHS_PER_YEAR;
 		if (DUCKDB_UNLIKELY(year < NumericLimits<int32_t>::Minimum() || year > NumericLimits<int32_t>::Maximum())) {
 			ThrowOutOfRange();
 		}
 		const bool leap = Date::IsLeapYear(UnsafeNumericCast<int32_t>(year));
-		return FromDays(YearStart(year) + (leap ? Date::CUMULATIVE_LEAP_DAYS : Date::CUMULATIVE_DAYS)[month]);
+		return YearStart(year) + (leap ? Date::CUMULATIVE_LEAP_DAYS : Date::CUMULATIVE_DAYS)[month];
+	}
+	static inline timestamp_t MonthIndexStart(int64_t months) {
+		return FromDays(MonthIndexStartDays(months));
 	}
 
 	struct MillenniumOperator {

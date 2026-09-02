@@ -128,6 +128,19 @@ public:
 		return (day + FIRST_DAY) * Interval::MICROS_PER_DAY;
 	}
 
+	int64_t HourBucketFirstDay() const {
+		return hour_bucket_first_day;
+	}
+	int64_t MinuteBucketFirstDay() const {
+		return minute_bucket_first_day;
+	}
+	int64_t DayBucketFirstDay() const {
+		return day_bucket_first_day;
+	}
+	[[gnu::always_inline]] inline const ZoneDay &InstantEntry(int64_t day) const {
+		return instants[UnsafeNumericCast<idx_t>(day)];
+	}
+
 	[[gnu::always_inline]] inline const ZoneDay *InstantDay(int64_t micros) const {
 		return Find(instants, micros);
 	}
@@ -164,6 +177,9 @@ private:
 	int64_t offset_max_input = 0;
 	int64_t resolve_min_wall = 0;
 	int64_t resolve_max_wall = 0;
+	int64_t hour_bucket_first_day = DAY_COUNT;
+	int64_t minute_bucket_first_day = DAY_COUNT;
+	int64_t day_bucket_first_day = DAY_COUNT;
 };
 
 } // namespace duckdb
