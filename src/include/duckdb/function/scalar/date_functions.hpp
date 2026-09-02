@@ -45,4 +45,24 @@ struct TryStrpTimeFun {
 	static ScalarFunctionSet GetFunctions();
 };
 
+struct InternalDateTruncBucketFun {
+	static constexpr const char *Name = "__internal_date_trunc_bucket";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
+struct InternalDateTruncUnbucketFun {
+	static constexpr const char *Name = "__internal_date_trunc_unbucket";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
 } // namespace duckdb
