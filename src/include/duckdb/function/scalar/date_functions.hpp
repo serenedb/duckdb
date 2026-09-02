@@ -65,4 +65,24 @@ struct InternalDateTruncUnbucketFun {
 	static ScalarFunction GetFunction();
 };
 
+struct InternalDateTruncMonthBucketFun {
+	static constexpr const char *Name = "__internal_date_trunc_month_bucket";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
+struct InternalDateTruncMonthUnbucketFun {
+	static constexpr const char *Name = "__internal_date_trunc_month_unbucket";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
 } // namespace duckdb

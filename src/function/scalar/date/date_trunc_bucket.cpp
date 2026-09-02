@@ -30,6 +30,14 @@ timestamp_t Unbucket(int64_t bucket, int64_t width, int64_t anchor) {
 	return timestamp_t(bucket * width + anchor);
 }
 
+int64_t MonthBucket(timestamp_t ts, int64_t width, int64_t anchor) {
+	return DateTrunc::FloorDiv(DateTrunc::MonthIndex(ts) - anchor, width);
+}
+
+timestamp_t MonthUnbucket(int64_t bucket, int64_t width, int64_t anchor) {
+	return DateTrunc::MonthIndexStart(bucket * width + anchor);
+}
+
 bool TryGetConstants(DataChunk &args, int64_t &width, int64_t &anchor) {
 	auto &width_vector = args.data[1];
 	auto &anchor_vector = args.data[2];
@@ -43,28 +51,33 @@ bool TryGetConstants(DataChunk &args, int64_t &width, int64_t &anchor) {
 	return true;
 }
 
-void BucketFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+template <class INPUT, class RESULT, RESULT (*FUN)(INPUT, int64_t, int64_t)>
+void Execute(DataChunk &args, Vector &result) {
 	int64_t width = 0;
 	int64_t anchor = 0;
 	if (TryGetConstants(args, width, anchor)) {
-		UnaryExecutor::Execute<timestamp_t, int64_t>(args.data[0], result, args.size(),
-		                                             [&](timestamp_t ts) { return Bucket(ts, width, anchor); });
+		UnaryExecutor::Execute<INPUT, RESULT>(args.data[0], result, args.size(),
+		                                      [&](INPUT input) { return FUN(input, width, anchor); });
 		return;
 	}
-	TernaryExecutor::Execute<timestamp_t, int64_t, int64_t, int64_t>(args.data[0], args.data[1], args.data[2], result,
-	                                                                 args.size(), Bucket);
+	TernaryExecutor::Execute<INPUT, int64_t, int64_t, RESULT>(args.data[0], args.data[1], args.data[2], result,
+	                                                          args.size(), FUN);
+}
+
+void BucketFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	Execute<timestamp_t, int64_t, Bucket>(args, result);
 }
 
 void UnbucketFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	int64_t width = 0;
-	int64_t anchor = 0;
-	if (TryGetConstants(args, width, anchor)) {
-		UnaryExecutor::Execute<int64_t, timestamp_t>(args.data[0], result, args.size(),
-		                                             [&](int64_t bucket) { return Unbucket(bucket, width, anchor); });
-		return;
-	}
-	TernaryExecutor::Execute<int64_t, int64_t, int64_t, timestamp_t>(args.data[0], args.data[1], args.data[2], result,
-	                                                                 args.size(), Unbucket);
+	Execute<int64_t, timestamp_t, Unbucket>(args, result);
+}
+
+void MonthBucketFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	Execute<timestamp_t, int64_t, MonthBucket>(args, result);
+}
+
+void MonthUnbucketFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	Execute<int64_t, timestamp_t, MonthUnbucket>(args, result);
 }
 
 template <class INPUT, class FUN>
@@ -99,6 +112,14 @@ unique_ptr<BaseStatistics> UnbucketStatistics(ClientContext &context, FunctionSt
 	return RangeStatistics<int64_t>(input, LogicalType::TIMESTAMP, Unbucket);
 }
 
+unique_ptr<BaseStatistics> MonthBucketStatistics(ClientContext &context, FunctionStatisticsInput &input) {
+	return RangeStatistics<timestamp_t>(input, LogicalType::BIGINT, MonthBucket);
+}
+
+unique_ptr<BaseStatistics> MonthUnbucketStatistics(ClientContext &context, FunctionStatisticsInput &input) {
+	return RangeStatistics<int64_t>(input, LogicalType::TIMESTAMP, MonthUnbucket);
+}
+
 } // namespace
 
 ScalarFunction InternalDateTruncBucketFun::GetFunction() {
@@ -109,6 +130,16 @@ ScalarFunction InternalDateTruncBucketFun::GetFunction() {
 ScalarFunction InternalDateTruncUnbucketFun::GetFunction() {
 	return ScalarFunction(Identifier(Name), {LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT},
 	                      LogicalType::TIMESTAMP, UnbucketFunction, nullptr, UnbucketStatistics);
+}
+
+ScalarFunction InternalDateTruncMonthBucketFun::GetFunction() {
+	return ScalarFunction(Identifier(Name), {LogicalType::TIMESTAMP, LogicalType::BIGINT, LogicalType::BIGINT},
+	                      LogicalType::BIGINT, MonthBucketFunction, nullptr, MonthBucketStatistics);
+}
+
+ScalarFunction InternalDateTruncMonthUnbucketFun::GetFunction() {
+	return ScalarFunction(Identifier(Name), {LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT},
+	                      LogicalType::TIMESTAMP, MonthUnbucketFunction, nullptr, MonthUnbucketStatistics);
 }
 
 } // namespace duckdb

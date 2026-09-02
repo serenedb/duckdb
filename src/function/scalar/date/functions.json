@@ -51,5 +51,19 @@
         "description": "",
         "example": "",
         "type": "scalar_function"
+    },
+    {
+        "name": "__internal_date_trunc_month_bucket",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
+    },
+    {
+        "name": "__internal_date_trunc_month_unbucket",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
     }
 ]

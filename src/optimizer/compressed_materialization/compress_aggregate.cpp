@@ -62,9 +62,11 @@ void CompressedMaterialization::CompressAggregate(unique_ptr<LogicalOperator> &o
 		// Mark the bindings referenced by the non-colref expression so they won't be modified
 		GetReferencedBindings(group_expr, referenced_bindings);
 
-		if (group_expr.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION &&
-		    group_expr.Cast<BoundFunctionExpression>().Function().GetName() == InternalDateTruncBucketFun::Name) {
-			continue;
+		if (group_expr.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
+			const auto &name = group_expr.Cast<BoundFunctionExpression>().Function().GetName();
+			if (name == InternalDateTruncBucketFun::Name || name == InternalDateTruncMonthBucketFun::Name) {
+				continue;
+			}
 		}
 
 		// The non-colref expression won't be compressed generically, so try to compress it here

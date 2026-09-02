@@ -91,6 +91,19 @@ struct DateTrunc {
 	static inline int64_t MonthStart(const YearDay &yd, int32_t month) {
 		return yd.year_start + (yd.leap ? Date::CUMULATIVE_LEAP_DAYS : Date::CUMULATIVE_DAYS)[month - 1];
 	}
+	static inline int64_t MonthIndex(timestamp_t input) {
+		const auto yd = ToYearDay(ToDays(input));
+		return yd.year * Interval::MONTHS_PER_YEAR + MonthOf(yd) - 1;
+	}
+	static inline timestamp_t MonthIndexStart(int64_t months) {
+		const auto year = FloorDiv(months, int64_t(Interval::MONTHS_PER_YEAR));
+		const auto month = months - year * Interval::MONTHS_PER_YEAR;
+		if (DUCKDB_UNLIKELY(year < NumericLimits<int32_t>::Minimum() || year > NumericLimits<int32_t>::Maximum())) {
+			ThrowOutOfRange();
+		}
+		const bool leap = Date::IsLeapYear(UnsafeNumericCast<int32_t>(year));
+		return FromDays(YearStart(year) + (leap ? Date::CUMULATIVE_LEAP_DAYS : Date::CUMULATIVE_DAYS)[month]);
+	}
 
 	struct MillenniumOperator {
 		static inline int64_t Days(int32_t days) {
