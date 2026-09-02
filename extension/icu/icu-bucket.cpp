@@ -34,6 +34,7 @@
 #include "include/icu-datefunc.hpp"
 #include "include/icu-datepart-lut.hpp"
 #include "include/icu-datetrunc-lut.hpp"
+#include "include/icu-helpers.hpp"
 #include "include/icu-timebucket-fast.hpp"
 #include "include/icu-zone-lut.hpp"
 #include "unicode/ucal.h"
@@ -219,7 +220,15 @@ struct ICUBucket : public ICUDateFunc {
 		}
 	}
 
-	static BucketSpec GetBucketSpec(Vector &part_arg) {
+	static int64_t ConstantArgument(Vector &arg, const char *what) {
+		if (arg.GetVectorType() != VectorType::CONSTANT_VECTOR || ConstantVector::IsNull(arg)) {
+			throw InvalidInputException("Time zone bucket functions need a constant %s", what);
+		}
+		return *ConstantVector::GetData<int64_t>(arg);
+	}
+
+	static BucketSpec GetBucketSpec(DataChunk &args) {
+		auto &part_arg = args.data[0];
 		if (part_arg.GetVectorType() != VectorType::CONSTANT_VECTOR || ConstantVector::IsNull(part_arg)) {
 			throw InvalidInputException("Time zone bucket functions need a constant part");
 		}
@@ -227,6 +236,13 @@ struct ICUBucket : public ICUDateFunc {
 		const auto part = GetDatePartSpecifier(ConstantVector::GetData<string_t>(part_arg)->GetString());
 		if (!TryGetBucketSpec(part, spec)) {
 			throw InvalidInputException("Time zone bucket functions do not support this part");
+		}
+		if (args.ColumnCount() == 4) {
+			spec.width = ConstantArgument(args.data[2], "width");
+			spec.anchor = ConstantArgument(args.data[3], "anchor");
+			if (spec.width <= 0) {
+				throw InvalidInputException("Time zone bucket width must be positive");
+			}
 		}
 		return spec;
 	}
@@ -241,7 +257,7 @@ struct ICUBucket : public ICUDateFunc {
 
 	static void BucketFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &info = GetBucketBindData(state);
-		const auto spec = GetBucketSpec(args.data[0]);
+		const auto spec = GetBucketSpec(args);
 		const auto &lut = *info.lut;
 		DispatchBucket(lut, spec, [&](auto bucket) {
 			UnaryExecutor::Execute<timestamp_tz_t, int64_t>(args.data[1], result, args.size(),
@@ -251,23 +267,39 @@ struct ICUBucket : public ICUDateFunc {
 
 	static void UnbucketFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &info = GetBucketBindData(state);
-		const auto spec = GetBucketSpec(args.data[0]);
+		const auto spec = GetBucketSpec(args);
 		CalendarPtr calendar;
 		UnaryExecutor::Execute<int64_t, timestamp_tz_t>(args.data[1], result, args.size(), [&](int64_t bucket) {
 			return UnbucketOf(info, spec, bucket, calendar);
 		});
 	}
 
-	static ScalarFunction GetBucketFunction() {
-		return ScalarFunction(Identifier("__internal_icu_date_trunc_bucket"),
-		                      {LogicalType::VARCHAR, LogicalType::TIMESTAMP_TZ}, LogicalType::BIGINT, BucketFunction,
-		                      Bind);
+	static ScalarFunctionSet BucketFunctions(const char *name, const LogicalType &input, const LogicalType &output,
+	                                         scalar_function_t function) {
+		ScalarFunctionSet set(name);
+		set.AddFunction(ScalarFunction(Identifier(name), {LogicalType::VARCHAR, input}, output, function, Bind));
+		set.AddFunction(ScalarFunction(Identifier(name),
+		                               {LogicalType::VARCHAR, input, LogicalType::BIGINT, LogicalType::BIGINT}, output,
+		                               function, Bind));
+		return set;
 	}
 
-	static ScalarFunction GetUnbucketFunction() {
-		return ScalarFunction(Identifier("__internal_icu_date_trunc_unbucket"),
-		                      {LogicalType::VARCHAR, LogicalType::BIGINT}, LogicalType::TIMESTAMP_TZ, UnbucketFunction,
-		                      Bind);
+	static ScalarFunctionSet GetBucketFunctions() {
+		return BucketFunctions("__internal_icu_date_trunc_bucket", LogicalType::TIMESTAMP_TZ, LogicalType::BIGINT,
+		                       BucketFunction);
+	}
+
+	static ScalarFunctionSet GetUnbucketFunctions() {
+		return BucketFunctions("__internal_icu_date_trunc_unbucket", LogicalType::BIGINT, LogicalType::TIMESTAMP_TZ,
+		                       UnbucketFunction);
+	}
+
+	static ScalarFunction GetBucketFunction(bool bounded = false) {
+		return GetBucketFunctions().functions[bounded ? 1 : 0];
+	}
+
+	static ScalarFunction GetUnbucketFunction(bool bounded = false) {
+		return GetUnbucketFunctions().functions[bounded ? 1 : 0];
 	}
 
 	class Rewrite : public BucketRewrite {
@@ -312,17 +344,26 @@ struct ICUBucket : public ICUDateFunc {
 			return true;
 		}
 		unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const override {
-			return MakeCall(GetBucketFunction(), std::move(input));
+			return MakeCall(GetBucketFunction(HasExplicitBounds()), std::move(input));
 		}
 		unique_ptr<Expression> Unbucket(unique_ptr<Expression> bucket) const override {
-			return MakeCall(GetUnbucketFunction(), std::move(bucket));
+			return MakeCall(GetUnbucketFunction(HasExplicitBounds()), std::move(bucket));
 		}
 
 	protected:
+		bool HasExplicitBounds() const {
+			BucketSpec base;
+			return !TryGetBucketSpec(spec.part, base) || base.width != spec.width || base.anchor != spec.anchor;
+		}
+
 		unique_ptr<Expression> MakeCall(ScalarFunction function, unique_ptr<Expression> input) const {
 			vector<unique_ptr<Expression>> arguments;
 			arguments.push_back(make_uniq<BoundConstantExpression>(part));
 			arguments.push_back(std::move(input));
+			if (HasExplicitBounds()) {
+				arguments.push_back(make_uniq<BoundConstantExpression>(Value::BIGINT(spec.width)));
+				arguments.push_back(make_uniq<BoundConstantExpression>(Value::BIGINT(spec.anchor)));
+			}
 			BoundScalarFunction bound_function(std::move(function));
 			return make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(arguments),
 			                                          make_uniq<BindData>(*info));
@@ -579,12 +620,51 @@ struct ICUBucket : public ICUDateFunc {
 				spec.anchor = spec.calendar ? DateTrunc::MonthIndex(timestamp_t(origin.value)) : origin.value;
 				break;
 			}
+			case LogicalTypeId::VARCHAR:
+				return ZonedTimeBucketRewrite(context, expr, width, StringValue::Get(third));
 			default:
 				return nullptr;
 			}
 		}
 		return make_uniq<DateBucketRewrite>(context, spec, 1, LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_TZ,
 		                                    true);
+	}
+
+	static unique_ptr<BucketRewrite> ZonedTimeBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr,
+	                                                        interval_t width, string tz) {
+		if (!ICUHelpers::TryGetTimeZone(tz) || !expr.BindInfo()) {
+			return nullptr;
+		}
+		const BindData zoned(tz, expr.BindInfo()->Cast<BindData>().cal_setting);
+		if (!zoned.lut || !zoned.lut->IsValid()) {
+			return nullptr;
+		}
+		BucketSpec spec;
+		switch (ICUTimeBucketFast::Classify(width)) {
+		case ICUTimeBucketFast::Kind::MICROS: {
+			const auto origin =
+			    FromNaive(zoned.calendar.get(), timestamp_t(ICUTimeBucketFast::DEFAULT_ORIGIN_MICROS_1));
+			DateBucketSpec fixed;
+			fixed.width = width.micros;
+			fixed.anchor = origin.value;
+			return make_uniq<DateBucketRewrite>(context, fixed, 1, LogicalType::TIMESTAMP_TZ,
+			                                    LogicalType::TIMESTAMP_TZ, true);
+		}
+		case ICUTimeBucketFast::Kind::DAYS:
+			TryGetBucketSpec(DatePartSpecifier::DAY, spec);
+			spec.width = width.days;
+			spec.anchor = ICUTimeBucketFast::DEFAULT_ORIGIN_MICROS_1 / Interval::MICROS_PER_DAY;
+			break;
+		case ICUTimeBucketFast::Kind::MONTHS:
+			TryGetBucketSpec(DatePartSpecifier::MONTH, spec);
+			spec.width = width.months;
+			spec.anchor = DateTrunc::MonthIndex(timestamp_t(ICUTimeBucketFast::DEFAULT_ORIGIN_MICROS_2));
+			break;
+		default:
+			return nullptr;
+		}
+		auto inner = make_uniq<Rewrite>(spec, zoned, Value(PartName(spec.part)));
+		return make_uniq<FunctionBucketRewrite>(std::move(inner), expr, 1);
 	}
 };
 
@@ -619,8 +699,8 @@ unique_ptr<BucketRewrite> ICULastDayBucketRewrite(ClientContext &context, const 
 }
 
 void RegisterICUBucketFunctions(ExtensionLoader &loader) {
-	loader.RegisterFunction(ICUBucket::GetBucketFunction());
-	loader.RegisterFunction(ICUBucket::GetUnbucketFunction());
+	loader.RegisterFunction(ICUBucket::GetBucketFunctions());
+	loader.RegisterFunction(ICUBucket::GetUnbucketFunctions());
 	loader.RegisterFunction(ICUBucket::GetCyclicFunction());
 }
 
