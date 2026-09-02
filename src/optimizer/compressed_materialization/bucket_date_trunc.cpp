@@ -1,7 +1,4 @@
-#include "duckdb/common/enums/date_part_specifier.hpp"
-#include "duckdb/common/operator/date_trunc_operators.hpp"
 #include "duckdb/common/types/hugeint.hpp"
-#include "duckdb/function/scalar/date_functions.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/column_binding_replacer.hpp"
 #include "duckdb/optimizer/compressed_materialization.hpp"
@@ -9,7 +6,6 @@
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
-#include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
@@ -18,95 +14,6 @@
 namespace duckdb {
 
 namespace {
-
-struct BucketSpec {
-	bool calendar = false;
-	int64_t width = 0;
-	int64_t anchor = 0;
-
-	int64_t Bucket(timestamp_t ts) const {
-		return DateTrunc::FloorDiv((calendar ? DateTrunc::MonthIndex(ts) : ts.value) - anchor, width);
-	}
-	ScalarFunction BucketFunction() const {
-		return calendar ? InternalDateTruncMonthBucketFun::GetFunction() : InternalDateTruncBucketFun::GetFunction();
-	}
-	ScalarFunction UnbucketFunction() const {
-		return calendar ? InternalDateTruncMonthUnbucketFun::GetFunction()
-		                : InternalDateTruncUnbucketFun::GetFunction();
-	}
-};
-
-bool TryGetBucketSpec(const Expression &expr, BucketSpec &spec) {
-	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
-		return false;
-	}
-	auto &function = expr.Cast<BoundFunctionExpression>();
-	const auto &name = function.Function().GetName();
-	if (name != "date_trunc" && name != "datetrunc") {
-		return false;
-	}
-	auto &children = function.GetChildren();
-	if (children.size() != 2 || children[0]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT ||
-	    children[1]->GetReturnType().id() != LogicalTypeId::TIMESTAMP) {
-		return false;
-	}
-	const auto &unit = children[0]->Cast<BoundConstantExpression>().GetValue();
-	DatePartSpecifier part;
-	if (unit.IsNull() || !TryGetDatePartSpecifier(StringValue::Get(unit), part)) {
-		return false;
-	}
-	spec = BucketSpec();
-	switch (part) {
-	case DatePartSpecifier::SECOND:
-	case DatePartSpecifier::EPOCH:
-		spec.width = Interval::MICROS_PER_SEC;
-		return true;
-	case DatePartSpecifier::MINUTE:
-		spec.width = Interval::MICROS_PER_MINUTE;
-		return true;
-	case DatePartSpecifier::HOUR:
-		spec.width = Interval::MICROS_PER_HOUR;
-		return true;
-	case DatePartSpecifier::DAY:
-	case DatePartSpecifier::DOW:
-	case DatePartSpecifier::ISODOW:
-	case DatePartSpecifier::DOY:
-	case DatePartSpecifier::JULIAN_DAY:
-		spec.width = Interval::MICROS_PER_DAY;
-		return true;
-	case DatePartSpecifier::WEEK:
-	case DatePartSpecifier::YEARWEEK:
-		spec.width = Interval::MICROS_PER_WEEK;
-		spec.anchor = DateTrunc::EPOCH_MONDAY * Interval::MICROS_PER_DAY;
-		return true;
-	case DatePartSpecifier::MONTH:
-		spec.calendar = true;
-		spec.width = 1;
-		return true;
-	case DatePartSpecifier::QUARTER:
-		spec.calendar = true;
-		spec.width = Interval::MONTHS_PER_QUARTER;
-		return true;
-	case DatePartSpecifier::YEAR:
-		spec.calendar = true;
-		spec.width = Interval::MONTHS_PER_YEAR;
-		return true;
-	case DatePartSpecifier::DECADE:
-		spec.calendar = true;
-		spec.width = Interval::MONTHS_PER_DECADE;
-		return true;
-	case DatePartSpecifier::CENTURY:
-		spec.calendar = true;
-		spec.width = Interval::MONTHS_PER_CENTURY;
-		return true;
-	case DatePartSpecifier::MILLENNIUM:
-		spec.calendar = true;
-		spec.width = Interval::MONTHS_PER_MILLENIUM;
-		return true;
-	default:
-		return false;
-	}
-}
 
 idx_t RequiredBitsForValue(uint32_t n) {
 	idx_t required_bits = 0;
@@ -155,18 +62,20 @@ bool TryAddPerfectHashBits(const LogicalType &type, const BaseStatistics &stats,
 	}
 }
 
-unique_ptr<Expression> MakeCall(ScalarFunction function, unique_ptr<Expression> input, int64_t width, int64_t anchor) {
-	vector<unique_ptr<Expression>> arguments;
-	arguments.push_back(std::move(input));
-	arguments.push_back(make_uniq<BoundConstantExpression>(Value::BIGINT(width)));
-	arguments.push_back(make_uniq<BoundConstantExpression>(Value::BIGINT(anchor)));
-	BoundScalarFunction bound_function(std::move(function));
-	return make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(arguments), nullptr);
+unique_ptr<BucketRewrite> GetBucketRewrite(ClientContext &context, const Expression &group) {
+	if (group.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
+		return nullptr;
+	}
+	auto &function = group.Cast<BoundFunctionExpression>();
+	if (!function.Function().HasBucketRewriteCallback()) {
+		return nullptr;
+	}
+	return function.Function().GetBucketRewriteCallback()(context, function);
 }
 
 struct BucketedGroup {
 	idx_t group_idx;
-	BucketSpec spec;
+	unique_ptr<BucketRewrite> rewrite;
 	int64_t min;
 	int64_t max;
 	unique_ptr<BaseStatistics> stats;
@@ -191,21 +100,17 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 		}
 	}
 
-	vector<idx_t> candidates;
+	vector<unique_ptr<BucketRewrite>> rewrites(groups.size());
+	bool any_candidate = false;
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
-		BucketSpec spec;
-		if (TryGetBucketSpec(*groups[group_idx], spec)) {
-			candidates.push_back(group_idx);
-		}
+		rewrites[group_idx] = GetBucketRewrite(context, *groups[group_idx]);
+		any_candidate = any_candidate || rewrites[group_idx];
 	}
-	if (candidates.empty()) {
+	if (!any_candidate) {
 		return;
 	}
 
-	const auto limit = NumericLimits<int64_t>::Maximum() - 2 * Interval::MICROS_PER_WEEK;
-	const auto first_ad = DateTrunc::YearStart(1) * Interval::MICROS_PER_DAY;
-	auto input_stats = [&](const Expression &group, const BaseStatistics &fallback) -> const BaseStatistics & {
-		auto &input = *group.Cast<BoundFunctionExpression>().GetChildren()[1];
+	auto input_stats = [&](const Expression &input, const BaseStatistics &fallback) -> const BaseStatistics & {
 		if (input.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 			auto it = statistics_map.find(input.Cast<BoundColumnRefExpression>().Binding());
 			if (it != statistics_map.end() && it->second && NumericStats::HasMinMax(*it->second)) {
@@ -221,16 +126,12 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 		if (!stats || !NumericStats::HasMinMax(*stats)) {
 			return;
 		}
-		BucketSpec spec;
-		if (TryGetBucketSpec(*groups[group_idx], spec)) {
-			auto &range_stats = input_stats(*groups[group_idx], *stats);
-			const auto min = NumericStats::GetMin<timestamp_t>(range_stats);
-			const auto max = NumericStats::GetMax<timestamp_t>(range_stats);
-			if (min > max || min.value < (spec.calendar ? first_ad : -limit) || max.value > limit) {
-				return;
-			}
-			BucketedGroup group {group_idx, spec, spec.Bucket(min), spec.Bucket(max), nullptr};
-			if (!TryAddPerfectHashBits(group.min, group.max, total_bits)) {
+		auto &rewrite = rewrites[group_idx];
+		if (rewrite) {
+			auto &input = *groups[group_idx]->Cast<BoundFunctionExpression>().GetChildren()[rewrite->InputIndex()];
+			BucketedGroup group {group_idx, std::move(rewrite), 0, 0, nullptr};
+			if (!group.rewrite->TryBucketRange(input_stats(input, *stats), group.min, group.max) ||
+			    !TryAddPerfectHashBits(group.min, group.max, total_bits)) {
 				return;
 			}
 			bucketed.push_back(std::move(group));
@@ -247,8 +148,8 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 	const auto old_bindings = aggregate.GetColumnBindings();
 	for (auto &group : bucketed) {
 		auto &function = groups[group.group_idx]->Cast<BoundFunctionExpression>();
-		groups[group.group_idx] = MakeCall(group.spec.BucketFunction(), std::move(function.GetChildrenMutable()[1]),
-		                                   group.spec.width, group.spec.anchor);
+		groups[group.group_idx] =
+		    group.rewrite->Bucket(std::move(function.GetChildrenMutable()[group.rewrite->InputIndex()]));
 		auto bucket_stats = NumericStats::CreateEmpty(LogicalType::BIGINT);
 		bucket_stats.CopyBase(*group_stats[group.group_idx]);
 		NumericStats::SetMin(bucket_stats, Value::BIGINT(group.min));
@@ -256,6 +157,7 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 		group.stats = std::move(group_stats[group.group_idx]);
 		group_stats[group.group_idx] = bucket_stats.ToUnique();
 		statistics_map[old_bindings[group.group_idx]] = bucket_stats.ToUnique();
+		bucketed_groups.insert(old_bindings[group.group_idx]);
 	}
 
 	op->ResolveOperatorTypes();
@@ -266,7 +168,7 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 		unique_ptr<Expression> expr = make_uniq<BoundColumnRefExpression>(types[col_idx], old_bindings[col_idx]);
 		for (auto &group : bucketed) {
 			if (group.group_idx == col_idx) {
-				expr = MakeCall(group.spec.UnbucketFunction(), std::move(expr), group.spec.width, group.spec.anchor);
+				expr = group.rewrite->Unbucket(std::move(expr));
 				statistics[col_idx] = group.stats.get();
 			}
 		}
