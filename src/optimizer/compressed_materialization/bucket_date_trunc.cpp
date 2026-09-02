@@ -19,7 +19,24 @@ namespace duckdb {
 
 namespace {
 
-bool TryGetBucketWidth(const Expression &expr, int64_t &width, int64_t &anchor) {
+struct BucketSpec {
+	bool calendar = false;
+	int64_t width = 0;
+	int64_t anchor = 0;
+
+	int64_t Bucket(timestamp_t ts) const {
+		return DateTrunc::FloorDiv((calendar ? DateTrunc::MonthIndex(ts) : ts.value) - anchor, width);
+	}
+	ScalarFunction BucketFunction() const {
+		return calendar ? InternalDateTruncMonthBucketFun::GetFunction() : InternalDateTruncBucketFun::GetFunction();
+	}
+	ScalarFunction UnbucketFunction() const {
+		return calendar ? InternalDateTruncMonthUnbucketFun::GetFunction()
+		                : InternalDateTruncUnbucketFun::GetFunction();
+	}
+};
+
+bool TryGetBucketSpec(const Expression &expr, BucketSpec &spec) {
 	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
 		return false;
 	}
@@ -38,29 +55,53 @@ bool TryGetBucketWidth(const Expression &expr, int64_t &width, int64_t &anchor) 
 	if (unit.IsNull() || !TryGetDatePartSpecifier(StringValue::Get(unit), part)) {
 		return false;
 	}
-	anchor = 0;
+	spec = BucketSpec();
 	switch (part) {
 	case DatePartSpecifier::SECOND:
 	case DatePartSpecifier::EPOCH:
-		width = Interval::MICROS_PER_SEC;
+		spec.width = Interval::MICROS_PER_SEC;
 		return true;
 	case DatePartSpecifier::MINUTE:
-		width = Interval::MICROS_PER_MINUTE;
+		spec.width = Interval::MICROS_PER_MINUTE;
 		return true;
 	case DatePartSpecifier::HOUR:
-		width = Interval::MICROS_PER_HOUR;
+		spec.width = Interval::MICROS_PER_HOUR;
 		return true;
 	case DatePartSpecifier::DAY:
 	case DatePartSpecifier::DOW:
 	case DatePartSpecifier::ISODOW:
 	case DatePartSpecifier::DOY:
 	case DatePartSpecifier::JULIAN_DAY:
-		width = Interval::MICROS_PER_DAY;
+		spec.width = Interval::MICROS_PER_DAY;
 		return true;
 	case DatePartSpecifier::WEEK:
 	case DatePartSpecifier::YEARWEEK:
-		width = Interval::MICROS_PER_WEEK;
-		anchor = DateTrunc::EPOCH_MONDAY * Interval::MICROS_PER_DAY;
+		spec.width = Interval::MICROS_PER_WEEK;
+		spec.anchor = DateTrunc::EPOCH_MONDAY * Interval::MICROS_PER_DAY;
+		return true;
+	case DatePartSpecifier::MONTH:
+		spec.calendar = true;
+		spec.width = 1;
+		return true;
+	case DatePartSpecifier::QUARTER:
+		spec.calendar = true;
+		spec.width = Interval::MONTHS_PER_QUARTER;
+		return true;
+	case DatePartSpecifier::YEAR:
+		spec.calendar = true;
+		spec.width = Interval::MONTHS_PER_YEAR;
+		return true;
+	case DatePartSpecifier::DECADE:
+		spec.calendar = true;
+		spec.width = Interval::MONTHS_PER_DECADE;
+		return true;
+	case DatePartSpecifier::CENTURY:
+		spec.calendar = true;
+		spec.width = Interval::MONTHS_PER_CENTURY;
+		return true;
+	case DatePartSpecifier::MILLENNIUM:
+		spec.calendar = true;
+		spec.width = Interval::MONTHS_PER_MILLENIUM;
 		return true;
 	default:
 		return false;
@@ -125,8 +166,7 @@ unique_ptr<Expression> MakeCall(ScalarFunction function, unique_ptr<Expression> 
 
 struct BucketedGroup {
 	idx_t group_idx;
-	int64_t width;
-	int64_t anchor;
+	BucketSpec spec;
 	int64_t min;
 	int64_t max;
 	unique_ptr<BaseStatistics> stats;
@@ -153,9 +193,8 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 
 	vector<idx_t> candidates;
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
-		int64_t width = 0;
-		int64_t anchor = 0;
-		if (TryGetBucketWidth(*groups[group_idx], width, anchor)) {
+		BucketSpec spec;
+		if (TryGetBucketSpec(*groups[group_idx], spec)) {
 			candidates.push_back(group_idx);
 		}
 	}
@@ -164,6 +203,17 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 	}
 
 	const auto limit = NumericLimits<int64_t>::Maximum() - 2 * Interval::MICROS_PER_WEEK;
+	const auto first_ad = DateTrunc::YearStart(1) * Interval::MICROS_PER_DAY;
+	auto input_stats = [&](const Expression &group, const BaseStatistics &fallback) -> const BaseStatistics & {
+		auto &input = *group.Cast<BoundFunctionExpression>().GetChildren()[1];
+		if (input.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
+			auto it = statistics_map.find(input.Cast<BoundColumnRefExpression>().Binding());
+			if (it != statistics_map.end() && it->second && NumericStats::HasMinMax(*it->second)) {
+				return *it->second;
+			}
+		}
+		return fallback;
+	};
 	idx_t total_bits = 0;
 	vector<BucketedGroup> bucketed;
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
@@ -171,20 +221,15 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 		if (!stats || !NumericStats::HasMinMax(*stats)) {
 			return;
 		}
-		int64_t width = 0;
-		int64_t anchor = 0;
-		if (TryGetBucketWidth(*groups[group_idx], width, anchor)) {
-			const auto min = NumericStats::GetMin<timestamp_t>(*stats);
-			const auto max = NumericStats::GetMax<timestamp_t>(*stats);
-			if (min > max || min.value < -limit || max.value > limit) {
+		BucketSpec spec;
+		if (TryGetBucketSpec(*groups[group_idx], spec)) {
+			auto &range_stats = input_stats(*groups[group_idx], *stats);
+			const auto min = NumericStats::GetMin<timestamp_t>(range_stats);
+			const auto max = NumericStats::GetMax<timestamp_t>(range_stats);
+			if (min > max || min.value < (spec.calendar ? first_ad : -limit) || max.value > limit) {
 				return;
 			}
-			BucketedGroup group {group_idx,
-			                     width,
-			                     anchor,
-			                     DateTrunc::FloorDiv(min.value - anchor, width),
-			                     DateTrunc::FloorDiv(max.value - anchor, width),
-			                     nullptr};
+			BucketedGroup group {group_idx, spec, spec.Bucket(min), spec.Bucket(max), nullptr};
 			if (!TryAddPerfectHashBits(group.min, group.max, total_bits)) {
 				return;
 			}
@@ -202,8 +247,8 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 	const auto old_bindings = aggregate.GetColumnBindings();
 	for (auto &group : bucketed) {
 		auto &function = groups[group.group_idx]->Cast<BoundFunctionExpression>();
-		groups[group.group_idx] = MakeCall(InternalDateTruncBucketFun::GetFunction(),
-		                                   std::move(function.GetChildrenMutable()[1]), group.width, group.anchor);
+		groups[group.group_idx] = MakeCall(group.spec.BucketFunction(), std::move(function.GetChildrenMutable()[1]),
+		                                   group.spec.width, group.spec.anchor);
 		auto bucket_stats = NumericStats::CreateEmpty(LogicalType::BIGINT);
 		bucket_stats.CopyBase(*group_stats[group.group_idx]);
 		NumericStats::SetMin(bucket_stats, Value::BIGINT(group.min));
@@ -221,8 +266,7 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 		unique_ptr<Expression> expr = make_uniq<BoundColumnRefExpression>(types[col_idx], old_bindings[col_idx]);
 		for (auto &group : bucketed) {
 			if (group.group_idx == col_idx) {
-				expr =
-				    MakeCall(InternalDateTruncUnbucketFun::GetFunction(), std::move(expr), group.width, group.anchor);
+				expr = MakeCall(group.spec.UnbucketFunction(), std::move(expr), group.spec.width, group.spec.anchor);
 				statistics[col_idx] = group.stats.get();
 			}
 		}

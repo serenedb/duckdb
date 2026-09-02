@@ -113,6 +113,8 @@ static const StaticFunctionDefinition function[] = {
 	DUCKDB_SCALAR_FUNCTION(InternalCompressStringUsmallintFun),
 	DUCKDB_SCALAR_FUNCTION(InternalCompressStringUtinyintFun),
 	DUCKDB_SCALAR_FUNCTION(InternalDateTruncBucketFun),
+	DUCKDB_SCALAR_FUNCTION(InternalDateTruncMonthBucketFun),
+	DUCKDB_SCALAR_FUNCTION(InternalDateTruncMonthUnbucketFun),
 	DUCKDB_SCALAR_FUNCTION(InternalDateTruncUnbucketFun),
 	DUCKDB_SCALAR_FUNCTION(InternalDecompressGeometryPointFun),
 	DUCKDB_SCALAR_FUNCTION_SET(InternalDecompressIntegralBigintFun),
