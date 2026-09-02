@@ -84,6 +84,11 @@ ZoneLUT::ZoneLUT(const icu::BasicTimeZone &tz) {
 		}
 		fixed = true;
 		fixed_offset = int64_t(raw_offset + dst_offset) * Interval::MICROS_PER_MSEC;
+		const auto limit = NumericLimits<int64_t>::Maximum() - 1;
+		offset_min_input = -limit - MinValue<int64_t>(fixed_offset, 0);
+		offset_max_input = limit - MaxValue<int64_t>(fixed_offset, 0);
+		resolve_min_wall = -limit + MaxValue<int64_t>(fixed_offset, 0);
+		resolve_max_wall = limit + MinValue<int64_t>(fixed_offset, 0);
 		return;
 	}
 

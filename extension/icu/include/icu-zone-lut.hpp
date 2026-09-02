@@ -42,6 +42,7 @@ public:
 	static constexpr int64_t DAY_COUNT = Date::DAYS_PER_YEAR_INTERVAL;
 	static constexpr int64_t NO_TRANSITION = NumericLimits<int64_t>::Maximum();
 	static constexpr int64_t MULTIPLE_TRANSITIONS = NumericLimits<int64_t>::Minimum();
+	static inline const int64_t FIRST_ANNO_DOMINI = DateTrunc::FromDays(DateTrunc::YearStart(1)).value;
 
 	explicit ZoneLUT(const icu::BasicTimeZone &tz);
 
@@ -57,6 +58,37 @@ public:
 
 	int64_t FixedOffset() const {
 		return fixed_offset;
+	}
+
+	[[gnu::always_inline]] inline bool TryOffset(int64_t micros, int64_t &offset) const {
+		if (fixed) {
+			offset = fixed_offset;
+			return micros >= offset_min_input && micros <= offset_max_input;
+		}
+		const auto day = InstantDay(micros);
+		if (!day) {
+			return false;
+		}
+		offset = Offset(*day, micros);
+		return true;
+	}
+
+	[[gnu::always_inline]] inline bool TryResolve(int64_t wall, int64_t &instant) const {
+		if (fixed) {
+			instant = wall - fixed_offset;
+			return wall >= resolve_min_wall && wall <= resolve_max_wall;
+		}
+		const auto day = WallDay(wall);
+		if (!day) {
+			return false;
+		}
+		instant = Resolve(*day, wall);
+		return true;
+	}
+
+	[[gnu::always_inline]] inline bool TryShiftBack(int64_t wall, int64_t offset, int64_t &instant) const {
+		instant = wall - offset;
+		return !fixed || (wall >= resolve_min_wall && wall <= resolve_max_wall);
 	}
 
 	[[gnu::always_inline]] inline const ZoneDay *InstantDay(int64_t micros) const {
@@ -91,6 +123,10 @@ private:
 	bool valid = true;
 	bool fixed = false;
 	int64_t fixed_offset = 0;
+	int64_t offset_min_input = 0;
+	int64_t offset_max_input = 0;
+	int64_t resolve_min_wall = 0;
+	int64_t resolve_max_wall = 0;
 };
 
 } // namespace duckdb
