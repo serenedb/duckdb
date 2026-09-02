@@ -33,6 +33,9 @@ class ExtensionLoader;
 unique_ptr<BucketRewrite> ICUDateTruncBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 unique_ptr<BucketRewrite> ICUTimeBucketBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 unique_ptr<BucketRewrite> ICUDateCastBucketRewrite(ClientContext &context, const BoundCastExpression &cast);
+unique_ptr<BucketRewrite> ICUStrfTimeBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
+unique_ptr<BucketRewrite> ICUMonthNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
+unique_ptr<BucketRewrite> ICUDayNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 
 void RegisterICUBucketFunctions(ExtensionLoader &loader);
 

@@ -1,5 +1,6 @@
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "core_functions/scalar/date_functions.hpp"
+#include "duckdb/function/scalar/date_bucket_rewrite.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/enums/date_part_specifier.hpp"
@@ -2363,6 +2364,9 @@ ScalarFunctionSet MonthNameFun::GetFunctions() {
 	                                     DatePart::UnaryFunction<date_t, string_t, MonthNameOperator>));
 	monthname.AddFunction(ScalarFunction({LogicalType::TIMESTAMP}, LogicalType::VARCHAR,
 	                                     DatePart::UnaryFunction<timestamp_t, string_t, MonthNameOperator>));
+	for (auto &function : monthname.functions) {
+		function.SetBucketRewriteCallback(MonthNameBucketRewrite);
+	}
 	return monthname;
 }
 
@@ -2372,6 +2376,9 @@ ScalarFunctionSet DayNameFun::GetFunctions() {
 	                                   DatePart::UnaryFunction<date_t, string_t, DayNameOperator>));
 	dayname.AddFunction(ScalarFunction({LogicalType::TIMESTAMP}, LogicalType::VARCHAR,
 	                                   DatePart::UnaryFunction<timestamp_t, string_t, DayNameOperator>));
+	for (auto &function : dayname.functions) {
+		function.SetBucketRewriteCallback(DayNameBucketRewrite);
+	}
 	return dayname;
 }
 
