@@ -11,7 +11,7 @@
 namespace duckdb {
 
 ICUDateFunc::BindData::BindData(const BindData &other)
-    : tz_setting(other.tz_setting), cal_setting(other.cal_setting), calendar(other.calendar->clone()) {
+    : tz_setting(other.tz_setting), cal_setting(other.cal_setting), calendar(other.calendar->clone()), lut(other.lut) {
 }
 
 ICUDateFunc::BindData::BindData(const string &tz_setting_p, const string &cal_setting_p)
@@ -55,6 +55,10 @@ void ICUDateFunc::BindData::InitCalendar() {
 	//	The only error here is if we have a non-Gregorian calendar,
 	//	and we just ignore that and hope for the best...
 	ucal_setGregorianChange((UCalendar *)calendar.get(), U_DATE_MIN, &success); // NOLINT
+
+	if (strcmp(calendar->getType(), "gregorian") == 0) {
+		lut = ZoneLUT::Get(calendar->getTimeZone());
+	}
 }
 
 bool ICUDateFunc::BindData::Equals(const FunctionData &other_p) const {

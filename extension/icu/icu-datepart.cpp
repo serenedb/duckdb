@@ -2,7 +2,9 @@
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "include/icu-datepart.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-zone-lut.hpp"
 
+#include "duckdb/common/operator/date_trunc_operators.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/common/enums/date_part_specifier.hpp"
 #include "duckdb/common/types/date.hpp"
@@ -152,6 +154,217 @@ struct ICUDatePart : public ICUDateFunc {
 		return result;
 	}
 
+	struct LocalTime {
+		timestamp_t wall;
+		int64_t offset;
+	};
+	typedef int64_t (*local_bigint_t)(const LocalTime &local);
+	typedef double (*local_double_t)(const LocalTime &local);
+
+	[[gnu::always_inline]] static inline bool TryLocalTime(const ZoneLUT &lut, timestamp_tz_t input, LocalTime &local) {
+		if (!lut.TryOffset(input.value, local.offset)) {
+			return false;
+		}
+		local.wall = timestamp_t(input.value + local.offset);
+		return local.wall.value >= ZoneLUT::FIRST_ANNO_DOMINI;
+	}
+
+	static inline int32_t LocalDays(const LocalTime &local) {
+		return DateTrunc::ToDays(local.wall);
+	}
+
+	static inline int64_t LocalTimeOfDay(const LocalTime &local) {
+		return local.wall.value - int64_t(LocalDays(local)) * Interval::MICROS_PER_DAY;
+	}
+
+	static inline DateTrunc::YearDay LocalYearDay(const LocalTime &local) {
+		return DateTrunc::ToYearDay(LocalDays(local));
+	}
+
+	static int64_t LocalEra(const LocalTime &local) {
+		return 1;
+	}
+
+	static int64_t LocalYear(const LocalTime &local) {
+		return LocalYearDay(local).year;
+	}
+
+	static int64_t LocalDecade(const LocalTime &local) {
+		return LocalYear(local) / 10;
+	}
+
+	static int64_t LocalCentury(const LocalTime &local) {
+		return ((LocalYear(local) - 1) / 100) + 1;
+	}
+
+	static int64_t LocalMillenium(const LocalTime &local) {
+		return ((LocalYear(local) - 1) / 1000) + 1;
+	}
+
+	static int64_t LocalMonth(const LocalTime &local) {
+		return DateTrunc::MonthOf(LocalYearDay(local));
+	}
+
+	static int64_t LocalQuarter(const LocalTime &local) {
+		return (LocalMonth(local) - 1) / Interval::MONTHS_PER_QUARTER + 1;
+	}
+
+	static int64_t LocalDay(const LocalTime &local) {
+		const auto yd = LocalYearDay(local);
+		return yd.doy - (DateTrunc::MonthStart(yd, DateTrunc::MonthOf(yd)) - yd.year_start) + 1;
+	}
+
+	static int64_t LocalISODayOfWeek(const LocalTime &local) {
+		return Date::ExtractISODayOfTheWeek(date_t(LocalDays(local)));
+	}
+
+	static int64_t LocalDayOfWeek(const LocalTime &local) {
+		return LocalISODayOfWeek(local) % 7;
+	}
+
+	static int64_t LocalWeek(const LocalTime &local) {
+		return Date::ExtractISOWeekNumber(date_t(LocalDays(local)));
+	}
+
+	static int64_t LocalISOYear(const LocalTime &local) {
+		return Date::ExtractISOYearNumber(date_t(LocalDays(local)));
+	}
+
+	static int64_t LocalYearWeek(const LocalTime &local) {
+		const auto iyyy = LocalISOYear(local);
+		const auto ww = LocalWeek(local);
+		return iyyy * 100 + ((iyyy > 0) ? ww : -ww);
+	}
+
+	static int64_t LocalDayOfYear(const LocalTime &local) {
+		return LocalYearDay(local).doy + 1;
+	}
+
+	static int64_t LocalHour(const LocalTime &local) {
+		return LocalTimeOfDay(local) / Interval::MICROS_PER_HOUR;
+	}
+
+	static int64_t LocalMinute(const LocalTime &local) {
+		return (LocalTimeOfDay(local) % Interval::MICROS_PER_HOUR) / Interval::MICROS_PER_MINUTE;
+	}
+
+	static int64_t LocalSecond(const LocalTime &local) {
+		return (LocalTimeOfDay(local) % Interval::MICROS_PER_MINUTE) / Interval::MICROS_PER_SEC;
+	}
+
+	static int64_t LocalMillisecond(const LocalTime &local) {
+		return (LocalTimeOfDay(local) % Interval::MICROS_PER_MINUTE) / Interval::MICROS_PER_MSEC;
+	}
+
+	static int64_t LocalMicrosecond(const LocalTime &local) {
+		return LocalTimeOfDay(local) % Interval::MICROS_PER_MINUTE;
+	}
+
+	static int64_t LocalTimezone(const LocalTime &local) {
+		return local.offset / Interval::MICROS_PER_SEC;
+	}
+
+	static int64_t LocalTimezoneHour(const LocalTime &local) {
+		return LocalTimezone(local) / Interval::SECS_PER_HOUR;
+	}
+
+	static int64_t LocalTimezoneMinute(const LocalTime &local) {
+		return (LocalTimezone(local) % Interval::SECS_PER_HOUR) / Interval::SECS_PER_MINUTE;
+	}
+
+	static double LocalEpoch(const LocalTime &local) {
+		const int64_t instant = local.wall.value - local.offset;
+		const int64_t millis = DateTrunc::FloorDiv(instant, Interval::MICROS_PER_MSEC);
+		const uint64_t micros = UnsafeNumericCast<uint64_t>(instant - millis * Interval::MICROS_PER_MSEC);
+		auto result = double(millis) / Interval::MSECS_PER_SEC;
+		result += micros / double(Interval::MICROS_PER_SEC);
+		return result;
+	}
+
+	static double LocalJulianDay(const LocalTime &local) {
+		double result = double(LocalTimeOfDay(local));
+		result /= Interval::MICROS_PER_DAY;
+		result += double(Date::ExtractJulianDay(date_t(LocalDays(local))));
+		return result;
+	}
+
+	static date_t LocalLastDay(const LocalTime &local) {
+		const auto yd = LocalYearDay(local);
+		const auto month = DateTrunc::MonthOf(yd);
+		const auto days = yd.leap ? Date::LEAP_DAYS[month] : Date::NORMAL_DAYS[month];
+		return date_t(UnsafeNumericCast<int32_t>(DateTrunc::MonthStart(yd, month) + days - 1));
+	}
+
+	static string_t LocalMonthName(const LocalTime &local) {
+		return Date::MONTH_NAMES[LocalMonth(local) - 1];
+	}
+
+	static string_t LocalDayName(const LocalTime &local) {
+		return Date::DAY_NAMES[LocalDayOfWeek(local)];
+	}
+
+	static local_bigint_t LocalBigintFactory(DatePartSpecifier part) {
+		switch (part) {
+		case DatePartSpecifier::YEAR:
+			return LocalYear;
+		case DatePartSpecifier::MONTH:
+			return LocalMonth;
+		case DatePartSpecifier::DAY:
+			return LocalDay;
+		case DatePartSpecifier::DECADE:
+			return LocalDecade;
+		case DatePartSpecifier::CENTURY:
+			return LocalCentury;
+		case DatePartSpecifier::MILLENNIUM:
+			return LocalMillenium;
+		case DatePartSpecifier::MICROSECONDS:
+			return LocalMicrosecond;
+		case DatePartSpecifier::MILLISECONDS:
+			return LocalMillisecond;
+		case DatePartSpecifier::SECOND:
+			return LocalSecond;
+		case DatePartSpecifier::MINUTE:
+			return LocalMinute;
+		case DatePartSpecifier::HOUR:
+			return LocalHour;
+		case DatePartSpecifier::DOW:
+			return LocalDayOfWeek;
+		case DatePartSpecifier::ISODOW:
+			return LocalISODayOfWeek;
+		case DatePartSpecifier::WEEK:
+			return LocalWeek;
+		case DatePartSpecifier::ISOYEAR:
+			return LocalISOYear;
+		case DatePartSpecifier::DOY:
+			return LocalDayOfYear;
+		case DatePartSpecifier::QUARTER:
+			return LocalQuarter;
+		case DatePartSpecifier::YEARWEEK:
+			return LocalYearWeek;
+		case DatePartSpecifier::ERA:
+			return LocalEra;
+		case DatePartSpecifier::TIMEZONE:
+			return LocalTimezone;
+		case DatePartSpecifier::TIMEZONE_HOUR:
+			return LocalTimezoneHour;
+		case DatePartSpecifier::TIMEZONE_MINUTE:
+			return LocalTimezoneMinute;
+		default:
+			return nullptr;
+		}
+	}
+
+	static local_double_t LocalDoubleFactory(DatePartSpecifier part) {
+		switch (part) {
+		case DatePartSpecifier::EPOCH:
+			return LocalEpoch;
+		case DatePartSpecifier::JULIAN_DAY:
+			return LocalJulianDay;
+		default:
+			return nullptr;
+		}
+	}
+
 	static part_bigint_t PartCodeBigintFactory(DatePartSpecifier part) {
 		switch (part) {
 		case DatePartSpecifier::YEAR:
@@ -253,16 +466,20 @@ struct ICUDatePart : public ICUDateFunc {
 	struct BindAdapterData : public BindData {
 		using result_t = RESULT_TYPE;
 		typedef result_t (*adapter_t)(icu::Calendar *calendar, const uint64_t micros);
+		typedef result_t (*local_adapter_t)(const LocalTime &local);
 		using adapters_t = vector<adapter_t>;
 
-		BindAdapterData(ClientContext &context, adapter_t adapter_p) : BindData(context), adapters(1, adapter_p) {
+		BindAdapterData(ClientContext &context, adapter_t adapter_p, local_adapter_t local_adapter_p)
+		    : BindData(context), adapters(1, adapter_p), local_adapter(local_adapter_p) {
 		}
 		BindAdapterData(ClientContext &context, adapters_t &adapters_p) : BindData(context), adapters(adapters_p) {
 		}
-		BindAdapterData(const BindAdapterData &other) : BindData(other), adapters(other.adapters) {
+		BindAdapterData(const BindAdapterData &other)
+		    : BindData(other), adapters(other.adapters), local_adapter(other.local_adapter) {
 		}
 
 		adapters_t adapters;
+		local_adapter_t local_adapter = nullptr;
 
 		bool Equals(const FunctionData &other_p) const override {
 			const auto &other = other_p.Cast<BindAdapterData>();
@@ -282,17 +499,27 @@ struct ICUDatePart : public ICUDateFunc {
 
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BIND_TYPE>();
-		CalendarPtr calendar_ptr(info.calendar->clone());
-		auto calendar = calendar_ptr.get();
+		CalendarPtr calendar_ptr;
+		auto get_calendar = [&]() {
+			if (!calendar_ptr) {
+				calendar_ptr.reset(info.calendar->clone());
+			}
+			return calendar_ptr.get();
+		};
 
+		const auto lut = info.local_adapter ? info.lut.get() : nullptr;
 		UnaryExecutor::Execute<INPUT_TYPE, RESULT_TYPE>(date_arg, result,
 		                                                [&](INPUT_TYPE input) -> optional<RESULT_TYPE> {
-			                                                if (input.IsFinite()) {
-				                                                const auto micros = SetTime(calendar, input);
-				                                                return info.adapters[0](calendar, micros);
-			                                                } else {
+			                                                if (!input.IsFinite()) {
 				                                                return nullopt;
 			                                                }
+			                                                LocalTime local;
+			                                                if (lut && TryLocalTime(*lut, input, local)) {
+				                                                return info.local_adapter(local);
+			                                                }
+			                                                auto calendar = get_calendar();
+			                                                const auto micros = SetTime(calendar, input);
+			                                                return info.adapters[0](calendar, micros);
 		                                                });
 	}
 
@@ -305,18 +532,31 @@ struct ICUDatePart : public ICUDateFunc {
 
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BIND_TYPE>();
-		CalendarPtr calendar_ptr(info.calendar->clone());
-		auto calendar = calendar_ptr.get();
+		CalendarPtr calendar_ptr;
+		auto get_calendar = [&]() {
+			if (!calendar_ptr) {
+				calendar_ptr.reset(info.calendar->clone());
+			}
+			return calendar_ptr.get();
+		};
 
+		const auto lut = info.lut.get();
 		BinaryExecutor::Execute<string_t, INPUT_TYPE, RESULT_TYPE>(
 		    part_arg, date_arg, result, [&](string_t specifier, INPUT_TYPE input) -> optional<RESULT_TYPE> {
-			    if (input.IsFinite()) {
-				    const auto micros = SetTime(calendar, input);
-				    auto adapter = PartCodeBigintFactory(GetDatePartSpecifier(specifier.GetString()));
-				    return adapter(calendar, micros);
-			    } else {
+			    if (!input.IsFinite()) {
 				    return nullopt;
 			    }
+			    const auto part = GetDatePartSpecifier(specifier.GetString());
+			    auto adapter = PartCodeBigintFactory(part);
+			    LocalTime local;
+			    if (lut && TryLocalTime(*lut, input, local)) {
+				    if (auto local_adapter = LocalBigintFactory(part)) {
+					    return local_adapter(local);
+				    }
+			    }
+			    auto calendar = get_calendar();
+			    const auto micros = SetTime(calendar, input);
+			    return adapter(calendar, micros);
 		    });
 	}
 
@@ -334,12 +574,15 @@ struct ICUDatePart : public ICUDateFunc {
 			InitFactories();
 		}
 		BindStructData(const BindStructData &other)
-		    : BindData(other), part_codes(other.part_codes), bigints(other.bigints), doubles(other.doubles) {
+		    : BindData(other), part_codes(other.part_codes), bigints(other.bigints), doubles(other.doubles),
+		      local_bigints(other.local_bigints), local_doubles(other.local_doubles) {
 		}
 
 		part_codes_t part_codes;
 		bigints_t bigints;
 		doubles_t doubles;
+		vector<local_bigint_t> local_bigints;
+		vector<local_double_t> local_doubles;
 
 		bool Equals(const FunctionData &other_p) const override {
 			const auto &other = other_p.Cast<BindStructData>();
@@ -355,14 +598,29 @@ struct ICUDatePart : public ICUDateFunc {
 			bigints.resize(part_codes.size(), nullptr);
 			doubles.clear();
 			doubles.resize(part_codes.size(), nullptr);
+			local_bigints.clear();
+			local_bigints.resize(part_codes.size(), nullptr);
+			local_doubles.clear();
+			local_doubles.resize(part_codes.size(), nullptr);
 			for (size_t col = 0; col < part_codes.size(); ++col) {
 				const auto part_code = part_codes[col];
 				if (IsBigintDatepart(part_code)) {
 					bigints[col] = PartCodeBigintFactory(part_code);
+					local_bigints[col] = LocalBigintFactory(part_code);
 				} else {
 					doubles[col] = PartCodeDoubleFactory(part_code);
+					local_doubles[col] = LocalDoubleFactory(part_code);
 				}
 			}
+		}
+
+		bool HasLocalAdapters() const {
+			for (size_t col = 0; col < part_codes.size(); ++col) {
+				if (!(IsBigintDatepart(part_codes[col]) ? bool(local_bigints[col]) : bool(local_doubles[col]))) {
+					return false;
+				}
+			}
+			return true;
 		}
 	};
 
@@ -370,8 +628,14 @@ struct ICUDatePart : public ICUDateFunc {
 	static void StructFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BindStructData>();
-		CalendarPtr calendar_ptr(info.calendar->clone());
-		auto calendar = calendar_ptr.get();
+		CalendarPtr calendar_ptr;
+		auto get_calendar = [&]() {
+			if (!calendar_ptr) {
+				calendar_ptr.reset(info.calendar->clone());
+			}
+			return calendar_ptr.get();
+		};
+		const auto lut = info.HasLocalAdapters() ? info.lut.get() : nullptr;
 
 		D_ASSERT(args.ColumnCount() == 1);
 		const auto count = args.size();
@@ -389,20 +653,25 @@ struct ICUDatePart : public ICUDateFunc {
 			auto entry = entries[i];
 			if (entry.IsValid()) {
 				res_valid.SetValid(i);
-				auto micros = SetTime(calendar, entry.GetValue());
 				const auto is_finite = entry.GetValue().IsFinite();
+				LocalTime local;
+				const bool use_local = is_finite && lut && TryLocalTime(*lut, entry.GetValue(), local);
+				icu::Calendar *calendar = nullptr;
+				uint64_t micros = 0;
+				if (is_finite && !use_local) {
+					calendar = get_calendar();
+					micros = SetTime(calendar, entry.GetValue());
+				}
 				for (size_t col = 0; col < child_entries.size(); ++col) {
 					auto &child_entry = child_entries[col];
 					if (is_finite) {
 						FlatVector::ValidityMutable(child_entry).SetValid(i);
 						if (IsBigintDatepart(info.part_codes[col])) {
 							auto pdata = FlatVector::GetDataMutable<int64_t>(child_entry);
-							auto adapter = info.bigints[col];
-							pdata[i] = adapter(calendar, micros);
+							pdata[i] = use_local ? info.local_bigints[col](local) : info.bigints[col](calendar, micros);
 						} else {
 							auto pdata = FlatVector::GetDataMutable<double>(child_entry);
-							auto adapter = info.doubles[col];
-							pdata[i] = adapter(calendar, micros);
+							pdata[i] = use_local ? info.local_doubles[col](local) : info.doubles[col](calendar, micros);
 						}
 					} else {
 						FlatVector::ValidityMutable(child_entry).SetInvalid(i);
@@ -422,8 +691,9 @@ struct ICUDatePart : public ICUDateFunc {
 	template <typename BIND_TYPE>
 	static duckdb::unique_ptr<FunctionData> BindAdapter(ClientContext &context, BoundScalarFunction &bound_function,
 	                                                    vector<duckdb::unique_ptr<Expression>> &arguments,
-	                                                    typename BIND_TYPE::adapter_t adapter) {
-		return make_uniq<BIND_TYPE>(context, adapter);
+	                                                    typename BIND_TYPE::adapter_t adapter,
+	                                                    typename BIND_TYPE::local_adapter_t local_adapter = nullptr) {
+		return make_uniq<BIND_TYPE>(context, adapter, local_adapter);
 	}
 
 	static duckdb::unique_ptr<FunctionData> BindUnaryDatePart(BindScalarFunctionInput &input) {
@@ -435,11 +705,11 @@ struct ICUDatePart : public ICUDateFunc {
 		if (IsBigintDatepart(part_code)) {
 			using data_t = BindAdapterData<int64_t>;
 			auto adapter = PartCodeBigintFactory(part_code);
-			return BindAdapter<data_t>(context, bound_function, arguments, adapter);
+			return BindAdapter<data_t>(context, bound_function, arguments, adapter, LocalBigintFactory(part_code));
 		} else {
 			using data_t = BindAdapterData<double>;
 			auto adapter = PartCodeDoubleFactory(part_code);
-			return BindAdapter<data_t>(context, bound_function, arguments, adapter);
+			return BindAdapter<data_t>(context, bound_function, arguments, adapter, LocalDoubleFactory(part_code));
 		}
 	}
 
@@ -596,7 +866,7 @@ struct ICUDatePart : public ICUDateFunc {
 		auto &arguments = input.GetArguments();
 
 		using data_t = BindAdapterData<date_t>;
-		return BindAdapter<data_t>(context, bound_function, arguments, MakeLastDay);
+		return BindAdapter<data_t>(context, bound_function, arguments, MakeLastDay, LocalLastDay);
 	}
 
 	template <typename INPUT_TYPE>
@@ -615,7 +885,7 @@ struct ICUDatePart : public ICUDateFunc {
 		auto &bound_function = input.GetBoundFunction();
 		auto &arguments = input.GetArguments();
 		using data_t = BindAdapterData<string_t>;
-		return BindAdapter<data_t>(context, bound_function, arguments, MonthName);
+		return BindAdapter<data_t>(context, bound_function, arguments, MonthName, LocalMonthName);
 	}
 
 	template <typename INPUT_TYPE>
@@ -634,7 +904,7 @@ struct ICUDatePart : public ICUDateFunc {
 		auto &bound_function = input.GetBoundFunction();
 		auto &arguments = input.GetArguments();
 		using data_t = BindAdapterData<string_t>;
-		return BindAdapter<data_t>(context, bound_function, arguments, DayName);
+		return BindAdapter<data_t>(context, bound_function, arguments, DayName, LocalDayName);
 	}
 
 	template <typename INPUT_TYPE>

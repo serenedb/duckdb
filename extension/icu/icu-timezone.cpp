@@ -8,6 +8,7 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "include/icu-casts.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-zone-lut.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/main/settings.hpp"
@@ -156,15 +157,53 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 		return timestamp_tz_ns_t(result);
 	}
 
+	static inline bool TryOperation(const ZoneLUT &lut, timestamp_t naive, timestamp_tz_t &result) {
+		if (!naive.IsFinite()) {
+			result = timestamp_tz_t(naive);
+			return true;
+		}
+		return lut.TryResolve(naive.value, result.value);
+	}
+
+	static inline bool TryOperation(const ZoneLUT &lut, timestamp_ns_t naive, timestamp_tz_ns_t &result) {
+		if (!naive.IsFinite()) {
+			result = timestamp_tz_ns_t(naive);
+			return true;
+		}
+		const auto nanos = naive.value % Interval::NANOS_PER_MICRO;
+		timestamp_tz_t cast;
+		if (!TryOperation(lut, timestamp_t(naive.value / Interval::NANOS_PER_MICRO), cast)) {
+			return false;
+		}
+		timestamp_ns_t ns;
+		if (!Timestamp::TryFromTimestampNanos(timestamp_t(cast), nanos, ns)) {
+			return false;
+		}
+		result = timestamp_tz_ns_t(ns);
+		return true;
+	}
+
 	template <class SRC, class DST>
 	static bool CastFromNaive(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 		auto &cast_data = parameters.cast_data->Cast<CastData>();
 		auto &info = cast_data.info->Cast<BindData>();
-		CalendarPtr calendar(info.calendar->clone());
+		CalendarPtr calendar;
+		auto get_calendar = [&]() {
+			if (!calendar) {
+				calendar.reset(info.calendar->clone());
+			}
+			return calendar.get();
+		};
+		const auto lut = info.lut.get();
 
 		UnaryExecutor::Execute<SRC, DST>(source, result, count, [&](SRC input) {
 			using NAIVE = timebase_t<DST::PRECISION, false>;
-			return Operation(calendar.get(), Cast::Operation<SRC, NAIVE>(input));
+			const auto naive = Cast::Operation<SRC, NAIVE>(input);
+			DST converted;
+			if (lut && TryOperation(*lut, naive, converted)) {
+				return converted;
+			}
+			return Operation(get_calendar(), naive);
 		});
 		return true;
 	}
@@ -276,15 +315,53 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 		return timestamp_ns_t(cast.value * Interval::NANOS_PER_MICRO + nanos);
 	}
 
+	static inline bool TryOperation(const ZoneLUT &lut, timestamp_tz_t instant, timestamp_t &result) {
+		if (!instant.IsFinite()) {
+			result = timestamp_t(instant);
+			return true;
+		}
+		int64_t offset = 0;
+		if (!lut.TryOffset(instant.value, offset)) {
+			return false;
+		}
+		result = timestamp_t(instant.value + offset);
+		return true;
+	}
+
+	static inline bool TryOperation(const ZoneLUT &lut, timestamp_tz_ns_t instant, timestamp_ns_t &result) {
+		if (!instant.IsFinite()) {
+			result = timestamp_ns_t(instant);
+			return true;
+		}
+		const auto nanos = instant.value % Interval::NANOS_PER_MICRO;
+		timestamp_t cast;
+		if (!TryOperation(lut, timestamp_tz_t(instant.value / Interval::NANOS_PER_MICRO), cast)) {
+			return false;
+		}
+		result = timestamp_ns_t(cast.value * Interval::NANOS_PER_MICRO + nanos);
+		return true;
+	}
+
 	template <class SRC, class DST>
 	static bool CastToNaive(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 		auto &cast_data = parameters.cast_data->Cast<CastData>();
 		auto &info = cast_data.info->Cast<BindData>();
-		CalendarPtr calendar(info.calendar->clone());
+		CalendarPtr calendar;
+		auto get_calendar = [&]() {
+			if (!calendar) {
+				calendar.reset(info.calendar->clone());
+			}
+			return calendar.get();
+		};
+		const auto lut = info.lut.get();
 
 		UnaryExecutor::Execute<SRC, DST>(source, result, count, [&](SRC input) {
 			using NAIVE = timebase_t<SRC::PRECISION, false>;
-			return Cast::Operation<NAIVE, DST>(Operation(calendar.get(), input));
+			NAIVE naive;
+			if (lut && TryOperation(*lut, input, naive)) {
+				return Cast::Operation<NAIVE, DST>(naive);
+			}
+			return Cast::Operation<NAIVE, DST>(Operation(get_calendar(), input));
 		});
 		return true;
 	}
@@ -474,15 +551,36 @@ bool ICUToTimeTZ::ToTimeTZ(icu::Calendar *calendar, timestamp_tz_t instant, dtim
 	return true;
 }
 
+static bool LutToTimeTZ(const ZoneLUT &lut, timestamp_tz_t instant, dtime_tz_t &result) {
+	int64_t offset = 0;
+	if (!instant.IsFinite() || !lut.TryOffset(instant.value, offset)) {
+		return false;
+	}
+	const int64_t wall = instant.value + offset;
+	const int64_t micros = wall - DateTrunc::FloorDiv(wall, Interval::MICROS_PER_DAY) * Interval::MICROS_PER_DAY;
+	result = dtime_tz_t(dtime_t(micros), UnsafeNumericCast<int32_t>(offset / Interval::MICROS_PER_SEC));
+	return true;
+}
+
 bool ICUToTimeTZ::CastToTimeTZ(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	auto &cast_data = parameters.cast_data->Cast<CastData>();
 	auto &info = cast_data.info->Cast<BindData>();
-	CalendarPtr calendar(info.calendar->clone());
+	CalendarPtr calendar;
+	auto get_calendar = [&]() {
+		if (!calendar) {
+			calendar.reset(info.calendar->clone());
+		}
+		return calendar.get();
+	};
+	const auto lut = info.lut.get();
 
 	UnaryExecutor::Execute<timestamp_tz_t, dtime_tz_t>(source, result, count,
 	                                                   [&](timestamp_tz_t input) -> optional<dtime_tz_t> {
 		                                                   dtime_tz_t output;
-		                                                   if (ToTimeTZ(calendar.get(), input, output)) {
+		                                                   if (lut && LutToTimeTZ(*lut, input, output)) {
+			                                                   return output;
+		                                                   }
+		                                                   if (ToTimeTZ(get_calendar(), input, output)) {
 			                                                   return output;
 		                                                   } else {
 			                                                   return nullopt;
@@ -494,7 +592,14 @@ bool ICUToTimeTZ::CastToTimeTZ(Vector &source, Vector &result, idx_t count, Cast
 bool ICUToTimeTZ::CastToTimeTZNs(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	auto &cast_data = parameters.cast_data->Cast<CastData>();
 	auto &info = cast_data.info->Cast<BindData>();
-	CalendarPtr calendar(info.calendar->clone());
+	CalendarPtr calendar;
+	auto get_calendar = [&]() {
+		if (!calendar) {
+			calendar.reset(info.calendar->clone());
+		}
+		return calendar.get();
+	};
+	const auto lut = info.lut.get();
 
 	UnaryExecutor::Execute<timestamp_tz_ns_t, dtime_tz_t>(
 	    source, result, count, [&](timestamp_tz_ns_t input) -> optional<dtime_tz_t> {
@@ -503,7 +608,10 @@ bool ICUToTimeTZ::CastToTimeTZNs(Vector &source, Vector &result, idx_t count, Ca
 		    }
 		    const auto micros = Cast::Operation<timestamp_ns_t, timestamp_t>(timestamp_ns_t(input.value));
 		    dtime_tz_t output;
-		    if (ToTimeTZ(calendar.get(), timestamp_tz_t(micros.value), output)) {
+		    if (lut && LutToTimeTZ(*lut, timestamp_tz_t(micros.value), output)) {
+			    return output;
+		    }
+		    if (ToTimeTZ(get_calendar(), timestamp_tz_t(micros.value), output)) {
 			    return output;
 		    } else {
 			    return nullopt;
@@ -583,7 +691,19 @@ struct ICUTimeZoneFunc : public ICUDateFunc {
 				throw InternalException("ICUTimeZone called with constant NULL tz");
 			}
 			SetTimeZone(calendar, *ConstantVector::GetData<string_t>(tz_vec));
-			UnaryExecutor::Execute<SRC, DST>(ts_vec, result, [&](SRC ts) { return OP::Operation(calendar, ts); });
+			if constexpr (std::is_same<SRC, dtime_tz_t>::value) {
+				UnaryExecutor::Execute<SRC, DST>(ts_vec, result, [&](SRC ts) { return OP::Operation(calendar, ts); });
+			} else {
+				const auto lut =
+				    strcmp(calendar->getType(), "gregorian") == 0 ? ZoneLUT::Get(calendar->getTimeZone()) : nullptr;
+				UnaryExecutor::Execute<SRC, DST>(ts_vec, result, [&](SRC ts) {
+					DST converted;
+					if (lut && OP::TryOperation(*lut, ts, converted)) {
+						return converted;
+					}
+					return OP::Operation(calendar, ts);
+				});
+			}
 		} else {
 			BinaryExecutor::Execute<string_t, SRC, DST>(tz_vec, ts_vec, result, [&](string_t tz_id, SRC ts) {
 				if (ts.IsFinite()) {

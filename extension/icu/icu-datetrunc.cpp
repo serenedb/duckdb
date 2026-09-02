@@ -2,13 +2,11 @@
 #include "include/icu-datefunc.hpp"
 #include "include/icu-zone-lut.hpp"
 
-#include "duckdb/common/helper.hpp"
 #include "duckdb/common/operator/date_trunc_operators.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
-#include "unicode/basictz.h"
 
 namespace duckdb {
 
@@ -38,50 +36,11 @@ struct DateTruncRecomputes<DateTrunc::MillenniumOperator> {
 };
 
 struct ICUDateTrunc : public ICUDateFunc {
-	struct FixedOffset {
-		int64_t micros;
-		int64_t min_input;
-		int64_t max_input;
-		int64_t min_truncated;
-	};
-
-	static FixedOffset MakeFixedOffset(int64_t micros) {
-		const auto limit = NumericLimits<int64_t>::Maximum() - 1;
-		FixedOffset fixed;
-		fixed.micros = micros;
-		fixed.min_input = -limit - MinValue<int64_t>(micros, 0);
-		fixed.max_input = limit - MaxValue<int64_t>(micros, 0);
-		fixed.min_truncated = -limit + MaxValue<int64_t>(micros, 0);
-		return fixed;
-	}
-
 	template <class OP>
 	static constexpr bool UsesEraYear() {
 		return std::is_same<OP, DateTrunc::DecadeOperator>::value ||
 		       std::is_same<OP, DateTrunc::CenturyOperator>::value ||
 		       std::is_same<OP, DateTrunc::MillenniumOperator>::value;
-	}
-
-	static inline const int64_t FIRST_ANNO_DOMINI = DateTrunc::FromDays(DateTrunc::YearStart(1)).value;
-
-	template <class OP>
-	[[gnu::always_inline]] static inline bool TryTruncFixedOffset(const FixedOffset &fixed, timestamp_tz_t input,
-	                                                              timestamp_tz_t &result) {
-		if (DUCKDB_UNLIKELY(input.value < fixed.min_input || input.value > fixed.max_input)) {
-			throw ConversionException("ICU date overflows timestamp range");
-		}
-		const timestamp_t wall(input.value + fixed.micros);
-		if constexpr (UsesEraYear<OP>()) {
-			if (wall.value < FIRST_ANNO_DOMINI) {
-				return false;
-			}
-		}
-		const auto truncated = OP::template Operation<timestamp_t, timestamp_t>(wall);
-		if (DUCKDB_UNLIKELY(truncated.value < fixed.min_truncated)) {
-			throw ConversionException("ICU date overflows timestamp range");
-		}
-		result = timestamp_tz_t(truncated.value - fixed.micros);
-		return true;
 	}
 
 	template <class OP>
@@ -93,28 +52,30 @@ struct ICUDateTrunc : public ICUDateFunc {
 	}
 
 	[[gnu::always_inline]] static inline bool InGap(const ZoneLUT &lut, int64_t wall) {
-		const auto wall_day = lut.WallDay(wall);
-		if (!wall_day) {
+		int64_t instant = 0;
+		int64_t offset = 0;
+		if (!lut.TryResolve(wall, instant) || !lut.TryOffset(instant, offset)) {
 			return true;
 		}
-		const auto instant = ZoneLUT::Resolve(*wall_day, wall);
-		const auto instant_day = lut.InstantDay(instant);
-		return !instant_day || instant + ZoneLUT::Offset(*instant_day, instant) != wall;
+		return instant + offset != wall;
 	}
 
 	template <class OP>
 	[[gnu::always_inline]] static inline bool TryTruncate(const ZoneLUT &lut, timestamp_tz_t input,
 	                                                      timestamp_tz_t &result) {
-		const auto instant_day = lut.InstantDay(input.value);
-		if (!instant_day) {
+		int64_t offset = 0;
+		if (!lut.TryOffset(input.value, offset)) {
 			return false;
 		}
-		const auto offset = ZoneLUT::Offset(*instant_day, input.value);
 		const timestamp_t wall(input.value + offset);
+		if constexpr (UsesEraYear<OP>()) {
+			if (wall.value < ZoneLUT::FIRST_ANNO_DOMINI) {
+				return false;
+			}
+		}
 		const auto truncated = OP::template Operation<timestamp_t, timestamp_t>(wall);
 		if constexpr (PreservesOffset<OP>()) {
-			result = timestamp_tz_t(truncated.value - offset);
-			return true;
+			return lut.TryShiftBack(truncated.value, offset, result.value);
 		}
 		using INTERMEDIATE = typename DateTruncRecomputes<OP>::type;
 		if constexpr (!std::is_void<INTERMEDIATE>::value) {
@@ -122,12 +83,7 @@ struct ICUDateTrunc : public ICUDateFunc {
 				return false;
 			}
 		}
-		const auto wall_day = lut.WallDay(truncated.value);
-		if (!wall_day) {
-			return false;
-		}
-		result = timestamp_tz_t(ZoneLUT::Resolve(*wall_day, truncated.value));
-		return true;
+		return lut.TryResolve(truncated.value, result.value);
 	}
 
 	static void PreserveOffsets(icu::Calendar *calendar) {
@@ -260,15 +216,9 @@ struct ICUDateTrunc : public ICUDateFunc {
 			return calendar.get();
 		};
 
-		const bool gregorian = strcmp(info.calendar->getType(), "gregorian") == 0;
-		const auto lut = gregorian ? ZoneLUT::Get(info.calendar->getTimeZone()) : nullptr;
-		const bool has_fixed_offset = lut && lut->HasFixedOffset();
-		const FixedOffset fixed = has_fixed_offset ? MakeFixedOffset(lut->FixedOffset()) : FixedOffset();
-		auto use_fixed_offset = [&](DatePartSpecifier type) {
-			return has_fixed_offset && type != DatePartSpecifier::ERA;
-		};
+		const auto lut = info.lut.get();
 		auto use_lut = [&](DatePartSpecifier type) {
-			return lut && !has_fixed_offset && type != DatePartSpecifier::ERA;
+			return lut && type != DatePartSpecifier::ERA;
 		};
 		auto icu_truncate = [&](part_trunc_t truncator, T input) {
 			auto icu_calendar = get_calendar();
@@ -285,21 +235,6 @@ struct ICUDateTrunc : public ICUDateFunc {
 			const auto specifier = ConstantVector::GetData<string_t>(part_arg)->GetString();
 			const auto type = GetDatePartSpecifier(specifier);
 			auto truncator = TruncationFactory(type);
-			if (use_fixed_offset(type)) {
-				DateTrunc::Dispatch(type, [&](auto op) {
-					UnaryExecutor::Execute<T, T>(date_arg, result, [&](T input) {
-						T truncated;
-						if (!input.IsFinite()) {
-							return input;
-						}
-						if (TryTruncFixedOffset<decltype(op)>(fixed, input, truncated)) {
-							return truncated;
-						}
-						return icu_truncate(truncator, input);
-					});
-				});
-				return;
-			}
 			if (use_lut(type)) {
 				DateTrunc::Dispatch(type, [&](auto op) {
 					UnaryExecutor::Execute<T, T>(date_arg, result, [&](T input) {
@@ -325,11 +260,6 @@ struct ICUDateTrunc : public ICUDateFunc {
 					return input;
 				}
 				T truncated;
-				if (use_fixed_offset(type) && DateTrunc::Dispatch(type, [&](auto op) {
-					    return TryTruncFixedOffset<decltype(op)>(fixed, input, truncated);
-				    })) {
-					return truncated;
-				}
 				if (use_lut(type) && DateTrunc::Dispatch(type, [&](auto op) {
 					    return TryTruncate<decltype(op)>(*lut, input, truncated);
 				    })) {
