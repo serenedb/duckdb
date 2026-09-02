@@ -2355,6 +2355,9 @@ ScalarFunctionSet LastDayFun::GetFunctions() {
 	                                    DatePart::UnaryFunction<date_t, date_t, LastDayOperator>));
 	last_day.AddFunction(ScalarFunction({LogicalType::TIMESTAMP}, LogicalType::DATE,
 	                                    DatePart::UnaryFunction<timestamp_t, date_t, LastDayOperator>));
+	for (auto &function : last_day.functions) {
+		function.SetBucketRewriteCallback(LastDayBucketRewrite);
+	}
 	return last_day;
 }
 

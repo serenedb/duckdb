@@ -450,6 +450,22 @@ struct ICUBucket : public ICUDateFunc {
 		return make_uniq<FunctionBucketRewrite>(std::move(inner), expr, 0);
 	}
 
+	static unique_ptr<BucketRewrite> LastDayRewrite(const BoundFunctionExpression &expr) {
+		auto &children = expr.GetChildren();
+		if (children.size() != 1 || children[0]->GetReturnType().id() != LogicalTypeId::TIMESTAMP_TZ ||
+		    !expr.BindInfo()) {
+			return nullptr;
+		}
+		auto &info = expr.BindInfo()->Cast<BindData>();
+		if (!info.lut || !info.lut->IsValid()) {
+			return nullptr;
+		}
+		BucketSpec spec;
+		TryGetBucketSpec(DatePartSpecifier::MONTH, spec);
+		auto inner = make_uniq<Rewrite>(spec, info, Value("month"));
+		return make_uniq<FunctionBucketRewrite>(std::move(inner), expr, 0);
+	}
+
 	static unique_ptr<BucketRewrite> DateTruncRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
 		auto &children = expr.GetChildren();
 		if (children.size() != 2 || children[0]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT ||
@@ -576,6 +592,10 @@ unique_ptr<BucketRewrite> ICUMonthNameBucketRewrite(ClientContext &context, cons
 
 unique_ptr<BucketRewrite> ICUDayNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
 	return ICUBucket::NameRewrite(expr, "dow", InternalDayNameFun::GetFunction(), 0, 6);
+}
+
+unique_ptr<BucketRewrite> ICULastDayBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
+	return ICUBucket::LastDayRewrite(expr);
 }
 
 void RegisterICUBucketFunctions(ExtensionLoader &loader) {

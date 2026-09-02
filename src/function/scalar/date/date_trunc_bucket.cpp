@@ -608,6 +608,21 @@ unique_ptr<BucketRewrite> DayNameBucketRewrite(ClientContext &context, const Bou
 	return CyclicRewrite(expr, InternalDayOfWeekFun::GetFunctions(), InternalDayNameFun::GetFunction(), 0, 6);
 }
 
+unique_ptr<BucketRewrite> LastDayBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr) {
+	auto &children = expr.GetChildren();
+	if (children.size() != 1) {
+		return nullptr;
+	}
+	const auto &input_type = children[0]->GetReturnType();
+	if (input_type.id() != LogicalTypeId::TIMESTAMP && input_type.id() != LogicalTypeId::DATE) {
+		return nullptr;
+	}
+	DateBucketSpec spec;
+	TryGetDateTruncSpec(DatePartSpecifier::MONTH, spec);
+	auto inner = make_uniq<DateBucketRewrite>(context, spec, 0, input_type, input_type, false);
+	return make_uniq<FunctionBucketRewrite>(std::move(inner), expr, 0);
+}
+
 ScalarFunctionSet InternalMonthOfYearFun::GetFunctions() {
 	ScalarFunctionSet set(Name);
 	set.AddFunction(ScalarFunction(Identifier(Name), {LogicalType::DATE}, LogicalType::BIGINT, MonthOfYearFunction<date_t>));

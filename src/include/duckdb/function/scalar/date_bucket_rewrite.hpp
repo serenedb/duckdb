@@ -81,5 +81,6 @@ unique_ptr<BucketRewrite> TimeBucketBucketRewrite(ClientContext &context, const 
 unique_ptr<BucketRewrite> StrfTimeBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 unique_ptr<BucketRewrite> MonthNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 unique_ptr<BucketRewrite> DayNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
+unique_ptr<BucketRewrite> LastDayBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 
 } // namespace duckdb

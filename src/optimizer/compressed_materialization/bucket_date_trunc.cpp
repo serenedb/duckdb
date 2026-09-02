@@ -1,4 +1,5 @@
 #include "duckdb/common/types/hugeint.hpp"
+#include "duckdb/execution/perfect_hash_budget.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/column_binding_replacer.hpp"
 #include "duckdb/optimizer/compressed_materialization.hpp"
@@ -164,7 +165,7 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 			return;
 		}
 	}
-	if (total_bits > Settings::Get<PerfectHtThresholdSetting>(context)) {
+	if (total_bits > PerfectHashBudget::MaxBits(context, aggregate.expressions)) {
 		return;
 	}
 
