@@ -175,6 +175,7 @@ private:
 	optional_ptr<LogicalOperator> root;
 	//! The map of ColumnBinding -> statistics for the various nodes
 	statistics_map_t &statistics_map;
+	column_binding_set_t bucketed_groups;
 };
 
 } // namespace duckdb

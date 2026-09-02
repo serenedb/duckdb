@@ -3,10 +3,143 @@
 #include "duckdb/common/operator/date_trunc_operators.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/function/scalar/date_functions.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/storage/statistics/numeric_stats.hpp"
 
 namespace duckdb {
 
 namespace {
+
+struct BucketSpec {
+	bool calendar = false;
+	int64_t width = 0;
+	int64_t anchor = 0;
+
+	int64_t Bucket(timestamp_t ts) const {
+		return DateTrunc::FloorDiv((calendar ? DateTrunc::MonthIndex(ts) : ts.value) - anchor, width);
+	}
+	ScalarFunction BucketFunction() const {
+		return calendar ? InternalDateTruncMonthBucketFun::GetFunction() : InternalDateTruncBucketFun::GetFunction();
+	}
+	ScalarFunction UnbucketFunction() const {
+		return calendar ? InternalDateTruncMonthUnbucketFun::GetFunction()
+		                : InternalDateTruncUnbucketFun::GetFunction();
+	}
+};
+
+bool TryGetBucketSpec(DatePartSpecifier part, BucketSpec &spec) {
+	spec = BucketSpec();
+	switch (part) {
+	case DatePartSpecifier::SECOND:
+	case DatePartSpecifier::EPOCH:
+		spec.width = Interval::MICROS_PER_SEC;
+		return true;
+	case DatePartSpecifier::MINUTE:
+		spec.width = Interval::MICROS_PER_MINUTE;
+		return true;
+	case DatePartSpecifier::HOUR:
+		spec.width = Interval::MICROS_PER_HOUR;
+		return true;
+	case DatePartSpecifier::DAY:
+	case DatePartSpecifier::DOW:
+	case DatePartSpecifier::ISODOW:
+	case DatePartSpecifier::DOY:
+	case DatePartSpecifier::JULIAN_DAY:
+		spec.width = Interval::MICROS_PER_DAY;
+		return true;
+	case DatePartSpecifier::WEEK:
+	case DatePartSpecifier::YEARWEEK:
+		spec.width = Interval::MICROS_PER_WEEK;
+		spec.anchor = DateTrunc::EPOCH_MONDAY * Interval::MICROS_PER_DAY;
+		return true;
+	case DatePartSpecifier::MONTH:
+		spec.calendar = true;
+		spec.width = 1;
+		return true;
+	case DatePartSpecifier::QUARTER:
+		spec.calendar = true;
+		spec.width = Interval::MONTHS_PER_QUARTER;
+		return true;
+	case DatePartSpecifier::YEAR:
+		spec.calendar = true;
+		spec.width = Interval::MONTHS_PER_YEAR;
+		return true;
+	case DatePartSpecifier::DECADE:
+		spec.calendar = true;
+		spec.width = Interval::MONTHS_PER_DECADE;
+		return true;
+	case DatePartSpecifier::CENTURY:
+		spec.calendar = true;
+		spec.width = Interval::MONTHS_PER_CENTURY;
+		return true;
+	case DatePartSpecifier::MILLENNIUM:
+		spec.calendar = true;
+		spec.width = Interval::MONTHS_PER_MILLENIUM;
+		return true;
+	default:
+		return false;
+	}
+}
+
+unique_ptr<Expression> MakeBucketCall(ScalarFunction function, unique_ptr<Expression> input, const BucketSpec &spec) {
+	vector<unique_ptr<Expression>> arguments;
+	arguments.push_back(std::move(input));
+	arguments.push_back(make_uniq<BoundConstantExpression>(Value::BIGINT(spec.width)));
+	arguments.push_back(make_uniq<BoundConstantExpression>(Value::BIGINT(spec.anchor)));
+	BoundScalarFunction bound_function(std::move(function));
+	return make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(arguments), nullptr);
+}
+
+class DateTruncBucketRewrite : public BucketRewrite {
+public:
+	explicit DateTruncBucketRewrite(BucketSpec spec_p) : spec(spec_p) {
+	}
+
+	idx_t InputIndex() const override {
+		return 1;
+	}
+	bool TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket, int64_t &max_bucket) const override {
+		if (!NumericStats::HasMinMax(input_stats)) {
+			return false;
+		}
+		const auto limit = NumericLimits<int64_t>::Maximum() - 2 * Interval::MICROS_PER_WEEK;
+		const auto lower = spec.calendar ? DateTrunc::YearStart(1) * Interval::MICROS_PER_DAY : -limit;
+		const auto min = NumericStats::GetMin<timestamp_t>(input_stats);
+		const auto max = NumericStats::GetMax<timestamp_t>(input_stats);
+		if (min > max || min.value < lower || max.value > limit) {
+			return false;
+		}
+		min_bucket = spec.Bucket(min);
+		max_bucket = spec.Bucket(max);
+		return true;
+	}
+	unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const override {
+		return MakeBucketCall(spec.BucketFunction(), std::move(input), spec);
+	}
+	unique_ptr<Expression> Unbucket(unique_ptr<Expression> bucket) const override {
+		return MakeBucketCall(spec.UnbucketFunction(), std::move(bucket), spec);
+	}
+
+private:
+	BucketSpec spec;
+};
+
+unique_ptr<BucketRewrite> DateTruncBucket(ClientContext &context, const BoundFunctionExpression &expr) {
+	auto &children = expr.GetChildren();
+	if (children.size() != 2 || children[0]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT ||
+	    children[1]->GetReturnType().id() != LogicalTypeId::TIMESTAMP) {
+		return nullptr;
+	}
+	const auto &unit = children[0]->Cast<BoundConstantExpression>().GetValue();
+	DatePartSpecifier part;
+	BucketSpec spec;
+	if (unit.IsNull() || !TryGetDatePartSpecifier(StringValue::Get(unit), part) || !TryGetBucketSpec(part, spec)) {
+		return nullptr;
+	}
+	return make_uniq<DateTruncBucketRewrite>(spec);
+}
 
 template <class TA, class TR, class OP>
 inline TR TruncateFinite(TA input) {
@@ -136,8 +269,10 @@ unique_ptr<FunctionData> DateTruncBind(BindScalarFunctionInput &input) {
 
 ScalarFunctionSet DateTruncFun::GetFunctions() {
 	ScalarFunctionSet date_trunc("date_trunc");
-	date_trunc.AddFunction(ScalarFunction({LogicalType::VARCHAR, LogicalType::TIMESTAMP}, LogicalType::TIMESTAMP,
-	                                      DateTruncFunction<timestamp_t, timestamp_t>, DateTruncBind));
+	ScalarFunction timestamp_trunc({LogicalType::VARCHAR, LogicalType::TIMESTAMP}, LogicalType::TIMESTAMP,
+	                               DateTruncFunction<timestamp_t, timestamp_t>, DateTruncBind);
+	timestamp_trunc.SetBucketRewriteCallback(DateTruncBucket);
+	date_trunc.AddFunction(std::move(timestamp_trunc));
 	date_trunc.AddFunction(ScalarFunction({LogicalType::VARCHAR, LogicalType::DATE}, LogicalType::TIMESTAMP,
 	                                      DateTruncFunction<date_t, timestamp_t>, DateTruncBind));
 	date_trunc.AddFunction(ScalarFunction({LogicalType::VARCHAR, LogicalType::INTERVAL}, LogicalType::INTERVAL,

@@ -8,7 +8,7 @@ bool ScalarFunctionCallbacks::operator==(const ScalarFunctionCallbacks &rhs) con
 	return bind == rhs.bind && init_local_state == rhs.init_local_state && statistics == rhs.statistics &&
 	       bind_lambda == rhs.bind_lambda && bind_expression == rhs.bind_expression &&
 	       get_modified_databases == rhs.get_modified_databases && serialize == rhs.serialize &&
-	       deserialize == rhs.deserialize && filter_prune == rhs.filter_prune;
+	       deserialize == rhs.deserialize && filter_prune == rhs.filter_prune && bucket_rewrite == rhs.bucket_rewrite;
 }
 
 bool ScalarFunctionCallbacks::operator!=(const ScalarFunctionCallbacks &rhs) const {

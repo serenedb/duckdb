@@ -1,4 +1,3 @@
-#include "duckdb/function/scalar/date_functions.hpp"
 #include "duckdb/optimizer/compressed_materialization.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
@@ -37,6 +36,7 @@ void CompressedMaterialization::CompressAggregate(unique_ptr<LogicalOperator> &o
 	vector<CompressedMaterializationType> materialization_types(groups.size(), CompressedMaterializationType::INVALID);
 	vector<unique_ptr<BaseStatistics>> stored_group_stats;
 	stored_group_stats.resize(groups.size());
+	const auto bindings_out = aggregate.GetColumnBindings();
 	auto try_compress_group = [&](idx_t group_idx, Expression &group_expr, optional_ptr<BaseStatistics> stats) {
 		if (!stats) {
 			return false;
@@ -62,11 +62,8 @@ void CompressedMaterialization::CompressAggregate(unique_ptr<LogicalOperator> &o
 		// Mark the bindings referenced by the non-colref expression so they won't be modified
 		GetReferencedBindings(group_expr, referenced_bindings);
 
-		if (group_expr.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
-			const auto &name = group_expr.Cast<BoundFunctionExpression>().Function().GetName();
-			if (name == InternalDateTruncBucketFun::Name || name == InternalDateTruncMonthBucketFun::Name) {
-				continue;
-			}
+		if (bucketed_groups.find(bindings_out[group_idx]) != bucketed_groups.end()) {
+			continue;
 		}
 
 		// The non-colref expression won't be compressed generically, so try to compress it here
@@ -101,7 +98,6 @@ void CompressedMaterialization::CompressAggregate(unique_ptr<LogicalOperator> &o
 	CompressedMaterializationInfo info(*op, {0}, referenced_bindings);
 
 	// Create binding mapping
-	const auto bindings_out = aggregate.GetColumnBindings();
 	const auto &types = aggregate.types;
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
 		// Aggregate changes bindings as it has a table idx
