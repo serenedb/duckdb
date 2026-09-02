@@ -2,6 +2,7 @@
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "include/icu-datepart.hpp"
 #include "include/icu-datepart-lut.hpp"
+#include "include/icu-datepart-stats.hpp"
 #include "include/icu-datefunc.hpp"
 
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -559,8 +560,10 @@ struct ICUDatePart : public ICUDateFunc {
 	template <typename INPUT_TYPE, typename RESULT_TYPE>
 	static ScalarFunction GetUnaryPartCodeFunction(const LogicalType &temporal_type,
 	                                               const LogicalType &result_type = LogicalType::BIGINT) {
-		return ScalarFunction({temporal_type}, result_type, UnaryTimestampFunction<INPUT_TYPE, RESULT_TYPE>,
-		                      BindUnaryDatePart);
+		ScalarFunction function({temporal_type}, result_type, UnaryTimestampFunction<INPUT_TYPE, RESULT_TYPE>,
+		                        BindUnaryDatePart);
+		function.SetStatisticsCallback(ICUDatePartStats::Propagate);
+		return function;
 	}
 
 	template <typename RESULT_TYPE = int64_t>
@@ -575,8 +578,10 @@ struct ICUDatePart : public ICUDateFunc {
 
 	template <typename INPUT_TYPE, typename RESULT_TYPE>
 	static ScalarFunction GetBinaryPartCodeFunction(const LogicalType &temporal_type) {
-		return ScalarFunction({LogicalType::VARCHAR, temporal_type}, LogicalType::BIGINT,
-		                      BinaryTimestampFunction<INPUT_TYPE, RESULT_TYPE>, BindBinaryDatePart);
+		ScalarFunction function({LogicalType::VARCHAR, temporal_type}, LogicalType::BIGINT,
+		                        BinaryTimestampFunction<INPUT_TYPE, RESULT_TYPE>, BindBinaryDatePart);
+		function.SetStatisticsCallback(ICUDatePartStats::Propagate);
+		return function;
 	}
 
 	template <typename INPUT_TYPE>
