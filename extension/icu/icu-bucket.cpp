@@ -50,7 +50,25 @@ struct ICUBucket : public ICUDateFunc {
 		DatePartSpecifier part = DatePartSpecifier::HOUR;
 		int64_t width = 1;
 		int64_t anchor = 0;
+		bool origin_days = false;
+
+		int64_t OriginDay() const {
+			return kind == Kind::LOCAL_MONTH ? DateTrunc::MonthIndexStartDays(anchor) : anchor;
+		}
 	};
+
+	static constexpr const char *TIME_BUCKET_DAY = "time_bucket_day";
+	static constexpr const char *TIME_BUCKET_MONTH = "time_bucket_month";
+
+	static bool TryParseBucketPart(const string &name, BucketSpec &spec) {
+		if (name == TIME_BUCKET_DAY || name == TIME_BUCKET_MONTH) {
+			const auto part = name == TIME_BUCKET_DAY ? DatePartSpecifier::DAY : DatePartSpecifier::MONTH;
+			TryGetBucketSpec(part, spec);
+			spec.origin_days = true;
+			return true;
+		}
+		return TryGetBucketSpec(GetDatePartSpecifier(name), spec);
+	}
 
 	static bool TryGetBucketSpec(DatePartSpecifier part, BucketSpec &spec) {
 		spec = BucketSpec();
@@ -137,6 +155,69 @@ struct ICUBucket : public ICUDateFunc {
 		return DateTrunc::FloorDiv(micros + offset, Interval::MICROS_PER_DAY);
 	}
 
+	static inline bool IsFallBack(const ZoneDay &entry) {
+		return entry.transition != ZoneLUT::NO_TRANSITION && entry.transition != ZoneLUT::MULTIPLE_TRANSITIONS &&
+		       entry.before > entry.after;
+	}
+
+	[[gnu::always_inline]] static inline bool MidnightRepeats(const ZoneDay &entry, int64_t local_day) {
+		if (!IsFallBack(entry)) {
+			return false;
+		}
+		const int64_t midnight = local_day * Interval::MICROS_PER_DAY;
+		return midnight >= entry.transition + int64_t(entry.after) * Interval::MICROS_PER_SEC &&
+		       midnight < entry.transition + int64_t(entry.before) * Interval::MICROS_PER_SEC;
+	}
+
+	[[gnu::always_inline]] static inline int64_t OriginDay(const ZoneLUT &lut, int64_t micros) {
+		const auto local_day = LocalDay(lut, micros);
+		if (lut.HasFixedOffset()) {
+			return local_day;
+		}
+		const auto index = local_day - ZoneLUT::FIRST_DAY;
+		if (index < 0 || index >= ZoneLUT::DAY_COUNT) {
+			ThrowBucketRange();
+		}
+		const auto &entry = lut.WallEntry(index);
+		if (MidnightRepeats(entry, local_day) &&
+		    micros < local_day * Interval::MICROS_PER_DAY - int64_t(entry.after) * Interval::MICROS_PER_SEC) {
+			return local_day - 1;
+		}
+		return local_day;
+	}
+
+	static bool OriginDaysSupported(const ZoneLUT &lut, int64_t first_day, int64_t last_day) {
+		if (lut.HasFixedOffset()) {
+			return true;
+		}
+		const auto origin_index = first_day - ZoneLUT::FIRST_DAY;
+		if (origin_index < 0 || origin_index >= ZoneLUT::DAY_COUNT) {
+			return false;
+		}
+		int64_t origin_offset = 0;
+		if (!lut.TryOffset(ZoneLUT::Resolve(lut.WallEntry(origin_index), first_day * Interval::MICROS_PER_DAY),
+		                   origin_offset)) {
+			return false;
+		}
+		const auto lo = MaxValue<int64_t>(MinValue(first_day, last_day) - 1 - ZoneLUT::FIRST_DAY, 0);
+		const auto hi = MinValue<int64_t>(MaxValue(first_day, last_day) + 1 - ZoneLUT::FIRST_DAY, ZoneLUT::DAY_COUNT - 1);
+		for (auto index = lo; index <= hi; index++) {
+			const auto &entry = lut.WallEntry(index);
+			if (entry.transition == ZoneLUT::NO_TRANSITION) {
+				continue;
+			}
+			if (entry.transition == ZoneLUT::MULTIPLE_TRANSITIONS ||
+			    AbsValue(int64_t(entry.before) - int64_t(entry.after)) >= Interval::SECS_PER_DAY) {
+				return false;
+			}
+			if (MidnightRepeats(entry, index + ZoneLUT::FIRST_DAY) &&
+			    origin_offset != int64_t(entry.after) * Interval::MICROS_PER_SEC) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	[[gnu::always_inline]] static inline int64_t HourWithTransitions(const ZoneLUT &lut, int64_t micros) {
 		const auto hour = DateTrunc::FloorDiv(micros, Interval::MICROS_PER_HOUR) * Interval::MICROS_PER_HOUR;
 		const auto day = DateTrunc::FloorDiv(micros, Interval::MICROS_PER_DAY) - ZoneLUT::FIRST_DAY;
@@ -166,12 +247,22 @@ struct ICUBucket : public ICUDateFunc {
 			}
 			break;
 		case BucketSpec::Kind::LOCAL_DAY:
-			func([&](int64_t micros) { return DateTrunc::FloorDiv(LocalDay(lut, micros) - anchor, width); });
+			if (spec.origin_days) {
+				func([&](int64_t micros) { return DateTrunc::FloorDiv(OriginDay(lut, micros) - anchor, width); });
+			} else {
+				func([&](int64_t micros) { return DateTrunc::FloorDiv(LocalDay(lut, micros) - anchor, width); });
+			}
 			break;
 		default:
-			func([&](int64_t micros) {
-				return DateTrunc::FloorDiv(DateTrunc::MonthIndex(LocalDay(lut, micros)) - anchor, width);
-			});
+			if (spec.origin_days) {
+				func([&](int64_t micros) {
+					return DateTrunc::FloorDiv(DateTrunc::MonthIndex(OriginDay(lut, micros)) - anchor, width);
+				});
+			} else {
+				func([&](int64_t micros) {
+					return DateTrunc::FloorDiv(DateTrunc::MonthIndex(LocalDay(lut, micros)) - anchor, width);
+				});
+			}
 			break;
 		}
 	}
@@ -201,6 +292,9 @@ struct ICUBucket : public ICUDateFunc {
 		if (!lut.TryResolveDay(day - ZoneLUT::FIRST_DAY, day * Interval::MICROS_PER_DAY + Interval::MICROS_PER_DAY / 2,
 		                       representative)) {
 			ThrowBucketRange();
+		}
+		if (spec.origin_days) {
+			return timestamp_tz_t(representative);
 		}
 		return ICUDateTruncLUT::Truncate(info, calendar, spec.part, timestamp_tz_t(representative));
 	}
@@ -233,8 +327,7 @@ struct ICUBucket : public ICUDateFunc {
 			throw InvalidInputException("Time zone bucket functions need a constant part");
 		}
 		BucketSpec spec;
-		const auto part = GetDatePartSpecifier(ConstantVector::GetData<string_t>(part_arg)->GetString());
-		if (!TryGetBucketSpec(part, spec)) {
+		if (!TryParseBucketPart(ConstantVector::GetData<string_t>(part_arg)->GetString(), spec)) {
 			throw InvalidInputException("Time zone bucket functions do not support this part");
 		}
 		if (args.ColumnCount() == 4) {
@@ -337,6 +430,10 @@ struct ICUBucket : public ICUDateFunc {
 			const auto min_day = DateTrunc::FloorDiv(min.value, Interval::MICROS_PER_DAY) - ZoneLUT::FIRST_DAY;
 			const auto max_day = DateTrunc::FloorDiv(max.value, Interval::MICROS_PER_DAY) - ZoneLUT::FIRST_DAY;
 			if (min_day < first_day || max_day + 1 >= ZoneLUT::DAY_COUNT) {
+				return false;
+			}
+			if (spec.origin_days && (!OriginDaysSupported(lut, spec.OriginDay(), max_day + ZoneLUT::FIRST_DAY + 1) ||
+			                         !OriginDaysSupported(lut, spec.OriginDay(), min_day + ZoneLUT::FIRST_DAY - 1))) {
 				return false;
 			}
 			min_bucket = BucketOf(lut, spec, min.value);
@@ -462,6 +559,13 @@ struct ICUBucket : public ICUDateFunc {
 			return nullptr;
 		}
 		return make_uniq<CyclicRewrite>(info, part, std::move(unbucket), lo, hi);
+	}
+
+	static const char *PartName(const BucketSpec &spec) {
+		if (spec.origin_days) {
+			return spec.kind == BucketSpec::Kind::LOCAL_MONTH ? TIME_BUCKET_MONTH : TIME_BUCKET_DAY;
+		}
+		return PartName(spec.part);
 	}
 
 	static const char *PartName(DatePartSpecifier part) {
@@ -651,19 +755,19 @@ struct ICUBucket : public ICUDateFunc {
 			                                    LogicalType::TIMESTAMP_TZ, true);
 		}
 		case ICUTimeBucketFast::Kind::DAYS:
-			TryGetBucketSpec(DatePartSpecifier::DAY, spec);
+			TryParseBucketPart(TIME_BUCKET_DAY, spec);
 			spec.width = width.days;
 			spec.anchor = ICUTimeBucketFast::DEFAULT_ORIGIN_MICROS_1 / Interval::MICROS_PER_DAY;
 			break;
 		case ICUTimeBucketFast::Kind::MONTHS:
-			TryGetBucketSpec(DatePartSpecifier::MONTH, spec);
+			TryParseBucketPart(TIME_BUCKET_MONTH, spec);
 			spec.width = width.months;
 			spec.anchor = DateTrunc::MonthIndex(timestamp_t(ICUTimeBucketFast::DEFAULT_ORIGIN_MICROS_2));
 			break;
 		default:
 			return nullptr;
 		}
-		auto inner = make_uniq<Rewrite>(spec, zoned, Value(PartName(spec.part)));
+		auto inner = make_uniq<Rewrite>(spec, zoned, Value(PartName(spec)));
 		return make_uniq<FunctionBucketRewrite>(std::move(inner), expr, 1);
 	}
 };

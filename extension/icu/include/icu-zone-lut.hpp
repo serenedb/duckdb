@@ -141,6 +141,10 @@ public:
 		return instants[UnsafeNumericCast<idx_t>(day)];
 	}
 
+	[[gnu::always_inline]] inline const ZoneDay &WallEntry(int64_t day) const {
+		return walls[UnsafeNumericCast<idx_t>(day)];
+	}
+
 	[[gnu::always_inline]] inline const ZoneDay *InstantDay(int64_t micros) const {
 		return Find(instants, micros);
 	}
