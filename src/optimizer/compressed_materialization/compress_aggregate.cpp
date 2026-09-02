@@ -1,6 +1,8 @@
+#include "duckdb/function/scalar/date_functions.hpp"
 #include "duckdb/optimizer/compressed_materialization.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 
 namespace duckdb {
@@ -59,6 +61,11 @@ void CompressedMaterialization::CompressAggregate(unique_ptr<LogicalOperator> &o
 
 		// Mark the bindings referenced by the non-colref expression so they won't be modified
 		GetReferencedBindings(group_expr, referenced_bindings);
+
+		if (group_expr.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION &&
+		    group_expr.Cast<BoundFunctionExpression>().Function().GetName() == InternalDateTruncBucketFun::Name) {
+			continue;
+		}
 
 		// The non-colref expression won't be compressed generically, so try to compress it here
 		if (try_compress_group(group_idx, group_expr, GetVariantWrapperStats(group_expr))) {

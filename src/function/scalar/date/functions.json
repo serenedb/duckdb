@@ -37,5 +37,19 @@
         "example": "try_strptime('Wed, 1 January 1992 - 08:38:40 PM', '%a, %-d %B %Y - %I:%M:%S %p')",
         "type": "scalar_function_set",
         "struct": "TryStrpTimeFun"
+    },
+    {
+        "name": "__internal_date_trunc_bucket",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
+    },
+    {
+        "name": "__internal_date_trunc_unbucket",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
     }
 ]
