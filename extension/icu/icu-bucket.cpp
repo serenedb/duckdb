@@ -395,7 +395,7 @@ struct ICUBucket : public ICUDateFunc {
 		return GetUnbucketFunctions().functions[bounded ? 1 : 0];
 	}
 
-	class Rewrite : public BucketRewrite {
+	class Rewrite : public GranularBucketRewrite {
 	public:
 		Rewrite(BucketSpec spec_p, const BindData &info_p, Value part_p)
 		    : spec(spec_p), info(make_uniq<BindData>(info_p)), part(std::move(part_p)) {
@@ -403,6 +403,19 @@ struct ICUBucket : public ICUDateFunc {
 
 		idx_t InputIndex() const override {
 			return 1;
+		}
+		int64_t GranularityMicros() const override {
+			if (spec.kind != BucketSpec::Kind::INSTANT) {
+				return Interval::MICROS_PER_DAY;
+			}
+			auto a = spec.width;
+			auto b = AbsValue(spec.anchor);
+			while (b) {
+				const auto r = a % b;
+				a = b;
+				b = r;
+			}
+			return a;
 		}
 		void RequireYearSpanBelow(int64_t years) {
 			max_year_span = years;

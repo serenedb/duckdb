@@ -1,6 +1,7 @@
 add_library_unity(
   duckdb_optimizer_compressed_materialization
   OBJECT
+  bucket_composition.cpp
   bucket_date_trunc.cpp
   compress_aggregate.cpp
   compress_comparison_join.cpp

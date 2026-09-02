@@ -1,6 +1,7 @@
 #include "duckdb/common/types/hugeint.hpp"
 #include "duckdb/execution/perfect_hash_budget.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/optimizer/bucket_composition.hpp"
 #include "duckdb/optimizer/column_binding_replacer.hpp"
 #include "duckdb/optimizer/compressed_materialization.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
@@ -64,32 +65,9 @@ bool TryAddPerfectHashBits(const LogicalType &type, const BaseStatistics &stats,
 	}
 }
 
-unique_ptr<BucketRewrite> GetBucketRewrite(ClientContext &context, const Expression &group) {
-	switch (group.GetExpressionClass()) {
-	case ExpressionClass::BOUND_FUNCTION: {
-		auto &function = group.Cast<BoundFunctionExpression>();
-		if (!function.Function().HasBucketRewriteCallback()) {
-			return nullptr;
-		}
-		return function.Function().GetBucketRewriteCallback()(context, function);
-	}
-	case ExpressionClass::BOUND_CAST: {
-		auto &cast = group.Cast<BoundCastExpression>();
-		if (!cast.GetBoundCast().bucket_rewrite) {
-			return nullptr;
-		}
-		return cast.GetBoundCast().bucket_rewrite(context, cast);
-	}
-	default:
-		return nullptr;
-	}
-}
-
-unique_ptr<Expression> &InputExpression(Expression &group, idx_t index) {
-	if (group.GetExpressionClass() == ExpressionClass::BOUND_CAST) {
-		return group.Cast<BoundCastExpression>().ChildMutable();
-	}
-	return group.Cast<BoundFunctionExpression>().GetChildrenMutable()[index];
+Expression &RewriteInput(Expression &group, const BucketRewrite &rewrite) {
+	auto custom = rewrite.CustomInput();
+	return custom ? *custom : *BucketRewriteInput(group, rewrite.InputIndex());
 }
 
 struct BucketedGroup {
@@ -119,11 +97,25 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 		}
 	}
 
-	vector<unique_ptr<BucketRewrite>> rewrites(groups.size());
+	const auto max_bits = PerfectHashBudget::MaxBits(context, aggregate.expressions);
+	vector<vector<unique_ptr<BucketRewrite>>> candidates(groups.size());
 	bool any_candidate = false;
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
-		rewrites[group_idx] = GetBucketRewrite(context, *groups[group_idx]);
-		any_candidate = any_candidate || rewrites[group_idx];
+		auto &group = *groups[group_idx];
+		auto &stats = group_stats[group_idx];
+		idx_t dense_bits = 0;
+		const bool dense_already = group.GetReturnType().IsIntegral() && stats && NumericStats::HasMinMax(*stats) &&
+		                           TryAddPerfectHashBits(group.GetReturnType(), *stats, dense_bits) &&
+		                           dense_bits <= max_bits;
+		if (auto hooked = GetHookedBucketRewrite(context, group)) {
+			candidates[group_idx].push_back(std::move(hooked));
+		}
+		if (!dense_already) {
+			for (auto &composite : CompositeBucketRewrites(context, group)) {
+				candidates[group_idx].push_back(std::move(composite));
+			}
+		}
+		any_candidate = any_candidate || !candidates[group_idx].empty();
 	}
 	if (!any_candidate) {
 		return;
@@ -154,13 +146,21 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 	vector<BucketedGroup> bucketed;
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
 		auto &stats = group_stats[group_idx];
-		auto &rewrite = rewrites[group_idx];
-		if (rewrite) {
-			auto &input = *InputExpression(*groups[group_idx], rewrite->InputIndex());
-			const auto range_stats = input_stats(input, stats.get());
-			BucketedGroup group {group_idx, std::move(rewrite), 0, 0, nullptr};
-			if (!range_stats || !group.rewrite->TryBucketRange(*range_stats, group.min, group.max) ||
-			    !TryAddPerfectHashBits(group.min, group.max, total_bits)) {
+		auto &options = candidates[group_idx];
+		if (!options.empty()) {
+			BucketedGroup group {group_idx, nullptr, 0, 0, nullptr};
+			for (auto &candidate : options) {
+				auto &input = RewriteInput(*groups[group_idx], *candidate);
+				const auto range_stats = input_stats(input, candidate->CustomInput() ? nullptr : stats.get());
+				idx_t bits = total_bits;
+				if (range_stats && candidate->TryBucketRange(*range_stats, group.min, group.max) &&
+				    TryAddPerfectHashBits(group.min, group.max, bits)) {
+					group.rewrite = std::move(candidate);
+					total_bits = bits;
+					break;
+				}
+			}
+			if (!group.rewrite) {
 				return;
 			}
 			bucketed.push_back(std::move(group));
@@ -173,14 +173,13 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 			return;
 		}
 	}
-	if (total_bits > PerfectHashBudget::MaxBits(context, aggregate.expressions)) {
+	if (total_bits > max_bits) {
 		return;
 	}
 
 	const auto old_bindings = aggregate.GetColumnBindings();
 	for (auto &group : bucketed) {
-		groups[group.group_idx] =
-		    group.rewrite->Bucket(std::move(InputExpression(*groups[group.group_idx], group.rewrite->InputIndex())));
+		groups[group.group_idx] = group.rewrite->Bucket(RewriteInput(*groups[group.group_idx], *group.rewrite).Copy());
 		auto bucket_stats = NumericStats::CreateEmpty(LogicalType::BIGINT);
 		if (group_stats[group.group_idx]) {
 			bucket_stats.CopyBase(*group_stats[group.group_idx]);

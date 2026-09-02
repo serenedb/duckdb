@@ -24,12 +24,18 @@ struct DateBucketSpec {
 	int64_t Bucket(int64_t micros) const;
 };
 
-class DateBucketRewrite : public BucketRewrite {
+class GranularBucketRewrite : public BucketRewrite {
+public:
+	virtual int64_t GranularityMicros() const = 0;
+};
+
+class DateBucketRewrite : public GranularBucketRewrite {
 public:
 	DateBucketRewrite(ClientContext &context, DateBucketSpec spec, idx_t input_index, LogicalType input_type,
 	                  LogicalType result_type, bool anno_domini_only);
 
 	idx_t InputIndex() const override;
+	int64_t GranularityMicros() const override;
 	bool TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket, int64_t &max_bucket) const override;
 	unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const override;
 	unique_ptr<Expression> Unbucket(unique_ptr<Expression> bucket) const override;

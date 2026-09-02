@@ -711,6 +711,20 @@ idx_t DateBucketRewrite::InputIndex() const {
 	return input_index;
 }
 
+int64_t DateBucketRewrite::GranularityMicros() const {
+	if (spec.calendar || result_type.id() == LogicalTypeId::DATE) {
+		return Interval::MICROS_PER_DAY;
+	}
+	auto a = spec.width;
+	auto b = AbsValue(spec.anchor);
+	while (b) {
+		const auto r = a % b;
+		a = b;
+		b = r;
+	}
+	return a;
+}
+
 bool TryGetMicrosRange(const BaseStatistics &stats, int64_t &min, int64_t &max, bool &zoned) {
 	if (stats.GetStatsType() != StatisticsType::NUMERIC_STATS || !NumericStats::HasMinMax(stats)) {
 		return false;

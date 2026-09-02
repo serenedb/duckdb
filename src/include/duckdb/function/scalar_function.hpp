@@ -164,6 +164,9 @@ public:
 	virtual ~BucketRewrite() = default;
 
 	virtual idx_t InputIndex() const = 0;
+	virtual optional_ptr<Expression> CustomInput() const {
+		return nullptr;
+	}
 	virtual bool TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket, int64_t &max_bucket) const = 0;
 	virtual unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const = 0;
 	virtual unique_ptr<Expression> Unbucket(unique_ptr<Expression> bucket) const = 0;
