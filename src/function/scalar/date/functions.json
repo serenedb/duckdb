@@ -43,10 +43,17 @@
         "parameters": "",
         "description": "",
         "example": "",
-        "type": "scalar_function"
+        "type": "scalar_function_set"
     },
     {
         "name": "__internal_date_trunc_unbucket",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
+    },
+    {
+        "name": "__internal_date_trunc_unbucket_tz",
         "parameters": "",
         "description": "",
         "example": "",
@@ -57,10 +64,17 @@
         "parameters": "",
         "description": "",
         "example": "",
-        "type": "scalar_function"
+        "type": "scalar_function_set"
     },
     {
         "name": "__internal_date_trunc_month_unbucket",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
+    },
+    {
+        "name": "__internal_date_trunc_month_unbucket_tz",
         "parameters": "",
         "description": "",
         "example": "",

@@ -7,6 +7,7 @@
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
+#include "duckdb/function/scalar/date_bucket_rewrite.hpp"
 #include "core_functions/scalar/date_functions.hpp"
 
 namespace duckdb {
@@ -402,6 +403,7 @@ ScalarFunctionSet TimeBucketFun::GetFunctions() {
 
 	for (auto &func : time_bucket.functions) {
 		func.SetArgProperties(1, ArgProperties().NonDecreasing());
+		func.SetBucketRewriteCallback(TimeBucketBucketRewrite);
 	}
 
 	//	Not monotonic (wraps)
