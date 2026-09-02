@@ -106,11 +106,18 @@ struct CastLocalStateParameters {
 typedef bool (*cast_function_t)(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
 typedef unique_ptr<FunctionLocalState> (*init_cast_local_state_t)(CastLocalStateParameters &parameters);
 
+class BucketRewrite;
+class BoundCastExpression;
+
+typedef unique_ptr<BucketRewrite> (*cast_bucket_rewrite_t)(ClientContext &context, const BoundCastExpression &expr);
+
 struct BoundCastInfo {
 	DUCKDB_API
 	BoundCastInfo( // NOLINT: allow explicit cast from cast_function_t
 	    cast_function_t function, unique_ptr<BoundCastData> cast_data = nullptr,
 	    init_cast_local_state_t init_local_state = nullptr);
+
+	cast_bucket_rewrite_t bucket_rewrite = nullptr;
 
 	bool Cast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) const {
 		auto all_ok = function(source, result, count, parameters);

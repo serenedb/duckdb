@@ -7,9 +7,11 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "include/icu-bucket.hpp"
 #include "include/icu-casts.hpp"
 #include "include/icu-datefunc.hpp"
 #include "include/icu-datetrunc.hpp"
+#include "include/icu-zone-lut-casts.hpp"
 
 #include <cmath>
 
@@ -44,6 +46,9 @@ date_t ICUMakeDate::ToDate(ClientContext &context, timestamp_tz_t instant) {
 bool ICUMakeDate::CastToDate(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	auto &cast_data = parameters.cast_data->Cast<CastData>();
 	auto &info = cast_data.info->Cast<BindData>();
+	if (ICUZoneCasts::TryCast<timestamp_tz_t, date_t>(info.lut.get(), source, result, count)) {
+		return true;
+	}
 	CalendarPtr calendar(info.calendar->clone());
 
 	UnaryExecutor::Execute<timestamp_tz_t, date_t>(
@@ -77,7 +82,9 @@ BoundCastInfo ICUMakeDate::BindCastToDate(BindCastInput &input, const LogicalTyp
 	if (source.id() == LogicalTypeId::TIMESTAMP_TZ_NS) {
 		return BoundCastInfo(CastToDateNs, std::move(cast_data));
 	}
-	return BoundCastInfo(CastToDate, std::move(cast_data));
+	BoundCastInfo result(CastToDate, std::move(cast_data));
+	result.bucket_rewrite = ICUDateCastBucketRewrite;
+	return result;
 }
 
 void ICUMakeDate::AddCasts(ExtensionLoader &loader) {

@@ -5,6 +5,7 @@
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
@@ -63,14 +64,31 @@ bool TryAddPerfectHashBits(const LogicalType &type, const BaseStatistics &stats,
 }
 
 unique_ptr<BucketRewrite> GetBucketRewrite(ClientContext &context, const Expression &group) {
-	if (group.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
+	switch (group.GetExpressionClass()) {
+	case ExpressionClass::BOUND_FUNCTION: {
+		auto &function = group.Cast<BoundFunctionExpression>();
+		if (!function.Function().HasBucketRewriteCallback()) {
+			return nullptr;
+		}
+		return function.Function().GetBucketRewriteCallback()(context, function);
+	}
+	case ExpressionClass::BOUND_CAST: {
+		auto &cast = group.Cast<BoundCastExpression>();
+		if (!cast.GetBoundCast().bucket_rewrite) {
+			return nullptr;
+		}
+		return cast.GetBoundCast().bucket_rewrite(context, cast);
+	}
+	default:
 		return nullptr;
 	}
-	auto &function = group.Cast<BoundFunctionExpression>();
-	if (!function.Function().HasBucketRewriteCallback()) {
-		return nullptr;
+}
+
+unique_ptr<Expression> &InputExpression(Expression &group, idx_t index) {
+	if (group.GetExpressionClass() == ExpressionClass::BOUND_CAST) {
+		return group.Cast<BoundCastExpression>().ChildMutable();
 	}
-	return function.Function().GetBucketRewriteCallback()(context, function);
+	return group.Cast<BoundFunctionExpression>().GetChildrenMutable()[index];
 }
 
 struct BucketedGroup {
@@ -110,32 +128,37 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 		return;
 	}
 
-	auto input_stats = [&](const Expression &input, const BaseStatistics &fallback) -> const BaseStatistics & {
+	auto input_stats = [&](const Expression &input,
+	                       optional_ptr<const BaseStatistics> fallback) -> optional_ptr<const BaseStatistics> {
 		if (input.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 			auto it = statistics_map.find(input.Cast<BoundColumnRefExpression>().Binding());
 			if (it != statistics_map.end() && it->second && NumericStats::HasMinMax(*it->second)) {
-				return *it->second;
+				return it->second.get();
 			}
 		}
-		return fallback;
+		if (fallback && NumericStats::HasMinMax(*fallback)) {
+			return fallback;
+		}
+		return nullptr;
 	};
 	idx_t total_bits = 0;
 	vector<BucketedGroup> bucketed;
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
 		auto &stats = group_stats[group_idx];
-		if (!stats || !NumericStats::HasMinMax(*stats)) {
-			return;
-		}
 		auto &rewrite = rewrites[group_idx];
 		if (rewrite) {
-			auto &input = *groups[group_idx]->Cast<BoundFunctionExpression>().GetChildren()[rewrite->InputIndex()];
+			auto &input = *InputExpression(*groups[group_idx], rewrite->InputIndex());
+			const auto range_stats = input_stats(input, stats.get());
 			BucketedGroup group {group_idx, std::move(rewrite), 0, 0, nullptr};
-			if (!group.rewrite->TryBucketRange(input_stats(input, *stats), group.min, group.max) ||
+			if (!range_stats || !group.rewrite->TryBucketRange(*range_stats, group.min, group.max) ||
 			    !TryAddPerfectHashBits(group.min, group.max, total_bits)) {
 				return;
 			}
 			bucketed.push_back(std::move(group));
 			continue;
+		}
+		if (!stats || !NumericStats::HasMinMax(*stats)) {
+			return;
 		}
 		if (!TryAddPerfectHashBits(groups[group_idx]->GetReturnType(), *stats, total_bits)) {
 			return;
@@ -147,11 +170,12 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 
 	const auto old_bindings = aggregate.GetColumnBindings();
 	for (auto &group : bucketed) {
-		auto &function = groups[group.group_idx]->Cast<BoundFunctionExpression>();
 		groups[group.group_idx] =
-		    group.rewrite->Bucket(std::move(function.GetChildrenMutable()[group.rewrite->InputIndex()]));
+		    group.rewrite->Bucket(std::move(InputExpression(*groups[group.group_idx], group.rewrite->InputIndex())));
 		auto bucket_stats = NumericStats::CreateEmpty(LogicalType::BIGINT);
-		bucket_stats.CopyBase(*group_stats[group.group_idx]);
+		if (group_stats[group.group_idx]) {
+			bucket_stats.CopyBase(*group_stats[group.group_idx]);
+		}
 		NumericStats::SetMin(bucket_stats, Value::BIGINT(group.min));
 		NumericStats::SetMax(bucket_stats, Value::BIGINT(group.max));
 		group.stats = std::move(group_stats[group.group_idx]);
@@ -164,12 +188,14 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 	const auto &types = op->types;
 	vector<unique_ptr<Expression>> projections;
 	vector<optional_ptr<BaseStatistics>> statistics(old_bindings.size());
+	vector<bool> is_bucketed(old_bindings.size(), false);
 	for (idx_t col_idx = 0; col_idx < old_bindings.size(); col_idx++) {
 		unique_ptr<Expression> expr = make_uniq<BoundColumnRefExpression>(types[col_idx], old_bindings[col_idx]);
 		for (auto &group : bucketed) {
 			if (group.group_idx == col_idx) {
 				expr = group.rewrite->Unbucket(std::move(expr));
 				statistics[col_idx] = group.stats.get();
+				is_bucketed[col_idx] = true;
 			}
 		}
 		projections.push_back(std::move(expr));
@@ -187,6 +213,9 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 	for (idx_t col_idx = 0; col_idx < old_bindings.size(); col_idx++) {
 		if (statistics[col_idx]) {
 			statistics_map[new_bindings[col_idx]] = statistics[col_idx]->ToUnique();
+			continue;
+		}
+		if (is_bucketed[col_idx]) {
 			continue;
 		}
 		auto it = statistics_map.find(old_bindings[col_idx]);

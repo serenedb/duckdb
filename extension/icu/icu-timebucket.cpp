@@ -9,7 +9,9 @@
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "include/icu-bucket.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-timebucket-fast.hpp"
 
 namespace duckdb {
 
@@ -370,6 +372,9 @@ struct ICUTimeBucket : public ICUDateFunc {
 
 		const auto &bucket_width_arg = args.data[0];
 		const auto &ts_arg = args.data[1];
+		if (ICUTimeBucketFast::TryBinary(args, result)) {
+			return;
+		}
 
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg)) {
@@ -424,6 +429,9 @@ struct ICUTimeBucket : public ICUDateFunc {
 		const auto &bucket_width_arg = args.data[0];
 		const auto &ts_arg = args.data[1];
 		const auto &offset_arg = args.data[2];
+		if (ICUTimeBucketFast::TryOffset(args, result)) {
+			return;
+		}
 
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg)) {
@@ -486,6 +494,9 @@ struct ICUTimeBucket : public ICUDateFunc {
 		const auto &bucket_width_arg = args.data[0];
 		const auto &ts_arg = args.data[1];
 		const auto &origin_arg = args.data[2];
+		if (ICUTimeBucketFast::TryOrigin(args, result)) {
+			return;
+		}
 
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR &&
 		    origin_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
@@ -620,6 +631,7 @@ struct ICUTimeBucket : public ICUDateFunc {
 		for (auto &func : set.functions) {
 			func.SetFallible();
 			func.SetArgProperties(1, ArgProperties().NonDecreasing());
+			func.SetBucketRewriteCallback(ICUTimeBucketBucketRewrite);
 		}
 		loader.RegisterFunction(set);
 	}
