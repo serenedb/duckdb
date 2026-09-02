@@ -51,10 +51,19 @@ struct ICUDateTrunc : public ICUDateFunc {
 		       std::is_same<OP, DateTrunc::MicrosecondOperator>::value;
 	}
 
-	[[gnu::always_inline]] static inline bool InGap(const ZoneLUT &lut, int64_t wall) {
+	template <class OP, class = void>
+	struct TruncatesDays : std::false_type {};
+
+	template <class OP>
+	struct TruncatesDays<OP, std::void_t<decltype(OP::Days(int32_t()))>> : std::true_type {};
+
+	[[gnu::always_inline]] static inline bool InGap(const ZoneLUT &lut, int64_t days) {
+		const int64_t wall = days * Interval::MICROS_PER_DAY;
 		int64_t instant = 0;
+		int64_t instant_day = 0;
 		int64_t offset = 0;
-		if (!lut.TryResolve(wall, instant) || !lut.TryOffset(instant, offset)) {
+		if (!lut.TryResolveDay(days - ZoneLUT::FIRST_DAY, wall, instant) ||
+		    !lut.TryInstantDay(instant, instant_day, offset)) {
 			return true;
 		}
 		return instant + offset != wall;
@@ -64,7 +73,8 @@ struct ICUDateTrunc : public ICUDateFunc {
 	[[gnu::always_inline]] static inline bool TryTruncate(const ZoneLUT &lut, timestamp_tz_t input,
 	                                                      timestamp_tz_t &result) {
 		int64_t offset = 0;
-		if (!lut.TryOffset(input.value, offset)) {
+		int64_t instant_day = 0;
+		if (!lut.TryInstantDay(input.value, instant_day, offset)) {
 			return false;
 		}
 		const timestamp_t wall(input.value + offset);
@@ -73,17 +83,29 @@ struct ICUDateTrunc : public ICUDateFunc {
 				return false;
 			}
 		}
-		const auto truncated = OP::template Operation<timestamp_t, timestamp_t>(wall);
-		if constexpr (PreservesOffset<OP>()) {
-			return lut.TryShiftBack(truncated.value, offset, result.value);
-		}
-		using INTERMEDIATE = typename DateTruncRecomputes<OP>::type;
-		if constexpr (!std::is_void<INTERMEDIATE>::value) {
-			if (InGap(lut, INTERMEDIATE::template Operation<timestamp_t, timestamp_t>(wall).value)) {
-				return false;
+		if constexpr (TruncatesDays<OP>::value) {
+			const auto days = DateTrunc::ToDays(wall);
+			using INTERMEDIATE = typename DateTruncRecomputes<OP>::type;
+			if constexpr (!std::is_void<INTERMEDIATE>::value) {
+				if (InGap(lut, INTERMEDIATE::Days(days))) {
+					return false;
+				}
 			}
+			const auto truncated_days = OP::Days(days);
+			return lut.TryResolveDay(truncated_days - ZoneLUT::FIRST_DAY, truncated_days * Interval::MICROS_PER_DAY,
+			                         result.value);
+		} else {
+			const auto truncated = OP::template Operation<timestamp_t, timestamp_t>(wall);
+			if constexpr (PreservesOffset<OP>()) {
+				return lut.TryShiftBack(truncated.value, offset, result.value);
+			}
+			if (lut.HasFixedOffset()) {
+				return lut.TryResolve(truncated.value, result.value);
+			}
+			const auto start = ZoneLUT::DayStart(instant_day);
+			const auto wall_day = instant_day + (wall.value >= start + Interval::MICROS_PER_DAY) - (wall.value < start);
+			return lut.TryResolveDay(wall_day, truncated.value, result.value);
 		}
-		return lut.TryResolve(truncated.value, result.value);
 	}
 
 	static void PreserveOffsets(icu::Calendar *calendar) {

@@ -91,6 +91,43 @@ public:
 		return !fixed || (wall >= resolve_min_wall && wall <= resolve_max_wall);
 	}
 
+	[[gnu::always_inline]] inline bool TryInstantDay(int64_t micros, int64_t &day, int64_t &offset) const {
+		if (fixed) {
+			offset = fixed_offset;
+			return micros >= offset_min_input && micros <= offset_max_input;
+		}
+		day = DateTrunc::FloorDiv(micros, Interval::MICROS_PER_DAY) - FIRST_DAY;
+		if (day < 0 || day >= DAY_COUNT) {
+			return false;
+		}
+		const auto &entry = instants[UnsafeNumericCast<idx_t>(day)];
+		if (entry.transition == MULTIPLE_TRANSITIONS) {
+			return false;
+		}
+		offset = Offset(entry, micros);
+		return true;
+	}
+
+	[[gnu::always_inline]] inline bool TryResolveDay(int64_t day, int64_t wall, int64_t &instant) const {
+		if (fixed) {
+			instant = wall - fixed_offset;
+			return wall >= resolve_min_wall && wall <= resolve_max_wall;
+		}
+		if (day < 0 || day >= DAY_COUNT) {
+			return false;
+		}
+		const auto &entry = walls[UnsafeNumericCast<idx_t>(day)];
+		if (entry.transition == MULTIPLE_TRANSITIONS) {
+			return false;
+		}
+		instant = Resolve(entry, wall);
+		return true;
+	}
+
+	static inline int64_t DayStart(int64_t day) {
+		return (day + FIRST_DAY) * Interval::MICROS_PER_DAY;
+	}
+
 	[[gnu::always_inline]] inline const ZoneDay *InstantDay(int64_t micros) const {
 		return Find(instants, micros);
 	}

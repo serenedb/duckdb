@@ -157,6 +157,8 @@ struct ICUDatePart : public ICUDateFunc {
 	struct LocalTime {
 		timestamp_t wall;
 		int64_t offset;
+		int32_t days;
+		int64_t time_of_day;
 	};
 	typedef int64_t (*local_bigint_t)(const LocalTime &local);
 	typedef double (*local_double_t)(const LocalTime &local);
@@ -166,15 +168,20 @@ struct ICUDatePart : public ICUDateFunc {
 			return false;
 		}
 		local.wall = timestamp_t(input.value + local.offset);
-		return local.wall.value >= ZoneLUT::FIRST_ANNO_DOMINI;
+		if (local.wall.value < ZoneLUT::FIRST_ANNO_DOMINI) {
+			return false;
+		}
+		local.days = DateTrunc::ToDays(local.wall);
+		local.time_of_day = local.wall.value - int64_t(local.days) * Interval::MICROS_PER_DAY;
+		return true;
 	}
 
 	static inline int32_t LocalDays(const LocalTime &local) {
-		return DateTrunc::ToDays(local.wall);
+		return local.days;
 	}
 
 	static inline int64_t LocalTimeOfDay(const LocalTime &local) {
-		return local.wall.value - int64_t(LocalDays(local)) * Interval::MICROS_PER_DAY;
+		return local.time_of_day;
 	}
 
 	static inline DateTrunc::YearDay LocalYearDay(const LocalTime &local) {
