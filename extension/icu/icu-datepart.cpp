@@ -616,8 +616,10 @@ struct ICUDatePart : public ICUDateFunc {
 
 	template <typename INPUT_TYPE>
 	static ScalarFunction GetLastDayFunction(const LogicalType &temporal_type) {
-		return ScalarFunction({temporal_type}, LogicalType::DATE, UnaryTimestampFunction<INPUT_TYPE, date_t>,
-		                      BindLastDate);
+		ScalarFunction function({temporal_type}, LogicalType::DATE, UnaryTimestampFunction<INPUT_TYPE, date_t>,
+		                        BindLastDate);
+		function.SetBucketRewriteCallback(ICULastDayBucketRewrite);
+		return function;
 	}
 	static void AddLastDayFunctions(const Identifier &name, ExtensionLoader &loader) {
 		ScalarFunctionSet set {name};

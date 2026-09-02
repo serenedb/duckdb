@@ -36,6 +36,7 @@ unique_ptr<BucketRewrite> ICUDateCastBucketRewrite(ClientContext &context, const
 unique_ptr<BucketRewrite> ICUStrfTimeBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 unique_ptr<BucketRewrite> ICUMonthNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 unique_ptr<BucketRewrite> ICUDayNameBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
+unique_ptr<BucketRewrite> ICULastDayBucketRewrite(ClientContext &context, const BoundFunctionExpression &expr);
 
 void RegisterICUBucketFunctions(ExtensionLoader &loader);
 
