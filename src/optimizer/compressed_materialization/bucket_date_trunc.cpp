@@ -85,6 +85,35 @@ bool TryAddPerfectHashBits(const hugeint_t &min, const hugeint_t &max, idx_t &to
 	return true;
 }
 
+template <class T>
+bool TryAddPerfectHashBits(const BaseStatistics &stats, idx_t &total_bits) {
+	return TryAddPerfectHashBits(Hugeint::Convert(NumericStats::GetMin<T>(stats)),
+	                             Hugeint::Convert(NumericStats::GetMax<T>(stats)), total_bits);
+}
+
+bool TryAddPerfectHashBits(const LogicalType &type, const BaseStatistics &stats, idx_t &total_bits) {
+	switch (type.InternalType()) {
+	case PhysicalType::INT8:
+		return TryAddPerfectHashBits<int8_t>(stats, total_bits);
+	case PhysicalType::INT16:
+		return TryAddPerfectHashBits<int16_t>(stats, total_bits);
+	case PhysicalType::INT32:
+		return TryAddPerfectHashBits<int32_t>(stats, total_bits);
+	case PhysicalType::INT64:
+		return TryAddPerfectHashBits<int64_t>(stats, total_bits);
+	case PhysicalType::UINT8:
+		return TryAddPerfectHashBits<uint8_t>(stats, total_bits);
+	case PhysicalType::UINT16:
+		return TryAddPerfectHashBits<uint16_t>(stats, total_bits);
+	case PhysicalType::UINT32:
+		return TryAddPerfectHashBits<uint32_t>(stats, total_bits);
+	case PhysicalType::UINT64:
+		return TryAddPerfectHashBits<uint64_t>(stats, total_bits);
+	default:
+		return false;
+	}
+}
+
 unique_ptr<Expression> MakeCall(ScalarFunction function, unique_ptr<Expression> input, int64_t width, int64_t anchor) {
 	vector<unique_ptr<Expression>> arguments;
 	arguments.push_back(std::move(input));
@@ -122,6 +151,18 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 		}
 	}
 
+	vector<idx_t> candidates;
+	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
+		int64_t width = 0;
+		int64_t anchor = 0;
+		if (TryGetBucketWidth(*groups[group_idx], width, anchor)) {
+			candidates.push_back(group_idx);
+		}
+	}
+	if (candidates.empty()) {
+		return;
+	}
+
 	const auto limit = NumericLimits<int64_t>::Maximum() - 2 * Interval::MICROS_PER_WEEK;
 	idx_t total_bits = 0;
 	vector<BucketedGroup> bucketed;
@@ -150,13 +191,11 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 			bucketed.push_back(std::move(group));
 			continue;
 		}
-		if (!TypeIsIntegral(groups[group_idx]->GetReturnType().InternalType()) ||
-		    !TryAddPerfectHashBits(NumericStats::Min(*stats).GetValue<hugeint_t>(),
-		                           NumericStats::Max(*stats).GetValue<hugeint_t>(), total_bits)) {
+		if (!TryAddPerfectHashBits(groups[group_idx]->GetReturnType(), *stats, total_bits)) {
 			return;
 		}
 	}
-	if (bucketed.empty() || total_bits > Settings::Get<PerfectHtThresholdSetting>(context)) {
+	if (total_bits > Settings::Get<PerfectHtThresholdSetting>(context)) {
 		return;
 	}
 
