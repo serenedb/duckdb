@@ -7,4 +7,4 @@ CREATE TABLE t0(c0 TINYINT);
 statement error
 ANALYZE t0(c4);
 ----
-does not exist
+does not have a column named
