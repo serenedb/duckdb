@@ -12,6 +12,7 @@
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/catalog/catalog_permissions.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/exception/catalog_exception.hpp"
@@ -61,6 +62,8 @@ public:
 	Value comment;
 	//! (optional) extra data associated with this entry
 	InsertionOrderPreservingMap<string> tags;
+	//! Ownership and grants; core carries them, the access-control layer reads them
+	CatalogPermissions permissions;
 
 private:
 	//! Child entry

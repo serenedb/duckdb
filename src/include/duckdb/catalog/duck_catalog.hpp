@@ -12,6 +12,12 @@
 
 namespace duckdb {
 
+class DuckSchemaEntry;
+class IndexCatalogEntry;
+class TableCatalogEntry;
+struct CreateIndexInfo;
+struct BoundCreateTableInfo;
+
 //! The Catalog object represents the catalog of the database.
 class DuckCatalog : public Catalog {
 public:
@@ -38,6 +44,10 @@ public:
 
 public:
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) override;
+	DUCKDB_API virtual unique_ptr<IndexCatalogEntry> MakeIndexEntry(DuckSchemaEntry &schema, CreateIndexInfo &info,
+	                                                                TableCatalogEntry &table);
+	DUCKDB_API virtual unique_ptr<TableCatalogEntry> MakeTableEntry(DuckSchemaEntry &schema,
+	                                                                BoundCreateTableInfo &info);
 	DUCKDB_API void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) override;
 	DUCKDB_API void ScanSchemas(std::function<void(SchemaCatalogEntry &)> callback);
 

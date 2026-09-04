@@ -39,6 +39,8 @@ private:
 	CatalogSet types;
 	//! The catalog set holding the coordinate systems
 	CatalogSet coordinate_systems;
+	//! The catalog set holding the tokenizers
+	CatalogSet tokenizers;
 
 public:
 	optional_ptr<CatalogEntry> AddEntry(CatalogTransaction transaction, unique_ptr<StandardEntry> entry,

@@ -62,6 +62,7 @@ public:
 	SequenceData GetData() const;
 	int64_t CurrentValue();
 	int64_t NextValue(DuckTransaction &transaction);
+	int64_t NextValues(DuckTransaction &transaction, idx_t count);
 	void ReplayValue(uint64_t usage_count, int64_t counter, optional<int64_t> last_value);
 
 	string ToSQL() const override;

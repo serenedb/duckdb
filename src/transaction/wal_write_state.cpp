@@ -154,6 +154,10 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 		case CatalogType::PREPARED_STATEMENT:
 		case CatalogType::SCALAR_FUNCTION_ENTRY:
 		case CatalogType::DEPENDENCY_ENTRY:
+		case CatalogType::DATABASE_ENTRY:
+		case CatalogType::TOKENIZER_ENTRY:
+		case CatalogType::ROLE_ENTRY:
+		case CatalogType::FOREIGN_SERVER_ENTRY:
 		case CatalogType::SECRET_ENTRY:
 		case CatalogType::SECRET_TYPE_ENTRY:
 		case CatalogType::SECRET_FUNCTION_ENTRY:
@@ -164,6 +168,10 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 		}
 		break;
 	case CatalogType::PREPARED_STATEMENT:
+	case CatalogType::DATABASE_ENTRY:
+	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::ROLE_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
 	case CatalogType::SCALAR_FUNCTION_ENTRY:
 	case CatalogType::TABLE_FUNCTION_ENTRY:

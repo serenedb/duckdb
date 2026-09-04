@@ -1,4 +1,5 @@
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
@@ -81,7 +82,8 @@ DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info)
       functions(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultFunctionGenerator>(catalog, *this) : nullptr),
       sequences(catalog), collations(catalog), types(catalog, make_uniq<DefaultTypeGenerator>(catalog, *this)),
       coordinate_systems(
-          catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, *this) : nullptr) {
+          catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, *this) : nullptr),
+      tokenizers(catalog) {
 }
 
 unique_ptr<CatalogEntry> DuckSchemaEntry::Copy(ClientContext &context) const {
@@ -152,7 +154,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) {
-	auto table = make_uniq<DuckTableEntry>(catalog, *this, info);
+	auto table = catalog.Cast<DuckCatalog>().MakeTableEntry(*this, info);
 
 	// add a foreign key constraint in main key table if there is a foreign key constraint
 	vector<unique_ptr<AlterForeignKeyInfo>> fk_arrays;
@@ -260,7 +262,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction trans
 		throw CatalogException("An index with the name " + info.GetIndexName() + " already exists!");
 	}
 
-	auto index = make_uniq<DuckIndexEntry>(catalog, *this, info, table);
+	auto index = catalog.Cast<DuckCatalog>().MakeIndexEntry(*this, info, table);
 	auto dependencies = index->dependencies;
 	return AddEntryInternal(transaction, std::move(index), info.on_conflict, dependencies);
 }
@@ -434,6 +436,8 @@ CatalogSet &DuckSchemaEntry::GetCatalogSet(CatalogType type) {
 		return coordinate_systems;
 	case CatalogType::TYPE_ENTRY:
 		return types;
+	case CatalogType::TOKENIZER_ENTRY:
+		return tokenizers;
 	default:
 		throw InternalException({{"catalog_type", CatalogTypeToString(type)}}, "Unsupported catalog type in schema");
 	}
@@ -451,6 +455,7 @@ void DuckSchemaEntry::Verify(Catalog &catalog) {
 	sequences.Verify(catalog);
 	collations.Verify(catalog);
 	types.Verify(catalog);
+	tokenizers.Verify(catalog);
 }
 
 } // namespace duckdb

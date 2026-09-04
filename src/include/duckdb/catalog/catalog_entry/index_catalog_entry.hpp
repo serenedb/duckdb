@@ -39,6 +39,12 @@ public:
 	//! The set of expressions to index by
 	vector<unique_ptr<ParsedExpression>> expressions;
 	vector<unique_ptr<ParsedExpression>> parsed_expressions;
+	//! The partial-index predicate (CREATE INDEX ... WHERE <predicate>)
+	unique_ptr<ParsedExpression> where_clause;
+	//! The opclass per indexed column; empty string means none was specified
+	vector<string> column_opclasses;
+	//! Per-column opclass options, parallel to column_opclasses
+	vector<std::optional<case_insensitive_map_t<Value>>> column_opclass_options;
 
 public:
 	//! Returns the CreateIndexInfo

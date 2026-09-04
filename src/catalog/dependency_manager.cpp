@@ -48,10 +48,17 @@ DependencyManager::DependencyManager(DuckCatalog &catalog) : catalog(catalog), s
 }
 
 Identifier DependencyManager::GetSchema(const CatalogEntry &entry) {
-	if (entry.type == CatalogType::SCHEMA_ENTRY) {
+	switch (entry.type) {
+	case CatalogType::SCHEMA_ENTRY:
 		return entry.name;
+	case CatalogType::ROLE_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+		// Catalog-scoped kinds have no schema; the mangled name carries the type, so an empty schema
+		// component stays unambiguous against every schema-scoped kind.
+		return Identifier::InvalidSchema();
+	default:
+		return entry.ParentSchema().name;
 	}
-	return entry.ParentSchema().name;
 }
 
 MangledEntryName DependencyManager::MangleName(const CatalogEntryInfo &info) {
@@ -437,6 +444,15 @@ static string EntryToString(CatalogEntryInfo &info) {
 	}
 	case CatalogType::TRIGGER_ENTRY: {
 		return StringUtil::Format("trigger \"%s\"", info.name);
+	}
+	case CatalogType::TOKENIZER_ENTRY: {
+		return StringUtil::Format("text search dictionary \"%s\"", info.name);
+	}
+	case CatalogType::ROLE_ENTRY: {
+		return StringUtil::Format("role \"%s\"", info.name);
+	}
+	case CatalogType::FOREIGN_SERVER_ENTRY: {
+		return StringUtil::Format("server \"%s\"", info.name);
 	}
 	default:
 		throw InternalException("CatalogType not handled in EntryToString (DependencyManager) for %s",
