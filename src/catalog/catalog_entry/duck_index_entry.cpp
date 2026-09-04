@@ -57,7 +57,11 @@ DataTableInfo &DuckIndexEntry::GetDataTableInfo() const {
 }
 
 void DuckIndexEntry::CommitDrop(CommitDropState &drop_state) {
-	D_ASSERT(info);
+	// An index over a relation with no DataTable (a view) has no index list to
+	// remove itself from; Rollback already tolerates the same shape.
+	if (!info || !info->info) {
+		return;
+	}
 	drop_state.RemoveIndex(GetDataTableInfo().GetIndexes(), name);
 }
 

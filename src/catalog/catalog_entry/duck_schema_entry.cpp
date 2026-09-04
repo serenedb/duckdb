@@ -154,7 +154,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) {
-	auto table = catalog.Cast<DuckCatalog>().MakeTableEntry(*this, info);
+	auto table = catalog.Cast<DuckCatalog>().MakeTableEntry(transaction, *this, info);
 
 	// add a foreign key constraint in main key table if there is a foreign key constraint
 	vector<unique_ptr<AlterForeignKeyInfo>> fk_arrays;
