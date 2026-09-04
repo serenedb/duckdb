@@ -970,7 +970,18 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 
 		const auto rebinds = catalog.DependentsResolveByName() && alter_info.DependentCanRebind();
 		const auto reshaped = catalog.ReshapesOwnedDependents() && CascadeDrop(false, dep.Dependent().flags);
-		if (!rebinds && !reshaped && alter_info.BreaksDependent(dep.EntryInfo().type)) {
+		// A replaced definition is only blocked by an owning dependent (a sequence its table owns); a plain
+		// dependent (a view over the replaced function) rebinds against the new one.
+		const auto replace_breaks_owner = alter_info.ReplacesDefinition() && dep.Dependent().flags.IsOwnedBy();
+		if (!rebinds && !reshaped && (alter_info.BreaksDependent(dep.EntryInfo().type) || replace_breaks_owner)) {
+			if (alter_info.ReplacesDefinition()) {
+				auto dependent_entry = LookupEntry(transaction, dep);
+				auto object_display = EntryDisplayInfo(old_obj);
+				CatalogEntryInfo dependent_display =
+				    dependent_entry ? EntryDisplayInfo(*dependent_entry) : dep.EntryInfo();
+				throw DependencyException("%s depends on %s.", EntryToString(dependent_display),
+				                          EntryToString(object_display));
+			}
 			throw DependencyException("Cannot alter entry \"%s\" because there are entries that "
 			                          "depend on it.",
 			                          old_obj.name.GetIdentifierName());

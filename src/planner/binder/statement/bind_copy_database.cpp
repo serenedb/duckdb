@@ -33,11 +33,16 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_databas
 		                                            create_info->GetQualifiedName().Name()));
 		auto on_conflict = create_info->type == CatalogType::SCHEMA_ENTRY ? OnCreateConflict::IGNORE_ON_CONFLICT
 		                                                                  : OnCreateConflict::ERROR_ON_CONFLICT;
-		// Update all the dependencies of the entry to point to the newly created entries on the target database
+		// Update all the dependencies of the entry to point to the newly created entries on the target
+		// database. The oid names the source entry, and while it is set the subject resolves by that id
+		// alone -- into the source catalog -- so clear it and rewrite the catalog on the entry itself (not
+		// only on the outer dependency) so the target's own entry resolves by name here.
 		LogicalDependencyList altered_dependencies;
 		for (auto &dep : create_info->dependencies.Set()) {
 			auto altered_dep = dep;
 			altered_dep.catalog = target_database_name;
+			altered_dep.entry.catalog = target_database_name;
+			altered_dep.entry.oid = 0;
 			altered_dependencies.AddDependency(altered_dep);
 		}
 		create_info->dependencies = altered_dependencies;

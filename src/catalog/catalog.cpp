@@ -1333,6 +1333,9 @@ vector<reference<CatalogEntry>> Catalog::GetAllEntries(ClientContext &context, C
 }
 
 void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
+	if (info.type == AlterType::ALTER_SCHEMA) {
+		throw NotImplementedException("Altering schemas is not yet supported");
+	}
 	// ALTER FUNCTION ... RENAME TO ... cannot disambiguate scalar vs table
 	// macro at parse time (mirrors the binder skip in Binder::Bind(AlterStatement)).
 	// Dispatch to the schema without a type-specific lookup so the schema's
