@@ -239,6 +239,7 @@ struct SerializeScratch {
 	vector<uint32_t> pl;          //! WriteCleavedSegment: prefix lengths
 	vector<uint32_t> pid;         //! WriteCleavedSegment: prefix ids (dict_count-sized, incl. the null slot)
 	vector<uint32_t> sl;          //! WriteCleavedSegment suffix lengths / WriteNative string lengths (dict_count-sized)
+	vector<uint32_t> first_row;
 };
 
 //===--------------------------------------------------------------------===//
@@ -255,8 +256,7 @@ public:
 
 	// ---- Add / undo a row ----
 	//! Append one row for value `s` (or NULL): dedup, lazily FSST-encode a new entry, update stats + selection.
-	//! Returns whether it added a NEW dictionary entry. Shared by the scan-vector add path and the overshoot
-	//! rewind's re-add.
+	//! Returns whether it added a NEW dictionary entry.
 	bool AddValue(const string_t &s, bool is_null);
 	//! Undo the last AddValue (to flush the segment WITHOUT that row and start the next one with it): pop the
 	//! selection, and if it was a new dictionary entry, pop it too. Stats are left as a harmless superset -- the
@@ -298,23 +298,16 @@ public:
 	//! Write a native (duckdb-compatible) layout for the given mode (DICTIONARY / DICT_FSST / FSST_ONLY) straight from
 	//! the in-memory raw or FSST-encoded entries.
 	idx_t WriteNative(DictFSSTMode mode);
-	//! Serialize the accumulated segment, choosing the smallest applicable mode (see FinalizeSegment). When
-	//! use_cached is set (pure auto, common flush path) the triggering cleave in cut_dict is reused as-is.
-	idx_t FinalizeSegment(bool use_cached);
+	idx_t MeasureSegment(bool use_cached, DictFSSTMode &out_mode);
+	idx_t WriteSegment(DictFSSTMode mode);
 
 	// ---- Flush / entry points ----
-	//! Overshoot recovery: the segment grew past the block since the last fitting cleave (reclustering /
-	//! selection-width bump). Move the rows added since that checkpoint (fit_rows/fit_raw_count) to the next
-	//! segment -- copying their values since the flush frees the entry heap -- rewind to the checkpoint, flush, and
-	//! re-add them.
 	void FlushRewind();
-	//! Re-run one scan-vector row's add through AddValue. Shared by the main Compress loop and the undo-then-readd
-	//! recovery paths (which re-add the same row after PopRow).
-	bool AddScanRow(UnifiedVectorFormat &vf, const string_t *strings, idx_t j);
+	void PopUntilFits(vector<string_t> &moved, char *null_marker);
+	void CompressValue(const string_t &s, bool is_null);
 	//! Not yet FSST-encoded: check the encode trigger (raw dictionary big enough and either near a block or stopped
 	//! growing) or, for a tiny selection-dominated dictionary, cut a plain DICTIONARY once it fills the block.
-	void MaybeEncodeOrCutSmall(UnifiedVectorFormat &vf, const string_t *strings, idx_t i, bool was_new_i,
-	                           idx_t block_size);
+	void MaybeEncodeOrCutSmall(const string_t &s, bool is_null, bool was_new);
 	//! Cheap gate before the (still cheap, but less so) cut checks: true once the segment has grown by CLEAVE_GAP
 	//! since the last cleave baseline, or the just-added entry crossed a selection-bitpacking width (which can
 	//! overshoot by more than one row, so it cannot wait for the next gap).
@@ -322,13 +315,9 @@ public:
 	//! Cut path once the segment has given up cleaving (a plain layout already won this segment): size against the
 	//! exact plain layout and flush -- WITH the current row when it fits, else excluding it (plain size is monotonic
 	//! in rows, so excluding the overshooting row always recovers -- no rewind needed).
-	void CutPlain(UnifiedVectorFormat &vf, const string_t *strings, idx_t i, bool was_new_i, idx_t margin,
-	              idx_t block_size);
-	//! Cut path while still (possibly) cleaving: gated by CleavedUpperBound, does the real RefreshCleave, commits to
-	//! the winning mode on the segment's first decision, and on overshoot excludes row i (re-cleave) or, if that
-	//! still overflows, rewinds to the last comfortably-fitting checkpoint.
-	void CutCleaved(UnifiedVectorFormat &vf, const string_t *strings, idx_t i, bool was_new_i, idx_t margin,
-	                idx_t block_size);
+	void CutPlain(const string_t &s, bool is_null, bool was_new, idx_t margin);
+	void CutCleaved(const string_t &s, bool is_null, bool was_new, idx_t margin);
+	void SettleCleave(idx_t true_c, const string_t &s, bool is_null, bool was_new, idx_t margin);
 	//! Accumulates the whole segment in memory so it can be cut against the CLEAVED size -- packing enough rows that
 	//! the block fills UNDER the prefix-factored encoding. One entry list (raw + FSST-encoded), one row->entry
 	//! selection, cleaved once per segment at flush.
@@ -396,6 +385,7 @@ public:
 	// ---- Framework / output ----
 	StatsWriter<string_t> stats_writer;
 	unique_ptr<DictFSSTAnalyzeState> analyze;
+	const idx_t block_size;
 	idx_t tuple_count = 0;
 	//! How many values have we compressed so far?
 	idx_t total_tuple_count = 0;
