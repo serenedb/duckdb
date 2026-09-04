@@ -1,6 +1,9 @@
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "include/icu-bucket.hpp"
 #include "include/icu-datepart.hpp"
+#include "include/icu-datepart-lut.hpp"
+#include "include/icu-datepart-stats.hpp"
 #include "include/icu-datefunc.hpp"
 
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -282,6 +285,19 @@ struct ICUDatePart : public ICUDateFunc {
 
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BIND_TYPE>();
+		if (std::is_same<INPUT_TYPE, timestamp_tz_t>::value) {
+			CalendarPtr outside_calendar;
+			auto outside = [&](timestamp_tz_t input) {
+				if (!outside_calendar) {
+					outside_calendar.reset(info.calendar->clone());
+				}
+				const auto micros = SetTime(outside_calendar.get(), input);
+				return info.adapters[0](outside_calendar.get(), micros);
+			};
+			if (ICUDatePartLUT::TryUnary<RESULT_TYPE>(args, state, result, outside)) {
+				return;
+			}
+		}
 		CalendarPtr calendar_ptr(info.calendar->clone());
 		auto calendar = calendar_ptr.get();
 
@@ -305,6 +321,21 @@ struct ICUDatePart : public ICUDateFunc {
 
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BIND_TYPE>();
+		if (std::is_same<INPUT_TYPE, timestamp_tz_t>::value && std::is_same<RESULT_TYPE, int64_t>::value) {
+			DatePartSpecifier outside_part;
+			CalendarPtr outside_calendar;
+			auto outside = [&](timestamp_tz_t input) {
+				if (!outside_calendar) {
+					outside_calendar.reset(info.calendar->clone());
+				}
+				const auto micros = SetTime(outside_calendar.get(), input);
+				return PartCodeBigintFactory(outside_part)(outside_calendar.get(), micros);
+			};
+			if (ICUConstantArgs::TryGetPart(part_arg, outside_part) &&
+			    ICUDatePartLUT::TryBinary(args, state, result, outside)) {
+				return;
+			}
+		}
 		CalendarPtr calendar_ptr(info.calendar->clone());
 		auto calendar = calendar_ptr.get();
 
@@ -550,8 +581,10 @@ struct ICUDatePart : public ICUDateFunc {
 	template <typename INPUT_TYPE, typename RESULT_TYPE>
 	static ScalarFunction GetUnaryPartCodeFunction(const LogicalType &temporal_type,
 	                                               const LogicalType &result_type = LogicalType::BIGINT) {
-		return ScalarFunction({temporal_type}, result_type, UnaryTimestampFunction<INPUT_TYPE, RESULT_TYPE>,
-		                      BindUnaryDatePart);
+		ScalarFunction function({temporal_type}, result_type, UnaryTimestampFunction<INPUT_TYPE, RESULT_TYPE>,
+		                        BindUnaryDatePart);
+		function.SetStatisticsCallback(ICUDatePartStats::Propagate);
+		return function;
 	}
 
 	template <typename RESULT_TYPE = int64_t>
@@ -566,8 +599,10 @@ struct ICUDatePart : public ICUDateFunc {
 
 	template <typename INPUT_TYPE, typename RESULT_TYPE>
 	static ScalarFunction GetBinaryPartCodeFunction(const LogicalType &temporal_type) {
-		return ScalarFunction({LogicalType::VARCHAR, temporal_type}, LogicalType::BIGINT,
-		                      BinaryTimestampFunction<INPUT_TYPE, RESULT_TYPE>, BindBinaryDatePart);
+		ScalarFunction function({LogicalType::VARCHAR, temporal_type}, LogicalType::BIGINT,
+		                        BinaryTimestampFunction<INPUT_TYPE, RESULT_TYPE>, BindBinaryDatePart);
+		function.SetStatisticsCallback(ICUDatePartStats::Propagate);
+		return function;
 	}
 
 	template <typename INPUT_TYPE>
@@ -601,8 +636,10 @@ struct ICUDatePart : public ICUDateFunc {
 
 	template <typename INPUT_TYPE>
 	static ScalarFunction GetLastDayFunction(const LogicalType &temporal_type) {
-		return ScalarFunction({temporal_type}, LogicalType::DATE, UnaryTimestampFunction<INPUT_TYPE, date_t>,
-		                      BindLastDate);
+		ScalarFunction function({temporal_type}, LogicalType::DATE, UnaryTimestampFunction<INPUT_TYPE, date_t>,
+		                        BindLastDate);
+		function.SetBucketRewriteCallback(ICULastDayBucketRewrite);
+		return function;
 	}
 	static void AddLastDayFunctions(const Identifier &name, ExtensionLoader &loader) {
 		ScalarFunctionSet set {name};
@@ -620,8 +657,10 @@ struct ICUDatePart : public ICUDateFunc {
 
 	template <typename INPUT_TYPE>
 	static ScalarFunction GetMonthNameFunction(const LogicalType &temporal_type) {
-		return ScalarFunction({temporal_type}, LogicalType::VARCHAR, UnaryTimestampFunction<INPUT_TYPE, string_t>,
-		                      BindMonthName);
+		ScalarFunction function({temporal_type}, LogicalType::VARCHAR, UnaryTimestampFunction<INPUT_TYPE, string_t>,
+		                        BindMonthName);
+		function.SetBucketRewriteCallback(ICUMonthNameBucketRewrite);
+		return function;
 	}
 	static void AddMonthNameFunctions(const Identifier &name, ExtensionLoader &loader) {
 		ScalarFunctionSet set {name};
@@ -639,8 +678,10 @@ struct ICUDatePart : public ICUDateFunc {
 
 	template <typename INPUT_TYPE>
 	static ScalarFunction GetDayNameFunction(const LogicalType &temporal_type) {
-		return ScalarFunction({temporal_type}, LogicalType::VARCHAR, UnaryTimestampFunction<INPUT_TYPE, string_t>,
-		                      BindDayName);
+		ScalarFunction function({temporal_type}, LogicalType::VARCHAR, UnaryTimestampFunction<INPUT_TYPE, string_t>,
+		                        BindDayName);
+		function.SetBucketRewriteCallback(ICUDayNameBucketRewrite);
+		return function;
 	}
 	static void AddDayNameFunctions(const Identifier &name, ExtensionLoader &loader) {
 		ScalarFunctionSet set {name};
