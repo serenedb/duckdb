@@ -45,4 +45,124 @@ struct TryStrpTimeFun {
 	static ScalarFunctionSet GetFunctions();
 };
 
+struct InternalDateTruncBucketFun {
+	static constexpr const char *Name = "__internal_date_trunc_bucket";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct InternalDateTruncUnbucketFun {
+	static constexpr const char *Name = "__internal_date_trunc_unbucket";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
+struct InternalDateTruncUnbucketTzFun {
+	static constexpr const char *Name = "__internal_date_trunc_unbucket_tz";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
+struct InternalDateTruncMonthBucketFun {
+	static constexpr const char *Name = "__internal_date_trunc_month_bucket";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct InternalDateTruncMonthUnbucketFun {
+	static constexpr const char *Name = "__internal_date_trunc_month_unbucket";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
+struct InternalDateTruncMonthUnbucketTzFun {
+	static constexpr const char *Name = "__internal_date_trunc_month_unbucket_tz";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
+struct InternalMonthOfYearFun {
+	static constexpr const char *Name = "__internal_month_of_year";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct InternalDayOfWeekFun {
+	static constexpr const char *Name = "__internal_day_of_week";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct InternalDateTruncUnbucketTimeFun {
+	static constexpr const char *Name = "__internal_date_trunc_unbucket_time";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
+struct InternalTimeOfDayBucketFun {
+	static constexpr const char *Name = "__internal_time_of_day_bucket";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct InternalMonthNameFun {
+	static constexpr const char *Name = "__internal_month_name";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
+struct InternalDayNameFun {
+	static constexpr const char *Name = "__internal_day_name";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
 } // namespace duckdb
