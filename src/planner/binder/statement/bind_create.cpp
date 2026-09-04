@@ -603,6 +603,9 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		}
 	}
 	entry_retriever.SetCallback(nullptr);
+	if (collect_dependencies) {
+		base.dependencies = MacroFunction::UnionDependencies(base.macros);
+	}
 
 	return BindCreateSchema(info);
 }

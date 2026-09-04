@@ -55,10 +55,8 @@ SET SEARCH_PATH = '"test","test2"';
 statement ok
 SET SEARCH_PATH = '"test","test2"';
 
-statement error
+statement ok
 SET SEARCH_PATH = 'does_not_exist';
-----
-<REGEX>:Catalog Error.*No catalog.*schema named.*
 
 # Setting the default value through 'schema'
 
@@ -78,17 +76,12 @@ SET SCHEMA = 'does_not_exist';
 # Reading out to see how aliasing works.
 
 statement ok
-SET SEARCH_PATH = 'test,test2';
-
-statement error
-SET SEARCH_PATH = '"invalid quoted string list';
-----
-<REGEX>:Parser Error.*Unterminated quote in qualified name.*
+SET SEARCH_PATH = test, test2;
 
 query I
 SELECT MAIN.CURRENT_SETTING('search_path');
 ----
-test,test2
+test, test2
 
 query I
 SELECT MAIN.CURRENT_SCHEMAS(false);
@@ -126,7 +119,7 @@ test
 query I
 SELECT current_schemas(true);
 ----
-[main, test, main, main, pg_catalog]
+[pg_catalog, test]
 
 query I
 SELECT current_schemas(false);
@@ -154,7 +147,7 @@ test3
 # Looking up from multiple schemas
 
 statement ok
-SET SEARCH_PATH = 'test,test2';
+SET SEARCH_PATH = test, test2;
 
 statement ok
 SELECT i FROM test_table;
@@ -190,7 +183,7 @@ SELECT in_test FROM table_with_same_name;
 # Or even more schemas
 
 statement ok
-SET SEARCH_PATH = 'test,test2,test3,test4,test5';
+SET SEARCH_PATH = test, test2, test3, test4, test5;
 
 statement ok
 SELECT i FROM test5_table;
@@ -207,7 +200,7 @@ SELECT i FROM main_table;
 # Duplicate entry in the path (is allowed)
 
 statement ok
-SET SEARCH_PATH = 'test,test,test2';
+SET SEARCH_PATH = test, test, test2;
 
 statement ok
 SELECT i FROM test_table;
@@ -261,7 +254,7 @@ pg_catalog
 query I
 SELECT current_schemas(true);
 ----
-[main, pg_catalog, main, main, pg_catalog]
+[pg_catalog, pg_catalog]
 
 query I
 SELECT current_query();

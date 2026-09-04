@@ -149,6 +149,8 @@ unique_ptr<CreateMacroInfo> MacroCatalogEntry::MergedWith(const CreateMacroInfo 
 			merged.macros.push_back(declared_macro->Copy());
 		}
 	}
+	// Top-level dependencies track the merged overload set, not the superseded version they were copied from.
+	merged.dependencies = MacroFunction::UnionDependencies(merged.macros);
 	return unique_ptr_cast<CreateInfo, CreateMacroInfo>(std::move(info));
 }
 
