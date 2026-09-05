@@ -123,6 +123,7 @@ struct Chain {
 	reference<Expression> input;
 	vector<idx_t> path;
 	InfinityRule infinity = InfinityRule::PRESERVED;
+	bool folds = false;
 
 	explicit Chain(Expression &expr) : root(expr), input(expr) {
 	}
@@ -241,12 +242,18 @@ bool OthersFoldable(const vector<unique_ptr<Expression>> &children, idx_t input_
 	return true;
 }
 
-optional_idx StepInput(const Expression &expr, InfinityRule &infinity) {
+optional_idx StepInput(const Expression &expr, InfinityRule &infinity, bool &folds) {
+	const auto function_step = [&folds](optional_idx index) {
+		folds = folds || index.IsValid();
+		return index;
+	};
 	if (expr.GetExpressionClass() == ExpressionClass::BOUND_CAST) {
 		auto &cast = expr.Cast<BoundCastExpression>();
 		if (cast.IsTryCast() || !CastAllowed(cast.Child().GetReturnType(), cast.GetReturnType())) {
 			return optional_idx();
 		}
+		folds = folds || GetTypeIdSize(cast.GetReturnType().InternalType()) <
+		                     GetTypeIdSize(cast.Child().GetReturnType().InternalType());
 		return optional_idx(0);
 	}
 	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
@@ -262,14 +269,14 @@ optional_idx StepInput(const Expression &expr, InfinityRule &infinity) {
 			return optional_idx();
 		}
 		infinity = monotone->infinity;
-		return optional_idx(monotone->input_index);
+		return function_step(optional_idx(monotone->input_index));
 	}
 	if (NameIn(name, {"date_part", "datepart"})) {
 		if (children.size() != 2 || !MonotoneDatePart(*children[0])) {
 			return optional_idx();
 		}
 		infinity = InfinityRule::NULLED;
-		return optional_idx(1);
+		return function_step(optional_idx(1));
 	}
 	if (NameIn(name, {"floor", "ceil", "ceiling", "trunc", "round"})) {
 		if (children.empty() || children.size() > 2 || !OthersFoldable(children, 0)) {
@@ -278,19 +285,19 @@ optional_idx StepInput(const Expression &expr, InfinityRule &infinity) {
 		if (children.size() == 2 && !children[0]->GetReturnType().IsIntegral()) {
 			return optional_idx();
 		}
-		return optional_idx(0);
+		return function_step(optional_idx(0));
 	}
 	if (name == "+") {
-		return ArithmeticInput(children, true, false, true);
+		return function_step(ArithmeticInput(children, true, false, true));
 	}
 	if (name == "-") {
-		return ArithmeticInput(children, false, false, true);
+		return function_step(ArithmeticInput(children, false, false, true));
 	}
 	if (name == "*") {
-		return ArithmeticInput(children, true, true, true);
+		return function_step(ArithmeticInput(children, true, true, true));
 	}
 	if (NameIn(name, {"/", "//"})) {
-		return ArithmeticInput(children, false, true, false);
+		return function_step(ArithmeticInput(children, false, true, false));
 	}
 	return optional_idx();
 }
@@ -299,7 +306,7 @@ bool Analyse(Expression &expr, Chain &chain) {
 	reference<Expression> current(expr);
 	while (true) {
 		InfinityRule infinity = InfinityRule::PRESERVED;
-		auto index = StepInput(current.get(), infinity);
+		auto index = StepInput(current.get(), infinity, chain.folds);
 		if (!index.IsValid()) {
 			break;
 		}
@@ -544,6 +551,7 @@ struct RangeBuilder {
 	const Domain &domain;
 	const Expression &input;
 	InfinityRule infinity;
+	bool folds;
 
 	unique_ptr<Expression> Key(ExpressionType type, int64_t key) const {
 		return Compare(type, input, domain.ToValue(key));
@@ -592,7 +600,11 @@ struct RangeBuilder {
 
 	unique_ptr<Expression> Below(const Boundary &boundary) const {
 		if (boundary.none) {
-			return Conjoin(Ceiling(), FiniteLower());
+			auto finite = FiniteLower();
+			if (!InhabitedInfinity() && !finite) {
+				return nullptr;
+			}
+			return Conjoin(Ceiling(), std::move(finite));
 		}
 		return Conjoin(Key(ExpressionType::COMPARE_LESSTHAN, boundary.key), FiniteLower());
 	}
@@ -609,7 +621,7 @@ struct RangeBuilder {
 
 	unique_ptr<Expression> Between(const Boundary &lower, const Boundary &upper) const {
 		if (lower.none) {
-			return Empty();
+			return folds ? Empty() : nullptr;
 		}
 		auto result = Key(ExpressionType::COMPARE_GREATERTHANOREQUALTO, lower.key);
 		if (upper.none) {
@@ -629,7 +641,7 @@ struct Search {
 		return evaluator.ResultType();
 	}
 	RangeBuilder Builder() const {
-		return RangeBuilder {domain, chain.input.get(), chain.infinity};
+		return RangeBuilder {domain, chain.input.get(), chain.infinity, chain.folds};
 	}
 
 	int64_t Guess(const Value &constant) const {
