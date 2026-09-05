@@ -234,7 +234,7 @@ vector<vector<unique_ptr<BucketRewrite>>> CollectCandidates(ClientContext &conte
 		auto &group = groups[group_idx].get();
 		auto &stats = group_stats[group_idx];
 		idx_t dense_bits = 0;
-		const bool dense_already = group.GetReturnType().IsIntegral() && stats && NumericStats::HasMinMax(*stats) &&
+		const bool dense_already = group.GetReturnType().IsIntegral() && UsableStatistics(stats.get()) &&
 		                           TryAddPerfectHashBits(group.GetReturnType(), *stats, dense_bits) &&
 		                           dense_bits <= max_bits;
 		if (coordinate_rewrites[group_idx]) {
@@ -501,7 +501,7 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 			bucketed.push_back(std::move(group));
 			continue;
 		}
-		if (!stats || !NumericStats::HasMinMax(*stats)) {
+		if (!UsableStatistics(stats.get())) {
 			return;
 		}
 		if (!TryAddPerfectHashBits(groups[group_idx]->GetReturnType(), *stats, total_bits)) {
