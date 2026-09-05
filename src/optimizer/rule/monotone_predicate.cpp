@@ -541,6 +541,9 @@ unique_ptr<Expression> Conjoin(unique_ptr<Expression> left, unique_ptr<Expressio
 }
 
 unique_ptr<Expression> Disjoin(unique_ptr<Expression> left, unique_ptr<Expression> right) {
+	if (!left) {
+		return right;
+	}
 	if (!right) {
 		return left;
 	}
@@ -901,6 +904,9 @@ private:
 				return nullptr;
 			}
 			auto range = search->Builder().Between(bounds.lower, bounds.upper);
+			if (!range) {
+				return nullptr;
+			}
 			result = result ? Disjoin(std::move(result), std::move(range)) : std::move(range);
 		}
 		return result;
