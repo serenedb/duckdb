@@ -270,7 +270,8 @@ void DuckTransactionManager::Checkpoint(ClientContext &context, bool force) {
 		} else {
 			auto &duck_transaction = current->Cast<DuckTransaction>();
 			if (duck_transaction.ChangesMade()) {
-				throw TransactionException("Cannot CHECKPOINT: the current transaction has transaction local changes");
+				throw TransactionException(Exception::InitializeExtraInfo("TRANSACTION_LOCAL_CHANGES", optional_idx()),
+				                           "Cannot CHECKPOINT: the current transaction has transaction local changes");
 			}
 		}
 	}
