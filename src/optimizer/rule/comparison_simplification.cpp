@@ -15,7 +15,7 @@ static bool DateTimestampComparisonIsInvertible(BoundFunctionExpression &expr, B
                                                 unique_ptr<Expression> &replacement) {
 	const auto timestamp = constant_value.GetValue<timestamp_t>();
 	if (!timestamp.IsFinite()) {
-		return false; // an infinite TIMESTAMP has no time of day to compare against
+		return false;
 	}
 	if (Timestamp::GetTime(timestamp) == dtime_t(0)) {
 		return true; // it's midnight: no replacement needed
