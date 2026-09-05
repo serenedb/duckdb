@@ -8,6 +8,8 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "include/icu-casts.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-timezone-stats.hpp"
+#include "include/icu-zone-lut-casts.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/main/settings.hpp"
@@ -164,7 +166,12 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 
 		UnaryExecutor::Execute<SRC, DST>(source, result, count, [&](SRC input) {
 			using NAIVE = timebase_t<DST::PRECISION, false>;
-			return Operation(calendar.get(), Cast::Operation<SRC, NAIVE>(input));
+			const auto naive = Cast::Operation<SRC, NAIVE>(input);
+			DST converted;
+			if (info.lut && ICUZoneCasts::Try(*info.lut, naive, converted)) {
+				return converted;
+			}
+			return Operation(calendar.get(), naive);
 		});
 		return true;
 	}
@@ -284,6 +291,10 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 
 		UnaryExecutor::Execute<SRC, DST>(source, result, count, [&](SRC input) {
 			using NAIVE = timebase_t<SRC::PRECISION, false>;
+			NAIVE naive;
+			if (info.lut && ICUZoneCasts::Try(*info.lut, input, naive)) {
+				return Cast::Operation<NAIVE, DST>(naive);
+			}
 			return Cast::Operation<NAIVE, DST>(Operation(calendar.get(), input));
 		});
 		return true;
@@ -482,6 +493,9 @@ bool ICUToTimeTZ::CastToTimeTZ(Vector &source, Vector &result, idx_t count, Cast
 	UnaryExecutor::Execute<timestamp_tz_t, dtime_tz_t>(source, result, count,
 	                                                   [&](timestamp_tz_t input) -> optional<dtime_tz_t> {
 		                                                   dtime_tz_t output;
+		                                                   if (info.lut && ICUZoneCasts::Try(*info.lut, input, output)) {
+			                                                   return output;
+		                                                   }
 		                                                   if (ToTimeTZ(calendar.get(), input, output)) {
 			                                                   return output;
 		                                                   } else {
@@ -503,6 +517,9 @@ bool ICUToTimeTZ::CastToTimeTZNs(Vector &source, Vector &result, idx_t count, Ca
 		    }
 		    const auto micros = Cast::Operation<timestamp_ns_t, timestamp_t>(timestamp_ns_t(input.value));
 		    dtime_tz_t output;
+		    if (info.lut && ICUZoneCasts::Try(*info.lut, timestamp_tz_t(micros.value), output)) {
+			    return output;
+		    }
 		    if (ToTimeTZ(calendar.get(), timestamp_tz_t(micros.value), output)) {
 			    return output;
 		    } else {
@@ -583,7 +600,14 @@ struct ICUTimeZoneFunc : public ICUDateFunc {
 				throw InternalException("ICUTimeZone called with constant NULL tz");
 			}
 			SetTimeZone(calendar, *ConstantVector::GetData<string_t>(tz_vec));
-			UnaryExecutor::Execute<SRC, DST>(ts_vec, result, [&](SRC ts) { return OP::Operation(calendar, ts); });
+			const auto lut = string(calendar->getType()) == "gregorian" ? ZoneLUT::Get(calendar->getTimeZone()) : nullptr;
+			UnaryExecutor::Execute<SRC, DST>(ts_vec, result, [&](SRC ts) {
+				DST converted;
+				if (lut && ICUZoneCasts::Try(*lut, ts, converted)) {
+					return converted;
+				}
+				return OP::Operation(calendar, ts);
+			});
 		} else {
 			BinaryExecutor::Execute<string_t, SRC, DST>(tz_vec, ts_vec, result, [&](string_t tz_id, SRC ts) {
 				if (ts.IsFinite()) {
@@ -606,6 +630,9 @@ struct ICUTimeZoneFunc : public ICUDateFunc {
 		                               Execute<ICUToTimeTZ, dtime_tz_t, dtime_tz_t>, Bind));
 		for (auto &func : set.functions) {
 			func.SetFallible();
+			if (func.GetReturnType().id() != LogicalTypeId::TIME_TZ) {
+				func.SetStatisticsCallback(ICUTimeZoneStats::Propagate);
+			}
 		}
 		loader.RegisterFunction(set);
 	}

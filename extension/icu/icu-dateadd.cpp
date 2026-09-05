@@ -6,6 +6,7 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-scalar-fast.hpp"
 #include "icu-helpers.hpp"
 
 namespace duckdb {
@@ -247,9 +248,14 @@ struct ICUDateAdd : public ICUDateFunc {
 		auto &info = func_expr.BindInfo()->Cast<BindData>();
 		TZCalendar calendar(*info.calendar, info.cal_setting);
 
-		BinaryExecutor::Execute<TA, TB, TR>(args.data[0], args.data[1], result, [&](TA left, TB right) {
-			return OP::template Operation<TA, TB, TR>(left, right, calendar);
-		});
+		const auto operation = std::is_same<OP, ICUCalendarAdd>::value   ? ICUScalarFast::Operation::ADD
+		                       : std::is_same<OP, ICUCalendarSub>::value ? ICUScalarFast::Operation::SUBTRACT
+		                                                                 : ICUScalarFast::Operation::AGE;
+		auto row = [&](TA left, TB right) { return OP::template Operation<TA, TB, TR>(left, right, calendar); };
+		if (ICUScalarFast::IntervalArithmetic<TA, TB>::Try(args, result, info, operation, row)) {
+			return;
+		}
+		BinaryExecutor::Execute<TA, TB, TR>(args.data[0], args.data[1], result, row);
 	}
 
 	template <typename TA, typename TB, typename TR, typename OP>
