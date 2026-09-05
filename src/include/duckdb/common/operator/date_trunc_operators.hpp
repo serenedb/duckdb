@@ -169,8 +169,8 @@ struct DateTrunc {
 
 	static inline YearDay ToYearDay(int32_t days) {
 		int32_t cycle = 0;
-		uint32_t n = UnsafeNumericCast<uint32_t>(days);
-		if (DUCKDB_UNLIKELY(n >= UnsafeNumericCast<uint32_t>(Date::DAYS_PER_YEAR_INTERVAL))) {
+		uint32_t n = static_cast<uint32_t>(days);
+		if (DUCKDB_UNLIKELY(n >= static_cast<uint32_t>(Date::DAYS_PER_YEAR_INTERVAL))) {
 			cycle = FloorDiv(days, Date::DAYS_PER_YEAR_INTERVAL);
 			n = UnsafeNumericCast<uint32_t>(days - cycle * Date::DAYS_PER_YEAR_INTERVAL);
 		}
