@@ -589,7 +589,7 @@ void Dictionary::CleaveMeasure(const uint32_t *order, CleaveStats &out) {
 DictFSSTCompressionState::DictFSSTCompressionState(ColumnDataCheckpointData &checkpoint_data_p,
                                                    unique_ptr<DictFSSTAnalyzeState> &&analyze_p)
     : StandardCompressionState(checkpoint_data_p, CompressionType::COMPRESSION_DICT_FSST), stats_writer(GetType()),
-      analyze(std::move(analyze_p)) {
+      analyze(std::move(analyze_p)), block_size(info.GetBlockSize()) {
 	const auto &mode = Settings::Get<ForceDictFsstModeSetting>(checkpoint_data_p.GetDatabase());
 	if (mode == "DEFAULT") {
 		forced_mode = DictFSSTMode::COUNT;
@@ -616,18 +616,24 @@ void DictFSSTCompressionState::CreateEmptySegment() {
 }
 
 void DictFSSTCompressionState::Flush(bool final, bool use_cached_cleave) {
-	if (!tuple_count) {
-		return;
-	}
-	current_segment->count = tuple_count;
-	auto segment_size = FinalizeSegment(use_cached_cleave);
-	FlushCurrentSegment(stats_writer, segment_size);
-	total_tuple_count += tuple_count;
-
-	ResetSegment();
-	tuple_count = 0;
-	if (!final) {
-		CreateAndPinNewSegment();
+	while (tuple_count) {
+		DictFSSTMode mode;
+		const idx_t size = MeasureSegment(use_cached_cleave, mode);
+		if (size <= block_size || tuple_count == 1) {
+			current_segment->count = tuple_count;
+			const idx_t written = WriteSegment(mode);
+			D_ASSERT(written == size);
+			FlushCurrentSegment(stats_writer, written);
+			total_tuple_count += tuple_count;
+			ResetSegment();
+			tuple_count = 0;
+			if (!final) {
+				CreateAndPinNewSegment();
+			}
+			return;
+		}
+		FlushRewind();
+		use_cached_cleave = false;
 	}
 }
 
@@ -862,109 +868,145 @@ idx_t DictFSSTCompressionState::WriteNative(DictFSSTMode mode) {
 	return layout.total;
 }
 
-idx_t DictFSSTCompressionState::FinalizeSegment(bool use_cached) {
-	idx_t entry_n = dict.raw.size();
+idx_t DictFSSTCompressionState::MeasureSegment(bool use_cached, DictFSSTMode &out_mode) {
+	const idx_t entry_n = dict.raw.size();
 	if (IsNativeMode(forced_mode)) {
-		if (entry_n == 0) {
-			return WriteNative(DictFSSTMode::DICTIONARY);
-		}
-		DictFSSTMode m = EffectiveForcedNativeMode();
-		if (m != DictFSSTMode::DICTIONARY && !dict.EncodedReady()) {
+		out_mode = entry_n == 0 ? DictFSSTMode::DICTIONARY : EffectiveForcedNativeMode();
+		if (out_mode != DictFSSTMode::DICTIONARY && !dict.EncodedReady()) {
 			dict.EncodeAll();
 		}
-		return WriteNative(m);
+		return NativeSize(out_mode);
 	}
 	if (entry_n == 0 || !dict.EncodedReady()) {
-		return WriteNative(DictFSSTMode::DICTIONARY);
+		out_mode = DictFSSTMode::DICTIONARY;
+		return NativeSize(out_mode);
 	}
-	auto symbol_table = dict.symbol_table.get();
-
 	if (committed == CutCommit::PLAIN && forced_mode == DictFSSTMode::COUNT) {
-		DictFSSTMode plain_mode;
-		PlainOnlySize(plain_mode);
-		return WriteNative(plain_mode);
+		return PlainOnlySize(out_mode);
 	}
-
 	//! Forced plus modes go through the same measure-then-materialize path as auto: RefreshCleave honours
 	//! forced_mode when picking cut_mode, and this is what keeps every written layout one a measuring pass saw.
 	if (!use_cached || forced_mode != DictFSSTMode::COUNT) {
-		RefreshCleave();
+		const idx_t size = RefreshCleave();
+		out_mode = cut_mode;
+		return size;
 	}
-	if (cut_mode == DictFSSTMode::DICT_FSST_PLUS) {
+	out_mode = cut_mode;
+	return CachedCutSize();
+}
+
+idx_t DictFSSTCompressionState::WriteSegment(DictFSSTMode mode) {
+	auto symbol_table = dict.symbol_table.get();
+	if (mode == DictFSSTMode::DICT_FSST_PLUS) {
 		dict.SyncSortedOrder();
 		dict.Cleave(cut_dict, dict.sorted_order.data(), prefix_cap);
-		BuildSelNew(*this, cut_dict, entry_n);
-		return WriteCleavedSegment(*this, cut_mode, cut_dict, serialize_scratch.sel, symbol_table,
-		                           dict.symbol_table_size);
+		BuildSelNew(*this, cut_dict, dict.raw.size());
+		return WriteCleavedSegment(*this, mode, cut_dict, serialize_scratch.sel, symbol_table, dict.symbol_table_size);
 	}
-	if (cut_mode == DictFSSTMode::FSST_PLUS) {
+	if (mode == DictFSSTMode::FSST_PLUS) {
 		dict.Cleave(cut_dict_row, nullptr, prefix_cap);
-		return WriteCleavedSegment(*this, cut_mode, cut_dict_row, {}, symbol_table, dict.symbol_table_size);
+		return WriteCleavedSegment(*this, mode, cut_dict_row, {}, symbol_table, dict.symbol_table_size);
 	}
-	return WriteNative(cut_mode);
+	return WriteNative(mode);
+}
+
+void DictFSSTCompressionState::PopUntilFits(vector<string_t> &moved, char *null_marker) {
+	auto &first_row = serialize_scratch.first_row;
+	first_row.assign(dict.raw.size(), NumericLimits<uint32_t>::Maximum());
+	for (idx_t r = 0; r < tuple_count; r++) {
+		const auto di = dictionary_indices[r];
+		if (di != 0 && first_row[di - 1] == NumericLimits<uint32_t>::Maximum()) {
+			first_row[di - 1] = NumericCast<uint32_t>(r);
+		}
+	}
+	DictFSSTMode mode;
+	while (tuple_count > 1 && MeasureSegment(false, mode) > block_size) {
+		const idx_t pop_n = MaxValue<idx_t>(1, tuple_count / 8);
+		for (idx_t k = 0; k < pop_n && tuple_count > 1; k++) {
+			const idx_t r = tuple_count - 1;
+			const auto di = dictionary_indices[r];
+			if (di != 0) {
+				moved.push_back(dict.raw[di - 1]);
+			} else {
+				string_t null_row(string_t::INLINE_LENGTH + 1);
+				null_row.SetPointer(null_marker);
+				moved.push_back(null_row);
+			}
+			PopRow(di != 0 && first_row[di - 1] == r);
+		}
+	}
+	std::reverse(moved.begin(), moved.end());
 }
 
 void DictFSSTCompressionState::FlushRewind() {
-	D_ASSERT(fit_rows < tuple_count && fit_raw_count <= dict.raw.size());
-	idx_t moved_count = tuple_count - fit_rows;
 	auto *const null_marker = reinterpret_cast<char *>(~uintptr_t(0));
 	vector<string_t> moved;
-	moved.reserve(moved_count);
-	for (idx_t k = 0; k < moved_count; k++) {
-		idx_t di = dictionary_indices[fit_rows + k];
-		if (di != 0) {
-			moved.push_back(dict.raw[di - 1]);
-		} else {
-			string_t null_row(string_t::INLINE_LENGTH + 1);
-			null_row.SetPointer(null_marker);
-			moved.push_back(null_row);
+	if (fit_rows == 0 || fit_rows >= tuple_count) {
+		PopUntilFits(moved, null_marker);
+	} else {
+		D_ASSERT(fit_raw_count <= dict.raw.size());
+		const idx_t moved_count = tuple_count - fit_rows;
+		moved.reserve(moved_count);
+		for (idx_t k = 0; k < moved_count; k++) {
+			const idx_t di = dictionary_indices[fit_rows + k];
+			if (di != 0) {
+				moved.push_back(dict.raw[di - 1]);
+			} else {
+				string_t null_row(string_t::INLINE_LENGTH + 1);
+				null_row.SetPointer(null_marker);
+				moved.push_back(null_row);
+			}
 		}
-	}
-	for (idx_t r = fit_rows; r < tuple_count; r++) {
-		if (dictionary_indices[r] == 0) {
-			null_count--;
+		for (idx_t r = fit_rows; r < tuple_count; r++) {
+			if (dictionary_indices[r] == 0) {
+				null_count--;
+			}
 		}
+		dictionary_indices.resize(fit_rows);
+		while (dict.raw.size() > fit_raw_count) {
+			dict.PopLastEntry();
+		}
+		tuple_count = fit_rows;
+		//! fit_rows certifies a size for the CANDIDATE it was measured under, so restore that candidate with it. The
+		//! rewind rebuilds the exact state the certificate was taken in -- including, when the flip row is among the
+		//! moved rows, all-unique itself -- but the commit in force may have been poisoned since (the flip kills the
+		//! row candidate), and flushing under it writes a layout the certificate never priced: sorted needs a
+		//! selection buffer the row cut did not pay for. Restoring fit_commit makes the flush write back exactly what
+		//! was measured, rather than relying on the re-measurement to rediscover it.
+		committed = fit_commit;
 	}
-	dictionary_indices.resize(fit_rows);
-	while (dict.raw.size() > fit_raw_count) {
-		dict.PopLastEntry();
-	}
-	tuple_count = fit_rows;
-	//! fit_rows certifies a size for the CANDIDATE it was measured under, so restore that candidate with it. The
-	//! rewind rebuilds the exact state the certificate was taken in -- including, when the flip row is among the moved
-	//! rows, all-unique itself -- but the commit in force may have been poisoned since (the flip kills the row
-	//! candidate), and flushing under it writes a layout the certificate never priced: sorted needs a selection buffer
-	//! the row cut did not pay for. Restoring fit_commit makes the flush write back exactly what was measured, rather
-	//! than relying on the re-measurement to rediscover it.
-	committed = fit_commit;
 	StringHeap saved;
 	saved.Move(dict.raw_heap);
 	Flush(false);
-	for (idx_t k = 0; k < moved_count; k++) {
-		AddValue(moved[k], moved[k].GetData() == null_marker);
+	for (auto &row : moved) {
+		CompressValue(row, row.GetData() == null_marker);
 	}
 }
 
-bool DictFSSTCompressionState::AddScanRow(UnifiedVectorFormat &vf, const string_t *strings, idx_t j) {
-	auto jdx = vf.sel->get_index(j);
-	bool is_null = !vf.validity.RowIsValid(jdx);
-	return AddValue(is_null ? string_t() : strings[jdx], is_null);
+void DictFSSTCompressionState::CompressValue(const string_t &s, bool is_null) {
+	const bool was_new = AddValue(s, is_null);
+	if (!dict.EncodedReady()) {
+		MaybeEncodeOrCutSmall(s, is_null, was_new);
+		return;
+	}
+	if (!NearBlock(was_new)) {
+		return;
+	}
+	const idx_t margin = dict.max_enc_len + ROW_HEADROOM;
+	if (committed == CutCommit::PLAIN) {
+		CutPlain(s, is_null, was_new, margin);
+	} else {
+		CutCleaved(s, is_null, was_new, margin);
+	}
 }
 
-void DictFSSTCompressionState::MaybeEncodeOrCutSmall(UnifiedVectorFormat &vf, const string_t *strings, idx_t i,
-                                                     bool was_new, idx_t block_size) {
+void DictFSSTCompressionState::MaybeEncodeOrCutSmall(const string_t &s, bool is_null, bool was_new) {
 	if (forced_mode != DictFSSTMode::DICTIONARY && dict.raw_bytes >= ENCODE_THRESHOLD) {
 		if (NativeSize(DictFSSTMode::DICTIONARY) + ENCODE_HEADROOM >= block_size ||
 		    rows_since_new >= DICT_STABLE_ROWS) {
 			dict.EncodeAll();
-			//! Only certify a state the cleave just proved fits. This path fires when the native size is already
-			//! within ENCODE_HEADROOM of the block, so the cleave can come back over it, and an uncertified fit_rows
-			//! is a rewind target nothing ever priced -- the same defect FlushRewind's restore guards against.
-			if (RefreshCleave() + dict.max_enc_len + ROW_HEADROOM < block_size) {
-				fit_rows = tuple_count;
-				fit_raw_count = dict.raw.size();
-				fit_commit = committed;
-			}
+			const idx_t true_c = RefreshCleave();
+			SettleCleave(true_c, s, is_null, was_new, dict.max_enc_len + ROW_HEADROOM);
 		}
 		return;
 	}
@@ -980,7 +1022,7 @@ void DictFSSTCompressionState::MaybeEncodeOrCutSmall(UnifiedVectorFormat &vf, co
 		if (sel_width_bumped && NativeSize(DictFSSTMode::DICTIONARY) + dict.max_raw_len + ROW_HEADROOM >= block_size) {
 			PopRow(true);
 			Flush(false);
-			AddScanRow(vf, strings, i);
+			AddValue(s, is_null);
 			return;
 		}
 	}
@@ -1004,8 +1046,7 @@ bool DictFSSTCompressionState::NearBlock(bool was_new) const {
 	return grown >= CLEAVE_GAP || sel_width_bumped || enc_width_bumped || unique_broken;
 }
 
-void DictFSSTCompressionState::CutPlain(UnifiedVectorFormat &vf, const string_t *strings, idx_t i, bool was_new,
-                                        idx_t margin, idx_t block_size) {
+void DictFSSTCompressionState::CutPlain(const string_t &s, bool is_null, bool was_new, idx_t margin) {
 	DictFSSTMode plain_mode;
 	idx_t plain_c = PlainOnlySize(plain_mode);
 	if (plain_c + margin < block_size) {
@@ -1020,30 +1061,10 @@ void DictFSSTCompressionState::CutPlain(UnifiedVectorFormat &vf, const string_t 
 	}
 	PopRow(was_new);
 	Flush(false);
-	AddScanRow(vf, strings, i);
+	AddValue(s, is_null);
 }
 
-void DictFSSTCompressionState::CutCleaved(UnifiedVectorFormat &vf, const string_t *strings, idx_t i, bool was_new,
-                                          idx_t margin, idx_t block_size) {
-	//! A PLUS_ROW segment that loses all-unique revives the sorted candidate, and the dict-bytes
-	//! baseline under CleavedUpperBound was anchored to the row candidate -- row savings do not
-	//! provably bound sorted savings, so the bound cannot be trusted for the revived candidate.
-	//! Cleave for real instead: RefreshCleave resets `committed` to UNDECIDED and re-anchors the
-	//! baseline from the freshly chosen candidate. NearBlock fires on exactly this flip
-	//! (unique_broken), so this is reached on the row that breaks uniqueness.
-	const bool row_commit_broken =
-	    committed == CutCommit::PLUS_ROW && (null_count != 0 || dict.encoded.size() != tuple_count);
-	if (!row_commit_broken && CleavedUpperBound() + margin < block_size) {
-		return;
-	}
-	idx_t true_c = RefreshCleave();
-	if (committed == CutCommit::UNDECIDED) {
-		if (!IsPlusMode(cut_mode)) {
-			committed = CutCommit::PLAIN;
-		} else {
-			committed = cut_mode == DictFSSTMode::DICT_FSST_PLUS ? CutCommit::PLUS_SORTED : CutCommit::PLUS_ROW;
-		}
-	}
+void DictFSSTCompressionState::SettleCleave(idx_t true_c, const string_t &s, bool is_null, bool was_new, idx_t margin) {
 	if (true_c + margin < block_size) {
 		fit_rows = tuple_count;
 		fit_raw_count = dict.raw.size();
@@ -1055,14 +1076,37 @@ void DictFSSTCompressionState::CutCleaved(UnifiedVectorFormat &vf, const string_
 		return;
 	}
 	PopRow(was_new);
-	idx_t excl_c = was_new ? RefreshCleave() : CachedCutSize();
+	const idx_t excl_c = was_new ? RefreshCleave() : CachedCutSize();
 	if (excl_c <= block_size) {
 		Flush(false, true);
-		AddScanRow(vf, strings, i);
-	} else {
-		AddScanRow(vf, strings, i);
-		FlushRewind();
+		AddValue(s, is_null);
+		return;
 	}
+	AddValue(s, is_null);
+	FlushRewind();
+}
+
+void DictFSSTCompressionState::CutCleaved(const string_t &s, bool is_null, bool was_new, idx_t margin) {
+	//! A PLUS_ROW segment that loses all-unique revives the sorted candidate, and the dict-bytes
+	//! baseline under CleavedUpperBound was anchored to the row candidate -- row savings do not
+	//! provably bound sorted savings, so the bound cannot be trusted for the revived candidate.
+	//! Cleave for real instead: RefreshCleave resets `committed` to UNDECIDED and re-anchors the
+	//! baseline from the freshly chosen candidate. NearBlock fires on exactly this flip
+	//! (unique_broken), so this is reached on the row that breaks uniqueness.
+	const bool row_commit_broken =
+	    committed == CutCommit::PLUS_ROW && (null_count != 0 || dict.encoded.size() != tuple_count);
+	if (!row_commit_broken && CleavedUpperBound() + margin < block_size) {
+		return;
+	}
+	const idx_t true_c = RefreshCleave();
+	if (committed == CutCommit::UNDECIDED) {
+		if (!IsPlusMode(cut_mode)) {
+			committed = CutCommit::PLAIN;
+		} else {
+			committed = cut_mode == DictFSSTMode::DICT_FSST_PLUS ? CutCommit::PLUS_SORTED : CutCommit::PLUS_ROW;
+		}
+	}
+	SettleCleave(true_c, s, is_null, was_new, margin);
 }
 
 void DictFSSTCompressionState::Compress(const Vector &scan_vector) {
@@ -1070,24 +1114,10 @@ void DictFSSTCompressionState::Compress(const Vector &scan_vector) {
 	scan_vector.ToUnifiedFormat(vector_format);
 	auto strings = UnifiedVectorFormat::GetData<string_t>(vector_format);
 	const auto count = scan_vector.size();
-	const idx_t block_size = info.GetBlockSize();
-
 	for (idx_t i = 0; i < count; i++) {
-		const bool was_new = AddScanRow(vector_format, strings, i);
-
-		if (!dict.EncodedReady()) {
-			MaybeEncodeOrCutSmall(vector_format, strings, i, was_new, block_size);
-			continue;
-		}
-		if (!NearBlock(was_new)) {
-			continue;
-		}
-		idx_t margin = dict.max_enc_len + ROW_HEADROOM;
-		if (committed == CutCommit::PLAIN) {
-			CutPlain(vector_format, strings, i, was_new, margin, block_size);
-		} else {
-			CutCleaved(vector_format, strings, i, was_new, margin, block_size);
-		}
+		const auto idx = vector_format.sel->get_index(i);
+		const bool is_null = !vector_format.validity.RowIsValid(idx);
+		CompressValue(is_null ? string_t() : strings[idx], is_null);
 	}
 }
 
