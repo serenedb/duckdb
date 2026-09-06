@@ -19,6 +19,8 @@
 #include "include/icu-table-range.hpp"
 #include "include/icu-timebucket.hpp"
 #include "include/icu-timezone.hpp"
+#include "include/icu-zone-transitions.hpp"
+#include "duckdb/optimizer/rule/monotone_predicate.hpp"
 #include "include/icu_extension.hpp"
 #include "icu-helpers.hpp"
 #include "collation_collator.hpp"
@@ -339,6 +341,11 @@ unique_ptr<TimeZone> GetTimeZoneInternal(string &tz_str, vector<string> &candida
 	return nullptr;
 }
 
+unique_ptr<TimeZone> ICUHelpers::TryGetTimeZone(string &tz_str) {
+	vector<string> candidates;
+	return GetTimeZoneInternal(tz_str, candidates);
+}
+
 unique_ptr<TimeZone> ICUHelpers::GetTimeZone(string &tz_str, string *error_message) {
 	vector<string> candidates;
 	auto tz = GetTimeZoneInternal(tz_str, candidates);
@@ -462,6 +469,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterICUStrptimeFunctions(loader);
 	RegisterICUTimeBucketFunctions(loader);
 	RegisterICUTimeZoneFunctions(loader);
+	MonotonePredicateRule::zone_transitions = ICUZoneTransitions::Collect;
 
 	// Calendars
 	config.AddExtensionOption("Calendar", "The current calendar", LogicalType::VARCHAR, Value("gregorian"),

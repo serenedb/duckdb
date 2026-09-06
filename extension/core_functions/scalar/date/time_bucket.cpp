@@ -8,6 +8,7 @@
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
+#include "duckdb/function/scalar/date_bucket_rewrite.hpp"
 #include "core_functions/scalar/date_functions.hpp"
 
 namespace duckdb {
@@ -423,12 +424,16 @@ ScalarFunctionSet TimeBucketFun::GetFunctions() {
 	time_bucket.AddFunction(NameBucketWidthTimestampOriginArguments(
 	    ScalarFunction({}, LogicalType::TIMESTAMP, TimeBucketOriginFunction<timestamp_t>), LogicalType::TIMESTAMP));
 
-	time_bucket.ApplyToFunctions(
-	    [](ScalarFunction &func) { func.SetArgProperties(1, ArgProperties().NonDecreasing()); });
+	time_bucket.ApplyToFunctions([](ScalarFunction &func) {
+		func.SetArgProperties(1, ArgProperties().NonDecreasing());
+		func.SetBucketRewriteCallback(TimeBucketBucketRewrite);
+	});
 
 	//	Not monotonic (wraps)
-	time_bucket.AddFunction(NameBucketWidthTimestampArguments(
-	    ScalarFunction({}, LogicalType::TIME, TimeBucketFunction<dtime_t>), LogicalType::TIME));
+	auto time_of_day = NameBucketWidthTimestampArguments(
+	    ScalarFunction({}, LogicalType::TIME, TimeBucketFunction<dtime_t>), LogicalType::TIME);
+	time_of_day.SetBucketRewriteCallback(TimeBucketBucketRewrite);
+	time_bucket.AddFunction(time_of_day);
 	time_bucket.AddFunction(NameBucketWidthTimestampOffsetArguments(
 	    ScalarFunction({}, LogicalType::TIME, TimeBucketOffsetFunction<dtime_t>), LogicalType::TIME));
 	time_bucket.AddFunction(NameBucketWidthTimestampOriginArguments(

@@ -1,6 +1,9 @@
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "include/icu-bucket.hpp"
 #include "include/icu-datepart.hpp"
+#include "include/icu-datepart-lut.hpp"
+#include "include/icu-datepart-stats.hpp"
 #include "include/icu-datefunc.hpp"
 
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -298,6 +301,19 @@ struct ICUDatePart : public ICUDateFunc {
 
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BIND_TYPE>();
+		if constexpr (std::is_same<INPUT_TYPE, timestamp_tz_t>::value) {
+			CalendarPtr outside_calendar;
+			auto outside = [&](timestamp_tz_t input) {
+				if (!outside_calendar) {
+					outside_calendar = info.calendar->Copy();
+				}
+				const auto micros = SetTime(outside_calendar.get(), input);
+				return info.adapters[0](outside_calendar.get(), micros);
+			};
+			if (ICUDatePartLUT::TryUnary<RESULT_TYPE>(args, state, result, outside)) {
+				return;
+			}
+		}
 		CalendarPtr calendar_ptr(info.calendar->Copy());
 		auto calendar = calendar_ptr.get();
 
@@ -566,6 +582,7 @@ struct ICUDatePart : public ICUDateFunc {
 	                                               const LogicalType &result_type = LogicalType::BIGINT) {
 		ScalarFunction fun({}, result_type, UnaryTimestampFunction<INPUT_TYPE, RESULT_TYPE>, BindUnaryDatePart);
 		fun.GetSignature().AddParameter("ts", temporal_type);
+		fun.SetStatisticsCallback(ICUDatePartStats::Propagate);
 		return fun;
 	}
 
@@ -585,6 +602,7 @@ struct ICUDatePart : public ICUDateFunc {
 		ScalarFunction fun({}, LogicalType::DOUBLE, BinaryTimestampFunction<INPUT_TYPE, RESULT_TYPE>,
 		                   BindBinaryDatePart);
 		fun.GetSignature().AddParameter("part", LogicalType::VARCHAR).AddParameter("ts", temporal_type);
+		fun.SetStatisticsCallback(ICUDatePartStats::Propagate);
 		return fun;
 	}
 
@@ -620,6 +638,7 @@ struct ICUDatePart : public ICUDateFunc {
 	static ScalarFunction GetLastDayFunction(const LogicalType &temporal_type) {
 		ScalarFunction fun({}, LogicalType::DATE, UnaryTimestampFunction<INPUT_TYPE, date_t>, BindLastDate);
 		fun.GetSignature().AddParameter("ts", temporal_type);
+		fun.SetBucketRewriteCallback(ICULastDayBucketRewrite);
 		return fun;
 	}
 	static void AddLastDayFunctions(const Identifier &name, ExtensionLoader &loader) {
@@ -641,6 +660,7 @@ struct ICUDatePart : public ICUDateFunc {
 	static ScalarFunction GetMonthNameFunction(const LogicalType &temporal_type) {
 		ScalarFunction fun({}, LogicalType::VARCHAR, UnaryTimestampFunction<INPUT_TYPE, string_t>, BindMonthName);
 		fun.GetSignature().AddParameter("ts", temporal_type);
+		fun.SetBucketRewriteCallback(ICUMonthNameBucketRewrite);
 		return fun;
 	}
 	static void AddMonthNameFunctions(const Identifier &name, ExtensionLoader &loader) {
@@ -662,6 +682,7 @@ struct ICUDatePart : public ICUDateFunc {
 	static ScalarFunction GetDayNameFunction(const LogicalType &temporal_type) {
 		ScalarFunction fun({}, LogicalType::VARCHAR, UnaryTimestampFunction<INPUT_TYPE, string_t>, BindDayName);
 		fun.GetSignature().AddParameter("ts", temporal_type);
+		fun.SetBucketRewriteCallback(ICUDayNameBucketRewrite);
 		return fun;
 	}
 	static void AddDayNameFunctions(const Identifier &name, ExtensionLoader &loader) {

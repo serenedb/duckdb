@@ -10,7 +10,7 @@
 namespace duckdb {
 
 ICUDateFunc::BindData::BindData(const BindData &other)
-    : tz_setting(other.tz_setting), cal_setting(other.cal_setting), calendar(other.calendar->Copy()) {
+    : tz_setting(other.tz_setting), cal_setting(other.cal_setting), calendar(other.calendar->Copy()), lut(other.lut) {
 }
 
 ICUDateFunc::BindData::BindData(const string &tz_setting_p, const string &cal_setting_p)
@@ -32,6 +32,9 @@ void ICUDateFunc::BindData::InitCalendar() {
 	calendar = Calendar::TryCreate(cal_setting, tz ? std::move(tz) : TimeZone::TryCreate("UTC"));
 	if (!calendar) {
 		throw InternalException("Unable to create calendar.");
+	}
+	if (strcmp(calendar->GetType(), "gregorian") == 0) {
+		lut = ZoneLUT::Get(calendar->GetTimeZone());
 	}
 }
 

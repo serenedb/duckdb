@@ -1,5 +1,6 @@
 #include "timezone.hpp"
 
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "grego.hpp"
 
@@ -206,6 +207,94 @@ void SimpleTimeZone::GetOffsetFromLocal(int64_t millis, LocalOption non_existing
 	dst_offset_out = GetOffsetForFields(year, month, dom, dow, mid) - raw_offset;
 }
 
+int64_t SimpleTimeZone::GetRuleStart(const Boundary &rule, int32_t year, int32_t prev_raw_offset,
+                                     int32_t prev_dst_offset) {
+	const auto month_len = Grego::MonthLength(year, rule.month);
+	const auto rule_day = MinValue<int32_t>(rule.day, month_len);
+	int64_t day = 0;
+	bool after = true;
+	switch (rule.day_mode) {
+	case DayMode::DAY_OF_MONTH:
+		day = Grego::FieldsToDay(year, rule.month, rule_day);
+		break;
+	case DayMode::DAY_OF_WEEK_IN_MONTH:
+		if (rule_day > 0) {
+			day = Grego::FieldsToDay(year, rule.month, 1) + 7 * (rule_day - 1);
+		} else {
+			day = Grego::FieldsToDay(year, rule.month, month_len) + 7 * (rule_day + 1);
+			after = false;
+		}
+		break;
+	case DayMode::DAY_OF_WEEK_GE_DOM:
+		day = Grego::FieldsToDay(year, rule.month, rule_day);
+		break;
+	case DayMode::DAY_OF_WEEK_LE_DOM:
+		day = Grego::FieldsToDay(year, rule.month, rule_day);
+		after = false;
+		break;
+	}
+	if (rule.day_mode != DayMode::DAY_OF_MONTH) {
+		auto delta = rule.day_of_week - Grego::DayOfWeek(static_cast<int32_t>(day));
+		if (after && delta < 0) {
+			delta += 7;
+		} else if (!after && delta > 0) {
+			delta -= 7;
+		}
+		day += delta;
+	}
+	auto result = day * MILLIS_PER_DAY + rule.time;
+	if (rule.time_mode != TimeMode::UTC) {
+		result -= prev_raw_offset;
+	}
+	if (rule.time_mode == TimeMode::WALL) {
+		result -= prev_dst_offset;
+	}
+	return result;
+}
+
+bool SimpleTimeZone::GetNextRuleStart(const Boundary &rule, int64_t millis, bool inclusive, int32_t prev_raw_offset,
+                                      int32_t prev_dst_offset, int64_t &result) {
+	int32_t year = 0;
+	int8_t month, dom, dow;
+	int16_t doy;
+	int32_t mid;
+	if (!Grego::TimeToFields(millis, year, month, dom, dow, doy, mid)) {
+		if (millis > 0) {
+			return false;
+		}
+		year = 0;
+	}
+	const auto first = MaxValue<int32_t>(year - 1, 0);
+	const auto last = MaxValue<int32_t>(year + 1, first);
+	for (auto candidate = first; candidate <= last; candidate++) {
+		const auto start_time = GetRuleStart(rule, candidate, prev_raw_offset, prev_dst_offset);
+		if (start_time > millis || (inclusive && start_time == millis)) {
+			result = start_time;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool SimpleTimeZone::GetNextTransition(int64_t millis, bool inclusive, TimeZoneTransition &transition) const {
+	if (!use_daylight) {
+		return false;
+	}
+	int64_t dst_start = 0;
+	int64_t dst_end = 0;
+	const auto has_start = GetNextRuleStart(start, millis, inclusive, raw_offset, 0, dst_start);
+	const auto has_end = GetNextRuleStart(end, millis, inclusive, raw_offset, dst_savings, dst_end);
+	if (has_start && (!has_end || dst_start < dst_end)) {
+		transition = {dst_start, raw_offset, dst_savings};
+		return true;
+	}
+	if (has_end) {
+		transition = {dst_end, raw_offset, 0};
+		return true;
+	}
+	return false;
+}
+
 unique_ptr<TimeZone> SimpleTimeZone::Copy() const {
 	return unique_ptr<TimeZone>(new SimpleTimeZone(*this));
 }
@@ -283,6 +372,46 @@ void OlsonTimeZone::GetOffsetFromLocal(int64_t millis, LocalOption non_existing,
 	} else {
 		GetHistoricalOffset(millis, true, non_existing, duplicated, raw_offset, dst_offset);
 	}
+}
+
+bool OlsonTimeZone::GetNextTransition(int64_t millis, bool inclusive, TimeZoneTransition &transition) const {
+	const auto final_start = final_zone ? final_start_millis : NumericLimits<int64_t>::Maximum();
+	const auto begin = data.transitions;
+	const auto end = data.transitions + data.transition_count;
+	auto next = std::partition_point(begin, end, [&](int64_t seconds) {
+		const auto time = seconds * MILLIS_PER_SECOND;
+		return inclusive ? time < millis : time <= millis;
+	});
+	for (; next != end; ++next) {
+		const auto time = *next * MILLIS_PER_SECOND;
+		if (time >= final_start) {
+			break;
+		}
+		const auto index = int32_t(next - begin);
+		const auto &before = OffsetsAt(index - 1);
+		const auto &after = OffsetsAt(index);
+		if (before.raw_offset != after.raw_offset || before.dst_offset != after.dst_offset) {
+			transition = {time, after.raw_offset * int32_t(MILLIS_PER_SECOND),
+			              after.dst_offset * int32_t(MILLIS_PER_SECOND)};
+			return true;
+		}
+	}
+	if (!final_zone) {
+		return false;
+	}
+	if (millis < final_start_millis || (inclusive && millis == final_start_millis)) {
+		int32_t raw_before, dst_before;
+		GetHistoricalOffset(final_start_millis - 1, false, LocalOption::FORMER, LocalOption::LATTER, raw_before,
+		                    dst_before);
+		int32_t raw_after, dst_after;
+		final_zone->GetOffset(final_start_millis, raw_after, dst_after);
+		if (raw_before != raw_after || dst_before != dst_after) {
+			transition = {final_start_millis, raw_after, dst_after};
+			return true;
+		}
+	}
+	return final_zone->GetNextTransition(MaxValue(millis, final_start_millis), inclusive && millis > final_start_millis,
+	                                     transition);
 }
 
 unique_ptr<TimeZone> OlsonTimeZone::Copy() const {

@@ -8,6 +8,8 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "include/icu-casts.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-timezone-stats.hpp"
+#include "include/icu-zone-lut-casts.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/main/settings.hpp"
@@ -210,7 +212,7 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 	static bool CastFromNaive(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 		auto &cast_data = parameters.cast_data->Cast<CastData>();
 		auto &info = cast_data.info->Cast<BindData>();
-		CalendarPtr calendar(info.calendar->Copy());
+		CalendarPtr calendar;
 
 		bool all_converted = true;
 		UnaryExecutor::Execute<SRC, DST>(source, result, count, [&](SRC input) -> optional<DST> {
@@ -221,8 +223,14 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 				all_converted = false;
 				return nullopt;
 			}
-			// the zone shift can overflow, and a TRY_CAST must see that as NULL rather than an exception
 			DST shifted;
+			if (info.lut && ICUZoneCasts::Try(*info.lut, naive, shifted)) {
+				return shifted;
+			}
+			if (!calendar) {
+				calendar = info.calendar->Copy();
+			}
+			// the zone shift can overflow, and a TRY_CAST must see that as NULL rather than an exception
 			string error;
 			if (!TryOperation(calendar.get(), naive, shifted, error)) {
 				HandleCastError::AssignError(error, parameters);
@@ -375,18 +383,23 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 	static bool CastToNaive(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 		auto &cast_data = parameters.cast_data->Cast<CastData>();
 		auto &info = cast_data.info->Cast<BindData>();
-		CalendarPtr calendar(info.calendar->Copy());
+		CalendarPtr calendar;
 
 		bool all_converted = true;
 		UnaryExecutor::Execute<SRC, DST>(source, result, count, [&](SRC input) -> optional<DST> {
 			using NAIVE = timestamp_base_t<SRC::PRECISION, false>;
-			// the zone shift itself can fail, and a TRY_CAST must see that as NULL rather than an exception
 			NAIVE naive;
-			string error;
-			if (!TryOperation(calendar.get(), input, naive, error)) {
-				HandleCastError::AssignError(error, parameters);
-				all_converted = false;
-				return nullopt;
+			if (!info.lut || !ICUZoneCasts::Try(*info.lut, input, naive)) {
+				if (!calendar) {
+					calendar = info.calendar->Copy();
+				}
+				// the zone shift itself can fail, and a TRY_CAST must see that as NULL rather than an exception
+				string error;
+				if (!TryOperation(calendar.get(), input, naive, error)) {
+					HandleCastError::AssignError(error, parameters);
+					all_converted = false;
+					return nullopt;
+				}
 			}
 			DST output;
 			if (!TryCast::Operation(naive, output)) {
@@ -592,18 +605,21 @@ bool ICUToTimeTZ::CastToTimeTZ(Vector &source, Vector &result, idx_t count, Cast
 	auto &info = cast_data.info->Cast<BindData>();
 	CalendarPtr calendar(info.calendar->Copy());
 
-	UnaryExecutor::Execute<timestamp_tz_t, dtime_tz_t>(source, result, count,
-	                                                   [&](timestamp_tz_t input) -> optional<dtime_tz_t> {
-		                                                   dtime_tz_t output;
-		                                                   string error_message;
-		                                                   if (ToTimeTZ(calendar.get(), input, output, error_message)) {
-			                                                   return output;
-		                                                   }
-		                                                   if (!error_message.empty()) {
-			                                                   HandleCastError::AssignError(error_message, parameters);
-		                                                   }
-		                                                   return nullopt;
-	                                                   });
+	UnaryExecutor::Execute<timestamp_tz_t, dtime_tz_t>(
+	    source, result, count, [&](timestamp_tz_t input) -> optional<dtime_tz_t> {
+		    dtime_tz_t output;
+		    if (info.lut && ICUZoneCasts::Try(*info.lut, input, output)) {
+			    return output;
+		    }
+		    string error_message;
+		    if (ToTimeTZ(calendar.get(), input, output, error_message)) {
+			    return output;
+		    }
+		    if (!error_message.empty()) {
+			    HandleCastError::AssignError(error_message, parameters);
+		    }
+		    return nullopt;
+	    });
 	return true;
 }
 
@@ -619,6 +635,9 @@ bool ICUToTimeTZ::CastToTimeTZNs(Vector &source, Vector &result, idx_t count, Ca
 		    }
 		    const auto micros = Cast::Operation<timestamp_ns_t, timestamp_t>(timestamp_ns_t(input.value));
 		    dtime_tz_t output;
+		    if (info.lut && ICUZoneCasts::Try(*info.lut, timestamp_tz_t(micros.value), output)) {
+			    return output;
+		    }
 		    string error_message;
 		    if (ToTimeTZ(calendar.get(), timestamp_tz_t(micros.value), output, error_message)) {
 			    return output;
@@ -705,7 +724,15 @@ struct ICUTimeZoneFunc : public ICUDateFunc {
 				throw InternalException("ICUTimeZone called with constant NULL tz");
 			}
 			auto calendar = cache.GetCalendar(*ConstantVector::GetData<string_t>(tz_vec));
-			UnaryExecutor::Execute<SRC, DST>(ts_vec, result, [&](SRC ts) { return OP::Operation(calendar, ts); });
+			const auto lut =
+			    std::string_view(calendar->GetType()) == "gregorian" ? ZoneLUT::Get(calendar->GetTimeZone()) : nullptr;
+			UnaryExecutor::Execute<SRC, DST>(ts_vec, result, [&](SRC ts) {
+				DST converted;
+				if (lut && ICUZoneCasts::Try(*lut, ts, converted)) {
+					return converted;
+				}
+				return OP::Operation(calendar, ts);
+			});
 		} else {
 			BinaryExecutor::Execute<string_t, SRC, DST>(tz_vec, ts_vec, result, [&](string_t tz_id, SRC ts) {
 				if (ts.IsFinite()) {
@@ -755,6 +782,9 @@ struct ICUTimeZoneFunc : public ICUDateFunc {
 		set.ApplyToFunctions([](ScalarFunction &func) {
 			func.SetFallible();
 			func.SetInitStateCallback(InitCalendarCache);
+			if (func.GetReturnType().id() != LogicalTypeId::TIME_TZ) {
+				func.SetStatisticsCallback(ICUTimeZoneStats::Propagate);
+			}
 		});
 		loader.RegisterFunction(set);
 	}
