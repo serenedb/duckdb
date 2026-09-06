@@ -30,7 +30,7 @@ class BufferPool;
 //! for its result; a throwing build hands the key over to the next waiter.
 class SharedObjectCache {
 public:
-	explicit SharedObjectCache(BufferPool &buffer_pool);
+	explicit SharedObjectCache(shared_ptr<BufferPool> buffer_pool);
 	~SharedObjectCache();
 
 	//! Return the live entry interned under T's (type, key), building it if absent. `build` returns unique_ptr<T>
@@ -78,9 +78,8 @@ private:
 	shared_ptr<ObjectCacheEntry> GetInternal(std::string_view type, std::string_view key);
 
 private:
-	BufferPool &buffer_pool;
 	//! Held via shared_ptr by the cache and by every entry's deleter, so an entry released after the cache's
-	//! destruction still finds a live registry.
+	//! destruction still finds a live registry and buffer pool.
 	shared_ptr<Registry> registry;
 };
 
