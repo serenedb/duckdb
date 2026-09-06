@@ -110,6 +110,8 @@ public:
 
 private:
 	//! Compress materializing operators
+	void BucketDateTruncGroups(unique_ptr<LogicalOperator> &op);
+	bool BucketDistinct(unique_ptr<LogicalOperator> &op);
 	void CompressAggregate(unique_ptr<LogicalOperator> &op);
 	void CompressComparisonJoin(unique_ptr<LogicalOperator> &op);
 	void CompressDistinct(unique_ptr<LogicalOperator> &op);
@@ -174,6 +176,7 @@ private:
 	optional_ptr<LogicalOperator> root;
 	//! The map of ColumnBinding -> statistics for the various nodes
 	statistics_map_t &statistics_map;
+	column_binding_set_t bucketed_groups;
 };
 
 } // namespace duckdb

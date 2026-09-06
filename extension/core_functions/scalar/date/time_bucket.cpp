@@ -7,6 +7,7 @@
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
+#include "duckdb/function/scalar/date_bucket_rewrite.hpp"
 #include "core_functions/scalar/date_functions.hpp"
 
 namespace duckdb {
@@ -402,11 +403,14 @@ ScalarFunctionSet TimeBucketFun::GetFunctions() {
 
 	for (auto &func : time_bucket.functions) {
 		func.SetArgProperties(1, ArgProperties().NonDecreasing());
+		func.SetBucketRewriteCallback(TimeBucketBucketRewrite);
 	}
 
 	//	Not monotonic (wraps)
-	time_bucket.AddFunction(
-	    ScalarFunction({LogicalType::INTERVAL, LogicalType::TIME}, LogicalType::TIME, TimeBucketFunction<dtime_t>));
+	ScalarFunction time_of_day({LogicalType::INTERVAL, LogicalType::TIME}, LogicalType::TIME,
+	                           TimeBucketFunction<dtime_t>);
+	time_of_day.SetBucketRewriteCallback(TimeBucketBucketRewrite);
+	time_bucket.AddFunction(time_of_day);
 	time_bucket.AddFunction(ScalarFunction({LogicalType::INTERVAL, LogicalType::TIME, LogicalType::INTERVAL},
 	                                       LogicalType::TIME, TimeBucketOffsetFunction<dtime_t>));
 	time_bucket.AddFunction(ScalarFunction({LogicalType::INTERVAL, LogicalType::TIME, LogicalType::TIME},

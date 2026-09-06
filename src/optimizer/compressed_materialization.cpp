@@ -407,13 +407,18 @@ void CompressedMaterialization::Compress(unique_ptr<LogicalOperator> &op) {
 
 	switch (op->type) {
 	case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY:
-		CompressAggregate(op);
+		BucketDateTruncGroups(op);
+		CompressAggregate(op->type == LogicalOperatorType::LOGICAL_PROJECTION ? op->children[0] : op);
 		break;
 	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
 		CompressComparisonJoin(op);
 		break;
 	case LogicalOperatorType::LOGICAL_DISTINCT:
-		CompressDistinct(op);
+		if (BucketDistinct(op)) {
+			CompressAggregate(op->children[0]);
+		} else {
+			CompressDistinct(op);
+		}
 		break;
 	case LogicalOperatorType::LOGICAL_ORDER_BY:
 		CompressOrder(op);

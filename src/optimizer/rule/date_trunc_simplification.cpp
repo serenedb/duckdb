@@ -51,6 +51,9 @@ unique_ptr<Expression> DateTruncSimplificationRule::Apply(LogicalOperator &op, v
 	}
 
 	auto &column_part = bindings[3].get().Cast<BoundColumnRefExpression>();
+	if (column_part.GetReturnType().id() == LogicalTypeId::TIMESTAMP_TZ) {
+		return nullptr;
+	}
 	auto &rhs = bindings[4].get().Cast<BoundConstantExpression>();
 
 	// Determine whether or not the column name is on the lhs or rhs.

@@ -1,4 +1,5 @@
 #include "duckdb/function/scalar/strftime_format.hpp"
+#include "duckdb/function/scalar/date_bucket_rewrite.hpp"
 
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -305,6 +306,9 @@ ScalarFunctionSet StrfTimeFun::GetFunctions() {
 	                                    StrfTimeFunctionTimestampNS<false>, StrfTimeBindFunction<false>));
 	strftime.AddFunction(ScalarFunction({LogicalType::VARCHAR, LogicalType::TIMESTAMP_TZ_NS}, LogicalType::VARCHAR,
 	                                    StrfTimeFunctionTimestampNS<true>, StrfTimeBindFunction<true>));
+	for (auto &function : strftime.functions) {
+		function.SetBucketRewriteCallback(StrfTimeBucketRewrite);
+	}
 	return strftime;
 }
 ScalarFunctionSet StrpTimeFun::GetFunctions() {

@@ -1,5 +1,7 @@
 #include "core_functions/scalar/date_functions.hpp"
 #include "duckdb/common/enums/date_part_specifier.hpp"
+#include "duckdb/function/scalar/date_bucket_rewrite.hpp"
+#include "duckdb/function/scalar/date_trunc_fast.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/types/date.hpp"
@@ -575,9 +577,11 @@ unique_ptr<FunctionData> DateTruncBind(BindScalarFunctionInput &input) {
 	switch (bound_function.GetArguments()[1].id()) {
 	case LogicalType::TIMESTAMP:
 		bound_function.SetStatisticsCallback(DateTruncStats<timestamp_t, timestamp_t>(part_code));
+		bound_function.SetFunctionCallback(DateTruncFast::Callback<timestamp_t, timestamp_t>(part_code));
 		break;
 	case LogicalType::DATE:
 		bound_function.SetStatisticsCallback(DateTruncStats<date_t, timestamp_t>(part_code));
+		bound_function.SetFunctionCallback(DateTruncFast::Callback<date_t, timestamp_t>(part_code));
 		break;
 	default:
 		throw NotImplementedException("Temporal argument type for DATETRUNC");
@@ -599,6 +603,7 @@ ScalarFunctionSet DateTruncFun::GetFunctions() {
 	for (auto &func : date_trunc.functions) {
 		func.SetFallible();
 		func.SetArgProperties(1, ArgProperties().NonDecreasing());
+		func.SetBucketRewriteCallback(DateTruncBucketRewrite);
 	}
 	return date_trunc;
 }
