@@ -368,14 +368,14 @@ struct ICUTimeBucket : public ICUDateFunc {
 
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BindData>();
-		TZCalendar calendar(*info.calendar, info.cal_setting);
-		SetTimeZone(calendar.GetICUCalendar(), string_t("UTC"));
-
 		const auto &bucket_width_arg = args.data[0];
 		const auto &ts_arg = args.data[1];
 		if (ICUTimeBucketFast::TryBinary(args, result)) {
 			return;
 		}
+
+		TZCalendar calendar(*info.calendar, info.cal_setting);
+		SetTimeZone(calendar.GetICUCalendar(), string_t("UTC"));
 
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg)) {
@@ -424,15 +424,15 @@ struct ICUTimeBucket : public ICUDateFunc {
 
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BindData>();
-		TZCalendar calendar(*info.calendar, info.cal_setting);
-		SetTimeZone(calendar.GetICUCalendar(), string_t("UTC"));
-
 		const auto &bucket_width_arg = args.data[0];
 		const auto &ts_arg = args.data[1];
 		const auto &offset_arg = args.data[2];
 		if (ICUTimeBucketFast::TryOffset(args, result)) {
 			return;
 		}
+
+		TZCalendar calendar(*info.calendar, info.cal_setting);
+		SetTimeZone(calendar.GetICUCalendar(), string_t("UTC"));
 
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg)) {
@@ -489,15 +489,15 @@ struct ICUTimeBucket : public ICUDateFunc {
 
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BindData>();
-		TZCalendar calendar(*info.calendar, info.cal_setting);
-		SetTimeZone(calendar.GetICUCalendar(), string_t("UTC"));
-
 		const auto &bucket_width_arg = args.data[0];
 		const auto &ts_arg = args.data[1];
 		const auto &origin_arg = args.data[2];
 		if (ICUTimeBucketFast::TryOrigin(args, result)) {
 			return;
 		}
+
+		TZCalendar calendar(*info.calendar, info.cal_setting);
+		SetTimeZone(calendar.GetICUCalendar(), string_t("UTC"));
 
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR &&
 		    origin_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
@@ -558,8 +558,6 @@ struct ICUTimeBucket : public ICUDateFunc {
 
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BindData>();
-		TZCalendar calendar(*info.calendar, info.cal_setting);
-
 		const auto &bucket_width_arg = args.data[0];
 		const auto &ts_arg = args.data[1];
 		const auto &tz_arg = args.data[2];
@@ -567,6 +565,8 @@ struct ICUTimeBucket : public ICUDateFunc {
 		if (ICUTimeBucketFast::TryTimeZone(args, result)) {
 			return;
 		}
+
+		TZCalendar calendar(*info.calendar, info.cal_setting);
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR &&
 		    tz_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg) || ConstantVector::IsNull(tz_arg)) {
@@ -627,11 +627,11 @@ struct ICUTimeBucket : public ICUDateFunc {
 
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BindData>();
-		TZCalendar calendar(*info.calendar, info.cal_setting);
-
 		if (ICUTimeBucketFast::TryTimeZoneOrigin(args, result)) {
 			return;
 		}
+
+		TZCalendar calendar(*info.calendar, info.cal_setting);
 
 		VariadicExecutor::Execute<timestamp_tz_t, interval_t, timestamp_tz_t, string_t, timestamp_tz_t>(
 		    args, result,

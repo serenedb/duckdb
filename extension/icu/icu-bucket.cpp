@@ -135,8 +135,8 @@ struct ICUBucket : public ICUDateFunc {
 
 	[[gnu::always_inline]] static inline int64_t HourWithTransitions(const ZoneLUT &lut, int64_t micros) {
 		const auto hour = DateTrunc::FloorDiv(micros, Interval::MICROS_PER_HOUR) * Interval::MICROS_PER_HOUR;
-		const auto day = DateTrunc::FloorDiv(micros, Interval::MICROS_PER_DAY) - ZoneLUT::FIRST_DAY;
-		if (day < 0 || day + 1 >= ZoneLUT::DAY_COUNT) {
+		const auto day = DateTrunc::FloorDiv(micros, Interval::MICROS_PER_DAY) - DateTruncTable::FIRST_DAY;
+		if (day < 0 || day + 1 >= DateTruncTable::DAY_COUNT) {
 			ThrowBucketRange();
 		}
 		const auto value = FixUpHour(lut.InstantEntry(day), hour);
@@ -208,7 +208,7 @@ struct ICUBucket : public ICUDateFunc {
 			break;
 		}
 		int64_t representative = 0;
-		if (!lut.TryResolveDay(day - ZoneLUT::FIRST_DAY, day * Interval::MICROS_PER_DAY + Interval::MICROS_PER_DAY / 2,
+		if (!lut.TryResolveDay(day - DateTruncTable::FIRST_DAY, day * Interval::MICROS_PER_DAY + Interval::MICROS_PER_DAY / 2,
 		                       representative)) {
 			ThrowBucketRange();
 		}
@@ -227,7 +227,7 @@ struct ICUBucket : public ICUDateFunc {
 			if (spec.part == DatePartSpecifier::MINUTE) {
 				return lut.MinuteBucketFirstDay();
 			}
-			return lut.HasFixedOffset() && lut.FixedOffset() % Interval::MICROS_PER_SEC != 0 ? ZoneLUT::DAY_COUNT : 0;
+			return lut.HasFixedOffset() && lut.FixedOffset() % Interval::MICROS_PER_SEC != 0 ? DateTruncTable::DAY_COUNT : 0;
 		default:
 			return lut.DayBucketFirstDay();
 		}
@@ -329,7 +329,7 @@ struct ICUBucket : public ICUDateFunc {
 		return GetUnbucketFunctions().functions[bounded ? 1 : 0];
 	}
 
-	class Rewrite : public GranularBucketRewrite {
+	class Rewrite : public BucketRewrite {
 	public:
 		Rewrite(BucketSpec spec_p, const BindData &info_p, Value part_p)
 		    : spec(spec_p), info(make_uniq<BindData>(info_p)), part(std::move(part_p)) {
@@ -338,27 +338,38 @@ struct ICUBucket : public ICUDateFunc {
 		idx_t InputIndex() const override {
 			return 1;
 		}
-		bool Contains(const GranularBucketRewrite &finer) const override {
-			auto core = finer.Core();
-			auto other = core ? dynamic_cast<const Rewrite *>(core.get()) : nullptr;
-			if (!other || spec.origin_days != other->spec.origin_days || info->tz_setting != other->info->tz_setting) {
+		BucketGrid Grid() const override {
+			BucketGrid grid;
+			grid.family = BucketGrid::Family::ZONED;
+			grid.variant = static_cast<uint8_t>(spec.kind);
+			grid.width = spec.width;
+			grid.anchor = spec.anchor;
+			grid.origin_days = spec.origin_days;
+			grid.fixed_offset = info->lut && info->lut->HasFixedOffset();
+			grid.identity = info->tz_setting;
+			return grid;
+		}
+		bool Contains(const BucketGrid &finer) const override {
+			if (finer.family != BucketGrid::Family::ZONED || spec.origin_days != finer.origin_days ||
+			    info->tz_setting != finer.identity) {
 				return false;
 			}
-			const auto &fine = other->spec;
+			const auto fine_kind = static_cast<BucketSpec::Kind>(finer.variant);
 			switch (spec.kind) {
 			case BucketSpec::Kind::INSTANT:
-				return fine.kind == BucketSpec::Kind::INSTANT && info->lut && info->lut->HasFixedOffset() &&
-				       Nested(spec.width, spec.anchor, fine.width, fine.anchor);
+				return fine_kind == BucketSpec::Kind::INSTANT && info->lut && info->lut->HasFixedOffset() &&
+				       Grid().Nests(finer);
 			case BucketSpec::Kind::LOCAL_DAY:
-				if (fine.kind == BucketSpec::Kind::LOCAL_DAY) {
-					return Nested(spec.width, spec.anchor, fine.width, fine.anchor);
+				if (fine_kind == BucketSpec::Kind::LOCAL_DAY) {
+					return Grid().Nests(finer);
 				}
-				return fine.kind == BucketSpec::Kind::INSTANT;
+				return fine_kind == BucketSpec::Kind::INSTANT;
 			default:
-				if (fine.kind == BucketSpec::Kind::LOCAL_MONTH) {
-					return Nested(spec.width, spec.anchor, fine.width, fine.anchor);
+				if (fine_kind == BucketSpec::Kind::LOCAL_MONTH) {
+					return Grid().Nests(finer);
 				}
-				return fine.kind == BucketSpec::Kind::INSTANT || (fine.kind == BucketSpec::Kind::LOCAL_DAY && fine.width == 1);
+				return fine_kind == BucketSpec::Kind::INSTANT ||
+				       (fine_kind == BucketSpec::Kind::LOCAL_DAY && finer.width == 1);
 			}
 		}
 		int64_t GranularityMicros() const override {
@@ -402,13 +413,13 @@ struct ICUBucket : public ICUDateFunc {
 			}
 			const auto &lut = *info->lut;
 			const auto first_day = MaxValue<int64_t>(BucketFirstDay(lut, spec), 1);
-			const auto min_day = DateTrunc::FloorDiv(min.value, Interval::MICROS_PER_DAY) - ZoneLUT::FIRST_DAY;
-			const auto max_day = DateTrunc::FloorDiv(max.value, Interval::MICROS_PER_DAY) - ZoneLUT::FIRST_DAY;
-			if (min_day < first_day || max_day + 1 >= ZoneLUT::DAY_COUNT) {
+			const auto min_day = DateTrunc::FloorDiv(min.value, Interval::MICROS_PER_DAY) - DateTruncTable::FIRST_DAY;
+			const auto max_day = DateTrunc::FloorDiv(max.value, Interval::MICROS_PER_DAY) - DateTruncTable::FIRST_DAY;
+			if (min_day < first_day || max_day + 1 >= DateTruncTable::DAY_COUNT) {
 				return false;
 			}
-			if (spec.origin_days && !lut.OriginDaysSupported(spec.OriginDay(), min_day + ZoneLUT::FIRST_DAY - 1,
-			                                                 max_day + ZoneLUT::FIRST_DAY + 1)) {
+			if (spec.origin_days && !lut.OriginDaysSupported(spec.OriginDay(), min_day + DateTruncTable::FIRST_DAY - 1,
+			                                                 max_day + DateTruncTable::FIRST_DAY + 1)) {
 				return false;
 			}
 			min_bucket = BucketOf(lut, spec, min.value);
@@ -594,7 +605,7 @@ struct ICUBucket : public ICUDateFunc {
 			}
 			return ZonedTimeOfDay(context, *info, width, format_value, nullptr);
 		}
-		auto inner = make_uniq<Rewrite>(spec, *info, Value(DateTruncPartName(part)));
+		auto inner = make_uniq<Rewrite>(spec, *info, Value(string(DateTruncPartName(part))));
 		if (two_digit_year) {
 			inner->RequireYearSpanBelow(100);
 		}

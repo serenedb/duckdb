@@ -4,6 +4,10 @@
 
 namespace duckdb {
 
+unique_ptr<Expression> BucketRewrite::UnbucketCore(unique_ptr<Expression> bucket) const {
+	return Unbucket(std::move(bucket));
+}
+
 bool ScalarFunctionCallbacks::operator==(const ScalarFunctionCallbacks &rhs) const {
 	return bind == rhs.bind && init_local_state == rhs.init_local_state && statistics == rhs.statistics &&
 	       bind_lambda == rhs.bind_lambda && bind_expression == rhs.bind_expression &&

@@ -58,24 +58,9 @@ bool TryGetConstant(const Expression &expr, int64_t &value) {
 	return true;
 }
 
-int64_t RawValue(timestamp_t value) {
-	return value.value;
-}
-
-int64_t RawValue(timestamp_tz_t value) {
-	return value.value;
-}
-
-int64_t RawValue(timestamp_ms_t value) {
-	return value.value;
-}
-
-int64_t RawValue(timestamp_sec_t value) {
-	return value.value;
-}
-
-int64_t RawValue(timestamp_ns_t value) {
-	return value.value;
+template <int64_t SCALE, bool NS>
+int64_t RawValue(timebase_t<SCALE, NS> value) {
+	return int64_t(value);
 }
 
 int64_t RawValue(date_t value) {
@@ -171,25 +156,10 @@ void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 }
 
 template <class T>
-bool Finite(T value) {
-	return Value::IsFinite(value);
-}
-
-template <>
-bool Finite(timestamp_tz_t value) {
-	return value.IsFinite();
-}
-
-template <>
-bool Finite(dtime_t value) {
-	return true;
-}
-
-template <class T>
 bool TryScaledRange(const BaseStatistics &stats, int64_t scale, int64_t limit, int64_t &min, int64_t &max) {
 	const auto lo = NumericStats::GetMin<T>(stats);
 	const auto hi = NumericStats::GetMax<T>(stats);
-	if (!Finite(lo) || !Finite(hi)) {
+	if (!Value::IsFinite(lo) || !Value::IsFinite(hi)) {
 		return false;
 	}
 	const auto lo_raw = RawValue(lo);
@@ -216,7 +186,7 @@ unique_ptr<BaseStatistics> RangeStatistics(ClientContext &context, FunctionStati
 	}
 	const auto min = NumericStats::GetMin<INPUT>(child);
 	const auto max = NumericStats::GetMax<INPUT>(child);
-	if (min > max || !Finite(min) || !Finite(max)) {
+	if (min > max || !Value::IsFinite(min) || !Value::IsFinite(max)) {
 		return nullptr;
 	}
 	Value min_bucket;
@@ -487,9 +457,7 @@ unique_ptr<BucketRewrite> DateBinBucketRewrite(ClientContext &context, const Bou
 
 bool CyclicBucketRewrite::TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket_p,
                                          int64_t &max_bucket_p) const {
-	min_bucket_p = min_bucket;
-	max_bucket_p = max_bucket;
-	return true;
+	return TryConstantRange(min_bucket_p, max_bucket_p);
 }
 
 unique_ptr<Expression> CyclicBucketRewrite::Unbucket(unique_ptr<Expression> bucket) const {
@@ -509,10 +477,10 @@ namespace {
 struct TruncationLevel {
 	DateCoordinates::Level level;
 	DatePartSpecifier part;
-	const char *name;
+	std::string_view name;
 };
 
-const TruncationLevel TRUNCATION_LEVELS[] = {
+constexpr TruncationLevel TRUNCATION_LEVELS[] = {
     {DateCoordinates::Level::MILLENNIUM, DatePartSpecifier::MILLENNIUM, "millennium"},
     {DateCoordinates::Level::CENTURY, DatePartSpecifier::CENTURY, "century"},
     {DateCoordinates::Level::DECADE, DatePartSpecifier::DECADE, "decade"},
@@ -718,7 +686,7 @@ bool DateCoordinates::TryResolve(bool sub_day_constant, DatePartSpecifier &part)
 	return true;
 }
 
-const char *DateTruncPartName(DatePartSpecifier part) {
+std::string_view DateTruncPartName(DatePartSpecifier part) {
 	auto entry = absl::c_find_if(TRUNCATION_LEVELS, [&](const TruncationLevel &l) { return l.part == part; });
 	return entry != std::end(TRUNCATION_LEVELS) ? entry->name : "second";
 }
@@ -929,11 +897,14 @@ unique_ptr<BucketRewrite> DayNameBucketRewrite(ClientContext &context, const Bou
 
 namespace {
 
-template <class INPUT>
-int64_t TimeOfDaySlot(INPUT ts, int64_t width) {
+void ValidateTimeOfDayWidth(int64_t width) {
 	if (width <= 0) {
 		throw InvalidInputException("Time of day bucket width must be positive");
 	}
+}
+
+template <class INPUT>
+int64_t TimeOfDaySlot(INPUT ts, int64_t width) {
 	const auto micros = Micros(ts);
 	const auto day = DateTrunc::FloorDiv(micros, Interval::MICROS_PER_DAY);
 	return (micros - day * Interval::MICROS_PER_DAY) / width;
@@ -944,12 +915,16 @@ void TimeOfDayFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 	auto &width_vector = args.data[1];
 	if (width_vector.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(width_vector)) {
 		const auto width = *ConstantVector::GetData<int64_t>(width_vector);
+		ValidateTimeOfDayWidth(width);
 		UnaryExecutor::Execute<INPUT, int64_t>(args.data[0], result, args.size(),
 		                                       [&](INPUT input) { return TimeOfDaySlot(input, width); });
 		return;
 	}
 	BinaryExecutor::Execute<INPUT, int64_t, int64_t>(args.data[0], args.data[1], result, args.size(),
-	                                                 TimeOfDaySlot<INPUT>);
+	                                                 [](INPUT input, int64_t row_width) {
+		                                                 ValidateTimeOfDayWidth(row_width);
+		                                                 return TimeOfDaySlot(input, row_width);
+	                                                 });
 }
 
 ScalarFunction TimeOfDayFunctionFor(const LogicalType &input_type, scalar_function_t function) {
@@ -1102,18 +1077,25 @@ idx_t DateBucketRewrite::InputIndex() const {
 	return input_index;
 }
 
-bool DateBucketRewrite::Contains(const GranularBucketRewrite &finer) const {
-	auto core = finer.Core();
-	auto other = core ? dynamic_cast<const DateBucketRewrite *>(core.get()) : nullptr;
-	if (!other || other->input_type != input_type) {
+BucketGrid DateBucketRewrite::Grid() const {
+	BucketGrid grid;
+	grid.family = BucketGrid::Family::NAIVE;
+	grid.variant = spec.calendar ? 1 : 0;
+	grid.width = spec.width;
+	grid.anchor = spec.anchor;
+	grid.input_type = input_type;
+	return grid;
+}
+
+bool DateBucketRewrite::Contains(const BucketGrid &finer) const {
+	if (finer.family != BucketGrid::Family::NAIVE || finer.input_type != input_type) {
 		return false;
 	}
-	if (spec.calendar == other->spec.calendar) {
-		return Nested(spec.width, spec.anchor, other->spec.width, other->spec.anchor);
+	if ((spec.calendar ? 1 : 0) == finer.variant) {
+		return Grid().Nests(finer);
 	}
 	if (spec.calendar) {
-		return other->spec.width > 0 && Interval::MICROS_PER_DAY % other->spec.width == 0 &&
-		       other->spec.anchor % other->spec.width == 0;
+		return finer.width > 0 && Interval::MICROS_PER_DAY % finer.width == 0 && finer.anchor % finer.width == 0;
 	}
 	return false;
 }
@@ -1165,7 +1147,7 @@ bool TryGetMicrosRange(const BaseStatistics &stats, int64_t &min, int64_t &max, 
 	case LogicalTypeId::TIMESTAMP_NS: {
 		const auto lo = NumericStats::GetMin<timestamp_ns_t>(stats);
 		const auto hi = NumericStats::GetMax<timestamp_ns_t>(stats);
-		if (!Finite(lo) || !Finite(hi)) {
+		if (!Value::IsFinite(lo) || !Value::IsFinite(hi)) {
 			return false;
 		}
 		min = DateTrunc::FloorDiv(lo.value, Interval::NANOS_PER_MICRO);

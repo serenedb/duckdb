@@ -83,7 +83,7 @@ struct ICUDateTruncLUT {
 		int64_t instant = 0;
 		int64_t instant_day = 0;
 		int64_t offset = 0;
-		if (!lut.TryResolveDay(days - ZoneLUT::FIRST_DAY, wall, instant) ||
+		if (!lut.TryResolveDay(days - DateTruncTable::FIRST_DAY, wall, instant) ||
 		    !lut.TryInstantDay(instant, instant_day, offset)) {
 			return true;
 		}
@@ -113,7 +113,7 @@ struct ICUDateTruncLUT {
 				}
 			}
 			const auto truncated_days = OP::Days(days);
-			return lut.TryResolveDay(truncated_days - ZoneLUT::FIRST_DAY, truncated_days * Interval::MICROS_PER_DAY,
+			return lut.TryResolveDay(truncated_days - DateTruncTable::FIRST_DAY, truncated_days * Interval::MICROS_PER_DAY,
 			                         result.value);
 		} else {
 			const auto truncated = OP::template Operation<timestamp_t, timestamp_t>(wall);
