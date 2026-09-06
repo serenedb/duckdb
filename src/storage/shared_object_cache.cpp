@@ -1,12 +1,11 @@
 #include "duckdb/storage/shared_object_cache.hpp"
 
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/mutex.hpp"
-
 #include "duckdb/common/unordered_map.hpp"
+#include "duckdb/storage/buffer/buffer_pool_reservation.hpp"
 
 #include "absl/hash/hash.h"
-
-#include "duckdb/storage/buffer/buffer_pool_reservation.hpp"
 
 namespace duckdb {
 
@@ -46,6 +45,7 @@ struct SharedObjectCache::KeyEq {
 
 struct SharedObjectCache::Slot {
 	weak_ptr<ObjectCacheEntry> value;
+	idx_t reserved = 0;
 	//! True while one thread runs `build` for this slot; other threads Await on it.
 	bool building = false;
 	//! Threads blocked in Await on this slot; an erase would invalidate their slot pointer.
@@ -53,8 +53,12 @@ struct SharedObjectCache::Slot {
 };
 
 struct SharedObjectCache::Registry {
+	explicit Registry(shared_ptr<BufferPool> buffer_pool_p) : buffer_pool(std::move(buffer_pool_p)) {
+	}
+
 	mutex lock;
 	unordered_map<FullKey, Slot, KeyHash, KeyEq> slots;
+	shared_ptr<BufferPool> buffer_pool;
 };
 
 //! Deleter of an interned entry: destroys the payload, releases its buffer pool reservation, and drops the
@@ -67,7 +71,7 @@ struct SharedObjectCache::Deleter {
 	void operator()(ObjectCacheEntry *entry) {
 		delete entry;
 		reservation.reset();
-		const lock_guard<mutex> guard(registry->lock);
+		const absl::MutexLock guard(&registry->lock);
 		auto it = registry->slots.find(key);
 		if (it != registry->slots.end() && it->second.value.expired() && !it->second.building &&
 		    it->second.waiters == 0) {
@@ -76,8 +80,8 @@ struct SharedObjectCache::Deleter {
 	}
 };
 
-SharedObjectCache::SharedObjectCache(BufferPool &buffer_pool_p)
-    : buffer_pool(buffer_pool_p), registry(make_shared_ptr<Registry>()) {
+SharedObjectCache::SharedObjectCache(shared_ptr<BufferPool> buffer_pool)
+    : registry(make_shared_ptr<Registry>(std::move(buffer_pool))) {
 }
 
 SharedObjectCache::~SharedObjectCache() = default;
@@ -86,8 +90,8 @@ SharedObjectCache::~SharedObjectCache() = default;
 //! slot pointer stays valid across Await: the map is node-based, and a slot with building == true or waiters > 0
 //! is never erased.
 shared_ptr<ObjectCacheEntry> SharedObjectCache::ClaimSlot(const LookupKey &lookup) {
-	absl::MutexLock guard(&registry->lock);
-	auto *slot = &registry->slots.try_emplace(lookup).first->second;
+	const absl::MutexLock guard(&registry->lock);
+	auto *slot = &registry->slots.try_emplace(FullKey {lookup}).first->second;
 	while (true) {
 		if (auto live = slot->value.lock()) {
 			return live;
@@ -121,22 +125,26 @@ SharedObjectCache::GetOrBuildInternal(std::string_view type, std::string_view ke
 
 	try {
 		auto built = build();
-		D_ASSERT(built);
+		if (!built) {
+			throw InternalException("SharedObjectCache: build returned no entry for key \"%s\"", string(key));
+		}
 		const auto estimated_memory = built->GetEstimatedCacheMemory();
 		const idx_t size = estimated_memory.IsValid() ? estimated_memory.GetIndex() : 0;
 		// Fully construct the deleter before releasing `built`: a throw here leaves the entry owned.
 		Deleter deleter {registry, FullKey {lookup},
-		                 make_shared_ptr<TempBufferPoolReservation>(MemoryTag::OBJECT_CACHE, buffer_pool, size)};
+		                 make_shared_ptr<TempBufferPoolReservation>(MemoryTag::OBJECT_CACHE, *registry->buffer_pool,
+		                                                            size)};
 		shared_ptr<ObjectCacheEntry> value(built.release(), std::move(deleter));
-		const lock_guard<mutex> guard(registry->lock);
+		const absl::MutexLock guard(&registry->lock);
 		auto it = registry->slots.find(lookup);
 		D_ASSERT(it != registry->slots.end());
 		it->second.value = value;
+		it->second.reserved = size;
 		it->second.building = false;
 		return value;
 	} catch (...) {
 		// Hand the key over to the next waiter, or drop the slot if nobody wants it.
-		const lock_guard<mutex> guard(registry->lock);
+		const absl::MutexLock guard(&registry->lock);
 		auto it = registry->slots.find(lookup);
 		D_ASSERT(it != registry->slots.end());
 		it->second.building = false;
@@ -169,9 +177,8 @@ idx_t SharedObjectCache::GetMemoryUsage() const {
 	const absl::ReaderMutexLock guard(&registry->lock);
 	idx_t reserved = 0;
 	for (auto &slot : registry->slots) {
-		if (auto live = slot.second.value.lock()) {
-			const auto estimated_memory = live->GetEstimatedCacheMemory();
-			reserved += estimated_memory.IsValid() ? estimated_memory.GetIndex() : 0;
+		if (!slot.second.value.expired()) {
+			reserved += slot.second.reserved;
 		}
 	}
 	return reserved;
