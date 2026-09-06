@@ -22,7 +22,10 @@
 
 #include "duckdb/common/enums/date_part_specifier.hpp"
 #include "duckdb/common/error_data.hpp"
+#include "duckdb/common/operator/add.hpp"
 #include "duckdb/common/operator/date_trunc_operators.hpp"
+#include "duckdb/common/operator/multiply.hpp"
+#include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/common/optional.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
@@ -48,10 +51,10 @@ bool TryGetConstant(const Expression &expr, int64_t &value) {
 		return false;
 	}
 	const auto &constant = expr.Cast<BoundConstantExpression>().GetValue();
-	if (constant.IsNull()) {
+	if (constant.IsNull() || constant.type().id() != LogicalTypeId::BIGINT) {
 		return false;
 	}
-	value = constant.GetValue<int64_t>();
+	value = BigIntValue::Get(constant);
 	return true;
 }
 
@@ -93,6 +96,20 @@ int64_t Micros(timestamp_ns_t ts) {
 	return DateTrunc::FloorDiv(RawValue(ts), Interval::NANOS_PER_MICRO);
 }
 
+void ValidateWidth(int64_t width) {
+	if (width <= 0) {
+		throw InvalidInputException("Bucket width must be positive");
+	}
+}
+
+int64_t Origin(int64_t bucket, int64_t width, int64_t anchor) {
+	int64_t result = 0;
+	if (!TryMultiplyOperator::Operation(bucket, width, result) || !TryAddOperator::Operation(result, anchor, result)) {
+		throw OutOfRangeException("Bucket %lld of width %lld is out of range", bucket, width);
+	}
+	return result;
+}
+
 template <class INPUT>
 int64_t Bucket(INPUT ts, int64_t width, int64_t anchor) {
 	return DateTrunc::FloorDiv(Micros(ts) - anchor, width);
@@ -100,7 +117,16 @@ int64_t Bucket(INPUT ts, int64_t width, int64_t anchor) {
 
 template <class RESULT>
 RESULT Unbucket(int64_t bucket, int64_t width, int64_t anchor) {
-	return RESULT(bucket * width + anchor);
+	return RESULT(Origin(bucket, width, anchor));
+}
+
+template <>
+dtime_t Unbucket<dtime_t>(int64_t bucket, int64_t width, int64_t anchor) {
+	const auto micros = Origin(bucket, width, anchor);
+	if (micros < 0 || micros >= Interval::MICROS_PER_DAY) {
+		throw OutOfRangeException("Bucket %lld of width %lld is not a time of day", bucket, width);
+	}
+	return dtime_t(micros);
 }
 
 template <class INPUT>
@@ -110,7 +136,7 @@ int64_t MonthBucket(INPUT ts, int64_t width, int64_t anchor) {
 
 template <class RESULT>
 RESULT MonthUnbucket(int64_t bucket, int64_t width, int64_t anchor) {
-	return RESULT(DateTrunc::MonthIndexStart(bucket * width + anchor).value);
+	return RESULT(DateTrunc::MonthIndexStart(Origin(bucket, width, anchor)).value);
 }
 
 bool TryGetConstants(DataChunk &args, int64_t &width, int64_t &anchor) {
@@ -131,12 +157,17 @@ void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	int64_t width = 0;
 	int64_t anchor = 0;
 	if (TryGetConstants(args, width, anchor)) {
+		ValidateWidth(width);
 		UnaryExecutor::Execute<INPUT, RESULT>(args.data[0], result, args.size(),
 		                                      [&](INPUT input) { return FUN(input, width, anchor); });
 		return;
 	}
 	TernaryExecutor::Execute<INPUT, int64_t, int64_t, RESULT>(args.data[0], args.data[1], args.data[2], result,
-	                                                          args.size(), FUN);
+	                                                          args.size(),
+	                                                          [](INPUT input, int64_t row_width, int64_t row_anchor) {
+		                                                          ValidateWidth(row_width);
+		                                                          return FUN(input, row_width, row_anchor);
+	                                                          });
 }
 
 template <class T>
@@ -188,10 +219,20 @@ unique_ptr<BaseStatistics> RangeStatistics(ClientContext &context, FunctionStati
 	if (min > max || !Finite(min) || !Finite(max)) {
 		return nullptr;
 	}
+	Value min_bucket;
+	Value max_bucket;
+	try {
+		min_bucket = Value::CreateValue(FUN(min, width, anchor));
+		max_bucket = Value::CreateValue(FUN(max, width, anchor));
+	} catch (const OutOfRangeException &) {
+		return nullptr;
+	} catch (const ConversionException &) {
+		return nullptr;
+	}
 	auto result = NumericStats::CreateEmpty(input.expr.GetReturnType());
 	result.CopyBase(child);
-	NumericStats::SetMin(result, Value::CreateValue(FUN(min, width, anchor)));
-	NumericStats::SetMax(result, Value::CreateValue(FUN(max, width, anchor)));
+	NumericStats::SetMin(result, std::move(min_bucket));
+	NumericStats::SetMax(result, std::move(max_bucket));
 	return result.ToUnique();
 }
 
@@ -301,7 +342,8 @@ bool TryGetTimeBucketSpec(const vector<unique_ptr<Expression>> &children, DateBu
 			origin = int64_t(value.days) * Interval::MICROS_PER_DAY;
 		}
 		if (spec.calendar) {
-			spec.anchor = EPOCH_MONTH_INDEX + (DateTrunc::MonthIndex(timestamp_t(origin)) - EPOCH_MONTH_INDEX) % spec.width;
+			spec.anchor =
+			    EPOCH_MONTH_INDEX + (DateTrunc::MonthIndex(timestamp_t(origin)) - EPOCH_MONTH_INDEX) % spec.width;
 		} else {
 			spec.anchor = origin % spec.width;
 		}
@@ -373,8 +415,8 @@ unique_ptr<BucketRewrite> TimeBucketBucketRewrite(ClientContext &context, const 
 	if (!TryGetTimeBucketSpec(children, spec)) {
 		return nullptr;
 	}
-	if (timed && (spec.calendar || spec.width > Interval::MICROS_PER_DAY ||
-	              Interval::MICROS_PER_DAY % spec.width != 0)) {
+	if (timed &&
+	    (spec.calendar || spec.width > Interval::MICROS_PER_DAY || Interval::MICROS_PER_DAY % spec.width != 0)) {
 		return nullptr;
 	}
 	return make_uniq<DateBucketRewrite>(context, spec, 1, input_type, expr.GetReturnType(), false);
@@ -401,8 +443,7 @@ unique_ptr<Expression> FunctionBucketRewrite::Unbucket(unique_ptr<Expression> bu
 	return make_uniq<BoundFunctionExpression>(function, std::move(children), bind_info ? bind_info->Copy() : nullptr);
 }
 
-CyclicBucketRewrite::CyclicBucketRewrite(ScalarFunction unbucket_function_p, int64_t min_bucket_p,
-                                         int64_t max_bucket_p)
+CyclicBucketRewrite::CyclicBucketRewrite(ScalarFunction unbucket_function_p, int64_t min_bucket_p, int64_t max_bucket_p)
     : unbucket_function(std::move(unbucket_function_p)), min_bucket(min_bucket_p), max_bucket(max_bucket_p) {
 }
 
@@ -732,7 +773,7 @@ bool TryGetStrfTimeGranularity(const string &format_string, bool sub_day_constan
 namespace {
 
 unique_ptr<BucketRewrite> NaiveTimeOfDay(ClientContext &context, const LogicalType &input_type, idx_t input_index,
-                                        int64_t width, const Value &format, optional_ptr<Expression> input) {
+                                         int64_t width, const Value &format, optional_ptr<Expression> input) {
 	const auto functions = InternalTimeOfDayBucketFun::GetFunctions().functions;
 	switch (input_type.id()) {
 	case LogicalTypeId::TIMESTAMP:
@@ -983,8 +1024,8 @@ unique_ptr<BucketRewrite> TimeOfDayRewrite(ClientContext &context, ScalarFunctio
 		arguments.push_back(make_uniq<BoundConstantExpression>(format));
 		FunctionBinder binder(context);
 		ErrorData error;
-		shell = binder.BindScalarFunction(Identifier(DEFAULT_SCHEMA), Identifier("strftime"), std::move(arguments),
-		                                  error);
+		shell =
+		    binder.BindScalarFunction(Identifier(DEFAULT_SCHEMA), Identifier("strftime"), std::move(arguments), error);
 	}
 	if (!shell) {
 		return nullptr;
@@ -1017,17 +1058,19 @@ unique_ptr<BucketRewrite> LastDayBucketRewrite(ClientContext &context, const Bou
 
 ScalarFunctionSet InternalMonthOfYearFun::GetFunctions() {
 	ScalarFunctionSet set(Name);
-	set.AddFunction(ScalarFunction(Identifier(Name), {LogicalType::DATE}, LogicalType::BIGINT, MonthOfYearFunction<date_t>));
 	set.AddFunction(
-	    ScalarFunction(Identifier(Name), {LogicalType::TIMESTAMP}, LogicalType::BIGINT, MonthOfYearFunction<timestamp_t>));
+	    ScalarFunction(Identifier(Name), {LogicalType::DATE}, LogicalType::BIGINT, MonthOfYearFunction<date_t>));
+	set.AddFunction(ScalarFunction(Identifier(Name), {LogicalType::TIMESTAMP}, LogicalType::BIGINT,
+	                               MonthOfYearFunction<timestamp_t>));
 	return set;
 }
 
 ScalarFunctionSet InternalDayOfWeekFun::GetFunctions() {
 	ScalarFunctionSet set(Name);
-	set.AddFunction(ScalarFunction(Identifier(Name), {LogicalType::DATE}, LogicalType::BIGINT, DayOfWeekFunction<date_t>));
 	set.AddFunction(
-	    ScalarFunction(Identifier(Name), {LogicalType::TIMESTAMP}, LogicalType::BIGINT, DayOfWeekFunction<timestamp_t>));
+	    ScalarFunction(Identifier(Name), {LogicalType::DATE}, LogicalType::BIGINT, DayOfWeekFunction<date_t>));
+	set.AddFunction(ScalarFunction(Identifier(Name), {LogicalType::TIMESTAMP}, LogicalType::BIGINT,
+	                               DayOfWeekFunction<timestamp_t>));
 	return set;
 }
 
@@ -1039,8 +1082,14 @@ ScalarFunction InternalDayNameFun::GetFunction() {
 	return ScalarFunction(Identifier(Name), {LogicalType::BIGINT}, LogicalType::VARCHAR, DayNameFunction);
 }
 
-int64_t DateBucketSpec::Bucket(int64_t micros) const {
-	return DateTrunc::FloorDiv((calendar ? DateTrunc::MonthIndex(timestamp_t(micros)) : micros) - anchor, width);
+bool DateBucketSpec::TryBucket(int64_t micros, int64_t &result) const {
+	const auto value = calendar ? DateTrunc::MonthIndex(timestamp_t(micros)) : micros;
+	int64_t offset = 0;
+	if (!TrySubtractOperator::Operation(value, anchor, offset)) {
+		return false;
+	}
+	result = DateTrunc::FloorDiv(offset, width);
+	return true;
 }
 
 DateBucketRewrite::DateBucketRewrite(ClientContext &context_p, DateBucketSpec spec_p, idx_t input_index_p,
@@ -1141,20 +1190,16 @@ bool DateBucketRewrite::TryBucketRange(const BaseStatistics &stats, int64_t &min
 		max += Interval::MICROS_PER_DAY;
 	}
 	const auto limit = NumericLimits<int64_t>::Maximum() - Interval::MICROS_PER_WEEK;
-	const auto lower =
-	    anno_domini_only && spec.calendar ? DateTrunc::YearStart(1) * Interval::MICROS_PER_DAY : -limit;
+	const auto lower = anno_domini_only && spec.calendar ? DateTrunc::YearStart(1) * Interval::MICROS_PER_DAY : -limit;
 	if (min < lower || max > limit) {
 		return false;
 	}
-	if (max_year_span &&
-	    DateTrunc::ToYearDay(DateTrunc::ToDays(timestamp_t(max))).year -
-	            DateTrunc::ToYearDay(DateTrunc::ToDays(timestamp_t(min))).year >=
-	        max_year_span) {
+	if (max_year_span && DateTrunc::ToYearDay(DateTrunc::ToDays(timestamp_t(max))).year -
+	                             DateTrunc::ToYearDay(DateTrunc::ToDays(timestamp_t(min))).year >=
+	                         max_year_span) {
 		return false;
 	}
-	min_bucket = spec.Bucket(min);
-	max_bucket = spec.Bucket(max);
-	return true;
+	return spec.TryBucket(min, min_bucket) && spec.TryBucket(max, max_bucket);
 }
 
 unique_ptr<Expression> DateBucketRewrite::Bucket(unique_ptr<Expression> input) const {
@@ -1187,8 +1232,8 @@ unique_ptr<Expression> DateBucketRewrite::Unbucket(unique_ptr<Expression> bucket
 
 ScalarFunctionSet InternalDateTruncBucketFun::GetFunctions() {
 	ScalarFunctionSet set(Name);
-	set.AddFunction(BucketFunction<timestamp_t, int64_t, Bucket<timestamp_t>>(Name, LogicalType::TIMESTAMP,
-	                                                                          LogicalType::BIGINT));
+	set.AddFunction(
+	    BucketFunction<timestamp_t, int64_t, Bucket<timestamp_t>>(Name, LogicalType::TIMESTAMP, LogicalType::BIGINT));
 	set.AddFunction(BucketFunction<timestamp_tz_t, int64_t, Bucket<timestamp_tz_t>>(Name, LogicalType::TIMESTAMP_TZ,
 	                                                                                LogicalType::BIGINT));
 	set.AddFunction(BucketFunction<timestamp_ns_t, int64_t, Bucket<timestamp_ns_t>>(Name, LogicalType::TIMESTAMP_NS,
