@@ -324,7 +324,8 @@ vector<shared_ptr<AttachedDatabase>> &MetaTransaction::GetStatementDatabases(Cli
 
 void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationType modification) {
 	if (IsReadOnly()) {
-		throw TransactionException("Cannot write to database \"%s\" - transaction is launched in read-only mode",
+		throw TransactionException(Exception::InitializeExtraInfo("READ_ONLY", optional_idx()),
+		                           "Cannot write to database \"%s\" - transaction is launched in read-only mode",
 		                           db.GetName());
 	}
 	auto &transaction = GetTransaction(db);
@@ -352,6 +353,7 @@ void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationT
 	}
 	if (&db != modified_database.get()) {
 		throw TransactionException(
+		    Exception::InitializeExtraInfo("CROSS_DATABASE_WRITE", optional_idx()),
 		    "Attempting to write to database \"%s\" in a transaction that has already modified database \"%s\" - a "
 		    "single transaction can only write to a single attached database.",
 		    db.GetName(), modified_database->GetName());
