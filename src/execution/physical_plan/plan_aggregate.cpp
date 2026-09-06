@@ -1,6 +1,7 @@
 #include <absl/algorithm/container.h>
 
 #include "duckdb/main/settings.hpp"
+#include "duckdb/execution/perfect_hash_budget.hpp"
 #include "duckdb/function/partition_stats.hpp"
 
 #include "duckdb/execution/operator/aggregate/physical_hash_aggregate.hpp"
@@ -17,15 +18,6 @@
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 
 namespace duckdb {
-
-static uint32_t RequiredBitsForValue(uint32_t n) {
-	idx_t required_bits = 0;
-	while (n > 0) {
-		n >>= 1;
-		required_bits++;
-	}
-	return UnsafeNumericCast<uint32_t>(required_bits);
-}
 
 template <class T>
 hugeint_t GetRangeHugeint(const BaseStatistics &nstats) {
@@ -136,6 +128,7 @@ static bool CanUsePerfectHashAggregate(ClientContext &context, LogicalAggregate 
 		return false;
 	}
 	idx_t perfect_hash_bits = 0;
+	const auto max_bits = PerfectHashBudget::MaxBits(context, op.expressions);
 	for (idx_t group_idx = 0; group_idx < op.groups.size(); group_idx++) {
 		auto &group = op.groups[group_idx];
 		auto &stats = op.group_stats[group_idx];
@@ -230,11 +223,11 @@ static bool CanUsePerfectHashAggregate(ClientContext &context, LogicalAggregate 
 
 		range += 2;
 		// figure out how many bits we need
-		idx_t required_bits = RequiredBitsForValue(UnsafeNumericCast<uint32_t>(range));
+		idx_t required_bits = PerfectHashBudget::RequiredBits(UnsafeNumericCast<uint32_t>(range));
 		bits_per_group.push_back(required_bits);
 		perfect_hash_bits += required_bits;
 		// check if we have exceeded the bits for the hash
-		if (perfect_hash_bits > Settings::Get<PerfectHtThresholdSetting>(context)) {
+		if (perfect_hash_bits > max_bits) {
 			// too many bits for perfect hash
 			return false;
 		}

@@ -12,6 +12,8 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "include/icu-bucket.hpp"
+#include "include/icu-scalar-fast.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -608,21 +610,32 @@ struct ICUStrftime : public ICUDateFunc {
 			StrfTimeFormat format;
 			ParseFormatSpecifier(*ConstantVector::GetData<string_t>(fmt_arg), format);
 
+			auto row = [&](T input) {
+				return Operation(calendar.get(), input, tz_name, format, result);
+			};
+			if (ICUScalarFast::TryStrftime<T>(info, src_arg, args.size(), format, tz_name, result, row)) {
+				return;
+			}
 			UnaryExecutor::Execute<T, string_t>(src_arg, result, [&](T input) {
 				if (input.IsFinite()) {
-					return Operation(calendar.get(), input, tz_name, format, result);
+					return row(input);
 				} else {
 					return StringVector::AddString(result, Date::ToInfinity(input));
 				}
 			});
 		} else {
+			auto row = [&](T input, string_t format_specifier) {
+				StrfTimeFormat format;
+				ParseFormatSpecifier(format_specifier, format);
+				return Operation(calendar.get(), input, tz_name, format, result);
+			};
+			if (ICUScalarFast::TryStrftimeDynamic<T>(info, src_arg, fmt_arg, args.size(), tz_name, result, row)) {
+				return;
+			}
 			BinaryExecutor::Execute<T, string_t, string_t>(
 			    src_arg, fmt_arg, result, [&](T input, string_t format_specifier) {
 				    if (input.IsFinite()) {
-					    StrfTimeFormat format;
-					    ParseFormatSpecifier(format_specifier, format);
-
-					    return Operation(calendar.get(), input, tz_name, format, result);
+					    return row(input, format_specifier);
 				    } else {
 					    return StringVector::AddString(result, Date::ToInfinity(input));
 				    }
@@ -636,11 +649,13 @@ struct ICUStrftime : public ICUDateFunc {
 		tstz_fun.GetSignature()
 		    .AddParameter("data", LogicalType::TIMESTAMP_TZ)
 		    .AddParameter("format", LogicalType::VARCHAR);
+		tstz_fun.SetBucketRewriteCallback(ICUStrfTimeBucketRewrite);
 		set.AddFunction(tstz_fun);
 		ScalarFunction tstz_ns_fun({}, LogicalType::VARCHAR, ICUStrftimeFunction<timestamp_tz_ns_t>, Bind);
 		tstz_ns_fun.GetSignature()
 		    .AddParameter("data", LogicalType::TIMESTAMP_TZ_NS)
 		    .AddParameter("format", LogicalType::VARCHAR);
+		tstz_ns_fun.SetBucketRewriteCallback(ICUStrfTimeBucketRewrite);
 		set.AddFunction(tstz_ns_fun);
 		// throws for unsupported format specifiers
 		set.SetFallible();

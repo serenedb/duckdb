@@ -183,6 +183,55 @@ typedef ExpressionType (*function_get_expression_type_t)(FunctionToStringInput &
 //! Legacy serialize function for expressions that were converted into functions
 typedef unique_ptr<Expression> (*function_legacy_serialize_t)(FunctionToStringInput &input);
 
+struct BucketGrid {
+	enum class Family : uint8_t { NONE, NAIVE, ZONED };
+
+	Family family = Family::NONE;
+	uint8_t variant = 0;
+	int64_t width = 0;
+	int64_t anchor = 0;
+	bool origin_days = false;
+	bool fixed_offset = false;
+	LogicalType input_type;
+	string identity;
+
+	bool Nests(const BucketGrid &finer) const {
+		return finer.width > 0 && width % finer.width == 0 && (anchor - finer.anchor) % finer.width == 0;
+	}
+};
+
+class BucketRewrite {
+public:
+	virtual ~BucketRewrite() = default;
+
+	virtual idx_t InputIndex() const = 0;
+	virtual optional_ptr<Expression> CustomInput() const {
+		return nullptr;
+	}
+	virtual bool TryConstantRange(int64_t &min_bucket, int64_t &max_bucket) const {
+		return false;
+	}
+	virtual bool TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket, int64_t &max_bucket) const = 0;
+	virtual unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const = 0;
+	virtual unique_ptr<Expression> Unbucket(unique_ptr<Expression> bucket) const = 0;
+
+	virtual int64_t GranularityMicros() const {
+		return 0;
+	}
+	virtual unique_ptr<Expression> UnbucketCore(unique_ptr<Expression> bucket) const;
+	virtual BucketGrid Grid() const {
+		return BucketGrid();
+	}
+	virtual bool Contains(const BucketGrid &finer) const {
+		return false;
+	}
+	virtual unique_ptr<BucketRewrite> TryTimeOfDay(ClientContext &context, Expression &input) const {
+		return nullptr;
+	}
+};
+
+typedef unique_ptr<BucketRewrite> (*bucket_rewrite_t)(ClientContext &context, const BoundFunctionExpression &expr);
+
 class ScalarFunctionCallbacks {
 public:
 	//! The main scalar function to execute
@@ -215,6 +264,8 @@ public:
 
 	//! The filter prune function (if any)
 	propagate_filter_t filter_prune = nullptr;
+
+	bucket_rewrite_t bucket_rewrite = nullptr;
 
 	bool operator==(const ScalarFunctionCallbacks &rhs) const;
 	bool operator!=(const ScalarFunctionCallbacks &rhs) const;
@@ -308,6 +359,10 @@ public: // Callbacks
 	auto HasFilterPruneCallback() const -> bool { return callbacks.filter_prune != nullptr; }
 	auto SetFilterPruneCallback(propagate_filter_t callback) -> void { callbacks.filter_prune = callback; }
 	auto GetFilterPruneCallback() const -> propagate_filter_t { return callbacks.filter_prune; }
+
+	auto HasBucketRewriteCallback() const -> bool { return callbacks.bucket_rewrite != nullptr; }
+	auto SetBucketRewriteCallback(bucket_rewrite_t callback) -> void { callbacks.bucket_rewrite = callback; }
+	auto GetBucketRewriteCallback() const -> bucket_rewrite_t { return callbacks.bucket_rewrite; }
 
 	auto HasToStringCallback() const -> bool { return callbacks.to_string != nullptr; }
 	auto SetToStringCallback(function_to_string_t callback) -> void { callbacks.to_string = callback; }

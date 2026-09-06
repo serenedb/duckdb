@@ -19,6 +19,12 @@ namespace datetime {
 //! FORMER picks the offset that was in effect before the transition, LATTER the one after it.
 enum class LocalOption : uint8_t { FORMER, LATTER };
 
+struct TimeZoneTransition {
+	int64_t time;
+	int32_t raw_offset;
+	int32_t dst_offset;
+};
+
 //! A time zone, i.e. a mapping between instants and the UTC offsets that apply to them.
 //! All offsets are expressed in milliseconds, and all times in milliseconds since 1970-01-01 UTC.
 class TimeZone {
@@ -44,6 +50,7 @@ public:
 	//! The offsets that apply at a local (wall clock) time
 	virtual void GetOffsetFromLocal(int64_t millis, LocalOption non_existing, LocalOption duplicated,
 	                                int32_t &raw_offset, int32_t &dst_offset) const = 0;
+	virtual bool GetNextTransition(int64_t millis, bool inclusive, TimeZoneTransition &transition) const = 0;
 	//! Whether the two zones describe the same offsets. Aliases of one another are equivalent.
 	bool Equals(const TimeZone &other) const {
 		return id == other.id;
@@ -68,6 +75,7 @@ public:
 	void GetOffset(int64_t millis, int32_t &raw_offset, int32_t &dst_offset) const override;
 	void GetOffsetFromLocal(int64_t millis, LocalOption non_existing, LocalOption duplicated, int32_t &raw_offset,
 	                        int32_t &dst_offset) const override;
+	bool GetNextTransition(int64_t millis, bool inclusive, TimeZoneTransition &transition) const override;
 	unique_ptr<TimeZone> Copy() const override;
 
 private:
@@ -92,6 +100,9 @@ private:
 	                             int32_t millis, int32_t millis_delta, const Boundary &rule);
 	//! The total offset that applies to a local standard time
 	int32_t GetOffsetForFields(int32_t year, int8_t month, int8_t dom, int8_t dow, int32_t millis) const;
+	static int64_t GetRuleStart(const Boundary &rule, int32_t year, int32_t prev_raw_offset, int32_t prev_dst_offset);
+	static bool GetNextRuleStart(const Boundary &rule, int64_t millis, bool inclusive, int32_t prev_raw_offset,
+	                             int32_t prev_dst_offset, int64_t &result);
 
 	int32_t raw_offset;
 	bool use_daylight;
@@ -109,6 +120,7 @@ public:
 	void GetOffset(int64_t millis, int32_t &raw_offset, int32_t &dst_offset) const override;
 	void GetOffsetFromLocal(int64_t millis, LocalOption non_existing, LocalOption duplicated, int32_t &raw_offset,
 	                        int32_t &dst_offset) const override;
+	bool GetNextTransition(int64_t millis, bool inclusive, TimeZoneTransition &transition) const override;
 	unique_ptr<TimeZone> Copy() const override;
 
 private:

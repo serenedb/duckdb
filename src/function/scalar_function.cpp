@@ -6,6 +6,10 @@
 
 namespace duckdb {
 
+unique_ptr<Expression> BucketRewrite::UnbucketCore(unique_ptr<Expression> bucket) const {
+	return Unbucket(std::move(bucket));
+}
+
 FunctionUnbindInput::FunctionUnbindInput(const BoundFunctionExpression &expression_p,
                                          vector<unique_ptr<ParsedExpression>> children_p)
     : expression(expression_p), children(std::move(children_p)) {
@@ -28,7 +32,8 @@ bool ScalarFunctionCallbacks::operator==(const ScalarFunctionCallbacks &rhs) con
 	return bind == rhs.bind && init_local_state == rhs.init_local_state && statistics == rhs.statistics &&
 	       bind_lambda == rhs.bind_lambda && bind_expression == rhs.bind_expression &&
 	       get_modified_databases == rhs.get_modified_databases && serialize == rhs.serialize &&
-	       deserialize == rhs.deserialize && filter_prune == rhs.filter_prune && unbind == rhs.unbind;
+	       deserialize == rhs.deserialize && filter_prune == rhs.filter_prune && unbind == rhs.unbind &&
+	       bucket_rewrite == rhs.bucket_rewrite;
 }
 
 bool ScalarFunctionCallbacks::operator!=(const ScalarFunctionCallbacks &rhs) const {
