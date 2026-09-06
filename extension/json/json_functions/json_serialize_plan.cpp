@@ -139,10 +139,11 @@ static void JsonSerializePlanFunction(DataChunk &args, ExpressionState &state, V
 					plan = optimizer.Optimize(std::move(plan));
 				}
 
+				plan->ResolveOperatorTypes();
+
 				ColumnBindingResolver resolver;
 				LogicalPlanVerifier::Verify(context, *plan);
 				resolver.VisitOperator(*plan);
-				plan->ResolveOperatorTypes();
 
 				string operator_name;
 				if (!OperatorSupportsSerialization(*plan, operator_name)) {
