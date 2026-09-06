@@ -137,7 +137,7 @@ struct MonotoneFunction {
 	InfinityRule infinity;
 };
 
-const MonotoneFunction MONOTONE_FUNCTIONS[] = {
+constexpr MonotoneFunction MONOTONE_FUNCTIONS[] = {
     {"date_trunc", 1, 2, NumericLimits<idx_t>::Maximum(), InfinityRule::PRESERVED},
     {"datetrunc", 1, 2, NumericLimits<idx_t>::Maximum(), InfinityRule::PRESERVED},
     {"date_bin", 1, 2, NumericLimits<idx_t>::Maximum(), InfinityRule::PRESERVED},
@@ -530,24 +530,22 @@ unique_ptr<Expression> Compare(ExpressionType type, const Expression &input, Val
 	return BoundComparisonExpression::Create(type, input.Copy(), make_uniq<BoundConstantExpression>(std::move(value)));
 }
 
-unique_ptr<Expression> Conjoin(unique_ptr<Expression> left, unique_ptr<Expression> right) {
+unique_ptr<Expression> Combine(ExpressionType type, unique_ptr<Expression> left, unique_ptr<Expression> right) {
 	if (!left) {
 		return right;
 	}
 	if (!right) {
 		return left;
 	}
-	return make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND, std::move(left), std::move(right));
+	return make_uniq<BoundConjunctionExpression>(type, std::move(left), std::move(right));
+}
+
+unique_ptr<Expression> Conjoin(unique_ptr<Expression> left, unique_ptr<Expression> right) {
+	return Combine(ExpressionType::CONJUNCTION_AND, std::move(left), std::move(right));
 }
 
 unique_ptr<Expression> Disjoin(unique_ptr<Expression> left, unique_ptr<Expression> right) {
-	if (!left) {
-		return right;
-	}
-	if (!right) {
-		return left;
-	}
-	return make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_OR, std::move(left), std::move(right));
+	return Combine(ExpressionType::CONJUNCTION_OR, std::move(left), std::move(right));
 }
 
 struct RangeBuilder {

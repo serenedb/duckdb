@@ -37,9 +37,6 @@ struct ZoneDay {
 
 class ZoneLUT {
 public:
-	static constexpr int32_t FIRST_YEAR = 1900;
-	static constexpr int32_t FIRST_DAY = -25567;
-	static constexpr int64_t DAY_COUNT = Date::DAYS_PER_YEAR_INTERVAL;
 	static constexpr int64_t NO_TRANSITION = NumericLimits<int64_t>::Maximum();
 	static constexpr int64_t MULTIPLE_TRANSITIONS = NumericLimits<int64_t>::Minimum();
 	static inline const int64_t FIRST_ANNO_DOMINI = DateTrunc::FromDays(DateTrunc::YearStart(1)).value;
@@ -120,7 +117,7 @@ public:
 	}
 
 	static inline int64_t DayStart(int64_t day) {
-		return (day + FIRST_DAY) * Interval::MICROS_PER_DAY;
+		return (day + DateTruncTable::FIRST_DAY) * Interval::MICROS_PER_DAY;
 	}
 
 	int64_t HourBucketFirstDay() const {
@@ -162,11 +159,11 @@ public:
 
 private:
 	[[gnu::always_inline]] static inline int64_t DayIndex(int64_t micros) {
-		return DateTrunc::FloorDiv(micros, Interval::MICROS_PER_DAY) - FIRST_DAY;
+		return DateTrunc::FloorDiv(micros, Interval::MICROS_PER_DAY) - DateTruncTable::FIRST_DAY;
 	}
 
 	[[gnu::always_inline]] static inline const ZoneDay *Entry(const unsafe_vector<ZoneDay> &days, int64_t day) {
-		if (day < 0 || day >= DAY_COUNT) {
+		if (day < 0 || day >= DateTruncTable::DAY_COUNT) {
 			return nullptr;
 		}
 		const auto &entry = days[UnsafeNumericCast<idx_t>(day)];
@@ -186,9 +183,9 @@ private:
 	int64_t offset_max_input = 0;
 	int64_t resolve_min_wall = 0;
 	int64_t resolve_max_wall = 0;
-	int64_t hour_bucket_first_day = DAY_COUNT;
-	int64_t minute_bucket_first_day = DAY_COUNT;
-	int64_t day_bucket_first_day = DAY_COUNT;
+	int64_t hour_bucket_first_day = DateTruncTable::DAY_COUNT;
+	int64_t minute_bucket_first_day = DateTruncTable::DAY_COUNT;
+	int64_t day_bucket_first_day = DateTruncTable::DAY_COUNT;
 	vector<int64_t> jump_days;
 	vector<pair<int64_t, int32_t>> repeated_midnights;
 };
