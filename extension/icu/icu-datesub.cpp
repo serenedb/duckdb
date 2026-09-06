@@ -1,5 +1,6 @@
 #include "include/icu-datesub.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-scalar-fast.hpp"
 
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/common/enums/date_part_specifier.hpp"
@@ -104,22 +105,33 @@ struct ICUCalendarSub : public ICUDateFunc {
 				throw InternalException("ICUDateSub called with constant NULL bucket width");
 			}
 			const auto specifier = ConstantVector::GetData<string_t>(part_arg)->GetString();
-			auto part_func = SubtractFactory(GetDatePartSpecifier(specifier));
+			const auto part = GetDatePartSpecifier(specifier);
+			auto part_func = SubtractFactory(part);
+			auto row = [&](T start_date, T end_date) { return part_func(calendar.get(), start_date, end_date); };
+			if (ICUScalarFast::TryDateSub(info, part, startdate_arg, enddate_arg, args.size(), result, row)) {
+				return;
+			}
 			BinaryExecutor::Execute<T, T, int64_t>(startdate_arg, enddate_arg, result,
 			                                       [&](T start_date, T end_date) -> optional<int64_t> {
 				                                       if (start_date.IsFinite() && end_date.IsFinite()) {
-					                                       return part_func(calendar.get(), start_date, end_date);
+					                                       return row(start_date, end_date);
 				                                       } else {
 					                                       return nullopt;
 				                                       }
 			                                       });
 		} else {
+			auto row = [&](string_t specifier, T start_date, T end_date) {
+				auto part_func = SubtractFactory(GetDatePartSpecifier(specifier.GetString()));
+				return part_func(calendar.get(), start_date, end_date);
+			};
+			if (ICUScalarFast::TryDifferenceDynamic(info, part_arg, startdate_arg, enddate_arg, result, false, row)) {
+				return;
+			}
 			TernaryExecutor::Execute<string_t, T, T, int64_t>(
 			    part_arg, startdate_arg, enddate_arg, result,
 			    [&](string_t specifier, T start_date, T end_date) -> optional<int64_t> {
 				    if (start_date.IsFinite() && end_date.IsFinite()) {
-					    auto part_func = SubtractFactory(GetDatePartSpecifier(specifier.GetString()));
-					    return part_func(calendar.get(), start_date, end_date);
+					    return row(specifier, start_date, end_date);
 				    } else {
 					    return nullopt;
 				    }
@@ -235,24 +247,35 @@ struct ICUCalendarDiff : public ICUDateFunc {
 				const auto part = GetDatePartSpecifier(specifier);
 				auto trunc_func = DiffTruncationFactory(part);
 				auto sub_func = SubtractFactory(part);
+				auto row = [&](T start_date, T end_date) {
+					return DifferenceFunc<T>(calendar, start_date, end_date, trunc_func, sub_func);
+				};
+				if (ICUScalarFast::TryDateDiff(info, part, startdate_arg, enddate_arg, args.size(), result, row)) {
+					return;
+				}
 				BinaryExecutor::Execute<T, T, int64_t>(
 				    startdate_arg, enddate_arg, result, [&](T start_date, T end_date) -> optional<int64_t> {
 					    if (start_date.IsFinite() && end_date.IsFinite()) {
-						    return DifferenceFunc<T>(calendar, start_date, end_date, trunc_func, sub_func);
+						    return row(start_date, end_date);
 					    } else {
 						    return nullopt;
 					    }
 				    });
 			}
 		} else {
+			auto row = [&](string_t specifier, T start_date, T end_date) {
+				const auto part = GetDatePartSpecifier(specifier.GetString());
+				return DifferenceFunc<T>(calendar, start_date, end_date, DiffTruncationFactory(part),
+				                         SubtractFactory(part));
+			};
+			if (ICUScalarFast::TryDifferenceDynamic(info, part_arg, startdate_arg, enddate_arg, result, true, row)) {
+				return;
+			}
 			TernaryExecutor::Execute<string_t, T, T, int64_t>(
 			    part_arg, startdate_arg, enddate_arg, result,
 			    [&](string_t specifier, T start_date, T end_date) -> optional<int64_t> {
 				    if (start_date.IsFinite() && end_date.IsFinite()) {
-					    const auto part = GetDatePartSpecifier(specifier.GetString());
-					    auto trunc_func = DiffTruncationFactory(part);
-					    auto sub_func = SubtractFactory(part);
-					    return DifferenceFunc<T>(calendar, start_date, end_date, trunc_func, sub_func);
+					    return row(specifier, start_date, end_date);
 				    } else {
 					    return nullopt;
 				    }

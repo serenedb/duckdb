@@ -19,6 +19,8 @@
 #include "include/icu-table-range.hpp"
 #include "include/icu-timebucket.hpp"
 #include "include/icu-timezone.hpp"
+#include "include/icu-zone-transitions.hpp"
+#include "duckdb/optimizer/rule/monotone_predicate.hpp"
 #include "include/icu_extension.hpp"
 #include "unicode/calendar.h"
 #include "unicode/coll.h"
@@ -518,6 +520,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterICUStrptimeFunctions(loader);
 	RegisterICUTimeBucketFunctions(loader);
 	RegisterICUTimeZoneFunctions(loader);
+	MonotonePredicateRule::zone_transitions = ICUZoneTransitions::Collect;
 
 	// Calendars
 	UErrorCode status = U_ZERO_ERROR;

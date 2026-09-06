@@ -11,6 +11,7 @@
 #include "duckdb/common/enums/date_part_specifier.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/function/function.hpp"
+#include "icu-zone-lut.hpp"
 #include "tz_calendar.hpp"
 
 namespace duckdb {
@@ -24,6 +25,7 @@ struct ICUDateFunc {
 		string tz_setting;
 		string cal_setting;
 		CalendarPtr calendar;
+		shared_ptr<const ZoneLUT> lut;
 
 		bool Equals(const FunctionData &other_p) const override;
 		duckdb::unique_ptr<FunctionData> Copy() const override;
