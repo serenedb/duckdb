@@ -470,10 +470,9 @@ struct Leaf {
 bool TryLeaf(const Folder &folder, Expression &expr, Leaf &leaf) {
 	if (auto hooked = GetHookedBucketRewrite(folder.context, expr)) {
 		leaf.input = BucketRewriteInput(expr, hooked->InputIndex()).get();
-		auto granular = dynamic_cast<GranularBucketRewrite *>(hooked.get());
-		if (granular && granular->GranularityMicros() > 0) {
+		if (const auto granularity = hooked->GranularityMicros(); granularity > 0) {
 			leaf.info.kind = LeafInfo::Kind::DATE;
-			leaf.info.granularity = granular->GranularityMicros();
+			leaf.info.granularity = granularity;
 		}
 		if (expr.GetReturnType().id() == LogicalTypeId::DATE) {
 			leaf.info.kind = LeafInfo::Kind::DATE;
@@ -826,23 +825,11 @@ bool DateInput(const Expression &expr) {
 }
 
 bool PartFunctionSpecifier(std::string_view name, DatePartSpecifier &part) {
-	if (name == "dayofyear") {
-		part = DatePartSpecifier::DOY;
-		return true;
+	if (!NameIn(name, {"year", "quarter", "month", "week", "day", "hour", "minute", "second", "decade", "century",
+	                   "millennium", "isoyear", "isodow", "yearweek", "dayofyear", "dayofweek", "weekofyear"})) {
+		return false;
 	}
-	if (name == "dayofweek") {
-		part = DatePartSpecifier::DOW;
-		return true;
-	}
-	if (name == "weekofyear") {
-		part = DatePartSpecifier::WEEK;
-		return true;
-	}
-	if (NameIn(name, {"year", "quarter", "month", "week", "day", "hour", "minute", "second", "decade", "century",
-	                  "millennium", "isoyear", "isodow", "yearweek"})) {
-		return TryGetDatePartSpecifier(string(name), part);
-	}
-	return false;
+	return TryGetDatePartSpecifier(string(name), part);
 }
 
 bool ClassifyLabelPart(const Folder &folder, Expression &part_expr, DateCoordinates &coordinates, LabelPart &out) {
@@ -1018,12 +1005,8 @@ unique_ptr<BucketRewrite> TryTimeOfDayCast(const Folder &folder, Expression &gro
 	if (!inner_rewrite) {
 		return nullptr;
 	}
-	auto core = GranularBucketRewrite::CoreOf(*inner_rewrite);
-	if (!core) {
-		return nullptr;
-	}
 	auto &input = *BucketRewriteInput(inner, inner_rewrite->InputIndex());
-	return core->TryTimeOfDay(folder.context, input);
+	return inner_rewrite->TryTimeOfDay(folder.context, input);
 }
 
 struct Candidate {

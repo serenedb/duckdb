@@ -40,9 +40,9 @@ struct ICUZoneTransitions {
 		if (lut->HasFixedOffset()) {
 			return true;
 		}
-		const int64_t first = DateTrunc::FloorDiv(from, Interval::MICROS_PER_DAY) - ZoneLUT::FIRST_DAY;
-		const int64_t last = DateTrunc::FloorDiv(to, Interval::MICROS_PER_DAY) - ZoneLUT::FIRST_DAY;
-		if (first < 0 || last >= ZoneLUT::DAY_COUNT) {
+		const int64_t first = DateTrunc::FloorDiv(from, Interval::MICROS_PER_DAY) - DateTruncTable::FIRST_DAY;
+		const int64_t last = DateTrunc::FloorDiv(to, Interval::MICROS_PER_DAY) - DateTruncTable::FIRST_DAY;
+		if (first < 0 || last >= DateTruncTable::DAY_COUNT) {
 			return false;
 		}
 		for (int64_t day = first; day <= last; day++) {

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <string_view>
+
 #include "duckdb/common/enums/date_part_specifier.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/function/scalar_function.hpp"
@@ -36,40 +38,22 @@ struct DateBucketSpec {
 	bool TryBucket(int64_t micros, int64_t &result) const;
 };
 
-class GranularBucketRewrite : public BucketRewrite {
-public:
-	virtual int64_t GranularityMicros() const = 0;
-	virtual bool Contains(const GranularBucketRewrite &finer) const = 0;
-	virtual optional_ptr<const GranularBucketRewrite> Core() const {
-		return this;
-	}
-	virtual unique_ptr<BucketRewrite> TryTimeOfDay(ClientContext &context, Expression &input) const {
-		return nullptr;
-	}
-
-	static bool Nested(int64_t width, int64_t anchor, int64_t finer_width, int64_t finer_anchor) {
-		return finer_width > 0 && width % finer_width == 0 && (anchor - finer_anchor) % finer_width == 0;
-	}
-	static optional_ptr<const GranularBucketRewrite> CoreOf(const BucketRewrite &rewrite) {
-		auto granular = dynamic_cast<const GranularBucketRewrite *>(&rewrite);
-		return granular ? granular->Core() : nullptr;
-	}
-};
-
-class DelegatingBucketRewrite : public GranularBucketRewrite {
+class DelegatingBucketRewrite : public BucketRewrite {
 public:
 	explicit DelegatingBucketRewrite(unique_ptr<BucketRewrite> inner_p) : inner(std::move(inner_p)) {
 	}
 
-	int64_t GranularityMicros() const override {
-		return 0;
+	unique_ptr<Expression> UnbucketCore(unique_ptr<Expression> bucket) const override {
+		return inner->UnbucketCore(std::move(bucket));
 	}
-	optional_ptr<const GranularBucketRewrite> Core() const override {
-		return CoreOf(*inner);
+	BucketGrid Grid() const override {
+		return inner->Grid();
 	}
-	bool Contains(const GranularBucketRewrite &finer) const override {
-		auto core = Core();
-		return core && core->Contains(finer);
+	bool Contains(const BucketGrid &finer) const override {
+		return inner->Contains(finer);
+	}
+	unique_ptr<BucketRewrite> TryTimeOfDay(ClientContext &context, Expression &input) const override {
+		return inner->TryTimeOfDay(context, input);
 	}
 	bool TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket, int64_t &max_bucket) const override {
 		return inner->TryBucketRange(input_stats, min_bucket, max_bucket);
@@ -82,14 +66,15 @@ protected:
 	unique_ptr<BucketRewrite> inner;
 };
 
-class DateBucketRewrite : public GranularBucketRewrite {
+class DateBucketRewrite : public BucketRewrite {
 public:
 	DateBucketRewrite(ClientContext &context, DateBucketSpec spec, idx_t input_index, LogicalType input_type,
 	                  LogicalType result_type, bool anno_domini_only);
 
 	idx_t InputIndex() const override;
 	int64_t GranularityMicros() const override;
-	bool Contains(const GranularBucketRewrite &finer) const override;
+	BucketGrid Grid() const override;
+	bool Contains(const BucketGrid &finer) const override;
 	bool TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket, int64_t &max_bucket) const override;
 	unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const override;
 	unique_ptr<Expression> Unbucket(unique_ptr<Expression> bucket) const override;
@@ -211,7 +196,7 @@ unique_ptr<Expression> MakeBucketCall(const ScalarFunction &function, vector<uni
                                       unique_ptr<FunctionData> bind_info = nullptr);
 unique_ptr<Expression> RebuildShell(ClientContext &context, const Expression &shell, const Expression &template_input,
                                     unique_ptr<Expression> value);
-const char *DateTruncPartName(DatePartSpecifier part);
+std::string_view DateTruncPartName(DatePartSpecifier part);
 bool TryGetStrfTimeGranularity(const string &format, bool sub_day_constant, DatePartSpecifier &part,
                                bool &two_digit_year);
 bool TryGetMicrosRange(const BaseStatistics &stats, int64_t &min, int64_t &max, bool &zoned);

@@ -427,7 +427,7 @@ struct DateTrunc {
 
 	template <class TA, class TR>
 	static inline TR Element(DatePartSpecifier type, TA element) {
-		if (!element.IsFinite()) {
+		if (!Value::IsFinite(element)) {
 			return Cast::template Operation<TA, TR>(element);
 		}
 		return Dispatch(type, [&](auto op) { return decltype(op)::template Operation<TA, TR>(element); });

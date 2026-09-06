@@ -33,19 +33,19 @@ namespace duckdb {
 namespace {
 
 constexpr int64_t MSECS_PER_DAY = Interval::MICROS_PER_DAY / Interval::MICROS_PER_MSEC;
-constexpr int32_t MSECS_PER_SEC = Interval::MICROS_PER_SEC / Interval::MICROS_PER_MSEC;
+
 
 bool OffsetSeconds(int32_t millis, int32_t &seconds) {
-	seconds = millis / MSECS_PER_SEC;
-	return seconds * MSECS_PER_SEC == millis;
+	seconds = millis / Interval::MSECS_PER_SEC;
+	return seconds * Interval::MSECS_PER_SEC == millis;
 }
 
 int64_t DayOf(int64_t micros) {
-	return DateTrunc::FloorDiv(micros, Interval::MICROS_PER_DAY) - ZoneLUT::FIRST_DAY;
+	return DateTrunc::FloorDiv(micros, Interval::MICROS_PER_DAY) - DateTruncTable::FIRST_DAY;
 }
 
 void Fill(unsafe_vector<ZoneDay> &days, int64_t &next, int64_t end, int32_t offset) {
-	const auto limit = MinValue<int64_t>(end, ZoneLUT::DAY_COUNT);
+	const auto limit = MinValue<int64_t>(end, DateTruncTable::DAY_COUNT);
 	for (; next < limit; next++) {
 		days[UnsafeNumericCast<idx_t>(next)] = {ZoneLUT::NO_TRANSITION, offset, offset};
 	}
@@ -53,7 +53,7 @@ void Fill(unsafe_vector<ZoneDay> &days, int64_t &next, int64_t end, int32_t offs
 
 void Attach(unsafe_vector<ZoneDay> &days, int64_t &next, int64_t first, int64_t last, const ZoneDay &transition) {
 	Fill(days, next, first, transition.before);
-	for (auto day = MaxValue<int64_t>(first, 0); day <= last && day < ZoneLUT::DAY_COUNT; day++) {
+	for (auto day = MaxValue<int64_t>(first, 0); day <= last && day < DateTruncTable::DAY_COUNT; day++) {
 		auto &entry = days[UnsafeNumericCast<idx_t>(day)];
 		if (day < next) {
 			entry.transition = ZoneLUT::MULTIPLE_TRANSITIONS;
@@ -61,13 +61,12 @@ void Attach(unsafe_vector<ZoneDay> &days, int64_t &next, int64_t first, int64_t 
 			entry = transition;
 		}
 	}
-	next = MaxValue<int64_t>(next, MinValue<int64_t>(last + 1, ZoneLUT::DAY_COUNT));
+	next = MaxValue<int64_t>(next, MinValue<int64_t>(last + 1, DateTruncTable::DAY_COUNT));
 }
 
 } // namespace
 
 ZoneLUT::ZoneLUT(const icu::BasicTimeZone &tz) {
-	D_ASSERT(Date::FromDate(FIRST_YEAR, 1, 1).days == FIRST_DAY);
 	UErrorCode status = U_ZERO_ERROR;
 	const auto rule_count = tz.countTransitionRules(status);
 	if (U_FAILURE(status)) {
@@ -90,14 +89,14 @@ ZoneLUT::ZoneLUT(const icu::BasicTimeZone &tz) {
 		offset_max_input = limit - MaxValue<int64_t>(fixed_offset, 0);
 		resolve_min_wall = -limit + MaxValue<int64_t>(fixed_offset, 0);
 		resolve_max_wall = limit + MinValue<int64_t>(fixed_offset, 0);
-		hour_bucket_first_day = fixed_offset % Interval::MICROS_PER_HOUR == 0 ? 0 : DAY_COUNT;
-		minute_bucket_first_day = fixed_offset % Interval::MICROS_PER_MINUTE == 0 ? 0 : DAY_COUNT;
+		hour_bucket_first_day = fixed_offset % Interval::MICROS_PER_HOUR == 0 ? 0 : DateTruncTable::DAY_COUNT;
+		minute_bucket_first_day = fixed_offset % Interval::MICROS_PER_MINUTE == 0 ? 0 : DateTruncTable::DAY_COUNT;
 		day_bucket_first_day = 0;
 		return;
 	}
 
-	const int64_t begin_ms = (int64_t(FIRST_DAY) - 2) * MSECS_PER_DAY;
-	const int64_t end_ms = (int64_t(FIRST_DAY) + DAY_COUNT + 2) * MSECS_PER_DAY;
+	const int64_t begin_ms = (int64_t(DateTruncTable::FIRST_DAY) - 2) * MSECS_PER_DAY;
+	const int64_t end_ms = (int64_t(DateTruncTable::FIRST_DAY) + DateTruncTable::DAY_COUNT + 2) * MSECS_PER_DAY;
 	tz.getOffset(UDate(begin_ms), false, raw_offset, dst_offset, status);
 	int32_t current = 0;
 	if (U_FAILURE(status) || !OffsetSeconds(raw_offset + dst_offset, current)) {
@@ -105,8 +104,8 @@ ZoneLUT::ZoneLUT(const icu::BasicTimeZone &tz) {
 		return;
 	}
 
-	instants.resize(UnsafeNumericCast<idx_t>(DAY_COUNT));
-	walls.resize(UnsafeNumericCast<idx_t>(DAY_COUNT));
+	instants.resize(UnsafeNumericCast<idx_t>(DateTruncTable::DAY_COUNT));
+	walls.resize(UnsafeNumericCast<idx_t>(DateTruncTable::DAY_COUNT));
 	int64_t next_instant = 0;
 	int64_t next_wall = 0;
 	icu::TimeZoneTransition transition;
@@ -133,12 +132,12 @@ ZoneLUT::ZoneLUT(const icu::BasicTimeZone &tz) {
 		base = UDate(millis);
 		inclusive = false;
 	}
-	Fill(instants, next_instant, DAY_COUNT, current);
-	Fill(walls, next_wall, DAY_COUNT, current);
+	Fill(instants, next_instant, DateTruncTable::DAY_COUNT, current);
+	Fill(walls, next_wall, DateTruncTable::DAY_COUNT, current);
 	hour_bucket_first_day = 0;
 	minute_bucket_first_day = 0;
 	day_bucket_first_day = 0;
-	for (int64_t day = 0; day < DAY_COUNT; day++) {
+	for (int64_t day = 0; day < DateTruncTable::DAY_COUNT; day++) {
 		const auto &entry = instants[UnsafeNumericCast<idx_t>(day)];
 		const auto &wall = walls[UnsafeNumericCast<idx_t>(day)];
 		const bool multiple = entry.transition == MULTIPLE_TRANSITIONS || wall.transition == MULTIPLE_TRANSITIONS;
@@ -158,7 +157,7 @@ ZoneLUT::ZoneLUT(const icu::BasicTimeZone &tz) {
 		if (multiple || (wall.transition != NO_TRANSITION &&
 		                 AbsValue(int64_t(wall.before) - int64_t(wall.after)) >= Interval::SECS_PER_DAY)) {
 			jump_days.push_back(day);
-		} else if (MidnightRepeats(wall, day + FIRST_DAY)) {
+		} else if (MidnightRepeats(wall, day + DateTruncTable::FIRST_DAY)) {
 			repeated_midnights.emplace_back(day, wall.after);
 		}
 	}
@@ -177,8 +176,8 @@ bool ZoneLUT::OriginDaysSupported(int64_t origin_day, int64_t lo_day, int64_t hi
 	if (fixed) {
 		return true;
 	}
-	const auto origin_index = origin_day - FIRST_DAY;
-	if (origin_index < 0 || origin_index >= DAY_COUNT) {
+	const auto origin_index = origin_day - DateTruncTable::FIRST_DAY;
+	if (origin_index < 0 || origin_index >= DateTruncTable::DAY_COUNT) {
 		return false;
 	}
 	int64_t origin_offset = 0;
@@ -186,8 +185,8 @@ bool ZoneLUT::OriginDaysSupported(int64_t origin_day, int64_t lo_day, int64_t hi
 	               origin_offset)) {
 		return false;
 	}
-	const auto lo = MinValue(MinValue(lo_day, hi_day), origin_day) - 1 - FIRST_DAY;
-	const auto hi = MaxValue(MaxValue(lo_day, hi_day), origin_day) + 1 - FIRST_DAY;
+	const auto lo = MinValue(MinValue(lo_day, hi_day), origin_day) - 1 - DateTruncTable::FIRST_DAY;
+	const auto hi = MaxValue(MaxValue(lo_day, hi_day), origin_day) + 1 - DateTruncTable::FIRST_DAY;
 	auto jump = std::lower_bound(jump_days.begin(), jump_days.end(), lo);
 	if (jump != jump_days.end() && *jump <= hi) {
 		return false;

@@ -536,7 +536,7 @@ struct ICUScalarFast {
 				return false;
 			}
 			const int64_t day = DateTrunc::FloorDiv(local, Interval::MICROS_PER_DAY);
-			return lut.TryResolveDay(day - ZoneLUT::FIRST_DAY, day * Interval::MICROS_PER_DAY, out);
+			return lut.TryResolveDay(day - DateTruncTable::FIRST_DAY, day * Interval::MICROS_PER_DAY, out);
 		}
 		case DatePartSpecifier::MONTH:
 			return TryTruncMonth(lut, micros, false, out);

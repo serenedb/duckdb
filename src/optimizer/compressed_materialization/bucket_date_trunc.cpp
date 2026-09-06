@@ -260,17 +260,18 @@ idx_t EliminateNested(vector<BucketedGroup> &bucketed, const vector<reference<Ex
 	idx_t saved_bits = 0;
 	for (idx_t coarse_idx = 0; coarse_idx < bucketed.size(); coarse_idx++) {
 		auto &coarse_group = bucketed[coarse_idx];
-		auto coarse = dynamic_cast<GranularBucketRewrite *>(coarse_group.rewrite.get());
-		if (!coarse) {
+		auto &coarse = *coarse_group.rewrite;
+		const auto coarse_grid = coarse.Grid();
+		if (coarse_grid.family == BucketGrid::Family::NONE) {
 			continue;
 		}
-		auto &coarse_input = RewriteInput(groups[coarse_group.group_idx], *coarse);
+		auto &coarse_input = RewriteInput(groups[coarse_group.group_idx], coarse);
 		for (idx_t fine_idx = 0; fine_idx < bucketed.size(); fine_idx++) {
 			auto &fine_group = bucketed[fine_idx];
-			auto fine = dynamic_cast<GranularBucketRewrite *>(fine_group.rewrite.get());
-			if (fine_idx == coarse_idx || fine_group.provider.IsValid() || !fine || !coarse->Contains(*fine) ||
-			    (fine->Contains(*coarse) && fine_idx > coarse_idx) ||
-			    !coarse_input.Equals(RewriteInput(groups[fine_group.group_idx], *fine))) {
+			auto &fine = *fine_group.rewrite;
+			if (fine_idx == coarse_idx || fine_group.provider.IsValid() || !coarse.Contains(fine.Grid()) ||
+			    (fine.Contains(coarse_grid) && fine_idx > coarse_idx) ||
+			    !coarse_input.Equals(RewriteInput(groups[fine_group.group_idx], fine))) {
 				continue;
 			}
 			coarse_group.provider = fine_idx;
@@ -616,9 +617,9 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 			projections.push_back(group->rewrite->Unbucket(kept_reference(col_idx)));
 		} else {
 			auto &provider = bucketed[group->provider.GetIndex()];
-			auto core = GranularBucketRewrite::CoreOf(*provider.rewrite);
-			projections.push_back(RebuildShell(context, *group->shell, *group->input_template,
-			                                   core->Unbucket(kept_reference(provider.group_idx))));
+			projections.push_back(
+			    RebuildShell(context, *group->shell, *group->input_template,
+			                 provider.rewrite->UnbucketCore(kept_reference(provider.group_idx))));
 		}
 	}
 

@@ -26,7 +26,6 @@
 namespace duckdb {
 
 struct ICUOriginDay {
-	static constexpr int64_t DAY_ORIGIN = 10959;
 	static constexpr int64_t MONTH_ORIGIN = 2000 * 12;
 
 	[[gnu::always_inline]] static inline bool TryLocalDay(const ZoneLUT &lut, int64_t micros, int64_t &local_day) {
@@ -46,8 +45,8 @@ struct ICUOriginDay {
 		if (lut.HasFixedOffset()) {
 			return true;
 		}
-		const auto index = day - ZoneLUT::FIRST_DAY;
-		if (index < 0 || index >= ZoneLUT::DAY_COUNT) {
+		const auto index = day - DateTruncTable::FIRST_DAY;
+		if (index < 0 || index >= DateTruncTable::DAY_COUNT) {
 			return false;
 		}
 		const auto &entry = lut.WallEntry(index);
@@ -59,7 +58,7 @@ struct ICUOriginDay {
 	}
 
 	[[gnu::always_inline]] static inline bool TryBucketStart(const ZoneLUT &lut, int64_t first_day, int64_t &start) {
-		return lut.TryResolveDay(first_day - ZoneLUT::FIRST_DAY, first_day * Interval::MICROS_PER_DAY, start);
+		return lut.TryResolveDay(first_day - DateTruncTable::FIRST_DAY, first_day * Interval::MICROS_PER_DAY, start);
 	}
 };
 
