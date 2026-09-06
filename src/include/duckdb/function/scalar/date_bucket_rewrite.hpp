@@ -33,7 +33,7 @@ struct DateBucketSpec {
 	int64_t width = 1;
 	int64_t anchor = 0;
 
-	int64_t Bucket(int64_t micros) const;
+	bool TryBucket(int64_t micros, int64_t &result) const;
 };
 
 class GranularBucketRewrite : public BucketRewrite {
@@ -167,7 +167,20 @@ protected:
 };
 
 struct DateCoordinates {
-	enum class Level : uint8_t { NONE, MILLENNIUM, CENTURY, DECADE, YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, SECOND };
+	enum class Level : uint8_t {
+		NONE,
+		MILLENNIUM,
+		CENTURY,
+		DECADE,
+		YEAR,
+		QUARTER,
+		MONTH,
+		WEEK,
+		DAY,
+		HOUR,
+		MINUTE,
+		SECOND
+	};
 
 	Level finest = Level::NONE;
 	bool year = false;
