@@ -1,5 +1,7 @@
 #include "include/icu-datetrunc.hpp"
+#include "include/icu-bucket.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-datetrunc-lut.hpp"
 
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -126,6 +128,9 @@ struct ICUDateTrunc : public ICUDateFunc {
 	template <typename T>
 	static void ICUDateTruncFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.ColumnCount() == 2);
+		if (ICUDateTruncLUT::TryExecute<T>(args, state, result)) {
+			return;
+		}
 		const auto &part_arg = args.data[0];
 		const auto &date_arg = args.data[1];
 
@@ -165,7 +170,9 @@ struct ICUDateTrunc : public ICUDateFunc {
 
 	template <typename TA>
 	static ScalarFunction GetDateTruncFunction(const LogicalTypeId &type) {
-		return ScalarFunction({LogicalType::VARCHAR, type}, LogicalType::TIMESTAMP_TZ, ICUDateTruncFunction<TA>, Bind);
+		ScalarFunction function({LogicalType::VARCHAR, type}, LogicalType::TIMESTAMP_TZ, ICUDateTruncFunction<TA>, Bind);
+		function.SetBucketRewriteCallback(ICUDateTruncBucketRewrite);
+		return function;
 	}
 
 	static void AddBinaryTimestampFunction(const Identifier &name, ExtensionLoader &loader) {
@@ -229,6 +236,7 @@ timestamp_tz_t ICUDateFunc::CurrentMidnight(icu::Calendar *calendar, ExpressionS
 void RegisterICUDateTruncFunctions(ExtensionLoader &loader) {
 	ICUDateTrunc::AddBinaryTimestampFunction("date_trunc", loader);
 	ICUDateTrunc::AddBinaryTimestampFunction("datetrunc", loader);
+	RegisterICUBucketFunctions(loader);
 }
 
 } // namespace duckdb
