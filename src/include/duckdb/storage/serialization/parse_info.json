@@ -334,6 +334,108 @@
     ]
   },
   {
+    "class": "AlterPermissionsInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_PERMISSIONS",
+    "members": [
+      {
+        "id": 300,
+        "name": "entry_catalog_type",
+        "type": "CatalogType"
+      },
+      {
+        "id": 301,
+        "name": "in_schema",
+        "type": "bool"
+      },
+      {
+        "id": 302,
+        "name": "targets",
+        "type": "vector<Identifier>"
+      },
+      {
+        "id": 303,
+        "name": "new_owner",
+        "type": "string"
+      },
+      {
+        "id": 304,
+        "name": "new_owner_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 305,
+        "name": "privileges",
+        "type": "AclMode"
+      },
+      {
+        "id": 306,
+        "name": "column_privileges",
+        "type": "vector<ColumnPrivilege>"
+      },
+      {
+        "id": 307,
+        "name": "grantee",
+        "type": "string"
+      },
+      {
+        "id": 308,
+        "name": "grantee_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 309,
+        "name": "granted_by",
+        "type": "string"
+      },
+      {
+        "id": 310,
+        "name": "grantors",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 311,
+        "name": "revoke",
+        "type": "bool"
+      },
+      {
+        "id": 312,
+        "name": "with_grant_option",
+        "type": "bool"
+      },
+      {
+        "id": 313,
+        "name": "option_only",
+        "type": "bool"
+      },
+      {
+        "id": 314,
+        "name": "cascade",
+        "type": "bool"
+      },
+      {
+        "id": 315,
+        "name": "default_objtype",
+        "type": "CatalogType"
+      },
+      {
+        "id": 316,
+        "name": "for_role",
+        "type": "string"
+      },
+      {
+        "id": 317,
+        "name": "default_schema",
+        "type": "string"
+      },
+      {
+        "id": 318,
+        "name": "target_role",
+        "type": "idx_t"
+      }
+    ]
+  },
+  {
     "class": "ChangeOwnershipInfo",
     "base": "AlterInfo",
     "enum": "CHANGE_OWNERSHIP",

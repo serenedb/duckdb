@@ -104,6 +104,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	case AlterType::ALTER_DATABASE:
 		result = AlterDatabaseInfo::Deserialize(deserializer);
 		break;
+	case AlterType::ALTER_PERMISSIONS:
+		result = AlterPermissionsInfo::Deserialize(deserializer);
+		break;
 	case AlterType::ALTER_TABLE:
 		result = AlterTableInfo::Deserialize(deserializer);
 		break;
@@ -290,6 +293,53 @@ unique_ptr<AlterTableInfo> AlterForeignKeyInfo::Deserialize(Deserializer &deseri
 	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(403, "pk_keys", result->pk_keys);
 	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(404, "fk_keys", result->fk_keys);
 	deserializer.ReadProperty<AlterForeignKeyType>(405, "alter_fk_type", result->type);
+	return std::move(result);
+}
+
+void AlterPermissionsInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<CatalogType>(300, "entry_catalog_type", entry_catalog_type);
+	serializer.WritePropertyWithDefault<bool>(301, "in_schema", in_schema);
+	serializer.WritePropertyWithDefault<vector<Identifier>>(302, "targets", targets);
+	serializer.WritePropertyWithDefault<string>(303, "new_owner", new_owner);
+	serializer.WritePropertyWithDefault<idx_t>(304, "new_owner_id", new_owner_id);
+	serializer.WriteProperty<AclMode>(305, "privileges", privileges);
+	serializer.WritePropertyWithDefault<vector<ColumnPrivilege>>(306, "column_privileges", column_privileges);
+	serializer.WritePropertyWithDefault<string>(307, "grantee", grantee);
+	serializer.WritePropertyWithDefault<idx_t>(308, "grantee_id", grantee_id);
+	serializer.WritePropertyWithDefault<string>(309, "granted_by", granted_by);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(310, "grantors", grantors);
+	serializer.WritePropertyWithDefault<bool>(311, "revoke", revoke);
+	serializer.WritePropertyWithDefault<bool>(312, "with_grant_option", with_grant_option);
+	serializer.WritePropertyWithDefault<bool>(313, "option_only", option_only);
+	serializer.WritePropertyWithDefault<bool>(314, "cascade", cascade);
+	serializer.WriteProperty<CatalogType>(315, "default_objtype", default_objtype);
+	serializer.WritePropertyWithDefault<string>(316, "for_role", for_role);
+	serializer.WritePropertyWithDefault<string>(317, "default_schema", default_schema);
+	serializer.WritePropertyWithDefault<idx_t>(318, "target_role", target_role);
+}
+
+unique_ptr<AlterInfo> AlterPermissionsInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<AlterPermissionsInfo>(new AlterPermissionsInfo());
+	deserializer.ReadProperty<CatalogType>(300, "entry_catalog_type", result->entry_catalog_type);
+	deserializer.ReadPropertyWithDefault<bool>(301, "in_schema", result->in_schema);
+	deserializer.ReadPropertyWithDefault<vector<Identifier>>(302, "targets", result->targets);
+	deserializer.ReadPropertyWithDefault<string>(303, "new_owner", result->new_owner);
+	deserializer.ReadPropertyWithDefault<idx_t>(304, "new_owner_id", result->new_owner_id);
+	deserializer.ReadProperty<AclMode>(305, "privileges", result->privileges);
+	deserializer.ReadPropertyWithDefault<vector<ColumnPrivilege>>(306, "column_privileges", result->column_privileges);
+	deserializer.ReadPropertyWithDefault<string>(307, "grantee", result->grantee);
+	deserializer.ReadPropertyWithDefault<idx_t>(308, "grantee_id", result->grantee_id);
+	deserializer.ReadPropertyWithDefault<string>(309, "granted_by", result->granted_by);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(310, "grantors", result->grantors);
+	deserializer.ReadPropertyWithDefault<bool>(311, "revoke", result->revoke);
+	deserializer.ReadPropertyWithDefault<bool>(312, "with_grant_option", result->with_grant_option);
+	deserializer.ReadPropertyWithDefault<bool>(313, "option_only", result->option_only);
+	deserializer.ReadPropertyWithDefault<bool>(314, "cascade", result->cascade);
+	deserializer.ReadProperty<CatalogType>(315, "default_objtype", result->default_objtype);
+	deserializer.ReadPropertyWithDefault<string>(316, "for_role", result->for_role);
+	deserializer.ReadPropertyWithDefault<string>(317, "default_schema", result->default_schema);
+	deserializer.ReadPropertyWithDefault<idx_t>(318, "target_role", result->target_role);
 	return std::move(result);
 }
 

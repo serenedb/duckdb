@@ -306,7 +306,6 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		auto &comment_on_column_info = info.Cast<SetColumnCommentInfo>();
 		return SetColumnComment(context, comment_on_column_info);
 	}
-
 	if (info.type != AlterType::ALTER_TABLE) {
 		throw CatalogException("Can only modify table with ALTER TABLE statement");
 	}
@@ -1360,6 +1359,17 @@ unique_ptr<CatalogEntry> DuckTableEntry::SetColumnComment(ClientContext &context
 	// Modify the column that was specified by 'column_name'
 	auto &col = table_info.columns.GetColumnMutable(col_idx);
 	col.SetComment(info.comment_value);
+
+	auto binder = Binder::CreateBinder(context);
+	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+}
+
+unique_ptr<CatalogEntry> DuckTableEntry::AlterPermissions(ClientContext &context, AlterPermissionsInfo &info) {
+	auto create_info = GetInfo();
+	auto &table_info = create_info->Cast<CreateTableInfo>();
+	table_info.permissions = permissions;
+	ApplyPermissionAlter(table_info.permissions, &table_info.columns, type, info);
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);

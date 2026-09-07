@@ -22,7 +22,6 @@
 namespace duckdb {
 class BindContext;
 class BoundQueryNode;
-class ClientContext;
 class ColumnRefExpression;
 class SubqueryRef;
 class LogicalGet;
@@ -124,7 +123,6 @@ public:
 	optional_ptr<StandardEntry> entry;
 	//! Virtual columns
 	virtual_column_map_t virtual_columns;
-	optional_ptr<ClientContext> context;
 
 public:
 	unique_ptr<ParsedExpression> ExpandGeneratedColumn(const Identifier &column_name);
@@ -133,12 +131,6 @@ public:
 	ErrorData ColumnNotFoundError(const Identifier &column_name) const override;
 	// These are columns that are present in the name_map, appearing in the order that they're bound
 	const vector<ColumnIndex> &GetBoundColumnIds() const;
-	// Same list without the debug uniqueness verification -- for readers that run
-	// mid-bind, where statements like MERGE hold transient duplicates that are
-	// resolved before planning
-	const vector<ColumnIndex> &PeekBoundColumnIds() const {
-		return bound_column_ids;
-	}
 
 protected:
 	ColumnBinding GetColumnBinding(column_t column_index);

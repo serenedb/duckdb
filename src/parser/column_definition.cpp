@@ -25,6 +25,7 @@ ColumnDefinition ColumnDefinition::Copy() const {
 	copy.category = category;
 	copy.comment = comment;
 	copy.tags = tags;
+	copy.acl = acl;
 	return copy;
 }
 
@@ -77,6 +78,14 @@ const Value &ColumnDefinition::Comment() const {
 
 void ColumnDefinition::SetComment(const Value &comment) {
 	this->comment = comment;
+}
+
+const vector<AclItem> &ColumnDefinition::Acl() const {
+	return acl;
+}
+
+void ColumnDefinition::SetAcl(vector<AclItem> new_acl) {
+	acl = std::move(new_acl);
 }
 
 const InsertionOrderPreservingMap<string> &ColumnDefinition::Tags() const {

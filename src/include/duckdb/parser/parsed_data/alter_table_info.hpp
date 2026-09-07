@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/column_definition.hpp"
 #include "duckdb/parser/constraint.hpp"
@@ -64,6 +65,43 @@ public:
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 
 	explicit SetCommentInfo();
+};
+
+//===--------------------------------------------------------------------===//
+// Alter Permissions
+//===--------------------------------------------------------------------===//
+struct AlterPermissionsInfo : public AlterInfo {
+	AlterPermissionsInfo(CatalogType entry_catalog_type, QualifiedName entry_name);
+
+	CatalogType entry_catalog_type;
+	bool in_schema = false;
+	vector<Identifier> targets;
+	string new_owner;
+	idx_t new_owner_id = 0;
+	AclMode privileges = AclMode::NoRights;
+	vector<ColumnPrivilege> column_privileges;
+	string grantee;
+	idx_t grantee_id = ACL_ID_PUBLIC;
+	string granted_by;
+	vector<idx_t> grantors;
+	bool revoke = false;
+	bool with_grant_option = false;
+	bool option_only = false;
+	bool cascade = false;
+	CatalogType default_objtype = CatalogType::INVALID;
+	string for_role;
+	string default_schema;
+	idx_t target_role = 0;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit AlterPermissionsInfo();
 };
 
 //===--------------------------------------------------------------------===//

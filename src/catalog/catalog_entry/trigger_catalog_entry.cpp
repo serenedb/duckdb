@@ -17,6 +17,7 @@ TriggerCatalogEntry::TriggerCatalogEntry(Catalog &catalog, SchemaCatalogEntry &s
 	this->temporary = info.temporary;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 }
 
 unique_ptr<CatalogEntry> TriggerCatalogEntry::Copy(ClientContext &context) const {

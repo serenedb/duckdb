@@ -27,7 +27,9 @@ enum class AlterType : uint8_t {
 	ALTER_TABLE_FUNCTION = 6,
 	SET_COMMENT = 7,
 	SET_COLUMN_COMMENT = 8,
-	ALTER_DATABASE = 9
+	ALTER_DATABASE = 9,
+	ALTER_PERMISSIONS = 10,
+	ALTER_ROLE = 11
 };
 
 enum class AlterBindMode { BIND_ON_ALTER, SKIP_BINDING };

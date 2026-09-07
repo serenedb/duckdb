@@ -480,6 +480,12 @@
         "name": "tags",
         "type": "InsertionOrderPreservingMap<string>",
         "default": "InsertionOrderPreservingMap<string>()"
+      },
+      {
+        "id": 107,
+        "name": "acl",
+        "type": "vector<AclItem>",
+        "default": "vector<AclItem>()"
       }
     ],
     "constructor": [
@@ -487,6 +493,102 @@
       "type",
       "expression",
       "category"
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "AclItem",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "grantee",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "grantor",
+        "type": "idx_t"
+      },
+      {
+        "id": 102,
+        "name": "privs",
+        "type": "AclMode"
+      },
+      {
+        "id": 103,
+        "name": "grant_option",
+        "type": "AclMode"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "ColumnPrivilege",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "column",
+        "type": "Identifier"
+      },
+      {
+        "id": 101,
+        "name": "privileges",
+        "type": "AclMode"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "DefaultAcl",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "role",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "objtype",
+        "type": "CatalogType"
+      },
+      {
+        "id": 102,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "CatalogPermissions",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "owner",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      },
+      {
+        "id": 102,
+        "name": "defaults",
+        "type": "vector<DefaultAcl>"
+      }
     ],
     "pointer_type": "none"
   },

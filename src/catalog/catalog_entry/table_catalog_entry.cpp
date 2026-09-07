@@ -34,6 +34,7 @@ TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schem
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 }
 
 bool TableCatalogEntry::HasGeneratedColumns() const {

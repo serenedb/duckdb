@@ -117,6 +117,18 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		return result;
 	}
 
+	if (stmt.info->type == AlterType::ALTER_PERMISSIONS) {
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		if (stmt.info->GetCatalogType() != CatalogType::DATABASE_ENTRY) {
+			BindSchemaOrCatalog(stmt.info->GetQualifiedNameMutable());
+			auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
+			properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
+		}
+		result.plan = make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_ALTER, std::move(stmt.info));
+		return result;
+	}
+
 	BindSchemaOrCatalog(stmt.info->GetQualifiedNameMutable());
 
 	// ALTER FUNCTION ... RENAME TO ... skips entry lookup (scalar-vs-table

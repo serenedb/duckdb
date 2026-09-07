@@ -15,6 +15,7 @@ SchemaCatalogEntry::SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info)
 	this->internal = info.internal;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 }
 
 CatalogTransaction SchemaCatalogEntry::GetCatalogTransaction(ClientContext &context) {

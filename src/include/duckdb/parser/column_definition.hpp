@@ -13,6 +13,7 @@
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/common/enums/compression_type.hpp"
 #include "duckdb/catalog/catalog_entry/table_column_type.hpp"
+#include "duckdb/catalog/permissions.hpp"
 
 namespace duckdb {
 
@@ -50,6 +51,9 @@ public:
 	//! tags
 	DUCKDB_API const InsertionOrderPreservingMap<string> &Tags() const;
 	void SetTags(InsertionOrderPreservingMap<string> new_tags);
+
+	DUCKDB_API const vector<AclItem> &Acl() const;
+	void SetAcl(vector<AclItem> new_acl);
 
 	//! compression_type
 	const duckdb::CompressionType &CompressionType() const;
@@ -111,6 +115,7 @@ private:
 	Value comment;
 	//! Tags on this column
 	InsertionOrderPreservingMap<string> tags;
+	vector<AclItem> acl;
 };
 
 } // namespace duckdb

@@ -1,4 +1,5 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/extra_type_info.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -84,6 +85,56 @@ string SetCommentInfo::ToString() const {
 }
 
 SetCommentInfo::SetCommentInfo() : AlterInfo(AlterType::SET_COMMENT) {
+}
+
+//===--------------------------------------------------------------------===//
+// AlterPermissionsInfo
+//===--------------------------------------------------------------------===//
+AlterPermissionsInfo::AlterPermissionsInfo(CatalogType entry_catalog_type, QualifiedName entry_name)
+    : AlterInfo(AlterType::ALTER_PERMISSIONS, std::move(entry_name), OnEntryNotFound::THROW_EXCEPTION),
+      entry_catalog_type(entry_catalog_type) {
+}
+
+CatalogType AlterPermissionsInfo::GetCatalogType() const {
+	return entry_catalog_type;
+}
+
+unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
+	auto result = make_uniq<AlterPermissionsInfo>(entry_catalog_type, GetQualifiedName());
+	result->if_not_found = if_not_found;
+	result->in_schema = in_schema;
+	result->targets = targets;
+	result->new_owner = new_owner;
+	result->new_owner_id = new_owner_id;
+	result->privileges = privileges;
+	result->column_privileges = column_privileges;
+	result->grantee = grantee;
+	result->grantee_id = grantee_id;
+	result->granted_by = granted_by;
+	result->grantors = grantors;
+	result->revoke = revoke;
+	result->with_grant_option = with_grant_option;
+	result->option_only = option_only;
+	result->cascade = cascade;
+	result->default_objtype = default_objtype;
+	result->for_role = for_role;
+	result->default_schema = default_schema;
+	result->target_role = target_role;
+	return std::move(result);
+}
+
+string AlterPermissionsInfo::ToString() const {
+	auto object = ParseInfo::TypeToString(entry_catalog_type) + " " +
+	              GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (!new_owner.empty()) {
+		return "ALTER " + object + " OWNER TO " + new_owner + ";";
+	}
+	return string(revoke ? "REVOKE " : "GRANT ") + EnumUtil::ToString(privileges) + " ON " + object +
+	       (revoke ? " FROM " : " TO ") + grantee + ";";
+}
+
+AlterPermissionsInfo::AlterPermissionsInfo()
+    : AlterInfo(AlterType::ALTER_PERMISSIONS), entry_catalog_type(CatalogType::INVALID) {
 }
 
 //===--------------------------------------------------------------------===//

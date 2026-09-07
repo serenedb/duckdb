@@ -119,12 +119,9 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 		break;
 	case CatalogType::DELETED_ENTRY:
 		switch (entry.type) {
-		case CatalogType::TABLE_ENTRY: {
-			auto &table_entry = entry.Cast<DuckTableEntry>();
-			D_ASSERT(table_entry.IsDuckTable());
-			log.WriteDropTable(table_entry);
+		case CatalogType::TABLE_ENTRY:
+			log.WriteDropTable(entry.Cast<TableCatalogEntry>());
 			break;
-		}
 		case CatalogType::SCHEMA_ENTRY:
 			log.WriteDropSchema(entry.Cast<SchemaCatalogEntry>());
 			break;

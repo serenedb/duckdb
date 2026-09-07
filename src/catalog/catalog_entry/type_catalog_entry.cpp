@@ -20,6 +20,7 @@ TypeCatalogEntry::TypeCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema,
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 }
 
 unique_ptr<CatalogEntry> TypeCatalogEntry::Copy(ClientContext &context) const {

@@ -69,6 +69,12 @@
         "id": 110,
         "name": "extension_name",
         "type": "Identifier"
+      },
+      {
+        "id": 111,
+        "name": "permissions",
+        "type": "CatalogPermissions",
+        "default": "CatalogPermissions()"
       }
     ],
     "methods": {

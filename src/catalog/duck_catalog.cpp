@@ -67,7 +67,8 @@ unique_ptr<IndexCatalogEntry> DuckCatalog::MakeIndexEntry(DuckSchemaEntry &schem
 	return make_uniq<DuckIndexEntry>(*this, schema, info, table);
 }
 
-unique_ptr<TableCatalogEntry> DuckCatalog::MakeTableEntry(DuckSchemaEntry &schema, BoundCreateTableInfo &info) {
+unique_ptr<TableCatalogEntry> DuckCatalog::MakeTableEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
+                                                          BoundCreateTableInfo &info) {
 	return make_uniq<DuckTableEntry>(*this, schema, info);
 }
 
