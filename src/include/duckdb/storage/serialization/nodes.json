@@ -569,7 +569,7 @@
     "pointer_type": "none"
   },
   {
-    "class": "CatalogPermissions",
+    "class": "Permissions",
     "includes": [
       "duckdb/catalog/permissions.hpp"
     ],

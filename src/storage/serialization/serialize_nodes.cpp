@@ -200,20 +200,6 @@ CaseCheck CaseCheck::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
-void CatalogPermissions::Serialize(Serializer &serializer) const {
-	serializer.WritePropertyWithDefault<idx_t>(100, "owner", owner);
-	serializer.WritePropertyWithDefault<vector<AclItem>>(101, "acl", acl);
-	serializer.WritePropertyWithDefault<vector<DefaultAcl>>(102, "defaults", defaults);
-}
-
-CatalogPermissions CatalogPermissions::Deserialize(Deserializer &deserializer) {
-	CatalogPermissions result;
-	deserializer.ReadPropertyWithDefault<idx_t>(100, "owner", result.owner);
-	deserializer.ReadPropertyWithDefault<vector<AclItem>>(101, "acl", result.acl);
-	deserializer.ReadPropertyWithDefault<vector<DefaultAcl>>(102, "defaults", result.defaults);
-	return result;
-}
-
 void ColumnBinding::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<TableIndex>(100, "table_index", table_index);
 	serializer.WritePropertyWithDefault<ProjectionIndex>(101, "column_index", column_index);
@@ -486,6 +472,20 @@ OrderByNode OrderByNode::Deserialize(Deserializer &deserializer) {
 	auto null_order = deserializer.ReadProperty<OrderByNullType>(101, "null_order");
 	auto expression = deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(102, "expression");
 	OrderByNode result(type, null_order, std::move(expression));
+	return result;
+}
+
+void Permissions::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<idx_t>(100, "owner", owner);
+	serializer.WritePropertyWithDefault<vector<AclItem>>(101, "acl", acl);
+	serializer.WritePropertyWithDefault<vector<DefaultAcl>>(102, "defaults", defaults);
+}
+
+Permissions Permissions::Deserialize(Deserializer &deserializer) {
+	Permissions result;
+	deserializer.ReadPropertyWithDefault<idx_t>(100, "owner", result.owner);
+	deserializer.ReadPropertyWithDefault<vector<AclItem>>(101, "acl", result.acl);
+	deserializer.ReadPropertyWithDefault<vector<DefaultAcl>>(102, "defaults", result.defaults);
 	return result;
 }
 

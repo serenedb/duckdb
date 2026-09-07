@@ -52,7 +52,7 @@ public:
 	Value comment;
 	//! Key-value tags with additional metadata
 	InsertionOrderPreservingMap<string> tags;
-	CatalogPermissions permissions;
+	Permissions permissions;
 
 public:
 	const QualifiedName &GetQualifiedName() const {

@@ -13,6 +13,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/dependency/dependency_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_column_type.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/box_renderer.hpp"
 #include "duckdb/common/column_index.hpp"
 #include "duckdb/common/encryption_state.hpp"
@@ -318,26 +319,36 @@ AccessMode EnumUtil::FromString<AccessMode>(const char *value) {
 	return static_cast<AccessMode>(StringUtil::StringToEnum(GetAccessModeValues(), 4, "AccessMode", value));
 }
 
-const StringUtil::EnumStringLiteral *GetAccessVerbValues() {
+const StringUtil::EnumStringLiteral *GetAclModeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
-		{ static_cast<uint32_t>(AccessVerb::NONE), "NONE" },
-		{ static_cast<uint32_t>(AccessVerb::INSERT), "INSERT" },
-		{ static_cast<uint32_t>(AccessVerb::SELECT), "SELECT" },
-		{ static_cast<uint32_t>(AccessVerb::UPDATE), "UPDATE" },
-		{ static_cast<uint32_t>(AccessVerb::DELETE), "DELETE" },
-		{ static_cast<uint32_t>(AccessVerb::TRUNCATE), "TRUNCATE" }
+		{ static_cast<uint32_t>(AclMode::NoRights), "NoRights" },
+		{ static_cast<uint32_t>(AclMode::Insert), "Insert" },
+		{ static_cast<uint32_t>(AclMode::Select), "Select" },
+		{ static_cast<uint32_t>(AclMode::Update), "Update" },
+		{ static_cast<uint32_t>(AclMode::Delete), "Delete" },
+		{ static_cast<uint32_t>(AclMode::Truncate), "Truncate" },
+		{ static_cast<uint32_t>(AclMode::References), "References" },
+		{ static_cast<uint32_t>(AclMode::Trigger), "Trigger" },
+		{ static_cast<uint32_t>(AclMode::Execute), "Execute" },
+		{ static_cast<uint32_t>(AclMode::Usage), "Usage" },
+		{ static_cast<uint32_t>(AclMode::Create), "Create" },
+		{ static_cast<uint32_t>(AclMode::CreateTemp), "CreateTemp" },
+		{ static_cast<uint32_t>(AclMode::Connect), "Connect" },
+		{ static_cast<uint32_t>(AclMode::Set), "Set" },
+		{ static_cast<uint32_t>(AclMode::AlterSystem), "AlterSystem" },
+		{ static_cast<uint32_t>(AclMode::Maintain), "Maintain" }
 	};
 	return values;
 }
 
 template<>
-const char* EnumUtil::ToChars<AccessVerb>(AccessVerb value) {
-	return StringUtil::EnumToString(GetAccessVerbValues(), 6, "AccessVerb", static_cast<uint32_t>(value));
+const char* EnumUtil::ToChars<AclMode>(AclMode value) {
+	return StringUtil::EnumToString(GetAclModeValues(), 16, "AclMode", static_cast<uint32_t>(value));
 }
 
 template<>
-AccessVerb EnumUtil::FromString<AccessVerb>(const char *value) {
-	return static_cast<AccessVerb>(StringUtil::StringToEnum(GetAccessVerbValues(), 6, "AccessVerb", value));
+AclMode EnumUtil::FromString<AclMode>(const char *value) {
+	return static_cast<AclMode>(StringUtil::StringToEnum(GetAclModeValues(), 16, "AclMode", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAdaptiveFilterSourceValues() {
@@ -606,19 +617,21 @@ const StringUtil::EnumStringLiteral *GetAlterTypeValues() {
 		{ static_cast<uint32_t>(AlterType::ALTER_TABLE_FUNCTION), "ALTER_TABLE_FUNCTION" },
 		{ static_cast<uint32_t>(AlterType::SET_COMMENT), "SET_COMMENT" },
 		{ static_cast<uint32_t>(AlterType::SET_COLUMN_COMMENT), "SET_COLUMN_COMMENT" },
-		{ static_cast<uint32_t>(AlterType::ALTER_DATABASE), "ALTER_DATABASE" }
+		{ static_cast<uint32_t>(AlterType::ALTER_DATABASE), "ALTER_DATABASE" },
+		{ static_cast<uint32_t>(AlterType::ALTER_PERMISSIONS), "ALTER_PERMISSIONS" },
+		{ static_cast<uint32_t>(AlterType::ALTER_ROLE), "ALTER_ROLE" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<AlterType>(AlterType value) {
-	return StringUtil::EnumToString(GetAlterTypeValues(), 10, "AlterType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterTypeValues(), 12, "AlterType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterType EnumUtil::FromString<AlterType>(const char *value) {
-	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 10, "AlterType", value));
+	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 12, "AlterType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAlterViewTypeValues() {

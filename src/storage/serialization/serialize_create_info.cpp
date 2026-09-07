@@ -31,7 +31,7 @@ void CreateInfo::Serialize(Serializer &serializer) const {
 		serializer.WritePropertyWithDefault<LogicalDependencyList>(109, "dependencies", dependencies, LogicalDependencyList());
 	}
 	serializer.WritePropertyWithDefault<Identifier>(110, "extension_name", extension_name);
-	serializer.WritePropertyWithDefault<CatalogPermissions>(111, "permissions", permissions, CatalogPermissions());
+	serializer.WritePropertyWithDefault<Permissions>(111, "permissions", permissions, Permissions());
 }
 
 unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
@@ -46,7 +46,7 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 	auto tags = deserializer.ReadPropertyWithExplicitDefault<InsertionOrderPreservingMap<string>>(108, "tags", InsertionOrderPreservingMap<string>());
 	auto dependencies = deserializer.ReadPropertyWithExplicitDefault<LogicalDependencyList>(109, "dependencies", LogicalDependencyList());
 	auto extension_name = deserializer.ReadPropertyWithDefault<Identifier>(110, "extension_name");
-	auto permissions = deserializer.ReadPropertyWithExplicitDefault<CatalogPermissions>(111, "permissions", CatalogPermissions());
+	auto permissions = deserializer.ReadPropertyWithExplicitDefault<Permissions>(111, "permissions", Permissions());
 	deserializer.Set<CatalogType>(type);
 	unique_ptr<CreateInfo> result;
 	switch (type) {

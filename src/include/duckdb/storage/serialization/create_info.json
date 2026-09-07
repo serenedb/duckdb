@@ -73,8 +73,8 @@
       {
         "id": 111,
         "name": "permissions",
-        "type": "CatalogPermissions",
-        "default": "CatalogPermissions()"
+        "type": "Permissions",
+        "default": "Permissions()"
       }
     ],
     "methods": {

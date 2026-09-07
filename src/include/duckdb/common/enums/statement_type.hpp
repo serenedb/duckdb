@@ -12,7 +12,6 @@
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/unordered_set.hpp"
-#include "duckdb/common/vector.hpp"
 #include "duckdb/main/query_parameters.hpp"
 #include "duckdb/common/enums/database_modification_type.hpp"
 
@@ -70,38 +69,7 @@ std::string_view StatementReturnTypeToString(StatementReturnType type);
 class Catalog;
 class CatalogEntry;
 class ClientContext;
-
-//! Verb bits the binder records per access, for the server's access-control
-//! layer to enforce. Values mirror the server's privilege bitmask so it can use
-//! them without a translation table; core treats them as an opaque bitmask.
-enum class AccessVerb : uint8_t {
-	NONE = 0,
-	INSERT = 1,
-	SELECT = 2,
-	UPDATE = 4,
-	DELETE = 8,
-	TRUNCATE = 16,
-};
-inline AccessVerb operator|(AccessVerb a, AccessVerb b) {
-	return static_cast<AccessVerb>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
-}
-inline AccessVerb &operator|=(AccessVerb &a, AccessVerb b) {
-	a = a | b;
-	return a;
-}
-
-//! One base-relation access discovered during binding, for the access-control
-//! layer to enforce. `who` is the enclosing definer view (its owner is the
-//! effective principal) or null for the caller. `read`/`write` are logical
-//! (0-based, generated-PK-excluded) columns.
-struct AccessRequirement {
-	idx_t table_index = 0;
-	const CatalogEntry *table = nullptr;
-	const CatalogEntry *who = nullptr;
-	AccessVerb verb = AccessVerb::NONE;
-	unordered_set<idx_t> read;
-	unordered_set<idx_t> write;
-};
+class ViewCatalogEntry;
 
 //! A struct containing various properties of a SQL statement
 struct StatementProperties {
