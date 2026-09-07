@@ -734,7 +734,7 @@ static void TransformPrivilegeList(PEGTransformer &transformer, ParseResult &pri
 	    info.default_objtype != CatalogType::INVALID ? info.default_objtype : info.entry_catalog_type;
 	auto add = [&](const string &keyword, optional_ptr<ParseResult> columns) {
 		AclMode mode;
-		if (!TryParseAclKeyword(keyword, acl_class, mode)) {
+		if (!Permissions::TryParsePrivilege(keyword, acl_class, mode)) {
 			throw ParserException("invalid privilege type %s", keyword);
 		}
 		if (!columns) {

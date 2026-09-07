@@ -30,7 +30,6 @@ class Serializer;
 class Value;
 
 struct AlterInfo;
-struct AlterPermissionsInfo;
 struct CatalogTransaction;
 struct CreateInfo;
 
@@ -75,7 +74,6 @@ private:
 public:
 	virtual unique_ptr<CatalogEntry> AlterEntry(ClientContext &context, AlterInfo &info);
 	virtual unique_ptr<CatalogEntry> AlterEntry(CatalogTransaction transaction, AlterInfo &info);
-	virtual unique_ptr<CatalogEntry> AlterPermissions(ClientContext &context, AlterPermissionsInfo &info);
 	virtual void UndoAlter(ClientContext &context, AlterInfo &info);
 	virtual void Rollback(CatalogEntry &prev_entry);
 	virtual void OnDrop();

@@ -306,6 +306,9 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		auto &comment_on_column_info = info.Cast<SetColumnCommentInfo>();
 		return SetColumnComment(context, comment_on_column_info);
 	}
+	if (info.type == AlterType::ALTER_PERMISSIONS) {
+		return AlterPermissions(context, info.Cast<AlterPermissionsInfo>());
+	}
 	if (info.type != AlterType::ALTER_TABLE) {
 		throw CatalogException("Can only modify table with ALTER TABLE statement");
 	}

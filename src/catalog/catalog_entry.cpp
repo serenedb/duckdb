@@ -5,6 +5,7 @@
 #include "duckdb/common/serializer/binary_serializer.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 
 namespace duckdb {
@@ -26,6 +27,12 @@ void CatalogEntry::SetAsRoot() {
 
 // LCOV_EXCL_START
 unique_ptr<CatalogEntry> CatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
+	if (info.type == AlterType::ALTER_PERMISSIONS) {
+		auto result = Copy(context);
+		result->permissions = permissions;
+		result->permissions.Alter(info.Cast<AlterPermissionsInfo>(), type, nullptr);
+		return result;
+	}
 	throw InternalException("Unsupported alter type for catalog entry!");
 }
 
@@ -103,6 +110,7 @@ const SchemaCatalogEntry &CatalogEntry::ParentSchema() const {
 
 void CatalogEntry::Serialize(Serializer &serializer) const {
 	const auto info = GetInfo();
+	info->permissions = permissions;
 	info->Serialize(serializer);
 }
 
