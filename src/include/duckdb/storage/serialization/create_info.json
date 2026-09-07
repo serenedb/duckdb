@@ -143,6 +143,16 @@
         "id": 210,
         "name": "where_clause",
         "type": "ParsedExpression*"
+      },
+      {
+        "id": 211,
+        "name": "column_opclasses",
+        "type": "vector<string>"
+      },
+      {
+        "id": 212,
+        "name": "column_opclass_options",
+        "type": "vector<optional<case_insensitive_map_t<Value>>>"
       }
     ],
     "methods": {

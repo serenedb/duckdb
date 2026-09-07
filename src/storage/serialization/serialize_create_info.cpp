@@ -104,6 +104,8 @@ void CreateIndexInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<case_insensitive_map_t<Value>>(208, "options", options);
 	serializer.WritePropertyWithDefault<string>(209, "index_type_name", index_type);
 	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(210, "where_clause", where_clause);
+	serializer.WritePropertyWithDefault<vector<string>>(211, "column_opclasses", column_opclasses);
+	serializer.WritePropertyWithDefault<vector<optional<case_insensitive_map_t<Value>>>>(212, "column_opclass_options", column_opclass_options);
 }
 
 unique_ptr<CreateInfo> CreateIndexInfo::Deserialize(Deserializer &deserializer) {
@@ -119,6 +121,8 @@ unique_ptr<CreateInfo> CreateIndexInfo::Deserialize(Deserializer &deserializer) 
 	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<Value>>(208, "options", result->options);
 	deserializer.ReadPropertyWithDefault<string>(209, "index_type_name", result->index_type);
 	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(210, "where_clause", result->where_clause);
+	deserializer.ReadPropertyWithDefault<vector<string>>(211, "column_opclasses", result->column_opclasses);
+	deserializer.ReadPropertyWithDefault<vector<optional<case_insensitive_map_t<Value>>>>(212, "column_opclass_options", result->column_opclass_options);
 	result->SetName(std::move(name));
 	return std::move(result);
 }
