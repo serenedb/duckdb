@@ -102,13 +102,13 @@ EXPLAIN SELECT * FROM date_test WHERE d < timestamp '2024-06-15 12:00:00';
 ----
 physical_plan	<REGEX>:.*d < '2024-06-16'::DATE.*
 
-# non-midnight, <= : floor
+# non-midnight, <= : below floor + 1 day
 query II
 EXPLAIN SELECT * FROM date_test WHERE d <= timestamp '2024-06-15 12:00:00';
 ----
 physical_plan	<REGEX>:.*d (<= '2024-06-15'|< '2024-06-16')::DATE.*
 
-# non-midnight, > : floor
+# non-midnight, > : at least floor + 1 day
 query II
 EXPLAIN SELECT * FROM date_test WHERE d > timestamp '2024-06-15 12:00:00';
 ----

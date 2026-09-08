@@ -50,6 +50,12 @@ struct PerfectHashBudget {
 		return MaxValue<idx_t>(total, 1);
 	}
 
+	static idx_t DefaultBits() {
+		static const idx_t bits =
+		    Value(PerfectHtThresholdSetting::DefaultValue).DefaultCastAs(LogicalType::UBIGINT).GetValue<idx_t>();
+		return bits;
+	}
+
 	static idx_t MaxBits(ClientContext &context, const vector<unique_ptr<Expression>> &aggregates) {
 		idx_t bits = Settings::Get<PerfectHtThresholdSetting>(context);
 		if (bits < DEFAULT_THRESHOLD_BITS) {

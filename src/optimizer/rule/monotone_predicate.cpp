@@ -530,6 +530,12 @@ unique_ptr<Expression> Compare(ExpressionType type, const Expression &input, Val
 	return BoundComparisonExpression::Create(type, input.Copy(), make_uniq<BoundConstantExpression>(std::move(value)));
 }
 
+unique_ptr<Expression> NullCheck(const Expression &input, ExpressionType type) {
+	auto result = make_uniq<BoundOperatorExpression>(type, LogicalType::BOOLEAN);
+	result->GetChildrenMutable().push_back(input.Copy());
+	return std::move(result);
+}
+
 unique_ptr<Expression> Combine(ExpressionType type, unique_ptr<Expression> left, unique_ptr<Expression> right) {
 	if (!left) {
 		return right;
@@ -553,6 +559,7 @@ struct RangeBuilder {
 	const Expression &input;
 	InfinityRule infinity;
 	bool folds;
+	bool filter_context;
 
 	unique_ptr<Expression> Key(ExpressionType type, int64_t key) const {
 		return Compare(type, input, domain.ToValue(key));
@@ -570,6 +577,12 @@ struct RangeBuilder {
 	unique_ptr<Expression> Empty() const {
 		return Conjoin(Key(ExpressionType::COMPARE_GREATERTHANOREQUALTO, domain.max_key),
 		               Key(ExpressionType::COMPARE_LESSTHAN, domain.max_key));
+	}
+	unique_ptr<Expression> Vacant() const {
+		if (filter_context) {
+			return make_uniq<BoundConstantExpression>(Value::BOOLEAN(false));
+		}
+		return Empty();
 	}
 	unique_ptr<Expression> FiniteLower() const {
 		return ExcludedInfinity() ? Key(ExpressionType::COMPARE_GREATERTHANOREQUALTO, domain.min_key) : nullptr;
@@ -611,11 +624,14 @@ struct RangeBuilder {
 	}
 
 	unique_ptr<Expression> Outside(const Boundary &lower, const Boundary &upper) const {
+		if (!lower.none && !upper.none && !domain.floating && upper.key == lower.key + 1 && !ExcludedInfinity()) {
+			return Key(ExpressionType::COMPARE_NOTEQUAL, lower.key);
+		}
 		if (lower.none) {
 			return Below(lower);
 		}
 		if (upper.none) {
-			return Disjoin(Below(lower), Top());
+			return Disjoin(Top(), Below(lower));
 		}
 		if (upper.key == lower.key + 1) {
 			return Conjoin(Key(ExpressionType::COMPARE_NOTEQUAL, lower.key), Conjoin(FiniteLower(), FiniteUpper()));
@@ -625,7 +641,13 @@ struct RangeBuilder {
 
 	unique_ptr<Expression> Between(const Boundary &lower, const Boundary &upper) const {
 		if (lower.none) {
-			return folds ? Empty() : nullptr;
+			return folds ? Vacant() : nullptr;
+		}
+		if (!upper.none && upper.key <= lower.key) {
+			return Vacant();
+		}
+		if (!upper.none && !domain.floating && upper.key == lower.key + 1) {
+			return Key(ExpressionType::COMPARE_EQUAL, lower.key);
 		}
 		if (!upper.none && upper.key == lower.key + 1) {
 			return Key(ExpressionType::COMPARE_EQUAL, lower.key);
@@ -639,16 +661,16 @@ struct RangeBuilder {
 };
 
 struct Search {
-	Search(ClientContext &context_p, Chain chain_p, Domain domain_p)
+	Search(ClientContext &context_p, Chain chain_p, Domain domain_p, bool filter_context_p)
 	    : context(context_p), chain(std::move(chain_p)), domain(std::move(domain_p)),
-	      evaluator(context_p, chain, domain) {
+	      evaluator(context_p, chain, domain), filter_context(filter_context_p) {
 	}
 
 	const LogicalType &ResultType() const {
 		return evaluator.ResultType();
 	}
 	RangeBuilder Builder() const {
-		return RangeBuilder {domain, chain.input.get(), chain.infinity, chain.folds};
+		return RangeBuilder {domain, chain.input.get(), chain.infinity, chain.folds, filter_context};
 	}
 
 	int64_t Guess(const Value &constant) const {
@@ -689,6 +711,7 @@ struct Search {
 	Chain chain;
 	Domain domain;
 	Evaluator evaluator;
+	bool filter_context;
 };
 
 class Rewriter {
@@ -725,7 +748,7 @@ private:
 		if (!domain.valid) {
 			return nullptr;
 		}
-		return make_uniq<Search>(context, std::move(chain), std::move(domain));
+		return make_uniq<Search>(context, std::move(chain), std::move(domain), filter_context);
 	}
 
 	static bool IsInfinite(const Value &value) {
@@ -805,6 +828,8 @@ private:
 		switch (type) {
 		case ExpressionType::COMPARE_EQUAL:
 		case ExpressionType::COMPARE_NOTEQUAL:
+		case ExpressionType::COMPARE_DISTINCT_FROM:
+		case ExpressionType::COMPARE_NOT_DISTINCT_FROM:
 		case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
 		case ExpressionType::COMPARE_GREATERTHAN:
 		case ExpressionType::COMPARE_LESSTHAN:
@@ -836,11 +861,20 @@ private:
 			return nullptr;
 		}
 		auto builder = search->Builder();
+		const auto &input = search->chain.input.get();
 		switch (type) {
 		case ExpressionType::COMPARE_EQUAL:
 			return builder.Between(bounds.lower, bounds.upper);
 		case ExpressionType::COMPARE_NOTEQUAL:
 			return builder.Outside(bounds.lower, bounds.upper);
+		case ExpressionType::COMPARE_NOT_DISTINCT_FROM: {
+			auto range = builder.Between(bounds.lower, bounds.upper);
+			return range ? Conjoin(NullCheck(input, ExpressionType::OPERATOR_IS_NOT_NULL), std::move(range)) : nullptr;
+		}
+		case ExpressionType::COMPARE_DISTINCT_FROM: {
+			auto outside = builder.Outside(bounds.lower, bounds.upper);
+			return outside ? Disjoin(NullCheck(input, ExpressionType::OPERATOR_IS_NULL), std::move(outside)) : nullptr;
+		}
 		case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
 			return builder.AtLeast(bounds.lower);
 		case ExpressionType::COMPARE_GREATERTHAN:
