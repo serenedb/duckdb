@@ -742,18 +742,7 @@ static void TransformGrantTarget(PEGTransformer &transformer, ParseResult &targe
                                  AlterPermissionsInfo &info) {
 	auto &chosen = target_choice_holder.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 	if (chosen.name == "GrantAllInSchema") {
-		// 0:'ALL' 1:GrantObjTypePlural 2:'IN' 3:'SCHEMA' 4:QualifiedName
-		auto &kw = chosen.Cast<ListParseResult>()
-		               .GetChild(1)
-		               .Cast<ListParseResult>()
-		               .Child<ChoiceParseResult>(0)
-		               .GetResult()
-		               .Cast<KeywordParseResult>();
-		info.entry_catalog_type = GrantObjectType(StringUtil::Upper(kw.keyword));
-		info.in_schema = true;
-		auto schema = transformer.Transform<QualifiedName>(chosen.Cast<ListParseResult>().GetChild(4));
-		info.SetQualifiedName(schema.Schema(), schema.Name(), Identifier());
-		return;
+		throw NotImplementedException("GRANT ... ON ALL ... IN SCHEMA is not supported");
 	}
 	if (chosen.name == "GrantFunctionTarget") {
 		// 0:GrantRoutineKind 1:QualifiedName 2:FuncArgSignature?

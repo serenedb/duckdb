@@ -123,7 +123,7 @@ public:
 
 class InCatalogEntry : public CatalogEntry {
 public:
-	InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t catalog_oid = 0);
+	InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t oid = 0);
 	~InCatalogEntry() override;
 
 	//! The catalog the entry belongs to

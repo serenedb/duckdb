@@ -46,7 +46,7 @@ void ViewCatalogEntry::Initialize(CreateViewInfo &info) {
 }
 
 ViewCatalogEntry::ViewCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateViewInfo &info)
-    : StandardEntry(CatalogType::VIEW_ENTRY, schema, catalog, info.GetViewName(), info.catalog_oid),
+    : StandardEntry(CatalogType::VIEW_ENTRY, schema, catalog, info.GetViewName(), info.oid),
       bind_state(ViewBindState::UNBOUND) {
 	Initialize(info);
 }
@@ -119,7 +119,7 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, Al
 	}
 
 	if (info.type != AlterType::ALTER_VIEW) {
-		throw CatalogException("Can only modify view with ALTER VIEW statement");
+		return CatalogEntry::AlterEntry(context, info);
 	}
 	auto &view_info = info.Cast<AlterViewInfo>();
 	switch (view_info.alter_view_type) {

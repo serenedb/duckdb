@@ -117,10 +117,11 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		return result;
 	}
 
-	if (stmt.info->type == AlterType::ALTER_PERMISSIONS) {
+	if (stmt.info->type == AlterType::ALTER_PERMISSIONS || stmt.info->type == AlterType::ALTER_ROLE) {
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
-		if (stmt.info->GetCatalogType() != CatalogType::DATABASE_ENTRY) {
+		const auto catalog_type = stmt.info->GetCatalogType();
+		if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY) {
 			BindSchemaOrCatalog(stmt.info->GetQualifiedNameMutable());
 			auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
 			properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);

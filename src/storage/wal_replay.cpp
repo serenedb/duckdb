@@ -775,7 +775,7 @@ void ReplayWithoutIndex(ClientContext &context, Catalog &catalog, AlterInfo &inf
 }
 
 void WriteAheadLogDeserializer::ReplayIndexData(IndexStorageInfo &info) {
-	D_ASSERT(info.IsValid() && !info.name.empty());
+	D_ASSERT(!info.name.empty());
 
 	auto &single_file_sm = db.GetStorageManager().Cast<SingleFileStorageManager>();
 	auto &block_manager = single_file_sm.block_manager;

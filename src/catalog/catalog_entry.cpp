@@ -111,7 +111,7 @@ const SchemaCatalogEntry &CatalogEntry::ParentSchema() const {
 void CatalogEntry::Serialize(Serializer &serializer) const {
 	const auto info = GetInfo();
 	info->permissions = permissions;
-	info->catalog_oid = oid;
+	info->oid = oid;
 	info->Serialize(serializer);
 }
 
@@ -128,8 +128,8 @@ void CatalogEntry::Rollback(CatalogEntry &prev_entry) {
 void CatalogEntry::OnDrop() {
 }
 
-InCatalogEntry::InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t catalog_oid)
-    : CatalogEntry(type, catalog, std::move(name), catalog_oid), catalog(catalog) {
+InCatalogEntry::InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t oid)
+    : CatalogEntry(type, catalog, std::move(name), oid), catalog(catalog) {
 }
 
 InCatalogEntry::~InCatalogEntry() {

@@ -78,7 +78,7 @@
       },
       {
         "id": 112,
-        "name": "catalog_oid",
+        "name": "oid",
         "type": "idx_t",
         "default": "0ULL"
       }

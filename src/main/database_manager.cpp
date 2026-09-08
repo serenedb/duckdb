@@ -316,7 +316,6 @@ shared_ptr<AttachedDatabase> DatabaseManager::ReattachDatabase(ClientContext &co
 shared_ptr<AttachedDatabase> DatabaseManager::FinalizeAttach(ClientContext &context, AttachInfo &info,
                                                              shared_ptr<AttachedDatabase> attached_db,
                                                              const Identifier &name) {
-	attached_db->oid = NextOid();
 	shared_ptr<AttachedDatabase> detached_db;
 	{
 		lock_guard<mutex> guard(databases_lock);

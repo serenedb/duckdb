@@ -302,8 +302,6 @@ unique_ptr<AlterTableInfo> AlterForeignKeyInfo::Deserialize(Deserializer &deseri
 void AlterPermissionsInfo::Serialize(Serializer &serializer) const {
 	AlterInfo::Serialize(serializer);
 	serializer.WriteProperty<CatalogType>(300, "entry_catalog_type", entry_catalog_type);
-	serializer.WritePropertyWithDefault<bool>(301, "in_schema", in_schema);
-	serializer.WritePropertyWithDefault<vector<Identifier>>(302, "targets", targets);
 	serializer.WritePropertyWithDefault<string>(303, "new_owner", new_owner);
 	serializer.WritePropertyWithDefault<idx_t>(304, "new_owner_id", new_owner_id);
 	serializer.WriteProperty<AclMode>(305, "privileges", privileges);
@@ -325,8 +323,6 @@ void AlterPermissionsInfo::Serialize(Serializer &serializer) const {
 unique_ptr<AlterInfo> AlterPermissionsInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<AlterPermissionsInfo>(new AlterPermissionsInfo());
 	deserializer.ReadProperty<CatalogType>(300, "entry_catalog_type", result->entry_catalog_type);
-	deserializer.ReadPropertyWithDefault<bool>(301, "in_schema", result->in_schema);
-	deserializer.ReadPropertyWithDefault<vector<Identifier>>(302, "targets", result->targets);
 	deserializer.ReadPropertyWithDefault<string>(303, "new_owner", result->new_owner);
 	deserializer.ReadPropertyWithDefault<idx_t>(304, "new_owner_id", result->new_owner_id);
 	deserializer.ReadProperty<AclMode>(305, "privileges", result->privileges);
