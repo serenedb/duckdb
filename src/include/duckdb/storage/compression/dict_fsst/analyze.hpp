@@ -23,6 +23,7 @@ public:
 	bool contains_nulls = false;
 	idx_t total_string_length = 0;
 	idx_t total_count = 0;
+	const idx_t string_size_limit;
 };
 
 } // namespace dict_fsst
