@@ -434,10 +434,14 @@ void WriteAheadLog::WriteCreateIndex(const IndexCatalogEntry &entry) {
 	serializer.WriteProperty(101, "index_catalog_entry", &entry);
 
 	// Serialize the index data to the persistent storage and write the metadata.
+	// An index over a relation with no DataTable (a view) has no index storage
+	// to serialize; the definition above is the whole record.
 	auto &index_entry = entry.Cast<DuckIndexEntry>();
-	auto &list = index_entry.GetDataTableInfo().GetIndexes();
-	auto &database = GetDatabase();
-	SerializeIndex(database, serializer, list, index_entry.name);
+	if (index_entry.info && index_entry.info->info) {
+		auto &list = index_entry.GetDataTableInfo().GetIndexes();
+		auto &database = GetDatabase();
+		SerializeIndex(database, serializer, list, index_entry.name);
+	}
 	serializer.End();
 }
 

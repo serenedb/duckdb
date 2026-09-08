@@ -57,7 +57,9 @@ DataTableInfo &DuckIndexEntry::GetDataTableInfo() const {
 }
 
 void DuckIndexEntry::CommitDrop(CommitDropState &drop_state) {
-	D_ASSERT(info);
+	if (!info || !info->info) {
+		return;
+	}
 	drop_state.RemoveIndex(GetDataTableInfo().GetIndexes(), name);
 }
 

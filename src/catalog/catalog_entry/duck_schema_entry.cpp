@@ -135,6 +135,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 				throw CatalogException("Existing object %s is of type %s, trying to replace with type %s", entry_name,
 				                       CatalogTypeToString(old_entry->type), CatalogTypeToString(entry_type));
 			}
+			entry->permissions = old_entry->permissions;
 			OnDropEntry(transaction, *old_entry);
 			(void)set.DropEntry(transaction, entry_name, false, entry->internal);
 		}
@@ -154,7 +155,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) {
-	auto table = catalog.Cast<DuckCatalog>().MakeTableEntry(*this, info);
+	auto table = catalog.Cast<DuckCatalog>().MakeTableEntry(transaction, *this, info);
 
 	// add a foreign key constraint in main key table if there is a foreign key constraint
 	vector<unique_ptr<AlterForeignKeyInfo>> fk_arrays;
