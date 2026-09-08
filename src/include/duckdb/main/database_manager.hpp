@@ -104,6 +104,12 @@ public:
 	idx_t NextOid() {
 		return next_oid++;
 	}
+	idx_t CurrentOid() const {
+		return next_oid;
+	}
+	void SetNextOid(idx_t oid) {
+		next_oid = oid;
+	}
 	bool HasDefaultDatabase() {
 		return !default_database.empty();
 	}

@@ -344,16 +344,6 @@
         "type": "CatalogType"
       },
       {
-        "id": 301,
-        "name": "in_schema",
-        "type": "bool"
-      },
-      {
-        "id": 302,
-        "name": "targets",
-        "type": "vector<Identifier>"
-      },
-      {
         "id": 303,
         "name": "new_owner",
         "type": "string"

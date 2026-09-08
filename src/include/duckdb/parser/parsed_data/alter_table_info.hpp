@@ -71,8 +71,6 @@ struct AlterPermissionsInfo : public AlterInfo {
 	AlterPermissionsInfo(CatalogType entry_catalog_type, QualifiedName entry_name);
 
 	CatalogType entry_catalog_type;
-	bool in_schema = false;
-	vector<Identifier> targets;
 	string new_owner;
 	idx_t new_owner_id = 0;
 	AclMode privileges = AclMode::NoRights;

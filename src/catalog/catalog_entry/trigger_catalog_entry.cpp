@@ -9,7 +9,7 @@
 namespace duckdb {
 
 TriggerCatalogEntry::TriggerCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTriggerInfo &info)
-    : StandardEntry(CatalogType::TRIGGER_ENTRY, schema, catalog, info.GetTriggerName()),
+    : StandardEntry(CatalogType::TRIGGER_ENTRY, schema, catalog, info.GetTriggerName(), info.catalog_oid),
       base_table(unique_ptr_cast<TableRef, BaseTableRef>(info.base_table->Copy())), timing(info.timing),
       event_type(info.event_type), columns(info.columns), for_each(info.for_each),
       referencing_new_table(info.referencing_new_table), referencing_old_table(info.referencing_old_table),

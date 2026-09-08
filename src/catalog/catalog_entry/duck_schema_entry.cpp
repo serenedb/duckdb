@@ -391,6 +391,9 @@ void DuckSchemaEntry::OnDropEntry(CatalogTransaction transaction, CatalogEntry &
 	}
 	// if we have transaction local insertions for this table - clear them
 	auto &table_entry = entry.Cast<TableCatalogEntry>();
+	if (!table_entry.IsDuckTable()) {
+		return;
+	}
 	auto &local_storage = LocalStorage::Get(transaction.transaction->Cast<DuckTransaction>());
 	local_storage.DropTable(table_entry.GetStorage());
 }

@@ -3,7 +3,7 @@
 namespace duckdb {
 
 IndexCatalogEntry::IndexCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateIndexInfo &info)
-    : StandardEntry(CatalogType::INDEX_ENTRY, schema, catalog, info.GetIndexName()), sql(info.sql),
+    : StandardEntry(CatalogType::INDEX_ENTRY, schema, catalog, info.GetIndexName(), info.catalog_oid), sql(info.sql),
       options(info.options), index_type(info.index_type), index_constraint_type(info.constraint_type),
       column_ids(info.column_ids), column_opclasses(info.column_opclasses) {
 	this->temporary = info.temporary;

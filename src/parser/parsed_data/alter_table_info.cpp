@@ -102,8 +102,6 @@ CatalogType AlterPermissionsInfo::GetCatalogType() const {
 unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	auto result = make_uniq<AlterPermissionsInfo>(entry_catalog_type, GetQualifiedName());
 	result->if_not_found = if_not_found;
-	result->in_schema = in_schema;
-	result->targets = targets;
 	result->new_owner = new_owner;
 	result->new_owner_id = new_owner_id;
 	result->privileges = privileges;

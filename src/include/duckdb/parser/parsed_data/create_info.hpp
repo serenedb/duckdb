@@ -53,6 +53,7 @@ public:
 	//! Key-value tags with additional metadata
 	InsertionOrderPreservingMap<string> tags;
 	Permissions permissions;
+	idx_t catalog_oid = 0;
 
 public:
 	const QualifiedName &GetQualifiedName() const {

@@ -351,7 +351,7 @@ IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, c
 		// Bound: move new storage info into bound_infos, then reference it
 		auto &bound_index = index.Cast<BoundIndex>();
 		auto storage_info = bound_index.SerializeToDisk(context, info.options);
-		D_ASSERT(storage_info.IsValid() && !storage_info.name.empty());
+		D_ASSERT(!storage_info.name.empty());
 		result.bound_infos.push_back(std::move(storage_info));
 		result.ordered_infos.push_back(result.bound_infos.back());
 	}

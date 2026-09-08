@@ -15,8 +15,8 @@ CatalogEntry::CatalogEntry(CatalogType type, Identifier name_p, idx_t oid)
       parent(nullptr) {
 }
 
-CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p)
-    : CatalogEntry(type, std::move(name_p), catalog.GetDatabase().GetDatabaseManager().NextOid()) {
+CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p, idx_t oid)
+    : CatalogEntry(type, std::move(name_p), oid ? oid : catalog.GetDatabase().GetDatabaseManager().NextOid()) {
 }
 
 CatalogEntry::~CatalogEntry() {
@@ -111,6 +111,7 @@ const SchemaCatalogEntry &CatalogEntry::ParentSchema() const {
 void CatalogEntry::Serialize(Serializer &serializer) const {
 	const auto info = GetInfo();
 	info->permissions = permissions;
+	info->catalog_oid = oid;
 	info->Serialize(serializer);
 }
 
@@ -127,8 +128,8 @@ void CatalogEntry::Rollback(CatalogEntry &prev_entry) {
 void CatalogEntry::OnDrop() {
 }
 
-InCatalogEntry::InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name)
-    : CatalogEntry(type, catalog, std::move(name)), catalog(catalog) {
+InCatalogEntry::InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t catalog_oid)
+    : CatalogEntry(type, catalog, std::move(name), catalog_oid), catalog(catalog) {
 }
 
 InCatalogEntry::~InCatalogEntry() {

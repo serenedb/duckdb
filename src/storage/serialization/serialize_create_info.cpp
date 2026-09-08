@@ -32,6 +32,7 @@ void CreateInfo::Serialize(Serializer &serializer) const {
 	}
 	serializer.WritePropertyWithDefault<Identifier>(110, "extension_name", extension_name);
 	serializer.WritePropertyWithDefault<Permissions>(111, "permissions", permissions, Permissions());
+	serializer.WritePropertyWithDefault<idx_t>(112, "catalog_oid", catalog_oid, 0ULL);
 }
 
 unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
@@ -47,6 +48,7 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 	auto dependencies = deserializer.ReadPropertyWithExplicitDefault<LogicalDependencyList>(109, "dependencies", LogicalDependencyList());
 	auto extension_name = deserializer.ReadPropertyWithDefault<Identifier>(110, "extension_name");
 	auto permissions = deserializer.ReadPropertyWithExplicitDefault<Permissions>(111, "permissions", Permissions());
+	auto catalog_oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(112, "catalog_oid", 0ULL);
 	deserializer.Set<CatalogType>(type);
 	unique_ptr<CreateInfo> result;
 	switch (type) {
@@ -90,6 +92,7 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 	result->dependencies = dependencies;
 	result->extension_name = std::move(extension_name);
 	result->permissions = permissions;
+	result->catalog_oid = catalog_oid;
 	result->SetQualification(std::move(catalog), std::move(schema));
 	return result;
 }

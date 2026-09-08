@@ -17,8 +17,9 @@ class SchemaCatalogEntry;
 //! A StandardEntry is a catalog entry that is a member of a schema
 class StandardEntry : public InCatalogEntry {
 public:
-	StandardEntry(CatalogType type, SchemaCatalogEntry &schema, Catalog &catalog, Identifier name)
-	    : InCatalogEntry(type, catalog, std::move(name)), schema(schema) {
+	StandardEntry(CatalogType type, SchemaCatalogEntry &schema, Catalog &catalog, Identifier name,
+	              idx_t catalog_oid = 0)
+	    : InCatalogEntry(type, catalog, std::move(name), catalog_oid), schema(schema) {
 	}
 	~StandardEntry() override {
 	}

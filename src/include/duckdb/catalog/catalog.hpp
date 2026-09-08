@@ -340,7 +340,7 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> AddFunction(ClientContext &context, CreateFunctionInfo &info);
 
 	//! Alter an existing entry in the catalog.
-	DUCKDB_API void Alter(CatalogTransaction transaction, AlterInfo &info);
+	DUCKDB_API virtual void Alter(CatalogTransaction transaction, AlterInfo &info);
 	DUCKDB_API void Alter(ClientContext &context, AlterInfo &info);
 
 	virtual PhysicalOperator &PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
