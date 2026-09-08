@@ -67,9 +67,6 @@ public:
 	explicit SetCommentInfo();
 };
 
-//===--------------------------------------------------------------------===//
-// Alter Permissions
-//===--------------------------------------------------------------------===//
 struct AlterPermissionsInfo : public AlterInfo {
 	AlterPermissionsInfo(CatalogType entry_catalog_type, QualifiedName entry_name);
 
@@ -102,6 +99,42 @@ public:
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 
 	explicit AlterPermissionsInfo();
+};
+
+struct AlterRoleInfo : public AlterInfo {
+	explicit AlterRoleInfo(Identifier role);
+
+	RoleOption set_options = RoleOption::None;
+	RoleOption clear_options = RoleOption::None;
+	bool set_password = false;
+	bool null_password = false;
+	string password;
+	bool set_conn_limit = false;
+	int32_t conn_limit = -1;
+	bool set_valid_until = false;
+	int64_t valid_until = 0;
+	Identifier new_name;
+	bool reset_all_config = false;
+	vector<string> reset_config;
+	vector<string> set_config;
+	string grant_role;
+	bool revoke = false;
+	bool option_only = false;
+	int8_t admin_option = -1;
+	int8_t inherit_option = -1;
+	int8_t set_option = -1;
+	idx_t grant_role_id = 0;
+	idx_t grantor_id = 0;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit AlterRoleInfo();
 };
 
 //===--------------------------------------------------------------------===//

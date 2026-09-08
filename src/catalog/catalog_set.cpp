@@ -334,6 +334,9 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 			return true;
 		}
 	}
+	if (alter_info.type != AlterType::ALTER_PERMISSIONS) {
+		value->permissions = entry->permissions;
+	}
 
 	// If this ALTER produced a new DuckTableEntry, refresh the LocalTableStorage's table_entry
 	// pointer so that commit-time Flush pushes an AppendInfo referencing the current DuckTableEntry.

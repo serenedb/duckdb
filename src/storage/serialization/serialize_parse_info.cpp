@@ -107,6 +107,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	case AlterType::ALTER_PERMISSIONS:
 		result = AlterPermissionsInfo::Deserialize(deserializer);
 		break;
+	case AlterType::ALTER_ROLE:
+		result = AlterRoleInfo::Deserialize(deserializer);
+		break;
 	case AlterType::ALTER_TABLE:
 		result = AlterTableInfo::Deserialize(deserializer);
 		break;
@@ -340,6 +343,57 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Deserialize(Deserializer &deserializ
 	deserializer.ReadPropertyWithDefault<string>(316, "for_role", result->for_role);
 	deserializer.ReadPropertyWithDefault<string>(317, "default_schema", result->default_schema);
 	deserializer.ReadPropertyWithDefault<idx_t>(318, "target_role", result->target_role);
+	return std::move(result);
+}
+
+void AlterRoleInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<RoleOption>(300, "set_options", set_options);
+	serializer.WriteProperty<RoleOption>(301, "clear_options", clear_options);
+	serializer.WritePropertyWithDefault<bool>(302, "set_password", set_password);
+	serializer.WritePropertyWithDefault<bool>(303, "null_password", null_password);
+	serializer.WritePropertyWithDefault<string>(304, "password", password);
+	serializer.WritePropertyWithDefault<bool>(305, "set_conn_limit", set_conn_limit);
+	serializer.WritePropertyWithDefault<int32_t>(306, "conn_limit", conn_limit);
+	serializer.WritePropertyWithDefault<bool>(307, "set_valid_until", set_valid_until);
+	serializer.WritePropertyWithDefault<int64_t>(308, "valid_until", valid_until);
+	serializer.WritePropertyWithDefault<Identifier>(309, "new_name", new_name);
+	serializer.WritePropertyWithDefault<bool>(310, "reset_all_config", reset_all_config);
+	serializer.WritePropertyWithDefault<vector<string>>(311, "reset_config", reset_config);
+	serializer.WritePropertyWithDefault<vector<string>>(312, "set_config", set_config);
+	serializer.WritePropertyWithDefault<string>(313, "grant_role", grant_role);
+	serializer.WritePropertyWithDefault<bool>(314, "revoke", revoke);
+	serializer.WritePropertyWithDefault<bool>(315, "option_only", option_only);
+	serializer.WritePropertyWithDefault<int8_t>(316, "admin_option", admin_option);
+	serializer.WritePropertyWithDefault<int8_t>(317, "inherit_option", inherit_option);
+	serializer.WritePropertyWithDefault<int8_t>(318, "set_option", set_option);
+	serializer.WritePropertyWithDefault<idx_t>(319, "grant_role_id", grant_role_id);
+	serializer.WritePropertyWithDefault<idx_t>(320, "grantor_id", grantor_id);
+}
+
+unique_ptr<AlterInfo> AlterRoleInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<AlterRoleInfo>(new AlterRoleInfo());
+	deserializer.ReadProperty<RoleOption>(300, "set_options", result->set_options);
+	deserializer.ReadProperty<RoleOption>(301, "clear_options", result->clear_options);
+	deserializer.ReadPropertyWithDefault<bool>(302, "set_password", result->set_password);
+	deserializer.ReadPropertyWithDefault<bool>(303, "null_password", result->null_password);
+	deserializer.ReadPropertyWithDefault<string>(304, "password", result->password);
+	deserializer.ReadPropertyWithDefault<bool>(305, "set_conn_limit", result->set_conn_limit);
+	deserializer.ReadPropertyWithDefault<int32_t>(306, "conn_limit", result->conn_limit);
+	deserializer.ReadPropertyWithDefault<bool>(307, "set_valid_until", result->set_valid_until);
+	deserializer.ReadPropertyWithDefault<int64_t>(308, "valid_until", result->valid_until);
+	deserializer.ReadPropertyWithDefault<Identifier>(309, "new_name", result->new_name);
+	deserializer.ReadPropertyWithDefault<bool>(310, "reset_all_config", result->reset_all_config);
+	deserializer.ReadPropertyWithDefault<vector<string>>(311, "reset_config", result->reset_config);
+	deserializer.ReadPropertyWithDefault<vector<string>>(312, "set_config", result->set_config);
+	deserializer.ReadPropertyWithDefault<string>(313, "grant_role", result->grant_role);
+	deserializer.ReadPropertyWithDefault<bool>(314, "revoke", result->revoke);
+	deserializer.ReadPropertyWithDefault<bool>(315, "option_only", result->option_only);
+	deserializer.ReadPropertyWithDefault<int8_t>(316, "admin_option", result->admin_option);
+	deserializer.ReadPropertyWithDefault<int8_t>(317, "inherit_option", result->inherit_option);
+	deserializer.ReadPropertyWithDefault<int8_t>(318, "set_option", result->set_option);
+	deserializer.ReadPropertyWithDefault<idx_t>(319, "grant_role_id", result->grant_role_id);
+	deserializer.ReadPropertyWithDefault<idx_t>(320, "grantor_id", result->grantor_id);
 	return std::move(result);
 }
 

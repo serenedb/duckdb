@@ -138,6 +138,56 @@ AlterPermissionsInfo::AlterPermissionsInfo()
 }
 
 //===--------------------------------------------------------------------===//
+// AlterRoleInfo
+//===--------------------------------------------------------------------===//
+AlterRoleInfo::AlterRoleInfo(Identifier role)
+    : AlterInfo(AlterType::ALTER_ROLE, QualifiedName(Identifier(), Identifier(), std::move(role)),
+                OnEntryNotFound::THROW_EXCEPTION) {
+}
+
+AlterRoleInfo::AlterRoleInfo() : AlterInfo(AlterType::ALTER_ROLE) {
+}
+
+CatalogType AlterRoleInfo::GetCatalogType() const {
+	return CatalogType::ROLE_ENTRY;
+}
+
+unique_ptr<AlterInfo> AlterRoleInfo::Copy() const {
+	auto result = make_uniq<AlterRoleInfo>(GetQualifiedName().Name());
+	result->if_not_found = if_not_found;
+	result->set_options = set_options;
+	result->clear_options = clear_options;
+	result->set_password = set_password;
+	result->null_password = null_password;
+	result->password = password;
+	result->set_conn_limit = set_conn_limit;
+	result->conn_limit = conn_limit;
+	result->set_valid_until = set_valid_until;
+	result->valid_until = valid_until;
+	result->new_name = new_name;
+	result->reset_all_config = reset_all_config;
+	result->reset_config = reset_config;
+	result->set_config = set_config;
+	result->grant_role = grant_role;
+	result->revoke = revoke;
+	result->option_only = option_only;
+	result->admin_option = admin_option;
+	result->inherit_option = inherit_option;
+	result->set_option = set_option;
+	result->grant_role_id = grant_role_id;
+	result->grantor_id = grantor_id;
+	return std::move(result);
+}
+
+string AlterRoleInfo::ToString() const {
+	if (!grant_role.empty()) {
+		return string(revoke ? "REVOKE " : "GRANT ") + grant_role + (revoke ? " FROM " : " TO ") +
+		       GetQualifiedName().Name().GetIdentifierName() + ";";
+	}
+	return "ALTER ROLE " + GetQualifiedName().Name().GetIdentifierName() + ";";
+}
+
+//===--------------------------------------------------------------------===//
 // AlterTableInfo
 //===--------------------------------------------------------------------===//
 AlterTableInfo::AlterTableInfo(AlterTableType type) : AlterInfo(AlterType::ALTER_TABLE), alter_table_type(type) {

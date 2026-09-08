@@ -4849,6 +4849,30 @@ ResultModifierType EnumUtil::FromString<ResultModifierType>(const char *value) {
 	return static_cast<ResultModifierType>(StringUtil::StringToEnum(GetResultModifierTypeValues(), 4, "ResultModifierType", value));
 }
 
+const StringUtil::EnumStringLiteral *GetRoleOptionValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(RoleOption::None), "None" },
+		{ static_cast<uint32_t>(RoleOption::Superuser), "Superuser" },
+		{ static_cast<uint32_t>(RoleOption::Inherit), "Inherit" },
+		{ static_cast<uint32_t>(RoleOption::CreateRole), "CreateRole" },
+		{ static_cast<uint32_t>(RoleOption::CreateDb), "CreateDb" },
+		{ static_cast<uint32_t>(RoleOption::Login), "Login" },
+		{ static_cast<uint32_t>(RoleOption::Replication), "Replication" },
+		{ static_cast<uint32_t>(RoleOption::BypassRls), "BypassRls" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<RoleOption>(RoleOption value) {
+	return StringUtil::EnumToString(GetRoleOptionValues(), 8, "RoleOption", static_cast<uint32_t>(value));
+}
+
+template<>
+RoleOption EnumUtil::FromString<RoleOption>(const char *value) {
+	return static_cast<RoleOption>(StringUtil::StringToEnum(GetRoleOptionValues(), 8, "RoleOption", value));
+}
+
 const StringUtil::EnumStringLiteral *GetRowGroupAppendModeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(RowGroupAppendMode::APPEND_TO_EXISTING), "APPEND_TO_EXISTING" },

@@ -62,6 +62,30 @@ constexpr AclMode &operator&=(AclMode &a, AclMode b) {
 
 constexpr AclMode ACL_COLUMN_PRIVILEGES = AclMode::Select | AclMode::Insert | AclMode::Update | AclMode::References;
 
+enum class RoleOption : uint32_t {
+	None = 0x0,
+	Superuser = 0x1,
+	Inherit = 0x2,
+	CreateRole = 0x4,
+	CreateDb = 0x8,
+	Login = 0x10,
+	Replication = 0x20,
+	BypassRls = 0x40,
+};
+
+constexpr RoleOption operator|(RoleOption a, RoleOption b) {
+	return static_cast<RoleOption>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
+constexpr RoleOption operator&(RoleOption a, RoleOption b) {
+	return static_cast<RoleOption>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+}
+constexpr RoleOption operator~(RoleOption a) {
+	return static_cast<RoleOption>(~static_cast<uint32_t>(a));
+}
+constexpr bool HasOption(RoleOption options, RoleOption option) {
+	return (options & option) == option;
+}
+
 struct AclItem {
 	idx_t grantee = 0;
 	idx_t grantor = 0;

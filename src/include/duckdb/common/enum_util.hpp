@@ -438,6 +438,8 @@ enum class RequestType : uint8_t;
 
 enum class ResultModifierType : uint8_t;
 
+enum class RoleOption : uint32_t;
+
 enum class RowGroupAppendMode : uint8_t;
 
 enum class SampleMethod : uint8_t;
@@ -1195,6 +1197,9 @@ const char* EnumUtil::ToChars<RequestType>(RequestType value);
 
 template<>
 const char* EnumUtil::ToChars<ResultModifierType>(ResultModifierType value);
+
+template<>
+const char* EnumUtil::ToChars<RoleOption>(RoleOption value);
 
 template<>
 const char* EnumUtil::ToChars<RowGroupAppendMode>(RowGroupAppendMode value);
@@ -2027,6 +2032,9 @@ RequestType EnumUtil::FromString<RequestType>(const char *value);
 
 template<>
 ResultModifierType EnumUtil::FromString<ResultModifierType>(const char *value);
+
+template<>
+RoleOption EnumUtil::FromString<RoleOption>(const char *value);
 
 template<>
 RowGroupAppendMode EnumUtil::FromString<RowGroupAppendMode>(const char *value);

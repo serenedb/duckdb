@@ -5,6 +5,7 @@
 
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/limits.hpp"
+#include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
@@ -16,9 +17,6 @@
 #include "duckdb/common/exception.hpp"
 
 namespace duckdb {
-
-// Role DDL is rewritten into serenedb_* pragmas (handlers in
-// server/pg/commands/rbac.cpp); object privileges become AlterStatements.
 
 namespace {
 
@@ -48,9 +46,6 @@ unique_ptr<ParsedExpression> StrConst(std::string_view s) {
 }
 unique_ptr<ParsedExpression> BoolConst(bool b) {
 	return make_uniq<ConstantExpression>(Value::BOOLEAN(b));
-}
-unique_ptr<ParsedExpression> IntConst(int32_t i) {
-	return make_uniq<ConstantExpression>(Value::INTEGER(i));
 }
 unique_ptr<ParsedExpression> BigIntConst(int64_t i) {
 	return make_uniq<ConstantExpression>(Value::BIGINT(i));
@@ -163,8 +158,6 @@ string TransformGrantedBy(PEGTransformer &transformer, ParseResult &list, idx_t 
 	return TransformColIdName(transformer, opt.GetResult().Cast<ListParseResult>().GetChild(2));
 }
 
-// The object class named by a GRANT / OWNER TO / DEFAULT PRIVILEGES keyword,
-// singular or plural.
 CatalogType GrantObjectType(const string &keyword) {
 	if (keyword == "TABLE" || keyword == "VIEW" || keyword == "TABLES") {
 		return CatalogType::TABLE_ENTRY;
@@ -550,22 +543,19 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 	auto name = TransformColIdName(transformer, list_pr.GetChild(2));
 	auto &chosen = list_pr.GetChild(3).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 
+	auto info = make_uniq<AlterRoleInfo>(Identifier(name));
+	auto result = make_uniq<AlterStatement>();
+
 	if (chosen.name == "AlterRoleRename") {
 		// LIST(AlterRoleRename): 0:'RENAME' 1:'TO' 2:ColId
-		auto new_name = TransformColIdName(transformer, chosen.Cast<ListParseResult>().GetChild(2));
-		auto result = make_uniq<PragmaStatement>();
-		result->info->name = "serenedb_rename_role";
-		result->info->parameters.push_back(StrConst(name));
-		result->info->parameters.push_back(StrConst(new_name));
+		info->new_name = Identifier(TransformColIdName(transformer, chosen.Cast<ListParseResult>().GetChild(2)));
+		result->info = std::move(info);
 		return std::move(result);
 	}
 
 	if (chosen.name == "AlterRoleConfig") {
 		// LIST(AlterRoleConfig) -> CHOICE(AlterRoleSet / AlterRoleReset).
 		auto &cfg = chosen.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-		auto result = make_uniq<PragmaStatement>();
-		result->info->name = "serenedb_alter_role_config";
-		result->info->parameters.push_back(StrConst(name));
 		if (cfg.name == "AlterRoleSet") {
 			// LIST(AlterRoleSet): 0:'SET' 1:SettingName 2:GROUP-LIST -> CHOICE(
 			// AlterRoleSetTo / AlterRoleSetFromCurrent). SettingName is a
@@ -590,36 +580,23 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 			// AlterRoleSetFromCurrent records the GUC's current value; SereneDB has
 			// no session GUC store, so it persists an empty value (the GUC name
 			// alone), matching PG's "setting=" shape closely enough for surfacing.
-			result->info->parameters.push_back(StrConst("SET"));
-			result->info->parameters.push_back(StrConst(setting));
-			result->info->parameters.push_back(StrConst(value));
+			info->set_config.push_back(setting + "=" + value);
 		} else {
 			// LIST(AlterRoleReset): 0:'RESET' 1:GROUP-LIST -> CHOICE(AlterRoleResetAll
 			// / SettingName).
 			auto &reset_choice =
 			    cfg.Cast<ListParseResult>().Child<ListParseResult>(1).Child<ChoiceParseResult>(0).GetResult();
 			if (reset_choice.name == "AlterRoleResetAll") {
-				result->info->parameters.push_back(StrConst("RESET_ALL"));
-				result->info->parameters.push_back(StrConst(string()));
+				info->reset_all_config = true;
 			} else {
 				// SettingName is a matcher-handled IdentifierParseResult.
-				result->info->parameters.push_back(StrConst("RESET"));
-				result->info->parameters.push_back(StrConst(reset_choice.Cast<IdentifierParseResult>().identifier));
+				info->reset_config.push_back(reset_choice.Cast<IdentifierParseResult>().identifier);
 			}
-			result->info->parameters.push_back(StrConst(string()));
 		}
+		result->info = std::move(info);
 		return std::move(result);
 	}
 
-	int32_t login = -1, super = -1, createdb = -1, createrole = -1, inherit = -1;
-	int32_t replication = -1, bypassrls = -1;
-	bool has_password = false;
-	string password;
-	bool password_is_null = false; // PASSWORD NULL clears; PASSWORD '' is a real password
-	bool has_conn_limit = false;
-	int64_t conn_limit = -1;
-	bool has_valid_until = false;
-	int64_t valid_until = 0;
 	std::set<string> seen;
 	auto once = [&seen](const string &category) {
 		if (!seen.insert(category).second) {
@@ -633,69 +610,59 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 		if (opt.name == "PasswordOption") {
 			// PasswordOption <- 'ENCRYPTED'? 'PASSWORD' StringLiteral
 			once("password");
-			has_password = true;
-			password = opt.Cast<ListParseResult>().GetChild(2).Cast<StringLiteralParseResult>().result;
+			info->set_password = true;
+			info->password = opt.Cast<ListParseResult>().GetChild(2).Cast<StringLiteralParseResult>().result;
 			continue;
 		}
 		if (opt.name == "PasswordNullOption") {
 			once("password");
-			has_password = true;
-			password_is_null = true; // clears the password
+			info->set_password = true;
+			info->null_password = true;
 			continue;
 		}
 		if (opt.name == "ConnLimitOption") {
 			once("connlimit");
-			has_conn_limit = true;
-			conn_limit = TransformConnLimit(opt);
+			info->set_conn_limit = true;
+			info->conn_limit = NumericCast<int32_t>(TransformConnLimit(opt));
 			continue;
 		}
 		if (opt.name == "ValidUntilOption") {
 			once("validuntil");
-			has_valid_until = true;
-			valid_until = TransformValidUntil(opt);
+			info->set_valid_until = true;
+			info->valid_until = TransformValidUntil(opt);
 			continue;
 		}
 		// Every other option is a rule wrapping a CHOICE of two keywords (the
 		// positive form and its NO* negation), like LoginOption.
 		auto &kw = opt.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>();
-		const int32_t on = StringUtil::Upper(kw.keyword).rfind("NO", 0) == 0 ? 0 : 1;
+		const bool on = StringUtil::Upper(kw.keyword).rfind("NO", 0) != 0;
 		once(string(opt.name));
+		RoleOption option;
 		if (opt.name == "LoginOption") {
-			login = on;
+			option = RoleOption::Login;
 		} else if (opt.name == "SuperuserOption") {
-			super = on;
+			option = RoleOption::Superuser;
 		} else if (opt.name == "CreateDbOption") {
-			createdb = on;
+			option = RoleOption::CreateDb;
 		} else if (opt.name == "CreateRoleOption") {
-			createrole = on;
+			option = RoleOption::CreateRole;
 		} else if (opt.name == "ReplicationOption") {
-			replication = on;
+			option = RoleOption::Replication;
 		} else if (opt.name == "BypassRlsOption") {
-			bypassrls = on;
+			option = RoleOption::BypassRls;
 		} else if (opt.name == "InheritOption") {
-			inherit = on;
+			option = RoleOption::Inherit;
 		} else {
 			throw ParserException("Unexpected role option in ALTER ROLE: %s", opt.name);
 		}
+		if (on) {
+			info->set_options = info->set_options | option;
+		} else {
+			info->clear_options = info->clear_options | option;
+		}
 	}
 
-	auto result = make_uniq<PragmaStatement>();
-	result->info->name = "serenedb_alter_role";
-	result->info->parameters.push_back(StrConst(name));
-	result->info->parameters.push_back(IntConst(login));
-	result->info->parameters.push_back(IntConst(super));
-	result->info->parameters.push_back(IntConst(createdb));
-	result->info->parameters.push_back(IntConst(createrole));
-	result->info->parameters.push_back(IntConst(inherit));
-	result->info->parameters.push_back(BoolConst(has_password));
-	result->info->parameters.push_back(StrConst(password));
-	result->info->parameters.push_back(BoolConst(password_is_null));
-	result->info->parameters.push_back(BoolConst(has_conn_limit));
-	result->info->parameters.push_back(BoolConst(has_valid_until));
-	result->info->parameters.push_back(BigIntConst(valid_until));
-	result->info->parameters.push_back(BigIntConst(conn_limit));
-	result->info->parameters.push_back(IntConst(replication));
-	result->info->parameters.push_back(IntConst(bypassrls));
+	result->info = std::move(info);
 	return std::move(result);
 }
 
@@ -726,9 +693,6 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 	return std::move(result);
 }
 
-// `privs_list` is the LIST(PrivilegeList) node: child 0 is the AllPrivileges /
-// List(Privilege) choice. Privilege bits go to the info; a column list attaches
-// them to the named columns instead.
 static void TransformPrivilegeList(PEGTransformer &transformer, ParseResult &privs_list, AlterPermissionsInfo &info) {
 	const auto acl_class =
 	    info.default_objtype != CatalogType::INVALID ? info.default_objtype : info.entry_catalog_type;
@@ -774,8 +738,6 @@ static void TransformPrivilegeList(PEGTransformer &transformer, ParseResult &pri
 	}
 }
 
-// A GrantTarget fills the object class and name; the ALL ... IN SCHEMA forms
-// carry the schema in the qualified name and mark the info as bulk.
 static void TransformGrantTarget(PEGTransformer &transformer, ParseResult &target_choice_holder,
                                  AlterPermissionsInfo &info) {
 	auto &chosen = target_choice_holder.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
@@ -826,8 +788,6 @@ static void TransformGrantTarget(PEGTransformer &transformer, ParseResult &targe
 	}
 }
 
-// GRANT/REVOKE on an object. `option_only` marks the REVOKE GRANT OPTION FOR
-// downgrade (keep the privilege, drop only its grant option).
 // Children from `privs_child`: 0:PrivilegeList 1:'ON' 2:GrantTarget 3:TO/FROM
 // 4:Grantee 5:WithGrantOption?/DropBehavior? 6:GrantedBy?
 static unique_ptr<SQLStatement> BuildGrantTable(PEGTransformer &transformer, ListParseResult &list_pr, bool revoke,
@@ -858,13 +818,16 @@ static unique_ptr<SQLStatement> BuildGrantTable(PEGTransformer &transformer, Lis
 // FOR (keep the membership edge, drop only its admin option).
 static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, ListParseResult &list_pr, bool revoke,
                                                bool option_only, idx_t opts_child) {
-	auto role = TransformColIdName(transformer, list_pr.GetChild(0));
-	auto member = TransformColIdName(transformer, list_pr.GetChild(2));
+	auto info = make_uniq<AlterRoleInfo>(Identifier(TransformColIdName(transformer, list_pr.GetChild(2))));
+	info->grant_role = TransformColIdName(transformer, list_pr.GetChild(0));
+	info->revoke = revoke;
+	info->option_only = option_only;
 
 	// Per-edge options, tri-state (-1 unspecified / 0 false / 1 true). REVOKE has
 	// no option list. ADMIN OPTION FOR forces admin := 0.
-	int32_t admin = option_only ? 0 : -1, inherit = -1, set_opt = -1;
-	string granted_by;
+	if (option_only) {
+		info->admin_option = 0;
+	}
 	if (!revoke) {
 		auto &opts_opt = list_pr.Child<OptionalParseResult>(opts_child);
 		if (opts_opt.HasResult()) {
@@ -878,26 +841,18 @@ static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, List
 					v = 1; // bare 'WITH ADMIN OPTION' / 'WITH INHERIT' means TRUE
 				}
 				if (chosen.name == "AdminOption") {
-					admin = v;
+					info->admin_option = NumericCast<int8_t>(v);
 				} else if (chosen.name == "InheritMemberOption") {
-					inherit = v;
+					info->inherit_option = NumericCast<int8_t>(v);
 				} else {
-					set_opt = v;
+					info->set_option = NumericCast<int8_t>(v);
 				}
 			}
 		}
-		granted_by = TransformGrantedBy(transformer, list_pr, opts_child + 1);
 	}
 
-	auto result = make_uniq<PragmaStatement>();
-	result->info->name = "serenedb_grant_role";
-	result->info->parameters.push_back(StrConst(role));
-	result->info->parameters.push_back(StrConst(member));
-	result->info->parameters.push_back(BoolConst(revoke));
-	result->info->parameters.push_back(IntConst(admin));
-	result->info->parameters.push_back(IntConst(inherit));
-	result->info->parameters.push_back(IntConst(set_opt));
-	result->info->parameters.push_back(BoolConst(option_only));
+	auto result = make_uniq<AlterStatement>();
+	result->info = std::move(info);
 	return std::move(result);
 }
 
@@ -923,17 +878,13 @@ static unique_ptr<SQLStatement> BuildGrant(PEGTransformer &transformer, ChoicePa
 	// builder by viewing children 3.. as role/from/member.
 	if (form.name == "RevokeAdminOptionFor") {
 		auto &list_pr = form.Cast<ListParseResult>();
-		auto role = TransformColIdName(transformer, list_pr.GetChild(3));
-		auto member = TransformColIdName(transformer, list_pr.GetChild(5));
-		auto result = make_uniq<PragmaStatement>();
-		result->info->name = "serenedb_grant_role";
-		result->info->parameters.push_back(StrConst(role));
-		result->info->parameters.push_back(StrConst(member));
-		result->info->parameters.push_back(BoolConst(true)); // revoke
-		result->info->parameters.push_back(IntConst(0));     // admin := 0
-		result->info->parameters.push_back(IntConst(-1));    // inherit unspecified
-		result->info->parameters.push_back(IntConst(-1));    // set unspecified
-		result->info->parameters.push_back(BoolConst(true)); // option_only
+		auto info = make_uniq<AlterRoleInfo>(Identifier(TransformColIdName(transformer, list_pr.GetChild(5))));
+		info->grant_role = TransformColIdName(transformer, list_pr.GetChild(3));
+		info->revoke = true;
+		info->option_only = true;
+		info->admin_option = 0;
+		auto result = make_uniq<AlterStatement>();
+		result->info = std::move(info);
 		return std::move(result);
 	}
 
@@ -958,10 +909,6 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformRevokeStatement(PEGTran
 	return BuildGrant(transformer, inner, /*revoke=*/true);
 }
 
-// ALTER DEFAULT PRIVILEGES [FOR ROLE r,...] [IN SCHEMA s,...] (GRANT|REVOKE) ...
-// for_role/in_schema are empty when unspecified (defaults: current user / all
-// schemas). SereneDB supports a single FOR ROLE / IN SCHEMA target (PG allows
-// lists; the first of each is used).
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterDefaultPrivilegesStatement(PEGTransformer &transformer,
                                                                                          ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();

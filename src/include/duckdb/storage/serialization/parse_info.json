@@ -436,6 +436,118 @@
     ]
   },
   {
+    "class": "AlterRoleInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_ROLE",
+    "members": [
+      {
+        "id": 300,
+        "name": "set_options",
+        "type": "RoleOption"
+      },
+      {
+        "id": 301,
+        "name": "clear_options",
+        "type": "RoleOption"
+      },
+      {
+        "id": 302,
+        "name": "set_password",
+        "type": "bool"
+      },
+      {
+        "id": 303,
+        "name": "null_password",
+        "type": "bool"
+      },
+      {
+        "id": 304,
+        "name": "password",
+        "type": "string"
+      },
+      {
+        "id": 305,
+        "name": "set_conn_limit",
+        "type": "bool"
+      },
+      {
+        "id": 306,
+        "name": "conn_limit",
+        "type": "int32_t"
+      },
+      {
+        "id": 307,
+        "name": "set_valid_until",
+        "type": "bool"
+      },
+      {
+        "id": 308,
+        "name": "valid_until",
+        "type": "int64_t"
+      },
+      {
+        "id": 309,
+        "name": "new_name",
+        "type": "Identifier"
+      },
+      {
+        "id": 310,
+        "name": "reset_all_config",
+        "type": "bool"
+      },
+      {
+        "id": 311,
+        "name": "reset_config",
+        "type": "vector<string>"
+      },
+      {
+        "id": 312,
+        "name": "set_config",
+        "type": "vector<string>"
+      },
+      {
+        "id": 313,
+        "name": "grant_role",
+        "type": "string"
+      },
+      {
+        "id": 314,
+        "name": "revoke",
+        "type": "bool"
+      },
+      {
+        "id": 315,
+        "name": "option_only",
+        "type": "bool"
+      },
+      {
+        "id": 316,
+        "name": "admin_option",
+        "type": "int8_t"
+      },
+      {
+        "id": 317,
+        "name": "inherit_option",
+        "type": "int8_t"
+      },
+      {
+        "id": 318,
+        "name": "set_option",
+        "type": "int8_t"
+      },
+      {
+        "id": 319,
+        "name": "grant_role_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 320,
+        "name": "grantor_id",
+        "type": "idx_t"
+      }
+    ]
+  },
+  {
     "class": "ChangeOwnershipInfo",
     "base": "AlterInfo",
     "enum": "CHANGE_OWNERSHIP",
