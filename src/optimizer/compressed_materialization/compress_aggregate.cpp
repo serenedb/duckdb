@@ -136,22 +136,23 @@ void CompressedMaterialization::UpdateAggregateStats(unique_ptr<LogicalOperator>
 	auto &compressed_aggregate = op->children[0]->Cast<LogicalAggregate>();
 	auto &groups = compressed_aggregate.groups;
 	auto &group_stats = compressed_aggregate.group_stats;
+	const auto bindings = compressed_aggregate.GetColumnBindings();
 
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
 		auto &group_expr = *groups[group_idx];
-		if (group_expr.GetExpressionType() != ExpressionType::BOUND_COLUMN_REF) {
-			continue;
-		}
-		auto &colref = group_expr.Cast<BoundColumnRefExpression>();
 		if (!group_stats[group_idx]) {
 			continue;
 		}
-		if (colref.GetReturnType() == group_stats[group_idx]->GetType()) {
-			continue;
+		if (group_expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF &&
+		    group_expr.GetReturnType() != group_stats[group_idx]->GetType()) {
+			auto &colref = group_expr.Cast<BoundColumnRefExpression>();
+			auto it = statistics_map.find(colref.Binding());
+			if (it != statistics_map.end() && it->second) {
+				group_stats[group_idx] = it->second->ToUnique();
+			}
 		}
-		auto it = statistics_map.find(colref.Binding());
-		if (it != statistics_map.end() && it->second) {
-			group_stats[group_idx] = it->second->ToUnique();
+		if (group_stats[group_idx]->GetType() == group_expr.GetReturnType()) {
+			statistics_map[bindings[group_idx]] = group_stats[group_idx]->ToUnique();
 		}
 	}
 }
