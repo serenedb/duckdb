@@ -231,6 +231,9 @@ private:
 	}
 
 	bool TryEvaluateAt(const Value &bound, int64_t &result) const {
+		if (bound.type() != column.GetReturnType()) {
+			return false;
+		}
 		unique_ptr<Expression> constant = make_uniq<BoundConstantExpression>(bound);
 		auto evaluated = ReplaceColumn(expr->Copy(), constant);
 		Value value;
