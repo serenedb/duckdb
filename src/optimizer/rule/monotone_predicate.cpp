@@ -617,12 +617,18 @@ struct RangeBuilder {
 		if (upper.none) {
 			return Disjoin(Below(lower), Top());
 		}
+		if (upper.key == lower.key + 1) {
+			return Conjoin(Key(ExpressionType::COMPARE_NOTEQUAL, lower.key), Conjoin(FiniteLower(), FiniteUpper()));
+		}
 		return Disjoin(Below(lower), AtLeast(upper));
 	}
 
 	unique_ptr<Expression> Between(const Boundary &lower, const Boundary &upper) const {
 		if (lower.none) {
 			return folds ? Empty() : nullptr;
+		}
+		if (!upper.none && upper.key == lower.key + 1) {
+			return Key(ExpressionType::COMPARE_EQUAL, lower.key);
 		}
 		auto result = Key(ExpressionType::COMPARE_GREATERTHANOREQUALTO, lower.key);
 		if (upper.none) {
