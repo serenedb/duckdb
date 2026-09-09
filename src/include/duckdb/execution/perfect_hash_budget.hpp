@@ -32,6 +32,7 @@ namespace duckdb {
 struct PerfectHashBudget {
 	static constexpr idx_t BYTES_PER_THREAD = idx_t(1) << 20;
 	static constexpr idx_t MAX_BITS = 18;
+	static constexpr idx_t DEFAULT_THRESHOLD_BITS = 12;
 
 	static idx_t RequiredBits(uint32_t n) {
 		return absl::bit_width(n);
@@ -51,6 +52,9 @@ struct PerfectHashBudget {
 
 	static idx_t MaxBits(ClientContext &context, const vector<unique_ptr<Expression>> &aggregates) {
 		idx_t bits = Settings::Get<PerfectHtThresholdSetting>(context);
+		if (bits < DEFAULT_THRESHOLD_BITS) {
+			return bits;
+		}
 		const auto bytes = StateBytes(aggregates);
 		if (bytes == NumericLimits<idx_t>::Maximum()) {
 			return bits;
