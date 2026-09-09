@@ -100,7 +100,7 @@ analyzed_plan	<REGEX>:.*Column Filter[ \t\n│]*.*d >= '2025.*AND.*d <.*'2025.*$
 query II
 explain analyze select * from test where date_trunc('day', d) != '2025-01-08';
 ----
-analyzed_plan	<REGEX>:.*FILTER.*\(d >= '2025.*OR.*\(d <[ \t\n│─]*'2025.*$
+analyzed_plan	<REGEX>:.*FILTER.*\(d (>=|<) '2025.*OR.*\(d (<|>=)[ \t\n│─]*'2025.*$
 
 query II
 explain analyze select * from test where date_trunc('day', d) is not distinct from '2025-01-08';

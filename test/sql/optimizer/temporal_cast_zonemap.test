@@ -1,5 +1,5 @@
 # name: test/sql/optimizer/temporal_cast_zonemap.test
-# description: Test that temporal cast filters generate OptionalFilter for zonemap pruning
+# description: Temporal cast filters fold into exact bounds, or an OptionalFilter for zonemap pruning
 # group: [optimizer]
 
 statement ok
@@ -62,7 +62,7 @@ physical_plan	<REGEX>:.*col.*DATE.*
 
 # ---------------------------------------------------------------------------
 # DATE -> TIMESTAMP: non-midnight comparisons no longer need the zone map —
-# ordering ops rewrite to direct DATE filters, = folds to EMPTY_RESULT.
+# ordering ops rewrite to direct DATE filters, = becomes an empty DATE range.
 # ---------------------------------------------------------------------------
 query II
 EXPLAIN SELECT * FROM date_table WHERE CAST(col AS TIMESTAMP) > '2024-01-01 12:00:00'::TIMESTAMP;
@@ -72,71 +72,71 @@ physical_plan	<REGEX>:.*col.*DATE.*
 query II
 EXPLAIN SELECT * FROM date_table WHERE CAST(col AS TIMESTAMP) = '2024-01-01 12:00:00'::TIMESTAMP;
 ----
-physical_plan	<REGEX>:.*EMPTY_RESULT.*
+physical_plan	<REGEX>:.*\(col >= '2024-01-02'::DATE\) AND \(col < '2024-01-02'::DATE\).*
 
 # ---------------------------------------------------------------------------
-# TIMESTAMP -> DATE (margin = 24h)
+# TIMESTAMP -> DATE: exact bound on the next day
 # ---------------------------------------------------------------------------
 query II
 EXPLAIN SELECT * FROM ts_table WHERE CAST(col AS DATE) > '2020-06-01'::DATE;
 ----
-physical_plan	<REGEX>:.*optional.*col.*
+physical_plan	<REGEX>:.*col >= '2020-06-02 00:00:00'::TIMESTAMP.*
 
 # ---------------------------------------------------------------------------
-# TIMESTAMP_NS -> TIMESTAMP (margin = 1s)
+# TIMESTAMP_NS -> TIMESTAMP: exact bound at the rounding point
 # ---------------------------------------------------------------------------
 query II
 EXPLAIN SELECT * FROM tsns_table WHERE CAST(col AS TIMESTAMP) > '2020-06-01'::TIMESTAMP;
 ----
-physical_plan	<REGEX>:.*optional.*col.*
+physical_plan	<REGEX>:.*col >= '2020-06-01 00:00:00.0000005'::TIMESTAMP_NS.*
 
 # ---------------------------------------------------------------------------
-# TIMESTAMP -> TIMESTAMP_MS (margin = 1s)
+# TIMESTAMP -> TIMESTAMP_MS: exact bound at the rounding point
 # ---------------------------------------------------------------------------
 query II
 EXPLAIN SELECT * FROM ts_table WHERE CAST(col AS TIMESTAMP_MS) > '2020-06-01'::TIMESTAMP_MS;
 ----
-physical_plan	<REGEX>:.*optional.*col.*
+physical_plan	<REGEX>:.*col >= '2020-06-01 00:00:00.0005'::TIMESTAMP.*
 
 # ---------------------------------------------------------------------------
-# TIMESTAMP -> TIMESTAMP_S (margin = 1s)
+# TIMESTAMP -> TIMESTAMP_S: exact bound at the rounding point
 # ---------------------------------------------------------------------------
 query II
 EXPLAIN SELECT * FROM ts_table WHERE CAST(col AS TIMESTAMP_S) > '2020-06-01'::TIMESTAMP_S;
 ----
-physical_plan	<REGEX>:.*optional.*col.*
+physical_plan	<REGEX>:.*col >= '2020-06-01 00:00:00.5'::TIMESTAMP.*
 
 # ---------------------------------------------------------------------------
-# TIMESTAMP_MS -> DATE (margin = 24h)
+# TIMESTAMP_MS -> DATE: exact bound on the next day
 # ---------------------------------------------------------------------------
 query II
 EXPLAIN SELECT * FROM tsms_table WHERE CAST(col AS DATE) > '2020-06-01'::DATE;
 ----
-physical_plan	<REGEX>:.*optional.*col.*
+physical_plan	<REGEX>:.*col >= '2020-06-02 00:00:00'::TIMESTAMP_MS.*
 
 # ---------------------------------------------------------------------------
-# TIMESTAMP_S -> DATE (margin = 24h)
+# TIMESTAMP_S -> DATE: exact bound on the next day
 # ---------------------------------------------------------------------------
 query II
 EXPLAIN SELECT * FROM tss_table WHERE CAST(col AS DATE) > '2020-06-01'::DATE;
 ----
-physical_plan	<REGEX>:.*optional.*col.*
+physical_plan	<REGEX>:.*col >= '2020-06-02 00:00:00'::TIMESTAMP_S.*
 
 # ---------------------------------------------------------------------------
-# TIMESTAMP_NS -> TIMESTAMP_MS (margin = 1s)
+# TIMESTAMP_NS -> TIMESTAMP_MS: exact bound at the rounding point
 # ---------------------------------------------------------------------------
 query II
 EXPLAIN SELECT * FROM tsns_table WHERE CAST(col AS TIMESTAMP_MS) > '2020-06-01'::TIMESTAMP_MS;
 ----
-physical_plan	<REGEX>:.*optional.*col.*
+physical_plan	<REGEX>:.*col >= '2020-06-01 00:00:00.0005'::TIMESTAMP_NS.*
 
 # ---------------------------------------------------------------------------
-# TIMESTAMP_MS -> TIMESTAMP_S (margin = 1s)
+# TIMESTAMP_MS -> TIMESTAMP_S: exact bound at the rounding point
 # ---------------------------------------------------------------------------
 query II
 EXPLAIN SELECT * FROM tsms_table WHERE CAST(col AS TIMESTAMP_S) > '2020-06-01'::TIMESTAMP_S;
 ----
-physical_plan	<REGEX>:.*optional.*col.*
+physical_plan	<REGEX>:.*col >= '2020-06-01 00:00:00.5'::TIMESTAMP_MS.*
 
 # ---------------------------------------------------------------------------
 # DATE -> TIMESTAMPTZ (margin = 2h) - requires ICU for TIMESTAMPTZ->DATE cast
@@ -181,7 +181,7 @@ physical_plan	<!REGEX>:.*optional.*
 query II
 EXPLAIN SELECT * FROM date_table WHERE CAST(col AS TIMESTAMP) > '2024-01-01'::TIMESTAMP;
 ----
-physical_plan	<REGEX>:.*col > '2024-01-01'::DATE.*
+physical_plan	<REGEX>:.*col (> '2024-01-01'|>= '2024-01-02')::DATE.*
 
 # ---------------------------------------------------------------------------
 # Correctness: results match expected values
