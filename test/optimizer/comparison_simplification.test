@@ -73,12 +73,12 @@ physical_plan	<REGEX>:.*d < '2024-06-15'::DATE.*
 query II
 EXPLAIN SELECT * FROM date_test WHERE d <= timestamp '2024-06-15 00:00:00';
 ----
-physical_plan	<REGEX>:.*d <= '2024-06-15'::DATE.*
+physical_plan	<REGEX>:.*d (<= '2024-06-15'|< '2024-06-16')::DATE.*
 
 query II
 EXPLAIN SELECT * FROM date_test WHERE d > timestamp '2024-06-15 00:00:00';
 ----
-physical_plan	<REGEX>:.*d > '2024-06-15'::DATE.*
+physical_plan	<REGEX>:.*d (> '2024-06-15'|>= '2024-06-16')::DATE.*
 
 query II
 EXPLAIN SELECT * FROM date_test WHERE d >= timestamp '2024-06-15 00:00:00';
@@ -106,13 +106,13 @@ physical_plan	<REGEX>:.*d < '2024-06-16'::DATE.*
 query II
 EXPLAIN SELECT * FROM date_test WHERE d <= timestamp '2024-06-15 12:00:00';
 ----
-physical_plan	<REGEX>:.*d <= '2024-06-15'::DATE.*
+physical_plan	<REGEX>:.*d (<= '2024-06-15'|< '2024-06-16')::DATE.*
 
 # non-midnight, > : floor
 query II
 EXPLAIN SELECT * FROM date_test WHERE d > timestamp '2024-06-15 12:00:00';
 ----
-physical_plan	<REGEX>:.*d > '2024-06-15'::DATE.*
+physical_plan	<REGEX>:.*d (> '2024-06-15'|>= '2024-06-16')::DATE.*
 
 # non-midnight, >= : floor + 1 day
 query II
@@ -208,13 +208,13 @@ SELECT d FROM date_test WHERE d >= timestamp '2024-06-15 12:00:00' ORDER BY d;
 query II
 EXPLAIN SELECT * FROM date_test WHERE timestamp '2024-06-15 00:00:00' < d;
 ----
-physical_plan	<REGEX>:.*d > '2024-06-15'::DATE.*
+physical_plan	<REGEX>:.*d (> '2024-06-15'|>= '2024-06-16')::DATE.*
 
 # non-midnight, T < col  ↔  col > floor (no adjust)
 query II
 EXPLAIN SELECT * FROM date_test WHERE timestamp '2024-06-15 12:00:00' < d;
 ----
-physical_plan	<REGEX>:.*d > '2024-06-15'::DATE.*
+physical_plan	<REGEX>:.*d (> '2024-06-15'|>= '2024-06-16')::DATE.*
 
 # non-midnight, T <= col  ↔  col >= floor+1
 query II
@@ -232,7 +232,7 @@ physical_plan	<REGEX>:.*d < '2024-06-16'::DATE.*
 query II
 EXPLAIN SELECT * FROM date_test WHERE timestamp '2024-06-15 12:00:00' >= d;
 ----
-physical_plan	<REGEX>:.*d <= '2024-06-15'::DATE.*
+physical_plan	<REGEX>:.*d (<= '2024-06-15'|< '2024-06-16')::DATE.*
 
 # non-midnight, T = col → constant_or_null
 query II
