@@ -1,3 +1,4 @@
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
@@ -19,7 +20,11 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/create_trigger_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
@@ -253,6 +258,18 @@ protected:
 
 	void ReplayCreateTrigger();
 	void ReplayDropTrigger();
+
+	void ReplayCreateTokenizer();
+	void ReplayDropTokenizer();
+
+	void ReplayCreateRole();
+	void ReplayDropRole();
+
+	void ReplayCreateDatabase();
+	void ReplayDropDatabase();
+
+	void ReplayCreateForeignServer();
+	void ReplayDropForeignServer();
 
 	void ReplayUseTable();
 	void ReplayInsert();
@@ -669,6 +686,30 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::DROP_TRIGGER:
 		ReplayDropTrigger();
 		break;
+	case WALType::CREATE_TOKENIZER:
+		ReplayCreateTokenizer();
+		break;
+	case WALType::DROP_TOKENIZER:
+		ReplayDropTokenizer();
+		break;
+	case WALType::CREATE_ROLE:
+		ReplayCreateRole();
+		break;
+	case WALType::DROP_ROLE:
+		ReplayDropRole();
+		break;
+	case WALType::CREATE_DATABASE:
+		ReplayCreateDatabase();
+		break;
+	case WALType::DROP_DATABASE:
+		ReplayDropDatabase();
+		break;
+	case WALType::CREATE_FOREIGN_SERVER:
+		ReplayCreateForeignServer();
+		break;
+	case WALType::DROP_FOREIGN_SERVER:
+		ReplayDropForeignServer();
+		break;
 	default:
 		throw InternalException("Invalid WAL entry type!");
 	}
@@ -901,13 +942,12 @@ void WriteAheadLogDeserializer::ReplayDropView() {
 // Replay Schema
 //===--------------------------------------------------------------------===//
 void WriteAheadLogDeserializer::ReplayCreateSchema() {
-	CreateSchemaInfo info;
-	info.SetQualifiedName(QualifiedName({Identifier(deserializer.ReadProperty<string>(101, "schema"))}, Identifier()));
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "schema");
 	if (DeserializeOnly()) {
 		return;
 	}
 
-	catalog.CreateSchema(context, info);
+	catalog.CreateSchema(context, info->Cast<CreateSchemaInfo>());
 }
 
 void WriteAheadLogDeserializer::ReplayDropSchema() {
@@ -982,6 +1022,89 @@ void WriteAheadLogDeserializer::ReplayDropTrigger() {
 	auto &duck_table = table.Cast<DuckTableEntry>();
 	auto transaction = catalog.GetCatalogTransaction(context);
 	duck_table.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateTokenizer() {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "tokenizer");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	auto &schema = catalog.GetSchema(context, info->GetQualifiedName().Schema());
+	schema.Cast<DuckSchemaEntry>().CreateTokenizer(catalog.GetCatalogTransaction(context),
+	                                               info->Cast<CreateTokenizerInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropTokenizer() {
+	DropInfo info;
+	info.type = CatalogType::TOKENIZER_ENTRY;
+	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
+	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
+	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
+	if (DeserializeOnly()) {
+		return;
+	}
+
+	catalog.DropEntry(context, info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateRole() {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "role");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().CreateRole(catalog.GetCatalogTransaction(context), info->Cast<CreateRoleInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropRole() {
+	DropInfo info;
+	info.type = CatalogType::ROLE_ENTRY;
+	info.SetName(Identifier(deserializer.ReadProperty<string>(101, "name")));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DropRole(catalog.GetCatalogTransaction(context), info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateDatabase() {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "database");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().CreateDatabase(catalog.GetCatalogTransaction(context),
+	                                           info->Cast<CreateDatabaseInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropDatabase() {
+	DropInfo info;
+	info.type = CatalogType::DATABASE_ENTRY;
+	info.SetName(Identifier(deserializer.ReadProperty<string>(101, "name")));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DropDatabase(catalog.GetCatalogTransaction(context), info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateForeignServer() {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "server");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().CreateForeignServer(catalog.GetCatalogTransaction(context),
+	                                                info->Cast<CreateForeignServerInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropForeignServer() {
+	DropInfo info;
+	info.type = CatalogType::FOREIGN_SERVER_ENTRY;
+	info.SetName(Identifier(deserializer.ReadProperty<string>(101, "name")));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DropForeignServer(catalog.GetCatalogTransaction(context), info);
 }
 
 //===--------------------------------------------------------------------===//

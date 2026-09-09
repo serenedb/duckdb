@@ -485,5 +485,149 @@
         "trigger_name"
       ]
     }
+  },
+  {
+    "class": "CreateRoleInfo",
+    "base": "CreateInfo",
+    "enum": "ROLE_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_role_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "options",
+        "type": "RoleOption"
+      },
+      {
+        "id": 202,
+        "name": "conn_limit",
+        "type": "int32_t"
+      },
+      {
+        "id": 203,
+        "name": "valid_until",
+        "type": "int64_t"
+      },
+      {
+        "id": 204,
+        "name": "password",
+        "type": "string"
+      },
+      {
+        "id": 205,
+        "name": "member_of",
+        "type": "vector<Membership>"
+      },
+      {
+        "id": 206,
+        "name": "config",
+        "type": "vector<string>"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
+  },
+  {
+    "class": "CreateDatabaseInfo",
+    "base": "CreateInfo",
+    "enum": "DATABASE_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_database_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
+  },
+  {
+    "class": "CreateForeignServerInfo",
+    "base": "CreateInfo",
+    "enum": "FOREIGN_SERVER_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "server_type",
+        "type": "string"
+      },
+      {
+        "id": 202,
+        "name": "version",
+        "type": "string"
+      },
+      {
+        "id": 203,
+        "name": "fdw_name",
+        "type": "string"
+      },
+      {
+        "id": 204,
+        "name": "options",
+        "type": "case_insensitive_map_t<string>"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
+  },
+  {
+    "class": "CreateTokenizerInfo",
+    "base": "CreateInfo",
+    "enum": "TOKENIZER_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "features",
+        "type": "uint64_t"
+      },
+      {
+        "id": 202,
+        "name": "config",
+        "type": "string"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
   }
 ]

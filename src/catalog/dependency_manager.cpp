@@ -52,9 +52,8 @@ Identifier DependencyManager::GetSchema(const CatalogEntry &entry) {
 	case CatalogType::SCHEMA_ENTRY:
 		return entry.name;
 	case CatalogType::ROLE_ENTRY:
+	case CatalogType::DATABASE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
-		// Catalog-scoped kinds have no schema; the mangled name carries the type, so an empty schema
-		// component stays unambiguous against every schema-scoped kind.
 		return Identifier::InvalidSchema();
 	default:
 		return entry.ParentSchema().name;
@@ -332,6 +331,9 @@ optional_ptr<CatalogEntry> DependencyManager::LookupEntry(CatalogTransaction tra
 	auto &schema = info.schema;
 	auto &name = info.name;
 
+	if (schema.empty()) {
+		return catalog.GetCatalogSet(type).GetEntry(transaction, name);
+	}
 	// Lookup the schema
 	auto schema_entry = catalog.GetSchema(transaction, schema, OnEntryNotFound::RETURN_NULL);
 	if (type == CatalogType::SCHEMA_ENTRY || !schema_entry) {

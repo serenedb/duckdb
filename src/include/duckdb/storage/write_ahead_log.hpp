@@ -25,9 +25,11 @@ struct AlterInfo;
 class AttachedDatabase;
 class Catalog;
 class DatabaseInstance;
+class InCatalogEntry;
 class SchemaCatalogEntry;
 class SequenceCatalogEntry;
 class ScalarMacroCatalogEntry;
+class StandardEntry;
 class ViewCatalogEntry;
 class TriggerCatalogEntry;
 class TypeCatalogEntry;
@@ -100,6 +102,18 @@ public:
 
 	void WriteCreateTrigger(const TriggerCatalogEntry &entry);
 	void WriteDropTrigger(const TriggerCatalogEntry &entry);
+
+	void WriteCreateTokenizer(const StandardEntry &entry);
+	void WriteDropTokenizer(const StandardEntry &entry);
+
+	void WriteCreateRole(const InCatalogEntry &entry);
+	void WriteDropRole(const InCatalogEntry &entry);
+
+	void WriteCreateDatabase(const InCatalogEntry &entry);
+	void WriteDropDatabase(const InCatalogEntry &entry);
+
+	void WriteCreateForeignServer(const InCatalogEntry &entry);
+	void WriteDropForeignServer(const InCatalogEntry &entry);
 	//! Sets the table used for subsequent insert/delete/update commands
 	void WriteSetTable(const Identifier &schema, const Identifier &table);
 

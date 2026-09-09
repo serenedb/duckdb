@@ -8,6 +8,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/checksum.hpp"
 #include "duckdb/common/encryption_functions.hpp"
@@ -335,7 +336,7 @@ void WriteAheadLog::WriteDropTable(const TableCatalogEntry &entry) {
 //===--------------------------------------------------------------------===//
 void WriteAheadLog::WriteCreateSchema(const SchemaCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::CREATE_SCHEMA);
-	serializer.WriteProperty(101, "schema", entry.name);
+	serializer.WriteProperty(101, "schema", &entry);
 	serializer.End();
 }
 
@@ -482,6 +483,55 @@ void WriteAheadLog::WriteDropTrigger(const TriggerCatalogEntry &entry) {
 	serializer.WriteProperty(101, "schema", entry.schema.name);
 	serializer.WriteProperty(102, "name", entry.name);
 	serializer.WriteProperty(103, "table", entry.base_table->Table());
+	serializer.End();
+}
+
+void WriteAheadLog::WriteCreateTokenizer(const StandardEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_TOKENIZER);
+	serializer.WriteProperty(101, "tokenizer", &entry);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropTokenizer(const StandardEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_TOKENIZER);
+	serializer.WriteProperty(101, "schema", entry.schema.name);
+	serializer.WriteProperty(102, "name", entry.name);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteCreateRole(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_ROLE);
+	serializer.WriteProperty(101, "role", &entry);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropRole(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_ROLE);
+	serializer.WriteProperty(101, "name", entry.name);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteCreateDatabase(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_DATABASE);
+	serializer.WriteProperty(101, "database", &entry);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropDatabase(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_DATABASE);
+	serializer.WriteProperty(101, "name", entry.name);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteCreateForeignServer(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_FOREIGN_SERVER);
+	serializer.WriteProperty(101, "server", &entry);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropForeignServer(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_FOREIGN_SERVER);
+	serializer.WriteProperty(101, "name", entry.name);
 	serializer.End();
 }
 

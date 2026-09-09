@@ -98,6 +98,19 @@ struct AclItem {
 	static AclItem Deserialize(Deserializer &deserializer);
 };
 
+struct Membership {
+	idx_t role = 0;
+	idx_t grantor = 0;
+	bool admin_option = false;
+	bool inherit_option = true;
+	bool set_option = true;
+
+	bool operator==(const Membership &rhs) const = default;
+
+	void Serialize(Serializer &serializer) const;
+	static Membership Deserialize(Deserializer &deserializer);
+};
+
 struct DefaultAcl {
 	idx_t role = 0;
 	CatalogType objtype = CatalogType::INVALID;

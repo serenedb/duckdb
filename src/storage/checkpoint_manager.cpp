@@ -1,6 +1,7 @@
 #include "duckdb/storage/checkpoint_manager.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
@@ -13,6 +14,7 @@
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/common/enums/checkpoint_abort.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/binary_serializer.hpp"
@@ -23,7 +25,11 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/block_manager.hpp"
@@ -109,12 +115,27 @@ unique_ptr<TableDataWriter> SingleFileCheckpointWriter::GetTableDataWriter(Table
 	return make_uniq<SingleFileTableDataWriter>(*this, table, *table_metadata_writer);
 }
 
-static catalog_entry_vector_t GetCatalogEntries(vector<reference<SchemaCatalogEntry>> &schemas) {
+static catalog_entry_vector_t GetCatalogEntries(DuckCatalog &catalog, vector<reference<SchemaCatalogEntry>> &schemas) {
 	catalog_entry_vector_t entries;
+	for (auto type : {CatalogType::ROLE_ENTRY, CatalogType::DATABASE_ENTRY, CatalogType::FOREIGN_SERVER_ENTRY}) {
+		catalog.GetCatalogSet(type).Scan([&](CatalogEntry &entry) {
+			if (entry.internal) {
+				return;
+			}
+			entries.push_back(entry);
+		});
+	}
 	for (auto &schema_p : schemas) {
 		auto &schema = schema_p.get();
 		entries.push_back(schema);
 		schema.Scan(CatalogType::TYPE_ENTRY, [&](CatalogEntry &entry) {
+			if (entry.internal) {
+				return;
+			}
+			entries.push_back(entry);
+		});
+
+		schema.Scan(CatalogType::TOKENIZER_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.internal) {
 				return;
 			}
@@ -244,7 +265,7 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 	D_ASSERT(catalog.IsDuckCatalog());
 
 	auto &dependency_manager = *catalog.GetDependencyManager();
-	catalog_entries = GetCatalogEntries(schemas);
+	catalog_entries = GetCatalogEntries(catalog, schemas);
 	dependency_manager.ReorderEntries(catalog_entries);
 
 	// write the actual data into the database
@@ -305,6 +326,9 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 			if (entry.type != CatalogType::TABLE_ENTRY) {
 				continue;
 			}
+			if (!entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+				continue;
+			}
 			auto &table = entry.Cast<DuckTableEntry>();
 			auto &storage = table.GetStorage();
 			auto segment_info = storage.GetColumnSegmentInfo(context);
@@ -359,6 +383,9 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 	for (auto &entry_ref : catalog_entries) {
 		auto &entry = entry_ref.get();
 		if (entry.type != CatalogType::TABLE_ENTRY) {
+			continue;
+		}
+		if (!entry.Cast<TableCatalogEntry>().IsDuckTable()) {
 			continue;
 		}
 		auto &table = entry.Cast<DuckTableEntry>();
@@ -456,6 +483,26 @@ void CheckpointWriter::WriteEntry(CatalogEntry &entry, Serializer &serializer) {
 		WriteTrigger(trigger, serializer);
 		break;
 	}
+	case CatalogType::TOKENIZER_ENTRY: {
+		auto &tokenizer = entry.Cast<StandardEntry>();
+		WriteTokenizer(tokenizer, serializer);
+		break;
+	}
+	case CatalogType::ROLE_ENTRY: {
+		auto &role = entry.Cast<InCatalogEntry>();
+		WriteRole(role, serializer);
+		break;
+	}
+	case CatalogType::DATABASE_ENTRY: {
+		auto &database = entry.Cast<InCatalogEntry>();
+		WriteDatabase(database, serializer);
+		break;
+	}
+	case CatalogType::FOREIGN_SERVER_ENTRY: {
+		auto &server = entry.Cast<InCatalogEntry>();
+		WriteForeignServer(server, serializer);
+		break;
+	}
 	default:
 		throw InternalException("Unrecognized catalog type in CheckpointWriter::WriteEntry");
 	}
@@ -507,6 +554,22 @@ void CheckpointReader::ReadEntry(CatalogTransaction transaction, Deserializer &d
 	}
 	case CatalogType::TRIGGER_ENTRY: {
 		ReadTrigger(transaction, deserializer);
+		break;
+	}
+	case CatalogType::TOKENIZER_ENTRY: {
+		ReadTokenizer(transaction, deserializer);
+		break;
+	}
+	case CatalogType::ROLE_ENTRY: {
+		ReadRole(transaction, deserializer);
+		break;
+	}
+	case CatalogType::DATABASE_ENTRY: {
+		ReadDatabase(transaction, deserializer);
+		break;
+	}
+	case CatalogType::FOREIGN_SERVER_ENTRY: {
+		ReadForeignServer(transaction, deserializer);
 		break;
 	}
 	default:
@@ -571,6 +634,47 @@ void CheckpointReader::ReadSequence(CatalogTransaction transaction, Deserializer
 	catalog.CreateSequence(transaction, sequence_info);
 }
 
+void CheckpointWriter::WriteTokenizer(StandardEntry &tokenizer, Serializer &serializer) {
+	serializer.WriteProperty(100, "tokenizer", &tokenizer);
+}
+
+void CheckpointReader::ReadTokenizer(CatalogTransaction transaction, Deserializer &deserializer) {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "tokenizer");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	auto &schema = catalog.GetSchema(transaction, info->GetQualifiedName().Schema());
+	schema.Cast<DuckSchemaEntry>().CreateTokenizer(transaction, info->Cast<CreateTokenizerInfo>());
+}
+
+void CheckpointWriter::WriteRole(InCatalogEntry &role, Serializer &serializer) {
+	serializer.WriteProperty(100, "role", &role);
+}
+
+void CheckpointReader::ReadRole(CatalogTransaction transaction, Deserializer &deserializer) {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "role");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	catalog.Cast<DuckCatalog>().CreateRole(transaction, info->Cast<CreateRoleInfo>());
+}
+
+void CheckpointWriter::WriteDatabase(InCatalogEntry &database, Serializer &serializer) {
+	serializer.WriteProperty(100, "database", &database);
+}
+
+void CheckpointReader::ReadDatabase(CatalogTransaction transaction, Deserializer &deserializer) {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "database");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	catalog.Cast<DuckCatalog>().CreateDatabase(transaction, info->Cast<CreateDatabaseInfo>());
+}
+
+void CheckpointWriter::WriteForeignServer(InCatalogEntry &server, Serializer &serializer) {
+	serializer.WriteProperty(100, "server", &server);
+}
+
+void CheckpointReader::ReadForeignServer(CatalogTransaction transaction, Deserializer &deserializer) {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "server");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	catalog.Cast<DuckCatalog>().CreateForeignServer(transaction, info->Cast<CreateForeignServerInfo>());
+}
+
 //===--------------------------------------------------------------------===//
 // Indexes
 //===--------------------------------------------------------------------===//
@@ -625,7 +729,6 @@ void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &d
 		index_storage_info = table_info->ExtractIndexStorageInfo(index.name);
 	}
 
-	D_ASSERT(index_storage_info.IsValid());
 	D_ASSERT(!index_storage_info.name.empty());
 
 	// Create an unbound index and add it to the table.
@@ -676,6 +779,9 @@ void CheckpointReader::ReadTableMacro(CatalogTransaction transaction, Deserializ
 void SingleFileCheckpointWriter::WriteTable(TableCatalogEntry &table, Serializer &serializer) {
 	// Write the table metadata
 	serializer.WriteProperty(100, "table", &table);
+	if (!table.IsDuckTable()) {
+		return;
+	}
 
 	// If there is a context available, bind indexes before serialization.
 	// This is necessary so that buffered index operations are replayed before we checkpoint, otherwise
@@ -704,17 +810,19 @@ void CheckpointReader::ReadTable(CatalogTransaction transaction, Deserializer &d
 		bound_info->dependencies.AddDependency(dep);
 	}
 
-	// now read the actual table data and place it into the CreateTableInfo
-	ReadTableData(transaction, deserializer, *bound_info);
+	auto table_pointer =
+	    deserializer.ReadPropertyWithExplicitDefault<MetaBlockPointer>(101, "table_pointer", MetaBlockPointer());
+	if (table_pointer.IsValid()) {
+		ReadTableData(transaction, deserializer, *bound_info, table_pointer);
+	}
 
 	// finally create the table in the catalog
 	catalog.CreateTable(transaction, *bound_info);
 }
 
 void CheckpointReader::ReadTableData(CatalogTransaction transaction, Deserializer &deserializer,
-                                     BoundCreateTableInfo &bound_info) {
+                                     BoundCreateTableInfo &bound_info, MetaBlockPointer table_pointer) {
 	// written in "SingleFileTableDataWriter::FinalizeTable"
-	auto table_pointer = deserializer.ReadProperty<MetaBlockPointer>(101, "table_pointer");
 	auto total_rows = deserializer.ReadProperty<idx_t>(102, "total_rows");
 
 	// Cover reading old storage files.

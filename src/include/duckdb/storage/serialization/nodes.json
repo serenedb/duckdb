@@ -526,6 +526,40 @@
     "pointer_type": "none"
   },
   {
+    "class": "Membership",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "role",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "grantor",
+        "type": "idx_t"
+      },
+      {
+        "id": 102,
+        "name": "admin_option",
+        "type": "bool"
+      },
+      {
+        "id": 103,
+        "name": "inherit_option",
+        "type": "bool"
+      },
+      {
+        "id": 104,
+        "name": "set_option",
+        "type": "bool"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
     "class": "ColumnPrivilege",
     "includes": [
       "duckdb/catalog/permissions.hpp"

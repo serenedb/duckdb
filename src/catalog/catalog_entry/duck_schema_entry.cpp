@@ -37,6 +37,7 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
@@ -245,6 +246,11 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateSequence(CatalogTransaction tr
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateType(CatalogTransaction transaction, CreateTypeInfo &info) {
 	auto type_entry = make_uniq<TypeCatalogEntry>(catalog, *this, info);
 	return AddEntry(transaction, std::move(type_entry), info.on_conflict);
+}
+
+optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTokenizer(CatalogTransaction transaction, CreateTokenizerInfo &info) {
+	auto tokenizer = catalog.Cast<DuckCatalog>().MakeTokenizerEntry(*this, info);
+	return AddEntry(transaction, std::move(tokenizer), info.on_conflict);
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateView(CatalogTransaction transaction, CreateViewInfo &info) {

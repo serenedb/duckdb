@@ -425,6 +425,24 @@ JoinCondition JoinCondition::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
+void Membership::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<idx_t>(100, "role", role);
+	serializer.WritePropertyWithDefault<idx_t>(101, "grantor", grantor);
+	serializer.WritePropertyWithDefault<bool>(102, "admin_option", admin_option);
+	serializer.WritePropertyWithDefault<bool>(103, "inherit_option", inherit_option);
+	serializer.WritePropertyWithDefault<bool>(104, "set_option", set_option);
+}
+
+Membership Membership::Deserialize(Deserializer &deserializer) {
+	Membership result;
+	deserializer.ReadPropertyWithDefault<idx_t>(100, "role", result.role);
+	deserializer.ReadPropertyWithDefault<idx_t>(101, "grantor", result.grantor);
+	deserializer.ReadPropertyWithDefault<bool>(102, "admin_option", result.admin_option);
+	deserializer.ReadPropertyWithDefault<bool>(103, "inherit_option", result.inherit_option);
+	deserializer.ReadPropertyWithDefault<bool>(104, "set_option", result.set_option);
+	return result;
+}
+
 void MultiFileOptions::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<bool>(100, "filename", filename);
 	serializer.WritePropertyWithDefault<bool>(101, "hive_partitioning", hive_partitioning);

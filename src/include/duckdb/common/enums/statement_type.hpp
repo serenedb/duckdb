@@ -97,16 +97,18 @@ struct StatementProperties {
 		DatabaseModificationType modifications;
 	};
 
+	struct ViewScope {
+		const ViewCatalogEntry *view = nullptr;
+		idx_t begin = 0;
+		idx_t end = 0;
+	};
+
 	//! The set of databases this statement will read from
 	identifier_map_t<CatalogIdentity> read_databases;
 	//! The set of databases this statement will modify
 	identifier_map_t<ModificationInfo> modified_databases;
-	//! Every base-relation access the binder discovered, with the columns touched,
-	//! the verb, and the effective principal to check it against (`who` = the
-	//! enclosing definer view whose owner is checked, or null for the caller).
-	//! Opaque to core: the access-control layer reads it and enforces. Verb bits
-	//! mirror the privilege bitmask; columns are logical (0-based, PK-excluded).
-	vector<AccessRequirement> access_requirements;
+	vector<ViewScope> view_scopes;
+	vector<const CatalogEntry *> resolved_entries;
 	//! Whether or not the statement requires a valid transaction. Almost all statements require this, with the
 	//! exception of ROLLBACK
 	bool requires_valid_transaction;

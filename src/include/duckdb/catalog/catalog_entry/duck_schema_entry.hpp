@@ -13,6 +13,8 @@
 
 namespace duckdb {
 
+struct CreateTokenizerInfo;
+
 //! A schema in the catalog
 class DuckSchemaEntry : public SchemaCatalogEntry {
 public:
@@ -64,6 +66,7 @@ public:
 	optional_ptr<CatalogEntry> CreateCoordinateSystem(CatalogTransaction transaction,
 	                                                  CreateCoordinateSystemInfo &info) override;
 	optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info) override;
+	optional_ptr<CatalogEntry> CreateTokenizer(CatalogTransaction transaction, CreateTokenizerInfo &info);
 	void Alter(CatalogTransaction transaction, AlterInfo &info) override;
 	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
 	void Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
