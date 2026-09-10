@@ -388,6 +388,11 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 		entry_to_destroy = new_entry->TakeChild();
 	}
 
+	// Update shared entry state only after the alter is installed and rollbackable.
+	if (new_entry->name != entry->name) {
+		new_entry->SetAsRoot();
+	}
+
 	read_lock.unlock();
 	write_lock.unlock();
 

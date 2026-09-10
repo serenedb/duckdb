@@ -317,7 +317,6 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		auto copied_table = CatalogEntry::AlterEntry(context, info);
 		auto old_table_name = name;
 		auto &new_table_name = info.Cast<RenameInfo>().new_name;
-		storage->SetTableName(new_table_name);
 		UpdateDependentIndexes(context, *this, [&](DuckIndexEntry &index) {
 			RewriteIndexExpressions(index, [&](ParsedExpression &expr) {
 				ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(
