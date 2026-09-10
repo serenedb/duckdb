@@ -47,10 +47,6 @@ InsertDatabasePathResult DatabaseFilePathManager::InsertDatabasePath(DatabaseMan
 				existing.reuse_claimed = true;
 				return InsertDatabasePathResult::REUSE_EXISTING;
 			}
-			// the database that reserved this path is already gone, but its StoredDatabasePath cleanup
-			// has not erased the entry yet: the path is on its way free, so wait for that erase rather
-			// than refusing the attach
-			return InsertDatabasePathResult::PENDING_DETACH;
 		}
 		bool already_exists = false;
 		bool attached_in_this_system = false;

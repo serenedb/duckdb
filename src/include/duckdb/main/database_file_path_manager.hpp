@@ -21,7 +21,7 @@ struct AttachOptions;
 class AttachedDatabase;
 class DatabaseManager;
 
-enum class InsertDatabasePathResult { SUCCESS, ALREADY_EXISTS, REUSE_EXISTING, PENDING_DETACH };
+enum class InsertDatabasePathResult { SUCCESS, ALREADY_EXISTS, REUSE_EXISTING };
 
 struct DatabasePathInfo {
 	DatabasePathInfo(DatabaseManager &manager, const Identifier &name_p, AccessMode access_mode);
