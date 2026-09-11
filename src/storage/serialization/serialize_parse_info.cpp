@@ -258,9 +258,6 @@ unique_ptr<AlterInfo> AlterIndexInfo::Deserialize(Deserializer &deserializer) {
 	auto alter_index_type = deserializer.ReadProperty<AlterIndexType>(300, "alter_index_type");
 	unique_ptr<AlterIndexInfo> result;
 	switch (alter_index_type) {
-	case AlterIndexType::RENAME_INDEX:
-		result = RenameIndexInfo::Deserialize(deserializer);
-		break;
 	case AlterIndexType::RESET_INDEX_OPTIONS:
 		result = ResetIndexOptionsInfo::Deserialize(deserializer);
 		break;
@@ -750,17 +747,6 @@ unique_ptr<AlterTableInfo> RenameFieldInfo::Deserialize(Deserializer &deserializ
 	auto result = duckdb::unique_ptr<RenameFieldInfo>(new RenameFieldInfo());
 	deserializer.ReadPropertyWithDefault<vector<Identifier>>(400, "column_path", result->column_path);
 	deserializer.ReadPropertyWithDefault<Identifier>(401, "new_name", result->new_name);
-	return std::move(result);
-}
-
-void RenameIndexInfo::Serialize(Serializer &serializer) const {
-	AlterIndexInfo::Serialize(serializer);
-	serializer.WritePropertyWithDefault<Identifier>(400, "new_index_name", new_index_name);
-}
-
-unique_ptr<AlterIndexInfo> RenameIndexInfo::Deserialize(Deserializer &deserializer) {
-	auto result = duckdb::unique_ptr<RenameIndexInfo>(new RenameIndexInfo());
-	deserializer.ReadPropertyWithDefault<Identifier>(400, "new_index_name", result->new_index_name);
 	return std::move(result);
 }
 

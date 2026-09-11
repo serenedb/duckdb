@@ -656,18 +656,6 @@
     ]
   },
   {
-    "class": "RenameIndexInfo",
-    "base": "AlterIndexInfo",
-    "enum": "RENAME_INDEX",
-    "members": [
-      {
-        "id": 400,
-        "name": "new_index_name",
-        "type": "Identifier"
-      }
-    ]
-  },
-  {
     "class": "SetIndexOptionsInfo",
     "base": "AlterIndexInfo",
     "enum": "SET_INDEX_OPTIONS",

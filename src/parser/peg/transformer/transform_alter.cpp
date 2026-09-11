@@ -94,10 +94,6 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransfor
 	AlterEntryData data(base_table_name->GetQualifiedName(),
 	                    if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION);
 	switch (alter_index_alter->alter_table_type) {
-	case AlterTableType::RENAME_TABLE: {
-		auto &rename_info = alter_index_alter->Cast<RenameTableInfo>();
-		return make_uniq_base<AlterInfo, RenameIndexInfo>(data, rename_info.new_table_name);
-	}
 	case AlterTableType::SET_TABLE_OPTIONS: {
 		auto &set_info = alter_index_alter->Cast<SetTableOptionsInfo>();
 		case_insensitive_map_t<Value> options;

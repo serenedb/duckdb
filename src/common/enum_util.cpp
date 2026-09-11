@@ -535,7 +535,6 @@ AlterForeignKeyType EnumUtil::FromString<AlterForeignKeyType>(const char *value)
 const StringUtil::EnumStringLiteral *GetAlterIndexTypeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(AlterIndexType::INVALID), "INVALID" },
-		{ static_cast<uint32_t>(AlterIndexType::RENAME_INDEX), "RENAME_INDEX" },
 		{ static_cast<uint32_t>(AlterIndexType::SET_INDEX_OPTIONS), "SET_INDEX_OPTIONS" },
 		{ static_cast<uint32_t>(AlterIndexType::RESET_INDEX_OPTIONS), "RESET_INDEX_OPTIONS" }
 	};

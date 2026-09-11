@@ -514,7 +514,7 @@ private:
 //===--------------------------------------------------------------------===//
 // AlterIndexInfo
 //===--------------------------------------------------------------------===//
-enum class AlterIndexType : uint8_t { INVALID = 0, RENAME_INDEX = 1, SET_INDEX_OPTIONS = 2, RESET_INDEX_OPTIONS = 3 };
+enum class AlterIndexType : uint8_t { INVALID = 0, SET_INDEX_OPTIONS = 1, RESET_INDEX_OPTIONS = 2 };
 
 struct AlterIndexInfo : public AlterInfo {
 	AlterIndexInfo(AlterIndexType type, const AlterEntryData &data);
@@ -529,25 +529,6 @@ public:
 
 protected:
 	explicit AlterIndexInfo(AlterIndexType type);
-};
-
-//===--------------------------------------------------------------------===//
-// RenameIndexInfo
-//===--------------------------------------------------------------------===//
-struct RenameIndexInfo : public AlterIndexInfo {
-	RenameIndexInfo(const AlterEntryData &data, Identifier new_name);
-	~RenameIndexInfo() override;
-
-	Identifier new_index_name;
-
-public:
-	unique_ptr<AlterInfo> Copy() const override;
-	string ToString() const override;
-	void Serialize(Serializer &serializer) const override;
-	static unique_ptr<AlterIndexInfo> Deserialize(Deserializer &deserializer);
-
-private:
-	RenameIndexInfo();
 };
 
 //===--------------------------------------------------------------------===//

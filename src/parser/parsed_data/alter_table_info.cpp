@@ -693,34 +693,6 @@ CatalogType AlterIndexInfo::GetCatalogType() const {
 }
 
 //===--------------------------------------------------------------------===//
-// RenameIndexInfo
-//===--------------------------------------------------------------------===//
-RenameIndexInfo::RenameIndexInfo() : AlterIndexInfo(AlterIndexType::RENAME_INDEX) {
-}
-RenameIndexInfo::RenameIndexInfo(const AlterEntryData &data, Identifier new_name_p)
-    : AlterIndexInfo(AlterIndexType::RENAME_INDEX, data), new_index_name(std::move(new_name_p)) {
-}
-RenameIndexInfo::~RenameIndexInfo() {
-}
-
-unique_ptr<AlterInfo> RenameIndexInfo::Copy() const {
-	return make_uniq_base<AlterInfo, RenameIndexInfo>(GetAlterEntryData(), new_index_name);
-}
-
-string RenameIndexInfo::ToString() const {
-	string result = "";
-	result += "ALTER INDEX ";
-	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
-		result += "IF EXISTS ";
-	}
-	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-	result += " RENAME TO ";
-	result += SQLIdentifier(new_index_name);
-	result += ";";
-	return result;
-}
-
-//===--------------------------------------------------------------------===//
 // SetIndexOptionsInfo
 //===--------------------------------------------------------------------===//
 SetIndexOptionsInfo::SetIndexOptionsInfo() : AlterIndexInfo(AlterIndexType::SET_INDEX_OPTIONS) {
