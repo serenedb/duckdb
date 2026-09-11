@@ -36,10 +36,16 @@ unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index)
 
 	// bind the parsed expressions to create unbound expressions
 	vector<unique_ptr<Expression>> unbound_expressions;
-	unbound_expressions.reserve(parsed_expressions.size());
+	unbound_expressions.reserve(parsed_expressions.size() + 1);
 	for (auto &expr : parsed_expressions) {
 		auto copy = expr->Copy();
 		unbound_expressions.push_back(Bind(copy));
+	}
+	if (create_info.where_clause) {
+		IndexBinder where_binder(binder, context, table, info);
+		where_binder.target_type = LogicalType::BOOLEAN;
+		auto where_copy = create_info.where_clause->Copy();
+		unbound_expressions.push_back(where_binder.Bind(where_copy));
 	}
 
 	CreateIndexInput input(context, unbound_index.table_io_manager, unbound_index.db, create_info.constraint_type,
@@ -96,6 +102,7 @@ unique_ptr<LogicalOperator> IndexBinder::BindCreateIndex(ClientContext &context,
 		where_binder.SetCatalogLookupCallback(lookup_callback);
 		auto where_copy = create_index_info->where_clause->Copy();
 		bound_where = where_binder.Bind(where_copy);
+		expressions.push_back(bound_where->Copy());
 	}
 
 	auto &get = plan->Cast<LogicalGet>();

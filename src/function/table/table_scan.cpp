@@ -917,9 +917,7 @@ InsertionOrderPreservingMap<string> TableScanToString(TableFunctionToStringInput
 	if (!bind_data.display_name.empty()) {
 		result["Table"] = bind_data.display_name;
 	} else {
-		result["Table"] =
-		    QualifiedName(bind_data.table.schema.catalog.GetName(), bind_data.table.schema.name, bind_data.table.name)
-		        .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+		result["Table"] = bind_data.table.name.GetIdentifierName();
 	}
 	result["Type"] = bind_data.is_index_scan ? "Index Scan" : "Sequential Scan";
 	return result;

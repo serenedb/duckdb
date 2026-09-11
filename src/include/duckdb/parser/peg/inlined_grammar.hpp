@@ -1030,7 +1030,7 @@ const char INLINED_PEG_GRAMMAR[] = {
 	"VirtualGeneratedColumn <- 'VIRTUAL'\n"
 	"StoredGeneratedColumn <- 'STORED'\n"
 	"CreateTSDictionaryStatement <- 'CREATE' 'TEXT' 'SEARCH' 'DICTIONARY' IfNotExists? QualifiedName TSDictionaryDefinition\n"
-	"DropTSDictionaryStatement <- 'DROP' 'TEXT' 'SEARCH' 'DICTIONARY' IfExists? QualifiedName\n"
+	"DropTSDictionaryStatement <- 'DROP' 'TEXT' 'SEARCH' 'DICTIONARY' IfExists? QualifiedName DropBehavior?\n"
 	"TSDictionaryDefinition <- Parens(List(TSDictionaryDefElement))\n"
 	"TSDictionaryDefElement <- ColLabel TSDictionaryDefArg?\n"
 	"TSDictionaryDefArg <- '=' DefArg\n"

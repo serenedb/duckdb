@@ -63,6 +63,7 @@ public:
 	int64_t CurrentValue();
 	int64_t NextValue(DuckTransaction &transaction);
 	int64_t NextValues(DuckTransaction &transaction, idx_t count);
+	int64_t SetValue(DuckTransaction &transaction, int64_t value, bool is_called);
 	void ReplayValue(uint64_t usage_count, int64_t counter, optional<int64_t> last_value);
 
 	string ToSQL() const override;

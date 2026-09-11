@@ -1107,7 +1107,7 @@ VirtualGeneratedColumn <- 'VIRTUAL'
 StoredGeneratedColumn <- 'STORED'
 
 CreateTSDictionaryStatement <- 'CREATE' 'TEXT' 'SEARCH' 'DICTIONARY' IfNotExists? QualifiedName TSDictionaryDefinition
-DropTSDictionaryStatement <- 'DROP' 'TEXT' 'SEARCH' 'DICTIONARY' IfExists? QualifiedName
+DropTSDictionaryStatement <- 'DROP' 'TEXT' 'SEARCH' 'DICTIONARY' IfExists? QualifiedName DropBehavior?
 
 TSDictionaryDefinition <- Parens(List(TSDictionaryDefElement))
 TSDictionaryDefElement <- ColLabel TSDictionaryDefArg?

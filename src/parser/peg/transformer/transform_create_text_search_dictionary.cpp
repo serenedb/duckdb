@@ -1,4 +1,5 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
+#include "duckdb/parser/statement/drop_statement.hpp"
 #include "duckdb/parser/statement/pragma_statement.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -62,15 +63,16 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateTSDictionaryState
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropTSDictionaryStatement(PEGTransformer &transformer,
                                                                                    ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	// 0:'DROP' 1:'TEXT' 2:'SEARCH' 3:'DICTIONARY' 4:IfExists? 5:QualifiedName
 	bool if_exists = list_pr.Child<OptionalParseResult>(4).HasResult();
 	auto qname = transformer.Transform<QualifiedName>(list_pr.Child<ListParseResult>(5));
-	auto full_name = QualifiedNameToDottedString(qname);
+	bool cascade = false;
+	transformer.TransformOptional<bool>(list_pr, 6, cascade);
 
-	auto result = make_uniq<PragmaStatement>();
-	result->info->name = "drop_text_search_dictionary";
-	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value(full_name)));
-	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value::BOOLEAN(if_exists)));
+	auto result = make_uniq<DropStatement>();
+	result->info->type = CatalogType::TOKENIZER_ENTRY;
+	result->info->SetQualifiedName(qname);
+	result->info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	result->info->cascade = cascade;
 	return std::move(result);
 }
 

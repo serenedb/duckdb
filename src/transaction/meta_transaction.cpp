@@ -305,10 +305,6 @@ void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationT
 		// we can always modify the system and temp databases
 		return;
 	}
-	if (db.GetTransactionManager().ForwardWrites()) {
-		// forwards its writes to another database, so it never occupies the single-writable-db slot
-		return;
-	}
 	if (!modified_database) {
 		modified_database = &db;
 		return;

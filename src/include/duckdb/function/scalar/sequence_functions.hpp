@@ -25,6 +25,16 @@ struct CurrvalFun {
 	static ScalarFunction GetFunction();
 };
 
+struct SetvalFun {
+	static constexpr const char *Name = "setval";
+	static constexpr const char *Parameters = "'sequence_name',value[,is_called]";
+	static constexpr const char *Description = "Set the current value of the sequence. The following nextval returns value + increment, or value itself when is_called is false.";
+	static constexpr const char *Example = "setval('my_sequence_name', 100)";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
 struct NextvalFun {
 	static constexpr const char *Name = "nextval";
 	static constexpr const char *Parameters = "'sequence_name'";
