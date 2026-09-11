@@ -92,6 +92,7 @@
 #include "shell_renderer.hpp"
 #include "shell_highlight.hpp"
 #include "shell_state.hpp"
+#include "shell_docs.hpp"
 #include "duckdb/main/error_manager.hpp"
 #include "duckdb/main/client_config.hpp"
 
@@ -3153,6 +3154,15 @@ static void linenoise_completion(const char *zLine, linenoiseCompletions *lc) {
 		idx_t nLine = ShellState::StringLength(zLine);
 		if (zLine[0] == '.') {
 			// auto-complete dot command
+			duckdb::idx_t argument_start = 0;
+			duckdb::vector<duckdb::string> docs_completions;
+			if (DocsCompletions(zLine, nLine, argument_start, docs_completions)) {
+				for (auto &completion : docs_completions) {
+					linenoiseAddCompletion(lc, zLine, completion.c_str(), completion.size(), argument_start,
+					                       "keyword", 0, '\0');
+				}
+				return;
+			}
 			auto dot_completions = ShellState::GetMetadataCompletions(zLine, nLine);
 			for (auto &completion : dot_completions) {
 				linenoiseAddCompletion(lc, zLine, completion.c_str(), completion.size(), 0, "keyword", 0, '\0');
