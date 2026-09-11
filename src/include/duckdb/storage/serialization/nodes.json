@@ -598,6 +598,11 @@
         "id": 102,
         "name": "acl",
         "type": "vector<AclItem>"
+      },
+      {
+        "id": 103,
+        "name": "scope",
+        "type": "idx_t"
       }
     ],
     "pointer_type": "none"

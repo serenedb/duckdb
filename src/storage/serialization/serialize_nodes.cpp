@@ -332,6 +332,7 @@ void DefaultAcl::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<idx_t>(100, "role", role);
 	serializer.WriteProperty<CatalogType>(101, "objtype", objtype);
 	serializer.WritePropertyWithDefault<vector<AclItem>>(102, "acl", acl);
+	serializer.WritePropertyWithDefault<idx_t>(103, "scope", scope);
 }
 
 DefaultAcl DefaultAcl::Deserialize(Deserializer &deserializer) {
@@ -339,6 +340,7 @@ DefaultAcl DefaultAcl::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<idx_t>(100, "role", result.role);
 	deserializer.ReadProperty<CatalogType>(101, "objtype", result.objtype);
 	deserializer.ReadPropertyWithDefault<vector<AclItem>>(102, "acl", result.acl);
+	deserializer.ReadPropertyWithDefault<idx_t>(103, "scope", result.scope);
 	return result;
 }
 

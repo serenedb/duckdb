@@ -8,7 +8,7 @@
 
 #include <algorithm>
 
-namespace duckdb {
+namespace  duckdb {
 
 CatalogType Permissions::AclClass(CatalogType entry_type) {
 	switch (entry_type) {
@@ -181,7 +181,8 @@ void Permissions::Alter(const AlterPermissionsInfo &info, CatalogType entry_type
 
 	if (info.default_objtype != CatalogType::INVALID) {
 		auto row = std::find_if(defaults.begin(), defaults.end(), [&](const DefaultAcl &entry) {
-			return entry.role == info.target_role && entry.objtype == info.default_objtype;
+			return entry.role == info.target_role && entry.scope == info.default_scope &&
+			       entry.objtype == info.default_objtype;
 		});
 		const auto baseline = AclDefault(info.default_objtype, info.target_role);
 		auto row_acl = row == defaults.end() ? baseline : row->acl;
@@ -191,7 +192,8 @@ void Permissions::Alter(const AlterPermissionsInfo &info, CatalogType entry_type
 				defaults.erase(row);
 			}
 		} else if (row == defaults.end()) {
-			defaults.push_back(DefaultAcl {info.target_role, info.default_objtype, std::move(row_acl)});
+			defaults.push_back(
+			    DefaultAcl {info.target_role, info.default_scope, info.default_objtype, std::move(row_acl)});
 		} else {
 			row->acl = std::move(row_acl);
 		}

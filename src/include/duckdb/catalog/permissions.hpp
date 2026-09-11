@@ -113,6 +113,7 @@ struct Membership {
 
 struct DefaultAcl {
 	idx_t role = 0;
+	idx_t scope = 0;
 	CatalogType objtype = CatalogType::INVALID;
 	vector<AclItem> acl;
 

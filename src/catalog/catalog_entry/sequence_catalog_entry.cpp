@@ -82,6 +82,41 @@ int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction) {
 	return result;
 }
 
+int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t value, bool is_called) {
+	lock_guard<mutex> seqlock(lock);
+	if (value < data.min_value) {
+		throw SequenceException("setval: value %lld is out of bounds for sequence \"%s\" (%lld..%lld)", value, name,
+		                        data.min_value, data.max_value);
+	}
+	if (value > data.max_value) {
+		throw SequenceException("setval: value %lld is out of bounds for sequence \"%s\" (%lld..%lld)", value, name,
+		                        data.min_value, data.max_value);
+	}
+	if (is_called) {
+		const bool overflow = !TryAddOperator::Operation(value, data.increment, data.counter);
+		if (data.cycle) {
+			if (overflow) {
+				data.counter = data.increment < 0 ? data.max_value : data.min_value;
+			} else if (data.counter < data.min_value) {
+				data.counter = data.max_value;
+			} else if (data.counter > data.max_value) {
+				data.counter = data.min_value;
+			}
+		} else if (overflow) {
+			data.counter = data.increment < 0 ? data.min_value : data.max_value;
+		}
+		data.last_value = value;
+	} else {
+		data.counter = value;
+		data.last_value.reset();
+	}
+	data.usage_count++;
+	if (!temporary) {
+		transaction.PushSequenceUsage(*this, data);
+	}
+	return value;
+}
+
 int64_t SequenceCatalogEntry::NextValues(DuckTransaction &transaction, idx_t count) {
 	if (count == 0) {
 		throw InternalException("SequenceCatalogEntry::NextValues requires a positive count");
@@ -141,6 +176,7 @@ unique_ptr<CreateInfo> SequenceCatalogEntry::GetInfo() const {
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	return std::move(result);
 }
 

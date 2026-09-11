@@ -66,6 +66,7 @@ unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	result->column_comments_map = column_comments;
 	result->security_invoker = security_invoker;
 	return std::move(result);

@@ -422,6 +422,11 @@
         "id": 318,
         "name": "target_role",
         "type": "idx_t"
+      },
+      {
+        "id": 319,
+        "name": "default_scope",
+        "type": "idx_t"
       }
     ]
   },
@@ -606,6 +611,83 @@
         "id": 400,
         "name": "new_view_name",
         "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "AlterScalarFunctionInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_SCALAR_FUNCTION",
+    "class_type": "alter_scalar_function_type",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_scalar_function_type",
+        "type": "AlterScalarFunctionType"
+      }
+    ]
+  },
+  {
+    "class": "RenameScalarFunctionInfo",
+    "base": "AlterScalarFunctionInfo",
+    "enum": "RENAME_SCALAR_FUNCTION",
+    "members": [
+      {
+        "id": 400,
+        "name": "new_name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "AlterIndexInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_INDEX",
+    "class_type": "alter_index_type",
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_index_type",
+        "type": "AlterIndexType"
+      }
+    ]
+  },
+  {
+    "class": "RenameIndexInfo",
+    "base": "AlterIndexInfo",
+    "enum": "RENAME_INDEX",
+    "members": [
+      {
+        "id": 400,
+        "name": "new_index_name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "SetIndexOptionsInfo",
+    "base": "AlterIndexInfo",
+    "enum": "SET_INDEX_OPTIONS",
+    "members": [
+      {
+        "id": 400,
+        "name": "options",
+        "type": "case_insensitive_map_t<Value>"
+      }
+    ]
+  },
+  {
+    "class": "ResetIndexOptionsInfo",
+    "base": "AlterIndexInfo",
+    "enum": "RESET_INDEX_OPTIONS",
+    "members": [
+      {
+        "id": 400,
+        "name": "options",
+        "type": "identifier_set_t"
       }
     ]
   },
@@ -1062,6 +1144,23 @@
         "id": 402,
         "name": "cascade",
         "type": "bool"
+      }
+    ]
+  },
+  {
+    "class": "RenameConstraintInfo",
+    "base": "AlterTableInfo",
+    "enum": "RENAME_CONSTRAINT",
+    "members": [
+      {
+        "id": 400,
+        "name": "old_name",
+        "type": "string"
+      },
+      {
+        "id": 401,
+        "name": "new_name",
+        "type": "string"
       }
     ]
   },

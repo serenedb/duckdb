@@ -64,6 +64,8 @@ enum class AlterDatabaseType : uint8_t;
 
 enum class AlterForeignKeyType : uint8_t;
 
+enum class AlterIndexType : uint8_t;
+
 enum class AlterScalarFunctionType : uint8_t;
 
 enum class AlterTableFunctionType : uint8_t;
@@ -636,6 +638,9 @@ const char* EnumUtil::ToChars<AlterDatabaseType>(AlterDatabaseType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterForeignKeyType>(AlterForeignKeyType value);
+
+template<>
+const char* EnumUtil::ToChars<AlterIndexType>(AlterIndexType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterScalarFunctionType>(AlterScalarFunctionType value);
@@ -1471,6 +1476,9 @@ AlterDatabaseType EnumUtil::FromString<AlterDatabaseType>(const char *value);
 
 template<>
 AlterForeignKeyType EnumUtil::FromString<AlterForeignKeyType>(const char *value);
+
+template<>
+AlterIndexType EnumUtil::FromString<AlterIndexType>(const char *value);
 
 template<>
 AlterScalarFunctionType EnumUtil::FromString<AlterScalarFunctionType>(const char *value);

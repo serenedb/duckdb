@@ -40,6 +40,7 @@ unique_ptr<CreateInfo> TriggerCatalogEntry::GetInfo() const {
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	return std::move(result);
 }
 

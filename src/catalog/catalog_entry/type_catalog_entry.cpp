@@ -38,6 +38,7 @@ unique_ptr<CreateInfo> TypeCatalogEntry::GetInfo() const {
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	result->bind_function = bind_function;
 	return std::move(result);
 }

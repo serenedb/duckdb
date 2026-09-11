@@ -118,6 +118,7 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->for_role = for_role;
 	result->default_schema = default_schema;
 	result->target_role = target_role;
+	result->default_scope = default_scope;
 	return std::move(result);
 }
 
@@ -676,6 +677,124 @@ string RenameViewInfo::ToString() const {
 }
 
 //===--------------------------------------------------------------------===//
+// AlterIndexInfo
+//===--------------------------------------------------------------------===//
+AlterIndexInfo::AlterIndexInfo(AlterIndexType type) : AlterInfo(AlterType::ALTER_INDEX), alter_index_type(type) {
+}
+
+AlterIndexInfo::AlterIndexInfo(AlterIndexType type, const AlterEntryData &data)
+    : AlterInfo(AlterType::ALTER_INDEX, data.GetQualifiedName(), data.if_not_found), alter_index_type(type) {
+}
+AlterIndexInfo::~AlterIndexInfo() {
+}
+
+CatalogType AlterIndexInfo::GetCatalogType() const {
+	return CatalogType::INDEX_ENTRY;
+}
+
+//===--------------------------------------------------------------------===//
+// RenameIndexInfo
+//===--------------------------------------------------------------------===//
+RenameIndexInfo::RenameIndexInfo() : AlterIndexInfo(AlterIndexType::RENAME_INDEX) {
+}
+RenameIndexInfo::RenameIndexInfo(const AlterEntryData &data, Identifier new_name_p)
+    : AlterIndexInfo(AlterIndexType::RENAME_INDEX, data), new_index_name(std::move(new_name_p)) {
+}
+RenameIndexInfo::~RenameIndexInfo() {
+}
+
+unique_ptr<AlterInfo> RenameIndexInfo::Copy() const {
+	return make_uniq_base<AlterInfo, RenameIndexInfo>(GetAlterEntryData(), new_index_name);
+}
+
+string RenameIndexInfo::ToString() const {
+	string result = "";
+	result += "ALTER INDEX ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " RENAME TO ";
+	result += SQLIdentifier(new_index_name);
+	result += ";";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
+// SetIndexOptionsInfo
+//===--------------------------------------------------------------------===//
+SetIndexOptionsInfo::SetIndexOptionsInfo() : AlterIndexInfo(AlterIndexType::SET_INDEX_OPTIONS) {
+}
+SetIndexOptionsInfo::SetIndexOptionsInfo(const AlterEntryData &data, case_insensitive_map_t<Value> options_p)
+    : AlterIndexInfo(AlterIndexType::SET_INDEX_OPTIONS, data), options(std::move(options_p)) {
+}
+SetIndexOptionsInfo::~SetIndexOptionsInfo() {
+}
+
+unique_ptr<AlterInfo> SetIndexOptionsInfo::Copy() const {
+	return make_uniq_base<AlterInfo, SetIndexOptionsInfo>(GetAlterEntryData(), options);
+}
+
+string SetIndexOptionsInfo::ToString() const {
+	string result = "";
+	result += "ALTER INDEX ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " SET (";
+	idx_t i = 0;
+	for (auto &option : options) {
+		if (i > 0) {
+			result += ", ";
+		}
+		result += SQLString(option.first) + "=" + option.second.ToSQLString();
+		i++;
+	}
+	result += ");";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
+// ResetIndexOptionsInfo
+//===--------------------------------------------------------------------===//
+ResetIndexOptionsInfo::ResetIndexOptionsInfo() : AlterIndexInfo(AlterIndexType::RESET_INDEX_OPTIONS) {
+}
+ResetIndexOptionsInfo::ResetIndexOptionsInfo(const AlterEntryData &data, identifier_set_t options_p)
+    : AlterIndexInfo(AlterIndexType::RESET_INDEX_OPTIONS, data), options(std::move(options_p)) {
+}
+ResetIndexOptionsInfo::~ResetIndexOptionsInfo() {
+}
+
+unique_ptr<AlterInfo> ResetIndexOptionsInfo::Copy() const {
+	identifier_set_t options_copy;
+	for (auto &option : options) {
+		options_copy.emplace(option);
+	}
+	return make_uniq_base<AlterInfo, ResetIndexOptionsInfo>(GetAlterEntryData(), options_copy);
+}
+
+string ResetIndexOptionsInfo::ToString() const {
+	string result = "";
+	result += "ALTER INDEX ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " RESET (";
+	idx_t i = 0;
+	for (auto &option : options) {
+		if (i > 0) {
+			result += ", ";
+		}
+		result += SQLString(option.GetIdentifierName());
+		i++;
+	}
+	result += ");";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
 // AddConstraintInfo
 //===--------------------------------------------------------------------===//
 AddConstraintInfo::AddConstraintInfo() : AlterTableInfo(AlterTableType::ADD_CONSTRAINT) {
@@ -742,8 +861,8 @@ string DropConstraintInfo::ToString() const {
 RenameConstraintInfo::RenameConstraintInfo() : AlterTableInfo(AlterTableType::RENAME_CONSTRAINT) {
 }
 
-RenameConstraintInfo::RenameConstraintInfo(AlterEntryData data, string old_name_p, string new_name_p)
-    : AlterTableInfo(AlterTableType::RENAME_CONSTRAINT, std::move(data)), old_name(std::move(old_name_p)),
+RenameConstraintInfo::RenameConstraintInfo(const AlterEntryData &data, string old_name_p, string new_name_p)
+    : AlterTableInfo(AlterTableType::RENAME_CONSTRAINT, data), old_name(std::move(old_name_p)),
       new_name(std::move(new_name_p)) {
 }
 

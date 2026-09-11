@@ -52,6 +52,7 @@ unique_ptr<CreateInfo> IndexCatalogEntry::GetInfo() const {
 
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	result->options = options;
 
 	return std::move(result);

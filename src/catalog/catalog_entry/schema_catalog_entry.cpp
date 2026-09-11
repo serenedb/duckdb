@@ -65,6 +65,7 @@ unique_ptr<CreateInfo> SchemaCatalogEntry::GetInfo() const {
 	result->SetQualifiedName(QualifiedName({name}, Identifier()));
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	return std::move(result);
 }
 
