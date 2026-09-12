@@ -33,6 +33,11 @@ unique_ptr<CatalogEntry> CatalogEntry::AlterEntry(ClientContext &context, AlterI
 		result->permissions.Alter(info.Cast<AlterPermissionsInfo>(), type, nullptr);
 		return result;
 	}
+	if (info.type == AlterType::RENAME) {
+		auto result = Copy(context);
+		result->name = info.Cast<RenameInfo>().new_name;
+		return result;
+	}
 	throw InternalException("Unsupported alter type for catalog entry!");
 }
 

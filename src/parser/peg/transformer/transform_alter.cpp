@@ -106,6 +106,9 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransfor
 		auto &reset_info = alter_index_alter->Cast<ResetTableOptionsInfo>();
 		return make_uniq_base<AlterInfo, ResetIndexOptionsInfo>(data, std::move(reset_info.table_options));
 	}
+	case AlterTableType::RENAME_TABLE:
+		return make_uniq_base<AlterInfo, RenameInfo>(CatalogType::INDEX_ENTRY, data,
+		                                             alter_index_alter->Cast<RenameTableInfo>().new_table_name);
 	default:
 		throw NotImplementedException("unsupported ALTER INDEX action");
 	}
@@ -119,7 +122,7 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionStmt(PEGTrans
 	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
 	auto not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	AlterEntryData data(qualified_name, not_found);
-	return make_uniq<RenameScalarFunctionInfo>(data, rename_info->new_table_name);
+	return make_uniq_base<AlterInfo, RenameInfo>(CatalogType::MACRO_ENTRY, data, rename_info->new_table_name);
 }
 
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSequenceStmt(PEGTransformer &transformer,
@@ -151,7 +154,9 @@ QualifiedName PEGTransformerFactory::TransformQualifiedSequenceName(PEGTransform
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSequenceOptions(PEGTransformer &transformer,
                                                                            ParseResult &choice_result) {
 	if (choice_result.name == "RenameAlter") {
-		return transformer.Transform<unique_ptr<AlterTableInfo>>(choice_result);
+		auto rename_info = transformer.Transform<unique_ptr<AlterTableInfo>>(choice_result);
+		return make_uniq_base<AlterInfo, RenameInfo>(CatalogType::SEQUENCE_ENTRY, AlterEntryData(),
+		                                             rename_info->Cast<RenameTableInfo>().new_table_name);
 	}
 	return transformer.Transform<unique_ptr<AlterInfo>>(choice_result);
 }

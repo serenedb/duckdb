@@ -132,18 +132,14 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 
 	BindSchemaOrCatalog(stmt.info->GetQualifiedNameMutable());
 
-	// ALTER FUNCTION ... RENAME TO ... skips entry lookup (scalar-vs-table
-	// macro is ambiguous at parse time). Emit LogicalSimple directly.
-	if (stmt.info->type == AlterType::ALTER_SCALAR_FUNCTION &&
-	    stmt.info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
-	        AlterScalarFunctionType::RENAME_SCALAR_FUNCTION) {
-		auto &properties = GetStatementProperties();
-		properties.return_type = StatementReturnType::NOTHING;
-		result.plan = make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_ALTER, std::move(stmt.info));
-		return result;
-	}
-
 	optional_ptr<CatalogEntry> entry;
+	auto lookup = [&](CatalogType type, OnEntryNotFound if_not_found) {
+		auto &name = stmt.info->GetQualifiedName();
+		EntryLookupInfo lookup_info(type, QualifiedName(name.Name()));
+		return entry_retriever.GetEntry(
+		    EntryLookupInfo(lookup_info, QualifiedName(name.Catalog(), name.Schema(), lookup_info.GetEntryIdentifier())),
+		    if_not_found);
+	};
 	if (stmt.info->type == AlterType::SET_COLUMN_COMMENT) {
 		// Extra step for column comments: They can alter a table or a view, and we resolve that here.
 		auto &info = stmt.info->Cast<SetColumnCommentInfo>();
@@ -153,14 +149,21 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			auto &view = entry->Cast<ViewCatalogEntry>();
 			view.BindView(context);
 		}
+	} else if (stmt.info->type == AlterType::RENAME && stmt.info->GetCatalogType() == CatalogType::MACRO_ENTRY) {
+		auto &rename_info = stmt.info->Cast<RenameInfo>();
+		entry = lookup(CatalogType::MACRO_ENTRY, OnEntryNotFound::RETURN_NULL);
+		if (!entry) {
+			entry = lookup(CatalogType::TABLE_MACRO_ENTRY, OnEntryNotFound::RETURN_NULL);
+			if (entry) {
+				rename_info.entry_catalog_type = CatalogType::TABLE_MACRO_ENTRY;
+			}
+		}
+		if (!entry) {
+			entry = lookup(CatalogType::MACRO_ENTRY, stmt.info->if_not_found);
+		}
 	} else {
 		// For any other ALTER, we retrieve the catalog entry directly.
-		EntryLookupInfo lookup_info(stmt.info->GetCatalogType(), QualifiedName(stmt.info->GetQualifiedName().Name()));
-		entry =
-		    entry_retriever.GetEntry(EntryLookupInfo(lookup_info, QualifiedName(stmt.info->GetQualifiedName().Catalog(),
-		                                                                        stmt.info->GetQualifiedName().Schema(),
-		                                                                        lookup_info.GetEntryIdentifier())),
-		                             stmt.info->if_not_found);
+		entry = lookup(stmt.info->GetCatalogType(), stmt.info->if_not_found);
 	}
 
 	auto &properties = GetStatementProperties();

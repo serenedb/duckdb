@@ -132,6 +132,28 @@ string AlterPermissionsInfo::ToString() const {
 	       (revoke ? " FROM " : " TO ") + grantee + ";";
 }
 
+RenameInfo::RenameInfo(CatalogType entry_catalog_type, const AlterEntryData &data, Identifier new_name_p)
+    : AlterInfo(AlterType::RENAME, data.qualified_name, data.if_not_found), entry_catalog_type(entry_catalog_type),
+      new_name(std::move(new_name_p)) {
+}
+
+RenameInfo::RenameInfo() : AlterInfo(AlterType::RENAME), entry_catalog_type(CatalogType::INVALID) {
+}
+
+CatalogType RenameInfo::GetCatalogType() const {
+	return entry_catalog_type;
+}
+
+unique_ptr<AlterInfo> RenameInfo::Copy() const {
+	return make_uniq_base<AlterInfo, RenameInfo>(entry_catalog_type, GetAlterEntryData(), new_name);
+}
+
+string RenameInfo::ToString() const {
+	return "ALTER " + ParseInfo::TypeToString(entry_catalog_type) + " " +
+	       GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA) + " RENAME TO " +
+	       KeywordHelper::WriteOptionallyQuoted(new_name.GetIdentifierName()) + ";";
+}
+
 AlterPermissionsInfo::AlterPermissionsInfo()
     : AlterInfo(AlterType::ALTER_PERMISSIONS), entry_catalog_type(CatalogType::INVALID) {
 }

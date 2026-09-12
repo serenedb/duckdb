@@ -543,31 +543,30 @@ const StringUtil::EnumStringLiteral *GetAlterIndexTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<AlterIndexType>(AlterIndexType value) {
-	return StringUtil::EnumToString(GetAlterIndexTypeValues(), 4, "AlterIndexType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterIndexTypeValues(), 3, "AlterIndexType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterIndexType EnumUtil::FromString<AlterIndexType>(const char *value) {
-	return static_cast<AlterIndexType>(StringUtil::StringToEnum(GetAlterIndexTypeValues(), 4, "AlterIndexType", value));
+	return static_cast<AlterIndexType>(StringUtil::StringToEnum(GetAlterIndexTypeValues(), 3, "AlterIndexType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAlterScalarFunctionTypeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(AlterScalarFunctionType::INVALID), "INVALID" },
-		{ static_cast<uint32_t>(AlterScalarFunctionType::ADD_FUNCTION_OVERLOADS), "ADD_FUNCTION_OVERLOADS" },
-		{ static_cast<uint32_t>(AlterScalarFunctionType::RENAME_SCALAR_FUNCTION), "RENAME_SCALAR_FUNCTION" }
+		{ static_cast<uint32_t>(AlterScalarFunctionType::ADD_FUNCTION_OVERLOADS), "ADD_FUNCTION_OVERLOADS" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<AlterScalarFunctionType>(AlterScalarFunctionType value) {
-	return StringUtil::EnumToString(GetAlterScalarFunctionTypeValues(), 3, "AlterScalarFunctionType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterScalarFunctionTypeValues(), 2, "AlterScalarFunctionType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterScalarFunctionType EnumUtil::FromString<AlterScalarFunctionType>(const char *value) {
-	return static_cast<AlterScalarFunctionType>(StringUtil::StringToEnum(GetAlterScalarFunctionTypeValues(), 3, "AlterScalarFunctionType", value));
+	return static_cast<AlterScalarFunctionType>(StringUtil::StringToEnum(GetAlterScalarFunctionTypeValues(), 2, "AlterScalarFunctionType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAlterTableFunctionTypeValues() {
@@ -639,19 +638,20 @@ const StringUtil::EnumStringLiteral *GetAlterTypeValues() {
 		{ static_cast<uint32_t>(AlterType::ALTER_DATABASE), "ALTER_DATABASE" },
 		{ static_cast<uint32_t>(AlterType::ALTER_PERMISSIONS), "ALTER_PERMISSIONS" },
 		{ static_cast<uint32_t>(AlterType::ALTER_ROLE), "ALTER_ROLE" },
-		{ static_cast<uint32_t>(AlterType::ALTER_INDEX), "ALTER_INDEX" }
+		{ static_cast<uint32_t>(AlterType::ALTER_INDEX), "ALTER_INDEX" },
+		{ static_cast<uint32_t>(AlterType::RENAME), "RENAME" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<AlterType>(AlterType value) {
-	return StringUtil::EnumToString(GetAlterTypeValues(), 13, "AlterType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterTypeValues(), 14, "AlterType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterType EnumUtil::FromString<AlterType>(const char *value) {
-	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 13, "AlterType", value));
+	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 14, "AlterType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAlterViewTypeValues() {

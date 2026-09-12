@@ -30,7 +30,8 @@ enum class AlterType : uint8_t {
 	ALTER_DATABASE = 9,
 	ALTER_PERMISSIONS = 10,
 	ALTER_ROLE = 11,
-	ALTER_INDEX = 12
+	ALTER_INDEX = 12,
+	RENAME = 13
 };
 
 enum class AlterBindMode { BIND_ON_ALTER, SKIP_BINDING };

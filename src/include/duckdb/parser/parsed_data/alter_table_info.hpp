@@ -100,6 +100,23 @@ public:
 	explicit AlterPermissionsInfo();
 };
 
+struct RenameInfo : public AlterInfo {
+	RenameInfo(CatalogType entry_catalog_type, const AlterEntryData &data, Identifier new_name);
+
+	CatalogType entry_catalog_type;
+	Identifier new_name;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit RenameInfo();
+};
+
 struct AlterRoleInfo : public AlterInfo {
 	explicit AlterRoleInfo(Identifier role);
 

@@ -334,6 +334,23 @@
     ]
   },
   {
+    "class": "RenameInfo",
+    "base": "AlterInfo",
+    "enum": "RENAME",
+    "members": [
+      {
+        "id": 300,
+        "name": "entry_catalog_type",
+        "type": "CatalogType"
+      },
+      {
+        "id": 301,
+        "name": "new_name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
     "class": "AlterPermissionsInfo",
     "base": "AlterInfo",
     "enum": "ALTER_PERMISSIONS",
@@ -627,18 +644,6 @@
         "id": 300,
         "name": "alter_scalar_function_type",
         "type": "AlterScalarFunctionType"
-      }
-    ]
-  },
-  {
-    "class": "RenameScalarFunctionInfo",
-    "base": "AlterScalarFunctionInfo",
-    "enum": "RENAME_SCALAR_FUNCTION",
-    "members": [
-      {
-        "id": 400,
-        "name": "new_name",
-        "type": "Identifier"
       }
     ]
   },
