@@ -1682,6 +1682,7 @@ IdentifierType:
     - ColIdOrString
     - ColLabelOrString
     - TypeFuncName
+    - NamedParameterName
     - IdentifierColId
     - ReservedIdentifierOrStringLiteral
     - AttachAlias
@@ -1798,6 +1799,8 @@ excluded_rules:
   - TSDictionaryDefinition
   - TSDictionaryDefElement
   - TSDictionaryDefArg
+  - TSDictionaryExpression
+  - TSDictionaryWith
   - ShowQualifiedName
   - ResetAll
   - CommentValue

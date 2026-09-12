@@ -9149,7 +9149,7 @@ PEGTransformerFactory::TransformPositionalFunctionArgumentInternal(PEGTransforme
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformNamedParameterInternal(PEGTransformer &transformer,
                                                                                         ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	auto type_func_name = transformer.Transform<Identifier>(list_pr.GetChild(0));
+	auto named_parameter_name = transformer.Transform<Identifier>(list_pr.GetChild(0));
 	optional<LogicalType> type {};
 	auto &type_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
 	if (type_opt.HasResult()) {
@@ -9157,8 +9157,25 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformNamedParameterI
 		type = type_value;
 	}
 	auto expression = transformer.Transform<unique_ptr<ParsedExpression>>(list_pr.GetChild(3));
-	auto result = TransformNamedParameter(transformer, type_func_name, type, std::move(expression));
+	auto result = TransformNamedParameter(transformer, named_parameter_name, type, std::move(expression));
 	return make_uniq<TypedTransformResult<MacroParameter>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformNamedParameterNameInternal(PEGTransformer &transformer,
+                                                                                            ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	Identifier result;
+	if (choice_pr.GetResult().type == ParseResultType::IDENTIFIER) {
+		result = choice_pr.GetResult().Cast<IdentifierParseResult>().identifier;
+	} else if (choice_pr.GetResult().type == ParseResultType::KEYWORD) {
+		result = Identifier(choice_pr.GetResult().Cast<KeywordParseResult>().keyword);
+	} else if (choice_pr.GetResult().type == ParseResultType::STRING) {
+		result = Identifier(choice_pr.GetResult().Cast<StringLiteralParseResult>().result);
+	} else {
+		result = transformer.Transform<Identifier>(choice_pr.GetResult());
+	}
+	return make_uniq<TypedTransformResult<Identifier>>(result);
 }
 
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformTableAliasInternal(PEGTransformer &transformer,
@@ -11516,6 +11533,7 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"NamedFunctionArgument", &PEGTransformerFactory::TransformNamedFunctionArgumentInternal},
 	    {"PositionalFunctionArgument", &PEGTransformerFactory::TransformPositionalFunctionArgumentInternal},
 	    {"NamedParameter", &PEGTransformerFactory::TransformNamedParameterInternal},
+	    {"NamedParameterName", &PEGTransformerFactory::TransformNamedParameterNameInternal},
 	    {"TableAlias", &PEGTransformerFactory::TransformTableAliasInternal},
 	    {"TableAliasAs", &PEGTransformerFactory::TransformTableAliasAsInternal},
 	    {"TableAliasWithoutAs", &PEGTransformerFactory::TransformTableAliasWithoutAsInternal},
