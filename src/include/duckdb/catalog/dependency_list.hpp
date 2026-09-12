@@ -27,6 +27,7 @@ struct LogicalDependency {
 public:
 	CatalogEntryInfo entry;
 	Identifier catalog;
+	bool owned_by = false;
 
 public:
 	explicit LogicalDependency(CatalogEntry &entry);
@@ -54,6 +55,7 @@ class LogicalDependencyList {
 
 public:
 	DUCKDB_API void AddDependency(CatalogEntry &entry);
+	DUCKDB_API void AddOwnedDependency(CatalogEntry &entry);
 	DUCKDB_API void AddDependency(const LogicalDependency &entry);
 	DUCKDB_API bool Contains(CatalogEntry &entry);
 

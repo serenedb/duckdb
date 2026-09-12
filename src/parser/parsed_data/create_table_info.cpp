@@ -29,6 +29,7 @@ unique_ptr<CreateInfo> CreateTableInfo::Copy() const {
 	for (auto &order : sort_keys) {
 		result->sort_keys.push_back(order->Copy());
 	}
+	result->serial_columns = serial_columns;
 	for (auto &option : options) {
 		result->options.emplace(option.first, option.second->Copy());
 	}

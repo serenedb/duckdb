@@ -1,6 +1,7 @@
 #include "duckdb/function/table/table_scan.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/common/enums/expression_type.hpp"
 #include "duckdb/common/mutex.hpp"
@@ -17,6 +18,9 @@
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -1019,14 +1023,52 @@ TableFunction TableScanFunction::GetFunction() {
 	return scan_function;
 }
 
+static unique_ptr<FunctionData> IndexScanBind(ClientContext &context, TableFunctionBindInput &input,
+                                              vector<LogicalType> &return_types, vector<string> &names) {
+	QualifiedName name(Identifier(StringValue::Get(input.inputs[0])), Identifier(StringValue::Get(input.inputs[1])),
+	                   Identifier(StringValue::Get(input.inputs[2])));
+	auto &index = Catalog::GetEntry<IndexCatalogEntry>(context, name);
+	auto &table = Catalog::GetEntry<TableCatalogEntry>(
+	    context, QualifiedName(name.Catalog(), name.Schema(), index.GetTableName()));
+	auto result = make_uniq<TableScanBindData>(table);
+	result->display_name = index.name.GetIdentifierName();
+	for (auto &column : table.GetColumns().Logical()) {
+		return_types.push_back(column.Type());
+		names.push_back(column.Name().GetIdentifierName());
+	}
+	return std::move(result);
+}
+
+unique_ptr<TableRef> TableScanFunction::IndexReplacementScan(ClientContext &context, ReplacementScanInput &input,
+                                                             optional_ptr<ReplacementScanData>) {
+	auto index = Catalog::GetEntry<IndexCatalogEntry>(context, input.name, OnEntryNotFound::RETURN_NULL);
+	if (!index || index->index_type != ART::TYPE_NAME) {
+		return nullptr;
+	}
+	vector<unique_ptr<ParsedExpression>> arguments;
+	arguments.push_back(make_uniq<ConstantExpression>(Value(index->ParentCatalog().GetName().GetIdentifierName())));
+	arguments.push_back(make_uniq<ConstantExpression>(Value(index->ParentSchema().name.GetIdentifierName())));
+	arguments.push_back(make_uniq<ConstantExpression>(Value(index->name.GetIdentifierName())));
+	auto ref = make_uniq<TableFunctionRef>();
+	ref->function = make_uniq<FunctionExpression>("index_scan", std::move(arguments));
+	return std::move(ref);
+}
+
 void TableScanFunction::RegisterFunction(BuiltinFunctions &set) {
 	TableFunctionSet table_scan_set("seq_scan");
 	table_scan_set.AddFunction(GetFunction());
 	set.AddFunction(std::move(table_scan_set));
+	auto index_scan = GetFunction();
+	index_scan.name = "index_scan";
+	index_scan.arguments = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
+	index_scan.bind = IndexScanBind;
+	set.AddFunction(std::move(index_scan));
 }
 
 void BuiltinFunctions::RegisterTableScanFunctions() {
 	TableScanFunction::RegisterFunction(*this);
+	auto &config = DBConfig::GetConfig(*transaction.db);
+	config.replacement_scans.emplace_back(TableScanFunction::IndexReplacementScan);
 }
 
 } // namespace duckdb

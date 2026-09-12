@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/function/table_function.hpp"
+#include "duckdb/function/replacement_scan.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/function/built_in_functions.hpp"
@@ -59,6 +60,8 @@ public:
 struct TableScanFunction {
 	static void RegisterFunction(BuiltinFunctions &set);
 	static TableFunction GetFunction();
+	static unique_ptr<TableRef> IndexReplacementScan(ClientContext &context, ReplacementScanInput &input,
+	                                                 optional_ptr<ReplacementScanData> data);
 };
 
 } // namespace duckdb

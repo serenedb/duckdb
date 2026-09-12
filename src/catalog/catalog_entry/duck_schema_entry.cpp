@@ -27,6 +27,8 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_aggregate_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_collation_info.hpp"
@@ -152,10 +154,53 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 			return nullptr;
 		}
 	}
+	for (auto &dependency : dependencies.Set()) {
+		if (!dependency.owned_by) {
+			continue;
+		}
+		auto &owned_schema = catalog.GetSchema(transaction, dependency.entry.schema);
+		auto owned = owned_schema.GetEntry(transaction, dependency.entry.type, dependency.entry.name);
+		catalog.GetDependencyManager()->AddOwnership(transaction, *result, *owned);
+	}
 	return result;
 }
 
+static Identifier FreeSequenceName(CatalogTransaction transaction, DuckSchemaEntry &schema, const Identifier &table,
+                                   const Identifier &column) {
+	auto stem = table.GetIdentifierName() + "_" + column.GetIdentifierName() + "_seq";
+	Identifier candidate(stem);
+	for (idx_t suffix = 1; schema.GetEntry(transaction, CatalogType::SEQUENCE_ENTRY, candidate); suffix++) {
+		candidate = Identifier(stem + to_string(suffix));
+	}
+	return candidate;
+}
+
+static void CreateSerialSequences(CatalogTransaction transaction, DuckSchemaEntry &schema, BoundCreateTableInfo &info) {
+	auto &table = info.Base();
+	if (table.serial_columns.empty()) {
+		return;
+	}
+	if (table.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT &&
+	    schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, table.GetTableName())) {
+		return;
+	}
+	for (auto &column_name : table.serial_columns) {
+		auto &column = table.columns.GetColumnMutable(column_name);
+		CreateSequenceInfo sequence_info;
+		sequence_info.SetQualification(schema.catalog.GetName(), schema.name);
+		sequence_info.SetSequenceName(FreeSequenceName(transaction, schema, table.GetTableName(), column_name));
+		sequence_info.max_value = Value::MaximumValue(column.Type()).GetValue<int64_t>();
+		auto &sequence = *schema.CreateSequence(transaction, sequence_info);
+		vector<unique_ptr<ParsedExpression>> arguments;
+		arguments.push_back(
+		    make_uniq<ConstantExpression>(Value(QualifiedName(Identifier(), schema.name, sequence.name).ToString())));
+		column.SetDefaultValue(make_uniq<FunctionExpression>(Identifier("nextval"), std::move(arguments)));
+		info.dependencies.AddOwnedDependency(sequence);
+	}
+}
+
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) {
+	CreateSerialSequences(transaction, *this, info);
 	auto table = catalog.Cast<DuckCatalog>().MakeTableEntry(transaction, *this, info);
 
 	// add a foreign key constraint in main key table if there is a foreign key constraint

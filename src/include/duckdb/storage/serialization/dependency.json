@@ -38,6 +38,12 @@
 				"id": 101,
 				"name": "catalog",
 				"type": "Identifier"
+			},
+			{
+				"id": 102,
+				"name": "owned_by",
+				"type": "bool",
+				"default": false
 			}
 		],
 		"pointer_type": "none",

@@ -77,6 +77,12 @@ void LogicalDependencyList::AddDependency(CatalogEntry &entry) {
 	set.insert(dependency);
 }
 
+void LogicalDependencyList::AddOwnedDependency(CatalogEntry &entry) {
+	LogicalDependency dependency(entry);
+	dependency.owned_by = true;
+	set.insert(dependency);
+}
+
 void LogicalDependencyList::AddDependency(const LogicalDependency &entry) {
 	set.insert(entry);
 }

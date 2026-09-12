@@ -77,6 +77,7 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTableStmt(
 	info->partition_keys = std::move(create_table_definition.partition_keys);
 	info->sort_keys = std::move(create_table_definition.sort_keys);
 	info->options = std::move(create_table_definition.options);
+	info->serial_columns = std::move(create_table_definition.serial_columns);
 
 	result->info = std::move(info);
 	return result;
@@ -132,6 +133,7 @@ CreateTableDefinition PEGTransformerFactory::TransformCreateColumnList(
 		result.constraints = std::move(create_table_column_list->constraints);
 		result.null_conflict_columns = std::move(create_table_column_list->null_conflict_columns);
 		result.duplicate_default_columns = std::move(create_table_column_list->duplicate_default_columns);
+		result.serial_columns = std::move(create_table_column_list->serial_columns);
 	}
 	if (partition_sorted_options) {
 		result.partition_keys = std::move(partition_sorted_options->partition_keys);
@@ -186,6 +188,9 @@ PEGTransformerFactory::TransformCreateTableColumnList(PEGTransformer &transforme
 					pending_name_applied = true;
 				}
 				result.constraints.push_back(std::move(made));
+			}
+			if (column_result.serial) {
+				result.serial_columns.push_back(column_result.column_definition.GetName());
 			}
 			result.columns.AddColumn(std::move(column_result.column_definition));
 		} else {
@@ -362,6 +367,31 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 		return result;
 	}
 
+	bool serial = false;
+	if (column_type.IsUnbound()) {
+		auto &expr = UnboundType::GetTypeExpression(column_type);
+		if (expr->GetExpressionClass() == ExpressionClass::TYPE) {
+			auto &type_expr = expr->Cast<TypeExpression>();
+			if (type_expr.GetQualifiedName().Schema().empty()) {
+				auto type_name = type_expr.GetTypeName().GetIdentifierName();
+				if (type_name == "serial") {
+					column_type = LogicalType::INTEGER;
+					serial = true;
+				} else if (type_name == "bigserial") {
+					column_type = LogicalType::BIGINT;
+					serial = true;
+				} else if (type_name == "smallserial") {
+					column_type = LogicalType::SMALLINT;
+					serial = true;
+				}
+			}
+		}
+	}
+	if (serial && !accumulated_constraints.has_not_null) {
+		accumulated_constraints.has_not_null = true;
+		accumulated_constraints.constraint_types.push_back(make_pair(false, ConstraintType::NOT_NULL));
+	}
+
 	ColumnDefinition col(qualified_name.Name(), column_type);
 
 	if (accumulated_constraints.default_value) {
@@ -374,6 +404,7 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 	result.has_not_null = accumulated_constraints.has_not_null;
 	result.has_primary_key = accumulated_constraints.has_primary_key;
 	result.has_duplicate_default = accumulated_constraints.has_duplicate_default;
+	result.serial = serial;
 	result.constraint_name = std::move(pending_constraint_name);
 	return result;
 }
