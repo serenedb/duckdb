@@ -3695,9 +3695,11 @@ public:
 	                                                            unique_ptr<ParsedExpression> expression);
 	static unique_ptr<TransformResultValue> TransformNamedParameterInternal(PEGTransformer &transformer,
 	                                                                        ParseResult &parse_result);
-	static MacroParameter TransformNamedParameter(PEGTransformer &transformer, const Identifier &type_func_name,
+	static MacroParameter TransformNamedParameter(PEGTransformer &transformer, const Identifier &named_parameter_name,
 	                                              const optional<LogicalType> &type,
 	                                              unique_ptr<ParsedExpression> expression);
+	static unique_ptr<TransformResultValue> TransformNamedParameterNameInternal(PEGTransformer &transformer,
+	                                                                            ParseResult &parse_result);
 	static unique_ptr<TransformResultValue> TransformTableAliasInternal(PEGTransformer &transformer,
 	                                                                    ParseResult &parse_result);
 	static unique_ptr<TransformResultValue> TransformTableAliasAsInternal(PEGTransformer &transformer,
