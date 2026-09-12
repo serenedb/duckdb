@@ -92,7 +92,7 @@ Parser Error: Expected a single SELECT statement
 statement error
 SELECT * FROM query('FROM query(FROM)');
 ----
-Parser Error: syntax error at or near "FROM"
+Parser Error: syntax error at or near ")"
 
 # multiple statements are not supported
 statement error
@@ -104,7 +104,7 @@ Parser Error: Expected a single SELECT statement
 statement error
 SELECT query(SELECT 1);
 ----
-Parser Error: syntax error at or near "SELECT"
+Parser Error: syntax error at or near "1"
 
 statement error
 SELECT * FROM query('CREATE TABLE tbl (a INT)');
@@ -245,7 +245,7 @@ FROM query_table('(SELECT 17 + 25)');
 statement error
 FROM query_table(SELECT 17 + 25);
 ----
-Parser Error: syntax error at or near "SELECT"
+Parser Error: syntax error at or near "17"
 
 statement error 
 FROM query_table("SELECT 4 + 2");

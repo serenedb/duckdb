@@ -91,7 +91,8 @@ TableFunctionArguments <- Parens(List(FunctionArgument)?)
 FunctionArgument <- NamedFunctionArgument / PositionalFunctionArgument
 NamedFunctionArgument <- NamedParameter
 PositionalFunctionArgument <- Expression
-NamedParameter <- TypeFuncName Type? NamedParameterAssignment Expression
+NamedParameter <- NamedParameterName Type? NamedParameterAssignment Expression
+NamedParameterName <- ReservedKeyword / UnreservedKeyword / ColumnNameKeyword / FuncNameKeyword / TypeNameKeyword / Identifier
 NamedParameterAssignment <- ':=' / '=>'
 
 TableAlias <- TableAliasAs / TableAliasWithoutAs
