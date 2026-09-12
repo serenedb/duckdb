@@ -241,12 +241,12 @@ FunctionArgument PEGTransformerFactory::TransformPositionalFunctionArgument(PEGT
 }
 
 MacroParameter PEGTransformerFactory::TransformNamedParameter(PEGTransformer &transformer,
-                                                              const Identifier &type_func_name,
+                                                              const Identifier &named_parameter_name,
                                                               const optional<LogicalType> &type,
                                                               unique_ptr<ParsedExpression> expression) {
 	MacroParameter parameter;
 	parameter.expression = std::move(expression);
-	parameter.name = type_func_name;
+	parameter.name = named_parameter_name;
 	parameter.is_default = true;
 	if (type) {
 		parameter.type = *type;
