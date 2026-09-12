@@ -383,6 +383,10 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		auto &drop_constraint_info = table_info.Cast<DropConstraintInfo>();
 		return DropConstraint(context, drop_constraint_info);
 	}
+	case AlterTableType::RENAME_CONSTRAINT: {
+		auto &rename_constraint_info = table_info.Cast<RenameConstraintInfo>();
+		return RenameConstraint(context, rename_constraint_info);
+	}
 	case AlterTableType::DROP_NOT_NULL: {
 		auto &drop_not_null_info = table_info.Cast<DropNotNullInfo>();
 		return DropNotNull(context, drop_not_null_info);
@@ -1148,28 +1152,45 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropNotNull(ClientContext &context, Dro
 	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
 }
 
+static optional_idx FindConstraint(const vector<unique_ptr<Constraint>> &constraints, const string &constraint_name) {
+	for (idx_t i = 0; i < constraints.size(); i++) {
+		if (constraints[i]->constraint_name == constraint_name) {
+			return optional_idx(i);
+		}
+	}
+	return optional_idx();
+}
+
 unique_ptr<CatalogEntry> DuckTableEntry::DropConstraint(ClientContext &context, DropConstraintInfo &info) {
 	auto create_info = GetInfo();
 	auto &table_info = create_info->Cast<CreateTableInfo>();
-
-	// CHECK constraints carry no name in the catalog; the caller identifies
-	// the constraint by its expression text.
-	bool found = false;
-	for (idx_t i = 0; i < table_info.constraints.size(); i++) {
-		auto &constraint = table_info.constraints[i];
-		if (constraint->type != ConstraintType::CHECK) {
-			continue;
+	auto constraint_idx = FindConstraint(table_info.constraints, info.constraint_name);
+	if (!constraint_idx.IsValid()) {
+		if (info.if_constraint_not_found) {
+			return nullptr;
 		}
-		auto &check = constraint->Cast<CheckConstraint>();
-		if (check.expression->ToString() == info.constraint_name) {
-			table_info.constraints.erase(table_info.constraints.begin() + static_cast<ptrdiff_t>(i));
-			found = true;
-			break;
-		}
-	}
-	if (!found && !info.if_constraint_not_found) {
 		throw CatalogException("constraint \"%s\" of table \"%s\" does not exist", info.constraint_name, name);
 	}
+	auto &constraint = *table_info.constraints[constraint_idx.GetIndex()];
+	if (constraint.type == ConstraintType::UNIQUE || constraint.type == ConstraintType::FOREIGN_KEY) {
+		throw NotImplementedException("Dropping a %s constraint is not supported for DuckDB tables",
+		                              EnumUtil::ToString(constraint.type));
+	}
+	table_info.constraints.erase(table_info.constraints.begin() + static_cast<ptrdiff_t>(constraint_idx.GetIndex()));
+
+	auto binder = Binder::CreateBinder(context);
+	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+}
+
+unique_ptr<CatalogEntry> DuckTableEntry::RenameConstraint(ClientContext &context, RenameConstraintInfo &info) {
+	auto create_info = GetInfo();
+	auto &table_info = create_info->Cast<CreateTableInfo>();
+	auto constraint_idx = FindConstraint(table_info.constraints, info.old_name);
+	if (!constraint_idx.IsValid()) {
+		throw CatalogException("constraint \"%s\" of table \"%s\" does not exist", info.old_name, name);
+	}
+	table_info.constraints[constraint_idx.GetIndex()]->constraint_name = info.new_name;
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
