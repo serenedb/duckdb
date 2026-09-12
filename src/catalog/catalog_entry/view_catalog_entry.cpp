@@ -3,7 +3,6 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
-#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/common/limits.hpp"
@@ -107,32 +106,7 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, Al
 		return copied_view;
 	}
 
-	// PostgreSQL allows `ALTER TABLE ... RENAME TO` on views, so we convert it
-	// to the equivalent ALTER VIEW operation to support tools like dbt-postgres.
-	if (info.type == AlterType::ALTER_TABLE) {
-		auto &table_info = info.Cast<AlterTableInfo>();
-		if (table_info.alter_table_type == AlterTableType::RENAME_TABLE) {
-			auto &rename_info = table_info.Cast<RenameTableInfo>();
-			auto copied_view = Copy(context);
-			copied_view->name = rename_info.new_table_name;
-			return copied_view;
-		}
-	}
-
-	if (info.type != AlterType::ALTER_VIEW) {
-		return CatalogEntry::AlterEntry(context, info);
-	}
-	auto &view_info = info.Cast<AlterViewInfo>();
-	switch (view_info.alter_view_type) {
-	case AlterViewType::RENAME_VIEW: {
-		auto &rename_info = view_info.Cast<RenameViewInfo>();
-		auto copied_view = Copy(context);
-		copied_view->name = rename_info.new_view_name;
-		return copied_view;
-	}
-	default:
-		throw InternalException("Unrecognized alter view type!");
-	}
+	return CatalogEntry::AlterEntry(context, info);
 }
 
 shared_ptr<ViewColumnInfo> ViewCatalogEntry::GetColumnInfo() const {

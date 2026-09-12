@@ -189,9 +189,6 @@ unique_ptr<AlterInfo> AlterTableInfo::Deserialize(Deserializer &deserializer) {
 	case AlterTableType::RENAME_FIELD:
 		result = RenameFieldInfo::Deserialize(deserializer);
 		break;
-	case AlterTableType::RENAME_TABLE:
-		result = RenameTableInfo::Deserialize(deserializer);
-		break;
 	case AlterTableType::RESET_TABLE_OPTIONS:
 		result = ResetTableOptionsInfo::Deserialize(deserializer);
 		break;
@@ -225,9 +222,6 @@ unique_ptr<AlterInfo> AlterViewInfo::Deserialize(Deserializer &deserializer) {
 	auto alter_view_type = deserializer.ReadProperty<AlterViewType>(300, "alter_view_type");
 	unique_ptr<AlterViewInfo> result;
 	switch (alter_view_type) {
-	case AlterViewType::RENAME_VIEW:
-		result = RenameViewInfo::Deserialize(deserializer);
-		break;
 	default:
 		throw SerializationException("Unsupported type for deserialization of AlterViewInfo!");
 	}
@@ -760,28 +754,6 @@ unique_ptr<AlterInfo> RenameInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<RenameInfo>(new RenameInfo());
 	deserializer.ReadProperty<CatalogType>(300, "entry_catalog_type", result->entry_catalog_type);
 	deserializer.ReadPropertyWithDefault<Identifier>(301, "new_name", result->new_name);
-	return std::move(result);
-}
-
-void RenameTableInfo::Serialize(Serializer &serializer) const {
-	AlterTableInfo::Serialize(serializer);
-	serializer.WritePropertyWithDefault<Identifier>(400, "new_table_name", new_table_name);
-}
-
-unique_ptr<AlterTableInfo> RenameTableInfo::Deserialize(Deserializer &deserializer) {
-	auto result = duckdb::unique_ptr<RenameTableInfo>(new RenameTableInfo());
-	deserializer.ReadPropertyWithDefault<Identifier>(400, "new_table_name", result->new_table_name);
-	return std::move(result);
-}
-
-void RenameViewInfo::Serialize(Serializer &serializer) const {
-	AlterViewInfo::Serialize(serializer);
-	serializer.WritePropertyWithDefault<Identifier>(400, "new_view_name", new_view_name);
-}
-
-unique_ptr<AlterViewInfo> RenameViewInfo::Deserialize(Deserializer &deserializer) {
-	auto result = duckdb::unique_ptr<RenameViewInfo>(new RenameViewInfo());
-	deserializer.ReadPropertyWithDefault<Identifier>(400, "new_view_name", result->new_view_name);
 	return std::move(result);
 }
 

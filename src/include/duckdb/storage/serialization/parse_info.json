@@ -115,18 +115,6 @@
     ]
   },
   {
-    "class": "RenameTableInfo",
-    "base": "AlterTableInfo",
-    "enum": "RENAME_TABLE",
-    "members": [
-      {
-        "id": 400,
-        "name": "new_table_name",
-        "type": "Identifier"
-      }
-    ]
-  },
-  {
     "class": "AddColumnInfo",
     "base": "AlterTableInfo",
     "enum": "ADD_COLUMN",
@@ -616,18 +604,6 @@
         "id": 300,
         "name": "alter_view_type",
         "type": "AlterViewType"
-      }
-    ]
-  },
-  {
-    "class": "RenameViewInfo",
-    "base": "AlterViewInfo",
-    "enum": "RENAME_VIEW",
-    "members": [
-      {
-        "id": 400,
-        "name": "new_view_name",
-        "type": "Identifier"
       }
     ]
   },

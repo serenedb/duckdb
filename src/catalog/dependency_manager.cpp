@@ -716,7 +716,6 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 				}
 				break;
 			}
-			case AlterTableType::RENAME_TABLE:
 			case AlterTableType::RENAME_COLUMN: {
 				// Secondary indexes reference their table by catalog entry and
 				// their key columns by storage position, so a rename underneath
@@ -728,6 +727,12 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			}
 			default:
 				break;
+			}
+			break;
+		}
+		case AlterType::RENAME: {
+			if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
+				disallow_alter = false;
 			}
 			break;
 		}

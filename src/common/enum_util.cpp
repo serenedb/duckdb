@@ -656,20 +656,19 @@ AlterType EnumUtil::FromString<AlterType>(const char *value) {
 
 const StringUtil::EnumStringLiteral *GetAlterViewTypeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
-		{ static_cast<uint32_t>(AlterViewType::INVALID), "INVALID" },
-		{ static_cast<uint32_t>(AlterViewType::RENAME_VIEW), "RENAME_VIEW" }
+		{ static_cast<uint32_t>(AlterViewType::INVALID), "INVALID" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<AlterViewType>(AlterViewType value) {
-	return StringUtil::EnumToString(GetAlterViewTypeValues(), 2, "AlterViewType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterViewTypeValues(), 1, "AlterViewType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterViewType EnumUtil::FromString<AlterViewType>(const char *value) {
-	return static_cast<AlterViewType>(StringUtil::StringToEnum(GetAlterViewTypeValues(), 2, "AlterViewType", value));
+	return static_cast<AlterViewType>(StringUtil::StringToEnum(GetAlterViewTypeValues(), 1, "AlterViewType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAppenderTypeValues() {

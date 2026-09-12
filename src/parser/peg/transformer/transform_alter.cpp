@@ -51,7 +51,13 @@ PEGTransformerFactory::TransformAlterTableStmt(PEGTransformer &transformer, cons
 		throw ParserException("Only one ALTER command per statement is supported");
 	}
 	auto result = std::move(alter_table_options[0]);
-	result->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	auto if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	if (result->alter_table_type == AlterTableType::RENAME_TABLE) {
+		AlterEntryData data(base_table_name->GetQualifiedName(), if_not_found);
+		return make_uniq_base<AlterInfo, RenameInfo>(CatalogType::TABLE_ENTRY, data,
+		                                             result->Cast<RenameTableInfo>().new_table_name);
+	}
+	result->if_not_found = if_not_found;
 	result->SetQualifiedName(base_table_name->GetQualifiedName());
 
 	return std::move(result);
@@ -72,11 +78,10 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterViewStmt(PEGTransform
                                                                     const optional<bool> &if_exists,
                                                                     unique_ptr<BaseTableRef> base_table_name,
                                                                     unique_ptr<AlterTableInfo> rename_alter) {
-	auto rename_table = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
-	auto result = make_uniq<RenameViewInfo>(AlterEntryData(), rename_table->new_table_name);
-	result->SetQualifiedName(base_table_name->GetQualifiedName());
-	result->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	return std::move(result);
+	AlterEntryData data(base_table_name->GetQualifiedName(),
+	                    if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION);
+	return make_uniq_base<AlterInfo, RenameInfo>(CatalogType::VIEW_ENTRY, data,
+	                                             rename_alter->Cast<RenameTableInfo>().new_table_name);
 }
 
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSchemaStmt(PEGTransformer &transformer,

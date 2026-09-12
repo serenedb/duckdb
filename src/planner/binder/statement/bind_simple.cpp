@@ -136,9 +136,9 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	auto lookup = [&](CatalogType type, OnEntryNotFound if_not_found) {
 		auto &name = stmt.info->GetQualifiedName();
 		EntryLookupInfo lookup_info(type, QualifiedName(name.Name()));
-		return entry_retriever.GetEntry(
-		    EntryLookupInfo(lookup_info, QualifiedName(name.Catalog(), name.Schema(), lookup_info.GetEntryIdentifier())),
-		    if_not_found);
+		return entry_retriever.GetEntry(EntryLookupInfo(lookup_info, QualifiedName(name.Catalog(), name.Schema(),
+		                                                                           lookup_info.GetEntryIdentifier())),
+		                                if_not_found);
 	};
 	if (stmt.info->type == AlterType::SET_COLUMN_COMMENT) {
 		// Extra step for column comments: They can alter a table or a view, and we resolve that here.

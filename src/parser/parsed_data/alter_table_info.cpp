@@ -297,9 +297,6 @@ string RenameFieldInfo::ToString() const {
 //===--------------------------------------------------------------------===//
 // RenameTableInfo
 //===--------------------------------------------------------------------===//
-RenameTableInfo::RenameTableInfo() : AlterTableInfo(AlterTableType::RENAME_TABLE) {
-}
-
 RenameTableInfo::RenameTableInfo(const AlterEntryData &data, Identifier new_name_p)
     : AlterTableInfo(AlterTableType::RENAME_TABLE, data), new_table_name(std::move(new_name_p)) {
 }
@@ -668,34 +665,6 @@ AlterViewInfo::~AlterViewInfo() {
 
 CatalogType AlterViewInfo::GetCatalogType() const {
 	return CatalogType::VIEW_ENTRY;
-}
-
-//===--------------------------------------------------------------------===//
-// RenameViewInfo
-//===--------------------------------------------------------------------===//
-RenameViewInfo::RenameViewInfo() : AlterViewInfo(AlterViewType::RENAME_VIEW) {
-}
-RenameViewInfo::RenameViewInfo(const AlterEntryData &data, Identifier new_name_p)
-    : AlterViewInfo(AlterViewType::RENAME_VIEW, data), new_view_name(std::move(new_name_p)) {
-}
-RenameViewInfo::~RenameViewInfo() {
-}
-
-unique_ptr<AlterInfo> RenameViewInfo::Copy() const {
-	return make_uniq_base<AlterInfo, RenameViewInfo>(GetAlterEntryData(), new_view_name);
-}
-
-string RenameViewInfo::ToString() const {
-	string result = "";
-	result += "ALTER VIEW ";
-	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
-		result += "IF EXISTS ";
-	}
-	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-	result += " RENAME TO ";
-	result += SQLIdentifier(new_view_name);
-	result += ";";
-	return result;
 }
 
 //===--------------------------------------------------------------------===//
