@@ -126,6 +126,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	case AlterType::CHANGE_OWNERSHIP:
 		result = ChangeOwnershipInfo::Deserialize(deserializer);
 		break;
+	case AlterType::RENAME:
+		result = RenameInfo::Deserialize(deserializer);
+		break;
 	case AlterType::SET_COLUMN_COMMENT:
 		result = SetColumnCommentInfo::Deserialize(deserializer);
 		break;
@@ -240,9 +243,6 @@ unique_ptr<AlterInfo> AlterScalarFunctionInfo::Deserialize(Deserializer &deseria
 	auto alter_scalar_function_type = deserializer.ReadProperty<AlterScalarFunctionType>(300, "alter_scalar_function_type");
 	unique_ptr<AlterScalarFunctionInfo> result;
 	switch (alter_scalar_function_type) {
-	case AlterScalarFunctionType::RENAME_SCALAR_FUNCTION:
-		result = RenameScalarFunctionInfo::Deserialize(deserializer);
-		break;
 	default:
 		throw SerializationException("Unsupported type for deserialization of AlterScalarFunctionInfo!");
 	}
@@ -750,14 +750,16 @@ unique_ptr<AlterTableInfo> RenameFieldInfo::Deserialize(Deserializer &deserializ
 	return std::move(result);
 }
 
-void RenameScalarFunctionInfo::Serialize(Serializer &serializer) const {
-	AlterScalarFunctionInfo::Serialize(serializer);
-	serializer.WritePropertyWithDefault<Identifier>(400, "new_name", new_name);
+void RenameInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<CatalogType>(300, "entry_catalog_type", entry_catalog_type);
+	serializer.WritePropertyWithDefault<Identifier>(301, "new_name", new_name);
 }
 
-unique_ptr<AlterScalarFunctionInfo> RenameScalarFunctionInfo::Deserialize(Deserializer &deserializer) {
-	auto result = duckdb::unique_ptr<RenameScalarFunctionInfo>(new RenameScalarFunctionInfo());
-	deserializer.ReadPropertyWithDefault<Identifier>(400, "new_name", result->new_name);
+unique_ptr<AlterInfo> RenameInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<RenameInfo>(new RenameInfo());
+	deserializer.ReadProperty<CatalogType>(300, "entry_catalog_type", result->entry_catalog_type);
+	deserializer.ReadPropertyWithDefault<Identifier>(301, "new_name", result->new_name);
 	return std::move(result);
 }
 
