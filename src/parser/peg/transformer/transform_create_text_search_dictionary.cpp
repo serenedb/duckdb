@@ -24,7 +24,6 @@ static string QualifiedNameToDottedString(const QualifiedName &name) {
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateTSDictionaryStatement(PEGTransformer &transformer,
                                                                                      ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	// 0:'CREATE' 1:'TEXT' 2:'SEARCH' 3:'DICTIONARY' 4:IfNotExists? 5:QualifiedName 6:TSDictionaryDefinition
 	bool if_not_exists = list_pr.Child<OptionalParseResult>(4).HasResult();
 	auto qname = transformer.Transform<QualifiedName>(list_pr.Child<ListParseResult>(5));
 	auto full_name = QualifiedNameToDottedString(qname);
@@ -34,18 +33,24 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateTSDictionaryState
 	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value(full_name)));
 	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value::BOOLEAN(if_not_exists)));
 
-	// TSDictionaryDefinition <- Parens(List(TSDictionaryDefElement))
-	auto &def_pr = list_pr.Child<ListParseResult>(6);
-	auto &list_inside = ExtractResultFromParens(def_pr.GetChild(0));
+	auto &expr_pr = list_pr.Child<ListParseResult>(6);
+	auto expr = transformer.Transform<unique_ptr<ParsedExpression>>(expr_pr.GetChild(1));
+	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value(expr->ToString())));
+	transformer.ClearParameters();
+
+	auto &with_opt = expr_pr.Child<OptionalParseResult>(2);
+	if (!with_opt.HasResult()) {
+		return std::move(result);
+	}
+	auto &definition_pr = with_opt.GetResult().Cast<ListParseResult>().Child<ListParseResult>(1);
+	auto &list_inside = ExtractResultFromParens(definition_pr.GetChild(0));
 	auto elements = ExtractParseResultsFromList(list_inside);
 	for (auto &elem_ref : elements) {
 		auto &elem_pr = elem_ref.get().Cast<ListParseResult>();
-		// TSDictionaryDefElement <- ColLabel TSDictionaryDefArg?
 		auto opt_name = transformer.Transform<string>(elem_pr.GetChild(0));
 		auto &arg_opt = elem_pr.Child<OptionalParseResult>(1);
 		unique_ptr<ParsedExpression> value_expr;
 		if (arg_opt.HasResult()) {
-			// TSDictionaryDefArg <- '=' DefArg
 			auto &arg_list = arg_opt.GetResult().Cast<ListParseResult>();
 			value_expr = transformer.Transform<unique_ptr<ParsedExpression>>(arg_list.GetChild(1));
 		} else {
@@ -56,7 +61,6 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateTSDictionaryState
 			throw InvalidInputException("conflicting or redundant options: \"%s\" specified more than once", opt_name);
 		}
 	}
-
 	return std::move(result);
 }
 
