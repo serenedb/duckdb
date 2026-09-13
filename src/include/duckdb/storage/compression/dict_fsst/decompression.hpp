@@ -28,6 +28,7 @@ public:
 	                            idx_t scan_count);
 	const SelectionVector &GetSelVec(idx_t start, idx_t scan_count);
 	void Select(Vector &result, idx_t start, const SelectionVector &sel, idx_t sel_count);
+	void SelectDictionary(Vector &result, idx_t start, idx_t span, const SelectionVector &sel, idx_t sel_count);
 
 	bool AllowDictionaryScan(idx_t scan_count);
 
@@ -55,6 +56,8 @@ public:
 
 	buffer_ptr<SelectionVector> sel_vec;
 	idx_t sel_vec_size = 0;
+	buffer_ptr<SelectionVector> dict_sel;
+	idx_t dict_sel_size = 0;
 
 	//===------------------------------------------------------------------===//
 	// The generic entry model, shared by every mode.
