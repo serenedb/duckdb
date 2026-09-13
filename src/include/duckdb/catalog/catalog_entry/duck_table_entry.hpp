@@ -89,14 +89,6 @@ public:
 	//! Returns the virtual columns for this table
 	virtual_column_map_t GetVirtualColumns() const override;
 
-	optional_ptr<CatalogEntry> CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info) override;
-	void ScanTriggers(CatalogTransaction transaction,
-	                  const std::function<void(CatalogEntry &)> &callback) const override;
-	//! Scan all triggers without a transaction (used by checkpoint writer)
-	void ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback);
-	//! Drop a trigger by name
-	bool DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade);
-
 private:
 	unique_ptr<CatalogEntry> RenameColumn(ClientContext &context, RenameColumnInfo &info);
 	unique_ptr<CatalogEntry> RenameField(ClientContext &context, RenameFieldInfo &info);
@@ -123,8 +115,6 @@ private:
 private:
 	//! A reference to the underlying storage unit used for this table
 	shared_ptr<DataTable> storage;
-	//! The catalog set holding triggers for this table
-	shared_ptr<CatalogSet> triggers;
 	//! Manages dependencies of the individual columns of the table
 	ColumnDependencyManager column_dependency_manager;
 };

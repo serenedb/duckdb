@@ -126,9 +126,9 @@ virtual_column_map_t DuckTableEntry::GetVirtualColumns() const {
 DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info,
                                shared_ptr<DataTable> inherited_storage, shared_ptr<CatalogSet> inherited_triggers)
     : TableCatalogEntry(catalog, schema, info.Base()), storage(std::move(inherited_storage)),
-      triggers(std::move(inherited_triggers)), column_dependency_manager(std::move(info.column_dependency_manager)) {
-	if (!triggers) {
-		triggers = make_shared_ptr<CatalogSet>(catalog);
+      column_dependency_manager(std::move(info.column_dependency_manager)) {
+	if (inherited_triggers) {
+		triggers = std::move(inherited_triggers);
 	}
 	if (storage) {
 		if (!info.indexes.empty()) {
@@ -420,6 +420,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameColumn(ClientContext &context, Re
 	if (rename_idx.index == COLUMN_IDENTIFIER_ROW_ID) {
 		throw CatalogException("Cannot rename rowid column");
 	}
+	storage->GetDataTableInfo()->BindIndexes(context);
 	IdentifierEquality same(columns.IsCaseSensitive());
 	UpdateDependentIndexes(context, *this, [&](DuckIndexEntry &index) {
 		RewriteIndexExpressions(index, [&](ParsedExpression &expr) {
@@ -1174,11 +1175,6 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropConstraint(ClientContext &context, 
 		}
 		throw CatalogException("constraint \"%s\" of table \"%s\" does not exist", info.constraint_name, name);
 	}
-	auto &constraint = *table_info.constraints[constraint_idx.GetIndex()];
-	if (constraint.type == ConstraintType::FOREIGN_KEY) {
-		throw NotImplementedException("Dropping a %s constraint is not supported for DuckDB tables",
-		                              EnumUtil::ToString(constraint.type));
-	}
 	table_info.constraints.erase(table_info.constraints.begin() + static_cast<ptrdiff_t>(constraint_idx.GetIndex()));
 
 	auto binder = Binder::CreateBinder(context);
@@ -1374,7 +1370,8 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropForeignKeyConstraint(ClientContext 
 			// Symmetric removal: drops the PK-side back-reference when applied
 			// to the main-key table, and the FK constraint itself when applied
 			// to the referencing table.
-			if (fk.info.table == info.fk_table) {
+			if (fk.info.table == info.fk_table && fk.fk_columns == info.fk_columns &&
+			    fk.pk_columns == info.pk_columns) {
 				continue;
 			}
 		}
@@ -1519,11 +1516,37 @@ void DuckTableEntry::CommitDropConstraint(const AlterInfo &info, CommitDropState
 		return;
 	}
 	auto constraint_idx = FindConstraint(constraints, info.Cast<DropConstraintInfo>().constraint_name);
-	if (!constraint_idx.IsValid() || constraints[constraint_idx.GetIndex()]->type != ConstraintType::UNIQUE) {
+	if (!constraint_idx.IsValid()) {
 		return;
 	}
-	auto &unique = constraints[constraint_idx.GetIndex()]->Cast<UniqueConstraint>();
-	drop_state.RemoveIndex(storage->GetDataTableInfo()->GetIndexes(), unique.GetName(name));
+	auto &constraint = *constraints[constraint_idx.GetIndex()];
+	IndexConstraintType type;
+	vector<column_t> column_ids;
+	if (constraint.type == ConstraintType::UNIQUE) {
+		auto &unique = constraint.Cast<UniqueConstraint>();
+		type = unique.IsPrimaryKey() ? IndexConstraintType::PRIMARY : IndexConstraintType::UNIQUE;
+		for (auto &logical_index : unique.GetLogicalIndexes(columns)) {
+			column_ids.push_back(columns.LogicalToPhysical(logical_index).index);
+		}
+	} else if (constraint.type == ConstraintType::FOREIGN_KEY) {
+		auto &fk = constraint.Cast<ForeignKeyConstraint>();
+		if (fk.info.type == ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE) {
+			return;
+		}
+		type = IndexConstraintType::FOREIGN;
+		for (auto &physical_index : fk.info.fk_keys) {
+			column_ids.push_back(physical_index.index);
+		}
+	} else {
+		return;
+	}
+	auto &indexes = storage->GetDataTableInfo()->GetIndexes();
+	for (auto &index : indexes.Indexes()) {
+		if (index.GetConstraintType() == type && index.GetColumnIds() == column_ids) {
+			drop_state.RemoveIndex(indexes, index.GetIndexName());
+			return;
+		}
+	}
 }
 
 void DuckTableEntry::CommitDrop(CommitDropState &drop_state) {
@@ -1555,40 +1578,6 @@ bool DuckTableEntry::ScanColumnSegmentInfo(const QueryContext &context, ColumnSe
 
 TableStorageInfo DuckTableEntry::GetStorageInfo(ClientContext &context) {
 	return storage->GetStorageInfo();
-}
-
-optional_ptr<CatalogEntry> DuckTableEntry::CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info) {
-	auto trigger = make_uniq<TriggerCatalogEntry>(catalog, schema, info);
-	auto entry_name = trigger->name;
-	LogicalDependencyList dependencies = trigger->dependencies;
-	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
-		auto old_entry = triggers->GetEntry(transaction, entry_name);
-		if (old_entry) {
-			return nullptr;
-		}
-	} else if (info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
-		auto old_entry = triggers->GetEntry(transaction, entry_name);
-		if (old_entry) {
-			triggers->DropEntry(transaction, entry_name, false);
-		}
-	}
-	if (!triggers->CreateEntry(transaction, entry_name, std::move(trigger), dependencies)) {
-		throw CatalogException::EntryAlreadyExists(CatalogType::TRIGGER_ENTRY, entry_name);
-	}
-	return triggers->GetEntry(transaction, entry_name);
-}
-
-void DuckTableEntry::ScanTriggers(CatalogTransaction transaction,
-                                  const std::function<void(CatalogEntry &)> &callback) const {
-	triggers->Scan(transaction, callback);
-}
-
-void DuckTableEntry::ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback) {
-	triggers->Scan(callback);
-}
-
-bool DuckTableEntry::DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade) {
-	return triggers->DropEntry(transaction, name, cascade);
 }
 
 } // namespace duckdb

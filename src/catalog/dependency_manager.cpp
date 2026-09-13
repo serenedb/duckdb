@@ -716,7 +716,9 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 				}
 				break;
 			}
-			case AlterTableType::RENAME_COLUMN: {
+			case AlterTableType::RENAME_COLUMN:
+			case AlterTableType::RENAME_CONSTRAINT:
+			case AlterTableType::DROP_CONSTRAINT: {
 				// Secondary indexes reference their table by catalog entry and
 				// their key columns by storage position, so a rename underneath
 				// them does not affect index lookups.

@@ -72,24 +72,18 @@ unique_ptr<GlobalTableFunctionState> DuckDBTriggersInit(ClientContext &context, 
 	auto result = make_uniq<DuckDBTriggersData>();
 
 	auto schemas = Catalog::GetAllSchemas(context);
-	vector<reference<DuckTableEntry>> tables;
+	vector<reference<TableCatalogEntry>> tables;
 	for (auto &schema : schemas) {
 		schema.get().Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
-			if (entry.type != CatalogType::TABLE_ENTRY) {
-				return;
+			if (entry.type == CatalogType::TABLE_ENTRY) {
+				tables.push_back(entry.Cast<TableCatalogEntry>());
 			}
-			auto &table = entry.Cast<TableCatalogEntry>();
-			if (!table.IsDuckTable()) {
-				return;
-			}
-			auto &duck_table = entry.Cast<DuckTableEntry>();
-			tables.push_back(duck_table);
 		});
 	}
-	for (auto &table : tables) {
-		auto &duck_table = table.get();
-		auto transaction = CatalogTransaction(duck_table.ParentCatalog(), context);
-		duck_table.ScanTriggers(transaction, [&](CatalogEntry &trigger) {
+	for (auto &table_ref : tables) {
+		auto &table = table_ref.get();
+		auto transaction = CatalogTransaction(table.ParentCatalog(), context);
+		table.ScanTriggers(transaction, [&](CatalogEntry &trigger) {
 			result->entries.push_back(trigger.Cast<TriggerCatalogEntry>());
 		});
 	}

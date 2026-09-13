@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/extra_type_info.hpp"
@@ -33,6 +34,9 @@ constexpr const char *TableCatalogEntry::Name;
 TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info)
     : StandardEntry(CatalogType::TABLE_ENTRY, schema, catalog, info.GetTableName(), info.oid),
       columns(std::move(info.columns)), constraints(std::move(info.constraints)) {
+	if (catalog.IsDuckCatalog()) {
+		triggers = make_shared_ptr<CatalogSet>(catalog);
+	}
 	this->temporary = info.temporary;
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
@@ -382,12 +386,44 @@ vector<column_t> TableCatalogEntry::GetRowIdColumns() const {
 }
 
 optional_ptr<CatalogEntry> TableCatalogEntry::CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info) {
-	throw NotImplementedException("Triggers are not supported for this table type");
+	if (!triggers) {
+		throw NotImplementedException("Triggers are not supported for this table type");
+	}
+	auto trigger = make_uniq<TriggerCatalogEntry>(catalog, schema, info);
+	auto entry_name = trigger->name;
+	LogicalDependencyList dependencies = trigger->dependencies;
+	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
+		auto old_entry = triggers->GetEntry(transaction, entry_name);
+		if (old_entry) {
+			return nullptr;
+		}
+	} else if (info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		auto old_entry = triggers->GetEntry(transaction, entry_name);
+		if (old_entry) {
+			triggers->DropEntry(transaction, entry_name, false);
+		}
+	}
+	if (!triggers->CreateEntry(transaction, entry_name, std::move(trigger), dependencies)) {
+		throw CatalogException::EntryAlreadyExists(CatalogType::TRIGGER_ENTRY, entry_name);
+	}
+	return triggers->GetEntry(transaction, entry_name);
 }
 
 void TableCatalogEntry::ScanTriggers(CatalogTransaction transaction,
                                      const std::function<void(CatalogEntry &)> &callback) const {
-	// Default: no triggers (non-DuckDB tables do not support triggers)
+	if (triggers) {
+		triggers->Scan(transaction, callback);
+	}
+}
+
+void TableCatalogEntry::ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback) {
+	if (triggers) {
+		triggers->Scan(callback);
+	}
+}
+
+bool TableCatalogEntry::DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade) {
+	return triggers && triggers->DropEntry(transaction, name, cascade);
 }
 
 vector<const_reference<TriggerCatalogEntry>> TableCatalogEntry::GetTriggersForEvent(CatalogTransaction transaction,
@@ -483,15 +519,18 @@ void TableCatalogEntry::RenameColumn(ColumnList &columns, vector<unique_ptr<Cons
 }
 
 unique_ptr<CatalogEntry> TableCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
-	if (info.type != AlterType::ALTER_TABLE ||
-	    info.Cast<AlterTableInfo>().alter_table_type != AlterTableType::RENAME_COLUMN) {
-		return CatalogEntry::AlterEntry(context, info);
+	unique_ptr<CatalogEntry> result;
+	if (info.type == AlterType::ALTER_TABLE &&
+	    info.Cast<AlterTableInfo>().alter_table_type == AlterTableType::RENAME_COLUMN) {
+		auto &rename_info = info.Cast<RenameColumnInfo>();
+		GetColumnIndex(rename_info.old_name);
+		result = Copy(context);
+		auto &table = result->Cast<TableCatalogEntry>();
+		RenameColumn(table.columns, table.constraints, rename_info);
+	} else {
+		result = CatalogEntry::AlterEntry(context, info);
 	}
-	auto &rename_info = info.Cast<RenameColumnInfo>();
-	GetColumnIndex(rename_info.old_name);
-	auto result = Copy(context);
-	auto &table = result->Cast<TableCatalogEntry>();
-	RenameColumn(table.columns, table.constraints, rename_info);
+	result->Cast<TableCatalogEntry>().triggers = triggers;
 	return result;
 }
 

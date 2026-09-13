@@ -175,11 +175,7 @@ static catalog_entry_vector_t GetCatalogEntries(DuckCatalog &catalog, vector<ref
 		// Scan triggers from each table directly (triggers are nested under their table)
 		for (auto &table_entry : tables) {
 			auto &table = table_entry.get().Cast<TableCatalogEntry>();
-			if (!table.IsDuckTable()) {
-				continue;
-			}
-			auto &duck_table = table.Cast<DuckTableEntry>();
-			duck_table.ScanTriggersNonTransactional([&](CatalogEntry &entry) {
+			table.ScanTriggersNonTransactional([&](CatalogEntry &entry) {
 				if (!entry.internal) {
 					entries.push_back(entry);
 				}
@@ -616,8 +612,7 @@ void CheckpointReader::ReadTrigger(CatalogTransaction transaction, Deserializer 
 	if (!table_entry) {
 		throw IOException("corrupt database file - trigger entry without table entry");
 	}
-	auto &duck_table = table_entry->Cast<DuckTableEntry>();
-	duck_table.CreateTrigger(transaction, trigger_info);
+	table_entry->Cast<TableCatalogEntry>().CreateTrigger(transaction, trigger_info);
 }
 
 //===--------------------------------------------------------------------===//
