@@ -67,7 +67,8 @@ public:
 
 	void SetAsRoot() override;
 
-	void CommitAlter(string &column_name, CommitDropState &drop_state);
+	void CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state);
+	void CommitDropConstraint(const AlterInfo &info, CommitDropState &drop_state);
 	void CommitDrop(CommitDropState &drop_state);
 
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;

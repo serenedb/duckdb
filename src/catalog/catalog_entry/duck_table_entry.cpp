@@ -1175,7 +1175,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropConstraint(ClientContext &context, 
 		throw CatalogException("constraint \"%s\" of table \"%s\" does not exist", info.constraint_name, name);
 	}
 	auto &constraint = *table_info.constraints[constraint_idx.GetIndex()];
-	if (constraint.type == ConstraintType::UNIQUE || constraint.type == ConstraintType::FOREIGN_KEY) {
+	if (constraint.type == ConstraintType::FOREIGN_KEY) {
 		throw NotImplementedException("Dropping a %s constraint is not supported for DuckDB tables",
 		                              EnumUtil::ToString(constraint.type));
 	}
@@ -1482,8 +1482,11 @@ void DuckTableEntry::SetAsRoot() {
 	storage->SetTableName(name);
 }
 
-void DuckTableEntry::CommitAlter(string &column_name, CommitDropState &drop_state) {
-	D_ASSERT(!column_name.empty());
+void DuckTableEntry::CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state) {
+	if (column_name.empty()) {
+		CommitDropConstraint(info, drop_state);
+		return;
+	}
 	optional_idx logical_column_idx;
 	auto column_path = StringUtil::Split(column_name, '.');
 	D_ASSERT(!column_path.empty());
@@ -1508,6 +1511,19 @@ void DuckTableEntry::CommitAlter(string &column_name, CommitDropState &drop_stat
 	auto logical_column_index = LogicalIndex(logical_column_idx.GetIndex());
 	auto column_index = columns.LogicalToPhysical(logical_column_index).index;
 	storage->CommitDropColumn(column_index, drop_state);
+}
+
+void DuckTableEntry::CommitDropConstraint(const AlterInfo &info, CommitDropState &drop_state) {
+	if (info.type != AlterType::ALTER_TABLE ||
+	    info.Cast<AlterTableInfo>().alter_table_type != AlterTableType::DROP_CONSTRAINT) {
+		return;
+	}
+	auto constraint_idx = FindConstraint(constraints, info.Cast<DropConstraintInfo>().constraint_name);
+	if (!constraint_idx.IsValid() || constraints[constraint_idx.GetIndex()]->type != ConstraintType::UNIQUE) {
+		return;
+	}
+	auto &unique = constraints[constraint_idx.GetIndex()]->Cast<UniqueConstraint>();
+	drop_state.RemoveIndex(storage->GetDataTableInfo()->GetIndexes(), unique.GetName(name));
 }
 
 void DuckTableEntry::CommitDrop(CommitDropState &drop_state) {

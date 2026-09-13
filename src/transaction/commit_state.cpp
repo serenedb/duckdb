@@ -186,12 +186,8 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 
 			switch (parent.type) {
 			case CatalogType::TABLE_ENTRY:
-				if (!column_name.empty()) {
-					D_ASSERT(entry.type != CatalogType::RENAMED_ENTRY);
-					auto &table_entry = entry.Cast<DuckTableEntry>();
-					D_ASSERT(table_entry.IsDuckTable());
-					// write the alter table in the log
-					table_entry.CommitAlter(column_name, drop_state);
+				if (entry.type == CatalogType::TABLE_ENTRY && entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+					entry.Cast<DuckTableEntry>().CommitAlter(column_name, parse_info->Cast<AlterInfo>(), drop_state);
 				}
 				break;
 			case CatalogType::VIEW_ENTRY:
