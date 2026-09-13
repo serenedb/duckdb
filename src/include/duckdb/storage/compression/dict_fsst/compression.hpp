@@ -203,6 +203,9 @@ public:
 	idx_t symbol_table_size = DConstants::INVALID_INDEX;
 	unsafe_unique_array<unsigned char> encode_buffer = nullptr;
 	idx_t encode_buffer_size = 0;
+	void *spare_encoder = nullptr;
+	idx_t spare_symbol_table_size = DConstants::INVALID_INDEX;
+	uint32_t spare_uses = 0;
 
 	//! Cleave scratch (members only to reuse the allocation across cleaves).
 	//! Global lexicographic (string_t <) order of the encoded entries (the DICT_FSST_PLUS cleave order; the row cleave
@@ -308,6 +311,7 @@ public:
 	//! Not yet FSST-encoded: check the encode trigger (raw dictionary big enough and either near a block or stopped
 	//! growing) or, for a tiny selection-dominated dictionary, cut a plain DICTIONARY once it fills the block.
 	void MaybeEncodeOrCutSmall(const string_t &s, bool is_null, bool was_new);
+	bool DictionaryNearBlock(const string_t &s, bool was_new, idx_t margin);
 	//! Cheap gate before the (still cheap, but less so) cut checks: true once the segment has grown by CLEAVE_GAP
 	//! since the last cleave baseline, or the just-added entry crossed a selection-bitpacking width (which can
 	//! overshoot by more than one row, so it cannot wait for the next gap).
@@ -393,6 +397,8 @@ public:
 	//! Rows since the last new entry; past DICT_STABLE_ROWS the dictionary is treated as complete and encoded even
 	//! when the segment is not near a block (the low-cardinality case).
 	idx_t rows_since_new = 0;
+	idx_t dict_size_slack = 0;
+	idx_t dict_slack_margin = 0;
 };
 
 } // namespace dict_fsst

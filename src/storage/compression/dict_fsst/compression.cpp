@@ -21,6 +21,10 @@ constexpr idx_t ENCODE_HEADROOM = 16 * 1024;
 constexpr idx_t DICT_STABLE_ROWS = 4096;
 constexpr idx_t CLEAVE_GAP = 2 * 1024;
 constexpr idx_t MODE_TIE_TOL = 2 * 1024;
+constexpr idx_t SYMBOL_TABLE_REUSE = 3;
+constexpr idx_t DICT_SLACK_ROW_CHARGE = 4;
+constexpr idx_t DICT_SLACK_ENTRY_CHARGE = 16;
+constexpr idx_t DICT_SLACK_ALLOWANCE = 256;
 //! What one prefix group costs in metadata: its prefix-lengths entry plus the amortized prefix-id width growth,
 //! rounded up. Charged inside the DP so a group must SAVE more than it costs to form at all -- which both kills
 //! net-negative junk groups and is what lets CleavedUpperBound charge anchored groups at a flat constant.
@@ -417,8 +421,10 @@ void BuildSelNew(DictFSSTCompressionState &state, const CleavedDictionary &dict,
 
 Dictionary::~Dictionary() {
 	if (encoder) {
-		auto fsst_encoder = reinterpret_cast<duckdb_fsst_encoder_t *>(encoder);
-		duckdb_fsst_destroy(fsst_encoder);
+		duckdb_fsst_destroy(reinterpret_cast<duckdb_fsst_encoder_t *>(encoder));
+	}
+	if (spare_encoder) {
+		duckdb_fsst_destroy(reinterpret_cast<duckdb_fsst_encoder_t *>(spare_encoder));
 	}
 }
 
@@ -436,7 +442,11 @@ void Dictionary::Clear() {
 	max_raw_len = 0;
 	max_enc_len = 0;
 	if (encoder) {
-		duckdb_fsst_destroy(reinterpret_cast<duckdb_fsst_encoder_t *>(encoder));
+		if (spare_encoder) {
+			duckdb_fsst_destroy(reinterpret_cast<duckdb_fsst_encoder_t *>(spare_encoder));
+		}
+		spare_encoder = encoder;
+		spare_symbol_table_size = symbol_table_size;
 		encoder = nullptr;
 	}
 	symbol_table_size = DConstants::INVALID_INDEX;
@@ -488,12 +498,24 @@ void Dictionary::EncodeAll() {
 		ptrs[i] = reinterpret_cast<unsigned char *>(const_cast<char *>(raw[i].GetData()));
 		total += sizes[i];
 	}
-	encoder = reinterpret_cast<void *>(duckdb_fsst_create(n, sizes.data(), ptrs.data(), 0));
-	auto fsst_encoder = reinterpret_cast<duckdb_fsst_encoder_t *>(encoder);
-	if (!symbol_table) {
-		symbol_table = make_unsafe_uniq_array_uninitialized<unsigned char>(sizeof(duckdb_fsst_decoder_t));
+	if (spare_encoder && spare_uses < SYMBOL_TABLE_REUSE) {
+		encoder = spare_encoder;
+		spare_encoder = nullptr;
+		symbol_table_size = spare_symbol_table_size;
+		spare_uses++;
+	} else {
+		if (spare_encoder) {
+			duckdb_fsst_destroy(reinterpret_cast<duckdb_fsst_encoder_t *>(spare_encoder));
+			spare_encoder = nullptr;
+		}
+		spare_uses = 0;
+		encoder = reinterpret_cast<void *>(duckdb_fsst_create(n, sizes.data(), ptrs.data(), 0));
+		if (!symbol_table) {
+			symbol_table = make_unsafe_uniq_array_uninitialized<unsigned char>(sizeof(duckdb_fsst_decoder_t));
+		}
+		symbol_table_size = duckdb_fsst_export(reinterpret_cast<duckdb_fsst_encoder_t *>(encoder), symbol_table.get());
 	}
-	symbol_table_size = duckdb_fsst_export(fsst_encoder, symbol_table.get());
+	auto fsst_encoder = reinterpret_cast<duckdb_fsst_encoder_t *>(encoder);
 
 	size_t out_cap = 7 + 2 * total;
 	if (out_cap > encode_buffer_size) {
@@ -648,6 +670,8 @@ void DictFSSTCompressionState::ResetSegment() {
 	enc_width_at_cleave = 0;
 	null_count = 0;
 	rows_since_new = 0;
+	dict_size_slack = 0;
+	dict_slack_margin = 0;
 	committed = allow_plus ? CutCommit::UNDECIDED : CutCommit::PLAIN;
 	fit_rows = 0;
 	fit_raw_count = 0;
@@ -1000,10 +1024,35 @@ void DictFSSTCompressionState::CompressValue(const string_t &s, bool is_null) {
 	}
 }
 
+bool DictFSSTCompressionState::DictionaryNearBlock(const string_t &s, bool was_new, idx_t margin) {
+	idx_t charge = DICT_SLACK_ROW_CHARGE;
+	bool exact = margin != dict_slack_margin;
+	if (was_new) {
+		const idx_t len = s.GetSize();
+		charge += len + DICT_SLACK_ENTRY_CHARGE;
+		const idx_t entry_n = dict.raw.size();
+		exact = exact || len >= dict.max_raw_len ||
+		        (entry_n >= 2 && BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(entry_n)) !=
+		                             BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(entry_n - 1)));
+	}
+	if (!exact && dict_size_slack > charge) {
+		dict_size_slack -= charge;
+		return false;
+	}
+	dict_slack_margin = margin;
+	const idx_t size = NativeSize(DictFSSTMode::DICTIONARY) + margin;
+	if (size >= block_size) {
+		dict_size_slack = 0;
+		return true;
+	}
+	const idx_t remaining = block_size - size;
+	dict_size_slack = remaining > DICT_SLACK_ALLOWANCE ? remaining - DICT_SLACK_ALLOWANCE : 0;
+	return false;
+}
+
 void DictFSSTCompressionState::MaybeEncodeOrCutSmall(const string_t &s, bool is_null, bool was_new) {
 	if (forced_mode != DictFSSTMode::DICTIONARY && dict.raw_bytes >= ENCODE_THRESHOLD) {
-		if (NativeSize(DictFSSTMode::DICTIONARY) + ENCODE_HEADROOM >= block_size ||
-		    rows_since_new >= DICT_STABLE_ROWS) {
+		if (rows_since_new >= DICT_STABLE_ROWS || DictionaryNearBlock(s, was_new, ENCODE_HEADROOM)) {
 			dict.EncodeAll();
 			const idx_t true_c = RefreshCleave();
 			SettleCleave(true_c, s, is_null, was_new, dict.max_enc_len + ROW_HEADROOM);
@@ -1026,7 +1075,7 @@ void DictFSSTCompressionState::MaybeEncodeOrCutSmall(const string_t &s, bool is_
 			return;
 		}
 	}
-	if (NativeSize(DictFSSTMode::DICTIONARY) + dict.max_raw_len + ROW_HEADROOM >= block_size) {
+	if (DictionaryNearBlock(s, was_new, dict.max_raw_len + ROW_HEADROOM)) {
 		Flush(false);
 	}
 }
