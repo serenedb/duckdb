@@ -885,9 +885,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			                                           create_index_info.GetQualifiedName().Schema(),
 			                                           create_index_info.table));
 			auto resolved = Catalog::GetEntry(context, table_lookup, OnEntryNotFound::RETURN_NULL);
-			if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
-				table_ptr = &resolved->Cast<TableCatalogEntry>();
-			}
+			table_ptr =
+			    resolved && resolved->type == CatalogType::TABLE_ENTRY ? &resolved->Cast<TableCatalogEntry>() : nullptr;
 		}
 		if (table_ptr) {
 			auto &table = *table_ptr;

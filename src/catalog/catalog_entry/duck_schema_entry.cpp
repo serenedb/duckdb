@@ -51,13 +51,15 @@
 namespace duckdb {
 
 static void FindForeignKeyInformation(TableCatalogEntry &table, AlterForeignKeyType alter_fk_type,
-                                      vector<unique_ptr<AlterForeignKeyInfo>> &fk_arrays) {
+                                      vector<unique_ptr<AlterForeignKeyInfo>> &fk_arrays,
+                                      const string &constraint_name = string()) {
 	auto &constraints = table.GetConstraints();
 	auto &catalog = table.ParentCatalog();
 	auto &name = table.name;
 	for (idx_t i = 0; i < constraints.size(); i++) {
 		auto &cond = constraints[i];
-		if (cond->type != ConstraintType::FOREIGN_KEY) {
+		if (cond->type != ConstraintType::FOREIGN_KEY ||
+		    (!constraint_name.empty() && cond->constraint_name != constraint_name)) {
 			continue;
 		}
 		auto &fk = cond->Cast<ForeignKeyConstraint>();
@@ -363,6 +365,15 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		}
 	} else {
 		auto &name = info.GetQualifiedName().Name();
+		vector<unique_ptr<AlterForeignKeyInfo>> fk_arrays;
+		if (info.type == AlterType::ALTER_TABLE &&
+		    info.Cast<AlterTableInfo>().alter_table_type == AlterTableType::DROP_CONSTRAINT) {
+			auto entry = set.GetEntry(transaction, name);
+			if (entry && entry->type == CatalogType::TABLE_ENTRY) {
+				FindForeignKeyInformation(entry->Cast<TableCatalogEntry>(), AlterForeignKeyType::AFT_DELETE, fk_arrays,
+				                          info.Cast<DropConstraintInfo>().constraint_name);
+			}
+		}
 		if (!set.AlterEntry(transaction, name, info)) {
 			throw CatalogException::MissingEntry(type, name, string());
 		}
@@ -380,6 +391,9 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 					dependency_manager->RemoveDependencyBetween(transaction, *other, *altered);
 				}
 			}
+		}
+		for (auto &fk_array : fk_arrays) {
+			Alter(transaction, *fk_array);
 		}
 	}
 }

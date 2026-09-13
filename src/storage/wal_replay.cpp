@@ -968,6 +968,9 @@ void WriteAheadLogDeserializer::ReplayDropSchema() {
 //===--------------------------------------------------------------------===//
 void WriteAheadLogDeserializer::ReplayCreateType() {
 	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "type");
+	if (DeserializeOnly()) {
+		return;
+	}
 	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	catalog.CreateType(context, info->Cast<CreateTypeInfo>());
 }
@@ -999,9 +1002,8 @@ void WriteAheadLogDeserializer::ReplayCreateTrigger() {
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, QualifiedName(trigger_info.GetQualifiedName().Catalog(),
 	                                                                          trigger_info.GetQualifiedName().Schema(),
 	                                                                          trigger_info.base_table->Table()));
-	auto &duck_table = table.Cast<DuckTableEntry>();
 	auto transaction = catalog.GetCatalogTransaction(context);
-	duck_table.CreateTrigger(transaction, trigger_info);
+	table.CreateTrigger(transaction, trigger_info);
 }
 
 void WriteAheadLogDeserializer::ReplayDropTrigger() {
@@ -1020,9 +1022,8 @@ void WriteAheadLogDeserializer::ReplayDropTrigger() {
 	}
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(
 	    context, QualifiedName(catalog.GetName(), info.GetQualifiedName().Schema(), table_name));
-	auto &duck_table = table.Cast<DuckTableEntry>();
 	auto transaction = catalog.GetCatalogTransaction(context);
-	duck_table.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade);
+	table.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade);
 }
 
 void WriteAheadLogDeserializer::ReplayCreateTokenizer() {
