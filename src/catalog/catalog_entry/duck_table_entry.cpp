@@ -420,11 +420,12 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameColumn(ClientContext &context, Re
 	if (rename_idx.index == COLUMN_IDENTIFIER_ROW_ID) {
 		throw CatalogException("Cannot rename rowid column");
 	}
+	IdentifierEquality same(columns.IsCaseSensitive());
 	UpdateDependentIndexes(context, *this, [&](DuckIndexEntry &index) {
 		RewriteIndexExpressions(index, [&](ParsedExpression &expr) {
 			ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(
 			    expr, [&](ColumnRefExpression &colref) {
-				    if (colref.ColumnNames().back() == info.old_name) {
+				    if (same(colref.ColumnNames().back(), info.old_name)) {
 					    colref.ColumnNamesMutable().back() = info.new_name;
 				    }
 			    });
@@ -450,6 +451,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddColumn(ClientContext &context, AddCo
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	for (auto &col : columns.Logical()) {
 		create_info->columns.AddColumn(col.Copy());
@@ -770,6 +772,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	logical_index_set_t removed_columns;
 	if (column_dependency_manager.HasDependents(removed_index)) {
@@ -1208,6 +1211,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	// Bind the USING expression.
 	auto binder = Binder::CreateBinder(context);
@@ -1485,8 +1489,9 @@ void DuckTableEntry::CommitAlter(string &column_name, CommitDropState &drop_stat
 	D_ASSERT(!column_path.empty());
 	auto &root_column_name = column_path[0];
 	idx_t column_position = 0;
+	IdentifierEquality same(columns.IsCaseSensitive());
 	for (auto &col : columns.Logical()) {
-		if (col.Name() == root_column_name) {
+		if (same(col.Name(), Identifier(root_column_name))) {
 			// No need to alter storage, removed column is generated column
 			if (col.Generated()) {
 				return;

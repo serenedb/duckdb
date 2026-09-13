@@ -35,7 +35,7 @@ class SequenceCatalogEntry;
 
 class CatalogEntryMap {
 public:
-	CatalogEntryMap() {
+	explicit CatalogEntryMap(bool case_sensitive = false) : entries(IdentifierCompare(case_sensitive)) {
 	}
 
 public:
@@ -44,6 +44,9 @@ public:
 	void DropEntry(CatalogEntry &entry);
 	identifier_tree_t<unique_ptr<CatalogEntry>> &Entries();
 	optional_ptr<CatalogEntry> GetEntry(const Identifier &name);
+	bool IsCaseSensitive() const {
+		return entries.key_comp().case_sensitive;
+	}
 
 private:
 	//! Mapping of identifier to catalog entry
@@ -61,6 +64,7 @@ public:
 
 public:
 	DUCKDB_API explicit CatalogSet(Catalog &catalog, unique_ptr<DefaultGenerator> defaults = nullptr);
+	DUCKDB_API CatalogSet(Catalog &catalog, unique_ptr<DefaultGenerator> defaults, bool case_sensitive);
 	~CatalogSet();
 
 	//! Create an entry in the catalog set. Returns whether or not it was

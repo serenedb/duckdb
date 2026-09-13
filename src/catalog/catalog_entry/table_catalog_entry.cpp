@@ -419,9 +419,10 @@ vector<const_reference<TriggerCatalogEntry>> TableCatalogEntry::GetTriggersForEv
 	return result;
 }
 
-static void RenameExpression(ParsedExpression &root_expr, const RenameColumnInfo &info) {
+static void RenameExpression(ParsedExpression &root_expr, const RenameColumnInfo &info,
+                             const IdentifierEquality &same) {
 	ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(root_expr, [&](ColumnRefExpression &colref) {
-		if (colref.ColumnNames().back() == info.old_name) {
+		if (same(colref.ColumnNames().back(), info.old_name)) {
 			colref.ColumnNamesMutable().back() = info.new_name;
 		}
 	});
@@ -429,14 +430,15 @@ static void RenameExpression(ParsedExpression &root_expr, const RenameColumnInfo
 
 void TableCatalogEntry::RenameColumn(ColumnList &columns, vector<unique_ptr<Constraint>> &constraints,
                                      const RenameColumnInfo &info) {
-	ColumnList renamed;
+	IdentifierEquality same(columns.IsCaseSensitive());
+	ColumnList renamed(false, columns.IsCaseSensitive());
 	for (auto &col : columns.Logical()) {
 		auto copy = col.Copy();
-		if (col.Name() == info.old_name) {
+		if (same(col.Name(), info.old_name)) {
 			copy.SetName(info.new_name);
 		}
 		if (col.Generated()) {
-			RenameExpression(copy.GeneratedExpressionMutable(), info);
+			RenameExpression(copy.GeneratedExpressionMutable(), info, same);
 		}
 		renamed.AddColumn(std::move(copy));
 	}
@@ -445,11 +447,11 @@ void TableCatalogEntry::RenameColumn(ColumnList &columns, vector<unique_ptr<Cons
 		case ConstraintType::NOT_NULL:
 			break;
 		case ConstraintType::CHECK:
-			RenameExpression(*constraint->Cast<CheckConstraint>().expression, info);
+			RenameExpression(*constraint->Cast<CheckConstraint>().expression, info, same);
 			break;
 		case ConstraintType::UNIQUE:
 			for (auto &column_name : constraint->Cast<UniqueConstraint>().GetColumnNamesMutable()) {
-				if (column_name == info.old_name) {
+				if (same(column_name, info.old_name)) {
 					column_name = info.new_name;
 				}
 			}
@@ -465,7 +467,7 @@ void TableCatalogEntry::RenameColumn(ColumnList &columns, vector<unique_ptr<Cons
 				}
 			}
 			for (idx_t i = 0; i < fk_columns.size(); i++) {
-				if (fk_columns[i] == info.old_name) {
+				if (same(fk_columns[i], info.old_name)) {
 					throw CatalogException(
 					    "Cannot rename column \"%s\" because this is involved in the foreign key constraint",
 					    info.old_name);
