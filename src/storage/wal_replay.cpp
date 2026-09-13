@@ -849,7 +849,7 @@ void WriteAheadLogDeserializer::ReplayAlter() {
 	auto info = deserializer.ReadProperty<unique_ptr<ParseInfo>>(101, "info");
 	auto &alter_info = info->Cast<AlterInfo>();
 	alter_info.bind_mode = AlterBindMode::SKIP_BINDING;
-	if (!alter_info.IsAddPrimaryKey()) {
+	if (!alter_info.IsAddUniqueConstraint()) {
 		return ReplayWithoutIndex(context, catalog, alter_info, DeserializeOnly());
 	}
 
@@ -901,7 +901,8 @@ void WriteAheadLogDeserializer::ReplayAlter() {
 	}
 
 	auto &storage = table.GetStorage();
-	CreateIndexInput input(context, TableIOManager::Get(storage), storage.db, IndexConstraintType::PRIMARY,
+	CreateIndexInput input(context, TableIOManager::Get(storage), storage.db,
+	                       unique_info.IsPrimaryKey() ? IndexConstraintType::PRIMARY : IndexConstraintType::UNIQUE,
 	                       index_storage_info.name, column_ids, unbound_expressions, index_storage_info,
 	                       index_storage_info.options);
 

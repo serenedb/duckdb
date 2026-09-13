@@ -23,7 +23,7 @@ struct ConstraintEntry {
 			return;
 		}
 		auto binder = Binder::CreateBinder(context);
-		bound_constraints = binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
+		bound_constraints = binder->BindConstraints(table);
 	}
 
 	TableCatalogEntry &table;
