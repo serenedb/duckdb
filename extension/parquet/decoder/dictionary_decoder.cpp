@@ -6,6 +6,7 @@
 
 #include "column_reader.hpp"
 #include "parquet_reader.hpp"
+#include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/table_filter_state.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
@@ -135,7 +136,8 @@ idx_t DictionaryDecoder::Read(uint8_t *defines, idx_t read_count, Vector &result
 		D_ASSERT(result.GetVectorType() == VectorType::DICTIONARY_VECTOR);
 	} else {
 		D_ASSERT(result.GetVectorType() == VectorType::FLAT_VECTOR);
-		VectorOperations::Copy(dictionary->data, result, dictionary_selection_vector, read_count, 0, result_offset);
+		StringVector::CopyImmutableStrings(dictionary->data, result, dictionary_selection_vector, read_count, 0,
+		                                   result_offset);
 	}
 	return valid_count;
 }

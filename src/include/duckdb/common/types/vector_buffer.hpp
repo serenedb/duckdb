@@ -47,6 +47,9 @@ struct AuxiliaryDataHolder {
 	virtual idx_t GetAllocationSize() const {
 		return 0;
 	}
+	virtual bool IsImmutable() const {
+		return false;
+	}
 };
 
 struct AuxiliaryDataSet {
@@ -65,6 +68,18 @@ private:
 class AuxiliaryDataSetHolder : public AuxiliaryDataHolder {
 public:
 	explicit AuxiliaryDataSetHolder(buffer_ptr<AuxiliaryDataSet> buffer) : auxiliary_data(std::move(buffer)) {
+	}
+
+	bool IsImmutable() const override {
+		if (!auxiliary_data) {
+			return true;
+		}
+		for (auto &holder : auxiliary_data->data) {
+			if (!holder->IsImmutable()) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 private:

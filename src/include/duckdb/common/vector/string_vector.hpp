@@ -19,6 +19,9 @@ struct StringHeapHolder : AuxiliaryDataHolder {
 	}
 
 	idx_t GetAllocationSize() const override;
+	bool IsImmutable() const override {
+		return true;
+	}
 
 	StringHeap heap;
 };
@@ -108,6 +111,11 @@ struct StringVector {
 	DUCKDB_API static void AddHeapReference(Vector &vector, const Vector &other);
 	//! Add a reference from this vector to the auxiliary data
 	DUCKDB_API static void AddAuxiliaryData(Vector &vector, unique_ptr<AuxiliaryDataHolder> data);
+	DUCKDB_API static void CopyImmutableStrings(const Vector &source, Vector &target, idx_t source_count,
+	                                            idx_t source_offset, idx_t target_offset);
+	DUCKDB_API static void CopyImmutableStrings(const Vector &source, Vector &target, const SelectionVector &sel,
+	                                            idx_t source_count, idx_t source_offset, idx_t target_offset);
+	DUCKDB_API static void AppendImmutableStrings(Vector &list, const Vector &source, idx_t count);
 
 	//! Allocate a buffer to store up to "len" bytes for a string
 	//! This can be turned into a proper string by using FinalizeBuffer afterwards

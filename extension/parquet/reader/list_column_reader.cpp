@@ -2,6 +2,7 @@
 #include <utility>
 
 #include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector/string_vector.hpp"
 #include "reader/list_column_reader.hpp"
 #include "parquet_reader.hpp"
 #include "column_reader.hpp"
@@ -60,7 +61,7 @@ struct TemplatedListReader {
 	}
 
 	static void AppendVector(optional_ptr<Vector> result_out, const Vector &read_vector, idx_t child_idx) {
-		ListVector::Append(*result_out, read_vector, child_idx);
+		StringVector::AppendImmutableStrings(*result_out, read_vector, child_idx);
 	}
 };
 
