@@ -1,6 +1,7 @@
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/transaction/commit_state.hpp"
@@ -11,14 +12,39 @@ IndexDataTableInfo::IndexDataTableInfo(shared_ptr<DataTableInfo> info_p, const I
     : info(std::move(info_p)), index_name(index_name_p) {
 }
 
-void DuckIndexEntry::Rollback(CatalogEntry &) {
-	if (!info) {
+static void RenameIndex(TableIndexList &indexes, const Identifier &name, const Identifier &new_name) {
+	auto index = indexes.Find(name);
+	if (index) {
+		index->name = new_name;
+	}
+}
+
+unique_ptr<CatalogEntry> DuckIndexEntry::AlterEntry(ClientContext &context, AlterInfo &alter_info) {
+	auto result = CatalogEntry::AlterEntry(context, alter_info);
+	if (alter_info.type == AlterType::RENAME && info && info->info) {
+		auto &indexes = info->info->GetIndexes();
+		indexes.Bind(context, *info->info);
+		RenameIndex(indexes, name, result->name);
+	}
+	return result;
+}
+
+void DuckIndexEntry::UndoAlter(ClientContext &context, AlterInfo &alter_info) {
+	if (info && info->info) {
+		RenameIndex(info->info->GetIndexes(), alter_info.Cast<RenameInfo>().new_name, name);
+	}
+}
+
+void DuckIndexEntry::Rollback(CatalogEntry &prev_entry) {
+	if (!info || !info->info) {
 		return;
 	}
-	if (!info->info) {
+	auto &indexes = info->info->GetIndexes();
+	if (prev_entry.type == CatalogType::INVALID) {
+		indexes.RemoveIndex(name);
 		return;
 	}
-	info->info->GetIndexes().RemoveIndex(name);
+	RenameIndex(indexes, name, prev_entry.name);
 }
 
 DuckIndexEntry::DuckIndexEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateIndexInfo &create_info,
