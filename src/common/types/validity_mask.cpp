@@ -139,8 +139,7 @@ void ValidityMask::CopySel(const ValidityMask &other, const SelectionVector &sel
 		return;
 	}
 
-	if (!sel.IsSet() && IsAligned(source_offset) && IsAligned(target_offset)) {
-		// common case where we are shifting into an aligned mask using a flat vector
+	if (!sel.IsSet()) {
 		SliceInPlace(other, target_offset, source_offset, copy_count);
 		return;
 	}
@@ -182,7 +181,7 @@ void ValidityMask::SliceInPlace(const ValidityMask &other, idx_t target_offset, 
 			*target_validity = tgt_entry | src_entry;
 		}
 		return;
-	} else if (IsAligned(target_offset)) {
+	} else if (IsAligned(target_offset) && other.GetData()) {
 		//	Simple common case where we are shifting into an aligned mask (e.g., 0 in Slice above)
 		const idx_t tail = source_offset % BITS_PER_VALUE;
 		const idx_t head = BITS_PER_VALUE - tail;
@@ -215,46 +214,29 @@ void ValidityMask::SliceInPlace(const ValidityMask &other, idx_t target_offset, 
 		return;
 	}
 
-	// FIXME: use bitwise operations here
-#if 1
-	for (idx_t i = 0; i < count; i++) {
-		Set(target_offset + i, other.RowIsValid(source_offset + i));
-	}
-#else
-	// first shift the "whole" units
-	idx_t entire_units = offset / BITS_PER_VALUE;
-	idx_t sub_units = offset - entire_units * BITS_PER_VALUE;
-	if (entire_units > 0) {
-		idx_t validity_idx;
-		for (validity_idx = 0; validity_idx + entire_units < STANDARD_ENTRY_COUNT; validity_idx++) {
-			new_mask.validity_mask[validity_idx] = other.validity_mask[validity_idx + entire_units];
+	auto source_validity = other.GetData();
+	auto target_validity = GetData();
+	idx_t done = 0;
+	while (done < count) {
+		const idx_t tgt_bit = target_offset + done;
+		const idx_t tgt_shift = tgt_bit % BITS_PER_VALUE;
+		const idx_t n = MinValue<idx_t>(count - done, BITS_PER_VALUE - tgt_shift);
+		validity_t bits = ValidityBuffer::MAX_ENTRY;
+		if (source_validity) {
+			const idx_t src_bit = source_offset + done;
+			const idx_t src_entry = src_bit / BITS_PER_VALUE;
+			const idx_t src_shift = src_bit % BITS_PER_VALUE;
+			bits = source_validity[src_entry] >> src_shift;
+			if (src_shift != 0 && src_shift + n > BITS_PER_VALUE) {
+				bits |= source_validity[src_entry + 1] << (BITS_PER_VALUE - src_shift);
+			}
 		}
+		const validity_t n_mask =
+		    n == BITS_PER_VALUE ? ValidityBuffer::MAX_ENTRY : ((static_cast<validity_t>(1) << n) - 1);
+		auto &tgt = target_validity[tgt_bit / BITS_PER_VALUE];
+		tgt = (tgt & ~(n_mask << tgt_shift)) | ((bits & n_mask) << tgt_shift);
+		done += n;
 	}
-	// now we shift the remaining sub units
-	// this gets a bit more complicated because we have to shift over the borders of the entries
-	// e.g. suppose we have 2 entries of length 4 and we left-shift by two
-	// 0101|1010
-	// a regular left-shift of both gets us:
-	// 0100|1000
-	// we then OR the overflow (right-shifted by BITS_PER_VALUE - offset) together to get the correct result
-	// 0100|1000 ->
-	// 0110|1000
-	if (sub_units > 0) {
-		idx_t validity_idx;
-		for (validity_idx = 0; validity_idx + 1 < STANDARD_ENTRY_COUNT; validity_idx++) {
-			new_mask.validity_mask[validity_idx] =
-			    (other.validity_mask[validity_idx] >> sub_units) |
-			    (other.validity_mask[validity_idx + 1] << (BITS_PER_VALUE - sub_units));
-		}
-		new_mask.validity_mask[validity_idx] >>= sub_units;
-	}
-#ifdef DEBUG
-	for (idx_t i = offset; i < STANDARD_VECTOR_SIZE; i++) {
-		D_ASSERT(new_mask.RowIsValid(i - offset) == other.RowIsValid(i));
-	}
-	Initialize(new_mask);
-#endif
-#endif
 }
 
 enum class ValiditySerialization : uint8_t { BITMASK = 0, VALID_VALUES = 1, INVALID_VALUES = 2 };
