@@ -227,6 +227,9 @@ void DependencyManager::CreateDependent(CatalogTransaction transaction, const De
 
 void DependencyManager::CreateDependency(CatalogTransaction transaction, DependencyInfo &info) {
 	auto subject_entry = LookupEntry(transaction, info.subject.entry);
+	if (subject_entry && subject_entry->internal) {
+		return;
+	}
 	info.subject.oid = subject_entry ? subject_entry->oid : optional_idx();
 
 	DependencyCatalogSet subjects(Subjects(), info.dependent.entry);
