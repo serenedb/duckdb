@@ -60,10 +60,7 @@ bool CopyImmutableStrings(const Vector &source, Vector &target, const SelectionV
 		memcpy(tdata + target_offset, ldata + source_offset, copy_count * sizeof(string_t));
 	} else {
 		for (idx_t i = 0; i < copy_count; i++) {
-			auto target_idx = target_offset + i;
-			if (target_validity.RowIsValid(target_idx)) {
-				tdata[target_idx] = ldata[sel.get_index(source_offset + i)];
-			}
+			tdata[target_offset + i] = ldata[sel.get_index(source_offset + i)];
 		}
 	}
 	StringVector::AddAuxiliaryData(target, make_uniq<AuxiliaryDataSetHolder>(source_aux));
@@ -83,6 +80,8 @@ void CopyImmutableList(const Vector &source, Vector &target, const SelectionVect
 	for (idx_t i = 0; i < copy_count; i++) {
 		auto target_idx = target_offset + i;
 		if (!target_validity.RowIsValid(target_idx)) {
+			tdata[target_idx].offset = 0;
+			tdata[target_idx].length = 0;
 			continue;
 		}
 		auto &source_entry = sdata[sel.get_index(source_offset + i)];
