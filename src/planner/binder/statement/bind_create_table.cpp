@@ -363,6 +363,9 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableCheckpoint(unique_ptr<Cr
                                                                    SchemaCatalogEntry &schema) {
 	auto result = make_uniq<BoundCreateTableInfo>(schema, std::move(info));
 	CreateColumnDependencyManager(*result);
+	for (auto &dep : result->Base().dependencies.Set()) {
+		result->dependencies.AddDependency(dep);
+	}
 	return result;
 }
 

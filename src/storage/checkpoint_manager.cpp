@@ -801,10 +801,6 @@ void CheckpointReader::ReadTable(CatalogTransaction transaction, Deserializer &d
 	auto &schema = catalog.GetSchema(transaction, info->GetQualifiedName().Schema());
 	auto bound_info = Binder::BindCreateTableCheckpoint(std::move(info), schema);
 
-	for (auto &dep : bound_info->Base().dependencies.Set()) {
-		bound_info->dependencies.AddDependency(dep);
-	}
-
 	auto table_pointer =
 	    deserializer.ReadPropertyWithExplicitDefault<MetaBlockPointer>(101, "table_pointer", MetaBlockPointer());
 	if (table_pointer.IsValid()) {

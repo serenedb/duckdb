@@ -787,8 +787,9 @@ void WriteAheadLogDeserializer::ReplayCreateTable() {
 
 void WriteAheadLogDeserializer::ReplayDropTable() {
 	DropInfo info;
-
 	info.type = CatalogType::TABLE_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -930,6 +931,8 @@ void WriteAheadLogDeserializer::ReplayCreateView() {
 void WriteAheadLogDeserializer::ReplayDropView() {
 	DropInfo info;
 	info.type = CatalogType::VIEW_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -953,8 +956,9 @@ void WriteAheadLogDeserializer::ReplayCreateSchema() {
 
 void WriteAheadLogDeserializer::ReplayDropSchema() {
 	DropInfo info;
-
 	info.type = CatalogType::SCHEMA_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	info.SetName(Identifier(deserializer.ReadProperty<string>(101, "schema")));
 	if (DeserializeOnly()) {
 		return;
@@ -977,8 +981,9 @@ void WriteAheadLogDeserializer::ReplayCreateType() {
 
 void WriteAheadLogDeserializer::ReplayDropType() {
 	DropInfo info;
-
 	info.type = CatalogType::TYPE_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -1040,6 +1045,8 @@ void WriteAheadLogDeserializer::ReplayCreateTokenizer() {
 void WriteAheadLogDeserializer::ReplayDropTokenizer() {
 	DropInfo info;
 	info.type = CatalogType::TOKENIZER_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -1124,6 +1131,8 @@ void WriteAheadLogDeserializer::ReplayCreateSequence() {
 void WriteAheadLogDeserializer::ReplayDropSequence() {
 	DropInfo info;
 	info.type = CatalogType::SEQUENCE_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -1166,6 +1175,8 @@ void WriteAheadLogDeserializer::ReplayCreateMacro() {
 void WriteAheadLogDeserializer::ReplayDropMacro() {
 	DropInfo info;
 	info.type = CatalogType::MACRO_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -1190,6 +1201,8 @@ void WriteAheadLogDeserializer::ReplayCreateTableMacro() {
 void WriteAheadLogDeserializer::ReplayDropTableMacro() {
 	DropInfo info;
 	info.type = CatalogType::TABLE_MACRO_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -1240,6 +1253,8 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 void WriteAheadLogDeserializer::ReplayDropIndex() {
 	DropInfo info;
 	info.type = CatalogType::INDEX_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
