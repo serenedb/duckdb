@@ -21,7 +21,6 @@ constexpr idx_t ENCODE_HEADROOM = 16 * 1024;
 constexpr idx_t DICT_STABLE_ROWS = 4096;
 constexpr idx_t CLEAVE_GAP = 2 * 1024;
 constexpr idx_t MODE_TIE_TOL = 2 * 1024;
-constexpr idx_t SYMBOL_TABLE_REUSE = 3;
 constexpr idx_t DICT_SLACK_ROW_CHARGE = 4;
 constexpr idx_t DICT_SLACK_ENTRY_CHARGE = 16;
 constexpr idx_t DICT_SLACK_ALLOWANCE = 256;
@@ -423,9 +422,6 @@ Dictionary::~Dictionary() {
 	if (encoder) {
 		duckdb_fsst_destroy(reinterpret_cast<duckdb_fsst_encoder_t *>(encoder));
 	}
-	if (spare_encoder) {
-		duckdb_fsst_destroy(reinterpret_cast<duckdb_fsst_encoder_t *>(spare_encoder));
-	}
 }
 
 void Dictionary::Clear() {
@@ -442,11 +438,7 @@ void Dictionary::Clear() {
 	max_raw_len = 0;
 	max_enc_len = 0;
 	if (encoder) {
-		if (spare_encoder) {
-			duckdb_fsst_destroy(reinterpret_cast<duckdb_fsst_encoder_t *>(spare_encoder));
-		}
-		spare_encoder = encoder;
-		spare_symbol_table_size = symbol_table_size;
+		duckdb_fsst_destroy(reinterpret_cast<duckdb_fsst_encoder_t *>(encoder));
 		encoder = nullptr;
 	}
 	symbol_table_size = DConstants::INVALID_INDEX;
@@ -498,23 +490,11 @@ void Dictionary::EncodeAll() {
 		ptrs[i] = reinterpret_cast<unsigned char *>(const_cast<char *>(raw[i].GetData()));
 		total += sizes[i];
 	}
-	if (spare_encoder && spare_uses < SYMBOL_TABLE_REUSE) {
-		encoder = spare_encoder;
-		spare_encoder = nullptr;
-		symbol_table_size = spare_symbol_table_size;
-		spare_uses++;
-	} else {
-		if (spare_encoder) {
-			duckdb_fsst_destroy(reinterpret_cast<duckdb_fsst_encoder_t *>(spare_encoder));
-			spare_encoder = nullptr;
-		}
-		spare_uses = 0;
-		encoder = reinterpret_cast<void *>(duckdb_fsst_create(n, sizes.data(), ptrs.data(), 0));
-		if (!symbol_table) {
-			symbol_table = make_unsafe_uniq_array_uninitialized<unsigned char>(sizeof(duckdb_fsst_decoder_t));
-		}
-		symbol_table_size = duckdb_fsst_export(reinterpret_cast<duckdb_fsst_encoder_t *>(encoder), symbol_table.get());
+	encoder = reinterpret_cast<void *>(duckdb_fsst_create(n, sizes.data(), ptrs.data(), 0));
+	if (!symbol_table) {
+		symbol_table = make_unsafe_uniq_array_uninitialized<unsigned char>(sizeof(duckdb_fsst_decoder_t));
 	}
+	symbol_table_size = duckdb_fsst_export(reinterpret_cast<duckdb_fsst_encoder_t *>(encoder), symbol_table.get());
 	auto fsst_encoder = reinterpret_cast<duckdb_fsst_encoder_t *>(encoder);
 
 	size_t out_cap = 7 + 2 * total;

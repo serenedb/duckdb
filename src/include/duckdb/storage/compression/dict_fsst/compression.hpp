@@ -203,9 +203,6 @@ public:
 	idx_t symbol_table_size = DConstants::INVALID_INDEX;
 	unsafe_unique_array<unsigned char> encode_buffer = nullptr;
 	idx_t encode_buffer_size = 0;
-	void *spare_encoder = nullptr;
-	idx_t spare_symbol_table_size = DConstants::INVALID_INDEX;
-	uint32_t spare_uses = 0;
 
 	//! Cleave scratch (members only to reuse the allocation across cleaves).
 	//! Global lexicographic (string_t <) order of the encoded entries (the DICT_FSST_PLUS cleave order; the row cleave
