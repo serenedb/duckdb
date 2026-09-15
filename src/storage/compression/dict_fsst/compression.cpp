@@ -417,7 +417,8 @@ void BuildSelNew(DictFSSTCompressionState &state, const CleavedDictionary &dict,
 
 Dictionary::~Dictionary() {
 	if (encoder) {
-		duckdb_fsst_destroy(reinterpret_cast<duckdb_fsst_encoder_t *>(encoder));
+		auto fsst_encoder = reinterpret_cast<duckdb_fsst_encoder_t *>(encoder);
+		duckdb_fsst_destroy(fsst_encoder);
 	}
 }
 
@@ -488,11 +489,11 @@ void Dictionary::EncodeAll() {
 		total += sizes[i];
 	}
 	encoder = reinterpret_cast<void *>(duckdb_fsst_create(n, sizes.data(), ptrs.data(), 0));
+	auto fsst_encoder = reinterpret_cast<duckdb_fsst_encoder_t *>(encoder);
 	if (!symbol_table) {
 		symbol_table = make_unsafe_uniq_array_uninitialized<unsigned char>(sizeof(duckdb_fsst_decoder_t));
 	}
-	symbol_table_size = duckdb_fsst_export(reinterpret_cast<duckdb_fsst_encoder_t *>(encoder), symbol_table.get());
-	auto fsst_encoder = reinterpret_cast<duckdb_fsst_encoder_t *>(encoder);
+	symbol_table_size = duckdb_fsst_export(fsst_encoder, symbol_table.get());
 
 	size_t out_cap = 7 + 2 * total;
 	if (out_cap > encode_buffer_size) {
