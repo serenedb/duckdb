@@ -71,8 +71,8 @@ optional_ptr<DependencyManager> DuckCatalog::GetDependencyManager() {
 // Schema
 //===--------------------------------------------------------------------===//
 unique_ptr<IndexCatalogEntry> DuckCatalog::MakeIndexEntry(DuckSchemaEntry &schema, CreateIndexInfo &info,
-                                                          TableCatalogEntry &table) {
-	return make_uniq<DuckIndexEntry>(*this, schema, info, table);
+                                                          CatalogEntry &relation) {
+	return make_uniq<DuckIndexEntry>(*this, schema, info, relation.Cast<TableCatalogEntry>());
 }
 
 unique_ptr<TableCatalogEntry> DuckCatalog::MakeTableEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,

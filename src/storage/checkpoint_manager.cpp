@@ -700,7 +700,6 @@ void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &d
 		// See internal issue 3663.
 		throw IOException("corrupt database file - index entry without table entry");
 	}
-	auto &table = catalog_table->Cast<DuckTableEntry>();
 
 	// we also need to make sure the index type is loaded
 	// backwards compatibility:
@@ -708,6 +707,11 @@ void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &d
 	if (info.index_type.empty()) {
 		info.index_type = ART::TYPE_NAME;
 	}
+	if (catalog_table->type != CatalogType::TABLE_ENTRY || !catalog_table->Cast<TableCatalogEntry>().IsDuckTable()) {
+		schema.CreateIndex(transaction, info, *catalog_table);
+		return;
+	}
+	auto &table = catalog_table->Cast<DuckTableEntry>();
 
 	// now we can look for the index in the catalog and assign the table info
 	auto &index = schema.CreateIndex(transaction, info, table)->Cast<DuckIndexEntry>();

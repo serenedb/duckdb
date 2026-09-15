@@ -307,16 +307,23 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateView(CatalogTransaction transa
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
                                                         TableCatalogEntry &table) {
-	info.dependencies.AddDependency(table);
+	CatalogEntry &relation = table;
+	return CreateIndex(transaction, info, relation);
+}
+
+optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
+                                                        CatalogEntry &relation) {
+	info.dependencies.AddDependency(relation);
 
 	// currently, we can not alter PK/FK/UNIQUE constraints
 	// concurrency-safe name checks against other INDEX catalog entries happens in the catalog
-	if (info.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT &&
-	    !table.GetStorage().IndexNameIsUnique(info.GetIndexName().GetIdentifierName())) {
+	if (info.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT && relation.type == CatalogType::TABLE_ENTRY &&
+	    relation.Cast<TableCatalogEntry>().IsDuckTable() &&
+	    !relation.Cast<TableCatalogEntry>().GetStorage().IndexNameIsUnique(info.GetIndexName().GetIdentifierName())) {
 		throw CatalogException("An index with the name " + info.GetIndexName() + " already exists!");
 	}
 
-	auto index = catalog.Cast<DuckCatalog>().MakeIndexEntry(*this, info, table);
+	auto index = catalog.Cast<DuckCatalog>().MakeIndexEntry(*this, info, relation);
 	auto dependencies = index->dependencies;
 	return AddEntryInternal(transaction, std::move(index), info.on_conflict, dependencies);
 }

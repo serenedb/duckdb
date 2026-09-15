@@ -27,6 +27,19 @@ optional_ptr<CatalogEntry> SchemaCatalogEntry::CreateIndex(ClientContext &contex
 	return CreateIndex(GetCatalogTransaction(context), info, table);
 }
 
+optional_ptr<CatalogEntry> SchemaCatalogEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
+                                                           CatalogEntry &relation) {
+	if (relation.type != CatalogType::TABLE_ENTRY) {
+		throw NotImplementedException("CREATE INDEX on a %s is not supported", CatalogTypeToString(relation.type));
+	}
+	return CreateIndex(transaction, info, relation.Cast<TableCatalogEntry>());
+}
+
+optional_ptr<CatalogEntry> SchemaCatalogEntry::CreateIndex(ClientContext &context, CreateIndexInfo &info,
+                                                           CatalogEntry &relation) {
+	return CreateIndex(GetCatalogTransaction(context), info, relation);
+}
+
 SimilarCatalogEntry SchemaCatalogEntry::GetSimilarEntry(CatalogTransaction transaction,
                                                         const EntryLookupInfo &lookup_info) {
 	SimilarCatalogEntry result;

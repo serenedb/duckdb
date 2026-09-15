@@ -1234,9 +1234,12 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 	const auto schema_name = create_info->GetQualifiedName().Schema();
 	const auto table_name = info.table;
 
-	auto &entry =
-	    catalog.GetEntry<TableCatalogEntry>(context, QualifiedName(catalog.GetName(), schema_name, table_name));
-	auto &table = entry.Cast<DuckTableEntry>();
+	auto &relation = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, schema_name, table_name);
+	if (relation.type != CatalogType::TABLE_ENTRY || !relation.Cast<TableCatalogEntry>().IsDuckTable()) {
+		catalog.GetSchema(context, schema_name).CreateIndex(context, info, relation);
+		return;
+	}
+	auto &table = relation.Cast<DuckTableEntry>();
 	auto &storage = table.GetStorage();
 	auto &io_manager = TableIOManager::Get(storage);
 

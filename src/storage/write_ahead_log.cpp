@@ -442,6 +442,9 @@ void WriteAheadLog::WriteCreateIndex(const IndexCatalogEntry &entry) {
 		auto &list = index_entry.GetDataTableInfo().GetIndexes();
 		auto &database = GetDatabase();
 		SerializeIndex(database, serializer, list, index_entry.name);
+	} else {
+		serializer.WriteProperty(102, "index_storage_info", IndexStorageInfo(index_entry.name));
+		serializer.WriteList(103, "index_storage", 0, [](Serializer::List &, idx_t) {});
 	}
 	serializer.End();
 }

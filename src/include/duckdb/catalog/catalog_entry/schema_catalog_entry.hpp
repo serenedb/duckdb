@@ -62,6 +62,9 @@ public:
 	virtual optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
 	                                               TableCatalogEntry &table) = 0;
 	optional_ptr<CatalogEntry> CreateIndex(ClientContext &context, CreateIndexInfo &info, TableCatalogEntry &table);
+	virtual optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
+	                                               CatalogEntry &relation);
+	optional_ptr<CatalogEntry> CreateIndex(ClientContext &context, CreateIndexInfo &info, CatalogEntry &relation);
 	//! Create a scalar or aggregate function within the given schema
 	virtual optional_ptr<CatalogEntry> CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) = 0;
 	//! Creates a table with the given name in the schema
