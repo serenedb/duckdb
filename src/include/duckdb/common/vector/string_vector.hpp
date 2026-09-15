@@ -19,9 +19,6 @@ struct StringHeapHolder : AuxiliaryDataHolder {
 	}
 
 	idx_t GetAllocationSize() const override;
-	bool IsImmutable() const override {
-		return true;
-	}
 
 	StringHeap heap;
 };

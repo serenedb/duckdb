@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "duckdb/common/vector/immutable_strings.hpp"
+#include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/vector/dictionary_vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
@@ -26,18 +27,11 @@
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 
+#include <algorithm>
+
 namespace duckdb {
 
 namespace {
-
-bool AuxiliaryDataIsImmutable(const AuxiliaryDataSet &set) {
-	for (auto &holder : set.data) {
-		if (!holder->IsImmutable()) {
-			return false;
-		}
-	}
-	return true;
-}
 
 void CopyImmutable(const Vector &source, Vector &target, const SelectionVector &sel, idx_t source_count,
                    idx_t source_offset, idx_t target_offset);
@@ -49,7 +43,7 @@ bool CopyImmutableStrings(const Vector &source, Vector &target, const SelectionV
 		return false;
 	}
 	auto &source_aux = source_buffer->GetAuxiliaryData();
-	if (!source_aux || !AuxiliaryDataIsImmutable(*source_aux)) {
+	if (!source_aux || !ImmutableStrings::Certified(*source_aux)) {
 		return false;
 	}
 	auto &target_validity = FlatVector::ValidityMutable(target);
@@ -136,11 +130,16 @@ void CopyImmutable(const Vector &source_p, Vector &target, const SelectionVector
 		auto &dictionary = source_ref.get();
 		auto &dict_sel = DictionaryVector::SelVector(dictionary);
 		if (sel_ref.get().IsSet()) {
-			if (source_offset != 0) {
-				break;
+			auto &sel = sel_ref.get();
+			auto composed = make_buffer<SelectionData>(copy_count);
+			auto composed_data = reinterpret_cast<sel_t *>(composed->owned_data.get());
+			for (idx_t i = 0; i < copy_count; i++) {
+				composed_data[i] = UnsafeNumericCast<sel_t>(dict_sel.get_index(sel.get_index(source_offset + i)));
 			}
-			owned_sel.Initialize(dict_sel.Slice(sel_ref.get(), copy_count));
+			owned_sel.Initialize(std::move(composed));
 			sel_ref = owned_sel;
+			source_offset = 0;
+			source_count = copy_count;
 		} else {
 			sel_ref = dict_sel;
 		}
@@ -172,10 +171,16 @@ void CopyImmutable(const Vector &source_p, Vector &target, const SelectionVector
 			break;
 		}
 	}
-	VectorOperations::Copy(source_p, target, sel_p, source_count, source_offset, target_offset);
+	VectorOperations::Copy(source, target, sel, source_count, source_offset, target_offset);
 }
 
 } // namespace
+
+bool ImmutableStrings::Certified(const AuxiliaryDataSet &set) {
+	return std::any_of(set.data.begin(), set.data.end(), [](const unique_ptr<AuxiliaryDataHolder> &holder) {
+		return holder->CertifiesImmutablePayloads();
+	});
+}
 
 void ImmutableStrings::Copy(const Vector &source, Vector &target, idx_t source_count, idx_t source_offset,
                             idx_t target_offset) {
