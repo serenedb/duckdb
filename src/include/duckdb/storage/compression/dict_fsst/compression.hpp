@@ -50,8 +50,8 @@ struct PlusEntry {
 };
 
 //! Result of cleaving a set of ALREADY-FSST-ENCODED dictionary entries. Prefix/suffix spans borrow the caller's
-//! encoded byte copy; the FSST encoder + serialized symbol table are owned by the compression state, so this struct
-//! owns nothing and never destroys an encoder.
+//! encoded byte copy; the FSST encoder + serialized symbol table are owned by the compression state (reused, not
+//! re-created), so this struct owns nothing and never destroys an encoder.
 struct CleavedDictionary {
 	vector<PlusPrefix> prefixes;
 	vector<PlusEntry> entries;
