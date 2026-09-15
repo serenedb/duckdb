@@ -33,6 +33,15 @@ namespace duckdb {
 
 namespace {
 
+class CertifiedAuxiliaryDataSetHolder : public AuxiliaryDataSetHolder {
+public:
+	using AuxiliaryDataSetHolder::AuxiliaryDataSetHolder;
+
+	bool CertifiesImmutablePayloads() const override {
+		return true;
+	}
+};
+
 void CopyImmutable(const Vector &source, Vector &target, const SelectionVector &sel, idx_t source_count,
                    idx_t source_offset, idx_t target_offset);
 
@@ -180,6 +189,13 @@ bool ImmutableStrings::Certified(const AuxiliaryDataSet &set) {
 	return std::any_of(set.data.begin(), set.data.end(), [](const unique_ptr<AuxiliaryDataHolder> &holder) {
 		return holder->CertifiesImmutablePayloads();
 	});
+}
+
+unique_ptr<AuxiliaryDataHolder> ImmutableStrings::Reference(buffer_ptr<AuxiliaryDataSet> set) {
+	if (set && Certified(*set)) {
+		return make_uniq<CertifiedAuxiliaryDataSetHolder>(std::move(set));
+	}
+	return make_uniq<AuxiliaryDataSetHolder>(std::move(set));
 }
 
 void ImmutableStrings::Copy(const Vector &source, Vector &target, idx_t source_count, idx_t source_offset,

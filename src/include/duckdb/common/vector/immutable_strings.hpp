@@ -28,6 +28,7 @@ namespace duckdb {
 
 struct ImmutableStrings {
 	DUCKDB_API static bool Certified(const AuxiliaryDataSet &set);
+	DUCKDB_API static unique_ptr<AuxiliaryDataHolder> Reference(buffer_ptr<AuxiliaryDataSet> set);
 	DUCKDB_API static void Copy(const Vector &source, Vector &target, idx_t source_count, idx_t source_offset,
 	                            idx_t target_offset);
 	DUCKDB_API static void Copy(const Vector &source, Vector &target, const SelectionVector &sel, idx_t source_count,
