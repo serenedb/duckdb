@@ -225,8 +225,13 @@ RowGroupPruner::CreateRowGroupReordererOptions(const optional_idx row_limit, con
 		}
 	}
 	// Only sort row groups by primary order column and prune with limit if set
+	std::shared_ptr<const Expression> limit_expression;
+	if (logical_limit.limit_val.Type() == LimitNodeType::EXPRESSION_VALUE) {
+		limit_expression = std::shared_ptr<const Expression>(logical_limit.limit_val.GetValueExpression().Copy());
+	}
 	return make_uniq<RowGroupOrderOptions>(storage_index, order_by, order_type, null_order, column_type, combined_limit,
-	                                       NumericCast<uint64_t>(0), NumericCast<uint64_t>(0), single_order_key);
+	                                       NumericCast<uint64_t>(0), NumericCast<uint64_t>(0), single_order_key,
+	                                       std::move(limit_expression));
 }
 
 } // namespace duckdb
