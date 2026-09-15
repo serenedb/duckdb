@@ -104,11 +104,13 @@ public:
 	idx_t NextOid() {
 		return next_oid++;
 	}
-	idx_t CurrentOid() const {
-		return next_oid;
-	}
-	void SetNextOid(idx_t oid) {
-		next_oid = oid;
+	idx_t ClaimOid(idx_t oid) {
+		for (auto current = next_oid.load(); current <= oid;) {
+			if (next_oid.compare_exchange_weak(current, oid + 1)) {
+				break;
+			}
+		}
+		return oid;
 	}
 	bool HasDefaultDatabase() {
 		return !default_database.empty();
