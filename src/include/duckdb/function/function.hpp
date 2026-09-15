@@ -68,6 +68,10 @@ struct FunctionData {
 	DUCKDB_API virtual bool Equals(const FunctionData &other) const = 0;
 	DUCKDB_API static bool Equals(const FunctionData *left, const FunctionData *right);
 	DUCKDB_API virtual bool SupportStatementCache() const;
+	//! Whether a plan holding a scan bound to this data may be cached for a prepared statement whose parameters are
+	//! not yet known: the scan must then read every parameter it depends on at execution time rather than expect a
+	//! re-bind with the values as constants. Default false, which keeps re-binding on every execution.
+	DUCKDB_API virtual bool CachePlanWithParameters() const;
 
 	template <class TARGET>
 	TARGET &Cast() {

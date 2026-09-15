@@ -502,17 +502,6 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 #ifdef DEBUG
 	logical_plan->Verify(*this);
 #endif
-	if (!result->value_map.empty() && !parameters.parameters) {
-		// if this is a prepared statement we can choose not to fully plan
-		// if we have parameters, we might want to re-bind when they are available as we can then do more optimizations
-		// in this situation we check if we want to cache the plan at all
-		if (!PreparedStatement::CanCachePlan(*logical_plan)) {
-			// we don't - early-out
-			result->properties.always_require_rebind = true;
-			return result;
-		}
-	}
-
 	// Mandatory access check on the freshly bound plan. Runs before (and
 	// independent of) the optimizer so it cannot be bypassed via
 	// disable_optimizer / a plan that opts out of optimization.
@@ -537,6 +526,19 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 #ifdef DEBUG
 		logical_plan->Verify(*this);
 #endif
+	}
+
+	if (!result->value_map.empty() && !parameters.parameters) {
+		// if this is a prepared statement we can choose not to fully plan
+		// if we have parameters, we might want to re-bind when they are available as we can then do more optimizations
+		// in this situation we check if we want to cache the plan at all. The check follows the optimizer: a scan
+		// decides whether it reads its parameters at execution (FunctionData::CachePlanWithParameters) while its
+		// filters are pushed down.
+		if (!PreparedStatement::CanCachePlan(*logical_plan)) {
+			// we don't - early-out
+			result->properties.always_require_rebind = true;
+			return result;
+		}
 	}
 
 	// Convert the logical query plan into a physical query plan.

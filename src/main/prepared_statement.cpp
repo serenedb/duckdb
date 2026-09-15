@@ -1,4 +1,5 @@
 #include "duckdb/main/prepared_statement.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/prepared_statement_data.hpp"
@@ -145,9 +146,14 @@ bool PreparedStatement::CanCachePlan(const LogicalOperator &root) {
 	for (idx_t i = 0; i < operators.size(); i++) {
 		auto &op = operators[i].get();
 		switch (op.type) {
-		case LogicalOperatorType::LOGICAL_GET:
-			// this operator prevents caching
-			return false;
+		case LogicalOperatorType::LOGICAL_GET: {
+			// a scan prevents caching unless its bind data reads its parameters at execution
+			auto &get = op.Cast<LogicalGet>();
+			if (!get.bind_data || !get.bind_data->CachePlanWithParameters()) {
+				return false;
+			}
+			break;
+		}
 		default:
 			break;
 		}
