@@ -50,8 +50,8 @@ struct PlusEntry {
 };
 
 //! Result of cleaving a set of ALREADY-FSST-ENCODED dictionary entries. Prefix/suffix spans borrow the caller's
-//! encoded byte copy; the FSST encoder + serialized symbol table are owned by the compression state (reused, not
-//! re-created), so this struct owns nothing and never destroys an encoder.
+//! encoded byte copy; the FSST encoder + serialized symbol table are owned by the compression state, so this struct
+//! owns nothing and never destroys an encoder.
 struct CleavedDictionary {
 	vector<PlusPrefix> prefixes;
 	vector<PlusEntry> entries;
@@ -308,7 +308,7 @@ public:
 	//! Not yet FSST-encoded: check the encode trigger (raw dictionary big enough and either near a block or stopped
 	//! growing) or, for a tiny selection-dominated dictionary, cut a plain DICTIONARY once it fills the block.
 	void MaybeEncodeOrCutSmall(const string_t &s, bool is_null, bool was_new);
-	bool DictionaryNearBlock(const string_t &s, bool was_new, idx_t margin);
+	bool DictionaryNearBlock(idx_t margin) const;
 	//! Cheap gate before the (still cheap, but less so) cut checks: true once the segment has grown by CLEAVE_GAP
 	//! since the last cleave baseline, or the just-added entry crossed a selection-bitpacking width (which can
 	//! overshoot by more than one row, so it cannot wait for the next gap).
@@ -394,8 +394,6 @@ public:
 	//! Rows since the last new entry; past DICT_STABLE_ROWS the dictionary is treated as complete and encoded even
 	//! when the segment is not near a block (the low-cardinality case).
 	idx_t rows_since_new = 0;
-	idx_t dict_size_slack = 0;
-	idx_t dict_slack_margin = 0;
 };
 
 } // namespace dict_fsst
