@@ -45,6 +45,10 @@ bool FunctionData::SupportStatementCache() const {
 	return true;
 }
 
+bool FunctionData::CachePlanWithParameters() const {
+	return false;
+}
+
 Function::Function(Identifier name_p) : name(std::move(name_p)) {
 }
 Function::~Function() {

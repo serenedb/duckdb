@@ -4,26 +4,43 @@
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/bound_parameter_expression.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_empty_result.hpp"
 
 namespace duckdb {
+static void CollectParameters(Expression &expr, vector<shared_ptr<BoundParameterData>> &parameters) {
+	if (expr.GetExpressionType() == ExpressionType::VALUE_PARAMETER) {
+		parameters.push_back(expr.Cast<BoundParameterExpression>().ParameterData());
+		return;
+	}
+	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { CollectParameters(child, parameters); });
+}
+
 unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperator> op) {
 	D_ASSERT(op->type == LogicalOperatorType::LOGICAL_GET);
 	auto &get = op->Cast<LogicalGet>();
 
+	// A scan that supports some form of filter push-down would bind a parameter
+	// of the filters as a constant: such parameters are invalidated to force a
+	// re-bind on execution. A complex-filter scan sees the filters first, and
+	// may instead take the parameters over to read them at execution
+	// (FunctionData::CachePlanWithParameters), in which case the plan stays
+	// cacheable and nothing is invalidated.
+	vector<shared_ptr<BoundParameterData>> filter_parameters;
 	if (get.function.pushdown_complex_filter || get.function.filter_pushdown) {
-		// this scan supports some form of filter push-down
-		// check if there are any parameters
-		// if there are, invalidate them to force a re-bind on execution
 		for (auto &filter : filters) {
 			if (filter->filter->HasParameter()) {
-				// there is a parameter in the filters! invalidate it
-				BoundParameterExpression::InvalidateRecursive(*filter->filter);
+				CollectParameters(*filter->filter, filter_parameters);
 			}
 		}
 	}
+	auto invalidate_parameters = [&]() {
+		for (auto &parameter_data : filter_parameters) {
+			parameter_data->return_type = LogicalTypeId::INVALID;
+		}
+	};
 	if (get.function.pushdown_complex_filter) {
 		// for the remaining filters, check if we can push any of them into the scan as well
 		vector<unique_ptr<Expression>> expressions;
@@ -35,6 +52,9 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 
 		get.function.pushdown_complex_filter(optimizer.context, get, get.bind_data.get(), expressions);
 
+		if (!get.bind_data || !get.bind_data->CachePlanWithParameters()) {
+			invalidate_parameters();
+		}
 		if (expressions.empty()) {
 			return op;
 		}
@@ -45,6 +65,8 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 			f->ExtractBindings();
 			filters.push_back(std::move(f));
 		}
+	} else {
+		invalidate_parameters();
 	}
 
 	if (get.table_filters.HasFilters() || !get.function.filter_pushdown) {
