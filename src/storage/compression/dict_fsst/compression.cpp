@@ -1012,25 +1012,25 @@ void DictFSSTCompressionState::MaybeEncodeOrCutSmall(const string_t &s, bool is_
 		}
 		return;
 	}
+	if (!DictionaryNearBlock(dict.max_raw_len + ROW_HEADROOM)) {
+		return;
+	}
 	//! A never-encoded segment can be half a million rows wide at a few bits of selection each, and one NEW entry
 	//! that crosses a bitpacking width boundary re-prices every one of those rows at once -- the same
-	//! whole-segment re-price NearBlock watches for on the encoded path, and far larger than ROW_HEADROOM. The
-	//! byte trigger below only sees it after the fact, so handle the jump exactly like CutPlain's overshoot:
-	//! exclude the bumping row, flush the pre-bump segment (which passed the trigger and so fits), re-add.
+	//! whole-segment re-price NearBlock watches for on the encoded path, and far larger than ROW_HEADROOM. Handle
+	//! the jump exactly like CutPlain's overshoot: exclude the bumping row, flush the pre-bump segment (which
+	//! passed the trigger and so fits), re-add.
 	if (was_new && tuple_count > 1) {
 		const idx_t entry_n = dict.raw.size();
-		const bool sel_width_bumped = BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(entry_n)) !=
-		                              BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(entry_n - 1));
-		if (sel_width_bumped && NativeSize(DictFSSTMode::DICTIONARY) + dict.max_raw_len + ROW_HEADROOM >= block_size) {
+		if (BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(entry_n)) !=
+		    BitpackingPrimitives::MinimumBitWidth(NumericCast<uint32_t>(entry_n - 1))) {
 			PopRow(true);
 			Flush(false);
 			AddValue(s, is_null);
 			return;
 		}
 	}
-	if (DictionaryNearBlock(dict.max_raw_len + ROW_HEADROOM)) {
-		Flush(false);
-	}
+	Flush(false);
 }
 
 bool DictFSSTCompressionState::NearBlock(bool was_new) const {
