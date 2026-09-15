@@ -806,6 +806,9 @@ void DependencyManager::Scan(
 	catalog_entry_set_t entries;
 	dependents.Scan(transaction, [&](CatalogEntry &set) {
 		auto entry = LookupEntry(transaction, set);
+		if (!entry) {
+			return;
+		}
 		entries.insert(*entry);
 	});
 
