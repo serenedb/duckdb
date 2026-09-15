@@ -47,6 +47,9 @@ struct AuxiliaryDataHolder {
 	virtual idx_t GetAllocationSize() const {
 		return 0;
 	}
+	virtual bool CertifiesImmutablePayloads() const {
+		return false;
+	}
 };
 
 struct AuxiliaryDataSet {

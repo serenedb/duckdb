@@ -164,6 +164,10 @@ void DictFSSTSelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector
 		scan_state.Select(result, start, sel, sel_count);
 		return;
 	}
+	if (scan_state.dictionary) {
+		scan_state.SelectDictionary(result, state.GetPositionInSegment(), vector_count, sel, sel_count);
+		return;
+	}
 	// fallback: scan + slice
 	DictFSSTCompressionStorage::StringScan(segment, state, vector_count, result);
 	result.Slice(sel, sel_count);

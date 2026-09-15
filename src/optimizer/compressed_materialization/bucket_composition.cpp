@@ -268,6 +268,23 @@ bool DateTyped(const Expression &expr) {
 	return type.id() == LogicalTypeId::DATE || LogicalType::TypeIsTimestamp(type);
 }
 
+bool ZonedTyped(const LogicalType &type) {
+	return type.id() == LogicalTypeId::TIMESTAMP_TZ || type.id() == LogicalTypeId::TIMESTAMP_TZ_NS;
+}
+
+optional_ptr<Expression> UnwrapDateCasts(optional_ptr<Expression> expr) {
+	while (expr && expr->GetExpressionClass() == ExpressionClass::BOUND_CAST) {
+		auto &cast = expr->Cast<BoundCastExpression>();
+		auto &child = cast.ChildMutable();
+		if (cast.IsTryCast() || !DateTyped(cast) || !DateTyped(*child) ||
+		    ZonedTyped(cast.GetReturnType()) != ZonedTyped(child->GetReturnType())) {
+			return nullptr;
+		}
+		expr = child.get();
+	}
+	return expr;
+}
+
 bool IsEpochBase(const Folder &folder, Expression &expr, optional_ptr<Expression> &column, idx_t &columns) {
 	auto &children = expr.Cast<BoundFunctionExpression>().GetChildrenMutable();
 	const auto &name = FunctionName(expr);
@@ -281,6 +298,7 @@ bool IsEpochBase(const Folder &folder, Expression &expr, optional_ptr<Expression
 			argument = children[1].get();
 		}
 	}
+	argument = UnwrapDateCasts(argument);
 	if (!argument || argument->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF || !DateTyped(*argument)) {
 		return false;
 	}

@@ -37,6 +37,7 @@ public:
 
 	//! Whether or not we can propagate a cast between two types
 	static bool CanPropagateCast(const LogicalType &source, const LogicalType &target);
+	static bool IsTimestampUnitCast(const LogicalType &source, const LogicalType &target);
 	static unique_ptr<BaseStatistics> TryPropagateCast(const BaseStatistics &stats, const LogicalType &source,
 	                                                   const LogicalType &target);
 
