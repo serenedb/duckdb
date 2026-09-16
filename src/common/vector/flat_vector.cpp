@@ -39,6 +39,9 @@ void StandardVectorBuffer::SetVectorType(VectorType new_vector_type) {
 }
 
 void StandardVectorBuffer::ResetCapacity(idx_t capacity_p) {
+	if (allocated_data.IsSet() && type_size != 0) {
+		capacity_p = MaxValue<idx_t>(capacity_p, allocated_data.GetSize() / type_size);
+	}
 	capacity = capacity_p;
 	validity.Reset(capacity);
 }

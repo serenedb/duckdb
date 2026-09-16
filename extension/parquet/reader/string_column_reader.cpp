@@ -72,6 +72,10 @@ public:
 	explicit ParquetStringVectorBuffer(shared_ptr<ResizeableBuffer> buffer_p) : buffer(std::move(buffer_p)) {
 	}
 
+	bool CertifiesImmutablePayloads() const override {
+		return true;
+	}
+
 private:
 	shared_ptr<ResizeableBuffer> buffer;
 };
