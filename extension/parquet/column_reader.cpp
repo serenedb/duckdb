@@ -485,7 +485,7 @@ void ColumnReader::PreparePageV2(PageHeader &page_hdr) {
 }
 
 void ColumnReader::AllocateBlock(idx_t size) {
-	if (!block) {
+	if (!block || block.use_count() > 1) {
 		block = make_shared_ptr<ResizeableBuffer>(GetAllocator(), size);
 	} else {
 		block->resize(GetAllocator(), size);
