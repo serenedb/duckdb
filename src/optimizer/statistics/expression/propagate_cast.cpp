@@ -69,6 +69,9 @@ bool StatisticsPropagator::CanPropagateCast(const LogicalType &source, const Log
 	default:
 		return false;
 	}
+	if (IsTimestampUnitCast(source, target)) {
+		return true;
+	}
 	// for time/timestamps/dates - there are various limitations on what we can propagate
 	//	Downcasting timestamps to times is not a truncation operation
 	switch (target.id()) {
