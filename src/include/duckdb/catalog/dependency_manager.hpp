@@ -38,6 +38,7 @@ struct DependencyDependent {
 	CatalogEntryInfo entry;
 	//! The type of dependency this is (e.g, blocking, non-blocking, ownership)
 	DependencyDependentFlags flags;
+	subdependency_set_t subdependencies;
 };
 
 //! Every dependency consists of a subject (the entry being depended on) and a dependent (the entry that has the
@@ -126,7 +127,10 @@ private:
 	void VerifyExistence(CatalogTransaction transaction, DependencyEntry &object);
 	void VerifyCommitDrop(CatalogTransaction transaction, transaction_t start_time, CatalogEntry &object);
 	//! Returns the objects that should be dropped alongside the object
-	catalog_entry_set_t CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object, bool cascade);
+	catalog_entry_map_t<subdependency_set_t> CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object,
+	                                                               bool cascade);
+	bool DropSubDependencies(CatalogTransaction transaction, CatalogEntry &table,
+	                         const subdependency_set_t &subdependencies);
 	void DropObject(CatalogTransaction transaction, CatalogEntry &object, bool cascade);
 	void AlterObject(CatalogTransaction transaction, CatalogEntry &old_obj, CatalogEntry &new_obj, AlterInfo &info);
 

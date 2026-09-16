@@ -84,7 +84,15 @@ void LogicalDependencyList::AddOwnedDependency(CatalogEntry &entry) {
 }
 
 void LogicalDependencyList::AddDependency(const LogicalDependency &entry) {
-	set.insert(entry);
+	auto existing = entry.subdependencies.empty() ? set.end() : set.find(entry);
+	if (existing == set.end()) {
+		set.insert(entry);
+		return;
+	}
+	auto merged = *existing;
+	merged.subdependencies.insert(entry.subdependencies.begin(), entry.subdependencies.end());
+	set.erase(existing);
+	set.insert(std::move(merged));
 }
 
 bool LogicalDependencyList::Contains(CatalogEntry &entry_p) {

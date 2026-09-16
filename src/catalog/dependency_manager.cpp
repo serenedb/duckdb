@@ -13,6 +13,7 @@
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/common/queue.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
 #include "duckdb/catalog/dependency_catalog_set.hpp"
 
@@ -259,6 +260,8 @@ void DependencyManager::CreateDependency(CatalogTransaction transaction, Depende
 		if (existing_flags != dependent_flags) {
 			dependent_flags.Apply(existing_flags);
 		}
+		auto &existing_subdependencies = existing.Dependent().subdependencies;
+		info.dependent.subdependencies.insert(existing_subdependencies.begin(), existing_subdependencies.end());
 		dependents.DropEntry(transaction, dependent_mangled, false, false);
 	}
 
@@ -290,8 +293,8 @@ void DependencyManager::CreateDependencies(CatalogTransaction transaction, const
 	// add the object to the dependents_map of each object that it depends on
 	for (auto &dependency : dependencies.Set()) {
 		DependencyInfo info {
-		    /*dependent = */ DependencyDependent {GetLookupProperties(object), dependency_flags},
-		    /*subject = */ DependencySubject {dependency.entry, DependencySubjectFlags(), optional_idx()}};
+		    DependencyDependent {GetLookupProperties(object), dependency_flags, dependency.subdependencies},
+		    DependencySubject {dependency.entry, DependencySubjectFlags(), optional_idx()}};
 		CreateDependency(transaction, info);
 	}
 }
@@ -565,14 +568,14 @@ void DependencyManager::VerifyCommitDrop(CatalogTransaction transaction, transac
 	});
 }
 
-catalog_entry_set_t DependencyManager::CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object,
-                                                             bool cascade) {
+catalog_entry_map_t<subdependency_set_t> DependencyManager::CheckDropDependencies(CatalogTransaction transaction,
+                                                                                  CatalogEntry &object, bool cascade) {
+	catalog_entry_map_t<subdependency_set_t> to_drop;
 	if (IsSystemEntry(object)) {
 		// Don't do anything for this
-		return catalog_entry_set_t();
+		return to_drop;
 	}
 
-	catalog_entry_set_t to_drop;
 	catalog_entry_set_t blocking_dependents;
 
 	auto info = GetLookupProperties(object);
@@ -589,7 +592,7 @@ catalog_entry_set_t DependencyManager::CheckDropDependencies(CatalogTransaction 
 			// no cascade and there are objects that depend on this object: throw error
 			blocking_dependents.insert(*entry);
 		} else {
-			to_drop.insert(*entry);
+			to_drop[*entry] = dep.Dependent().subdependencies;
 		}
 	});
 	if (!blocking_dependents.empty()) {
@@ -606,10 +609,44 @@ catalog_entry_set_t DependencyManager::CheckDropDependencies(CatalogTransaction 
 		if (flags.IsOwnership()) {
 			// We own this object, it should be dropped along with the table
 			auto entry = LookupEntry(transaction, dep);
-			to_drop.insert(*entry);
+			to_drop[*entry];
 		}
 	});
 	return to_drop;
+}
+
+bool DependencyManager::DropSubDependencies(CatalogTransaction transaction, CatalogEntry &table,
+                                            const subdependency_set_t &subdependencies) {
+	AlterEntryData data(QualifiedName(catalog.GetName(), table.ParentSchema().name, table.name),
+	                    OnEntryNotFound::THROW_EXCEPTION);
+	try {
+		for (auto &subdependency : subdependencies) {
+			switch (subdependency.alter) {
+			case AlterTableType::REMOVE_COLUMN: {
+				RemoveColumnInfo info(data, subdependency.name.GetIdentifierName(), true, true);
+				catalog.Alter(transaction, info);
+				break;
+			}
+			case AlterTableType::SET_DEFAULT: {
+				SetDefaultInfo info(data, subdependency.name, nullptr);
+				catalog.Alter(transaction, info);
+				break;
+			}
+			case AlterTableType::DROP_CONSTRAINT: {
+				DropConstraintInfo info(data, subdependency.name.GetIdentifierName(), true, false);
+				catalog.Alter(transaction, info);
+				break;
+			}
+			default:
+				throw InternalException("Unexpected subdependency alter type");
+			}
+		}
+	} catch (InternalException &) {
+		throw;
+	} catch (std::exception &) {
+		return false;
+	}
+	return true;
 }
 
 void DependencyManager::DropObject(CatalogTransaction transaction, CatalogEntry &object, bool cascade) {
@@ -623,9 +660,12 @@ void DependencyManager::DropObject(CatalogTransaction transaction, CatalogEntry 
 	CleanupDependencies(transaction, object);
 
 	for (auto &entry : to_drop) {
-		auto set = entry.get().set;
-		D_ASSERT(set);
-		set->DropEntry(transaction, entry.get().name, cascade);
+		auto &dependent = entry.first.get();
+		if (!entry.second.empty() && DropSubDependencies(transaction, dependent, entry.second)) {
+			continue;
+		}
+		D_ASSERT(dependent.set);
+		dependent.set->DropEntry(transaction, dependent.name, cascade);
 	}
 }
 
@@ -719,15 +759,18 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 				}
 				break;
 			}
-			case AlterTableType::RENAME_COLUMN:
-			case AlterTableType::RENAME_CONSTRAINT:
-			case AlterTableType::DROP_CONSTRAINT: {
+			case AlterTableType::RENAME_COLUMN: {
 				// Secondary indexes reference their table by catalog entry and
 				// their key columns by storage position, so a rename underneath
 				// them does not affect index lookups.
 				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
 					disallow_alter = false;
 				}
+				break;
+			}
+			case AlterTableType::RENAME_CONSTRAINT:
+			case AlterTableType::DROP_CONSTRAINT: {
+				disallow_alter = false;
 				break;
 			}
 			default:

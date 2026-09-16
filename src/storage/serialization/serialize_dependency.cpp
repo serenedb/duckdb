@@ -6,6 +6,7 @@
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/catalog/dependency.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
 
 namespace duckdb {
@@ -28,6 +29,7 @@ void LogicalDependency::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<CatalogEntryInfo>(100, "entry", entry);
 	serializer.WritePropertyWithDefault<Identifier>(101, "catalog", catalog);
 	serializer.WritePropertyWithDefault<bool>(102, "owned_by", owned_by, false);
+	serializer.WritePropertyWithDefault<subdependency_set_t>(103, "subdependencies", subdependencies, subdependency_set_t());
 }
 
 LogicalDependency LogicalDependency::Deserialize(Deserializer &deserializer) {
@@ -35,6 +37,7 @@ LogicalDependency LogicalDependency::Deserialize(Deserializer &deserializer) {
 	auto catalog = deserializer.ReadPropertyWithDefault<Identifier>(101, "catalog");
 	LogicalDependency result(deserializer.TryGet<Catalog>(), entry, std::move(catalog));
 	deserializer.ReadPropertyWithExplicitDefault<bool>(102, "owned_by", result.owned_by, false);
+	deserializer.ReadPropertyWithExplicitDefault<subdependency_set_t>(103, "subdependencies", result.subdependencies, subdependency_set_t());
 	return result;
 }
 
@@ -45,6 +48,18 @@ void LogicalDependencyList::Serialize(Serializer &serializer) const {
 LogicalDependencyList LogicalDependencyList::Deserialize(Deserializer &deserializer) {
 	LogicalDependencyList result;
 	deserializer.ReadProperty<create_info_set_t>(100, "set", result.set);
+	return result;
+}
+
+void SubDependency::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<AlterTableType>(100, "alter", alter);
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+}
+
+SubDependency SubDependency::Deserialize(Deserializer &deserializer) {
+	SubDependency result;
+	deserializer.ReadProperty<AlterTableType>(100, "alter", result.alter);
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
 	return result;
 }
 

@@ -197,7 +197,12 @@ static void CreateSerialSequences(CatalogTransaction transaction, DuckSchemaEntr
 		arguments.push_back(
 		    make_uniq<ConstantExpression>(Value(QualifiedName(Identifier(), schema.name, sequence.name).ToString())));
 		column.SetDefaultValue(make_uniq<FunctionExpression>(Identifier("nextval"), std::move(arguments)));
-		info.dependencies.AddOwnedDependency(sequence);
+		LogicalDependency dependency(sequence);
+		dependency.owned_by = true;
+		if (schema.catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+			dependency.subdependencies.insert(SubDependency {AlterTableType::SET_DEFAULT, column_name});
+		}
+		info.dependencies.AddDependency(dependency);
 	}
 }
 

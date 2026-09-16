@@ -28,6 +28,7 @@ public:
 	CatalogEntryInfo entry;
 	Identifier catalog;
 	bool owned_by = false;
+	subdependency_set_t subdependencies;
 
 public:
 	explicit LogicalDependency(CatalogEntry &entry);

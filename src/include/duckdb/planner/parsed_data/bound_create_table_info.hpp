@@ -38,6 +38,7 @@ struct BoundCreateTableInfo {
 	vector<unique_ptr<Constraint>> constraints;
 	//! Dependents of the table (in e.g. default values)
 	LogicalDependencyList dependencies;
+	SubDependency subdependency;
 	//! The existing table data on disk (if any)
 	unique_ptr<PersistentTableData> data;
 	//! CREATE TABLE from QUERY
@@ -49,6 +50,7 @@ struct BoundCreateTableInfo {
 		D_ASSERT(base);
 		return base->Cast<CreateTableInfo>();
 	}
+	void AddSubDependency(AlterTableType alter, const Identifier &name);
 };
 
 } // namespace duckdb

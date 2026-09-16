@@ -86,7 +86,7 @@ optional_ptr<CatalogEntry> CatalogEntryMap::GetEntry(const Identifier &name) {
 }
 
 CatalogSet::CatalogSet(Catalog &catalog_p, unique_ptr<DefaultGenerator> defaults)
-    : CatalogSet(catalog_p, std::move(defaults), catalog_p.MatchesNamesExactly()) {
+    : CatalogSet(catalog_p, std::move(defaults), catalog_p.IsCaseSensitive()) {
 }
 
 CatalogSet::CatalogSet(Catalog &catalog_p, unique_ptr<DefaultGenerator> defaults, bool case_sensitive)
