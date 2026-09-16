@@ -27,11 +27,14 @@ public:
 	void ScanToDictionaryVector(ColumnSegment &segment, Vector &result, idx_t result_offset, idx_t start,
 	                            idx_t scan_count);
 	const SelectionVector &GetSelVec(idx_t start, idx_t scan_count);
+	const SelectionVector &GetSelVec(idx_t start, idx_t scan_count, const SelectionVector &sel, idx_t sel_count);
 	void Select(Vector &result, idx_t start, const SelectionVector &sel, idx_t sel_count);
+	void SelectDictionary(Vector &result, idx_t start, idx_t span, const SelectionVector &sel, idx_t sel_count);
 
 	bool AllowDictionaryScan(idx_t scan_count);
 
 private:
+	idx_t UnpackCodes(idx_t start, idx_t scan_count);
 	//! Byte offset of entry `string_number` in dict_ptr. Forward reads extend the running offset (the cheap path
 	//! every sequential scan takes); a backward re-seek materializes the full prefix sum once and is O(1) thereafter.
 	uint32_t DecompressOffset(idx_t string_number);
