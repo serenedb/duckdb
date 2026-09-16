@@ -558,6 +558,10 @@ void DataTable::SetTableName(Identifier new_name) {
 	info->SetTableName(std::move(new_name));
 }
 
+void DataTable::SetColumnName(PhysicalIndex index, const Identifier &new_name) {
+	column_definitions[index.index].SetName(new_name);
+}
+
 TableStorageInfo DataTable::GetStorageInfo() {
 	TableStorageInfo result;
 	result.cardinality = GetTotalRows();

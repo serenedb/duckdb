@@ -441,6 +441,9 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameColumn(ClientContext &context, Re
 	TableCatalogEntry::RenameColumn(table_info.columns, table_info.constraints, info);
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
+	if (!columns.GetColumn(rename_idx).Generated()) {
+		storage->SetColumnName(columns.LogicalToPhysical(rename_idx), info.new_name);
+	}
 	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
 }
 
@@ -1481,6 +1484,9 @@ unique_ptr<CatalogEntry> DuckTableEntry::Copy(ClientContext &context) const {
 void DuckTableEntry::SetAsRoot() {
 	storage->SetAsMainTable();
 	storage->SetTableName(name);
+	for (auto &column : columns.Physical()) {
+		storage->SetColumnName(column.Physical(), column.Name());
+	}
 }
 
 void DuckTableEntry::CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state) {
