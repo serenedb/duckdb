@@ -6,6 +6,7 @@ add_library_unity(
   dictionary_vector.cpp
   flat_vector.cpp
   fsst_vector.cpp
+  immutable_strings.cpp
   list_vector.cpp
   map_vector.cpp
   sequence_vector.cpp

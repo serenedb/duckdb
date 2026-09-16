@@ -1,5 +1,6 @@
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector/dictionary_vector.hpp"
+#include "duckdb/common/vector/immutable_strings.hpp"
 #include "duckdb/common/types/bignum.hpp"
 #include "duckdb/common/types/bit.hpp"
 
@@ -167,7 +168,7 @@ buffer_ptr<VectorBuffer> VectorStringBuffer::FlattenSliceInternal(const LogicalT
 	}
 	// add heap reference from source to result
 	if (auxiliary_data) {
-		result->AddAuxiliaryData(make_uniq<AuxiliaryDataSetHolder>(auxiliary_data));
+		result->AddAuxiliaryData(ImmutableStrings::Reference(auxiliary_data));
 	}
 	return result;
 }
