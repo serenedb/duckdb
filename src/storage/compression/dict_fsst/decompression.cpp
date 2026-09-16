@@ -215,7 +215,7 @@ void CompressedStringScanState::Initialize(bool initialize_dictionary) {
 	}
 }
 
-const SelectionVector &CompressedStringScanState::GetSelVec(idx_t start, idx_t scan_count) {
+idx_t CompressedStringScanState::UnpackCodes(idx_t start, idx_t scan_count) {
 	D_ASSERT(mode != DictFSSTMode::FSST_ONLY && mode != DictFSSTMode::FSST_PLUS);
 	// Handling non-bitpacking-group-aligned start values;
 	idx_t start_offset = start % BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
@@ -232,7 +232,11 @@ const SelectionVector &CompressedStringScanState::GetSelVec(idx_t start, idx_t s
 	sel_t *sel_vec_ptr = sel_vec->data();
 	BitpackingPrimitives::UnPackBuffer<sel_t>(data_ptr_cast(sel_vec_ptr), sel_buf_src, decompress_count,
 	                                          dictionary_indices_width);
+	return start_offset;
+}
 
+const SelectionVector &CompressedStringScanState::GetSelVec(idx_t start, idx_t scan_count) {
+	const idx_t start_offset = UnpackCodes(start, scan_count);
 	if (start_offset != 0) {
 		for (idx_t i = 0; i < scan_count; i++) {
 			sel_vec->set_index(i, sel_vec->get_index(i + start_offset));
@@ -284,6 +288,22 @@ void CompressedStringScanState::ScanToFlatVector(Vector &result, idx_t result_of
 	result.Verify();
 }
 
+const SelectionVector &CompressedStringScanState::GetSelVec(idx_t start, idx_t scan_count, const SelectionVector &sel,
+                                                            idx_t sel_count) {
+	D_ASSERT(sel_count <= scan_count);
+	const idx_t start_offset = UnpackCodes(start, scan_count);
+	auto *codes = sel_vec->data();
+#ifdef DEBUG
+	for (idx_t i = 1; i < sel_count; i++) {
+		D_ASSERT(sel.get_index(i - 1) < sel.get_index(i));
+	}
+#endif
+	for (idx_t i = 0; i < sel_count; i++) {
+		codes[i] = codes[start_offset + sel.get_index(i)];
+	}
+	return *sel_vec;
+}
+
 void CompressedStringScanState::Select(Vector &result, idx_t start, const SelectionVector &sel, idx_t sel_count) {
 	D_ASSERT(!dictionary);
 	D_ASSERT(mode == DictFSSTMode::FSST_ONLY || mode == DictFSSTMode::FSST_PLUS);
@@ -318,6 +338,12 @@ void CompressedStringScanState::ScanToDictionaryVector(ColumnSegment &segment, V
 	auto &selvec = GetSelVec(start, scan_count);
 	result.Dictionary(dictionary, selvec, scan_count);
 	result.Verify();
+}
+
+void CompressedStringScanState::SelectDictionary(Vector &result, idx_t start, idx_t span, const SelectionVector &sel,
+                                                 idx_t sel_count) {
+	D_ASSERT(dictionary);
+	result.Dictionary(dictionary, GetSelVec(start, span, sel, sel_count), sel_count);
 }
 
 } // namespace dict_fsst
