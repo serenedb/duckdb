@@ -308,6 +308,7 @@ public:
 	//! Not yet FSST-encoded: check the encode trigger (raw dictionary big enough and either near a block or stopped
 	//! growing) or, for a tiny selection-dominated dictionary, cut a plain DICTIONARY once it fills the block.
 	void MaybeEncodeOrCutSmall(const string_t &s, bool is_null, bool was_new);
+	bool DictionaryNearBlock(idx_t margin) const;
 	//! Cheap gate before the (still cheap, but less so) cut checks: true once the segment has grown by CLEAVE_GAP
 	//! since the last cleave baseline, or the just-added entry crossed a selection-bitpacking width (which can
 	//! overshoot by more than one row, so it cannot wait for the next gap).
