@@ -330,6 +330,10 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		});
 		return copied_table;
 	}
+	if (info.type == AlterType::SET_COMMENT &&
+	    info.Cast<SetCommentInfo>().entry_catalog_type == CatalogType::TABLE_ENTRY) {
+		return CatalogEntry::AlterEntry(context, info);
+	}
 	if (info.type != AlterType::ALTER_TABLE) {
 		throw CatalogException("Can only modify table with ALTER TABLE statement");
 	}

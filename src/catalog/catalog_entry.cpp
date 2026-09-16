@@ -40,6 +40,11 @@ unique_ptr<CatalogEntry> CatalogEntry::AlterEntry(ClientContext &context, AlterI
 		result->name = info.Cast<RenameInfo>().new_name;
 		return result;
 	}
+	if (info.type == AlterType::SET_COMMENT) {
+		auto result = Copy(context);
+		result->comment = info.Cast<SetCommentInfo>().comment_value;
+		return result;
+	}
 	throw InternalException("Unsupported alter type for catalog entry!");
 }
 
