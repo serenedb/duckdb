@@ -171,6 +171,7 @@ SourceResultType PhysicalTableScan::GetDataInternal(ExecutionContext &context, D
 
 	if (function.function) {
 		data.async_result = AsyncResultType::IMPLICIT;
+		data.blockable = &g_state;
 
 		const auto initial_async_result = data.async_result.GetResultType();
 		const auto execution_strategy = g_state.physical_table_scan_execution_strategy;
