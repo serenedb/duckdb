@@ -99,7 +99,8 @@ struct ICUZoneCasts {
 		if (!instant.IsFinite() || !lut.TryOffset(instant.value, offset)) {
 			return false;
 		}
-		result = date_t(UnsafeNumericCast<int32_t>(DateTrunc::FloorDiv(instant.value + offset, Interval::MICROS_PER_DAY)));
+		result =
+		    date_t(UnsafeNumericCast<int32_t>(DateTrunc::FloorDiv(instant.value + offset, Interval::MICROS_PER_DAY)));
 		return true;
 	}
 

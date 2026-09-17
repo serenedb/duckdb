@@ -77,7 +77,8 @@ struct ICUTimeBucketFast {
 				return false;
 			}
 			const auto months =
-			    DateTrunc::FloorDiv(DateTrunc::MonthIndex(timestamp_t(ts)) - origin_month, width) * width + origin_month;
+			    DateTrunc::FloorDiv(DateTrunc::MonthIndex(timestamp_t(ts)) - origin_month, width) * width +
+			    origin_month;
 			bucket = DateTrunc::MonthIndexStart(months).value;
 			return true;
 		}
@@ -136,7 +137,8 @@ struct ICUTimeBucketFast {
 		case Kind::DAYS:
 			return Execute(ts_arg, result, count, FixedBucket {origin, FixedWidth(kind, width)});
 		case Kind::MONTHS:
-			return Execute(ts_arg, result, count, MonthBucket {DateTrunc::MonthIndex(timestamp_t(origin)), width.months});
+			return Execute(ts_arg, result, count,
+			               MonthBucket {DateTrunc::MonthIndex(timestamp_t(origin)), width.months});
 		default:
 			return false;
 		}
@@ -295,8 +297,8 @@ struct ICUTimeBucketFast {
 			return true;
 		}
 		int64_t adjustment = prev_offset - offset;
-		adjustment = adjustment >= 0 ? adjustment % Interval::MICROS_PER_DAY
-		                             : -((-adjustment) % Interval::MICROS_PER_DAY);
+		adjustment =
+		    adjustment >= 0 ? adjustment % Interval::MICROS_PER_DAY : -((-adjustment) % Interval::MICROS_PER_DAY);
 		if (adjustment == 0) {
 			result = t;
 			return true;

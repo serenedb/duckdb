@@ -490,18 +490,18 @@ bool ICUToTimeTZ::CastToTimeTZ(Vector &source, Vector &result, idx_t count, Cast
 	auto &info = cast_data.info->Cast<BindData>();
 	CalendarPtr calendar(info.calendar->clone());
 
-	UnaryExecutor::Execute<timestamp_tz_t, dtime_tz_t>(source, result, count,
-	                                                   [&](timestamp_tz_t input) -> optional<dtime_tz_t> {
-		                                                   dtime_tz_t output;
-		                                                   if (info.lut && ICUZoneCasts::Try(*info.lut, input, output)) {
-			                                                   return output;
-		                                                   }
-		                                                   if (ToTimeTZ(calendar.get(), input, output)) {
-			                                                   return output;
-		                                                   } else {
-			                                                   return nullopt;
-		                                                   }
-	                                                   });
+	UnaryExecutor::Execute<timestamp_tz_t, dtime_tz_t>(
+	    source, result, count, [&](timestamp_tz_t input) -> optional<dtime_tz_t> {
+		    dtime_tz_t output;
+		    if (info.lut && ICUZoneCasts::Try(*info.lut, input, output)) {
+			    return output;
+		    }
+		    if (ToTimeTZ(calendar.get(), input, output)) {
+			    return output;
+		    } else {
+			    return nullopt;
+		    }
+	    });
 	return true;
 }
 
@@ -600,7 +600,8 @@ struct ICUTimeZoneFunc : public ICUDateFunc {
 				throw InternalException("ICUTimeZone called with constant NULL tz");
 			}
 			SetTimeZone(calendar, *ConstantVector::GetData<string_t>(tz_vec));
-			const auto lut = string(calendar->getType()) == "gregorian" ? ZoneLUT::Get(calendar->getTimeZone()) : nullptr;
+			const auto lut =
+			    string(calendar->getType()) == "gregorian" ? ZoneLUT::Get(calendar->getTimeZone()) : nullptr;
 			UnaryExecutor::Execute<SRC, DST>(ts_vec, result, [&](SRC ts) {
 				DST converted;
 				if (lut && ICUZoneCasts::Try(*lut, ts, converted)) {

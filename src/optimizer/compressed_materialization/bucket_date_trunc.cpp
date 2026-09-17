@@ -119,7 +119,8 @@ unique_ptr<BaseStatistics> ExpressionStatistics(ClientContext &context, const st
 		if (!child) {
 			return nullptr;
 		}
-		auto result = StatisticsPropagator::TryPropagateCast(*child, cast.Child().GetReturnType(), cast.GetReturnType());
+		auto result =
+		    StatisticsPropagator::TryPropagateCast(*child, cast.Child().GetReturnType(), cast.GetReturnType());
 		if (result && cast.IsTryCast()) {
 			result->Set(StatsInfo::CAN_HAVE_NULL_VALUES);
 		}
@@ -216,8 +217,9 @@ struct GroupAlias {
 		return definitions.size() > 1;
 	}
 	bool Admits(const BucketRewrite &rewrite, const Expression &input, const LogicalType &group_type) const {
-		return !SpansUnion() || (!rewrite.CustomInput() && input.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF &&
-		                         input.GetReturnType() == group_type);
+		return !SpansUnion() ||
+		       (!rewrite.CustomInput() && input.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF &&
+		        input.GetReturnType() == group_type);
 	}
 	unique_ptr<Expression> &Definition() {
 		return *definitions[0];
@@ -225,9 +227,9 @@ struct GroupAlias {
 };
 
 vector<vector<unique_ptr<BucketRewrite>>> CollectCandidates(ClientContext &context,
-                                                           const vector<reference<Expression>> &groups,
-                                                           const vector<unique_ptr<BaseStatistics>> &group_stats,
-                                                           idx_t max_bits) {
+                                                            const vector<reference<Expression>> &groups,
+                                                            const vector<unique_ptr<BaseStatistics>> &group_stats,
+                                                            idx_t max_bits) {
 	auto coordinate_rewrites = CoordinateBucketRewrites(context, groups);
 	vector<vector<unique_ptr<BucketRewrite>>> candidates(groups.size());
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
@@ -482,11 +484,10 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 				}
 				bool ranged = candidate->TryConstantRange(group.min, group.max);
 				if (!ranged) {
-					const auto range_stats =
-					    alias.SpansUnion()
-					        ? (UsableStatistics(stats.get()) ? stats.get() : nullptr)
-					        : InputStatistics(context, statistics_map, derived_stats, input,
-					                          candidate->CustomInput() ? nullptr : stats.get());
+					const auto range_stats = alias.SpansUnion()
+					                             ? (UsableStatistics(stats.get()) ? stats.get() : nullptr)
+					                             : InputStatistics(context, statistics_map, derived_stats, input,
+					                                               candidate->CustomInput() ? nullptr : stats.get());
 					ranged = range_stats && candidate->TryBucketRange(*range_stats, group.min, group.max);
 				}
 				if (ranged && TryAddPerfectHashBits(group.min, group.max, bits)) {
@@ -617,9 +618,8 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 			projections.push_back(group->rewrite->Unbucket(kept_reference(col_idx)));
 		} else {
 			auto &provider = bucketed[group->provider.GetIndex()];
-			projections.push_back(
-			    RebuildShell(context, *group->shell, *group->input_template,
-			                 provider.rewrite->UnbucketCore(kept_reference(provider.group_idx))));
+			projections.push_back(RebuildShell(context, *group->shell, *group->input_template,
+			                                   provider.rewrite->UnbucketCore(kept_reference(provider.group_idx))));
 		}
 	}
 

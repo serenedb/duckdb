@@ -605,7 +605,9 @@ struct ICUStrftime : public ICUDateFunc {
 			StrfTimeFormat format;
 			ParseFormatSpecifier(*ConstantVector::GetData<string_t>(fmt_arg), format);
 
-			auto row = [&](T input) { return Operation(calendar.get(), input, tz_name, format, result); };
+			auto row = [&](T input) {
+				return Operation(calendar.get(), input, tz_name, format, result);
+			};
 			if (ICUScalarFast::TryStrftime<T>(info, src_arg, args.size(), format, tz_name, result, row)) {
 				return;
 			}

@@ -34,7 +34,6 @@ namespace {
 
 constexpr int64_t MSECS_PER_DAY = Interval::MICROS_PER_DAY / Interval::MICROS_PER_MSEC;
 
-
 bool OffsetSeconds(int32_t millis, int32_t &seconds) {
 	seconds = millis / Interval::MSECS_PER_SEC;
 	return seconds * Interval::MSECS_PER_SEC == millis;
@@ -141,8 +140,9 @@ ZoneLUT::ZoneLUT(const icu::BasicTimeZone &tz) {
 		const auto &entry = instants[UnsafeNumericCast<idx_t>(day)];
 		const auto &wall = walls[UnsafeNumericCast<idx_t>(day)];
 		const bool multiple = entry.transition == MULTIPLE_TRANSITIONS || wall.transition == MULTIPLE_TRANSITIONS;
-		const bool whole_hours = entry.before % Interval::SECS_PER_HOUR == 0 && entry.after % Interval::SECS_PER_HOUR == 0 &&
-		                         (entry.transition == NO_TRANSITION || entry.transition % Interval::MICROS_PER_HOUR == 0);
+		const bool whole_hours =
+		    entry.before % Interval::SECS_PER_HOUR == 0 && entry.after % Interval::SECS_PER_HOUR == 0 &&
+		    (entry.transition == NO_TRANSITION || entry.transition % Interval::MICROS_PER_HOUR == 0);
 		const bool whole_minutes =
 		    entry.before % Interval::SECS_PER_MINUTE == 0 && entry.after % Interval::SECS_PER_MINUTE == 0;
 		if (multiple) {
@@ -191,8 +191,9 @@ bool ZoneLUT::OriginDaysSupported(int64_t origin_day, int64_t lo_day, int64_t hi
 	if (jump != jump_days.end() && *jump <= hi) {
 		return false;
 	}
-	auto repeated = std::lower_bound(repeated_midnights.begin(), repeated_midnights.end(), lo,
-	                                 [](const pair<int64_t, int32_t> &entry, int64_t day) { return entry.first < day; });
+	auto repeated =
+	    std::lower_bound(repeated_midnights.begin(), repeated_midnights.end(), lo,
+	                     [](const pair<int64_t, int32_t> &entry, int64_t day) { return entry.first < day; });
 	for (; repeated != repeated_midnights.end() && repeated->first <= hi; repeated++) {
 		if (int64_t(repeated->second) * Interval::MICROS_PER_SEC != origin_offset) {
 			return false;
