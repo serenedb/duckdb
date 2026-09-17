@@ -188,6 +188,8 @@ public:
 	optional_ptr<GlobalTableFunctionState> global_state;
 	AsyncResult async_result {};
 	AsyncResultsExecutionMode results_execution_mode {AsyncResultsExecutionMode::SYNCHRONOUS};
+	optional_ptr<InterruptState> interrupt_state;
+	optional_ptr<StateWithBlockableTasks> blockable;
 
 	//! SereneDB inverted-index row-addressed lookup. `pk_lookups` are ascending
 	//! per-call file-row-numbers / byte-offsets to fetch (parquet: row-group skip
