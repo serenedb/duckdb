@@ -3,6 +3,7 @@
 #include "duckdb/planner/operator/logical_simple.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
@@ -62,6 +63,9 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		}
 		optional_ptr<CatalogEntry> entry;
 		if (stmt.info->type == CatalogType::MACRO_ENTRY) {
+			for (auto &type : stmt.info->func_parameters) {
+				BindLogicalType(type);
+			}
 			// We also support "DROP MACRO" (instead of "DROP MACRO TABLE") for table macros
 			// First try to drop a scalar macro
 			EntryLookupInfo macro_entry_lookup(stmt.info->type, stmt.info->GetQualifiedName());
@@ -89,6 +93,14 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		}
 		if (entry->internal) {
 			throw CatalogException("Cannot drop internal catalog entry \"%s\"!", entry->name.GetIdentifierName());
+		}
+		if (entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) {
+			auto &macro = entry->Cast<MacroCatalogEntry>();
+			if (macro.is_procedure != stmt.info->is_procedure) {
+				throw BinderException("%s(%s) is not a %s", entry->name.GetIdentifierName(),
+				                      MacroFunction::ParameterTypesToString(stmt.info->func_parameters),
+				                      stmt.info->is_procedure ? "procedure" : "function");
+			}
 		}
 		stmt.info->SetQualifiedName(QualifiedName(entry->ParentCatalog().GetName(), entry->ParentSchema().name,
 		                                          stmt.info->GetQualifiedName().Name()));

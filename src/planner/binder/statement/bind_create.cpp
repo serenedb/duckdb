@@ -1,6 +1,8 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
@@ -256,6 +258,42 @@ void Binder::BindCreateViewInfo(CreateViewInfo &base) {
 	}
 	BindView(context, *base.query, base.GetQualifiedName().Catalog(), base.GetQualifiedName().Schema(), dependencies,
 	         base.aliases, base.types, base.names);
+}
+
+void Binder::MergeMacroOverloads(CreateInfo &info) {
+	SearchSchema(info);
+	auto &catalog = Catalog::GetCatalog(context, info.GetQualifiedName().Catalog());
+	const bool merge_overloads = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (!merge_overloads || info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
+		return;
+	}
+	EntryLookupInfo lookup(info.type, info.GetQualifiedName());
+	auto existing = Catalog::GetEntry(context, lookup, OnEntryNotFound::RETURN_NULL);
+	if (!existing) {
+		return;
+	}
+	auto &macro_info = info.Cast<CreateMacroInfo>();
+	for (auto &function : macro_info.macros) {
+		for (auto &type : function->types) {
+			if (type.id() == LogicalTypeId::UNBOUND) {
+				BindLogicalType(type);
+			}
+		}
+	}
+	const bool replace = info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT;
+	for (auto &overload : existing->Cast<MacroCatalogEntry>().macros) {
+		const bool redefined = std::any_of(macro_info.macros.begin(), macro_info.macros.end(),
+		                                   [&](const unique_ptr<MacroFunction> &function) {
+			                                   return function->HasParameterTypes(overload->ParameterTypes());
+		                                   });
+		if (!redefined) {
+			macro_info.macros.push_back(overload->Copy());
+		} else if (!replace) {
+			throw CatalogException("function \"%s\" already exists with same argument types",
+			                       macro_info.GetFunctionName().GetIdentifierName());
+		}
+	}
+	info.on_conflict = OnCreateConflict::REPLACE_ON_CONFLICT;
 }
 
 SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
@@ -850,12 +888,14 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::TABLE_MACRO_ENTRY: {
+		MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
 		result.plan =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
 		break;
 	}
 	case CatalogType::MACRO_ENTRY: {
+		MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
 		auto logical_create =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);

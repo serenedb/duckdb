@@ -29,6 +29,7 @@
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_aggregate_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_collation_info.hpp"
@@ -438,6 +439,26 @@ void DuckSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 		throw CatalogException("Existing object %s is of type %s, trying to drop type %s",
 		                       info.GetQualifiedName().Name(), CatalogTypeToString(existing_entry->type),
 		                       CatalogTypeToString(info.type));
+	}
+	if (info.has_func_args) {
+		auto create_info = existing_entry->Cast<MacroCatalogEntry>().GetInfo();
+		auto &macros = create_info->Cast<CreateMacroInfo>().macros;
+		auto overload = std::find_if(macros.begin(), macros.end(), [&](const unique_ptr<MacroFunction> &function) {
+			return function->HasParameterTypes(info.func_parameters);
+		});
+		if (overload == macros.end()) {
+			if (info.if_not_found == OnEntryNotFound::RETURN_NULL) {
+				return;
+			}
+			throw CatalogException("function %s(%s) does not exist", info.GetQualifiedName().Name().GetIdentifierName(),
+			                       MacroFunction::ParameterTypesToString(info.func_parameters));
+		}
+		if (macros.size() > 1) {
+			macros.erase(overload);
+			create_info->on_conflict = OnCreateConflict::REPLACE_ON_CONFLICT;
+			CreateFunction(transaction, create_info->Cast<CreateFunctionInfo>());
+			return;
+		}
 	}
 
 	vector<unique_ptr<AlterForeignKeyInfo>> fk_arrays;

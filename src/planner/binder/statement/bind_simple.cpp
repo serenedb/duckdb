@@ -162,19 +162,22 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		if (!entry) {
 			entry = lookup(CatalogType::MACRO_ENTRY, stmt.info->if_not_found);
 		}
-	} else if (stmt.info->type == AlterType::RENAME && stmt.info->GetCatalogType() == CatalogType::TABLE_ENTRY) {
+	} else if (stmt.info->type == AlterType::RENAME && (stmt.info->GetCatalogType() == CatalogType::TABLE_ENTRY ||
+	                                                    stmt.info->GetCatalogType() == CatalogType::INDEX_ENTRY)) {
 		auto &rename_info = stmt.info->Cast<RenameInfo>();
 		auto &target_catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
-		const bool rename_covers_indexes = target_catalog.Compatibility() == SqlCompatibility::POSTGRES;
-		entry = lookup(CatalogType::TABLE_ENTRY, OnEntryNotFound::RETURN_NULL);
-		if (!entry && rename_covers_indexes) {
-			entry = lookup(CatalogType::INDEX_ENTRY, OnEntryNotFound::RETURN_NULL);
+		const bool rename_spans_tables_and_indexes = target_catalog.Compatibility() == SqlCompatibility::POSTGRES;
+		const auto declared = stmt.info->GetCatalogType();
+		const auto other = declared == CatalogType::TABLE_ENTRY ? CatalogType::INDEX_ENTRY : CatalogType::TABLE_ENTRY;
+		entry = lookup(declared, OnEntryNotFound::RETURN_NULL);
+		if (!entry && rename_spans_tables_and_indexes) {
+			entry = lookup(other, OnEntryNotFound::RETURN_NULL);
 			if (entry) {
-				rename_info.entry_catalog_type = CatalogType::INDEX_ENTRY;
+				rename_info.entry_catalog_type = other;
 			}
 		}
 		if (!entry) {
-			entry = lookup(CatalogType::TABLE_ENTRY, stmt.info->if_not_found);
+			entry = lookup(declared, stmt.info->if_not_found);
 		}
 	} else {
 		// For any other ALTER, we retrieve the catalog entry directly.

@@ -591,6 +591,7 @@ private:
 	static void BindSchemaOrCatalog(CatalogEntryRetriever &retriever, QualifiedName &qualified_name);
 	Identifier BindCatalog(const Identifier &catalog_name);
 	SchemaCatalogEntry &BindCreateSchema(CreateInfo &info);
+	void MergeMacroOverloads(CreateInfo &info);
 
 	vector<CatalogSearchEntry> GetSearchPath(Catalog &catalog, const Identifier &schema_name);
 
