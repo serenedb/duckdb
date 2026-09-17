@@ -172,8 +172,8 @@ interval_t ICUCalendarSub::Operation(timestamp_tz_t end_date, timestamp_tz_t sta
 	auto min_diff = SubtractField(calendar, UCAL_MINUTE, end_date);
 	auto sec_diff = SubtractField(calendar, UCAL_SECOND, end_date);
 	auto ms_diff = SubtractField(calendar, UCAL_MILLISECOND, end_date);
-	auto micros_diff = UnsafeNumericCast<int32_t>(ms_diff * Interval::MICROS_PER_MSEC +
-	                                             (static_cast<int64_t>(end_micros) - static_cast<int64_t>(start_micros)));
+	auto micros_diff = UnsafeNumericCast<int32_t>(
+	    ms_diff * Interval::MICROS_PER_MSEC + (static_cast<int64_t>(end_micros) - static_cast<int64_t>(start_micros)));
 	result.micros = Time::FromTime(hour_diff, min_diff, sec_diff, micros_diff).micros;
 
 	return result;
@@ -212,8 +212,8 @@ interval_t ICUCalendarAge::Operation(timestamp_tz_t end_date, timestamp_tz_t sta
 	auto min_diff = SubtractField(calendar, UCAL_MINUTE, end_date);
 	auto sec_diff = SubtractField(calendar, UCAL_SECOND, end_date);
 	auto ms_diff = SubtractField(calendar, UCAL_MILLISECOND, end_date);
-	auto micros_diff = UnsafeNumericCast<int32_t>(ms_diff * Interval::MICROS_PER_MSEC +
-	                                             (static_cast<int64_t>(end_micros) - static_cast<int64_t>(start_micros)));
+	auto micros_diff = UnsafeNumericCast<int32_t>(
+	    ms_diff * Interval::MICROS_PER_MSEC + (static_cast<int64_t>(end_micros) - static_cast<int64_t>(start_micros)));
 	result.micros = Time::FromTime(hour_diff, min_diff, sec_diff, micros_diff).micros;
 
 	return result;
@@ -253,7 +253,9 @@ struct ICUDateAdd : public ICUDateFunc {
 		const auto operation = std::is_same<OP, ICUCalendarAdd>::value   ? ICUScalarFast::Operation::ADD
 		                       : std::is_same<OP, ICUCalendarSub>::value ? ICUScalarFast::Operation::SUBTRACT
 		                                                                 : ICUScalarFast::Operation::AGE;
-		auto row = [&](TA left, TB right) { return OP::template Operation<TA, TB, TR>(left, right, calendar); };
+		auto row = [&](TA left, TB right) {
+			return OP::template Operation<TA, TB, TR>(left, right, calendar);
+		};
 		if (ICUScalarFast::IntervalArithmetic<TA, TB>::Try(args, result, info, operation, row)) {
 			return;
 		}

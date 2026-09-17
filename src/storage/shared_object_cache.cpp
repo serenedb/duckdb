@@ -101,7 +101,8 @@ shared_ptr<ObjectCacheEntry> SharedObjectCache::ClaimSlot(const LookupKey &looku
 			return nullptr;
 		}
 		slot->waiters++;
-		registry->lock.Await(absl::Condition(+[](Slot *waited) { return !waited->building; }, slot));
+		registry->lock.Await(absl::Condition(
+		    +[](Slot *waited) { return !waited->building; }, slot));
 		slot->waiters--;
 	}
 }
@@ -131,9 +132,9 @@ SharedObjectCache::GetOrBuildInternal(std::string_view type, std::string_view ke
 		const auto estimated_memory = built->GetEstimatedCacheMemory();
 		const idx_t size = estimated_memory.IsValid() ? estimated_memory.GetIndex() : 0;
 		// Fully construct the deleter before releasing `built`: a throw here leaves the entry owned.
-		Deleter deleter {registry, FullKey {lookup},
-		                 make_shared_ptr<TempBufferPoolReservation>(MemoryTag::OBJECT_CACHE, *registry->buffer_pool,
-		                                                            size)};
+		Deleter deleter {
+		    registry, FullKey {lookup},
+		    make_shared_ptr<TempBufferPoolReservation>(MemoryTag::OBJECT_CACHE, *registry->buffer_pool, size)};
 		shared_ptr<ObjectCacheEntry> value(built.release(), std::move(deleter));
 		const absl::MutexLock guard(&registry->lock);
 		auto it = registry->slots.find(lookup);

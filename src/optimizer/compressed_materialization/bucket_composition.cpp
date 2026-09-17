@@ -329,14 +329,14 @@ bool IsMonotone(const Folder &folder, Expression &expr, optional_ptr<Expression>
 		}
 		if (children.size() == 2 && NameIn(name, {"+", "-", "*"})) {
 			return (folder.IsConstant(*children[0]) || folder.IsConstant(*children[1])) &&
-			       IsMonotone(folder, *children[0], column, columns) && IsMonotone(folder, *children[1], column, columns);
+			       IsMonotone(folder, *children[0], column, columns) &&
+			       IsMonotone(folder, *children[1], column, columns);
 		}
 		if (children.size() == 2 && NameIn(name, {"/", "//", "round", "trunc"})) {
 			return folder.IsNonNullConstant(*children[1]) && IsMonotone(folder, *children[0], column, columns);
 		}
-		if (children.size() == 1 &&
-		    NameIn(name, {"-", "floor", "ceil", "ceiling", "trunc", "round", "ln", "log", "log2", "log10", "sqrt", "exp",
-		                  "cbrt", "sign"})) {
+		if (children.size() == 1 && NameIn(name, {"-", "floor", "ceil", "ceiling", "trunc", "round", "ln", "log",
+		                                          "log2", "log10", "sqrt", "exp", "cbrt", "sign"})) {
 			return IsMonotone(folder, *children[0], column, columns);
 		}
 		return false;
@@ -714,8 +714,9 @@ bool EpochWrapper(std::string_view name, LeafInfo &info) {
 	if (info.kind != LeafInfo::Kind::DATE || info.granularity <= 0) {
 		return false;
 	}
-	const int64_t unit =
-	    name == "epoch" ? Interval::MICROS_PER_SEC : name == "epoch_ms" ? Interval::MICROS_PER_MSEC : 1;
+	const int64_t unit = name == "epoch"      ? Interval::MICROS_PER_SEC
+	                     : name == "epoch_ms" ? Interval::MICROS_PER_MSEC
+	                                          : 1;
 	if (info.granularity % unit != 0) {
 		return false;
 	}
@@ -1001,8 +1002,8 @@ unique_ptr<BucketRewrite> CoordinateBucketRewrite(ClientContext &context, Expres
 	arguments.push_back(input.Copy());
 	FunctionBinder binder(context);
 	ErrorData error;
-	auto truncation = binder.BindScalarFunction(Identifier(DEFAULT_SCHEMA), Identifier("date_trunc"),
-	                                            std::move(arguments), error);
+	auto truncation =
+	    binder.BindScalarFunction(Identifier(DEFAULT_SCHEMA), Identifier("date_trunc"), std::move(arguments), error);
 	if (!truncation || truncation->GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
 		return nullptr;
 	}
@@ -1084,10 +1085,9 @@ vector<unique_ptr<BucketRewrite>> CompositeBucketRewrites(ClientContext &context
 		CollectLeaves(folder, *child, path, 1, candidates);
 		for (auto &candidate : candidates) {
 			if (WrapperAllowed(folder, group, index, candidate.leaf.info)) {
-				result.push_back(make_uniq<CompositeBucketRewrite>(std::move(candidate.leaf.rewrite),
-				                                                   *candidate.leaf.input, group,
-				                                                   std::move(candidate.path),
-				                                                   candidate.leaf.info.ValueLimit()));
+				result.push_back(
+				    make_uniq<CompositeBucketRewrite>(std::move(candidate.leaf.rewrite), *candidate.leaf.input, group,
+				                                      std::move(candidate.path), candidate.leaf.info.ValueLimit()));
 			}
 		}
 	}
@@ -1134,8 +1134,7 @@ vector<unique_ptr<BucketRewrite>> CoordinateBucketRewrites(ClientContext &contex
 	for (auto &set : sets) {
 		DatePartSpecifier period;
 		if (set.members.size() < 2 || set.coordinates.two_digit_year ||
-		    set.input->GetReturnType().id() == LogicalTypeId::DATE ||
-		    !set.coordinates.TryResolve(false, period)) {
+		    set.input->GetReturnType().id() == LogicalTypeId::DATE || !set.coordinates.TryResolve(false, period)) {
 			continue;
 		}
 		for (auto member : set.members) {

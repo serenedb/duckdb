@@ -107,7 +107,9 @@ struct ICUCalendarSub : public ICUDateFunc {
 			const auto specifier = ConstantVector::GetData<string_t>(part_arg)->GetString();
 			const auto part = GetDatePartSpecifier(specifier);
 			auto part_func = SubtractFactory(part);
-			auto row = [&](T start_date, T end_date) { return part_func(calendar.get(), start_date, end_date); };
+			auto row = [&](T start_date, T end_date) {
+				return part_func(calendar.get(), start_date, end_date);
+			};
 			if (ICUScalarFast::TryDateSub(info, part, startdate_arg, enddate_arg, args.size(), result, row)) {
 				return;
 			}
@@ -253,14 +255,14 @@ struct ICUCalendarDiff : public ICUDateFunc {
 				if (ICUScalarFast::TryDateDiff(info, part, startdate_arg, enddate_arg, args.size(), result, row)) {
 					return;
 				}
-				BinaryExecutor::Execute<T, T, int64_t>(
-				    startdate_arg, enddate_arg, result, [&](T start_date, T end_date) -> optional<int64_t> {
-					    if (start_date.IsFinite() && end_date.IsFinite()) {
-						    return row(start_date, end_date);
-					    } else {
-						    return nullopt;
-					    }
-				    });
+				BinaryExecutor::Execute<T, T, int64_t>(startdate_arg, enddate_arg, result,
+				                                       [&](T start_date, T end_date) -> optional<int64_t> {
+					                                       if (start_date.IsFinite() && end_date.IsFinite()) {
+						                                       return row(start_date, end_date);
+					                                       } else {
+						                                       return nullopt;
+					                                       }
+				                                       });
 			}
 		} else {
 			auto row = [&](string_t specifier, T start_date, T end_date) {
