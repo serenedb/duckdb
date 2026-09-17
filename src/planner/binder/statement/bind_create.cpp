@@ -356,6 +356,20 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			it.second = std::move(const_expr);
 		}
 
+		auto &dependencies = base.dependencies;
+		const auto should_create_dependencies = Settings::Get<EnableMacroDependenciesSetting>(context);
+		const auto binder_callback = [&dependencies, &catalog](CatalogEntry &entry) {
+			if (&catalog != &entry.ParentCatalog()) {
+				// Don't register any cross-catalog dependencies
+				return;
+			}
+			// Register any catalog entry required to bind the macro function
+			dependencies.AddDependency(entry);
+		};
+		if (should_create_dependencies) {
+			SetCatalogLookupCallback(binder_callback);
+		}
+
 		// Resolve any user type arguments
 		for (idx_t param_idx = 0; param_idx < function->types.size(); param_idx++) {
 			auto &type = function->types[param_idx];
@@ -396,16 +410,6 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		    make_uniq<DummyBinding>(dummy_types, dummy_names, base.GetFunctionName().GetIdentifierName());
 		macro_binding = this_macro_binding.get();
 
-		auto &dependencies = base.dependencies;
-		const auto should_create_dependencies = Settings::Get<EnableMacroDependenciesSetting>(context);
-		const auto binder_callback = [&dependencies, &catalog](CatalogEntry &entry) {
-			if (&catalog != &entry.ParentCatalog()) {
-				// Don't register any cross-catalog dependencies
-				return;
-			}
-			// Register any catalog entry required to bind the macro function
-			dependencies.AddDependency(entry);
-		};
 
 		// bind it to verify the function was defined correctly
 		ErrorData error;
