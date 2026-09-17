@@ -209,6 +209,7 @@ public:
 	AsyncResultsExecutionMode results_execution_mode {AsyncResultsExecutionMode::SYNCHRONOUS};
 	//! Interrupt state of the calling task, so the function might park and wake-up by returning a taskless Blocked res
 	optional_ptr<const InterruptState> interrupt_state;
+	optional_ptr<StateWithBlockableTasks> blockable;
 
 	//! SereneDB inverted-index row-addressed lookup. `pk_lookups` are ascending
 	//! per-call file-row-numbers / byte-offsets to fetch (parquet: row-group skip
