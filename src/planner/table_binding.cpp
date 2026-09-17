@@ -8,6 +8,7 @@
 #include "duckdb/planner/bind_context.hpp"
 #include "duckdb/planner/bound_query_node.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_lambdaref_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 
@@ -291,6 +292,11 @@ BindResult TableBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 	LogicalType col_type;
 	auto ventry = virtual_columns.find(column_index);
 	if (ventry != virtual_columns.end()) {
+		if (column_index == COLUMN_IDENTIFIER_TABLE_OID && entry) {
+			auto oid = make_uniq<BoundConstantExpression>(Value::BIGINT(NumericCast<int64_t>(entry->oid)));
+			oid->SetAlias(Identifier(colref.GetName()));
+			return BindResult(std::move(oid));
+		}
 		// virtual column - fetch type from there
 		col_type = ventry->second.type;
 	} else {
