@@ -188,7 +188,8 @@ struct ICUScalarFast {
 	static inline bool TryDaySteps(const ZoneLUT &lut, int64_t origin, int64_t end, int64_t unit, int64_t &count) {
 		ICUTimeBucketFast::DayOrigin day_origin;
 		int64_t end_day = 0;
-		if (!ICUTimeBucketFast::TryDayOrigin(lut, origin, day_origin) || !ICUOriginDay::TryLocalDay(lut, end, end_day)) {
+		if (!ICUTimeBucketFast::TryDayOrigin(lut, origin, day_origin) ||
+		    !ICUOriginDay::TryLocalDay(lut, end, end_day)) {
 			return false;
 		}
 		auto add = [&](int64_t n, int64_t &added) {
@@ -200,7 +201,8 @@ struct ICUScalarFast {
 	}
 
 	static inline bool TryDayCount(const ZoneLUT &lut, int64_t origin, int64_t end, int64_t &count, int64_t &added) {
-		return TryDaySteps(lut, origin, end, 1, count) && ICUTimeBucketFast::TryCalendarAddDays(lut, origin, count, added);
+		return TryDaySteps(lut, origin, end, 1, count) &&
+		       ICUTimeBucketFast::TryCalendarAddDays(lut, origin, count, added);
 	}
 
 	static inline bool TrySubtract(const ZoneLUT &lut, timestamp_tz_t end, timestamp_tz_t start, interval_t &out) {
@@ -408,7 +410,9 @@ struct ICUScalarFast {
 			if (!TryMonthIndex(lut, origin, origin_index) || !TryMonthIndex(lut, end, end_index)) {
 				return false;
 			}
-			auto add = [&](int64_t count, int64_t &added) { return TryAddMonths(lut, origin, count * unit, added); };
+			auto add = [&](int64_t count, int64_t &added) {
+				return TryAddMonths(lut, origin, count * unit, added);
+			};
 			if (!ICUTimeBucketFast::SettleCount(start_ms, target_ms, (end_index - origin_index) / unit, add,
 			                                    SEARCH_STEPS, value)) {
 				return false;
@@ -518,7 +522,8 @@ struct ICUScalarFast {
 			return true;
 		case DatePartSpecifier::SECOND:
 		case DatePartSpecifier::MINUTE: {
-			const int64_t unit = part == DatePartSpecifier::SECOND ? Interval::MICROS_PER_SEC : Interval::MICROS_PER_MINUTE;
+			const int64_t unit =
+			    part == DatePartSpecifier::SECOND ? Interval::MICROS_PER_SEC : Interval::MICROS_PER_MINUTE;
 			if (!TryLocal(lut, micros, offset, local)) {
 				return false;
 			}
@@ -529,7 +534,8 @@ struct ICUScalarFast {
 			if (!TryLocal(lut, micros, offset, local)) {
 				return false;
 			}
-			return lut.TryResolve(DateTrunc::FloorDiv(local, Interval::MICROS_PER_HOUR) * Interval::MICROS_PER_HOUR, out);
+			return lut.TryResolve(DateTrunc::FloorDiv(local, Interval::MICROS_PER_HOUR) * Interval::MICROS_PER_HOUR,
+			                      out);
 		case DatePartSpecifier::DAY:
 		case DatePartSpecifier::WEEK: {
 			if (!TryLocal(lut, micros, offset, local)) {

@@ -208,8 +208,8 @@ struct ICUBucket : public ICUDateFunc {
 			break;
 		}
 		int64_t representative = 0;
-		if (!lut.TryResolveDay(day - DateTruncTable::FIRST_DAY, day * Interval::MICROS_PER_DAY + Interval::MICROS_PER_DAY / 2,
-		                       representative)) {
+		if (!lut.TryResolveDay(day - DateTruncTable::FIRST_DAY,
+		                       day * Interval::MICROS_PER_DAY + Interval::MICROS_PER_DAY / 2, representative)) {
 			ThrowBucketRange();
 		}
 		if (spec.origin_days) {
@@ -227,7 +227,8 @@ struct ICUBucket : public ICUDateFunc {
 			if (spec.part == DatePartSpecifier::MINUTE) {
 				return lut.MinuteBucketFirstDay();
 			}
-			return lut.HasFixedOffset() && lut.FixedOffset() % Interval::MICROS_PER_SEC != 0 ? DateTruncTable::DAY_COUNT : 0;
+			return lut.HasFixedOffset() && lut.FixedOffset() % Interval::MICROS_PER_SEC != 0 ? DateTruncTable::DAY_COUNT
+			                                                                                 : 0;
 		default:
 			return lut.DayBucketFirstDay();
 		}
@@ -766,8 +767,8 @@ struct ICUBucket : public ICUDateFunc {
 			DateBucketSpec fixed;
 			fixed.width = width.micros;
 			fixed.anchor = anchor.value;
-			return make_uniq<DateBucketRewrite>(context, fixed, 1, LogicalType::TIMESTAMP_TZ,
-			                                    LogicalType::TIMESTAMP_TZ, true);
+			return make_uniq<DateBucketRewrite>(context, fixed, 1, LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_TZ,
+			                                    true);
 		}
 		case ICUTimeBucketFast::Kind::DAYS:
 			if (has_origin && !origin_at_midnight) {
@@ -775,11 +776,12 @@ struct ICUBucket : public ICUDateFunc {
 			}
 			TryParseBucketPart(TIME_BUCKET_DAY, spec);
 			spec.width = width.days;
-			spec.anchor = has_origin ? origin_day : ICUTimeBucketFast::DEFAULT_ORIGIN_MICROS_1 / Interval::MICROS_PER_DAY;
+			spec.anchor =
+			    has_origin ? origin_day : ICUTimeBucketFast::DEFAULT_ORIGIN_MICROS_1 / Interval::MICROS_PER_DAY;
 			break;
 		case ICUTimeBucketFast::Kind::MONTHS:
-			if (has_origin &&
-			    (!origin_at_midnight || origin_day != DateTrunc::MonthIndexStartDays(DateTrunc::MonthIndex(origin_day)))) {
+			if (has_origin && (!origin_at_midnight ||
+			                   origin_day != DateTrunc::MonthIndexStartDays(DateTrunc::MonthIndex(origin_day)))) {
 				return nullptr;
 			}
 			TryParseBucketPart(TIME_BUCKET_MONTH, spec);

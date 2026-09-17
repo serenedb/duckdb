@@ -60,7 +60,8 @@ struct ICUDateTruncRecomputes<DateTrunc::MillenniumOperator> {
 struct ICUDateTruncLUT {
 	template <class OP>
 	static constexpr bool UsesEraYear() {
-		return std::is_same<OP, DateTrunc::DecadeOperator>::value || std::is_same<OP, DateTrunc::CenturyOperator>::value ||
+		return std::is_same<OP, DateTrunc::DecadeOperator>::value ||
+		       std::is_same<OP, DateTrunc::CenturyOperator>::value ||
 		       std::is_same<OP, DateTrunc::MillenniumOperator>::value;
 	}
 
@@ -113,8 +114,8 @@ struct ICUDateTruncLUT {
 				}
 			}
 			const auto truncated_days = OP::Days(days);
-			return lut.TryResolveDay(truncated_days - DateTruncTable::FIRST_DAY, truncated_days * Interval::MICROS_PER_DAY,
-			                         result.value);
+			return lut.TryResolveDay(truncated_days - DateTruncTable::FIRST_DAY,
+			                         truncated_days * Interval::MICROS_PER_DAY, result.value);
 		} else {
 			const auto truncated = OP::template Operation<timestamp_t, timestamp_t>(wall);
 			if constexpr (PreservesOffset<OP>()) {
@@ -146,8 +147,9 @@ struct ICUDateTruncLUT {
 			return input;
 		}
 		timestamp_tz_t truncated;
-		if (info.lut && part != DatePartSpecifier::ERA &&
-		    DateTrunc::Dispatch(part, [&](auto op) { return TryTruncate<decltype(op)>(*info.lut, input, truncated); })) {
+		if (info.lut && part != DatePartSpecifier::ERA && DateTrunc::Dispatch(part, [&](auto op) {
+			    return TryTruncate<decltype(op)>(*info.lut, input, truncated);
+		    })) {
 			return truncated;
 		}
 		return TruncateWithICU(info, calendar, part, input);

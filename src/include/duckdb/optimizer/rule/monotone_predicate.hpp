@@ -26,8 +26,7 @@ namespace duckdb {
 
 class MonotonePredicateRule : public Rule {
 public:
-	using zone_transitions_t = bool (*)(ClientContext &context, int64_t from, int64_t to,
-	                                    vector<int64_t> &transitions);
+	using zone_transitions_t = bool (*)(ClientContext &context, int64_t from, int64_t to, vector<int64_t> &transitions);
 
 	explicit MonotonePredicateRule(ExpressionRewriter &rewriter);
 
