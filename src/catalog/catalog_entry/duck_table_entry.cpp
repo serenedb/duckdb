@@ -703,13 +703,11 @@ void DuckTableEntry::UpdateConstraintsOnColumnDrop(const LogicalIndex &removed_i
 			}
 			auto physical_index = columns.LogicalToPhysical(removed_index);
 			if (bound_check.bound_columns.find(physical_index) != bound_check.bound_columns.end()) {
-				if (bound_check.bound_columns.size() > 1) {
-					// CHECK constraint that concerns mult
+				const bool drop_shared_checks = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+				if (bound_check.bound_columns.size() > 1 && !drop_shared_checks) {
 					throw CatalogException(
 					    "Cannot drop column \"%s\" because there is a CHECK constraint that depends on it",
 					    info.removed_column);
-				} else {
-					// CHECK constraint that ONLY concerns this column, strip the constraint
 				}
 			} else {
 				// check constraint does not concern the removed column: simply re-add it
@@ -802,7 +800,8 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 		}
 		create_info->columns.AddColumn(col.Copy());
 	}
-	if (create_info->columns.empty()) {
+	const bool allow_zero_columns = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (create_info->columns.empty() && !allow_zero_columns) {
 		throw CatalogException("Cannot drop column: table only has one column remaining!");
 	}
 	auto adjusted_indices = column_dependency_manager.RemoveColumn(removed_index, columns.LogicalColumnCount());

@@ -291,9 +291,16 @@ void DependencyManager::CreateDependencies(CatalogTransaction transaction, const
 	}
 
 	// add the object to the dependents_map of each object that it depends on
+	const bool index_blocks_non_relations = catalog.Compatibility() == SqlCompatibility::POSTGRES;
 	for (auto &dependency : dependencies.Set()) {
+		auto flags = dependency_flags;
+		const bool relation = dependency.entry.type == CatalogType::TABLE_ENTRY ||
+		                      dependency.entry.type == CatalogType::VIEW_ENTRY;
+		if (index_blocks_non_relations && !relation) {
+			flags.SetBlocking();
+		}
 		DependencyInfo info {
-		    DependencyDependent {GetLookupProperties(object), dependency_flags, dependency.subdependencies},
+		    DependencyDependent {GetLookupProperties(object), flags, dependency.subdependencies},
 		    DependencySubject {dependency.entry, DependencySubjectFlags(), optional_idx()}};
 		CreateDependency(transaction, info);
 	}
@@ -454,7 +461,7 @@ static string EntryToString(CatalogEntryInfo &info) {
 		return StringUtil::Format("trigger \"%s\"", info.name);
 	}
 	case CatalogType::TOKENIZER_ENTRY: {
-		return StringUtil::Format("text search dictionary \"%s\"", info.name);
+		return StringUtil::Format("tokenizer \"%s\"", info.name);
 	}
 	case CatalogType::ROLE_ENTRY: {
 		return StringUtil::Format("role \"%s\"", info.name);
@@ -750,19 +757,9 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 				disallow_alter = false;
 				break;
 			}
-			case AlterTableType::REMOVE_COLUMN: {
-				// Index dependents are checked precisely by the storage layer:
-				// the DataTable constructor refuses the drop when any index
-				// references the removed column (or one after it).
-				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
-					disallow_alter = false;
-				}
-				break;
-			}
-			case AlterTableType::RENAME_COLUMN: {
-				// Secondary indexes reference their table by catalog entry and
-				// their key columns by storage position, so a rename underneath
-				// them does not affect index lookups.
+			case AlterTableType::REMOVE_COLUMN:
+			case AlterTableType::RENAME_COLUMN:
+			case AlterTableType::ALTER_COLUMN_TYPE: {
 				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
 					disallow_alter = false;
 				}
