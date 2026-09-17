@@ -207,7 +207,8 @@ struct DateTrunc {
 
 	static inline int64_t MonthIndex(int64_t days) {
 		if (DateTruncTable::Contains(days)) {
-			return int64_t(DateTruncTable::FIRST_YEAR) * Interval::MONTHS_PER_YEAR + DateTruncTable::INSTANCE.Month(days);
+			return int64_t(DateTruncTable::FIRST_YEAR) * Interval::MONTHS_PER_YEAR +
+			       DateTruncTable::INSTANCE.Month(days);
 		}
 		const auto yd = ToYearDay(UnsafeNumericCast<int32_t>(days));
 		return yd.year * Interval::MONTHS_PER_YEAR + MonthOf(yd) - 1;
