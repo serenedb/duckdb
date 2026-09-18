@@ -237,7 +237,11 @@ optional_ptr<CreateSecretFunction> SecretManager::LookupFunctionInternal(const I
 
 unique_ptr<SecretEntry> SecretManager::CreateSecret(ClientContext &context, const CreateSecretInput &input) {
 	// Note that a context is required for CreateSecret, as the CreateSecretFunction expects one
-	auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
+	return CreateSecret(context, input, CatalogTransaction::GetSystemCatalogTransaction(context));
+}
+
+unique_ptr<SecretEntry> SecretManager::CreateSecret(ClientContext &context, const CreateSecretInput &input,
+                                                    CatalogTransaction transaction) {
 	InitializeSecrets(transaction);
 
 	// Make a copy to set the provider to default if necessary
