@@ -432,6 +432,11 @@
         "id": 319,
         "name": "default_scope",
         "type": "idx_t"
+      },
+      {
+        "id": 320,
+        "name": "all_in_schema",
+        "type": "bool"
       }
     ]
   },

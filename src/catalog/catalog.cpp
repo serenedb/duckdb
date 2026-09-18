@@ -1327,6 +1327,10 @@ void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		AlterSchema(transaction, info);
 		return;
 	}
+	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().all_in_schema) {
+		GetSchema(transaction, info.GetQualifiedName().Schema()).Alter(transaction, info);
+		return;
+	}
 	if (transaction.HasContext()) {
 		CatalogEntryRetriever retriever(transaction.GetContext());
 		EntryLookupInfo lookup_info(info.GetCatalogType(), info.GetQualifiedName());

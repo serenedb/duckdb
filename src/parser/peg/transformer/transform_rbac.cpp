@@ -742,7 +742,24 @@ static void TransformGrantTarget(PEGTransformer &transformer, ParseResult &targe
                                  AlterPermissionsInfo &info) {
 	auto &chosen = target_choice_holder.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 	if (chosen.name == "GrantAllInSchema") {
-		throw NotImplementedException("GRANT ... ON ALL ... IN SCHEMA is not supported");
+		auto &all = chosen.Cast<ListParseResult>();
+		auto kind = StringUtil::Upper(all.GetChild(1)
+		                                  .Cast<ListParseResult>()
+		                                  .Child<ChoiceParseResult>(0)
+		                                  .GetResult()
+		                                  .Cast<KeywordParseResult>()
+		                                  .keyword);
+		if (kind == "TABLES") {
+			info.entry_catalog_type = CatalogType::TABLE_ENTRY;
+		} else if (kind == "SEQUENCES") {
+			info.entry_catalog_type = CatalogType::SEQUENCE_ENTRY;
+		} else {
+			info.entry_catalog_type = CatalogType::MACRO_ENTRY;
+		}
+		auto schema = transformer.Transform<QualifiedName>(all.GetChild(4));
+		info.SetQualifiedName(schema.Schema(), schema.Name(), Identifier());
+		info.all_in_schema = true;
+		return;
 	}
 	if (chosen.name == "GrantFunctionTarget") {
 		// 0:GrantRoutineKind 1:QualifiedName 2:FuncArgSignature?

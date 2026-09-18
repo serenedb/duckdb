@@ -362,6 +362,7 @@ void AlterPermissionsInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<string>(317, "default_schema", default_schema);
 	serializer.WritePropertyWithDefault<idx_t>(318, "target_role", target_role);
 	serializer.WritePropertyWithDefault<idx_t>(319, "default_scope", default_scope);
+	serializer.WritePropertyWithDefault<bool>(320, "all_in_schema", all_in_schema);
 }
 
 unique_ptr<AlterInfo> AlterPermissionsInfo::Deserialize(Deserializer &deserializer) {
@@ -384,6 +385,7 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Deserialize(Deserializer &deserializ
 	deserializer.ReadPropertyWithDefault<string>(317, "default_schema", result->default_schema);
 	deserializer.ReadPropertyWithDefault<idx_t>(318, "target_role", result->target_role);
 	deserializer.ReadPropertyWithDefault<idx_t>(319, "default_scope", result->default_scope);
+	deserializer.ReadPropertyWithDefault<bool>(320, "all_in_schema", result->all_in_schema);
 	return std::move(result);
 }
 

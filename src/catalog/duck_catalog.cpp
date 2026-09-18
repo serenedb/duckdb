@@ -20,12 +20,13 @@
 
 namespace duckdb {
 
-DuckCatalog::DuckCatalog(AttachedDatabase &db, bool case_sensitive_schemas)
+DuckCatalog::DuckCatalog(AttachedDatabase &db, bool case_sensitive_names)
     : Catalog(db), dependency_manager(make_uniq<DependencyManager>(*this)),
       schemas(make_uniq<CatalogSet>(*this, IsSystemCatalog() ? make_uniq<DefaultSchemaGenerator>(*this) : nullptr,
-                                    case_sensitive_schemas)),
-      roles(make_uniq<CatalogSet>(*this, nullptr, false)), databases(make_uniq<CatalogSet>(*this, nullptr, false)),
-      foreign_servers(make_uniq<CatalogSet>(*this, nullptr, false)) {
+                                    case_sensitive_names)),
+      roles(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
+      databases(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
+      foreign_servers(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)) {
 }
 
 DuckCatalog::~DuckCatalog() {

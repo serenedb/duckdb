@@ -21,6 +21,10 @@ TypeCatalogEntry::TypeCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema,
 	this->comment = info.comment;
 	this->tags = info.tags;
 	this->permissions = info.permissions;
+	const bool enum_alias_is_type_name = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (enum_alias_is_type_name && !internal && user_type.id() == LogicalTypeId::ENUM && !user_type.HasAlias()) {
+		user_type.SetAlias(name.GetIdentifierName());
+	}
 }
 
 unique_ptr<CatalogEntry> TypeCatalogEntry::Copy(ClientContext &context) const {

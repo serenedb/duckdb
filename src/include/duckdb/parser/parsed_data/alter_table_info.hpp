@@ -88,6 +88,7 @@ struct AlterPermissionsInfo : public AlterInfo {
 	string default_schema;
 	idx_t target_role = 0;
 	idx_t default_scope = 0;
+	bool all_in_schema = false;
 
 public:
 	CatalogType GetCatalogType() const override;
