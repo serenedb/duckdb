@@ -105,26 +105,6 @@ struct InternalDateTruncMonthUnbucketTzFun {
 	static ScalarFunction GetFunction();
 };
 
-struct InternalMonthOfYearFun {
-	static constexpr const char *Name = "__internal_month_of_year";
-	static constexpr const char *Parameters = "";
-	static constexpr const char *Description = "";
-	static constexpr const char *Example = "";
-	static constexpr const char *Categories = "";
-
-	static ScalarFunctionSet GetFunctions();
-};
-
-struct InternalDayOfWeekFun {
-	static constexpr const char *Name = "__internal_day_of_week";
-	static constexpr const char *Parameters = "";
-	static constexpr const char *Description = "";
-	static constexpr const char *Example = "";
-	static constexpr const char *Categories = "";
-
-	static ScalarFunctionSet GetFunctions();
-};
-
 struct InternalDateTruncUnbucketTimeFun {
 	static constexpr const char *Name = "__internal_date_trunc_unbucket_time";
 	static constexpr const char *Parameters = "";
@@ -137,6 +117,26 @@ struct InternalDateTruncUnbucketTimeFun {
 
 struct InternalTimeOfDayBucketFun {
 	static constexpr const char *Name = "__internal_time_of_day_bucket";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct InternalMonthOfYearFun {
+	static constexpr const char *Name = "__internal_month_of_year";
+	static constexpr const char *Parameters = "";
+	static constexpr const char *Description = "";
+	static constexpr const char *Example = "";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct InternalDayOfWeekFun {
+	static constexpr const char *Name = "__internal_day_of_week";
 	static constexpr const char *Parameters = "";
 	static constexpr const char *Description = "";
 	static constexpr const char *Example = "";

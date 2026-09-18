@@ -89,9 +89,8 @@ unique_ptr<BaseStatistics> PropagateDateTruncStatistics(ClientContext &context, 
 
 template <typename TA, typename TR>
 function_statistics_t DateTruncStats(DatePartSpecifier type) {
-	return DateTrunc::Dispatch(type, [](auto op) -> function_statistics_t {
-		return PropagateDateTruncStatistics<TA, TR, decltype(op)>;
-	});
+	return DateTrunc::Dispatch(
+	    type, [](auto op) -> function_statistics_t { return PropagateDateTruncStatistics<TA, TR, decltype(op)>; });
 }
 
 unique_ptr<FunctionData> DateTruncBind(BindScalarFunctionInput &input) {

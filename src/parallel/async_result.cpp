@@ -166,7 +166,6 @@ AsyncResultType AsyncResult::GetAsyncResultType(SourceResultType s) {
 bool AsyncResult::HasTasks() const {
 	D_ASSERT(result_type != AsyncResultType::INVALID);
 	if (async_tasks.empty()) {
-		D_ASSERT(result_type != AsyncResultType::BLOCKED);
 		return false;
 	} else {
 		D_ASSERT(result_type == AsyncResultType::BLOCKED);
@@ -175,11 +174,7 @@ bool AsyncResult::HasTasks() const {
 }
 AsyncResultType AsyncResult::GetResultType() const {
 	D_ASSERT(result_type != AsyncResultType::INVALID);
-	if (async_tasks.empty()) {
-		D_ASSERT(result_type != AsyncResultType::BLOCKED);
-	} else {
-		D_ASSERT(result_type == AsyncResultType::BLOCKED);
-	}
+	D_ASSERT(async_tasks.empty() || result_type == AsyncResultType::BLOCKED);
 	return result_type;
 }
 vector<unique_ptr<AsyncTask>> &&AsyncResult::ExtractAsyncTasks() {

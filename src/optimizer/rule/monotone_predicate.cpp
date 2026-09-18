@@ -214,8 +214,7 @@ bool CastAllowed(const LogicalType &from, const LogicalType &to) {
 	const auto f = from.id();
 	const auto t = to.id();
 	if (from.IsIntegral() && (to.IsIntegral() || t == LogicalTypeId::DOUBLE)) {
-		return GetTypeIdSize(from.InternalType()) < GetTypeIdSize(to.InternalType()) ||
-		       t == LogicalTypeId::DOUBLE;
+		return GetTypeIdSize(from.InternalType()) < GetTypeIdSize(to.InternalType()) || t == LogicalTypeId::DOUBLE;
 	}
 	switch (f) {
 	case LogicalTypeId::DATE:
@@ -262,7 +261,8 @@ optional_idx StepInput(const Expression &expr, InfinityRule &infinity, bool &fol
 	auto &func = expr.Cast<BoundFunctionExpression>();
 	auto &children = func.GetChildren();
 	const std::string_view name = func.Function().GetName().GetIdentifierName();
-	auto monotone = absl::c_find_if(MONOTONE_FUNCTIONS, [&](const MonotoneFunction &entry) { return name == entry.name; });
+	auto monotone =
+	    absl::c_find_if(MONOTONE_FUNCTIONS, [&](const MonotoneFunction &entry) { return name == entry.name; });
 	if (monotone != std::end(MONOTONE_FUNCTIONS)) {
 		if (children.size() < monotone->min_arguments || children.size() > monotone->max_arguments ||
 		    !OthersFoldable(children, monotone->input_index)) {
@@ -405,8 +405,8 @@ bool Probe(Evaluator &evaluator, PRED &pred, int64_t key, bool &result) {
 enum class Bracket : uint8_t { FAILED, SETTLED, BRACKETED };
 
 template <class PRED>
-Bracket BracketBoundary(Evaluator &evaluator, const Domain &domain, PRED &pred, int64_t guess, int64_t &lo,
-                        int64_t &hi, Boundary &boundary) {
+Bracket BracketBoundary(Evaluator &evaluator, const Domain &domain, PRED &pred, int64_t guess, int64_t &lo, int64_t &hi,
+                        Boundary &boundary) {
 	bool result = false;
 	if (!Probe(evaluator, pred, guess, result)) {
 		return Bracket::FAILED;
@@ -506,7 +506,7 @@ bool ZoneMonotone(ClientContext &context, Evaluator &evaluator, const Domain &do
 	}
 	vector<int64_t> transitions;
 	if (!MonotonePredicateRule::zone_transitions(context, from - TRANSITION_MARGIN, to + TRANSITION_MARGIN,
-	                                              transitions)) {
+	                                             transitions)) {
 		return false;
 	}
 	vector<int64_t> keys;

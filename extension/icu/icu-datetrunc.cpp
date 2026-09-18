@@ -170,7 +170,8 @@ struct ICUDateTrunc : public ICUDateFunc {
 
 	template <typename TA>
 	static ScalarFunction GetDateTruncFunction(const LogicalTypeId &type) {
-		ScalarFunction function({LogicalType::VARCHAR, type}, LogicalType::TIMESTAMP_TZ, ICUDateTruncFunction<TA>, Bind);
+		ScalarFunction function({LogicalType::VARCHAR, type}, LogicalType::TIMESTAMP_TZ, ICUDateTruncFunction<TA>,
+		                        Bind);
 		function.SetBucketRewriteCallback(ICUDateTruncBucketRewrite);
 		return function;
 	}
