@@ -123,6 +123,10 @@ public:
 	                                                  SecretPersistType persist_type, const string &storage = "");
 	//! Create a secret from a CreateSecretInfo
 	DUCKDB_API unique_ptr<SecretEntry> CreateSecret(ClientContext &context, const CreateSecretInput &info);
+	//! Create a secret registered through the given transaction, for secrets whose lifetime is not the caller's
+	//! transaction
+	DUCKDB_API unique_ptr<SecretEntry> CreateSecret(ClientContext &context, const CreateSecretInput &info,
+	                                                CatalogTransaction transaction);
 	//! The Bind for create secret is done by the secret manager
 	DUCKDB_API BoundStatement BindCreateSecret(CatalogTransaction transaction, CreateSecretInput &info);
 	//! Lookup the best matching secret by matching the secret scopes to the path
