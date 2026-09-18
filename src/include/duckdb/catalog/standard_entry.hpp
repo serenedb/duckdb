@@ -10,6 +10,7 @@
 
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
+#include "duckdb/catalog/schema_info.hpp"
 
 namespace duckdb {
 class SchemaCatalogEntry;
@@ -17,24 +18,23 @@ class SchemaCatalogEntry;
 //! A StandardEntry is a catalog entry that is a member of a schema
 class StandardEntry : public InCatalogEntry {
 public:
-	StandardEntry(CatalogType type, SchemaCatalogEntry &schema, Catalog &catalog, Identifier name, idx_t oid = 0)
-	    : InCatalogEntry(type, catalog, std::move(name), oid), schema(schema) {
-	}
+	StandardEntry(CatalogType type, SchemaCatalogEntry &schema, Catalog &catalog, Identifier name, idx_t oid = 0);
 	~StandardEntry() override {
 	}
 
-	//! The schema the entry belongs to
-	SchemaCatalogEntry &schema;
+	shared_ptr<SchemaInfo> schema_info;
 	//! The dependencies of the entry, can be empty
 	LogicalDependencyList dependencies;
 
 public:
-	SchemaCatalogEntry &ParentSchema() override {
-		return schema;
+	Identifier ParentSchemaName() const override {
+		return schema_info->name;
 	}
-	const SchemaCatalogEntry &ParentSchema() const override {
-		return schema;
+	idx_t ParentSchemaOid() const {
+		return schema_info->oid;
 	}
+	SchemaCatalogEntry &ParentSchema(CatalogTransaction transaction) const override;
+	using CatalogEntry::ParentSchema;
 };
 
 } // namespace duckdb

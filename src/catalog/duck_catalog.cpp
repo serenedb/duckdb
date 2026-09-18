@@ -136,6 +136,16 @@ void DuckCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	DropSchema(GetCatalogTransaction(context), info);
 }
 
+void DuckCatalog::AlterSchema(CatalogTransaction transaction, AlterInfo &info) {
+	auto &name = info.GetQualifiedName().Name();
+	D_ASSERT(!name.empty());
+	if (!schemas->AlterEntry(transaction, name, info)) {
+		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingEntry(CatalogType::SCHEMA_ENTRY, name, string());
+		}
+	}
+}
+
 unique_ptr<InCatalogEntry> DuckCatalog::MakeRoleEntry(CreateRoleInfo &info) {
 	throw NotImplementedException("Roles are not supported by this catalog");
 }

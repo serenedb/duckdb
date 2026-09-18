@@ -64,7 +64,7 @@ unique_ptr<CatalogEntry> DuckIndexEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateIndexInfo>();
 
-	auto result = make_uniq<DuckIndexEntry>(catalog, schema, cast_info, info);
+	auto result = make_uniq<DuckIndexEntry>(catalog, ParentSchema(context), cast_info, info);
 	result->initial_index_size = initial_index_size;
 
 	return std::move(result);

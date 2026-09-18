@@ -57,7 +57,7 @@ Identifier DependencyManager::GetSchema(const CatalogEntry &entry) {
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 		return Identifier::InvalidSchema();
 	default:
-		return entry.ParentSchema().name;
+		return entry.ParentSchemaName();
 	}
 }
 
@@ -624,7 +624,7 @@ catalog_entry_map_t<subdependency_set_t> DependencyManager::CheckDropDependencie
 
 bool DependencyManager::DropSubDependencies(CatalogTransaction transaction, CatalogEntry &table,
                                             const subdependency_set_t &subdependencies) {
-	AlterEntryData data(QualifiedName(catalog.GetName(), table.ParentSchema().name, table.name),
+	AlterEntryData data(QualifiedName(catalog.GetName(), table.ParentSchemaName(), table.name),
 	                    OnEntryNotFound::THROW_EXCEPTION);
 	try {
 		for (auto &subdependency : subdependencies) {
@@ -731,7 +731,6 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		// Don't do anything for this
 		return;
 	}
-
 	const auto old_info = GetLookupProperties(old_obj);
 	const auto new_info = GetLookupProperties(new_obj);
 
@@ -835,6 +834,7 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		CreateDependency(transaction, dep);
 	}
 }
+
 
 void DependencyManager::Scan(
     ClientContext &context,

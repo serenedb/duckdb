@@ -26,7 +26,7 @@ void Binder::BindDropTrigger(DropStatement &stmt, StatementProperties &propertie
 	BindSchemaOrCatalog(base_table_ref.GetQualifiedNameMutable());
 	// IF EXISTS only guards the trigger, not the table (PostgreSQL-compatible behavior).
 	auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context, base_table_ref.GetQualifiedName());
-	stmt.info->SetQualifiedName(QualifiedName(table_entry.ParentCatalog().GetName(), table_entry.ParentSchema().name,
+	stmt.info->SetQualifiedName(QualifiedName(table_entry.ParentCatalog().GetName(), table_entry.ParentSchemaName(),
 	                                          stmt.info->GetQualifiedName().Name()));
 	properties.RegisterDBModify(table_entry.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 }
@@ -102,7 +102,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 				                      stmt.info->is_procedure ? "procedure" : "function");
 			}
 		}
-		stmt.info->SetQualifiedName(QualifiedName(entry->ParentCatalog().GetName(), entry->ParentSchema().name,
+		stmt.info->SetQualifiedName(QualifiedName(entry->ParentCatalog().GetName(), entry->ParentSchemaName(),
 		                                          stmt.info->GetQualifiedName().Name()));
 		if (!entry->temporary) {
 			// we can only drop temporary schema entries in read-only mode

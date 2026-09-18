@@ -26,13 +26,13 @@ TypeCatalogEntry::TypeCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema,
 unique_ptr<CatalogEntry> TypeCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateTypeInfo>();
-	auto result = make_uniq<TypeCatalogEntry>(catalog, schema, cast_info);
+	auto result = make_uniq<TypeCatalogEntry>(catalog, ParentSchema(context), cast_info);
 	return std::move(result);
 }
 
 unique_ptr<CreateInfo> TypeCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateTypeInfo>();
-	result->SetQualifiedName(QualifiedName(catalog.GetName(), schema.name, name));
+	result->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchemaName(), name));
 	result->type = user_type;
 	result->extension_name = extension_name;
 	result->dependencies = dependencies;

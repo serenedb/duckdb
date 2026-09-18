@@ -11,6 +11,7 @@
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/catalog/schema_info.hpp"
 
 namespace duckdb {
 class ClientContext;
@@ -45,10 +46,14 @@ public:
 	static constexpr const char *Name = "schema";
 
 public:
-	SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info);
+	SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<SchemaInfo> schema_info = nullptr);
 
 public:
 	unique_ptr<CreateInfo> GetInfo() const override;
+
+	const shared_ptr<SchemaInfo> &GetSchemaInfo() const {
+		return schema_info;
+	}
 
 	//! Scan the specified catalog set, invoking the callback method for every entry
 	virtual void Scan(ClientContext &context, CatalogType type,
@@ -111,5 +116,8 @@ public:
 	virtual void Alter(CatalogTransaction transaction, AlterInfo &info) = 0;
 
 	CatalogTransaction GetCatalogTransaction(ClientContext &context);
+
+protected:
+	shared_ptr<SchemaInfo> schema_info;
 };
 } // namespace duckdb

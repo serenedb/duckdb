@@ -211,7 +211,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
 	}
 	stmt.info->SetQualifiedName(
-	    QualifiedName(catalog.GetName(), entry->ParentSchema().name, stmt.info->GetQualifiedName().Name()));
+	    QualifiedName(catalog.GetName(), entry->ParentSchemaName(), stmt.info->GetQualifiedName().Name()));
 
 	if (!stmt.info->IsAddUniqueConstraint()) {
 		result.plan = make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_ALTER, std::move(stmt.info));

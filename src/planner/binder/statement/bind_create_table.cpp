@@ -90,7 +90,7 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
-	auto binder = CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema().name);
+	auto binder = CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchemaName());
 	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
@@ -662,8 +662,8 @@ static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryR
 		}
 
 		auto &pk_table_entry_ptr = table_entry->Cast<TableCatalogEntry>();
-		fk.info.schema = pk_table_entry_ptr.schema.name;
-		if (&pk_table_entry_ptr.schema != &schema) {
+		fk.info.schema = pk_table_entry_ptr.ParentSchemaName();
+		if (pk_table_entry_ptr.schema_info != schema.GetSchemaInfo()) {
 			throw BinderException("Creating foreign keys across different schemas or catalogs is not supported");
 		}
 		FindMatchingPrimaryKeyColumns(pk_table_entry_ptr.GetColumns(), pk_table_entry_ptr.GetConstraints(), fk);

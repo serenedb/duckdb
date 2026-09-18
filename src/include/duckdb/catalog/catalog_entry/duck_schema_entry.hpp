@@ -14,11 +14,14 @@
 namespace duckdb {
 
 struct CreateTokenizerInfo;
+class DuckSchemaEntry;
 
-//! A schema in the catalog
-class DuckSchemaEntry : public SchemaCatalogEntry {
+class DuckSchemaSets {
 public:
-	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info);
+	DuckSchemaSets(Catalog &catalog, DuckSchemaEntry &schema);
+
+	CatalogSet &GetCatalogSet(CatalogType type);
+	void Verify(Catalog &catalog);
 
 private:
 	//! The catalog set holding the tables
@@ -43,6 +46,16 @@ private:
 	CatalogSet coordinate_systems;
 	//! The catalog set holding the tokenizers
 	CatalogSet tokenizers;
+};
+
+//! A schema in the catalog
+class DuckSchemaEntry : public SchemaCatalogEntry {
+public:
+	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<SchemaInfo> inherited_info = nullptr,
+	                shared_ptr<DuckSchemaSets> inherited_sets = nullptr);
+
+private:
+	shared_ptr<DuckSchemaSets> sets;
 
 public:
 	optional_ptr<CatalogEntry> AddEntry(CatalogTransaction transaction, unique_ptr<StandardEntry> entry,

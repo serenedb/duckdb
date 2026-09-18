@@ -119,8 +119,8 @@ void DuckDBTriggersFunction(ClientContext &context, TableFunctionInput &data_p, 
 
 		database_name.Append(Value(trigger.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.catalog.GetOid())));
-		schema_name.Append(Value(trigger.schema.name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.schema.oid)));
+		schema_name.Append(Value(trigger.ParentSchemaName()));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.ParentSchemaOid())));
 		trigger_name.Append(Value(trigger.name));
 		trigger_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.oid)));
 		table_name.Append(Value(trigger.base_table->Table()));

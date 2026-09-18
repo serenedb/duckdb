@@ -102,7 +102,7 @@ private:
 	unique_ptr<CatalogEntry> DropNotNull(ClientContext &context, DropNotNullInfo &info);
 	unique_ptr<CatalogEntry> DropConstraint(ClientContext &context, DropConstraintInfo &info);
 	unique_ptr<CatalogEntry> RenameConstraint(ClientContext &context, RenameConstraintInfo &info);
-	unique_ptr<CatalogEntry> AddForeignKeyConstraint(AlterForeignKeyInfo &info);
+	unique_ptr<CatalogEntry> AddForeignKeyConstraint(CatalogTransaction transaction, AlterForeignKeyInfo &info);
 	unique_ptr<CatalogEntry> DropForeignKeyConstraint(ClientContext &context, AlterForeignKeyInfo &info);
 	unique_ptr<CatalogEntry> SetColumnComment(ClientContext &context, SetColumnCommentInfo &info);
 	unique_ptr<CatalogEntry> AlterPermissions(ClientContext &context, AlterPermissionsInfo &info);

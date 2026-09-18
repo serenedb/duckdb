@@ -1318,7 +1318,15 @@ vector<reference<CatalogEntry>> Catalog::GetAllEntries(ClientContext &context, C
 	return result;
 }
 
+void Catalog::AlterSchema(CatalogTransaction transaction, AlterInfo &info) {
+	throw NotImplementedException("ALTER SCHEMA is not supported for this catalog");
+}
+
 void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
+	if (info.GetCatalogType() == CatalogType::SCHEMA_ENTRY) {
+		AlterSchema(transaction, info);
+		return;
+	}
 	if (transaction.HasContext()) {
 		CatalogEntryRetriever retriever(transaction.GetContext());
 		EntryLookupInfo lookup_info(info.GetCatalogType(), info.GetQualifiedName());

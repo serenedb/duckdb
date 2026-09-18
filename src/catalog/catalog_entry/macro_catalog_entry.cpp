@@ -25,7 +25,7 @@ ScalarMacroCatalogEntry::ScalarMacroCatalogEntry(Catalog &catalog, SchemaCatalog
 unique_ptr<CatalogEntry> ScalarMacroCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateMacroInfo>();
-	auto result = make_uniq<ScalarMacroCatalogEntry>(catalog, schema, cast_info);
+	auto result = make_uniq<ScalarMacroCatalogEntry>(catalog, ParentSchema(context), cast_info);
 	return std::move(result);
 }
 
@@ -36,13 +36,13 @@ TableMacroCatalogEntry::TableMacroCatalogEntry(Catalog &catalog, SchemaCatalogEn
 unique_ptr<CatalogEntry> TableMacroCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateMacroInfo>();
-	auto result = make_uniq<TableMacroCatalogEntry>(catalog, schema, cast_info);
+	auto result = make_uniq<TableMacroCatalogEntry>(catalog, ParentSchema(context), cast_info);
 	return std::move(result);
 }
 
 unique_ptr<CreateInfo> MacroCatalogEntry::GetInfo() const {
 	auto info = make_uniq<CreateMacroInfo>(type);
-	info->SetQualifiedName(QualifiedName(catalog.GetName(), schema.name, name));
+	info->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchemaName(), name));
 	for (auto &function : macros) {
 		info->macros.push_back(function->Copy());
 	}

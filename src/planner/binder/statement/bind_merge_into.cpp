@@ -309,7 +309,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 
 	// bind table constraints/default values in case these are referenced
 	auto &catalog_name = table.ParentCatalog().GetName();
-	auto &schema_name = table.ParentSchema().name;
+	auto schema_name = table.ParentSchemaName();
 	BindDefaultValues(table.GetColumns(), merge_into->bound_defaults, catalog_name.GetIdentifierName(),
 	                  schema_name.GetIdentifierName());
 

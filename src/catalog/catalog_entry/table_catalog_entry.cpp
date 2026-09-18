@@ -105,7 +105,7 @@ vector<LogicalType> TableCatalogEntry::GetTypes() const {
 
 unique_ptr<CreateInfo> TableCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateTableInfo>();
-	result->SetQualifiedName(QualifiedName(catalog.GetName(), schema.name, name));
+	result->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchemaName(), name));
 	result->columns = columns.Copy();
 	result->constraints.reserve(constraints.size());
 	result->dependencies = dependencies;
@@ -389,7 +389,7 @@ optional_ptr<CatalogEntry> TableCatalogEntry::CreateTrigger(CatalogTransaction t
 	if (!triggers) {
 		throw NotImplementedException("Triggers are not supported for this table type");
 	}
-	auto trigger = make_uniq<TriggerCatalogEntry>(catalog, schema, info);
+	auto trigger = make_uniq<TriggerCatalogEntry>(catalog, ParentSchema(transaction), info);
 	auto entry_name = trigger->name;
 	LogicalDependencyList dependencies = trigger->dependencies;
 	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {

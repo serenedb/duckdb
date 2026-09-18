@@ -44,7 +44,7 @@ static string GetSchema(CatalogEntry &entry) {
 	if (entry.type == CatalogType::SCHEMA_ENTRY) {
 		return entry.name.GetIdentifierName();
 	}
-	return entry.ParentSchema().name.GetIdentifierName();
+	return entry.ParentSchemaName().GetIdentifierName();
 }
 
 LogicalDependency::LogicalDependency(CatalogEntry &entry) {

@@ -52,7 +52,7 @@ ViewCatalogEntry::ViewCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema,
 
 unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateViewInfo>();
-	result->SetQualifiedName(QualifiedName({schema.name}, name));
+	result->SetQualifiedName(QualifiedName({ParentSchemaName()}, name));
 	result->sql = sql;
 	result->query = query ? unique_ptr_cast<SQLStatement, SelectStatement>(query->Copy()) : nullptr;
 	result->aliases = aliases;
@@ -146,7 +146,7 @@ void ViewCatalogEntry::BindView(ClientContext &context, BindViewAction action) {
 	bind_thread = ThreadUtil::GetThreadId();
 	try {
 		auto columns = make_shared_ptr<ViewColumnInfo>();
-		Binder::BindView(context, GetQuery(), ParentCatalog().GetName(), ParentSchema().name, nullptr, aliases,
+		Binder::BindView(context, GetQuery(), ParentCatalog().GetName(), ParentSchemaName(), nullptr, aliases,
 		                 columns->types, columns->names);
 		view_columns.atomic_store(columns);
 	} catch (...) {
@@ -191,7 +191,7 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::Copy(ClientContext &context) const {
 	D_ASSERT(!internal);
 	auto create_info = GetInfo();
 
-	return make_uniq<ViewCatalogEntry>(catalog, schema, create_info->Cast<CreateViewInfo>());
+	return make_uniq<ViewCatalogEntry>(catalog, ParentSchema(context), create_info->Cast<CreateViewInfo>());
 }
 
 } // namespace duckdb

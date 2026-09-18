@@ -263,7 +263,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(CatalogTransaction transacti
 	}
 
 	// We add foreign key constraints without a client context during checkpoint loading.
-	return AddForeignKeyConstraint(foreign_key_constraint_info);
+	return AddForeignKeyConstraint(transaction, foreign_key_constraint_info);
 }
 
 // The indexes over a table keep the table and its columns by name: in their key expressions, in their
@@ -272,7 +272,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(CatalogTransaction transacti
 static void UpdateDependentIndexes(ClientContext &context, DuckTableEntry &table,
                                    const std::function<void(DuckIndexEntry &)> &update) {
 	auto &data_table_info = table.GetStorage().GetDataTableInfo();
-	table.schema.Scan(context, CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
+	table.ParentSchema(context).Scan(context, CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
 		auto &index = entry.Cast<DuckIndexEntry>();
 		if (RefersToSameObject(index.GetDataTableInfo(), *data_table_info)) {
 			update(index);
@@ -378,7 +378,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 	case AlterTableType::FOREIGN_KEY_CONSTRAINT: {
 		auto &foreign_key_constraint_info = table_info.Cast<AlterForeignKeyInfo>();
 		if (foreign_key_constraint_info.type == AlterForeignKeyType::AFT_ADD) {
-			return AddForeignKeyConstraint(foreign_key_constraint_info);
+			return AddForeignKeyConstraint(catalog.GetCatalogTransaction(context), foreign_key_constraint_info);
 		} else {
 			return DropForeignKeyConstraint(context, foreign_key_constraint_info);
 		}
@@ -424,6 +424,7 @@ void DuckTableEntry::UndoAlter(ClientContext &context, AlterInfo &info) {
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::RenameColumn(ClientContext &context, RenameColumnInfo &info) {
+	auto &schema = ParentSchema(context);
 	auto rename_idx = GetColumnIndex(info.old_name);
 	if (rename_idx.index == COLUMN_IDENTIFIER_ROW_ID) {
 		throw CatalogException("Cannot rename rowid column");
@@ -453,6 +454,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameColumn(ClientContext &context, Re
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::AddColumn(ClientContext &context, AddColumnInfo &info) {
+	auto &schema = ParentSchema(context);
 	auto col_name = info.new_column.GetName();
 
 	// We're checking for the opposite condition (ADD COLUMN IF _NOT_ EXISTS ...).
@@ -772,6 +774,7 @@ void DuckTableEntry::UpdateConstraintsOnColumnDrop(const LogicalIndex &removed_i
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, RemoveColumnInfo &info) {
+	auto &schema = ParentSchema(context);
 	auto removed_index = GetColumnIndex(info.removed_column, info.if_column_exists);
 	if (!removed_index.IsValid()) {
 		if (!info.if_column_exists) {
@@ -1086,6 +1089,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameField(ClientContext &context, Ren
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::SetDefault(ClientContext &context, SetDefaultInfo &info) {
+	auto &schema = ParentSchema(context);
 	auto default_idx = GetColumnIndex(info.column_name);
 	if (default_idx.index == COLUMN_IDENTIFIER_ROW_ID) {
 		throw CatalogException("Cannot SET DEFAULT for rowid column");
@@ -1108,6 +1112,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::SetDefault(ClientContext &context, SetD
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::SetNotNull(ClientContext &context, SetNotNullInfo &info) {
+	auto &schema = ParentSchema(context);
 	auto not_null_idx = GetColumnIndex(info.column_name);
 	if (columns.GetColumn(LogicalIndex(not_null_idx)).Generated()) {
 		throw BinderException("Unsupported constraint for generated column!");
@@ -1146,6 +1151,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::SetNotNull(ClientContext &context, SetN
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::DropNotNull(ClientContext &context, DropNotNullInfo &info) {
+	auto &schema = ParentSchema(context);
 	auto not_null_idx = GetColumnIndex(info.column_name);
 
 	auto create_info = GetInfo();
@@ -1178,6 +1184,7 @@ static optional_idx FindConstraint(const vector<unique_ptr<Constraint>> &constra
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::DropConstraint(ClientContext &context, DropConstraintInfo &info) {
+	auto &schema = ParentSchema(context);
 	auto create_info = GetInfo();
 	auto &table_info = create_info->Cast<CreateTableInfo>();
 	auto constraint_idx = FindConstraint(table_info.constraints, info.constraint_name);
@@ -1196,6 +1203,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropConstraint(ClientContext &context, 
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::RenameConstraint(ClientContext &context, RenameConstraintInfo &info) {
+	auto &schema = ParentSchema(context);
 	auto create_info = GetInfo();
 	auto &table_info = create_info->Cast<CreateTableInfo>();
 	auto constraint_idx = FindConstraint(table_info.constraints, info.old_name);
@@ -1211,6 +1219,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameConstraint(ClientContext &context
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context, ChangeColumnTypeInfo &info) {
+	auto &schema = ParentSchema(context);
 	// Bind type
 	auto type_binder = Binder::CreateBinder(context);
 	type_binder->SetSearchPath(catalog, schema.name);
@@ -1317,6 +1326,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::SetColumnComment(ClientContext &context, SetColumnCommentInfo &info) {
+	auto &schema = ParentSchema(context);
 	auto col_idx = GetColumnIndex(info.column_name);
 	if (col_idx.index == COLUMN_IDENTIFIER_ROW_ID) {
 		throw CatalogException("Cannot SET COMMENT for rowid column");
@@ -1335,6 +1345,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::SetColumnComment(ClientContext &context
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::AlterPermissions(ClientContext &context, AlterPermissionsInfo &info) {
+	auto &schema = ParentSchema(context);
 	auto create_info = GetInfo();
 	auto &table_info = create_info->Cast<CreateTableInfo>();
 	table_info.permissions = permissions;
@@ -1345,7 +1356,9 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterPermissions(ClientContext &context
 	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
 }
 
-unique_ptr<CatalogEntry> DuckTableEntry::AddForeignKeyConstraint(AlterForeignKeyInfo &info) {
+unique_ptr<CatalogEntry> DuckTableEntry::AddForeignKeyConstraint(CatalogTransaction transaction,
+                                                                 AlterForeignKeyInfo &info) {
+	auto &schema = ParentSchema(transaction);
 	D_ASSERT(info.type == AlterForeignKeyType::AFT_ADD);
 	auto create_info = make_uniq<CreateTableInfo>(schema, name);
 	create_info->temporary = temporary;
@@ -1371,6 +1384,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddForeignKeyConstraint(AlterForeignKey
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::DropForeignKeyConstraint(ClientContext &context, AlterForeignKeyInfo &info) {
+	auto &schema = ParentSchema(context);
 	D_ASSERT(info.type == AlterForeignKeyType::AFT_DELETE);
 	auto create_info = make_uniq<CreateTableInfo>(schema, name);
 	create_info->temporary = temporary;
@@ -1447,6 +1461,7 @@ void DuckTableEntry::OnDrop() {
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::AddConstraint(ClientContext &context, AddConstraintInfo &info) {
+	auto &schema = ParentSchema(context);
 	auto create_info = GetInfo();
 	auto &table_info = create_info->Cast<CreateTableInfo>();
 
@@ -1482,6 +1497,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddConstraint(ClientContext &context, A
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::Copy(ClientContext &context) const {
+	auto &schema = ParentSchema(context);
 	D_ASSERT(!internal);
 	auto create_info = GetInfo();
 

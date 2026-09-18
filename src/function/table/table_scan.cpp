@@ -930,8 +930,8 @@ InsertionOrderPreservingMap<string> TableScanToString(TableFunctionToStringInput
 static void TableScanSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
                                const TableFunction &function) {
 	auto &bind_data = bind_data_p->Cast<TableScanBindData>();
-	serializer.WriteProperty(100, "catalog", bind_data.table.schema.catalog.GetName());
-	serializer.WriteProperty(101, "schema", bind_data.table.schema.name);
+	serializer.WriteProperty(100, "catalog", bind_data.table.ParentCatalog().GetName());
+	serializer.WriteProperty(101, "schema", bind_data.table.ParentSchemaName());
 	serializer.WriteProperty(102, "table", bind_data.table.name);
 	serializer.WriteProperty(103, "is_index_scan", bind_data.is_index_scan);
 	serializer.WriteProperty(104, "is_create_index", bind_data.is_create_index);
@@ -1047,7 +1047,7 @@ unique_ptr<TableRef> TableScanFunction::IndexReplacementScan(ClientContext &cont
 	}
 	vector<unique_ptr<ParsedExpression>> arguments;
 	arguments.push_back(make_uniq<ConstantExpression>(Value(index->ParentCatalog().GetName().GetIdentifierName())));
-	arguments.push_back(make_uniq<ConstantExpression>(Value(index->ParentSchema().name.GetIdentifierName())));
+	arguments.push_back(make_uniq<ConstantExpression>(Value(index->ParentSchemaName().GetIdentifierName())));
 	arguments.push_back(make_uniq<ConstantExpression>(Value(index->name.GetIdentifierName())));
 	auto ref = make_uniq<TableFunctionRef>();
 	ref->function = make_uniq<FunctionExpression>("index_scan", std::move(arguments));

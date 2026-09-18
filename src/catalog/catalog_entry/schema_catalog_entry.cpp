@@ -10,12 +10,16 @@
 
 namespace duckdb {
 
-SchemaCatalogEntry::SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info)
-    : InCatalogEntry(CatalogType::SCHEMA_ENTRY, catalog, info.GetQualifiedName().Schema(), info.oid) {
+SchemaCatalogEntry::SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<SchemaInfo> schema_info_p)
+    : InCatalogEntry(CatalogType::SCHEMA_ENTRY, catalog, info.GetQualifiedName().Schema(), info.oid),
+      schema_info(std::move(schema_info_p)) {
 	this->internal = info.internal;
 	this->comment = info.comment;
 	this->tags = info.tags;
 	this->permissions = info.permissions;
+	if (!schema_info) {
+		schema_info = make_shared_ptr<SchemaInfo>(oid, name);
+	}
 }
 
 CatalogTransaction SchemaCatalogEntry::GetCatalogTransaction(ClientContext &context) {

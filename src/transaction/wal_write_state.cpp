@@ -34,7 +34,7 @@ WALWriteState::WALWriteState(DuckTransaction &transaction_p, WriteAheadLog &log,
 void WALWriteState::SwitchTable(DuckTableEntry &table_entry, UndoFlags new_op) {
 	if (current_table_entry.get() != &table_entry) {
 		// write the current table to the log
-		log.WriteSetTable(table_entry.schema.name, table_entry.name);
+		log.WriteSetTable(table_entry.ParentSchemaName(), table_entry.name);
 		current_table_entry = table_entry;
 	}
 }
@@ -64,6 +64,7 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 	case CatalogType::ROLE_ENTRY:
 	case CatalogType::DATABASE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::SCHEMA_ENTRY:
 		if (entry.type == CatalogType::RENAMED_ENTRY || entry.type == parent.type) {
 			// ALTER statement, read the extra data after the entry
 			auto extra_data_size = Load<idx_t>(dataptr);
@@ -118,17 +119,13 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 			case CatalogType::FOREIGN_SERVER_ENTRY:
 				log.WriteCreateForeignServer(parent.Cast<InCatalogEntry>());
 				break;
+			case CatalogType::SCHEMA_ENTRY:
+				log.WriteCreateSchema(parent.Cast<SchemaCatalogEntry>());
+				break;
 			default:
 				throw InternalException("Don't know how to create this type!");
 			}
 		}
-		break;
-	case CatalogType::SCHEMA_ENTRY:
-		if (entry.type == CatalogType::RENAMED_ENTRY || entry.type == CatalogType::SCHEMA_ENTRY) {
-			// ALTER TABLE statement, skip it
-			return;
-		}
-		log.WriteCreateSchema(parent.Cast<SchemaCatalogEntry>());
 		break;
 	case CatalogType::RENAMED_ENTRY:
 		// This is a rename, nothing needs to be done for this

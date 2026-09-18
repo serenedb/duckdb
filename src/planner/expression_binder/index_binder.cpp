@@ -106,7 +106,7 @@ unique_ptr<LogicalOperator> IndexBinder::BindCreateIndex(ClientContext &context,
 	}
 
 	auto &get = plan->Cast<LogicalGet>();
-	InitCreateIndexInfo(get, *create_index_info, table_entry.schema.name);
+	InitCreateIndexInfo(get, *create_index_info, table_entry.ParentSchemaName());
 	auto &bind_data = get.bind_data->Cast<TableScanBindData>();
 	bind_data.is_create_index = true;
 

@@ -51,6 +51,7 @@ public:
 
 public:
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) override;
+	DUCKDB_API void AlterSchema(CatalogTransaction transaction, AlterInfo &info) override;
 	DUCKDB_API virtual unique_ptr<IndexCatalogEntry> MakeIndexEntry(DuckSchemaEntry &schema, CreateIndexInfo &info,
 	                                                                CatalogEntry &relation);
 	DUCKDB_API virtual unique_ptr<TableCatalogEntry>

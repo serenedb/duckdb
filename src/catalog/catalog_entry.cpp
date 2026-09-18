@@ -111,14 +111,19 @@ const Catalog &CatalogEntry::ParentCatalog() const {
 	throw InternalException("CatalogEntry::ParentCatalog called on catalog entry without catalog");
 }
 
-SchemaCatalogEntry &CatalogEntry::ParentSchema() {
-	throw InternalException("CatalogEntry::ParentSchema called on catalog entry without schema");
+Identifier CatalogEntry::ParentSchemaName() const {
+	throw InternalException("CatalogEntry::ParentSchemaName called on catalog entry without schema");
 }
 
-const SchemaCatalogEntry &CatalogEntry::ParentSchema() const {
+SchemaCatalogEntry &CatalogEntry::ParentSchema(CatalogTransaction transaction) const {
 	throw InternalException("CatalogEntry::ParentSchema called on catalog entry without schema");
 }
 // LCOV_EXCL_STOP
+
+SchemaCatalogEntry &CatalogEntry::ParentSchema(ClientContext &context) const {
+	auto &catalog = const_cast<CatalogEntry &>(*this).ParentCatalog();
+	return ParentSchema(catalog.GetCatalogTransaction(context));
+}
 
 void CatalogEntry::Serialize(Serializer &serializer) const {
 	const auto info = GetInfo();
