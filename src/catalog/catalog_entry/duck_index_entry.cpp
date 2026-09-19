@@ -12,26 +12,17 @@ IndexDataTableInfo::IndexDataTableInfo(shared_ptr<DataTableInfo> info_p, const I
     : info(std::move(info_p)), index_name(index_name_p) {
 }
 
-static void RenameIndex(TableIndexList &indexes, const Identifier &name, const Identifier &new_name) {
-	auto index = indexes.Find(name);
-	if (index) {
-		index->name = new_name;
-	}
-}
-
 unique_ptr<CatalogEntry> DuckIndexEntry::AlterEntry(ClientContext &context, AlterInfo &alter_info) {
 	auto result = CatalogEntry::AlterEntry(context, alter_info);
 	if (alter_info.type == AlterType::RENAME && info && info->info) {
-		auto &indexes = info->info->GetIndexes();
-		indexes.Bind(context, *info->info);
-		RenameIndex(indexes, name, result->name);
+		info->info->GetIndexes().RenameIndex(name, result->name);
 	}
 	return result;
 }
 
 void DuckIndexEntry::UndoAlter(ClientContext &context, AlterInfo &alter_info) {
 	if (info && info->info) {
-		RenameIndex(info->info->GetIndexes(), alter_info.Cast<RenameInfo>().new_name, name);
+		info->info->GetIndexes().RenameIndex(alter_info.Cast<RenameInfo>().new_name, name);
 	}
 }
 
@@ -44,7 +35,7 @@ void DuckIndexEntry::Rollback(CatalogEntry &prev_entry) {
 		indexes.RemoveIndex(name);
 		return;
 	}
-	RenameIndex(indexes, name, prev_entry.name);
+	indexes.RenameIndex(name, prev_entry.name);
 }
 
 DuckIndexEntry::DuckIndexEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateIndexInfo &create_info,

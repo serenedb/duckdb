@@ -110,6 +110,16 @@ void TableIndexList::RemoveIndex(const Identifier &name) {
 	}
 }
 
+void TableIndexList::RenameIndex(const Identifier &name, const Identifier &new_name) {
+	lock_guard<mutex> lock(index_entries_lock);
+	for (auto &entry : index_entries) {
+		if (entry->index->GetIndexName() == name) {
+			entry->index->SetIndexName(new_name);
+			return;
+		}
+	}
+}
+
 unordered_set<string> TableIndexList::DistinctIndexTypes() const {
 	lock_guard<mutex> lock(index_entries_lock);
 	unordered_set<string> result;

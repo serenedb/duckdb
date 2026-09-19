@@ -47,6 +47,7 @@ InsertDatabasePathResult DatabaseFilePathManager::InsertDatabasePath(DatabaseMan
 				existing.reuse_claimed = true;
 				return InsertDatabasePathResult::REUSE_EXISTING;
 			}
+			return InsertDatabasePathResult::ALREADY_EXISTS;
 		}
 		bool already_exists = false;
 		bool attached_in_this_system = false;
