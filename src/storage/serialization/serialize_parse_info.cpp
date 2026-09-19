@@ -129,6 +129,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	case AlterType::RENAME:
 		result = RenameInfo::Deserialize(deserializer);
 		break;
+	case AlterType::REPLACE_DEFINITION:
+		result = ReplaceDefinitionInfo::Deserialize(deserializer);
+		break;
 	case AlterType::SET_COLUMN_COMMENT:
 		result = SetColumnCommentInfo::Deserialize(deserializer);
 		break;
@@ -756,6 +759,17 @@ unique_ptr<AlterInfo> RenameInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<RenameInfo>(new RenameInfo());
 	deserializer.ReadProperty<CatalogType>(300, "entry_catalog_type", result->entry_catalog_type);
 	deserializer.ReadPropertyWithDefault<Identifier>(301, "new_name", result->new_name);
+	return std::move(result);
+}
+
+void ReplaceDefinitionInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(300, "definition", definition);
+}
+
+unique_ptr<AlterInfo> ReplaceDefinitionInfo::Deserialize(Deserializer &deserializer) {
+	auto definition = deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(300, "definition");
+	auto result = duckdb::unique_ptr<ReplaceDefinitionInfo>(new ReplaceDefinitionInfo(std::move(definition)));
 	return std::move(result);
 }
 

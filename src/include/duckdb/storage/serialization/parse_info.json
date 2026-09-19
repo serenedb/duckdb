@@ -339,6 +339,19 @@
     ]
   },
   {
+    "class": "ReplaceDefinitionInfo",
+    "base": "AlterInfo",
+    "enum": "REPLACE_DEFINITION",
+    "members": [
+      {
+        "id": 300,
+        "name": "definition",
+        "type": "CreateInfo*"
+      }
+    ],
+    "constructor": ["definition"]
+  },
+  {
     "class": "AlterPermissionsInfo",
     "base": "AlterInfo",
     "enum": "ALTER_PERMISSIONS",

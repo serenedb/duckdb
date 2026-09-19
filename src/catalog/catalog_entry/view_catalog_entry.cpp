@@ -4,6 +4,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/main/query_result.hpp"
@@ -73,6 +74,40 @@ unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 
 unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
 	D_ASSERT(!internal);
+
+	if (info.type == AlterType::REPLACE_DEFINITION) {
+		auto &definition = info.Cast<ReplaceDefinitionInfo>().definition->Cast<CreateViewInfo>();
+		auto columns = GetColumnInfo();
+		if (!columns) {
+			BindView(context);
+			columns = GetColumnInfo();
+		}
+		auto column_name = [](const vector<Identifier> &names, const vector<Identifier> &column_aliases, idx_t i) {
+			return i < column_aliases.size() ? column_aliases[i] : names[i];
+		};
+		if (definition.types.size() < columns->types.size()) {
+			throw BinderException("cannot drop columns from view");
+		}
+		for (idx_t i = 0; i < columns->types.size(); i++) {
+			auto old_name = column_name(columns->names, aliases, i);
+			auto new_name = column_name(definition.names, definition.aliases, i);
+			if (!(old_name == new_name)) {
+				throw BinderException("cannot change name of view column \"%s\" to \"%s\"", old_name.GetIdentifierName(),
+				                      new_name.GetIdentifierName());
+			}
+			if (columns->types[i] != definition.types[i]) {
+				throw BinderException("cannot change data type of view column \"%s\" from %s to %s",
+				                      old_name.GetIdentifierName(), columns->types[i].ToString(),
+				                      definition.types[i].ToString());
+			}
+		}
+		auto replaced = definition.Copy();
+		auto &replaced_view = replaced->Cast<CreateViewInfo>();
+		replaced_view.comment = comment;
+		replaced_view.tags = tags;
+		replaced_view.column_comments_map = column_comments;
+		return make_uniq<ViewCatalogEntry>(catalog, ParentSchema(context), replaced_view);
+	}
 
 	// Column comments have a special alter type
 	if (info.type == AlterType::SET_COLUMN_COMMENT) {

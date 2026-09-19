@@ -155,6 +155,29 @@ string RenameInfo::ToString() const {
 	       KeywordHelper::WriteOptionallyQuoted(new_name.GetIdentifierName()) + ";";
 }
 
+ReplaceDefinitionInfo::ReplaceDefinitionInfo(unique_ptr<CreateInfo> definition_p)
+    : AlterInfo(AlterType::REPLACE_DEFINITION, definition_p->GetQualifiedName(), OnEntryNotFound::THROW_EXCEPTION),
+      definition(std::move(definition_p)) {
+	new_dependencies = make_uniq<LogicalDependencyList>(definition->dependencies);
+}
+
+ReplaceDefinitionInfo::~ReplaceDefinitionInfo() {
+}
+
+CatalogType ReplaceDefinitionInfo::GetCatalogType() const {
+	return definition->type;
+}
+
+unique_ptr<AlterInfo> ReplaceDefinitionInfo::Copy() const {
+	auto result = make_uniq<ReplaceDefinitionInfo>(definition->Copy());
+	result->if_not_found = if_not_found;
+	return std::move(result);
+}
+
+string ReplaceDefinitionInfo::ToString() const {
+	return definition->ToString();
+}
+
 AlterPermissionsInfo::AlterPermissionsInfo()
     : AlterInfo(AlterType::ALTER_PERMISSIONS), entry_catalog_type(CatalogType::INVALID) {
 }

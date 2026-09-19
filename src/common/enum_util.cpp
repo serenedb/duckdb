@@ -639,7 +639,8 @@ const StringUtil::EnumStringLiteral *GetAlterTypeValues() {
 		{ static_cast<uint32_t>(AlterType::ALTER_PERMISSIONS), "ALTER_PERMISSIONS" },
 		{ static_cast<uint32_t>(AlterType::ALTER_ROLE), "ALTER_ROLE" },
 		{ static_cast<uint32_t>(AlterType::ALTER_INDEX), "ALTER_INDEX" },
-		{ static_cast<uint32_t>(AlterType::RENAME), "RENAME" }
+		{ static_cast<uint32_t>(AlterType::RENAME), "RENAME" },
+		{ static_cast<uint32_t>(AlterType::REPLACE_DEFINITION), "REPLACE_DEFINITION" }
 	};
 	return values;
 }

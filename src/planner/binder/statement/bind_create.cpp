@@ -293,7 +293,7 @@ void Binder::MergeMacroOverloads(CreateInfo &info) {
 			                       macro_info.GetFunctionName().GetIdentifierName());
 		}
 	}
-	info.on_conflict = OnCreateConflict::REPLACE_ON_CONFLICT;
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 }
 
 SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
@@ -869,6 +869,10 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &base = stmt.info->Cast<CreateViewInfo>();
 		// bind the schema
 		auto &schema = BindCreateSchema(*stmt.info);
+		const bool replace_alters_entry = schema.catalog.Compatibility() == SqlCompatibility::POSTGRES;
+		if (replace_alters_entry && stmt.info->on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+			stmt.info->on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		}
 		if (stmt.info->on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 			CatalogTransaction transaction(schema.ParentCatalog(), context);
 			auto existing_entry = schema.GetEntry(transaction, CatalogType::VIEW_ENTRY, base.GetViewName());

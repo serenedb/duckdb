@@ -10,6 +10,7 @@
 
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
+#include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/parser/column_definition.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/result_modifier.hpp"
@@ -116,6 +117,21 @@ public:
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 
 	explicit RenameInfo();
+};
+
+struct ReplaceDefinitionInfo : public AlterInfo {
+	explicit ReplaceDefinitionInfo(unique_ptr<CreateInfo> definition);
+	~ReplaceDefinitionInfo() override;
+
+	unique_ptr<CreateInfo> definition;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 };
 
 struct AlterRoleInfo : public AlterInfo {

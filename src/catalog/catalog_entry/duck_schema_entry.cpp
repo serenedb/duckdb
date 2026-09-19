@@ -240,17 +240,28 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTable(CatalogTransaction trans
 	return entry;
 }
 
+static bool AlterExistingEntry(DuckSchemaEntry &schema, CatalogTransaction transaction, CreateInfo &info,
+                               const Identifier &name) {
+	if (info.on_conflict != OnCreateConflict::ALTER_ON_CONFLICT) {
+		return false;
+	}
+	auto current_entry = schema.GetCatalogSet(info.type).GetEntry(transaction, name);
+	if (!current_entry) {
+		return false;
+	}
+	if (current_entry->type != info.type) {
+		throw CatalogException("Existing object %s is of type %s, trying to replace with type %s", name,
+		                       CatalogTypeToString(current_entry->type), CatalogTypeToString(info.type));
+	}
+	info.dependencies.AddDependency(schema);
+	auto alter_info = info.GetAlterInfo();
+	schema.Alter(transaction, *alter_info);
+	return true;
+}
+
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) {
-	if (info.on_conflict == OnCreateConflict::ALTER_ON_CONFLICT) {
-		// check if the original entry exists
-		auto &catalog_set = GetCatalogSet(info.type);
-		auto current_entry = catalog_set.GetEntry(transaction, info.GetFunctionName());
-		if (current_entry) {
-			// the current entry exists - alter it instead
-			auto alter_info = info.GetAlterInfo();
-			Alter(transaction, *alter_info);
-			return nullptr;
-		}
+	if (AlterExistingEntry(*this, transaction, info, info.GetFunctionName())) {
+		return nullptr;
 	}
 	unique_ptr<StandardEntry> function;
 	switch (info.type) {
@@ -312,6 +323,9 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTokenizer(CatalogTransaction t
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateView(CatalogTransaction transaction, CreateViewInfo &info) {
+	if (AlterExistingEntry(*this, transaction, info, info.GetViewName())) {
+		return nullptr;
+	}
 	auto view = make_uniq<ViewCatalogEntry>(catalog, *this, info);
 	return AddEntry(transaction, std::move(view), info.on_conflict);
 }

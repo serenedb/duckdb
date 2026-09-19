@@ -1,6 +1,8 @@
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
+#include "duckdb/common/exception/binder_exception.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
 namespace duckdb {
 
@@ -53,6 +55,23 @@ unique_ptr<CreateInfo> MacroCatalogEntry::GetInfo() const {
 	info->tags = tags;
 	info->permissions = permissions;
 	return std::move(info);
+}
+
+unique_ptr<CatalogEntry> MacroCatalogEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &info) {
+	if (info.type != AlterType::REPLACE_DEFINITION) {
+		return CatalogEntry::AlterEntry(transaction, info);
+	}
+	auto replaced = info.Cast<ReplaceDefinitionInfo>().definition->Copy();
+	auto &replaced_macro = replaced->Cast<CreateMacroInfo>();
+	if (replaced_macro.is_procedure != is_procedure) {
+		throw BinderException("cannot change routine kind");
+	}
+	replaced_macro.comment = comment;
+	replaced_macro.tags = tags;
+	if (replaced_macro.type == CatalogType::MACRO_ENTRY) {
+		return make_uniq<ScalarMacroCatalogEntry>(catalog, ParentSchema(transaction), replaced_macro);
+	}
+	return make_uniq<TableMacroCatalogEntry>(catalog, ParentSchema(transaction), replaced_macro);
 }
 
 string MacroCatalogEntry::ToSQL() const {
