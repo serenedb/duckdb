@@ -21,6 +21,8 @@
 namespace duckdb {
 class AttachedDatabase;
 class ClientContext;
+class SecretManager;
+class SecretStorage;
 struct DatabaseModificationType;
 class Transaction;
 
@@ -40,6 +42,7 @@ class MetaTransaction {
 public:
 	DUCKDB_API MetaTransaction(ClientContext &context, timestamp_t start_timestamp,
 	                           transaction_t global_transaction_id);
+	DUCKDB_API ~MetaTransaction();
 
 	ClientContext &context;
 	//! The timestamp when the transaction started
@@ -92,6 +95,8 @@ public:
 	vector<shared_ptr<AttachedDatabase>> &GetStatementDatabases(ClientContext &context);
 
 private:
+	friend class SecretManager;
+
 	//! Lock to prevent all_transactions and transactions from getting out of sync.
 	mutex lock;
 	//! The set of active transactions for each database.
@@ -115,6 +120,8 @@ private:
 	//! enumerations see one stable, pinned set even under concurrent ATTACH/DETACH.
 	//! Reset at each statement boundary in SetActiveQuery, lazy initialization.
 	vector<shared_ptr<AttachedDatabase>> statement_databases;
+	//! Secrets that only live for the duration of this transaction.
+	unique_ptr<SecretStorage> transaction_secret_storage;
 };
 
 } // namespace duckdb
