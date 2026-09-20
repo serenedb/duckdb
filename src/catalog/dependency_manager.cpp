@@ -293,6 +293,9 @@ void DependencyManager::CreateDependencies(CatalogTransaction transaction, const
 	// add the object to the dependents_map of each object that it depends on
 	const bool index_blocks_non_relations = catalog.Compatibility() == SqlCompatibility::POSTGRES;
 	for (auto &dependency : dependencies.Set()) {
+		if (dependency.entry == object_info) {
+			continue;
+		}
 		auto flags = dependency_flags;
 		const bool relation = dependency.entry.type == CatalogType::TABLE_ENTRY ||
 		                      dependency.entry.type == CatalogType::VIEW_ENTRY;
@@ -476,10 +479,13 @@ static string EntryToString(CatalogEntryInfo &info) {
 }
 
 string DependencyManager::CollectDependents(CatalogTransaction transaction, catalog_entry_set_t &entries,
-                                            CatalogEntryInfo &info) {
+                                            CatalogEntryInfo &info, catalog_entry_set_t &listed) {
 	string result;
 	for (auto &entry : entries) {
 		D_ASSERT(!IsSystemEntry(entry.get()));
+		if (!listed.insert(entry).second) {
+			continue;
+		}
 		auto other_info = GetLookupProperties(entry);
 		result += StringUtil::Format("%s depends on %s.\n", EntryToString(other_info), EntryToString(info));
 		catalog_entry_set_t entry_dependents;
@@ -493,7 +499,7 @@ string DependencyManager::CollectDependents(CatalogTransaction transaction, cata
 			}
 		});
 		if (!entry_dependents.empty()) {
-			result += CollectDependents(transaction, entry_dependents, other_info);
+			result += CollectDependents(transaction, entry_dependents, other_info, listed);
 		}
 	}
 	return result;
@@ -605,7 +611,8 @@ catalog_entry_map_t<subdependency_set_t> DependencyManager::CheckDropDependencie
 	if (!blocking_dependents.empty()) {
 		string error_string =
 		    StringUtil::Format("Cannot drop entry \"%s\" because there are entries that depend on it.\n", object.name);
-		error_string += CollectDependents(transaction, blocking_dependents, info);
+		catalog_entry_set_t listed {object};
+		error_string += CollectDependents(transaction, blocking_dependents, info, listed);
 		error_string += "Use DROP...CASCADE to drop all dependents.";
 		throw DependencyException(error_string);
 	}
@@ -697,6 +704,7 @@ void DependencyManager::ReorderEntry(CatalogTransaction transaction, CatalogEntr
 		// Already seen and ordered appropriately
 		return;
 	}
+	visited.insert(catalog_entry);
 
 	// Check if there are any entries that this entry depends on, those are written first
 	catalog_entry_vector_t dependents;
@@ -707,7 +715,6 @@ void DependencyManager::ReorderEntry(CatalogTransaction transaction, CatalogEntr
 	}
 
 	// Then write the entry
-	visited.insert(catalog_entry);
 	order.push_back(catalog_entry);
 }
 
@@ -776,6 +783,12 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		}
 		case AlterType::RENAME: {
 			if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
+				disallow_alter = false;
+			}
+			break;
+		}
+		case AlterType::REPLACE_DEFINITION: {
+			if (dep.EntryInfo().type != CatalogType::INDEX_ENTRY || old_obj.type == CatalogType::VIEW_ENTRY) {
 				disallow_alter = false;
 			}
 			break;
