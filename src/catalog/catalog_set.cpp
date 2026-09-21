@@ -380,7 +380,6 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	}
 	auto new_entry = value.get();
 	map.UpdateEntry(std::move(value));
-	new_entry->SetAsRoot(&transaction);
 
 	// push the old entry in the undo buffer for this transaction
 	unique_ptr<CatalogEntry> entry_to_destroy;
@@ -402,9 +401,7 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	}
 
 	// Update shared entry state only after the alter is installed and rollbackable.
-	if (new_entry->name != entry->name) {
-		new_entry->SetAsRoot();
-	}
+	new_entry->SetAsRoot(&transaction);
 
 	read_lock.unlock();
 	write_lock.unlock();

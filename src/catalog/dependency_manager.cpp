@@ -382,6 +382,56 @@ void DependencyManager::CleanupDependencies(CatalogTransaction transaction, Cata
 	}
 }
 
+void DependencyManager::RenameSchema(CatalogTransaction transaction, CatalogEntry &old_schema,
+                                     CatalogEntry &new_schema) {
+	auto old_info = GetLookupProperties(old_schema);
+	auto new_info = GetLookupProperties(new_schema);
+	IdentifierEquality equals(catalog.IsCaseSensitive());
+
+	vector<CatalogEntryInfo> children;
+	ScanDependents(transaction, old_info, [&](DependencyEntry &dep) { children.push_back(dep.EntryInfo()); });
+
+	vector<DependencyInfo> edges;
+	unordered_set<string> seen;
+	auto collect = [&](DependencyInfo edge) {
+		auto key = MangleName(edge.dependent.entry).name.GetIdentifierName() + '\0' +
+		           MangleName(edge.subject.entry).name.GetIdentifierName();
+		if (seen.insert(key).second) {
+			edges.push_back(std::move(edge));
+		}
+	};
+	for (auto &child : children) {
+		ScanDependents(transaction, child, [&](DependencyEntry &dep) {
+			auto &dependent = dep.EntryInfo();
+			const bool names_by_column =
+			    dependent.type == CatalogType::TABLE_ENTRY && equals(dependent.schema, old_info.name) &&
+			    (child.type == CatalogType::SEQUENCE_ENTRY || child.type == CatalogType::TYPE_ENTRY);
+			if (dependent.type != CatalogType::INDEX_ENTRY && !names_by_column) {
+				throw DependencyException("Cannot alter entry \"%s\" because there are entries that depend on it.",
+				                          old_schema.name);
+			}
+			collect(DependencyInfo::FromDependent(dep));
+		});
+		ScanSubjects(transaction, child, [&](DependencyEntry &dep) { collect(DependencyInfo::FromSubject(dep)); });
+	}
+
+	for (auto &edge : edges) {
+		RemoveDependency(transaction, edge);
+	}
+	auto rekey = [&](CatalogEntryInfo &info) {
+		if (info.type == CatalogType::SCHEMA_ENTRY && equals(info.name, old_info.name)) {
+			info = new_info;
+		} else if (equals(info.schema, old_info.name)) {
+			info.schema = new_info.name;
+		}
+	};
+	for (auto &edge : edges) {
+		rekey(edge.dependent.entry);
+		rekey(edge.subject.entry);
+		CreateDependency(transaction, edge);
+	}
+}
+
 void DependencyManager::RemoveDependencyBetween(CatalogTransaction transaction, CatalogEntry &dependent,
                                                 CatalogEntry &subject) {
 	if (IsSystemEntry(dependent) || IsSystemEntry(subject)) {
@@ -545,7 +595,8 @@ void DependencyManager::VerifyExistence(CatalogTransaction transaction, Dependen
 }
 
 void DependencyManager::VerifyCommitDrop(CatalogTransaction transaction, transaction_t start_time,
-                                         CatalogEntry &object) {
+                                         CatalogEntry &object_p) {
+	auto &object = object_p.type == CatalogType::RENAMED_ENTRY && object_p.HasChild() ? object_p.Child() : object_p;
 	if (IsSystemEntry(object)) {
 		return;
 	}
@@ -629,38 +680,31 @@ catalog_entry_map_t<subdependency_set_t> DependencyManager::CheckDropDependencie
 	return to_drop;
 }
 
-bool DependencyManager::DropSubDependencies(CatalogTransaction transaction, CatalogEntry &table,
+void DependencyManager::DropSubDependencies(CatalogTransaction transaction, CatalogEntry &table,
                                             const subdependency_set_t &subdependencies) {
 	AlterEntryData data(QualifiedName(catalog.GetName(), table.ParentSchemaName(), table.name),
 	                    OnEntryNotFound::THROW_EXCEPTION);
-	try {
-		for (auto &subdependency : subdependencies) {
-			switch (subdependency.alter) {
-			case AlterTableType::REMOVE_COLUMN: {
-				RemoveColumnInfo info(data, subdependency.name.GetIdentifierName(), true, true);
-				catalog.Alter(transaction, info);
-				break;
-			}
-			case AlterTableType::SET_DEFAULT: {
-				SetDefaultInfo info(data, subdependency.name, nullptr);
-				catalog.Alter(transaction, info);
-				break;
-			}
-			case AlterTableType::DROP_CONSTRAINT: {
-				DropConstraintInfo info(data, subdependency.name.GetIdentifierName(), true, false);
-				catalog.Alter(transaction, info);
-				break;
-			}
-			default:
-				throw InternalException("Unexpected subdependency alter type");
-			}
+	for (auto &subdependency : subdependencies) {
+		switch (subdependency.alter) {
+		case AlterTableType::REMOVE_COLUMN: {
+			RemoveColumnInfo info(data, subdependency.name.GetIdentifierName(), true, true);
+			catalog.Alter(transaction, info);
+			break;
 		}
-	} catch (InternalException &) {
-		throw;
-	} catch (std::exception &) {
-		return false;
+		case AlterTableType::SET_DEFAULT: {
+			SetDefaultInfo info(data, subdependency.name, nullptr);
+			catalog.Alter(transaction, info);
+			break;
+		}
+		case AlterTableType::DROP_CONSTRAINT: {
+			DropConstraintInfo info(data, subdependency.name.GetIdentifierName(), true, false);
+			catalog.Alter(transaction, info);
+			break;
+		}
+		default:
+			throw InternalException("Unexpected subdependency alter type");
+		}
 	}
-	return true;
 }
 
 void DependencyManager::DropObject(CatalogTransaction transaction, CatalogEntry &object, bool cascade) {
@@ -675,7 +719,8 @@ void DependencyManager::DropObject(CatalogTransaction transaction, CatalogEntry 
 
 	for (auto &entry : to_drop) {
 		auto &dependent = entry.first.get();
-		if (!entry.second.empty() && DropSubDependencies(transaction, dependent, entry.second)) {
+		if (dependent.type == CatalogType::TABLE_ENTRY && !entry.second.empty()) {
+			DropSubDependencies(transaction, dependent, entry.second);
 			continue;
 		}
 		D_ASSERT(dependent.set);
@@ -738,10 +783,15 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		// Don't do anything for this
 		return;
 	}
+	if (old_obj.type == CatalogType::SCHEMA_ENTRY && alter_info.type == AlterType::RENAME) {
+		RenameSchema(transaction, old_obj, new_obj);
+		return;
+	}
 	const auto old_info = GetLookupProperties(old_obj);
 	const auto new_info = GetLookupProperties(new_obj);
 
 	vector<DependencyInfo> dependencies;
+	const bool views_depend_on_columns = catalog.Compatibility() == SqlCompatibility::POSTGRES;
 	// Other entries that depend on us
 	ScanDependents(transaction, old_info, [&](DependencyEntry &dep) {
 		// It makes no sense to have a schema depend on anything
@@ -763,7 +813,18 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 				disallow_alter = false;
 				break;
 			}
-			case AlterTableType::REMOVE_COLUMN:
+			case AlterTableType::REMOVE_COLUMN: {
+				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
+					disallow_alter = false;
+					break;
+				}
+				if (views_depend_on_columns && dep.EntryInfo().type == CatalogType::VIEW_ENTRY &&
+				    !dep.Dependent().subdependencies.count(SubDependency {
+				        AlterTableType::REMOVE_COLUMN, alter_table.Cast<RemoveColumnInfo>().removed_column})) {
+					disallow_alter = false;
+				}
+				break;
+			}
 			case AlterTableType::RENAME_COLUMN:
 			case AlterTableType::ALTER_COLUMN_TYPE: {
 				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {

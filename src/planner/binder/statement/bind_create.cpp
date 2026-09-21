@@ -480,7 +480,6 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		    make_uniq<DummyBinding>(dummy_types, dummy_names, base.GetFunctionName().GetIdentifierName());
 		macro_binding = this_macro_binding.get();
 
-
 		// bind it to verify the function was defined correctly
 		ErrorData error;
 		auto types_compatible = [&](const LogicalType &actual, const LogicalType &expected) -> bool {
@@ -731,8 +730,8 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	auto &table = *table_ptr;
 
 	// Trigger inherits catalog/schema from the base table
-	create_trigger_info.SetQualifiedName(
-	    QualifiedName(table.catalog.GetName(), table.ParentSchemaName(), create_trigger_info.GetQualifiedName().Name()));
+	create_trigger_info.SetQualifiedName(QualifiedName(table.catalog.GetName(), table.ParentSchemaName(),
+	                                                   create_trigger_info.GetQualifiedName().Name()));
 
 	auto &schema = BindCreateSchema(create_trigger_info);
 

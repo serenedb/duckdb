@@ -12,7 +12,22 @@ StandardEntry::StandardEntry(CatalogType type, SchemaCatalogEntry &schema, Catal
 }
 
 SchemaCatalogEntry &StandardEntry::ParentSchema(CatalogTransaction transaction) const {
-	return catalog.GetSchema(transaction, schema_info->name);
+	auto schema = catalog.GetSchema(transaction, schema_info->Name(), OnEntryNotFound::RETURN_NULL);
+	if (schema && schema->GetSchemaInfo() == schema_info) {
+		return *schema;
+	}
+	optional_ptr<SchemaCatalogEntry> found;
+	if (transaction.context) {
+		catalog.ScanSchemas(*transaction.context, [&](SchemaCatalogEntry &candidate) {
+			if (candidate.GetSchemaInfo() == schema_info) {
+				found = &candidate;
+			}
+		});
+	}
+	if (found) {
+		return *found;
+	}
+	return catalog.GetSchema(transaction, schema_info->Name());
 }
 
 } // namespace duckdb
