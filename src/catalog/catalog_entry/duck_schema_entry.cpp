@@ -90,6 +90,12 @@ DuckSchemaSets::DuckSchemaSets(Catalog &catalog, DuckSchemaEntry &schema)
       coordinate_systems(
           catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, schema) : nullptr),
       tokenizers(catalog) {
+	const bool one_relation_namespace = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (one_relation_namespace) {
+		tables.ShareNamespace(indexes);
+		tables.ShareNamespace(sequences);
+		indexes.ShareNamespace(sequences);
+	}
 }
 
 DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<SchemaInfo> inherited_info,
@@ -104,6 +110,41 @@ unique_ptr<CatalogEntry> DuckSchemaEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateSchemaInfo>();
 	return make_uniq<DuckSchemaEntry>(catalog, cast_info, schema_info, sets);
+}
+
+void DuckSchemaEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
+	SetSchemaName(name, transaction);
+}
+
+void DuckSchemaEntry::SetSchemaName(const Identifier &schema_name, optional_ptr<CatalogTransaction> transaction) {
+	auto previous = schema_info->Name();
+	IdentifierEquality equals(catalog.IsCaseSensitive());
+	if (equals(previous, schema_name)) {
+		return;
+	}
+	schema_info->SetName(schema_name);
+	auto rename_child = [&](CatalogEntry &entry) {
+		auto &dependencies = entry.Cast<StandardEntry>().dependencies;
+		LogicalDependencyList renamed;
+		for (auto &dependency : dependencies.Set()) {
+			auto copy = dependency;
+			if (copy.entry.type == CatalogType::SCHEMA_ENTRY && equals(copy.entry.name, previous)) {
+				copy.entry.name = schema_name;
+				copy.entry.schema = schema_name;
+			} else if (equals(copy.entry.schema, previous)) {
+				copy.entry.schema = schema_name;
+			}
+			renamed.AddDependency(copy);
+		}
+		dependencies = std::move(renamed);
+	};
+	sets->ForEachSet([&](CatalogSet &set) {
+		if (transaction) {
+			set.Scan(*transaction, rename_child);
+		} else {
+			set.Scan(rename_child);
+		}
+	});
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction transaction,
@@ -129,7 +170,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 	auto &set = GetCatalogSet(entry_type);
 	dependencies.AddDependency(*this);
 	if (on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
-		auto old_entry = set.GetEntry(transaction, entry_name);
+		auto old_entry = set.GetNamespaceEntry(transaction, entry_name);
 		if (old_entry) {
 			return nullptr;
 		}
@@ -137,7 +178,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 
 	if (on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
 		// CREATE OR REPLACE: first try to drop the entry
-		auto old_entry = set.GetEntry(transaction, entry_name);
+		auto old_entry = set.GetNamespaceEntry(transaction, entry_name);
 		if (old_entry) {
 			if (dependencies.Contains(*old_entry)) {
 				throw CatalogException("CREATE OR REPLACE is not allowed to depend on itself");
@@ -155,7 +196,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 	if (!set.CreateEntry(transaction, entry_name, std::move(entry), dependencies)) {
 		// entry already exists!
 		if (on_conflict == OnCreateConflict::ERROR_ON_CONFLICT) {
-			auto existing_entry = set.GetEntry(transaction, entry_name);
+			auto existing_entry = set.GetNamespaceEntry(transaction, entry_name);
 			auto existing_type = existing_entry ? existing_entry->type : entry_type;
 			throw CatalogException::EntryAlreadyExists(existing_type, entry_name);
 		} else {
@@ -173,40 +214,28 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 	return result;
 }
 
-static Identifier FreeSequenceName(CatalogTransaction transaction, DuckSchemaEntry &schema, const Identifier &table,
-                                   const Identifier &column) {
-	auto stem = table.GetIdentifierName() + "_" + column.GetIdentifierName() + "_seq";
-	Identifier candidate(stem);
-	for (idx_t suffix = 1; schema.GetEntry(transaction, CatalogType::SEQUENCE_ENTRY, candidate); suffix++) {
-		candidate = Identifier(stem + to_string(suffix));
-	}
-	return candidate;
-}
-
 static void CreateSerialSequences(CatalogTransaction transaction, DuckSchemaEntry &schema, BoundCreateTableInfo &info) {
 	auto &table = info.Base();
-	if (table.serial_columns.empty()) {
+	if (info.serial_sequences.empty()) {
 		return;
 	}
 	if (table.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT &&
 	    schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, table.GetTableName())) {
 		return;
 	}
-	for (auto &column_name : table.serial_columns) {
-		auto &column = table.columns.GetColumnMutable(column_name);
+	for (auto &serial : info.serial_sequences) {
 		CreateSequenceInfo sequence_info;
 		sequence_info.SetQualification(schema.catalog.GetName(), schema.name);
-		sequence_info.SetSequenceName(FreeSequenceName(transaction, schema, table.GetTableName(), column_name));
-		sequence_info.max_value = Value::MaximumValue(column.Type()).GetValue<int64_t>();
+		sequence_info.SetSequenceName(serial.name);
+		sequence_info.max_value =
+		    Value::MaximumValue(table.columns.GetColumn(serial.column).Type()).GetValue<int64_t>();
 		auto &sequence = *schema.CreateSequence(transaction, sequence_info);
-		vector<unique_ptr<ParsedExpression>> arguments;
-		arguments.push_back(
-		    make_uniq<ConstantExpression>(Value(QualifiedName(Identifier(), schema.name, sequence.name).ToString())));
-		column.SetDefaultValue(make_uniq<FunctionExpression>(Identifier("nextval"), std::move(arguments)));
 		LogicalDependency dependency(sequence);
 		dependency.owned_by = true;
 		if (schema.catalog.Compatibility() == SqlCompatibility::POSTGRES) {
-			dependency.subdependencies.insert(SubDependency {AlterTableType::SET_DEFAULT, column_name});
+			for (auto &dependent : serial.dependents) {
+				dependency.subdependencies.insert(SubDependency {AlterTableType::SET_DEFAULT, dependent});
+			}
 		}
 		info.dependencies.AddDependency(dependency);
 	}
@@ -245,7 +274,7 @@ static bool AlterExistingEntry(DuckSchemaEntry &schema, CatalogTransaction trans
 	if (info.on_conflict != OnCreateConflict::ALTER_ON_CONFLICT) {
 		return false;
 	}
-	auto current_entry = schema.GetCatalogSet(info.type).GetEntry(transaction, name);
+	auto current_entry = schema.GetCatalogSet(info.type).GetNamespaceEntry(transaction, name);
 	if (!current_entry) {
 		return false;
 	}

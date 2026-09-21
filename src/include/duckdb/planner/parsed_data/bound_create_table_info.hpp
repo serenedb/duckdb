@@ -22,6 +22,12 @@
 namespace duckdb {
 class CatalogEntry;
 
+struct BoundSerialSequence {
+	Identifier column;
+	Identifier name;
+	vector<Identifier> dependents;
+};
+
 struct BoundCreateTableInfo {
 	explicit BoundCreateTableInfo(SchemaCatalogEntry &schema, unique_ptr<CreateInfo> base_p)
 	    : schema(schema), base(std::move(base_p)) {
@@ -39,6 +45,7 @@ struct BoundCreateTableInfo {
 	//! Dependents of the table (in e.g. default values)
 	LogicalDependencyList dependencies;
 	SubDependency subdependency;
+	vector<BoundSerialSequence> serial_sequences;
 	//! The existing table data on disk (if any)
 	unique_ptr<PersistentTableData> data;
 	//! CREATE TABLE from QUERY

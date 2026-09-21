@@ -65,7 +65,7 @@ public:
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
 
-	void SetAsRoot() override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
 
 	void CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state);
 	void CommitDropConstraint(const AlterInfo &info, CommitDropState &drop_state);

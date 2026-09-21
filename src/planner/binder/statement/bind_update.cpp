@@ -60,7 +60,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 
 	if (prioritize_table_when_binding) {
 		binder_with_search_path =
-		    CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchemaName());
+		    CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema(context).name);
 		expr_binder_ptr = binder_with_search_path.get();
 	}
 
@@ -272,7 +272,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	}
 	// bind the default values
 	auto &catalog_name = table.ParentCatalog().GetName();
-	auto schema_name = table.ParentSchemaName();
+	auto schema_name = table.ParentSchema(context).name;
 	BindDefaultValues(table.GetColumns(), update->bound_defaults, catalog_name.GetIdentifierName(),
 	                  schema_name.GetIdentifierName());
 	update->bound_constraints = BindConstraints(table);

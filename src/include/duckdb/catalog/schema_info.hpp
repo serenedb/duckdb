@@ -10,6 +10,7 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/identifier.hpp"
+#include "duckdb/common/mutex.hpp"
 
 namespace duckdb {
 
@@ -19,7 +20,19 @@ public:
 	}
 
 	const idx_t oid;
-	const Identifier name;
+
+	Identifier Name() const {
+		lock_guard<mutex> guard(name_lock);
+		return name;
+	}
+	void SetName(Identifier new_name) {
+		lock_guard<mutex> guard(name_lock);
+		name = std::move(new_name);
+	}
+
+private:
+	mutable mutex name_lock;
+	Identifier name;
 };
 
 } // namespace duckdb

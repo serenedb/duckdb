@@ -739,7 +739,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 
 	// bind the default values
 	auto &catalog_name = table.ParentCatalog().GetName();
-	auto schema_name = table.ParentSchemaName();
+	auto schema_name = table.ParentSchema(context).name;
 	BindDefaultValues(table.GetColumns(), insert->bound_defaults, catalog_name.GetIdentifierName(),
 	                  schema_name.GetIdentifierName());
 	insert->bound_constraints = BindConstraints(table);

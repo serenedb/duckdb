@@ -88,7 +88,10 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSchemaStmt(PEGTransfo
                                                                       const optional<bool> &if_exists,
                                                                       const QualifiedName &qualified_name,
                                                                       unique_ptr<AlterTableInfo> rename_alter) {
-	throw NotImplementedException("Altering schemas is not yet supported");
+	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
+	auto not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	AlterEntryData data(qualified_name, not_found);
+	return make_uniq_base<AlterInfo, RenameInfo>(CatalogType::SCHEMA_ENTRY, data, rename_info->new_table_name);
 }
 
 // AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter

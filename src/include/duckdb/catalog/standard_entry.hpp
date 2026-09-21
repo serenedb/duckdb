@@ -28,7 +28,7 @@ public:
 
 public:
 	Identifier ParentSchemaName() const override {
-		return schema_info->name;
+		return schema_info->Name();
 	}
 	idx_t ParentSchemaOid() const {
 		return schema_info->oid;

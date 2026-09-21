@@ -119,6 +119,9 @@ public:
 	static MangledEntryName MangleName(const CatalogEntryInfo &info);
 	static MangledEntryName MangleName(const CatalogEntry &entry);
 	static CatalogEntryInfo GetLookupProperties(const CatalogEntry &entry);
+	//! Returns the objects that should be dropped alongside the object
+	catalog_entry_map_t<subdependency_set_t> CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object,
+	                                                               bool cascade);
 
 private:
 	void ReorderEntry(CatalogTransaction transaction, CatalogEntry &entry, catalog_entry_set_t &visited,
@@ -127,13 +130,11 @@ private:
 	void AddObject(CatalogTransaction transaction, CatalogEntry &object, const LogicalDependencyList &dependencies);
 	void VerifyExistence(CatalogTransaction transaction, DependencyEntry &object);
 	void VerifyCommitDrop(CatalogTransaction transaction, transaction_t start_time, CatalogEntry &object);
-	//! Returns the objects that should be dropped alongside the object
-	catalog_entry_map_t<subdependency_set_t> CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object,
-	                                                               bool cascade);
-	bool DropSubDependencies(CatalogTransaction transaction, CatalogEntry &table,
+	void DropSubDependencies(CatalogTransaction transaction, CatalogEntry &table,
 	                         const subdependency_set_t &subdependencies);
 	void DropObject(CatalogTransaction transaction, CatalogEntry &object, bool cascade);
 	void AlterObject(CatalogTransaction transaction, CatalogEntry &old_obj, CatalogEntry &new_obj, AlterInfo &info);
+	void RenameSchema(CatalogTransaction transaction, CatalogEntry &old_schema, CatalogEntry &new_schema);
 
 private:
 	void RemoveDependency(CatalogTransaction transaction, const DependencyInfo &info);

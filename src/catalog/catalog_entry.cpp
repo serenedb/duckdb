@@ -24,7 +24,7 @@ CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p
 CatalogEntry::~CatalogEntry() {
 }
 
-void CatalogEntry::SetAsRoot() {
+void CatalogEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
 }
 
 // LCOV_EXCL_START

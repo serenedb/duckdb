@@ -1,5 +1,6 @@
 #include "duckdb/planner/expression_binder/index_binder.hpp"
 
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
@@ -107,6 +108,15 @@ unique_ptr<LogicalOperator> IndexBinder::BindCreateIndex(ClientContext &context,
 
 	auto &get = plan->Cast<LogicalGet>();
 	InitCreateIndexInfo(get, *create_index_info, table_entry.ParentSchemaName());
+	const bool indexes_depend_on_columns = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (indexes_depend_on_columns) {
+		LogicalDependency table_dependency(table_entry);
+		for (auto &column_id : create_index_info->column_ids) {
+			table_dependency.subdependencies.insert(
+			    SubDependency {AlterTableType::REMOVE_COLUMN, table_entry.GetColumn(LogicalIndex(column_id)).Name()});
+		}
+		dependencies.AddDependency(table_dependency);
+	}
 	auto &bind_data = get.bind_data->Cast<TableScanBindData>();
 	bind_data.is_create_index = true;
 

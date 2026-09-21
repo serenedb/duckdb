@@ -14,6 +14,9 @@
 namespace duckdb {
 
 struct DataTableInfo;
+class QueryContext;
+struct ColumnSegmentInfo;
+struct ColumnSegmentInfoScanState;
 
 //! An index catalog entry
 class IndexCatalogEntry : public StandardEntry {
@@ -54,6 +57,12 @@ public:
 
 	virtual Identifier GetSchemaName() const = 0;
 	virtual Identifier GetTableName() const = 0;
+	virtual void InitializeColumnSegmentInfoScan(ColumnSegmentInfoScanState &state) const {
+	}
+	virtual bool ScanColumnSegmentInfo(const QueryContext &context, ColumnSegmentInfoScanState &state,
+	                                   vector<ColumnSegmentInfo> &result) const {
+		return false;
+	}
 
 	//! Returns true, if this index is UNIQUE
 	bool IsUnique() const;

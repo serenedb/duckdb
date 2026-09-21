@@ -90,7 +90,7 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
-	auto binder = CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchemaName());
+	auto binder = CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema(context).name);
 	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
@@ -686,6 +686,72 @@ static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryR
 	}
 }
 
+static Identifier FreeSequenceName(CatalogTransaction transaction, SchemaCatalogEntry &schema, const Identifier &table,
+                                   const Identifier &column) {
+	auto stem = table.GetIdentifierName() + "_" + column.GetIdentifierName() + "_seq";
+	Identifier candidate(stem);
+	for (idx_t suffix = 1; schema.GetEntry(transaction, CatalogType::SEQUENCE_ENTRY, candidate); suffix++) {
+		candidate = Identifier(stem + to_string(suffix));
+	}
+	return candidate;
+}
+
+static bool DefaultNamesSequence(const ColumnDefinition &column, const QualifiedName &sequence,
+                                 const IdentifierEquality &equals) {
+	if (!column.HasDefaultValue() || column.DefaultValue().GetExpressionClass() != ExpressionClass::FUNCTION) {
+		return false;
+	}
+	auto &function = column.DefaultValue().Cast<FunctionExpression>();
+	auto &arguments = function.GetArguments();
+	if (!(function.GetQualifiedName().Name() == Identifier("nextval")) || arguments.size() != 1 ||
+	    arguments[0].GetExpression().GetExpressionClass() != ExpressionClass::CONSTANT) {
+		return false;
+	}
+	auto &value = arguments[0].GetExpression().Cast<ConstantExpression>().GetValue();
+	if (value.IsNull()) {
+		return false;
+	}
+	auto named = QualifiedName::Parse(value.ToString());
+	return (named.Catalog().empty() || equals(named.Catalog(), sequence.Catalog())) &&
+	       (named.Schema().empty() || equals(named.Schema(), sequence.Schema())) &&
+	       equals(named.Name(), sequence.Name());
+}
+
+static void BindSerialSequences(ClientContext &context, SchemaCatalogEntry &schema, BoundCreateTableInfo &result) {
+	auto &table = result.Base();
+	auto &catalog = schema.ParentCatalog();
+	auto transaction = catalog.GetCatalogTransaction(context);
+	IdentifierEquality equals(catalog.IsCaseSensitive());
+	for (auto &serial_column : table.serial_columns) {
+		BoundSerialSequence serial;
+		serial.column = serial_column;
+		serial.name = FreeSequenceName(transaction, schema, table.GetTableName(), serial_column);
+		vector<unique_ptr<ParsedExpression>> arguments;
+		arguments.push_back(make_uniq<ConstantExpression>(Value(QualifiedName(serial.name).ToString())));
+		table.columns.GetColumnMutable(serial_column)
+		    .SetDefaultValue(make_uniq<FunctionExpression>(Identifier("nextval"), std::move(arguments)));
+		QualifiedName sequence(catalog.GetName(), schema.name, serial.name);
+		for (auto &column : table.columns.Physical()) {
+			if (DefaultNamesSequence(column, sequence, equals)) {
+				serial.dependents.push_back(column.Name());
+			}
+		}
+		result.serial_sequences.push_back(std::move(serial));
+	}
+}
+
+static bool NamesPendingSerialSequence(BoundCreateTableInfo &info, const Identifier &column) {
+	IdentifierEquality equals(info.Base().columns.IsCaseSensitive());
+	for (auto &serial : info.serial_sequences) {
+		for (auto &dependent : serial.dependents) {
+			if (equals(dependent, column)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateInfo> info, SchemaCatalogEntry &schema,
                                                              vector<unique_ptr<Expression>> &bound_defaults,
                                                              AlterBindMode bind_mode) {
@@ -766,10 +832,26 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		// Bind all physical column types
 		auto type_binder = Binder::CreateBinder(context, *this);
 		type_binder->SetSearchPath(result->schema.catalog, result->schema.name);
+		const bool column_types_are_dependencies = catalog.Compatibility() == SqlCompatibility::POSTGRES;
 		for (idx_t i = 0; i < base.columns.PhysicalColumnCount(); i++) {
 			auto &column = base.columns.GetColumnMutable(PhysicalIndex(i));
 			result->AddSubDependency(AlterTableType::REMOVE_COLUMN, column.Name());
 			type_binder->BindLogicalType(column.TypeMutable());
+			if (!column_types_are_dependencies || !column.Type().HasAlias()) {
+				continue;
+			}
+			for (auto &previous : base.dependencies.Set()) {
+				if (previous.entry.type != CatalogType::TYPE_ENTRY ||
+				    previous.entry.name != Identifier(column.Type().GetAlias())) {
+					continue;
+				}
+				EntryLookupInfo lookup(CatalogType::TYPE_ENTRY,
+				                       QualifiedName(previous.catalog, previous.entry.schema, previous.entry.name));
+				auto entry = type_binder->EntryRetriever().GetEntry(lookup, OnEntryNotFound::RETURN_NULL);
+				if (entry && entry->Cast<TypeCatalogEntry>().user_type == column.Type()) {
+					break;
+				}
+			}
 		}
 
 		auto &config = DBConfig::Get(catalog.GetAttached());
@@ -789,10 +871,14 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		auto constraint_binder = CreateBinderWithSearchPath(schema.ParentCatalog().GetName(), schema.name);
 		bound_constraints = constraint_binder->BindNewConstraints(*result);
 		if (bind_mode != AlterBindMode::SKIP_BINDING) {
+			BindSerialSequences(context, schema, *result);
 			auto &catalog_name = schema.ParentCatalog().GetName();
 			auto &schema_name = schema.name;
 			for (auto &column : base.columns.Physical()) {
 				result->AddSubDependency(AlterTableType::SET_DEFAULT, column.Name());
+				if (NamesPendingSerialSequence(*result, column.Name())) {
+					continue;
+				}
 				BindDefaultValue(column, bound_defaults, catalog_name.GetIdentifierName(),
 				                 schema_name.GetIdentifierName());
 			}

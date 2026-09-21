@@ -131,6 +131,20 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		return result;
 	}
 
+	if (stmt.info->type == AlterType::RENAME && stmt.info->GetCatalogType() == CatalogType::SCHEMA_ENTRY) {
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		auto &name = stmt.info->GetQualifiedName();
+		auto &catalog_name = name.Schema().empty() ? name.Catalog() : name.Schema();
+		auto schema = Catalog::GetSchema(context, catalog_name, name.Name(), stmt.info->if_not_found);
+		if (schema) {
+			properties.RegisterDBModify(schema->catalog, context, DatabaseModificationType::ALTER_TABLE);
+			stmt.info->SetQualifiedName(QualifiedName(schema->catalog.GetName(), Identifier(), schema->name));
+		}
+		result.plan = make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_ALTER, std::move(stmt.info));
+		return result;
+	}
+
 	BindSchemaOrCatalog(stmt.info->GetQualifiedNameMutable());
 
 	optional_ptr<CatalogEntry> entry;
