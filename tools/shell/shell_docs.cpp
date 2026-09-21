@@ -49,7 +49,8 @@ bool DocsCompletions(const char *line, duckdb::idx_t length, duckdb::idx_t &argu
 			return false;
 		}
 		argument_start = marker.size();
-		completions = GetDocsBackend().complete(argument);
+		auto &state = ShellState::Get();
+		completions = GetDocsBackend().complete(state.db ? state.db->instance.get() : nullptr, argument);
 		return true;
 	}
 	return false;
@@ -67,11 +68,7 @@ MetadataResult ShowDocumentation(ShellState &state, const duckdb::vector<duckdb:
 	}
 
 	request.color = ShellHighlight::IsEnabled() && state.stdout_is_console;
-	if (!state.psql_dbname.empty()) {
-		request.query = [&state](const duckdb::string &sql, duckdb::string &out) {
-			return state.ExecuteSQLSingleValue(sql, out) == ExecuteSQLSingleValueResult::SUCCESS;
-		};
-	}
+	request.instance = state.db ? state.db->instance.get() : nullptr;
 	if (state.max_width > 0) {
 		request.width = state.max_width;
 	} else if (state.stdout_is_console) {

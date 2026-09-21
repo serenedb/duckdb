@@ -13,18 +13,22 @@
 
 #include <functional>
 
+namespace duckdb {
+class DatabaseInstance;
+}
+
 namespace duckdb_shell {
 
 struct DocsRequest {
 	duckdb::vector<duckdb::string> args;
 	duckdb::idx_t width = 80;
 	bool color = false;
-	std::function<bool(const duckdb::string &sql, duckdb::string &out)> query;
+	duckdb::DatabaseInstance *instance = nullptr;
 };
 
 struct DocsBackend {
 	std::function<bool(const DocsRequest &request, duckdb::string &out)> run;
-	std::function<duckdb::vector<duckdb::string>(const duckdb::string &prefix)> complete;
+	std::function<duckdb::vector<duckdb::string>(duckdb::DatabaseInstance *instance, const duckdb::string &prefix)> complete;
 };
 
 void RegisterDocsBackend(DocsBackend backend);
