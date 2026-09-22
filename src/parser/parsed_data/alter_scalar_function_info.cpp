@@ -32,47 +32,12 @@ AddScalarFunctionOverloadInfo::~AddScalarFunctionOverloadInfo() {
 }
 
 unique_ptr<AlterInfo> AddScalarFunctionOverloadInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, AddScalarFunctionOverloadInfo>(
+	return make_uniq_base<AlterInfo, AddScalarFunctionOverloadInfo>(
 	    GetAlterEntryData(), unique_ptr_cast<CreateInfo, CreateScalarFunctionInfo>(new_overloads->Copy()));
-	result->oid = oid;
-	return result;
 }
 
 string AddScalarFunctionOverloadInfo::ToString() const {
 	throw NotImplementedException("NOT PARSABLE CURRENTLY");
-}
-
-//===--------------------------------------------------------------------===//
-// RenameScalarFunctionInfo
-//===--------------------------------------------------------------------===//
-RenameScalarFunctionInfo::RenameScalarFunctionInfo()
-    : AlterScalarFunctionInfo(AlterScalarFunctionType::RENAME_SCALAR_FUNCTION, AlterEntryData()) {
-}
-
-RenameScalarFunctionInfo::RenameScalarFunctionInfo(const AlterEntryData &data, Identifier new_name_p)
-    : AlterScalarFunctionInfo(AlterScalarFunctionType::RENAME_SCALAR_FUNCTION, data), new_name(std::move(new_name_p)) {
-}
-
-RenameScalarFunctionInfo::~RenameScalarFunctionInfo() {
-}
-
-unique_ptr<AlterInfo> RenameScalarFunctionInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, RenameScalarFunctionInfo>(GetAlterEntryData(), new_name);
-	result->oid = oid;
-	return result;
-}
-
-string RenameScalarFunctionInfo::ToString() const {
-	auto &qualified_name = GetQualifiedName();
-	string result = "ALTER FUNCTION ";
-	if (!qualified_name.Schema().empty()) {
-		result += KeywordHelper::WriteOptionallyQuoted(qualified_name.Schema().GetIdentifierName()) + ".";
-	}
-	result += KeywordHelper::WriteOptionallyQuoted(qualified_name.Name().GetIdentifierName());
-	result += " RENAME TO ";
-	result += KeywordHelper::WriteOptionallyQuoted(new_name.GetIdentifierName());
-	result += ";";
-	return result;
 }
 
 } // namespace duckdb

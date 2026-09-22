@@ -9,7 +9,6 @@ PEGTransformerFactory::TransformCreateSchemaStmt(PEGTransformer &transformer, co
 	if (!name && !authorization) {
 		throw ParserException("CREATE SCHEMA requires a schema name or AUTHORIZATION");
 	}
-	// PG: "CREATE SCHEMA AUTHORIZATION role" names the schema after the role that is to own it.
 	auto qualified_name = name ? *name : QualifiedName(*authorization);
 	if (!qualified_name.Catalog().empty()) {
 		throw ParserException("CREATE SCHEMA too many dots: expected \"catalog.schema\" or \"schema\"");

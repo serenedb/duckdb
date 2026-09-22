@@ -1,6 +1,7 @@
 #include "duckdb/function/table/table_scan.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/common/enums/expression_type.hpp"
 #include "duckdb/common/mutex.hpp"
@@ -17,6 +18,9 @@
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -917,7 +921,7 @@ InsertionOrderPreservingMap<string> TableScanToString(TableFunctionToStringInput
 	if (!bind_data.display_name.empty()) {
 		result["Table"] = bind_data.display_name;
 	} else {
-		result["Table"] = bind_data.table.ScanName();
+		result["Table"] = bind_data.table.name.GetIdentifierName();
 	}
 	result["Type"] = bind_data.is_index_scan ? "Index Scan" : "Sequential Scan";
 	return result;
@@ -926,8 +930,8 @@ InsertionOrderPreservingMap<string> TableScanToString(TableFunctionToStringInput
 static void TableScanSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
                                const TableFunction &function) {
 	auto &bind_data = bind_data_p->Cast<TableScanBindData>();
-	serializer.WriteProperty(100, "catalog", bind_data.table.ParentSchema().catalog.GetName());
-	serializer.WriteProperty(101, "schema", bind_data.table.ParentSchema().name);
+	serializer.WriteProperty(100, "catalog", bind_data.table.ParentCatalog().GetName());
+	serializer.WriteProperty(101, "schema", bind_data.table.ParentSchemaName());
 	serializer.WriteProperty(102, "table", bind_data.table.name);
 	serializer.WriteProperty(103, "is_index_scan", bind_data.is_index_scan);
 	serializer.WriteProperty(104, "is_create_index", bind_data.is_create_index);
@@ -1019,14 +1023,51 @@ TableFunction TableScanFunction::GetFunction() {
 	return scan_function;
 }
 
+static unique_ptr<FunctionData> IndexScanBind(ClientContext &context, TableFunctionBindInput &input,
+                                              vector<LogicalType> &return_types, vector<string> &names) {
+	QualifiedName name(Identifier(StringValue::Get(input.inputs[0])), Identifier(StringValue::Get(input.inputs[1])),
+	                   Identifier(StringValue::Get(input.inputs[2])));
+	auto &index = Catalog::GetEntry<IndexCatalogEntry>(context, name);
+	auto &table = Catalog::GetEntry<TableCatalogEntry>(
+	    context, QualifiedName(name.Catalog(), name.Schema(), index.GetTableName()));
+	auto result = make_uniq<TableScanBindData>(table);
+	result->display_name = index.name.GetIdentifierName();
+	for (auto &column : table.GetColumns().Logical()) {
+		return_types.push_back(column.Type());
+		names.push_back(column.Name().GetIdentifierName());
+	}
+	return std::move(result);
+}
+
+unique_ptr<TableRef> TableScanFunction::IndexReplacementScan(ClientContext &context, ReplacementScanInput &input,
+                                                             optional_ptr<ReplacementScanData>) {
+	auto index = Catalog::GetEntry<IndexCatalogEntry>(context, input.name, OnEntryNotFound::RETURN_NULL);
+	if (!index || index->index_type != ART::TYPE_NAME) {
+		return nullptr;
+	}
+	vector<unique_ptr<ParsedExpression>> arguments;
+	arguments.push_back(make_uniq<ConstantExpression>(Value(index->ParentCatalog().GetName().GetIdentifierName())));
+	arguments.push_back(make_uniq<ConstantExpression>(Value(index->ParentSchemaName().GetIdentifierName())));
+	arguments.push_back(make_uniq<ConstantExpression>(Value(index->name.GetIdentifierName())));
+	auto ref = make_uniq<TableFunctionRef>();
+	ref->function = make_uniq<FunctionExpression>("seq_scan", std::move(arguments));
+	return std::move(ref);
+}
+
 void TableScanFunction::RegisterFunction(BuiltinFunctions &set) {
 	TableFunctionSet table_scan_set("seq_scan");
 	table_scan_set.AddFunction(GetFunction());
+	auto index_scan = GetFunction();
+	index_scan.arguments = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
+	index_scan.bind = IndexScanBind;
+	table_scan_set.AddFunction(std::move(index_scan));
 	set.AddFunction(std::move(table_scan_set));
 }
 
 void BuiltinFunctions::RegisterTableScanFunctions() {
 	TableScanFunction::RegisterFunction(*this);
+	auto &config = DBConfig::GetConfig(*transaction.db);
+	config.replacement_scans.emplace_back(TableScanFunction::IndexReplacementScan);
 }
 
 } // namespace duckdb

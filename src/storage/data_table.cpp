@@ -39,10 +39,10 @@
 
 namespace duckdb {
 
-DataTableInfo::DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, Identifier schema,
-                             Identifier table, idx_t catalog_id)
-    : db(db), table_io_manager(std::move(table_io_manager_p)), schema(std::move(schema)), table(std::move(table)),
-      catalog_id(catalog_id) {
+DataTableInfo::DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p,
+                             shared_ptr<SchemaInfo> schema_info, Identifier table)
+    : db(db), table_io_manager(std::move(table_io_manager_p)), schema_info(std::move(schema_info)),
+      table(std::move(table)) {
 }
 
 void DataTableInfo::BindIndexes(ClientContext &context, const char *index_type) {
@@ -65,11 +65,11 @@ IndexStorageInfo DataTableInfo::ExtractIndexStorageInfo(const Identifier &name) 
 	                        name.GetIdentifierName());
 }
 
-DataTable::DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, const string &schema,
-                     const string &table, vector<ColumnDefinition> column_definitions_p,
-                     unique_ptr<PersistentTableData> data, idx_t catalog_id)
-    : db(db), info(make_shared_ptr<DataTableInfo>(db, std::move(table_io_manager_p), Identifier(schema),
-                                                  Identifier(table), catalog_id)),
+DataTable::DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p,
+                     shared_ptr<SchemaInfo> schema_info, const string &table,
+                     vector<ColumnDefinition> column_definitions_p, unique_ptr<PersistentTableData> data)
+    : db(db), info(make_shared_ptr<DataTableInfo>(db, std::move(table_io_manager_p), std::move(schema_info),
+                                                  Identifier(table))),
       column_definitions(std::move(column_definitions_p)), version(DataTableVersion::MAIN_TABLE) {
 	// initialize the table with the existing data from disk, if any
 	auto types = GetTypes();
@@ -83,15 +83,6 @@ DataTable::DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_m
 		D_ASSERT(row_groups->GetTotalRows() == 0);
 	}
 	row_groups->Verify();
-
-	RefreshExternalIndexes();
-}
-
-void DataTable::RefreshExternalIndexes() {
-	auto &config = DBConfig::GetConfig(db.GetDatabase());
-	if (config.external_index_provider) {
-		config.external_index_provider(*this);
-	}
 }
 
 DataTable::DataTable(ClientContext &context, DataTable &parent, ColumnDefinition &new_column, Expression &default_value)
@@ -121,90 +112,67 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, ColumnDefinition
 
 DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_column)
     : db(parent.db), info(parent.info), version(DataTableVersion::MAIN_TABLE) {
+	// prevent any new tuples from being added to the parent
 	auto &local_storage = LocalStorage::Get(context, db);
+	lock_guard<mutex> parent_lock(parent.append_lock);
 
-	// Bind all indexes. Binding resolves catalog entries and may open a connection of its own, so it runs before
-	// the append lock below: a committer holds that lock while waiting on locks binding takes.
-	info->BindIndexes(context);
-
-	// prevent any new tuples from being added to the parent. The scope ends before the external-index refresh:
-	// injecting reaches the catalog through a connection of its own, and a committer holds this lock while
-	// waiting on locks that road takes.
-	{
-		lock_guard<mutex> parent_lock(parent.append_lock);
-
-		for (auto &column_def : parent.column_definitions) {
-			column_definitions.emplace_back(column_def.Copy());
-		}
-
-		// first check if there are any indexes that exist that point to the removed column.
-		// The list is snapshotted first: probing the catalog below takes its locks, and iterating holds the index
-		// list's
-		// -- nesting the two here would order them against a commit's index maintenance, which nests them the other
-		// way.
-		struct IndexColumnCheck {
-			Identifier name;
-			bool entry_backed;
-			vector<column_t> column_ids;
-		};
-		vector<IndexColumnCheck> checks;
-		for (auto &index : info->indexes.Indexes()) {
-			checks.push_back(
-			    {index.GetIndexName(), index.GetConstraintType() == IndexConstraintType::NONE, index.GetColumnIds()});
-		}
-		for (auto &check : checks) {
-			if (check.entry_backed) {
-				// Plain indexes are always entry-backed; when the entry is no longer
-				// visible the index was dropped earlier in this transaction and only
-				// leaves the storage list at commit - it cannot block the drop.
-				// (Unique CREATE INDEX entries still block: their names are not
-				// distinguishable from constraint-backed indexes here.)
-				auto &index_catalog = db.GetCatalog();
-				EntryLookupInfo lookup_info(CatalogType::INDEX_ENTRY, check.name);
-				auto entry =
-				    index_catalog.GetEntry(context, info->GetSchemaName(), lookup_info, OnEntryNotFound::RETURN_NULL);
-				if (!entry) {
-					continue;
-				}
-			}
-			for (auto &column_id : check.column_ids) {
-				if (column_id == removed_column) {
-					throw CatalogException("Cannot drop this column: an index depends on it!");
-				} else if (column_id > removed_column) {
-					throw CatalogException("Cannot drop this column: an index depends on a column after it!");
-				}
-			}
-		}
-
-		// erase the column definitions from this DataTable
-		D_ASSERT(removed_column < column_definitions.size());
-		column_definitions.erase_at(removed_column);
-
-		storage_t storage_idx = 0;
-		for (idx_t i = 0; i < column_definitions.size(); i++) {
-			auto &col = column_definitions[i];
-			col.SetOid(i);
-			if (col.Generated()) {
-				continue;
-			}
-			col.SetStorageOid(storage_idx++);
-		}
-
-		// alter the row_groups and remove the column from each of them
-		this->row_groups = parent.row_groups->RemoveColumn(removed_column);
-
-		// scan the original table, and fill the new column with the transformed value
-		local_storage.DropColumn(parent, *this, removed_column);
-
-		// this table replaces the previous table, hence the parent is no longer the root DataTable
-		parent.version = DataTableVersion::ALTERED;
+	for (auto &column_def : parent.column_definitions) {
+		column_definitions.emplace_back(column_def.Copy());
 	}
 
-	RefreshExternalIndexes();
+	// Bind all indexes.
+	info->BindIndexes(context);
+
+	// first check if there are any indexes that exist that point to the removed column
+	for (auto &index : info->indexes.Indexes()) {
+		if (index.GetConstraintType() == IndexConstraintType::NONE) {
+			// Plain indexes are always entry-backed; when the entry is no longer
+			// visible the index was dropped earlier in this transaction and only
+			// leaves the storage list at commit - it cannot block the drop.
+			// (Unique CREATE INDEX entries still block: their names are not
+			// distinguishable from constraint-backed indexes here.)
+			auto &index_catalog = db.GetCatalog();
+			EntryLookupInfo lookup_info(CatalogType::INDEX_ENTRY, index.GetIndexName());
+			auto entry =
+			    index_catalog.GetEntry(context, info->GetSchemaName(), lookup_info, OnEntryNotFound::RETURN_NULL);
+			if (!entry) {
+				continue;
+			}
+		}
+		for (auto &column_id : index.GetColumnIds()) {
+			if (column_id == removed_column) {
+				throw CatalogException("Cannot drop this column: an index depends on it!");
+			} else if (column_id > removed_column) {
+				throw CatalogException("Cannot drop this column: an index depends on a column after it!");
+			}
+		}
+	}
+
+	// erase the column definitions from this DataTable
+	D_ASSERT(removed_column < column_definitions.size());
+	column_definitions.erase_at(removed_column);
+
+	storage_t storage_idx = 0;
+	for (idx_t i = 0; i < column_definitions.size(); i++) {
+		auto &col = column_definitions[i];
+		col.SetOid(i);
+		if (col.Generated()) {
+			continue;
+		}
+		col.SetStorageOid(storage_idx++);
+	}
+
+	// alter the row_groups and remove the column from each of them
+	this->row_groups = parent.row_groups->RemoveColumn(removed_column);
+
+	// scan the original table, and fill the new column with the transformed value
+	local_storage.DropColumn(parent, *this, removed_column);
+
+	// this table replaces the previous table, hence the parent is no longer the root DataTable
+	parent.version = DataTableVersion::ALTERED;
 }
 
-DataTable::DataTable(ClientContext &context, DataTable &parent, BoundConstraint &constraint, const ColumnList &columns,
-                     const string &constraint_text)
+DataTable::DataTable(ClientContext &context, DataTable &parent, BoundConstraint &constraint)
     : db(parent.db), info(parent.info), row_groups(parent.row_groups), version(DataTableVersion::MAIN_TABLE) {
 	// ALTER COLUMN to add a new constraint.
 
@@ -218,7 +186,7 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, BoundConstraint 
 	}
 
 	if (constraint.type != ConstraintType::UNIQUE) {
-		VerifyNewConstraint(local_storage, parent, constraint, columns, constraint_text);
+		VerifyNewConstraint(local_storage, parent, constraint);
 	}
 	local_storage.MoveStorage(parent, *this);
 	parent.version = DataTableVersion::ALTERED;
@@ -228,16 +196,14 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t changed_id
                      const vector<StorageIndex> &bound_columns, Expression &cast_expr)
     : db(parent.db), info(parent.info), version(DataTableVersion::MAIN_TABLE) {
 	auto &local_storage = LocalStorage::Get(context, db);
-
-	// Bind all indexes. Before the append lock, as in the removed-column constructor: binding resolves catalog
-	// entries and may open a connection of its own.
-	info->BindIndexes(context);
-
 	// prevent any tuples from being added to the parent
 	lock_guard<mutex> lock(append_lock);
 	for (auto &column_def : parent.column_definitions) {
 		column_definitions.emplace_back(column_def.Copy());
 	}
+
+	// Bind all indexes.
+	info->BindIndexes(context);
 
 	// first check if there are any indexes that exist that point to the changed column
 	for (auto &index : info->indexes.Indexes()) {
@@ -572,7 +538,7 @@ bool DataTable::IndexNameIsUnique(const string &name) {
 }
 
 Identifier DataTableInfo::GetSchemaName() {
-	return schema;
+	return schema_info->Name();
 }
 
 Identifier DataTableInfo::GetTableName() {
@@ -591,6 +557,10 @@ Identifier DataTable::GetTableName() const {
 
 void DataTable::SetTableName(Identifier new_name) {
 	info->SetTableName(std::move(new_name));
+}
+
+void DataTable::SetColumnName(PhysicalIndex index, const Identifier &new_name) {
+	column_definitions[index.index].SetName(new_name);
 }
 
 TableStorageInfo DataTable::GetStorageInfo() {
@@ -702,8 +672,7 @@ static void VerifyNotNullConstraint(TableCatalogEntry &table, const Vector &vect
 		return;
 	}
 
-	throw ConstraintException("NOT NULL constraint failed: %s.%s", table.name.GetIdentifierName(),
-	                          col_name.GetIdentifierName());
+	throw ConstraintException("NOT NULL constraint failed: %s.%s", table.name, col_name);
 }
 
 // To avoid throwing an error at SELECT, instead this moves the error detection to INSERT
@@ -728,21 +697,20 @@ static void VerifyCheckConstraintExpression(ClientContext &context, TableCatalog
                                             DataChunk &chunk, const string &check_text) {
 	ExpressionExecutor executor(context, expr);
 	Vector result(LogicalType::INTEGER);
-	auto &table_name = table.name.GetIdentifierName();
 	try {
 		executor.ExecuteExpression(chunk, result);
 	} catch (std::exception &ex) {
 		ErrorData error(ex);
-		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Error: %s)", table_name,
+		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Error: %s)", table.name,
 		                          check_text, error.RawMessage());
 	} catch (...) {
 		// LCOV_EXCL_START
-		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Unknown Error)", table_name,
+		throw ConstraintException("CHECK constraint failed on table %s with expression %s (Unknown Error)", table.name,
 		                          check_text);
 	} // LCOV_EXCL_STOP
 	for (auto entry : result.Values<int32_t>()) {
 		if (entry.IsValid() && entry.GetValue() == 0) {
-			throw ConstraintException("CHECK constraint failed on table %s with expression %s", table_name, check_text);
+			throw ConstraintException("CHECK constraint failed on table %s with expression %s", table.name, check_text);
 		}
 	}
 }
@@ -934,15 +902,13 @@ void DataTable::VerifyDeleteForeignKeyConstraint(optional_ptr<LocalTableStorage>
 	VerifyForeignKeyConstraint(storage, bound_foreign_key, context, chunk, VerifyExistenceType::DELETE_FK);
 }
 
-void DataTable::VerifyNewConstraint(LocalStorage &local_storage, DataTable &parent, const BoundConstraint &constraint,
-                                    const ColumnList &columns, const string &constraint_text) {
+void DataTable::VerifyNewConstraint(LocalStorage &local_storage, DataTable &parent, const BoundConstraint &constraint) {
 	if (constraint.type != ConstraintType::NOT_NULL && constraint.type != ConstraintType::CHECK) {
 		throw NotImplementedException("FIXME: ALTER COLUMN with such constraint is not supported yet");
 	}
 
-	parent.row_groups->VerifyNewConstraint(local_storage.GetClientContext(), parent, constraint, columns,
-	                                       constraint_text);
-	local_storage.VerifyNewConstraint(parent, constraint, columns, constraint_text);
+	parent.row_groups->VerifyNewConstraint(local_storage.GetClientContext(), parent, constraint);
+	local_storage.VerifyNewConstraint(parent, constraint);
 }
 
 void DataTable::VerifyUniqueIndexes(TableIndexList &indexes, optional_ptr<LocalTableStorage> storage, DataChunk &chunk,
@@ -1409,7 +1375,7 @@ void DataTable::MergeStorage(RowGroupCollection &data, optional_ptr<StorageCommi
 
 void DataTable::WriteToLog(DuckTransaction &transaction, WriteAheadLog &log, idx_t row_start, idx_t count,
                            optional_ptr<StorageCommitState> commit_state) {
-	log.WriteSetTable(info->schema, info->table, info->GetCatalogId());
+	log.WriteSetTable(info->GetSchemaName(), info->GetTableName());
 	if (!commit_state) {
 		ScanTableSegment(transaction, row_start, count, [&](DataChunk &chunk) { log.WriteInsert(chunk); });
 		return;
@@ -1507,8 +1473,7 @@ void DataTable::RevertAppend(DuckTransaction &transaction, idx_t start_row, idx_
 ErrorData DataTable::AppendToIndexes(TableIndexList &indexes, optional_ptr<TableIndexList> delete_indexes,
                                      DataChunk &table_chunk, DataChunk &index_chunk,
                                      const vector<StorageIndex> &mapped_column_ids, row_t row_start,
-                                     const IndexAppendMode index_append_mode, optional_idx active_checkpoint,
-                                     bool skip_external) {
+                                     const IndexAppendMode index_append_mode, optional_idx active_checkpoint) {
 	// Generate the vector of row identifiers.
 	Vector row_ids(LogicalType::ROW_TYPE);
 	VectorOperations::GenerateSequence(row_ids, table_chunk.size(), row_start, 1);
@@ -1529,10 +1494,6 @@ ErrorData DataTable::AppendToIndexes(TableIndexList &indexes, optional_ptr<Table
 		}
 
 		auto &bound_index = index.Cast<BoundIndex>();
-		if (skip_external && bound_index.IsExternal()) {
-			// Already fed directly from the shared replay chunk by the caller.
-			continue;
-		}
 
 		// Find the matching delete index.
 		optional_ptr<BoundIndex> delete_index;
@@ -1636,11 +1597,7 @@ void DataTable::RevertIndexAppend(TableAppendState &state, DataChunk &chunk, Vec
 
 void DataTable::RemoveFromIndexes(const QueryContext &context, Vector &row_identifiers, idx_t count,
                                   IndexRemovalType removal_type, optional_idx active_checkpoint) {
-	// During WAL replay external indexes are fed their deletes at entry granularity (wal_replay.cpp),
-	// outside the locks held here.
-	const bool skip_external = DuckTransactionManager::Get(db).GetReplayCommitOffset() != 0;
-	row_groups->RemoveFromIndexes(context, info->indexes, row_identifiers, count, removal_type, active_checkpoint,
-	                              skip_external);
+	row_groups->RemoveFromIndexes(context, info->indexes, row_identifiers, count, removal_type, active_checkpoint);
 }
 
 //===--------------------------------------------------------------------===//

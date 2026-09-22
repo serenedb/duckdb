@@ -24,12 +24,9 @@ void ColumnList::SetCaseSensitive(bool case_sensitive_p) {
 	case_sensitive = case_sensitive_p;
 	identifier_map_t<column_t> rekeyed(0, IdentifierHashFunction(case_sensitive), IdentifierEquality(case_sensitive));
 	for (auto &entry : name_map) {
-		// Two names the old keying kept apart can be one under the new one, and the list then holds a duplicate
-		// it was never checked for -- this is where that check lands.
-		if (!allow_duplicate_names && !rekeyed.emplace(entry.first, entry.second).second) {
+		if (!rekeyed.emplace(entry.first, entry.second).second && !allow_duplicate_names) {
 			throw CatalogException("Column with name %s already exists!", entry.first);
 		}
-		rekeyed[entry.first] = entry.second;
 	}
 	name_map = std::move(rekeyed);
 }
@@ -115,16 +112,6 @@ const ColumnDefinition &ColumnList::GetColumn(const Identifier &name) const {
 	auto entry = name_map.find(name);
 	if (entry == name_map.end()) {
 		throw InternalException("Column with name \"%s\" does not exist", name);
-	}
-	auto logical_index = entry->second;
-	D_ASSERT(logical_index < columns.size());
-	return columns[logical_index];
-}
-
-optional_ptr<const ColumnDefinition> ColumnList::TryGetColumn(const Identifier &name) const {
-	auto entry = name_map.find(name);
-	if (entry == name_map.end()) {
-		return nullptr;
 	}
 	auto logical_index = entry->second;
 	D_ASSERT(logical_index < columns.size());

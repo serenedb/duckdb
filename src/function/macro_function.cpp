@@ -279,6 +279,21 @@ unique_ptr<DummyBinding> MacroFunction::CreateDummyBinding(
 	return res;
 }
 
+vector<LogicalType> MacroFunction::ParameterTypes() const {
+	auto result = types;
+	result.resize(parameters.size(), LogicalType::UNKNOWN);
+	return result;
+}
+
+bool MacroFunction::HasParameterTypes(const vector<LogicalType> &parameter_types) const {
+	return ParameterTypes() == parameter_types;
+}
+
+string MacroFunction::ParameterTypesToString(const vector<LogicalType> &parameter_types) {
+	return StringUtil::Join(parameter_types, parameter_types.size(), ", ",
+	                        [](const LogicalType &type) { return type.ToString(); });
+}
+
 void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.type = type;
 	for (auto &param : parameters) {
@@ -291,17 +306,6 @@ void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.return_types = return_types;
 	other.return_names = return_names;
 	other.is_procedure = is_procedure;
-	other.dependencies = dependencies;
-}
-
-LogicalDependencyList MacroFunction::UnionDependencies(const vector<unique_ptr<MacroFunction>> &macro_functions) {
-	LogicalDependencyList result;
-	for (auto &function : macro_functions) {
-		for (auto &dep : function->dependencies.Set()) {
-			result.AddDependency(dep);
-		}
-	}
-	return result;
 }
 
 vector<unique_ptr<ParsedExpression>>

@@ -22,7 +22,6 @@
 namespace duckdb {
 class BindContext;
 class BoundQueryNode;
-class ClientContext;
 class ColumnRefExpression;
 class SubqueryRef;
 class LogicalGet;
@@ -35,8 +34,6 @@ enum class BindingType { BASE, TABLE, DUMMY, CATALOG_ENTRY, CTE };
 
 //! A Binding represents a binding to a table, table-producing function or subquery with a specified table index.
 struct Binding {
-	//! `case_sensitive` keys the columns by the exact name, for a relation whose catalog matches names that way --
-	//! a table declared `("A" int, "a" int)` has two columns and each must bind to its own.
 	Binding(BindingType binding_type, BindingAlias alias, vector<LogicalType> types, vector<Identifier> names,
 	        TableIndex index, bool case_sensitive = false);
 	virtual ~Binding() = default;
@@ -126,7 +123,6 @@ public:
 	optional_ptr<StandardEntry> entry;
 	//! Virtual columns
 	virtual_column_map_t virtual_columns;
-	optional_ptr<ClientContext> context;
 
 public:
 	unique_ptr<ParsedExpression> ExpandGeneratedColumn(const Identifier &column_name);
@@ -135,12 +131,6 @@ public:
 	ErrorData ColumnNotFoundError(const Identifier &column_name) const override;
 	// These are columns that are present in the name_map, appearing in the order that they're bound
 	const vector<ColumnIndex> &GetBoundColumnIds() const;
-	// Same list without the debug uniqueness verification -- for readers that run
-	// mid-bind, where statements like MERGE hold transient duplicates that are
-	// resolved before planning
-	const vector<ColumnIndex> &PeekBoundColumnIds() const {
-		return bound_column_ids;
-	}
 
 protected:
 	ColumnBinding GetColumnBinding(column_t column_index);

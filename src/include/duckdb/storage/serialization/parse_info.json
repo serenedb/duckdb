@@ -54,12 +54,6 @@
         "id": 205,
         "name": "allow_internal",
         "type": "bool"
-      },
-      {
-        "id": 206,
-        "name": "oid",
-        "type": "idx_t",
-        "default": 0
       }
     ],
     "methods": {
@@ -116,18 +110,6 @@
       {
         "id": 401,
         "name": "new_name",
-        "type": "Identifier"
-      }
-    ]
-  },
-  {
-    "class": "RenameTableInfo",
-    "base": "AlterTableInfo",
-    "enum": "RENAME_TABLE",
-    "members": [
-      {
-        "id": 400,
-        "name": "new_table_name",
         "type": "Identifier"
       }
     ]
@@ -340,24 +322,246 @@
     ]
   },
   {
-    "class": "SetPermissionsInfo",
+    "class": "RenameInfo",
     "base": "AlterInfo",
-    "enum": "SET_PERMISSIONS",
+    "enum": "RENAME",
     "members": [
       {
         "id": 300,
-        "name": "permissions_alter_type",
-        "type": "PermissionsAlterType"
-      },
-      {
-        "id": 301,
         "name": "entry_catalog_type",
         "type": "CatalogType"
       },
       {
+        "id": 301,
+        "name": "new_name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "ReplaceDefinitionInfo",
+    "base": "AlterInfo",
+    "enum": "REPLACE_DEFINITION",
+    "members": [
+      {
+        "id": 300,
+        "name": "definition",
+        "type": "CreateInfo*"
+      }
+    ],
+    "constructor": ["definition"]
+  },
+  {
+    "class": "AlterPermissionsInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_PERMISSIONS",
+    "members": [
+      {
+        "id": 300,
+        "name": "entry_catalog_type",
+        "type": "CatalogType"
+      },
+      {
+        "id": 303,
+        "name": "new_owner",
+        "type": "string"
+      },
+      {
+        "id": 304,
+        "name": "new_owner_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 305,
+        "name": "privileges",
+        "type": "AclMode"
+      },
+      {
+        "id": 306,
+        "name": "column_privileges",
+        "type": "vector<ColumnPrivilege>"
+      },
+      {
+        "id": 307,
+        "name": "grantee",
+        "type": "string"
+      },
+      {
+        "id": 308,
+        "name": "grantee_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 309,
+        "name": "granted_by",
+        "type": "string"
+      },
+      {
+        "id": 310,
+        "name": "grantors",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 311,
+        "name": "revoke",
+        "type": "bool"
+      },
+      {
+        "id": 312,
+        "name": "with_grant_option",
+        "type": "bool"
+      },
+      {
+        "id": 313,
+        "name": "option_only",
+        "type": "bool"
+      },
+      {
+        "id": 314,
+        "name": "cascade",
+        "type": "bool"
+      },
+      {
+        "id": 315,
+        "name": "default_objtype",
+        "type": "CatalogType"
+      },
+      {
+        "id": 316,
+        "name": "for_role",
+        "type": "string"
+      },
+      {
+        "id": 317,
+        "name": "default_schema",
+        "type": "string"
+      },
+      {
+        "id": 318,
+        "name": "target_role",
+        "type": "idx_t"
+      },
+      {
+        "id": 319,
+        "name": "default_scope",
+        "type": "idx_t"
+      },
+      {
+        "id": 320,
+        "name": "all_in_schema",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "class": "AlterRoleInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_ROLE",
+    "members": [
+      {
+        "id": 300,
+        "name": "set_options",
+        "type": "RoleOption"
+      },
+      {
+        "id": 301,
+        "name": "clear_options",
+        "type": "RoleOption"
+      },
+      {
         "id": 302,
-        "name": "permissions",
-        "type": "CatalogPermissions"
+        "name": "set_password",
+        "type": "bool"
+      },
+      {
+        "id": 303,
+        "name": "null_password",
+        "type": "bool"
+      },
+      {
+        "id": 304,
+        "name": "password",
+        "type": "string"
+      },
+      {
+        "id": 305,
+        "name": "set_conn_limit",
+        "type": "bool"
+      },
+      {
+        "id": 306,
+        "name": "conn_limit",
+        "type": "int32_t"
+      },
+      {
+        "id": 307,
+        "name": "set_valid_until",
+        "type": "bool"
+      },
+      {
+        "id": 308,
+        "name": "valid_until",
+        "type": "int64_t"
+      },
+      {
+        "id": 309,
+        "name": "new_name",
+        "type": "Identifier"
+      },
+      {
+        "id": 310,
+        "name": "reset_all_config",
+        "type": "bool"
+      },
+      {
+        "id": 311,
+        "name": "reset_config",
+        "type": "vector<string>"
+      },
+      {
+        "id": 312,
+        "name": "set_config",
+        "type": "vector<string>"
+      },
+      {
+        "id": 313,
+        "name": "grant_role",
+        "type": "string"
+      },
+      {
+        "id": 314,
+        "name": "revoke",
+        "type": "bool"
+      },
+      {
+        "id": 315,
+        "name": "option_only",
+        "type": "bool"
+      },
+      {
+        "id": 316,
+        "name": "admin_option",
+        "type": "int8_t"
+      },
+      {
+        "id": 317,
+        "name": "inherit_option",
+        "type": "int8_t"
+      },
+      {
+        "id": 318,
+        "name": "set_option",
+        "type": "int8_t"
+      },
+      {
+        "id": 319,
+        "name": "grant_role_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 320,
+        "name": "grantor_id",
+        "type": "idx_t"
       }
     ]
   },
@@ -409,6 +613,19 @@
     ]
   },
   {
+    "class": "AlterViewInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_VIEW",
+    "class_type": "alter_view_type",
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_view_type",
+        "type": "AlterViewType"
+      }
+    ]
+  },
+  {
     "class": "AlterScalarFunctionInfo",
     "base": "AlterInfo",
     "enum": "ALTER_SCALAR_FUNCTION",
@@ -425,39 +642,39 @@
     ]
   },
   {
-    "class": "RenameScalarFunctionInfo",
-    "base": "AlterScalarFunctionInfo",
-    "enum": "RENAME_SCALAR_FUNCTION",
-    "members": [
-      {
-        "id": 400,
-        "name": "new_name",
-        "type": "Identifier"
-      }
-    ]
-  },
-  {
-    "class": "AlterViewInfo",
+    "class": "AlterIndexInfo",
     "base": "AlterInfo",
-    "enum": "ALTER_VIEW",
-    "class_type": "alter_view_type",
+    "enum": "ALTER_INDEX",
+    "class_type": "alter_index_type",
     "members": [
       {
         "id": 300,
-        "name": "alter_view_type",
-        "type": "AlterViewType"
+        "name": "alter_index_type",
+        "type": "AlterIndexType"
       }
     ]
   },
   {
-    "class": "RenameViewInfo",
-    "base": "AlterViewInfo",
-    "enum": "RENAME_VIEW",
+    "class": "SetIndexOptionsInfo",
+    "base": "AlterIndexInfo",
+    "enum": "SET_INDEX_OPTIONS",
     "members": [
       {
         "id": 400,
-        "name": "new_view_name",
-        "type": "Identifier"
+        "name": "options",
+        "type": "case_insensitive_map_t<Value>"
+      }
+    ]
+  },
+  {
+    "class": "ResetIndexOptionsInfo",
+    "base": "AlterIndexInfo",
+    "enum": "RESET_INDEX_OPTIONS",
+    "members": [
+      {
+        "id": 400,
+        "name": "options",
+        "type": "identifier_set_t"
       }
     ]
   },
@@ -484,21 +701,6 @@
     "members": [
       {
         "id": 400,
-        "name": "new_name",
-        "type": "Identifier"
-      }
-    ]
-  },
-  {
-    "class": "RenameSchemaInfo",
-    "base": "AlterInfo",
-    "enum": "ALTER_SCHEMA",
-    "includes": [
-      "duckdb/parser/parsed_data/alter_schema_info.hpp"
-    ],
-    "members": [
-      {
-        "id": 300,
         "name": "new_name",
         "type": "Identifier"
       }
@@ -907,28 +1109,6 @@
         "id": 400,
         "name": "constraint",
         "type": "unique_ptr<Constraint>"
-      },
-      {
-        "id": 401,
-        "name": "implied_not_nulls",
-        "type": "vector<unique_ptr<Constraint>>"
-      }
-    ]
-  },
-  {
-    "class": "RenameConstraintInfo",
-    "base": "AlterTableInfo",
-    "enum": "RENAME_CONSTRAINT",
-    "members": [
-      {
-        "id": 400,
-        "name": "old_name",
-        "type": "string"
-      },
-      {
-        "id": 401,
-        "name": "new_name",
-        "type": "string"
       }
     ]
   },
@@ -951,6 +1131,23 @@
         "id": 402,
         "name": "cascade",
         "type": "bool"
+      }
+    ]
+  },
+  {
+    "class": "RenameConstraintInfo",
+    "base": "AlterTableInfo",
+    "enum": "RENAME_CONSTRAINT",
+    "members": [
+      {
+        "id": 400,
+        "name": "old_name",
+        "type": "string"
+      },
+      {
+        "id": 401,
+        "name": "new_name",
+        "type": "string"
       }
     ]
   },

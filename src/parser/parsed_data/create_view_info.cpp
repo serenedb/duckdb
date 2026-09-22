@@ -1,4 +1,5 @@
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/parser/parser.hpp"
@@ -48,6 +49,10 @@ unique_ptr<CreateInfo> CreateViewInfo::Copy() const {
 	result->security_invoker = security_invoker;
 	result->query = unique_ptr_cast<SQLStatement, SelectStatement>(query->Copy());
 	return std::move(result);
+}
+
+unique_ptr<AlterInfo> CreateViewInfo::GetAlterInfo() const {
+	return make_uniq_base<AlterInfo, ReplaceDefinitionInfo>(Copy());
 }
 
 unique_ptr<SelectStatement> CreateViewInfo::ParseSelect(const string &sql) {

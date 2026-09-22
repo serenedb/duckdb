@@ -54,11 +54,15 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 			                      "the list of column names");
 		}
 		column_name_set.insert(col_name);
-		// A missing column falls through to BindColumn, whose error names the table.
-		if (table.ColumnExists(col_name) && table.GetColumn(col_name).Generated()) {
+		if (!table.ColumnExists(col_name)) {
+			throw BinderException("Column with name \"%s\" does not exist", col_name);
+		}
+		auto &col = table.GetColumn(col_name);
+		// ignore generated column
+		if (col.Generated()) {
 			throw BinderException(
 			    "cannot vacuum or analyze generated column \"%s\" - specify non-generated columns to vacuum or analyze",
-			    col_name);
+			    col.GetName());
 		}
 		non_generated_column_names.emplace_back(col_name);
 		ColumnRefExpression colref(col_name, binding_name);

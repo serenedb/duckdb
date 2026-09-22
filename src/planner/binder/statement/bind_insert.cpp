@@ -691,8 +691,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	} else {
 		// inserting into a non-temporary table: alters underlying database
 		DatabaseModificationType modification_type = DatabaseModificationType::INSERT_DATA;
-		GetStatementProperties().RegisterDBModify(table.catalog, context, modification_type);
-		GetStatementProperties().RegisterDBRead(table.ParentCatalog(), context);
+		GetStatementProperties().RegisterDBModify(table.GetStorageCatalog(context), context, modification_type);
 	}
 
 	auto insert = make_uniq<LogicalInsert>(table, GenerateTableIndex());
@@ -725,17 +724,6 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	BindInsertColumnList(table, node.columns, node.default_values, named_column_map, insert->expected_types,
 	                     column_index_map);
 
-	// Record the INSERT access (verb + written columns) for the access-control
-	// rule. named_column_map holds the logical positions the insert targets
-	// (the explicit column list, or every physical column when none is given).
-	{
-		auto &access = RecordAccess(insert->table_index.index, table);
-		access.verb |= AccessVerb::INSERT;
-		for (auto &col_idx : named_column_map) {
-			access.write.insert(col_idx.index);
-		}
-	}
-
 	// An INSERT ... SELECT supplies a value for every targeted column, so naming a
 	// generated column there is not allowed -- a generated column only accepts
 	// DEFAULT (handled by the VALUES binder). Matches PostgreSQL. A VALUES insert
@@ -751,7 +739,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 
 	// bind the default values
 	auto &catalog_name = table.ParentCatalog().GetName();
-	auto &schema_name = table.ParentSchema().name;
+	auto schema_name = table.ParentSchema(context).name;
 	BindDefaultValues(table.GetColumns(), insert->bound_defaults, catalog_name.GetIdentifierName(),
 	                  schema_name.GetIdentifierName());
 	insert->bound_constraints = BindConstraints(table);

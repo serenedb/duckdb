@@ -1,4 +1,5 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/extra_type_info.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -26,11 +27,9 @@ CatalogType ChangeOwnershipInfo::GetCatalogType() const {
 }
 
 unique_ptr<AlterInfo> ChangeOwnershipInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, ChangeOwnershipInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
-	                                                             GetQualifiedName().Schema(), GetQualifiedName().Name(),
-	                                                             owner_schema, owner_name, if_not_found);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, ChangeOwnershipInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
+	                                                      GetQualifiedName().Schema(), GetQualifiedName().Name(),
+	                                                      owner_schema, owner_name, if_not_found);
 }
 
 string ChangeOwnershipInfo::ToString() const {
@@ -66,11 +65,9 @@ CatalogType SetCommentInfo::GetCatalogType() const {
 }
 
 unique_ptr<AlterInfo> SetCommentInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, SetCommentInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
-	                                                        GetQualifiedName().Schema(), GetQualifiedName().Name(),
-	                                                        comment_value, if_not_found);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, SetCommentInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
+	                                                 GetQualifiedName().Schema(), GetQualifiedName().Name(),
+	                                                 comment_value, if_not_found);
 }
 
 string SetCommentInfo::ToString() const {
@@ -88,6 +85,151 @@ string SetCommentInfo::ToString() const {
 }
 
 SetCommentInfo::SetCommentInfo() : AlterInfo(AlterType::SET_COMMENT) {
+}
+
+//===--------------------------------------------------------------------===//
+// AlterPermissionsInfo
+//===--------------------------------------------------------------------===//
+AlterPermissionsInfo::AlterPermissionsInfo(CatalogType entry_catalog_type, QualifiedName entry_name)
+    : AlterInfo(AlterType::ALTER_PERMISSIONS, std::move(entry_name), OnEntryNotFound::THROW_EXCEPTION),
+      entry_catalog_type(entry_catalog_type) {
+}
+
+CatalogType AlterPermissionsInfo::GetCatalogType() const {
+	return entry_catalog_type;
+}
+
+unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
+	auto result = make_uniq<AlterPermissionsInfo>(entry_catalog_type, GetQualifiedName());
+	result->if_not_found = if_not_found;
+	result->new_owner = new_owner;
+	result->new_owner_id = new_owner_id;
+	result->privileges = privileges;
+	result->column_privileges = column_privileges;
+	result->grantee = grantee;
+	result->grantee_id = grantee_id;
+	result->granted_by = granted_by;
+	result->grantors = grantors;
+	result->revoke = revoke;
+	result->with_grant_option = with_grant_option;
+	result->option_only = option_only;
+	result->cascade = cascade;
+	result->default_objtype = default_objtype;
+	result->for_role = for_role;
+	result->default_schema = default_schema;
+	result->target_role = target_role;
+	result->default_scope = default_scope;
+	result->all_in_schema = all_in_schema;
+	return std::move(result);
+}
+
+string AlterPermissionsInfo::ToString() const {
+	auto object = ParseInfo::TypeToString(entry_catalog_type) + " " +
+	              GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (!new_owner.empty()) {
+		return "ALTER " + object + " OWNER TO " + new_owner + ";";
+	}
+	return string(revoke ? "REVOKE " : "GRANT ") + EnumUtil::ToString(privileges) + " ON " + object +
+	       (revoke ? " FROM " : " TO ") + grantee + ";";
+}
+
+RenameInfo::RenameInfo(CatalogType entry_catalog_type, const AlterEntryData &data, Identifier new_name_p)
+    : AlterInfo(AlterType::RENAME, data.qualified_name, data.if_not_found), entry_catalog_type(entry_catalog_type),
+      new_name(std::move(new_name_p)) {
+}
+
+RenameInfo::RenameInfo() : AlterInfo(AlterType::RENAME), entry_catalog_type(CatalogType::INVALID) {
+}
+
+CatalogType RenameInfo::GetCatalogType() const {
+	return entry_catalog_type;
+}
+
+unique_ptr<AlterInfo> RenameInfo::Copy() const {
+	return make_uniq_base<AlterInfo, RenameInfo>(entry_catalog_type, GetAlterEntryData(), new_name);
+}
+
+string RenameInfo::ToString() const {
+	return "ALTER " + ParseInfo::TypeToString(entry_catalog_type) + " " +
+	       GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA) + " RENAME TO " +
+	       KeywordHelper::WriteOptionallyQuoted(new_name.GetIdentifierName()) + ";";
+}
+
+ReplaceDefinitionInfo::ReplaceDefinitionInfo(unique_ptr<CreateInfo> definition_p)
+    : AlterInfo(AlterType::REPLACE_DEFINITION, definition_p->GetQualifiedName(), OnEntryNotFound::THROW_EXCEPTION),
+      definition(std::move(definition_p)) {
+	new_dependencies = make_uniq<LogicalDependencyList>(definition->dependencies);
+}
+
+ReplaceDefinitionInfo::~ReplaceDefinitionInfo() {
+}
+
+CatalogType ReplaceDefinitionInfo::GetCatalogType() const {
+	return definition->type;
+}
+
+unique_ptr<AlterInfo> ReplaceDefinitionInfo::Copy() const {
+	auto result = make_uniq<ReplaceDefinitionInfo>(definition->Copy());
+	result->if_not_found = if_not_found;
+	return std::move(result);
+}
+
+string ReplaceDefinitionInfo::ToString() const {
+	return definition->ToString();
+}
+
+AlterPermissionsInfo::AlterPermissionsInfo()
+    : AlterInfo(AlterType::ALTER_PERMISSIONS), entry_catalog_type(CatalogType::INVALID) {
+}
+
+//===--------------------------------------------------------------------===//
+// AlterRoleInfo
+//===--------------------------------------------------------------------===//
+AlterRoleInfo::AlterRoleInfo(Identifier role)
+    : AlterInfo(AlterType::ALTER_ROLE, QualifiedName(Identifier(), Identifier(), std::move(role)),
+                OnEntryNotFound::THROW_EXCEPTION) {
+}
+
+AlterRoleInfo::AlterRoleInfo() : AlterInfo(AlterType::ALTER_ROLE) {
+}
+
+CatalogType AlterRoleInfo::GetCatalogType() const {
+	return CatalogType::ROLE_ENTRY;
+}
+
+unique_ptr<AlterInfo> AlterRoleInfo::Copy() const {
+	auto result = make_uniq<AlterRoleInfo>(GetQualifiedName().Name());
+	result->if_not_found = if_not_found;
+	result->set_options = set_options;
+	result->clear_options = clear_options;
+	result->set_password = set_password;
+	result->null_password = null_password;
+	result->password = password;
+	result->set_conn_limit = set_conn_limit;
+	result->conn_limit = conn_limit;
+	result->set_valid_until = set_valid_until;
+	result->valid_until = valid_until;
+	result->new_name = new_name;
+	result->reset_all_config = reset_all_config;
+	result->reset_config = reset_config;
+	result->set_config = set_config;
+	result->grant_role = grant_role;
+	result->revoke = revoke;
+	result->option_only = option_only;
+	result->admin_option = admin_option;
+	result->inherit_option = inherit_option;
+	result->set_option = set_option;
+	result->grant_role_id = grant_role_id;
+	result->grantor_id = grantor_id;
+	return std::move(result);
+}
+
+string AlterRoleInfo::ToString() const {
+	if (!grant_role.empty()) {
+		return string(revoke ? "REVOKE " : "GRANT ") + grant_role + (revoke ? " FROM " : " TO ") +
+		       GetQualifiedName().Name().GetIdentifierName() + ";";
+	}
+	return "ALTER ROLE " + GetQualifiedName().Name().GetIdentifierName() + ";";
 }
 
 //===--------------------------------------------------------------------===//
@@ -120,9 +262,7 @@ RenameColumnInfo::~RenameColumnInfo() {
 }
 
 unique_ptr<AlterInfo> RenameColumnInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, RenameColumnInfo>(GetAlterEntryData(), old_name, new_name);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, RenameColumnInfo>(GetAlterEntryData(), old_name, new_name);
 }
 
 string RenameColumnInfo::ToString() const {
@@ -155,9 +295,7 @@ RenameFieldInfo::~RenameFieldInfo() {
 }
 
 unique_ptr<AlterInfo> RenameFieldInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, RenameFieldInfo>(GetAlterEntryData(), column_path, new_name);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, RenameFieldInfo>(GetAlterEntryData(), column_path, new_name);
 }
 
 string RenameFieldInfo::ToString() const {
@@ -183,9 +321,6 @@ string RenameFieldInfo::ToString() const {
 //===--------------------------------------------------------------------===//
 // RenameTableInfo
 //===--------------------------------------------------------------------===//
-RenameTableInfo::RenameTableInfo() : AlterTableInfo(AlterTableType::RENAME_TABLE) {
-}
-
 RenameTableInfo::RenameTableInfo(const AlterEntryData &data, Identifier new_name_p)
     : AlterTableInfo(AlterTableType::RENAME_TABLE, data), new_table_name(std::move(new_name_p)) {
 }
@@ -194,9 +329,7 @@ RenameTableInfo::~RenameTableInfo() {
 }
 
 unique_ptr<AlterInfo> RenameTableInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, RenameTableInfo>(GetAlterEntryData(), new_table_name);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, RenameTableInfo>(GetAlterEntryData(), new_table_name);
 }
 
 string RenameTableInfo::ToString() const {
@@ -228,10 +361,7 @@ AddColumnInfo::~AddColumnInfo() {
 }
 
 unique_ptr<AlterInfo> AddColumnInfo::Copy() const {
-	auto result =
-	    make_uniq_base<AlterInfo, AddColumnInfo>(GetAlterEntryData(), new_column.Copy(), if_column_not_exists);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, AddColumnInfo>(GetAlterEntryData(), new_column.Copy(), if_column_not_exists);
 }
 
 string AddColumnInfo::ToString() const {
@@ -272,10 +402,8 @@ AddFieldInfo::~AddFieldInfo() {
 }
 
 unique_ptr<AlterInfo> AddFieldInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, AddFieldInfo>(GetAlterEntryData(), column_path, new_field.Copy(),
-	                                                      if_field_not_exists);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, AddFieldInfo>(GetAlterEntryData(), column_path, new_field.Copy(),
+	                                               if_field_not_exists);
 }
 
 string AddFieldInfo::ToString() const {
@@ -312,10 +440,8 @@ RemoveColumnInfo::~RemoveColumnInfo() {
 }
 
 unique_ptr<AlterInfo> RemoveColumnInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, RemoveColumnInfo>(GetAlterEntryData(), removed_column.GetIdentifierName(),
-	                                                          if_column_exists, cascade);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, RemoveColumnInfo>(GetAlterEntryData(), removed_column.GetIdentifierName(),
+	                                                   if_column_exists, cascade);
 }
 
 string RemoveColumnInfo::ToString() const {
@@ -352,10 +478,7 @@ RemoveFieldInfo::~RemoveFieldInfo() {
 }
 
 unique_ptr<AlterInfo> RemoveFieldInfo::Copy() const {
-	auto result =
-	    make_uniq_base<AlterInfo, RemoveFieldInfo>(GetAlterEntryData(), column_path, if_column_exists, cascade);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, RemoveFieldInfo>(GetAlterEntryData(), column_path, if_column_exists, cascade);
 }
 
 string RemoveFieldInfo::ToString() const {
@@ -397,10 +520,8 @@ ChangeColumnTypeInfo::~ChangeColumnTypeInfo() {
 }
 
 unique_ptr<AlterInfo> ChangeColumnTypeInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, ChangeColumnTypeInfo>(GetAlterEntryData(), column_name, target_type,
-	                                                              expression->Copy());
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, ChangeColumnTypeInfo>(GetAlterEntryData(), column_name, target_type,
+	                                                       expression->Copy());
 }
 
 string ChangeColumnTypeInfo::ToString() const {
@@ -446,10 +567,8 @@ SetDefaultInfo::~SetDefaultInfo() {
 }
 
 unique_ptr<AlterInfo> SetDefaultInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, SetDefaultInfo>(GetAlterEntryData(), column_name,
-	                                                        expression ? expression->Copy() : nullptr);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, SetDefaultInfo>(GetAlterEntryData(), column_name,
+	                                                 expression ? expression->Copy() : nullptr);
 }
 
 string SetDefaultInfo::ToString() const {
@@ -484,9 +603,7 @@ SetNotNullInfo::~SetNotNullInfo() {
 }
 
 unique_ptr<AlterInfo> SetNotNullInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, SetNotNullInfo>(GetAlterEntryData(), column_name);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, SetNotNullInfo>(GetAlterEntryData(), column_name);
 }
 
 string SetNotNullInfo::ToString() const {
@@ -516,9 +633,7 @@ DropNotNullInfo::~DropNotNullInfo() {
 }
 
 unique_ptr<AlterInfo> DropNotNullInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, DropNotNullInfo>(GetAlterEntryData(), column_name);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, DropNotNullInfo>(GetAlterEntryData(), column_name);
 }
 
 string DropNotNullInfo::ToString() const {
@@ -552,10 +667,8 @@ AlterForeignKeyInfo::~AlterForeignKeyInfo() {
 }
 
 unique_ptr<AlterInfo> AlterForeignKeyInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, AlterForeignKeyInfo>(GetAlterEntryData(), fk_table, pk_columns, fk_columns,
-	                                                             pk_keys, fk_keys, type);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, AlterForeignKeyInfo>(GetAlterEntryData(), fk_table, pk_columns, fk_columns,
+	                                                      pk_keys, fk_keys, type);
 }
 
 string AlterForeignKeyInfo::ToString() const {
@@ -579,32 +692,92 @@ CatalogType AlterViewInfo::GetCatalogType() const {
 }
 
 //===--------------------------------------------------------------------===//
-// RenameViewInfo
+// AlterIndexInfo
 //===--------------------------------------------------------------------===//
-RenameViewInfo::RenameViewInfo() : AlterViewInfo(AlterViewType::RENAME_VIEW) {
-}
-RenameViewInfo::RenameViewInfo(const AlterEntryData &data, Identifier new_name_p)
-    : AlterViewInfo(AlterViewType::RENAME_VIEW, data), new_view_name(std::move(new_name_p)) {
-}
-RenameViewInfo::~RenameViewInfo() {
+AlterIndexInfo::AlterIndexInfo(AlterIndexType type) : AlterInfo(AlterType::ALTER_INDEX), alter_index_type(type) {
 }
 
-unique_ptr<AlterInfo> RenameViewInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, RenameViewInfo>(GetAlterEntryData(), new_view_name);
-	result->oid = oid;
-	return result;
+AlterIndexInfo::AlterIndexInfo(AlterIndexType type, const AlterEntryData &data)
+    : AlterInfo(AlterType::ALTER_INDEX, data.GetQualifiedName(), data.if_not_found), alter_index_type(type) {
+}
+AlterIndexInfo::~AlterIndexInfo() {
 }
 
-string RenameViewInfo::ToString() const {
+CatalogType AlterIndexInfo::GetCatalogType() const {
+	return CatalogType::INDEX_ENTRY;
+}
+
+//===--------------------------------------------------------------------===//
+// SetIndexOptionsInfo
+//===--------------------------------------------------------------------===//
+SetIndexOptionsInfo::SetIndexOptionsInfo() : AlterIndexInfo(AlterIndexType::SET_INDEX_OPTIONS) {
+}
+SetIndexOptionsInfo::SetIndexOptionsInfo(const AlterEntryData &data, case_insensitive_map_t<Value> options_p)
+    : AlterIndexInfo(AlterIndexType::SET_INDEX_OPTIONS, data), options(std::move(options_p)) {
+}
+SetIndexOptionsInfo::~SetIndexOptionsInfo() {
+}
+
+unique_ptr<AlterInfo> SetIndexOptionsInfo::Copy() const {
+	return make_uniq_base<AlterInfo, SetIndexOptionsInfo>(GetAlterEntryData(), options);
+}
+
+string SetIndexOptionsInfo::ToString() const {
 	string result = "";
-	result += "ALTER VIEW ";
+	result += "ALTER INDEX ";
 	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 		result += "IF EXISTS ";
 	}
 	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-	result += " RENAME TO ";
-	result += SQLIdentifier(new_view_name);
-	result += ";";
+	result += " SET (";
+	idx_t i = 0;
+	for (auto &option : options) {
+		if (i > 0) {
+			result += ", ";
+		}
+		result += SQLString(option.first) + "=" + option.second.ToSQLString();
+		i++;
+	}
+	result += ");";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
+// ResetIndexOptionsInfo
+//===--------------------------------------------------------------------===//
+ResetIndexOptionsInfo::ResetIndexOptionsInfo() : AlterIndexInfo(AlterIndexType::RESET_INDEX_OPTIONS) {
+}
+ResetIndexOptionsInfo::ResetIndexOptionsInfo(const AlterEntryData &data, identifier_set_t options_p)
+    : AlterIndexInfo(AlterIndexType::RESET_INDEX_OPTIONS, data), options(std::move(options_p)) {
+}
+ResetIndexOptionsInfo::~ResetIndexOptionsInfo() {
+}
+
+unique_ptr<AlterInfo> ResetIndexOptionsInfo::Copy() const {
+	identifier_set_t options_copy;
+	for (auto &option : options) {
+		options_copy.emplace(option);
+	}
+	return make_uniq_base<AlterInfo, ResetIndexOptionsInfo>(GetAlterEntryData(), options_copy);
+}
+
+string ResetIndexOptionsInfo::ToString() const {
+	string result = "";
+	result += "ALTER INDEX ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " RESET (";
+	idx_t i = 0;
+	for (auto &option : options) {
+		if (i > 0) {
+			result += ", ";
+		}
+		result += SQLString(option.GetIdentifierName());
+		i++;
+	}
+	result += ");";
 	return result;
 }
 
@@ -622,13 +795,7 @@ AddConstraintInfo::~AddConstraintInfo() {
 }
 
 unique_ptr<AlterInfo> AddConstraintInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, AddConstraintInfo>(GetAlterEntryData(), constraint->Copy());
-	result->oid = oid;
-	auto &add_info = result->Cast<AddConstraintInfo>();
-	for (auto &implied : implied_not_nulls) {
-		add_info.implied_not_nulls.push_back(implied->Copy());
-	}
-	return result;
+	return make_uniq_base<AlterInfo, AddConstraintInfo>(GetAlterEntryData(), constraint->Copy());
 }
 
 string AddConstraintInfo::ToString() const {
@@ -656,10 +823,8 @@ DropConstraintInfo::~DropConstraintInfo() {
 }
 
 unique_ptr<AlterInfo> DropConstraintInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, DropConstraintInfo>(GetAlterEntryData(), constraint_name,
-	                                                            if_constraint_not_found, cascade);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, DropConstraintInfo>(GetAlterEntryData(), constraint_name, if_constraint_not_found,
+	                                                     cascade);
 }
 
 string DropConstraintInfo::ToString() const {
@@ -683,8 +848,8 @@ string DropConstraintInfo::ToString() const {
 RenameConstraintInfo::RenameConstraintInfo() : AlterTableInfo(AlterTableType::RENAME_CONSTRAINT) {
 }
 
-RenameConstraintInfo::RenameConstraintInfo(AlterEntryData data, string old_name_p, string new_name_p)
-    : AlterTableInfo(AlterTableType::RENAME_CONSTRAINT, std::move(data)), old_name(std::move(old_name_p)),
+RenameConstraintInfo::RenameConstraintInfo(const AlterEntryData &data, string old_name_p, string new_name_p)
+    : AlterTableInfo(AlterTableType::RENAME_CONSTRAINT, data), old_name(std::move(old_name_p)),
       new_name(std::move(new_name_p)) {
 }
 
@@ -692,9 +857,7 @@ RenameConstraintInfo::~RenameConstraintInfo() {
 }
 
 unique_ptr<AlterInfo> RenameConstraintInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, RenameConstraintInfo>(GetAlterEntryData(), old_name, new_name);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, RenameConstraintInfo>(GetAlterEntryData(), old_name, new_name);
 }
 
 string RenameConstraintInfo::ToString() const {
@@ -727,10 +890,7 @@ unique_ptr<AlterInfo> SetPartitionedByInfo::Copy() const {
 	for (auto &partition_key : partition_keys) {
 		copied_partition_keys.push_back(partition_key->Copy());
 	}
-	auto result =
-	    make_uniq_base<AlterInfo, SetPartitionedByInfo>(GetAlterEntryData(), std::move(copied_partition_keys));
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, SetPartitionedByInfo>(GetAlterEntryData(), std::move(copied_partition_keys));
 }
 
 string SetPartitionedByInfo::ToString() const {
@@ -769,9 +929,7 @@ unique_ptr<AlterInfo> SetSortedByInfo::Copy() const {
 	for (auto &order_key : orders) {
 		copied_orders.emplace_back(order_key.type, order_key.null_order, order_key.expression->Copy());
 	}
-	auto result = make_uniq_base<AlterInfo, SetSortedByInfo>(GetAlterEntryData(), std::move(copied_orders));
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, SetSortedByInfo>(GetAlterEntryData(), std::move(copied_orders));
 }
 
 string SetSortedByInfo::ToString() const {
@@ -811,9 +969,7 @@ unique_ptr<AlterInfo> SetTableOptionsInfo::Copy() const {
 	for (auto &option : table_options) {
 		table_options_copy.emplace(option.first, option.second->Copy());
 	}
-	auto result = make_uniq<SetTableOptionsInfo>(GetAlterEntryData(), std::move(table_options_copy));
-	result->oid = oid;
-	return result;
+	return make_uniq<SetTableOptionsInfo>(GetAlterEntryData(), std::move(table_options_copy));
 }
 
 string SetTableOptionsInfo::ToString() const {
@@ -850,9 +1006,7 @@ unique_ptr<AlterInfo> ResetTableOptionsInfo::Copy() const {
 	for (auto &option : table_options) {
 		table_options_copy.emplace(option);
 	}
-	auto result = make_uniq<ResetTableOptionsInfo>(GetAlterEntryData(), table_options_copy);
-	result->oid = oid;
-	return result;
+	return make_uniq<ResetTableOptionsInfo>(GetAlterEntryData(), table_options_copy);
 }
 
 string ResetTableOptionsInfo::ToString() const {

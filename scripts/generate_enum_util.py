@@ -23,7 +23,6 @@ blacklist = [
     "BatchDrainMode",
     "PartitionKeyTrackerState",
     "StorageVersion",
-    "AclMode",
     "Family",
     "Level",
     "Unit",

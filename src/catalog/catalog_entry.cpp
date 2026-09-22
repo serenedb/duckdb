@@ -5,6 +5,7 @@
 #include "duckdb/common/serializer/binary_serializer.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 
 namespace duckdb {
@@ -14,18 +15,36 @@ CatalogEntry::CatalogEntry(CatalogType type, Identifier name_p, idx_t oid)
       parent(nullptr) {
 }
 
-CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p)
-    : CatalogEntry(type, std::move(name_p), catalog.GetDatabase().GetDatabaseManager().NextOid()) {
+CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p, idx_t oid)
+    : CatalogEntry(type, std::move(name_p),
+                   oid ? catalog.GetDatabase().GetDatabaseManager().ClaimOid(oid)
+                       : catalog.GetDatabase().GetDatabaseManager().NextOid()) {
 }
 
 CatalogEntry::~CatalogEntry() {
 }
 
-void CatalogEntry::SetAsRoot() {
+void CatalogEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
 }
 
 // LCOV_EXCL_START
 unique_ptr<CatalogEntry> CatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
+	if (info.type == AlterType::ALTER_PERMISSIONS) {
+		auto result = Copy(context);
+		result->permissions = permissions;
+		result->permissions.Alter(info.Cast<AlterPermissionsInfo>(), type, nullptr);
+		return result;
+	}
+	if (info.type == AlterType::RENAME) {
+		auto result = Copy(context);
+		result->name = info.Cast<RenameInfo>().new_name;
+		return result;
+	}
+	if (info.type == AlterType::SET_COMMENT) {
+		auto result = Copy(context);
+		result->comment = info.Cast<SetCommentInfo>().comment_value;
+		return result;
+	}
 	throw InternalException("Unsupported alter type for catalog entry!");
 }
 
@@ -44,7 +63,7 @@ unique_ptr<CatalogEntry> CatalogEntry::Copy(ClientContext &context) const {
 }
 
 unique_ptr<CreateInfo> CatalogEntry::GetInfo() const {
-	throw InternalException("Unsupported type for CatalogEntry::GetInfo: %s", EnumUtil::ToString(type));
+	throw InternalException("Unsupported type for CatalogEntry::GetInfo!");
 }
 
 string CatalogEntry::ToSQL() const {
@@ -92,29 +111,24 @@ const Catalog &CatalogEntry::ParentCatalog() const {
 	throw InternalException("CatalogEntry::ParentCatalog called on catalog entry without catalog");
 }
 
-SchemaCatalogEntry &CatalogEntry::ParentSchema() {
-	throw InternalException("CatalogEntry::ParentSchema called on catalog entry without schema");
+Identifier CatalogEntry::ParentSchemaName() const {
+	throw InternalException("CatalogEntry::ParentSchemaName called on catalog entry without schema");
 }
 
-const SchemaCatalogEntry &CatalogEntry::ParentSchema() const {
+SchemaCatalogEntry &CatalogEntry::ParentSchema(CatalogTransaction transaction) const {
 	throw InternalException("CatalogEntry::ParentSchema called on catalog entry without schema");
-}
-
-optional_ptr<const SchemaCatalogEntry> CatalogEntry::TryGetParentSchema() const {
-	return nullptr;
 }
 // LCOV_EXCL_STOP
 
-unique_ptr<CatalogEntry> CatalogEntry::CopyPreservingIdentity(ClientContext &context) const {
-	auto result = Copy(context);
-	result->oid = oid;
-	result->duck_managed = duck_managed;
-	result->permissions = permissions;
-	return result;
+SchemaCatalogEntry &CatalogEntry::ParentSchema(ClientContext &context) const {
+	auto &catalog = const_cast<CatalogEntry &>(*this).ParentCatalog();
+	return ParentSchema(catalog.GetCatalogTransaction(context));
 }
 
 void CatalogEntry::Serialize(Serializer &serializer) const {
 	const auto info = GetInfo();
+	info->permissions = permissions;
+	info->oid = oid;
 	info->Serialize(serializer);
 }
 
@@ -131,8 +145,8 @@ void CatalogEntry::Rollback(CatalogEntry &prev_entry) {
 void CatalogEntry::OnDrop() {
 }
 
-InCatalogEntry::InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name)
-    : CatalogEntry(type, catalog, std::move(name)), catalog(catalog) {
+InCatalogEntry::InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t oid)
+    : CatalogEntry(type, catalog, std::move(name), oid), catalog(catalog) {
 }
 
 InCatalogEntry::~InCatalogEntry() {

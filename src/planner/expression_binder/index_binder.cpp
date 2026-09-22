@@ -1,8 +1,8 @@
 #include "duckdb/planner/expression_binder/index_binder.hpp"
 
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
-#include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/column_binding.hpp"
 #include "duckdb/execution/index/bound_index.hpp"
@@ -12,6 +12,7 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/planner/operator/logical_create_index.hpp"
+#include "duckdb/planner/operator/logical_filter.hpp"
 
 namespace duckdb {
 
@@ -20,40 +21,7 @@ IndexBinder::IndexBinder(Binder &binder, ClientContext &context, optional_ptr<Ta
     : ExpressionBinder(binder, context), table(table), info(info) {
 }
 
-//! Old spelling -> current spelling for every key column of `info` whose name moved. The key's position in the
-//! table is the identity that a rename leaves alone: an ALTER that would shift it is refused while the index
-//! exists, so `column_ids` still points at the same column and the name there is what the key is called now.
-static case_insensitive_map_t<Identifier> RenamedKeyColumns(const CreateIndexInfo &info,
-                                                            const vector<Identifier> &table_column_names) {
-	case_insensitive_map_t<Identifier> renames;
-	if (info.names.empty() || table_column_names.empty()) {
-		return renames;
-	}
-	for (auto column_id : info.column_ids) {
-		if (column_id >= info.names.size() || column_id >= table_column_names.size()) {
-			continue;
-		}
-		auto &was = info.names[column_id];
-		auto &is = table_column_names[column_id];
-		if (was.GetIdentifierName() != is.GetIdentifierName()) {
-			renames.emplace(was.GetIdentifierName(), is);
-		}
-	}
-	return renames;
-}
-
-static void ApplyRenames(ParsedExpression &expr, const case_insensitive_map_t<Identifier> &renames) {
-	ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(expr, [&](ColumnRefExpression &colref) {
-		auto entry = renames.find(colref.ColumnNames().back().GetIdentifierName());
-		if (entry != renames.end()) {
-			colref.ColumnNamesMutable().back() = entry->second;
-		}
-	});
-}
-
-unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index,
-                                              const vector<ColumnIndex> &bound_column_ids,
-                                              const vector<Identifier> &table_column_names) {
+unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index) {
 	auto &index_type_name = unbound_index.GetIndexType();
 	// Do we know the type of this index now?
 	auto index_type = context.db->config.GetIndexTypes().FindByName(index_type_name);
@@ -68,27 +36,21 @@ unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index,
 	auto &parsed_expressions = unbound_index.GetParsedExpressions();
 
 	// bind the parsed expressions to create unbound expressions
-	auto renames = RenamedKeyColumns(create_info, table_column_names);
 	vector<unique_ptr<Expression>> unbound_expressions;
-	unbound_expressions.reserve(parsed_expressions.size());
+	unbound_expressions.reserve(parsed_expressions.size() + 1);
 	for (auto &expr : parsed_expressions) {
 		auto copy = expr->Copy();
-		if (!renames.empty()) {
-			ApplyRenames(*copy, renames);
-		}
 		unbound_expressions.push_back(Bind(copy));
 	}
-
-	auto column_ids = create_info.column_ids;
-	if (column_ids.empty()) {
-		column_ids.reserve(bound_column_ids.size());
-		for (auto &column_id : bound_column_ids) {
-			column_ids.push_back(column_id.GetPrimaryIndex());
-		}
+	if (create_info.where_clause) {
+		IndexBinder where_binder(binder, context, table, info);
+		where_binder.target_type = LogicalType::BOOLEAN;
+		auto where_copy = create_info.where_clause->Copy();
+		unbound_expressions.push_back(where_binder.Bind(where_copy));
 	}
 
 	CreateIndexInput input(context, unbound_index.table_io_manager, unbound_index.db, create_info.constraint_type,
-	                       create_info.GetIndexName(), column_ids, unbound_expressions, storage_info,
+	                       create_info.GetIndexName(), create_info.column_ids, unbound_expressions, storage_info,
 	                       create_info.options);
 
 	return index_type->create_instance(input);
@@ -120,12 +82,13 @@ unique_ptr<LogicalOperator> IndexBinder::BindCreateIndex(ClientContext &context,
 	// Add the dependencies.
 	auto &dependencies = create_index_info->dependencies;
 	auto &catalog = Catalog::GetCatalog(context, create_index_info->GetQualifiedName().Catalog());
-	SetCatalogLookupCallback([&dependencies, &catalog](CatalogEntry &entry) {
+	catalog_entry_callback_t lookup_callback = [&dependencies, &catalog](CatalogEntry &entry) {
 		if (&catalog != &entry.ParentCatalog()) {
 			return;
 		}
 		dependencies.AddDependency(entry);
-	});
+	};
+	SetCatalogLookupCallback(lookup_callback);
 
 	// Bind the index expressions.
 	vector<unique_ptr<Expression>> expressions;
@@ -133,13 +96,37 @@ unique_ptr<LogicalOperator> IndexBinder::BindCreateIndex(ClientContext &context,
 		expressions.push_back(Bind(expr));
 	}
 
+	unique_ptr<Expression> bound_where;
+	if (create_index_info->where_clause) {
+		IndexBinder where_binder(binder, context, table, info);
+		where_binder.target_type = LogicalType::BOOLEAN;
+		where_binder.SetCatalogLookupCallback(lookup_callback);
+		auto where_copy = create_index_info->where_clause->Copy();
+		bound_where = where_binder.Bind(where_copy);
+		expressions.push_back(bound_where->Copy());
+	}
+
 	auto &get = plan->Cast<LogicalGet>();
-	InitCreateIndexInfo(get, *create_index_info, table_entry.ParentSchema().name);
+	InitCreateIndexInfo(get, *create_index_info, table_entry.ParentSchemaName());
+	const bool indexes_depend_on_columns = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (indexes_depend_on_columns) {
+		LogicalDependency table_dependency(table_entry);
+		for (auto &column_id : create_index_info->column_ids) {
+			table_dependency.subdependencies.insert(
+			    SubDependency {AlterTableType::REMOVE_COLUMN, table_entry.GetColumn(LogicalIndex(column_id)).Name()});
+		}
+		dependencies.AddDependency(table_dependency);
+	}
 	auto &bind_data = get.bind_data->Cast<TableScanBindData>();
 	bind_data.is_create_index = true;
 
 	auto result = make_uniq<LogicalCreateIndex>(std::move(create_index_info), std::move(expressions), table_entry,
 	                                            std::move(alter_table_info));
+	if (bound_where) {
+		auto filter = make_uniq<LogicalFilter>(std::move(bound_where));
+		filter->AddChild(std::move(plan));
+		plan = std::move(filter);
+	}
 	result->children.push_back(std::move(plan));
 	return std::move(result);
 }

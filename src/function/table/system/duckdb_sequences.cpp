@@ -80,12 +80,8 @@ unique_ptr<GlobalTableFunctionState> DuckDBSequencesInit(ClientContext &context,
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
 	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden);
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::SEQUENCE_ENTRY, [&](CatalogEntry &entry) {
-			if (entry.type != CatalogType::SEQUENCE_ENTRY) {
-				return;
-			}
-			result->entries.push_back(entry.Cast<SequenceCatalogEntry>());
-		});
+		schema.get().Scan(context, CatalogType::SEQUENCE_ENTRY,
+		                  [&](CatalogEntry &entry) { result->entries.push_back(entry.Cast<SequenceCatalogEntry>()); });
 	};
 	return std::move(result);
 }
@@ -139,8 +135,8 @@ void DuckDBSequencesFunction(ClientContext &context, TableFunctionInput &data_p,
 
 		database_name.Append(Value(seq.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(seq.catalog.GetOid())));
-		schema_name.Append(Value(seq.ParentSchema().name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(seq.ParentSchema().oid)));
+		schema_name.Append(Value(seq.ParentSchemaName()));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(seq.ParentSchemaOid())));
 		sequence_name.Append(Value(seq.name));
 		sequence_oid.Append(Value::BIGINT(NumericCast<int64_t>(seq.oid)));
 		comment.Append(Value(seq.comment));

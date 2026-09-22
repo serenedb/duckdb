@@ -1,7 +1,6 @@
 #include "duckdb/catalog/catalog.hpp"
 
 #include "duckdb/catalog/catalog_search_path.hpp"
-#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/catalog_entry/list.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
@@ -325,8 +324,8 @@ optional_ptr<CatalogEntry> Catalog::CreateCoordinateSystem(CatalogTransaction tr
 //===--------------------------------------------------------------------===//
 optional_ptr<CatalogEntry> Catalog::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info) {
 	auto &schema = GetSchema(transaction, info.GetQualifiedName().Schema());
-	auto &table = schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, info.table)->Cast<TableCatalogEntry>();
-	return schema.CreateIndex(transaction, info, table);
+	auto &relation = *schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, info.table);
+	return schema.CreateIndex(transaction, info, relation);
 }
 
 optional_ptr<CatalogEntry> Catalog::CreateIndex(ClientContext &context, CreateIndexInfo &info) {
@@ -359,11 +358,6 @@ unique_ptr<TableRef> Catalog::RemoteExecute(ClientContext &context, unique_ptr<Q
 
 unique_ptr<TableRef> Catalog::RemoteExecute(ClientContext &context, const string &sql) {
 	throw NotImplementedException("RemoteExecute(string) not supported by this catalog");
-}
-
-void Catalog::AlterDependent(CatalogTransaction transaction, CatalogEntry &dependent, AlterInfo &info) {
-	D_ASSERT(dependent.set);
-	dependent.set->AlterEntry(transaction, dependent.name, info);
 }
 
 bool Catalog::SupportsPushdown(const ParsedExpression &expression) {
@@ -1250,14 +1244,6 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(ClientContext &context
 	return schemas;
 }
 
-optional_ptr<TableCatalogEntry> Catalog::LookupTableById(CatalogTransaction, idx_t) {
-	return nullptr;
-}
-
-optional_ptr<SchemaCatalogEntry> Catalog::LookupSchemaById(CatalogTransaction, idx_t) {
-	return nullptr;
-}
-
 vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(CatalogEntryRetriever &retriever,
                                                           const string &catalog_name) {
 	vector<reference<Catalog>> catalogs;
@@ -1332,18 +1318,20 @@ vector<reference<CatalogEntry>> Catalog::GetAllEntries(ClientContext &context, C
 	return result;
 }
 
+void Catalog::AlterSchema(CatalogTransaction transaction, AlterInfo &info) {
+	throw NotImplementedException("ALTER SCHEMA is not supported for this catalog");
+}
+
 void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
-	if (info.type == AlterType::ALTER_SCHEMA) {
-		throw NotImplementedException("Altering schemas is not yet supported");
+	if (info.GetCatalogType() == CatalogType::SCHEMA_ENTRY) {
+		AlterSchema(transaction, info);
+		return;
 	}
-	// ALTER FUNCTION ... RENAME TO ... cannot disambiguate scalar vs table
-	// macro at parse time (mirrors the binder skip in Binder::Bind(AlterStatement)).
-	// Dispatch to the schema without a type-specific lookup so the schema's
-	// Alter implementation can resolve by name across function kinds.
-	const bool is_rename_function = info.type == AlterType::ALTER_SCALAR_FUNCTION &&
-	                                info.Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
-	                                    AlterScalarFunctionType::RENAME_SCALAR_FUNCTION;
-	if (transaction.HasContext() && !is_rename_function) {
+	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().all_in_schema) {
+		GetSchema(transaction, info.GetQualifiedName().Schema()).Alter(transaction, info);
+		return;
+	}
+	if (transaction.HasContext()) {
 		CatalogEntryRetriever retriever(transaction.GetContext());
 		EntryLookupInfo lookup_info(info.GetCatalogType(), info.GetQualifiedName());
 		auto lookup = LookupEntry(retriever, lookup_info, info.if_not_found);
@@ -1352,7 +1340,7 @@ void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		}
 		return lookup.schema->Alter(transaction, info);
 	}
-	D_ASSERT(is_rename_function || info.if_not_found == OnEntryNotFound::THROW_EXCEPTION);
+	D_ASSERT(info.if_not_found == OnEntryNotFound::THROW_EXCEPTION);
 	auto &schema = GetSchema(transaction, info.GetQualifiedName().Schema());
 	return schema.Alter(transaction, info);
 }
@@ -1367,19 +1355,6 @@ vector<MetadataBlockInfo> Catalog::GetMetadataInfo(ClientContext &context) {
 
 optional_ptr<DependencyManager> Catalog::GetDependencyManager() {
 	return nullptr;
-}
-
-CatalogEntryInfo Catalog::GetDependencyInfo(const CatalogEntry &entry) const {
-	return CatalogEntryInfo {entry.type, DependencyManager::GetSchema(entry), entry.name,
-	                         Identifier(entry.ParentCatalog().GetName())};
-}
-
-optional_ptr<CatalogEntry> Catalog::GetDependencyEntry(CatalogTransaction transaction, const CatalogEntryInfo &info) {
-	auto schema_entry = GetSchema(transaction, info.schema, OnEntryNotFound::RETURN_NULL);
-	if (info.type == CatalogType::SCHEMA_ENTRY || !schema_entry) {
-		return schema_entry.get();
-	}
-	return schema_entry->GetEntry(transaction, info.type, info.name);
 }
 
 ErrorData Catalog::SupportsCreateTable(BoundCreateTableInfo &info) {
@@ -1421,17 +1396,6 @@ string Catalog::GetDefaultTable() const {
 
 string Catalog::GetDefaultTableSchema() const {
 	return !default_table_schema.empty() ? default_table_schema : DEFAULT_SCHEMA;
-}
-
-void Catalog::WriteCatalogChange(DuckTransaction &, CatalogEntry &, data_ptr_t) {
-}
-
-void Catalog::ReplayCatalogState(ClientContext &, const_data_ptr_t, idx_t) {
-	throw IOException("Catalog log holds state this catalog cannot replay");
-}
-
-void Catalog::ReplayCatalogEntry(ClientContext &, CreateInfo &info, const CatalogPermissions &, bool) {
-	throw IOException("Catalog log holds a %s entry, which this catalog cannot replay", CatalogTypeToString(info.type));
 }
 
 void Catalog::Verify() {

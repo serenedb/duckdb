@@ -13,6 +13,7 @@
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/hash.hpp"
 
 namespace duckdb {
 class CatalogEntry;
@@ -58,20 +59,6 @@ protected:
 
 private:
 	uint8_t value;
-};
-
-//! Which piece of a dependent binds its subject: the sub-object a cascade can trim so the dependent
-//! survives, where dropping it whole is the only alternative. NONE means the whole entry is the binding.
-enum class DependencyPieceKind : uint8_t { NONE = 0, COLUMN_TYPE = 1, COLUMN_DEFAULT = 2, CHECK = 3, FOREIGN_KEY = 4 };
-
-struct DependencyPiece {
-	DependencyPieceKind kind = DependencyPieceKind::NONE;
-	//! Host identifier of the sub-object (a column or a constraint); opaque to duckdb
-	idx_t sub_object = DConstants::INVALID_INDEX;
-
-	bool operator==(const DependencyPiece &other) const {
-		return kind == other.kind && sub_object == other.sub_object;
-	}
 };
 
 struct DependencySubjectFlags : public DependencyFlags {
@@ -150,24 +137,39 @@ public:
 	}
 };
 
+enum class AlterTableType : uint8_t;
+
+struct SubDependency {
+public:
+	AlterTableType alter {};
+	Identifier name;
+
+public:
+	bool operator==(const SubDependency &other) const {
+		return other.alter == alter && other.name == name;
+	}
+
+public:
+	void Serialize(Serializer &serializer) const;
+	static SubDependency Deserialize(Deserializer &deserializer);
+};
+
+struct SubDependencyHashFunction {
+	uint64_t operator()(const SubDependency &a) const {
+		return CombineHash(Hash<uint8_t>(static_cast<uint8_t>(a.alter)), a.name.Hash());
+	}
+};
+
+using subdependency_set_t = unordered_set<SubDependency, SubDependencyHashFunction>;
+
 struct CatalogEntryInfo {
 public:
 	CatalogType type;
 	Identifier schema;
 	Identifier name;
-	//! Empty means the dependency manager's own catalog, which is what every
-	//! dependency recorded before cross-catalog support looked like.
-	Identifier catalog;
-	//! When non-zero, the subject is addressed by this stable id alone -- the
-	//! identity space CreateInfo::oid and CatalogEntry::oid share -- and the
-	//! name-keyed fields do not participate in identity.
-	idx_t oid = 0;
 
 public:
 	bool operator==(const CatalogEntryInfo &other) const {
-		if (oid != 0 || other.oid != 0) {
-			return oid == other.oid;
-		}
 		if (other.type != type) {
 			return false;
 		}
@@ -175,9 +177,6 @@ public:
 			return false;
 		}
 		if (other.name != name) {
-			return false;
-		}
-		if (other.catalog != catalog) {
 			return false;
 		}
 		return true;

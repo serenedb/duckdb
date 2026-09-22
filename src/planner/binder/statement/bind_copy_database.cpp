@@ -33,16 +33,11 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_databas
 		                                            create_info->GetQualifiedName().Name()));
 		auto on_conflict = create_info->type == CatalogType::SCHEMA_ENTRY ? OnCreateConflict::IGNORE_ON_CONFLICT
 		                                                                  : OnCreateConflict::ERROR_ON_CONFLICT;
-		// Update all the dependencies of the entry to point to the newly created entries on the target
-		// database. The oid names the source entry, and while it is set the subject resolves by that id
-		// alone -- into the source catalog -- so clear it and rewrite the catalog on the entry itself (not
-		// only on the outer dependency) so the target's own entry resolves by name here.
+		// Update all the dependencies of the entry to point to the newly created entries on the target database
 		LogicalDependencyList altered_dependencies;
 		for (auto &dep : create_info->dependencies.Set()) {
 			auto altered_dep = dep;
 			altered_dep.catalog = target_database_name;
-			altered_dep.entry.catalog = target_database_name;
-			altered_dep.entry.oid = 0;
 			altered_dependencies.AddDependency(altered_dep);
 		}
 		create_info->dependencies = altered_dependencies;
@@ -67,10 +62,10 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseData(Catalog &source_catalog
 		// generate the insert statement
 		InsertStatement insert_stmt;
 		auto &insert_node = *insert_stmt.node;
-		insert_node.qualified_name = QualifiedName(target_database_name, table.ParentSchema().name, table.name);
+		insert_node.qualified_name = QualifiedName(target_database_name, table.ParentSchemaName(), table.name);
 
 		auto from_tbl = make_uniq<BaseTableRef>();
-		from_tbl->SetQualifiedName(QualifiedName(source_catalog.GetName(), table.ParentSchema().name, table.name));
+		from_tbl->SetQualifiedName(QualifiedName(source_catalog.GetName(), table.ParentSchemaName(), table.name));
 
 		auto select_node = make_uniq<SelectNode>();
 		auto &select_list = select_node->select_list;

@@ -53,7 +53,7 @@ public:
 	virtual void BindView(ClientContext &context, BindViewAction action = BindViewAction::BIND_IF_UNBOUND);
 	//! Update the view with a new set of types / names
 	virtual void UpdateBinding(const vector<LogicalType> &types, const vector<Identifier> &names);
-	Value GetColumnComment(idx_t column_index) const;
+	Value GetColumnComment(idx_t column_index);
 
 public:
 	unique_ptr<CreateInfo> GetInfo() const override;
