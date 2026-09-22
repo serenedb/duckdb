@@ -18,18 +18,18 @@ DocsBackend &BackendStorage() {
 constexpr duckdb::idx_t kMinWidth = 40;
 constexpr duckdb::idx_t kMaxWidth = 100;
 
-} // namespace
-
-void RegisterDocsBackend(DocsBackend backend) {
-	BackendStorage() = std::move(backend);
-}
-
 bool HasDocsBackend() {
 	return static_cast<bool>(BackendStorage().run);
 }
 
 const DocsBackend &GetDocsBackend() {
 	return BackendStorage();
+}
+
+} // namespace
+
+void RegisterDocsBackend(DocsBackend backend) {
+	BackendStorage() = std::move(backend);
 }
 
 bool DocsCompletions(const char *line, duckdb::idx_t length, duckdb::idx_t &argument_start,
@@ -75,8 +75,6 @@ MetadataResult ShowDocumentation(ShellState &state, const duckdb::vector<duckdb:
 		auto size = duckdb::Terminal::GetTerminalSize();
 		auto columns = size.ws_col > 2 ? static_cast<duckdb::idx_t>(size.ws_col - 2) : kMinWidth;
 		request.width = std::min(std::max(columns, kMinWidth), kMaxWidth);
-	} else {
-		request.width = 80;
 	}
 
 	duckdb::string rendered;
@@ -88,17 +86,15 @@ MetadataResult ShowDocumentation(ShellState &state, const duckdb::vector<duckdb:
 
 	duckdb::idx_t line_count = 0;
 	duckdb::idx_t widest = 0;
-	duckdb::idx_t current = 0;
-	for (auto c : rendered) {
-		if (c == '\n') {
-			line_count++;
-			widest = std::max(widest, current);
-			current = 0;
-		} else {
-			current++;
+	for (duckdb::idx_t begin = 0; begin < rendered.size();) {
+		auto end = rendered.find('\n', begin);
+		if (end == duckdb::string::npos) {
+			end = rendered.size();
 		}
+		widest = std::max(widest, ShellState::RenderLength(rendered.c_str() + begin, end - begin));
+		line_count++;
+		begin = end + 1;
 	}
-	widest = std::max(widest, current);
 
 	duckdb::unique_ptr<PagerState> pager;
 	if (state.ShouldUsePagerForSize(line_count, widest)) {

@@ -28,14 +28,11 @@ struct DocsRequest {
 
 struct DocsBackend {
 	std::function<bool(const DocsRequest &request, duckdb::string &out)> run;
-	std::function<duckdb::vector<duckdb::string>(duckdb::DatabaseInstance *instance, const duckdb::string &prefix)> complete;
+	std::function<duckdb::vector<duckdb::string>(duckdb::DatabaseInstance *instance, const duckdb::string &prefix)>
+	    complete;
 };
 
 void RegisterDocsBackend(DocsBackend backend);
-
-bool HasDocsBackend();
-
-const DocsBackend &GetDocsBackend();
 
 bool DocsCompletions(const char *line, duckdb::idx_t length, duckdb::idx_t &argument_start,
                      duckdb::vector<duckdb::string> &completions);
