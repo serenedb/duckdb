@@ -305,6 +305,11 @@ static void RewriteIndexDependencies(DuckIndexEntry &index, const Identifier &ol
 	index.dependencies = std::move(updated);
 }
 
+static string NotSupportedForTables(const Catalog &catalog) {
+	const bool name_the_engine = catalog.Compatibility() == SqlCompatibility::DUCK;
+	return name_the_engine ? "is not supported for DuckDB tables" : "is not supported";
+}
+
 unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
 	D_ASSERT(!internal);
 
@@ -390,14 +395,13 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		return AddConstraint(context, add_constraint_info);
 	}
 	case AlterTableType::SET_PARTITIONED_BY:
-		throw NotImplementedException("SET PARTITIONED BY is not supported for DuckDB tables");
+		throw NotImplementedException("SET PARTITIONED BY " + NotSupportedForTables(catalog));
 	case AlterTableType::SET_SORTED_BY:
-		throw NotImplementedException("SET SORTED BY is not supported for DuckDB tables");
+		throw NotImplementedException("SET SORTED BY " + NotSupportedForTables(catalog));
 	case AlterTableType::SET_TABLE_OPTIONS:
-		throw NotImplementedException("SET (<options>) is not supported for DuckDB tables");
-	case AlterTableType::RESET_TABLE_OPTIONS: {
-		throw NotImplementedException("RESET (<options>) is not supported for DuckDB tables");
-	}
+		throw NotImplementedException("SET (<options>) " + NotSupportedForTables(catalog));
+	case AlterTableType::RESET_TABLE_OPTIONS:
+		throw NotImplementedException("RESET (<options>) " + NotSupportedForTables(catalog));
 	default:
 		throw InternalException("Unrecognized alter table type!");
 	}
