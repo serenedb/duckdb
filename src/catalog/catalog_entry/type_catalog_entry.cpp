@@ -12,7 +12,7 @@ namespace duckdb {
 constexpr const char *TypeCatalogEntry::Name;
 
 TypeCatalogEntry::TypeCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTypeInfo &info)
-    : StandardEntry(CatalogType::TYPE_ENTRY, schema, catalog, info.GetTypeName()), user_type(info.type),
+    : StandardEntry(CatalogType::TYPE_ENTRY, schema, catalog, info.GetTypeName(), info.oid), user_type(info.type),
       bind_function(info.bind_function) {
 	this->temporary = info.temporary;
 	this->internal = info.internal;
@@ -20,26 +20,30 @@ TypeCatalogEntry::TypeCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema,
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
+	const bool enum_alias_is_type_name = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (enum_alias_is_type_name && !internal && user_type.id() == LogicalTypeId::ENUM && !user_type.HasAlias()) {
+		user_type.SetAlias(name.GetIdentifierName());
+	}
 }
 
 unique_ptr<CatalogEntry> TypeCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateTypeInfo>();
-	auto result = make_uniq<TypeCatalogEntry>(catalog, Schema(), cast_info);
+	auto result = make_uniq<TypeCatalogEntry>(catalog, ParentSchema(context), cast_info);
 	return std::move(result);
 }
 
 unique_ptr<CreateInfo> TypeCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateTypeInfo>();
-	result->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchema().name, name));
+	result->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchemaName(), name));
 	result->type = user_type;
 	result->extension_name = extension_name;
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	result->bind_function = bind_function;
-	result->oid = oid;
-	result->parent_oid = ParentSchema().oid;
 	return std::move(result);
 }
 

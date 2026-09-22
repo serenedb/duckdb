@@ -56,17 +56,14 @@ enum class WALType : uint8_t {
 	CREATE_TRIGGER = 30,
 	DROP_TRIGGER = 31,
 
-	// -----------------------------
-	// SereneDB
-	// -----------------------------
-	//! A create/drop of a kind duckdb keeps no entry class for -- a serenedb database, role, tokenizer or foreign
-	//! server. One pair of records rather than one per kind: the CreateInfo already says which kind it is, and the
-	//! catalog that owns the kind is what applies it.
-	CREATE_ENTRY = 42,
-	DROP_ENTRY = 43,
-	//! State a catalog keeps that is not an entry: a sequence's counter, the id horizon, an open drop. Opaque here --
-	//! the catalog that wrote the payload is the only thing that can read it.
-	CATALOG_STATE = 44,
+	CREATE_TOKENIZER = 150,
+	DROP_TOKENIZER = 151,
+	CREATE_ROLE = 152,
+	DROP_ROLE = 153,
+	CREATE_DATABASE = 154,
+	DROP_DATABASE = 155,
+	CREATE_FOREIGN_SERVER = 156,
+	DROP_FOREIGN_SERVER = 157,
 	// -----------------------------
 	// Flush
 	// -----------------------------

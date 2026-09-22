@@ -1,4 +1,3 @@
-#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/create_coordinate_system_info.hpp"
 #include "duckdb/catalog/default/default_coordinate_systems.hpp"
 #include "duckdb/catalog/catalog_entry/coordinate_system_catalog_entry.hpp"
@@ -40,13 +39,13 @@ const builtin_crs_array DEFAULT_CRS_DEFINITIONS = {{
 
 } // namespace
 
-DefaultCoordinateSystemGenerator::DefaultCoordinateSystemGenerator(Catalog &catalog, SchemaIdentity &identity)
-    : DefaultGenerator(catalog), identity(identity) {
+DefaultCoordinateSystemGenerator::DefaultCoordinateSystemGenerator(Catalog &catalog, SchemaCatalogEntry &schema)
+    : DefaultGenerator(catalog), schema(schema) {
 }
 
 unique_ptr<CatalogEntry> DefaultCoordinateSystemGenerator::CreateDefaultEntry(ClientContext &context,
                                                                               const Identifier &entry_name) {
-	if (identity.Schema().name != DEFAULT_SCHEMA) {
+	if (schema.name != DEFAULT_SCHEMA) {
 		return nullptr;
 	}
 
@@ -55,7 +54,7 @@ unique_ptr<CatalogEntry> DefaultCoordinateSystemGenerator::CreateDefaultEntry(Cl
 			CreateCoordinateSystemInfo info(crs_definition.name, crs_definition.auth_code, crs_definition.srid,
 			                                crs_definition.projjson, crs_definition.wkt2_2019);
 
-			auto result = make_uniq<CoordinateSystemCatalogEntry>(catalog, identity.Schema(), info);
+			auto result = make_uniq<CoordinateSystemCatalogEntry>(catalog, schema, info);
 			return std::move(result);
 		}
 	}
@@ -64,7 +63,7 @@ unique_ptr<CatalogEntry> DefaultCoordinateSystemGenerator::CreateDefaultEntry(Cl
 }
 
 vector<Identifier> DefaultCoordinateSystemGenerator::GetDefaultEntries() {
-	if (identity.Schema().name != DEFAULT_SCHEMA) {
+	if (schema.name != DEFAULT_SCHEMA) {
 		return {};
 	}
 

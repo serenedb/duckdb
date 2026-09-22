@@ -29,9 +29,7 @@ AddTableFunctionOverloadInfo::~AddTableFunctionOverloadInfo() {
 }
 
 unique_ptr<AlterInfo> AddTableFunctionOverloadInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, AddTableFunctionOverloadInfo>(GetAlterEntryData(), new_overloads);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, AddTableFunctionOverloadInfo>(GetAlterEntryData(), new_overloads);
 }
 
 string AddTableFunctionOverloadInfo::ToString() const {

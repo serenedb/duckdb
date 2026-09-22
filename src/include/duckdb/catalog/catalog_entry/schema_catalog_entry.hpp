@@ -11,7 +11,7 @@
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
-#include "duckdb/catalog/schema_identity.hpp"
+#include "duckdb/catalog/schema_info.hpp"
 
 namespace duckdb {
 class ClientContext;
@@ -46,20 +46,14 @@ public:
 	static constexpr const char *Name = "schema";
 
 public:
-	SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info);
-
-protected:
-	//! Supersede the current version of `identity` with this one, taking everything the schema holds over
-	SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<SchemaIdentity> identity);
+	SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<SchemaInfo> schema_info = nullptr);
 
 public:
-	//! What an entry inside this schema points at, so that altering the schema neither strands its contents nor
-	//! leaves those entries naming a destroyed version
-	const shared_ptr<SchemaIdentity> &GetIdentity() const {
-		return identity;
-	}
-
 	unique_ptr<CreateInfo> GetInfo() const override;
+
+	const shared_ptr<SchemaInfo> &GetSchemaInfo() const {
+		return schema_info;
+	}
 
 	//! Scan the specified catalog set, invoking the callback method for every entry
 	virtual void Scan(ClientContext &context, CatalogType type,
@@ -73,6 +67,9 @@ public:
 	virtual optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
 	                                               TableCatalogEntry &table) = 0;
 	optional_ptr<CatalogEntry> CreateIndex(ClientContext &context, CreateIndexInfo &info, TableCatalogEntry &table);
+	virtual optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
+	                                               CatalogEntry &relation);
+	optional_ptr<CatalogEntry> CreateIndex(ClientContext &context, CreateIndexInfo &info, CatalogEntry &relation);
 	//! Create a scalar or aggregate function within the given schema
 	virtual optional_ptr<CatalogEntry> CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) = 0;
 	//! Creates a table with the given name in the schema
@@ -120,7 +117,7 @@ public:
 
 	CatalogTransaction GetCatalogTransaction(ClientContext &context);
 
-private:
-	shared_ptr<SchemaIdentity> identity;
+protected:
+	shared_ptr<SchemaInfo> schema_info;
 };
 } // namespace duckdb

@@ -14,16 +14,12 @@
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 
-#include <chrono>
-#include <thread>
-
 namespace duckdb {
 
 // Oids are started at 20000 to avoid colliding with Postgres builtin types, which end at 16383:
 // https://github.com/postgres/postgres/blob/db93988ab0e78396f2ed9e96c826ff988d12b9f2/src/include/access/transam.h#L156-L197
 DatabaseManager::DatabaseManager(DatabaseInstance &db)
-    : db(db), next_oid(20000), reserved_oid(0), oid_reservation_sink(nullptr), current_query_number(1),
-      current_transaction_id(0), remote_catalog_count(0) {
+    : db(db), next_oid(20000), current_query_number(1), current_transaction_id(0), remote_catalog_count(0) {
 	system = make_shared_ptr<AttachedDatabase>(db);
 	auto &config = DBConfig::GetConfig(db);
 	path_manager = config.path_manager;
@@ -34,44 +30,6 @@ DatabaseManager::DatabaseManager(DatabaseInstance &db)
 }
 
 DatabaseManager::~DatabaseManager() {
-}
-
-void DatabaseManager::RestoreOid(idx_t oid) {
-	auto current = next_oid.load(std::memory_order_relaxed);
-	while (current <= oid &&
-	       !next_oid.compare_exchange_weak(current, oid + 1, std::memory_order_release, std::memory_order_relaxed)) {
-	}
-}
-
-void DatabaseManager::RestoreOidReservation(idx_t horizon) {
-	// Allocation resumes at the horizon, not wherever replay's own constructions left the counter:
-	// every id below it may already name something durable, and an id is never reissued.
-	if (horizon > 0) {
-		RestoreOid(horizon - 1);
-	}
-	auto current = reserved_oid.load(std::memory_order_relaxed);
-	while (current < horizon && !reserved_oid.compare_exchange_weak(current, horizon, std::memory_order_release,
-	                                                                std::memory_order_relaxed)) {
-	}
-}
-
-void DatabaseManager::ReserveOids(idx_t oid) {
-	auto sink = oid_reservation_sink.load(std::memory_order_acquire);
-	if (!sink) {
-		// Nobody is writing the allocator down, so nothing bounds it.
-		return;
-	}
-	lock_guard<mutex> lock(oid_reservation_lock);
-	if (oid < reserved_oid.load(std::memory_order_relaxed)) {
-		return;
-	}
-	auto horizon = oid + OID_RESERVE_BLOCK;
-	if (!sink(horizon)) {
-		// The record did not land -- the host's log is not up yet. The horizon stays where it was, so
-		// the next allocation asks again once it is.
-		return;
-	}
-	reserved_oid.store(horizon, std::memory_order_release);
 }
 
 DatabaseManager &DatabaseManager::Get(AttachedDatabase &db) {
@@ -147,52 +105,27 @@ bool RequiresTrackingAttaches(const string &path, const string &db_type) {
 	return true;
 }
 
-// A database that is on its way out gives the file up within moments, so an attach that wants the file
-// waits a millisecond a round for it. Waiting past this means nobody is coming to release it -- the
-// holder keeps it for good, or is the very transaction doing the attach -- and the attach conflicts.
-static constexpr idx_t MAX_DETACH_WAIT_ROUNDS = 10000;
-
-// The engine's own reader -- read_duckdb over a file a user may also have attached -- answers to a name
-// no user can type and only ever reads, so it takes the database that has the file open as it is: in
-// whatever mode, under whatever name, that database was opened.
-static bool IsEngineReader(const AttachOptions &options) {
-	return options.visibility == AttachVisibility::HIDDEN && options.access_mode == AccessMode::READ_ONLY;
-}
-
-// A re-attach hands back the database that still has the file open, so it serves this attach only as it
-// already is: under its own name, because a live object other statements still hold is never renamed, and
-// in the mode the file is open in. Anything else conflicts with the database that still holds the file.
-static bool CanReuse(const AttachedDatabase &database, const AttachInfo &info, const AttachOptions &options) {
-	if (IsEngineReader(options)) {
-		return true;
-	}
-	if (!(database.GetName() == info.name)) {
-		return false;
-	}
-	return database.IsReadOnly() == (options.access_mode == AccessMode::READ_ONLY);
-}
-
 // a re-attach hands back the database that already has the file open, so it has to keep the options it
 // was opened with
-static void VerifyReattachOptions(AttachedDatabase &database, const AttachInfo &info, const AttachOptions &options) {
+static bool VerifyReattachOptions(AttachedDatabase &database, const AttachInfo &info, const AttachOptions &options) {
 	if (AttachedDatabase::NameIsReserved(info.name)) {
 		throw BinderException("Attached database name \"%s\" cannot be used because it is a reserved name",
 		                      info.name.GetIdentifierName());
+	}
+	if (database.IsReadOnly() != (options.access_mode == AccessMode::READ_ONLY)) {
+		return false;
 	}
 	if (options.vacuum_rebuild_indexes_threshold.IsValid()) {
 		auto previous_setting = database.GetVacuumRebuildIndexThreshold();
 		auto new_setting = options.vacuum_rebuild_indexes_threshold.GetIndex();
 		if (previous_setting != new_setting) {
-			throw BinderException("Cannot re-attach with a different vacuum_rebuild_indexes setting "
-			                      "(previous: %d, new: %d)",
-			                      previous_setting, new_setting);
+			return false;
 		}
 	}
 	if (database.GetCatalog().HasConflictingAttachOptions(info.path, options)) {
-		throw BinderException("Cannot attach \"%s\" - the database file \"%s\" is already attached with "
-		                      "different options",
-		                      info.name, info.path);
+		return false;
 	}
+	return true;
 }
 
 // InsertDatabasePath claims the path entry before we know whether the re-attach goes through
@@ -241,9 +174,8 @@ shared_ptr<AttachedDatabase> DatabaseManager::AttachDatabase(ClientContext &cont
 		// constant-time lookup in the catalog for the db name
 		auto existing_db = GetDatabase(info.name);
 		if (existing_db) {
-			if (!IsEngineReader(options) &&
-			    ((existing_db->IsReadOnly() && options.access_mode == AccessMode::READ_WRITE) ||
-			     (!existing_db->IsReadOnly() && options.access_mode == AccessMode::READ_ONLY))) {
+			if ((existing_db->IsReadOnly() && options.access_mode == AccessMode::READ_WRITE) ||
+			    (!existing_db->IsReadOnly() && options.access_mode == AccessMode::READ_ONLY)) {
 				auto existing_mode = existing_db->IsReadOnly() ? AccessMode::READ_ONLY : AccessMode::READ_WRITE;
 				auto existing_mode_str = EnumUtil::ToString(existing_mode);
 				auto attached_mode = EnumUtil::ToString(options.access_mode);
@@ -279,31 +211,13 @@ shared_ptr<AttachedDatabase> DatabaseManager::AttachDatabase(ClientContext &cont
 		auto timer = context.client_data->profiler->StartTimer<MetricStorageWaitingToAttachLatency>();
 		// Start trying to attach.
 		InsertDatabasePathResult insert_result;
-		idx_t waits_left = MAX_DETACH_WAIT_ROUNDS;
 		for (;;) {
 			insert_result = InsertDatabasePath(info, options);
 			if (insert_result == InsertDatabasePathResult::REUSE_EXISTING) {
-				if (!CanReuse(*options.reused_database, info, options)) {
-					// the database that holds the file serves no attach but its own, so the file only
-					// comes free once that database is gone - wait for it, but not on whoever is holding
-					// it for good, and not on ourselves
-					path_manager->ReleaseReuse(info.path);
-					options.reused_database.reset();
-					if (waits_left == 0) {
-						throw BinderException("Unique file handle conflict: Cannot attach \"%s\" - the database "
-						                      "file \"%s\" is in the process of being detached",
-						                      info.name, info.path);
-					}
-					--waits_left;
-					context.InterruptCheck();
-					std::this_thread::sleep_for(std::chrono::milliseconds(1));
-					continue;
-				}
 				if (auto reattached = ReattachDatabase(context, info, options)) {
+					timer.EndTimer();
 					return reattached;
 				}
-				// the database finished closing while we were attaching, so its path entry is on its way
-				// out and the next round attaches the file fresh
 				context.InterruptCheck();
 				continue;
 			}
@@ -380,11 +294,12 @@ shared_ptr<AttachedDatabase> DatabaseManager::ReattachDatabase(ClientContext &co
 	auto database = std::move(options.reused_database);
 	ReuseClaim claim(*path_manager, *this, info.path);
 	if (!database->TryReuse()) {
-		// the database finished closing while we were attaching - its path entry is about to go,
-		// and the caller's retry attaches the file fresh
+		// the database finished closing while we were attaching - its path entry is about to go
 		return nullptr;
 	}
-	VerifyReattachOptions(*database, info, options);
+	if (!VerifyReattachOptions(*database, info, options)) {
+		return nullptr;
+	}
 	auto attached_db = FinalizeAttach(context, info, database, info.name);
 	if (attached_db != database) {
 		// IF NOT EXISTS, and another attach claimed the name while we got here: it wins, and the file
@@ -401,7 +316,6 @@ shared_ptr<AttachedDatabase> DatabaseManager::ReattachDatabase(ClientContext &co
 shared_ptr<AttachedDatabase> DatabaseManager::FinalizeAttach(ClientContext &context, AttachInfo &info,
                                                              shared_ptr<AttachedDatabase> attached_db,
                                                              const Identifier &name) {
-	attached_db->oid = NextOid();
 	shared_ptr<AttachedDatabase> detached_db;
 	{
 		lock_guard<mutex> guard(databases_lock);
@@ -419,6 +333,8 @@ shared_ptr<AttachedDatabase> DatabaseManager::FinalizeAttach(ClientContext &cont
 				throw BinderException("Failed to attach database: database with name \"%s\" already exists", name);
 			}
 		}
+		// the name is ours now - a re-attach renames the database it hands back to it
+		attached_db->SetName(name);
 	}
 	auto &meta_transaction = MetaTransaction::Get(context);
 	if (detached_db) {

@@ -15,8 +15,6 @@
 #include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
 
-#include "duckdb/catalog/catalog_permissions.hpp"
-
 namespace duckdb {
 
 enum class AlterType : uint8_t {
@@ -30,18 +28,11 @@ enum class AlterType : uint8_t {
 	SET_COMMENT = 7,
 	SET_COLUMN_COMMENT = 8,
 	ALTER_DATABASE = 9,
-	SET_PERMISSIONS = 10,
-	ALTER_SCHEMA = 11
-};
-
-//! GRANT, REVOKE and OWNER TO, for a catalog that models postgres' owner + ACL on its entries.
-enum class PermissionsAlterType : uint8_t {
-	INVALID = 0,
-	GRANT_PRIVILEGES = 1,
-	REVOKE_PRIVILEGES = 2,
-	CHANGE_ROLE_OWNER = 3,
-	//! The whole definition was replaced, owner and ACL with it. Nothing a dependent bound against moves.
-	REPLACE_DEFINITION = 4
+	ALTER_PERMISSIONS = 10,
+	ALTER_ROLE = 11,
+	ALTER_INDEX = 12,
+	RENAME = 13,
+	REPLACE_DEFINITION = 14
 };
 
 enum class AlterBindMode { BIND_ON_ALTER, SKIP_BINDING };
@@ -70,10 +61,6 @@ public:
 	~AlterInfo() override;
 
 	AlterType type;
-	//! The identifier the catalog that owns this entry knows it by, zero when it owns none. A rename cannot reach
-	//! it, so it is what a replay resolves the target by -- the name in this record is the one at the time of the
-	//! alter, and the owning catalog has since moved on. Same role it serves on CreateInfo.
-	idx_t oid = 0;
 	//! if exists
 	OnEntryNotFound if_not_found;
 	//! Allow altering internal entries
@@ -112,68 +99,14 @@ public:
 		return Identifier();
 	};
 
-	//! Whether this alter leaves a dependent of the given kind unusable, so the dependency manager must refuse it.
-	//! Answered by the alters that have an exception; every other alter breaks whatever depended on the old shape.
-	virtual bool BreaksDependent(CatalogType dependent_type) const {
-		return true;
-	}
-	//! Whether a dependent that resolves its references at use, rather than binding them once, simply re-resolves
-	//! after this alter -- a rename or a dropped piece degrades such a dependent instead of invalidating it.
-	//! Only consulted for a catalog whose dependents work that way (Catalog::DependentsResolveByName).
-	virtual bool DependentCanRebind() const {
-		return false;
-	}
-	//! Whether this alter is really a CREATE OR REPLACE that swaps the whole definition. A dependent it breaks is
-	//! refused the way a DROP the dependent blocks is -- naming the dependent -- rather than as a generic alter.
-	virtual bool ReplacesDefinition() const {
-		return false;
-	}
-
 	AlterEntryData GetAlterEntryData() const;
-	//! ADD PRIMARY KEY or ADD UNIQUE: the constraint is backed by an index, so the ALTER has to build one over the
-	//! existing rows. Without it the constraint is recorded and never rejects anything.
-	bool IsAddIndexedConstraint() const;
+	bool IsAddUniqueConstraint() const;
 
 protected:
 	explicit AlterInfo(AlterType type);
 
 	//! Qualified name of the entry to alter (catalog.schema.name)
 	QualifiedName qualified_name;
-};
-
-//! A change to an entry's owner or its access control list. The privileges themselves stay with the catalog
-//! implementation that models them: it hands CatalogSet::AlterEntry the replacement entry, and this record is
-//! what the undo buffer and any log carry about the change.
-struct SetPermissionsInfo : public AlterInfo {
-	SetPermissionsInfo(PermissionsAlterType permissions_alter_type, CatalogType entry_catalog_type, QualifiedName name,
-	                   CatalogPermissions permissions);
-
-	PermissionsAlterType permissions_alter_type;
-	CatalogType entry_catalog_type;
-	//! The owner and grants the entry carries after this alter. Whole rather than a delta: a version states what it
-	//! is, the way a rename states the name rather than the edit that produced it.
-	CatalogPermissions permissions;
-
-public:
-	CatalogType GetCatalogType() const override;
-	unique_ptr<AlterInfo> Copy() const override;
-	string ToString() const override;
-
-	//! An owner or ACL change leaves the shape a dependent bound against untouched, and a plain dependent
-	//! rebinds against a replaced definition (CREATE OR REPLACE) -- only an ownership edge, handled in
-	//! DependencyManager::AlterObject, blocks a replace.
-	bool BreaksDependent(CatalogType dependent_type) const override {
-		return false;
-	}
-	bool ReplacesDefinition() const override {
-		return permissions_alter_type == PermissionsAlterType::REPLACE_DEFINITION;
-	}
-
-	void Serialize(Serializer &serializer) const override;
-	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
-
-private:
-	SetPermissionsInfo();
 };
 
 } // namespace duckdb

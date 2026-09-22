@@ -110,10 +110,10 @@ void ReorderTableEntries(catalog_entry_vector_t &tables) {
 
 string CreateFileName(const string &id_suffix, TableCatalogEntry &table, const string &extension) {
 	auto name = SanitizeExportIdentifier(table.name);
-	if (table.ParentSchema().name == DEFAULT_SCHEMA) {
+	if (table.ParentSchemaName() == DEFAULT_SCHEMA) {
 		return StringUtil::Format("%s%s.%s", name, id_suffix, extension);
 	}
-	auto schema = SanitizeExportIdentifier(table.ParentSchema().name);
+	auto schema = SanitizeExportIdentifier(table.ParentSchemaName());
 	return StringUtil::Format("%s_%s%s.%s", schema, name, id_suffix, extension);
 }
 
@@ -224,7 +224,7 @@ BoundStatement Binder::Bind(ExportStatement &stmt) {
 			id++;
 		}
 		info->is_from = false;
-		info->SetQualifiedName(QualifiedName(Identifier(catalog), table.ParentSchema().name, table.name));
+		info->SetQualifiedName(QualifiedName(Identifier(catalog), table.ParentSchemaName(), table.name));
 
 		// We can not export generated columns
 		child_list_t<LogicalType> select_list;

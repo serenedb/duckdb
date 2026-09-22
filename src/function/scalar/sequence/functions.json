@@ -7,6 +7,13 @@
         "type": "scalar_function"
     },
     {
+        "name": "setval",
+        "parameters": "'sequence_name',value[,is_called]",
+        "description": "Set the current value of the sequence. The following nextval returns value + increment, or value itself when is_called is false.",
+        "example": "setval('my_sequence_name', 100)",
+        "type": "scalar_function_set"
+    },
+    {
         "name": "nextval",
         "parameters": "'sequence_name'",
         "description": "Return the following value of the sequence.",

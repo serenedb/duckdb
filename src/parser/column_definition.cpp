@@ -25,7 +25,7 @@ ColumnDefinition ColumnDefinition::Copy() const {
 	copy.category = category;
 	copy.comment = comment;
 	copy.tags = tags;
-	copy.catalog_oid = catalog_oid;
+	copy.acl = acl;
 	return copy;
 }
 
@@ -80,6 +80,14 @@ void ColumnDefinition::SetComment(const Value &comment) {
 	this->comment = comment;
 }
 
+const vector<AclItem> &ColumnDefinition::Acl() const {
+	return acl;
+}
+
+void ColumnDefinition::SetAcl(vector<AclItem> new_acl) {
+	acl = std::move(new_acl);
+}
+
 const InsertionOrderPreservingMap<string> &ColumnDefinition::Tags() const {
 	return tags;
 }
@@ -118,14 +126,6 @@ const column_t &ColumnDefinition::Oid() const {
 
 void ColumnDefinition::SetOid(column_t oid) {
 	this->oid = oid;
-}
-
-const idx_t &ColumnDefinition::CatalogOid() const {
-	return catalog_oid;
-}
-
-void ColumnDefinition::SetCatalogOid(idx_t catalog_oid) {
-	this->catalog_oid = catalog_oid;
 }
 
 const TableColumnType &ColumnDefinition::Category() const {

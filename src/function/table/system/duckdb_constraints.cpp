@@ -283,10 +283,10 @@ void DuckDBConstraintsFunction(ClientContext &context, TableFunctionInput &data_
 				throw NotImplementedException("Unimplemented constraint for duckdb_constraints");
 			}
 
-			database_name.Append(Value(table.ParentSchema().catalog.GetName()));
-			database_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.ParentSchema().catalog.GetOid())));
-			schema_name.Append(Value(table.ParentSchema().name));
-			schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.ParentSchema().oid)));
+			database_name.Append(Value(table.ParentCatalog().GetName()));
+			database_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.ParentCatalog().GetOid())));
+			schema_name.Append(Value(table.ParentSchemaName()));
+			schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.ParentSchemaOid())));
 			table_name.Append(Value(table.name));
 			table_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.oid)));
 

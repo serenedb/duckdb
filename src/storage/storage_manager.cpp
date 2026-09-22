@@ -820,8 +820,7 @@ void SingleFileStorageManager::Destroy() {
 			if (entry.internal) {
 				return;
 			}
-			// A table whose rows are an index of its own -- a search table -- has no DataTable to destroy.
-			if (entry.type == CatalogType::TABLE_ENTRY && entry.Cast<DuckTableEntry>().TryGetStorage()) {
+			if (entry.type == CatalogType::TABLE_ENTRY && entry.Cast<TableCatalogEntry>().IsDuckTable()) {
 				tables.push_back(entry.Cast<DuckTableEntry>());
 			}
 		});

@@ -12,14 +12,13 @@
 #include "duckdb/catalog/default/default_generator.hpp"
 
 namespace duckdb {
-class SchemaIdentity;
+class SchemaCatalogEntry;
 
 class DefaultViewGenerator : public DefaultGenerator {
 public:
-	DefaultViewGenerator(Catalog &catalog, SchemaIdentity &identity);
+	DefaultViewGenerator(Catalog &catalog, SchemaCatalogEntry &schema);
 
-	//! Not a schema entry: an alter chains a new one, and this generator outlives the version that built it
-	SchemaIdentity &identity;
+	SchemaCatalogEntry &schema;
 
 public:
 	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const Identifier &entry_name) override;

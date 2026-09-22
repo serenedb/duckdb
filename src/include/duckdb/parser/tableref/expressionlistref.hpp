@@ -31,8 +31,6 @@ public:
 	vector<LogicalType> expected_types;
 	//! Expected table names.
 	vector<Identifier> expected_names;
-	//! Whether the expected names are keyed exactly, which they are when they came from a table that holds both
-	//! "A" and "a" -- the binding must not treat those as one name.
 	bool case_sensitive_names = false;
 
 public:

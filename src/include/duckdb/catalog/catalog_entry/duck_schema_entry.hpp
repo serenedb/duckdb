@@ -13,26 +13,24 @@
 
 namespace duckdb {
 
-//! Everything a schema holds, shared by every version of the schema entry. Altering a schema chains a new entry,
-//! and its contents must not move with it -- the same handover a table rename makes with its DataTable.
-//! `case_sensitive` keys every set by the exact name, for a catalog that folds identifiers by its own rules.
-class SchemaCatalogSets {
+struct CreateTokenizerInfo;
+class DuckSchemaEntry;
+
+class DuckSchemaSets {
 public:
-	SchemaCatalogSets(Catalog &catalog, bool case_sensitive);
-	virtual ~SchemaCatalogSets() = default;
+	DuckSchemaSets(Catalog &catalog, DuckSchemaEntry &schema);
 
-	//! Get the catalog set for the specified type
-	virtual CatalogSet &Get(CatalogType type);
+	CatalogSet &GetCatalogSet(CatalogType type);
 	void Verify(Catalog &catalog);
-
-	const shared_ptr<SchemaIdentity> &GetIdentity() const {
-		return identity;
+	template <class F>
+	void ForEachSet(F &&callback) {
+		for (auto set : {&tables, &indexes, &table_functions, &copy_functions, &pragma_functions, &functions,
+		                 &sequences, &collations, &types, &coordinate_systems, &tokenizers}) {
+			callback(*set);
+		}
 	}
 
 private:
-	//! What the entries inside these sets point at. Held beside the sets rather than being them: an entry that
-	//! owned the set that owns it is a cycle, and the whole schema leaks with it.
-	shared_ptr<SchemaIdentity> identity;
 	//! The catalog set holding the tables
 	CatalogSet tables;
 	//! The catalog set holding the indexes
@@ -53,33 +51,31 @@ private:
 	CatalogSet types;
 	//! The catalog set holding the coordinate systems
 	CatalogSet coordinate_systems;
+	//! The catalog set holding the tokenizers
+	CatalogSet tokenizers;
 };
 
 //! A schema in the catalog
 class DuckSchemaEntry : public SchemaCatalogEntry {
 public:
-	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info);
+	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<SchemaInfo> inherited_info = nullptr,
+	                shared_ptr<DuckSchemaSets> inherited_sets = nullptr);
 
-protected:
-	//! Supersede the version that currently holds `sets`, taking the schema's whole contents over
-	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, const shared_ptr<SchemaCatalogSets> &sets);
-
-	//! Held by every version of the schema entry, so the contents survive the version that created them
-	shared_ptr<SchemaCatalogSets> sets;
+private:
+	shared_ptr<DuckSchemaSets> sets;
 
 public:
 	optional_ptr<CatalogEntry> AddEntry(CatalogTransaction transaction, unique_ptr<StandardEntry> entry,
 	                                    OnCreateConflict on_conflict);
-	//! `replaces` is the name the entry a REPLACE_ON_CONFLICT supersedes is filed under, when that is not the
-	//! name the new entry carries -- a rename that is also a redefinition.
 	optional_ptr<CatalogEntry> AddEntryInternal(CatalogTransaction transaction, unique_ptr<StandardEntry> entry,
-	                                            OnCreateConflict on_conflict, LogicalDependencyList dependencies,
-	                                            optional_ptr<const Identifier> replaces = nullptr);
+	                                            OnCreateConflict on_conflict, LogicalDependencyList dependencies);
 
 	optional_ptr<CatalogEntry> CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) override;
 	optional_ptr<CatalogEntry> CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) override;
 	optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
 	                                       TableCatalogEntry &table) override;
+	optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
+	                                       CatalogEntry &relation) override;
 	optional_ptr<CatalogEntry> CreateView(CatalogTransaction transaction, CreateViewInfo &info) override;
 	optional_ptr<CatalogEntry> CreateSequence(CatalogTransaction transaction, CreateSequenceInfo &info) override;
 	optional_ptr<CatalogEntry> CreateTableFunction(CatalogTransaction transaction,
@@ -92,6 +88,7 @@ public:
 	optional_ptr<CatalogEntry> CreateCoordinateSystem(CatalogTransaction transaction,
 	                                                  CreateCoordinateSystemInfo &info) override;
 	optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info) override;
+	optional_ptr<CatalogEntry> CreateTokenizer(CatalogTransaction transaction, CreateTokenizerInfo &info);
 	void Alter(CatalogTransaction transaction, AlterInfo &info) override;
 	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
 	void Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
@@ -102,12 +99,7 @@ public:
 	SimilarCatalogEntry GetSimilarEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info) override;
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
-
-	//! This version is about to be destroyed: hand the schema's contents back to the version it superseded,
-	//! which every entry inside the schema resolves through.
-	void Rollback(CatalogEntry &prev_entry) override;
-	//! The alter that produced a superseding version was refused: reclaim the contents for this one.
-	void UndoAlter(ClientContext &context, AlterInfo &info) override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
 
 	void Verify(Catalog &catalog) override;
 
@@ -116,5 +108,6 @@ public:
 
 private:
 	void OnDropEntry(CatalogTransaction transaction, CatalogEntry &entry);
+	void SetSchemaName(const Identifier &schema_name, optional_ptr<CatalogTransaction> transaction);
 };
 } // namespace duckdb

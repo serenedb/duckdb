@@ -34,6 +34,7 @@ public:
 	               shared_ptr<IndexDataTableInfo> storage_info);
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
 	void Rollback(CatalogEntry &prev_entry) override;
 
 	//! The indexed table information
@@ -47,7 +48,6 @@ public:
 	Identifier GetTableName() const override;
 
 	DataTableInfo &GetDataTableInfo() const;
-	optional_ptr<DataTableInfo> TryGetDataTableInfo() const;
 
 	//! Saves index removal into drop_state to be removed after FlushCommit().
 	void CommitDrop(CommitDropState &drop_state);

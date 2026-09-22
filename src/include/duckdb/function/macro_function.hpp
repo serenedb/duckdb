@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/function/function.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -54,23 +53,18 @@ public:
 	vector<string> return_names;
 	//! Whether this overload is a procedure (CALL only, not usable in SELECT/FROM)
 	bool is_procedure = false;
-	//! What this overload's body resolved to when it was bound (gated on
-	//! enable_macro_dependencies). Collected once at the overload's own bind;
-	//! the entry's list is the union over the overload set, so adding or
-	//! dropping an overload never re-binds the others.
-	LogicalDependencyList dependencies;
 
 public:
 	virtual ~MacroFunction() {
 	}
 
-	//! The union over an overload set: the dependency list of the entry the
-	//! set makes.
-	static LogicalDependencyList UnionDependencies(const vector<unique_ptr<MacroFunction>> &macro_functions);
-
 	void CopyProperties(MacroFunction &other) const;
 
 	virtual unique_ptr<MacroFunction> Copy() const = 0;
+
+	vector<LogicalType> ParameterTypes() const;
+	bool HasParameterTypes(const vector<LogicalType> &parameter_types) const;
+	static string ParameterTypesToString(const vector<LogicalType> &parameter_types);
 
 	vector<unique_ptr<ParsedExpression>> GetPositionalParametersForSerialization(Serializer &serializer) const;
 	void FinalizeDeserialization();

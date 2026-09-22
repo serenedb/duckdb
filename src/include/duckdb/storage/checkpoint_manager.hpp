@@ -9,7 +9,6 @@
 #pragma once
 
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/common/reference_map.hpp"
 #include "duckdb/storage/partial_block_manager.hpp"
 
 namespace duckdb {
@@ -26,6 +25,7 @@ class Deserializer;
 class Connection;
 class DuckTransaction;
 class DuckTransactionManager;
+class InCatalogEntry;
 class IndexCatalogEntry;
 
 class MetadataManager;
@@ -34,6 +34,7 @@ class SchemaCatalogEntry;
 class SequenceCatalogEntry;
 class Serializer;
 class ScalarMacroCatalogEntry;
+class StandardEntry;
 class TableMacroCatalogEntry;
 class TableCatalogEntry;
 class TriggerCatalogEntry;
@@ -82,19 +83,9 @@ public:
 	virtual unique_ptr<TableDataWriter> GetTableDataWriter(TableCatalogEntry &table) = 0;
 
 protected:
-	//! Whether the definition of `entry` is another catalog's, so this file records only its rows. It is the
-	//! schema that says so: the entries of a schema a catalog of its own persists are that catalog's.
-	bool DefinitionElsewhere(const CatalogEntry &entry) const;
-
-	//! The schemas whose definitions a catalog of its own persists.
-	reference_set_t<SchemaCatalogEntry> foreign_schemas;
-
 	virtual void WriteEntry(CatalogEntry &entry, Serializer &serializer);
 	virtual void WriteSchema(SchemaCatalogEntry &schema, Serializer &serializer);
 	virtual void WriteTable(TableCatalogEntry &table, Serializer &serializer) = 0;
-	//! The rows of a table whose definition this file does not hold: the catalog that owns the entry persists
-	//! that itself, so the record is the entry's identifier plus its data.
-	virtual void WriteDataManifest(TableCatalogEntry &table, Serializer &serializer);
 	virtual void WriteView(ViewCatalogEntry &table, Serializer &serializer);
 	virtual void WriteSequence(SequenceCatalogEntry &table, Serializer &serializer);
 	virtual void WriteMacro(ScalarMacroCatalogEntry &table, Serializer &serializer);
@@ -102,6 +93,10 @@ protected:
 	virtual void WriteIndex(IndexCatalogEntry &index_catalog_entry, Serializer &serializer);
 	virtual void WriteType(TypeCatalogEntry &type, Serializer &serializer);
 	virtual void WriteTrigger(TriggerCatalogEntry &trigger, Serializer &serializer);
+	virtual void WriteTokenizer(StandardEntry &tokenizer, Serializer &serializer);
+	virtual void WriteRole(InCatalogEntry &role, Serializer &serializer);
+	virtual void WriteDatabase(InCatalogEntry &database, Serializer &serializer);
+	virtual void WriteForeignServer(InCatalogEntry &server, Serializer &serializer);
 };
 
 class CheckpointReader {
@@ -119,10 +114,6 @@ protected:
 	virtual void ReadEntry(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadSchema(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadTable(CatalogTransaction transaction, Deserializer &deserializer);
-	//! Reads the rows of `catalog_id`'s table and creates it from the definition the host catalog holds.
-	void ReadDataManifest(CatalogTransaction transaction, Deserializer &deserializer, idx_t catalog_id);
-	//! Reads past a table's rows without attaching them, for a table the host catalog no longer has.
-	void SkipTableData(Deserializer &deserializer);
 	virtual void ReadView(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadSequence(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadMacro(CatalogTransaction transaction, Deserializer &deserializer);
@@ -130,9 +121,13 @@ protected:
 	virtual void ReadIndex(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadType(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadTrigger(CatalogTransaction transaction, Deserializer &deserializer);
+	virtual void ReadTokenizer(CatalogTransaction transaction, Deserializer &deserializer);
+	virtual void ReadRole(CatalogTransaction transaction, Deserializer &deserializer);
+	virtual void ReadDatabase(CatalogTransaction transaction, Deserializer &deserializer);
+	virtual void ReadForeignServer(CatalogTransaction transaction, Deserializer &deserializer);
 
 	virtual void ReadTableData(CatalogTransaction transaction, Deserializer &deserializer,
-	                           BoundCreateTableInfo &bound_info);
+	                           BoundCreateTableInfo &bound_info, MetaBlockPointer table_pointer);
 };
 
 class SingleFileCheckpointReader final : public CheckpointReader {
@@ -172,7 +167,6 @@ public:
 
 public:
 	void WriteTable(TableCatalogEntry &table, Serializer &serializer) override;
-	void WriteDataManifest(TableCatalogEntry &table, Serializer &serializer) override;
 
 private:
 	optional_ptr<ClientContext> context;

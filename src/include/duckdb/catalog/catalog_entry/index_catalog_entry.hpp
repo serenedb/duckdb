@@ -14,6 +14,9 @@
 namespace duckdb {
 
 struct DataTableInfo;
+class QueryContext;
+struct ColumnSegmentInfo;
+struct ColumnSegmentInfoScanState;
 
 //! An index catalog entry
 class IndexCatalogEntry : public StandardEntry {
@@ -36,13 +39,15 @@ public:
 	IndexConstraintType index_constraint_type;
 	//! The column ids of the indexed table
 	vector<column_t> column_ids;
-	//! The indexed table's column names as they were when the index was built. RENAME COLUMN does not rewrite the
-	//! key expressions below, so this is what says which spelling in them has since gone stale -- read positionally,
-	//! through column_ids, because that is what a rename leaves alone.
-	vector<Identifier> table_column_names;
 	//! The set of expressions to index by
 	vector<unique_ptr<ParsedExpression>> expressions;
 	vector<unique_ptr<ParsedExpression>> parsed_expressions;
+	//! The partial-index predicate (CREATE INDEX ... WHERE <predicate>)
+	unique_ptr<ParsedExpression> where_clause;
+	//! The opclass per indexed column; empty string means none was specified
+	vector<string> column_opclasses;
+	//! Per-column opclass options, parallel to column_opclasses
+	vector<std::optional<case_insensitive_map_t<Value>>> column_opclass_options;
 
 public:
 	//! Returns the CreateIndexInfo
@@ -52,6 +57,12 @@ public:
 
 	virtual Identifier GetSchemaName() const = 0;
 	virtual Identifier GetTableName() const = 0;
+	virtual void InitializeColumnSegmentInfoScan(ColumnSegmentInfoScanState &state) const {
+	}
+	virtual bool ScanColumnSegmentInfo(const QueryContext &context, ColumnSegmentInfoScanState &state,
+	                                   vector<ColumnSegmentInfo> &result) const {
+		return false;
+	}
 
 	//! Returns true, if this index is UNIQUE
 	bool IsUnique() const;

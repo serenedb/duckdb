@@ -1,9 +1,16 @@
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/function/built_in_functions.hpp"
 #include "duckdb/main/attached_database.hpp"
@@ -13,11 +20,13 @@
 
 namespace duckdb {
 
-DuckCatalog::DuckCatalog(AttachedDatabase &db, bool case_sensitive_schemas)
+DuckCatalog::DuckCatalog(AttachedDatabase &db, bool case_sensitive_names)
     : Catalog(db), dependency_manager(make_uniq<DependencyManager>(*this)),
       schemas(make_uniq<CatalogSet>(*this, IsSystemCatalog() ? make_uniq<DefaultSchemaGenerator>(*this) : nullptr,
-                                    case_sensitive_schemas)) {
-	schemas->EnableOidLookup(nullptr, CatalogType::SCHEMA_ENTRY);
+                                    case_sensitive_names)),
+      roles(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
+      databases(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
+      foreign_servers(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)) {
 }
 
 DuckCatalog::~DuckCatalog() {
@@ -62,6 +71,16 @@ optional_ptr<DependencyManager> DuckCatalog::GetDependencyManager() {
 //===--------------------------------------------------------------------===//
 // Schema
 //===--------------------------------------------------------------------===//
+unique_ptr<IndexCatalogEntry> DuckCatalog::MakeIndexEntry(DuckSchemaEntry &schema, CreateIndexInfo &info,
+                                                          CatalogEntry &relation) {
+	return make_uniq<DuckIndexEntry>(*this, schema, info, relation.Cast<TableCatalogEntry>());
+}
+
+unique_ptr<TableCatalogEntry> DuckCatalog::MakeTableEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
+                                                          BoundCreateTableInfo &info) {
+	return make_uniq<DuckTableEntry>(*this, schema, info);
+}
+
 optional_ptr<CatalogEntry> DuckCatalog::CreateSchemaInternal(CatalogTransaction transaction, CreateSchemaInfo &info) {
 	LogicalDependencyList dependencies;
 
@@ -118,6 +137,113 @@ void DuckCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	DropSchema(GetCatalogTransaction(context), info);
 }
 
+void DuckCatalog::AlterSchema(CatalogTransaction transaction, AlterInfo &info) {
+	auto &name = info.GetQualifiedName().Name();
+	D_ASSERT(!name.empty());
+	if (!schemas->AlterEntry(transaction, name, info)) {
+		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingEntry(CatalogType::SCHEMA_ENTRY, name, string());
+		}
+	}
+}
+
+unique_ptr<InCatalogEntry> DuckCatalog::MakeRoleEntry(CreateRoleInfo &info) {
+	throw NotImplementedException("Roles are not supported by this catalog");
+}
+
+unique_ptr<InCatalogEntry> DuckCatalog::MakeDatabaseEntry(CreateDatabaseInfo &info) {
+	throw NotImplementedException("Database entries are not supported by this catalog");
+}
+
+unique_ptr<InCatalogEntry> DuckCatalog::MakeForeignServerEntry(CreateForeignServerInfo &info) {
+	throw NotImplementedException("Foreign servers are not supported by this catalog");
+}
+
+unique_ptr<StandardEntry> DuckCatalog::MakeTokenizerEntry(DuckSchemaEntry &schema, CreateTokenizerInfo &info) {
+	throw NotImplementedException("Text search dictionaries are not supported by this catalog");
+}
+
+optional_ptr<CatalogEntry> DuckCatalog::AddEntry(CatalogTransaction transaction, unique_ptr<InCatalogEntry> entry,
+                                                 OnCreateConflict on_conflict) {
+	auto entry_name = entry->name;
+	auto entry_type = entry->type;
+	auto result = entry.get();
+	auto &set = GetCatalogSet(entry_type);
+	if (on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT && set.GetEntry(transaction, entry_name)) {
+		return nullptr;
+	}
+	if (on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		auto old_entry = set.GetEntry(transaction, entry_name);
+		if (old_entry) {
+			entry->permissions = old_entry->permissions;
+			(void)set.DropEntry(transaction, entry_name, false, entry->internal);
+		}
+	}
+	if (!set.CreateEntry(transaction, entry_name, std::move(entry), LogicalDependencyList())) {
+		if (on_conflict == OnCreateConflict::ERROR_ON_CONFLICT) {
+			throw CatalogException::EntryAlreadyExists(entry_type, entry_name);
+		}
+		return nullptr;
+	}
+	return result;
+}
+
+optional_ptr<CatalogEntry> DuckCatalog::CreateRole(CatalogTransaction transaction, CreateRoleInfo &info) {
+	return AddEntry(transaction, MakeRoleEntry(info), info.on_conflict);
+}
+
+optional_ptr<CatalogEntry> DuckCatalog::CreateDatabase(CatalogTransaction transaction, CreateDatabaseInfo &info) {
+	return AddEntry(transaction, MakeDatabaseEntry(info), info.on_conflict);
+}
+
+optional_ptr<CatalogEntry> DuckCatalog::CreateForeignServer(CatalogTransaction transaction,
+                                                            CreateForeignServerInfo &info) {
+	return AddEntry(transaction, MakeForeignServerEntry(info), info.on_conflict);
+}
+
+void DuckCatalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
+	D_ASSERT(!info.GetQualifiedName().Name().empty());
+	if (!roles->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
+		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingEntry(CatalogType::ROLE_ENTRY, info.GetQualifiedName().Name(), string());
+		}
+	}
+}
+
+void DuckCatalog::DropDatabase(CatalogTransaction transaction, DropInfo &info) {
+	D_ASSERT(!info.GetQualifiedName().Name().empty());
+	if (!databases->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
+		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingEntry(CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name(), string());
+		}
+	}
+}
+
+void DuckCatalog::DropForeignServer(CatalogTransaction transaction, DropInfo &info) {
+	D_ASSERT(!info.GetQualifiedName().Name().empty());
+	if (!foreign_servers->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
+		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingEntry(CatalogType::FOREIGN_SERVER_ENTRY, info.GetQualifiedName().Name(),
+			                                     string());
+		}
+	}
+}
+
+CatalogSet &DuckCatalog::GetCatalogSet(CatalogType type) {
+	switch (type) {
+	case CatalogType::SCHEMA_ENTRY:
+		return *schemas;
+	case CatalogType::ROLE_ENTRY:
+		return *roles;
+	case CatalogType::DATABASE_ENTRY:
+		return *databases;
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+		return *foreign_servers;
+	default:
+		throw InternalException("Unsupported catalog type in catalog: %s", CatalogTypeToString(type));
+	}
+}
+
 void DuckCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
 	schemas->Scan(GetCatalogTransaction(context),
 	              [&](CatalogEntry &entry) { callback(entry.Cast<SchemaCatalogEntry>()); });
@@ -125,87 +251,6 @@ void DuckCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaC
 
 void DuckCatalog::ScanSchemas(std::function<void(SchemaCatalogEntry &)> callback) {
 	schemas->Scan([&](CatalogEntry &entry) { callback(entry.Cast<SchemaCatalogEntry>()); });
-}
-
-//! Exact rather than the Identifier's case-insensitive equality: a case-sensitive set keys "a" and "A" as two
-//! chains, and each version node unregisters under the same exact name it registered with
-static bool SameOidLocation(const EntryOidLocation &loc, idx_t schema_oid, CatalogType slot, const Identifier &name) {
-	return loc.schema_oid == schema_oid && loc.slot == slot && loc.name.GetIdentifierName() == name.GetIdentifierName();
-}
-
-void DuckCatalog::AddOidLocation(idx_t oid, idx_t schema_oid, CatalogType slot, const Identifier &name) {
-	lock_guard<mutex> guard(oid_locations_lock);
-	auto &locations = oid_locations[oid];
-	for (auto &loc : locations) {
-		if (SameOidLocation(loc, schema_oid, slot, name)) {
-			loc.count++;
-			return;
-		}
-	}
-	locations.push_back(EntryOidLocation {schema_oid, slot, name, 1});
-}
-
-void DuckCatalog::RemoveOidLocation(idx_t oid, idx_t schema_oid, CatalogType slot, const Identifier &name) {
-	lock_guard<mutex> guard(oid_locations_lock);
-	auto map_entry = oid_locations.find(oid);
-	if (map_entry == oid_locations.end()) {
-		return;
-	}
-	auto &locations = map_entry->second;
-	for (idx_t i = 0; i < locations.size(); i++) {
-		auto &loc = locations[i];
-		if (!SameOidLocation(loc, schema_oid, slot, name)) {
-			continue;
-		}
-		if (--loc.count == 0) {
-			locations.erase_at(i);
-		}
-		break;
-	}
-	if (locations.empty()) {
-		oid_locations.erase(map_entry);
-	}
-}
-
-optional_ptr<CatalogSet> DuckCatalog::RootEntrySet(CatalogType slot) {
-	if (slot == CatalogType::SCHEMA_ENTRY) {
-		return schemas.get();
-	}
-	return nullptr;
-}
-
-optional_ptr<CatalogEntry> DuckCatalog::GetEntryById(CatalogTransaction transaction, idx_t oid) {
-	vector<EntryOidLocation> locations;
-	{
-		lock_guard<mutex> guard(oid_locations_lock);
-		auto map_entry = oid_locations.find(oid);
-		if (map_entry == oid_locations.end()) {
-			return nullptr;
-		}
-		locations = map_entry->second;
-	}
-	for (auto &loc : locations) {
-		optional_ptr<CatalogSet> set;
-		if (loc.schema_oid == DConstants::INVALID_INDEX) {
-			set = RootEntrySet(loc.slot);
-		} else {
-			// The schema by its own id: renaming a schema moves nothing under it
-			auto schema = GetEntryById(transaction, loc.schema_oid);
-			if (!schema || schema->type != CatalogType::SCHEMA_ENTRY) {
-				continue;
-			}
-			set = &schema->Cast<DuckSchemaEntry>().GetCatalogSet(loc.slot);
-		}
-		if (!set) {
-			continue;
-		}
-		auto entry = set->GetEntry(transaction, loc.name);
-		// A location outlives a drop-and-recreate under the same name; the visible version's own oid decides
-		if (entry && entry->oid == oid) {
-			return entry;
-		}
-	}
-	return nullptr;
 }
 
 CatalogSet &DuckCatalog::GetSchemaCatalogSet() {
@@ -260,6 +305,9 @@ void DuckCatalog::Verify() {
 	DUCKDB_DEBUG_VERIFY_GUARD();
 	Catalog::Verify();
 	schemas->Verify(*this);
+	roles->Verify(*this);
+	databases->Verify(*this);
+	foreign_servers->Verify(*this);
 #endif
 }
 

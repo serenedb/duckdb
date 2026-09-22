@@ -9,7 +9,7 @@
 namespace duckdb {
 
 TriggerCatalogEntry::TriggerCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTriggerInfo &info)
-    : StandardEntry(CatalogType::TRIGGER_ENTRY, schema, catalog, info.GetTriggerName()),
+    : StandardEntry(CatalogType::TRIGGER_ENTRY, schema, catalog, info.GetTriggerName(), info.oid),
       base_table(unique_ptr_cast<TableRef, BaseTableRef>(info.base_table->Copy())), timing(info.timing),
       event_type(info.event_type), columns(info.columns), for_each(info.for_each),
       referencing_new_table(info.referencing_new_table), referencing_old_table(info.referencing_old_table),
@@ -17,17 +17,18 @@ TriggerCatalogEntry::TriggerCatalogEntry(Catalog &catalog, SchemaCatalogEntry &s
 	this->temporary = info.temporary;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 }
 
 unique_ptr<CatalogEntry> TriggerCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateTriggerInfo>();
-	return make_uniq<TriggerCatalogEntry>(catalog, Schema(), cast_info);
+	return make_uniq<TriggerCatalogEntry>(catalog, ParentSchema(context), cast_info);
 }
 
 unique_ptr<CreateInfo> TriggerCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateTriggerInfo>();
-	result->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchema().name, name));
+	result->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchemaName(), name));
 	result->base_table = unique_ptr_cast<TableRef, BaseTableRef>(base_table->Copy());
 	result->timing = timing;
 	result->event_type = event_type;
@@ -39,8 +40,7 @@ unique_ptr<CreateInfo> TriggerCatalogEntry::GetInfo() const {
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
-	result->oid = oid;
-	result->parent_oid = ParentSchema().oid;
+	result->permissions = permissions;
 	return std::move(result);
 }
 

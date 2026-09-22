@@ -30,7 +30,6 @@ class ClientContext;
 class LogicalDependencyList;
 
 class DuckCatalog;
-class SchemaIdentity;
 class TableCatalogEntry;
 class SequenceCatalogEntry;
 
@@ -64,10 +63,8 @@ public:
 	};
 
 public:
-	//! `case_sensitive` keys the set by the exact name rather than by duckdb's case-insensitive identifier
-	//! comparison, for a catalog that folds identifiers by its own rules before they get here.
-	DUCKDB_API explicit CatalogSet(Catalog &catalog, unique_ptr<DefaultGenerator> defaults = nullptr,
-	                               bool case_sensitive = false);
+	DUCKDB_API explicit CatalogSet(Catalog &catalog, unique_ptr<DefaultGenerator> defaults = nullptr);
+	DUCKDB_API CatalogSet(Catalog &catalog, unique_ptr<DefaultGenerator> defaults, bool case_sensitive);
 	~CatalogSet();
 
 	//! Create an entry in the catalog set. Returns whether or not it was
@@ -76,21 +73,10 @@ public:
 	                            const LogicalDependencyList &dependencies);
 	DUCKDB_API bool CreateEntry(ClientContext &context, const Identifier &name, unique_ptr<CatalogEntry> value,
 	                            const LogicalDependencyList &dependencies);
-	//! Creates `value` under its own name, or -- when an entry named `replaces` exists -- installs it as an
-	//! alter of that entry: a replace hands the object's edges over and takes the rename path, rather than
-	//! leaving a drop tombstone that VerifyCommitDrop would refuse. Returns whether the set took the write.
-	DUCKDB_API bool CreateOrReplaceEntry(CatalogTransaction transaction, const Identifier &replaces,
-	                                     unique_ptr<CatalogEntry> value, const LogicalDependencyList &dependencies);
-	//! Whether the committed version `transaction` resolves under `name` has since been dropped by a
-	//! concurrent commit: the transaction still reads it, a committed read no longer finds it. Writing a
-	//! new version over such an entry would silently resurrect it.
-	DUCKDB_API bool CommittedVersionVanished(CatalogTransaction transaction, const Identifier &name);
+	void ShareNamespace(CatalogSet &other);
+	DUCKDB_API optional_ptr<CatalogEntry> GetNamespaceEntry(CatalogTransaction transaction, const Identifier &name);
 
 	DUCKDB_API bool AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info);
-	//! Alter with the replacement entry supplied by the caller, for a catalog that computes the new version
-	//! itself rather than deriving it from the AlterInfo. A null `value` falls back to asking the entry.
-	DUCKDB_API bool AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info,
-	                           unique_ptr<CatalogEntry> value);
 
 	DUCKDB_API bool DropEntry(CatalogTransaction transaction, const Identifier &name, bool cascade,
 	                          bool allow_drop_internal = false);
@@ -118,7 +104,7 @@ public:
 
 	//! Rollback <entry> to be the currently valid entry for a certain catalog
 	//! entry
-	void Undo(CatalogEntry &entry);
+	void Undo(CatalogTransaction transaction, CatalogEntry &entry);
 
 	//! Scan the catalog set, invoking the callback method for every committed entry
 	DUCKDB_API void Scan(const std::function<void(CatalogEntry &)> &callback);
@@ -154,11 +140,6 @@ public:
 	//! Override the default generator - this should not be used after the catalog set has been used
 	void SetDefaultGenerator(unique_ptr<DefaultGenerator> defaults);
 
-	//! File every entry placed in this set in the catalog's by-id map, under `slot` inside the schema `owner`
-	//! currently heads -- or at the catalog root when there is no owner. A set that never enables this stays
-	//! out of by-id lookups.
-	void EnableOidLookup(optional_ptr<SchemaIdentity> owner, CatalogType slot);
-
 private:
 	bool DropDependencies(CatalogTransaction transaction, const Identifier &name, bool cascade,
 	                      bool allow_drop_internal = false);
@@ -178,12 +159,9 @@ private:
 	                                              unique_lock<mutex> &lock);
 
 	bool DropEntryInternal(CatalogTransaction transaction, const Identifier &name, bool allow_drop_internal = false);
-	void ClearLocalStorage(CatalogTransaction transaction, const Identifier &name);
 
 	bool CreateEntryInternal(CatalogTransaction transaction, const Identifier &name, unique_ptr<CatalogEntry> value,
 	                         unique_lock<mutex> &read_lock, bool should_be_empty = true);
-	void AddOidLocation(CatalogEntry &entry);
-	void RemoveOidLocation(CatalogEntry &entry);
 	void CheckCatalogEntryInvariants(CatalogEntry &value, const Identifier &name);
 	//! Verify that the previous entry in the chain is dropped.
 	bool VerifyVacancy(CatalogTransaction transaction, CatalogEntry &entry);
@@ -191,18 +169,15 @@ private:
 	bool StartChain(CatalogTransaction transaction, const Identifier &name, unique_lock<mutex> &read_lock);
 	bool RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, const Identifier &new_name,
 	                         AlterInfo &alter_info, unique_lock<mutex> &read_lock);
+	bool NamespaceVacant(CatalogTransaction transaction, const Identifier &name);
 
 private:
 	DuckCatalog &catalog;
 	//! The catalog lock is used to make changes to the data
 	mutex catalog_lock;
 	CatalogEntryMap map;
+	vector<reference<CatalogSet>> shared_namespace;
 	//! The generator used to generate default internal entries
 	unique_ptr<DefaultGenerator> defaults;
-	//! Where a by-id lookup files entries placed here; INVALID keeps the set out of the by-id map
-	optional_ptr<SchemaIdentity> oid_owner;
-	CatalogType oid_slot = CatalogType::INVALID;
-	//! The owning schema's oid, cached at the first placement (constant across schema versions)
-	idx_t oid_schema = DConstants::INVALID_INDEX;
 };
 } // namespace duckdb
