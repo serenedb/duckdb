@@ -42,7 +42,7 @@ enum class ARTScanResult : uint8_t;
 
 enum class AccessMode : uint8_t;
 
-enum class AccessVerb : uint8_t;
+enum class AclMode : uint64_t;
 
 enum class AdaptiveFilterSource : uint8_t;
 
@@ -63,6 +63,8 @@ enum class AllowParserOverride : uint8_t;
 enum class AlterDatabaseType : uint8_t;
 
 enum class AlterForeignKeyType : uint8_t;
+
+enum class AlterIndexType : uint8_t;
 
 enum class AlterScalarFunctionType : uint8_t;
 
@@ -185,8 +187,6 @@ enum class DefaultOrderByNullType : uint8_t;
 enum class DeferredRuntimeFilterType : uint8_t;
 
 enum class DependencyEntryType : uint8_t;
-
-enum class DependencyPieceKind : uint8_t;
 
 enum class DeprecatedIndexType : uint8_t;
 
@@ -390,8 +390,6 @@ enum class PartitionedTupleDataType : uint8_t;
 
 enum class PendingExecutionResult : uint8_t;
 
-enum class PermissionsAlterType : uint8_t;
-
 enum class PhysicalOperatorType : uint8_t;
 
 enum class PhysicalTableScanExecutionStrategy : uint8_t;
@@ -442,6 +440,8 @@ enum class RequestType : uint8_t;
 
 enum class ResultModifierType : uint8_t;
 
+enum class RoleOption : uint32_t;
+
 enum class RowGroupAppendMode : uint8_t;
 
 enum class SampleMethod : uint8_t;
@@ -489,6 +489,8 @@ enum class SinkResultType : uint8_t;
 enum class SortKeyType : uint8_t;
 
 enum class SourceResultType : uint8_t;
+
+enum class SqlCompatibility : uint8_t;
 
 enum class StarExpressionType : uint8_t;
 
@@ -607,7 +609,7 @@ template<>
 const char* EnumUtil::ToChars<AccessMode>(AccessMode value);
 
 template<>
-const char* EnumUtil::ToChars<AccessVerb>(AccessVerb value);
+const char* EnumUtil::ToChars<AclMode>(AclMode value);
 
 template<>
 const char* EnumUtil::ToChars<AdaptiveFilterSource>(AdaptiveFilterSource value);
@@ -638,6 +640,9 @@ const char* EnumUtil::ToChars<AlterDatabaseType>(AlterDatabaseType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterForeignKeyType>(AlterForeignKeyType value);
+
+template<>
+const char* EnumUtil::ToChars<AlterIndexType>(AlterIndexType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterScalarFunctionType>(AlterScalarFunctionType value);
@@ -821,9 +826,6 @@ const char* EnumUtil::ToChars<DeferredRuntimeFilterType>(DeferredRuntimeFilterTy
 
 template<>
 const char* EnumUtil::ToChars<DependencyEntryType>(DependencyEntryType value);
-
-template<>
-const char* EnumUtil::ToChars<DependencyPieceKind>(DependencyPieceKind value);
 
 template<>
 const char* EnumUtil::ToChars<DeprecatedIndexType>(DeprecatedIndexType value);
@@ -1129,9 +1131,6 @@ template<>
 const char* EnumUtil::ToChars<PendingExecutionResult>(PendingExecutionResult value);
 
 template<>
-const char* EnumUtil::ToChars<PermissionsAlterType>(PermissionsAlterType value);
-
-template<>
 const char* EnumUtil::ToChars<PhysicalOperatorType>(PhysicalOperatorType value);
 
 template<>
@@ -1207,6 +1206,9 @@ template<>
 const char* EnumUtil::ToChars<ResultModifierType>(ResultModifierType value);
 
 template<>
+const char* EnumUtil::ToChars<RoleOption>(RoleOption value);
+
+template<>
 const char* EnumUtil::ToChars<RowGroupAppendMode>(RowGroupAppendMode value);
 
 template<>
@@ -1277,6 +1279,9 @@ const char* EnumUtil::ToChars<SortKeyType>(SortKeyType value);
 
 template<>
 const char* EnumUtil::ToChars<SourceResultType>(SourceResultType value);
+
+template<>
+const char* EnumUtil::ToChars<SqlCompatibility>(SqlCompatibility value);
 
 template<>
 const char* EnumUtil::ToChars<StarExpressionType>(StarExpressionType value);
@@ -1445,7 +1450,7 @@ template<>
 AccessMode EnumUtil::FromString<AccessMode>(const char *value);
 
 template<>
-AccessVerb EnumUtil::FromString<AccessVerb>(const char *value);
+AclMode EnumUtil::FromString<AclMode>(const char *value);
 
 template<>
 AdaptiveFilterSource EnumUtil::FromString<AdaptiveFilterSource>(const char *value);
@@ -1476,6 +1481,9 @@ AlterDatabaseType EnumUtil::FromString<AlterDatabaseType>(const char *value);
 
 template<>
 AlterForeignKeyType EnumUtil::FromString<AlterForeignKeyType>(const char *value);
+
+template<>
+AlterIndexType EnumUtil::FromString<AlterIndexType>(const char *value);
 
 template<>
 AlterScalarFunctionType EnumUtil::FromString<AlterScalarFunctionType>(const char *value);
@@ -1659,9 +1667,6 @@ DeferredRuntimeFilterType EnumUtil::FromString<DeferredRuntimeFilterType>(const 
 
 template<>
 DependencyEntryType EnumUtil::FromString<DependencyEntryType>(const char *value);
-
-template<>
-DependencyPieceKind EnumUtil::FromString<DependencyPieceKind>(const char *value);
 
 template<>
 DeprecatedIndexType EnumUtil::FromString<DeprecatedIndexType>(const char *value);
@@ -1967,9 +1972,6 @@ template<>
 PendingExecutionResult EnumUtil::FromString<PendingExecutionResult>(const char *value);
 
 template<>
-PermissionsAlterType EnumUtil::FromString<PermissionsAlterType>(const char *value);
-
-template<>
 PhysicalOperatorType EnumUtil::FromString<PhysicalOperatorType>(const char *value);
 
 template<>
@@ -2045,6 +2047,9 @@ template<>
 ResultModifierType EnumUtil::FromString<ResultModifierType>(const char *value);
 
 template<>
+RoleOption EnumUtil::FromString<RoleOption>(const char *value);
+
+template<>
 RowGroupAppendMode EnumUtil::FromString<RowGroupAppendMode>(const char *value);
 
 template<>
@@ -2115,6 +2120,9 @@ SortKeyType EnumUtil::FromString<SortKeyType>(const char *value);
 
 template<>
 SourceResultType EnumUtil::FromString<SourceResultType>(const char *value);
+
+template<>
+SqlCompatibility EnumUtil::FromString<SqlCompatibility>(const char *value);
 
 template<>
 StarExpressionType EnumUtil::FromString<StarExpressionType>(const char *value);
