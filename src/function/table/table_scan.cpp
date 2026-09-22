@@ -1050,19 +1050,18 @@ unique_ptr<TableRef> TableScanFunction::IndexReplacementScan(ClientContext &cont
 	arguments.push_back(make_uniq<ConstantExpression>(Value(index->ParentSchemaName().GetIdentifierName())));
 	arguments.push_back(make_uniq<ConstantExpression>(Value(index->name.GetIdentifierName())));
 	auto ref = make_uniq<TableFunctionRef>();
-	ref->function = make_uniq<FunctionExpression>("index_scan", std::move(arguments));
+	ref->function = make_uniq<FunctionExpression>("seq_scan", std::move(arguments));
 	return std::move(ref);
 }
 
 void TableScanFunction::RegisterFunction(BuiltinFunctions &set) {
 	TableFunctionSet table_scan_set("seq_scan");
 	table_scan_set.AddFunction(GetFunction());
-	set.AddFunction(std::move(table_scan_set));
 	auto index_scan = GetFunction();
-	index_scan.name = "index_scan";
 	index_scan.arguments = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
 	index_scan.bind = IndexScanBind;
-	set.AddFunction(std::move(index_scan));
+	table_scan_set.AddFunction(std::move(index_scan));
+	set.AddFunction(std::move(table_scan_set));
 }
 
 void BuiltinFunctions::RegisterTableScanFunctions() {
