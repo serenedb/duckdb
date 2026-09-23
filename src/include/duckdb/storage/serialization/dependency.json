@@ -105,6 +105,12 @@
 				"version": "v2.0.0"
 			},
 			{
+				"id": 16484,
+				"name": "owned_by",
+				"type": "bool",
+				"version": "serenedb_v1"
+			},
+			{
 				"id": 16485,
 				"name": "subdependencies",
 				"type": "subdependency_set_t",

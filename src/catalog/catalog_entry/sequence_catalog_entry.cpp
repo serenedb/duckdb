@@ -106,6 +106,44 @@ int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t val
 	return NextValue(transaction);
 }
 
+int64_t SequenceCatalogEntry::NextValues(DuckTransaction &transaction, idx_t count) {
+	if (count == 0) {
+		throw InternalException("SequenceCatalogEntry::NextValues requires a positive count");
+	}
+	lock_guard<mutex> seqlock(lock);
+	auto counter = data.counter;
+	int64_t result = counter;
+	for (idx_t i = 0; i < count; i++) {
+		result = counter;
+		bool overflow = !TryAddOperator::Operation(result, data.increment, counter);
+		if (data.cycle) {
+			if (overflow) {
+				counter = data.increment < 0 ? data.max_value : data.min_value;
+			} else if (counter < data.min_value) {
+				counter = data.max_value;
+			} else if (counter > data.max_value) {
+				counter = data.min_value;
+			}
+		} else {
+			if (result < data.min_value || (overflow && data.increment < 0)) {
+				throw SequenceException("nextval: reached minimum value of sequence %s (%lld)", name, data.min_value);
+			}
+			if (result > data.max_value || overflow) {
+				throw SequenceException("nextval: reached maximum value of sequence \"%s\" (%lld)", name,
+				                        data.max_value);
+			}
+		}
+	}
+	auto base = data.counter;
+	data.counter = counter;
+	data.last_value = result;
+	data.usage_count += count;
+	if (!temporary) {
+		transaction.PushSequenceUsage(*this, data);
+	}
+	return base;
+}
+
 void SequenceCatalogEntry::ReplayValue(uint64_t v_usage_count, int64_t v_counter, optional<int64_t> last_value) {
 	if (v_usage_count > data.usage_count) {
 		data.usage_count = v_usage_count;
