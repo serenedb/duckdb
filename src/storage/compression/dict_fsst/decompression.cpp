@@ -263,6 +263,7 @@ void CompressedStringScanState::ScanToFlatVector(Vector &result, idx_t result_of
 	auto &selvec = GetSelVec(start, scan_count);
 	if (dictionary) {
 		// We have prepared the full dictionary, we can reference these strings directly
+		StringVector::AddHeapReference(result, dictionary->data);
 		auto dictionary_values = FlatVector::GetData<string_t>(dictionary->data);
 		for (idx_t i = 0; i < scan_count; i++) {
 			// Lookup dict offset in index buffer
