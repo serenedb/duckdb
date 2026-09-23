@@ -43,6 +43,10 @@ BoundStatement Binder::BindAlterAddIndex(BoundStatement &result, CatalogEntry &e
 	auto bound_constraint =
 	    BindUniqueConstraint(*constraint_info.constraint, table_info.GetQualifiedName().Name(), column_list);
 	auto &bound_unique = bound_constraint->Cast<BoundUniqueConstraint>();
+	const auto existing_pk = table.GetPrimaryKey();
+	if (bound_unique.is_primary_key && existing_pk) {
+		throw CatalogException("table \"%s\" can have only one primary key: %s", table.name, existing_pk->ToString());
+	}
 
 	// Create the CreateIndexInfo.
 	auto create_index_info = make_uniq<CreateIndexInfo>();
