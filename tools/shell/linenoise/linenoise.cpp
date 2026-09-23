@@ -142,6 +142,11 @@ TabCompletion Linenoise::TabComplete() const {
 	return result;
 }
 
+static bool NarrowsCompletion(char c) {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' ||
+	       c == '/' || c == '-' || c == '#';
+}
+
 /* This is an helper function for linenoiseEdit() and is called when the
  * user types the <tab> key in order to complete the string currently in the
  * input.
@@ -193,6 +198,15 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 			// if there are no ties we immediately accept the first completion suggestion
 			completion_idx = 0;
 		}
+
+		const auto narrow = [&]() {
+			completion_list = TabComplete();
+			completion_idx = optional_idx();
+			if (completions.empty()) {
+				next_key.action = KEY_NULL;
+				stop = true;
+			}
+		};
 
 		idx_t action_count = 0;
 		while (!stop) {
@@ -295,7 +309,29 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 				}
 				break;
 			}
+			case BACKSPACE:
+			case CTRL_H:
+				if (render_completion_suggestion) {
+					if (pos > 0) {
+						const auto prev = PrevChar();
+						memmove(buf + prev, buf + pos, len - pos);
+						len -= pos - prev;
+						pos = prev;
+						buf[len] = '\0';
+					}
+					narrow();
+					break;
+				}
+				next_key = key_press;
+				accept_completion = true;
+				stop = true;
+				break;
 			default:
+				if (render_completion_suggestion && NarrowsCompletion(key_press.action)) {
+					InsertCharacter(key_press.action);
+					narrow();
+					break;
+				}
 				next_key = key_press;
 				accept_completion = true;
 				stop = true;
@@ -333,6 +369,14 @@ bool Linenoise::HandleANSIEscape(const char *buf, size_t len, size_t &cpos) {
 		}
 		if (cpos < len)
 			cpos++; // skip final letter
+	} else if (cpos < len && buf[cpos] == ']') {
+		cpos++;
+		while (cpos < len && buf[cpos] != '\a' && !(buf[cpos] == '\033' && cpos + 1 < len && buf[cpos + 1] == '\\')) {
+			cpos++;
+		}
+		if (cpos < len) {
+			cpos += buf[cpos] == '\a' ? 1 : 2;
+		}
 	} else {
 		// standalone ESC
 		cpos++;
