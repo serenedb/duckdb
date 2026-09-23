@@ -502,22 +502,17 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 #ifdef DEBUG
 	logical_plan->Verify(*this);
 #endif
-	if (!result->value_map.empty() && !parameters.parameters) {
-		// if this is a prepared statement we can choose not to fully plan
-		// if we have parameters, we might want to re-bind when they are available as we can then do more optimizations
-		// in this situation we check if we want to cache the plan at all
-		if (!PreparedStatement::CanCachePlan(*logical_plan)) {
-			// we don't - early-out
-			result->properties.always_require_rebind = true;
-			return result;
-		}
-	}
-
 	// Mandatory access check on the freshly bound plan. Runs before (and
 	// independent of) the optimizer so it cannot be bypassed via
 	// disable_optimizer / a plan that opts out of optimization.
 	if (auto &db_config = DBConfig::GetConfig(*this); db_config.access_check_function) {
 		db_config.access_check_function(*this, *logical_planner.binder);
+	}
+
+	const bool may_cache_plan = !result->value_map.empty() && !parameters.parameters;
+	vector<TableIndex> bound_scans;
+	if (may_cache_plan) {
+		bound_scans = PreparedStatement::PlanScans(*logical_plan);
 	}
 
 	bool optimize = Settings::Get<EnableOptimizerSetting>(*this);
@@ -537,6 +532,19 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 #ifdef DEBUG
 		logical_plan->Verify(*this);
 #endif
+	}
+
+	if (may_cache_plan) {
+		// if this is a prepared statement we can choose not to fully plan
+		// if we have parameters, we might want to re-bind when they are available as we can then do more optimizations
+		// in this situation we check if we want to cache the plan at all. The check follows the optimizer: a scan
+		// decides whether it reads its parameters at execution (FunctionData::CachePlanWithParameters) while its
+		// filters are pushed down.
+		if (!PreparedStatement::CanCachePlan(*logical_plan, bound_scans)) {
+			// we don't - early-out
+			result->properties.always_require_rebind = true;
+			return result;
+		}
 	}
 
 	// Convert the logical query plan into a physical query plan.

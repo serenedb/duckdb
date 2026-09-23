@@ -27,10 +27,14 @@ ParserCache &Parser::GetCache() {
 	if (options.parser_cache) {
 		return *options.parser_cache;
 	}
-	if (!local_cache) {
-		local_cache = make_uniq<ParserCache>();
-	}
-	return *local_cache;
+	// A parse with no database behind it -- a type string, a column list, a
+	// default function's body -- would otherwise compile the whole PEG grammar
+	// for its own throwaway cache, which is milliseconds per call. They share
+	// one cache instead; it is the same grammar for every database, and the
+	// cache builds its matcher under its own lock. Never destroyed: statics
+	// still parse while the process is shutting down.
+	static ParserCache &fallback = *new ParserCache();
+	return fallback;
 }
 
 static bool ReplaceUnicodeSpaces(std::string_view query, string &new_query, vector<UnicodeSpace> &unicode_spaces) {

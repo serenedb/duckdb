@@ -9,10 +9,19 @@
 #include "duckdb/storage/table/row_group_reorderer.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
 
 namespace duckdb {
 
 RowGroupPruner::RowGroupPruner(ClientContext &context_p) : context(context_p) {
+}
+
+static std::shared_ptr<const Expression> LimitNodeExpression(const BoundLimitNode &node) {
+	if (node.Type() == LimitNodeType::EXPRESSION_VALUE) {
+		return std::shared_ptr<const Expression>(node.GetValueExpression().Copy());
+	}
+	return std::shared_ptr<const Expression>(
+	    make_uniq<BoundConstantExpression>(Value::BIGINT(NumericCast<int64_t>(node.GetConstantValue()))));
 }
 
 unique_ptr<LogicalOperator> RowGroupPruner::Optimize(unique_ptr<LogicalOperator> op) {
@@ -28,6 +37,7 @@ unique_ptr<LogicalOperator> RowGroupPruner::Optimize(unique_ptr<LogicalOperator>
 bool RowGroupPruner::TryOptimize(LogicalOperator &op) const {
 	optional_idx row_limit;
 	optional_idx row_offset;
+	bool push_limit = true;
 
 	if (op.type != LogicalOperatorType::LOGICAL_LIMIT) {
 		return false;
@@ -56,6 +66,7 @@ bool RowGroupPruner::TryOptimize(LogicalOperator &op) const {
 		    op_type == LogicalOperatorType::LOGICAL_DISTINCT) {
 			row_limit.SetInvalid();
 			row_offset.SetInvalid();
+			push_limit = false;
 		}
 		current_op = *current_op.get().children[0];
 	}
@@ -102,6 +113,7 @@ bool RowGroupPruner::TryOptimize(LogicalOperator &op) const {
 		if (invalidate) {
 			row_limit.SetInvalid();
 			row_offset.SetInvalid();
+			push_limit = false;
 		}
 	}
 
@@ -109,7 +121,7 @@ bool RowGroupPruner::TryOptimize(LogicalOperator &op) const {
 	const auto single_order_key = logical_order->orders.size() == 1;
 	const auto &primary_order = logical_order->orders[0];
 	auto options = CreateRowGroupReordererOptions(row_limit, row_offset, primary_order, *logical_get, storage_index,
-	                                              logical_limit, single_order_key);
+	                                              logical_limit, single_order_key, push_limit);
 	if (!options) {
 		return false;
 	}
@@ -189,15 +201,15 @@ unique_ptr<RowGroupOrderOptions>
 RowGroupPruner::CreateRowGroupReordererOptions(const optional_idx row_limit, const optional_idx row_offset,
                                                const BoundOrderByNode &primary_order, const LogicalGet &logical_get,
                                                const StorageIndex &storage_index, LogicalLimit &logical_limit,
-                                               const bool single_order_key) const {
+                                               const bool single_order_key, const bool push_limit) const {
 	const auto &colref = primary_order.expression->Cast<BoundColumnRefExpression>();
 	const auto column_type =
 	    colref.GetReturnType() == LogicalType::VARCHAR ? OrderByColumnType::STRING : OrderByColumnType::NUMERIC;
 	const auto order_type = primary_order.type;
 	const auto null_order = primary_order.null_order;
 	const auto order_by = order_type == OrderType::ASCENDING ? OrderByStatistics::MIN : OrderByStatistics::MAX;
-	optional_idx combined_limit = row_limit.IsValid()
-	                                  ? row_limit.GetIndex() + (row_offset.IsValid() ? row_offset.GetIndex() : 0)
+	optional_idx combined_limit = row_limit.IsValid() && row_offset.IsValid()
+	                                  ? row_limit.GetIndex() + row_offset.GetIndex()
 	                                  : optional_idx();
 
 	if (row_offset.IsValid() && row_offset.GetIndex() > 0 && logical_get.function.get_partition_stats) {
@@ -225,8 +237,23 @@ RowGroupPruner::CreateRowGroupReordererOptions(const optional_idx row_limit, con
 		}
 	}
 	// Only sort row groups by primary order column and prune with limit if set
+	std::shared_ptr<const Expression> limit_expression;
+	std::shared_ptr<const Expression> offset_expression;
+	const auto &limit_val = logical_limit.limit_val;
+	const auto &offset_val = logical_limit.offset_val;
+	const auto is_value = [](const BoundLimitNode &node) {
+		return node.Type() == LimitNodeType::CONSTANT_VALUE || node.Type() == LimitNodeType::EXPRESSION_VALUE;
+	};
+	if (push_limit && is_value(limit_val) && (is_value(offset_val) || offset_val.Type() == LimitNodeType::UNSET) &&
+	    (limit_val.Type() == LimitNodeType::EXPRESSION_VALUE || offset_val.Type() == LimitNodeType::EXPRESSION_VALUE)) {
+		limit_expression = LimitNodeExpression(limit_val);
+		if (offset_val.Type() != LimitNodeType::UNSET) {
+			offset_expression = LimitNodeExpression(offset_val);
+		}
+	}
 	return make_uniq<RowGroupOrderOptions>(storage_index, order_by, order_type, null_order, column_type, combined_limit,
-	                                       NumericCast<uint64_t>(0), NumericCast<uint64_t>(0), single_order_key);
+	                                       NumericCast<uint64_t>(0), NumericCast<uint64_t>(0), single_order_key,
+	                                       std::move(limit_expression), std::move(offset_expression));
 }
 
 } // namespace duckdb

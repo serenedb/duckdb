@@ -1,4 +1,5 @@
 #include "duckdb/main/prepared_statement.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/prepared_statement_data.hpp"
@@ -138,16 +139,21 @@ unique_ptr<PendingQueryResult> PreparedStatement::PendingQuery(identifier_map_t<
 	return result;
 }
 
-bool PreparedStatement::CanCachePlan(const LogicalOperator &root) {
+bool PreparedStatement::CanCachePlan(const LogicalOperator &root, const vector<TableIndex> &bound_scans) {
 	vector<const_reference<LogicalOperator>> operators;
 	operators.push_back(root);
 
 	for (idx_t i = 0; i < operators.size(); i++) {
 		auto &op = operators[i].get();
 		switch (op.type) {
-		case LogicalOperatorType::LOGICAL_GET:
-			// this operator prevents caching
-			return false;
+		case LogicalOperatorType::LOGICAL_GET: {
+			// a scan prevents caching unless its bind data reads its parameters at execution
+			auto &get = op.Cast<LogicalGet>();
+			if (!get.bind_data || !get.bind_data->CachePlanWithParameters()) {
+				return false;
+			}
+			break;
+		}
 		default:
 			break;
 		}
@@ -156,7 +162,29 @@ bool PreparedStatement::CanCachePlan(const LogicalOperator &root) {
 			operators.push_back(*child);
 		}
 	}
+	const auto scans = PlanScans(root);
+	for (auto &index : bound_scans) {
+		if (std::find(scans.begin(), scans.end(), index) == scans.end()) {
+			return false;
+		}
+	}
 	return true;
+}
+
+vector<TableIndex> PreparedStatement::PlanScans(const LogicalOperator &root) {
+	vector<TableIndex> scans;
+	vector<const_reference<LogicalOperator>> operators;
+	operators.push_back(root);
+	for (idx_t i = 0; i < operators.size(); i++) {
+		auto &op = operators[i].get();
+		if (op.type == LogicalOperatorType::LOGICAL_GET) {
+			scans.push_back(op.Cast<LogicalGet>().table_index);
+		}
+		for (auto &child : op.children) {
+			operators.push_back(*child);
+		}
+	}
+	return scans;
 }
 
 } // namespace duckdb

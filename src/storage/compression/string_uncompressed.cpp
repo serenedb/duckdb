@@ -160,6 +160,14 @@ BufferHandle &ColumnFetchState::GetOrInsertHandle(ColumnSegment &segment) {
 	}
 }
 
+data_ptr_t ColumnFetchState::GetOrInsertSegmentData(ColumnSegment &segment) {
+	return GetOrInsertSegmentState<SegmentDataFetchState>(segment, [&]() {
+		       return make_uniq<SegmentDataFetchState>(GetOrInsertHandle(segment).GetDataMutable() +
+		                                               segment.GetBlockOffset());
+	       })
+	    .data;
+}
+
 void UncompressedStringStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id,
                                                Vector &result, idx_t result_idx) {
 	// fetch a single row from the string segment

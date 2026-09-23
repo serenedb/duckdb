@@ -843,6 +843,11 @@ public:
 		if (UseVectorStateCache(vector_idx, internal_offset)) {
 			return *current_vector;
 		}
+		if (current_vector && current_vector->metadata.vector_idx == vector_idx &&
+		    current_vector->scanned_count < internal_offset) {
+			Skip(*current_vector, internal_offset - current_vector->scanned_count);
+			return *current_vector;
+		}
 		current_vector = make_uniq<ZSTDVectorScanState>();
 		current_vector->metadata = GetVectorMetadata(vector_idx);
 		auto &metadata = current_vector->metadata;
@@ -1150,7 +1155,8 @@ void ZSTDStorage::StringScan(ColumnSegment &segment, ColumnScanState &state, idx
 //===--------------------------------------------------------------------===//
 void ZSTDStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
                                  idx_t result_idx) {
-	ZSTDScanState scan_state(segment);
+	auto &scan_state = state.GetOrInsertSegmentState<ZSTDScanState>(segment,
+	                                                                [&]() { return make_uniq<ZSTDScanState>(segment); });
 	scan_state.ScanPartial(UnsafeNumericCast<idx_t>(row_id), result, result_idx, 1);
 }
 

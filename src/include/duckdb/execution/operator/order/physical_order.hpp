@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/sorting/sort.hpp"
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/parallel/pipeline.hpp"
 #include "duckdb/planner/bound_query_node.hpp"
@@ -28,6 +29,15 @@ public:
 	vector<BoundOrderByNode> orders;
 	vector<idx_t> projections;
 	bool is_index_sort;
+
+	//! The sort itself: the layouts and the bound sort-key functions, which
+	//! depend only on the plan. Built once and reused, so re-executing a
+	//! prepared statement does not re-bind (and re-parse) them per query.
+	Sort &GetSort(ClientContext &context) const;
+
+private:
+	mutable mutex sort_lock;
+	mutable unique_ptr<Sort> sort;
 
 public:
 	//===--------------------------------------------------------------------===//

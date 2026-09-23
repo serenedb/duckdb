@@ -30,10 +30,18 @@ ExpressionFilterState::ExpressionFilterState(ClientContext &context, const Expre
 ExpressionFilterState::~ExpressionFilterState() {
 }
 
+bool ExpressionFilterExecutor::FilterValue(const_data_ptr_t value, bool valid) {
+	throw InternalException("FilterValue called on a filter executor that does not filter single values");
+}
+
 class ConjunctionAndFilterExecutor final : public ExpressionFilterExecutor {
 public:
 	explicit ConjunctionAndFilterExecutor(vector<unique_ptr<ExpressionFilterExecutor>> children_p)
 	    : children(std::move(children_p)) {
+		filters_values = true;
+		for (auto &child : children) {
+			filters_values = filters_values && child->FiltersValues();
+		}
 	}
 
 	idx_t FilterSelection(SelectionVector &sel, Vector &vector, idx_t scan_count,
@@ -47,8 +55,22 @@ public:
 		return approved_tuple_count;
 	}
 
+	bool FiltersValues() const override {
+		return filters_values;
+	}
+
+	bool FilterValue(const_data_ptr_t value, bool valid) override {
+		for (auto &child : children) {
+			if (!child->FilterValue(value, valid)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 private:
 	vector<unique_ptr<ExpressionFilterExecutor>> children;
+	bool filters_values;
 };
 
 class OptionalFilterExecutor final : public ExpressionFilterExecutor {
@@ -57,12 +79,28 @@ public:
 	                      idx_t &approved_tuple_count) override {
 		return approved_tuple_count;
 	}
+
+	bool FiltersValues() const override {
+		return true;
+	}
+
+	bool FilterValue(const_data_ptr_t value, bool valid) override {
+		return true;
+	}
 };
 
 class ComparisonFilterExecutor final : public ExpressionFilterExecutor {
 public:
 	ComparisonFilterExecutor(ExpressionType comparison_type_p, Value constant_p)
-	    : comparison_type(comparison_type_p), constant(std::move(constant_p)) {
+	    : comparison_type(comparison_type_p), constant(std::move(constant_p)), compare_value(ResolveCompareValue()) {
+	}
+
+	bool FiltersValues() const override {
+		return constant.IsNull() || compare_value;
+	}
+
+	bool FilterValue(const_data_ptr_t value, bool valid) override {
+		return valid && !constant.IsNull() && compare_value(value, constant);
 	}
 
 	idx_t FilterSelection(SelectionVector &sel, Vector &vector, idx_t scan_count,
@@ -179,10 +217,75 @@ private:
 		current_capacity = count;
 	}
 
+	using compare_value_t = bool (*)(const_data_ptr_t value, const Value &constant);
+
+	template <class T, class OP>
+	static bool CompareValue(const_data_ptr_t value, const Value &constant) {
+		return OP::Operation(Load<T>(value), constant.GetValueUnsafe<T>());
+	}
+
+	template <class T>
+	compare_value_t ResolveCompareValueTyped() const {
+		switch (comparison_type) {
+		case ExpressionType::COMPARE_EQUAL:
+			return CompareValue<T, Equals>;
+		case ExpressionType::COMPARE_NOTEQUAL:
+			return CompareValue<T, NotEquals>;
+		case ExpressionType::COMPARE_GREATERTHAN:
+			return CompareValue<T, GreaterThan>;
+		case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
+			return CompareValue<T, GreaterThanEquals>;
+		case ExpressionType::COMPARE_LESSTHAN:
+			return CompareValue<T, LessThan>;
+		case ExpressionType::COMPARE_LESSTHANOREQUALTO:
+			return CompareValue<T, LessThanEquals>;
+		default:
+			return nullptr;
+		}
+	}
+
+	compare_value_t ResolveCompareValue() const {
+		switch (constant.type().InternalType()) {
+		case PhysicalType::BOOL:
+			return ResolveCompareValueTyped<bool>();
+		case PhysicalType::INT8:
+			return ResolveCompareValueTyped<int8_t>();
+		case PhysicalType::INT16:
+			return ResolveCompareValueTyped<int16_t>();
+		case PhysicalType::INT32:
+			return ResolveCompareValueTyped<int32_t>();
+		case PhysicalType::INT64:
+			return ResolveCompareValueTyped<int64_t>();
+		case PhysicalType::INT128:
+			return ResolveCompareValueTyped<hugeint_t>();
+		case PhysicalType::UINT8:
+			return ResolveCompareValueTyped<uint8_t>();
+		case PhysicalType::UINT16:
+			return ResolveCompareValueTyped<uint16_t>();
+		case PhysicalType::UINT32:
+			return ResolveCompareValueTyped<uint32_t>();
+		case PhysicalType::UINT64:
+			return ResolveCompareValueTyped<uint64_t>();
+		case PhysicalType::UINT128:
+			return ResolveCompareValueTyped<uhugeint_t>();
+		case PhysicalType::FLOAT:
+			return ResolveCompareValueTyped<float>();
+		case PhysicalType::DOUBLE:
+			return ResolveCompareValueTyped<double>();
+		case PhysicalType::INTERVAL:
+			return ResolveCompareValueTyped<interval_t>();
+		case PhysicalType::VARCHAR:
+			return ResolveCompareValueTyped<string_t>();
+		default:
+			return nullptr;
+		}
+	}
+
 	ExpressionType comparison_type;
 	Value constant;
 	SelectionVector result_sel;
 	idx_t current_capacity = 0;
+	compare_value_t compare_value;
 };
 
 class SelectivityOptionalFilterExecutor final : public ExpressionFilterExecutor {
@@ -208,6 +311,14 @@ public:
 		child->FilterSelection(sel, vector, scan_count, approved_tuple_count);
 		stats.Update(approved_tuple_count, before_count);
 		return approved_tuple_count;
+	}
+
+	bool FiltersValues() const override {
+		return !child || child->FiltersValues();
+	}
+
+	bool FilterValue(const_data_ptr_t value, bool valid) override {
+		return !child || child->FilterValue(value, valid);
 	}
 
 private:

@@ -9,6 +9,7 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/planner/operator/logical_limit.hpp"
+#include "duckdb/planner/operator/logical_order.hpp"
 
 namespace duckdb {
 
@@ -136,6 +137,13 @@ static PhysicalOperator *TryCreateLimitedDistinct(PhysicalPlanGenerator &generat
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalLimit &op) {
 	D_ASSERT(op.children.size() == 1);
+	if (op.children[0]->type == LogicalOperatorType::LOGICAL_ORDER_BY) {
+		auto &order = op.children[0]->Cast<LogicalOrder>();
+		if (auto consumed = TryConsumeTopN(*order.children[0], order.orders.size(), order.projection_map,
+		                                   op.limit_val, op.offset_val)) {
+			return *consumed;
+		}
+	}
 	auto &plan = CreatePlan(*op.children[0]);
 	auto *limit_child = &plan;
 	auto total_limit = GetLimit(op.limit_val, op.offset_val);
