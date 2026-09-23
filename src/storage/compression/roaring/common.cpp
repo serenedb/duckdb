@@ -266,26 +266,43 @@ void RoaringScanBoolean(ColumnSegment &segment, ColumnScanState &state, idx_t sc
 //===--------------------------------------------------------------------===//
 // Fetch
 //===--------------------------------------------------------------------===//
+struct RoaringFetchState : public SegmentScanState {
+	explicit RoaringFetchState(ColumnSegment &segment)
+	    : scan_state(segment), count(segment.count.load()),
+	      decoded_containers((count + ROARING_CONTAINER_SIZE - 1) / ROARING_CONTAINER_SIZE, false) {
+		decoded.Initialize(count);
+	}
+
+	bool RowIsValid(idx_t row) {
+		const idx_t container = row / ROARING_CONTAINER_SIZE;
+		if (!decoded_containers[container]) {
+			const idx_t start = container * ROARING_CONTAINER_SIZE;
+			scan_state.ScanPartial(start, decoded, start, MinValue<idx_t>(ROARING_CONTAINER_SIZE, count - start));
+			decoded_containers[container] = true;
+		}
+		return decoded.RowIsValidUnsafe(row);
+	}
+
+	RoaringScanState scan_state;
+	idx_t count;
+	ValidityMask decoded;
+	vector<bool> decoded_containers;
+};
+
+static RoaringFetchState &GetRoaringFetchState(ColumnSegment &segment, ColumnFetchState &state) {
+	return state.GetOrInsertSegmentState<RoaringFetchState>(segment,
+	                                                        [&]() { return make_uniq<RoaringFetchState>(segment); });
+}
+
 void RoaringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result, idx_t result_idx) {
-	RoaringScanState scan_state(segment);
-
-	idx_t internal_offset;
-	idx_t container_idx = scan_state.GetContainerIndex(static_cast<idx_t>(row_id), internal_offset);
-	auto &container_state = scan_state.LoadContainer(container_idx, internal_offset);
-
-	scan_state.ScanInternal(container_state, 1, FlatVector::ValidityMutable(result), result_idx);
+	if (!GetRoaringFetchState(segment, state).RowIsValid(static_cast<idx_t>(row_id))) {
+		FlatVector::ValidityMutable(result).SetInvalid(result_idx);
+	}
 }
 void RoaringFetchRowBoolean(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
                             idx_t result_idx) {
-	RoaringScanState scan_state(segment);
-
-	idx_t internal_offset;
-	idx_t container_idx = scan_state.GetContainerIndex(static_cast<idx_t>(row_id), internal_offset);
-	auto &container_state = scan_state.LoadContainer(container_idx, internal_offset);
-
-	ValidityMask validity(1);
-	scan_state.ScanInternal(container_state, 1, validity, 0);
-	ExtractValidityMaskToData(validity, result, result_idx, 1);
+	FlatVector::GetDataMutable<uint8_t>(result)[result_idx] =
+	    GetRoaringFetchState(segment, state).RowIsValid(static_cast<idx_t>(row_id));
 }
 
 void RoaringSkip(ColumnSegment &segment, ColumnScanState &state, idx_t skip_count) {

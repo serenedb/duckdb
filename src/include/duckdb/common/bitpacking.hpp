@@ -78,6 +78,51 @@ public:
 		return UnPackGroup<T>(dst, src, width, skip_sign_extension);
 	}
 
+	template <class T>
+	inline static T UnPackValue(data_ptr_t src, idx_t index, bitpacking_width_t width) {
+		if constexpr (sizeof(T) > sizeof(uint64_t)) {
+			if (width == 0) {
+				return T(0);
+			}
+			const idx_t bit = index * width;
+			const auto ptr = src + bit / 8;
+			const idx_t shift = bit % 8;
+			uint64_t words[3] = {0, 0, 0};
+			memcpy(words, ptr, (shift + width + 7) / 8);
+			uint64_t lower = words[0] >> shift;
+			uint64_t upper = words[1] >> shift;
+			if (shift) {
+				lower |= words[1] << (64 - shift);
+				upper |= words[2] << (64 - shift);
+			}
+			if (width < 64) {
+				lower &= (uint64_t(1) << width) - 1;
+				upper = 0;
+			} else if (width < 128) {
+				upper &= (uint64_t(1) << (width - 64)) - 1;
+			}
+			return T(static_cast<decltype(T::upper)>(upper), lower);
+		} else {
+			if (width == 0) {
+				return T(0);
+			}
+			const idx_t bit = index * width;
+			const auto ptr = src + bit / 8;
+			const idx_t shift = bit % 8;
+			const idx_t bytes = (shift + width + 7) / 8;
+			uint64_t word = 0;
+			memcpy(&word, ptr, MinValue<idx_t>(bytes, sizeof(uint64_t)));
+			uint64_t value = word >> shift;
+			if (bytes > sizeof(uint64_t)) {
+				value |= static_cast<uint64_t>(ptr[sizeof(uint64_t)]) << (64 - shift);
+			}
+			if (width < 64) {
+				value &= (uint64_t(1) << width) - 1;
+			}
+			return static_cast<T>(value);
+		}
+	}
+
 	// Calculates the minimum required number of bits per value that can store all values
 	template <class T, bool is_signed = NumericLimits<T>::IsSigned()>
 	inline static bitpacking_width_t MinimumBitWidth(T value) {

@@ -187,11 +187,8 @@ void FixedSizeScan(ColumnSegment &segment, ColumnScanState &state, idx_t scan_co
 template <class T>
 void FixedSizeFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
                        idx_t result_idx) {
-	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
-	auto handle = buffer_manager.Pin(segment.GetBlockHandle());
-
 	// first fetch the data from the base table
-	auto data_ptr = handle.GetDataMutable() + segment.GetBlockOffset() + NumericCast<idx_t>(row_id) * sizeof(T);
+	auto data_ptr = state.GetOrInsertSegmentData(segment) + NumericCast<idx_t>(row_id) * sizeof(T);
 
 	memcpy(FlatVector::GetDataMutable(result) + result_idx * sizeof(T), data_ptr, sizeof(T));
 }

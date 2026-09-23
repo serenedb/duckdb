@@ -148,6 +148,13 @@ public:
 	idx_t GetPositionInSegment() const;
 };
 
+struct SegmentDataFetchState : public SegmentScanState {
+	explicit SegmentDataFetchState(data_ptr_t data_p) : data(data_p) {
+	}
+
+	data_ptr_t data;
+};
+
 enum class FetchType {
 	//! Verify if each row is valid for the transaction prior to fetching
 	TRANSACTIONAL_FETCH,
@@ -161,12 +168,31 @@ struct ColumnFetchState {
 	QueryContext context;
 	//! The set of pinned block handles for this set of fetches
 	buffer_handle_set_t handles;
+	unordered_map<const ColumnSegment *, unique_ptr<SegmentScanState>> segment_states;
 	//! Any child states of the fetch
 	vector<unique_ptr<ColumnFetchState>> child_states;
 	//! The current row group we are fetching from
 	optional_ptr<SegmentNode<RowGroup>> row_group;
 
 	BufferHandle &GetOrInsertHandle(ColumnSegment &segment);
+	data_ptr_t GetOrInsertSegmentData(ColumnSegment &segment);
+
+	template <class STATE, class FACTORY>
+	STATE &GetOrInsertSegmentState(ColumnSegment &segment, FACTORY &&factory) {
+		if (last_segment.get() != &segment) {
+			auto &entry = segment_states[&segment];
+			if (!entry) {
+				entry = factory();
+			}
+			last_segment = &segment;
+			last_segment_state = entry.get();
+		}
+		return last_segment_state->Cast<STATE>();
+	}
+
+private:
+	optional_ptr<const ColumnSegment> last_segment;
+	optional_ptr<SegmentScanState> last_segment_state;
 };
 
 struct ScanFilter {
