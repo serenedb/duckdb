@@ -5,9 +5,11 @@
 
 #include "duckdb/storage/table/chunk_info.hpp"
 
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table/update_segment.hpp"
 #include "duckdb/storage/table/row_version_manager.hpp"
@@ -24,7 +26,9 @@ void RollbackState::RollbackEntry(UndoFlags type, data_ptr_t data) {
 		// Load and undo the catalog entry.
 		auto catalog_entry = Load<CatalogEntry *>(data);
 		D_ASSERT(catalog_entry->set);
-		catalog_entry->set->Undo(*catalog_entry);
+		CatalogTransaction catalog_transaction(catalog_entry->ParentCatalog().GetDatabase(), transaction.transaction_id,
+		                                       transaction.start_time);
+		catalog_entry->set->Undo(catalog_transaction, *catalog_entry);
 		break;
 	}
 	case UndoFlags::INSERT_TUPLE: {

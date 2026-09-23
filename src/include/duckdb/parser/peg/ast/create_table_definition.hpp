@@ -9,12 +9,13 @@
 namespace duckdb {
 struct CreateTableDefinition {
 	unique_ptr<SelectStatement> select_statement;
-	ColumnList columns;
+	ColumnList columns {false, true};
 	vector<unique_ptr<Constraint>> constraints;
 	vector<unique_ptr<ParsedExpression>> partition_keys;
 	vector<unique_ptr<ParsedExpression>> sort_keys;
 	case_insensitive_map_t<unique_ptr<ParsedExpression>> options;
 	vector<string> null_conflict_columns;
 	vector<string> duplicate_default_columns;
+	vector<Identifier> serial_columns;
 };
 } // namespace duckdb

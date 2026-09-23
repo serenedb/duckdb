@@ -21,6 +21,8 @@
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
 
 void CatalogEntryMap::AddEntry(unique_ptr<CatalogEntry> entry) {
@@ -86,7 +88,11 @@ optional_ptr<CatalogEntry> CatalogEntryMap::GetEntry(const Identifier &name) {
 }
 
 CatalogSet::CatalogSet(Catalog &catalog_p, unique_ptr<DefaultGenerator> defaults)
-    : catalog(catalog_p.Cast<DuckCatalog>()), defaults(std::move(defaults)) {
+    : CatalogSet(catalog_p, std::move(defaults), catalog_p.IsCaseSensitive()) {
+}
+
+CatalogSet::CatalogSet(Catalog &catalog_p, unique_ptr<DefaultGenerator> defaults, bool case_sensitive)
+    : catalog(catalog_p.Cast<DuckCatalog>()), map(case_sensitive), defaults(std::move(defaults)) {
 	D_ASSERT(catalog_p.IsDuckCatalog());
 }
 CatalogSet::~CatalogSet() {
@@ -209,13 +215,40 @@ bool CatalogSet::CreateEntry(CatalogTransaction transaction, const Identifier &n
 	lock_guard<mutex> write_lock(catalog.GetWriteLock());
 	// lock this catalog set to disallow reading
 	unique_lock<mutex> read_lock(catalog_lock);
-
+	if (!NamespaceVacant(transaction, name)) {
+		return false;
+	}
 	return CreateEntryInternal(transaction, name, std::move(value), read_lock);
 }
 
 bool CatalogSet::CreateEntry(ClientContext &context, const Identifier &name, unique_ptr<CatalogEntry> value,
                              const LogicalDependencyList &dependencies) {
 	return CreateEntry(catalog.GetCatalogTransaction(context), name, std::move(value), dependencies);
+}
+
+void CatalogSet::ShareNamespace(CatalogSet &other) {
+	shared_namespace.push_back(other);
+	other.shared_namespace.push_back(*this);
+}
+
+bool CatalogSet::NamespaceVacant(CatalogTransaction transaction, const Identifier &name) {
+	return absl::c_all_of(shared_namespace, [&](CatalogSet &set) {
+		lock_guard<mutex> lock(set.catalog_lock);
+		auto entry = set.map.GetEntry(name);
+		return !entry || VerifyVacancy(transaction, *entry);
+	});
+}
+
+optional_ptr<CatalogEntry> CatalogSet::GetNamespaceEntry(CatalogTransaction transaction, const Identifier &name) {
+	auto entry = GetEntry(transaction, name);
+	for (CatalogSet &other : shared_namespace) {
+		auto sibling = other.GetEntry(transaction, name);
+		D_ASSERT(!entry || !sibling);
+		if (sibling) {
+			entry = sibling;
+		}
+	}
+	return entry;
 }
 
 //! This method is used to retrieve an entry for the purpose of making a new version, through an alter/drop/create
@@ -275,14 +308,11 @@ bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntr
 
 	auto &context = *transaction.context;
 	auto entry_value = map.GetEntry(new_name);
-	if (entry_value) {
-		auto &existing_entry = GetEntryForTransaction(transaction, *entry_value);
-		if (!existing_entry.deleted) {
-			// There exists an entry by this name that is not deleted
-			old.UndoAlter(context, alter_info);
-			throw CatalogException("Could not rename \"%s\" to \"%s\": another entry with this name already exists!",
-			                       original_name, new_name);
-		}
+	if ((entry_value && !GetEntryForTransaction(transaction, *entry_value).deleted) ||
+	    !NamespaceVacant(transaction, new_name)) {
+		old.UndoAlter(context, alter_info);
+		throw CatalogException("Could not rename \"%s\" to \"%s\": another entry with this name already exists!",
+		                       original_name, new_name);
 	}
 
 	// Add a RENAMED_ENTRY before adding a DELETED_ENTRY, this makes it so that when this is committed
@@ -318,35 +348,14 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 		throw CatalogException("Cannot alter entry \"%s\" because it is an internal system entry", entry->name);
 	}
 
-	unique_ptr<CatalogEntry> value;
-	if (alter_info.type == AlterType::SET_COMMENT) {
-		// Copy the existing entry; we are only changing metadata here
-		if (!transaction.context) {
-			throw InternalException("Cannot AlterEntry::SET_COMMENT without client context");
-		}
-		value = entry->Copy(*transaction.context);
-		value->comment = alter_info.Cast<SetCommentInfo>().comment_value;
-	} else {
-		// Use the existing entry to create the altered entry
-		value = entry->AlterEntry(transaction, alter_info);
-		if (!value) {
-			// alter failed, but did not result in an error
-			return true;
-		}
+	// Use the existing entry to create the altered entry
+	auto value = entry->AlterEntry(transaction, alter_info);
+	if (!value) {
+		// alter failed, but did not result in an error
+		return true;
 	}
-
-	// If this ALTER produced a new DuckTableEntry, refresh the LocalTableStorage's table_entry
-	// pointer so that commit-time Flush pushes an AppendInfo referencing the current DuckTableEntry.
-	if (transaction.context && value->type == CatalogType::TABLE_ENTRY) {
-		auto &tce = value->Cast<TableCatalogEntry>();
-		if (tce.IsDuckTable()) {
-			auto &new_entry = tce.Cast<DuckTableEntry>();
-			auto &new_storage = new_entry.GetStorage();
-			auto lstorage = LocalStorage::Get(*transaction.context, new_storage.db).GetStorage(new_storage);
-			if (lstorage) {
-				lstorage->table_entry = &new_entry;
-			}
-		}
+	if (alter_info.type != AlterType::ALTER_PERMISSIONS) {
+		value->permissions = entry->permissions;
 	}
 
 	// lock the catalog for writing
@@ -364,7 +373,7 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	// Preserve the oid across the alter: an altered entry is the same logical object as before
 	value->oid = entry->oid;
 
-	if (!(value->name == entry->name)) {
+	if (!IdentifierEquality(map.IsCaseSensitive())(value->name, entry->name)) {
 		if (!RenameEntryInternal(transaction, *entry, value->name, alter_info, read_lock)) {
 			return false;
 		}
@@ -390,6 +399,9 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 		// in that case we are able to just directly destroy the child (if there is any)
 		entry_to_destroy = new_entry->TakeChild();
 	}
+
+	// Update shared entry state only after the alter is installed and rollbackable.
+	new_entry->SetAsRoot(&transaction);
 
 	read_lock.unlock();
 	write_lock.unlock();
@@ -667,7 +679,7 @@ void CatalogSet::UpdateTimestamp(CatalogEntry &entry, transaction_t timestamp) {
 	entry.timestamp = timestamp;
 }
 
-void CatalogSet::Undo(CatalogEntry &entry) {
+void CatalogSet::Undo(CatalogTransaction transaction, CatalogEntry &entry) {
 	lock_guard<mutex> write_lock(catalog.GetWriteLock());
 	lock_guard<mutex> lock(catalog_lock);
 
@@ -680,7 +692,7 @@ void CatalogSet::Undo(CatalogEntry &entry) {
 
 	D_ASSERT(entry.name == to_be_removed_node.name);
 	if (!to_be_removed_node.HasParent()) {
-		to_be_removed_node.Child().SetAsRoot();
+		to_be_removed_node.Child().SetAsRoot(&transaction);
 	}
 	map.DropEntry(to_be_removed_node);
 

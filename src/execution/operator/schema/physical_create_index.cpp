@@ -138,7 +138,7 @@ SinkFinalizeType PhysicalCreateIndex::Finalize(Pipeline &pipeline, Event &event,
 		    "Transaction conflict: cannot add an index to a table that has been altered or dropped");
 	}
 
-	auto &schema = table.schema;
+	auto &schema = table.ParentSchema(context);
 	info->column_ids = storage_ids;
 
 	if (!alter_table_info) {

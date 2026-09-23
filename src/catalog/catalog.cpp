@@ -324,8 +324,8 @@ optional_ptr<CatalogEntry> Catalog::CreateCoordinateSystem(CatalogTransaction tr
 //===--------------------------------------------------------------------===//
 optional_ptr<CatalogEntry> Catalog::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info) {
 	auto &schema = GetSchema(transaction, info.GetQualifiedName().Schema());
-	auto &table = schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, info.table)->Cast<TableCatalogEntry>();
-	return schema.CreateIndex(transaction, info, table);
+	auto &relation = *schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, info.table);
+	return schema.CreateIndex(transaction, info, relation);
 }
 
 optional_ptr<CatalogEntry> Catalog::CreateIndex(ClientContext &context, CreateIndexInfo &info) {
@@ -522,8 +522,15 @@ vector<CatalogSearchEntry> GetCatalogEntries(CatalogEntryRetriever &retriever, c
 		// no catalog or schema provided - scan the entire search path
 		entries = search_path.Get();
 	} else if (IsInvalidCatalog(catalog)) {
+		const bool pg_catalog_is_system_main =
+		    schema == "pg_catalog" &&
+		    Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
+		        SqlCompatibility::POSTGRES;
 		auto catalogs = search_path.GetCatalogsForSchema(schema);
 		for (auto &catalog_name : catalogs) {
+			if (pg_catalog_is_system_main && catalog_name == SYSTEM_CATALOG) {
+				entries.emplace_back(catalog_name, DEFAULT_SCHEMA);
+			}
 			entries.emplace_back(catalog_name, schema);
 		}
 		if (entries.empty()) {
@@ -1318,15 +1325,20 @@ vector<reference<CatalogEntry>> Catalog::GetAllEntries(ClientContext &context, C
 	return result;
 }
 
+void Catalog::AlterSchema(CatalogTransaction transaction, AlterInfo &info) {
+	throw NotImplementedException("ALTER SCHEMA is not supported for this catalog");
+}
+
 void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
-	// ALTER FUNCTION ... RENAME TO ... cannot disambiguate scalar vs table
-	// macro at parse time (mirrors the binder skip in Binder::Bind(AlterStatement)).
-	// Dispatch to the schema without a type-specific lookup so the schema's
-	// Alter implementation can resolve by name across function kinds.
-	const bool is_rename_function = info.type == AlterType::ALTER_SCALAR_FUNCTION &&
-	                                info.Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
-	                                    AlterScalarFunctionType::RENAME_SCALAR_FUNCTION;
-	if (transaction.HasContext() && !is_rename_function) {
+	if (info.GetCatalogType() == CatalogType::SCHEMA_ENTRY) {
+		AlterSchema(transaction, info);
+		return;
+	}
+	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().all_in_schema) {
+		GetSchema(transaction, info.GetQualifiedName().Schema()).Alter(transaction, info);
+		return;
+	}
+	if (transaction.HasContext()) {
 		CatalogEntryRetriever retriever(transaction.GetContext());
 		EntryLookupInfo lookup_info(info.GetCatalogType(), info.GetQualifiedName());
 		auto lookup = LookupEntry(retriever, lookup_info, info.if_not_found);
@@ -1335,7 +1347,7 @@ void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		}
 		return lookup.schema->Alter(transaction, info);
 	}
-	D_ASSERT(is_rename_function || info.if_not_found == OnEntryNotFound::THROW_EXCEPTION);
+	D_ASSERT(info.if_not_found == OnEntryNotFound::THROW_EXCEPTION);
 	auto &schema = GetSchema(transaction, info.GetQualifiedName().Schema());
 	return schema.Alter(transaction, info);
 }

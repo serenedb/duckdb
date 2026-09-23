@@ -44,7 +44,7 @@ static string GetSchema(CatalogEntry &entry) {
 	if (entry.type == CatalogType::SCHEMA_ENTRY) {
 		return entry.name.GetIdentifierName();
 	}
-	return entry.ParentSchema().name.GetIdentifierName();
+	return entry.ParentSchemaName().GetIdentifierName();
 }
 
 LogicalDependency::LogicalDependency(CatalogEntry &entry) {
@@ -77,8 +77,22 @@ void LogicalDependencyList::AddDependency(CatalogEntry &entry) {
 	set.insert(dependency);
 }
 
+void LogicalDependencyList::AddOwnedDependency(CatalogEntry &entry) {
+	LogicalDependency dependency(entry);
+	dependency.owned_by = true;
+	set.insert(dependency);
+}
+
 void LogicalDependencyList::AddDependency(const LogicalDependency &entry) {
-	set.insert(entry);
+	auto existing = entry.subdependencies.empty() ? set.end() : set.find(entry);
+	if (existing == set.end()) {
+		set.insert(entry);
+		return;
+	}
+	auto merged = *existing;
+	merged.subdependencies.insert(entry.subdependencies.begin(), entry.subdependencies.end());
+	set.erase(existing);
+	set.insert(std::move(merged));
 }
 
 bool LogicalDependencyList::Contains(CatalogEntry &entry_p) {

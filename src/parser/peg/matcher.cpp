@@ -74,7 +74,11 @@ public:
 		if (!MatchKeyword(state)) {
 			return nullptr;
 		}
-		auto result = state.allocator.Make<KeywordParseResult>(token_text, start_offset);
+		std::string_view keyword_text = token_text;
+		if (!state.preserve_identifier_case) {
+			keyword_text = state.allocator.CopyStringLower(token_text);
+		}
+		auto result = state.allocator.Make<KeywordParseResult>(keyword_text, start_offset);
 		result->name = name;
 		return result;
 	}
