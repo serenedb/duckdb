@@ -978,9 +978,20 @@ void Linenoise::RefreshMultiLine() {
 		string completion_text;
 		idx_t column_count = ws.ws_col / max_length;
 		completion_columns = oversized ? 1 : column_count;
+		idx_t first = 0;
+		if (completion_idx.IsValid()) {
+			const idx_t per_row = MaxValue<idx_t>(completion_columns, 1);
+			const idx_t available = NumericCast<idx_t>(ws.ws_row) > NumericCast<idx_t>(rows) + 1
+			                            ? NumericCast<idx_t>(ws.ws_row) - NumericCast<idx_t>(rows) - 1
+			                            : 1;
+			const idx_t row = completion_idx.GetIndex() / per_row;
+			if (row >= available) {
+				first = (row - available + 1) * per_row;
+			}
+		}
 		idx_t column_index = 0;
 		idx_t rendered_rows = 1;
-		for (idx_t i = 0; i < completion_list.completions.size(); i++) {
+		for (idx_t i = first; i < completion_list.completions.size(); i++) {
 			auto &completion = completion_list.completions[i];
 			auto &rendered_text = completion.original_completion;
 			auto element_type = duckdb_shell::HighlightElementType::NONE;

@@ -3157,10 +3157,14 @@ static void linenoise_completion(const char *zLine, linenoiseCompletions *lc) {
 			duckdb::idx_t argument_start = 0;
 			duckdb::vector<DocsCompletion> docs_completions;
 			if (DocsCompletions(zLine, nLine, argument_start, docs_completions)) {
-				for (auto &completion : docs_completions) {
+				for (duckdb::idx_t i = 0; i < docs_completions.size(); i++) {
+					auto &completion = docs_completions[i];
 					linenoiseAddLabeledCompletion(lc, zLine, completion.text.c_str(), completion.text.size(),
 					                              argument_start, completion.label.c_str(), completion.label.size(),
 					                              "keyword");
+					if (completion.selected) {
+						linenoiseSelectCompletion(lc, i);
+					}
 				}
 				return;
 			}

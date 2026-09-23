@@ -67,6 +67,7 @@ void linenoiseAddCompletion(linenoiseCompletions *, const char *line, const char
 void linenoiseAddLabeledCompletion(linenoiseCompletions *, const char *line, const char *completion, size_t nCompletion,
                                    size_t completion_start, const char *label, size_t nLabel,
                                    const char *completion_type);
+void linenoiseSelectCompletion(linenoiseCompletions *, size_t index);
 
 char *linenoise(const char *prompt);
 void linenoiseFree(void *ptr);

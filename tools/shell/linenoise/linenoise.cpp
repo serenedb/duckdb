@@ -192,7 +192,7 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 				pos = nwritten;
 				len = nwritten;
 			}
-			completion_idx = optional_idx();
+			completion_idx = completion_list.selected;
 			render_completion_suggestion = true;
 		} else {
 			// if there are no ties we immediately accept the first completion suggestion
@@ -201,7 +201,7 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 
 		const auto narrow = [&]() {
 			completion_list = TabComplete();
-			completion_idx = optional_idx();
+			completion_idx = completion_list.selected;
 			if (completions.empty()) {
 				next_key.action = KEY_NULL;
 				stop = true;
@@ -277,8 +277,10 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 					break;
 				case EscapeSequence::ESCAPE:
 					/* Re-show original buffer */
+					completion_idx = optional_idx();
+					render_completion_suggestion = false;
 					RefreshLine();
-					next_key = key_press;
+					next_key.action = KEY_NULL;
 					stop = true;
 					break;
 				case EscapeSequence::UP:
@@ -1509,7 +1511,9 @@ bool Linenoise::TryGetKeyPress(int fd, KeyPress &key_press) {
 	key_press.action = c;
 	if (key_press.action == ESC) {
 		// for ESC we need to read an escape sequence
-		key_press.sequence = Terminal::ReadEscapeSequence(ifd, key_press);
+		key_press.sequence = has_more_data || Terminal::HasMoreData(ifd, 50000) > 0
+		                         ? Terminal::ReadEscapeSequence(ifd, key_press)
+		                         : EscapeSequence::ESCAPE;
 	}
 	return true;
 #endif

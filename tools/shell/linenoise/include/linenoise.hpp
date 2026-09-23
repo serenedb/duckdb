@@ -66,6 +66,7 @@ struct Completion {
 
 struct TabCompletion {
 	vector<Completion> completions;
+	optional_idx selected;
 };
 
 enum class RenderTruncation { NO_TRUNCATE, TRUNCATE_TOP, TRUNCATE_BOTTOM, TRUNCATE_BOTH };
@@ -237,7 +238,7 @@ public:
 	optional_idx completion_idx;             //! Index in set of tab completions
 	idx_t rendered_completion_lines;         //! The number of completion lines rendered
 	idx_t completion_columns;
-	bool render_completion_suggestion;       //! Whether or not to render auto-complete suggestions
+	bool render_completion_suggestion; //! Whether or not to render auto-complete suggestions
 };
 
 } // namespace duckdb

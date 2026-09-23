@@ -30,6 +30,7 @@ struct DocsRequest {
 struct DocsCompletion {
 	duckdb::string text;
 	duckdb::string label;
+	bool selected = false;
 };
 
 struct DocsBackend {
