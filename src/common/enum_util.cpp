@@ -13,6 +13,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/dependency/dependency_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_column_type.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/box_renderer.hpp"
 #include "duckdb/common/column_index.hpp"
 #include "duckdb/common/encryption_state.hpp"
@@ -69,6 +70,7 @@
 #include "duckdb/common/enums/set_operation_type.hpp"
 #include "duckdb/common/enums/set_scope.hpp"
 #include "duckdb/common/enums/set_type.hpp"
+#include "duckdb/common/enums/sql_compatibility.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
 #include "duckdb/common/enums/storage_block_prefetch.hpp"
 #include "duckdb/common/enums/stream_execution_result.hpp"
@@ -318,26 +320,36 @@ AccessMode EnumUtil::FromString<AccessMode>(const char *value) {
 	return static_cast<AccessMode>(StringUtil::StringToEnum(GetAccessModeValues(), 4, "AccessMode", value));
 }
 
-const StringUtil::EnumStringLiteral *GetAccessVerbValues() {
+const StringUtil::EnumStringLiteral *GetAclModeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
-		{ static_cast<uint32_t>(AccessVerb::NONE), "NONE" },
-		{ static_cast<uint32_t>(AccessVerb::INSERT), "INSERT" },
-		{ static_cast<uint32_t>(AccessVerb::SELECT), "SELECT" },
-		{ static_cast<uint32_t>(AccessVerb::UPDATE), "UPDATE" },
-		{ static_cast<uint32_t>(AccessVerb::DELETE), "DELETE" },
-		{ static_cast<uint32_t>(AccessVerb::TRUNCATE), "TRUNCATE" }
+		{ static_cast<uint32_t>(AclMode::NoRights), "NoRights" },
+		{ static_cast<uint32_t>(AclMode::Insert), "Insert" },
+		{ static_cast<uint32_t>(AclMode::Select), "Select" },
+		{ static_cast<uint32_t>(AclMode::Update), "Update" },
+		{ static_cast<uint32_t>(AclMode::Delete), "Delete" },
+		{ static_cast<uint32_t>(AclMode::Truncate), "Truncate" },
+		{ static_cast<uint32_t>(AclMode::References), "References" },
+		{ static_cast<uint32_t>(AclMode::Trigger), "Trigger" },
+		{ static_cast<uint32_t>(AclMode::Execute), "Execute" },
+		{ static_cast<uint32_t>(AclMode::Usage), "Usage" },
+		{ static_cast<uint32_t>(AclMode::Create), "Create" },
+		{ static_cast<uint32_t>(AclMode::CreateTemp), "CreateTemp" },
+		{ static_cast<uint32_t>(AclMode::Connect), "Connect" },
+		{ static_cast<uint32_t>(AclMode::Set), "Set" },
+		{ static_cast<uint32_t>(AclMode::AlterSystem), "AlterSystem" },
+		{ static_cast<uint32_t>(AclMode::Maintain), "Maintain" }
 	};
 	return values;
 }
 
 template<>
-const char* EnumUtil::ToChars<AccessVerb>(AccessVerb value) {
-	return StringUtil::EnumToString(GetAccessVerbValues(), 6, "AccessVerb", static_cast<uint32_t>(value));
+const char* EnumUtil::ToChars<AclMode>(AclMode value) {
+	return StringUtil::EnumToString(GetAclModeValues(), 16, "AclMode", static_cast<uint32_t>(value));
 }
 
 template<>
-AccessVerb EnumUtil::FromString<AccessVerb>(const char *value) {
-	return static_cast<AccessVerb>(StringUtil::StringToEnum(GetAccessVerbValues(), 6, "AccessVerb", value));
+AclMode EnumUtil::FromString<AclMode>(const char *value) {
+	return static_cast<AclMode>(StringUtil::StringToEnum(GetAclModeValues(), 16, "AclMode", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAdaptiveFilterSourceValues() {
@@ -521,23 +533,41 @@ AlterForeignKeyType EnumUtil::FromString<AlterForeignKeyType>(const char *value)
 	return static_cast<AlterForeignKeyType>(StringUtil::StringToEnum(GetAlterForeignKeyTypeValues(), 2, "AlterForeignKeyType", value));
 }
 
+const StringUtil::EnumStringLiteral *GetAlterIndexTypeValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(AlterIndexType::INVALID), "INVALID" },
+		{ static_cast<uint32_t>(AlterIndexType::SET_INDEX_OPTIONS), "SET_INDEX_OPTIONS" },
+		{ static_cast<uint32_t>(AlterIndexType::RESET_INDEX_OPTIONS), "RESET_INDEX_OPTIONS" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<AlterIndexType>(AlterIndexType value) {
+	return StringUtil::EnumToString(GetAlterIndexTypeValues(), 3, "AlterIndexType", static_cast<uint32_t>(value));
+}
+
+template<>
+AlterIndexType EnumUtil::FromString<AlterIndexType>(const char *value) {
+	return static_cast<AlterIndexType>(StringUtil::StringToEnum(GetAlterIndexTypeValues(), 3, "AlterIndexType", value));
+}
+
 const StringUtil::EnumStringLiteral *GetAlterScalarFunctionTypeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(AlterScalarFunctionType::INVALID), "INVALID" },
-		{ static_cast<uint32_t>(AlterScalarFunctionType::ADD_FUNCTION_OVERLOADS), "ADD_FUNCTION_OVERLOADS" },
-		{ static_cast<uint32_t>(AlterScalarFunctionType::RENAME_SCALAR_FUNCTION), "RENAME_SCALAR_FUNCTION" }
+		{ static_cast<uint32_t>(AlterScalarFunctionType::ADD_FUNCTION_OVERLOADS), "ADD_FUNCTION_OVERLOADS" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<AlterScalarFunctionType>(AlterScalarFunctionType value) {
-	return StringUtil::EnumToString(GetAlterScalarFunctionTypeValues(), 3, "AlterScalarFunctionType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterScalarFunctionTypeValues(), 2, "AlterScalarFunctionType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterScalarFunctionType EnumUtil::FromString<AlterScalarFunctionType>(const char *value) {
-	return static_cast<AlterScalarFunctionType>(StringUtil::StringToEnum(GetAlterScalarFunctionTypeValues(), 3, "AlterScalarFunctionType", value));
+	return static_cast<AlterScalarFunctionType>(StringUtil::StringToEnum(GetAlterScalarFunctionTypeValues(), 2, "AlterScalarFunctionType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAlterTableFunctionTypeValues() {
@@ -606,37 +636,41 @@ const StringUtil::EnumStringLiteral *GetAlterTypeValues() {
 		{ static_cast<uint32_t>(AlterType::ALTER_TABLE_FUNCTION), "ALTER_TABLE_FUNCTION" },
 		{ static_cast<uint32_t>(AlterType::SET_COMMENT), "SET_COMMENT" },
 		{ static_cast<uint32_t>(AlterType::SET_COLUMN_COMMENT), "SET_COLUMN_COMMENT" },
-		{ static_cast<uint32_t>(AlterType::ALTER_DATABASE), "ALTER_DATABASE" }
+		{ static_cast<uint32_t>(AlterType::ALTER_DATABASE), "ALTER_DATABASE" },
+		{ static_cast<uint32_t>(AlterType::ALTER_PERMISSIONS), "ALTER_PERMISSIONS" },
+		{ static_cast<uint32_t>(AlterType::ALTER_ROLE), "ALTER_ROLE" },
+		{ static_cast<uint32_t>(AlterType::ALTER_INDEX), "ALTER_INDEX" },
+		{ static_cast<uint32_t>(AlterType::RENAME), "RENAME" },
+		{ static_cast<uint32_t>(AlterType::REPLACE_DEFINITION), "REPLACE_DEFINITION" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<AlterType>(AlterType value) {
-	return StringUtil::EnumToString(GetAlterTypeValues(), 10, "AlterType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterTypeValues(), 15, "AlterType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterType EnumUtil::FromString<AlterType>(const char *value) {
-	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 10, "AlterType", value));
+	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 15, "AlterType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAlterViewTypeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
-		{ static_cast<uint32_t>(AlterViewType::INVALID), "INVALID" },
-		{ static_cast<uint32_t>(AlterViewType::RENAME_VIEW), "RENAME_VIEW" }
+		{ static_cast<uint32_t>(AlterViewType::INVALID), "INVALID" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<AlterViewType>(AlterViewType value) {
-	return StringUtil::EnumToString(GetAlterViewTypeValues(), 2, "AlterViewType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterViewTypeValues(), 1, "AlterViewType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterViewType EnumUtil::FromString<AlterViewType>(const char *value) {
-	return static_cast<AlterViewType>(StringUtil::StringToEnum(GetAlterViewTypeValues(), 2, "AlterViewType", value));
+	return static_cast<AlterViewType>(StringUtil::StringToEnum(GetAlterViewTypeValues(), 1, "AlterViewType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAppenderTypeValues() {
@@ -1118,6 +1152,9 @@ const StringUtil::EnumStringLiteral *GetCatalogTypeValues() {
 		{ static_cast<uint32_t>(CatalogType::DATABASE_ENTRY), "DATABASE_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::COORDINATE_SYSTEM_ENTRY), "COORDINATE_SYSTEM_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::TRIGGER_ENTRY), "TRIGGER_ENTRY" },
+		{ static_cast<uint32_t>(CatalogType::TOKENIZER_ENTRY), "TOKENIZER_ENTRY" },
+		{ static_cast<uint32_t>(CatalogType::ROLE_ENTRY), "ROLE_ENTRY" },
+		{ static_cast<uint32_t>(CatalogType::FOREIGN_SERVER_ENTRY), "FOREIGN_SERVER_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::TABLE_FUNCTION_ENTRY), "TABLE_FUNCTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::SCALAR_FUNCTION_ENTRY), "SCALAR_FUNCTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::AGGREGATE_FUNCTION_ENTRY), "AGGREGATE_FUNCTION_ENTRY" },
@@ -1138,12 +1175,12 @@ const StringUtil::EnumStringLiteral *GetCatalogTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<CatalogType>(CatalogType value) {
-	return StringUtil::EnumToString(GetCatalogTypeValues(), 26, "CatalogType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetCatalogTypeValues(), 29, "CatalogType", static_cast<uint32_t>(value));
 }
 
 template<>
 CatalogType EnumUtil::FromString<CatalogType>(const char *value) {
-	return static_cast<CatalogType>(StringUtil::StringToEnum(GetCatalogTypeValues(), 26, "CatalogType", value));
+	return static_cast<CatalogType>(StringUtil::StringToEnum(GetCatalogTypeValues(), 29, "CatalogType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetCheckpointAbortValues() {
@@ -4833,6 +4870,30 @@ ResultModifierType EnumUtil::FromString<ResultModifierType>(const char *value) {
 	return static_cast<ResultModifierType>(StringUtil::StringToEnum(GetResultModifierTypeValues(), 4, "ResultModifierType", value));
 }
 
+const StringUtil::EnumStringLiteral *GetRoleOptionValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(RoleOption::None), "None" },
+		{ static_cast<uint32_t>(RoleOption::Superuser), "Superuser" },
+		{ static_cast<uint32_t>(RoleOption::Inherit), "Inherit" },
+		{ static_cast<uint32_t>(RoleOption::CreateRole), "CreateRole" },
+		{ static_cast<uint32_t>(RoleOption::CreateDb), "CreateDb" },
+		{ static_cast<uint32_t>(RoleOption::Login), "Login" },
+		{ static_cast<uint32_t>(RoleOption::Replication), "Replication" },
+		{ static_cast<uint32_t>(RoleOption::BypassRls), "BypassRls" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<RoleOption>(RoleOption value) {
+	return StringUtil::EnumToString(GetRoleOptionValues(), 8, "RoleOption", static_cast<uint32_t>(value));
+}
+
+template<>
+RoleOption EnumUtil::FromString<RoleOption>(const char *value) {
+	return static_cast<RoleOption>(StringUtil::StringToEnum(GetRoleOptionValues(), 8, "RoleOption", value));
+}
+
 const StringUtil::EnumStringLiteral *GetRowGroupAppendModeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(RowGroupAppendMode::APPEND_TO_EXISTING), "APPEND_TO_EXISTING" },
@@ -5328,6 +5389,24 @@ const char* EnumUtil::ToChars<SourceResultType>(SourceResultType value) {
 template<>
 SourceResultType EnumUtil::FromString<SourceResultType>(const char *value) {
 	return static_cast<SourceResultType>(StringUtil::StringToEnum(GetSourceResultTypeValues(), 3, "SourceResultType", value));
+}
+
+const StringUtil::EnumStringLiteral *GetSqlCompatibilityValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(SqlCompatibility::DUCK), "DUCK" },
+		{ static_cast<uint32_t>(SqlCompatibility::POSTGRES), "POSTGRES" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<SqlCompatibility>(SqlCompatibility value) {
+	return StringUtil::EnumToString(GetSqlCompatibilityValues(), 2, "SqlCompatibility", static_cast<uint32_t>(value));
+}
+
+template<>
+SqlCompatibility EnumUtil::FromString<SqlCompatibility>(const char *value) {
+	return static_cast<SqlCompatibility>(StringUtil::StringToEnum(GetSqlCompatibilityValues(), 2, "SqlCompatibility", value));
 }
 
 const StringUtil::EnumStringLiteral *GetStarExpressionTypeValues() {
@@ -6386,6 +6465,14 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 		{ static_cast<uint32_t>(WALType::ROW_GROUP_DATA), "ROW_GROUP_DATA" },
 		{ static_cast<uint32_t>(WALType::CREATE_TRIGGER), "CREATE_TRIGGER" },
 		{ static_cast<uint32_t>(WALType::DROP_TRIGGER), "DROP_TRIGGER" },
+		{ static_cast<uint32_t>(WALType::CREATE_TOKENIZER), "CREATE_TOKENIZER" },
+		{ static_cast<uint32_t>(WALType::DROP_TOKENIZER), "DROP_TOKENIZER" },
+		{ static_cast<uint32_t>(WALType::CREATE_ROLE), "CREATE_ROLE" },
+		{ static_cast<uint32_t>(WALType::DROP_ROLE), "DROP_ROLE" },
+		{ static_cast<uint32_t>(WALType::CREATE_DATABASE), "CREATE_DATABASE" },
+		{ static_cast<uint32_t>(WALType::DROP_DATABASE), "DROP_DATABASE" },
+		{ static_cast<uint32_t>(WALType::CREATE_FOREIGN_SERVER), "CREATE_FOREIGN_SERVER" },
+		{ static_cast<uint32_t>(WALType::DROP_FOREIGN_SERVER), "DROP_FOREIGN_SERVER" },
 		{ static_cast<uint32_t>(WALType::WAL_VERSION), "WAL_VERSION" },
 		{ static_cast<uint32_t>(WALType::CHECKPOINT), "CHECKPOINT" },
 		{ static_cast<uint32_t>(WALType::WAL_FLUSH), "WAL_FLUSH" }
@@ -6395,12 +6482,12 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<WALType>(WALType value) {
-	return StringUtil::EnumToString(GetWALTypeValues(), 29, "WALType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetWALTypeValues(), 37, "WALType", static_cast<uint32_t>(value));
 }
 
 template<>
 WALType EnumUtil::FromString<WALType>(const char *value) {
-	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 29, "WALType", value));
+	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 37, "WALType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetWindowAggregationModeValues() {
