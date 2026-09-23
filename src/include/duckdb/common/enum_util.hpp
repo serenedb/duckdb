@@ -186,8 +186,6 @@ enum class DeferredRuntimeFilterType : uint8_t;
 
 enum class DependencyEntryType : uint8_t;
 
-enum class DependencyPieceKind : uint8_t;
-
 enum class DeprecatedIndexType : uint8_t;
 
 enum class DeprecatedUsingKeySyntax : uint8_t;
@@ -389,8 +387,6 @@ enum class PartitionedColumnDataType : uint8_t;
 enum class PartitionedTupleDataType : uint8_t;
 
 enum class PendingExecutionResult : uint8_t;
-
-enum class PermissionsAlterType : uint8_t;
 
 enum class PhysicalOperatorType : uint8_t;
 
@@ -823,9 +819,6 @@ template<>
 const char* EnumUtil::ToChars<DependencyEntryType>(DependencyEntryType value);
 
 template<>
-const char* EnumUtil::ToChars<DependencyPieceKind>(DependencyPieceKind value);
-
-template<>
 const char* EnumUtil::ToChars<DeprecatedIndexType>(DeprecatedIndexType value);
 
 template<>
@@ -1127,9 +1120,6 @@ const char* EnumUtil::ToChars<PartitionedTupleDataType>(PartitionedTupleDataType
 
 template<>
 const char* EnumUtil::ToChars<PendingExecutionResult>(PendingExecutionResult value);
-
-template<>
-const char* EnumUtil::ToChars<PermissionsAlterType>(PermissionsAlterType value);
 
 template<>
 const char* EnumUtil::ToChars<PhysicalOperatorType>(PhysicalOperatorType value);
@@ -1661,9 +1651,6 @@ template<>
 DependencyEntryType EnumUtil::FromString<DependencyEntryType>(const char *value);
 
 template<>
-DependencyPieceKind EnumUtil::FromString<DependencyPieceKind>(const char *value);
-
-template<>
 DeprecatedIndexType EnumUtil::FromString<DeprecatedIndexType>(const char *value);
 
 template<>
@@ -1965,9 +1952,6 @@ PartitionedTupleDataType EnumUtil::FromString<PartitionedTupleDataType>(const ch
 
 template<>
 PendingExecutionResult EnumUtil::FromString<PendingExecutionResult>(const char *value);
-
-template<>
-PermissionsAlterType EnumUtil::FromString<PermissionsAlterType>(const char *value);
 
 template<>
 PhysicalOperatorType EnumUtil::FromString<PhysicalOperatorType>(const char *value);
