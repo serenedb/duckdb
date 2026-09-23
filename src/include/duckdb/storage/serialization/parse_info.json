@@ -434,6 +434,59 @@
     ]
   },
   {
+    "class": "AlterScalarFunctionInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_SCALAR_FUNCTION",
+    "class_type": "alter_scalar_function_type",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_scalar_function_type",
+        "type": "AlterScalarFunctionType"
+      }
+    ]
+  },
+  {
+    "class": "RenameScalarFunctionInfo",
+    "base": "AlterScalarFunctionInfo",
+    "enum": "RENAME_SCALAR_FUNCTION",
+    "members": [
+      {
+        "id": 400,
+        "name": "new_name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "AlterIndexInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_INDEX",
+    "class_type": "alter_index_type",
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_index_type",
+        "type": "AlterIndexType"
+      }
+    ]
+  },
+  {
+    "class": "RenameIndexInfo",
+    "base": "AlterIndexInfo",
+    "enum": "RENAME_INDEX",
+    "members": [
+      {
+        "id": 400,
+        "name": "new_name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
     "class": "AlterDatabaseInfo",
     "base": "AlterInfo",
     "enum": "ALTER_DATABASE",
@@ -498,6 +551,34 @@
         "id": 400,
         "name": "options",
         "type": "identifier_set_t"
+      }
+    ]
+  },
+  {
+    "class": "AlterSequenceInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_SEQUENCE",
+    "class_type": "alter_sequence_type",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_sequence_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_sequence_type",
+        "type": "AlterSequenceType"
+      }
+    ]
+  },
+  {
+    "class": "RenameSequenceInfo",
+    "base": "AlterSequenceInfo",
+    "enum": "RENAME_SEQUENCE",
+    "members": [
+      {
+        "id": 400,
+        "name": "new_name",
+        "type": "Identifier"
       }
     ]
   },

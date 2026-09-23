@@ -33,6 +33,7 @@ inline constexpr uint8_t SERENEDB_ENUM_VALUE_BASE = 200;
 template <class T>
 constexpr bool IsSereneDBEnumValue(T value) {
 	constexpr bool extended = std::is_same_v<T, AlterTableType> || std::is_same_v<T, AlterType> ||
+	                          std::is_same_v<T, AlterSequenceType> || std::is_same_v<T, AlterScalarFunctionType> ||
 	                          std::is_same_v<T, CatalogType> || std::is_same_v<T, TableColumnType> ||
 	                          std::is_same_v<T, WALType>;
 	return extended && static_cast<uint8_t>(value) >= SERENEDB_ENUM_VALUE_BASE;

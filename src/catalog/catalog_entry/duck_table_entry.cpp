@@ -15,6 +15,8 @@
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
+#include "duckdb/transaction/local_storage.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/parser/constraints/check_constraint.hpp"
 #include "duckdb/planner/constraints/bound_check_constraint.hpp"
@@ -315,10 +317,11 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(CatalogTransaction transacti
 // The indexes over a table keep the table and its columns by name: in their key expressions, in their
 // dependency list and in the CREATE INDEX SQL. All three are read back when the database is loaded, so a
 // rename has to reach them as well - otherwise the index only resolves until the next restart.
-static void UpdateDependentIndexes(ClientContext &context, DuckTableEntry &table,
+static void UpdateDependentIndexes(CatalogTransaction transaction, DuckTableEntry &table,
                                    const std::function<void(DuckIndexEntry &)> &update) {
 	auto &data_table_info = table.GetStorage().GetDataTableInfo();
-	table.schema.Scan(context, CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
+	auto &schema = table.ParentSchema(transaction).Cast<DuckSchemaEntry>();
+	schema.GetCatalogSet(CatalogType::INDEX_ENTRY).Scan(transaction, [&](CatalogEntry &entry) {
 		auto &index = entry.Cast<DuckIndexEntry>();
 		if (RefersToSameObject(index.GetDataTableInfo(), *data_table_info)) {
 			update(index);
@@ -361,7 +364,14 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		auto &comment_on_column_info = info.Cast<SetColumnCommentInfo>();
 		return SetColumnComment(context, comment_on_column_info);
 	}
-
+	if (info.GetNewName() && info.GetCatalogType() == CatalogType::TABLE_ENTRY) {
+		storage->GetDataTableInfo()->BindIndexes(context);
+		return CatalogEntry::AlterEntry(context, info);
+	}
+	if (info.type == AlterType::SET_COMMENT &&
+	    info.Cast<SetCommentInfo>().entry_catalog_type == CatalogType::TABLE_ENTRY) {
+		return CatalogEntry::AlterEntry(context, info);
+	}
 	if (info.type != AlterType::ALTER_TABLE) {
 		throw CatalogException("Can only modify table with ALTER TABLE statement");
 	}
@@ -374,30 +384,6 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 	case AlterTableType::RENAME_FIELD: {
 		auto &rename_info = table_info.Cast<RenameFieldInfo>();
 		return RenameField(context, rename_info);
-	}
-	case AlterTableType::RENAME_TABLE: {
-		auto &rename_info = table_info.Cast<RenameTableInfo>();
-		auto copied_table = Copy(context);
-		copied_table->name = rename_info.new_table_name;
-		auto old_table_name = name;
-		auto &new_table_name = rename_info.new_table_name;
-		// the storage carries the name the index definitions are regenerated with, so rename it first
-		storage->SetTableName(new_table_name);
-		UpdateDependentIndexes(context, *this, [&](DuckIndexEntry &index) {
-			RewriteIndexExpressions(index, [&](ParsedExpression &expr) {
-				ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(
-				    expr, [&](ColumnRefExpression &colref) {
-					    auto &names = colref.ColumnNamesMutable();
-					    for (idx_t i = 0; i + 1 < names.size(); i++) {
-						    if (names[i] == old_table_name) {
-							    names[i] = new_table_name;
-						    }
-					    }
-				    });
-			});
-			RewriteIndexDependencies(index, old_table_name, new_table_name);
-		});
-		return copied_table;
 	}
 	case AlterTableType::ADD_COLUMN: {
 		auto &add_info = table_info.Cast<AddColumnInfo>();
@@ -462,24 +448,8 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 
 void DuckTableEntry::UndoAlter(ClientContext &context, AlterInfo &info) {
 	D_ASSERT(!internal);
-	D_ASSERT(info.type == AlterType::ALTER_TABLE);
-	auto &table_info = info.Cast<AlterTableInfo>();
-	switch (table_info.alter_table_type) {
-	case AlterTableType::RENAME_TABLE: {
-		storage->SetTableName(this->name);
-		break;
-	default:
-		break;
-	}
-	}
-}
-
-static void RenameExpression(ParsedExpression &root_expr, RenameColumnInfo &info) {
-	ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(root_expr, [&](ColumnRefExpression &colref) {
-		if (colref.ColumnNames().back() == info.old_name) {
-			colref.ColumnNamesMutable().back() = info.new_name;
-		}
-	});
+	D_ASSERT(info.GetNewName());
+	storage->SetTableName(this->name);
 }
 
 // Keep struct literal defaults aligned with nested field renames.
@@ -511,70 +481,10 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameColumn(ClientContext &context, Re
 	if (rename_idx.index == COLUMN_IDENTIFIER_ROW_ID) {
 		throw CatalogException("Cannot rename rowid column");
 	}
-	UpdateDependentIndexes(context, *this, [&](DuckIndexEntry &index) {
-		RewriteIndexExpressions(index, [&](ParsedExpression &expr) { RenameExpression(expr, info); });
-	});
-	auto create_info = make_uniq<CreateTableInfo>(schema, name);
-	create_info->temporary = temporary;
-	create_info->comment = comment;
-	create_info->tags = tags;
-	for (auto &col : columns.Logical()) {
-		auto copy = col.Copy();
-		if (rename_idx == col.Logical()) {
-			copy.SetName(info.new_name);
-		}
-		if (col.Generated() && column_dependency_manager.IsDependencyOf(col.Logical(), rename_idx)) {
-			RenameExpression(copy.GeneratedExpressionMutable(), info);
-		}
-		create_info->columns.AddColumn(std::move(copy));
-	}
-	for (idx_t c_idx = 0; c_idx < constraints.size(); c_idx++) {
-		auto copy = constraints[c_idx]->Copy();
-		switch (copy->type) {
-		case ConstraintType::NOT_NULL:
-			// NOT NULL constraint: no adjustments necessary
-			break;
-		case ConstraintType::CHECK: {
-			// CHECK constraint: need to rename column references that refer to the renamed column
-			auto &check = copy->Cast<CheckConstraint>();
-			RenameExpression(*check.expression, info);
-			break;
-		}
-		case ConstraintType::UNIQUE: {
-			// UNIQUE constraint: possibly need to rename columns
-			auto &unique = copy->Cast<UniqueConstraint>();
-			for (auto &column_name : unique.GetColumnNamesMutable()) {
-				if (column_name == info.old_name) {
-					column_name = info.new_name;
-				}
-			}
-			break;
-		}
-		case ConstraintType::FOREIGN_KEY: {
-			// FOREIGN KEY constraint: possibly need to rename columns
-			auto &fk = copy->Cast<ForeignKeyConstraint>();
-			vector<Identifier> columns = fk.pk_columns;
-			if (fk.info.type == ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
-				columns = fk.fk_columns;
-			} else if (fk.info.type == ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
-				for (idx_t i = 0; i < fk.fk_columns.size(); i++) {
-					columns.push_back(fk.fk_columns[i]);
-				}
-			}
-			for (idx_t i = 0; i < columns.size(); i++) {
-				if (columns[i] == info.old_name) {
-					throw CatalogException(
-					    "Cannot rename column \"%s\" because this is involved in the foreign key constraint",
-					    info.old_name);
-				}
-			}
-			break;
-		}
-		default:
-			throw InternalException("Unsupported constraint for entry!");
-		}
-		create_info->constraints.push_back(std::move(copy));
-	}
+	storage->GetDataTableInfo()->BindIndexes(context);
+	auto create_info = GetInfo();
+	auto &table_info = create_info->Cast<CreateTableInfo>();
+	TableCatalogEntry::RenameColumn(table_info.columns, table_info.constraints, info);
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
 	SetAlterDependencies(*bound_create_info, info);
@@ -1611,9 +1521,52 @@ unique_ptr<CatalogEntry> DuckTableEntry::Copy(ClientContext &context) const {
 	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
 }
 
-void DuckTableEntry::SetAsRoot() {
+void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
 	storage->SetAsMainTable();
+	IdentifierEquality same(columns.IsCaseSensitive());
+	auto previous_name = storage->GetTableName();
+	vector<pair<Identifier, Identifier>> renamed_columns;
+	auto &storage_columns = storage->Columns();
+	for (auto &column : columns.Physical()) {
+		auto &previous_column = storage_columns[column.Physical().index].Name();
+		if (!same(previous_column, column.Name())) {
+			renamed_columns.emplace_back(previous_column, column.Name());
+		}
+	}
 	storage->SetTableName(name);
+	for (auto &column : columns.Physical()) {
+		storage->SetColumnName(column.Physical(), column.Name());
+	}
+	if (!transaction) {
+		return;
+	}
+	if (!same(previous_name, name) || !renamed_columns.empty()) {
+		UpdateDependentIndexes(*transaction, *this, [&](DuckIndexEntry &index) {
+			RewriteIndexExpressions(index, [&](ParsedExpression &expr) {
+				ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(
+				    expr, [&](ColumnRefExpression &colref) {
+					    auto &names = colref.ColumnNamesMutable();
+					    for (idx_t i = 0; i + 1 < names.size(); i++) {
+						    if (same(names[i], previous_name)) {
+							    names[i] = name;
+						    }
+					    }
+					    for (auto &renamed : renamed_columns) {
+						    if (same(names.back(), renamed.first)) {
+							    names.back() = renamed.second;
+						    }
+					    }
+				    });
+			});
+			RewriteIndexDependencies(index, previous_name, name);
+		});
+	}
+	if (transaction->context) {
+		auto lstorage = LocalStorage::Get(*transaction->context, storage->db).GetStorage(*storage);
+		if (lstorage) {
+			lstorage->table_entry = this;
+		}
+	}
 }
 
 void DuckTableEntry::CommitAlter(string &column_name, CommitDropState &drop_state) {

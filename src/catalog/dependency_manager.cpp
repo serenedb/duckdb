@@ -595,7 +595,8 @@ void DependencyManager::VerifyExistence(CatalogTransaction transaction, Dependen
 }
 
 void DependencyManager::VerifyCommitDrop(CatalogTransaction transaction, VisibilityBound visibility_bound,
-                                         CatalogEntry &object) {
+                                         CatalogEntry &object_p) {
+	auto &object = object_p.type == CatalogType::RENAMED_ENTRY && object_p.HasChild() ? object_p.Child() : object_p;
 	if (IsSystemEntry(object)) {
 		return;
 	}

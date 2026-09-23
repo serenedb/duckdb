@@ -293,6 +293,7 @@ public:
 
 	Identifier GetTableName() const;
 	void SetTableName(Identifier new_name);
+	void SetColumnName(PhysicalIndex index, const Identifier &new_name);
 
 	TableStorageInfo GetStorageInfo() const;
 

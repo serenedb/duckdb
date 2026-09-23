@@ -23,11 +23,21 @@ CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p
 CatalogEntry::~CatalogEntry() {
 }
 
-void CatalogEntry::SetAsRoot() {
+void CatalogEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
 }
 
 // LCOV_EXCL_START
 unique_ptr<CatalogEntry> CatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
+	if (auto new_name = info.GetNewName()) {
+		auto result = Copy(context);
+		result->name = *new_name;
+		return result;
+	}
+	if (info.type == AlterType::SET_COMMENT) {
+		auto result = Copy(context);
+		result->comment = info.Cast<SetCommentInfo>().comment_value;
+		return result;
+	}
 	throw InternalException("Unsupported alter type for catalog entry!");
 }
 

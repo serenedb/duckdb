@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/identifier.hpp"
+#include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/parser/parsed_data/parse_info.hpp"
 #include "duckdb/parser/qualified_name.hpp"
@@ -28,7 +29,8 @@ enum class AlterType : uint8_t {
 	SET_COMMENT = 7,
 	SET_COLUMN_COMMENT = 8,
 	ALTER_DATABASE = 9,
-	ALTER_SCHEMA = 10
+	ALTER_SCHEMA = 10,
+	ALTER_INDEX = 202
 };
 
 enum class AlterBindMode { BIND_ON_ALTER, SKIP_BINDING };
@@ -94,6 +96,9 @@ public:
 	virtual Identifier GetColumnName() const {
 		return Identifier();
 	};
+	virtual optional_ptr<const Identifier> GetNewName() const {
+		return nullptr;
+	}
 
 	AlterEntryData GetAlterEntryData() const;
 	bool IsAddPrimaryKey() const;
@@ -104,6 +109,35 @@ protected:
 
 	//! Qualified name of the entry to alter (catalog.schema.name)
 	QualifiedName qualified_name;
+};
+
+string RenameEntryToString(CatalogType entry_type, const string &target, OnEntryNotFound if_not_found,
+                           const Identifier &new_name);
+
+template <class DERIVED, class BASE, auto RENAME_TYPE>
+struct RenameEntryInfo : public BASE {
+	RenameEntryInfo(const AlterEntryData &data, Identifier new_name_p)
+	    : BASE(RENAME_TYPE, data), new_name(std::move(new_name_p)) {
+	}
+
+	Identifier new_name;
+
+public:
+	optional_ptr<const Identifier> GetNewName() const override {
+		return &new_name;
+	}
+	unique_ptr<AlterInfo> Copy() const override {
+		return make_uniq_base<AlterInfo, DERIVED>(this->GetAlterEntryData(), new_name);
+	}
+	string ToString() const override {
+		return RenameEntryToString(this->GetCatalogType(),
+		                           this->GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA),
+		                           this->if_not_found, new_name);
+	}
+
+protected:
+	RenameEntryInfo() : BASE(RENAME_TYPE) {
+	}
 };
 
 } // namespace duckdb

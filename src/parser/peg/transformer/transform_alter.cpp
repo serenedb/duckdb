@@ -10,6 +10,7 @@
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_database_info.hpp"
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
+#include "duckdb/parser/parsed_data/alter_sequence_info.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
 #include "duckdb/parser/query_node/update_query_node.hpp"
@@ -152,24 +153,17 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransfor
                                                                      const optional<bool> &if_exists,
                                                                      unique_ptr<BaseTableRef> base_table_name,
                                                                      unique_ptr<AlterTableInfo> alter_index_alter) {
-	auto not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	AlterEntryData data(base_table_name->GetQualifiedName(),
+	                    if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION);
 	switch (alter_index_alter->alter_table_type) {
 	case AlterTableType::RENAME_TABLE: {
-		auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(alter_index_alter));
-		// ALTER INDEX <name> RENAME TO <new_name> uses the same catalog action as
-		// ALTER TABLE rename: the catalog resolves the entry by name across
-		// table/view/index.
-		auto result = make_uniq<RenameTableInfo>(AlterEntryData(), rename_info->new_table_name);
-		result->SetQualifiedName(base_table_name->GetQualifiedName());
-		result->if_not_found = not_found;
-		return std::move(result);
+		return make_uniq_base<AlterInfo, RenameIndexInfo>(data,
+		                                                  alter_index_alter->Cast<RenameTableInfo>().new_table_name);
 	}
 	case AlterTableType::SET_TABLE_OPTIONS:
 	case AlterTableType::RESET_TABLE_OPTIONS:
-		// ALTER INDEX <name> SET/RESET (options): same by-name catalog resolution
-		// as the rename above; the catalog decides which options are valid.
 		alter_index_alter->SetQualifiedName(base_table_name->GetQualifiedName());
-		alter_index_alter->if_not_found = not_found;
+		alter_index_alter->if_not_found = data.if_not_found;
 		return std::move(alter_index_alter);
 	default:
 		throw NotImplementedException("unsupported ALTER INDEX action");
@@ -216,7 +210,8 @@ QualifiedName PEGTransformerFactory::TransformQualifiedSequenceName(PEGTransform
 unique_ptr<AlterInfo>
 PEGTransformerFactory::TransformRenameAlterSequenceOptions(PEGTransformer &transformer,
                                                            unique_ptr<AlterTableInfo> rename_alter) {
-	throw NotImplementedException("Renaming sequences is not yet supported");
+	auto &rename = rename_alter->Cast<RenameTableInfo>();
+	return make_uniq<RenameSequenceInfo>(AlterEntryData(), rename.new_table_name);
 }
 
 unique_ptr<AlterInfo>

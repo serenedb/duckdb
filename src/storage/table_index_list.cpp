@@ -213,6 +213,23 @@ void TableIndexList::RemoveIndex(idx_t index_oid) {
 	}
 }
 
+void TableIndexList::RenameIndex(idx_t index_oid, const Identifier &new_name) {
+	shared_ptr<IndexEntry> renamed_entry;
+	{
+		annotated_lock_guard lock(index_entries_lock);
+		for (const auto &entry : index_entries) {
+			if (entry->GetCatalogIndexOid() == index_oid) {
+				renamed_entry = entry;
+				break;
+			}
+		}
+	}
+	if (renamed_entry && renamed_entry->GetName() != new_name) {
+		auto index = renamed_entry->GetWriteHandle<Index>();
+		index->SetIndexName(new_name);
+	}
+}
+
 bool TableIndexList::HasUniqueIndexes() const {
 	annotated_lock_guard lock(index_entries_lock);
 	for (const auto &entry : index_entries) {

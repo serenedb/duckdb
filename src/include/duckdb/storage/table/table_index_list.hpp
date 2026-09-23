@@ -70,6 +70,7 @@ public:
 	//! Removes an index entry from the list of index entries and release any storage the index owns.
 	void RemoveIndex(const Identifier &name);
 	void RemoveIndex(idx_t index_oid);
+	void RenameIndex(idx_t index_oid, const Identifier &new_name);
 	//! Returns true, if the index name does not exist.
 	bool NameIsUnique(const string &name) const;
 	//! Returns true if an index with the given name exists.
