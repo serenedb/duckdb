@@ -426,9 +426,6 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameColumn(ClientContext &context, Re
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
 	info.new_dependencies = make_uniq<LogicalDependencyList>(std::move(bound_create_info->dependencies));
-	if (!columns.GetColumn(rename_idx).Generated()) {
-		storage->SetColumnName(columns.LogicalToPhysical(rename_idx), info.new_name);
-	}
 	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
 }
 

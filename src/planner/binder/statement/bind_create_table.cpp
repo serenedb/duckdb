@@ -640,7 +640,8 @@ static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryR
 		}
 		info.AddSubDependency(AlterTableType::DROP_CONSTRAINT, Identifier(cond->constraint_name));
 		if (!fk.info.pk_keys.empty() && !fk.info.fk_keys.empty()) {
-			entry_retriever.GetEntry(ReferencedTableLookup(schema, fk));
+			entry_retriever.GetEntry(EntryLookupInfo(
+			    CatalogType::TABLE_ENTRY, QualifiedName(schema.ParentCatalog().GetName(), schema.name, fk.info.table)));
 			continue;
 		}
 		D_ASSERT(fk.info.pk_keys.empty());

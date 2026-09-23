@@ -791,7 +791,9 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 	const auto new_info = GetLookupProperties(new_obj);
 
 	vector<DependencyInfo> dependencies;
-	const bool views_depend_on_columns = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	const auto compatibility = catalog.Compatibility();
+	const bool views_depend_on_columns = compatibility == SqlCompatibility::POSTGRES;
+	const bool retype_under_indexes = compatibility == SqlCompatibility::POSTGRES;
 	// Other entries that depend on us
 	ScanDependents(transaction, old_info, [&](DependencyEntry &dep) {
 		// It makes no sense to have a schema depend on anything
@@ -825,9 +827,14 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 				}
 				break;
 			}
-			case AlterTableType::RENAME_COLUMN:
-			case AlterTableType::ALTER_COLUMN_TYPE: {
+			case AlterTableType::RENAME_COLUMN: {
 				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
+					disallow_alter = false;
+				}
+				break;
+			}
+			case AlterTableType::ALTER_COLUMN_TYPE: {
+				if (retype_under_indexes && dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
 					disallow_alter = false;
 				}
 				break;
