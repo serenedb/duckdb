@@ -27,6 +27,7 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_aggregate_function_info.hpp"
@@ -287,17 +288,28 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTable(CatalogTransaction trans
 	return entry;
 }
 
+static bool AlterExistingEntry(DuckSchemaEntry &schema, CatalogTransaction transaction, CreateInfo &info,
+                               const Identifier &name) {
+	if (info.on_conflict != OnCreateConflict::ALTER_ON_CONFLICT) {
+		return false;
+	}
+	auto current_entry = schema.GetCatalogSet(info.type).GetNamespaceEntry(transaction, name);
+	if (!current_entry) {
+		return false;
+	}
+	if (current_entry->type != info.type) {
+		throw CatalogException("Existing object %s is of type %s, trying to replace with type %s", name,
+		                       CatalogTypeToString(current_entry->type), CatalogTypeToString(info.type));
+	}
+	info.dependencies.AddDependency(schema);
+	auto alter_info = info.GetAlterInfo();
+	schema.Alter(transaction, *alter_info);
+	return true;
+}
+
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) {
-	if (info.on_conflict == OnCreateConflict::ALTER_ON_CONFLICT) {
-		// check if the original entry exists
-		auto &catalog_set = GetCatalogSet(info.type);
-		auto current_entry = catalog_set.GetEntry(transaction, info.GetFunctionName());
-		if (current_entry) {
-			// the current entry exists - alter it instead
-			auto alter_info = info.GetAlterInfo();
-			Alter(transaction, *alter_info);
-			return nullptr;
-		}
+	if (AlterExistingEntry(*this, transaction, info, info.GetFunctionName())) {
+		return nullptr;
 	}
 	unique_ptr<StandardEntry> function;
 	switch (info.type) {
@@ -349,6 +361,9 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateType(CatalogTransaction transa
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateView(CatalogTransaction transaction, CreateViewInfo &info) {
+	if (AlterExistingEntry(*this, transaction, info, info.GetViewName())) {
+		return nullptr;
+	}
 	auto view = make_uniq<ViewCatalogEntry>(catalog, *this, info);
 	return AddEntry(transaction, std::move(view), info.on_conflict);
 }
@@ -506,6 +521,26 @@ void DuckSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 		throw CatalogException("Existing object %s is of type %s, trying to drop type %s",
 		                       info.GetQualifiedName().Name(), CatalogTypeToString(existing_entry->type),
 		                       CatalogTypeToString(info.type));
+	}
+	if (info.has_func_args) {
+		auto create_info = existing_entry->Cast<MacroCatalogEntry>().GetInfo();
+		auto &macros = create_info->Cast<CreateMacroInfo>().macros;
+		auto overload = std::find_if(macros.begin(), macros.end(), [&](const unique_ptr<MacroFunction> &function) {
+			return function->HasParameterTypes(info.func_parameters);
+		});
+		if (overload == macros.end()) {
+			if (info.if_not_found == OnEntryNotFound::RETURN_NULL) {
+				return;
+			}
+			throw CatalogException("function %s(%s) does not exist", info.GetQualifiedName().Name().GetIdentifierName(),
+			                       MacroFunction::ParameterTypesToString(info.func_parameters));
+		}
+		if (macros.size() > 1) {
+			macros.erase(overload);
+			create_info->on_conflict = OnCreateConflict::REPLACE_ON_CONFLICT;
+			CreateFunction(transaction, create_info->Cast<CreateFunctionInfo>());
+			return;
+		}
 	}
 
 	if (!DropEntryInternal(transaction, *existing_entry, info.GetQualifiedName().Name(), info.cascade,
