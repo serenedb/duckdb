@@ -169,7 +169,8 @@ public:
 	}
 
 	//! Returns whether or not we can / want to cache a logical plan
-	static bool CanCachePlan(const LogicalOperator &op);
+	static bool CanCachePlan(const LogicalOperator &op, const vector<TableIndex> &bound_scans);
+	static vector<TableIndex> PlanScans(const LogicalOperator &op);
 
 private:
 	unique_ptr<PendingQueryResult> PendingQueryRecursive(vector<Value> &values) {
