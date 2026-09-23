@@ -21,6 +21,7 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/common/type_visitor.hpp"
@@ -559,6 +560,62 @@ static void CheckForeignKeyTypes(const ColumnList &pk_columns, const ColumnList 
 	}
 }
 
+static void CollectColumnNames(const ParsedExpression &expr, case_insensitive_set_t &names) {
+	if (expr.GetExpressionType() == ExpressionType::COLUMN_REF) {
+		names.insert(expr.Cast<ColumnRefExpression>().GetColumnName().GetIdentifierName());
+		return;
+	}
+	ParsedExpressionIterator::EnumerateChildren(
+	    expr, [&](const ParsedExpression &child) { CollectColumnNames(child, names); });
+}
+
+static string DefaultConstraintName(const CreateTableInfo &base, const Constraint &constraint) {
+	auto &table = base.GetTableName();
+	switch (constraint.type) {
+	case ConstraintType::UNIQUE: {
+		auto &unique = constraint.Cast<UniqueConstraint>();
+		if (unique.IsPrimaryKey()) {
+			return table + "_pkey";
+		}
+		if (unique.HasIndex()) {
+			return table + "_" + base.columns.GetColumn(unique.GetIndex()).Name() + "_key";
+		}
+		return table + "_" + StringUtil::Join(unique.GetColumnNames(), "_") + "_key";
+	}
+	case ConstraintType::CHECK: {
+		case_insensitive_set_t columns;
+		CollectColumnNames(*constraint.Cast<CheckConstraint>().expression, columns);
+		return columns.size() == 1 ? table + "_" + *columns.begin() + "_check" : table + "_check";
+	}
+	case ConstraintType::FOREIGN_KEY:
+		return table + "_" + StringUtil::Join(constraint.Cast<ForeignKeyConstraint>().fk_columns, "_") + "_fkey";
+	default:
+		return string();
+	}
+}
+
+static void NameConstraints(CreateTableInfo &base) {
+	case_insensitive_set_t names;
+	for (auto &constraint : base.constraints) {
+		names.insert(constraint->constraint_name);
+	}
+	for (auto &constraint : base.constraints) {
+		if (!constraint->constraint_name.empty()) {
+			continue;
+		}
+		auto name = DefaultConstraintName(base, *constraint);
+		if (name.empty()) {
+			continue;
+		}
+		auto candidate = name;
+		for (idx_t attempt = 1; names.count(candidate); attempt++) {
+			candidate = name + to_string(attempt);
+		}
+		names.insert(candidate);
+		constraint->constraint_name = candidate;
+	}
+}
+
 static void BindCreateTableConstraints(CreateTableInfo &create_info, CatalogEntryRetriever &entry_retriever,
                                        SchemaCatalogEntry &schema) {
 	// If there is a foreign key constraint, resolve primary key column's index from primary key column's name
@@ -716,7 +773,9 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		// bind the generated column expressions
 		BindGeneratedColumns(*result);
 		// bind any constraints
-
+		if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+			NameConstraints(base);
+		}
 		BindCreateTableConstraints(base, entry_retriever, schema);
 
 		if (AnyConstraintReferencesGeneratedColumn(base)) {

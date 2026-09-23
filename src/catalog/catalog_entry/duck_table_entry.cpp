@@ -422,6 +422,10 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		auto &drop_constraint_info = table_info.Cast<DropConstraintInfo>();
 		return DropConstraint(context, drop_constraint_info);
 	}
+	case AlterTableType::RENAME_CONSTRAINT: {
+		auto &rename_constraint_info = table_info.Cast<RenameConstraintInfo>();
+		return RenameConstraint(context, rename_constraint_info);
+	}
 	case AlterTableType::DROP_NOT_NULL: {
 		auto &drop_not_null_info = table_info.Cast<DropNotNullInfo>();
 		return DropNotNull(context, drop_not_null_info);
@@ -1168,29 +1172,43 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropNotNull(ClientContext &context, Dro
 	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
 }
 
+static optional_idx FindConstraint(const vector<unique_ptr<Constraint>> &constraints, const string &constraint_name) {
+	for (idx_t i = 0; i < constraints.size(); i++) {
+		if (constraints[i]->constraint_name == constraint_name) {
+			return optional_idx(i);
+		}
+	}
+	return optional_idx();
+}
+
 unique_ptr<CatalogEntry> DuckTableEntry::DropConstraint(ClientContext &context, DropConstraintInfo &info) {
 	auto &schema = ParentSchema(context);
 	auto create_info = GetInfo();
 	auto &table_info = create_info->Cast<CreateTableInfo>();
-
-	// CHECK constraints carry no name in the catalog; the caller identifies
-	// the constraint by its expression text.
-	bool found = false;
-	for (idx_t i = 0; i < table_info.constraints.size(); i++) {
-		auto &constraint = table_info.constraints[i];
-		if (constraint->type != ConstraintType::CHECK) {
-			continue;
+	auto constraint_idx = FindConstraint(table_info.constraints, info.constraint_name);
+	if (!constraint_idx.IsValid()) {
+		if (info.if_constraint_not_found) {
+			return nullptr;
 		}
-		auto &check = constraint->Cast<CheckConstraint>();
-		if (check.expression->ToString() == info.constraint_name) {
-			table_info.constraints.erase(table_info.constraints.begin() + static_cast<ptrdiff_t>(i));
-			found = true;
-			break;
-		}
-	}
-	if (!found && !info.if_constraint_not_found) {
 		throw CatalogException("constraint \"%s\" of table %s does not exist", info.constraint_name, name);
 	}
+	table_info.constraints.erase(table_info.constraints.begin() + static_cast<ptrdiff_t>(constraint_idx.GetIndex()));
+
+	auto binder = Binder::CreateBinder(context);
+	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
+	SetAlterDependencies(*bound_create_info, info);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+}
+
+unique_ptr<CatalogEntry> DuckTableEntry::RenameConstraint(ClientContext &context, RenameConstraintInfo &info) {
+	auto &schema = ParentSchema(context);
+	auto create_info = GetInfo();
+	auto &table_info = create_info->Cast<CreateTableInfo>();
+	auto constraint_idx = FindConstraint(table_info.constraints, info.old_name);
+	if (!constraint_idx.IsValid()) {
+		throw CatalogException("constraint \"%s\" of table %s does not exist", info.old_name, name);
+	}
+	table_info.constraints[constraint_idx.GetIndex()]->constraint_name = info.new_name;
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
@@ -1380,7 +1398,8 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropForeignKeyConstraint(ClientContext 
 			// Symmetric removal: drops the PK-side back-reference when applied
 			// to the main-key table, and the FK constraint itself when applied
 			// to the referencing table.
-			if (fk.info.table == info.fk_table) {
+			if (fk.info.table == info.fk_table && fk.fk_columns == info.fk_columns &&
+			    fk.pk_columns == info.pk_columns) {
 				continue;
 			}
 		}
@@ -1529,8 +1548,11 @@ void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
 	}
 }
 
-void DuckTableEntry::CommitAlter(string &column_name, CommitDropState &drop_state) {
-	D_ASSERT(!column_name.empty());
+void DuckTableEntry::CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state) {
+	if (column_name.empty()) {
+		CommitDropConstraint(info, drop_state);
+		return;
+	}
 	optional_idx logical_column_idx;
 	auto column_path = StringUtil::Split(column_name, '.');
 	D_ASSERT(!column_path.empty());
@@ -1555,6 +1577,46 @@ void DuckTableEntry::CommitAlter(string &column_name, CommitDropState &drop_stat
 	auto logical_column_index = LogicalIndex(logical_column_idx.GetIndex());
 	auto column_index = columns.LogicalToPhysical(logical_column_index).index;
 	storage->CommitDropColumn(column_index, drop_state);
+}
+
+void DuckTableEntry::CommitDropConstraint(const AlterInfo &info, CommitDropState &drop_state) {
+	if (info.type != AlterType::ALTER_TABLE ||
+	    info.Cast<AlterTableInfo>().alter_table_type != AlterTableType::DROP_CONSTRAINT) {
+		return;
+	}
+	auto constraint_idx = FindConstraint(constraints, info.Cast<DropConstraintInfo>().constraint_name);
+	if (!constraint_idx.IsValid()) {
+		return;
+	}
+	auto &constraint = *constraints[constraint_idx.GetIndex()];
+	IndexConstraintType type;
+	vector<column_t> column_ids;
+	if (constraint.type == ConstraintType::UNIQUE) {
+		auto &unique = constraint.Cast<UniqueConstraint>();
+		type = unique.IsPrimaryKey() ? IndexConstraintType::PRIMARY : IndexConstraintType::UNIQUE;
+		for (auto &logical_index : unique.GetLogicalIndexes(columns)) {
+			column_ids.push_back(columns.LogicalToPhysical(logical_index).index);
+		}
+	} else if (constraint.type == ConstraintType::FOREIGN_KEY) {
+		auto &fk = constraint.Cast<ForeignKeyConstraint>();
+		if (fk.info.type == ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE) {
+			return;
+		}
+		type = IndexConstraintType::FOREIGN;
+		for (auto &physical_index : fk.info.fk_keys) {
+			column_ids.push_back(physical_index.index);
+		}
+	} else {
+		return;
+	}
+	auto &indexes = storage->GetDataTableInfo()->GetIndexes();
+	for (auto entry : indexes.IndexEntries()) {
+		auto index = entry->GetReadHandle<Index>();
+		if (index->GetConstraintType() == type && index->GetColumnIds() == column_ids) {
+			drop_state.RemoveIndex(indexes, index->GetIndexName());
+			return;
+		}
+	}
 }
 
 void DuckTableEntry::CommitDrop(CommitDropState &drop_state) {

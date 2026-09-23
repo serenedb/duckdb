@@ -68,7 +68,8 @@ public:
 
 	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
 
-	void CommitAlter(string &column_name, CommitDropState &drop_state);
+	void CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state);
+	void CommitDropConstraint(const AlterInfo &info, CommitDropState &drop_state);
 	void CommitDrop(CommitDropState &drop_state);
 
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
@@ -102,6 +103,7 @@ private:
 	unique_ptr<CatalogEntry> SetNotNull(ClientContext &context, SetNotNullInfo &info);
 	unique_ptr<CatalogEntry> DropNotNull(ClientContext &context, DropNotNullInfo &info);
 	unique_ptr<CatalogEntry> DropConstraint(ClientContext &context, DropConstraintInfo &info);
+	unique_ptr<CatalogEntry> RenameConstraint(ClientContext &context, RenameConstraintInfo &info);
 	unique_ptr<CatalogEntry> AddForeignKeyConstraint(CatalogTransaction transaction, AlterForeignKeyInfo &info);
 	unique_ptr<CatalogEntry> DropForeignKeyConstraint(ClientContext &context, AlterForeignKeyInfo &info);
 	unique_ptr<CatalogEntry> SetColumnComment(ClientContext &context, SetColumnCommentInfo &info);

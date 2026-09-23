@@ -672,8 +672,8 @@ string DropConstraintInfo::ToString() const {
 RenameConstraintInfo::RenameConstraintInfo() : AlterTableInfo(AlterTableType::RENAME_CONSTRAINT) {
 }
 
-RenameConstraintInfo::RenameConstraintInfo(AlterEntryData data, string old_name_p, string new_name_p)
-    : AlterTableInfo(AlterTableType::RENAME_CONSTRAINT, std::move(data)), old_name(std::move(old_name_p)),
+RenameConstraintInfo::RenameConstraintInfo(const AlterEntryData &data, string old_name_p, string new_name_p)
+    : AlterTableInfo(AlterTableType::RENAME_CONSTRAINT, data), old_name(std::move(old_name_p)),
       new_name(std::move(new_name_p)) {
 }
 

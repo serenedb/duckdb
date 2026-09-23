@@ -1108,6 +1108,23 @@
     ]
   },
   {
+    "class": "RenameConstraintInfo",
+    "base": "AlterTableInfo",
+    "enum": "RENAME_CONSTRAINT",
+    "members": [
+      {
+        "id": 400,
+        "name": "old_name",
+        "type": "string"
+      },
+      {
+        "id": 401,
+        "name": "new_name",
+        "type": "string"
+      }
+    ]
+  },
+  {
     "class": "SetPartitionedByInfo",
     "base": "AlterTableInfo",
     "enum": "SET_PARTITIONED_BY",

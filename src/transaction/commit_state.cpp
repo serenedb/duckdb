@@ -40,7 +40,11 @@ void CommitDropState::DropBlock(block_id_t block_id) {
 }
 
 void CommitDropState::RemoveIndex(TableIndexList &indexes, idx_t index_oid) {
-	pending_index_removals.push_back(PendingIndexRemoval {indexes, index_oid});
+	pending_index_removals.push_back(PendingIndexRemoval {indexes, index_oid, Identifier()});
+}
+
+void CommitDropState::RemoveIndex(TableIndexList &indexes, const Identifier &index_name) {
+	pending_index_removals.push_back(PendingIndexRemoval {indexes, optional_idx(), index_name});
 }
 
 void CommitDropState::FinalizeCommit() {
@@ -53,7 +57,11 @@ void CommitDropState::FinalizeCommit() {
 	D_ASSERT(block_manager || dropped_block_ids.empty());
 
 	for (auto &removal : pending_index_removals) {
-		removal.indexes.get().RemoveIndex(removal.index_oid);
+		if (removal.index_oid.IsValid()) {
+			removal.indexes.get().RemoveIndex(removal.index_oid.GetIndex());
+		} else {
+			removal.indexes.get().RemoveIndex(removal.index_name);
+		}
 	}
 	dropped_block_ids.clear();
 	pending_index_removals.clear();
@@ -190,12 +198,8 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 
 			switch (parent.type) {
 			case CatalogType::TABLE_ENTRY:
-				if (!column_name.empty()) {
-					D_ASSERT(entry.type != CatalogType::RENAMED_ENTRY);
-					auto &table_entry = entry.Cast<DuckTableEntry>();
-					D_ASSERT(table_entry.IsDuckTable());
-					// write the alter table in the log
-					table_entry.CommitAlter(column_name, drop_state);
+				if (entry.type == CatalogType::TABLE_ENTRY && entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+					entry.Cast<DuckTableEntry>().CommitAlter(column_name, parse_info->Cast<AlterInfo>(), drop_state);
 				}
 				break;
 			case CatalogType::VIEW_ENTRY:

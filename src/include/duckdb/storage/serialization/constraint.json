@@ -10,6 +10,13 @@
         "id": 100,
         "name": "type",
         "type": "ConstraintType"
+      },
+      {
+        "id": 16484,
+        "name": "constraint_name",
+        "type": "string",
+        "default": "\"\"",
+        "version": "serenedb_v1"
       }
     ]
   },

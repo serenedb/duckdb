@@ -11,6 +11,8 @@
 #include "duckdb/transaction/undo_buffer.hpp"
 #include "duckdb/common/vector_size.hpp"
 #include "duckdb/common/enums/index_removal_type.hpp"
+#include "duckdb/common/identifier.hpp"
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/reference_map.hpp"
 #include "duckdb/storage/block.hpp"
@@ -35,7 +37,8 @@ enum class CommitMode { COMMIT, REVERT_COMMIT };
 //! An index that has been marked for removal from a table's index list once the commit chain succeeds.
 struct PendingIndexRemoval {
 	reference<TableIndexList> indexes;
-	idx_t index_oid;
+	optional_idx index_oid;
+	Identifier index_name;
 };
 
 //! Accumulates block marks and index removals during commit so they can be applied together once the
@@ -52,6 +55,8 @@ public:
 	//! memory index data and also marks all blocks on disk as free blocks allowing for reclamation. Block marking for
 	//! indexes is handled implicitly along destruction paths for index memory.
 	void RemoveIndex(TableIndexList &indexes, idx_t index_oid);
+	//! Register a constraint index, which has no catalog oid, to be removed by name during FinalizeCommit.
+	void RemoveIndex(TableIndexList &indexes, const Identifier &index_name);
 	//! Finalize accumulated block marks and index removals.
 	void FinalizeCommit();
 	//! True if no work has been queued.
