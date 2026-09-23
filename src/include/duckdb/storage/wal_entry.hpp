@@ -65,6 +65,7 @@ struct WALCreateSchema {
 	Identifier schema;
 	// the schema as a QualifiedName (parent schemas form the path, the schema name is the name); v2.0.0 onwards
 	QualifiedName qualified_name;
+	unique_ptr<CreateInfo> info;
 
 	void Serialize(Serializer &serializer) const;
 	static WALCreateSchema Deserialize(Deserializer &deserializer);

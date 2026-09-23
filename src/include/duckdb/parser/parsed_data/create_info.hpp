@@ -51,6 +51,7 @@ public:
 	Value comment;
 	//! Key-value tags with additional metadata
 	InsertionOrderPreservingMap<string> tags;
+	idx_t oid = 0;
 
 public:
 	const QualifiedName &GetQualifiedName() const {

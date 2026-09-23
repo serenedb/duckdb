@@ -75,6 +75,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "info",
+        "type": "CreateInfo*",
+        "version": "serenedb_v1"
       }
     ]
   },

@@ -19,7 +19,7 @@ class SchemaCatalogEntry;
 //! A StandardEntry is a catalog entry that is a member of a schema
 class StandardEntry : public InCatalogEntry {
 public:
-	StandardEntry(CatalogType type, SchemaCatalogEntry &schema, Catalog &catalog, Identifier name);
+	StandardEntry(CatalogType type, SchemaCatalogEntry &schema, Catalog &catalog, Identifier name, idx_t oid = 0);
 	~StandardEntry() override {
 	}
 

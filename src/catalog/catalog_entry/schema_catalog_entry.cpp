@@ -13,7 +13,8 @@ namespace duckdb {
 SchemaCatalogEntry::SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info,
                                        optional_ptr<SchemaCatalogEntry> parent_schema,
                                        shared_ptr<SchemaInfo> schema_info_p)
-    : InCatalogEntry(CatalogType::SCHEMA_ENTRY, catalog, info.SchemaName()), schema_info(std::move(schema_info_p)) {
+    : InCatalogEntry(CatalogType::SCHEMA_ENTRY, catalog, info.SchemaName(), info.oid),
+      schema_info(std::move(schema_info_p)) {
 	this->internal = info.internal;
 	this->comment = info.comment;
 	this->tags = info.tags;
