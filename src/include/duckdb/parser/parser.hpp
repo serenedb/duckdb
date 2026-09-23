@@ -96,6 +96,5 @@ private:
 	ParserCache &GetCache();
 
 	ParserOptions options;
-	unique_ptr<ParserCache> local_cache;
 };
 } // namespace duckdb
