@@ -5,14 +5,30 @@
 
 namespace duckdb {
 
-ColumnList::ColumnList(bool allow_duplicate_names) : allow_duplicate_names(allow_duplicate_names) {
+ColumnList::ColumnList(bool allow_duplicate_names, bool case_sensitive)
+    : name_map(0, IdentifierHashFunction(case_sensitive), IdentifierEquality(case_sensitive)),
+      allow_duplicate_names(allow_duplicate_names), case_sensitive(case_sensitive) {
 }
 
-ColumnList::ColumnList(vector<ColumnDefinition> columns, bool allow_duplicate_names)
-    : allow_duplicate_names(allow_duplicate_names) {
+ColumnList::ColumnList(vector<ColumnDefinition> columns, bool allow_duplicate_names, bool case_sensitive)
+    : ColumnList(allow_duplicate_names, case_sensitive) {
 	for (auto &col : columns) {
 		AddColumn(std::move(col));
 	}
+}
+
+void ColumnList::SetCaseSensitive(bool case_sensitive_p) {
+	if (case_sensitive == case_sensitive_p) {
+		return;
+	}
+	case_sensitive = case_sensitive_p;
+	identifier_map_t<column_t> rekeyed(0, IdentifierHashFunction(case_sensitive), IdentifierEquality(case_sensitive));
+	for (auto &entry : name_map) {
+		if (!rekeyed.emplace(entry.first, entry.second).second && !allow_duplicate_names) {
+			throw CatalogException("Column with name %s already exists!", entry.first);
+		}
+	}
+	name_map = std::move(rekeyed);
 }
 
 void ColumnList::AddColumn(ColumnDefinition column) {
@@ -152,7 +168,7 @@ LogicalIndex ColumnList::GetColumnIndex(Identifier &column_name) const {
 }
 
 ColumnList ColumnList::Copy() const {
-	ColumnList result(allow_duplicate_names);
+	ColumnList result(allow_duplicate_names, case_sensitive);
 	for (auto &col : columns) {
 		result.AddColumn(col.Copy());
 	}

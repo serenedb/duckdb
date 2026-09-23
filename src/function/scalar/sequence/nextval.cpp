@@ -88,6 +88,39 @@ void NextValFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 }
 
+void SetValFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+	if (!func_expr.BindInfo()) {
+		ConstantVector::SetNull(result, count_t(args.size()));
+		return;
+	}
+	auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<NextValLocalState>();
+	UnifiedVectorFormat values;
+	args.data[1].ToUnifiedFormat(args.size(), values);
+	UnifiedVectorFormat called;
+	if (args.ColumnCount() > 2) {
+		args.data[2].ToUnifiedFormat(args.size(), called);
+	}
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	auto result_data = FlatVector::Writer<int64_t>(result, args.size());
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto value_idx = values.sel->get_index(i);
+		if (!values.validity.RowIsValid(value_idx)) {
+			result_data.WriteNull();
+			continue;
+		}
+		bool is_called = true;
+		if (args.ColumnCount() > 2) {
+			auto called_idx = called.sel->get_index(i);
+			if (called.validity.RowIsValid(called_idx)) {
+				is_called = UnifiedVectorFormat::GetData<bool>(called)[called_idx];
+			}
+		}
+		auto value = UnifiedVectorFormat::GetData<int64_t>(values)[value_idx];
+		result_data.WriteValue(lstate.sequence.SetValue(lstate.transaction, value, is_called));
+	}
+}
+
 unique_ptr<FunctionData> NextValBind(BindScalarFunctionInput &input) {
 	auto &arguments = input.GetArguments();
 
@@ -147,6 +180,24 @@ ScalarFunction NextvalFun::GetFunction() {
 	next_val.SetVolatile();
 	next_val.SetFallible();
 	return next_val;
+}
+
+ScalarFunctionSet SetvalFun::GetFunctions() {
+	ScalarFunctionSet set_val("setval");
+	for (auto &arguments :
+	     vector<vector<LogicalType>> {{LogicalType::VARCHAR, LogicalType::BIGINT},
+	                                  {LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BOOLEAN}}) {
+		ScalarFunction function(arguments, LogicalType::BIGINT, SetValFunction, nullptr, nullptr);
+		function.SetBindCallback(NextValBind);
+		function.SetSerializeCallback(Serialize);
+		function.SetDeserializeCallback(Deserialize);
+		function.SetModifiedDatabasesCallback(NextValModifiedDatabases);
+		function.SetInitStateCallback(NextValLocalFunction);
+		function.SetVolatile();
+		function.SetFallible();
+		set_val.AddFunction(std::move(function));
+	}
+	return set_val;
 }
 
 ScalarFunction CurrvalFun::GetFunction() {

@@ -1,3 +1,4 @@
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
@@ -19,7 +20,11 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/create_trigger_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
@@ -253,6 +258,18 @@ protected:
 
 	void ReplayCreateTrigger();
 	void ReplayDropTrigger();
+
+	void ReplayCreateTokenizer();
+	void ReplayDropTokenizer();
+
+	void ReplayCreateRole();
+	void ReplayDropRole();
+
+	void ReplayCreateDatabase();
+	void ReplayDropDatabase();
+
+	void ReplayCreateForeignServer();
+	void ReplayDropForeignServer();
 
 	void ReplayUseTable();
 	void ReplayInsert();
@@ -669,6 +686,30 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::DROP_TRIGGER:
 		ReplayDropTrigger();
 		break;
+	case WALType::CREATE_TOKENIZER:
+		ReplayCreateTokenizer();
+		break;
+	case WALType::DROP_TOKENIZER:
+		ReplayDropTokenizer();
+		break;
+	case WALType::CREATE_ROLE:
+		ReplayCreateRole();
+		break;
+	case WALType::DROP_ROLE:
+		ReplayDropRole();
+		break;
+	case WALType::CREATE_DATABASE:
+		ReplayCreateDatabase();
+		break;
+	case WALType::DROP_DATABASE:
+		ReplayDropDatabase();
+		break;
+	case WALType::CREATE_FOREIGN_SERVER:
+		ReplayCreateForeignServer();
+		break;
+	case WALType::DROP_FOREIGN_SERVER:
+		ReplayDropForeignServer();
+		break;
 	default:
 		throw InternalException("Invalid WAL entry type!");
 	}
@@ -746,8 +787,9 @@ void WriteAheadLogDeserializer::ReplayCreateTable() {
 
 void WriteAheadLogDeserializer::ReplayDropTable() {
 	DropInfo info;
-
 	info.type = CatalogType::TABLE_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -775,7 +817,7 @@ void ReplayWithoutIndex(ClientContext &context, Catalog &catalog, AlterInfo &inf
 }
 
 void WriteAheadLogDeserializer::ReplayIndexData(IndexStorageInfo &info) {
-	D_ASSERT(info.IsValid() && !info.name.empty());
+	D_ASSERT(!info.name.empty());
 
 	auto &single_file_sm = db.GetStorageManager().Cast<SingleFileStorageManager>();
 	auto &block_manager = single_file_sm.block_manager;
@@ -808,7 +850,7 @@ void WriteAheadLogDeserializer::ReplayAlter() {
 	auto info = deserializer.ReadProperty<unique_ptr<ParseInfo>>(101, "info");
 	auto &alter_info = info->Cast<AlterInfo>();
 	alter_info.bind_mode = AlterBindMode::SKIP_BINDING;
-	if (!alter_info.IsAddPrimaryKey()) {
+	if (!alter_info.IsAddUniqueConstraint()) {
 		return ReplayWithoutIndex(context, catalog, alter_info, DeserializeOnly());
 	}
 
@@ -860,7 +902,8 @@ void WriteAheadLogDeserializer::ReplayAlter() {
 	}
 
 	auto &storage = table.GetStorage();
-	CreateIndexInput input(context, TableIOManager::Get(storage), storage.db, IndexConstraintType::PRIMARY,
+	CreateIndexInput input(context, TableIOManager::Get(storage), storage.db,
+	                       unique_info.IsPrimaryKey() ? IndexConstraintType::PRIMARY : IndexConstraintType::UNIQUE,
 	                       index_storage_info.name, column_ids, unbound_expressions, index_storage_info,
 	                       index_storage_info.options);
 
@@ -888,6 +931,8 @@ void WriteAheadLogDeserializer::ReplayCreateView() {
 void WriteAheadLogDeserializer::ReplayDropView() {
 	DropInfo info;
 	info.type = CatalogType::VIEW_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -901,19 +946,19 @@ void WriteAheadLogDeserializer::ReplayDropView() {
 // Replay Schema
 //===--------------------------------------------------------------------===//
 void WriteAheadLogDeserializer::ReplayCreateSchema() {
-	CreateSchemaInfo info;
-	info.SetQualifiedName(QualifiedName({Identifier(deserializer.ReadProperty<string>(101, "schema"))}, Identifier()));
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "schema");
 	if (DeserializeOnly()) {
 		return;
 	}
 
-	catalog.CreateSchema(context, info);
+	catalog.CreateSchema(context, info->Cast<CreateSchemaInfo>());
 }
 
 void WriteAheadLogDeserializer::ReplayDropSchema() {
 	DropInfo info;
-
 	info.type = CatalogType::SCHEMA_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	info.SetName(Identifier(deserializer.ReadProperty<string>(101, "schema")));
 	if (DeserializeOnly()) {
 		return;
@@ -927,14 +972,18 @@ void WriteAheadLogDeserializer::ReplayDropSchema() {
 //===--------------------------------------------------------------------===//
 void WriteAheadLogDeserializer::ReplayCreateType() {
 	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "type");
+	if (DeserializeOnly()) {
+		return;
+	}
 	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	catalog.CreateType(context, info->Cast<CreateTypeInfo>());
 }
 
 void WriteAheadLogDeserializer::ReplayDropType() {
 	DropInfo info;
-
 	info.type = CatalogType::TYPE_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -958,9 +1007,8 @@ void WriteAheadLogDeserializer::ReplayCreateTrigger() {
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, QualifiedName(trigger_info.GetQualifiedName().Catalog(),
 	                                                                          trigger_info.GetQualifiedName().Schema(),
 	                                                                          trigger_info.base_table->Table()));
-	auto &duck_table = table.Cast<DuckTableEntry>();
 	auto transaction = catalog.GetCatalogTransaction(context);
-	duck_table.CreateTrigger(transaction, trigger_info);
+	table.CreateTrigger(transaction, trigger_info);
 }
 
 void WriteAheadLogDeserializer::ReplayDropTrigger() {
@@ -979,9 +1027,93 @@ void WriteAheadLogDeserializer::ReplayDropTrigger() {
 	}
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(
 	    context, QualifiedName(catalog.GetName(), info.GetQualifiedName().Schema(), table_name));
-	auto &duck_table = table.Cast<DuckTableEntry>();
 	auto transaction = catalog.GetCatalogTransaction(context);
-	duck_table.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade);
+	table.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateTokenizer() {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "tokenizer");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	auto &schema = catalog.GetSchema(context, info->GetQualifiedName().Schema());
+	schema.Cast<DuckSchemaEntry>().CreateTokenizer(catalog.GetCatalogTransaction(context),
+	                                               info->Cast<CreateTokenizerInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropTokenizer() {
+	DropInfo info;
+	info.type = CatalogType::TOKENIZER_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
+	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
+	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
+	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
+	if (DeserializeOnly()) {
+		return;
+	}
+
+	catalog.DropEntry(context, info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateRole() {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "role");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().CreateRole(catalog.GetCatalogTransaction(context), info->Cast<CreateRoleInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropRole() {
+	DropInfo info;
+	info.type = CatalogType::ROLE_ENTRY;
+	info.SetName(Identifier(deserializer.ReadProperty<string>(101, "name")));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DropRole(catalog.GetCatalogTransaction(context), info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateDatabase() {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "database");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().CreateDatabase(catalog.GetCatalogTransaction(context),
+	                                           info->Cast<CreateDatabaseInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropDatabase() {
+	DropInfo info;
+	info.type = CatalogType::DATABASE_ENTRY;
+	info.SetName(Identifier(deserializer.ReadProperty<string>(101, "name")));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DropDatabase(catalog.GetCatalogTransaction(context), info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateForeignServer() {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "server");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().CreateForeignServer(catalog.GetCatalogTransaction(context),
+	                                                info->Cast<CreateForeignServerInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropForeignServer() {
+	DropInfo info;
+	info.type = CatalogType::FOREIGN_SERVER_ENTRY;
+	info.SetName(Identifier(deserializer.ReadProperty<string>(101, "name")));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DropForeignServer(catalog.GetCatalogTransaction(context), info);
 }
 
 //===--------------------------------------------------------------------===//
@@ -999,6 +1131,8 @@ void WriteAheadLogDeserializer::ReplayCreateSequence() {
 void WriteAheadLogDeserializer::ReplayDropSequence() {
 	DropInfo info;
 	info.type = CatalogType::SEQUENCE_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -1041,6 +1175,8 @@ void WriteAheadLogDeserializer::ReplayCreateMacro() {
 void WriteAheadLogDeserializer::ReplayDropMacro() {
 	DropInfo info;
 	info.type = CatalogType::MACRO_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -1065,6 +1201,8 @@ void WriteAheadLogDeserializer::ReplayCreateTableMacro() {
 void WriteAheadLogDeserializer::ReplayDropTableMacro() {
 	DropInfo info;
 	info.type = CatalogType::TABLE_MACRO_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
@@ -1096,14 +1234,17 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 	const auto schema_name = create_info->GetQualifiedName().Schema();
 	const auto table_name = info.table;
 
-	auto &entry =
-	    catalog.GetEntry<TableCatalogEntry>(context, QualifiedName(catalog.GetName(), schema_name, table_name));
-	auto &table = entry.Cast<DuckTableEntry>();
+	auto &relation = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, schema_name, table_name);
+	if (relation.type != CatalogType::TABLE_ENTRY || !relation.Cast<TableCatalogEntry>().IsDuckTable()) {
+		catalog.GetSchema(context, schema_name).CreateIndex(context, info, relation);
+		return;
+	}
+	auto &table = relation.Cast<DuckTableEntry>();
 	auto &storage = table.GetStorage();
 	auto &io_manager = TableIOManager::Get(storage);
 
 	// Create the index in the catalog.
-	table.schema.CreateIndex(context, info, table);
+	table.ParentSchema(context).CreateIndex(context, info, table);
 
 	// add the index to the storage
 	auto unbound_index = make_uniq<UnboundIndex>(std::move(create_info), std::move(index_info), io_manager, db);
@@ -1115,6 +1256,8 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 void WriteAheadLogDeserializer::ReplayDropIndex() {
 	DropInfo info;
 	info.type = CatalogType::INDEX_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));

@@ -49,6 +49,7 @@ public:
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;
+	unique_ptr<AlterInfo> GetAlterInfo() const override;
 
 	//! Gets a bound CreateViewInfo object from a SELECT statement and a view name, schema name, etc
 	DUCKDB_API static unique_ptr<CreateViewInfo> FromSelect(ClientContext &context, unique_ptr<CreateViewInfo> info);

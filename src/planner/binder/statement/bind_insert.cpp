@@ -77,6 +77,7 @@ void Binder::ExpandDefaultInValuesList(InsertQueryNode &node, TableCatalogEntry 
 	auto &expr_list = values_list->Cast<ExpressionListRef>();
 	expr_list.expected_types.resize(expected_columns);
 	expr_list.expected_names.resize(expected_columns);
+	expr_list.case_sensitive_names = table.GetColumns().IsCaseSensitive();
 
 	D_ASSERT(!expr_list.values.empty());
 	CheckInsertColumnCountMismatch(expected_columns, expr_list.values[0].size(), !node.columns.empty(), table.name);
@@ -125,7 +126,7 @@ void Binder::ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<uniq
 	}
 	auto column_index = GenerateTableIndex();
 	auto generated_binder = Binder::CreateBinder(context, this);
-	generated_binder->bind_context.AddGenericBinding(column_index, table.name, names, types);
+	generated_binder->bind_context.AddGenericBinding(column_index, table.name, names, types, columns.IsCaseSensitive());
 	ExpressionBinder generated_expr_binder(*generated_binder, context);
 	idx_t pos = 0;
 	for (auto &col : columns.Physical()) {
@@ -347,7 +348,9 @@ void Binder::BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &
 		// insertion statement specifies column list
 
 		// create a mapping of (list index) -> (column index)
-		identifier_map_t<idx_t> column_name_map;
+		const auto case_sensitive = table.GetColumns().IsCaseSensitive();
+		identifier_map_t<idx_t> column_name_map(0, IdentifierHashFunction(case_sensitive),
+		                                        IdentifierEquality(case_sensitive));
 		for (idx_t i = 0; i < columns.size(); i++) {
 			auto entry = column_name_map.insert(make_pair(columns[i], i));
 			if (!entry.second) {
@@ -689,7 +692,6 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		// inserting into a non-temporary table: alters underlying database
 		DatabaseModificationType modification_type = DatabaseModificationType::INSERT_DATA;
 		GetStatementProperties().RegisterDBModify(table.GetStorageCatalog(context), context, modification_type);
-		GetStatementProperties().RegisterDBRead(table.ParentCatalog(), context);
 	}
 
 	auto insert = make_uniq<LogicalInsert>(table, GenerateTableIndex());
@@ -722,17 +724,6 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	BindInsertColumnList(table, node.columns, node.default_values, named_column_map, insert->expected_types,
 	                     column_index_map);
 
-	// Record the INSERT access (verb + written columns) for the access-control
-	// rule. named_column_map holds the logical positions the insert targets
-	// (the explicit column list, or every physical column when none is given).
-	{
-		auto &access = RecordAccess(insert->table_index.index, table);
-		access.verb |= AccessVerb::INSERT;
-		for (auto &col_idx : named_column_map) {
-			access.write.insert(col_idx.index);
-		}
-	}
-
 	// An INSERT ... SELECT supplies a value for every targeted column, so naming a
 	// generated column there is not allowed -- a generated column only accepts
 	// DEFAULT (handled by the VALUES binder). Matches PostgreSQL. A VALUES insert
@@ -748,7 +739,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 
 	// bind the default values
 	auto &catalog_name = table.ParentCatalog().GetName();
-	auto &schema_name = table.ParentSchema().name;
+	auto schema_name = table.ParentSchema(context).name;
 	BindDefaultValues(table.GetColumns(), insert->bound_defaults, catalog_name.GetIdentifierName(),
 	                  schema_name.GetIdentifierName());
 	insert->bound_constraints = BindConstraints(table);

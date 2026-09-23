@@ -23,6 +23,7 @@ struct ConstraintColumnDefinition {
 	bool has_explicit_null = false;
 	bool has_not_null = false;
 	bool has_primary_key = false;
+	bool serial = false;
 	// PG-compat: column declared DEFAULT more than once. Surfaced by the
 	// CreateTable transformer (which knows the table name).
 	bool has_duplicate_default = false;

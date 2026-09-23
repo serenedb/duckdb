@@ -145,21 +145,43 @@ inline string &operator+=(string &a, const Identifier &b) {
 }
 
 struct IdentifierHashFunction {
-	uint64_t operator()(const Identifier &id) const {
-		return id.Hash();
+	IdentifierHashFunction() = default;
+	explicit IdentifierHashFunction(bool case_sensitive_p) : case_sensitive(case_sensitive_p) {
 	}
+
+	DUCKDB_API uint64_t operator()(const Identifier &id) const;
+
+	bool case_sensitive = false;
 };
 
 struct IdentifierEquality {
+	IdentifierEquality() = default;
+	explicit IdentifierEquality(bool case_sensitive_p) : case_sensitive(case_sensitive_p) {
+	}
+
 	bool operator()(const Identifier &a, const Identifier &b) const {
+		if (case_sensitive) {
+			return a.GetIdentifierName() == b.GetIdentifierName();
+		}
 		return a == b;
 	}
+
+	bool case_sensitive = false;
 };
 
 struct IdentifierCompare {
+	IdentifierCompare() = default;
+	explicit IdentifierCompare(bool case_sensitive_p) : case_sensitive(case_sensitive_p) {
+	}
+
 	bool operator()(const Identifier &a, const Identifier &b) const {
+		if (case_sensitive) {
+			return a.GetIdentifierName() < b.GetIdentifierName();
+		}
 		return a < b;
 	}
+
+	bool case_sensitive = false;
 };
 
 template <typename T>

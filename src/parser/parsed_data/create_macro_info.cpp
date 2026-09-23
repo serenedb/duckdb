@@ -1,6 +1,7 @@
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
 namespace duckdb {
 
@@ -38,6 +39,10 @@ unique_ptr<CreateInfo> CreateMacroInfo::Copy() const {
 	result->is_procedure = is_procedure;
 	CopyFunctionProperties(*result);
 	return std::move(result);
+}
+
+unique_ptr<AlterInfo> CreateMacroInfo::GetAlterInfo() const {
+	return make_uniq_base<AlterInfo, ReplaceDefinitionInfo>(Copy());
 }
 
 vector<unique_ptr<MacroFunction>> CreateMacroInfo::GetAllButFirstFunction() const {

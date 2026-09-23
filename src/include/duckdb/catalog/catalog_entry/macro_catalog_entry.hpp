@@ -28,6 +28,7 @@ public:
 
 public:
 	unique_ptr<CreateInfo> GetInfo() const override;
+	unique_ptr<CatalogEntry> AlterEntry(CatalogTransaction transaction, AlterInfo &info) override;
 
 	string ToSQL() const override;
 };

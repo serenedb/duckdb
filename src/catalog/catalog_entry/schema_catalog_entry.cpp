@@ -10,11 +10,16 @@
 
 namespace duckdb {
 
-SchemaCatalogEntry::SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info)
-    : InCatalogEntry(CatalogType::SCHEMA_ENTRY, catalog, info.GetQualifiedName().Schema()) {
+SchemaCatalogEntry::SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<SchemaInfo> schema_info_p)
+    : InCatalogEntry(CatalogType::SCHEMA_ENTRY, catalog, info.GetQualifiedName().Schema(), info.oid),
+      schema_info(std::move(schema_info_p)) {
 	this->internal = info.internal;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
+	if (!schema_info) {
+		schema_info = make_shared_ptr<SchemaInfo>(oid, name);
+	}
 }
 
 CatalogTransaction SchemaCatalogEntry::GetCatalogTransaction(ClientContext &context) {
@@ -24,6 +29,19 @@ CatalogTransaction SchemaCatalogEntry::GetCatalogTransaction(ClientContext &cont
 optional_ptr<CatalogEntry> SchemaCatalogEntry::CreateIndex(ClientContext &context, CreateIndexInfo &info,
                                                            TableCatalogEntry &table) {
 	return CreateIndex(GetCatalogTransaction(context), info, table);
+}
+
+optional_ptr<CatalogEntry> SchemaCatalogEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
+                                                           CatalogEntry &relation) {
+	if (relation.type != CatalogType::TABLE_ENTRY) {
+		throw NotImplementedException("CREATE INDEX on a %s is not supported", CatalogTypeToString(relation.type));
+	}
+	return CreateIndex(transaction, info, relation.Cast<TableCatalogEntry>());
+}
+
+optional_ptr<CatalogEntry> SchemaCatalogEntry::CreateIndex(ClientContext &context, CreateIndexInfo &info,
+                                                           CatalogEntry &relation) {
+	return CreateIndex(GetCatalogTransaction(context), info, relation);
 }
 
 SimilarCatalogEntry SchemaCatalogEntry::GetSimilarEntry(CatalogTransaction transaction,
@@ -64,6 +82,7 @@ unique_ptr<CreateInfo> SchemaCatalogEntry::GetInfo() const {
 	result->SetQualifiedName(QualifiedName({name}, Identifier()));
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	return std::move(result);
 }
 
