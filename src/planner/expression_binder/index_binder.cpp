@@ -13,6 +13,7 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/planner/operator/logical_create_index.hpp"
+#include "duckdb/planner/operator/logical_filter.hpp"
 
 namespace duckdb {
 
@@ -37,10 +38,16 @@ unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index)
 
 	// bind the parsed expressions to create unbound expressions
 	vector<unique_ptr<Expression>> unbound_expressions;
-	unbound_expressions.reserve(parsed_expressions.size());
+	unbound_expressions.reserve(parsed_expressions.size() + 1);
 	for (auto &expr : parsed_expressions) {
 		auto copy = expr->Copy();
 		unbound_expressions.push_back(Bind(copy));
+	}
+	if (create_info.where_clause) {
+		IndexBinder where_binder(binder, context, table, info);
+		where_binder.target_type = LogicalType::BOOLEAN;
+		auto where_copy = create_info.where_clause->Copy();
+		unbound_expressions.push_back(where_binder.Bind(where_copy));
 	}
 
 	CreateIndexInput input(context, unbound_index.table_io_manager, unbound_index.db, create_info.constraint_type,
@@ -81,18 +88,29 @@ unique_ptr<LogicalOperator> IndexBinder::BindCreateIndex(ClientContext &context,
 	// Add the dependencies.
 	auto &dependencies = create_index_info->dependencies;
 	auto &catalog = table_entry.ParentCatalog();
-	SetCatalogLookupCallback([&dependencies, &catalog](CatalogEntry &entry) {
+	catalog_entry_callback_t lookup_callback = [&dependencies, &catalog](CatalogEntry &entry) {
 		if (&catalog != &entry.ParentCatalog()) {
 			return;
 		}
 		// indexes do not require CASCADE to be dropped, they are simply always dropped along with the table
 		dependencies.AddDependency(entry, DependencyDependentFlags());
-	});
+	};
+	SetCatalogLookupCallback(lookup_callback);
 
 	// Bind the index expressions.
 	vector<unique_ptr<Expression>> expressions;
 	for (auto &expr : create_index_info->expressions) {
 		expressions.push_back(Bind(expr));
+	}
+
+	unique_ptr<Expression> bound_where;
+	if (create_index_info->where_clause) {
+		IndexBinder where_binder(binder, context, table, info);
+		where_binder.target_type = LogicalType::BOOLEAN;
+		where_binder.SetCatalogLookupCallback(lookup_callback);
+		auto where_copy = create_index_info->where_clause->Copy();
+		bound_where = where_binder.Bind(where_copy);
+		expressions.push_back(bound_where->Copy());
 	}
 
 	auto &get = plan->Cast<LogicalGet>();
@@ -112,6 +130,11 @@ unique_ptr<LogicalOperator> IndexBinder::BindCreateIndex(ClientContext &context,
 
 	auto result = make_uniq<LogicalCreateIndex>(std::move(create_index_info), std::move(expressions), table_entry,
 	                                            std::move(alter_table_info));
+	if (bound_where) {
+		auto filter = make_uniq<LogicalFilter>(std::move(bound_where));
+		filter->AddChild(std::move(plan));
+		plan = std::move(filter);
+	}
 	result->children.push_back(std::move(plan));
 	return std::move(result);
 }
