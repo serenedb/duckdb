@@ -18,6 +18,7 @@
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/transaction/local_storage.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/parser/constraints/check_constraint.hpp"
@@ -507,6 +508,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddColumn(ClientContext &context, AddCo
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->dependencies = dependencies;
 	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	for (auto &col : columns.Logical()) {
@@ -726,13 +728,11 @@ void DuckTableEntry::UpdateConstraintsOnColumnDrop(const LogicalIndex &removed_i
 			}
 			auto physical_index = columns.LogicalToPhysical(removed_index);
 			if (bound_check.bound_columns.find(physical_index) != bound_check.bound_columns.end()) {
-				if (bound_check.bound_columns.size() > 1) {
-					// CHECK constraint that concerns mult
+				const bool drop_shared_checks = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+				if (bound_check.bound_columns.size() > 1 && !drop_shared_checks) {
 					throw CatalogException(
 					    "Cannot drop column %s because there is a CHECK constraint that depends on it",
 					    info.removed_column);
-				} else {
-					// CHECK constraint that ONLY concerns this column, strip the constraint
 				}
 			} else {
 				// check constraint does not concern the removed column: simply re-add it
@@ -805,6 +805,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->dependencies = dependencies;
 	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	logical_index_set_t removed_columns;
@@ -824,7 +825,8 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 		}
 		create_info->columns.AddColumn(col.Copy());
 	}
-	if (create_info->columns.empty()) {
+	const bool allow_zero_columns = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (create_info->columns.empty() && !allow_zero_columns) {
 		throw CatalogException("Cannot drop column: table only has one column remaining!");
 	}
 	auto adjusted_indices = column_dependency_manager.RemoveColumn(removed_index, columns.LogicalColumnCount());
@@ -839,6 +841,20 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	SetAlterDependencies(*bound_create_info, info);
 	if (columns.GetColumn(LogicalIndex(removed_index)).Generated()) {
 		return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+	}
+	const bool cascade_drops_column_dependents = info.cascade && catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (cascade_drops_column_dependents) {
+		auto transaction = catalog.GetCatalogTransaction(context);
+		SubDependency removed {AlterTableType::REMOVE_COLUMN, info.removed_column};
+		for (auto &entry : catalog.GetDependencyManager()->CheckDropDependencies(transaction, *this, true)) {
+			auto &dependent = entry.first.get();
+			const bool plain_index =
+			    dependent.type != CatalogType::INDEX_ENTRY ||
+			    dependent.Cast<IndexCatalogEntry>().index_constraint_type == IndexConstraintType::NONE;
+			if (plain_index && entry.second.contains(removed)) {
+				dependent.set->DropEntry(transaction, dependent.name, true);
+			}
+		}
 	}
 	auto new_storage =
 	    make_shared_ptr<DataTable>(context, *storage, columns.LogicalToPhysical(LogicalIndex(removed_index)).index);
@@ -1244,6 +1260,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->dependencies = dependencies;
 	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	// Bind the USING expression.
@@ -1378,6 +1395,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddForeignKeyConstraint(CatalogTransact
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->dependencies = dependencies;
 
 	create_info->columns = columns.Copy();
 	for (idx_t i = 0; i < constraints.size(); i++) {
@@ -1404,6 +1422,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropForeignKeyConstraint(ClientContext 
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->dependencies = dependencies;
 
 	create_info->columns = columns.Copy();
 	for (idx_t i = 0; i < constraints.size(); i++) {

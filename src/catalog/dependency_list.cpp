@@ -87,6 +87,7 @@ void LogicalDependencyList::AddDependency(const LogicalDependency &entry) {
 	// Merge flags instead of discarding the new ones - the same subject can be depended on for multiple reasons
 	auto merged = *it;
 	merged.flags.Apply(entry.flags);
+	merged.subdependencies.insert(entry.subdependencies.begin(), entry.subdependencies.end());
 	set.erase(it);
 	set.insert(std::move(merged));
 }

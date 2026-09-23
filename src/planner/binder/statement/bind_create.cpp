@@ -43,6 +43,7 @@
 #include "duckdb/planner/expression_binder/select_binder.hpp"
 #include "duckdb/planner/operator/logical_create.hpp"
 #include "duckdb/planner/operator/logical_create_table.hpp"
+#include "duckdb/planner/logical_operator_visitor.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
@@ -340,6 +341,33 @@ void Binder::SetCatalogLookupCallback(catalog_entry_callback_t callback) {
 	entry_retriever.SetCallback(std::move(callback));
 }
 
+class ViewColumnDependencies : public LogicalOperatorVisitor {
+public:
+	ViewColumnDependencies(Catalog &catalog, LogicalDependencyList &dependencies)
+	    : catalog(catalog), dependencies(dependencies) {
+	}
+
+	void VisitOperator(LogicalOperator &op) override {
+		if (op.type == LogicalOperatorType::LOGICAL_GET) {
+			auto &get = op.Cast<LogicalGet>();
+			auto table = get.GetTable();
+			if (table && &table->ParentCatalog() == &catalog) {
+				LogicalDependency dependency(*table);
+				for (auto &column : get.GetColumnIds()) {
+					dependency.subdependencies.insert(
+					    SubDependency {AlterTableType::REMOVE_COLUMN, table->GetColumn(column.ToLogical()).Name()});
+				}
+				dependencies.AddDependency(dependency);
+			}
+		}
+		VisitOperatorChildren(op);
+	}
+
+private:
+	Catalog &catalog;
+	LogicalDependencyList &dependencies;
+};
+
 void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const Identifier &catalog_name,
                       const Identifier &schema_name, optional_ptr<LogicalDependencyList> dependencies,
                       const vector<Identifier> &aliases, vector<LogicalType> &result_types,
@@ -363,6 +391,10 @@ void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const
 
 	auto copy = stmt.Copy();
 	auto query_node = view_binder->Bind(*copy);
+	const bool views_depend_on_columns = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (dependencies && views_depend_on_columns) {
+		ViewColumnDependencies(catalog, *dependencies).VisitOperator(*query_node.plan);
+	}
 	if (aliases.size() > query_node.names.size()) {
 		throw BinderException("More VIEW aliases than columns in query result");
 	}
@@ -511,6 +543,20 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			default_values[param_name] = std::move(default_val);
 		}
 
+		auto &dependencies = base.dependencies;
+		const auto should_create_dependencies = Settings::Get<EnableMacroDependenciesSetting>(context);
+		const auto binder_callback = [&dependencies, &catalog](CatalogEntry &entry) {
+			if (&catalog != &entry.ParentCatalog()) {
+				// Don't register any cross-catalog dependencies
+				return;
+			}
+			// Register any catalog entry required to bind the macro function
+			dependencies.AddDependency(entry);
+		};
+		if (should_create_dependencies) {
+			SetCatalogLookupCallback(binder_callback);
+		}
+
 		// Resolve any user type arguments
 		for (idx_t param_idx = 0; param_idx < function->types.size(); param_idx++) {
 			auto &type = function->types[param_idx];
@@ -554,17 +600,6 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		auto this_macro_binding =
 		    make_uniq<DummyBinding>(dummy_types, dummy_names, base.GetFunctionName().GetIdentifierName());
 		macro_binding = this_macro_binding.get();
-
-		auto &dependencies = base.dependencies;
-		const auto should_create_dependencies = Settings::Get<EnableMacroDependenciesSetting>(context);
-		const auto binder_callback = [&dependencies, &catalog](CatalogEntry &entry) {
-			if (&catalog != &entry.ParentCatalog()) {
-				// Don't register any cross-catalog dependencies
-				return;
-			}
-			// Register any catalog entry required to bind the macro function
-			dependencies.AddDependency(entry);
-		};
 
 		// bind it to verify the function was defined correctly
 		ErrorData error;
@@ -685,6 +720,9 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			    });
 			try {
 				auto bound = dummy_binder->Bind(*query_node);
+				if (should_create_dependencies && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+					ViewColumnDependencies(catalog, dependencies).VisitOperator(*bound.plan);
+				}
 
 				// Validate declared return types against actual query output.
 				auto &declared = function->return_types;

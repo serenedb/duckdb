@@ -29,6 +29,7 @@ public:
 	Identifier catalog;
 	//! Whether this dependency is automatically satisfied and must never block a DROP/ALTER of the entry it depends on
 	DependencyDependentFlags flags = DependencyDependentFlags().SetBlocking();
+	subdependency_set_t subdependencies;
 
 public:
 	explicit LogicalDependency(CatalogEntry &entry);

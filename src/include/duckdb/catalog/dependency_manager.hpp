@@ -38,6 +38,7 @@ struct DependencyDependent {
 	CatalogEntryInfo entry;
 	//! The type of dependency this is (e.g, blocking, non-blocking, ownership)
 	DependencyDependentFlags flags;
+	subdependency_set_t subdependencies;
 };
 
 //! Every dependency consists of a subject (the entry being depended on) and a dependent (the entry that has the
@@ -112,7 +113,8 @@ private:
 	//! Look up a trigger dependency through the table it is defined on
 	optional_ptr<CatalogEntry> LookupTrigger(CatalogTransaction transaction, SchemaCatalogEntry &schema_entry,
 	                                         const CatalogEntryInfo &info);
-	string CollectDependents(CatalogTransaction transaction, catalog_entry_set_t &entries, CatalogEntryInfo &info);
+	string CollectDependents(CatalogTransaction transaction, catalog_entry_set_t &entries, CatalogEntryInfo &info,
+	                         catalog_entry_set_t &listed);
 	void CleanupDependencies(CatalogTransaction transaction, CatalogEntry &entry);
 
 public:
@@ -128,6 +130,9 @@ public:
 	//! empty path (the entry lives in the catalog root) or if a schema along the path does not exist.
 	optional_ptr<SchemaCatalogEntry> NavigateSchemaPath(CatalogTransaction transaction,
 	                                                    const vector<Identifier> &schema_path);
+	//! Returns the objects that should be dropped alongside the object
+	catalog_entry_map_t<subdependency_set_t> CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object,
+	                                                               bool cascade);
 
 private:
 	void ReorderEntry(CatalogTransaction transaction, CatalogEntry &entry, catalog_entry_set_t &visited,
@@ -136,8 +141,8 @@ private:
 	void AddObject(CatalogTransaction transaction, CatalogEntry &object, const LogicalDependencyList &dependencies);
 	void VerifyExistence(CatalogTransaction transaction, DependencyEntry &object);
 	void VerifyCommitDrop(CatalogTransaction transaction, VisibilityBound visibility_bound, CatalogEntry &object);
-	//! Returns the objects that should be dropped alongside the object
-	catalog_entry_set_t CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object, bool cascade);
+	void DropSubDependencies(CatalogTransaction transaction, CatalogEntry &table,
+	                         const subdependency_set_t &subdependencies);
 	void DropObject(CatalogTransaction transaction, CatalogEntry &object, bool cascade);
 	void AlterObject(CatalogTransaction transaction, CatalogEntry &old_obj, CatalogEntry &new_obj, AlterInfo &info);
 	void RenameSchema(CatalogTransaction transaction, CatalogEntry &old_schema, CatalogEntry &new_schema);

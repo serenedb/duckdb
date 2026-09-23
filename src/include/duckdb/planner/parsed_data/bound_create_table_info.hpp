@@ -36,6 +36,7 @@ struct BoundCreateTableInfo {
 	ColumnDependencyManager column_dependency_manager;
 	//! List of constraints on the table
 	vector<unique_ptr<Constraint>> constraints;
+	SubDependency subdependency;
 	//! The existing table data on disk (if any)
 	unique_ptr<PersistentTableData> data;
 	//! CREATE TABLE from QUERY
@@ -47,6 +48,7 @@ struct BoundCreateTableInfo {
 		D_ASSERT(base);
 		return base->Cast<CreateTableInfo>();
 	}
+	void AddSubDependency(AlterTableType alter, const Identifier &name);
 };
 
 } // namespace duckdb
