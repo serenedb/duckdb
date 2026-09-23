@@ -14,7 +14,12 @@
 
 namespace duckdb {
 
-enum class AlterSchemaType : uint8_t { INVALID = 0, SET_SCHEMA_OPTIONS = 1, RESET_SCHEMA_OPTIONS = 2 };
+enum class AlterSchemaType : uint8_t {
+	INVALID = 0,
+	SET_SCHEMA_OPTIONS = 1,
+	RESET_SCHEMA_OPTIONS = 2,
+	RENAME_SCHEMA = 200
+};
 
 //! The qualified name uses the same layout as CreateSchemaInfo: [catalog, parent_schemas..., schema, <empty name>]
 struct AlterSchemaInfo : public AlterInfo {
@@ -81,6 +86,18 @@ public:
 
 private:
 	ResetSchemaOptionsInfo();
+};
+
+struct RenameSchemaInfo : public RenameEntryInfo<RenameSchemaInfo, AlterSchemaInfo, AlterSchemaType::RENAME_SCHEMA> {
+	using RenameEntryInfo::RenameEntryInfo;
+
+public:
+	string ToString() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterSchemaInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	RenameSchemaInfo() = default;
 };
 
 } // namespace duckdb

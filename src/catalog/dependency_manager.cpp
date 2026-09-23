@@ -555,6 +555,86 @@ string DependencyManager::CollectDependents(CatalogTransaction transaction, cata
 	return result;
 }
 
+void DependencyManager::RenameSchema(CatalogTransaction transaction, CatalogEntry &old_schema,
+                                     CatalogEntry &new_schema) {
+	auto old_info = GetLookupProperties(old_schema);
+	auto new_info = GetLookupProperties(new_schema);
+	IdentifierEquality equals(catalog.IsCaseSensitive());
+	auto old_path = old_info.schema_path;
+	old_path.push_back(old_info.name);
+	auto same_path = [&](const vector<Identifier> &path, const vector<Identifier> &prefix, idx_t count) {
+		if (path.size() < count) {
+			return false;
+		}
+		for (idx_t i = 0; i < count; i++) {
+			if (!equals(path[i], prefix[i])) {
+				return false;
+			}
+		}
+		return true;
+	};
+
+	vector<DependencyInfo> edges;
+	unordered_set<string> seen;
+	auto collect = [&](DependencyInfo edge) {
+		auto key = MangleName(edge.dependent.entry).name.GetIdentifierName() + '\0' +
+		           MangleName(edge.subject.entry).name.GetIdentifierName();
+		if (seen.insert(key).second) {
+			edges.push_back(std::move(edge));
+		}
+	};
+	string blockers;
+	vector<CatalogEntryInfo> schemas {old_info};
+	for (idx_t schema_idx = 0; schema_idx < schemas.size(); schema_idx++) {
+		vector<CatalogEntryInfo> children;
+		ScanDependents(transaction, schemas[schema_idx],
+		               [&](DependencyEntry &dep) { children.push_back(dep.EntryInfo()); });
+		for (auto &child : children) {
+			ScanSubjects(transaction, child, [&](DependencyEntry &dep) { collect(DependencyInfo::FromSubject(dep)); });
+			if (child.type == CatalogType::SCHEMA_ENTRY) {
+				schemas.push_back(child);
+				continue;
+			}
+			ScanDependents(transaction, child, [&](DependencyEntry &dep) {
+				auto &dependent = dep.EntryInfo();
+				const bool names_by_column =
+				    dependent.type == CatalogType::TABLE_ENTRY &&
+				    dependent.schema_path.size() == child.schema_path.size() &&
+				    same_path(dependent.schema_path, child.schema_path, child.schema_path.size()) &&
+				    (child.type == CatalogType::SEQUENCE_ENTRY || child.type == CatalogType::TYPE_ENTRY);
+				if (dependent.type != CatalogType::INDEX_ENTRY && !names_by_column) {
+					blockers += DependencyToString(child, dependent);
+					return;
+				}
+				collect(DependencyInfo::FromDependent(dep));
+			});
+		}
+	}
+	if (!blockers.empty()) {
+		throw DependencyException(StringUtil::Format(
+		    "Cannot alter entry \"%s\" because there are entries that depend on it.\n%sDrop the dependent entries "
+		    "first and recreate them after the change.",
+		    old_schema.name.GetIdentifierName(), blockers));
+	}
+
+	for (auto &edge : edges) {
+		RemoveDependency(transaction, edge);
+	}
+	auto rekey = [&](CatalogEntryInfo &info) {
+		if (info.type == CatalogType::SCHEMA_ENTRY && info.schema_path.size() == old_info.schema_path.size() &&
+		    same_path(info.schema_path, old_path, old_info.schema_path.size()) && equals(info.name, old_info.name)) {
+			info = new_info;
+		} else if (same_path(info.schema_path, old_path, old_path.size())) {
+			info.schema_path[old_path.size() - 1] = new_info.name;
+		}
+	};
+	for (auto &edge : edges) {
+		rekey(edge.dependent.entry);
+		rekey(edge.subject.entry);
+		CreateDependency(transaction, edge);
+	}
+}
+
 void DependencyManager::VerifyExistence(CatalogTransaction transaction, DependencyEntry &object) {
 	auto &subject = object.Subject();
 
@@ -746,7 +826,10 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		// Don't do anything for this
 		return;
 	}
-
+	if (old_obj.type == CatalogType::SCHEMA_ENTRY && alter_info.GetNewName()) {
+		RenameSchema(transaction, old_obj, new_obj);
+		return;
+	}
 	const auto old_info = GetLookupProperties(old_obj);
 	const auto new_info = GetLookupProperties(new_obj);
 

@@ -21,6 +21,13 @@ public:
 
 	CatalogSet &GetCatalogSet(CatalogType type);
 	void Verify(Catalog &catalog);
+	template <class F>
+	void ForEachSet(F &&callback) {
+		for (auto set : {&schemas, &tables, &indexes, &table_functions, &copy_functions, &pragma_functions, &functions,
+		                 &sequences, &collations, &types, &coordinate_systems}) {
+			callback(*set);
+		}
+	}
 
 private:
 	//! The catalog set holding the nested schemas
@@ -93,6 +100,7 @@ public:
 	SimilarCatalogEntry GetSimilarEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info) override;
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
 
 	void Verify(Catalog &catalog) override;
 
@@ -101,5 +109,6 @@ public:
 
 private:
 	void OnDropEntry(CatalogTransaction transaction, CatalogEntry &entry);
+	void SetSchemaName(const Identifier &schema_name, optional_ptr<CatalogTransaction> transaction);
 };
 } // namespace duckdb

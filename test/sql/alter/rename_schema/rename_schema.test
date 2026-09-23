@@ -5,4 +5,4 @@
 statement error
 ALTER SCHEMA a RENAME TO b;
 ----
-Not implemented Error: Altering schemas is not yet supported
+Catalog Error: Schema with name a does not exist!

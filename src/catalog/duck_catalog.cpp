@@ -96,6 +96,8 @@ void DuckCatalog::AlterSchema(CatalogTransaction transaction, SchemaCatalogEntry
 		throw NotImplementedException("SET (<options>) is not supported for DuckDB schemas");
 	case AlterSchemaType::RESET_SCHEMA_OPTIONS:
 		throw NotImplementedException("RESET (<options>) is not supported for DuckDB schemas");
+	case AlterSchemaType::RENAME_SCHEMA:
+		return AlterSchemaEntry(transaction, schema, info);
 	default:
 		throw InternalException("Unrecognized alter schema type!");
 	}
@@ -136,6 +138,19 @@ void DuckCatalog::DropSchema(CatalogTransaction transaction, DropInfo &info) {
 
 void DuckCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	DropSchema(GetCatalogTransaction(context), info);
+}
+
+void DuckCatalog::AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntry &schema, AlterInfo &info) {
+	auto parent_path = schema.GetParentSchemaPath();
+	auto &set = parent_path.empty() ? *schemas
+	                                : GetSchema(transaction, parent_path, OnEntryNotFound::THROW_EXCEPTION)
+	                                      ->Cast<DuckSchemaEntry>()
+	                                      .GetCatalogSet(CatalogType::SCHEMA_ENTRY);
+	if (!set.AlterEntry(transaction, schema.name, info)) {
+		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingEntry(CatalogType::SCHEMA_ENTRY, schema.name, string());
+		}
+	}
 }
 
 void DuckCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
