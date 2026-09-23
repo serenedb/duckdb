@@ -13,7 +13,7 @@ namespace duckdb {
 constexpr const char *TypeCatalogEntry::Name;
 
 TypeCatalogEntry::TypeCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTypeInfo &info)
-    : StandardEntry(CatalogType::TYPE_ENTRY, schema, catalog, info.GetTypeName()), user_type(info.type),
+    : StandardEntry(CatalogType::TYPE_ENTRY, schema, catalog, info.GetTypeName(), info.oid), user_type(info.type),
       constructors(info.constructors) {
 	if (constructors.functions.empty()) {
 		// a type without constructors takes no modifiers and always resolves to its own type

@@ -6,8 +6,8 @@
 
 namespace duckdb {
 
-StandardEntry::StandardEntry(CatalogType type, SchemaCatalogEntry &schema, Catalog &catalog, Identifier name)
-    : InCatalogEntry(type, catalog, std::move(name)), schema_info(schema.GetSchemaInfo()) {
+StandardEntry::StandardEntry(CatalogType type, SchemaCatalogEntry &schema, Catalog &catalog, Identifier name, idx_t oid)
+    : InCatalogEntry(type, catalog, std::move(name), oid), schema_info(schema.GetSchemaInfo()) {
 }
 
 SchemaCatalogEntry &StandardEntry::ParentSchema(CatalogTransaction transaction) const {

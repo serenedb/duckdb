@@ -1063,18 +1063,22 @@ void WriteAheadLogDeserializer::ReplayDropView() {
 //===--------------------------------------------------------------------===//
 void WriteAheadLogDeserializer::ReplayCreateSchema() {
 	auto entry = WALCreateSchema::Deserialize(deserializer);
-	CreateSchemaInfo info;
-	auto schema_path = entry.qualified_name.Path();
-	if (schema_path.empty()) {
-		// Legacy WALs only store a top-level schema name.
-		schema_path.push_back(std::move(entry.schema));
+	if (!entry.info) {
+		auto info = make_uniq<CreateSchemaInfo>();
+		auto schema_path = entry.qualified_name.Path();
+		if (schema_path.empty()) {
+			// Legacy WALs only store a top-level schema name.
+			schema_path.push_back(std::move(entry.schema));
+		}
+		info->SetQualifiedName(
+		    QualifiedName::FromCatalogSchema(catalog.GetName(), std::move(schema_path), Identifier()));
+		entry.info = std::move(info);
 	}
-	info.SetQualifiedName(QualifiedName::FromCatalogSchema(catalog.GetName(), std::move(schema_path), Identifier()));
 	if (DeserializeOnly()) {
 		return;
 	}
 
-	catalog.CreateSchema(context, info);
+	catalog.CreateSchema(context, entry.info->Cast<CreateSchemaInfo>());
 }
 
 void WriteAheadLogDeserializer::ReplayDropSchema() {
