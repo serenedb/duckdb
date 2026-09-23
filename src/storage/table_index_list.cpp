@@ -110,6 +110,16 @@ void TableIndexList::RemoveIndex(const Identifier &name) {
 	}
 }
 
+void TableIndexList::RenameIndex(const Identifier &name, const Identifier &new_name) {
+	lock_guard<mutex> lock(index_entries_lock);
+	for (auto &entry : index_entries) {
+		if (entry->index->GetIndexName() == name) {
+			entry->index->SetIndexName(new_name);
+			return;
+		}
+	}
+}
+
 unordered_set<string> TableIndexList::DistinctIndexTypes() const {
 	lock_guard<mutex> lock(index_entries_lock);
 	unordered_set<string> result;
@@ -351,7 +361,7 @@ IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, c
 		// Bound: move new storage info into bound_infos, then reference it
 		auto &bound_index = index.Cast<BoundIndex>();
 		auto storage_info = bound_index.SerializeToDisk(context, info.options);
-		D_ASSERT(storage_info.IsValid() && !storage_info.name.empty());
+		D_ASSERT(!storage_info.name.empty());
 		result.bound_infos.push_back(std::move(storage_info));
 		result.ordered_infos.push_back(result.bound_infos.back());
 	}

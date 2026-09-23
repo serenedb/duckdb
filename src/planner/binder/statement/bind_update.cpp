@@ -60,7 +60,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 
 	if (prioritize_table_when_binding) {
 		binder_with_search_path =
-		    CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema().name);
+		    CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema(context).name);
 		expr_binder_ptr = binder_with_search_path.get();
 	}
 
@@ -272,7 +272,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	}
 	// bind the default values
 	auto &catalog_name = table.ParentCatalog().GetName();
-	auto &schema_name = table.ParentSchema().name;
+	auto schema_name = table.ParentSchema(context).name;
 	BindDefaultValues(table.GetColumns(), update->bound_defaults, catalog_name.GetIdentifierName(),
 	                  schema_name.GetIdentifierName());
 	update->bound_constraints = BindConstraints(table);
@@ -314,20 +314,6 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 
 	auto update_table_index = GenerateTableIndex();
 	update->table_index = update_table_index;
-
-	// Record the UPDATE access (verb + written columns) for the access-control
-	// rule. A del-and-insert update rewrites the whole row, so it carries no
-	// specific written-column set (the table-level UPDATE check still applies).
-	{
-		auto &access = RecordAccess(update->table_index.index, table);
-		access.verb |= AccessVerb::UPDATE;
-		if (!update->update_is_del_and_insert) {
-			for (const auto &phys : update->columns) {
-				access.write.insert(phys.index);
-			}
-		}
-	}
-
 	if (!node.returning_list.empty()) {
 		unique_ptr<LogicalOperator> update_as_logicaloperator = std::move(update);
 

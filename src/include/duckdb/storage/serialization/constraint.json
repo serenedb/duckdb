@@ -10,6 +10,12 @@
         "id": 100,
         "name": "type",
         "type": "ConstraintType"
+      },
+      {
+        "id": 101,
+        "name": "constraint_name",
+        "type": "string",
+        "default": "\"\""
       }
     ]
   },

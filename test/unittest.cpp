@@ -9,6 +9,11 @@
 #include "test_helpers.hpp"
 #include "test_config.hpp"
 
+#ifndef DUCKDB_WINDOWS
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 using namespace duckdb;
 
 int main(int argc_in, char *argv[]) {
@@ -19,6 +24,7 @@ int main(int argc_in, char *argv[]) {
 	test_config.Initialize();
 	bool keep_home = false;
 	bool use_stdin = false;
+	idx_t jobs = 1;
 
 	idx_t argc = NumericCast<idx_t>(argc_in);
 	int new_argc = 0;
@@ -42,6 +48,8 @@ int main(int argc_in, char *argv[]) {
 			keep_home = true;
 		} else if (argument == "--stdin") {
 			use_stdin = true;
+		} else if (argument == "--jobs") {
+			jobs = std::stoull(argv[++i]);
 		} else {
 			try {
 				if (!test_config.ParseArgument(argument, argc, argv, i)) {
@@ -55,6 +63,67 @@ int main(int argc_in, char *argv[]) {
 		}
 	}
 	test_config.ChangeWorkingDirectory(test_directory);
+
+	if (use_stdin || test_config.GetSkipCompiledTests()) {
+		Catch::getMutableRegistryHub().clearTests();
+	}
+	if (use_stdin) {
+		RegisterSqllogictestStdin();
+	} else {
+		RegisterSqllogictests();
+	}
+
+	string worker_spec;
+#ifndef DUCKDB_WINDOWS
+	if (jobs > 1) {
+		Catch::ConfigData data;
+		data.testsOrTags.assign(new_argv.get() + 1, new_argv.get() + new_argc);
+		Catch::Config config(data);
+		auto &all_tests = Catch::getAllTestCasesSorted(config);
+		for (auto &match : config.testSpec().matchesByFilter(all_tests, config)) {
+			if (match.tests.empty()) {
+				std::cout << "No test cases matched '" << match.name << "'" << std::endl;
+			}
+		}
+		auto tests = Catch::filterTests(all_tests, config.testSpec(), config);
+		std::stable_partition(tests.begin(), tests.end(),
+		                      [](const Catch::TestCase &test) { return StringUtil::EndsWith(test.name, ".test_slow"); });
+		jobs = MinValue<idx_t>(jobs, tests.size());
+		idx_t worker = 0;
+		for (; worker < jobs; worker++) {
+			auto pid = fork();
+			if (pid < 0) {
+				perror("fork");
+				return 1;
+			}
+			if (pid == 0) {
+				break;
+			}
+		}
+		if (worker == jobs) {
+			idx_t failed_workers = 0;
+			int status;
+			while (wait(&status) > 0) {
+				if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+					failed_workers++;
+				}
+			}
+			std::cout << "\n===============================================================================" << std::endl;
+			if (failed_workers == 0) {
+				std::cout << "All tests passed (" << tests.size() << " test cases)" << std::endl;
+				return 0;
+			}
+			std::cout << "test cases: " << tests.size() << " | " << failed_workers << " of " << jobs
+			          << " workers failed" << std::endl;
+			return 1;
+		}
+		for (idx_t i = worker; i < tests.size(); i += jobs) {
+			worker_spec += (worker_spec.empty() ? "\"" : ",\"") + tests[i].name + "\"";
+		}
+		new_argv[1] = &worker_spec[0];
+		new_argc = 2;
+	}
+#endif
 
 	// delete the testing directory if it exists
 	auto dir = TestCreatePath("");
@@ -82,14 +151,6 @@ int main(int argc_in, char *argv[]) {
 #endif
 	}
 
-	if (use_stdin || test_config.GetSkipCompiledTests()) {
-		Catch::getMutableRegistryHub().clearTests();
-	}
-	if (use_stdin) {
-		RegisterSqllogictestStdin();
-	} else {
-		RegisterSqllogictests();
-	}
 	int result = Catch::Session().run(new_argc, new_argv.get());
 
 	std::string failures_summary = FailureSummary::GetFailureSummary();

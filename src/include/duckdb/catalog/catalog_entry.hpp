@@ -12,6 +12,7 @@
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/exception/catalog_exception.hpp"
@@ -35,7 +36,7 @@ struct CreateInfo;
 //! Abstract base class of an entry in the catalog
 class CatalogEntry {
 public:
-	CatalogEntry(CatalogType type, Catalog &catalog, Identifier name);
+	CatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t oid = 0);
 	CatalogEntry(CatalogType type, Identifier name, idx_t oid);
 	virtual ~CatalogEntry();
 
@@ -61,6 +62,8 @@ public:
 	Value comment;
 	//! (optional) extra data associated with this entry
 	InsertionOrderPreservingMap<string> tags;
+	//! Ownership and grants; core carries them, the access-control layer reads them
+	Permissions permissions;
 
 private:
 	//! Child entry
@@ -80,16 +83,16 @@ public:
 	virtual unique_ptr<CreateInfo> GetInfo() const;
 
 	//! Sets the CatalogEntry as the new root entry (i.e. the newest entry)
-	// this is called on a rollback to an AlterEntry
-	virtual void SetAsRoot();
+	virtual void SetAsRoot(optional_ptr<CatalogTransaction> transaction);
 
 	//! Convert the catalog entry to a SQL string that can be used to re-construct the catalog entry
 	virtual string ToSQL() const;
 
 	virtual Catalog &ParentCatalog();
 	virtual const Catalog &ParentCatalog() const;
-	virtual SchemaCatalogEntry &ParentSchema();
-	virtual const SchemaCatalogEntry &ParentSchema() const;
+	virtual Identifier ParentSchemaName() const;
+	virtual SchemaCatalogEntry &ParentSchema(CatalogTransaction transaction) const;
+	SchemaCatalogEntry &ParentSchema(ClientContext &context) const;
 
 	virtual void Verify(Catalog &catalog);
 
@@ -120,7 +123,7 @@ public:
 
 class InCatalogEntry : public CatalogEntry {
 public:
-	InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name);
+	InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t oid = 0);
 	~InCatalogEntry() override;
 
 	//! The catalog the entry belongs to

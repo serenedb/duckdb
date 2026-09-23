@@ -1,6 +1,7 @@
 #include "duckdb/function/table/system_functions.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 
@@ -21,6 +22,7 @@ struct PragmaStorageFunctionData : public TableFunctionData {
 	}
 
 	TableCatalogEntry &table_entry;
+	optional_ptr<IndexCatalogEntry> index;
 	ColumnSegmentInfoScanOptions options;
 };
 
@@ -112,8 +114,19 @@ static unique_ptr<FunctionData> PragmaStorageInfoBind(ClientContext &context, Ta
 
 	// look up the table name in the catalog
 	Binder::BindSchemaOrCatalog(context, qname);
+	optional_ptr<IndexCatalogEntry> index;
+	if (!Catalog::GetEntry(context, EntryLookupInfo(CatalogType::TABLE_ENTRY, qname), OnEntryNotFound::RETURN_NULL)) {
+		auto entry =
+		    Catalog::GetEntry(context, EntryLookupInfo(CatalogType::INDEX_ENTRY, qname), OnEntryNotFound::RETURN_NULL);
+		if (entry && entry->ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES) {
+			index = &entry->Cast<IndexCatalogEntry>();
+			qname = QualifiedName(index->ParentCatalog().GetName(), index->ParentSchemaName(), index->GetTableName());
+		}
+	}
 	auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context, qname);
-	return make_uniq<PragmaStorageFunctionData>(table_entry, options);
+	auto result = make_uniq<PragmaStorageFunctionData>(table_entry, options);
+	result->index = index;
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> PragmaStorageInfoInitGlobal(ClientContext &context,
@@ -122,7 +135,11 @@ unique_ptr<GlobalTableFunctionState> PragmaStorageInfoInitGlobal(ClientContext &
 	auto max_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
 	auto gstate = make_uniq<PragmaStorageGlobalState>(max_threads);
 	gstate->scan_state.options = bind_data.options;
-	bind_data.table_entry.InitializeColumnSegmentInfoScan(gstate->scan_state);
+	if (bind_data.index) {
+		bind_data.index->InitializeColumnSegmentInfoScan(gstate->scan_state);
+	} else {
+		bind_data.table_entry.InitializeColumnSegmentInfoScan(gstate->scan_state);
+	}
 	return std::move(gstate);
 }
 
@@ -175,7 +192,10 @@ static void PragmaStorageInfoFunction(ClientContext &context, TableFunctionInput
 			bool has_more;
 			{
 				lock_guard<mutex> guard(gstate.lock);
-				has_more = bind_data.table_entry.ScanColumnSegmentInfo(query_context, gstate.scan_state, lstate.buffer);
+				has_more =
+				    bind_data.index
+				        ? bind_data.index->ScanColumnSegmentInfo(query_context, gstate.scan_state, lstate.buffer)
+				        : bind_data.table_entry.ScanColumnSegmentInfo(query_context, gstate.scan_state, lstate.buffer);
 			}
 			if (!has_more) {
 				break;

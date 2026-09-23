@@ -14,6 +14,9 @@
 namespace duckdb {
 
 struct DataTableInfo;
+class QueryContext;
+struct ColumnSegmentInfo;
+struct ColumnSegmentInfoScanState;
 
 //! An index catalog entry
 class IndexCatalogEntry : public StandardEntry {
@@ -39,6 +42,12 @@ public:
 	//! The set of expressions to index by
 	vector<unique_ptr<ParsedExpression>> expressions;
 	vector<unique_ptr<ParsedExpression>> parsed_expressions;
+	//! The partial-index predicate (CREATE INDEX ... WHERE <predicate>)
+	unique_ptr<ParsedExpression> where_clause;
+	//! The opclass per indexed column; empty string means none was specified
+	vector<string> column_opclasses;
+	//! Per-column opclass options, parallel to column_opclasses
+	vector<std::optional<case_insensitive_map_t<Value>>> column_opclass_options;
 
 public:
 	//! Returns the CreateIndexInfo
@@ -48,6 +57,12 @@ public:
 
 	virtual Identifier GetSchemaName() const = 0;
 	virtual Identifier GetTableName() const = 0;
+	virtual void InitializeColumnSegmentInfoScan(ColumnSegmentInfoScanState &state) const {
+	}
+	virtual bool ScanColumnSegmentInfo(const QueryContext &context, ColumnSegmentInfoScanState &state,
+	                                   vector<ColumnSegmentInfo> &result) const {
+		return false;
+	}
 
 	//! Returns true, if this index is UNIQUE
 	bool IsUnique() const;
