@@ -3,8 +3,8 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
-#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/main/query_result.hpp"
@@ -40,18 +40,20 @@ void ViewCatalogEntry::Initialize(CreateViewInfo &info) {
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 	this->column_comments = info.column_comments_map;
 	this->security_invoker = info.security_invoker;
 }
 
 ViewCatalogEntry::ViewCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateViewInfo &info)
-    : StandardEntry(CatalogType::VIEW_ENTRY, schema, catalog, info.GetViewName()), bind_state(ViewBindState::UNBOUND) {
+    : StandardEntry(CatalogType::VIEW_ENTRY, schema, catalog, info.GetViewName(), info.oid),
+      bind_state(ViewBindState::UNBOUND) {
 	Initialize(info);
 }
 
 unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateViewInfo>();
-	result->SetQualifiedName(QualifiedName({schema.name}, name));
+	result->SetQualifiedName(QualifiedName({ParentSchemaName()}, name));
 	result->sql = sql;
 	result->query = query ? unique_ptr_cast<SQLStatement, SelectStatement>(query->Copy()) : nullptr;
 	result->aliases = aliases;
@@ -64,6 +66,7 @@ unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	result->column_comments_map = column_comments;
 	result->security_invoker = security_invoker;
 	return std::move(result);
@@ -71,6 +74,40 @@ unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 
 unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
 	D_ASSERT(!internal);
+
+	if (info.type == AlterType::REPLACE_DEFINITION) {
+		auto &definition = info.Cast<ReplaceDefinitionInfo>().definition->Cast<CreateViewInfo>();
+		auto columns = GetColumnInfo();
+		if (!columns) {
+			BindView(context);
+			columns = GetColumnInfo();
+		}
+		auto column_name = [](const vector<Identifier> &names, const vector<Identifier> &column_aliases, idx_t i) {
+			return i < column_aliases.size() ? column_aliases[i] : names[i];
+		};
+		if (definition.types.size() < columns->types.size()) {
+			throw BinderException("cannot drop columns from view");
+		}
+		for (idx_t i = 0; i < columns->types.size(); i++) {
+			auto old_name = column_name(columns->names, aliases, i);
+			auto new_name = column_name(definition.names, definition.aliases, i);
+			if (!(old_name == new_name)) {
+				throw BinderException("cannot change name of view column \"%s\" to \"%s\"",
+				                      old_name.GetIdentifierName(), new_name.GetIdentifierName());
+			}
+			if (columns->types[i] != definition.types[i]) {
+				throw BinderException("cannot change data type of view column \"%s\" from %s to %s",
+				                      old_name.GetIdentifierName(), columns->types[i].ToString(),
+				                      definition.types[i].ToString());
+			}
+		}
+		auto replaced = definition.Copy();
+		auto &replaced_view = replaced->Cast<CreateViewInfo>();
+		replaced_view.comment = comment;
+		replaced_view.tags = tags;
+		replaced_view.column_comments_map = column_comments;
+		return make_uniq<ViewCatalogEntry>(catalog, ParentSchema(context), replaced_view);
+	}
 
 	// Column comments have a special alter type
 	if (info.type == AlterType::SET_COLUMN_COMMENT) {
@@ -104,32 +141,7 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, Al
 		return copied_view;
 	}
 
-	// PostgreSQL allows `ALTER TABLE ... RENAME TO` on views, so we convert it
-	// to the equivalent ALTER VIEW operation to support tools like dbt-postgres.
-	if (info.type == AlterType::ALTER_TABLE) {
-		auto &table_info = info.Cast<AlterTableInfo>();
-		if (table_info.alter_table_type == AlterTableType::RENAME_TABLE) {
-			auto &rename_info = table_info.Cast<RenameTableInfo>();
-			auto copied_view = Copy(context);
-			copied_view->name = rename_info.new_table_name;
-			return copied_view;
-		}
-	}
-
-	if (info.type != AlterType::ALTER_VIEW) {
-		throw CatalogException("Can only modify view with ALTER VIEW statement");
-	}
-	auto &view_info = info.Cast<AlterViewInfo>();
-	switch (view_info.alter_view_type) {
-	case AlterViewType::RENAME_VIEW: {
-		auto &rename_info = view_info.Cast<RenameViewInfo>();
-		auto copied_view = Copy(context);
-		copied_view->name = rename_info.new_view_name;
-		return copied_view;
-	}
-	default:
-		throw InternalException("Unrecognized alter view type!");
-	}
+	return CatalogEntry::AlterEntry(context, info);
 }
 
 shared_ptr<ViewColumnInfo> ViewCatalogEntry::GetColumnInfo() const {
@@ -169,7 +181,7 @@ void ViewCatalogEntry::BindView(ClientContext &context, BindViewAction action) {
 	bind_thread = ThreadUtil::GetThreadId();
 	try {
 		auto columns = make_shared_ptr<ViewColumnInfo>();
-		Binder::BindView(context, GetQuery(), ParentCatalog().GetName(), ParentSchema().name, nullptr, aliases,
+		Binder::BindView(context, GetQuery(), ParentCatalog().GetName(), ParentSchemaName(), nullptr, aliases,
 		                 columns->types, columns->names);
 		view_columns.atomic_store(columns);
 	} catch (...) {
@@ -214,7 +226,7 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::Copy(ClientContext &context) const {
 	D_ASSERT(!internal);
 	auto create_info = GetInfo();
 
-	return make_uniq<ViewCatalogEntry>(catalog, schema, create_info->Cast<CreateViewInfo>());
+	return make_uniq<ViewCatalogEntry>(catalog, ParentSchema(context), create_info->Cast<CreateViewInfo>());
 }
 
 } // namespace duckdb

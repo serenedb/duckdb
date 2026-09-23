@@ -186,12 +186,8 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 
 			switch (parent.type) {
 			case CatalogType::TABLE_ENTRY:
-				if (!column_name.empty()) {
-					D_ASSERT(entry.type != CatalogType::RENAMED_ENTRY);
-					auto &table_entry = entry.Cast<DuckTableEntry>();
-					D_ASSERT(table_entry.IsDuckTable());
-					// write the alter table in the log
-					table_entry.CommitAlter(column_name, drop_state);
+				if (entry.type == CatalogType::TABLE_ENTRY && entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+					entry.Cast<DuckTableEntry>().CommitAlter(column_name, parse_info->Cast<AlterInfo>(), drop_state);
 				}
 				break;
 			case CatalogType::VIEW_ENTRY:
@@ -230,8 +226,10 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 	case CatalogType::DELETED_ENTRY:
 		switch (entry.type) {
 		case CatalogType::TABLE_ENTRY: {
+			if (!entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+				break;
+			}
 			auto &table_entry = entry.Cast<DuckTableEntry>();
-			D_ASSERT(table_entry.IsDuckTable());
 
 			// If the table was renamed, we do not need to drop the DataTable.
 			table_entry.CommitDrop(drop_state);
@@ -248,6 +246,9 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 		}
 		break;
 	case CatalogType::DATABASE_ENTRY:
+	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::ROLE_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::PREPARED_STATEMENT:
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
 	case CatalogType::SCALAR_FUNCTION_ENTRY:

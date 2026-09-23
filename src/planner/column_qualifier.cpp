@@ -408,7 +408,7 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnNameWithManyDotsInter
 		auto entry = binding_entry->GetStandardEntry();
 		if (entry) {
 			catalog = entry->ParentCatalog().GetName().GetIdentifierName();
-			schema = entry->ParentSchema().name.GetIdentifierName();
+			schema = entry->ParentSchemaName().GetIdentifierName();
 		}
 
 		for (idx_t i = 0; i < 3; i++) {

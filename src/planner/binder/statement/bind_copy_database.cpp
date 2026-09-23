@@ -62,10 +62,10 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseData(Catalog &source_catalog
 		// generate the insert statement
 		InsertStatement insert_stmt;
 		auto &insert_node = *insert_stmt.node;
-		insert_node.qualified_name = QualifiedName(target_database_name, table.ParentSchema().name, table.name);
+		insert_node.qualified_name = QualifiedName(target_database_name, table.ParentSchemaName(), table.name);
 
 		auto from_tbl = make_uniq<BaseTableRef>();
-		from_tbl->SetQualifiedName(QualifiedName(source_catalog.GetName(), table.ParentSchema().name, table.name));
+		from_tbl->SetQualifiedName(QualifiedName(source_catalog.GetName(), table.ParentSchemaName(), table.name));
 
 		auto select_node = make_uniq<SelectNode>();
 		auto &select_list = select_node->select_list;

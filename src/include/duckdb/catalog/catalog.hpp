@@ -13,6 +13,7 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/enums/catalog_lookup_behavior.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
+#include "duckdb/common/enums/sql_compatibility.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception/catalog_exception.hpp"
 #include "duckdb/common/map.hpp"
@@ -128,6 +129,13 @@ public:
 
 	virtual bool IsDuckCatalog() {
 		return false;
+	}
+
+	virtual SqlCompatibility Compatibility() const {
+		return SqlCompatibility::DUCK;
+	}
+	bool IsCaseSensitive() const {
+		return Compatibility() == SqlCompatibility::POSTGRES;
 	}
 
 	virtual void Initialize(bool load_builtin) = 0;
@@ -340,7 +348,7 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> AddFunction(ClientContext &context, CreateFunctionInfo &info);
 
 	//! Alter an existing entry in the catalog.
-	DUCKDB_API void Alter(CatalogTransaction transaction, AlterInfo &info);
+	DUCKDB_API virtual void Alter(CatalogTransaction transaction, AlterInfo &info);
 	DUCKDB_API void Alter(ClientContext &context, AlterInfo &info);
 
 	virtual PhysicalOperator &PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
@@ -524,6 +532,7 @@ private:
 	                                                           const reference_set_t<SchemaCatalogEntry> &schemas);
 
 	virtual void DropSchema(ClientContext &context, DropInfo &info) = 0;
+	DUCKDB_API virtual void AlterSchema(CatalogTransaction transaction, AlterInfo &info);
 
 public:
 	template <class TARGET>

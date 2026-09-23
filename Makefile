@@ -716,6 +716,7 @@ format_venv:
 	@$(FORMAT_PYTHON) -m pip show black >/dev/null 2>&1 || $(FORMAT_PYTHON) -m pip install black==24.*
 	@$(FORMAT_PYTHON) -m pip show cmake-format >/dev/null 2>&1 || $(FORMAT_PYTHON) -m pip install cmake-format
 	@$(FORMAT_PYTHON) -m pip show clang_format >/dev/null 2>&1 || $(FORMAT_PYTHON) -m pip install clang_format==11.0.1
+	@$(FORMAT_PYTHON) -m pip show typos >/dev/null 2>&1 || $(FORMAT_PYTHON) -m pip install typos==1.50.2
 
 benchmark:
 	mkdir -p ./build/release && \
