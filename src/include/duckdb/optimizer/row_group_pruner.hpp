@@ -39,7 +39,8 @@ private:
 	                                                                const LogicalGet &logical_get,
 	                                                                const StorageIndex &storage_index,
 	                                                                LogicalLimit &logical_limit,
-	                                                                const bool single_order_key) const;
+	                                                                const bool single_order_key,
+	                                                                const bool push_limit) const;
 };
 
 } // namespace duckdb

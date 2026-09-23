@@ -38,6 +38,7 @@ enum class TableFunctionParallelism : uint8_t {
 };
 
 class BaseStatistics;
+struct BoundLimitNode;
 class LogicalDependencyList;
 class LogicalGet;
 class TableFunction;
@@ -413,8 +414,8 @@ typedef vector<column_t> (*table_function_get_row_id_columns)(ClientContext &con
 typedef void (*table_function_set_scan_order)(ClientContext &context, unique_ptr<RowGroupOrderOptions> order_options,
                                               optional_ptr<FunctionData> bind_data);
 
-typedef bool (*table_function_consume_top_n_t)(ClientContext &context, FunctionData &bind_data, idx_t limit,
-                                               idx_t offset);
+typedef bool (*table_function_consume_top_n_t)(ClientContext &context, FunctionData &bind_data,
+                                               const BoundLimitNode &limit, const BoundLimitNode &offset);
 
 typedef void (*table_function_set_partitions_to_scan_t)(vector<idx_t> partition_indices,
                                                         optional_ptr<FunctionData> bind_data);

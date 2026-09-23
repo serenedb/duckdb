@@ -19,6 +19,7 @@
 #include "duckdb/common/unordered_set.hpp"
 
 namespace duckdb {
+struct BoundLimitNode;
 class ClientContext;
 class ColumnDataCollection;
 
@@ -174,6 +175,9 @@ private:
 	unique_ptr<PhysicalPlan> PlanInternal(LogicalOperator &logical);
 	bool PreserveInsertionOrder(PhysicalOperator &plan);
 	bool UseBatchIndex(PhysicalOperator &plan);
+	optional_ptr<PhysicalOperator> TryConsumeTopN(LogicalOperator &child, idx_t order_count,
+	                                              const vector<ProjectionIndex> &projection_map,
+	                                              const BoundLimitNode &limit, const BoundLimitNode &offset);
 	optional_ptr<PhysicalOperator> PlanAsOfLoopJoin(LogicalComparisonJoin &op, PhysicalOperator &probe,
 	                                                PhysicalOperator &build);
 };
