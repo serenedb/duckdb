@@ -73,6 +73,8 @@ public:
 	                            const LogicalDependencyList &dependencies);
 	DUCKDB_API bool CreateEntry(ClientContext &context, const Identifier &name, unique_ptr<CatalogEntry> value,
 	                            const LogicalDependencyList &dependencies);
+	void ShareNamespace(CatalogSet &other);
+	DUCKDB_API optional_ptr<CatalogEntry> GetNamespaceEntry(CatalogTransaction transaction, const Identifier &name);
 
 	DUCKDB_API bool AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info);
 
@@ -173,13 +175,15 @@ private:
 	//! Start the catalog entry chain with a dummy node
 	bool StartChain(CatalogTransaction transaction, const Identifier &name, unique_lock<mutex> &read_lock);
 	bool RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, const Identifier &new_name,
-	                         AlterInfo &alter_info, unique_lock<mutex> &read_lock);
+	                         AlterInfo &alter_info, unique_lock<mutex> &read_lock, bool namespace_vacant);
+	bool NamespaceVacant(CatalogTransaction transaction, const Identifier &name);
 
 private:
 	DuckCatalog &catalog;
 	//! The catalog lock is used to make changes to the data
 	mutex catalog_lock;
 	CatalogEntryMap map;
+	vector<reference<CatalogSet>> shared_namespace;
 	//! The generator used to generate default internal entries
 	unique_ptr<DefaultGenerator> defaults;
 };

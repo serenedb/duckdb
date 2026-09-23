@@ -9,7 +9,10 @@
 #pragma once
 
 #include "duckdb/catalog/standard_entry.hpp"
+#include "duckdb/common/query_context.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/storage/table/row_group_collection.hpp"
+#include "duckdb/storage/table_storage_info.hpp"
 
 namespace duckdb {
 
@@ -48,6 +51,12 @@ public:
 
 	virtual Identifier GetSchemaName() const = 0;
 	virtual Identifier GetTableName() const = 0;
+	virtual void InitializeColumnSegmentInfoScan(ColumnSegmentInfoScanState &state) const {
+	}
+	virtual bool ScanColumnSegmentInfo(const QueryContext &context, ColumnSegmentInfoScanState &state,
+	                                   vector<ColumnSegmentInfo> &result) const {
+		return false;
+	}
 
 	//! Returns true, if this index is UNIQUE
 	bool IsUnique() const;

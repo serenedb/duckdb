@@ -85,6 +85,12 @@ DuckSchemaSets::DuckSchemaSets(Catalog &catalog, DuckSchemaEntry &schema)
       types(catalog, schema.internal ? make_uniq<DefaultTypeGenerator>(catalog, schema) : nullptr),
       coordinate_systems(
           catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, schema) : nullptr) {
+	const bool one_relation_namespace = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (one_relation_namespace) {
+		tables.ShareNamespace(indexes);
+		tables.ShareNamespace(sequences);
+		indexes.ShareNamespace(sequences);
+	}
 }
 
 DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info,
@@ -196,7 +202,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 	auto &set = GetCatalogSet(entry_type);
 	dependencies.AddDependency(*this);
 	if (on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
-		auto old_entry = set.GetEntry(transaction, entry_name);
+		auto old_entry = set.GetNamespaceEntry(transaction, entry_name);
 		if (old_entry) {
 			return nullptr;
 		}
@@ -204,7 +210,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 
 	if (on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
 		// CREATE OR REPLACE: first try to drop the entry
-		auto old_entry = set.GetEntry(transaction, entry_name);
+		auto old_entry = set.GetNamespaceEntry(transaction, entry_name);
 		if (old_entry) {
 			if (dependencies.Contains(*old_entry)) {
 				throw CatalogException("CREATE OR REPLACE is not allowed to depend on itself");
@@ -220,7 +226,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 	if (!set.CreateEntry(transaction, entry_name, std::move(entry), dependencies)) {
 		// entry already exists!
 		if (on_conflict == OnCreateConflict::ERROR_ON_CONFLICT) {
-			auto existing_entry = set.GetEntry(transaction, entry_name);
+			auto existing_entry = set.GetNamespaceEntry(transaction, entry_name);
 			auto existing_type = existing_entry ? existing_entry->type : entry_type;
 			throw CatalogException::EntryAlreadyExists(existing_type, entry_name);
 		} else {

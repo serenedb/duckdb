@@ -1,6 +1,7 @@
 #include "duckdb/function/table/system_functions.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/parser/qualified_name.hpp"
@@ -172,6 +173,15 @@ static unique_ptr<FunctionData> PragmaTableInfoBind(ClientContext &context, Tabl
 	// look up the table name in the catalog
 	CatalogEntryRetriever retriever(context);
 	qname = Binder::BindTableName(retriever, qname);
+	if (!Catalog::GetEntry(context, EntryLookupInfo(CatalogType::TABLE_ENTRY, qname), OnEntryNotFound::RETURN_NULL)) {
+		auto index =
+		    Catalog::GetEntry(context, EntryLookupInfo(CatalogType::INDEX_ENTRY, qname), OnEntryNotFound::RETURN_NULL);
+		const bool index_is_relation = index && index->ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES;
+		if (index_is_relation) {
+			auto &index_entry = index->Cast<IndexCatalogEntry>();
+			qname = index_entry.GetQualifiedName(index_entry.GetTableName());
+		}
+	}
 	auto &entry = Catalog::GetEntry(context, CatalogType::TABLE_ENTRY, qname);
 	Binder::RegisterEntryRead(input.binder, context, entry);
 	return make_uniq<PragmaTableFunctionData>(entry, IS_PRAGMA_TABLE_INFO);
