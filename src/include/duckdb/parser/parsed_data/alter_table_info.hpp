@@ -536,7 +536,7 @@ private:
 // RenameConstraintInfo
 //===--------------------------------------------------------------------===//
 struct RenameConstraintInfo : public AlterTableInfo {
-	RenameConstraintInfo(AlterEntryData data, string old_name, string new_name);
+	RenameConstraintInfo(const AlterEntryData &data, string old_name, string new_name);
 	~RenameConstraintInfo() override;
 
 	//! Constraint old name
@@ -547,6 +547,9 @@ struct RenameConstraintInfo : public AlterTableInfo {
 public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
 
 private:
 	RenameConstraintInfo();
