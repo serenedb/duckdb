@@ -144,6 +144,10 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSchemaStmt(PEGTransfo
 		auto &reset_options = alter_schema_options->Cast<ResetTableOptionsInfo>();
 		return make_uniq<ResetSchemaOptionsInfo>(data, std::move(reset_options.table_options));
 	}
+	case AlterTableType::RENAME_TABLE: {
+		auto &rename = alter_schema_options->Cast<RenameTableInfo>();
+		return make_uniq<RenameSchemaInfo>(data, rename.new_table_name);
+	}
 	default:
 		throw NotImplementedException("Altering schemas is not yet supported");
 	}

@@ -581,6 +581,8 @@ private:
 	                                                           const reference_set_t<SchemaCatalogEntry> &schemas);
 
 	virtual void DropSchema(ClientContext &context, DropInfo &info) = 0;
+	DUCKDB_API virtual void AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntry &schema,
+	                                         AlterInfo &info);
 
 public:
 	template <class TARGET>

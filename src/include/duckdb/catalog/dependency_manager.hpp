@@ -140,6 +140,7 @@ private:
 	catalog_entry_set_t CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object, bool cascade);
 	void DropObject(CatalogTransaction transaction, CatalogEntry &object, bool cascade);
 	void AlterObject(CatalogTransaction transaction, CatalogEntry &old_obj, CatalogEntry &new_obj, AlterInfo &info);
+	void RenameSchema(CatalogTransaction transaction, CatalogEntry &old_schema, CatalogEntry &new_schema);
 
 private:
 	void RemoveDependency(CatalogTransaction transaction, const DependencyInfo &info);

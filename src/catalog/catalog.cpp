@@ -1602,6 +1602,10 @@ vector<reference<CatalogEntry>> Catalog::GetAllEntries(ClientContext &context, C
 	return result;
 }
 
+void Catalog::AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntry &schema, AlterInfo &info) {
+	throw NotImplementedException("Altering schema %s is not supported by this catalog", schema.name);
+}
+
 void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	if (info.type == AlterType::ALTER_SCHEMA) {
 		auto &schema_info = info.Cast<AlterSchemaInfo>();
@@ -1610,6 +1614,13 @@ void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 			return;
 		}
 		return AlterSchema(transaction, *schema, schema_info);
+	}
+	if (info.GetCatalogType() == CatalogType::SCHEMA_ENTRY) {
+		auto schema = GetSchema(transaction, info.GetQualifiedName().Name(), info.if_not_found);
+		if (!schema) {
+			return;
+		}
+		return AlterSchemaEntry(transaction, *schema, info);
 	}
 	// ALTER FUNCTION ... RENAME TO ... cannot disambiguate scalar vs table
 	// macro at parse time (mirrors the binder skip in Binder::Bind(AlterStatement)).
