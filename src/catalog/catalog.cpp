@@ -435,6 +435,44 @@ struct CatalogLookup {
 //===--------------------------------------------------------------------===//
 // Generic
 //===--------------------------------------------------------------------===//
+bool Catalog::InRelationNamespace(CatalogType type) {
+	switch (type) {
+	case CatalogType::TABLE_ENTRY:
+	case CatalogType::VIEW_ENTRY:
+	case CatalogType::INDEX_ENTRY:
+	case CatalogType::SEQUENCE_ENTRY:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static string RelationKind(CatalogType type) {
+	switch (type) {
+	case CatalogType::VIEW_ENTRY:
+		return "view";
+	case CatalogType::INDEX_ENTRY:
+		return "index";
+	case CatalogType::SEQUENCE_ENTRY:
+		return "sequence";
+	default:
+		return "table";
+	}
+}
+
+static string WithArticle(const string &kind) {
+	return (kind == "index" ? "an " : "a ") + kind;
+}
+
+[[noreturn]] static void ThrowWrongRelationKind(const Identifier &name, CatalogType requested, CatalogType actual) {
+	auto extra_info = Exception::InitializeExtraInfo("WRONG_OBJECT_TYPE", optional_idx());
+	auto actual_kind = RelationKind(actual);
+	extra_info["hint"] =
+	    StringUtil::Format("Use DROP %s to remove %s.", StringUtil::Upper(actual_kind), WithArticle(actual_kind));
+	throw CatalogException(extra_info, StringUtil::Format("\"%s\" is not %s", name.GetIdentifierName(),
+	                                                      WithArticle(RelationKind(requested))));
+}
+
 void Catalog::DropEntry(ClientContext &context, DropInfo &info) {
 	if (info.type == CatalogType::SCHEMA_ENTRY) {
 		// DROP SCHEMA
@@ -444,12 +482,38 @@ void Catalog::DropEntry(ClientContext &context, DropInfo &info) {
 
 	CatalogEntryRetriever retriever(context);
 	EntryLookupInfo lookup_info(info.type, info.GetQualifiedName());
-	auto lookup = LookupEntry(retriever, lookup_info, info.if_not_found);
-	if (!lookup.Found()) {
+	if (Compatibility() != SqlCompatibility::POSTGRES || !InRelationNamespace(info.type)) {
+		auto lookup = LookupEntry(retriever, lookup_info, info.if_not_found);
+		if (!lookup.Found()) {
+			return;
+		}
+		lookup.schema->DropEntry(context, info);
 		return;
 	}
-
-	lookup.schema->DropEntry(context, info);
+	auto &name = info.GetQualifiedName().Name();
+	auto lookup = LookupEntry(retriever, lookup_info, OnEntryNotFound::RETURN_NULL);
+	if (lookup.Found()) {
+		if (lookup.entry->type != info.type) {
+			ThrowWrongRelationKind(name, info.type, lookup.entry->type);
+		}
+		lookup.schema->DropEntry(context, info);
+		return;
+	}
+	for (auto other : {CatalogType::TABLE_ENTRY, CatalogType::INDEX_ENTRY, CatalogType::SEQUENCE_ENTRY}) {
+		const bool same_set =
+		    other == info.type || (other == CatalogType::TABLE_ENTRY && info.type == CatalogType::VIEW_ENTRY);
+		if (same_set) {
+			continue;
+		}
+		auto holder =
+		    LookupEntry(retriever, EntryLookupInfo(other, info.GetQualifiedName()), OnEntryNotFound::RETURN_NULL);
+		if (holder.Found()) {
+			ThrowWrongRelationKind(name, info.type, holder.entry->type);
+		}
+	}
+	if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+		LookupEntry(retriever, lookup_info, OnEntryNotFound::THROW_EXCEPTION);
+	}
 }
 
 SchemaCatalogEntry &Catalog::GetSchema(ClientContext &context, const Identifier &schema) {

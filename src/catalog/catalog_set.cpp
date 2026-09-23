@@ -22,6 +22,8 @@
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
 
 void CatalogEntryMap::AddEntry(unique_ptr<CatalogEntry> entry) {
@@ -212,15 +214,42 @@ bool CatalogSet::CreateEntry(CatalogTransaction transaction, const Identifier &n
 
 	// lock the catalog for writing
 	lock_guard<mutex> write_lock(catalog.GetWriteLock());
+	if (!NamespaceVacant(transaction, name)) {
+		return false;
+	}
 	// lock this catalog set to disallow reading
 	unique_lock<mutex> read_lock(catalog_lock);
-
 	return CreateEntryInternal(transaction, name, std::move(value), read_lock);
 }
 
 bool CatalogSet::CreateEntry(ClientContext &context, const Identifier &name, unique_ptr<CatalogEntry> value,
                              const LogicalDependencyList &dependencies) {
 	return CreateEntry(catalog.GetCatalogTransaction(context), name, std::move(value), dependencies);
+}
+
+void CatalogSet::ShareNamespace(CatalogSet &other) {
+	shared_namespace.push_back(other);
+	other.shared_namespace.push_back(*this);
+}
+
+bool CatalogSet::NamespaceVacant(CatalogTransaction transaction, const Identifier &name) {
+	return absl::c_all_of(shared_namespace, [&](CatalogSet &set) {
+		lock_guard<mutex> lock(set.catalog_lock);
+		auto entry = set.map.GetEntry(name);
+		return !entry || VerifyVacancy(transaction, *entry);
+	});
+}
+
+optional_ptr<CatalogEntry> CatalogSet::GetNamespaceEntry(CatalogTransaction transaction, const Identifier &name) {
+	auto entry = GetEntry(transaction, name);
+	for (CatalogSet &other : shared_namespace) {
+		auto sibling = other.GetEntry(transaction, name);
+		D_ASSERT(!entry || !sibling);
+		if (sibling) {
+			entry = sibling;
+		}
+	}
+	return entry;
 }
 
 //! This method is used to retrieve an entry for the purpose of making a new version, through an alter/drop/create
@@ -285,12 +314,12 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 }
 
 bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, const Identifier &new_name,
-                                     AlterInfo &alter_info, unique_lock<mutex> &read_lock) {
+                                     AlterInfo &alter_info, unique_lock<mutex> &read_lock, bool namespace_vacant) {
 	auto &original_name = old.name;
 
 	auto &context = *transaction.context;
 	auto entry_value = map.GetEntry(new_name);
-	if (entry_value && !GetEntryForTransaction(transaction, *entry_value).deleted) {
+	if ((entry_value && !GetEntryForTransaction(transaction, *entry_value).deleted) || !namespace_vacant) {
 		old.UndoAlter(context, alter_info);
 		ThrowRenameConflict(old, new_name);
 	}
@@ -343,6 +372,7 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	// lock the catalog for writing
 	unique_lock<mutex> write_lock(catalog.GetWriteLock());
 	const bool renamed = !IdentifierEquality(map.IsCaseSensitive())(value->name, name);
+	const bool namespace_vacant = !renamed || NamespaceVacant(transaction, value->name);
 	// lock this catalog set to disallow reading
 	unique_lock<mutex> read_lock(catalog_lock);
 
@@ -357,7 +387,7 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	value->oid = entry->oid;
 
 	if (renamed) {
-		if (!RenameEntryInternal(transaction, *entry, value->name, alter_info, read_lock)) {
+		if (!RenameEntryInternal(transaction, *entry, value->name, alter_info, read_lock, namespace_vacant)) {
 			return false;
 		}
 	}
