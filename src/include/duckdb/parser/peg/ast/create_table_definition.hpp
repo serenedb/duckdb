@@ -16,5 +16,6 @@ struct CreateTableDefinition {
 	case_insensitive_map_t<unique_ptr<ParsedExpression>> options;
 	vector<string> null_conflict_columns;
 	vector<string> duplicate_default_columns;
+	vector<Identifier> serial_columns;
 };
 } // namespace duckdb

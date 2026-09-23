@@ -27,6 +27,8 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
@@ -240,10 +242,46 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 			return nullptr;
 		}
 	}
+	for (auto &dependency : dependencies.Set()) {
+		if (!dependency.owned_by) {
+			continue;
+		}
+		auto &owned_schema =
+		    *catalog.GetSchema(transaction, dependency.entry.schema_path, OnEntryNotFound::THROW_EXCEPTION);
+		auto owned = owned_schema.GetEntry(transaction, dependency.entry.type, dependency.entry.name);
+		catalog.GetDependencyManager()->AddOwnership(transaction, *result, *owned);
+	}
 	return result;
 }
 
+static void CreateSerialSequences(CatalogTransaction transaction, DuckSchemaEntry &schema, BoundCreateTableInfo &info) {
+	auto &table = info.Base();
+	if (info.serial_sequences.empty()) {
+		return;
+	}
+	if (table.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT &&
+	    schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, table.GetTableName())) {
+		return;
+	}
+	for (auto &serial : info.serial_sequences) {
+		CreateSequenceInfo sequence_info;
+		sequence_info.SetQualifiedName(schema.GetQualifiedName(serial.name));
+		sequence_info.max_value =
+		    Value::MaximumValue(table.columns.GetColumn(serial.column).Type()).GetValue<int64_t>();
+		auto &sequence = *schema.CreateSequence(transaction, sequence_info);
+		LogicalDependency dependency(sequence);
+		dependency.owned_by = true;
+		if (schema.catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+			for (auto &dependent : serial.dependents) {
+				dependency.subdependencies.insert(SubDependency {AlterTableType::SET_DEFAULT, dependent});
+			}
+		}
+		table.dependencies.AddDependency(dependency);
+	}
+}
+
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) {
+	CreateSerialSequences(transaction, *this, info);
 	auto table = catalog.Cast<DuckCatalog>().MakeTableEntry(transaction, *this, info);
 	auto &dependencies = info.Base().dependencies;
 
