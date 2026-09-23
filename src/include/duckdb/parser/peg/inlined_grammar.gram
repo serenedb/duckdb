@@ -970,10 +970,7 @@ PublicationFor <- 'FOR' (PublicationForAllTables / PublicationForTable)
 PublicationForAllTables <- 'ALL' 'TABLES'
 PublicationForTable <- 'TABLE' List(BaseTableName)
 
-CreateSchemaStmt <- 'SCHEMA' IfNotExists? QualifiedName? SchemaAuthorization?
-
-SchemaAuthorization <- 'AUTHORIZATION' ColId
-
+CreateSchemaStmt <- 'SCHEMA' IfNotExists? QualifiedName
 CreateSecretStmt <- 'SECRET' IfNotExists? SecretName? SecretStorageSpecifier? GenericCopyOptionList
 
 SecretStorageSpecifier <- 'IN' Identifier
