@@ -8,6 +8,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/checksum.hpp"
 #include "duckdb/common/thread.hpp"
@@ -462,6 +463,42 @@ void WriteAheadLog::WriteDropTrigger(const TriggerCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::DROP_TRIGGER);
 	serializer.WriteEntry(
 	    WALDropTrigger(QualifiedName(entry.ParentSchemaPath(), entry.name), entry.base_table->Table()));
+	serializer.End();
+}
+
+void WriteAheadLog::WriteCreateTokenizer(const StandardEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_TOKENIZER);
+	serializer.WriteEntry(WALCreateTokenizer {entry.GetSerializedInfo()});
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropTokenizer(const StandardEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_TOKENIZER);
+	serializer.WriteEntry(WALDropTokenizer {QualifiedName(entry.ParentSchemaPath(), entry.name)});
+	serializer.End();
+}
+
+void WriteAheadLog::WriteCreateDatabase(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_DATABASE);
+	serializer.WriteEntry(WALCreateDatabase {entry.GetSerializedInfo()});
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropDatabase(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_DATABASE);
+	serializer.WriteEntry(WALDropDatabase {entry.name});
+	serializer.End();
+}
+
+void WriteAheadLog::WriteCreateForeignServer(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_FOREIGN_SERVER);
+	serializer.WriteEntry(WALCreateForeignServer {entry.GetSerializedInfo()});
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropForeignServer(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_FOREIGN_SERVER);
+	serializer.WriteEntry(WALDropForeignServer {entry.name});
 	serializer.End();
 }
 

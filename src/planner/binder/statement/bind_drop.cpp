@@ -58,7 +58,8 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	case CatalogType::TABLE_MACRO_ENTRY:
 	case CatalogType::INDEX_ENTRY:
 	case CatalogType::TABLE_ENTRY:
-	case CatalogType::TYPE_ENTRY: {
+	case CatalogType::TYPE_ENTRY:
+	case CatalogType::TOKENIZER_ENTRY: {
 		// Resolve the catalog + (possibly nested) schema path. A leading component is the catalog when it names an
 		// attached database, and otherwise the outermost schema of a nested schema path. The entry lookup below
 		// navigates whatever qualification comes out of this.

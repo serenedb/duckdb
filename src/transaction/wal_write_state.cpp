@@ -64,6 +64,9 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 	case CatalogType::TYPE_ENTRY:
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY:
+	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::DATABASE_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SCHEMA_ENTRY:
 		if (entry.type == CatalogType::RENAMED_ENTRY || entry.type == parent.type) {
 			// ALTER statement, read the extra data after the entry
@@ -107,6 +110,15 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 			case CatalogType::TABLE_MACRO_ENTRY:
 				log.WriteCreateTableMacro(parent.Cast<TableMacroCatalogEntry>());
 				break;
+			case CatalogType::TOKENIZER_ENTRY:
+				log.WriteCreateTokenizer(parent.Cast<StandardEntry>());
+				break;
+			case CatalogType::DATABASE_ENTRY:
+				log.WriteCreateDatabase(parent.Cast<InCatalogEntry>());
+				break;
+			case CatalogType::FOREIGN_SERVER_ENTRY:
+				log.WriteCreateForeignServer(parent.Cast<InCatalogEntry>());
+				break;
 			case CatalogType::SCHEMA_ENTRY:
 				log.WriteCreateSchema(parent.Cast<SchemaCatalogEntry>());
 				break;
@@ -147,6 +159,15 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 		}
 		case CatalogType::TRIGGER_ENTRY:
 			log.WriteDropTrigger(entry.Cast<TriggerCatalogEntry>());
+			break;
+		case CatalogType::TOKENIZER_ENTRY:
+			log.WriteDropTokenizer(entry.Cast<StandardEntry>());
+			break;
+		case CatalogType::DATABASE_ENTRY:
+			log.WriteDropDatabase(entry.Cast<InCatalogEntry>());
+			break;
+		case CatalogType::FOREIGN_SERVER_ENTRY:
+			log.WriteDropForeignServer(entry.Cast<InCatalogEntry>());
 			break;
 		case CatalogType::RENAMED_ENTRY:
 		case CatalogType::PREPARED_STATEMENT:

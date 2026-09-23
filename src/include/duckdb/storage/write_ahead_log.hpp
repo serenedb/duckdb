@@ -8,7 +8,9 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/common/enums/wal_type.hpp"
@@ -99,6 +101,15 @@ public:
 
 	void WriteCreateTrigger(const TriggerCatalogEntry &entry);
 	void WriteDropTrigger(const TriggerCatalogEntry &entry);
+
+	void WriteCreateTokenizer(const StandardEntry &entry);
+	void WriteDropTokenizer(const StandardEntry &entry);
+
+	void WriteCreateDatabase(const InCatalogEntry &entry);
+	void WriteDropDatabase(const InCatalogEntry &entry);
+
+	void WriteCreateForeignServer(const InCatalogEntry &entry);
+	void WriteDropForeignServer(const InCatalogEntry &entry);
 	//! Sets the table used for subsequent insert/delete/update commands. The qualified name holds the (possibly
 	//! nested) schema path of the table followed by the table name.
 	void WriteSetTable(const QualifiedName &table);

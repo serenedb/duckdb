@@ -1,6 +1,7 @@
 #include "duckdb/storage/checkpoint_manager.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
@@ -14,6 +15,7 @@
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/assert.hpp"
+#include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/common/enums/checkpoint_abort.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/binary_serializer.hpp"
@@ -25,7 +27,10 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/block_manager.hpp"
@@ -124,12 +129,27 @@ unique_ptr<TableDataWriter> SingleFileCheckpointWriter::GetTableDataWriter(Table
 	return make_uniq<SingleFileTableDataWriter>(*this, table, *table_metadata_writer);
 }
 
-static catalog_entry_vector_t GetCatalogEntries(vector<reference<SchemaCatalogEntry>> &schemas) {
+static catalog_entry_vector_t GetCatalogEntries(DuckCatalog &catalog, vector<reference<SchemaCatalogEntry>> &schemas) {
 	catalog_entry_vector_t entries;
+	for (auto type : {CatalogType::DATABASE_ENTRY, CatalogType::FOREIGN_SERVER_ENTRY}) {
+		catalog.GetCatalogSet(type).Scan([&](CatalogEntry &entry) {
+			if (entry.internal) {
+				return;
+			}
+			entries.push_back(entry);
+		});
+	}
 	for (auto &schema_p : schemas) {
 		auto &schema = schema_p.get();
 		entries.push_back(schema);
 		schema.Scan(CatalogType::TYPE_ENTRY, [&](CatalogEntry &entry) {
+			if (entry.internal) {
+				return;
+			}
+			entries.push_back(entry);
+		});
+
+		schema.Scan(CatalogType::TOKENIZER_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.internal) {
 				return;
 			}
@@ -280,7 +300,7 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 	D_ASSERT(catalog.IsDuckCatalog());
 
 	auto &dependency_manager = *catalog.GetDependencyManager();
-	catalog_entries = GetCatalogEntries(schemas);
+	catalog_entries = GetCatalogEntries(catalog, schemas);
 	dependency_manager.ReorderEntries(catalog_entries);
 
 	// write the actual data into the database
@@ -499,6 +519,21 @@ void CheckpointWriter::WriteEntry(CatalogEntry &entry, Serializer &serializer) {
 		WriteTrigger(trigger, serializer);
 		break;
 	}
+	case CatalogType::TOKENIZER_ENTRY: {
+		auto &tokenizer = entry.Cast<StandardEntry>();
+		WriteTokenizer(tokenizer, serializer);
+		break;
+	}
+	case CatalogType::DATABASE_ENTRY: {
+		auto &database = entry.Cast<InCatalogEntry>();
+		WriteDatabase(database, serializer);
+		break;
+	}
+	case CatalogType::FOREIGN_SERVER_ENTRY: {
+		auto &server = entry.Cast<InCatalogEntry>();
+		WriteForeignServer(server, serializer);
+		break;
+	}
 	default:
 		throw InternalException("Unrecognized catalog type in CheckpointWriter::WriteEntry");
 	}
@@ -565,6 +600,18 @@ void CheckpointReader::ReadEntry(CatalogTransaction transaction, Deserializer &d
 		ReadTrigger(transaction, deserializer);
 		break;
 	}
+	case CatalogType::TOKENIZER_ENTRY: {
+		ReadTokenizer(transaction, deserializer);
+		break;
+	}
+	case CatalogType::DATABASE_ENTRY: {
+		ReadDatabase(transaction, deserializer);
+		break;
+	}
+	case CatalogType::FOREIGN_SERVER_ENTRY: {
+		ReadForeignServer(transaction, deserializer);
+		break;
+	}
 	default:
 		throw DataCorruptionException("corrupt database file - unrecognized catalog type in checkpoint");
 	}
@@ -624,6 +671,37 @@ void CheckpointReader::ReadSequence(CatalogTransaction transaction, Deserializer
 	auto info = ReadCreateInfo(deserializer, CatalogType::SEQUENCE_ENTRY, "sequence");
 	auto &sequence_info = info->Cast<CreateSequenceInfo>();
 	catalog.CreateSequence(transaction, sequence_info);
+}
+
+void CheckpointWriter::WriteTokenizer(StandardEntry &tokenizer, Serializer &serializer) {
+	serializer.WriteProperty(100, "tokenizer", &tokenizer);
+}
+
+void CheckpointReader::ReadTokenizer(CatalogTransaction transaction, Deserializer &deserializer) {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "tokenizer");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	auto &schema = catalog.GetEntrySchema(transaction, info->GetQualifiedName());
+	schema.Cast<DuckSchemaEntry>().CreateTokenizer(transaction, info->Cast<CreateTokenizerInfo>());
+}
+
+void CheckpointWriter::WriteDatabase(InCatalogEntry &database, Serializer &serializer) {
+	serializer.WriteProperty(100, "database", &database);
+}
+
+void CheckpointReader::ReadDatabase(CatalogTransaction transaction, Deserializer &deserializer) {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "database");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	catalog.Cast<DuckCatalog>().CreateDatabase(transaction, info->Cast<CreateDatabaseInfo>());
+}
+
+void CheckpointWriter::WriteForeignServer(InCatalogEntry &server, Serializer &serializer) {
+	serializer.WriteProperty(100, "server", &server);
+}
+
+void CheckpointReader::ReadForeignServer(CatalogTransaction transaction, Deserializer &deserializer) {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "server");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	catalog.Cast<DuckCatalog>().CreateForeignServer(transaction, info->Cast<CreateForeignServerInfo>());
 }
 
 //===--------------------------------------------------------------------===//

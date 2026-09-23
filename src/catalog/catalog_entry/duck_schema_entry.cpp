@@ -39,6 +39,7 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
@@ -87,7 +88,8 @@ DuckSchemaSets::DuckSchemaSets(Catalog &catalog, DuckSchemaEntry &schema)
       sequences(catalog), collations(catalog),
       types(catalog, schema.internal ? make_uniq<DefaultTypeGenerator>(catalog, schema) : nullptr),
       coordinate_systems(
-          catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, schema) : nullptr) {
+          catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, schema) : nullptr),
+      tokenizers(catalog) {
 	const bool one_relation_namespace = catalog.Compatibility() == SqlCompatibility::POSTGRES;
 	if (one_relation_namespace) {
 		tables.ShareNamespace(indexes);
@@ -360,6 +362,11 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateType(CatalogTransaction transa
 	return AddEntry(transaction, std::move(type_entry), info.on_conflict);
 }
 
+optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTokenizer(CatalogTransaction transaction, CreateTokenizerInfo &info) {
+	auto tokenizer = catalog.Cast<DuckCatalog>().MakeTokenizerEntry(*this, info);
+	return AddEntry(transaction, std::move(tokenizer), info.on_conflict);
+}
+
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateView(CatalogTransaction transaction, CreateViewInfo &info) {
 	if (AlterExistingEntry(*this, transaction, info, info.GetViewName())) {
 		return nullptr;
@@ -613,6 +620,8 @@ CatalogSet &DuckSchemaSets::GetCatalogSet(CatalogType type) {
 		return coordinate_systems;
 	case CatalogType::TYPE_ENTRY:
 		return types;
+	case CatalogType::TOKENIZER_ENTRY:
+		return tokenizers;
 	default:
 		throw InternalException({{"catalog_type", CatalogTypeToString(type)}}, "Unsupported catalog type in schema");
 	}
@@ -634,6 +643,7 @@ void DuckSchemaSets::Verify(Catalog &catalog) {
 	sequences.Verify(catalog);
 	collations.Verify(catalog);
 	types.Verify(catalog);
+	tokenizers.Verify(catalog);
 }
 
 } // namespace duckdb

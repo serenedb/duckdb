@@ -1,3 +1,4 @@
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -25,7 +26,10 @@
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/create_trigger_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
@@ -326,6 +330,15 @@ protected:
 
 	void ReplayCreateTrigger();
 	void ReplayDropTrigger();
+
+	void ReplayCreateTokenizer();
+	void ReplayDropTokenizer();
+
+	void ReplayCreateDatabase();
+	void ReplayDropDatabase();
+
+	void ReplayCreateForeignServer();
+	void ReplayDropForeignServer();
 
 	void ReplayUseTable();
 	void ReplayInsert();
@@ -804,6 +817,24 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::DROP_TRIGGER:
 		ReplayDropTrigger();
 		break;
+	case WALType::CREATE_TOKENIZER:
+		ReplayCreateTokenizer();
+		break;
+	case WALType::DROP_TOKENIZER:
+		ReplayDropTokenizer();
+		break;
+	case WALType::CREATE_DATABASE:
+		ReplayCreateDatabase();
+		break;
+	case WALType::DROP_DATABASE:
+		ReplayDropDatabase();
+		break;
+	case WALType::CREATE_FOREIGN_SERVER:
+		ReplayCreateForeignServer();
+		break;
+	case WALType::DROP_FOREIGN_SERVER:
+		ReplayDropForeignServer();
+		break;
 	default:
 		throw InternalException("Invalid WAL entry type!");
 	}
@@ -1169,6 +1200,76 @@ void WriteAheadLogDeserializer::ReplayDropTrigger() {
 	    Catalog::GetEntry<TableCatalogEntry>(context, info.GetQualifiedName().WithName(std::move(table_name)));
 	auto transaction = catalog.GetCatalogTransaction(context);
 	table.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateTokenizer() {
+	auto wal_entry = WALCreateTokenizer::Deserialize(deserializer);
+	auto &info = wal_entry.tokenizer;
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	auto transaction = catalog.GetCatalogTransaction(context);
+	auto &schema = catalog.GetEntrySchema(transaction, info->GetQualifiedName());
+	schema.Cast<DuckSchemaEntry>().CreateTokenizer(transaction, info->Cast<CreateTokenizerInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropTokenizer() {
+	auto entry = WALDropTokenizer::Deserialize(deserializer);
+	DropInfo info;
+	info.type = CatalogType::TOKENIZER_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
+	info.SetQualifiedName(ReplayEntryName(catalog, entry.qualified_name));
+	if (DeserializeOnly()) {
+		return;
+	}
+
+	catalog.DropEntry(context, info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateDatabase() {
+	auto wal_entry = WALCreateDatabase::Deserialize(deserializer);
+	auto &info = wal_entry.database;
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().CreateDatabase(catalog.GetCatalogTransaction(context),
+	                                           info->Cast<CreateDatabaseInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropDatabase() {
+	auto entry = WALDropDatabase::Deserialize(deserializer);
+	DropInfo info;
+	info.type = CatalogType::DATABASE_ENTRY;
+	info.SetName(std::move(entry.name));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DropDatabase(catalog.GetCatalogTransaction(context), info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateForeignServer() {
+	auto wal_entry = WALCreateForeignServer::Deserialize(deserializer);
+	auto &info = wal_entry.server;
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().CreateForeignServer(catalog.GetCatalogTransaction(context),
+	                                                info->Cast<CreateForeignServerInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropForeignServer() {
+	auto entry = WALDropForeignServer::Deserialize(deserializer);
+	DropInfo info;
+	info.type = CatalogType::FOREIGN_SERVER_ENTRY;
+	info.SetName(std::move(entry.name));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DropForeignServer(catalog.GetCatalogTransaction(context), info);
 }
 
 //===--------------------------------------------------------------------===//
