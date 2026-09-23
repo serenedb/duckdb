@@ -123,11 +123,6 @@ public:
 	virtual bool DependentCanRebind() const {
 		return false;
 	}
-	//! Whether this alter is really a CREATE OR REPLACE that swaps the whole definition. A dependent it breaks is
-	//! refused the way a DROP the dependent blocks is -- naming the dependent -- rather than as a generic alter.
-	virtual bool ReplacesDefinition() const {
-		return false;
-	}
 
 	AlterEntryData GetAlterEntryData() const;
 	//! ADD PRIMARY KEY or ADD UNIQUE: the constraint is backed by an index, so the ALTER has to build one over the
@@ -159,14 +154,9 @@ public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
 
-	//! An owner or ACL change leaves the shape a dependent bound against untouched, and a plain dependent
-	//! rebinds against a replaced definition (CREATE OR REPLACE) -- only an ownership edge, handled in
-	//! DependencyManager::AlterObject, blocks a replace.
+	//! An owner or ACL change leaves the shape a dependent bound against untouched.
 	bool BreaksDependent(CatalogType dependent_type) const override {
 		return false;
-	}
-	bool ReplacesDefinition() const override {
-		return permissions_alter_type == PermissionsAlterType::REPLACE_DEFINITION;
 	}
 
 	void Serialize(Serializer &serializer) const override;
