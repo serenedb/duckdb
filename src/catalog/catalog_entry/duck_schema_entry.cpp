@@ -154,11 +154,6 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 
 	if (on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
 		auto &superseded_name = replaces ? *replaces : entry_name;
-		if (auto old_entry = set.GetEntry(transaction, superseded_name)) {
-			// The replace supersedes the old incarnation's rows with the new one's: its transaction-local
-			// inserts must never reach a flush, the same way a drop discards them.
-			OnDropEntry(transaction, *old_entry);
-		}
 		if (!set.CreateOrReplaceEntry(transaction, superseded_name, std::move(entry), dependencies)) {
 			return nullptr;
 		}
@@ -413,15 +408,10 @@ void DuckSchemaEntry::OnDropEntry(CatalogTransaction transaction, CatalogEntry &
 	if (entry.type != CatalogType::TABLE_ENTRY) {
 		return;
 	}
-	// if we have transaction local insertions for this table - clear them. A table another catalog owns
-	// keeps its rows outside duckdb's local storage and has no DataTable to clear.
+	// if we have transaction local insertions for this table - clear them
 	auto &table_entry = entry.Cast<TableCatalogEntry>();
-	auto storage = table_entry.TryGetStorage();
-	if (!storage) {
-		return;
-	}
 	auto &local_storage = LocalStorage::Get(transaction.transaction->Cast<DuckTransaction>());
-	local_storage.DropTable(*storage);
+	local_storage.DropTable(table_entry.GetStorage());
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::LookupEntry(CatalogTransaction transaction,
