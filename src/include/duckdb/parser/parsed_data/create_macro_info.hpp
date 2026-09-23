@@ -21,6 +21,7 @@ struct CreateMacroInfo : public CreateFunctionInfo {
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;
+	unique_ptr<AlterInfo> GetAlterInfo() const override;
 
 	string ToString() const override;
 	DUCKDB_API void Serialize(Serializer &serializer) const override;

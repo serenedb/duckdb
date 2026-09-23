@@ -62,6 +62,10 @@ public:
 
 	virtual unique_ptr<MacroFunction> Copy() const = 0;
 
+	vector<LogicalType> ParameterTypes() const;
+	bool HasParameterTypes(const vector<LogicalType> &parameter_types) const;
+	static string ParameterTypesToString(const vector<LogicalType> &parameter_types);
+
 	vector<unique_ptr<ParsedExpression>> GetPositionalParametersForSerialization(Serializer &serializer) const;
 	void FinalizeDeserialization();
 

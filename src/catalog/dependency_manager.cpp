@@ -974,6 +974,12 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			}
 			break;
 		}
+		case AlterType::REPLACE_DEFINITION: {
+			if (dep.EntryInfo().type != CatalogType::INDEX_ENTRY || old_obj.type == CatalogType::VIEW_ENTRY) {
+				disallow_alter = false;
+			}
+			break;
+		}
 		case AlterType::SET_COLUMN_COMMENT:
 		case AlterType::SET_COMMENT: {
 			disallow_alter = false;

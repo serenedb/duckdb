@@ -30,7 +30,8 @@ enum class AlterType : uint8_t {
 	SET_COLUMN_COMMENT = 8,
 	ALTER_DATABASE = 9,
 	ALTER_SCHEMA = 10,
-	ALTER_INDEX = 202
+	ALTER_INDEX = 202,
+	REPLACE_DEFINITION = 203
 };
 
 enum class AlterBindMode { BIND_ON_ALTER, SKIP_BINDING };
