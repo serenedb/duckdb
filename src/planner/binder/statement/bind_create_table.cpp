@@ -286,7 +286,8 @@ void Binder::BindGeneratedColumns(BoundCreateTableInfo &info) {
 	// Create a new binder because we dont need (or want) these bindings in this scope
 	auto binder = Binder::CreateBinder(context);
 	binder->SetCatalogLookupCallback(entry_retriever.GetCallback());
-	binder->bind_context.AddGenericBinding(table_index, base.GetTableName(), names, types);
+	binder->bind_context.AddGenericBinding(table_index, base.GetTableName(), names, types,
+	                                       base.columns.IsCaseSensitive());
 	auto expr_binder = ExpressionBinder(*binder, context);
 	ErrorData ignore;
 	auto table_binding = binder->bind_context.GetBinding(base.GetTableName(), ignore);
@@ -644,6 +645,7 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 	auto &dependencies = base.dependencies;
 	dependencies.AddDependency(schema);
 	auto &catalog = schema.ParentCatalog();
+	base.columns.SetCaseSensitive(catalog.IsCaseSensitive());
 	optional_ptr<StorageManager> storage_manager;
 	if (catalog.IsDuckCatalog() && !catalog.InMemory()) {
 		storage_manager = StorageManager::Get(catalog);
@@ -678,7 +680,7 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 					target_col_names.emplace_back(names[i]);
 				}
 			}
-			ColumnList new_columns;
+			ColumnList new_columns(false, base.columns.IsCaseSensitive());
 			for (idx_t i = 0; i < target_col_names.size(); i++) {
 				new_columns.AddColumn(ColumnDefinition(Identifier(target_col_names[i]), sql_types[i]));
 			}

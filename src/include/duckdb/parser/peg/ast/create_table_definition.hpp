@@ -9,7 +9,7 @@
 namespace duckdb {
 struct CreateTableDefinition {
 	unique_ptr<SelectStatement> select_statement;
-	ColumnList columns;
+	ColumnList columns {false, true};
 	vector<unique_ptr<Constraint>> constraints;
 	vector<unique_ptr<ParsedExpression>> partition_keys;
 	vector<unique_ptr<ParsedExpression>> sort_keys;

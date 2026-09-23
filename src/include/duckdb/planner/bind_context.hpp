@@ -117,7 +117,7 @@ public:
 	                     const vector<LogicalType> &types, StandardEntry &entry);
 	//! Adds a base table with the given alias to the BindContext.
 	void AddGenericBinding(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-	                       const vector<LogicalType> &types);
+	                       const vector<LogicalType> &types, bool case_sensitive = false);
 
 	//! Registers an alternative name for a column of the binding with the given index
 	//! The alias can be bound like a regular column, but is not emitted by *
@@ -154,7 +154,7 @@ public:
 	//! Alias a set of column names for the specified table, using the original names if there are not enough aliases
 	//! specified.
 	static vector<Identifier> AliasColumnNames(const Identifier &table_name, const vector<Identifier> &names,
-	                                           const vector<Identifier> &column_aliases);
+	                                           const vector<Identifier> &column_aliases, bool case_sensitive = false);
 
 	//! Add all the bindings from a BindContext to this BindContext. The other BindContext is destroyed in the process.
 	void AddContext(BindContext other);
