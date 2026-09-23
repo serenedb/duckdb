@@ -97,6 +97,7 @@ protected:
 	virtual void WriteType(TypeCatalogEntry &type, Serializer &serializer);
 	virtual void WriteTrigger(TriggerCatalogEntry &trigger, Serializer &serializer);
 	virtual void WriteTokenizer(StandardEntry &tokenizer, Serializer &serializer);
+	virtual void WriteRole(InCatalogEntry &role, Serializer &serializer);
 	virtual void WriteDatabase(InCatalogEntry &database, Serializer &serializer);
 	virtual void WriteForeignServer(InCatalogEntry &server, Serializer &serializer);
 };
@@ -124,6 +125,7 @@ protected:
 	virtual void ReadType(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadTrigger(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadTokenizer(CatalogTransaction transaction, Deserializer &deserializer);
+	virtual void ReadRole(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadDatabase(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadForeignServer(CatalogTransaction transaction, Deserializer &deserializer);
 

@@ -1879,6 +1879,7 @@ IdentifierType:
     - UpdateAlias
     - TableAliasColon
     - SecretStorageSpecifier
+    - SchemaAuthorization
     - SecretName
     - TriggerName
     - DropSecretStorage

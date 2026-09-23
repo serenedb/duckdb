@@ -27,6 +27,7 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/create_trigger_info.hpp"
@@ -330,6 +331,9 @@ protected:
 
 	void ReplayCreateTokenizer();
 	void ReplayDropTokenizer();
+
+	void ReplayCreateRole();
+	void ReplayDropRole();
 
 	void ReplayCreateDatabase();
 	void ReplayDropDatabase();
@@ -820,6 +824,12 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::DROP_TOKENIZER:
 		ReplayDropTokenizer();
 		break;
+	case WALType::CREATE_ROLE:
+		ReplayCreateRole();
+		break;
+	case WALType::DROP_ROLE:
+		ReplayDropRole();
+		break;
 	case WALType::CREATE_DATABASE:
 		ReplayCreateDatabase();
 		break;
@@ -1222,6 +1232,27 @@ void WriteAheadLogDeserializer::ReplayDropTokenizer() {
 	}
 
 	catalog.DropEntry(context, info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateRole() {
+	auto wal_entry = WALCreateRole::Deserialize(deserializer);
+	auto &info = wal_entry.role;
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().CreateRole(catalog.GetCatalogTransaction(context), info->Cast<CreateRoleInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropRole() {
+	auto entry = WALDropRole::Deserialize(deserializer);
+	DropInfo info;
+	info.type = CatalogType::ROLE_ENTRY;
+	info.SetName(std::move(entry.name));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DropRole(catalog.GetCatalogTransaction(context), info);
 }
 
 void WriteAheadLogDeserializer::ReplayCreateDatabase() {

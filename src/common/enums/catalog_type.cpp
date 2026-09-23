@@ -47,6 +47,8 @@ string CatalogTypeToString(CatalogType type) {
 		return "Trigger";
 	case CatalogType::TOKENIZER_ENTRY:
 		return "Tokenizer";
+	case CatalogType::ROLE_ENTRY:
+		return "Role";
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 		return "Foreign Server";
 	case CatalogType::SECRET_ENTRY:
@@ -121,6 +123,9 @@ CatalogType CatalogTypeFromString(const string &type) {
 	}
 	if (type == "Tokenizer") {
 		return CatalogType::TOKENIZER_ENTRY;
+	}
+	if (type == "Role") {
+		return CatalogType::ROLE_ENTRY;
 	}
 	if (type == "Foreign Server") {
 		return CatalogType::FOREIGN_SERVER_ENTRY;

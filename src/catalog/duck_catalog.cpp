@@ -9,6 +9,7 @@
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
@@ -24,6 +25,7 @@ DuckCatalog::DuckCatalog(AttachedDatabase &db, bool case_sensitive_names)
     : Catalog(db), dependency_manager(make_uniq<DependencyManager>(*this)),
       schemas(make_uniq<CatalogSet>(*this, IsSystemCatalog() ? make_uniq<DefaultSchemaGenerator>(*this) : nullptr,
                                     case_sensitive_names)),
+      roles(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
       databases(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
       foreign_servers(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)) {
 }
@@ -171,6 +173,10 @@ void DuckCatalog::AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalog
 	}
 }
 
+unique_ptr<InCatalogEntry> DuckCatalog::MakeRoleEntry(CreateRoleInfo &info) {
+	throw NotImplementedException("Roles are not supported by this catalog");
+}
+
 unique_ptr<InCatalogEntry> DuckCatalog::MakeDatabaseEntry(CreateDatabaseInfo &info) {
 	throw NotImplementedException("Database entries are not supported by this catalog");
 }
@@ -208,6 +214,10 @@ optional_ptr<CatalogEntry> DuckCatalog::AddEntry(CatalogTransaction transaction,
 	return result;
 }
 
+optional_ptr<CatalogEntry> DuckCatalog::CreateRole(CatalogTransaction transaction, CreateRoleInfo &info) {
+	return AddEntry(transaction, MakeRoleEntry(info), info.on_conflict);
+}
+
 optional_ptr<CatalogEntry> DuckCatalog::CreateDatabase(CatalogTransaction transaction, CreateDatabaseInfo &info) {
 	return AddEntry(transaction, MakeDatabaseEntry(info), info.on_conflict);
 }
@@ -215,6 +225,15 @@ optional_ptr<CatalogEntry> DuckCatalog::CreateDatabase(CatalogTransaction transa
 optional_ptr<CatalogEntry> DuckCatalog::CreateForeignServer(CatalogTransaction transaction,
                                                             CreateForeignServerInfo &info) {
 	return AddEntry(transaction, MakeForeignServerEntry(info), info.on_conflict);
+}
+
+void DuckCatalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
+	D_ASSERT(!info.GetQualifiedName().Name().empty());
+	if (!roles->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
+		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingEntry(CatalogType::ROLE_ENTRY, info.GetQualifiedName().Name(), string());
+		}
+	}
 }
 
 void DuckCatalog::DropDatabase(CatalogTransaction transaction, DropInfo &info) {
@@ -240,6 +259,8 @@ CatalogSet &DuckCatalog::GetCatalogSet(CatalogType type) {
 	switch (type) {
 	case CatalogType::SCHEMA_ENTRY:
 		return *schemas;
+	case CatalogType::ROLE_ENTRY:
+		return *roles;
 	case CatalogType::DATABASE_ENTRY:
 		return *databases;
 	case CatalogType::FOREIGN_SERVER_ENTRY:
@@ -311,6 +332,7 @@ void DuckCatalog::Verify() {
 	DUCKDB_DEBUG_VERIFY_GUARD();
 	Catalog::Verify();
 	schemas->Verify(*this);
+	roles->Verify(*this);
 	databases->Verify(*this);
 	foreign_servers->Verify(*this);
 #endif

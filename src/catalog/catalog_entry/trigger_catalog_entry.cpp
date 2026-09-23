@@ -19,6 +19,7 @@ TriggerCatalogEntry::TriggerCatalogEntry(Catalog &catalog, SchemaCatalogEntry &s
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 }
 
 unique_ptr<CatalogEntry> TriggerCatalogEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &alter_info) {
@@ -65,6 +66,7 @@ unique_ptr<CreateInfo> TriggerCatalogEntry::GetInfo() const {
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	return std::move(result);
 }
 

@@ -104,6 +104,9 @@ public:
 	void WriteCreateTokenizer(const StandardEntry &entry);
 	void WriteDropTokenizer(const StandardEntry &entry);
 
+	void WriteCreateRole(const InCatalogEntry &entry);
+	void WriteDropRole(const InCatalogEntry &entry);
+
 	void WriteCreateDatabase(const InCatalogEntry &entry);
 	void WriteDropDatabase(const InCatalogEntry &entry);
 

@@ -30,6 +30,7 @@ enum class CatalogType : uint8_t {
 	TRIGGER_ENTRY = 11,
 
 	TOKENIZER_ENTRY = 228,
+	ROLE_ENTRY = 229,
 	FOREIGN_SERVER_ENTRY = 230,
 
 	// functions

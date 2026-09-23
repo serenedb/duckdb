@@ -327,6 +327,20 @@ struct WALDropTokenizer {
 	static WALDropTokenizer Deserialize(Deserializer &deserializer);
 };
 
+struct WALCreateRole {
+	unique_ptr<CreateInfo> role;
+
+	void Serialize(Serializer &serializer) const;
+	static WALCreateRole Deserialize(Deserializer &deserializer);
+};
+
+struct WALDropRole {
+	Identifier name;
+
+	void Serialize(Serializer &serializer) const;
+	static WALDropRole Deserialize(Deserializer &deserializer);
+};
+
 struct WALCreateDatabase {
 	unique_ptr<CreateInfo> database;
 

@@ -1686,6 +1686,10 @@ void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		}
 		return AlterSchemaEntry(transaction, *schema, info);
 	}
+	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().all_in_schema) {
+		GetSchema(transaction, info.GetQualifiedName().Schema()).Alter(transaction, info);
+		return;
+	}
 	// ALTER FUNCTION ... RENAME TO ... cannot disambiguate scalar vs table
 	// macro at parse time (mirrors the binder skip in Binder::Bind(AlterStatement)).
 	// Dispatch to the schema without a type-specific lookup so the schema's

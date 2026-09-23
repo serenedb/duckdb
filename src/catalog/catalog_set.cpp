@@ -368,6 +368,9 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 		// alter failed, but did not result in an error
 		return true;
 	}
+	if (alter_info.type != AlterType::ALTER_PERMISSIONS) {
+		value->permissions = entry->permissions;
+	}
 
 	// lock the catalog for writing
 	unique_lock<mutex> write_lock(catalog.GetWriteLock());

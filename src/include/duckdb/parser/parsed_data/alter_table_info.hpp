@@ -8,9 +8,11 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/parser/column_definition.hpp"
+#include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/result_modifier.hpp"
 
@@ -67,6 +69,41 @@ public:
 	explicit SetCommentInfo();
 };
 
+struct AlterPermissionsInfo : public AlterInfo {
+	AlterPermissionsInfo(CatalogType entry_catalog_type, QualifiedName entry_name);
+
+	CatalogType entry_catalog_type;
+	string new_owner;
+	idx_t new_owner_id = 0;
+	AclMode privileges = AclMode::NoRights;
+	vector<ColumnPrivilege> column_privileges;
+	string grantee;
+	idx_t grantee_id = ACL_ID_PUBLIC;
+	string granted_by;
+	vector<idx_t> grantors;
+	bool revoke = false;
+	bool with_grant_option = false;
+	bool option_only = false;
+	bool cascade = false;
+	CatalogType default_objtype = CatalogType::INVALID;
+	string for_role;
+	string default_schema;
+	idx_t target_role = 0;
+	idx_t default_scope = 0;
+	bool all_in_schema = false;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+	void ApplyTo(Permissions &permissions, CatalogType entry_type, optional_ptr<ColumnList> columns) const;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit AlterPermissionsInfo();
+};
+
 struct ReplaceDefinitionInfo : public AlterInfo {
 	explicit ReplaceDefinitionInfo(unique_ptr<CreateInfo> definition);
 	~ReplaceDefinitionInfo() override;
@@ -80,6 +117,42 @@ public:
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+};
+
+struct AlterRoleInfo : public AlterInfo {
+	explicit AlterRoleInfo(Identifier role);
+
+	RoleOption set_options = RoleOption::None;
+	RoleOption clear_options = RoleOption::None;
+	bool set_password = false;
+	bool null_password = false;
+	string password;
+	bool set_conn_limit = false;
+	int32_t conn_limit = -1;
+	bool set_valid_until = false;
+	int64_t valid_until = 0;
+	Identifier new_name;
+	bool reset_all_config = false;
+	vector<string> reset_config;
+	vector<string> set_config;
+	string grant_role;
+	bool revoke = false;
+	bool option_only = false;
+	int8_t admin_option = -1;
+	int8_t inherit_option = -1;
+	int8_t set_option = -1;
+	idx_t grant_role_id = 0;
+	idx_t grantor_id = 0;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit AlterRoleInfo();
 };
 
 //===--------------------------------------------------------------------===//
