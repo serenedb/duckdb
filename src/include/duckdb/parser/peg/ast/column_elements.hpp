@@ -7,7 +7,7 @@
 
 namespace duckdb {
 struct ColumnElements {
-	ColumnList columns {false};
+	ColumnList columns {false, true};
 	vector<unique_ptr<Constraint>> constraints;
 	vector<unique_ptr<ParsedExpression>> partition_keys;
 	vector<unique_ptr<ParsedExpression>> sort_keys;
@@ -16,6 +16,7 @@ struct ColumnElements {
 	// PRIMARY KEY in their definition. The CreateTable transformer reads
 	// these out and raises a single error per column with the table name.
 	vector<string> null_conflict_columns;
+	vector<Identifier> serial_columns;
 	// PG-compat: column names that declared
 	// DEFAULT more than once. Same deferred-error pattern as the null conflict
 	// list above; the CreateTable transformer raises the canonical PG message

@@ -279,6 +279,21 @@ unique_ptr<DummyBinding> MacroFunction::CreateDummyBinding(
 	return res;
 }
 
+vector<LogicalType> MacroFunction::ParameterTypes() const {
+	auto result = types;
+	result.resize(parameters.size(), LogicalType::UNKNOWN);
+	return result;
+}
+
+bool MacroFunction::HasParameterTypes(const vector<LogicalType> &parameter_types) const {
+	return ParameterTypes() == parameter_types;
+}
+
+string MacroFunction::ParameterTypesToString(const vector<LogicalType> &parameter_types) {
+	return StringUtil::Join(parameter_types, parameter_types.size(), ", ",
+	                        [](const LogicalType &type) { return type.ToString(); });
+}
+
 void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.type = type;
 	for (auto &param : parameters) {

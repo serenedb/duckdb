@@ -137,8 +137,7 @@ string DuckDBFileReaderOptions::GetCandidates(const vector<reference<TableCatalo
 		auto &table = table_ref.get();
 		if (table_names[table.name] > 1) {
 			// name conflicts across schemas - add the schema name
-			auto &schema = table.ParentSchema();
-			candidate_list.push_back(schema.name + "." + table.name);
+			candidate_list.push_back(table.ParentSchemaName() + "." + table.name);
 		} else {
 			candidate_list.push_back(table.name.GetIdentifierName());
 		}
@@ -176,7 +175,7 @@ string DuckDBFileReaderOptions::PrintOptions() const {
 }
 
 bool DuckDBFileReaderOptions::Matches(TableCatalogEntry &table) const {
-	if (!schema_name.empty() && table.ParentSchema().name != schema_name) {
+	if (!schema_name.empty() && table.ParentSchemaName() != schema_name) {
 		return false;
 	}
 	if (!table_name.empty() && table.name != table_name) {
@@ -236,7 +235,7 @@ DuckDBReader::DuckDBReader(ClientContext &context_p, OpenFileInfo file_p, const 
 		columns.emplace_back(col.Name().GetIdentifierName(), col.Type());
 	}
 	column_count = columns.size();
-	schema_name = table.ParentSchema().name;
+	schema_name = table.ParentSchemaName();
 	table_name = table.name;
 	db_wrapper->table_entry = table;
 }

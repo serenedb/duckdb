@@ -34,6 +34,7 @@ public:
 	               shared_ptr<IndexDataTableInfo> storage_info);
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
 	void Rollback(CatalogEntry &prev_entry) override;
 
 	//! The indexed table information

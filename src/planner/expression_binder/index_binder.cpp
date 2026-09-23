@@ -1,5 +1,6 @@
 #include "duckdb/planner/expression_binder/index_binder.hpp"
 
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
@@ -11,6 +12,7 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/planner/operator/logical_create_index.hpp"
+#include "duckdb/planner/operator/logical_filter.hpp"
 
 namespace duckdb {
 
@@ -35,10 +37,16 @@ unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index)
 
 	// bind the parsed expressions to create unbound expressions
 	vector<unique_ptr<Expression>> unbound_expressions;
-	unbound_expressions.reserve(parsed_expressions.size());
+	unbound_expressions.reserve(parsed_expressions.size() + 1);
 	for (auto &expr : parsed_expressions) {
 		auto copy = expr->Copy();
 		unbound_expressions.push_back(Bind(copy));
+	}
+	if (create_info.where_clause) {
+		IndexBinder where_binder(binder, context, table, info);
+		where_binder.target_type = LogicalType::BOOLEAN;
+		auto where_copy = create_info.where_clause->Copy();
+		unbound_expressions.push_back(where_binder.Bind(where_copy));
 	}
 
 	CreateIndexInput input(context, unbound_index.table_io_manager, unbound_index.db, create_info.constraint_type,
@@ -74,12 +82,13 @@ unique_ptr<LogicalOperator> IndexBinder::BindCreateIndex(ClientContext &context,
 	// Add the dependencies.
 	auto &dependencies = create_index_info->dependencies;
 	auto &catalog = Catalog::GetCatalog(context, create_index_info->GetQualifiedName().Catalog());
-	SetCatalogLookupCallback([&dependencies, &catalog](CatalogEntry &entry) {
+	catalog_entry_callback_t lookup_callback = [&dependencies, &catalog](CatalogEntry &entry) {
 		if (&catalog != &entry.ParentCatalog()) {
 			return;
 		}
 		dependencies.AddDependency(entry);
-	});
+	};
+	SetCatalogLookupCallback(lookup_callback);
 
 	// Bind the index expressions.
 	vector<unique_ptr<Expression>> expressions;
@@ -87,13 +96,37 @@ unique_ptr<LogicalOperator> IndexBinder::BindCreateIndex(ClientContext &context,
 		expressions.push_back(Bind(expr));
 	}
 
+	unique_ptr<Expression> bound_where;
+	if (create_index_info->where_clause) {
+		IndexBinder where_binder(binder, context, table, info);
+		where_binder.target_type = LogicalType::BOOLEAN;
+		where_binder.SetCatalogLookupCallback(lookup_callback);
+		auto where_copy = create_index_info->where_clause->Copy();
+		bound_where = where_binder.Bind(where_copy);
+		expressions.push_back(bound_where->Copy());
+	}
+
 	auto &get = plan->Cast<LogicalGet>();
-	InitCreateIndexInfo(get, *create_index_info, table_entry.schema.name);
+	InitCreateIndexInfo(get, *create_index_info, table_entry.ParentSchemaName());
+	const bool indexes_depend_on_columns = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (indexes_depend_on_columns) {
+		LogicalDependency table_dependency(table_entry);
+		for (auto &column_id : create_index_info->column_ids) {
+			table_dependency.subdependencies.insert(
+			    SubDependency {AlterTableType::REMOVE_COLUMN, table_entry.GetColumn(LogicalIndex(column_id)).Name()});
+		}
+		dependencies.AddDependency(table_dependency);
+	}
 	auto &bind_data = get.bind_data->Cast<TableScanBindData>();
 	bind_data.is_create_index = true;
 
 	auto result = make_uniq<LogicalCreateIndex>(std::move(create_index_info), std::move(expressions), table_entry,
 	                                            std::move(alter_table_info));
+	if (bound_where) {
+		auto filter = make_uniq<LogicalFilter>(std::move(bound_where));
+		filter->AddChild(std::move(plan));
+		plan = std::move(filter);
+	}
 	result->children.push_back(std::move(plan));
 	return std::move(result);
 }
