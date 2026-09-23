@@ -503,5 +503,71 @@
         "default": "QualifiedName()"
       }
     ]
+  },
+  {
+    "class": "WALCreateTokenizer",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "tokenizer",
+        "type": "CreateInfo*"
+      }
+    ]
+  },
+  {
+    "class": "WALDropTokenizer",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "qualified_name",
+        "type": "QualifiedName"
+      }
+    ]
+  },
+  {
+    "class": "WALCreateDatabase",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "database",
+        "type": "CreateInfo*"
+      }
+    ]
+  },
+  {
+    "class": "WALDropDatabase",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "WALCreateForeignServer",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "server",
+        "type": "CreateInfo*"
+      }
+    ]
+  },
+  {
+    "class": "WALDropForeignServer",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "name",
+        "type": "Identifier"
+      }
+    ]
   }
 ]

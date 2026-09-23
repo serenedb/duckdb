@@ -313,4 +313,46 @@ struct WALUseTable {
 	static WALUseTable Deserialize(Deserializer &deserializer);
 };
 
+struct WALCreateTokenizer {
+	unique_ptr<CreateInfo> tokenizer;
+
+	void Serialize(Serializer &serializer) const;
+	static WALCreateTokenizer Deserialize(Deserializer &deserializer);
+};
+
+struct WALDropTokenizer {
+	QualifiedName qualified_name;
+
+	void Serialize(Serializer &serializer) const;
+	static WALDropTokenizer Deserialize(Deserializer &deserializer);
+};
+
+struct WALCreateDatabase {
+	unique_ptr<CreateInfo> database;
+
+	void Serialize(Serializer &serializer) const;
+	static WALCreateDatabase Deserialize(Deserializer &deserializer);
+};
+
+struct WALDropDatabase {
+	Identifier name;
+
+	void Serialize(Serializer &serializer) const;
+	static WALDropDatabase Deserialize(Deserializer &deserializer);
+};
+
+struct WALCreateForeignServer {
+	unique_ptr<CreateInfo> server;
+
+	void Serialize(Serializer &serializer) const;
+	static WALCreateForeignServer Deserialize(Deserializer &deserializer);
+};
+
+struct WALDropForeignServer {
+	Identifier name;
+
+	void Serialize(Serializer &serializer) const;
+	static WALDropForeignServer Deserialize(Deserializer &deserializer);
+};
+
 } // namespace duckdb

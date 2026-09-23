@@ -12,7 +12,13 @@
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/standard_entry.hpp"
+#include "duckdb/common/enums/on_create_conflict.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
+#include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 
 namespace duckdb {
@@ -54,6 +60,16 @@ public:
 	                                                                CatalogEntry &relation);
 	DUCKDB_API virtual unique_ptr<TableCatalogEntry>
 	MakeTableEntry(CatalogTransaction transaction, DuckSchemaEntry &schema, BoundCreateTableInfo &info);
+	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeDatabaseEntry(CreateDatabaseInfo &info);
+	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeForeignServerEntry(CreateForeignServerInfo &info);
+	DUCKDB_API virtual unique_ptr<StandardEntry> MakeTokenizerEntry(DuckSchemaEntry &schema, CreateTokenizerInfo &info);
+
+	DUCKDB_API optional_ptr<CatalogEntry> CreateDatabase(CatalogTransaction transaction, CreateDatabaseInfo &info);
+	DUCKDB_API optional_ptr<CatalogEntry> CreateForeignServer(CatalogTransaction transaction,
+	                                                          CreateForeignServerInfo &info);
+	DUCKDB_API void DropDatabase(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
+
 	DUCKDB_API void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) override;
 	DUCKDB_API void ScanSchemas(std::function<void(SchemaCatalogEntry &)> callback);
 
@@ -80,6 +96,7 @@ public:
 	                                                         unique_ptr<AlterTableInfo> alter_info) override;
 
 	CatalogSet &GetSchemaCatalogSet();
+	CatalogSet &GetCatalogSet(CatalogType type);
 
 	DatabaseSize GetDatabaseSize(ClientContext &context) override;
 	vector<MetadataBlockInfo> GetMetadataInfo(ClientContext &context) override;
@@ -98,6 +115,8 @@ private:
 	DUCKDB_API void DropSchema(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API void DropSchema(ClientContext &context, DropInfo &info) override;
 	optional_ptr<CatalogEntry> CreateSchemaInternal(CatalogTransaction transaction, CreateSchemaInfo &info);
+	optional_ptr<CatalogEntry> AddEntry(CatalogTransaction transaction, unique_ptr<InCatalogEntry> entry,
+	                                    OnCreateConflict on_conflict);
 	void Verify() override;
 
 private:
@@ -107,6 +126,8 @@ private:
 	mutex write_lock;
 	//! The catalog set holding the schemas
 	unique_ptr<CatalogSet> schemas;
+	unique_ptr<CatalogSet> databases;
+	unique_ptr<CatalogSet> foreign_servers;
 
 	//! Identifies whether the db is encrypted
 	bool is_encrypted = false;

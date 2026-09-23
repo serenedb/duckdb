@@ -80,6 +80,9 @@ vector<Identifier> DependencyManager::GetSchemaPath(const CatalogEntry &entry) {
 	switch (entry.type) {
 	case CatalogType::SCHEMA_ENTRY:
 		return entry.Cast<SchemaCatalogEntry>().GetParentSchemaPath();
+	case CatalogType::DATABASE_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+		return vector<Identifier>();
 	default:
 		return entry.ParentSchemaPath();
 	}
@@ -398,6 +401,9 @@ optional_ptr<CatalogEntry> DependencyManager::LookupEntry(CatalogTransaction tra
 		return container.GetEntry(transaction, name);
 	}
 	if (!schema) {
+		if (schema_path.empty()) {
+			return catalog.GetCatalogSet(type).GetEntry(transaction, name);
+		}
 		return nullptr;
 	}
 	if (type == CatalogType::TRIGGER_ENTRY) {
@@ -520,6 +526,12 @@ static string EntryToString(const CatalogEntryInfo &info) {
 	}
 	case CatalogType::TRIGGER_ENTRY: {
 		return StringUtil::Format("trigger %s on table %s", info.name, info.table);
+	}
+	case CatalogType::TOKENIZER_ENTRY: {
+		return StringUtil::Format("tokenizer %s", info.name);
+	}
+	case CatalogType::FOREIGN_SERVER_ENTRY: {
+		return StringUtil::Format("server %s", info.name);
 	}
 	default:
 		throw InternalException("CatalogType not handled in EntryToString (DependencyManager) for %s",
@@ -678,6 +690,8 @@ void DependencyManager::VerifyExistence(CatalogTransaction transaction, Dependen
 	} else if (schema) {
 		EntryLookupInfo lookup_info(type, QualifiedName(name));
 		lookup_result = schema->LookupEntryDetailed(transaction, lookup_info);
+	} else if (schema_path.empty()) {
+		lookup_result = catalog.GetCatalogSet(type).GetEntryDetailed(transaction, name);
 	}
 
 	if (lookup_result.reason == CatalogSet::EntryLookup::FailureReason::DELETED) {
