@@ -42,18 +42,18 @@ unique_ptr<CatalogEntry> TriggerCatalogEntry::AlterEntry(CatalogTransaction tran
 	if (!updated) {
 		return nullptr;
 	}
-	return make_uniq<TriggerCatalogEntry>(catalog, schema, cast_info);
+	return make_uniq<TriggerCatalogEntry>(catalog, ParentSchema(transaction), cast_info);
 }
 
 unique_ptr<CatalogEntry> TriggerCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateTriggerInfo>();
-	return make_uniq<TriggerCatalogEntry>(catalog, schema, cast_info);
+	return make_uniq<TriggerCatalogEntry>(catalog, ParentSchema(context), cast_info);
 }
 
 unique_ptr<CreateInfo> TriggerCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateTriggerInfo>();
-	result->SetQualifiedName(schema.GetQualifiedName(name));
+	result->SetQualifiedName(GetQualifiedName(name));
 	result->base_table = unique_ptr_cast<TableRef, BaseTableRef>(base_table->Copy());
 	result->timing = timing;
 	result->event_type = event_type;

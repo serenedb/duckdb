@@ -37,8 +37,7 @@ BindingAlias::BindingAlias(Identifier catalog_p, const vector<Identifier> &schem
 }
 
 BindingAlias::BindingAlias(const StandardEntry &entry)
-    : catalog(entry.ParentCatalog().GetName()),
-      qualified_name(MakeSchemaAlias(entry.schema.GetSchemaPath(), entry.name)) {
+    : catalog(entry.ParentCatalog().GetName()), qualified_name(MakeSchemaAlias(entry.ParentSchemaPath(), entry.name)) {
 }
 
 bool BindingAlias::IsSet() const {

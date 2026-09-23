@@ -68,7 +68,7 @@ void IndexBinder::InitCreateIndexInfo(LogicalGet &get, CreateIndexInfo &info) {
 	info.scan_types.emplace_back(LogicalType::ROW_TYPE);
 	info.names = get.names;
 	// the index lives in the same (possibly nested) schema as the table it is created on
-	info.SetQualifiedName(get.GetTable()->schema.GetQualifiedName(info.GetQualifiedName().Name()));
+	info.SetQualifiedName(get.GetTable()->GetQualifiedName(info.GetQualifiedName().Name()));
 	get.AddColumnId(COLUMN_IDENTIFIER_ROW_ID);
 }
 

@@ -197,7 +197,7 @@ SQLSourceQueryResult LogicalPlanSQLExportHelpers::ReconstructSQLSource(ClientCon
 		source = std::move(result.source);
 	} else if (auto table = get.GetTable()) {
 		auto reference = make_uniq<BaseTableRef>();
-		reference->SetQualifiedName(table->schema.GetQualifiedName(table->name));
+		reference->SetQualifiedName(table->GetQualifiedName(table->name));
 		source = std::move(reference);
 	} else {
 		if (get.bind_info) {

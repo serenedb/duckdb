@@ -20,7 +20,7 @@ ScalarFunctionCatalogEntry::ScalarFunctionCatalogEntry(Catalog &catalog, SchemaC
 
 shared_ptr<const ScalarFunction> ScalarFunctionCatalogEntry::FinalizeFunction(ScalarFunction function) const {
 	auto result = make_shared_ptr<ScalarFunction>(std::move(function));
-	result->SetQualifiedName(schema.GetQualifiedName(name));
+	result->SetQualifiedName(GetQualifiedName(name));
 	return result;
 }
 
@@ -45,7 +45,7 @@ unique_ptr<CatalogEntry> ScalarFunctionCatalogEntry::AlterEntry(CatalogTransacti
 	new_info.descriptions = descriptions;
 	new_info.descriptions.insert(new_info.descriptions.end(), add_overloads.new_overloads->descriptions.begin(),
 	                             add_overloads.new_overloads->descriptions.end());
-	return make_uniq<ScalarFunctionCatalogEntry>(catalog, schema, new_info);
+	return make_uniq<ScalarFunctionCatalogEntry>(catalog, ParentSchema(transaction), new_info);
 }
 
 } // namespace duckdb

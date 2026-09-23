@@ -315,7 +315,6 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		if (new_entry.type == CatalogType::TRIGGER_ENTRY && old_entry.type != CatalogType::TRIGGER_ENTRY) {
 			auto &trig = new_entry.Cast<TriggerCatalogEntry>();
 			if (!trig.columns.empty()) {
-				auto &table_set = trig.schema.Cast<DuckSchemaEntry>().GetCatalogSet(CatalogType::TABLE_ENTRY);
 				// Transaction view at bind time (what the trigger saw when it was created).
 				// Use commit_id as the transaction_id so that earlier catalog changes in this
 				// same transaction (already stamped with commit_id) are visible here.
@@ -323,10 +322,11 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 				// Transaction view at commit time (all changes committed before this commit)
 				CatalogTransaction commit_txn(duck_catalog.GetDatabase(), MAX_TRANSACTION_ID,
 				                              VisibilityBound::Through(commit_id));
+				auto &schema = trig.ParentSchema(commit_txn).Cast<DuckSchemaEntry>();
+				auto &table_set = schema.GetCatalogSet(CatalogType::TABLE_ENTRY);
 
-				auto bound_table = trig.schema.GetEntry(bind_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
-				auto current_table =
-				    trig.schema.GetEntry(commit_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
+				auto bound_table = schema.GetEntry(bind_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
+				auto current_table = schema.GetEntry(commit_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
 
 				// Case (A): a concurrent alter was committed while this trigger was binding
 				if (bound_table && current_table && !RefersToSameObject(*bound_table, *current_table)) {

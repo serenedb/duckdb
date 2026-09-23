@@ -43,10 +43,10 @@
 namespace duckdb {
 
 DataTableInfo::DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p,
-                             vector<Identifier> schema_path, Identifier table)
-    : db(db), table_io_manager(std::move(table_io_manager_p)), schema_path(std::move(schema_path)),
+                             shared_ptr<SchemaInfo> schema_info, Identifier table)
+    : db(db), table_io_manager(std::move(table_io_manager_p)), schema_info(std::move(schema_info)),
       table(std::move(table)) {
-	D_ASSERT(!this->schema_path.empty());
+	D_ASSERT(this->schema_info);
 }
 
 void DataTableInfo::BindIndexes(ClientContext &context, const optional<string> &index_type) {
@@ -69,10 +69,10 @@ IndexStorageInfo DataTableInfo::ExtractIndexStorageInfo(const Identifier &name) 
 }
 
 DataTable::DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p,
-                     vector<Identifier> schema_path, Identifier table, vector<ColumnDefinition> column_definitions_p,
-                     unique_ptr<PersistentTableData> data)
+                     shared_ptr<SchemaInfo> schema_info, Identifier table,
+                     vector<ColumnDefinition> column_definitions_p, unique_ptr<PersistentTableData> data)
     : db(db),
-      info(make_shared_ptr<DataTableInfo>(db, std::move(table_io_manager_p), std::move(schema_path), std::move(table))),
+      info(make_shared_ptr<DataTableInfo>(db, std::move(table_io_manager_p), std::move(schema_info), std::move(table))),
       column_definitions(std::move(column_definitions_p)), version(DataTableVersion::MAIN_TABLE) {
 	// initialize the table with the existing data from disk, if any
 	auto types = GetTypes();
@@ -529,11 +529,11 @@ bool DataTable::IndexNameIsUnique(const string &name) {
 }
 
 Identifier DataTableInfo::GetSchemaName() {
-	return schema_path.back();
+	return schema_info->Name();
 }
 
-const vector<Identifier> &DataTableInfo::GetSchemaPath() const {
-	return schema_path;
+vector<Identifier> DataTableInfo::GetSchemaPath() const {
+	return schema_info->Path();
 }
 
 Identifier DataTableInfo::GetTableName() {

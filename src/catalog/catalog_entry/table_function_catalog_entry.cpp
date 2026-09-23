@@ -18,7 +18,7 @@ TableFunctionCatalogEntry::TableFunctionCatalogEntry(Catalog &catalog, SchemaCat
 }
 
 void TableFunctionCatalogEntry::FinalizeFunction(TableFunction &function) const {
-	function.SetQualifiedName(schema.GetQualifiedName(name));
+	function.SetQualifiedName(GetQualifiedName(name));
 }
 
 unique_ptr<CatalogEntry> TableFunctionCatalogEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &info) {
@@ -38,7 +38,7 @@ unique_ptr<CatalogEntry> TableFunctionCatalogEntry::AlterEntry(CatalogTransactio
 	}
 	CreateTableFunctionInfo new_info(std::move(new_set));
 	new_info.internal = internal;
-	return make_uniq<TableFunctionCatalogEntry>(catalog, schema, new_info);
+	return make_uniq<TableFunctionCatalogEntry>(catalog, ParentSchema(transaction), new_info);
 }
 
 } // namespace duckdb
