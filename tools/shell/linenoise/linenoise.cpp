@@ -267,6 +267,26 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 					next_key = key_press;
 					stop = true;
 					break;
+				case EscapeSequence::UP:
+				case EscapeSequence::DOWN:
+				case EscapeSequence::LEFT:
+				case EscapeSequence::RIGHT:
+					if (render_completion_suggestion) {
+						const bool vertical =
+						    key_press.sequence == EscapeSequence::UP || key_press.sequence == EscapeSequence::DOWN;
+						const bool forward =
+						    key_press.sequence == EscapeSequence::DOWN || key_press.sequence == EscapeSequence::RIGHT;
+						const idx_t step = vertical ? MaxValue<idx_t>(completion_columns, 1) : 1;
+						if (!completion_idx.IsValid()) {
+							completion_idx = 0;
+						} else if (forward && completion_idx.GetIndex() + step < completions.size()) {
+							completion_idx = completion_idx.GetIndex() + step;
+						} else if (!forward && completion_idx.GetIndex() >= step) {
+							completion_idx = completion_idx.GetIndex() - step;
+						}
+						break;
+					}
+					DUCKDB_EXPLICIT_FALLTHROUGH;
 				default:
 					next_key = key_press;
 					accept_completion = true;
@@ -1156,6 +1176,7 @@ Linenoise::Linenoise(int stdin_fd, int stdout_fd, char *buf, size_t buflen, cons
 	insert = false;
 	search_index = 0;
 	rendered_completion_lines = 0;
+	completion_columns = 1;
 	completion_idx = optional_idx();
 	render_completion_suggestion = false;
 

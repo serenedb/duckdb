@@ -3,6 +3,9 @@
 #include "terminal.hpp"
 #include "shell_highlight.hpp"
 #include "shell_state.hpp"
+#ifdef HAVE_LINENOISE
+#include "linenoise.hpp"
+#endif
 
 #include <algorithm>
 
@@ -26,6 +29,26 @@ const DocsBackend &GetDocsBackend() {
 	return BackendStorage();
 }
 
+bool CanOfferList(ShellState &state) {
+#ifdef HAVE_LINENOISE
+	return state.rl_version == ReadLineVersion::LINENOISE && state.stdin_is_interactive && state.stdout_is_console &&
+	       state.out == stdout && state.outfile.empty() && !duckdb::Terminal::IsUnsupportedTerm();
+#else
+	return false;
+#endif
+}
+
+void OfferList() {
+#ifdef HAVE_LINENOISE
+	for (const char c : duckdb::string(".docs ")) {
+		duckdb::KeyPress key;
+		key.action = c;
+		duckdb::BufferedKeyPresses::BufferKeyPress(key);
+	}
+	duckdb::BufferedKeyPresses::BufferKeyPress(duckdb::TAB);
+#endif
+}
+
 } // namespace
 
 void RegisterDocsBackend(DocsBackend backend) {
@@ -33,7 +56,7 @@ void RegisterDocsBackend(DocsBackend backend) {
 }
 
 bool DocsCompletions(const char *line, duckdb::idx_t length, duckdb::idx_t &argument_start,
-                     duckdb::vector<duckdb::string> &completions) {
+                     duckdb::vector<DocsCompletion> &completions) {
 	if (!HasDocsBackend() || !GetDocsBackend().complete) {
 		return false;
 	}
@@ -44,13 +67,10 @@ bool DocsCompletions(const char *line, duckdb::idx_t length, duckdb::idx_t &argu
 		if (text.size() < marker.size() || text.compare(0, marker.size(), marker) != 0) {
 			continue;
 		}
-		auto argument = text.substr(marker.size());
-		if (argument.find(' ') != duckdb::string::npos) {
-			return false;
-		}
 		argument_start = marker.size();
 		auto &state = ShellState::Get();
-		completions = GetDocsBackend().complete(state.db ? state.db->instance.get() : nullptr, argument);
+		completions =
+		    GetDocsBackend().complete(state.db ? state.db->instance.get() : nullptr, text.substr(marker.size()));
 		return true;
 	}
 	return false;
@@ -68,6 +88,7 @@ MetadataResult ShowDocumentation(ShellState &state, const duckdb::vector<duckdb:
 	}
 
 	request.color = ShellHighlight::IsEnabled() && state.stdout_is_console;
+	request.interactive = CanOfferList(state);
 	request.instance = state.db ? state.db->instance.get() : nullptr;
 	if (state.max_width > 0) {
 		request.width = state.max_width;
@@ -79,6 +100,9 @@ MetadataResult ShowDocumentation(ShellState &state, const duckdb::vector<duckdb:
 
 	duckdb::string rendered;
 	const bool ok = GetDocsBackend().run(request, rendered);
+	if (request.interactive && GetDocsBackend().listed && GetDocsBackend().listed()) {
+		OfferList();
+	}
 	if (!ok) {
 		state.Print(PrintOutput::STDERR, rendered);
 		return MetadataResult::FAIL;

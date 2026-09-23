@@ -3155,11 +3155,12 @@ static void linenoise_completion(const char *zLine, linenoiseCompletions *lc) {
 		if (zLine[0] == '.') {
 			// auto-complete dot command
 			duckdb::idx_t argument_start = 0;
-			duckdb::vector<duckdb::string> docs_completions;
+			duckdb::vector<DocsCompletion> docs_completions;
 			if (DocsCompletions(zLine, nLine, argument_start, docs_completions)) {
 				for (auto &completion : docs_completions) {
-					linenoiseAddCompletion(lc, zLine, completion.c_str(), completion.size(), argument_start,
-					                       "keyword", 0, '\0');
+					linenoiseAddLabeledCompletion(lc, zLine, completion.text.c_str(), completion.text.size(),
+					                              argument_start, completion.label.c_str(), completion.label.size(),
+					                              "keyword");
 				}
 				return;
 			}

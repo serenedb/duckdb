@@ -956,6 +956,7 @@ void Linenoise::RefreshMultiLine() {
 		// we need to figure out how many "columns" we render
 		idx_t max_length = 0;
 		idx_t max_split_length = (ws.ws_col / 2) - 2;
+		bool oversized = false;
 		for (auto &completion : completion_list.completions) {
 			auto &completion_text = completion.original_completion;
 			if (!completion.original_completion_length.IsValid()) {
@@ -965,6 +966,7 @@ void Linenoise::RefreshMultiLine() {
 			idx_t completion_length = completion.original_completion_length.GetIndex();
 			if (completion_length > max_split_length) {
 				// oversized value - we treat these differently / separately - ignore here
+				oversized = true;
 			} else if (completion_length > max_length) {
 				max_length = completion_length;
 			}
@@ -975,6 +977,7 @@ void Linenoise::RefreshMultiLine() {
 		max_length++;
 		string completion_text;
 		idx_t column_count = ws.ws_col / max_length;
+		completion_columns = oversized ? 1 : column_count;
 		idx_t column_index = 0;
 		idx_t rendered_rows = 1;
 		for (idx_t i = 0; i < completion_list.completions.size(); i++) {
