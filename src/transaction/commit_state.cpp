@@ -234,8 +234,10 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 	case CatalogType::DELETED_ENTRY:
 		switch (entry.type) {
 		case CatalogType::TABLE_ENTRY: {
+			if (!entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+				break;
+			}
 			auto &table_entry = entry.Cast<DuckTableEntry>();
-			D_ASSERT(table_entry.IsDuckTable());
 
 			// If the table was renamed, we do not need to drop the DataTable.
 			table_entry.CommitDrop(drop_state);
@@ -281,7 +283,8 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		D_ASSERT(catalog.IsDuckCatalog());
 
 		auto &new_entry = old_entry.Parent();
-		if (old_entry.type == CatalogType::TABLE_ENTRY && new_entry.type == CatalogType::TABLE_ENTRY) {
+		if (old_entry.type == CatalogType::TABLE_ENTRY && new_entry.type == CatalogType::TABLE_ENTRY &&
+		    old_entry.Cast<TableCatalogEntry>().IsDuckTable()) {
 			auto &old_storage = old_entry.Cast<DuckTableEntry>().GetStorage();
 			auto &new_storage = new_entry.Cast<DuckTableEntry>().GetStorage();
 			if (!RefersToSameObject(old_storage, new_storage) && old_storage.IsMainTable()) {

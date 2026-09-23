@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/common/enums/column_segment_info_scan_type.hpp"
@@ -67,7 +68,8 @@ public:
 
 public:
 	//! Create a TableCatalogEntry and initialize storage for it
-	DUCKDB_API TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info);
+	DUCKDB_API TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
+	                             shared_ptr<CatalogSet> inherited_triggers = nullptr);
 
 public:
 	DUCKDB_API unique_ptr<CreateInfo> GetInfo() const override;
@@ -171,9 +173,10 @@ public:
 
 	//! Create a trigger on this table (throws for table types that don't support triggers)
 	virtual optional_ptr<CatalogEntry> CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info);
-	//! Scan all triggers on this table (default: no-op - non-DuckDB tables have no triggers)
+	//! Scan all triggers on this table
 	virtual void ScanTriggers(CatalogTransaction transaction,
 	                          const std::function<void(CatalogEntry &)> &callback) const;
+	void ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback);
 	//! Get the trigger with the given name on this table
 	virtual optional_ptr<CatalogEntry> GetTrigger(CatalogTransaction transaction, const Identifier &name) const;
 	//! Drop a trigger from this table (throws for table types that don't support triggers)
@@ -187,7 +190,10 @@ public:
 	                                                                 TriggerForEach for_each) const;
 
 protected:
+	void RenameTriggerColumns(ClientContext &context, const RenameColumnInfo &info);
+
 	//! A list of constraints that are part of this table
 	vector<unique_ptr<Constraint>> constraints;
+	shared_ptr<CatalogSet> triggers;
 };
 } // namespace duckdb

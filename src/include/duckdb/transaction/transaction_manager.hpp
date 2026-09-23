@@ -50,13 +50,6 @@ public:
 	//! default; managers without MVCC snapshots have nothing to refresh.
 	virtual void RefreshStartTime(Transaction &transaction) {
 	}
-	//! Whether this manager forwards its writes to another database (e.g. a
-	//! storage-less catalog facade); such databases never occupy the
-	//! single-writable-db slot.
-	virtual bool ForwardWrites() const {
-		return false;
-	}
-
 	AttachedDatabase &GetDB() {
 		return db;
 	}

@@ -150,12 +150,9 @@ virtual_column_map_t DuckTableEntry::GetVirtualColumns() const {
 
 DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info,
                                shared_ptr<DataTable> inherited_storage, shared_ptr<CatalogSet> inherited_triggers)
-    : TableCatalogEntry(catalog, schema, info.Base()), columns(std::move(info.Base().columns)),
-      storage(std::move(inherited_storage)), triggers(std::move(inherited_triggers)),
+    : TableCatalogEntry(catalog, schema, info.Base(), std::move(inherited_triggers)),
+      columns(std::move(info.Base().columns)), storage(std::move(inherited_storage)),
       column_dependency_manager(std::move(info.column_dependency_manager)) {
-	if (!triggers) {
-		triggers = make_shared_ptr<CatalogSet>(catalog);
-	}
 	if (storage) {
 		if (!info.indexes.empty()) {
 			storage->SetIndexStorageInfo(std::move(info.indexes));
@@ -324,7 +321,7 @@ static void UpdateDependentIndexes(CatalogTransaction transaction, DuckTableEntr
 	auto &schema = table.ParentSchema(transaction).Cast<DuckSchemaEntry>();
 	schema.GetCatalogSet(CatalogType::INDEX_ENTRY).Scan(transaction, [&](CatalogEntry &entry) {
 		auto &index = entry.Cast<DuckIndexEntry>();
-		if (RefersToSameObject(index.GetDataTableInfo(), *data_table_info)) {
+		if (index.info && index.info->info && RefersToSameObject(index.GetDataTableInfo(), *data_table_info)) {
 			update(index);
 			index.sql = index.GetInfo()->ToString();
 		}
@@ -489,44 +486,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameColumn(ClientContext &context, Re
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
 	SetAlterDependencies(*bound_create_info, info);
-
-	// Update any UPDATE OF triggers whose column list references the renamed column.
-	// Also detect concurrent uncommitted (or recently-committed) triggers that reference the same
-	// column: the snapshot scan cannot see them, so we raise a write-write conflict so the caller
-	// retries after the concurrent transaction completes.
-	auto txn = catalog.GetCatalogTransaction(context);
-	vector<Identifier> triggers_to_update;
-	triggers->ScanWithConflictDetection(
-	    txn,
-	    [&](CatalogEntry &raw_entry) {
-		    auto &trig = raw_entry.Cast<TriggerCatalogEntry>();
-		    for (const auto &col : trig.columns) {
-			    if (col == info.old_name) {
-				    triggers_to_update.push_back(trig.name);
-				    break;
-			    }
-		    }
-	    },
-	    [&](CatalogEntry &concurrent_entry) {
-		    if (concurrent_entry.type != CatalogType::TRIGGER_ENTRY || concurrent_entry.deleted) {
-			    return;
-		    }
-		    auto &trig = concurrent_entry.Cast<TriggerCatalogEntry>();
-		    for (const auto &col : trig.columns) {
-			    if (col == info.old_name) {
-				    throw TransactionException("Catalog write-write conflict on alter with \"%s\": trigger \"%s\" "
-				                               "references column \"%s\" which is being renamed",
-				                               name, trig.name, info.old_name);
-			    }
-		    }
-	    });
-	// Use a copy of info without new_dependencies so AlterObject does not
-	// replace the trigger's own dependency edges with the table's dep list.
-	auto trigger_alter_info = info.Copy();
-	for (const auto &trigger_name : triggers_to_update) {
-		triggers->AlterEntry(txn, trigger_name, *trigger_alter_info);
-	}
-
+	RenameTriggerColumns(context, info);
 	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
 }
 
@@ -1635,44 +1595,6 @@ bool DuckTableEntry::ScanColumnSegmentInfo(const QueryContext &context, ColumnSe
 
 TableStorageInfo DuckTableEntry::GetStorageInfo(ClientContext &context) {
 	return storage->GetStorageInfo();
-}
-
-optional_ptr<CatalogEntry> DuckTableEntry::CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info) {
-	auto trigger = make_uniq<TriggerCatalogEntry>(catalog, ParentSchema(transaction), info);
-	auto entry_name = trigger->name;
-	LogicalDependencyList dependencies = trigger->dependencies;
-	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
-		auto old_entry = triggers->GetEntry(transaction, entry_name);
-		if (old_entry) {
-			return nullptr;
-		}
-	} else if (info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
-		auto old_entry = triggers->GetEntry(transaction, entry_name);
-		if (old_entry) {
-			triggers->DropEntry(transaction, entry_name, false);
-		}
-	}
-	if (!triggers->CreateEntry(transaction, entry_name, std::move(trigger), dependencies)) {
-		throw CatalogException::EntryAlreadyExists(CatalogType::TRIGGER_ENTRY, entry_name);
-	}
-	return triggers->GetEntry(transaction, entry_name);
-}
-
-void DuckTableEntry::ScanTriggers(CatalogTransaction transaction,
-                                  const std::function<void(CatalogEntry &)> &callback) const {
-	triggers->Scan(transaction, callback);
-}
-
-optional_ptr<CatalogEntry> DuckTableEntry::GetTrigger(CatalogTransaction transaction, const Identifier &name) const {
-	return triggers->GetEntry(transaction, name);
-}
-
-void DuckTableEntry::ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback) {
-	triggers->Scan(callback);
-}
-
-bool DuckTableEntry::DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade) {
-	return triggers->DropEntry(transaction, name, cascade);
 }
 
 } // namespace duckdb

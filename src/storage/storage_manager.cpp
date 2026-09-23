@@ -842,7 +842,7 @@ void SingleFileStorageManager::Destroy() {
 			if (entry.internal) {
 				return;
 			}
-			if (entry.type == CatalogType::TABLE_ENTRY) {
+			if (entry.type == CatalogType::TABLE_ENTRY && entry.Cast<TableCatalogEntry>().IsDuckTable()) {
 				tables.push_back(entry.Cast<DuckTableEntry>());
 			}
 		});

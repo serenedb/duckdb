@@ -1,6 +1,8 @@
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
@@ -62,6 +64,16 @@ optional_ptr<DependencyManager> DuckCatalog::GetDependencyManager() {
 //===--------------------------------------------------------------------===//
 // Schema
 //===--------------------------------------------------------------------===//
+unique_ptr<IndexCatalogEntry> DuckCatalog::MakeIndexEntry(DuckSchemaEntry &schema, CreateIndexInfo &info,
+                                                          CatalogEntry &relation) {
+	return make_uniq<DuckIndexEntry>(*this, schema, info, relation.Cast<TableCatalogEntry>());
+}
+
+unique_ptr<TableCatalogEntry> DuckCatalog::MakeTableEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
+                                                          BoundCreateTableInfo &info) {
+	return make_uniq<DuckTableEntry>(*this, schema, info);
+}
+
 optional_ptr<CatalogEntry> DuckCatalog::CreateSchemaInternal(CatalogTransaction transaction, CreateSchemaInfo &info) {
 	LogicalDependencyList dependencies;
 

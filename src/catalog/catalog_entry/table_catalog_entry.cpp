@@ -31,9 +31,13 @@ namespace duckdb {
 
 constexpr const char *TableCatalogEntry::Name;
 
-TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info)
+TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
+                                     shared_ptr<CatalogSet> inherited_triggers)
     : StandardEntry(CatalogType::TABLE_ENTRY, schema, catalog, info.GetTableName(), info.oid),
-      constraints(std::move(info.constraints)) {
+      constraints(std::move(info.constraints)), triggers(std::move(inherited_triggers)) {
+	if (!triggers && catalog.IsDuckCatalog()) {
+		triggers = make_shared_ptr<CatalogSet>(catalog);
+	}
 	this->temporary = info.temporary;
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
@@ -401,21 +405,96 @@ vector<column_t> TableCatalogEntry::GetRowIdColumns() const {
 }
 
 optional_ptr<CatalogEntry> TableCatalogEntry::CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info) {
-	throw NotImplementedException("Triggers are not supported for this table type");
+	if (!triggers) {
+		throw NotImplementedException("Triggers are not supported for this table type");
+	}
+	auto trigger = make_uniq<TriggerCatalogEntry>(catalog, ParentSchema(transaction), info);
+	auto entry_name = trigger->name;
+	LogicalDependencyList dependencies = trigger->dependencies;
+	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
+		auto old_entry = triggers->GetEntry(transaction, entry_name);
+		if (old_entry) {
+			return nullptr;
+		}
+	} else if (info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		auto old_entry = triggers->GetEntry(transaction, entry_name);
+		if (old_entry) {
+			triggers->DropEntry(transaction, entry_name, false);
+		}
+	}
+	if (!triggers->CreateEntry(transaction, entry_name, std::move(trigger), dependencies)) {
+		throw CatalogException::EntryAlreadyExists(CatalogType::TRIGGER_ENTRY, entry_name);
+	}
+	return triggers->GetEntry(transaction, entry_name);
 }
 
 void TableCatalogEntry::ScanTriggers(CatalogTransaction transaction,
                                      const std::function<void(CatalogEntry &)> &callback) const {
-	// Default: no triggers (non-DuckDB tables do not support triggers)
+	if (triggers) {
+		triggers->Scan(transaction, callback);
+	}
+}
+
+void TableCatalogEntry::ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback) {
+	if (triggers) {
+		triggers->Scan(callback);
+	}
 }
 
 optional_ptr<CatalogEntry> TableCatalogEntry::GetTrigger(CatalogTransaction transaction, const Identifier &name) const {
-	// Default: no triggers (non-DuckDB tables do not support triggers)
-	return nullptr;
+	if (!triggers) {
+		return nullptr;
+	}
+	return triggers->GetEntry(transaction, name);
 }
 
 bool TableCatalogEntry::DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade) {
-	throw NotImplementedException("Triggers are not supported for this table type");
+	if (!triggers) {
+		throw NotImplementedException("Triggers are not supported for this table type");
+	}
+	return triggers->DropEntry(transaction, name, cascade);
+}
+
+void TableCatalogEntry::RenameTriggerColumns(ClientContext &context, const RenameColumnInfo &info) {
+	if (!triggers) {
+		return;
+	}
+	// Update any UPDATE OF triggers whose column list references the renamed column.
+	// Also detect concurrent uncommitted (or recently-committed) triggers that reference the same
+	// column: the snapshot scan cannot see them, so we raise a write-write conflict so the caller
+	// retries after the concurrent transaction completes.
+	auto txn = catalog.GetCatalogTransaction(context);
+	vector<Identifier> triggers_to_update;
+	triggers->ScanWithConflictDetection(
+	    txn,
+	    [&](CatalogEntry &raw_entry) {
+		    auto &trig = raw_entry.Cast<TriggerCatalogEntry>();
+		    for (const auto &col : trig.columns) {
+			    if (col == info.old_name) {
+				    triggers_to_update.push_back(trig.name);
+				    break;
+			    }
+		    }
+	    },
+	    [&](CatalogEntry &concurrent_entry) {
+		    if (concurrent_entry.type != CatalogType::TRIGGER_ENTRY || concurrent_entry.deleted) {
+			    return;
+		    }
+		    auto &trig = concurrent_entry.Cast<TriggerCatalogEntry>();
+		    for (const auto &col : trig.columns) {
+			    if (col == info.old_name) {
+				    throw TransactionException("Catalog write-write conflict on alter with \"%s\": trigger \"%s\" "
+				                               "references column \"%s\" which is being renamed",
+				                               name, trig.name, info.old_name);
+			    }
+		    }
+	    });
+	// Use a copy of info without new_dependencies so AlterObject does not
+	// replace the trigger's own dependency edges with the table's dep list.
+	auto trigger_alter_info = info.Copy();
+	for (const auto &trigger_name : triggers_to_update) {
+		triggers->AlterEntry(txn, trigger_name, *trigger_alter_info);
+	}
 }
 
 vector<const_reference<TriggerCatalogEntry>> TableCatalogEntry::GetTriggersForEvent(CatalogTransaction transaction,
