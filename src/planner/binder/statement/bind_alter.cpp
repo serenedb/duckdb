@@ -136,6 +136,19 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		return result;
 	}
 
+	if (stmt.info->type == AlterType::ALTER_PERMISSIONS || stmt.info->type == AlterType::ALTER_ROLE) {
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		const auto catalog_type = stmt.info->GetCatalogType();
+		if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY) {
+			stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
+			auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
+			properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
+		}
+		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
+		return result;
+	}
+
 	// resolve the (possibly nested) catalog/schema qualification of the altered entry
 	stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
 

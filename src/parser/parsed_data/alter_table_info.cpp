@@ -1,5 +1,6 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
+#include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/logical_type_info.hpp"
 #include "duckdb/parser/constraint.hpp"
@@ -88,6 +89,52 @@ string SetCommentInfo::ToString() const {
 SetCommentInfo::SetCommentInfo() : AlterInfo(AlterType::SET_COMMENT) {
 }
 
+//===--------------------------------------------------------------------===//
+// AlterPermissionsInfo
+//===--------------------------------------------------------------------===//
+AlterPermissionsInfo::AlterPermissionsInfo(CatalogType entry_catalog_type, QualifiedName entry_name)
+    : AlterInfo(AlterType::ALTER_PERMISSIONS, std::move(entry_name), OnEntryNotFound::THROW_EXCEPTION),
+      entry_catalog_type(entry_catalog_type) {
+}
+
+CatalogType AlterPermissionsInfo::GetCatalogType() const {
+	return entry_catalog_type;
+}
+
+unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
+	auto result = make_uniq<AlterPermissionsInfo>(entry_catalog_type, GetQualifiedName());
+	result->if_not_found = if_not_found;
+	result->new_owner = new_owner;
+	result->new_owner_id = new_owner_id;
+	result->privileges = privileges;
+	result->column_privileges = column_privileges;
+	result->grantee = grantee;
+	result->grantee_id = grantee_id;
+	result->granted_by = granted_by;
+	result->grantors = grantors;
+	result->revoke = revoke;
+	result->with_grant_option = with_grant_option;
+	result->option_only = option_only;
+	result->cascade = cascade;
+	result->default_objtype = default_objtype;
+	result->for_role = for_role;
+	result->default_schema = default_schema;
+	result->target_role = target_role;
+	result->default_scope = default_scope;
+	result->all_in_schema = all_in_schema;
+	return std::move(result);
+}
+
+string AlterPermissionsInfo::ToString() const {
+	auto object = ParseInfo::TypeToString(entry_catalog_type) + " " +
+	              GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (!new_owner.empty()) {
+		return "ALTER " + object + " OWNER TO " + new_owner + ";";
+	}
+	return string(revoke ? "REVOKE " : "GRANT ") + EnumUtil::ToString(privileges) + " ON " + object +
+	       (revoke ? " FROM " : " TO ") + grantee + ";";
+}
+
 ReplaceDefinitionInfo::ReplaceDefinitionInfo(unique_ptr<CreateInfo> definition_p)
     : AlterInfo(AlterType::REPLACE_DEFINITION, definition_p->GetQualifiedName(), OnEntryNotFound::THROW_EXCEPTION),
       definition(std::move(definition_p)) {
@@ -109,6 +156,60 @@ unique_ptr<AlterInfo> ReplaceDefinitionInfo::Copy() const {
 
 string ReplaceDefinitionInfo::ToString() const {
 	return definition->ToString();
+}
+
+AlterPermissionsInfo::AlterPermissionsInfo()
+    : AlterInfo(AlterType::ALTER_PERMISSIONS), entry_catalog_type(CatalogType::INVALID) {
+}
+
+//===--------------------------------------------------------------------===//
+// AlterRoleInfo
+//===--------------------------------------------------------------------===//
+AlterRoleInfo::AlterRoleInfo(Identifier role)
+    : AlterInfo(AlterType::ALTER_ROLE, QualifiedName(Identifier(), Identifier(), std::move(role)),
+                OnEntryNotFound::THROW_EXCEPTION) {
+}
+
+AlterRoleInfo::AlterRoleInfo() : AlterInfo(AlterType::ALTER_ROLE) {
+}
+
+CatalogType AlterRoleInfo::GetCatalogType() const {
+	return CatalogType::ROLE_ENTRY;
+}
+
+unique_ptr<AlterInfo> AlterRoleInfo::Copy() const {
+	auto result = make_uniq<AlterRoleInfo>(GetQualifiedName().Name());
+	result->if_not_found = if_not_found;
+	result->set_options = set_options;
+	result->clear_options = clear_options;
+	result->set_password = set_password;
+	result->null_password = null_password;
+	result->password = password;
+	result->set_conn_limit = set_conn_limit;
+	result->conn_limit = conn_limit;
+	result->set_valid_until = set_valid_until;
+	result->valid_until = valid_until;
+	result->new_name = new_name;
+	result->reset_all_config = reset_all_config;
+	result->reset_config = reset_config;
+	result->set_config = set_config;
+	result->grant_role = grant_role;
+	result->revoke = revoke;
+	result->option_only = option_only;
+	result->admin_option = admin_option;
+	result->inherit_option = inherit_option;
+	result->set_option = set_option;
+	result->grant_role_id = grant_role_id;
+	result->grantor_id = grantor_id;
+	return std::move(result);
+}
+
+string AlterRoleInfo::ToString() const {
+	if (!grant_role.empty()) {
+		return string(revoke ? "REVOKE " : "GRANT ") + grant_role + (revoke ? " FROM " : " TO ") +
+		       GetQualifiedName().Name().GetIdentifierName() + ";";
+	}
+	return "ALTER ROLE " + GetQualifiedName().Name().GetIdentifierName() + ";";
 }
 
 //===--------------------------------------------------------------------===//

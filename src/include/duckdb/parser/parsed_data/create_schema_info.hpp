@@ -19,6 +19,7 @@ struct CreateSchemaInfo : public CreateInfo {
 
 	//! Extra schema options if any
 	case_insensitive_map_t<unique_ptr<ParsedExpression>> options;
+	Identifier authorization;
 
 public:
 	//! The qualified name encodes the full path as [catalog, parent_schemas..., new_schema, <empty name>]. The empty

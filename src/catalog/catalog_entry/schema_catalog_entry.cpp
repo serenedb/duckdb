@@ -18,6 +18,7 @@ SchemaCatalogEntry::SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info,
 	this->internal = info.internal;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 	if (!schema_info) {
 		schema_info = make_shared_ptr<SchemaInfo>(oid, name, parent_schema ? parent_schema->GetSchemaInfo() : nullptr);
 	}
@@ -141,6 +142,7 @@ unique_ptr<CreateInfo> SchemaCatalogEntry::GetInfo() const {
 	                                             : QualifiedName({name}, Identifier()));
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	return std::move(result);
 }
 

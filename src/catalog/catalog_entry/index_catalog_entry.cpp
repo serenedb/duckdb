@@ -12,6 +12,7 @@ IndexCatalogEntry::IndexCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schem
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 	for (auto &expr : expressions) {
 		D_ASSERT(expr);
 		expressions.push_back(expr->Copy());
@@ -54,6 +55,7 @@ unique_ptr<CreateInfo> IndexCatalogEntry::GetInfo() const {
 
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	result->options = options;
 
 	return std::move(result);

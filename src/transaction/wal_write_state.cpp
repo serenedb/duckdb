@@ -65,6 +65,7 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY:
 	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::ROLE_ENTRY:
 	case CatalogType::DATABASE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SCHEMA_ENTRY:
@@ -112,6 +113,9 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 				break;
 			case CatalogType::TOKENIZER_ENTRY:
 				log.WriteCreateTokenizer(parent.Cast<StandardEntry>());
+				break;
+			case CatalogType::ROLE_ENTRY:
+				log.WriteCreateRole(parent.Cast<InCatalogEntry>());
 				break;
 			case CatalogType::DATABASE_ENTRY:
 				log.WriteCreateDatabase(parent.Cast<InCatalogEntry>());
@@ -162,6 +166,9 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 			break;
 		case CatalogType::TOKENIZER_ENTRY:
 			log.WriteDropTokenizer(entry.Cast<StandardEntry>());
+			break;
+		case CatalogType::ROLE_ENTRY:
+			log.WriteDropRole(entry.Cast<InCatalogEntry>());
 			break;
 		case CatalogType::DATABASE_ENTRY:
 			log.WriteDropDatabase(entry.Cast<InCatalogEntry>());

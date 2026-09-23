@@ -18,6 +18,7 @@ MacroCatalogEntry::MacroCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schem
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 }
 
 unique_ptr<MacroCatalogEntry> MacroCatalogEntry::Create(Catalog &catalog, SchemaCatalogEntry &schema,
@@ -61,6 +62,7 @@ unique_ptr<CreateInfo> MacroCatalogEntry::GetInfo() const {
 	info->dependencies = dependencies;
 	info->comment = comment;
 	info->tags = tags;
+	info->permissions = permissions;
 	return std::move(info);
 }
 

@@ -478,6 +478,18 @@ void WriteAheadLog::WriteDropTokenizer(const StandardEntry &entry) {
 	serializer.End();
 }
 
+void WriteAheadLog::WriteCreateRole(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_ROLE);
+	serializer.WriteEntry(WALCreateRole {entry.GetSerializedInfo()});
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropRole(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_ROLE);
+	serializer.WriteEntry(WALDropRole {entry.name});
+	serializer.End();
+}
+
 void WriteAheadLog::WriteCreateDatabase(const InCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::CREATE_DATABASE);
 	serializer.WriteEntry(WALCreateDatabase {entry.GetSerializedInfo()});

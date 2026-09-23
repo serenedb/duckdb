@@ -224,6 +224,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 				throw CatalogException("Existing object %s is of type %s, trying to replace with type %s", entry_name,
 				                       CatalogTypeToString(old_entry->type), CatalogTypeToString(entry_type));
 			}
+			entry->permissions = old_entry->permissions;
 			(void)DropEntryInternal(transaction, *old_entry, entry_name, false, entry->internal);
 		}
 	}
@@ -433,7 +434,32 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreatePragmaFunction(CatalogTransact
 	return AddEntry(transaction, std::move(pragma_function), info.on_conflict);
 }
 
+static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transaction, AlterPermissionsInfo &info) {
+	vector<CatalogType> kinds {info.entry_catalog_type};
+	if (info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
+		kinds.push_back(CatalogType::TABLE_MACRO_ENTRY);
+	}
+	info.all_in_schema = false;
+	for (auto kind : kinds) {
+		vector<Identifier> names;
+		schema.GetCatalogSet(kind).Scan(transaction, [&](CatalogEntry &entry) {
+			if (!entry.internal) {
+				names.push_back(entry.name);
+			}
+		});
+		info.entry_catalog_type = kind;
+		for (auto &name : names) {
+			info.SetQualifiedName(schema.GetQualifiedName(name));
+			schema.Alter(transaction, info);
+		}
+	}
+}
+
 void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
+	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().all_in_schema) {
+		AlterAllInSchema(*this, transaction, info.Cast<AlterPermissionsInfo>());
+		return;
+	}
 	CatalogType type = info.GetCatalogType();
 
 	if (info.type == AlterType::ALTER_SCALAR_FUNCTION &&
