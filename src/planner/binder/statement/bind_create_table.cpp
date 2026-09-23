@@ -21,6 +21,8 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/common/type_visitor.hpp"
@@ -88,7 +90,8 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
-	return BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
+	auto binder = CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema(context).name);
+	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const vector<unique_ptr<Constraint>> &constraints,
@@ -100,10 +103,23 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const vector<unique_
 	return bound_constraints;
 }
 
-vector<unique_ptr<BoundConstraint>> Binder::BindNewConstraints(vector<unique_ptr<Constraint>> &constraints,
-                                                               const Identifier &table_name,
-                                                               const ColumnList &columns) {
-	auto bound_constraints = BindConstraints(constraints, table_name, columns);
+void BoundCreateTableInfo::AddSubDependency(AlterTableType alter, const Identifier &name) {
+	if (schema.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES) {
+		return;
+	}
+	subdependency = SubDependency {alter, name};
+}
+
+vector<unique_ptr<BoundConstraint>> Binder::BindNewConstraints(BoundCreateTableInfo &info) {
+	auto &base = info.Base();
+	auto &constraints = base.constraints;
+	const auto &table_name = base.GetTableName();
+	auto &columns = base.columns;
+	vector<unique_ptr<BoundConstraint>> bound_constraints;
+	for (const auto &constr : constraints) {
+		info.AddSubDependency(AlterTableType::DROP_CONSTRAINT, Identifier(constr->constraint_name));
+		bound_constraints.push_back(BindConstraint(*constr, table_name, columns));
+	}
 
 	// Handle PK and NOT NULL constraints.
 	bool has_primary_key = false;
@@ -267,7 +283,8 @@ void Binder::BindGeneratedColumns(BoundCreateTableInfo &info) {
 	// Create a new binder because we dont need (or want) these bindings in this scope
 	auto binder = Binder::CreateBinder(context);
 	binder->SetCatalogLookupCallback(entry_retriever.GetCallback());
-	binder->bind_context.AddGenericBinding(table_index, base.GetTableName(), names, types);
+	binder->bind_context.AddGenericBinding(table_index, base.GetTableName(), names, types,
+	                                       base.columns.IsCaseSensitive());
 	auto expr_binder = ExpressionBinder(*binder, context);
 	ErrorData ignore;
 	auto table_binding = binder->bind_context.GetBinding(base.GetTableName(), ignore);
@@ -292,6 +309,7 @@ void Binder::BindGeneratedColumns(BoundCreateTableInfo &info) {
 
 		auto expression = col.GeneratedExpression().Copy();
 
+		info.AddSubDependency(AlterTableType::REMOVE_COLUMN, col.Name());
 		auto bound_expression = expr_binder.Bind(expression);
 		D_ASSERT(bound_expression);
 		if (bound_expression->HasSubquery()) {
@@ -361,6 +379,9 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableCheckpoint(unique_ptr<Cr
                                                                    SchemaCatalogEntry &schema) {
 	auto result = make_uniq<BoundCreateTableInfo>(schema, std::move(info));
 	CreateColumnDependencyManager(*result);
+	for (auto &dep : result->Base().dependencies.Set()) {
+		result->dependencies.AddDependency(dep);
+	}
 	return result;
 }
 
@@ -537,8 +558,75 @@ static void CheckForeignKeyTypes(const ColumnList &pk_columns, const ColumnList 
 	}
 }
 
-static void BindCreateTableConstraints(CreateTableInfo &create_info, CatalogEntryRetriever &entry_retriever,
+static void CollectColumnNames(const ParsedExpression &expr, case_insensitive_set_t &names) {
+	if (expr.GetExpressionType() == ExpressionType::COLUMN_REF) {
+		names.insert(expr.Cast<ColumnRefExpression>().GetColumnName().GetIdentifierName());
+		return;
+	}
+	ParsedExpressionIterator::EnumerateChildren(
+	    expr, [&](const ParsedExpression &child) { CollectColumnNames(child, names); });
+}
+
+static string DefaultConstraintName(const CreateTableInfo &base, const Constraint &constraint) {
+	auto &table = base.GetTableName();
+	switch (constraint.type) {
+	case ConstraintType::UNIQUE: {
+		auto &unique = constraint.Cast<UniqueConstraint>();
+		if (unique.IsPrimaryKey()) {
+			return table + "_pkey";
+		}
+		if (unique.HasIndex()) {
+			return table + "_" + base.columns.GetColumn(unique.GetIndex()).Name() + "_key";
+		}
+		return table + "_" + StringUtil::Join(unique.GetColumnNames(), "_") + "_key";
+	}
+	case ConstraintType::CHECK: {
+		case_insensitive_set_t columns;
+		CollectColumnNames(*constraint.Cast<CheckConstraint>().expression, columns);
+		return columns.size() == 1 ? table + "_" + *columns.begin() + "_check" : table + "_check";
+	}
+	case ConstraintType::FOREIGN_KEY:
+		return table + "_" + StringUtil::Join(constraint.Cast<ForeignKeyConstraint>().fk_columns, "_") + "_fkey";
+	default:
+		return string();
+	}
+}
+
+static void NameConstraints(CreateTableInfo &base) {
+	case_insensitive_set_t names;
+	for (auto &constraint : base.constraints) {
+		names.insert(constraint->constraint_name);
+	}
+	for (auto &constraint : base.constraints) {
+		if (!constraint->constraint_name.empty()) {
+			continue;
+		}
+		auto name = DefaultConstraintName(base, *constraint);
+		if (name.empty()) {
+			continue;
+		}
+		auto candidate = name;
+		for (idx_t attempt = 1; names.count(candidate); attempt++) {
+			candidate = name + to_string(attempt);
+		}
+		names.insert(candidate);
+		constraint->constraint_name = candidate;
+	}
+}
+
+static EntryLookupInfo ReferencedTableLookup(SchemaCatalogEntry &schema, const ForeignKeyConstraint &fk) {
+	// Resolve the table reference in the same catalog/schema as the table being
+	// created, so FK references work for external catalogs (not just the default).
+	Identifier fk_catalog = fk.info.schema.empty() ? schema.ParentCatalog().GetName() : Identifier::InvalidCatalog();
+	string fk_schema = fk.info.schema.empty() ? schema.name.GetIdentifierName() : fk.info.schema.GetIdentifierName();
+	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, QualifiedName(fk.info.table));
+	return EntryLookupInfo(table_lookup,
+	                       QualifiedName(fk_catalog, Identifier(fk_schema), table_lookup.GetEntryIdentifier()));
+}
+
+static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryRetriever &entry_retriever,
                                        SchemaCatalogEntry &schema) {
+	auto &create_info = info.Base();
 	// If there is a foreign key constraint, resolve primary key column's index from primary key column's name
 	reference_set_t<SchemaCatalogEntry> fk_schemas;
 	for (idx_t i = 0; i < create_info.constraints.size(); i++) {
@@ -550,8 +638,10 @@ static void BindCreateTableConstraints(CreateTableInfo &create_info, CatalogEntr
 		if (fk.info.type != ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
 			continue;
 		}
+		info.AddSubDependency(AlterTableType::DROP_CONSTRAINT, Identifier(cond->constraint_name));
 		if (!fk.info.pk_keys.empty() && !fk.info.fk_keys.empty()) {
-			return;
+			entry_retriever.GetEntry(ReferencedTableLookup(schema, fk));
+			continue;
 		}
 		D_ASSERT(fk.info.pk_keys.empty());
 		D_ASSERT(fk.info.fk_keys.empty());
@@ -566,22 +656,14 @@ static void BindCreateTableConstraints(CreateTableInfo &create_info, CatalogEntr
 			continue;
 		}
 
-		// Resolve the table reference in the same catalog/schema as the table being
-		// created, so FK references work for external catalogs (not just the default).
-		Identifier fk_catalog =
-		    fk.info.schema.empty() ? schema.ParentCatalog().GetName() : Identifier::InvalidCatalog();
-		string fk_schema =
-		    fk.info.schema.empty() ? schema.name.GetIdentifierName() : fk.info.schema.GetIdentifierName();
-		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, QualifiedName(fk.info.table));
-		auto table_entry = entry_retriever.GetEntry(EntryLookupInfo(
-		    table_lookup, QualifiedName(fk_catalog, Identifier(fk_schema), table_lookup.GetEntryIdentifier())));
+		auto table_entry = entry_retriever.GetEntry(ReferencedTableLookup(schema, fk));
 		if (table_entry->type == CatalogType::VIEW_ENTRY) {
 			throw BinderException("cannot reference a VIEW with a FOREIGN KEY");
 		}
 
 		auto &pk_table_entry_ptr = table_entry->Cast<TableCatalogEntry>();
-		fk.info.schema = pk_table_entry_ptr.schema.name;
-		if (&pk_table_entry_ptr.schema != &schema) {
+		fk.info.schema = pk_table_entry_ptr.ParentSchemaName();
+		if (pk_table_entry_ptr.schema_info != schema.GetSchemaInfo()) {
 			throw BinderException("Creating foreign keys across different schemas or catalogs is not supported");
 		}
 		FindMatchingPrimaryKeyColumns(pk_table_entry_ptr.GetColumns(), pk_table_entry_ptr.GetConstraints(), fk);
@@ -604,21 +686,85 @@ static void BindCreateTableConstraints(CreateTableInfo &create_info, CatalogEntr
 	}
 }
 
+static Identifier FreeSequenceName(CatalogTransaction transaction, SchemaCatalogEntry &schema, const Identifier &table,
+                                   const Identifier &column) {
+	auto stem = table.GetIdentifierName() + "_" + column.GetIdentifierName() + "_seq";
+	Identifier candidate(stem);
+	for (idx_t suffix = 1; schema.GetEntry(transaction, CatalogType::SEQUENCE_ENTRY, candidate); suffix++) {
+		candidate = Identifier(stem + to_string(suffix));
+	}
+	return candidate;
+}
+
+static bool DefaultNamesSequence(const ColumnDefinition &column, const QualifiedName &sequence,
+                                 const IdentifierEquality &equals) {
+	if (!column.HasDefaultValue() || column.DefaultValue().GetExpressionClass() != ExpressionClass::FUNCTION) {
+		return false;
+	}
+	auto &function = column.DefaultValue().Cast<FunctionExpression>();
+	auto &arguments = function.GetArguments();
+	if (!(function.GetQualifiedName().Name() == Identifier("nextval")) || arguments.size() != 1 ||
+	    arguments[0].GetExpression().GetExpressionClass() != ExpressionClass::CONSTANT) {
+		return false;
+	}
+	auto &value = arguments[0].GetExpression().Cast<ConstantExpression>().GetValue();
+	if (value.IsNull()) {
+		return false;
+	}
+	auto named = QualifiedName::Parse(value.ToString());
+	return (named.Catalog().empty() || equals(named.Catalog(), sequence.Catalog())) &&
+	       (named.Schema().empty() || equals(named.Schema(), sequence.Schema())) &&
+	       equals(named.Name(), sequence.Name());
+}
+
+static void BindSerialSequences(ClientContext &context, SchemaCatalogEntry &schema, BoundCreateTableInfo &result) {
+	auto &table = result.Base();
+	auto &catalog = schema.ParentCatalog();
+	auto transaction = catalog.GetCatalogTransaction(context);
+	IdentifierEquality equals(catalog.IsCaseSensitive());
+	for (auto &serial_column : table.serial_columns) {
+		BoundSerialSequence serial;
+		serial.column = serial_column;
+		serial.name = FreeSequenceName(transaction, schema, table.GetTableName(), serial_column);
+		vector<unique_ptr<ParsedExpression>> arguments;
+		arguments.push_back(make_uniq<ConstantExpression>(Value(QualifiedName(serial.name).ToString())));
+		table.columns.GetColumnMutable(serial_column)
+		    .SetDefaultValue(make_uniq<FunctionExpression>(Identifier("nextval"), std::move(arguments)));
+		QualifiedName sequence(catalog.GetName(), schema.name, serial.name);
+		for (auto &column : table.columns.Physical()) {
+			if (DefaultNamesSequence(column, sequence, equals)) {
+				serial.dependents.push_back(column.Name());
+			}
+		}
+		result.serial_sequences.push_back(std::move(serial));
+	}
+}
+
+static bool NamesPendingSerialSequence(BoundCreateTableInfo &info, const Identifier &column) {
+	IdentifierEquality equals(info.Base().columns.IsCaseSensitive());
+	for (auto &serial : info.serial_sequences) {
+		for (auto &dependent : serial.dependents) {
+			if (equals(dependent, column)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateInfo> info, SchemaCatalogEntry &schema,
                                                              vector<unique_ptr<Expression>> &bound_defaults,
                                                              AlterBindMode bind_mode) {
 	auto &base = info->Cast<CreateTableInfo>();
 	auto result = make_uniq<BoundCreateTableInfo>(schema, std::move(info));
 	auto &dependencies = result->dependencies;
+	dependencies.AddDependency(schema);
 	auto &catalog = schema.ParentCatalog();
+	base.columns.SetCaseSensitive(catalog.IsCaseSensitive());
 	optional_ptr<StorageManager> storage_manager;
 	if (catalog.IsDuckCatalog() && !catalog.InMemory()) {
 		storage_manager = StorageManager::Get(catalog);
 	}
-
-	// Bind all types by first looking into the same catalog/schema as the table
-	auto type_binder = Binder::CreateBinder(context, *this);
-	type_binder->SetSearchPath(result->schema.catalog, result->schema.name);
 
 	vector<unique_ptr<BoundConstraint>> bound_constraints;
 	if (base.query) {
@@ -645,7 +791,7 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 					target_col_names.emplace_back(names[i]);
 				}
 			}
-			ColumnList new_columns;
+			ColumnList new_columns(false, base.columns.IsCaseSensitive());
 			for (idx_t i = 0; i < target_col_names.size(); i++) {
 				new_columns.AddColumn(ColumnDefinition(Identifier(target_col_names[i]), sql_types[i]));
 			}
@@ -657,13 +803,15 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		}
 
 		// Bind all types
+		auto type_binder = Binder::CreateBinder(context, *this);
+		type_binder->SetSearchPath(result->schema.catalog, result->schema.name);
 		for (idx_t i = 0; i < base.columns.PhysicalColumnCount(); i++) {
 			auto &column = base.columns.GetColumnMutable(PhysicalIndex(i));
 			type_binder->BindLogicalType(column.TypeMutable());
 		}
 
 	} else {
-		SetCatalogLookupCallback([&dependencies, &schema](CatalogEntry &entry) {
+		SetCatalogLookupCallback([&dependencies, &subdependency = result->subdependency, &schema](CatalogEntry &entry) {
 			if (&schema.ParentCatalog() != &entry.ParentCatalog()) {
 				// Don't register dependencies between catalogs
 				return;
@@ -674,13 +822,36 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 				return;
 			}
 
-			dependencies.AddDependency(entry);
+			LogicalDependency dependency(entry);
+			if (subdependency.alter != AlterTableType::INVALID) {
+				dependency.subdependencies.insert(subdependency);
+			}
+			dependencies.AddDependency(dependency);
 		});
 
 		// Bind all physical column types
+		auto type_binder = Binder::CreateBinder(context, *this);
+		type_binder->SetSearchPath(result->schema.catalog, result->schema.name);
+		const bool column_types_are_dependencies = catalog.Compatibility() == SqlCompatibility::POSTGRES;
 		for (idx_t i = 0; i < base.columns.PhysicalColumnCount(); i++) {
 			auto &column = base.columns.GetColumnMutable(PhysicalIndex(i));
+			result->AddSubDependency(AlterTableType::REMOVE_COLUMN, column.Name());
 			type_binder->BindLogicalType(column.TypeMutable());
+			if (!column_types_are_dependencies || !column.Type().HasAlias()) {
+				continue;
+			}
+			for (auto &previous : base.dependencies.Set()) {
+				if (previous.entry.type != CatalogType::TYPE_ENTRY ||
+				    previous.entry.name != Identifier(column.Type().GetAlias())) {
+					continue;
+				}
+				EntryLookupInfo lookup(CatalogType::TYPE_ENTRY,
+				                       QualifiedName(previous.catalog, previous.entry.schema, previous.entry.name));
+				auto entry = type_binder->EntryRetriever().GetEntry(lookup, OnEntryNotFound::RETURN_NULL);
+				if (entry && entry->Cast<TypeCatalogEntry>().user_type == column.Type()) {
+					break;
+				}
+			}
 		}
 
 		auto &config = DBConfig::Get(catalog.GetAttached());
@@ -689,19 +860,28 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		// bind the generated column expressions
 		BindGeneratedColumns(*result);
 		// bind any constraints
-
-		BindCreateTableConstraints(base, entry_retriever, schema);
+		if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+			NameConstraints(base);
+		}
+		BindCreateTableConstraints(*result, entry_retriever, schema);
 
 		if (AnyConstraintReferencesGeneratedColumn(base)) {
 			throw BinderException("Constraints on virtual generated columns are not supported");
 		}
-		bound_constraints = BindNewConstraints(base.constraints, base.GetTableName(), base.columns);
+		auto constraint_binder = CreateBinderWithSearchPath(schema.ParentCatalog().GetName(), schema.name);
+		bound_constraints = constraint_binder->BindNewConstraints(*result);
 		if (bind_mode != AlterBindMode::SKIP_BINDING) {
-			// bind the default values
+			BindSerialSequences(context, schema, *result);
 			auto &catalog_name = schema.ParentCatalog().GetName();
 			auto &schema_name = schema.name;
-			BindDefaultValues(base.columns, bound_defaults, catalog_name.GetIdentifierName(),
-			                  schema_name.GetIdentifierName());
+			for (auto &column : base.columns.Physical()) {
+				result->AddSubDependency(AlterTableType::SET_DEFAULT, column.Name());
+				if (NamesPendingSerialSequence(*result, column.Name())) {
+					continue;
+				}
+				BindDefaultValue(column, bound_defaults, catalog_name.GetIdentifierName(),
+				                 schema_name.GetIdentifierName());
+			}
 		}
 	}
 

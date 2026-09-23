@@ -69,6 +69,7 @@ public:
 	void AddIndex(unique_ptr<Index> index);
 	//! Removes an index entry from the list of index entries and release any storage the index owns.
 	void RemoveIndex(const Identifier &name);
+	void RenameIndex(const Identifier &name, const Identifier &new_name);
 	//! Returns true, if the index name does not exist.
 	bool NameIsUnique(const string &name);
 	//! Returns an optional pointer to the index matching the name.

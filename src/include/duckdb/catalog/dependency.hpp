@@ -13,6 +13,7 @@
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/hash.hpp"
 
 namespace duckdb {
 class CatalogEntry;
@@ -135,6 +136,31 @@ public:
 		return result;
 	}
 };
+
+enum class AlterTableType : uint8_t;
+
+struct SubDependency {
+public:
+	AlterTableType alter {};
+	Identifier name;
+
+public:
+	bool operator==(const SubDependency &other) const {
+		return other.alter == alter && other.name == name;
+	}
+
+public:
+	void Serialize(Serializer &serializer) const;
+	static SubDependency Deserialize(Deserializer &deserializer);
+};
+
+struct SubDependencyHashFunction {
+	uint64_t operator()(const SubDependency &a) const {
+		return CombineHash(Hash<uint8_t>(static_cast<uint8_t>(a.alter)), a.name.Hash());
+	}
+};
+
+using subdependency_set_t = unordered_set<SubDependency, SubDependencyHashFunction>;
 
 struct CatalogEntryInfo {
 public:

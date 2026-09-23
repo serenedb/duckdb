@@ -13,10 +13,22 @@
 
 namespace duckdb {
 
-//! A schema in the catalog
-class DuckSchemaEntry : public SchemaCatalogEntry {
+struct CreateTokenizerInfo;
+class DuckSchemaEntry;
+
+class DuckSchemaSets {
 public:
-	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info);
+	DuckSchemaSets(Catalog &catalog, DuckSchemaEntry &schema);
+
+	CatalogSet &GetCatalogSet(CatalogType type);
+	void Verify(Catalog &catalog);
+	template <class F>
+	void ForEachSet(F &&callback) {
+		for (auto set : {&tables, &indexes, &table_functions, &copy_functions, &pragma_functions, &functions,
+		                 &sequences, &collations, &types, &coordinate_systems, &tokenizers}) {
+			callback(*set);
+		}
+	}
 
 private:
 	//! The catalog set holding the tables
@@ -39,6 +51,18 @@ private:
 	CatalogSet types;
 	//! The catalog set holding the coordinate systems
 	CatalogSet coordinate_systems;
+	//! The catalog set holding the tokenizers
+	CatalogSet tokenizers;
+};
+
+//! A schema in the catalog
+class DuckSchemaEntry : public SchemaCatalogEntry {
+public:
+	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<SchemaInfo> inherited_info = nullptr,
+	                shared_ptr<DuckSchemaSets> inherited_sets = nullptr);
+
+private:
+	shared_ptr<DuckSchemaSets> sets;
 
 public:
 	optional_ptr<CatalogEntry> AddEntry(CatalogTransaction transaction, unique_ptr<StandardEntry> entry,
@@ -50,6 +74,8 @@ public:
 	optional_ptr<CatalogEntry> CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) override;
 	optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
 	                                       TableCatalogEntry &table) override;
+	optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
+	                                       CatalogEntry &relation) override;
 	optional_ptr<CatalogEntry> CreateView(CatalogTransaction transaction, CreateViewInfo &info) override;
 	optional_ptr<CatalogEntry> CreateSequence(CatalogTransaction transaction, CreateSequenceInfo &info) override;
 	optional_ptr<CatalogEntry> CreateTableFunction(CatalogTransaction transaction,
@@ -62,6 +88,7 @@ public:
 	optional_ptr<CatalogEntry> CreateCoordinateSystem(CatalogTransaction transaction,
 	                                                  CreateCoordinateSystemInfo &info) override;
 	optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info) override;
+	optional_ptr<CatalogEntry> CreateTokenizer(CatalogTransaction transaction, CreateTokenizerInfo &info);
 	void Alter(CatalogTransaction transaction, AlterInfo &info) override;
 	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
 	void Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
@@ -72,6 +99,7 @@ public:
 	SimilarCatalogEntry GetSimilarEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info) override;
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
 
 	void Verify(Catalog &catalog) override;
 
@@ -80,5 +108,6 @@ public:
 
 private:
 	void OnDropEntry(CatalogTransaction transaction, CatalogEntry &entry);
+	void SetSchemaName(const Identifier &schema_name, optional_ptr<CatalogTransaction> transaction);
 };
 } // namespace duckdb
