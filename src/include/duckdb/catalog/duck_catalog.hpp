@@ -15,7 +15,7 @@ namespace duckdb {
 //! The Catalog object represents the catalog of the database.
 class DuckCatalog : public Catalog {
 public:
-	explicit DuckCatalog(AttachedDatabase &db);
+	explicit DuckCatalog(AttachedDatabase &db, bool case_sensitive_names = false);
 	~DuckCatalog() override;
 
 public:

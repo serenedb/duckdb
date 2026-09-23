@@ -13,6 +13,7 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/enums/catalog_lookup_behavior.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
+#include "duckdb/common/enums/sql_compatibility.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception/catalog_exception.hpp"
 #include "duckdb/common/map.hpp"
@@ -134,6 +135,13 @@ public:
 
 	virtual bool IsDuckCatalog() {
 		return false;
+	}
+
+	virtual SqlCompatibility Compatibility() const {
+		return SqlCompatibility::DUCK;
+	}
+	bool IsCaseSensitive() const {
+		return Compatibility() == SqlCompatibility::POSTGRES;
 	}
 
 	virtual void Initialize(bool load_builtin) = 0;

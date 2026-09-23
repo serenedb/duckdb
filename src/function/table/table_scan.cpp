@@ -1111,6 +1111,8 @@ InsertionOrderPreservingMap<string> TableScanToString(TableFunctionToStringInput
 	auto &bind_data = input.bind_data->Cast<TableScanBindData>();
 	if (!bind_data.display_name.empty()) {
 		result["Table"] = bind_data.display_name;
+	} else if (bind_data.table.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES) {
+		result["Table"] = bind_data.table.name.GetIdentifierName();
 	} else {
 		result["Table"] = bind_data.table.GetQualifiedName(bind_data.table.name)
 		                      .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);

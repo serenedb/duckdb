@@ -345,6 +345,11 @@ static void RewriteIndexDependencies(DuckIndexEntry &index, const Identifier &ol
 	index.dependencies = std::move(updated);
 }
 
+static string NotSupportedForTables(const Catalog &catalog) {
+	const bool name_the_engine = catalog.Compatibility() == SqlCompatibility::DUCK;
+	return name_the_engine ? "is not supported for DuckDB tables" : "is not supported";
+}
+
 unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
 	D_ASSERT(!internal);
 
@@ -440,14 +445,13 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		return AddConstraint(context, add_constraint_info);
 	}
 	case AlterTableType::SET_PARTITIONED_BY:
-		throw NotImplementedException("SET PARTITIONED BY is not supported for DuckDB tables");
+		throw NotImplementedException("SET PARTITIONED BY " + NotSupportedForTables(catalog));
 	case AlterTableType::SET_SORTED_BY:
-		throw NotImplementedException("SET SORTED BY is not supported for DuckDB tables");
+		throw NotImplementedException("SET SORTED BY " + NotSupportedForTables(catalog));
 	case AlterTableType::SET_TABLE_OPTIONS:
-		throw NotImplementedException("SET (<options>) is not supported for DuckDB tables");
-	case AlterTableType::RESET_TABLE_OPTIONS: {
-		throw NotImplementedException("RESET (<options>) is not supported for DuckDB tables");
-	}
+		throw NotImplementedException("SET (<options>) " + NotSupportedForTables(catalog));
+	case AlterTableType::RESET_TABLE_OPTIONS:
+		throw NotImplementedException("RESET (<options>) " + NotSupportedForTables(catalog));
 	default:
 		throw InternalException("Unrecognized alter table type!");
 	}
@@ -625,6 +629,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddColumn(ClientContext &context, AddCo
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	for (auto &col : columns.Logical()) {
 		create_info->columns.AddColumn(col.Copy());
@@ -922,6 +927,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	logical_index_set_t removed_columns;
 	if (column_dependency_manager.HasDependents(removed_index)) {
@@ -1332,6 +1338,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
+	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
 
 	// Bind the USING expression.
 	auto binder = Binder::CreateBinder(context);
@@ -1613,8 +1620,9 @@ void DuckTableEntry::CommitAlter(string &column_name, CommitDropState &drop_stat
 	D_ASSERT(!column_path.empty());
 	auto &root_column_name = column_path[0];
 	idx_t column_position = 0;
+	IdentifierEquality same(columns.IsCaseSensitive());
 	for (auto &col : columns.Logical()) {
-		if (col.Name() == root_column_name) {
+		if (same(col.Name(), Identifier(root_column_name))) {
 			// No need to alter storage, removed column is generated column
 			if (col.Generated()) {
 				return;
