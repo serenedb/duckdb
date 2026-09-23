@@ -169,11 +169,7 @@ static catalog_entry_vector_t GetCatalogEntries(vector<reference<SchemaCatalogEn
 		// Scan triggers from each table directly (triggers are nested under their table)
 		for (auto &table_entry : tables) {
 			auto &table = table_entry.get().Cast<TableCatalogEntry>();
-			if (!table.IsDuckTable()) {
-				continue;
-			}
-			auto &duck_table = table.Cast<DuckTableEntry>();
-			duck_table.ScanTriggersNonTransactional([&](CatalogEntry &entry) {
+			table.ScanTriggersNonTransactional([&](CatalogEntry &entry) {
 				if (!entry.internal) {
 					entries.push_back(entry);
 				}
@@ -214,7 +210,8 @@ static bool HasBufferedIndexReplays(AttachedDatabase &db) {
 			return;
 		}
 		schema.Scan(CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
-			if (has_buffered_replays || entry.type != CatalogType::TABLE_ENTRY) {
+			if (has_buffered_replays || entry.type != CatalogType::TABLE_ENTRY ||
+			    !entry.Cast<TableCatalogEntry>().IsDuckTable()) {
 				return;
 			}
 			auto &table = entry.Cast<DuckTableEntry>();
@@ -344,6 +341,9 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 			if (entry.type != CatalogType::TABLE_ENTRY) {
 				continue;
 			}
+			if (!entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+				continue;
+			}
 			auto &table = entry.Cast<DuckTableEntry>();
 			auto &storage = table.GetStorage();
 			auto segment_info = storage.GetColumnSegmentInfo(context);
@@ -398,6 +398,9 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 	for (auto &entry_ref : catalog_entries) {
 		auto &entry = entry_ref.get();
 		if (entry.type != CatalogType::TABLE_ENTRY) {
+			continue;
+		}
+		if (!entry.Cast<TableCatalogEntry>().IsDuckTable()) {
 			continue;
 		}
 		auto &table = entry.Cast<DuckTableEntry>();
@@ -606,8 +609,7 @@ void CheckpointReader::ReadTrigger(CatalogTransaction transaction, Deserializer 
 	if (!table_entry) {
 		throw DataCorruptionException("corrupt database file - trigger entry without table entry");
 	}
-	auto &duck_table = table_entry->Cast<DuckTableEntry>();
-	duck_table.CreateTrigger(transaction, trigger_info);
+	table_entry->Cast<TableCatalogEntry>().CreateTrigger(transaction, trigger_info);
 }
 
 //===--------------------------------------------------------------------===//
@@ -654,7 +656,6 @@ void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &d
 		// See internal issue 3663.
 		throw DataCorruptionException("corrupt database file - index entry without table entry");
 	}
-	auto &table = catalog_table->Cast<DuckTableEntry>();
 
 	// we also need to make sure the index type is loaded
 	// backwards compatibility:
@@ -662,6 +663,11 @@ void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &d
 	if (info.index_type.empty()) {
 		info.index_type = ART::TYPE_NAME;
 	}
+	if (catalog_table->type != CatalogType::TABLE_ENTRY || !catalog_table->Cast<TableCatalogEntry>().IsDuckTable()) {
+		schema.CreateIndex(transaction, info, *catalog_table);
+		return;
+	}
+	auto &table = catalog_table->Cast<DuckTableEntry>();
 
 	// now we can look for the index in the catalog and assign the table info
 	auto &index = schema.CreateIndex(transaction, info, table)->Cast<DuckIndexEntry>();
@@ -678,7 +684,6 @@ void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &d
 		index_storage_info = table_info->ExtractIndexStorageInfo(index.name);
 	}
 
-	D_ASSERT(index_storage_info.IsValid());
 	D_ASSERT(!index_storage_info.name.empty());
 
 	// Create an unbound index and add it to the table.
@@ -729,6 +734,9 @@ void CheckpointReader::ReadTableMacro(CatalogTransaction transaction, Deserializ
 void SingleFileCheckpointWriter::WriteTable(TableCatalogEntry &table, Serializer &serializer) {
 	// Write the table metadata
 	serializer.WriteProperty(100, "table", &table);
+	if (!table.IsDuckTable()) {
+		return;
+	}
 
 	// Explicit checkpoints bind indexes before serialization, so that buffered index operations are replayed
 	// and not lost on a restart. During a commit-time checkpoint the caller has no active transaction.
@@ -759,16 +767,19 @@ void CheckpointReader::ReadTable(CatalogTransaction transaction, Deserializer &d
 	auto bound_info = Binder::BindCreateTableCheckpoint(std::move(info), schema);
 
 	// now read the actual table data and place it into the CreateTableInfo
-	ReadTableData(transaction, deserializer, *bound_info);
+	auto table_pointer =
+	    deserializer.ReadPropertyWithExplicitDefault<MetaBlockPointer>(101, "table_pointer", MetaBlockPointer());
+	if (table_pointer.IsValid()) {
+		ReadTableData(transaction, deserializer, *bound_info, table_pointer);
+	}
 
 	// finally create the table in the catalog
 	catalog.CreateTable(transaction, *bound_info);
 }
 
 void CheckpointReader::ReadTableData(CatalogTransaction transaction, Deserializer &deserializer,
-                                     BoundCreateTableInfo &bound_info) {
+                                     BoundCreateTableInfo &bound_info, MetaBlockPointer table_pointer) {
 	// written in "SingleFileTableDataWriter::FinalizeTable"
-	auto table_pointer = deserializer.ReadProperty<MetaBlockPointer>(101, "table_pointer");
 	auto total_rows = deserializer.ReadProperty<idx_t>(102, "total_rows");
 
 	// Cover reading old storage files.

@@ -924,7 +924,7 @@ void ReplayWithoutIndex(ClientContext &context, Catalog &catalog, AlterInfo &inf
 }
 
 void WriteAheadLogDeserializer::ReplayIndexData(IndexStorageInfo &info) {
-	D_ASSERT(info.IsValid() && !info.name.empty());
+	D_ASSERT(!info.name.empty());
 
 	auto &single_file_sm = db.GetStorageManager().Cast<SingleFileStorageManager>();
 	auto &block_manager = single_file_sm.block_manager;
@@ -1133,9 +1133,8 @@ void WriteAheadLogDeserializer::ReplayCreateTrigger() {
 	// the trigger lives in the same (possibly nested) schema as its base table
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(
 	    context, ReplayQualifiedName(catalog, trigger_info.GetQualifiedName(), trigger_info.base_table->Table()));
-	auto &duck_table = table.Cast<DuckTableEntry>();
 	auto transaction = catalog.GetCatalogTransaction(context);
-	duck_table.CreateTrigger(transaction, trigger_info);
+	table.CreateTrigger(transaction, trigger_info);
 }
 
 void WriteAheadLogDeserializer::ReplayDropTrigger() {
@@ -1154,9 +1153,8 @@ void WriteAheadLogDeserializer::ReplayDropTrigger() {
 	// the trigger lives in the same (possibly nested) schema as its base table
 	auto &table =
 	    Catalog::GetEntry<TableCatalogEntry>(context, info.GetQualifiedName().WithName(std::move(table_name)));
-	auto &duck_table = table.Cast<DuckTableEntry>();
 	auto transaction = catalog.GetCatalogTransaction(context);
-	duck_table.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade);
+	table.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade);
 }
 
 //===--------------------------------------------------------------------===//
@@ -1265,8 +1263,13 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 
 	// the table lives in the same (possibly nested) schema as the index
 	auto table_name = ReplayQualifiedName(catalog, create_info->GetQualifiedName(), info.table);
-	auto &entry = catalog.GetEntry<TableCatalogEntry>(context, table_name);
-	auto &table = entry.Cast<DuckTableEntry>();
+	auto &relation = *Catalog::GetEntry(context, EntryLookupInfo(CatalogType::TABLE_ENTRY, table_name),
+	                                    OnEntryNotFound::THROW_EXCEPTION);
+	if (relation.type != CatalogType::TABLE_ENTRY || !relation.Cast<TableCatalogEntry>().IsDuckTable()) {
+		relation.ParentSchema(context).CreateIndex(context, info, relation);
+		return;
+	}
+	auto &table = relation.Cast<DuckTableEntry>();
 	auto &storage = table.GetStorage();
 	auto &io_manager = TableIOManager::Get(storage);
 

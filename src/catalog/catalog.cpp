@@ -342,8 +342,8 @@ optional_ptr<CatalogEntry> Catalog::CreateCoordinateSystem(CatalogTransaction tr
 //===--------------------------------------------------------------------===//
 optional_ptr<CatalogEntry> Catalog::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info) {
 	auto &schema = GetEntrySchema(transaction, info.GetQualifiedName());
-	auto &table = schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, info.table)->Cast<TableCatalogEntry>();
-	return schema.CreateIndex(transaction, info, table);
+	auto &relation = *schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, info.table);
+	return schema.CreateIndex(transaction, info, relation);
 }
 
 optional_ptr<CatalogEntry> Catalog::CreateIndex(ClientContext &context, CreateIndexInfo &info) {

@@ -1,5 +1,6 @@
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
@@ -231,7 +232,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) {
-	auto table = make_uniq<DuckTableEntry>(catalog, *this, info);
+	auto table = catalog.Cast<DuckCatalog>().MakeTableEntry(transaction, *this, info);
 	auto &dependencies = info.Base().dependencies;
 
 	vector<unique_ptr<AlterForeignKeyInfo>> fk_arrays;
@@ -326,17 +327,24 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateView(CatalogTransaction transa
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
                                                         TableCatalogEntry &table) {
+	CatalogEntry &relation = table;
+	return CreateIndex(transaction, info, relation);
+}
+
+optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
+                                                        CatalogEntry &relation) {
 	// indexes do not require CASCADE to be dropped, they are simply always dropped along with the table
-	info.dependencies.AddDependency(table, DependencyDependentFlags());
+	info.dependencies.AddDependency(relation, DependencyDependentFlags());
 
 	// currently, we can not alter PK/FK/UNIQUE constraints
 	// concurrency-safe name checks against other INDEX catalog entries happens in the catalog
-	if (info.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT &&
-	    !table.GetStorage().IndexNameIsUnique(info.GetIndexName().GetIdentifierName())) {
+	if (info.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT && relation.type == CatalogType::TABLE_ENTRY &&
+	    relation.Cast<TableCatalogEntry>().IsDuckTable() &&
+	    !relation.Cast<TableCatalogEntry>().GetStorage().IndexNameIsUnique(info.GetIndexName().GetIdentifierName())) {
 		throw CatalogException("An index with the name " + info.GetIndexName() + " already exists!");
 	}
 
-	auto index = make_uniq<DuckIndexEntry>(catalog, *this, info, table);
+	auto index = catalog.Cast<DuckCatalog>().MakeIndexEntry(*this, info, relation);
 	auto dependencies = index->dependencies;
 	return AddEntryInternal(transaction, std::move(index), info.on_conflict, dependencies);
 }
@@ -488,6 +496,9 @@ void DuckSchemaEntry::OnDropEntry(CatalogTransaction transaction, CatalogEntry &
 	}
 	// if we have transaction local insertions for this table - clear them
 	auto &table_entry = entry.Cast<TableCatalogEntry>();
+	if (!table_entry.IsDuckTable()) {
+		return;
+	}
 	auto &local_storage = LocalStorage::Get(transaction.transaction->Cast<DuckTransaction>());
 	local_storage.DropTable(table_entry.GetStorage());
 }

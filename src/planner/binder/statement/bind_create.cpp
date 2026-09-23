@@ -1073,8 +1073,10 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY,
 			                             create_index_info.GetQualifiedName().WithName(create_index_info.table));
 			auto resolved = Catalog::GetEntry(context, table_lookup, OnEntryNotFound::RETURN_NULL);
-			if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
-				table_ptr = &resolved->Cast<TableCatalogEntry>();
+			if (resolved) {
+				table_ptr = resolved->type == CatalogType::TABLE_ENTRY ? &resolved->Cast<TableCatalogEntry>() : nullptr;
+			} else if (table_ptr->name != create_index_info.table) {
+				table_ptr = nullptr;
 			}
 		}
 		if (table_ptr) {

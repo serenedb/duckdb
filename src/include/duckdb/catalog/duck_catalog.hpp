@@ -9,6 +9,11 @@
 #pragma once
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 
 namespace duckdb {
 
@@ -45,6 +50,10 @@ public:
 	                            AlterSchemaInfo &info) override;
 	DUCKDB_API void AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntry &schema,
 	                                 AlterInfo &info) override;
+	DUCKDB_API virtual unique_ptr<IndexCatalogEntry> MakeIndexEntry(DuckSchemaEntry &schema, CreateIndexInfo &info,
+	                                                                CatalogEntry &relation);
+	DUCKDB_API virtual unique_ptr<TableCatalogEntry>
+	MakeTableEntry(CatalogTransaction transaction, DuckSchemaEntry &schema, BoundCreateTableInfo &info);
 	DUCKDB_API void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) override;
 	DUCKDB_API void ScanSchemas(std::function<void(SchemaCatalogEntry &)> callback);
 
