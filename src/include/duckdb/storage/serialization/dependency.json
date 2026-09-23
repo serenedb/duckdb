@@ -62,6 +62,26 @@
 		"pointer_type": "none"
 	},
 	{
+		"class": "SubDependency",
+		"includes": [
+			"duckdb/catalog/dependency.hpp",
+			"duckdb/parser/parsed_data/alter_table_info.hpp"
+		],
+		"members": [
+			{
+				"id": 100,
+				"name": "alter",
+				"type": "AlterTableType"
+			},
+			{
+				"id": 101,
+				"name": "name",
+				"type": "Identifier"
+			}
+		],
+		"pointer_type": "none"
+	},
+	{
 		"class": "LogicalDependency",
 		"includes": [
 			"duckdb/catalog/dependency_list.hpp"
@@ -83,6 +103,13 @@
 				"type": "DependencyDependentFlags",
 				"default": "DependencyDependentFlags().SetBlocking()",
 				"version": "v2.0.0"
+			},
+			{
+				"id": 16485,
+				"name": "subdependencies",
+				"type": "subdependency_set_t",
+				"default": "subdependency_set_t()",
+				"version": "serenedb_v1"
 			}
 		],
 		"pointer_type": "none",

@@ -22,6 +22,7 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/common/type_visitor.hpp"
@@ -103,10 +104,23 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const vector<unique_
 	return bound_constraints;
 }
 
-vector<unique_ptr<BoundConstraint>> Binder::BindNewConstraints(vector<unique_ptr<Constraint>> &constraints,
-                                                               const Identifier &table_name,
-                                                               const ColumnList &columns) {
-	auto bound_constraints = BindConstraints(constraints, table_name, columns);
+void BoundCreateTableInfo::AddSubDependency(AlterTableType alter, const Identifier &name) {
+	if (schema.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES) {
+		return;
+	}
+	subdependency = SubDependency {alter, name};
+}
+
+vector<unique_ptr<BoundConstraint>> Binder::BindNewConstraints(BoundCreateTableInfo &info) {
+	auto &base = info.Base();
+	auto &constraints = base.constraints;
+	const auto &table_name = base.GetTableName();
+	auto &columns = base.columns;
+	vector<unique_ptr<BoundConstraint>> bound_constraints;
+	for (const auto &constr : constraints) {
+		info.AddSubDependency(AlterTableType::DROP_CONSTRAINT, Identifier(constr->constraint_name));
+		bound_constraints.push_back(BindConstraint(*constr, table_name, columns));
+	}
 
 	// Handle PK and NOT NULL constraints.
 	bool has_primary_key = false;
@@ -316,6 +330,7 @@ void Binder::BindGeneratedColumns(BoundCreateTableInfo &info) {
 
 		auto expression = col.GeneratedExpression().Copy();
 
+		info.AddSubDependency(AlterTableType::REMOVE_COLUMN, col.Name());
 		auto bound_expression = expr_binder.Bind(expression);
 		D_ASSERT(bound_expression);
 		if (bound_expression->HasSubquery()) {
@@ -616,8 +631,23 @@ static void NameConstraints(CreateTableInfo &base) {
 	}
 }
 
-static void BindCreateTableConstraints(CreateTableInfo &create_info, CatalogEntryRetriever &entry_retriever,
+static EntryLookupInfo ReferencedTableLookup(SchemaCatalogEntry &schema, const ForeignKeyConstraint &fk) {
+	// Resolve the table reference in the same catalog/schema as the table being
+	// created, so FK references work for external catalogs (not just the default).
+	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, QualifiedName(fk.info.table));
+	QualifiedName fk_name;
+	if (fk.info.schema.empty() || fk.info.schema == schema.name) {
+		// a foreign key can only reference a table in the same (possibly nested) schema
+		fk_name = schema.GetQualifiedName(fk.info.table);
+	} else {
+		fk_name = QualifiedName(Identifier::InvalidCatalog(), fk.info.schema, fk.info.table);
+	}
+	return EntryLookupInfo(table_lookup, fk_name);
+}
+
+static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryRetriever &entry_retriever,
                                        SchemaCatalogEntry &schema) {
+	auto &create_info = info.Base();
 	// If there is a foreign key constraint, resolve primary key column's index from primary key column's name
 	reference_set_t<SchemaCatalogEntry> fk_schemas;
 	for (idx_t i = 0; i < create_info.constraints.size(); i++) {
@@ -629,8 +659,10 @@ static void BindCreateTableConstraints(CreateTableInfo &create_info, CatalogEntr
 		if (fk.info.type != ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
 			continue;
 		}
+		info.AddSubDependency(AlterTableType::DROP_CONSTRAINT, Identifier(cond->constraint_name));
 		if (!fk.info.pk_keys.empty() && !fk.info.fk_keys.empty()) {
-			return;
+			entry_retriever.GetEntry(ReferencedTableLookup(schema, fk));
+			continue;
 		}
 		D_ASSERT(fk.info.pk_keys.empty());
 		D_ASSERT(fk.info.fk_keys.empty());
@@ -645,17 +677,7 @@ static void BindCreateTableConstraints(CreateTableInfo &create_info, CatalogEntr
 			continue;
 		}
 
-		// Resolve the table reference in the same catalog/schema as the table being
-		// created, so FK references work for external catalogs (not just the default).
-		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, QualifiedName(fk.info.table));
-		QualifiedName fk_name;
-		if (fk.info.schema.empty() || fk.info.schema == schema.name) {
-			// a foreign key can only reference a table in the same (possibly nested) schema
-			fk_name = schema.GetQualifiedName(fk.info.table);
-		} else {
-			fk_name = QualifiedName(Identifier::InvalidCatalog(), fk.info.schema, fk.info.table);
-		}
-		auto table_entry = entry_retriever.GetEntry(EntryLookupInfo(table_lookup, fk_name));
+		auto table_entry = entry_retriever.GetEntry(ReferencedTableLookup(schema, fk));
 		if (table_entry->type == CatalogType::VIEW_ENTRY) {
 			throw BinderException("cannot reference a VIEW with a FOREIGN KEY");
 		}
@@ -690,6 +712,7 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
                                                              AlterBindMode bind_mode) {
 	auto result = make_uniq<BoundCreateTableInfo>(schema, std::move(info));
 	auto &base = result->Base();
+	const auto previous_dependencies = std::move(base.dependencies);
 	base.dependencies = LogicalDependencyList();
 	auto &dependencies = base.dependencies;
 	dependencies.AddDependency(schema);
@@ -699,10 +722,6 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 	if (catalog.IsDuckCatalog() && !catalog.InMemory()) {
 		storage_manager = StorageManager::Get(catalog);
 	}
-
-	// Bind all types by first looking into the same catalog/schema as the table
-	auto type_binder = Binder::CreateBinder(context, *this);
-	type_binder->SetSearchPath(result->schema.catalog, result->schema.name);
 
 	vector<unique_ptr<BoundConstraint>> bound_constraints;
 	if (base.query) {
@@ -741,13 +760,15 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		}
 
 		// Bind all types
+		auto type_binder = Binder::CreateBinder(context, *this);
+		type_binder->SetSearchPath(result->schema.catalog, result->schema.name);
 		for (idx_t i = 0; i < base.columns.PhysicalColumnCount(); i++) {
 			auto &column = base.columns.GetColumnMutable(PhysicalIndex(i));
 			type_binder->BindLogicalType(column.TypeMutable());
 		}
 
 	} else {
-		SetCatalogLookupCallback([&dependencies, &schema](CatalogEntry &entry) {
+		SetCatalogLookupCallback([&dependencies, &subdependency = result->subdependency, &schema](CatalogEntry &entry) {
 			if (&schema.ParentCatalog() != &entry.ParentCatalog()) {
 				// Don't register dependencies between catalogs
 				return;
@@ -758,13 +779,37 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 				return;
 			}
 
-			dependencies.AddDependency(entry);
+			LogicalDependency dependency(entry);
+			if (subdependency.alter != AlterTableType::INVALID) {
+				dependency.subdependencies.insert(subdependency);
+			}
+			dependencies.AddDependency(dependency);
 		});
 
 		// Bind all physical column types
+		auto type_binder = Binder::CreateBinder(context, *this);
+		type_binder->SetSearchPath(result->schema.catalog, result->schema.name);
+		const bool column_types_are_dependencies = catalog.Compatibility() == SqlCompatibility::POSTGRES;
 		for (idx_t i = 0; i < base.columns.PhysicalColumnCount(); i++) {
 			auto &column = base.columns.GetColumnMutable(PhysicalIndex(i));
+			result->AddSubDependency(AlterTableType::REMOVE_COLUMN, column.Name());
 			type_binder->BindLogicalType(column.TypeMutable());
+			if (!column_types_are_dependencies || !column.Type().HasAlias()) {
+				continue;
+			}
+			for (auto &previous : previous_dependencies.Set()) {
+				if (previous.entry.type != CatalogType::TYPE_ENTRY ||
+				    previous.entry.name != Identifier(column.Type().GetAlias())) {
+					continue;
+				}
+				EntryLookupInfo lookup(CatalogType::TYPE_ENTRY,
+				                       QualifiedName::FromCatalogSchema(previous.catalog, previous.entry.schema_path,
+				                                                        previous.entry.name));
+				auto entry = type_binder->EntryRetriever().GetEntry(lookup, OnEntryNotFound::RETURN_NULL);
+				if (entry && entry->Cast<TypeCatalogEntry>().user_type == column.Type()) {
+					break;
+				}
+			}
 		}
 
 		auto &config = DBConfig::Get(catalog.GetAttached());
@@ -776,13 +821,13 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
 			NameConstraints(base);
 		}
-		BindCreateTableConstraints(base, entry_retriever, schema);
+		BindCreateTableConstraints(*result, entry_retriever, schema);
 
 		if (AnyConstraintReferencesGeneratedColumn(base)) {
 			throw BinderException("Constraints on virtual generated columns are not supported");
 		}
 		auto constraint_binder = CreateBinderWithSearchPath(schema.ParentCatalog().GetName(), schema.name);
-		bound_constraints = constraint_binder->BindNewConstraints(base.constraints, base.GetTableName(), base.columns);
+		bound_constraints = constraint_binder->BindNewConstraints(*result);
 		for (auto &constraint : base.constraints) {
 			VerifyConstraintTimingStorageVersion(*constraint, catalog, base.temporary);
 		}
@@ -790,8 +835,11 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 			// bind the default values
 			auto &catalog_name = schema.ParentCatalog().GetName();
 			auto &schema_name = schema.name;
-			BindDefaultValues(base.columns, bound_defaults, catalog_name.GetIdentifierName(),
-			                  schema_name.GetIdentifierName());
+			for (auto &column : base.columns.Physical()) {
+				result->AddSubDependency(AlterTableType::SET_DEFAULT, column.Name());
+				BindDefaultValue(column, bound_defaults, catalog_name.GetIdentifierName(),
+				                 schema_name.GetIdentifierName());
+			}
 		}
 	}
 
