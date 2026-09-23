@@ -167,7 +167,22 @@
         "id": 16584,
         "name": "where_clause",
         "type": "ParsedExpression*"
+      },
+      {
+        "id": 16585,
+        "name": "column_opclasses",
+        "type": "vector<string>",
+        "serialize_property": "GetOpclassesForSerialization()"
+      },
+      {
+        "id": 16586,
+        "name": "column_opclass_options",
+        "type": "vector<optional<case_insensitive_map_t<Value>>>",
+        "serialize_property": "GetOpclassOptionsForSerialization()"
       }
+    ],
+    "finalize_deserialization": [
+      "result->FinalizeDeserialization();"
     ],
     "methods": {
       "SetName": [

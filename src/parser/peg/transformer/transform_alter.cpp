@@ -8,6 +8,7 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_database_info.hpp"
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
 #include "duckdb/parser/parsed_data/alter_sequence_info.hpp"
@@ -161,15 +162,21 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransfor
 	AlterEntryData data(base_table_name->GetQualifiedName(),
 	                    if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION);
 	switch (alter_index_alter->alter_table_type) {
-	case AlterTableType::RENAME_TABLE: {
+	case AlterTableType::SET_TABLE_OPTIONS: {
+		auto &set_info = alter_index_alter->Cast<SetTableOptionsInfo>();
+		case_insensitive_map_t<Value> options;
+		for (auto &option : set_info.table_options) {
+			options.emplace(option.first, option.second->Cast<ConstantExpression>().GetLiteral().ToValue());
+		}
+		return make_uniq_base<AlterInfo, SetIndexOptionsInfo>(data, std::move(options));
+	}
+	case AlterTableType::RESET_TABLE_OPTIONS: {
+		auto &reset_info = alter_index_alter->Cast<ResetTableOptionsInfo>();
+		return make_uniq_base<AlterInfo, ResetIndexOptionsInfo>(data, std::move(reset_info.table_options));
+	}
+	case AlterTableType::RENAME_TABLE:
 		return make_uniq_base<AlterInfo, RenameIndexInfo>(data,
 		                                                  alter_index_alter->Cast<RenameTableInfo>().new_table_name);
-	}
-	case AlterTableType::SET_TABLE_OPTIONS:
-	case AlterTableType::RESET_TABLE_OPTIONS:
-		alter_index_alter->SetQualifiedName(base_table_name->GetQualifiedName());
-		alter_index_alter->if_not_found = data.if_not_found;
-		return std::move(alter_index_alter);
 	default:
 		throw NotImplementedException("unsupported ALTER INDEX action");
 	}

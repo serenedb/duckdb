@@ -649,6 +649,80 @@ CatalogType AlterIndexInfo::GetCatalogType() const {
 }
 
 //===--------------------------------------------------------------------===//
+// SetIndexOptionsInfo
+//===--------------------------------------------------------------------===//
+SetIndexOptionsInfo::SetIndexOptionsInfo() : AlterIndexInfo(AlterIndexType::SET_INDEX_OPTIONS) {
+}
+SetIndexOptionsInfo::SetIndexOptionsInfo(const AlterEntryData &data, case_insensitive_map_t<Value> options_p)
+    : AlterIndexInfo(AlterIndexType::SET_INDEX_OPTIONS, data), options(std::move(options_p)) {
+}
+SetIndexOptionsInfo::~SetIndexOptionsInfo() {
+}
+
+unique_ptr<AlterInfo> SetIndexOptionsInfo::Copy() const {
+	return make_uniq_base<AlterInfo, SetIndexOptionsInfo>(GetAlterEntryData(), options);
+}
+
+string SetIndexOptionsInfo::ToString() const {
+	string result = "";
+	result += "ALTER INDEX ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " SET (";
+	idx_t i = 0;
+	for (auto &option : options) {
+		if (i > 0) {
+			result += ", ";
+		}
+		result += SQLString(option.first) + "=" + option.second.ToSQLString();
+		i++;
+	}
+	result += ");";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
+// ResetIndexOptionsInfo
+//===--------------------------------------------------------------------===//
+ResetIndexOptionsInfo::ResetIndexOptionsInfo() : AlterIndexInfo(AlterIndexType::RESET_INDEX_OPTIONS) {
+}
+ResetIndexOptionsInfo::ResetIndexOptionsInfo(const AlterEntryData &data, identifier_set_t options_p)
+    : AlterIndexInfo(AlterIndexType::RESET_INDEX_OPTIONS, data), options(std::move(options_p)) {
+}
+ResetIndexOptionsInfo::~ResetIndexOptionsInfo() {
+}
+
+unique_ptr<AlterInfo> ResetIndexOptionsInfo::Copy() const {
+	identifier_set_t options_copy;
+	for (auto &option : options) {
+		options_copy.emplace(option);
+	}
+	return make_uniq_base<AlterInfo, ResetIndexOptionsInfo>(GetAlterEntryData(), options_copy);
+}
+
+string ResetIndexOptionsInfo::ToString() const {
+	string result = "";
+	result += "ALTER INDEX ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " RESET (";
+	idx_t i = 0;
+	for (auto &option : options) {
+		if (i > 0) {
+			result += ", ";
+		}
+		result += SQLString(option.GetIdentifierName());
+		i++;
+	}
+	result += ");";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
 // AddConstraintInfo
 //===--------------------------------------------------------------------===//
 AddConstraintInfo::AddConstraintInfo() : AlterTableInfo(AlterTableType::ADD_CONSTRAINT) {

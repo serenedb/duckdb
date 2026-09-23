@@ -70,6 +70,10 @@ public:
 
 	vector<string> ExpressionsToList() const;
 	string ExpressionsToString() const;
+
+	vector<string> GetOpclassesForSerialization() const;
+	vector<std::optional<case_insensitive_map_t<Value>>> GetOpclassOptionsForSerialization() const;
+	void FinalizeDeserialization();
 };
 
 } // namespace duckdb

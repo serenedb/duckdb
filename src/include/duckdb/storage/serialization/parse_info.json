@@ -544,6 +544,30 @@
     ]
   },
   {
+    "class": "SetIndexOptionsInfo",
+    "base": "AlterIndexInfo",
+    "enum": "SET_INDEX_OPTIONS",
+    "members": [
+      {
+        "id": 400,
+        "name": "options",
+        "type": "case_insensitive_map_t<Value>"
+      }
+    ]
+  },
+  {
+    "class": "ResetIndexOptionsInfo",
+    "base": "AlterIndexInfo",
+    "enum": "RESET_INDEX_OPTIONS",
+    "members": [
+      {
+        "id": 400,
+        "name": "options",
+        "type": "identifier_set_t"
+      }
+    ]
+  },
+  {
     "class": "RenameIndexInfo",
     "base": "AlterIndexInfo",
     "enum": "RENAME_INDEX",
