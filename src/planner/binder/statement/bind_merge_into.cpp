@@ -282,7 +282,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 				}
 			}
 		}
-		properties.RegisterDBModify(table.catalog, context, modification);
+		properties.RegisterDBModify(table.GetStorageCatalog(context), context, modification);
 	}
 
 	// Record the write access each WHEN action needs for the access-control rule,

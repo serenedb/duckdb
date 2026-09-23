@@ -11,7 +11,6 @@
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
-#include "duckdb/catalog/schema_identity.hpp"
 
 namespace duckdb {
 class ClientContext;
@@ -48,17 +47,7 @@ public:
 public:
 	SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info);
 
-protected:
-	//! Supersede the current version of `identity` with this one, taking everything the schema holds over
-	SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<SchemaIdentity> identity);
-
 public:
-	//! What an entry inside this schema points at, so that altering the schema neither strands its contents nor
-	//! leaves those entries naming a destroyed version
-	const shared_ptr<SchemaIdentity> &GetIdentity() const {
-		return identity;
-	}
-
 	unique_ptr<CreateInfo> GetInfo() const override;
 
 	//! Scan the specified catalog set, invoking the callback method for every entry
@@ -119,8 +108,5 @@ public:
 	virtual void Alter(CatalogTransaction transaction, AlterInfo &info) = 0;
 
 	CatalogTransaction GetCatalogTransaction(ClientContext &context);
-
-private:
-	shared_ptr<SchemaIdentity> identity;
 };
 } // namespace duckdb

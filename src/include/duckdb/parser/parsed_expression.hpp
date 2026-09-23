@@ -196,12 +196,6 @@ public:
 		is_named_parameter = v;
 	}
 
-	//! The oid of the catalog object this node names, stamped by the hosting
-	//! catalog when the expression is bound and kept across every rewrite of the
-	//! statement holding it. Zero means "none"; duckdb's own catalog never sets
-	//! it. Same role oid serves on CreateInfo.
-	idx_t oid = 0;
-
 	//! Create a copy of this expression
 	virtual unique_ptr<ParsedExpression> Copy() const = 0;
 

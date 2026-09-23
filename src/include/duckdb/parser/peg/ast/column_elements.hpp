@@ -7,9 +7,7 @@
 
 namespace duckdb {
 struct ColumnElements {
-	//! Case-sensitive: unquoted identifiers are already folded by the matcher, so two names that still differ in
-	//! case were written quoted and are two columns, as postgres has them.
-	ColumnList columns {false, true};
+	ColumnList columns {false};
 	vector<unique_ptr<Constraint>> constraints;
 	vector<unique_ptr<ParsedExpression>> partition_keys;
 	vector<unique_ptr<ParsedExpression>> sort_keys;

@@ -15,23 +15,9 @@
 
 namespace duckdb {
 
-namespace {
-
-//! A relation binds its columns the way its catalog keys them: a table whose column list matches names exactly
-//! can hold both "A" and "a", and each column reference has to reach its own.
-bool EntryIsCaseSensitive(optional_ptr<StandardEntry> entry) {
-	if (!entry || entry->type != CatalogType::TABLE_ENTRY) {
-		return false;
-	}
-	return entry->Cast<TableCatalogEntry>().GetColumns().IsCaseSensitive();
-}
-
-} // namespace
-
 Binding::Binding(BindingType binding_type, BindingAlias alias_p, vector<LogicalType> coltypes,
-                 vector<Identifier> colnames, TableIndex index, bool case_sensitive)
-    : binding_type(binding_type), alias(std::move(alias_p)), index(index), types(std::move(coltypes)),
-      name_map(0, IdentifierHashFunction(case_sensitive), IdentifierEquality(case_sensitive)) {
+                 vector<Identifier> colnames, TableIndex index)
+    : binding_type(binding_type), alias(std::move(alias_p)), index(index), types(std::move(coltypes)) {
 	names.reserve(colnames.size());
 	for (auto &colname : colnames) {
 		names.emplace_back(std::move(colname));
@@ -165,8 +151,7 @@ optional_ptr<StandardEntry> EntryBinding::GetStandardEntry() {
 TableBinding::TableBinding(const Identifier &alias, vector<LogicalType> types_p, vector<Identifier> names_p,
                            vector<ColumnIndex> &bound_column_ids, optional_ptr<StandardEntry> entry, TableIndex index,
                            virtual_column_map_t virtual_columns_p)
-    : Binding(BindingType::TABLE, GetAlias(alias, entry), std::move(types_p), std::move(names_p), index,
-              EntryIsCaseSensitive(entry)),
+    : Binding(BindingType::TABLE, GetAlias(alias, entry), std::move(types_p), std::move(names_p), index),
       bound_column_ids(bound_column_ids), entry(entry), virtual_columns(std::move(virtual_columns_p)) {
 	for (auto &ventry : virtual_columns) {
 		auto idx = ventry.first;

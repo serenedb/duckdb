@@ -35,10 +35,8 @@ enum class BindingType { BASE, TABLE, DUMMY, CATALOG_ENTRY, CTE };
 
 //! A Binding represents a binding to a table, table-producing function or subquery with a specified table index.
 struct Binding {
-	//! `case_sensitive` keys the columns by the exact name, for a relation whose catalog matches names that way --
-	//! a table declared `("A" int, "a" int)` has two columns and each must bind to its own.
 	Binding(BindingType binding_type, BindingAlias alias, vector<LogicalType> types, vector<Identifier> names,
-	        TableIndex index, bool case_sensitive = false);
+	        TableIndex index);
 	virtual ~Binding() = default;
 
 public:
