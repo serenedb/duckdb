@@ -171,6 +171,9 @@ struct RenameTableInfo : public AlterTableInfo {
 public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+	optional_ptr<const Identifier> GetNewName() const override {
+		return &new_table_name;
+	}
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
@@ -444,11 +447,45 @@ struct RenameViewInfo : public AlterViewInfo {
 public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+	optional_ptr<const Identifier> GetNewName() const override {
+		return &new_view_name;
+	}
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterViewInfo> Deserialize(Deserializer &deserializer);
 
 private:
 	RenameViewInfo();
+};
+
+//===--------------------------------------------------------------------===//
+// AlterIndexInfo
+//===--------------------------------------------------------------------===//
+enum class AlterIndexType : uint8_t { INVALID = 0, RENAME_INDEX = 3 };
+
+struct AlterIndexInfo : public AlterInfo {
+	AlterIndexInfo(AlterIndexType type, const AlterEntryData &data);
+	~AlterIndexInfo() override;
+
+	AlterIndexType alter_index_type;
+
+public:
+	CatalogType GetCatalogType() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+protected:
+	explicit AlterIndexInfo(AlterIndexType type);
+};
+
+struct RenameIndexInfo : public RenameEntryInfo<RenameIndexInfo, AlterIndexInfo, AlterIndexType::RENAME_INDEX> {
+	using RenameEntryInfo::RenameEntryInfo;
+
+public:
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterIndexInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	RenameIndexInfo() = default;
 };
 
 //===--------------------------------------------------------------------===//

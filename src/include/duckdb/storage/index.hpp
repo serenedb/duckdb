@@ -53,6 +53,7 @@ public:
 
 	//! The name of the index
 	virtual const Identifier &GetIndexName() const = 0;
+	virtual void SetIndexName(Identifier name) = 0;
 
 	//! The index constraint type
 	virtual IndexConstraintType GetConstraintType() const = 0;

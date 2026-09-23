@@ -610,6 +610,22 @@ string RenameViewInfo::ToString() const {
 }
 
 //===--------------------------------------------------------------------===//
+// AlterIndexInfo
+//===--------------------------------------------------------------------===//
+AlterIndexInfo::AlterIndexInfo(AlterIndexType type) : AlterInfo(AlterType::ALTER_INDEX), alter_index_type(type) {
+}
+
+AlterIndexInfo::AlterIndexInfo(AlterIndexType type, const AlterEntryData &data)
+    : AlterInfo(AlterType::ALTER_INDEX, data.GetQualifiedName(), data.if_not_found), alter_index_type(type) {
+}
+AlterIndexInfo::~AlterIndexInfo() {
+}
+
+CatalogType AlterIndexInfo::GetCatalogType() const {
+	return CatalogType::INDEX_ENTRY;
+}
+
+//===--------------------------------------------------------------------===//
 // AddConstraintInfo
 //===--------------------------------------------------------------------===//
 AddConstraintInfo::AddConstraintInfo() : AlterTableInfo(AlterTableType::ADD_CONSTRAINT) {

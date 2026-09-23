@@ -102,7 +102,7 @@ public:
 
 	//! Rollback <entry> to be the currently valid entry for a certain catalog
 	//! entry
-	void Undo(CatalogEntry &entry);
+	void Undo(CatalogTransaction transaction, CatalogEntry &entry);
 
 	//! Scan the catalog set, invoking the callback method for every committed entry
 	DUCKDB_API void Scan(const std::function<void(CatalogEntry &)> &callback);

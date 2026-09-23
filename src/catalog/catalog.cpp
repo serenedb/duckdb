@@ -1628,6 +1628,11 @@ void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		return lookup.schema->Alter(transaction, info);
 	}
 	D_ASSERT(is_rename_function || info.if_not_found == OnEntryNotFound::THROW_EXCEPTION);
+	if (is_rename_function && info.GetQualifiedName().Schema().empty()) {
+		auto default_schema = GetDefaultSchema();
+		return GetSchema(transaction, default_schema ? *default_schema : Identifier(DEFAULT_SCHEMA))
+		    .Alter(transaction, info);
+	}
 	auto &schema = GetEntrySchema(transaction, info.GetQualifiedName());
 	return schema.Alter(transaction, info);
 }

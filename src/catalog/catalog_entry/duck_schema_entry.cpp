@@ -26,6 +26,7 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
+#include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_aggregate_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_collation_info.hpp"
@@ -337,6 +338,26 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreatePragmaFunction(CatalogTransact
 
 void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	CatalogType type = info.GetCatalogType();
+
+	if (info.type == AlterType::ALTER_SCALAR_FUNCTION &&
+	    info.Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
+	        AlterScalarFunctionType::RENAME_SCALAR_FUNCTION) {
+		auto &name = info.GetQualifiedName().Name();
+		for (auto kind : {CatalogType::SCALAR_FUNCTION_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
+			auto &kind_set = GetCatalogSet(kind);
+			if (kind_set.GetEntry(transaction, name)) {
+				if (!kind_set.AlterEntry(transaction, name, info) &&
+				    info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+					throw CatalogException::MissingEntry(CatalogType::MACRO_ENTRY, name, string());
+				}
+				return;
+			}
+		}
+		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingEntry(CatalogType::MACRO_ENTRY, name, string());
+		}
+		return;
+	}
 
 	auto &set = GetCatalogSet(type);
 	if (info.type == AlterType::CHANGE_OWNERSHIP) {

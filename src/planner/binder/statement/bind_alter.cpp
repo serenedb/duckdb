@@ -9,6 +9,7 @@
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
@@ -143,6 +144,23 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	if (stmt.info->type == AlterType::ALTER_SCALAR_FUNCTION &&
 	    stmt.info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
 	        AlterScalarFunctionType::RENAME_SCALAR_FUNCTION) {
+		if (stmt.info->GetQualifiedName().Schema().empty()) {
+			optional_ptr<CatalogEntry> function;
+			for (auto type : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
+				EntryLookupInfo lookup_info(type, stmt.info->GetQualifiedName());
+				function = entry_retriever.GetEntry(lookup_info, OnEntryNotFound::RETURN_NULL);
+				if (function) {
+					break;
+				}
+			}
+			if (!function) {
+				EntryLookupInfo lookup_info(CatalogType::MACRO_ENTRY, stmt.info->GetQualifiedName());
+				function = entry_retriever.GetEntry(lookup_info, stmt.info->if_not_found);
+			}
+			if (function) {
+				stmt.info->SetQualifiedName(function->Cast<StandardEntry>().GetQualifiedName(function->name));
+			}
+		}
 		auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
@@ -152,6 +170,10 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	}
 
 	optional_ptr<CatalogEntry> entry;
+	auto lookup = [&](CatalogType type, OnEntryNotFound if_not_found) {
+		EntryLookupInfo lookup_info(type, stmt.info->GetQualifiedName());
+		return entry_retriever.GetEntry(lookup_info, if_not_found);
+	};
 	if (stmt.info->type == AlterType::SET_COLUMN_COMMENT) {
 		// Extra step for column comments: They can alter a table or a view, and we resolve that here.
 		auto &info = stmt.info->Cast<SetColumnCommentInfo>();
@@ -161,10 +183,33 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			auto &view = entry->Cast<ViewCatalogEntry>();
 			view.BindView(context);
 		}
+	} else if (stmt.info->GetNewName() && (stmt.info->GetCatalogType() == CatalogType::TABLE_ENTRY ||
+	                                       stmt.info->GetCatalogType() == CatalogType::INDEX_ENTRY)) {
+		auto &target_catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
+		const bool rename_spans_tables_and_indexes = target_catalog.Compatibility() == SqlCompatibility::POSTGRES;
+		const auto declared = stmt.info->GetCatalogType();
+		const auto other = declared == CatalogType::TABLE_ENTRY ? CatalogType::INDEX_ENTRY : CatalogType::TABLE_ENTRY;
+		entry = lookup(declared, OnEntryNotFound::RETURN_NULL);
+		if (!entry && rename_spans_tables_and_indexes) {
+			entry = lookup(other, OnEntryNotFound::RETURN_NULL);
+			if (entry) {
+				auto data = stmt.info->GetAlterEntryData();
+				auto new_name = *stmt.info->GetNewName();
+				const auto allow_internal = stmt.info->allow_internal;
+				if (other == CatalogType::INDEX_ENTRY) {
+					stmt.info = make_uniq<RenameIndexInfo>(data, std::move(new_name));
+				} else {
+					stmt.info = make_uniq<RenameTableInfo>(data, std::move(new_name));
+				}
+				stmt.info->allow_internal = allow_internal;
+			}
+		}
+		if (!entry) {
+			entry = lookup(declared, stmt.info->if_not_found);
+		}
 	} else {
 		// For any other ALTER, we retrieve the catalog entry directly.
-		EntryLookupInfo lookup_info(stmt.info->GetCatalogType(), stmt.info->GetQualifiedName());
-		entry = entry_retriever.GetEntry(lookup_info, stmt.info->if_not_found);
+		entry = lookup(stmt.info->GetCatalogType(), stmt.info->if_not_found);
 	}
 
 	auto &properties = GetStatementProperties();

@@ -81,8 +81,7 @@ public:
 	unique_ptr<CreateInfo> GetSerializedInfo() const;
 
 	//! Sets the CatalogEntry as the new root entry (i.e. the newest entry)
-	// this is called on a rollback to an AlterEntry
-	virtual void SetAsRoot();
+	virtual void SetAsRoot(optional_ptr<CatalogTransaction> transaction);
 
 	//! Convert the catalog entry to a SQL string that can be used to re-construct the catalog entry
 	virtual string ToSQL() const;

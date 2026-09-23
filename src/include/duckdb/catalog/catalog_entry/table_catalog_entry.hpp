@@ -71,6 +71,8 @@ public:
 
 public:
 	DUCKDB_API unique_ptr<CreateInfo> GetInfo() const override;
+	DUCKDB_API static void RenameColumn(ColumnList &columns, vector<unique_ptr<Constraint>> &constraints,
+	                                    const RenameColumnInfo &info);
 
 	DUCKDB_API virtual bool HasGeneratedColumns() const;
 

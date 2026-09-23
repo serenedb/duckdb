@@ -10,14 +10,20 @@ namespace duckdb {
 IndexDataTableInfo::IndexDataTableInfo(shared_ptr<DataTableInfo> info_p) : info(std::move(info_p)) {
 }
 
-void DuckIndexEntry::Rollback(CatalogEntry &) {
-	if (!info) {
+void DuckIndexEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
+	if (!info || !info->info) {
 		return;
 	}
-	if (!info->info) {
+	info->info->GetIndexes().RenameIndex(oid, name);
+}
+
+void DuckIndexEntry::Rollback(CatalogEntry &prev_entry) {
+	if (!info || !info->info) {
 		return;
 	}
-	info->info->GetIndexes().RemoveIndex(oid);
+	if (prev_entry.type == CatalogType::INVALID) {
+		info->info->GetIndexes().RemoveIndex(oid);
+	}
 }
 
 DuckIndexEntry::DuckIndexEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateIndexInfo &create_info,
