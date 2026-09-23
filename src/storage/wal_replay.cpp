@@ -1267,7 +1267,7 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 	auto &io_manager = TableIOManager::Get(storage);
 
 	// Create the index in the catalog.
-	auto index_entry = table.schema.CreateIndex(context, info, table);
+	auto index_entry = table.ParentSchema(context).CreateIndex(context, info, table);
 
 	// add the index to the storage
 	auto unbound_index = make_uniq<UnboundIndex>(std::move(create_info), std::move(index_info), io_manager, db);

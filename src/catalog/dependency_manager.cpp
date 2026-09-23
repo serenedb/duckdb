@@ -75,15 +75,12 @@ DependencyManager::DependencyManager(DuckCatalog &catalog) : catalog(catalog), s
 }
 
 vector<Identifier> DependencyManager::GetSchemaPath(const CatalogEntry &entry) {
-	// the path of (nested) schemas that contain this entry, outermost first - the parent chain for a schema entry, or
-	// the containing schema's full path for any other entry. This is uniform across entry types: no special-casing.
-	optional_ptr<const SchemaCatalogEntry> schema;
-	if (entry.type == CatalogType::SCHEMA_ENTRY) {
-		schema = entry.Cast<SchemaCatalogEntry>().GetParentSchema().get();
-	} else {
-		schema = entry.ParentSchema();
+	switch (entry.type) {
+	case CatalogType::SCHEMA_ENTRY:
+		return entry.Cast<SchemaCatalogEntry>().GetParentSchemaPath();
+	default:
+		return entry.ParentSchemaPath();
 	}
-	return schema ? schema->GetSchemaPath() : vector<Identifier>();
 }
 
 MangledEntryName DependencyManager::MangleName(const CatalogEntryInfo &info) {

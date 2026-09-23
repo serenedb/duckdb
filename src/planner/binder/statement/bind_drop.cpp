@@ -27,7 +27,7 @@ void Binder::BindDropTrigger(DropStatement &stmt, StatementProperties &propertie
 	// IF EXISTS only guards the trigger, not the table (PostgreSQL-compatible behavior).
 	auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context, base_table_ref.GetQualifiedName());
 	// the trigger lives in the same (possibly nested) schema as its base table
-	stmt.info->SetQualifiedName(table_entry.ParentSchema().GetQualifiedName(stmt.info->GetQualifiedName().Name()));
+	stmt.info->SetQualifiedName(table_entry.GetQualifiedName(stmt.info->GetQualifiedName().Name()));
 	properties.RegisterDBModify(table_entry.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 }
 
@@ -98,7 +98,8 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 			throw CatalogException("Cannot drop internal catalog entry %s!", entry->name);
 		}
 		// keep the entry's full (possibly nested) schema path so execution navigates the same schema
-		stmt.info->SetQualifiedName(entry->ParentSchema().GetQualifiedName(stmt.info->GetQualifiedName().Name()));
+		stmt.info->SetQualifiedName(QualifiedName::FromCatalogSchema(
+		    entry->ParentCatalog().GetName(), entry->ParentSchemaPath(), stmt.info->GetQualifiedName().Name()));
 		if (!entry->temporary) {
 			// we can only drop temporary schema entries in read-only mode
 			properties.RegisterDBModify(entry->ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);

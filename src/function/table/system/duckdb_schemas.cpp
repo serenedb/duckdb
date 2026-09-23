@@ -105,9 +105,9 @@ void DuckDBSchemasFunction(ClientContext &context, TableFunctionInput &data_p, D
 		tags.Append(Value::MAP(entry.tags));
 		internal.Append(Value::BOOLEAN(entry.internal));
 		sql.Append(Value());
-		auto parent = entry.GetParentSchema();
+		auto &parent = entry.GetSchemaInfo()->parent;
 		if (parent) {
-			parent_schema.Append(Value(parent->name));
+			parent_schema.Append(Value(parent->Name()));
 			parent_schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(parent->oid)));
 		} else {
 			parent_schema.Append(Value());

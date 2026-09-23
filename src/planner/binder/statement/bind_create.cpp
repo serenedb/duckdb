@@ -61,7 +61,7 @@ static unique_ptr<CommonTableExpressionInfo> MakeTriggerValidationCTE(const Tabl
 	auto alias_select = make_uniq<SelectNode>();
 	alias_select->select_list.push_back(make_uniq<StarExpression>());
 	auto alias_table_ref = make_uniq<BaseTableRef>();
-	alias_table_ref->SetQualifiedName(table.schema.GetQualifiedName(table.name));
+	alias_table_ref->SetQualifiedName(table.GetQualifiedName(table.name));
 	alias_select->from_table = std::move(alias_table_ref);
 	auto alias_cte = make_uniq<CommonTableExpressionInfo>();
 	alias_cte->query_node = std::move(alias_select);
@@ -820,7 +820,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	create_trigger_info.dependencies.AddDependency(table, DependencyDependentFlags());
 
 	// Trigger inherits the catalog and the (possibly nested) schema from the base table
-	create_trigger_info.SetQualifiedName(table.schema.GetQualifiedName(create_trigger_info.GetQualifiedName().Name()));
+	create_trigger_info.SetQualifiedName(table.GetQualifiedName(create_trigger_info.GetQualifiedName().Name()));
 	// ... and its temporariness, so that a trigger on a temporary table lands in the temp catalog
 	create_trigger_info.temporary = table.temporary;
 

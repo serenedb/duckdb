@@ -1112,7 +1112,7 @@ InsertionOrderPreservingMap<string> TableScanToString(TableFunctionToStringInput
 	if (!bind_data.display_name.empty()) {
 		result["Table"] = bind_data.display_name;
 	} else {
-		result["Table"] = bind_data.table.schema.GetQualifiedName(bind_data.table.name)
+		result["Table"] = bind_data.table.GetQualifiedName(bind_data.table.name)
 		                      .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	}
 	result["Type"] = bind_data.is_index_scan ? "Index Scan" : "Sequential Scan";
@@ -1124,14 +1124,14 @@ static void TableScanSerialize(Serializer &serializer, const optional_ptr<Functi
 	auto &bind_data = bind_data_p->Cast<TableScanBindData>();
 	// the catalog/schema/name are only the innermost qualification - "qualified_name" carries the full (possibly
 	// nested) schema path
-	serializer.WriteProperty(100, "catalog", bind_data.table.schema.catalog.GetName());
-	serializer.WriteProperty(101, "schema", bind_data.table.schema.name);
+	serializer.WriteProperty(100, "catalog", bind_data.table.ParentCatalog().GetName());
+	serializer.WriteProperty(101, "schema", bind_data.table.ParentSchemaName());
 	serializer.WriteProperty(102, "table", bind_data.table.name);
 	serializer.WriteProperty(103, "is_index_scan", bind_data.is_index_scan);
 	serializer.WriteProperty(104, "is_create_index", bind_data.is_create_index);
 	serializer.WritePropertyWithDefault(105, "result_ids", unsafe_vector<row_t>());
 	serializer.WritePropertyWithDefault<QualifiedName>(
-	    106, "qualified_name", bind_data.table.schema.GetQualifiedName(bind_data.table.name), QualifiedName());
+	    106, "qualified_name", bind_data.table.GetQualifiedName(bind_data.table.name), QualifiedName());
 }
 
 static unique_ptr<FunctionData> TableScanDeserialize(Deserializer &deserializer, BoundTableFunction &function) {
@@ -1236,7 +1236,7 @@ static TableFunctionToSQLResult TableScanToSQL(ClientContext &, const LogicalGet
 	}
 	auto table = make_uniq<BaseTableRef>();
 	auto entry = get.GetTable();
-	table->SetQualifiedName(entry->schema.GetQualifiedName(entry->name));
+	table->SetQualifiedName(entry->GetQualifiedName(entry->name));
 	return {std::move(table), {}};
 }
 

@@ -331,7 +331,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 
 		// when binding a view, we always look into the catalog/schema where the view is stored first
 		auto view_search_path =
-		    GetSearchPath(view_catalog_entry.ParentCatalog(), view_catalog_entry.ParentSchema().name, true);
+		    GetSearchPath(view_catalog_entry.ParentCatalog(), view_catalog_entry.ParentSchemaName(), true);
 		view_binder->entry_retriever.SetSearchPath(std::move(view_search_path));
 		// propagate the AT clause through the view
 		view_binder->entry_retriever.SetAtClause(entry_at_clause);
@@ -349,7 +349,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			// wrap the plan of a secure view - this prevents the optimizer from pushing into the view
 			bound_child.plan = make_uniq<LogicalSecureView>(
 			    view_catalog_entry.name.GetIdentifierName(),
-			    view_catalog_entry.ParentSchema().GetQualifiedName(view_catalog_entry.name), bound_child.types,
+			    view_catalog_entry.ParentSchema(context).GetQualifiedName(view_catalog_entry.name), bound_child.types,
 			    entry_at_clause, std::move(bound_child.plan));
 		}
 		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry);

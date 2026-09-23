@@ -1197,7 +1197,7 @@ unique_ptr<TableDescription> ClientContext::TableInfo(const Identifier &database
 		}
 		// Describe the table at its resolved location, not the input identifiers.
 		auto &catalog = table->ParentCatalog();
-		result = make_uniq<TableDescription>(QualifiedName(catalog.GetName(), table->ParentSchema().name, table->name));
+		result = make_uniq<TableDescription>(QualifiedName(catalog.GetName(), table->ParentSchemaName(), table->name));
 		result->readonly = catalog.GetAttached().IsReadOnly();
 		for (auto &column : table->GetColumns().Logical()) {
 			result->columns.emplace_back(column.Copy());

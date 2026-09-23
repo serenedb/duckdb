@@ -89,7 +89,8 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
-	return BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
+	auto binder = CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema(context).name);
+	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const vector<unique_ptr<Constraint>> &constraints,
@@ -602,8 +603,8 @@ static void BindCreateTableConstraints(CreateTableInfo &create_info, CatalogEntr
 		}
 
 		auto &pk_table_entry_ptr = table_entry->Cast<TableCatalogEntry>();
-		fk.info.schema = pk_table_entry_ptr.schema.name;
-		if (&pk_table_entry_ptr.schema != &schema) {
+		fk.info.schema = pk_table_entry_ptr.ParentSchemaName();
+		if (pk_table_entry_ptr.schema_info != schema.GetSchemaInfo()) {
 			throw BinderException("Creating foreign keys across different schemas or catalogs is not supported");
 		}
 		FindMatchingPrimaryKeyColumns(pk_table_entry_ptr.GetColumns(), pk_table_entry_ptr.GetConstraints(), fk);
@@ -719,7 +720,8 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		if (AnyConstraintReferencesGeneratedColumn(base)) {
 			throw BinderException("Constraints on virtual generated columns are not supported");
 		}
-		bound_constraints = BindNewConstraints(base.constraints, base.GetTableName(), base.columns);
+		auto constraint_binder = CreateBinderWithSearchPath(schema.ParentCatalog().GetName(), schema.name);
+		bound_constraints = constraint_binder->BindNewConstraints(base.constraints, base.GetTableName(), base.columns);
 		for (auto &constraint : base.constraints) {
 			VerifyConstraintTimingStorageVersion(*constraint, catalog, base.temporary);
 		}

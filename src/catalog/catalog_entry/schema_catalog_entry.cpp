@@ -11,11 +11,15 @@
 namespace duckdb {
 
 SchemaCatalogEntry::SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info,
-                                       optional_ptr<SchemaCatalogEntry> parent_schema_p)
-    : InCatalogEntry(CatalogType::SCHEMA_ENTRY, catalog, info.SchemaName()), parent_schema(parent_schema_p) {
+                                       optional_ptr<SchemaCatalogEntry> parent_schema,
+                                       shared_ptr<SchemaInfo> schema_info_p)
+    : InCatalogEntry(CatalogType::SCHEMA_ENTRY, catalog, info.SchemaName()), schema_info(std::move(schema_info_p)) {
 	this->internal = info.internal;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	if (!schema_info) {
+		schema_info = make_shared_ptr<SchemaInfo>(oid, name, parent_schema ? parent_schema->GetSchemaInfo() : nullptr);
+	}
 }
 
 CatalogTransaction SchemaCatalogEntry::GetCatalogTransaction(ClientContext &context) {
@@ -61,14 +65,13 @@ CatalogSet::EntryLookup SchemaCatalogEntry::LookupEntryDetailed(CatalogTransacti
 }
 
 vector<Identifier> SchemaCatalogEntry::GetSchemaPath() const {
-	vector<Identifier> path;
-	optional_ptr<const SchemaCatalogEntry> schema = this;
-	while (schema) {
-		path.push_back(schema->name);
-		schema = schema->GetParentSchema().get();
-	}
-	std::reverse(path.begin(), path.end());
+	auto path = GetParentSchemaPath();
+	path.push_back(name);
 	return path;
+}
+
+vector<Identifier> SchemaCatalogEntry::GetParentSchemaPath() const {
+	return schema_info->parent ? schema_info->parent->Path() : vector<Identifier>();
 }
 
 QualifiedName SchemaCatalogEntry::GetQualifiedName(const Identifier &entry_name) const {
@@ -120,7 +123,8 @@ void SchemaCatalogEntry::ScanSchemaTree(const std::function<void(SchemaCatalogEn
 
 unique_ptr<CreateInfo> SchemaCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateSchemaInfo>();
-	result->SetQualifiedName(GetParentSchema() ? GetQualifiedName(Identifier()) : QualifiedName({name}, Identifier()));
+	result->SetQualifiedName(schema_info->parent ? GetQualifiedName(Identifier())
+	                                             : QualifiedName({name}, Identifier()));
 	result->comment = comment;
 	result->tags = tags;
 	return std::move(result);

@@ -59,7 +59,7 @@ static void FindForeignKeyInformation(TableCatalogEntry &table, AlterForeignKeyT
 		auto &fk = cond->Cast<ForeignKeyConstraint>();
 		if (fk.info.type == ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
 			// the referenced table lives in the same (possibly nested) schema as this table
-			AlterEntryData alter_data(table.schema.GetQualifiedName(fk.info.table), OnEntryNotFound::THROW_EXCEPTION);
+			AlterEntryData alter_data(table.GetQualifiedName(fk.info.table), OnEntryNotFound::THROW_EXCEPTION);
 			fk_arrays.push_back(make_uniq<AlterForeignKeyInfo>(std::move(alter_data), name, fk.pk_columns,
 			                                                   fk.fk_columns, fk.info.pk_keys, fk.info.fk_keys,
 			                                                   alter_fk_type));
@@ -71,27 +71,33 @@ static void FindForeignKeyInformation(TableCatalogEntry &table, AlterForeignKeyT
 	}
 }
 
-DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info,
-                                 optional_ptr<SchemaCatalogEntry> parent_schema_p)
-    : SchemaCatalogEntry(catalog, info, parent_schema_p), schemas(catalog),
-      tables(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultViewGenerator>(catalog, *this) : nullptr),
+DuckSchemaSets::DuckSchemaSets(Catalog &catalog, DuckSchemaEntry &schema)
+    : schemas(catalog),
+      tables(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultViewGenerator>(catalog, schema) : nullptr),
       indexes(catalog),
       table_functions(catalog,
-                      catalog.IsSystemCatalog() ? make_uniq<DefaultTableFunctionGenerator>(catalog, *this) : nullptr),
+                      catalog.IsSystemCatalog() ? make_uniq<DefaultTableFunctionGenerator>(catalog, schema) : nullptr),
       copy_functions(catalog), pragma_functions(catalog),
-      functions(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultFunctionGenerator>(catalog, *this) : nullptr),
-      sequences(catalog), collations(catalog), types(catalog, make_uniq<DefaultTypeGenerator>(catalog, *this)),
+      functions(catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultFunctionGenerator>(catalog, schema) : nullptr),
+      sequences(catalog), collations(catalog),
+      types(catalog, schema.internal ? make_uniq<DefaultTypeGenerator>(catalog, schema) : nullptr),
       coordinate_systems(
-          catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, *this) : nullptr) {
+          catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, schema) : nullptr) {
+}
+
+DuckSchemaEntry::DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info,
+                                 optional_ptr<SchemaCatalogEntry> parent_schema_p,
+                                 shared_ptr<SchemaInfo> inherited_info, shared_ptr<DuckSchemaSets> inherited_sets)
+    : SchemaCatalogEntry(catalog, info, parent_schema_p, std::move(inherited_info)), sets(std::move(inherited_sets)) {
+	if (!sets) {
+		sets = make_shared_ptr<DuckSchemaSets>(catalog, *this);
+	}
 }
 
 unique_ptr<CatalogEntry> DuckSchemaEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateSchemaInfo>();
-
-	auto result = make_uniq<DuckSchemaEntry>(catalog, cast_info, parent_schema);
-
-	return std::move(result);
+	return make_uniq<DuckSchemaEntry>(catalog, cast_info, nullptr, schema_info, sets);
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) {
@@ -99,7 +105,8 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateSchema(CatalogTransaction tran
 	dependencies.AddDependency(*this);
 	auto entry = make_uniq<DuckSchemaEntry>(catalog, info, *this);
 	auto result = entry.get();
-	if (!schemas.CreateEntry(transaction, info.SchemaName(), std::move(entry), dependencies)) {
+	if (!GetCatalogSet(CatalogType::SCHEMA_ENTRY)
+	         .CreateEntry(transaction, info.SchemaName(), std::move(entry), dependencies)) {
 		return nullptr;
 	}
 	return result;
@@ -421,6 +428,10 @@ SimilarCatalogEntry DuckSchemaEntry::GetSimilarEntry(CatalogTransaction transact
 }
 
 CatalogSet &DuckSchemaEntry::GetCatalogSet(CatalogType type) {
+	return sets->GetCatalogSet(type);
+}
+
+CatalogSet &DuckSchemaSets::GetCatalogSet(CatalogType type) {
 	switch (type) {
 	case CatalogType::SCHEMA_ENTRY:
 		return schemas;
@@ -456,7 +467,10 @@ CatalogSet &DuckSchemaEntry::GetCatalogSet(CatalogType type) {
 
 void DuckSchemaEntry::Verify(Catalog &catalog) {
 	InCatalogEntry::Verify(catalog);
+	sets->Verify(catalog);
+}
 
+void DuckSchemaSets::Verify(Catalog &catalog) {
 	schemas.Verify(catalog);
 	tables.Verify(catalog);
 	indexes.Verify(catalog);

@@ -88,8 +88,10 @@ public:
 
 	virtual Catalog &ParentCatalog();
 	virtual const Catalog &ParentCatalog() const;
-	virtual SchemaCatalogEntry &ParentSchema();
-	virtual const SchemaCatalogEntry &ParentSchema() const;
+	virtual Identifier ParentSchemaName() const;
+	virtual vector<Identifier> ParentSchemaPath() const;
+	virtual SchemaCatalogEntry &ParentSchema(CatalogTransaction transaction) const;
+	SchemaCatalogEntry &ParentSchema(ClientContext &context) const;
 
 	virtual void Verify(Catalog &catalog);
 
