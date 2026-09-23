@@ -19,8 +19,9 @@ public:
 	class ColumnListIterator;
 
 public:
-	DUCKDB_API explicit ColumnList(bool allow_duplicate_names = false);
-	DUCKDB_API explicit ColumnList(vector<ColumnDefinition> columns, bool allow_duplicate_names = false);
+	DUCKDB_API explicit ColumnList(bool allow_duplicate_names = false, bool case_sensitive = false);
+	DUCKDB_API explicit ColumnList(vector<ColumnDefinition> columns, bool allow_duplicate_names = false,
+	                               bool case_sensitive = false);
 
 	DUCKDB_API void AddColumn(ColumnDefinition column);
 	void Finalize();
@@ -61,6 +62,11 @@ public:
 		allow_duplicate_names = allow_duplicates;
 	}
 
+	bool IsCaseSensitive() const {
+		return case_sensitive;
+	}
+	DUCKDB_API void SetCaseSensitive(bool case_sensitive);
+
 private:
 	vector<ColumnDefinition> columns;
 	//! A map of column name to column index
@@ -69,6 +75,7 @@ private:
 	vector<idx_t> physical_columns;
 	//! Allow duplicate names or not
 	bool allow_duplicate_names;
+	bool case_sensitive;
 
 private:
 	void AddToNameMap(ColumnDefinition &column);

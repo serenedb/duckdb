@@ -55,6 +55,15 @@ enum class WALType : uint8_t {
 
 	CREATE_TRIGGER = 30,
 	DROP_TRIGGER = 31,
+
+	CREATE_TOKENIZER = 150,
+	DROP_TOKENIZER = 151,
+	CREATE_ROLE = 152,
+	DROP_ROLE = 153,
+	CREATE_DATABASE = 154,
+	DROP_DATABASE = 155,
+	CREATE_FOREIGN_SERVER = 156,
+	DROP_FOREIGN_SERVER = 157,
 	// -----------------------------
 	// Flush
 	// -----------------------------

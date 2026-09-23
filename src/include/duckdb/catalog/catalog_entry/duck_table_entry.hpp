@@ -65,9 +65,10 @@ public:
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
 
-	void SetAsRoot() override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
 
-	void CommitAlter(string &column_name, CommitDropState &drop_state);
+	void CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state);
+	void CommitDropConstraint(const AlterInfo &info, CommitDropState &drop_state);
 	void CommitDrop(CommitDropState &drop_state);
 
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
@@ -88,14 +89,6 @@ public:
 	//! Returns the virtual columns for this table
 	virtual_column_map_t GetVirtualColumns() const override;
 
-	optional_ptr<CatalogEntry> CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info) override;
-	void ScanTriggers(CatalogTransaction transaction,
-	                  const std::function<void(CatalogEntry &)> &callback) const override;
-	//! Scan all triggers without a transaction (used by checkpoint writer)
-	void ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback);
-	//! Drop a trigger by name
-	bool DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade);
-
 private:
 	unique_ptr<CatalogEntry> RenameColumn(ClientContext &context, RenameColumnInfo &info);
 	unique_ptr<CatalogEntry> RenameField(ClientContext &context, RenameFieldInfo &info);
@@ -108,9 +101,11 @@ private:
 	unique_ptr<CatalogEntry> SetNotNull(ClientContext &context, SetNotNullInfo &info);
 	unique_ptr<CatalogEntry> DropNotNull(ClientContext &context, DropNotNullInfo &info);
 	unique_ptr<CatalogEntry> DropConstraint(ClientContext &context, DropConstraintInfo &info);
-	unique_ptr<CatalogEntry> AddForeignKeyConstraint(AlterForeignKeyInfo &info);
+	unique_ptr<CatalogEntry> RenameConstraint(ClientContext &context, RenameConstraintInfo &info);
+	unique_ptr<CatalogEntry> AddForeignKeyConstraint(CatalogTransaction transaction, AlterForeignKeyInfo &info);
 	unique_ptr<CatalogEntry> DropForeignKeyConstraint(ClientContext &context, AlterForeignKeyInfo &info);
 	unique_ptr<CatalogEntry> SetColumnComment(ClientContext &context, SetColumnCommentInfo &info);
+	unique_ptr<CatalogEntry> AlterPermissions(ClientContext &context, AlterPermissionsInfo &info);
 	unique_ptr<CatalogEntry> AddConstraint(ClientContext &context, AddConstraintInfo &info);
 
 	void UpdateConstraintsOnColumnDrop(const LogicalIndex &removed_index, const vector<LogicalIndex> &adjusted_indices,
@@ -120,8 +115,6 @@ private:
 private:
 	//! A reference to the underlying storage unit used for this table
 	shared_ptr<DataTable> storage;
-	//! The catalog set holding triggers for this table
-	shared_ptr<CatalogSet> triggers;
 	//! Manages dependencies of the individual columns of the table
 	ColumnDependencyManager column_dependency_manager;
 };

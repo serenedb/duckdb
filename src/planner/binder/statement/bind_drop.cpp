@@ -3,6 +3,7 @@
 #include "duckdb/planner/operator/logical_simple.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
@@ -25,7 +26,7 @@ void Binder::BindDropTrigger(DropStatement &stmt, StatementProperties &propertie
 	BindSchemaOrCatalog(base_table_ref.GetQualifiedNameMutable());
 	// IF EXISTS only guards the trigger, not the table (PostgreSQL-compatible behavior).
 	auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context, base_table_ref.GetQualifiedName());
-	stmt.info->SetQualifiedName(QualifiedName(table_entry.ParentCatalog().GetName(), table_entry.ParentSchema().name,
+	stmt.info->SetQualifiedName(QualifiedName(table_entry.ParentCatalog().GetName(), table_entry.ParentSchemaName(),
 	                                          stmt.info->GetQualifiedName().Name()));
 	properties.RegisterDBModify(table_entry.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 }
@@ -52,7 +53,8 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	case CatalogType::TABLE_MACRO_ENTRY:
 	case CatalogType::INDEX_ENTRY:
 	case CatalogType::TABLE_ENTRY:
-	case CatalogType::TYPE_ENTRY: {
+	case CatalogType::TYPE_ENTRY:
+	case CatalogType::TOKENIZER_ENTRY: {
 		BindSchemaOrCatalog(stmt.info->GetQualifiedNameMutable());
 		auto catalog = Catalog::GetCatalogEntry(context, stmt.info->GetQualifiedName().Catalog());
 		if (catalog) {
@@ -61,6 +63,9 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		}
 		optional_ptr<CatalogEntry> entry;
 		if (stmt.info->type == CatalogType::MACRO_ENTRY) {
+			for (auto &type : stmt.info->func_parameters) {
+				BindLogicalType(type);
+			}
 			// We also support "DROP MACRO" (instead of "DROP MACRO TABLE") for table macros
 			// First try to drop a scalar macro
 			EntryLookupInfo macro_entry_lookup(stmt.info->type, stmt.info->GetQualifiedName());
@@ -89,7 +94,15 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		if (entry->internal) {
 			throw CatalogException("Cannot drop internal catalog entry \"%s\"!", entry->name.GetIdentifierName());
 		}
-		stmt.info->SetQualifiedName(QualifiedName(entry->ParentCatalog().GetName(), entry->ParentSchema().name,
+		if (entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) {
+			auto &macro = entry->Cast<MacroCatalogEntry>();
+			if (macro.is_procedure != stmt.info->is_procedure) {
+				throw BinderException("%s(%s) is not a %s", entry->name.GetIdentifierName(),
+				                      MacroFunction::ParameterTypesToString(stmt.info->func_parameters),
+				                      stmt.info->is_procedure ? "procedure" : "function");
+			}
+		}
+		stmt.info->SetQualifiedName(QualifiedName(entry->ParentCatalog().GetName(), entry->ParentSchemaName(),
 		                                          stmt.info->GetQualifiedName().Name()));
 		if (!entry->temporary) {
 			// we can only drop temporary schema entries in read-only mode

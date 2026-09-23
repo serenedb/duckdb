@@ -480,6 +480,12 @@
         "name": "tags",
         "type": "InsertionOrderPreservingMap<string>",
         "default": "InsertionOrderPreservingMap<string>()"
+      },
+      {
+        "id": 107,
+        "name": "acl",
+        "type": "vector<AclItem>",
+        "default": "vector<AclItem>()"
       }
     ],
     "constructor": [
@@ -487,6 +493,141 @@
       "type",
       "expression",
       "category"
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "AclItem",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "grantee",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "grantor",
+        "type": "idx_t"
+      },
+      {
+        "id": 102,
+        "name": "privs",
+        "type": "AclMode"
+      },
+      {
+        "id": 103,
+        "name": "grant_option",
+        "type": "AclMode"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "Membership",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "role",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "grantor",
+        "type": "idx_t"
+      },
+      {
+        "id": 102,
+        "name": "admin_option",
+        "type": "bool"
+      },
+      {
+        "id": 103,
+        "name": "inherit_option",
+        "type": "bool"
+      },
+      {
+        "id": 104,
+        "name": "set_option",
+        "type": "bool"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "ColumnPrivilege",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "column",
+        "type": "Identifier"
+      },
+      {
+        "id": 101,
+        "name": "privileges",
+        "type": "AclMode"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "DefaultAcl",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "role",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "objtype",
+        "type": "CatalogType"
+      },
+      {
+        "id": 102,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      },
+      {
+        "id": 103,
+        "name": "scope",
+        "type": "idx_t"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "Permissions",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "owner",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      },
+      {
+        "id": 102,
+        "name": "defaults",
+        "type": "vector<DefaultAcl>"
+      }
     ],
     "pointer_type": "none"
   },
@@ -500,10 +641,24 @@
         "id": 100,
         "name": "columns",
         "type": "vector<ColumnDefinition>"
+      },
+      {
+        "id": 101,
+        "name": "allow_duplicate_names",
+        "type": "bool",
+        "default": false
+      },
+      {
+        "id": 102,
+        "name": "case_sensitive",
+        "type": "bool",
+        "default": false
       }
     ],
     "constructor": [
-      "columns"
+      "columns",
+      "allow_duplicate_names",
+      "case_sensitive"
     ],
     "pointer_type": "none"
   },

@@ -100,6 +100,9 @@ public:
 	const Identifier &GetIndexName() const override {
 		return name;
 	}
+	void SetIndexName(Identifier name_p) override {
+		name = std::move(name_p);
+	}
 	IndexConstraintType GetConstraintType() const override {
 		return index_constraint_type;
 	}

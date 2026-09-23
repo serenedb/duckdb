@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/schema_info.hpp"
 #include "duckdb/storage/storage_lock.hpp"
 #include "duckdb/storage/table/table_index_list.hpp"
 
@@ -21,8 +22,8 @@ struct DataTableInfo {
 	friend class DataTable;
 
 public:
-	DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, Identifier schema,
-	              Identifier table);
+	DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p,
+	              shared_ptr<SchemaInfo> schema_info, Identifier table);
 
 	//! Bind unknown indexes throwing an exception if binding fails.
 	//! Only binds the specified index type, or all, if nullptr.
@@ -63,7 +64,7 @@ private:
 	//! Lock for modifying the name
 	mutex name_lock;
 	//! The schema of the table
-	Identifier schema;
+	shared_ptr<SchemaInfo> schema_info;
 	//! The name of the table
 	Identifier table;
 	//! The physical list of indexes of this table

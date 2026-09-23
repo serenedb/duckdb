@@ -97,7 +97,7 @@ static PhysicalOperator &AddSort(PhysicalPlanGenerator &plan, LogicalCreateIndex
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalCreateIndex &op) {
 	// op.table is either a table or a view; for views, index_type->create_plan must be set.
-	auto &schema = op.table.Cast<StandardEntry>().schema;
+	auto &schema = op.table.ParentSchema(context);
 	auto entry =
 	    schema.GetEntry(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, op.info->GetIndexName());
 	if (entry) {

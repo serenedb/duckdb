@@ -177,6 +177,11 @@ ExtensionLoadResult SQLLogicTestRunner::LoadExtension(DuckDB &db, const std::str
 
 NewDatabaseConnection SQLLogicTestRunner::CreateDatabase(const string &db_path, bool load_extensions) {
 	NewDatabaseConnection result;
+	auto spill_directory = TestCreatePath("sqllogic_temp");
+	auto &temp_directory = config->options.temporary_directory;
+	if (config->options.use_temporary_directory && (temp_directory.empty() || temp_directory == spill_directory)) {
+		temp_directory = DBConfig::IsInMemoryDatabase(db_path.c_str()) ? spill_directory : string();
+	}
 	try {
 		result.db = make_uniq<DuckDB>(db_path, config.get());
 
@@ -681,16 +686,6 @@ void add_env_tag(vector<string> &tags, const string &name, const string *value =
 	}
 }
 
-void SQLLogicTestRunner::ConfigureDefaultInMemoryTemporaryDirectory(const string &script) {
-	if (!dbpath.empty() || !config->options.use_temporary_directory || config->options.temporary_directory != ".tmp") {
-		return;
-	}
-	auto normalized_script = StringUtil::Replace(script, "\\", "/");
-	auto temp_directory_name = StringUtil::Replace(normalized_script, "/", "_");
-	auto temp_directory = TestJoinPath(TestJoinPath(TestDirectoryPath(), "sqllogic_temp"), temp_directory_name);
-	config->SetOptionByName("temp_directory", temp_directory);
-}
-
 void SQLLogicTestRunner::ExecuteFile(string script) {
 	SQLLogicParser parser;
 	bool success = parser.OpenFile(script);
@@ -740,10 +735,6 @@ void SQLLogicTestRunner::ExecuteInternal(SQLLogicParser &parser, const string &s
 	for (auto ignore : test_config.ErrorMessagesToBeSkipped()) {
 		ignore_error_messages.insert(ignore);
 	}
-
-	// In-memory sqllogictests otherwise share ".tmp" across unittest processes.
-	// Give each script its own spill directory under the per-process TEST_DIR.
-	ConfigureDefaultInMemoryTemporaryDirectory(script);
 
 	// initialize the database with the default dbpath
 	LoadDatabase(dbpath, true);
