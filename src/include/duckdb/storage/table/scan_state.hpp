@@ -190,6 +190,15 @@ struct ColumnFetchState {
 		return last_segment_state->Cast<STATE>();
 	}
 
+	void ReleaseSegments() {
+		last_segment = nullptr;
+		last_segment_state = nullptr;
+		segment_states.clear();
+		child_states.clear();
+		handles.clear();
+		row_group = nullptr;
+	}
+
 private:
 	optional_ptr<const ColumnSegment> last_segment;
 	optional_ptr<SegmentScanState> last_segment_state;
