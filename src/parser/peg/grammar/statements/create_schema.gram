@@ -1,3 +1,1 @@
-CreateSchemaStmt <- 'SCHEMA' IfNotExists? QualifiedName? SchemaAuthorization?
-
-SchemaAuthorization <- 'AUTHORIZATION' ColId
+CreateSchemaStmt <- 'SCHEMA' IfNotExists? QualifiedName

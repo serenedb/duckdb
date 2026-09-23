@@ -1,7 +1,5 @@
 #include "duckdb/execution/index/bound_index.hpp"
 
-#include "duckdb/storage/external_index_batch.hpp"
-
 #include "duckdb/common/array.hpp"
 #include "duckdb/common/radix.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
@@ -50,10 +48,6 @@ ErrorData BoundIndex::Append(DataChunk &chunk, Vector &row_ids, IndexAppendInfo 
 	IndexLock l;
 	InitializeLock(l);
 	return Append(l, chunk, row_ids, info);
-}
-
-ErrorData BoundIndex::Append(IndexLock &l, const shared_ptr<ExternalIndexBatch> &batch, IndexAppendInfo &info) {
-	return Append(l, batch->data, batch->row_ids, info);
 }
 
 void BoundIndex::VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager) {
@@ -229,6 +223,9 @@ void BoundIndex::ApplyBufferedReplays(const vector<LogicalType> &table_types, Bu
 	for (const auto &replay_range : buffered_replays.ranges) {
 		const auto type_idx = static_cast<idx_t>(replay_range.type);
 		auto &state = replay_states[type_idx];
+
+		// Tell the index which WAL entry this range came from; an external-segment index may skip it.
+		OnReplayRange(replay_range.commit_offset);
 
 		// Initialize the scan state if necessary. Take ownership of buffered operations, since we won't need
 		// them after replaying anyways.

@@ -8,7 +8,6 @@ CreateSchemaInfo::CreateSchemaInfo() : CreateInfo(CatalogType::SCHEMA_ENTRY) {
 unique_ptr<CreateInfo> CreateSchemaInfo::Copy() const {
 	auto result = make_uniq<CreateSchemaInfo>();
 	CopyProperties(*result);
-	result->authorization = authorization;
 	return std::move(result);
 }
 

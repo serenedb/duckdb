@@ -33,8 +33,8 @@ struct TableScanBindData : public TableFunctionData {
 	unique_ptr<RowGroupOrderOptions> order_options;
 	//! Subset of partition indices to scan, if null, scan all
 	unique_ptr<unordered_set<idx_t>> partitions_to_scan;
-	//! The name a plan shows for this scan, when the relation the user named is not the one holding the rows.
-	//! Selecting from an index by name is the case: the rows are the table's, the name is the index's.
+	//! Display-only override for EXPLAIN output: a catalog delegating its
+	//! scan to a storage table sets the user-facing name here.
 	string display_name;
 
 public:

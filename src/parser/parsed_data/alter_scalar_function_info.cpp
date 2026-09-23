@@ -32,10 +32,8 @@ AddScalarFunctionOverloadInfo::~AddScalarFunctionOverloadInfo() {
 }
 
 unique_ptr<AlterInfo> AddScalarFunctionOverloadInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, AddScalarFunctionOverloadInfo>(
+	return make_uniq_base<AlterInfo, AddScalarFunctionOverloadInfo>(
 	    GetAlterEntryData(), unique_ptr_cast<CreateInfo, CreateScalarFunctionInfo>(new_overloads->Copy()));
-	result->oid = oid;
-	return result;
 }
 
 string AddScalarFunctionOverloadInfo::ToString() const {
@@ -57,9 +55,7 @@ RenameScalarFunctionInfo::~RenameScalarFunctionInfo() {
 }
 
 unique_ptr<AlterInfo> RenameScalarFunctionInfo::Copy() const {
-	auto result = make_uniq_base<AlterInfo, RenameScalarFunctionInfo>(GetAlterEntryData(), new_name);
-	result->oid = oid;
-	return result;
+	return make_uniq_base<AlterInfo, RenameScalarFunctionInfo>(GetAlterEntryData(), new_name);
 }
 
 string RenameScalarFunctionInfo::ToString() const {

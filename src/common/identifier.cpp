@@ -1,7 +1,6 @@
 #include "duckdb/common/identifier.hpp"
 
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/common/types/hash.hpp"
 
 #include <ostream>
 
@@ -9,14 +8,6 @@ namespace duckdb {
 
 hash_t Identifier::Hash() const {
 	return StringUtil::CIHash(value);
-}
-
-uint64_t IdentifierHashFunction::operator()(const Identifier &id) const {
-	if (case_sensitive) {
-		const auto &name = id.GetIdentifierName();
-		return Hash(name.c_str(), name.size());
-	}
-	return id.Hash();
 }
 
 bool operator==(const Identifier &a, const Identifier &b) {

@@ -13,7 +13,7 @@
 #include "duckdb/parser/parser_options.hpp"
 
 namespace duckdb {
-class SchemaIdentity;
+class SchemaCatalogEntry;
 
 struct DefaultNamedParameter {
 	const char *name;
@@ -30,10 +30,9 @@ struct DefaultTableMacro {
 
 class DefaultTableFunctionGenerator : public DefaultGenerator {
 public:
-	DefaultTableFunctionGenerator(Catalog &catalog, SchemaIdentity &identity);
+	DefaultTableFunctionGenerator(Catalog &catalog, SchemaCatalogEntry &schema);
 
-	//! Not a schema entry: an alter chains a new one, and this generator outlives the version that built it
-	SchemaIdentity &identity;
+	SchemaCatalogEntry &schema;
 
 public:
 	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const Identifier &entry_name) override;

@@ -2,7 +2,6 @@
 #include "duckdb/catalog/default/default_schemas.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
@@ -12,23 +11,10 @@
 namespace duckdb {
 
 SchemaCatalogEntry::SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info)
-    : SchemaCatalogEntry(catalog, info, make_shared_ptr<SchemaIdentity>()) {
-}
-
-SchemaCatalogEntry::SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<SchemaIdentity> identity_p)
-    : InCatalogEntry(CatalogType::SCHEMA_ENTRY, catalog, info.GetQualifiedName().Schema()),
-      identity(std::move(identity_p)) {
+    : InCatalogEntry(CatalogType::SCHEMA_ENTRY, catalog, info.GetQualifiedName().Schema()) {
 	this->internal = info.internal;
 	this->comment = info.comment;
 	this->tags = info.tags;
-	identity->Adopt(*this);
-}
-
-SchemaIdentity::~SchemaIdentity() {
-}
-
-StandardEntry::StandardEntry(CatalogType type, SchemaCatalogEntry &schema, Catalog &catalog, Identifier name)
-    : InCatalogEntry(type, catalog, std::move(name)), schema_identity(schema.GetIdentity()) {
 }
 
 CatalogTransaction SchemaCatalogEntry::GetCatalogTransaction(ClientContext &context) {
@@ -78,7 +64,6 @@ unique_ptr<CreateInfo> SchemaCatalogEntry::GetInfo() const {
 	result->SetQualifiedName(QualifiedName({name}, Identifier()));
 	result->comment = comment;
 	result->tags = tags;
-	result->oid = oid;
 	return std::move(result);
 }
 

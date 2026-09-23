@@ -45,23 +45,16 @@ string CatalogTypeToString(CatalogType type) {
 		return "Sequence";
 	case CatalogType::TRIGGER_ENTRY:
 		return "Trigger";
-	case CatalogType::TOKENIZER_ENTRY:
-		return "Tokenizer";
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-		return "Foreign Server";
-	case CatalogType::ROLE_ENTRY:
-		return "Role";
 	case CatalogType::SECRET_ENTRY:
 		return "Secret";
 	case CatalogType::SECRET_TYPE_ENTRY:
 		return "Secret Type";
 	case CatalogType::SECRET_FUNCTION_ENTRY:
 		return "Secret Function";
-	case CatalogType::DEPENDENCY_ENTRY:
-		return "Dependency";
 	case CatalogType::INVALID:
 	case CatalogType::DELETED_ENTRY:
 	case CatalogType::RENAMED_ENTRY:
+	case CatalogType::DEPENDENCY_ENTRY:
 		break;
 	}
 	return "INVALID";
@@ -113,9 +106,6 @@ CatalogType CatalogTypeFromString(const string &type) {
 	if (type == "Index") {
 		return CatalogType::INDEX_ENTRY;
 	}
-	if (type == "Dependency") {
-		return CatalogType::DEPENDENCY_ENTRY;
-	}
 	if (type == "Prepared Statement") {
 		return CatalogType::PREPARED_STATEMENT;
 	}
@@ -124,15 +114,6 @@ CatalogType CatalogTypeFromString(const string &type) {
 	}
 	if (type == "Trigger") {
 		return CatalogType::TRIGGER_ENTRY;
-	}
-	if (type == "Tokenizer") {
-		return CatalogType::TOKENIZER_ENTRY;
-	}
-	if (type == "Foreign Server") {
-		return CatalogType::FOREIGN_SERVER_ENTRY;
-	}
-	if (type == "Role") {
-		return CatalogType::ROLE_ENTRY;
 	}
 	if (type == "INVALID") {
 		return CatalogType::INVALID;
