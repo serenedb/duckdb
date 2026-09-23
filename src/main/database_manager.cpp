@@ -307,19 +307,6 @@ shared_ptr<AttachedDatabase> DatabaseManager::AttachDatabase(ClientContext &cont
 				context.InterruptCheck();
 				continue;
 			}
-			if (insert_result == InsertDatabasePathResult::PENDING_DETACH) {
-				// the database that reserved this file is being torn down; its path entry is on its way
-				// out, so wait for the erase and then attach the file fresh
-				if (waits_left == 0) {
-					throw BinderException("Unique file handle conflict: Cannot attach \"%s\" - the database "
-					                      "file \"%s\" is in the process of being detached",
-					                      info.name, info.path);
-				}
-				--waits_left;
-				context.InterruptCheck();
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-				continue;
-			}
 			if (insert_result != InsertDatabasePathResult::ALREADY_EXISTS) {
 				break;
 			}
