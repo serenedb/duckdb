@@ -970,7 +970,10 @@ PublicationFor <- 'FOR' (PublicationForAllTables / PublicationForTable)
 PublicationForAllTables <- 'ALL' 'TABLES'
 PublicationForTable <- 'TABLE' List(BaseTableName)
 
-CreateSchemaStmt <- 'SCHEMA' IfNotExists? QualifiedName
+CreateSchemaStmt <- 'SCHEMA' IfNotExists? QualifiedName? SchemaAuthorization?
+
+SchemaAuthorization <- 'AUTHORIZATION' ColId
+
 CreateSecretStmt <- 'SECRET' IfNotExists? SecretName? SecretStorageSpecifier? GenericCopyOptionList
 
 SecretStorageSpecifier <- 'IN' Identifier
@@ -1107,7 +1110,7 @@ VirtualGeneratedColumn <- 'VIRTUAL'
 StoredGeneratedColumn <- 'STORED'
 
 CreateTSDictionaryStatement <- 'CREATE' 'TEXT' 'SEARCH' 'DICTIONARY' IfNotExists? QualifiedName TSDictionaryExpression
-DropTSDictionaryStatement <- 'DROP' 'TEXT' 'SEARCH' 'DICTIONARY' IfExists? QualifiedName
+DropTSDictionaryStatement <- 'DROP' 'TEXT' 'SEARCH' 'DICTIONARY' IfExists? QualifiedName DropBehavior?
 
 TSDictionaryExpression <- 'AS' Expression TSDictionaryWith?
 TSDictionaryWith <- 'WITH' TSDictionaryDefinition
