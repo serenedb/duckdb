@@ -21,17 +21,18 @@ SequenceData::SequenceData(CreateSequenceInfo &info)
 }
 
 SequenceCatalogEntry::SequenceCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateSequenceInfo &info)
-    : StandardEntry(CatalogType::SEQUENCE_ENTRY, schema, catalog, info.GetSequenceName()), data(info) {
+    : StandardEntry(CatalogType::SEQUENCE_ENTRY, schema, catalog, info.GetSequenceName(), info.oid), data(info) {
 	this->temporary = info.temporary;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 }
 
 unique_ptr<CatalogEntry> SequenceCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateSequenceInfo>();
 
-	auto result = make_uniq<SequenceCatalogEntry>(catalog, schema, cast_info);
+	auto result = make_uniq<SequenceCatalogEntry>(catalog, ParentSchema(context), cast_info);
 	result->data = GetData();
 
 	return std::move(result);
@@ -81,6 +82,77 @@ int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction) {
 	return result;
 }
 
+int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t value, bool is_called) {
+	lock_guard<mutex> seqlock(lock);
+	if (value < data.min_value) {
+		throw SequenceException("setval: value %lld is out of bounds for sequence \"%s\" (%lld..%lld)", value, name,
+		                        data.min_value, data.max_value);
+	}
+	if (value > data.max_value) {
+		throw SequenceException("setval: value %lld is out of bounds for sequence \"%s\" (%lld..%lld)", value, name,
+		                        data.min_value, data.max_value);
+	}
+	if (is_called) {
+		const bool overflow = !TryAddOperator::Operation(value, data.increment, data.counter);
+		if (data.cycle) {
+			if (overflow) {
+				data.counter = data.increment < 0 ? data.max_value : data.min_value;
+			} else if (data.counter < data.min_value) {
+				data.counter = data.max_value;
+			} else if (data.counter > data.max_value) {
+				data.counter = data.min_value;
+			}
+		} else if (overflow) {
+			data.counter = data.increment < 0 ? data.min_value : data.max_value;
+		}
+		data.last_value = value;
+	} else {
+		data.counter = value;
+		data.last_value.reset();
+	}
+	data.usage_count++;
+	if (!temporary) {
+		transaction.PushSequenceUsage(*this, data);
+	}
+	return value;
+}
+
+int64_t SequenceCatalogEntry::NextValues(DuckTransaction &transaction, idx_t count) {
+	if (count == 0) {
+		throw InternalException("SequenceCatalogEntry::NextValues requires a positive count");
+	}
+	lock_guard<mutex> seqlock(lock);
+	int64_t base = data.counter;
+	for (idx_t i = 0; i < count; i++) {
+		int64_t result = data.counter;
+		bool overflow = !TryAddOperator::Operation(data.counter, data.increment, data.counter);
+		if (data.cycle) {
+			if (overflow) {
+				data.counter = data.increment < 0 ? data.max_value : data.min_value;
+			} else if (data.counter < data.min_value) {
+				data.counter = data.max_value;
+			} else if (data.counter > data.max_value) {
+				data.counter = data.min_value;
+			}
+		} else {
+			if (result < data.min_value || (overflow && data.increment < 0)) {
+				throw SequenceException("nextval: reached minimum value of sequence \"%s\" (%lld)", name,
+				                        data.min_value);
+			}
+			if (result > data.max_value || overflow) {
+				throw SequenceException("nextval: reached maximum value of sequence \"%s\" (%lld)", name,
+				                        data.max_value);
+			}
+		}
+		data.last_value = result;
+		data.usage_count++;
+	}
+	if (!temporary) {
+		transaction.PushSequenceUsage(*this, data);
+	}
+	return base;
+}
+
 void SequenceCatalogEntry::ReplayValue(uint64_t v_usage_count, int64_t v_counter, optional<int64_t> last_value) {
 	if (v_usage_count > data.usage_count) {
 		data.usage_count = v_usage_count;
@@ -93,7 +165,7 @@ unique_ptr<CreateInfo> SequenceCatalogEntry::GetInfo() const {
 	auto seq_data = GetData();
 
 	auto result = make_uniq<CreateSequenceInfo>();
-	result->SetQualifiedName(QualifiedName(catalog.GetName(), schema.name, name));
+	result->SetQualifiedName(QualifiedName(catalog.GetName(), ParentSchemaName(), name));
 	result->usage_count = seq_data.usage_count;
 	result->increment = seq_data.increment;
 	result->min_value = seq_data.min_value;
@@ -104,6 +176,7 @@ unique_ptr<CreateInfo> SequenceCatalogEntry::GetInfo() const {
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	return std::move(result);
 }
 
