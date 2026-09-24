@@ -14,21 +14,13 @@ namespace duckdb_shell {
 
 namespace {
 
-DocsBackend &BackendStorage() {
+DocsBackend &Backend() {
 	static DocsBackend backend;
 	return backend;
 }
 
 constexpr duckdb::idx_t kMinWidth = 40;
 constexpr duckdb::idx_t kMaxWidth = 100;
-
-bool HasDocsBackend() {
-	return static_cast<bool>(BackendStorage().run);
-}
-
-const DocsBackend &GetDocsBackend() {
-	return BackendStorage();
-}
 
 bool CanOfferList(ShellState &state) {
 #ifdef HAVE_LINENOISE
@@ -56,18 +48,18 @@ void OfferList() {
 } // namespace
 
 void RegisterDocsBackend(DocsBackend backend) {
-	BackendStorage() = std::move(backend);
+	Backend() = std::move(backend);
 }
 
 void LoadDocsBackend(duckdb::ClientContext &context) {
-	if (GetDocsBackend().load) {
-		GetDocsBackend().load(context);
+	if (Backend().load) {
+		Backend().load(context);
 	}
 }
 
 bool DocsCompletions(const char *line, duckdb::idx_t length, duckdb::idx_t &argument_start,
                      duckdb::vector<DocsCompletion> &completions) {
-	if (!HasDocsBackend() || !GetDocsBackend().complete) {
+	if (!Backend().run || !Backend().complete) {
 		return false;
 	}
 	const duckdb::string text(line, length);
@@ -79,15 +71,14 @@ bool DocsCompletions(const char *line, duckdb::idx_t length, duckdb::idx_t &argu
 		}
 		argument_start = marker.size();
 		auto &state = ShellState::Get();
-		completions =
-		    GetDocsBackend().complete(state.db ? state.db->instance.get() : nullptr, text.substr(marker.size()));
+		completions = Backend().complete(state.db ? state.db->instance.get() : nullptr, text.substr(marker.size()));
 		return true;
 	}
 	return false;
 }
 
 MetadataResult ShowDocumentation(ShellState &state, const duckdb::vector<duckdb::string> &args) {
-	if (!HasDocsBackend()) {
+	if (!Backend().run) {
 		state.Print(PrintOutput::STDERR, "Documentation is not available in this build.\n");
 		return MetadataResult::FAIL;
 	}
@@ -109,8 +100,8 @@ MetadataResult ShowDocumentation(ShellState &state, const duckdb::vector<duckdb:
 	}
 
 	duckdb::string rendered;
-	const bool ok = GetDocsBackend().run(request, rendered);
-	if (request.interactive && GetDocsBackend().listed && GetDocsBackend().listed()) {
+	const bool ok = Backend().run(request, rendered);
+	if (request.interactive && Backend().offered && Backend().offered()) {
 		OfferList();
 	}
 	if (!ok) {

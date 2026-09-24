@@ -38,7 +38,7 @@ struct DocsBackend {
 	std::function<bool(const DocsRequest &request, duckdb::string &out)> run;
 	std::function<duckdb::vector<DocsCompletion>(duckdb::DatabaseInstance *instance, const duckdb::string &argument)>
 	    complete;
-	std::function<bool()> listed;
+	std::function<bool()> offered;
 	std::function<void(duckdb::ClientContext &context)> load;
 };
 

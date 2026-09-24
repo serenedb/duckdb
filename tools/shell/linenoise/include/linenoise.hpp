@@ -238,8 +238,8 @@ public:
 	TabCompletion completion_list;           //! Set of tab completions of current completion
 	optional_idx completion_idx;             //! Index in set of tab completions
 	idx_t rendered_completion_lines;         //! The number of completion lines rendered
+	bool render_completion_suggestion;       //! Whether or not to render auto-complete suggestions
 	idx_t completion_columns;
-	bool render_completion_suggestion; //! Whether or not to render auto-complete suggestions
 };
 
 } // namespace duckdb

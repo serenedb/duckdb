@@ -874,10 +874,13 @@ static const MetadataCommand metadata_commands[] = {
     {"decimal_sep", 0, SetDecimalSep, "SEP",
      "Sets the decimal separator used when rendering numbers. Only for duckbox mode.", 3, ""},
     {"databases", 1, ShowDatabases, "", "List names and files of attached databases", 2, ""},
-    {"docs", 0, ShowDocumentation, "?NAME|PATH?", "Show the SereneDB documentation for NAME or PATH", 3,
-     "Notes:\n\t* With no argument, lists the top-level documentation sections\n\t* NAME is matched against entry "
-     "titles (e.g. .docs date_trunc)\n\t* PATH is an exact entry path (e.g. .docs sql/indexes/index.md)\n\t* When "
-     "several entries share a name, all of them are shown"},
+    {"docs", 0, ShowDocumentation, "?NAME|PATH|NUMBER?", "Show the SereneDB documentation for NAME, PATH or NUMBER", 3,
+     "Notes:\n\t* With no argument, lists the top-level documentation sections\n"
+     "\t* NAME is looked up among objects, sections and pages (e.g. .docs date_trunc)\n"
+     "\t* PATH is an exact entry path (e.g. .docs sql/indexes/index.md)\n"
+     "\t* NUMBER opens an item of the last list (e.g. .docs 2)\n"
+     "\t* When several entries match, they are listed by number and --all renders every match\n"
+     "\t* --search QUERY ranks every page, --kind KIND lists one kind of object and --list PREFIX prints paths"},
     {
         "dump",
         0,
