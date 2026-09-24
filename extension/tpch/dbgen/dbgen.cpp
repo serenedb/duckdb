@@ -642,7 +642,7 @@ void DBGenWrapper::LoadTPCHData(ClientContext &context, double flt_scale, const 
 	TPCHDBgenParameters parameters(context, catalog, schema, suffix);
 #ifndef DUCKDB_NO_THREADS
 	bool explicit_partial_generation = children > 1 && current_step != -1;
-	auto thread_count = TaskScheduler::GetScheduler(context).NumberOfThreads();
+	auto thread_count = TaskScheduler::QueryThreads(context);
 	if (explicit_partial_generation || thread_count <= 1) {
 #endif
 		// if we are doing explicit partial generation the parallelism is managed outside of dbgen

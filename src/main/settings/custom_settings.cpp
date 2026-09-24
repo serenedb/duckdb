@@ -1599,7 +1599,23 @@ void ThreadsSetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
 	config.options.maximum_threads = new_maximum_threads;
 }
 
+void ThreadsSetting::SetLocal(ClientContext &context, const Value &input) {
+	auto new_val = input.GetValue<int64_t>();
+	if (new_val < 1) {
+		throw SyntaxException("Must have at least 1 thread!");
+	}
+	ClientConfig::GetConfig(context).threads = NumericCast<idx_t>(new_val);
+}
+
+void ThreadsSetting::ResetLocal(ClientContext &context) {
+	ClientConfig::GetConfig(context).threads = optional_idx();
+}
+
 Value ThreadsSetting::GetSetting(const ClientContext &context) {
+	auto &threads = ClientConfig::GetConfig(context).threads;
+	if (threads.IsValid()) {
+		return Value::BIGINT(NumericCast<int64_t>(threads.GetIndex()));
+	}
 	auto &config = DBConfig::GetConfig(context);
 	return Value::BIGINT(NumericCast<int64_t>(config.options.maximum_threads));
 }

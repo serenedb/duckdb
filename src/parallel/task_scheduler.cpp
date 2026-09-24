@@ -277,6 +277,12 @@ idx_t TaskScheduler::NumberOfThreads() {
 	return GetPool(TaskSchedulerType::REGULAR).NumberOfThreads();
 }
 
+idx_t TaskScheduler::QueryThreads(ClientContext &context) {
+	const auto pool = GetScheduler(context).NumberOfThreads();
+	const auto &cap = ClientConfig::GetConfig(context).threads;
+	return cap.IsValid() ? MinValue<idx_t>(pool, cap.GetIndex()) : pool;
+}
+
 idx_t TaskScheduler::NumberOfAsyncThreads() {
 	return GetPool(TaskSchedulerType::ASYNC).NumberOfThreads();
 }

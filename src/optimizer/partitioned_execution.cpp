@@ -14,8 +14,7 @@
 namespace duckdb {
 
 PartitionedExecution::PartitionedExecution(Optimizer &optimizer_p, unique_ptr<LogicalOperator> &root_p)
-    : optimizer(optimizer_p), root(root_p),
-      num_threads(TaskScheduler::GetScheduler(optimizer.context).NumberOfThreads()) {
+    : optimizer(optimizer_p), root(root_p), num_threads(TaskScheduler::QueryThreads(optimizer.context)) {
 }
 
 struct PartitionedExecutionConfig {

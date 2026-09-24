@@ -57,6 +57,7 @@ public:
 	unique_ptr<ProducerToken> CreateProducer();
 	//! Returns the number of threads
 	DUCKDB_API idx_t NumberOfThreads();
+	DUCKDB_API static idx_t QueryThreads(ClientContext &context);
 	//! Returns the number of async threads
 	DUCKDB_API idx_t NumberOfAsyncThreads();
 

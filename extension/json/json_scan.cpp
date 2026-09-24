@@ -55,8 +55,7 @@ void JSONScanData::InitializeFormats(bool auto_detect_p) {
 JSONScanGlobalState::JSONScanGlobalState(ClientContext &context, const MultiFileBindData &bind_data_p)
     : bind_data(bind_data_p), json_data(bind_data.bind_data->Cast<JSONScanData>()),
       transform_options(json_data.transform_options), allocator(BufferAllocator::Get(context)),
-      buffer_capacity(json_data.options.maximum_object_size * 2),
-      system_threads(TaskScheduler::GetScheduler(context).NumberOfThreads()),
+      buffer_capacity(json_data.options.maximum_object_size * 2), system_threads(TaskScheduler::QueryThreads(context)),
       enable_parallel_scans(bind_data.file_list->GetTotalFileCount() < system_threads) {
 }
 

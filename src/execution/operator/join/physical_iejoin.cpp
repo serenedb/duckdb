@@ -933,8 +933,7 @@ IEJoinGlobalSourceState::IEJoinGlobalSourceState(const PhysicalIEJoin &op, Clien
 	l2_blocks = BinValue<idx_t>(join_count, STANDARD_VECTOR_SIZE);
 
 	//	Schedule the largest group on as many threads as possible
-	auto &ts = TaskScheduler::GetScheduler(client);
-	const auto threads = ts.NumberOfThreads();
+	const auto threads = TaskScheduler::QueryThreads(client);
 	per_thread = BinValue<idx_t>(l2_blocks, threads);
 
 	Initialize();

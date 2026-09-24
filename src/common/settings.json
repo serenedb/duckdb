@@ -1344,9 +1344,9 @@
     },
     {
         "name": "threads",
-        "description": "The number of total threads used by the system.",
+        "description": "The number of total threads used by the system; a session or transaction value caps the threads its queries use.",
         "type": "BIGINT",
-        "scope": "global",
+        "scope": "global_local",
         "custom_implementation": true,
         "aliases": [
             "worker_threads"
