@@ -1150,7 +1150,7 @@ public:
 		base_context.tdefs[REGION].base = regions.count;
 
 #ifndef DUCKDB_NO_THREADS
-		auto thread_count = TaskScheduler::GetScheduler(context).NumberOfThreads();
+		auto thread_count = TaskScheduler::QueryThreads(context);
 		if (!ExplicitPartialGeneration() && thread_count > 1) {
 			mode = DBGenMode::PARALLEL;
 			parallel_thread_count = thread_count;

@@ -96,12 +96,11 @@ void TemporaryMemoryManager::Unregister(TemporaryMemoryState &temporary_memory_s
 
 void TemporaryMemoryManager::UpdateConfiguration(ClientContext &context) {
 	auto &buffer_manager = BufferManager::GetBufferManager(context);
-	auto &task_scheduler = TaskScheduler::GetScheduler(context);
 
 	memory_limit =
 	    LossyNumericCast<idx_t>(MAXIMUM_MEMORY_LIMIT_RATIO * static_cast<double>(buffer_manager.GetMaxMemory()));
 	has_temporary_directory = buffer_manager.HasTemporaryDirectory();
-	num_threads = task_scheduler.NumberOfThreads();
+	num_threads = TaskScheduler::QueryThreads(context);
 	num_connections = ConnectionManager::Get(context).GetConnectionCount();
 	query_max_memory = buffer_manager.GetOperatorMemoryLimit();
 }

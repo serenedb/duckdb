@@ -188,7 +188,7 @@ void MetaPipeline::AddRecursiveDependencies(const vector<shared_ptr<Pipeline>> &
 	// by only adding the dependencies if the source operator can likely keep all threads busy.
 	// when dependencies are forced (e.g. for DML CTEs), we always add them regardless,
 	// because the ordering is required for correctness, not just performance.
-	const auto thread_count = TaskScheduler::GetScheduler(executor.context).NumberOfThreads();
+	const auto thread_count = TaskScheduler::QueryThreads(executor.context);
 	for (; it != child_meta_pipelines.end(); it++) {
 		for (auto &pipeline : it->get()->pipelines) {
 			if (dependency_mode == RecursiveDependencyMode::RESPECT_PARALLELISM &&

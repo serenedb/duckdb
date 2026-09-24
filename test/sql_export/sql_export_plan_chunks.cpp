@@ -230,8 +230,8 @@ TEST_CASE("Owned chunk SQL export retains delivered rows before conversion error
 	for (idx_t count : vector<idx_t> {STANDARD_VECTOR_SIZE, STANDARD_VECTOR_SIZE + STANDARD_VECTOR_SIZE / 2}) {
 		DuckDB db(nullptr);
 		Connection connection(db);
-		REQUIRE_NO_FAIL(
-		    connection.Query("SET threads=1; SET max_streaming_buffer_size='1b'; CREATE TABLE chunk_input(x VARCHAR)"));
+		REQUIRE_NO_FAIL(connection.Query(
+		    "SET GLOBAL threads=1; SET max_streaming_buffer_size='1b'; CREATE TABLE chunk_input(x VARCHAR)"));
 		auto good = connection.Query("SELECT '1'::VARCHAR FROM range(" + to_string(count) + ")");
 		auto bad = connection.Query("SELECT 'bad'::VARCHAR FROM range(" + to_string(count) + ")");
 		REQUIRE_NO_FAIL(*good);
@@ -401,7 +401,7 @@ TEST_CASE("Owned chunk SQL export accounts for intrinsic SINGLE join errors",
 				Connection connection(db);
 				// Isolate source chunk boundaries from join-result coalescing.
 				REQUIRE_NO_FAIL(connection.Query(
-				    "SET threads=1; SET max_streaming_buffer_size='1b'; SET enable_caching_operators=false"));
+				    "SET GLOBAL threads=1; SET max_streaming_buffer_size='1b'; SET enable_caching_operators=false"));
 				REQUIRE_NO_FAIL(connection.Query(string("SET scalar_subquery_error_on_multiple_rows=") +
 				                                 (error_on_multiple ? "true" : "false")));
 				auto first = connection.Query(combined ? "SELECT 0::BIGINT FROM range(" + to_string(count) + ")"

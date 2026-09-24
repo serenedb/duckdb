@@ -14,7 +14,7 @@ TEST_CASE("Read-ahead progress only counts the assignments a thread is decoding"
 	// ten row groups
 	REQUIRE_NO_FAIL(con.Query("CREATE TABLE integers AS SELECT range AS i FROM range(1228800)"));
 	REQUIRE_NO_FAIL(con.Query("CHECKPOINT"));
-	REQUIRE_NO_FAIL(con.Query("SET threads=1"));
+	REQUIRE_NO_FAIL(con.Query("SET GLOBAL threads=1"));
 	REQUIRE_NO_FAIL(con.Query("SET async_threads=4"));
 	REQUIRE_NO_FAIL(con.Query("SET storage_block_prefetch='debug_force_always'"));
 	REQUIRE_NO_FAIL(con.Query("SET read_ahead_depth=4"));
