@@ -162,7 +162,7 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 	static bool CastFromNaive(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 		auto &cast_data = parameters.cast_data->Cast<CastData>();
 		auto &info = cast_data.info->Cast<BindData>();
-		CalendarPtr calendar(info.calendar->clone());
+		CalendarPtr calendar;
 
 		UnaryExecutor::Execute<SRC, DST>(source, result, count, [&](SRC input) {
 			using NAIVE = timebase_t<DST::PRECISION, false>;
@@ -170,6 +170,9 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 			DST converted;
 			if (info.lut && ICUZoneCasts::Try(*info.lut, naive, converted)) {
 				return converted;
+			}
+			if (!calendar) {
+				calendar.reset(info.calendar->clone());
 			}
 			return Operation(calendar.get(), naive);
 		});
@@ -287,13 +290,16 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 	static bool CastToNaive(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 		auto &cast_data = parameters.cast_data->Cast<CastData>();
 		auto &info = cast_data.info->Cast<BindData>();
-		CalendarPtr calendar(info.calendar->clone());
+		CalendarPtr calendar;
 
 		UnaryExecutor::Execute<SRC, DST>(source, result, count, [&](SRC input) {
 			using NAIVE = timebase_t<SRC::PRECISION, false>;
 			NAIVE naive;
 			if (info.lut && ICUZoneCasts::Try(*info.lut, input, naive)) {
 				return Cast::Operation<NAIVE, DST>(naive);
+			}
+			if (!calendar) {
+				calendar.reset(info.calendar->clone());
 			}
 			return Cast::Operation<NAIVE, DST>(Operation(calendar.get(), input));
 		});
