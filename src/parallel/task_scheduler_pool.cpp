@@ -69,6 +69,8 @@ struct TaskSchedulerThread {
 	}
 	void SetAffinity(const vector<int> &, idx_t) {
 	}
+	void SetAffinityAll(const vector<int> &) {
+	}
 
 	static void *Trampoline(void *arg) {
 		unique_ptr<std::function<void()>> fn(static_cast<std::function<void()> *>(arg));
@@ -99,6 +101,19 @@ struct TaskSchedulerThread {
 			// if we did not manage to set affinity, the thread just does not have affinity, which is OK
 			pthread_setaffinity_np(internal_thread.native_handle(), sizeof(cpu_set_t), &cpuset);
 		}
+#endif
+	}
+	void SetAffinityAll(const vector<int> &available_cpus) {
+#if defined(__GLIBC__)
+		if (available_cpus.empty()) {
+			return;
+		}
+		cpu_set_t cpuset;
+		CPU_ZERO(&cpuset);
+		for (const auto cpu_id : available_cpus) {
+			CPU_SET(cpu_id, &cpuset);
+		}
+		pthread_setaffinity_np(internal_thread.native_handle(), sizeof(cpu_set_t), &cpuset);
 #endif
 	}
 
@@ -151,7 +166,7 @@ static vector<int> GetProcessCPUMask() {
 #if defined(__GLIBC__)
 	cpu_set_t cpuset;
 	CPU_ZERO(&cpuset);
-	if (sched_getaffinity(0, sizeof(cpu_set_t), &cpuset) != 0) {
+	if (sched_getaffinity(getpid(), sizeof(cpu_set_t), &cpuset) != 0) {
 		return {};
 	}
 	vector<int> available_cpus;
@@ -225,6 +240,7 @@ void TaskSchedulerPool::RelaunchThreads(TaskScheduler &scheduler, bool destroy) 
 	// Resolve thread pinning once: it applies both to the kept caller (re-pinned to its new index below) and to the
 	// threads spawned afterwards.
 	const auto available_cpus = GetAvailableCPUsForPinning(pool_type, pin_thread_mode, new_thread_count);
+	const auto process_cpus = available_cpus.empty() ? GetProcessCPUMask() : vector<int>();
 
 	// Stop every worker except the calling thread, detecting it in the same pass. A SET threads runs on the session's
 	// own pool worker, which cannot join itself, so it is kept alive and reconciled by the spawn step below. We stop
@@ -256,6 +272,8 @@ void TaskSchedulerPool::RelaunchThreads(TaskScheduler &scheduler, bool destroy) 
 		// 1..N-1 below
 		if (!available_cpus.empty()) {
 			kept_thread->SetAffinity(available_cpus, 0);
+		} else {
+			kept_thread->SetAffinityAll(process_cpus);
 		}
 		threads.push_back(std::move(kept_thread));
 		markers.push_back(std::move(kept_marker));
@@ -279,6 +297,8 @@ void TaskSchedulerPool::RelaunchThreads(TaskScheduler &scheduler, bool destroy) 
 				    });
 				if (!available_cpus.empty()) {
 					thread_wrapper->SetAffinity(available_cpus, threads.size());
+				} else {
+					thread_wrapper->SetAffinityAll(process_cpus);
 				}
 			} catch (std::exception &ex) {
 				// thread constructor failed - this can happen when the system has too many threads allocated
