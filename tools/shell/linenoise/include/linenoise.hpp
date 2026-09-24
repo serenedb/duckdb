@@ -67,6 +67,7 @@ struct Completion {
 struct TabCompletion {
 	vector<Completion> completions;
 	optional_idx selected;
+	bool menu = false;
 };
 
 enum class RenderTruncation { NO_TRUNCATE, TRUNCATE_TOP, TRUNCATE_BOTTOM, TRUNCATE_BOTH };

@@ -5,6 +5,7 @@
 #include "shell_state.hpp"
 #ifdef HAVE_LINENOISE
 #include "linenoise.hpp"
+#include <unistd.h>
 #endif
 
 #include <algorithm>
@@ -40,6 +41,9 @@ bool CanOfferList(ShellState &state) {
 
 void OfferList() {
 #ifdef HAVE_LINENOISE
+	if (duckdb::Terminal::HasMoreData(STDIN_FILENO) > 0) {
+		return;
+	}
 	for (const char c : duckdb::string(".docs ")) {
 		duckdb::KeyPress key;
 		key.action = c;

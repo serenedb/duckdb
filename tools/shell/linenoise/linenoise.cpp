@@ -277,17 +277,23 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 					break;
 				case EscapeSequence::ESCAPE:
 					/* Re-show original buffer */
-					completion_idx = optional_idx();
-					render_completion_suggestion = false;
+					if (completion_list.menu) {
+						completion_idx = optional_idx();
+						render_completion_suggestion = false;
+						RefreshLine();
+						next_key.action = KEY_NULL;
+						stop = true;
+						break;
+					}
 					RefreshLine();
-					next_key.action = KEY_NULL;
+					next_key = key_press;
 					stop = true;
 					break;
 				case EscapeSequence::UP:
 				case EscapeSequence::DOWN:
 				case EscapeSequence::LEFT:
 				case EscapeSequence::RIGHT:
-					if (render_completion_suggestion) {
+					if (render_completion_suggestion && completion_list.menu) {
 						const bool vertical =
 						    key_press.sequence == EscapeSequence::UP || key_press.sequence == EscapeSequence::DOWN;
 						const bool forward =
@@ -313,7 +319,7 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 			}
 			case BACKSPACE:
 			case CTRL_H:
-				if (render_completion_suggestion) {
+				if (render_completion_suggestion && completion_list.menu) {
 					if (pos > 0) {
 						const auto prev = PrevChar();
 						memmove(buf + prev, buf + pos, len - pos);
@@ -329,7 +335,7 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 				stop = true;
 				break;
 			default:
-				if (render_completion_suggestion && NarrowsCompletion(key_press.action)) {
+				if (render_completion_suggestion && completion_list.menu && NarrowsCompletion(key_press.action)) {
 					InsertCharacter(key_press.action);
 					narrow();
 					break;
@@ -1511,7 +1517,8 @@ bool Linenoise::TryGetKeyPress(int fd, KeyPress &key_press) {
 	key_press.action = c;
 	if (key_press.action == ESC) {
 		// for ESC we need to read an escape sequence
-		key_press.sequence = has_more_data || Terminal::HasMoreData(ifd, 50000) > 0
+		const bool menu_open = render_completion_suggestion && completion_list.menu;
+		key_press.sequence = has_more_data || !menu_open || Terminal::HasMoreData(ifd, 50000) > 0
 		                         ? Terminal::ReadEscapeSequence(ifd, key_press)
 		                         : EscapeSequence::ESCAPE;
 	}

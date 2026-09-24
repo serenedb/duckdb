@@ -163,6 +163,10 @@ void linenoiseSelectCompletion(linenoiseCompletions *lc, size_t index) {
 	reinterpret_cast<duckdb::TabCompletion *>(lc)->selected = index;
 }
 
+void linenoiseCompletionMenu(linenoiseCompletions *lc) {
+	reinterpret_cast<duckdb::TabCompletion *>(lc)->menu = true;
+}
+
 size_t linenoiseComputeRenderWidth(const char *buf, size_t len) {
 	return Linenoise::ComputeRenderWidth(buf, len);
 }
