@@ -14,6 +14,7 @@
 #include <functional>
 
 namespace duckdb {
+class ClientContext;
 class DatabaseInstance;
 }
 
@@ -38,9 +39,12 @@ struct DocsBackend {
 	std::function<duckdb::vector<DocsCompletion>(duckdb::DatabaseInstance *instance, const duckdb::string &argument)>
 	    complete;
 	std::function<bool()> listed;
+	std::function<void(duckdb::ClientContext &context)> load;
 };
 
 void RegisterDocsBackend(DocsBackend backend);
+
+void LoadDocsBackend(duckdb::ClientContext &context);
 
 bool DocsCompletions(const char *line, duckdb::idx_t length, duckdb::idx_t &argument_start,
                      duckdb::vector<DocsCompletion> &completions);

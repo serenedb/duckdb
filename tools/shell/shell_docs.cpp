@@ -59,6 +59,12 @@ void RegisterDocsBackend(DocsBackend backend) {
 	BackendStorage() = std::move(backend);
 }
 
+void LoadDocsBackend(duckdb::ClientContext &context) {
+	if (GetDocsBackend().load) {
+		GetDocsBackend().load(context);
+	}
+}
+
 bool DocsCompletions(const char *line, duckdb::idx_t length, duckdb::idx_t &argument_start,
                      duckdb::vector<DocsCompletion> &completions) {
 	if (!HasDocsBackend() || !GetDocsBackend().complete) {
