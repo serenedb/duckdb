@@ -379,6 +379,12 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	D_ASSERT(ref.function->GetExpressionType() == ExpressionType::FUNCTION);
 	auto &fexpr = ref.function->Cast<FunctionExpression>();
 
+	if (ref.inline_function) {
+		D_ASSERT(fexpr.GetArguments().empty());
+		return BindTableFunctionInternal(*ref.inline_function, ref, vector<Value>(), named_parameter_map_t(),
+		                                 vector<LogicalType>(), vector<Identifier>(), nullptr);
+	}
+
 	Identifier catalog = fexpr.GetQualifiedName().Catalog();
 	Identifier schema = fexpr.GetQualifiedName().Schema();
 	Binder::BindSchemaOrCatalog(context, catalog, schema);

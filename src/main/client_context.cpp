@@ -338,6 +338,9 @@ ErrorData ClientContext::EndQueryInternal(ClientContextLock &lock, bool success,
 	}
 	active_query->progress_bar.reset();
 	D_ASSERT(active_query.get());
+	if (active_query->prepared && active_query->prepared->physical_plan) {
+		active_query->prepared->physical_plan->ResetStates();
+	}
 	active_query.reset();
 	query_deadline.SetInvalid();
 	query_progress.Initialize();

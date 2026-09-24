@@ -50,6 +50,13 @@ public:
 	void SetRoot(PhysicalOperator &op) {
 		root = op;
 	}
+	//! Drop what the last execution left in the operators, as if the plan had been destroyed.
+	void ResetStates() {
+		for (auto &op : ops) {
+			op.get().sink_state.reset();
+			op.get().op_state.reset();
+		}
+	}
 	//! Get a reference to the arena.
 	ArenaAllocator &ArenaRef() {
 		return arena;
