@@ -147,7 +147,7 @@ public:
 
 	template <class T>
 	shared_ptr<T> Get(const string &key) {
-		lock_guard<mutex> l(lock);
+		absl::ReaderMutexLock l(lock);
 		auto lookup = registered_state.find(key);
 		if (lookup == registered_state.end()) {
 			return nullptr;
@@ -166,7 +166,7 @@ public:
 	}
 
 	vector<shared_ptr<ClientContextState>> States() {
-		lock_guard<mutex> l(lock);
+		absl::ReaderMutexLock l(lock);
 		vector<shared_ptr<ClientContextState>> states;
 		for (auto &entry : registered_state) {
 			states.push_back(entry.second);
