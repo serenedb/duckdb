@@ -242,6 +242,7 @@ public:
 	SpillPhase spill_phase DUCKDB_GUARDED_BY(lock);
 	//! Uncombined exported data, aligned one-to-one with the partitions of uncombined_data
 	vector<unique_ptr<ColumnDataCollection>> uncombined_exported_data;
+	vector<unique_ptr<PartitionedTupleData>> local_data;
 	//! Allocators used during the Sink/Finalize
 	vector<shared_ptr<ArenaAllocator>> stored_allocators;
 	idx_t stored_allocators_size;
@@ -269,6 +270,8 @@ RadixHTGlobalSinkState::RadixHTGlobalSinkState(ClientContext &context_p, const R
       max_partition_size(0) {
 	spill_plan = AggregateStateSpilling::TryCreateSpillPlan(radix_ht.GetLayout());
 	spill_phase = SpillPhase::NATIVE_ALLOWED;
+	local_data.reserve(number_of_threads);
+	stored_allocators.reserve(number_of_threads);
 
 	// Compute minimum reservation
 	auto tuples_per_block = block_alloc_size / radix_ht.GetLayout().GetRowWidth();
@@ -505,6 +508,7 @@ void RadixPartitionedHashTable::ResetGlobalSinkState(ClientContext &context, Glo
 	gstate.config.Reset();
 	gstate.uncombined_data.reset();
 	gstate.uncombined_exported_data.clear();
+	gstate.local_data.clear();
 	{
 		const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
 		gstate.spill_phase = SpillPhase::NATIVE_ALLOWED;
@@ -941,11 +945,7 @@ void RadixPartitionedHashTable::Combine(ExecutionContext &context, GlobalSinkSta
 
 	const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
 	D_ASSERT(!gstate.finalized);
-	if (gstate.uncombined_data) {
-		gstate.uncombined_data->Combine(*lstate.abandoned_data);
-	} else {
-		gstate.uncombined_data = std::move(lstate.abandoned_data);
-	}
+	gstate.local_data.push_back(std::move(lstate.abandoned_data));
 	if (!lstate.abandoned_exported_data.empty()) {
 		if (gstate.uncombined_exported_data.empty()) {
 			gstate.uncombined_exported_data = std::move(lstate.abandoned_exported_data);
@@ -980,6 +980,15 @@ void RadixPartitionedHashTable::Finalize(ClientContext &context, GlobalSinkState
 	auto &gstate = gstate_p.Cast<RadixHTGlobalSinkState>();
 	const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
 	D_ASSERT(!gstate.finalized);
+
+	for (auto &data : gstate.local_data) {
+		if (gstate.uncombined_data) {
+			gstate.uncombined_data->Combine(*data);
+		} else {
+			gstate.uncombined_data = std::move(data);
+		}
+	}
+	gstate.local_data.clear();
 
 	if (!gstate.uncombined_exported_data.empty() &&
 	    (!gstate.uncombined_data ||
