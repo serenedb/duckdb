@@ -195,6 +195,7 @@ public:
 
 	//! Uncombined partitioned data that will be put into the AggregatePartitions
 	unique_ptr<PartitionedTupleData> uncombined_data;
+	vector<unique_ptr<PartitionedTupleData>> local_data;
 	//! Allocators used during the Sink/Finalize
 	vector<shared_ptr<ArenaAllocator>> stored_allocators;
 	idx_t stored_allocators_size;
@@ -220,6 +221,8 @@ RadixHTGlobalSinkState::RadixHTGlobalSinkState(ClientContext &context_p, const R
       any_abandoned(false), radix_ht(radix_ht_p), config(*this), stored_allocators_size(0), finalize_done(0),
       scan_pin_properties(TupleDataPinProperties::DESTROY_AFTER_DONE), count_before_combining(0),
       max_partition_size(0) {
+	local_data.reserve(number_of_threads);
+	stored_allocators.reserve(number_of_threads);
 	// Compute minimum reservation
 	auto tuples_per_block = block_alloc_size / radix_ht.GetLayout().GetRowWidth();
 	idx_t ht_count =
@@ -451,6 +454,7 @@ void RadixPartitionedHashTable::ResetGlobalSinkState(ClientContext &context, Glo
 	gstate.any_abandoned = false;
 	gstate.config.Reset();
 	gstate.uncombined_data.reset();
+	gstate.local_data.clear();
 	gstate.stored_allocators.clear();
 	gstate.stored_allocators_size = 0;
 	gstate.partitions.clear();
@@ -681,11 +685,7 @@ void RadixPartitionedHashTable::Combine(ExecutionContext &context, GlobalSinkSta
 
 	const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
 	D_ASSERT(!gstate.finalized);
-	if (gstate.uncombined_data) {
-		gstate.uncombined_data->Combine(*lstate.abandoned_data);
-	} else {
-		gstate.uncombined_data = std::move(lstate.abandoned_data);
-	}
+	gstate.local_data.push_back(std::move(lstate.abandoned_data));
 	gstate.stored_allocators.emplace_back(std::move(aggregate_allocator));
 	gstate.stored_allocators_size += gstate.stored_allocators.back()->AllocationSize();
 }
@@ -694,6 +694,15 @@ void RadixPartitionedHashTable::Finalize(ClientContext &context, GlobalSinkState
 	auto &gstate = gstate_p.Cast<RadixHTGlobalSinkState>();
 	const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
 	D_ASSERT(!gstate.finalized);
+
+	for (auto &data : gstate.local_data) {
+		if (gstate.uncombined_data) {
+			gstate.uncombined_data->Combine(*data);
+		} else {
+			gstate.uncombined_data = std::move(data);
+		}
+	}
+	gstate.local_data.clear();
 
 	if (gstate.uncombined_data) {
 		auto &uncombined_data = *gstate.uncombined_data;
