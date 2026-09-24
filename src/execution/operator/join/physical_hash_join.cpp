@@ -794,25 +794,29 @@ SinkCombineResultType PhysicalHashJoin::Combine(ExecutionContext &context, Opera
 	if (has_layout) {
 		lstate.hash_table->GetSinkCollection().FlushAppendState(lstate.append_state);
 	}
-	annotated_lock_guard<annotated_mutex> guard(gstate.lock);
-	if (!has_layout) {
-		// nothing to merge — drop the empty thread-local hash table
-		gstate.active_local_states--;
-	} else if (lstate.keep_hash_table) {
-		gstate.local_hash_tables.push_back(*lstate.hash_table);
-	} else {
-		gstate.owned_local_hash_tables.push_back(std::move(lstate.hash_table));
-		gstate.local_hash_tables.push_back(*gstate.owned_local_hash_tables.back());
-	}
-	if (gstate.local_hash_tables.size() == gstate.active_local_states) {
-		// Set to 0 until PrepareFinalize
-		gstate.temporary_memory_state->SetZero();
+	bool combine_filters;
+	{
+		annotated_lock_guard<annotated_mutex> guard(gstate.lock);
+		if (!has_layout) {
+			// nothing to merge — drop the empty thread-local hash table
+			gstate.active_local_states--;
+		} else if (lstate.keep_hash_table) {
+			gstate.local_hash_tables.push_back(*lstate.hash_table);
+		} else {
+			gstate.owned_local_hash_tables.push_back(std::move(lstate.hash_table));
+			gstate.local_hash_tables.push_back(*gstate.owned_local_hash_tables.back());
+		}
+		if (gstate.local_hash_tables.size() == gstate.active_local_states) {
+			// Set to 0 until PrepareFinalize
+			gstate.temporary_memory_state->SetZero();
+		}
+		combine_filters = filter_pushdown && !gstate.skip_filter_pushdown;
 	}
 
 	auto &client_profiler = QueryProfiler::Get(context.client);
 	context.thread.profiler.Flush(*this);
 	client_profiler.Flush(context.thread.profiler);
-	if (filter_pushdown && !gstate.skip_filter_pushdown) {
+	if (combine_filters) {
 		filter_pushdown->Combine(*gstate.global_filter_state, *lstate.local_filter_state);
 	}
 
