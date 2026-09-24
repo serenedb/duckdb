@@ -291,7 +291,6 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		// Grab a write lock on the catalog
 		auto &duck_catalog = catalog.Cast<DuckCatalog>();
 		lock_guard<mutex> write_lock(duck_catalog.GetWriteLock());
-		lock_guard<mutex> read_lock(old_entry.set->GetCatalogLock());
 
 		// For a genuine CREATE TRIGGER (not an ALTER propagation), verify that the table version
 		// the trigger was bound against is still current at commit time.  Checking column
@@ -305,17 +304,17 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		if (new_entry.type == CatalogType::TRIGGER_ENTRY && old_entry.type != CatalogType::TRIGGER_ENTRY) {
 			auto &trig = new_entry.Cast<TriggerCatalogEntry>();
 			if (!trig.columns.empty()) {
-				auto &table_set = trig.schema.Cast<DuckSchemaEntry>().GetCatalogSet(CatalogType::TABLE_ENTRY);
 				// Transaction view at bind time (what the trigger saw when it was created).
 				// Use commit_id as the transaction_id so that earlier catalog changes in this
 				// same transaction (already stamped with commit_id) are visible here.
 				CatalogTransaction bind_txn(duck_catalog.GetDatabase(), commit_id, transaction.start_time);
 				// Transaction view at commit time (all changes committed before this commit)
 				CatalogTransaction commit_txn(duck_catalog.GetDatabase(), MAX_TRANSACTION_ID, commit_id + 1);
+				auto &schema = trig.ParentSchema(commit_txn);
+				auto &table_set = schema.Cast<DuckSchemaEntry>().GetCatalogSet(CatalogType::TABLE_ENTRY);
 
-				auto bound_table = trig.schema.GetEntry(bind_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
-				auto current_table =
-				    trig.schema.GetEntry(commit_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
+				auto bound_table = schema.GetEntry(bind_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
+				auto current_table = schema.GetEntry(commit_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
 
 				// Case (A): a concurrent alter was committed while this trigger was binding
 				if (bound_table && current_table && !RefersToSameObject(*bound_table, *current_table)) {
@@ -336,6 +335,7 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 			}
 		}
 
+		lock_guard<mutex> read_lock(old_entry.set->GetCatalogLock());
 		// Set the timestamp of the catalog entry to the given commit_id, marking it as committed
 		CatalogSet::UpdateTimestamp(old_entry.Parent(), commit_id);
 
