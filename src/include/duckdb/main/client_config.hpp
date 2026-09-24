@@ -63,6 +63,8 @@ struct ClientConfig {
 	bool has_disabled_optimizers = false;
 	set<OptimizerType> disabled_optimizers;
 
+	optional_idx threads;
+
 	//! Force parallelism of small tables, used for testing
 	bool verify_parallelism = false;
 	//! If this context should also try to use the available replacement scans

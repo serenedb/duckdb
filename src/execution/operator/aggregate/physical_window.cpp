@@ -594,8 +594,7 @@ void WindowGlobalSourceState::CreateTaskList() {
 	std::sort(partition_blocks.begin(), partition_blocks.end(), std::greater<PartitionBlock>());
 
 	//	Schedule the largest group on as many threads as possible
-	auto &ts = TaskScheduler::GetScheduler(client);
-	const auto threads = ts.NumberOfThreads();
+	const auto threads = TaskScheduler::QueryThreads(client);
 
 	const auto &max_block = partition_blocks.front();
 

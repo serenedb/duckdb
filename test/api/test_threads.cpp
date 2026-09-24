@@ -16,8 +16,8 @@ void run_query_multiple_times(duckdb::unique_ptr<string> query, duckdb::unique_p
 void change_thread_counts(duckdb::DuckDB &db) {
 	auto con = Connection(db);
 	for (int i = 0; i < 10; ++i) {
-		con.Query("SET threads=10");
-		con.Query("SET threads=1");
+		con.Query("SET GLOBAL threads=10");
+		con.Query("SET GLOBAL threads=1");
 	}
 }
 
@@ -86,7 +86,7 @@ TEST_CASE("Test external threads", "[api]") {
 	auto &config = DBConfig::GetConfig(*db.instance);
 	auto options = config.GetOptions();
 
-	con.Query("SET threads=13");
+	con.Query("SET GLOBAL threads=13");
 	REQUIRE(config.options.maximum_threads == 13);
 	REQUIRE(db.NumberOfThreads() == 13);
 	con.Query("SET external_threads=13");
@@ -113,7 +113,7 @@ TEST_CASE("Test external threads", "[api]") {
 	REQUIRE(Settings::Get<ExternalThreadsSetting>(config) == 1);
 	REQUIRE(db.NumberOfThreads() == 13);
 
-	con.Query("RESET threads");
+	con.Query("RESET GLOBAL threads");
 	auto file_system = make_uniq<VirtualFileSystem>();
 	REQUIRE(config.options.maximum_threads == DBConfig().GetSystemMaxThreads(*file_system));
 	REQUIRE(db.NumberOfThreads() == DBConfig().GetSystemMaxThreads(*file_system));

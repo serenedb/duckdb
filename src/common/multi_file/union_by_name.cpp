@@ -5,17 +5,23 @@ namespace duckdb {
 
 class UnionByReaderTask : public BaseExecutorTask {
 public:
-	UnionByReaderTask(TaskExecutor &executor, ClientContext &context, const OpenFileInfo &file, idx_t file_idx,
-	                  vector<shared_ptr<BaseUnionData>> &readers, BaseFileReaderOptions &options,
-	                  MultiFileOptions &file_options, MultiFileReader &multi_file_reader,
-	                  MultiFileReaderInterface &interface)
-	    : BaseExecutorTask(executor), context(context), file(file), file_idx(file_idx), readers(readers),
+	UnionByReaderTask(TaskExecutor &executor, ClientContext &context, const vector<OpenFileInfo> &files,
+	                  atomic<idx_t> &next_file, vector<shared_ptr<BaseUnionData>> &readers,
+	                  BaseFileReaderOptions &options, MultiFileOptions &file_options,
+	                  MultiFileReader &multi_file_reader, MultiFileReaderInterface &interface)
+	    : BaseExecutorTask(executor), context(context), files(files), next_file(next_file), readers(readers),
 	      options(options), file_options(file_options), multi_file_reader(multi_file_reader), interface(interface) {
 	}
 
 	void ExecuteTask() override {
-		auto reader = multi_file_reader.CreateReader(context, file, options, file_options, interface);
-		readers[file_idx] = reader->GetUnionData(file_idx);
+		while (!executor.HasError()) {
+			const auto file_idx = next_file++;
+			if (file_idx >= files.size()) {
+				break;
+			}
+			auto reader = multi_file_reader.CreateReader(context, files[file_idx], options, file_options, interface);
+			readers[file_idx] = reader->GetUnionData(file_idx);
+		}
 	}
 
 	string TaskType() const override {
@@ -24,8 +30,8 @@ public:
 
 private:
 	ClientContext &context;
-	const OpenFileInfo &file;
-	idx_t file_idx;
+	const vector<OpenFileInfo> &files;
+	atomic<idx_t> &next_file;
 	vector<shared_ptr<BaseUnionData>> &readers;
 	BaseFileReaderOptions &options;
 	MultiFileOptions &file_options;
@@ -42,10 +48,12 @@ vector<shared_ptr<BaseUnionData>> UnionByName::UnionCols(ClientContext &context,
 	vector<shared_ptr<BaseUnionData>> union_readers;
 	union_readers.resize(files.size());
 
+	atomic<idx_t> next_file {0};
+	const auto num_tasks = MinValue<idx_t>(files.size(), TaskScheduler::QueryThreads(context));
 	TaskExecutor executor(context);
 	// schedule tasks for all files
-	for (idx_t file_idx = 0; file_idx < files.size(); ++file_idx) {
-		auto task = make_uniq<UnionByReaderTask>(executor, context, files[file_idx], file_idx, union_readers, options,
+	for (idx_t task_idx = 0; task_idx < num_tasks; task_idx++) {
+		auto task = make_uniq<UnionByReaderTask>(executor, context, files, next_file, union_readers, options,
 		                                         file_options, multi_file_reader, interface);
 		executor.ScheduleTask(std::move(task));
 	}

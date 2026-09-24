@@ -97,7 +97,7 @@ bool PhysicalOperator::CanSaturateThreads(ClientContext &context) const {
 	// In debug mode we always return true here so that the code that depends on it is well-tested
 	return true;
 #else
-	const auto num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+	const auto num_threads = TaskScheduler::QueryThreads(context);
 	return EstimatedThreadCount() >= num_threads;
 #endif
 }
@@ -212,7 +212,7 @@ idx_t PhysicalOperator::GetMaxThreadMemory(ClientContext &context) {
 	// Memory usage per thread should scale with max mem / num threads
 	// We take 1/4th of this, to be conservative
 	auto max_memory = BufferManager::GetBufferManager(context).GetOperatorMemoryLimit();
-	auto num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+	auto num_threads = TaskScheduler::QueryThreads(context);
 	return (max_memory / num_threads) / 4;
 }
 

@@ -312,7 +312,7 @@ public:
 	    : context(context_p), executor(context_p, TaskSchedulerType::ASYNC) {
 		auto &scheduler = TaskScheduler::GetScheduler(context);
 		async_threads = scheduler.NumberOfAsyncThreads();
-		auto regular_threads = scheduler.NumberOfThreads();
+		auto regular_threads = TaskScheduler::QueryThreads(context);
 		max_pending_tasks = MaxValue<idx_t>(MIN_PENDING_TASKS, (async_threads + regular_threads) * 4);
 	}
 
@@ -2377,10 +2377,9 @@ void PartitionedCopyState::CreateTaskList() {
 	}
 	std::sort(partition_blocks.begin(), partition_blocks.end(), std::greater<PartitionBlock>());
 
-	auto &ts = TaskScheduler::GetScheduler(partitioned_copy.context);
 	const auto &max_block = partition_blocks.front();
 
-	const auto threads = MinValue<idx_t>(locals, ts.NumberOfThreads());
+	const auto threads = MinValue<idx_t>(locals, TaskScheduler::QueryThreads(partitioned_copy.context));
 	const auto aligned_scale = MaxValue<idx_t>(ValidityMask::BITS_PER_VALUE / STANDARD_VECTOR_SIZE, 1);
 	const auto aligned_count = PartitionedCopyHashGroup::BinValue(max_block.first, aligned_scale);
 	const auto per_thread = aligned_scale * PartitionedCopyHashGroup::BinValue(aligned_count, threads);

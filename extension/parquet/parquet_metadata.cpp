@@ -138,7 +138,7 @@ struct ParquetMetadataGlobalState : public GlobalTableFunctionState {
 	    : file_paths(std::move(file_paths_p)) {
 		auto expand_result = file_paths->GetExpandResult();
 		if (expand_result == FileExpandResult::MULTIPLE_FILES) {
-			max_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+			max_threads = TaskScheduler::QueryThreads(context);
 		} else {
 			max_threads = 1;
 		}

@@ -1,0 +1,85 @@
+# name: test/sql/settings/setting_threads_scope.test
+# description: A session value of threads caps that session's queries, SET GLOBAL threads sizes the pool
+# group: [settings]
+
+statement ok
+SET GLOBAL threads = 4
+
+statement ok con1
+SET threads = 2
+
+query I con1
+SELECT current_setting('threads')
+----
+2
+
+query I con2
+SELECT current_setting('threads')
+----
+4
+
+statement ok con1
+SET threads = 100
+
+query I con1
+SELECT current_setting('threads')
+----
+100
+
+query I con1
+SELECT count(*) FROM range(1000000)
+----
+1000000
+
+statement error con1
+SET threads = 0
+----
+<REGEX>:Syntax Error.*Must have at least 1 thread.*
+
+query I con1
+SELECT current_setting('threads')
+----
+100
+
+statement ok con2
+SET SESSION threads = 3
+
+statement ok
+SET GLOBAL threads = 6
+
+query I con2
+SELECT current_setting('threads')
+----
+3
+
+query I con1
+SELECT current_setting('threads')
+----
+100
+
+statement ok con1
+RESET threads
+
+query I con1
+SELECT current_setting('threads')
+----
+6
+
+statement ok con2
+PRAGMA threads = 1
+
+query I con2
+SELECT current_setting('threads')
+----
+1
+
+statement ok con2
+RESET threads
+
+query I con2
+SELECT current_setting('threads')
+----
+6
+
+statement ok
+RESET GLOBAL threads

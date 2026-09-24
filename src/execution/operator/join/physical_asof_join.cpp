@@ -692,8 +692,7 @@ void AsOfGlobalSourceState::CreateTaskList(ClientContext &client) {
 	const auto &max_block = partition_blocks.front();
 
 	//	Schedule the largest group on as many threads as possible
-	auto &ts = TaskScheduler::GetScheduler(client);
-	const auto threads = ts.NumberOfThreads();
+	const auto threads = TaskScheduler::QueryThreads(client);
 
 	const auto per_thread = AsOfHashGroup::BinValue(max_block.first, threads);
 	if (!per_thread) {
