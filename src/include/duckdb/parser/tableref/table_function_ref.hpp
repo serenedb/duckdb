@@ -14,6 +14,8 @@
 #include "duckdb/common/enums/ordinality_request_type.hpp"
 
 namespace duckdb {
+class TableFunction;
+
 //! Represents a Table producing function
 class TableFunctionRef : public TableRef {
 public:
@@ -29,6 +31,9 @@ public:
 
 	//! Whether or not WITH ORDINALITY has been invoked
 	OrdinalityType with_ordinality = OrdinalityType::WITHOUT_ORDINALITY;
+	//! A function bound as-is instead of being looked up in the catalog by name, for statements built in C++
+	//! (never parsed or serialized). It takes no arguments; `function` still names it for errors and EXPLAIN.
+	shared_ptr<TableFunction> inline_function;
 
 public:
 	string ToString() const override;
