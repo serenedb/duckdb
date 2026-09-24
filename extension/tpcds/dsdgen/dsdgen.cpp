@@ -492,7 +492,7 @@ public:
 		InitializeWork();
 
 #ifndef DUCKDB_NO_THREADS
-		auto thread_count = TaskScheduler::GetScheduler(context).NumberOfThreads();
+		auto thread_count = TaskScheduler::QueryThreads(context);
 		parallel_thread_count = thread_count;
 		if (thread_count > 1 && HasParallelWork()) {
 			mode = DSDGenMode::PARALLEL;

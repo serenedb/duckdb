@@ -853,7 +853,7 @@ TEST_CASE("V2 table: progress callback reports scan progress", "[capi_v2][table_
 	// Single-threaded so all execution happens in our steps, and the progress
 	// bar enabled so the engine polls the scan for progress at all.
 	for (const char *setup_sql :
-	     {"SET threads=1", "SET enable_progress_bar=true", "SET enable_progress_bar_print=false"}) {
+	     {"SET GLOBAL threads=1", "SET enable_progress_bar=true", "SET enable_progress_bar_print=false"}) {
 		ExecSQL(fx.conn, setup_sql);
 	}
 

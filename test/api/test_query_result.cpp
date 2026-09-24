@@ -133,7 +133,7 @@ TEST_CASE("A submitted query parks for the consumer's choice", "[api][query_resu
 TEST_CASE("ExecuteTask on a parked undecided handle reports READY and runs nothing", "[api][query_result]") {
 	DuckDB db(nullptr);
 	Connection con(db);
-	REQUIRE_NO_FAIL(con.Query("SET threads=1"));
+	REQUIRE_NO_FAIL(con.Query("SET GLOBAL threads=1"));
 
 	auto handle = Submit(con, "SELECT i FROM range(500000) t(i)");
 	Deadline deadline;

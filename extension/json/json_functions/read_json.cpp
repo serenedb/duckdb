@@ -246,7 +246,7 @@ unique_ptr<JSONStructureNode> JSONScan::DetectStructure(ClientContext &context, 
 	sampled_readers.resize(files.empty() ? 0 : files.size());
 
 	AutoDetectState auto_detect_state(context, json_data, files, sampled_readers, date_format_map);
-	const auto num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+	const auto num_threads = TaskScheduler::QueryThreads(context);
 	const auto files_per_task = (file_count + num_threads - 1) / num_threads;
 	const auto num_tasks = (file_count + files_per_task - 1) / files_per_task;
 	vector<JSONStructureNode> task_nodes(num_tasks);

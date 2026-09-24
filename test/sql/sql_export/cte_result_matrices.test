@@ -3,7 +3,7 @@
 # group: [sql_export]
 
 statement ok
-SET threads=1;
+SET GLOBAL threads=1;
 
 statement ok
 SET disabled_optimizers='compressed_materialization';
