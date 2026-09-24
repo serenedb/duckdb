@@ -374,7 +374,10 @@ idx_t TaskScheduler::GetEstimatedCPUId() {
 }
 
 void TaskScheduler::RelaunchThreads() {
-	lock_guard<mutex> t(thread_lock);
+	unique_lock<mutex> t(thread_lock, std::try_to_lock);
+	if (!t.owns_lock()) {
+		return;
+	}
 	for (auto &pool : pools) {
 		pool->RelaunchThreads(*this, false);
 	}
