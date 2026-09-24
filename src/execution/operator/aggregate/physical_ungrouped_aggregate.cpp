@@ -98,6 +98,7 @@ void UngroupedAggregateState::Move(UngroupedAggregateState &other) {
 	other.functions = std::move(functions);
 	other.aggregate_types = std::move(aggregate_types);
 	other.argument_counts = std::move(argument_counts);
+	other.counts = std::move(counts);
 }
 
 //===--------------------------------------------------------------------===//
@@ -120,36 +121,69 @@ public:
 	unique_ptr<DistinctAggregateState> distinct_state;
 };
 
-ArenaAllocator &GlobalUngroupedAggregateState::CreateAllocator() const {
-	lock_guard<mutex> glock(lock);
-	stored_allocators.emplace_back(make_uniq<ArenaAllocator>(client_allocator));
-	return *stored_allocators.back();
+GlobalUngroupedAggregateState::~GlobalUngroupedAggregateState() {
+	auto *node = pending.exchange(nullptr, std::memory_order_acquire);
+	while (node) {
+		auto *next = node->next;
+		delete node;
+		node = next;
+	}
 }
 
 void GlobalUngroupedAggregateState::Combine(LocalUngroupedAggregateState &other) {
+	auto node = make_uniq<PendingState>();
+	node->allocator = std::move(other.owned_allocator);
+	other.state.Move(node->state);
+	auto *raw = node.release();
+	raw->next = pending.load(std::memory_order_relaxed);
+	while (!pending.compare_exchange_weak(raw->next, raw, std::memory_order_release, std::memory_order_relaxed)) {
+	}
+}
+
+void GlobalUngroupedAggregateState::MergePending() {
+	PendingState *combined = nullptr;
+	for (auto *node = pending.load(std::memory_order_acquire); node;) {
+		auto *next = node->next;
+		node->next = combined;
+		combined = node;
+		node = next;
+	}
+	pending.store(combined, std::memory_order_relaxed);
 	lock_guard<mutex> glock(lock);
-	for (idx_t aggr_idx = 0; aggr_idx < state.functions.size(); aggr_idx++) {
-		if (state.aggregate_types[aggr_idx] == AggregateType::DISTINCT) {
-			continue;
+	while (auto *node = pending.load(std::memory_order_relaxed)) {
+		if (node->allocator) {
+			stored_allocators.push_back(std::move(node->allocator));
 		}
+		auto &other = node->state;
+		for (idx_t aggr_idx = 0; aggr_idx < state.functions.size(); aggr_idx++) {
+			if (state.aggregate_types[aggr_idx] == AggregateType::DISTINCT) {
+				continue;
+			}
 
-		auto &func = state.functions[aggr_idx];
-		Vector source_state(Value::POINTER(CastPointerToValue(other.state.aggregate_data[aggr_idx].get())), count_t(1));
-		Vector dest_state(Value::POINTER(CastPointerToValue(state.aggregate_data[aggr_idx].get())), count_t(1));
+			auto &func = state.functions[aggr_idx];
+			Vector source_state(Value::POINTER(CastPointerToValue(other.aggregate_data[aggr_idx].get())), count_t(1));
+			Vector dest_state(Value::POINTER(CastPointerToValue(state.aggregate_data[aggr_idx].get())), count_t(1));
 
-		AggregateInputData aggr_input_data(func, state.bind_data[aggr_idx].get(), allocator,
-		                                   AggregateCombineType::ALLOW_DESTRUCTIVE);
-		if (!func.HasStateCombineCallback()) {
-			throw InternalException("Aggregate function " + func.GetName() + " does not support combining of states");
+			AggregateInputData aggr_input_data(func, state.bind_data[aggr_idx].get(), allocator,
+			                                   AggregateCombineType::ALLOW_DESTRUCTIVE);
+			if (!func.HasStateCombineCallback()) {
+				throw InternalException("Aggregate function " + func.GetName() +
+				                        " does not support combining of states");
+			}
+			func.GetStateCombineCallback()(source_state, dest_state, aggr_input_data, 1);
+			state.counts[aggr_idx] += other.counts[aggr_idx];
 		}
-		func.GetStateCombineCallback()(source_state, dest_state, aggr_input_data, 1);
-		state.counts[aggr_idx] += other.state.counts[aggr_idx];
+		pending.store(node->next, std::memory_order_relaxed);
+		delete node;
 	}
 }
 
 void GlobalUngroupedAggregateState::CombineDistinct(LocalUngroupedAggregateState &other,
                                                     DistinctAggregateData &distinct_data) {
 	lock_guard<mutex> glock(lock);
+	if (other.owned_allocator) {
+		stored_allocators.push_back(std::move(other.owned_allocator));
+	}
 	for (idx_t aggr_idx = 0; aggr_idx < state.functions.size(); aggr_idx++) {
 		if (!distinct_data.IsDistinct(aggr_idx)) {
 			continue;
@@ -242,7 +276,8 @@ void UngroupedAggregateExecuteState::Sink(LocalUngroupedAggregateState &state, D
 // Local State
 //===--------------------------------------------------------------------===//
 LocalUngroupedAggregateState::LocalUngroupedAggregateState(GlobalUngroupedAggregateState &gstate)
-    : allocator(gstate.CreateAllocator()), state(gstate.state), repeated_state_vector(LogicalType::POINTER) {
+    : owned_allocator(make_uniq<ArenaAllocator>(gstate.client_allocator)), allocator(*owned_allocator),
+      state(gstate.state), repeated_state_vector(LogicalType::POINTER) {
 }
 
 class UngroupedAggregateLocalSinkState : public LocalSinkState {
@@ -690,6 +725,7 @@ void VerifyNullHandling(DataChunk &chunk, UngroupedAggregateState &state,
 }
 
 void GlobalUngroupedAggregateState::Finalize(DataChunk &result, idx_t column_offset) {
+	MergePending();
 	result.SetChildCardinality(1);
 	for (idx_t aggr_idx = 0; aggr_idx < state.functions.size(); aggr_idx++) {
 		auto &func = state.functions[aggr_idx];

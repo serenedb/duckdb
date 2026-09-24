@@ -18,6 +18,7 @@ struct DistinctAggregateData;
 struct LocalUngroupedAggregateState;
 
 struct UngroupedAggregateState {
+	UngroupedAggregateState() = default;
 	explicit UngroupedAggregateState(const vector<unique_ptr<Expression>> &aggregate_expressions);
 	UngroupedAggregateState(const UngroupedAggregateState &global_state);
 	~UngroupedAggregateState();
@@ -45,6 +46,7 @@ public:
 	GlobalUngroupedAggregateState(Allocator &client_allocator, const vector<unique_ptr<Expression>> &aggregates)
 	    : client_allocator(client_allocator), allocator(client_allocator), state(aggregates) {
 	}
+	~GlobalUngroupedAggregateState();
 
 	mutable mutex lock;
 	//! Client allocator
@@ -57,17 +59,27 @@ public:
 	UngroupedAggregateState state;
 
 public:
-	//! Create an ArenaAllocator with cross-thread lifetime
-	ArenaAllocator &CreateAllocator() const;
 	void Combine(LocalUngroupedAggregateState &other);
 	void CombineDistinct(LocalUngroupedAggregateState &other, DistinctAggregateData &distinct_data);
 	void Finalize(DataChunk &result, idx_t column_offset = 0);
+
+private:
+	struct PendingState {
+		PendingState *next = nullptr;
+		unique_ptr<ArenaAllocator> allocator;
+		UngroupedAggregateState state;
+	};
+
+	void MergePending();
+
+	atomic<PendingState *> pending {nullptr};
 };
 
 struct LocalUngroupedAggregateState {
 public:
 	explicit LocalUngroupedAggregateState(GlobalUngroupedAggregateState &gstate);
 
+	unique_ptr<ArenaAllocator> owned_allocator;
 	//! Local arena allocator
 	ArenaAllocator &allocator;
 	//! The local aggregate state
