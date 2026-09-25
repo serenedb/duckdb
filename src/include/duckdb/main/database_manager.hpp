@@ -36,6 +36,8 @@ public:
 	explicit DatabaseManager(DatabaseInstance &db);
 	~DatabaseManager();
 
+	static constexpr idx_t FIRST_OID = 2000000;
+
 public:
 	static DatabaseManager &Get(DatabaseInstance &db);
 	static DatabaseManager &Get(ClientContext &db);
