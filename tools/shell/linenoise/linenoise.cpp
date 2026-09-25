@@ -142,6 +142,11 @@ TabCompletion Linenoise::TabComplete() const {
 	return result;
 }
 
+static bool NarrowsCompletion(char c) {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' ||
+	       c == '/' || c == '-' || c == '#';
+}
+
 /* This is an helper function for linenoiseEdit() and is called when the
  * user types the <tab> key in order to complete the string currently in the
  * input.
@@ -187,12 +192,21 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 				pos = nwritten;
 				len = nwritten;
 			}
-			completion_idx = optional_idx();
+			completion_idx = completion_list.selected;
 			render_completion_suggestion = true;
 		} else {
 			// if there are no ties we immediately accept the first completion suggestion
 			completion_idx = 0;
 		}
+
+		const auto narrow = [&]() {
+			completion_list = TabComplete();
+			completion_idx = completion_list.selected;
+			if (completions.empty()) {
+				next_key.action = KEY_NULL;
+				stop = true;
+			}
+		};
 
 		idx_t action_count = 0;
 		while (!stop) {
@@ -263,10 +277,38 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 					break;
 				case EscapeSequence::ESCAPE:
 					/* Re-show original buffer */
+					if (completion_list.menu) {
+						completion_idx = optional_idx();
+						render_completion_suggestion = false;
+						RefreshLine();
+						next_key.action = KEY_NULL;
+						stop = true;
+						break;
+					}
 					RefreshLine();
 					next_key = key_press;
 					stop = true;
 					break;
+				case EscapeSequence::UP:
+				case EscapeSequence::DOWN:
+				case EscapeSequence::LEFT:
+				case EscapeSequence::RIGHT:
+					if (render_completion_suggestion && completion_list.menu) {
+						const bool vertical =
+						    key_press.sequence == EscapeSequence::UP || key_press.sequence == EscapeSequence::DOWN;
+						const bool forward =
+						    key_press.sequence == EscapeSequence::DOWN || key_press.sequence == EscapeSequence::RIGHT;
+						const idx_t step = vertical ? MaxValue<idx_t>(completion_columns, 1) : 1;
+						if (!completion_idx.IsValid()) {
+							completion_idx = 0;
+						} else if (forward && completion_idx.GetIndex() + step < completions.size()) {
+							completion_idx = completion_idx.GetIndex() + step;
+						} else if (!forward && completion_idx.GetIndex() >= step) {
+							completion_idx = completion_idx.GetIndex() - step;
+						}
+						break;
+					}
+					DUCKDB_EXPLICIT_FALLTHROUGH;
 				default:
 					next_key = key_press;
 					accept_completion = true;
@@ -275,7 +317,29 @@ bool Linenoise::CompleteLine(KeyPress &next_key) {
 				}
 				break;
 			}
+			case BACKSPACE:
+			case CTRL_H:
+				if (render_completion_suggestion && completion_list.menu) {
+					if (pos > 0) {
+						const auto prev = PrevChar();
+						memmove(buf + prev, buf + pos, len - pos);
+						len -= pos - prev;
+						pos = prev;
+						buf[len] = '\0';
+					}
+					narrow();
+					break;
+				}
+				next_key = key_press;
+				accept_completion = true;
+				stop = true;
+				break;
 			default:
+				if (render_completion_suggestion && completion_list.menu && NarrowsCompletion(key_press.action)) {
+					InsertCharacter(key_press.action);
+					narrow();
+					break;
+				}
 				next_key = key_press;
 				accept_completion = true;
 				stop = true;
@@ -313,6 +377,14 @@ bool Linenoise::HandleANSIEscape(const char *buf, size_t len, size_t &cpos) {
 		}
 		if (cpos < len)
 			cpos++; // skip final letter
+	} else if (cpos < len && buf[cpos] == ']') {
+		cpos++;
+		while (cpos < len && buf[cpos] != '\a' && !(buf[cpos] == '\033' && cpos + 1 < len && buf[cpos + 1] == '\\')) {
+			cpos++;
+		}
+		if (cpos < len) {
+			cpos += buf[cpos] == '\a' ? 1 : 2;
+		}
 	} else {
 		// standalone ESC
 		cpos++;
@@ -1156,6 +1228,7 @@ Linenoise::Linenoise(int stdin_fd, int stdout_fd, char *buf, size_t buflen, cons
 	insert = false;
 	search_index = 0;
 	rendered_completion_lines = 0;
+	completion_columns = 1;
 	completion_idx = optional_idx();
 	render_completion_suggestion = false;
 
@@ -1444,7 +1517,10 @@ bool Linenoise::TryGetKeyPress(int fd, KeyPress &key_press) {
 	key_press.action = c;
 	if (key_press.action == ESC) {
 		// for ESC we need to read an escape sequence
-		key_press.sequence = Terminal::ReadEscapeSequence(ifd, key_press);
+		const bool menu_open = render_completion_suggestion && completion_list.menu;
+		key_press.sequence = has_more_data || !menu_open || Terminal::HasMoreData(ifd, 50000) > 0
+		                         ? Terminal::ReadEscapeSequence(ifd, key_press)
+		                         : EscapeSequence::ESCAPE;
 	}
 	return true;
 #endif

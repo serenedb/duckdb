@@ -11,6 +11,8 @@
 
 namespace duckdb_shell {
 
+MetadataResult ShowDocumentation(ShellState &state, const duckdb::vector<duckdb::string> &args);
+
 MetadataResult ToggleAbout(ShellState &state, const vector<string> &args) {
 	string about_text = "SereneDB is a real-time search and analytics database with Postgres wire protocol support.\n\n"
 	                    "Developed and maintained by SereneDB GmbH, "
@@ -872,6 +874,13 @@ static const MetadataCommand metadata_commands[] = {
     {"decimal_sep", 0, SetDecimalSep, "SEP",
      "Sets the decimal separator used when rendering numbers. Only for duckbox mode.", 3, ""},
     {"databases", 1, ShowDatabases, "", "List names and files of attached databases", 2, ""},
+    {"docs", 0, ShowDocumentation, "?NAME|PATH|NUMBER?", "Show the SereneDB documentation for NAME, PATH or NUMBER", 3,
+     "Notes:\n\t* With no argument, lists the top-level documentation sections\n"
+     "\t* NAME is looked up among objects, sections and pages (e.g. .docs date_trunc)\n"
+     "\t* PATH is an exact entry path (e.g. .docs sql/indexes/index.md)\n"
+     "\t* NUMBER opens an item of the last list (e.g. .docs 2)\n"
+     "\t* When several entries match, they are listed by number and --all renders every match\n"
+     "\t* --search QUERY ranks every page, --kind KIND lists one kind of object and --list PREFIX prints paths"},
     {
         "dump",
         0,
