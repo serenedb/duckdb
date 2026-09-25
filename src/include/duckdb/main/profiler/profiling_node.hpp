@@ -82,6 +82,9 @@ public:
 	DUCKDB_API void Flush(const PhysicalOperator &phys_op);
 	DUCKDB_API OperatorMetrics &GetOperatorMetrics(const PhysicalOperator &phys_op);
 	DUCKDB_API bool OperatorMetricsIsInitialized(const PhysicalOperator &phys_op);
+	bool IsEnabled() const {
+		return enabled;
+	}
 
 public:
 	ClientContext &context;
