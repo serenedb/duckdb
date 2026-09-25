@@ -152,46 +152,33 @@ void ListLengthBinaryFunction(DataChunk &args, ExpressionState &, Vector &result
 		}
 
 		// Walk down dim-1 levels of nesting to find the target list
+		auto entry = UnifiedVectorFormat::GetData<list_entry_t>(input_data)[input_idx];
 		Vector *current_vec = &input;
-		idx_t current_idx = input_idx;
 		bool valid = true;
 
 		for (int64_t d = 1; d < dim; d++) {
-			if (current_vec->GetType().id() != LogicalTypeId::LIST) {
-				valid = false;
-				break;
-			}
-			UnifiedVectorFormat current_data;
-			current_vec->ToUnifiedFormat(count, current_data);
-			auto mapped = current_data.sel->get_index(current_idx);
-			if (!current_data.validity.RowIsValid(mapped)) {
-				valid = false;
-				break;
-			}
-			auto entry = UnifiedVectorFormat::GetData<list_entry_t>(current_data)[mapped];
 			if (entry.length == 0) {
 				valid = false;
 				break;
 			}
 			// Descend into the first element of this list
-			current_vec = &ListVector::GetEntry(*current_vec);
-			current_idx = entry.offset;
+			auto &child = ListVector::GetEntry(*current_vec);
+			if (child.GetType().id() != LogicalTypeId::LIST) {
+				valid = false;
+				break;
+			}
+			UnifiedVectorFormat child_data;
+			child.ToUnifiedFormat(ListVector::GetListSize(*current_vec), child_data);
+			auto child_idx = child_data.sel->get_index(entry.offset);
+			if (!child_data.validity.RowIsValid(child_idx)) {
+				valid = false;
+				break;
+			}
+			entry = UnifiedVectorFormat::GetData<list_entry_t>(child_data)[child_idx];
+			current_vec = &child;
 		}
 
-		if (!valid || current_vec->GetType().id() != LogicalTypeId::LIST) {
-			result_validity.SetInvalid(i);
-			continue;
-		}
-
-		UnifiedVectorFormat current_data;
-		current_vec->ToUnifiedFormat(count, current_data);
-		auto mapped = current_data.sel->get_index(current_idx);
-		if (!current_data.validity.RowIsValid(mapped)) {
-			result_validity.SetInvalid(i);
-			continue;
-		}
-		auto entry = UnifiedVectorFormat::GetData<list_entry_t>(current_data)[mapped];
-		if (entry.length == 0) {
+		if (!valid || entry.length == 0) {
 			result_validity.SetInvalid(i);
 			continue;
 		}
