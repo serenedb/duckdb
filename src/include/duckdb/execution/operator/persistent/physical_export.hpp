@@ -26,6 +26,7 @@ struct ExportEntries {
 	vector<reference<CatalogEntry>> views;
 	vector<reference<CatalogEntry>> indexes;
 	vector<reference<CatalogEntry>> macros;
+	vector<reference<CatalogEntry>> tokenizers;
 };
 
 //! Parse a file from disk using a specified copy function and return the set of chunks retrieved from the file

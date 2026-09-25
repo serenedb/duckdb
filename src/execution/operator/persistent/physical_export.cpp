@@ -34,6 +34,9 @@ static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entrie
 			continue;
 		}
 		auto create_info = entry.get().GetInfo();
+		if (create_info->type == CatalogType::SCHEMA_ENTRY) {
+			create_info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+		}
 		try {
 			// Strip the catalog from the info
 			create_info->SetQualifiedName(QualifiedName(Identifier(), create_info->GetQualifiedName().Schema(),
@@ -162,6 +165,11 @@ void PhysicalExport::ExtractEntries(ClientContext &context, vector<reference<Sch
 				result.macros.push_back(entry);
 			}
 		});
+		schema.Scan(context, CatalogType::TOKENIZER_ENTRY, [&](CatalogEntry &entry) {
+			if (!entry.internal) {
+				result.tokenizers.push_back(entry);
+			}
+		});
 	}
 }
 
@@ -195,10 +203,12 @@ catalog_entry_vector_t PhysicalExport::GetNaiveExportOrder(ClientContext &contex
 	size += entries.views.size();
 	size += entries.indexes.size();
 	size += entries.macros.size();
+	size += entries.tokenizers.size();
 	catalog_entries.reserve(size);
 	AddEntries(catalog_entries, entries.schemas);
 	AddEntries(catalog_entries, entries.sequences);
 	AddEntries(catalog_entries, entries.custom_types);
+	AddEntries(catalog_entries, entries.tokenizers);
 	AddEntries(catalog_entries, entries.tables);
 	AddEntries(catalog_entries, entries.macros);
 	AddEntries(catalog_entries, entries.views);
