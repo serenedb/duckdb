@@ -75,10 +75,11 @@ struct DuckDBReadBindData : TableFunctionData {
 };
 
 struct AttachedDatabaseWrapper {
-	AttachedDatabaseWrapper(ClientContext &context, shared_ptr<AttachedDatabase> attached_database_p);
+	AttachedDatabaseWrapper(ClientContext &context, Identifier name, shared_ptr<AttachedDatabase> attached_database_p);
 	~AttachedDatabaseWrapper();
 
 	ClientContext &context;
+	Identifier name;
 	shared_ptr<AttachedDatabase> attached_database;
 	optional_ptr<TableCatalogEntry> table_entry;
 };
@@ -184,15 +185,14 @@ bool DuckDBFileReaderOptions::Matches(TableCatalogEntry &table) const {
 	return true;
 }
 
-AttachedDatabaseWrapper::AttachedDatabaseWrapper(ClientContext &context,
+AttachedDatabaseWrapper::AttachedDatabaseWrapper(ClientContext &context, Identifier name_p,
                                                  shared_ptr<AttachedDatabase> attached_database_p)
-    : context(context), attached_database(std::move(attached_database_p)) {
+    : context(context), name(std::move(name_p)), attached_database(std::move(attached_database_p)) {
 }
 
 AttachedDatabaseWrapper::~AttachedDatabaseWrapper() {
 	if (attached_database) {
 		auto &db_manager = DatabaseManager::Get(context);
-		auto name = attached_database->GetName();
 		attached_database.reset();
 		db_manager.DetachDatabase(context, name, OnEntryNotFound::RETURN_NULL);
 	}
@@ -255,9 +255,10 @@ AttachedDatabase &DuckDBReader::GetAttachedDatabase() {
 		unordered_map<string, Value> attach_kv;
 		AttachOptions attach_options(attach_kv, AccessMode::READ_ONLY);
 		attach_options.visibility = AttachVisibility::HIDDEN;
+		attach_options.borrow_open_database = true;
 
 		auto attached = db_manager.AttachDatabase(context, info, attach_options);
-		db_wrapper = make_shared_ptr<AttachedDatabaseWrapper>(context, std::move(attached));
+		db_wrapper = make_shared_ptr<AttachedDatabaseWrapper>(context, info.name, std::move(attached));
 	}
 	return *db_wrapper->attached_database;
 }

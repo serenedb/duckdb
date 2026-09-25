@@ -107,25 +107,30 @@ bool RequiresTrackingAttaches(const string &path, const string &db_type) {
 
 // a re-attach hands back the database that already has the file open, so it has to keep the options it
 // was opened with
-static bool VerifyReattachOptions(AttachedDatabase &database, const AttachInfo &info, const AttachOptions &options) {
+static void VerifyReattachOptions(AttachedDatabase &database, const AttachInfo &info, const AttachOptions &options) {
 	if (AttachedDatabase::NameIsReserved(info.name)) {
 		throw BinderException("Attached database name \"%s\" cannot be used because it is a reserved name",
 		                      info.name.GetIdentifierName());
 	}
 	if (database.IsReadOnly() != (options.access_mode == AccessMode::READ_ONLY)) {
-		return false;
+		auto existing_mode = database.IsReadOnly() ? AccessMode::READ_ONLY : AccessMode::READ_WRITE;
+		throw BinderException("Database \"%s\" is already attached in %s mode, cannot re-attach in %s mode", info.name,
+		                      EnumUtil::ToString(existing_mode), EnumUtil::ToString(options.access_mode));
 	}
 	if (options.vacuum_rebuild_indexes_threshold.IsValid()) {
 		auto previous_setting = database.GetVacuumRebuildIndexThreshold();
 		auto new_setting = options.vacuum_rebuild_indexes_threshold.GetIndex();
 		if (previous_setting != new_setting) {
-			return false;
+			throw BinderException("Cannot re-attach with a different vacuum_rebuild_indexes setting "
+			                      "(previous: %d, new: %d)",
+			                      previous_setting, new_setting);
 		}
 	}
 	if (database.GetCatalog().HasConflictingAttachOptions(info.path, options)) {
-		return false;
+		throw BinderException("Cannot attach \"%s\" - the database file \"%s\" is already attached with "
+		                      "different options",
+		                      info.name, info.path);
 	}
-	return true;
 }
 
 // InsertDatabasePath claims the path entry before we know whether the re-attach goes through
@@ -266,8 +271,6 @@ shared_ptr<AttachedDatabase> DatabaseManager::AttachDatabase(ClientContext &cont
 	// now create the attached database
 	auto &db = DatabaseInstance::GetDatabase(context);
 	auto attached_db = db.CreateAttachedDatabase(context, info, options);
-	// record the owner of the path, so a re-attach while its detach cleanup is pending finds it
-	path_manager->SetDatabase(info.path, attached_db);
 
 	if (default_database.empty()) {
 		default_database = attached_db->GetName();
@@ -284,6 +287,8 @@ shared_ptr<AttachedDatabase> DatabaseManager::AttachDatabase(ClientContext &cont
 		}
 		attached_db->FinalizeLoad(context);
 	}
+	// record the owner of the path, so a re-attach while its detach cleanup is pending finds it
+	path_manager->SetDatabase(info.path, attached_db);
 
 	auto name = attached_db->GetName();
 	return FinalizeAttach(context, info, std::move(attached_db), name);
@@ -297,9 +302,10 @@ shared_ptr<AttachedDatabase> DatabaseManager::ReattachDatabase(ClientContext &co
 		// the database finished closing while we were attaching - its path entry is about to go
 		return nullptr;
 	}
-	if (!VerifyReattachOptions(*database, info, options)) {
-		return nullptr;
+	if (options.borrow_open_database) {
+		return database;
 	}
+	VerifyReattachOptions(*database, info, options);
 	auto attached_db = FinalizeAttach(context, info, database, info.name);
 	if (attached_db != database) {
 		// IF NOT EXISTS, and another attach claimed the name while we got here: it wins, and the file

@@ -15,7 +15,9 @@
 #include "duckdb/common/map.hpp"
 #include "duckdb/common/vector.hpp"
 
+#include <absl/strings/match.h>
 #include <iosfwd>
+#include <string_view>
 
 namespace duckdb {
 
@@ -64,6 +66,10 @@ public:
 	//! The raw underlying string (preserving original casing)
 	const string &GetIdentifierName() const {
 		return value;
+	}
+
+	bool operator==(std::string_view other) const {
+		return absl::EqualsIgnoreCase(value, other);
 	}
 
 	bool empty() const { // NOLINT: match std::string interface

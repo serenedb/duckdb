@@ -27,18 +27,12 @@ InsertDatabasePathResult DatabaseFilePathManager::InsertDatabasePath(DatabaseMan
 	auto entry = db_paths.emplace(path, DatabasePathInfo(manager, name, options.access_mode));
 	if (!entry.second) {
 		auto &existing = entry.first->second;
-		// The path is registered but no system currently has it attached: this is a stale entry left
-		// behind by a database that has been detached while its cleanup (StoredDatabasePath destruction)
-		// is still pending -- e.g. an attached database that is still pinned by a view or index defined
-		// over it, or by a transaction that has not finalized yet. That database still owns the file and
-		// still writes to it, so we must not open a second one over the same path: hand back the database
-		// that is already there and let the caller re-register it under the requested name.
 		if (existing.reuse_claimed) {
 			// a re-attach of this path is in flight: wait for it to register the database (or to give the
 			// claim back), rather than handing the same database out twice
 			return InsertDatabasePathResult::ALREADY_EXISTS;
 		}
-		if (existing.attached_databases.empty()) {
+		if (existing.attached_databases.empty() || (options.borrow_open_database && existing.name == name)) {
 			options.reused_database = existing.database.lock();
 			if (options.reused_database) {
 				// whether the database is still usable can only be checked while holding a reference to
