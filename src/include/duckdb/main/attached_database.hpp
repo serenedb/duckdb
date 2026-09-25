@@ -10,6 +10,7 @@
 
 #include "duckdb/main/config.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/main/valid_checker.hpp"
 
 namespace duckdb {
@@ -133,9 +134,12 @@ public:
 	bool IsSystem() const;
 	bool IsTemporary() const;
 	bool IsReadOnly() const;
+	bool OpenedReadOnly() const {
+		return opened_read_only;
+	}
 	bool IsInitialDatabase() const;
 	void SetInitialDatabase();
-	void SetReadOnlyDatabase();
+	void SetAccessMode(AccessMode access_mode);
 	void OnDetach(ClientContext &context);
 	RecoveryMode GetRecoveryMode() const {
 		return recovery_mode;
@@ -167,7 +171,8 @@ private:
 	unique_ptr<StorageManager> storage;
 	unique_ptr<Catalog> catalog;
 	unique_ptr<TransactionManager> transaction_manager;
-	AttachedDatabaseType type;
+	atomic<AttachedDatabaseType> type;
+	const bool opened_read_only;
 	optional_ptr<Catalog> parent_catalog;
 	optional_ptr<StorageExtension> storage_extension;
 	RecoveryMode recovery_mode = RecoveryMode::DEFAULT;

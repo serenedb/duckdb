@@ -2,6 +2,7 @@
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/parser/parsed_data/attach_info.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database_manager.hpp"
 
 namespace duckdb {
@@ -41,7 +42,8 @@ InsertDatabasePathResult DatabaseFilePathManager::InsertDatabasePath(DatabaseMan
 				existing.reuse_claimed = true;
 				return InsertDatabasePathResult::REUSE_EXISTING;
 			}
-			return InsertDatabasePathResult::ALREADY_EXISTS;
+			return existing.attached_databases.empty() ? InsertDatabasePathResult::CLOSING
+			                                           : InsertDatabasePathResult::ALREADY_EXISTS;
 		}
 		bool already_exists = false;
 		bool attached_in_this_system = false;
@@ -119,6 +121,17 @@ void DatabaseFilePathManager::EraseDatabasePath(const string &path) {
 		} else {
 			entry->second.reference_count--;
 		}
+	}
+}
+
+void DatabaseFilePathManager::WaitForRelease(const string &path, ClientContext &context) {
+	lock_guard<mutex> path_lock(db_paths_lock);
+	auto released = [&] {
+		auto entry = db_paths.find(path);
+		return entry == db_paths.end() || !entry->second.attached_databases.empty();
+	};
+	while (!db_paths_lock.AwaitWithTimeout(absl::Condition(&released), absl::Milliseconds(100))) {
+		context.InterruptCheck();
 	}
 }
 

@@ -118,7 +118,8 @@ ValidChecker &ValidChecker::Get(AttachedDatabase &db) {
 AttachedDatabase::AttachedDatabase(DatabaseInstance &db, AttachedDatabaseType type)
     : CatalogEntry(CatalogType::DATABASE_ENTRY,
                    Identifier(type == AttachedDatabaseType::SYSTEM_DATABASE ? SYSTEM_CATALOG : TEMP_CATALOG), 0),
-      db(db), validity(db, ValidChecker::Scope::DATABASE), type(type), close_lock(make_shared_ptr<mutex>()) {
+      db(db), validity(db, ValidChecker::Scope::DATABASE), type(type), opened_read_only(false),
+      close_lock(make_shared_ptr<mutex>()) {
 	// This database does not have storage, or uses temporary_objects for in-memory storage.
 	D_ASSERT(type == AttachedDatabaseType::TEMP_DATABASE || type == AttachedDatabaseType::SYSTEM_DATABASE);
 	if (type == AttachedDatabaseType::TEMP_DATABASE) {
@@ -135,12 +136,9 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, AttachedDatabaseType ty
 AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, Identifier name_p, string file_path_p,
                                    AttachOptions &options)
     : CatalogEntry(CatalogType::DATABASE_ENTRY, catalog_p, std::move(name_p)), db(db),
-      validity(db, ValidChecker::Scope::DATABASE), parent_catalog(&catalog_p), close_lock(make_shared_ptr<mutex>()) {
-	if (options.access_mode == AccessMode::READ_ONLY) {
-		type = AttachedDatabaseType::READ_ONLY_DATABASE;
-	} else {
-		type = AttachedDatabaseType::READ_WRITE_DATABASE;
-	}
+      validity(db, ValidChecker::Scope::DATABASE), opened_read_only(options.access_mode == AccessMode::READ_ONLY),
+      parent_catalog(&catalog_p), close_lock(make_shared_ptr<mutex>()) {
+	SetAccessMode(options.access_mode);
 	recovery_mode = options.recovery_mode;
 	visibility = options.visibility;
 	vacuum_rebuild_threshold = options.vacuum_rebuild_indexes_threshold;
@@ -157,13 +155,9 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, Ide
 AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, StorageExtension &storage_extension_p,
                                    ClientContext &context, Identifier name_p, AttachInfo &info, AttachOptions &options)
     : CatalogEntry(CatalogType::DATABASE_ENTRY, catalog_p, std::move(name_p)), db(db),
-      validity(db, ValidChecker::Scope::DATABASE), parent_catalog(&catalog_p), storage_extension(&storage_extension_p),
-      close_lock(make_shared_ptr<mutex>()) {
-	if (options.access_mode == AccessMode::READ_ONLY) {
-		type = AttachedDatabaseType::READ_ONLY_DATABASE;
-	} else {
-		type = AttachedDatabaseType::READ_WRITE_DATABASE;
-	}
+      validity(db, ValidChecker::Scope::DATABASE), opened_read_only(options.access_mode == AccessMode::READ_ONLY),
+      parent_catalog(&catalog_p), storage_extension(&storage_extension_p), close_lock(make_shared_ptr<mutex>()) {
+	SetAccessMode(options.access_mode);
 	recovery_mode = options.recovery_mode;
 	visibility = options.visibility;
 	vacuum_rebuild_threshold = options.vacuum_rebuild_indexes_threshold;
@@ -195,15 +189,15 @@ AttachedDatabase::~AttachedDatabase() {
 }
 
 bool AttachedDatabase::IsSystem() const {
-	D_ASSERT(!storage || type != AttachedDatabaseType::SYSTEM_DATABASE);
-	return type == AttachedDatabaseType::SYSTEM_DATABASE;
+	D_ASSERT(!storage || type.load(std::memory_order_relaxed) != AttachedDatabaseType::SYSTEM_DATABASE);
+	return type.load(std::memory_order_relaxed) == AttachedDatabaseType::SYSTEM_DATABASE;
 }
 
 bool AttachedDatabase::IsTemporary() const {
-	return type == AttachedDatabaseType::TEMP_DATABASE;
+	return type.load(std::memory_order_relaxed) == AttachedDatabaseType::TEMP_DATABASE;
 }
 bool AttachedDatabase::IsReadOnly() const {
-	return type == AttachedDatabaseType::READ_ONLY_DATABASE;
+	return type.load(std::memory_order_relaxed) == AttachedDatabaseType::READ_ONLY_DATABASE;
 }
 
 bool AttachedDatabase::NameIsReserved(const Identifier &name) {
@@ -329,8 +323,10 @@ void AttachedDatabase::SetInitialDatabase() {
 	is_initial_database = true;
 }
 
-void AttachedDatabase::SetReadOnlyDatabase() {
-	type = AttachedDatabaseType::READ_ONLY_DATABASE;
+void AttachedDatabase::SetAccessMode(AccessMode access_mode) {
+	type.store(access_mode == AccessMode::READ_ONLY ? AttachedDatabaseType::READ_ONLY_DATABASE
+	                                                : AttachedDatabaseType::READ_WRITE_DATABASE,
+	           std::memory_order_relaxed);
 }
 
 void AttachedDatabase::OnDetach(ClientContext &context) {

@@ -110,11 +110,6 @@ static void VerifyReattachOptions(AttachedDatabase &database, const AttachInfo &
 		throw BinderException("Attached database name \"%s\" cannot be used because it is a reserved name",
 		                      info.name.GetIdentifierName());
 	}
-	if (database.IsReadOnly() != (options.access_mode == AccessMode::READ_ONLY)) {
-		auto existing_mode = database.IsReadOnly() ? AccessMode::READ_ONLY : AccessMode::READ_WRITE;
-		throw BinderException("Database \"%s\" is already attached in %s mode, cannot re-attach in %s mode", info.name,
-		                      EnumUtil::ToString(existing_mode), EnumUtil::ToString(options.access_mode));
-	}
 	if (options.vacuum_rebuild_indexes_threshold.IsValid()) {
 		auto previous_setting = database.GetVacuumRebuildIndexThreshold();
 		auto new_setting = options.vacuum_rebuild_indexes_threshold.GetIndex();
@@ -221,7 +216,11 @@ shared_ptr<AttachedDatabase> DatabaseManager::AttachDatabase(ClientContext &cont
 					timer.EndTimer();
 					return reattached;
 				}
-				context.InterruptCheck();
+				path_manager->WaitForRelease(info.path, context);
+				continue;
+			}
+			if (insert_result == InsertDatabasePathResult::CLOSING) {
+				path_manager->WaitForRelease(info.path, context);
 				continue;
 			}
 			if (insert_result != InsertDatabasePathResult::ALREADY_EXISTS) {
@@ -303,7 +302,17 @@ shared_ptr<AttachedDatabase> DatabaseManager::ReattachDatabase(ClientContext &co
 	if (options.borrow_open_database) {
 		return database;
 	}
+	if (database->GetName() != info.name ||
+	    (database->OpenedReadOnly() && options.access_mode != AccessMode::READ_ONLY)) {
+		if (MetaTransaction::Get(context).ReferencesDatabase(*database)) {
+			throw BinderException("Unique file handle conflict: Cannot attach \"%s\" - the database file \"%s\" is in "
+			                      "the process of being detached",
+			                      info.name, info.path);
+		}
+		return nullptr;
+	}
 	VerifyReattachOptions(*database, info, options);
+	database->SetAccessMode(options.access_mode);
 	auto attached_db = FinalizeAttach(context, info, database, info.name);
 	if (attached_db != database) {
 		// IF NOT EXISTS, and another attach claimed the name while we got here: it wins, and the file
@@ -337,8 +346,6 @@ shared_ptr<AttachedDatabase> DatabaseManager::FinalizeAttach(ClientContext &cont
 				throw BinderException("Failed to attach database: database with name \"%s\" already exists", name);
 			}
 		}
-		// the name is ours now - a re-attach renames the database it hands back to it
-		attached_db->SetName(name);
 	}
 	auto &meta_transaction = MetaTransaction::Get(context);
 	if (detached_db) {

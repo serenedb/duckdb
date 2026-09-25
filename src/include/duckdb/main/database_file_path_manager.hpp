@@ -19,9 +19,10 @@ namespace duckdb {
 struct AttachInfo;
 struct AttachOptions;
 class AttachedDatabase;
+class ClientContext;
 class DatabaseManager;
 
-enum class InsertDatabasePathResult { SUCCESS, ALREADY_EXISTS, REUSE_EXISTING };
+enum class InsertDatabasePathResult { SUCCESS, ALREADY_EXISTS, REUSE_EXISTING, CLOSING };
 
 struct DatabasePathInfo {
 	DatabasePathInfo(DatabaseManager &manager, const Identifier &name_p, AccessMode access_mode);
@@ -50,6 +51,7 @@ public:
 	void EraseDatabasePath(const string &path);
 	//! Called when a database is detached, but before it is fully finished being used
 	void DetachDatabase(DatabaseManager &manager, const string &path);
+	void WaitForRelease(const string &path, ClientContext &context);
 
 private:
 	//! The lock to add entries to the db_paths map
