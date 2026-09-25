@@ -178,6 +178,11 @@ void FixedSizeScan(ColumnSegment &segment, ColumnScanState &state, idx_t scan_co
 	auto source_data = data + start * sizeof(T);
 
 	result.SetVectorType(VectorType::FLAT_VECTOR);
+	if ((reinterpret_cast<uintptr_t>(source_data) % alignof(T)) != 0) {
+		// a block adopted from a file mapping can start at any byte; the result is read as T[]
+		memcpy(FlatVector::GetDataMutable(result), source_data, scan_count * sizeof(T));
+		return;
+	}
 	FlatVector::SetData(result, source_data, count_t(scan_count));
 }
 

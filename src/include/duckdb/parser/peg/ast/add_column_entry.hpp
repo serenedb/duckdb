@@ -12,6 +12,7 @@ struct AddColumnEntry {
 	vector<Identifier> column_path;
 	unique_ptr<ParsedExpression> default_value;
 	CompressionType compression = CompressionType::COMPRESSION_AUTO;
+	uint8_t compression_level = 0;
 };
 
 } // namespace duckdb

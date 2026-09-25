@@ -1687,8 +1687,8 @@ public:
 	                                                      const vector<string> &dotted_identifier);
 	static unique_ptr<TransformResultValue> TransformColumnCompressionInternal(PEGTransformer &transformer,
 	                                                                           ParseResult &parse_result);
-	static ColumnConstraintEntry TransformColumnCompression(PEGTransformer &transformer,
-	                                                        const Identifier &col_id_or_string);
+	static ColumnConstraintEntry TransformColumnCompression(PEGTransformer &transformer, const Identifier &col_id_or_string,
+	                                                        optional<vector<unique_ptr<ParsedExpression>>> expression);
 	static unique_ptr<TransformResultValue> TransformKeyActionsInternal(PEGTransformer &transformer,
 	                                                                    ParseResult &parse_result);
 	static KeyActions TransformKeyActions(PEGTransformer &transformer, const optional<string> &update_action,

@@ -157,6 +157,14 @@ BlockHandle::BlockHandle(BlockManager &block_manager, block_id_t block_id_p, Mem
 }
 
 BlockHandle::BlockHandle(BlockManager &block_manager, block_id_t block_id_p, MemoryTag tag_p,
+                         idx_t block_alloc_size_p)
+    : block_manager(block_manager), block_alloc_size(block_alloc_size_p),
+      block_header_size(block_manager.GetBlockHeaderSize()), block_id(block_id_p),
+      memory_p(make_shared_ptr<BlockMemory>(block_manager.GetBufferManager(), block_id_p, tag_p, block_alloc_size)),
+      memory(*memory_p) {
+}
+
+BlockHandle::BlockHandle(BlockManager &block_manager, block_id_t block_id_p, MemoryTag tag_p,
                          unique_ptr<FileBuffer> buffer_p, DestroyBufferUpon destroy_buffer_upon_p, idx_t size_p,
                          BufferPoolReservation &&reservation)
     : block_manager(block_manager), block_alloc_size(block_manager.GetBlockAllocSize()),

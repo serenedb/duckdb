@@ -1,12 +1,15 @@
 #include "duckdb/storage/compression/dictionary/decompression.hpp"
 
+#include <cstddef>
+
 namespace duckdb {
 
 uint16_t CompressedStringScanState::GetStringLength(sel_t index) {
 	if (index == 0) {
 		return 0;
 	} else {
-		return UnsafeNumericCast<uint16_t>(index_buffer_ptr[index] - index_buffer_ptr[index - 1]);
+		return UnsafeNumericCast<uint16_t>(Load<uint32_t>(index_buffer_ptr + index * sizeof(uint32_t)) -
+		                                   Load<uint32_t>(index_buffer_ptr + (index - 1) * sizeof(uint32_t)));
 	}
 }
 
@@ -31,16 +34,16 @@ void CompressedStringScanState::Initialize(ColumnSegment &segment, bool initiali
 	baseptr = handle->GetDataMutable() + segment.GetBlockOffset();
 
 	// Load header values
-	auto header_ptr = reinterpret_cast<dictionary_compression_header_t *>(baseptr);
-	auto index_buffer_offset = Load<uint32_t>(data_ptr_cast(&header_ptr->index_buffer_offset));
-	index_buffer_count = Load<uint32_t>(data_ptr_cast(&header_ptr->index_buffer_count));
-	current_width = (bitpacking_width_t)(Load<uint32_t>(data_ptr_cast(&header_ptr->bitpacking_width)));
+	auto index_buffer_offset = Load<uint32_t>(baseptr + offsetof(dictionary_compression_header_t, index_buffer_offset));
+	index_buffer_count = Load<uint32_t>(baseptr + offsetof(dictionary_compression_header_t, index_buffer_count));
+	current_width =
+	    (bitpacking_width_t)(Load<uint32_t>(baseptr + offsetof(dictionary_compression_header_t, bitpacking_width)));
 	if (segment.GetBlockOffset() + index_buffer_offset + sizeof(uint32_t) * index_buffer_count >
 	    segment.GetBlockSize()) {
 		throw IOException(
 		    "Failed to scan dictionary string - index was out of range. Database file appears to be corrupted.");
 	}
-	index_buffer_ptr = reinterpret_cast<uint32_t *>(baseptr + index_buffer_offset);
+	index_buffer_ptr = baseptr + index_buffer_offset;
 	base_data = data_ptr_cast(baseptr + DictionaryCompression::DICTIONARY_HEADER_SIZE);
 
 	block_size = segment.GetBlockSize();
@@ -62,7 +65,8 @@ void CompressedStringScanState::Initialize(ColumnSegment &segment, bool initiali
 	for (uint32_t i = 1; i < index_buffer_count; i++) {
 		// NOTE: the passing of dict_child_vector, will not be used, its for big strings
 		uint16_t str_len = GetStringLength(i);
-		dict_child_data.WriteStringRef(FetchStringFromDict(UnsafeNumericCast<int32_t>(index_buffer_ptr[i]), str_len));
+		dict_child_data.WriteStringRef(FetchStringFromDict(
+		    UnsafeNumericCast<int32_t>(Load<uint32_t>(index_buffer_ptr + i * sizeof(uint32_t))), str_len));
 	}
 }
 
@@ -88,7 +92,7 @@ void CompressedStringScanState::ScanToFlatVector(Vector &result, idx_t result_of
 	for (idx_t i = 0; i < scan_count; i++) {
 		// Lookup dict offset in index buffer
 		auto string_number = sel_vec->get_index(i + start_offset);
-		auto dict_offset = index_buffer_ptr[string_number];
+		auto dict_offset = Load<uint32_t>(index_buffer_ptr + string_number * sizeof(uint32_t));
 		auto str_len = GetStringLength(UnsafeNumericCast<sel_t>(string_number));
 		result_data.WriteStringRef(FetchStringFromDict(UnsafeNumericCast<int32_t>(dict_offset), str_len));
 	}

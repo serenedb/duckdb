@@ -3,6 +3,8 @@
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/fsst.hpp"
 
+#include <cstddef>
+
 #include "duckdb/common/bitpacking.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/random_engine.hpp"
@@ -779,16 +781,16 @@ bool FSSTFun::TypeIsSupported(const PhysicalType physical_type) {
 // Helper Functions
 //===--------------------------------------------------------------------===//
 void FSSTStorage::SetDictionary(ColumnSegment &segment, BufferHandle &handle, StringDictionaryContainer container) {
-	auto header_ptr = reinterpret_cast<fsst_compression_header_t *>(handle.GetDataMutable() + segment.GetBlockOffset());
-	Store<uint32_t>(container.size, data_ptr_cast(&header_ptr->dict_size));
-	Store<uint32_t>(container.end, data_ptr_cast(&header_ptr->dict_end));
+	auto base_ptr = handle.GetDataMutable() + segment.GetBlockOffset();
+	Store<uint32_t>(container.size, base_ptr + offsetof(fsst_compression_header_t, dict_size));
+	Store<uint32_t>(container.end, base_ptr + offsetof(fsst_compression_header_t, dict_end));
 }
 
 StringDictionaryContainer FSSTStorage::GetDictionary(ColumnSegment &segment, BufferHandle &handle) {
-	auto header_ptr = reinterpret_cast<fsst_compression_header_t *>(handle.GetDataMutable() + segment.GetBlockOffset());
+	auto base_ptr = handle.GetDataMutable() + segment.GetBlockOffset();
 	StringDictionaryContainer container;
-	container.size = Load<uint32_t>(data_ptr_cast(&header_ptr->dict_size));
-	container.end = Load<uint32_t>(data_ptr_cast(&header_ptr->dict_end));
+	container.size = Load<uint32_t>(base_ptr + offsetof(fsst_compression_header_t, dict_size));
+	container.end = Load<uint32_t>(base_ptr + offsetof(fsst_compression_header_t, dict_end));
 	return container;
 }
 
@@ -805,12 +807,11 @@ char *FSSTStorage::FetchStringPointer(StringDictionaryContainer dict, data_ptr_t
 // Returns false if no symbol table was found. This means all strings are either empty or null
 bool FSSTStorage::ParseFSSTSegmentHeader(data_ptr_t base_ptr, duckdb_fsst_decoder_t *decoder_out,
                                          bitpacking_width_t *width_out, const idx_t block_size) {
-	auto header_ptr = reinterpret_cast<fsst_compression_header_t *>(base_ptr);
-	auto fsst_symbol_table_offset = Load<uint32_t>(data_ptr_cast(&header_ptr->fsst_symbol_table_offset));
+	auto fsst_symbol_table_offset = Load<uint32_t>(base_ptr + offsetof(fsst_compression_header_t, fsst_symbol_table_offset));
 	if (fsst_symbol_table_offset > block_size) {
 		throw InternalException("invalid fsst_symbol_table_offset in FSSTStorage::ParseFSSTSegmentHeader");
 	}
-	*width_out = (bitpacking_width_t)(Load<uint32_t>(data_ptr_cast(&header_ptr->bitpacking_width)));
+	*width_out = (bitpacking_width_t)(Load<uint32_t>(base_ptr + offsetof(fsst_compression_header_t, bitpacking_width)));
 	return duckdb_fsst_import(decoder_out, base_ptr + fsst_symbol_table_offset);
 }
 

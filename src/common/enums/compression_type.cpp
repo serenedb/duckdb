@@ -10,9 +10,11 @@ namespace duckdb {
 
 vector<string> ListCompressionTypes(void) {
 	vector<string> compression_types;
-	uint8_t amount_of_compression_options = (uint8_t)CompressionType::COMPRESSION_COUNT;
-	compression_types.reserve(amount_of_compression_options);
-	for (uint8_t i = 0; i < amount_of_compression_options; i++) {
+	for (uint8_t i = 0; i < (uint8_t)CompressionType::COMPRESSION_COUNT; i++) {
+		compression_types.push_back(CompressionTypeToString((CompressionType)i));
+	}
+	for (uint8_t i = (uint8_t)CompressionType::COMPRESSION_DICT_LZ4;
+	     i < (uint8_t)CompressionType::COMPRESSION_SERENEDB_COUNT; i++) {
 		compression_types.push_back(CompressionTypeToString((CompressionType)i));
 	}
 	return compression_types;
@@ -116,6 +118,22 @@ string CompressionTypeToString(CompressionType type) {
 		return "DICT_FSST";
 	case CompressionType::COMPRESSION_EMPTY:
 		return "Empty Validity";
+	case CompressionType::COMPRESSION_DICT_LZ4:
+		return "DICT_LZ4";
+	case CompressionType::COMPRESSION_DICT_ZSTD:
+		return "DICT_ZSTD";
+	case CompressionType::COMPRESSION_LZ4:
+		return "LZ4";
+	case CompressionType::COMPRESSION_COL_DICT_FSST:
+		return "DICT_FSST";
+	case CompressionType::COMPRESSION_COL_FSST:
+		return "FSST";
+	case CompressionType::COMPRESSION_DICT_ZXC:
+		return "DICT_ZXC";
+	case CompressionType::COMPRESSION_ZXC:
+		return "ZXC";
+	case CompressionType::COMPRESSION_COL_ZSTD:
+		return "ZSTD";
 	default:
 		throw InternalException("Unrecognized compression type!");
 	}

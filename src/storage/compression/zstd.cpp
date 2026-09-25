@@ -745,7 +745,7 @@ public:
 	//! The current pointer at which we're reading the vectors data
 	data_ptr_t current_buffer_ptr;
 	//! The (uncompressed) string lengths for this vector
-	const string_length_t *string_lengths;
+	const_data_ptr_t string_lengths;
 	//! The amount of values already consumed from the state
 	idx_t scanned_count = 0;
 	//! The amount of compressed data read
@@ -779,19 +779,19 @@ public:
 
 		// Set pointers to the Vector Metadata
 		offset = AlignValue<idx_t, sizeof(page_id_t)>(offset);
-		page_ids = reinterpret_cast<page_id_t *>(data + offset);
+		page_ids = data + offset;
 		offset += (sizeof(page_id_t) * amount_of_vectors);
 
 		offset = AlignValue<idx_t, sizeof(page_offset_t)>(offset);
-		page_offsets = reinterpret_cast<page_offset_t *>(data + offset);
+		page_offsets = data + offset;
 		offset += (sizeof(page_offset_t) * amount_of_vectors);
 
 		offset = AlignValue<idx_t, sizeof(uncompressed_size_t)>(offset);
-		uncompressed_sizes = reinterpret_cast<uncompressed_size_t *>(data + offset);
+		uncompressed_sizes = data + offset;
 		offset += (sizeof(uncompressed_size_t) * amount_of_vectors);
 
 		offset = AlignValue<idx_t, sizeof(compressed_size_t)>(offset);
-		compressed_sizes = reinterpret_cast<compressed_size_t *>(data + offset);
+		compressed_sizes = data + offset;
 		offset += (sizeof(compressed_size_t) * amount_of_vectors);
 
 		scanned_count = 0;
@@ -812,10 +812,14 @@ public:
 		idx_t value_count = MinValue<idx_t>(segment_count - previous_value_count, ZSTD_VECTOR_SIZE);
 
 		return ZSTDVectorScanMetadata {/* vector_idx = */ vector_idx,
-		                               /* block_id = */ page_ids[vector_idx],
-		                               /* block_offset = */ page_offsets[vector_idx],
-		                               /* uncompressed_size = */ uncompressed_sizes[vector_idx],
-		                               /* compressed_size = */ compressed_sizes[vector_idx],
+		                               /* block_id = */ Load<page_id_t>(page_ids + vector_idx * sizeof(page_id_t)),
+		                               /* block_offset = */
+		                               Load<page_offset_t>(page_offsets + vector_idx * sizeof(page_offset_t)),
+		                               /* uncompressed_size = */
+		                               Load<uncompressed_size_t>(uncompressed_sizes +
+		                                                         vector_idx * sizeof(uncompressed_size_t)),
+		                               /* compressed_size = */
+		                               Load<compressed_size_t>(compressed_sizes + vector_idx * sizeof(compressed_size_t)),
 		                               /* count = */ value_count};
 	}
 
@@ -871,7 +875,7 @@ public:
 			auto vector_size = metadata.count;
 
 			auto string_lengths_size = (sizeof(string_length_t) * vector_size);
-			scan_state.string_lengths = reinterpret_cast<string_length_t *>(scan_state.current_buffer_ptr);
+			scan_state.string_lengths = scan_state.current_buffer_ptr;
 			scan_state.current_buffer_ptr += string_lengths_size;
 
 			// Update the in_buffer to point to the start of the compressed data frame
@@ -911,8 +915,7 @@ public:
 		const idx_t total_size = (lengths_position + lengths_size) - data_position;
 		if (const_data_ptr_t base = stream_reader->TryReadStable(data_position, total_size)) {
 			// Zero-copy: lengths and the zstd input both point into the mapping
-			scan_state.string_lengths =
-			    reinterpret_cast<const string_length_t *>(base + (lengths_position - data_position));
+			scan_state.string_lengths = base + (lengths_position - data_position);
 			scan_state.in_buffer.src = base;
 			scan_state.in_buffer.size = metadata.compressed_size;
 			scan_state.in_buffer.pos = 0;
@@ -926,7 +929,7 @@ public:
 			    buffer_manager.GetBufferAllocator().Allocate(ZSTD_VECTOR_SIZE * sizeof(string_length_t));
 		}
 		stream_reader->Read(lengths_position, stream_lengths_scratch.get(), lengths_size);
-		scan_state.string_lengths = reinterpret_cast<const string_length_t *>(stream_lengths_scratch.get());
+		scan_state.string_lengths = stream_lengths_scratch.get();
 		scan_state.stream_position = data_position;
 		scan_state.stream_remaining = metadata.compressed_size;
 		scan_state.in_buffer.src = nullptr;
@@ -1030,10 +1033,10 @@ public:
 		D_ASSERT(scan_state.scanned_count + count <= scan_state.metadata.count);
 
 		// Figure out how much we need to skip
-		const string_length_t *string_lengths = &scan_state.string_lengths[scan_state.scanned_count];
+		const_data_ptr_t string_lengths = scan_state.string_lengths + scan_state.scanned_count * sizeof(string_length_t);
 		idx_t uncompressed_length = 0;
 		for (idx_t i = 0; i < count; i++) {
-			uncompressed_length += string_lengths[i];
+			uncompressed_length += Load<string_length_t>(string_lengths + i * sizeof(string_length_t));
 		}
 
 		// Skip that many bytes by decompressing into the skip_buffer
@@ -1051,10 +1054,10 @@ public:
 		D_ASSERT(scan_state.scanned_count + count <= scan_state.metadata.count);
 		D_ASSERT(result.GetType().InternalType() == PhysicalType::VARCHAR);
 
-		const string_length_t *string_lengths = &scan_state.string_lengths[scan_state.scanned_count];
+		const_data_ptr_t string_lengths = scan_state.string_lengths + scan_state.scanned_count * sizeof(string_length_t);
 		idx_t uncompressed_length = 0;
 		for (idx_t i = 0; i < count; i++) {
-			uncompressed_length += string_lengths[i];
+			uncompressed_length += Load<string_length_t>(string_lengths + i * sizeof(string_length_t));
 		}
 		auto &allocator = StringVector::GetStringAllocator(result);
 		auto uncompressed_data = StringVector::AllocateShrinkableBuffer(allocator, uncompressed_length);
@@ -1064,8 +1067,9 @@ public:
 
 		idx_t offset = 0;
 		for (idx_t i = 0; i < count; i++) {
-			string_data[result_offset + i] = string_t(char_ptr_cast(uncompressed_data + offset), string_lengths[i]);
-			offset += string_lengths[i];
+			const auto length = Load<string_length_t>(string_lengths + i * sizeof(string_length_t));
+			string_data[result_offset + i] = string_t(char_ptr_cast(uncompressed_data + offset), length);
+			offset += length;
 		}
 		scan_state.scanned_count += count;
 		scanned_count += count;
@@ -1100,10 +1104,10 @@ public:
 	//===--------------------------------------------------------------------===//
 	// Vector metadata
 	//===--------------------------------------------------------------------===//
-	page_id_t *page_ids;
-	page_offset_t *page_offsets;
-	uncompressed_size_t *uncompressed_sizes;
-	compressed_size_t *compressed_sizes;
+	data_ptr_t page_ids;
+	data_ptr_t page_offsets;
+	data_ptr_t uncompressed_sizes;
+	data_ptr_t compressed_sizes;
 
 	//! Cache of (the scan state of) the current vector being read
 	unique_ptr<ZSTDVectorScanState> current_vector;

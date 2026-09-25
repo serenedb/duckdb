@@ -38,7 +38,7 @@ public:
 	data_ptr_t baseptr;
 	//! Start of the data (pointing to the start of the selection buffer)
 	data_ptr_t base_data;
-	uint32_t *index_buffer_ptr;
+	data_ptr_t index_buffer_ptr;
 	uint32_t index_buffer_count;
 
 	buffer_ptr<DictionaryEntry> dictionary;

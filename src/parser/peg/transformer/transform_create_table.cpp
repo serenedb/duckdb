@@ -15,6 +15,7 @@
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/parser/parsed_data/create_secret_info.hpp"
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
+#include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/catalog/default/default_types.hpp"
@@ -260,6 +261,7 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 	}
 	auto column_type = has_type ? *type : LogicalType::ANY;
 	CompressionType compression_type = CompressionType::COMPRESSION_AUTO;
+	uint8_t compression_level = 0;
 	ColumnConstraint accumulated_constraints;
 	// ConstraintNameClause? -- an explicit `CONSTRAINT <name>` preceding the column's
 	// constraints binds to the first constraint object we build for this column.
@@ -288,6 +290,7 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 				accumulated_constraints.constraint_types.push_back(cc_entry.constraint_type_info);
 			} else if (cc_entry.constraint_name == "ColumnCompression") {
 				compression_type = cc_entry.compression_type;
+				compression_level = cc_entry.compression_level;
 				if (compression_type == CompressionType::COMPRESSION_AUTO) {
 					throw ParserException("Unrecognized option for column compression, expected none, uncompressed, "
 					                      "rle, dictionary, pfor, bitpacking, fsst, chimp, patas, zstd, alp, alprd or "
@@ -350,6 +353,7 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 		ColumnDefinition col(qualified_name.Name(), column_type, std::move(generated.expr),
 		                     generated.stored ? TableColumnType::GENERATED_STORED : TableColumnType::GENERATED_VIRTUAL);
 		col.SetCompressionType(compression_type);
+		col.SetCompressionLevel(compression_level);
 		if (accumulated_constraints.default_value) {
 			throw ParserException("Not allowed to set default on a generated column");
 		}
@@ -368,6 +372,7 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 		col.SetDefaultValue(std::move(accumulated_constraints.default_value));
 	}
 	col.SetCompressionType(compression_type);
+	col.SetCompressionLevel(compression_level);
 	ConstraintColumnDefinition result = {std::move(col), accumulated_constraints.constraint_types,
 	                                     std::move(accumulated_constraints.constraints)};
 	result.has_explicit_null = accumulated_constraints.has_explicit_null;
@@ -460,12 +465,42 @@ vector<string> PEGTransformerFactory::TransformColumnIdList(PEGTransformer &tran
 	return IdentifiersToStrings(col_id);
 }
 
-ColumnConstraintEntry PEGTransformerFactory::TransformColumnCompression(PEGTransformer &transformer,
-                                                                        const Identifier &col_id_or_string) {
+ColumnConstraintEntry PEGTransformerFactory::TransformColumnCompression(
+    PEGTransformer &transformer, const Identifier &col_id_or_string,
+    optional<vector<unique_ptr<ParsedExpression>>> expression) {
 	ColumnConstraintEntry entry;
 	entry.constraint_name = "ColumnCompression";
 	entry.compression_type =
 	    EnumUtil::FromString<CompressionType>(StringUtil::Lower(col_id_or_string.GetIdentifierName()));
+	if (!expression) {
+		return entry;
+	}
+	for (auto &option : *expression) {
+		// name = value, as WITH options are written
+		if (option->GetExpressionClass() != ExpressionClass::COMPARISON ||
+		    option->Cast<ComparisonExpression>().GetExpressionType() != ExpressionType::COMPARE_EQUAL) {
+			throw ParserException("Compression option must be written as name = value, got '%s'", option->ToString());
+		}
+		auto &comparison = option->Cast<ComparisonExpression>();
+		if (comparison.Left().GetExpressionClass() != ExpressionClass::COLUMN_REF ||
+		    comparison.Right().GetExpressionClass() != ExpressionClass::CONSTANT) {
+			throw ParserException("Compression option must be written as name = value, got '%s'", option->ToString());
+		}
+		auto name =
+		    StringUtil::Lower(comparison.Left().Cast<ColumnRefExpression>().GetColumnName().GetIdentifierName());
+		auto &value = comparison.Right().Cast<ConstantExpression>().GetValue();
+		if (name != "compression_level") {
+			throw ParserException("Unknown compression option '%s', expected compression_level", name);
+		}
+		if (!value.type().IsIntegral() || value.IsNull()) {
+			throw ParserException("compression_level must be an integer, got '%s'", value.ToString());
+		}
+		auto level = value.GetValue<int64_t>();
+		if (level < 1 || level > 255) {
+			throw ParserException("compression_level must be between 1 and 255, got %lld", level);
+		}
+		entry.compression_level = NumericCast<uint8_t>(level);
+	}
 	return entry;
 }
 

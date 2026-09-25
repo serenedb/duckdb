@@ -42,6 +42,10 @@ static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageMa
 	auto &base = info.base->Cast<CreateTableInfo>();
 	for (auto &col : base.columns.Logical()) {
 		auto compression_type = col.CompressionType();
+		if (IsSereneDBCompressionType(compression_type) || compression_type == CompressionType::COMPRESSION_FSST) {
+			// implemented by the SereneDB columnstore, which validates the column itself
+			continue;
+		}
 		auto compression_availability_result = CompressionTypeIsAvailable(compression_type, storage_manager);
 		if (!compression_availability_result.IsAvailable()) {
 			if (compression_availability_result.IsDeprecated()) {

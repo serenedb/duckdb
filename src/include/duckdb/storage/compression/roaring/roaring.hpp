@@ -481,7 +481,7 @@ public:
 			finished = true;
 			return;
 		}
-		value = reinterpret_cast<uint16_t *>(data)[array_index];
+		value = Load<uint16_t>(data + array_index * sizeof(uint16_t));
 		array_index++;
 	}
 
@@ -534,10 +534,10 @@ public:
 	void Verify() const override {
 #ifdef DEBUG
 		uint16_t index = 0;
-		auto array = reinterpret_cast<uint16_t *>(data);
 		for (uint16_t i = 0; i < count; i++) {
-			D_ASSERT(!i || array[i] > index);
-			index = array[i];
+			const auto value = Load<uint16_t>(data + i * sizeof(uint16_t));
+			D_ASSERT(!i || value > index);
+			index = value;
 		}
 #endif
 	}

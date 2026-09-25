@@ -108,6 +108,8 @@ public:
 
 	//! Register a block with the given block id in the base file
 	shared_ptr<BlockHandle> RegisterBlock(block_id_t block_id);
+	//! Register a block of a given allocation size instead of the block manager's nominal one
+	shared_ptr<BlockHandle> RegisterBlock(block_id_t block_id, idx_t block_alloc_size);
 	//! Convert an existing in-memory buffer into a persistent disk-backed block
 	//! If mode is set to destructive (default) - the old_block will be destroyed as part of this method
 	//! This can only be safely used when there is no other (lingering) usage of old_block

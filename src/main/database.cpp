@@ -316,7 +316,7 @@ void DatabaseInstance::Initialize(const char *database_path, DBConfig *user_conf
 	result_set_manager = make_uniq<ResultSetManager>(*this);
 
 	scheduler = make_uniq<TaskScheduler>(*this);
-	object_cache = make_uniq<ObjectCache>(*config.buffer_pool);
+	object_cache = make_uniq<ObjectCache>(ObjectCache::DefaultMaxMemory(config.options.maximum_memory), *config.buffer_pool);
 	config.buffer_pool->SetObjectCache(object_cache.get());
 	shared_object_cache = make_uniq<SharedObjectCache>(config.buffer_pool);
 	connection_manager = make_uniq<ConnectionManager>();

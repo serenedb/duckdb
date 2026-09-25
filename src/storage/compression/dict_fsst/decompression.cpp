@@ -4,6 +4,8 @@
 #include "fsst.h"
 #include "duckdb/common/fsst.hpp"
 
+#include <cstddef>
+
 namespace duckdb {
 namespace dict_fsst {
 
@@ -65,19 +67,18 @@ void CompressedStringScanState::Initialize(bool initialize_dictionary) {
 	baseptr = handle->GetDataMutable() + segment.GetBlockOffset();
 
 	// Load header values
-	auto header_ptr = reinterpret_cast<dict_fsst_compression_header_t *>(baseptr);
-	mode = header_ptr->mode;
+	mode = static_cast<DictFSSTMode>(Load<uint8_t>(baseptr + offsetof(dict_fsst_compression_header_t, mode)));
 	if (!IsNativeMode(mode) && !IsPlusMode(mode)) {
 		throw FatalException("This block was written with a dict_fsst mode not recognized by this version of SereneDB: "
 		                     "%d",
 		                     static_cast<uint8_t>(mode));
 	}
 
-	dict_count = header_ptr->dict_count;
-	auto symbol_table_size = header_ptr->symbol_table_size;
+	dict_count = Load<uint32_t>(baseptr + offsetof(dict_fsst_compression_header_t, dict_count));
+	auto symbol_table_size = Load<uint32_t>(baseptr + offsetof(dict_fsst_compression_header_t, symbol_table_size));
 
-	dictionary_indices_width =
-	    (bitpacking_width_t)(Load<uint8_t>(data_ptr_cast(&header_ptr->dictionary_indices_width)));
+	dictionary_indices_width = (bitpacking_width_t)(Load<uint8_t>(
+	    baseptr + offsetof(dict_fsst_compression_header_t, dictionary_indices_width)));
 
 	static constexpr auto GROUP = BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
 	const bool plus = IsPlusMode(mode);
@@ -92,16 +93,20 @@ void CompressedStringScanState::Initialize(bool initialize_dictionary) {
 	bitpacking_width_t prefix_id_width = 0;
 	idx_t prefix_decoded_cap = 0;
 	if (plus) {
-		auto ext = reinterpret_cast<dict_fsst_plus_header_t *>(
-		    baseptr + AlignValue<idx_t>(sizeof(dict_fsst_compression_header_t)));
-		prefix_count = ext->prefix_count;
-		prefix_decoded_cap = size_t(ext->prefix_bytes_size) * 8 + 8;
-		prefix_lengths_width = (bitpacking_width_t)(Load<uint8_t>(data_ptr_cast(&ext->prefix_lengths_width)));
-		prefix_id_width = (bitpacking_width_t)(Load<uint8_t>(data_ptr_cast(&ext->prefix_id_width)));
-		entry_lengths_width = (bitpacking_width_t)(Load<uint8_t>(data_ptr_cast(&ext->suffix_lengths_width)));
-		auto layout = DictFSSTPlusLayout::Compute(
-		    segment.count.load(), dict_count, prefix_count, dictionary_indices_width, prefix_lengths_width,
-		    prefix_id_width, entry_lengths_width, symbol_table_size, ext->prefix_bytes_size, ext->suffix_bytes_size);
+		auto ext = baseptr + AlignValue<idx_t>(sizeof(dict_fsst_compression_header_t));
+		prefix_count = Load<uint32_t>(ext + offsetof(dict_fsst_plus_header_t, prefix_count));
+		const auto prefix_bytes_size = Load<uint32_t>(ext + offsetof(dict_fsst_plus_header_t, prefix_bytes_size));
+		const auto suffix_bytes_size = Load<uint32_t>(ext + offsetof(dict_fsst_plus_header_t, suffix_bytes_size));
+		prefix_decoded_cap = size_t(prefix_bytes_size) * 8 + 8;
+		prefix_lengths_width =
+		    (bitpacking_width_t)(Load<uint8_t>(ext + offsetof(dict_fsst_plus_header_t, prefix_lengths_width)));
+		prefix_id_width = (bitpacking_width_t)(Load<uint8_t>(ext + offsetof(dict_fsst_plus_header_t, prefix_id_width)));
+		entry_lengths_width =
+		    (bitpacking_width_t)(Load<uint8_t>(ext + offsetof(dict_fsst_plus_header_t, suffix_lengths_width)));
+		auto layout = DictFSSTPlusLayout::Compute(segment.count.load(), dict_count, prefix_count,
+		                                          dictionary_indices_width, prefix_lengths_width, prefix_id_width,
+		                                          entry_lengths_width, symbol_table_size, prefix_bytes_size,
+		                                          suffix_bytes_size);
 		if (segment.GetBlockOffset() + layout.total > segment.GetBlockSize()) {
 			throw IOException(
 			    "Failed to scan dictionary string - index was out of range. Database file appears to be corrupted.");
@@ -115,8 +120,9 @@ void CompressedStringScanState::Initialize(bool initialize_dictionary) {
 		prefix_bytes_src = baseptr + layout.prefix_bytes_dest;
 	} else {
 		prefix_count = 0;
-		auto dictionary_size = header_ptr->dict_size;
-		entry_lengths_width = (bitpacking_width_t)(Load<uint8_t>(data_ptr_cast(&header_ptr->string_lengths_width)));
+		auto dictionary_size = Load<uint32_t>(baseptr + offsetof(dict_fsst_compression_header_t, dict_size));
+		entry_lengths_width = (bitpacking_width_t)(Load<uint8_t>(
+		    baseptr + offsetof(dict_fsst_compression_header_t, string_lengths_width)));
 		auto entry_lengths_space = BitpackingPrimitives::GetRequiredSize(dict_count, entry_lengths_width);
 		auto dictionary_indices_space =
 		    BitpackingPrimitives::GetRequiredSize(segment.count.load(), dictionary_indices_width);

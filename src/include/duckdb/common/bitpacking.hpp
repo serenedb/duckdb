@@ -230,6 +230,21 @@ private:
 	template <class T>
 	static inline void UnPackGroup(data_ptr_t dst, data_ptr_t src, bitpacking_width_t width,
 	                               bool skip_sign_extension = false) {
+		if (!std::is_same<T, int8_t>::value && !std::is_same<T, uint8_t>::value &&
+		    (reinterpret_cast<uintptr_t>(src) % sizeof(uint32_t)) != 0) {
+			// the unpackers read the packed group through 32-bit pointers; a block adopted straight from a file
+			// mapping can start at any byte, so such a group is unpacked from an aligned copy
+			alignas(16) uint32_t aligned[BITPACKING_ALGORITHM_GROUP_SIZE * sizeof(hugeint_t) / sizeof(uint32_t)];
+			memcpy(aligned, src, (BITPACKING_ALGORITHM_GROUP_SIZE * width) / 8);
+			UnPackGroupAligned<T>(dst, data_ptr_cast(aligned), width, skip_sign_extension);
+			return;
+		}
+		UnPackGroupAligned<T>(dst, src, width, skip_sign_extension);
+	}
+
+	template <class T>
+	static inline void UnPackGroupAligned(data_ptr_t dst, data_ptr_t src, bitpacking_width_t width,
+	                                      bool skip_sign_extension) {
 		if (std::is_same<T, int8_t>::value || std::is_same<T, uint8_t>::value) {
 			duckdb_fastpforlib::fastunpack(reinterpret_cast<const uint8_t *>(src), reinterpret_cast<uint8_t *>(dst),
 			                               static_cast<uint32_t>(width));

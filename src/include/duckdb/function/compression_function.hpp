@@ -346,7 +346,7 @@ public:
 
 //! The set of compression functions
 struct CompressionFunctionSet {
-	static constexpr idx_t COMPRESSION_TYPE_COUNT = 16;
+	static constexpr idx_t COMPRESSION_TYPE_COUNT = static_cast<idx_t>(CompressionType::COMPRESSION_SERENEDB_COUNT);
 	static constexpr idx_t PHYSICAL_TYPE_COUNT = 19;
 
 public:
