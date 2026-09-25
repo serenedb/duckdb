@@ -1,3 +1,4 @@
+#include "duckdb/common/helper.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/function/compression_function.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
@@ -7,6 +8,11 @@
 #include "duckdb/storage/table/scan_state.hpp"
 
 namespace duckdb {
+
+static bool RowIsValidAt(const_data_ptr_t bits, idx_t row) {
+	const auto entry = Load<validity_t>(bits + (row / ValidityMask::BITS_PER_VALUE) * sizeof(validity_t));
+	return (entry & (validity_t(1) << (row % ValidityMask::BITS_PER_VALUE))) != 0;
+}
 
 //===--------------------------------------------------------------------===//
 // Mask constants
@@ -219,7 +225,6 @@ unique_ptr<SegmentScanState> ValidityInitScan(const QueryContext &context, Colum
 void ValidityUncompressed::UnalignedScan(data_ptr_t input, idx_t input_size, idx_t input_start,
                                          ValidityMask &result_mask, idx_t result_offset, idx_t scan_count) {
 	D_ASSERT(input_start < input_size);
-	auto input_data = reinterpret_cast<validity_t *>(input);
 
 #ifdef DEBUG
 	// save boundary entries to verify we don't corrupt surrounding bits later.
@@ -247,6 +252,7 @@ void ValidityUncompressed::UnalignedScan(data_ptr_t input, idx_t input_size, idx
 #if STANDARD_VECTOR_SIZE < 128
 	// fallback for tiny vector sizes
 	// the bitwise ops we use below don't work if the vector size is too small
+	auto input_data = reinterpret_cast<validity_t *>(input);
 	ValidityMask source_mask128(input_data, input_size);
 	for (idx_t i = 0; i < scan_count; i++) {
 		if (!source_mask128.RowIsValid(input_start + i)) {
@@ -304,7 +310,7 @@ void ValidityUncompressed::UnalignedScan(data_ptr_t input, idx_t input_size, idx
 	// now start the bit games
 	idx_t pos = 0;
 	while (pos < scan_count) {
-		validity_t input_mask = input_data[input_entry];
+		validity_t input_mask = Load<validity_t>(input + input_entry * sizeof(validity_t));
 		idx_t bits_left = scan_count - pos;
 
 		// these are bits left within the current entries (possibly extra than what we need).
@@ -401,10 +407,9 @@ void ValidityUncompressed::UnalignedScan(data_ptr_t input, idx_t input_size, idx
 
 #ifdef DEBUG
 	// verify in-range bits.
-	ValidityMask source_mask(input_data, input_size);
 	for (idx_t i = 0; i < scan_count; i++) {
 		bool original_valid = debug_original_result.RowIsValid(i);
-		bool input_valid = source_mask.RowIsValid(input_start + i);
+		bool input_valid = RowIsValidAt(input, input_start + i);
 		bool result_valid = result_mask.RowIsValid(result_offset + i);
 		D_ASSERT(result_valid == (original_valid && input_valid));
 	}
@@ -436,12 +441,11 @@ void ValidityUncompressed::AlignedScan(data_ptr_t input, idx_t input_start, Vali
 	// aligned scan: no need to do anything fancy
 	// note: this is only an optimization which avoids having to do messy bitshifting in the common case
 	// it is not required for correctness
-	auto input_data = reinterpret_cast<validity_t *>(input);
 	auto result_data = result_mask.GetData();
 	idx_t start_offset = input_start / ValidityMask::BITS_PER_VALUE;
 	idx_t entry_scan_count = (scan_count + ValidityMask::BITS_PER_VALUE - 1) / ValidityMask::BITS_PER_VALUE;
 	for (idx_t i = 0; i < entry_scan_count; i++) {
-		auto input_entry = input_data[start_offset + i];
+		auto input_entry = Load<validity_t>(input + (start_offset + i) * sizeof(validity_t));
 		if (!result_data && input_entry == ValidityMask::ValidityBuffer::MAX_ENTRY) {
 			continue;
 		}
@@ -493,13 +497,11 @@ void ValiditySelect(ColumnSegment &segment, ColumnScanState &state, idx_t, Vecto
 	auto &scan_state = state.scan_state->Cast<ValidityScanState>();
 	auto buffer_ptr = scan_state.handle.GetDataMutable() + segment.GetBlockOffset();
 	auto &result_mask = FlatVector::ValidityMutable(result);
-	auto input_data = reinterpret_cast<validity_t *>(buffer_ptr);
 
 	auto start = state.GetPositionInSegment();
-	ValidityMask source_mask(input_data, segment.count);
 	for (idx_t i = 0; i < sel_count; i++) {
 		auto source_idx = start + sel.get_index(i);
-		if (!source_mask.RowIsValidUnsafe(source_idx)) {
+		if (!RowIsValidAt(buffer_ptr, source_idx)) {
 			result_mask.SetInvalid(i);
 		}
 	}
@@ -513,9 +515,8 @@ void ValidityFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row
 	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
 	auto handle = buffer_manager.Pin(segment.GetBlockHandle());
 	auto dataptr = handle.GetDataMutable() + segment.GetBlockOffset();
-	ValidityMask mask(reinterpret_cast<validity_t *>(dataptr), segment.count);
 	auto &result_mask = FlatVector::ValidityMutable(result);
-	if (!mask.RowIsValidUnsafe(NumericCast<idx_t>(row_id))) {
+	if (!RowIsValidAt(dataptr, NumericCast<idx_t>(row_id))) {
 		result_mask.SetInvalid(result_idx);
 	}
 }

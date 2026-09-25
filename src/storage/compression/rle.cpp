@@ -586,14 +586,14 @@ struct RLEScanState : public SegmentScanState {
 
 	inline T Value() const {
 		if (!layout.packed) {
-			return reinterpret_cast<const T *>(layout.values)[entry_pos];
+			return Load<T>(layout.values + entry_pos * sizeof(T));
 		}
 		return value_window[entry_pos & (RLE_GROUP_SIZE - 1)];
 	}
 
 	inline rle_count_t Count() const {
 		if (!layout.packed) {
-			return reinterpret_cast<const rle_count_t *>(layout.counts)[entry_pos];
+			return Load<rle_count_t>(layout.counts + entry_pos * sizeof(rle_count_t));
 		}
 		return count_window[entry_pos & (RLE_GROUP_SIZE - 1)];
 	}
@@ -669,8 +669,8 @@ struct RLEScanState : public SegmentScanState {
 				run_end = count_window[lane];
 				element = value_window[lane];
 			} else {
-				run_end = reinterpret_cast<const rle_count_t *>(layout.counts)[entry_pos];
-				element = reinterpret_cast<const T *>(layout.values)[entry_pos];
+				run_end = Load<rle_count_t>(layout.counts + entry_pos * sizeof(rle_count_t));
+				element = Load<T>(layout.values + entry_pos * sizeof(T));
 			}
 			const idx_t run_count = run_end - position_in_entry;
 			const idx_t remaining = scan_count - written;
@@ -843,6 +843,11 @@ void RLEFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 			run_values = make_unsafe_uniq_array<T>(padded_run_count);
 			RLEScanState<T>::ValueCodec::Unpack(run_values.get(), values_ptr, padded_run_count, layout.value_frame,
 			                                    layout.value_width);
+			values_ptr = data_ptr_cast(run_values.get());
+		} else if ((reinterpret_cast<uintptr_t>(values_ptr) % alignof(T)) != 0) {
+			// the filter reads the run values as a typed vector, which needs them aligned
+			run_values = make_unsafe_uniq_array<T>(total_run_count);
+			memcpy(run_values.get(), values_ptr, total_run_count * sizeof(T));
 			values_ptr = data_ptr_cast(run_values.get());
 		}
 

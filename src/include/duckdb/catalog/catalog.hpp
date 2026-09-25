@@ -140,6 +140,10 @@ public:
 		return false;
 	}
 
+	virtual bool SupportsSereneDBCompression() const {
+		return false;
+	}
+
 	//! Whether this catalog matches identifiers exactly rather than case-insensitively. A catalog that folds
 	//! unquoted names itself, as postgres does, holds `t("A" int, "a" int)` as two columns; duckdb's own
 	//! semantics collapse the two.

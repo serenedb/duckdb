@@ -261,6 +261,7 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformAddColumn(PEGTransfor
 		column_definition.SetDefaultValue(std::move(add_column_entry.default_value));
 	}
 	column_definition.SetCompressionType(add_column_entry.compression);
+	column_definition.SetCompressionLevel(add_column_entry.compression_level);
 	if (add_column_entry.column_path.size() > 1 && add_column_entry.compression != CompressionType::COMPRESSION_AUTO) {
 		throw ParserException("USING COMPRESSION is not supported when adding a struct field");
 	}
@@ -305,6 +306,7 @@ AddColumnEntry PEGTransformerFactory::TransformAddColumnEntry(
 				new_column.default_value = std::move(constraint.expression);
 			} else if (constraint.constraint_name == "ColumnCompression") {
 				new_column.compression = constraint.compression_type;
+				new_column.compression_level = constraint.compression_level;
 				if (new_column.compression == CompressionType::COMPRESSION_AUTO) {
 					throw ParserException("Unrecognized option for column compression, expected none, uncompressed, "
 					                      "rle, dictionary, pfor, bitpacking, fsst, chimp, patas, zstd, alp, alprd or "

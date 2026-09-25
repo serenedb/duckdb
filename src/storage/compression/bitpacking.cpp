@@ -40,10 +40,11 @@ static bitpacking_metadata_encoded_t EncodeMeta(bitpacking_metadata_t metadata) 
 	encoded_value |= UnsafeNumericCast<bitpacking_metadata_encoded_t>((uint8_t)metadata.mode << 24);
 	return encoded_value;
 }
-static bitpacking_metadata_t DecodeMeta(bitpacking_metadata_encoded_t *metadata_encoded) {
+static bitpacking_metadata_t DecodeMeta(const_data_ptr_t metadata_encoded) {
 	bitpacking_metadata_t metadata;
-	metadata.mode = static_cast<BitpackingMode>((*metadata_encoded >> 24) & 0xFF);
-	metadata.offset = *metadata_encoded & 0x00FFFFFF;
+	const auto encoded = Load<bitpacking_metadata_encoded_t>(metadata_encoded);
+	metadata.mode = static_cast<BitpackingMode>((encoded >> 24) & 0xFF);
+	metadata.offset = encoded & 0x00FFFFFF;
 	return metadata;
 }
 
@@ -626,7 +627,7 @@ public:
 		D_ASSERT(bitpacking_metadata_ptr > handle.GetDataMutable() &&
 		         (bitpacking_metadata_ptr < handle.GetDataMutable() + current_segment.GetBlockSize()));
 		current_group_offset = 0;
-		current_group = DecodeMeta(reinterpret_cast<bitpacking_metadata_encoded_t *>(bitpacking_metadata_ptr));
+		current_group = DecodeMeta(bitpacking_metadata_ptr);
 
 		bitpacking_metadata_ptr -= sizeof(bitpacking_metadata_encoded_t);
 		current_group_ptr = GetPtr(current_group);
@@ -634,13 +635,13 @@ public:
 		// Read first value
 		switch (current_group.mode) {
 		case BitpackingMode::CONSTANT:
-			current_constant = *reinterpret_cast<T *>(current_group_ptr);
+			current_constant = Load<T>(current_group_ptr);
 			current_group_ptr += sizeof(T);
 			break;
 		case BitpackingMode::FOR:
 		case BitpackingMode::CONSTANT_DELTA:
 		case BitpackingMode::DELTA_FOR:
-			current_frame_of_reference = *reinterpret_cast<T *>(current_group_ptr);
+			current_frame_of_reference = Load<T>(current_group_ptr);
 			current_group_ptr += sizeof(T);
 			break;
 		default:
@@ -650,12 +651,12 @@ public:
 		// Read second value
 		switch (current_group.mode) {
 		case BitpackingMode::CONSTANT_DELTA:
-			current_constant = *reinterpret_cast<T *>(current_group_ptr);
+			current_constant = Load<T>(current_group_ptr);
 			current_group_ptr += sizeof(T);
 			break;
 		case BitpackingMode::FOR:
 		case BitpackingMode::DELTA_FOR:
-			current_width = (bitpacking_width_t)(*reinterpret_cast<T *>(current_group_ptr));
+			current_width = (bitpacking_width_t)(Load<T>(current_group_ptr));
 			current_group_ptr += MaxValue(sizeof(T), sizeof(bitpacking_width_t));
 			break;
 		case BitpackingMode::CONSTANT:
@@ -666,7 +667,7 @@ public:
 
 		// Read third value
 		if (current_group.mode == BitpackingMode::DELTA_FOR) {
-			current_delta_offset = *reinterpret_cast<T *>(current_group_ptr);
+			current_delta_offset = Load<T>(current_group_ptr);
 			current_group_ptr += sizeof(T);
 		}
 	}
@@ -1060,7 +1061,7 @@ void BitpackingFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vect
 		idx_t offset_in_group = scan_state.current_group_offset;
 		if (offset_in_group == BITPACKING_METADATA_GROUP_SIZE) {
 			// the scan exhausted the group but has not loaded the next one yet
-			meta = DecodeMeta(reinterpret_cast<bitpacking_metadata_encoded_t *>(peek_ptr));
+			meta = DecodeMeta(peek_ptr);
 			peek_ptr -= sizeof(bitpacking_metadata_encoded_t);
 			group_idx++;
 			offset_in_group = 0;
@@ -1089,7 +1090,7 @@ void BitpackingFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vect
 			}
 			remaining -= MinValue<idx_t>(remaining, BITPACKING_METADATA_GROUP_SIZE - offset_in_group);
 			if (remaining > 0) {
-				meta = DecodeMeta(reinterpret_cast<bitpacking_metadata_encoded_t *>(peek_ptr));
+				meta = DecodeMeta(peek_ptr);
 				peek_ptr -= sizeof(bitpacking_metadata_encoded_t);
 				group_idx++;
 				offset_in_group = 0;

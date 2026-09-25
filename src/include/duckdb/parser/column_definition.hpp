@@ -60,6 +60,10 @@ public:
 	const duckdb::CompressionType &CompressionType() const;
 	void SetCompressionType(duckdb::CompressionType compression_type);
 
+	//! compression_level (0 = the codec's or the table's default)
+	uint8_t CompressionLevel() const;
+	void SetCompressionLevel(uint8_t compression_level);
+
 	//! storage_oid
 	const storage_t &StorageOid() const;
 	void SetStorageOid(storage_t storage_oid);
@@ -111,6 +115,8 @@ private:
 	LogicalType type;
 	//! Compression Type used for this column
 	duckdb::CompressionType compression_type = duckdb::CompressionType::COMPRESSION_AUTO;
+	//! Level of the compression codec, 0 leaves it to the codec or the table
+	uint8_t compression_level = 0;
 	//! The index of the column in the storage of the table
 	storage_t storage_oid = DConstants::INVALID_INDEX;
 	//! The index of the column in the table

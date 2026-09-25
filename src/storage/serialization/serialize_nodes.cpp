@@ -204,6 +204,7 @@ void ColumnDefinition::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<Value>(105, "comment", comment, Value());
 	serializer.WritePropertyWithDefault<InsertionOrderPreservingMap<string>>(106, "tags", tags, InsertionOrderPreservingMap<string>());
 	serializer.WritePropertyWithDefault<idx_t>(107, "catalog_oid", catalog_oid, 0);
+	serializer.WritePropertyWithDefault<uint8_t>(108, "compression_level", compression_level, 0);
 }
 
 ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
@@ -216,6 +217,7 @@ ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithExplicitDefault<Value>(105, "comment", result.comment, Value());
 	deserializer.ReadPropertyWithExplicitDefault<InsertionOrderPreservingMap<string>>(106, "tags", result.tags, InsertionOrderPreservingMap<string>());
 	deserializer.ReadPropertyWithExplicitDefault<idx_t>(107, "catalog_oid", result.catalog_oid, 0);
+	deserializer.ReadPropertyWithExplicitDefault<uint8_t>(108, "compression_level", result.compression_level, 0);
 	return result;
 }
 

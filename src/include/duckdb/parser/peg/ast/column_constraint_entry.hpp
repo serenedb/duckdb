@@ -13,9 +13,11 @@ struct ColumnConstraintEntry {
 	unique_ptr<ParsedExpression> expression;
 	unique_ptr<Constraint> constraint;
 	CompressionType compression_type;
+	uint8_t compression_level;
 
 	ColumnConstraintEntry()
-	    : constraint_type_info(false, ConstraintType::INVALID), compression_type(CompressionType::COMPRESSION_AUTO) {
+	    : constraint_type_info(false, ConstraintType::INVALID), compression_type(CompressionType::COMPRESSION_AUTO),
+	      compression_level(0) {
 	}
 };
 
