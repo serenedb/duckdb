@@ -200,12 +200,6 @@ void PhysicalExport::ExtractEntries(ClientContext &context, vector<reference<Sch
 			}
 			result.custom_types.push_back(entry);
 		});
-		schema.Scan(context, CatalogType::TOKENIZER_ENTRY, [&](CatalogEntry &entry) {
-			if (!entry.internal) {
-				throw NotImplementedException("EXPORT DATABASE does not support text search dictionaries yet: \"%s\"",
-				                              entry.name.GetIdentifierName());
-			}
-		});
 		schema.Scan(context, CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.internal) {
 				return;
@@ -220,6 +214,11 @@ void PhysicalExport::ExtractEntries(ClientContext &context, vector<reference<Sch
 		schema.Scan(context, CatalogType::TABLE_MACRO_ENTRY, [&](CatalogEntry &entry) {
 			if (!entry.internal && entry.type == CatalogType::TABLE_MACRO_ENTRY) {
 				result.macros.push_back(entry);
+			}
+		});
+		schema.Scan(context, CatalogType::TOKENIZER_ENTRY, [&](CatalogEntry &entry) {
+			if (!entry.internal) {
+				result.tokenizers.push_back(entry);
 			}
 		});
 	}
@@ -280,10 +279,12 @@ catalog_entry_vector_t PhysicalExport::GetNaiveExportOrder(ClientContext &contex
 	size += entries.views.size();
 	size += entries.indexes.size();
 	size += entries.macros.size();
+	size += entries.tokenizers.size();
 	catalog_entries.reserve(size);
 	AddEntries(catalog_entries, entries.schemas);
 	AddEntries(catalog_entries, entries.sequences);
 	AddEntries(catalog_entries, entries.custom_types);
+	AddEntries(catalog_entries, entries.tokenizers);
 	AddEntries(catalog_entries, entries.tables);
 	AddEntries(catalog_entries, entries.macros);
 	AddEntries(catalog_entries, entries.views);
