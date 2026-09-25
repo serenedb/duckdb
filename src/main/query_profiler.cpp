@@ -546,6 +546,9 @@ void OperatorProfiler::Flush(const PhysicalOperator &phys_op) {
 }
 
 void QueryProfiler::Flush(OperatorProfiler &profiler) {
+	if (!profiler.IsEnabled()) {
+		return;
+	}
 	lock_guard<mutex> guard(lock);
 	if (!IsEnabled() || !running) {
 		return;
