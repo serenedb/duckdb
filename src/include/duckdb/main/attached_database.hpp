@@ -81,9 +81,8 @@ struct AttachOptions {
 	AttachVisibility visibility = AttachVisibility::SHOWN;
 	//! The stored database path (in the path manager)
 	unique_ptr<StoredDatabasePath> stored_database_path;
-	//! Set when the path is still held by a database whose detach has not been cleaned up yet: that
-	//! database is re-attached under the requested name instead of opening the file a second time
 	shared_ptr<AttachedDatabase> reused_database;
+	bool borrow_open_database = false;
 	//! Per-database override of vacuum_rebuild_indexes. If not set, the global setting value is used.
 	optional_idx vacuum_rebuild_indexes_threshold;
 };
