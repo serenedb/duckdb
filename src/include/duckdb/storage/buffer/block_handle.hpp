@@ -330,7 +330,7 @@ private:
 
 class ABSL_CACHELINE_ALIGNED BlockHandle : public enable_shared_from_this<BlockHandle> {
 public:
-	BlockHandle(BlockManager &block_manager, block_id_t block_id, MemoryTag tag);
+	BlockHandle(BlockManager &block_manager, block_id_t block_id, MemoryTag tag, idx_t block_alloc_size);
 	BlockHandle(BlockManager &block_manager, block_id_t block_id, MemoryTag tag, FileBufferType buffer_type,
 	            DestroyBufferUpon destroy_buffer_upon, idx_t size);
 	BlockHandle(BlockManager &block_manager, block_id_t block_id, MemoryTag tag, unique_ptr<FileBuffer> buffer,
