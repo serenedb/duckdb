@@ -802,6 +802,9 @@ void Executor::ThrowException() {
 }
 
 void Executor::Flush(ThreadContext &thread_context) {
+	if (!thread_context.profiler.IsEnabled()) {
+		return;
+	}
 	auto global_profiler = profiler;
 	if (global_profiler) {
 		global_profiler->Flush(thread_context.profiler);
