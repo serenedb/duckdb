@@ -51,3 +51,19 @@ SELECT len(l) FROM lists
 NULL
 0
 5
+
+query I
+SELECT array_length(l, 1) FROM lists WHERE len(l) > 1
+----
+2
+5
+
+statement ok
+CREATE TABLE nested AS SELECT * FROM (VALUES (1, [[1, 2], [3]]), (2, [[4, 5, 6]]), (3, [[]]), (4, NULL)) tbl(k, l)
+
+query II
+SELECT k, array_length(l, 2) FROM nested WHERE k > 1 ORDER BY k
+----
+2	3
+3	NULL
+4	NULL
