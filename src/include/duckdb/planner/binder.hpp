@@ -270,6 +270,7 @@ public:
 	                                                     AlterBindMode bind_mode = AlterBindMode::BIND_ON_ALTER);
 	static unique_ptr<BoundCreateTableInfo> BindCreateTableCheckpoint(unique_ptr<CreateInfo> info,
 	                                                                  SchemaCatalogEntry &schema);
+	static void VerifySereneDBCompression(Catalog &catalog, const ColumnDefinition &column);
 
 	//! The lone LOGICAL_GET reached through identity projections, or nullptr if `op` is not a bare
 	//! table-function passthrough.

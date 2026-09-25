@@ -375,6 +375,7 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformAddColumn(PEGTransfor
 		column_definition.SetDefaultValue(std::move(add_column_entry.default_value));
 	}
 	column_definition.SetCompressionType(add_column_entry.compression_type);
+	column_definition.SetCompressionLevel(add_column_entry.compression_level);
 
 	unique_ptr<AlterTableInfo> result;
 	auto if_not_exists_value = if_not_exists.has_value();
@@ -450,6 +451,7 @@ AddColumnEntry PEGTransformerFactory::TransformAddColumnEntry(
 				throw ParserException("Adding columns with FOREIGN KEY constraints is not supported yet");
 			} else if (constraint.constraint_name == "ColumnCompression") {
 				new_column.compression_type = constraint.compression_type;
+				new_column.compression_level = constraint.compression_level;
 				if (new_column.compression_type == CompressionType::COMPRESSION_AUTO) {
 					throw ParserException("Unrecognized option for column compression");
 				}

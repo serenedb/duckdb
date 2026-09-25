@@ -15,6 +15,7 @@ struct AddColumnEntry {
 	//! Constraints applied via extra ALTER statements after the column is added
 	AddColumnConstraints add_column_constraints;
 	CompressionType compression_type = CompressionType::COMPRESSION_AUTO;
+	uint8_t compression_level = 0;
 };
 
 } // namespace duckdb
