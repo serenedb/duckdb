@@ -34,8 +34,18 @@ enum class CompressionType : uint8_t {
 	COMPRESSION_ROARING = 13,
 	COMPRESSION_EMPTY = 14, // internal only
 	COMPRESSION_DICT_FSST = 15,
-	ENUM_SIZE // This has to stay the last entry of the type!
+	ENUM_SIZE, // This has to stay the last entry of the type!
+	COMPRESSION_DICT_LZ4 = 100,
+	COMPRESSION_DICT_ZSTD = 101,
+	COMPRESSION_LZ4 = 102,
+	COMPRESSION_DICT_ZXC = 103,
+	COMPRESSION_ZXC = 104,
+	COMPRESSION_SERENEDB_COUNT // This has to stay the last SereneDB entry!
 };
+
+inline bool IsSereneDBCompressionType(CompressionType type) {
+	return type >= CompressionType::COMPRESSION_DICT_LZ4 && type < CompressionType::COMPRESSION_SERENEDB_COUNT;
+}
 
 struct CompressionAvailabilityResult {
 private:
