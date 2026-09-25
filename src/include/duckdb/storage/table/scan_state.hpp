@@ -165,6 +165,8 @@ struct ColumnFetchState {
 	vector<unique_ptr<ColumnFetchState>> child_states;
 	//! The current row group we are fetching from
 	optional_ptr<SegmentNode<RowGroup>> row_group;
+	//! State a compression function keeps between fetches (e.g. a decoded frame)
+	unique_ptr<SegmentScanState> codec_state;
 
 	BufferHandle &GetOrInsertHandle(ColumnSegment &segment);
 };

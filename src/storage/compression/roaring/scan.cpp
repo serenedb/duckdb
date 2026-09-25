@@ -103,7 +103,7 @@ void RunContainerScanState::Verify() const {
 	DUCKDB_DEBUG_VERIFY_GUARD();
 	uint16_t index = 0;
 	for (idx_t i = 0; i < count; i++) {
-		auto run = reinterpret_cast<RunContainerRLEPair *>(data)[i];
+		auto run = Load<RunContainerRLEPair>(data + i * sizeof(RunContainerRLEPair));
 		D_ASSERT(run.start >= index);
 		index = run.start + 1 + run.length;
 	}
@@ -115,7 +115,7 @@ void RunContainerScanState::LoadNextRun() {
 		finished = true;
 		return;
 	}
-	run = reinterpret_cast<RunContainerRLEPair *>(data)[run_index];
+	run = Load<RunContainerRLEPair>(data + run_index * sizeof(RunContainerRLEPair));
 	run_index++;
 }
 
@@ -285,7 +285,6 @@ ContainerScanState &RoaringScanState::LoadContainer(idx_t container_index, idx_t
 			current_container = make_uniq<CompressedRunContainerScanState>(container_index, container_size,
 			                                                               number_of_runs, segments, data_ptr);
 		} else {
-			D_ASSERT(AlignPointer<sizeof(RunContainerRLEPair)>(data_ptr) == data_ptr);
 			current_container =
 			    make_uniq<RunContainerScanState>(container_index, container_size, number_of_runs, data_ptr);
 		}
@@ -302,7 +301,6 @@ ContainerScanState &RoaringScanState::LoadContainer(idx_t container_index, idx_t
 				    container_index, container_size, cardinality, segments, data_ptr);
 			}
 		} else {
-			D_ASSERT(AlignPointer<sizeof(uint16_t)>(data_ptr) == data_ptr);
 			if (metadata.IsInverted()) {
 				current_container =
 				    make_uniq<ArrayContainerScanState<NULLS>>(container_index, container_size, cardinality, data_ptr);

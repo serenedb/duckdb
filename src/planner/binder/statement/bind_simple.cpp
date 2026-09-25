@@ -220,6 +220,12 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	type_binder->SetSearchPath(catalog, stmt.info->GetQualifiedName().Schema());
 
 	BindAlterTypes(*type_binder, stmt);
+	if (stmt.info->type == AlterType::ALTER_TABLE) {
+		auto &table_info = stmt.info->Cast<AlterTableInfo>();
+		if (table_info.alter_table_type == AlterTableType::ADD_COLUMN) {
+			VerifySereneDBCompression(catalog, table_info.Cast<AddColumnInfo>().new_column);
+		}
+	}
 
 	if (catalog.IsSystemCatalog()) {
 		throw BinderException("Can not comment on System Catalog entries");
