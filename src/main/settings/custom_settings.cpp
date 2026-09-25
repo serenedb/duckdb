@@ -39,6 +39,7 @@
 #include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/storage/object_cache.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/logging/log_manager.hpp"
@@ -1187,6 +1188,7 @@ void MaxMemorySetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const V
 	    ParseMemoryLimitOrPercentage(input.ToString(), [&]() { return GetAvailableSystemMemory(config); });
 	if (db) {
 		BufferManager::GetBufferManager(*db).SetMemoryLimit(maximum_memory);
+		db->GetObjectCache().FollowMemoryLimit(maximum_memory);
 	}
 	config.options.maximum_memory = maximum_memory;
 }
@@ -1198,6 +1200,7 @@ void MaxMemorySetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
 	config.options.maximum_memory = old_memory;
 	if (db) {
 		BufferManager::GetBufferManager(*db).SetMemoryLimit(new_memory);
+		db->GetObjectCache().FollowMemoryLimit(new_memory);
 	}
 	config.options.maximum_memory = new_memory;
 }
