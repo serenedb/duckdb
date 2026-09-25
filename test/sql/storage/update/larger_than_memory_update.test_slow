@@ -8,7 +8,7 @@ statement ok
 CREATE TABLE integers AS FROM range(10000000) t(i);
 
 statement ok
-SET threads=1
+SET GLOBAL threads=1
 
 # 10M bigints is ~75MB uncompressed
 statement ok
