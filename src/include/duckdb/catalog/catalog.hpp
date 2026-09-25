@@ -173,6 +173,9 @@ public:
 	                                row_t row_start, ErrorData &error) {
 		return false;
 	}
+	virtual bool SupportsSereneDBCompression() const {
+		return false;
+	}
 
 	virtual void Initialize(bool load_builtin) = 0;
 	virtual void Initialize(optional_ptr<ClientContext> context, bool load_builtin);
