@@ -59,6 +59,13 @@ class ObjectCache {
 public:
 	//! Default max memory 8GiB for non-evictable cache entries.
 	static constexpr idx_t DEFAULT_MAX_MEMORY = 8ULL * 1024 * 1024 * 1024;
+	static constexpr idx_t MIN_AUTOMATIC_MAX_MEMORY = 256ULL * 1024 * 1024;
+	static idx_t DefaultMaxMemory(idx_t maximum_memory) {
+		if (maximum_memory == DConstants::INVALID_INDEX) {
+			return DEFAULT_MAX_MEMORY;
+		}
+		return MaxValue<idx_t>(MIN_AUTOMATIC_MAX_MEMORY, maximum_memory / 8);
+	}
 
 	explicit ObjectCache(BufferPool &buffer_pool_p) : ObjectCache(DEFAULT_MAX_MEMORY, buffer_pool_p) {
 	}
@@ -180,6 +187,22 @@ public:
 		const lock_guard<mutex> lock(lock_mutex);
 		return lru_cache.Capacity();
 	}
+	void SetMaxMemory(idx_t max_memory) {
+		const lock_guard<mutex> lock(lock_mutex);
+		explicit_max_memory = true;
+		lru_cache.SetCapacity(max_memory);
+	}
+	void SetAutomaticMaxMemory(idx_t maximum_memory) {
+		const lock_guard<mutex> lock(lock_mutex);
+		explicit_max_memory = false;
+		lru_cache.SetCapacity(DefaultMaxMemory(maximum_memory));
+	}
+	void FollowMemoryLimit(idx_t maximum_memory) {
+		const lock_guard<mutex> lock(lock_mutex);
+		if (!explicit_max_memory) {
+			lru_cache.SetCapacity(DefaultMaxMemory(maximum_memory));
+		}
+	}
 	idx_t GetCurrentMemory() const {
 		const lock_guard<mutex> lock(lock_mutex);
 		return lru_cache.CurrentTotalWeight();
@@ -213,6 +236,7 @@ private:
 	SharedLruCache<string, ObjectCacheEntry, duckdb::BufferPoolPayload> lru_cache;
 	//! Separate storage for non-evictable entries (i.e., encryption keys)
 	unordered_map<string, shared_ptr<ObjectCacheEntry>> non_evictable_entries;
+	bool explicit_max_memory = false;
 	//! Used to create buffer pool reservation on entries creation.
 	BufferPool &buffer_pool;
 };
