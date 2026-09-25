@@ -1989,10 +1989,13 @@ struct TempFileEncryptionSetting {
 struct ThreadsSetting {
 	using RETURN_TYPE = int64_t;
 	static constexpr const char *Name = "threads";
-	static constexpr const char *Description = "The number of total threads used by the system.";
+	static constexpr const char *Description = "The number of total threads used by the system; a session or "
+	                                           "transaction value caps the threads its queries use.";
 	static constexpr const char *InputType = "BIGINT";
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
+	static void SetLocal(ClientContext &context, const Value &parameter);
+	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
 };
 
