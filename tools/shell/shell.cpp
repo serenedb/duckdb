@@ -92,6 +92,7 @@
 #include "shell_renderer.hpp"
 #include "shell_highlight.hpp"
 #include "shell_state.hpp"
+#include "shell_docs.hpp"
 #include "duckdb/main/error_manager.hpp"
 #include "duckdb/main/client_config.hpp"
 
@@ -1271,6 +1272,7 @@ void ShellState::OpenDB(ShellOpenFlags flags) {
 		db->LoadStaticExtension<duckdb::AutocompleteExtension>();
 #endif
 		db->LoadStaticExtension<duckdb::ShellExtension>();
+		LoadDocsBackend(*conn->context);
 		if (safe_mode) {
 			ExecuteQuery("SET enable_external_access=false");
 			ExecuteQuery("SET lock_configuration=true");
