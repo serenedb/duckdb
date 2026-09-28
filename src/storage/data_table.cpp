@@ -159,7 +159,8 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_co
 			if (column_id == removed_column) {
 				throw CatalogException("Cannot drop this column: an index depends on it!");
 			} else if (column_id > removed_column && !index.remaps_columns) {
-				throw CatalogException("Cannot drop this column: an index depends on a column after it!");
+				throw CatalogException(Exception::InitializeExtraInfo("UNSUPPORTED", optional_idx()),
+				                       "Cannot drop this column: an index depends on a column after it!");
 			}
 		}
 	}
