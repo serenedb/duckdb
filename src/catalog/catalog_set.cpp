@@ -346,6 +346,13 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	if (!alter_info.allow_internal && entry->internal) {
 		throw CatalogException("Cannot alter entry \"%s\" because it is an internal system entry", entry->name);
 	}
+	if (alter_info.type == AlterType::RENAME && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+		auto &new_name = alter_info.Cast<RenameInfo>().new_name;
+		if (IdentifierEquality(map.IsCaseSensitive())(new_name, entry->name)) {
+			throw CatalogException("Could not rename \"%s\" to \"%s\": another entry with this name already exists!",
+			                       entry->name, new_name);
+		}
+	}
 
 	// Use the existing entry to create the altered entry
 	auto value = entry->AlterEntry(transaction, alter_info);
