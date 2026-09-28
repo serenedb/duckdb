@@ -436,21 +436,26 @@ IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, c
 		}
 	}
 	result.bound_infos.reserve(bound_count);
-	for (auto &entry : index_entries) {
-		auto &index = *entry->index;
-		if (!index.IsBound()) {
-			// Unbound: reference existing storage info
-			auto &unbound_index = index.Cast<UnboundIndex>();
-			D_ASSERT(!unbound_index.GetStorageInfo().name.empty());
-			result.ordered_infos.push_back(unbound_index.GetStorageInfo());
-			continue;
+	for (const bool constraint_indexes : {true, false}) {
+		for (auto &entry : index_entries) {
+			auto &index = *entry->index;
+			if ((index.GetConstraintType() != IndexConstraintType::NONE) != constraint_indexes) {
+				continue;
+			}
+			if (!index.IsBound()) {
+				// Unbound: reference existing storage info
+				auto &unbound_index = index.Cast<UnboundIndex>();
+				D_ASSERT(!unbound_index.GetStorageInfo().name.empty());
+				result.ordered_infos.push_back(unbound_index.GetStorageInfo());
+				continue;
+			}
+			// Bound: move new storage info into bound_infos, then reference it
+			auto &bound_index = index.Cast<BoundIndex>();
+			auto storage_info = bound_index.SerializeToDisk(context, info.options);
+			D_ASSERT(!storage_info.name.empty());
+			result.bound_infos.push_back(std::move(storage_info));
+			result.ordered_infos.push_back(result.bound_infos.back());
 		}
-		// Bound: move new storage info into bound_infos, then reference it
-		auto &bound_index = index.Cast<BoundIndex>();
-		auto storage_info = bound_index.SerializeToDisk(context, info.options);
-		D_ASSERT(!storage_info.name.empty());
-		result.bound_infos.push_back(std::move(storage_info));
-		result.ordered_infos.push_back(result.bound_infos.back());
 	}
 
 	return result;
