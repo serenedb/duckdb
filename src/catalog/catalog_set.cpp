@@ -302,6 +302,16 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 	return true;
 }
 
+[[noreturn]] static void ThrowRenameConflict(const CatalogEntry &entry, const Identifier &new_name) {
+	auto extra_info = Exception::InitializeExtraInfo("ENTRY_ALREADY_EXISTS", optional_idx());
+	extra_info["name"] = new_name.GetIdentifierName();
+	extra_info["type"] = CatalogTypeToString(entry.type);
+	throw CatalogException(extra_info,
+	                       StringUtil::Format("Could not rename \"%s\" to \"%s\": another entry with this name "
+	                                          "already exists!",
+	                                          entry.name.GetIdentifierName(), new_name.GetIdentifierName()));
+}
+
 bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, const Identifier &new_name,
                                      AlterInfo &alter_info, unique_lock<mutex> &read_lock, bool namespace_vacant) {
 	auto &original_name = old.name;
@@ -310,8 +320,7 @@ bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntr
 	auto entry_value = map.GetEntry(new_name);
 	if ((entry_value && !GetEntryForTransaction(transaction, *entry_value).deleted) || !namespace_vacant) {
 		old.UndoAlter(context, alter_info);
-		throw CatalogException("Could not rename \"%s\" to \"%s\": another entry with this name already exists!",
-		                       original_name, new_name);
+		ThrowRenameConflict(old, new_name);
 	}
 
 	// Add a RENAMED_ENTRY before adding a DELETED_ENTRY, this makes it so that when this is committed
@@ -349,8 +358,7 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	if (alter_info.type == AlterType::RENAME && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
 		auto &new_name = alter_info.Cast<RenameInfo>().new_name;
 		if (IdentifierEquality(map.IsCaseSensitive())(new_name, entry->name)) {
-			throw CatalogException("Could not rename \"%s\" to \"%s\": another entry with this name already exists!",
-			                       entry->name, new_name);
+			ThrowRenameConflict(*entry, new_name);
 		}
 	}
 
