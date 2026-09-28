@@ -313,6 +313,14 @@ bool Linenoise::HandleANSIEscape(const char *buf, size_t len, size_t &cpos) {
 		}
 		if (cpos < len)
 			cpos++; // skip final letter
+	} else if (cpos < len && buf[cpos] == ']') {
+		cpos++;
+		while (cpos < len && buf[cpos] != '\a' && !(buf[cpos] == '\033' && cpos + 1 < len && buf[cpos + 1] == '\\')) {
+			cpos++;
+		}
+		if (cpos < len) {
+			cpos += buf[cpos] == '\a' ? 1 : 2;
+		}
 	} else {
 		// standalone ESC
 		cpos++;
