@@ -793,6 +793,14 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 	const auto compatibility = catalog.Compatibility();
 	const bool views_depend_on_columns = compatibility == SqlCompatibility::POSTGRES;
 	const bool retype_under_indexes = compatibility == SqlCompatibility::POSTGRES;
+	const auto reads_column = [&](DependencyEntry &dep, const Identifier &column) {
+		const auto type = dep.EntryInfo().type;
+		if (!views_depend_on_columns || (type != CatalogType::VIEW_ENTRY && type != CatalogType::TABLE_MACRO_ENTRY)) {
+			return true;
+		}
+		return dep.Dependent().subdependencies.count(SubDependency {AlterTableType::REMOVE_COLUMN, column}) != 0;
+	};
+	string blockers;
 	// Other entries that depend on us
 	ScanDependents(transaction, old_info, [&](DependencyEntry &dep) {
 		// It makes no sense to have a schema depend on anything
@@ -815,25 +823,22 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 				break;
 			}
 			case AlterTableType::REMOVE_COLUMN: {
-				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
-					disallow_alter = false;
-					break;
-				}
-				if (views_depend_on_columns && dep.EntryInfo().type == CatalogType::VIEW_ENTRY &&
-				    !dep.Dependent().subdependencies.count(SubDependency {
-				        AlterTableType::REMOVE_COLUMN, alter_table.Cast<RemoveColumnInfo>().removed_column})) {
+				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY ||
+				    !reads_column(dep, alter_table.Cast<RemoveColumnInfo>().removed_column)) {
 					disallow_alter = false;
 				}
 				break;
 			}
 			case AlterTableType::RENAME_COLUMN: {
-				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
+				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY ||
+				    !reads_column(dep, alter_table.Cast<RenameColumnInfo>().old_name)) {
 					disallow_alter = false;
 				}
 				break;
 			}
 			case AlterTableType::ALTER_COLUMN_TYPE: {
-				if (retype_under_indexes && dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
+				if ((retype_under_indexes && dep.EntryInfo().type == CatalogType::INDEX_ENTRY) ||
+				    !reads_column(dep, alter_table.Cast<ChangeColumnTypeInfo>().column_name)) {
 					disallow_alter = false;
 				}
 				break;
@@ -866,7 +871,7 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			break;
 		}
 		case AlterType::RENAME: {
-			if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY) {
+			if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY && old_obj.type == CatalogType::TABLE_ENTRY) {
 				disallow_alter = false;
 			}
 			break;
@@ -887,15 +892,22 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			break;
 		}
 		if (disallow_alter) {
-			throw DependencyException("Cannot alter entry \"%s\" because there are entries that "
-			                          "depend on it.",
-			                          old_obj.name);
+			auto dependent = dep.EntryInfo();
+			auto subject = old_info;
+			blockers += StringUtil::Format("%s depends on %s.\n", EntryToString(dependent), EntryToString(subject));
+			return;
 		}
 
 		auto dep_info = DependencyInfo::FromDependent(dep);
 		dep_info.subject.entry = new_info;
 		dependencies.emplace_back(dep_info);
 	});
+	if (!blockers.empty()) {
+		throw DependencyException(StringUtil::Format(
+		    "Cannot alter entry \"%s\" because there are entries that depend on it.\n%sDrop the dependent entries "
+		    "first and recreate them after the change.",
+		    old_obj.name.GetIdentifierName(), blockers));
+	}
 
 	// Keep old dependencies
 	bool has_new_dependencies = alter_info.new_dependencies.get();
