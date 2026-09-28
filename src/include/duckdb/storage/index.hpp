@@ -84,6 +84,8 @@ public:
 		return column_id_set;
 	}
 
+	virtual void RemapColumnIds(const vector<column_t> &new_column_ids);
+
 	virtual void ResetStorage() = 0;
 
 public:

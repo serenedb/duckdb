@@ -166,6 +166,7 @@ public:
 	virtual bool RemovalNeedsColumnValues() const {
 		return true;
 	}
+	void RemapColumnIds(const vector<column_t> &new_column_ids) override;
 	//! Creates a delta index - an empty copy of the index with the same schema, etc
 	//! This will only be called if SupportsDeltaIndexes returns true
 	virtual unique_ptr<BoundIndex> CreateDeltaIndex(DeltaIndexType delta_index_type) const;

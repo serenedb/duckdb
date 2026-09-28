@@ -39,6 +39,7 @@ struct IndexEntry {
 	unique_ptr<BoundIndex> removed_data_during_checkpoint;
 	//! The last checkpoint index that was written with this index
 	optional_idx last_written_checkpoint;
+	vector<idx_t> column_oids;
 };
 
 struct IndexSerializationInfo {
@@ -69,6 +70,8 @@ public:
 	void AddIndex(unique_ptr<Index> index);
 	//! Removes an index entry from the list of index entries and release any storage the index owns.
 	void RemoveIndex(const Identifier &name);
+	void RemoveIndexesOnColumn(column_t column_id);
+	void SyncColumnLayout(const vector<idx_t> &old_column_oids, const vector<idx_t> &new_column_oids);
 	void RenameIndex(const Identifier &name, const Identifier &new_name);
 	//! Returns true, if the index name does not exist.
 	bool NameIsUnique(const string &name);
@@ -96,6 +99,7 @@ public:
 	void Move(TableIndexList &other) {
 		D_ASSERT(index_entries.empty());
 		index_entries = std::move(other.index_entries);
+		detached_entries = std::move(other.detached_entries);
 	}
 	//! Merge any changes added to deltas during a checkpoint back into the main indexes
 	void MergeCheckpointDeltas(transaction_t checkpoint_id);
@@ -123,6 +127,7 @@ private:
 	mutable mutex index_entries_lock;
 	//! The index entries of the table.
 	vector<unique_ptr<IndexEntry>> index_entries;
+	vector<unique_ptr<IndexEntry>> detached_entries;
 	//! Contains the number of unbound indexes.
 	idx_t unbound_count = 0;
 };
