@@ -142,9 +142,16 @@ static vector<idx_t> SyncIndexColumnLayout(DataTableInfo &info, const ColumnList
 	return info.SetIndexColumnLayout(logical_oids, std::move(physical_oids));
 }
 
-static void AssignCatalogOids(Catalog &catalog, ColumnList &columns) {
+static void AssignCatalogOids(Catalog &catalog, ColumnList &columns, vector<unique_ptr<Constraint>> &constraints) {
 	auto &manager = catalog.GetDatabase().GetDatabaseManager();
 	const bool assign = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	auto assign_oid = [&](idx_t &oid) {
+		if (oid) {
+			manager.ClaimOid(oid);
+		} else if (assign) {
+			oid = manager.NextOid();
+		}
+	};
 	for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
 		auto &column = columns.GetColumnMutable(LogicalIndex(i));
 		if (column.CatalogOid()) {
@@ -153,13 +160,19 @@ static void AssignCatalogOids(Catalog &catalog, ColumnList &columns) {
 			column.SetCatalogOid(manager.NextOid());
 		}
 	}
+	for (auto &constraint : constraints) {
+		assign_oid(constraint->oid);
+		if (constraint->type == ConstraintType::UNIQUE) {
+			assign_oid(constraint->Cast<UniqueConstraint>().index_oid);
+		}
+	}
 }
 
 DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info,
                                shared_ptr<DataTable> inherited_storage, shared_ptr<CatalogSet> inherited_triggers)
     : TableCatalogEntry(catalog, schema, info.Base()), storage(std::move(inherited_storage)),
       column_dependency_manager(std::move(info.column_dependency_manager)) {
-	AssignCatalogOids(catalog, columns);
+	AssignCatalogOids(catalog, columns, constraints);
 	if (inherited_triggers) {
 		triggers = std::move(inherited_triggers);
 	}

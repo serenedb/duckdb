@@ -61,6 +61,9 @@ public:
 	vector<Identifier> columns;
 	//! Whether this is a PRIMARY KEY constraint, or a UNIQUE constraint.
 	bool is_primary_key;
+
+public:
+	idx_t index_oid = 0;
 };
 
 } // namespace duckdb

@@ -65,6 +65,7 @@ public:
 	ConstraintType type;
 	//! User-specified constraint name (from CONSTRAINT name ...), or empty.
 	string constraint_name;
+	idx_t oid = 0;
 
 public:
 	DUCKDB_API virtual string ToString() const = 0;
