@@ -2564,9 +2564,6 @@ void PartitionedCopy::Sink(ExecutionContext &execution_context, DataChunk &chunk
 				sinking_state = make_shared_ptr<PartitionedCopyState>(*this, std::move(global_sink_state));
 			}
 			lstate.current_state = sinking_state;
-		}
-
-		{
 			annotated_lock_guard<annotated_mutex> state_guard(lstate.current_state->lock);
 			lstate.current_state->locals++;
 		}
