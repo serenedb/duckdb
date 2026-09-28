@@ -213,11 +213,11 @@ bool CatalogSet::CreateEntry(CatalogTransaction transaction, const Identifier &n
 
 	// lock the catalog for writing
 	lock_guard<mutex> write_lock(catalog.GetWriteLock());
-	// lock this catalog set to disallow reading
-	unique_lock<mutex> read_lock(catalog_lock);
 	if (!NamespaceVacant(transaction, name)) {
 		return false;
 	}
+	// lock this catalog set to disallow reading
+	unique_lock<mutex> read_lock(catalog_lock);
 	return CreateEntryInternal(transaction, name, std::move(value), read_lock);
 }
 
@@ -303,13 +303,12 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 }
 
 bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, const Identifier &new_name,
-                                     AlterInfo &alter_info, unique_lock<mutex> &read_lock) {
+                                     AlterInfo &alter_info, unique_lock<mutex> &read_lock, bool namespace_vacant) {
 	auto &original_name = old.name;
 
 	auto &context = *transaction.context;
 	auto entry_value = map.GetEntry(new_name);
-	if ((entry_value && !GetEntryForTransaction(transaction, *entry_value).deleted) ||
-	    !NamespaceVacant(transaction, new_name)) {
+	if ((entry_value && !GetEntryForTransaction(transaction, *entry_value).deleted) || !namespace_vacant) {
 		old.UndoAlter(context, alter_info);
 		throw CatalogException("Could not rename \"%s\" to \"%s\": another entry with this name already exists!",
 		                       original_name, new_name);
@@ -360,6 +359,8 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 
 	// lock the catalog for writing
 	unique_lock<mutex> write_lock(catalog.GetWriteLock());
+	const bool renamed = !IdentifierEquality(map.IsCaseSensitive())(value->name, name);
+	const bool namespace_vacant = !renamed || NamespaceVacant(transaction, value->name);
 	// lock this catalog set to disallow reading
 	unique_lock<mutex> read_lock(catalog_lock);
 
@@ -373,8 +374,8 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	// Preserve the oid across the alter: an altered entry is the same logical object as before
 	value->oid = entry->oid;
 
-	if (!IdentifierEquality(map.IsCaseSensitive())(value->name, entry->name)) {
-		if (!RenameEntryInternal(transaction, *entry, value->name, alter_info, read_lock)) {
+	if (renamed) {
+		if (!RenameEntryInternal(transaction, *entry, value->name, alter_info, read_lock, namespace_vacant)) {
 			return false;
 		}
 	}
