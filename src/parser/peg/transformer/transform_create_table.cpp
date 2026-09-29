@@ -496,15 +496,10 @@ vector<string> PEGTransformerFactory::TransformColumnIdList(PEGTransformer &tran
 	return IdentifiersToStrings(col_id);
 }
 
-ColumnConstraintEntry
-PEGTransformerFactory::TransformColumnCompression(PEGTransformer &transformer, const Identifier &col_id_or_string,
-                                                  optional<vector<unique_ptr<ParsedExpression>>> expression) {
-	ColumnConstraintEntry entry;
-	entry.constraint_name = "ColumnCompression";
-	entry.compression_type =
-	    EnumUtil::FromString<CompressionType>(StringUtil::Lower(col_id_or_string.GetIdentifierName()));
+static uint8_t TransformCompressionLevel(optional<vector<unique_ptr<ParsedExpression>>> &expression) {
+	uint8_t compression_level = 0;
 	if (!expression) {
-		return entry;
+		return compression_level;
 	}
 	for (auto &option : *expression) {
 		// name = value, as WITH options are written
@@ -523,7 +518,7 @@ PEGTransformerFactory::TransformColumnCompression(PEGTransformer &transformer, c
 		if (name != "compression_level") {
 			throw ParserException("Unknown compression option '%s', expected compression_level", name);
 		}
-		if (entry.compression_level != 0) {
+		if (compression_level != 0) {
 			throw ParserException("Compression option compression_level is specified more than once");
 		}
 		if (!value.type().IsIntegral() || value.IsNull()) {
@@ -533,9 +528,35 @@ PEGTransformerFactory::TransformColumnCompression(PEGTransformer &transformer, c
 		if (level < 1 || level > 255) {
 			throw ParserException("compression_level must be between 1 and 255, got %lld", level);
 		}
-		entry.compression_level = NumericCast<uint8_t>(level);
+		compression_level = NumericCast<uint8_t>(level);
 	}
+	return compression_level;
+}
+
+static CompressionType TransformCompressionName(const Identifier &col_id_or_string) {
+	return EnumUtil::FromString<CompressionType>(StringUtil::Lower(col_id_or_string.GetIdentifierName()));
+}
+
+ColumnConstraintEntry
+PEGTransformerFactory::TransformColumnCompression(PEGTransformer &transformer, const Identifier &col_id_or_string,
+                                                  optional<vector<unique_ptr<ParsedExpression>>> expression) {
+	ColumnConstraintEntry entry;
+	entry.constraint_name = "ColumnCompression";
+	entry.compression_type = TransformCompressionName(col_id_or_string);
+	entry.compression_level = TransformCompressionLevel(expression);
 	return entry;
+}
+
+unique_ptr<AlterTableInfo>
+PEGTransformerFactory::TransformSetCompressionCodec(PEGTransformer &transformer, const Identifier &col_id_or_string,
+                                                    optional<vector<unique_ptr<ParsedExpression>>> expression) {
+	auto compression_type = TransformCompressionName(col_id_or_string);
+	auto compression_level = TransformCompressionLevel(expression);
+	return make_uniq<SetColumnCompressionInfo>(AlterEntryData(), Identifier(), compression_type, compression_level);
+}
+
+unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformSetCompressionDefault(PEGTransformer &transformer) {
+	return make_uniq<SetColumnCompressionInfo>(AlterEntryData(), Identifier(), CompressionType::COMPRESSION_AUTO, 0);
 }
 
 ColumnConstraintEntry PEGTransformerFactory::TransformForeignKeyConstraint(PEGTransformer &transformer,
