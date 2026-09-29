@@ -1,0 +1,97 @@
+# name: test/optimizer/expression_rewriter/filter_reorder.test
+# description: filter_reorder bounds how far filter reordering moves conjuncts that can throw
+# group: [expression_rewriter]
+
+statement ok
+CREATE TABLE t AS SELECT i % 300 AS a, i % 7 AS b, i % 5 AS c, i % 3 AS d, (i % 300)::VARCHAR AS s FROM range(1, 1001) r(i);
+
+statement ok
+PRAGMA explain_output = OPTIMIZED_ONLY
+
+query I
+SELECT current_setting('filter_reorder')
+----
+safe
+
+query II
+EXPLAIN SELECT a FROM t WHERE a <> b AND s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d
+----
+logical_opt	<REGEX>:.*a != b.*s AS INTEGER.*b != c.*reverse.*TINYINT.*c != d.*
+
+statement ok
+SET filter_reorder = 'never'
+
+query II
+EXPLAIN SELECT a FROM t WHERE a <> b AND s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d
+----
+logical_opt	<REGEX>:.*a != b.*s AS INTEGER.*reverse.*b != c.*TINYINT.*c != d.*
+
+statement ok
+SET filter_reorder = 'fast'
+
+query II
+EXPLAIN SELECT a FROM t WHERE a <> b AND s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d
+----
+logical_opt	<REGEX>:.*a != b.*b != c.*c != d.*s AS INTEGER.*reverse.*TINYINT.*
+
+statement ok
+SET filter_reorder = 'always'
+
+query II
+EXPLAIN SELECT a FROM t WHERE a <> b AND s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d
+----
+logical_opt	<REGEX>:.*a != b.*b != c.*c != d.*TINYINT.*s AS INTEGER.*reverse.*
+
+statement error
+SET filter_reorder = 'sometimes'
+----
+<REGEX>:.*unrecognized value.*
+
+statement ok
+RESET filter_reorder
+
+statement error
+SELECT count(*) FROM range(1000) WHERE range < 100 AND range::TINYINT < range + 1
+----
+<REGEX>:.*out of range.*
+
+query I
+SELECT count(*) FROM t WHERE length(s) < length(b::VARCHAR || 'xx') AND a::TINYINT <> d
+----
+388
+
+statement ok
+SET filter_reorder = 'fast'
+
+query I
+SELECT count(*) FROM range(1000) WHERE range < 100 AND range::TINYINT < range + 1
+----
+100
+
+query I
+SELECT count(*) FROM t WHERE length(s) < length(b::VARCHAR || 'xx') AND a::TINYINT <> d
+----
+388
+
+statement ok
+SET filter_reorder = 'always'
+
+statement error
+SELECT count(*) FROM t WHERE length(s) < length(b::VARCHAR || 'xx') AND a::TINYINT <> d
+----
+<REGEX>:.*out of range.*
+
+statement ok
+CREATE TABLE big AS SELECT i % 300 AS a, i % 7 AS b, i % 5 AS c, i % 3 AS d, (i % 300)::VARCHAR AS s FROM range(1, 1000001) r(i);
+
+foreach level safe fast
+
+statement ok
+SET filter_reorder = '{level}'
+
+query I
+SELECT count(*) FROM big WHERE b <> c AND c <> d AND length(s) < length(b::VARCHAR || 'xx') AND a::TINYINT <> d
+----
+225758
+
+endloop

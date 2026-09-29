@@ -1,4 +1,6 @@
 #include "duckdb/optimizer/expression_heuristics.hpp"
+#include "duckdb/common/enums/filter_reorder.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/planner/table_filter_set.hpp"
 #include "duckdb/planner/expression/bound_between_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -10,6 +12,91 @@
 #include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
+
+namespace {
+
+struct ExpressionCosts {
+	unique_ptr<Expression> expr;
+	idx_t cost;
+
+	bool operator==(const ExpressionCosts &p) const {
+		return cost == p.cost;
+	}
+	bool operator<(const ExpressionCosts &p) const {
+		return cost < p.cost;
+	}
+};
+
+vector<ExpressionCosts> ReorderByCost(vector<unique_ptr<Expression>> &expressions, bool keep_order_if_can_throw) {
+	vector<ExpressionCosts> expression_costs;
+	expression_costs.reserve(expressions.size());
+	bool keep_order = false;
+	for (auto &expr : expressions) {
+		keep_order = keep_order || (keep_order_if_can_throw && expr->CanThrow());
+		expression_costs.push_back({nullptr, ExpressionHeuristics::Cost(*expr)});
+		expression_costs.back().expr = std::move(expr);
+	}
+	if (!keep_order) {
+		sort(expression_costs.begin(), expression_costs.end());
+	}
+	return expression_costs;
+}
+
+vector<ExpressionCosts> ReorderSafe(vector<unique_ptr<Expression>> &expressions) {
+	vector<ExpressionCosts> expression_costs;
+	expression_costs.reserve(expressions.size());
+	idx_t block = 0;
+	for (auto &expr : expressions) {
+		expression_costs.push_back({nullptr, ExpressionHeuristics::Cost(*expr)});
+		expression_costs.back().expr = std::move(expr);
+		if (expression_costs.back().expr->CanThrow()) {
+			sort(expression_costs.begin() + block, expression_costs.end() - 1);
+			block = expression_costs.size();
+		}
+	}
+	sort(expression_costs.begin() + block, expression_costs.end());
+	return expression_costs;
+}
+
+vector<ExpressionCosts> ReorderFast(vector<unique_ptr<Expression>> &expressions) {
+	vector<idx_t> costs(expressions.size());
+	vector<idx_t> non_failing;
+	for (idx_t i = 0; i < expressions.size(); i++) {
+		costs[i] = ExpressionHeuristics::Cost(*expressions[i]);
+		if (!expressions[i]->CanThrow()) {
+			non_failing.push_back(i);
+		}
+	}
+	sort(non_failing.begin(), non_failing.end(), [&](idx_t l, idx_t r) { return costs[l] < costs[r]; });
+	vector<idx_t> rank(expressions.size(), DConstants::INVALID_INDEX);
+	for (idx_t r = 0; r < non_failing.size(); r++) {
+		rank[non_failing[r]] = r;
+	}
+
+	vector<ExpressionCosts> expression_costs;
+	expression_costs.reserve(expressions.size());
+	auto emit = [&](idx_t i) {
+		expression_costs.push_back({std::move(expressions[i]), costs[i]});
+	};
+	idx_t next = 0;
+	idx_t required = 0;
+	for (idx_t i = 0; i < expressions.size(); i++) {
+		if (rank[i] != DConstants::INVALID_INDEX) {
+			required = MaxValue(required, rank[i] + 1);
+			continue;
+		}
+		while (next < non_failing.size() && (next < required || costs[non_failing[next]] < costs[i])) {
+			emit(non_failing[next++]);
+		}
+		emit(i);
+	}
+	while (next < non_failing.size()) {
+		emit(non_failing[next++]);
+	}
+	return expression_costs;
+}
+
+} // namespace
 
 unique_ptr<LogicalOperator> ExpressionHeuristics::Rewrite(unique_ptr<LogicalOperator> op) {
 	VisitOperator(*op);
@@ -36,35 +123,21 @@ unique_ptr<Expression> ExpressionHeuristics::VisitReplace(BoundConjunctionExpres
 }
 
 void ExpressionHeuristics::ReorderExpressions(vector<unique_ptr<Expression>> &expressions) {
-	struct ExpressionCosts {
-		unique_ptr<Expression> expr;
-		idx_t cost;
-
-		bool operator==(const ExpressionCosts &p) const {
-			return cost == p.cost;
-		}
-		bool operator<(const ExpressionCosts &p) const {
-			return cost < p.cost;
-		}
-	};
-
-	for (idx_t i = 0; i < expressions.size(); i++) {
-		if (expressions[i]->CanThrow()) {
-			// do not allow reordering if an expression can throw
-			return;
-		}
-	}
-
 	vector<ExpressionCosts> expression_costs;
-	expression_costs.reserve(expressions.size());
-	// iterate expressions, get cost for each one
-	for (idx_t i = 0; i < expressions.size(); i++) {
-		idx_t cost = Cost(*expressions[i]);
-		expression_costs.push_back({std::move(expressions[i]), cost});
+	switch (Settings::Get<FilterReorderSetting>(optimizer.context)) {
+	case FilterReorder::NEVER:
+		expression_costs = ReorderByCost(expressions, true);
+		break;
+	case FilterReorder::SAFE:
+		expression_costs = ReorderSafe(expressions);
+		break;
+	case FilterReorder::FAST:
+		expression_costs = ReorderFast(expressions);
+		break;
+	case FilterReorder::ALWAYS:
+		expression_costs = ReorderByCost(expressions, false);
+		break;
 	}
-
-	// sort by cost and put back in place
-	sort(expression_costs.begin(), expression_costs.end());
 	for (idx_t i = 0; i < expression_costs.size(); i++) {
 		expressions[i] = std::move(expression_costs[i].expr);
 	}
