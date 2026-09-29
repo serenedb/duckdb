@@ -459,6 +459,7 @@ struct RLECompressState : public StandardCompressionState {
 		auto counts = StagedCounts();
 
 		RLEHeader<T> header;
+		memset(&header, 0, sizeof(header));
 		header.entry_count = NumericCast<uint32_t>(entry_count);
 		header.value_width = ValueCodec::Analyze(values, entry_count, header.value_frame);
 		header.count_width = CountCodec::Analyze(counts, entry_count, header.count_frame);

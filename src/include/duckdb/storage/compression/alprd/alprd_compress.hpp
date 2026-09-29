@@ -220,6 +220,7 @@ public:
 #endif
 			total_segment_size = metadata_offset + bytes_used_by_metadata;
 		}
+		memset(dataptr + UsedSpace(), 0, total_segment_size - bytes_used_by_metadata - UsedSpace());
 
 		// Store the offset to the end of metadata (to be used as a backwards pointer in decoding)
 		Store<AlpRDConstants::METADATA_POINTER_TYPE>(
