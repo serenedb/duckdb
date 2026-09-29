@@ -193,7 +193,6 @@ bool DuckTransaction::HasSequenceUsage() {
 }
 
 void DuckTransaction::CoverSequenceUsage() {
-	lock_guard<mutex> l(sequence_lock);
 	for (auto &usage : sequence_usage) {
 		auto &sequence = usage.first.get();
 		if (sequence.LogsValues()) {
@@ -204,7 +203,6 @@ void DuckTransaction::CoverSequenceUsage() {
 
 vector<SequenceValue> DuckTransaction::ReserveSequenceUsage(WriteAheadLog &catalog_log) {
 	vector<SequenceValue> durable_after;
-	lock_guard<mutex> l(sequence_lock);
 	for (auto &usage : sequence_usage) {
 		auto &sequence = usage.first.get();
 		if (sequence.LogsValues()) {
