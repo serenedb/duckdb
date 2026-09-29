@@ -149,7 +149,6 @@ void FunctionExpression::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<bool>(206, "is_operator", is_operator);
 	serializer.WritePropertyWithDefault<bool>(207, "export_state", export_state);
 	serializer.WritePropertyWithDefault<Identifier>(208, "catalog", qualified_name.Catalog());
-	serializer.WritePropertyWithDefault<bool>(210, "from_operator", from_operator);
 
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<vector<FunctionArgument>>(209, "arguments", arguments);
@@ -158,6 +157,9 @@ void FunctionExpression::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0) || qualified_name.Path().size() > 3) {
 		// the catalog/schema properties above cannot represent a nested schema path
 		serializer.WriteProperty<QualifiedName>(210, "qualified_name", qualified_name);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<bool>(16584, "from_operator", from_operator);
 	}
 }
 
@@ -186,7 +188,6 @@ unique_ptr<ParsedExpression> FunctionExpression::Deserialize(Deserializer &deser
 	deserializer.ReadPropertyWithDefault<bool>(205, "distinct", result->distinct);
 	deserializer.ReadPropertyWithDefault<bool>(206, "is_operator", result->is_operator);
 	deserializer.ReadPropertyWithDefault<bool>(207, "export_state", result->export_state);
-	deserializer.ReadPropertyWithDefault<bool>(210, "from_operator", result->from_operator);
 	auto catalog = deserializer.ReadPropertyWithDefault<Identifier>(208, "catalog");
 	result->SetQualifiedName(std::move(catalog), std::move(schema), std::move(function_name));
 
@@ -200,6 +201,7 @@ unique_ptr<ParsedExpression> FunctionExpression::Deserialize(Deserializer &deser
 	if (!qualified_name.Path().empty()) {
 		result->SetQualifiedName(std::move(qualified_name));
 	}
+	deserializer.ReadPropertyWithDefault<bool>(16584, "from_operator", result->from_operator);
 
 	return std::move(result);
 }

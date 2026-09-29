@@ -730,7 +730,7 @@
         "type": "bool"
       },
       {
-        "id": 102,
+        "id": 16484,
         "name": "serenedb_pragma_option",
         "type": "string"
       }
@@ -1604,7 +1604,7 @@
         "type": "idx_t"
       },
       {
-        "id": 108,
+        "id": 16484,
         "name": "single_order_key",
         "type": "bool",
         "default": "true"
