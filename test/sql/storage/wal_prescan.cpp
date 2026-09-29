@@ -200,7 +200,7 @@ TEST_CASE("WAL replay validates DML payloads skipped during prescan", "[storage]
 		FAIL("Expected WAL replay to fail");
 	} catch (Exception &ex) {
 		ErrorData error(ex);
-		REQUIRE(error.Type() == ExceptionType::SERIALIZATION);
+		REQUIRE(error.Type() == ExceptionType::IO);
 		REQUIRE(error.RawMessage().find("field id mismatch, expected: 101, got: 0") != string::npos);
 	}
 }
