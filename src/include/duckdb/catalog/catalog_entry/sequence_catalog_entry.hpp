@@ -43,6 +43,7 @@ struct SequenceData {
 	int64_t max_value;
 	//! Whether or not the sequence cycles
 	bool cycle;
+	uint64_t cache;
 };
 
 //! A sequence catalog entry

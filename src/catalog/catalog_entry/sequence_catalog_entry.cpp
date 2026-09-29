@@ -21,7 +21,8 @@ constexpr const char *SequenceCatalogEntry::Name;
 
 SequenceData::SequenceData(CreateSequenceInfo &info)
     : usage_count(info.usage_count), counter(info.start_value), last_value(info.last_value), increment(info.increment),
-      start_value(info.start_value), min_value(info.min_value), max_value(info.max_value), cycle(info.cycle) {
+      start_value(info.start_value), min_value(info.min_value), max_value(info.max_value), cycle(info.cycle),
+      cache(info.cache) {
 }
 
 SequenceCatalogEntry::SequenceCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateSequenceInfo &info)
@@ -132,7 +133,7 @@ void SequenceCatalogEntry::CoverDurable(unique_lock<mutex> &seqlock, idx_t count
 			lock.Await(NotLogging(&logging));
 			continue;
 		}
-		auto target = LogAhead(data, count + LOG_AHEAD_VALUES);
+		auto target = LogAhead(data, count + MaxValue<idx_t>(LOG_AHEAD_VALUES, data.cache));
 		if (target.usage_count <= durable_usage_count) {
 			return;
 		}
@@ -300,6 +301,7 @@ unique_ptr<CreateInfo> SequenceCatalogEntry::GetInfo() const {
 	result->max_value = seq_data.max_value;
 	result->start_value = seq_data.counter;
 	result->cycle = seq_data.cycle;
+	result->cache = seq_data.cache;
 	result->last_value = seq_data.last_value;
 	result->dependencies = dependencies;
 	result->comment = comment;
@@ -318,6 +320,9 @@ string SequenceCatalogEntry::ToSQL() const {
 	ss << " MINVALUE " << seq_data.min_value;
 	ss << " MAXVALUE " << seq_data.max_value;
 	ss << " START " << seq_data.counter;
+	if (seq_data.cache != 1) {
+		ss << " CACHE " << seq_data.cache;
+	}
 	ss << " " << (seq_data.cycle ? "CYCLE" : "NO CYCLE") << ";";
 	return ss.str();
 }
