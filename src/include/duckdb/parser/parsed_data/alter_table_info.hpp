@@ -275,6 +275,12 @@ struct RenameTableInfo : public AlterTableInfo {
 public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	RenameTableInfo();
 };
 
 //===--------------------------------------------------------------------===//
@@ -502,7 +508,7 @@ private:
 //===--------------------------------------------------------------------===//
 // Alter View
 //===--------------------------------------------------------------------===//
-enum class AlterViewType : uint8_t { INVALID = 0 };
+enum class AlterViewType : uint8_t { INVALID = 0, RENAME_VIEW = 1 };
 
 struct AlterViewInfo : public AlterInfo {
 	AlterViewInfo(AlterViewType type, const AlterEntryData &data);
@@ -517,6 +523,22 @@ public:
 
 protected:
 	explicit AlterViewInfo(AlterViewType type);
+};
+
+struct RenameViewInfo : public AlterViewInfo {
+	RenameViewInfo(const AlterEntryData &data, Identifier new_name);
+	~RenameViewInfo() override;
+
+	Identifier new_view_name;
+
+public:
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterViewInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	RenameViewInfo();
 };
 
 //===--------------------------------------------------------------------===//

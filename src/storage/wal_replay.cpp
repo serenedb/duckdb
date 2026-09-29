@@ -856,8 +856,26 @@ void WriteAheadLogDeserializer::ReplayIndexData(IndexStorageInfo &info) {
 	});
 }
 
+static unique_ptr<ParseInfo> FromDuckDBRenameInfo(unique_ptr<ParseInfo> info) {
+	auto &alter_info = info->Cast<AlterInfo>();
+	unique_ptr<AlterInfo> result;
+	if (alter_info.type == AlterType::ALTER_TABLE &&
+	    alter_info.Cast<AlterTableInfo>().alter_table_type == AlterTableType::RENAME_TABLE) {
+		result = make_uniq<RenameInfo>(CatalogType::TABLE_ENTRY, alter_info.GetAlterEntryData(),
+		                               alter_info.Cast<RenameTableInfo>().new_table_name);
+	} else if (alter_info.type == AlterType::ALTER_VIEW &&
+	           alter_info.Cast<AlterViewInfo>().alter_view_type == AlterViewType::RENAME_VIEW) {
+		result = make_uniq<RenameInfo>(CatalogType::VIEW_ENTRY, alter_info.GetAlterEntryData(),
+		                               alter_info.Cast<RenameViewInfo>().new_view_name);
+	} else {
+		return info;
+	}
+	result->allow_internal = alter_info.allow_internal;
+	return std::move(result);
+}
+
 void WriteAheadLogDeserializer::ReplayAlter() {
-	auto info = deserializer.ReadProperty<unique_ptr<ParseInfo>>(101, "info");
+	auto info = FromDuckDBRenameInfo(deserializer.ReadProperty<unique_ptr<ParseInfo>>(101, "info"));
 	auto &alter_info = info->Cast<AlterInfo>();
 	alter_info.bind_mode = AlterBindMode::SKIP_BINDING;
 	if (!alter_info.IsAddUniqueConstraint()) {
@@ -956,7 +974,14 @@ void WriteAheadLogDeserializer::ReplayDropView() {
 // Replay Schema
 //===--------------------------------------------------------------------===//
 void WriteAheadLogDeserializer::ReplayCreateSchema() {
-	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "schema");
+	unique_ptr<CreateInfo> info;
+	if (IsSereneDBStorageVersion(db.GetStorageManager().GetStorageVersion())) {
+		info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "schema");
+	} else {
+		info = make_uniq<CreateSchemaInfo>();
+		info->SetQualifiedName(
+		    QualifiedName({Identifier(deserializer.ReadProperty<string>(101, "schema"))}, Identifier()));
+	}
 	if (DeserializeOnly()) {
 		return;
 	}

@@ -255,6 +255,10 @@ public:
 		serializer.WriteList(field_id, tag, count, func);
 	}
 
+	void RequireSereneDBStorageVersion(const char *what) const {
+		serializer.RequireSereneDBStorageVersion(what);
+	}
+
 private:
 	ChecksumWriter checksum_writer;
 	SerializationOptions options;
@@ -336,7 +340,11 @@ void WriteAheadLog::WriteDropTable(const TableCatalogEntry &entry) {
 //===--------------------------------------------------------------------===//
 void WriteAheadLog::WriteCreateSchema(const SchemaCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::CREATE_SCHEMA);
-	serializer.WriteProperty(101, "schema", &entry);
+	if (IsSereneDBStorageVersion(storage_manager.GetStorageVersion())) {
+		serializer.WriteProperty(101, "schema", &entry);
+	} else {
+		serializer.WriteProperty(101, "schema", entry.name);
+	}
 	serializer.End();
 }
 
@@ -621,9 +629,33 @@ void WriteAheadLog::WriteUpdate(DataChunk &chunk, const vector<column_t> &column
 //===--------------------------------------------------------------------===//
 // Write ALTER Statement
 //===--------------------------------------------------------------------===//
+static unique_ptr<AlterInfo> DuckDBRenameInfo(const AlterInfo &info) {
+	if (info.type != AlterType::RENAME) {
+		return nullptr;
+	}
+	auto &rename = info.Cast<RenameInfo>();
+	unique_ptr<AlterInfo> result;
+	switch (rename.entry_catalog_type) {
+	case CatalogType::TABLE_ENTRY:
+		result = make_uniq<RenameTableInfo>(rename.GetAlterEntryData(), rename.new_name);
+		break;
+	case CatalogType::VIEW_ENTRY:
+		result = make_uniq<RenameViewInfo>(rename.GetAlterEntryData(), rename.new_name);
+		break;
+	default:
+		return nullptr;
+	}
+	result->allow_internal = rename.allow_internal;
+	return result;
+}
+
 void WriteAheadLog::WriteAlter(CatalogEntry &entry, const AlterInfo &info) {
 	WriteAheadLogSerializer serializer(*this, WALType::ALTER_INFO);
-	serializer.WriteProperty(101, "info", &info);
+	unique_ptr<AlterInfo> duckdb_info;
+	if (!IsSereneDBStorageVersion(storage_manager.GetStorageVersion())) {
+		duckdb_info = DuckDBRenameInfo(info);
+	}
+	serializer.WriteProperty(101, "info", duckdb_info ? duckdb_info.get() : &info);
 
 	if (!info.IsAddUniqueConstraint()) {
 		return serializer.End();
@@ -632,6 +664,9 @@ void WriteAheadLog::WriteAlter(CatalogEntry &entry, const AlterInfo &info) {
 	auto &table_info = info.Cast<AlterTableInfo>();
 	auto &constraint_info = table_info.Cast<AddConstraintInfo>();
 	auto &unique = constraint_info.constraint->Cast<UniqueConstraint>();
+	if (!unique.IsPrimaryKey()) {
+		serializer.RequireSereneDBStorageVersion("ALTER TABLE ADD UNIQUE");
+	}
 
 	auto &table_entry = entry.Cast<DuckTableEntry>();
 	auto &parent = table_entry.Parent().Cast<DuckTableEntry>();
