@@ -190,24 +190,47 @@ ErrorData LocalTableStorage::AppendToIndexes(DuckTransaction &transaction, RowGr
 	DataChunk table_chunk;
 	table_chunk.InitializeEmpty(table_types);
 
+	auto finish_append = [&]() {
+		ErrorData result;
+		for (auto &index : index_list.Indexes()) {
+			if (!index.IsBound()) {
+				continue;
+			}
+			auto finished = index.Cast<BoundIndex>().FinishAppend();
+			if (!result.HasError()) {
+				result = std::move(finished);
+			}
+		}
+		return result;
+	};
+
 	// index_chunk scans are created here in the mapped_column_ids ordering (see note above).
 	ErrorData error;
-	for (auto &index_chunk : source.Chunks(transaction, mapped_column_ids)) {
-		D_ASSERT(index_chunk.ColumnCount() == mapped_column_ids.size());
-		for (idx_t i = 0; i < mapped_column_ids.size(); i++) {
-			auto col_id = mapped_column_ids[i].GetPrimaryIndex();
-			table_chunk.data[col_id].Reference(index_chunk.data[i]);
-		}
+	try {
+		for (auto &index_chunk : source.Chunks(transaction, mapped_column_ids)) {
+			D_ASSERT(index_chunk.ColumnCount() == mapped_column_ids.size());
+			for (idx_t i = 0; i < mapped_column_ids.size(); i++) {
+				auto col_id = mapped_column_ids[i].GetPrimaryIndex();
+				table_chunk.data[col_id].Reference(index_chunk.data[i]);
+			}
 
-		// Pass both the table and the index chunk.
-		// We need the table chunk for the bound indexes,
-		// and the index chunk for the unbound indexes (to buffer it).
-		error = DataTable::AppendToIndexes(index_list, delete_indexes, table_chunk, index_chunk, mapped_column_ids,
-		                                   start_row, index_append_mode, checkpoint_id);
-		if (error.HasError()) {
-			break;
+			// Pass both the table and the index chunk.
+			// We need the table chunk for the bound indexes,
+			// and the index chunk for the unbound indexes (to buffer it).
+			error = DataTable::AppendToIndexes(index_list, delete_indexes, table_chunk, index_chunk, mapped_column_ids,
+			                                   start_row, index_append_mode, checkpoint_id);
+			if (error.HasError()) {
+				break;
+			}
+			start_row += UnsafeNumericCast<row_t>(index_chunk.size());
 		}
-		start_row += UnsafeNumericCast<row_t>(index_chunk.size());
+	} catch (...) {
+		finish_append();
+		throw;
+	}
+	auto finished = finish_append();
+	if (!error.HasError()) {
+		error = std::move(finished);
 	}
 	return error;
 }
