@@ -15,7 +15,8 @@ struct ConjunctionState : public ExpressionState {
 			adaptive_filter = make_uniq<AdaptiveFilter>(expr, Settings::Get<FilterReorderSetting>(GetContext()));
 			adaptive_filter->SetLogger(GetContext().logger);
 		} else {
-			adaptive_filter = make_uniq<AdaptiveFilter>(expr);
+			adaptive_filter = make_uniq<AdaptiveFilter>(
+			    expr, EnumUtil::FromString<FilterReorder>(FilterReorderSetting::DefaultValue));
 		}
 	}
 	unique_ptr<AdaptiveFilter> adaptive_filter;

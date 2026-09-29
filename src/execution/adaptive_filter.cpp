@@ -109,10 +109,9 @@ bool AdaptiveFilter::CanSwap(idx_t idx) const {
 		return !can_throw[left] && !can_throw[right];
 	case FilterReorder::FAST:
 		return !can_throw[right] || right < left;
+	case FilterReorder::NEVER:
 	case FilterReorder::ALWAYS:
 		return true;
-	default:
-		D_ASSERT(false);
 	}
 }
 
