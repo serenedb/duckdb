@@ -326,6 +326,15 @@ bool LocalTableManager::IsEmpty() const {
 	return table_storage.empty();
 }
 
+vector<reference<DataTable>> LocalTableManager::GetTables() const {
+	lock_guard<mutex> l(table_storage_lock);
+	vector<reference<DataTable>> tables;
+	for (auto &entry : table_storage) {
+		tables.push_back(entry.first);
+	}
+	return tables;
+}
+
 shared_ptr<LocalTableStorage> LocalTableManager::MoveEntry(DataTable &table) {
 	lock_guard<mutex> l(table_storage_lock);
 	auto entry = table_storage.find(table);
@@ -559,6 +568,10 @@ bool LocalStorage::ChangesMade() noexcept {
 
 bool LocalStorage::Find(DataTable &table) {
 	return table_manager.GetStorage(table) != nullptr;
+}
+
+vector<reference<DataTable>> LocalStorage::GetTables() const {
+	return table_manager.GetTables();
 }
 
 idx_t LocalStorage::EstimatedSize() {
