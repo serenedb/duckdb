@@ -294,6 +294,7 @@ protected:
 
 	void ReplayUseCatalog();
 	void ReplayCommitPrepared();
+	void ReplayArtifact();
 	void ReplayUseTable();
 	void ReplayInsert();
 	void ReplayRowGroupData();
@@ -756,6 +757,9 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 		break;
 	case WALType::COMMIT_PREPARED:
 		ReplayCommitPrepared();
+		break;
+	case WALType::ARTIFACT:
+		ReplayArtifact();
 		break;
 	default:
 		throw InternalException("Invalid WAL entry type!");
@@ -1423,6 +1427,17 @@ void WriteAheadLogDeserializer::ReplayCommitPrepared() {
 		participants.emplace_back(oids[i], generations[i]);
 	}
 	state.committed_prepared.emplace_back(txid, std::move(participants));
+}
+
+void WriteAheadLogDeserializer::ReplayArtifact() {
+	auto type = deserializer.ReadProperty<CatalogType>(101, "catalog_type");
+	auto catalog_oid = deserializer.ReadProperty<idx_t>(102, "catalog_oid");
+	auto oid = deserializer.ReadProperty<idx_t>(103, "oid");
+	auto paths = deserializer.ReadProperty<vector<string>>(104, "paths");
+	if (DeserializeOnly()) {
+		return;
+	}
+	db.GetCatalog().ReplayArtifact(type, catalog_oid, oid, std::move(paths));
 }
 
 void WriteAheadLogDeserializer::ReplayUseTable() {

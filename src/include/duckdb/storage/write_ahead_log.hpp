@@ -119,6 +119,7 @@ public:
 	void WriteSetTable(const Identifier &schema, const Identifier &table, idx_t table_oid);
 	void WriteUseCatalog(idx_t catalog_oid);
 	void WriteCommitPrepared(const hugeint_t &txid, const vector<pair<idx_t, idx_t>> &participants);
+	void WriteArtifact(CatalogType type, idx_t catalog_oid, idx_t oid, const vector<string> &paths);
 
 	void WriteAlter(CatalogEntry &entry, const AlterInfo &info, bool with_index_storage = true);
 

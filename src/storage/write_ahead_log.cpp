@@ -615,6 +615,15 @@ void WriteAheadLog::WriteCommitPrepared(const hugeint_t &txid, const vector<pair
 	serializer.End();
 }
 
+void WriteAheadLog::WriteArtifact(CatalogType type, idx_t catalog_oid, idx_t oid, const vector<string> &paths) {
+	WriteAheadLogSerializer serializer(*this, WALType::ARTIFACT);
+	serializer.WriteProperty(101, "catalog_type", type);
+	serializer.WriteProperty(102, "catalog_oid", catalog_oid);
+	serializer.WriteProperty(103, "oid", oid);
+	serializer.WriteProperty(104, "paths", paths);
+	serializer.End();
+}
+
 void WriteAheadLog::WriteInsert(DataChunk &chunk) {
 	D_ASSERT(chunk.size() > 0);
 	chunk.Verify(GetDatabase().GetDatabase());
