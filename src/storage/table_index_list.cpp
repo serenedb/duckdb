@@ -258,8 +258,10 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 	auto table_name = table_info.GetTableName();
 	auto &table_entry =
 	    catalog.GetEntry<TableCatalogEntry>(context, QualifiedName(catalog.GetName(), schema, table_name));
-	auto &table = table_entry.Cast<DuckTableEntry>();
+	Bind(context, table_entry.Cast<DuckTableEntry>(), index_type);
+}
 
+void TableIndexList::Bind(ClientContext &context, DuckTableEntry &table, const char *index_type) {
 	vector<LogicalType> column_types;
 	vector<string> column_names;
 	for (auto &col : table.GetColumns().Logical()) {
@@ -442,6 +444,7 @@ IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, c
 			if ((index.GetConstraintType() != IndexConstraintType::NONE) != constraint_indexes) {
 				continue;
 			}
+			result.ordered_indexes.push_back(index);
 			if (!index.IsBound()) {
 				// Unbound: reference existing storage info
 				auto &unbound_index = index.Cast<UnboundIndex>();

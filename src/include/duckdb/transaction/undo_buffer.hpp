@@ -56,7 +56,8 @@ public:
 	//! Cleanup the undo buffer
 	void Cleanup(transaction_t lowest_active_transaction);
 	//! Commit the changes made in the UndoBuffer: should be called on commit
-	void WriteToWAL(WriteAheadLog &wal, optional_ptr<StorageCommitState> commit_state);
+	void WriteToWAL(optional_ptr<WriteAheadLog> wal, optional_ptr<StorageCommitState> commit_state,
+	                optional_ptr<WriteAheadLog> catalog_log);
 	//! Iterate the undo buffer and commit each entry. Deferred drop side effects accumulate in
 	//! info.drop_state so they can be applied after the commit chain succeeds.
 	void Commit(UndoBuffer::IteratorState &iterator_state, CommitInfo &info);

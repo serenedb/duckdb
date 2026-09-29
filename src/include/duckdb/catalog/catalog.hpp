@@ -64,6 +64,7 @@ class PragmaFunctionCatalogEntry;
 class CatalogSet;
 class DatabaseInstance;
 class DependencyManager;
+class WriteAheadLog;
 
 struct CatalogLookup;
 struct CatalogEntryLookup;
@@ -137,6 +138,14 @@ public:
 	bool IsCaseSensitive() const {
 		return Compatibility() == SqlCompatibility::POSTGRES;
 	}
+
+	virtual bool UsesCatalogLog() const {
+		return false;
+	}
+	virtual optional_ptr<WriteAheadLog> CatalogLog() {
+		return nullptr;
+	}
+	virtual Catalog &ReplayUseCatalog(ClientContext &context, idx_t catalog_oid);
 
 	virtual void Initialize(bool load_builtin) = 0;
 	virtual void Initialize(optional_ptr<ClientContext> context, bool load_builtin);

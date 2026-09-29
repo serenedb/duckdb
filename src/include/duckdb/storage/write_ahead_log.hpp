@@ -94,7 +94,7 @@ public:
 	void WriteCreateTableMacro(const TableMacroCatalogEntry &entry);
 	void WriteDropTableMacro(const TableMacroCatalogEntry &entry);
 
-	void WriteCreateIndex(const IndexCatalogEntry &entry);
+	void WriteCreateIndex(const IndexCatalogEntry &entry, bool with_index_storage = true);
 	void WriteDropIndex(const IndexCatalogEntry &entry);
 
 	void WriteCreateType(const TypeCatalogEntry &entry);
@@ -115,9 +115,12 @@ public:
 	void WriteCreateForeignServer(const InCatalogEntry &entry);
 	void WriteDropForeignServer(const InCatalogEntry &entry);
 	//! Sets the table used for subsequent insert/delete/update commands
-	void WriteSetTable(const Identifier &schema, const Identifier &table);
+	void WriteSetTable(const TableCatalogEntry &table);
+	void WriteSetTable(const Identifier &schema, const Identifier &table, idx_t table_oid);
+	void WriteUseCatalog(idx_t catalog_oid);
+	void WriteCommitPrepared(const hugeint_t &txid, const vector<pair<idx_t, idx_t>> &participants);
 
-	void WriteAlter(CatalogEntry &entry, const AlterInfo &info);
+	void WriteAlter(CatalogEntry &entry, const AlterInfo &info, bool with_index_storage = true);
 
 	void WriteInsert(DataChunk &chunk);
 	void WriteRowGroupData(const PersistentCollectionData &data);
@@ -140,7 +143,7 @@ public:
 	//! fsync. Must be called while the WAL lock (StorageManager::wal_lock) is held so the append stays totally ordered.
 	//! Returns the WAL byte offset that covers this commit's entries; the caller must subsequently call GroupSync with
 	//! this offset to make the bytes durable before acknowledging the commit.
-	idx_t FlushAppendNoSync();
+	idx_t FlushAppendNoSync(optional_ptr<const hugeint_t> prepared_txid = nullptr);
 	//! Group commit: make every WAL byte up to (at least) my_offset durable. Called with the WAL lock NOT held, so
 	//! concurrent committers overlap their fsyncs or coalesce onto in-flight ones. A committer returns from this call
 	//! only once durable_offset >= my_offset, i.e. its WAL_FLUSH marker is on stable storage.

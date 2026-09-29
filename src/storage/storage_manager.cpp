@@ -17,6 +17,7 @@
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/storage/table/column_data.hpp"
 #include "duckdb/storage/table/in_memory_checkpoint.hpp"
+#include "duckdb/storage/table_storage_load.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
@@ -154,7 +155,8 @@ void StorageOptions::Initialize(unordered_map<string, Value> &options) {
 }
 
 StorageManager::StorageManager(AttachedDatabase &db, string path_p, AttachOptions &options)
-    : db(db), path(std::move(path_p)), read_only(options.access_mode == AccessMode::READ_ONLY), wal_size(0) {
+    : defer_load(options.defer_storage_load), db(db), path(std::move(path_p)),
+      read_only(options.access_mode == AccessMode::READ_ONLY), wal_size(0) {
 	if (path.empty()) {
 		path = IN_MEMORY_PATH;
 		return;
@@ -556,15 +558,42 @@ void SingleFileStorageManager::LoadDatabase(QueryContext context) {
 			}
 		}
 
-		unique_ptr<MetricsTimer> timer = nullptr;
-
-		// Start timing the storage load step.
-		auto client_context = context.GetClientContext();
-		if (client_context) {
-			auto profiler = client_context->client_data->profiler;
-			timer = make_uniq<MetricsTimer>(profiler->StartTimer<MetricStorageAttachLoadStorageLatency>());
+		if (defer_load) {
+			deferred_storage = true;
+		} else {
+			LoadStorage(context);
 		}
+	}
 
+	//
+	if (row_group_size > 122880ULL && IsPriorToVersion(StorageVersion::V1_2_0, GetStorageVersion())) {
+		throw InvalidInputException("Unsupported row group size %llu - row group sizes >= 122_880 are only supported "
+		                            "with STORAGE_VERSION '1.2.0' or above.\nExplicitly specify a newer storage "
+		                            "version when creating the database to enable larger row groups",
+		                            row_group_size);
+	}
+
+	load_complete = !defer_load;
+}
+
+void SingleFileStorageManager::LoadStorage(QueryContext context) {
+	unique_ptr<MetricsTimer> timer = nullptr;
+
+	// Start timing the storage load step.
+	auto client_context = context.GetClientContext();
+	if (client_context) {
+		auto profiler = client_context->client_data->profiler;
+		timer = make_uniq<MetricsTimer>(profiler->StartTimer<MetricStorageAttachLoadStorageLatency>());
+	}
+
+	auto &catalog = db.GetCatalog();
+	if (catalog.UsesCatalogLog()) {
+		if (!client_context) {
+			throw InternalException("Loading the storage of a catalog-log database needs a client context");
+		}
+		table_storage_load = make_uniq<TableStorageLoad>(catalog.Cast<DuckCatalog>(), *client_context);
+	}
+	try {
 		// Load the checkpoint from storage.
 		auto checkpoint_reader = SingleFileCheckpointReader(*this);
 		checkpoint_reader.LoadFromStorage();
@@ -584,17 +613,29 @@ void SingleFileStorageManager::LoadDatabase(QueryContext context) {
 		wal_path = GetWALPath();
 		wal = WriteAheadLog::Replay(context, *this, wal_path);
 
-		// Timer will go out of scope here, if set.
+		if (table_storage_load) {
+			if (client_context->transaction.HasActiveTransaction()) {
+				table_storage_load->Install();
+			} else {
+				client_context->RunFunctionInTransaction([&]() { table_storage_load->Install(); });
+			}
+		}
+	} catch (...) {
+		table_storage_load.reset();
+		throw;
 	}
+	table_storage_load.reset();
+}
 
-	//
-	if (row_group_size > 122880ULL && IsPriorToVersion(StorageVersion::V1_2_0, GetStorageVersion())) {
-		throw InvalidInputException("Unsupported row group size %llu - row group sizes >= 122_880 are only supported "
-		                            "with STORAGE_VERSION '1.2.0' or above.\nExplicitly specify a newer storage "
-		                            "version when creating the database to enable larger row groups",
-		                            row_group_size);
+void StorageManager::FinishLoad(QueryContext context) {
+	if (!defer_load) {
+		return;
 	}
-
+	defer_load = false;
+	if (deferred_storage) {
+		deferred_storage = false;
+		LoadStorage(context);
+	}
 	load_complete = true;
 }
 
@@ -621,6 +662,7 @@ public:
 	void RevertCommit() override;
 	// Make the commit persistent
 	void FlushCommit() override;
+	bool PrepareCommit(const hugeint_t &txid) override;
 	idx_t GetFlushOffset() const override {
 		return flush_offset;
 	}
@@ -688,6 +730,17 @@ void SingleFileStorageCommitState::FlushCommit() {
 	// acknowledged.
 	flush_offset = wal.FlushAppendNoSync();
 	state = WALCommitState::FLUSHED;
+}
+
+bool SingleFileStorageCommitState::PrepareCommit(const hugeint_t &txid) {
+	D_ASSERT(state == WALCommitState::IN_PROGRESS);
+	state = WALCommitState::FLUSHED;
+	if (wal.GetTotalWritten() == initial_written) {
+		flush_offset = initial_wal_size;
+		return false;
+	}
+	flush_offset = wal.FlushAppendNoSync(&txid);
+	return true;
 }
 
 void SingleFileStorageCommitState::AddRowGroupData(DataTable &table, idx_t start_index, idx_t count,

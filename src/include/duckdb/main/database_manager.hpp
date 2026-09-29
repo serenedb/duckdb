@@ -15,6 +15,9 @@
 #include "duckdb/parser/parsed_data/attach_info.hpp"
 #include "duckdb/main/database_file_path_manager.hpp"
 #include "duckdb/common/checked_integer.hpp"
+#include "duckdb/common/map.hpp"
+
+#include <functional>
 
 namespace duckdb {
 class AttachedDatabase;
@@ -114,6 +117,9 @@ public:
 		}
 		return oid;
 	}
+	void CommitPrepared(const hugeint_t &txid, vector<pair<idx_t, idx_t>> participants);
+	bool IsPreparedCommitted(const hugeint_t &txid);
+	void RetainPrepared(const std::function<bool(const hugeint_t &, const vector<pair<idx_t, idx_t>> &)> &keep);
 	bool HasDefaultDatabase() {
 		return !default_database.empty();
 	}
@@ -141,6 +147,8 @@ private:
 	identifier_map_t<shared_ptr<AttachedDatabase>> databases;
 	//! The next object id handed out by the NextOid method
 	atomic<idx_t> next_oid;
+	mutex committed_prepared_lock;
+	map<hugeint_t, vector<pair<idx_t, idx_t>>> committed_prepared;
 	//! The current query number
 	atomic<transaction_t> current_query_number;
 	//! The current transaction number

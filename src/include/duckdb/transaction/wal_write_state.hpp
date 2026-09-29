@@ -24,8 +24,8 @@ struct UpdateInfo;
 
 class WALWriteState {
 public:
-	explicit WALWriteState(DuckTransaction &transaction, WriteAheadLog &log,
-	                       optional_ptr<StorageCommitState> commit_state);
+	WALWriteState(DuckTransaction &transaction, optional_ptr<WriteAheadLog> log,
+	              optional_ptr<StorageCommitState> commit_state, optional_ptr<WriteAheadLog> catalog_log);
 
 public:
 	void CommitEntry(UndoFlags type, data_ptr_t data);
@@ -34,13 +34,17 @@ private:
 	void SwitchTable(DuckTableEntry &table_entry, UndoFlags new_op);
 
 	void WriteCatalogEntry(CatalogEntry &entry, data_ptr_t extra_data);
+	void WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry, const AlterInfo *alter_info);
 	void WriteDelete(DeleteInfo &info);
 	void WriteUpdate(UpdateInfo &info);
+	WriteAheadLog &Log();
 
 private:
 	DuckTransaction &transaction;
-	WriteAheadLog &log;
+	optional_ptr<WriteAheadLog> log;
 	optional_ptr<StorageCommitState> commit_state;
+	optional_ptr<WriteAheadLog> catalog_log;
+	bool catalog_selected = false;
 
 	optional_ptr<DuckTableEntry> current_table_entry;
 

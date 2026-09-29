@@ -291,6 +291,10 @@ void WriteAheadLog::WriteHeader() {
 	    catalog.GetIsEncrypted() ? idx_t(WAL_ENCRYPTED_VERSION_NUMBER) : idx_t(WAL_VERSION_NUMBER);
 	serializer.WriteProperty(101, "version", encryption_version_number);
 
+	if (database.GetStorageManager().InMemory()) {
+		serializer.End();
+		return;
+	}
 	auto &single_file_block_manager = database.GetStorageManager().GetBlockManager().Cast<SingleFileBlockManager>();
 	auto file_version_number = single_file_block_manager.GetVersionNumber();
 	// double check
@@ -438,7 +442,7 @@ void SerializeIndex(AttachedDatabase &db, WriteAheadLogSerializer &serializer, T
 	}
 }
 
-void WriteAheadLog::WriteCreateIndex(const IndexCatalogEntry &entry) {
+void WriteAheadLog::WriteCreateIndex(const IndexCatalogEntry &entry, bool with_index_storage) {
 	WriteAheadLogSerializer serializer(*this, WALType::CREATE_INDEX);
 	serializer.WriteProperty(101, "index_catalog_entry", &entry);
 
@@ -446,7 +450,7 @@ void WriteAheadLog::WriteCreateIndex(const IndexCatalogEntry &entry) {
 	// An index over a relation with no DataTable (a view) has no index storage
 	// to serialize; the definition above is the whole record.
 	auto &index_entry = entry.Cast<DuckIndexEntry>();
-	if (index_entry.info && index_entry.info->info) {
+	if (with_index_storage && index_entry.info && index_entry.info->info) {
 		auto &list = index_entry.GetDataTableInfo().GetIndexes();
 		auto &database = GetDatabase();
 		SerializeIndex(database, serializer, list, index_entry.name);
@@ -461,6 +465,9 @@ void WriteAheadLog::WriteDropIndex(const IndexCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::DROP_INDEX);
 	serializer.WriteProperty(101, "schema", entry.ParentSchemaName());
 	serializer.WriteProperty(102, "name", entry.name);
+	if (IsSereneDBStorageVersion(storage_manager.GetStorageVersion())) {
+		serializer.WriteProperty(16484, "oid", entry.oid);
+	}
 	serializer.End();
 }
 
@@ -574,10 +581,37 @@ void WriteAheadLog::WriteDropSchema(const SchemaCatalogEntry &entry) {
 //===--------------------------------------------------------------------===//
 // DATA
 //===--------------------------------------------------------------------===//
-void WriteAheadLog::WriteSetTable(const Identifier &schema, const Identifier &table) {
+void WriteAheadLog::WriteSetTable(const TableCatalogEntry &table) {
+	WriteSetTable(table.ParentSchemaName(), table.name, table.oid);
+}
+
+void WriteAheadLog::WriteSetTable(const Identifier &schema, const Identifier &table, idx_t table_oid) {
 	WriteAheadLogSerializer serializer(*this, WALType::USE_TABLE);
 	serializer.WriteProperty(101, "schema", schema);
 	serializer.WriteProperty(102, "table", table);
+	if (IsSereneDBStorageVersion(storage_manager.GetStorageVersion())) {
+		serializer.WriteProperty(16484, "table_oid", table_oid);
+	}
+	serializer.End();
+}
+
+void WriteAheadLog::WriteUseCatalog(idx_t catalog_oid) {
+	WriteAheadLogSerializer serializer(*this, WALType::USE_CATALOG);
+	serializer.WriteProperty(101, "catalog_oid", catalog_oid);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteCommitPrepared(const hugeint_t &txid, const vector<pair<idx_t, idx_t>> &participants) {
+	vector<idx_t> oids;
+	vector<idx_t> generations;
+	for (auto &participant : participants) {
+		oids.push_back(participant.first);
+		generations.push_back(participant.second);
+	}
+	WriteAheadLogSerializer serializer(*this, WALType::COMMIT_PREPARED);
+	serializer.WriteProperty(101, "txid", txid);
+	serializer.WriteProperty(102, "participant_oids", oids);
+	serializer.WriteProperty(103, "participant_generations", generations);
 	serializer.End();
 }
 
@@ -649,7 +683,7 @@ static unique_ptr<AlterInfo> DuckDBRenameInfo(const AlterInfo &info) {
 	return result;
 }
 
-void WriteAheadLog::WriteAlter(CatalogEntry &entry, const AlterInfo &info) {
+void WriteAheadLog::WriteAlter(CatalogEntry &entry, const AlterInfo &info, bool with_index_storage) {
 	WriteAheadLogSerializer serializer(*this, WALType::ALTER_INFO);
 	unique_ptr<AlterInfo> duckdb_info;
 	if (!IsSereneDBStorageVersion(storage_manager.GetStorageVersion())) {
@@ -657,7 +691,7 @@ void WriteAheadLog::WriteAlter(CatalogEntry &entry, const AlterInfo &info) {
 	}
 	serializer.WriteProperty(101, "info", duckdb_info ? duckdb_info.get() : &info);
 
-	if (!info.IsAddUniqueConstraint()) {
+	if (!with_index_storage || !info.IsAddUniqueConstraint()) {
 		return serializer.End();
 	}
 
@@ -696,13 +730,17 @@ void WriteAheadLog::Flush() {
 	storage_manager.SetWALSize(writer->GetFileSize());
 }
 
-idx_t WriteAheadLog::FlushAppendNoSync() {
+idx_t WriteAheadLog::FlushAppendNoSync(optional_ptr<const hugeint_t> prepared_txid) {
 	if (!writer) {
 		return 0;
 	}
 
 	// write an empty entry, marking the end of this commit in the WAL byte stream
-	WriteAheadLogSerializer serializer(*this, WALType::WAL_FLUSH);
+	WriteAheadLogSerializer serializer(*this, prepared_txid ? WALType::WAL_PREPARED : WALType::WAL_FLUSH);
+	if (prepared_txid) {
+		serializer.RequireSereneDBStorageVersion("a two-phase commit");
+		serializer.WriteProperty(101, "txid", *prepared_txid);
+	}
 	serializer.End();
 
 	// push the buffered bytes into the OS page cache, but do NOT fsync yet -- the grouped fsync in GroupSync makes

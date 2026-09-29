@@ -24,6 +24,7 @@ class DataTable;
 class DatabaseInstance;
 class TransactionManager;
 class TableCatalogEntry;
+class TableStorageLoad;
 struct PersistentCollectionData;
 
 class StorageCommitState {
@@ -37,6 +38,7 @@ public:
 	virtual void RevertCommit() = 0;
 	// Make the commit persistent
 	virtual void FlushCommit() = 0;
+	virtual bool PrepareCommit(const hugeint_t &txid) = 0;
 	//! The WAL byte offset covering this commit's entries after FlushCommit, or 0 if no WAL bytes were written. The
 	//! transaction manager passes this to WriteAheadLog::GroupSync to make the bytes durable before acknowledging.
 	virtual idx_t GetFlushOffset() const {
@@ -105,6 +107,10 @@ public:
 	bool IsLoaded() const {
 		return load_complete;
 	}
+	void FinishLoad(QueryContext context);
+	optional_ptr<TableStorageLoad> GetTableStorageLoad() {
+		return table_storage_load.get();
+	}
 	//! The path to the WAL, derived from the database file path
 	string GetWALPath(const string &suffix = ".wal");
 	//! The path to the WAL that is used while a checkpoint is running
@@ -165,8 +171,12 @@ public:
 
 protected:
 	virtual void LoadDatabase(QueryContext context) = 0;
+	virtual void LoadStorage(QueryContext context) = 0;
 
 protected:
+	bool defer_load = false;
+	bool deferred_storage = false;
+	unique_ptr<TableStorageLoad> table_storage_load;
 	//! The attached database managed by this storage manager.
 	AttachedDatabase &db;
 	//! The path of the database
@@ -229,6 +239,7 @@ public:
 
 protected:
 	void LoadDatabase(QueryContext context) override;
+	void LoadStorage(QueryContext context) override;
 
 	unique_ptr<CheckpointWriter> CreateCheckpointWriter(QueryContext context, CheckpointOptions options);
 };

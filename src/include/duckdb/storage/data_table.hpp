@@ -17,6 +17,7 @@
 namespace duckdb {
 
 class BoundForeignKeyConstraint;
+class BoundIndex;
 class AttachedDatabase;
 class ClientContext;
 class ColumnList;
@@ -300,6 +301,7 @@ public:
 	bool HasForeignKeyIndex(std::span<const PhysicalIndex> keys, ForeignKeyType type);
 	void SetIndexStorageInfo(vector<IndexStorageInfo> index_storage_info);
 	void VacuumIndexes();
+	void RebuildIndex(BoundIndex &index);
 	void VerifyIndexBuffers();
 	void CleanupAppend(transaction_t lowest_transaction, idx_t start, idx_t count);
 	void Destroy();
