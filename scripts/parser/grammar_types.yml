@@ -228,6 +228,9 @@ AlterTableInfo:
     - AlterType
     - AddOrDropDefault
     - AddDefault
+    - SetCompression
+    - SetCompressionDefault
+    - SetCompressionCodec
     - RenameColumn
     - RenameAlter
     - AddConstraint

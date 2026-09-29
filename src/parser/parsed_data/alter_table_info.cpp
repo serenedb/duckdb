@@ -594,6 +594,50 @@ string SetDefaultInfo::ToString() const {
 }
 
 //===--------------------------------------------------------------------===//
+// SetColumnCompressionInfo
+//===--------------------------------------------------------------------===//
+SetColumnCompressionInfo::SetColumnCompressionInfo()
+    : AlterTableInfo(AlterTableType::SET_COLUMN_COMPRESSION), compression_type(CompressionType::COMPRESSION_AUTO),
+      compression_level(0) {
+}
+
+SetColumnCompressionInfo::SetColumnCompressionInfo(const AlterEntryData &data, Identifier column_name_p,
+                                                   CompressionType compression_type_p, uint8_t compression_level_p)
+    : AlterTableInfo(AlterTableType::SET_COLUMN_COMPRESSION, data), column_name(std::move(column_name_p)),
+      compression_type(compression_type_p), compression_level(compression_level_p) {
+}
+
+SetColumnCompressionInfo::~SetColumnCompressionInfo() {
+}
+
+unique_ptr<AlterInfo> SetColumnCompressionInfo::Copy() const {
+	return make_uniq_base<AlterInfo, SetColumnCompressionInfo>(GetAlterEntryData(), column_name, compression_type,
+	                                                           compression_level);
+}
+
+string SetColumnCompressionInfo::ToString() const {
+	string result = "";
+	result += "ALTER TABLE ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " ALTER COLUMN ";
+	result += SQLIdentifier(column_name);
+	result += " SET COMPRESSION ";
+	if (compression_type == CompressionType::COMPRESSION_AUTO) {
+		result += "DEFAULT";
+	} else {
+		result += CompressionTypeToString(compression_type);
+		if (compression_level != 0) {
+			result += "(compression_level = " + to_string(compression_level) + ")";
+		}
+	}
+	result += ";";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
 // SetNotNullInfo
 //===--------------------------------------------------------------------===//
 SetNotNullInfo::SetNotNullInfo() : AlterTableInfo(AlterTableType::SET_NOT_NULL) {

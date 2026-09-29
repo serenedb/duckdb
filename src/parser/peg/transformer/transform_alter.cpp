@@ -383,6 +383,13 @@ PEGTransformerFactory::TransformAlterColumn(PEGTransformer &transformer, const b
 		auto set_not_null = unique_ptr_cast<AlterTableInfo, SetNotNullInfo>(std::move(alter_column_entry));
 		set_not_null->column_name = nested_column_name->ColumnNames()[0];
 		return std::move(set_not_null);
+	} else if (alter_column_entry->alter_table_type == AlterTableType::SET_COLUMN_COMPRESSION) {
+		if (nested_column_name->ColumnNames().size() != 1) {
+			throw ParserException("SET COMPRESSION is not supported on a struct field");
+		}
+		auto set_compression = unique_ptr_cast<AlterTableInfo, SetColumnCompressionInfo>(std::move(alter_column_entry));
+		set_compression->column_name = nested_column_name->ColumnNames()[0];
+		return std::move(set_compression);
 	} else if (alter_column_entry->alter_table_type == AlterTableType::ALTER_COLUMN_TYPE) {
 		auto change_column_type = unique_ptr_cast<AlterTableInfo, ChangeColumnTypeInfo>(std::move(alter_column_entry));
 		change_column_type->column_name = nested_column_name->ColumnNames()[0];
