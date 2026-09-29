@@ -198,6 +198,9 @@ unique_ptr<AlterInfo> AlterTableInfo::Deserialize(Deserializer &deserializer) {
 	case AlterTableType::RESET_TABLE_OPTIONS:
 		result = ResetTableOptionsInfo::Deserialize(deserializer);
 		break;
+	case AlterTableType::SET_COLUMN_COMPRESSION:
+		result = SetColumnCompressionInfo::Deserialize(deserializer);
+		break;
 	case AlterTableType::SET_DEFAULT:
 		result = SetDefaultInfo::Deserialize(deserializer);
 		break;
@@ -839,6 +842,21 @@ unique_ptr<AlterInfo> SetColumnCommentInfo::Deserialize(Deserializer &deserializ
 	deserializer.ReadProperty<CatalogType>(300, "catalog_entry_type", result->catalog_entry_type);
 	deserializer.ReadProperty<Value>(301, "comment_value", result->comment_value);
 	deserializer.ReadPropertyWithDefault<Identifier>(302, "column_name", result->column_name);
+	return std::move(result);
+}
+
+void SetColumnCompressionInfo::Serialize(Serializer &serializer) const {
+	AlterTableInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(400, "column_name", column_name);
+	serializer.WriteProperty<CompressionType>(401, "compression_type", compression_type);
+	serializer.WritePropertyWithDefault<uint8_t>(402, "compression_level", compression_level);
+}
+
+unique_ptr<AlterTableInfo> SetColumnCompressionInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<SetColumnCompressionInfo>(new SetColumnCompressionInfo());
+	deserializer.ReadPropertyWithDefault<Identifier>(400, "column_name", result->column_name);
+	deserializer.ReadProperty<CompressionType>(401, "compression_type", result->compression_type);
+	deserializer.ReadPropertyWithDefault<uint8_t>(402, "compression_level", result->compression_level);
 	return std::move(result);
 }
 
