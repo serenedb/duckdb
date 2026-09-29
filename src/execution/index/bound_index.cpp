@@ -236,9 +236,6 @@ void BoundIndex::ApplyBufferedReplays(const vector<LogicalType> &table_types, Bu
 		const auto type_idx = static_cast<idx_t>(replay_range.type);
 		auto &state = replay_states[type_idx];
 
-		// Tell the index which WAL entry this range came from; an external-segment index may skip it.
-		OnReplayRange(replay_range.commit_offset);
-
 		// Initialize the scan state if necessary. Take ownership of buffered operations, since we won't need
 		// them after replaying anyways.
 		if (!state.scan_initialized) {
@@ -288,7 +285,6 @@ void BoundIndex::ApplyBufferedReplays(const vector<LogicalType> &table_types, Bu
 			current_row += rows_to_process;
 		}
 	}
-	FinishReplay();
 }
 
 } // namespace duckdb
