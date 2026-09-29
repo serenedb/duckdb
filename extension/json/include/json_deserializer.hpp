@@ -4,14 +4,18 @@
 
 namespace duckdb {
 
-class JsonDeserializer : public Deserializer {
+class JsonDeserializer final : public Deserializer {
 public:
+	using List = TypedList<JsonDeserializer>;
+
 	JsonDeserializer(yyjson_val *val, const yyjson_doc_ptr &doc) : doc(doc.get()) {
 		deserialize_enum_from_string = true;
 		stack.emplace_back(val);
 	}
 
 private:
+	friend class Deserializer;
+
 	struct StackFrame {
 		yyjson_val *val;
 		yyjson_arr_iter arr_iter;
