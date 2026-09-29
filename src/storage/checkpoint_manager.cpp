@@ -426,9 +426,15 @@ void WriteCatalogEntries(WriteAheadLog &log, DuckCatalog &catalog) {
 		case CatalogType::TYPE_ENTRY:
 			log.WriteCreateType(entry.Cast<TypeCatalogEntry>());
 			break;
-		case CatalogType::SEQUENCE_ENTRY:
-			log.WriteCreateSequence(entry.Cast<SequenceCatalogEntry>());
+		case CatalogType::SEQUENCE_ENTRY: {
+			auto &sequence = entry.Cast<SequenceCatalogEntry>();
+			log.WriteCreateSequence(sequence);
+			auto durable = sequence.GetDurableValue();
+			if (durable.usage_count > sequence.GetData().usage_count) {
+				log.WriteSequenceValue(durable);
+			}
 			break;
+		}
 		case CatalogType::TABLE_ENTRY:
 			log.WriteCreateTable(entry.Cast<TableCatalogEntry>());
 			break;

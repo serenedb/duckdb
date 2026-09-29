@@ -60,6 +60,7 @@ public:
 	unique_ptr<CreateInfo> GetInfo() const override;
 
 	SequenceData GetData() const;
+	SequenceValue GetDurableValue();
 	int64_t CurrentValue();
 	int64_t NextValue(DuckTransaction &transaction);
 	int64_t NextValues(DuckTransaction &transaction, idx_t count);
@@ -69,9 +70,17 @@ public:
 	string ToSQL() const override;
 
 private:
+	bool LogsValues() const;
+	void CoverDurable(unique_lock<mutex> &seqlock, idx_t count);
+	void MakeDurable(unique_lock<mutex> &seqlock, const SequenceData &target);
+
+private:
 	//! Lock for getting a value on the sequence
 	mutable mutex lock;
 	//! Sequence data
 	SequenceData data;
+	uint64_t durable_usage_count;
+	int64_t durable_counter;
+	bool logging = false;
 };
 } // namespace duckdb

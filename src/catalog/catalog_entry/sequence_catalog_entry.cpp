@@ -6,6 +6,10 @@
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/common/operator/add.hpp"
+#include "duckdb/common/types/hugeint.hpp"
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/storage/storage_manager.hpp"
+#include "duckdb/storage/write_ahead_log.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 
 #include <algorithm>
@@ -21,7 +25,8 @@ SequenceData::SequenceData(CreateSequenceInfo &info)
 }
 
 SequenceCatalogEntry::SequenceCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateSequenceInfo &info)
-    : StandardEntry(CatalogType::SEQUENCE_ENTRY, schema, catalog, info.GetSequenceName(), info.oid), data(info) {
+    : StandardEntry(CatalogType::SEQUENCE_ENTRY, schema, catalog, info.GetSequenceName(), info.oid), data(info),
+      durable_usage_count(data.usage_count), durable_counter(data.counter) {
 	this->temporary = info.temporary;
 	this->comment = info.comment;
 	this->tags = info.tags;
@@ -33,7 +38,10 @@ unique_ptr<CatalogEntry> SequenceCatalogEntry::Copy(ClientContext &context) cons
 	auto &cast_info = info_copy->Cast<CreateSequenceInfo>();
 
 	auto result = make_uniq<SequenceCatalogEntry>(catalog, ParentSchema(context), cast_info);
-	result->data = GetData();
+	lock_guard<mutex> seqlock(lock);
+	result->data = data;
+	result->durable_usage_count = durable_usage_count;
+	result->durable_counter = durable_counter;
 
 	return std::move(result);
 }
@@ -41,6 +49,95 @@ unique_ptr<CatalogEntry> SequenceCatalogEntry::Copy(ClientContext &context) cons
 SequenceData SequenceCatalogEntry::GetData() const {
 	lock_guard<mutex> seqlock(lock);
 	return data;
+}
+
+SequenceValue SequenceCatalogEntry::GetDurableValue() {
+	lock_guard<mutex> seqlock(lock);
+	return SequenceValue {this, durable_usage_count, durable_counter};
+}
+
+bool SequenceCatalogEntry::LogsValues() const {
+	return !temporary && timestamp < TRANSACTION_ID_START && catalog.UsesCatalogLog();
+}
+
+static SequenceData LogAhead(SequenceData data, idx_t steps) {
+	if (!data.cycle) {
+		auto increment = hugeint_t(data.increment);
+		auto limit =
+		    data.increment > 0
+		        ? MinValue<hugeint_t>(data.max_value, hugeint_t(NumericLimits<int64_t>::Maximum()) - increment)
+		        : MaxValue<hugeint_t>(data.min_value, hugeint_t(NumericLimits<int64_t>::Minimum()) - increment);
+		auto counter = hugeint_t(data.counter);
+		hugeint_t available = 0;
+		if (data.counter >= data.min_value && data.counter <= data.max_value) {
+			auto distance = data.increment > 0 ? limit - counter : counter - limit;
+			if (distance >= 0) {
+				available = distance / (data.increment > 0 ? increment : -increment) + 1;
+			}
+		}
+		auto taken = MinValue<hugeint_t>(available, Hugeint::Convert(steps));
+		data.counter = Hugeint::Cast<int64_t>(counter + taken * increment);
+		data.usage_count += Hugeint::Cast<uint64_t>(taken);
+		return data;
+	}
+	for (idx_t i = 0; i < steps; i++) {
+		int64_t next;
+		if (!TryAddOperator::Operation(data.counter, data.increment, next)) {
+			next = data.increment < 0 ? data.max_value : data.min_value;
+		} else if (next < data.min_value) {
+			next = data.max_value;
+		} else if (next > data.max_value) {
+			next = data.min_value;
+		}
+		data.counter = next;
+		data.usage_count++;
+	}
+	return data;
+}
+
+static absl::Condition NotLogging(bool *logging) {
+	return absl::Condition(
+	    +[](bool *busy) { return !*busy; }, logging);
+}
+
+void SequenceCatalogEntry::MakeDurable(unique_lock<mutex> &seqlock, const SequenceData &target) {
+	lock.Await(NotLogging(&logging));
+	logging = true;
+	seqlock.unlock();
+	try {
+		auto log = catalog.CatalogLog();
+		if (!log) {
+			throw InternalException("Sequence \"%s\" advanced before the catalog log is open", name);
+		}
+		auto wal_lock = log->GetStorageManager().GetWALLock();
+		auto &current = *catalog.CatalogLog();
+		current.WriteUseCatalog(catalog.GetAttached().oid);
+		current.WriteSequenceValue(SequenceValue {this, target.usage_count, target.counter});
+		current.GroupSync(current.FlushAppendNoSync());
+	} catch (...) {
+		seqlock.lock();
+		logging = false;
+		throw;
+	}
+	seqlock.lock();
+	durable_usage_count = MaxValue(durable_usage_count, target.usage_count);
+	durable_counter = target.counter;
+	logging = false;
+}
+
+void SequenceCatalogEntry::CoverDurable(unique_lock<mutex> &seqlock, idx_t count) {
+	static constexpr idx_t LOG_AHEAD_VALUES = 32;
+	while (data.usage_count + count > durable_usage_count) {
+		if (logging) {
+			lock.Await(NotLogging(&logging));
+			continue;
+		}
+		auto target = LogAhead(data, count + LOG_AHEAD_VALUES);
+		if (target.usage_count <= durable_usage_count) {
+			return;
+		}
+		MakeDurable(seqlock, target);
+	}
 }
 
 int64_t SequenceCatalogEntry::CurrentValue() {
@@ -54,7 +151,11 @@ int64_t SequenceCatalogEntry::CurrentValue() {
 }
 
 int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction) {
-	lock_guard<mutex> seqlock(lock);
+	unique_lock<mutex> seqlock(lock);
+	const bool logs_values = LogsValues();
+	if (logs_values) {
+		CoverDurable(seqlock, 1);
+	}
 	int64_t result;
 	result = data.counter;
 	bool overflow = !TryAddOperator::Operation(data.counter, data.increment, data.counter);
@@ -76,14 +177,18 @@ int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction) {
 	}
 	data.last_value = result;
 	data.usage_count++;
-	if (!temporary) {
+	if (!temporary && !logs_values) {
 		transaction.PushSequenceUsage(*this, data);
 	}
 	return result;
 }
 
 int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t value, bool is_called) {
-	lock_guard<mutex> seqlock(lock);
+	unique_lock<mutex> seqlock(lock);
+	const bool logs_values = LogsValues();
+	if (logs_values) {
+		lock.Await(NotLogging(&logging));
+	}
 	if (value < data.min_value) {
 		throw SequenceException("setval: value %lld is out of bounds for sequence \"%s\" (%lld..%lld)", value, name,
 		                        data.min_value, data.max_value);
@@ -110,6 +215,11 @@ int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t val
 		data.counter = value;
 		data.last_value.reset();
 	}
+	if (logs_values) {
+		data.usage_count = MaxValue(data.usage_count, durable_usage_count) + 1;
+		MakeDurable(seqlock, data);
+		return value;
+	}
 	data.usage_count++;
 	if (!temporary) {
 		transaction.PushSequenceUsage(*this, data);
@@ -121,8 +231,24 @@ int64_t SequenceCatalogEntry::NextValues(DuckTransaction &transaction, idx_t cou
 	if (count == 0) {
 		throw InternalException("SequenceCatalogEntry::NextValues requires a positive count");
 	}
-	lock_guard<mutex> seqlock(lock);
+	unique_lock<mutex> seqlock(lock);
+	const bool logs_values = LogsValues();
+	if (logs_values) {
+		CoverDurable(seqlock, count);
+	}
 	int64_t base = data.counter;
+	if (!data.cycle) {
+		auto reserved = LogAhead(data, count);
+		if (reserved.usage_count == data.usage_count + count) {
+			data.last_value = Hugeint::Cast<int64_t>(hugeint_t(reserved.counter) - hugeint_t(data.increment));
+			data.counter = reserved.counter;
+			data.usage_count = reserved.usage_count;
+			if (!temporary && !logs_values) {
+				transaction.PushSequenceUsage(*this, data);
+			}
+			return base;
+		}
+	}
 	for (idx_t i = 0; i < count; i++) {
 		int64_t result = data.counter;
 		bool overflow = !TryAddOperator::Operation(data.counter, data.increment, data.counter);
@@ -147,7 +273,7 @@ int64_t SequenceCatalogEntry::NextValues(DuckTransaction &transaction, idx_t cou
 		data.last_value = result;
 		data.usage_count++;
 	}
-	if (!temporary) {
+	if (!temporary && !logs_values) {
 		transaction.PushSequenceUsage(*this, data);
 	}
 	return base;
@@ -158,6 +284,8 @@ void SequenceCatalogEntry::ReplayValue(uint64_t v_usage_count, int64_t v_counter
 		data.usage_count = v_usage_count;
 		data.counter = v_counter;
 		data.last_value = last_value;
+		durable_usage_count = v_usage_count;
+		durable_counter = v_counter;
 	}
 }
 

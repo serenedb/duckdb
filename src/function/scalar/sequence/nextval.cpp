@@ -82,6 +82,16 @@ void NextValFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	result.SetVectorType(VectorType::FLAT_VECTOR);
 
 	auto result_data = FlatVector::Writer<int64_t>(result, args.size());
+	if (std::is_same<OP, NextSequenceValueOperator>::value && args.size() > 1) {
+		auto data = lstate.sequence.GetData();
+		if (!data.cycle) {
+			auto base = lstate.sequence.NextValues(lstate.transaction, args.size());
+			for (idx_t i = 0; i < args.size(); i++) {
+				result_data.WriteValue(base + NumericCast<int64_t>(i) * data.increment);
+			}
+			return;
+		}
+	}
 	for (idx_t i = 0; i < args.size(); i++) {
 		// get the next value from the sequence
 		result_data.WriteValue(OP::Operation(lstate.transaction, lstate.sequence));
