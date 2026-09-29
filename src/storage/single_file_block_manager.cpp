@@ -295,6 +295,14 @@ void DatabaseHeader::SetStorageVersionInDatabaseHeader(DatabaseHeader &header, S
 			throw InvalidInputException("Unsupported DuckDB storage format version '%llu'", read_version);
 		}
 		if (!IsReadableStorageVersion(storage_version)) {
+			if (IsSereneDBStorageVersion(storage_version) && storage_version < SERENEDB_VERSION_LOWER) {
+				throw InvalidInputException(
+				    "The file uses storage format version %s (%llu), which this version of SereneDB no longer reads "
+				    "(it reads serenedb versions %s through %s). The file was written by an older version of SereneDB.",
+				    StorageVersionInfo::GetStorageVersionString(storage_version), read_version,
+				    StorageVersionInfo::GetStorageVersionString(SERENEDB_VERSION_LOWER),
+				    StorageVersionInfo::GetStorageVersionString(SERENEDB_VERSION_UPPER));
+			}
 			throw InvalidInputException(
 			    "The file uses storage format version %llu, which is newer than this version of SereneDB supports (up "
 			    "to DuckDB %s and serenedb %s). Upgrade to a newer version of SereneDB to open it.",

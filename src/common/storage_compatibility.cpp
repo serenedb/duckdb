@@ -30,6 +30,13 @@ StorageCompatibility StorageCompatibility::FromString(const string &input) {
 		throw InvalidInputException("The version string '%s' is not a known storage version, valid options are: %s",
 		                            input, StringUtil::Join(candidates, ", "));
 	}
+	if (IsSereneDBStorageVersion(storage_version) && !IsReadableStorageVersion(storage_version)) {
+		throw InvalidInputException(
+		    "The storage version '%s' can no longer be read by this version of SereneDB, which reads serenedb "
+		    "versions %s through %s",
+		    input, StorageVersionInfo::GetStorageVersionString(SERENEDB_VERSION_LOWER),
+		    StorageVersionInfo::GetStorageVersionString(SERENEDB_VERSION_UPPER));
+	}
 	StorageCompatibility result;
 	result.duckdb_version = input;
 	result.storage_version = storage_version;

@@ -19,6 +19,7 @@ inline constexpr idx_t SERENEDB_VERSION_NUMBER_UPPER = SereneDBVersionNumber(SER
 
 static_assert(DUCKDB_VERSION_NUMBER_LOWER <= DUCKDB_VERSION_NUMBER_DEFAULT);
 static_assert(DUCKDB_VERSION_NUMBER_DEFAULT <= DUCKDB_VERSION_NUMBER_UPPER);
+static_assert(IsSereneDBStorageVersion(SERENEDB_VERSION_LOWER));
 static_assert(SERENEDB_VERSION_NUMBER_LOWER <= SERENEDB_VERSION_NUMBER_UPPER);
 
 bool IsReadableStorageVersion(const StorageVersion version) {
