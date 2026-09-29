@@ -200,9 +200,11 @@ optional_ptr<Catalog> MetaTransaction::CatalogLogForCommit() {
 }
 
 ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
-	auto &catalog_storage = catalog.CatalogLog()->GetStorageManager();
+	auto catalog_log_ref = catalog.CatalogLog();
+	auto &catalog_storage = catalog_log_ref->GetStorageManager();
 	auto catalog_lock = catalog_storage.GetWALLock();
-	auto &catalog_log = *catalog.CatalogLog();
+	catalog_log_ref = catalog.CatalogLog();
+	auto &catalog_log = *catalog_log_ref;
 	auto &log_owner = catalog_storage.GetAttached().GetCatalog();
 	auto commit_state = catalog_storage.GenStorageCommitState(catalog_log);
 	const auto txid = UUID::GenerateRandomUUID();
@@ -230,6 +232,7 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 			break;
 		}
 	}
+	idx_t decision_offset = 0;
 	if (!error.HasError()) {
 		try {
 			log_owner.OnCatalogLogPrepared();
@@ -237,7 +240,7 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 				catalog_log.WriteCommitPrepared(txid, prepared);
 			}
 			commit_state->FlushCommit();
-			catalog_log.GroupSync(commit_state->GetFlushOffset());
+			decision_offset = commit_state->GetFlushOffset();
 			if (!prepared.empty()) {
 				DatabaseManager::Get(context).CommitPrepared(txid, std::move(prepared));
 			}
@@ -258,6 +261,9 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 		}
 		return error;
 	}
+	log_owner.BeginCatalogLogCommit();
+	catalog_lock.unlock();
+	catalog_log.GroupSync(decision_offset);
 	log_owner.OnCatalogLogDecided();
 	for (auto &participant : participants) {
 		auto &transaction_ref = participant.get();
@@ -270,6 +276,7 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 			error.Merge(commit_error);
 		}
 	}
+	log_owner.EndCatalogLogCommit();
 	return error;
 }
 

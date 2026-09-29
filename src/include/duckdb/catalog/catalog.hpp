@@ -142,7 +142,7 @@ public:
 	virtual bool UsesCatalogLog() const {
 		return false;
 	}
-	virtual optional_ptr<WriteAheadLog> CatalogLog() {
+	virtual shared_ptr<WriteAheadLog> CatalogLog() {
 		return nullptr;
 	}
 	virtual Catalog &ReplayUseCatalog(ClientContext &context, idx_t catalog_oid);
@@ -151,6 +151,10 @@ public:
 	virtual void OnCatalogLogPrepared() {
 	}
 	virtual void OnCatalogLogDecided() {
+	}
+	virtual void BeginCatalogLogCommit() {
+	}
+	virtual void EndCatalogLogCommit() {
 	}
 
 	virtual void Initialize(bool load_builtin) = 0;
