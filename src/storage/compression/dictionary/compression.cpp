@@ -152,6 +152,8 @@ idx_t DictionaryCompressionCompressState::Finalize() {
 
 	// Early-out, if the block is sufficiently full.
 	if (total_size >= info.GetCompactionFlushLimit()) {
+		auto gap_offset = index_buffer_offset + index_buffer_size;
+		memset(base_ptr + gap_offset, 0, current_dictionary.end - current_dictionary.size - gap_offset);
 		return info.GetBlockSize();
 	}
 

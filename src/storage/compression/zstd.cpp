@@ -290,7 +290,7 @@ public:
 
 		if (buffer_collection.CanFlush()) {
 			auto &buffer_state = buffer_collection.GetCurrentBufferState();
-			FlushPage(buffer_collection.BufferHandleMutable(), current_block_id);
+			FlushPage(buffer_collection.BufferHandleMutable(), buffer_state.offset, current_block_id);
 			buffer_state.flags.Clear();
 			buffer_state.full = false;
 			buffer_state.offset = 0;
@@ -491,11 +491,12 @@ public:
 		return new_id;
 	}
 
-	void FlushPage(BufferHandle &buffer, block_id_t block_id) {
+	void FlushPage(BufferHandle &buffer, idx_t used_space, block_id_t block_id) {
 		if (block_id == INVALID_BLOCK) {
 			return;
 		}
 
+		memset(buffer.GetDataMutable() + used_space, 0, info.GetBlockSize() - used_space);
 		// Write the current page to disk
 		block_manager.Write(QueryContext(), buffer.GetFileBuffer(), block_id);
 	}
@@ -578,7 +579,7 @@ public:
 			return;
 		}
 		auto &buffer_handle = *buffer_handle_ptr;
-		FlushPage(buffer_handle, vector_state.starting_page);
+		FlushPage(buffer_handle, buffer_state.offset, vector_state.starting_page);
 		buffer_state.offset = 0;
 		buffer_state.full = false;
 	}
@@ -620,7 +621,7 @@ public:
 					throw InternalException("(ZSTDCompressionState::FlushSegment) Both extra pages were dirty (needed "
 					                        "to be flushed), this should be impossible");
 				}
-				FlushPage(buffer_handle, buffer_collection.block_id);
+				FlushPage(buffer_handle, buffer_state.offset, buffer_collection.block_id);
 				buffer_state.full = false;
 				buffer_state.offset = 0;
 				buffer_state.flags.Clear();

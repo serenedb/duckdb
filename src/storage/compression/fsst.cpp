@@ -364,6 +364,8 @@ public:
 
 		if (total_size >= info.GetCompactionFlushLimit()) {
 			// the block is full enough, don't bother moving around the dictionary
+			auto gap_offset = symbol_table_offset + fsst_serialized_symbol_table_size;
+			memset(base_ptr + gap_offset, 0, current_dictionary.end - current_dictionary.size - gap_offset);
 			return info.GetBlockSize();
 		}
 
