@@ -27,18 +27,14 @@ struct ExpressionCosts {
 	}
 };
 
-vector<ExpressionCosts> ReorderByCost(vector<unique_ptr<Expression>> &expressions, bool keep_order_if_can_throw) {
+vector<ExpressionCosts> ReorderAlways(vector<unique_ptr<Expression>> &expressions) {
 	vector<ExpressionCosts> expression_costs;
 	expression_costs.reserve(expressions.size());
-	bool keep_order = false;
 	for (auto &expr : expressions) {
-		keep_order = keep_order || (keep_order_if_can_throw && expr->CanThrow());
 		expression_costs.push_back({nullptr, ExpressionHeuristics::Cost(*expr)});
 		expression_costs.back().expr = std::move(expr);
 	}
-	if (!keep_order) {
-		sort(expression_costs.begin(), expression_costs.end());
-	}
+	sort(expression_costs.begin(), expression_costs.end());
 	return expression_costs;
 }
 
@@ -50,11 +46,11 @@ vector<ExpressionCosts> ReorderSafe(vector<unique_ptr<Expression>> &expressions)
 		expression_costs.push_back({nullptr, ExpressionHeuristics::Cost(*expr)});
 		expression_costs.back().expr = std::move(expr);
 		if (expression_costs.back().expr->CanThrow()) {
-			sort(expression_costs.begin() + block, expression_costs.end() - 1);
+			sort(expression_costs.begin() + NumericCast<int64_t>(block), expression_costs.end() - 1);
 			block = expression_costs.size();
 		}
 	}
-	sort(expression_costs.begin() + block, expression_costs.end());
+	sort(expression_costs.begin() + NumericCast<int64_t>(block), expression_costs.end());
 	return expression_costs;
 }
 
@@ -99,7 +95,9 @@ vector<ExpressionCosts> ReorderFast(vector<unique_ptr<Expression>> &expressions)
 } // namespace
 
 unique_ptr<LogicalOperator> ExpressionHeuristics::Rewrite(unique_ptr<LogicalOperator> op) {
-	VisitOperator(*op);
+	if (Settings::Get<FilterReorderSetting>(optimizer.context) != FilterReorder::NEVER) {
+		VisitOperator(*op);
+	}
 	return op;
 }
 
@@ -126,8 +124,7 @@ void ExpressionHeuristics::ReorderExpressions(vector<unique_ptr<Expression>> &ex
 	vector<ExpressionCosts> expression_costs;
 	switch (Settings::Get<FilterReorderSetting>(optimizer.context)) {
 	case FilterReorder::NEVER:
-		expression_costs = ReorderByCost(expressions, true);
-		break;
+		return;
 	case FilterReorder::SAFE:
 		expression_costs = ReorderSafe(expressions);
 		break;
@@ -135,7 +132,7 @@ void ExpressionHeuristics::ReorderExpressions(vector<unique_ptr<Expression>> &ex
 		expression_costs = ReorderFast(expressions);
 		break;
 	case FilterReorder::ALWAYS:
-		expression_costs = ReorderByCost(expressions, false);
+		expression_costs = ReorderAlways(expressions);
 		break;
 	}
 	for (idx_t i = 0; i < expression_costs.size(); i++) {

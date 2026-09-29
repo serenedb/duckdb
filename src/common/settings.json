@@ -817,7 +817,7 @@
     },
     {
         "name": "filter_reorder",
-        "description": "How far filter reordering may move conjuncts that can throw: 'never' keeps the order once one can throw; 'safe' reorders only between them; 'fast' may move other conjuncts ahead of them, which can skip an error; 'always' orders by cost alone",
+        "description": "How far filter reordering may move conjuncts that can throw: 'never' does not reorder filters at all; 'safe' reorders only between them; 'fast' may move other conjuncts ahead of them, which can skip an error; 'always' orders by cost alone",
         "type": "ENUM<FilterReorder>",
         "default_scope": "local",
         "default_value": "safe"

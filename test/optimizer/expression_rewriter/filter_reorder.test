@@ -48,14 +48,21 @@ statement ok
 SET filter_reorder = '{level}'
 
 query II
-EXPLAIN SELECT a FROM t WHERE s || b::VARCHAR <> reverse(s) AND s LIKE b::VARCHAR AND a <> b
-----
-logical_opt	<REGEX>:.*a != b.*~~.*reverse.*
-
-query II
 EXPLAIN SELECT a FROM t WHERE a::TINYINT <> d AND a::DOUBLE <> d::DOUBLE
 ----
 logical_opt	<REGEX>:.*TINYINT.*DOUBLE.*
+
+endloop
+
+foreach level safe fast always
+
+statement ok
+SET filter_reorder = '{level}'
+
+query II
+EXPLAIN SELECT a FROM t WHERE s || b::VARCHAR <> reverse(s) AND s LIKE b::VARCHAR AND a <> b
+----
+logical_opt	<REGEX>:.*a != b.*~~.*reverse.*
 
 query II
 EXPLAIN SELECT a FROM t WHERE (a::TINYINT <> d OR (s || b::VARCHAR <> reverse(s) AND a <> b)) AND c <> d
@@ -127,6 +134,16 @@ endloop
 
 statement ok
 SET filter_reorder = 'never'
+
+query II
+EXPLAIN SELECT a FROM t WHERE s || b::VARCHAR <> reverse(s) AND s LIKE b::VARCHAR AND a <> b
+----
+logical_opt	<REGEX>:.*reverse.*~~.*a != b.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE (a::TINYINT <> d OR (s || b::VARCHAR <> reverse(s) AND a <> b)) AND c <> d
+----
+logical_opt	<REGEX>:.*TINYINT.*reverse.*a != b.*c != d.*
 
 query II
 EXPLAIN SELECT a FROM t WHERE s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND a <> b
@@ -328,3 +345,41 @@ statement error
 SELECT count(*) FROM big WHERE length(s) >= 3 OR b = c OR c = d OR a::TINYINT <> d
 ----
 <REGEX>:.*out of range.*
+
+statement ok
+SET threads = 1
+
+statement ok
+CALL enable_logging('AdaptiveFilter')
+
+statement ok
+SET filter_reorder = 'never'
+
+statement ok
+CALL truncate_duckdb_logs()
+
+query I
+SELECT count(*) FROM big WHERE b <> c AND c <> d AND length(s) < length(b::VARCHAR || 'xx')
+----
+225758
+
+query II
+SELECT count(*) FILTER (event = 'INIT') > 0, count(*) FILTER (event = 'REORDER') FROM duckdb_logs_parsed('AdaptiveFilter')
+----
+true	0
+
+statement ok
+SET filter_reorder = 'safe'
+
+statement ok
+CALL truncate_duckdb_logs()
+
+query I
+SELECT count(*) FROM big WHERE b <> c AND c <> d AND length(s) < length(b::VARCHAR || 'xx')
+----
+225758
+
+query I
+SELECT count(*) FILTER (event = 'REORDER') > 0 FROM duckdb_logs_parsed('AdaptiveFilter')
+----
+true

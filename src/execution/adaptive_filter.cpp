@@ -13,15 +13,13 @@
 namespace duckdb {
 
 AdaptiveFilter::AdaptiveFilter(const Expression &expr, FilterReorder reorder_p)
-    : reorder(reorder_p), observe_interval(10), execute_interval(20), warmup(true) {
+    : disable_permutations(reorder_p == FilterReorder::NEVER), reorder(reorder_p), observe_interval(10),
+      execute_interval(20), warmup(true) {
 	auto &conj_expr = expr.Cast<BoundConjunctionExpression>();
 	D_ASSERT(conj_expr.GetChildren().size() > 1);
 	for (idx_t idx = 0; idx < conj_expr.GetChildren().size(); idx++) {
 		permutation.push_back(idx);
 		can_throw.push_back(conj_expr.GetChildren()[idx]->CanThrow());
-		if (can_throw.back() && reorder == FilterReorder::NEVER) {
-			disable_permutations = true;
-		}
 		if (idx != conj_expr.GetChildren().size() - 1) {
 			swap_likeliness.push_back(100);
 		}
@@ -110,6 +108,7 @@ bool AdaptiveFilter::CanSwap(idx_t idx) const {
 	case FilterReorder::FAST:
 		return !can_throw[right] || right < left;
 	case FilterReorder::NEVER:
+		return false;
 	case FilterReorder::ALWAYS:
 		return true;
 	}
