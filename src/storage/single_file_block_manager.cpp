@@ -821,6 +821,18 @@ void SingleFileBlockManager::ChecksumAndWrite(QueryContext context, FileBuffer &
 }
 
 void SingleFileBlockManager::Initialize(const DatabaseHeader &header, const optional_idx block_alloc_size) {
+	if (IsSereneDBStorageVersion(header.storage_compatibility) && !IsSereneDBStorageVersion(options.storage_version)) {
+		throw InvalidInputException("Error opening \"%s\": the file has SereneDB storage version %s. "
+		                            "A file with a SereneDB storage version opens only at a SereneDB storage version.",
+		                            path, GetStorageVersionName(header.storage_compatibility, false));
+	}
+	if (!IsSereneDBStorageVersion(header.storage_compatibility) && IsSereneDBStorageVersion(options.storage_version)) {
+		throw InvalidInputException(
+		    "Error opening \"%s\": the file has storage version %s, which is not a SereneDB storage version. "
+		    "It was written by a release of SereneDB older than %s, or it is not a SereneDB database file.",
+		    path, GetStorageVersionName(header.storage_compatibility, false),
+		    GetStorageVersionName(SERENEDB_VERSION_LOWER, false));
+	}
 	free_list_id = header.free_list;
 	meta_block = header.meta_block;
 	iteration_count = header.iteration;
