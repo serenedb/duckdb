@@ -18,13 +18,13 @@ DETACH version_1_2_0
 statement error
 ATTACH '{TEST_DIR}/version_1_2_0.db' (STORAGE_VERSION 'v1.0.0');
 ----
-The storage version of an existing database cannot be lowered
+The storage format version of an existing DuckDB database file cannot be lowered
 
 # unknown storage version
 statement error
 ATTACH '{TEST_DIR}/version_1_2_0.db' (STORAGE_VERSION 'non_existant');
 ----
-not a known DuckDB version
+The version string 'non_existant' is not a known storage version
 
 # we can open it with the current version
 statement ok
@@ -134,7 +134,7 @@ DETACH default_version
 statement error
 ATTACH '{TEST_DIR}/default_version.db' (STORAGE_VERSION 'v1.0.0')
 ----
-The storage version of an existing database cannot be lowered
+The storage format version of an existing DuckDB database file cannot be lowered
 
 # setting the storage_compatibility_version explicitly changes the default storage compatibility version when attaching
 statement ok
