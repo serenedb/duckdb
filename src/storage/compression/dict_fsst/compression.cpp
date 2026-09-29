@@ -329,6 +329,17 @@ idx_t WriteCleavedSegment(DictFSSTCompressionState &state, DictFSSTMode mode, co
 	}
 
 	auto base_ptr = state.handle.GetDataMutable();
+	const pair<idx_t, idx_t> gaps[] = {
+	    {0, layout.selection_dest},
+	    {layout.selection_dest + layout.selection_space, layout.symtab_dest},
+	    {layout.symtab_dest + symbol_table_size, layout.prefix_lengths_dest},
+	    {layout.prefix_lengths_dest + layout.prefix_lengths_space, layout.prefix_bytes_dest},
+	    {layout.prefix_bytes_dest + dict.prefix_bytes, layout.prefix_ids_dest},
+	    {layout.prefix_ids_dest + layout.prefix_ids_space, layout.suffix_lengths_dest},
+	    {layout.suffix_lengths_dest + layout.suffix_lengths_space, layout.suffix_bytes_dest}};
+	for (auto &gap : gaps) {
+		memset(base_ptr + gap.first, 0, gap.second - gap.first);
+	}
 	auto header = reinterpret_cast<dict_fsst_compression_header_t *>(base_ptr);
 	header->dict_size = 0;
 	header->dict_count = NumericCast<uint32_t>(dict_count);
@@ -877,6 +888,14 @@ idx_t DictFSSTCompressionState::WriteNative(DictFSSTMode mode) {
 	}
 
 	auto base_ptr = handle.GetDataMutable();
+	const idx_t sl_end = layout.sl_dest + BitpackingPrimitives::GetRequiredSize(layout.dict_count, layout.sl_width);
+	const pair<idx_t, idx_t> gaps[] = {{0, layout.dict_dest},
+	                                   {layout.dict_dest + layout.dict_bytes, layout.symtab_dest},
+	                                   {layout.symtab_dest + layout.symtab_size, layout.sl_dest},
+	                                   {sl_end, layout.di_dest}};
+	for (auto &gap : gaps) {
+		memset(base_ptr + gap.first, 0, gap.second - gap.first);
+	}
 	auto header = reinterpret_cast<dict_fsst_compression_header_t *>(base_ptr);
 	header->mode = mode;
 	header->dict_size = NumericCast<uint32_t>(layout.dict_bytes);

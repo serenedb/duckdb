@@ -332,6 +332,8 @@ public:
 			compression_buffer[compression_buffer_idx] = value;
 			minimum = MinValue<T>(minimum, value);
 			maximum = MaxValue<T>(maximum, value);
+		} else if constexpr (!std::is_same_v<OP, EmptyBitpackingWriter>) {
+			compression_buffer[compression_buffer_idx] = T(0);
 		}
 
 		compression_buffer_idx++;

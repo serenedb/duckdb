@@ -361,6 +361,8 @@ public:
 			// the block is full enough, don't bother moving around the dictionary
 			// NOTE: We forgot to call SetDictionary here, so dict_size on disk is stale.
 			// not worth fixing as it's a legacy encoder, the reader can be bounded by dict_end
+			auto gap_offset = symbol_table_offset + fsst_serialized_symbol_table_size;
+			memset(base_ptr + gap_offset, 0, current_dictionary.end - current_dictionary.size - gap_offset);
 			return info.GetBlockSize();
 		}
 
