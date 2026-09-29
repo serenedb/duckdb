@@ -320,7 +320,7 @@ static void UpdateDependentIndexes(CatalogTransaction transaction, DuckTableEntr
 	auto &schema = table.ParentSchema(transaction).Cast<DuckSchemaEntry>();
 	schema.GetCatalogSet(CatalogType::INDEX_ENTRY).Scan(transaction, [&](CatalogEntry &entry) {
 		auto &index = entry.Cast<DuckIndexEntry>();
-		if (RefersToSameObject(index.GetDataTableInfo(), *data_table_info)) {
+		if (index.info && index.info->info && RefersToSameObject(index.GetDataTableInfo(), *data_table_info)) {
 			update(index);
 			index.sql = index.GetInfo()->ToString();
 		}
