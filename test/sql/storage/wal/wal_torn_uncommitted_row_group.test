@@ -159,7 +159,7 @@ SET debug_abort_on_wal_failure=true;
 statement error
 ATTACH '{TEST_DIR}/wal_abort_on_failure_gen.db' AS db_torn;
 ----
-<REGEX>:.*Failure while replaying WAL file.*
+<REGEX>:.*not enough data in file to deserialize result.*
 
 # With debug_abort_on_wal_failure=false, attaching succeeds and recovers correctly
 statement ok

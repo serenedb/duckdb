@@ -98,10 +98,11 @@ public:
 	      stream(nullptr, 0), deserializer(stream_p), deserialize_only(deserialize_only) {
 		deserializer.Set<Catalog &>(catalog);
 	}
-	WriteAheadLogDeserializer(ReplayState &state_p, unique_ptr<data_t[]> data_p, idx_t size,
+	WriteAheadLogDeserializer(ReplayState &state_p, unique_ptr<data_t[]> data_p, idx_t size, idx_t entry_offset_p,
 	                          bool deserialize_only = false)
 	    : state(state_p), db(state.db), context(state.context), catalog(state.catalog), data(std::move(data_p)),
-	      stream(data.get(), size), deserializer(stream), deserialize_only(deserialize_only) {
+	      stream(data.get(), size), deserializer(stream), deserialize_only(deserialize_only),
+	      entry_offset(entry_offset_p) {
 		deserializer.Set<Catalog &>(catalog);
 	}
 
@@ -139,7 +140,7 @@ public:
 				    offset, computed_checksum, stored_checksum);
 			}
 
-			return WriteAheadLogDeserializer(state_p, std::move(buffer), size, deserialize_only);
+			return WriteAheadLogDeserializer(state_p, std::move(buffer), size, offset, deserialize_only);
 		}
 
 		if (state_p.wal_version == 3) {
@@ -217,14 +218,14 @@ public:
 				    offset, computed_checksum, stored_checksum);
 			}
 
-			return WriteAheadLogDeserializer(state_p, std::move(out_buffer), size, deserialize_only);
+			return WriteAheadLogDeserializer(state_p, std::move(out_buffer), size, offset, deserialize_only);
 		}
 
 		throw IOException("Failed to read WAL of version %llu - can only read version 1, 2 and 3 (encrypted)",
 		                  state_p.wal_version);
 	}
 
-	bool ReplayEntry() {
+	bool ReplayEntry() try {
 		deserializer.Begin();
 		auto wal_type = deserializer.ReadProperty<WALType>(100, "wal_type");
 		if (wal_type == WALType::WAL_FLUSH) {
@@ -240,6 +241,14 @@ public:
 		}
 		deserializer.End();
 		return false;
+	} catch (SerializationException &ex) {
+		if (!entry_offset.IsValid()) {
+			throw;
+		}
+		ErrorData error(ex);
+		throw IOException("The WAL entry at byte position %llu matches its checksum but could not be replayed, it "
+		                  "may have been written by a newer version of SereneDB: %s",
+		                  entry_offset.GetIndex(), error.RawMessage());
 	}
 
 	bool DeserializeOnly() const {
@@ -337,6 +346,7 @@ private:
 	MemoryStream stream;
 	BinaryDeserializer deserializer;
 	bool deserialize_only;
+	optional_idx entry_offset;
 	optional_idx expected_checkpoint_id;
 };
 
