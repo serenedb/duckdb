@@ -431,7 +431,9 @@ void WALWriteState::CommitEntry(UndoFlags type, data_ptr_t data) {
 		break;
 	case UndoFlags::SEQUENCE_VALUE: {
 		auto info = reinterpret_cast<SequenceValue *>(data);
-		Log().WriteSequenceValue(*info);
+		if (!info->entry->LogsValues()) {
+			Log().WriteSequenceValue(*info);
+		}
 		break;
 	}
 	default:

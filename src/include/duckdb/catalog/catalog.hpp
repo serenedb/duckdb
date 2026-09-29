@@ -156,6 +156,7 @@ public:
 	}
 	virtual void EndCatalogLogCommit() {
 	}
+	void SyncCatalogLog();
 
 	virtual void Initialize(bool load_builtin) = 0;
 	virtual void Initialize(optional_ptr<ClientContext> context, bool load_builtin);

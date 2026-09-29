@@ -438,10 +438,24 @@ ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Tra
                                                      WriteAheadLog &catalog_log, const hugeint_t &txid,
                                                      vector<pair<idx_t, idx_t>> &participants) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	vector<SequenceValue> sequences;
+	if (db.GetCatalog().UsesCatalogLog() && transaction.HasSequenceUsage()) {
+		try {
+			sequences = transaction.ReserveSequenceUsage(catalog_log);
+		} catch (std::exception &ex) {
+			return ErrorData(ex);
+		}
+		if (!transaction.ShouldWriteToWAL(db)) {
+			transaction.prepared = make_uniq<DuckTransaction::PreparedCommit>();
+			transaction.prepared->sequences = std::move(sequences);
+			return ErrorData();
+		}
+	}
 	if (!transaction.ShouldWriteToWAL(db)) {
 		return ErrorData();
 	}
 	auto prepared = make_uniq<DuckTransaction::PreparedCommit>();
+	prepared->sequences = std::move(sequences);
 	auto &storage_manager = db.GetStorageManager();
 	if (storage_manager.HasWAL()) {
 		prepared->wal_lock = storage_manager.GetWALLock();
@@ -468,6 +482,18 @@ ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Tra
 ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Transaction &transaction_p) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
 	auto prepared = std::move(transaction.prepared);
+	ErrorData error;
+	if (prepared) {
+		for (auto &value : prepared->sequences) {
+			value.entry->MarkDurable(value);
+		}
+	} else if (db.GetCatalog().UsesCatalogLog() && transaction.HasSequenceUsage()) {
+		try {
+			transaction.CoverSequenceUsage();
+		} catch (std::exception &ex) {
+			error = ErrorData(ex);
+		}
+	}
 	unique_lock<mutex> t_lock(transaction_lock);
 	if (!db.IsSystem() && !db.IsTemporary()) {
 		if (transaction.ChangesMade()) {
@@ -483,7 +509,6 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	auto undo_properties = transaction.GetUndoProperties();
 	auto checkpoint_decision =
 	    prepared ? CheckpointDecision("the commit is prepared") : CanCheckpoint(transaction, lock, undo_properties);
-	ErrorData error;
 	unique_lock<mutex> held_wal_lock;
 	// pin the WAL object (captured below while holding the WAL lock) so a concurrent checkpoint that resets it cannot
 	// free the object out from under our GroupSync fsync, which runs with the WAL lock released

@@ -429,9 +429,9 @@ void WriteCatalogEntries(WriteAheadLog &log, DuckCatalog &catalog) {
 		case CatalogType::SEQUENCE_ENTRY: {
 			auto &sequence = entry.Cast<SequenceCatalogEntry>();
 			log.WriteCreateSequence(sequence);
-			auto durable = sequence.GetDurableValue();
-			if (durable.usage_count > sequence.GetData().usage_count) {
-				log.WriteSequenceValue(durable);
+			auto reserved = sequence.GetReservedValue();
+			if (reserved.usage_count > sequence.GetData().usage_count) {
+				log.WriteSequenceValue(reserved);
 			}
 			break;
 		}

@@ -13,15 +13,40 @@
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/common/optional.hpp"
+#include "duckdb/common/unordered_map.hpp"
 
 namespace duckdb {
+class ClientContext;
 class DuckTransaction;
 class SequenceCatalogEntry;
+class WriteAheadLog;
 
 struct SequenceValue {
 	SequenceCatalogEntry *entry;
 	uint64_t usage_count;
 	int64_t counter;
+};
+
+struct SequenceSessionValue {
+	int64_t next = 0;
+	idx_t remaining = 0;
+	int64_t increment = 0;
+	uint64_t usage_count = 0;
+	int64_t counter = 0;
+	optional<int64_t> last;
+};
+
+struct SequenceSession {
+	static SequenceSession &Get(ClientContext &context);
+
+	mutex lock;
+	unordered_map<idx_t, SequenceSessionValue> values;
+};
+
+struct SequenceRuns {
+	int64_t first[2];
+	idx_t count[2];
+	idx_t size = 0;
 };
 
 struct SequenceData {
@@ -61,18 +86,29 @@ public:
 	unique_ptr<CreateInfo> GetInfo() const override;
 
 	SequenceData GetData() const;
-	SequenceValue GetDurableValue();
-	int64_t CurrentValue();
-	int64_t NextValue(DuckTransaction &transaction);
+	SequenceValue GetReservedValue();
+	int64_t CurrentValue(SequenceSession &session);
+	int64_t NextValue(DuckTransaction &transaction, SequenceSession &session);
+	void NextValues(DuckTransaction &transaction, SequenceSession &session, idx_t count, SequenceRuns &runs);
 	int64_t NextValues(DuckTransaction &transaction, idx_t count);
+	int64_t SetValue(DuckTransaction &transaction, SequenceSession &session, int64_t value, bool is_called);
 	int64_t SetValue(DuckTransaction &transaction, int64_t value, bool is_called);
 	void ReplayValue(uint64_t usage_count, int64_t counter, optional<int64_t> last_value);
+	void Cover(uint64_t usage_count);
+	void ReserveInCommit(WriteAheadLog &catalog_log, uint64_t usage_count, vector<SequenceValue> &durable_after);
+	void MarkReserved(const SequenceValue &value);
+	void MarkDurable(const SequenceValue &value);
+	bool LogsValues() const;
 
 	string ToSQL() const override;
 
 private:
-	bool LogsValues() const;
-	void CoverDurable(unique_lock<mutex> &seqlock, idx_t count);
+	idx_t Block() const;
+	SequenceData Reserved() const;
+	void Fetch(SequenceSessionValue &cached, idx_t needed);
+	void RaiseReserved(uint64_t usage_count, int64_t counter);
+	void RaiseDurable(uint64_t usage_count, int64_t counter);
+	void AppendReservation(const SequenceData &target);
 	void MakeDurable(unique_lock<mutex> &seqlock, const SequenceData &target);
 
 private:
@@ -80,8 +116,12 @@ private:
 	mutable mutex lock;
 	//! Sequence data
 	SequenceData data;
+	uint64_t reserved_usage_count;
+	int64_t reserved_counter;
 	uint64_t durable_usage_count;
 	int64_t durable_counter;
+	int64_t block_next = 0;
+	idx_t block_remaining = 0;
 	bool logging = false;
 };
 } // namespace duckdb

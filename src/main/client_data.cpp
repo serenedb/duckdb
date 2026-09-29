@@ -1,6 +1,7 @@
 #include "duckdb/main/client_data.hpp"
 
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/opener_file_system.hpp"
 #include "duckdb/common/random_engine.hpp"
@@ -237,6 +238,7 @@ ClientData::ClientData(ClientContext &context) : catalog_search_path(make_uniq<C
 	temporary_objects = make_shared_ptr<AttachedDatabase>(db, AttachedDatabaseType::TEMP_DATABASE);
 	temporary_objects->oid = DatabaseManager::Get(db).NextOid();
 	random_engine = make_uniq<RandomEngine>();
+	sequence_session = make_uniq<SequenceSession>();
 	file_opener = make_uniq<ClientContextFileOpener>(context);
 	client_file_system = make_uniq<ClientFileSystem>(context);
 	client_buffer_manager = make_uniq<ClientBufferManager>(context, db.GetBufferManager());

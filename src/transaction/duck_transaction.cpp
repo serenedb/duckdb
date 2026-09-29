@@ -157,22 +157,61 @@ void DuckTransaction::PinUpdateColumn(const ColumnData &column) {
 	pinned_columns.try_emplace(root, root->shared_from_this());
 }
 
-void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, const SequenceData &data) {
+void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, uint64_t usage_count, int64_t counter) {
 	lock_guard<mutex> l(sequence_lock);
 	auto entry = sequence_usage.find(sequence);
 	if (entry == sequence_usage.end()) {
 		auto undo_entry = undo_buffer.CreateEntry(UndoFlags::SEQUENCE_VALUE, sizeof(SequenceValue));
 		auto sequence_info = reinterpret_cast<SequenceValue *>(undo_entry.GetDataMutable());
 		sequence_info->entry = &sequence;
-		sequence_info->usage_count = data.usage_count;
-		sequence_info->counter = data.counter;
+		sequence_info->usage_count = usage_count;
+		sequence_info->counter = counter;
 		sequence_usage.emplace(sequence, *sequence_info);
 	} else {
 		auto &sequence_info = entry->second.get();
 		D_ASSERT(RefersToSameObject(*sequence_info.entry, sequence));
-		sequence_info.usage_count = data.usage_count;
-		sequence_info.counter = data.counter;
+		if (usage_count > sequence_info.usage_count) {
+			sequence_info.usage_count = usage_count;
+			sequence_info.counter = counter;
+		}
 	}
+}
+
+bool DuckTransaction::OnlySequenceUsage() {
+	{
+		lock_guard<mutex> l(sequence_lock);
+		if (sequence_usage.empty()) {
+			return false;
+		}
+	}
+	return !storage->ChangesMade() && undo_buffer.OnlySequenceValues();
+}
+
+bool DuckTransaction::HasSequenceUsage() {
+	lock_guard<mutex> l(sequence_lock);
+	return !sequence_usage.empty();
+}
+
+void DuckTransaction::CoverSequenceUsage() {
+	lock_guard<mutex> l(sequence_lock);
+	for (auto &usage : sequence_usage) {
+		auto &sequence = usage.first.get();
+		if (sequence.LogsValues()) {
+			sequence.Cover(usage.second.get().usage_count);
+		}
+	}
+}
+
+vector<SequenceValue> DuckTransaction::ReserveSequenceUsage(WriteAheadLog &catalog_log) {
+	vector<SequenceValue> durable_after;
+	lock_guard<mutex> l(sequence_lock);
+	for (auto &usage : sequence_usage) {
+		auto &sequence = usage.first.get();
+		if (sequence.LogsValues()) {
+			sequence.ReserveInCommit(catalog_log, usage.second.get().usage_count, durable_after);
+		}
+	}
+	return durable_after;
 }
 
 bool DuckTransaction::ChangesMade() {
@@ -208,6 +247,9 @@ bool DuckTransaction::ShouldWriteToWAL(AttachedDatabase &db) {
 		return false;
 	}
 	if (db.IsSystem()) {
+		return false;
+	}
+	if (db.GetCatalog().UsesCatalogLog() && OnlySequenceUsage()) {
 		return false;
 	}
 	if (db.GetRecoveryMode() == RecoveryMode::NO_WAL_WRITES) {

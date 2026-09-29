@@ -173,6 +173,15 @@ UndoBufferProperties UndoBuffer::GetProperties() {
 	return properties;
 }
 
+bool UndoBuffer::OnlySequenceValues() {
+	bool only_sequences = true;
+	IteratorState iterator_state;
+	IterateEntries(iterator_state, [&](UndoFlags entry_type, data_ptr_t) {
+		only_sequences = only_sequences && entry_type == UndoFlags::SEQUENCE_VALUE;
+	});
+	return only_sequences;
+}
+
 void UndoBuffer::Cleanup(transaction_t lowest_active_transaction) {
 	// garbage collect everything in the Undo Chunk
 	// this should only happen if

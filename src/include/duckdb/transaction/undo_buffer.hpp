@@ -52,6 +52,7 @@ public:
 
 	bool ChangesMade();
 	UndoBufferProperties GetProperties();
+	bool OnlySequenceValues();
 
 	//! Cleanup the undo buffer
 	void Cleanup(transaction_t lowest_active_transaction);
