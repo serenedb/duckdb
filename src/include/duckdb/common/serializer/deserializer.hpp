@@ -242,13 +242,14 @@ public:
 	}
 
 	template <class FUNC>
-	void ReadOptionalList(this auto &self, const field_id_t field_id, const char *tag, FUNC func) {
+	bool ReadOptionalList(this auto &self, const field_id_t field_id, const char *tag, FUNC func) {
 		if (!self.OnOptionalPropertyBegin(field_id, tag)) {
 			self.OnOptionalPropertyEnd(false);
-			return;
+			return false;
 		}
 		self.ReadListInternal(func);
 		self.OnOptionalPropertyEnd(true);
+		return true;
 	}
 
 	template <class FUNC>
@@ -258,6 +259,19 @@ public:
 		func(self);
 		self.OnObjectEnd();
 		self.OnPropertyEnd();
+	}
+
+	template <class FUNC>
+	bool ReadOptionalObject(this auto &self, const field_id_t field_id, const char *tag, FUNC func) {
+		if (!self.OnOptionalPropertyBegin(field_id, tag)) {
+			self.OnOptionalPropertyEnd(false);
+			return false;
+		}
+		self.OnObjectBegin();
+		func(self);
+		self.OnObjectEnd();
+		self.OnOptionalPropertyEnd(true);
+		return true;
 	}
 
 private:
