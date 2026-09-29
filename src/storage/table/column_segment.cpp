@@ -41,13 +41,18 @@ unique_ptr<ColumnSegment> ColumnSegment::CreatePersistentSegment(DatabaseInstanc
 	shared_ptr<BlockHandle> block;
 
 	auto &type = statistics.GetType();
-	auto function = config.GetCompressionFunction(compression_type, type.InternalType());
+	auto function = config.TryGetCompressionFunction(compression_type, type.InternalType());
+	if (!function) {
+		throw IOException("Cannot read a column segment of type %s compressed with method %llu, which this release "
+		                  "of SereneDB does not have: the database file was written by a newer release",
+		                  type.ToString(), static_cast<uint64_t>(compression_type));
+	}
 	if (block_id != INVALID_BLOCK) {
 		block = block_manager.RegisterBlock(block_id);
 	}
 
 	auto segment_size = block_manager.GetBlockSize();
-	return make_uniq<ColumnSegment>(db, std::move(block), ColumnSegmentType::PERSISTENT, count, function,
+	return make_uniq<ColumnSegment>(db, std::move(block), ColumnSegmentType::PERSISTENT, count, *function,
 	                                std::move(statistics), block_id, offset, segment_size, std::move(segment_state),
 	                                byte_size);
 }
