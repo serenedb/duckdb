@@ -203,6 +203,7 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 	auto &catalog_storage = catalog.CatalogLog()->GetStorageManager();
 	auto catalog_lock = catalog_storage.GetWALLock();
 	auto &catalog_log = *catalog.CatalogLog();
+	auto &log_owner = catalog_storage.GetAttached().GetCatalog();
 	auto commit_state = catalog_storage.GenStorageCommitState(catalog_log);
 	const auto txid = UUID::GenerateRandomUUID();
 	vector<pair<idx_t, idx_t>> prepared;
@@ -231,6 +232,7 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 	}
 	if (!error.HasError()) {
 		try {
+			log_owner.OnCatalogLogPrepared();
 			if (!prepared.empty()) {
 				catalog_log.WriteCommitPrepared(txid, prepared);
 			}
@@ -256,6 +258,7 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 		}
 		return error;
 	}
+	log_owner.OnCatalogLogDecided();
 	for (auto &participant : participants) {
 		auto &transaction_ref = participant.get();
 		auto &db = transaction_ref.transaction.manager.GetDB();

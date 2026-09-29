@@ -148,6 +148,10 @@ public:
 	virtual Catalog &ReplayUseCatalog(ClientContext &context, idx_t catalog_oid);
 	virtual void ReplayArtifact(CatalogType type, idx_t catalog_oid, idx_t oid, vector<string> paths) {
 	}
+	virtual void OnCatalogLogPrepared() {
+	}
+	virtual void OnCatalogLogDecided() {
+	}
 
 	virtual void Initialize(bool load_builtin) = 0;
 	virtual void Initialize(optional_ptr<ClientContext> context, bool load_builtin);
