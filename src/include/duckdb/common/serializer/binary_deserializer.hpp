@@ -15,8 +15,10 @@
 namespace duckdb {
 class ClientContext;
 
-class BinaryDeserializer : public Deserializer {
+class BinaryDeserializer final : public Deserializer {
 public:
+	using List = TypedList<BinaryDeserializer>;
+
 	explicit BinaryDeserializer(ReadStream &stream) : stream(stream) {
 		deserialize_enum_from_string = false;
 	}
