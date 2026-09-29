@@ -27,6 +27,17 @@
 #include "duckdb/storage/table/per_column_metadata_blocks.hpp"
 
 namespace duckdb {
+inline constexpr field_id_t SERENEDB_FIELD_ID_BASE = 16384;
+inline constexpr uint8_t SERENEDB_ENUM_VALUE_BASE = 200;
+
+template <class T>
+constexpr bool IsSereneDBEnumValue(T value) {
+	constexpr bool extended = std::is_same_v<T, AlterTableType> || std::is_same_v<T, AlterType> ||
+	                          std::is_same_v<T, CatalogType> || std::is_same_v<T, TableColumnType> ||
+	                          std::is_same_v<T, WALType>;
+	return extended && static_cast<uint8_t>(value) >= SERENEDB_ENUM_VALUE_BASE;
+}
+
 class SerializationOptions {
 public:
 	SerializationOptions() = default;
@@ -34,7 +45,7 @@ public:
 
 	bool serialize_enum_as_string = false;
 	bool serialize_default_values = false;
-	StorageCompatibility storage_compatibility = StorageCompatibility::DuckDBDefault();
+	StorageCompatibility storage_compatibility = StorageCompatibility::SereneDBLatest();
 };
 
 class Serializer {
@@ -52,6 +63,14 @@ public:
 
 	bool ShouldSerialize(StorageVersion version_added) const {
 		return ShouldSerializeInternal(version_added);
+	}
+
+	void RequireSereneDBStorageVersion(const char *what) const {
+		auto &compatibility = options.storage_compatibility;
+		if (!IsSereneDBStorageVersion(compatibility.GetStorageVersionCompatibility())) {
+			throw NotImplementedException("Cannot write %s to a database file with DuckDB storage version %s", what,
+			                              compatibility.duckdb_version);
+		}
 	}
 
 	class List {
@@ -203,6 +222,9 @@ public:
 protected:
 	template <typename T>
 	typename std::enable_if<std::is_enum<T>::value, void>::type WriteValue(this auto &self, const T value) {
+		if (IsSereneDBEnumValue(value)) {
+			self.RequireSereneDBStorageVersion(EnumUtil::ToChars(value));
+		}
 		if (self.options.serialize_enum_as_string) {
 			// Use the enum serializer to lookup tostring function
 			auto str = EnumUtil::ToChars(value);
