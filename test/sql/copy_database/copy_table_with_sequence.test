@@ -31,9 +31,9 @@ select * from backup.tbl;
 2
 
 query I
-select currval('backup.main.seq');
+select nextval('backup.main.seq');
 ----
-2
+3
 
 statement ok
 drop sequence backup.main.seq cascade;

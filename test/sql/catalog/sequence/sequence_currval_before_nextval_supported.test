@@ -29,11 +29,10 @@ checkpoint;
 
 restart
 
-# currval survives restart
-query I
+statement error
 SELECT currval('scenario_id');
 ----
-2
+Sequence Error: currval: sequence is not yet defined in this session
 
 query I
 SELECT nextval('scenario_id');
