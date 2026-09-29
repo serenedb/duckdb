@@ -349,8 +349,7 @@ struct RLECompressState : public StandardCompressionState {
 
 	explicit RLECompressState(ColumnDataCheckpointData &checkpoint_data_p)
 	    : StandardCompressionState(checkpoint_data_p, CompressionType::COMPRESSION_RLE),
-	      packed(
-	          StorageManager::TargetAtLeastVersion(StorageVersion::SERENEDB_V1, checkpoint_data_p.GetStorageVersion())),
+	      packed(IsSereneDBStorageVersion(checkpoint_data_p.GetStorageVersion())),
 	      header_size(RLEHeaderSize<T>(packed)) {
 		if (packed) {
 			pack_buffer = make_unsafe_uniq_array<data_t>(checkpoint_data_p.GetBlockManager().GetBlockSize());

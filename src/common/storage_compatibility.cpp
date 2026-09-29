@@ -81,6 +81,9 @@ const StorageCompatibility &StorageCompatibility::SereneDBLatest() {
 }
 
 bool StorageCompatibility::Compare(StorageVersion property_version) const {
+	if (IsSereneDBStorageVersion(property_version) && !IsSereneDBStorageVersion(storage_version)) {
+		return false;
+	}
 	return property_version <= storage_version;
 }
 

@@ -64,6 +64,33 @@ string CreateIndexInfo::ExpressionsToString() const {
 	return StringUtil::Join(list, ", ");
 }
 
+vector<string> CreateIndexInfo::GetOpclassesForSerialization() const {
+	for (auto &opclass : column_opclasses) {
+		if (!opclass.empty()) {
+			return column_opclasses;
+		}
+	}
+	return {};
+}
+
+vector<std::optional<case_insensitive_map_t<Value>>> CreateIndexInfo::GetOpclassOptionsForSerialization() const {
+	for (auto &opclass_options : column_opclass_options) {
+		if (opclass_options) {
+			return column_opclass_options;
+		}
+	}
+	return {};
+}
+
+void CreateIndexInfo::FinalizeDeserialization() {
+	if (column_opclasses.empty()) {
+		column_opclasses.resize(parsed_expressions.size());
+	}
+	if (column_opclass_options.empty()) {
+		column_opclass_options.resize(parsed_expressions.size());
+	}
+}
+
 string CreateIndexInfo::ToString() const {
 	string result;
 
