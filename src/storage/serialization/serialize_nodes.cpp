@@ -220,7 +220,7 @@ void ColumnDefinition::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<duckdb::CompressionType>(104, "compression_type", compression_type);
 	serializer.WritePropertyWithDefault<Value>(105, "comment", comment, Value());
 	serializer.WritePropertyWithDefault<InsertionOrderPreservingMap<string>>(106, "tags", tags, InsertionOrderPreservingMap<string>());
-	serializer.WritePropertyWithDefault<vector<AclItem>>(107, "acl", acl, vector<AclItem>());
+	serializer.WritePropertyWithDefault<vector<AclItem>>(16484, "acl", acl, vector<AclItem>());
 }
 
 ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
@@ -232,7 +232,7 @@ ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadProperty<duckdb::CompressionType>(104, "compression_type", result.compression_type);
 	deserializer.ReadPropertyWithExplicitDefault<Value>(105, "comment", result.comment, Value());
 	deserializer.ReadPropertyWithExplicitDefault<InsertionOrderPreservingMap<string>>(106, "tags", result.tags, InsertionOrderPreservingMap<string>());
-	deserializer.ReadPropertyWithExplicitDefault<vector<AclItem>>(107, "acl", result.acl, vector<AclItem>());
+	deserializer.ReadPropertyWithExplicitDefault<vector<AclItem>>(16484, "acl", result.acl, vector<AclItem>());
 	return result;
 }
 
@@ -270,14 +270,18 @@ ColumnInfo ColumnInfo::Deserialize(Deserializer &deserializer) {
 
 void ColumnList::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<ColumnDefinition>>(100, "columns", columns);
-	serializer.WritePropertyWithDefault<bool>(101, "allow_duplicate_names", allow_duplicate_names, false);
-	serializer.WritePropertyWithDefault<bool>(102, "case_sensitive", case_sensitive, false);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<bool>(16484, "allow_duplicate_names", allow_duplicate_names, false);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<bool>(16485, "case_sensitive", case_sensitive, false);
+	}
 }
 
 ColumnList ColumnList::Deserialize(Deserializer &deserializer) {
 	auto columns = deserializer.ReadPropertyWithDefault<vector<ColumnDefinition>>(100, "columns");
-	auto allow_duplicate_names = deserializer.ReadPropertyWithExplicitDefault<bool>(101, "allow_duplicate_names", false);
-	auto case_sensitive = deserializer.ReadPropertyWithExplicitDefault<bool>(102, "case_sensitive", false);
+	auto allow_duplicate_names = deserializer.ReadPropertyWithExplicitDefault<bool>(16484, "allow_duplicate_names", false);
+	auto case_sensitive = deserializer.ReadPropertyWithExplicitDefault<bool>(16485, "case_sensitive", false);
 	ColumnList result(std::move(columns), allow_duplicate_names, case_sensitive);
 	return result;
 }
@@ -594,7 +598,7 @@ void RowGroupOrderOptions::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<optional_idx>(105, "row_limit", row_limit);
 	serializer.WritePropertyWithDefault<idx_t>(106, "row_group_offset", row_group_offset);
 	serializer.WritePropertyWithDefault<idx_t>(107, "leading_null_group_offset", leading_null_group_offset);
-	serializer.WritePropertyWithDefault<bool>(108, "single_order_key", single_order_key, true);
+	serializer.WritePropertyWithDefault<bool>(16484, "single_order_key", single_order_key, true);
 }
 
 unique_ptr<RowGroupOrderOptions> RowGroupOrderOptions::Deserialize(Deserializer &deserializer) {
@@ -606,7 +610,7 @@ unique_ptr<RowGroupOrderOptions> RowGroupOrderOptions::Deserialize(Deserializer 
 	auto row_limit = deserializer.ReadProperty<optional_idx>(105, "row_limit");
 	auto row_group_offset = deserializer.ReadPropertyWithDefault<idx_t>(106, "row_group_offset");
 	auto leading_null_group_offset = deserializer.ReadPropertyWithDefault<idx_t>(107, "leading_null_group_offset");
-	auto single_order_key = deserializer.ReadPropertyWithExplicitDefault<bool>(108, "single_order_key", true);
+	auto single_order_key = deserializer.ReadPropertyWithExplicitDefault<bool>(16484, "single_order_key", true);
 	auto result = duckdb::unique_ptr<RowGroupOrderOptions>(new RowGroupOrderOptions(column_idx, order_by, order_type, null_order, column_type, row_limit, row_group_offset, leading_null_group_offset, single_order_key));
 	return result;
 }
@@ -850,14 +854,14 @@ TableFilterSet TableFilterSet::Deserialize(Deserializer &deserializer) {
 void VacuumOptions::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<bool>(100, "vacuum", vacuum);
 	serializer.WritePropertyWithDefault<bool>(101, "analyze", analyze);
-	serializer.WritePropertyWithDefault<string>(102, "serenedb_pragma_option", serenedb_pragma_option);
+	serializer.WritePropertyWithDefault<string>(16484, "serenedb_pragma_option", serenedb_pragma_option);
 }
 
 VacuumOptions VacuumOptions::Deserialize(Deserializer &deserializer) {
 	VacuumOptions result;
 	deserializer.ReadPropertyWithDefault<bool>(100, "vacuum", result.vacuum);
 	deserializer.ReadPropertyWithDefault<bool>(101, "analyze", result.analyze);
-	deserializer.ReadPropertyWithDefault<string>(102, "serenedb_pragma_option", result.serenedb_pragma_option);
+	deserializer.ReadPropertyWithDefault<string>(16484, "serenedb_pragma_option", result.serenedb_pragma_option);
 	return result;
 }
 

@@ -11,12 +11,14 @@ namespace duckdb {
 
 void Constraint::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<ConstraintType>(100, "type", type);
-	serializer.WritePropertyWithDefault<string>(101, "constraint_name", constraint_name, "");
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<string>(16484, "constraint_name", constraint_name, "");
+	}
 }
 
 unique_ptr<Constraint> Constraint::Deserialize(Deserializer &deserializer) {
 	auto type = deserializer.ReadProperty<ConstraintType>(100, "type");
-	auto constraint_name = deserializer.ReadPropertyWithExplicitDefault<string>(101, "constraint_name", "");
+	auto constraint_name = deserializer.ReadPropertyWithExplicitDefault<string>(16484, "constraint_name", "");
 	unique_ptr<Constraint> result;
 	switch (type) {
 	case ConstraintType::CHECK:

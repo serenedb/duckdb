@@ -35,8 +35,10 @@ void CreateInfo::Serialize(Serializer &serializer) const {
 		serializer.WritePropertyWithDefault<LogicalDependencyList>(109, "dependencies", dependencies, LogicalDependencyList());
 	}
 	serializer.WritePropertyWithDefault<Identifier>(110, "extension_name", extension_name);
-	serializer.WritePropertyWithDefault<Permissions>(111, "permissions", permissions, Permissions());
-	serializer.WritePropertyWithDefault<idx_t>(112, "oid", oid, 0ULL);
+	serializer.WritePropertyWithDefault<Permissions>(16484, "permissions", permissions, Permissions());
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16485, "oid", oid, 0ULL);
+	}
 }
 
 unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
@@ -51,8 +53,8 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 	auto tags = deserializer.ReadPropertyWithExplicitDefault<InsertionOrderPreservingMap<string>>(108, "tags", InsertionOrderPreservingMap<string>());
 	auto dependencies = deserializer.ReadPropertyWithExplicitDefault<LogicalDependencyList>(109, "dependencies", LogicalDependencyList());
 	auto extension_name = deserializer.ReadPropertyWithDefault<Identifier>(110, "extension_name");
-	auto permissions = deserializer.ReadPropertyWithExplicitDefault<Permissions>(111, "permissions", Permissions());
-	auto oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(112, "oid", 0ULL);
+	auto permissions = deserializer.ReadPropertyWithExplicitDefault<Permissions>(16484, "permissions", Permissions());
+	auto oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(16485, "oid", 0ULL);
 	deserializer.Set<CatalogType>(type);
 	unique_ptr<CreateInfo> result;
 	switch (type) {
@@ -157,9 +159,9 @@ void CreateIndexInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<column_t>>(207, "column_ids", column_ids);
 	serializer.WritePropertyWithDefault<case_insensitive_map_t<Value>>(208, "options", options);
 	serializer.WritePropertyWithDefault<string>(209, "index_type_name", index_type);
-	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(210, "where_clause", where_clause);
-	serializer.WritePropertyWithDefault<vector<string>>(211, "column_opclasses", column_opclasses);
-	serializer.WritePropertyWithDefault<vector<optional<case_insensitive_map_t<Value>>>>(212, "column_opclass_options", column_opclass_options);
+	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(16584, "where_clause", where_clause);
+	serializer.WritePropertyWithDefault<vector<string>>(16585, "column_opclasses", GetOpclassesForSerialization());
+	serializer.WritePropertyWithDefault<vector<optional<case_insensitive_map_t<Value>>>>(16586, "column_opclass_options", GetOpclassOptionsForSerialization());
 }
 
 unique_ptr<CreateInfo> CreateIndexInfo::Deserialize(Deserializer &deserializer) {
@@ -174,10 +176,11 @@ unique_ptr<CreateInfo> CreateIndexInfo::Deserialize(Deserializer &deserializer) 
 	deserializer.ReadPropertyWithDefault<vector<column_t>>(207, "column_ids", result->column_ids);
 	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<Value>>(208, "options", result->options);
 	deserializer.ReadPropertyWithDefault<string>(209, "index_type_name", result->index_type);
-	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(210, "where_clause", result->where_clause);
-	deserializer.ReadPropertyWithDefault<vector<string>>(211, "column_opclasses", result->column_opclasses);
-	deserializer.ReadPropertyWithDefault<vector<optional<case_insensitive_map_t<Value>>>>(212, "column_opclass_options", result->column_opclass_options);
+	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(16584, "where_clause", result->where_clause);
+	deserializer.ReadPropertyWithDefault<vector<string>>(16585, "column_opclasses", result->column_opclasses);
+	deserializer.ReadPropertyWithDefault<vector<optional<case_insensitive_map_t<Value>>>>(16586, "column_opclass_options", result->column_opclass_options);
 	result->SetName(std::move(name));
+	result->FinalizeDeserialization();
 	return std::move(result);
 }
 
@@ -354,7 +357,7 @@ void CreateViewInfo::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V1_5_0)) {
 		serializer.WritePropertyWithDefault<identifier_map_t<Value>>(206, "column_comments_map", column_comments_map, identifier_map_t<Value>());
 	}
-	serializer.WritePropertyWithDefault<bool>(207, "security_invoker", security_invoker);
+	serializer.WritePropertyWithDefault<bool>(16584, "security_invoker", security_invoker);
 }
 
 unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
@@ -369,7 +372,7 @@ unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
 	result->aliases = std::move(aliases);
 	result->types = std::move(types);
 	result->query = std::move(query);
-	deserializer.ReadPropertyWithDefault<bool>(207, "security_invoker", result->security_invoker);
+	deserializer.ReadPropertyWithDefault<bool>(16584, "security_invoker", result->security_invoker);
 	result->SetName(std::move(view_name));
 	return std::move(result);
 }

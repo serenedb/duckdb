@@ -215,7 +215,7 @@ void BoundMergeIntoAction::Serialize(Serializer &serializer) const {
 		serializer.WriteProperty<IndexVector<idx_t, PhysicalIndex>>(204, "column_index_map", column_index_map);
 	}
 	serializer.WritePropertyWithDefault<bool>(205, "update_is_del_and_insert", update_is_del_and_insert);
-	serializer.WritePropertyWithDefault<idx_t>(206, "update_column_count", update_column_count);
+	serializer.WritePropertyWithDefault<idx_t>(16584, "update_column_count", update_column_count);
 }
 
 unique_ptr<BoundMergeIntoAction> BoundMergeIntoAction::Deserialize(Deserializer &deserializer) {
@@ -226,7 +226,7 @@ unique_ptr<BoundMergeIntoAction> BoundMergeIntoAction::Deserialize(Deserializer 
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(203, "expressions", result->expressions);
 	deserializer.ReadPropertyWithExplicitDefault<IndexVector<idx_t, PhysicalIndex>>(204, "column_index_map", result->column_index_map, IndexVector<idx_t, PhysicalIndex>());
 	deserializer.ReadPropertyWithDefault<bool>(205, "update_is_del_and_insert", result->update_is_del_and_insert);
-	deserializer.ReadPropertyWithDefault<idx_t>(206, "update_column_count", result->update_column_count);
+	deserializer.ReadPropertyWithDefault<idx_t>(16584, "update_column_count", result->update_column_count);
 	return result;
 }
 
@@ -429,7 +429,7 @@ void LogicalDelete::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<bool>(202, "return_chunk", return_chunk);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(203, "expressions", expressions);
 	serializer.WritePropertyWithDefault<vector<idx_t>>(204, "return_columns", return_columns);
-	serializer.WritePropertyWithDefault<bool>(205, "is_truncate", is_truncate, false);
+	serializer.WritePropertyWithDefault<bool>(16584, "is_truncate", is_truncate, false);
 }
 
 unique_ptr<LogicalOperator> LogicalDelete::Deserialize(Deserializer &deserializer) {
@@ -439,7 +439,7 @@ unique_ptr<LogicalOperator> LogicalDelete::Deserialize(Deserializer &deserialize
 	deserializer.ReadPropertyWithDefault<bool>(202, "return_chunk", result->return_chunk);
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(203, "expressions", result->expressions);
 	deserializer.ReadPropertyWithDefault<vector<idx_t>>(204, "return_columns", result->return_columns);
-	deserializer.ReadPropertyWithExplicitDefault<bool>(205, "is_truncate", result->is_truncate, false);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(16584, "is_truncate", result->is_truncate, false);
 	return std::move(result);
 }
 
@@ -836,7 +836,7 @@ void LogicalUpdate::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<PhysicalIndex>>(204, "columns", columns);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(205, "bound_defaults", bound_defaults);
 	serializer.WritePropertyWithDefault<bool>(206, "update_is_del_and_insert", update_is_del_and_insert);
-	serializer.WritePropertyWithDefault<idx_t>(207, "update_column_count", update_column_count);
+	serializer.WritePropertyWithDefault<idx_t>(16584, "update_column_count", update_column_count);
 }
 
 unique_ptr<LogicalOperator> LogicalUpdate::Deserialize(Deserializer &deserializer) {
@@ -848,7 +848,7 @@ unique_ptr<LogicalOperator> LogicalUpdate::Deserialize(Deserializer &deserialize
 	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(204, "columns", result->columns);
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(205, "bound_defaults", result->bound_defaults);
 	deserializer.ReadPropertyWithDefault<bool>(206, "update_is_del_and_insert", result->update_is_del_and_insert);
-	deserializer.ReadPropertyWithDefault<idx_t>(207, "update_column_count", result->update_column_count);
+	deserializer.ReadPropertyWithDefault<idx_t>(16584, "update_column_count", result->update_column_count);
 	return std::move(result);
 }
 

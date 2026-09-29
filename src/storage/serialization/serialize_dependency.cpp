@@ -28,16 +28,20 @@ CatalogEntryInfo CatalogEntryInfo::Deserialize(Deserializer &deserializer) {
 void LogicalDependency::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<CatalogEntryInfo>(100, "entry", entry);
 	serializer.WritePropertyWithDefault<Identifier>(101, "catalog", catalog);
-	serializer.WritePropertyWithDefault<bool>(102, "owned_by", owned_by, false);
-	serializer.WritePropertyWithDefault<subdependency_set_t>(103, "subdependencies", subdependencies, subdependency_set_t());
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<bool>(16484, "owned_by", owned_by, false);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<subdependency_set_t>(16485, "subdependencies", subdependencies, subdependency_set_t());
+	}
 }
 
 LogicalDependency LogicalDependency::Deserialize(Deserializer &deserializer) {
 	auto entry = deserializer.ReadProperty<CatalogEntryInfo>(100, "entry");
 	auto catalog = deserializer.ReadPropertyWithDefault<Identifier>(101, "catalog");
 	LogicalDependency result(deserializer.TryGet<Catalog>(), entry, std::move(catalog));
-	deserializer.ReadPropertyWithExplicitDefault<bool>(102, "owned_by", result.owned_by, false);
-	deserializer.ReadPropertyWithExplicitDefault<subdependency_set_t>(103, "subdependencies", result.subdependencies, subdependency_set_t());
+	deserializer.ReadPropertyWithExplicitDefault<bool>(16484, "owned_by", result.owned_by, false);
+	deserializer.ReadPropertyWithExplicitDefault<subdependency_set_t>(16485, "subdependencies", result.subdependencies, subdependency_set_t());
 	return result;
 }
 
