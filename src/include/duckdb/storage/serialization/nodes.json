@@ -482,7 +482,7 @@
         "default": "InsertionOrderPreservingMap<string>()"
       },
       {
-        "id": 107,
+        "id": 16484,
         "name": "acl",
         "type": "vector<AclItem>",
         "default": "vector<AclItem>()"
@@ -643,16 +643,18 @@
         "type": "vector<ColumnDefinition>"
       },
       {
-        "id": 101,
+        "id": 16484,
         "name": "allow_duplicate_names",
         "type": "bool",
-        "default": false
+        "default": false,
+        "version": "serenedb_v1"
       },
       {
-        "id": 102,
+        "id": 16485,
         "name": "case_sensitive",
         "type": "bool",
-        "default": false
+        "default": false,
+        "version": "serenedb_v1"
       }
     ],
     "constructor": [
@@ -749,7 +751,7 @@
         "type": "bool"
       },
       {
-        "id": 102,
+        "id": 16484,
         "name": "serenedb_pragma_option",
         "type": "string"
       }
@@ -1515,7 +1517,7 @@
         "type": "idx_t"
       },
       {
-        "id": 108,
+        "id": 16484,
         "name": "single_order_key",
         "type": "bool",
         "default": "true"

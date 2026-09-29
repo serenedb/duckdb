@@ -60,16 +60,18 @@
 				"type": "Identifier"
 			},
 			{
-				"id": 102,
+				"id": 16484,
 				"name": "owned_by",
 				"type": "bool",
-				"default": false
+				"default": false,
+				"version": "serenedb_v1"
 			},
 			{
-				"id": 103,
+				"id": 16485,
 				"name": "subdependencies",
 				"type": "subdependency_set_t",
-				"default": "subdependency_set_t()"
+				"default": "subdependency_set_t()",
+				"version": "serenedb_v1"
 			}
 		],
 		"pointer_type": "none",

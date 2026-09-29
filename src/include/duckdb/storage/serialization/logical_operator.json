@@ -799,7 +799,7 @@
         "type": "vector<idx_t>"
       },
       {
-        "id": 205,
+        "id": 16584,
         "name": "is_truncate",
         "type": "bool",
         "default": "false"
@@ -852,7 +852,7 @@
         "type": "bool"
       },
       {
-        "id": 207,
+        "id": 16584,
         "name": "update_column_count",
         "type": "idx_t"
       }
@@ -947,7 +947,7 @@
         "type": "bool"
       },
       {
-        "id": 206,
+        "id": 16584,
         "name": "update_column_count",
         "type": "idx_t"
       }

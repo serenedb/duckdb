@@ -72,7 +72,18 @@ def verify_serialization_versions(version_map):
 verify_serialization_versions(version_map)
 
 
+def is_serenedb_version(version: str) -> bool:
+    if not version.startswith("serenedb_"):
+        return False
+    if version not in version_map["storage"]["values"]:
+        print(f"Specified version ({version}) could not be found in the storage versions of version_map.json!")
+        exit(1)
+    return True
+
+
 def lookup_serialization_version(version: str):
+    if is_serenedb_version(version):
+        return version
     if version.lower() == "latest":
         print(
             f"'latest' is not an allowed 'version' to use in serialization JSON files, please provide a duckdb version"
@@ -110,6 +121,8 @@ def lookup_serialization_version(version: str):
 
 def version_string_to_storage_version_enum(version: str) -> str:
     """Convert a version string like 'v0.10.3' to 'StorageVersion::V0_10_3'."""
+    if is_serenedb_version(version):
+        return f"StorageVersion::{version.upper()}"
     versions = version_map["serialization"]["values"]
     if version not in versions:
         return "StorageVersion::DUCKDB_LATEST"

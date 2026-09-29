@@ -12,10 +12,11 @@
         "type": "ConstraintType"
       },
       {
-        "id": 101,
+        "id": 16484,
         "name": "constraint_name",
         "type": "string",
-        "default": "\"\""
+        "default": "\"\"",
+        "version": "serenedb_v1"
       }
     ]
   },

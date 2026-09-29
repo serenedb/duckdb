@@ -282,9 +282,10 @@
         "accessor": "IsOperator()"
       },
       {
-        "id": 210,
+        "id": 16584,
         "name": "from_operator",
         "type": "bool",
+        "version": "serenedb_v1",
         "equals_skip": true,
         "accessor_mut": "FromOperatorMutable()",
         "accessor": "IsFromOperator()"

@@ -193,8 +193,8 @@ enum class AlterTableType : uint8_t {
 	RENAME_FIELD = 16,
 	SET_TABLE_OPTIONS = 17,
 	RESET_TABLE_OPTIONS = 18,
-	DROP_CONSTRAINT = 19,
-	RENAME_CONSTRAINT = 20,
+	DROP_CONSTRAINT = 200,
+	RENAME_CONSTRAINT = 201,
 };
 
 struct AlterTableInfo : public AlterInfo {
