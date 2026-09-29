@@ -1,0 +1,165 @@
+# name: test/sql/storage/serenedb_state_in_duckdb_file.test
+# group: [storage]
+
+load {TEST_DIR}/serenedb_state_in_duckdb_file.db
+
+statement ok
+PRAGMA disable_checkpoint_on_shutdown
+
+statement ok
+PRAGMA wal_autocheckpoint='1TB'
+
+statement ok
+CREATE TABLE t (a INTEGER, b INTEGER, c VARCHAR)
+
+statement ok
+CREATE SEQUENCE seq
+
+statement ok
+CREATE SCHEMA sch
+
+statement ok
+CREATE INDEX i ON t (a)
+
+statement error
+CREATE INDEX partial ON t (a) WHERE a > 0
+----
+Cannot write where_clause to a database file with DuckDB storage version
+
+statement error
+CREATE INDEX opclass ON t (c text_pattern_ops)
+----
+Cannot write column_opclasses to a database file with DuckDB storage version
+
+statement error
+CREATE TABLE stored (a INTEGER, b INTEGER GENERATED ALWAYS AS (a + 1) STORED)
+----
+Cannot write GENERATED_STORED to a database file with DuckDB storage version
+
+statement error
+CREATE VIEW invoker WITH (security_invoker = true) AS SELECT 1 AS x
+----
+Cannot write security_invoker to a database file with DuckDB storage version
+
+statement error
+ALTER INDEX i RENAME TO i2
+----
+Cannot write RENAME to a database file with DuckDB storage version
+
+statement error
+ALTER SEQUENCE seq RENAME TO seq2
+----
+Cannot write RENAME to a database file with DuckDB storage version
+
+statement error
+ALTER SCHEMA sch RENAME TO sch2
+----
+Cannot write RENAME to a database file with DuckDB storage version
+
+statement ok
+CREATE TABLE u (a INTEGER)
+
+statement error
+ALTER TABLE u ADD UNIQUE (a)
+----
+Cannot write ALTER TABLE ADD UNIQUE to a database file with DuckDB storage version
+
+statement ok
+CREATE TABLE sch.in_schema AS SELECT range AS a FROM range(3)
+
+statement ok
+CREATE TABLE renamed_from (a INTEGER)
+
+statement ok
+INSERT INTO renamed_from VALUES (7)
+
+statement ok
+ALTER TABLE renamed_from RENAME TO renamed_to
+
+statement ok
+CREATE VIEW view_from AS SELECT 42 AS x
+
+statement ok
+ALTER VIEW view_from RENAME TO view_to
+
+statement ok
+CREATE TABLE named_check (a INTEGER CONSTRAINT positive CHECK (a > 0))
+
+statement ok
+CREATE TABLE duplicate_names AS SELECT 1 AS x, 2 AS x
+
+restart
+
+query I
+SELECT sum(a) FROM sch.in_schema
+----
+3
+
+query I
+SELECT a FROM renamed_to
+----
+7
+
+query I
+SELECT x FROM view_to
+----
+42
+
+query II
+SELECT * FROM duplicate_names
+----
+1	2
+
+statement error
+INSERT INTO named_check VALUES (-1)
+----
+CHECK constraint failed
+
+statement ok
+ATTACH ':memory:' AS mem
+
+statement ok
+CREATE TABLE mem.stored (a INTEGER, b INTEGER GENERATED ALWAYS AS (a + 1) STORED)
+
+statement ok
+CREATE INDEX partial ON mem.stored (a) WHERE a > 0
+
+statement ok
+CREATE TABLE mem.u (a INTEGER)
+
+statement ok
+ALTER TABLE mem.u ADD UNIQUE (a)
+
+statement ok
+ATTACH '{TEST_DIR}/serenedb_state_in_serenedb_file.db' AS sdb (STORAGE_VERSION 'serenedb_latest')
+
+statement ok
+CREATE TABLE sdb.stored (a INTEGER, b INTEGER GENERATED ALWAYS AS (a + 1) STORED)
+
+statement ok
+CREATE INDEX partial ON sdb.stored (a) WHERE a > 0
+
+statement ok
+CREATE TABLE sdb.u (a INTEGER)
+
+statement ok
+ALTER TABLE sdb.u ADD UNIQUE (a)
+
+statement ok
+DETACH sdb
+
+statement ok
+ATTACH '{TEST_DIR}/serenedb_state_in_serenedb_file.db' AS sdb (STORAGE_VERSION 'serenedb_latest')
+
+statement ok
+INSERT INTO sdb.stored (a) VALUES (1)
+
+query II
+SELECT a, b FROM sdb.stored
+----
+1	2
+
+statement error
+INSERT INTO sdb.u VALUES (1), (1)
+----
+duplicate key "1"
