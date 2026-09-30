@@ -211,6 +211,11 @@ EXPLAIN SELECT a FROM t WHERE s LIKE b::VARCHAR AND a + b <> length(s) AND a::TI
 ----
 logical_opt	<REGEX>:.*a != b.*~~.*length.*TINYINT.*reverse.*
 
+query II
+EXPLAIN SELECT a FROM t WHERE a <> b AND s || b::VARCHAR <> reverse(s) AND a::TINYINT <> d AND s LIKE b::VARCHAR
+----
+logical_opt	<REGEX>:.*a != b.*~~.*reverse.*TINYINT.*
+
 statement ok
 SET filter_reorder = 'FAST'
 

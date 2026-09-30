@@ -46,7 +46,9 @@ vector<ExpressionCosts> ReorderSafe(vector<unique_ptr<Expression>> &expressions)
 		expression_costs.push_back({nullptr, ExpressionHeuristics::Cost(*expr)});
 		expression_costs.back().expr = std::move(expr);
 		if (expression_costs.back().expr->CanThrow()) {
-			sort(expression_costs.begin() + NumericCast<int64_t>(block), expression_costs.end() - 1);
+			if (expression_costs.size() - 1 - block > 1) {
+				sort(expression_costs.begin() + NumericCast<int64_t>(block), expression_costs.end() - 1);
+			}
 			block = expression_costs.size();
 		}
 	}
@@ -57,17 +59,19 @@ vector<ExpressionCosts> ReorderSafe(vector<unique_ptr<Expression>> &expressions)
 vector<ExpressionCosts> ReorderFast(vector<unique_ptr<Expression>> &expressions) {
 	vector<idx_t> costs(expressions.size());
 	vector<idx_t> non_failing;
+	vector<pair<idx_t, idx_t>> failing;
+	idx_t max_cost = 0;
 	for (idx_t i = 0; i < expressions.size(); i++) {
 		costs[i] = ExpressionHeuristics::Cost(*expressions[i]);
-		if (!expressions[i]->CanThrow()) {
+		if (expressions[i]->CanThrow()) {
+			failing.emplace_back(i, max_cost);
+			max_cost = 0;
+		} else {
 			non_failing.push_back(i);
+			max_cost = MaxValue(max_cost, costs[i]);
 		}
 	}
 	sort(non_failing.begin(), non_failing.end(), [&](idx_t l, idx_t r) { return costs[l] < costs[r]; });
-	vector<idx_t> rank(expressions.size(), DConstants::INVALID_INDEX);
-	for (idx_t r = 0; r < non_failing.size(); r++) {
-		rank[non_failing[r]] = r;
-	}
 
 	vector<ExpressionCosts> expression_costs;
 	expression_costs.reserve(expressions.size());
@@ -75,16 +79,12 @@ vector<ExpressionCosts> ReorderFast(vector<unique_ptr<Expression>> &expressions)
 		expression_costs.push_back({std::move(expressions[i]), costs[i]});
 	};
 	idx_t next = 0;
-	idx_t required = 0;
-	for (idx_t i = 0; i < expressions.size(); i++) {
-		if (rank[i] != DConstants::INVALID_INDEX) {
-			required = MaxValue(required, rank[i] + 1);
-			continue;
-		}
-		while (next < non_failing.size() && (next < required || costs[non_failing[next]] < costs[i])) {
+	for (auto &[idx, required_cost] : failing) {
+		while (next < non_failing.size() &&
+		       (costs[non_failing[next]] <= required_cost || costs[non_failing[next]] < costs[idx])) {
 			emit(non_failing[next++]);
 		}
-		emit(i);
+		emit(idx);
 	}
 	while (next < non_failing.size()) {
 		emit(non_failing[next++]);
