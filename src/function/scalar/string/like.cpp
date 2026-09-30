@@ -6,6 +6,7 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 
 #include "duckdb/execution/expression_executor.hpp"
+#include "re2/literal_finder.h"
 
 #include <absl/strings/ascii.h>
 
@@ -229,10 +230,11 @@ bool TemplatedLikeOperator(const char *sdata, idx_t slen, const char *pdata, idx
 }
 
 struct LikeSegment {
-	explicit LikeSegment(string pattern) : pattern(std::move(pattern)) {
+	explicit LikeSegment(string pattern_p) : pattern(std::move(pattern_p)), finder(pattern) {
 	}
 
 	string pattern;
+	duckdb_re2::LiteralFinder finder;
 };
 
 struct LikeMatcher : public FunctionData {
@@ -269,8 +271,8 @@ struct LikeMatcher : public FunctionData {
 		for (; segment_idx < end_idx; segment_idx++) {
 			auto &segment = segments[segment_idx];
 			// find the pattern of the current segment
-			idx_t next_offset =
-			    FindStrInStr(str_data, str_len, const_uchar_ptr_cast(segment.pattern.c_str()), segment.pattern.size());
+			idx_t next_offset = FindStrInStr(str_data, str_len, const_uchar_ptr_cast(segment.pattern.c_str()),
+			                                 segment.pattern.size(), segment.finder);
 			if (next_offset == DConstants::INVALID_INDEX) {
 				// could not find this pattern in the string: no match
 				return false;
@@ -294,8 +296,8 @@ struct LikeMatcher : public FunctionData {
 		} else {
 			auto &segment = segments.back();
 			// find the pattern of the current segment
-			idx_t next_offset =
-			    FindStrInStr(str_data, str_len, const_uchar_ptr_cast(segment.pattern.c_str()), segment.pattern.size());
+			idx_t next_offset = FindStrInStr(str_data, str_len, const_uchar_ptr_cast(segment.pattern.c_str()),
+			                                 segment.pattern.size(), segment.finder);
 			return next_offset != DConstants::INVALID_INDEX;
 		}
 	}
