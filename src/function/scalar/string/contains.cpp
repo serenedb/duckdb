@@ -72,17 +72,18 @@ struct ContainsOperator {
 	}
 };
 
-} // namespace
+bool UseFinder(idx_t haystack_size, idx_t needle_size) {
+	return needle_size > 1 && haystack_size >= needle_size + 31;
+}
 
-idx_t FindStrInStr(const unsigned char *haystack, idx_t haystack_size, const unsigned char *needle, idx_t needle_size) {
-	D_ASSERT(needle_size > 0);
-	if (needle_size > 1 && haystack_size >= needle_size + 31) {
-		const absl::string_view literal(const_char_ptr_cast(needle), needle_size);
-		const duckdb_re2::LiteralFinder finder(literal);
-		const auto begin = const_char_ptr_cast(haystack);
-		const auto found = finder.Find(literal, begin, begin + haystack_size);
-		return found ? UnsafeNumericCast<idx_t>(found - begin) : DConstants::INVALID_INDEX;
-	}
+idx_t FindWithFinder(const duckdb_re2::LiteralFinder &finder, absl::string_view literal, const unsigned char *haystack,
+                     idx_t haystack_size) {
+	const auto begin = const_char_ptr_cast(haystack);
+	const auto found = finder.Find(literal, begin, begin + haystack_size);
+	return found ? UnsafeNumericCast<idx_t>(found - begin) : DConstants::INVALID_INDEX;
+}
+
+idx_t FindShort(const unsigned char *haystack, idx_t haystack_size, const unsigned char *needle, idx_t needle_size) {
 	// start off by performing a memchr to find the first character of the
 	auto location = memchr(haystack, needle[0], haystack_size);
 	if (location == nullptr) {
@@ -114,6 +115,41 @@ idx_t FindStrInStr(const unsigned char *haystack, idx_t haystack_size, const uns
 	}
 }
 
+void ContainsFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &needle_vec = args.data[1];
+	if (needle_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(needle_vec)) {
+		const auto needle_s = *ConstantVector::GetData<string_t>(needle_vec);
+		const auto needle = const_uchar_ptr_cast(needle_s.GetData());
+		const auto needle_size = needle_s.GetSize();
+		if (needle_size > 1) {
+			const absl::string_view literal(needle_s.GetData(), needle_size);
+			const duckdb_re2::LiteralFinder finder(literal);
+			UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](string_t haystack_s) {
+				const auto haystack = const_uchar_ptr_cast(haystack_s.GetData());
+				const auto haystack_size = haystack_s.GetSize();
+				const auto found = UseFinder(haystack_size, needle_size)
+				                       ? FindWithFinder(finder, literal, haystack, haystack_size)
+				                       : FindShort(haystack, haystack_size, needle, needle_size);
+				return found != DConstants::INVALID_INDEX;
+			});
+			return;
+		}
+	}
+	BinaryExecutor::ExecuteStandard<string_t, string_t, bool, ContainsOperator>(args.data[0], args.data[1], result,
+	                                                                            args.size());
+}
+
+} // namespace
+
+idx_t FindStrInStr(const unsigned char *haystack, idx_t haystack_size, const unsigned char *needle, idx_t needle_size) {
+	D_ASSERT(needle_size > 0);
+	if (UseFinder(haystack_size, needle_size)) {
+		const absl::string_view literal(const_char_ptr_cast(needle), needle_size);
+		return FindWithFinder(duckdb_re2::LiteralFinder(literal), literal, haystack, haystack_size);
+	}
+	return FindShort(haystack, haystack_size, needle, needle_size);
+}
+
 idx_t FindStrInStr(const string_t &haystack_s, const string_t &needle_s) {
 	auto haystack = const_uchar_ptr_cast(haystack_s.GetData());
 	auto haystack_size = haystack_s.GetSize();
@@ -128,7 +164,7 @@ idx_t FindStrInStr(const string_t &haystack_s, const string_t &needle_s) {
 
 ScalarFunction GetStringContains() {
 	ScalarFunction string_fun("contains", {LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::BOOLEAN,
-	                          ScalarFunction::BinaryFunction<string_t, string_t, bool, ContainsOperator>);
+	                          ContainsFunction);
 	string_fun.SetCollationHandling(FunctionCollationHandling::PUSH_COMBINABLE_COLLATIONS);
 	return string_fun;
 }
