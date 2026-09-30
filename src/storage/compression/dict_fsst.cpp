@@ -58,6 +58,7 @@ struct DictFSSTCompressionStorage {
 	static void FinalizeCompress(CompressionState &state_p);
 
 	static unique_ptr<SegmentScanState> StringInitScan(const QueryContext &context, ColumnSegment &segment);
+	static unique_ptr<SegmentScanState> StringInitSparseScan(const QueryContext &context, ColumnSegment &segment);
 	template <bool ALLOW_DICT_VECTORS>
 	static void StringScanPartial(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result,
 	                              idx_t result_offset);
@@ -119,6 +120,16 @@ unique_ptr<SegmentScanState> DictFSSTCompressionStorage::StringInitScan(const Qu
 	return std::move(state);
 }
 
+unique_ptr<SegmentScanState> DictFSSTCompressionStorage::StringInitSparseScan(const QueryContext &context,
+                                                                              ColumnSegment &segment) {
+	// the dictionary is materialized only once on-demand decodes add up to it (ChargeDecodes)
+	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
+	auto state = make_uniq<CompressedStringScanState>(segment, buffer_manager.Pin(segment.GetBlockHandle()));
+	state->Initialize(false);
+	state->deferred_dictionary = state->mode != DictFSSTMode::FSST_ONLY && state->mode != DictFSSTMode::FSST_PLUS;
+	return std::move(state);
+}
+
 //===--------------------------------------------------------------------===//
 // Scan base data
 //===--------------------------------------------------------------------===//
@@ -127,6 +138,7 @@ void DictFSSTCompressionStorage::StringScanPartial(ColumnSegment &segment, Colum
                                                    Vector &result, idx_t result_offset) {
 	// clear any previously locked buffers and get the primary buffer handle
 	auto &scan_state = state.scan_state->Cast<CompressedStringScanState>();
+	scan_state.ChargeDecodes(scan_count);
 
 	auto start = state.GetPositionInSegment();
 	if (!ALLOW_DICT_VECTORS || !scan_state.AllowDictionaryScan(scan_count)) {
@@ -164,8 +176,13 @@ void DictFSSTSelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector
 		scan_state.Select(result, start, sel, sel_count);
 		return;
 	}
+	scan_state.ChargeDecodes(sel_count);
 	if (scan_state.dictionary) {
 		scan_state.SelectDictionary(result, state.GetPositionInSegment(), vector_count, sel, sel_count);
+		return;
+	}
+	if (scan_state.deferred_dictionary) {
+		scan_state.SelectEntries(result, state.GetPositionInSegment(), vector_count, sel, sel_count);
 		return;
 	}
 	// fallback: scan + slice
@@ -275,6 +292,7 @@ CompressionFunction DictFSSTCompressionFun::GetFunction(PhysicalType data_type) 
 	    dict_fsst::DictFSSTCompressionStorage::StringScanPartial<false>,
 	    dict_fsst::DictFSSTCompressionStorage::StringFetchRow, UncompressedFunctions::EmptySkip,
 	    UncompressedStringStorage::StringInitSegment);
+	res.init_sparse_scan = dict_fsst::DictFSSTCompressionStorage::StringInitSparseScan;
 	res.validity = CompressionValidity::NO_VALIDITY_REQUIRED;
 	res.select = dict_fsst::DictFSSTSelect;
 	res.filter = dict_fsst::DictFSSTFilter;

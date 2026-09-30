@@ -114,6 +114,12 @@ void ColumnSegment::InitializeScan(ColumnScanState &state) {
 	state.scan_state = function.get().init_scan(state.context, *this);
 }
 
+void ColumnSegment::InitializeSparseScan(ColumnScanState &state) {
+	auto &fun = function.get();
+	auto init = fun.init_sparse_scan ? fun.init_sparse_scan : fun.init_scan;
+	state.scan_state = init(state.context, *this);
+}
+
 void ColumnSegment::Scan(ColumnScanState &state, idx_t scan_count, Vector &result, idx_t result_offset,
                          ScanVectorType scan_type) {
 	if (scan_type == ScanVectorType::SCAN_ENTIRE_VECTOR) {

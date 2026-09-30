@@ -292,6 +292,8 @@ public:
 	compression_init_prefetch_t init_prefetch;
 	//! init_scan is called to set up the scan state
 	compression_init_segment_scan_t init_scan;
+	//! init_sparse_scan (optional) sets up the scan state for reading a few scattered rows; defaults to init_scan
+	compression_init_segment_scan_t init_sparse_scan = nullptr;
 	//! scan_vector scans an entire vector using the scan state
 	compression_scan_vector_t scan_vector;
 	//! scan_partial scans a subset of a vector

@@ -61,6 +61,8 @@ public:
 public:
 	void InitializePrefetch(PrefetchState &prefetch_state, ColumnScanState &scan_state);
 	void InitializeScan(ColumnScanState &state);
+	//! Set up the scan state for reading a few scattered rows (see CompressionFunction::init_sparse_scan)
+	void InitializeSparseScan(ColumnScanState &state);
 	//! Scan one vector from this segment
 	void Scan(ColumnScanState &state, idx_t scan_count, Vector &result, idx_t result_offset, ScanVectorType scan_type);
 	//! Scan a subset of a vector (defined by the selection vector)

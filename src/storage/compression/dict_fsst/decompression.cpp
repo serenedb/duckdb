@@ -215,6 +215,35 @@ void CompressedStringScanState::Initialize(bool initialize_dictionary) {
 	}
 }
 
+void CompressedStringScanState::ChargeDecodes(idx_t count) {
+	if (!deferred_dictionary) {
+		return;
+	}
+	decoded_on_demand += count;
+	if (decoded_on_demand >= dict_count) {
+		MaterializeDictionary();
+	}
+}
+
+void CompressedStringScanState::MaterializeDictionary() {
+	D_ASSERT(deferred_dictionary && !dictionary);
+	D_ASSERT(dict_count >= 1);
+	// the same reconstruct as the streamed loop in Initialize, sourced from the arrays Initialize(false) unpacked
+	dictionary = DictionaryVector::CreateReusableDictionary(segment.GetType(), dict_count);
+	auto &dict_data = dictionary->data;
+	auto dict_child_data = FlatVector::GetDataMutable<string_t>(dict_data);
+	FlatVector::ValidityMutable(dict_data).SetInvalid(0);
+	auto &allocator = StringVector::GetStringAllocator(dict_data);
+	idx_t offset = 0;
+	for (uint32_t i = 0; i < dict_count; i++) {
+		const uint32_t len = entry_lengths[i];
+		const uint32_t pid = prefix_count > 0 ? prefix_ids[i] : 0;
+		dict_child_data[i] = ReconstructEntry(allocator, pid, len, char_ptr_cast(dict_ptr + offset));
+		offset += len;
+	}
+	deferred_dictionary = false;
+}
+
 idx_t CompressedStringScanState::UnpackCodes(idx_t start, idx_t scan_count) {
 	D_ASSERT(mode != DictFSSTMode::FSST_ONLY && mode != DictFSSTMode::FSST_PLUS);
 	// Handling non-bitpacking-group-aligned start values;
@@ -344,6 +373,24 @@ void CompressedStringScanState::SelectDictionary(Vector &result, idx_t start, id
                                                  idx_t sel_count) {
 	D_ASSERT(dictionary);
 	result.Dictionary(dictionary, GetSelVec(start, span, sel, sel_count), sel_count);
+}
+
+void CompressedStringScanState::SelectEntries(Vector &result, idx_t start, idx_t span, const SelectionVector &sel,
+                                              idx_t sel_count) {
+	D_ASSERT(!dictionary);
+	D_ASSERT(mode != DictFSSTMode::FSST_ONLY && mode != DictFSSTMode::FSST_PLUS);
+	auto &codes = GetSelVec(start, span, sel, sel_count);
+	auto result_data = FlatVector::Writer<string_t>(result, sel_count);
+	auto &allocator = StringVector::GetStringAllocator(result);
+	for (idx_t i = 0; i < sel_count; i++) {
+		auto string_number = codes.get_index(i);
+		if (string_number == 0) {
+			result_data.WriteNull();
+			continue;
+		}
+		result_data.WriteStringRef(FetchEntry(allocator, string_number));
+	}
+	result.Verify();
 }
 
 } // namespace dict_fsst
