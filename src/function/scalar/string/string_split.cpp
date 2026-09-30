@@ -50,7 +50,9 @@ struct RegexpStringSplit {
 
 	static idx_t Find(const char *input_data, idx_t input_size, const char *delim_data, idx_t delim_size,
 	                  idx_t &match_size, void *data) {
-		duckdb_re2::RE2 regex(duckdb_re2::StringPiece(delim_data, delim_size));
+		duckdb_re2::RE2::Options options;
+		options.set_thread_safe(false);
+		duckdb_re2::RE2 regex(duckdb_re2::StringPiece(delim_data, delim_size), options);
 		if (!regex.ok()) {
 			throw InvalidInputException(regex.error());
 		}
