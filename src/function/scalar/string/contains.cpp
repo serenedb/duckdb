@@ -6,6 +6,7 @@
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/function/scalar/struct_functions.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "re2/literal_finder.h"
 
 namespace duckdb {
 
@@ -75,6 +76,13 @@ struct ContainsOperator {
 
 idx_t FindStrInStr(const unsigned char *haystack, idx_t haystack_size, const unsigned char *needle, idx_t needle_size) {
 	D_ASSERT(needle_size > 0);
+	if (needle_size > 1 && haystack_size >= needle_size + 31) {
+		const absl::string_view literal(const_char_ptr_cast(needle), needle_size);
+		const duckdb_re2::LiteralFinder finder(literal);
+		const auto begin = const_char_ptr_cast(haystack);
+		const auto found = finder.Find(literal, begin, begin + haystack_size);
+		return found ? UnsafeNumericCast<idx_t>(found - begin) : DConstants::INVALID_INDEX;
+	}
 	// start off by performing a memchr to find the first character of the
 	auto location = memchr(haystack, needle[0], haystack_size);
 	if (location == nullptr) {
