@@ -153,6 +153,16 @@ idx_t FindStrInStr(const unsigned char *haystack, idx_t haystack_size, const uns
 	return FindShort(haystack, haystack_size, needle, needle_size);
 }
 
+idx_t FindStrInStr(const unsigned char *haystack, idx_t haystack_size, const unsigned char *needle, idx_t needle_size,
+                   const duckdb_re2::LiteralFinder &finder) {
+	D_ASSERT(needle_size > 0);
+	if (UseFinder(haystack_size, needle_size)) {
+		const absl::string_view literal(const_char_ptr_cast(needle), needle_size);
+		return FindWithFinder(finder, literal, haystack, haystack_size);
+	}
+	return FindShort(haystack, haystack_size, needle, needle_size);
+}
+
 idx_t FindStrInStr(const string_t &haystack_s, const string_t &needle_s) {
 	auto haystack = const_uchar_ptr_cast(haystack_s.GetData());
 	auto haystack_size = haystack_s.GetSize();
