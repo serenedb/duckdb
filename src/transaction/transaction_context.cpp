@@ -59,12 +59,44 @@ void TransactionContext::Commit() {
 	}
 	// Pre-commit hooks run while the transaction is still active so they can
 	// issue operations that need ActiveTransaction (e.g. reverting SET LOCAL
-	// values for custom-impl settings).
-	for (auto &state : context.registered_state->States()) {
-		state->TransactionPreCommit(*current_transaction, context);
+	// values for custom-impl settings). A hook that refuses the commit by
+	// throwing ends the transaction the same way a failed commit does -- leaving
+	// it active would wedge the connection on the next statement.
+	ErrorData precommit_error;
+	std::exception_ptr precommit_exception;
+	try {
+		for (auto &state : context.registered_state->States()) {
+			state->TransactionPreCommit(*current_transaction, context);
+		}
+	} catch (std::exception &ex) {
+		precommit_error = ErrorData(ex);
+		precommit_exception = std::current_exception();
 	}
 	auto transaction = std::move(current_transaction);
 	ClearTransaction();
+	if (precommit_exception) {
+		// The commit never ran, so the rollback is ours to drive. It mirrors
+		// Rollback(): finalize only once the rollback succeeded, and rethrow the
+		// hook's own exception so the refusal keeps the caller's error class.
+		auto rolled_back = false;
+		try {
+			transaction->Rollback();
+			rolled_back = true;
+		} catch (...) { // NOLINT: the refusal is the error worth reporting
+		}
+		for (auto const &s : context.registered_state->States()) {
+			s->TransactionRollback(*transaction, context, precommit_error);
+		}
+
+		// match Rollback behaviour - Finalize only successfull rollback.
+		if (rolled_back) {
+			try {
+				transaction->Finalize();
+			} catch (...) { // NOLINT: the refusal is the error worth reporting
+			}
+		}
+		std::rethrow_exception(precommit_exception);
+	}
 	auto error = transaction->Commit();
 	// Notify any registered state of transaction commit
 	if (error.HasError()) {
