@@ -898,7 +898,7 @@ SchemaOrData <- CopySchema / CopyData
 CopySchema <- 'SCHEMA'
 CopyData <- 'DATA'
 
-CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName
+CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName WithList?
 DropDatabaseStatement <- 'DROP' 'DATABASE' IfExists? CatalogName DropDatabaseForce?
 DropDatabaseForce <- '(' 'FORCE' ')'
 
@@ -987,6 +987,7 @@ SequenceOption <-
 	SeqSetMinMax /
 	SeqNoMinMax /
 	SeqStartWith /
+	SeqCache /
 	SeqOwnedBy
 
 SeqSetCycle <- SeqCycle / SeqNoCycle
@@ -996,6 +997,7 @@ SeqSetIncrement <- 'INCREMENT' 'BY'? Expression
 SeqSetMinMax <- SeqMinOrMax Expression
 SeqNoMinMax <- 'NO' SeqMinOrMax
 SeqStartWith <- 'START' 'WITH'? Expression
+SeqCache <- 'CACHE' Expression
 SeqOwnedBy <- 'OWNED' 'BY' QualifiedName
 
 SeqMinOrMax <- MinValue / MaxValue

@@ -1954,7 +1954,14 @@ PEGTransformerFactory::TransformCreateDatabaseStatementInternal(PEGTransformer &
 		if_not_exists = if_not_exists_value;
 	}
 	auto catalog_name = list_pr.GetChild(3).Cast<IdentifierParseResult>().identifier;
-	auto result = TransformCreateDatabaseStatement(transformer, if_not_exists, catalog_name);
+	optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list {};
+	auto &with_list_opt = list_pr.GetChild(4).Cast<OptionalParseResult>();
+	if (with_list_opt.HasResult()) {
+		auto with_list_value =
+		    transformer.Transform<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(with_list_opt.GetResult());
+		with_list = std::move(with_list_value);
+	}
+	auto result = TransformCreateDatabaseStatement(transformer, if_not_exists, catalog_name, std::move(with_list));
 	return make_uniq<TypedTransformResult<unique_ptr<SQLStatement>>>(std::move(result));
 }
 
@@ -2629,6 +2636,14 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSeqStartWithInt
 	has_result = has_result_opt.HasResult();
 	auto expression = transformer.Transform<unique_ptr<ParsedExpression>>(list_pr.GetChild(2));
 	auto result = TransformSeqStartWith(transformer, has_result, std::move(expression));
+	return make_uniq<TypedTransformResult<pair<string, unique_ptr<SequenceOption>>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSeqCacheInternal(PEGTransformer &transformer,
+                                                                                  ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto expression = transformer.Transform<unique_ptr<ParsedExpression>>(list_pr.GetChild(1));
+	auto result = TransformSeqCache(transformer, std::move(expression));
 	return make_uniq<TypedTransformResult<pair<string, unique_ptr<SequenceOption>>>>(std::move(result));
 }
 
@@ -10925,6 +10940,7 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"SeqSetMinMax", &PEGTransformerFactory::TransformSeqSetMinMaxInternal},
 	    {"SeqNoMinMax", &PEGTransformerFactory::TransformSeqNoMinMaxInternal},
 	    {"SeqStartWith", &PEGTransformerFactory::TransformSeqStartWithInternal},
+	    {"SeqCache", &PEGTransformerFactory::TransformSeqCacheInternal},
 	    {"SeqOwnedBy", &PEGTransformerFactory::TransformSeqOwnedByInternal},
 	    {"SeqMinOrMax", &PEGTransformerFactory::TransformSeqMinOrMaxInternal},
 	    {"MinValue", &PEGTransformerFactory::TransformMinValueInternal},
