@@ -181,7 +181,7 @@ struct FlatVector {
 	DUCKDB_API static const SelectionVector *IncrementalSelectionVector();
 
 	template <class T>
-	static VectorWriter<T> Writer(Vector &vector, idx_t count, idx_t offset) {
+	[[gnu::always_inline]] static VectorWriter<T> Writer(Vector &vector, idx_t count, idx_t offset) {
 		SetSize(vector, offset + count);
 		return VectorWriter<T>(vector, count, offset);
 	}
