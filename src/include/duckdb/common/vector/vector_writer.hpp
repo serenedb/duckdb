@@ -78,7 +78,10 @@ private:
 
 template <>
 struct VectorWriter<string_t> {
-	VectorWriter(Vector &vector, idx_t count, idx_t offset);
+	[[gnu::always_inline]] VectorWriter(Vector &vector, idx_t count, idx_t offset)
+	    : vector(vector), data(FlatVector::GetDataMutable<string_t>(vector)),
+	      validity(FlatVector::ValidityMutable(vector)), count(offset + count), current_idx(offset) {
+	}
 	VectorWriter(VectorWriter &&other) noexcept
 	    : vector(other.vector), data(other.data), validity(other.validity), heap(other.heap), count(other.count),
 	      current_idx(other.current_idx) {
