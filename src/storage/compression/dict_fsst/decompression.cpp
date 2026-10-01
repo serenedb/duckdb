@@ -331,7 +331,10 @@ bool CompressedStringScanState::AllowDictionaryScan(idx_t scan_count) {
 		return false;
 	}
 	if (!dictionary) {
-		return false;
+		if (!deferred_dictionary) {
+			return false;
+		}
+		MaterializeDictionary();
 	}
 	return true;
 }
