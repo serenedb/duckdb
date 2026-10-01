@@ -7,6 +7,8 @@ namespace duckdb {
 
 namespace dict_fsst {
 
+struct DictFSSTSparse;
+
 //===--------------------------------------------------------------------===//
 // Scan
 //===--------------------------------------------------------------------===//
@@ -32,8 +34,18 @@ public:
 	void SelectDictionary(Vector &result, idx_t start, idx_t span, const SelectionVector &sel, idx_t sel_count);
 
 	bool AllowDictionaryScan(idx_t scan_count);
+	//! Decodes the whole deferred dictionary
+	void MaterializeDictionary();
+	//! Charges `count` on-demand decodes of a deferred dictionary; materializes it once they reach dict_count
+	void ChargeDecodes(idx_t count);
+	//! Materializes a deferred dictionary for a read of `count` of `span` rows that is not sparse, else charges it
+	void PrepareRead(idx_t count, idx_t span);
+	//! Select with the dictionary deferred: decodes only the selected rows' entries
+	void SelectEntries(Vector &result, idx_t start, idx_t span, const SelectionVector &sel, idx_t sel_count);
 
 private:
+	friend struct DictFSSTSparse;
+
 	idx_t UnpackCodes(idx_t start, idx_t scan_count);
 	//! Byte offset of entry `string_number` in dict_ptr. Forward reads extend the running offset (the cheap path
 	//! every sequential scan takes); a backward re-seek materializes the full prefix sum once and is O(1) thereafter.
@@ -101,6 +113,13 @@ public:
 		uint32_t len;
 	};
 	unsafe_unique_array<PrefixSlot> prefix_slots;
+
+	//! Dictionary mode whose `dictionary` is not materialized yet, and the on-demand decodes charged against it
+	bool deferred_dictionary = false;
+	idx_t decoded_on_demand = 0;
+	//! Per-entry verdicts of DictFSSTSparse::TryFilter, and each entry's slot in the batch that last decoded it
+	unsafe_unique_array<uint8_t> sparse_verdicts;
+	unsafe_unique_array<uint32_t> sparse_slots;
 
 	unsafe_unique_array<bool> filter_result;
 	bool null_filter_result_initialized = false;

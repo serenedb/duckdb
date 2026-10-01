@@ -3,6 +3,7 @@
 #include "duckdb/storage/compression/dict_fsst/analyze.hpp"
 #include "duckdb/storage/compression/dict_fsst/compression.hpp"
 #include "duckdb/storage/compression/dict_fsst/decompression.hpp"
+#include "duckdb/storage/compression/dict_fsst/sparse.hpp"
 #include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
 
@@ -115,7 +116,8 @@ unique_ptr<SegmentScanState> DictFSSTCompressionStorage::StringInitScan(const Qu
                                                                         ColumnSegment &segment) {
 	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
 	auto state = make_uniq<CompressedStringScanState>(segment, buffer_manager.Pin(segment.GetBlockHandle()));
-	state->Initialize(true);
+	state->Initialize(false);
+	state->deferred_dictionary = state->mode != DictFSSTMode::FSST_ONLY && state->mode != DictFSSTMode::FSST_PLUS;
 	return std::move(state);
 }
 
@@ -127,6 +129,7 @@ void DictFSSTCompressionStorage::StringScanPartial(ColumnSegment &segment, Colum
                                                    Vector &result, idx_t result_offset) {
 	// clear any previously locked buffers and get the primary buffer handle
 	auto &scan_state = state.scan_state->Cast<CompressedStringScanState>();
+	scan_state.PrepareRead(scan_count, STANDARD_VECTOR_SIZE);
 
 	auto start = state.GetPositionInSegment();
 	if (!ALLOW_DICT_VECTORS || !scan_state.AllowDictionaryScan(scan_count)) {
@@ -164,8 +167,13 @@ void DictFSSTSelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector
 		scan_state.Select(result, start, sel, sel_count);
 		return;
 	}
+	scan_state.PrepareRead(sel_count, vector_count);
 	if (scan_state.dictionary) {
 		scan_state.SelectDictionary(result, state.GetPositionInSegment(), vector_count, sel, sel_count);
+		return;
+	}
+	if (scan_state.deferred_dictionary) {
+		scan_state.SelectEntries(result, state.GetPositionInSegment(), vector_count, sel, sel_count);
 		return;
 	}
 	// fallback: scan + slice
@@ -176,18 +184,13 @@ void DictFSSTSelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector
 //===--------------------------------------------------------------------===//
 // Filter
 //===--------------------------------------------------------------------===//
-static bool DictFSSTFilterPasses(CompressedStringScanState &scan_state, TableFilterState &filter_state,
-                                 idx_t dict_offset) {
-	// Evaluate NULL only when slot zero is referenced by an actual row.
-	if (dict_offset == 0 && !scan_state.null_filter_result_initialized) {
-		Vector null_data(scan_state.dictionary->data, /*offset=*/0, /*end=*/1);
-		SelectionVector null_sel;
-		idx_t null_filter_count = 1;
-		ColumnSegment::FilterSelection(null_sel, null_data, filter_state, 1, null_filter_count);
-		scan_state.filter_result[0] = null_filter_count == 1;
-		scan_state.null_filter_result_initialized = true;
-	}
-	return scan_state.filter_result[dict_offset];
+static void DictFSSTResolveNullFilter(CompressedStringScanState &scan_state, TableFilterState &filter_state) {
+	Vector null_data(scan_state.dictionary->data, /*offset=*/0, /*end=*/1);
+	SelectionVector null_sel;
+	idx_t null_filter_count = 1;
+	ColumnSegment::FilterSelection(null_sel, null_data, filter_state, 1, null_filter_count);
+	scan_state.filter_result[0] = null_filter_count == 1;
+	scan_state.null_filter_result_initialized = true;
 }
 
 static void DictFSSTFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_count, Vector &result,
@@ -195,6 +198,12 @@ static void DictFSSTFilter(ColumnSegment &segment, ColumnScanState &state, idx_t
                            TableFilterState &filter_state) {
 	auto &scan_state = state.scan_state->Cast<CompressedStringScanState>();
 	auto start = state.GetPositionInSegment();
+	if (DictFSSTSparse::TryFilter(scan_state, start, vector_count, result, sel, sel_count, filter_state)) {
+		return;
+	}
+	if (scan_state.deferred_dictionary) {
+		scan_state.MaterializeDictionary();
+	}
 	if (scan_state.AllowDictionaryScan(vector_count)) {
 		// only pushdown filters on dictionaries
 		if (!scan_state.filter_result) {
@@ -232,11 +241,26 @@ static void DictFSSTFilter(ColumnSegment &segment, ColumnScanState &state, idx_t
 			}
 		}
 		auto &dict_sel = scan_state.GetSelVec(start, vector_count);
+		const sel_t *codes = dict_sel.data();
+		const sel_t *rows = sel.data();
+		const bool *passes = scan_state.filter_result.get();
+		bool null_resolved = scan_state.null_filter_result_initialized;
+		auto row_at = [rows](idx_t i) {
+			return rows ? idx_t(rows[i]) : i;
+		};
+		auto row_passes = [&](idx_t row_idx) {
+			const auto code = codes[row_idx];
+			if (DUCKDB_UNLIKELY(code == 0 && !null_resolved)) {
+				DictFSSTResolveNullFilter(scan_state, filter_state);
+				null_resolved = true;
+			}
+			return passes[code];
+		};
 		// the selection is only rebuilt from the first entry that actually drops - a window
 		// whose candidate rows all land on matching dictionary entries costs no copy
 		idx_t idx = 0;
 		for (; idx < sel_count; idx++) {
-			if (!DictFSSTFilterPasses(scan_state, filter_state, dict_sel.get_index(sel.get_index(idx)))) {
+			if (!row_passes(row_at(idx))) {
 				break;
 			}
 		}
@@ -246,11 +270,11 @@ static void DictFSSTFilter(ColumnSegment &segment, ColumnScanState &state, idx_t
 			auto out_sel = matching_sel.data();
 			idx_t approved_tuple_count = idx;
 			for (idx_t i = 0; i < idx; i++) {
-				out_sel[i] = UnsafeNumericCast<sel_t>(sel.get_index(i));
+				out_sel[i] = UnsafeNumericCast<sel_t>(row_at(i));
 			}
 			for (idx++; idx < sel_count; idx++) {
-				auto row_idx = sel.get_index(idx);
-				if (DictFSSTFilterPasses(scan_state, filter_state, dict_sel.get_index(row_idx))) {
+				auto row_idx = row_at(idx);
+				if (row_passes(row_idx)) {
 					out_sel[approved_tuple_count++] = UnsafeNumericCast<sel_t>(row_idx);
 				}
 			}
