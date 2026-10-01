@@ -4,6 +4,7 @@
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/function/scalar/regexp.hpp"
+#include "duckdb/function/scalar/regexp_trailing_any.hpp"
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
@@ -247,8 +248,10 @@ RegexpExtractBindData::RegexpExtractBindData(duckdb_re2::RE2::Options options, s
 }
 
 unique_ptr<FunctionData> RegexpExtractBindData::Copy() const {
-	return make_uniq<RegexpExtractBindData>(options, constant_string, constant_pattern, group_index,
-	                                        no_match_returns_input);
+	auto result = make_uniq<RegexpExtractBindData>(options, constant_string, constant_pattern, group_index,
+	                                               no_match_returns_input);
+	result->head_pattern = head_pattern;
+	return std::move(result);
 }
 
 bool RegexpExtractBindData::Equals(const FunctionData &other_p) const {
@@ -271,9 +274,24 @@ static void RegexExtractFunction(DataChunk &args, ExpressionState &state, Vector
 	if (info.constant_pattern) {
 		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexLocalState>();
 		const auto &re = lstate.constant_pattern;
-		UnaryExecutor::Execute<string_t, string_t>(strings, result, [&](string_t input) {
-			return ExtractCaptureGroup(input, re, info.group_index, info.no_match_returns_input);
-		});
+		if (lstate.head_pattern) {
+			const auto &head = *lstate.head_pattern;
+			UnaryExecutor::Execute<string_t, string_t>(strings, result, [&](string_t input) {
+				string_t output;
+				switch (RegexpTrailingAny::Extract(input, head, info.group_index, output)) {
+				case RegexpTrailingAny::Result::MATCH:
+					return output;
+				case RegexpTrailingAny::Result::NO_MATCH:
+					return info.no_match_returns_input ? input : string_t(nullptr, 0);
+				default:
+					return ExtractCaptureGroup(input, re, info.group_index, info.no_match_returns_input);
+				}
+			});
+		} else {
+			UnaryExecutor::Execute<string_t, string_t>(strings, result, [&](string_t input) {
+				return ExtractCaptureGroup(input, re, info.group_index, info.no_match_returns_input);
+			});
+		}
 	} else {
 		BinaryExecutor::Execute<string_t, string_t, string_t>(
 		    strings, patterns, result, [&](string_t input, string_t pattern) {
@@ -404,8 +422,12 @@ static unique_ptr<FunctionData> RegexExtractBind(BindScalarFunctionInput &input)
 		}
 	}
 
-	return make_uniq<RegexpExtractBindData>(options, std::move(constant_string), constant_pattern, group_index,
-	                                        no_match_returns_input);
+	auto result = make_uniq<RegexpExtractBindData>(options, constant_string, constant_pattern, group_index,
+	                                               no_match_returns_input);
+	if (constant_pattern && (arguments.size() < 3 || arguments[2]->GetReturnType().id() != LogicalTypeId::LIST)) {
+		result->head_pattern = RegexpTrailingAny::HeadPattern(constant_string, options);
+	}
+	return std::move(result);
 }
 
 // Constructs a regex-family ScalarFunction and names its (up to 4) parameters via the builder pattern, since these
@@ -465,19 +487,19 @@ ScalarFunctionSet RegexpExtractFun::GetFunctions() {
 	ScalarFunctionSet regexp_extract("regexp_extract");
 	regexp_extract.AddFunction(MakeRegexFunction({{"string", LogicalType::VARCHAR}, {"regex", LogicalType::VARCHAR}},
 	                                             LogicalType::VARCHAR, RegexExtractFunction, RegexExtractBind,
-	                                             RegexInitLocalState));
+	                                             RegexpTrailingAny::InitLocalState));
 	regexp_extract.AddFunction(MakeRegexFunction(
 	    {{"string", LogicalType::VARCHAR}, {"regex", LogicalType::VARCHAR}, {"group", LogicalType::INTEGER}},
-	    LogicalType::VARCHAR, RegexExtractFunction, RegexExtractBind, RegexInitLocalState));
+	    LogicalType::VARCHAR, RegexExtractFunction, RegexExtractBind, RegexpTrailingAny::InitLocalState));
 	regexp_extract.AddFunction(MakeRegexFunction(
 	    {{"string", LogicalType::VARCHAR}, {"regex", LogicalType::VARCHAR}, {"options", LogicalType::VARCHAR}},
-	    LogicalType::VARCHAR, RegexExtractFunction, RegexExtractBind, RegexInitLocalState));
+	    LogicalType::VARCHAR, RegexExtractFunction, RegexExtractBind, RegexpTrailingAny::InitLocalState));
 	regexp_extract.AddFunction(MakeRegexFunction({{"string", LogicalType::VARCHAR},
 	                                              {"regex", LogicalType::VARCHAR},
 	                                              {"group", LogicalType::INTEGER},
 	                                              {"options", LogicalType::VARCHAR}},
 	                                             LogicalType::VARCHAR, RegexExtractFunction, RegexExtractBind,
-	                                             RegexInitLocalState));
+	                                             RegexpTrailingAny::InitLocalState));
 	// REGEXP_EXTRACT(<string>, <pattern>, [<group 1 name>[, <group n name>]...])
 	regexp_extract.AddFunction(MakeRegexFunction({{"string", LogicalType::VARCHAR},
 	                                              {"regex", LogicalType::VARCHAR},

@@ -1,0 +1,84 @@
+# name: test/sql/function/string/regex_extract_trailing_any.test
+# description: regexp_extract and regexp_replace with a pattern ending in .*$
+# group: [string]
+
+statement ok
+CREATE TABLE urls AS SELECT * FROM (VALUES
+	(1, 'https://www.example.com/path?x=1'),
+	(2, 'http://example.org/'),
+	(3, 'ftp://example.net/file'),
+	(4, 'https://example.com/a' || chr(10) || 'b'),
+	(5, 'http://a/' || chr(10) || 'http://b/c'),
+	(6, '')
+) t(id, url);
+
+query IT
+SELECT id, regexp_extract(url, '^https?://(?:www\.)?([^/]+)/.*$', 1) FROM urls ORDER BY id
+----
+1	example.com
+2	example.org
+3	(empty)
+4	(empty)
+5	(empty)
+6	(empty)
+
+query IT
+SELECT id, regexp_extract(url, 'https?://([^/]+)/.*$', 1) FROM urls ORDER BY id
+----
+1	www.example.com
+2	example.org
+3	(empty)
+4	(empty)
+5	b
+6	(empty)
+
+query IT
+SELECT id, regexp_extract(url, 'https?://([^/]+)/.*$') FROM urls ORDER BY id
+----
+1	https://www.example.com/path?x=1
+2	http://example.org/
+3	(empty)
+4	(empty)
+5	http://b/c
+6	(empty)
+
+query IT
+SELECT id, regexp_replace(url, '^https?://(?:www\.)?([^/]+)/.*$', '\1') FROM urls WHERE id <= 3 ORDER BY id
+----
+1	example.com
+2	example.org
+3	ftp://example.net/file
+
+query IT
+SELECT id, regexp_replace(url, '^https?://(?:www\.)?([^/]+)/.*$', '\1') = url FROM urls WHERE id >= 4 ORDER BY id
+----
+4	true
+5	true
+6	true
+
+# an escaped dot is not a trailing .*$
+query T
+SELECT regexp_extract('baa..', 'a\.*$')
+----
+a..
+
+# with dot matching newlines the whole tail is taken
+query I
+SELECT length(regexp_extract('x' || chr(10) || 'y', '(?s)x.*$'))
+----
+3
+
+query I
+SELECT length(regexp_extract('x' || chr(10) || 'y', 'x.*$', 0, 's'))
+----
+3
+
+query T
+SELECT regexp_extract('x' || chr(10) || 'y', 'x.*$')
+----
+(empty)
+
+query T
+SELECT regexp_extract('abc', '(x)?.*$', 1)
+----
+(empty)

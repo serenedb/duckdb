@@ -113,6 +113,8 @@ struct RegexpExtractBindData : public RegexpBaseBindData {
 	// On no match, return the input instead of an empty string (set via the `k` option, also used by
 	// the regexp_replace -> regexp_extract optimizer rewrite).
 	bool no_match_returns_input = false;
+	// The constant pattern without a trailing `.*$` when `.` does not match newlines, empty otherwise.
+	string head_pattern;
 
 	unique_ptr<FunctionData> Copy() const override;
 	bool Equals(const FunctionData &other_p) const override;
@@ -185,6 +187,8 @@ struct RegexLocalState : public FunctionLocalState {
 	RE2 constant_pattern;
 	//! Used by regexp_extract_all to pre-allocate the args
 	RegexStringPieceArgs group_buffer;
+	//! Compiled RegexpExtractBindData::head_pattern
+	unique_ptr<RE2> head_pattern;
 };
 
 unique_ptr<FunctionLocalState> RegexInitLocalState(ExpressionState &state, const BoundFunctionExpression &expr,
