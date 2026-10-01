@@ -3,6 +3,7 @@
 #include "duckdb/storage/compression/dict_fsst/analyze.hpp"
 #include "duckdb/storage/compression/dict_fsst/compression.hpp"
 #include "duckdb/storage/compression/dict_fsst/decompression.hpp"
+#include "duckdb/storage/compression/dict_fsst/sparse.hpp"
 #include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
 
@@ -115,7 +116,8 @@ unique_ptr<SegmentScanState> DictFSSTCompressionStorage::StringInitScan(const Qu
                                                                         ColumnSegment &segment) {
 	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
 	auto state = make_uniq<CompressedStringScanState>(segment, buffer_manager.Pin(segment.GetBlockHandle()));
-	state->Initialize(true);
+	state->Initialize(false);
+	state->deferred_dictionary = state->mode != DictFSSTMode::FSST_ONLY && state->mode != DictFSSTMode::FSST_PLUS;
 	return std::move(state);
 }
 
@@ -127,6 +129,7 @@ void DictFSSTCompressionStorage::StringScanPartial(ColumnSegment &segment, Colum
                                                    Vector &result, idx_t result_offset) {
 	// clear any previously locked buffers and get the primary buffer handle
 	auto &scan_state = state.scan_state->Cast<CompressedStringScanState>();
+	scan_state.PrepareRead(scan_count, STANDARD_VECTOR_SIZE);
 
 	auto start = state.GetPositionInSegment();
 	if (!ALLOW_DICT_VECTORS || !scan_state.AllowDictionaryScan(scan_count)) {
@@ -164,8 +167,13 @@ void DictFSSTSelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector
 		scan_state.Select(result, start, sel, sel_count);
 		return;
 	}
+	scan_state.PrepareRead(sel_count, vector_count);
 	if (scan_state.dictionary) {
 		scan_state.SelectDictionary(result, state.GetPositionInSegment(), vector_count, sel, sel_count);
+		return;
+	}
+	if (scan_state.deferred_dictionary) {
+		scan_state.SelectEntries(result, state.GetPositionInSegment(), vector_count, sel, sel_count);
 		return;
 	}
 	// fallback: scan + slice
@@ -181,6 +189,12 @@ static void DictFSSTFilter(ColumnSegment &segment, ColumnScanState &state, idx_t
                            TableFilterState &filter_state) {
 	auto &scan_state = state.scan_state->Cast<CompressedStringScanState>();
 	auto start = state.GetPositionInSegment();
+	if (DictFSSTSparse::TryFilter(scan_state, start, vector_count, result, sel, sel_count, filter_state)) {
+		return;
+	}
+	if (scan_state.deferred_dictionary) {
+		scan_state.MaterializeDictionary();
+	}
 	if (scan_state.AllowDictionaryScan(vector_count)) {
 		// only pushdown filters on dictionaries
 		if (!scan_state.filter_result) {
