@@ -19,7 +19,7 @@ bool TableFunctionRef::Equals(const TableRef &other_p) const {
 		return false;
 	}
 	auto &other = other_p.Cast<TableFunctionRef>();
-	return function->Equals(*other.function);
+	return inline_function == other.inline_function && function->Equals(*other.function);
 }
 
 unique_ptr<TableRef> TableFunctionRef::Copy() {
@@ -28,6 +28,7 @@ unique_ptr<TableRef> TableFunctionRef::Copy() {
 	copy->function = function->Copy();
 	copy->column_name_alias = column_name_alias;
 	copy->with_ordinality = with_ordinality;
+	copy->inline_function = inline_function;
 	CopyProperties(*copy);
 
 	return std::move(copy);
