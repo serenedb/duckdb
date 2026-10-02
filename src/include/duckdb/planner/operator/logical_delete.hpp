@@ -32,6 +32,7 @@ public:
 	//! per-row delete path. TRUNCATE has different transactional semantics
 	//! than DELETE and must remain distinguishable through planning.
 	bool is_truncate = false;
+	vector<idx_t> truncate_group;
 
 public:
 	void Serialize(Serializer &serializer) const override;

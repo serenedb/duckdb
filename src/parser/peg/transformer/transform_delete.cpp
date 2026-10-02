@@ -47,29 +47,30 @@ vector<unique_ptr<TableRef>> PEGTransformerFactory::TransformDeleteUsingClause(P
 	return table_ref;
 }
 
-// TRUNCATE [TABLE] [ONLY] t1 [*], [ONLY] t2 [*], ... [RESTART | CONTINUE IDENTITY] [CASCADE | RESTRICT]
-// Lowers to one DeleteStatement per relation with is_truncate=true on the
-// DeleteQueryNode. Multi-relation produces a MultiStatement. ONLY / * /
-// RESTART | CONTINUE IDENTITY / CASCADE | RESTRICT are accepted for PG-syntax
-// compat but ignored: no inheritance, no FK enforcement, no OWNED-BY identity
-// sequences.
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformTruncateStatement(
     PEGTransformer &transformer, const bool &has_result, vector<unique_ptr<BaseTableRef>> truncate_target,
     const optional<bool> &truncate_identity_clause, const optional<bool> &drop_behavior) {
-	auto build_one = [](unique_ptr<BaseTableRef> table) -> unique_ptr<DeleteStatement> {
+	const bool cascade = drop_behavior.value_or(false);
+	const bool restart_identity = truncate_identity_clause.value_or(false);
+	auto build_one = [&](unique_ptr<TableRef> table) -> unique_ptr<DeleteStatement> {
 		auto del = make_uniq<DeleteStatement>();
 		del->node->table = std::move(table);
 		del->node->is_truncate = true;
+		del->node->truncate_cascade = cascade;
+		del->node->truncate_restart_identity = restart_identity;
+		for (auto &target : truncate_target) {
+			del->node->truncate_group.push_back(target->Copy());
+		}
 		return del;
 	};
 
-	if (truncate_target.size() == 1) {
-		return build_one(std::move(truncate_target[0]));
+	if (truncate_target.size() == 1 && !cascade && !restart_identity) {
+		return build_one(truncate_target[0]->Copy());
 	}
 
 	auto multi = make_uniq<MultiStatement>();
-	for (auto &target : truncate_target) {
-		multi->statements.push_back(build_one(std::move(target)));
+	for (idx_t i = 0; i < truncate_target.size(); i++) {
+		multi->statements.push_back(build_one(truncate_target[i]->Copy()));
 	}
 	return std::move(multi);
 }
@@ -96,7 +97,7 @@ bool PEGTransformerFactory::TransformTruncateRestart(PEGTransformer &transformer
 }
 
 bool PEGTransformerFactory::TransformTruncateContinue(PEGTransformer &transformer) {
-	return true;
+	return false;
 }
 
 } // namespace duckdb

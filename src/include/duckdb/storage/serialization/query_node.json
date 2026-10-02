@@ -266,6 +266,21 @@
         "id": 16584,
         "name": "is_truncate",
         "type": "bool"
+      },
+      {
+        "id": 16585,
+        "name": "truncate_cascade",
+        "type": "bool"
+      },
+      {
+        "id": 16586,
+        "name": "truncate_restart_identity",
+        "type": "bool"
+      },
+      {
+        "id": 16587,
+        "name": "truncate_group",
+        "type": "vector<TableRef*>"
       }
     ]
   },

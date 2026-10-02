@@ -229,6 +229,8 @@ class Binder : public enable_shared_from_this<Binder> {
 public:
 	DUCKDB_API static shared_ptr<Binder> CreateBinder(ClientContext &context, optional_ptr<Binder> parent = nullptr,
 	                                                  BinderType binder_type = BinderType::REGULAR_BINDER);
+	static vector<reference<TableCatalogEntry>> TruncateReferencingTables(ClientContext &context,
+	                                                                      TableCatalogEntry &table);
 
 	//! The client context
 	ClientContext &context;
@@ -564,6 +566,7 @@ private:
 	static string RowScopeName(TriggerEventType event_type);
 	BoundStatement BindNode(UpdateQueryNode &node);
 	BoundStatement BindNode(DeleteQueryNode &node);
+	vector<idx_t> BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry &table);
 	BoundStatement BindNode(MergeQueryNode &node);
 	BoundStatement BindNode(CopyQueryNode &node);
 
