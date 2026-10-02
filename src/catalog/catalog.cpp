@@ -45,6 +45,8 @@
 #include "duckdb/function/built_in_functions.hpp"
 #include "duckdb/catalog/similar_catalog_entry.hpp"
 #include "duckdb/storage/database_size.hpp"
+#include "duckdb/storage/storage_manager.hpp"
+#include "duckdb/storage/write_ahead_log.hpp"
 #include "duckdb/main/settings.hpp"
 #include <algorithm>
 
@@ -437,6 +439,25 @@ struct CatalogLookup {
 //===--------------------------------------------------------------------===//
 Catalog &Catalog::ReplayUseCatalog(ClientContext &context, idx_t catalog_oid) {
 	throw InternalException("Catalog %s has no catalog log to replay catalog %llu from", GetName(), catalog_oid);
+}
+
+void Catalog::SyncCatalogLog() {
+	auto log = CatalogLog();
+	if (!log) {
+		throw InternalException("Catalog %s has no catalog log to sync", GetName());
+	}
+	idx_t offset;
+	{
+		auto commit_lock = log->GetStorageManager().GetCommitLock();
+		log = CatalogLog();
+		if (!log) {
+			throw InternalException("Catalog %s has no catalog log to sync", GetName());
+		}
+		offset = log->GetFlushedOffset();
+	}
+	if (offset > 0) {
+		log->SyncUpTo(offset);
+	}
 }
 
 bool Catalog::InRelationNamespace(CatalogType type) {

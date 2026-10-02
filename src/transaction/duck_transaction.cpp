@@ -148,22 +148,48 @@ UndoBufferReference DuckTransaction::CreateUpdateInfo(DuckTableEntry &table_entr
 	return undo_entry;
 }
 
-void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, const SequenceData &data) {
+void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, uint64_t usage_count, int64_t counter) {
 	lock_guard<mutex> l(sequence_lock);
+	if (sequence.LogsValues()) {
+		auto logged = logged_sequence_usage.emplace(sequence, usage_count);
+		logged.first->second = MaxValue(logged.first->second, usage_count);
+		return;
+	}
 	auto entry = sequence_usage.find(sequence);
 	if (entry == sequence_usage.end()) {
 		auto undo_entry = undo_buffer.CreateEntry(UndoFlags::SEQUENCE_VALUE, sizeof(SequenceValue));
 		auto sequence_info = reinterpret_cast<SequenceValue *>(undo_entry.GetDataMutable());
 		sequence_info->entry = &sequence;
-		sequence_info->usage_count = data.usage_count;
-		sequence_info->counter = data.counter;
+		sequence_info->usage_count = usage_count;
+		sequence_info->counter = counter;
 		sequence_usage.emplace(sequence, *sequence_info);
 	} else {
 		auto &sequence_info = entry->second.get();
 		D_ASSERT(RefersToSameObject(*sequence_info.entry, sequence));
-		sequence_info.usage_count = data.usage_count;
-		sequence_info.counter = data.counter;
+		if (usage_count > sequence_info.usage_count) {
+			sequence_info.usage_count = usage_count;
+			sequence_info.counter = counter;
+		}
 	}
+}
+
+bool DuckTransaction::HasLoggedSequenceUsage() {
+	lock_guard<mutex> l(sequence_lock);
+	return !logged_sequence_usage.empty();
+}
+
+void DuckTransaction::CoverSequenceUsage() {
+	for (auto &usage : logged_sequence_usage) {
+		usage.first.get().Cover(usage.second);
+	}
+}
+
+vector<SequenceValue> DuckTransaction::ReserveSequenceUsage(WriteAheadLog &catalog_log) {
+	vector<SequenceValue> durable_after;
+	for (auto &usage : logged_sequence_usage) {
+		usage.first.get().ReserveInCommit(catalog_log, usage.second, durable_after);
+	}
+	return durable_after;
 }
 
 bool DuckTransaction::ChangesMade() {

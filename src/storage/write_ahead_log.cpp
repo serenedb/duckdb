@@ -78,6 +78,11 @@ idx_t WriteAheadLog::GetTotalWritten() const {
 	return writer->GetTotalWritten();
 }
 
+idx_t WriteAheadLog::GetFlushedOffset() {
+	lock_guard<mutex> guard(sync_lock);
+	return requested_sync_offset;
+}
+
 void WriteAheadLog::Truncate(idx_t size) {
 	if (init_state == WALInitState::NO_WAL) {
 		// no WAL to truncate
@@ -350,7 +355,7 @@ void WriteAheadLog::WriteSequenceValue(SequenceValue val) {
 	WriteAheadLogSerializer serializer(*this, WALType::SEQUENCE_VALUE);
 	// last_value (id 105) is only serialized from storage version v2.0.0 onwards, and is omitted when unset
 	serializer.WriteEntry(WALSequenceValue(QualifiedName(sequence.ParentSchemaPath(), sequence.name), val.usage_count,
-	                                       val.counter, val.entry->GetData().last_value));
+	                                       val.counter, val.entry->GetData().last_value, sequence.oid));
 	serializer.End();
 }
 

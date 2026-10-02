@@ -384,6 +384,19 @@ ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Tra
                                                      WriteAheadLog &catalog_log, const hugeint_t &txid,
                                                      vector<pair<idx_t, idx_t>> &participants) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	vector<SequenceValue> sequences;
+	if (db.GetCatalog().UsesCatalogLog() && transaction.HasLoggedSequenceUsage()) {
+		try {
+			sequences = transaction.ReserveSequenceUsage(catalog_log);
+		} catch (std::exception &ex) {
+			return ErrorData(ex);
+		}
+		if (!transaction.ShouldWriteToWAL(db)) {
+			transaction.prepared = make_uniq<DuckTransaction::PreparedCommit>();
+			transaction.prepared->sequences = std::move(sequences);
+			return ErrorData();
+		}
+	}
 	if (!transaction.ChangesMade() || !db.HasStorageManager() || !transaction.ShouldWriteToWAL(db)) {
 		return ErrorData();
 	}
@@ -392,6 +405,7 @@ ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Tra
 		return error;
 	}
 	auto prepared = make_uniq<DuckTransaction::PreparedCommit>();
+	prepared->sequences = std::move(sequences);
 	auto &storage_manager = db.GetStorageManager();
 	if (&catalog_log.GetStorageManager() != &storage_manager) {
 		prepared->commit_lock = storage_manager.GetCommitLock();
@@ -423,6 +437,17 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	auto prepared = std::move(transaction.prepared);
 	// flush the transaction-local blocks of bulk appends before taking any commit locks (see PreFlushOptimisticBlocks)
 	ErrorData error = prepared ? ErrorData() : transaction.PreFlushOptimisticBlocks(db);
+	if (prepared) {
+		for (auto &value : prepared->sequences) {
+			value.entry->MarkDurable(value);
+		}
+	} else if (!error.HasError() && db.GetCatalog().UsesCatalogLog() && transaction.HasLoggedSequenceUsage()) {
+		try {
+			transaction.CoverSequenceUsage();
+		} catch (std::exception &ex) {
+			error = ErrorData(ex);
+		}
+	}
 	unique_lock<mutex> t_lock(transaction_lock);
 	if (!db.IsSystem() && !db.IsTemporary()) {
 		if (transaction.ChangesMade()) {
