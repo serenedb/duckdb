@@ -212,6 +212,7 @@ public:
 	// backing index storage are ready). Without this, an ALTER-driven table
 	// rebuild during WAL replay would bind such an index too early and fault.
 	bool defer_implicit_bind = false;
+	bool remaps_columns = false;
 };
 
 } // namespace duckdb

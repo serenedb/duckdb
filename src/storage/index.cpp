@@ -10,4 +10,10 @@ Index::Index(const vector<column_t> &column_ids, TableIOManager &table_io_manage
 	column_id_set.insert(column_ids.begin(), column_ids.end());
 }
 
+void Index::RemapColumnIds(const vector<column_t> &new_column_ids) {
+	column_ids = new_column_ids;
+	column_id_set.clear();
+	column_id_set.insert(column_ids.begin(), column_ids.end());
+}
+
 } // namespace duckdb

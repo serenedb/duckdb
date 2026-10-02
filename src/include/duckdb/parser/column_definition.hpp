@@ -70,6 +70,13 @@ public:
 	const column_t &Oid() const;
 	void SetOid(column_t oid);
 
+	idx_t CatalogOid() const {
+		return catalog_oid;
+	}
+	void SetCatalogOid(idx_t catalog_oid_p) {
+		catalog_oid = catalog_oid_p;
+	}
+
 	//! category
 	const TableColumnType &Category() const;
 	//! Whether this column is a Generated Column
@@ -106,6 +113,8 @@ private:
 	storage_t storage_oid = DConstants::INVALID_INDEX;
 	//! The index of the column in the table
 	idx_t oid = DConstants::INVALID_INDEX;
+	//! The stable column id
+	idx_t catalog_oid = 0;
 	//! The category of the column
 	TableColumnType category = TableColumnType::STANDARD;
 	//! The default value of the column (for non-generated columns)
