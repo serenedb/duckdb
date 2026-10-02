@@ -1,5 +1,7 @@
 #include "duckdb/execution/index/unbound_index.hpp"
 
+#include "duckdb/common/algorithm.hpp"
+#include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/storage/block_manager.hpp"
@@ -24,6 +26,20 @@ UnboundIndex::UnboundIndex(unique_ptr<CreateInfo> create_info, IndexStorageInfo 
 	}
 }
 
+void UnboundIndex::RemapColumnIds(const vector<column_t> &new_column_ids) {
+	D_ASSERT(new_column_ids.size() == column_ids.size());
+	for (auto &mapped : mapped_column_ids) {
+		for (idx_t i = 0; i < column_ids.size(); i++) {
+			if (column_ids[i] == mapped.GetPrimaryIndex()) {
+				mapped.SetIndex(new_column_ids[i]);
+				break;
+			}
+		}
+	}
+	create_info->Cast<CreateIndexInfo>().column_ids = new_column_ids;
+	Index::RemapColumnIds(new_column_ids);
+}
+
 void UnboundIndex::ResetStorage() {
 	auto &block_manager = table_io_manager.GetIndexBlockManager();
 	for (auto &info : storage_info.allocator_infos) {
@@ -38,23 +54,36 @@ void UnboundIndex::ResetStorage() {
 void UnboundIndex::BufferChunk(DataChunk &index_column_chunk, Vector &row_ids,
                                const vector<StorageIndex> &mapped_column_ids_p, const BufferedIndexReplay replay_type) {
 	D_ASSERT(!column_ids.empty());
-	auto types = index_column_chunk.GetTypes(); // column types
+	if (mapped_column_ids.empty()) {
+		vector<column_t> own_columns(column_id_set.begin(), column_id_set.end());
+		std::sort(own_columns.begin(), own_columns.end());
+		for (auto column : own_columns) {
+			mapped_column_ids.emplace_back(column);
+		}
+	}
+
+	vector<idx_t> sources;
+	vector<LogicalType> types;
+	for (auto &mapped : mapped_column_ids) {
+		auto source =
+		    std::find_if(mapped_column_ids_p.begin(), mapped_column_ids_p.end(), [&](const StorageIndex &column) {
+			    return column.GetPrimaryIndex() == mapped.GetPrimaryIndex();
+		    });
+		if (source == mapped_column_ids_p.end()) {
+			throw InternalException("Buffered index chunk does not carry indexed column " +
+			                        std::to_string(mapped.GetPrimaryIndex()));
+		}
+		sources.push_back(NumericCast<idx_t>(source - mapped_column_ids_p.begin()));
+		types.push_back(index_column_chunk.data[sources.back()].GetType());
+	}
 	types.push_back(LogicalType::ROW_TYPE);
 
 	auto &allocator = Allocator::Get(db);
 
-	//! First time we are buffering data, canonical column_id mapping is stored.
-	//! This should be a sorted list of all the physical offsets of Indexed columns on this table.
-	if (mapped_column_ids.empty()) {
-		mapped_column_ids = mapped_column_ids_p;
-	}
-	D_ASSERT(mapped_column_ids == mapped_column_ids_p);
-
-	// combined_chunk has all the indexed columns according to mapped_column_ids ordering, as well as a rowid column.
 	DataChunk combined_chunk;
 	combined_chunk.InitializeEmpty(types);
-	for (idx_t i = 0; i < index_column_chunk.ColumnCount(); i++) {
-		combined_chunk.data[i].Reference(index_column_chunk.data[i]);
+	for (idx_t i = 0; i < sources.size(); i++) {
+		combined_chunk.data[i].Reference(index_column_chunk.data[sources[i]]);
 	}
 	combined_chunk.data.back().Reference(row_ids);
 

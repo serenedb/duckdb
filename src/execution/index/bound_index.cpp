@@ -153,6 +153,18 @@ void BoundIndex::ExecuteExpressions(DataChunk &input, DataChunk &result) {
 	executor.Execute(input, result);
 }
 
+void BoundIndex::RemapColumnIds(const vector<column_t> &new_column_ids) {
+	IndexLock index_lock;
+	InitializeLock(index_lock);
+	Index::RemapColumnIds(new_column_ids);
+	bound_expressions.clear();
+	executor.ClearExpressions();
+	for (auto &expr : unbound_expressions) {
+		bound_expressions.push_back(BindExpression(expr->Copy()));
+		executor.AddExpression(*bound_expressions.back());
+	}
+}
+
 unique_ptr<Expression> BoundIndex::BindExpression(unique_ptr<Expression> root_expr) {
 	ExpressionIterator::VisitExpressionMutable<BoundColumnRefExpression>(
 	    root_expr, [&](BoundColumnRefExpression &bound_colref, unique_ptr<Expression> &expr) {

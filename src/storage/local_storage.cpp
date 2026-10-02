@@ -75,6 +75,7 @@ LocalTableStorage::LocalTableStorage(DataTable &new_data_table, LocalTableStorag
 	row_groups->collection = std::move(new_collection);
 
 	append_indexes.Move(parent.append_indexes);
+	append_indexes.RemoveIndexesOnColumn(drop_column_index);
 }
 
 LocalTableStorage::LocalTableStorage(ClientContext &context, DataTable &new_dt, LocalTableStorage &parent,

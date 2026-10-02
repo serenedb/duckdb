@@ -1,6 +1,7 @@
 #include "duckdb/storage/table/table_index_list.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/types/conflict_manager.hpp"
 #include "duckdb/execution/index/art/art.hpp"
 #include "duckdb/storage/table/append_state.hpp"
@@ -97,6 +98,14 @@ void TableIndexList::AddIndex(unique_ptr<Index> index) {
 
 void TableIndexList::RemoveIndex(const Identifier &name) {
 	lock_guard<mutex> lock(index_entries_lock);
+	for (idx_t i = 0; i < detached_entries.size(); i++) {
+		auto &index = *detached_entries[i]->index;
+		if (index.GetIndexName() == name) {
+			index.ResetStorage();
+			detached_entries.erase_at(i);
+			return;
+		}
+	}
 	for (idx_t i = 0; i < index_entries.size(); i++) {
 		auto &index = *index_entries[i]->index;
 		if (index.GetIndexName() == name) {
@@ -108,6 +117,84 @@ void TableIndexList::RemoveIndex(const Identifier &name) {
 			return;
 		}
 	}
+}
+
+void TableIndexList::RemoveIndexesOnColumn(column_t column_id) {
+	lock_guard<mutex> lock(index_entries_lock);
+	for (idx_t i = index_entries.size(); i > 0; i--) {
+		auto &index = *index_entries[i - 1]->index;
+		if (!index.GetColumnIdSet().count(column_id)) {
+			continue;
+		}
+		if (!index.IsBound()) {
+			unbound_count--;
+		}
+		index.ResetStorage();
+		index_entries.erase_at(i - 1);
+	}
+}
+
+void TableIndexList::SyncColumnLayout(const vector<idx_t> &old_column_oids, const vector<idx_t> &new_column_oids) {
+	unordered_map<idx_t, column_t> new_positions;
+	for (idx_t i = 0; i < new_column_oids.size(); i++) {
+		new_positions.emplace(new_column_oids[i], i);
+	}
+	lock_guard<mutex> lock(index_entries_lock);
+	vector<unique_ptr<IndexEntry>> attached;
+	vector<unique_ptr<IndexEntry>> detached;
+	auto place = [&](unique_ptr<IndexEntry> entry) {
+		auto &index = *entry->index;
+		vector<column_t> positions;
+		for (auto oid : entry->column_oids) {
+			auto position = new_positions.find(oid);
+			if (position == new_positions.end()) {
+				detached.push_back(std::move(entry));
+				return;
+			}
+			positions.push_back(position->second);
+		}
+		if (positions != index.GetColumnIds()) {
+			auto index_type = index.db.GetDatabase().config.GetIndexTypes().FindByName(index.GetIndexType());
+			if (!index_type || !index_type->remaps_columns) {
+				detached.push_back(std::move(entry));
+				return;
+			}
+			index.RemapColumnIds(positions);
+			for (auto delta : {entry->deleted_rows_in_use.get(), entry->added_data_during_checkpoint.get(),
+			                   entry->removed_data_during_checkpoint.get()}) {
+				if (delta) {
+					delta->RemapColumnIds(positions);
+				}
+			}
+		}
+		attached.push_back(std::move(entry));
+	};
+	for (auto &entry : index_entries) {
+		if (entry->column_oids.empty()) {
+			auto &column_ids = entry->index->GetColumnIds();
+			const bool in_layout = std::all_of(column_ids.begin(), column_ids.end(),
+			                                   [&](column_t column_id) { return column_id < old_column_oids.size(); });
+			if (!in_layout) {
+				attached.push_back(std::move(entry));
+				continue;
+			}
+			for (auto column_id : column_ids) {
+				entry->column_oids.push_back(old_column_oids[column_id]);
+			}
+		}
+		place(std::move(entry));
+	}
+	for (auto &entry : detached_entries) {
+		place(std::move(entry));
+	}
+	unbound_count = 0;
+	for (auto &entry : attached) {
+		if (!entry->index->IsBound()) {
+			unbound_count++;
+		}
+	}
+	index_entries = std::move(attached);
+	detached_entries = std::move(detached);
 }
 
 void TableIndexList::RenameIndex(const Identifier &name, const Identifier &new_name) {
