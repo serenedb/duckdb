@@ -11,6 +11,7 @@
 #include "duckdb/storage/table/delete_state.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
+#include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/transaction/local_storage.hpp"
 
 namespace duckdb {
@@ -217,6 +218,10 @@ SinkCombineResultType PhysicalDelete::Combine(ExecutionContext &, OperatorSinkCo
 }
 
 unique_ptr<GlobalSinkState> PhysicalDelete::GetGlobalSinkState(ClientContext &context) const {
+	if (is_truncate && tableref.catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+		auto &transaction = DuckTransaction::Get(context, tableref.catalog);
+		transaction.GetTransactionManager().CheckTruncate(transaction, table);
+	}
 	return make_uniq<DeleteGlobalState>(context, GetTypes(), tableref, bound_constraints);
 }
 

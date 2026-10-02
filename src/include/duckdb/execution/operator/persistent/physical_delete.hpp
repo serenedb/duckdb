@@ -31,6 +31,7 @@ public:
 	idx_t row_id_index;
 	bool return_chunk;
 	vector<idx_t> return_columns;
+	bool is_truncate = false;
 
 public:
 	// Source interface
