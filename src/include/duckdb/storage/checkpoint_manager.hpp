@@ -23,6 +23,7 @@ class ColumnSegment;
 class DatabaseInstance;
 class Deserializer;
 class Connection;
+class DuckCatalog;
 class DuckTransaction;
 class DuckTransactionManager;
 class InCatalogEntry;
@@ -182,5 +183,7 @@ private:
 	//! Block usage count for verification purposes
 	unordered_map<block_id_t, idx_t> verify_block_usage_count;
 };
+
+void WriteCatalogEntries(WriteAheadLog &log, DuckCatalog &catalog);
 
 } // namespace duckdb

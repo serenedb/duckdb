@@ -9,6 +9,9 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
+#include "duckdb/parser/constraints/foreign_key_constraint.hpp"
+#include "duckdb/parser/constraints/unique_constraint.hpp"
+#include "duckdb/storage/index.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/checkpoint/table_data_reader.hpp"
 #include "duckdb/storage/metadata/metadata_reader.hpp"
@@ -18,6 +21,46 @@
 #include "duckdb/storage/data_table.hpp"
 
 namespace duckdb {
+
+static idx_t CatalogIndexOid(DuckTableEntry &table, const Index &index) {
+	auto &columns = table.GetColumns();
+	auto constraint_type = index.GetConstraintType();
+	if (constraint_type == IndexConstraintType::NONE) {
+		idx_t oid = 0;
+		auto transaction = CatalogTransaction::GetSystemTransaction(table.ParentCatalog().GetDatabase());
+		table.ParentSchema(transaction).Scan(CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
+			if (entry.name == index.GetIndexName()) {
+				oid = entry.oid;
+			}
+		});
+		return oid;
+	}
+	for (auto &constraint : table.GetConstraints()) {
+		vector<column_t> column_ids;
+		if (constraint->type == ConstraintType::UNIQUE) {
+			auto &unique = constraint->Cast<UniqueConstraint>();
+			auto unique_type = unique.IsPrimaryKey() ? IndexConstraintType::PRIMARY : IndexConstraintType::UNIQUE;
+			if (unique_type != constraint_type) {
+				continue;
+			}
+			for (auto &logical_index : unique.GetLogicalIndexes(columns)) {
+				column_ids.push_back(columns.LogicalToPhysical(logical_index).index);
+			}
+			if (column_ids == index.GetColumnIds()) {
+				return unique.index_oid;
+			}
+		} else if (constraint->type == ConstraintType::FOREIGN_KEY && constraint_type == IndexConstraintType::FOREIGN) {
+			auto &foreign_key = constraint->Cast<ForeignKeyConstraint>();
+			for (auto &key : foreign_key.info.fk_keys) {
+				column_ids.push_back(key.index);
+			}
+			if (column_ids == index.GetColumnIds()) {
+				return foreign_key.oid;
+			}
+		}
+	}
+	return 0;
+}
 
 TableDataWriter::TableDataWriter(TableCatalogEntry &table_p, QueryContext context)
     : table(table_p.Cast<DuckTableEntry>()), context(context.GetClientContext()) {
@@ -220,6 +263,13 @@ void SingleFileTableDataWriter::FinalizeTable(const TableStatistics &global_stat
 	    [&](Serializer::List &list, idx_t i) { list.WriteElement(index_storage_infos.ordered_infos[i].get()); });
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WriteProperty(105, "next_row_id", next_row_id);
+	}
+	if (table.ParentCatalog().UsesCatalogLog()) {
+		vector<idx_t> index_oids;
+		for (auto &index : index_storage_infos.ordered_indexes) {
+			index_oids.push_back(CatalogIndexOid(table, index));
+		}
+		serializer.WriteProperty(106, "index_oids", index_oids);
 	}
 	// ¬serializer.ShouldSerialize(StorageVersion::V2_0_0) ==> (next_row_id == total_rows)
 	D_ASSERT(serializer.ShouldSerialize(StorageVersion::V2_0_0) || (next_row_id == total_rows));

@@ -32,6 +32,7 @@ add_library_unity(
   standard_buffer_manager.cpp
   temporary_file_manager.cpp
   table_index_list.cpp
+  table_storage_load.cpp
   write_ahead_log.cpp
   open_file_storage_extension.cpp
   optimistic_data_writer.cpp

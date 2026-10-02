@@ -216,19 +216,22 @@ bool DuckTransaction::ShouldWriteToWAL(AttachedDatabase &db) {
 	}
 	auto &storage_manager = db.GetStorageManager();
 	if (!storage_manager.HasWAL()) {
-		return false;
+		return storage_manager.InMemory() && db.GetCatalog().CatalogLog() != nullptr;
 	}
 	return true;
 }
 
 ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &db,
-                                      unique_ptr<StorageCommitState> &commit_state) noexcept {
+                                      unique_ptr<StorageCommitState> &commit_state,
+                                      optional_ptr<WriteAheadLog> catalog_log) noexcept {
 	ErrorData error_data;
 	try {
 		D_ASSERT(ShouldWriteToWAL(db));
 		auto &storage_manager = db.GetStorageManager();
 		auto wal = storage_manager.GetWAL();
-		commit_state = storage_manager.GenStorageCommitState(*wal);
+		if (wal) {
+			commit_state = storage_manager.GenStorageCommitState(*wal);
+		}
 
 		auto &profiler = *context.client_data->profiler;
 		auto commit_timer = profiler.StartTimer<MetricStorageCommitLocalStorageLatency>();
@@ -236,8 +239,8 @@ ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &
 		commit_timer.EndTimer();
 
 		auto wal_timer = profiler.StartTimer<MetricStorageWriteToWALLatency>();
-		undo_buffer.WriteToWAL(*wal, commit_state.get());
-		if (commit_state->HasRowGroupData()) {
+		undo_buffer.WriteToWAL(wal, commit_state.get(), catalog_log);
+		if (commit_state && commit_state->HasRowGroupData()) {
 			// if we have optimistically written any data AND we are writing to the WAL, we have written references to
 			// optimistically written blocks
 			// hence we need to ensure those optimistically written blocks are persisted

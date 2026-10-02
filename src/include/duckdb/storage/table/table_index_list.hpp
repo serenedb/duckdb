@@ -15,6 +15,7 @@
 namespace duckdb {
 
 class ConflictManager;
+class DuckTableEntry;
 class LocalTableStorage;
 struct IndexStorageInfo;
 struct DataTableInfo;
@@ -58,6 +59,7 @@ struct IndexSerializationInfo {
 struct IndexSerializationResult {
 	//! The ordered list of references to serialize - preserves iteration order of index_entries
 	vector<reference<const IndexStorageInfo>> ordered_infos;
+	vector<reference<const Index>> ordered_indexes;
 	//! Storage for bound index infos to keep them alive.
 	vector<IndexStorageInfo> bound_infos;
 };
@@ -79,6 +81,7 @@ public:
 	optional_ptr<BoundIndex> Find(const Identifier &name);
 	//! Binds unbound indexes possibly present after loading an extension.
 	void Bind(ClientContext &context, DataTableInfo &table_info, const char *index_type = nullptr);
+	void Bind(ClientContext &context, DuckTableEntry &table, const char *index_type = nullptr);
 	//! Returns true, if there are no index entries.
 	bool Empty() const {
 		return Count() == 0;

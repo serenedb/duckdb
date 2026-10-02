@@ -468,6 +468,28 @@ InsertDatabasePathResult DatabaseManager::InsertDatabasePath(const AttachInfo &i
 	return path_manager->InsertDatabasePath(*this, info.path, info.name, info.on_conflict, options);
 }
 
+void DatabaseManager::CommitPrepared(const hugeint_t &txid, vector<pair<idx_t, idx_t>> participants) {
+	lock_guard<mutex> guard(committed_prepared_lock);
+	committed_prepared[txid] = std::move(participants);
+}
+
+bool DatabaseManager::IsPreparedCommitted(const hugeint_t &txid) {
+	lock_guard<mutex> guard(committed_prepared_lock);
+	return committed_prepared.count(txid) != 0;
+}
+
+void DatabaseManager::RetainPrepared(
+    const std::function<bool(const hugeint_t &, const vector<pair<idx_t, idx_t>> &)> &keep) {
+	lock_guard<mutex> guard(committed_prepared_lock);
+	for (auto entry = committed_prepared.begin(); entry != committed_prepared.end();) {
+		if (keep(entry->first, entry->second)) {
+			++entry;
+		} else {
+			entry = committed_prepared.erase(entry);
+		}
+	}
+}
+
 vector<string> DatabaseManager::GetAttachedDatabasePaths() {
 	vector<string> result;
 	lock_guard<mutex> guard(databases_lock);

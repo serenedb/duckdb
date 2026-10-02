@@ -6,6 +6,11 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/transaction/transaction_manager.hpp"
+#include "duckdb/common/types/uuid.hpp"
+#include "duckdb/storage/storage_manager.hpp"
+#include "duckdb/storage/write_ahead_log.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
+#include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/secret/secret_storage.hpp"
 
@@ -163,7 +168,123 @@ Transaction &Transaction::Get(ClientContext &context, Catalog &catalog) {
 	return Transaction::Get(context, catalog.GetAttached());
 }
 
+optional_ptr<Catalog> MetaTransaction::CatalogLogForCommit() {
+	optional_ptr<AttachedDatabase> writer;
+	idx_t writers = 0;
+	bool catalog_changes = false;
+	for (auto &db_ref : all_transactions) {
+		auto &db = db_ref.get();
+		if (db.IsSystem() || db.IsTemporary()) {
+			continue;
+		}
+		auto entry = transactions.find(db);
+		if (entry == transactions.end() || entry->second.state != TransactionState::UNCOMMITTED ||
+		    !entry->second.transaction.IsDuckTransaction()) {
+			continue;
+		}
+		auto &transaction = entry->second.transaction.Cast<DuckTransaction>();
+		if (!transaction.ChangesMade()) {
+			continue;
+		}
+		if (!db.GetCatalog().UsesCatalogLog()) {
+			return nullptr;
+		}
+		writer = db;
+		writers++;
+		catalog_changes = catalog_changes || transaction.catalog_version >= TRANSACTION_ID_START;
+	}
+	if ((!catalog_changes && writers < 2) || !writer->GetCatalog().CatalogLog()) {
+		return nullptr;
+	}
+	return writer->GetCatalog();
+}
+
+ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
+	auto catalog_log_ref = catalog.CatalogLog();
+	auto &catalog_storage = catalog_log_ref->GetStorageManager();
+	auto catalog_lock = catalog_storage.GetWALLock();
+	catalog_log_ref = catalog.CatalogLog();
+	auto &catalog_log = *catalog_log_ref;
+	auto &log_owner = catalog_storage.GetAttached().GetCatalog();
+	auto commit_state = catalog_storage.GenStorageCommitState(catalog_log);
+	const auto txid = UUID::GenerateRandomUUID();
+	vector<pair<idx_t, idx_t>> prepared;
+	ErrorData error;
+	vector<reference<TransactionReference>> participants;
+	for (idx_t i = all_transactions.size(); i > 0; i--) {
+		auto &db = all_transactions[i - 1].get();
+		auto &transaction_ref = transactions.find(db)->second;
+		if (transaction_ref.state != TransactionState::UNCOMMITTED) {
+			continue;
+		}
+		if (ValidChecker::IsInvalidated(db)) {
+			error.Merge(ErrorData(IOException("%s", ValidChecker::InvalidatedMessage(db))));
+			break;
+		}
+		participants.push_back(transaction_ref);
+		auto &transaction_manager = db.GetTransactionManager();
+		if (!transaction_manager.IsDuckTransactionManager()) {
+			continue;
+		}
+		error = transaction_manager.Cast<DuckTransactionManager>().PrepareTransaction(
+		    context, transaction_ref.transaction, catalog_log, txid, prepared);
+		if (error.HasError()) {
+			break;
+		}
+	}
+	idx_t decision_offset = 0;
+	if (!error.HasError()) {
+		try {
+			log_owner.OnCatalogLogPrepared();
+			if (!prepared.empty()) {
+				catalog_log.WriteCommitPrepared(txid, prepared);
+			}
+			commit_state->FlushCommit();
+			decision_offset = commit_state->GetFlushOffset();
+			if (!prepared.empty()) {
+				DatabaseManager::Get(context).CommitPrepared(txid, std::move(prepared));
+			}
+		} catch (std::exception &ex) {
+			error = ErrorData(ex);
+		}
+	}
+	if (error.HasError()) {
+		commit_state->RevertCommit();
+		for (auto &participant : participants) {
+			auto &transaction_ref = participant.get();
+			try {
+				transaction_ref.transaction.manager.RollbackTransaction(transaction_ref.transaction);
+			} catch (std::exception &ex) {
+				error.Merge(ErrorData(ex));
+			}
+			transaction_ref.state = TransactionState::ROLLED_BACK;
+		}
+		return error;
+	}
+	log_owner.BeginCatalogLogCommit();
+	catalog_lock.unlock();
+	catalog_log.GroupSync(decision_offset);
+	log_owner.OnCatalogLogDecided();
+	for (auto &participant : participants) {
+		auto &transaction_ref = participant.get();
+		auto &db = transaction_ref.transaction.manager.GetDB();
+		auto commit_error = transaction_ref.transaction.manager.CommitTransaction(context, transaction_ref.transaction);
+		transaction_ref.state = TransactionState::COMMITTED;
+		if (commit_error.HasError()) {
+			ValidChecker::Invalidate(db, "Failed to apply a transaction whose commit is durable: " +
+			                                 commit_error.RawMessage());
+			error.Merge(commit_error);
+		}
+	}
+	log_owner.EndCatalogLogCommit();
+	return error;
+}
+
 ErrorData MetaTransaction::Commit() {
+	auto catalog = CatalogLogForCommit();
+	if (catalog) {
+		return CommitThroughCatalogLog(*catalog);
+	}
 	ErrorData error;
 #ifdef DEBUG
 	reference_set_t<AttachedDatabase> committed_tx;
@@ -328,7 +449,8 @@ void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationT
 		modified_database = &db;
 		return;
 	}
-	if (&db != modified_database.get()) {
+	if (&db != modified_database.get() &&
+	    !(db.GetCatalog().UsesCatalogLog() && modified_database->GetCatalog().UsesCatalogLog())) {
 		throw TransactionException(
 		    Exception::InitializeExtraInfo("CROSS_DATABASE_WRITE", optional_idx()),
 		    "Attempting to write to database \"%s\" in a transaction that has already modified database \"%s\" - a "
