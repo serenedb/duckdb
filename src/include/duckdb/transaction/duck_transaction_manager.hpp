@@ -58,6 +58,9 @@ public:
 	transaction_t GetLastCommit() const {
 		return last_commit;
 	}
+	idx_t GetLastCommittedCatalogVersion() const {
+		return last_committed_version;
+	}
 	//! Wait until every published commit is durable. Called under the commit lock, so no new commit can
 	//! enter its sync window and the wait is bounded by the syncs in flight
 	void WaitForDurability();
@@ -192,7 +195,7 @@ private:
 	VisibilityBound durable_bound;
 
 	atomic<idx_t> last_uncommitted_catalog_version = {TRANSACTION_ID_START};
-	idx_t last_committed_version = 0;
+	atomic<idx_t> last_committed_version = {0};
 
 	//! Only one cleanup can be active at any time.
 	mutex cleanup_lock;
