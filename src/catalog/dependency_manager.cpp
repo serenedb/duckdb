@@ -699,8 +699,7 @@ void DependencyManager::VerifyExistence(CatalogTransaction transaction, Dependen
 	}
 
 	if (lookup_result.reason == CatalogSet::EntryLookup::FailureReason::DELETED) {
-		throw DependencyException("Could not commit creation of dependency, subject %s has been deleted",
-		                          object.SourceInfo().name);
+		throw DependencyException("Could not commit creation of dependency, subject %s has been deleted", name);
 	}
 	// The subject still exists by name - check if it is the same object the dependency was created against
 	if (!subject.flags.IsOwnership() && subject.oid.IsValid() && lookup_result.result &&
