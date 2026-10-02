@@ -115,35 +115,48 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, ColumnDefinition
 
 DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_column)
     : db(parent.db), info(parent.info), version(DataTableVersion::MAIN_TABLE) {
-	// prevent any new tuples from being added to the parent
 	auto &local_storage = LocalStorage::Get(context, db);
+
+	// Bind all indexes.
+	info->BindIndexes(context);
+
+	// prevent any new tuples from being added to the parent
 	lock_guard<mutex> parent_lock(parent.append_lock);
 
 	for (auto &column_def : parent.column_definitions) {
 		column_definitions.emplace_back(column_def.Copy());
 	}
 
-	// Bind all indexes.
-	info->BindIndexes(context);
-
-	// first check if there are any indexes that exist that point to the removed column
+	struct IndexColumns {
+		Identifier name;
+		bool entry_backed;
+		unordered_set<column_t> column_ids;
+	};
+	vector<IndexColumns> index_columns;
 	for (auto index_entry : info->indexes.IndexEntries()) {
 		auto index_info = index_entry->GetStorageInfo();
-		if (!index_info.is_unique && !index_info.is_primary && !index_info.is_foreign) {
+		index_columns.push_back({index_entry->GetName(),
+		                         !index_info.is_unique && !index_info.is_primary && !index_info.is_foreign,
+		                         std::move(index_info.column_set)});
+	}
+
+	// first check if there are any indexes that exist that point to the removed column
+	for (auto &index : index_columns) {
+		if (index.entry_backed) {
 			// Plain indexes are always entry-backed; when the entry is no longer
 			// visible the index was dropped earlier in this transaction and only
 			// leaves the storage list at commit - it cannot block the drop.
 			// (Unique CREATE INDEX entries still block: their names are not
 			// distinguishable from constraint-backed indexes here.)
 			auto &index_catalog = db.GetCatalog();
-			EntryLookupInfo lookup_info(CatalogType::INDEX_ENTRY, index_entry->GetName());
+			EntryLookupInfo lookup_info(CatalogType::INDEX_ENTRY, index.name);
 			auto entry =
 			    index_catalog.GetEntry(context, info->GetSchemaName(), lookup_info, OnEntryNotFound::RETURN_NULL);
 			if (!entry) {
 				continue;
 			}
 		}
-		for (auto column_id : index_info.column_set) {
+		for (auto column_id : index.column_ids) {
 			if (column_id == removed_column) {
 				throw CatalogException("Cannot drop this column: an index depends on it!");
 			} else if (column_id > removed_column) {
@@ -202,14 +215,15 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t changed_id
     : db(parent.db), info(parent.info), version(DataTableVersion::MAIN_TABLE) {
 	auto &transaction = DuckTransaction::Get(context, db);
 	auto &local_storage = LocalStorage::Get(transaction);
+
+	// Bind all indexes.
+	info->BindIndexes(context);
+
 	// prevent any tuples from being added to the parent
 	lock_guard<mutex> parent_lock(parent.append_lock);
 	for (auto &column_def : parent.column_definitions) {
 		column_definitions.emplace_back(column_def.Copy());
 	}
-
-	// Bind all indexes.
-	info->BindIndexes(context);
 
 	// first check if there are any indexes that exist that point to the changed column
 	for (const auto column_id : info->indexes.GetIndexedColumns()) {

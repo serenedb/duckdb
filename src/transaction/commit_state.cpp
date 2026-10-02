@@ -300,6 +300,9 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 				                           old_entry.name);
 			}
 		}
+		// Grab a write lock on the catalog
+		auto &duck_catalog = catalog.Cast<DuckCatalog>();
+		lock_guard<mutex> write_lock(duck_catalog.GetWriteLock());
 		if (new_entry.type == CatalogType::DEPENDENCY_ENTRY) {
 			auto &dep = new_entry.Cast<DependencyEntry>();
 			if (dep.Side() == DependencyEntryType::SUBJECT) {
@@ -308,9 +311,6 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		} else if (new_entry.type == CatalogType::DELETED_ENTRY && old_entry.set) {
 			old_entry.set->CommitDrop(commit_id, transaction.view.visibility_bound, old_entry);
 		}
-		// Grab a write lock on the catalog
-		auto &duck_catalog = catalog.Cast<DuckCatalog>();
-		lock_guard<mutex> write_lock(duck_catalog.GetWriteLock());
 		lock_guard<mutex> read_lock(old_entry.set->GetCatalogLock());
 
 		// For a genuine CREATE TRIGGER (not an ALTER propagation), verify that the table version
