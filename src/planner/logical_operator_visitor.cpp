@@ -217,6 +217,9 @@ void LogicalOperatorVisitor::EnumerateExpressions(LogicalOperator &op,
 				for (auto &expr : action->expressions) {
 					callback(&expr);
 				}
+				for (auto &check : action->checks) {
+					callback(&check->expression);
+				}
 			}
 		}
 		break;

@@ -180,6 +180,7 @@ CreateStatement:
     - CreateTypeStmt
     - CreateViewStmt
     - CreateTriggerStmt
+    - CreatePolicyStmt
     - CreateJobStmt
 
 DropStatement:
@@ -197,6 +198,7 @@ DropStatement:
     - DropType
     - DropSecret
     - DropTrigger
+    - DropPolicy
     - DropJob
 
 AlterInfo:
@@ -213,12 +215,22 @@ AlterInfo:
     - AlterSequenceStmt
     - AlterSequenceOptions
     - SetSequenceOption
+    - AlterRowSecurityStmt
+    - AlterPolicyStmt
     - AlterJobStmt
     - AlterJobAction
     - AlterJobRename
     - AlterJobSuspend
     - AlterJobResume
     - AlterJobSetSchedule
+
+AlterPolicyInfo:
+  type: "unique_ptr<AlterPolicyInfo>"
+  by_value: true
+  rules:
+    - AlterPolicyAction
+    - AlterPolicyRename
+    - AlterPolicyClauses
 
 AlterTableInfo:
   type: "unique_ptr<AlterTableInfo>"
@@ -391,6 +403,8 @@ Expression:
     - JobInterval
     - JobIntervalShort
     - JobIntervalExpression
+    - PolicyUsing
+    - PolicyCheck
     - LogicalAndExpressionTail
     - ColDefAndExpr
     - ColDefAndExpressionTail
@@ -944,6 +958,12 @@ JobScheduleInfo:
     - JobEvery
     - JobAfter
 
+RoleNameList:
+  type: "vector<Identifier>"
+  by_value: false
+  rules:
+    - PolicyToRoles
+
 TriggerEventInfo:
   type: "TriggerEventInfo"
   by_value: false
@@ -1175,6 +1195,10 @@ Bool:
     - ExcludeNulls
     - PrecedingOrFollowing
     - JobSuspended
+    - PolicyPermissive
+    - PolicyPermissiveMode
+    - PolicyPermissiveKeyword
+    - PolicyRestrictiveKeyword
     - IfExists
     - IncludeOrExcludeNulls
     - AnalyzeVerbose
@@ -1301,6 +1325,7 @@ CatalogType:
     - CommentColumn
     - TableOrView
     - MaterializedViewEntry
+    - AlterRowSecurityRelation
 
 
 Value:
@@ -1330,6 +1355,28 @@ TriggerForEach:
     - ForEachRow
     - ForEachStatement
     - ForEachClause
+
+PolicyCommand:
+  type: "PolicyCommand"
+  by_value: false
+  rules:
+    - PolicyForCmd
+    - PolicyCommandKeyword
+    - PolicyCommandAll
+    - PolicyCommandSelect
+    - PolicyCommandInsert
+    - PolicyCommandUpdate
+    - PolicyCommandDelete
+
+RowSecurityAction:
+  type: "RowSecurityAction"
+  by_value: false
+  rules:
+    - RowSecurityAction
+    - RowSecurityEnable
+    - RowSecurityDisable
+    - RowSecurityNoForce
+    - RowSecurityForce
 
 # ---------------------------------------------------------------------------
 # Enum / simple-value categories
@@ -1738,6 +1785,11 @@ IdentifierType:
     - DotIdentifier
     - IdentifierDot
     - ExtensionAlias
+    - PolicyName
+    - PolicyRole
+    - PolicyCurrentRole
+    - PolicyCurrentUser
+    - PolicySessionUser
 
 matcher_rule_overrides:
   Identifier:

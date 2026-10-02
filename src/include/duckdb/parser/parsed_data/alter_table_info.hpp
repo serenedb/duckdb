@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/permissions.hpp"
+#include "duckdb/common/enums/policy_command.hpp"
 #include "duckdb/common/optional.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
@@ -68,6 +69,23 @@ public:
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 
 	explicit SetCommentInfo();
+};
+
+struct SetRowSecurityInfo : public AlterInfo {
+	SetRowSecurityInfo(CatalogType entry_catalog_type, AlterEntryData data, RowSecurityAction action);
+
+	CatalogType entry_catalog_type;
+	RowSecurityAction action;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit SetRowSecurityInfo();
 };
 
 struct AlterPermissionsInfo : public AlterInfo {

@@ -1,0 +1,125 @@
+# name: test/sql/row_security/row_security_views.test
+# group: [row_security]
+
+statement ok
+CREATE TABLE squad (id INTEGER, member VARCHAR, grade INTEGER);
+
+statement ok
+INSERT INTO squad VALUES (1, 'arelav', 42), (2, 'babsky', 21), (3, 'arelav', 13);
+
+statement ok
+CREATE VIEW squad_view (who, points) AS SELECT member, grade FROM squad;
+
+statement ok
+ALTER VIEW squad_view ENABLE ROW LEVEL SECURITY;
+
+query I
+SELECT count(*) FROM squad_view;
+----
+3
+
+statement ok
+ALTER VIEW squad_view FORCE ROW LEVEL SECURITY;
+
+query I
+SELECT count(*) FROM squad_view;
+----
+0
+
+statement ok
+CREATE POLICY arelav_rows ON squad_view USING (who = 'arelav');
+
+query I
+SELECT points FROM squad_view ORDER BY points;
+----
+13
+42
+
+query I
+SELECT score FROM squad_view AS v(name, score) ORDER BY score;
+----
+13
+42
+
+query I
+SELECT count(*) FROM squad;
+----
+3
+
+statement error
+CREATE POLICY no_inserts ON squad_view FOR INSERT WITH CHECK (true);
+----
+<REGEX>:.*policies on views can only be created FOR SELECT or FOR ALL.*
+
+statement error
+CREATE POLICY no_checks ON squad_view WITH CHECK (points > 0);
+----
+<REGEX>:.*WITH CHECK cannot be applied to policies on views.*
+
+statement error
+CREATE POLICY no_column ON squad_view USING (grade > 0);
+----
+<REGEX>:.*grade.*
+
+statement ok
+CREATE POLICY high_points ON squad_view AS RESTRICTIVE USING (points > 20);
+
+query I
+SELECT points FROM squad_view;
+----
+42
+
+query IIII
+SELECT policy_name, relation_name, relation_type, permissive FROM duckdb_policies() ORDER BY policy_name;
+----
+arelav_rows	squad_view	VIEW	true
+high_points	squad_view	VIEW	false
+
+query I
+SELECT count(*) FROM squad_view WHERE CASE WHEN points = 13 THEN error('leak arelav row') ELSE true END;
+----
+1
+
+statement ok
+ALTER POLICY high_points ON squad_view USING (points > 10);
+
+query I
+SELECT points FROM squad_view ORDER BY points;
+----
+13
+42
+
+statement ok
+ALTER VIEW squad_view RENAME TO squad_board;
+
+query I
+SELECT count(*) FROM squad_board;
+----
+2
+
+statement ok
+DROP POLICY high_points ON squad_board;
+
+statement error
+DROP POLICY high_points ON squad_board;
+----
+<REGEX>:.*policy "high_points" for view "squad_board" does not exist.*
+
+statement ok
+ALTER VIEW squad_board NO FORCE ROW LEVEL SECURITY;
+
+query I
+SELECT count(*) FROM squad_board;
+----
+3
+
+statement ok
+ALTER VIEW squad_board DISABLE ROW LEVEL SECURITY;
+
+statement ok
+DROP VIEW squad_board;
+
+query I
+SELECT count(*) FROM duckdb_policies();
+----
+0

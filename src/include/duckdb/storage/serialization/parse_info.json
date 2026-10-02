@@ -1248,6 +1248,69 @@
     ]
   },
   {
+    "class": "SetRowSecurityInfo",
+    "base": "AlterInfo",
+    "enum": "SET_ROW_SECURITY",
+    "members": [
+      {
+        "id": 300,
+        "name": "entry_catalog_type",
+        "type": "CatalogType"
+      },
+      {
+        "id": 301,
+        "name": "action",
+        "type": "RowSecurityAction"
+      }
+    ]
+  },
+  {
+    "class": "AlterPolicyInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_POLICY",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_policy_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_policy_type",
+        "type": "AlterPolicyType"
+      },
+      {
+        "id": 301,
+        "name": "base_table",
+        "type": "BaseTableRef*",
+        "base": "TableRef"
+      },
+      {
+        "id": 302,
+        "name": "new_name",
+        "type": "Identifier"
+      },
+      {
+        "id": 303,
+        "name": "role_names",
+        "type": "vector<Identifier>"
+      },
+      {
+        "id": 304,
+        "name": "roles",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 305,
+        "name": "using_expr",
+        "type": "ParsedExpression*"
+      },
+      {
+        "id": 306,
+        "name": "check_expr",
+        "type": "ParsedExpression*"
+      }
+    ]
+  },
+  {
     "class": "AlterJobInfo",
     "base": "AlterInfo",
     "enum": "ALTER_JOB",

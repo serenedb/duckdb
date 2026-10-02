@@ -53,6 +53,8 @@ string CatalogTypeToString(CatalogType type) {
 		return "Foreign Server";
 	case CatalogType::JOB_ENTRY:
 		return "Job";
+	case CatalogType::POLICY_ENTRY:
+		return "Policy";
 	case CatalogType::SECRET_ENTRY:
 		return "Secret";
 	case CatalogType::SECRET_TYPE_ENTRY:
@@ -134,6 +136,9 @@ CatalogType CatalogTypeFromString(const string &type) {
 	}
 	if (type == "Job") {
 		return CatalogType::JOB_ENTRY;
+	}
+	if (type == "Policy") {
+		return CatalogType::POLICY_ENTRY;
 	}
 	if (type == "INVALID") {
 		return CatalogType::INVALID;

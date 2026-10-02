@@ -1,6 +1,19 @@
 AlterStatement <- 'ALTER' AlterOptions
 
-AlterOptions <- AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt / AlterJobStmt
+AlterOptions <- AlterRowSecurityStmt / AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt / AlterPolicyStmt / AlterJobStmt
+
+AlterRowSecurityStmt <- AlterRowSecurityRelation IfExists? BaseTableName RowSecurityAction 'ROW' 'LEVEL' 'SECURITY'
+AlterRowSecurityRelation <- CommentTable / CommentView
+RowSecurityAction <- RowSecurityEnable / RowSecurityDisable / RowSecurityNoForce / RowSecurityForce
+RowSecurityEnable <- 'ENABLE'
+RowSecurityDisable <- 'DISABLE'
+RowSecurityNoForce <- 'NO' 'FORCE'
+RowSecurityForce <- 'FORCE'
+
+AlterPolicyStmt <- 'POLICY' PolicyName 'ON' BaseTableName AlterPolicyAction
+AlterPolicyAction <- AlterPolicyRename / AlterPolicyClauses
+AlterPolicyRename <- 'RENAME' 'TO' ColId
+AlterPolicyClauses <- PolicyToRoles? PolicyUsing? PolicyCheck?
 
 AlterJobStmt <- 'JOB' IfExists? QualifiedName AlterJobAction
 AlterJobAction <- AlterJobRename / AlterJobSuspend / AlterJobResume / AlterJobSetSchedule

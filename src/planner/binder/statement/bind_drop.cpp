@@ -31,6 +31,16 @@ void Binder::BindDropTrigger(DropStatement &stmt, StatementProperties &propertie
 	properties.RegisterDBModify(table_entry.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 }
 
+void Binder::BindDropPolicy(DropStatement &stmt, StatementProperties &properties) {
+	auto &policy_extra = stmt.info->extra_drop_info->Cast<ExtraDropPolicyInfo>();
+	auto &relation = BindPolicyRelation(policy_extra.base_table->Cast<BaseTableRef>());
+	stmt.info->SetQualifiedName(QualifiedName(relation.ParentCatalog().GetName(), relation.ParentSchemaName(),
+	                                          stmt.info->GetQualifiedName().Name()));
+	if (!relation.temporary) {
+		properties.RegisterDBModify(relation.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
+	}
+}
+
 BoundStatement Binder::Bind(DropStatement &stmt) {
 	BoundStatement result;
 
@@ -123,6 +133,9 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	}
 	case CatalogType::TRIGGER_ENTRY:
 		BindDropTrigger(stmt, properties);
+		break;
+	case CatalogType::POLICY_ENTRY:
+		BindDropPolicy(stmt, properties);
 		break;
 	default:
 		throw BinderException("Unknown catalog type for drop statement: '%s'", CatalogTypeToString(stmt.info->type));

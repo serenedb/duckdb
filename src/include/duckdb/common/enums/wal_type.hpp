@@ -68,6 +68,8 @@ enum class WALType : uint8_t {
 	ARTIFACT = 211,
 	CREATE_JOB = 212,
 	DROP_JOB = 213,
+	CREATE_POLICY = 214,
+	DROP_POLICY = 215,
 	// -----------------------------
 	// Flush
 	// -----------------------------

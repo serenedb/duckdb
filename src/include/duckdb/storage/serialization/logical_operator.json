@@ -265,6 +265,12 @@
     ]
   },
   {
+    "class": "LogicalSecurityBarrier",
+    "base": "LogicalOperator",
+    "enum": "LOGICAL_SECURITY_BARRIER",
+    "members": []
+  },
+  {
     "class": "LogicalColumnDataGet",
     "base": "LogicalOperator",
     "enum": "LOGICAL_CHUNK_GET",
@@ -985,7 +991,8 @@
       "LOGICAL_CREATE_MACRO",
       "LOGICAL_CREATE_TYPE",
       "LOGICAL_CREATE_TRIGGER",
-      "LOGICAL_CREATE_JOB"
+      "LOGICAL_CREATE_JOB",
+      "LOGICAL_CREATE_POLICY"
     ],
     "members": [
       {

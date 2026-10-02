@@ -29,12 +29,14 @@ public:
 	unique_ptr<Expression> expression;
 	//! The columns used by the CHECK constraint
 	physical_index_set_t bound_columns;
+	string violation_message;
 
 public:
 	unique_ptr<BoundConstraint> Copy() const override {
 		auto result = make_uniq<BoundCheckConstraint>();
 		result->expression = expression->Copy();
 		result->bound_columns = bound_columns;
+		result->violation_message = violation_message;
 		return std::move(result);
 	}
 };

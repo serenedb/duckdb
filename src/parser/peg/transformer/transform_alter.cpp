@@ -6,6 +6,7 @@
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/alter_job_info.hpp"
+#include "duckdb/parser/parsed_data/alter_policy_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
@@ -93,6 +94,64 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSchemaStmt(PEGTransfo
 	auto not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	AlterEntryData data(qualified_name, not_found);
 	return make_uniq_base<AlterInfo, RenameInfo>(CatalogType::SCHEMA_ENTRY, data, rename_info->new_table_name);
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterRowSecurityStmt(
+    PEGTransformer &transformer, const CatalogType &alter_row_security_relation, const optional<bool> &if_exists,
+    unique_ptr<BaseTableRef> base_table_name, const RowSecurityAction &row_security_action) {
+	AlterEntryData data(base_table_name->GetQualifiedName(),
+	                    if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION);
+	return make_uniq_base<AlterInfo, SetRowSecurityInfo>(alter_row_security_relation, std::move(data),
+	                                                     row_security_action);
+}
+
+RowSecurityAction PEGTransformerFactory::TransformRowSecurityEnable(PEGTransformer &transformer) {
+	return RowSecurityAction::ENABLE;
+}
+
+RowSecurityAction PEGTransformerFactory::TransformRowSecurityDisable(PEGTransformer &transformer) {
+	return RowSecurityAction::DISABLE;
+}
+
+RowSecurityAction PEGTransformerFactory::TransformRowSecurityNoForce(PEGTransformer &transformer) {
+	return RowSecurityAction::NO_FORCE;
+}
+
+RowSecurityAction PEGTransformerFactory::TransformRowSecurityForce(PEGTransformer &transformer) {
+	return RowSecurityAction::FORCE;
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterPolicyStmt(PEGTransformer &transformer,
+                                                                      const Identifier &policy_name,
+                                                                      unique_ptr<BaseTableRef> base_table_name,
+                                                                      unique_ptr<AlterPolicyInfo> alter_policy_action) {
+	alter_policy_action->SetName(policy_name);
+	alter_policy_action->if_not_found = OnEntryNotFound::THROW_EXCEPTION;
+	alter_policy_action->base_table = std::move(base_table_name);
+	return std::move(alter_policy_action);
+}
+
+unique_ptr<AlterPolicyInfo> PEGTransformerFactory::TransformAlterPolicyRename(PEGTransformer &transformer,
+                                                                              const Identifier &col_id) {
+	auto result = make_uniq<AlterPolicyInfo>(AlterPolicyType::RENAME, AlterEntryData(), nullptr);
+	result->new_name = col_id;
+	return result;
+}
+
+unique_ptr<AlterPolicyInfo> PEGTransformerFactory::TransformAlterPolicyClauses(
+    PEGTransformer &transformer, const optional<vector<Identifier>> &policy_to_roles,
+    optional<unique_ptr<ParsedExpression>> policy_using, optional<unique_ptr<ParsedExpression>> policy_check) {
+	auto result = make_uniq<AlterPolicyInfo>(AlterPolicyType::SET_CLAUSES, AlterEntryData(), nullptr);
+	if (policy_to_roles) {
+		result->role_names = *policy_to_roles;
+	}
+	if (policy_using) {
+		result->using_expr = std::move(*policy_using);
+	}
+	if (policy_check) {
+		result->check_expr = std::move(*policy_check);
+	}
+	return result;
 }
 
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterJobStmt(PEGTransformer &transformer,

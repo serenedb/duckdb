@@ -530,6 +530,9 @@ static string EntryToString(CatalogEntryInfo &info) {
 	case CatalogType::JOB_ENTRY: {
 		return StringUtil::Format("job \"%s\"", info.name);
 	}
+	case CatalogType::POLICY_ENTRY: {
+		return StringUtil::Format("policy \"%s\"", info.name);
+	}
 	case CatalogType::ROLE_ENTRY: {
 		return StringUtil::Format("role \"%s\"", info.name);
 	}
@@ -902,6 +905,7 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		}
 		case AlterType::SET_COLUMN_COMMENT:
 		case AlterType::SET_COMMENT:
+		case AlterType::SET_ROW_SECURITY:
 		case AlterType::ALTER_PERMISSIONS:
 		case AlterType::ALTER_SEQUENCE:
 		case AlterType::CHANGE_OWNERSHIP: {

@@ -15,6 +15,7 @@ add_library_unity(
   schema_catalog_entry.cpp
   sequence_catalog_entry.cpp
   job_catalog_entry.cpp
+  policy_catalog_entry.cpp
   table_catalog_entry.cpp
   trigger_catalog_entry.cpp
   column_dependency_manager.cpp

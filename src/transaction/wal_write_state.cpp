@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/policy_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
@@ -53,6 +54,7 @@ void WALWriteState::SwitchTable(DuckTableEntry &table_entry, UndoFlags new_op) {
 
 static bool IsAlterableLoggedEntry(CatalogType type) {
 	switch (type) {
+	case CatalogType::POLICY_ENTRY:
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
 	case CatalogType::INDEX_ENTRY:
@@ -177,6 +179,12 @@ void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry
 		D_ASSERT(entry.type != CatalogType::RENAMED_ENTRY);
 		target.WriteCreateTrigger(parent.Cast<TriggerCatalogEntry>());
 		break;
+	case CatalogType::POLICY_ENTRY:
+		if (entry.type != CatalogType::RENAMED_ENTRY) {
+			target.WriteCreatePolicy(parent.Cast<PolicyCatalogEntry>());
+			break;
+		}
+		DUCKDB_EXPLICIT_FALLTHROUGH;
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
 	case CatalogType::INDEX_ENTRY:
@@ -275,6 +283,9 @@ void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry
 		}
 		case CatalogType::TRIGGER_ENTRY:
 			target.WriteDropTrigger(entry.Cast<TriggerCatalogEntry>());
+			break;
+		case CatalogType::POLICY_ENTRY:
+			target.WriteDropPolicy(entry.Cast<PolicyCatalogEntry>());
 			break;
 		case CatalogType::TOKENIZER_ENTRY:
 			target.WriteDropTokenizer(entry.Cast<StandardEntry>());

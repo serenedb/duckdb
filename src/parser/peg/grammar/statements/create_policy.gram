@@ -1,0 +1,21 @@
+CreatePolicyStmt <- 'POLICY' PolicyName 'ON' BaseTableName PolicyPermissive? PolicyForCmd? PolicyToRoles? PolicyUsing? PolicyCheck?
+
+PolicyName <- ColId
+PolicyPermissive <- 'AS' PolicyPermissiveMode
+PolicyPermissiveMode <- PolicyPermissiveKeyword / PolicyRestrictiveKeyword
+PolicyPermissiveKeyword <- 'PERMISSIVE'
+PolicyRestrictiveKeyword <- 'RESTRICTIVE'
+PolicyForCmd <- 'FOR' PolicyCommandKeyword
+PolicyCommandKeyword <- PolicyCommandAll / PolicyCommandSelect / PolicyCommandInsert / PolicyCommandUpdate / PolicyCommandDelete
+PolicyCommandAll <- 'ALL'
+PolicyCommandSelect <- 'SELECT'
+PolicyCommandInsert <- 'INSERT'
+PolicyCommandUpdate <- 'UPDATE'
+PolicyCommandDelete <- 'DELETE'
+PolicyToRoles <- 'TO' List(PolicyRole)
+PolicyRole <- PolicyCurrentRole / PolicyCurrentUser / PolicySessionUser / ColId
+PolicyCurrentRole <- 'CURRENT_ROLE'
+PolicyCurrentUser <- 'CURRENT_USER'
+PolicySessionUser <- 'SESSION_USER'
+PolicyUsing <- 'USING' Parens(Expression)
+PolicyCheck <- 'WITH' 'CHECK' Parens(Expression)

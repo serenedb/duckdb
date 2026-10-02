@@ -33,6 +33,7 @@
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/common/enums/copy_option_mode.hpp"
+#include "duckdb/common/enums/policy_command.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
 
 #include <absl/functional/function_ref.h>
@@ -62,11 +63,15 @@ class ExternalDependency;
 class TableFunction;
 class TableStorageInfo;
 class BoundConstraint;
+class BoundCheckConstraint;
+class OnConflictInfo;
 class AtClause;
 class BoundAtClause;
 
 struct CreateInfo;
 struct CreateTriggerInfo;
+struct CreatePolicyInfo;
+struct AlterPolicyInfo;
 struct CreateJobInfo;
 struct JobSchedule;
 struct QualifiedName;
@@ -200,6 +205,7 @@ struct GlobalBinderState {
 	optional_ptr<TableCatalogEntry> trigger_creation_table;
 	//! Name of the trigger being created (for error messages)
 	Identifier trigger_creation_name;
+	reference_set_t<StandardEntry> row_security_relations;
 };
 
 //! Bind the parsed query tree to the actual columns present in the catalog.
@@ -276,6 +282,7 @@ public:
 	SchemaCatalogEntry &BindSchema(CreateInfo &info);
 	SchemaCatalogEntry &BindCreateFunctionInfo(CreateInfo &info);
 	SchemaCatalogEntry &BindCreateTriggerInfo(CreateTriggerInfo &info);
+	SchemaCatalogEntry &BindCreatePolicyInfo(CreatePolicyInfo &info);
 	SchemaCatalogEntry &BindCreateJobInfo(CreateJobInfo &info);
 	void BindJobSchedule(JobSchedule &schedule, unique_ptr<ParsedExpression> &interval_expr,
 	                     unique_ptr<ParsedExpression> &offset_expr);
@@ -392,6 +399,7 @@ private:
 	bool allow_procedure_call = false;
 	//! The set of bound views
 	reference_set_t<ViewCatalogEntry> bound_views;
+	optional_ptr<TableRef> row_security_target;
 	//! Used to retrieve CatalogEntry's
 	CatalogEntryRetriever entry_retriever;
 	//! Unnamed subquery index
@@ -508,6 +516,28 @@ private:
 	BoundStatement BindNode(DeleteQueryNode &node);
 	vector<idx_t> BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry &table);
 	BoundStatement BindNode(MergeQueryNode &node);
+	BoundStatement BindNode(MergeQueryNode &node, optional_ptr<OnConflictInfo> on_conflict);
+
+	optional_idx RowSecurityRole();
+	bool RowSecurityApplies(StandardEntry &relation);
+	unique_ptr<ParsedExpression> RowSecurityExpression(StandardEntry &relation, PolicyCommand command, bool check);
+	unique_ptr<LogicalOperator> ApplyRowSecurity(StandardEntry &relation, const vector<PolicyCommand> &commands,
+	                                             unique_ptr<LogicalOperator> root,
+	                                             const std::function<void(BindContext &)> &add_binding);
+	unique_ptr<LogicalOperator> ApplyRowSecurity(StandardEntry &relation, LogicalGet &get,
+	                                             unique_ptr<LogicalOperator> root,
+	                                             const vector<PolicyCommand> &commands);
+	void AddRowSecurityChecks(TableCatalogEntry &table, PolicyCommand command, bool select_visible,
+	                          vector<unique_ptr<BoundConstraint>> &constraints);
+	void BindRowSecurityChecks(TableCatalogEntry &table, LogicalGet &get, const vector<PolicyCommand> &commands,
+	                           TableIndex proj_index, vector<unique_ptr<Expression>> &projection,
+	                           vector<unique_ptr<BoundCheckConstraint>> &checks);
+	BoundStatement BindWithoutRowSecurity(TableRef &ref);
+	StandardEntry &BindPolicyRelation(BaseTableRef &base_table);
+	void BindPolicyClauses(StandardEntry &relation, PolicyCommand command, optional_ptr<ParsedExpression> using_expr,
+	                       optional_ptr<ParsedExpression> check_expr);
+	void BindDropPolicy(DropStatement &stmt, StatementProperties &properties);
+	void BindAlterPolicy(AlterPolicyInfo &info, StatementProperties &properties);
 
 	unique_ptr<LogicalOperator> VisitQueryNode(BoundQueryNode &node, unique_ptr<LogicalOperator> root);
 	unique_ptr<LogicalOperator> CreatePlan(BoundSelectNode &statement);

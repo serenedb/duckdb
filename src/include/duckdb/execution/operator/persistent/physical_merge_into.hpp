@@ -10,6 +10,7 @@
 
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/common/enums/merge_action_type.hpp"
+#include "duckdb/planner/constraints/bound_check_constraint.hpp"
 
 namespace duckdb {
 class MergeIntoLocalState;
@@ -24,6 +25,7 @@ public:
 	optional_ptr<PhysicalOperator> op;
 	//! Expressions to execute (if any) prior to sinking
 	vector<unique_ptr<Expression>> expressions;
+	vector<unique_ptr<BoundCheckConstraint>> checks;
 };
 
 struct MergeActionRange {

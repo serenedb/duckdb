@@ -7,6 +7,7 @@
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/operator/logical_join.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
+#include "duckdb/planner/operator/logical_security_barrier.hpp"
 #include "duckdb/planner/operator/logical_empty_result.hpp"
 #include "duckdb/planner/operator/logical_window.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
@@ -145,6 +146,8 @@ unique_ptr<LogicalOperator> FilterPushdown::Rewrite(unique_ptr<LogicalOperator> 
 		return PushdownWindow(std::move(op));
 	case LogicalOperatorType::LOGICAL_UNNEST:
 		return PushdownUnnest(std::move(op));
+	case LogicalOperatorType::LOGICAL_SECURITY_BARRIER:
+		return PushdownSecurityBarrier(std::move(op));
 	default:
 		return FinishPushdown(std::move(op));
 	}
@@ -343,6 +346,24 @@ unique_ptr<LogicalOperator> FilterPushdown::FinishPushdown(unique_ptr<LogicalOpe
 		child = pushdown.Rewrite(std::move(child));
 	}
 	// now push any existing filters
+	return PushFinalFilters(std::move(op));
+}
+
+unique_ptr<LogicalOperator> FilterPushdown::PushdownSecurityBarrier(unique_ptr<LogicalOperator> op) {
+	FilterPushdown child_pushdown(optimizer, convert_mark_joins);
+	vector<unique_ptr<Filter>> leaky_filters;
+	for (auto &filter : filters) {
+		if (!LogicalSecurityBarrier::CanCross(*filter->filter)) {
+			leaky_filters.push_back(std::move(filter));
+			continue;
+		}
+		if (child_pushdown.AddFilter(std::move(filter->filter)) == FilterResult::UNSATISFIABLE) {
+			return make_uniq<LogicalEmptyResult>(std::move(op));
+		}
+	}
+	filters = std::move(leaky_filters);
+	child_pushdown.GenerateFilters();
+	op->children[0] = child_pushdown.Rewrite(std::move(op->children[0]));
 	return PushFinalFilters(std::move(op));
 }
 

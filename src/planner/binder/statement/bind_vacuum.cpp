@@ -17,7 +17,7 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 
 	D_ASSERT(vacuum.column_id_map.empty());
 
-	auto bound_table = Bind(*info.ref);
+	auto bound_table = BindWithoutRowSecurity(*info.ref);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only vacuum or analyze base tables");
 	}

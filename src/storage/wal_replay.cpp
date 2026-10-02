@@ -2,6 +2,7 @@
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/catalog/row_security.hpp"
 #include "duckdb/common/checksum.hpp"
 #include "duckdb/common/encryption_functions.hpp"
 #include "duckdb/common/encryption_key_manager.hpp"
@@ -23,6 +24,7 @@
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
+#include "duckdb/parser/parsed_data/create_policy_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
@@ -280,6 +282,9 @@ protected:
 
 	void ReplayCreateTrigger();
 	void ReplayDropTrigger();
+
+	void ReplayCreatePolicy();
+	void ReplayDropPolicy();
 
 	void ReplayCreateTokenizer();
 	void ReplayDropTokenizer();
@@ -731,6 +736,12 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::DROP_TRIGGER:
 		ReplayDropTrigger();
 		break;
+	case WALType::CREATE_POLICY:
+		ReplayCreatePolicy();
+		break;
+	case WALType::DROP_POLICY:
+		ReplayDropPolicy();
+		break;
 	case WALType::CREATE_TOKENIZER:
 		ReplayCreateTokenizer();
 		break;
@@ -1142,6 +1153,35 @@ void WriteAheadLogDeserializer::ReplayDropTrigger() {
 	    context, QualifiedName(catalog.GetName(), info.GetQualifiedName().Schema(), table_name));
 	auto transaction = catalog.GetCatalogTransaction(context);
 	table.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade);
+}
+
+//===--------------------------------------------------------------------===//
+// Replay Policy
+//===--------------------------------------------------------------------===//
+void WriteAheadLogDeserializer::ReplayCreatePolicy() {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "policy");
+	info->on_conflict = OnCreateConflict::REPLACE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	auto &policy_info = info->Cast<CreatePolicyInfo>();
+	auto transaction = catalog.GetCatalogTransaction(context);
+	auto &schema = catalog.GetSchema(transaction, policy_info.GetQualifiedName().Schema());
+	auto &relation = RowSecurity::GetRelation(transaction, schema, policy_info.relation_oid);
+	RowSecurity::Get(relation)->CreatePolicy(transaction, relation, policy_info);
+}
+
+void WriteAheadLogDeserializer::ReplayDropPolicy() {
+	auto schema_name = Identifier(deserializer.ReadProperty<string>(101, "schema"));
+	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
+	auto relation_oid = deserializer.ReadProperty<idx_t>(103, "relation_oid");
+	if (DeserializeOnly()) {
+		return;
+	}
+	auto transaction = catalog.GetCatalogTransaction(context);
+	auto &schema = catalog.GetSchema(transaction, schema_name);
+	auto &relation = RowSecurity::GetRelation(transaction, schema, relation_oid);
+	RowSecurity::Get(relation)->DropPolicy(transaction, name);
 }
 
 void WriteAheadLogDeserializer::ReplayCreateTokenizer() {

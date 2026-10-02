@@ -272,6 +272,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		auto logical_get =
 		    make_uniq<LogicalGet>(table_index, scan_function, std::move(bind_data), std::move(return_types),
 		                          std::move(return_names), std::move(virtual_columns));
+		auto &get = *logical_get;
 		auto &col_ids = logical_get->GetMutableColumnIds();
 		// The binding carries this entry, and column binding reads the table's
 		// column model from it (star-expansion, generated-column expansion,
@@ -283,6 +284,9 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		result.types = table_types;
 		result.names = table_names;
 		result.plan = std::move(logical_get);
+		if (row_security_target.get() != &ref) {
+			result.plan = ApplyRowSecurity(table, get, std::move(result.plan), {PolicyCommand::SELECT});
+		}
 		return result;
 	}
 	case CatalogType::VIEW_ENTRY: {
@@ -328,8 +332,18 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		}
 		// update the view binding with the bound view information
 		view_catalog_entry.UpdateBinding(bound_child.types, bound_child.names);
-		bind_context.AddView(bound_child.plan->GetRootIndex(), subquery.alias, subquery, bound_child,
-		                     view_catalog_entry);
+		auto view_index = bound_child.plan->GetRootIndex();
+		if (row_security_target.get() != &ref) {
+			auto view_names =
+			    BindContext::AliasColumnNames(view_catalog_entry.name, bound_child.names, view_catalog_entry.aliases);
+			bound_child.plan =
+			    ApplyRowSecurity(view_catalog_entry, {PolicyCommand::SELECT}, std::move(bound_child.plan),
+			                     [&](BindContext &policy_context) {
+				                     policy_context.AddEntryBinding(view_index, view_catalog_entry.name, view_names,
+				                                                    bound_child.types, view_catalog_entry);
+			                     });
+		}
+		bind_context.AddView(view_index, subquery.alias, subquery, bound_child, view_catalog_entry);
 		GetStatementProperties().view_scopes.push_back({&view_catalog_entry, scope_begin,
 		                                                global_binder_state->bound_tables, resolved_begin,
 		                                                GetStatementProperties().resolved_entries.size()});

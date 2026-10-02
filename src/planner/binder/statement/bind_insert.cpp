@@ -683,7 +683,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	if (node.on_conflict_info) {
 		// generate a MERGE INTO statement and bind it instead
 		auto merge_into = GenerateMergeInto(node, table);
-		return Bind(*merge_into);
+		return BindNode(*merge_into->node, node.on_conflict_info.get());
 	}
 	if (table.temporary) {
 		// Temporary inserts still need a catalog dependency so prepared statements are rebound if the table is dropped.
@@ -743,6 +743,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	BindDefaultValues(table.GetColumns(), insert->bound_defaults, catalog_name.GetIdentifierName(),
 	                  schema_name.GetIdentifierName());
 	insert->bound_constraints = BindConstraints(table);
+	AddRowSecurityChecks(table, PolicyCommand::INSERT, !node.returning_list.empty(), insert->bound_constraints);
 	if (!node.select_statement && !node.default_values) {
 		result.plan = std::move(insert);
 		return result;

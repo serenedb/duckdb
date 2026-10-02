@@ -10,6 +10,7 @@
 
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
+#include "duckdb/catalog/row_security.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/common/enums/column_segment_info_scan_type.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
@@ -167,6 +168,14 @@ public:
 
 	virtual vector<column_t> GetRowIdColumns() const;
 
+	RowSecurity &GetRowSecurity() {
+		return row_security;
+	}
+	const RowSecurity &GetRowSecurity() const {
+		return row_security;
+	}
+	void CopyRowSecurity(CreateTableInfo &info) const;
+
 	optional_ptr<CatalogEntry> CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info);
 	void ScanTriggers(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback) const;
 	void ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback);
@@ -185,5 +194,6 @@ protected:
 	shared_ptr<CatalogSet> triggers;
 	//! A list of constraints that are part of this table
 	vector<unique_ptr<Constraint>> constraints;
+	RowSecurity row_security;
 };
 } // namespace duckdb

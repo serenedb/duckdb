@@ -44,5 +44,20 @@
         "type": "TableRef*"
       }
     ]
+  },
+  {
+    "class": "ExtraDropPolicyInfo",
+    "base": "ExtraDropInfo",
+    "enum": "POLICY_INFO",
+    "includes": [
+      "duckdb/parser/tableref.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "base_table",
+        "type": "TableRef*"
+      }
+    ]
   }
 ]

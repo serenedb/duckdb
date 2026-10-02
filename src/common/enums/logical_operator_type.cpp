@@ -46,6 +46,8 @@ string LogicalOperatorToString(LogicalOperatorType type) {
 		return "TOP_N";
 	case LogicalOperatorType::LOGICAL_SAMPLE:
 		return "SAMPLE";
+	case LogicalOperatorType::LOGICAL_SECURITY_BARRIER:
+		return "SECURITY_BARRIER";
 	case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
 		return "COPY_TO_FILE";
 	case LogicalOperatorType::LOGICAL_COPY_DATABASE:
@@ -116,6 +118,8 @@ string LogicalOperatorToString(LogicalOperatorType type) {
 		return "CREATE_TRIGGER";
 	case LogicalOperatorType::LOGICAL_CREATE_JOB:
 		return "CREATE_JOB";
+	case LogicalOperatorType::LOGICAL_CREATE_POLICY:
+		return "CREATE_POLICY";
 	case LogicalOperatorType::LOGICAL_DROP:
 		return "DROP";
 	case LogicalOperatorType::LOGICAL_PRAGMA:

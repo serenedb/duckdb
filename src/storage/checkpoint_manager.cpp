@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/policy_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
@@ -15,6 +16,7 @@
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/catalog/row_security.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/common/enums/checkpoint_abort.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
@@ -203,6 +205,13 @@ static catalog_entry_vector_t GetCatalogEntries(DuckCatalog &catalog, vector<ref
 					entries.push_back(entry);
 				}
 			});
+		}
+		for (auto &table_entry : tables) {
+			table_entry.get().Cast<TableCatalogEntry>().GetRowSecurity().ScanPolicies(
+			    [&](PolicyCatalogEntry &policy) { entries.push_back(policy); });
+		}
+		for (auto &view : views) {
+			view.get().GetRowSecurity().ScanPolicies([&](PolicyCatalogEntry &policy) { entries.push_back(policy); });
 		}
 
 		schema.Scan(CatalogType::SCALAR_FUNCTION_ENTRY, [&](CatalogEntry &entry) {
@@ -462,6 +471,9 @@ void WriteCatalogEntries(WriteAheadLog &log, DuckCatalog &catalog) {
 		case CatalogType::TRIGGER_ENTRY:
 			log.WriteCreateTrigger(entry.Cast<TriggerCatalogEntry>());
 			break;
+		case CatalogType::POLICY_ENTRY:
+			log.WriteCreatePolicy(entry.Cast<PolicyCatalogEntry>());
+			break;
 		case CatalogType::TOKENIZER_ENTRY:
 			log.WriteCreateTokenizer(entry.Cast<StandardEntry>());
 			break;
@@ -592,6 +604,11 @@ void CheckpointWriter::WriteEntry(CatalogEntry &entry, Serializer &serializer) {
 		WriteTrigger(trigger, serializer);
 		break;
 	}
+	case CatalogType::POLICY_ENTRY: {
+		auto &policy = entry.Cast<PolicyCatalogEntry>();
+		WritePolicy(policy, serializer);
+		break;
+	}
 	case CatalogType::TOKENIZER_ENTRY: {
 		auto &tokenizer = entry.Cast<StandardEntry>();
 		WriteTokenizer(tokenizer, serializer);
@@ -669,6 +686,10 @@ void CheckpointReader::ReadEntry(CatalogTransaction transaction, Deserializer &d
 		ReadTrigger(transaction, deserializer);
 		break;
 	}
+	case CatalogType::POLICY_ENTRY: {
+		ReadPolicy(transaction, deserializer);
+		break;
+	}
 	case CatalogType::TOKENIZER_ENTRY: {
 		ReadTokenizer(transaction, deserializer);
 		break;
@@ -737,6 +758,22 @@ void CheckpointReader::ReadTrigger(CatalogTransaction transaction, Deserializer 
 		throw IOException("corrupt database file - trigger entry without table entry");
 	}
 	table_entry->Cast<TableCatalogEntry>().CreateTrigger(transaction, trigger_info);
+}
+
+//===--------------------------------------------------------------------===//
+// Policies
+//===--------------------------------------------------------------------===//
+void CheckpointWriter::WritePolicy(PolicyCatalogEntry &policy, Serializer &serializer) {
+	serializer.WriteProperty(100, "policy", &policy);
+}
+
+void CheckpointReader::ReadPolicy(CatalogTransaction transaction, Deserializer &deserializer) {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "policy");
+	auto &policy_info = info->Cast<CreatePolicyInfo>();
+	policy_info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	auto &schema = catalog.GetSchema(transaction, policy_info.GetQualifiedName().Schema());
+	auto &relation = RowSecurity::GetRelation(transaction, schema, policy_info.relation_oid);
+	RowSecurity::Get(relation)->CreatePolicy(transaction, relation, policy_info);
 }
 
 //===--------------------------------------------------------------------===//

@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/row_security.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/common/types.hpp"
@@ -65,6 +66,16 @@ public:
 	virtual const SelectStatement &GetQuery();
 
 	string ToSQL() const override;
+
+	RowSecurity &GetRowSecurity() {
+		return row_security;
+	}
+	const RowSecurity &GetRowSecurity() const {
+		return row_security;
+	}
+
+protected:
+	RowSecurity row_security;
 
 private:
 	mutable mutex bind_lock;

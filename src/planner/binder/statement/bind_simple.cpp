@@ -1,11 +1,14 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/policy_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/catalog/row_security.hpp"
 #include "duckdb/execution/index/art/art.hpp"
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/parser/parsed_data/alter_job_info.hpp"
+#include "duckdb/parser/parsed_data/alter_policy_info.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
@@ -74,7 +77,7 @@ BoundStatement Binder::BindAlterAddIndex(BoundStatement &result, CatalogEntry &e
 	                                                 table_info.GetQualifiedName().Schema(),
 	                                                 table_info.GetQualifiedName().Name()));
 	auto table_ref = make_uniq<BaseTableRef>(table_description);
-	auto bound_table = Bind(*table_ref);
+	auto bound_table = BindWithoutRowSecurity(*table_ref);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("can only add an index to a base table");
 	}
@@ -115,10 +118,44 @@ static void BindAlterTypes(Binder &binder, AlterStatement &stmt) {
 	}
 }
 
+void Binder::BindAlterPolicy(AlterPolicyInfo &info, StatementProperties &properties) {
+	auto &relation = BindPolicyRelation(*info.base_table);
+	auto policy_name = info.GetQualifiedName().Name();
+	info.SetQualifiedName(QualifiedName(relation.ParentCatalog().GetName(), relation.ParentSchemaName(), policy_name));
+	auto transaction = relation.ParentCatalog().GetCatalogTransaction(context);
+	auto row_security = RowSecurity::Get(relation);
+	auto policy = row_security ? row_security->GetPolicy(transaction, policy_name) : nullptr;
+	auto relation_kind = relation.type == CatalogType::VIEW_ENTRY ? "view" : "table";
+	if (!policy) {
+		throw CatalogException("policy \"%s\" for %s \"%s\" does not exist", policy_name.GetIdentifierName(),
+		                       relation_kind, relation.name.GetIdentifierName());
+	}
+	if (info.alter_policy_type == AlterPolicyType::RENAME) {
+		if (row_security->GetPolicy(transaction, info.new_name)) {
+			throw CatalogException("policy \"%s\" for %s \"%s\" already exists", info.new_name.GetIdentifierName(),
+			                       relation_kind, relation.name.GetIdentifierName());
+		}
+	} else {
+		BindPolicyClauses(relation, policy->command, info.using_expr ? info.using_expr.get() : policy->using_expr.get(),
+		                  info.check_expr ? info.check_expr.get() : policy->check_expr.get());
+	}
+	if (!relation.temporary) {
+		properties.RegisterDBModify(relation.ParentCatalog(), context, DatabaseModificationType::ALTER_TABLE);
+	}
+}
+
 BoundStatement Binder::Bind(AlterStatement &stmt) {
 	BoundStatement result;
 	result.names = {"Success"};
 	result.types = {LogicalType::BOOLEAN};
+
+	if (stmt.info->type == AlterType::ALTER_POLICY) {
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		BindAlterPolicy(stmt.info->Cast<AlterPolicyInfo>(), properties);
+		result.plan = make_uniq<LogicalSimple>(LogicalOperatorType::LOGICAL_ALTER, std::move(stmt.info));
+		return result;
+	}
 
 	// Special handling for ALTER DATABASE - doesn't use schema binding
 	if (stmt.info->type == AlterType::ALTER_DATABASE) {

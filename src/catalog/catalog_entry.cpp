@@ -1,6 +1,7 @@
 #include "duckdb/catalog/catalog_entry.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/row_security.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/binary_serializer.hpp"
 #include "duckdb/main/database.hpp"
@@ -43,6 +44,15 @@ unique_ptr<CatalogEntry> CatalogEntry::AlterEntry(ClientContext &context, AlterI
 	if (info.type == AlterType::SET_COMMENT) {
 		auto result = Copy(context);
 		result->comment = info.Cast<SetCommentInfo>().comment_value;
+		return result;
+	}
+	if (info.type == AlterType::SET_ROW_SECURITY) {
+		auto result = Copy(context);
+		auto row_security = RowSecurity::Get(*result);
+		if (!row_security) {
+			throw CatalogException("\"%s\" does not support row-level security", name);
+		}
+		row_security->Apply(info.Cast<SetRowSecurityInfo>().action);
 		return result;
 	}
 	throw InternalException("Unsupported alter type for catalog entry!");

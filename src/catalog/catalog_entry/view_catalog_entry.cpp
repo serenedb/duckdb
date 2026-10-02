@@ -43,10 +43,12 @@ void ViewCatalogEntry::Initialize(CreateViewInfo &info) {
 	this->permissions = info.permissions;
 	this->column_comments = info.column_comments_map;
 	this->security_invoker = info.security_invoker;
+	row_security.enabled = info.row_security;
+	row_security.forced = info.force_row_security;
 }
 
 ViewCatalogEntry::ViewCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateViewInfo &info)
-    : StandardEntry(CatalogType::VIEW_ENTRY, schema, catalog, info.GetViewName(), info.oid),
+    : StandardEntry(CatalogType::VIEW_ENTRY, schema, catalog, info.GetViewName(), info.oid), row_security(catalog),
       bind_state(ViewBindState::UNBOUND) {
 	Initialize(info);
 }
@@ -69,6 +71,8 @@ unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 	result->permissions = permissions;
 	result->column_comments_map = column_comments;
 	result->security_invoker = security_invoker;
+	result->row_security = row_security.enabled;
+	result->force_row_security = row_security.forced;
 	return std::move(result);
 }
 
@@ -106,7 +110,11 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, Al
 		replaced_view.comment = comment;
 		replaced_view.tags = tags;
 		replaced_view.column_comments_map = column_comments;
-		return make_uniq<ViewCatalogEntry>(catalog, ParentSchema(context), replaced_view);
+		replaced_view.row_security = row_security.enabled;
+		replaced_view.force_row_security = row_security.forced;
+		auto result = make_uniq<ViewCatalogEntry>(catalog, ParentSchema(context), replaced_view);
+		result->row_security.policies = row_security.policies;
+		return std::move(result);
 	}
 
 	// Column comments have a special alter type
@@ -226,7 +234,9 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::Copy(ClientContext &context) const {
 	D_ASSERT(!internal);
 	auto create_info = GetInfo();
 
-	return make_uniq<ViewCatalogEntry>(catalog, ParentSchema(context), create_info->Cast<CreateViewInfo>());
+	auto result = make_uniq<ViewCatalogEntry>(catalog, ParentSchema(context), create_info->Cast<CreateViewInfo>());
+	result->row_security.policies = row_security.policies;
+	return std::move(result);
 }
 
 } // namespace duckdb

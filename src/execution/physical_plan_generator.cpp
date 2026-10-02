@@ -91,6 +91,8 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalOperator &op) {
 		return CreatePlan(op.Cast<LogicalLimit>());
 	case LogicalOperatorType::LOGICAL_SAMPLE:
 		return CreatePlan(op.Cast<LogicalSample>());
+	case LogicalOperatorType::LOGICAL_SECURITY_BARRIER:
+		return CreatePlan(*op.children[0]);
 	case LogicalOperatorType::LOGICAL_ORDER_BY:
 		return CreatePlan(op.Cast<LogicalOrder>());
 	case LogicalOperatorType::LOGICAL_TOP_N:
@@ -150,6 +152,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalOperator &op) {
 	case LogicalOperatorType::LOGICAL_CREATE_TYPE:
 	case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
 	case LogicalOperatorType::LOGICAL_CREATE_JOB:
+	case LogicalOperatorType::LOGICAL_CREATE_POLICY:
 		return CreatePlan(op.Cast<LogicalCreate>());
 	case LogicalOperatorType::LOGICAL_PRAGMA:
 		return CreatePlan(op.Cast<LogicalPragma>());

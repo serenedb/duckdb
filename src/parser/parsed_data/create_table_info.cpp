@@ -30,6 +30,8 @@ unique_ptr<CreateInfo> CreateTableInfo::Copy() const {
 		result->sort_keys.push_back(order->Copy());
 	}
 	result->serial_columns = serial_columns;
+	result->row_security = row_security;
+	result->force_row_security = force_row_security;
 	for (auto &option : options) {
 		result->options.emplace(option.first, option.second->Copy());
 	}

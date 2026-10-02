@@ -27,6 +27,8 @@ add_library_unity(
   create_tokenizer_info.cpp
   create_job_info.cpp
   alter_job_info.cpp
+  create_policy_info.cpp
+  alter_policy_info.cpp
   create_trigger_info.cpp
   create_schema_info.cpp
   create_scalar_function_info.cpp

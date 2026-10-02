@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/list.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
+#include "duckdb/catalog/row_security.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
@@ -12,6 +13,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/main/extension_helper.hpp"
+#include "duckdb/parser/parsed_data/alter_policy_info.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_aggregate_function_info.hpp"
@@ -359,6 +361,15 @@ unique_ptr<LogicalOperator> Catalog::BindAlterAddIndex(Binder &binder, TableCata
                                                        unique_ptr<CreateIndexInfo> create_info,
                                                        unique_ptr<AlterTableInfo> alter_info) {
 	throw NotImplementedException("BindAlterAddIndex not supported by this catalog");
+}
+
+bool Catalog::BypassesRowSecurity(ClientContext &context, StandardEntry &relation, optional_idx role) {
+	auto row_security = RowSecurity::Get(relation);
+	return !row_security || !row_security->forced;
+}
+
+bool Catalog::IsRowSecurityMember(ClientContext &context, const vector<idx_t> &policy_roles, optional_idx role) {
+	return std::find(policy_roles.begin(), policy_roles.end(), ACL_ID_PUBLIC) != policy_roles.end();
 }
 
 unique_ptr<TableRef> Catalog::RemoteExecute(ClientContext &context, unique_ptr<QueryNode> node) {
@@ -1429,6 +1440,20 @@ void Catalog::AlterSchema(CatalogTransaction transaction, AlterInfo &info) {
 void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	if (info.GetCatalogType() == CatalogType::SCHEMA_ENTRY) {
 		AlterSchema(transaction, info);
+		return;
+	}
+	if (info.type == AlterType::ALTER_POLICY) {
+		auto &policy_info = info.Cast<AlterPolicyInfo>();
+		auto &relation_name = policy_info.base_table->Table();
+		auto &schema = GetSchema(transaction, info.GetQualifiedName().Schema());
+		auto relation = schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, relation_name);
+		auto row_security = relation ? RowSecurity::Get(*relation) : nullptr;
+		if (!row_security || !row_security->AlterPolicy(transaction, info.GetQualifiedName().Name(), info)) {
+			throw CatalogException("policy \"%s\" for %s \"%s\" does not exist",
+			                       info.GetQualifiedName().Name().GetIdentifierName(),
+			                       relation && relation->type == CatalogType::VIEW_ENTRY ? "view" : "table",
+			                       relation_name.GetIdentifierName());
+		}
 		return;
 	}
 	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().all_in_schema) {

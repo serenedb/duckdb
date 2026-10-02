@@ -77,7 +77,7 @@ vector<idx_t> Binder::BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry
 
 BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	// visit the table reference
-	auto bound_table = Bind(*node.table);
+	auto bound_table = BindWithoutRowSecurity(*node.table);
 	auto root = std::move(bound_table.plan);
 	if (root->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only delete from base table");
@@ -101,6 +101,11 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		auto &properties = GetStatementProperties();
 		properties.RegisterDBModify(table.GetStorageCatalog(context), context, DatabaseModificationType::DELETE_DATA);
 	}
+	vector<PolicyCommand> row_security_commands {PolicyCommand::DELETE};
+	if (node.condition || !node.returning_list.empty()) {
+		row_security_commands.push_back(PolicyCommand::SELECT);
+	}
+	root = ApplyRowSecurity(table, get, std::move(root), row_security_commands);
 
 	// plan any tables from the various using clauses
 	if (!node.using_clauses.empty()) {

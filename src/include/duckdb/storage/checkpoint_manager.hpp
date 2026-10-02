@@ -34,6 +34,7 @@ class MetadataReader;
 class SchemaCatalogEntry;
 class SequenceCatalogEntry;
 class Serializer;
+class PolicyCatalogEntry;
 class ScalarMacroCatalogEntry;
 class StandardEntry;
 class TableMacroCatalogEntry;
@@ -94,6 +95,7 @@ protected:
 	virtual void WriteIndex(IndexCatalogEntry &index_catalog_entry, Serializer &serializer);
 	virtual void WriteType(TypeCatalogEntry &type, Serializer &serializer);
 	virtual void WriteTrigger(TriggerCatalogEntry &trigger, Serializer &serializer);
+	virtual void WritePolicy(PolicyCatalogEntry &policy, Serializer &serializer);
 	virtual void WriteTokenizer(StandardEntry &tokenizer, Serializer &serializer);
 	virtual void WriteRole(InCatalogEntry &role, Serializer &serializer);
 	virtual void WriteDatabase(InCatalogEntry &database, Serializer &serializer);
@@ -122,6 +124,7 @@ protected:
 	virtual void ReadIndex(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadType(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadTrigger(CatalogTransaction transaction, Deserializer &deserializer);
+	virtual void ReadPolicy(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadTokenizer(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadRole(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadDatabase(CatalogTransaction transaction, Deserializer &deserializer);

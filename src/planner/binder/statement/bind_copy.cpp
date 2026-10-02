@@ -530,6 +530,10 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 	// lookup the table to copy into
 	BindSchemaOrCatalog(stmt.info->GetQualifiedNameMutable());
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, stmt.info->GetQualifiedName());
+	if (RowSecurityApplies(table)) {
+		throw PermissionException(
+		    "COPY FROM not supported with row-level security\nHINT: Use INSERT statements instead.");
+	}
 	physical_index_vector_t<idx_t> column_index_map;
 	vector<LogicalIndex> named_column_map;
 	vector<LogicalType> expected_types;

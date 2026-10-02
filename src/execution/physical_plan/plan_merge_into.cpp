@@ -16,9 +16,13 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 
 	result->action_type = action.action_type;
 	result->condition = std::move(action.condition);
+	result->checks = std::move(action.checks);
 	vector<unique_ptr<BoundConstraint>> bound_constraints;
 	for (auto &constraint : op.bound_constraints) {
 		bound_constraints.push_back(constraint->Copy());
+	}
+	for (auto &constraint : action.bound_constraints) {
+		bound_constraints.push_back(std::move(constraint));
 	}
 	auto return_types = op.types;
 	if (op.return_chunk) {

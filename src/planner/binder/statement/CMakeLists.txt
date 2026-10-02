@@ -28,6 +28,7 @@ add_library_unity(
   bind_simple.cpp
   bind_summarize.cpp
   bind_update.cpp
+  bind_row_security.cpp
   bind_update_extensions.cpp
   bind_vacuum.cpp)
 set(ALL_OBJECT_FILES
