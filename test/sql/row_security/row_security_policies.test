@@ -1,0 +1,299 @@
+# name: test/sql/row_security/row_security_policies.test
+# group: [row_security]
+
+statement ok
+CREATE TABLE squad (id INTEGER, member VARCHAR, grade INTEGER, note VARCHAR);
+
+statement ok
+INSERT INTO squad VALUES (1, 'arelav', 42, 'skuf'), (2, 'babsky', 21, 'boss'), (3, 'arelav', 13, '7');
+
+statement ok
+ALTER TABLE squad ENABLE ROW LEVEL SECURITY;
+
+query I
+SELECT count(*) FROM squad;
+----
+3
+
+statement ok
+ALTER TABLE squad FORCE ROW LEVEL SECURITY;
+
+query I
+SELECT count(*) FROM squad;
+----
+0
+
+statement ok
+CREATE POLICY arelav_rows ON squad USING (member = 'arelav');
+
+query II
+SELECT id, note FROM squad ORDER BY id;
+----
+1	skuf
+3	7
+
+statement error
+CREATE POLICY arelav_rows ON squad USING (true);
+----
+<REGEX>:.*policy "arelav_rows" for table "squad" already exists.*
+
+statement error
+CREATE POLICY vedernikoff_rows ON squad TO vedernikoff USING (true);
+----
+<REGEX>:.*role "vedernikoff" does not exist.*
+
+statement error
+CREATE POLICY inserts ON squad FOR INSERT USING (true);
+----
+<REGEX>:.*only WITH CHECK expression allowed for INSERT.*
+
+statement error
+CREATE POLICY selects ON squad FOR SELECT WITH CHECK (true);
+----
+<REGEX>:.*WITH CHECK cannot be applied to SELECT or DELETE.*
+
+statement error
+CREATE POLICY unknown_column ON squad USING (nope = 1);
+----
+<REGEX>:.*nope.*
+
+statement ok
+CREATE POLICY skuf_only ON squad AS RESTRICTIVE FOR SELECT USING (grade > 20);
+
+query IIIIII
+SELECT policy_name, relation_name, relation_type, permissive, command, using_expression FROM duckdb_policies() ORDER BY policy_name;
+----
+arelav_rows	squad	TABLE	true	ALL	(member = 'arelav')
+skuf_only	squad	TABLE	false	SELECT	(grade > 20)
+
+query I
+SELECT id FROM squad ORDER BY id;
+----
+1
+
+query I
+SELECT count(*) FROM squad WHERE CASE WHEN grade = 21 THEN error('leak babsky') ELSE true END;
+----
+1
+
+query I
+SELECT count(*) FROM squad WHERE CASE WHEN grade = 13 THEN error('leak arelav row') ELSE true END;
+----
+1
+
+statement ok
+DROP POLICY skuf_only ON squad;
+
+statement ok
+INSERT INTO squad VALUES (4, 'arelav', 1, 'new');
+
+statement error
+INSERT INTO squad VALUES (5, 'babsky', 1, 'nope');
+----
+<REGEX>:.*new row violates row-level security policy for table "squad".*
+
+statement error
+UPDATE squad SET member = 'babsky' WHERE id = 4;
+----
+<REGEX>:.*new row violates row-level security policy for table "squad".*
+
+statement ok
+UPDATE squad SET grade = 0;
+
+statement ok
+DELETE FROM squad WHERE id = 4;
+
+statement ok
+ALTER TABLE squad NO FORCE ROW LEVEL SECURITY;
+
+query III
+SELECT id, member, grade FROM squad ORDER BY id;
+----
+1	arelav	0
+2	babsky	21
+3	arelav	0
+
+statement ok
+ALTER POLICY arelav_rows ON squad RENAME TO arelav_only;
+
+statement ok
+ALTER TABLE squad FORCE ROW LEVEL SECURITY;
+
+statement ok
+ALTER TABLE squad RENAME COLUMN member TO who;
+
+query I
+SELECT count(*) FROM squad;
+----
+2
+
+query II
+SELECT policy_name, using_expression FROM duckdb_policies();
+----
+arelav_only	(who = 'arelav')
+
+statement ok
+ALTER POLICY arelav_only ON squad USING (who = 'babsky');
+
+query I
+SELECT id FROM squad;
+----
+2
+
+statement ok
+ALTER POLICY arelav_only ON squad USING (who = 'arelav') WITH CHECK (grade = 0);
+
+statement error
+INSERT INTO squad VALUES (6, 'arelav', 1, 'x');
+----
+<REGEX>:.*new row violates row-level security policy for table "squad".*
+
+statement error
+ALTER POLICY nope ON squad RENAME TO nothing;
+----
+<REGEX>:.*policy "nope" for table "squad" does not exist.*
+
+statement ok
+ALTER TABLE squad RENAME TO squad_board;
+
+statement ok
+ALTER TABLE squad_board RENAME TO squad;
+
+query I
+SELECT count(*) FROM squad;
+----
+2
+
+statement ok
+BEGIN;
+
+statement ok
+DROP POLICY arelav_only ON squad;
+
+query I
+SELECT count(*) FROM squad;
+----
+0
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT count(*) FROM squad;
+----
+2
+
+statement error
+ALTER TABLE squad DROP COLUMN who;
+----
+<REGEX>:.*cannot drop column who of table squad because other objects depend on it.*
+
+statement ok
+ALTER TABLE squad DROP COLUMN who CASCADE;
+
+query I
+SELECT count(*) FROM squad;
+----
+0
+
+statement ok
+ALTER TABLE squad DISABLE ROW LEVEL SECURITY;
+
+query I
+SELECT count(*) FROM squad;
+----
+3
+
+statement ok
+CREATE TABLE tasks (id INTEGER, who VARCHAR, v INTEGER);
+
+statement ok
+INSERT INTO tasks VALUES (1, 'babsky', 0);
+
+statement ok
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+
+statement ok
+ALTER TABLE tasks FORCE ROW LEVEL SECURITY;
+
+statement ok
+CREATE POLICY tasks_read ON tasks FOR SELECT USING (true);
+
+statement ok
+CREATE POLICY tasks_write ON tasks FOR UPDATE USING (true) WITH CHECK (who = 'arelav');
+
+statement error
+UPDATE tasks SET v = 1;
+----
+<REGEX>:.*new row violates row-level security policy for table "tasks".*
+
+statement ok
+UPDATE tasks SET who = 'arelav', v = 2;
+
+statement ok
+ALTER POLICY tasks_write ON tasks WITH CHECK (1 = 0);
+
+statement error
+UPDATE tasks SET v = 3;
+----
+<REGEX>:.*new row violates row-level security policy for table "tasks".*
+
+statement ok
+ALTER POLICY tasks_write ON tasks WITH CHECK (who = current_user);
+
+statement error
+UPDATE tasks SET v = 4;
+----
+<REGEX>:.*new row violates row-level security policy for table "tasks".*
+
+query II
+SELECT who, v FROM tasks;
+----
+arelav	2
+
+statement ok
+CREATE TABLE members (team VARCHAR);
+
+statement ok
+INSERT INTO members VALUES ('red');
+
+statement ok
+CREATE TABLE board (id INTEGER, team VARCHAR);
+
+statement ok
+INSERT INTO board VALUES (1, 'red'), (2, 'blue');
+
+statement ok
+ALTER TABLE board ENABLE ROW LEVEL SECURITY;
+
+statement ok
+ALTER TABLE board FORCE ROW LEVEL SECURITY;
+
+statement ok
+CREATE POLICY board_team ON board USING (team IN (SELECT team FROM members));
+
+query I
+SELECT id FROM board;
+----
+1
+
+statement ok
+CREATE TEMPORARY TABLE members (team VARCHAR);
+
+statement error
+SELECT id FROM board;
+----
+<REGEX>:.*policy expressions cannot use temporary object "members".*
+
+statement error
+CREATE POLICY board_temp ON board USING (team IN (SELECT team FROM members));
+----
+<REGEX>:.*policy expressions cannot use temporary object "members".*
+
+statement ok
+DROP TABLE temp.main.members;
+
+query I
+SELECT id FROM board;
+----
+1

@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/policy_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
@@ -504,6 +505,23 @@ void WriteAheadLog::WriteDropTrigger(const TriggerCatalogEntry &entry) {
 	serializer.WriteProperty(101, "schema", entry.ParentSchemaName());
 	serializer.WriteProperty(102, "name", entry.name);
 	serializer.WriteProperty(103, "table", entry.base_table->Table());
+	serializer.End();
+}
+
+//===--------------------------------------------------------------------===//
+// POLICIES
+//===--------------------------------------------------------------------===//
+void WriteAheadLog::WriteCreatePolicy(const PolicyCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_POLICY);
+	serializer.WriteProperty(101, "policy", &entry);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropPolicy(const PolicyCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_POLICY);
+	serializer.WriteProperty(101, "schema", entry.ParentSchemaName());
+	serializer.WriteProperty(102, "name", entry.name);
+	serializer.WriteProperty(103, "relation_oid", entry.relation_oid);
 	serializer.End();
 }
 

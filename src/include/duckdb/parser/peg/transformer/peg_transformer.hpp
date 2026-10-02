@@ -45,6 +45,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/parameter_expression.hpp"
 #include "duckdb/parser/expression/window_expression.hpp"
+#include "duckdb/parser/parsed_data/alter_policy_info.hpp"
 #include "duckdb/parser/parsed_data/connect_info.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/parser/parsed_data/transaction_info.hpp"
@@ -517,14 +518,6 @@ public:
 	                                                                         ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformGrantStatement(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformRevokeStatement(PEGTransformer &transformer, ParseResult &parse_result);
-	static unique_ptr<SQLStatement> TransformCreatePolicyStatement(PEGTransformer &transformer,
-	                                                               ParseResult &parse_result);
-	static unique_ptr<SQLStatement> TransformAlterPolicyStatement(PEGTransformer &transformer,
-	                                                              ParseResult &parse_result);
-	static unique_ptr<SQLStatement> TransformDropPolicyStatement(PEGTransformer &transformer,
-	                                                             ParseResult &parse_result);
-	static unique_ptr<SQLStatement> TransformAlterTableRowSecurityStatement(PEGTransformer &transformer,
-	                                                                        ParseResult &parse_result);
 	// create_server.gram — CREATE/DROP SERVER walk an OPTIONS Parens(List(...)) body that the
 	// generator cannot auto-extract; hand-write the entry points.
 	static unique_ptr<SQLStatement> TransformCreateServerStatement(PEGTransformer &transformer,

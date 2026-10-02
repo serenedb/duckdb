@@ -45,7 +45,8 @@ public:
 	//! Create a TableCatalogEntry and initialize storage for it
 	DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info,
 	               shared_ptr<DataTable> inherited_storage = nullptr,
-	               shared_ptr<CatalogSet> inherited_triggers = nullptr);
+	               shared_ptr<CatalogSet> inherited_triggers = nullptr,
+	               shared_ptr<CatalogSet> inherited_policies = nullptr);
 
 public:
 	unique_ptr<CatalogEntry> AlterEntry(ClientContext &context, AlterInfo &info) override;

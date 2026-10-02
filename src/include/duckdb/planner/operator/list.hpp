@@ -38,6 +38,7 @@
 #include "duckdb/planner/operator/logical_recursive_cte.hpp"
 #include "duckdb/planner/operator/logical_reset.hpp"
 #include "duckdb/planner/operator/logical_sample.hpp"
+#include "duckdb/planner/operator/logical_security_barrier.hpp"
 #include "duckdb/planner/operator/logical_set.hpp"
 #include "duckdb/planner/operator/logical_set_operation.hpp"
 #include "duckdb/planner/operator/logical_simple.hpp"

@@ -1,5 +1,6 @@
 #include "duckdb/execution/operator/schema/physical_create_function.hpp"
 #include "duckdb/execution/operator/schema/physical_create_job.hpp"
+#include "duckdb/execution/operator/schema/physical_create_policy.hpp"
 #include "duckdb/execution/operator/schema/physical_create_schema.hpp"
 #include "duckdb/execution/operator/schema/physical_create_sequence.hpp"
 #include "duckdb/execution/operator/schema/physical_create_trigger.hpp"
@@ -24,6 +25,9 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalCreate &op) {
 	case LogicalOperatorType::LOGICAL_CREATE_JOB:
 		return Make<PhysicalCreateJob>(unique_ptr_cast<CreateInfo, CreateJobInfo>(std::move(op.info)),
 		                               op.estimated_cardinality);
+	case LogicalOperatorType::LOGICAL_CREATE_POLICY:
+		return Make<PhysicalCreatePolicy>(unique_ptr_cast<CreateInfo, CreatePolicyInfo>(std::move(op.info)),
+		                                  op.estimated_cardinality);
 	case LogicalOperatorType::LOGICAL_CREATE_VIEW:
 		return Make<PhysicalCreateView>(unique_ptr_cast<CreateInfo, CreateViewInfo>(std::move(op.info)),
 		                                op.estimated_cardinality);

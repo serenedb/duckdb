@@ -1,0 +1,95 @@
+# name: test/sql/row_security/row_security_merge.test
+# group: [row_security]
+
+statement ok
+CREATE TABLE crew (id INTEGER PRIMARY KEY, member VARCHAR, grade INTEGER);
+
+statement ok
+INSERT INTO crew VALUES (1, 'arelav', 1), (2, 'babsky', 2);
+
+statement ok
+CREATE TABLE allowed (id INTEGER);
+
+statement ok
+INSERT INTO allowed VALUES (3);
+
+statement ok
+ALTER TABLE crew ENABLE ROW LEVEL SECURITY;
+
+statement ok
+ALTER TABLE crew FORCE ROW LEVEL SECURITY;
+
+statement ok
+CREATE POLICY arelav_rows ON crew USING (member = 'arelav');
+
+statement error
+MERGE INTO crew USING (VALUES (2, 'arelav', 20)) s(id, member, grade) ON crew.id = s.id WHEN MATCHED THEN UPDATE SET grade = s.grade WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.member, s.grade);
+----
+<REGEX>:.*Duplicate key.*
+
+statement ok
+MERGE INTO crew USING (VALUES (1, 10)) s(id, grade) ON crew.id = s.id WHEN MATCHED THEN UPDATE SET grade = s.grade;
+
+statement error
+MERGE INTO crew USING (VALUES (1)) s(id) ON crew.id = s.id WHEN MATCHED THEN UPDATE SET member = 'babsky';
+----
+<REGEX>:.*new row violates row-level security policy for table "crew".*
+
+statement ok
+CREATE POLICY cheap ON crew AS RESTRICTIVE FOR UPDATE USING (grade < 5);
+
+statement error
+MERGE INTO crew USING (VALUES (1)) s(id) ON crew.id = s.id WHEN MATCHED THEN UPDATE SET grade = 0;
+----
+<REGEX>:.*target row violates row-level security policy for table "crew".*
+
+statement ok
+MERGE INTO crew USING (VALUES (1)) s(id) ON crew.id = s.id WHEN MATCHED AND crew.grade > 5 THEN DO NOTHING WHEN MATCHED THEN UPDATE SET grade = 0;
+
+statement ok
+CREATE POLICY keep ON crew AS RESTRICTIVE FOR DELETE USING (grade < 5);
+
+statement error
+MERGE INTO crew USING (VALUES (1)) s(id) ON crew.id = s.id WHEN MATCHED THEN DELETE;
+----
+<REGEX>:.*target row violates row-level security policy for table "crew".*
+
+statement error
+INSERT INTO crew VALUES (2, 'arelav', 3) ON CONFLICT (id) DO UPDATE SET grade = excluded.grade;
+----
+<REGEX>:.*target row violates row-level security policy for table "crew".*
+
+statement error
+INSERT INTO crew VALUES (1, 'babsky', 3) ON CONFLICT (id) DO NOTHING;
+----
+<REGEX>:.*new row violates row-level security policy for table "crew".*
+
+statement ok
+INSERT INTO crew VALUES (2, 'arelav', 3) ON CONFLICT (id) DO NOTHING;
+
+statement ok
+INSERT INTO crew VALUES (3, 'arelav', 3) ON CONFLICT (id) DO UPDATE SET grade = excluded.grade;
+
+statement ok
+DROP POLICY cheap ON crew;
+
+statement ok
+CREATE POLICY listed ON crew AS RESTRICTIVE FOR UPDATE USING (id IN (SELECT id FROM allowed)) WITH CHECK (true);
+
+statement error
+MERGE INTO crew USING (VALUES (1)) s(id) ON crew.id = s.id WHEN MATCHED THEN UPDATE SET grade = 0;
+----
+<REGEX>:.*target row violates row-level security policy for table "crew".*
+
+statement ok
+MERGE INTO crew USING (VALUES (3)) s(id) ON crew.id = s.id WHEN MATCHED THEN UPDATE SET grade = 4;
+
+statement ok
+ALTER TABLE crew NO FORCE ROW LEVEL SECURITY;
+
+query III
+SELECT id, member, grade FROM crew ORDER BY id;
+----
+1	arelav	10
+2	babsky	2
+3	arelav	4

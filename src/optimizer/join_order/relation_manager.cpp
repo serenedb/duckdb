@@ -121,6 +121,7 @@ static bool OperatorNeedsRelation(LogicalOperatorType op_type) {
 	case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY:
 	case LogicalOperatorType::LOGICAL_WINDOW:
 	case LogicalOperatorType::LOGICAL_SAMPLE:
+	case LogicalOperatorType::LOGICAL_SECURITY_BARRIER:
 		return true;
 	default:
 		return false;
@@ -359,7 +360,8 @@ bool RelationManager::ExtractJoinRelations(JoinOrderOptimizer &optimizer, Logica
 		AddAggregateOrWindowRelation(input_op, parent, operator_stats, op->type);
 		return true;
 	}
-	case LogicalOperatorType::LOGICAL_UNNEST: {
+	case LogicalOperatorType::LOGICAL_UNNEST:
+	case LogicalOperatorType::LOGICAL_SECURITY_BARRIER: {
 		// optimize children of unnest
 		RelationStats child_stats;
 		AddRelationWithChildren(optimizer, *op, input_op, parent, child_stats, limit_op, datasource_filters);

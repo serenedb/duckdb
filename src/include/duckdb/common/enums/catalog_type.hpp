@@ -33,6 +33,7 @@ enum class CatalogType : uint8_t {
 	ROLE_ENTRY = 229,
 	FOREIGN_SERVER_ENTRY = 230,
 	JOB_ENTRY = 231,
+	POLICY_ENTRY = 232,
 
 	// functions
 	TABLE_FUNCTION_ENTRY = 25,

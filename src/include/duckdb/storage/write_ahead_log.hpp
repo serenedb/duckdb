@@ -31,6 +31,7 @@ class SequenceCatalogEntry;
 class ScalarMacroCatalogEntry;
 class StandardEntry;
 class ViewCatalogEntry;
+class PolicyCatalogEntry;
 class TriggerCatalogEntry;
 class TypeCatalogEntry;
 class TableCatalogEntry;
@@ -105,6 +106,9 @@ public:
 
 	void WriteCreateTrigger(const TriggerCatalogEntry &entry);
 	void WriteDropTrigger(const TriggerCatalogEntry &entry);
+
+	void WriteCreatePolicy(const PolicyCatalogEntry &entry);
+	void WriteDropPolicy(const PolicyCatalogEntry &entry);
 
 	void WriteCreateTokenizer(const StandardEntry &entry);
 	void WriteDropTokenizer(const StandardEntry &entry);

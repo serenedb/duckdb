@@ -44,6 +44,7 @@ class TableFunction;
 class TableFilterSet;
 class TableFunctionRef;
 class TableCatalogEntry;
+class ViewCatalogEntry;
 class SampleOptions;
 struct MultiFileReader;
 struct OperatorPartitionData;
@@ -293,10 +294,12 @@ struct BindInfo {
 public:
 	explicit BindInfo(ScanType type_p) : type(type_p) {};
 	explicit BindInfo(TableCatalogEntry &table) : type(ScanType::TABLE), table(&table) {};
+	explicit BindInfo(ViewCatalogEntry &view) : type(ScanType::TABLE), view(&view) {};
 
 	unordered_map<string, Value> options;
 	ScanType type;
 	optional_ptr<TableCatalogEntry> table;
+	optional_ptr<ViewCatalogEntry> view;
 
 	void InsertOption(const string &name, Value value) { // NOLINT: work-around bug in clang-tidy
 		if (options.find(name) != options.end()) {

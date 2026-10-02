@@ -19,7 +19,8 @@ enum class ExtraDropInfoType : uint8_t {
 	INVALID = 0,
 
 	SECRET_INFO = 1,
-	TRIGGER_INFO = 2
+	TRIGGER_INFO = 2,
+	POLICY_INFO = 3
 };
 
 struct ExtraDropInfo {
@@ -53,6 +54,19 @@ struct ExtraDropTriggerInfo : public ExtraDropInfo {
 	ExtraDropTriggerInfo(const ExtraDropTriggerInfo &info);
 
 	//! Table the trigger is on
+	unique_ptr<TableRef> base_table;
+
+public:
+	unique_ptr<ExtraDropInfo> Copy() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<ExtraDropInfo> Deserialize(Deserializer &deserializer);
+};
+
+struct ExtraDropPolicyInfo : public ExtraDropInfo {
+	ExtraDropPolicyInfo();
+	ExtraDropPolicyInfo(const ExtraDropPolicyInfo &info);
+
 	unique_ptr<TableRef> base_table;
 
 public:

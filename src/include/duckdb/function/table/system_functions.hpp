@@ -174,6 +174,10 @@ struct DuckDBSequencesFun {
 	static void RegisterFunction(BuiltinFunctions &set);
 };
 
+struct DuckDBPoliciesFun {
+	static void RegisterFunction(BuiltinFunctions &set);
+};
+
 struct DuckDBTriggersFun {
 	static void RegisterFunction(BuiltinFunctions &set);
 };

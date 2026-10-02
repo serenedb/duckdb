@@ -82,6 +82,12 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalOper
 	case LogicalOperatorType::LOGICAL_WINDOW:
 		result = PropagateStatistics(node.Cast<LogicalWindow>(), node_ptr);
 		break;
+	case LogicalOperatorType::LOGICAL_SECURITY_BARRIER:
+		result = PropagateChildren(node, node_ptr);
+		for (auto &binding : node.GetColumnBindings()) {
+			statistics_map.erase(binding);
+		}
+		break;
 	default:
 		result = PropagateChildren(node, node_ptr);
 	}

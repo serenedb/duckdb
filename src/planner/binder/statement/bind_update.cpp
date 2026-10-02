@@ -216,11 +216,23 @@ BoundStatement Binder::Bind(UpdateStatement &stmt) {
 	return Bind(*stmt.node);
 }
 
+static bool UpdateReadsTargetRows(UpdateQueryNode &node) {
+	if (node.set_info->condition || !node.returning_list.empty()) {
+		return true;
+	}
+	bool reads = false;
+	for (auto &expr : node.set_info->expressions) {
+		ParsedExpressionIterator::VisitExpression<ColumnRefExpression>(
+		    *expr, [&](const ColumnRefExpression &) { reads = true; });
+	}
+	return reads;
+}
+
 BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	unique_ptr<LogicalOperator> root;
 
 	// visit the table reference
-	auto bound_table = Bind(*node.table);
+	auto bound_table = BindWithoutRowSecurity(*node.table);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only update base table");
 	}
@@ -245,18 +257,22 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 		return std::move(*expanded);
 	}
 
-	optional_ptr<LogicalGet> get;
+	optional_ptr<LogicalGet> get = &bound_table.plan->Cast<LogicalGet>();
+	auto reads_target_rows = UpdateReadsTargetRows(node);
+	vector<PolicyCommand> row_security_commands {PolicyCommand::UPDATE};
+	if (reads_target_rows) {
+		row_security_commands.push_back(PolicyCommand::SELECT);
+	}
+	bound_table.plan = ApplyRowSecurity(table, *get, std::move(bound_table.plan), row_security_commands);
 	if (node.from_table) {
 		auto from_binder = Binder::CreateBinder(context, this);
 		BoundJoinRef bound_crossproduct(JoinRefType::CROSS);
 		bound_crossproduct.left = std::move(bound_table);
 		bound_crossproduct.right = from_binder->Bind(*node.from_table);
 		root = CreatePlan(bound_crossproduct);
-		get = &root->children[0]->Cast<LogicalGet>();
 		bind_context.AddContext(std::move(from_binder->bind_context));
 	} else {
 		root = std::move(bound_table.plan);
-		get = &root->Cast<LogicalGet>();
 	}
 
 	if (!table.temporary) {
@@ -276,6 +292,8 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	BindDefaultValues(table.GetColumns(), update->bound_defaults, catalog_name.GetIdentifierName(),
 	                  schema_name.GetIdentifierName());
 	update->bound_constraints = BindConstraints(table);
+	auto parsed_constraint_count = update->bound_constraints.size();
+	AddRowSecurityChecks(table, PolicyCommand::UPDATE, reads_target_rows, update->bound_constraints);
 
 	// project any additional columns required for the condition/expressions
 	if (node.set_info->condition) {
@@ -300,6 +318,10 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	// storage-derived decisions (index updates force delete+insert) come
 	// from the scan-bound table when the catalog delegates storage
 	auto storage_table = get->GetTable();
+	for (idx_t i = parsed_constraint_count; i < update->bound_constraints.size(); i++) {
+		auto &check = update->bound_constraints[i]->Cast<BoundCheckConstraint>();
+		LogicalUpdate::BindCheckColumns(table, *get, *proj, *update, check.bound_columns);
+	}
 	if (storage_table && storage_table.get() != &table) {
 		storage_table->BindUpdateConstraints(*this, *get, *proj, *update, context);
 	} else {

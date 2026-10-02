@@ -18,6 +18,10 @@
 #include "duckdb/planner/operator/logical_update.hpp"
 #include "duckdb/planner/expression_binder/projection_binder.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
+#include "duckdb/planner/constraints/bound_check_constraint.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/parser/statement/insert_statement.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include <algorithm>
 
@@ -91,6 +95,12 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		update.bound_constraints = std::move(merge_into.bound_constraints);
 		update.update_is_del_and_insert = false;
 		update.update_column_count = 0;
+
+		AddRowSecurityChecks(table, PolicyCommand::UPDATE, true, result->bound_constraints);
+		for (auto &constraint : result->bound_constraints) {
+			LogicalUpdate::BindCheckColumns(table, get, proj, update,
+			                                constraint->Cast<BoundCheckConstraint>().bound_columns);
+		}
 
 		// call BindUpdateConstraints -- storage-derived decisions (an index
 		// update forces delete+insert) come from the scan-bound table when the
@@ -224,15 +234,37 @@ void CheckMergeAction(MergeActionCondition condition, MergeActionType action_typ
 	}
 }
 
+static vector<unique_ptr<BoundCheckConstraint>> ProposedRowChecks(ClientContext &context,
+                                                                  BoundMergeIntoAction &insert) {
+	vector<unique_ptr<BoundCheckConstraint>> result;
+	for (auto &constraint : insert.bound_constraints) {
+		auto &check = constraint->Cast<BoundCheckConstraint>();
+		auto expr = check.expression->Copy();
+		ExpressionIterator::VisitExpressionMutable<BoundReferenceExpression>(
+		    expr, [&](BoundReferenceExpression &ref, unique_ptr<Expression> &child) {
+			    child = insert.expressions[ref.Index()]->Copy();
+		    });
+		auto proposed = make_uniq<BoundCheckConstraint>();
+		proposed->expression = BoundCastExpression::AddCastToType(context, std::move(expr), LogicalType::BOOLEAN);
+		proposed->violation_message = check.violation_message;
+		result.push_back(std::move(proposed));
+	}
+	return result;
+}
+
 BoundStatement Binder::Bind(MergeIntoStatement &stmt) {
 	return Bind(*stmt.node);
 }
 
 BoundStatement Binder::BindNode(MergeQueryNode &node) {
+	return BindNode(node, nullptr);
+}
+
+BoundStatement Binder::BindNode(MergeQueryNode &node, optional_ptr<OnConflictInfo> on_conflict) {
 	// bind the target table
 	auto target_binder = Binder::CreateBinder(context, this);
 	auto table_alias = node.target->alias;
-	auto bound_table = target_binder->Bind(*node.target);
+	auto bound_table = target_binder->BindWithoutRowSecurity(*node.target);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only merge into base tables!");
 	}
@@ -251,6 +283,11 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		}
 	}
 	auto &table = *table_ptr;
+	auto &get = bound_table.plan->Cast<LogicalGet>();
+	if (!on_conflict) {
+		bound_table.plan =
+		    target_binder->ApplyRowSecurity(table, get, std::move(bound_table.plan), {PolicyCommand::SELECT});
+	}
 
 	bool has_triggers = false;
 	auto transaction = table.ParentCatalog().GetCatalogTransaction(context);
@@ -301,7 +338,6 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		}
 	}
 	// bind the WHEN NOT MATCHED BY SOURCE / TARGET merge actions
-	auto &get = bound_table.plan->Cast<LogicalGet>();
 	auto merge_into = make_uniq<LogicalMergeInto>(table);
 	merge_into->table_index = GenerateTableIndex();
 	auto proj_index = GenerateTableIndex();
@@ -388,6 +424,54 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 			                                        *action, source_aliases, source_names));
 		}
 		merge_into->actions.emplace(entry.first, std::move(bound_actions));
+	}
+
+	if (RowSecurityApplies(table)) {
+		auto insert_select_visible = !node.returning_list.empty();
+		if (on_conflict) {
+			insert_select_visible |=
+			    on_conflict->action_type == OnConflictAction::UPDATE || !on_conflict->indexed_columns.empty();
+		}
+		optional_ptr<BoundMergeIntoAction> insert_action;
+		for (auto &entry : merge_into->actions) {
+			for (auto &action : entry.second) {
+				switch (action->action_type) {
+				case MergeActionType::MERGE_INSERT:
+					AddRowSecurityChecks(table, PolicyCommand::INSERT, insert_select_visible,
+					                     action->bound_constraints);
+					insert_action = *action;
+					break;
+				case MergeActionType::MERGE_UPDATE:
+					if (!on_conflict) {
+						BindRowSecurityChecks(table, get, {PolicyCommand::UPDATE}, proj_index, projection_expressions,
+						                      action->checks);
+					}
+					break;
+				case MergeActionType::MERGE_DELETE:
+					BindRowSecurityChecks(table, get, {PolicyCommand::DELETE}, proj_index, projection_expressions,
+					                      action->checks);
+					break;
+				default:
+					break;
+				}
+			}
+		}
+		if (on_conflict && insert_action) {
+			auto &matched = merge_into->actions[MergeActionCondition::WHEN_MATCHED];
+			bool unguarded = matched.empty();
+			for (auto &action : matched) {
+				action->checks = ProposedRowChecks(context, *insert_action);
+				BindRowSecurityChecks(table, get, {PolicyCommand::UPDATE, PolicyCommand::SELECT}, proj_index,
+				                      projection_expressions, action->checks);
+				unguarded = action->condition != nullptr;
+			}
+			if (unguarded) {
+				auto do_nothing = make_uniq<BoundMergeIntoAction>();
+				do_nothing->action_type = MergeActionType::MERGE_DO_NOTHING;
+				do_nothing->checks = ProposedRowChecks(context, *insert_action);
+				matched.push_back(std::move(do_nothing));
+			}
+		}
 	}
 
 	// plan merge action subqueries

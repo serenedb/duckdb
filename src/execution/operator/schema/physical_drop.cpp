@@ -5,6 +5,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/row_security.hpp"
 #include "duckdb/parser/parsed_data/extra_drop_info.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 
@@ -67,6 +68,25 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
 			if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 				throw CatalogException("Trigger with name \"%s\" does not exist on table \"%s\"",
 				                       info->GetQualifiedName().Name(), base_table_ref.Table());
+			}
+		}
+		break;
+	}
+	case CatalogType::POLICY_ENTRY: {
+		auto &policy_extra = info->extra_drop_info->Cast<ExtraDropPolicyInfo>();
+		auto &base_table_ref = policy_extra.base_table->Cast<BaseTableRef>();
+		auto &qualified_name = info->GetQualifiedName();
+		auto &relation = Catalog::GetEntry(context.client, EntryLookupInfo(CatalogType::TABLE_ENTRY,
+		                                                                   QualifiedName(qualified_name.Catalog(),
+		                                                                                 qualified_name.Schema(),
+		                                                                                 base_table_ref.Table())))
+		                     .Cast<StandardEntry>();
+		auto transaction = relation.ParentCatalog().GetCatalogTransaction(context.client);
+		auto row_security = RowSecurity::Get(relation);
+		if (!row_security || !row_security->DropPolicy(transaction, qualified_name.Name())) {
+			if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+				throw CatalogException("policy \"%s\" for %s \"%s\" does not exist", qualified_name.Name(),
+				                       relation.type == CatalogType::VIEW_ENTRY ? "view" : "table", relation.name);
 			}
 		}
 		break;

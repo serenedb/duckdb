@@ -67,6 +67,7 @@ private:
 	unique_ptr<LogicalOperator> PushdownLimit(unique_ptr<LogicalOperator> op);
 	//! Push down a LogicalWindow op
 	unique_ptr<LogicalOperator> PushdownWindow(unique_ptr<LogicalOperator> op);
+	unique_ptr<LogicalOperator> PushdownSecurityBarrier(unique_ptr<LogicalOperator> op);
 	// Pushdown an inner join
 	unique_ptr<LogicalOperator> PushdownInnerJoin(unique_ptr<LogicalOperator> op,
 	                                              unordered_set<TableIndex> &left_bindings,

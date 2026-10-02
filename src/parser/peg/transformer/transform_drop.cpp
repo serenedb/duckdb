@@ -277,6 +277,22 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropTrigger(PEGTransfo
 	return result;
 }
 
+unique_ptr<DropStatement> PEGTransformerFactory::TransformDropPolicy(PEGTransformer &transformer,
+                                                                     const optional<bool> &if_exists,
+                                                                     const Identifier &policy_name,
+                                                                     unique_ptr<BaseTableRef> base_table_name) {
+	auto result = make_uniq<DropStatement>();
+	auto info = make_uniq<DropInfo>();
+	info->type = CatalogType::POLICY_ENTRY;
+	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	info->SetName(policy_name);
+	auto extra_info = make_uniq<ExtraDropPolicyInfo>();
+	extra_info->base_table = std::move(base_table_name);
+	info->extra_drop_info = std::move(extra_info);
+	result->info = std::move(info);
+	return result;
+}
+
 unique_ptr<DropStatement> PEGTransformerFactory::TransformDropJob(PEGTransformer &transformer,
                                                                   const optional<bool> &if_exists,
                                                                   const vector<QualifiedName> &qualified_name) {

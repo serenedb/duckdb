@@ -57,6 +57,7 @@ class AggregateFunctionCatalogEntry;
 class CollateCatalogEntry;
 class SchemaCatalogEntry;
 class TableCatalogEntry;
+class StandardEntry;
 class ViewCatalogEntry;
 class SequenceCatalogEntry;
 class TableFunctionCatalogEntry;
@@ -403,6 +404,8 @@ public:
 	                                                      unique_ptr<LogicalOperator> plan,
 	                                                      unique_ptr<CreateIndexInfo> create_info,
 	                                                      unique_ptr<AlterTableInfo> alter_info);
+	virtual bool BypassesRowSecurity(ClientContext &context, StandardEntry &relation, optional_idx role);
+	virtual bool IsRowSecurityMember(ClientContext &context, const vector<idx_t> &policy_roles, optional_idx role);
 
 	virtual DatabaseSize GetDatabaseSize(ClientContext &context) = 0;
 	virtual vector<MetadataBlockInfo> GetMetadataInfo(ClientContext &context);

@@ -65,6 +65,16 @@ ALTER TABLE u ADD UNIQUE (a)
 Cannot write ALTER TABLE ADD UNIQUE to a database file with DuckDB storage version
 
 statement error
+ALTER TABLE u ENABLE ROW LEVEL SECURITY
+----
+Cannot write SET_ROW_SECURITY to a database file with DuckDB storage version
+
+statement error
+CREATE POLICY p ON u USING (a > 0)
+----
+Cannot write CREATE_POLICY to a database file with DuckDB storage version
+
+statement error
 CREATE JOB j AFTER 1 HOUR AS SELECT 1
 ----
 Cannot write CREATE_JOB to a database file with DuckDB storage version

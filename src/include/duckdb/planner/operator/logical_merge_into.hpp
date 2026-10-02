@@ -12,6 +12,7 @@
 #include "duckdb/common/enums/merge_action_type.hpp"
 #include "duckdb/common/index_vector.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
+#include "duckdb/planner/constraints/bound_check_constraint.hpp"
 
 namespace duckdb {
 class TableCatalogEntry;
@@ -33,6 +34,8 @@ public:
 	//! Whether or not an UPDATE is a DELETE + INSERT
 	bool update_is_del_and_insert = false;
 	idx_t update_column_count = 0;
+	vector<unique_ptr<BoundConstraint>> bound_constraints;
+	vector<unique_ptr<BoundCheckConstraint>> checks;
 
 	void Serialize(Serializer &serializer) const;
 	static unique_ptr<BoundMergeIntoAction> Deserialize(Deserializer &deserializer);

@@ -1095,4 +1095,49 @@ string ResetTableOptionsInfo::ToString() const {
 	return result;
 }
 
+SetRowSecurityInfo::SetRowSecurityInfo()
+    : AlterInfo(AlterType::SET_ROW_SECURITY), entry_catalog_type(CatalogType::TABLE_ENTRY),
+      action(RowSecurityAction::ENABLE) {
+}
+
+SetRowSecurityInfo::SetRowSecurityInfo(CatalogType entry_catalog_type_p, AlterEntryData data,
+                                       RowSecurityAction action_p)
+    : AlterInfo(AlterType::SET_ROW_SECURITY, std::move(data.qualified_name), data.if_not_found),
+      entry_catalog_type(entry_catalog_type_p), action(action_p) {
+}
+
+CatalogType SetRowSecurityInfo::GetCatalogType() const {
+	return entry_catalog_type;
+}
+
+unique_ptr<AlterInfo> SetRowSecurityInfo::Copy() const {
+	return make_uniq_base<AlterInfo, SetRowSecurityInfo>(entry_catalog_type, GetAlterEntryData(), action);
+}
+
+string SetRowSecurityInfo::ToString() const {
+	string result = "ALTER ";
+	result += ParseInfo::TypeToString(entry_catalog_type);
+	result += " ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	switch (action) {
+	case RowSecurityAction::ENABLE:
+		result += " ENABLE";
+		break;
+	case RowSecurityAction::DISABLE:
+		result += " DISABLE";
+		break;
+	case RowSecurityAction::FORCE:
+		result += " FORCE";
+		break;
+	case RowSecurityAction::NO_FORCE:
+		result += " NO FORCE";
+		break;
+	}
+	result += " ROW LEVEL SECURITY;";
+	return result;
+}
+
 } // namespace duckdb

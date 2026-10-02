@@ -18,6 +18,7 @@
 #include "duckdb/function/window/rows_functions.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 
 #include "duckdb/planner/expression/bound_window_expression.hpp"
 #include "duckdb/planner/operator/logical_window.hpp"
@@ -357,7 +358,17 @@ BoundStatement Binder::BindTableFunctionInternal(TableFunction &table_function, 
 	                              get->GetMutableColumnIds(), get->GetTable().get(), std::move(virtual_columns));
 	result.names = std::move(return_names);
 	result.types = std::move(return_types);
+	auto &scan = *get;
+	optional_ptr<StandardEntry> scanned_relation;
+	if (table_function.get_bind_info) {
+		auto bind_info = table_function.get_bind_info(scan.bind_data.get());
+		scanned_relation = bind_info.table ? optional_ptr<StandardEntry>(bind_info.table.get())
+		                                   : optional_ptr<StandardEntry>(bind_info.view.get());
+	}
 	result.plan = std::move(get);
+	if (scanned_relation) {
+		result.plan = ApplyRowSecurity(*scanned_relation, scan, std::move(result.plan), {PolicyCommand::SELECT});
+	}
 	return result;
 }
 

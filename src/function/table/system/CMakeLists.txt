@@ -20,6 +20,7 @@ add_library_unity(
   duckdb_eviction_queues.cpp
   duckdb_metrics.cpp
   duckdb_optimizers.cpp
+  duckdb_policies.cpp
   duckdb_schemas.cpp
   duckdb_secrets.cpp
   duckdb_prepared_statements.cpp

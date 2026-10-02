@@ -49,6 +49,13 @@ string DropInfo::ToString() const {
 				result += trigger_info.base_table->Cast<BaseTableRef>().ToString();
 			}
 		}
+		if (type == CatalogType::POLICY_ENTRY && extra_drop_info) {
+			auto &policy_info = extra_drop_info->Cast<ExtraDropPolicyInfo>();
+			if (policy_info.base_table) {
+				result += " ON ";
+				result += policy_info.base_table->Cast<BaseTableRef>().ToString();
+			}
+		}
 		if (cascade) {
 			result += " CASCADE";
 		}

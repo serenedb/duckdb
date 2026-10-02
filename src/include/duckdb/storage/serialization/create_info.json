@@ -222,6 +222,16 @@
         "id": 206,
         "name": "options",
         "type": "case_insensitive_map_t<ParsedExpression*>"
+      },
+      {
+        "id": 16584,
+        "name": "row_security",
+        "type": "bool"
+      },
+      {
+        "id": 16585,
+        "name": "force_row_security",
+        "type": "bool"
       }
     ],
     "methods": {
@@ -291,6 +301,16 @@
       {
         "id": 16584,
         "name": "security_invoker",
+        "type": "bool"
+      },
+      {
+        "id": 16585,
+        "name": "row_security",
+        "type": "bool"
+      },
+      {
+        "id": 16586,
+        "name": "force_row_security",
         "type": "bool"
       }
     ],
@@ -693,6 +713,68 @@
     "methods": {
       "SetName": [
         "name"
+      ]
+    }
+  },
+  {
+    "class": "CreatePolicyInfo",
+    "base": "CreateInfo",
+    "enum": "POLICY_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_policy_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "policy_name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "base_table",
+        "type": "BaseTableRef*",
+        "base": "TableRef"
+      },
+      {
+        "id": 202,
+        "name": "relation_oid",
+        "type": "idx_t"
+      },
+      {
+        "id": 203,
+        "name": "permissive",
+        "type": "bool"
+      },
+      {
+        "id": 204,
+        "name": "command",
+        "type": "PolicyCommand"
+      },
+      {
+        "id": 205,
+        "name": "role_names",
+        "type": "vector<Identifier>"
+      },
+      {
+        "id": 206,
+        "name": "roles",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 207,
+        "name": "using_expr",
+        "type": "ParsedExpression*"
+      },
+      {
+        "id": 208,
+        "name": "check_expr",
+        "type": "ParsedExpression*"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "policy_name"
       ]
     }
   }

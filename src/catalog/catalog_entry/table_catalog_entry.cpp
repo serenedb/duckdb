@@ -33,10 +33,12 @@ constexpr const char *TableCatalogEntry::Name;
 
 TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info)
     : StandardEntry(CatalogType::TABLE_ENTRY, schema, catalog, info.GetTableName(), info.oid),
-      columns(std::move(info.columns)), constraints(std::move(info.constraints)) {
+      columns(std::move(info.columns)), constraints(std::move(info.constraints)), row_security(catalog) {
 	if (catalog.IsDuckCatalog()) {
 		triggers = make_shared_ptr<CatalogSet>(catalog);
 	}
+	row_security.enabled = info.row_security;
+	row_security.forced = info.force_row_security;
 	this->temporary = info.temporary;
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
@@ -115,7 +117,13 @@ unique_ptr<CreateInfo> TableCatalogEntry::GetInfo() const {
 	result->internal = internal;
 	result->comment = comment;
 	result->tags = tags;
+	CopyRowSecurity(*result);
 	return std::move(result);
+}
+
+void TableCatalogEntry::CopyRowSecurity(CreateTableInfo &info) const {
+	info.row_security = row_security.enabled;
+	info.force_row_security = row_security.forced;
 }
 
 string TableCatalogEntry::ColumnsToSQL(const ColumnList &columns, const vector<unique_ptr<Constraint>> &constraints) {
@@ -250,6 +258,11 @@ void LogicalUpdate::BindExtraColumns(TableCatalogEntry &table, LogicalGet &get, 
 	if (bound_columns.size() <= 1) {
 		return;
 	}
+	BindCheckColumns(table, get, proj, update, bound_columns);
+}
+
+void LogicalUpdate::BindCheckColumns(TableCatalogEntry &table, LogicalGet &get, LogicalProjection &proj,
+                                     LogicalUpdate &update, physical_index_set_t &bound_columns) {
 	idx_t found_column_count = 0;
 	physical_index_set_t found_columns;
 	for (idx_t i = 0; i < update.columns.size(); i++) {
@@ -530,7 +543,9 @@ unique_ptr<CatalogEntry> TableCatalogEntry::AlterEntry(ClientContext &context, A
 	} else {
 		result = CatalogEntry::AlterEntry(context, info);
 	}
-	result->Cast<TableCatalogEntry>().triggers = triggers;
+	auto &table = result->Cast<TableCatalogEntry>();
+	table.triggers = triggers;
+	table.row_security.policies = row_security.policies;
 	return result;
 }
 

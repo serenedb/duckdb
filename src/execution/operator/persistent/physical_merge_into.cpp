@@ -39,7 +39,8 @@ PhysicalMergeInto::PhysicalMergeInto(PhysicalPlan &physical_plan, vector<Logical
 // Sink
 //===--------------------------------------------------------------------===//
 struct MergeSinkState {
-	MergeSinkState() : selected_sel(STANDARD_VECTOR_SIZE), remaining_sel(STANDARD_VECTOR_SIZE) {
+	MergeSinkState()
+	    : selected_sel(STANDARD_VECTOR_SIZE), remaining_sel(STANDARD_VECTOR_SIZE), check_sel(STANDARD_VECTOR_SIZE) {
 	}
 
 	bool computed_matches = false;
@@ -49,6 +50,7 @@ struct MergeSinkState {
 	SelectionVector current_sel;
 	SelectionVector selected_sel;
 	SelectionVector remaining_sel;
+	SelectionVector check_sel;
 	idx_t current_count;
 	unique_ptr<DataChunk> sliced_chunk;
 	optional_ptr<DataChunk> input_chunk;
@@ -57,6 +59,7 @@ struct MergeSinkState {
 struct MergeLocalExecutionState {
 	unique_ptr<LocalSinkState> local_state;
 	unique_ptr<ExpressionExecutor> condition_executor;
+	vector<unique_ptr<ExpressionExecutor>> check_executors;
 	unique_ptr<ExpressionExecutor> insert_executor;
 	unique_ptr<DataChunk> insert_chunk;
 };
@@ -82,6 +85,9 @@ public:
 			}
 			if (action->condition) {
 				state.condition_executor = make_uniq<ExpressionExecutor>(context.client, *action->condition);
+			}
+			for (auto &check : action->checks) {
+				state.check_executors.push_back(make_uniq<ExpressionExecutor>(context.client, *check->expression));
 			}
 			if (!action->expressions.empty()) {
 				state.insert_executor = make_uniq<ExpressionExecutor>(context.client, action->expressions);
@@ -160,6 +166,12 @@ public:
 			result = sliced_chunk;
 		} else {
 			result = chunk;
+		}
+		for (idx_t i = 0; i < action.checks.size(); i++) {
+			auto &executor = *local_action_state.check_executors[i];
+			if (executor.SelectExpression(*result, local_state.sink_state.check_sel) != result->size()) {
+				throw PermissionException(action.checks[i]->violation_message);
+			}
 		}
 		// if we have any expressions - execute them to generate the new input chunk
 		if (!action.expressions.empty()) {

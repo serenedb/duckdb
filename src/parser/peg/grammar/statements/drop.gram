@@ -11,9 +11,11 @@ DropEntries <-
 	DropType /
 	DropSecret /
 	DropTrigger /
+	DropPolicy /
 	DropJob
 
 DropTrigger <- 'TRIGGER' IfExists? TriggerName 'ON' BaseTableName
+DropPolicy <- 'POLICY' IfExists? PolicyName 'ON' BaseTableName
 DropJob <- 'JOB' IfExists? List(QualifiedName)
 
 DropTable <- TableOrView IfExists? List(BaseTableName)

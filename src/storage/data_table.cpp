@@ -756,6 +756,23 @@ static void VerifyCheckConstraintExpression(ClientContext &context, TableCatalog
 	}
 }
 
+static void VerifyExtraCheckConstraint(ClientContext &context, TableCatalogEntry &table,
+                                       BoundCheckConstraint &bound_check, DataChunk &chunk) {
+	if (bound_check.violation_message.empty()) {
+		VerifyCheckConstraintExpression(context, table, *bound_check.expression, chunk,
+		                                "CHECK(" + bound_check.expression->ToString() + ")");
+		return;
+	}
+	ExpressionExecutor executor(context, *bound_check.expression);
+	Vector result(LogicalType::INTEGER);
+	executor.ExecuteExpression(chunk, result);
+	for (auto entry : result.Values<int32_t>()) {
+		if (!entry.IsValid() || entry.GetValue() == 0) {
+			throw PermissionException(bound_check.violation_message);
+		}
+	}
+}
+
 static void VerifyCheckConstraint(ClientContext &context, TableCatalogEntry &table, Expression &expr, DataChunk &chunk,
                                   CheckConstraint &check) {
 	VerifyCheckConstraintExpression(context, table, expr, chunk, check.ToString());
@@ -1066,9 +1083,7 @@ void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, Clien
 			// Engine-supplied extra constraints carry no parsed counterpart in
 			// this entry (e.g. a facade catalog enforcing its own checks
 			// through a delegated table); they are always CHECK constraints.
-			auto &bound_check = constraint->Cast<BoundCheckConstraint>();
-			VerifyCheckConstraintExpression(context, table, *bound_check.expression, chunk,
-			                                "CHECK(" + bound_check.expression->ToString() + ")");
+			VerifyExtraCheckConstraint(context, table, constraint->Cast<BoundCheckConstraint>(), chunk);
 			continue;
 		}
 		auto &base_constraint = constraints[i];
@@ -1812,10 +1827,13 @@ void DataTable::VerifyUpdateConstraints(ConstraintState &state, ClientContext &c
 			// this entry (e.g. a facade catalog enforcing its own checks
 			// through a delegated table); they are always CHECK constraints.
 			auto &bound_check = constraint->Cast<BoundCheckConstraint>();
+			if (bound_check.bound_columns.empty()) {
+				VerifyExtraCheckConstraint(context, table, bound_check, chunk);
+				continue;
+			}
 			DataChunk mock_chunk;
 			if (CreateMockChunk(table, column_ids, bound_check.bound_columns, chunk, mock_chunk)) {
-				VerifyCheckConstraintExpression(context, table, *bound_check.expression, mock_chunk,
-				                                "CHECK(" + bound_check.expression->ToString() + ")");
+				VerifyExtraCheckConstraint(context, table, bound_check, mock_chunk);
 			}
 			continue;
 		}

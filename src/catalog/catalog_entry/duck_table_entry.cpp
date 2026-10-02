@@ -31,6 +31,7 @@
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/catalog/catalog_entry/policy_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/storage/table_storage_info.hpp"
@@ -169,12 +170,16 @@ static void AssignCatalogOids(Catalog &catalog, ColumnList &columns, vector<uniq
 }
 
 DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info,
-                               shared_ptr<DataTable> inherited_storage, shared_ptr<CatalogSet> inherited_triggers)
+                               shared_ptr<DataTable> inherited_storage, shared_ptr<CatalogSet> inherited_triggers,
+                               shared_ptr<CatalogSet> inherited_policies)
     : TableCatalogEntry(catalog, schema, info.Base()), storage(std::move(inherited_storage)),
       column_dependency_manager(std::move(info.column_dependency_manager)) {
 	AssignCatalogOids(catalog, columns, constraints);
 	if (inherited_triggers) {
 		triggers = std::move(inherited_triggers);
+	}
+	if (inherited_policies) {
+		row_security.policies = std::move(inherited_policies);
 	}
 	if (storage) {
 		if (!info.indexes.empty()) {
@@ -372,6 +377,9 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 	    info.Cast<SetCommentInfo>().entry_catalog_type == CatalogType::TABLE_ENTRY) {
 		return CatalogEntry::AlterEntry(context, info);
 	}
+	if (info.type == AlterType::SET_ROW_SECURITY) {
+		return CatalogEntry::AlterEntry(context, info);
+	}
 	if (info.type != AlterType::ALTER_TABLE) {
 		throw CatalogException("Can only modify table with ALTER TABLE statement");
 	}
@@ -468,8 +476,20 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameColumn(ClientContext &context, Re
 	TableCatalogEntry::RenameColumn(table_info.columns, table_info.constraints, info);
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
+
+	auto transaction = catalog.GetCatalogTransaction(context);
+	IdentifierEquality same(columns.IsCaseSensitive());
+	vector<Identifier> policies_to_update;
+	row_security.ScanPolicies(transaction, [&](PolicyCatalogEntry &policy) {
+		if (policy.ReferencesColumn(info.old_name, same)) {
+			policies_to_update.push_back(policy.name);
+		}
+	});
+	for (auto &policy_name : policies_to_update) {
+		row_security.AlterPolicy(transaction, policy_name, info);
+	}
 	info.new_dependencies = make_uniq<LogicalDependencyList>(std::move(bound_create_info->dependencies));
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::AddColumn(ClientContext &context, AddColumnInfo &info) {
@@ -494,6 +514,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddColumn(ClientContext &context, AddCo
 	for (auto &constraint : constraints) {
 		create_info->constraints.push_back(constraint->Copy());
 	}
+	CopyRowSecurity(*create_info);
 
 	auto binder = Binder::CreateBinder(context);
 	binder->SetSearchPath(catalog, schema.name);
@@ -523,7 +544,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddColumn(ClientContext &context, AddCo
 		                         schema_name.GetIdentifierName());
 	}
 	auto new_storage = make_shared_ptr<DataTable>(context, *storage, info.new_column, *bound_defaults.back());
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers, row_security.policies);
 }
 
 struct StructMappingInfo {
@@ -820,6 +841,30 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	if (!removed_columns.empty() && !info.cascade) {
 		throw CatalogException("Cannot drop column: column is a dependency of 1 or more generated column(s)");
 	}
+	CopyRowSecurity(*create_info);
+	auto transaction = catalog.GetCatalogTransaction(context);
+	IdentifierEquality same(columns.IsCaseSensitive());
+	vector<Identifier> policies_to_drop;
+	row_security.ScanPolicies(transaction, [&](PolicyCatalogEntry &policy) {
+		bool references_removed = policy.ReferencesColumn(info.removed_column, same);
+		for (auto &removed : removed_columns) {
+			references_removed = references_removed || policy.ReferencesColumn(columns.GetColumn(removed).Name(), same);
+		}
+		if (!references_removed) {
+			return;
+		}
+		if (!info.cascade) {
+			throw DependencyException(
+			    "cannot drop column %s of table %s because other objects depend on it\nDETAIL: policy %s on table %s "
+			    "depends on column %s\nHINT: Use DROP ... CASCADE to drop the dependent objects too.",
+			    info.removed_column.GetIdentifierName(), name.GetIdentifierName(), policy.name.GetIdentifierName(),
+			    name.GetIdentifierName(), info.removed_column.GetIdentifierName());
+		}
+		policies_to_drop.push_back(policy.name);
+	});
+	for (auto &policy_name : policies_to_drop) {
+		row_security.DropPolicy(transaction, policy_name);
+	}
 	bool dropped_column_is_generated = false;
 	for (auto &col : columns.Logical()) {
 		if (col.Logical() == removed_index || removed_columns.count(col.Logical())) {
@@ -845,11 +890,10 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
 	info.new_dependencies = make_uniq<LogicalDependencyList>(std::move(bound_create_info->dependencies));
 	if (columns.GetColumn(LogicalIndex(removed_index)).Generated()) {
-		return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+		return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 	}
 	const bool cascade_drops_column_dependents = info.cascade && catalog.Compatibility() == SqlCompatibility::POSTGRES;
 	if (cascade_drops_column_dependents) {
-		auto transaction = catalog.GetCatalogTransaction(context);
 		SubDependency removed {AlterTableType::REMOVE_COLUMN, info.removed_column};
 		for (auto &entry : catalog.GetDependencyManager()->CheckDropDependencies(transaction, *this, true)) {
 			auto &dependent = entry.first.get();
@@ -863,7 +907,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	}
 	auto new_storage =
 	    make_shared_ptr<DataTable>(context, *storage, columns.LogicalToPhysical(LogicalIndex(removed_index)).index);
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers, row_security.policies);
 }
 
 struct DroppedFieldMapping {
@@ -1146,7 +1190,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::SetDefault(ClientContext &context, SetD
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
 	info.new_dependencies = make_uniq<LogicalDependencyList>(std::move(bound_create_info->dependencies));
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::SetNotNull(ClientContext &context, SetNotNullInfo &info) {
@@ -1178,14 +1222,14 @@ unique_ptr<CatalogEntry> DuckTableEntry::SetNotNull(ClientContext &context, SetN
 
 	// Early return
 	if (has_not_null) {
-		return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+		return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 	}
 
 	// Return with new storage info. Note that we need the bound column index here.
 	auto physical_columns = columns.LogicalToPhysical(LogicalIndex(not_null_idx));
 	auto bound_constraint = make_uniq<BoundNotNullConstraint>(physical_columns);
 	auto new_storage = make_shared_ptr<DataTable>(context, *storage, *bound_constraint);
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers, row_security.policies);
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::DropNotNull(ClientContext &context, DropNotNullInfo &info) {
@@ -1209,7 +1253,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropNotNull(ClientContext &context, Dro
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 }
 
 static optional_idx FindConstraint(const vector<unique_ptr<Constraint>> &constraints, const string &constraint_name) {
@@ -1237,7 +1281,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropConstraint(ClientContext &context, 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
 	info.new_dependencies = make_uniq<LogicalDependencyList>(std::move(bound_create_info->dependencies));
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::RenameConstraint(ClientContext &context, RenameConstraintInfo &info) {
@@ -1253,7 +1297,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RenameConstraint(ClientContext &context
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
 	info.new_dependencies = make_uniq<LogicalDependencyList>(std::move(bound_create_info->dependencies));
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context, ChangeColumnTypeInfo &info) {
@@ -1264,12 +1308,22 @@ unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context
 	type_binder->BindLogicalType(info.target_type);
 
 	auto change_idx = GetColumnIndex(info.column_name);
+	IdentifierEquality same(columns.IsCaseSensitive());
+	row_security.ScanPolicies(catalog.GetCatalogTransaction(context), [&](PolicyCatalogEntry &policy) {
+		if (policy.ReferencesColumn(info.column_name, same)) {
+			throw DependencyException("cannot alter type of a column used in a policy definition\nDETAIL: policy %s "
+			                          "on table %s depends on column \"%s\"",
+			                          policy.name.GetIdentifierName(), name.GetIdentifierName(),
+			                          info.column_name.GetIdentifierName());
+		}
+	});
 	auto create_info = make_uniq<CreateTableInfo>(schema, name);
 	create_info->temporary = temporary;
 	create_info->comment = comment;
 	create_info->tags = tags;
 	create_info->dependencies = dependencies;
 	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
+	CopyRowSecurity(*create_info);
 
 	// Bind the USING expression.
 	auto binder = Binder::CreateBinder(context);
@@ -1360,7 +1414,8 @@ unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context
 	auto new_storage =
 	    make_shared_ptr<DataTable>(context, *storage, columns.LogicalToPhysical(LogicalIndex(change_idx)).index,
 	                               info.target_type, std::move(storage_oids), *bound_expression);
-	auto result = make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers);
+	auto result =
+	    make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers, row_security.policies);
 	return std::move(result);
 }
 
@@ -1380,7 +1435,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::SetColumnComment(ClientContext &context
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::AlterPermissions(ClientContext &context, AlterPermissionsInfo &info) {
@@ -1392,7 +1447,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterPermissions(ClientContext &context
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::AddForeignKeyConstraint(CatalogTransaction transaction,
@@ -1404,6 +1459,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddForeignKeyConstraint(CatalogTransact
 	create_info->comment = comment;
 	create_info->tags = tags;
 	create_info->dependencies = dependencies;
+	CopyRowSecurity(*create_info);
 
 	create_info->columns = columns.Copy();
 	for (idx_t i = 0; i < constraints.size(); i++) {
@@ -1420,7 +1476,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddForeignKeyConstraint(CatalogTransact
 
 	unique_ptr<BoundCreateTableInfo> bound_create_info;
 	bound_create_info = Binder::BindCreateTableCheckpoint(std::move(create_info), schema);
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 }
 
 unique_ptr<CatalogEntry> DuckTableEntry::DropForeignKeyConstraint(ClientContext &context, AlterForeignKeyInfo &info) {
@@ -1431,6 +1487,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropForeignKeyConstraint(ClientContext 
 	create_info->comment = comment;
 	create_info->tags = tags;
 	create_info->dependencies = dependencies;
+	CopyRowSecurity(*create_info);
 
 	create_info->columns = columns.Copy();
 	for (idx_t i = 0; i < constraints.size(); i++) {
@@ -1450,7 +1507,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::DropForeignKeyConstraint(ClientContext 
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 }
 
 void DuckTableEntry::Rollback(CatalogEntry &prev_entry) {
@@ -1533,7 +1590,8 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddConstraint(ClientContext &context, A
 	info.new_dependencies = make_uniq<LogicalDependencyList>(std::move(bound_create_info->dependencies));
 
 	auto new_storage = make_shared_ptr<DataTable>(context, *storage, *bound_constraint);
-	auto new_entry = make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers);
+	auto new_entry =
+	    make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers, row_security.policies);
 	return std::move(new_entry);
 }
 
@@ -1544,7 +1602,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::Copy(ClientContext &context) const {
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableCheckpoint(std::move(create_info), schema);
-	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers, row_security.policies);
 }
 
 void DuckTableEntry::ReplaceStorage(DuckTableEntry &source) {

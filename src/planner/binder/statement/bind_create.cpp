@@ -25,6 +25,7 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
+#include "duckdb/parser/parsed_data/create_policy_info.hpp"
 #include "duckdb/parser/parsed_data/create_trigger_info.hpp"
 #include "duckdb/parser/parsed_data/create_secret_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
@@ -722,7 +723,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	BindSchemaOrCatalog(create_trigger_info.base_table->GetQualifiedNameMutable());
 	TableDescription table_description(create_trigger_info.base_table->GetQualifiedName());
 	auto table_ref = make_uniq<BaseTableRef>(table_description);
-	auto bound_table = Bind(*table_ref);
+	auto bound_table = BindWithoutRowSecurity(*table_ref);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("CREATE TRIGGER requires a base table, not a view or subquery");
 	}
@@ -870,6 +871,18 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	return schema;
 }
 
+SchemaCatalogEntry &Binder::BindCreatePolicyInfo(CreatePolicyInfo &info) {
+	if (info.temporary) {
+		throw BinderException("CREATE TEMPORARY POLICY is not supported");
+	}
+	auto &relation = BindPolicyRelation(*info.base_table);
+	BindPolicyClauses(relation, info.command, info.using_expr.get(), info.check_expr.get());
+	info.temporary = relation.temporary;
+	info.SetQualifiedName(
+	    QualifiedName(relation.ParentCatalog().GetName(), relation.ParentSchemaName(), info.GetPolicyName()));
+	return BindCreateSchema(info);
+}
+
 unique_ptr<LogicalOperator> DuckCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt, CatalogEntry &table,
                                                          unique_ptr<LogicalOperator> plan) {
 	if (table.type != CatalogType::TABLE_ENTRY) {
@@ -949,7 +962,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		                                                 create_index_info.GetQualifiedName().Schema(),
 		                                                 create_index_info.table));
 		auto table_ref = make_uniq<BaseTableRef>(table_description);
-		auto bound_table = Bind(*table_ref);
+		auto bound_table = BindWithoutRowSecurity(*table_ref);
 		auto plan = std::move(bound_table.plan);
 		// Tables go through the LOGICAL_GET; otherwise resolve a view and let its catalog decide.
 		optional_ptr<TableCatalogEntry> table_ptr;
@@ -1137,6 +1150,12 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::JOB_ENTRY: {
 		auto &schema = BindCreateJobInfo(stmt.info->Cast<CreateJobInfo>());
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_JOB, std::move(stmt.info), &schema);
+		break;
+	}
+	case CatalogType::POLICY_ENTRY: {
+		auto &schema = BindCreatePolicyInfo(stmt.info->Cast<CreatePolicyInfo>());
+		result.plan =
+		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_POLICY, std::move(stmt.info), &schema);
 		break;
 	}
 	default:

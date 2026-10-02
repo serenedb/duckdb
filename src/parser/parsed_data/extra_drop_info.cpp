@@ -13,6 +13,17 @@ unique_ptr<ExtraDropInfo> ExtraDropTriggerInfo::Copy() const {
 	return make_uniq<ExtraDropTriggerInfo>(*this);
 }
 
+ExtraDropPolicyInfo::ExtraDropPolicyInfo() : ExtraDropInfo(ExtraDropInfoType::POLICY_INFO) {
+}
+
+ExtraDropPolicyInfo::ExtraDropPolicyInfo(const ExtraDropPolicyInfo &info)
+    : ExtraDropInfo(ExtraDropInfoType::POLICY_INFO), base_table(info.base_table ? info.base_table->Copy() : nullptr) {
+}
+
+unique_ptr<ExtraDropInfo> ExtraDropPolicyInfo::Copy() const {
+	return make_uniq<ExtraDropPolicyInfo>(*this);
+}
+
 ExtraDropSecretInfo::ExtraDropSecretInfo() : ExtraDropInfo(ExtraDropInfoType::SECRET_INFO) {
 }
 
