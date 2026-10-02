@@ -1000,7 +1000,8 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		}
 		case AlterType::SET_COLUMN_COMMENT:
 		case AlterType::SET_COMMENT:
-		case AlterType::ALTER_PERMISSIONS: {
+		case AlterType::ALTER_PERMISSIONS:
+		case AlterType::CHANGE_OWNERSHIP: {
 			disallow_alter = false;
 			break;
 		}
@@ -1174,6 +1175,28 @@ void DependencyManager::AddOwnership(CatalogTransaction transaction, CatalogEntr
 	    /*subject = */ DependencySubject {GetLookupProperties(entry), DependencySubjectFlags().SetOwnership(),
 	                                      optional_idx()}};
 	CreateDependency(transaction, info);
+}
+
+void DependencyManager::RemoveOwnership(CatalogTransaction transaction, CatalogEntry &entry) {
+	if (IsSystemEntry(entry)) {
+		return;
+	}
+	vector<DependencyInfo> owners;
+	ScanDependents(transaction, GetLookupProperties(entry), [&](DependencyEntry &dep) {
+		if (dep.Dependent().flags.IsOwnedBy()) {
+			owners.push_back(DependencyInfo::FromDependent(dep));
+		}
+	});
+	for (auto &owner : owners) {
+		RemoveDependency(transaction, owner);
+		if (!owner.dependent.flags.IsBlocking()) {
+			continue;
+		}
+		DependencyInfo remaining {DependencyDependent {owner.dependent.entry, DependencyDependentFlags().SetBlocking(),
+		                                               owner.dependent.subdependencies},
+		                          DependencySubject {owner.subject.entry, DependencySubjectFlags(), optional_idx()}};
+		CreateDependency(transaction, remaining);
+	}
 }
 
 static string FormatString(const MangledEntryName &mangled) {

@@ -95,6 +95,7 @@ public:
 	void RemoveDependencyBetween(CatalogTransaction transaction, CatalogEntry &dependent, CatalogEntry &subject);
 
 	void AddOwnership(CatalogTransaction transaction, CatalogEntry &owner, CatalogEntry &entry);
+	void RemoveOwnership(CatalogTransaction transaction, CatalogEntry &entry);
 	catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, CatalogEntry &owner);
 
 	//! Get the order of entries needed by EXPORT, the objects with no dependencies are exported first

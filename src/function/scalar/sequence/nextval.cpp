@@ -5,6 +5,7 @@
 #include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
@@ -135,9 +136,28 @@ void NextValFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 }
 
+const Expression &SequenceNameArgument(const Expression &argument) {
+	reference<const Expression> current = argument;
+	while (BoundCastExpression::IsCast(current.get())) {
+		auto &cast = current.get().Cast<BoundFunctionExpression>();
+		auto &child = BoundCastExpression::Child(cast);
+		if (StringUtil::CIEquals(BoundCastExpression::TargetType(cast).GetAlias(), "regclass") &&
+		    child.GetReturnType().id() == LogicalTypeId::VARCHAR) {
+			return child;
+		}
+		current = child;
+	}
+	return argument;
+}
+
 unique_ptr<FunctionData> NextValBind(BindScalarFunctionInput &input) {
 	// parameter to nextval function is a foldable constant
 	// evaluate the constant and perform the catalog lookup already
+	auto &arguments = input.GetArguments();
+	auto &sequence_name = SequenceNameArgument(*arguments[0]);
+	if (&sequence_name != arguments[0].get()) {
+		arguments[0] = sequence_name.Copy();
+	}
 	const auto seqname = input.GetConstant(0);
 	if (seqname.IsNull()) {
 		return nullptr;

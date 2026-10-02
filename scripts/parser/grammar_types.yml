@@ -854,6 +854,8 @@ QualifiedName:
   by_value: false
   rules:
     - QualifiedSequenceName
+    - SeqOwner
+    - SeqOwnerNone
     - IdentifierOrStringLiteral
     - QualifiedTypeName
     - TypeNameAsQualifiedName
@@ -1669,6 +1671,7 @@ SequenceOptionEntry:
     - SeqNoMinMax
     - SeqStartWith
     - SeqCache
+    - SeqAsType
     - SeqOwnedBy
     - AlterSequenceOption
     - SeqRestart
