@@ -27,9 +27,11 @@ CatalogType ChangeOwnershipInfo::GetCatalogType() const {
 }
 
 unique_ptr<AlterInfo> ChangeOwnershipInfo::Copy() const {
-	return make_uniq_base<AlterInfo, ChangeOwnershipInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
-	                                                      GetQualifiedName().Schema(), GetQualifiedName().Name(),
-	                                                      owner_schema, owner_name, if_not_found);
+	auto result =
+	    make_uniq<ChangeOwnershipInfo>(entry_catalog_type, GetQualifiedName().Catalog(), GetQualifiedName().Schema(),
+	                                   GetQualifiedName().Name(), owner_schema, owner_name, if_not_found);
+	result->owner_path = owner_path;
+	return std::move(result);
 }
 
 string ChangeOwnershipInfo::ToString() const {
@@ -43,8 +45,19 @@ string ChangeOwnershipInfo::ToString() const {
 	}
 	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	result += " OWNED BY ";
-	result += QualifiedName(GetQualifiedName().Catalog(), owner_schema, owner_name)
-	              .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (!owner_path.empty()) {
+		for (idx_t i = 0; i < owner_path.size(); i++) {
+			if (i) {
+				result += ".";
+			}
+			result += SQLIdentifier(owner_path[i].GetIdentifierName());
+		}
+	} else if (owner_name.empty()) {
+		result += "NONE";
+	} else {
+		result += QualifiedName(GetQualifiedName().Catalog(), owner_schema, owner_name)
+		              .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	}
 	result += ";";
 	return result;
 }

@@ -6,7 +6,7 @@ AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter
 AlterIndexAlter <- RenameAlter / SetOptions / ResetOptions
 AlterFunctionStmt <- 'FUNCTION' IfExists? QualifiedName RenameAlter
 
-AlterTableStmt <- 'TABLE' IfExists? BaseTableName List(AlterTableOptions)
+AlterTableStmt <- 'TABLE' IfExists? 'ONLY'? BaseTableName List(AlterTableOptions)
 AlterSchemaStmt <- 'SCHEMA' IfExists? QualifiedName RenameAlter
 
 AlterTableOptions <- AddColumn / DropColumn / AlterColumn / AddConstraint / DropConstraint / ChangeNullability /

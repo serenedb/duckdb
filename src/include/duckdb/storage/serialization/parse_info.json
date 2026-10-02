@@ -613,6 +613,12 @@
         "id": 302,
         "name": "owner_name",
         "type": "Identifier"
+      },
+      {
+        "id": 16584,
+        "name": "owner_path",
+        "type": "vector<Identifier>",
+        "version": "serenedb_v1"
       }
     ]
   },

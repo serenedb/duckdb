@@ -127,6 +127,9 @@ public:
 	virtual bool IsDuckTable() const {
 		return false;
 	}
+	virtual bool NumbersRowsWith(const CatalogEntry &sequence) const {
+		return false;
+	}
 
 	DUCKDB_API static string ColumnsToSQL(const ColumnList &columns, const vector<unique_ptr<Constraint>> &constraints);
 

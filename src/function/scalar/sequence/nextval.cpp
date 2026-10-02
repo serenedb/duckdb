@@ -7,6 +7,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
@@ -135,6 +136,19 @@ void SetValFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 }
 
+const Expression &SequenceNameArgument(const Expression &argument) {
+	reference<const Expression> current = argument;
+	while (current.get().GetExpressionClass() == ExpressionClass::BOUND_CAST) {
+		auto &cast = current.get().Cast<BoundCastExpression>();
+		if (StringUtil::CIEquals(cast.GetReturnType().GetAlias(), "regclass") &&
+		    cast.Child().GetReturnType().id() == LogicalTypeId::VARCHAR) {
+			return cast.Child();
+		}
+		current = cast.Child();
+	}
+	return argument;
+}
+
 unique_ptr<FunctionData> NextValBind(BindScalarFunctionInput &input) {
 	auto &arguments = input.GetArguments();
 
@@ -148,7 +162,7 @@ unique_ptr<FunctionData> NextValBind(BindScalarFunctionInput &input) {
 	auto &binder = input.GetBinder();
 	// parameter to nextval function is a foldable constant
 	// evaluate the constant and perform the catalog lookup already
-	auto seqname = ExpressionExecutor::EvaluateScalar(binder.context, *arguments[0]);
+	auto seqname = ExpressionExecutor::EvaluateScalar(binder.context, SequenceNameArgument(*arguments[0]));
 	if (seqname.IsNull()) {
 		return nullptr;
 	}
