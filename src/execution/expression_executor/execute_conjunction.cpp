@@ -1,6 +1,7 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/execution/adaptive_filter.hpp"
 
@@ -10,9 +11,12 @@ namespace duckdb {
 
 struct ConjunctionState : public ExpressionState {
 	ConjunctionState(const Expression &expr, ExpressionExecutorState &root) : ExpressionState(expr, root) {
-		adaptive_filter = make_uniq<AdaptiveFilter>(expr);
 		if (HasContext()) {
+			adaptive_filter = make_uniq<AdaptiveFilter>(expr, Settings::Get<FilterReorderSetting>(GetContext()));
 			adaptive_filter->SetLogger(GetContext().logger);
+		} else {
+			adaptive_filter = make_uniq<AdaptiveFilter>(
+			    expr, EnumUtil::FromString<FilterReorder>(FilterReorderSetting::DefaultValue));
 		}
 	}
 	unique_ptr<AdaptiveFilter> adaptive_filter;

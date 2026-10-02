@@ -10,6 +10,7 @@
 
 #include "duckdb/planner/table_filter_set.hpp"
 #include "duckdb/common/common.hpp"
+#include "duckdb/common/enums/filter_reorder.hpp"
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/random_engine.hpp"
 #include "duckdb/common/shared_ptr.hpp"
@@ -30,7 +31,7 @@ enum class AdaptiveFilterSource : uint8_t {
 
 class AdaptiveFilter {
 public:
-	explicit AdaptiveFilter(const Expression &expr);
+	AdaptiveFilter(const Expression &expr, FilterReorder reorder);
 	explicit AdaptiveFilter(const TableFilterSet &table_filters, vector<idx_t> filter_global_pos = {});
 	//! An identity permutation over an externally owned filter list.
 	explicit AdaptiveFilter(idx_t filter_count);
@@ -54,11 +55,14 @@ public:
 private:
 	vector<pair<string, string>> BuildInitInfo(AdaptiveFilterSource source,
 	                                           const vector<idx_t> &filter_identities) const;
+	bool CanSwap(idx_t idx) const;
 
 private:
 	vector<idx_t> permutation;
 	vector<idx_t> swap_likeliness;
 	bool disable_permutations = false;
+	FilterReorder reorder = FilterReorder::ALWAYS;
+	vector<bool> can_throw;
 	vector<idx_t> filter_global_pos;
 	//! used for adaptive expression reordering
 	idx_t iteration_count = 0;

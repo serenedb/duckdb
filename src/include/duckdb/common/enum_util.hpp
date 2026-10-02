@@ -252,6 +252,8 @@ enum class FileSyncParallelism : uint8_t;
 
 enum class FilterPropagateResult : uint8_t;
 
+enum class FilterReorder : uint8_t;
+
 enum class ForeignKeyType : uint8_t;
 
 enum class FunctionCollationHandling : uint8_t;
@@ -922,6 +924,9 @@ const char* EnumUtil::ToChars<FileSyncParallelism>(FileSyncParallelism value);
 
 template<>
 const char* EnumUtil::ToChars<FilterPropagateResult>(FilterPropagateResult value);
+
+template<>
+const char* EnumUtil::ToChars<FilterReorder>(FilterReorder value);
 
 template<>
 const char* EnumUtil::ToChars<ForeignKeyType>(ForeignKeyType value);
@@ -1763,6 +1768,9 @@ FileSyncParallelism EnumUtil::FromString<FileSyncParallelism>(const char *value)
 
 template<>
 FilterPropagateResult EnumUtil::FromString<FilterPropagateResult>(const char *value);
+
+template<>
+FilterReorder EnumUtil::FromString<FilterReorder>(const char *value);
 
 template<>
 ForeignKeyType EnumUtil::FromString<ForeignKeyType>(const char *value);

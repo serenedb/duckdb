@@ -816,6 +816,13 @@
         "default_value": ""
     },
     {
+        "name": "filter_reorder",
+        "description": "How far filter reordering may move conjuncts that can throw: 'never' does not reorder filters at all; 'safe' reorders only between them; 'fast' may move other conjuncts ahead of them, which can skip an error; 'always' orders by cost alone",
+        "type": "ENUM<FilterReorder>",
+        "default_scope": "local",
+        "default_value": "safe"
+    },
+    {
         "name": "force_bitpacking_mode",
         "description": "DEBUG SETTING: forces a specific bitpacking mode",
         "type": "ENUM<BitpackingMode>",
