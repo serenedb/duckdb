@@ -744,7 +744,7 @@ AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter
 AlterIndexAlter <- RenameAlter / SetOptions / ResetOptions
 AlterFunctionStmt <- 'FUNCTION' IfExists? QualifiedName RenameAlter
 
-AlterTableStmt <- 'TABLE' IfExists? BaseTableName List(AlterTableOptions)
+AlterTableStmt <- 'TABLE' IfExists? 'ONLY'? BaseTableName List(AlterTableOptions)
 AlterSchemaStmt <- 'SCHEMA' IfExists? QualifiedName RenameAlter
 
 AlterTableOptions <- AddColumn / DropColumn / AlterColumn / AddConstraint / DropConstraint / ChangeNullability /
@@ -790,7 +790,10 @@ AlterSequenceStmt <- 'SEQUENCE' IfExists? QualifiedSequenceName AlterSequenceOpt
 QualifiedSequenceName <- CatalogQualification? SchemaQualification? SequenceName
 
 AlterSequenceOptions <- RenameAlter / SetSequenceOption
-SetSequenceOption <- SequenceOption+
+SetSequenceOption <- AlterSequenceOption+
+AlterSequenceOption <- SeqRestart / SequenceOption
+SeqRestart <- 'RESTART' SeqRestartValue?
+SeqRestartValue <- 'WITH'? Expression
 
 AlterDatabaseStmt <- 'DATABASE' IfExists? Identifier 'SET' 'ALIAS' 'TO' Identifier
 
@@ -898,7 +901,7 @@ SchemaOrData <- CopySchema / CopyData
 CopySchema <- 'SCHEMA'
 CopyData <- 'DATA'
 
-CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName
+CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName WithList?
 DropDatabaseStatement <- 'DROP' 'DATABASE' IfExists? CatalogName DropDatabaseForce?
 DropDatabaseForce <- '(' 'FORCE' ')'
 
@@ -987,6 +990,8 @@ SequenceOption <-
 	SeqSetMinMax /
 	SeqNoMinMax /
 	SeqStartWith /
+	SeqCache /
+	SeqAsType /
 	SeqOwnedBy
 
 SeqSetCycle <- SeqCycle / SeqNoCycle
@@ -996,7 +1001,11 @@ SeqSetIncrement <- 'INCREMENT' 'BY'? Expression
 SeqSetMinMax <- SeqMinOrMax Expression
 SeqNoMinMax <- 'NO' SeqMinOrMax
 SeqStartWith <- 'START' 'WITH'? Expression
-SeqOwnedBy <- 'OWNED' 'BY' QualifiedName
+SeqCache <- 'CACHE' Expression
+SeqAsType <- 'AS' Type
+SeqOwnedBy <- 'OWNED' 'BY' SeqOwner
+SeqOwner <- SeqOwnerNone / QualifiedName
+SeqOwnerNone <- 'NONE'
 
 SeqMinOrMax <- MinValue / MaxValue
 MinValue <- 'MINVALUE'

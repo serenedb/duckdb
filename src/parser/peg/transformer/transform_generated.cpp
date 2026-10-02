@@ -67,16 +67,19 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterTableStmtI
 		auto if_exists_value = transformer.Transform<bool>(if_exists_opt.GetResult());
 		if_exists = if_exists_value;
 	}
-	auto base_table_name = transformer.Transform<unique_ptr<BaseTableRef>>(list_pr.GetChild(2));
+	bool has_result {};
+	auto &has_result_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	has_result = has_result_opt.HasResult();
+	auto base_table_name = transformer.Transform<unique_ptr<BaseTableRef>>(list_pr.GetChild(3));
 	vector<unique_ptr<AlterTableInfo>> alter_table_options;
-	auto alter_table_options_items = ExtractParseResultsFromList(list_pr.GetChild(3));
+	auto alter_table_options_items = ExtractParseResultsFromList(list_pr.GetChild(4));
 	for (auto &alter_table_options_item : alter_table_options_items) {
 		auto alter_table_options_value =
 		    transformer.Transform<unique_ptr<AlterTableInfo>>(alter_table_options_item.get());
 		alter_table_options.push_back(std::move(alter_table_options_value));
 	}
-	auto result =
-	    TransformAlterTableStmt(transformer, if_exists, std::move(base_table_name), std::move(alter_table_options));
+	auto result = TransformAlterTableStmt(transformer, if_exists, has_result, std::move(base_table_name),
+	                                      std::move(alter_table_options));
 	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
 }
 
@@ -478,15 +481,48 @@ PEGTransformerFactory::TransformAlterSequenceOptionsInternal(PEGTransformer &tra
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSetSequenceOptionInternal(PEGTransformer &transformer,
                                                                                            ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	vector<pair<string, unique_ptr<SequenceOption>>> sequence_option;
-	auto &sequence_option_repeat = list_pr.GetChild(0).Cast<RepeatParseResult>();
-	for (auto &sequence_option_item : sequence_option_repeat.GetChildren()) {
-		auto sequence_option_value =
-		    transformer.Transform<pair<string, unique_ptr<SequenceOption>>>(sequence_option_item.get());
-		sequence_option.push_back(std::move(sequence_option_value));
+	vector<pair<string, unique_ptr<SequenceOption>>> alter_sequence_option;
+	auto &alter_sequence_option_repeat = list_pr.GetChild(0).Cast<RepeatParseResult>();
+	for (auto &alter_sequence_option_item : alter_sequence_option_repeat.GetChildren()) {
+		auto alter_sequence_option_value =
+		    transformer.Transform<pair<string, unique_ptr<SequenceOption>>>(alter_sequence_option_item.get());
+		alter_sequence_option.push_back(std::move(alter_sequence_option_value));
 	}
-	auto result = TransformSetSequenceOption(transformer, std::move(sequence_option));
+	auto result = TransformSetSequenceOption(transformer, std::move(alter_sequence_option));
 	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformAlterSequenceOptionInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<pair<string, unique_ptr<SequenceOption>>>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<pair<string, unique_ptr<SequenceOption>>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSeqRestartInternal(PEGTransformer &transformer,
+                                                                                    ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	optional<unique_ptr<ParsedExpression>> seq_restart_value {};
+	auto &seq_restart_value_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
+	if (seq_restart_value_opt.HasResult()) {
+		auto seq_restart_value_value =
+		    transformer.Transform<unique_ptr<ParsedExpression>>(seq_restart_value_opt.GetResult());
+		seq_restart_value = std::move(seq_restart_value_value);
+	}
+	auto result = TransformSeqRestart(transformer, std::move(seq_restart_value));
+	return make_uniq<TypedTransformResult<pair<string, unique_ptr<SequenceOption>>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSeqRestartValueInternal(PEGTransformer &transformer,
+                                                                                         ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	bool has_result {};
+	auto &has_result_opt = list_pr.GetChild(0).Cast<OptionalParseResult>();
+	has_result = has_result_opt.HasResult();
+	auto expression = transformer.Transform<unique_ptr<ParsedExpression>>(list_pr.GetChild(1));
+	auto result = TransformSeqRestartValue(transformer, has_result, std::move(expression));
+	return make_uniq<TypedTransformResult<unique_ptr<ParsedExpression>>>(std::move(result));
 }
 
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterDatabaseStmtInternal(PEGTransformer &transformer,
@@ -1954,7 +1990,14 @@ PEGTransformerFactory::TransformCreateDatabaseStatementInternal(PEGTransformer &
 		if_not_exists = if_not_exists_value;
 	}
 	auto catalog_name = list_pr.GetChild(3).Cast<IdentifierParseResult>().identifier;
-	auto result = TransformCreateDatabaseStatement(transformer, if_not_exists, catalog_name);
+	optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list {};
+	auto &with_list_opt = list_pr.GetChild(4).Cast<OptionalParseResult>();
+	if (with_list_opt.HasResult()) {
+		auto with_list_value =
+		    transformer.Transform<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(with_list_opt.GetResult());
+		with_list = std::move(with_list_value);
+	}
+	auto result = TransformCreateDatabaseStatement(transformer, if_not_exists, catalog_name, std::move(with_list));
 	return make_uniq<TypedTransformResult<unique_ptr<SQLStatement>>>(std::move(result));
 }
 
@@ -2632,12 +2675,42 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSeqStartWithInt
 	return make_uniq<TypedTransformResult<pair<string, unique_ptr<SequenceOption>>>>(std::move(result));
 }
 
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSeqCacheInternal(PEGTransformer &transformer,
+                                                                                  ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto expression = transformer.Transform<unique_ptr<ParsedExpression>>(list_pr.GetChild(1));
+	auto result = TransformSeqCache(transformer, std::move(expression));
+	return make_uniq<TypedTransformResult<pair<string, unique_ptr<SequenceOption>>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSeqAsTypeInternal(PEGTransformer &transformer,
+                                                                                   ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto type = transformer.Transform<LogicalType>(list_pr.GetChild(1));
+	auto result = TransformSeqAsType(transformer, type);
+	return make_uniq<TypedTransformResult<pair<string, unique_ptr<SequenceOption>>>>(std::move(result));
+}
+
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSeqOwnedByInternal(PEGTransformer &transformer,
                                                                                     ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	auto qualified_name = transformer.Transform<QualifiedName>(list_pr.GetChild(2));
-	auto result = TransformSeqOwnedBy(transformer, qualified_name);
+	auto seq_owner = transformer.Transform<QualifiedName>(list_pr.GetChild(2));
+	auto result = TransformSeqOwnedBy(transformer, seq_owner);
 	return make_uniq<TypedTransformResult<pair<string, unique_ptr<SequenceOption>>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSeqOwnerInternal(PEGTransformer &transformer,
+                                                                                  ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<QualifiedName>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<QualifiedName>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSeqOwnerNoneInternal(PEGTransformer &transformer,
+                                                                                      ParseResult &parse_result) {
+	auto result = TransformSeqOwnerNone(transformer);
+	return make_uniq<TypedTransformResult<QualifiedName>>(result);
 }
 
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSeqMinOrMaxInternal(PEGTransformer &transformer,
@@ -10713,6 +10786,9 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"QualifiedSequenceName", &PEGTransformerFactory::TransformQualifiedSequenceNameInternal},
 	    {"AlterSequenceOptions", &PEGTransformerFactory::TransformAlterSequenceOptionsInternal},
 	    {"SetSequenceOption", &PEGTransformerFactory::TransformSetSequenceOptionInternal},
+	    {"AlterSequenceOption", &PEGTransformerFactory::TransformAlterSequenceOptionInternal},
+	    {"SeqRestart", &PEGTransformerFactory::TransformSeqRestartInternal},
+	    {"SeqRestartValue", &PEGTransformerFactory::TransformSeqRestartValueInternal},
 	    {"AlterDatabaseStmt", &PEGTransformerFactory::TransformAlterDatabaseStmtInternal},
 	    {"AnalyzeStatement", &PEGTransformerFactory::TransformAnalyzeStatementInternal},
 	    {"AnalyzeTarget", &PEGTransformerFactory::TransformAnalyzeTargetInternal},
@@ -10925,7 +11001,11 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"SeqSetMinMax", &PEGTransformerFactory::TransformSeqSetMinMaxInternal},
 	    {"SeqNoMinMax", &PEGTransformerFactory::TransformSeqNoMinMaxInternal},
 	    {"SeqStartWith", &PEGTransformerFactory::TransformSeqStartWithInternal},
+	    {"SeqCache", &PEGTransformerFactory::TransformSeqCacheInternal},
+	    {"SeqAsType", &PEGTransformerFactory::TransformSeqAsTypeInternal},
 	    {"SeqOwnedBy", &PEGTransformerFactory::TransformSeqOwnedByInternal},
+	    {"SeqOwner", &PEGTransformerFactory::TransformSeqOwnerInternal},
+	    {"SeqOwnerNone", &PEGTransformerFactory::TransformSeqOwnerNoneInternal},
 	    {"SeqMinOrMax", &PEGTransformerFactory::TransformSeqMinOrMaxInternal},
 	    {"MinValue", &PEGTransformerFactory::TransformMinValueInternal},
 	    {"MaxValue", &PEGTransformerFactory::TransformMaxValueInternal},

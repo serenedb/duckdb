@@ -118,11 +118,13 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 void CreateDatabaseInfo::Serialize(Serializer &serializer) const {
 	CreateInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<Identifier>(200, "name", qualified_name.Name());
+	serializer.WritePropertyWithDefault<case_insensitive_map_t<Value>>(201, "options", options);
 }
 
 unique_ptr<CreateInfo> CreateDatabaseInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<CreateDatabaseInfo>(new CreateDatabaseInfo());
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(200, "name");
+	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<Value>>(201, "options", result->options);
 	result->SetName(std::move(name));
 	return std::move(result);
 }
@@ -245,6 +247,15 @@ void CreateSequenceInfo::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<optional<int64_t>>(207, "last_value", last_value);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<uint64_t>(16584, "cache", cache, 1ULL);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<optional<int64_t>>(16585, "recorded_start", recorded_start);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<vector<Identifier>>(16586, "owned_by", owned_by);
+	}
 }
 
 unique_ptr<CreateInfo> CreateSequenceInfo::Deserialize(Deserializer &deserializer) {
@@ -257,6 +268,9 @@ unique_ptr<CreateInfo> CreateSequenceInfo::Deserialize(Deserializer &deserialize
 	deserializer.ReadPropertyWithDefault<int64_t>(205, "start_value", result->start_value);
 	deserializer.ReadPropertyWithDefault<bool>(206, "cycle", result->cycle);
 	deserializer.ReadPropertyWithDefault<optional<int64_t>>(207, "last_value", result->last_value);
+	deserializer.ReadPropertyWithExplicitDefault<uint64_t>(16584, "cache", result->cache, 1ULL);
+	deserializer.ReadPropertyWithDefault<optional<int64_t>>(16585, "recorded_start", result->recorded_start);
+	deserializer.ReadPropertyWithDefault<vector<Identifier>>(16586, "owned_by", result->owned_by);
 	result->SetName(std::move(name));
 	return std::move(result);
 }
