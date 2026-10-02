@@ -379,6 +379,9 @@ void WriteAheadLog::WriteSequenceValue(SequenceValue val) {
 	if (StorageManager::TargetAtLeastVersion(StorageVersion::V2_0_0, storage_manager.GetStorageVersion())) {
 		serializer.WriteProperty(105, "last_value", val.entry->GetData().last_value);
 	}
+	if (IsSereneDBStorageVersion(storage_manager.GetStorageVersion())) {
+		serializer.WriteProperty(16484, "oid", sequence.oid);
+	}
 	serializer.End();
 }
 

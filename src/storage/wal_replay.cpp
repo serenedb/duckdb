@@ -1252,6 +1252,7 @@ void WriteAheadLogDeserializer::ReplaySequenceValue() {
 	auto usage_count = deserializer.ReadProperty<uint64_t>(103, "usage_count");
 	auto counter = deserializer.ReadProperty<int64_t>(104, "counter");
 	auto last_value = deserializer.ReadPropertyWithDefault<optional<int64_t>>(105, "last_value");
+	auto oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", 0);
 
 	if (DeserializeOnly()) {
 		return;
@@ -1260,7 +1261,17 @@ void WriteAheadLogDeserializer::ReplaySequenceValue() {
 	// fetch the sequence from the catalog
 	auto seq = catalog.GetEntry<SequenceCatalogEntry>(
 	    context, QualifiedName(catalog.GetName(), Identifier(schema), Identifier(name)),
-	    catalog.UsesCatalogLog() ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION);
+	    catalog.UsesCatalogLog() || oid ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION);
+	if (oid && (!seq || seq->oid != oid)) {
+		seq = nullptr;
+		catalog.ScanSchemas(context, [&](SchemaCatalogEntry &candidate) {
+			candidate.Scan(context, CatalogType::SEQUENCE_ENTRY, [&](CatalogEntry &entry) {
+				if (entry.oid == oid) {
+					seq = &entry.Cast<SequenceCatalogEntry>();
+				}
+			});
+		});
+	}
 	if (seq) {
 		seq->ReplayValue(usage_count, counter, last_value);
 	}

@@ -16,14 +16,11 @@
 namespace duckdb {
 
 struct NextvalBindData : public FunctionData {
-	explicit NextvalBindData(SequenceCatalogEntry &sequence) : sequence(sequence), create_info(sequence.GetInfo()) {
+	explicit NextvalBindData(SequenceCatalogEntry &sequence) : sequence(sequence) {
 	}
 
 	//! The sequence to use for the nextval computation; only if the sequence is a constant
 	SequenceCatalogEntry &sequence;
-
-	//! The CreateInfo for the above sequence, if it exists
-	unique_ptr<CreateInfo> create_info;
 
 	unique_ptr<FunctionData> Copy() const override {
 		return make_uniq<NextvalBindData>(sequence);

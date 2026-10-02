@@ -261,6 +261,18 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 		}
 		return error;
 	}
+	for (auto &participant : participants) {
+		auto &transaction = participant.get().transaction;
+		if (!transaction.IsDuckTransaction()) {
+			continue;
+		}
+		auto &prepared_commit = transaction.Cast<DuckTransaction>().prepared;
+		if (prepared_commit) {
+			for (auto &value : prepared_commit->sequences) {
+				value.entry->MarkReserved(value);
+			}
+		}
+	}
 	log_owner.BeginCatalogLogCommit();
 	catalog_lock.unlock();
 	catalog_log.GroupSync(decision_offset);
