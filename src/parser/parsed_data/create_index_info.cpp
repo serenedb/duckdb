@@ -115,21 +115,24 @@ string CreateIndexInfo::ToString() const {
 	result += "(";
 	result += ExpressionsToString();
 	result += ")";
-	if (!options.empty()) {
-		result += " WITH (";
-		idx_t i = 0;
-		for (auto &opt : options) {
-			if (i > 0) {
-				result += ", ";
-			}
-			if (opt.second.IsNull()) {
-				result += opt.first;
-			} else {
-				result += StringUtil::Format("%s = %s", opt.first, opt.second.ToString());
-			}
-			i++;
+	string rendered_options;
+	for (auto &opt : options) {
+		if (opt.second.type().id() == LogicalTypeId::BLOB) {
+			continue;
 		}
-		result += " )";
+		if (!rendered_options.empty()) {
+			rendered_options += ", ";
+		}
+		if (opt.second.IsNull()) {
+			rendered_options += opt.first;
+		} else if (opt.second.type().id() == LogicalTypeId::VARCHAR) {
+			rendered_options += StringUtil::Format("%s = %s", opt.first, opt.second.ToSQLString());
+		} else {
+			rendered_options += StringUtil::Format("%s = %s", opt.first, opt.second.ToString());
+		}
+	}
+	if (!rendered_options.empty()) {
+		result += " WITH (" + rendered_options + " )";
 	}
 	if (where_clause) {
 		result += " WHERE ";
