@@ -65,6 +65,10 @@ class CatalogSet;
 class DatabaseInstance;
 class DependencyManager;
 class WriteAheadLog;
+class DuckTransaction;
+class RowGroupCollection;
+class TableIndexList;
+struct StorageIndex;
 
 struct CatalogLookup;
 struct CatalogEntryLookup;
@@ -159,6 +163,11 @@ public:
 	virtual void RequestCatalogLogSync(shared_ptr<WriteAheadLog> log, idx_t offset) {
 	}
 	void SyncCatalogLog();
+	virtual bool AppendLocalIndexes(DuckTransaction &transaction, TableIndexList &index_list,
+	                                RowGroupCollection &source, const vector<StorageIndex> &mapped_column_ids,
+	                                row_t row_start, ErrorData &error) {
+		return false;
+	}
 
 	virtual void Initialize(bool load_builtin) = 0;
 	virtual void Initialize(optional_ptr<ClientContext> context, bool load_builtin);
