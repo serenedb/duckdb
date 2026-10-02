@@ -659,5 +659,41 @@
         "name"
       ]
     }
+  },
+  {
+    "class": "CreateJobInfo",
+    "base": "CreateInfo",
+    "enum": "JOB_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_job_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "schedule",
+        "type": "JobSchedule"
+      },
+      {
+        "id": 202,
+        "name": "suspended",
+        "type": "bool"
+      },
+      {
+        "id": 203,
+        "name": "body",
+        "type": "string"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
   }
 ]

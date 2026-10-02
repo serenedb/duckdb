@@ -18,6 +18,7 @@
 #include "duckdb/parser/peg/ast/generic_copy_option.hpp"
 #include "duckdb/parser/peg/ast/generic_copy_option_value.hpp"
 #include "duckdb/parser/peg/ast/insert_values.hpp"
+#include "duckdb/parser/peg/ast/job_schedule_info.hpp"
 #include "duckdb/parser/peg/ast/create_pivot_entry.hpp"
 #include "duckdb/parser/peg/ast/join_prefix.hpp"
 #include "duckdb/parser/peg/ast/join_qualifier.hpp"

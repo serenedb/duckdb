@@ -247,6 +247,7 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 		break;
 	case CatalogType::DATABASE_ENTRY:
 	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::JOB_ENTRY:
 	case CatalogType::ROLE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::PREPARED_STATEMENT:

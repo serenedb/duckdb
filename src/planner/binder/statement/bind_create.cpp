@@ -23,6 +23,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_trigger_info.hpp"
 #include "duckdb/parser/parsed_data/create_secret_info.hpp"
@@ -1131,6 +1132,11 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &schema = BindCreateTriggerInfo(create_trigger_info);
 		result.plan =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_TRIGGER, std::move(stmt.info), &schema);
+		break;
+	}
+	case CatalogType::JOB_ENTRY: {
+		auto &schema = BindCreateJobInfo(stmt.info->Cast<CreateJobInfo>());
+		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_JOB, std::move(stmt.info), &schema);
 		break;
 	}
 	default:

@@ -22,6 +22,7 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
@@ -282,6 +283,9 @@ protected:
 
 	void ReplayCreateTokenizer();
 	void ReplayDropTokenizer();
+
+	void ReplayCreateJob();
+	void ReplayDropJob();
 
 	void ReplayCreateRole();
 	void ReplayDropRole();
@@ -733,6 +737,12 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::DROP_TOKENIZER:
 		ReplayDropTokenizer();
 		break;
+	case WALType::CREATE_JOB:
+		ReplayCreateJob();
+		break;
+	case WALType::DROP_JOB:
+		ReplayDropJob();
+		break;
 	case WALType::CREATE_ROLE:
 		ReplayCreateRole();
 		break;
@@ -1157,6 +1167,30 @@ void WriteAheadLogDeserializer::ReplayDropTokenizer() {
 		return;
 	}
 
+	catalog.DropEntry(context, info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateJob() {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "job");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	auto &schema = catalog.GetSchema(context, info->GetQualifiedName().Schema());
+	schema.CreateJob(catalog.GetCatalogTransaction(context), info->Cast<CreateJobInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropJob() {
+	DropInfo info;
+	info.type = CatalogType::JOB_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
+	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
+	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
+	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
+	if (DeserializeOnly()) {
+		return;
+	}
 	catalog.DropEntry(context, info);
 }
 

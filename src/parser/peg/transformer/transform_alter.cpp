@@ -5,6 +5,7 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
+#include "duckdb/parser/parsed_data/alter_job_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
@@ -92,6 +93,37 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSchemaStmt(PEGTransfo
 	auto not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	AlterEntryData data(qualified_name, not_found);
 	return make_uniq_base<AlterInfo, RenameInfo>(CatalogType::SCHEMA_ENTRY, data, rename_info->new_table_name);
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterJobStmt(PEGTransformer &transformer,
+                                                                   const optional<bool> &if_exists,
+                                                                   const QualifiedName &qualified_name,
+                                                                   unique_ptr<AlterInfo> alter_job_action) {
+	alter_job_action->SetQualifiedName(qualified_name);
+	alter_job_action->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	return alter_job_action;
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterJobRename(PEGTransformer &transformer,
+                                                                     const Identifier &col_id) {
+	return make_uniq_base<AlterInfo, RenameInfo>(CatalogType::JOB_ENTRY, AlterEntryData(), col_id);
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterJobSuspend(PEGTransformer &transformer) {
+	return make_uniq_base<AlterInfo, AlterJobInfo>(AlterJobType::SUSPEND, AlterEntryData());
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterJobResume(PEGTransformer &transformer) {
+	return make_uniq_base<AlterInfo, AlterJobInfo>(AlterJobType::RESUME, AlterEntryData());
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterJobSetSchedule(PEGTransformer &transformer,
+                                                                          JobScheduleInfo job_schedule) {
+	auto result = make_uniq<AlterJobInfo>(AlterJobType::SET_SCHEDULE, AlterEntryData());
+	result->schedule.kind = job_schedule.kind;
+	result->interval_expr = std::move(job_schedule.interval);
+	result->offset_expr = std::move(job_schedule.offset);
+	return std::move(result);
 }
 
 // AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter

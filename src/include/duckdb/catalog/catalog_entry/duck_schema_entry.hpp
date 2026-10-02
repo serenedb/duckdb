@@ -14,6 +14,7 @@
 namespace duckdb {
 
 struct CreateTokenizerInfo;
+struct CreateJobInfo;
 class DuckSchemaEntry;
 
 class DuckSchemaSets {
@@ -25,7 +26,7 @@ public:
 	template <class F>
 	void ForEachSet(F &&callback) {
 		for (auto set : {&tables, &indexes, &table_functions, &copy_functions, &pragma_functions, &functions,
-		                 &sequences, &collations, &types, &coordinate_systems, &tokenizers}) {
+		                 &sequences, &collations, &types, &coordinate_systems, &tokenizers, &jobs}) {
 			callback(*set);
 		}
 	}
@@ -53,6 +54,7 @@ private:
 	CatalogSet coordinate_systems;
 	//! The catalog set holding the tokenizers
 	CatalogSet tokenizers;
+	CatalogSet jobs;
 };
 
 //! A schema in the catalog
@@ -89,6 +91,7 @@ public:
 	                                                  CreateCoordinateSystemInfo &info) override;
 	optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info) override;
 	optional_ptr<CatalogEntry> CreateTokenizer(CatalogTransaction transaction, CreateTokenizerInfo &info);
+	optional_ptr<CatalogEntry> CreateJob(CatalogTransaction transaction, CreateJobInfo &info) override;
 	void Alter(CatalogTransaction transaction, AlterInfo &info) override;
 	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
 	void Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;

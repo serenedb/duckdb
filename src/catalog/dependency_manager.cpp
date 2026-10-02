@@ -275,7 +275,8 @@ void DependencyManager::CreateDependency(CatalogTransaction transaction, Depende
 void DependencyManager::CreateDependencies(CatalogTransaction transaction, const CatalogEntry &object,
                                            const LogicalDependencyList &dependencies) {
 	DependencyDependentFlags dependency_flags;
-	if (object.type != CatalogType::INDEX_ENTRY) {
+	const bool automatic = object.type == CatalogType::INDEX_ENTRY || object.type == CatalogType::JOB_ENTRY;
+	if (!automatic) {
 		// indexes do not require CASCADE to be dropped, they are simply always dropped along with the table
 		dependency_flags.SetBlocking();
 	}
@@ -300,7 +301,10 @@ void DependencyManager::CreateDependencies(CatalogTransaction transaction, const
 		auto flags = dependency_flags;
 		const bool relation =
 		    dependency.entry.type == CatalogType::TABLE_ENTRY || dependency.entry.type == CatalogType::VIEW_ENTRY;
-		if (index_blocks_non_relations && !relation) {
+		if (index_blocks_non_relations && object.type == CatalogType::INDEX_ENTRY && !relation) {
+			flags.SetBlocking();
+		}
+		if (object.type == CatalogType::JOB_ENTRY && dependency.entry.type == CatalogType::SCHEMA_ENTRY) {
 			flags.SetBlocking();
 		}
 		DependencyInfo info {DependencyDependent {GetLookupProperties(object), flags, dependency.subdependencies},
@@ -522,6 +526,9 @@ static string EntryToString(CatalogEntryInfo &info) {
 	}
 	case CatalogType::TOKENIZER_ENTRY: {
 		return StringUtil::Format("tokenizer \"%s\"", info.name);
+	}
+	case CatalogType::JOB_ENTRY: {
+		return StringUtil::Format("job \"%s\"", info.name);
 	}
 	case CatalogType::ROLE_ENTRY: {
 		return StringUtil::Format("role \"%s\"", info.name);
@@ -903,6 +910,9 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		}
 		default:
 			break;
+		}
+		if (dep.EntryInfo().type == CatalogType::JOB_ENTRY) {
+			disallow_alter = false;
 		}
 		if (disallow_alter) {
 			auto dependent = dep.EntryInfo();

@@ -78,6 +78,7 @@ SQLStatement:
     - CreatePublicationStatement
     - CreateSubscriptionStatement
     - ExecuteStatement
+    - ExecuteJobStatement
     - ExplainStatement
     - ExplainableStatements
     - ExplainSelectStatement
@@ -179,6 +180,7 @@ CreateStatement:
     - CreateTypeStmt
     - CreateViewStmt
     - CreateTriggerStmt
+    - CreateJobStmt
 
 DropStatement:
   type: "unique_ptr<DropStatement>"
@@ -195,6 +197,7 @@ DropStatement:
     - DropType
     - DropSecret
     - DropTrigger
+    - DropJob
 
 AlterInfo:
   type: "unique_ptr<AlterInfo>"
@@ -210,6 +213,12 @@ AlterInfo:
     - AlterSequenceStmt
     - AlterSequenceOptions
     - SetSequenceOption
+    - AlterJobStmt
+    - AlterJobAction
+    - AlterJobRename
+    - AlterJobSuspend
+    - AlterJobResume
+    - AlterJobSetSchedule
 
 AlterTableInfo:
   type: "unique_ptr<AlterTableInfo>"
@@ -378,6 +387,10 @@ Expression:
     - ColDefOrExpr
     - ColDefOrExpressionTail
     - LogicalAndExpression
+    - JobOffset
+    - JobInterval
+    - JobIntervalShort
+    - JobIntervalExpression
     - LogicalAndExpressionTail
     - ColDefAndExpr
     - ColDefAndExpressionTail
@@ -923,6 +936,14 @@ MacroParameter:
     - SimpleParameter
     - NamedParameter
 
+JobScheduleInfo:
+  type: "JobScheduleInfo"
+  by_value: true
+  rules:
+    - JobSchedule
+    - JobEvery
+    - JobAfter
+
 TriggerEventInfo:
   type: "TriggerEventInfo"
   by_value: false
@@ -1153,6 +1174,7 @@ Bool:
     - IncludeNulls
     - ExcludeNulls
     - PrecedingOrFollowing
+    - JobSuspended
     - IfExists
     - IncludeOrExcludeNulls
     - AnalyzeVerbose

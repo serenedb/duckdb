@@ -8,6 +8,8 @@
 #include "duckdb/catalog/catalog_entry/copy_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/job_catalog_entry.hpp"
+#include "duckdb/main/job_scheduler.hpp"
 #include "duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
@@ -35,6 +37,7 @@
 #include "duckdb/parser/parsed_data/create_collation_info.hpp"
 #include "duckdb/parser/parsed_data/create_copy_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_pragma_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -89,7 +92,7 @@ DuckSchemaSets::DuckSchemaSets(Catalog &catalog, DuckSchemaEntry &schema)
       types(catalog, schema.internal ? make_uniq<DefaultTypeGenerator>(catalog, schema) : nullptr),
       coordinate_systems(
           catalog, catalog.IsSystemCatalog() ? make_uniq<DefaultCoordinateSystemGenerator>(catalog, schema) : nullptr),
-      tokenizers(catalog) {
+      tokenizers(catalog), jobs(catalog) {
 	const bool one_relation_namespace = catalog.Compatibility() == SqlCompatibility::POSTGRES;
 	if (one_relation_namespace) {
 		tables.ShareNamespace(indexes);
@@ -363,6 +366,15 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateType(CatalogTransaction transa
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTokenizer(CatalogTransaction transaction, CreateTokenizerInfo &info) {
 	auto tokenizer = catalog.Cast<DuckCatalog>().MakeTokenizerEntry(*this, info);
 	return AddEntry(transaction, std::move(tokenizer), info.on_conflict);
+}
+
+optional_ptr<CatalogEntry> DuckSchemaEntry::CreateJob(CatalogTransaction transaction, CreateJobInfo &info) {
+	info.schedule.Verify();
+	auto &duck_catalog = catalog.Cast<DuckCatalog>();
+	auto job = make_uniq<JobCatalogEntry>(catalog, *this, info);
+	auto result = AddEntry(transaction, std::move(job), info.on_conflict);
+	duck_catalog.GetJobScheduler().JobCreated(catalog.GetAttached());
+	return result;
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateView(CatalogTransaction transaction, CreateViewInfo &info) {
@@ -664,6 +676,8 @@ CatalogSet &DuckSchemaSets::GetCatalogSet(CatalogType type) {
 		return types;
 	case CatalogType::TOKENIZER_ENTRY:
 		return tokenizers;
+	case CatalogType::JOB_ENTRY:
+		return jobs;
 	default:
 		throw InternalException({{"catalog_type", CatalogTypeToString(type)}}, "Unsupported catalog type in schema");
 	}
@@ -685,6 +699,7 @@ void DuckSchemaSets::Verify(Catalog &catalog) {
 	collations.Verify(catalog);
 	types.Verify(catalog);
 	tokenizers.Verify(catalog);
+	jobs.Verify(catalog);
 }
 
 } // namespace duckdb

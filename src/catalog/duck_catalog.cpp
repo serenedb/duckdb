@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
+#include "duckdb/main/job_scheduler.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
@@ -30,9 +31,15 @@ DuckCatalog::DuckCatalog(AttachedDatabase &db, bool case_sensitive_names)
 }
 
 DuckCatalog::~DuckCatalog() {
+	if (job_scheduler) {
+		job_scheduler->Stop();
+		job_scheduler->Wait();
+	}
 }
 
 void DuckCatalog::Initialize(bool load_builtin) {
+	job_scheduler = make_shared_ptr<JobScheduler>(*this);
+
 	// first initialize the base system catalogs
 	// these are never written to the WAL
 	// we start these at 1 because deleted entries default to 0
@@ -58,6 +65,21 @@ void DuckCatalog::Initialize(bool load_builtin) {
 
 bool DuckCatalog::IsDuckCatalog() {
 	return true;
+}
+
+void DuckCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {
+	if (IsSystemCatalog()) {
+		return;
+	}
+	bool has_jobs = false;
+	ScanSchemas([&](SchemaCatalogEntry &schema) {
+		schema.Scan(CatalogType::JOB_ENTRY, [&](CatalogEntry &) { has_jobs = true; });
+	});
+	GetJobScheduler().Load(GetAttached(), has_jobs);
+}
+
+void DuckCatalog::OnDetach(ClientContext &context) {
+	GetJobScheduler().Stop();
 }
 
 bool DuckCatalog::SupportsMultipleDMLCTEs() const {
@@ -161,6 +183,10 @@ unique_ptr<InCatalogEntry> DuckCatalog::MakeForeignServerEntry(CreateForeignServ
 
 unique_ptr<StandardEntry> DuckCatalog::MakeTokenizerEntry(DuckSchemaEntry &schema, CreateTokenizerInfo &info) {
 	throw NotImplementedException("Text search dictionaries are not supported by this catalog");
+}
+
+JobScheduler &DuckCatalog::GetJobScheduler() {
+	return *job_scheduler;
 }
 
 optional_ptr<CatalogEntry> DuckCatalog::AddEntry(CatalogTransaction transaction, unique_ptr<InCatalogEntry> entry,

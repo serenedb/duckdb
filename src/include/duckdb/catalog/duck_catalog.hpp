@@ -15,6 +15,7 @@ namespace duckdb {
 class DuckSchemaEntry;
 class InCatalogEntry;
 class IndexCatalogEntry;
+class JobScheduler;
 class StandardEntry;
 class TableCatalogEntry;
 struct CreateIndexInfo;
@@ -34,6 +35,8 @@ public:
 public:
 	bool IsDuckCatalog() override;
 	void Initialize(bool load_builtin) override;
+	void FinalizeLoad(optional_ptr<ClientContext> context) override;
+	void OnDetach(ClientContext &context) override;
 
 	string GetCatalogType() override {
 		return "duckdb";
@@ -60,6 +63,7 @@ public:
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeDatabaseEntry(CreateDatabaseInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeForeignServerEntry(CreateForeignServerInfo &info);
 	DUCKDB_API virtual unique_ptr<StandardEntry> MakeTokenizerEntry(DuckSchemaEntry &schema, CreateTokenizerInfo &info);
+	DUCKDB_API JobScheduler &GetJobScheduler();
 
 	DUCKDB_API optional_ptr<CatalogEntry> CreateRole(CatalogTransaction transaction, CreateRoleInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateDatabase(CatalogTransaction transaction, CreateDatabaseInfo &info);
@@ -127,6 +131,7 @@ private:
 	unique_ptr<CatalogSet> roles;
 	unique_ptr<CatalogSet> databases;
 	unique_ptr<CatalogSet> foreign_servers;
+	shared_ptr<JobScheduler> job_scheduler;
 
 	//! Identifies whether the db is encrypted
 	bool is_encrypted = false;

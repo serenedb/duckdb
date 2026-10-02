@@ -64,6 +64,11 @@ ALTER TABLE u ADD UNIQUE (a)
 ----
 Cannot write ALTER TABLE ADD UNIQUE to a database file with DuckDB storage version
 
+statement error
+CREATE JOB j AFTER 1 HOUR AS SELECT 1
+----
+Cannot write CREATE_JOB to a database file with DuckDB storage version
+
 statement ok
 CREATE TABLE sch.in_schema AS SELECT range AS a FROM range(3)
 

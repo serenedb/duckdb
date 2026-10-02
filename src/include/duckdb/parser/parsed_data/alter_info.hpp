@@ -32,7 +32,8 @@ enum class AlterType : uint8_t {
 	ALTER_ROLE = 201,
 	ALTER_INDEX = 202,
 	RENAME = 203,
-	REPLACE_DEFINITION = 204
+	REPLACE_DEFINITION = 204,
+	ALTER_JOB = 205
 };
 
 enum class AlterBindMode { BIND_ON_ALTER, SKIP_BINDING };

@@ -1,6 +1,8 @@
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/main/client_data.hpp"
+#include "duckdb/main/job_scheduler.hpp"
 
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
@@ -675,6 +677,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	// upstream): new-snapshot visibility is bounded by last_pending_commit/last_durable_commit, not by active-set
 	// membership, so removal need not wait for durability. Doing it here, rather than re-acquiring the transaction
 	// lock after the fsync, avoids an extra lock on every commit.
+	const bool catalog_changed = !error.HasError() && undo_properties.has_catalog_changes;
 	bool store_transaction = undo_properties.has_updates || undo_properties.has_index_deletes ||
 	                         undo_properties.has_catalog_changes || error.HasError();
 	auto cleanup_info = RemoveTransaction(transaction, store_transaction);
@@ -700,6 +703,9 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	}
 
 	CleanupTransactions();
+	if (catalog_changed) {
+		db.GetCatalog().Cast<DuckCatalog>().GetJobScheduler().CatalogChanged();
+	}
 
 	// now perform a checkpoint if (1) we are able to checkpoint, and (2) the WAL has reached sufficient size to
 	// checkpoint

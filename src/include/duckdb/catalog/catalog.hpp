@@ -39,6 +39,7 @@ struct CreatePragmaFunctionInfo;
 struct CreateFunctionInfo;
 struct CreateViewInfo;
 struct CreateSequenceInfo;
+struct CreateJobInfo;
 struct CreateCollationInfo;
 struct CreateCoordinateSystemInfo;
 struct CreateIndexInfo;
@@ -224,6 +225,7 @@ public:
 	//! Creates a sequence in the catalog.
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSequence(CatalogTransaction transaction, CreateSequenceInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSequence(ClientContext &context, CreateSequenceInfo &info);
+	DUCKDB_API optional_ptr<CatalogEntry> CreateJob(ClientContext &context, CreateJobInfo &info);
 	//! Creates a Enum in the catalog.
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(ClientContext &context, CreateTypeInfo &info);

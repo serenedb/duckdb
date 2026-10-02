@@ -520,6 +520,19 @@ void WriteAheadLog::WriteDropTokenizer(const StandardEntry &entry) {
 	serializer.End();
 }
 
+void WriteAheadLog::WriteCreateJob(const StandardEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_JOB);
+	serializer.WriteProperty(101, "job", &entry);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropJob(const StandardEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_JOB);
+	serializer.WriteProperty(101, "schema", entry.ParentSchemaName());
+	serializer.WriteProperty(102, "name", entry.name);
+	serializer.End();
+}
+
 void WriteAheadLog::WriteCreateRole(const InCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::CREATE_ROLE);
 	serializer.WriteProperty(101, "role", &entry);

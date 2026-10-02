@@ -1,0 +1,43 @@
+# name: test/sql/job/job_reparse.test
+# group: [job]
+
+statement ok
+SET debug_verify_statement = 'REPARSE_STATEMENT';
+
+statement ok
+CREATE TABLE kostya (n INTEGER);
+
+statement ok
+CREATE JOB babsky EVERY (INTERVAL '1 hour' * 2) OFFSET (INTERVAL '5 minutes') AS INSERT INTO kostya VALUES (1);
+
+statement ok
+CREATE JOB clickclack EVERY 15 MINUTES AS SELECT 'arelav; is skuf' ;
+
+statement ok
+CREATE OR REPLACE TEMPORARY JOB deadinside AFTER INTERVAL '1' DAY SUSPENDED AS SELECT 1;
+
+statement ok
+ALTER JOB babsky SET SCHEDULE EVERY (INTERVAL '3 hours') OFFSET 1 HOUR;
+
+statement ok
+ALTER JOB babsky RENAME TO vedernikoff;
+
+statement ok
+ALTER JOB vedernikoff SUSPEND;
+
+statement ok
+EXECUTE JOB vedernikoff;
+
+statement ok
+DROP JOB IF EXISTS clickclack CASCADE;
+
+query IIII
+SELECT job_name, schedule, suspended, body FROM duckdb_jobs() ORDER BY job_name;
+----
+deadinside	AFTER INTERVAL '1 day'	true	SELECT 1
+vedernikoff	EVERY INTERVAL '03:00:00' OFFSET INTERVAL '01:00:00'	true	INSERT INTO kostya (VALUES (1))
+
+query I
+SELECT n FROM kostya;
+----
+1

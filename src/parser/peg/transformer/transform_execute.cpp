@@ -1,7 +1,22 @@
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/statement/call_statement.hpp"
 #include "duckdb/parser/statement/execute_statement.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 
 namespace duckdb {
+
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformExecuteJobStatement(PEGTransformer &transformer,
+                                                                             const QualifiedName &qualified_name) {
+	vector<unique_ptr<ParsedExpression>> children;
+	children.push_back(make_uniq<ConstantExpression>(Value(qualified_name.ToString())));
+	auto function = make_uniq<FunctionExpression>("execute_job", std::move(children));
+	function->SetQualifiedName(
+	    QualifiedName(Identifier(SYSTEM_CATALOG), Identifier(DEFAULT_SCHEMA), function->GetQualifiedName().Name()));
+	auto result = make_uniq<CallStatement>();
+	result->function = std::move(function);
+	return std::move(result);
+}
 
 unique_ptr<SQLStatement>
 PEGTransformerFactory::TransformExecuteStatement(PEGTransformer &transformer, const Identifier &identifier,

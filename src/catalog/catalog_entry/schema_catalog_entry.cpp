@@ -44,6 +44,10 @@ optional_ptr<CatalogEntry> SchemaCatalogEntry::CreateIndex(ClientContext &contex
 	return CreateIndex(GetCatalogTransaction(context), info, relation);
 }
 
+optional_ptr<CatalogEntry> SchemaCatalogEntry::CreateJob(CatalogTransaction transaction, CreateJobInfo &info) {
+	throw NotImplementedException("Jobs are not supported in catalog \"%s\"", catalog.GetName().GetIdentifierName());
+}
+
 SimilarCatalogEntry SchemaCatalogEntry::GetSimilarEntry(CatalogTransaction transaction,
                                                         const EntryLookupInfo &lookup_info) {
 	SimilarCatalogEntry result;
