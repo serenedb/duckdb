@@ -7,6 +7,8 @@
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/transaction/meta_transaction.hpp"
 
 namespace duckdb {
 
@@ -71,7 +73,21 @@ static unique_ptr<FunctionData> DuckDBTriggersBind(ClientContext &context, Table
 unique_ptr<GlobalTableFunctionState> DuckDBTriggersInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBTriggersData>();
 
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto &meta_transaction = MetaTransaction::Get(context);
+	vector<reference<SchemaCatalogEntry>> schemas;
+	for (auto &database : meta_transaction.GetStatementDatabases(context)) {
+		if (database->GetVisibility() == AttachVisibility::HIDDEN || !database->GetCatalog().IsDuckCatalog()) {
+			continue;
+		}
+		auto catalog_schemas = meta_transaction.UseDatabase(database).GetCatalog().GetSchemas(context);
+		schemas.insert(schemas.end(), catalog_schemas.begin(), catalog_schemas.end());
+	}
+	sort(schemas.begin(), schemas.end(), [](reference<SchemaCatalogEntry> left, reference<SchemaCatalogEntry> right) {
+		if (left.get().catalog.GetName() != right.get().catalog.GetName()) {
+			return left.get().catalog.GetName() < right.get().catalog.GetName();
+		}
+		return left.get().name < right.get().name;
+	});
 	vector<reference<TableCatalogEntry>> tables;
 	for (auto &schema : schemas) {
 		schema.get().Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
