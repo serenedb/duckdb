@@ -34,6 +34,7 @@ class TableIndexIterationHelper;
 
 struct IndexSerializationInfo {
 	case_insensitive_map_t<Value> options;
+	unordered_set<idx_t> constraint_index_oids;
 };
 
 // IndexStorageInfo is move-only. Keep every serialized info in owned_infos and expose stable ordered references.

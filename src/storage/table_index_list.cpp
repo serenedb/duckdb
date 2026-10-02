@@ -680,11 +680,16 @@ IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, c
 	IndexSerializationResult result;
 
 	result.owned_infos.reserve(index_entries.size());
-	for (const auto &entry : index_entries) {
-		auto storage_info = entry->SerializeToDisk(context, info.options);
-		D_ASSERT(!storage_info.name.empty());
-		result.owned_infos.push_back(std::move(storage_info));
-		result.ordered_infos.push_back(result.owned_infos.back());
+	for (const bool constraint_indexes : {true, false}) {
+		for (const auto &entry : index_entries) {
+			if (info.constraint_index_oids.contains(entry->GetIndexOid()) != constraint_indexes) {
+				continue;
+			}
+			auto storage_info = entry->SerializeToDisk(context, info.options);
+			D_ASSERT(!storage_info.name.empty());
+			result.owned_infos.push_back(std::move(storage_info));
+			result.ordered_infos.push_back(result.owned_infos.back());
+		}
 	}
 
 	return result;

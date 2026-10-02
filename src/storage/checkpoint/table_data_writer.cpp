@@ -10,6 +10,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
+#include "duckdb/parser/constraints/foreign_key_constraint.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/checkpoint/table_data_reader.hpp"
 #include "duckdb/storage/metadata/metadata_reader.hpp"
@@ -198,6 +199,13 @@ void SingleFileTableDataWriter::FinalizeTable(const TableStatistics &global_stat
 	IndexSerializationInfo serialization_info;
 	if (!v1_0_0_storage) {
 		serialization_info.options.emplace("v1_0_0_storage", v1_0_0_storage);
+	}
+	for (auto &constraint : table.GetConstraints()) {
+		if (constraint->type == ConstraintType::UNIQUE ||
+		    (constraint->type == ConstraintType::FOREIGN_KEY &&
+		     constraint->Cast<ForeignKeyConstraint>().info.IsAppendConstraint())) {
+			serialization_info.constraint_index_oids.insert(constraint->GetBackingIndexOid());
+		}
 	}
 
 	auto index_storage_infos = info.GetIndexes().SerializeToDisk(context, serialization_info);
