@@ -39,7 +39,7 @@ add_library(test_capi_v2_static_extension OBJECT
 target_compile_definitions(test_capi_v2_static_extension
                            PRIVATE DUCKDB_EXTENSION_NAME=cpp_api_static_demo)
 target_include_directories(test_capi_v2_static_extension
-                           PRIVATE ${CMAKE_SOURCE_DIR}/tools/cpp)
+                           PRIVATE ${PROJECT_SOURCE_DIR}/tools/cpp)
 
 set(UNITTEST_OBJECT_FILES
     ${UNITTEST_OBJECT_FILES} $<TARGET_OBJECTS:test_sql_capi_v2>
