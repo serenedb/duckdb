@@ -11,8 +11,10 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/storage/block_manager.hpp"
+#include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
+#include "duckdb/transaction/local_storage.hpp"
 #include "duckdb/transaction/transaction_data.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_context_state.hpp"
@@ -377,6 +379,25 @@ void DuckTransactionManager::CleanupTransactions() {
 			lock_guard<mutex> q_lock(cleanup_queue_lock);
 			cleanup_queue.pop();
 		}
+	}
+}
+
+void DuckTransactionManager::CheckTruncate(DuckTransaction &transaction, DataTable &table) {
+	auto &info = *table.GetDataTableInfo();
+	bool concurrent = info.last_append_commit.load() > transaction.start_time;
+	if (!concurrent) {
+		lock_guard<mutex> guard(transaction_lock);
+		for (auto &active : active_transactions) {
+			if (active.get() != &transaction && active->GetLocalStorage().Find(table)) {
+				concurrent = true;
+				break;
+			}
+		}
+	}
+	if (concurrent) {
+		throw TransactionException(
+		    "Attempting to truncate table %s but another transaction has added rows to this table",
+		    info.GetTableName());
 	}
 }
 
