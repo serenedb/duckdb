@@ -1412,9 +1412,19 @@ void WriteAheadLogDeserializer::ReplaySequenceValue() {
 	}
 
 	// fetch the sequence from the catalog
-	auto seq = catalog.GetEntry<SequenceCatalogEntry>(context, ReplayEntryName(catalog, entry.qualified_name),
-	                                                  catalog.UsesCatalogLog() ? OnEntryNotFound::RETURN_NULL
-	                                                                           : OnEntryNotFound::THROW_EXCEPTION);
+	auto seq = catalog.GetEntry<SequenceCatalogEntry>(
+	    context, ReplayEntryName(catalog, entry.qualified_name),
+	    catalog.UsesCatalogLog() || entry.oid ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION);
+	if (entry.oid && (!seq || seq->oid != entry.oid)) {
+		seq = nullptr;
+		catalog.ScanSchemas(context, [&](SchemaCatalogEntry &candidate) {
+			candidate.Scan(context, CatalogType::SEQUENCE_ENTRY, [&](CatalogEntry &sequence) {
+				if (sequence.oid == entry.oid) {
+					seq = &sequence.Cast<SequenceCatalogEntry>();
+				}
+			});
+		});
+	}
 	if (seq) {
 		seq->ReplayValue(entry.usage_count, entry.counter, entry.last_value);
 	}

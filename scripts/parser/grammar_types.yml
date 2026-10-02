@@ -1666,6 +1666,7 @@ SequenceOptionEntry:
     - SeqSetMinMax
     - SeqNoMinMax
     - SeqStartWith
+    - SeqCache
     - SeqOwnedBy
 
 SetOperationTail:

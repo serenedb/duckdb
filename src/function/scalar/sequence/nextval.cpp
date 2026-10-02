@@ -17,21 +17,23 @@ namespace duckdb {
 namespace {
 
 struct CurrentSequenceValueOperator {
-	static int64_t Operation(DuckTransaction &, SequenceCatalogEntry &seq, const int64_t, const bool) {
-		return seq.CurrentValue();
+	static int64_t Operation(DuckTransaction &, SequenceSession &session, SequenceCatalogEntry &seq, const int64_t,
+	                         const bool) {
+		return seq.CurrentValue(session);
 	}
 };
 
 struct NextSequenceValueOperator {
-	static int64_t Operation(DuckTransaction &transaction, SequenceCatalogEntry &seq, const int64_t, const bool) {
-		return seq.NextValue(transaction);
+	static int64_t Operation(DuckTransaction &transaction, SequenceSession &session, SequenceCatalogEntry &seq,
+	                         const int64_t, const bool) {
+		return seq.NextValue(transaction, session);
 	}
 };
 
 struct SetValValueOperator {
-	static int64_t Operation(DuckTransaction &transaction, SequenceCatalogEntry &seq, const int64_t value,
-	                         const bool is_called) {
-		return seq.SetValue(transaction, value, is_called);
+	static int64_t Operation(DuckTransaction &transaction, SequenceSession &session, SequenceCatalogEntry &seq,
+	                         const int64_t value, const bool is_called) {
+		return seq.SetValue(transaction, session, value, is_called);
 	}
 };
 
@@ -51,11 +53,12 @@ SequenceCatalogEntry &BindSequence(Binder &binder, const Identifier &name) {
 }
 
 struct NextValLocalState : public FunctionLocalState {
-	explicit NextValLocalState(DuckTransaction &transaction, SequenceCatalogEntry &sequence)
-	    : transaction(transaction), sequence(sequence) {
+	NextValLocalState(DuckTransaction &transaction, SequenceSession &session, SequenceCatalogEntry &sequence)
+	    : transaction(transaction), session(session), sequence(sequence) {
 	}
 
 	DuckTransaction &transaction;
+	SequenceSession &session;
 	SequenceCatalogEntry &sequence;
 };
 
@@ -73,7 +76,7 @@ unique_ptr<FunctionLocalState> NextValLocalFunction(ExpressionState &state, cons
 	auto &info = bind_data->Cast<NextvalBindData>();
 	auto &sequence = info.sequence;
 	auto &transaction = DuckTransaction::Get(context, sequence.catalog);
-	return make_uniq<NextValLocalState>(transaction, sequence);
+	return make_uniq<NextValLocalState>(transaction, SequenceSession::Get(context), sequence);
 }
 
 template <class OP>
@@ -88,6 +91,23 @@ void NextValFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	// sequence to use is hard coded
 	// increment the sequence
 	result.SetVectorType(VectorType::FLAT_VECTOR);
+
+	if constexpr (std::is_same_v<OP, NextSequenceValueOperator>) {
+		if (args.size() > 1) {
+			auto data = lstate.sequence.GetData();
+			if (!data.cycle) {
+				auto result_data = FlatVector::Writer<int64_t>(result, args.size());
+				SequenceRuns runs;
+				lstate.sequence.NextValues(lstate.transaction, lstate.session, args.size(), runs);
+				for (idx_t run = 0; run < runs.size; run++) {
+					for (idx_t i = 0; i < runs.count[run]; i++) {
+						result_data.WriteValue(runs.first[run] + NumericCast<int64_t>(i) * data.increment);
+					}
+				}
+				return;
+			}
+		}
+	}
 
 	unique_ptr<VectorIterator<int64_t>> new_val_entries;
 	unique_ptr<VectorIterator<bool>> is_called_entries;
@@ -111,7 +131,7 @@ void NextValFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 		int64_t value = new_val_entries ? (*new_val_entries)[i].GetValue() : 0;
 		bool is_called = is_called_entries ? (*is_called_entries)[i].GetValue() : true;
 		// get the next value from the sequence
-		result_data.WriteValue(OP::Operation(lstate.transaction, lstate.sequence, value, is_called));
+		result_data.WriteValue(OP::Operation(lstate.transaction, lstate.session, lstate.sequence, value, is_called));
 	}
 }
 
@@ -129,7 +149,7 @@ unique_ptr<FunctionData> NextValBind(BindScalarFunctionInput &input) {
 
 void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data, const BoundScalarFunction &) {
 	auto &next_val_bind_data = bind_data->Cast<NextvalBindData>();
-	serializer.WritePropertyWithDefault(100, "sequence_create_info", next_val_bind_data.create_info);
+	serializer.WritePropertyWithDefault(100, "sequence_create_info", next_val_bind_data.sequence.GetInfo());
 }
 
 unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, BoundScalarFunction &) {

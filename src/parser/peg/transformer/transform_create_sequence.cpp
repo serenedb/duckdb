@@ -96,6 +96,13 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateSequenceStmt(
 		} else if (option.first == "cycle") {
 			auto seq_val_option = unique_ptr_cast<SequenceOption, ValueSequenceOption>(std::move(option.second));
 			info->cycle = seq_val_option->value.GetValue<bool>();
+		} else if (option.first == "cache") {
+			auto seq_val_option = unique_ptr_cast<SequenceOption, ValueSequenceOption>(std::move(option.second));
+			auto cache = seq_val_option->value.GetValue<int64_t>();
+			if (cache <= 0) {
+				throw ParserException("CACHE (%lld) must be greater than zero", cache);
+			}
+			info->cache = static_cast<uint64_t>(cache);
 		} else {
 			throw ParserException("Unrecognized option \"%s\" for CREATE SEQUENCE", option.first);
 		}
@@ -198,6 +205,16 @@ PEGTransformerFactory::TransformSeqStartWith(PEGTransformer &transformer, const 
 	auto &const_expr = expression->Cast<ConstantExpression>();
 	return make_pair("start",
 	                 make_uniq<ValueSequenceOption>(SequenceInfo::SEQ_START, const_expr.GetLiteral().ToValue()));
+}
+
+pair<string, unique_ptr<SequenceOption>>
+PEGTransformerFactory::TransformSeqCache(PEGTransformer &transformer, unique_ptr<ParsedExpression> expression) {
+	if (expression->GetExpressionClass() != ExpressionClass::CONSTANT) {
+		throw ParserException("Expected constant expression.");
+	}
+	auto &const_expr = expression->Cast<ConstantExpression>();
+	return make_pair("cache",
+	                 make_uniq<ValueSequenceOption>(SequenceInfo::SEQ_CACHE, const_expr.GetLiteral().ToValue()));
 }
 
 pair<string, unique_ptr<SequenceOption>>

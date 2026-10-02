@@ -93,7 +93,10 @@ public:
 
 	void PushDelete(DuckTableEntry &table_entry, RowVersionManager &info, idx_t vector_idx, row_t rows[], idx_t count,
 	                idx_t base_row);
-	void PushSequenceUsage(SequenceCatalogEntry &entry, const SequenceData &data);
+	void PushSequenceUsage(SequenceCatalogEntry &entry, uint64_t usage_count, int64_t counter);
+	bool HasLoggedSequenceUsage();
+	void CoverSequenceUsage();
+	vector<SequenceValue> ReserveSequenceUsage(WriteAheadLog &catalog_log);
 	void PushAppend(DuckTableEntry &table_entry, idx_t row_start, idx_t row_count);
 	UndoBufferReference CreateUpdateInfo(DuckTableEntry &table_entry, idx_t type_size, idx_t entries,
 	                                     idx_t row_group_start);
@@ -116,6 +119,7 @@ public:
 	struct PreparedCommit {
 		unique_lock<mutex> commit_lock;
 		unique_ptr<StorageCommitState> commit_state;
+		vector<SequenceValue> sequences;
 	};
 	unique_ptr<PreparedCommit> prepared;
 
@@ -131,8 +135,8 @@ private:
 	unique_ptr<StorageLockKey> vacuum_lock;
 	//! Lock for accessing sequence_usage
 	mutex sequence_lock;
-	//! Map of all sequences that were used during the transaction and the value they had in this transaction
 	reference_map_t<SequenceCatalogEntry, reference<SequenceValue>> sequence_usage;
+	reference_map_t<SequenceCatalogEntry, uint64_t> logged_sequence_usage;
 	//! Flag to prevent auto-checkpointing inside a checkpoint transaction.
 	bool is_checkpoint_transaction = false;
 };
