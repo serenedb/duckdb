@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/common/storage_compatibility.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/query_profiler.hpp"
@@ -10,6 +11,7 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/parser/parsed_data/alter_database_info.hpp"
 #include "duckdb/storage/storage_extension.hpp"
+#include "duckdb/storage/storage_info.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
@@ -253,6 +255,13 @@ shared_ptr<AttachedDatabase> DatabaseManager::AttachDatabase(ClientContext &cont
 		// we only need to prevent duplicate opening of DuckDB files
 		// if this is not a DuckDB file but e.g. a CSV or Parquet file, we don't need to do this duplicate protection
 		options.stored_database_path.reset();
+	} else if (auto entry = options.options.find("storage_version"); entry != options.options.end()) {
+		auto version = StorageCompatibility::FromString(entry->second.ToString()).storage_version;
+		if (IsSereneDBStorageVersion(version)) {
+			throw InvalidInputException("Cannot attach \"%s\" at storage version %s: a SereneDB storage version is for "
+			                            "SereneDB databases, a DuckDB database takes a DuckDB storage version",
+			                            info.path, entry->second.ToString());
+		}
 	}
 	if (AttachedDatabase::NameIsReserved(info.name)) {
 		throw BinderException("Attached database name \"%s\" cannot be used because it is a reserved name",
