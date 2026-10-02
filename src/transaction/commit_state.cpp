@@ -278,6 +278,9 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		D_ASSERT(catalog.IsDuckCatalog());
 
 		auto &new_entry = old_entry.Parent();
+		// Grab a write lock on the catalog
+		auto &duck_catalog = catalog.Cast<DuckCatalog>();
+		lock_guard<mutex> write_lock(duck_catalog.GetWriteLock());
 		if (new_entry.type == CatalogType::DEPENDENCY_ENTRY) {
 			auto &dep = new_entry.Cast<DependencyEntry>();
 			if (dep.Side() == DependencyEntryType::SUBJECT) {
@@ -286,9 +289,6 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		} else if (new_entry.type == CatalogType::DELETED_ENTRY && old_entry.set) {
 			old_entry.set->CommitDrop(commit_id, transaction.start_time, old_entry);
 		}
-		// Grab a write lock on the catalog
-		auto &duck_catalog = catalog.Cast<DuckCatalog>();
-		lock_guard<mutex> write_lock(duck_catalog.GetWriteLock());
 		lock_guard<mutex> read_lock(old_entry.set->GetCatalogLock());
 		// Set the timestamp of the catalog entry to the given commit_id, marking it as committed
 		CatalogSet::UpdateTimestamp(old_entry.Parent(), commit_id);
