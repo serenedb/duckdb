@@ -476,59 +476,62 @@ void DataTable::VacuumIndexes() {
 }
 
 void DataTable::RebuildIndexes() {
-	auto &indexes = info->indexes;
-	auto &types = row_groups->GetTypes();
-
-	for (auto &index : indexes.Indexes()) {
+	for (auto &index : info->indexes.Indexes()) {
 		if (!index.IsBound()) {
 			throw InternalException("RebuildIndexes expects all indexes to be bound during checkpoint");
 		}
-		auto &bound_index = index.Cast<BoundIndex>();
-		bound_index.ResetStorage();
-
-		auto &col_ids = bound_index.GetColumnIds();
-
-		vector<StorageIndex> scan_column_ids;
-		vector<LogicalType> scan_types;
-		for (auto col_id : col_ids) {
-			scan_column_ids.emplace_back(col_id);
-			scan_types.push_back(types[col_id]);
-		}
-		scan_column_ids.emplace_back(COLUMN_IDENTIFIER_ROW_ID);
-		scan_types.push_back(LogicalType::ROW_TYPE);
-
-		DataChunk scan_chunk;
-		scan_chunk.Initialize(Allocator::Get(db), scan_types);
-
-		CreateIndexScanState state;
-		auto scan_type = TableScanType::TABLE_SCAN_COMMITTED_ROWS;
-		state.Initialize(scan_column_ids, nullptr);
-		QueryContext context;
-		row_groups->InitializeScan(context, state.table_state, scan_column_ids, nullptr);
-		row_groups->InitializeCreateIndexScan(state);
-
-		DataChunk table_chunk;
-		table_chunk.InitializeEmpty(types);
-
-		while (true) {
-			scan_chunk.Reset();
-			state.table_state.Scan(scan_chunk, scan_type, state.segment_lock);
-			if (scan_chunk.size() == 0) {
-				break;
-			}
-			for (idx_t i = 0; i < col_ids.size(); i++) {
-				table_chunk.data[col_ids[i]].Reference(scan_chunk.data[i]);
-			}
-			Vector &row_ids = scan_chunk.data[col_ids.size()];
-
-			auto error = bound_index.Append(table_chunk, row_ids);
-			if (error.HasError()) {
-				throw InternalException("Failed to rebuild index '%s' after vacuum: %s", bound_index.GetIndexName(),
-				                        error.Message());
-			}
-		}
-		bound_index.Verify();
+		RebuildIndex(index.Cast<BoundIndex>());
 	}
+}
+
+void DataTable::RebuildIndex(BoundIndex &bound_index) {
+	auto &types = row_groups->GetTypes();
+	bound_index.ResetStorage();
+	if (row_groups->GetTotalRows() == 0) {
+		return;
+	}
+
+	auto &col_ids = bound_index.GetColumnIds();
+
+	vector<StorageIndex> scan_column_ids;
+	vector<LogicalType> scan_types;
+	for (auto col_id : col_ids) {
+		scan_column_ids.emplace_back(col_id);
+		scan_types.push_back(types[col_id]);
+	}
+	scan_column_ids.emplace_back(COLUMN_IDENTIFIER_ROW_ID);
+	scan_types.push_back(LogicalType::ROW_TYPE);
+
+	DataChunk scan_chunk;
+	scan_chunk.Initialize(Allocator::Get(db), scan_types);
+
+	CreateIndexScanState state;
+	auto scan_type = TableScanType::TABLE_SCAN_COMMITTED_ROWS;
+	state.Initialize(scan_column_ids, nullptr);
+	QueryContext context;
+	row_groups->InitializeScan(context, state.table_state, scan_column_ids, nullptr);
+	row_groups->InitializeCreateIndexScan(state);
+
+	DataChunk table_chunk;
+	table_chunk.InitializeEmpty(types);
+
+	while (true) {
+		scan_chunk.Reset();
+		state.table_state.Scan(scan_chunk, scan_type, state.segment_lock);
+		if (scan_chunk.size() == 0) {
+			break;
+		}
+		for (idx_t i = 0; i < col_ids.size(); i++) {
+			table_chunk.data[col_ids[i]].Reference(scan_chunk.data[i]);
+		}
+		Vector &row_ids = scan_chunk.data[col_ids.size()];
+
+		auto error = bound_index.Append(table_chunk, row_ids);
+		if (error.HasError()) {
+			throw InternalException("Failed to rebuild index '%s': %s", bound_index.GetIndexName(), error.Message());
+		}
+	}
+	bound_index.Verify();
 }
 
 void DataTable::VerifyIndexBuffers() {
@@ -1413,7 +1416,6 @@ void DataTable::MergeStorage(RowGroupCollection &data, optional_ptr<StorageCommi
 
 void DataTable::WriteToLog(DuckTransaction &transaction, WriteAheadLog &log, idx_t row_start, idx_t count,
                            optional_ptr<StorageCommitState> commit_state) {
-	log.WriteSetTable(info->GetSchemaName(), info->GetTableName());
 	if (!commit_state) {
 		ScanTableSegment(transaction, row_start, count, [&](DataChunk &chunk) { log.WriteInsert(chunk); });
 		return;

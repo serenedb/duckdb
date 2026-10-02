@@ -434,8 +434,40 @@ void DuckTransactionManager::CleanupTransactions() {
 	}
 }
 
+ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Transaction &transaction_p,
+                                                     WriteAheadLog &catalog_log, const hugeint_t &txid,
+                                                     vector<pair<idx_t, idx_t>> &participants) {
+	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	if (!transaction.ShouldWriteToWAL(db)) {
+		return ErrorData();
+	}
+	auto prepared = make_uniq<DuckTransaction::PreparedCommit>();
+	auto &storage_manager = db.GetStorageManager();
+	if (storage_manager.HasWAL()) {
+		prepared->wal_lock = storage_manager.GetWALLock();
+		prepared->wal = storage_manager.GetWALShared();
+	}
+	auto error = transaction.WriteToWAL(context, db, prepared->commit_state, catalog_log);
+	if (error.HasError()) {
+		return error;
+	}
+	if (prepared->commit_state) {
+		try {
+			if (prepared->commit_state->PrepareCommit(txid)) {
+				participants.emplace_back(db.oid, storage_manager.GetBlockManager().GetCheckpointIteration());
+			}
+			prepared->wal->GroupSync(prepared->commit_state->GetFlushOffset());
+		} catch (std::exception &ex) {
+			return ErrorData(ex);
+		}
+	}
+	transaction.prepared = std::move(prepared);
+	return ErrorData();
+}
+
 ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Transaction &transaction_p) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	auto prepared = std::move(transaction.prepared);
 	unique_lock<mutex> t_lock(transaction_lock);
 	if (!db.IsSystem() && !db.IsTemporary()) {
 		if (transaction.ChangesMade()) {
@@ -449,7 +481,8 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	// check if we can checkpoint
 	unique_ptr<StorageLockKey> lock;
 	auto undo_properties = transaction.GetUndoProperties();
-	auto checkpoint_decision = CanCheckpoint(transaction, lock, undo_properties);
+	auto checkpoint_decision =
+	    prepared ? CheckpointDecision("the commit is prepared") : CanCheckpoint(transaction, lock, undo_properties);
 	ErrorData error;
 	unique_lock<mutex> held_wal_lock;
 	// pin the WAL object (captured below while holding the WAL lock) so a concurrent checkpoint that resets it cannot
@@ -459,6 +492,14 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	idx_t wal_generation = 0;
 	unique_ptr<StorageCommitState> commit_state;
 	bool skip_wal_write_due_to_checkpoint = false;
+	if (prepared) {
+		held_wal_lock = std::move(prepared->wal_lock);
+		wal_ref = std::move(prepared->wal);
+		commit_state = std::move(prepared->commit_state);
+		if (wal_ref) {
+			wal_generation = db.GetStorageManager().GetBlockManager().GetCheckpointIteration();
+		}
+	}
 	if (checkpoint_decision.can_checkpoint) {
 		// we can perform an automatic checkpoint
 		// we have two options:
@@ -472,7 +513,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 			skip_wal_write_due_to_checkpoint = true;
 		}
 	}
-	bool should_write_to_wal = transaction.ShouldWriteToWAL(db);
+	bool should_write_to_wal = !prepared && transaction.ShouldWriteToWAL(db);
 	if (should_write_to_wal) {
 		auto &storage_manager = db.GetStorageManager().Cast<SingleFileStorageManager>();
 		// if we are committing changes and we are not doing a "checkpoint instead of WAL write"
@@ -664,6 +705,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 
 void DuckTransactionManager::RollbackTransaction(Transaction &transaction_p) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	transaction.prepared.reset();
 
 	DUCKDB_LOG(db.GetDatabase(), TransactionLogType, db, "Rollback", transaction.transaction_id);
 

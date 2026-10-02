@@ -20,11 +20,13 @@
 
 namespace duckdb {
 class AttachedDatabase;
+class Catalog;
 class ClientContext;
 class SecretManager;
 class SecretStorage;
 struct DatabaseModificationType;
 class Transaction;
+class WriteAheadLog;
 
 enum class TransactionState { UNCOMMITTED, COMMITTED, ROLLED_BACK };
 
@@ -97,6 +99,9 @@ public:
 
 private:
 	friend class SecretManager;
+
+	optional_ptr<Catalog> CatalogLogForCommit();
+	ErrorData CommitThroughCatalogLog(Catalog &catalog);
 
 	//! Lock to prevent all_transactions and transactions from getting out of sync.
 	mutex lock;

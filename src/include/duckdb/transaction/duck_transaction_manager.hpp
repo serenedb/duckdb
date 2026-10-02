@@ -46,6 +46,8 @@ public:
 	Transaction &StartTransaction(ClientContext &context) override;
 	//! Commit the given transaction
 	ErrorData CommitTransaction(ClientContext &context, Transaction &transaction) override;
+	ErrorData PrepareTransaction(ClientContext &context, Transaction &transaction, WriteAheadLog &catalog_log,
+	                             const hugeint_t &txid, vector<pair<idx_t, idx_t>> &participants);
 	//! Rollback the given transaction
 	void RollbackTransaction(Transaction &transaction) override;
 

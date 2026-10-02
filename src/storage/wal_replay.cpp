@@ -42,6 +42,8 @@
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table/row_group_collection.hpp"
+#include "duckdb/storage/table_storage_load.hpp"
+#include "duckdb/main/database_manager.hpp"
 
 namespace duckdb {
 enum class WALReplayState { MAIN_WAL, CHECKPOINT_WAL };
@@ -49,13 +51,18 @@ enum class WALReplayState { MAIN_WAL, CHECKPOINT_WAL };
 class ReplayState {
 public:
 	ReplayState(AttachedDatabase &db, ClientContext &context, WALReplayState replay_state_p)
-	    : db(db), context(context), catalog(db.GetCatalog()), replay_state(replay_state_p) {
+	    : db(db), context(context), catalog(db.GetCatalog()),
+	      table_storage(db.GetStorageManager().GetTableStorageLoad()), replay_state(replay_state_p) {
 	}
 
 	AttachedDatabase &db;
 	ClientContext &context;
-	Catalog &catalog;
+	reference<Catalog> catalog;
 	optional_ptr<DuckTableEntry> current_table;
+	optional_idx current_table_oid;
+	optional_ptr<TableStorageLoad> table_storage;
+	optional<hugeint_t> prepared_txid;
+	vector<pair<hugeint_t, vector<pair<idx_t, idx_t>>>> committed_prepared;
 	MetaBlockPointer checkpoint_id;
 	idx_t wal_version = 1;
 	optional_idx current_position;
@@ -79,13 +86,13 @@ public:
 class WriteAheadLogDeserializer {
 public:
 	WriteAheadLogDeserializer(ReplayState &state_p, BufferedFileReader &stream_p, bool deserialize_only = false)
-	    : state(state_p), db(state.db), context(state.context), catalog(state.catalog), data(nullptr),
+	    : state(state_p), db(state.db), context(state.context), catalog(state.catalog.get()), data(nullptr),
 	      stream(nullptr, 0), deserializer(stream_p), deserialize_only(deserialize_only) {
 		deserializer.Set<Catalog &>(catalog);
 	}
 	WriteAheadLogDeserializer(ReplayState &state_p, unique_ptr<data_t[]> data_p, idx_t size, idx_t entry_offset_p,
 	                          bool deserialize_only = false)
-	    : state(state_p), db(state.db), context(state.context), catalog(state.catalog), data(std::move(data_p)),
+	    : state(state_p), db(state.db), context(state.context), catalog(state.catalog.get()), data(std::move(data_p)),
 	      stream(data.get(), size), deserializer(stream), deserialize_only(deserialize_only),
 	      entry_offset(entry_offset_p) {
 		deserializer.Set<Catalog &>(catalog);
@@ -215,6 +222,11 @@ public:
 			deserializer.End();
 			return true;
 		}
+		if (wal_type == WALType::WAL_PREPARED) {
+			state.prepared_txid = deserializer.ReadProperty<hugeint_t>(101, "txid");
+			deserializer.End();
+			return true;
+		}
 		ReplayEntry(wal_type);
 		deserializer.End();
 		return false;
@@ -280,6 +292,9 @@ protected:
 	void ReplayCreateForeignServer();
 	void ReplayDropForeignServer();
 
+	void ReplayUseCatalog();
+	void ReplayCommitPrepared();
+	void ReplayArtifact();
 	void ReplayUseTable();
 	void ReplayInsert();
 	void ReplayRowGroupData();
@@ -447,14 +462,24 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 	// first deserialize the WAL to look for a checkpoint flag
 	// if there is a checkpoint flag, we might have already flushed the contents of the WAL to disk
 	ReplayState checkpoint_state(database, *con.context, replay_state);
+	auto &db_manager = DatabaseManager::Get(database.GetDatabase());
+	unordered_set<idx_t> undecided_batches;
 	try {
 		idx_t replay_entry_count = 0;
+		idx_t batch_start = reader.CurrentOffset();
 		while (true) {
 			replay_entry_count++;
 			// read the current entry (deserialize only)
 			checkpoint_state.current_position = reader.CurrentOffset();
 			auto deserializer = WriteAheadLogDeserializer::GetEntryDeserializer(checkpoint_state, reader, true);
 			if (deserializer.ReplayEntry()) {
+				if (checkpoint_state.prepared_txid) {
+					if (!db_manager.IsPreparedCommitted(*checkpoint_state.prepared_txid)) {
+						undecided_batches.insert(batch_start);
+					}
+					checkpoint_state.prepared_txid.reset();
+				}
+				batch_start = reader.CurrentOffset();
 				// check if the file is exhausted
 				if (reader.Finished()) {
 					// we finished reading the file: break
@@ -559,20 +584,30 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 	idx_t successful_offset = 0;
 	bool all_succeeded = false;
 	try {
+		bool skip_batch = undecided_batches.count(reader.CurrentOffset()) != 0;
 		while (true) {
 			// Publish the byte offset of the entry we are about to replay so any unbound index buffering this
 			// entry's ops can stamp it onto its replay ranges (used to skip already-durable ops at bind time).
 			duck_manager.SetReplayCommitOffset(reader.CurrentOffset());
 			// read the current entry
-			auto deserializer = WriteAheadLogDeserializer::GetEntryDeserializer(state, reader);
+			auto deserializer = WriteAheadLogDeserializer::GetEntryDeserializer(state, reader, skip_batch);
 			if (deserializer.ReplayEntry()) {
+				state.prepared_txid.reset();
 				con.Commit();
+				for (auto &decision : state.committed_prepared) {
+					db_manager.CommitPrepared(decision.first, std::move(decision.second));
+				}
+				state.committed_prepared.clear();
+				skip_batch = undecided_batches.count(reader.CurrentOffset()) != 0;
 
 				// Commit any outstanding indexes.
 				for (auto &info : state.replay_index_infos) {
 					info.index_list.get().AddIndex(std::move(info.index));
 				}
 				state.replay_index_infos.clear();
+				if (state.table_storage) {
+					state.table_storage->AttachPendingIndexes();
+				}
 
 				successful_offset = reader.CurrentOffset();
 				// check if the file is exhausted
@@ -720,6 +755,15 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::DROP_FOREIGN_SERVER:
 		ReplayDropForeignServer();
 		break;
+	case WALType::USE_CATALOG:
+		ReplayUseCatalog();
+		break;
+	case WALType::COMMIT_PREPARED:
+		ReplayCommitPrepared();
+		break;
+	case WALType::ARTIFACT:
+		ReplayArtifact();
+		break;
 	default:
 		throw InternalException("Invalid WAL entry type!");
 	}
@@ -740,7 +784,6 @@ void WriteAheadLogDeserializer::ThrowVersionError(idx_t checkpoint_iteration, id
 void WriteAheadLogDeserializer::ReplayVersion() {
 	state.wal_version = deserializer.ReadProperty<idx_t>(101, "version");
 
-	auto &single_file_block_manager = db.GetStorageManager().GetBlockManager().Cast<SingleFileBlockManager>();
 	data_t db_identifier[MainHeader::DB_IDENTIFIER_LEN];
 	bool is_set = false;
 	deserializer.ReadOptionalList(102, "db_identifier", [&](Deserializer::List &list, idx_t i) {
@@ -754,6 +797,7 @@ void WriteAheadLogDeserializer::ReplayVersion() {
 	if (!is_set || !checkpoint_iteration.IsValid()) {
 		return;
 	}
+	auto &single_file_block_manager = db.GetStorageManager().GetBlockManager().Cast<SingleFileBlockManager>();
 	auto expected_db_identifier = single_file_block_manager.GetDBIdentifier();
 	if (!MainHeader::CompareDBIdentifiers(db_identifier, expected_db_identifier)) {
 		throw IOException("WAL does not match database file.");
@@ -787,6 +831,10 @@ void WriteAheadLogDeserializer::ReplayCreateTable() {
 	if (DeserializeOnly()) {
 		return;
 	}
+	if (state.table_storage) {
+		state.table_storage->Create(context, std::move(info));
+		return;
+	}
 	// bind the constraints to the table again
 	auto binder = Binder::CreateBinder(context);
 	auto &schema = catalog.GetSchema(context, info->GetQualifiedName().Schema());
@@ -804,6 +852,11 @@ void WriteAheadLogDeserializer::ReplayDropTable() {
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
 	if (DeserializeOnly()) {
+		return;
+	}
+	if (state.table_storage) {
+		state.table_storage->Drop(state.current_table_oid);
+		state.current_table = nullptr;
 		return;
 	}
 
@@ -878,7 +931,16 @@ void WriteAheadLogDeserializer::ReplayAlter() {
 	auto info = FromDuckDBRenameInfo(deserializer.ReadProperty<unique_ptr<ParseInfo>>(101, "info"));
 	auto &alter_info = info->Cast<AlterInfo>();
 	alter_info.bind_mode = AlterBindMode::SKIP_BINDING;
-	if (!alter_info.IsAddUniqueConstraint()) {
+	if (state.table_storage) {
+		if (!DeserializeOnly()) {
+			state.table_storage->Alter(context, state.current_table_oid, alter_info);
+			if (state.current_table_oid.IsValid()) {
+				state.current_table = state.table_storage->Find(state.current_table_oid.GetIndex());
+			}
+		}
+		return;
+	}
+	if (!alter_info.IsAddUniqueConstraint() || catalog.UsesCatalogLog()) {
 		return ReplayWithoutIndex(context, catalog, alter_info, DeserializeOnly());
 	}
 
@@ -985,8 +1047,18 @@ void WriteAheadLogDeserializer::ReplayCreateSchema() {
 	if (DeserializeOnly()) {
 		return;
 	}
-
-	catalog.CreateSchema(context, info->Cast<CreateSchemaInfo>());
+	auto &schema_info = info->Cast<CreateSchemaInfo>();
+	if (catalog.UsesCatalogLog()) {
+		EntryLookupInfo lookup(CatalogType::SCHEMA_ENTRY, schema_info.GetQualifiedName().Schema());
+		auto existing = catalog.GetSchema(context, lookup, OnEntryNotFound::RETURN_NULL);
+		if (existing) {
+			existing->permissions = schema_info.permissions;
+			existing->comment = schema_info.comment;
+			existing->tags = schema_info.tags;
+			return;
+		}
+	}
+	catalog.CreateSchema(context, schema_info);
 }
 
 void WriteAheadLogDeserializer::ReplayDropSchema() {
@@ -1190,9 +1262,12 @@ void WriteAheadLogDeserializer::ReplaySequenceValue() {
 	}
 
 	// fetch the sequence from the catalog
-	auto &seq = catalog.GetEntry<SequenceCatalogEntry>(
-	    context, QualifiedName(catalog.GetName(), Identifier(schema), Identifier(name)));
-	seq.ReplayValue(usage_count, counter, last_value);
+	auto seq = catalog.GetEntry<SequenceCatalogEntry>(
+	    context, QualifiedName(catalog.GetName(), Identifier(schema), Identifier(name)),
+	    catalog.UsesCatalogLog() ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION);
+	if (seq) {
+		seq->ReplayValue(usage_count, counter, last_value);
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -1265,6 +1340,10 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 	if (info.index_type.empty()) {
 		info.index_type = ART::TYPE_NAME;
 	}
+	if (state.table_storage) {
+		state.table_storage->CreateIndex(state.current_table_oid, std::move(create_info), std::move(index_info));
+		return;
+	}
 
 	const auto schema_name = create_info->GetQualifiedName().Schema();
 	const auto table_name = info.table;
@@ -1280,6 +1359,9 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 
 	// Create the index in the catalog.
 	table.ParentSchema(context).CreateIndex(context, info, table);
+	if (catalog.UsesCatalogLog()) {
+		return;
+	}
 
 	// add the index to the storage
 	auto unbound_index = make_uniq<UnboundIndex>(std::move(create_info), std::move(index_info), io_manager, db);
@@ -1295,8 +1377,13 @@ void WriteAheadLogDeserializer::ReplayDropIndex() {
 	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto schema = Identifier(deserializer.ReadProperty<string>(101, "schema"));
 	auto name = Identifier(deserializer.ReadProperty<string>(102, "name"));
+	auto index_oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", 0);
 	info.SetQualifiedName(QualifiedName({std::move(schema)}, std::move(name)));
 	if (DeserializeOnly()) {
+		return;
+	}
+	if (state.table_storage) {
+		state.table_storage->DropIndex(state.current_table_oid, index_oid);
 		return;
 	}
 
@@ -1315,10 +1402,57 @@ void WriteAheadLogDeserializer::ReplayDropIndex() {
 //===--------------------------------------------------------------------===//
 // Replay Data
 //===--------------------------------------------------------------------===//
+void WriteAheadLogDeserializer::ReplayUseCatalog() {
+	auto catalog_oid = deserializer.ReadProperty<idx_t>(101, "catalog_oid");
+	if (DeserializeOnly()) {
+		return;
+	}
+	if (catalog_oid == db.oid) {
+		state.catalog = db.GetCatalog();
+		return;
+	}
+	state.catalog = db.GetCatalog().ReplayUseCatalog(context, catalog_oid);
+	MetaTransaction::Get(context).ModifyDatabase(state.catalog.get().GetAttached(), DatabaseModificationType());
+}
+
+void WriteAheadLogDeserializer::ReplayCommitPrepared() {
+	auto txid = deserializer.ReadProperty<hugeint_t>(101, "txid");
+	auto oids = deserializer.ReadProperty<vector<idx_t>>(102, "participant_oids");
+	auto generations = deserializer.ReadProperty<vector<idx_t>>(103, "participant_generations");
+	if (DeserializeOnly()) {
+		return;
+	}
+	if (oids.size() != generations.size()) {
+		throw SerializationException("Corrupt WAL: prepared commit participants do not match their generations");
+	}
+	vector<pair<idx_t, idx_t>> participants;
+	for (idx_t i = 0; i < oids.size(); i++) {
+		participants.emplace_back(oids[i], generations[i]);
+	}
+	state.committed_prepared.emplace_back(txid, std::move(participants));
+}
+
+void WriteAheadLogDeserializer::ReplayArtifact() {
+	auto type = deserializer.ReadProperty<CatalogType>(101, "catalog_type");
+	auto catalog_oid = deserializer.ReadProperty<idx_t>(102, "catalog_oid");
+	auto oid = deserializer.ReadProperty<idx_t>(103, "oid");
+	auto paths = deserializer.ReadProperty<vector<string>>(104, "paths");
+	if (DeserializeOnly()) {
+		return;
+	}
+	db.GetCatalog().ReplayArtifact(type, catalog_oid, oid, std::move(paths));
+}
+
 void WriteAheadLogDeserializer::ReplayUseTable() {
 	auto schema_name = deserializer.ReadProperty<Identifier>(101, "schema");
 	auto table_name = deserializer.ReadProperty<Identifier>(102, "table");
+	auto table_oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "table_oid", 0);
 	if (DeserializeOnly()) {
+		return;
+	}
+	if (state.table_storage) {
+		state.current_table_oid = table_oid;
+		state.current_table = state.table_storage->Find(table_oid);
 		return;
 	}
 	state.current_table =
@@ -1328,7 +1462,7 @@ void WriteAheadLogDeserializer::ReplayUseTable() {
 void WriteAheadLogDeserializer::ReplayInsert() {
 	DataChunk chunk;
 	deserializer.ReadObject(101, "chunk", [&](Deserializer &object) { chunk.Deserialize(object); });
-	if (DeserializeOnly()) {
+	if (DeserializeOnly() || (!state.current_table && state.table_storage)) {
 		return;
 	}
 	if (!state.current_table) {
@@ -1357,6 +1491,9 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 		for (auto &block_id : data.GetBlockIds()) {
 			block_manager.MarkBlockAsUsed(block_id);
 		}
+		return;
+	}
+	if (!state.current_table && state.table_storage) {
 		return;
 	}
 	if (!state.current_table) {
@@ -1402,7 +1539,7 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 void WriteAheadLogDeserializer::ReplayDelete() {
 	DataChunk chunk;
 	deserializer.ReadObject(101, "chunk", [&](Deserializer &object) { chunk.Deserialize(object); });
-	if (DeserializeOnly()) {
+	if (DeserializeOnly() || (!state.current_table && state.table_storage)) {
 		return;
 	}
 	if (!state.current_table) {
@@ -1432,7 +1569,7 @@ void WriteAheadLogDeserializer::ReplayUpdate() {
 	DataChunk chunk;
 	deserializer.ReadObject(102, "chunk", [&](Deserializer &object) { chunk.Deserialize(object); });
 
-	if (DeserializeOnly()) {
+	if (DeserializeOnly() || (!state.current_table && state.table_storage)) {
 		return;
 	}
 	if (!state.current_table) {
