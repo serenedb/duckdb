@@ -467,6 +467,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -501,6 +507,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "table_oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -589,6 +601,49 @@
         "id": 101,
         "name": "name",
         "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "WALUseCatalog",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "catalog_oid",
+        "type": "idx_t"
+      }
+    ]
+  },
+  {
+    "class": "WALPrepared",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "txid",
+        "type": "hugeint_t"
+      }
+    ]
+  },
+  {
+    "class": "WALCommitPrepared",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "txid",
+        "type": "hugeint_t"
+      },
+      {
+        "id": 102,
+        "name": "participant_oids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 103,
+        "name": "participant_generations",
+        "type": "vector<idx_t>"
       }
     ]
   }

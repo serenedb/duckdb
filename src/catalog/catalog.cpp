@@ -435,6 +435,10 @@ struct CatalogLookup {
 //===--------------------------------------------------------------------===//
 // Generic
 //===--------------------------------------------------------------------===//
+Catalog &Catalog::ReplayUseCatalog(ClientContext &context, idx_t catalog_oid) {
+	throw InternalException("Catalog %s has no catalog log to replay catalog %llu from", GetName(), catalog_oid);
+}
+
 bool Catalog::InRelationNamespace(CatalogType type) {
 	switch (type) {
 	case CatalogType::TABLE_ENTRY:

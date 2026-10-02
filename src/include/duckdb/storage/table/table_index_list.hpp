@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/enums/index_removal_type.hpp"
 #include "duckdb/common/optional_ptr.hpp"
@@ -41,6 +42,7 @@ struct IndexSerializationInfo {
 struct IndexSerializationResult {
 	//! The ordered list of references to serialize - preserves iteration order of index_entries
 	vector<reference<const IndexStorageInfo>> ordered_infos;
+	vector<shared_ptr<IndexEntry>> ordered_entries;
 	//! Storage for index infos to keep the references in ordered_infos alive.
 	vector<IndexStorageInfo> owned_infos;
 };
@@ -60,6 +62,7 @@ public:
 	//! Appends a table chunk with generated row IDs, using delete and checkpoint indexes where required.
 	ErrorData Append(optional_ptr<TableIndexList> delete_indexes, DataChunk &chunk, row_t row_start,
 	                 IndexAppendMode append_mode, optional_idx active_checkpoint);
+	ErrorData FinishAppend();
 	//! Reverts an append to all index entries.
 	void RevertAppend(DataChunk &chunk, Vector &row_ids);
 	//! Reverts an append with generated row IDs starting at row_start.
@@ -85,6 +88,7 @@ public:
 	shared_ptr<IndexEntry> FindEntry(const IndexEntry &index) const;
 	//! Binds unbound indexes possibly present after loading an extension.
 	void Bind(ClientContext &context, DataTableInfo &table_info, const optional<string> &index_type = {});
+	void Bind(ClientContext &context, TableCatalogEntry &table, const optional<string> &index_type = {});
 	//! Returns true, if there are no index entries.
 	bool Empty() const {
 		return Count() == 0;

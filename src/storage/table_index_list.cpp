@@ -149,6 +149,18 @@ ErrorData TableIndexList::Append(optional_ptr<TableIndexList> delete_indexes, Da
 	return error;
 }
 
+ErrorData TableIndexList::FinishAppend() {
+	annotated_lock_guard lock(index_entries_lock);
+	ErrorData result;
+	for (const auto &entry : index_entries) {
+		auto finished = entry->FinishAppend();
+		if (!result.HasError()) {
+			result = std::move(finished);
+		}
+	}
+	return result;
+}
+
 void TableIndexList::RevertAppend(DataChunk &chunk, Vector &row_ids) {
 	annotated_lock_guard lock(index_entries_lock);
 	for (const auto &entry : index_entries) {
@@ -503,8 +515,10 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 	auto &table_entry = catalog.GetEntry<TableCatalogEntry>(
 	    context,
 	    QualifiedName::FromCatalogSchema(catalog.GetName(), table_info.GetSchemaPath(), table_info.GetTableName()));
-	auto &table = table_entry.Cast<DuckTableEntry>();
+	Bind(context, table_entry, index_type);
+}
 
+void TableIndexList::Bind(ClientContext &context, TableCatalogEntry &table, const optional<string> &index_type) {
 	vector<LogicalType> column_types;
 	vector<string> column_names;
 	for (auto &col : table.GetColumns().Logical()) {
@@ -685,6 +699,7 @@ IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, c
 			if (info.constraint_index_oids.contains(entry->GetIndexOid()) != constraint_indexes) {
 				continue;
 			}
+			result.ordered_entries.push_back(entry);
 			auto storage_info = entry->SerializeToDisk(context, info.options);
 			D_ASSERT(!storage_info.name.empty());
 			result.owned_infos.push_back(std::move(storage_info));

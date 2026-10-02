@@ -179,18 +179,27 @@ ErrorData LocalTableStorage::AppendToIndexes(DuckTransaction &transaction, RowGr
 	table_chunk.InitializeEmpty(table_types);
 
 	ErrorData error;
-	for (auto &index_chunk : source.Chunks(transaction, mapped_column_ids)) {
-		D_ASSERT(index_chunk.ColumnCount() == mapped_column_ids.size());
-		for (idx_t i = 0; i < mapped_column_ids.size(); i++) {
-			auto col_id = mapped_column_ids[i].GetPrimaryIndex();
-			table_chunk.data[col_id].Reference(index_chunk.data[i]);
-		}
+	try {
+		for (auto &index_chunk : source.Chunks(transaction, mapped_column_ids)) {
+			D_ASSERT(index_chunk.ColumnCount() == mapped_column_ids.size());
+			for (idx_t i = 0; i < mapped_column_ids.size(); i++) {
+				auto col_id = mapped_column_ids[i].GetPrimaryIndex();
+				table_chunk.data[col_id].Reference(index_chunk.data[i]);
+			}
 
-		error = index_list.Append(delete_indexes, table_chunk, start_row, index_append_mode, checkpoint_id);
-		if (error.HasError()) {
-			break;
+			error = index_list.Append(delete_indexes, table_chunk, start_row, index_append_mode, checkpoint_id);
+			if (error.HasError()) {
+				break;
+			}
+			start_row += UnsafeNumericCast<row_t>(index_chunk.size());
 		}
-		start_row += UnsafeNumericCast<row_t>(index_chunk.size());
+	} catch (...) {
+		index_list.FinishAppend();
+		throw;
+	}
+	auto finished = index_list.FinishAppend();
+	if (!error.HasError()) {
+		error = std::move(finished);
 	}
 	return error;
 }
@@ -307,6 +316,15 @@ LocalTableStorage &LocalTableManager::GetOrCreateStorage(ClientContext &context,
 bool LocalTableManager::IsEmpty() const {
 	lock_guard<mutex> l(table_storage_lock);
 	return table_storage.empty();
+}
+
+vector<reference<DataTable>> LocalTableManager::GetTables() const {
+	lock_guard<mutex> l(table_storage_lock);
+	vector<reference<DataTable>> tables;
+	for (auto &entry : table_storage) {
+		tables.push_back(entry.second->table_ref);
+	}
+	return tables;
 }
 
 shared_ptr<LocalTableStorage> LocalTableManager::MoveEntry(DataTable &table) {
@@ -531,6 +549,10 @@ bool LocalStorage::ChangesMade() noexcept {
 
 bool LocalStorage::Find(DataTable &table) {
 	return table_manager.GetStorage(table) != nullptr;
+}
+
+vector<reference<DataTable>> LocalStorage::GetTables() const {
+	return table_manager.GetTables();
 }
 
 idx_t LocalStorage::EstimatedSize() {

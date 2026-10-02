@@ -25,6 +25,7 @@
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/types/string.hpp"
+#include "duckdb/storage/write_ahead_log.hpp"
 
 #include <functional>
 
@@ -142,6 +143,22 @@ public:
 	}
 	bool IsCaseSensitive() const {
 		return Compatibility() == SqlCompatibility::POSTGRES;
+	}
+
+	virtual bool UsesCatalogLog() const {
+		return false;
+	}
+	virtual shared_ptr<WriteAheadLog> CatalogLog() {
+		return nullptr;
+	}
+	virtual Catalog &ReplayUseCatalog(ClientContext &context, idx_t catalog_oid);
+	virtual void OnCatalogLogPrepared() {
+	}
+	virtual void OnCatalogLogDecided() {
+	}
+	virtual void BeginCatalogLogCommit() {
+	}
+	virtual void EndCatalogLogCommit() {
 	}
 
 	virtual void Initialize(bool load_builtin) = 0;

@@ -380,10 +380,49 @@ void DuckTransactionManager::CleanupTransactions() {
 	}
 }
 
+ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Transaction &transaction_p,
+                                                     WriteAheadLog &catalog_log, const hugeint_t &txid,
+                                                     vector<pair<idx_t, idx_t>> &participants) {
+	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	if (!transaction.ChangesMade() || !db.HasStorageManager() || !transaction.ShouldWriteToWAL(db)) {
+		return ErrorData();
+	}
+	auto error = transaction.PreFlushOptimisticBlocks(db);
+	if (error.HasError()) {
+		return error;
+	}
+	auto prepared = make_uniq<DuckTransaction::PreparedCommit>();
+	auto &storage_manager = db.GetStorageManager();
+	if (&catalog_log.GetStorageManager() != &storage_manager) {
+		prepared->commit_lock = storage_manager.GetCommitLock();
+	}
+	error = transaction.AppendLocalStorage(context, db, prepared->commit_state);
+	if (!error.HasError()) {
+		error = transaction.WriteToWAL(context, db, prepared->commit_state, catalog_log);
+	}
+	if (error.HasError()) {
+		return error;
+	}
+	if (prepared->commit_state) {
+		try {
+			auto prepared_offset = prepared->commit_state->PrepareCommit(txid);
+			if (prepared_offset > 0) {
+				participants.emplace_back(db.oid, storage_manager.GetBlockManager().GetCheckpointIteration());
+				storage_manager.GetWAL()->SyncUpTo(prepared_offset);
+			}
+		} catch (std::exception &ex) {
+			return ErrorData(ex);
+		}
+	}
+	transaction.prepared = std::move(prepared);
+	return ErrorData();
+}
+
 ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Transaction &transaction_p) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	auto prepared = std::move(transaction.prepared);
 	// flush the transaction-local blocks of bulk appends before taking any commit locks (see PreFlushOptimisticBlocks)
-	ErrorData error = transaction.PreFlushOptimisticBlocks(db);
+	ErrorData error = prepared ? ErrorData() : transaction.PreFlushOptimisticBlocks(db);
 	unique_lock<mutex> t_lock(transaction_lock);
 	if (!db.IsSystem() && !db.IsTemporary()) {
 		if (transaction.ChangesMade()) {
@@ -397,13 +436,19 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	// check if we can checkpoint
 	unique_ptr<StorageLockKey> lock;
 	auto undo_properties = transaction.GetUndoProperties();
-	auto checkpoint_decision = CanCheckpoint(transaction, lock, undo_properties);
+	auto checkpoint_decision =
+	    prepared ? CheckpointDecision("the commit is prepared") : CanCheckpoint(transaction, lock, undo_properties);
 	// orders this commit's append and commit or revert against checkpoints; read-only transactions commit without it
 	unique_lock<mutex> held_commit_lock;
 	unique_ptr<StorageCommitState> commit_state;
 	optional_ptr<WriteAheadLog> commit_wal;
 	bool skip_wal_write_due_to_checkpoint = false;
 	bool wal_written = false;
+	if (prepared) {
+		held_commit_lock = std::move(prepared->commit_lock);
+		commit_state = std::move(prepared->commit_state);
+		wal_written = commit_state != nullptr;
+	}
 	if (checkpoint_decision.can_checkpoint) {
 		// we can perform an automatic checkpoint
 		// we have two options:
@@ -417,7 +462,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 			skip_wal_write_due_to_checkpoint = true;
 		}
 	}
-	bool has_changes = !error.HasError() && transaction.ChangesMade() && db.HasStorageManager();
+	bool has_changes = !prepared && !error.HasError() && transaction.ChangesMade() && db.HasStorageManager();
 	bool should_write_to_wal = has_changes && transaction.ShouldWriteToWAL(db);
 	if (has_changes) {
 		// appending the local storage and writing the WAL can take long: other transactions run meanwhile
@@ -635,6 +680,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 
 void DuckTransactionManager::RollbackTransaction(Transaction &transaction_p) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	transaction.prepared.reset();
 
 	DUCKDB_LOG(db.GetDatabase(), TransactionLogType, db, "Rollback", transaction.GetTransactionId());
 

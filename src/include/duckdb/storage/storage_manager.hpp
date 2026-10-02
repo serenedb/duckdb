@@ -15,6 +15,7 @@
 #include "duckdb/storage/database_size.hpp"
 #include "duckdb/storage/checkpoint/checkpoint_options.hpp"
 #include "duckdb/storage/storage_options.hpp"
+#include "duckdb/storage/table_storage_load.hpp"
 
 namespace duckdb {
 struct AttachOptions;
@@ -41,6 +42,7 @@ public:
 	//! otherwise the marker is only pushed to the OS and the WAL offset to sync up to is returned (0 if
 	//! nothing was written, or it was synced here)
 	virtual idx_t FlushCommit(bool sync_now) = 0;
+	virtual idx_t PrepareCommit(const hugeint_t &txid) = 0;
 
 	virtual void AddRowGroupData(DataTable &table, idx_t start_index, idx_t count,
 	                             unique_ptr<PersistentCollectionData> row_group_data) = 0;
@@ -100,6 +102,10 @@ public:
 	}
 	bool IsLoaded() const {
 		return load_complete;
+	}
+	void FinishLoad(QueryContext context);
+	optional_ptr<TableStorageLoad> GetTableStorageLoad() {
+		return table_storage_load.get();
 	}
 	//! The path to the WAL, derived from the database file path
 	string GetWALPath(const string &suffix = ".wal");
@@ -161,8 +167,12 @@ public:
 
 protected:
 	virtual void LoadDatabase(QueryContext context) = 0;
+	virtual void LoadStorage(QueryContext context) = 0;
 
 protected:
+	bool defer_load = false;
+	bool deferred_storage = false;
+	unique_ptr<TableStorageLoad> table_storage_load;
 	//! The attached database managed by this storage manager.
 	AttachedDatabase &db;
 	//! The path of the database
@@ -226,6 +236,7 @@ public:
 
 protected:
 	void LoadDatabase(QueryContext context) override;
+	void LoadStorage(QueryContext context) override;
 
 	unique_ptr<CheckpointWriter> CreateCheckpointWriter(QueryContext context, CheckpointOptions options);
 };

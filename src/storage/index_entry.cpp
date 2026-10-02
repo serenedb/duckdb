@@ -93,6 +93,14 @@ ErrorData IndexEntry::Append(DataChunk &chunk, Vector &row_ids, const shared_ptr
 	return error;
 }
 
+ErrorData IndexEntry::FinishAppend() {
+	auto entry_lock = lock.GetExclusiveLock();
+	if (!owned_index->IsBound()) {
+		return ErrorData();
+	}
+	return owned_index->Cast<BoundIndex>().FinishAppend();
+}
+
 void IndexEntry::RevertAppend(DataChunk &chunk, Vector &row_ids) {
 	auto entry_lock = lock.GetExclusiveLock();
 	if (auto delta = deltas.Find(IndexDeltaType::ADDED_DATA_DURING_CHECKPOINT)) {

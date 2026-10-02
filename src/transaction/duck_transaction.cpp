@@ -207,7 +207,7 @@ bool DuckTransaction::ShouldWriteToWAL(AttachedDatabase &db) {
 	}
 	auto &storage_manager = db.GetStorageManager();
 	if (!storage_manager.HasWAL()) {
-		return false;
+		return storage_manager.InMemory() && db.GetCatalog().CatalogLog() != nullptr;
 	}
 	return true;
 }
@@ -242,7 +242,10 @@ ErrorData DuckTransaction::AppendLocalStorage(ClientContext &context, AttachedDa
 	try {
 		if (ShouldWriteToWAL(db)) {
 			auto &storage_manager = db.GetStorageManager();
-			commit_state = storage_manager.GenStorageCommitState(*storage_manager.GetWAL());
+			auto wal = storage_manager.GetWAL();
+			if (wal) {
+				commit_state = storage_manager.GenStorageCommitState(*wal);
+			}
 		}
 		auto &profiler = *context.client_data->profiler;
 		auto commit_timer = profiler.StartTimer<MetricStorageCommitLocalStorageLatency>();
@@ -259,20 +262,21 @@ ErrorData DuckTransaction::AppendLocalStorage(ClientContext &context, AttachedDa
 }
 
 ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &db,
-                                      unique_ptr<StorageCommitState> &commit_state) noexcept {
+                                      unique_ptr<StorageCommitState> &commit_state,
+                                      optional_ptr<WriteAheadLog> catalog_log) noexcept {
 	ErrorData error_data;
 	try {
 		// the append may have consumed the last local change: do not ask ShouldWriteToWAL again here
-		D_ASSERT(commit_state);
+		D_ASSERT(commit_state || catalog_log);
 		auto wal = db.GetStorageManager().GetWAL();
 		auto &profiler = *context.client_data->profiler;
 		auto wal_timer = profiler.StartTimer<MetricStorageWriteToWALLatency>();
-		undo_buffer.WriteToWAL(*wal, commit_state.get());
+		undo_buffer.WriteToWAL(wal, commit_state.get(), catalog_log);
 		wal_timer.EndTimer();
 
 		// no FileSync is required here: any optimistically written blocks that the WAL references
 		// have already been synced by FlushBulkAppendBlocksAndSync, before the commit locks were taken
-		D_ASSERT(!commit_state->HasRowGroupData() || storage->SyncedFlushedBlocks());
+		D_ASSERT(!commit_state || !commit_state->HasRowGroupData() || storage->SyncedFlushedBlocks());
 	} catch (std::exception &ex) {
 		// Call RevertCommit() outside this try-catch as it itself may throw
 		error_data = ErrorData(ex);

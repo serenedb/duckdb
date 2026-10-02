@@ -93,7 +93,7 @@ public:
 	void WriteCreateTableMacro(const TableMacroCatalogEntry &entry);
 	void WriteDropTableMacro(const TableMacroCatalogEntry &entry);
 
-	void WriteCreateIndex(const IndexCatalogEntry &entry);
+	void WriteCreateIndex(const IndexCatalogEntry &entry, bool with_index_storage = true);
 	void WriteDropIndex(const IndexCatalogEntry &entry);
 
 	void WriteCreateType(const TypeCatalogEntry &entry);
@@ -115,9 +115,12 @@ public:
 	void WriteDropForeignServer(const InCatalogEntry &entry);
 	//! Sets the table used for subsequent insert/delete/update commands. The qualified name holds the (possibly
 	//! nested) schema path of the table followed by the table name.
-	void WriteSetTable(const QualifiedName &table);
+	void WriteSetTable(const QualifiedName &table, idx_t table_oid);
+	void WriteSetTable(const TableCatalogEntry &table);
+	void WriteUseCatalog(idx_t catalog_oid);
+	void WriteCommitPrepared(const hugeint_t &txid, const vector<pair<idx_t, idx_t>> &participants);
 
-	void WriteAlter(CatalogEntry &entry, const AlterInfo &info);
+	void WriteAlter(CatalogEntry &entry, const AlterInfo &info, bool with_index_storage = true);
 
 	void WriteInsert(DataChunk &chunk);
 	void WriteRowGroupData(const PersistentCollectionData &data);
@@ -139,7 +142,7 @@ public:
 	void Flush();
 	//! Write a WAL_FLUSH marker and push the buffer to the OS without syncing it. Returns the
 	//! offset covering the marker, to be passed to SyncUpTo. Caller must hold the WAL lock
-	idx_t FlushMarker();
+	idx_t FlushMarker(optional_ptr<const hugeint_t> prepared_txid = nullptr);
 	//! Block until the WAL is durable up to the given offset
 	void SyncUpTo(idx_t offset);
 	//! Increment the WAL entry count, which is used for the auto-checkpoint threshold.

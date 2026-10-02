@@ -11,6 +11,8 @@
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
+#include "duckdb/parser/constraints/unique_constraint.hpp"
+#include "duckdb/storage/table/index_entry.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/checkpoint/table_data_reader.hpp"
 #include "duckdb/storage/metadata/metadata_reader.hpp"
@@ -20,6 +22,24 @@
 #include "duckdb/storage/data_table.hpp"
 
 namespace duckdb {
+
+static idx_t CatalogIndexOid(DuckTableEntry &table, const IndexEntry &entry) {
+	auto index_oid = entry.GetIndexOid();
+	for (auto &constraint : table.GetConstraints()) {
+		if (constraint->type == ConstraintType::UNIQUE) {
+			auto &unique = constraint->Cast<UniqueConstraint>();
+			if (unique.GetBackingIndexOid() == index_oid) {
+				return unique.index_oid;
+			}
+		} else if (constraint->type == ConstraintType::FOREIGN_KEY) {
+			auto &foreign_key = constraint->Cast<ForeignKeyConstraint>();
+			if (foreign_key.info.IsAppendConstraint() && foreign_key.GetBackingIndexOid() == index_oid) {
+				return foreign_key.oid;
+			}
+		}
+	}
+	return index_oid;
+}
 
 TableDataWriter::TableDataWriter(TableCatalogEntry &table_p, QueryContext context)
     : table(table_p.Cast<DuckTableEntry>()), context(context.GetClientContext()) {
@@ -228,6 +248,13 @@ void SingleFileTableDataWriter::FinalizeTable(const TableStatistics &global_stat
 	    [&](Serializer::List &list, idx_t i) { list.WriteElement(index_storage_infos.ordered_infos[i].get()); });
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WriteProperty(105, "next_row_id", next_row_id);
+	}
+	if (table.ParentCatalog().UsesCatalogLog()) {
+		vector<idx_t> index_oids;
+		for (auto &entry : index_storage_infos.ordered_entries) {
+			index_oids.push_back(CatalogIndexOid(table, *entry));
+		}
+		serializer.WriteProperty(16484, "index_oids", index_oids);
 	}
 	// ¬serializer.ShouldSerialize(StorageVersion::V2_0_0) ==> (next_row_id == total_rows)
 	D_ASSERT(serializer.ShouldSerialize(StorageVersion::V2_0_0) || (next_row_id == total_rows));

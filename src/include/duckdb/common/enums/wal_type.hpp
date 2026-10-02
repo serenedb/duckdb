@@ -64,11 +64,14 @@ enum class WALType : uint8_t {
 	DROP_DATABASE = 205,
 	CREATE_FOREIGN_SERVER = 206,
 	DROP_FOREIGN_SERVER = 207,
+	USE_CATALOG = 208,
 	// -----------------------------
 	// Flush
 	// -----------------------------
 	WAL_VERSION = 98,
 	CHECKPOINT = 99,
-	WAL_FLUSH = 100
+	WAL_FLUSH = 100,
+	WAL_PREPARED = 209,
+	COMMIT_PREPARED = 210
 };
 }
