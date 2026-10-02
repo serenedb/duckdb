@@ -41,6 +41,18 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateSequenceStmt(
 	bool has_start_value = false;
 	bool min_value_set = false;
 	bool max_value_set = false;
+	auto type_min = NumericLimits<int64_t>::Minimum();
+	auto type_max = NumericLimits<int64_t>::Maximum();
+	string type_name;
+	auto as_type = sequence_options.find("as");
+	if (as_type != sequence_options.end()) {
+		auto type = unique_ptr_cast<SequenceOption, ValueSequenceOption>(std::move(as_type->second))->value.type();
+		type_min = Value::MinimumValue(type).GetValue<int64_t>();
+		type_max = Value::MaximumValue(type).GetValue<int64_t>();
+		type_name = StringUtil::Lower(type.ToString());
+		info->max_value = type_max;
+		sequence_options.erase(as_type);
+	}
 
 	for (auto &option : sequence_options) {
 		if (option.first == "increment") {
@@ -53,14 +65,14 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateSequenceStmt(
 				throw ParserException("Increment must not be zero");
 			} else if (info->increment < 0) {
 				if (!min_value_set) {
-					info->min_value = NumericLimits<int64_t>::Minimum();
+					info->min_value = type_min;
 				}
 				if (!max_value_set) {
 					info->max_value = -1;
 				}
 			} else {
 				if (!max_value_set) {
-					info->max_value = NumericLimits<int64_t>::Maximum();
+					info->max_value = type_max;
 				}
 				if (!min_value_set) {
 					info->min_value = 1;
@@ -103,9 +115,23 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateSequenceStmt(
 				throw ParserException("CACHE (%lld) must be greater than zero", cache);
 			}
 			info->cache = static_cast<uint64_t>(cache);
+		} else if (option.first == "owned") {
+			auto owned_by = unique_ptr_cast<SequenceOption, QualifiedSequenceOption>(std::move(option.second));
+			auto &owner = owned_by->qualified_name;
+			for (auto part : {&owner.Catalog(), &owner.Schema(), &owner.Name()}) {
+				if (!part->empty()) {
+					info->owned_by.push_back(*part);
+				}
+			}
 		} else {
 			throw ParserException("Unrecognized option \"%s\" for CREATE SEQUENCE", option.first);
 		}
+	}
+	if (info->min_value < type_min) {
+		throw ParserException("MINVALUE (%lld) is out of range for sequence data type %s", info->min_value, type_name);
+	}
+	if (info->max_value > type_max) {
+		throw ParserException("MAXVALUE (%lld) is out of range for sequence data type %s", info->max_value, type_name);
 	}
 	if (!has_start_value) {
 		if (info->increment < 0) {
@@ -217,10 +243,27 @@ PEGTransformerFactory::TransformSeqCache(PEGTransformer &transformer, unique_ptr
 	                 make_uniq<ValueSequenceOption>(SequenceInfo::SEQ_CACHE, const_expr.GetLiteral().ToValue()));
 }
 
-pair<string, unique_ptr<SequenceOption>>
-PEGTransformerFactory::TransformSeqOwnedBy(PEGTransformer &transformer, const QualifiedName &qualified_name) {
-	// Unused by old transformer
-	return make_pair("owned", make_uniq<QualifiedSequenceOption>(SequenceInfo::SEQ_OWN, qualified_name));
+pair<string, unique_ptr<SequenceOption>> PEGTransformerFactory::TransformSeqAsType(PEGTransformer &transformer,
+                                                                                   const LogicalType &parsed_type) {
+	const auto type = parsed_type.IsUnbound() ? UnboundType::TryDefaultBind(parsed_type) : parsed_type;
+	switch (type.id()) {
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+		break;
+	default:
+		throw ParserException("sequence type must be smallint, integer, or bigint");
+	}
+	return make_pair("as", make_uniq<ValueSequenceOption>(SequenceInfo::SEQ_MAX, Value(type)));
+}
+
+pair<string, unique_ptr<SequenceOption>> PEGTransformerFactory::TransformSeqOwnedBy(PEGTransformer &transformer,
+                                                                                    const QualifiedName &seq_owner) {
+	return make_pair("owned", make_uniq<QualifiedSequenceOption>(SequenceInfo::SEQ_OWN, seq_owner));
+}
+
+QualifiedName PEGTransformerFactory::TransformSeqOwnerNone(PEGTransformer &transformer) {
+	return QualifiedName();
 }
 
 string PEGTransformerFactory::TransformMinValue(PEGTransformer &transformer) {

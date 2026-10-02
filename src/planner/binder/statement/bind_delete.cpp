@@ -44,19 +44,12 @@ vector<QualifiedName> Binder::TruncateIdentitySequences(ClientContext &context, 
 	if (!dependencies) {
 		return result;
 	}
-	IdentifierEquality equals(catalog.IsCaseSensitive());
 	for (auto &owned : dependencies->OwnedEntries(catalog.GetCatalogTransaction(context), table)) {
 		auto &entry = owned.get();
-		if (entry.type != CatalogType::SEQUENCE_ENTRY) {
+		if (entry.type != CatalogType::SEQUENCE_ENTRY || table.NumbersRowsWith(entry)) {
 			continue;
 		}
-		QualifiedName sequence(catalog.GetName(), entry.ParentSchemaName(), entry.name);
-		for (auto &column : table.GetColumns().Logical()) {
-			if (DefaultNamesSequence(column, sequence, equals)) {
-				result.push_back(std::move(sequence));
-				break;
-			}
-		}
+		result.emplace_back(catalog.GetName(), entry.ParentSchemaName(), entry.name);
 	}
 	return result;
 }

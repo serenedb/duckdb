@@ -275,6 +275,38 @@ optional_ptr<CatalogEntry> CatalogSet::GetEntryInternal(CatalogTransaction trans
 	return &catalog_entry;
 }
 
+static CatalogEntry &ColumnOwner(CatalogTransaction transaction, Catalog &catalog, CatalogEntry &sequence,
+                                 const vector<Identifier> &path) {
+	if (path.size() < 2) {
+		throw CatalogException("invalid OWNED BY option");
+	}
+	auto &table_name = path[path.size() - 2];
+	auto &column_name = path.back();
+	const auto sequence_schema = sequence.ParentSchemaName();
+	const auto schema_name = path.size() > 2 ? path[path.size() - 3] : sequence_schema;
+	IdentifierEquality equals(catalog.IsCaseSensitive());
+	if (!equals(schema_name, sequence_schema)) {
+		throw CatalogException("sequence must be in same schema as table it is linked to");
+	}
+	auto schema = catalog.GetSchema(transaction, schema_name, OnEntryNotFound::RETURN_NULL);
+	auto owner = schema ? schema->GetEntry(transaction, CatalogType::TABLE_ENTRY, table_name) : nullptr;
+	if (!owner) {
+		throw CatalogException("relation \"%s\" does not exist", table_name.GetIdentifierName());
+	}
+	if (owner->type != CatalogType::TABLE_ENTRY) {
+		throw CatalogException("referenced relation \"%s\" is not a table or foreign table",
+		                       table_name.GetIdentifierName());
+	}
+	if (!owner->Cast<TableCatalogEntry>().ColumnExists(column_name)) {
+		throw CatalogException("column \"%s\" of relation \"%s\" does not exist", column_name.GetIdentifierName(),
+		                       table_name.GetIdentifierName());
+	}
+	if (owner->permissions.owner != sequence.permissions.owner) {
+		throw CatalogException("sequence must have same owner as table it is linked to");
+	}
+	return *owner;
+}
+
 bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipInfo &info) {
 	// lock the catalog for writing
 	unique_lock<mutex> write_lock(catalog.GetWriteLock());
@@ -282,6 +314,19 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 	auto entry = GetEntryInternal(transaction, info.GetQualifiedName().Name());
 	if (!entry) {
 		return false;
+	}
+	auto &dependencies = *catalog.GetDependencyManager();
+	if (info.owner_path.empty() && info.owner_name.empty()) {
+		write_lock.unlock();
+		dependencies.RemoveOwnership(transaction, *entry);
+		return true;
+	}
+	if (catalog.Compatibility() == SqlCompatibility::POSTGRES && !info.owner_path.empty()) {
+		auto &owner = ColumnOwner(transaction, catalog, *entry, info.owner_path);
+		write_lock.unlock();
+		dependencies.RemoveOwnership(transaction, *entry);
+		dependencies.AddOwnership(transaction, owner, *entry);
+		return true;
 	}
 	optional_ptr<CatalogEntry> owner_entry;
 	auto schema = catalog.GetSchema(transaction, info.owner_schema, OnEntryNotFound::RETURN_NULL);
@@ -299,7 +344,7 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 		                       info.owner_name.GetIdentifierName());
 	}
 	write_lock.unlock();
-	catalog.GetDependencyManager()->AddOwnership(transaction, *owner_entry, *entry);
+	dependencies.AddOwnership(transaction, *owner_entry, *entry);
 	return true;
 }
 

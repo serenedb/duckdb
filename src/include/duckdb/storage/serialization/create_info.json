@@ -471,6 +471,12 @@
         "name": "recorded_start",
         "type": "optional<int64_t>",
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16586,
+        "name": "owned_by",
+        "type": "vector<Identifier>",
+        "version": "serenedb_v1"
       }
     ],
     "methods": {

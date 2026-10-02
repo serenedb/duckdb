@@ -95,7 +95,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterStatement(PEGTrans
 
 unique_ptr<AlterInfo>
 PEGTransformerFactory::TransformAlterTableStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
-                                               unique_ptr<BaseTableRef> base_table_name,
+                                               const bool &has_result, unique_ptr<BaseTableRef> base_table_name,
                                                vector<unique_ptr<AlterTableInfo>> alter_table_options) {
 	if (alter_table_options.size() > 1) {
 		throw ParserException("Only one ALTER command per statement is supported");
@@ -245,11 +245,17 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformSetSequenceOption(
 			}
 			has_owned = true;
 			auto owned_by = unique_ptr_cast<SequenceOption, QualifiedSequenceOption>(std::move(seq_option.second));
-			auto schema = owned_by->qualified_name.Schema().empty() ? Identifier::DefaultSchema()
-			                                                        : owned_by->qualified_name.Schema();
-			owned_info =
-			    make_uniq<ChangeOwnershipInfo>(CatalogType::SEQUENCE_ENTRY, "", "", "", schema,
-			                                   owned_by->qualified_name.Name(), OnEntryNotFound::THROW_EXCEPTION);
+			auto &owner = owned_by->qualified_name;
+			auto schema =
+			    owner.Name().empty() || !owner.Schema().empty() ? owner.Schema() : Identifier::DefaultSchema();
+			auto ownership = make_uniq<ChangeOwnershipInfo>(CatalogType::SEQUENCE_ENTRY, "", "", "", schema,
+			                                                owner.Name(), OnEntryNotFound::THROW_EXCEPTION);
+			for (auto part : {&owner.Catalog(), &owner.Schema(), &owner.Name()}) {
+				if (!part->empty()) {
+					ownership->owner_path.push_back(*part);
+				}
+			}
+			owned_info = std::move(ownership);
 		} else {
 			throw NotImplementedException("ALTER SEQUENCE option not yet supported");
 		}

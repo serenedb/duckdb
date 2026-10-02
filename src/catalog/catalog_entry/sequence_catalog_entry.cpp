@@ -68,6 +68,9 @@ static absl::Condition Settled(SequenceState *state) {
 }
 
 unique_ptr<CatalogEntry> SequenceCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
+	if (info.type == AlterType::CHANGE_OWNERSHIP) {
+		return Copy(context);
+	}
 	const bool restart = info.type == AlterType::ALTER_SEQUENCE &&
 	                     info.Cast<AlterSequenceInfo>().alter_sequence_type == AlterSequenceType::RESTART_SEQUENCE;
 	if (!restart && !info.GetNewName()) {
