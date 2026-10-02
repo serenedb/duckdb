@@ -17,6 +17,7 @@
 namespace duckdb {
 
 class BoundForeignKeyConstraint;
+class BoundIndex;
 class AttachedDatabase;
 class ClientContext;
 class ColumnList;
@@ -287,6 +288,7 @@ public:
 	bool HasForeignKeyIndex(std::span<const PhysicalIndex> keys, ForeignKeyType type);
 	void SetIndexStorageInfo(vector<IndexStorageInfo> index_storage_info);
 	void VacuumIndexes();
+	void RebuildIndex(IndexEntry &entry);
 	void VerifyIndexBuffers() const;
 	void CleanupAppend(VisibilityBound lowest_visibility_bound, idx_t start, idx_t count);
 	void Destroy();
@@ -327,6 +329,7 @@ private:
 
 	//! Rebuild all indexes after vacuuming changed rowid's (used with vacuum_rebuild_indexes setting).
 	void RebuildIndexes();
+	void ScanIndexColumns(const vector<column_t> &col_ids, const IndexRebuildAppend &append);
 
 	void VerifyForeignKeyConstraint(optional_ptr<LocalTableStorage> storage,
 	                                const BoundForeignKeyConstraint &bound_foreign_key, ClientContext &context,

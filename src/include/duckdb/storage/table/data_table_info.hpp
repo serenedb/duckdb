@@ -55,6 +55,12 @@ public:
 	vector<Identifier> GetSchemaPath() const;
 	Identifier GetTableName();
 	void SetTableName(Identifier name);
+	idx_t GetTableOid() const {
+		return table_oid;
+	}
+	void SetTableOid(idx_t oid) {
+		table_oid = oid;
+	}
 	vector<idx_t> SetIndexColumnLayout(vector<idx_t> logical_column_oids, vector<idx_t> physical_column_oids);
 
 private:
@@ -68,6 +74,7 @@ private:
 	shared_ptr<SchemaInfo> schema_info;
 	//! The name of the table
 	Identifier table;
+	atomic<idx_t> table_oid {0};
 	//! The physical list of indexes of this table
 	TableIndexList indexes;
 	vector<idx_t> index_logical_column_oids;

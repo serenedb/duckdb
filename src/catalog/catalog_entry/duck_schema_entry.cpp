@@ -199,7 +199,8 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntryInternal(CatalogTransaction 
 		auto modified_database = meta.ModifiedDatabase();
 		auto &db = ParentCatalog().GetAttached();
 		if (!db.IsTemporary() && !db.IsSystem()) {
-			if (!modified_database || !RefersToSameObject(*modified_database, ParentCatalog().GetAttached())) {
+			auto db_transaction = meta.TryGetTransaction(db);
+			if (!modified_database || !db_transaction || db_transaction->IsReadOnly()) {
 				throw InternalException(
 				    "DuckSchemaEntry::AddEntryInternal called but this database is not marked as modified");
 			}

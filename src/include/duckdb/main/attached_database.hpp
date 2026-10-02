@@ -98,6 +98,7 @@ struct AttachOptions {
 	unique_ptr<StoredDatabasePath> stored_database_path;
 	shared_ptr<AttachedDatabase> reused_database;
 	bool borrow_open_database = false;
+	bool defer_storage_load = false;
 	//! Per-database override of vacuum_rebuild_indexes. If not set, the global setting value is used.
 	optional_idx vacuum_rebuild_indexes_threshold;
 	//! Deleter binding (from ATTACH/CONNECT TO EXTERNAL RESOURCE): on detach, `<deleter_function>(<deleter_payload>)`

@@ -74,8 +74,8 @@ public:
 	ErrorData AppendLocalStorage(ClientContext &context, AttachedDatabase &db,
 	                             unique_ptr<StorageCommitState> &commit_state) noexcept;
 	//! Writes the undo buffer to the WAL, with the commit state of AppendLocalStorage
-	ErrorData WriteToWAL(ClientContext &context, AttachedDatabase &db,
-	                     unique_ptr<StorageCommitState> &commit_state) noexcept;
+	ErrorData WriteToWAL(ClientContext &context, AttachedDatabase &db, unique_ptr<StorageCommitState> &commit_state,
+	                     optional_ptr<WriteAheadLog> catalog_log = nullptr) noexcept;
 	//! Commit the current transaction with the given commit identifier. Returns an error message if the transaction
 	//! commit failed, or an empty string if the commit was successful
 	ErrorData Commit(AttachedDatabase &db, CommitInfo &commit_info,
@@ -112,6 +112,12 @@ public:
 	void SetIsCheckpointTransaction() {
 		is_checkpoint_transaction = true;
 	}
+
+	struct PreparedCommit {
+		unique_lock<mutex> commit_lock;
+		unique_ptr<StorageCommitState> commit_state;
+	};
+	unique_ptr<PreparedCommit> prepared;
 
 private:
 	//! The undo buffer is used to store old versions of rows that are updated

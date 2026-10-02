@@ -10,6 +10,9 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
+#include "duckdb/parser/constraints/foreign_key_constraint.hpp"
+#include "duckdb/parser/constraints/unique_constraint.hpp"
+#include "duckdb/storage/table/index_entry.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/checkpoint/table_data_reader.hpp"
 #include "duckdb/storage/metadata/metadata_reader.hpp"
@@ -19,6 +22,40 @@
 #include "duckdb/storage/data_table.hpp"
 
 namespace duckdb {
+
+static idx_t CatalogIndexOid(DuckTableEntry &table, const IndexEntry &entry) {
+	auto catalog_index_oid = entry.GetCatalogIndexOid();
+	if (catalog_index_oid.IsValid()) {
+		return catalog_index_oid.GetIndex();
+	}
+	auto info = entry.GetStorageInfo();
+	auto index_column_ids = entry.GetColumnIds();
+	auto &columns = table.GetColumns();
+	for (auto &constraint : table.GetConstraints()) {
+		vector<column_t> column_ids;
+		if (constraint->type == ConstraintType::UNIQUE) {
+			auto &unique = constraint->Cast<UniqueConstraint>();
+			if (!info.is_unique || unique.IsPrimaryKey() != info.is_primary) {
+				continue;
+			}
+			for (auto &logical_index : unique.GetLogicalIndexes(columns)) {
+				column_ids.push_back(columns.LogicalToPhysical(logical_index).index);
+			}
+			if (column_ids == index_column_ids) {
+				return unique.index_oid;
+			}
+		} else if (constraint->type == ConstraintType::FOREIGN_KEY && info.is_foreign) {
+			auto &foreign_key = constraint->Cast<ForeignKeyConstraint>();
+			for (auto &key : foreign_key.info.fk_keys) {
+				column_ids.push_back(key.index);
+			}
+			if (column_ids == index_column_ids) {
+				return foreign_key.oid;
+			}
+		}
+	}
+	return 0;
+}
 
 TableDataWriter::TableDataWriter(TableCatalogEntry &table_p, QueryContext context)
     : table(table_p.Cast<DuckTableEntry>()), context(context.GetClientContext()) {
@@ -220,6 +257,13 @@ void SingleFileTableDataWriter::FinalizeTable(const TableStatistics &global_stat
 	    [&](Serializer::List &list, idx_t i) { list.WriteElement(index_storage_infos.ordered_infos[i].get()); });
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WriteProperty(105, "next_row_id", next_row_id);
+	}
+	if (table.ParentCatalog().UsesCatalogLog()) {
+		vector<idx_t> index_oids;
+		for (auto &entry : index_storage_infos.ordered_entries) {
+			index_oids.push_back(CatalogIndexOid(table, *entry));
+		}
+		serializer.WriteProperty(16484, "index_oids", index_oids);
 	}
 	// ¬serializer.ShouldSerialize(StorageVersion::V2_0_0) ==> (next_row_id == total_rows)
 	D_ASSERT(serializer.ShouldSerialize(StorageVersion::V2_0_0) || (next_row_id == total_rows));

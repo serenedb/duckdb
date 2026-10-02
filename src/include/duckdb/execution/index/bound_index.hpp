@@ -123,6 +123,9 @@ public:
 	virtual ErrorData Append(IndexLock &l, DataChunk &chunk, Vector &row_ids, IndexAppendInfo &info) DUCKDB_REQUIRES(l);
 	//! Obtains a lock and calls Append while holding that lock.
 	ErrorData Append(DataChunk &chunk, Vector &row_ids, IndexAppendInfo &info) DUCKDB_EXCLUDES(lock);
+	virtual ErrorData FinishAppend() {
+		return ErrorData();
+	}
 
 	//! Verify that data can be appended to the index without a constraint violation.
 	virtual void VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager)

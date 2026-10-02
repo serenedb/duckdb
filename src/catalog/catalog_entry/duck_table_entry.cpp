@@ -218,6 +218,7 @@ DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, Bou
 	}
 	storage = make_shared_ptr<DataTable>(catalog.GetAttached(), StorageManager::Get(catalog).GetTableIOManager(&info),
 	                                     schema.GetSchemaInfo(), name, std::move(column_defs), std::move(info.data));
+	storage->GetDataTableInfo()->SetTableOid(oid);
 	vector<idx_t> logical_oids;
 	SyncIndexColumnLayout(*storage->GetDataTableInfo(), columns, logical_oids);
 
@@ -1580,6 +1581,22 @@ unique_ptr<CatalogEntry> DuckTableEntry::Copy(ClientContext &context) const {
 	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
 }
 
+void DuckTableEntry::ReplaceStorage(DuckTableEntry &source) {
+	auto &source_columns = source.storage->Columns();
+	idx_t column_count = 0;
+	for (auto &column : columns.Physical()) {
+		if (column_count >= source_columns.size() || source_columns[column_count].Type() != column.Type()) {
+			throw IOException("The stored rows of table \"%s\" do not match its columns", name);
+		}
+		column_count++;
+	}
+	if (column_count != source_columns.size()) {
+		throw IOException("The stored rows of table \"%s\" do not match its columns", name);
+	}
+	storage = source.storage;
+	SetAsRoot(nullptr);
+}
+
 void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
 	storage->SetAsMainTable();
 	IdentifierEquality same(columns.IsCaseSensitive());
@@ -1593,6 +1610,7 @@ void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
 		}
 	}
 	storage->SetTableName(name);
+	storage->GetDataTableInfo()->SetTableOid(oid);
 	for (auto &column : columns.Physical()) {
 		storage->SetColumnName(column.Physical(), column.Name());
 	}

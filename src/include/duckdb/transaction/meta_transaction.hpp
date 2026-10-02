@@ -17,6 +17,7 @@
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/catalog/catalog.hpp"
 
 namespace duckdb {
 class AttachedDatabase;
@@ -97,6 +98,9 @@ public:
 
 private:
 	friend class SecretManager;
+
+	optional_ptr<Catalog> CatalogLogForCommit();
+	ErrorData CommitThroughCatalogLog(Catalog &catalog);
 
 	//! Lock to prevent all_transactions and transactions from getting out of sync.
 	mutex lock;

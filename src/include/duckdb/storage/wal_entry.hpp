@@ -276,9 +276,11 @@ struct WALDropTrigger {
 struct WALDropIndex {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
+	idx_t oid = 0;
 
 	WALDropIndex() = default;
-	explicit WALDropIndex(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
+	WALDropIndex(QualifiedName qualified_name_p, idx_t oid_p)
+	    : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -296,9 +298,11 @@ struct WALDropIndex {
 struct WALUseTable {
 	// the table as a QualifiedName (the containing schema path + the table name)
 	QualifiedName qualified_name;
+	idx_t table_oid = 0;
 
 	WALUseTable() = default;
-	explicit WALUseTable(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
+	WALUseTable(QualifiedName qualified_name_p, idx_t table_oid_p)
+	    : qualified_name(std::move(qualified_name_p)), table_oid(table_oid_p) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -367,6 +371,39 @@ struct WALDropForeignServer {
 
 	void Serialize(Serializer &serializer) const;
 	static WALDropForeignServer Deserialize(Deserializer &deserializer);
+};
+
+struct WALUseCatalog {
+	idx_t catalog_oid = 0;
+
+	void Serialize(Serializer &serializer) const;
+	static WALUseCatalog Deserialize(Deserializer &deserializer);
+};
+
+struct WALPrepared {
+	hugeint_t txid;
+
+	void Serialize(Serializer &serializer) const;
+	static WALPrepared Deserialize(Deserializer &deserializer);
+};
+
+struct WALCommitPrepared {
+	hugeint_t txid;
+	vector<idx_t> participant_oids;
+	vector<idx_t> participant_generations;
+
+	void Serialize(Serializer &serializer) const;
+	static WALCommitPrepared Deserialize(Deserializer &deserializer);
+};
+
+struct WALArtifact {
+	CatalogType catalog_type = CatalogType::INVALID;
+	idx_t catalog_oid = 0;
+	idx_t oid = 0;
+	vector<string> paths;
+
+	void Serialize(Serializer &serializer) const;
+	static WALArtifact Deserialize(Deserializer &deserializer);
 };
 
 } // namespace duckdb
