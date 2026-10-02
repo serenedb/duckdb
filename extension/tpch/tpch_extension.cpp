@@ -292,31 +292,39 @@ static string PragmaTpchQuery(ClientContext &context, const FunctionParameters &
 	return tpch::DBGenWrapper::GetQuery(index, sf_entry->second.GetValue<double>());
 }
 
+static void AddScaleFactorOption(TypedKwargs &options) {
+	options.Add("sf", LogicalType::DOUBLE);
+}
+
 static void LoadInternal(ExtensionLoader &loader) {
 	TableFunction dbgen_func("dbgen", {}, DbgenFunction, DbgenBind, DbgenInit);
-	dbgen_func.named_parameters["sf"] = LogicalType::DOUBLE;
-	dbgen_func.named_parameters["overwrite"] = LogicalType::BOOLEAN;
-	dbgen_func.named_parameters["catalog"] = LogicalType::VARCHAR;
-	dbgen_func.named_parameters["schema"] = LogicalType::VARCHAR;
-	dbgen_func.named_parameters["suffix"] = LogicalType::VARCHAR;
-	dbgen_func.named_parameters["children"] = LogicalType::UINTEGER;
-	dbgen_func.named_parameters["step"] = LogicalType::UINTEGER;
+	dbgen_func.GetSignature().WithTypedKwargs("options", [](TypedKwargs &options) {
+		options.Add("sf", LogicalType::DOUBLE)
+		    .Add("overwrite", LogicalType::BOOLEAN)
+		    .Add("catalog", LogicalType::VARCHAR)
+		    .Add("schema", LogicalType::VARCHAR)
+		    .Add("suffix", LogicalType::VARCHAR)
+		    .Add("children", LogicalType::UINTEGER)
+		    .Add("step", LogicalType::UINTEGER);
+	});
 	dbgen_func.call_return_type = StatementReturnType::NOTHING;
 	dbgen_func.table_scan_progress = DbgenProgress;
 	loader.RegisterFunction(dbgen_func);
 
 	// create the TPCH pragma that allows us to run the query
-	auto tpch_func = PragmaFunction::PragmaCall("tpch", PragmaTpchQuery, {LogicalType::BIGINT});
-	tpch_func.named_parameters["sf"] = LogicalType::DOUBLE;
+	auto tpch_func = PragmaFunction::PragmaCall("tpch", PragmaTpchQuery,
+	                                            FunctionSignature().AddPositionalOnly("query_nr", LogicalType::BIGINT));
+	tpch_func.GetSignature().WithTypedKwargs("options", AddScaleFactorOption);
 	loader.RegisterFunction(tpch_func);
 
 	// create the TPCH_QUERIES function that returns the queries, optionally parameterized for a scale factor
 	TableFunctionSet tpch_queries_set("tpch_queries");
 	TableFunction tpch_query_func({}, TPCHQueryFunction, TPCHQueryBind, TPCHInit);
-	tpch_query_func.named_parameters["sf"] = LogicalType::DOUBLE;
+	tpch_query_func.GetSignature().WithTypedKwargs("options", AddScaleFactorOption);
 	tpch_queries_set.AddFunction(tpch_query_func);
-	tpch_query_func.GetArguments() = {LogicalType::DOUBLE};
-	tpch_queries_set.AddFunction(tpch_query_func);
+	TableFunction tpch_query_sf_func({LogicalType::DOUBLE}, TPCHQueryFunction, TPCHQueryBind, TPCHInit);
+	tpch_query_sf_func.GetSignature().WithTypedKwargs("options", AddScaleFactorOption);
+	tpch_queries_set.AddFunction(tpch_query_sf_func);
 	loader.RegisterFunction(tpch_queries_set);
 
 	// create the TPCH_ANSWERS that returns the query result

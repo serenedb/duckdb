@@ -90,6 +90,9 @@ bool HasDegenerateFrameCase4(BoundWindowExpression &wexpr) {
 }
 
 bool HasDegenerateFrame(ClientContext &client, BoundWindowExpression &wexpr) {
+	if (wexpr.Filter() || !wexpr.ArgOrders().empty()) {
+		return false;
+	}
 	//	From https://www.vldb.org/pvldb/vol19/p3525-lindner.pdf §4 Frame Analysis
 	const bool case_iv = HasDegenerateFrameCase4(wexpr);
 	const bool case_i_iv = case_iv || HasDegenerateFrameCase1(client, wexpr) || HasDegenerateFrameCase2(wexpr) ||
