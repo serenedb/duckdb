@@ -221,6 +221,9 @@ void ColumnDefinition::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<Value>(105, "comment", comment, Value());
 	serializer.WritePropertyWithDefault<InsertionOrderPreservingMap<string>>(106, "tags", tags, InsertionOrderPreservingMap<string>());
 	serializer.WritePropertyWithDefault<vector<AclItem>>(16484, "acl", acl, vector<AclItem>());
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16485, "catalog_oid", catalog_oid, 0);
+	}
 }
 
 ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
@@ -233,6 +236,7 @@ ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithExplicitDefault<Value>(105, "comment", result.comment, Value());
 	deserializer.ReadPropertyWithExplicitDefault<InsertionOrderPreservingMap<string>>(106, "tags", result.tags, InsertionOrderPreservingMap<string>());
 	deserializer.ReadPropertyWithExplicitDefault<vector<AclItem>>(16484, "acl", result.acl, vector<AclItem>());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16485, "catalog_oid", result.catalog_oid, 0);
 	return result;
 }
 

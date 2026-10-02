@@ -117,6 +117,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	case AlterType::ALTER_SCALAR_FUNCTION:
 		result = AlterScalarFunctionInfo::Deserialize(deserializer);
 		break;
+	case AlterType::ALTER_SEQUENCE:
+		result = AlterSequenceInfo::Deserialize(deserializer);
+		break;
 	case AlterType::ALTER_TABLE:
 		result = AlterTableInfo::Deserialize(deserializer);
 		break;
@@ -449,6 +452,19 @@ unique_ptr<AlterInfo> AlterRoleInfo::Deserialize(Deserializer &deserializer) {
 	return std::move(result);
 }
 
+void AlterSequenceInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<optional<int64_t>>(300, "restart_with", restart_with);
+	serializer.WritePropertyWithDefault<uint64_t>(301, "usage_count", usage_count);
+}
+
+unique_ptr<AlterInfo> AlterSequenceInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<AlterSequenceInfo>(new AlterSequenceInfo());
+	deserializer.ReadPropertyWithDefault<optional<int64_t>>(300, "restart_with", result->restart_with);
+	deserializer.ReadPropertyWithDefault<uint64_t>(301, "usage_count", result->usage_count);
+	return std::move(result);
+}
+
 void AttachInfo::Serialize(Serializer &serializer) const {
 	ParseInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<Identifier>(200, "name", name);
@@ -497,6 +513,9 @@ void ChangeOwnershipInfo::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<CatalogType>(300, "entry_catalog_type", entry_catalog_type);
 	serializer.WritePropertyWithDefault<Identifier>(301, "owner_schema", owner_schema);
 	serializer.WritePropertyWithDefault<Identifier>(302, "owner_name", owner_name);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<vector<Identifier>>(16584, "owner_path", owner_path);
+	}
 }
 
 unique_ptr<AlterInfo> ChangeOwnershipInfo::Deserialize(Deserializer &deserializer) {
@@ -504,6 +523,7 @@ unique_ptr<AlterInfo> ChangeOwnershipInfo::Deserialize(Deserializer &deserialize
 	deserializer.ReadProperty<CatalogType>(300, "entry_catalog_type", result->entry_catalog_type);
 	deserializer.ReadPropertyWithDefault<Identifier>(301, "owner_schema", result->owner_schema);
 	deserializer.ReadPropertyWithDefault<Identifier>(302, "owner_name", result->owner_name);
+	deserializer.ReadPropertyWithDefault<vector<Identifier>>(16584, "owner_path", result->owner_path);
 	return std::move(result);
 }
 

@@ -430,6 +430,7 @@ void LogicalDelete::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(203, "expressions", expressions);
 	serializer.WritePropertyWithDefault<vector<idx_t>>(204, "return_columns", return_columns);
 	serializer.WritePropertyWithDefault<bool>(16584, "is_truncate", is_truncate, false);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(16585, "truncate_group", truncate_group);
 }
 
 unique_ptr<LogicalOperator> LogicalDelete::Deserialize(Deserializer &deserializer) {
@@ -440,6 +441,7 @@ unique_ptr<LogicalOperator> LogicalDelete::Deserialize(Deserializer &deserialize
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(203, "expressions", result->expressions);
 	deserializer.ReadPropertyWithDefault<vector<idx_t>>(204, "return_columns", result->return_columns);
 	deserializer.ReadPropertyWithExplicitDefault<bool>(16584, "is_truncate", result->is_truncate, false);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(16585, "truncate_group", result->truncate_group);
 	return std::move(result);
 }
 
