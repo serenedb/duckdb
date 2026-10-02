@@ -563,6 +563,11 @@
         "name": "name",
         "serialize_property": "qualified_name.Name()",
         "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "options",
+        "type": "case_insensitive_map_t<Value>"
       }
     ],
     "methods": {
