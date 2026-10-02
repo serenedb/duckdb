@@ -119,6 +119,7 @@ public:
 	LocalTableStorage &GetOrCreateStorage(ClientContext &context, DataTable &table);
 	idx_t EstimatedSize() const;
 	bool IsEmpty() const;
+	vector<reference<DataTable>> GetTables() const;
 	void InsertEntry(DataTable &table, shared_ptr<LocalTableStorage> entry);
 
 private:
@@ -190,6 +191,7 @@ public:
 
 	void DropTable(DataTable &table);
 	bool Find(DataTable &table);
+	vector<reference<DataTable>> GetTables() const;
 
 	idx_t AddedRows(DataTable &table);
 	vector<PartitionStatistics> GetPartitionStats(DataTable &table) const;
