@@ -565,8 +565,6 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 	// we need to recover from the WAL: actually set up the replay state
 	ReplayState state(database, *con.context, replay_state);
 
-	// Publish each replayed entry's byte offset on the transaction manager so unbound-index buffering can
-	// stamp its replay ranges; reset to 0 on any exit so live (non-replay) ops never inherit a stale offset.
 	auto &duck_manager = DuckTransactionManager::Get(database);
 	struct ReplayOffsetGuard {
 		DuckTransactionManager &manager;
@@ -586,8 +584,6 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 	try {
 		bool skip_batch = undecided_batches.count(reader.CurrentOffset()) != 0;
 		while (true) {
-			// Publish the byte offset of the entry we are about to replay so any unbound index buffering this
-			// entry's ops can stamp it onto its replay ranges (used to skip already-durable ops at bind time).
 			duck_manager.SetReplayCommitOffset(reader.CurrentOffset());
 			// read the current entry
 			auto deserializer = WriteAheadLogDeserializer::GetEntryDeserializer(state, reader, skip_batch);
