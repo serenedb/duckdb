@@ -12,6 +12,7 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/alter_sequence_info.hpp"
 #include "duckdb/common/optional.hpp"
 #include "duckdb/common/unordered_map.hpp"
 
@@ -126,6 +127,7 @@ private:
 	bool Committed() const;
 	idx_t Block() const;
 	void ThrowIfSuperseded() const;
+	SequenceData Restarted(RestartSequenceInfo &info) const;
 	SequenceData Reserved() const;
 	void Fetch(SequenceSessionValue &cached, idx_t needed);
 	void FetchLocked(SequenceSessionValue &cached, idx_t needed);

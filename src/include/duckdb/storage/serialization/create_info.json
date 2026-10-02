@@ -465,6 +465,12 @@
         "type": "uint64_t",
         "default": "1ULL",
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16585,
+        "name": "recorded_start",
+        "type": "optional<int64_t>",
+        "version": "serenedb_v1"
       }
     ],
     "methods": {

@@ -725,8 +725,8 @@ static Identifier FreeSequenceName(CatalogTransaction transaction, SchemaCatalog
 	return candidate;
 }
 
-static bool DefaultNamesSequence(const ColumnDefinition &column, const QualifiedName &sequence,
-                                 const IdentifierEquality &equals) {
+bool Binder::DefaultNamesSequence(const ColumnDefinition &column, const QualifiedName &sequence,
+                                  const IdentifierEquality &equals) {
 	if (!column.HasDefaultValue() || column.DefaultValue().GetExpressionClass() != ExpressionClass::FUNCTION) {
 		return false;
 	}
@@ -761,7 +761,7 @@ static void BindSerialSequences(ClientContext &context, SchemaCatalogEntry &sche
 		    .SetDefaultValue(make_uniq<FunctionExpression>(Identifier("nextval"), std::move(arguments)));
 		auto sequence = schema.GetQualifiedName(serial.name);
 		for (auto &column : table.columns.Physical()) {
-			if (DefaultNamesSequence(column, sequence, equals)) {
+			if (Binder::DefaultNamesSequence(column, sequence, equals)) {
 				serial.dependents.push_back(column.Name());
 			}
 		}

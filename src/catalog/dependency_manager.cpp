@@ -16,6 +16,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/alter_sequence_info.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/catalog/dependency_catalog_set.hpp"
@@ -1003,6 +1004,12 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			disallow_alter = false;
 			break;
 		}
+		case AlterType::ALTER_SEQUENCE: {
+			if (alter_info.Cast<AlterSequenceInfo>().alter_sequence_type == AlterSequenceType::RESTART_SEQUENCE) {
+				disallow_alter = false;
+			}
+			break;
+		}
 		default:
 			break;
 		}
@@ -1095,6 +1102,24 @@ void DependencyManager::Scan(
 			callback(entry, dependent_entry, dependent.Dependent().flags);
 		});
 	}
+}
+
+catalog_entry_vector_t DependencyManager::OwnedEntries(CatalogTransaction transaction, CatalogEntry &owner) {
+	catalog_entry_vector_t result;
+	if (IsSystemEntry(owner)) {
+		return result;
+	}
+	lock_guard<mutex> write_lock(catalog.GetWriteLock());
+	ScanSubjects(transaction, GetLookupProperties(owner), [&](DependencyEntry &dep) {
+		if (!dep.Subject().flags.IsOwnership()) {
+			return;
+		}
+		auto entry = LookupEntry(transaction, dep);
+		if (entry) {
+			result.push_back(*entry);
+		}
+	});
+	return result;
 }
 
 void DependencyManager::AddOwnership(CatalogTransaction transaction, CatalogEntry &owner, CatalogEntry &entry) {
