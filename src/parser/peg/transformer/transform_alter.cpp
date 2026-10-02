@@ -169,13 +169,20 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSequenceOptions(PEGTr
 	return transformer.Transform<unique_ptr<AlterInfo>>(choice_result);
 }
 
-unique_ptr<AlterInfo>
-PEGTransformerFactory::TransformSetSequenceOption(PEGTransformer &transformer,
-                                                  vector<pair<string, unique_ptr<SequenceOption>>> sequence_option) {
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformSetSequenceOption(
+    PEGTransformer &transformer, vector<pair<string, unique_ptr<SequenceOption>>> alter_sequence_option) {
 	bool has_owned = false;
 	unique_ptr<AlterInfo> owned_info;
-	for (auto &seq_option : sequence_option) {
-		if (seq_option.first == "owned") {
+	unique_ptr<AlterInfo> restart_info;
+	for (auto &seq_option : alter_sequence_option) {
+		if (seq_option.first == "restart") {
+			if (restart_info) {
+				throw ParserException("conflicting or redundant options");
+			}
+			auto restart = unique_ptr_cast<SequenceOption, ValueSequenceOption>(std::move(seq_option.second));
+			restart_info = make_uniq<AlterSequenceInfo>(
+			    AlterEntryData(), restart->value.IsNull() ? optional<int64_t>() : restart->value.GetValue<int64_t>());
+		} else if (seq_option.first == "owned") {
 			if (has_owned) {
 				throw ParserException("Owned by value should be passed at most once");
 			}
@@ -186,12 +193,50 @@ PEGTransformerFactory::TransformSetSequenceOption(PEGTransformer &transformer,
 			owned_info =
 			    make_uniq<ChangeOwnershipInfo>(CatalogType::SEQUENCE_ENTRY, "", "", "", schema,
 			                                   owned_by->qualified_name.Name(), OnEntryNotFound::THROW_EXCEPTION);
+		} else {
+			throw NotImplementedException("ALTER SEQUENCE option not yet supported");
 		}
+	}
+	if (owned_info && restart_info) {
+		throw NotImplementedException("ALTER SEQUENCE cannot combine OWNED BY and RESTART");
 	}
 	if (owned_info) {
 		return owned_info;
 	}
-	throw NotImplementedException("ALTER SEQUENCE option not yet supported");
+	return restart_info;
+}
+
+pair<string, unique_ptr<SequenceOption>>
+PEGTransformerFactory::TransformSeqRestart(PEGTransformer &transformer,
+                                           optional<unique_ptr<ParsedExpression>> seq_restart_value) {
+	if (!seq_restart_value) {
+		return make_pair("restart", make_uniq<ValueSequenceOption>(SequenceInfo::SEQ_START, Value()));
+	}
+	auto expression = std::move(*seq_restart_value);
+	if (expression->GetExpressionClass() == ExpressionClass::FUNCTION) {
+		auto func_expr = unique_ptr_cast<ParsedExpression, FunctionExpression>(std::move(expression));
+		if (func_expr->FunctionName() != "-" || func_expr->GetArguments().size() != 1 ||
+		    func_expr->GetArguments()[0].GetExpression().GetExpressionClass() != ExpressionClass::CONSTANT) {
+			throw ParserException("Expected constant expression.");
+		}
+		const auto const_value =
+		    func_expr->GetArguments()[0].GetExpression().Cast<ConstantExpression>().GetValue().GetValue<hugeint_t>();
+		expression = make_uniq<ConstantExpression>(Value::Numeric(LogicalType::BIGINT, -const_value));
+	}
+	if (expression->GetExpressionClass() != ExpressionClass::CONSTANT) {
+		throw ParserException("Expected constant expression.");
+	}
+	auto value = expression->Cast<ConstantExpression>().GetValue();
+	if (value.IsNull()) {
+		throw ParserException("Expected constant expression.");
+	}
+	return make_pair("restart", make_uniq<ValueSequenceOption>(SequenceInfo::SEQ_START, std::move(value)));
+}
+
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSeqRestartValue(PEGTransformer &transformer,
+                                                                             const bool &has_result,
+                                                                             unique_ptr<ParsedExpression> expression) {
+	return expression;
 }
 
 void PEGTransformerFactory::AddToMultiStatement(const unique_ptr<MultiStatement> &multi_statement,

@@ -351,6 +351,23 @@
     ]
   },
   {
+    "class": "AlterSequenceInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_SEQUENCE",
+    "members": [
+      {
+        "id": 300,
+        "name": "restart_with",
+        "type": "optional<int64_t>"
+      },
+      {
+        "id": 301,
+        "name": "usage_count",
+        "type": "uint64_t"
+      }
+    ]
+  },
+  {
     "class": "ReplaceDefinitionInfo",
     "base": "AlterInfo",
     "enum": "REPLACE_DEFINITION",

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/permissions.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/parser/column_definition.hpp"
@@ -117,6 +118,23 @@ public:
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 
 	explicit RenameInfo();
+};
+
+struct AlterSequenceInfo : public AlterInfo {
+	AlterSequenceInfo(const AlterEntryData &data, optional<int64_t> restart_with);
+
+	optional<int64_t> restart_with;
+	uint64_t usage_count = 0;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit AlterSequenceInfo();
 };
 
 struct ReplaceDefinitionInfo : public AlterInfo {

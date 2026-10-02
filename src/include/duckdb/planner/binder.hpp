@@ -18,6 +18,7 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/parser/column_definition.hpp"
+#include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/parser/query_node.hpp"
 #include "duckdb/parser/result_modifier.hpp"
 #include "duckdb/parser/tableref/delimgetref.hpp"
@@ -215,6 +216,9 @@ public:
 	                                                  BinderType binder_type = BinderType::REGULAR_BINDER);
 	static vector<reference<TableCatalogEntry>> TruncateReferencingTables(ClientContext &context,
 	                                                                      TableCatalogEntry &table);
+	static vector<QualifiedName> TruncateIdentitySequences(ClientContext &context, TableCatalogEntry &table);
+	static bool DefaultNamesSequence(const ColumnDefinition &column, const QualifiedName &sequence,
+	                                 const IdentifierEquality &equals);
 
 	//! The client context
 	ClientContext &context;

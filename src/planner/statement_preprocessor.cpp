@@ -5,7 +5,9 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/query_node/delete_query_node.hpp"
+#include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/statement/delete_statement.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
@@ -118,6 +120,7 @@ static unique_ptr<TableRef> TruncateTargetRef(TableCatalogEntry &table) {
 
 void StatementPreprocessor::ExpandTruncate(MultiStatement &multi_statement) const {
 	bool cascade = false;
+	bool restart_identity = false;
 	for (auto &statement : multi_statement.statements) {
 		if (statement->type != StatementType::DELETE_STATEMENT) {
 			return;
@@ -127,8 +130,9 @@ void StatementPreprocessor::ExpandTruncate(MultiStatement &multi_statement) cons
 			return;
 		}
 		cascade = cascade || node.truncate_cascade;
+		restart_identity = restart_identity || node.truncate_restart_identity;
 	}
-	if (!cascade) {
+	if (!cascade && !restart_identity) {
 		return;
 	}
 	vector<reference<TableCatalogEntry>> group;
@@ -145,17 +149,18 @@ void StatementPreprocessor::ExpandTruncate(MultiStatement &multi_statement) cons
 		add(Catalog::GetEntry<TableCatalogEntry>(context, node.table->Cast<BaseTableRef>().GetQualifiedName()));
 	}
 	const auto named = group.size();
-	for (idx_t i = 0; i < group.size(); i++) {
+	for (idx_t i = 0; cascade && i < group.size(); i++) {
 		for (auto &referencing : Binder::TruncateReferencingTables(context, group[i].get())) {
 			add(referencing.get());
 		}
 	}
 	auto &first = multi_statement.statements[0]->Cast<DeleteStatement>();
+	const auto query = first.query;
 	for (idx_t i = named; i < group.size(); i++) {
 		auto statement = make_uniq<DeleteStatement>();
 		statement->node = unique_ptr_cast<QueryNode, DeleteQueryNode>(first.node->Copy());
 		statement->node->table = TruncateTargetRef(group[i].get());
-		statement->query = first.query;
+		statement->query = query;
 		multi_statement.statements.push_back(std::move(statement));
 	}
 	for (auto &statement : multi_statement.statements) {
@@ -165,6 +170,21 @@ void StatementPreprocessor::ExpandTruncate(MultiStatement &multi_statement) cons
 			node.truncate_group.push_back(TruncateTargetRef(member.get()));
 		}
 	}
+	if (!restart_identity) {
+		return;
+	}
+	vector<unique_ptr<SQLStatement>> restarts;
+	for (auto &member : group) {
+		for (auto &sequence : Binder::TruncateIdentitySequences(context, member.get())) {
+			auto statement = make_uniq<AlterStatement>();
+			statement->info = make_uniq<AlterSequenceInfo>(
+			    AlterEntryData(std::move(sequence), OnEntryNotFound::THROW_EXCEPTION), optional<int64_t>());
+			statement->query = query;
+			restarts.push_back(std::move(statement));
+		}
+	}
+	multi_statement.statements.insert(multi_statement.statements.begin(), std::make_move_iterator(restarts.begin()),
+	                                  std::make_move_iterator(restarts.end()));
 }
 
 vector<unique_ptr<SQLStatement>> StatementPreprocessor::TryReparsePragma(unique_ptr<SQLStatement> statement) const {

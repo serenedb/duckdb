@@ -541,6 +541,7 @@ Expression:
     - CopyFileNameIdentifierColId
     - DatabasePath
     - UsingExpression
+    - SeqRestartValue
     - RelOptionArgumentOpt
     - ExpressionAlias
 
@@ -1533,6 +1534,8 @@ SequenceOptionEntry:
     - SeqStartWith
     - SeqCache
     - SeqOwnedBy
+    - AlterSequenceOption
+    - SeqRestart
 
 SetOperationTail:
   type: "pair<unique_ptr<SetOperationNode>, unique_ptr<SelectStatement>>"
