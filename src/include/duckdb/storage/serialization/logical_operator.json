@@ -883,6 +883,11 @@
         "name": "is_truncate",
         "type": "bool",
         "default": "false"
+      },
+      {
+        "id": 16585,
+        "name": "truncate_group",
+        "type": "vector<idx_t>"
       }
     ],
     "constructor": [
