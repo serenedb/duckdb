@@ -114,6 +114,7 @@ private:
 	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const CatalogEntryInfo &info);
 	string CollectDependents(CatalogTransaction transaction, catalog_entry_set_t &entries, CatalogEntryInfo &info,
 	                         catalog_entry_set_t &listed);
+	static string DescribeDependency(CatalogEntryInfo &dependent, CatalogEntryInfo &subject);
 	void CleanupDependencies(CatalogTransaction transaction, CatalogEntry &entry);
 
 public:
