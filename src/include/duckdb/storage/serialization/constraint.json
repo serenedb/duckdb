@@ -17,6 +17,13 @@
         "type": "string",
         "default": "\"\"",
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16485,
+        "name": "oid",
+        "type": "idx_t",
+        "default": 0,
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -119,6 +126,13 @@
         "type": "ConstraintTiming",
         "default": "ConstraintTiming::DEFAULT",
         "version": "v2.0.0"
+      },
+      {
+        "id": 16584,
+        "name": "index_oid",
+        "type": "idx_t",
+        "default": 0,
+        "version": "serenedb_v1"
       }
     ]
   }

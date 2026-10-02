@@ -52,6 +52,7 @@ string ForeignKeyConstraint::ToString() const {
 unique_ptr<Constraint> ForeignKeyConstraint::Copy() const {
 	auto result = make_uniq<ForeignKeyConstraint>(pk_columns, fk_columns, info);
 	result->constraint_name = constraint_name;
+	result->oid = oid;
 	return std::move(result);
 }
 

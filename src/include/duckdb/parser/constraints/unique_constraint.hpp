@@ -73,6 +73,7 @@ public:
 	bool is_primary_key;
 	//! The declared constraint timing, or DEFAULT when no modifier was specified.
 	ConstraintTiming timing;
+	idx_t index_oid = 0;
 };
 
 } // namespace duckdb
