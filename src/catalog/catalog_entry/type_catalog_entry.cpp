@@ -2,6 +2,7 @@
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -32,15 +33,22 @@ TypeCatalogEntry::TypeCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema,
 	this->comment = info.comment;
 	this->tags = info.tags;
 	this->permissions = info.permissions;
-	const bool enum_alias_is_type_name = catalog.Compatibility() == SqlCompatibility::POSTGRES;
-	if (enum_alias_is_type_name && !internal && user_type.id() == LogicalTypeId::ENUM && !user_type.HasAlias()) {
+	const bool postgres = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (postgres && !internal && user_type.id() == LogicalTypeId::ENUM && !user_type.HasAlias()) {
 		user_type = user_type.WithAlias(name.GetIdentifierName());
+	}
+	if (postgres && !internal) {
+		auto extension_info = user_type.HasExtensionInfo() ? make_uniq<ExtensionTypeInfo>(*user_type.GetExtensionInfo())
+		                                                   : make_uniq<ExtensionTypeInfo>();
+		extension_info->properties[ExtensionTypeInfo::CATALOG_OID_PROPERTY] = Value::UBIGINT(oid);
+		user_type = user_type.WithExtensionInfo(std::move(extension_info));
 	}
 }
 
 unique_ptr<CatalogEntry> TypeCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateTypeInfo>();
+	cast_info.oid = oid;
 	auto result = make_uniq<TypeCatalogEntry>(catalog, ParentSchema(context), cast_info);
 	return std::move(result);
 }
