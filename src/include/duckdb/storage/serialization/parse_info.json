@@ -846,6 +846,23 @@
     ]
   },
   {
+    "class": "RestartSequenceInfo",
+    "base": "AlterSequenceInfo",
+    "enum": "RESTART_SEQUENCE",
+    "members": [
+      {
+        "id": 400,
+        "name": "restart_with",
+        "type": "optional<int64_t>"
+      },
+      {
+        "id": 401,
+        "name": "usage_count",
+        "type": "uint64_t"
+      }
+    ]
+  },
+  {
     "class": "AttachInfo",
     "base": "ParseInfo",
     "enum": "ATTACH_INFO",

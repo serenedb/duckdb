@@ -55,6 +55,7 @@ struct CreateSequenceInfo : public CreateInfo {
 	uint64_t cache;
 	//! The most recently returned value
 	optional<int64_t> last_value;
+	optional<int64_t> recorded_start;
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;

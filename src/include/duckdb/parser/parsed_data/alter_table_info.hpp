@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/permissions.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/parser/column_definition.hpp"
