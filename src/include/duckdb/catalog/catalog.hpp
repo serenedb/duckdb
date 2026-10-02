@@ -242,6 +242,7 @@ public:
 
 	//! Drops an entry from the catalog
 	DUCKDB_API void DropEntry(ClientContext &context, DropInfo &info);
+	static bool InRelationNamespace(CatalogType type);
 
 	DUCKDB_API virtual optional_ptr<SchemaCatalogEntry> LookupSchema(CatalogTransaction transaction,
 	                                                                 const EntryLookupInfo &schema_lookup,
