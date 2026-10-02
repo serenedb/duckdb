@@ -13,6 +13,7 @@
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/storage/table/index_entry.hpp"
 #include "duckdb/execution/index/bound_index.hpp"
+#include "duckdb/execution/index/index_type_set.hpp"
 #include "duckdb/storage/index.hpp"
 
 namespace duckdb {
@@ -69,6 +70,9 @@ public:
 	                       optional_idx active_checkpoint = optional_idx());
 	//! Removes an index entry from the list of index entries and release any storage the index owns.
 	void RemoveIndex(idx_t index_oid);
+	void RemoveIndexesOnColumn(column_t column_id);
+	void SyncColumnLayout(IndexTypeSet &index_types, const vector<idx_t> &old_column_oids,
+	                      const vector<idx_t> &new_column_oids);
 	void RenameIndex(idx_t index_oid, const Identifier &new_name);
 	//! Returns true, if the index name does not exist.
 	bool NameIsUnique(const string &name) const;
@@ -125,6 +129,7 @@ public:
 		std::lock(lock, other_lock);
 		D_ASSERT(index_entries.empty());
 		index_entries = std::move(other.index_entries);
+		detached_entries = std::move(other.detached_entries);
 		unbound_count = other.unbound_count;
 		other.unbound_count = 0;
 	}
@@ -164,6 +169,7 @@ private:
 	mutable annotated_mutex index_entries_lock;
 	//! The index entries of the table.
 	vector<shared_ptr<IndexEntry>> index_entries DUCKDB_GUARDED_BY(index_entries_lock);
+	vector<shared_ptr<IndexEntry>> detached_entries DUCKDB_GUARDED_BY(index_entries_lock);
 	//! Contains the number of unbound indexes.
 	idx_t unbound_count DUCKDB_GUARDED_BY(index_entries_lock) = 0;
 };

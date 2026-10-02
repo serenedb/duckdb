@@ -65,6 +65,8 @@ LocalTableStorage::LocalTableStorage(DataTable &new_data_table, LocalTableStorag
 
 	append_indexes.Move(parent.append_indexes);
 	delete_indexes.Move(parent.delete_indexes);
+	append_indexes.RemoveIndexesOnColumn(drop_column_index);
+	delete_indexes.RemoveIndexesOnColumn(drop_column_index);
 }
 
 LocalTableStorage::LocalTableStorage(ClientContext &context, DataTable &new_dt, LocalTableStorage &parent,

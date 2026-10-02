@@ -5,6 +5,7 @@
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/common/helper.hpp"
@@ -14,8 +15,11 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/execution/index/unbound_index.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/execution/index/index_type_set.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/config.hpp"
 #include "duckdb/main/profiler/profiling_utils.hpp"
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/parser/constraints/list.hpp"
@@ -130,37 +134,39 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_co
 	struct IndexColumns {
 		Identifier name;
 		bool entry_backed;
+		bool remaps_columns;
 		unordered_set<column_t> column_ids;
 	};
+	auto &index_catalog = db.GetCatalog();
+	const bool stable_column_ids = index_catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	auto &index_types = db.GetDatabase().config.GetIndexTypes();
 	vector<IndexColumns> index_columns;
 	for (auto index_entry : info->indexes.IndexEntries()) {
 		auto index_info = index_entry->GetStorageInfo();
-		index_columns.push_back({index_entry->GetName(),
-		                         !index_info.is_unique && !index_info.is_primary && !index_info.is_foreign,
-		                         std::move(index_info.column_set)});
+		auto index_type = index_types.FindByName(index_entry->GetIndexType());
+		index_columns.push_back(
+		    {index_entry->GetName(), !index_info.is_unique && !index_info.is_primary && !index_info.is_foreign,
+		     stable_column_ids && index_type && index_type->remaps_columns, std::move(index_info.column_set)});
 	}
 
 	// first check if there are any indexes that exist that point to the removed column
+	auto catalog_transaction = index_catalog.GetCatalogTransaction(context);
+	auto schema = index_catalog.GetSchema(catalog_transaction, info->GetSchemaPath(), OnEntryNotFound::RETURN_NULL);
 	for (auto &index : index_columns) {
-		if (index.entry_backed) {
-			// Plain indexes are always entry-backed; when the entry is no longer
-			// visible the index was dropped earlier in this transaction and only
-			// leaves the storage list at commit - it cannot block the drop.
-			// (Unique CREATE INDEX entries still block: their names are not
-			// distinguishable from constraint-backed indexes here.)
-			auto &index_catalog = db.GetCatalog();
+		if (schema) {
 			EntryLookupInfo lookup_info(CatalogType::INDEX_ENTRY, index.name);
-			auto entry =
-			    index_catalog.GetEntry(context, info->GetSchemaName(), lookup_info, OnEntryNotFound::RETURN_NULL);
-			if (!entry) {
+			auto lookup = schema->LookupEntryDetailed(catalog_transaction, lookup_info);
+			const bool dropped = lookup.reason == CatalogSet::EntryLookup::FailureReason::DELETED;
+			if (dropped || (index.entry_backed && !lookup.result)) {
 				continue;
 			}
 		}
 		for (auto column_id : index.column_ids) {
 			if (column_id == removed_column) {
 				throw CatalogException("Cannot drop this column: an index depends on it!");
-			} else if (column_id > removed_column) {
-				throw CatalogException("Cannot drop this column: an index depends on a column after it!");
+			} else if (column_id > removed_column && !index.remaps_columns) {
+				throw CatalogException(Exception::InitializeExtraInfo("UNSUPPORTED", optional_idx()),
+				                       "Cannot drop this column: an index depends on a column after it!");
 			}
 		}
 	}
@@ -558,6 +564,27 @@ Identifier DataTableInfo::GetTableName() {
 void DataTableInfo::SetTableName(Identifier name) {
 	lock_guard<mutex> l(name_lock);
 	table = std::move(name);
+}
+
+static bool HasStableColumnOids(const vector<idx_t> &column_oids) {
+	return !column_oids.empty() &&
+	       std::all_of(column_oids.begin(), column_oids.end(), [](idx_t column_oid) { return column_oid != 0; });
+}
+
+vector<idx_t> DataTableInfo::SetIndexColumnLayout(vector<idx_t> logical_column_oids,
+                                                  vector<idx_t> physical_column_oids) {
+	auto previous_logical = std::move(index_logical_column_oids);
+	auto previous_physical = std::move(index_physical_column_oids);
+	index_logical_column_oids = std::move(logical_column_oids);
+	index_physical_column_oids = std::move(physical_column_oids);
+	if (!HasStableColumnOids(previous_physical) || !HasStableColumnOids(index_physical_column_oids)) {
+		return {};
+	}
+	if (previous_physical != index_physical_column_oids) {
+		indexes.SyncColumnLayout(db.GetDatabase().config.GetIndexTypes(), previous_physical,
+		                         index_physical_column_oids);
+	}
+	return previous_logical;
 }
 
 Identifier DataTable::GetTableName() const {

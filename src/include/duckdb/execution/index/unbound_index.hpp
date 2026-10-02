@@ -86,6 +86,7 @@ public:
 
 public:
 	void ResetStorage() override;
+	void RemapColumnIds(const vector<column_t> &new_column_ids) override;
 
 	bool IsBound() const override {
 		return false;

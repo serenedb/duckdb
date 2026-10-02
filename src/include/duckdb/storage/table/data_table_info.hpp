@@ -55,6 +55,7 @@ public:
 	vector<Identifier> GetSchemaPath() const;
 	Identifier GetTableName();
 	void SetTableName(Identifier name);
+	vector<idx_t> SetIndexColumnLayout(vector<idx_t> logical_column_oids, vector<idx_t> physical_column_oids);
 
 private:
 	//! The database instance of the table
@@ -69,6 +70,8 @@ private:
 	Identifier table;
 	//! The physical list of indexes of this table
 	TableIndexList indexes;
+	vector<idx_t> index_logical_column_oids;
+	vector<idx_t> index_physical_column_oids;
 	//! Index storage information of the indexes created by this table
 	vector<IndexStorageInfo> index_storage_infos;
 	//! The last seen checkpoint while doing a concurrent operation, if any

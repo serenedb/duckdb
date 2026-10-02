@@ -621,6 +621,12 @@
         "id": 16484,
         "name": "acl",
         "type": "vector<AclItem>"
+      },
+      {
+        "id": 16485,
+        "name": "catalog_oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ],
     "constructor": [

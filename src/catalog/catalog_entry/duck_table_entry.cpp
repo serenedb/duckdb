@@ -150,11 +150,37 @@ virtual_column_map_t DuckTableEntry::GetVirtualColumns() const {
 	return virtual_columns;
 }
 
+static vector<idx_t> SyncIndexColumnLayout(DataTableInfo &info, const ColumnList &columns,
+                                           vector<idx_t> &logical_oids) {
+	vector<idx_t> physical_oids;
+	for (auto &column : columns.Logical()) {
+		logical_oids.push_back(column.CatalogOid());
+		if (!column.Generated()) {
+			physical_oids.push_back(column.CatalogOid());
+		}
+	}
+	return info.SetIndexColumnLayout(logical_oids, std::move(physical_oids));
+}
+
+static void AssignCatalogOids(Catalog &catalog, ColumnList &columns) {
+	auto &manager = catalog.GetDatabase().GetDatabaseManager();
+	const bool assign = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
+		auto &column = columns.GetColumnMutable(LogicalIndex(i));
+		if (column.CatalogOid()) {
+			manager.ClaimOid(column.CatalogOid());
+		} else if (assign) {
+			column.SetCatalogOid(manager.NextOid());
+		}
+	}
+}
+
 DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info,
                                shared_ptr<DataTable> inherited_storage, shared_ptr<CatalogSet> inherited_triggers)
     : TableCatalogEntry(catalog, schema, info.Base(), std::move(inherited_triggers)),
       columns(std::move(info.Base().columns)), storage(std::move(inherited_storage)),
       column_dependency_manager(std::move(info.column_dependency_manager)) {
+	AssignCatalogOids(catalog, columns);
 	if (storage) {
 		if (!info.indexes.empty()) {
 			storage->SetIndexStorageInfo(std::move(info.indexes));
@@ -171,6 +197,8 @@ DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, Bou
 	}
 	storage = make_shared_ptr<DataTable>(catalog.GetAttached(), StorageManager::Get(catalog).GetTableIOManager(&info),
 	                                     schema.GetSchemaInfo(), name, std::move(column_defs), std::move(info.data));
+	vector<idx_t> logical_oids;
+	SyncIndexColumnLayout(*storage->GetDataTableInfo(), columns, logical_oids);
 
 	// Create the unique indexes for the UNIQUE, PRIMARY KEY, and FOREIGN KEY constraints.
 	idx_t indexes_idx = 0;
@@ -531,6 +559,9 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddColumn(ClientContext &context, AddCo
 
 	info.new_column.SetOid(columns.LogicalColumnCount());
 	info.new_column.SetStorageOid(columns.PhysicalColumnCount());
+	if (!info.new_column.CatalogOid() && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+		info.new_column.SetCatalogOid(catalog.GetDatabase().GetDatabaseManager().NextOid());
+	}
 	auto col = info.new_column.Copy();
 
 	create_info->columns.AddColumn(std::move(col));
@@ -1563,8 +1594,27 @@ void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
 	for (auto &column : columns.Physical()) {
 		storage->SetColumnName(column.Physical(), column.Name());
 	}
+	vector<idx_t> logical_oids;
+	auto previous_logical_oids = SyncIndexColumnLayout(*storage->GetDataTableInfo(), columns, logical_oids);
 	if (!transaction) {
 		return;
+	}
+	if (!previous_logical_oids.empty() && previous_logical_oids != logical_oids) {
+		unordered_map<idx_t, column_t> positions;
+		for (idx_t i = 0; i < logical_oids.size(); i++) {
+			positions.emplace(logical_oids[i], i);
+		}
+		UpdateDependentIndexes(*transaction, *this, [&](DuckIndexEntry &index) {
+			for (auto &column_id : index.column_ids) {
+				if (column_id >= previous_logical_oids.size()) {
+					continue;
+				}
+				auto position = positions.find(previous_logical_oids[column_id]);
+				if (position != positions.end()) {
+					column_id = position->second;
+				}
+			}
+		});
 	}
 	if (!same(previous_name, name) || !renamed_columns.empty()) {
 		UpdateDependentIndexes(*transaction, *this, [&](DuckIndexEntry &index) {

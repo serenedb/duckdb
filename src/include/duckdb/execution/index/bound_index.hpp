@@ -173,6 +173,7 @@ public:
 	virtual bool RemovalNeedsColumnValues() const {
 		return true;
 	}
+	void RemapColumnIds(const vector<column_t> &new_column_ids) override;
 
 	//! Returns the in-memory usage of the index. The index lock must be held
 	virtual idx_t GetInMemorySize(IndexLock &state) const DUCKDB_REQUIRES(state) = 0;
