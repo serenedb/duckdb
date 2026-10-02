@@ -163,6 +163,9 @@ public:
 
 	//! Whether or not the index supports the creation of delta indexes
 	virtual bool SupportsDeltaIndexes() const;
+	virtual bool RemovalNeedsColumnValues() const {
+		return true;
+	}
 	//! Creates a delta index - an empty copy of the index with the same schema, etc
 	//! This will only be called if SupportsDeltaIndexes returns true
 	virtual unique_ptr<BoundIndex> CreateDeltaIndex(DeltaIndexType delta_index_type) const;
