@@ -375,7 +375,9 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 			                           table_name, table_modification);
 		}
 		// mark the tuples as committed
-		info->table->GetStorage().CommitAppend(commit_id, info->start_row, info->count);
+		auto &storage = info->table->GetStorage();
+		storage.CommitAppend(commit_id, info->start_row, info->count);
+		storage.GetDataTableInfo()->last_append_commit.store(commit_id);
 		break;
 	}
 	case UndoFlags::DELETE_TUPLE: {
