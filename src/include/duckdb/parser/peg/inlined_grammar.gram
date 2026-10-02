@@ -11,10 +11,6 @@ Statement <-
 	DropServerStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
-	CreatePolicyStatement /
-	AlterPolicyStatement /
-	DropPolicyStatement /
-	AlterTableRowSecurityStatement /
 	AlterOwnerStatement /
 	AlterDefaultPrivilegesStatement /
 	AlterRoleStatement /
@@ -739,7 +735,20 @@ UnreservedKeyword <- 'ABORT' /
 'ZONE'
 AlterStatement <- 'ALTER' AlterOptions
 
-AlterOptions <- AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt / AlterJobStmt
+AlterOptions <- AlterRowSecurityStmt / AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt / AlterPolicyStmt / AlterJobStmt
+
+AlterRowSecurityStmt <- AlterRowSecurityRelation IfExists? BaseTableName RowSecurityAction 'ROW' 'LEVEL' 'SECURITY'
+AlterRowSecurityRelation <- CommentTable / CommentView
+RowSecurityAction <- RowSecurityEnable / RowSecurityDisable / RowSecurityNoForce / RowSecurityForce
+RowSecurityEnable <- 'ENABLE'
+RowSecurityDisable <- 'DISABLE'
+RowSecurityNoForce <- 'NO' 'FORCE'
+RowSecurityForce <- 'FORCE'
+
+AlterPolicyStmt <- 'POLICY' PolicyName 'ON' BaseTableName AlterPolicyAction
+AlterPolicyAction <- AlterPolicyRename / AlterPolicyClauses
+AlterPolicyRename <- 'RENAME' 'TO' ColId
+AlterPolicyClauses <- PolicyToRoles? PolicyUsing? PolicyCheck?
 
 AlterJobStmt <- 'JOB' IfExists? QualifiedName AlterJobAction
 AlterJobAction <- AlterJobRename / AlterJobSuspend / AlterJobResume / AlterJobSetSchedule
@@ -987,6 +996,28 @@ RowsClause <- 'ROWS' NumberLiteral
 ParallelClause <- 'PARALLEL' Identifier
 LeakproofClause <- 'NOT'? 'LEAKPROOF'
 
+CreatePolicyStmt <- 'POLICY' PolicyName 'ON' BaseTableName PolicyPermissive? PolicyForCmd? PolicyToRoles? PolicyUsing? PolicyCheck?
+
+PolicyName <- ColId
+PolicyPermissive <- 'AS' PolicyPermissiveMode
+PolicyPermissiveMode <- PolicyPermissiveKeyword / PolicyRestrictiveKeyword
+PolicyPermissiveKeyword <- 'PERMISSIVE'
+PolicyRestrictiveKeyword <- 'RESTRICTIVE'
+PolicyForCmd <- 'FOR' PolicyCommandKeyword
+PolicyCommandKeyword <- PolicyCommandAll / PolicyCommandSelect / PolicyCommandInsert / PolicyCommandUpdate / PolicyCommandDelete
+PolicyCommandAll <- 'ALL'
+PolicyCommandSelect <- 'SELECT'
+PolicyCommandInsert <- 'INSERT'
+PolicyCommandUpdate <- 'UPDATE'
+PolicyCommandDelete <- 'DELETE'
+PolicyToRoles <- 'TO' List(PolicyRole)
+PolicyRole <- PolicyCurrentRole / PolicyCurrentUser / PolicySessionUser / ColId
+PolicyCurrentRole <- 'CURRENT_ROLE'
+PolicyCurrentUser <- 'CURRENT_USER'
+PolicySessionUser <- 'SESSION_USER'
+PolicyUsing <- 'USING' Parens(Expression)
+PolicyCheck <- 'WITH' 'CHECK' Parens(Expression)
+
 CreatePublicationStatement <- 'CREATE' 'PUBLICATION' Identifier PublicationFor?
 PublicationFor <- 'FOR' (PublicationForAllTables / PublicationForTable)
 PublicationForAllTables <- 'ALL' 'TABLES'
@@ -1041,7 +1072,7 @@ SubscriptionConnection <- 'CONNECTION' StringLiteral SubscriptionPublication?
 SubscriptionPublication <- 'PUBLICATION' List(Identifier)
 
 CreateStatement <- 'CREATE' OrReplace? Temporary? CreateStatementVariation
-CreateStatementVariation <- CreateTableStmt / CreateMacroStmt / CreateSequenceStmt / CreateTypeStmt / CreateSchemaStmt / CreateViewStmt / CreateIndexStmt / CreateSecretStmt / CreateTriggerStmt / CreateJobStmt
+CreateStatementVariation <- CreateTableStmt / CreateMacroStmt / CreateSequenceStmt / CreateTypeStmt / CreateSchemaStmt / CreateViewStmt / CreateIndexStmt / CreateSecretStmt / CreateTriggerStmt / CreatePolicyStmt / CreateJobStmt
 OrReplace <- 'OR' 'REPLACE'
 Temporary <- Persistent / TempPersistent / TemporaryPersistent
 Persistent <- 'PERSISTENT'
@@ -1251,9 +1282,11 @@ DropEntries <-
 	DropType /
 	DropSecret /
 	DropTrigger /
+	DropPolicy /
 	DropJob
 
 DropTrigger <- 'TRIGGER' IfExists? TriggerName 'ON' BaseTableName
+DropPolicy <- 'POLICY' IfExists? PolicyName 'ON' BaseTableName
 DropJob <- 'JOB' IfExists? List(QualifiedName)
 
 DropTable <- TableOrView IfExists? List(BaseTableName)
@@ -1895,26 +1928,6 @@ SuperuserOption <- 'SUPERUSER' / 'NOSUPERUSER'
 InheritOption   <- 'INHERIT' / 'NOINHERIT'
 SysIdOption     <- 'SYSID' NumberLiteral
 PasswordOption  <- 'ENCRYPTED'? 'PASSWORD' StringLiteral
-
-# Row-Level Security. CREATE/ALTER/DROP POLICY -> serenedb_*_policy pragmas;
-# ALTER TABLE ... ROW LEVEL SECURITY -> serenedb_alter_table_row_security. The
-# USING/WITH CHECK predicate is rendered to text in the transformer (a pragma
-# arg cannot carry a live column-referencing expression) and re-parsed at
-# enforcement time. Registered before the native Create/Alter statements.
-CreatePolicyStatement <- 'CREATE' 'POLICY' ColId 'ON' QualifiedName PolicyPermissive? PolicyForCmd? PolicyToRoles? PolicyUsing? PolicyCheck?
-AlterPolicyStatement  <- 'ALTER' 'POLICY' ColId 'ON' QualifiedName (PolicyRename / PolicyAlterClauses)
-DropPolicyStatement   <- 'DROP' 'POLICY' IfExists? ColId 'ON' QualifiedName DropBehavior?
-AlterTableRowSecurityStatement <- 'ALTER' 'TABLE' IfExists? QualifiedName RowSecurityAction
-
-PolicyRename       <- 'RENAME' 'TO' ColId
-PolicyAlterClauses <- PolicyToRoles? PolicyUsing? PolicyCheck?
-PolicyPermissive   <- 'AS' ('PERMISSIVE' / 'RESTRICTIVE')
-PolicyForCmd       <- 'FOR' ('ALL' / 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE')
-PolicyToRoles      <- 'TO' List(Grantee)
-PolicyUsing        <- 'USING' Parens(Expression)
-PolicyCheck        <- 'WITH' 'CHECK' Parens(Expression)
-RowSecurityAction  <- RowSecurityVerb 'ROW' 'LEVEL' 'SECURITY'
-RowSecurityVerb    <- 'ENABLE' / 'DISABLE' / ('NO' 'FORCE') / 'FORCE'
 
 PrivilegeList <- AllPrivileges / List(Privilege)
 AllPrivileges <- 'ALL' 'PRIVILEGES'? PrivilegeColumns?

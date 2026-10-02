@@ -585,6 +585,46 @@ public:
 	                                                        unique_ptr<AlterInfo> alter_options);
 	static unique_ptr<TransformResultValue> TransformAlterOptionsInternal(PEGTransformer &transformer,
 	                                                                      ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformAlterRowSecurityStmtInternal(PEGTransformer &transformer,
+	                                                                              ParseResult &parse_result);
+	static unique_ptr<AlterInfo> TransformAlterRowSecurityStmt(PEGTransformer &transformer,
+	                                                           const CatalogType &alter_row_security_relation,
+	                                                           const optional<bool> &if_exists,
+	                                                           unique_ptr<BaseTableRef> base_table_name,
+	                                                           const RowSecurityAction &row_security_action);
+	static unique_ptr<TransformResultValue> TransformAlterRowSecurityRelationInternal(PEGTransformer &transformer,
+	                                                                                  ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformRowSecurityActionInternal(PEGTransformer &transformer,
+	                                                                           ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformRowSecurityEnableInternal(PEGTransformer &transformer,
+	                                                                           ParseResult &parse_result);
+	static RowSecurityAction TransformRowSecurityEnable(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformRowSecurityDisableInternal(PEGTransformer &transformer,
+	                                                                            ParseResult &parse_result);
+	static RowSecurityAction TransformRowSecurityDisable(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformRowSecurityNoForceInternal(PEGTransformer &transformer,
+	                                                                            ParseResult &parse_result);
+	static RowSecurityAction TransformRowSecurityNoForce(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformRowSecurityForceInternal(PEGTransformer &transformer,
+	                                                                          ParseResult &parse_result);
+	static RowSecurityAction TransformRowSecurityForce(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformAlterPolicyStmtInternal(PEGTransformer &transformer,
+	                                                                         ParseResult &parse_result);
+	static unique_ptr<AlterInfo> TransformAlterPolicyStmt(PEGTransformer &transformer, const Identifier &policy_name,
+	                                                      unique_ptr<BaseTableRef> base_table_name,
+	                                                      unique_ptr<AlterPolicyInfo> alter_policy_action);
+	static unique_ptr<TransformResultValue> TransformAlterPolicyActionInternal(PEGTransformer &transformer,
+	                                                                           ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformAlterPolicyRenameInternal(PEGTransformer &transformer,
+	                                                                           ParseResult &parse_result);
+	static unique_ptr<AlterPolicyInfo> TransformAlterPolicyRename(PEGTransformer &transformer,
+	                                                              const Identifier &col_id);
+	static unique_ptr<TransformResultValue> TransformAlterPolicyClausesInternal(PEGTransformer &transformer,
+	                                                                            ParseResult &parse_result);
+	static unique_ptr<AlterPolicyInfo> TransformAlterPolicyClauses(PEGTransformer &transformer,
+	                                                               const optional<vector<Identifier>> &policy_to_roles,
+	                                                               optional<unique_ptr<ParsedExpression>> policy_using,
+	                                                               optional<unique_ptr<ParsedExpression>> policy_check);
 	static unique_ptr<TransformResultValue> TransformAlterJobStmtInternal(PEGTransformer &transformer,
 	                                                                      ParseResult &parse_result);
 	static unique_ptr<AlterInfo> TransformAlterJobStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
@@ -1504,6 +1544,61 @@ public:
 	                                                                              ParseResult &parse_result);
 	static unique_ptr<MacroFunction>
 	TransformTableMacroDefinition(PEGTransformer &transformer, unique_ptr<SelectStatement> select_statement_internal);
+	static unique_ptr<TransformResultValue> TransformCreatePolicyStmtInternal(PEGTransformer &transformer,
+	                                                                          ParseResult &parse_result);
+	static unique_ptr<CreateStatement> TransformCreatePolicyStmt(
+	    PEGTransformer &transformer, const Identifier &policy_name, unique_ptr<BaseTableRef> base_table_name,
+	    const optional<bool> &policy_permissive, const optional<PolicyCommand> &policy_for_cmd,
+	    const optional<vector<Identifier>> &policy_to_roles, optional<unique_ptr<ParsedExpression>> policy_using,
+	    optional<unique_ptr<ParsedExpression>> policy_check);
+	static unique_ptr<TransformResultValue> TransformPolicyNameInternal(PEGTransformer &transformer,
+	                                                                    ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformPolicyPermissiveInternal(PEGTransformer &transformer,
+	                                                                          ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformPolicyPermissiveModeInternal(PEGTransformer &transformer,
+	                                                                              ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformPolicyPermissiveKeywordInternal(PEGTransformer &transformer,
+	                                                                                 ParseResult &parse_result);
+	static bool TransformPolicyPermissiveKeyword(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformPolicyRestrictiveKeywordInternal(PEGTransformer &transformer,
+	                                                                                  ParseResult &parse_result);
+	static bool TransformPolicyRestrictiveKeyword(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformPolicyForCmdInternal(PEGTransformer &transformer,
+	                                                                      ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformPolicyCommandKeywordInternal(PEGTransformer &transformer,
+	                                                                              ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformPolicyCommandAllInternal(PEGTransformer &transformer,
+	                                                                          ParseResult &parse_result);
+	static PolicyCommand TransformPolicyCommandAll(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformPolicyCommandSelectInternal(PEGTransformer &transformer,
+	                                                                             ParseResult &parse_result);
+	static PolicyCommand TransformPolicyCommandSelect(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformPolicyCommandInsertInternal(PEGTransformer &transformer,
+	                                                                             ParseResult &parse_result);
+	static PolicyCommand TransformPolicyCommandInsert(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformPolicyCommandUpdateInternal(PEGTransformer &transformer,
+	                                                                             ParseResult &parse_result);
+	static PolicyCommand TransformPolicyCommandUpdate(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformPolicyCommandDeleteInternal(PEGTransformer &transformer,
+	                                                                             ParseResult &parse_result);
+	static PolicyCommand TransformPolicyCommandDelete(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformPolicyToRolesInternal(PEGTransformer &transformer,
+	                                                                       ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformPolicyRoleInternal(PEGTransformer &transformer,
+	                                                                    ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformPolicyCurrentRoleInternal(PEGTransformer &transformer,
+	                                                                           ParseResult &parse_result);
+	static Identifier TransformPolicyCurrentRole(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformPolicyCurrentUserInternal(PEGTransformer &transformer,
+	                                                                           ParseResult &parse_result);
+	static Identifier TransformPolicyCurrentUser(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformPolicySessionUserInternal(PEGTransformer &transformer,
+	                                                                           ParseResult &parse_result);
+	static Identifier TransformPolicySessionUser(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformPolicyUsingInternal(PEGTransformer &transformer,
+	                                                                     ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformPolicyCheckInternal(PEGTransformer &transformer,
+	                                                                     ParseResult &parse_result);
 	static unique_ptr<TransformResultValue> TransformCreateSchemaStmtInternal(PEGTransformer &transformer,
 	                                                                          ParseResult &parse_result);
 	static unique_ptr<CreateStatement> TransformCreateSchemaStmt(PEGTransformer &transformer,
@@ -2083,6 +2178,11 @@ public:
 	static unique_ptr<DropStatement> TransformDropTrigger(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                      const Identifier &trigger_name,
 	                                                      unique_ptr<BaseTableRef> base_table_name);
+	static unique_ptr<TransformResultValue> TransformDropPolicyInternal(PEGTransformer &transformer,
+	                                                                    ParseResult &parse_result);
+	static unique_ptr<DropStatement> TransformDropPolicy(PEGTransformer &transformer, const optional<bool> &if_exists,
+	                                                     const Identifier &policy_name,
+	                                                     unique_ptr<BaseTableRef> base_table_name);
 	static unique_ptr<TransformResultValue> TransformDropJobInternal(PEGTransformer &transformer,
 	                                                                 ParseResult &parse_result);
 	static unique_ptr<DropStatement> TransformDropJob(PEGTransformer &transformer, const optional<bool> &if_exists,

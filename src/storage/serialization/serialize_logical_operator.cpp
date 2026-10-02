@@ -61,6 +61,9 @@ unique_ptr<LogicalOperator> LogicalOperator::Deserialize(Deserializer &deseriali
 	case LogicalOperatorType::LOGICAL_CREATE_MACRO:
 		result = LogicalCreate::Deserialize(deserializer);
 		break;
+	case LogicalOperatorType::LOGICAL_CREATE_POLICY:
+		result = LogicalCreate::Deserialize(deserializer);
+		break;
 	case LogicalOperatorType::LOGICAL_CREATE_SCHEMA:
 		result = LogicalCreate::Deserialize(deserializer);
 		break;
@@ -171,6 +174,9 @@ unique_ptr<LogicalOperator> LogicalOperator::Deserialize(Deserializer &deseriali
 		break;
 	case LogicalOperatorType::LOGICAL_SAMPLE:
 		result = LogicalSample::Deserialize(deserializer);
+		break;
+	case LogicalOperatorType::LOGICAL_SECURITY_BARRIER:
+		result = LogicalSecurityBarrier::Deserialize(deserializer);
 		break;
 	case LogicalOperatorType::LOGICAL_SET:
 		result = LogicalSet::Deserialize(deserializer);
@@ -758,6 +764,15 @@ void LogicalSample::Serialize(Serializer &serializer) const {
 unique_ptr<LogicalOperator> LogicalSample::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<LogicalSample>(new LogicalSample());
 	deserializer.ReadPropertyWithDefault<unique_ptr<SampleOptions>>(200, "sample_options", result->sample_options);
+	return std::move(result);
+}
+
+void LogicalSecurityBarrier::Serialize(Serializer &serializer) const {
+	LogicalOperator::Serialize(serializer);
+}
+
+unique_ptr<LogicalOperator> LogicalSecurityBarrier::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<LogicalSecurityBarrier>(new LogicalSecurityBarrier());
 	return std::move(result);
 }
 

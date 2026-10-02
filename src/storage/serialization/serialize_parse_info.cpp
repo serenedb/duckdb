@@ -24,6 +24,7 @@
 #include "duckdb/parser/parsed_data/transaction_info.hpp"
 #include "duckdb/parser/parsed_data/vacuum_info.hpp"
 #include "duckdb/parser/parsed_data/exported_table_data.hpp"
+#include "duckdb/parser/parsed_data/alter_policy_info.hpp"
 #include "duckdb/parser/parsed_data/alter_job_info.hpp"
 
 namespace duckdb {
@@ -115,6 +116,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	case AlterType::ALTER_PERMISSIONS:
 		result = AlterPermissionsInfo::Deserialize(deserializer);
 		break;
+	case AlterType::ALTER_POLICY:
+		result = AlterPolicyInfo::Deserialize(deserializer);
+		break;
 	case AlterType::ALTER_ROLE:
 		result = AlterRoleInfo::Deserialize(deserializer);
 		break;
@@ -144,6 +148,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 		break;
 	case AlterType::SET_COMMENT:
 		result = SetCommentInfo::Deserialize(deserializer);
+		break;
+	case AlterType::SET_ROW_SECURITY:
+		result = SetRowSecurityInfo::Deserialize(deserializer);
 		break;
 	default:
 		throw SerializationException("Unsupported type for deserialization of AlterInfo!");
@@ -415,6 +422,30 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Deserialize(Deserializer &deserializ
 	deserializer.ReadPropertyWithDefault<idx_t>(318, "target_role", result->target_role);
 	deserializer.ReadPropertyWithDefault<idx_t>(319, "default_scope", result->default_scope);
 	deserializer.ReadPropertyWithDefault<bool>(320, "all_in_schema", result->all_in_schema);
+	return std::move(result);
+}
+
+void AlterPolicyInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<AlterPolicyType>(300, "alter_policy_type", alter_policy_type);
+	serializer.WritePropertyWithDefault<unique_ptr<BaseTableRef>>(301, "base_table", base_table);
+	serializer.WritePropertyWithDefault<Identifier>(302, "new_name", new_name);
+	serializer.WritePropertyWithDefault<vector<Identifier>>(303, "role_names", role_names);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(304, "roles", roles);
+	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(305, "using_expr", using_expr);
+	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(306, "check_expr", check_expr);
+}
+
+unique_ptr<AlterInfo> AlterPolicyInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<AlterPolicyInfo>(new AlterPolicyInfo());
+	deserializer.ReadProperty<AlterPolicyType>(300, "alter_policy_type", result->alter_policy_type);
+	auto base_table = deserializer.ReadPropertyWithDefault<unique_ptr<TableRef>>(301, "base_table");
+	result->base_table = unique_ptr_cast<TableRef, BaseTableRef>(std::move(base_table));
+	deserializer.ReadPropertyWithDefault<Identifier>(302, "new_name", result->new_name);
+	deserializer.ReadPropertyWithDefault<vector<Identifier>>(303, "role_names", result->role_names);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(304, "roles", result->roles);
+	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(305, "using_expr", result->using_expr);
+	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(306, "check_expr", result->check_expr);
 	return std::move(result);
 }
 
@@ -935,6 +966,19 @@ void SetPartitionedByInfo::Serialize(Serializer &serializer) const {
 unique_ptr<AlterTableInfo> SetPartitionedByInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<SetPartitionedByInfo>(new SetPartitionedByInfo());
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(400, "partition_keys", result->partition_keys);
+	return std::move(result);
+}
+
+void SetRowSecurityInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<CatalogType>(300, "entry_catalog_type", entry_catalog_type);
+	serializer.WriteProperty<RowSecurityAction>(301, "action", action);
+}
+
+unique_ptr<AlterInfo> SetRowSecurityInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<SetRowSecurityInfo>(new SetRowSecurityInfo());
+	deserializer.ReadProperty<CatalogType>(300, "entry_catalog_type", result->entry_catalog_type);
+	deserializer.ReadProperty<RowSecurityAction>(301, "action", result->action);
 	return std::move(result);
 }
 

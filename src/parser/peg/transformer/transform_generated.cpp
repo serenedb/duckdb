@@ -19,6 +19,117 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterOptionsInt
 	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
 }
 
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformAlterRowSecurityStmtInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto alter_row_security_relation = transformer.Transform<CatalogType>(list_pr.GetChild(0));
+	optional<bool> if_exists {};
+	auto &if_exists_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
+	if (if_exists_opt.HasResult()) {
+		auto if_exists_value = transformer.Transform<bool>(if_exists_opt.GetResult());
+		if_exists = if_exists_value;
+	}
+	auto base_table_name = transformer.Transform<unique_ptr<BaseTableRef>>(list_pr.GetChild(2));
+	auto row_security_action = transformer.Transform<RowSecurityAction>(list_pr.GetChild(3));
+	auto result = TransformAlterRowSecurityStmt(transformer, alter_row_security_relation, if_exists,
+	                                            std::move(base_table_name), row_security_action);
+	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformAlterRowSecurityRelationInternal(PEGTransformer &transformer,
+                                                                 ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<CatalogType>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<CatalogType>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformRowSecurityActionInternal(PEGTransformer &transformer,
+                                                                                           ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<RowSecurityAction>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<RowSecurityAction>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformRowSecurityEnableInternal(PEGTransformer &transformer,
+                                                                                           ParseResult &parse_result) {
+	auto result = TransformRowSecurityEnable(transformer);
+	return make_uniq<TypedTransformResult<RowSecurityAction>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformRowSecurityDisableInternal(PEGTransformer &transformer,
+                                                                                            ParseResult &parse_result) {
+	auto result = TransformRowSecurityDisable(transformer);
+	return make_uniq<TypedTransformResult<RowSecurityAction>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformRowSecurityNoForceInternal(PEGTransformer &transformer,
+                                                                                            ParseResult &parse_result) {
+	auto result = TransformRowSecurityNoForce(transformer);
+	return make_uniq<TypedTransformResult<RowSecurityAction>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformRowSecurityForceInternal(PEGTransformer &transformer,
+                                                                                          ParseResult &parse_result) {
+	auto result = TransformRowSecurityForce(transformer);
+	return make_uniq<TypedTransformResult<RowSecurityAction>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterPolicyStmtInternal(PEGTransformer &transformer,
+                                                                                         ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto policy_name = transformer.Transform<Identifier>(list_pr.GetChild(1));
+	auto base_table_name = transformer.Transform<unique_ptr<BaseTableRef>>(list_pr.GetChild(3));
+	auto alter_policy_action = transformer.Transform<unique_ptr<AlterPolicyInfo>>(list_pr.GetChild(4));
+	auto result =
+	    TransformAlterPolicyStmt(transformer, policy_name, std::move(base_table_name), std::move(alter_policy_action));
+	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterPolicyActionInternal(PEGTransformer &transformer,
+                                                                                           ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<unique_ptr<AlterPolicyInfo>>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<unique_ptr<AlterPolicyInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterPolicyRenameInternal(PEGTransformer &transformer,
+                                                                                           ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto col_id = transformer.Transform<Identifier>(list_pr.GetChild(2));
+	auto result = TransformAlterPolicyRename(transformer, col_id);
+	return make_uniq<TypedTransformResult<unique_ptr<AlterPolicyInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterPolicyClausesInternal(PEGTransformer &transformer,
+                                                                                            ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	optional<vector<Identifier>> policy_to_roles {};
+	auto &policy_to_roles_opt = list_pr.GetChild(0).Cast<OptionalParseResult>();
+	if (policy_to_roles_opt.HasResult()) {
+		auto policy_to_roles_value = transformer.Transform<vector<Identifier>>(policy_to_roles_opt.GetResult());
+		policy_to_roles = policy_to_roles_value;
+	}
+	optional<unique_ptr<ParsedExpression>> policy_using {};
+	auto &policy_using_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
+	if (policy_using_opt.HasResult()) {
+		auto policy_using_value = transformer.Transform<unique_ptr<ParsedExpression>>(policy_using_opt.GetResult());
+		policy_using = std::move(policy_using_value);
+	}
+	optional<unique_ptr<ParsedExpression>> policy_check {};
+	auto &policy_check_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	if (policy_check_opt.HasResult()) {
+		auto policy_check_value = transformer.Transform<unique_ptr<ParsedExpression>>(policy_check_opt.GetResult());
+		policy_check = std::move(policy_check_value);
+	}
+	auto result =
+	    TransformAlterPolicyClauses(transformer, policy_to_roles, std::move(policy_using), std::move(policy_check));
+	return make_uniq<TypedTransformResult<unique_ptr<AlterPolicyInfo>>>(std::move(result));
+}
+
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterJobStmtInternal(PEGTransformer &transformer,
                                                                                       ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -2648,6 +2759,186 @@ PEGTransformerFactory::TransformTableMacroDefinitionInternal(PEGTransformer &tra
 	return make_uniq<TypedTransformResult<unique_ptr<MacroFunction>>>(std::move(result));
 }
 
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformCreatePolicyStmtInternal(PEGTransformer &transformer,
+                                                                                          ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto policy_name = transformer.Transform<Identifier>(list_pr.GetChild(1));
+	auto base_table_name = transformer.Transform<unique_ptr<BaseTableRef>>(list_pr.GetChild(3));
+	optional<bool> policy_permissive {};
+	auto &policy_permissive_opt = list_pr.GetChild(4).Cast<OptionalParseResult>();
+	if (policy_permissive_opt.HasResult()) {
+		auto policy_permissive_value = transformer.Transform<bool>(policy_permissive_opt.GetResult());
+		policy_permissive = policy_permissive_value;
+	}
+	optional<PolicyCommand> policy_for_cmd {};
+	auto &policy_for_cmd_opt = list_pr.GetChild(5).Cast<OptionalParseResult>();
+	if (policy_for_cmd_opt.HasResult()) {
+		auto policy_for_cmd_value = transformer.Transform<PolicyCommand>(policy_for_cmd_opt.GetResult());
+		policy_for_cmd = policy_for_cmd_value;
+	}
+	optional<vector<Identifier>> policy_to_roles {};
+	auto &policy_to_roles_opt = list_pr.GetChild(6).Cast<OptionalParseResult>();
+	if (policy_to_roles_opt.HasResult()) {
+		auto policy_to_roles_value = transformer.Transform<vector<Identifier>>(policy_to_roles_opt.GetResult());
+		policy_to_roles = policy_to_roles_value;
+	}
+	optional<unique_ptr<ParsedExpression>> policy_using {};
+	auto &policy_using_opt = list_pr.GetChild(7).Cast<OptionalParseResult>();
+	if (policy_using_opt.HasResult()) {
+		auto policy_using_value = transformer.Transform<unique_ptr<ParsedExpression>>(policy_using_opt.GetResult());
+		policy_using = std::move(policy_using_value);
+	}
+	optional<unique_ptr<ParsedExpression>> policy_check {};
+	auto &policy_check_opt = list_pr.GetChild(8).Cast<OptionalParseResult>();
+	if (policy_check_opt.HasResult()) {
+		auto policy_check_value = transformer.Transform<unique_ptr<ParsedExpression>>(policy_check_opt.GetResult());
+		policy_check = std::move(policy_check_value);
+	}
+	auto result =
+	    TransformCreatePolicyStmt(transformer, policy_name, std::move(base_table_name), policy_permissive,
+	                              policy_for_cmd, policy_to_roles, std::move(policy_using), std::move(policy_check));
+	return make_uniq<TypedTransformResult<unique_ptr<CreateStatement>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPolicyNameInternal(PEGTransformer &transformer,
+                                                                                    ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto col_id = transformer.Transform<Identifier>(list_pr.GetChild(0));
+	auto result = col_id;
+	return make_uniq<TypedTransformResult<Identifier>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPolicyPermissiveInternal(PEGTransformer &transformer,
+                                                                                          ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto policy_permissive_mode = transformer.Transform<bool>(list_pr.GetChild(1));
+	auto result = policy_permissive_mode;
+	return make_uniq<TypedTransformResult<bool>>(result);
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformPolicyPermissiveModeInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<bool>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<bool>>(result);
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformPolicyPermissiveKeywordInternal(PEGTransformer &transformer,
+                                                                ParseResult &parse_result) {
+	auto result = TransformPolicyPermissiveKeyword(transformer);
+	return make_uniq<TypedTransformResult<bool>>(result);
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformPolicyRestrictiveKeywordInternal(PEGTransformer &transformer,
+                                                                 ParseResult &parse_result) {
+	auto result = TransformPolicyRestrictiveKeyword(transformer);
+	return make_uniq<TypedTransformResult<bool>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPolicyForCmdInternal(PEGTransformer &transformer,
+                                                                                      ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto policy_command_keyword = transformer.Transform<PolicyCommand>(list_pr.GetChild(1));
+	auto result = policy_command_keyword;
+	return make_uniq<TypedTransformResult<PolicyCommand>>(result);
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformPolicyCommandKeywordInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<PolicyCommand>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<PolicyCommand>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPolicyCommandAllInternal(PEGTransformer &transformer,
+                                                                                          ParseResult &parse_result) {
+	auto result = TransformPolicyCommandAll(transformer);
+	return make_uniq<TypedTransformResult<PolicyCommand>>(result);
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformPolicyCommandSelectInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto result = TransformPolicyCommandSelect(transformer);
+	return make_uniq<TypedTransformResult<PolicyCommand>>(result);
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformPolicyCommandInsertInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto result = TransformPolicyCommandInsert(transformer);
+	return make_uniq<TypedTransformResult<PolicyCommand>>(result);
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformPolicyCommandUpdateInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto result = TransformPolicyCommandUpdate(transformer);
+	return make_uniq<TypedTransformResult<PolicyCommand>>(result);
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformPolicyCommandDeleteInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto result = TransformPolicyCommandDelete(transformer);
+	return make_uniq<TypedTransformResult<PolicyCommand>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPolicyToRolesInternal(PEGTransformer &transformer,
+                                                                                       ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	vector<Identifier> policy_role;
+	auto policy_role_items = ExtractParseResultsFromList(list_pr.GetChild(1));
+	for (auto &policy_role_item : policy_role_items) {
+		auto policy_role_value = transformer.Transform<Identifier>(policy_role_item.get());
+		policy_role.push_back(policy_role_value);
+	}
+	auto result = policy_role;
+	return make_uniq<TypedTransformResult<vector<Identifier>>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPolicyRoleInternal(PEGTransformer &transformer,
+                                                                                    ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<Identifier>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<Identifier>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPolicyCurrentRoleInternal(PEGTransformer &transformer,
+                                                                                           ParseResult &parse_result) {
+	auto result = TransformPolicyCurrentRole(transformer);
+	return make_uniq<TypedTransformResult<Identifier>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPolicyCurrentUserInternal(PEGTransformer &transformer,
+                                                                                           ParseResult &parse_result) {
+	auto result = TransformPolicyCurrentUser(transformer);
+	return make_uniq<TypedTransformResult<Identifier>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPolicySessionUserInternal(PEGTransformer &transformer,
+                                                                                           ParseResult &parse_result) {
+	auto result = TransformPolicySessionUser(transformer);
+	return make_uniq<TypedTransformResult<Identifier>>(result);
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPolicyUsingInternal(PEGTransformer &transformer,
+                                                                                     ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto expression = transformer.Transform<unique_ptr<ParsedExpression>>(ExtractResultFromParens(list_pr.GetChild(1)));
+	auto result = std::move(expression);
+	return make_uniq<TypedTransformResult<unique_ptr<ParsedExpression>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformPolicyCheckInternal(PEGTransformer &transformer,
+                                                                                     ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto expression = transformer.Transform<unique_ptr<ParsedExpression>>(ExtractResultFromParens(list_pr.GetChild(2)));
+	auto result = std::move(expression);
+	return make_uniq<TypedTransformResult<unique_ptr<ParsedExpression>>>(std::move(result));
+}
+
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformCreateSchemaStmtInternal(PEGTransformer &transformer,
                                                                                           ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -4378,6 +4669,21 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformDropTriggerInte
 	auto trigger_name = transformer.Transform<Identifier>(list_pr.GetChild(2));
 	auto base_table_name = transformer.Transform<unique_ptr<BaseTableRef>>(list_pr.GetChild(4));
 	auto result = TransformDropTrigger(transformer, if_exists, trigger_name, std::move(base_table_name));
+	return make_uniq<TypedTransformResult<unique_ptr<DropStatement>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformDropPolicyInternal(PEGTransformer &transformer,
+                                                                                    ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	optional<bool> if_exists {};
+	auto &if_exists_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
+	if (if_exists_opt.HasResult()) {
+		auto if_exists_value = transformer.Transform<bool>(if_exists_opt.GetResult());
+		if_exists = if_exists_value;
+	}
+	auto policy_name = transformer.Transform<Identifier>(list_pr.GetChild(2));
+	auto base_table_name = transformer.Transform<unique_ptr<BaseTableRef>>(list_pr.GetChild(4));
+	auto result = TransformDropPolicy(transformer, if_exists, policy_name, std::move(base_table_name));
 	return make_uniq<TypedTransformResult<unique_ptr<DropStatement>>>(std::move(result));
 }
 
@@ -10918,6 +11224,17 @@ void PEGTransformerFactory::RegisterGenerated() {
 	static const TransformRule builtin_transform_rules[] = {
 	    {"AlterStatement", &PEGTransformerFactory::TransformAlterStatementInternal},
 	    {"AlterOptions", &PEGTransformerFactory::TransformAlterOptionsInternal},
+	    {"AlterRowSecurityStmt", &PEGTransformerFactory::TransformAlterRowSecurityStmtInternal},
+	    {"AlterRowSecurityRelation", &PEGTransformerFactory::TransformAlterRowSecurityRelationInternal},
+	    {"RowSecurityAction", &PEGTransformerFactory::TransformRowSecurityActionInternal},
+	    {"RowSecurityEnable", &PEGTransformerFactory::TransformRowSecurityEnableInternal},
+	    {"RowSecurityDisable", &PEGTransformerFactory::TransformRowSecurityDisableInternal},
+	    {"RowSecurityNoForce", &PEGTransformerFactory::TransformRowSecurityNoForceInternal},
+	    {"RowSecurityForce", &PEGTransformerFactory::TransformRowSecurityForceInternal},
+	    {"AlterPolicyStmt", &PEGTransformerFactory::TransformAlterPolicyStmtInternal},
+	    {"AlterPolicyAction", &PEGTransformerFactory::TransformAlterPolicyActionInternal},
+	    {"AlterPolicyRename", &PEGTransformerFactory::TransformAlterPolicyRenameInternal},
+	    {"AlterPolicyClauses", &PEGTransformerFactory::TransformAlterPolicyClausesInternal},
 	    {"AlterJobStmt", &PEGTransformerFactory::TransformAlterJobStmtInternal},
 	    {"AlterJobAction", &PEGTransformerFactory::TransformAlterJobActionInternal},
 	    {"AlterJobRename", &PEGTransformerFactory::TransformAlterJobRenameInternal},
@@ -11172,6 +11489,26 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"SimpleParameter", &PEGTransformerFactory::TransformSimpleParameterInternal},
 	    {"ScalarMacroDefinition", &PEGTransformerFactory::TransformScalarMacroDefinitionInternal},
 	    {"TableMacroDefinition", &PEGTransformerFactory::TransformTableMacroDefinitionInternal},
+	    {"CreatePolicyStmt", &PEGTransformerFactory::TransformCreatePolicyStmtInternal},
+	    {"PolicyName", &PEGTransformerFactory::TransformPolicyNameInternal},
+	    {"PolicyPermissive", &PEGTransformerFactory::TransformPolicyPermissiveInternal},
+	    {"PolicyPermissiveMode", &PEGTransformerFactory::TransformPolicyPermissiveModeInternal},
+	    {"PolicyPermissiveKeyword", &PEGTransformerFactory::TransformPolicyPermissiveKeywordInternal},
+	    {"PolicyRestrictiveKeyword", &PEGTransformerFactory::TransformPolicyRestrictiveKeywordInternal},
+	    {"PolicyForCmd", &PEGTransformerFactory::TransformPolicyForCmdInternal},
+	    {"PolicyCommandKeyword", &PEGTransformerFactory::TransformPolicyCommandKeywordInternal},
+	    {"PolicyCommandAll", &PEGTransformerFactory::TransformPolicyCommandAllInternal},
+	    {"PolicyCommandSelect", &PEGTransformerFactory::TransformPolicyCommandSelectInternal},
+	    {"PolicyCommandInsert", &PEGTransformerFactory::TransformPolicyCommandInsertInternal},
+	    {"PolicyCommandUpdate", &PEGTransformerFactory::TransformPolicyCommandUpdateInternal},
+	    {"PolicyCommandDelete", &PEGTransformerFactory::TransformPolicyCommandDeleteInternal},
+	    {"PolicyToRoles", &PEGTransformerFactory::TransformPolicyToRolesInternal},
+	    {"PolicyRole", &PEGTransformerFactory::TransformPolicyRoleInternal},
+	    {"PolicyCurrentRole", &PEGTransformerFactory::TransformPolicyCurrentRoleInternal},
+	    {"PolicyCurrentUser", &PEGTransformerFactory::TransformPolicyCurrentUserInternal},
+	    {"PolicySessionUser", &PEGTransformerFactory::TransformPolicySessionUserInternal},
+	    {"PolicyUsing", &PEGTransformerFactory::TransformPolicyUsingInternal},
+	    {"PolicyCheck", &PEGTransformerFactory::TransformPolicyCheckInternal},
 	    {"CreateSchemaStmt", &PEGTransformerFactory::TransformCreateSchemaStmtInternal},
 	    {"SchemaAuthorization", &PEGTransformerFactory::TransformSchemaAuthorizationInternal},
 	    {"CreateSecretStmt", &PEGTransformerFactory::TransformCreateSecretStmtInternal},
@@ -11338,6 +11675,7 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"DropStatement", &PEGTransformerFactory::TransformDropStatementInternal},
 	    {"DropEntries", &PEGTransformerFactory::TransformDropEntriesInternal},
 	    {"DropTrigger", &PEGTransformerFactory::TransformDropTriggerInternal},
+	    {"DropPolicy", &PEGTransformerFactory::TransformDropPolicyInternal},
 	    {"DropJob", &PEGTransformerFactory::TransformDropJobInternal},
 	    {"DropTable", &PEGTransformerFactory::TransformDropTableInternal},
 	    {"DropTableFunction", &PEGTransformerFactory::TransformDropTableFunctionInternal},

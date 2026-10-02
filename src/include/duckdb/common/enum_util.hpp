@@ -68,6 +68,8 @@ enum class AlterIndexType : uint8_t;
 
 enum class AlterJobType : uint8_t;
 
+enum class AlterPolicyType : uint8_t;
+
 enum class AlterScalarFunctionType : uint8_t;
 
 enum class AlterTableFunctionType : uint8_t;
@@ -400,6 +402,8 @@ enum class PhysicalTableScanExecutionStrategy : uint8_t;
 
 enum class PhysicalType : uint8_t;
 
+enum class PolicyCommand : uint8_t;
+
 enum class PragmaType : uint8_t;
 
 enum class PreparedParamType : uint8_t;
@@ -447,6 +451,8 @@ enum class ResultModifierType : uint8_t;
 enum class RoleOption : uint32_t;
 
 enum class RowGroupAppendMode : uint8_t;
+
+enum class RowSecurityAction : uint8_t;
 
 enum class SampleMethod : uint8_t;
 
@@ -650,6 +656,9 @@ const char* EnumUtil::ToChars<AlterIndexType>(AlterIndexType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterJobType>(AlterJobType value);
+
+template<>
+const char* EnumUtil::ToChars<AlterPolicyType>(AlterPolicyType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterScalarFunctionType>(AlterScalarFunctionType value);
@@ -1150,6 +1159,9 @@ template<>
 const char* EnumUtil::ToChars<PhysicalType>(PhysicalType value);
 
 template<>
+const char* EnumUtil::ToChars<PolicyCommand>(PolicyCommand value);
+
+template<>
 const char* EnumUtil::ToChars<PragmaType>(PragmaType value);
 
 template<>
@@ -1220,6 +1232,9 @@ const char* EnumUtil::ToChars<RoleOption>(RoleOption value);
 
 template<>
 const char* EnumUtil::ToChars<RowGroupAppendMode>(RowGroupAppendMode value);
+
+template<>
+const char* EnumUtil::ToChars<RowSecurityAction>(RowSecurityAction value);
 
 template<>
 const char* EnumUtil::ToChars<SampleMethod>(SampleMethod value);
@@ -1497,6 +1512,9 @@ AlterIndexType EnumUtil::FromString<AlterIndexType>(const char *value);
 
 template<>
 AlterJobType EnumUtil::FromString<AlterJobType>(const char *value);
+
+template<>
+AlterPolicyType EnumUtil::FromString<AlterPolicyType>(const char *value);
 
 template<>
 AlterScalarFunctionType EnumUtil::FromString<AlterScalarFunctionType>(const char *value);
@@ -1997,6 +2015,9 @@ template<>
 PhysicalType EnumUtil::FromString<PhysicalType>(const char *value);
 
 template<>
+PolicyCommand EnumUtil::FromString<PolicyCommand>(const char *value);
+
+template<>
 PragmaType EnumUtil::FromString<PragmaType>(const char *value);
 
 template<>
@@ -2067,6 +2088,9 @@ RoleOption EnumUtil::FromString<RoleOption>(const char *value);
 
 template<>
 RowGroupAppendMode EnumUtil::FromString<RowGroupAppendMode>(const char *value);
+
+template<>
+RowSecurityAction EnumUtil::FromString<RowSecurityAction>(const char *value);
 
 template<>
 SampleMethod EnumUtil::FromString<SampleMethod>(const char *value);

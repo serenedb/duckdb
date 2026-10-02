@@ -19,6 +19,7 @@
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
+#include "duckdb/parser/parsed_data/create_policy_info.hpp"
 
 namespace duckdb {
 
@@ -73,6 +74,9 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 		break;
 	case CatalogType::MACRO_ENTRY:
 		result = CreateMacroInfo::Deserialize(deserializer);
+		break;
+	case CatalogType::POLICY_ENTRY:
+		result = CreatePolicyInfo::Deserialize(deserializer);
 		break;
 	case CatalogType::ROLE_ENTRY:
 		result = CreateRoleInfo::Deserialize(deserializer);
@@ -224,6 +228,35 @@ unique_ptr<CreateInfo> CreateMacroInfo::Deserialize(Deserializer &deserializer) 
 	return std::move(result);
 }
 
+void CreatePolicyInfo::Serialize(Serializer &serializer) const {
+	CreateInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(200, "policy_name", qualified_name.Name());
+	serializer.WritePropertyWithDefault<unique_ptr<BaseTableRef>>(201, "base_table", base_table);
+	serializer.WritePropertyWithDefault<idx_t>(202, "relation_oid", relation_oid);
+	serializer.WritePropertyWithDefault<bool>(203, "permissive", permissive);
+	serializer.WriteProperty<PolicyCommand>(204, "command", command);
+	serializer.WritePropertyWithDefault<vector<Identifier>>(205, "role_names", role_names);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(206, "roles", roles);
+	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(207, "using_expr", using_expr);
+	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(208, "check_expr", check_expr);
+}
+
+unique_ptr<CreateInfo> CreatePolicyInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<CreatePolicyInfo>(new CreatePolicyInfo());
+	auto policy_name = deserializer.ReadPropertyWithDefault<Identifier>(200, "policy_name");
+	auto base_table = deserializer.ReadPropertyWithDefault<unique_ptr<TableRef>>(201, "base_table");
+	result->base_table = unique_ptr_cast<TableRef, BaseTableRef>(std::move(base_table));
+	deserializer.ReadPropertyWithDefault<idx_t>(202, "relation_oid", result->relation_oid);
+	deserializer.ReadPropertyWithDefault<bool>(203, "permissive", result->permissive);
+	deserializer.ReadProperty<PolicyCommand>(204, "command", result->command);
+	deserializer.ReadPropertyWithDefault<vector<Identifier>>(205, "role_names", result->role_names);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(206, "roles", result->roles);
+	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(207, "using_expr", result->using_expr);
+	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(208, "check_expr", result->check_expr);
+	result->SetName(std::move(policy_name));
+	return std::move(result);
+}
+
 void CreateRoleInfo::Serialize(Serializer &serializer) const {
 	CreateInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<Identifier>(200, "name", qualified_name.Name());
@@ -306,6 +339,8 @@ void CreateTableInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(204, "partition_keys", partition_keys);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(205, "sort_keys", sort_keys);
 	serializer.WritePropertyWithDefault<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(206, "options", options);
+	serializer.WritePropertyWithDefault<bool>(16584, "row_security", row_security);
+	serializer.WritePropertyWithDefault<bool>(16585, "force_row_security", force_row_security);
 }
 
 unique_ptr<CreateInfo> CreateTableInfo::Deserialize(Deserializer &deserializer) {
@@ -317,6 +352,8 @@ unique_ptr<CreateInfo> CreateTableInfo::Deserialize(Deserializer &deserializer) 
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(204, "partition_keys", result->partition_keys);
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(205, "sort_keys", result->sort_keys);
 	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(206, "options", result->options);
+	deserializer.ReadPropertyWithDefault<bool>(16584, "row_security", result->row_security);
+	deserializer.ReadPropertyWithDefault<bool>(16585, "force_row_security", result->force_row_security);
 	result->SetName(std::move(table));
 	return std::move(result);
 }
@@ -394,6 +431,8 @@ void CreateViewInfo::Serialize(Serializer &serializer) const {
 		serializer.WritePropertyWithDefault<identifier_map_t<Value>>(206, "column_comments_map", column_comments_map, identifier_map_t<Value>());
 	}
 	serializer.WritePropertyWithDefault<bool>(16584, "security_invoker", security_invoker);
+	serializer.WritePropertyWithDefault<bool>(16585, "row_security", row_security);
+	serializer.WritePropertyWithDefault<bool>(16586, "force_row_security", force_row_security);
 }
 
 unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
@@ -409,6 +448,8 @@ unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
 	result->types = std::move(types);
 	result->query = std::move(query);
 	deserializer.ReadPropertyWithDefault<bool>(16584, "security_invoker", result->security_invoker);
+	deserializer.ReadPropertyWithDefault<bool>(16585, "row_security", result->row_security);
+	deserializer.ReadPropertyWithDefault<bool>(16586, "force_row_security", result->force_row_security);
 	result->SetName(std::move(view_name));
 	return std::move(result);
 }
