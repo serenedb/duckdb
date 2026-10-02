@@ -94,6 +94,7 @@ struct IndexInfo {
 	bool is_foreign;
 	ConstraintCheckMode check_mode = ConstraintCheckMode::DEFAULT;
 	unordered_set<column_t> column_set;
+	bool removal_needs_column_values = true;
 };
 
 } // namespace duckdb

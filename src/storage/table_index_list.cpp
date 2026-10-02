@@ -544,6 +544,19 @@ unordered_set<column_t> TableIndexList::GetIndexedColumns() const {
 	return column_ids;
 }
 
+unordered_set<column_t> TableIndexList::GetRemovalColumns() const {
+	annotated_lock_guard lock(index_entries_lock);
+	unordered_set<column_t> column_ids;
+	for (const auto &entry : index_entries) {
+		auto index_info = entry->GetStorageInfo();
+		if (unbound_count == 0 && !index_info.removal_needs_column_values) {
+			continue;
+		}
+		column_ids.insert(index_info.column_set.begin(), index_info.column_set.end());
+	}
+	return column_ids;
+}
+
 vector<unordered_set<column_t>> TableIndexList::GetConflictTargetColumns(const ConflictInfo &conflict_info) const {
 	annotated_lock_guard lock(index_entries_lock);
 	vector<unordered_set<column_t>> result;
