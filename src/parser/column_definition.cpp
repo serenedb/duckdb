@@ -169,6 +169,9 @@ string ColumnDefinition::ToSQLString() const {
 			generated_expression = cast_expr.Child();
 		}
 		result += " GENERATED ALWAYS AS(" + generated_expression.get().ToString() + ")";
+		if (category == TableColumnType::GENERATED_STORED) {
+			result += " STORED";
+		}
 	} else if (HasDefaultValue()) {
 		result += " DEFAULT(" + DefaultValue().ToString() + ")";
 	}
