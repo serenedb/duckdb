@@ -9,6 +9,7 @@
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database.hpp"
@@ -1015,7 +1016,16 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 			continue;
 		}
 		auto &catalog = database->GetCatalog();
-		auto current_schemas = catalog.GetSchemas(context);
+		vector<reference<SchemaCatalogEntry>> current_schemas;
+		try {
+			current_schemas = catalog.GetSchemas(context);
+		} catch (const std::exception &ex) {
+			// This only gathers names for a "did you mean" suggestion, so an unreachable
+			// catalog is skipped rather than replacing the caller's error with ours.
+			DUCKDB_LOG_DEBUG(context, "Skipping catalog \"" + database->GetName() +
+			                              "\" while collecting similar entries: " + ErrorData(ex).RawMessage());
+			continue;
+		}
 		for (auto &current_schema : current_schemas) {
 			if (unseen_schemas.size() >= max_schema_count) {
 				break;
@@ -1662,7 +1672,18 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetAllSchemas(ClientContext &cont
 		// catalogs) would otherwise be destroyed by a concurrent DETACH/DROP DATABASE mid-statement.
 		auto &db = meta_transaction.UseDatabase(database);
 		auto &catalog = db.GetCatalog();
-		auto new_schemas = catalog.GetSchemas(context);
+		vector<reference<SchemaCatalogEntry>> new_schemas;
+		try {
+			new_schemas = catalog.GetSchemas(context);
+		} catch (const std::exception &ex) {
+			// One unreachable catalog must not fail a listing of all the others: a remote
+			// catalog can need credentials that are gone, and the pin above keeps a catalog
+			// detached mid-statement alive long enough to be scanned. Reaching a catalog
+			// directly still goes through TryLookupEntry, which reports the real error.
+			DUCKDB_LOG_DEBUG(context, "Skipping catalog \"" + database->GetName() +
+			                              "\" while listing schemas: " + ErrorData(ex).RawMessage());
+			continue;
+		}
 		result.insert(result.end(), new_schemas.begin(), new_schemas.end());
 	}
 	sort(result.begin(), result.end(),
