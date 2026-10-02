@@ -64,6 +64,9 @@ public:
 	transaction_t GetLastCommit() const {
 		return last_commit;
 	}
+	idx_t GetLastCommittedCatalogVersion() const {
+		return last_committed_version;
+	}
 	transaction_t GetActiveCheckpoint() const {
 		return active_checkpoint;
 	}
@@ -195,7 +198,7 @@ private:
 	atomic<transaction_t> last_durable_commit = 0;
 
 	atomic<idx_t> last_uncommitted_catalog_version = {TRANSACTION_ID_START};
-	idx_t last_committed_version = 0;
+	atomic<idx_t> last_committed_version = {0};
 
 	//! Only one cleanup can be active at any time.
 	mutex cleanup_lock;
