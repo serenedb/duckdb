@@ -140,10 +140,8 @@ public:
 	//! DEFAULT_SCHEMA.
 	DUCKDB_API unique_ptr<TableDescription> TableInfo(const Identifier &table_name);
 
-	//! Extract a set of SQL statements from a specific query. raw_statement_count, if set, receives the pre-expansion
-	//! statement count (see ClientContext::ParseStatements).
 	DUCKDB_API vector<unique_ptr<SQLStatement>>
-	ExtractStatements(std::string_view query, idx_t *raw_statement_count = nullptr, bool wrap_multi = true);
+	ExtractStatements(std::string_view query, vector<idx_t> *raw_statement_ends = nullptr, bool wrap_multi = true);
 	//! Extract the logical plan that corresponds to a query
 	DUCKDB_API unique_ptr<LogicalOperator> ExtractPlan(std::string_view query);
 
