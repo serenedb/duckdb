@@ -52,6 +52,9 @@ AlterSequenceStmt <- 'SEQUENCE' IfExists? QualifiedSequenceName AlterSequenceOpt
 QualifiedSequenceName <- CatalogQualification? SchemaQualification? SequenceName
 
 AlterSequenceOptions <- RenameAlter / SetSequenceOption
-SetSequenceOption <- SequenceOption+
+SetSequenceOption <- AlterSequenceOption+
+AlterSequenceOption <- SeqRestart / SequenceOption
+SeqRestart <- 'RESTART' SeqRestartValue?
+SeqRestartValue <- 'WITH'? Expression
 
 AlterDatabaseStmt <- 'DATABASE' IfExists? Identifier 'SET' 'ALIAS' 'TO' Identifier

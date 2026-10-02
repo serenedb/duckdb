@@ -155,6 +155,33 @@ string RenameInfo::ToString() const {
 	       KeywordHelper::WriteOptionallyQuoted(new_name.GetIdentifierName()) + ";";
 }
 
+AlterSequenceInfo::AlterSequenceInfo(const AlterEntryData &data, optional<int64_t> restart_with_p)
+    : AlterInfo(AlterType::ALTER_SEQUENCE, data.qualified_name, data.if_not_found),
+      restart_with(std::move(restart_with_p)) {
+}
+
+AlterSequenceInfo::AlterSequenceInfo() : AlterInfo(AlterType::ALTER_SEQUENCE) {
+}
+
+CatalogType AlterSequenceInfo::GetCatalogType() const {
+	return CatalogType::SEQUENCE_ENTRY;
+}
+
+unique_ptr<AlterInfo> AlterSequenceInfo::Copy() const {
+	auto result = make_uniq<AlterSequenceInfo>(GetAlterEntryData(), restart_with);
+	result->usage_count = usage_count;
+	return std::move(result);
+}
+
+string AlterSequenceInfo::ToString() const {
+	auto result =
+	    "ALTER SEQUENCE " + GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA) + " RESTART";
+	if (restart_with) {
+		result += " WITH " + to_string(*restart_with);
+	}
+	return result + ";";
+}
+
 ReplaceDefinitionInfo::ReplaceDefinitionInfo(unique_ptr<CreateInfo> definition_p)
     : AlterInfo(AlterType::REPLACE_DEFINITION, definition_p->GetQualifiedName(), OnEntryNotFound::THROW_EXCEPTION),
       definition(std::move(definition_p)) {

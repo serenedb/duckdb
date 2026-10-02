@@ -27,8 +27,8 @@ SequenceSession &SequenceSession::Get(ClientContext &context) {
 
 SequenceData::SequenceData(CreateSequenceInfo &info)
     : usage_count(info.usage_count), counter(info.start_value), last_value(info.last_value), increment(info.increment),
-      start_value(info.start_value), min_value(info.min_value), max_value(info.max_value), cycle(info.cycle),
-      cache(info.cache) {
+      start_value(info.recorded_start.value_or(info.start_value)), min_value(info.min_value), max_value(info.max_value),
+      cycle(info.cycle), cache(info.cache) {
 }
 
 SequenceState::SequenceState(const SequenceData &data_p)
@@ -68,18 +68,33 @@ static absl::Condition Settled(SequenceState *state) {
 }
 
 unique_ptr<CatalogEntry> SequenceCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
-	if (info.type != AlterType::RENAME) {
+	const bool restart = info.type == AlterType::ALTER_SEQUENCE;
+	if (!restart && info.type != AlterType::RENAME) {
 		return CatalogEntry::AlterEntry(context, info);
 	}
-	auto result = unique_ptr_cast<CatalogEntry, SequenceCatalogEntry>(CatalogEntry::AlterEntry(context, info));
+	auto result = unique_ptr_cast<CatalogEntry, SequenceCatalogEntry>(
+	    restart ? Copy(context) : CatalogEntry::AlterEntry(context, info));
 	{
 		lock_guard<mutex> seqlock(state->lock);
 		state->lock.Await(Settled(state.get()));
 		ThrowIfSuperseded();
-		result->generation = state->generation + 1;
+		if (restart) {
+			result->state = make_shared_ptr<SequenceState>(Restarted(info.Cast<AlterSequenceInfo>()));
+			result->generation = 0;
+		} else {
+			result->generation = state->generation + 1;
+		}
 		result->replaced = state;
 		result->replaced_generation = state->generation;
 		state->generation++;
+	}
+	if (restart) {
+		auto &session = SequenceSession::Get(context);
+		lock_guard<mutex> guard(session.lock);
+		auto cached = session.values.find(oid);
+		if (cached != session.values.end()) {
+			cached->second.remaining = 0;
+		}
 	}
 	return std::move(result);
 }
@@ -88,6 +103,26 @@ void SequenceCatalogEntry::SetAsRoot(optional_ptr<CatalogTransaction> transactio
 	replaced.reset();
 	lock_guard<mutex> seqlock(state->lock);
 	state->generation = generation;
+}
+
+SequenceData SequenceCatalogEntry::Restarted(AlterSequenceInfo &info) const {
+	auto result = state->data;
+	const auto counter = info.restart_with.value_or(result.start_value);
+	if (counter < result.min_value) {
+		throw InvalidInputException("RESTART value (%lld) cannot be less than MINVALUE (%lld)", counter,
+		                            result.min_value);
+	}
+	if (counter > result.max_value) {
+		throw InvalidInputException("RESTART value (%lld) cannot be greater than MAXVALUE (%lld)", counter,
+		                            result.max_value);
+	}
+	if (info.bind_mode != AlterBindMode::SKIP_BINDING) {
+		info.usage_count = MaxValue<uint64_t>(result.usage_count + Block(), state->reserved_usage_count) + 1;
+	}
+	result.usage_count = info.usage_count;
+	result.counter = counter;
+	result.last_value.reset();
+	return result;
 }
 
 void SequenceCatalogEntry::ThrowIfSuperseded() const {
@@ -580,6 +615,7 @@ unique_ptr<CreateInfo> SequenceCatalogEntry::GetInfo() const {
 	result->min_value = seq_data.min_value;
 	result->max_value = seq_data.max_value;
 	result->start_value = seq_data.counter;
+	result->recorded_start = seq_data.start_value;
 	result->cycle = seq_data.cycle;
 	result->cache = seq_data.cache;
 	result->last_value = seq_data.last_value;

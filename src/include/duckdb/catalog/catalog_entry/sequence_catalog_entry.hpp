@@ -126,6 +126,7 @@ public:
 private:
 	idx_t Block() const;
 	void ThrowIfSuperseded() const;
+	SequenceData Restarted(AlterSequenceInfo &info) const;
 	SequenceData Reserved() const;
 	void Fetch(SequenceSessionValue &cached, idx_t needed);
 	void FetchLocked(SequenceSessionValue &cached, idx_t needed);

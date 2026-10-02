@@ -884,7 +884,8 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		}
 		case AlterType::SET_COLUMN_COMMENT:
 		case AlterType::SET_COMMENT:
-		case AlterType::ALTER_PERMISSIONS: {
+		case AlterType::ALTER_PERMISSIONS:
+		case AlterType::ALTER_SEQUENCE: {
 			disallow_alter = false;
 			break;
 		}
@@ -973,6 +974,24 @@ void DependencyManager::Scan(
 			callback(entry, dependent_entry, dependent.Dependent().flags);
 		});
 	}
+}
+
+catalog_entry_vector_t DependencyManager::OwnedEntries(CatalogTransaction transaction, CatalogEntry &owner) {
+	catalog_entry_vector_t result;
+	if (IsSystemEntry(owner)) {
+		return result;
+	}
+	lock_guard<mutex> write_lock(catalog.GetWriteLock());
+	ScanSubjects(transaction, GetLookupProperties(owner), [&](DependencyEntry &dep) {
+		if (!dep.Subject().flags.IsOwnership()) {
+			return;
+		}
+		auto entry = LookupEntry(transaction, dep);
+		if (entry) {
+			result.push_back(*entry);
+		}
+	});
+	return result;
 }
 
 void DependencyManager::AddOwnership(CatalogTransaction transaction, CatalogEntry &owner, CatalogEntry &entry) {
