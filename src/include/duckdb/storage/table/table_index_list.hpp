@@ -139,6 +139,7 @@ public:
 	                      DataChunk &chunk, ConflictManager &conflict_manager);
 	//! Returns the physical table columns referenced by any index.
 	unordered_set<column_t> GetIndexedColumns() const;
+	unordered_set<column_t> GetRemovalColumns() const;
 	//! Returns the column sets of unique indexes matching the conflict target.
 	vector<unordered_set<column_t>> GetConflictTargetColumns(const ConflictInfo &conflict_info) const;
 	//! Get the combined column ids of the unique indexes.

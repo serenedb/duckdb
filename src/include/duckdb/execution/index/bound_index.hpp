@@ -170,6 +170,9 @@ public:
 
 	//! Whether or not the index supports the creation of delta indexes
 	virtual bool SupportsDeltaIndexes() const;
+	virtual bool RemovalNeedsColumnValues() const {
+		return true;
+	}
 
 	//! Returns the in-memory usage of the index. The index lock must be held
 	virtual idx_t GetInMemorySize(IndexLock &state) const DUCKDB_REQUIRES(state) = 0;

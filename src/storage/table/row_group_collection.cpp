@@ -1031,8 +1031,7 @@ void RowGroupCollection::Update(TransactionData transaction, DuckTableEntry &tab
 void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableIndexList &indexes,
                                            Vector &row_identifiers, idx_t count, IndexRemovalType removal_type,
                                            optional_idx active_checkpoint) {
-	// Collect all Indexed columns on the table.
-	auto indexed_column_id_set = indexes.GetIndexedColumns();
+	auto indexed_column_id_set = indexes.GetRemovalColumns();
 
 	// Sorted so that the fetched columns align with the ascending physical order used when
 	// referencing them into result_chunk below.
@@ -1046,12 +1045,15 @@ void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableInd
 	}
 
 	DataChunk fetch_chunk;
-	fetch_chunk.Initialize(GetAllocator(), column_types);
-
-	ColumnFetchState state;
-	state.fetch_type = FetchType::FORCE_FETCH;
-	TransactionData commit_transaction(MAX_TRANSACTION_ID, VisibilityBound::Before(MAX_COMMIT_ID));
-	Fetch(commit_transaction, fetch_chunk, column_ids, row_identifiers, count, state);
+	const bool fetch_values = !column_ids.empty();
+	if (fetch_values) {
+		fetch_chunk.Initialize(GetAllocator(), column_types);
+		ColumnFetchState state;
+		state.fetch_type = FetchType::FORCE_FETCH;
+		TransactionData commit_transaction(MAX_TRANSACTION_ID, VisibilityBound::Before(MAX_COMMIT_ID));
+		Fetch(commit_transaction, fetch_chunk, column_ids, row_identifiers, count, state);
+	}
+	const idx_t result_count = fetch_values ? fetch_chunk.size() : count;
 
 	// Used for index value removal.
 	// Contains all columns but only initializes indexed ones.
@@ -1070,7 +1072,7 @@ void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableInd
 			result_chunk.data[j].Reference(fetch_chunk.data[fetch_idx++]);
 			continue;
 		}
-		result_chunk.data[j].Reference(Value(types[j]), count_t(fetch_chunk.size()));
+		result_chunk.data[j].Reference(Value(types[j]), count_t(result_count));
 	}
 
 	indexes.RemoveFromIndexes(result_chunk, row_identifiers, removal_type, active_checkpoint);

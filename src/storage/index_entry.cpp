@@ -466,6 +466,8 @@ IndexInfo IndexEntry::GetStorageInfo() const {
 	result.is_unique = owned_index->IsUnique() || result.is_primary;
 	result.is_foreign = owned_index->IsForeign();
 	result.column_set = owned_index->GetColumnIdSet();
+	result.removal_needs_column_values =
+	    !owned_index->IsBound() || owned_index->Cast<BoundIndex>().RemovalNeedsColumnValues();
 	return result;
 }
 

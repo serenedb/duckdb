@@ -92,6 +92,7 @@ struct IndexInfo {
 	bool is_primary;
 	bool is_foreign;
 	unordered_set<column_t> column_set;
+	bool removal_needs_column_values = true;
 };
 
 } // namespace duckdb
