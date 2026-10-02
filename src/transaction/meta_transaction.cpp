@@ -29,13 +29,19 @@ ValidChecker &ValidChecker::Get(MetaTransaction &transaction) {
 }
 
 void MetaTransaction::RefreshStartTime() {
-	lock_guard<mutex> guard(lock);
-	for (auto &db : all_transactions) {
-		auto entry = transactions.find(db.get());
-		if (entry == transactions.end()) {
-			continue;
+	vector<std::pair<reference<AttachedDatabase>, reference<Transaction>>> to_refresh;
+	{
+		lock_guard<mutex> guard(lock);
+		for (auto &db : all_transactions) {
+			auto entry = transactions.find(db.get());
+			if (entry == transactions.end()) {
+				continue;
+			}
+			to_refresh.emplace_back(db, entry->second.transaction);
 		}
-		db.get().GetTransactionManager().RefreshStartTime(entry->second.transaction);
+	}
+	for (auto &entry : to_refresh) {
+		entry.first.get().GetTransactionManager().RefreshStartTime(entry.second.get());
 	}
 }
 
@@ -76,31 +82,40 @@ Transaction &MetaTransaction::GetTransaction(AttachedDatabase &db) {
 	if (ValidChecker::IsInvalidated(db)) {
 		throw IOException("%s", ValidChecker::InvalidatedMessage(db));
 	}
-	lock_guard<mutex> guard(lock);
-	if (scoped_override_txn && scoped_override_db && RefersToSameObject(*scoped_override_db, db)) {
-		return *scoped_override_txn;
+	{
+		lock_guard<mutex> guard(lock);
+		if (scoped_override_txn && scoped_override_db && RefersToSameObject(*scoped_override_db, db)) {
+			return *scoped_override_txn;
+		}
+		auto entry = transactions.find(db);
+		if (entry != transactions.end()) {
+			D_ASSERT(entry->second.transaction.active_query == active_query);
+			return entry->second.transaction;
+		}
 	}
-	auto entry = transactions.find(db);
-	if (entry == transactions.end()) {
-		auto &new_transaction = db.GetTransactionManager().StartTransaction(context);
-		new_transaction.active_query = active_query.load();
+	auto &new_transaction = db.GetTransactionManager().StartTransaction(context);
+	new_transaction.active_query = active_query.load();
+	unique_lock<mutex> guard(lock);
+	auto existing = transactions.find(db);
+	if (existing != transactions.end()) {
+		auto &transaction = existing->second.transaction;
+		guard.unlock();
+		db.GetTransactionManager().RollbackTransaction(new_transaction);
+		return transaction;
+	}
 #ifdef DEBUG
-		VerifyAllTransactionsUnique(db, all_transactions);
+	VerifyAllTransactionsUnique(db, all_transactions);
 #endif
-		// Rollback looks every entry of all_transactions up in transactions, so the two must not get out of sync:
-		// reserve first, then insert, so that a failing allocation happens before either is modified and the
-		// push_back that follows cannot allocate.
-		all_transactions.reserve(all_transactions.size() + 1);
-		transactions.insert(make_pair(reference<AttachedDatabase>(db), TransactionReference(new_transaction)));
-		all_transactions.push_back(db);
-		auto shared_db = db.shared_from_this();
-		UseDatabase(shared_db);
+	// Rollback looks every entry of all_transactions up in transactions, so the two must not get out of sync:
+	// reserve first, then insert, so that a failing allocation happens before either is modified and the
+	// push_back that follows cannot allocate.
+	all_transactions.reserve(all_transactions.size() + 1);
+	transactions.emplace(db, TransactionReference(new_transaction));
+	all_transactions.push_back(db);
+	auto shared_db = db.shared_from_this();
+	UseDatabase(shared_db);
 
-		return new_transaction;
-	} else {
-		D_ASSERT(entry->second.transaction.active_query == active_query);
-		return entry->second.transaction;
-	}
+	return new_transaction;
 }
 
 void MetaTransaction::RemoveTransaction(AttachedDatabase &db) {
@@ -285,13 +300,7 @@ AttachedDatabase &MetaTransaction::UseDatabase(shared_ptr<AttachedDatabase> &dat
 	lock_guard<mutex> guard(referenced_database_lock);
 	auto entry = referenced_databases.find(db_ref);
 	if (entry == referenced_databases.end()) {
-		auto used_entry = used_databases.emplace(db_ref.GetName(), db_ref);
-		if (!used_entry.second) {
-			// return used_entry.first->second.get();
-			throw InternalException(
-			    "Database name %s was already used by a different database for this meta transaction",
-			    db_ref.GetName());
-		}
+		used_databases.emplace(db_ref.GetName(), db_ref);
 		referenced_databases.emplace(reference<AttachedDatabase>(db_ref), database);
 	}
 	return db_ref;
