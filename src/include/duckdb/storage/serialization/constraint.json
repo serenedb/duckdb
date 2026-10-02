@@ -17,6 +17,13 @@
         "type": "string",
         "default": "\"\"",
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16485,
+        "name": "oid",
+        "type": "idx_t",
+        "default": 0,
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -112,6 +119,13 @@
         "id": 202,
         "name": "columns",
         "type": "vector<Identifier>"
+      },
+      {
+        "id": 16584,
+        "name": "index_oid",
+        "type": "idx_t",
+        "default": 0,
+        "version": "serenedb_v1"
       }
     ]
   }
