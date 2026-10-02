@@ -2,6 +2,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/planner/table_filter.hpp"
@@ -170,6 +171,14 @@ ErrorData LocalTableStorage::AppendToIndexes(DuckTransaction &transaction, RowGr
 		mapped_column_ids.emplace_back(col);
 	}
 	std::sort(mapped_column_ids.begin(), mapped_column_ids.end());
+	if (deleted_rows == 0) {
+		ErrorData error;
+		if (source.GetAttached().GetCatalog().AppendLocalIndexes(transaction, index_list, source, mapped_column_ids,
+		                                                         start_row, error)) {
+			start_row += UnsafeNumericCast<row_t>(source.GetTotalRows());
+			return error;
+		}
+	}
 	auto checkpoint_id = transaction.GetTransactionManager().Cast<DuckTransactionManager>().GetActiveCheckpoint();
 
 	// The bound expressions of the indexes (and their bound column references) are in relation to
