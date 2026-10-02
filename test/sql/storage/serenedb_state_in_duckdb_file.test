@@ -130,36 +130,12 @@ CREATE TABLE mem.u (a INTEGER)
 statement ok
 ALTER TABLE mem.u ADD UNIQUE (a)
 
-statement ok
+statement error
 ATTACH '{TEST_DIR}/serenedb_state_in_serenedb_file.db' AS sdb (STORAGE_VERSION 'serenedb_latest')
-
-statement ok
-CREATE TABLE sdb.stored (a INTEGER, b INTEGER GENERATED ALWAYS AS (a + 1) STORED)
-
-statement ok
-CREATE INDEX partial ON sdb.stored (a) WHERE a > 0
-
-statement ok
-CREATE TABLE sdb.u (a INTEGER)
-
-statement ok
-ALTER TABLE sdb.u ADD UNIQUE (a)
-
-statement ok
-DETACH sdb
-
-statement ok
-ATTACH '{TEST_DIR}/serenedb_state_in_serenedb_file.db' AS sdb (STORAGE_VERSION 'serenedb_latest')
-
-statement ok
-INSERT INTO sdb.stored (a) VALUES (1)
-
-query II
-SELECT a, b FROM sdb.stored
 ----
-1	2
+a SereneDB storage version is for SereneDB databases, a DuckDB database takes a DuckDB storage version
 
 statement error
-INSERT INTO sdb.u VALUES (1), (1)
+ATTACH '{TEST_DIR}/serenedb_state_in_serenedb_file.db' AS sdb (STORAGE_VERSION 'serenedb_v1')
 ----
-duplicate key "1"
+a SereneDB storage version is for SereneDB databases, a DuckDB database takes a DuckDB storage version
