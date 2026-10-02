@@ -538,7 +538,7 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	for (auto &col : table.GetColumns().Logical()) {
 		names.emplace_back(col.Name());
 		types.push_back(col.Type());
-		if (!col.Generated()) {
+		if (col.Category() != TableColumnType::GENERATED_VIRTUAL) {
 			bound_columns.emplace_back(column_count);
 		}
 		column_count++;
