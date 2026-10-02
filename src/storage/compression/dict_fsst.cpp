@@ -1,10 +1,13 @@
 #include "duckdb/common/enum_util.hpp"
+#include "duckdb/common/helper.hpp"
 #include "duckdb/storage/compression/dict_fsst/common.hpp"
 #include "duckdb/storage/compression/dict_fsst/analyze.hpp"
 #include "duckdb/storage/compression/dict_fsst/compression.hpp"
 #include "duckdb/storage/compression/dict_fsst/decompression.hpp"
 #include "duckdb/function/compression/compression.hpp"
 #include "duckdb/function/compression_function.hpp"
+
+#include <cstddef>
 
 /*
 Data layout per segment:
@@ -254,7 +257,7 @@ InsertionOrderPreservingMap<string> DictFSSTGetSegmentInfo(QueryContext context,
 	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
 	auto handle = buffer_manager.Pin(segment.GetBlockHandle());
 	auto base_ptr = handle.Ptr() + segment.GetBlockOffset();
-	auto mode = reinterpret_cast<const dict_fsst_compression_header_t *>(base_ptr)->mode;
+	auto mode = static_cast<DictFSSTMode>(Load<uint8_t>(base_ptr + offsetof(dict_fsst_compression_header_t, mode)));
 	InsertionOrderPreservingMap<string> result;
 	result["mode"] = EnumUtil::ToChars(mode);
 	return result;

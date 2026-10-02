@@ -695,6 +695,16 @@ public:
 	                      case_insensitive_map_t<unique_ptr<ParsedExpression>> rel_option_list);
 	static unique_ptr<TransformResultValue> TransformAlterColumnEntryInternal(PEGTransformer &transformer,
 	                                                                          ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformSetCompressionInternal(PEGTransformer &transformer,
+	                                                                        ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformSetCompressionDefaultInternal(PEGTransformer &transformer,
+	                                                                               ParseResult &parse_result);
+	static unique_ptr<AlterTableInfo> TransformSetCompressionDefault(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformSetCompressionCodecInternal(PEGTransformer &transformer,
+	                                                                             ParseResult &parse_result);
+	static unique_ptr<AlterTableInfo>
+	TransformSetCompressionCodec(PEGTransformer &transformer, const Identifier &col_id_or_string,
+	                             optional<vector<unique_ptr<ParsedExpression>>> expression);
 	static unique_ptr<TransformResultValue> TransformAddOrDropDefaultInternal(PEGTransformer &transformer,
 	                                                                          ParseResult &parse_result);
 	static unique_ptr<TransformResultValue> TransformAddDefaultInternal(PEGTransformer &transformer,
@@ -1688,7 +1698,8 @@ public:
 	static unique_ptr<TransformResultValue> TransformColumnCompressionInternal(PEGTransformer &transformer,
 	                                                                           ParseResult &parse_result);
 	static ColumnConstraintEntry TransformColumnCompression(PEGTransformer &transformer,
-	                                                        const Identifier &col_id_or_string);
+	                                                        const Identifier &col_id_or_string,
+	                                                        optional<vector<unique_ptr<ParsedExpression>>> expression);
 	static unique_ptr<TransformResultValue> TransformKeyActionsInternal(PEGTransformer &transformer,
 	                                                                    ParseResult &parse_result);
 	static KeyActions TransformKeyActions(PEGTransformer &transformer, const optional<string> &update_action,

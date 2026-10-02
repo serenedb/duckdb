@@ -362,6 +362,10 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		auto &set_default_info = table_info.Cast<SetDefaultInfo>();
 		return SetDefault(context, set_default_info);
 	}
+	case AlterTableType::SET_COLUMN_COMPRESSION: {
+		auto &set_compression_info = table_info.Cast<SetColumnCompressionInfo>();
+		return SetColumnCompression(context, set_compression_info);
+	}
 	case AlterTableType::ALTER_COLUMN_TYPE: {
 		auto &change_type_info = table_info.Cast<ChangeColumnTypeInfo>();
 		return ChangeColumnType(context, change_type_info);
@@ -1100,6 +1104,27 @@ unique_ptr<CatalogEntry> DuckTableEntry::SetDefault(ClientContext &context, SetD
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
 	info.new_dependencies = make_uniq<LogicalDependencyList>(std::move(bound_create_info->dependencies));
+	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
+}
+
+unique_ptr<CatalogEntry> DuckTableEntry::SetColumnCompression(ClientContext &context, SetColumnCompressionInfo &info) {
+	auto &schema = ParentSchema(context);
+	auto column_idx = GetColumnIndex(info.column_name);
+	if (column_idx.index == COLUMN_IDENTIFIER_ROW_ID) {
+		throw CatalogException("Cannot SET COMPRESSION for rowid column");
+	}
+
+	auto create_info = GetInfo();
+	auto &table_info = create_info->Cast<CreateTableInfo>();
+	auto &col = table_info.columns.GetColumnMutable(column_idx);
+	if (col.Generated()) {
+		throw BinderException("Cannot SET COMPRESSION for generated column \"%s\"", col.Name());
+	}
+	col.SetCompressionType(info.compression_type);
+	col.SetCompressionLevel(info.compression_level);
+
+	auto binder = Binder::CreateBinder(context);
+	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema);
 	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
 }
 

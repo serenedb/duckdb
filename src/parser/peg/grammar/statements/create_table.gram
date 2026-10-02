@@ -48,7 +48,7 @@ DefaultValue <- 'DEFAULT' ColumnDefaultExpr
 CheckConstraint <- 'CHECK' Parens(Expression)
 ForeignKeyConstraint <- 'REFERENCES' BaseTableName Parens(ColumnList)? KeyActions
 ColumnCollation <- 'COLLATE' DottedIdentifier
-ColumnCompression <- 'USING' 'COMPRESSION' ColIdOrString
+ColumnCompression <- 'USING' 'COMPRESSION' ColIdOrString Parens(List(Expression))?
 
 KeyActions <- UpdateAction? DeleteAction?
 UpdateAction <- 'ON' 'UPDATE' KeyAction

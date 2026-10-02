@@ -255,6 +255,28 @@
     ]
   },
   {
+    "class": "SetColumnCompressionInfo",
+    "base": "AlterTableInfo",
+    "enum": "SET_COLUMN_COMPRESSION",
+    "members": [
+      {
+        "id": 400,
+        "name": "column_name",
+        "type": "Identifier"
+      },
+      {
+        "id": 401,
+        "name": "compression_type",
+        "type": "CompressionType"
+      },
+      {
+        "id": 402,
+        "name": "compression_level",
+        "type": "uint8_t"
+      }
+    ]
+  },
+  {
     "class": "AlterForeignKeyInfo",
     "base": "AlterTableInfo",
     "enum": "FOREIGN_KEY_CONSTRAINT",

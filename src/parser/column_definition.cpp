@@ -22,6 +22,7 @@ ColumnDefinition ColumnDefinition::Copy() const {
 	copy.storage_oid = storage_oid;
 	copy.expression = expression ? expression->Copy() : nullptr;
 	copy.compression_type = compression_type;
+	copy.compression_level = compression_level;
 	copy.category = category;
 	copy.comment = comment;
 	copy.tags = tags;
@@ -104,6 +105,14 @@ void ColumnDefinition::SetCompressionType(duckdb::CompressionType compression_ty
 	this->compression_type = compression_type;
 }
 
+uint8_t ColumnDefinition::CompressionLevel() const {
+	return compression_level;
+}
+
+void ColumnDefinition::SetCompressionLevel(uint8_t compression_level) {
+	this->compression_level = compression_level;
+}
+
 const storage_t &ColumnDefinition::StorageOid() const {
 	return storage_oid;
 }
@@ -173,6 +182,9 @@ string ColumnDefinition::ToSQLString() const {
 	}
 	if (CompressionType() != CompressionType::COMPRESSION_AUTO) {
 		result += " USING COMPRESSION " + CompressionTypeToString(CompressionType());
+		if (compression_level != 0) {
+			result += "(compression_level = " + to_string(compression_level) + ")";
+		}
 	}
 	return result;
 }

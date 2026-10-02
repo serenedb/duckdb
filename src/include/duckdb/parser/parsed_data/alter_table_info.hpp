@@ -195,6 +195,7 @@ enum class AlterTableType : uint8_t {
 	RESET_TABLE_OPTIONS = 18,
 	DROP_CONSTRAINT = 200,
 	RENAME_CONSTRAINT = 201,
+	SET_COLUMN_COMPRESSION = 202,
 };
 
 struct AlterTableInfo : public AlterInfo {
@@ -483,6 +484,28 @@ public:
 
 private:
 	SetNotNullInfo();
+};
+
+//===--------------------------------------------------------------------===//
+// SetColumnCompressionInfo
+//===--------------------------------------------------------------------===//
+struct SetColumnCompressionInfo : public AlterTableInfo {
+	SetColumnCompressionInfo(const AlterEntryData &data, Identifier column_name, CompressionType compression_type,
+	                         uint8_t compression_level);
+	~SetColumnCompressionInfo() override;
+
+	Identifier column_name;
+	CompressionType compression_type;
+	uint8_t compression_level;
+
+public:
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	SetColumnCompressionInfo();
 };
 
 //===--------------------------------------------------------------------===//

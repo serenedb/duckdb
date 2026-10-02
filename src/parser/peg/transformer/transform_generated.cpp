@@ -334,6 +334,41 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterColumnEntr
 	return make_uniq<TypedTransformResult<unique_ptr<AlterTableInfo>>>(std::move(result));
 }
 
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformSetCompressionInternal(PEGTransformer &transformer,
+                                                                                        ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<unique_ptr<AlterTableInfo>>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<unique_ptr<AlterTableInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformSetCompressionDefaultInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto result = TransformSetCompressionDefault(transformer);
+	return make_uniq<TypedTransformResult<unique_ptr<AlterTableInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformSetCompressionCodecInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto col_id_or_string = transformer.Transform<Identifier>(list_pr.GetChild(2));
+	optional<vector<unique_ptr<ParsedExpression>>> expression {};
+	auto &expression_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	if (expression_opt.HasResult()) {
+		vector<unique_ptr<ParsedExpression>> expression_value;
+		auto expression_value_items_1 =
+		    ExtractParseResultsFromList(ExtractResultFromParens(expression_opt.GetResult()));
+		for (auto &expression_value_item_1 : expression_value_items_1) {
+			auto expression_value_value_1 =
+			    transformer.Transform<unique_ptr<ParsedExpression>>(expression_value_item_1.get());
+			expression_value.push_back(std::move(expression_value_value_1));
+		}
+		expression = std::move(expression_value);
+	}
+	auto result = TransformSetCompressionCodec(transformer, col_id_or_string, std::move(expression));
+	return make_uniq<TypedTransformResult<unique_ptr<AlterTableInfo>>>(std::move(result));
+}
+
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAddOrDropDefaultInternal(PEGTransformer &transformer,
                                                                                           ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -3199,7 +3234,20 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformColumnCompressi
                                                                                            ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto col_id_or_string = transformer.Transform<Identifier>(list_pr.GetChild(2));
-	auto result = TransformColumnCompression(transformer, col_id_or_string);
+	optional<vector<unique_ptr<ParsedExpression>>> expression {};
+	auto &expression_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	if (expression_opt.HasResult()) {
+		vector<unique_ptr<ParsedExpression>> expression_value;
+		auto expression_value_items_1 =
+		    ExtractParseResultsFromList(ExtractResultFromParens(expression_opt.GetResult()));
+		for (auto &expression_value_item_1 : expression_value_items_1) {
+			auto expression_value_value_1 =
+			    transformer.Transform<unique_ptr<ParsedExpression>>(expression_value_item_1.get());
+			expression_value.push_back(std::move(expression_value_value_1));
+		}
+		expression = std::move(expression_value);
+	}
+	auto result = TransformColumnCompression(transformer, col_id_or_string, std::move(expression));
 	return make_uniq<TypedTransformResult<ColumnConstraintEntry>>(std::move(result));
 }
 
@@ -10699,6 +10747,9 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"SetOptions", &PEGTransformerFactory::TransformSetOptionsInternal},
 	    {"ResetOptions", &PEGTransformerFactory::TransformResetOptionsInternal},
 	    {"AlterColumnEntry", &PEGTransformerFactory::TransformAlterColumnEntryInternal},
+	    {"SetCompression", &PEGTransformerFactory::TransformSetCompressionInternal},
+	    {"SetCompressionDefault", &PEGTransformerFactory::TransformSetCompressionDefaultInternal},
+	    {"SetCompressionCodec", &PEGTransformerFactory::TransformSetCompressionCodecInternal},
 	    {"AddOrDropDefault", &PEGTransformerFactory::TransformAddOrDropDefaultInternal},
 	    {"AddDefault", &PEGTransformerFactory::TransformAddDefaultInternal},
 	    {"DropDefault", &PEGTransformerFactory::TransformDropDefaultInternal},

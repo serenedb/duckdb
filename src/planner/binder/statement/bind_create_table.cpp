@@ -39,11 +39,33 @@ static void CreateColumnDependencyManager(BoundCreateTableInfo &info) {
 	}
 }
 
+void Binder::VerifySereneDBCompression(Catalog &catalog, const ColumnDefinition &column) {
+	if (catalog.SupportsSereneDBCompression()) {
+		return;
+	}
+	if (IsSereneDBCompressionType(column.CompressionType())) {
+		throw BinderException(
+		    "Can't compress column \"%s\" using compression type '%s', that type is only available on SereneDB tables",
+		    column.Name(), CompressionTypeToString(column.CompressionType()));
+	}
+	if (column.CompressionLevel() != 0) {
+		throw BinderException(
+		    "Can't set compression_level on column \"%s\", compression options are only available on SereneDB tables",
+		    column.Name());
+	}
+}
+
 static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageManager> storage_manager,
                                   DBConfig &config, BoundCreateTableInfo &info) {
 	auto &base = info.base->Cast<CreateTableInfo>();
+	auto &catalog = info.schema.ParentCatalog();
 	for (auto &col : base.columns.Logical()) {
+		Binder::VerifySereneDBCompression(catalog, col);
 		auto compression_type = col.CompressionType();
+		if (catalog.SupportsSereneDBCompression() &&
+		    (IsSereneDBCompressionType(compression_type) || compression_type == CompressionType::COMPRESSION_FSST)) {
+			continue;
+		}
 		auto compression_availability_result = CompressionTypeIsAvailable(compression_type, storage_manager);
 		if (!compression_availability_result.IsAvailable()) {
 			if (compression_availability_result.IsDeprecated()) {

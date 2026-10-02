@@ -810,7 +810,10 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 				break;
 			}
 			case AlterTableType::ADD_COLUMN:
-			case AlterTableType::SET_DEFAULT: {
+			case AlterTableType::SET_DEFAULT:
+			case AlterTableType::SET_COLUMN_COMPRESSION:
+			case AlterTableType::SET_TABLE_OPTIONS:
+			case AlterTableType::RESET_TABLE_OPTIONS: {
 				disallow_alter = false;
 				break;
 			}
