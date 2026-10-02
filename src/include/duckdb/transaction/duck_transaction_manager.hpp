@@ -53,6 +53,8 @@ public:
 
 	void Checkpoint(ClientContext &context, bool force = false) override;
 
+	void CheckTruncate(DuckTransaction &transaction, DataTable &table);
+
 	transaction_t LowestActiveId() const {
 		return lowest_active_id;
 	}

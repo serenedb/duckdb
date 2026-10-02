@@ -63,6 +63,8 @@ public:
 	}
 	vector<idx_t> SetIndexColumnLayout(vector<idx_t> logical_column_oids, vector<idx_t> physical_column_oids);
 
+	atomic<transaction_t> last_append_commit {0};
+
 private:
 	//! The database instance of the table
 	AttachedDatabase &db;

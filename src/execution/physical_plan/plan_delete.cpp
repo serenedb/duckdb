@@ -39,6 +39,7 @@ PhysicalOperator &DuckCatalog::PlanDelete(ClientContext &context, PhysicalPlanGe
 	auto &del = planner.Make<PhysicalDelete>(op.types, storage_table, storage_table.GetStorage(),
 	                                         std::move(op.bound_constraints), bound_ref.Index(),
 	                                         op.estimated_cardinality, op.return_chunk, std::move(op.return_columns));
+	del.Cast<PhysicalDelete>().is_truncate = op.is_truncate;
 	del.children.push_back(plan);
 	return del;
 }
