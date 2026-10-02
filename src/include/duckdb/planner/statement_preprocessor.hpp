@@ -28,9 +28,11 @@ public:
 	//! invalidation-policy) block -- the caller takes responsibility for the transaction (the pg-wire extended Parse
 	//! runs the body in its own implicit block, so one user command that expands stays a single prepared unit).
 	void Preprocess(ClientContextLock &lock, vector<unique_ptr<SQLStatement>> &statements,
-	                CurrentTransactionState transaction_context_state, bool wrap_multi = true);
+	                CurrentTransactionState transaction_context_state, bool wrap_multi = true,
+	                vector<idx_t> *raw_statement_ends = nullptr);
 	void PreprocessInternal(ClientContextLock &lock, vector<unique_ptr<SQLStatement>> &statements,
-	                        CurrentTransactionState transaction_context_state, bool wrap_multi = true);
+	                        CurrentTransactionState transaction_context_state, bool wrap_multi,
+	                        vector<idx_t> *raw_statement_ends);
 
 private:
 	ClientContext &context;

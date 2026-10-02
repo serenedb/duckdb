@@ -207,7 +207,8 @@ vector<unique_ptr<SQLStatement>> StatementPreprocessor::TryReparsePragma(unique_
 }
 
 void StatementPreprocessor::Preprocess(ClientContextLock &lock, vector<unique_ptr<SQLStatement>> &statements,
-                                       CurrentTransactionState transaction_context_state, bool wrap_multi) {
+                                       CurrentTransactionState transaction_context_state, bool wrap_multi,
+                                       vector<idx_t> *raw_statement_ends) {
 	// Quick check: do we need preprocessing at all?
 	bool needs_preprocessing = false;
 	for (auto &stmt : statements) {
@@ -217,16 +218,21 @@ void StatementPreprocessor::Preprocess(ClientContextLock &lock, vector<unique_pt
 		}
 	}
 	if (!needs_preprocessing) {
+		if (raw_statement_ends) {
+			for (idx_t end = 1; end <= statements.size(); end++) {
+				raw_statement_ends->push_back(end);
+			}
+		}
 		return;
 	}
 
 	context.RunFunctionInTransactionInternal(
-	    lock, [&] { PreprocessInternal(lock, statements, transaction_context_state, wrap_multi); });
+	    lock, [&] { PreprocessInternal(lock, statements, transaction_context_state, wrap_multi, raw_statement_ends); });
 }
 
 void StatementPreprocessor::PreprocessInternal(ClientContextLock &lock, vector<unique_ptr<SQLStatement>> &statements,
-                                               const CurrentTransactionState transaction_context_state,
-                                               bool wrap_multi) {
+                                               const CurrentTransactionState transaction_context_state, bool wrap_multi,
+                                               vector<idx_t> *raw_statement_ends) {
 	CurrentTransactionState chained_transaction_state = NOT_IN_ACTIVE_TRANSACTION;
 	vector<unique_ptr<SQLStatement>> new_statements;
 	for (idx_t i = 0; i < statements.size(); i++) {
@@ -267,6 +273,9 @@ void StatementPreprocessor::PreprocessInternal(ClientContextLock &lock, vector<u
 		default: {
 			new_statements.push_back(std::move(statements[i]));
 		}
+		}
+		if (raw_statement_ends) {
+			raw_statement_ends->push_back(new_statements.size());
 		}
 	}
 
