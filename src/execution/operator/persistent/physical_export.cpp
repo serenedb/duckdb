@@ -28,9 +28,51 @@ PhysicalExport::PhysicalExport(PhysicalPlan &physical_plan, vector<LogicalType> 
       function(std::move(function)), info(std::move(info)), exported_tables(std::move(exported_tables)) {
 }
 
-static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entries) {
+static string CommentTarget(CatalogEntry &entry) {
+	switch (entry.type) {
+	case CatalogType::TABLE_ENTRY:
+		return "TABLE";
+	case CatalogType::VIEW_ENTRY:
+		return "VIEW";
+	case CatalogType::SEQUENCE_ENTRY:
+		return "SEQUENCE";
+	case CatalogType::INDEX_ENTRY:
+		return "INDEX";
+	case CatalogType::TYPE_ENTRY:
+		return "TYPE";
+	case CatalogType::MACRO_ENTRY:
+		return "MACRO";
+	case CatalogType::TABLE_MACRO_ENTRY:
+		return "MACRO TABLE";
+	default:
+		return string();
+	}
+}
+
+static void WriteComments(stringstream &ss, CatalogEntry &entry) {
+	auto target = CommentTarget(entry);
+	if (target.empty()) {
+		return;
+	}
+	auto name = QualifiedName(entry.ParentSchemaPath(), entry.name).ToString();
+	if (!entry.comment.IsNull()) {
+		ss << "COMMENT ON " << target << " " << name << " IS " << entry.comment.ToSQLString() << ";\n";
+	}
+	if (entry.type != CatalogType::TABLE_ENTRY) {
+		return;
+	}
+	for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
+		if (!column.Comment().IsNull()) {
+			ss << "COMMENT ON COLUMN " << name << "." << SQLIdentifier(column.Name()) << " IS "
+			   << column.Comment().ToSQLString() << ";\n";
+		}
+	}
+}
+
+static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entries,
+                                const reference_set_t<CatalogEntry> &skip) {
 	for (auto &entry : entries) {
-		if (entry.get().internal) {
+		if (entry.get().internal || skip.contains(entry.get())) {
 			continue;
 		}
 		auto create_info = entry.get().GetInfo();
@@ -43,6 +85,7 @@ static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entrie
 			ss << entry.get().ToSQL();
 		}
 		ss << '\n';
+		WriteComments(ss, entry.get());
 	}
 	ss << '\n';
 }
@@ -55,15 +98,28 @@ static void WriteStringStreamToFile(FileSystem &fs, stringstream &ss, const stri
 	handle.reset();
 }
 
-static void WriteCopyStatement(FileSystem &fs, stringstream &ss, CopyInfo &info, ExportedTableData &exported_table) {
+static void WriteCopyStatement(FileSystem &fs, stringstream &ss, CopyInfo &info, ExportedTableData &exported_table,
+                               TableCatalogEntry &table) {
 	ss << "COPY ";
 
 	//! NOTE: The catalog is explicitly not set here
 	auto table_name = exported_table.qualified_name;
 	table_name.StripCatalog();
+	ss << table_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	vector<string> columns;
+	bool has_generated = false;
+	for (auto &column : table.GetColumns().Physical()) {
+		if (column.Generated()) {
+			has_generated = true;
+		} else {
+			columns.push_back(KeywordHelper::WriteOptionallyQuoted(column.Name().GetIdentifierName()));
+		}
+	}
+	if (has_generated) {
+		ss << " (" << StringUtil::Join(columns, ", ") << ")";
+	}
 	auto file_path = StringUtil::Replace(exported_table.file_path, "\\", "/");
-	ss << StringUtil::Format("%s FROM %s (", table_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA),
-	                         SQLString(file_path));
+	ss << StringUtil::Format(" FROM %s (", SQLString(file_path));
 	// write the copy options
 	ss << "FORMAT '" << info.format << "'";
 	if (info.format == "csv") {
@@ -144,6 +200,12 @@ void PhysicalExport::ExtractEntries(ClientContext &context, vector<reference<Sch
 			}
 			result.custom_types.push_back(entry);
 		});
+		schema.Scan(context, CatalogType::TOKENIZER_ENTRY, [&](CatalogEntry &entry) {
+			if (!entry.internal) {
+				throw NotImplementedException("EXPORT DATABASE does not support text search dictionaries yet: \"%s\"",
+				                              entry.name.GetIdentifierName());
+			}
+		});
 		schema.Scan(context, CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.internal) {
 				return;
@@ -161,6 +223,31 @@ void PhysicalExport::ExtractEntries(ClientContext &context, vector<reference<Sch
 			}
 		});
 	}
+}
+
+static reference_set_t<CatalogEntry> CreatedByTarget(ClientContext &context, catalog_entry_vector_t &entries) {
+	reference_set_t<CatalogEntry> result;
+	for (auto &entry : entries) {
+		if (entry.get().type == CatalogType::SCHEMA_ENTRY &&
+		    entry.get().name == entry.get().ParentCatalog().GetDefaultSchema()) {
+			result.insert(entry.get());
+			continue;
+		}
+		if (entry.get().type != CatalogType::TABLE_ENTRY) {
+			continue;
+		}
+		auto &table = entry.get().Cast<TableCatalogEntry>();
+		auto dependencies = table.ParentCatalog().GetDependencyManager();
+		if (!dependencies) {
+			continue;
+		}
+		for (auto &owned : dependencies->OwnedEntries(table.ParentCatalog().GetCatalogTransaction(context), table)) {
+			if (table.NumbersRowsWith(owned.get())) {
+				result.insert(owned.get());
+			}
+		}
+	}
+	return result;
 }
 
 static void AddEntries(catalog_entry_vector_t &all_entries, catalog_entry_vector_t &to_add) {
@@ -225,7 +312,7 @@ SourceResultType PhysicalExport::GetDataInternal(ExecutionContext &context, Data
 
 	// write the schema.sql file
 	stringstream ss;
-	WriteCatalogEntries(ss, catalog_entries);
+	WriteCatalogEntries(ss, catalog_entries, CreatedByTarget(ccontext, catalog_entries));
 	WriteStringStreamToFile(fs, ss, fs.JoinPath(info->file_path, "schema.sql"));
 
 	// write the load.sql file
@@ -233,7 +320,7 @@ SourceResultType PhysicalExport::GetDataInternal(ExecutionContext &context, Data
 	stringstream load_ss;
 	for (idx_t i = 0; i < exported_tables->data.size(); i++) {
 		auto exported_table_info = exported_tables->data[i].table_data;
-		WriteCopyStatement(fs, load_ss, *info, exported_table_info);
+		WriteCopyStatement(fs, load_ss, *info, exported_table_info, exported_tables->data[i].entry);
 	}
 	WriteStringStreamToFile(fs, load_ss, fs.JoinPath(info->file_path, "load.sql"));
 	state.finished = true;
