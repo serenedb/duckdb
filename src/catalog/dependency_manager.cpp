@@ -400,19 +400,26 @@ void DependencyManager::RenameSchema(CatalogTransaction transaction, CatalogEntr
 			edges.push_back(std::move(edge));
 		}
 	};
+	string blockers;
 	for (auto &child : children) {
 		ScanDependents(transaction, child, [&](DependencyEntry &dep) {
-			auto &dependent = dep.EntryInfo();
+			auto dependent = dep.EntryInfo();
 			const bool names_by_column =
 			    dependent.type == CatalogType::TABLE_ENTRY && equals(dependent.schema, old_info.name) &&
 			    (child.type == CatalogType::SEQUENCE_ENTRY || child.type == CatalogType::TYPE_ENTRY);
 			if (dependent.type != CatalogType::INDEX_ENTRY && !names_by_column) {
-				throw DependencyException("Cannot alter entry \"%s\" because there are entries that depend on it.",
-				                          old_schema.name);
+				blockers += DescribeDependency(dependent, child);
+				return;
 			}
 			collect(DependencyInfo::FromDependent(dep));
 		});
 		ScanSubjects(transaction, child, [&](DependencyEntry &dep) { collect(DependencyInfo::FromSubject(dep)); });
+	}
+	if (!blockers.empty()) {
+		throw DependencyException(StringUtil::Format(
+		    "Cannot alter entry \"%s\" because there are entries that depend on it.\n%sDrop the dependent entries "
+		    "first and recreate them after the change.",
+		    old_schema.name.GetIdentifierName(), blockers));
 	}
 
 	for (auto &edge : edges) {
@@ -526,6 +533,10 @@ static string EntryToString(CatalogEntryInfo &info) {
 		throw InternalException("CatalogType not handled in EntryToString (DependencyManager) for %s",
 		                        CatalogTypeToString(type));
 	};
+}
+
+string DependencyManager::DescribeDependency(CatalogEntryInfo &dependent, CatalogEntryInfo &subject) {
+	return StringUtil::Format("%s depends on %s.\n", EntryToString(dependent), EntryToString(subject));
 }
 
 string DependencyManager::CollectDependents(CatalogTransaction transaction, catalog_entry_set_t &entries,
