@@ -55,6 +55,9 @@ unique_ptr<LogicalOperator> LogicalOperator::Deserialize(Deserializer &deseriali
 	case LogicalOperatorType::LOGICAL_CREATE_INDEX:
 		result = LogicalCreateIndex::Deserialize(deserializer);
 		break;
+	case LogicalOperatorType::LOGICAL_CREATE_JOB:
+		result = LogicalCreate::Deserialize(deserializer);
+		break;
 	case LogicalOperatorType::LOGICAL_CREATE_MACRO:
 		result = LogicalCreate::Deserialize(deserializer);
 		break;

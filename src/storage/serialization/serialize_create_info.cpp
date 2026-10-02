@@ -18,6 +18,7 @@
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
+#include "duckdb/parser/parsed_data/create_job_info.hpp"
 
 namespace duckdb {
 
@@ -66,6 +67,9 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 		break;
 	case CatalogType::INDEX_ENTRY:
 		result = CreateIndexInfo::Deserialize(deserializer);
+		break;
+	case CatalogType::JOB_ENTRY:
+		result = CreateJobInfo::Deserialize(deserializer);
 		break;
 	case CatalogType::MACRO_ENTRY:
 		result = CreateMacroInfo::Deserialize(deserializer);
@@ -183,6 +187,24 @@ unique_ptr<CreateInfo> CreateIndexInfo::Deserialize(Deserializer &deserializer) 
 	deserializer.ReadPropertyWithDefault<vector<optional<case_insensitive_map_t<Value>>>>(16586, "column_opclass_options", result->column_opclass_options);
 	result->SetName(std::move(name));
 	result->FinalizeDeserialization();
+	return std::move(result);
+}
+
+void CreateJobInfo::Serialize(Serializer &serializer) const {
+	CreateInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(200, "name", qualified_name.Name());
+	serializer.WriteProperty<JobSchedule>(201, "schedule", schedule);
+	serializer.WritePropertyWithDefault<bool>(202, "suspended", suspended);
+	serializer.WritePropertyWithDefault<string>(203, "body", body);
+}
+
+unique_ptr<CreateInfo> CreateJobInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<CreateJobInfo>(new CreateJobInfo());
+	auto name = deserializer.ReadPropertyWithDefault<Identifier>(200, "name");
+	deserializer.ReadProperty<JobSchedule>(201, "schedule", result->schedule);
+	deserializer.ReadPropertyWithDefault<bool>(202, "suspended", result->suspended);
+	deserializer.ReadPropertyWithDefault<string>(203, "body", result->body);
+	result->SetName(std::move(name));
 	return std::move(result);
 }
 

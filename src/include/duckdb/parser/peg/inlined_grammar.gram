@@ -31,6 +31,7 @@ Statement <-
 	ExplainStatement /
 	UpdateStatement /
 	PrepareStatement /
+	ExecuteJobStatement /
 	ExecuteStatement /
 	AlterStatement /
 	TransactionStatement /
@@ -738,7 +739,14 @@ UnreservedKeyword <- 'ABORT' /
 'ZONE'
 AlterStatement <- 'ALTER' AlterOptions
 
-AlterOptions <- AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt
+AlterOptions <- AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt / AlterJobStmt
+
+AlterJobStmt <- 'JOB' IfExists? QualifiedName AlterJobAction
+AlterJobAction <- AlterJobRename / AlterJobSuspend / AlterJobResume / AlterJobSetSchedule
+AlterJobRename <- 'RENAME' 'TO' ColId
+AlterJobSuspend <- 'SUSPEND'
+AlterJobResume <- 'RESUME'
+AlterJobSetSchedule <- 'SET' 'SCHEDULE' JobSchedule
 
 AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter
 AlterIndexAlter <- RenameAlter / SetOptions / ResetOptions
@@ -933,6 +941,17 @@ DefArgKeyword <- ReservedKeyword
 DefArgStringLiteral <- StringLiteral
 NoneLiteral <- 'NONE'
 
+CreateJobStmt <- 'JOB' IfNotExists? QualifiedName JobSchedule JobSuspended? 'AS' Statement
+
+JobSchedule <- JobEvery / JobAfter
+JobEvery <- 'EVERY' JobInterval JobOffset?
+JobAfter <- 'AFTER' JobInterval
+JobOffset <- 'OFFSET' JobInterval
+JobInterval <- IntervalLiteral / JobIntervalShort / JobIntervalExpression
+JobIntervalShort <- NumberLiteral Interval
+JobIntervalExpression <- Parens(Expression)
+JobSuspended <- 'SUSPENDED'
+
 CreateMacroStmt <- MacroOrFunction IfNotExists? QualifiedName List(MacroDefinition)
 
 MacroOrFunction <- MacroKeyword / FunctionKeyword / ProcedureKeyword
@@ -1022,7 +1041,7 @@ SubscriptionConnection <- 'CONNECTION' StringLiteral SubscriptionPublication?
 SubscriptionPublication <- 'PUBLICATION' List(Identifier)
 
 CreateStatement <- 'CREATE' OrReplace? Temporary? CreateStatementVariation
-CreateStatementVariation <- CreateTableStmt / CreateMacroStmt / CreateSequenceStmt / CreateTypeStmt / CreateSchemaStmt / CreateViewStmt / CreateIndexStmt / CreateSecretStmt / CreateTriggerStmt
+CreateStatementVariation <- CreateTableStmt / CreateMacroStmt / CreateSequenceStmt / CreateTypeStmt / CreateSchemaStmt / CreateViewStmt / CreateIndexStmt / CreateSecretStmt / CreateTriggerStmt / CreateJobStmt
 OrReplace <- 'OR' 'REPLACE'
 Temporary <- Persistent / TempPersistent / TemporaryPersistent
 Persistent <- 'PERSISTENT'
@@ -1231,9 +1250,11 @@ DropEntries <-
 	DropCollation /
 	DropType /
 	DropSecret /
-	DropTrigger
+	DropTrigger /
+	DropJob
 
 DropTrigger <- 'TRIGGER' IfExists? TriggerName 'ON' BaseTableName
+DropJob <- 'JOB' IfExists? List(QualifiedName)
 
 DropTable <- TableOrView IfExists? List(BaseTableName)
 DropTableFunction <- CommentMacroTable IfExists? List(TableFunctionName)
@@ -1270,6 +1291,8 @@ CatalogReservedSchema <- CatalogQualification ReservedSchemaName
 DropSecretStorage <- 'FROM' Identifier
 
 ExecuteStatement <- 'EXECUTE' Identifier TableFunctionArguments?
+ExecuteJobStatement <- 'EXECUTE' 'JOB' QualifiedName
+
 ExplainStatement <- 'EXPLAIN' ExplainAnalyze? ExplainOptionList? ExplainableStatements
 ExplainAnalyze <- 'ANALYZE'
 ExplainOptionList <- Parens(List(ExplainOption))
@@ -1799,7 +1822,7 @@ PasswordNullOption  <- 'PASSWORD' 'NULL'
 # before the native AlterStatement so OWNER TO is intercepted (DuckDB's alter
 # binder does not support ownership changes).
 AlterOwnerStatement <- 'ALTER' OwnerObjectType QualifiedName 'OWNER' 'TO' OwnerRoleSpec
-OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE'
+OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB'
 OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
 
 # ALTER DEFAULT PRIVILEGES [FOR ROLE r,...] [IN SCHEMA s,...] (GRANT|REVOKE) ...
