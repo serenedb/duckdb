@@ -696,15 +696,15 @@ void CatalogSet::UpdateTimestamp(CatalogEntry &entry, transaction_t timestamp) {
 }
 
 void CatalogSet::Undo(CatalogTransaction transaction, CatalogEntry &entry) {
-	lock_guard<mutex> write_lock(catalog.GetWriteLock());
-	lock_guard<mutex> lock(catalog_lock);
-
 	// entry has to be restored
 	// and entry->parent has to be removed ("rolled back")
 
 	// i.e. we have to place (entry) as (entry->parent) again
 	auto &to_be_removed_node = entry.Parent();
 	to_be_removed_node.Rollback(entry);
+
+	lock_guard<mutex> write_lock(catalog.GetWriteLock());
+	lock_guard<mutex> lock(catalog_lock);
 
 	D_ASSERT(entry.name == to_be_removed_node.name);
 	if (!to_be_removed_node.HasParent()) {
