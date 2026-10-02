@@ -473,6 +473,33 @@ static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transac
 	}
 }
 
+static void DropIndexesOnRemovedColumn(DuckSchemaEntry &schema, CatalogTransaction transaction, CatalogSet &tables,
+                                       const Identifier &table_name, const RemoveColumnInfo &info) {
+	auto entry = tables.GetEntry(transaction, table_name);
+	if (!entry || entry->type != CatalogType::TABLE_ENTRY) {
+		return;
+	}
+	auto &table = entry->Cast<TableCatalogEntry>();
+	if (!table.ColumnExists(info.removed_column)) {
+		return;
+	}
+	const auto removed = table.GetColumn(info.removed_column).Logical().index;
+	vector<Identifier> victims;
+	schema.GetCatalogSet(CatalogType::INDEX_ENTRY).Scan(transaction, [&](CatalogEntry &index_entry) {
+		auto &index = index_entry.Cast<IndexCatalogEntry>();
+		if (index.GetTableName() == table.name &&
+		    std::find(index.column_ids.begin(), index.column_ids.end(), removed) != index.column_ids.end()) {
+			victims.push_back(index.name);
+		}
+	});
+	for (auto &victim : victims) {
+		DropInfo drop;
+		drop.type = CatalogType::INDEX_ENTRY;
+		drop.SetQualifiedName(schema.GetQualifiedName(victim));
+		schema.DropEntry(transaction.GetContext(), drop);
+	}
+}
+
 void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().all_in_schema) {
 		AlterAllInSchema(*this, transaction, info.Cast<AlterPermissionsInfo>());
@@ -515,6 +542,11 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 				FindForeignKeyInformation(entry->Cast<TableCatalogEntry>(), AlterForeignKeyType::AFT_DELETE, fk_arrays,
 				                          info.Cast<DropConstraintInfo>().constraint_name);
 			}
+		}
+		if (info.type == AlterType::ALTER_TABLE &&
+		    info.Cast<AlterTableInfo>().alter_table_type == AlterTableType::REMOVE_COLUMN &&
+		    catalog.Compatibility() == SqlCompatibility::POSTGRES && transaction.HasContext()) {
+			DropIndexesOnRemovedColumn(*this, transaction, set, name, info.Cast<RemoveColumnInfo>());
 		}
 		if (!set.AlterEntry(transaction, name, info)) {
 			throw CatalogException::MissingEntry(type, name, string());

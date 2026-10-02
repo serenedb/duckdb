@@ -471,6 +471,17 @@ IndexInfo IndexEntry::GetStorageInfo() const {
 	return result;
 }
 
+vector<column_t> IndexEntry::GetColumnIds() const {
+	auto entry_lock = lock.GetSharedLock();
+	return owned_index->GetColumnIds();
+}
+
+void IndexEntry::RemapColumnIds(const vector<column_t> &column_ids) {
+	auto entry_lock = lock.GetExclusiveLock();
+	owned_index->RemapColumnIds(column_ids);
+	deltas.RemapColumnIds(column_ids);
+}
+
 idx_t IndexEntry::GetInMemorySize() const {
 	auto entry_lock = lock.GetSharedLock();
 	if (!owned_index->IsBound()) {
@@ -591,6 +602,14 @@ void IndexDeltas::Reset() {
 	checkpoint.added_data.reset();
 	checkpoint.removed_data.reset();
 	checkpoint.last_written_checkpoint = optional_idx();
+}
+
+void IndexDeltas::RemapColumnIds(const vector<column_t> &column_ids) {
+	for (auto delta : {deleted_rows_in_use.get(), checkpoint.added_data.get(), checkpoint.removed_data.get()}) {
+		if (delta) {
+			delta->RemapColumnIds(column_ids);
+		}
+	}
 }
 
 } // namespace duckdb

@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/types/constraint_conflict_info.hpp"
 #include "duckdb/common/types/conflict_manager.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
@@ -75,6 +76,10 @@ TableIndexList::~TableIndexList() {
 	{
 		annotated_lock_guard lock(index_entries_lock);
 		entries = std::move(index_entries);
+		for (auto &entry : detached_entries) {
+			entries.push_back(std::move(entry));
+		}
+		detached_entries.clear();
 		unbound_count = 0;
 	}
 	for (auto &entry : entries) {
@@ -173,7 +178,14 @@ void TableIndexList::RemoveIndex(const Identifier &name) {
 	shared_ptr<IndexEntry> removed_entry;
 	{
 		annotated_lock_guard lock(index_entries_lock);
-		for (idx_t i = 0; i < index_entries.size(); i++) {
+		for (idx_t i = 0; i < detached_entries.size(); i++) {
+			if (detached_entries[i]->GetName() == name) {
+				removed_entry = std::move(detached_entries[i]);
+				detached_entries.erase_at(i);
+				break;
+			}
+		}
+		for (idx_t i = 0; !removed_entry && i < index_entries.size(); i++) {
 			auto &entry = index_entries[i];
 			if (entry->GetName() != name) {
 				continue;
@@ -183,7 +195,6 @@ void TableIndexList::RemoveIndex(const Identifier &name) {
 			}
 			removed_entry = std::move(entry);
 			index_entries.erase_at(i);
-			break;
 		}
 	}
 	if (removed_entry) {
@@ -195,7 +206,14 @@ void TableIndexList::RemoveIndex(idx_t index_oid) {
 	shared_ptr<IndexEntry> removed_entry;
 	{
 		annotated_lock_guard lock(index_entries_lock);
-		for (idx_t i = 0; i < index_entries.size(); i++) {
+		for (idx_t i = 0; i < detached_entries.size(); i++) {
+			if (detached_entries[i]->GetCatalogIndexOid() == index_oid) {
+				removed_entry = std::move(detached_entries[i]);
+				detached_entries.erase_at(i);
+				break;
+			}
+		}
+		for (idx_t i = 0; !removed_entry && i < index_entries.size(); i++) {
 			auto &entry = index_entries[i];
 			if (entry->GetCatalogIndexOid() != index_oid) {
 				continue;
@@ -205,12 +223,89 @@ void TableIndexList::RemoveIndex(idx_t index_oid) {
 			}
 			removed_entry = std::move(entry);
 			index_entries.erase_at(i);
-			break;
 		}
 	}
 	if (removed_entry) {
 		removed_entry->Retire();
 	}
+}
+
+void TableIndexList::RemoveIndexesOnColumn(column_t column_id) {
+	vector<shared_ptr<IndexEntry>> removed_entries;
+	{
+		annotated_lock_guard lock(index_entries_lock);
+		for (idx_t i = index_entries.size(); i > 0; i--) {
+			auto &entry = index_entries[i - 1];
+			if (!entry->GetStorageInfo().column_set.count(column_id)) {
+				continue;
+			}
+			if (entry->GetBindState() != IndexBindState::BOUND) {
+				unbound_count--;
+			}
+			removed_entries.push_back(std::move(entry));
+			index_entries.erase_at(i - 1);
+		}
+	}
+	for (auto &entry : removed_entries) {
+		entry->Retire();
+	}
+}
+
+void TableIndexList::SyncColumnLayout(IndexTypeSet &index_types, const vector<idx_t> &old_column_oids,
+                                      const vector<idx_t> &new_column_oids) {
+	unordered_map<idx_t, column_t> new_positions;
+	for (idx_t i = 0; i < new_column_oids.size(); i++) {
+		new_positions.emplace(new_column_oids[i], i);
+	}
+	annotated_lock_guard lock(index_entries_lock);
+	vector<shared_ptr<IndexEntry>> attached;
+	vector<shared_ptr<IndexEntry>> detached;
+	auto place = [&](shared_ptr<IndexEntry> entry) {
+		vector<column_t> positions;
+		for (auto oid : entry->column_oids) {
+			auto position = new_positions.find(oid);
+			if (position == new_positions.end()) {
+				detached.push_back(std::move(entry));
+				return;
+			}
+			positions.push_back(position->second);
+		}
+		if (positions != entry->GetColumnIds()) {
+			auto index_type = index_types.FindByName(entry->GetIndexType());
+			if (!index_type || !index_type->remaps_columns) {
+				detached.push_back(std::move(entry));
+				return;
+			}
+			entry->RemapColumnIds(positions);
+		}
+		attached.push_back(std::move(entry));
+	};
+	for (auto &entry : index_entries) {
+		if (entry->column_oids.empty()) {
+			auto column_ids = entry->GetColumnIds();
+			const bool in_layout = std::all_of(column_ids.begin(), column_ids.end(),
+			                                   [&](column_t column_id) { return column_id < old_column_oids.size(); });
+			if (!in_layout) {
+				attached.push_back(std::move(entry));
+				continue;
+			}
+			for (auto column_id : column_ids) {
+				entry->column_oids.push_back(old_column_oids[column_id]);
+			}
+		}
+		place(std::move(entry));
+	}
+	for (auto &entry : detached_entries) {
+		place(std::move(entry));
+	}
+	unbound_count = 0;
+	for (auto &entry : attached) {
+		if (entry->GetBindState() != IndexBindState::BOUND) {
+			unbound_count++;
+		}
+	}
+	index_entries = std::move(attached);
+	detached_entries = std::move(detached);
 }
 
 void TableIndexList::RenameIndex(idx_t index_oid, const Identifier &new_name) {

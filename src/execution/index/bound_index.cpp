@@ -155,6 +155,17 @@ unique_ptr<Expression> BoundIndex::CopyUnboundExpression(const idx_t index) cons
 	return expression->Copy();
 }
 
+void BoundIndex::RemapColumnIds(const vector<column_t> &new_column_ids) {
+	IndexLock index_lock(*this);
+	Index::RemapColumnIds(new_column_ids);
+	bound_expressions.clear();
+	executor.ClearExpressions();
+	for (auto &expr : unbound_expressions) {
+		bound_expressions.push_back(BindExpression(expr->Copy()));
+		executor.AddExpression(*bound_expressions.back());
+	}
+}
+
 unique_ptr<Expression> BoundIndex::BindExpression(unique_ptr<Expression> root_expr) {
 	ExpressionIterator::VisitExpressionMutable<BoundColumnRefExpression>(
 	    root_expr, [&](BoundColumnRefExpression &bound_colref, unique_ptr<Expression> &expr) {
