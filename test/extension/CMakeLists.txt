@@ -94,7 +94,7 @@ target_compile_definitions(
   PRIVATE DUCKDB_EXTENSION_NAME=cpp_api_demo DUCKDB_CPP_API_LOADABLE
           DUCKDB_EXTENSION_API_VERSION_UNSTABLE=${DUCKDB_NORMALIZED_VERSION})
 target_include_directories(cpp_api_demo_loadable_extension
-                           PRIVATE ${CMAKE_SOURCE_DIR}/tools/cpp)
+                           PRIVATE ${PROJECT_SOURCE_DIR}/tools/cpp)
 target_link_libraries(cpp_api_demo_loadable_extension duckdb_cpp_api_loadable)
 
 # Same, but its entrypoint throws: covers the error slot aborting a load.
@@ -111,7 +111,7 @@ target_compile_definitions(
   PRIVATE DUCKDB_EXTENSION_NAME=cpp_api_demo_fail DUCKDB_CPP_API_LOADABLE
           DUCKDB_EXTENSION_API_VERSION_UNSTABLE=${DUCKDB_NORMALIZED_VERSION})
 target_include_directories(cpp_api_demo_fail_loadable_extension
-                           PRIVATE ${CMAKE_SOURCE_DIR}/tools/cpp)
+                           PRIVATE ${PROJECT_SOURCE_DIR}/tools/cpp)
 target_link_libraries(cpp_api_demo_fail_loadable_extension
                       duckdb_cpp_api_loadable)
 
