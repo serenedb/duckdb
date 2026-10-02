@@ -19,6 +19,7 @@ unique_ptr<CreateInfo> CreateSequenceInfo::Copy() const {
 	result->cache = cache;
 	result->last_value = last_value;
 	result->recorded_start = recorded_start;
+	result->owned_by = owned_by;
 	return std::move(result);
 }
 

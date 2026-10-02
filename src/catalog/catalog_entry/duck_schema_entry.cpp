@@ -339,7 +339,20 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::AddEntry(CatalogTransaction transact
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateSequence(CatalogTransaction transaction, CreateSequenceInfo &info) {
 	auto sequence = make_uniq<SequenceCatalogEntry>(catalog, *this, info);
-	return AddEntry(transaction, std::move(sequence), info.on_conflict);
+	auto result = AddEntry(transaction, std::move(sequence), info.on_conflict);
+	if (result && !info.owned_by.empty()) {
+		ChangeOwnershipInfo ownership(CatalogType::SEQUENCE_ENTRY, catalog.GetName(), name, result->name, Identifier(),
+		                              Identifier(), OnEntryNotFound::THROW_EXCEPTION);
+		ownership.owner_path = info.owned_by;
+		if (catalog.Compatibility() != SqlCompatibility::POSTGRES) {
+			auto owner =
+			    QualifiedName(vector<Identifier>(info.owned_by.begin(), info.owned_by.end() - 1), info.owned_by.back());
+			ownership.owner_schema = owner.Schema().empty() ? name : owner.Schema();
+			ownership.owner_name = owner.Name();
+		}
+		Alter(transaction, ownership);
+	}
+	return result;
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateType(CatalogTransaction transaction, CreateTypeInfo &info) {
@@ -474,7 +487,8 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 
 	auto &set = GetCatalogSet(type);
 	if (info.type == AlterType::CHANGE_OWNERSHIP) {
-		if (!set.AlterOwnership(transaction, info.Cast<ChangeOwnershipInfo>())) {
+		if (!set.AlterEntry(transaction, info.GetQualifiedName().Name(), info) ||
+		    !set.AlterOwnership(transaction, info.Cast<ChangeOwnershipInfo>())) {
 			throw CatalogException("Couldn't change ownership!");
 		}
 	} else {

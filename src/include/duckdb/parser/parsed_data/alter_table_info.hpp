@@ -36,6 +36,7 @@ struct ChangeOwnershipInfo : public AlterInfo {
 
 	Identifier owner_schema;
 	Identifier owner_name;
+	vector<Identifier> owner_path;
 
 public:
 	CatalogType GetCatalogType() const override;

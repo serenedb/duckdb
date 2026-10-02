@@ -10,6 +10,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_trigger_info.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
@@ -467,6 +468,29 @@ void WriteCatalogEntries(WriteAheadLog &log, DuckCatalog &catalog) {
 			break;
 		default:
 			throw InternalException("Unrecognized catalog type in WriteCatalogEntries");
+		}
+	}
+	CatalogTransaction committed(catalog.GetDatabase(), TRANSACTION_ID_START - 1, TRANSACTION_ID_START - 1);
+	auto &dependencies = *catalog.GetDependencyManager();
+	for (auto &entry_ref : entries) {
+		auto &owner = entry_ref.get();
+		if (owner.type != CatalogType::TABLE_ENTRY && owner.type != CatalogType::SEQUENCE_ENTRY) {
+			continue;
+		}
+		auto &declared = owner.Cast<StandardEntry>().dependencies;
+		for (auto &owned_ref : dependencies.OwnedEntries(committed, owner)) {
+			auto &owned = owned_ref.get();
+			const auto implied =
+			    std::any_of(declared.Set().begin(), declared.Set().end(), [&](const LogicalDependency &dep) {
+				    return dep.owned_by && dep.entry.type == owned.type && dep.entry.name == owned.name &&
+				           dep.entry.schema == owned.ParentSchemaName();
+			    });
+			if (implied) {
+				continue;
+			}
+			ChangeOwnershipInfo ownership(owned.type, catalog.GetName(), owned.ParentSchemaName(), owned.name,
+			                              owner.ParentSchemaName(), owner.name, OnEntryNotFound::THROW_EXCEPTION);
+			log.WriteAlter(owned, ownership);
 		}
 	}
 }
