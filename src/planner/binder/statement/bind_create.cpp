@@ -599,6 +599,9 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			    });
 			try {
 				auto bound = dummy_binder->Bind(*query_node);
+				if (should_create_dependencies && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+					ViewColumnDependencies(catalog, dependencies).VisitOperator(*bound.plan);
+				}
 
 				// Validate declared return types against actual query output.
 				auto &declared = function->return_types;
