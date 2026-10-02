@@ -15,6 +15,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
+#include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/catalog/dependency_catalog_set.hpp"
 
 #include "duckdb/common/printer.hpp"
@@ -840,6 +841,23 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			case AlterTableType::RENAME_CONSTRAINT:
 			case AlterTableType::DROP_CONSTRAINT: {
 				disallow_alter = false;
+				break;
+			}
+			case AlterTableType::SET_NOT_NULL:
+			case AlterTableType::DROP_NOT_NULL: {
+				if (compatibility == SqlCompatibility::POSTGRES) {
+					disallow_alter = false;
+				}
+				break;
+			}
+			case AlterTableType::ADD_CONSTRAINT: {
+				auto &constraint = *alter_table.Cast<AddConstraintInfo>().constraint;
+				const bool primary_key =
+				    constraint.type == ConstraintType::UNIQUE && constraint.Cast<UniqueConstraint>().IsPrimaryKey();
+				if (compatibility == SqlCompatibility::POSTGRES &&
+				    (!primary_key || dep.EntryInfo().type != CatalogType::INDEX_ENTRY)) {
+					disallow_alter = false;
+				}
 				break;
 			}
 			default:
