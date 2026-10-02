@@ -152,7 +152,11 @@ BoundStatement Binder::Bind(ExportStatement &stmt) {
 	result.names = {"Success"};
 
 	// bind copy options
+	const bool header_given = stmt.info->parsed_options.count("header") || stmt.info->options.count("header");
 	BindCopyOptions(*stmt.info);
+	if (!header_given && stmt.info->format == "csv") {
+		stmt.info->options["header"] = {Value::INTEGER(1)};
+	}
 
 	// lookup the format in the catalog
 	auto &copy_function = Catalog::GetEntry<CopyFunctionCatalogEntry>(
@@ -167,8 +171,12 @@ BoundStatement Binder::Bind(ExportStatement &stmt) {
 	catalog_entry_vector_t tables;
 	auto schemas = Catalog::GetSchemas(context, catalog);
 	for (auto &schema : schemas) {
+		auto &schema_catalog = schema.get().ParentCatalog();
+		if (schema_catalog.IsSystemCatalog() || schema_catalog.IsTemporaryCatalog()) {
+			continue;
+		}
 		schema.get().Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
-			if (entry.type == CatalogType::TABLE_ENTRY) {
+			if (entry.type == CatalogType::TABLE_ENTRY && !entry.internal) {
 				tables.push_back(entry.Cast<TableCatalogEntry>());
 			}
 		});
@@ -237,7 +245,9 @@ BoundStatement Binder::Bind(ExportStatement &stmt) {
 			}
 		}
 		for (auto &col : table.GetColumns().Physical()) {
-			select_list.emplace_back(std::make_pair(col.Name(), col.Type()));
+			if (!col.Generated()) {
+				select_list.emplace_back(std::make_pair(col.Name(), col.Type()));
+			}
 		}
 
 		ExportedTableData exported_data;
