@@ -101,6 +101,8 @@ struct StatementProperties {
 		const ViewCatalogEntry *view = nullptr;
 		idx_t begin = 0;
 		idx_t end = 0;
+		idx_t resolved_begin = 0;
+		idx_t resolved_end = 0;
 	};
 
 	//! The set of databases this statement will read from
