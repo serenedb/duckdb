@@ -73,8 +73,7 @@ public:
 	//! drop them. Safe because the checkpoint holds the exclusive checkpoint lock while it runs.
 	void RefreshCheckpointSnapshot(DuckTransaction &transaction);
 
-	//! Byte offset of the WAL entry currently being replayed (0 when not replaying). Unbound-index buffering
-	//! reads it to stamp replay ranges so already-durable ops are skipped at bind time.
+	//! Byte offset of the WAL entry currently being replayed (0 when not replaying).
 	idx_t GetReplayCommitOffset() const {
 		return replay_commit_offset;
 	}
