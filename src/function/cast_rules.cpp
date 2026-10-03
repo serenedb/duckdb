@@ -288,6 +288,15 @@ static int64_t ImplicitCastTimestampNS(const LogicalType &to) {
 	}
 }
 
+static int64_t ImplicitCastTimestampTZNS(const LogicalType &to) {
+	switch (to.id()) {
+	case LogicalTypeId::TIMESTAMP_TZ:
+		return TargetTypeCost(to);
+	default:
+		return -1;
+	}
+}
+
 static int64_t ImplicitCastTimestamp(const LogicalType &to) {
 	switch (to.id()) {
 	case LogicalTypeId::TIMESTAMP_NS:
@@ -656,6 +665,8 @@ int64_t CastRules::ImplicitCast(const LogicalType &from, const LogicalType &to) 
 		return ImplicitCastTimestampMS(to);
 	case LogicalTypeId::TIMESTAMP_NS:
 		return ImplicitCastTimestampNS(to);
+	case LogicalTypeId::TIMESTAMP_TZ_NS:
+		return ImplicitCastTimestampTZNS(to);
 	case LogicalTypeId::TIMESTAMP:
 		return ImplicitCastTimestamp(to);
 	case LogicalTypeId::BIGNUM:
