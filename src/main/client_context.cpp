@@ -324,9 +324,11 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatement(ClientC
                                                                          const QueryParameters &parameters) {
 	// check if any client context state could request a rebind
 	bool can_request_rebind = false;
-	for (auto &state : registered_state->States()) {
-		if (state->CanRequestRebind()) {
-			can_request_rebind = true;
+	if (statement->type != StatementType::LOGICAL_PLAN_STATEMENT) {
+		for (auto &state : registered_state->States()) {
+			if (state->CanRequestRebind()) {
+				can_request_rebind = true;
+			}
 		}
 	}
 	if (can_request_rebind) {
