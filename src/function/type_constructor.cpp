@@ -48,14 +48,16 @@ namespace {
 
 //! The type an argument is matched against. A modifier is always a constant, so an integer one matches as an
 //! integer literal exactly as it would in a function call - that is what lets DECIMAL(10) bind to a UTINYINT
-//! parameter, as the literal is known to fit. Unlike ExpressionBinder::GetExpressionReturnType this does not treat
-//! strings as literals: a string literal is implicitly castable to anything, which would let DECIMAL('32') through.
+//! parameter, as the literal is known to fit.
 //! Only overload matching uses this; errors report the value's own type.
 LogicalType MatchType(const TypeArgument &arg) {
 	auto &value = arg.GetValue();
 	auto &type = value.type();
 	if (type.IsIntegral() && !value.IsNull()) {
 		return LogicalType::INTEGER_LITERAL(value);
+	}
+	if (type.id() == LogicalTypeId::VARCHAR && !value.IsNull()) {
+		return LogicalType(LogicalTypeId::STRING_LITERAL);
 	}
 	return type;
 }
@@ -118,10 +120,13 @@ string ArgumentName(const Identifier &name, idx_t position) {
 //! Cast a modifier to the type its parameter declares. Overload selection already established the cast is possible.
 Value CastArgument(const Identifier &type_name, const string &arg_name, const Value &value, const LogicalType &target,
                    QueryLocation location) {
+	if (target.id() == LogicalTypeId::ANY) {
+		return value;
+	}
 	if (value.IsNull()) {
 		throw BinderException(location, "Type parameter %s for type %s cannot be NULL", arg_name, type_name);
 	}
-	if (target.id() == LogicalTypeId::ANY || value.type() == target) {
+	if (value.type() == target) {
 		return value;
 	}
 	string error;

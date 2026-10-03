@@ -141,7 +141,7 @@ SELECT '0.1'::DECIMAL(3, 4);
 statement error
 SELECT '0.1'::DECIMAL('hello');
 ----
-<REGEX>:Binder Error.*does not accept type parameters \(VARCHAR\).*
+<REGEX>:Binder Error.*Type parameter "width" for type "DECIMAL" must be of type UTINYINT, but hello could not be converted.*
 
 # ...or negative numbers - these do not fit the UTINYINT width parameter, so no definition matches
 statement error
@@ -176,20 +176,20 @@ SELECT 1::DECIMAL(3.0);
 ----
 <REGEX>:Binder Error.*does not accept type parameters \(DECIMAL\(2,1\)\).*
 
-statement error
+query I
 SELECT 1::DECIMAL('32');
 ----
-<REGEX>:Binder Error.*does not accept type parameters \(VARCHAR\).*
+1
 
 statement error
 SELECT 1::DECIMAL(18, 2.5);
 ----
 <REGEX>:Binder Error.*does not accept type parameters \(INTEGER, DECIMAL\(2,1\)\).*
 
-statement error
+query I
 SELECT 1::DECIMAL(18, '2');
 ----
-<REGEX>:Binder Error.*does not accept type parameters \(INTEGER, VARCHAR\).*
+1.00
 
 statement error
 SELECT 1::DECIMAL(TRUE);

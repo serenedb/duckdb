@@ -17,14 +17,12 @@ SELECT NULL::DECIMAL(10, 2, 3);
 statement error
 SELECT NULL::DECIMAL('ten');
 ----
-<REGEX>:Binder Error.*Type \"DECIMAL\" does not accept type parameters \(VARCHAR\).*
+<REGEX>:Binder Error.*Type parameter \"width\" for type \"DECIMAL\" must be of type UTINYINT, but ten could not be converted.*
 
-# the candidate overloads are listed in the error
-
-statement error
-SELECT NULL::DECIMAL('ten');
+query I
+SELECT typeof(NULL::DECIMAL('12', '3'));
 ----
-<REGEX>:.*Candidate definitions.*DECIMAL\(width UTINYINT, scale UTINYINT := 0\).*
+DECIMAL(12,3)
 
 # a NULL modifier is rejected before the constructor runs
 
