@@ -103,6 +103,7 @@ BoundTableFunction::BoundTableFunction(shared_ptr<const TableFunction> function_
 	projection_expression_pushdown = function.projection_expression_pushdown;
 	get_multi_file_reader = function.get_multi_file_reader;
 	supports_pushdown_type = function.supports_pushdown_type;
+	supports_pushdown_filter = function.supports_pushdown_filter;
 	supports_pushdown_extract = function.supports_pushdown_extract;
 	is_repeatable = function.is_repeatable;
 	get_partition_info = function.get_partition_info;
