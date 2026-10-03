@@ -295,8 +295,15 @@ void Binder::BindCreateSchema(CreateSchemaInfo &info) {
 		throw BinderException("Temporary schemas are not supported");
 	}
 	// the qualified name carries the dotted path with the new schema as the last component; resolve its leading
-	// component into a catalog (prepending the default catalog when it is a schema)
-	info.SetQualifiedName(ResolveCatalog(context, info.GetQualifiedName()));
+	// component into a catalog (prepending the default catalog when it is a schema). A lone name is the new schema
+	// itself, never a catalog.
+	auto &path = info.GetQualifiedName().Path();
+	if (path.size() == 2) {
+		info.SetQualifiedName(
+		    QualifiedName(vector<Identifier> {DatabaseManager::GetDefaultDatabase(context), path[0]}, Identifier()));
+	} else {
+		info.SetQualifiedName(ResolveCatalog(context, info.GetQualifiedName()));
+	}
 
 	auto &resolved_catalog = Catalog::GetCatalog(context, info.SchemaCatalog());
 	auto supports_create_schema = resolved_catalog.SupportsCreateSchema(info);
