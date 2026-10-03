@@ -126,6 +126,18 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 			auto &column_idx = op.GetColumnIndex(filter_idx);
 			auto column_id = column_idx.GetPrimaryIndex();
 			if (!op.function.supports_pushdown_type(*op.bind_data, column_id)) {
+				// column_ids is already pruned to only the columns this scan reads -- the
+				// filter column plus the query's outputs (e.g. a delete/update row-id). An
+				// empty projection_ids means "emit all of them". Declining a filter appends
+				// its column to projection_ids below; leaving it empty would make that append
+				// narrow the output to only the filter column, dropping the row-id. Emit the
+				// pruned set explicitly first so every output survives (and so the Filter node
+				// built from projection_ids below gets its output types).
+				if (projection_ids.empty()) {
+					for (idx_t i = 0; i < column_ids.size(); i++) {
+						projection_ids.push_back(ProjectionIndex(i));
+					}
+				}
 				Identifier column_name;
 				LogicalType column_type;
 				if (IsVirtualColumn(column_id)) {
