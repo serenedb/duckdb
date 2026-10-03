@@ -309,6 +309,10 @@ DuckTransactionManager::DurableSnapshot DuckTransactionManager::GetDurableSnapsh
 			// not committed, or durable already - its own thread has not removed it yet
 			continue;
 		}
+		if (active_transaction->decision_log &&
+		    active_transaction->decision_log->GetDurableOffset() >= active_transaction->wal_sync_offset) {
+			continue;
+		}
 		if (!first_unsynced || active_transaction->commit_id < first_unsynced->commit_id) {
 			first_unsynced = active_transaction.get();
 		}
@@ -402,67 +406,169 @@ void DuckTransactionManager::CheckTruncate(DuckTransaction &transaction, DataTab
 }
 
 ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Transaction &transaction_p,
-                                                     WriteAheadLog &catalog_log, const hugeint_t &txid,
+                                                     AttachedDatabase &catalog_owner, const hugeint_t &txid,
                                                      vector<pair<idx_t, idx_t>> &participants) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
-	vector<SequenceValue> sequences;
-	if (db.GetCatalog().UsesCatalogLog() && transaction.HasLoggedSequenceUsage()) {
-		try {
-			sequences = transaction.ReserveSequenceUsage(catalog_log);
-		} catch (std::exception &ex) {
-			return ErrorData(ex);
-		}
-		if (!transaction.ShouldWriteToWAL(db)) {
-			transaction.prepared = make_uniq<DuckTransaction::PreparedCommit>();
-			transaction.prepared->sequences = std::move(sequences);
-			return ErrorData();
-		}
-	}
-	if (!transaction.ChangesMade() || !db.HasStorageManager() || !transaction.ShouldWriteToWAL(db)) {
+	const bool logs_sequences = db.GetCatalog().UsesCatalogLog() && transaction.HasLoggedSequenceUsage();
+	const bool writes = transaction.ChangesMade() && db.HasStorageManager() && transaction.ShouldWriteToWAL(db);
+	if (!writes && !logs_sequences) {
 		return ErrorData();
 	}
+	optional_ptr<BlockManager> block_manager;
+	if (db.HasStorageManager()) {
+		block_manager = db.GetStorageManager().GetBlockManager();
+	}
+	transaction.prepared = make_uniq<DuckTransaction::PreparedCommit>(block_manager);
+	if (!writes) {
+		return ErrorData();
+	}
+	auto &prepared = *transaction.prepared;
 	auto error = transaction.PreFlushOptimisticBlocks(db);
 	if (error.HasError()) {
 		return error;
 	}
-	auto prepared = make_uniq<DuckTransaction::PreparedCommit>();
-	prepared->sequences = std::move(sequences);
 	auto &storage_manager = db.GetStorageManager();
-	if (&catalog_log.GetStorageManager() != &storage_manager) {
-		prepared->commit_lock = storage_manager.GetCommitLock();
+	if (&catalog_owner != &db) {
+		prepared.commit_lock = storage_manager.GetCommitLock();
 	}
-	error = transaction.AppendLocalStorage(context, db, prepared->commit_state);
+	error = transaction.AppendLocalStorage(context, db, prepared.commit_state);
 	if (!error.HasError()) {
-		error = transaction.WriteToWAL(context, db, prepared->commit_state, catalog_log);
+		error = transaction.WriteToWAL(context, db, prepared.commit_state, prepared.catalog_run);
 	}
 	if (error.HasError()) {
 		return error;
 	}
-	if (prepared->commit_state) {
+	if (prepared.commit_state) {
 		try {
-			auto prepared_offset = prepared->commit_state->PrepareCommit(txid);
-			if (prepared_offset > 0) {
-				participants.emplace_back(db.oid, storage_manager.GetBlockManager().GetCheckpointIteration());
-				storage_manager.GetWAL()->SyncUpTo(prepared_offset);
-			}
+			prepared.prepared_offset = prepared.commit_state->PrepareCommit(txid);
 		} catch (std::exception &ex) {
 			return ErrorData(ex);
 		}
+		if (prepared.prepared_offset > 0) {
+			participants.emplace_back(db.oid, storage_manager.GetWAL()->GetCheckpointIteration());
+		}
 	}
-	transaction.prepared = std::move(prepared);
+	return ErrorData();
+}
+
+ErrorData DuckTransactionManager::SyncPreparedTransaction(Transaction &transaction_p) {
+	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	if (!transaction.prepared || transaction.prepared->prepared_offset == 0) {
+		return ErrorData();
+	}
+	try {
+		db.GetStorageManager().GetWAL()->SyncUpTo(transaction.prepared->prepared_offset);
+	} catch (std::exception &ex) {
+		return ErrorData(ex);
+	}
+	return ErrorData();
+}
+
+ErrorData DuckTransactionManager::ApplyPreparedTransaction(ClientContext &context, Transaction &transaction_p) {
+	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	if (!transaction.prepared) {
+		return ErrorData();
+	}
+	lock_guard<mutex> t_lock(transaction_lock);
+	CommitInfo info;
+	info.commit_id = GetCommitTimestamp();
+	info.active_transactions = HasOtherTransactions(transaction) ? ActiveTransactionState::OTHER_TRANSACTIONS
+	                                                             : ActiveTransactionState::NO_OTHER_TRANSACTIONS;
+	auto error = transaction.ApplyPrepared(db, info);
+	if (error.HasError()) {
+		transaction.commit_id = 0;
+		return error;
+	}
+	if (!transaction.prepared->applied) {
+		return ErrorData();
+	}
+	DUCKDB_LOG(context, TransactionLogType, db, "Commit", info.commit_id);
+	last_commit = info.commit_id;
+	D_ASSERT(info.commit_id >= durable_bound);
+	transaction.wal_sync_offset = NumericLimits<idx_t>::Maximum();
+	transaction.catalog_version_before_commit = last_committed_version;
+	if (transaction.catalog_version >= TRANSACTION_ID_START) {
+		transaction.catalog_version = ++last_committed_version;
+	}
+	return ErrorData();
+}
+
+void DuckTransactionManager::RevertPreparedTransaction(Transaction &transaction_p) {
+	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	if (!transaction.prepared || !transaction.prepared->applied) {
+		return;
+	}
+	lock_guard<mutex> t_lock(transaction_lock);
+	try {
+		transaction.RevertPrepared();
+	} catch (std::exception &ex) {
+		ValidChecker::Invalidate(db, "Failed to revert a prepared commit: " + ErrorData(ex).RawMessage());
+	}
+	if (transaction.catalog_version == last_committed_version &&
+	    transaction.catalog_version > transaction.catalog_version_before_commit) {
+		last_committed_version = transaction.catalog_version_before_commit;
+	}
+	transaction.commit_id = 0;
+	transaction.wal_sync_offset = 0;
+}
+
+void DuckTransactionManager::DecidePreparedTransaction(Transaction &transaction_p,
+                                                       shared_ptr<WriteAheadLog> decision_log, idx_t decision_offset) {
+	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	if (!transaction.prepared || !transaction.prepared->applied) {
+		return;
+	}
+	lock_guard<mutex> t_lock(transaction_lock);
+	transaction.decision_log = std::move(decision_log);
+	transaction.wal_sync_offset = decision_offset;
+}
+
+ErrorData DuckTransactionManager::FinishPreparedTransaction(ClientContext &context, Transaction &transaction_p) {
+	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	D_ASSERT(transaction.prepared);
+	for (auto &value : transaction.prepared->sequences) {
+		value.entry->MarkDurable(value);
+	}
+	auto undo_properties = transaction.GetUndoProperties();
+	unique_ptr<DuckTransaction::PreparedCommit> prepared;
+	{
+		unique_lock<mutex> t_lock(transaction_lock);
+		if (transaction.prepared->applied) {
+			transaction.FinishPrepared();
+			if (context.registered_state && db.HasStorageManager()) {
+				auto &storage_manager = db.GetStorageManager();
+				idx_t wal_generation = storage_manager.GetBlockManager().GetCheckpointIteration();
+				idx_t wal_end_offset = 0;
+				if (transaction.prepared->commit_lock.owns_lock()) {
+					if (auto wal = storage_manager.GetWAL()) {
+						wal_generation = wal->GetCheckpointIteration();
+						wal_end_offset = storage_manager.GetWALSize();
+					}
+				}
+				for (auto &state : context.registered_state->States()) {
+					state->TransactionPreCheckpoint(db, context, wal_generation, wal_end_offset);
+				}
+			}
+		}
+		transaction.wal_sync_offset = 0;
+		transaction.decision_log.reset();
+		OnCommitCheckpointDecision(CheckpointDecision("the commit is prepared"), transaction);
+		bool store_transaction =
+		    undo_properties.has_updates || undo_properties.has_index_deletes || undo_properties.has_catalog_changes;
+		prepared = std::move(transaction.prepared);
+		QueueCleanup(RemoveTransaction(transaction, store_transaction, CreateCleanupInfo()));
+	}
+	prepared.reset();
+	CleanupTransactions();
+	DatabaseManager::Get(db.GetDatabase()).DrainPendingTeardowns();
 	return ErrorData();
 }
 
 ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Transaction &transaction_p) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
-	auto prepared = std::move(transaction.prepared);
 	// flush the transaction-local blocks of bulk appends before taking any commit locks (see PreFlushOptimisticBlocks)
-	ErrorData error = prepared ? ErrorData() : transaction.PreFlushOptimisticBlocks(db);
-	if (prepared) {
-		for (auto &value : prepared->sequences) {
-			value.entry->MarkDurable(value);
-		}
-	} else if (!error.HasError() && db.GetCatalog().UsesCatalogLog() && transaction.HasLoggedSequenceUsage()) {
+	ErrorData error = transaction.PreFlushOptimisticBlocks(db);
+	if (!error.HasError() && db.GetCatalog().UsesCatalogLog() && transaction.HasLoggedSequenceUsage()) {
 		try {
 			transaction.CoverSequenceUsage();
 		} catch (std::exception &ex) {
@@ -482,19 +588,13 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	// check if we can checkpoint
 	unique_ptr<StorageLockKey> lock;
 	auto undo_properties = transaction.GetUndoProperties();
-	auto checkpoint_decision =
-	    prepared ? CheckpointDecision("the commit is prepared") : CanCheckpoint(transaction, lock, undo_properties);
+	auto checkpoint_decision = CanCheckpoint(transaction, lock, undo_properties);
 	// orders this commit's append and commit or revert against checkpoints; read-only transactions commit without it
 	unique_lock<mutex> held_commit_lock;
 	unique_ptr<StorageCommitState> commit_state;
 	optional_ptr<WriteAheadLog> commit_wal;
 	bool skip_wal_write_due_to_checkpoint = false;
 	bool wal_written = false;
-	if (prepared) {
-		held_commit_lock = std::move(prepared->commit_lock);
-		commit_state = std::move(prepared->commit_state);
-		wal_written = commit_state != nullptr;
-	}
 	if (checkpoint_decision.can_checkpoint) {
 		// we can perform an automatic checkpoint
 		// we have two options:
@@ -508,7 +608,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 			skip_wal_write_due_to_checkpoint = true;
 		}
 	}
-	bool has_changes = !prepared && !error.HasError() && transaction.ChangesMade() && db.HasStorageManager();
+	bool has_changes = !error.HasError() && transaction.ChangesMade() && db.HasStorageManager();
 	bool should_write_to_wal = has_changes && transaction.ShouldWriteToWAL(db);
 	if (has_changes) {
 		// appending the local storage and writing the WAL can take long: other transactions run meanwhile
@@ -670,7 +770,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		if (synced) {
 			// advance the durable bound over every commit the sync covered
 			for (auto &active_transaction : active_transactions) {
-				if (active_transaction->wal_sync_offset != 0 &&
+				if (active_transaction->wal_sync_offset != 0 && !active_transaction->decision_log &&
 				    active_transaction->wal_sync_offset <= info.wal_sync_offset &&
 				    active_transaction->commit_id >= durable_bound) {
 					durable_bound = VisibilityBound::Through(active_transaction->commit_id);
@@ -726,19 +826,21 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 
 void DuckTransactionManager::RollbackTransaction(Transaction &transaction_p) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
-	transaction.prepared.reset();
 
 	DUCKDB_LOG(db.GetDatabase(), TransactionLogType, db, "Rollback", transaction.GetTransactionId());
 
 	ErrorData error;
+	unique_ptr<DuckTransaction::PreparedCommit> prepared;
 	{
 		// Obtain the transaction lock and roll back.
 		lock_guard<mutex> t_lock(transaction_lock);
 		error = transaction.Rollback();
+		prepared = std::move(transaction.prepared);
 
 		// Remove the transaction from the list of active transactions and gather cleanup information.
 		QueueCleanup(RemoveTransaction(transaction, CreateCleanupInfo()));
 	}
+	prepared.reset();
 
 	CleanupTransactions();
 

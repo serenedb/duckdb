@@ -43,8 +43,14 @@ public:
 	Transaction &StartTransaction(ClientContext &context) override;
 	//! Commit the given transaction
 	ErrorData CommitTransaction(ClientContext &context, Transaction &transaction) override;
-	ErrorData PrepareTransaction(ClientContext &context, Transaction &transaction, WriteAheadLog &catalog_log,
+	ErrorData PrepareTransaction(ClientContext &context, Transaction &transaction, AttachedDatabase &catalog_owner,
 	                             const hugeint_t &txid, vector<pair<idx_t, idx_t>> &participants);
+	ErrorData SyncPreparedTransaction(Transaction &transaction);
+	ErrorData ApplyPreparedTransaction(ClientContext &context, Transaction &transaction);
+	void RevertPreparedTransaction(Transaction &transaction);
+	void DecidePreparedTransaction(Transaction &transaction, shared_ptr<WriteAheadLog> decision_log,
+	                               idx_t decision_offset);
+	ErrorData FinishPreparedTransaction(ClientContext &context, Transaction &transaction);
 	//! Rollback the given transaction
 	void RollbackTransaction(Transaction &transaction) override;
 

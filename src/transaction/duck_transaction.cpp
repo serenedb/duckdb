@@ -50,6 +50,12 @@ SnapshotView DuckTransaction::GetSnapshotView() const {
 DuckTransaction::~DuckTransaction() {
 }
 
+DuckTransaction::PreparedCommit::PreparedCommit(optional_ptr<BlockManager> block_manager) : drop_state(block_manager) {
+}
+
+DuckTransaction::PreparedCommit::~PreparedCommit() {
+}
+
 DuckTransaction &DuckTransaction::Get(ClientContext &context, AttachedDatabase &db) {
 	return DuckTransaction::Get(context, db.GetCatalog());
 }
@@ -186,6 +192,12 @@ void DuckTransaction::CoverSequenceUsage() {
 
 vector<SequenceValue> DuckTransaction::ReserveSequenceUsage(WriteAheadLog &catalog_log) {
 	vector<SequenceValue> durable_after;
+	for (auto &usage : sequence_usage) {
+		auto &value = usage.second.get();
+		catalog_log.WriteUseCatalog(manager.GetDB().oid);
+		catalog_log.WriteSequenceValue(value);
+		durable_after.push_back(value);
+	}
 	for (auto &usage : logged_sequence_usage) {
 		usage.first.get().ReserveInCommit(catalog_log, usage.second, durable_after);
 	}
@@ -289,15 +301,15 @@ ErrorData DuckTransaction::AppendLocalStorage(ClientContext &context, AttachedDa
 
 ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &db,
                                       unique_ptr<StorageCommitState> &commit_state,
-                                      optional_ptr<WriteAheadLog> catalog_log) noexcept {
+                                      optional_ptr<vector<CatalogRunEntry>> catalog_run) noexcept {
 	ErrorData error_data;
 	try {
 		// the append may have consumed the last local change: do not ask ShouldWriteToWAL again here
-		D_ASSERT(commit_state || catalog_log);
+		D_ASSERT(commit_state || catalog_run);
 		auto wal = db.GetStorageManager().GetWAL();
 		auto &profiler = *context.client_data->profiler;
 		auto wal_timer = profiler.StartTimer<MetricStorageWriteToWALLatency>();
-		undo_buffer.WriteToWAL(wal, commit_state.get(), catalog_log);
+		undo_buffer.WriteToWAL(wal, commit_state.get(), catalog_run);
 		wal_timer.EndTimer();
 
 		// no FileSync is required here: any optimistically written blocks that the WAL references
@@ -378,6 +390,54 @@ ErrorData DuckTransaction::Commit(AttachedDatabase &db, CommitInfo &commit_info,
 		                             error_data.RawMessage());
 	}
 	return error_data;
+}
+
+ErrorData DuckTransaction::ApplyPrepared(AttachedDatabase &db, CommitInfo &commit_info) noexcept {
+	D_ASSERT(prepared);
+	this->commit_id = commit_info.commit_id;
+	if (!ChangesMade()) {
+		return ErrorData();
+	}
+	commit_info.drop_state = &prepared->drop_state;
+
+	ErrorData error_data;
+	try {
+		storage->Commit(prepared->commit_state.get());
+		undo_buffer.Commit(prepared->iterator_state, commit_info);
+		if (!db.IsSystem() && !db.IsTemporary() && Settings::Get<DebugForceCommitFailureSetting>(db.GetDatabase())) {
+			throw InvalidInputException("Forced commit failure (debug_force_commit_failure)");
+		}
+		prepared->applied = true;
+		return ErrorData();
+	} catch (std::exception &ex) {
+		error_data = ErrorData(ex);
+	}
+
+	try {
+		undo_buffer.RevertCommit(prepared->iterator_state, GetTransactionId());
+	} catch (std::exception &ex) {
+		ValidChecker::Invalidate(db.GetDatabase(),
+		                         "Failed to revert transaction commit, database is in an undefined state. "
+		                         "Original commit error: " +
+		                             error_data.RawMessage() + ". RevertCommit error: " + ErrorData(ex).RawMessage());
+	} catch (...) {
+		ValidChecker::Invalidate(db.GetDatabase(),
+		                         "Failed to revert transaction commit (unknown error), database is in an "
+		                         "undefined state. Original commit error: " +
+		                             error_data.RawMessage());
+	}
+	return error_data;
+}
+
+void DuckTransaction::RevertPrepared() {
+	D_ASSERT(prepared && prepared->applied);
+	undo_buffer.RevertCommit(prepared->iterator_state, GetTransactionId());
+	prepared->applied = false;
+}
+
+void DuckTransaction::FinishPrepared() {
+	D_ASSERT(prepared && prepared->applied);
+	prepared->drop_state.FinalizeCommit();
 }
 
 ErrorData DuckTransaction::Rollback() {
