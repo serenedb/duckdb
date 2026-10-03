@@ -13,6 +13,7 @@
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/transaction/undo_buffer.hpp"
+#include "duckdb/transaction/commit_state.hpp"
 #include "duckdb/common/enums/active_transaction_state.hpp"
 
 namespace duckdb {
@@ -50,6 +51,7 @@ public:
 	idx_t wal_sync_offset = 0;
 	//! The committed catalog version just before this commit published
 	idx_t catalog_version_before_commit = 0;
+	shared_ptr<WriteAheadLog> decision_log;
 
 	atomic<idx_t> catalog_version;
 
@@ -75,11 +77,14 @@ public:
 	                             unique_ptr<StorageCommitState> &commit_state) noexcept;
 	//! Writes the undo buffer to the WAL, with the commit state of AppendLocalStorage
 	ErrorData WriteToWAL(ClientContext &context, AttachedDatabase &db, unique_ptr<StorageCommitState> &commit_state,
-	                     optional_ptr<WriteAheadLog> catalog_log = nullptr) noexcept;
+	                     optional_ptr<vector<CatalogRunEntry>> catalog_run = nullptr) noexcept;
 	//! Commit the current transaction with the given commit identifier. Returns an error message if the transaction
 	//! commit failed, or an empty string if the commit was successful
 	ErrorData Commit(AttachedDatabase &db, CommitInfo &commit_info,
 	                 unique_ptr<StorageCommitState> commit_state) noexcept;
+	ErrorData ApplyPrepared(AttachedDatabase &db, CommitInfo &commit_info) noexcept;
+	void RevertPrepared();
+	void FinishPrepared();
 	//! Returns whether or not a commit of this transaction should trigger an automatic checkpoint
 	bool AutomaticCheckpoint(AttachedDatabase &db, const UndoBufferProperties &properties);
 
@@ -117,9 +122,17 @@ public:
 	}
 
 	struct PreparedCommit {
+		explicit PreparedCommit(optional_ptr<BlockManager> block_manager);
+		~PreparedCommit();
+
 		unique_lock<mutex> commit_lock;
 		unique_ptr<StorageCommitState> commit_state;
+		idx_t prepared_offset = 0;
+		vector<CatalogRunEntry> catalog_run;
 		vector<SequenceValue> sequences;
+		UndoBuffer::IteratorState iterator_state;
+		CommitDropState drop_state;
+		bool applied = false;
 	};
 	unique_ptr<PreparedCommit> prepared;
 

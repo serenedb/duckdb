@@ -30,8 +30,9 @@
 namespace duckdb {
 
 WALWriteState::WALWriteState(DuckTransaction &transaction_p, optional_ptr<WriteAheadLog> log,
-                             optional_ptr<StorageCommitState> commit_state, optional_ptr<WriteAheadLog> catalog_log)
-    : transaction(transaction_p), log(log), commit_state(commit_state), catalog_log(catalog_log),
+                             optional_ptr<StorageCommitState> commit_state,
+                             optional_ptr<vector<CatalogRunEntry>> catalog_run)
+    : transaction(transaction_p), log(log), commit_state(commit_state), catalog_run(catalog_run),
       current_table_entry(nullptr) {
 }
 
@@ -139,37 +140,43 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 		deserializer.End();
 	}
 	auto alter_info = parse_info ? &parse_info->Cast<AlterInfo>() : nullptr;
-	if (!catalog_log) {
-		WriteCatalogEntry(Log(), entry, alter_info);
+	if (!catalog_run) {
+		WriteCatalogEntry(Log(), entry, alter_info, true);
 		return;
 	}
-	if (!catalog_selected) {
-		catalog_log->WriteUseCatalog(transaction.manager.GetDB().oid);
-		catalog_selected = true;
-	}
-	WriteCatalogEntry(*catalog_log, entry, alter_info);
-	if (!log) {
-		return;
-	}
-	if (ChangesTableStorage(entry, alter_info)) {
-		if (entry.type == CatalogType::TABLE_ENTRY) {
-			SwitchTable(entry.Cast<DuckTableEntry>(), UndoFlags::CATALOG_ENTRY);
+	if (log) {
+		if (ChangesTableStorage(entry, alter_info)) {
+			if (entry.type == CatalogType::TABLE_ENTRY) {
+				SwitchTable(entry.Cast<DuckTableEntry>(), UndoFlags::CATALOG_ENTRY);
+			}
+			WriteCatalogEntry(*log, entry, alter_info, true);
+		} else {
+			auto index_table = IndexTableInfo(entry, alter_info);
+			if (index_table) {
+				log->WriteSetTable(QualifiedName(index_table->GetSchemaPath(), index_table->GetTableName()),
+				                   index_table->GetTableOid());
+				current_table_entry = nullptr;
+				WriteCatalogEntry(*log, entry, alter_info, true);
+			}
 		}
-		WriteCatalogEntry(*log, entry, alter_info);
+	}
+	catalog_run->emplace_back(entry, std::move(parse_info));
+}
+
+void WALWriteState::WriteCatalogRun(WriteAheadLog &catalog_log, idx_t catalog_oid, const vector<CatalogRunEntry> &run) {
+	if (run.empty()) {
 		return;
 	}
-	auto index_table = IndexTableInfo(entry, alter_info);
-	if (index_table) {
-		log->WriteSetTable(QualifiedName(index_table->GetSchemaPath(), index_table->GetTableName()),
-		                   index_table->GetTableOid());
-		current_table_entry = nullptr;
-		WriteCatalogEntry(*log, entry, alter_info);
+	catalog_log.WriteUseCatalog(catalog_oid);
+	for (auto &run_entry : run) {
+		auto alter_info = run_entry.alter_info ? &run_entry.alter_info->Cast<AlterInfo>() : nullptr;
+		WriteCatalogEntry(catalog_log, run_entry.entry, alter_info, false);
 	}
 }
 
-void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry, const AlterInfo *alter_info) {
+void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry, const AlterInfo *alter_info,
+                                      bool with_index_storage) {
 	auto &parent = entry.Parent();
-	const bool with_index_storage = &target != catalog_log.get();
 
 	switch (parent.type) {
 	case CatalogType::TRIGGER_ENTRY:

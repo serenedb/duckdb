@@ -83,6 +83,11 @@ idx_t WriteAheadLog::GetFlushedOffset() {
 	return requested_sync_offset;
 }
 
+idx_t WriteAheadLog::GetDurableOffset() {
+	lock_guard<mutex> guard(sync_lock);
+	return durable_offset;
+}
+
 void WriteAheadLog::Truncate(idx_t size) {
 	if (init_state == WALInitState::NO_WAL) {
 		// no WAL to truncate

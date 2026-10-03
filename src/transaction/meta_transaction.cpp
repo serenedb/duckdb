@@ -11,6 +11,8 @@
 #include "duckdb/storage/write_ahead_log.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
+#include "duckdb/transaction/wal_write_state.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/secret/secret_storage.hpp"
 
@@ -203,14 +205,22 @@ optional_ptr<Catalog> MetaTransaction::CatalogLogForCommit() {
 	return writer->GetCatalog();
 }
 
+static optional_ptr<DuckTransaction> PreparedParticipant(Transaction &transaction) {
+	if (!transaction.IsDuckTransaction()) {
+		return nullptr;
+	}
+	auto &duck_transaction = transaction.Cast<DuckTransaction>();
+	if (!duck_transaction.prepared) {
+		return nullptr;
+	}
+	return duck_transaction;
+}
+
 ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 	auto catalog_log_ref = catalog.CatalogLog();
 	auto &catalog_storage = catalog_log_ref->GetStorageManager();
-	auto catalog_lock = catalog_storage.GetCommitLock();
-	catalog_log_ref = catalog.CatalogLog();
-	auto &catalog_log = *catalog_log_ref;
-	auto &log_owner = catalog_storage.GetAttached().GetCatalog();
-	auto commit_state = catalog_storage.GenStorageCommitState(catalog_log);
+	auto &catalog_owner = catalog_storage.GetAttached();
+	auto &log_owner = catalog_owner.GetCatalog();
 	const auto txid = UUID::GenerateRandomUUID();
 	vector<pair<idx_t, idx_t>> prepared;
 	ErrorData error;
@@ -226,20 +236,91 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 			break;
 		}
 		participants.push_back(transaction_ref);
-		auto &transaction_manager = db.GetTransactionManager();
-		if (!transaction_manager.IsDuckTransactionManager()) {
-			continue;
+	}
+	std::sort(participants.begin(), participants.end(),
+	          [](const reference<TransactionReference> &a, const reference<TransactionReference> &b) {
+		          return a.get().transaction.manager.GetDB().oid < b.get().transaction.manager.GetDB().oid;
+	          });
+	auto rollback = [&]() {
+		for (auto &participant : participants) {
+			auto &transaction_ref = participant.get();
+			try {
+				transaction_ref.transaction.manager.RollbackTransaction(transaction_ref.transaction);
+			} catch (std::exception &ex) {
+				error.Merge(ErrorData(ex));
+			}
+			transaction_ref.state = TransactionState::ROLLED_BACK;
 		}
-		error = transaction_manager.Cast<DuckTransactionManager>().PrepareTransaction(
-		    context, transaction_ref.transaction, catalog_log, txid, prepared);
-		if (error.HasError()) {
-			break;
+	};
+	if (!error.HasError()) {
+		for (auto &participant : participants) {
+			auto &transaction = participant.get().transaction;
+			auto &transaction_manager = transaction.manager;
+			if (!transaction_manager.IsDuckTransactionManager()) {
+				continue;
+			}
+			error = transaction_manager.Cast<DuckTransactionManager>().PrepareTransaction(
+			    context, transaction, catalog_owner, txid, prepared);
+			if (error.HasError()) {
+				break;
+			}
+		}
+	}
+	if (!error.HasError()) {
+		for (auto &participant : participants) {
+			auto &transaction = participant.get().transaction;
+			if (!PreparedParticipant(transaction)) {
+				continue;
+			}
+			error = transaction.manager.Cast<DuckTransactionManager>().SyncPreparedTransaction(transaction);
+			if (error.HasError()) {
+				break;
+			}
+		}
+	}
+	if (error.HasError()) {
+		rollback();
+		return error;
+	}
+
+	auto catalog_lock = catalog_storage.GetCommitLock();
+	catalog_log_ref = catalog.CatalogLog();
+	auto &catalog_log = *catalog_log_ref;
+	auto commit_state = catalog_storage.GenStorageCommitState(catalog_log);
+	vector<reference<TransactionReference>> applied;
+	try {
+		log_owner.OnCatalogLogPrepared();
+	} catch (std::exception &ex) {
+		error = ErrorData(ex);
+	}
+	if (!error.HasError()) {
+		for (auto &participant : participants) {
+			auto &transaction = participant.get().transaction;
+			if (!PreparedParticipant(transaction)) {
+				continue;
+			}
+			error = transaction.manager.Cast<DuckTransactionManager>().ApplyPreparedTransaction(context, transaction);
+			if (error.HasError()) {
+				break;
+			}
+			applied.push_back(participant);
 		}
 	}
 	idx_t decision_offset = 0;
 	if (!error.HasError()) {
 		try {
-			log_owner.OnCatalogLogPrepared();
+			for (auto &participant : participants) {
+				auto &transaction = participant.get().transaction;
+				auto duck_transaction = PreparedParticipant(transaction);
+				if (!duck_transaction) {
+					continue;
+				}
+				auto &db = transaction.manager.GetDB();
+				WALWriteState::WriteCatalogRun(catalog_log, db.oid, duck_transaction->prepared->catalog_run);
+				if (db.GetCatalog().UsesCatalogLog() && duck_transaction->HasLoggedSequenceUsage()) {
+					duck_transaction->prepared->sequences = duck_transaction->ReserveSequenceUsage(catalog_log);
+				}
+			}
 			if (!prepared.empty()) {
 				catalog_log.WriteCommitPrepared(txid, prepared);
 			}
@@ -252,40 +333,50 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 		}
 	}
 	if (error.HasError()) {
-		commit_state->RevertCommit();
-		for (auto &participant : participants) {
-			auto &transaction_ref = participant.get();
-			try {
-				transaction_ref.transaction.manager.RollbackTransaction(transaction_ref.transaction);
-			} catch (std::exception &ex) {
-				error.Merge(ErrorData(ex));
-			}
-			transaction_ref.state = TransactionState::ROLLED_BACK;
+		for (idx_t i = applied.size(); i > 0; i--) {
+			auto &transaction = applied[i - 1].get().transaction;
+			transaction.manager.Cast<DuckTransactionManager>().RevertPreparedTransaction(transaction);
 		}
+		commit_state->RevertCommit();
+		rollback();
 		return error;
 	}
 	for (auto &participant : participants) {
-		auto &transaction = participant.get().transaction;
-		if (!transaction.IsDuckTransaction()) {
+		auto duck_transaction = PreparedParticipant(participant.get().transaction);
+		if (!duck_transaction) {
 			continue;
 		}
-		auto &prepared_commit = transaction.Cast<DuckTransaction>().prepared;
-		if (prepared_commit) {
-			for (auto &value : prepared_commit->sequences) {
-				value.entry->MarkReserved(value);
-			}
+		for (auto &value : duck_transaction->prepared->sequences) {
+			value.entry->MarkReserved(value);
 		}
+		duck_transaction->manager.Cast<DuckTransactionManager>().DecidePreparedTransaction(
+		    *duck_transaction, catalog_log_ref, decision_offset);
 	}
 	log_owner.BeginCatalogLogCommit();
 	catalog_lock.unlock();
 	if (decision_offset > 0) {
-		catalog_log.SyncUpTo(decision_offset);
+		try {
+			catalog_log.SyncUpTo(decision_offset);
+		} catch (std::exception &ex) {
+			error = ErrorData(ex);
+			for (auto &participant : participants) {
+				ValidChecker::Invalidate(participant.get().transaction.manager.GetDB(),
+				                         "Failed to sync the catalog log after committing: " + error.RawMessage());
+			}
+		}
 	}
 	log_owner.OnCatalogLogDecided();
 	for (auto &participant : participants) {
 		auto &transaction_ref = participant.get();
-		auto &db = transaction_ref.transaction.manager.GetDB();
-		auto commit_error = transaction_ref.transaction.manager.CommitTransaction(context, transaction_ref.transaction);
+		auto &transaction = transaction_ref.transaction;
+		auto &db = transaction.manager.GetDB();
+		ErrorData commit_error;
+		if (PreparedParticipant(transaction)) {
+			commit_error =
+			    transaction.manager.Cast<DuckTransactionManager>().FinishPreparedTransaction(context, transaction);
+		} else {
+			commit_error = transaction.manager.CommitTransaction(context, transaction);
+		}
 		transaction_ref.state = TransactionState::COMMITTED;
 		if (commit_error.HasError()) {
 			ValidChecker::Invalidate(db, "Failed to apply a transaction whose commit is durable: " +
