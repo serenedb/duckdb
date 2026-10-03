@@ -72,6 +72,9 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
 		}
+	} else {
+		entry_retriever.SetCallback(
+		    [this](CatalogEntry &entry) { GetStatementProperties().resolved_entries.push_back(&entry); });
 	}
 }
 

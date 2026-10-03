@@ -293,6 +293,9 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 	}
 
 	if (logical_planner.properties.bound_all_parameters) {
+		for (auto &state : registered_state->States()) {
+			state->OnBoundPlan(*this, *logical_planner.binder, *logical_planner.plan);
+		}
 		logical_planner.Optimize();
 	}
 	auto logical_plan = std::move(logical_planner.plan);

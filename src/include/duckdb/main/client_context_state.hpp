@@ -16,8 +16,10 @@
 #include <mutex>
 
 namespace duckdb {
+class Binder;
 class ClientContext;
 class ErrorData;
+class LogicalOperator;
 class MetaTransaction;
 class PreparedStatementData;
 class SQLStatement;
@@ -79,6 +81,8 @@ public:
 	}
 	virtual RebindQueryInfo OnPlanningError(ClientContext &context, SQLStatement &statement, ErrorData &error) {
 		return RebindQueryInfo::DO_NOT_REBIND;
+	}
+	virtual void OnBoundPlan(ClientContext &context, Binder &binder, LogicalOperator &plan) {
 	}
 	virtual RebindQueryInfo OnFinalizePrepare(ClientContext &context, PreparedStatementData &prepared_statement,
 	                                          PreparedStatementMode mode) {
