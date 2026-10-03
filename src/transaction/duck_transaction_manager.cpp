@@ -90,7 +90,8 @@ Transaction &DuckTransactionManager::StartTransaction(ClientContext &context) {
 	}
 
 	// create the actual transaction
-	auto transaction = make_uniq<DuckTransaction>(*this, context, start_time, transaction_id, last_committed_version);
+	auto transaction =
+	    make_uniq<DuckTransaction>(*this, context, start_time, transaction_id, CatalogVersionAt(start_time));
 	auto &transaction_ref = *transaction;
 
 	// store it in the set of active transactions
@@ -113,9 +114,34 @@ transaction_t DuckTransactionManager::DurableSnapshotBound(transaction_t fresh_s
 	return MaxValue<transaction_t>(durable + 1, 2);
 }
 
-transaction_t DuckTransactionManager::DurableSnapshotStart() {
+idx_t DuckTransactionManager::CatalogVersionAt(transaction_t start_time) {
+	const auto durable = last_durable_commit.load(std::memory_order_acquire);
+	while (!pending_catalog_commits.empty() && pending_catalog_commits.front().commit_id <= durable) {
+		pending_catalog_commits.pop_front();
+	}
+	for (auto &commit : pending_catalog_commits) {
+		if (commit.commit_id >= start_time) {
+			return commit.catalog_version - 1;
+		}
+	}
+	return last_committed_version;
+}
+
+void DuckTransactionManager::PublishCatalogVersion(DuckTransaction &transaction, transaction_t commit_id,
+                                                   bool pending) {
+	if (transaction.catalog_version < TRANSACTION_ID_START) {
+		return;
+	}
+	transaction.catalog_version = ++last_committed_version;
+	if (pending) {
+		pending_catalog_commits.push_back(PendingCatalogCommit {commit_id, transaction.catalog_version});
+	}
+}
+
+DuckTransactionManager::DurableSnapshot DuckTransactionManager::DurableSnapshotStart() {
 	lock_guard<mutex> lock(transaction_lock);
-	return DurableSnapshotBound(current_start_timestamp++);
+	const auto start_time = DurableSnapshotBound(current_start_timestamp++);
+	return DurableSnapshot {start_time, CatalogVersionAt(start_time)};
 }
 
 void DuckTransactionManager::RefreshCheckpointSnapshot(DuckTransaction &transaction) {
@@ -370,6 +396,7 @@ void DuckTransactionManager::RefreshStartTime(Transaction &transaction_p) {
 	// the refreshed snapshot is a snapshot acquisition like StartTransaction: bound it at the durable horizon so a
 	// per-statement refresh never observes a commit that is not yet durable
 	transaction.start_time = DurableSnapshotBound(current_start_timestamp++);
+	transaction.catalog_version = CatalogVersionAt(transaction.start_time);
 }
 
 transaction_t DuckTransactionManager::ApplyDurableFloor(transaction_t lowest_start_time) const {
@@ -507,7 +534,11 @@ ErrorData DuckTransactionManager::ApplyPrepared(Transaction &transaction_p) {
 	const auto commit_id = GetCommitTimestamp();
 	transaction.prepared->previous_pending = last_pending_commit.load(std::memory_order_acquire);
 	last_pending_commit.store(commit_id, std::memory_order_release);
-	return transaction.ApplyPrepared(db, commit_id);
+	auto error = transaction.ApplyPrepared(db, commit_id);
+	if (!error.HasError()) {
+		PublishCatalogVersion(transaction, commit_id, true);
+	}
+	return error;
 }
 
 ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Transaction &transaction_p) {
@@ -666,10 +697,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 			last_commit = info.commit_id;
 		}
 
-		// check if catalog changes were made
-		if (transaction.catalog_version >= TRANSACTION_ID_START) {
-			transaction.catalog_version = ++last_committed_version;
-		}
+		PublishCatalogVersion(transaction, info.commit_id, info.wal_flush_offset > 0);
 	}
 	OnCommitCheckpointDecision(checkpoint_decision, transaction);
 
