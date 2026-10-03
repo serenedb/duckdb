@@ -29,7 +29,7 @@ OrderBinder::OrderBinder(vector<reference<Binder>> binders, SelectNode &node, Se
 unique_ptr<Expression> OrderBinder::CreateProjectionReference(ParsedExpression &expr, const idx_t index) {
 	Identifier alias;
 	if (extra_list && index < extra_list->size()) {
-		alias = Identifier(extra_list->at(index)->ToString());
+		alias = extra_list->at(index)->GetAlias();
 	} else {
 		if (!expr.GetAlias().empty()) {
 			alias = expr.GetAlias();
