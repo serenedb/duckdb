@@ -274,7 +274,16 @@ unique_ptr<Expression> MoveUnaryMinusRule::Apply(LogicalOperator &op, vector<ref
 	unique_ptr<Expression> nan_guard;
 	bool nan_guard_disjunctive = false;
 	if (constant_type.IsFloating()) {
+		double val = 0.0;
+		if (constant_type.id() == LogicalTypeId::FLOAT) {
+			val = static_cast<double>(FloatValue::Get(outer_constant.GetValue()));
+		} else {
+			val = DoubleValue::Get(outer_constant.GetValue());
+		}
 		if (IsOrderedComparison(comparison.GetExpressionType())) {
+			if (Value::IsNan(val)) {
+				return nullptr;
+			}
 			auto &input = *negation.GetChildren()[0];
 			if (!CanDuplicateForNaNGuard(input)) {
 				return nullptr;
@@ -288,12 +297,6 @@ unique_ptr<Expression> MoveUnaryMinusRule::Apply(LogicalOperator &op, vector<ref
 			nan_guard_disjunctive = NaNGuardIsDisjunctive(negation_type);
 			nan_guard =
 			    nan_guard_disjunctive ? CreateIsNanCall(GetContext(), input) : CreateNotIsNanGuard(GetContext(), input);
-		}
-		double val = 0.0;
-		if (constant_type.id() == LogicalTypeId::FLOAT) {
-			val = static_cast<double>(FloatValue::Get(outer_constant.GetValue()));
-		} else {
-			val = DoubleValue::Get(outer_constant.GetValue());
 		}
 		auto result_value = Value::DOUBLE(-val).DefaultTryCastAs(constant_type);
 		if (!result_value) {
