@@ -277,4 +277,19 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropTrigger(PEGTransfo
 	return result;
 }
 
+unique_ptr<DropStatement> PEGTransformerFactory::TransformDropJob(PEGTransformer &transformer,
+                                                                  const optional<bool> &if_exists,
+                                                                  const vector<QualifiedName> &qualified_name) {
+	if (qualified_name.size() > 1) {
+		throw NotImplementedException("Can only drop one object at a time");
+	}
+	auto result = make_uniq<DropStatement>();
+	auto info = make_uniq<DropInfo>();
+	info->type = CatalogType::JOB_ENTRY;
+	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	info->SetQualifiedName(qualified_name[0]);
+	result->info = std::move(info);
+	return result;
+}
+
 } // namespace duckdb

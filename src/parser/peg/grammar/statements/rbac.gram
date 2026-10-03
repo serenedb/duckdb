@@ -36,7 +36,7 @@ PasswordNullOption  <- 'PASSWORD' 'NULL'
 # before the native AlterStatement so OWNER TO is intercepted (DuckDB's alter
 # binder does not support ownership changes).
 AlterOwnerStatement <- 'ALTER' OwnerObjectType QualifiedName 'OWNER' 'TO' OwnerRoleSpec
-OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE'
+OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB'
 OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
 
 # ALTER DEFAULT PRIVILEGES [FOR ROLE r,...] [IN SCHEMA s,...] (GRANT|REVOKE) ...

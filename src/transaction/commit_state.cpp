@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/job_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
@@ -9,6 +10,8 @@
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
+#include "duckdb/main/database.hpp"
+#include "duckdb/main/job_scheduler.hpp"
 #include "duckdb/storage/block_manager.hpp"
 #include "duckdb/storage/table/chunk_info.hpp"
 #include "duckdb/storage/table/column_data.hpp"
@@ -39,6 +42,14 @@ void CommitDropState::RemoveIndex(TableIndexList &indexes, Identifier name) {
 	pending_index_removals.push_back(PendingIndexRemoval {indexes, std::move(name)});
 }
 
+void CommitDropState::ScheduleJob(JobCatalogEntry &job) {
+	scheduled_jobs.emplace_back(job);
+}
+
+void CommitDropState::DropJob(JobCatalogEntry &job) {
+	dropped_jobs.emplace_back(job);
+}
+
 void CommitDropState::FinalizeCommit() {
 	if (block_manager) {
 		for (auto block_id : dropped_block_ids) {
@@ -51,12 +62,21 @@ void CommitDropState::FinalizeCommit() {
 	for (auto &removal : pending_index_removals) {
 		removal.indexes.get().RemoveIndex(removal.name);
 	}
+	for (auto &job : scheduled_jobs) {
+		job.get().ParentCatalog().GetDatabase().GetJobScheduler().Schedule(job);
+	}
+	for (auto &job : dropped_jobs) {
+		job.get().ParentCatalog().GetDatabase().GetJobScheduler().Drop(job);
+	}
 	dropped_block_ids.clear();
 	pending_index_removals.clear();
+	scheduled_jobs.clear();
+	dropped_jobs.clear();
 }
 
 bool CommitDropState::Empty() const {
-	return dropped_block_ids.empty() && pending_index_removals.empty();
+	return dropped_block_ids.empty() && pending_index_removals.empty() && scheduled_jobs.empty() &&
+	       dropped_jobs.empty();
 }
 
 //===--------------------------------------------------------------------===//
@@ -156,7 +176,8 @@ IndexRemovalType CommitState::GetIndexRemovalType(ActiveTransactionState transac
 
 void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, CommitInfo &info) {
 	auto &drop_state = *info.drop_state;
-	if (entry.temporary || entry.Parent().temporary) {
+	if ((entry.temporary || entry.Parent().temporary) && entry.type != CatalogType::JOB_ENTRY &&
+	    entry.Parent().type != CatalogType::JOB_ENTRY) {
 		return;
 	}
 
@@ -218,6 +239,9 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 			}
 		}
 		break;
+	case CatalogType::JOB_ENTRY:
+		drop_state.ScheduleJob(parent.Cast<JobCatalogEntry>());
+		break;
 	case CatalogType::SCHEMA_ENTRY:
 		break;
 	case CatalogType::RENAMED_ENTRY:
@@ -240,6 +264,9 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 			index_entry.CommitDrop(drop_state);
 			break;
 		}
+		case CatalogType::JOB_ENTRY:
+			drop_state.DropJob(entry.Cast<JobCatalogEntry>());
+			break;
 		default:
 			// no action required
 			break;

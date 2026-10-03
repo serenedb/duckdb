@@ -31,6 +31,7 @@
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
+#include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/block_manager.hpp"
@@ -156,6 +157,8 @@ static catalog_entry_vector_t GetCatalogEntries(DuckCatalog &catalog, vector<ref
 			}
 			entries.push_back(entry);
 		});
+
+		schema.Scan(CatalogType::JOB_ENTRY, [&](CatalogEntry &entry) { entries.emplace_back(entry); });
 
 		schema.Scan(CatalogType::SEQUENCE_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.internal) {
@@ -457,6 +460,9 @@ void WriteCatalogEntries(WriteAheadLog &log, DuckCatalog &catalog) {
 		case CatalogType::TOKENIZER_ENTRY:
 			log.WriteCreateTokenizer(entry.Cast<StandardEntry>());
 			break;
+		case CatalogType::JOB_ENTRY:
+			log.WriteCreateJob(entry.Cast<StandardEntry>());
+			break;
 		case CatalogType::ROLE_ENTRY:
 			log.WriteCreateRole(entry.Cast<InCatalogEntry>());
 			break;
@@ -474,7 +480,8 @@ void WriteCatalogEntries(WriteAheadLog &log, DuckCatalog &catalog) {
 	auto &dependencies = *catalog.GetDependencyManager();
 	for (auto &entry_ref : entries) {
 		auto &owner = entry_ref.get();
-		if (owner.type != CatalogType::TABLE_ENTRY && owner.type != CatalogType::SEQUENCE_ENTRY) {
+		if (owner.type != CatalogType::TABLE_ENTRY && owner.type != CatalogType::SEQUENCE_ENTRY &&
+		    owner.type != CatalogType::INDEX_ENTRY) {
 			continue;
 		}
 		auto &declared = owner.Cast<StandardEntry>().dependencies;
@@ -586,6 +593,10 @@ void CheckpointWriter::WriteEntry(CatalogEntry &entry, Serializer &serializer) {
 		WriteTokenizer(tokenizer, serializer);
 		break;
 	}
+	case CatalogType::JOB_ENTRY: {
+		serializer.WriteProperty(100, "job", &entry.Cast<StandardEntry>());
+		break;
+	}
 	case CatalogType::ROLE_ENTRY: {
 		auto &role = entry.Cast<InCatalogEntry>();
 		WriteRole(role, serializer);
@@ -656,6 +667,13 @@ void CheckpointReader::ReadEntry(CatalogTransaction transaction, Deserializer &d
 	}
 	case CatalogType::TOKENIZER_ENTRY: {
 		ReadTokenizer(transaction, deserializer);
+		break;
+	}
+	case CatalogType::JOB_ENTRY: {
+		auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "job");
+		info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+		auto &schema = catalog.GetSchema(transaction, info->GetQualifiedName().Schema());
+		schema.CreateJob(transaction, info->Cast<CreateJobInfo>());
 		break;
 	}
 	case CatalogType::ROLE_ENTRY: {

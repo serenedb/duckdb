@@ -63,7 +63,7 @@ LogicalDependency::LogicalDependency(CatalogEntry &entry) {
 
 LogicalDependency::LogicalDependency(optional_ptr<Catalog> catalog_p, CatalogEntryInfo entry_p, Identifier catalog_str)
     : entry(std::move(entry_p)), catalog(std::move(catalog_str)) {
-	if (catalog_p) {
+	if (catalog_p && !catalog_p->UsesCatalogLog()) {
 		catalog = catalog_p->GetName();
 	}
 }

@@ -16,6 +16,7 @@ add_library_unity(
   bind_export.cpp
   bind_extension.cpp
   bind_insert.cpp
+  bind_job.cpp
   bind_load.cpp
   bind_logical_plan.cpp
   bind_merge_into.cpp

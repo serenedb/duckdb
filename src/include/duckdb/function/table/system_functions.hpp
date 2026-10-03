@@ -158,6 +158,18 @@ struct DuckDBSecretTypesFun {
 	static void RegisterFunction(BuiltinFunctions &set);
 };
 
+struct DuckDBJobsFun {
+	static void RegisterFunction(BuiltinFunctions &set);
+};
+
+struct DuckDBJobRunsFun {
+	static void RegisterFunction(BuiltinFunctions &set);
+};
+
+struct ExecuteJobFun {
+	static void RegisterFunction(BuiltinFunctions &set);
+};
+
 struct DuckDBSequencesFun {
 	static void RegisterFunction(BuiltinFunctions &set);
 };

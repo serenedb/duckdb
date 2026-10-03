@@ -1,6 +1,7 @@
 #include "duckdb/execution/operator/schema/physical_detach.hpp"
 #include "duckdb/parser/parsed_data/detach_info.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/attached_database.hpp"
@@ -28,6 +29,7 @@ SourceResultType PhysicalDetach::GetDataInternal(ExecutionContext &context, Data
 				    "work on it - commit or rollback first",
 				    info->name);
 			}
+			DependencyManager::RequireNoForeignDependents(context.client, attached_db->GetCatalog());
 		}
 	}
 

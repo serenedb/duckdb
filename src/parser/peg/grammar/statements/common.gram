@@ -31,6 +31,7 @@ Statement <-
 	ExplainStatement /
 	UpdateStatement /
 	PrepareStatement /
+	ExecuteJobStatement /
 	ExecuteStatement /
 	AlterStatement /
 	TransactionStatement /

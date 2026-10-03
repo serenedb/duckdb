@@ -1,0 +1,228 @@
+# name: test/sql/job/job_ddl.test
+# group: [job]
+
+statement ok
+CREATE TABLE skuf_log (who VARCHAR, n INTEGER);
+
+statement ok
+CREATE JOB arelav AFTER 1 HOUR AS INSERT INTO skuf_log VALUES ('arelav', 1);
+
+query IIIIII
+SELECT database_name, schema_name, job_name, schedule, suspended, body FROM duckdb_jobs();
+----
+memory	main	arelav	AFTER INTERVAL '01:00:00'	false	INSERT INTO skuf_log (VALUES ('arelav', 1))
+
+statement ok
+EXECUTE JOB arelav;
+
+query II
+SELECT who, n FROM skuf_log;
+----
+arelav	1
+
+query III
+SELECT run_count, failure_count, last_status FROM duckdb_jobs();
+----
+1	0	success
+
+query II
+SELECT trigger, success FROM duckdb_job_runs();
+----
+manual	true
+
+statement error
+CREATE JOB arelav AFTER 1 HOUR AS SELECT 1;
+----
+<REGEX>:.*Job with name "arelav" already exists.*
+
+statement ok
+CREATE JOB IF NOT EXISTS arelav EVERY 1 MINUTE AS SELECT 1;
+
+query I
+SELECT schedule FROM duckdb_jobs();
+----
+AFTER INTERVAL '01:00:00'
+
+statement ok
+CREATE OR REPLACE JOB arelav EVERY 15 MINUTES OFFSET 5 MINUTES AS INSERT INTO skuf_log VALUES ('babsky', 2);
+
+query II
+SELECT schedule, body FROM duckdb_jobs();
+----
+EVERY INTERVAL '00:15:00' OFFSET INTERVAL '00:05:00'	INSERT INTO skuf_log (VALUES ('babsky', 2))
+
+query I
+SELECT (epoch(next_run)::BIGINT % 900) = 300 FROM duckdb_jobs();
+----
+true
+
+statement ok
+ALTER JOB arelav SUSPEND;
+
+query II
+SELECT suspended, next_run IS NULL FROM duckdb_jobs();
+----
+true	true
+
+statement ok
+EXECUTE JOB arelav;
+
+query I
+SELECT count(*) FROM skuf_log WHERE who = 'babsky';
+----
+1
+
+statement ok
+ALTER JOB arelav RESUME;
+
+query II
+SELECT suspended, next_run IS NULL FROM duckdb_jobs();
+----
+false	false
+
+statement ok
+ALTER JOB arelav SET SCHEDULE AFTER 2 DAYS;
+
+query II
+SELECT schedule_kind, schedule_interval FROM duckdb_jobs();
+----
+AFTER	2 days
+
+statement ok
+ALTER JOB arelav RENAME TO vedernikoff;
+
+query I
+SELECT job_name FROM duckdb_jobs();
+----
+vedernikoff
+
+statement ok
+CALL execute_job('vedernikoff');
+
+query I
+SELECT count(*) FROM skuf_log WHERE who = 'babsky';
+----
+2
+
+query I
+SELECT sql FROM duckdb_jobs();
+----
+CREATE JOB memory.main.vedernikoff AFTER INTERVAL '2 days' AS INSERT INTO skuf_log (VALUES ('babsky', 2));
+
+statement error
+EXECUTE JOB arelav;
+----
+<REGEX>:.*Job with name arelav does not exist.*
+
+statement ok
+ALTER JOB IF EXISTS arelav SUSPEND;
+
+statement error
+ALTER JOB arelav SUSPEND;
+----
+<REGEX>:.*Job with name arelav does not exist.*
+
+statement error
+CREATE JOB kostya EVERY 0 SECONDS AS SELECT 1;
+----
+<REGEX>:.*job schedule interval must be positive.*
+
+statement error
+CREATE JOB kostya EVERY INTERVAL '1 month 1 day' AS SELECT 1;
+----
+<REGEX>:.*EVERY interval cannot mix months with days or time.*
+
+statement error
+CREATE JOB kostya EVERY 1 HOUR OFFSET 2 HOURS AS SELECT 1;
+----
+<REGEX>:.*must be shorter than the interval.*
+
+statement error
+CREATE JOB kostya EVERY 1 HOUR OFFSET INTERVAL '-1 minute' AS SELECT 1;
+----
+<REGEX>:.*offset must not be negative.*
+
+statement error
+CREATE JOB kostya AFTER 1 HOUR OFFSET 1 MINUTE AS SELECT 1;
+----
+<REGEX>:.*syntax error.*
+
+statement error
+CREATE JOB kostya AFTER 1 HOUR AS BEGIN TRANSACTION;
+----
+<REGEX>:.*CREATE JOB body cannot be a transaction statement.*
+
+statement error
+CREATE JOB kostya AFTER 1 HOUR AS SELECT $1;
+----
+<REGEX>:.*CREATE JOB cannot have parameters.*
+
+statement ok
+CREATE JOB clickclack AFTER 1 HOUR AS INSERT INTO skuf_log VALUES ('clickclack', 'not a number');
+
+statement error
+EXECUTE JOB clickclack;
+----
+<REGEX>:.*Could not convert string 'not a number'.*
+
+query III
+SELECT last_status, failure_count, last_error LIKE '%not a number%' FROM duckdb_jobs() WHERE job_name = 'clickclack';
+----
+failed	1	true
+
+statement ok
+CREATE TEMPORARY JOB deadinside AFTER 1 HOUR AS INSERT INTO skuf_log VALUES ('deadinside', 3);
+
+query II
+SELECT database_name, temporary FROM duckdb_jobs() WHERE job_name = 'deadinside';
+----
+temp	true
+
+statement ok
+EXECUTE JOB deadinside;
+
+query I
+SELECT count(*) FROM skuf_log WHERE who = 'deadinside';
+----
+1
+
+statement ok
+DROP JOB deadinside;
+
+statement ok
+DROP JOB clickclack;
+
+statement ok
+DROP JOB vedernikoff;
+
+statement ok
+DROP JOB IF EXISTS vedernikoff;
+
+statement error
+DROP JOB vedernikoff;
+----
+<REGEX>:.*Job with name vedernikoff does not exist.*
+
+query I
+SELECT count(*) FROM duckdb_jobs();
+----
+0
+
+statement ok
+CREATE SCHEMA androed;
+
+statement ok
+CREATE JOB androed.nested AFTER 1 HOUR AS SELECT 1;
+
+statement error
+DROP SCHEMA androed;
+----
+<REGEX>:.*Cannot drop entry "androed" because there are entries that depend on it.*
+
+statement ok
+DROP SCHEMA androed CASCADE;
+
+query I
+SELECT count(*) FROM duckdb_jobs();
+----
+0
