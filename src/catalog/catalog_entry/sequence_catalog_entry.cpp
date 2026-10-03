@@ -31,13 +31,8 @@ SequenceData::SequenceData(CreateSequenceInfo &info)
       cycle(info.cycle), cache(info.cache) {
 }
 
-static idx_t NextSequenceStateId() {
-	static atomic<idx_t> next_id {0};
-	return ++next_id;
-}
-
 SequenceState::SequenceState(const SequenceData &data_p)
-    : id(NextSequenceStateId()), data(data_p), reserved_usage_count(data.usage_count), reserved_counter(data.counter),
+    : data(data_p), reserved_usage_count(data.usage_count), reserved_counter(data.counter),
       durable_usage_count(data.usage_count), durable_counter(data.counter) {
 }
 
@@ -298,9 +293,8 @@ void SequenceCatalogEntry::Fetch(SequenceSessionValue &cached, idx_t needed) {
 
 void SequenceCatalogEntry::FetchLocked(SequenceSessionValue &cached, idx_t needed) {
 	ThrowIfSuperseded();
-	cached.state_id = state->id;
 	auto &data = state->data;
-	const auto cache = MaxValue<idx_t>(data.cache, 1);
+	const auto cache = timestamp >= TRANSACTION_ID_START ? 1 : MaxValue<idx_t>(data.cache, 1);
 	const auto count = (needed + cache - 1) / cache * cache;
 	const auto first = data.counter;
 	idx_t taken = 0;
@@ -361,10 +355,9 @@ int64_t SequenceCatalogEntry::CurrentValue(SequenceSession &session) {
 
 int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction, SequenceSession &session) {
 	lock_guard<mutex> guard(session.lock);
-	auto &cached = session.values[oid];
-	if (cached.state_id != state->id) {
-		cached.remaining = 0;
-	}
+	auto &session_value = session.values[oid];
+	SequenceSessionValue uncommitted_value;
+	auto &cached = timestamp >= TRANSACTION_ID_START ? uncommitted_value : session_value;
 	if (cached.remaining == 0) {
 		Fetch(cached, 1);
 	}
@@ -372,7 +365,7 @@ int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction, SequenceSe
 	if (--cached.remaining) {
 		cached.next += cached.increment;
 	}
-	cached.last = result;
+	session_value.last = result;
 	if (!temporary) {
 		transaction.PushSequenceUsage(*this, cached.usage_count, cached.counter);
 	}
@@ -382,10 +375,9 @@ int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction, SequenceSe
 void SequenceCatalogEntry::NextValues(DuckTransaction &transaction, SequenceSession &session, idx_t count,
                                       SequenceRuns &runs) {
 	lock_guard<mutex> guard(session.lock);
-	auto &cached = session.values[oid];
-	if (cached.state_id != state->id) {
-		cached.remaining = 0;
-	}
+	auto &session_value = session.values[oid];
+	SequenceSessionValue uncommitted_value;
+	auto &cached = timestamp >= TRANSACTION_ID_START ? uncommitted_value : session_value;
 	runs.size = 0;
 	for (idx_t produced = 0; produced < count;) {
 		if (cached.remaining == 0) {
@@ -407,6 +399,7 @@ void SequenceCatalogEntry::NextValues(DuckTransaction &transaction, SequenceSess
 			    Hugeint::Cast<int64_t>(hugeint_t(cached.next) + hugeint_t(take) * hugeint_t(cached.increment));
 		}
 	}
+	session_value.last = cached.last;
 	if (!temporary) {
 		transaction.PushSequenceUsage(*this, cached.usage_count, cached.counter);
 	}

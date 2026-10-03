@@ -28,7 +28,6 @@ struct SequenceValue {
 };
 
 struct SequenceSessionValue {
-	idx_t state_id = 0;
 	int64_t next = 0;
 	idx_t remaining = 0;
 	int64_t increment = 0;
@@ -75,7 +74,6 @@ struct SequenceData {
 struct SequenceState {
 	explicit SequenceState(const SequenceData &data);
 
-	const idx_t id;
 	mutable mutex lock;
 	mutex log_lock;
 	SequenceData data;
