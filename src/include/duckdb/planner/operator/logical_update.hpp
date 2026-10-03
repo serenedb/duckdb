@@ -43,6 +43,7 @@ public:
 	//! how to handle a target row-id appearing more than once in the input (e.g. UPDATE ... FROM): keep the
 	//! lock-free path (ASSUME_UNIQUE), deduplicate keeping the first match (KEEP_FIRST), or error (ERROR)
 	RowIdHandling row_id_handling = RowIdHandling::ASSUME_UNIQUE;
+	idx_t update_column_count = 0;
 
 public:
 	void Serialize(Serializer &serializer) const override;

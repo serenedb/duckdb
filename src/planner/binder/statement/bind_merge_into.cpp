@@ -90,6 +90,7 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		update.bound_defaults = std::move(merge_into.bound_defaults);
 		update.bound_constraints = std::move(merge_into.bound_constraints);
 		update.update_is_del_and_insert = false;
+		update.update_column_count = 0;
 
 		// call BindUpdateConstraints -- storage-derived decisions (an index
 		// update forces delete+insert) come from the scan-bound table when the
@@ -108,6 +109,7 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		result->columns = std::move(update.columns);
 		result->expressions = std::move(update.expressions);
 		result->update_is_del_and_insert = update.update_is_del_and_insert;
+		result->update_column_count = update.update_column_count;
 		break;
 	}
 	case MergeActionType::MERGE_INSERT: {
