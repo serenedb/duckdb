@@ -260,7 +260,12 @@ connection_t ClientContext::GetConnectionId() const {
 	return connection_id;
 }
 
-static bool IsExplainAnalyze(SQLStatement *statement) {
+static bool IsExplainAnalyze(ClientContext &context, SQLStatement *statement) {
+	if (statement && statement->type == StatementType::EXECUTE_STATEMENT) {
+		auto &prepared_statements = ClientData::Get(context).prepared_statements;
+		auto entry = prepared_statements.find(statement->Cast<ExecuteStatement>().name);
+		statement = entry == prepared_statements.end() ? nullptr : entry->second->unbound_statement.get();
+	}
 	if (!statement) {
 		return false;
 	}
@@ -278,7 +283,7 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 	auto result = make_shared_ptr<PreparedStatementData>(statement_type);
 
 	auto &profiler = QueryProfiler::Get(*this);
-	profiler.StartQuery(statement->query, IsExplainAnalyze(statement.get()));
+	profiler.StartQuery(statement->query, IsExplainAnalyze(*this, statement.get()));
 	Planner logical_planner(*this);
 	if (parameters.statement_args) {
 		auto &parameter_values = *parameters.statement_args;
