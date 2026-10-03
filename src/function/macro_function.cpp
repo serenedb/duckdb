@@ -74,7 +74,9 @@ MacroBindResult MacroFunction::BindMacroFunction(
 		auto arg_copy = arg.GetExpression().Copy();
 		LogicalType arg_type = LogicalType::UNKNOWN;
 		if (requires_bind) {
+			const auto correlated_columns = binder.correlated_columns;
 			const auto arg_bind_result = expr_binder.BindExpression(arg_copy, depth + 1);
+			binder.correlated_columns = correlated_columns;
 			arg_type = arg_bind_result.HasError() ? LogicalType::UNKNOWN : arg_bind_result.expression->GetReturnType();
 		}
 		if (arg.GetExpression().IsNamedParameter()) {
