@@ -1479,6 +1479,16 @@ void RemoveUnusedColumns::RemoveColumnsFromLogicalGet(LogicalGet &get, unique_pt
 				}
 			}
 		}
+		if (get.projection_ids.empty() && !get.GetColumnIds().empty() &&
+		    get.GetAnyColumn() == COLUMN_IDENTIFIER_EMPTY) {
+			// every remaining column only feeds a table filter (e.g. count(*) with a pushed
+			// filter): an empty projection_ids means "no pruning", so express the empty output
+			// explicitly through the empty virtual column. The scan then reads the filter
+			// columns without emitting them, and a filter later proven always-true leaves a
+			// pure count-only scan behind.
+			auto empty_idx = get.AddColumnId(COLUMN_IDENTIFIER_EMPTY);
+			get.projection_ids.push_back(empty_idx);
+		}
 	}
 
 	if (has_pushdown_extract && !filter_expressions.empty()) {
