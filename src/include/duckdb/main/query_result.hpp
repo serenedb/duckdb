@@ -150,6 +150,7 @@ public:
 	DUCKDB_API idx_t RowCount();
 	//! Ends the query if it is still open. Idempotent.
 	DUCKDB_API void Close();
+	DUCKDB_API unique_ptr<QueryResult> TakeCollectorResult();
 	//! Whether this result is still the connection's open result.
 	DUCKDB_API bool IsOpen();
 

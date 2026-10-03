@@ -268,7 +268,7 @@ unique_ptr<QueryResult> ClientContext::SubmitPreparedStatementInternal(
 	auto result = make_uniq<QueryResult>(shared_from_this(), statement_data, std::move(types),
 	                                     std::move(client_properties), std::move(buffer));
 	active_query->SetOpenResult(*result);
-	if (delegating) {
+	if (delegating && !parameters.caller_drives) {
 		// The collector builds its own result object: run the query and hand that object out. The
 		// handle is released first, so destroying it never takes the context lock held here
 		result->context.reset();
