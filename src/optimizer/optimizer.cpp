@@ -140,6 +140,10 @@ bool Optimizer::OptimizerDisabled(ClientContext &context_p, OptimizerType type) 
 }
 
 bool Optimizer::OptimizerDisabledInternal(ClientContext &context_p, OptimizerType type) {
+	auto &client_config = ClientConfig::GetConfig(context_p);
+	if (client_config.has_disabled_optimizers) {
+		return client_config.disabled_optimizers.contains(type);
+	}
 	auto &config = DBConfig::GetConfig(context_p);
 	return config.options.disabled_optimizers.contains(type);
 }
