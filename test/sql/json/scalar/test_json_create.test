@@ -223,6 +223,11 @@ select row_to_json(NULL)
 ----
 NULL
 
+query T
+select row_to_json(row(42, 'duck'))
+----
+{"f1":42,"f2":"duck"}
+
 statement error
 select row_to_json([42])
 ----

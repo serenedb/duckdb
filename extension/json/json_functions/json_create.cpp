@@ -373,7 +373,14 @@ static unique_ptr<FunctionData> RowToJSONBind(BindScalarFunctionInput &input) {
 	if (arguments[0]->HasParameter()) {
 		throw ParameterNotResolvedException();
 	}
-	if (arguments[0]->GetReturnType().id() != LogicalTypeId::STRUCT && arg_id != LogicalTypeId::SQLNULL) {
+	if (arg_id == LogicalTypeId::TUPLE) {
+		child_list_t<LogicalType> fields;
+		for (auto &child : StructType::GetChildTypes(arguments[0]->GetReturnType())) {
+			fields.emplace_back(Identifier("f" + to_string(fields.size() + 1)), child.second);
+		}
+		arguments[0] = BoundCastExpression::AddCastToType(input.GetClientContext(), std::move(arguments[0]),
+		                                                  LogicalType::STRUCT(std::move(fields)));
+	} else if (arg_id != LogicalTypeId::STRUCT && arg_id != LogicalTypeId::SQLNULL) {
 		throw BinderException("row_to_json() argument type must be STRUCT");
 	}
 	return JSONCreateBindParams(bound_function, arguments, false);
