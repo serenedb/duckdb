@@ -16,6 +16,7 @@
 #include "duckdb/storage/storage_info.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/logging/log_type.hpp"
+#include "duckdb/main/client_config.hpp"
 
 #include <algorithm>
 
@@ -238,6 +239,10 @@ SinkResultType PhysicalBatchCopyToFile::Sink(ExecutionContext &context, DataChun
 		state.batch_index = batch_index;
 	}
 	state.rows_copied += chunk.size();
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
+	if (progress_callback) {
+		progress_callback(chunk.size(), chunk.GetAllocationSize());
+	}
 	state.collection->Append(state.append_state, chunk);
 	auto new_memory_usage = state.collection->AllocationSize();
 	if (new_memory_usage > state.local_memory_usage) {

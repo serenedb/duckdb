@@ -453,6 +453,10 @@ SinkResultType PhysicalBatchInsert::Sink(ExecutionContext &context, DataChunk &i
 			}
 		}
 	}
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
+	if (progress_callback) {
+		progress_callback(insert_chunk.size(), insert_chunk.GetAllocationSize());
+	}
 	if (!lstate.collection_index.IsValid()) {
 		annotated_lock_guard<annotated_mutex> l(gstate.lock);
 		// no collection yet: create a new one

@@ -3963,15 +3963,22 @@ SinkResultType PhysicalCopyToFile::Sink(ExecutionContext &context, DataChunk &ch
 		// if we are only writing the file when there are rows to write we need to initialize here
 		gstate.Initialize();
 	}
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
 	if (partition_output) {
 		auto result =
 		    gstate.partitioned_copy->Sink(context, chunk, *lstate.partitioned_copy_local_state, input.interrupt_state);
 		if (result != SinkResultType::BLOCKED) {
 			lstate.total_rows_copied += chunk.size();
+			if (progress_callback) {
+				progress_callback(chunk.size(), chunk.GetAllocationSize());
+			}
 		}
 		return result;
 	}
 	lstate.total_rows_copied += chunk.size();
+	if (progress_callback) {
+		progress_callback(chunk.size(), chunk.GetAllocationSize());
+	}
 
 	if (per_thread_output) {
 		if (!lstate.global_file_state) {
