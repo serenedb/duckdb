@@ -111,7 +111,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 	optional_ptr<PhysicalOperator> filter;
 	auto &projection_ids = op.projection_ids;
 
-	if (table_filters && op.function.supports_pushdown_type) {
+	if (table_filters && (op.function.supports_pushdown_filter || op.function.supports_pushdown_type)) {
 		vector<unique_ptr<Expression>> select_list;
 		unique_ptr<Expression> unsupported_filter;
 		unordered_set<ProjectionIndex> to_remove;
@@ -125,7 +125,19 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 			auto &filter_expr = entry.Filter();
 			auto &column_idx = op.GetColumnIndex(filter_idx);
 			auto column_id = column_idx.GetPrimaryIndex();
-			if (!op.function.supports_pushdown_type(*op.bind_data, column_id)) {
+			const auto pushdown =
+			    op.function.supports_pushdown_filter
+			        ? op.function.supports_pushdown_filter(*op.bind_data, column_id, filter_expr)
+			        : (op.function.supports_pushdown_type(*op.bind_data, column_id) ? TableFilterPushdown::BeforeLimit
+			                                                                        : TableFilterPushdown::Reject);
+			if (pushdown == TableFilterPushdown::Drop) {
+				// A redundant filter (e.g. the top-k collector's own score boundary that TOP_N pushed
+				// back into the scan): remove it entirely -- neither pushed into the scan nor rehosted
+				// as a Filter node above it.
+				to_remove.insert(filter_idx);
+				continue;
+			}
+			if (pushdown == TableFilterPushdown::Reject) {
 				// column_ids is already pruned to only the columns this scan reads -- the
 				// filter column plus the query's outputs (e.g. a delete/update row-id). An
 				// empty projection_ids means "emit all of them". Declining a filter appends

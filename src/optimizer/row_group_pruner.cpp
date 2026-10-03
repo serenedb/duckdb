@@ -76,9 +76,33 @@ bool RowGroupPruner::TryOptimize(LogicalOperator &op) const {
 	}
 
 	if (logical_get->table_filters.HasFilters()) {
-		// If there are filters, we only order the row groups but do not prune
-		row_limit.SetInvalid();
-		row_offset.SetInvalid();
+		bool invalidate;
+		if (logical_get->function.supports_pushdown_filter && logical_get->bind_data) {
+			// Per-filter: keep the pushed limit only if EVERY filter is applied before it
+			// (BeforeLimit, e.g. an INCLUDE column). AfterLimit (lookup source) applies after the
+			// limit, and Reject becomes a Filter node above the scan -- both force us to drop it.
+			invalidate = false;
+			for (auto &entry : logical_get->table_filters) {
+				const auto col_id = logical_get->GetColumnIndex(entry.GetIndex()).GetPrimaryIndex();
+				const auto pushdown =
+				    logical_get->function.supports_pushdown_filter(*logical_get->bind_data, col_id, entry.Filter());
+				// BeforeLimit is applied before the limit; Drop is removed entirely (redundant with how the
+				// scan enforces the limit, e.g. a top-k collector's own boundary) -- neither invalidates the
+				// pushed limit. AfterLimit / Reject do.
+				if (pushdown != TableFilterPushdown::BeforeLimit && pushdown != TableFilterPushdown::Drop) {
+					invalidate = true;
+					break;
+				}
+			}
+		} else {
+			// No per-filter callback: filters present + the function does not apply filters before the
+			// limit -> only reorder row groups, do not push the limit.
+			invalidate = true;
+		}
+		if (invalidate) {
+			row_limit.SetInvalid();
+			row_offset.SetInvalid();
+		}
 	}
 
 	// We can use the RowGroupReorderer!
