@@ -1,3 +1,4 @@
+#include "duckdb/common/enum_util.hpp"
 #include "duckdb/storage/compression/dict_fsst/common.hpp"
 #include "duckdb/storage/compression/dict_fsst/analyze.hpp"
 #include "duckdb/storage/compression/dict_fsst/compression.hpp"
@@ -115,11 +116,6 @@ unique_ptr<SegmentScanState> DictFSSTCompressionStorage::StringInitScan(const Qu
 	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
 	auto state = make_uniq<CompressedStringScanState>(segment, buffer_manager.Pin(segment.GetBlockHandle()));
 	state->Initialize(true);
-
-	const auto &stats = segment.GetStats();
-	if (stats.GetStatsType() == StatisticsType::STRING_STATS && StringStats::HasMaxStringLength(stats)) {
-		state->all_values_inlined = StringStats::MaxStringLength(stats) <= string_t::INLINE_LENGTH;
-	}
 	return std::move(state);
 }
 
@@ -162,8 +158,8 @@ void DictFSSTCompressionStorage::StringFetchRow(ColumnSegment &segment, ColumnFe
 void DictFSSTSelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector_count, Vector &result,
                     const SelectionVector &sel, idx_t sel_count) {
 	auto &scan_state = state.scan_state->Cast<CompressedStringScanState>();
-	if (scan_state.mode == DictFSSTMode::FSST_ONLY) {
-		// for FSST only
+	if (scan_state.mode == DictFSSTMode::FSST_ONLY || scan_state.mode == DictFSSTMode::FSST_PLUS) {
+		// for the no-selection-buffer per-row modes
 		auto start = state.GetPositionInSegment();
 		scan_state.Select(result, start, sel, sel_count);
 		return;
@@ -252,19 +248,6 @@ static void DictFSSTFilter(ColumnSegment &segment, ColumnScanState &state, idx_t
 	ColumnSegment::FilterSelection(sel, result, filter_state, vector_count, sel_count);
 }
 
-static string DictFSSTModeToString(const DictFSSTMode mode) {
-	switch (mode) {
-	case DictFSSTMode::DICTIONARY:
-		return "DICTIONARY";
-	case DictFSSTMode::DICT_FSST:
-		return "DICT_FSST";
-	case DictFSSTMode::FSST_ONLY:
-		return "FSST_ONLY";
-	default:
-		return "UNKNOWN";
-	}
-}
-
 //===--------------------------------------------------------------------===//
 // GetSegmentInfo
 //===--------------------------------------------------------------------===//
@@ -276,7 +259,7 @@ static InsertionOrderPreservingMap<string> DictFSSTGetSegmentInfo(QueryContext, 
 	const auto tuple_count = segment.count.load();
 
 	InsertionOrderPreservingMap<string> result;
-	result[DictFSSTModeToString(state->mode)] = StringUtil::Format("%d", tuple_count);
+	result[EnumUtil::ToChars(state->mode)] = StringUtil::Format("%d", tuple_count);
 	return result;
 }
 
