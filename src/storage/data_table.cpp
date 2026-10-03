@@ -1503,6 +1503,9 @@ void DataTable::RevertAppend(DuckTransaction &transaction, idx_t start_row, idx_
 	}
 #endif
 
+	if (!IsMainTable()) {
+		version = DataTableVersion::MAIN_TABLE;
+	}
 	// revert the data table append
 	RevertAppendInternal(start_row);
 }

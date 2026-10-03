@@ -278,6 +278,16 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		D_ASSERT(catalog.IsDuckCatalog());
 
 		auto &new_entry = old_entry.Parent();
+		if (old_entry.type == CatalogType::TABLE_ENTRY && new_entry.type == CatalogType::TABLE_ENTRY &&
+		    old_entry.Cast<TableCatalogEntry>().IsDuckTable() && new_entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+			auto &old_storage = old_entry.Cast<DuckTableEntry>().GetStorage();
+			auto &new_storage = new_entry.Cast<DuckTableEntry>().GetStorage();
+			if (!RefersToSameObject(old_storage, new_storage) && old_storage.IsMainTable()) {
+				throw TransactionException("Failed to alter table \"%s\" because the underlying table state was "
+				                           "reverted by a concurrent transaction",
+				                           old_entry.name.GetIdentifierName());
+			}
+		}
 		// Grab a write lock on the catalog
 		auto &duck_catalog = catalog.Cast<DuckCatalog>();
 		lock_guard<mutex> write_lock(duck_catalog.GetWriteLock());
