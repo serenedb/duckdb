@@ -9,6 +9,8 @@ set_extension_version_sources(icu icu_extension.cpp)
 include_directories(include)
 include_directories(collation/include)
 include_directories(datetime/include)
+include_directories(properties/include)
+include_directories(text/include)
 include_directories(${CMAKE_SOURCE_DIR}/third_party/zstd/include)
 
 set(ICU_EXTENSION_FILES
@@ -29,6 +31,16 @@ set(ICU_EXTENSION_FILES
     datetime/timezone.cpp
     datetime/tz_loader.cpp
     datetime/generated/tz_data.cpp
+    properties/unicode_properties.cpp
+    properties/generated/property_data.cpp
+    text/text_break_iterator.cpp
+    text/text_casing.cpp
+    text/text_dictionary.cpp
+    text/text_locale.cpp
+    text/text_normalizer.cpp
+    text/text_transform.cpp
+    text/text_unit.cpp
+    text/generated/text_data.cpp
     icu_extension.cpp
     icu-current.cpp
     icu-dateadd.cpp
