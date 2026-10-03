@@ -20,6 +20,8 @@ BoundStatement Binder::Bind(PrepareStatement &stmt) {
 	// we can always prepare, even if the transaction has been invalidated
 	// this is required because most clients ALWAYS invoke prepared statements
 	auto &properties = GetStatementProperties();
+	properties.view_scopes = prepared_planner.properties.view_scopes;
+	properties.resolved_entries = prepared_planner.properties.resolved_entries;
 	properties.requires_valid_transaction = false;
 	properties.result_eagerness = ResultEagerness::FORCED;
 	properties.bound_all_parameters = true;

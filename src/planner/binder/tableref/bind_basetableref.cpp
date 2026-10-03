@@ -304,6 +304,8 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 	case CatalogType::VIEW_ENTRY: {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
+		const auto scope_begin = global_binder_state->bound_tables;
+		const auto resolved_begin = GetStatementProperties().resolved_entries.size();
 		// We need to use a new binder for the view that doesn't reference any CTEs
 		// defined for this binder so there are no collisions between the CTEs defined
 		// for the view and for the current query
@@ -351,6 +353,9 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			    entry_at_clause, std::move(bound_child.plan));
 		}
 		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry);
+		GetStatementProperties().view_scopes.push_back({&view_catalog_entry, scope_begin,
+		                                                global_binder_state->bound_tables, resolved_begin,
+		                                                GetStatementProperties().resolved_entries.size()});
 		return bound_child;
 	}
 	default:
