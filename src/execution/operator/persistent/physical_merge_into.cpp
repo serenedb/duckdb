@@ -659,7 +659,7 @@ void PhysicalMergeInto::BuildPipelines(Pipeline &current, MetaPipeline &meta_pip
 		result_pipelines.push_back(current);
 		for (idx_t i = 1; i < action_pipeline_count; i++) {
 			// the actions emit their rows in order - the union pipelines run after the current pipeline
-			auto &union_pipeline = meta_pipeline.CreateUnionPipeline(current, true);
+			auto &union_pipeline = meta_pipeline.CreateUnionPipeline(result_pipelines.back(), true);
 			meta_pipeline.AssignNextBatchIndex(union_pipeline);
 			result_pipelines.push_back(union_pipeline);
 		}
