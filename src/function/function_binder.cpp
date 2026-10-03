@@ -1206,7 +1206,7 @@ static vector<Identifier> ResolveArguments(const SimpleFunction &function, Bound
 
 		if (seen_names.count(name)) {
 			// This should also not really happen when invoked through SQL
-			throw BinderException(location, "Duplicate named argument %s in function call to '%s'", name,
+			throw BinderException(location, "Duplicate named argument %s in function call to %s", name,
 			                      function.GetName());
 		}
 		seen_names.insert(name);
