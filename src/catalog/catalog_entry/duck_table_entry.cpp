@@ -834,7 +834,8 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	if (create_info->columns.empty() && !allow_zero_columns) {
 		throw CatalogException("Cannot drop column: table only has one column remaining!");
 	}
-	auto adjusted_indices = column_dependency_manager.RemoveColumn(removed_index, columns.LogicalColumnCount());
+	auto column_dependencies = column_dependency_manager;
+	auto adjusted_indices = column_dependencies.RemoveColumn(removed_index, columns.LogicalColumnCount());
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_constraints = binder->BindConstraints(constraints, name, columns);
