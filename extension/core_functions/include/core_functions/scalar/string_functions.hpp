@@ -160,9 +160,13 @@ struct HexFun {
 };
 
 struct ToHexFun {
-	using ALIAS = HexFun;
-
 	static constexpr const char *Name = "to_hex";
+	static constexpr const char *Parameters = "value::INTEGER\001value::BIGINT\001string::VARCHAR\001blob::BLOB\001value::ANY";
+	static constexpr const char *Description = "Converts the `value` to lowercase hexadecimal, as PostgreSQL does: a negative value is shown in 32-bit two's complement.\001Converts the `value` to lowercase hexadecimal, as PostgreSQL does: a negative value is shown in 64-bit two's complement.\001Converts the `string` to hexadecimal representation.\001Converts `blob` to `VARCHAR` using hexadecimal encoding.\001Converts the `value` to `VARCHAR` using hexadecimal representation.";
+	static constexpr const char *Example = "to_hex(255)\001to_hex(-1::BIGINT)\001to_hex('Hello')\001to_hex('\\xAA\\xBB'::BLOB)\001to_hex(42::UBIGINT)";
+	static constexpr const char *Categories = "numeric\001numeric\001string\001blob\001numeric";
+
+	static ScalarFunctionSet GetFunctions();
 };
 
 struct InstrFun {

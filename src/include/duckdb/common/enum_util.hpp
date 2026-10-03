@@ -42,6 +42,8 @@ enum class ARTSearchResult : uint8_t;
 
 enum class AccessMode : uint8_t;
 
+enum class AclMode : uint64_t;
+
 enum class AdaptiveFilterSource : uint8_t;
 
 enum class AggregateCombineType : uint8_t;
@@ -60,15 +62,17 @@ enum class AggregateStateExportMode : uint8_t;
 
 enum class AggregateType : uint8_t;
 
-enum class AllowParserOverride : uint8_t;
-
 enum class AlterDatabaseType : uint8_t;
 
 enum class AlterForeignKeyType : uint8_t;
 
+enum class AlterIndexType : uint8_t;
+
 enum class AlterScalarFunctionType : uint8_t;
 
 enum class AlterSchemaType : uint8_t;
+
+enum class AlterSequenceType : uint8_t;
 
 enum class AlterTableFunctionType : uint8_t;
 
@@ -206,6 +210,8 @@ enum class DestroyBufferUpon : uint8_t;
 
 enum class DialectCompatibilityMode : uint8_t;
 
+enum class DictFSSTMode : uint8_t;
+
 enum class DistinctCountSource : uint8_t;
 
 enum class DistinctType : uint8_t;
@@ -215,6 +221,8 @@ enum class ErrorType : uint16_t;
 enum class ExceptionFormatValueType : uint8_t;
 
 enum class ExceptionType : uint8_t;
+
+enum class ExplainFormatShape : uint8_t;
 
 enum class ExplainOutputType : uint8_t;
 
@@ -268,6 +276,8 @@ enum class FilterPropagateResult : uint8_t;
 
 enum class ForeignKeyType : uint8_t;
 
+enum class FormatArgumentType : uint8_t;
+
 enum class FunctionCollationHandling : uint8_t;
 
 enum class FunctionErrors : uint8_t;
@@ -283,8 +293,6 @@ enum class GateStatus : uint8_t;
 enum class GeometryStorageType : uint8_t;
 
 enum class GeometryType : uint8_t;
-
-enum class GrammarChangeType : uint8_t;
 
 enum class GroupByExpressionInfoType : uint8_t;
 
@@ -410,6 +418,8 @@ enum class OperatorMatcherMode : uint8_t;
 
 enum class OperatorResultType : uint8_t;
 
+enum class OptimizerHookPosition : uint8_t;
+
 enum class OptimizerType : uint32_t;
 
 enum class OrderByColumnType : uint8_t;
@@ -429,8 +439,6 @@ enum class OutputStream : uint8_t;
 enum class ParseInfoType : uint8_t;
 
 enum class ParseResultType : uint8_t;
-
-enum class ParserExtensionResultType : uint8_t;
 
 enum class PartitionedColumnDataType : uint8_t;
 
@@ -516,6 +524,8 @@ enum class ResultModifierType : uint8_t;
 
 enum class ResultOrdering : uint8_t;
 
+enum class RoleOption : uint32_t;
+
 enum class RowGroupAppendMode : uint8_t;
 
 enum class RowIdHandling : uint8_t;
@@ -572,6 +582,8 @@ enum class SourceBatchIndexState : uint8_t;
 
 enum class SourceResultType : uint8_t;
 
+enum class SqlCompatibility : uint8_t;
+
 enum class StarExpressionType : uint8_t;
 
 enum class StateMemoryOwnership : uint8_t;
@@ -590,8 +602,6 @@ enum class StorageBlockPrefetch : uint8_t;
 
 enum class StorageIndexType : uint8_t;
 
-enum class StorageVersion : uint64_t;
-
 enum class StrTimeSpecifier : uint8_t;
 
 enum class SubqueryType : uint8_t;
@@ -599,6 +609,8 @@ enum class SubqueryType : uint8_t;
 enum class SuggestionState : uint8_t;
 
 enum class TableColumnType : uint8_t;
+
+enum class TableFilterPushdown : uint8_t;
 
 enum class TableFilterType : uint8_t;
 
@@ -625,6 +637,8 @@ enum class ThreadPinMode : uint8_t;
 enum class TimestampCastResult : uint8_t;
 
 enum class TransactionInvalidationPolicy : uint8_t;
+
+enum class TransactionIsolationLevel : uint8_t;
 
 enum class TransactionModifierType : uint8_t;
 
@@ -697,6 +711,9 @@ template<>
 const char* EnumUtil::ToChars<AccessMode>(AccessMode value);
 
 template<>
+const char* EnumUtil::ToChars<AclMode>(AclMode value);
+
+template<>
 const char* EnumUtil::ToChars<AdaptiveFilterSource>(AdaptiveFilterSource value);
 
 template<>
@@ -724,19 +741,22 @@ template<>
 const char* EnumUtil::ToChars<AggregateType>(AggregateType value);
 
 template<>
-const char* EnumUtil::ToChars<AllowParserOverride>(AllowParserOverride value);
-
-template<>
 const char* EnumUtil::ToChars<AlterDatabaseType>(AlterDatabaseType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterForeignKeyType>(AlterForeignKeyType value);
 
 template<>
+const char* EnumUtil::ToChars<AlterIndexType>(AlterIndexType value);
+
+template<>
 const char* EnumUtil::ToChars<AlterScalarFunctionType>(AlterScalarFunctionType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterSchemaType>(AlterSchemaType value);
+
+template<>
+const char* EnumUtil::ToChars<AlterSequenceType>(AlterSequenceType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterTableFunctionType>(AlterTableFunctionType value);
@@ -943,6 +963,9 @@ template<>
 const char* EnumUtil::ToChars<DialectCompatibilityMode>(DialectCompatibilityMode value);
 
 template<>
+const char* EnumUtil::ToChars<DictFSSTMode>(DictFSSTMode value);
+
+template<>
 const char* EnumUtil::ToChars<DistinctCountSource>(DistinctCountSource value);
 
 template<>
@@ -956,6 +979,9 @@ const char* EnumUtil::ToChars<ExceptionFormatValueType>(ExceptionFormatValueType
 
 template<>
 const char* EnumUtil::ToChars<ExceptionType>(ExceptionType value);
+
+template<>
+const char* EnumUtil::ToChars<ExplainFormatShape>(ExplainFormatShape value);
 
 template<>
 const char* EnumUtil::ToChars<ExplainOutputType>(ExplainOutputType value);
@@ -1036,6 +1062,9 @@ template<>
 const char* EnumUtil::ToChars<ForeignKeyType>(ForeignKeyType value);
 
 template<>
+const char* EnumUtil::ToChars<FormatArgumentType>(FormatArgumentType value);
+
+template<>
 const char* EnumUtil::ToChars<FunctionCollationHandling>(FunctionCollationHandling value);
 
 template<>
@@ -1058,9 +1087,6 @@ const char* EnumUtil::ToChars<GeometryStorageType>(GeometryStorageType value);
 
 template<>
 const char* EnumUtil::ToChars<GeometryType>(GeometryType value);
-
-template<>
-const char* EnumUtil::ToChars<GrammarChangeType>(GrammarChangeType value);
 
 template<>
 const char* EnumUtil::ToChars<GroupByExpressionInfoType>(GroupByExpressionInfoType value);
@@ -1249,6 +1275,9 @@ template<>
 const char* EnumUtil::ToChars<OperatorResultType>(OperatorResultType value);
 
 template<>
+const char* EnumUtil::ToChars<OptimizerHookPosition>(OptimizerHookPosition value);
+
+template<>
 const char* EnumUtil::ToChars<OptimizerType>(OptimizerType value);
 
 template<>
@@ -1277,9 +1306,6 @@ const char* EnumUtil::ToChars<ParseInfoType>(ParseInfoType value);
 
 template<>
 const char* EnumUtil::ToChars<ParseResultType>(ParseResultType value);
-
-template<>
-const char* EnumUtil::ToChars<ParserExtensionResultType>(ParserExtensionResultType value);
 
 template<>
 const char* EnumUtil::ToChars<PartitionedColumnDataType>(PartitionedColumnDataType value);
@@ -1408,6 +1434,9 @@ template<>
 const char* EnumUtil::ToChars<ResultOrdering>(ResultOrdering value);
 
 template<>
+const char* EnumUtil::ToChars<RoleOption>(RoleOption value);
+
+template<>
 const char* EnumUtil::ToChars<RowGroupAppendMode>(RowGroupAppendMode value);
 
 template<>
@@ -1492,6 +1521,9 @@ template<>
 const char* EnumUtil::ToChars<SourceResultType>(SourceResultType value);
 
 template<>
+const char* EnumUtil::ToChars<SqlCompatibility>(SqlCompatibility value);
+
+template<>
 const char* EnumUtil::ToChars<StarExpressionType>(StarExpressionType value);
 
 template<>
@@ -1519,9 +1551,6 @@ template<>
 const char* EnumUtil::ToChars<StorageIndexType>(StorageIndexType value);
 
 template<>
-const char* EnumUtil::ToChars<StorageVersion>(StorageVersion value);
-
-template<>
 const char* EnumUtil::ToChars<StrTimeSpecifier>(StrTimeSpecifier value);
 
 template<>
@@ -1532,6 +1561,9 @@ const char* EnumUtil::ToChars<SuggestionState>(SuggestionState value);
 
 template<>
 const char* EnumUtil::ToChars<TableColumnType>(TableColumnType value);
+
+template<>
+const char* EnumUtil::ToChars<TableFilterPushdown>(TableFilterPushdown value);
 
 template<>
 const char* EnumUtil::ToChars<TableFilterType>(TableFilterType value);
@@ -1571,6 +1603,9 @@ const char* EnumUtil::ToChars<TimestampCastResult>(TimestampCastResult value);
 
 template<>
 const char* EnumUtil::ToChars<TransactionInvalidationPolicy>(TransactionInvalidationPolicy value);
+
+template<>
+const char* EnumUtil::ToChars<TransactionIsolationLevel>(TransactionIsolationLevel value);
 
 template<>
 const char* EnumUtil::ToChars<TransactionModifierType>(TransactionModifierType value);
@@ -1670,6 +1705,9 @@ template<>
 AccessMode EnumUtil::FromString<AccessMode>(const char *value);
 
 template<>
+AclMode EnumUtil::FromString<AclMode>(const char *value);
+
+template<>
 AdaptiveFilterSource EnumUtil::FromString<AdaptiveFilterSource>(const char *value);
 
 template<>
@@ -1697,19 +1735,22 @@ template<>
 AggregateType EnumUtil::FromString<AggregateType>(const char *value);
 
 template<>
-AllowParserOverride EnumUtil::FromString<AllowParserOverride>(const char *value);
-
-template<>
 AlterDatabaseType EnumUtil::FromString<AlterDatabaseType>(const char *value);
 
 template<>
 AlterForeignKeyType EnumUtil::FromString<AlterForeignKeyType>(const char *value);
 
 template<>
+AlterIndexType EnumUtil::FromString<AlterIndexType>(const char *value);
+
+template<>
 AlterScalarFunctionType EnumUtil::FromString<AlterScalarFunctionType>(const char *value);
 
 template<>
 AlterSchemaType EnumUtil::FromString<AlterSchemaType>(const char *value);
+
+template<>
+AlterSequenceType EnumUtil::FromString<AlterSequenceType>(const char *value);
 
 template<>
 AlterTableFunctionType EnumUtil::FromString<AlterTableFunctionType>(const char *value);
@@ -1916,6 +1957,9 @@ template<>
 DialectCompatibilityMode EnumUtil::FromString<DialectCompatibilityMode>(const char *value);
 
 template<>
+DictFSSTMode EnumUtil::FromString<DictFSSTMode>(const char *value);
+
+template<>
 DistinctCountSource EnumUtil::FromString<DistinctCountSource>(const char *value);
 
 template<>
@@ -1929,6 +1973,9 @@ ExceptionFormatValueType EnumUtil::FromString<ExceptionFormatValueType>(const ch
 
 template<>
 ExceptionType EnumUtil::FromString<ExceptionType>(const char *value);
+
+template<>
+ExplainFormatShape EnumUtil::FromString<ExplainFormatShape>(const char *value);
 
 template<>
 ExplainOutputType EnumUtil::FromString<ExplainOutputType>(const char *value);
@@ -2009,6 +2056,9 @@ template<>
 ForeignKeyType EnumUtil::FromString<ForeignKeyType>(const char *value);
 
 template<>
+FormatArgumentType EnumUtil::FromString<FormatArgumentType>(const char *value);
+
+template<>
 FunctionCollationHandling EnumUtil::FromString<FunctionCollationHandling>(const char *value);
 
 template<>
@@ -2031,9 +2081,6 @@ GeometryStorageType EnumUtil::FromString<GeometryStorageType>(const char *value)
 
 template<>
 GeometryType EnumUtil::FromString<GeometryType>(const char *value);
-
-template<>
-GrammarChangeType EnumUtil::FromString<GrammarChangeType>(const char *value);
 
 template<>
 GroupByExpressionInfoType EnumUtil::FromString<GroupByExpressionInfoType>(const char *value);
@@ -2222,6 +2269,9 @@ template<>
 OperatorResultType EnumUtil::FromString<OperatorResultType>(const char *value);
 
 template<>
+OptimizerHookPosition EnumUtil::FromString<OptimizerHookPosition>(const char *value);
+
+template<>
 OptimizerType EnumUtil::FromString<OptimizerType>(const char *value);
 
 template<>
@@ -2250,9 +2300,6 @@ ParseInfoType EnumUtil::FromString<ParseInfoType>(const char *value);
 
 template<>
 ParseResultType EnumUtil::FromString<ParseResultType>(const char *value);
-
-template<>
-ParserExtensionResultType EnumUtil::FromString<ParserExtensionResultType>(const char *value);
 
 template<>
 PartitionedColumnDataType EnumUtil::FromString<PartitionedColumnDataType>(const char *value);
@@ -2381,6 +2428,9 @@ template<>
 ResultOrdering EnumUtil::FromString<ResultOrdering>(const char *value);
 
 template<>
+RoleOption EnumUtil::FromString<RoleOption>(const char *value);
+
+template<>
 RowGroupAppendMode EnumUtil::FromString<RowGroupAppendMode>(const char *value);
 
 template<>
@@ -2465,6 +2515,9 @@ template<>
 SourceResultType EnumUtil::FromString<SourceResultType>(const char *value);
 
 template<>
+SqlCompatibility EnumUtil::FromString<SqlCompatibility>(const char *value);
+
+template<>
 StarExpressionType EnumUtil::FromString<StarExpressionType>(const char *value);
 
 template<>
@@ -2492,9 +2545,6 @@ template<>
 StorageIndexType EnumUtil::FromString<StorageIndexType>(const char *value);
 
 template<>
-StorageVersion EnumUtil::FromString<StorageVersion>(const char *value);
-
-template<>
 StrTimeSpecifier EnumUtil::FromString<StrTimeSpecifier>(const char *value);
 
 template<>
@@ -2505,6 +2555,9 @@ SuggestionState EnumUtil::FromString<SuggestionState>(const char *value);
 
 template<>
 TableColumnType EnumUtil::FromString<TableColumnType>(const char *value);
+
+template<>
+TableFilterPushdown EnumUtil::FromString<TableFilterPushdown>(const char *value);
 
 template<>
 TableFilterType EnumUtil::FromString<TableFilterType>(const char *value);
@@ -2544,6 +2597,9 @@ TimestampCastResult EnumUtil::FromString<TimestampCastResult>(const char *value)
 
 template<>
 TransactionInvalidationPolicy EnumUtil::FromString<TransactionInvalidationPolicy>(const char *value);
+
+template<>
+TransactionIsolationLevel EnumUtil::FromString<TransactionIsolationLevel>(const char *value);
 
 template<>
 TransactionModifierType EnumUtil::FromString<TransactionModifierType>(const char *value);

@@ -6,6 +6,7 @@
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/catalog/dependency.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
 
 namespace duckdb {
@@ -53,6 +54,15 @@ void LogicalDependency::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<DependencyDependentFlags>(102, "flags", flags, DependencyDependentFlags().SetBlocking());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<bool>(16484, "owned_by", owned_by, false);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<subdependency_set_t>(16485, "subdependencies", subdependencies, subdependency_set_t());
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16486, "oid", oid, 0);
+	}
 }
 
 LogicalDependency LogicalDependency::Deserialize(Deserializer &deserializer) {
@@ -60,6 +70,9 @@ LogicalDependency LogicalDependency::Deserialize(Deserializer &deserializer) {
 	auto catalog = deserializer.ReadPropertyWithDefault<Identifier>(101, "catalog");
 	LogicalDependency result(deserializer.TryGet<Catalog>(), entry, std::move(catalog));
 	deserializer.ReadPropertyWithExplicitDefault<DependencyDependentFlags>(102, "flags", result.flags, DependencyDependentFlags().SetBlocking());
+	deserializer.ReadPropertyWithExplicitDefault<bool>(16484, "owned_by", result.owned_by, false);
+	deserializer.ReadPropertyWithExplicitDefault<subdependency_set_t>(16485, "subdependencies", result.subdependencies, subdependency_set_t());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16486, "oid", result.oid, 0);
 	return result;
 }
 
@@ -70,6 +83,18 @@ void LogicalDependencyList::Serialize(Serializer &serializer) const {
 LogicalDependencyList LogicalDependencyList::Deserialize(Deserializer &deserializer) {
 	LogicalDependencyList result;
 	deserializer.ReadProperty<create_info_set_t>(100, "set", result.set);
+	return result;
+}
+
+void SubDependency::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<AlterTableType>(100, "alter", alter);
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+}
+
+SubDependency SubDependency::Deserialize(Deserializer &deserializer) {
+	SubDependency result;
+	deserializer.ReadProperty<AlterTableType>(100, "alter", result.alter);
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
 	return result;
 }
 

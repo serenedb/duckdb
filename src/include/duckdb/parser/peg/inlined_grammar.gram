@@ -5,6 +5,23 @@ TopLevelStatement <- Statement? (';'+ / EndOfInput)
 Statement <-
 	ExternalResourceStatement /
 	ExtensionRepositoryStatement /
+	CreateDatabaseStatement /
+	DropDatabaseStatement /
+	CreateTSDictionaryStatement /
+	DropTSDictionaryStatement /
+	CreateServerStatement /
+	DropServerStatement /
+	CreateRoleStatement /
+	DropRoleStatement /
+	CreatePolicyStatement /
+	AlterPolicyStatement /
+	DropPolicyStatement /
+	AlterTableRowSecurityStatement /
+	AlterOwnerStatement /
+	AlterDefaultPrivilegesStatement /
+	AlterRoleStatement /
+	GrantStatement /
+	RevokeStatement /
 	CreateStatement /
 	SelectStatement /
 	SetStatement /
@@ -25,11 +42,13 @@ Statement <-
 	DetachStatement /
 	CheckpointStatement /
 	VacuumStatement /
+	ReindexStatement /
 	ResetStatement /
 	ExportStatement /
 	ImportStatement /
 	CommentStatement /
 	DeallocateStatement /
+	DiscardStatement /
 	TruncateStatement /
 	LoadStatement /
 	InstallStatement /
@@ -38,6 +57,11 @@ Statement <-
 	MergeIntoStatement /
 	ConnectStatement /
 	DisconnectStatement /
+	CreatePublicationStatement /
+	CreateSubscriptionStatement /
+	ListenStatement /
+	NotifyStatement /
+	UnlistenStatement /
 	ExpressionStatement
 
 AnalyzeKeyword <- 'ANALYZE' / 'ANALYSE'
@@ -251,7 +275,6 @@ ColumnNameKeyword <- 'BETWEEN' /
 'XMLSERIALIZE' /
 'XMLTABLE'
 FuncNameKeyword <- 'ASOF' /
-'AT' /
 'AUTHORIZATION' /
 'BINARY' /
 'COLLATION' /
@@ -357,7 +380,6 @@ ReservedKeyword <- 'ALL' /
 'WINDOW' /
 'WITH'
 TypeNameKeyword <- 'ASOF' /
-'AT' /
 'AUTHORIZATION' /
 'BINARY' /
 'BY' /
@@ -402,6 +424,8 @@ UnreservedKeyword <- 'ABORT' /
 'APPROX' /
 'ASSERTION' /
 'ASSIGNMENT' /
+'AT' /
+'ATOMIC' /
 'ATTACH' /
 'ATTRIBUTE' /
 'AUTO' /
@@ -458,6 +482,7 @@ UnreservedKeyword <- 'ABORT' /
 'DELIMITER' /
 'DELIMITERS' /
 'DEPENDS' /
+'DESTROY' /
 'DETACH' /
 'DICTIONARY' /
 'DISABLE' /
@@ -619,6 +644,7 @@ UnreservedKeyword <- 'ABORT' /
 'REF' /
 'REFERENCING' /
 'REFRESH' /
+'REGISTER' /
 'REINDEX' /
 'RELATIVE' /
 'RELEASE' /
@@ -628,9 +654,11 @@ UnreservedKeyword <- 'ABORT' /
 'REPLICA' /
 'RESET' /
 'RESOURCE' /
+'RESOURCES' /
 'RESPECT' /
 'RESTART' /
 'RESTRICT' /
+'RETURN' /
 'RETURNS' /
 'REVOKE' /
 'ROLE' /
@@ -732,17 +760,22 @@ UnreservedKeyword <- 'ABORT' /
 'ZONE'
 AlterStatement <- 'ALTER' AlterOptions
 
-AlterOptions <- AlterTableStmt / AlterViewStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt
+AlterOptions <- AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt
 
-AlterTableStmt <- 'TABLE' IfExists? BaseTableName List(AlterTableOptions)
+AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter
+AlterIndexAlter <- RenameAlter / SetOptions / ResetOptions
+AlterFunctionStmt <- 'FUNCTION' IfExists? QualifiedName RenameAlter
+
+AlterTableStmt <- 'TABLE' IfExists? 'ONLY'? BaseTableName List(AlterTableOptions)
 AlterSchemaStmt <- 'SCHEMA' IfExists? QualifiedName AlterSchemaOptions
 AlterSchemaOptions <- RenameAlter / SetOptions / ResetOptions
 
 AlterTableOptions <- AddColumn / DropConstraint / DropColumn / AlterColumn / AddConstraint / ChangeNullability /
-        RenameColumn / RenameAlter / SetPartitionedBy / ResetPartitionedBy / SetSortedBy / ResetSortedBy / SetOptions / ResetOptions
+        RenameConstraint / RenameColumn / RenameAlter / SetPartitionedBy / ResetPartitionedBy / SetSortedBy / ResetSortedBy / SetOptions / ResetOptions
 
 AddConstraint <- 'ADD' TopLevelConstraint
 DropConstraint <- 'DROP' 'CONSTRAINT' IfExists? ConstraintName DropBehavior?
+RenameConstraint <- 'RENAME' 'CONSTRAINT' ConstraintName 'TO' ConstraintName
 AddColumn <- 'ADD' 'COLUMN'? IfNotExists? AddColumnEntry
 AddColumnEntry <- DottedIdentifier Type? GeneratedColumn? ColumnConstraint*
 DropColumn <- 'DROP' 'COLUMN'? IfExists? NestedColumnName DropBehavior?
@@ -781,7 +814,10 @@ QualifiedSequenceName <- CatalogQualification? SchemaQualification? SequenceName
 
 AlterSequenceOptions <- RenameAlterSequenceOptions / SetSequenceOption
 RenameAlterSequenceOptions <- RenameAlter
-SetSequenceOption <- SequenceOption+
+SetSequenceOption <- AlterSequenceOption+
+AlterSequenceOption <- SeqRestart / SequenceOption
+SeqRestart <- 'RESTART' SeqRestartValue?
+SeqRestartValue <- 'WITH'? Expression
 
 AlterDatabaseStmt <- 'DATABASE' IfExists? Identifier 'SET' 'ALIAS' 'TO' Identifier
 
@@ -834,7 +870,7 @@ CatalogSessionTarget <- CatalogName
 CopyStatement <- 'COPY' CopyVariations
 CopyVariations <- CopyTable / CopySelect / CopyFromDatabase
 
-CopyTable <- BaseTableName InsertColumnList? FromOrTo CopyFileName CopyOptions?
+CopyTable <- BaseTableName InsertColumnList? FromOrTo CopyFileName CopyOptions? WhereClause?
 FromOrTo <- CopyFrom / CopyTo
 CopyFrom <- 'FROM'
 CopyTo <- 'TO'
@@ -884,10 +920,17 @@ OrderByCopyOption <- 'ORDER' 'BY' GenericCopyOptionValue?
 PartitionedByCopyOption <- ('PARTITION' / 'PARTITIONED') 'BY' GenericCopyOptionValue?
 GenericCopyOptionList <- Parens(List(GenericCopyOption))
 GenericCopyOption <- CopyOptionName GenericCopyOptionValue?
-GenericCopyOptionValue <- GenericCopyOptionOrderList / GenericCopyOptionExpression
+GenericCopyOptionValue <- GenericCopyOptionOrderList / CopyFormatKeyword / CopyBooleanKeyword / GenericCopyOptionExpression
 GenericCopyOptionOrderList <- GenericCopyOptionParenthesizedExpressionList
 GenericCopyOptionExpression <- Expression
 GenericCopyOptionParenthesizedExpressionList <- Parens(OrderByExpressionList)
+# BINARY is a reserved keyword, so unquoted (FORMAT binary) cannot parse as a
+# value Expression; accept it explicitly (the transform maps it to "binary").
+CopyFormatKeyword <- 'BINARY'
+# ON is a reserved keyword, so (HEADER ON) cannot parse as a value Expression;
+# accept it explicitly (the transform maps it to "on", which the binder casts to
+# boolean true). OFF/TRUE/FALSE are not reserved and already parse as Expression.
+CopyBooleanKeyword <- 'ON'
 
 CopyFromDatabase <- CopyFromDatabaseWithFlag / CopyFromDatabaseWithoutFlag
 CopyFromDatabaseWithFlag <- 'FROM' 'DATABASE' ColId 'TO' ColId CopyDatabaseFlag
@@ -898,7 +941,14 @@ SchemaOrData <- CopySchema / CopyData
 CopySchema <- 'SCHEMA'
 CopyData <- 'DATA'
 
-CreateIndexStmt <- UniqueIndex? 'INDEX' IfNotExists? IndexName? 'ON' BaseTableName InsertColumnList? IndexType? Parens(List(IndexElement))? WithList? WhereClause?
+CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName WithList?
+DropDatabaseStatement <- 'DROP' 'DATABASE' IfExists? CatalogName DropDatabaseForce?
+DropDatabaseForce <- '(' 'FORCE' ')'
+
+CreateIndexStmt <- UniqueIndex? 'INDEX' IfNotExists? IndexName? 'ON' BaseTableName InsertColumnList? IndexType? Parens(List(IndexElement))? IncludeClause? WithList? WhereClause?
+
+IncludeClause <- 'INCLUDE' Parens(List(IncludedColumn))
+IncludedColumn <- ColId IndexOpclass?
 
 WithList <- 'WITH' RelOptionOrOids
 RelOptionOrOids <- RelOptionList / Oids
@@ -907,12 +957,15 @@ Oids <- WithOrWithoutOids 'OIDS'
 WithOrWithoutOids <- WithOids / WithoutOids
 WithOids <- 'WITH'
 WithoutOids <- 'WITHOUT'
-IndexElement <- Expression DescOrAsc? NullsFirstOrLast?
+IndexElement <- Expression IndexOpclass? DescOrAsc? NullsFirstOrLast?
+IndexOpclass <- Identifier DotColLabel? IndexOpclassOptions?
+IndexOpclassOptions <- Parens(List(IndexOpclassOption)?)
+IndexOpclassOption <- ColLabel ('=' DefArg)?
 UniqueIndex <- 'UNIQUE'
 IndexType <- 'USING' Identifier
 RelOption <- RelOptionName RelOptionArgumentOpt?
-RelOptionName <- DottedIdentifierString / StringLiteral
-DottedIdentifierString <- DottedIdentifier
+RelOptionName <- DottedColLabel / StringLiteral
+DottedColLabel <- ColLabel DotColLabel*
 RelOptionArgumentOpt <- '=' DefArg
 DefArg <- DefArgNull / DefArgStringLiteral / NumberLiteral / NoneLiteral / Expression / DefArgKeyword
 DefArgNull <- NullLiteral
@@ -922,11 +975,16 @@ NoneLiteral <- 'NONE'
 
 CreateMacroStmt <- MacroOrFunction IfNotExists? QualifiedName List(MacroDefinition)
 
-MacroOrFunction <- MacroKeyword / FunctionKeyword
+MacroOrFunction <- MacroKeyword / FunctionKeyword / ProcedureKeyword
 MacroKeyword <- 'MACRO'
 FunctionKeyword <- 'FUNCTION'
+ProcedureKeyword <- 'PROCEDURE'
 
-MacroDefinition <- Parens(MacroParameters?) 'AS' MacroDefinitionBody
+MacroDefinition <- Parens(MacroParameters?) FunctionDecorator* (AsMacroBody / AtomicMacroBody / ReturnMacroBody) FunctionDecorator*
+
+AsMacroBody <- 'AS' MacroDefinitionBody
+AtomicMacroBody <- 'BEGIN' 'ATOMIC' SelectStatementInternal ';'? 'END'
+ReturnMacroBody <- 'RETURN' Expression
 MacroDefinitionBody <- TableMacroDefinition / ScalarMacroDefinition
 
 MacroParameters <- List(MacroParameter)
@@ -936,7 +994,28 @@ SimpleParameter <- TypeFuncName Type?
 ScalarMacroDefinition <- Expression
 TableMacroDefinition <- 'TABLE' SelectStatementInternal
 
-CreateSchemaStmt <- 'SCHEMA' IfNotExists? QualifiedName WithOptionList?
+FunctionDecorator <- ReturnsClause / VolatilityKeyword / StrictClause / LanguageClause / SecurityClause / CostClause / RowsClause / ParallelClause / LeakproofClause
+
+ReturnsClause <- 'RETURNS' (ReturnsTable / ReturnsNull / Type)
+ReturnsTable <- 'TABLE' Parens(List(ColIdType))
+ReturnsNull <- 'NULL' 'ON' 'NULL' 'INPUT'
+VolatilityKeyword <- 'IMMUTABLE' / 'STABLE' / 'VOLATILE'
+StrictClause <- 'STRICT' / ('CALLED' 'ON' 'NULL' 'INPUT')
+LanguageClause <- 'LANGUAGE' Identifier
+SecurityClause <- 'EXTERNAL'? 'SECURITY' ('DEFINER' / 'INVOKER')
+CostClause <- 'COST' NumberLiteral
+RowsClause <- 'ROWS' NumberLiteral
+ParallelClause <- 'PARALLEL' Identifier
+LeakproofClause <- 'NOT'? 'LEAKPROOF'
+
+CreatePublicationStatement <- 'CREATE' 'PUBLICATION' Identifier PublicationFor?
+PublicationFor <- 'FOR' (PublicationForAllTables / PublicationForTable)
+PublicationForAllTables <- 'ALL' 'TABLES'
+PublicationForTable <- 'TABLE' List(BaseTableName)
+
+CreateSchemaStmt <- 'SCHEMA' IfNotExists? QualifiedName? SchemaAuthorization? WithOptionList?
+
+SchemaAuthorization <- 'AUTHORIZATION' ColId
 
 WithOptionList <- 'WITH' RelOptionList
 
@@ -953,6 +1032,8 @@ SequenceOption <-
 	SeqSetMinMax /
 	SeqNoMinMax /
 	SeqStartWith /
+	SeqCache /
+	SeqAsType /
 	SeqOwnedBy
 
 SeqSetCycle <- SeqCycle / SeqNoCycle
@@ -962,11 +1043,25 @@ SeqSetIncrement <- 'INCREMENT' 'BY'? Expression
 SeqSetMinMax <- SeqMinOrMax Expression
 SeqNoMinMax <- 'NO' SeqMinOrMax
 SeqStartWith <- 'START' 'WITH'? Expression
-SeqOwnedBy <- 'OWNED' 'BY' QualifiedName
+SeqCache <- 'CACHE' Expression
+SeqAsType <- 'AS' Type
+SeqOwnedBy <- 'OWNED' 'BY' SeqOwner
+SeqOwner <- SeqOwnerNone / QualifiedName
+SeqOwnerNone <- 'NONE'
 
 SeqMinOrMax <- MinValue / MaxValue
 MinValue <- 'MINVALUE'
 MaxValue <- 'MAXVALUE'
+
+CreateServerStatement <- 'CREATE' 'SERVER' IfNotExists? ColId 'FOREIGN' 'DATA' 'WRAPPER' Identifier ServerOptions?
+DropServerStatement <- 'DROP' 'SERVER' IfExists? ColId DropBehavior?
+
+ServerOptions <- 'OPTIONS' Parens(List(ServerOption))
+ServerOption <- ColLabel StringLiteral
+
+CreateSubscriptionStatement <- 'CREATE' 'SUBSCRIPTION' Identifier SubscriptionConnection?
+SubscriptionConnection <- 'CONNECTION' StringLiteral SubscriptionPublication?
+SubscriptionPublication <- 'PUBLICATION' List(Identifier)
 
 CreateStatement <- 'CREATE' OrReplace? Temporary? CreateStatementVariation
 CreateStatementVariation <- CreateTableStmt / CreateMacroStmt / CreateSequenceStmt / CreateTypeStmt / CreateSchemaStmt / CreateViewStmt / CreateIndexStmt / CreateSecretStmt / CreateTriggerStmt
@@ -1007,8 +1102,10 @@ CreateTableColumnList <- List(CreateTableColumnElement)
 CreateTableColumnElement <- CreateTableColumnDefinition / CreateTableConstraint
 CreateTableColumnDefinition <- ColumnDefinition
 CreateTableConstraint <- TopLevelConstraint
-ColumnDefinition <- DottedIdentifier Type? GeneratedColumn? ConstraintNameClause? ColumnConstraint*
-ColumnConstraint <- NotNullConstraint / UniqueConstraint / PrimaryKeyConstraint / DefaultValue / CheckConstraint / ForeignKeyConstraint / ColumnCollation / ColumnCompression
+ColumnDefinition <- DottedIdentifier Type? GeneratedColumn? ColumnConstraint*
+ColumnConstraint <- NamedColumnConstraint / ColumnConstraintElement / ColumnCollation
+NamedColumnConstraint <- ConstraintNameClause ColumnConstraintElement
+ColumnConstraintElement <- NotNullConstraint / UniqueConstraint / PrimaryKeyConstraint / DefaultValue / CheckConstraint / ForeignKeyConstraint / ColumnCompression
 NotNullConstraint <- NullConstraint / NotNullColumnConstraint
 NullConstraint <- 'NULL'
 NotNullColumnConstraint <- 'NOT' 'NULL'
@@ -1062,7 +1159,9 @@ StringLiteralIdentifier <- StringLiteral
 GeneratedColumn <- Generated? 'AS' Parens(Expression) GeneratedColumnType?
 
 Generated <- 'GENERATED' AlwaysOrByDefault?
-AlwaysOrByDefault <- 'ALWAYS' / ('BY' 'DEFAULT')
+AlwaysOrByDefault <- Always / ByDefault
+Always <- 'ALWAYS'
+ByDefault <- 'BY' 'DEFAULT'
 GeneratedColumnType <- VirtualGeneratedColumn / StoredGeneratedColumn
 
 CommitAction <- 'ON' 'COMMIT' PreserveOrDelete 'ROWS'
@@ -1071,6 +1170,15 @@ PreserveRows <- 'PRESERVE'
 DeleteRows <- 'DELETE'
 VirtualGeneratedColumn <- 'VIRTUAL'
 StoredGeneratedColumn <- 'STORED'
+
+CreateTSDictionaryStatement <- 'CREATE' 'TEXT' 'SEARCH' 'DICTIONARY' IfNotExists? QualifiedName TSDictionaryExpression
+DropTSDictionaryStatement <- 'DROP' 'TEXT' 'SEARCH' 'DICTIONARY' IfExists? QualifiedName DropBehavior?
+
+TSDictionaryExpression <- 'AS' Expression TSDictionaryWith?
+TSDictionaryWith <- 'WITH' TSDictionaryDefinition
+TSDictionaryDefinition <- Parens(List(TSDictionaryDefElement))
+TSDictionaryDefElement <- ColLabel TSDictionaryDefArg?
+TSDictionaryDefArg <- '=' DefArg
 
 CreateTriggerStmt <- 'TRIGGER' IfNotExists? TriggerName TriggerTiming TriggerEvent 'ON' BaseTableName ReferencingClause? ForEachClause? TriggerBody
 
@@ -1100,7 +1208,8 @@ ForEachRow <- 'FOR' 'EACH' 'ROW'
 ForEachStatement <- 'FOR' 'EACH' 'STATEMENT'
 
 CreateTypeStmt <- 'TYPE' IfNotExists? QualifiedName 'AS' CreateType
-CreateType <- EnumSelectType / EnumStringLiteralList / CreateTypeFromType
+CreateType <- EnumSelectType / EnumStringLiteralList / CreateTypeComposite / CreateTypeFromType
+CreateTypeComposite <- ColIdTypeList
 CreateTypeFromType <- Type
 EnumSelectType <- 'ENUM' Parens(SelectStatementInternal)
 EnumStringLiteralList <- 'ENUM' Parens(List(StringLiteral)?)
@@ -1109,22 +1218,40 @@ CreateViewStmt <- CreateSecure? CreateRecursive? 'VIEW' IfNotExists? QualifiedNa
 CreateRecursive <- 'RECURSIVE'
 CreateSecure <- 'SECURE'
 
-DeallocateStatement <- 'DEALLOCATE' DeallocatePrepare? ColIdOrString
+DeallocateStatement <- 'DEALLOCATE' DeallocatePrepare? DeallocateTarget
 DeallocatePrepare <- 'PREPARE'
+# PG accepts both DEALLOCATE <name> and DEALLOCATE [PREPARE] ALL.
+# The ALL form drops every prepared statement on the session.
+DeallocateTarget <- DeallocateAll / ColIdOrString
+DeallocateAll <- 'ALL'
+
+# PG-compat alias for pooled drivers (Npgsql, pgjdbc, psycopg). Every variant
+# collapses to DEALLOCATE ALL semantically: SereneDB has no temp tables /
+# session sequences, so the only observable effect is clearing the prepared
+# statement cache.
+DiscardStatement <- 'DISCARD' DiscardTarget
+DiscardTarget <- 'ALL' / 'PLANS' / 'SEQUENCES' / 'TEMPORARY' / 'TEMP'
 
 DeleteStatement <- WithClause? 'DELETE' 'FROM' TargetOptAlias DeleteUsingClause? WhereClause? ReturningClause?
-TruncateStatement <- 'TRUNCATE' 'TABLE'? BaseTableName
+TruncateStatement <- 'TRUNCATE' 'TABLE'? List(TruncateTarget) TruncateIdentityClause? DropBehavior?
+TruncateTarget <- TruncateOnly? BaseTableName TruncateStar?
+TruncateOnly <- 'ONLY'
+TruncateStar <- '*'
+TruncateIdentityClause <- TruncateRestart / TruncateContinue
+TruncateRestart <- 'RESTART' 'IDENTITY'
+TruncateContinue <- 'CONTINUE' 'IDENTITY'
 TargetOptAlias <- BaseTableName TargetAlias?
 TargetAlias <- 'AS'? ColId
 DeleteUsingClause <- 'USING' List(TableRef)
 
-DescribeStatement <- ShowTables / ShowDeprecatedSelect / DescribeSelect / ShowAllTables / ShowByName / DescribeByName
+DescribeStatement <- ShowTables / ShowDeprecatedSelect / DescribeSelect / ShowAllTables / ShowAliasedSetting / ShowAllSettings / ShowByName / DescribeByName
 
 # "DESCRIBE (query)" and "SUMMARIZE (query)" describe the query's columns. "SHOW (query)" does too but is deprecated,
 # so ShowDeprecatedSelect is parsed yet suppressed from autocomplete (matcher_factory.cpp) - SHOW won't offer to complete a query.
 ShowDeprecatedSelect <- ShowRule SelectStatementInternal
 DescribeSelect <- DescribeOrSummarize SelectStatementInternal
-ShowAllTables <- ShowOrDescribe 'ALL' 'TABLES'?
+ShowAllTables <- ShowOrDescribe 'ALL' 'TABLES'
+ShowAllSettings <- ShowOrDescribe 'ALL'
 ShowTables <- ShowOrDescribe 'TABLES' 'FROM' QualifiedName
 
 # "SHOW name" is settings-first, so its target autocompletes setting names (and the special MySQL forms), not
@@ -1149,6 +1276,9 @@ ShowSpecialForm <- 'DATABASES' / 'SCHEMAS' / 'TABLES' / 'VARIABLES'
 DescribeTarget <- DescribeBaseTableName / DescribeStringLiteral
 DescribeBaseTableName <- BaseTableName
 DescribeStringLiteral <- StringLiteral
+
+ShowAliasedSetting <- ShowOrDescribe ShowSettingAlias
+ShowSettingAlias <- ('TRANSACTION' 'ISOLATION' 'LEVEL') / ('SESSION' 'AUTHORIZATION') / ('TIME' 'ZONE')
 
 Summarize <- SummarizeRule
 SummarizeRule <- 'SUMMARIZE'
@@ -1178,7 +1308,9 @@ DropTrigger <- 'TRIGGER' IfExists? TriggerName 'ON' BaseTableName
 
 DropTable <- TableOrView IfExists? List(BaseTableName)
 DropTableFunction <- CommentMacroTable IfExists? List(TableFunctionName)
-DropFunction <- FunctionTypeMacro IfExists? List(FunctionIdentifier)
+DropFunction <- FunctionTypeMacro IfExists? List(DropFunctionItem)
+DropFunctionItem <- FunctionIdentifier DropFunctionArgs?
+DropFunctionArgs <- '(' List(Type)? ')'
 DropSchema <- 'SCHEMA' IfExists? List(QualifiedName)
 DropIndex <- 'INDEX' IfExists? List(QualifiedIndexName)
 QualifiedIndexName <- CatalogReservedSchemaIndex / SchemaReservedIndex / QualifiedIndexNameString
@@ -1192,9 +1324,10 @@ DropSecret <- Temporary? 'SECRET' IfExists? SecretName DropSecretStorage?
 
 TableOrView <- CommentTable / CommentView / MaterializedViewEntry
 MaterializedViewEntry <- 'MATERIALIZED' 'VIEW'
-FunctionTypeMacro <- FunctionTypeMacroKeyword / FunctionTypeFunction
+FunctionTypeMacro <- FunctionTypeMacroKeyword / FunctionTypeFunction / FunctionTypeProcedure
 FunctionTypeMacroKeyword <- 'MACRO'
 FunctionTypeFunction <- 'FUNCTION'
+FunctionTypeProcedure <- 'PROCEDURE'
 
 DropBehavior <- CascadeDropBehavior / RestrictDropBehavior
 CascadeDropBehavior <- 'CASCADE'
@@ -1222,6 +1355,7 @@ ExplainableStatements <-
     CreateStatement /
     DeallocateStatement /
     DeleteStatement /
+    TruncateStatement /
     DropStatement /
     ExecuteStatement /
     InsertStatement /
@@ -1479,8 +1613,10 @@ InExpression <- InExpressionList / InSelectStatement / InContainsExpression
 InContainsExpression <- OtherOperatorExpression
 InExpressionList <- Parens(List(Expression))
 InSelectStatement <- Parens(SelectStatementInternal)
-BetweenClause <- 'BETWEEN' Asymmetric? OtherOperatorExpression 'AND' OtherOperatorExpression
-Asymmetric <- 'ASYMMETRIC'
+BetweenClause <- 'BETWEEN' BetweenSymmetry? OtherOperatorExpression 'AND' OtherOperatorExpression
+BetweenSymmetry <- BetweenSymmetric / BetweenAsymmetric
+BetweenSymmetric <- 'SYMMETRIC'
+BetweenAsymmetric <- 'ASYMMETRIC'
 # LEVEL 8
 OtherOperatorExpression <- InfixOtherOperatorExpression / CustomPrefixExpression
 InfixOtherOperatorExpression <- BitwiseExpression OtherOperatorTail*
@@ -1527,10 +1663,11 @@ AtTimeZoneExpressionTail <- AtTimeZoneOperator PrefixExpression
 AtTimeZoneOperator <- 'AT' 'TIME' 'ZONE'
 # LEVEL 15
 PrefixExpression <- PrefixOperator* BaseExpression
-PrefixOperator <- QualifiedOperator / MinusPrefixOperator / PlusPrefixOperator
+PrefixOperator <- QualifiedOperator / MinusPrefixOperator / PlusPrefixOperator / DoubleNotPrefixOperator
 MinusPrefixOperator <- '-'
 PlusPrefixOperator <- '+'
 TildePrefixOperator <- '~'
+DoubleNotPrefixOperator <- '!!'
 # LEVEL 16 (Highest)
 BaseExpression <- SingleExpression IndirectionList?
 IndirectionList <- Indirection+
@@ -1553,7 +1690,7 @@ StepSliceBound <- ':' Expression?
 PostfixOperator <- '!'
 
 
-SpecialFunctionExpression <- CoalesceExpression / UnpackExpression / TryExpression / ColumnsExpression / ExtractExpression / LambdaExpression / NullIfExpression / PositionExpression / RowExpression / SubstringExpression / TrimExpression / OverlayExpression
+SpecialFunctionExpression <- CoalesceExpression / UnpackExpression / TryExpression / ColumnsExpression / ExtractExpression / LambdaExpression / NullIfExpression / PositionExpression / RowExpression / SubstringSimilarExpression / SubstringExpression / TrimExpression / OverlayExpression
 CoalesceExpression <- 'COALESCE' Parens(List(Expression))
 UnpackExpression <- 'UNPACK' Parens(Expression)
 TryExpression <- 'TRY' Parens(Expression)
@@ -1573,6 +1710,8 @@ SubstringParameters <- Expression SubstringFromFor
 SubstringFromFor <- SubstringFromOptionalFor / SubstringFor
 SubstringFromOptionalFor <- FromExpression ForExpression?
 SubstringFor <- ForExpression
+SubstringSimilarExpression <- 'SUBSTRING' Parens(SubstringSimilar)
+SubstringSimilar <- Expression 'SIMILAR' Expression 'ESCAPE' Expression
 TrimExpression <- 'TRIM' Parens(TrimArguments)
 TrimArguments <- TrimDirection? TrimSource? List(Expression)
 TrimDirection <- TrimBoth / TrimLeading / TrimTrailing
@@ -1624,7 +1763,7 @@ ExternalResourceSource <- ExternalResourceCreateClause / ExternalResourceReferen
 ExternalResourceCreateClause <- 'NEW' 'TEMPORARY' ExternalResourceKeyword StringLiteral ExternalResourceCreationOptions?
 ExternalResourceReferenceClause <- ExternalResourceKeyword ColId
 
-InsertStatement <- WithClause? 'INSERT' OrAction? 'INTO' InsertTarget ByNameOrPosition? InsertColumnList? InsertValues OnConflictClause? ReturningClause?
+InsertStatement <- WithClause? 'INSERT' OrAction? 'INTO' InsertTarget ByNameOrPosition? InsertColumnList? OverridingClause? InsertValues OnConflictClause? ReturningClause?
 
 OrAction <- InsertOrReplace / InsertOrIgnore
 InsertOrReplace <- 'OR' 'REPLACE'
@@ -1640,6 +1779,11 @@ InsertAlias <- 'AS' Identifier
 
 ColumnList <- List(ColId)
 InsertColumnList <- Parens(ColumnList)
+
+OverridingClause <- 'OVERRIDING' OverridingKind 'VALUE'
+OverridingKind <- OverridingSystem / OverridingUser
+OverridingSystem <- 'SYSTEM'
+OverridingUser <- 'USER'
 
 InsertValues <- SelectInsertValues / DefaultValues
 SelectInsertValues <- SelectStatementInternal
@@ -1779,6 +1923,10 @@ ByTarget <- 'BY' 'TARGET'
 
 
 
+ListenStatement <- 'LISTEN' Identifier
+NotifyStatement <- 'NOTIFY' Identifier (',' StringLiteral)?
+UnlistenStatement <- 'UNLISTEN' (Identifier / '*')
+
 PivotStatement <- PivotKeyword TableRef PivotOn? PivotUsing? PivotGroupByList?
 
 PivotOn <- 'ON' PivotColumnList
@@ -1818,6 +1966,154 @@ PragmaParameters <- Parens(List(Expression))
 PrepareStatement <- 'PREPARE' ColIdOrString TypeList? 'AS' Statement
 
 TypeList <- Parens(List(Type))
+
+# RBAC statements -> serenedb_* pragmas (mirrors CREATE TEXT SEARCH DICTIONARY).
+# USER is an alias for ROLE. Names use ColId/QualifiedName directly: Transform
+# dispatches by rule name, so a wrapper rule would need its own transformer.
+
+CreateRoleStatement <- 'CREATE' RoleOrUser ColId 'WITH'? CreateRoleClause*
+CreateRoleClause <- RoleOption / RoleMembershipClause
+RoleMembershipClause <- InRoleClause / RoleMembersClause / AdminClause
+InRoleClause      <- 'IN' ('ROLE' / 'GROUP') List(ColId)
+RoleMembersClause <- 'ROLE' List(ColId)
+AdminClause       <- 'ADMIN' List(ColId)
+DropRoleStatement   <- 'DROP' RoleOrUser IfExists? List(ColId)
+# RENAME TO is tried before the per-role GUC and attribute-option lists so
+# 'RENAME'/'SET'/'RESET' are not eaten by the wrong alternative.
+AlterRoleStatement  <- 'ALTER' RoleOrUser ColId (AlterRoleRename / AlterRoleConfig / AlterRoleOptionList)
+AlterRoleRename     <- 'RENAME' 'TO' ColId
+# ALTER ROLE name SET guc (= | TO) value ... | SET guc FROM CURRENT | RESET guc
+# | RESET ALL  -> per-role GUC settings (pg_db_role_setting / rolconfig).
+AlterRoleConfig     <- AlterRoleSet / AlterRoleReset
+AlterRoleSet        <- 'SET' SettingName (AlterRoleSetTo / AlterRoleSetFromCurrent)
+AlterRoleSetTo      <- ('=' / 'TO') List(Expression)
+AlterRoleSetFromCurrent <- 'FROM' 'CURRENT'
+AlterRoleReset      <- 'RESET' (AlterRoleResetAll / SettingName)
+AlterRoleResetAll   <- 'ALL'
+AlterRoleOptionList <- 'WITH'? AlterRoleOption+
+# PasswordNullOption before PasswordOption so 'PASSWORD NULL' is matched first.
+AlterRoleOption     <- LoginOption / SuperuserOption / CreateDbOption / CreateRoleOption / InheritOption / ReplicationOption / BypassRlsOption / ConnLimitOption / ValidUntilOption / PasswordNullOption / PasswordOption
+CreateDbOption      <- 'CREATEDB' / 'NOCREATEDB'
+CreateRoleOption    <- 'CREATEROLE' / 'NOCREATEROLE'
+ReplicationOption   <- 'REPLICATION' / 'NOREPLICATION'
+BypassRlsOption     <- 'BYPASSRLS' / 'NOBYPASSRLS'
+ConnLimitOption     <- 'CONNECTION' 'LIMIT' '-'? NumberLiteral
+ValidUntilOption    <- 'VALID' 'UNTIL' StringLiteral
+PasswordNullOption  <- 'PASSWORD' 'NULL'
+
+# ALTER <objtype> name OWNER TO role -> serenedb_alter_owner pragma. Registered
+# before the native AlterStatement so OWNER TO is intercepted (DuckDB's alter
+# binder does not support ownership changes).
+AlterOwnerStatement <- 'ALTER' OwnerObjectType QualifiedName 'OWNER' 'TO' OwnerRoleSpec
+OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE'
+OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
+
+# ALTER DEFAULT PRIVILEGES [FOR ROLE r,...] [IN SCHEMA s,...] (GRANT|REVOKE) ...
+#   -> serenedb_alter_default_privileges pragma (pg_default_acl rows).
+AlterDefaultPrivilegesStatement <- 'ALTER' 'DEFAULT' 'PRIVILEGES' DefaultPrivForRole? DefaultPrivInSchema? DefaultPrivAction
+DefaultPrivForRole <- 'FOR' RoleOrUser List(ColId)
+DefaultPrivInSchema <- 'IN' 'SCHEMA' List(QualifiedName)
+DefaultPrivAction <- DefaultPrivGrant / DefaultPrivRevoke
+DefaultPrivGrant <- 'GRANT' PrivilegeList 'ON' DefaultPrivObjType 'TO' Grantee WithGrantOption?
+DefaultPrivRevoke <- 'REVOKE' DefaultPrivRevokeGrantOpt? PrivilegeList 'ON' DefaultPrivObjType 'FROM' Grantee DropBehavior?
+DefaultPrivRevokeGrantOpt <- 'GRANT' 'OPTION' 'FOR'
+DefaultPrivObjType <- 'TABLES' / 'SEQUENCES' / 'FUNCTIONS' / 'ROUTINES' / 'TYPES' / 'SCHEMAS'
+
+# Table form (with 'ON') is tried before the bare 'GRANT role TO member' form.
+# The 'OPTION FOR' downgrade forms are tried first in REVOKE so 'GRANT'/'ADMIN'
+# is not consumed by the plain privilege/membership forms.
+GrantStatement  <- 'GRANT'  (GrantTablePrivilege  / GrantRoleMembership)
+RevokeStatement <- 'REVOKE' (RevokeGrantOptionFor / RevokeAdminOptionFor / RevokeTablePrivilege / RevokeRoleMembership)
+
+GrantTablePrivilege   <- PrivilegeList 'ON' GrantTarget 'TO'   Grantee WithGrantOption? GrantedBy?
+RevokeTablePrivilege  <- PrivilegeList 'ON' GrantTarget 'FROM' Grantee GrantedBy? DropBehavior?
+GrantRoleMembership   <- ColId 'TO'   ColId MemberOptionList? GrantedBy?
+RevokeRoleMembership  <- ColId 'FROM' ColId GrantedBy? DropBehavior?
+
+# REVOKE [GRANT OPTION FOR <priv> ... | ADMIN OPTION FOR <role> ...]: strip only
+# the grant/admin option, keeping the underlying privilege / membership edge.
+RevokeGrantOptionFor  <- 'GRANT' 'OPTION' 'FOR' PrivilegeList 'ON' GrantTarget 'FROM' Grantee GrantedBy? DropBehavior?
+RevokeAdminOptionFor  <- 'ADMIN' 'OPTION' 'FOR' ColId 'FROM' ColId GrantedBy? DropBehavior?
+
+# The object(s) a privilege is granted on. ALL ... IN SCHEMA (bulk) is tried
+# first so 'ALL' is not mistaken for a relation name. A FUNCTION/ROUTINE target
+# may carry an argument-type signature -- fn(int) -- to pick a specific
+# overload; PROCEDURE is accepted as a routine synonym too.
+GrantTarget <- GrantAllInSchema / GrantFunctionTarget / GrantNamedTarget
+GrantAllInSchema <- 'ALL' GrantObjTypePlural 'IN' 'SCHEMA' QualifiedName
+GrantObjTypePlural <- 'TABLES' / 'SEQUENCES' / 'FUNCTIONS' / 'ROUTINES' / 'PROCEDURES'
+GrantFunctionTarget <- GrantRoutineKind QualifiedName FuncArgSignature?
+GrantRoutineKind <- 'FUNCTION' / 'ROUTINE' / 'PROCEDURE'
+FuncArgSignature <- Parens(List(FuncArg)?)
+FuncArg <- (FuncArgMode? ColId Type) / (FuncArgMode? Type)
+FuncArgMode <- 'IN' / 'OUT' / 'INOUT' / 'VARIADIC'
+GrantNamedTarget <- GrantObjType? QualifiedName
+
+# Optional WITH GRANT OPTION suffix on a table GRANT: the grantee may re-grant.
+WithGrantOption <- 'WITH' 'GRANT' 'OPTION'
+# Optional GRANTED BY <role>: names the grantor of the privilege/membership.
+GrantedBy <- 'GRANTED' 'BY' ColId
+
+# Per-edge options on GRANT role TO member (PG16): admin/inherit/set. The bare
+# 'WITH ADMIN OPTION' form is the legacy spelling for admin=true. Uses the List
+# combinator so the transformer flattens it with ExtractParseResultsFromList.
+MemberOptionList <- 'WITH' List(MemberOption)
+MemberOption     <- AdminOption / InheritMemberOption / SetMemberOption
+AdminOption         <- 'ADMIN'   OptionBool? 'OPTION'?
+InheritMemberOption <- 'INHERIT' OptionBool?
+SetMemberOption     <- 'SET'     OptionBool?
+OptionBool <- 'TRUE' / 'FALSE'
+
+RoleOrUser <- 'ROLE' / 'USER'
+# Object class for GRANT/REVOKE ... ON <type> name. Absent defaults to TABLE.
+GrantObjType <- ForeignServerObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN'
+ForeignServerObjType <- 'FOREIGN' 'SERVER'
+# PUBLIC is the pseudo-role; otherwise a normal role identifier.
+Grantee <- 'PUBLIC' / ColId
+
+RoleOptionList <- RoleOption+
+RoleOption <- LoginOption / SuperuserOption / CreateDbOption / CreateRoleOption / InheritOption / ReplicationOption / BypassRlsOption / ConnLimitOption / ValidUntilOption / SysIdOption / PasswordNullOption / PasswordOption
+LoginOption     <- 'LOGIN' / 'NOLOGIN'
+SuperuserOption <- 'SUPERUSER' / 'NOSUPERUSER'
+InheritOption   <- 'INHERIT' / 'NOINHERIT'
+SysIdOption     <- 'SYSID' NumberLiteral
+PasswordOption  <- 'ENCRYPTED'? 'PASSWORD' StringLiteral
+
+# Row-Level Security. CREATE/ALTER/DROP POLICY -> serenedb_*_policy pragmas;
+# ALTER TABLE ... ROW LEVEL SECURITY -> serenedb_alter_table_row_security. The
+# USING/WITH CHECK predicate is rendered to text in the transformer (a pragma
+# arg cannot carry a live column-referencing expression) and re-parsed at
+# enforcement time. Registered before the native Create/Alter statements.
+CreatePolicyStatement <- 'CREATE' 'POLICY' ColId 'ON' QualifiedName PolicyPermissive? PolicyForCmd? PolicyToRoles? PolicyUsing? PolicyCheck?
+AlterPolicyStatement  <- 'ALTER' 'POLICY' ColId 'ON' QualifiedName (PolicyRename / PolicyAlterClauses)
+DropPolicyStatement   <- 'DROP' 'POLICY' IfExists? ColId 'ON' QualifiedName DropBehavior?
+AlterTableRowSecurityStatement <- 'ALTER' 'TABLE' IfExists? QualifiedName RowSecurityAction
+
+PolicyRename       <- 'RENAME' 'TO' ColId
+PolicyAlterClauses <- PolicyToRoles? PolicyUsing? PolicyCheck?
+PolicyPermissive   <- 'AS' ('PERMISSIVE' / 'RESTRICTIVE')
+PolicyForCmd       <- 'FOR' ('ALL' / 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE')
+PolicyToRoles      <- 'TO' List(Grantee)
+PolicyUsing        <- 'USING' Parens(Expression)
+PolicyCheck        <- 'WITH' 'CHECK' Parens(Expression)
+RowSecurityAction  <- RowSecurityVerb 'ROW' 'LEVEL' 'SECURITY'
+RowSecurityVerb    <- 'ENABLE' / 'DISABLE' / ('NO' 'FORCE') / 'FORCE'
+
+PrivilegeList <- AllPrivileges / List(Privilege)
+AllPrivileges <- 'ALL' 'PRIVILEGES'? PrivilegeColumns?
+# The privilege keyword is matched against the fixed set; an unknown word is a
+# parser syntax error (unlike PG, which accepts any identifier and rejects it
+# semantically). TEMPORARY before TEMP so the PEG ordered-choice matches the
+# longer word greedily. An optional (col, ...) list turns it into a column
+# privilege (GRANT SELECT (a, b) ON t). The keyword's validity for the target
+# object class (e.g. EXECUTE on a table) is still checked in the command layer.
+Privilege <- PrivilegeKeyword PrivilegeColumns?
+PrivilegeKeyword <- 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE' / 'TRUNCATE' / 'REFERENCES' / 'TRIGGER' / 'MAINTAIN' / 'USAGE' / 'EXECUTE' / 'CONNECT' / 'TEMPORARY' / 'TEMP' / 'CREATE'
+PrivilegeColumns <- Parens(List(ColId))
+
+ReindexStatement <- 'REINDEX' ReindexKind ReindexConcurrently? BaseTableName
+ReindexKind <- 'INDEX'
+ReindexConcurrently <- 'CONCURRENTLY'
 
 SelectStatement <- SelectStatementInternal
 SelectStatementInternal <- WithClause? SelectSetOpChain ResultModifiers?
@@ -1860,7 +2156,8 @@ UsingKey <- 'USING' 'KEY' Parens(TargetList)
 Materialized <- 'NOT'? 'MATERIALIZED'
 WithClause <- 'WITH' Recursive? List(WithStatement)
 Recursive <- 'RECURSIVE'
-SelectClause <- 'SELECT' DistinctClause? TargetList?
+SelectClause <- 'SELECT' DistinctClause? TargetList? SelectIntoClause?
+SelectIntoClause <- 'INTO' BaseTableName
 TargetList <- List(AliasedExpression)
 ColumnAliases <- Parens(List(ColIdOrString))
 
@@ -1873,7 +2170,12 @@ InnerTableRef <- ValuesRef / TableFunction / TableSubquery / BaseTableRef / Pare
 
 TableRef <- InnerTableRef JoinOrPivot*
 TableSubquery <- TableAliasColon? Lateral? SubqueryReference TableAlias?
-BaseTableRef <- TableAliasColon? BaseTableName TableAlias? AtClause? SampleClause?
+# AT '(' must win over TableAlias when the bare token after the table is AT:
+# AT is unreserved (serenedb), so Identifier would otherwise consume it as
+# alias, leaving AtClause? with nothing to match. AtClause requires `(`
+# after AT, so trying it FIRST cannot accidentally win on a bare AT alias
+# (e.g. `tbl at ORDER BY at.x`) because the `(` won't match.
+BaseTableRef <- TableAliasColon? BaseTableName AtClause? TableAlias? AtClause? SampleClause?
 TableAliasColon <- ColIdOrString ':'
 ValuesRef <- TableAliasColon? ValuesClause TableAlias?
 ParensTableRef <- TableAliasColon? Parens(TableRef) TableAlias? SampleClause?
@@ -1912,7 +2214,8 @@ TableFunctionArguments <- Parens(List(FunctionArgument)?)
 FunctionArgument <- NamedFunctionArgument / PositionalFunctionArgument
 NamedFunctionArgument <- NamedParameter
 PositionalFunctionArgument <- Expression
-NamedParameter <- TypeFuncName Type? NamedParameterAssignment Expression
+NamedParameter <- NamedParameterName Type? NamedParameterAssignment Expression
+NamedParameterName <- ReservedKeyword / UnreservedKeyword / ColumnNameKeyword / FuncNameKeyword / TypeNameKeyword / Identifier
 NamedParameterAssignment <- ':=' / '=>'
 
 TableAlias <- TableAliasAs / TableAliasWithoutAs
@@ -2040,13 +2343,29 @@ ValuesClause <- 'VALUES' List(ValuesExpressions)
 ValuesExpressions <- Parens(List(Expression))
 
 SetStatement <- 'SET' SetAssignmentOrTimeZone
-SetAssignmentOrTimeZone <- SetSchema / StandardAssignment / SetTimeZone
+SetAssignmentOrTimeZone <- SetSessionCharacteristics / SetSessionAuthorization / SetTransactionIsolation / SetRole / SetSchema / StandardAssignment / SetTimeZone
 
-ResetStatement <- 'RESET' SetVariableOrSetting
+ResetStatement <- 'RESET' ResetTarget
+ResetTarget <- ResetAll / ResetAliasedSetting / SetVariableOrSetting
 SetSchema <- 'SCHEMA' StringLiteral
+# PG-compat: RESET ALL and RESET LOCAL ALL both reset every user-set option.
+# The LOCAL variant only differs at execution time (transaction-bound).
+ResetAll <- ('LOCAL' 'ALL') / 'ALL'
+# PG-compat: RESET takes the same multi-word aliases as SHOW. Tried before
+# the generic identifier-style branches so the keywords aren't snatched by
+# SetSetting / SetVariable.
+ResetAliasedSetting <- ('TRANSACTION' 'ISOLATION' 'LEVEL') / ('SESSION' 'AUTHORIZATION') / ('TIME' 'ZONE')
 StandardAssignment <- SetVariableOrSetting SetAssignment
 SetVariableOrSetting <- SetVariable / SetSetting
 SetTimeZone <- 'TIME' 'ZONE' ZoneValue
+SetTransactionIsolation <- 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
+SetSessionCharacteristics <- 'SESSION' 'CHARACTERISTICS' 'AS' 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
+# PG: SET ROLE / SESSION AUTHORIZATION accept NonReservedWord_or_Sconst or DEFAULT.
+# RoleSpec reuses the Zone* leaf rules (DEFAULT -> DefaultExpression, string /
+# identifier -> string-typed ConstantExpression) so the choice auto-forwards.
+SetRole <- 'ROLE' RoleSpec
+SetSessionAuthorization <- 'SESSION' 'AUTHORIZATION' RoleSpec
+RoleSpec <- ZoneDefault / ZoneStringLiteral / ZoneIdentifier
 
 ZoneValue <- ZoneIntervalWithPrecision / ZoneIntervalWithInterval / ZoneLocal / ZoneDefault / ZoneStringLiteral / ZoneIdentifier / NumberLiteral
 ZoneLocal <- 'LOCAL'
@@ -2068,13 +2387,21 @@ GlobalScope <- 'GLOBAL'
 SetAssignment <- VariableAssign VariableList
 
 VariableAssign <- '=' / 'TO'
-VariableList <- List(Expression)
+VariableList <- List(SetValue)
+# PG accepts the bare keywords ON/OFF as boolean SET values (e.g.
+# SET standard_conforming_strings = on). ON is reserved, so it cannot reach the
+# Expression branch as an identifier; the SetValueOn / SetValueOff leaf rules
+# emit the lowercased keyword as a string constant so the BOOLEAN cast and SHOW
+# round-trip behave like libpq.
+SetValue <- SetValueOn / SetValueOff / Expression
+SetValueOn <- 'ON'
+SetValueOff <- 'OFF'
 
 TransactionStatement <- BeginTransaction / RollbackTransaction / CommitTransaction
 
-BeginTransaction <- StartOrBegin Transaction? ReadOrWrite?
-RollbackTransaction <- AbortOrRollback Transaction?
-CommitTransaction <- CommitOrEnd Transaction?
+BeginTransaction <- StartOrBegin Transaction? IsolationLevelClause? ReadOrWrite? DeferrableClause?
+RollbackTransaction <- AbortOrRollback Transaction? ChainClause?
+CommitTransaction <- CommitOrEnd Transaction? ChainClause?
 
 StartOrBegin <- 'START' / 'BEGIN'
 Transaction <- 'WORK' / 'TRANSACTION'
@@ -2082,8 +2409,27 @@ ReadOrWrite <- 'READ' ReadOnlyOrReadWrite
 ReadOnlyOrReadWrite <- ReadOnly / ReadWrite
 ReadOnly <- 'ONLY'
 ReadWrite <- 'WRITE'
+IsolationLevelClause <- 'ISOLATION' 'LEVEL' IsolationLevel
+IsolationLevel <- ReadCommitted / ReadUncommitted / RepeatableRead / Serializable
+ReadCommitted <- 'READ' 'COMMITTED'
+ReadUncommitted <- 'READ' 'UNCOMMITTED'
+RepeatableRead <- 'REPEATABLE' 'READ'
+Serializable <- 'SERIALIZABLE'
 AbortOrRollback <- 'ABORT' / 'ROLLBACK'
 CommitOrEnd <- 'COMMIT' / 'END'
+# PG: COMMIT/ROLLBACK [WORK | TRANSACTION] AND [NO] CHAIN. AND CHAIN should
+# immediately re-enter a new transaction with the same characteristics. We
+# parse-accept the keywords -- serenedb commits/rollbacks happily without
+# re-opening; the subsequent commit/rollback on the empty session merely
+# warns "no transaction is active" (matches PG semantics for callers that
+# don't rely on the chained txn).
+ChainClause <- 'AND' NoChain? 'CHAIN'
+NoChain <- 'NO'
+# PG: [NOT] DEFERRABLE transaction mode (only meaningful for SERIALIZABLE
+# READ ONLY, which serenedb rejects upfront, so this is a parse-only no-op).
+DeferrableClause <- NotDeferrable / Deferrable
+Deferrable <- 'DEFERRABLE'
+NotDeferrable <- 'NOT' 'DEFERRABLE'
 UpdateStatement <- WithClause? 'UPDATE' UpdateTarget UpdateSetClause FromClause? WhereClause? ReturningClause?
 
 UpdateTarget <- BaseTableSet / BaseTableAliasSet

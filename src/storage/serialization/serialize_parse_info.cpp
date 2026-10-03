@@ -9,8 +9,10 @@
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
+#include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_database_info.hpp"
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
+#include "duckdb/parser/parsed_data/alter_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/attach_info.hpp"
 #include "duckdb/parser/parsed_data/copy_database_info.hpp"
 #include "duckdb/parser/parsed_data/copy_info.hpp"
@@ -94,6 +96,9 @@ void AlterInfo::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0) || (qualified_name.Path().size() > 3)) {
 		serializer.WriteProperty<QualifiedName>(206, "qualified_name", qualified_name);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
 }
 
 unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
@@ -104,13 +109,29 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	auto if_not_found = deserializer.ReadProperty<OnEntryNotFound>(204, "if_not_found");
 	auto allow_internal = deserializer.ReadPropertyWithDefault<bool>(205, "allow_internal");
 	auto qualified_name = deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(206, "qualified_name", QualifiedName());
+	auto oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", 0);
 	unique_ptr<AlterInfo> result;
 	switch (type) {
 	case AlterType::ALTER_DATABASE:
 		result = AlterDatabaseInfo::Deserialize(deserializer);
 		break;
+	case AlterType::ALTER_INDEX:
+		result = AlterIndexInfo::Deserialize(deserializer);
+		break;
+	case AlterType::ALTER_PERMISSIONS:
+		result = AlterPermissionsInfo::Deserialize(deserializer);
+		break;
+	case AlterType::ALTER_ROLE:
+		result = AlterRoleInfo::Deserialize(deserializer);
+		break;
+	case AlterType::ALTER_SCALAR_FUNCTION:
+		result = AlterScalarFunctionInfo::Deserialize(deserializer);
+		break;
 	case AlterType::ALTER_SCHEMA:
 		result = AlterSchemaInfo::Deserialize(deserializer);
+		break;
+	case AlterType::ALTER_SEQUENCE:
+		result = AlterSequenceInfo::Deserialize(deserializer);
 		break;
 	case AlterType::ALTER_TABLE:
 		result = AlterTableInfo::Deserialize(deserializer);
@@ -120,6 +141,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 		break;
 	case AlterType::CHANGE_OWNERSHIP:
 		result = ChangeOwnershipInfo::Deserialize(deserializer);
+		break;
+	case AlterType::REPLACE_DEFINITION:
+		result = ReplaceDefinitionInfo::Deserialize(deserializer);
 		break;
 	case AlterType::SET_COLUMN_COMMENT:
 		result = SetColumnCommentInfo::Deserialize(deserializer);
@@ -132,6 +156,7 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	}
 	result->if_not_found = if_not_found;
 	result->allow_internal = allow_internal;
+	result->oid = oid;
 	result->SetQualifiedName(std::move(catalog), std::move(schema), std::move(name));
 	if (!qualified_name.Path().empty()) {
 		result->SetQualifiedName(std::move(qualified_name));
@@ -160,6 +185,9 @@ unique_ptr<AlterInfo> AlterTableInfo::Deserialize(Deserializer &deserializer) {
 	case AlterTableType::ALTER_COLUMN_TYPE:
 		result = ChangeColumnTypeInfo::Deserialize(deserializer);
 		break;
+	case AlterTableType::DROP_CONSTRAINT:
+		result = DropConstraintInfo::Deserialize(deserializer);
+		break;
 	case AlterTableType::DROP_NOT_NULL:
 		result = DropNotNullInfo::Deserialize(deserializer);
 		break;
@@ -174,6 +202,9 @@ unique_ptr<AlterInfo> AlterTableInfo::Deserialize(Deserializer &deserializer) {
 		break;
 	case AlterTableType::RENAME_COLUMN:
 		result = RenameColumnInfo::Deserialize(deserializer);
+		break;
+	case AlterTableType::RENAME_CONSTRAINT:
+		result = RenameConstraintInfo::Deserialize(deserializer);
 		break;
 	case AlterTableType::RENAME_FIELD:
 		result = RenameFieldInfo::Deserialize(deserializer);
@@ -223,6 +254,48 @@ unique_ptr<AlterInfo> AlterViewInfo::Deserialize(Deserializer &deserializer) {
 	return std::move(result);
 }
 
+void AlterScalarFunctionInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<AlterScalarFunctionType>(300, "alter_scalar_function_type", alter_scalar_function_type);
+}
+
+unique_ptr<AlterInfo> AlterScalarFunctionInfo::Deserialize(Deserializer &deserializer) {
+	auto alter_scalar_function_type = deserializer.ReadProperty<AlterScalarFunctionType>(300, "alter_scalar_function_type");
+	unique_ptr<AlterScalarFunctionInfo> result;
+	switch (alter_scalar_function_type) {
+	case AlterScalarFunctionType::RENAME_SCALAR_FUNCTION:
+		result = RenameScalarFunctionInfo::Deserialize(deserializer);
+		break;
+	default:
+		throw SerializationException("Unsupported type for deserialization of AlterScalarFunctionInfo!");
+	}
+	return std::move(result);
+}
+
+void AlterIndexInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<AlterIndexType>(300, "alter_index_type", alter_index_type);
+}
+
+unique_ptr<AlterInfo> AlterIndexInfo::Deserialize(Deserializer &deserializer) {
+	auto alter_index_type = deserializer.ReadProperty<AlterIndexType>(300, "alter_index_type");
+	unique_ptr<AlterIndexInfo> result;
+	switch (alter_index_type) {
+	case AlterIndexType::RENAME_INDEX:
+		result = RenameIndexInfo::Deserialize(deserializer);
+		break;
+	case AlterIndexType::RESET_INDEX_OPTIONS:
+		result = ResetIndexOptionsInfo::Deserialize(deserializer);
+		break;
+	case AlterIndexType::SET_INDEX_OPTIONS:
+		result = SetIndexOptionsInfo::Deserialize(deserializer);
+		break;
+	default:
+		throw SerializationException("Unsupported type for deserialization of AlterIndexInfo!");
+	}
+	return std::move(result);
+}
+
 void AlterDatabaseInfo::Serialize(Serializer &serializer) const {
 	AlterInfo::Serialize(serializer);
 	serializer.WriteProperty<AlterDatabaseType>(300, "alter_database_type", alter_database_type);
@@ -250,6 +323,9 @@ unique_ptr<AlterInfo> AlterSchemaInfo::Deserialize(Deserializer &deserializer) {
 	auto alter_schema_type = deserializer.ReadProperty<AlterSchemaType>(300, "alter_schema_type");
 	unique_ptr<AlterSchemaInfo> result;
 	switch (alter_schema_type) {
+	case AlterSchemaType::RENAME_SCHEMA:
+		result = RenameSchemaInfo::Deserialize(deserializer);
+		break;
 	case AlterSchemaType::RESET_SCHEMA_OPTIONS:
 		result = ResetSchemaOptionsInfo::Deserialize(deserializer);
 		break;
@@ -262,12 +338,34 @@ unique_ptr<AlterInfo> AlterSchemaInfo::Deserialize(Deserializer &deserializer) {
 	return std::move(result);
 }
 
+void AlterSequenceInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<AlterSequenceType>(300, "alter_sequence_type", alter_sequence_type);
+}
+
+unique_ptr<AlterInfo> AlterSequenceInfo::Deserialize(Deserializer &deserializer) {
+	auto alter_sequence_type = deserializer.ReadProperty<AlterSequenceType>(300, "alter_sequence_type");
+	unique_ptr<AlterSequenceInfo> result;
+	switch (alter_sequence_type) {
+	case AlterSequenceType::RENAME_SEQUENCE:
+		result = RenameSequenceInfo::Deserialize(deserializer);
+		break;
+	case AlterSequenceType::RESTART_SEQUENCE:
+		result = RestartSequenceInfo::Deserialize(deserializer);
+		break;
+	default:
+		throw SerializationException("Unsupported type for deserialization of AlterSequenceInfo!");
+	}
+	return std::move(result);
+}
+
 void AddColumnInfo::Serialize(Serializer &serializer) const {
 	AlterTableInfo::Serialize(serializer);
 	serializer.WriteProperty<ColumnDefinition>(400, "new_column", new_column);
 	serializer.WritePropertyWithDefault<bool>(401, "if_column_not_exists", if_column_not_exists);
 	serializer.WritePropertyWithDefault<bool>(402, "add_not_null", add_column_constraints.add_not_null);
 	serializer.WritePropertyWithDefault<bool>(403, "add_unique", add_column_constraints.add_unique);
+	serializer.WritePropertyWithDefault<bool>(404, "add_primary_key", add_column_constraints.add_primary_key);
 }
 
 unique_ptr<AlterTableInfo> AddColumnInfo::Deserialize(Deserializer &deserializer) {
@@ -276,6 +374,7 @@ unique_ptr<AlterTableInfo> AddColumnInfo::Deserialize(Deserializer &deserializer
 	deserializer.ReadPropertyWithDefault<bool>(401, "if_column_not_exists", result->if_column_not_exists);
 	deserializer.ReadPropertyWithDefault<bool>(402, "add_not_null", result->add_column_constraints.add_not_null);
 	deserializer.ReadPropertyWithDefault<bool>(403, "add_unique", result->add_column_constraints.add_unique);
+	deserializer.ReadPropertyWithDefault<bool>(404, "add_primary_key", result->add_column_constraints.add_primary_key);
 	return std::move(result);
 }
 
@@ -323,6 +422,104 @@ unique_ptr<AlterTableInfo> AlterForeignKeyInfo::Deserialize(Deserializer &deseri
 	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(403, "pk_keys", result->pk_keys);
 	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(404, "fk_keys", result->fk_keys);
 	deserializer.ReadProperty<AlterForeignKeyType>(405, "alter_fk_type", result->type);
+	return std::move(result);
+}
+
+void AlterPermissionsInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<CatalogType>(300, "entry_catalog_type", entry_catalog_type);
+	serializer.WritePropertyWithDefault<string>(303, "new_owner", new_owner);
+	serializer.WritePropertyWithDefault<idx_t>(304, "new_owner_id", new_owner_id);
+	serializer.WriteProperty<AclMode>(305, "privileges", privileges);
+	serializer.WritePropertyWithDefault<vector<ColumnPrivilege>>(306, "column_privileges", column_privileges);
+	serializer.WritePropertyWithDefault<string>(307, "grantee", grantee);
+	serializer.WritePropertyWithDefault<idx_t>(308, "grantee_id", grantee_id);
+	serializer.WritePropertyWithDefault<string>(309, "granted_by", granted_by);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(310, "grantors", grantors);
+	serializer.WritePropertyWithDefault<bool>(311, "revoke", revoke);
+	serializer.WritePropertyWithDefault<bool>(312, "with_grant_option", with_grant_option);
+	serializer.WritePropertyWithDefault<bool>(313, "option_only", option_only);
+	serializer.WritePropertyWithDefault<bool>(314, "cascade", cascade);
+	serializer.WriteProperty<CatalogType>(315, "default_objtype", default_objtype);
+	serializer.WritePropertyWithDefault<string>(316, "for_role", for_role);
+	serializer.WritePropertyWithDefault<string>(317, "default_schema", default_schema);
+	serializer.WritePropertyWithDefault<idx_t>(318, "target_role", target_role);
+	serializer.WritePropertyWithDefault<idx_t>(319, "default_scope", default_scope);
+	serializer.WritePropertyWithDefault<bool>(320, "all_in_schema", all_in_schema);
+}
+
+unique_ptr<AlterInfo> AlterPermissionsInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<AlterPermissionsInfo>(new AlterPermissionsInfo());
+	deserializer.ReadProperty<CatalogType>(300, "entry_catalog_type", result->entry_catalog_type);
+	deserializer.ReadPropertyWithDefault<string>(303, "new_owner", result->new_owner);
+	deserializer.ReadPropertyWithDefault<idx_t>(304, "new_owner_id", result->new_owner_id);
+	deserializer.ReadProperty<AclMode>(305, "privileges", result->privileges);
+	deserializer.ReadPropertyWithDefault<vector<ColumnPrivilege>>(306, "column_privileges", result->column_privileges);
+	deserializer.ReadPropertyWithDefault<string>(307, "grantee", result->grantee);
+	deserializer.ReadPropertyWithDefault<idx_t>(308, "grantee_id", result->grantee_id);
+	deserializer.ReadPropertyWithDefault<string>(309, "granted_by", result->granted_by);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(310, "grantors", result->grantors);
+	deserializer.ReadPropertyWithDefault<bool>(311, "revoke", result->revoke);
+	deserializer.ReadPropertyWithDefault<bool>(312, "with_grant_option", result->with_grant_option);
+	deserializer.ReadPropertyWithDefault<bool>(313, "option_only", result->option_only);
+	deserializer.ReadPropertyWithDefault<bool>(314, "cascade", result->cascade);
+	deserializer.ReadProperty<CatalogType>(315, "default_objtype", result->default_objtype);
+	deserializer.ReadPropertyWithDefault<string>(316, "for_role", result->for_role);
+	deserializer.ReadPropertyWithDefault<string>(317, "default_schema", result->default_schema);
+	deserializer.ReadPropertyWithDefault<idx_t>(318, "target_role", result->target_role);
+	deserializer.ReadPropertyWithDefault<idx_t>(319, "default_scope", result->default_scope);
+	deserializer.ReadPropertyWithDefault<bool>(320, "all_in_schema", result->all_in_schema);
+	return std::move(result);
+}
+
+void AlterRoleInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<RoleOption>(300, "set_options", set_options);
+	serializer.WriteProperty<RoleOption>(301, "clear_options", clear_options);
+	serializer.WritePropertyWithDefault<bool>(302, "set_password", set_password);
+	serializer.WritePropertyWithDefault<bool>(303, "null_password", null_password);
+	serializer.WritePropertyWithDefault<string>(304, "password", password);
+	serializer.WritePropertyWithDefault<bool>(305, "set_conn_limit", set_conn_limit);
+	serializer.WritePropertyWithDefault<int32_t>(306, "conn_limit", conn_limit);
+	serializer.WritePropertyWithDefault<bool>(307, "set_valid_until", set_valid_until);
+	serializer.WritePropertyWithDefault<int64_t>(308, "valid_until", valid_until);
+	serializer.WritePropertyWithDefault<Identifier>(309, "new_name", new_name);
+	serializer.WritePropertyWithDefault<bool>(310, "reset_all_config", reset_all_config);
+	serializer.WritePropertyWithDefault<vector<string>>(311, "reset_config", reset_config);
+	serializer.WritePropertyWithDefault<vector<string>>(312, "set_config", set_config);
+	serializer.WritePropertyWithDefault<string>(313, "grant_role", grant_role);
+	serializer.WritePropertyWithDefault<bool>(314, "revoke", revoke);
+	serializer.WritePropertyWithDefault<bool>(315, "option_only", option_only);
+	serializer.WritePropertyWithDefault<int8_t>(316, "admin_option", admin_option);
+	serializer.WritePropertyWithDefault<int8_t>(317, "inherit_option", inherit_option);
+	serializer.WritePropertyWithDefault<int8_t>(318, "set_option", set_option);
+	serializer.WritePropertyWithDefault<idx_t>(319, "grant_role_id", grant_role_id);
+	serializer.WritePropertyWithDefault<idx_t>(320, "grantor_id", grantor_id);
+}
+
+unique_ptr<AlterInfo> AlterRoleInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<AlterRoleInfo>(new AlterRoleInfo());
+	deserializer.ReadProperty<RoleOption>(300, "set_options", result->set_options);
+	deserializer.ReadProperty<RoleOption>(301, "clear_options", result->clear_options);
+	deserializer.ReadPropertyWithDefault<bool>(302, "set_password", result->set_password);
+	deserializer.ReadPropertyWithDefault<bool>(303, "null_password", result->null_password);
+	deserializer.ReadPropertyWithDefault<string>(304, "password", result->password);
+	deserializer.ReadPropertyWithDefault<bool>(305, "set_conn_limit", result->set_conn_limit);
+	deserializer.ReadPropertyWithDefault<int32_t>(306, "conn_limit", result->conn_limit);
+	deserializer.ReadPropertyWithDefault<bool>(307, "set_valid_until", result->set_valid_until);
+	deserializer.ReadPropertyWithDefault<int64_t>(308, "valid_until", result->valid_until);
+	deserializer.ReadPropertyWithDefault<Identifier>(309, "new_name", result->new_name);
+	deserializer.ReadPropertyWithDefault<bool>(310, "reset_all_config", result->reset_all_config);
+	deserializer.ReadPropertyWithDefault<vector<string>>(311, "reset_config", result->reset_config);
+	deserializer.ReadPropertyWithDefault<vector<string>>(312, "set_config", result->set_config);
+	deserializer.ReadPropertyWithDefault<string>(313, "grant_role", result->grant_role);
+	deserializer.ReadPropertyWithDefault<bool>(314, "revoke", result->revoke);
+	deserializer.ReadPropertyWithDefault<bool>(315, "option_only", result->option_only);
+	deserializer.ReadPropertyWithDefault<int8_t>(316, "admin_option", result->admin_option);
+	deserializer.ReadPropertyWithDefault<int8_t>(317, "inherit_option", result->inherit_option);
+	deserializer.ReadPropertyWithDefault<int8_t>(318, "set_option", result->set_option);
+	deserializer.ReadPropertyWithDefault<idx_t>(319, "grant_role_id", result->grant_role_id);
+	deserializer.ReadPropertyWithDefault<idx_t>(320, "grantor_id", result->grantor_id);
 	return std::move(result);
 }
 
@@ -376,6 +573,9 @@ void ChangeOwnershipInfo::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<CatalogType>(300, "entry_catalog_type", entry_catalog_type);
 	serializer.WritePropertyWithDefault<Identifier>(301, "owner_schema", owner_schema);
 	serializer.WritePropertyWithDefault<Identifier>(302, "owner_name", owner_name);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<vector<Identifier>>(16584, "owner_path", owner_path);
+	}
 }
 
 unique_ptr<AlterInfo> ChangeOwnershipInfo::Deserialize(Deserializer &deserializer) {
@@ -383,6 +583,7 @@ unique_ptr<AlterInfo> ChangeOwnershipInfo::Deserialize(Deserializer &deserialize
 	deserializer.ReadProperty<CatalogType>(300, "entry_catalog_type", result->entry_catalog_type);
 	deserializer.ReadPropertyWithDefault<Identifier>(301, "owner_schema", result->owner_schema);
 	deserializer.ReadPropertyWithDefault<Identifier>(302, "owner_name", result->owner_name);
+	deserializer.ReadPropertyWithDefault<vector<Identifier>>(16584, "owner_path", result->owner_path);
 	return std::move(result);
 }
 
@@ -478,6 +679,21 @@ void DisconnectInfo::Serialize(Serializer &serializer) const {
 
 unique_ptr<ParseInfo> DisconnectInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<DisconnectInfo>(new DisconnectInfo());
+	return std::move(result);
+}
+
+void DropConstraintInfo::Serialize(Serializer &serializer) const {
+	AlterTableInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<string>(400, "constraint_name", constraint_name);
+	serializer.WritePropertyWithDefault<bool>(401, "if_constraint_not_found", if_constraint_not_found);
+	serializer.WritePropertyWithDefault<bool>(402, "cascade", cascade);
+}
+
+unique_ptr<AlterTableInfo> DropConstraintInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<DropConstraintInfo>(new DropConstraintInfo());
+	deserializer.ReadPropertyWithDefault<string>(400, "constraint_name", result->constraint_name);
+	deserializer.ReadPropertyWithDefault<bool>(401, "if_constraint_not_found", result->if_constraint_not_found);
+	deserializer.ReadPropertyWithDefault<bool>(402, "cascade", result->cascade);
 	return std::move(result);
 }
 
@@ -614,6 +830,19 @@ unique_ptr<AlterTableInfo> RenameColumnInfo::Deserialize(Deserializer &deseriali
 	return std::move(result);
 }
 
+void RenameConstraintInfo::Serialize(Serializer &serializer) const {
+	AlterTableInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<string>(400, "old_name", old_name);
+	serializer.WritePropertyWithDefault<string>(401, "new_name", new_name);
+}
+
+unique_ptr<AlterTableInfo> RenameConstraintInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<RenameConstraintInfo>(new RenameConstraintInfo());
+	deserializer.ReadPropertyWithDefault<string>(400, "old_name", result->old_name);
+	deserializer.ReadPropertyWithDefault<string>(401, "new_name", result->new_name);
+	return std::move(result);
+}
+
 void RenameDatabaseInfo::Serialize(Serializer &serializer) const {
 	AlterDatabaseInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<Identifier>(400, "new_name", new_name);
@@ -638,6 +867,50 @@ unique_ptr<AlterTableInfo> RenameFieldInfo::Deserialize(Deserializer &deserializ
 	return std::move(result);
 }
 
+void RenameIndexInfo::Serialize(Serializer &serializer) const {
+	AlterIndexInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(400, "new_name", new_name);
+}
+
+unique_ptr<AlterIndexInfo> RenameIndexInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<RenameIndexInfo>(new RenameIndexInfo());
+	deserializer.ReadPropertyWithDefault<Identifier>(400, "new_name", result->new_name);
+	return std::move(result);
+}
+
+void RenameScalarFunctionInfo::Serialize(Serializer &serializer) const {
+	AlterScalarFunctionInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(400, "new_name", new_name);
+}
+
+unique_ptr<AlterScalarFunctionInfo> RenameScalarFunctionInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<RenameScalarFunctionInfo>(new RenameScalarFunctionInfo());
+	deserializer.ReadPropertyWithDefault<Identifier>(400, "new_name", result->new_name);
+	return std::move(result);
+}
+
+void RenameSchemaInfo::Serialize(Serializer &serializer) const {
+	AlterSchemaInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(400, "new_name", new_name);
+}
+
+unique_ptr<AlterSchemaInfo> RenameSchemaInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<RenameSchemaInfo>(new RenameSchemaInfo());
+	deserializer.ReadPropertyWithDefault<Identifier>(400, "new_name", result->new_name);
+	return std::move(result);
+}
+
+void RenameSequenceInfo::Serialize(Serializer &serializer) const {
+	AlterSequenceInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(400, "new_name", new_name);
+}
+
+unique_ptr<AlterSequenceInfo> RenameSequenceInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<RenameSequenceInfo>(new RenameSequenceInfo());
+	deserializer.ReadPropertyWithDefault<Identifier>(400, "new_name", result->new_name);
+	return std::move(result);
+}
+
 void RenameTableInfo::Serialize(Serializer &serializer) const {
 	AlterTableInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<Identifier>(400, "new_table_name", new_table_name);
@@ -657,6 +930,28 @@ void RenameViewInfo::Serialize(Serializer &serializer) const {
 unique_ptr<AlterViewInfo> RenameViewInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<RenameViewInfo>(new RenameViewInfo());
 	deserializer.ReadPropertyWithDefault<Identifier>(400, "new_view_name", result->new_view_name);
+	return std::move(result);
+}
+
+void ReplaceDefinitionInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(300, "definition", definition);
+}
+
+unique_ptr<AlterInfo> ReplaceDefinitionInfo::Deserialize(Deserializer &deserializer) {
+	auto definition = deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(300, "definition");
+	auto result = duckdb::unique_ptr<ReplaceDefinitionInfo>(new ReplaceDefinitionInfo(std::move(definition)));
+	return std::move(result);
+}
+
+void ResetIndexOptionsInfo::Serialize(Serializer &serializer) const {
+	AlterIndexInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<identifier_set_t>(400, "options", options);
+}
+
+unique_ptr<AlterIndexInfo> ResetIndexOptionsInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<ResetIndexOptionsInfo>(new ResetIndexOptionsInfo());
+	deserializer.ReadPropertyWithDefault<identifier_set_t>(400, "options", result->options);
 	return std::move(result);
 }
 
@@ -683,6 +978,19 @@ void ResetTableOptionsInfo::Serialize(Serializer &serializer) const {
 unique_ptr<AlterTableInfo> ResetTableOptionsInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<ResetTableOptionsInfo>(new ResetTableOptionsInfo());
 	deserializer.ReadPropertyWithDefault<identifier_set_t>(400, "table_options", result->table_options);
+	return std::move(result);
+}
+
+void RestartSequenceInfo::Serialize(Serializer &serializer) const {
+	AlterSequenceInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<optional<int64_t>>(400, "restart_with", restart_with);
+	serializer.WritePropertyWithDefault<uint64_t>(401, "usage_count", usage_count);
+}
+
+unique_ptr<AlterSequenceInfo> RestartSequenceInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<RestartSequenceInfo>(new RestartSequenceInfo());
+	deserializer.ReadPropertyWithDefault<optional<int64_t>>(400, "restart_with", result->restart_with);
+	deserializer.ReadPropertyWithDefault<uint64_t>(401, "usage_count", result->usage_count);
 	return std::move(result);
 }
 
@@ -724,6 +1032,17 @@ unique_ptr<AlterTableInfo> SetDefaultInfo::Deserialize(Deserializer &deserialize
 	auto result = duckdb::unique_ptr<SetDefaultInfo>(new SetDefaultInfo());
 	deserializer.ReadPropertyWithDefault<Identifier>(400, "column_name", result->column_name);
 	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(401, "expression", result->expression);
+	return std::move(result);
+}
+
+void SetIndexOptionsInfo::Serialize(Serializer &serializer) const {
+	AlterIndexInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<case_insensitive_map_t<Value>>(400, "options", options);
+}
+
+unique_ptr<AlterIndexInfo> SetIndexOptionsInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<SetIndexOptionsInfo>(new SetIndexOptionsInfo());
+	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<Value>>(400, "options", result->options);
 	return std::move(result);
 }
 

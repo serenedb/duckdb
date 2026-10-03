@@ -35,16 +35,6 @@ Value AccessModeSetting::GetSetting(const ClientContext &context) {
 }
 
 //===----------------------------------------------------------------------===//
-// Allow Parser Override Extension
-//===----------------------------------------------------------------------===//
-void AllowParserOverrideExtensionSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
-	if (parameter.IsNull()) {
-		throw InvalidInputException("allow_parser_override_extension setting cannot be NULL");
-	}
-	EnumUtil::FromString<AllowParserOverride>(StringValue::Get(parameter));
-}
-
-//===----------------------------------------------------------------------===//
 // Arrow Output Version
 //===----------------------------------------------------------------------===//
 void ArrowOutputVersionSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
@@ -233,6 +223,16 @@ void ExplainOutputSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
 		throw InvalidInputException("explain_output setting cannot be NULL");
 	}
 	EnumUtil::FromString<ExplainOutputType>(StringValue::Get(parameter));
+}
+
+//===----------------------------------------------------------------------===//
+// Explain Output Format
+//===----------------------------------------------------------------------===//
+void ExplainOutputFormatSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
+	if (parameter.IsNull()) {
+		throw InvalidInputException("explain_output_format setting cannot be NULL");
+	}
+	EnumUtil::FromString<ExplainFormatShape>(StringValue::Get(parameter));
 }
 
 //===----------------------------------------------------------------------===//

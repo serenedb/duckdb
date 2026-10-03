@@ -104,6 +104,8 @@ DefaultKeywordMaps DuckDBKeywordHelper::InitializeKeywordMaps() {
 	unreserved_keyword_map.insert("approx");
 	unreserved_keyword_map.insert("assertion");
 	unreserved_keyword_map.insert("assignment");
+	unreserved_keyword_map.insert("at");
+	unreserved_keyword_map.insert("atomic");
 	unreserved_keyword_map.insert("attach");
 	unreserved_keyword_map.insert("attribute");
 	unreserved_keyword_map.insert("auto");
@@ -160,6 +162,7 @@ DefaultKeywordMaps DuckDBKeywordHelper::InitializeKeywordMaps() {
 	unreserved_keyword_map.insert("delimiter");
 	unreserved_keyword_map.insert("delimiters");
 	unreserved_keyword_map.insert("depends");
+	unreserved_keyword_map.insert("destroy");
 	unreserved_keyword_map.insert("detach");
 	unreserved_keyword_map.insert("dictionary");
 	unreserved_keyword_map.insert("disable");
@@ -321,6 +324,7 @@ DefaultKeywordMaps DuckDBKeywordHelper::InitializeKeywordMaps() {
 	unreserved_keyword_map.insert("ref");
 	unreserved_keyword_map.insert("referencing");
 	unreserved_keyword_map.insert("refresh");
+	unreserved_keyword_map.insert("register");
 	unreserved_keyword_map.insert("reindex");
 	unreserved_keyword_map.insert("relative");
 	unreserved_keyword_map.insert("release");
@@ -330,9 +334,11 @@ DefaultKeywordMaps DuckDBKeywordHelper::InitializeKeywordMaps() {
 	unreserved_keyword_map.insert("replica");
 	unreserved_keyword_map.insert("reset");
 	unreserved_keyword_map.insert("resource");
+	unreserved_keyword_map.insert("resources");
 	unreserved_keyword_map.insert("respect");
 	unreserved_keyword_map.insert("restart");
 	unreserved_keyword_map.insert("restrict");
+	unreserved_keyword_map.insert("return");
 	unreserved_keyword_map.insert("returns");
 	unreserved_keyword_map.insert("revoke");
 	unreserved_keyword_map.insert("role");
@@ -493,7 +499,6 @@ DefaultKeywordMaps DuckDBKeywordHelper::InitializeKeywordMaps() {
 	// Populating typefunc_keyword_map
 	typefunc_keyword_map.insert("anti");
 	typefunc_keyword_map.insert("asof");
-	typefunc_keyword_map.insert("at");
 	typefunc_keyword_map.insert("authorization");
 	typefunc_keyword_map.insert("binary");
 	typefunc_keyword_map.insert("by");
@@ -531,7 +536,6 @@ DefaultKeywordMaps DuckDBKeywordHelper::InitializeKeywordMaps() {
 	// Populating typename_keyword_map
 	typename_keyword_map.insert("anti");
 	typename_keyword_map.insert("asof");
-	typename_keyword_map.insert("at");
 	typename_keyword_map.insert("authorization");
 	typename_keyword_map.insert("binary");
 	typename_keyword_map.insert("by");

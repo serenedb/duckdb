@@ -9,6 +9,22 @@
 
 namespace duckdb {
 
+void WALArtifact::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<CatalogType>(101, "catalog_type", catalog_type);
+	serializer.WritePropertyWithDefault<idx_t>(102, "catalog_oid", catalog_oid);
+	serializer.WritePropertyWithDefault<idx_t>(103, "oid", oid);
+	serializer.WritePropertyWithDefault<vector<string>>(104, "paths", paths);
+}
+
+WALArtifact WALArtifact::Deserialize(Deserializer &deserializer) {
+	WALArtifact result;
+	deserializer.ReadProperty<CatalogType>(101, "catalog_type", result.catalog_type);
+	deserializer.ReadPropertyWithDefault<idx_t>(102, "catalog_oid", result.catalog_oid);
+	deserializer.ReadPropertyWithDefault<idx_t>(103, "oid", result.oid);
+	deserializer.ReadPropertyWithDefault<vector<string>>(104, "paths", result.paths);
+	return result;
+}
+
 void WALCheckpoint::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<MetaBlockPointer>(101, "meta_block", meta_block);
 }
@@ -16,6 +32,40 @@ void WALCheckpoint::Serialize(Serializer &serializer) const {
 WALCheckpoint WALCheckpoint::Deserialize(Deserializer &deserializer) {
 	WALCheckpoint result;
 	deserializer.ReadProperty<MetaBlockPointer>(101, "meta_block", result.meta_block);
+	return result;
+}
+
+void WALCommitPrepared::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<hugeint_t>(101, "txid", txid);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(102, "participant_oids", participant_oids);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(103, "participant_generations", participant_generations);
+}
+
+WALCommitPrepared WALCommitPrepared::Deserialize(Deserializer &deserializer) {
+	WALCommitPrepared result;
+	deserializer.ReadProperty<hugeint_t>(101, "txid", result.txid);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(102, "participant_oids", result.participant_oids);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(103, "participant_generations", result.participant_generations);
+	return result;
+}
+
+void WALCreateDatabase::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "database", database);
+}
+
+WALCreateDatabase WALCreateDatabase::Deserialize(Deserializer &deserializer) {
+	WALCreateDatabase result;
+	deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(101, "database", result.database);
+	return result;
+}
+
+void WALCreateForeignServer::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "server", server);
+}
+
+WALCreateForeignServer WALCreateForeignServer::Deserialize(Deserializer &deserializer) {
+	WALCreateForeignServer result;
+	deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(101, "server", result.server);
 	return result;
 }
 
@@ -33,6 +83,16 @@ WALCreateMacro WALCreateMacro::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
+void WALCreateRole::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "role", role);
+}
+
+WALCreateRole WALCreateRole::Deserialize(Deserializer &deserializer) {
+	WALCreateRole result;
+	deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(101, "role", result.role);
+	return result;
+}
+
 void WALCreateSchema::Serialize(Serializer &serializer) const {
 	if (!serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<Identifier>(101, "schema", schema);
@@ -40,12 +100,16 @@ void WALCreateSchema::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(102, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(16484, "info", info);
+	}
 }
 
 WALCreateSchema WALCreateSchema::Deserialize(Deserializer &deserializer) {
 	WALCreateSchema result;
 	deserializer.ReadPropertyWithDefault<Identifier>(101, "schema", result.schema);
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(102, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(16484, "info", result.info);
 	return result;
 }
 
@@ -91,6 +155,16 @@ WALCreateTableMacro WALCreateTableMacro::Deserialize(Deserializer &deserializer)
 	return result;
 }
 
+void WALCreateTokenizer::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "tokenizer", tokenizer);
+}
+
+WALCreateTokenizer WALCreateTokenizer::Deserialize(Deserializer &deserializer) {
+	WALCreateTokenizer result;
+	deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(101, "tokenizer", result.tokenizer);
+	return result;
+}
+
 void WALCreateTrigger::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "trigger", trigger);
@@ -133,6 +207,26 @@ WALCreateView WALCreateView::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
+void WALDropDatabase::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+}
+
+WALDropDatabase WALDropDatabase::Deserialize(Deserializer &deserializer) {
+	WALDropDatabase result;
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
+	return result;
+}
+
+void WALDropForeignServer::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+}
+
+WALDropForeignServer WALDropForeignServer::Deserialize(Deserializer &deserializer) {
+	WALDropForeignServer result;
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
+	return result;
+}
+
 void WALDropIndex::Serialize(Serializer &serializer) const {
 	if (!serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<Identifier>(101, "schema", LegacySchema());
@@ -143,6 +237,9 @@ void WALDropIndex::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(103, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
 }
 
 WALDropIndex WALDropIndex::Deserialize(Deserializer &deserializer) {
@@ -150,6 +247,7 @@ WALDropIndex WALDropIndex::Deserialize(Deserializer &deserializer) {
 	auto schema = deserializer.ReadPropertyWithDefault<Identifier>(101, "schema");
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(102, "name");
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(103, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
@@ -166,6 +264,9 @@ void WALDropMacro::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(103, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
 }
 
 WALDropMacro WALDropMacro::Deserialize(Deserializer &deserializer) {
@@ -173,9 +274,20 @@ WALDropMacro WALDropMacro::Deserialize(Deserializer &deserializer) {
 	auto schema = deserializer.ReadPropertyWithDefault<Identifier>(101, "schema");
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(102, "name");
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(103, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
+	return result;
+}
+
+void WALDropRole::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+}
+
+WALDropRole WALDropRole::Deserialize(Deserializer &deserializer) {
+	WALDropRole result;
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
 	return result;
 }
 
@@ -186,12 +298,16 @@ void WALDropSchema::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(102, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
 }
 
 WALDropSchema WALDropSchema::Deserialize(Deserializer &deserializer) {
 	WALDropSchema result;
 	deserializer.ReadPropertyWithDefault<Identifier>(101, "schema", result.schema);
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(102, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	return result;
 }
 
@@ -205,6 +321,9 @@ void WALDropSequence::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(103, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
 }
 
 WALDropSequence WALDropSequence::Deserialize(Deserializer &deserializer) {
@@ -212,6 +331,7 @@ WALDropSequence WALDropSequence::Deserialize(Deserializer &deserializer) {
 	auto schema = deserializer.ReadPropertyWithDefault<Identifier>(101, "schema");
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(102, "name");
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(103, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
@@ -228,6 +348,9 @@ void WALDropTable::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(103, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
 }
 
 WALDropTable WALDropTable::Deserialize(Deserializer &deserializer) {
@@ -235,6 +358,7 @@ WALDropTable WALDropTable::Deserialize(Deserializer &deserializer) {
 	auto schema = deserializer.ReadPropertyWithDefault<Identifier>(101, "schema");
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(102, "name");
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(103, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
@@ -251,6 +375,9 @@ void WALDropTableMacro::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(103, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
 }
 
 WALDropTableMacro WALDropTableMacro::Deserialize(Deserializer &deserializer) {
@@ -258,9 +385,24 @@ WALDropTableMacro WALDropTableMacro::Deserialize(Deserializer &deserializer) {
 	auto schema = deserializer.ReadPropertyWithDefault<Identifier>(101, "schema");
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(102, "name");
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(103, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
+	return result;
+}
+
+void WALDropTokenizer::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<QualifiedName>(101, "qualified_name", qualified_name);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
+}
+
+WALDropTokenizer WALDropTokenizer::Deserialize(Deserializer &deserializer) {
+	WALDropTokenizer result;
+	deserializer.ReadProperty<QualifiedName>(101, "qualified_name", result.qualified_name);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	return result;
 }
 
@@ -275,6 +417,9 @@ void WALDropTrigger::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(104, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
 }
 
 WALDropTrigger WALDropTrigger::Deserialize(Deserializer &deserializer) {
@@ -283,6 +428,7 @@ WALDropTrigger WALDropTrigger::Deserialize(Deserializer &deserializer) {
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(102, "name");
 	deserializer.ReadPropertyWithDefault<Identifier>(103, "table", result.table);
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(104, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
@@ -299,6 +445,9 @@ void WALDropType::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(103, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
 }
 
 WALDropType WALDropType::Deserialize(Deserializer &deserializer) {
@@ -306,6 +455,7 @@ WALDropType WALDropType::Deserialize(Deserializer &deserializer) {
 	auto schema = deserializer.ReadPropertyWithDefault<Identifier>(101, "schema");
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(102, "name");
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(103, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
@@ -322,6 +472,9 @@ void WALDropView::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(103, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
 }
 
 WALDropView WALDropView::Deserialize(Deserializer &deserializer) {
@@ -329,9 +482,20 @@ WALDropView WALDropView::Deserialize(Deserializer &deserializer) {
 	auto schema = deserializer.ReadPropertyWithDefault<Identifier>(101, "schema");
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(102, "name");
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(103, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
+	return result;
+}
+
+void WALPrepared::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<hugeint_t>(101, "txid", txid);
+}
+
+WALPrepared WALPrepared::Deserialize(Deserializer &deserializer) {
+	WALPrepared result;
+	deserializer.ReadProperty<hugeint_t>(101, "txid", result.txid);
 	return result;
 }
 
@@ -358,6 +522,9 @@ void WALSequenceValue::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(106, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
 }
 
 WALSequenceValue WALSequenceValue::Deserialize(Deserializer &deserializer) {
@@ -368,9 +535,20 @@ WALSequenceValue WALSequenceValue::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<int64_t>(104, "counter", result.counter);
 	deserializer.ReadPropertyWithDefault<optional<int64_t>>(105, "last_value", result.last_value);
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(106, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
+	return result;
+}
+
+void WALUseCatalog::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<idx_t>(101, "catalog_oid", catalog_oid);
+}
+
+WALUseCatalog WALUseCatalog::Deserialize(Deserializer &deserializer) {
+	WALUseCatalog result;
+	deserializer.ReadPropertyWithDefault<idx_t>(101, "catalog_oid", result.catalog_oid);
 	return result;
 }
 
@@ -384,6 +562,9 @@ void WALUseTable::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<QualifiedName>(103, "qualified_name", qualified_name, QualifiedName());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "table_oid", table_oid, 0);
+	}
 }
 
 WALUseTable WALUseTable::Deserialize(Deserializer &deserializer) {
@@ -391,6 +572,7 @@ WALUseTable WALUseTable::Deserialize(Deserializer &deserializer) {
 	auto schema = deserializer.ReadPropertyWithDefault<Identifier>(101, "schema");
 	auto table = deserializer.ReadPropertyWithDefault<Identifier>(102, "table");
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(103, "qualified_name", result.qualified_name, QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "table_oid", result.table_oid, 0);
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(table));
 	}
