@@ -168,7 +168,7 @@ void TemporaryMemoryManager::UpdateState(ClientContext &context, TemporaryMemory
 void TemporaryMemoryManager::SetRemainingSize(TemporaryMemoryState &temporary_memory_state, idx_t new_remaining_size) {
 	D_ASSERT(this->remaining_size >= temporary_memory_state.GetRemainingSize());
 	this->remaining_size -= temporary_memory_state.GetRemainingSize();
-	temporary_memory_state.remaining_size = new_remaining_size;
+	temporary_memory_state.remaining_size = MinValue(new_remaining_size, MAXIMUM_REMAINING_SIZE);
 	this->remaining_size += temporary_memory_state.GetRemainingSize();
 }
 
