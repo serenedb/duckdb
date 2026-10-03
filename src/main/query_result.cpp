@@ -262,6 +262,22 @@ void QueryResult::Close() {
 	context.reset();
 }
 
+unique_ptr<QueryResult> QueryResult::TakeCollectorResult() {
+	if (buffer || HasError() || !context) {
+		return nullptr;
+	}
+	auto owner = context;
+	auto lock = owner->LockContext();
+	if (!IsOpenInternal(*lock)) {
+		Cancelled();
+		context.reset();
+		return nullptr;
+	}
+	auto produced = owner->CompleteDelegatedInternal(*lock, *this);
+	context.reset();
+	return produced;
+}
+
 //===--------------------------------------------------------------------===//
 // Format
 //===--------------------------------------------------------------------===//
