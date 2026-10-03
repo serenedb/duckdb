@@ -9,6 +9,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/tree_renderer.hpp"
 #include "duckdb/common/tree_renderer/text_tree_renderer.hpp"
+#include "duckdb/execution/operator/helper/physical_execute.hpp"
 #include "duckdb/execution/operator/scan/physical_column_data_scan.hpp"
 #include "duckdb/execution/operator/scan/physical_table_scan.hpp"
 #include "duckdb/execution/physical_operator.hpp"
@@ -1049,6 +1050,9 @@ void QueryProfiler::WriteToFile(const char *path, string &info) const {
 }
 
 unique_ptr<ProfilingNode> QueryProfiler::CreateTree(const PhysicalOperator &root_p, const idx_t depth) {
+	if (root_p.type == PhysicalOperatorType::EXECUTE) {
+		return CreateTree(root_p.Cast<PhysicalExecute>().plan, depth);
+	}
 	if (OperatorRequiresProfiling(root_p.type)) {
 		query_requires_profiling = true;
 	}
