@@ -180,7 +180,7 @@ shared_ptr<AttachedDatabase> DatabaseManager::AttachDatabase(ClientContext &cont
 				auto existing_mode = existing_db->IsReadOnly() ? AccessMode::READ_ONLY : AccessMode::READ_WRITE;
 				auto existing_mode_str = EnumUtil::ToString(existing_mode);
 				auto attached_mode = EnumUtil::ToString(options.access_mode);
-				throw BinderException("Database \"%s\" is already attached in %s mode, cannot re-attach in %s mode",
+				throw BinderException("Database %s is already attached in %s mode, cannot re-attach in %s mode",
 				                      info.name, existing_mode_str, attached_mode);
 			}
 			if (!options.default_table.Name().empty()) {
@@ -348,7 +348,7 @@ shared_ptr<AttachedDatabase> DatabaseManager::FinalizeAttach(ClientContext &cont
 				// way: another attach may have taken it since we looked
 				return entry.first->second;
 			} else {
-				throw BinderException("Failed to attach database: database with name \"%s\" already exists", name);
+				throw BinderException("Failed to attach database: database with name %s already exists", name);
 			}
 		}
 	}

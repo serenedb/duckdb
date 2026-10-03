@@ -124,7 +124,7 @@ bool CatalogSet::VerifyVacancy(CatalogTransaction transaction, CatalogEntry &ent
 		// A transaction that is not visible to our snapshot has already made a change to this entry.
 		// Because of Catalog limitations we can't push our change on this, even if the change was made by another
 		// active transaction that might end up being aborted. So we have to cancel this transaction.
-		throw TransactionException("Catalog write-write conflict on create with \"%s\"", entry.name);
+		throw TransactionException("Catalog write-write conflict on create with %s", entry.name);
 	}
 	// The entry is visible to our snapshot
 	if (!entry.deleted) {

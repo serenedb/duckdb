@@ -973,7 +973,7 @@ DroppedFieldMapping DropFieldFromStruct(const LogicalType &type, const vector<Id
 	}
 
 	if (!found) {
-		result.error = ErrorData(CatalogException("Cannot drop field \"%s\" - it does not exist", dropped_entry));
+		result.error = ErrorData(CatalogException("Cannot drop field %s - it does not exist", dropped_entry));
 	} else {
 		result.mapping = Value::STRUCT(std::move(child_mapping));
 		result.new_type = LogicalType::ConstructNestedType(type, std::move(new_type_children));

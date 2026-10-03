@@ -229,7 +229,7 @@ unique_ptr<BoundConstraint> Binder::BindUniqueConstraint(const Constraint &const
 
 		auto physical_index = col.Physical();
 		if (index_set.find(physical_index) != index_set.end()) {
-			throw ParserException("column \"%s\" appears twice in primary key constraint", col_name);
+			throw ParserException("column %s appears twice in primary key constraint", col_name);
 		}
 		indexes.push_back(physical_index);
 		index_set.insert(physical_index);
