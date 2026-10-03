@@ -471,33 +471,14 @@ ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Tra
                                                      WriteAheadLog &catalog_log, const hugeint_t &txid,
                                                      vector<pair<idx_t, idx_t>> &participants) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
-	vector<SequenceValue> sequences;
-	if (db.GetCatalog().UsesCatalogLog() && transaction.HasLoggedSequenceUsage()) {
-		try {
-			sequences = transaction.ReserveSequenceUsage(catalog_log);
-		} catch (std::exception &ex) {
-			return ErrorData(ex);
-		}
-		if (!transaction.ShouldWriteToWAL(db)) {
-			transaction.prepared = make_uniq<DuckTransaction::PreparedCommit>();
-			transaction.prepared->sequences = std::move(sequences);
-			return ErrorData();
-		}
-	}
 	if (!transaction.ShouldWriteToWAL(db)) {
 		return ErrorData();
 	}
 	auto prepared = make_uniq<DuckTransaction::PreparedCommit>();
-	prepared->sequences = std::move(sequences);
 	auto &storage_manager = db.GetStorageManager();
 	if (storage_manager.HasWAL()) {
 		prepared->wal_lock = storage_manager.GetWALLock();
 		prepared->wal = storage_manager.GetWALShared();
-		if (context.registered_state) {
-			for (auto &state : context.registered_state->States()) {
-				state->TransactionPreWalWrite(db, context);
-			}
-		}
 	}
 	auto error = transaction.WriteToWAL(context, db, prepared->commit_state, catalog_log);
 	if (error.HasError()) {
@@ -534,17 +515,6 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	auto prepared = std::move(transaction.prepared);
 	const bool applied = prepared && prepared->previous_pending.IsValid();
 	ErrorData error;
-	if (prepared) {
-		for (auto &value : prepared->sequences) {
-			value.entry->MarkDurable(value);
-		}
-	} else if (db.GetCatalog().UsesCatalogLog() && transaction.HasLoggedSequenceUsage()) {
-		try {
-			transaction.CoverSequenceUsage();
-		} catch (std::exception &ex) {
-			error = ErrorData(ex);
-		}
-	}
 	unique_lock<mutex> t_lock(transaction_lock);
 	if (!db.IsSystem() && !db.IsTemporary()) {
 		if (transaction.ChangesMade()) {
@@ -603,11 +573,6 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		// grab the WAL lock and hold it until the entire commit is finished
 		held_wal_lock = storage_manager.GetWALLock();
 		wal_ref = storage_manager.GetWALShared();
-		if (context.registered_state) {
-			for (auto &state : context.registered_state->States()) {
-				state->TransactionPreWalWrite(db, context);
-			}
-		}
 		// capture the WAL generation under the WAL lock so the WAL-ordered commit hook below sees the exact
 		// generation this commit's bytes append to
 		wal_generation = wal_ref->GetCheckpointIteration();
@@ -720,7 +685,6 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	// lock after the fsync, avoids an extra lock on every commit.
 	bool store_transaction = undo_properties.has_updates || undo_properties.has_index_deletes ||
 	                         undo_properties.has_catalog_changes || error.HasError();
-	transaction.EndCommitAppends();
 	auto cleanup_info = RemoveTransaction(transaction, store_transaction);
 	if (cleanup_info->ScheduleCleanup()) {
 		lock_guard<mutex> q_lock(cleanup_queue_lock);
@@ -805,7 +769,6 @@ void DuckTransactionManager::RollbackTransaction(Transaction &transaction_p) {
 		// Obtain the transaction lock and roll back.
 		lock_guard<mutex> t_lock(transaction_lock);
 		error = transaction.Rollback();
-		transaction.EndCommitAppends();
 		if (transaction.prepared && transaction.prepared->previous_pending.IsValid()) {
 			last_pending_commit.store(transaction.prepared->previous_pending.GetIndex(), std::memory_order_release);
 			transaction.commit_id = 0;

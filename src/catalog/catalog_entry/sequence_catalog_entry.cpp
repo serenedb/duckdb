@@ -1,7 +1,5 @@
 #include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
 
-#include <absl/cleanup/cleanup.h>
-
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
@@ -33,8 +31,13 @@ SequenceData::SequenceData(CreateSequenceInfo &info)
       cycle(info.cycle), cache(info.cache) {
 }
 
+static idx_t NextSequenceStateId() {
+	static atomic<idx_t> next_id {0};
+	return ++next_id;
+}
+
 SequenceState::SequenceState(const SequenceData &data_p)
-    : data(data_p), reserved_usage_count(data.usage_count), reserved_counter(data.counter),
+    : id(NextSequenceStateId()), data(data_p), reserved_usage_count(data.usage_count), reserved_counter(data.counter),
       durable_usage_count(data.usage_count), durable_counter(data.counter) {
 }
 
@@ -64,11 +67,6 @@ unique_ptr<CatalogEntry> SequenceCatalogEntry::Copy(ClientContext &context) cons
 	return std::move(result);
 }
 
-static absl::Condition Settled(SequenceState *state) {
-	return absl::Condition(
-	    +[](SequenceState *settling) { return !settling->logging && settling->appending == 0; }, state);
-}
-
 unique_ptr<CatalogEntry> SequenceCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
 	if (info.type == AlterType::CHANGE_OWNERSHIP) {
 		return Copy(context);
@@ -80,8 +78,8 @@ unique_ptr<CatalogEntry> SequenceCatalogEntry::AlterEntry(ClientContext &context
 	auto result = unique_ptr_cast<CatalogEntry, SequenceCatalogEntry>(
 	    restart ? Copy(context) : CatalogEntry::AlterEntry(context, info));
 	{
+		lock_guard<mutex> writer(state->log_lock);
 		lock_guard<mutex> seqlock(state->lock);
-		state->lock.Await(Settled(state.get()));
 		ThrowIfSuperseded();
 		if (restart) {
 			result->state = make_shared_ptr<SequenceState>(Restarted(info.Cast<AlterSequenceInfo>()));
@@ -197,16 +195,6 @@ static SequenceData LogAhead(SequenceData data, idx_t steps) {
 	return data;
 }
 
-static absl::Condition NotLogging(bool *logging) {
-	return absl::Condition(
-	    +[](bool *busy) { return !*busy; }, logging);
-}
-
-static absl::Condition NotWriting(SequenceState *state) {
-	return absl::Condition(
-	    +[](SequenceState *state) { return !state->logging && state->appending == 0; }, state);
-}
-
 idx_t SequenceCatalogEntry::Block() const {
 	static constexpr idx_t LOG_AHEAD_VALUES = 32;
 	static constexpr idx_t MAX_LOG_AHEAD_VALUES = 4096;
@@ -240,137 +228,77 @@ void SequenceCatalogEntry::RaiseDurable(uint64_t usage_count, int64_t counter) {
 	}
 }
 
-void SequenceCatalogEntry::AppendReservation(const SequenceData &target, bool wait) {
+pair<shared_ptr<WriteAheadLog>, idx_t> SequenceCatalogEntry::AppendReservation(const SequenceData &target) {
 	auto log = catalog.CatalogLog();
 	if (!log) {
 		throw InternalException("Sequence \"%s\" advanced without a catalog log", name);
 	}
-	idx_t offset;
-	{
-		auto wal_lock = log->GetStorageManager().GetWALLock();
-		log = catalog.CatalogLog();
-		if (!log) {
-			throw InternalException("Sequence \"%s\" advanced without a catalog log", name);
-		}
-		log->WriteUseCatalog(catalog.GetAttached().oid);
-		log->WriteSequenceValue(SequenceValue {this, target.usage_count, target.counter});
-		offset = log->FlushAppendNoSync();
-		lock_guard<mutex> seqlock(state->lock);
-		RaiseReserved(target.usage_count, target.counter, log, offset);
+	auto wal_lock = log->GetStorageManager().GetWALLock();
+	log = catalog.CatalogLog();
+	if (!log) {
+		throw InternalException("Sequence \"%s\" advanced without a catalog log", name);
 	}
-	if (wait) {
-		log->GroupSync(offset);
-	} else {
-		catalog.RequestCatalogLogSync(std::move(log), offset);
-	}
-}
-
-void SequenceCatalogEntry::MakeDurable(unique_lock<mutex> &seqlock, const SequenceData &target) {
-	state->lock.Await(NotLogging(&state->logging));
-	state->logging = true;
-	seqlock.unlock();
-	absl::Cleanup finish = [&]() noexcept {
-		if (!seqlock.owns_lock()) {
-			seqlock.lock();
-		}
-		state->logging = false;
-	};
-	AppendReservation(target, true);
-	seqlock.lock();
-	RaiseDurable(target.usage_count, target.counter);
+	log->WriteUseCatalog(catalog.GetAttached().oid);
+	log->WriteSequenceValue(SequenceValue {this, target.usage_count, target.counter});
+	const auto offset = log->FlushAppendNoSync();
+	lock_guard<mutex> seqlock(state->lock);
+	RaiseReserved(target.usage_count, target.counter, log, offset);
+	return {std::move(log), offset};
 }
 
 void SequenceCatalogEntry::Cover(uint64_t usage_count) {
 	unique_lock<mutex> seqlock(state->lock);
 	while (usage_count > state->durable_usage_count) {
-		if (usage_count <= state->reserved_usage_count && state->reserved_log) {
-			auto log = state->reserved_log;
-			const auto offset = state->reserved_offset;
-			const auto target = Reserved();
+		if (usage_count > state->reserved_usage_count) {
 			seqlock.unlock();
-			log->GroupSync(offset);
+			lock_guard<mutex> writer(state->log_lock);
 			seqlock.lock();
-			RaiseDurable(target.usage_count, target.counter);
-			continue;
-		}
-		if (state->logging) {
-			state->lock.Await(NotLogging(&state->logging));
-			continue;
-		}
-		state->logging = true;
-		const bool append = usage_count > state->reserved_usage_count;
-		const auto target = append ? LogAhead(state->data, Block()) : Reserved();
-		seqlock.unlock();
-		absl::Cleanup finish = [&]() noexcept {
-			if (!seqlock.owns_lock()) {
+			if (usage_count > state->reserved_usage_count) {
+				const auto target = LogAhead(state->data, Block());
+				seqlock.unlock();
+				AppendReservation(target);
 				seqlock.lock();
 			}
-			state->logging = false;
-		};
-		if (append) {
-			AppendReservation(target, true);
-		} else {
-			catalog.SyncCatalogLog();
+			continue;
 		}
+		auto log = state->reserved_log;
+		const auto offset = state->reserved_offset;
+		const auto target = Reserved();
+		seqlock.unlock();
+		log->GroupSync(offset);
 		seqlock.lock();
 		RaiseDurable(target.usage_count, target.counter);
 	}
 }
 
-void SequenceCatalogEntry::ReserveInCommit(WriteAheadLog &catalog_log, uint64_t usage_count,
-                                           vector<SequenceValue> &durable_after) {
-	unique_lock<mutex> seqlock(state->lock);
-	if (usage_count <= state->durable_usage_count) {
-		return;
-	}
-	const bool append = usage_count > state->reserved_usage_count;
-	const auto target = append ? LogAhead(state->data, Block()) : Reserved();
-	seqlock.unlock();
-	if (append) {
-		catalog_log.WriteUseCatalog(catalog.GetAttached().oid);
-		catalog_log.WriteSequenceValue(SequenceValue {this, target.usage_count, target.counter});
-	}
-	durable_after.push_back(SequenceValue {this, target.usage_count, target.counter});
-}
-
-void SequenceCatalogEntry::MarkReserved(const SequenceValue &value) {
-	lock_guard<mutex> seqlock(state->lock);
-	RaiseReserved(value.usage_count, value.counter, nullptr, 0);
-}
-
-void SequenceCatalogEntry::MarkDurable(const SequenceValue &value) {
-	lock_guard<mutex> seqlock(state->lock);
-	RaiseDurable(value.usage_count, value.counter);
-}
-
 void SequenceCatalogEntry::Fetch(SequenceSessionValue &cached, idx_t needed) {
-	optional<SequenceData> reservation;
 	{
 		lock_guard<mutex> seqlock(state->lock);
 		FetchLocked(cached, needed);
-		const auto block = Block();
-		if (LogsValues() && state->appending == 0 &&
-		    state->data.usage_count + block / 2 > state->reserved_usage_count) {
-			reservation = LogAhead(state->data, block);
-			state->appending++;
+		if (!LogsValues() || state->data.usage_count + Block() / 2 <= state->reserved_usage_count) {
+			return;
 		}
 	}
-	if (reservation) {
-		absl::Cleanup finish = [&]() noexcept {
-			FinishAppend();
-		};
-		AppendReservation(*reservation, false);
+	unique_lock<mutex> writer(state->log_lock, std::try_to_lock);
+	if (!writer.owns_lock()) {
+		return;
 	}
-}
-
-void SequenceCatalogEntry::FinishAppend() {
-	lock_guard<mutex> seqlock(state->lock);
-	state->appending--;
+	optional<SequenceData> target;
+	{
+		lock_guard<mutex> seqlock(state->lock);
+		const auto block = Block();
+		if (state->data.usage_count + block / 2 > state->reserved_usage_count) {
+			target = LogAhead(state->data, block);
+		}
+	}
+	if (target) {
+		AppendReservation(*target);
+	}
 }
 
 void SequenceCatalogEntry::FetchLocked(SequenceSessionValue &cached, idx_t needed) {
 	ThrowIfSuperseded();
-	cached.state = state;
+	cached.state_id = state->id;
 	auto &data = state->data;
 	const auto cache = MaxValue<idx_t>(data.cache, 1);
 	const auto count = (needed + cache - 1) / cache * cache;
@@ -434,7 +362,7 @@ int64_t SequenceCatalogEntry::CurrentValue(SequenceSession &session) {
 int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction, SequenceSession &session) {
 	lock_guard<mutex> guard(session.lock);
 	auto &cached = session.values[oid];
-	if (cached.state.lock() != state) {
+	if (cached.state_id != state->id) {
 		cached.remaining = 0;
 	}
 	if (cached.remaining == 0) {
@@ -455,7 +383,7 @@ void SequenceCatalogEntry::NextValues(DuckTransaction &transaction, SequenceSess
                                       SequenceRuns &runs) {
 	lock_guard<mutex> guard(session.lock);
 	auto &cached = session.values[oid];
-	if (cached.state.lock() != state) {
+	if (cached.state_id != state->id) {
 		cached.remaining = 0;
 	}
 	runs.size = 0;
@@ -497,11 +425,12 @@ int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, SequenceSes
 }
 
 int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t value, bool is_called) {
-	unique_lock<mutex> seqlock(state->lock);
 	const bool logs_values = LogsValues();
+	unique_lock<mutex> writer(state->log_lock, std::defer_lock);
 	if (logs_values) {
-		state->lock.Await(NotWriting(state.get()));
+		writer.lock();
 	}
+	unique_lock<mutex> seqlock(state->lock);
 	ThrowIfSuperseded();
 	auto &data = state->data;
 	if (value < data.min_value) {
@@ -512,7 +441,6 @@ int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t val
 		throw SequenceException("setval: value %lld is out of bounds for sequence \"%s\" (%lld..%lld)", value, name,
 		                        data.min_value, data.max_value);
 	}
-	state->block_remaining = 0;
 	if (is_called) {
 		const bool overflow = !TryAddOperator::Operation(value, data.increment, data.counter);
 		if (data.cycle) {
@@ -531,13 +459,16 @@ int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t val
 		data.counter = value;
 		data.last_value.reset();
 	}
+	data.usage_count = MaxValue(data.usage_count, state->reserved_usage_count) + 1;
 	if (logs_values) {
-		data.usage_count = MaxValue(data.usage_count, state->reserved_usage_count) + 1;
 		const auto target = data;
-		MakeDurable(seqlock, target);
+		seqlock.unlock();
+		auto reservation = AppendReservation(target);
+		reservation.first->GroupSync(reservation.second);
+		seqlock.lock();
+		RaiseDurable(target.usage_count, target.counter);
 		return value;
 	}
-	data.usage_count = MaxValue(data.usage_count, state->reserved_usage_count) + 1;
 	if (!temporary) {
 		transaction.PushSequenceUsage(*this, data.usage_count, data.counter);
 	}
@@ -551,31 +482,6 @@ int64_t SequenceCatalogEntry::NextValues(DuckTransaction &transaction, idx_t cou
 	lock_guard<mutex> seqlock(state->lock);
 	ThrowIfSuperseded();
 	auto &data = state->data;
-	if (!data.cycle) {
-		if (state->block_remaining < count) {
-			auto reserved = LogAhead(data, MaxValue<idx_t>(count, data.cache));
-			const auto taken = reserved.usage_count - data.usage_count;
-			if (taken >= count) {
-				state->block_next = data.counter;
-				state->block_remaining = taken;
-				data.last_value = Hugeint::Cast<int64_t>(hugeint_t(reserved.counter) - hugeint_t(data.increment));
-				data.counter = reserved.counter;
-				data.usage_count = reserved.usage_count;
-			}
-		}
-		if (state->block_remaining >= count) {
-			const auto base = state->block_next;
-			state->block_remaining -= count;
-			if (state->block_remaining) {
-				state->block_next =
-				    Hugeint::Cast<int64_t>(hugeint_t(base) + hugeint_t(count) * hugeint_t(data.increment));
-			}
-			if (!temporary) {
-				transaction.PushSequenceUsage(*this, data.usage_count, data.counter);
-			}
-			return base;
-		}
-	}
 	int64_t base = data.counter;
 	for (idx_t i = 0; i < count; i++) {
 		int64_t result = data.counter;

@@ -77,6 +77,7 @@ public:
 	virtual void UndoAlter(ClientContext &context, AlterInfo &info);
 	virtual void Rollback(CatalogEntry &prev_entry);
 	virtual void OnDrop();
+	virtual void OnAlter();
 
 	virtual unique_ptr<CatalogEntry> Copy(ClientContext &context) const;
 

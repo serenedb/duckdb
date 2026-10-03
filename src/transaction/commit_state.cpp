@@ -43,6 +43,10 @@ void CommitDropState::DropEntry(CatalogEntry &entry) {
 	dropped_entries.push_back(entry);
 }
 
+void CommitDropState::AlterEntry(CatalogEntry &entry) {
+	altered_entries.push_back(entry);
+}
+
 void CommitDropState::FinalizeCommit() {
 	if (block_manager) {
 		for (auto block_id : dropped_block_ids) {
@@ -58,13 +62,18 @@ void CommitDropState::FinalizeCommit() {
 	for (auto &entry : dropped_entries) {
 		entry.get().OnDrop();
 	}
+	for (auto &entry : altered_entries) {
+		entry.get().OnAlter();
+	}
 	dropped_block_ids.clear();
 	pending_index_removals.clear();
 	dropped_entries.clear();
+	altered_entries.clear();
 }
 
 bool CommitDropState::Empty() const {
-	return dropped_block_ids.empty() && pending_index_removals.empty() && dropped_entries.empty();
+	return dropped_block_ids.empty() && pending_index_removals.empty() && dropped_entries.empty() &&
+	       altered_entries.empty();
 }
 
 //===--------------------------------------------------------------------===//
@@ -191,6 +200,7 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 			auto column_name = deserializer.ReadProperty<string>(100, "column_name");
 			auto parse_info = deserializer.ReadProperty<unique_ptr<ParseInfo>>(101, "alter_info");
 			deserializer.End();
+			drop_state.AlterEntry(parent);
 
 			switch (parent.type) {
 			case CatalogType::TABLE_ENTRY:

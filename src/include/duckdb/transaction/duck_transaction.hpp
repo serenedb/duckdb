@@ -91,12 +91,8 @@ public:
 	void PushDelete(DuckTableEntry &table_entry, RowVersionManager &info, idx_t vector_idx, row_t rows[], idx_t count,
 	                idx_t base_row);
 	void PushSequenceUsage(SequenceCatalogEntry &entry, uint64_t usage_count, int64_t counter);
-	bool HasLoggedSequenceUsage();
 	void CoverSequenceUsage();
-	vector<SequenceValue> ReserveSequenceUsage(WriteAheadLog &catalog_log);
 	void PushAppend(DuckTableEntry &table_entry, idx_t row_start, idx_t row_count);
-	void BeginCommitAppend(DataTable &table);
-	void EndCommitAppends();
 	UndoBufferReference CreateUpdateInfo(DuckTableEntry &table_entry, idx_t type_size, idx_t entries,
 	                                     idx_t row_group_start);
 	//! Keep the column that owns an UpdateSegment this transaction's undo references alive until the undo is cleaned
@@ -123,7 +119,6 @@ public:
 		unique_lock<mutex> wal_lock;
 		shared_ptr<WriteAheadLog> wal;
 		unique_ptr<StorageCommitState> commit_state;
-		vector<SequenceValue> sequences;
 		optional_idx previous_pending;
 		unique_ptr<CommitDropState> drop_state;
 		UndoBuffer::IteratorState iterator_state;
@@ -137,7 +132,6 @@ private:
 	UndoBuffer undo_buffer;
 	//! The set of uncommitted appends for the transaction
 	unique_ptr<LocalStorage> storage;
-	vector<shared_ptr<DataTable>> commit_appends;
 	//! Lock that prevents checkpoints from starting
 	unique_ptr<StorageLockKey> checkpoint_lock;
 	//! Lock that prevents vacuums from starting

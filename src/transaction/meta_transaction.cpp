@@ -300,19 +300,6 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 		}
 		return error;
 	}
-	for (auto &participant : participants) {
-		auto &transaction = participant.get().transaction;
-		if (!transaction.IsDuckTransaction()) {
-			continue;
-		}
-		auto &prepared_commit = transaction.Cast<DuckTransaction>().prepared;
-		if (prepared_commit) {
-			for (auto &value : prepared_commit->sequences) {
-				value.entry->MarkReserved(value);
-			}
-		}
-	}
-	log_owner.BeginCatalogLogCommit();
 	catalog_lock.unlock();
 	catalog_log.GroupSync(decision_offset);
 	log_owner.OnCatalogLogDecided();
@@ -327,27 +314,36 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 			error.Merge(commit_error);
 		}
 	}
-	log_owner.EndCatalogLogCommit();
 	return error;
 }
 
 ErrorData MetaTransaction::Commit() {
-	auto catalog = CatalogLogForCommit();
-	if (catalog) {
-		return CommitThroughCatalogLog(*catalog);
-	}
 	ErrorData error;
+	for (auto &db : all_transactions) {
+		auto &transaction_ref = transactions.find(db.get())->second;
+		if (transaction_ref.state != TransactionState::UNCOMMITTED ||
+		    !transaction_ref.transaction.IsDuckTransaction()) {
+			continue;
+		}
+		try {
+			transaction_ref.transaction.Cast<DuckTransaction>().CoverSequenceUsage();
+		} catch (std::exception &ex) {
+			error = ErrorData(ex);
+			break;
+		}
+	}
+	if (!error.HasError()) {
+		auto catalog = CatalogLogForCommit();
+		if (catalog) {
+			return CommitThroughCatalogLog(*catalog);
+		}
+	}
 #ifdef DEBUG
 	reference_set_t<AttachedDatabase> committed_tx;
 #endif
-	vector<reference<AttachedDatabase>> order(all_transactions.rbegin(), all_transactions.rend());
-	std::stable_partition(order.begin(), order.end(), [&](AttachedDatabase &db) {
-		auto entry = transactions.find(db);
-		return entry != transactions.end() && entry->second.transaction.IsDuckTransaction() &&
-		       entry->second.transaction.Cast<DuckTransaction>().HasLoggedSequenceUsage();
-	});
-	for (auto &db_ref : order) {
-		auto &db = db_ref.get();
+	// commit transactions in reverse order
+	for (idx_t i = all_transactions.size(); i > 0; i--) {
+		auto &db = all_transactions[i - 1].get();
 		auto entry = transactions.find(db);
 		if (entry == transactions.end()) {
 			throw InternalException("Could not find transaction corresponding to database in MetaTransaction");

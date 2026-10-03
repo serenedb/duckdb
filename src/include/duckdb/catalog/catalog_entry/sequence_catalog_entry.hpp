@@ -27,10 +27,8 @@ struct SequenceValue {
 	int64_t counter;
 };
 
-struct SequenceState;
-
 struct SequenceSessionValue {
-	weak_ptr<SequenceState> state;
+	idx_t state_id = 0;
 	int64_t next = 0;
 	idx_t remaining = 0;
 	int64_t increment = 0;
@@ -77,7 +75,9 @@ struct SequenceData {
 struct SequenceState {
 	explicit SequenceState(const SequenceData &data);
 
+	const idx_t id;
 	mutable mutex lock;
+	mutex log_lock;
 	SequenceData data;
 	uint64_t reserved_usage_count;
 	int64_t reserved_counter;
@@ -85,10 +85,6 @@ struct SequenceState {
 	idx_t reserved_offset = 0;
 	uint64_t durable_usage_count;
 	int64_t durable_counter;
-	int64_t block_next = 0;
-	idx_t block_remaining = 0;
-	bool logging = false;
-	idx_t appending = 0;
 	idx_t generation = 0;
 };
 
@@ -119,9 +115,6 @@ public:
 	int64_t SetValue(DuckTransaction &transaction, int64_t value, bool is_called);
 	void ReplayValue(uint64_t usage_count, int64_t counter, optional<int64_t> last_value);
 	void Cover(uint64_t usage_count);
-	void ReserveInCommit(WriteAheadLog &catalog_log, uint64_t usage_count, vector<SequenceValue> &durable_after);
-	void MarkReserved(const SequenceValue &value);
-	void MarkDurable(const SequenceValue &value);
 	bool LogsValues() const;
 
 	string ToSQL() const override;
@@ -133,11 +126,9 @@ private:
 	SequenceData Reserved() const;
 	void Fetch(SequenceSessionValue &cached, idx_t needed);
 	void FetchLocked(SequenceSessionValue &cached, idx_t needed);
-	void FinishAppend();
 	void RaiseReserved(uint64_t usage_count, int64_t counter, shared_ptr<WriteAheadLog> log, idx_t offset);
 	void RaiseDurable(uint64_t usage_count, int64_t counter);
-	void AppendReservation(const SequenceData &target, bool wait);
-	void MakeDurable(unique_lock<mutex> &seqlock, const SequenceData &target);
+	pair<shared_ptr<WriteAheadLog>, idx_t> AppendReservation(const SequenceData &target);
 
 private:
 	shared_ptr<SequenceState> state;

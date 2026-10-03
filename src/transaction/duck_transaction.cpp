@@ -125,18 +125,6 @@ void DuckTransaction::PushDelete(DuckTableEntry &table_entry, RowVersionManager 
 	}
 }
 
-void DuckTransaction::BeginCommitAppend(DataTable &table) {
-	table.BeginCommitAppend();
-	commit_appends.push_back(table.shared_from_this());
-}
-
-void DuckTransaction::EndCommitAppends() {
-	for (auto &table : commit_appends) {
-		table->EndCommitAppend();
-	}
-	commit_appends.clear();
-}
-
 void DuckTransaction::PushAppend(DuckTableEntry &table_entry, idx_t start_row, idx_t row_count) {
 	auto undo_entry = undo_buffer.CreateEntry(UndoFlags::INSERT_TUPLE, sizeof(AppendInfo));
 	auto append_info = reinterpret_cast<AppendInfo *>(undo_entry.GetDataMutable());
@@ -194,23 +182,10 @@ void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, uint64_t
 	}
 }
 
-bool DuckTransaction::HasLoggedSequenceUsage() {
-	lock_guard<mutex> l(sequence_lock);
-	return !logged_sequence_usage.empty();
-}
-
 void DuckTransaction::CoverSequenceUsage() {
 	for (auto &usage : logged_sequence_usage) {
 		usage.first.get().Cover(usage.second);
 	}
-}
-
-vector<SequenceValue> DuckTransaction::ReserveSequenceUsage(WriteAheadLog &catalog_log) {
-	vector<SequenceValue> durable_after;
-	for (auto &usage : logged_sequence_usage) {
-		usage.first.get().ReserveInCommit(catalog_log, usage.second, durable_after);
-	}
-	return durable_after;
 }
 
 bool DuckTransaction::ChangesMade() {
