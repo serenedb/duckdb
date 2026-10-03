@@ -48,12 +48,15 @@
 #include <stdio.h>
 #include <assert.h>
 
+#include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/explain_statement.hpp"
 #include "duckdb/parser/statement/attach_statement.hpp"
 #include "duckdb/parser/statement/detach_statement.hpp"
+#include "duckdb/parser/statement/pragma_statement.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "shell_progress_bar.hpp"
 #include "shell_prompt.hpp"
@@ -987,12 +990,22 @@ SuccessState ShellState::ExecuteStatement(unique_ptr<duckdb::SQLStatement> state
 	return RenderQueryResult(*renderer, res);
 }
 
-// In psql mode the parser rewrites CREATE DATABASE -> ATTACH (TYPE serenedb)
-// and DROP DATABASE -> DETACH. The in-process shell has no serenedb storage
-// extension, so binding these locally fails. Forward the original statement to
-// the attached server (the auto-attached pg-wire endpoint) via postgres_execute
-// instead. Returns true when the statement was forwarded (result holds the
-// outcome); false leaves it to run through the normal local path.
+bool ShellState::IsServerPragma(const duckdb::SQLStatement &statement) {
+	if (statement.type != duckdb::StatementType::PRAGMA_STATEMENT) {
+		return false;
+	}
+	auto &name = statement.Cast<duckdb::PragmaStatement>().info->name;
+	auto &context = *conn->context;
+	bool unknown = false;
+	context.RunFunctionInTransaction([&]() {
+		duckdb::EntryLookupInfo lookup(
+		    duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY,
+		    duckdb::QualifiedName(duckdb::Identifier(SYSTEM_CATALOG), duckdb::Identifier(DEFAULT_SCHEMA), name));
+		unknown = !duckdb::Catalog::GetEntry(context, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
+	});
+	return unknown;
+}
+
 bool ShellState::TryForwardDatabaseDdl(const duckdb::SQLStatement &statement, const string &original_sql,
                                        SuccessState &result) {
 	if (subcommand != ShellSubcommand::PSQL || psql_dbname.empty()) {
@@ -1006,6 +1019,8 @@ bool ShellState::TryForwardDatabaseDdl(const duckdb::SQLStatement &statement, co
 		          duckdb::StringUtil::CIEquals(entry->second.ToString(), "serenedb");
 	} else if (statement.type == duckdb::StatementType::DETACH_STATEMENT) {
 		forward = true;
+	} else {
+		forward = IsServerPragma(statement);
 	}
 	if (!forward) {
 		return false;
@@ -1050,6 +1065,26 @@ void ShellState::SetupPrettyExplain(duckdb::SQLStatement &statement) {
 SuccessState ShellState::ExecuteSQL(const string &zSql) {
 	auto &con = *conn;
 	try {
+		if (subcommand == ShellSubcommand::PSQL && !psql_dbname.empty()) {
+			duckdb::Parser parser(con.context->GetParserOptions());
+			parser.ParseQuery(zSql);
+			const bool forwards_pragma =
+			    std::any_of(parser.statements.begin(), parser.statements.end(),
+			                [&](const duckdb::unique_ptr<duckdb::SQLStatement> &raw) { return IsServerPragma(*raw); });
+			if (forwards_pragma) {
+				for (auto &raw : parser.statements) {
+					auto raw_sql = zSql.substr(raw->stmt_location, raw->stmt_length);
+					SuccessState rc;
+					if (!TryForwardDatabaseDdl(*raw, raw_sql, rc)) {
+						rc = ExecuteSQL(raw_sql);
+					}
+					if (rc != SuccessState::SUCCESS) {
+						return rc;
+					}
+				}
+				return SuccessState::SUCCESS;
+			}
+		}
 		auto statements = con.ExtractStatements(zSql);
 		for (auto &statement : statements) {
 			idx_t start_pos = statement->stmt_location;
@@ -1076,10 +1111,6 @@ SuccessState ShellState::ExecuteSQL(const string &zSql) {
 
 			// Reset before bind; the `_` replacement scan sets it to true if it fires.
 			last_result_referenced = false;
-			// CREATE/DROP DATABASE are rewritten by the parser to ATTACH (TYPE
-			// serenedb) / DETACH -- local catalog ops the psql client shell cannot
-			// run (it has no serenedb storage extension). Forward the original
-			// statement to the attached server instead of binding it locally.
 			SuccessState forwarded_rc;
 			if (TryForwardDatabaseDdl(*statement, zStmtSql, forwarded_rc)) {
 				if (forwarded_rc != SuccessState::SUCCESS) {

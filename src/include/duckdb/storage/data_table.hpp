@@ -10,6 +10,8 @@
 
 #include "duckdb/common/enums/column_segment_info_scan_type.hpp"
 #include "duckdb/common/unique_ptr.hpp"
+
+#include <condition_variable>
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/storage/table/persistent_table_data.hpp"
 #include "duckdb/transaction/local_storage.hpp"
@@ -242,6 +244,9 @@ public:
 	bool IsRoot() const {
 		return IsMainTable();
 	}
+	void BeginCommitAppend();
+	void EndCommitAppend();
+	void WaitForCommitAppends(unique_lock<mutex> &lock);
 	string TableModification() const;
 
 	//! Get statistics of a physical column within the table
@@ -322,7 +327,7 @@ public:
 	void AddIndex(const ColumnList &columns, const vector<LogicalIndex> &column_indexes, const IndexConstraintType type,
 	              IndexStorageInfo index_info);
 	//! AddIndex moves an index to this table's index list.
-	void AddIndex(unique_ptr<Index> index);
+	idx_t AddIndex(unique_ptr<Index> index);
 
 	//! Returns a list of the partition stats
 	vector<PartitionStatistics> GetPartitionStats(ClientContext &context);
@@ -365,5 +370,7 @@ private:
 	shared_ptr<RowGroupCollection> row_groups;
 	//! The version of the data table
 	atomic<DataTableVersion> version;
+	idx_t commit_appends = 0;
+	std::condition_variable_any commit_appends_done;
 };
 } // namespace duckdb

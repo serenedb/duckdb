@@ -74,6 +74,13 @@ BufferedFileWriter &WriteAheadLog::Initialize() {
 	return *writer;
 }
 
+idx_t WriteAheadLog::GetCheckpointIteration() {
+	if (checkpoint_iteration.IsValid()) {
+		return checkpoint_iteration.GetIndex();
+	}
+	return storage_manager.GetBlockManager().GetCheckpointIteration();
+}
+
 idx_t WriteAheadLog::GetTotalWritten() const {
 	if (!Initialized()) {
 		return 0;
@@ -302,13 +309,7 @@ void WriteAheadLog::WriteHeader() {
 		auto db_identifier = single_file_block_manager.GetDBIdentifier();
 		serializer.WriteList(102, "db_identifier", MainHeader::DB_IDENTIFIER_LEN,
 		                     [&](Serializer::List &list, idx_t i) { list.WriteElement(db_identifier[i]); });
-		idx_t current_checkpoint_iteration;
-		if (checkpoint_iteration.IsValid()) {
-			current_checkpoint_iteration = checkpoint_iteration.GetIndex();
-		} else {
-			current_checkpoint_iteration = single_file_block_manager.GetCheckpointIteration();
-		}
-		serializer.WriteProperty(103, "checkpoint_iteration", current_checkpoint_iteration);
+		serializer.WriteProperty(103, "checkpoint_iteration", GetCheckpointIteration());
 	}
 
 	serializer.End();

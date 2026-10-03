@@ -70,6 +70,7 @@ public:
 		return flushed_offset.load(std::memory_order_acquire);
 	}
 
+	idx_t GetCheckpointIteration();
 	//! A WAL is initialized, if a writer to a file exists.
 	bool Initialized() const;
 	//! Initializes the file of the WAL by creating the file writer.

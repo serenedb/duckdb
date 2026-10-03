@@ -1,5 +1,7 @@
 #include "duckdb/storage/table/table_index_list.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/types/conflict_manager.hpp"
@@ -119,11 +121,12 @@ void TableIndexList::RemoveIndex(const Identifier &name) {
 	}
 }
 
-void TableIndexList::RemoveIndexesOnColumn(column_t column_id) {
+void TableIndexList::RemoveIndexesFromColumn(column_t column_id) {
 	lock_guard<mutex> lock(index_entries_lock);
 	for (idx_t i = index_entries.size(); i > 0; i--) {
 		auto &index = *index_entries[i - 1]->index;
-		if (!index.GetColumnIdSet().count(column_id)) {
+		auto &ids = index.GetColumnIds();
+		if (std::none_of(ids.begin(), ids.end(), [&](column_t id) { return id >= column_id; })) {
 			continue;
 		}
 		if (!index.IsBound()) {
@@ -256,6 +259,14 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 	auto &catalog = table_info.GetDB().GetCatalog();
 	auto schema = table_info.GetSchemaName();
 	auto table_name = table_info.GetTableName();
+	if (!table_info.GetDB().GetStorageManager().IsLoaded()) {
+		EntryLookupInfo lookup(CatalogType::TABLE_ENTRY, QualifiedName(catalog.GetName(), schema, table_name));
+		auto entry = Catalog::GetEntry(context, lookup, OnEntryNotFound::RETURN_NULL);
+		if (!entry || entry->type != CatalogType::TABLE_ENTRY || !entry->Cast<TableCatalogEntry>().IsDuckTable() ||
+		    !RefersToSameObject(*entry->Cast<TableCatalogEntry>().GetStorage().GetDataTableInfo(), table_info)) {
+			return;
+		}
+	}
 	auto &table_entry =
 	    catalog.GetEntry<TableCatalogEntry>(context, QualifiedName(catalog.GetName(), schema, table_name));
 	Bind(context, table_entry.Cast<DuckTableEntry>(), index_type);
@@ -313,6 +324,10 @@ void TableIndexList::Bind(ClientContext &context, DuckTableEntry &table, const c
 		} else {
 			throw InternalException("index entry bind state cannot be BOUND here");
 		}
+		absl::Cleanup unbind = [&]() noexcept {
+			lock.lock();
+			index_entry->bind_state = IndexBindState::UNBOUND;
+		};
 
 		// Create a binder to bind this index.
 		auto binder = Binder::CreateBinder(context);
@@ -341,6 +356,7 @@ void TableIndexList::Bind(ClientContext &context, DuckTableEntry &table, const c
 
 		// Commit the bound index to the index entry.
 		lock.lock();
+		std::move(unbind).Cancel();
 		index_entry->bind_state = IndexBindState::BOUND;
 		index_entry->index = std::move(bound_idx);
 		unbound_count--;

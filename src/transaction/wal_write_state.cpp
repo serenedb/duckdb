@@ -431,7 +431,15 @@ void WALWriteState::CommitEntry(UndoFlags type, data_ptr_t data) {
 		break;
 	case UndoFlags::SEQUENCE_VALUE: {
 		auto info = reinterpret_cast<SequenceValue *>(data);
-		Log().WriteSequenceValue(*info);
+		if (!catalog_log) {
+			Log().WriteSequenceValue(*info);
+			break;
+		}
+		if (!catalog_selected) {
+			catalog_log->WriteUseCatalog(transaction.manager.GetDB().oid);
+			catalog_selected = true;
+		}
+		catalog_log->WriteSequenceValue(*info);
 		break;
 	}
 	default:

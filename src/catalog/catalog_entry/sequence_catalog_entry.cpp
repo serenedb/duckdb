@@ -1,5 +1,7 @@
 #include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
@@ -200,6 +202,11 @@ static absl::Condition NotLogging(bool *logging) {
 	    +[](bool *busy) { return !*busy; }, logging);
 }
 
+static absl::Condition NotWriting(SequenceState *state) {
+	return absl::Condition(
+	    +[](SequenceState *state) { return !state->logging && state->appending == 0; }, state);
+}
+
 idx_t SequenceCatalogEntry::Block() const {
 	static constexpr idx_t LOG_AHEAD_VALUES = 32;
 	static constexpr idx_t MAX_LOG_AHEAD_VALUES = 4096;
@@ -262,16 +269,15 @@ void SequenceCatalogEntry::MakeDurable(unique_lock<mutex> &seqlock, const Sequen
 	state->lock.Await(NotLogging(&state->logging));
 	state->logging = true;
 	seqlock.unlock();
-	try {
-		AppendReservation(target, true);
-	} catch (...) {
-		seqlock.lock();
+	absl::Cleanup finish = [&]() noexcept {
+		if (!seqlock.owns_lock()) {
+			seqlock.lock();
+		}
 		state->logging = false;
-		throw;
-	}
+	};
+	AppendReservation(target, true);
 	seqlock.lock();
 	RaiseDurable(target.usage_count, target.counter);
-	state->logging = false;
 }
 
 void SequenceCatalogEntry::Cover(uint64_t usage_count) {
@@ -295,20 +301,19 @@ void SequenceCatalogEntry::Cover(uint64_t usage_count) {
 		const bool append = usage_count > state->reserved_usage_count;
 		const auto target = append ? LogAhead(state->data, Block()) : Reserved();
 		seqlock.unlock();
-		try {
-			if (append) {
-				AppendReservation(target, true);
-			} else {
-				catalog.SyncCatalogLog();
+		absl::Cleanup finish = [&]() noexcept {
+			if (!seqlock.owns_lock()) {
+				seqlock.lock();
 			}
-		} catch (...) {
-			seqlock.lock();
 			state->logging = false;
-			throw;
+		};
+		if (append) {
+			AppendReservation(target, true);
+		} else {
+			catalog.SyncCatalogLog();
 		}
 		seqlock.lock();
 		RaiseDurable(target.usage_count, target.counter);
-		state->logging = false;
 	}
 }
 
@@ -351,13 +356,10 @@ void SequenceCatalogEntry::Fetch(SequenceSessionValue &cached, idx_t needed) {
 		}
 	}
 	if (reservation) {
-		try {
-			AppendReservation(*reservation, false);
-		} catch (...) {
+		absl::Cleanup finish = [&]() noexcept {
 			FinishAppend();
-			throw;
-		}
-		FinishAppend();
+		};
+		AppendReservation(*reservation, false);
 	}
 }
 
@@ -368,6 +370,7 @@ void SequenceCatalogEntry::FinishAppend() {
 
 void SequenceCatalogEntry::FetchLocked(SequenceSessionValue &cached, idx_t needed) {
 	ThrowIfSuperseded();
+	cached.state = state;
 	auto &data = state->data;
 	const auto cache = MaxValue<idx_t>(data.cache, 1);
 	const auto count = (needed + cache - 1) / cache * cache;
@@ -431,6 +434,9 @@ int64_t SequenceCatalogEntry::CurrentValue(SequenceSession &session) {
 int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction, SequenceSession &session) {
 	lock_guard<mutex> guard(session.lock);
 	auto &cached = session.values[oid];
+	if (cached.state.lock() != state) {
+		cached.remaining = 0;
+	}
 	if (cached.remaining == 0) {
 		Fetch(cached, 1);
 	}
@@ -449,6 +455,9 @@ void SequenceCatalogEntry::NextValues(DuckTransaction &transaction, SequenceSess
                                       SequenceRuns &runs) {
 	lock_guard<mutex> guard(session.lock);
 	auto &cached = session.values[oid];
+	if (cached.state.lock() != state) {
+		cached.remaining = 0;
+	}
 	runs.size = 0;
 	for (idx_t produced = 0; produced < count;) {
 		if (cached.remaining == 0) {
@@ -491,7 +500,7 @@ int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t val
 	unique_lock<mutex> seqlock(state->lock);
 	const bool logs_values = LogsValues();
 	if (logs_values) {
-		state->lock.Await(NotLogging(&state->logging));
+		state->lock.Await(NotWriting(state.get()));
 	}
 	ThrowIfSuperseded();
 	auto &data = state->data;
@@ -528,7 +537,7 @@ int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t val
 		MakeDurable(seqlock, target);
 		return value;
 	}
-	data.usage_count++;
+	data.usage_count = MaxValue(data.usage_count, state->reserved_usage_count) + 1;
 	if (!temporary) {
 		transaction.PushSequenceUsage(*this, data.usage_count, data.counter);
 	}

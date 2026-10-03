@@ -77,7 +77,7 @@ LocalTableStorage::LocalTableStorage(DataTable &new_data_table, LocalTableStorag
 	row_groups->collection = std::move(new_collection);
 
 	append_indexes.Move(parent.append_indexes);
-	append_indexes.RemoveIndexesOnColumn(drop_column_index);
+	append_indexes.RemoveIndexesFromColumn(drop_column_index);
 }
 
 LocalTableStorage::LocalTableStorage(ClientContext &context, DataTable &new_dt, LocalTableStorage &parent,
@@ -653,6 +653,7 @@ void LocalStorage::Flush(DataTable &table, LocalTableStorage &storage, optional_
 
 	TableAppendState append_state;
 	table.AppendLock(transaction, append_state);
+	transaction.BeginCommitAppend(table);
 	if ((append_state.row_start == 0 || storage.GetCollection().GetTotalRows() >= row_group_size) &&
 	    storage.deleted_rows == 0) {
 		// table is currently empty OR we are bulk appending: move over the storage directly

@@ -125,6 +125,18 @@ void DuckTransaction::PushDelete(DuckTableEntry &table_entry, RowVersionManager 
 	}
 }
 
+void DuckTransaction::BeginCommitAppend(DataTable &table) {
+	table.BeginCommitAppend();
+	commit_appends.push_back(table.shared_from_this());
+}
+
+void DuckTransaction::EndCommitAppends() {
+	for (auto &table : commit_appends) {
+		table->EndCommitAppend();
+	}
+	commit_appends.clear();
+}
+
 void DuckTransaction::PushAppend(DuckTableEntry &table_entry, idx_t start_row, idx_t row_count) {
 	auto undo_entry = undo_buffer.CreateEntry(UndoFlags::INSERT_TUPLE, sizeof(AppendInfo));
 	auto append_info = reinterpret_cast<AppendInfo *>(undo_entry.GetDataMutable());
@@ -358,8 +370,33 @@ ErrorData DuckTransaction::Commit(AttachedDatabase &db, CommitInfo &commit_info,
 	return error_data;
 }
 
+ErrorData DuckTransaction::ApplyPrepared(AttachedDatabase &db, transaction_t commit_id) noexcept {
+	this->commit_id = commit_id;
+	try {
+		optional_ptr<BlockManager> block_manager;
+		if (db.HasStorageManager()) {
+			block_manager = db.GetStorageManager().GetBlockManager();
+		}
+		prepared->drop_state = make_uniq<CommitDropState>(block_manager);
+		CommitInfo info;
+		info.commit_id = commit_id;
+		info.active_transactions = ActiveTransactionState::OTHER_TRANSACTIONS;
+		info.drop_state = prepared->drop_state.get();
+		undo_buffer.Commit(prepared->iterator_state, info);
+		if (!db.IsSystem() && !db.IsTemporary() && Settings::Get<DebugForceCommitFailureSetting>(db.GetDatabase())) {
+			throw InvalidInputException("Forced commit failure (debug_force_commit_failure)");
+		}
+		return ErrorData();
+	} catch (std::exception &ex) {
+		return ErrorData(ex);
+	}
+}
+
 ErrorData DuckTransaction::Rollback() {
 	try {
+		if (prepared && prepared->drop_state) {
+			undo_buffer.RevertCommit(prepared->iterator_state, transaction_id);
+		}
 		storage->Rollback();
 		undo_buffer.Rollback();
 		return ErrorData();

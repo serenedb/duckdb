@@ -1,5 +1,6 @@
 #include "duckdb/transaction/meta_transaction.hpp"
 
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -12,6 +13,8 @@
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_set.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/main/secret/secret_storage.hpp"
 
 namespace duckdb {
@@ -211,8 +214,17 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 	vector<pair<idx_t, idx_t>> prepared;
 	ErrorData error;
 	vector<reference<TransactionReference>> participants;
-	for (idx_t i = all_transactions.size(); i > 0; i--) {
-		auto &db = all_transactions[i - 1].get();
+	vector<reference<AttachedDatabase>> order(all_transactions.rbegin(), all_transactions.rend());
+	std::stable_partition(order.begin(), order.end(),
+	                      [&](AttachedDatabase &db) { return RefersToSameObject(db, catalog_storage.GetAttached()); });
+	optional_ptr<DuckTransaction> owner_transaction;
+	auto owner = transactions.find(catalog_storage.GetAttached());
+	if (owner != transactions.end() && owner->second.state == TransactionState::UNCOMMITTED &&
+	    owner->second.transaction.IsDuckTransaction()) {
+		owner_transaction = owner->second.transaction.Cast<DuckTransaction>();
+	}
+	for (auto &db_ref : order) {
+		auto &db = db_ref.get();
 		auto &transaction_ref = transactions.find(db)->second;
 		if (transaction_ref.state != TransactionState::UNCOMMITTED) {
 			continue;
@@ -220,6 +232,28 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 		if (ValidChecker::IsInvalidated(db)) {
 			error.Merge(ErrorData(IOException("%s", ValidChecker::InvalidatedMessage(db))));
 			break;
+		}
+		if (!RefersToSameObject(db, catalog_storage.GetAttached()) && db.GetCatalog().UsesCatalogLog()) {
+			auto view = owner_transaction
+			                ? CatalogTransaction(db.GetDatabase(), owner_transaction->transaction_id,
+			                                     owner_transaction->start_time)
+			                : CatalogTransaction(db.GetDatabase(), TRANSACTION_ID_START - 1, TRANSACTION_ID_START - 1);
+			auto lookup = log_owner.Cast<DuckCatalog>()
+			                  .GetCatalogSet(CatalogType::DATABASE_ENTRY)
+			                  .GetEntryDetailed(view, db.GetName());
+			const bool visible = lookup.result && lookup.result->oid == db.oid;
+			const bool writes = transaction_ref.transaction.IsDuckTransaction() &&
+			                    transaction_ref.transaction.Cast<DuckTransaction>().ChangesMade();
+			if ((owner_transaction && lookup.reason == CatalogSet::EntryLookup::FailureReason::DELETED) ||
+			    (!visible && !writes)) {
+				transaction_ref.transaction.manager.RollbackTransaction(transaction_ref.transaction);
+				transaction_ref.state = TransactionState::ROLLED_BACK;
+				continue;
+			}
+			if (!visible) {
+				error = ErrorData(CatalogException("database \"%s\" does not exist", db.GetName().GetIdentifierName()));
+				break;
+			}
 		}
 		participants.push_back(transaction_ref);
 		auto &transaction_manager = db.GetTransactionManager();
@@ -230,6 +264,15 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 		    context, transaction_ref.transaction, catalog_log, txid, prepared);
 		if (error.HasError()) {
 			break;
+		}
+	}
+	for (auto &participant : participants) {
+		if (error.HasError()) {
+			break;
+		}
+		auto &transaction = participant.get().transaction;
+		if (transaction.manager.IsDuckTransactionManager()) {
+			error = transaction.manager.Cast<DuckTransactionManager>().ApplyPrepared(transaction);
 		}
 	}
 	idx_t decision_offset = 0;
@@ -250,14 +293,10 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 	}
 	if (error.HasError()) {
 		commit_state->RevertCommit();
-		for (auto &participant : participants) {
-			auto &transaction_ref = participant.get();
-			try {
-				transaction_ref.transaction.manager.RollbackTransaction(transaction_ref.transaction);
-			} catch (std::exception &ex) {
-				error.Merge(ErrorData(ex));
-			}
-			transaction_ref.state = TransactionState::ROLLED_BACK;
+		try {
+			Rollback();
+		} catch (std::exception &ex) {
+			error.Merge(ErrorData(ex));
 		}
 		return error;
 	}
@@ -301,9 +340,14 @@ ErrorData MetaTransaction::Commit() {
 #ifdef DEBUG
 	reference_set_t<AttachedDatabase> committed_tx;
 #endif
-	// commit transactions in reverse order
-	for (idx_t i = all_transactions.size(); i > 0; i--) {
-		auto &db = all_transactions[i - 1].get();
+	vector<reference<AttachedDatabase>> order(all_transactions.rbegin(), all_transactions.rend());
+	std::stable_partition(order.begin(), order.end(), [&](AttachedDatabase &db) {
+		auto entry = transactions.find(db);
+		return entry != transactions.end() && entry->second.transaction.IsDuckTransaction() &&
+		       entry->second.transaction.Cast<DuckTransaction>().HasLoggedSequenceUsage();
+	});
+	for (auto &db_ref : order) {
+		auto &db = db_ref.get();
 		auto entry = transactions.find(db);
 		if (entry == transactions.end()) {
 			throw InternalException("Could not find transaction corresponding to database in MetaTransaction");

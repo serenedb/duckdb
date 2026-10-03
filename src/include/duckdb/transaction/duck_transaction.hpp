@@ -12,6 +12,7 @@
 #include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/optional_ptr.hpp"
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/transaction/undo_buffer.hpp"
 #include "duckdb/common/enums/active_transaction_state.hpp"
 #include "duckdb/common/unordered_map.hpp"
@@ -94,6 +95,8 @@ public:
 	void CoverSequenceUsage();
 	vector<SequenceValue> ReserveSequenceUsage(WriteAheadLog &catalog_log);
 	void PushAppend(DuckTableEntry &table_entry, idx_t row_start, idx_t row_count);
+	void BeginCommitAppend(DataTable &table);
+	void EndCommitAppends();
 	UndoBufferReference CreateUpdateInfo(DuckTableEntry &table_entry, idx_t type_size, idx_t entries,
 	                                     idx_t row_group_start);
 	//! Keep the column that owns an UpdateSegment this transaction's undo references alive until the undo is cleaned
@@ -121,8 +124,12 @@ public:
 		shared_ptr<WriteAheadLog> wal;
 		unique_ptr<StorageCommitState> commit_state;
 		vector<SequenceValue> sequences;
+		optional_idx previous_pending;
+		unique_ptr<CommitDropState> drop_state;
+		UndoBuffer::IteratorState iterator_state;
 	};
 	unique_ptr<PreparedCommit> prepared;
+	ErrorData ApplyPrepared(AttachedDatabase &db, transaction_t commit_id) noexcept;
 
 private:
 	//! The undo buffer is used to store old versions of rows that are updated
@@ -130,6 +137,7 @@ private:
 	UndoBuffer undo_buffer;
 	//! The set of uncommitted appends for the transaction
 	unique_ptr<LocalStorage> storage;
+	vector<shared_ptr<DataTable>> commit_appends;
 	//! Lock that prevents checkpoints from starting
 	unique_ptr<StorageLockKey> checkpoint_lock;
 	//! Lock that prevents vacuums from starting

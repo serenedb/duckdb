@@ -48,6 +48,7 @@ public:
 	ErrorData CommitTransaction(ClientContext &context, Transaction &transaction) override;
 	ErrorData PrepareTransaction(ClientContext &context, Transaction &transaction, WriteAheadLog &catalog_log,
 	                             const hugeint_t &txid, vector<pair<idx_t, idx_t>> &participants);
+	ErrorData ApplyPrepared(Transaction &transaction);
 	//! Rollback the given transaction
 	void RollbackTransaction(Transaction &transaction) override;
 
@@ -64,6 +65,7 @@ public:
 	transaction_t GetLastCommit() const {
 		return last_commit;
 	}
+	transaction_t DurableSnapshotStart();
 	idx_t GetLastCommittedCatalogVersion() const {
 		return last_committed_version;
 	}
@@ -98,6 +100,7 @@ public:
 	unique_ptr<StorageLockKey> SharedCheckpointLock();
 	//! Try to obtain an exclusive checkpoint lock
 	unique_ptr<StorageLockKey> TryGetCheckpointLock();
+	unique_ptr<StorageLockKey> TryGetIdleCheckpointLock();
 	unique_ptr<StorageLockKey> TryUpgradeCheckpointLock(StorageLockKey &lock);
 	unique_ptr<StorageLockKey> SharedVacuumLock();
 	unique_ptr<StorageLockKey> TryGetVacuumLock();

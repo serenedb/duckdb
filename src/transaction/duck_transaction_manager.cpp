@@ -12,6 +12,7 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
+#include "duckdb/transaction/commit_state.hpp"
 #include "duckdb/transaction/local_storage.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_context_state.hpp"
@@ -110,6 +111,11 @@ transaction_t DuckTransactionManager::DurableSnapshotBound(transaction_t fresh_s
 	// transaction and recreated deterministically on every database open, so they must stay visible even before
 	// the first commit is durable, while every real commit id is at least 2 and stays correctly excluded
 	return MaxValue<transaction_t>(durable + 1, 2);
+}
+
+transaction_t DuckTransactionManager::DurableSnapshotStart() {
+	lock_guard<mutex> lock(transaction_lock);
+	return DurableSnapshotBound(current_start_timestamp++);
 }
 
 void DuckTransactionManager::RefreshCheckpointSnapshot(DuckTransaction &transaction) {
@@ -333,6 +339,12 @@ unique_ptr<StorageLockKey> DuckTransactionManager::TryGetCheckpointLock() {
 	return checkpoint_lock.TryGetExclusiveLock();
 }
 
+unique_ptr<StorageLockKey> DuckTransactionManager::TryGetIdleCheckpointLock() {
+	PurgeRecentlyCommitted();
+	CleanupTransactions();
+	return checkpoint_lock.TryGetExclusiveLock();
+}
+
 unique_ptr<StorageLockKey> DuckTransactionManager::SharedVacuumLock() {
 	return vacuum_lock.GetSharedLock();
 }
@@ -438,9 +450,9 @@ void DuckTransactionManager::CleanupTransactions() {
 
 void DuckTransactionManager::CheckTruncate(DuckTransaction &transaction, DataTable &table) {
 	auto &info = *table.GetDataTableInfo();
+	lock_guard<mutex> guard(transaction_lock);
 	bool concurrent = info.last_append_commit.load() > transaction.start_time;
 	if (!concurrent) {
-		lock_guard<mutex> guard(transaction_lock);
 		for (auto &active : active_transactions) {
 			if (active.get() != &transaction && active->GetLocalStorage().Find(table)) {
 				concurrent = true;
@@ -481,6 +493,11 @@ ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Tra
 	if (storage_manager.HasWAL()) {
 		prepared->wal_lock = storage_manager.GetWALLock();
 		prepared->wal = storage_manager.GetWALShared();
+		if (context.registered_state) {
+			for (auto &state : context.registered_state->States()) {
+				state->TransactionPreWalWrite(db, context);
+			}
+		}
 	}
 	auto error = transaction.WriteToWAL(context, db, prepared->commit_state, catalog_log);
 	if (error.HasError()) {
@@ -489,7 +506,7 @@ ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Tra
 	if (prepared->commit_state) {
 		try {
 			if (prepared->commit_state->PrepareCommit(txid)) {
-				participants.emplace_back(db.oid, storage_manager.GetBlockManager().GetCheckpointIteration());
+				participants.emplace_back(db.oid, prepared->wal->GetCheckpointIteration());
 			}
 			prepared->wal->GroupSync(prepared->commit_state->GetFlushOffset());
 		} catch (std::exception &ex) {
@@ -500,9 +517,22 @@ ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Tra
 	return ErrorData();
 }
 
+ErrorData DuckTransactionManager::ApplyPrepared(Transaction &transaction_p) {
+	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	if (!transaction.prepared || !transaction.ChangesMade()) {
+		return ErrorData();
+	}
+	lock_guard<mutex> t_lock(transaction_lock);
+	const auto commit_id = GetCommitTimestamp();
+	transaction.prepared->previous_pending = last_pending_commit.load(std::memory_order_acquire);
+	last_pending_commit.store(commit_id, std::memory_order_release);
+	return transaction.ApplyPrepared(db, commit_id);
+}
+
 ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Transaction &transaction_p) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
 	auto prepared = std::move(transaction.prepared);
+	const bool applied = prepared && prepared->previous_pending.IsValid();
 	ErrorData error;
 	if (prepared) {
 		for (auto &value : prepared->sequences) {
@@ -543,7 +573,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		wal_ref = std::move(prepared->wal);
 		commit_state = std::move(prepared->commit_state);
 		if (wal_ref) {
-			wal_generation = db.GetStorageManager().GetBlockManager().GetCheckpointIteration();
+			wal_generation = wal_ref->GetCheckpointIteration();
 		}
 	}
 	if (checkpoint_decision.can_checkpoint) {
@@ -573,12 +603,17 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		// grab the WAL lock and hold it until the entire commit is finished
 		held_wal_lock = storage_manager.GetWALLock();
 		wal_ref = storage_manager.GetWALShared();
+		if (context.registered_state) {
+			for (auto &state : context.registered_state->States()) {
+				state->TransactionPreWalWrite(db, context);
+			}
+		}
 		// capture the WAL generation under the WAL lock so the WAL-ordered commit hook below sees the exact
 		// generation this commit's bytes append to
-		wal_generation = storage_manager.GetBlockManager().GetCheckpointIteration();
+		wal_generation = wal_ref->GetCheckpointIteration();
 
 		// Commit the changes to the WAL.
-		if (!skip_wal_write_due_to_checkpoint) {
+		if (!error.HasError() && !skip_wal_write_due_to_checkpoint) {
 			error = transaction.WriteToWAL(context, db, commit_state);
 		}
 
@@ -603,13 +638,14 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	// in-memory databases don't have a WAL - we estimate how large their changeset is based on the undo properties
 	if (!db.IsSystem()) {
 		auto &storage_manager = db.GetStorageManager();
-		if (storage_manager.InMemory() || db.GetRecoveryMode() == RecoveryMode::NO_WAL_WRITES) {
+		if ((storage_manager.InMemory() && !db.GetCatalog().UsesCatalogLog()) ||
+		    db.GetRecoveryMode() == RecoveryMode::NO_WAL_WRITES) {
 			storage_manager.AddWALSize(undo_properties.estimated_size);
 		}
 	}
 	// obtain a commit id for the transaction
 	CommitInfo info;
-	info.commit_id = GetCommitTimestamp();
+	info.commit_id = applied ? transaction.commit_id : GetCommitTimestamp();
 
 	// commit the UndoBuffer of the transaction
 	if (!error.HasError()) {
@@ -621,7 +657,12 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		} else {
 			info.active_transactions = ActiveTransactionState::NO_OTHER_TRANSACTIONS;
 		}
-		error = transaction.Commit(db, info, std::move(commit_state));
+		if (applied) {
+			info.wal_flush_offset = commit_state ? commit_state->GetFlushOffset() : 0;
+			prepared->drop_state->FinalizeCommit();
+		} else {
+			error = transaction.Commit(db, info, std::move(commit_state));
+		}
 		if (!error.HasError() && info.wal_flush_offset > 0) {
 			// this commit wrote a WAL flush marker but has not been fsynced yet (that happens with the locks
 			// released, below). Record it as pending: until its group fsync raises last_durable_commit, a new
@@ -656,7 +697,9 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		}
 	} else {
 		DUCKDB_LOG(context, TransactionLogType, db, "Commit", info.commit_id);
-		last_commit = info.commit_id;
+		if (info.commit_id > last_commit) {
+			last_commit = info.commit_id;
+		}
 
 		// check if catalog changes were made
 		if (transaction.catalog_version >= TRANSACTION_ID_START) {
@@ -677,6 +720,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	// lock after the fsync, avoids an extra lock on every commit.
 	bool store_transaction = undo_properties.has_updates || undo_properties.has_index_deletes ||
 	                         undo_properties.has_catalog_changes || error.HasError();
+	transaction.EndCommitAppends();
 	auto cleanup_info = RemoveTransaction(transaction, store_transaction);
 	if (cleanup_info->ScheduleCleanup()) {
 		lock_guard<mutex> q_lock(cleanup_queue_lock);
@@ -696,6 +740,8 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		wal_ref->GroupSync(info.wal_flush_offset);
 		// our fsync now covers our flush marker: raise the durable horizon to this commit id (raise-only) and wake
 		// any parked drain
+		RaiseDurableHorizon(info.commit_id);
+	} else if (!error.HasError() && applied) {
 		RaiseDurableHorizon(info.commit_id);
 	}
 
@@ -751,7 +797,6 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 
 void DuckTransactionManager::RollbackTransaction(Transaction &transaction_p) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
-	transaction.prepared.reset();
 
 	DUCKDB_LOG(db.GetDatabase(), TransactionLogType, db, "Rollback", transaction.transaction_id);
 
@@ -760,6 +805,12 @@ void DuckTransactionManager::RollbackTransaction(Transaction &transaction_p) {
 		// Obtain the transaction lock and roll back.
 		lock_guard<mutex> t_lock(transaction_lock);
 		error = transaction.Rollback();
+		transaction.EndCommitAppends();
+		if (transaction.prepared && transaction.prepared->previous_pending.IsValid()) {
+			last_pending_commit.store(transaction.prepared->previous_pending.GetIndex(), std::memory_order_release);
+			transaction.commit_id = 0;
+		}
+		transaction.prepared.reset();
 
 		// Remove the transaction from the list of active transactions and gather cleanup information.
 		auto cleanup_info = RemoveTransaction(transaction);

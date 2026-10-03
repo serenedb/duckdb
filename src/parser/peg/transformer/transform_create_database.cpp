@@ -1,7 +1,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/statement/attach_statement.hpp"
-#include "duckdb/parser/statement/detach_statement.hpp"
+#include "duckdb/parser/statement/pragma_statement.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 
 namespace duckdb {
@@ -38,19 +38,14 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement
 	return std::move(result);
 }
 
-// DROP DATABASE foo [(FORCE)] -> DETACH foo. serenedb has no detach-without-drop
-// semantics, so the resulting DETACH drops the database via
-// SereneDBCatalog::OnDetach. FORCE is parsed for grammar compatibility but
-// currently ignored (serenedb's drop is already synchronous).
 unique_ptr<SQLStatement>
 PEGTransformerFactory::TransformDropDatabaseStatement(PEGTransformer &transformer, const optional<bool> &if_exists,
                                                       const Identifier &catalog_name,
                                                       const optional<bool> &drop_database_force) {
-	auto result = make_uniq<DetachStatement>();
-	auto info = make_uniq<DetachInfo>();
-	info->name = catalog_name;
-	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	result->info = std::move(info);
+	auto result = make_uniq<PragmaStatement>();
+	result->info->name = "serenedb_drop_database";
+	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value(catalog_name.GetIdentifierName())));
+	result->info->parameters.push_back(make_uniq<ConstantExpression>(Value::BOOLEAN(static_cast<bool>(if_exists))));
 	return std::move(result);
 }
 

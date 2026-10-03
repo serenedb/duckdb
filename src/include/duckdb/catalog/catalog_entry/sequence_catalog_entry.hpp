@@ -27,7 +27,10 @@ struct SequenceValue {
 	int64_t counter;
 };
 
+struct SequenceState;
+
 struct SequenceSessionValue {
+	weak_ptr<SequenceState> state;
 	int64_t next = 0;
 	idx_t remaining = 0;
 	int64_t increment = 0;

@@ -103,7 +103,8 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, ColumnDefinition
 	default_executor.AddExpression(default_value);
 
 	// prevent any new tuples from being added to the parent
-	lock_guard<mutex> parent_lock(parent.append_lock);
+	unique_lock<mutex> parent_lock(parent.append_lock);
+	parent.WaitForCommitAppends(parent_lock);
 
 	this->row_groups = parent.row_groups->AddColumn(context, new_column, default_executor);
 
@@ -122,7 +123,8 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_co
 	info->BindIndexes(context);
 
 	// prevent any new tuples from being added to the parent
-	lock_guard<mutex> parent_lock(parent.append_lock);
+	unique_lock<mutex> parent_lock(parent.append_lock);
+	parent.WaitForCommitAppends(parent_lock);
 
 	for (auto &column_def : parent.column_definitions) {
 		column_definitions.emplace_back(column_def.Copy());
@@ -173,7 +175,7 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_co
 	for (idx_t i = 0; i < column_definitions.size(); i++) {
 		auto &col = column_definitions[i];
 		col.SetOid(i);
-		if (col.Generated()) {
+		if (col.Category() == TableColumnType::GENERATED_VIRTUAL) {
 			continue;
 		}
 		col.SetStorageOid(storage_idx++);
@@ -197,7 +199,8 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, BoundConstraint 
 	info->BindIndexes(context);
 
 	auto &local_storage = LocalStorage::Get(context, db);
-	lock_guard<mutex> parent_lock(parent.append_lock);
+	unique_lock<mutex> parent_lock(parent.append_lock);
+	parent.WaitForCommitAppends(parent_lock);
 	for (auto &column_def : parent.column_definitions) {
 		column_definitions.emplace_back(column_def.Copy());
 	}
@@ -218,7 +221,8 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t changed_id
 	info->BindIndexes(context);
 
 	// prevent any tuples from being added to the parent
-	lock_guard<mutex> lock(append_lock);
+	unique_lock<mutex> parent_lock(parent.append_lock);
+	parent.WaitForCommitAppends(parent_lock);
 	for (auto &column_def : parent.column_definitions) {
 		column_definitions.emplace_back(column_def.Copy());
 	}
@@ -454,8 +458,11 @@ bool DataTable::HasUniqueIndexes() const {
 	return false;
 }
 
-void DataTable::AddIndex(unique_ptr<Index> index) {
+idx_t DataTable::AddIndex(unique_ptr<Index> index) {
+	unique_lock<mutex> lock(append_lock);
+	WaitForCommitAppends(lock);
 	info->indexes.AddIndex(std::move(index));
+	return row_groups->GetNextRowId();
 }
 
 bool DataTable::HasForeignKeyIndex(std::span<const PhysicalIndex> keys, ForeignKeyType type) {
@@ -1445,6 +1452,22 @@ void DataTable::WriteToLog(DuckTransaction &transaction, WriteAheadLog &log, idx
 	}
 
 	ScanTableSegment(transaction, row_start, count, [&](DataChunk &chunk) { log.WriteInsert(chunk); });
+}
+
+void DataTable::BeginCommitAppend() {
+	commit_appends++;
+}
+
+void DataTable::EndCommitAppend() {
+	{
+		lock_guard<mutex> lock(append_lock);
+		commit_appends--;
+	}
+	commit_appends_done.notify_all();
+}
+
+void DataTable::WaitForCommitAppends(unique_lock<mutex> &lock) {
+	commit_appends_done.wait(lock, [&]() { return commit_appends == 0; });
 }
 
 void DataTable::CommitAppend(transaction_t commit_id, idx_t row_start, idx_t count) {

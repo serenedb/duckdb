@@ -81,7 +81,7 @@ BoundStatement Binder::Bind(PragmaStatement &stmt) {
 	result.plan = make_uniq<LogicalPragma>(std::move(bound_info));
 
 	auto &properties = GetStatementProperties();
-	properties.return_type = StatementReturnType::QUERY_RESULT;
+	properties.return_type = StatementReturnType::NOTHING;
 	return result;
 }
 

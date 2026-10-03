@@ -24,6 +24,7 @@
 #include "duckdb/catalog/default/default_types.hpp"
 #include "duckdb/catalog/default/default_views.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
+#include "duckdb/execution/index/index_type_set.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
@@ -461,12 +462,21 @@ static void DropIndexesOnRemovedColumn(DuckSchemaEntry &schema, CatalogTransacti
 	if (!table.ColumnExists(info.removed_column)) {
 		return;
 	}
-	const auto removed = table.GetColumn(info.removed_column).Logical().index;
+	auto &column = table.GetColumn(info.removed_column);
+	auto &index_types = schema.catalog.GetDatabase().config.GetIndexTypes();
 	vector<Identifier> victims;
 	schema.GetCatalogSet(CatalogType::INDEX_ENTRY).Scan(transaction, [&](CatalogEntry &index_entry) {
 		auto &index = index_entry.Cast<IndexCatalogEntry>();
-		if (index.GetTableName() == table.name &&
-		    std::find(index.column_ids.begin(), index.column_ids.end(), removed) != index.column_ids.end()) {
+		if (index.GetTableName() != table.name) {
+			return;
+		}
+		auto index_type = index_types.FindByName(index.index_type);
+		const bool logical_ids = index_type && index_type->remaps_columns;
+		if (!logical_ids && column.Category() == TableColumnType::GENERATED_VIRTUAL) {
+			return;
+		}
+		const auto removed = logical_ids ? column.Logical().index : column.Physical().index;
+		if (std::find(index.column_ids.begin(), index.column_ids.end(), removed) != index.column_ids.end()) {
 			victims.push_back(index.name);
 		}
 	});
@@ -476,6 +486,28 @@ static void DropIndexesOnRemovedColumn(DuckSchemaEntry &schema, CatalogTransacti
 		drop.SetQualifiedName(schema.catalog.GetName(), schema.name, victim);
 		schema.DropEntry(transaction.GetContext(), drop);
 	}
+}
+
+static vector<LogicalDependency> SequencesOwnedByRemovedColumn(CatalogTransaction transaction, CatalogSet &tables,
+                                                               const Identifier &table_name,
+                                                               const RemoveColumnInfo &info) {
+	vector<LogicalDependency> owned;
+	auto entry = tables.GetEntry(transaction, table_name);
+	if (!entry || entry->type != CatalogType::TABLE_ENTRY) {
+		return owned;
+	}
+	auto &table = entry->Cast<TableCatalogEntry>();
+	if (!table.ColumnExists(info.removed_column)) {
+		return owned;
+	}
+	const SubDependency default_of {AlterTableType::SET_DEFAULT, table.GetColumn(info.removed_column).Name()};
+	for (auto &dependency : table.dependencies.Set()) {
+		if (dependency.owned_by && dependency.entry.type == CatalogType::SEQUENCE_ENTRY &&
+		    dependency.subdependencies.count(default_of)) {
+			owned.push_back(dependency);
+		}
+	}
+	return owned;
 }
 
 void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
@@ -502,13 +534,29 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 				                          info.Cast<DropConstraintInfo>().constraint_name);
 			}
 		}
+		vector<LogicalDependency> owned_sequences;
 		if (info.type == AlterType::ALTER_TABLE &&
 		    info.Cast<AlterTableInfo>().alter_table_type == AlterTableType::REMOVE_COLUMN &&
 		    catalog.Compatibility() == SqlCompatibility::POSTGRES && transaction.HasContext()) {
 			DropIndexesOnRemovedColumn(*this, transaction, set, name, info.Cast<RemoveColumnInfo>());
+			owned_sequences = SequencesOwnedByRemovedColumn(transaction, set, name, info.Cast<RemoveColumnInfo>());
 		}
 		if (!set.AlterEntry(transaction, name, info)) {
 			throw CatalogException::MissingEntry(type, name, string());
+		}
+		auto altered = owned_sequences.empty() ? nullptr : set.GetEntry(transaction, name);
+		for (auto &owned : owned_sequences) {
+			auto &owner_schema = catalog.GetSchema(transaction, owned.entry.schema);
+			auto sequence = owner_schema.GetEntry(transaction, CatalogType::SEQUENCE_ENTRY, owned.entry.name);
+			if (!sequence || !altered) {
+				continue;
+			}
+			catalog.GetDependencyManager()->RemoveDependencyBetween(transaction, *altered, *sequence);
+			DropInfo drop;
+			drop.type = CatalogType::SEQUENCE_ENTRY;
+			drop.SetQualifiedName(catalog.GetName(), owned.entry.schema, owned.entry.name);
+			drop.if_not_found = OnEntryNotFound::RETURN_NULL;
+			owner_schema.DropEntry(transaction.GetContext(), drop);
 		}
 		// Detaching a foreign-key pair must also remove the dependency edge
 		// registered at CREATE, or the referenced (main-key) table stays undroppable.
