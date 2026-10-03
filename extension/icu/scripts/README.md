@@ -86,3 +86,18 @@ worth understanding before committing.
   `stubdata.cpp`, without rebuilding ICU. The collation data was removed with it after the
   collator stopped using ICU: `python3 extension/icu/scripts/strip-data.py coll/`.
 - `inline-data.py` turns a data package into the C array in `stubdata.cpp`.
+
+# Updating the text and property data
+
+The text functions in `text/` (word and sentence breaking with the Thai, Lao, Burmese, Khmer and Chinese/Japanese dictionaries, normalization, case mapping, locale identifiers) and the Unicode properties that regular expressions name with `\p{...}` (`properties/`) do not use ICU either. `text/generated/text_data.cpp` and `properties/generated/property_data.cpp` hold tables that `generate_text_data.py` and `generate_property_data.py` read from the ICU data package (break rules, break dictionaries, sentence break exceptions, collation resources, normalization data), from a few ICU sources (the Greek uppercasing data, the ISO tables of locale identifiers, the property names) and from the UCD (normalization, case mapping, properties). The versions are `ICU_VERSION` and `UNICODE_VERSION` in `unicode_inputs.py`; the ICU release has to be the one built on that Unicode version.
+
+The generators need `python3` and the `zstd` command line tool:
+
+```bash
+python3 extension/icu/scripts/generate_text_data.py
+python3 extension/icu/scripts/generate_property_data.py
+```
+
+The inputs are downloaded into `~/.cache/duckdb-text-data/<ICU_VERSION>` (`TEXT_DATA_CACHE` overrides it). `generate_text_data.py` maps locales to the collations of `collation/generated/collation_data.cpp`, so regenerate the collation data first when both change (`TEXT_COLLATION_DATA` points it at another file). Both generators stop with an error when the ICU data changes shape (break rules that need 16-bit rows or look-ahead, new data format versions, changed GreekUpper bits); `icu_data.py` holds the readers to extend then. The size of the compressed units is printed at the end of each run.
+
+An update changes segmentation, normalization and case mapping, so it changes the terms of text indexes built before it. The tests that pin the behaviour live in SereneDB: the Unicode conformance tests in `tests/iresearch/analysis/text/unicode_text_tests.cpp` (WordBreakTest, SentenceBreakTest, NormalizationTest, CaseFolding and SpecialCasing of the UCD in `resources/tests/iresearch/unicode`) and the segmentation, normalization, case mapping and property tests in `tests/sqllogic/sdb/pg/simple/unicode`, whose expectations were recorded from ICU 78.3.

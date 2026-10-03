@@ -7,6 +7,8 @@ include_directories = [
         'extension/icu/include',
         'extension/icu/collation/include',
         'extension/icu/datetime/include',
+        'extension/icu/properties/include',
+        'extension/icu/text/include',
     ]
 ]
 # source files
@@ -18,6 +20,10 @@ source_directories = [
         'collation/generated',
         'datetime',
         'datetime/generated',
+        'properties',
+        'properties/generated',
+        'text',
+        'text/generated',
     ]
 ]
 source_files = []
