@@ -463,24 +463,40 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformDropColumn(
 	return std::move(result);
 }
 
+static void RejectFieldPath(const ColumnRefExpression &column, const char *alter_name) {
+	auto &names = column.ColumnNames();
+	if (names.size() == 1) {
+		return;
+	}
+	vector<string> parts;
+	for (auto &name : names) {
+		parts.push_back(name.GetIdentifierName());
+	}
+	throw ParserException("%s is not supported for the field %s - it can only be applied to a column", alter_name,
+	                      StringUtil::Join(parts, "."));
+}
+
 unique_ptr<AlterTableInfo>
 PEGTransformerFactory::TransformAlterColumn(PEGTransformer &transformer, const bool &has_result,
                                             unique_ptr<ColumnRefExpression> nested_column_name,
                                             unique_ptr<AlterTableInfo> alter_column_entry) {
 	if (alter_column_entry->alter_table_type == AlterTableType::SET_DEFAULT) {
+		RejectFieldPath(*nested_column_name, "SET DEFAULT");
 		auto set_default_entry = unique_ptr_cast<AlterTableInfo, SetDefaultInfo>(std::move(alter_column_entry));
-		// TODO(Dtenwolde) Figure out with nested names;
 		set_default_entry->column_name = nested_column_name->ColumnNames()[0];
 		return std::move(set_default_entry);
 	} else if (alter_column_entry->alter_table_type == AlterTableType::DROP_NOT_NULL) {
+		RejectFieldPath(*nested_column_name, "DROP NOT NULL");
 		auto drop_not_null = unique_ptr_cast<AlterTableInfo, DropNotNullInfo>(std::move(alter_column_entry));
 		drop_not_null->column_name = nested_column_name->ColumnNames()[0];
 		return std::move(drop_not_null);
 	} else if (alter_column_entry->alter_table_type == AlterTableType::SET_NOT_NULL) {
+		RejectFieldPath(*nested_column_name, "SET NOT NULL");
 		auto set_not_null = unique_ptr_cast<AlterTableInfo, SetNotNullInfo>(std::move(alter_column_entry));
 		set_not_null->column_name = nested_column_name->ColumnNames()[0];
 		return std::move(set_not_null);
 	} else if (alter_column_entry->alter_table_type == AlterTableType::ALTER_COLUMN_TYPE) {
+		RejectFieldPath(*nested_column_name, "ALTER TYPE");
 		auto change_column_type = unique_ptr_cast<AlterTableInfo, ChangeColumnTypeInfo>(std::move(alter_column_entry));
 		change_column_type->column_name = nested_column_name->ColumnNames()[0];
 		return std::move(change_column_type);

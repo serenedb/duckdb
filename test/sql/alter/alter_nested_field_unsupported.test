@@ -1,0 +1,64 @@
+# name: test/sql/alter/alter_nested_field_unsupported.test
+# description: ALTER forms that cannot address a nested field must reject it, not apply to the parent
+# group: [alter]
+
+statement ok
+CREATE TABLE t(s STRUCT(a INTEGER, b INTEGER), n INTEGER);
+
+statement ok
+INSERT INTO t VALUES ({'a': NULL, 'b': 1}, 1);
+
+statement error
+ALTER TABLE t ALTER s.a SET NOT NULL;
+----
+<REGEX>:.*SET NOT NULL is not supported for the field s\.a.*
+
+statement error
+ALTER TABLE t ALTER s.a DROP NOT NULL;
+----
+<REGEX>:.*DROP NOT NULL is not supported for the field s\.a.*
+
+statement error
+ALTER TABLE t ALTER s.a SET DEFAULT 5;
+----
+<REGEX>:.*SET DEFAULT is not supported for the field s\.a.*
+
+statement error
+ALTER TABLE t ALTER s.a TYPE BIGINT;
+----
+<REGEX>:.*ALTER TYPE is not supported for the field s\.a.*
+
+statement error
+ALTER TABLE t ALTER s.a.b SET NOT NULL;
+----
+<REGEX>:.*is not supported for the field s\.a\.b.*
+
+query I
+SELECT sql FROM duckdb_tables() WHERE table_name = 't';
+----
+CREATE TABLE t(s STRUCT(a INTEGER, b INTEGER), n INTEGER);
+
+statement ok
+ALTER TABLE t ALTER n SET DEFAULT 7;
+
+statement ok
+ALTER TABLE t ALTER n SET NOT NULL;
+
+query I
+SELECT sql FROM duckdb_tables() WHERE table_name = 't';
+----
+CREATE TABLE t(s STRUCT(a INTEGER, b INTEGER), n INTEGER DEFAULT(7) NOT NULL);
+
+statement ok
+ALTER TABLE t ALTER n DROP NOT NULL;
+
+statement ok
+ALTER TABLE t RENAME s.a TO z;
+
+statement ok
+ALTER TABLE t ADD COLUMN s.c INTEGER;
+
+query I
+SELECT sql FROM duckdb_tables() WHERE table_name = 't';
+----
+CREATE TABLE t(s STRUCT(z INTEGER, b INTEGER, c INTEGER), n INTEGER DEFAULT(7));
