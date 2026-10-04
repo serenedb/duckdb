@@ -531,7 +531,7 @@ public:
 	    : child(child_p), state(state_p), child_state(state_p) {
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(awaiting_child == child_result.has_value());
 		if (!child_result) {
 			awaiting_child = true;
@@ -740,7 +740,7 @@ public:
 		lifetime.active--;
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		if (child_result) {
 			if (depth == 1 && ++completed_children < lifetime.root_children) {
 				return MatchStep::Child({matcher, child_state});

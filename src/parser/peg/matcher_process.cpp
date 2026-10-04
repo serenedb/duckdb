@@ -32,7 +32,7 @@ public:
 	AtomicMatchProcess(const AtomicMatcher &matcher_p, MatchState &state_p) : matcher(matcher_p), state(state_p) {
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(!child_result);
 		D_ASSERT(!completed);
 		completed = true;
@@ -59,7 +59,7 @@ public:
 		}
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(awaiting_child == child_result.has_value());
 		if (child_result) {
 			awaiting_child = false;
@@ -168,7 +168,7 @@ public:
 		}
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(awaiting_child == child_result.has_value());
 		if (child_result) {
 			awaiting_child = false;
@@ -226,7 +226,7 @@ public:
 		}
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(awaiting_child == child_result.has_value());
 		if (!child_result) {
 			awaiting_child = true;
@@ -265,7 +265,7 @@ public:
 		}
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(awaiting_child == child_result.has_value());
 		if (child_result) {
 			awaiting_child = false;
