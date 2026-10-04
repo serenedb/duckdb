@@ -1,6 +1,7 @@
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/transaction/commit_state.hpp"
@@ -10,8 +11,8 @@ namespace duckdb {
 IndexDataTableInfo::IndexDataTableInfo(shared_ptr<DataTableInfo> info_p) : info(std::move(info_p)) {
 }
 
-void DuckIndexEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
-	if (!info || !info->info) {
+void DuckIndexEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) {
+	if (catalog.UsesCatalogLog() || !info || !info->info) {
 		return;
 	}
 	info->info->GetIndexes().RenameIndex(oid, name);
@@ -55,6 +56,10 @@ Identifier DuckIndexEntry::GetSchemaName() const {
 
 Identifier DuckIndexEntry::GetTableName() const {
 	return GetDataTableInfo().GetTableName();
+}
+
+optional_ptr<CatalogEntry> DuckIndexEntry::GetRelation(CatalogTransaction transaction) const {
+	return catalog.Cast<DuckCatalog>().GetOidIndex().GetVisible(table_oid, transaction.view);
 }
 
 DataTableInfo &DuckIndexEntry::GetDataTableInfo() const {

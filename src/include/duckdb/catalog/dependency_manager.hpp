@@ -109,7 +109,6 @@ private:
 
 private:
 	bool IsSystemEntry(CatalogEntry &entry) const;
-	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const LogicalDependency &dependency);
 	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, CatalogEntry &dependency);
 	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const CatalogEntryInfo &info);
 	//! Look up a trigger dependency through the table it is defined on
@@ -122,9 +121,12 @@ private:
 public:
 	//! The path of (nested) schemas that contain this entry, outermost first (empty for a top-level schema)
 	static vector<Identifier> GetSchemaPath(const CatalogEntry &entry);
+	static vector<Identifier> GetSchemaPath(CatalogTransaction transaction, const CatalogEntry &entry);
 	static MangledEntryName MangleName(const CatalogEntryInfo &info);
 	static MangledEntryName MangleName(const CatalogEntry &entry);
 	static CatalogEntryInfo GetLookupProperties(const CatalogEntry &entry);
+	static CatalogEntryInfo GetLookupProperties(CatalogTransaction transaction, const CatalogEntry &entry);
+	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const LogicalDependency &dependency);
 	//! The drop error for an entry with dependents, for catalogs that track their own dependents.
 	DUCKDB_API static string FormatDropError(const CatalogEntry &object,
 	                                         const vector<reference<CatalogEntry>> &dependents);

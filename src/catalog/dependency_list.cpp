@@ -53,6 +53,7 @@ LogicalDependency::LogicalDependency(CatalogEntry &entry) {
 		this->entry.name = entry.name;
 		this->entry.type = entry.type;
 		catalog = entry.ParentCatalog().GetName();
+		oid = entry.oid;
 	}
 }
 

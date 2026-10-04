@@ -148,7 +148,7 @@ void DuckDBTypesFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 
 		database_name.Append(Value(type_entry.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(type_entry.catalog.GetOid())));
-		schema_name.Append(Value(type_entry.ParentSchemaName()));
+		schema_name.Append(Value(type_entry.ParentSchemaName(CatalogTransaction(type_entry.ParentCatalog(), context))));
 		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(type_entry.ParentSchemaOid())));
 		int64_t oid;
 		if (type_entry.internal) {

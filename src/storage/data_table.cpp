@@ -4,6 +4,7 @@
 #include "duckdb/transaction/commit_state.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception.hpp"
@@ -563,6 +564,13 @@ vector<Identifier> DataTableInfo::GetSchemaPath() const {
 }
 
 Identifier DataTableInfo::GetTableName() {
+	auto &catalog = db.GetCatalog();
+	if (catalog.UsesCatalogLog()) {
+		auto entry = catalog.Cast<DuckCatalog>().GetOidIndex().GetCommitted(GetTableOid());
+		if (entry) {
+			return entry->name;
+		}
+	}
 	lock_guard<mutex> l(name_lock);
 	return table;
 }

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_versions.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -36,6 +37,9 @@ public:
 		return true;
 	}
 	void Initialize(bool load_builtin) override;
+	virtual idx_t DefaultSchemaOid() const {
+		return 0;
+	}
 
 	string GetCatalogType() override {
 		return "duckdb";
@@ -114,6 +118,9 @@ public:
 	DUCKDB_API optional_idx GetCatalogVersion(ClientContext &context) override;
 
 	optional_ptr<DependencyManager> GetDependencyManager() override;
+	CatalogOidIndex &GetOidIndex() {
+		return oid_index;
+	}
 
 private:
 	DUCKDB_API void DropSchema(CatalogTransaction transaction, DropInfo &info);
@@ -124,6 +131,7 @@ private:
 	void Verify() override;
 
 private:
+	CatalogOidIndex oid_index;
 	//! The DependencyManager manages dependencies between different catalog objects
 	unique_ptr<DependencyManager> dependency_manager;
 	//! Write lock for the catalog

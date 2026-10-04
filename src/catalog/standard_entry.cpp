@@ -11,6 +11,10 @@ StandardEntry::StandardEntry(CatalogType type, SchemaCatalogEntry &schema, Catal
 }
 
 SchemaCatalogEntry &StandardEntry::ParentSchema(CatalogTransaction transaction) const {
+	auto visible = schema_info->versions->GetVisible(transaction.view);
+	if (visible) {
+		return visible->Cast<SchemaCatalogEntry>();
+	}
 	auto path = schema_info->Path();
 	auto schema = catalog.GetSchema(transaction, path, OnEntryNotFound::RETURN_NULL);
 	if (schema && schema->GetSchemaInfo() == schema_info) {
@@ -30,6 +34,14 @@ SchemaCatalogEntry &StandardEntry::ParentSchema(CatalogTransaction transaction) 
 		return *found;
 	}
 	return *catalog.GetSchema(transaction, path, OnEntryNotFound::THROW_EXCEPTION);
+}
+
+Identifier StandardEntry::ParentSchemaName(CatalogTransaction transaction) const {
+	return schema_info->Name(transaction.view);
+}
+
+vector<Identifier> StandardEntry::ParentSchemaPath(CatalogTransaction transaction) const {
+	return schema_info->Path(transaction.view);
 }
 
 QualifiedName StandardEntry::GetQualifiedName(const Identifier &entry_name) const {

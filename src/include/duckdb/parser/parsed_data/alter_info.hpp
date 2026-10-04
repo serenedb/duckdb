@@ -66,6 +66,7 @@ public:
 	OnEntryNotFound if_not_found;
 	//! Allow altering internal entries
 	bool allow_internal;
+	idx_t oid = 0;
 	//! Determine whether to skip Bind
 	AlterBindMode bind_mode = AlterBindMode::BIND_ON_ALTER;
 	//! New dependencies for the altered entry (set during binding)

@@ -12,7 +12,7 @@ namespace duckdb {
 
 CatalogEntry::CatalogEntry(CatalogType type, Identifier name_p, idx_t oid)
     : oid(oid), type(type), set(nullptr), name(std::move(name_p)), deleted(false), temporary(false), internal(false),
-      parent(nullptr) {
+      previous_version(nullptr), parent(nullptr) {
 }
 
 CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p, idx_t oid)
@@ -24,7 +24,7 @@ CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p
 CatalogEntry::~CatalogEntry() {
 }
 
-void CatalogEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
+void CatalogEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) {
 }
 
 // LCOV_EXCL_START
@@ -115,8 +115,16 @@ Identifier CatalogEntry::ParentSchemaName() const {
 	throw InternalException("CatalogEntry::ParentSchemaName called on catalog entry without schema");
 }
 
+Identifier CatalogEntry::ParentSchemaName(CatalogTransaction transaction) const {
+	return ParentSchemaName();
+}
+
 vector<Identifier> CatalogEntry::ParentSchemaPath() const {
 	throw InternalException("CatalogEntry::ParentSchemaPath called on catalog entry without schema");
+}
+
+vector<Identifier> CatalogEntry::ParentSchemaPath(CatalogTransaction transaction) const {
+	return ParentSchemaPath();
 }
 
 SchemaCatalogEntry &CatalogEntry::ParentSchema(CatalogTransaction transaction) const {
@@ -129,10 +137,15 @@ SchemaCatalogEntry &CatalogEntry::ParentSchema(ClientContext &context) const {
 	return ParentSchema(catalog.GetCatalogTransaction(context));
 }
 
+idx_t CatalogEntry::ParentSchemaOid() const {
+	return 0;
+}
+
 unique_ptr<CreateInfo> CatalogEntry::GetSerializedInfo() const {
 	auto info = GetInfo();
 	info->permissions = permissions;
 	info->oid = oid;
+	info->schema_oid = ParentSchemaOid();
 	return info;
 }
 

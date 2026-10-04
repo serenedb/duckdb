@@ -32,7 +32,7 @@ public:
 	               shared_ptr<IndexDataTableInfo> storage_info);
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
-	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) override;
 	void Rollback(CatalogEntry &prev_entry) override;
 
 	//! The indexed table information
@@ -44,6 +44,7 @@ public:
 public:
 	Identifier GetSchemaName() const override;
 	Identifier GetTableName() const override;
+	optional_ptr<CatalogEntry> GetRelation(CatalogTransaction transaction) const override;
 
 	DataTableInfo &GetDataTableInfo() const;
 

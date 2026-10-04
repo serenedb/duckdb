@@ -1594,26 +1594,52 @@ void DuckTableEntry::ReplaceStorage(DuckTableEntry &source) {
 		throw IOException("The stored rows of table \"%s\" do not match its columns", name);
 	}
 	storage = source.storage;
-	SetAsRoot(nullptr);
+	SetAsRoot(nullptr, nullptr);
 }
 
-void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
-	storage->SetAsMainTable();
-	IdentifierEquality same(columns.IsCaseSensitive());
-	auto previous_name = storage->GetTableName();
-	vector<pair<Identifier, Identifier>> renamed_columns;
-	auto &storage_columns = storage->Columns();
-	for (auto &column : columns.Physical()) {
-		auto &previous_column = storage_columns[column.Physical().index].Name();
-		if (!same(previous_column, column.Name())) {
-			renamed_columns.emplace_back(previous_column, column.Name());
+static vector<pair<Identifier, Identifier>> RenamedColumns(const ColumnList &previous, const ColumnList &current) {
+	IdentifierEquality same(current.IsCaseSensitive());
+	unordered_map<idx_t, reference<const ColumnDefinition>> previous_by_oid;
+	for (auto &column : previous.Physical()) {
+		if (column.CatalogOid()) {
+			previous_by_oid.emplace(column.CatalogOid(), column);
 		}
 	}
-	storage->SetTableName(name);
-	storage->GetDataTableInfo()->SetTableOid(oid);
-	for (auto &column : columns.Physical()) {
-		storage->SetColumnName(column.Physical(), column.Name());
+	vector<pair<Identifier, Identifier>> renamed;
+	for (auto &column : current.Physical()) {
+		optional_ptr<const ColumnDefinition> previous_column;
+		if (column.CatalogOid()) {
+			auto entry = previous_by_oid.find(column.CatalogOid());
+			if (entry != previous_by_oid.end()) {
+				previous_column = &entry->second.get();
+			}
+		} else if (column.Physical().index < previous.PhysicalColumnCount()) {
+			previous_column = &previous.GetColumn(column.Physical());
+		}
+		if (previous_column && !same(previous_column->Name(), column.Name())) {
+			renamed.emplace_back(previous_column->Name(), column.Name());
+		}
 	}
+	return renamed;
+}
+
+void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) {
+	storage->SetAsMainTable();
+	storage->GetDataTableInfo()->SetTableOid(oid);
+	if (!catalog.UsesCatalogLog()) {
+		storage->SetTableName(name);
+		for (auto &column : columns.Physical()) {
+			storage->SetColumnName(column.Physical(), column.Name());
+		}
+	}
+	optional_ptr<DuckTableEntry> previous_table;
+	if (previous && previous->type == CatalogType::TABLE_ENTRY) {
+		previous_table = &previous->Cast<DuckTableEntry>();
+	}
+	IdentifierEquality same(columns.IsCaseSensitive());
+	auto previous_name = previous_table ? previous_table->name : name;
+	auto renamed_columns =
+	    previous_table ? RenamedColumns(previous_table->columns, columns) : vector<pair<Identifier, Identifier>>();
 	vector<idx_t> logical_oids;
 	auto previous_logical_oids = SyncIndexColumnLayout(*storage->GetDataTableInfo(), columns, logical_oids);
 	if (!transaction) {

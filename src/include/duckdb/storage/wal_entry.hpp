@@ -43,9 +43,11 @@ struct WALCreateTable {
 struct WALDropTable {
 	// the table as a QualifiedName (the containing schema path + the table name)
 	QualifiedName qualified_name;
+	idx_t oid = 0;
 
 	WALDropTable() = default;
-	explicit WALDropTable(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
+	WALDropTable(QualifiedName qualified_name_p, idx_t oid_p)
+	    : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -76,6 +78,7 @@ struct WALDropSchema {
 	Identifier schema;
 	// the schema as a QualifiedName (parent schemas form the path, the schema name is the name); v2.0.0 onwards
 	QualifiedName qualified_name;
+	idx_t oid = 0;
 
 	void Serialize(Serializer &serializer) const;
 	static WALDropSchema Deserialize(Deserializer &deserializer);
@@ -91,9 +94,10 @@ struct WALCreateView {
 struct WALDropView {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
+	idx_t oid = 0;
 
 	WALDropView() = default;
-	explicit WALDropView(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
+	WALDropView(QualifiedName qualified_name_p, idx_t oid_p) : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -118,9 +122,11 @@ struct WALCreateSequence {
 struct WALDropSequence {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
+	idx_t oid = 0;
 
 	WALDropSequence() = default;
-	explicit WALDropSequence(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
+	WALDropSequence(QualifiedName qualified_name_p, idx_t oid_p)
+	    : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -174,9 +180,11 @@ struct WALCreateMacro {
 struct WALDropMacro {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
+	idx_t oid = 0;
 
 	WALDropMacro() = default;
-	explicit WALDropMacro(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
+	WALDropMacro(QualifiedName qualified_name_p, idx_t oid_p)
+	    : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -201,9 +209,11 @@ struct WALCreateTableMacro {
 struct WALDropTableMacro {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
+	idx_t oid = 0;
 
 	WALDropTableMacro() = default;
-	explicit WALDropTableMacro(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
+	WALDropTableMacro(QualifiedName qualified_name_p, idx_t oid_p)
+	    : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -228,9 +238,10 @@ struct WALCreateType {
 struct WALDropType {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
+	idx_t oid = 0;
 
 	WALDropType() = default;
-	explicit WALDropType(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
+	WALDropType(QualifiedName qualified_name_p, idx_t oid_p) : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -256,10 +267,11 @@ struct WALDropTrigger {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
 	Identifier table;
+	idx_t oid = 0;
 
 	WALDropTrigger() = default;
-	WALDropTrigger(QualifiedName qualified_name_p, Identifier table_p)
-	    : qualified_name(std::move(qualified_name_p)), table(std::move(table_p)) {
+	WALDropTrigger(QualifiedName qualified_name_p, Identifier table_p, idx_t oid_p)
+	    : qualified_name(std::move(qualified_name_p)), table(std::move(table_p)), oid(oid_p) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -327,6 +339,7 @@ struct WALCreateTokenizer {
 
 struct WALDropTokenizer {
 	QualifiedName qualified_name;
+	idx_t oid = 0;
 
 	void Serialize(Serializer &serializer) const;
 	static WALDropTokenizer Deserialize(Deserializer &deserializer);

@@ -14,23 +14,16 @@ CREATE UNIQUE INDEX i1 ON db.t0 (c0);
 statement ok
 INSERT INTO db.t0 VALUES (1);
 
-# an index over the table does not block renaming it: the index follows the table
-statement ok
+# in a DuckDB file an index blocks renaming its table, as in DuckDB
+statement error
 ALTER TABLE db.t0 RENAME TO t3;
+----
+Cannot alter entry "t0" because there are entries that depend on it
 
 query II
 SELECT index_name, table_name FROM duckdb_indexes() WHERE database_name='db';
 ----
-i1	t3
-
-# renaming onto a name that is taken still fails
-statement ok
-CREATE TABLE db.t4 (c0 INT);
-
-statement error
-ALTER TABLE db.t3 RENAME TO t4;
-----
-another entry with this name already exists
+i1	t0
 
 # the index is still the table's, across a reload
 statement ok
@@ -40,14 +33,38 @@ statement ok
 ATTACH '{TEST_DIR}/rename_table_dependency.db' AS db;
 
 statement error
-INSERT INTO db.t3 VALUES (1);
+INSERT INTO db.t0 VALUES (1);
 ----
 violates unique constraint
 
 statement ok
-DROP TABLE db.t3;
+DROP TABLE db.t0;
 
 statement error
-ANALYZE db.t3;
+ANALYZE db.t0;
 ----
-Table with name t3 does not exist!
+Table with name t0 does not exist!
+
+# in memory the index follows the table
+statement ok
+CREATE TABLE t0 (c0 INT);
+
+statement ok
+CREATE UNIQUE INDEX i1 ON t0 (c0);
+
+statement ok
+ALTER TABLE t0 RENAME TO t3;
+
+query II
+SELECT index_name, table_name FROM duckdb_indexes() WHERE database_name='memory';
+----
+i1	t3
+
+# renaming onto a name that is taken still fails
+statement ok
+CREATE TABLE t4 (c0 INT);
+
+statement error
+ALTER TABLE t3 RENAME TO t4;
+----
+another entry with this name already exists

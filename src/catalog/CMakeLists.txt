@@ -6,6 +6,7 @@ add_library_unity(
   OBJECT
   catalog_entry.cpp
   catalog_entry_retriever.cpp
+  catalog_versions.cpp
   permissions.cpp
   catalog.cpp
   catalog_search_path.cpp

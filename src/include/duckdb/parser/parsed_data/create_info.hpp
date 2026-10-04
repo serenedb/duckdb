@@ -54,6 +54,7 @@ public:
 	InsertionOrderPreservingMap<string> tags;
 	Permissions permissions;
 	idx_t oid = 0;
+	idx_t schema_oid = 0;
 
 public:
 	const QualifiedName &GetQualifiedName() const {

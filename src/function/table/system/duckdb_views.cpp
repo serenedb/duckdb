@@ -109,7 +109,7 @@ void DuckDBViewsFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 				break;
 			case 2:
 				// schema_name, LogicalType::VARCHAR
-				col_vector.Append(Value(view.ParentSchemaName()));
+				col_vector.Append(Value(view.ParentSchemaName(CatalogTransaction(view.ParentCatalog(), context))));
 				break;
 			case 3:
 				// schema_oid, LogicalType::BIGINT

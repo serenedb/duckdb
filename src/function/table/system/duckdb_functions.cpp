@@ -693,7 +693,7 @@ static optional_idx GetFunctionDescriptionIndex(vector<FunctionDescription> &fun
 }
 
 template <class T, class OP>
-bool ExtractFunctionData(CatalogEntry &entry, idx_t function_idx, DataChunk &output) {
+bool ExtractFunctionData(ClientContext &context, CatalogEntry &entry, idx_t function_idx, DataChunk &output) {
 	auto &function = entry.Cast<T>();
 	vector<LogicalType> parameter_types_vector = OP::GetParameterLogicalTypes(function, function_idx);
 	Value parameter_types_value = OP::GetParameterTypes(function, function_idx);
@@ -710,7 +710,7 @@ bool ExtractFunctionData(CatalogEntry &entry, idx_t function_idx, DataChunk &out
 	output.data[col++].Append(Value::BIGINT(NumericCast<int64_t>(function.ParentCatalog().GetOid())));
 
 	// schema_name, LogicalType::VARCHAR
-	output.data[col++].Append(Value(function.ParentSchemaName()));
+	output.data[col++].Append(Value(function.ParentSchemaName(CatalogTransaction(function.ParentCatalog(), context))));
 
 	// function_name, LogicalType::VARCHAR
 	output.data[col++].Append(Value(function.name));
@@ -795,31 +795,31 @@ void DuckDBFunctionsFunction(ClientContext &context, TableFunctionInput &data_p,
 		switch (entry.type) {
 		case CatalogType::SCALAR_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<ScalarFunctionCatalogEntry, ScalarFunctionExtractor>(
-			    entry, data.offset_in_entry, output);
+			    context, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::AGGREGATE_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<AggregateFunctionCatalogEntry, AggregateFunctionExtractor>(
-			    entry, data.offset_in_entry, output);
+			    context, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::TABLE_MACRO_ENTRY:
-			finished =
-			    ExtractFunctionData<TableMacroCatalogEntry, TableMacroExtractor>(entry, data.offset_in_entry, output);
+			finished = ExtractFunctionData<TableMacroCatalogEntry, TableMacroExtractor>(context, entry,
+			                                                                            data.offset_in_entry, output);
 			break;
 		case CatalogType::MACRO_ENTRY:
-			finished =
-			    ExtractFunctionData<ScalarMacroCatalogEntry, MacroExtractor>(entry, data.offset_in_entry, output);
+			finished = ExtractFunctionData<ScalarMacroCatalogEntry, MacroExtractor>(context, entry,
+			                                                                        data.offset_in_entry, output);
 			break;
 		case CatalogType::TABLE_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<TableFunctionCatalogEntry, TableFunctionExtractor>(
-			    entry, data.offset_in_entry, output);
+			    context, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::PRAGMA_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<PragmaFunctionCatalogEntry, PragmaFunctionExtractor>(
-			    entry, data.offset_in_entry, output);
+			    context, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::WINDOW_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<WindowFunctionCatalogEntry, WindowFunctionExtractor>(
-			    entry, data.offset_in_entry, output);
+			    context, entry, data.offset_in_entry, output);
 			break;
 		default:
 			throw InternalException("FIXME: unrecognized function type in duckdb_functions");

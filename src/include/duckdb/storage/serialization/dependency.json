@@ -117,6 +117,13 @@
 				"type": "subdependency_set_t",
 				"default": "subdependency_set_t()",
 				"version": "serenedb_v1"
+			},
+			{
+				"id": 16486,
+				"name": "oid",
+				"type": "idx_t",
+				"default": 0,
+				"version": "serenedb_v1"
 			}
 		],
 		"pointer_type": "none",

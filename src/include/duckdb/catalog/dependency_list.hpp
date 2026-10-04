@@ -31,6 +31,7 @@ public:
 	DependencyDependentFlags flags = DependencyDependentFlags().SetBlocking();
 	bool owned_by = false;
 	subdependency_set_t subdependencies;
+	idx_t oid = 0;
 
 public:
 	explicit LogicalDependency(CatalogEntry &entry);
