@@ -104,16 +104,16 @@ bool MatchStack::ExecuteFrame(MatchStackFrame &frame) {
 	D_ASSERT(frame.process);
 	auto step = frame.process->Resume(frame.child_result);
 	frame.child_result.reset();
-	auto child = step.GetChild();
-	if (!child) {
+	if (!step.HasChild()) {
 		frame.result = step.GetResult();
 		return true;
 	}
-	if (child->matcher.IsAtomic()) {
-		frame.child_result = ExecuteAtomicMatcher(*child);
+	auto child = step.GetChild();
+	if (child.matcher.IsAtomic()) {
+		frame.child_result = ExecuteAtomicMatcher(child);
 		return false;
 	}
-	PushFrame(*child);
+	PushFrame(child);
 	return false;
 }
 

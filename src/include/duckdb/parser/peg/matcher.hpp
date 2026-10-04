@@ -216,20 +216,35 @@ struct MatchInput {
 //! Produced by a MatchProcess::Resume call, controlling the next step in the execution
 class MatchStep {
 public:
-	static MatchStep Child(MatchInput input);
-	static MatchStep Complete(MatcherResult result);
+	static MatchStep Child(MatchInput input) {
+		return MatchStep(input.matcher, input.state);
+	}
+	static MatchStep Complete(MatcherResult result) {
+		return MatchStep(result);
+	}
 
-	optional<MatchInput> GetChild();
-	MatcherResult GetResult() const;
-
-private:
-	MatchStep(optional<MatchInput> child_p, optional<MatcherResult> result_p)
-	    : child(std::move(child_p)), result(result_p) {
+	bool HasChild() const {
+		return matcher;
+	}
+	MatchInput GetChild() const {
+		return MatchInput {*matcher, *state};
+	}
+	MatcherResult GetResult() const {
+		return result;
 	}
 
 private:
-	optional<MatchInput> child;
-	optional<MatcherResult> result;
+	MatchStep(const Matcher &matcher_p, MatchState &state_p) : matcher(&matcher_p), state(&state_p) {
+	}
+	explicit MatchStep(MatcherResult result_p) : matcher(nullptr), result(result_p) {
+	}
+
+private:
+	const Matcher *matcher;
+	union {
+		MatchState *state;
+		MatcherResult result;
+	};
 };
 
 class MatchProcess {
@@ -264,8 +279,8 @@ public:
 	MatcherResult MatchParseResult(MatchState &state) const;
 	//! Create matcher-local state with state.Make<PROCESS>() for either execution driver.
 	virtual arena_ptr<MatchProcess> StartMatch(MatchState &state) const = 0;
-	virtual bool IsAtomic() const {
-		return false;
+	bool IsAtomic() const {
+		return atomic;
 	}
 	virtual SuggestionType AddSuggestion(MatchState &state) const;
 	virtual SuggestionType AddSuggestionInternal(MatchState &state) const = 0;
@@ -327,10 +342,15 @@ public:
 	}
 
 protected:
+	Matcher(MatcherType type, bool atomic_p) : type(type), atomic(atomic_p) {
+	}
+
+protected:
 	friend class MatcherAllocator;
 	MatcherType type;
 	string name;
 	optional_idx packrat_id;
+	bool atomic = false;
 	bool packrat_memoized = false;
 	bool collapsible = false;
 	optional_ptr<const CompiledGrammarRule> rule;
@@ -338,12 +358,9 @@ protected:
 
 class AtomicMatcher : public Matcher {
 public:
-	explicit AtomicMatcher(MatcherType type) : Matcher(type) {
+	explicit AtomicMatcher(MatcherType type) : Matcher(type, true) {
 	}
 
-	bool IsAtomic() const final {
-		return true;
-	}
 	DUCKDB_API arena_ptr<MatchProcess> StartMatch(MatchState &state) const final;
 	virtual MatcherResult MatchAtomic(MatchState &state) const = 0;
 };
