@@ -270,11 +270,11 @@ void Parser::ParseQuery(const string &query_p) {
 	// PEG parser: tokenize, then peel one TopLevelStatement at a time. On per-statement PEG
 	// failure, hand the rest of the query to parse_function extensions; the extension reports
 	// how many bytes it consumed and we advance the token cursor past them.
-	auto owned_tokens = make_uniq<vector<MatcherToken>>();
-	ParserTokenizerBehavior behavior(query, *owned_tokens);
+	vector<MatcherToken> tokens;
+	ParserTokenizerBehavior behavior(query, tokens);
 	auto &tokenizer = GetGrammar().GetTokenizer();
 	tokenizer.TokenizeInput(behavior);
-	TokenIterator token_iterator(std::move(owned_tokens));
+	TokenIterator token_iterator(tokens);
 	while (token_iterator.Current()) {
 		try {
 			auto stmt = ParseTopLevelStatement(token_iterator);

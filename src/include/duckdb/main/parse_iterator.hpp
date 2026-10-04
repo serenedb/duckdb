@@ -11,6 +11,7 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/parser/peg/matcher_token.hpp"
 
 namespace duckdb {
 class ClientContext;
@@ -70,6 +71,7 @@ private:
 	//! Parser instance kept alive across Peek calls so its PEG matcher / transformer caches
 	//! stay warm. Constructed lazily on the first Peek.
 	unique_ptr<Parser> parser;
+	unique_ptr<vector<MatcherToken>> tokens;
 	//! Tokenized view of `sql` and its current position. Populated once on the first Peek.
 	unique_ptr<TokenIterator> token_iterator;
 	//! Single-statement buffer holding the result of the most recent Peek. Cleared by

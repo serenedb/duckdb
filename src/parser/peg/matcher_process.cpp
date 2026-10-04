@@ -7,26 +7,6 @@
 
 namespace duckdb {
 
-MatchStep MatchStep::Child(MatchInput input) {
-	return MatchStep(input, nullopt);
-}
-
-MatchStep MatchStep::Complete(MatcherResult result) {
-	return MatchStep(nullopt, result);
-}
-
-optional<MatchInput> MatchStep::GetChild() {
-	return child;
-}
-
-MatcherResult MatchStep::GetResult() const {
-	D_ASSERT(!child);
-	if (!result) {
-		throw InternalException("Completed match step has no result");
-	}
-	return *result;
-}
-
 class AtomicMatchProcess : public MatchProcess {
 public:
 	AtomicMatchProcess(const AtomicMatcher &matcher_p, MatchState &state_p) : matcher(matcher_p), state(state_p) {

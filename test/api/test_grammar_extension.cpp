@@ -116,10 +116,10 @@ TEST_CASE("Literal choice dispatch preserves ordered choice results", "[api][gra
 		auto process = choice.StartMatch(state);
 		auto step = process->Resume(nullopt);
 		if (text == "WHERE") {
-			REQUIRE(step.GetChild());
-			REQUIRE(&step.GetChild()->matcher == &choice.matchers[3].get());
+			REQUIRE(step.HasChild());
+			REQUIRE(&step.GetChild().matcher == &choice.matchers[3].get());
 		} else {
-			REQUIRE_FALSE(step.GetChild());
+			REQUIRE_FALSE(step.HasChild());
 			REQUIRE_FALSE(step.GetResult().IsSuccess());
 		}
 	}
