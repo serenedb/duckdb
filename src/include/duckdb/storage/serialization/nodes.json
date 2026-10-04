@@ -1819,5 +1819,35 @@
       }
     ],
     "pointer_type": "none"
+  },
+  {
+    "class": "JobSchedule",
+    "includes": [
+      "duckdb/catalog/job_schedule.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "kind",
+        "type": "JobScheduleKind"
+      },
+      {
+        "id": 101,
+        "name": "interval",
+        "type": "Value"
+      },
+      {
+        "id": 102,
+        "name": "offset",
+        "type": "Value"
+      },
+      {
+        "id": 103,
+        "name": "concurrent",
+        "type": "bool",
+        "default": false
+      }
+    ],
+    "pointer_type": "none"
   }
 ]

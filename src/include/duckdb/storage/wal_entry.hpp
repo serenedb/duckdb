@@ -345,6 +345,21 @@ struct WALDropTokenizer {
 	static WALDropTokenizer Deserialize(Deserializer &deserializer);
 };
 
+struct WALCreateJob {
+	unique_ptr<CreateInfo> job;
+
+	void Serialize(Serializer &serializer) const;
+	static WALCreateJob Deserialize(Deserializer &deserializer);
+};
+
+struct WALDropJob {
+	QualifiedName qualified_name;
+	idx_t oid = 0;
+
+	void Serialize(Serializer &serializer) const;
+	static WALDropJob Deserialize(Deserializer &deserializer);
+};
+
 struct WALCreateRole {
 	unique_ptr<CreateInfo> role;
 

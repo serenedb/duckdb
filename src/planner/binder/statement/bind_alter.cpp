@@ -7,6 +7,7 @@
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/parsed_data/alter_job_info.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
@@ -110,6 +111,12 @@ static void BindAlterTypes(Binder &binder, AlterStatement &stmt) {
 		} break;
 		default:
 			break;
+		}
+	}
+	if (stmt.info->type == AlterType::ALTER_JOB) {
+		auto &job_info = stmt.info->Cast<AlterJobInfo>();
+		if (job_info.alter_job_type == AlterJobType::SET_SCHEDULE) {
+			binder.BindJobSchedule(job_info.schedule, job_info.interval_expr, job_info.offset_expr);
 		}
 	}
 }

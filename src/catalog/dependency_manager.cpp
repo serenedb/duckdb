@@ -570,6 +570,9 @@ static string EntryToString(const CatalogEntryInfo &info) {
 	case CatalogType::TOKENIZER_ENTRY: {
 		return StringUtil::Format("tokenizer %s", info.name);
 	}
+	case CatalogType::JOB_ENTRY: {
+		return StringUtil::Format("job %s", info.name);
+	}
 	case CatalogType::ROLE_ENTRY: {
 		return StringUtil::Format("role %s", info.name);
 	}
@@ -1077,6 +1080,7 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		case AlterType::SET_COLUMN_COMMENT:
 		case AlterType::SET_COMMENT:
 		case AlterType::ALTER_PERMISSIONS:
+		case AlterType::ALTER_JOB:
 		case AlterType::CHANGE_OWNERSHIP: {
 			disallow_alter = false;
 			break;

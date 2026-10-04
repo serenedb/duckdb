@@ -159,6 +159,8 @@ string PhysicalOperatorToString(PhysicalOperatorType type) {
 		return "CREATE_TYPE";
 	case PhysicalOperatorType::CREATE_TRIGGER:
 		return "CREATE_TRIGGER";
+	case PhysicalOperatorType::CREATE_JOB:
+		return "CREATE_JOB";
 	case PhysicalOperatorType::ATTACH:
 		return "ATTACH";
 	case PhysicalOperatorType::DETACH:

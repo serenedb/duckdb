@@ -62,6 +62,7 @@ static bool IsAlterableLoggedEntry(CatalogType type) {
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY:
 	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::JOB_ENTRY:
 	case CatalogType::ROLE_ENTRY:
 	case CatalogType::DATABASE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
@@ -197,6 +198,7 @@ void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY:
 	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::JOB_ENTRY:
 	case CatalogType::ROLE_ENTRY:
 	case CatalogType::DATABASE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
@@ -233,6 +235,9 @@ void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry
 				break;
 			case CatalogType::TOKENIZER_ENTRY:
 				target.WriteCreateTokenizer(parent.Cast<StandardEntry>());
+				break;
+			case CatalogType::JOB_ENTRY:
+				target.WriteCreateJob(parent.Cast<StandardEntry>());
 				break;
 			case CatalogType::ROLE_ENTRY:
 				target.WriteCreateRole(parent.Cast<InCatalogEntry>());
@@ -286,6 +291,9 @@ void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry
 			break;
 		case CatalogType::TOKENIZER_ENTRY:
 			target.WriteDropTokenizer(entry.Cast<StandardEntry>());
+			break;
+		case CatalogType::JOB_ENTRY:
+			target.WriteDropJob(entry.Cast<StandardEntry>());
 			break;
 		case CatalogType::ROLE_ENTRY:
 			target.WriteDropRole(entry.Cast<InCatalogEntry>());

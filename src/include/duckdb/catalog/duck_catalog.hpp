@@ -18,6 +18,7 @@
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
@@ -69,6 +70,8 @@ public:
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeDatabaseEntry(CreateDatabaseInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeForeignServerEntry(CreateForeignServerInfo &info);
 	DUCKDB_API virtual unique_ptr<StandardEntry> MakeTokenizerEntry(DuckSchemaEntry &schema, CreateTokenizerInfo &info);
+	DUCKDB_API virtual unique_ptr<StandardEntry> MakeJobEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
+	                                                          CreateJobInfo &info);
 
 	DUCKDB_API optional_ptr<CatalogEntry> CreateRole(CatalogTransaction transaction, CreateRoleInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateDatabase(CatalogTransaction transaction, CreateDatabaseInfo &info);

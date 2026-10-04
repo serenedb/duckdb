@@ -190,6 +190,11 @@ unique_ptr<StandardEntry> DuckCatalog::MakeTokenizerEntry(DuckSchemaEntry &schem
 	throw NotImplementedException("Text search dictionaries are not supported by this catalog");
 }
 
+unique_ptr<StandardEntry> DuckCatalog::MakeJobEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
+                                                    CreateJobInfo &info) {
+	throw NotImplementedException("Jobs are not supported by this catalog");
+}
+
 optional_ptr<CatalogEntry> DuckCatalog::AddEntry(CatalogTransaction transaction, unique_ptr<InCatalogEntry> entry,
                                                  OnCreateConflict on_conflict) {
 	auto entry_name = entry->name;
