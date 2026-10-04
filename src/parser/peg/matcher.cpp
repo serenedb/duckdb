@@ -140,6 +140,22 @@ void MatcherAllocator::ComputeFirstSets(const GrammarLiteralTable &table) {
 	}
 }
 
+data_ptr_t MatchProcessArena::AllocateInNewChunk(idx_t size) {
+	if (size > CHUNK_SIZE) {
+		throw InternalException("A match process of %llu bytes does not fit a process arena chunk", size);
+	}
+	if (position + size > CHUNK_SIZE) {
+		chunk_index++;
+		position = 0;
+	}
+	if (chunk_index >= chunks.size()) {
+		chunks.push_back(Allocator::DefaultAllocator().Allocate(CHUNK_SIZE));
+	}
+	auto result = chunks[chunk_index].get() + position;
+	position += size;
+	return result;
+}
+
 ParseResultAllocator::ParseResultAllocator() : arena(Allocator::DefaultAllocator()) {
 }
 

@@ -18,7 +18,10 @@ MatchStack::~MatchStack() {
 
 void MatchStack::DestroyTopFrame() {
 	D_ASSERT(!frames.empty());
+	auto &processes = frames.back().match_state.context.processes;
+	auto process_mark = frames.back().process_mark;
 	frames.pop_back();
+	processes.Rewind(process_mark);
 }
 
 optional<MatcherResult> PackratMatchState::TryLoadCachedResult(const Matcher &matcher, MatchState &state) {
@@ -51,7 +54,8 @@ void PackratMatchState::StoreResult(const Matcher &matcher, MatchState &state, c
 	state.context.packrat_cache->Store(matcher.GetPackratSlot().GetIndex(), token_index_before.GetIndex(), cache_entry);
 }
 
-MatchStackFrame::MatchStackFrame(MatchInput input) : matcher(input.matcher), match_state(input.state) {
+MatchStackFrame::MatchStackFrame(MatchInput input)
+    : matcher(input.matcher), match_state(input.state), process_mark(input.state.context.processes.Mark()) {
 }
 
 bool MatchStackFrame::IsInitialized() const {

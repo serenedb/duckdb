@@ -149,20 +149,57 @@ struct MatcherSuggestion {
 	char extra_char = '\0';
 };
 
+class MatchProcessArena {
+public:
+	template <class PROCESS, class... ARGS>
+	PROCESS *Make(ARGS &&... args) {
+		static_assert(alignof(PROCESS) <= sizeof(idx_t), "match processes are allocated with 8-byte alignment");
+		return new (Allocate(sizeof(PROCESS))) PROCESS(std::forward<ARGS>(args)...);
+	}
+	idx_t Mark() const {
+		return chunk_index * CHUNK_SIZE + position;
+	}
+	void Rewind(idx_t mark) {
+		chunk_index = mark / CHUNK_SIZE;
+		position = mark % CHUNK_SIZE;
+	}
+	void FreeAll() {
+		chunks.clear();
+		chunk_index = 0;
+		position = 0;
+	}
+
+private:
+	static constexpr idx_t CHUNK_SIZE = 16384;
+
+	data_ptr_t Allocate(idx_t size) {
+		size = AlignValue(size);
+		if (position + size > CHUNK_SIZE || chunk_index >= chunks.size()) {
+			return AllocateInNewChunk(size);
+		}
+		auto result = chunks[chunk_index].get() + position;
+		position += size;
+		return result;
+	}
+	data_ptr_t AllocateInNewChunk(idx_t size);
+
+	vector<AllocatedData> chunks;
+	idx_t chunk_index = 0;
+	idx_t position = 0;
+};
+
 struct MatchContext {
-	MatchContext(vector<MatcherSuggestion> &suggestions_p, ParseResultAllocator &allocator_p,
-	             ArenaAllocator &process_allocator_p, idx_t &max_token_index_p,
+	MatchContext(vector<MatcherSuggestion> &suggestions_p, ParseResultAllocator &allocator_p, idx_t &max_token_index_p,
 	             MatchMode mode_p = MatchMode::BUILD_PARSE_RESULT,
 	             IdentifierCaseMode identifier_case_mode_p = IdentifierCaseMode::PRESERVE_CASE,
 	             ParserPackratCache *packrat_cache_p = nullptr)
-	    : suggestions(suggestions_p), allocator(allocator_p), process_allocator(process_allocator_p),
-	      max_token_index(max_token_index_p), identifier_case_mode(identifier_case_mode_p),
-	      packrat_cache(packrat_cache_p), mode(mode_p) {
+	    : suggestions(suggestions_p), allocator(allocator_p), max_token_index(max_token_index_p),
+	      identifier_case_mode(identifier_case_mode_p), packrat_cache(packrat_cache_p), mode(mode_p) {
 	}
 
 	vector<MatcherSuggestion> &suggestions;
 	ParseResultAllocator &allocator;
-	ArenaAllocator &process_allocator;
+	MatchProcessArena processes;
 	idx_t &max_token_index;
 	IdentifierCaseMode identifier_case_mode;
 	ParserPackratCache *packrat_cache;
@@ -491,7 +528,7 @@ inline std::string_view MatchState::FoldIdentifier(std::string_view text) const 
 template <class PROCESS, class... ARGS>
 arena_ptr<MatchProcess> MatchState::Make(ARGS &&... args) {
 	static_assert(std::is_base_of<MatchProcess, PROCESS>::value, "Expected a matcher process");
-	return arena_ptr<MatchProcess>(context.process_allocator.Make<PROCESS>(std::forward<ARGS>(args)...));
+	return arena_ptr<MatchProcess>(context.processes.Make<PROCESS>(std::forward<ARGS>(args)...));
 }
 
 template <class RESULT, class... ARGS>

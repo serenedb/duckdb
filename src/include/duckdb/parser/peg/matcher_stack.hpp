@@ -40,6 +40,7 @@ public:
 	optional<MatcherResult> child_result;
 	optional<MatcherResult> result;
 	PackratMatchState packrat_state;
+	idx_t process_mark;
 };
 
 class MatchStack {
