@@ -102,33 +102,35 @@ enum class MatchMode : uint8_t { BUILD_PARSE_RESULT, RECOGNIZE_ONLY };
 class MatcherResult {
 public:
 	static MatcherResult Success(optional_ptr<ParseResult> parse_result = nullptr) {
-		return MatcherResult(true, parse_result);
+		return MatcherResult(parse_result.get());
 	}
 
 	static MatcherResult Failure() {
-		return MatcherResult(false, nullptr);
+		return MatcherResult(FailureMarker());
 	}
 
 	bool IsSuccess() const {
-		return success;
+		return parse_result != FailureMarker();
 	}
 
 	bool HasParseResult() const {
-		return parse_result != nullptr;
+		return parse_result && IsSuccess();
 	}
 
 	optional_ptr<ParseResult> GetParseResult() const {
-		return parse_result;
+		return IsSuccess() ? parse_result : nullptr;
 	}
 
 private:
-	MatcherResult(bool success_p, optional_ptr<ParseResult> parse_result_p)
-	    : success(success_p), parse_result(parse_result_p) {
+	explicit MatcherResult(ParseResult *parse_result_p) : parse_result(parse_result_p) {
+	}
+
+	static ParseResult *FailureMarker() {
+		return reinterpret_cast<ParseResult *>(alignof(ParseResult));
 	}
 
 private:
-	bool success;
-	optional_ptr<ParseResult> parse_result;
+	ParseResult *parse_result;
 };
 
 struct MatcherSuggestion {
@@ -247,7 +249,7 @@ public:
 	virtual ~MatchProcess() = default;
 
 	//! Resume matching, optionally with the result of the previously requested child.
-	virtual MatchStep Resume(optional<MatcherResult> child_result) = 0;
+	virtual MatchStep Resume(const optional<MatcherResult> &child_result) = 0;
 };
 
 enum class MatcherType {
