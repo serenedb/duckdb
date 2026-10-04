@@ -415,6 +415,9 @@ AddColumnEntry PEGTransformerFactory::TransformAddColumnEntry(
 	}
 	if (column_constraint) {
 		for (auto &constraint : *column_constraint) {
+			if (!constraint.constraint_type_info.name.empty()) {
+				throw ParserException("Named constraints on a column added by ALTER TABLE are not supported yet");
+			}
 			auto constraint_type =
 			    constraint.constraint ? constraint.constraint->type : constraint.constraint_type_info.type;
 			if (constraint.constraint_name == "DefaultValue") {

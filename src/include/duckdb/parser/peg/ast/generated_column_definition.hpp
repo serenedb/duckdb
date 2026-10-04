@@ -28,9 +28,5 @@ struct ConstraintColumnDefinition {
 	// PG-compat: column declared DEFAULT more than once. Surfaced by the
 	// CreateTable transformer (which knows the table name).
 	bool has_duplicate_default = false;
-	// PG-compat: explicit `CONSTRAINT <name>` not consumed by an object constraint
-	// (CHECK/FK); carried so the CreateTable transformer names the PK/UNIQUE/NOT NULL
-	// it materializes from the column flags.
-	string constraint_name;
 };
 } // namespace duckdb
