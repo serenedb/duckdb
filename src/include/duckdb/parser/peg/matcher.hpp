@@ -399,6 +399,12 @@ public:
 	bool IsCollapsible() const {
 		return collapsible;
 	}
+	void SetBuiltInMatch() {
+		built_in_match = true;
+	}
+	bool HasBuiltInMatch() const {
+		return built_in_match;
+	}
 
 public:
 	template <class TARGET>
@@ -428,6 +434,7 @@ protected:
 	optional_idx packrat_slot;
 	bool atomic = false;
 	bool collapsible = false;
+	bool built_in_match = false;
 	optional_ptr<const CompiledGrammarRule> rule;
 	MatcherFirstSet first_set;
 	optional_ptr<const GrammarLiteralTable> first_set_table;

@@ -43,10 +43,11 @@ public:
 	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(awaiting_child == child_result.has_value());
 		auto &allocator = state.context.allocator;
+		auto &suggestions = state.context.suggestions;
 		if (child_result) {
 			awaiting_child = false;
 			if (!child_result->IsSuccess()) {
-				DiscardSuggestions();
+				matcher.DiscardSuggestions(suggestions, saved_suggestion_size);
 				allocator.DiscardChildren(children_begin);
 				return MatchStep::Complete(MatcherResult::Failure());
 			}
@@ -63,7 +64,7 @@ public:
 				return MatchStep::Child({matcher.matchers[child_index].get(), list_state});
 			}
 			if (matcher.suppress_suggestions) {
-				DiscardSuggestions();
+				matcher.DiscardSuggestions(suggestions, saved_suggestion_size);
 				allocator.DiscardChildren(children_begin);
 				return MatchStep::Complete(MatcherResult::Failure());
 			}
@@ -76,9 +77,9 @@ public:
 			return MatchStep::Complete(MatcherResult::Failure());
 		}
 		state.token_iterator.SetPosition(list_state.token_iterator);
-		DiscardSuggestions();
+		matcher.DiscardSuggestions(suggestions, saved_suggestion_size);
 		if (matcher.IsCollapsible()) {
-			auto collapsible = FindCollapsibleResult(allocator.PendingChildren(children_begin));
+			auto collapsible = ListMatcher::FindCollapsibleResult(allocator.PendingChildren(children_begin));
 			if (collapsible) {
 				allocator.DiscardChildren(children_begin);
 				collapsible->collapsed = true;
@@ -88,45 +89,6 @@ public:
 		auto children = allocator.TakeChildren(children_begin);
 		return MatchStep::Complete(
 		    state.AllocateParseResult<ListParseResult>(children, matcher.GetDeclaredName(), start_offset));
-	}
-
-private:
-	//! The child that can stand in for this rule's own result, or nullptr when the rule has to build one
-	static optional_ptr<ParseResult> FindCollapsibleResult(std::span<const reference<ParseResult>> children) {
-		optional_ptr<ParseResult> collapsible;
-		for (auto &child : children) {
-			auto &child_result = child.get();
-			// an optional that matched nothing carries no value, so it does not stop the rule from collapsing
-			if (child_result.type == ParseResultType::OPTIONAL &&
-			    !child_result.Cast<OptionalParseResult>().HasResult()) {
-				continue;
-			}
-
-			// a second child with a result means the rule combines them rather than forwarding one of them
-			if (collapsible) {
-				return nullptr;
-			}
-
-			collapsible = child_result;
-		}
-
-		// only results that carry a rule of their own are collapsible into this one, since the result is
-		// transformed by that rule
-		if (collapsible && !collapsible->GetRule()) {
-			return nullptr;
-		}
-
-		// null when no child produced a result, so a rule that matched empty still gets a result of its own
-		return collapsible;
-	}
-
-	void DiscardSuggestions() {
-		if (!matcher.suppress_suggestions) {
-			return;
-		}
-		list_state.context.suggestions.erase(list_state.context.suggestions.begin() +
-		                                         NumericCast<int64_t>(saved_suggestion_size),
-		                                     list_state.context.suggestions.end());
 	}
 
 private:
@@ -142,6 +104,33 @@ private:
 
 arena_ptr<MatchProcess> ListMatcher::StartMatch(MatchState &state) const {
 	return state.Make<ListMatchProcess>(*this, state);
+}
+
+optional_ptr<ParseResult> ListMatcher::FindCollapsibleResult(std::span<const reference<ParseResult>> children) {
+	optional_ptr<ParseResult> collapsible;
+	for (auto &child : children) {
+		auto &child_result = child.get();
+		// an optional that matched nothing carries no value, so it does not stop the rule from collapsing
+		if (child_result.type == ParseResultType::OPTIONAL && !child_result.Cast<OptionalParseResult>().HasResult()) {
+			continue;
+		}
+
+		// a second child with a result means the rule combines them rather than forwarding one of them
+		if (collapsible) {
+			return nullptr;
+		}
+
+		collapsible = child_result;
+	}
+
+	// only results that carry a rule of their own are collapsible into this one, since the result is
+	// transformed by that rule
+	if (collapsible && !collapsible->GetRule()) {
+		return nullptr;
+	}
+
+	// null when no child produced a result, so a rule that matched empty still gets a result of its own
+	return collapsible;
 }
 
 template <bool SINGLE_CHILD>
@@ -197,10 +186,7 @@ arena_ptr<MatchProcess> ChoiceMatcher::StartMatch(MatchState &state) const {
 }
 
 arena_ptr<MatchProcess> LiteralChoiceMatcher::StartMatch(MatchState &state) const {
-	auto literal = state.token_iterator.CurrentLiteralInfo(table);
-	auto entry = literal_children.find(literal.LiteralId());
-	auto child_index = entry == literal_children.end() ? matchers.size() : entry->second;
-	return state.Make<ChoiceMatchProcess<true>>(*this, state, child_index);
+	return state.Make<ChoiceMatchProcess<true>>(*this, state, SelectChild(state.token_iterator));
 }
 
 class OptionalMatchProcess : public MatchProcess {
