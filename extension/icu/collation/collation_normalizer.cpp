@@ -119,7 +119,7 @@ bool Normalizer::IsFCD(const vector<uint32_t> &text) {
 	return true;
 }
 
-void Normalizer::DecomposeHangul(vector<uint32_t> &text) {
+void Normalizer::DecomposeHangul(vector<uint32_t> &text, vector<uint32_t> &scratch) {
 	bool has_syllable = false;
 	for (auto codepoint : text) {
 		if (IsHangulSyllable(codepoint)) {
@@ -130,63 +130,61 @@ void Normalizer::DecomposeHangul(vector<uint32_t> &text) {
 	if (!has_syllable) {
 		return;
 	}
-	vector<uint32_t> decomposed;
-	decomposed.reserve(text.size() + 2);
+	scratch.clear();
+	scratch.reserve(text.size() + 2);
 	for (auto codepoint : text) {
 		if (!IsHangulSyllable(codepoint)) {
-			decomposed.push_back(codepoint);
+			scratch.push_back(codepoint);
 			continue;
 		}
 		auto index = codepoint - HANGUL_S_BASE;
-		decomposed.push_back(HANGUL_L_BASE + index / HANGUL_N_COUNT);
-		decomposed.push_back(HANGUL_V_BASE + (index % HANGUL_N_COUNT) / HANGUL_T_COUNT);
+		scratch.push_back(HANGUL_L_BASE + index / HANGUL_N_COUNT);
+		scratch.push_back(HANGUL_V_BASE + (index % HANGUL_N_COUNT) / HANGUL_T_COUNT);
 		auto trailing = index % HANGUL_T_COUNT;
 		if (trailing != 0) {
-			decomposed.push_back(HANGUL_T_BASE + trailing);
+			scratch.push_back(HANGUL_T_BASE + trailing);
 		}
 	}
-	text = std::move(decomposed);
+	text.swap(scratch);
 }
 
-void Normalizer::Decompose(vector<uint32_t> &text) {
-	vector<uint32_t> decomposed;
-	decomposed.reserve(text.size() * 2);
+void Normalizer::Decompose(vector<uint32_t> &text, vector<uint32_t> &scratch) {
+	scratch.clear();
+	scratch.reserve(text.size() * 2);
 	for (auto codepoint : text) {
 		if (codepoint >= HANGUL_S_BASE && codepoint < HANGUL_S_BASE + HANGUL_S_COUNT) {
 			auto index = codepoint - HANGUL_S_BASE;
-			decomposed.push_back(HANGUL_L_BASE + index / HANGUL_N_COUNT);
-			decomposed.push_back(HANGUL_V_BASE + (index % HANGUL_N_COUNT) / HANGUL_T_COUNT);
+			scratch.push_back(HANGUL_L_BASE + index / HANGUL_N_COUNT);
+			scratch.push_back(HANGUL_V_BASE + (index % HANGUL_N_COUNT) / HANGUL_T_COUNT);
 			auto trailing = index % HANGUL_T_COUNT;
 			if (trailing != 0) {
-				decomposed.push_back(HANGUL_T_BASE + trailing);
+				scratch.push_back(HANGUL_T_BASE + trailing);
 			}
 			continue;
 		}
 		uint32_t length;
 		auto decomposition = GetDecomposition(codepoint, length);
 		if (!decomposition) {
-			decomposed.push_back(codepoint);
+			scratch.push_back(codepoint);
 			continue;
 		}
-		for (uint32_t i = 0; i < length; i++) {
-			decomposed.push_back(decomposition[i]);
-		}
+		scratch.insert(scratch.end(), decomposition, decomposition + length);
 	}
+	text.swap(scratch);
 	// put the combining marks in canonical order
-	for (idx_t i = 1; i < decomposed.size(); i++) {
-		auto current = CombiningClass(decomposed[i]);
+	for (idx_t i = 1; i < text.size(); i++) {
+		auto current = CombiningClass(text[i]);
 		if (current == 0) {
 			continue;
 		}
 		for (idx_t j = i; j > 0; j--) {
-			auto previous = CombiningClass(decomposed[j - 1]);
+			auto previous = CombiningClass(text[j - 1]);
 			if (previous == 0 || previous <= current) {
 				break;
 			}
-			std::swap(decomposed[j - 1], decomposed[j]);
+			std::swap(text[j - 1], text[j]);
 		}
 	}
-	text = std::move(decomposed);
 }
 
 } // namespace collation

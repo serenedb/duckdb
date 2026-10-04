@@ -169,9 +169,11 @@ static bool LookupTailoringValue(const CollationTailoring &tailoring, uint32_t c
 class ElementGenerator {
 public:
 	ElementGenerator(const CollationTailoring *tailoring_p, const TailoredBlocks &tailored_p, vector<uint32_t> &text_p,
-	                 const uint64_t *fast_elements_p, const uint64_t *fast_expansions_p, uint32_t fast_limit_p)
+	                 vector<idx_t> &skipped_p, const uint64_t *fast_elements_p, const uint64_t *fast_expansions_p,
+	                 uint32_t fast_limit_p)
 	    : root(GetCollationRoot()), table(&root.table), tailoring(tailoring_p), tailored(tailored_p), text(text_p),
-	      fast_elements(fast_elements_p), fast_expansions(fast_expansions_p), fast_limit(fast_limit_p) {
+	      skipped(skipped_p), fast_elements(fast_elements_p), fast_expansions(fast_expansions_p),
+	      fast_limit(fast_limit_p) {
 	}
 
 	void Generate(vector<collation_element_t> &result);
@@ -181,8 +183,8 @@ private:
 	void AppendElements(uint32_t offset, uint32_t count, vector<collation_element_t> &result);
 	//! Matches the contexts of an entry at the current position, returns true if one matched
 	bool MatchContext(const CollationEntry &entry, idx_t position, uint32_t &ce_offset, uint32_t &ce_count,
-	                  idx_t &consumed, vector<idx_t> &skipped);
-	bool MatchContraction(const CollationContext &context, idx_t position, idx_t &consumed, vector<idx_t> &skipped);
+	                  idx_t &consumed);
+	bool MatchContraction(const CollationContext &context, idx_t position, idx_t &consumed);
 	bool MatchPrefix(const CollationContext &context, idx_t position);
 
 private:
@@ -193,7 +195,7 @@ private:
 	const TailoredBlocks &tailored;
 	vector<uint32_t> &text;
 	//! the positions a discontiguous contraction matched, reused across the characters
-	vector<idx_t> skipped_buffer;
+	vector<idx_t> &skipped;
 
 	//! the elements of the characters that do not depend on their neighbours
 	const uint64_t *fast_elements;
@@ -224,8 +226,7 @@ bool ElementGenerator::MatchPrefix(const CollationContext &context, idx_t positi
 	return true;
 }
 
-bool ElementGenerator::MatchContraction(const CollationContext &context, idx_t position, idx_t &consumed,
-                                        vector<idx_t> &skipped) {
+bool ElementGenerator::MatchContraction(const CollationContext &context, idx_t position, idx_t &consumed) {
 	auto chars = table->context_chars + context.chars_offset;
 	if (position + 1 >= text.size()) {
 		return false;
@@ -272,7 +273,7 @@ bool ElementGenerator::MatchContraction(const CollationContext &context, idx_t p
 }
 
 bool ElementGenerator::MatchContext(const CollationEntry &entry, idx_t position, uint32_t &ce_offset,
-                                    uint32_t &ce_count, idx_t &consumed, vector<idx_t> &skipped) {
+                                    uint32_t &ce_count, idx_t &consumed) {
 	for (uint32_t i = 0; i < entry.context_count; i++) {
 		auto &context = table->contexts[entry.context_offset + i];
 		if (context.type == COLLATION_CONTEXT_PREFIX) {
@@ -281,11 +282,8 @@ bool ElementGenerator::MatchContext(const CollationEntry &entry, idx_t position,
 			}
 			consumed = 1;
 			skipped.clear();
-		} else {
-			if (!MatchContraction(context, position, consumed, skipped_buffer)) {
-				continue;
-			}
-			skipped = skipped_buffer;
+		} else if (!MatchContraction(context, position, consumed)) {
+			continue;
 		}
 		ce_offset = context.ce_offset;
 		ce_count = context.ce_count;
@@ -295,7 +293,6 @@ bool ElementGenerator::MatchContext(const CollationEntry &entry, idx_t position,
 }
 
 void ElementGenerator::Generate(vector<collation_element_t> &result) {
-	vector<idx_t> skipped;
 	idx_t position = 0;
 	while (position < text.size()) {
 		auto codepoint = text[position];
@@ -329,7 +326,7 @@ void ElementGenerator::Generate(vector<collation_element_t> &result) {
 			auto &entry = table->entries[index];
 			uint32_t ce_offset;
 			uint32_t ce_count;
-			if (MatchContext(entry, position, ce_offset, ce_count, consumed, skipped)) {
+			if (MatchContext(entry, position, ce_offset, ce_count, consumed)) {
 				AppendElements(ce_offset, ce_count, result);
 				// characters that were skipped by a discontiguous contraction are removed
 				// from the text, the remaining characters keep their relative order
@@ -1209,12 +1206,12 @@ void Collator::GetSortKey(const char *data, idx_t size, CollationBuffer &buffer)
 	auto &text = buffer.text;
 	auto flags = Normalizer::Decode(data, size, text);
 	if (settings.normalization && (flags & Normalizer::TEXT_HAS_MARKS) && !Normalizer::IsFCD(text)) {
-		Normalizer::Decompose(text);
+		Normalizer::Decompose(text, buffer.scratch);
 	} else if (flags & Normalizer::TEXT_HAS_HANGUL) {
-		Normalizer::DecomposeHangul(text);
+		Normalizer::DecomposeHangul(text, buffer.scratch);
 	}
 	buffer.elements.clear();
-	ElementGenerator generator(tailoring, tailored, text, fast_elements, fast_expansions, FAST_LIMIT);
+	ElementGenerator generator(tailoring, tailored, text, buffer.skipped, fast_elements, fast_expansions, FAST_LIMIT);
 	generator.Generate(buffer.elements);
 
 	buffer.key.clear();
