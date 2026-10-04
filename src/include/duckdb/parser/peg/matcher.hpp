@@ -308,14 +308,11 @@ public:
 	const string &GetDeclaredName() const {
 		return name;
 	}
-	optional_idx GetPackratId() const {
-		return packrat_id;
-	}
-	void SetPackratMemoized() {
-		packrat_memoized = true;
+	optional_idx GetPackratSlot() const {
+		return packrat_slot;
 	}
 	bool IsPackratMemoized() const {
-		return packrat_memoized;
+		return packrat_slot.IsValid();
 	}
 	//! See ParsedGrammar::SetTransformProcess
 	void SetCollapsible() {
@@ -350,9 +347,8 @@ protected:
 	friend class MatcherAllocator;
 	MatcherType type;
 	string name;
-	optional_idx packrat_id;
+	optional_idx packrat_slot;
 	bool atomic = false;
-	bool packrat_memoized = false;
 	bool collapsible = false;
 	optional_ptr<const CompiledGrammarRule> rule;
 };
@@ -382,9 +378,14 @@ public:
 class MatcherAllocator {
 public:
 	Matcher &Allocate(unique_ptr<Matcher> matcher);
+	void SetPackratMemoized(Matcher &matcher);
+	idx_t PackratSlotCount() const {
+		return packrat_slots;
+	}
 
 private:
 	vector<unique_ptr<Matcher>> matchers;
+	idx_t packrat_slots = 0;
 };
 
 class ParseResultAllocator {
