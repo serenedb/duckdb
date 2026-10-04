@@ -16,7 +16,6 @@
 #include "duckdb/parser/simplified_token.hpp"
 #include "duckdb/parser/parser_options.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
-#include "duckdb/parser/parser_extension.hpp"
 
 namespace duckdb {
 
@@ -68,13 +67,6 @@ public:
 	//! using `stmt->stmt_location` if needed.
 	DUCKDB_API unique_ptr<SQLStatement> ParseTopLevelStatement(TokenIterator &token_iterator);
 
-	//! Run the `parse_function` extensions over the unconsumed tail of `query`,
-	//! the way `ParseQuery` does in its catch handler. Returns the produced `ExtensionStatement`
-	//! and advances `token_iterator` past the bytes the extension claimed. Returns nullptr if no
-	//! extension claims the segment. Used by both `ParseQuery` and the lazy `ParseIterator`
-	//! so the two paths handle PEG failures identically.
-	DUCKDB_API unique_ptr<SQLStatement> TryParseExtensionStatement(TokenIterator &token_iterator, const string &query);
-
 	//! Tokenize a query, returning the raw tokens together with their locations
 	static vector<SimplifiedToken> Tokenize(const string &query);
 
@@ -112,13 +104,10 @@ public:
 	//! non-ASCII Unicode spaces
 	static string NormalizeSQLString(const string &query);
 
-	void ThrowParserOverrideError(ParserOverrideResult &result);
-
 private:
-	CompiledGrammar &GetGrammar();
+	const CompiledGrammar &GetGrammar() const;
 
 	ParserOptions options;
-	shared_ptr<CompiledGrammar> compiled_grammar;
 	ExpressionDepthCheck depth_check;
 };
 } // namespace duckdb

@@ -16,7 +16,6 @@
 #include "duckdb/common/enums/output_type.hpp"
 #include "duckdb/common/progress_bar/progress_bar.hpp"
 #include "duckdb/common/types/value.hpp"
-#include "duckdb/common/optional.hpp"
 #include "duckdb/common/enums/profiling_coverage.hpp"
 #include "duckdb/main/user_settings.hpp"
 
@@ -25,7 +24,6 @@ namespace duckdb {
 class ClientContext;
 class PhysicalResultCollector;
 class PreparedStatementData;
-struct CompiledGrammar;
 struct ReplacementScan;
 
 typedef std::function<unique_ptr<PhysicalOperator>(ClientContext &context, PreparedStatementData &data)>
@@ -98,14 +96,6 @@ struct ClientConfig {
 
 	//! Function that is used to create the result collector for a materialized result.
 	get_result_collector_t get_result_collector = nullptr;
-
-	optional<string> current_dialect;
-	//! The (ordered) list of grammar extensions currently used by the parser
-	vector<string> active_grammar_extensions;
-	//! The compiled grammar active for the connection
-	shared_ptr<CompiledGrammar> cached_grammar;
-	//! The grammar of the database this client is CONNECT-ed to; unset when not connected
-	shared_ptr<CompiledGrammar> connected_grammar;
 
 public:
 	static ClientConfig &GetConfig(ClientContext &context);

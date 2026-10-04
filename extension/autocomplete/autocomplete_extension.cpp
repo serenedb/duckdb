@@ -22,7 +22,6 @@
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/parser/peg/tokenizer/highlight_tokenizer.hpp"
 #include "duckdb/parser/peg/tokenizer/parser_tokenizer.hpp"
-#include "duckdb/parser/parser_extension.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -366,7 +365,7 @@ public:
 	vector<AutoCompleteCandidate> SuggestSettingName() override {
 		return ::duckdb::SuggestSettingName(context);
 	}
-	shared_ptr<CompiledGrammar> GetCompiledGrammar() override {
+	const CompiledGrammar &GetCompiledGrammar() override {
 		return CompiledGrammar::Get(context);
 	}
 
@@ -460,10 +459,10 @@ void SQLAutoCompleteFunction(ClientContext &context, TableFunctionInput &data_p,
 }
 
 static unique_ptr<SQLTokenizeFunctionData> GenerateTokens(ClientContext &context, const string &sql) {
-	auto compiled_grammar = CompiledGrammar::Get(context);
+	auto &compiled_grammar = CompiledGrammar::Get(context);
 	vector<MatcherToken> tokens;
 	HighlightTokenizerBehavior behavior(sql, tokens);
-	compiled_grammar->GetTokenizer().TokenizeInput(behavior);
+	compiled_grammar.GetTokenizer().TokenizeInput(behavior);
 
 	// use the parser to annotate any tokens
 	vector<MatcherSuggestion> suggestions;
@@ -475,7 +474,7 @@ static unique_ptr<SQLTokenizeFunctionData> GenerateTokens(ClientContext &context
 	                           identifier_case_mode);
 	MatchState state(token_iterator, match_context);
 
-	compiled_grammar->ProgramMatcher().MatchParseResult(state);
+	compiled_grammar.ProgramMatcher().MatchParseResult(state);
 
 	return make_uniq<SQLTokenizeFunctionData>(std::move(tokens));
 }
@@ -549,8 +548,8 @@ static duckdb::unique_ptr<FunctionData> CheckPEGParserBind(ClientContext &contex
 	string clean_sql;
 	const string &sql_ref = Parser::StripUnicodeSpaces(sql, clean_sql) ? clean_sql : sql;
 	ParserTokenizerBehavior behavior(sql_ref, root_tokens);
-	auto compiled_grammar = CompiledGrammar::Get(context);
-	if (!compiled_grammar->GetTokenizer().TokenizeInput(behavior)) {
+	auto &compiled_grammar = CompiledGrammar::Get(context);
+	if (!compiled_grammar.GetTokenizer().TokenizeInput(behavior)) {
 		return nullptr;
 	}
 
@@ -567,7 +566,7 @@ static duckdb::unique_ptr<FunctionData> CheckPEGParserBind(ClientContext &contex
 	                           identifier_case_mode);
 	MatchState state(token_iterator, match_context);
 
-	auto match_result = compiled_grammar->ProgramMatcher().MatchParseResult(state);
+	auto match_result = compiled_grammar.ProgramMatcher().MatchParseResult(state);
 	// `+ 1` accounts for the EOI sentinel — the matcher walk may report success without
 	// consuming it.
 	if (!match_result.IsSuccess() || state.token_iterator.Position() + 1 < root_tokens.size()) {

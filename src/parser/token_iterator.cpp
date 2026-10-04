@@ -1,7 +1,6 @@
 #include "duckdb/parser/token_iterator.hpp"
 
 #include "duckdb/common/exception.hpp"
-#include "duckdb/parser/parser_extension.hpp"
 
 namespace duckdb {
 
@@ -67,15 +66,6 @@ void TokenIterator::SetPreviousTokenType(TokenType type) {
 		throw InternalException("TokenIterator has no previous token to annotate");
 	}
 	tokens[position - 1].type = type;
-}
-
-vector<SimpleToken> TokenIterator::RemainingTokens() const {
-	vector<SimpleToken> result;
-	result.reserve(tokens.size() - position);
-	for (idx_t index = position; index < tokens.size(); index++) {
-		result.emplace_back(tokens[index].text, tokens[index].type);
-	}
-	return result;
 }
 
 string TokenIterator::ToString() const {

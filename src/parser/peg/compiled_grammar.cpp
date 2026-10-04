@@ -1,8 +1,8 @@
 #include "duckdb/parser/peg/compiled_grammar.hpp"
+#include "duckdb/parser/peg/passthrough_dialect.hpp"
 #include "duckdb/parser/peg/matcher_factory.hpp"
 #include "duckdb/parser/peg/keyword_helper/parsed_grammar_keyword_helper.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/parser/grammar_extension.hpp"
 
 namespace duckdb {
 
@@ -111,14 +111,7 @@ terminal_rule_overrides_t ParsedGrammar::BuildTerminalRuleOverrides(const PEGKey
 	return overrides;
 }
 
-shared_ptr<CompiledGrammar> CompiledGrammar::Create(const vector<reference<GrammarExtension>> &grammar_extensions) {
-	auto grammar = ParsedGrammar::CreateDefault();
-	for (auto &extension : grammar_extensions) {
-		auto changes = extension.get().GetChanges();
-		for (auto &change : changes) {
-			change.Apply(grammar);
-		}
-	}
+CompiledGrammar CompiledGrammar::Compile(ParsedGrammar &grammar) {
 	ValidateParsedGrammarRoots(grammar);
 	for (auto &entry : grammar.rules) {
 		auto &parsed_rule = *entry.second;
@@ -142,19 +135,27 @@ shared_ptr<CompiledGrammar> CompiledGrammar::Create(const vector<reference<Gramm
 	auto &top_level_statement_matcher = factory.GetMatcher("TopLevelStatement");
 	allocator.ComputeFirstSets(keyword_helper->GetLiteralTable());
 
-	auto new_matcher = shared_ptr<CompiledGrammar>(new CompiledGrammar(std::move(allocator), std::move(keyword_helper),
-	                                                                   std::move(tokenizer), std::move(rules),
-	                                                                   program_matcher, top_level_statement_matcher));
-	return new_matcher;
+	return CompiledGrammar(std::move(allocator), std::move(keyword_helper), std::move(tokenizer), std::move(rules),
+	                       program_matcher, top_level_statement_matcher);
 }
 
-shared_ptr<CompiledGrammar> CompiledGrammar::DefaultGrammar() {
-	static auto grammar = Create();
+CompiledGrammar CompiledGrammar::Create() {
+	auto grammar = ParsedGrammar::CreateDefault();
+	return Compile(grammar);
+}
+
+const CompiledGrammar &CompiledGrammar::Base() {
+	static const CompiledGrammar grammar = Create();
 	return grammar;
 }
 
-shared_ptr<CompiledGrammar> CompiledGrammar::Create() {
-	return Create({});
+const CompiledGrammar &CompiledGrammar::Passthrough() {
+	static const CompiledGrammar grammar = [] {
+		auto parsed_grammar = ParsedGrammar::CreateDefault();
+		ApplyPassthroughDialect(parsed_grammar);
+		return Compile(parsed_grammar);
+	}();
+	return grammar;
 }
 
 optional_ptr<const CompiledGrammarRule> CompiledGrammar::GetRule(const string &rule_name) const {

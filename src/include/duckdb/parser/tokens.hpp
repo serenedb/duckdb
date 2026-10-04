@@ -26,7 +26,6 @@ class DetachStatement;
 class DisconnectStatement;
 class DeleteStatement;
 class DropStatement;
-class ExtensionStatement;
 class InsertStatement;
 class SelectStatement;
 class TransactionStatement;

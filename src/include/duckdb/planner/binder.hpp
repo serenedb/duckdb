@@ -489,7 +489,6 @@ private:
 	BoundStatement Bind(RelationStatement &stmt);
 	BoundStatement Bind(CallStatement &stmt);
 	BoundStatement Bind(ExportStatement &stmt);
-	BoundStatement Bind(ExtensionStatement &stmt);
 	BoundStatement Bind(SetStatement &stmt);
 	BoundStatement Bind(SetVariableStatement &stmt);
 	BoundStatement Bind(ResetVariableStatement &stmt);

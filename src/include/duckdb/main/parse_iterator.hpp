@@ -32,8 +32,6 @@ class TokenIterator;
 //! always sees either a real statement or a clean exhaustion.
 class ParseIterator {
 public:
-	//! Peel parse-facing statements out of a SQL string (PEG / parser_override). The context is
-	//! bound for the lifetime of the iterator and must outlive it.
 	DUCKDB_API ParseIterator(ClientContext &context, const string &sql);
 	DUCKDB_API ~ParseIterator();
 
@@ -65,7 +63,6 @@ private:
 	void EnsureTokenized();
 
 private:
-	//! The bound context, used for parser options / metrics / override extensions.
 	ClientContext &context;
 	string sql;
 	//! Parser instance kept alive across Peek calls so its PEG matcher / transformer caches
@@ -80,14 +77,6 @@ private:
 	//! Once Peek determines there are no more statements (cursor past end of tokens), we stay
 	//! exhausted; subsequent Peek calls return false without re-invoking the parser.
 	bool exhausted = false;
-	//! Statements produced by a successful `parser_override` extension; if non-empty the
-	//! iterator yields these in order instead of running the PEG parser at all. Populated on
-	//! the first Peek when an extension claims the query.
-	unique_ptr<vector<unique_ptr<SQLStatement>>> overridden_statements;
-	//! Cursor into `overridden_statements`.
-	idx_t override_cursor = 0;
-	//! True once we've consulted parser_override extensions for this query.
-	bool override_resolved = false;
 };
 
 } // namespace duckdb

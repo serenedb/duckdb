@@ -1,10 +1,8 @@
 #include "catch.hpp"
 #include "duckdb/common/enums/lambda_syntax.hpp"
-#include "duckdb/common/enums/allow_parser_override.hpp"
 #include "duckdb/common/enums/dialect_compatibility_mode.hpp"
 #include "duckdb/common/enums/table_function_identifier_conversion.hpp"
 #include "duckdb/common/enums/show_behavior.hpp"
-#include "duckdb/parser/peg/dialect_extension.hpp"
 #include "test_helpers.hpp"
 
 #include <iostream>
@@ -73,7 +71,6 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 	    {"table_function_identifier_conversion",
 	     {EnumUtil::ToString(TableFunctionIdentifierConversion::DISABLE_IMPLICIT_STRING)}},
 	    {"dialect_compatibility_mode", {EnumUtil::ToString(DialectCompatibilityMode::SPARK)}},
-	    {"allow_parser_override_extension", {EnumUtil::ToString(AllowParserOverride::FALLBACK_OVERRIDE)}},
 	    {"profiling_coverage", {EnumUtil::ToString(ProfilingCoverage::ALL)}},
 	    {"show_behavior", {EnumUtil::ToString(ShowBehaviorType::TABLE)}},
 	    {"autoload_known_extensions", {false}},
@@ -177,7 +174,6 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 bool OptionIsExcludedFromTest(const string &name) {
 	static unordered_set<string> excluded_options = {
 	    "access_mode",
-	    "active_grammar_extensions",
 	    "allow_community_extensions",   // cant change this while db is running
 	    "allow_extension_repositories", // can only be tightened at runtime, cannot be freely reset
 	    "allow_unredacted_secrets",     // cant change this while db is running
@@ -186,7 +182,6 @@ bool OptionIsExcludedFromTest(const string &name) {
 	    "allowed_directories",
 	    "allowed_paths",
 	    "block_allocator_memory", // cant reduce
-	    "current_dialect",
 	    "custom_user_agent",
 	    "debug_delta_only_variant_encoding_enabled",
 	    "debug_verification_mode",

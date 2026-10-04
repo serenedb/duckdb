@@ -81,8 +81,8 @@ DUCKDB_V2_ERROR duckdb_v2_tokenize_sql(duckdb_v2_connection_handle conn, const d
 		duckdb::string input(Convert(sql));
 		duckdb::vector<duckdb::MatcherToken> raw_tokens;
 		CleanExitTokenizerBehavior behavior(input, raw_tokens);
-		auto grammar = duckdb::CompiledGrammar::Get(*connection->context);
-		const bool clean_exit = grammar->GetTokenizer().TokenizeInput(behavior);
+		auto &grammar = duckdb::CompiledGrammar::Get(*connection->context);
+		const bool clean_exit = grammar.GetTokenizer().TokenizeInput(behavior);
 
 		auto wrapper = duckdb::make_uniq<TokenIteratorWrapperV2>();
 		wrapper->input_length = input.size();

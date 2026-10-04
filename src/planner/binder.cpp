@@ -114,8 +114,6 @@ BoundStatement Binder::Bind(SQLStatement &statement) {
 		return Bind(statement.Cast<SetStatement>());
 	case StatementType::LOAD_STATEMENT:
 		return Bind(statement.Cast<LoadStatement>());
-	case StatementType::EXTENSION_STATEMENT:
-		return Bind(statement.Cast<ExtensionStatement>());
 	case StatementType::PREPARE_STATEMENT:
 		return Bind(statement.Cast<PrepareStatement>());
 	case StatementType::EXECUTE_STATEMENT:

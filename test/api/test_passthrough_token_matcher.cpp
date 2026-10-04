@@ -20,7 +20,7 @@ MatchOutcome MatchTokenAt(const string &query, idx_t position) {
 	auto compiled = CompiledGrammar::Create();
 	vector<MatcherToken> tokens;
 	ParserTokenizerBehavior behavior(query, tokens);
-	compiled->GetTokenizer().TokenizeInput(behavior);
+	compiled.GetTokenizer().TokenizeInput(behavior);
 
 	TokenIterator iterator(tokens);
 	iterator.SetPosition(position);

@@ -181,13 +181,11 @@ void ClientContext::ConnectToCatalog(const shared_ptr<AttachedDatabase> &target)
 	}
 	connected_to_database = target;
 	is_connected = true;
-	ClientConfig::GetConfig(*this).connected_grammar = target->GetConnectedGrammar(*this);
 }
 
 void ClientContext::DisconnectFromCatalog() {
 	connected_to_database.reset();
 	is_connected = false;
-	ClientConfig::GetConfig(*this).connected_grammar.reset();
 }
 
 shared_ptr<AttachedDatabase> ClientContext::TryGetConnectedCatalog() const {
@@ -830,8 +828,7 @@ unique_ptr<QueryResult> ClientContext::Query(const string &query, QueryParameter
 
 		// Look ahead WITHOUT parsing: HasMore() only walks the token cursor, so it never parses (and
 		// never throws) the next statement here. The next statement is parsed later, in this loop's
-		// next GetStatementForExecutionWithLock — after the current statement has executed. This lets a statement
-		// register grammar (e.g. LOAD an extension) that a following statement then uses.
+		// next GetStatementForExecutionWithLock — after the current statement has executed.
 		bool has_next = iterator.HasMore();
 
 		if (has_next && query_parameters.statement_args && !query_parameters.statement_args->empty()) {
@@ -1375,9 +1372,7 @@ ParserOptions ClientContext::GetParserOptions() {
 	options.integer_division = Settings::Get<IntegerDivisionSetting>(*this);
 	options.regex_match_operator_semantics = Settings::Get<RegexMatchOperatorSemanticsSetting>(*this);
 	options.max_expression_depth = Settings::Get<MaxExpressionDepthSetting>(*this);
-	options.extensions = DBConfig::GetConfig(*this).GetCallbackManager();
-	options.parser_override_setting = Settings::Get<AllowParserOverrideExtensionSetting>(*this);
-	options.compiled_grammar = CompiledGrammar::Get(*this);
+	options.grammar = CompiledGrammar::Get(*this);
 	return options;
 }
 

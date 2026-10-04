@@ -2,7 +2,6 @@
 #include "duckdb/common/multi_file/multi_file_list.hpp"
 #include "duckdb/common/arrow/arrow_type_extension.hpp"
 #include "duckdb/main/profiler/metrics_manager.hpp"
-#include "duckdb/parser/peg/compiled_grammar.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/http/http_util.hpp"
@@ -86,11 +85,6 @@ DatabaseInstance::DatabaseInstance() : db_validity(*this, ValidChecker::Scope::D
 	config.is_user_config = false;
 	create_api_v1 = nullptr;
 	invoke_capi_v2 = nullptr;
-	parser_cache = make_uniq<ParserCache>();
-}
-
-ParserCache &DatabaseInstance::GetParserCache() {
-	return *parser_cache;
 }
 
 DatabaseInstance::~DatabaseInstance() {

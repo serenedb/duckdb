@@ -2,9 +2,7 @@
 #include <type_traits>
 #include "test_helpers.hpp"
 
-#include "duckdb/main/settings.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
-#include "duckdb/parser/grammar_extension.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/peg/keyword_helper/default_keyword_maps.hpp"
@@ -16,7 +14,6 @@
 #include "duckdb/parser/peg/parsed_grammar.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
-#include "duckdb/parser/tableref/emptytableref.hpp"
 
 using namespace duckdb;
 
@@ -54,7 +51,7 @@ TEST_CASE("Literal choice dispatch retains autocomplete metadata", "[api][gramma
 	auto grammar = ParsedGrammar::Parse("Program <- 'TABLE' / '(' / '.' / 'table'");
 	auto rules = CompileTestProgramRule(grammar);
 	MatcherAllocator allocator;
-	MatcherFactory factory(allocator, grammar, rules, compiled->GetKeywordHelper(), {});
+	MatcherFactory factory(allocator, grammar, rules, compiled.GetKeywordHelper(), {});
 	auto &root = factory.CreateRootMatcher("Program").Cast<ListMatcher>();
 	auto &choice = root.matchers[0].get().Cast<ChoiceMatcher>();
 	vector<reference<Matcher>> children = choice.matchers;
@@ -94,12 +91,12 @@ TEST_CASE("Literal choice dispatch preserves ordered choice results", "[api][gra
 	auto grammar = ParsedGrammar::Parse("Program <- 'SELECT' / 'FROM' / 'select' / 'WHERE' / '('");
 	auto rules = CompileTestProgramRule(grammar);
 	MatcherAllocator allocator;
-	MatcherFactory factory(allocator, grammar, rules, compiled->GetKeywordHelper(), {});
+	MatcherFactory factory(allocator, grammar, rules, compiled.GetKeywordHelper(), {});
 	auto &root = factory.CreateRootMatcher("Program").Cast<ListMatcher>();
 	auto &choice = root.matchers[0].get().Cast<ChoiceMatcher>();
 	vector<reference<Matcher>> children = choice.matchers;
 	ChoiceMatcher sequential(std::move(children));
-	auto &table = compiled->GetKeywordHelper().GetLiteralTable();
+	auto &table = compiled.GetKeywordHelper().GetLiteralTable();
 	REQUIRE(choice.matchers[0].get().Cast<KeywordMatcher>().GetDispatchLiteral(table).IsValid());
 	for (auto &text : vector<string> {"WHERE", "unknown_literal"}) {
 		vector<MatcherToken> tokens {MatcherToken(text, 0, TokenType::KEYWORD)};
@@ -175,7 +172,7 @@ TEST_CASE("Literal dispatch does not assume custom keyword matcher semantics", "
 	auto rules = CompileTestProgramRule(grammar);
 	MatcherAllocator allocator;
 	idx_t calls = 0;
-	DispatchOverrideMatcherFactory factory(allocator, grammar, rules, compiled->GetKeywordHelper(), calls);
+	DispatchOverrideMatcherFactory factory(allocator, grammar, rules, compiled.GetKeywordHelper(), calls);
 	auto &root = factory.CreateRootMatcher("Program");
 	auto result = MatchLiteralChoiceTest(root, "FROM", MatchMode::RECOGNIZE_ONLY);
 	REQUIRE(result.success);
@@ -190,7 +187,7 @@ TEST_CASE("Literal dispatch leaves mixed and unregistered alternatives unchanged
 		auto grammar = ParsedGrammar::Parse(definition);
 		auto rules = CompileTestProgramRule(grammar);
 		MatcherAllocator allocator;
-		MatcherFactory factory(allocator, grammar, rules, compiled->GetKeywordHelper(), {});
+		MatcherFactory factory(allocator, grammar, rules, compiled.GetKeywordHelper(), {});
 		auto &root = factory.CreateRootMatcher("Program").Cast<ListMatcher>();
 		auto &choice = root.matchers[0].get().Cast<ChoiceMatcher>();
 		vector<reference<Matcher>> children = choice.matchers;
@@ -452,10 +449,8 @@ TEST_CASE("Custom keyword helpers and standalone literal matchers keep their sem
 	REQUIRE(MatchLiteralTestToken(standalone, "CUSTOM_WORD"));
 	REQUIRE(MatchLiteralTestToken(custom_helper, "CUSTOM_WORD"));
 	REQUIRE_FALSE(MatchLiteralTestToken(custom_helper, "another_word"));
-	DuckDB db(nullptr);
-	Connection con(db);
-	auto grammar = CompiledGrammar::Get(*con.context);
-	KeywordMatcher unregistered("unregistered_literal_test_word", KeywordInfo(), grammar->GetKeywordHelper());
+	KeywordMatcher unregistered("unregistered_literal_test_word", KeywordInfo(),
+	                            CompiledGrammar::Base().GetKeywordHelper());
 	REQUIRE(MatchLiteralTestToken(unregistered, "UNREGISTERED_LITERAL_TEST_WORD"));
 	REQUIRE_FALSE(MatchLiteralTestToken(unregistered, "another_word"));
 }
@@ -477,185 +472,21 @@ TEST_CASE("Transform result types use stable registered names", "[api][grammar_e
 	REQUIRE(TryGetTransformResult<bool>(result) == nullptr);
 }
 
-class GrammarExtensionTestValueTransformProcess final : public TransformProcess {
-public:
-	explicit GrammarExtensionTestValueTransformProcess(PEGTransformer &transformer_p) : transformer(transformer_p) {
-	}
-
-	TransformStep Resume(arena_ptr<TransformResultValue> child_result) override {
-		D_ASSERT(!child_result);
-		return TransformStep::Complete(transformer.MakeResult<bool>(true));
-	}
-
-private:
-	PEGTransformer &transformer;
-};
-
-class GrammarExtensionTestTransformProcess final : public TransformProcess {
-public:
-	GrammarExtensionTestTransformProcess(PEGTransformer &transformer_p, ParseResult &parse_result_p)
-	    : transformer(transformer_p), parse_result(parse_result_p) {
-	}
-
-	TransformStep Resume(arena_ptr<TransformResultValue> child_result) override {
-		if (!child_result) {
-			auto &list = parse_result.Cast<ListParseResult>();
-			return TransformStep::Child({transformer.GetRule("GrammarExtensionTestValue"), list.GetChild(0)});
-		}
-		D_ASSERT(TryGetTransformResult<bool>(*child_result));
-		auto statement = make_uniq<SelectStatement>();
-		auto select_node = make_uniq<SelectNode>();
-		select_node->select_list.push_back(ConstantExpression::Integer(42));
-		select_node->from_table = make_uniq<EmptyTableRef>();
-		statement->node = std::move(select_node);
-		return TransformStep::Complete(transformer.MakeResult<unique_ptr<SelectStatement>>(std::move(statement)));
-	}
-
-private:
-	PEGTransformer &transformer;
-	ParseResult &parse_result;
-};
-
-static arena_ptr<TransformProcess> StartGrammarExtensionTestValueTransform(PEGTransformer &transformer, ParseResult &) {
-	return transformer.MakeProcess<GrammarExtensionTestValueTransformProcess>(transformer);
-}
-
-static arena_ptr<TransformProcess> StartGrammarExtensionTestTransform(PEGTransformer &transformer,
-                                                                      ParseResult &parse_result) {
-	return transformer.MakeProcess<GrammarExtensionTestTransformProcess>(transformer, parse_result);
-}
-
-class GrammarExtensionTestMatchProcess final : public MatchProcess {
-public:
-	GrammarExtensionTestMatchProcess(const Matcher &child_p, MatchState &state_p)
-	    : child(child_p), state(state_p), child_state(state_p) {
-	}
-
-	MatchStep Resume(const optional<MatcherResult> &child_result) override {
-		D_ASSERT(awaiting_child == child_result.has_value());
-		if (!child_result) {
-			awaiting_child = true;
-			return MatchStep::Child({child, child_state});
-		}
-		awaiting_child = false;
-		if (child_result->IsSuccess()) {
-			state.token_iterator.SetPosition(child_state.token_iterator);
-		}
-		return MatchStep::Complete(*child_result);
-	}
-
-private:
-	const Matcher &child;
-	MatchState &state;
-	MatchState child_state;
-	bool awaiting_child = false;
-};
-
-class GrammarExtensionTestMatcher final : public Matcher {
-public:
-	GrammarExtensionTestMatcher() : child("ANSWER", KeywordInfo()) {
-	}
-
-	arena_ptr<MatchProcess> StartMatch(MatchState &state) const override {
-		return state.Make<GrammarExtensionTestMatchProcess>(child, state);
-	}
-
-	SuggestionType AddSuggestionInternal(MatchState &state) const override {
-		return child.AddSuggestion(state);
-	}
-
-	string ToString() const override {
-		return "GrammarExtensionTestMatcher";
-	}
-
-private:
-	KeywordMatcher child;
-};
-
-class AddGrammarExtensionTestValue final : public GrammarExtension {
-public:
-	AddGrammarExtensionTestValue() : GrammarExtension("extension_test_value", "GrammarExtensionTestValue") {
-	}
-
-	vector<GrammarChange> GetChanges() const override {
-		vector<GrammarChange> changes;
-		changes.push_back(
-		    GrammarChange::AddRule("GrammarExtensionTestValue <- 'WRONG'", StartGrammarExtensionTestValueTransform));
-		changes.push_back(GrammarChange::AddChoice("UnreservedKeyword", "'ANSWER'"));
-		changes.push_back(GrammarChange::AddTerminalRuleOverride(
-		    "GrammarExtensionTestValue", [](const PEGKeywordHelper &keyword_helper) {
-			    if (DefaultKeywordMaps::GetKeywordCategory(keyword_helper.LookupKeyword("ANSWER")) !=
-			        KeywordCategory::KEYWORD_UNRESERVED) {
-				    throw InternalException("Parser change keyword is missing from the compiled keyword helper");
-			    }
-			    return make_uniq<GrammarExtensionTestMatcher>();
-		    }));
-		return changes;
-	}
-};
-
-class AddGrammarExtensionTestAtom final : public GrammarExtension {
-public:
-	AddGrammarExtensionTestAtom() : GrammarExtension("extension_test_atom", "GrammarExtensionTestAtom") {
-	}
-
-	vector<GrammarChange> GetChanges() const override {
-		vector<GrammarChange> changes;
-		changes.push_back(GrammarChange::AddRule("GrammarExtensionTestAtom <- GrammarExtensionTestValue",
-		                                         StartGrammarExtensionTestTransform));
-		changes.push_back(
-		    GrammarChange::PrependChoice("SelectAtom", "GrammarExtensionTestAtom", [](const PEGExpression &expression) {
-			    return expression.type == PEGExpression::Type::REFERENCE &&
-			           expression.text.GetString() == "SelectParens";
-		    }));
-		return changes;
-	}
-};
-
-static void RegisterGrammarExtensionTestSyntax(DatabaseInstance &db) {
-	GrammarExtension::Register(db, make_shared_ptr<AddGrammarExtensionTestValue>());
-	GrammarExtension::Register(db, make_shared_ptr<AddGrammarExtensionTestAtom>());
-}
-
-static void ActivateGrammarExtensionTestSyntax(Connection &con) {
-	REQUIRE_NO_FAIL(*con.Query("SET active_grammar_extensions = ['extension_test_value', 'extension_test_atom']"));
-}
-
-TEST_CASE("Literal caches respect active grammar extensions", "[api][grammar_extension]") {
-	DuckDB db(nullptr);
-	Connection con(db);
-	auto base = CompiledGrammar::Get(*con.context);
-	auto &base_table = base->GetKeywordHelper().GetLiteralTable();
+TEST_CASE("Literal caches follow the grammar they are matched against", "[api][grammar_extension]") {
+	auto &base_table = CompiledGrammar::Base().GetKeywordHelper().GetLiteralTable();
+	auto grammar = ParsedGrammar::CreateDefault();
+	grammar.AddRule("LiteralCacheTestValue <- 'ANSWER'");
+	auto extended = CompiledGrammar::Compile(grammar);
+	auto &extended_table = extended.GetKeywordHelper().GetLiteralTable();
+	REQUIRE(extended_table.CacheId() != base_table.CacheId());
 	vector<MatcherToken> tokens {MatcherToken("answer", 0, TokenType::IDENTIFIER)};
 	TokenIterator iterator(tokens);
 	REQUIRE(iterator.CurrentLiteralInfo(base_table).LiteralId() == 0);
-	RegisterGrammarExtensionTestSyntax(*db.instance);
-	ActivateGrammarExtensionTestSyntax(con);
-	auto extended = CompiledGrammar::Get(*con.context);
-	auto &extended_table = extended->GetKeywordHelper().GetLiteralTable();
-	REQUIRE(extended_table.CacheId() != base_table.CacheId());
-	REQUIRE(iterator.CurrentLiteralInfo(extended_table)
-	            .HasAnyFlags(DefaultKeywordMaps::GetIdentifierMask(SuggestionState::SUGGEST_COLUMN_NAME)));
+	REQUIRE(iterator.CurrentLiteralInfo(extended_table).LiteralId() != 0);
 	REQUIRE(iterator.CurrentLiteralInfo(base_table).LiteralId() == 0);
-	KeywordMatcher keyword("ANSWER", KeywordInfo(), extended->GetKeywordHelper());
+	KeywordMatcher keyword("ANSWER", KeywordInfo(), extended.GetKeywordHelper());
 	REQUIRE(MatchLiteralTestToken(keyword, "answer"));
 	REQUIRE_FALSE(MatchLiteralTestToken(keyword, "missing"));
-	REQUIRE_NO_FAIL(*con.Query("SET active_grammar_extensions = []"));
-	REQUIRE(CompiledGrammar::Get(*con.context) == base);
-}
-
-static void CheckGrammarExtensionTestSyntax(Connection &con) {
-	auto result = con.Query("ANSWER");
-	REQUIRE_NO_FAIL(*result);
-	REQUIRE(result->Collection().GetValue(0, 0) == Value::INTEGER(42));
-}
-
-TEST_CASE("Grammar extensions apply in registration order", "[api][grammar_extension]") {
-	DuckDB db(nullptr);
-	RegisterGrammarExtensionTestSyntax(*db.instance);
-	Connection con(db);
-	ActivateGrammarExtensionTestSyntax(con);
-	CheckGrammarExtensionTestSyntax(con);
 }
 
 class ConstantSevenTransformProcess final : public TransformProcess {
@@ -677,46 +508,25 @@ static arena_ptr<TransformProcess> StartConstantSevenTransform(PEGTransformer &t
 	return transformer.MakeProcess<ConstantSevenTransformProcess>(transformer);
 }
 
-//! Replaces the transform of a rule the default grammar marks as collapsible with one that does not forward its
-//! operand
-class OverrideAdditiveExpressionTransform final : public GrammarExtension {
-public:
-	OverrideAdditiveExpressionTransform(const string &name, bool collapsible_p)
-	    : GrammarExtension(name, "OverrideAdditiveExpressionTransform"), collapsible(collapsible_p) {
-	}
-
-	vector<GrammarChange> GetChanges() const override {
-		vector<GrammarChange> changes;
-		changes.push_back(
-		    GrammarChange::SetTransformProcess("AdditiveExpression", StartConstantSevenTransform, collapsible));
-		return changes;
-	}
-
-private:
-	bool collapsible;
-};
+static string TransformFirstSelectExpression(ParsedGrammar &grammar, const string &query) {
+	auto compiled = CompiledGrammar::Compile(grammar);
+	auto options = ParserOptions::Builtin();
+	options.grammar = &compiled;
+	Parser parser(options);
+	parser.ParseQuery(query);
+	REQUIRE(parser.statements.size() == 1);
+	auto &node = parser.statements[0]->Cast<SelectStatement>().node->Cast<SelectNode>();
+	return node.select_list[0]->ToString();
+}
 
 TEST_CASE("Overriding a transform opts its rule out of collapsing", "[api][grammar_extension]") {
-	DuckDB db(nullptr);
-	GrammarExtension::Register(*db.instance, make_shared_ptr<OverrideAdditiveExpressionTransform>("seven", false));
-	GrammarExtension::Register(*db.instance,
-	                           make_shared_ptr<OverrideAdditiveExpressionTransform>("collapsible_seven", true));
-	// separate connections, because once an extension is active it also rewrites the literals of a later SET
-	Connection con(db);
-	REQUIRE_NO_FAIL(*con.Query("SET active_grammar_extensions = ['seven']"));
-	auto result = con.Query("SELECT 1");
-	REQUIRE_NO_FAIL(*result);
-	REQUIRE(result->Collection().GetValue(0, 0) == Value::INTEGER(7));
+	auto grammar = ParsedGrammar::CreateDefault();
+	grammar.SetTransformProcess("AdditiveExpression", StartConstantSevenTransform);
+	REQUIRE(TransformFirstSelectExpression(grammar, "SELECT 1") == "7");
 
-	// the extension promised the collapse is safe, so an operand without a tail skips its transform
-	Connection collapsible_con(db);
-	REQUIRE_NO_FAIL(*collapsible_con.Query("SET active_grammar_extensions = ['collapsible_seven']"));
-	result = collapsible_con.Query("SELECT 1");
-	REQUIRE_NO_FAIL(*result);
-	REQUIRE(result->Collection().GetValue(0, 0) == Value::INTEGER(1));
-	result = collapsible_con.Query("SELECT 1 + 1");
-	REQUIRE_NO_FAIL(*result);
-	REQUIRE(result->Collection().GetValue(0, 0) == Value::INTEGER(7));
+	grammar.SetTransformProcess("AdditiveExpression", StartConstantSevenTransform, true);
+	REQUIRE(TransformFirstSelectExpression(grammar, "SELECT 1") == "1");
+	REQUIRE(TransformFirstSelectExpression(grammar, "SELECT 1 + 1") == "7");
 }
 
 struct MatchProcessLifetimeState {
@@ -1103,7 +913,7 @@ TEST_CASE("Compiled grammar processes use arena ownership", "[api][grammar_exten
 	MatchContext context(suggestions, parse_results, max_token_index);
 	MatchState state(iterator, context);
 	auto grammar = CompiledGrammar::Create();
-	auto process = grammar->TopLevelStatementMatcher().StartMatch(state);
+	auto process = grammar.TopLevelStatementMatcher().StartMatch(state);
 	REQUIRE(process);
 	REQUIRE(context.processes.Mark() > 0);
 	process.reset();
@@ -1111,192 +921,29 @@ TEST_CASE("Compiled grammar processes use arena ownership", "[api][grammar_exten
 	REQUIRE(context.processes.Mark() == 0);
 }
 
-TEST_CASE("Grammar changes expose structured metadata", "[api][grammar_extension]") {
-	auto add_rule = GrammarChange::AddRule("TrackedRule <- 'tracked'");
-	REQUIRE(add_rule.Type() == GrammarChangeType::ADD_RULE);
-	REQUIRE(add_rule.RuleName() == "TrackedRule");
-	REQUIRE(add_rule.Definition() == "TrackedRule <- 'tracked'");
-
-	auto add_choice = GrammarChange::AddChoice("TrackedRule", "'choice'");
-	REQUIRE(add_choice.Type() == GrammarChangeType::ADD_CHOICE);
-	REQUIRE(add_choice.RuleName() == "TrackedRule");
-	REQUIRE(add_choice.Definition() == "'choice'");
-}
-
-TEST_CASE("Grammar choices support cursor placement", "[api][grammar_extension]") {
-	auto grammar = ParsedGrammar::Parse("CursorRule <- 'first' / 'last'");
-	grammar.AddChoice("CursorRule", "'second'", [](const PEGExpression &expression) {
-		return expression.type == PEGExpression::Type::LITERAL && expression.text.GetString() == "first";
-	});
-	grammar.PrependChoice("CursorRule", "'third'", [](const PEGExpression &expression) {
-		return expression.type == PEGExpression::Type::LITERAL && expression.text.GetString() == "last";
-	});
-
-	vector<string> choices;
-	auto rule = grammar.GetRule("CursorRule");
-	REQUIRE(rule);
-	for (auto &expression : rule->recipe.expression.children) {
-		if (expression.type == PEGExpression::Type::LITERAL) {
-			choices.push_back(expression.text.GetString());
-		}
-	}
-	REQUIRE(choices == vector<string> {"first", "second", "third", "last"});
-}
-
-TEST_CASE("Grammar choices can be replaced", "[api][grammar_extension]") {
-	auto grammar = ParsedGrammar::Parse("CursorRule <- 'first' / 'second' / 'last'");
-	grammar.ReplaceChoice("CursorRule", "'replacement'", [](const PEGExpression &expression) {
-		return expression.type == PEGExpression::Type::LITERAL && expression.text.GetString() == "second";
-	});
-
-	auto rule = grammar.GetRule("CursorRule");
-	REQUIRE(rule);
-	REQUIRE(rule->recipe.expression.type == PEGExpression::Type::CHOICE);
-	REQUIRE(rule->recipe.expression.children.size() == 3);
-	REQUIRE(rule->recipe.expression.children[0].text.GetString() == "first");
-	REQUIRE(rule->recipe.expression.children[1].text.GetString() == "replacement");
-	REQUIRE(rule->recipe.expression.children[2].text.GetString() == "last");
-
-	REQUIRE_THROWS(grammar.ReplaceChoice("CursorRule", "'replacement'", [](const PEGExpression &expression) {
-		return expression.type == PEGExpression::Type::LITERAL && expression.text.GetString() == "missing";
-	}));
-
-	auto non_choice_grammar = ParsedGrammar::Parse("NonChoiceRule <- 'only'");
-	REQUIRE_THROWS(
-	    non_choice_grammar.ReplaceChoice("NonChoiceRule", "'replacement'", [](const PEGExpression &expression) {
-		    return expression.type == PEGExpression::Type::LITERAL;
-	    }));
-}
-
-TEST_CASE("Grammar choices can be removed", "[api][grammar_extension]") {
-	auto grammar = ParsedGrammar::Parse("CursorRule <- 'first' / 'second' / 'last'");
-	grammar.RemoveChoice("CursorRule", [](const PEGExpression &expression) {
-		return expression.type == PEGExpression::Type::LITERAL && expression.text.GetString() == "second";
-	});
-
-	auto rule = grammar.GetRule("CursorRule");
-	REQUIRE(rule);
-	REQUIRE(rule->recipe.expression.type == PEGExpression::Type::CHOICE);
-	REQUIRE(rule->recipe.expression.children.size() == 2);
-	REQUIRE(rule->recipe.expression.children[0].text.GetString() == "first");
-	REQUIRE(rule->recipe.expression.children[1].text.GetString() == "last");
-
-	REQUIRE_THROWS(grammar.RemoveChoice("CursorRule", [](const PEGExpression &expression) {
-		return expression.type == PEGExpression::Type::LITERAL && expression.text.GetString() == "missing";
-	}));
-
-	grammar.RemoveChoice("CursorRule", [](const PEGExpression &expression) {
-		return expression.type == PEGExpression::Type::LITERAL && expression.text.GetString() == "first";
-	});
-	REQUIRE(rule->recipe.expression.type == PEGExpression::Type::LITERAL);
-	REQUIRE(rule->recipe.expression.text.GetString() == "last");
-}
-
-class OverrideDefaultTerminalRule final : public GrammarExtension {
-public:
-	OverrideDefaultTerminalRule()
-	    : GrammarExtension("default_terminal_rule", "Add a terminal rule override for identifier") {
-	}
-
-	vector<GrammarChange> GetChanges() const override {
-		vector<GrammarChange> changes;
-		changes.push_back(GrammarChange::AddTerminalRuleOverride("identifier", [](const PEGKeywordHelper &) {
-			return make_uniq<KeywordMatcher>("replacement", KeywordInfo(0, ' '));
-		}));
-		return changes;
-	}
-};
-
 TEST_CASE("Default terminal rule overrides are registered before additions", "[api][grammar_extension]") {
-	DuckDB db(nullptr);
-	Connection con(db);
-	GrammarExtension::Register(*db.instance, make_shared_ptr<OverrideDefaultTerminalRule>());
-	REQUIRE_FAIL(con.Query("SET active_grammar_extensions = ['default_terminal_rule']"));
+	auto grammar = ParsedGrammar::CreateDefault();
+	grammar.AddTerminalRuleOverride("identifier", [](const PEGKeywordHelper &) {
+		return make_uniq<KeywordMatcher>("replacement", KeywordInfo(0, ' '));
+	});
+	REQUIRE_THROWS(CompiledGrammar::Compile(grammar));
 }
 
-TEST_CASE("The parser cache only holds the base grammar", "[api][grammar_extension]") {
+TEST_CASE("Sessions parse with the base grammar", "[api][grammar_extension]") {
 	DuckDB db(nullptr);
 	Connection con(db);
-	REQUIRE_NO_FAIL(*con.Query("SELECT 1"));
-	auto base_grammar = CompiledGrammar::Get(*con.context);
-	REQUIRE(base_grammar == CompiledGrammar::Get(*con.context));
+	Connection other(db);
+	REQUIRE(&CompiledGrammar::Get(*con.context) == &CompiledGrammar::Base());
+	REQUIRE(&CompiledGrammar::Get(*other.context) == &CompiledGrammar::Base());
+	REQUIRE(&CompiledGrammar::Passthrough() != &CompiledGrammar::Base());
 
-	RegisterGrammarExtensionTestSyntax(*db.instance);
-	REQUIRE(base_grammar == CompiledGrammar::Get(*con.context));
-	ActivateGrammarExtensionTestSyntax(con);
-	CheckGrammarExtensionTestSyntax(con);
-	auto extension_grammar = CompiledGrammar::Get(*con.context);
-	REQUIRE(extension_grammar == CompiledGrammar::Get(*con.context));
-}
-
-TEST_CASE("Active grammar extensions are cached on their connection", "[api][grammar_extension]") {
-	DuckDB db(nullptr);
-	RegisterGrammarExtensionTestSyntax(*db.instance);
-	Connection enabled(db);
-	Connection disabled(db);
-
-	auto base_grammar = CompiledGrammar::Get(*disabled.context);
-	ActivateGrammarExtensionTestSyntax(enabled);
-	CheckGrammarExtensionTestSyntax(enabled);
-	REQUIRE_FAIL(disabled.Query("ANSWER"));
-	CheckGrammarExtensionTestSyntax(enabled);
-	ActiveGrammarExtensionsSetting::SetLocal(*enabled.context, Value::LIST(LogicalType::VARCHAR, vector<Value> {}));
-	REQUIRE_FAIL(enabled.Query("ANSWER"));
-	REQUIRE(base_grammar == CompiledGrammar::Get(*enabled.context));
-}
-
-TEST_CASE("Parser options retain their compiled grammar", "[api][grammar_extension]") {
-	DuckDB db(nullptr);
-	RegisterGrammarExtensionTestSyntax(*db.instance);
-	Connection con(db);
-	ActivateGrammarExtensionTestSyntax(con);
-
-	Parser context_parser(*con.context);
-	REQUIRE_NOTHROW(context_parser.ParseQuery("ANSWER"));
-	REQUIRE(context_parser.statements.size() == 1);
-	auto &context_select = context_parser.statements[0]->Cast<SelectStatement>().node->Cast<SelectNode>();
-	REQUIRE(context_select.select_list[0]->GetExpressionClass() == ExpressionClass::CONSTANT);
-
-	auto options = ParserOptions::Builtin();
-	options.compiled_grammar = CompiledGrammar::Get(*con.context);
-	REQUIRE(options.compiled_grammar == CompiledGrammar::Get(*con.context));
-	options.extensions = nullptr;
-
-	Parser parser(std::move(options));
-	REQUIRE_NOTHROW(parser.ParseQuery("ANSWER"));
+	auto parser = Parser::GetBuiltinParser();
+	REQUIRE_NOTHROW(parser.ParseQuery("SELECT 42"));
 	REQUIRE(parser.statements.size() == 1);
-
-	auto base_parser = Parser::GetBuiltinParser();
-	REQUIRE_NOTHROW(base_parser.ParseQuery("ANSWER"));
-	REQUIRE(base_parser.statements.size() == 1);
-	auto &base_select = base_parser.statements[0]->Cast<SelectStatement>().node->Cast<SelectNode>();
-	// Without the extension, ANSWER is a table name in a FROM-first query.
-	REQUIRE(base_select.select_list[0]->GetExpressionClass() == ExpressionClass::STAR);
-	REQUIRE(base_select.from_table->type == TableReferenceType::BASE_TABLE);
 }
 
-class AddInvalidGrammarExtensionTestRule final : public GrammarExtension {
-public:
-	AddInvalidGrammarExtensionTestRule() : GrammarExtension("invalid_grammar_extension", "Invalid grammar extension") {
-	}
-
-	vector<GrammarChange> GetChanges() const override {
-		vector<GrammarChange> changes;
-		changes.push_back(GrammarChange::AddRule("GrammarExtensionInvalid <- GrammarExtensionMissingRule"));
-		return changes;
-	}
-};
-
-TEST_CASE("Invalid Grammar extensions fail grammar compilation", "[api][grammar_extension]") {
-	DuckDB db(nullptr);
-	Connection con(db);
-	RegisterGrammarExtensionTestSyntax(*db.instance);
-	GrammarExtension::Register(*db.instance, make_shared_ptr<AddInvalidGrammarExtensionTestRule>());
-	ActivateGrammarExtensionTestSyntax(con);
-	auto result = con.Query("SET active_grammar_extensions = ['invalid_grammar_extension']");
-	REQUIRE_FAIL(result);
-	CheckGrammarExtensionTestSyntax(con);
-	auto setting =
-	    con.Query("SELECT current_setting('active_grammar_extensions')::VARCHAR[]")->Collection().GetValue(0, 0);
-	REQUIRE(ListValue::GetChildren(setting).size() == 2);
+TEST_CASE("Grammars with missing rule references fail compilation", "[api][grammar_extension]") {
+	auto grammar = ParsedGrammar::CreateDefault();
+	grammar.AddRule("GrammarExtensionInvalid <- GrammarExtensionMissingRule");
+	REQUIRE_THROWS(CompiledGrammar::Compile(grammar));
 }

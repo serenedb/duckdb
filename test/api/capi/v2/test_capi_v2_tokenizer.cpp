@@ -1,9 +1,5 @@
 #include "test_capi_v2.hpp"
 
-#include "duckdb/main/capi_v2/capi_v2_internal.hpp"
-#include "duckdb/parser/grammar_change.hpp"
-#include "duckdb/parser/grammar_extension.hpp"
-
 #include <ostream>
 #include <string>
 #include <vector>
@@ -122,19 +118,6 @@ Lexed TokenizeAll(duckdb_v2_connection_handle conn, duckdb_v2_str sql) {
 Lexed TokenizeAll(duckdb_v2_connection_handle conn, const std::string &sql) {
 	return TokenizeAll(conn, Convert(sql));
 }
-
-// A grammar extension that adds one unreserved keyword and nothing else, so a
-// connection selecting it classifies that word differently from the base grammar.
-class TokenizerTestKeywordExtension final : public duckdb::GrammarExtension {
-public:
-	TokenizerTestKeywordExtension() : GrammarExtension("tokenizer_test_keyword", "adds the keyword ANSWER") {
-	}
-	duckdb::vector<duckdb::GrammarChange> GetChanges() const override {
-		duckdb::vector<duckdb::GrammarChange> changes;
-		changes.push_back(duckdb::GrammarChange::AddChoice("UnreservedKeyword", "'ANSWER'"));
-		return changes;
-	}
-};
 
 } // namespace
 
@@ -374,33 +357,6 @@ TEST_CASE("V2 tokenizer: the iterator outlives the connection and the database",
 	REQUIRE(TokDrain(it, 12) == Toks {{KEYWORD, 0, 6}, {NUMBER, 7, 1}, {TERMINATOR, 8, 1}, {STRING, 10, 2}});
 	REQUIRE(EndsUnterminated(it));
 	duckdb_v2_token_iterator_destroy(&it);
-}
-
-TEST_CASE("V2 tokenizer: the keyword set is the connection's grammar", "[capi_v2][tokenizer]") {
-	EnvFixture fx;
-	auto &instance = *duckdb::capiv2::Convert(fx.instance)->GetDatabase().instance;
-	duckdb::GrammarExtension::Register(instance, duckdb::make_shared_ptr<TokenizerTestKeywordExtension>());
-
-	// Base grammar: ANSWER is a plain identifier.
-	REQUIRE(TokenizeAll(fx.conn, "ANSWER") == Complete({{IDENTIFIER, 0, 6}}));
-
-	// Selecting the extension makes it a keyword on that connection only.
-	ExecSQL(fx.conn, "SET active_grammar_extensions = ['tokenizer_test_keyword']");
-	REQUIRE(TokenizeAll(fx.conn, "ANSWER") == Complete({{KEYWORD, 0, 6}}));
-
-	duckdb_v2_connection_handle other = nullptr;
-	REQUIRE(duckdb_v2_connection_create(fx.instance, &other, nullptr) == DUCKDB_V2_ERROR_NONE);
-	REQUIRE(TokenizeAll(other, "ANSWER") == Complete({{IDENTIFIER, 0, 6}}));
-	duckdb_v2_connection_destroy(&other);
-
-	// The grammar is read when the iterator is created, not when it is stepped.
-	duckdb_v2_token_iterator_handle it = nullptr;
-	auto sql_str = Convert("ANSWER");
-	REQUIRE(duckdb_v2_tokenize_sql(fx.conn, &sql_str, &it, nullptr) == DUCKDB_V2_ERROR_NONE);
-	ExecSQL(fx.conn, "RESET active_grammar_extensions");
-	REQUIRE(TokDrain(it, 6) == Toks {{KEYWORD, 0, 6}});
-	duckdb_v2_token_iterator_destroy(&it);
-	REQUIRE(TokenizeAll(fx.conn, "ANSWER") == Complete({{IDENTIFIER, 0, 6}}));
 }
 
 // ===========================================================================

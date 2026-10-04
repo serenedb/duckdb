@@ -3,11 +3,6 @@
 # group: [table]
 
 query I
-SELECT count(*) >= 0 FROM duckdb_grammar_extensions();
-----
-true
-
-query I
 SELECT count(*) >= 0 FROM duckdb_coordinate_systems();
 ----
 true

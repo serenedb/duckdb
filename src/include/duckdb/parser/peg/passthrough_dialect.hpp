@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include "duckdb/parser/peg/dialect_extension.hpp"
 #include "duckdb/parser/peg/matcher.hpp"
 
 namespace duckdb {
@@ -55,15 +54,6 @@ public:
 //!
 //! DISCONNECT stays interpreted so the client can always end the connection; every other statement is handed to
 //! the remote verbatim. The tokenizer is unchanged, so statement boundaries are DuckDB's.
-class PassthroughDialect : public DialectExtension {
-public:
-	static constexpr const char *NAME = "passthrough";
-
-public:
-	PassthroughDialect() : DialectExtension(NAME) {
-	}
-
-	void ApplyGrammarChanges(GrammarChangesInput &input) override;
-};
+void ApplyPassthroughDialect(ParsedGrammar &grammar);
 
 } // namespace duckdb
