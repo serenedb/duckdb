@@ -51,3 +51,23 @@ query I
 FROM query('SELECT count(*) FROM range(10) t(i) WHERE ' || repeat('i < 11 AND ', 2000) || 'i < 3')
 ----
 3
+
+statement error
+FROM query('SELECT NULL::' || repeat('STRUCT(a ', 1000) || 'INTEGER' || repeat(')', 1000))
+----
+<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+
+statement error
+FROM query('SELECT NULL::' || repeat('MAP(INTEGER, ', 1000) || 'INTEGER' || repeat(')', 1000))
+----
+<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+
+statement error
+FROM query('CREATE TABLE deep_type(c ' || repeat('STRUCT(a ', 1000) || 'INTEGER' || repeat(')', 1000) || ')')
+----
+<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+
+query I
+FROM query('SELECT (NULL::' || repeat('STRUCT(a ', 100) || 'INTEGER' || repeat(')', 100) || ') IS NULL')
+----
+true

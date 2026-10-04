@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/parser/sql_statement.hpp"
+#include "duckdb/parser/expression_depth_check.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/parser/query_node.hpp"
 #include "duckdb/parser/column_list.hpp"
@@ -29,19 +30,6 @@ struct UnicodeSpace {
 
 	idx_t pos;
 	idx_t bytes;
-};
-
-struct ExpressionDepthCheck {
-	static constexpr idx_t LEVELS_PER_TOKEN = 2;
-
-	idx_t max_expression_depth;
-	vector<pair<reference<ParsedExpression>, idx_t>> pending;
-	idx_t deepest = 0;
-
-	static bool CanExceed(idx_t token_count, idx_t max_expression_depth) {
-		return token_count * LEVELS_PER_TOKEN > max_expression_depth;
-	}
-	void Verify(ParsedExpression &root);
 };
 
 //! The parser is responsible for parsing the query and converting it into a set
