@@ -10,7 +10,8 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/numeric_utils.hpp"
-#include "duckdb/common/unordered_set.hpp"
+
+#include <algorithm>
 
 namespace duckdb {
 
@@ -30,41 +31,59 @@ public:
 		INVALID
 	};
 
-	/* The double {{}} in the initializer for excluded_entries is intentional, workaround for bug in gcc-4.9 */
 	template <class T, class MATCHER>
 	static bool MatchRecursive(vector<unique_ptr<MATCHER>> &matchers, vector<reference<T>> &entries,
-	                           vector<reference<T>> &bindings, unordered_set<idx_t> excluded_entries, idx_t m_idx = 0) {
+	                           vector<reference<T>> &bindings, const vector<vector<idx_t>> &candidates,
+	                           vector<idx_t> &assigned) {
+		auto m_idx = assigned.size();
 		if (m_idx == matchers.size()) {
-			// matched all matchers!
 			return true;
 		}
-		// try to find a match for the current matcher (m_idx)
-		idx_t previous_binding_count = bindings.size();
-		for (idx_t e_idx = 0; e_idx < entries.size(); e_idx++) {
-			// first check if this entry has already been matched
-			if (excluded_entries.find(e_idx) != excluded_entries.end()) {
-				// it has been matched: skip this entry
+		auto previous_binding_count = NumericCast<int64_t>(bindings.size());
+		for (auto e_idx : candidates[m_idx]) {
+			if (std::find(assigned.begin(), assigned.end(), e_idx) != assigned.end()) {
 				continue;
 			}
-			// otherwise check if the current matcher matches this entry
 			if (matchers[m_idx]->Match(entries[e_idx], bindings)) {
-				// m_idx matches e_idx!
-				// check if we can find a complete match for this path
-				// first add e_idx to the new set of excluded entries
-				unordered_set<idx_t> new_excluded_entries;
-				new_excluded_entries = excluded_entries;
-				new_excluded_entries.insert(e_idx);
-				// then match the next matcher in the set
-				if (MatchRecursive(matchers, entries, bindings, new_excluded_entries, m_idx + 1)) {
-					// we found a match for this path! success
+				assigned.push_back(e_idx);
+				if (MatchRecursive(matchers, entries, bindings, candidates, assigned)) {
 					return true;
-				} else {
-					// we did not find a match! remove any bindings we added in the call to Match()
-					bindings.erase(bindings.begin() + NumericCast<int64_t>(previous_binding_count), bindings.end());
 				}
+				assigned.pop_back();
 			}
+			bindings.erase(bindings.begin() + previous_binding_count, bindings.end());
 		}
 		return false;
+	}
+
+	template <class T, class MATCHER>
+	static bool MatchUnordered(vector<unique_ptr<MATCHER>> &matchers, vector<reference<T>> &entries,
+	                           vector<reference<T>> &bindings) {
+		auto previous_binding_count = NumericCast<int64_t>(bindings.size());
+		if (matchers.size() == 1) {
+			for (auto &entry : entries) {
+				if (matchers[0]->Match(entry, bindings)) {
+					return true;
+				}
+				bindings.erase(bindings.begin() + previous_binding_count, bindings.end());
+			}
+			return false;
+		}
+		vector<vector<idx_t>> candidates(matchers.size());
+		for (idx_t m_idx = 0; m_idx < matchers.size(); m_idx++) {
+			for (idx_t e_idx = 0; e_idx < entries.size(); e_idx++) {
+				if (matchers[m_idx]->Match(entries[e_idx], bindings)) {
+					candidates[m_idx].push_back(e_idx);
+				}
+				bindings.erase(bindings.begin() + previous_binding_count, bindings.end());
+			}
+			if (candidates[m_idx].empty()) {
+				return false;
+			}
+		}
+		vector<idx_t> assigned;
+		assigned.reserve(matchers.size());
+		return MatchRecursive(matchers, entries, bindings, candidates, assigned);
 	}
 
 	template <class T, class MATCHER>
@@ -104,12 +123,7 @@ public:
 			}
 			// now perform the actual matching
 			// every matcher has to match a UNIQUE entry
-			// we perform this matching in a recursive way
-			unordered_set<idx_t> excluded_entries;
-			if (!MatchRecursive(matchers, entries, bindings, excluded_entries)) {
-				return false;
-			}
-			return true;
+			return MatchUnordered(matchers, entries, bindings);
 		}
 	}
 
