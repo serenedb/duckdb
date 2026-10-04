@@ -347,6 +347,21 @@ SELECT CASE WHEN false THEN json_set('{}', '$not_a_path', '1') ELSE '{}'::JSON E
 ----
 {}
 
+query T
+SELECT TRY(json_set('{}', (1 // 0)::VARCHAR, '1'))
+----
+NULL
+
+query T
+SELECT CASE WHEN false THEN json_remove('{}', (1 // 0)::VARCHAR) ELSE '{}'::JSON END
+----
+{}
+
+statement error
+SELECT json_set('{}', (1 // 0)::VARCHAR, '1')
+----
+Division by zero
+
 # Wildcards are not supported in modification functions
 statement error
 SELECT json_set('{"a":[1,2]}', '$.a[*]', '9')

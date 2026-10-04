@@ -1,0 +1,117 @@
+# name: test/sql/error/unevaluated_expression_errors.test
+# description: Planning never raises the error of an expression that execution does not evaluate
+# group: [error]
+
+statement ok
+CREATE TABLE empty_ints(i INTEGER)
+
+query T
+SELECT TRY(CASE WHEN 1 // 0 = 1 THEN 'a' ELSE 'b' END)
+----
+NULL
+
+query T
+SELECT CASE WHEN i > 0 THEN 'pos' WHEN 1 // 0 = 1 THEN 'x' ELSE 'neg' END FROM (VALUES (1), (2)) t(i)
+----
+pos
+pos
+
+statement error
+SELECT CASE WHEN i > 0 THEN 'pos' WHEN 1 // 0 = 1 THEN 'x' ELSE 'neg' END FROM (VALUES (1), (-1)) t(i)
+----
+Division by zero
+
+query I
+SELECT COALESCE(3, -NULLIF(67, -48 // 0))
+----
+3
+
+query T
+SELECT TRY(i::VARCHAR || (1 // 0)::VARCHAR) FROM (VALUES (1)) t(i)
+----
+NULL
+
+query T
+SELECT TRY(prefix(s, (1 // 0)::VARCHAR)) FROM (VALUES ('a')) t(s)
+----
+NULL
+
+query T
+SELECT TRY(contains(s, (1 // 0)::VARCHAR)) FROM (VALUES ('a')) t(s)
+----
+NULL
+
+query T
+SELECT TRY(suffix(s, (1 // 0)::VARCHAR)) FROM (VALUES ('a')) t(s)
+----
+NULL
+
+query II
+SELECT * FROM (VALUES (1)) a(i) LEFT JOIN (VALUES (1)) b(j) ON a.i = b.j WHERE COALESCE(b.j, 1 // 0) > 0
+----
+1	1
+
+statement error
+SELECT * FROM (VALUES (1)) a(i) LEFT JOIN (VALUES (2)) b(j) ON a.i = b.j WHERE COALESCE(b.j, 1 // 0) > 0
+----
+Division by zero
+
+query T
+SELECT TRY(i < 0 AND 1 // 0 = 1) FROM (VALUES (1)) t(i)
+----
+NULL
+
+query T
+SELECT TRY(i > 0 OR 1 // 0 = 1) FROM (VALUES (1)) t(i)
+----
+NULL
+
+query T
+SELECT TRY(substring('abc', 1 // 0, 1))
+----
+NULL
+
+query T
+SELECT TRY(regexp_matches('abc', (1 // 0)::VARCHAR))
+----
+NULL
+
+query T
+SELECT TRY('abc' LIKE (1 // 0)::VARCHAR)
+----
+NULL
+
+query T
+SELECT TRY(date_part((1 // 0)::VARCHAR, DATE '2024-01-01'))
+----
+NULL
+
+query I
+SELECT sum(i) OVER (ROWS BETWEEN ('x' || '')::INTEGER PRECEDING AND CURRENT ROW) FROM empty_ints
+----
+
+query I
+SELECT sum(i) OVER (ROWS BETWEEN 0 PRECEDING AND ('x' || '')::INTEGER FOLLOWING) FROM empty_ints
+----
+
+statement error
+SELECT sum(i) OVER (ROWS BETWEEN ('x' || '')::INTEGER PRECEDING AND CURRENT ROW) FROM (VALUES (1)) t(i)
+----
+Could not convert string 'x' to INT32
+
+query I
+SELECT lead(i, 1 // 0) OVER () FROM empty_ints
+----
+
+query I
+SELECT lag(i, 1, 1 // 0) OVER () FROM empty_ints
+----
+
+query I
+SELECT nth_value(i, 1 // 0) OVER () FROM empty_ints
+----
+
+statement error
+SELECT lead(i, 1 // 0) OVER () FROM (VALUES (1)) t(i)
+----
+Division by zero
