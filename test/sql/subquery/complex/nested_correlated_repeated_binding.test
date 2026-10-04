@@ -1,0 +1,45 @@
+# name: test/sql/subquery/complex/nested_correlated_repeated_binding.test
+# description: Nested correlated subqueries whose removed duplicate elimination maps the correlated column onto a column the join already outputs
+# group: [complex]
+
+statement ok
+CREATE TABLE t(oid INTEGER, typname VARCHAR);
+
+statement ok
+INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+CREATE TABLE r(oid INTEGER, contypid INTEGER, contype VARCHAR, conname VARCHAR);
+
+statement ok
+INSERT INTO r VALUES (10, 1, 'c', 'x'), (11, 1, 'p', 'y'), (12, 2, 'c', 'z');
+
+query T
+SELECT t.typname FROM t WHERE EXISTS (SELECT (SELECT c.contype FROM r c WHERE c.oid = r.oid) FROM r WHERE t.oid = r.contypid) ORDER BY 1
+----
+a
+b
+
+query TT
+SELECT t.typname, ARRAY(SELECT (SELECT c.contype FROM r c WHERE c.oid = r.oid) FROM r WHERE t.oid = r.contypid ORDER BY r.conname) FROM t ORDER BY 1
+----
+a	[c, p]
+b	[c]
+c	[]
+
+query TT
+SELECT t.typname, (SELECT (SELECT c.contype FROM r c WHERE c.oid = r.oid) FROM r WHERE t.oid = r.contypid ORDER BY r.conname LIMIT 1) FROM t ORDER BY 1
+----
+a	c
+b	c
+c	NULL
+
+statement ok
+CREATE MACRO kind_of(x) AS (SELECT c.contype FROM r c WHERE c.oid = x)
+
+query TT
+SELECT t.typname, ARRAY(SELECT kind_of(r.oid) FROM r WHERE t.oid = r.contypid ORDER BY r.conname) FROM t ORDER BY 1
+----
+a	[c, p]
+b	[c]
+c	[]

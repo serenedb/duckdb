@@ -102,6 +102,7 @@ public:
 
 private:
 	static void RemapProjectionMapStrict(vector<ProjectionIndex> &projection_map,
+	                                     const vector<ColumnBinding> &original_child_bindings,
 	                                     const vector<ColumnBinding> &child_bindings_before,
 	                                     const vector<ColumnBinding> &child_bindings_after);
 };
