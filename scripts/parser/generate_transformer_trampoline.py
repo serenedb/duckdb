@@ -892,7 +892,7 @@ class UseGramPreviewEmitter:
             else:
                 lines.append("\tauto &list_pr = process.parse_result.Cast<ListParseResult>();")
                 lines.append("\tauto &choice_pr = list_pr.Child<ChoiceParseResult>(0);")
-                lines.append("\tauto result = choice_pr.GetResult().Cast<KeywordParseResult>().keyword;")
+                lines.append("\tstring result(choice_pr.GetResult().Cast<KeywordParseResult>().keyword);")
         else:
             lines.append(f"\tauto result = Transform{rule_name}(transformer);")
         lines.append(f"\treturn {typed_result_expr(cpp_type, 'result', by_value)};")
@@ -1473,7 +1473,7 @@ class UseGramPreviewEmitter:
         if matcher == "number_literal":
             return f"TransformNumberLiteral(transformer, {parse_expr})"
         if matcher in ("operator", "all_operators"):
-            return f"{parse_expr}.Cast<OperatorParseResult>().operator_token"
+            return f"string({parse_expr}.Cast<OperatorParseResult>().operator_token)"
         if matcher in ("identifier", "identifier_string"):
             return f"{parse_expr}.Cast<IdentifierParseResult>().identifier.GetIdentifierName()"
         raise NotImplementedError(f"unsupported matcher override: {matcher}")

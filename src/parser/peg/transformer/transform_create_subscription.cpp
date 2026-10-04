@@ -38,7 +38,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateSubscriptionState
 		//  2: SubscriptionPublication?
 		auto &conn_list = conn_opt.GetResult().Cast<ListParseResult>();
 		auto connection_str = conn_list.Child<StringLiteralParseResult>(1).result;
-		result->info->named_parameters["connection"] = ConstantExpression::String(connection_str);
+		result->info->named_parameters["connection"] = ConstantExpression::String(string(connection_str));
 
 		auto &pub_opt = conn_list.Child<OptionalParseResult>(2);
 		if (pub_opt.HasResult()) {

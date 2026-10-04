@@ -201,19 +201,7 @@ struct MatchState {
 		return context.max_token_index;
 	}
 
-	//! Fold a non-quoted identifier in-place according to the configured case mode
-	void FoldIdentifier(string &text) const {
-		switch (context.identifier_case_mode) {
-		case IdentifierCaseMode::LOWERCASE:
-			text = StringUtil::Lower(text);
-			break;
-		case IdentifierCaseMode::UPPERCASE:
-			text = StringUtil::Upper(text);
-			break;
-		default:
-			break;
-		}
-	}
+	std::string_view FoldIdentifier(std::string_view text) const;
 
 	void AddSuggestion(MatcherSuggestion suggestion);
 };
@@ -301,6 +289,9 @@ public:
 		return !name.empty();
 	}
 	string GetName() const;
+	const string &GetDeclaredName() const {
+		return name;
+	}
 	optional_idx GetPackratId() const {
 		return packrat_id;
 	}
@@ -380,11 +371,58 @@ private:
 
 class ParseResultAllocator {
 public:
-	optional_ptr<ParseResult> Allocate(unique_ptr<ParseResult> parse_result);
+	ParseResultAllocator();
+
+	ParseResultAllocator(const ParseResultAllocator &) = delete;
+	ParseResultAllocator &operator=(const ParseResultAllocator &) = delete;
+
+	template <class RESULT, class... ARGS>
+	RESULT &Make(ARGS &&... args) {
+		static_assert(std::is_trivially_destructible_v<RESULT>, "parse results are never destroyed");
+		return *arena.Make<RESULT>(std::forward<ARGS>(args)...);
+	}
+
+	std::string_view Lower(std::string_view text);
+	std::string_view Upper(std::string_view text);
+	std::string_view Unquote(std::string_view body, char quote);
+	char *AllocateText(idx_t capacity) {
+		return char_ptr_cast(arena.Allocate(capacity));
+	}
+	std::string_view FinishText(char *data, idx_t capacity, idx_t size) {
+		arena.ShrinkHead(capacity - size);
+		return std::string_view(data, size);
+	}
+	static idx_t CopyUnquoted(std::string_view body, char quote, char *target);
+
+	idx_t ChildCount() const {
+		return children.size();
+	}
+	void PushChild(ParseResult &child) {
+		children.push_back(child);
+	}
+	std::span<const reference<ParseResult>> PendingChildren(idx_t begin) const {
+		return std::span<const reference<ParseResult>>(children).subspan(begin);
+	}
+	void DiscardChildren(idx_t begin) {
+		children.erase(children.begin() + NumericCast<int64_t>(begin), children.end());
+	}
+	std::span<reference<ParseResult>> TakeChildren(idx_t begin);
 
 private:
-	vector<unique_ptr<ParseResult>> parse_results;
+	ArenaAllocator arena;
+	vector<reference<ParseResult>> children;
 };
+
+inline std::string_view MatchState::FoldIdentifier(std::string_view text) const {
+	switch (context.identifier_case_mode) {
+	case IdentifierCaseMode::LOWERCASE:
+		return context.allocator.Lower(text);
+	case IdentifierCaseMode::UPPERCASE:
+		return context.allocator.Upper(text);
+	default:
+		return text;
+	}
+}
 
 template <class PROCESS, class... ARGS>
 arena_ptr<MatchProcess> MatchState::Make(ARGS &&... args) {
@@ -397,10 +435,10 @@ MatcherResult MatchState::AllocateParseResult(ARGS &&... args) {
 	if (!BuildParseResult()) {
 		return MatcherResult::Success();
 	}
-	auto result = context.allocator.Allocate(make_uniq<RESULT>(std::forward<ARGS>(args)...));
+	auto &result = context.allocator.Make<RESULT>(std::forward<ARGS>(args)...);
 	if (rule) {
-		result->SetRule(*rule);
-		result->name = rule->name;
+		result.SetRule(*rule);
+		result.name = rule->name;
 	}
 	return MatcherResult::Success(result);
 }

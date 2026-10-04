@@ -244,7 +244,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateRoleStatement(PEG
 	};
 
 	auto &clauses_opt = list_pr.Child<OptionalParseResult>(4);
-	vector<reference<ParseResult>> clauses;
+	std::span<reference<ParseResult>> clauses;
 	if (clauses_opt.HasResult()) {
 		clauses = clauses_opt.GetResult().Cast<RepeatParseResult>().GetChildren();
 	}

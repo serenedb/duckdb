@@ -59,10 +59,62 @@ Matcher &MatcherAllocator::Allocate(unique_ptr<Matcher> matcher) {
 	return result;
 }
 
-optional_ptr<ParseResult> ParseResultAllocator::Allocate(unique_ptr<ParseResult> parse_result) {
-	auto result_ptr = parse_result.get();
-	parse_results.push_back(std::move(parse_result));
-	return optional_ptr<ParseResult>(result_ptr);
+ParseResultAllocator::ParseResultAllocator() : arena(Allocator::DefaultAllocator()) {
+}
+
+std::string_view ParseResultAllocator::Lower(std::string_view text) {
+	auto first = std::find_if(text.begin(), text.end(), [](char c) { return c >= 'A' && c <= 'Z'; });
+	if (first == text.end()) {
+		return text;
+	}
+	auto data = AllocateText(text.size());
+	for (idx_t i = 0; i < text.size(); i++) {
+		data[i] = StringUtil::CharacterToLower(text[i]);
+	}
+	return std::string_view(data, text.size());
+}
+
+std::string_view ParseResultAllocator::Upper(std::string_view text) {
+	auto first = std::find_if(text.begin(), text.end(), [](char c) { return c >= 'a' && c <= 'z'; });
+	if (first == text.end()) {
+		return text;
+	}
+	auto data = AllocateText(text.size());
+	for (idx_t i = 0; i < text.size(); i++) {
+		data[i] = StringUtil::CharacterToUpper(text[i]);
+	}
+	return std::string_view(data, text.size());
+}
+
+idx_t ParseResultAllocator::CopyUnquoted(std::string_view body, char quote, char *target) {
+	idx_t size = 0;
+	for (idx_t i = 0; i < body.size(); i++) {
+		target[size++] = body[i];
+		if (body[i] == quote && i + 1 < body.size() && body[i + 1] == quote) {
+			i++;
+		}
+	}
+	return size;
+}
+
+std::string_view ParseResultAllocator::Unquote(std::string_view body, char quote) {
+	if (body.find(quote) == std::string_view::npos) {
+		return body;
+	}
+	auto data = AllocateText(body.size());
+	return FinishText(data, body.size(), CopyUnquoted(body, quote, data));
+}
+
+std::span<reference<ParseResult>> ParseResultAllocator::TakeChildren(idx_t begin) {
+	auto count = children.size() - begin;
+	if (count == 0) {
+		return {};
+	}
+	auto data =
+	    reinterpret_cast<reference<ParseResult> *>(arena.AllocateAligned(count * sizeof(reference<ParseResult>)));
+	std::uninitialized_copy(children.begin() + NumericCast<int64_t>(begin), children.end(), data);
+	DiscardChildren(begin);
+	return {data, count};
 }
 
 } // namespace duckdb

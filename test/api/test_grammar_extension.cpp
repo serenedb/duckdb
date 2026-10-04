@@ -758,7 +758,7 @@ public:
 		}
 		if (lifetime.create_result) {
 			return MatchStep::Complete(child_state.AllocateParseResult<ListParseResult>(
-			    vector<reference<ParseResult>>(), string("nested result"), optional_idx()));
+			    std::span<reference<ParseResult>>(), "nested result", optional_idx()));
 		}
 		return MatchStep::Complete(MatcherResult::Success());
 	}

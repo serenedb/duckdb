@@ -36,10 +36,8 @@ public:
 		if (!state.BuildParseResult()) {
 			return MatcherResult::Success();
 		}
-		string keyword_text = token_text;
-		state.FoldIdentifier(keyword_text);
 		auto result =
-		    state.AllocateParseResult<KeywordParseResult>(std::move(keyword_text), start_offset, token_length);
+		    state.AllocateParseResult<KeywordParseResult>(state.FoldIdentifier(token_text), start_offset, token_length);
 		if (result.HasParseResult()) {
 			result.GetParseResult()->name = name;
 		}
