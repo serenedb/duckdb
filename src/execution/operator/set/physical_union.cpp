@@ -66,15 +66,17 @@ void PhysicalUnion::BuildPipelines(Pipeline &current, MetaPipeline &meta_pipelin
 		union_pipelines.push_back(union_pipeline);
 	}
 	// continue with the current pipeline
-	children[0].get().BuildPipelines(current, meta_pipeline);
+	auto child = children.begin();
+	(*child).get().BuildPipelines(current, meta_pipeline);
 	bool can_saturate_threads =
-	    ContainsSink(children[0].get()) && children[0].get().CanSaturateThreads(current.GetClientContext());
+	    ContainsSink((*child).get()) && (*child).get().CanSaturateThreads(current.GetClientContext());
 	for (idx_t i = 1; i < children.size(); i++) {
+		auto &previous = (*child).get();
+		++child;
 		auto &union_pipeline = union_pipelines[children.size() - i - 1].get();
 		vector<shared_ptr<Pipeline>> dependencies;
 		optional_ptr<MetaPipeline> last_child_ptr;
-		if (ContainsSink(children[i - 1].get()) &&
-		    children[i - 1].get().CanSaturateThreads(current.GetClientContext())) {
+		if (ContainsSink(previous) && previous.CanSaturateThreads(current.GetClientContext())) {
 			can_saturate_threads = true;
 		}
 		if (order_matters || can_saturate_threads) {
@@ -93,7 +95,7 @@ void PhysicalUnion::BuildPipelines(Pipeline &current, MetaPipeline &meta_pipelin
 		// Assign proper batch index to the union pipeline
 		meta_pipeline.AssignNextBatchIndex(union_pipeline);
 		// build the union pipeline
-		children[i].get().BuildPipelines(union_pipeline, meta_pipeline);
+		(*child).get().BuildPipelines(union_pipeline, meta_pipeline);
 
 		if (last_child_ptr) {
 			// the pointer was set, set up the dependencies
