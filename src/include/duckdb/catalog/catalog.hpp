@@ -156,6 +156,8 @@ public:
 	}
 	virtual void OnCatalogLogDecided() {
 	}
+	virtual void RequestCatalogLogSync(shared_ptr<WriteAheadLog> log, idx_t offset) {
+	}
 	virtual bool AppendLocalIndexes(DuckTransaction &transaction, TableIndexList &index_list,
 	                                RowGroupCollection &source, const vector<StorageIndex> &mapped_column_ids,
 	                                row_t row_start, ErrorData &error) {
