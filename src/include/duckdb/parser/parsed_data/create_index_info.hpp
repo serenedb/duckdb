@@ -56,6 +56,7 @@ struct CreateIndexInfo : public CreateInfo {
 	//! Parallel to column_opclasses; entry is nullopt when no parens were given,
 	//! and an (empty or non-empty) map when parens were present in the source SQL.
 	vector<std::optional<case_insensitive_map_t<Value>>> column_opclass_options;
+	idx_t table_oid = 0;
 
 	//! The types of the logical columns (necessary for scanning the table during CREATE INDEX)
 	vector<LogicalType> scan_types;

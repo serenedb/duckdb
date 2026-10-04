@@ -291,7 +291,7 @@ void DuckDBConstraintsFunction(ClientContext &context, TableFunctionInput &data_
 
 			database_name.Append(Value(table.ParentCatalog().GetName()));
 			database_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.ParentCatalog().GetOid())));
-			schema_name.Append(Value(table.ParentSchemaName()));
+			schema_name.Append(Value(table.ParentSchemaName(CatalogTransaction(table.ParentCatalog(), context))));
 			schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.ParentSchemaOid())));
 			table_name.Append(Value(table.name));
 			table_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.oid)));

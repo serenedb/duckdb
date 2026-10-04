@@ -126,6 +126,8 @@ public:
 	virtual const Value GenerationExpression(idx_t col) = 0;
 
 	void WriteColumns(idx_t start_col, idx_t end_col, DataChunk &output);
+
+	Identifier parent_schema_name;
 };
 
 class TableColumnHelper : public ColumnHelper {
@@ -252,15 +254,20 @@ private:
 };
 
 unique_ptr<ColumnHelper> ColumnHelper::Create(ClientContext &context, CatalogEntry &entry) {
+	unique_ptr<ColumnHelper> result;
 	switch (entry.type) {
 	case CatalogType::TABLE_ENTRY:
-		return make_uniq<TableColumnHelper>(entry.Cast<TableCatalogEntry>());
+		result = make_uniq<TableColumnHelper>(entry.Cast<TableCatalogEntry>());
+		break;
 	case CatalogType::VIEW_ENTRY:
-		return make_uniq<ViewColumnHelper>(context, entry.Cast<ViewCatalogEntry>());
+		result = make_uniq<ViewColumnHelper>(context, entry.Cast<ViewCatalogEntry>());
+		break;
 	default:
 		throw NotImplementedException({{"catalog_type", CatalogTypeToString(entry.type)}},
 		                              "Unsupported catalog type for duckdb_columns");
 	}
+	result->parent_schema_name = entry.ParentSchemaName(CatalogTransaction(entry.ParentCatalog(), context));
+	return result;
 }
 
 void ColumnHelper::WriteColumns(idx_t start_col, idx_t end_col, DataChunk &output) {
@@ -312,7 +319,7 @@ void ColumnHelper::WriteColumns(idx_t start_col, idx_t end_col, DataChunk &outpu
 
 		database_name.Append(Value(entry.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.catalog.GetOid())));
-		schema_name.Append(Value(entry.ParentSchemaName()));
+		schema_name.Append(Value(parent_schema_name));
 		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.ParentSchemaOid())));
 		table_name.Append(Value(entry.name));
 		table_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.oid)));

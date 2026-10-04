@@ -70,6 +70,12 @@
         "serialize_condition": "qualified_name.Path().size() > 3",
         "deserialize_default": "QualifiedName()",
         "deserialize_skip_assign": true
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ],
     "methods": {

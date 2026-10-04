@@ -106,7 +106,7 @@ public:
 	SimilarCatalogEntry GetSimilarEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info) override;
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
-	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) override;
 
 	void Verify(Catalog &catalog) override;
 
@@ -118,6 +118,6 @@ private:
 	bool DropEntryInternal(CatalogTransaction transaction, CatalogEntry &entry, const Identifier &name, bool cascade,
 	                       bool allow_drop_internal);
 	void OnDropEntry(CatalogTransaction transaction, CatalogEntry &entry);
-	void SetSchemaName(const Identifier &schema_name, optional_ptr<CatalogTransaction> transaction);
+	void RenameInDependencies(const Identifier &previous, optional_ptr<CatalogTransaction> transaction);
 };
 } // namespace duckdb

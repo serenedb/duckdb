@@ -691,7 +691,7 @@ static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryR
 		}
 
 		auto &pk_table_entry_ptr = table_entry->Cast<TableCatalogEntry>();
-		fk.info.schema = pk_table_entry_ptr.ParentSchemaName();
+		fk.info.schema = pk_table_entry_ptr.ParentSchema(entry_retriever.GetContext()).name;
 		if (pk_table_entry_ptr.schema_info != schema.GetSchemaInfo()) {
 			throw BinderException("Creating foreign keys across different schemas or catalogs is not supported");
 		}

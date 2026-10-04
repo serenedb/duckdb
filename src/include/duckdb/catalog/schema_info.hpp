@@ -8,38 +8,47 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_versions.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/identifier.hpp"
-#include "duckdb/common/mutex.hpp"
 
 namespace duckdb {
 
 class SchemaInfo {
 public:
 	SchemaInfo(idx_t oid, Identifier name, shared_ptr<SchemaInfo> parent = nullptr)
-	    : oid(oid), parent(std::move(parent)), name(std::move(name)) {
+	    : oid(oid), parent(std::move(parent)), versions(make_shared_ptr<CatalogVersions>()),
+	      created_name(std::move(name)) {
 	}
 
 	const idx_t oid;
 	const shared_ptr<SchemaInfo> parent;
+	const shared_ptr<CatalogVersions> versions;
 
 	Identifier Name() const {
-		lock_guard<mutex> guard(name_lock);
-		return name;
+		auto committed = versions->GetCommitted();
+		return committed ? committed->name : created_name;
 	}
-	void SetName(Identifier new_name) {
-		lock_guard<mutex> guard(name_lock);
-		name = std::move(new_name);
+	Identifier Name(const SnapshotView &view) const {
+		auto visible = versions->GetVisible(view);
+		return visible ? visible->name : Name();
 	}
 	vector<Identifier> Path() const {
 		auto path = parent ? parent->Path() : vector<Identifier>();
 		path.push_back(Name());
 		return path;
 	}
+	vector<Identifier> Path(const SnapshotView &view) const {
+		auto path = parent ? parent->Path(view) : vector<Identifier>();
+		path.push_back(Name(view));
+		return path;
+	}
+	bool HasPendingVersion() const {
+		return versions->HasPending() || (parent && parent->HasPendingVersion());
+	}
 
 private:
-	mutable mutex name_lock;
-	Identifier name;
+	const Identifier created_name;
 };
 
 } // namespace duckdb

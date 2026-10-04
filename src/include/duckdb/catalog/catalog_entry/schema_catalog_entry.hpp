@@ -57,6 +57,10 @@ public:
 	vector<Identifier> GetSchemaPath() const;
 	//! The path of the schemas containing this one, empty for a top-level schema
 	vector<Identifier> GetParentSchemaPath() const;
+	vector<Identifier> GetParentSchemaPath(CatalogTransaction transaction) const;
+	idx_t ParentSchemaOid() const override {
+		return schema_info->parent ? schema_info->parent->oid : 0;
+	}
 	//! The schema path formatted as a SQL name, without the catalog.
 	DUCKDB_API string GetSchemaName() const;
 	//! The fully qualified name of an entry in this schema: [catalog, schema path..., entry_name]

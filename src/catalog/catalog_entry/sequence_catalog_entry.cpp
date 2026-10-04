@@ -103,7 +103,8 @@ unique_ptr<CatalogEntry> SequenceCatalogEntry::AlterEntry(ClientContext &context
 	return std::move(result);
 }
 
-void SequenceCatalogEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
+void SequenceCatalogEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction,
+                                     optional_ptr<CatalogEntry> previous) {
 	replaced.reset();
 	lock_guard<mutex> seqlock(state->lock);
 	state->generation = generation;

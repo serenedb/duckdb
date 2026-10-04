@@ -210,7 +210,7 @@ void TableStorageLoad::Attach(DuckTableEntry &table, unique_ptr<CatalogEntry> en
 		index_entry_oids[definition.oid] = definition.entry_oid;
 	}
 	BindExternalIndexes(table, *shadow_storage.GetDataTableInfo());
-	shadow.SetAsRoot(nullptr);
+	shadow.SetAsRoot(nullptr, nullptr);
 
 	auto &slot = storage[table.oid];
 	if (slot) {
@@ -258,7 +258,7 @@ void TableStorageLoad::Alter(ClientContext &context, optional_idx table_oid, Alt
 	if (!altered) {
 		return;
 	}
-	altered->SetAsRoot(nullptr);
+	altered->SetAsRoot(nullptr, nullptr);
 	retired.push_back(std::move(entry->second));
 	entry->second = std::move(altered);
 }
@@ -313,7 +313,7 @@ void TableStorageLoad::AttachIndex(PendingIndex pending) {
 		UseIndexLayoutOf(final_table, *shadow.GetStorage().GetDataTableInfo());
 		AttachIndexInstance(final_table, shadow.GetStorage(), definition, std::move(pending.storage_info));
 		BindExternalIndexes(final_table, *shadow.GetStorage().GetDataTableInfo());
-		shadow.SetAsRoot(nullptr);
+		shadow.SetAsRoot(nullptr, nullptr);
 		loaded_indexes[pending.table_oid].insert(pending.index_oid);
 		index_entry_oids[pending.index_oid] = definition.entry_oid;
 		return;

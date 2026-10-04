@@ -31,10 +31,12 @@ public:
 	Identifier ParentSchemaName() const override {
 		return schema_info->Name();
 	}
+	Identifier ParentSchemaName(CatalogTransaction transaction) const override;
 	vector<Identifier> ParentSchemaPath() const override {
 		return schema_info->Path();
 	}
-	idx_t ParentSchemaOid() const {
+	vector<Identifier> ParentSchemaPath(CatalogTransaction transaction) const override;
+	idx_t ParentSchemaOid() const override {
 		return schema_info->oid;
 	}
 	SchemaCatalogEntry &ParentSchema(CatalogTransaction transaction) const override;

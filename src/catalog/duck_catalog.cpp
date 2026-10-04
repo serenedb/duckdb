@@ -44,6 +44,7 @@ void DuckCatalog::Initialize(bool load_builtin) {
 	info.SetQualifiedName(QualifiedName({Identifier::DefaultSchema()}, Identifier()));
 	info.internal = true;
 	info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	info.oid = DefaultSchemaOid();
 	CreateSchema(data, info);
 
 	if (load_builtin) {
@@ -161,7 +162,7 @@ void DuckCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 }
 
 void DuckCatalog::AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntry &schema, AlterInfo &info) {
-	auto parent_path = schema.GetParentSchemaPath();
+	auto parent_path = schema.GetParentSchemaPath(transaction);
 	auto &set = parent_path.empty() ? *schemas
 	                                : GetSchema(transaction, parent_path, OnEntryNotFound::THROW_EXCEPTION)
 	                                      ->Cast<DuckSchemaEntry>()

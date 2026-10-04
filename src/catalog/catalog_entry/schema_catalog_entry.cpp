@@ -89,6 +89,10 @@ vector<Identifier> SchemaCatalogEntry::GetParentSchemaPath() const {
 	return schema_info->parent ? schema_info->parent->Path() : vector<Identifier>();
 }
 
+vector<Identifier> SchemaCatalogEntry::GetParentSchemaPath(CatalogTransaction transaction) const {
+	return schema_info->parent ? schema_info->parent->Path(transaction.view) : vector<Identifier>();
+}
+
 QualifiedName SchemaCatalogEntry::GetQualifiedName(const Identifier &entry_name) const {
 	return QualifiedName::FromCatalogSchema(catalog.GetName(), GetSchemaPath(), entry_name);
 }

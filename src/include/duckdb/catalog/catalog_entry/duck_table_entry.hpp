@@ -66,7 +66,7 @@ public:
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
 
-	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) override;
 	void ReplaceStorage(DuckTableEntry &source);
 
 	void CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state);

@@ -104,7 +104,7 @@ static void DuckDBCoordinateSystemsFunction(ClientContext &context, TableFunctio
 
 		database_name.Append(Value(crs_entry.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(crs_entry.catalog.GetOid())));
-		schema_name.Append(Value(crs_entry.ParentSchemaName()));
+		schema_name.Append(Value(crs_entry.ParentSchemaName(CatalogTransaction(crs_entry.ParentCatalog(), context))));
 		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(crs_entry.ParentSchemaOid())));
 		int64_t oid = NumericCast<int64_t>(crs_entry.oid);
 		Value oid_val;

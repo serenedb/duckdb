@@ -104,7 +104,7 @@ public:
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
 	unique_ptr<CreateInfo> GetInfo() const override;
 	unique_ptr<CatalogEntry> AlterEntry(ClientContext &context, AlterInfo &info) override;
-	void SetAsRoot(optional_ptr<CatalogTransaction> transaction) override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) override;
 
 	SequenceData GetData() const;
 	SequenceValue GetReservedValue();

@@ -58,6 +58,7 @@ public:
 	Identifier extension_name;
 	//! Timestamp at which the catalog entry was created
 	atomic<transaction_t> timestamp;
+	atomic<CatalogEntry *> previous_version;
 	//! (optional) comment on this entry
 	Value comment;
 	//! (optional) extra data associated with this entry
@@ -84,7 +85,7 @@ public:
 	unique_ptr<CreateInfo> GetSerializedInfo() const;
 
 	//! Sets the CatalogEntry as the new root entry (i.e. the newest entry)
-	virtual void SetAsRoot(optional_ptr<CatalogTransaction> transaction);
+	virtual void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous);
 
 	//! Convert the catalog entry to a SQL string that can be used to re-construct the catalog entry
 	virtual string ToSQL() const;
@@ -92,7 +93,10 @@ public:
 	virtual Catalog &ParentCatalog();
 	virtual const Catalog &ParentCatalog() const;
 	virtual Identifier ParentSchemaName() const;
+	virtual Identifier ParentSchemaName(CatalogTransaction transaction) const;
 	virtual vector<Identifier> ParentSchemaPath() const;
+	virtual vector<Identifier> ParentSchemaPath(CatalogTransaction transaction) const;
+	virtual idx_t ParentSchemaOid() const;
 	virtual SchemaCatalogEntry &ParentSchema(CatalogTransaction transaction) const;
 	SchemaCatalogEntry &ParentSchema(ClientContext &context) const;
 

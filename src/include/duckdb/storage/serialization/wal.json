@@ -56,6 +56,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -100,6 +106,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -146,6 +158,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -192,6 +210,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -296,6 +320,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -342,6 +372,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -388,6 +424,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -439,6 +481,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -541,6 +589,12 @@
         "id": 101,
         "name": "qualified_name",
         "type": "QualifiedName"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },

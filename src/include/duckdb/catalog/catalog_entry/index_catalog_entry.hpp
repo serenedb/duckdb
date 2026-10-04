@@ -48,6 +48,7 @@ public:
 	vector<string> column_opclasses;
 	//! Per-column opclass options, parallel to column_opclasses
 	vector<std::optional<case_insensitive_map_t<Value>>> column_opclass_options;
+	idx_t table_oid;
 
 public:
 	//! Returns the CreateIndexInfo
@@ -57,6 +58,7 @@ public:
 
 	virtual Identifier GetSchemaName() const = 0;
 	virtual Identifier GetTableName() const = 0;
+	virtual optional_ptr<CatalogEntry> GetRelation(CatalogTransaction transaction) const;
 	virtual void InitializeColumnSegmentInfoScan(ColumnSegmentInfoScanState &state) const {
 	}
 	virtual bool ScanColumnSegmentInfo(const QueryContext &context, ColumnSegmentInfoScanState &state,

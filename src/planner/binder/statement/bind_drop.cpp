@@ -117,7 +117,9 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		}
 		// keep the entry's full (possibly nested) schema path so execution navigates the same schema
 		stmt.info->SetQualifiedName(QualifiedName::FromCatalogSchema(
-		    entry->ParentCatalog().GetName(), entry->ParentSchemaPath(), stmt.info->GetQualifiedName().Name()));
+		    entry->ParentCatalog().GetName(),
+		    entry->ParentSchemaPath(entry->ParentCatalog().GetCatalogTransaction(context)),
+		    stmt.info->GetQualifiedName().Name()));
 		if (!entry->temporary) {
 			// we can only drop temporary schema entries in read-only mode
 			properties.RegisterDBModify(entry->ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);

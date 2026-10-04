@@ -111,9 +111,11 @@ void UnpackMultiStatement(MultiStatement &multi_statement, const CurrentTransact
 	AddStatements(multi_statement.statements, handling, new_statements);
 }
 
-static unique_ptr<TableRef> TruncateTargetRef(TableCatalogEntry &table) {
+static unique_ptr<TableRef> TruncateTargetRef(ClientContext &context, TableCatalogEntry &table) {
 	auto ref = make_uniq<BaseTableRef>();
-	ref->SetQualifiedName(QualifiedName(table.ParentCatalog().GetName(), table.ParentSchemaName(), table.name));
+	auto &catalog = table.ParentCatalog();
+	ref->SetQualifiedName(QualifiedName::FromCatalogSchema(
+	    catalog.GetName(), table.ParentSchemaPath(catalog.GetCatalogTransaction(context)), table.name));
 	return std::move(ref);
 }
 
@@ -158,7 +160,7 @@ void StatementPreprocessor::ExpandTruncate(MultiStatement &multi_statement) cons
 	for (idx_t i = named; i < group.size(); i++) {
 		auto statement = make_uniq<DeleteStatement>();
 		statement->node = unique_ptr_cast<QueryNode, DeleteQueryNode>(first.node->Copy());
-		statement->node->table = TruncateTargetRef(group[i].get());
+		statement->node->table = TruncateTargetRef(context, group[i].get());
 		statement->query = query;
 		multi_statement.statements.push_back(std::move(statement));
 	}
@@ -166,7 +168,7 @@ void StatementPreprocessor::ExpandTruncate(MultiStatement &multi_statement) cons
 		auto &node = *statement->Cast<DeleteStatement>().node;
 		node.truncate_group.clear();
 		for (auto &member : group) {
-			node.truncate_group.push_back(TruncateTargetRef(member.get()));
+			node.truncate_group.push_back(TruncateTargetRef(context, member.get()));
 		}
 	}
 	if (!restart_identity) {

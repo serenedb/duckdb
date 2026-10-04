@@ -171,9 +171,9 @@ BindingAlias Binding::GetAlias(const Identifier &explicit_alias, optional_ptr<St
 	return BindingAlias(*entry);
 }
 
-EntryBinding::EntryBinding(const Identifier &alias, vector<LogicalType> types_p, vector<Identifier> names_p,
+EntryBinding::EntryBinding(BindingAlias alias, vector<LogicalType> types_p, vector<Identifier> names_p,
                            TableIndex index, StandardEntry &entry)
-    : Binding(BindingType::CATALOG_ENTRY, GetAlias(alias, entry), std::move(types_p), std::move(names_p), index),
+    : Binding(BindingType::CATALOG_ENTRY, std::move(alias), std::move(types_p), std::move(names_p), index),
       entry(entry) {
 }
 
@@ -181,10 +181,10 @@ optional_ptr<StandardEntry> EntryBinding::GetStandardEntry() {
 	return &entry;
 }
 
-TableBinding::TableBinding(const Identifier &alias, vector<LogicalType> types_p, vector<Identifier> names_p,
+TableBinding::TableBinding(BindingAlias alias, vector<LogicalType> types_p, vector<Identifier> names_p,
                            vector<ColumnIndex> &bound_column_ids, optional_ptr<StandardEntry> entry, TableIndex index,
                            virtual_column_map_t virtual_columns_p)
-    : Binding(BindingType::TABLE, GetAlias(alias, entry), std::move(types_p), std::move(names_p), index,
+    : Binding(BindingType::TABLE, std::move(alias), std::move(types_p), std::move(names_p), index,
               EntryIsCaseSensitive(entry)),
       bound_column_ids(bound_column_ids), entry(entry), virtual_columns(std::move(virtual_columns_p)) {
 	for (auto &ventry : virtual_columns) {

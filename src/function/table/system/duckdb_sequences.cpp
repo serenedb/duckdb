@@ -135,7 +135,7 @@ void DuckDBSequencesFunction(ClientContext &context, TableFunctionInput &data_p,
 
 		database_name.Append(Value(seq.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(seq.catalog.GetOid())));
-		schema_name.Append(Value(seq.ParentSchemaName()));
+		schema_name.Append(Value(seq.ParentSchemaName(CatalogTransaction(seq.ParentCatalog(), context))));
 		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(seq.ParentSchemaOid())));
 		sequence_name.Append(Value(seq.name));
 		sequence_oid.Append(Value::BIGINT(NumericCast<int64_t>(seq.oid)));

@@ -7,7 +7,7 @@ namespace duckdb {
 IndexCatalogEntry::IndexCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateIndexInfo &info)
     : StandardEntry(CatalogType::INDEX_ENTRY, schema, catalog, info.GetIndexName(), info.oid), sql(info.sql),
       options(info.options), index_type(info.index_type), index_constraint_type(info.constraint_type),
-      column_ids(info.column_ids), column_opclasses(info.column_opclasses) {
+      column_ids(info.column_ids), column_opclasses(info.column_opclasses), table_oid(info.table_oid) {
 	this->temporary = info.temporary;
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
@@ -33,6 +33,7 @@ unique_ptr<CreateInfo> IndexCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateIndexInfo>();
 	result->SetQualifiedName(GetQualifiedName(name));
 	result->table = GetTableName();
+	result->table_oid = table_oid;
 
 	result->temporary = temporary;
 	result->sql = sql;
@@ -59,6 +60,10 @@ unique_ptr<CreateInfo> IndexCatalogEntry::GetInfo() const {
 	result->options = options;
 
 	return std::move(result);
+}
+
+optional_ptr<CatalogEntry> IndexCatalogEntry::GetRelation(CatalogTransaction transaction) const {
+	return ParentSchema(transaction).GetEntry(transaction, CatalogType::TABLE_ENTRY, GetTableName());
 }
 
 string IndexCatalogEntry::ToSQL() const {

@@ -49,7 +49,7 @@ vector<QualifiedName> Binder::TruncateIdentitySequences(ClientContext &context, 
 		if (entry.type != CatalogType::SEQUENCE_ENTRY || table.NumbersRowsWith(entry)) {
 			continue;
 		}
-		result.emplace_back(catalog.GetName(), entry.ParentSchemaName(), entry.name);
+		result.emplace_back(catalog.GetName(), entry.ParentSchema(context).name, entry.name);
 	}
 	return result;
 }

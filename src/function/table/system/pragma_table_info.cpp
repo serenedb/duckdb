@@ -173,16 +173,17 @@ static unique_ptr<FunctionData> PragmaTableInfoBind(ClientContext &context, Tabl
 	// look up the table name in the catalog
 	CatalogEntryRetriever retriever(context);
 	qname = Binder::BindTableName(retriever, qname);
+	optional_ptr<CatalogEntry> indexed_relation;
 	if (!Catalog::GetEntry(context, EntryLookupInfo(CatalogType::TABLE_ENTRY, qname), OnEntryNotFound::RETURN_NULL)) {
 		auto index =
 		    Catalog::GetEntry(context, EntryLookupInfo(CatalogType::INDEX_ENTRY, qname), OnEntryNotFound::RETURN_NULL);
 		const bool index_is_relation = index && index->ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES;
 		if (index_is_relation) {
 			auto &index_entry = index->Cast<IndexCatalogEntry>();
-			qname = index_entry.GetQualifiedName(index_entry.GetTableName());
+			indexed_relation = index_entry.GetRelation(index_entry.catalog.GetCatalogTransaction(context));
 		}
 	}
-	auto &entry = Catalog::GetEntry(context, CatalogType::TABLE_ENTRY, qname);
+	auto &entry = indexed_relation ? *indexed_relation : Catalog::GetEntry(context, CatalogType::TABLE_ENTRY, qname);
 	Binder::RegisterEntryRead(input.binder, context, entry);
 	return make_uniq<PragmaTableFunctionData>(entry, IS_PRAGMA_TABLE_INFO);
 }

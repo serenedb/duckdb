@@ -99,6 +99,12 @@
         "name": "oid",
         "type": "idx_t",
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16486,
+        "name": "schema_oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ],
     "methods": {
@@ -185,6 +191,12 @@
         "name": "column_opclass_options",
         "type": "vector<optional<case_insensitive_map_t<Value>>>",
         "serialize_property": "GetOpclassOptionsForSerialization()"
+      },
+      {
+        "id": 16587,
+        "name": "table_oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ],
     "finalize_deserialization": [

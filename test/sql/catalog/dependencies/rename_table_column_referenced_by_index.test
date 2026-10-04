@@ -13,14 +13,16 @@ create index idx on db.tbl(a);
 statement ok
 insert into db.tbl values ('x');
 
-# an index over the column does not block renaming it: the index follows the column
-statement ok
+# in a DuckDB file an index over the column blocks renaming it, as in DuckDB
+statement error
 alter table db.tbl rename a to b;
+----
+Cannot alter entry "tbl" because there are entries that depend on it.
 
 query I
 select sql from duckdb_indexes() where index_name='idx';
 ----
-CREATE INDEX idx ON tbl(b);
+CREATE INDEX idx ON tbl(a);
 
 # and it is still usable after a reload
 statement ok
@@ -33,6 +35,29 @@ statement ok
 insert into db.tbl values ('y');
 
 query I
-select b from db.tbl where b = 'x';
+select a from db.tbl where a = 'x';
+----
+x
+
+# in memory the index follows the column
+statement ok
+create table tbl(a varchar);
+
+statement ok
+create index idx on tbl(a);
+
+statement ok
+insert into tbl values ('x');
+
+statement ok
+alter table tbl rename a to b;
+
+query I
+select sql from duckdb_indexes() where index_name='idx' and database_name='memory';
+----
+CREATE INDEX idx ON tbl(b);
+
+query I
+select b from tbl where b = 'x';
 ----
 x

@@ -1282,7 +1282,10 @@ static unique_ptr<FunctionData> IndexScanBind(ClientContext &context, TableFunct
 	QualifiedName name(Identifier(StringValue::Get(input.inputs[0])), Identifier(StringValue::Get(input.inputs[1])),
 	                   Identifier(StringValue::Get(input.inputs[2])));
 	auto &index = Catalog::GetEntry<IndexCatalogEntry>(context, name);
-	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, index.GetQualifiedName(index.GetTableName()));
+	auto relation = index.GetRelation(index.catalog.GetCatalogTransaction(context));
+	auto &table = relation && relation->type == CatalogType::TABLE_ENTRY
+	                  ? relation->Cast<TableCatalogEntry>()
+	                  : Catalog::GetEntry<TableCatalogEntry>(context, index.GetQualifiedName(index.GetTableName()));
 	auto result = make_uniq<TableScanBindData>(table);
 	result->display_name = index.name.GetIdentifierName();
 	for (auto &column : table.GetColumns().Logical()) {
@@ -1301,7 +1304,7 @@ unique_ptr<TableRef> TableScanFunction::IndexReplacementScan(ClientContext &cont
 	}
 	vector<unique_ptr<ParsedExpression>> arguments;
 	arguments.push_back(ConstantExpression::String(index->ParentCatalog().GetName().GetIdentifierName()));
-	arguments.push_back(ConstantExpression::String(index->ParentSchemaName().GetIdentifierName()));
+	arguments.push_back(ConstantExpression::String(index->ParentSchema(context).name.GetIdentifierName()));
 	arguments.push_back(ConstantExpression::String(index->name.GetIdentifierName()));
 	auto ref = make_uniq<TableFunctionRef>();
 	ref->function = make_uniq<FunctionExpression>("seq_scan", std::move(arguments));
