@@ -19,6 +19,57 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterOptionsInt
 	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
 }
 
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterJobStmtInternal(PEGTransformer &transformer,
+                                                                                      ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	optional<bool> if_exists {};
+	auto &if_exists_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
+	if (if_exists_opt.HasResult()) {
+		auto if_exists_value = transformer.Transform<bool>(if_exists_opt.GetResult());
+		if_exists = if_exists_value;
+	}
+	auto qualified_name = transformer.Transform<QualifiedName>(list_pr.GetChild(2));
+	auto alter_job_action = transformer.Transform<unique_ptr<AlterInfo>>(list_pr.GetChild(3));
+	auto result = TransformAlterJobStmt(transformer, if_exists, qualified_name, std::move(alter_job_action));
+	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterJobActionInternal(PEGTransformer &transformer,
+                                                                                        ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<unique_ptr<AlterInfo>>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterJobRenameInternal(PEGTransformer &transformer,
+                                                                                        ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto col_id = transformer.Transform<Identifier>(list_pr.GetChild(2));
+	auto result = TransformAlterJobRename(transformer, col_id);
+	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterJobSuspendInternal(PEGTransformer &transformer,
+                                                                                         ParseResult &parse_result) {
+	auto result = TransformAlterJobSuspend(transformer);
+	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterJobResumeInternal(PEGTransformer &transformer,
+                                                                                        ParseResult &parse_result) {
+	auto result = TransformAlterJobResume(transformer);
+	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformAlterJobSetScheduleInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto job_schedule = transformer.Transform<JobScheduleInfo>(list_pr.GetChild(2));
+	auto result = TransformAlterJobSetSchedule(transformer, std::move(job_schedule));
+	return make_uniq<TypedTransformResult<unique_ptr<AlterInfo>>>(std::move(result));
+}
+
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformAlterIndexStmtInternal(PEGTransformer &transformer,
                                                                                         ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -2371,6 +2422,98 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformNoneLiteralInte
 	return make_uniq<TypedTransformResult<unique_ptr<ParsedExpression>>>(std::move(result));
 }
 
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformCreateJobStmtInternal(PEGTransformer &transformer,
+                                                                                       ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	optional<bool> if_not_exists {};
+	auto &if_not_exists_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
+	if (if_not_exists_opt.HasResult()) {
+		auto if_not_exists_value = transformer.Transform<bool>(if_not_exists_opt.GetResult());
+		if_not_exists = if_not_exists_value;
+	}
+	auto qualified_name = transformer.Transform<QualifiedName>(list_pr.GetChild(2));
+	auto job_schedule = transformer.Transform<JobScheduleInfo>(list_pr.GetChild(3));
+	optional<bool> job_suspended {};
+	auto &job_suspended_opt = list_pr.GetChild(4).Cast<OptionalParseResult>();
+	if (job_suspended_opt.HasResult()) {
+		auto job_suspended_value = transformer.Transform<bool>(job_suspended_opt.GetResult());
+		job_suspended = job_suspended_value;
+	}
+	auto statement = transformer.Transform<unique_ptr<SQLStatement>>(list_pr.GetChild(6));
+	auto result = TransformCreateJobStmt(transformer, if_not_exists, qualified_name, std::move(job_schedule),
+	                                     job_suspended, std::move(statement));
+	return make_uniq<TypedTransformResult<unique_ptr<CreateStatement>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformJobScheduleInternal(PEGTransformer &transformer,
+                                                                                     ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<JobScheduleInfo>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<JobScheduleInfo>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformJobEveryInternal(PEGTransformer &transformer,
+                                                                                  ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto job_interval = transformer.Transform<unique_ptr<ParsedExpression>>(list_pr.GetChild(1));
+	optional<unique_ptr<ParsedExpression>> job_offset {};
+	auto &job_offset_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	if (job_offset_opt.HasResult()) {
+		auto job_offset_value = transformer.Transform<unique_ptr<ParsedExpression>>(job_offset_opt.GetResult());
+		job_offset = std::move(job_offset_value);
+	}
+	auto result = TransformJobEvery(transformer, std::move(job_interval), std::move(job_offset));
+	return make_uniq<TypedTransformResult<JobScheduleInfo>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformJobAfterInternal(PEGTransformer &transformer,
+                                                                                  ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto job_interval = transformer.Transform<unique_ptr<ParsedExpression>>(list_pr.GetChild(1));
+	auto result = TransformJobAfter(transformer, std::move(job_interval));
+	return make_uniq<TypedTransformResult<JobScheduleInfo>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformJobOffsetInternal(PEGTransformer &transformer,
+                                                                                   ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto job_interval = transformer.Transform<unique_ptr<ParsedExpression>>(list_pr.GetChild(1));
+	auto result = std::move(job_interval);
+	return make_uniq<TypedTransformResult<unique_ptr<ParsedExpression>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformJobIntervalInternal(PEGTransformer &transformer,
+                                                                                     ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto result = transformer.Transform<unique_ptr<ParsedExpression>>(choice_pr.GetResult());
+	return make_uniq<TypedTransformResult<unique_ptr<ParsedExpression>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformJobIntervalShortInternal(PEGTransformer &transformer,
+                                                                                          ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto number_literal = transformer.Transform<unique_ptr<ParsedExpression>>(list_pr.GetChild(0));
+	auto interval = transformer.Transform<DatePartSpecifier>(list_pr.GetChild(1));
+	auto result = TransformJobIntervalShort(transformer, std::move(number_literal), interval);
+	return make_uniq<TypedTransformResult<unique_ptr<ParsedExpression>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformJobIntervalExpressionInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto expression = transformer.Transform<unique_ptr<ParsedExpression>>(ExtractResultFromParens(list_pr.GetChild(0)));
+	auto result = std::move(expression);
+	return make_uniq<TypedTransformResult<unique_ptr<ParsedExpression>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformJobSuspendedInternal(PEGTransformer &transformer,
+                                                                                      ParseResult &parse_result) {
+	auto result = TransformJobSuspended(transformer);
+	return make_uniq<TypedTransformResult<bool>>(result);
+}
+
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformCreateMacroStmtInternal(PEGTransformer &transformer,
                                                                                          ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -4238,6 +4381,25 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformDropTriggerInte
 	return make_uniq<TypedTransformResult<unique_ptr<DropStatement>>>(std::move(result));
 }
 
+unique_ptr<TransformResultValue> PEGTransformerFactory::TransformDropJobInternal(PEGTransformer &transformer,
+                                                                                 ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	optional<bool> if_exists {};
+	auto &if_exists_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
+	if (if_exists_opt.HasResult()) {
+		auto if_exists_value = transformer.Transform<bool>(if_exists_opt.GetResult());
+		if_exists = if_exists_value;
+	}
+	vector<QualifiedName> qualified_name;
+	auto qualified_name_items = ExtractParseResultsFromList(list_pr.GetChild(2));
+	for (auto &qualified_name_item : qualified_name_items) {
+		auto qualified_name_value = transformer.Transform<QualifiedName>(qualified_name_item.get());
+		qualified_name.push_back(qualified_name_value);
+	}
+	auto result = TransformDropJob(transformer, if_exists, qualified_name);
+	return make_uniq<TypedTransformResult<unique_ptr<DropStatement>>>(std::move(result));
+}
+
 unique_ptr<TransformResultValue> PEGTransformerFactory::TransformDropTableInternal(PEGTransformer &transformer,
                                                                                    ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -4550,6 +4712,14 @@ unique_ptr<TransformResultValue> PEGTransformerFactory::TransformExecuteStatemen
 		table_function_arguments = std::move(table_function_arguments_value);
 	}
 	auto result = TransformExecuteStatement(transformer, identifier, std::move(table_function_arguments));
+	return make_uniq<TypedTransformResult<unique_ptr<SQLStatement>>>(std::move(result));
+}
+
+unique_ptr<TransformResultValue>
+PEGTransformerFactory::TransformExecuteJobStatementInternal(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto qualified_name = transformer.Transform<QualifiedName>(list_pr.GetChild(2));
+	auto result = TransformExecuteJobStatement(transformer, qualified_name);
 	return make_uniq<TypedTransformResult<unique_ptr<SQLStatement>>>(std::move(result));
 }
 
@@ -10748,6 +10918,12 @@ void PEGTransformerFactory::RegisterGenerated() {
 	static const TransformRule builtin_transform_rules[] = {
 	    {"AlterStatement", &PEGTransformerFactory::TransformAlterStatementInternal},
 	    {"AlterOptions", &PEGTransformerFactory::TransformAlterOptionsInternal},
+	    {"AlterJobStmt", &PEGTransformerFactory::TransformAlterJobStmtInternal},
+	    {"AlterJobAction", &PEGTransformerFactory::TransformAlterJobActionInternal},
+	    {"AlterJobRename", &PEGTransformerFactory::TransformAlterJobRenameInternal},
+	    {"AlterJobSuspend", &PEGTransformerFactory::TransformAlterJobSuspendInternal},
+	    {"AlterJobResume", &PEGTransformerFactory::TransformAlterJobResumeInternal},
+	    {"AlterJobSetSchedule", &PEGTransformerFactory::TransformAlterJobSetScheduleInternal},
 	    {"AlterIndexStmt", &PEGTransformerFactory::TransformAlterIndexStmtInternal},
 	    {"AlterIndexAlter", &PEGTransformerFactory::TransformAlterIndexAlterInternal},
 	    {"AlterFunctionStmt", &PEGTransformerFactory::TransformAlterFunctionStmtInternal},
@@ -10973,6 +11149,15 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"DefArgKeyword", &PEGTransformerFactory::TransformDefArgKeywordInternal},
 	    {"DefArgStringLiteral", &PEGTransformerFactory::TransformDefArgStringLiteralInternal},
 	    {"NoneLiteral", &PEGTransformerFactory::TransformNoneLiteralInternal},
+	    {"CreateJobStmt", &PEGTransformerFactory::TransformCreateJobStmtInternal},
+	    {"JobSchedule", &PEGTransformerFactory::TransformJobScheduleInternal},
+	    {"JobEvery", &PEGTransformerFactory::TransformJobEveryInternal},
+	    {"JobAfter", &PEGTransformerFactory::TransformJobAfterInternal},
+	    {"JobOffset", &PEGTransformerFactory::TransformJobOffsetInternal},
+	    {"JobInterval", &PEGTransformerFactory::TransformJobIntervalInternal},
+	    {"JobIntervalShort", &PEGTransformerFactory::TransformJobIntervalShortInternal},
+	    {"JobIntervalExpression", &PEGTransformerFactory::TransformJobIntervalExpressionInternal},
+	    {"JobSuspended", &PEGTransformerFactory::TransformJobSuspendedInternal},
 	    {"CreateMacroStmt", &PEGTransformerFactory::TransformCreateMacroStmtInternal},
 	    {"MacroOrFunction", &PEGTransformerFactory::TransformMacroOrFunctionInternal},
 	    {"MacroKeyword", &PEGTransformerFactory::TransformMacroKeywordInternal},
@@ -11153,6 +11338,7 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"DropStatement", &PEGTransformerFactory::TransformDropStatementInternal},
 	    {"DropEntries", &PEGTransformerFactory::TransformDropEntriesInternal},
 	    {"DropTrigger", &PEGTransformerFactory::TransformDropTriggerInternal},
+	    {"DropJob", &PEGTransformerFactory::TransformDropJobInternal},
 	    {"DropTable", &PEGTransformerFactory::TransformDropTableInternal},
 	    {"DropTableFunction", &PEGTransformerFactory::TransformDropTableFunctionInternal},
 	    {"DropSchema", &PEGTransformerFactory::TransformDropSchemaInternal},
@@ -11180,6 +11366,7 @@ void PEGTransformerFactory::RegisterGenerated() {
 	    {"CatalogReservedSchema", &PEGTransformerFactory::TransformCatalogReservedSchemaInternal},
 	    {"DropSecretStorage", &PEGTransformerFactory::TransformDropSecretStorageInternal},
 	    {"ExecuteStatement", &PEGTransformerFactory::TransformExecuteStatementInternal},
+	    {"ExecuteJobStatement", &PEGTransformerFactory::TransformExecuteJobStatementInternal},
 	    {"ExplainStatement", &PEGTransformerFactory::TransformExplainStatementInternal},
 	    {"ExplainAnalyze", &PEGTransformerFactory::TransformExplainAnalyzeInternal},
 	    {"ExplainOptionList", &PEGTransformerFactory::TransformExplainOptionListInternal},

@@ -24,6 +24,7 @@
 #include "duckdb/parser/parsed_data/transaction_info.hpp"
 #include "duckdb/parser/parsed_data/vacuum_info.hpp"
 #include "duckdb/parser/parsed_data/exported_table_data.hpp"
+#include "duckdb/parser/parsed_data/alter_job_info.hpp"
 
 namespace duckdb {
 
@@ -107,6 +108,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 		break;
 	case AlterType::ALTER_INDEX:
 		result = AlterIndexInfo::Deserialize(deserializer);
+		break;
+	case AlterType::ALTER_JOB:
+		result = AlterJobInfo::Deserialize(deserializer);
 		break;
 	case AlterType::ALTER_PERMISSIONS:
 		result = AlterPermissionsInfo::Deserialize(deserializer);
@@ -351,6 +355,19 @@ unique_ptr<AlterTableInfo> AlterForeignKeyInfo::Deserialize(Deserializer &deseri
 	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(403, "pk_keys", result->pk_keys);
 	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(404, "fk_keys", result->fk_keys);
 	deserializer.ReadProperty<AlterForeignKeyType>(405, "alter_fk_type", result->type);
+	return std::move(result);
+}
+
+void AlterJobInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<AlterJobType>(300, "alter_job_type", alter_job_type);
+	serializer.WriteProperty<JobSchedule>(301, "schedule", schedule);
+}
+
+unique_ptr<AlterInfo> AlterJobInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<AlterJobInfo>(new AlterJobInfo());
+	deserializer.ReadProperty<AlterJobType>(300, "alter_job_type", result->alter_job_type);
+	deserializer.ReadProperty<JobSchedule>(301, "schedule", result->schedule);
 	return std::move(result);
 }
 
