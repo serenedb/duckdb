@@ -248,7 +248,9 @@ string Parser::NormalizeSQLString(const string &query) {
 }
 
 void Parser::ParseQuery(const string &query_p) {
-	const string query = NormalizeSQLString(query_p);
+	ValidateUTF8Query(query_p);
+	string stripped;
+	const string &query = StripUnicodeSpaces(query_p, stripped) ? stripped : query_p;
 	if (options.extensions) {
 		bool has_strict_extension_error = false;
 		ErrorData last_strict_extension_error;
