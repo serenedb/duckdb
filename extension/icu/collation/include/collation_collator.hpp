@@ -72,6 +72,8 @@ struct CollationBuffer {
 	vector<uint8_t> key;
 	//! the levels of the sort key that are written after the primary level
 	vector<uint8_t> levels[4];
+	vector<uint32_t> scratch;
+	vector<idx_t> skipped;
 };
 
 //! A collator is immutable once it is created, so that it can be shared between threads.
