@@ -1006,7 +1006,7 @@ bool Collator::GetFastElements(const char *data, idx_t size, CollationBuffer &bu
 		if (byte < 0x80) {
 			codepoint = byte;
 			position++;
-		} else if ((byte & 0xE0) == 0xC0 && position + 1 < size) {
+		} else if (byte >= 0xC2 && byte < 0xE0 && position + 1 < size) {
 			auto trail = static_cast<uint8_t>(data[position + 1]);
 			if ((trail & 0xC0) != 0x80) {
 				return false;
@@ -1055,7 +1055,7 @@ bool Collator::GetFastSortKey(const char *data, idx_t size, CollationBuffer &buf
 			if (byte < 0x80) {
 				codepoint = byte;
 				position++;
-			} else if ((byte & 0xE0) == 0xC0 && position + 1 < size) {
+			} else if (byte >= 0xC2 && byte < 0xE0 && position + 1 < size) {
 				auto trail = static_cast<uint8_t>(data[position + 1]);
 				if ((trail & 0xC0) != 0x80) {
 					return false;

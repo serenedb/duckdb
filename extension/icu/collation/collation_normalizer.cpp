@@ -1,11 +1,10 @@
 #include "collation_normalizer.hpp"
 
 #include "collation_data.hpp"
+#include "text_utf8.hpp"
 
 namespace duckdb {
 namespace collation {
-
-static constexpr uint32_t REPLACEMENT_CHARACTER = 0xFFFD;
 
 //! No character below these limits has a combining class or a canonical decomposition,
 //! which the tables are checked against
@@ -30,47 +29,9 @@ uint32_t Normalizer::Decode(const char *data, idx_t size, vector<uint32_t> &resu
 	result.clear();
 	uint32_t flags = 0;
 	auto bytes = reinterpret_cast<const uint8_t *>(data);
-	idx_t pos = 0;
+	size_t pos = 0;
 	while (pos < size) {
-		auto lead = bytes[pos];
-		uint32_t codepoint;
-		idx_t length;
-		if (lead < 0x80) {
-			codepoint = lead;
-			length = 1;
-		} else if ((lead & 0xE0) == 0xC0) {
-			codepoint = lead & 0x1F;
-			length = 2;
-		} else if ((lead & 0xF0) == 0xE0) {
-			codepoint = lead & 0x0F;
-			length = 3;
-		} else if ((lead & 0xF8) == 0xF0) {
-			codepoint = lead & 0x07;
-			length = 4;
-		} else {
-			result.push_back(REPLACEMENT_CHARACTER);
-			pos++;
-			continue;
-		}
-		if (pos + length > size) {
-			result.push_back(REPLACEMENT_CHARACTER);
-			pos++;
-			continue;
-		}
-		bool valid = true;
-		for (idx_t i = 1; i < length; i++) {
-			auto trail = bytes[pos + i];
-			if ((trail & 0xC0) != 0x80) {
-				valid = false;
-				break;
-			}
-			codepoint = (codepoint << 6) | (trail & 0x3F);
-		}
-		if (!valid) {
-			result.push_back(REPLACEMENT_CHARACTER);
-			pos++;
-			continue;
-		}
+		auto codepoint = text::DecodeUtf8(bytes, size, pos);
 		if (codepoint >= 0x80) {
 			// ASCII characters never carry a combining class and never decompose
 			flags |= TEXT_HAS_MARKS;
@@ -79,7 +40,6 @@ uint32_t Normalizer::Decode(const char *data, idx_t size, vector<uint32_t> &resu
 			}
 		}
 		result.push_back(codepoint);
-		pos += length;
 	}
 	return flags;
 }
