@@ -32,7 +32,7 @@ arena_ptr<TransformResultValue> TransformStep::TakeResult() {
 GeneratedTransformProcess::GeneratedTransformProcess(PEGTransformer &transformer_p, TransformInput input,
                                                      const TransformFrameOps &info_p)
     : parse_result(input.parse_result), info(info_p), child_results(transformer_p.allocator),
-      transformer(transformer_p), pending_children(transformer_p.allocator) {
+      transformer(transformer_p) {
 	if (!info.initialize || !info.finalize) {
 		throw InternalException("Incomplete transformer process for rule '%s'", info.name);
 	}
@@ -41,7 +41,16 @@ GeneratedTransformProcess::GeneratedTransformProcess(PEGTransformer &transformer
 
 void GeneratedTransformProcess::ReserveChildSlots(idx_t count) {
 	child_results.resize(count);
-	pending_children.reserve(count);
+	if (count <= pending_capacity) {
+		return;
+	}
+	auto pending =
+	    reinterpret_cast<PendingChild *>(transformer.allocator.AllocateAligned(count * sizeof(PendingChild)));
+	for (idx_t i = 0; i < pending_count; i++) {
+		new (pending + i) PendingChild(pending_children[i]);
+	}
+	pending_children = pending;
+	pending_capacity = count;
 }
 
 void GeneratedTransformProcess::SetChildResult(idx_t slot, arena_ptr<TransformResultValue> result) {
@@ -58,25 +67,26 @@ void GeneratedTransformProcess::SetChildResult(idx_t slot, arena_ptr<TransformRe
 }
 
 void GeneratedTransformProcess::PushChild(TransformInput input, idx_t slot) {
-	if (slot >= child_results.size()) {
+	if (slot >= child_results.size() || pending_count >= pending_capacity) {
 		throw InternalException("Invalid transformer child slot %llu for rule '%s'", slot, info.name);
 	}
-	pending_children.push_back({input, slot});
+	new (pending_children + pending_count++) PendingChild {input.rule, slot, input.parse_result};
 }
 
 TransformStep GeneratedTransformProcess::NextStep() {
-	if (!pending_children.empty()) {
-		auto child = pending_children.back();
-		pending_children.pop_back();
+	if (pending_count > 0) {
+		auto &child = pending_children[--pending_count];
 		child_result_slot = child.slot;
-		return TransformStep::Child(child.input);
+		TransformInput input(child.parse_result.get());
+		input.rule = child.rule;
+		return TransformStep::Child(input);
 	}
 	auto result = info.finalize(transformer, *this);
 	if (result) {
 		completed = true;
 		return TransformStep::Complete(std::move(result));
 	}
-	if (pending_children.empty()) {
+	if (pending_count == 0) {
 		throw InternalException("Transformer process for rule '%s' returned nullptr without requesting a child",
 		                        info.name);
 	}

@@ -374,15 +374,18 @@ public:
 
 private:
 	struct PendingChild {
-		TransformInput input;
+		optional_ptr<const CompiledGrammarRule> rule;
 		idx_t slot;
+		reference<ParseResult> parse_result;
 	};
 
 	TransformStep NextStep();
 
 private:
 	PEGTransformer &transformer;
-	arena_vector<PendingChild> pending_children;
+	PendingChild *pending_children = nullptr;
+	idx_t pending_count = 0;
+	idx_t pending_capacity = 0;
 	optional_idx child_result_slot;
 	bool completed = false;
 };
