@@ -30,12 +30,12 @@ public:
 			return MatcherResult::Failure();
 		}
 		// always advances, so a repeat over this matcher terminates
-		auto text = current->text;
+		std::string_view text = current->text;
 		auto offset = current->offset;
 		auto length = current->length;
 		state.token_iterator.Advance();
 		state.UpdateMaxTokenIndex();
-		return state.AllocateParseResult<TokenParseResult>(std::move(text), offset, length);
+		return state.AllocateParseResult<TokenParseResult>(text, offset, length);
 	}
 
 	SuggestionType AddSuggestionInternal(MatchState &state) const override {

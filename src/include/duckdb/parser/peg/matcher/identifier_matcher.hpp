@@ -30,6 +30,10 @@ public:
 		return false;
 	}
 
+	static std::string_view Body(std::string_view text) {
+		return text.substr(1, text.size() - 2);
+	}
+
 	bool IsIdentifier(const string &text) const {
 		if (text.empty()) {
 			return false;
@@ -62,16 +66,14 @@ public:
 			return MatcherResult::Success();
 		}
 
-		string result_text = token_text;
-		if (IsQuoted(result_text)) {
-			result_text = result_text.substr(1, result_text.size() - 2);
-			result_text = StringUtil::Replace(result_text, "\"\"", "\"");
-		} else if (IsSingleQuoted(result_text) && SupportsStringLiteral()) {
+		std::string_view result_text;
+		if (IsQuoted(token_text)) {
+			result_text = state.context.allocator.Unquote(Body(token_text), '"');
+		} else if (IsSingleQuoted(token_text) && SupportsStringLiteral()) {
 			// a single-quoted token in a table or file-name position is a path, so it is unwrapped but never folded
-			result_text = result_text.substr(1, result_text.size() - 2);
-			result_text = StringUtil::Replace(result_text, "''", "'");
+			result_text = state.context.allocator.Unquote(Body(token_text), '\'');
 		} else {
-			state.FoldIdentifier(result_text);
+			result_text = state.FoldIdentifier(token_text);
 		}
 		return state.AllocateParseResult<IdentifierParseResult>(result_text, start_offset, token_length);
 	}
@@ -196,14 +198,13 @@ public:
 		if (!state.BuildParseResult()) {
 			return MatcherResult::Success();
 		}
-		string result_text = token_text;
+		std::string_view result_text = token_text;
 		// unlike IdentifierMatcher this rule does not unwrap path literals, it only has to avoid folding them
-		const bool is_path_literal = IsSingleQuoted(result_text) && SupportsStringLiteral();
-		if (IsQuoted(result_text)) {
-			result_text = result_text.substr(1, result_text.size() - 2);
-			result_text = StringUtil::Replace(result_text, "\"\"", "\"");
+		const bool is_path_literal = IsSingleQuoted(token_text) && SupportsStringLiteral();
+		if (IsQuoted(token_text)) {
+			result_text = state.context.allocator.Unquote(Body(token_text), '"');
 		} else if (!is_path_literal) {
-			state.FoldIdentifier(result_text);
+			result_text = state.FoldIdentifier(token_text);
 		}
 		return state.AllocateParseResult<IdentifierParseResult>(result_text, start_offset, token_length);
 	}

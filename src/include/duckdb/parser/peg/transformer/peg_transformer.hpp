@@ -470,7 +470,7 @@ public:
 				SetResultLocation(bridged_result, parse_result.GetLocation());
 				return bridged_result;
 			}
-			throw InternalException("Transformer for rule '" + parse_result.name + "' returned an unexpected type.");
+			throw InternalException("Transformer for rule '%s' returned an unexpected type.", parse_result.name);
 		}
 
 		auto result = std::move(*result_value);

@@ -17,7 +17,7 @@ string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &trans
 		return parse_result.Cast<IdentifierParseResult>().identifier.GetIdentifierName();
 	}
 	if (parse_result.type == ParseResultType::KEYWORD) {
-		return parse_result.Cast<KeywordParseResult>().keyword;
+		return string(parse_result.Cast<KeywordParseResult>().keyword);
 	}
 	if (parse_result.type == ParseResultType::CHOICE) {
 		auto &choice_pr = parse_result.Cast<ChoiceParseResult>();
@@ -41,7 +41,7 @@ string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &trans
 				return child.get().Cast<IdentifierParseResult>().identifier.GetIdentifierName();
 			}
 			if (child.get().type == ParseResultType::KEYWORD) {
-				return child.get().Cast<KeywordParseResult>().keyword;
+				return string(child.get().Cast<KeywordParseResult>().keyword);
 			}
 			throw InternalException("Unexpected IdentifierOrKeyword type encountered %s.",
 			                        ParseResultToString(child.get().type));
@@ -531,7 +531,7 @@ DatePartSpecifier PEGTransformerFactory::TransformMinuteToSecond(PEGTransformer 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformNumberLiteral(PEGTransformer &transformer,
                                                                            ParseResult &parse_result) {
 	auto &literal_pr = parse_result.Cast<NumberParseResult>();
-	return ConstantExpression::Number(literal_pr.number);
+	return ConstantExpression::Number(string(literal_pr.number));
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetofType(PEGTransformer &transformer,
@@ -542,7 +542,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetofType(PEGTransf
 // StringLiteral <- '\'' [^\']* '\''
 string PEGTransformerFactory::TransformStringLiteral(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &string_literal_pr = parse_result.Cast<StringLiteralParseResult>();
-	return string_literal_pr.result;
+	return string(string_literal_pr.result);
 }
 
 Identifier PEGTransformerFactory::TransformConstraintName(PEGTransformer &transformer,

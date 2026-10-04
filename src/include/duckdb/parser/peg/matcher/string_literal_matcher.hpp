@@ -24,23 +24,16 @@ public:
 		auto start_offset = optional_idx(token->offset);
 		auto string_info = GetSpecialStringInfo(token->text);
 		const bool allows_continuation = IsSingleQuotedStringLiteral(*token, string_info);
+		const auto first_token = state.token_iterator.Position();
 
 		if (!MatchStringLiteral(state, string_info)) {
 			return MatcherResult::Failure();
 		}
 
-		string stripped_string;
 		idx_t end_offset = token->offset + token->length;
-		if (state.BuildParseResult()) {
-			stripped_string = StripStringLiteral(*token, string_info);
-		}
 		if (allows_continuation) {
 			while (IsStringLiteralContinuation(state)) {
 				token = state.token_iterator.Current();
-				if (state.BuildParseResult()) {
-					auto continuation_info = GetSpecialStringInfo(token->text);
-					stripped_string += StripStringLiteral(*token, continuation_info);
-				}
 				end_offset = token->offset + token->length;
 				Advance(state);
 			}
@@ -51,9 +44,9 @@ public:
 		}
 
 		auto token_length = optional_idx(end_offset - start_offset.GetIndex());
-
-		auto result = state.AllocateParseResult<StringLiteralParseResult>(stripped_string, string_info.type,
-		                                                                  start_offset, token_length);
+		auto text = LiteralText(state, first_token, string_info);
+		auto result =
+		    state.AllocateParseResult<StringLiteralParseResult>(text, string_info.type, start_offset, token_length);
 		if (result.HasParseResult()) {
 			result.GetParseResult()->name = name;
 		}
@@ -107,15 +100,35 @@ private:
 		return StringUtil::EndsWith(token.text, delimiter);
 	}
 
-	static string StripStringLiteral(const MatcherToken &token, const SpecialStringInfo &string_info) {
-		idx_t delimiter_length;
-		if (TryGetDollarQuoteDelimiterLength(token, delimiter_length)) {
-			return token.text.substr(delimiter_length, token.text.length() - 2 * delimiter_length);
+	static std::string_view QuotedBody(const MatcherToken &token, const SpecialStringInfo &string_info) {
+		return std::string_view(token.text)
+		    .substr(string_info.prefix_len, token.text.length() - (string_info.prefix_len + 1));
+	}
+
+	static std::string_view LiteralText(MatchState &state, idx_t first_token, const SpecialStringInfo &string_info) {
+		auto &allocator = state.context.allocator;
+		auto &first = state.token_iterator.GetToken(first_token);
+		auto end_token = state.token_iterator.Position();
+		if (end_token == first_token + 1) {
+			idx_t delimiter_length;
+			if (TryGetDollarQuoteDelimiterLength(first, delimiter_length)) {
+				return std::string_view(first.text)
+				    .substr(delimiter_length, first.text.length() - 2 * delimiter_length);
+			}
+			return allocator.Unquote(QuotedBody(first, string_info), '\'');
 		}
-		idx_t suffix_len = 1;
-		auto stripped_string =
-		    token.text.substr(string_info.prefix_len, token.text.length() - (string_info.prefix_len + suffix_len));
-		return StringUtil::Replace(stripped_string, "''", "'");
+		idx_t capacity = 0;
+		for (auto index = first_token; index < end_token; index++) {
+			capacity += state.token_iterator.GetToken(index).text.size();
+		}
+		auto data = allocator.AllocateText(capacity);
+		auto size = ParseResultAllocator::CopyUnquoted(QuotedBody(first, string_info), '\'', data);
+		for (auto index = first_token + 1; index < end_token; index++) {
+			auto &piece = state.token_iterator.GetToken(index);
+			size += ParseResultAllocator::CopyUnquoted(QuotedBody(piece, GetSpecialStringInfo(piece.text)), '\'',
+			                                           data + size);
+		}
+		return allocator.FinishText(data, capacity, size);
 	}
 
 	static void Advance(MatchState &state) {

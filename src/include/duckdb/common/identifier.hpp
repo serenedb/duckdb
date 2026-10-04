@@ -99,6 +99,36 @@ private:
 	string value;
 };
 
+class IdentifierRef {
+public:
+	IdentifierRef() = default;
+	explicit IdentifierRef(std::string_view value_p) : value(value_p) {
+	}
+
+	const IdentifierRef &GetIdentifierName() const {
+		return *this;
+	}
+
+	operator string() const { // NOLINT: allow implicit conversion to string
+		return string(value);
+	}
+
+	operator Identifier() const { // NOLINT: allow implicit conversion to Identifier
+		return Identifier(value);
+	}
+
+	operator std::string_view() const { // NOLINT: allow implicit conversion to std::string_view
+		return value;
+	}
+
+	friend std::ostream &operator<<(std::ostream &os, const IdentifierRef &id) {
+		return os << id.value;
+	}
+
+private:
+	std::string_view value;
+};
+
 //! Generate an internal name: the given prefix followed by a random UUID
 Identifier GenerateInternalName(const char *prefix);
 
