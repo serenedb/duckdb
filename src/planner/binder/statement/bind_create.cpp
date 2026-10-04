@@ -7,6 +7,7 @@
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
 #include "duckdb/function/table/table_scan.hpp"
@@ -27,6 +28,7 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/create_trigger_info.hpp"
 #include "duckdb/parser/parsed_data/create_secret_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
@@ -361,7 +363,7 @@ public:
 		if (op.type == LogicalOperatorType::LOGICAL_GET) {
 			auto &get = op.Cast<LogicalGet>();
 			auto table = get.GetTable();
-			if (table && &table->ParentCatalog() == &catalog) {
+			if (table && DependencyManager::CanDepend(catalog, table->ParentCatalog())) {
 				LogicalDependency dependency(*table);
 				for (auto &column : get.GetColumnIds()) {
 					dependency.subdependencies.insert(
@@ -387,8 +389,7 @@ void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const
 
 	if (dependencies) {
 		view_binder->SetCatalogLookupCallback([&dependencies, &catalog](CatalogEntry &entry) {
-			if (&catalog != &entry.ParentCatalog()) {
-				// Don't register dependencies between catalogs
+			if (!DependencyManager::CanDepend(catalog, entry.ParentCatalog())) {
 				return;
 			}
 			dependencies->AddDependency(entry);
@@ -592,8 +593,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		auto &dependencies = base.dependencies;
 		const auto should_create_dependencies = Settings::Get<EnableMacroDependenciesSetting>(context);
 		const auto binder_callback = [&dependencies, &catalog](CatalogEntry &entry) {
-			if (&catalog != &entry.ParentCatalog()) {
-				// Don't register any cross-catalog dependencies
+			if (!DependencyManager::CanDepend(catalog, entry.ParentCatalog())) {
 				return;
 			}
 			// Register any catalog entry required to bind the macro function
@@ -1222,8 +1222,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &catalog = Catalog::GetCatalog(context, create_type_info.GetQualifiedName().Catalog());
 		auto &dependencies = create_type_info.dependencies;
 		auto dependency_callback = [&dependencies, &catalog](CatalogEntry &entry) {
-			if (&catalog != &entry.ParentCatalog()) {
-				// Don't register any cross-catalog dependencies
+			if (!DependencyManager::CanDepend(catalog, entry.ParentCatalog())) {
 				return;
 			}
 			dependencies.AddDependency(entry);
@@ -1346,6 +1345,30 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::JOB_ENTRY: {
 		auto &schema = BindCreateJobInfo(stmt.info->Cast<CreateJobInfo>());
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_JOB, std::move(stmt.info), &schema);
+		break;
+	}
+	case CatalogType::ROLE_ENTRY:
+		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_ROLE, std::move(stmt.info));
+		break;
+	case CatalogType::FOREIGN_SERVER_ENTRY: {
+		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
+		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog), context,
+		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);
+		result.plan =
+		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER, std::move(stmt.info));
+		break;
+	}
+	case CatalogType::TOKENIZER_ENTRY: {
+		auto &info = stmt.info->Cast<CreateTokenizerInfo>();
+		auto &schema = BindCreateSchema(info);
+		ConstantBinder option_binder(*this, context, "text search dictionary option");
+		for (auto &entry : info.parsed_options) {
+			auto bound = option_binder.Bind(entry.second);
+			info.options[Identifier(entry.first)] = ExpressionExecutor::EvaluateScalar(context, *bound, true);
+		}
+		info.parsed_options.clear();
+		result.plan =
+		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_TOKENIZER, std::move(stmt.info), &schema);
 		break;
 	}
 	default:

@@ -5,11 +5,13 @@
 #include <string_view>
 
 #include "duckdb/catalog/permissions.hpp"
-#include "duckdb/common/limits.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/statement/drop_statement.hpp"
 #include "duckdb/parser/statement/pragma_statement.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -65,16 +67,15 @@ int64_t TransformValidUntil(ParseResult &opt) {
 	return parsed.value;
 }
 
-// 'CONNECTION' 'LIMIT' '-'? NumberLiteral -> the signed integer. Out-of-int64
-// magnitudes saturate; the command layer range-checks and reports the error.
-int64_t TransformConnLimit(ParseResult &opt) {
+// 'CONNECTION' 'LIMIT' '-'? NumberLiteral -> the signed integer.
+int32_t TransformConnLimit(ParseResult &opt) {
 	auto &cl = opt.Cast<ListParseResult>();
 	const bool negative = cl.Child<OptionalParseResult>(2).HasResult();
-	int64_t value = 0;
+	int32_t value = 0;
 	auto digits = cl.GetChild(3).Cast<NumberParseResult>().number;
 	auto [ptr, ec] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
-	if (ec != std::errc()) {
-		value = NumericLimits<int64_t>::Maximum();
+	if (ec != std::errc() || ptr != digits.data() + digits.size() || (negative && value > 1)) {
+		throw ParserException("invalid connection limit: %s%s", negative ? "-" : "", digits);
 	}
 	return negative ? -value : value;
 }
@@ -190,60 +191,42 @@ CatalogType GrantObjectType(const string &keyword) {
 
 } // namespace
 
-// CREATE ROLE/USER name [LOGIN] [SUPERUSER] [INHERIT] [PASSWORD '...']
-//   [CONNECTION LIMIT n] [VALID UNTIL '...']
-//   -> PRAGMA serenedb_create_role('name', login, superuser, inherit,
-//          has_password, has_conn_limit, has_valid_until)
-// PASSWORD / CONNECTION LIMIT / VALID UNTIL are accepted by the grammar but
-// unsupported; only a "was given" flag is forwarded so the command can reject
-// them.
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateRoleStatement(PEGTransformer &transformer,
                                                                              ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	// 0:'CREATE' 1:RoleOrUser 2:ColId 3:'WITH'? 4:RoleOptionList? 5:RoleMembershipClause*
 	// A present 4 is a bare LIST(RoleOptionList); absent it is an empty OPTIONAL.
 	// A present 5 is a REPEAT; absent it is an empty OPTIONAL.
-	auto name = TransformColIdName(transformer, list_pr.GetChild(2));
+	auto info = make_uniq<CreateRoleInfo>();
+	info->SetName(Identifier(TransformColIdName(transformer, list_pr.GetChild(2))));
 
 	// CREATE USER defaults to LOGIN; CREATE ROLE does not. An explicit
 	// LOGIN/NOLOGIN option below overrides either way.
 	auto &role_or_user =
 	    list_pr.GetChild(1).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>();
-	bool login = StringUtil::Upper(role_or_user.keyword) == "USER";
-	bool superuser = false;
-	bool createdb = false;
-	bool createrole = false;
-	bool replication = false;
-	bool bypassrls = false;
-	bool inherit = true; // PG default: new roles INHERIT
-	bool has_password = false;
-	string password;
-	bool password_is_null = false;
-	bool has_conn_limit = false;
-	int64_t conn_limit = -1;
-	bool has_valid_until = false;
-	int64_t valid_until = 0;
+	info->options = RoleOption::Inherit;
+	if (StringUtil::Upper(role_or_user.keyword) == "USER") {
+		info->options = info->options | RoleOption::Login;
+	}
 
 	// Attributes (RoleOption) and membership clauses (IN ROLE / ROLE / ADMIN) may
 	// be freely interleaved, like PG. A repeated option category is an error.
-	vector<Value> in_roles;      // new role becomes a member of these
-	vector<Value> role_members;  // these become members of the new role
-	vector<Value> admin_members; // these become members WITH ADMIN OPTION
 	absl::flat_hash_set<std::string_view> seen;
 	auto once = [&seen](std::string_view category) {
 		if (!seen.insert(category).second) {
 			throw ParserException("conflicting or redundant options");
 		}
 	};
-	auto keyword_positive = [](ParseResult &node, const char *positive) {
+	auto set_option = [&](ParseResult &node, std::string_view category, const char *positive, RoleOption option) {
+		once(category);
 		auto &kw = FirstKeyword(node);
-		return StringUtil::Upper(kw.keyword) == positive;
+		info->options = StringUtil::Upper(kw.keyword) == positive ? info->options | option : info->options & ~option;
 	};
-	auto collect_members = [&](ParseResult &clause, vector<Value> &target) {
+	auto collect_members = [&](ParseResult &clause, vector<Identifier> &target) {
 		auto &cl = clause.Cast<ListParseResult>();
 		auto &names = cl.GetChild(cl.GetChildren().size() - 1);
 		for (auto &n : PEGTransformerFactory::ExtractParseResultsFromList(names)) {
-			target.push_back(Value(TransformColIdName(transformer, n.get())));
+			target.emplace_back(TransformColIdName(transformer, n.get()));
 		}
 	};
 
@@ -258,98 +241,63 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateRoleStatement(PEG
 		auto &wrapper = clause_ref.get().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 		auto &opt = wrapper.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 		if (opt.Name() == "LoginOption") {
-			once("login");
-			login = keyword_positive(opt, "LOGIN");
+			set_option(opt, "login", "LOGIN", RoleOption::Login);
 		} else if (opt.Name() == "SuperuserOption") {
-			once("superuser");
-			superuser = keyword_positive(opt, "SUPERUSER");
+			set_option(opt, "superuser", "SUPERUSER", RoleOption::Superuser);
 		} else if (opt.Name() == "CreateDbOption") {
-			once("createdb");
-			createdb = keyword_positive(opt, "CREATEDB");
+			set_option(opt, "createdb", "CREATEDB", RoleOption::CreateDb);
 		} else if (opt.Name() == "CreateRoleOption") {
-			once("createrole");
-			createrole = keyword_positive(opt, "CREATEROLE");
+			set_option(opt, "createrole", "CREATEROLE", RoleOption::CreateRole);
 		} else if (opt.Name() == "ReplicationOption") {
-			once("replication");
-			replication = keyword_positive(opt, "REPLICATION");
+			set_option(opt, "replication", "REPLICATION", RoleOption::Replication);
 		} else if (opt.Name() == "BypassRlsOption") {
-			once("bypassrls");
-			bypassrls = keyword_positive(opt, "BYPASSRLS");
+			set_option(opt, "bypassrls", "BYPASSRLS", RoleOption::BypassRls);
 		} else if (opt.Name() == "InheritOption") {
-			once("inherit");
-			inherit = keyword_positive(opt, "INHERIT");
+			set_option(opt, "inherit", "INHERIT", RoleOption::Inherit);
 		} else if (opt.Name() == "ConnLimitOption") {
 			once("connlimit");
-			has_conn_limit = true;
-			conn_limit = TransformConnLimit(opt);
+			info->conn_limit = TransformConnLimit(opt);
 		} else if (opt.Name() == "ValidUntilOption") {
 			once("validuntil");
-			has_valid_until = true;
-			valid_until = TransformValidUntil(opt);
+			info->valid_until = TransformValidUntil(opt);
 		} else if (opt.Name() == "PasswordOption") {
 			// PasswordOption <- 'ENCRYPTED'? 'PASSWORD' StringLiteral
 			once("password");
-			has_password = true;
-			password = opt.Cast<ListParseResult>().GetChild(2).Cast<StringLiteralParseResult>().result;
+			info->password = opt.Cast<ListParseResult>().GetChild(2).Cast<StringLiteralParseResult>().result;
 		} else if (opt.Name() == "PasswordNullOption") {
 			once("password");
-			has_password = true;
-			password_is_null = true;
 		} else if (opt.Name() == "SysIdOption") {
 			// SYSID is a legacy no-op accepted for compatibility.
 		} else if (opt.Name() == "InRoleClause") {
-			collect_members(opt, in_roles);
+			collect_members(opt, info->in_roles);
 		} else if (opt.Name() == "RoleMembersClause") {
-			collect_members(opt, role_members);
+			collect_members(opt, info->role_members);
 		} else if (opt.Name() == "AdminClause") {
-			collect_members(opt, admin_members);
+			collect_members(opt, info->admin_members);
 		} else {
 			throw ParserException("Unexpected role option in CREATE ROLE: %s", opt.Name());
 		}
 	}
 
-	auto result = make_uniq<PragmaStatement>();
-	result->info->name = "serenedb_create_role";
-	result->info->parameters.push_back(StrConst(name));
-	result->info->parameters.push_back(BoolConst(login));
-	result->info->parameters.push_back(BoolConst(superuser));
-	result->info->parameters.push_back(BoolConst(inherit));
-	result->info->parameters.push_back(BoolConst(has_password));
-	result->info->parameters.push_back(StrConst(password));
-	result->info->parameters.push_back(BoolConst(password_is_null));
-	result->info->parameters.push_back(BoolConst(has_conn_limit));
-	result->info->parameters.push_back(BoolConst(has_valid_until));
-	result->info->parameters.push_back(BigIntConst(valid_until));
-	result->info->parameters.push_back(BoolConst(createdb));
-	result->info->parameters.push_back(BoolConst(createrole));
-	result->info->parameters.push_back(BigIntConst(conn_limit));
-	result->info->parameters.push_back(BoolConst(replication));
-	result->info->parameters.push_back(BoolConst(bypassrls));
-	result->info->parameters.push_back(
-	    ConstantExpression::FromValue(Value::LIST(LogicalType::VARCHAR, std::move(in_roles))));
-	result->info->parameters.push_back(
-	    ConstantExpression::FromValue(Value::LIST(LogicalType::VARCHAR, std::move(role_members))));
-	result->info->parameters.push_back(
-	    ConstantExpression::FromValue(Value::LIST(LogicalType::VARCHAR, std::move(admin_members))));
+	auto result = make_uniq<CreateStatement>();
+	result->info = std::move(info);
 	return std::move(result);
 }
 
-// DROP ROLE/USER [IF EXISTS] name [, ...] -> PRAGMA serenedb_drop_role([names], if_exists)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropRoleStatement(PEGTransformer &transformer,
                                                                            ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	// 0:'DROP' 1:RoleOrUser 2:IfExists? 3:List(ColId)
-	bool if_exists = list_pr.Child<OptionalParseResult>(2).HasResult();
-	vector<Value> names;
-	for (auto &n : PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(3))) {
-		names.push_back(Value(TransformColIdName(transformer, n.get())));
+	auto names = PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(3));
+	if (names.size() > 1) {
+		throw NotImplementedException("Can only drop one object at a time");
 	}
-
-	auto result = make_uniq<PragmaStatement>();
-	result->info->name = "serenedb_drop_role";
-	result->info->parameters.push_back(
-	    ConstantExpression::FromValue(Value::LIST(LogicalType::VARCHAR, std::move(names))));
-	result->info->parameters.push_back(BoolConst(if_exists));
+	auto result = make_uniq<DropStatement>();
+	result->info->type = CatalogType::ROLE_ENTRY;
+	result->info->SetQualifiedName(Identifier(), Identifier(),
+	                               Identifier(TransformColIdName(transformer, names[0].get())));
+	result->info->if_not_found = list_pr.Child<OptionalParseResult>(2).HasResult() ? OnEntryNotFound::RETURN_NULL
+	                                                                               : OnEntryNotFound::THROW_EXCEPTION;
 	return std::move(result);
 }
 
@@ -627,7 +575,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 		if (opt.Name() == "ConnLimitOption") {
 			once("connlimit");
 			info->set_conn_limit = true;
-			info->conn_limit = NumericCast<int32_t>(TransformConnLimit(opt));
+			info->conn_limit = TransformConnLimit(opt);
 			continue;
 		}
 		if (opt.Name() == "ValidUntilOption") {

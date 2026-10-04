@@ -119,22 +119,30 @@ bool CatalogSet::StartChain(CatalogTransaction transaction, const Identifier &na
 	return true;
 }
 
+static bool IsDependencyEntry(CatalogEntry &entry) {
+	return entry.type == CatalogType::DEPENDENCY_ENTRY;
+}
+
+static const Identifier &ConflictName(CatalogEntry &entry) {
+	auto &version = entry.type == CatalogType::DELETED_ENTRY && entry.HasChild() ? entry.Child() : entry;
+	if (IsDependencyEntry(version)) {
+		return version.Cast<DependencyEntry>().Dependent().entry.name;
+	}
+	return entry.name;
+}
+
 bool CatalogSet::VerifyVacancy(CatalogTransaction transaction, CatalogEntry &entry) {
 	if (HasConflict(transaction, entry.timestamp)) {
 		// A transaction that is not visible to our snapshot has already made a change to this entry.
 		// Because of Catalog limitations we can't push our change on this, even if the change was made by another
 		// active transaction that might end up being aborted. So we have to cancel this transaction.
-		throw TransactionException("Catalog write-write conflict on create with %s", entry.name);
+		throw TransactionException("Catalog write-write conflict on create with %s", ConflictName(entry));
 	}
 	// The entry is visible to our snapshot
 	if (!entry.deleted) {
 		return false;
 	}
 	return true;
-}
-
-static bool IsDependencyEntry(CatalogEntry &entry) {
-	return entry.type == CatalogType::DEPENDENCY_ENTRY;
 }
 
 void CatalogSet::CheckCatalogEntryInvariants(CatalogEntry &value, const Identifier &name) {
@@ -267,7 +275,7 @@ optional_ptr<CatalogEntry> CatalogSet::GetEntryInternal(CatalogTransaction trans
 		// Another transaction has already made an edit to this catalog entry, because of limitations in the Catalog we
 		// can't create an edit alongside this even if the other transaction might end up getting aborted. So we have to
 		// abort the transaction.
-		throw TransactionException("Catalog write-write conflict on alter with %s", catalog_entry.name);
+		throw TransactionException("Catalog write-write conflict on alter with %s", ConflictName(catalog_entry));
 	}
 	// The entry is visible to our snapshot, check if it's deleted
 	if (catalog_entry.deleted) {

@@ -15,6 +15,7 @@
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/function/built_in_functions.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/function/function_list.hpp"
 #include "duckdb/common/encryption_state.hpp"
@@ -186,7 +187,8 @@ unique_ptr<InCatalogEntry> DuckCatalog::MakeForeignServerEntry(CreateForeignServ
 	throw NotImplementedException("Foreign servers are not supported by this catalog");
 }
 
-unique_ptr<StandardEntry> DuckCatalog::MakeTokenizerEntry(DuckSchemaEntry &schema, CreateTokenizerInfo &info) {
+unique_ptr<StandardEntry> DuckCatalog::MakeTokenizerEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
+                                                          CreateTokenizerInfo &info) {
 	throw NotImplementedException("Text search dictionaries are not supported by this catalog");
 }
 
@@ -243,12 +245,16 @@ void DuckCatalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
 }
 
 void DuckCatalog::DropDatabase(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!databases->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
+	auto &name = info.GetQualifiedName().Name();
+	D_ASSERT(!name.empty());
+	if (!databases->DropEntry(transaction, name, info.cascade)) {
 		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name(), string());
+			throw CatalogException::MissingEntry(CatalogType::DATABASE_ENTRY, name, string());
 		}
+		return;
 	}
+	auto &context = transaction.GetContext();
+	DatabaseManager::Get(context).DetachDatabase(context, name, OnEntryNotFound::RETURN_NULL);
 }
 
 void DuckCatalog::DropForeignServer(CatalogTransaction transaction, DropInfo &info) {
