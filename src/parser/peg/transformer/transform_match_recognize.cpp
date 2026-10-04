@@ -319,6 +319,7 @@ PEGTransformerFactory::TransformRowPattern(PEGTransformer &transformer, unique_p
 	if (!row_pattern_alternative) {
 		return result;
 	}
+	transformer.AddDepth(row_pattern_alternative->size());
 	// alternation is left-associative: A | B | C becomes ((A | B) | C)
 	for (auto &alternative : *row_pattern_alternative) {
 		result = make_uniq_base<ParsedExpression, AlternationExpression>(std::move(result), std::move(alternative));

@@ -1,5 +1,7 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 
+#include "duckdb/common/exception/parser_exception.hpp"
+#include "duckdb/common/limits.hpp"
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
@@ -138,6 +140,7 @@ void TransformStack::InitializeFrame(TransformStackFrame &frame) {
 }
 
 arena_ptr<TransformResultValue> TransformStack::ExecuteFrame(TransformStackFrame &frame) {
+	transformer.running_frame = frame;
 	if (!frame.process) {
 		InitializeFrame(frame);
 	}
@@ -163,14 +166,20 @@ arena_ptr<TransformResultValue> TransformStack::Execute(TransformInput input) {
 		if (!result) {
 			continue;
 		}
+		auto result_height = frame.height + 1;
+		if (result_height >= transformer.max_height) {
+			ParserException::ThrowMaxExpressionDepth(transformer.options.max_expression_depth);
+		}
 		transformer.SetResultLocation(frame.parse_result, *result);
 		frames.pop();
 		if (frames.empty()) {
+			height = result_height;
 			return result;
 		}
 		auto &parent = frames.top();
 		D_ASSERT(!parent.child_result);
 		parent.child_result = std::move(result);
+		parent.height = MaxValue(parent.height, result_height);
 	}
 	throw InternalException("Transformer stack completed without a result");
 }
@@ -198,8 +207,35 @@ arena_ptr<TransformResultValue> PEGTransformer::TransformInternal(ParseResult &p
 		throw InternalException("No registered data exists for rule '%s'", parse_result.name);
 	}
 	TransformInput input {*rule, parse_result};
+	auto caller = running_frame;
 	TransformStack stack(*this);
-	return stack.Execute(input);
+	auto result = stack.Execute(input);
+	running_frame = caller;
+	if (caller) {
+		caller->height = MaxValue(caller->height, stack.Height());
+	}
+	return result;
+}
+
+PEGTransformer::PEGTransformer(ArenaAllocator &allocator, TokenIterator &token_iterator, ParserOptions &options_p,
+                               const CompiledGrammar &grammar_p)
+    : allocator(allocator), token_iterator(token_iterator), options(options_p), grammar(grammar_p),
+      max_height(options_p.max_expression_depth > NumericLimits<idx_t>::Maximum() / HEIGHT_PER_EXPRESSION_LEVEL
+                     ? NumericLimits<idx_t>::Maximum()
+                     : options_p.max_expression_depth * HEIGHT_PER_EXPRESSION_LEVEL) {
+}
+
+void PEGTransformer::AddDepth(idx_t levels) {
+	if (levels >= options.max_expression_depth) {
+		ParserException::ThrowMaxExpressionDepth(options.max_expression_depth);
+	}
+	if (!running_frame) {
+		return;
+	}
+	running_frame->height += levels;
+	if (running_frame->height >= max_height) {
+		ParserException::ThrowMaxExpressionDepth(options.max_expression_depth);
+	}
 }
 
 const CompiledGrammarRule &PEGTransformer::GetRule(const string &rule_name) const {

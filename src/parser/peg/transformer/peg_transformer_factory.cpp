@@ -5,6 +5,7 @@
 #include "duckdb/common/query_location.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/peg/matcher.hpp"
+#include "duckdb/parser/parser.hpp"
 #include "duckdb/common/to_string.hpp"
 #include "duckdb/parser/sql_statement.hpp"
 #include "duckdb/parser/token_iterator.hpp"
@@ -60,6 +61,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 	ArenaAllocator process_allocator(Allocator::DefaultAllocator());
 	MatchContext match_context(suggestions, parse_result_allocator, process_allocator, max_token_index,
 	                           MatchMode::BUILD_PARSE_RESULT, options.identifier_case_mode, &packrat_cache);
+	match_context.max_expression_depth = options.max_expression_depth;
 	MatchState state(token_iterator, match_context);
 	auto match_result = grammar.TopLevelStatementMatcher().MatchParseResult(state);
 	process_allocator.FreeAll();
@@ -83,6 +85,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 	}
 	D_ASSERT(match_result.HasParseResult());
 
+	auto statement_tokens = state.token_iterator.Position() - token_iterator.Position();
 	// Advance the caller's cursor past the consumed tokens.
 	token_iterator.SetPosition(state.token_iterator);
 
@@ -107,6 +110,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 
 	ArenaAllocator transformer_allocator(Allocator::DefaultAllocator());
 	PEGTransformer transformer(transformer_allocator, token_iterator, options, grammar);
+	transformer.can_exceed_depth = ExpressionDepthCheck::CanExceed(statement_tokens, options.max_expression_depth);
 
 	return ExtractAndTransformStatement(transformer, token_iterator, stmt_opt.GetResult(), terminator_offset);
 }

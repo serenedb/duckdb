@@ -37,6 +37,7 @@ public:
 
 	static ParserException SyntaxError(std::string_view query, std::string_view error_message,
 	                                   QueryLocation error_location);
+	[[noreturn]] static void ThrowMaxExpressionDepth(idx_t max_expression_depth);
 };
 
 } // namespace duckdb

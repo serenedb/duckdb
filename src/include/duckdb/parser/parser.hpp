@@ -31,6 +31,19 @@ struct UnicodeSpace {
 	idx_t bytes;
 };
 
+struct ExpressionDepthCheck {
+	static constexpr idx_t LEVELS_PER_TOKEN = 2;
+
+	idx_t max_expression_depth;
+	vector<pair<reference<ParsedExpression>, idx_t>> pending;
+	idx_t deepest = 0;
+
+	static bool CanExceed(idx_t token_count, idx_t max_expression_depth) {
+		return token_count * LEVELS_PER_TOKEN > max_expression_depth;
+	}
+	void Verify(ParsedExpression &root);
+};
+
 //! The parser is responsible for parsing the query and converting it into a set
 //! of parsed statements. The parsed statements can then be converted into a
 //! plan and executed.
@@ -116,5 +129,6 @@ private:
 
 	ParserOptions options;
 	shared_ptr<CompiledGrammar> compiled_grammar;
+	ExpressionDepthCheck depth_check;
 };
 } // namespace duckdb

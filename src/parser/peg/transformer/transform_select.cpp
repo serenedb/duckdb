@@ -4,6 +4,7 @@
 #include "duckdb/parser/result_modifier.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/expression_map.hpp"
+#include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/peg/ast/distinct_clause.hpp"
 #include "duckdb/parser/peg/ast/join_prefix.hpp"
 #include "duckdb/parser/peg/ast/join_qualifier.hpp"
@@ -157,6 +158,7 @@ unique_ptr<SelectStatement> PEGTransformerFactory::TransformSelectSetOpChain(
 				continue;
 			}
 		}
+		transformer.AddDepth(1);
 		setop_result->children.push_back(std::move(select->node));
 		setop_result->children.push_back(std::move(right_select->node));
 		select->node = std::move(setop_result);
@@ -179,6 +181,7 @@ unique_ptr<SelectStatement> PEGTransformerFactory::TransformIntersectChain(
 		return select;
 	}
 	for (auto &tail : *intersect_chain_tail) {
+		transformer.AddDepth(1);
 		auto intersect_node = std::move(tail.first);
 		auto right_select = std::move(tail.second);
 		intersect_node->children.push_back(std::move(select->node));
@@ -423,6 +426,7 @@ arena_ptr<TransformResultValue> PEGTransformerFactory::FinalizeTableRefTrampolin
 	}
 	auto &repeat_join_or_pivot = join_or_pivot_opt.GetResult().Cast<RepeatParseResult>();
 	auto repeat_children = repeat_join_or_pivot.GetChildren();
+	transformer.AddDepth(repeat_children.size());
 	for (idx_t i = 0; i < repeat_children.size(); i++) {
 		auto transform_join_or_pivot = process.TakeResult<unique_ptr<TableRef>>(1 + i);
 		if (transform_join_or_pivot->type == TableReferenceType::JOIN) {
@@ -869,6 +873,8 @@ LimitPercentResult PEGTransformerFactory::TransformLimitExpression(PEGTransforme
 
 struct GroupingExpressionMap {
 	parsed_expression_map_t<ProjectionIndex> map;
+	ExpressionDepthCheck depth_check;
+	bool verify_depth;
 };
 
 static void CheckGroupingSetMax(idx_t count) {
@@ -896,6 +902,9 @@ static GroupingSet VectorToGroupingSet(vector<ProjectionIndex> &indexes) {
 
 void PEGTransformerFactory::AddGroupByExpression(unique_ptr<ParsedExpression> expression, GroupingExpressionMap &map,
                                                  GroupByNode &result, vector<ProjectionIndex> &result_set) {
+	if (map.verify_depth) {
+		map.depth_check.Verify(*expression);
+	}
 	if (expression->GetExpressionType() == ExpressionType::FUNCTION) {
 		auto &func = expression->Cast<FunctionExpression>();
 		if (func.FunctionName() == "row") {
@@ -988,7 +997,7 @@ string PEGTransformerFactory::TransformRollupKeyword(PEGTransformer &transformer
 GroupByNode PEGTransformerFactory::TransformGroupByList(PEGTransformer &transformer,
                                                         vector<GroupByExpressionInfo> group_by_expression) {
 	GroupByNode result;
-	GroupingExpressionMap map;
+	GroupingExpressionMap map {{}, {transformer.options.max_expression_depth, {}}, transformer.can_exceed_depth};
 
 	for (auto &group_by_expr : group_by_expression) {
 		vector<GroupingSet> next_sets = GroupByExpressionUnfolding(group_by_expr, map, result);
@@ -1653,6 +1662,7 @@ unique_ptr<TableRef> PEGTransformerFactory::TransformFromClause(PEGTransformer &
 	if (table_ref.size() == 1) {
 		return result_table_ref;
 	}
+	transformer.AddDepth(table_ref.size() - 1);
 	for (idx_t i = 1; i < table_ref.size(); i++) {
 		auto cross_product = make_uniq<JoinRef>();
 		cross_product->left = std::move(result_table_ref);

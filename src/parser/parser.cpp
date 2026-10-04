@@ -2,6 +2,7 @@
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/peg/keyword_helper/duckdb_keyword_helper.hpp"
 
+#include "duckdb/common/limits.hpp"
 #include "duckdb/main/extension_callback_manager.hpp"
 #include "duckdb/parser/group_by_node.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
@@ -12,6 +13,25 @@
 #include "duckdb/parser/statement/extension_statement.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
+#include "duckdb/parser/statement/insert_statement.hpp"
+#include "duckdb/parser/statement/delete_statement.hpp"
+#include "duckdb/parser/statement/merge_into_statement.hpp"
+#include "duckdb/parser/statement/explain_statement.hpp"
+#include "duckdb/parser/statement/prepare_statement.hpp"
+#include "duckdb/parser/statement/copy_statement.hpp"
+#include "duckdb/parser/statement/set_statement.hpp"
+#include "duckdb/parser/statement/call_statement.hpp"
+#include "duckdb/parser/statement/execute_statement.hpp"
+#include "duckdb/parser/expression/subquery_expression.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_macro_info.hpp"
+#include "duckdb/function/scalar_macro_function.hpp"
+#include "duckdb/function/table_macro_function.hpp"
+#include "duckdb/parser/query_node/insert_query_node.hpp"
+#include "duckdb/parser/query_node/delete_query_node.hpp"
+#include "duckdb/parser/query_node/merge_query_node.hpp"
 #include "duckdb/parser/query_node/update_query_node.hpp"
 #include "duckdb/parser/tableref/expressionlistref.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
@@ -21,7 +41,7 @@
 
 namespace duckdb {
 
-Parser::Parser(const ParserOptions &options_p) : options(options_p) {
+Parser::Parser(const ParserOptions &options_p) : options(options_p), depth_check {options_p.max_expression_depth, {}} {
 }
 
 Parser::~Parser() = default;
@@ -349,12 +369,156 @@ unique_ptr<SQLStatement> Parser::TryParseExtensionStatement(TokenIterator &token
 	return nullptr;
 }
 
+void ExpressionDepthCheck::Verify(ParsedExpression &root) {
+	pending.clear();
+	pending.emplace_back(root, 1);
+	while (!pending.empty()) {
+		auto entry = pending.back();
+		pending.pop_back();
+		auto &expr = entry.first.get();
+		auto depth = entry.second;
+		if (depth > max_expression_depth) {
+			ParserException::ThrowMaxExpressionDepth(max_expression_depth);
+		}
+		deepest = MaxValue(deepest, depth);
+		auto push = [&](unique_ptr<ParsedExpression> &child) {
+			if (child) {
+				pending.emplace_back(*child, depth + 1);
+			}
+		};
+		ParsedExpressionIterator::EnumerateChildren(expr, push);
+		if (expr.GetExpressionClass() == ExpressionClass::SUBQUERY) {
+			auto &subquery = expr.Cast<SubqueryExpression>().SubqueryMutable();
+			if (subquery && subquery->node) {
+				ParsedExpressionIterator::EnumerateQueryNodeChildren(*subquery->node, push);
+			}
+		}
+	}
+}
+
+static void VerifyStatementDepth(SQLStatement &statement, ExpressionDepthCheck &check) {
+	auto verify = [&](unique_ptr<ParsedExpression> &expr) {
+		if (expr) {
+			check.Verify(*expr);
+		}
+	};
+	auto verify_node = [&](optional_ptr<QueryNode> node) {
+		if (node) {
+			ParsedExpressionIterator::EnumerateQueryNodeChildren(*node, verify);
+		}
+	};
+	switch (statement.type) {
+	case StatementType::SELECT_STATEMENT:
+		verify_node(statement.Cast<SelectStatement>().node.get());
+		break;
+	case StatementType::INSERT_STATEMENT:
+		verify_node(statement.Cast<InsertStatement>().node.get());
+		break;
+	case StatementType::UPDATE_STATEMENT:
+		verify_node(statement.Cast<UpdateStatement>().node.get());
+		break;
+	case StatementType::DELETE_STATEMENT:
+		verify_node(statement.Cast<DeleteStatement>().node.get());
+		break;
+	case StatementType::MERGE_INTO_STATEMENT:
+		verify_node(statement.Cast<MergeIntoStatement>().node.get());
+		break;
+	case StatementType::EXPLAIN_STATEMENT:
+		VerifyStatementDepth(*statement.Cast<ExplainStatement>().stmt, check);
+		break;
+	case StatementType::PREPARE_STATEMENT:
+		VerifyStatementDepth(*statement.Cast<PrepareStatement>().statement, check);
+		break;
+	case StatementType::COPY_STATEMENT: {
+		auto &info = *statement.Cast<CopyStatement>().info;
+		verify_node(info.select_statement.get());
+		verify(info.file_path_expression);
+		for (auto &option : info.parsed_options) {
+			verify(option.second);
+		}
+		break;
+	}
+	case StatementType::SET_STATEMENT: {
+		auto &set = statement.Cast<SetStatement>();
+		if (set.set_type == SetType::SET) {
+			verify(set.Cast<SetVariableStatement>().value);
+		}
+		break;
+	}
+	case StatementType::CALL_STATEMENT:
+		verify(statement.Cast<CallStatement>().function);
+		break;
+	case StatementType::EXECUTE_STATEMENT:
+		for (auto &value : statement.Cast<ExecuteStatement>().named_values) {
+			verify(value.second);
+		}
+		break;
+	case StatementType::CREATE_STATEMENT: {
+		auto &info = *statement.Cast<CreateStatement>().info;
+		switch (info.type) {
+		case CatalogType::VIEW_ENTRY: {
+			auto &view = info.Cast<CreateViewInfo>();
+			verify_node(view.query ? view.query->node.get() : nullptr);
+			break;
+		}
+		case CatalogType::INDEX_ENTRY: {
+			auto &index = info.Cast<CreateIndexInfo>();
+			for (auto &expr : index.expressions) {
+				verify(expr);
+			}
+			for (auto &expr : index.parsed_expressions) {
+				verify(expr);
+			}
+			break;
+		}
+		case CatalogType::MACRO_ENTRY:
+		case CatalogType::TABLE_MACRO_ENTRY: {
+			auto &macro_info = info.Cast<CreateMacroInfo>();
+			for (auto &macro : macro_info.macros) {
+				if (macro->type == MacroType::SCALAR_MACRO) {
+					verify(macro->Cast<ScalarMacroFunction>().expression);
+				} else if (macro->type == MacroType::TABLE_MACRO) {
+					verify_node(macro->Cast<TableMacroFunction>().query_node.get());
+				}
+			}
+			break;
+		}
+		case CatalogType::TABLE_ENTRY: {
+			auto &table = info.Cast<CreateTableInfo>();
+			verify_node(table.query ? table.query->node.get() : nullptr);
+			break;
+		}
+		default:
+			break;
+		}
+		break;
+	}
+	default:
+		break;
+	}
+}
+
 unique_ptr<SQLStatement> Parser::ParseTopLevelStatement(TokenIterator &token_iterator) {
 	if (!token_iterator.Current()) {
 		return nullptr;
 	}
 	auto &compiled_grammar = GetGrammar();
-	return PEGTransformerFactory::TransformTopLevelStatement(token_iterator, options, compiled_grammar);
+	auto first_token = token_iterator.Position();
+	auto statement = PEGTransformerFactory::TransformTopLevelStatement(token_iterator, options, compiled_grammar);
+	auto token_count = token_iterator.Position() - first_token;
+	if (!statement) {
+		return statement;
+	}
+	if (ExpressionDepthCheck::CanExceed(token_count, options.max_expression_depth)) {
+		VerifyStatementDepth(*statement, depth_check);
+	} else {
+#ifdef DEBUG
+		ExpressionDepthCheck measure {NumericLimits<idx_t>::Maximum(), {}};
+		VerifyStatementDepth(*statement, measure);
+		D_ASSERT(measure.deepest <= token_count * ExpressionDepthCheck::LEVELS_PER_TOKEN);
+#endif
+	}
+	return statement;
 }
 
 vector<SimplifiedToken> Parser::Tokenize(const string &query) {

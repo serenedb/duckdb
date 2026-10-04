@@ -94,6 +94,7 @@ PEGTransformerFactory::TransformBaseExpression(PEGTransformer &transformer,
 		return expr;
 	}
 
+	transformer.AddDepth(indirection_list->size());
 	bool prev_indirection_was_cast = false;
 	for (auto &indirection_expr : *indirection_list) {
 		if (indirection_expr->GetExpressionClass() == ExpressionClass::CAST) {
@@ -608,6 +609,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformLambdaArrowExpressi
 	if (!single_arrow_pair) {
 		return expr;
 	}
+	transformer.AddDepth(single_arrow_pair->size());
 	for (auto &right_expr : *single_arrow_pair) {
 		expr = make_uniq<LambdaExpression>(std::move(expr), std::move(right_expr));
 	}
@@ -628,7 +630,7 @@ static unique_ptr<ParsedExpression> FoldConjunctionExpression(PEGTransformer &tr
 	if (!tails) {
 		return expr;
 	}
-	auto depth_guard = transformer.StackCheck(tails->size());
+	transformer.AddDepth(tails->size());
 	for (auto &tail : *tails) {
 		expr = make_uniq<ConjunctionExpression>(conjunction_type, std::move(expr), std::move(tail));
 	}
@@ -694,6 +696,7 @@ PEGTransformerFactory::TransformLogicalNotExpression(PEGTransformer &transformer
 	if (!not_expression) {
 		return expr;
 	}
+	transformer.AddDepth(not_expression->size());
 	for (idx_t i = 0; i < not_expression->size(); i++) {
 		vector<unique_ptr<ParsedExpression>> inner_list_children;
 		inner_list_children.push_back(std::move(expr));
@@ -728,9 +731,10 @@ static unique_ptr<ParsedExpression> ApplyIsDistinctFromTail(unique_ptr<ParsedExp
 	return make_uniq<ComparisonExpression>(tail.comparison_type, std::move(expr), std::move(tail.expression));
 }
 
-static unique_ptr<ParsedExpression> ApplyComparisonTail(unique_ptr<ParsedExpression> expr,
+static unique_ptr<ParsedExpression> ApplyComparisonTail(PEGTransformer &transformer, unique_ptr<ParsedExpression> expr,
                                                         ComparisonExpressionTail tail) {
 	auto right_expr = std::move(tail.expression);
+	transformer.AddDepth(tail.not_keywords.size());
 	for (idx_t i = 0; i < tail.not_keywords.size(); i++) {
 		vector<unique_ptr<ParsedExpression>> inner_list_children;
 		inner_list_children.push_back(std::move(right_expr));
@@ -747,6 +751,7 @@ PEGTransformerFactory::TransformIsExpression(PEGTransformer &transformer,
 	if (!is_expression_continuation) {
 		return expr;
 	}
+	transformer.AddDepth(is_expression_continuation->size());
 	auto previous_type = ExpressionTailType::IS_TEST;
 	for (auto &tail : *is_expression_continuation) {
 		if (tail.type == previous_type &&
@@ -761,7 +766,7 @@ PEGTransformerFactory::TransformIsExpression(PEGTransformer &transformer,
 			expr = ApplyIsDistinctFromTail(std::move(expr), std::move(tail.distinct));
 			break;
 		case ExpressionTailType::COMPARISON:
-			expr = ApplyComparisonTail(std::move(expr), std::move(tail.comparison));
+			expr = ApplyComparisonTail(transformer, std::move(expr), std::move(tail.comparison));
 			break;
 		case ExpressionTailType::OTHER_OPERATOR: {
 			vector<OtherOperatorTail> other_tail;
@@ -863,6 +868,7 @@ PEGTransformerFactory::TransformIsDistinctFromExpression(PEGTransformer &transfo
 	if (is_distinct_from_tail->size() > 1) {
 		throw ParserException("Chained comparisons are not supported, use AND to combine comparisons");
 	}
+	transformer.AddDepth(is_distinct_from_tail->size());
 	for (auto &is_distinct : *is_distinct_from_tail) {
 		expr = ApplyIsDistinctFromTail(std::move(expr), std::move(is_distinct));
 	}
@@ -879,9 +885,9 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformComparisonExpressio
 	if (comparison_expression_tail->size() > 1) {
 		throw ParserException("Chained comparisons are not supported, use AND to combine comparisons");
 	}
-	auto cmp_depth_guard = transformer.StackCheck(comparison_expression_tail->size());
+	transformer.AddDepth(comparison_expression_tail->size());
 	for (auto &comparison_expr : *comparison_expression_tail) {
-		expr = ApplyComparisonTail(std::move(expr), std::move(comparison_expr));
+		expr = ApplyComparisonTail(transformer, std::move(expr), std::move(comparison_expr));
 	}
 	return expr;
 }
@@ -1150,7 +1156,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformBetweenInLikeExpres
 	if (between_like_op) {
 		predicate_count++;
 	}
-	auto depth_guard = transformer.StackCheck(predicate_count);
+	transformer.AddDepth(predicate_count);
 	if (in_predicate) {
 		for (auto &predicate : *in_predicate) {
 			expr = ApplyBetweenInLikeOperator(std::move(expr), predicate);
@@ -1364,6 +1370,7 @@ PEGTransformerFactory::TransformInfixOtherOperatorExpression(PEGTransformer &tra
 	if (!other_operator_tail) {
 		return expr;
 	}
+	transformer.AddDepth(other_operator_tail->size());
 	for (auto &other_operator_expr : *other_operator_tail) {
 		auto right_expr = std::move(other_operator_expr.expression);
 		if (other_operator_expr.op.is_any_all) {
@@ -1621,7 +1628,7 @@ PEGTransformerFactory::TransformBitwiseExpression(PEGTransformer &transformer,
 	if (!bitwise_expression_tail) {
 		return expr;
 	}
-	auto bit_depth_guard = transformer.StackCheck(bitwise_expression_tail->size());
+	transformer.AddDepth(bitwise_expression_tail->size());
 	for (auto &bit_expr : *bitwise_expression_tail) {
 		vector<unique_ptr<ParsedExpression>> bit_children;
 		bit_children.push_back(std::move(expr));
@@ -1641,7 +1648,7 @@ PEGTransformerFactory::TransformAdditiveExpression(PEGTransformer &transformer,
 	if (!additive_expression_tail) {
 		return expr;
 	}
-	auto add_depth_guard = transformer.StackCheck(additive_expression_tail->size());
+	transformer.AddDepth(additive_expression_tail->size());
 	for (auto &term_expr : *additive_expression_tail) {
 		vector<unique_ptr<ParsedExpression>> term_children;
 		term_children.push_back(std::move(expr));
@@ -1663,7 +1670,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformMultiplicativeExpre
 	if (!multiplicative_expression_tail) {
 		return expr;
 	}
-	auto mul_depth_guard = transformer.StackCheck(multiplicative_expression_tail->size());
+	transformer.AddDepth(multiplicative_expression_tail->size());
 	for (auto &factor_expr : *multiplicative_expression_tail) {
 		auto factor = std::move(factor_expr.op);
 		if (factor == "/" && transformer.options.integer_division) {
@@ -1686,6 +1693,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformExponentiationExpre
 	if (!exponentiation_expression_tail) {
 		return expr;
 	}
+	transformer.AddDepth(exponentiation_expression_tail->size());
 	for (auto &exponent_expr : *exponentiation_expression_tail) {
 		vector<unique_ptr<ParsedExpression>> exponent_children;
 		exponent_children.push_back(std::move(expr));
@@ -1712,7 +1720,7 @@ PEGTransformerFactory::TransformTildeExpression(PEGTransformer &transformer,
 	if (!tilde_prefix_operator) {
 		return expr;
 	}
-	auto tilde_depth_guard = transformer.StackCheck(tilde_prefix_operator->size());
+	transformer.AddDepth(tilde_prefix_operator->size());
 	for (const auto &prefix : *tilde_prefix_operator) {
 		vector<unique_ptr<ParsedExpression>> children;
 		children.push_back(std::move(expr));
@@ -1746,6 +1754,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCollateExpression(
 	if (!collate_expression_tail) {
 		return expr;
 	}
+	transformer.AddDepth(collate_expression_tail->size());
 	for (auto &collate_string_expr : *collate_expression_tail) {
 		string collate_string;
 		if (collate_string_expr->GetExpressionClass() == ExpressionClass::CONSTANT) {
@@ -1777,6 +1786,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformAtTimeZoneExpressio
 	if (!at_time_zone_expression_tail) {
 		return expr;
 	}
+	transformer.AddDepth(at_time_zone_expression_tail->size());
 	for (auto &time_zone_expr : *at_time_zone_expression_tail) {
 		vector<unique_ptr<ParsedExpression>> time_zone_children;
 		time_zone_children.push_back(std::move(time_zone_expr));
@@ -1830,6 +1840,14 @@ PEGTransformerFactory::FinalizePrefixExpressionTrampoline(PEGTransformer &transf
 	for (idx_t i = 0; i < prefix_children.size(); i++) {
 		prefixes.push_back(process.TakeResult<string>(1 + i));
 	}
+	idx_t nested_prefixes = prefixes.size();
+	if (expr->GetExpressionType() == ExpressionType::VALUE_CONSTANT &&
+	    expr->Cast<ConstantExpression>().GetLiteral().IsNumeric()) {
+		for (auto it = prefixes.rbegin(); it != prefixes.rend() && *it == "-"; ++it) {
+			nested_prefixes--;
+		}
+	}
+	transformer.AddDepth(nested_prefixes);
 
 	for (auto it = prefixes.rbegin(); it != prefixes.rend(); ++it) {
 		const string &prefix = *it;
