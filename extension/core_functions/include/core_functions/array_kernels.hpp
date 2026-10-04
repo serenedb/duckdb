@@ -3,6 +3,12 @@
 #include "duckdb/common/algorithm.hpp"
 #include <cmath>
 
+#if defined(__clang__)
+#define DUCKDB_REASSOCIATE_LOOP _Pragma("clang fp reassociate(on) contract(fast)")
+#else
+#define DUCKDB_REASSOCIATE_LOOP
+#endif
+
 namespace duckdb {
 
 //-------------------------------------------------------------------------
@@ -13,6 +19,7 @@ struct InnerProductOp {
 
 	template <class TYPE>
 	static TYPE Operation(const TYPE *lhs_data, const TYPE *rhs_data, const idx_t count) {
+		DUCKDB_REASSOCIATE_LOOP
 		TYPE result = 0;
 
 		auto lhs_ptr = lhs_data;
@@ -42,6 +49,7 @@ struct CosineSimilarityOp {
 
 	template <class TYPE>
 	static TYPE Operation(const TYPE *lhs_data, const TYPE *rhs_data, const idx_t count) {
+		DUCKDB_REASSOCIATE_LOOP
 		TYPE distance = 0;
 		TYPE norm_l = 0;
 		TYPE norm_r = 0;
@@ -80,6 +88,7 @@ struct DistanceSquaredOp {
 
 	template <class TYPE>
 	static TYPE Operation(const TYPE *lhs_data, const TYPE *rhs_data, const idx_t count) {
+		DUCKDB_REASSOCIATE_LOOP
 		TYPE distance = 0;
 
 		auto l_ptr = lhs_data;
@@ -104,5 +113,71 @@ struct DistanceOp {
 		return std::sqrt(DistanceSquaredOp::Operation(lhs_data, rhs_data, count));
 	}
 };
+
+struct L1DistanceOp {
+	static constexpr bool ALLOW_EMPTY = true;
+
+	template <class TYPE>
+	static TYPE Operation(const TYPE *lhs_data, const TYPE *rhs_data, const idx_t count) {
+		DUCKDB_REASSOCIATE_LOOP
+		TYPE distance = 0;
+		for (idx_t i = 0; i < count; i++) {
+			distance += std::abs(lhs_data[i] - rhs_data[i]);
+		}
+		return distance;
+	}
+};
+
+struct L1NormOp {
+	template <class TYPE>
+	static TYPE Operation(const TYPE *data, const idx_t count) {
+		DUCKDB_REASSOCIATE_LOOP
+		TYPE norm = 0;
+		for (idx_t i = 0; i < count; i++) {
+			norm += std::abs(data[i]);
+		}
+		return norm;
+	}
+};
+
+struct NormSquaredOp {
+	template <class TYPE>
+	static TYPE Operation(const TYPE *data, const idx_t count) {
+		DUCKDB_REASSOCIATE_LOOP
+		TYPE norm = 0;
+		for (idx_t i = 0; i < count; i++) {
+			norm += data[i] * data[i];
+		}
+		return norm;
+	}
+};
+
+struct L2NormOp {
+	template <class TYPE>
+	static TYPE Operation(const TYPE *data, const idx_t count) {
+		return std::sqrt(NormSquaredOp::Operation(data, count));
+	}
+};
+
+template <class NORM>
+struct NormalizeOp {
+	template <class TYPE>
+	static void Operation(const TYPE *data, TYPE *result, const idx_t count) {
+		const auto norm = NORM::Operation(data, count);
+		if (norm == 0) {
+			for (idx_t i = 0; i < count; i++) {
+				result[i] = 0;
+			}
+			return;
+		}
+		const auto inverse = static_cast<TYPE>(1) / norm;
+		for (idx_t i = 0; i < count; i++) {
+			result[i] = data[i] * inverse;
+		}
+	}
+};
+
+using L1NormalizeOp = NormalizeOp<L1NormOp>;
+using L2NormalizeOp = NormalizeOp<L2NormOp>;
 
 } // namespace duckdb
