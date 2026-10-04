@@ -667,26 +667,25 @@ PEGTransformerFactory::TransformSingleArrowPair(PEGTransformer &transformer,
 	return logical_or_expression;
 }
 
-static unique_ptr<ParsedExpression> FoldConjunctionExpression(PEGTransformer &transformer,
-                                                              unique_ptr<ParsedExpression> expression,
+static unique_ptr<ParsedExpression> FoldConjunctionExpression(unique_ptr<ParsedExpression> expression,
                                                               optional<vector<unique_ptr<ParsedExpression>>> tails,
                                                               ExpressionType conjunction_type) {
-	auto expr = std::move(expression);
 	if (!tails) {
-		return expr;
+		return expression;
 	}
-	transformer.AddDepth(tails->size());
+	auto result = make_uniq<ConjunctionExpression>(conjunction_type);
+	result->AddExpression(std::move(expression));
 	for (auto &tail : *tails) {
-		expr = make_uniq<ConjunctionExpression>(conjunction_type, std::move(expr), std::move(tail));
+		result->AddExpression(std::move(tail));
 	}
-	return expr;
+	return std::move(result);
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformLogicalOrExpression(
     PEGTransformer &transformer, unique_ptr<ParsedExpression> logical_and_expression,
     optional<vector<unique_ptr<ParsedExpression>>> logical_or_expression_tail) {
-	return FoldConjunctionExpression(transformer, std::move(logical_and_expression),
-	                                 std::move(logical_or_expression_tail), ExpressionType::CONJUNCTION_OR);
+	return FoldConjunctionExpression(std::move(logical_and_expression), std::move(logical_or_expression_tail),
+	                                 ExpressionType::CONJUNCTION_OR);
 }
 
 unique_ptr<ParsedExpression>
@@ -698,8 +697,8 @@ PEGTransformerFactory::TransformLogicalOrExpressionTail(PEGTransformer &transfor
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformLogicalAndExpression(
     PEGTransformer &transformer, unique_ptr<ParsedExpression> logical_not_expression,
     optional<vector<unique_ptr<ParsedExpression>>> logical_and_expression_tail) {
-	return FoldConjunctionExpression(transformer, std::move(logical_not_expression),
-	                                 std::move(logical_and_expression_tail), ExpressionType::CONJUNCTION_AND);
+	return FoldConjunctionExpression(std::move(logical_not_expression), std::move(logical_and_expression_tail),
+	                                 ExpressionType::CONJUNCTION_AND);
 }
 
 unique_ptr<ParsedExpression>
@@ -711,7 +710,7 @@ PEGTransformerFactory::TransformLogicalAndExpressionTail(PEGTransformer &transfo
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformColDefOrExpr(
     PEGTransformer &transformer, unique_ptr<ParsedExpression> col_def_and_expr,
     optional<vector<unique_ptr<ParsedExpression>>> col_def_or_expression_tail) {
-	return FoldConjunctionExpression(transformer, std::move(col_def_and_expr), std::move(col_def_or_expression_tail),
+	return FoldConjunctionExpression(std::move(col_def_and_expr), std::move(col_def_or_expression_tail),
 	                                 ExpressionType::CONJUNCTION_OR);
 }
 
@@ -724,8 +723,8 @@ PEGTransformerFactory::TransformColDefOrExpressionTail(PEGTransformer &transform
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformColDefAndExpr(
     PEGTransformer &transformer, unique_ptr<ParsedExpression> is_distinct_from_expression,
     optional<vector<unique_ptr<ParsedExpression>>> col_def_and_expression_tail) {
-	return FoldConjunctionExpression(transformer, std::move(is_distinct_from_expression),
-	                                 std::move(col_def_and_expression_tail), ExpressionType::CONJUNCTION_AND);
+	return FoldConjunctionExpression(std::move(is_distinct_from_expression), std::move(col_def_and_expression_tail),
+	                                 ExpressionType::CONJUNCTION_AND);
 }
 
 unique_ptr<ParsedExpression>
