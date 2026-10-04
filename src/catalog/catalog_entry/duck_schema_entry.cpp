@@ -426,7 +426,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateType(CatalogTransaction transa
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTokenizer(CatalogTransaction transaction, CreateTokenizerInfo &info) {
-	auto tokenizer = catalog.Cast<DuckCatalog>().MakeTokenizerEntry(*this, info);
+	auto tokenizer = catalog.Cast<DuckCatalog>().MakeTokenizerEntry(transaction, *this, info);
 	return AddEntry(transaction, std::move(tokenizer), info.on_conflict);
 }
 

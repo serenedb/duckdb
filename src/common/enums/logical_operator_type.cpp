@@ -118,6 +118,12 @@ string LogicalOperatorToString(LogicalOperatorType type) {
 		return "CREATE_TRIGGER";
 	case LogicalOperatorType::LOGICAL_CREATE_JOB:
 		return "CREATE_JOB";
+	case LogicalOperatorType::LOGICAL_CREATE_ROLE:
+		return "CREATE_ROLE";
+	case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
+		return "CREATE_FOREIGN_SERVER";
+	case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
+		return "CREATE_TOKENIZER";
 	case LogicalOperatorType::LOGICAL_DROP:
 		return "DROP";
 	case LogicalOperatorType::LOGICAL_PRAGMA:

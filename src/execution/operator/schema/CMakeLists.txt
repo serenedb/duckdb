@@ -12,6 +12,9 @@ add_library_unity(
   physical_create_view.cpp
   physical_create_function.cpp
   physical_create_job.cpp
+  physical_create_role.cpp
+  physical_create_foreign_server.cpp
+  physical_create_tokenizer.cpp
   physical_detach.cpp
   physical_drop.cpp)
 set(ALL_OBJECT_FILES

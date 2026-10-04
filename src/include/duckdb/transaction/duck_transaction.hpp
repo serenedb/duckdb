@@ -18,6 +18,7 @@
 
 namespace duckdb {
 class CommitDropState;
+class DependencyEntry;
 class DuckTableEntry;
 class RowGroupCollection;
 class RowVersionManager;
@@ -147,6 +148,7 @@ public:
 		vector<SequenceValue> sequences;
 		UndoBuffer::IteratorState iterator_state;
 		CommitDropState drop_state;
+		vector<reference<DependencyEntry>> foreign_dependencies;
 		bool applied = false;
 	};
 	unique_ptr<PreparedCommit> prepared;

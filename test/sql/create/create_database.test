@@ -14,4 +14,4 @@ syntax error at or near "FROM"
 statement error
 DROP DATABASE mydb
 ----
-Failed to detach database with name "mydb": database not found
+Database with name mydb does not exist!

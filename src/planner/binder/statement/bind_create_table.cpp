@@ -843,8 +843,7 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 
 	} else {
 		SetCatalogLookupCallback([&dependencies, &subdependency = result->subdependency, &schema](CatalogEntry &entry) {
-			if (&schema.ParentCatalog() != &entry.ParentCatalog()) {
-				// Don't register dependencies between catalogs
+			if (!DependencyManager::CanDepend(schema.ParentCatalog(), entry.ParentCatalog())) {
 				return;
 			}
 
@@ -922,8 +921,6 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 
 	// SereneDB fork: allow zero-physical-column tables (e.g. CREATE TABLE t();)
 	// so that indexes / constraints can still be attached later.
-
-	base.dependencies.VerifyDependencies(schema.catalog, base.GetTableName());
 
 #ifdef DEBUG
 	// Ensure all types are bound

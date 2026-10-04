@@ -14,6 +14,7 @@
 #include "duckdb/transaction/wal_write_state.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/main/secret/secret_storage.hpp"
 
 namespace duckdb {
@@ -310,6 +311,13 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 	idx_t decision_offset = 0;
 	if (!error.HasError()) {
 		try {
+			for (auto &participant : applied) {
+				auto &transaction = participant.get().transaction;
+				auto &prepared = *transaction.Cast<DuckTransaction>().prepared;
+				auto &dependencies = *transaction.manager.GetDB().GetCatalog().GetDependencyManager();
+				dependencies.VerifyForeignSubjects(prepared.foreign_dependencies);
+				dependencies.VerifyForeignDependents(prepared.drop_state.DroppedEntries());
+			}
 			for (auto &participant : participants) {
 				auto &transaction = participant.get().transaction;
 				auto duck_transaction = PreparedParticipant(transaction);

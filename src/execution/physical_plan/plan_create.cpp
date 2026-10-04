@@ -1,7 +1,10 @@
+#include "duckdb/execution/operator/schema/physical_create_foreign_server.hpp"
 #include "duckdb/execution/operator/schema/physical_create_function.hpp"
 #include "duckdb/execution/operator/schema/physical_create_job.hpp"
+#include "duckdb/execution/operator/schema/physical_create_role.hpp"
 #include "duckdb/execution/operator/schema/physical_create_schema.hpp"
 #include "duckdb/execution/operator/schema/physical_create_sequence.hpp"
+#include "duckdb/execution/operator/schema/physical_create_tokenizer.hpp"
 #include "duckdb/execution/operator/schema/physical_create_trigger.hpp"
 #include "duckdb/execution/operator/schema/physical_create_type.hpp"
 #include "duckdb/execution/operator/schema/physical_create_view.hpp"
@@ -24,6 +27,15 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalCreate &op) {
 	case LogicalOperatorType::LOGICAL_CREATE_JOB:
 		return Make<PhysicalCreateJob>(unique_ptr_cast<CreateInfo, CreateJobInfo>(std::move(op.info)),
 		                               op.estimated_cardinality);
+	case LogicalOperatorType::LOGICAL_CREATE_ROLE:
+		return Make<PhysicalCreateRole>(unique_ptr_cast<CreateInfo, CreateRoleInfo>(std::move(op.info)),
+		                                op.estimated_cardinality);
+	case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
+		return Make<PhysicalCreateForeignServer>(
+		    unique_ptr_cast<CreateInfo, CreateForeignServerInfo>(std::move(op.info)), op.estimated_cardinality);
+	case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
+		return Make<PhysicalCreateTokenizer>(unique_ptr_cast<CreateInfo, CreateTokenizerInfo>(std::move(op.info)),
+		                                     op.estimated_cardinality);
 	case LogicalOperatorType::LOGICAL_CREATE_VIEW:
 		return Make<PhysicalCreateView>(unique_ptr_cast<CreateInfo, CreateViewInfo>(std::move(op.info)),
 		                                op.estimated_cardinality);

@@ -72,21 +72,25 @@ public:
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeDatabaseEntry(CreateDatabaseInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeForeignServerEntry(CreateForeignServerInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeSubscriptionEntry(CreateSubscriptionInfo &info);
-	DUCKDB_API virtual unique_ptr<StandardEntry> MakeTokenizerEntry(DuckSchemaEntry &schema, CreateTokenizerInfo &info);
+	DUCKDB_API virtual unique_ptr<StandardEntry> MakeTokenizerEntry(CatalogTransaction transaction,
+	                                                                DuckSchemaEntry &schema, CreateTokenizerInfo &info);
 	DUCKDB_API virtual unique_ptr<StandardEntry> MakeJobEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
 	                                                          CreateJobInfo &info);
+	DUCKDB_API virtual bool IsPinnedEntry(const CatalogEntry &entry) const {
+		return false;
+	}
 
-	DUCKDB_API optional_ptr<CatalogEntry> CreateRole(CatalogTransaction transaction, CreateRoleInfo &info);
+	DUCKDB_API optional_ptr<CatalogEntry> CreateRole(CatalogTransaction transaction, CreateRoleInfo &info) override;
 	DUCKDB_API optional_ptr<CatalogEntry> CreateDatabase(CatalogTransaction transaction, CreateDatabaseInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateForeignServer(CatalogTransaction transaction,
-	                                                          CreateForeignServerInfo &info);
+	                                                          CreateForeignServerInfo &info) override;
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSubscription(CatalogTransaction transaction,
 	                                                         CreateSubscriptionInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateReplicationOrigin(CatalogTransaction transaction,
 	                                                              CreateReplicationOriginInfo &info);
-	DUCKDB_API void DropRole(CatalogTransaction transaction, DropInfo &info);
-	DUCKDB_API void DropDatabase(CatalogTransaction transaction, DropInfo &info);
-	DUCKDB_API void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API void DropRole(CatalogTransaction transaction, DropInfo &info) override;
+	DUCKDB_API void DropDatabase(CatalogTransaction transaction, DropInfo &info) override;
+	DUCKDB_API void DropForeignServer(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropSubscription(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API void DropReplicationOrigin(CatalogTransaction transaction, DropInfo &info);
 

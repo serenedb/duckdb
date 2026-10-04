@@ -11,8 +11,11 @@
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/dependency.hpp"
+#include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/catalog/catalog_entry_map.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/stack.hpp"
 #include "duckdb/common/string_util.hpp"
 
@@ -102,10 +105,18 @@ public:
 	void ReorderEntries(catalog_entry_vector_t &entries);
 	void ReorderEntries(catalog_entry_vector_t &entries, ClientContext &context);
 
+	static bool CanDepend(Catalog &dependent, Catalog &subject);
+	void ScanDependentEntries(CatalogTransaction transaction, CatalogEntry &object,
+	                          const std::function<void(CatalogEntry &)> &callback);
+	void VerifyForeignSubjects(const vector<reference<DependencyEntry>> &dependencies);
+	void VerifyForeignDependents(const vector<reference<CatalogEntry>> &dropped);
+
 private:
 	DuckCatalog &catalog;
 	CatalogSet subjects;
 	CatalogSet dependents;
+	mutex foreign_lock;
+	case_insensitive_set_t foreign_catalogs;
 
 private:
 	bool IsSystemEntry(CatalogEntry &entry) const;
@@ -168,6 +179,14 @@ private:
 	using dependency_callback_t = const std::function<void(DependencyEntry &)>;
 	void ScanDependents(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
 	void ScanSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
+	void ScanAllDependents(CatalogTransaction transaction, const CatalogEntryInfo &info,
+	                       dependency_callback_t &callback);
+	void ForEachCatalog(CatalogTransaction transaction, const std::function<bool(DuckCatalog &)> &visit,
+	                    const std::function<void(DuckCatalog &, CatalogTransaction)> &callback);
+	bool MayDependOn(const Identifier &catalog_name);
+	LogicalDependencyList EntryDependencies(CatalogTransaction transaction, CatalogEntry &object);
+	void RemoveDependencies(CatalogTransaction transaction, const CatalogEntry &object,
+	                        const LogicalDependencyList &dependencies);
 	void ScanSetInternal(CatalogTransaction transaction, const CatalogEntryInfo &info, bool subjects,
 	                     dependency_callback_t &callback);
 	void PrintSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info);

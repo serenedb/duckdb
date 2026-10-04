@@ -24,6 +24,7 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_pragma_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/create_secret_info.hpp"
 #include "duckdb/parser/sql_statement.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
@@ -216,6 +217,12 @@ optional_ptr<CatalogEntry> Catalog::CreateJob(ClientContext &context, CreateJobI
 	return schema.CreateJob(transaction, info);
 }
 
+optional_ptr<CatalogEntry> Catalog::CreateTokenizer(ClientContext &context, CreateTokenizerInfo &info) {
+	auto transaction = GetCatalogTransaction(context);
+	auto &schema = GetEntrySchema(transaction, info.GetQualifiedName());
+	return schema.CreateTokenizer(transaction, info);
+}
+
 //===--------------------------------------------------------------------===//
 // Type
 //===--------------------------------------------------------------------===//
@@ -392,6 +399,26 @@ unique_ptr<TableRef> Catalog::RemoteExecute(ClientContext &context, const string
 	throw NotImplementedException("RemoteExecute(string) not supported by this catalog");
 }
 
+optional_ptr<CatalogEntry> Catalog::CreateRole(CatalogTransaction transaction, CreateRoleInfo &info) {
+	throw NotImplementedException("CREATE ROLE is not supported by a %s catalog", GetCatalogType());
+}
+
+optional_ptr<CatalogEntry> Catalog::CreateForeignServer(CatalogTransaction transaction, CreateForeignServerInfo &info) {
+	throw NotImplementedException("CREATE SERVER is not supported by a %s catalog", GetCatalogType());
+}
+
+void Catalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
+	throw NotImplementedException("DROP ROLE is not supported by a %s catalog", GetCatalogType());
+}
+
+void Catalog::DropDatabase(CatalogTransaction transaction, DropInfo &info) {
+	throw NotImplementedException("DROP DATABASE is not supported by a %s catalog", GetCatalogType());
+}
+
+void Catalog::DropForeignServer(CatalogTransaction transaction, DropInfo &info) {
+	throw NotImplementedException("DROP SERVER is not supported by a %s catalog", GetCatalogType());
+}
+
 bool Catalog::SupportsPushdown(const ParsedExpression &expression) {
 	return true;
 }
@@ -510,6 +537,18 @@ void Catalog::DropEntry(ClientContext &context, DropInfo &info) {
 	if (info.type == CatalogType::SCHEMA_ENTRY) {
 		// DROP SCHEMA
 		DropSchema(context, info);
+		return;
+	}
+	if (info.type == CatalogType::ROLE_ENTRY) {
+		DropRole(GetCatalogTransaction(context), info);
+		return;
+	}
+	if (info.type == CatalogType::DATABASE_ENTRY) {
+		DropDatabase(GetCatalogTransaction(context), info);
+		return;
+	}
+	if (info.type == CatalogType::FOREIGN_SERVER_ENTRY) {
+		DropForeignServer(GetCatalogTransaction(context), info);
 		return;
 	}
 

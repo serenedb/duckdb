@@ -1475,7 +1475,8 @@ void WriteAheadLogDeserializer::ReplayCreateRole() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().CreateRole(catalog.GetCatalogTransaction(context), info->Cast<CreateRoleInfo>());
+	catalog.Cast<DuckCatalog>().DuckCatalog::CreateRole(catalog.GetCatalogTransaction(context),
+	                                                    info->Cast<CreateRoleInfo>());
 }
 
 void WriteAheadLogDeserializer::ReplayDropRole() {
@@ -1486,7 +1487,7 @@ void WriteAheadLogDeserializer::ReplayDropRole() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().DropRole(catalog.GetCatalogTransaction(context), info);
+	catalog.Cast<DuckCatalog>().DuckCatalog::DropRole(catalog.GetCatalogTransaction(context), info);
 }
 
 void WriteAheadLogDeserializer::ReplayCreateDatabase() {
@@ -1508,7 +1509,7 @@ void WriteAheadLogDeserializer::ReplayDropDatabase() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().DropDatabase(catalog.GetCatalogTransaction(context), info);
+	catalog.Cast<DuckCatalog>().DuckCatalog::DropDatabase(catalog.GetCatalogTransaction(context), info);
 }
 
 void WriteAheadLogDeserializer::ReplayCreateForeignServer() {
@@ -1518,8 +1519,8 @@ void WriteAheadLogDeserializer::ReplayCreateForeignServer() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().CreateForeignServer(catalog.GetCatalogTransaction(context),
-	                                                info->Cast<CreateForeignServerInfo>());
+	catalog.Cast<DuckCatalog>().DuckCatalog::CreateForeignServer(catalog.GetCatalogTransaction(context),
+	                                                             info->Cast<CreateForeignServerInfo>());
 }
 
 void WriteAheadLogDeserializer::ReplayDropForeignServer() {
@@ -1530,7 +1531,7 @@ void WriteAheadLogDeserializer::ReplayDropForeignServer() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().DropForeignServer(catalog.GetCatalogTransaction(context), info);
+	catalog.Cast<DuckCatalog>().DuckCatalog::DropForeignServer(catalog.GetCatalogTransaction(context), info);
 }
 
 void WriteAheadLogDeserializer::ReplayCreateSubscription() {

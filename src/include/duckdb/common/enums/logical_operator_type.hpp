@@ -89,6 +89,9 @@ enum class LogicalOperatorType : uint8_t {
 	LOGICAL_DETACH = 137,
 	LOGICAL_CREATE_TRIGGER = 138,
 	LOGICAL_CREATE_JOB = 139,
+	LOGICAL_CREATE_ROLE = 140,
+	LOGICAL_CREATE_FOREIGN_SERVER = 141,
+	LOGICAL_CREATE_TOKENIZER = 142,
 
 	// -----------------------------
 	// Explain

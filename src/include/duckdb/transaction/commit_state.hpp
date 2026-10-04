@@ -53,6 +53,9 @@ public:
 	//! indexes is handled implicitly along destruction paths for index memory.
 	void RemoveIndex(TableIndexList &indexes, idx_t index_oid);
 	void DropEntry(CatalogEntry &entry);
+	const vector<reference<CatalogEntry>> &DroppedEntries() const {
+		return dropped_entries;
+	}
 	//! Finalize accumulated block marks and index removals.
 	void FinalizeCommit();
 	//! True if no work has been queued.

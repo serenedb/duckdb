@@ -199,6 +199,7 @@ public:
 	Identifier name;
 	//! The table that owns this entry, for entries that are not unique within their schema (triggers)
 	Identifier table;
+	Identifier catalog {};
 
 public:
 	bool operator==(const CatalogEntryInfo &other) const {
@@ -212,6 +213,9 @@ public:
 			return false;
 		}
 		if (other.table != table) {
+			return false;
+		}
+		if (other.catalog != catalog) {
 			return false;
 		}
 		return true;

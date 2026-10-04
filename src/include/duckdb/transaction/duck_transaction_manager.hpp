@@ -67,6 +67,13 @@ public:
 	idx_t GetLastCommittedCatalogVersion() const {
 		return last_committed_version;
 	}
+	struct DurableSnapshot {
+		//! Every commit before this bound is durable
+		VisibilityBound visibility_bound = VisibilityBound::IncludingUncommitted();
+		//! The catalog version that snapshot observes
+		idx_t catalog_version = DConstants::INVALID_INDEX;
+	};
+	DurableSnapshot GetDurableSnapshot();
 	//! Wait until every published commit is durable. Called under the commit lock, so no new commit can
 	//! enter its sync window and the wait is bounded by the syncs in flight
 	void WaitForDurability();
@@ -165,14 +172,8 @@ private:
 	void RetireSyncedCommitsInternal(WriteAheadLog &wal, idx_t synced_offset);
 	bool EraseUnsyncedCommit(DuckTransaction &transaction);
 	void LeaveSyncWindow();
-	struct DurableSnapshot {
-		//! Every commit before this bound is durable
-		VisibilityBound visibility_bound = VisibilityBound::IncludingUncommitted();
-		//! The catalog version that snapshot observes
-		idx_t catalog_version = DConstants::INVALID_INDEX;
-	};
 	//! The most recent snapshot that contains only durable commits; unbounded when none is pending
-	DurableSnapshot GetDurableSnapshot();
+	DurableSnapshot GetDurableSnapshotInternal();
 
 private:
 	//! The current start timestamp used by transactions

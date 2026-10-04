@@ -106,6 +106,9 @@ static LogicalOperatorRepeatability ClassifyOperatorType(LogicalOperator &op) {
 	case LogicalOperatorType::LOGICAL_DETACH:
 	case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
 	case LogicalOperatorType::LOGICAL_CREATE_JOB:
+	case LogicalOperatorType::LOGICAL_CREATE_ROLE:
+	case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
+	case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
 	case LogicalOperatorType::LOGICAL_EXPLAIN:
 	case LogicalOperatorType::LOGICAL_PREPARE:
 	case LogicalOperatorType::LOGICAL_EXECUTE:

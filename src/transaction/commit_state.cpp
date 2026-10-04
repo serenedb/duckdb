@@ -310,6 +310,9 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 			auto &dep = new_entry.Cast<DependencyEntry>();
 			if (dep.Side() == DependencyEntryType::SUBJECT) {
 				new_entry.set->VerifyExistenceOfDependency(commit_id, new_entry);
+				if (transaction.prepared && !dep.EntryInfo().catalog.empty()) {
+					transaction.prepared->foreign_dependencies.push_back(dep);
+				}
 			}
 		} else if (new_entry.type == CatalogType::DELETED_ENTRY && old_entry.set) {
 			old_entry.set->CommitDrop(commit_id, transaction.view.visibility_bound, old_entry);

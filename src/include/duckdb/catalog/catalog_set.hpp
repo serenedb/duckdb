@@ -125,6 +125,7 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> GetHeadEntry(const Identifier &name);
 	DUCKDB_API void Scan(ClientContext &context, const std::function<void(CatalogEntry &)> &callback);
 	DUCKDB_API void ScanWithReturn(ClientContext &context, const std::function<bool(CatalogEntry &)> &callback);
+	DUCKDB_API bool IsEmpty();
 
 	template <class T>
 	vector<reference<T>> GetEntries(CatalogTransaction transaction) {

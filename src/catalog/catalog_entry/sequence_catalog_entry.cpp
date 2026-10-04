@@ -321,8 +321,7 @@ void SequenceCatalogEntry::Fetch(SequenceSessionValue &cached, idx_t needed) {
 		}
 	}
 	if (target) {
-		auto reservation = AppendReservation(*target);
-		catalog.RequestCatalogLogSync(std::move(reservation.first), reservation.second);
+		AppendReservation(*target);
 	}
 }
 
