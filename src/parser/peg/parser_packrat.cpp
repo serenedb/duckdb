@@ -1,37 +1,31 @@
 #include "duckdb/parser/peg/parser_packrat.hpp"
 
-#include "duckdb/parser/peg/matcher.hpp"
-
 namespace duckdb {
 
-size_t ParserPackratKeyHash::operator()(const ParserPackratKey &key) const {
-	return std::hash<idx_t>()(key.matcher_id) ^ (std::hash<idx_t>()(key.token_index) << 1);
+ParserPackratCache::ParserPackratCache(idx_t first_token_p, idx_t slot_count_p)
+    : arena(Allocator::DefaultAllocator()), first_token(first_token_p), slot_count(slot_count_p) {
 }
 
-ParserPackratCache::ParserPackratCache() = default;
-
-ParserPackratCache::~ParserPackratCache() = default;
-
-optional_ptr<const ParserPackratEntry> ParserPackratCache::Lookup(const Matcher &matcher, idx_t token_index) const {
-	D_ASSERT(matcher.IsPackratMemoized());
-	auto packrat_id = matcher.GetPackratId();
-	D_ASSERT(packrat_id.IsValid());
-	auto matcher_id = packrat_id.GetIndex();
-	ParserPackratKey key {matcher_id, token_index};
-	auto entry = entries.find(key);
-	if (entry == entries.end()) {
-		return nullptr;
+void ParserPackratCache::Store(idx_t slot, idx_t token_index, const ParserPackratEntry &entry) {
+	if (slot >= slot_count || token_index < first_token) {
+		return;
 	}
-	return optional_ptr<const ParserPackratEntry>(&entry->second);
-}
-
-void ParserPackratCache::Store(const Matcher &matcher, idx_t token_index, ParserPackratEntry entry) {
-	D_ASSERT(matcher.IsPackratMemoized());
-	auto packrat_id = matcher.GetPackratId();
-	D_ASSERT(packrat_id.IsValid());
-	auto matcher_id = packrat_id.GetIndex();
-	ParserPackratKey key {matcher_id, token_index};
-	entries.insert(make_pair(key, entry));
+	auto offset = token_index - first_token;
+	auto block = offset / BLOCK_TOKENS;
+	if (block >= blocks.size()) {
+		blocks.resize(block + 1);
+	}
+	if (!blocks[block]) {
+		auto count = BLOCK_TOKENS * slot_count;
+		auto data = reinterpret_cast<CachedEntry *>(arena.AllocateAligned(count * sizeof(CachedEntry)));
+		std::uninitialized_value_construct_n(data, count);
+		blocks[block] = data;
+	}
+	auto &cached = blocks[block][offset % BLOCK_TOKENS * slot_count + slot];
+	if (!cached.cached) {
+		cached.entry = entry;
+		cached.cached = true;
+	}
 }
 
 } // namespace duckdb

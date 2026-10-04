@@ -22,7 +22,7 @@ void MatchStack::DestroyTopFrame() {
 optional<MatcherResult> PackratMatchState::TryLoadCachedResult(const Matcher &matcher, MatchState &state) {
 	D_ASSERT(IsEnabled(matcher, state));
 	auto token_index = state.token_iterator.Position();
-	auto cached_result = state.context.packrat_cache->Lookup(matcher, token_index);
+	auto cached_result = state.context.packrat_cache->Lookup(matcher.GetPackratSlot().GetIndex(), token_index);
 	if (!cached_result) {
 		token_index_before = token_index;
 		max_token_index_before = state.GetMaxTokenIndex();
@@ -46,7 +46,7 @@ void PackratMatchState::StoreResult(const Matcher &matcher, MatchState &state, c
 	cache_entry.token_index_after = state.token_iterator.Position();
 	cache_entry.max_token_index_seen = MaxValue(max_token_index_before, state.GetMaxTokenIndex());
 	cache_entry.result = result.GetParseResult();
-	state.context.packrat_cache->Store(matcher, token_index_before.GetIndex(), cache_entry);
+	state.context.packrat_cache->Store(matcher.GetPackratSlot().GetIndex(), token_index_before.GetIndex(), cache_entry);
 }
 
 MatchStackFrame::MatchStackFrame(MatchInput input) : matcher(input.matcher), match_state(input.state) {

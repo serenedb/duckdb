@@ -33,6 +33,9 @@ public:
 	const Tokenizer &GetTokenizer() const {
 		return *tokenizer;
 	}
+	idx_t PackratSlotCount() const {
+		return allocator.PackratSlotCount();
+	}
 	optional_ptr<const CompiledGrammarRule> GetRule(const string &rule_name) const;
 
 public:
