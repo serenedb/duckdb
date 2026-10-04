@@ -38,6 +38,18 @@ SELECT array_cosine_similarity([1, 2, 3]::{type}[3], [1, 2, 3, 4]::{type}[4]);
 ----
 array_cosine_similarity: Array arguments must be of the same size
 
+# a zero vector has no direction: similarity 0, distance 1
+query IIII
+SELECT array_cosine_similarity([0, 0, 0]::{type}[3], [1, 2, 3]::{type}[3]), array_cosine_similarity([0, 0, 0]::{type}[3], [0, 0, 0]::{type}[3]), array_cosine_distance([1, 2, 3]::{type}[3], [0, 0, 0]::{type}[3]), array_cosine_distance([0, 0, 0]::{type}[3], [0, 0, 0]::{type}[3]);
+----
+0.0	0.0	1.0	1.0
+
 
 
 endloop
+
+# the product of the squared norms does not overflow FLOAT
+query II
+SELECT array_cosine_similarity([1e18, 1e18]::FLOAT[2], [1e18, 0]::FLOAT[2]), array_cosine_distance([1e18, 1e18]::FLOAT[2], [1e18, 1e18]::FLOAT[2]);
+----
+0.70710677	0.0

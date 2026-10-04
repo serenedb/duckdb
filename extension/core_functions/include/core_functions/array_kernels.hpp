@@ -57,7 +57,11 @@ struct CosineSimilarityOp {
 			norm_r += y * y;
 		}
 
-		auto similarity = distance / std::sqrt(norm_l * norm_r);
+		const auto denominator = std::sqrt(static_cast<double>(norm_l) * static_cast<double>(norm_r));
+		if (denominator == 0) {
+			return 0;
+		}
+		auto similarity = static_cast<TYPE>(distance / denominator);
 		return std::max(static_cast<TYPE>(-1.0), std::min(similarity, static_cast<TYPE>(1.0)));
 	}
 };
