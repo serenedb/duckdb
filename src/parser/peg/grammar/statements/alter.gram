@@ -1,6 +1,13 @@
 AlterStatement <- 'ALTER' AlterOptions
 
-AlterOptions <- AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt
+AlterOptions <- AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt / AlterJobStmt
+
+AlterJobStmt <- 'JOB' IfExists? QualifiedName AlterJobAction
+AlterJobAction <- AlterJobRename / AlterJobSuspend / AlterJobResume / AlterJobSetSchedule
+AlterJobRename <- 'RENAME' 'TO' ColId
+AlterJobSuspend <- 'SUSPEND'
+AlterJobResume <- 'RESUME'
+AlterJobSetSchedule <- 'SET' 'SCHEDULE' JobSchedule
 
 AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter
 AlterIndexAlter <- RenameAlter / SetOptions / ResetOptions

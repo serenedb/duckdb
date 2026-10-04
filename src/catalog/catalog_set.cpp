@@ -332,7 +332,8 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 	optional_ptr<CatalogEntry> owner_entry;
 	auto schema = catalog.GetSchema(transaction, info.owner_schema, OnEntryNotFound::RETURN_NULL);
 	if (schema) {
-		vector<CatalogType> entry_types {CatalogType::TABLE_ENTRY, CatalogType::SEQUENCE_ENTRY};
+		vector<CatalogType> entry_types {CatalogType::TABLE_ENTRY, CatalogType::SEQUENCE_ENTRY,
+		                                 CatalogType::INDEX_ENTRY};
 		for (auto entry_type : entry_types) {
 			owner_entry = schema->GetEntry(transaction, entry_type, info.owner_name);
 			if (owner_entry) {
