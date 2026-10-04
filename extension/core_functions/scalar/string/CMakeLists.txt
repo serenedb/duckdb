@@ -21,6 +21,7 @@ add_library_unity(
   format_bytes.cpp
   parse_formatted_bytes.cpp
   hex.cpp
+  to_hex.cpp
   repeat.cpp
   translate.cpp
   chr.cpp
