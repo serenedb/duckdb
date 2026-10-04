@@ -1,4 +1,5 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
@@ -127,12 +128,14 @@ string CreateIndexInfo::ToString() const {
 		if (!rendered_options.empty()) {
 			rendered_options += ", ";
 		}
+		rendered_options += SQLIdentifier::ToString(opt.first);
 		if (opt.second.IsNull()) {
-			rendered_options += opt.first;
-		} else if (opt.second.type().id() == LogicalTypeId::VARCHAR) {
-			rendered_options += StringUtil::Format("%s = %s", opt.first, opt.second.ToSQLString());
+			continue;
+		}
+		if (opt.second.type().id() == LogicalTypeId::VARCHAR) {
+			rendered_options += " = " + opt.second.ToSQLString();
 		} else {
-			rendered_options += StringUtil::Format("%s = %s", opt.first, opt.second.ToString());
+			rendered_options += " = " + opt.second.ToString();
 		}
 	}
 	if (!rendered_options.empty()) {

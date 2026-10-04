@@ -17,8 +17,8 @@ IndexOpclassOption <- ColLabel ('=' DefArg)?
 UniqueIndex <- 'UNIQUE'
 IndexType <- 'USING' Identifier
 RelOption <- RelOptionName RelOptionArgumentOpt?
-RelOptionName <- DottedIdentifierString / StringLiteral
-DottedIdentifierString <- DottedIdentifier
+RelOptionName <- DottedColLabel / StringLiteral
+DottedColLabel <- ColLabel DotColLabel*
 RelOptionArgumentOpt <- '=' DefArg
 DefArg <- DefArgNull / DefArgStringLiteral / NumberLiteral / NoneLiteral / Expression / DefArgKeyword
 DefArgNull <- NullLiteral
