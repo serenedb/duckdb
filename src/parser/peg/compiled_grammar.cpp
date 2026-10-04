@@ -208,20 +208,13 @@ shared_ptr<CompiledGrammar> ParserCache::GetPassthroughMatcher(const ClientConte
 	return passthrough_dialect->GetCompiledGrammar(context);
 }
 
-shared_ptr<CompiledGrammar> ParserCache::GetMatcher() {
-	{
-		std::unique_lock<duckdb::mutex> lock(mutex);
-		if (matcher) {
-			return matcher;
-		}
-	}
-	auto new_matcher = CompiledGrammar::Create();
+const shared_ptr<CompiledGrammar> &CompiledGrammar::Base() {
+	static const shared_ptr<CompiledGrammar> grammar = Create();
+	return grammar;
+}
 
-	std::unique_lock<duckdb::mutex> lock(mutex);
-	if (!matcher) {
-		matcher = std::move(new_matcher);
-	}
-	return matcher;
+shared_ptr<CompiledGrammar> ParserCache::GetMatcher() {
+	return CompiledGrammar::Base();
 }
 
 optional_ptr<const CompiledGrammarRule> CompiledGrammar::GetRule(const string &rule_name) const {

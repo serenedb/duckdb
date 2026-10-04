@@ -40,6 +40,7 @@ public:
 
 public:
 	static shared_ptr<CompiledGrammar> Get(ClientContext &context);
+	static const shared_ptr<CompiledGrammar> &Base();
 	//! Compile the base DuckDB grammar.
 	static shared_ptr<CompiledGrammar> Create();
 	//! Compile a grammar for the selected extensions without changing the client configuration.
@@ -65,8 +66,6 @@ public:
 	shared_ptr<CompiledGrammar> GetPassthroughMatcher(const ClientContext &context);
 
 private:
-	mutex mutex;
-	shared_ptr<CompiledGrammar> matcher;
 	duckdb::mutex passthrough_mutex;
 	unique_ptr<PassthroughDialect> passthrough_dialect;
 };

@@ -28,11 +28,7 @@ Parser::~Parser() = default;
 
 CompiledGrammar &Parser::GetGrammar() {
 	if (!compiled_grammar) {
-		if (options.compiled_grammar) {
-			compiled_grammar = options.compiled_grammar;
-		} else {
-			compiled_grammar = CompiledGrammar::Create();
-		}
+		compiled_grammar = options.compiled_grammar ? options.compiled_grammar : CompiledGrammar::Base();
 	}
 	return *compiled_grammar;
 }
