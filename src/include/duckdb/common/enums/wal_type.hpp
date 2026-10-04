@@ -70,6 +70,8 @@ enum class WALType : uint8_t {
 	REPLICATION_LSN = 213,
 	CREATE_REPLICATION_ORIGIN = 214,
 	DROP_REPLICATION_ORIGIN = 215,
+	CREATE_JOB = 216,
+	DROP_JOB = 217,
 	// -----------------------------
 	// Flush
 	// -----------------------------

@@ -231,6 +231,7 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 		}
 		break;
 	case CatalogType::SCHEMA_ENTRY:
+	case CatalogType::JOB_ENTRY:
 		break;
 	case CatalogType::RENAMED_ENTRY:
 		// This is a rename, nothing needs to be done for this

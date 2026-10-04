@@ -55,6 +55,8 @@ string CatalogTypeToString(CatalogType type) {
 		return "Subscription";
 	case CatalogType::REPLICATION_ORIGIN_ENTRY:
 		return "Replication Origin";
+	case CatalogType::JOB_ENTRY:
+		return "Job";
 	case CatalogType::SECRET_ENTRY:
 		return "Secret";
 	case CatalogType::SECRET_TYPE_ENTRY:
@@ -139,6 +141,9 @@ CatalogType CatalogTypeFromString(const string &type) {
 	}
 	if (type == "Replication Origin") {
 		return CatalogType::REPLICATION_ORIGIN_ENTRY;
+	}
+	if (type == "Job") {
+		return CatalogType::JOB_ENTRY;
 	}
 	if (type == "INVALID") {
 		return CatalogType::INVALID;

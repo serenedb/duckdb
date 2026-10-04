@@ -22,6 +22,7 @@
 #include "duckdb/parser/parsed_data/create_coordinate_system_info.hpp"
 #include "duckdb/parser/parsed_data/create_copy_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_pragma_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_secret_info.hpp"
 #include "duckdb/parser/sql_statement.hpp"
@@ -207,6 +208,12 @@ optional_ptr<CatalogEntry> Catalog::CreateSequence(ClientContext &context, Creat
 optional_ptr<CatalogEntry> Catalog::CreateSequence(CatalogTransaction transaction, SchemaCatalogEntry &schema,
                                                    CreateSequenceInfo &info) {
 	return schema.CreateSequence(transaction, info);
+}
+
+optional_ptr<CatalogEntry> Catalog::CreateJob(ClientContext &context, CreateJobInfo &info) {
+	auto transaction = GetCatalogTransaction(context);
+	auto &schema = GetEntrySchema(transaction, info.GetQualifiedName());
+	return schema.CreateJob(transaction, info);
 }
 
 //===--------------------------------------------------------------------===//

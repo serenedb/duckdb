@@ -8,6 +8,7 @@ add_library_unity(
   catalog_entry_retriever.cpp
   catalog_versions.cpp
   permissions.cpp
+  job_schedule.cpp
   catalog.cpp
   catalog_search_path.cpp
   catalog_set.cpp
