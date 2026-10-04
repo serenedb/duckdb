@@ -178,6 +178,9 @@ CatalogType GrantObjectType(const string &keyword) {
 	if (keyword == "DATABASE") {
 		return CatalogType::DATABASE_ENTRY;
 	}
+	if (keyword == "JOB") {
+		return CatalogType::JOB_ENTRY;
+	}
 	if (keyword == "FOREIGN SERVER") {
 		return CatalogType::FOREIGN_SERVER_ENTRY;
 	}

@@ -39,6 +39,7 @@ class Connection {
 public:
 	DUCKDB_API explicit Connection(DuckDB &database);
 	DUCKDB_API explicit Connection(DatabaseInstance &database);
+	DUCKDB_API explicit Connection(shared_ptr<ClientContext> context);
 	// disable copy constructors
 	Connection(const Connection &other) = delete;
 	Connection &operator=(const Connection &) = delete;

@@ -18,6 +18,7 @@
 #include "duckdb/parser/peg/ast/generic_copy_option.hpp"
 #include "duckdb/parser/peg/ast/generic_copy_option_value.hpp"
 #include "duckdb/parser/peg/ast/insert_values.hpp"
+#include "duckdb/parser/peg/ast/job_schedule_info.hpp"
 #include "duckdb/parser/peg/ast/create_pivot_entry.hpp"
 #include "duckdb/parser/peg/ast/join_prefix.hpp"
 #include "duckdb/parser/peg/ast/join_qualifier.hpp"
@@ -591,6 +592,26 @@ public:
 	                                                        unique_ptr<AlterInfo> alter_options);
 	static unique_ptr<TransformResultValue> TransformAlterOptionsInternal(PEGTransformer &transformer,
 	                                                                      ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformAlterJobStmtInternal(PEGTransformer &transformer,
+	                                                                      ParseResult &parse_result);
+	static unique_ptr<AlterInfo> TransformAlterJobStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
+	                                                   const QualifiedName &qualified_name,
+	                                                   unique_ptr<AlterInfo> alter_job_action);
+	static unique_ptr<TransformResultValue> TransformAlterJobActionInternal(PEGTransformer &transformer,
+	                                                                        ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformAlterJobRenameInternal(PEGTransformer &transformer,
+	                                                                        ParseResult &parse_result);
+	static unique_ptr<AlterInfo> TransformAlterJobRename(PEGTransformer &transformer, const Identifier &col_id);
+	static unique_ptr<TransformResultValue> TransformAlterJobSuspendInternal(PEGTransformer &transformer,
+	                                                                         ParseResult &parse_result);
+	static unique_ptr<AlterInfo> TransformAlterJobSuspend(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformAlterJobResumeInternal(PEGTransformer &transformer,
+	                                                                        ParseResult &parse_result);
+	static unique_ptr<AlterInfo> TransformAlterJobResume(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformAlterJobSetScheduleInternal(PEGTransformer &transformer,
+	                                                                             ParseResult &parse_result);
+	static unique_ptr<AlterInfo> TransformAlterJobSetSchedule(PEGTransformer &transformer,
+	                                                          JobScheduleInfo job_schedule);
 	static unique_ptr<TransformResultValue> TransformAlterIndexStmtInternal(PEGTransformer &transformer,
 	                                                                        ParseResult &parse_result);
 	static unique_ptr<AlterInfo> TransformAlterIndexStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
@@ -1410,6 +1431,35 @@ public:
 	static unique_ptr<TransformResultValue> TransformNoneLiteralInternal(PEGTransformer &transformer,
 	                                                                     ParseResult &parse_result);
 	static unique_ptr<ParsedExpression> TransformNoneLiteral(PEGTransformer &transformer);
+	static unique_ptr<TransformResultValue> TransformCreateJobStmtInternal(PEGTransformer &transformer,
+	                                                                       ParseResult &parse_result);
+	static unique_ptr<CreateStatement>
+	TransformCreateJobStmt(PEGTransformer &transformer, const optional<bool> &if_not_exists,
+	                       const QualifiedName &qualified_name, JobScheduleInfo job_schedule,
+	                       const optional<bool> &job_suspended, unique_ptr<SQLStatement> statement);
+	static unique_ptr<TransformResultValue> TransformJobScheduleInternal(PEGTransformer &transformer,
+	                                                                     ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformJobEveryInternal(PEGTransformer &transformer,
+	                                                                  ParseResult &parse_result);
+	static JobScheduleInfo TransformJobEvery(PEGTransformer &transformer, unique_ptr<ParsedExpression> job_interval,
+	                                         optional<unique_ptr<ParsedExpression>> job_offset);
+	static unique_ptr<TransformResultValue> TransformJobAfterInternal(PEGTransformer &transformer,
+	                                                                  ParseResult &parse_result);
+	static JobScheduleInfo TransformJobAfter(PEGTransformer &transformer, unique_ptr<ParsedExpression> job_interval);
+	static unique_ptr<TransformResultValue> TransformJobOffsetInternal(PEGTransformer &transformer,
+	                                                                   ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformJobIntervalInternal(PEGTransformer &transformer,
+	                                                                     ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformJobIntervalShortInternal(PEGTransformer &transformer,
+	                                                                          ParseResult &parse_result);
+	static unique_ptr<ParsedExpression> TransformJobIntervalShort(PEGTransformer &transformer,
+	                                                              unique_ptr<ParsedExpression> number_literal,
+	                                                              const DatePartSpecifier &interval);
+	static unique_ptr<TransformResultValue> TransformJobIntervalExpressionInternal(PEGTransformer &transformer,
+	                                                                               ParseResult &parse_result);
+	static unique_ptr<TransformResultValue> TransformJobSuspendedInternal(PEGTransformer &transformer,
+	                                                                      ParseResult &parse_result);
+	static bool TransformJobSuspended(PEGTransformer &transformer);
 	static unique_ptr<TransformResultValue> TransformCreateMacroStmtInternal(PEGTransformer &transformer,
 	                                                                         ParseResult &parse_result);
 	static unique_ptr<CreateStatement> TransformCreateMacroStmt(PEGTransformer &transformer,
@@ -2040,6 +2090,10 @@ public:
 	static unique_ptr<DropStatement> TransformDropTrigger(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                      const Identifier &trigger_name,
 	                                                      unique_ptr<BaseTableRef> base_table_name);
+	static unique_ptr<TransformResultValue> TransformDropJobInternal(PEGTransformer &transformer,
+	                                                                 ParseResult &parse_result);
+	static unique_ptr<DropStatement> TransformDropJob(PEGTransformer &transformer, const optional<bool> &if_exists,
+	                                                  const vector<QualifiedName> &qualified_name);
 	static unique_ptr<TransformResultValue> TransformDropTableInternal(PEGTransformer &transformer,
 	                                                                   ParseResult &parse_result);
 	static unique_ptr<DropStatement> TransformDropTable(PEGTransformer &transformer, const CatalogType &table_or_view,
@@ -2139,6 +2193,10 @@ public:
 	static unique_ptr<SQLStatement>
 	TransformExecuteStatement(PEGTransformer &transformer, const Identifier &identifier,
 	                          optional<vector<FunctionArgument>> table_function_arguments);
+	static unique_ptr<TransformResultValue> TransformExecuteJobStatementInternal(PEGTransformer &transformer,
+	                                                                             ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformExecuteJobStatement(PEGTransformer &transformer,
+	                                                             const QualifiedName &qualified_name);
 	static unique_ptr<TransformResultValue> TransformExplainStatementInternal(PEGTransformer &transformer,
 	                                                                          ParseResult &parse_result);
 	static unique_ptr<SQLStatement>

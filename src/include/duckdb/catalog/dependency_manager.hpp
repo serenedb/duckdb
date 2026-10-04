@@ -11,6 +11,7 @@
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/dependency.hpp"
+#include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/catalog/catalog_entry_map.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/common/stack.hpp"
@@ -102,6 +103,11 @@ public:
 	void ReorderEntries(catalog_entry_vector_t &entries);
 	void ReorderEntries(catalog_entry_vector_t &entries, ClientContext &context);
 
+	static bool CanDepend(Catalog &dependent, Catalog &subject);
+	static void RequireNoForeignDependents(ClientContext &context, Catalog &database);
+	void ScanDependentEntries(CatalogTransaction transaction, CatalogEntry &object,
+	                          const std::function<void(CatalogEntry &)> &callback);
+
 private:
 	DuckCatalog &catalog;
 	CatalogSet subjects;
@@ -153,6 +159,17 @@ private:
 	using dependency_callback_t = const std::function<void(DependencyEntry &)>;
 	void ScanDependents(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
 	void ScanSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
+	using foreign_callback_t =
+	    const std::function<void(DependencyManager &manager, CatalogTransaction transaction, DependencyEntry &)>;
+	void ScanForeignDependents(CatalogTransaction transaction, const CatalogEntryInfo &info,
+	                           foreign_callback_t &callback);
+	optional_ptr<Catalog> ForeignCatalog(CatalogTransaction transaction, const Identifier &name);
+	LogicalDependencyList EntryDependencies(CatalogTransaction transaction, CatalogEntry &object);
+	vector<CatalogEntryInfo> EntrySubjects(CatalogTransaction transaction, CatalogEntry &object);
+	void CreateEntryDependencies(CatalogTransaction transaction, CatalogEntry &object) {
+		CreateDependencies(transaction, object, EntryDependencies(transaction, object));
+	}
+	void RemoveEntryDependencies(CatalogTransaction transaction, CatalogEntry &object);
 	void ScanSetInternal(CatalogTransaction transaction, const CatalogEntryInfo &info, bool subjects,
 	                     dependency_callback_t &callback);
 	void PrintSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info);

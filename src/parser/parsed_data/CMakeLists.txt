@@ -25,6 +25,8 @@ add_library_unity(
   create_secret_info.cpp
   create_sequence_info.cpp
   create_tokenizer_info.cpp
+  create_job_info.cpp
+  alter_job_info.cpp
   create_trigger_info.cpp
   create_schema_info.cpp
   create_scalar_function_info.cpp

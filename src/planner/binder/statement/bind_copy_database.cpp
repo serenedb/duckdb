@@ -37,7 +37,9 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_databas
 		LogicalDependencyList altered_dependencies;
 		for (auto &dep : create_info->dependencies.Set()) {
 			auto altered_dep = dep;
-			altered_dep.catalog = target_database_name;
+			if (dep.catalog == from_database.GetName()) {
+				altered_dep.catalog = target_database_name;
+			}
 			altered_dependencies.AddDependency(altered_dep);
 		}
 		create_info->dependencies = altered_dependencies;

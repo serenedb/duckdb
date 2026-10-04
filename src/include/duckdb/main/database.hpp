@@ -28,6 +28,7 @@ class ConnectionManager;
 class ExtensionManager;
 class FileSystem;
 class TaskScheduler;
+class JobScheduler;
 class ObjectCache;
 class SharedObjectCache;
 struct AttachInfo;
@@ -60,6 +61,7 @@ public:
 	DUCKDB_API ExternalFileCache &GetExternalFileCache();
 	DUCKDB_API ResultSetManager &GetResultSetManager();
 	DUCKDB_API TaskScheduler &GetScheduler();
+	DUCKDB_API JobScheduler &GetJobScheduler();
 	DUCKDB_API ObjectCache &GetObjectCache();
 	DUCKDB_API SharedObjectCache &GetSharedObjectCache();
 	DUCKDB_API ConnectionManager &GetConnectionManager();
@@ -97,6 +99,7 @@ private:
 	shared_ptr<BufferManager> buffer_manager;
 	unique_ptr<DatabaseManager> db_manager;
 	unique_ptr<TaskScheduler> scheduler;
+	shared_ptr<JobScheduler> job_scheduler;
 	unique_ptr<ObjectCache> object_cache;
 	unique_ptr<SharedObjectCache> shared_object_cache;
 	unique_ptr<ConnectionManager> connection_manager;

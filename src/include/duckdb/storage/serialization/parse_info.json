@@ -1246,5 +1246,25 @@
         "required_until": "v2.0.0"
       }
     ]
+  },
+  {
+    "class": "AlterJobInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_JOB",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_job_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_job_type",
+        "type": "AlterJobType"
+      },
+      {
+        "id": 301,
+        "name": "schedule",
+        "type": "JobSchedule"
+      }
+    ]
   }
 ]

@@ -34,6 +34,8 @@ public:
 public:
 	bool IsDuckCatalog() override;
 	void Initialize(bool load_builtin) override;
+	void FinalizeLoad(optional_ptr<ClientContext> context) override;
+	void OnDetach(ClientContext &context) override;
 
 	string GetCatalogType() override {
 		return "duckdb";

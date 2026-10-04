@@ -67,6 +67,8 @@ class BoundAtClause;
 
 struct CreateInfo;
 struct CreateTriggerInfo;
+struct CreateJobInfo;
+struct JobSchedule;
 struct QualifiedName;
 struct BoundCreateTableInfo;
 struct BoundOnConflictInfo;
@@ -274,6 +276,9 @@ public:
 	SchemaCatalogEntry &BindSchema(CreateInfo &info);
 	SchemaCatalogEntry &BindCreateFunctionInfo(CreateInfo &info);
 	SchemaCatalogEntry &BindCreateTriggerInfo(CreateTriggerInfo &info);
+	SchemaCatalogEntry &BindCreateJobInfo(CreateJobInfo &info);
+	void BindJobSchedule(JobSchedule &schedule, unique_ptr<ParsedExpression> &interval_expr,
+	                     unique_ptr<ParsedExpression> &offset_expr);
 
 	//! Check usage, and cast named parameters to their types
 	static void BindNamedParameters(named_parameter_type_map_t &types, named_parameter_map_t &values,

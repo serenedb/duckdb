@@ -984,7 +984,8 @@
       "LOGICAL_CREATE_SCHEMA",
       "LOGICAL_CREATE_MACRO",
       "LOGICAL_CREATE_TYPE",
-      "LOGICAL_CREATE_TRIGGER"
+      "LOGICAL_CREATE_TRIGGER",
+      "LOGICAL_CREATE_JOB"
     ],
     "members": [
       {

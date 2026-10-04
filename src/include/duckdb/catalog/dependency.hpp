@@ -167,6 +167,7 @@ public:
 	CatalogType type;
 	Identifier schema;
 	Identifier name;
+	Identifier catalog {};
 
 public:
 	bool operator==(const CatalogEntryInfo &other) const {
@@ -177,6 +178,9 @@ public:
 			return false;
 		}
 		if (other.name != name) {
+			return false;
+		}
+		if (other.catalog != catalog) {
 			return false;
 		}
 		return true;

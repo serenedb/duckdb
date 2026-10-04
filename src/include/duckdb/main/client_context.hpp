@@ -118,6 +118,9 @@ public:
 	//! resolve the literal "$user" placeholder in catalog_search_path. Set by
 	//! the wire layer at connect time; updated on SET ROLE if applicable.
 	string session_user;
+	optional_idx login_role;
+	optional_idx session_role;
+	optional_idx effective_role;
 
 	//! Filter for settings listings (duckdb_settings(), SHOW ALL, pg_settings).
 	//! Return false to hide the setting from listings. SET / SHOW <name> are

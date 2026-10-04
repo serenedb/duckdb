@@ -66,6 +66,8 @@ enum class AlterForeignKeyType : uint8_t;
 
 enum class AlterIndexType : uint8_t;
 
+enum class AlterJobType : uint8_t;
+
 enum class AlterScalarFunctionType : uint8_t;
 
 enum class AlterTableFunctionType : uint8_t;
@@ -283,6 +285,8 @@ enum class IndexConstraintType : uint8_t;
 enum class InsertColumnOrder : uint8_t;
 
 enum class InterruptMode : uint8_t;
+
+enum class JobScheduleKind : uint8_t;
 
 enum class JoinFilterPushdownMode : uint8_t;
 
@@ -645,6 +649,9 @@ template<>
 const char* EnumUtil::ToChars<AlterIndexType>(AlterIndexType value);
 
 template<>
+const char* EnumUtil::ToChars<AlterJobType>(AlterJobType value);
+
+template<>
 const char* EnumUtil::ToChars<AlterScalarFunctionType>(AlterScalarFunctionType value);
 
 template<>
@@ -970,6 +977,9 @@ const char* EnumUtil::ToChars<InsertColumnOrder>(InsertColumnOrder value);
 
 template<>
 const char* EnumUtil::ToChars<InterruptMode>(InterruptMode value);
+
+template<>
+const char* EnumUtil::ToChars<JobScheduleKind>(JobScheduleKind value);
 
 template<>
 const char* EnumUtil::ToChars<JoinFilterPushdownMode>(JoinFilterPushdownMode value);
@@ -1486,6 +1496,9 @@ template<>
 AlterIndexType EnumUtil::FromString<AlterIndexType>(const char *value);
 
 template<>
+AlterJobType EnumUtil::FromString<AlterJobType>(const char *value);
+
+template<>
 AlterScalarFunctionType EnumUtil::FromString<AlterScalarFunctionType>(const char *value);
 
 template<>
@@ -1811,6 +1824,9 @@ InsertColumnOrder EnumUtil::FromString<InsertColumnOrder>(const char *value);
 
 template<>
 InterruptMode EnumUtil::FromString<InterruptMode>(const char *value);
+
+template<>
+JobScheduleKind EnumUtil::FromString<JobScheduleKind>(const char *value);
 
 template<>
 JoinFilterPushdownMode EnumUtil::FromString<JoinFilterPushdownMode>(const char *value);

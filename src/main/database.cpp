@@ -23,6 +23,7 @@
 #include "duckdb/main/db_instance_cache.hpp"
 #include "duckdb/main/error_manager.hpp"
 #include "duckdb/main/extension_helper.hpp"
+#include "duckdb/main/job_scheduler.hpp"
 #include "duckdb/main/result_set_manager.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
@@ -86,6 +87,9 @@ ParserCache &DatabaseInstance::GetParserCache() {
 }
 
 DatabaseInstance::~DatabaseInstance() {
+	if (job_scheduler) {
+		job_scheduler->Stop();
+	}
 	// destroy all attached databases
 	if (db_manager) {
 		db_manager->ResetDatabases();
@@ -94,6 +98,7 @@ DatabaseInstance::~DatabaseInstance() {
 	connection_manager.reset();
 	object_cache.reset();
 	shared_object_cache.reset();
+	job_scheduler.reset();
 	scheduler.reset();
 	db_manager.reset();
 
@@ -311,6 +316,7 @@ void DatabaseInstance::Initialize(const char *database_path, DBConfig *user_conf
 	result_set_manager = make_uniq<ResultSetManager>(*this);
 
 	scheduler = make_uniq<TaskScheduler>(*this);
+	job_scheduler = make_shared_ptr<JobScheduler>(*this);
 	object_cache = make_uniq<ObjectCache>(*config.buffer_pool);
 	config.buffer_pool->SetObjectCache(object_cache.get());
 	shared_object_cache = make_uniq<SharedObjectCache>(config.buffer_pool);
@@ -393,6 +399,10 @@ DatabaseManager &DatabaseManager::Get(ClientContext &db) {
 
 TaskScheduler &DatabaseInstance::GetScheduler() {
 	return *scheduler;
+}
+
+JobScheduler &DatabaseInstance::GetJobScheduler() {
+	return *job_scheduler;
 }
 
 SharedObjectCache &DatabaseInstance::GetSharedObjectCache() {

@@ -39,6 +39,7 @@
 #include "duckdb/common/extra_operator_info.hpp"
 #include "duckdb/storage/table/row_group_reorderer.hpp"
 #include "duckdb/storage/storage_index.hpp"
+#include "duckdb/catalog/job_schedule.hpp"
 
 namespace duckdb {
 
@@ -422,6 +423,20 @@ HivePartitioningIndex HivePartitioningIndex::Deserialize(Deserializer &deseriali
 	auto value = deserializer.ReadPropertyWithDefault<string>(100, "value");
 	auto index = deserializer.ReadPropertyWithDefault<idx_t>(101, "index");
 	HivePartitioningIndex result(std::move(value), index);
+	return result;
+}
+
+void JobSchedule::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<JobScheduleKind>(100, "kind", kind);
+	serializer.WriteProperty<Value>(101, "interval", interval);
+	serializer.WriteProperty<Value>(102, "offset", offset);
+}
+
+JobSchedule JobSchedule::Deserialize(Deserializer &deserializer) {
+	JobSchedule result;
+	deserializer.ReadProperty<JobScheduleKind>(100, "kind", result.kind);
+	deserializer.ReadProperty<Value>(101, "interval", result.interval);
+	deserializer.ReadProperty<Value>(102, "offset", result.offset);
 	return result;
 }
 

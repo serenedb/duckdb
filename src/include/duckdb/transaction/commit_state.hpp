@@ -19,6 +19,7 @@
 namespace duckdb {
 class BlockManager;
 class CatalogEntry;
+class JobCatalogEntry;
 class TableIndexList;
 class DataChunk;
 class DuckTransaction;
@@ -52,6 +53,8 @@ public:
 	//! memory index data and also marks all blocks on disk as free blocks allowing for reclamation. Block marking for
 	//! indexes is handled implicitly along destruction paths for index memory.
 	void RemoveIndex(TableIndexList &indexes, Identifier name);
+	void ScheduleJob(JobCatalogEntry &job);
+	void DropJob(JobCatalogEntry &job);
 	//! Finalize accumulated block marks and index removals.
 	void FinalizeCommit();
 	//! True if no work has been queued.
@@ -61,6 +64,8 @@ private:
 	optional_ptr<BlockManager> block_manager;
 	vector<block_id_t> dropped_block_ids;
 	vector<PendingIndexRemoval> pending_index_removals;
+	vector<reference<JobCatalogEntry>> scheduled_jobs;
+	vector<reference<JobCatalogEntry>> dropped_jobs;
 };
 
 struct IndexDataRemover {

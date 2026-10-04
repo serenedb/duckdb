@@ -5,6 +5,7 @@
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
 #include "duckdb/function/table/table_scan.hpp"
@@ -23,6 +24,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_trigger_info.hpp"
 #include "duckdb/parser/parsed_data/create_secret_info.hpp"
@@ -215,7 +217,7 @@ public:
 		if (op.type == LogicalOperatorType::LOGICAL_GET) {
 			auto &get = op.Cast<LogicalGet>();
 			auto table = get.GetTable();
-			if (table && &table->ParentCatalog() == &catalog) {
+			if (table && DependencyManager::CanDepend(catalog, table->ParentCatalog())) {
 				LogicalDependency dependency(*table);
 				for (auto &column : get.GetColumnIds()) {
 					dependency.subdependencies.insert(
@@ -241,8 +243,7 @@ void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const
 
 	if (dependencies) {
 		view_binder->SetCatalogLookupCallback([&dependencies, &catalog](CatalogEntry &entry) {
-			if (&catalog != &entry.ParentCatalog()) {
-				// Don't register dependencies between catalogs
+			if (!DependencyManager::CanDepend(catalog, entry.ParentCatalog())) {
 				return;
 			}
 			dependencies->AddDependency(entry);
@@ -429,8 +430,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		auto &dependencies = base.dependencies;
 		const auto should_create_dependencies = Settings::Get<EnableMacroDependenciesSetting>(context);
 		const auto binder_callback = [&dependencies, &catalog](CatalogEntry &entry) {
-			if (&catalog != &entry.ParentCatalog()) {
-				// Don't register any cross-catalog dependencies
+			if (!DependencyManager::CanDepend(catalog, entry.ParentCatalog())) {
 				return;
 			}
 			// Register any catalog entry required to bind the macro function
@@ -1012,8 +1012,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &catalog = Catalog::GetCatalog(context, create_type_info.GetQualifiedName().Catalog());
 		auto &dependencies = create_type_info.dependencies;
 		auto dependency_callback = [&dependencies, &catalog](CatalogEntry &entry) {
-			if (&catalog != &entry.ParentCatalog()) {
-				// Don't register any cross-catalog dependencies
+			if (!DependencyManager::CanDepend(catalog, entry.ParentCatalog())) {
 				return;
 			}
 			dependencies.AddDependency(entry);
@@ -1131,6 +1130,11 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &schema = BindCreateTriggerInfo(create_trigger_info);
 		result.plan =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_TRIGGER, std::move(stmt.info), &schema);
+		break;
+	}
+	case CatalogType::JOB_ENTRY: {
+		auto &schema = BindCreateJobInfo(stmt.info->Cast<CreateJobInfo>());
+		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_JOB, std::move(stmt.info), &schema);
 		break;
 	}
 	default:

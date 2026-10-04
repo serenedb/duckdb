@@ -54,6 +54,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	case CatalogType::INDEX_ENTRY:
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::TYPE_ENTRY:
+	case CatalogType::JOB_ENTRY:
 	case CatalogType::TOKENIZER_ENTRY: {
 		BindSchemaOrCatalog(stmt.info->GetQualifiedNameMutable());
 		auto catalog = Catalog::GetCatalogEntry(context, stmt.info->GetQualifiedName().Catalog());

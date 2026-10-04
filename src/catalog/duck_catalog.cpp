@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/job_catalog_entry.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
@@ -14,6 +15,8 @@
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/function/built_in_functions.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/database.hpp"
+#include "duckdb/main/job_scheduler.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/function/function_list.hpp"
 #include "duckdb/common/encryption_state.hpp"
@@ -58,6 +61,25 @@ void DuckCatalog::Initialize(bool load_builtin) {
 
 bool DuckCatalog::IsDuckCatalog() {
 	return true;
+}
+
+static void ScanJobs(DuckCatalog &catalog, const std::function<void(JobCatalogEntry &)> &callback) {
+	catalog.ScanSchemas([&](SchemaCatalogEntry &schema) {
+		schema.Scan(CatalogType::JOB_ENTRY, [&](CatalogEntry &entry) { callback(entry.Cast<JobCatalogEntry>()); });
+	});
+}
+
+void DuckCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {
+	if (IsSystemCatalog() || IsTemporaryCatalog()) {
+		return;
+	}
+	auto &scheduler = GetDatabase().GetJobScheduler();
+	ScanJobs(*this, [&](JobCatalogEntry &job) { scheduler.Schedule(job); });
+}
+
+void DuckCatalog::OnDetach(ClientContext &context) {
+	auto &scheduler = GetDatabase().GetJobScheduler();
+	ScanJobs(*this, [&](JobCatalogEntry &job) { scheduler.Drop(job); });
 }
 
 bool DuckCatalog::SupportsMultipleDMLCTEs() const {

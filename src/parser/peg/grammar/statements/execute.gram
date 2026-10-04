@@ -1,1 +1,2 @@
 ExecuteStatement <- 'EXECUTE' Identifier TableFunctionArguments?
+ExecuteJobStatement <- 'EXECUTE' 'JOB' QualifiedName
