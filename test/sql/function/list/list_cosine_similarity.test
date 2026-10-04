@@ -48,4 +48,16 @@ SELECT list_cosine_distance([1, 2, 3]::{type}[], [1, 2, 3]::{type}[]) = 1 - list
 ----
 true
 
+# a zero vector has no direction: similarity 0, distance 1
+query IIII
+SELECT list_cosine_similarity([0, 0, 0]::{type}[], [1, 2, 3]::{type}[]), list_cosine_similarity([0, 0, 0]::{type}[], [0, 0, 0]::{type}[]), list_cosine_distance([1, 2, 3]::{type}[], [0, 0, 0]::{type}[]), list_cosine_distance([0, 0, 0]::{type}[], [0, 0, 0]::{type}[]);
+----
+0.0	0.0	1.0	1.0
+
 endloop
+
+# the product of the squared norms does not overflow FLOAT
+query II
+SELECT list_cosine_similarity([1e18, 1e18]::FLOAT[], [1e18, 0]::FLOAT[]), list_cosine_distance([1e18, 1e18]::FLOAT[], [1e18, 1e18]::FLOAT[]);
+----
+0.70710677	0.0
