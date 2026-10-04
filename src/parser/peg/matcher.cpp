@@ -26,7 +26,9 @@ MatcherResult Matcher::MatchParseResult(MatchState &state) const {
 
 SuggestionType Matcher::AddSuggestion(MatchState &state) const {
 	if (!state.added_suggestions) {
-		state.added_suggestions = make_uniq<reference_set_t<const Matcher>>();
+		auto &scopes = state.context.suggestion_scopes;
+		scopes.push_back(make_uniq<reference_set_t<const Matcher>>());
+		state.added_suggestions = *scopes.back();
 	}
 	auto &added_suggestions = *state.added_suggestions;
 	auto entry = added_suggestions.find(*this);

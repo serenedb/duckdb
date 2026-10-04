@@ -166,6 +166,7 @@ struct MatchContext {
 	IdentifierCaseMode identifier_case_mode;
 	ParserPackratCache *packrat_cache;
 	MatchMode mode;
+	vector<unique_ptr<reference_set_t<const Matcher>>> suggestion_scopes;
 };
 
 struct MatchState {
@@ -178,7 +179,7 @@ struct MatchState {
 
 	TokenIterator token_iterator;
 	MatchContext &context;
-	unique_ptr<reference_set_t<const Matcher>> added_suggestions;
+	optional_ptr<reference_set_t<const Matcher>> added_suggestions;
 	optional_ptr<const CompiledGrammarRule> rule;
 
 	bool BuildParseResult() const {
