@@ -67,6 +67,7 @@ public:
 	idx_t wal_version = 1;
 	optional_idx current_position;
 	optional_idx checkpoint_position;
+	optional_idx checkpoint_end_position;
 	optional_idx expected_checkpoint_id;
 	WALReplayState replay_state;
 
@@ -464,6 +465,7 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 	ReplayState checkpoint_state(database, *con.context, replay_state);
 	auto &db_manager = DatabaseManager::Get(database.GetDatabase());
 	unordered_set<idx_t> undecided_batches;
+	idx_t checkpoint_truncate_offset = 0;
 	try {
 		idx_t replay_entry_count = 0;
 		idx_t batch_start = reader.CurrentOffset();
@@ -472,7 +474,12 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 			// read the current entry (deserialize only)
 			checkpoint_state.current_position = reader.CurrentOffset();
 			auto deserializer = WriteAheadLogDeserializer::GetEntryDeserializer(checkpoint_state, reader, true);
-			if (deserializer.ReplayEntry()) {
+			auto is_batch_end = deserializer.ReplayEntry();
+			if (checkpoint_state.checkpoint_position.IsValid() && !checkpoint_state.checkpoint_end_position.IsValid()) {
+				checkpoint_state.checkpoint_end_position = reader.CurrentOffset();
+				checkpoint_truncate_offset = batch_start;
+			}
+			if (is_batch_end) {
 				if (checkpoint_state.prepared_txid) {
 					if (!db_manager.IsPreparedCommitted(*checkpoint_state.prepared_txid)) {
 						undecided_batches.insert(batch_start);
@@ -500,11 +507,15 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 		}
 	} // LCOV_EXCL_STOP
 	unique_ptr<FileHandle> checkpoint_handle;
-	if (checkpoint_state.checkpoint_id.IsValid()) {
+	bool truncate_failed_checkpoint_marker = false;
+	if (checkpoint_state.checkpoint_id.IsValid() && checkpoint_state.checkpoint_end_position.IsValid()) {
 		if (replay_state == WALReplayState::CHECKPOINT_WAL) {
 			throw InvalidInputException(
 			    "Failure while replaying checkpoint WAL file \"%s\": checkpoint WAL cannot contain a checkpoint marker",
 			    wal_path);
+		}
+		if (checkpoint_state.current_position.GetIndex() != checkpoint_state.checkpoint_end_position.GetIndex()) {
+			throw IOException("WAL checkpoint marker must be at the end of the WAL");
 		}
 		// there is a checkpoint flag
 		// this means a checkpoint was on-going when we crashed
@@ -520,6 +531,9 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 			if (checkpoint_was_successful) {
 				// the contents of the WAL have already been checkpointed and there is no checkpoint WAL - we are done
 				return nullptr;
+			}
+			if (!storage_manager.GetAttached().IsReadOnly()) {
+				truncate_failed_checkpoint_marker = true;
 			}
 		} else {
 			// we have a checkpoint WAL
@@ -561,6 +575,20 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 		auto expected_id = checkpoint_state.expected_checkpoint_id.GetIndex();
 		WriteAheadLogDeserializer::ThrowVersionError(expected_id - 1, expected_id);
 	}
+	unique_ptr<BufferedFileReader> truncated_wal_reader;
+	if (truncate_failed_checkpoint_marker) {
+		reader.handle.reset();
+		auto truncate_handle = fs.OpenFile(wal_path, FileFlags::FILE_FLAGS_WRITE);
+		fs.Truncate(*truncate_handle, NumericCast<int64_t>(checkpoint_truncate_offset));
+		truncate_handle->Sync();
+		truncate_handle.reset();
+		if (checkpoint_truncate_offset == 0) {
+			return make_uniq<WriteAheadLog>(storage_manager, wal_path);
+		}
+		auto main_handle = fs.OpenFile(wal_path, FileFlags::FILE_FLAGS_READ);
+		truncated_wal_reader = make_uniq<BufferedFileReader>(fs, std::move(main_handle));
+	}
+	auto &wal_reader = truncated_wal_reader ? *truncated_wal_reader : reader;
 
 	// we need to recover from the WAL: actually set up the replay state
 	ReplayState state(database, *con.context, replay_state);
@@ -574,7 +602,7 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 	} replay_offset_guard {duck_manager};
 
 	// reset the reader - we are going to read the WAL from the beginning again
-	reader.Reset();
+	wal_reader.Reset();
 
 	// replay the WAL
 	// note that everything is wrapped inside a try/catch block here
@@ -582,11 +610,11 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 	idx_t successful_offset = 0;
 	bool all_succeeded = false;
 	try {
-		bool skip_batch = undecided_batches.count(reader.CurrentOffset()) != 0;
+		bool skip_batch = undecided_batches.count(wal_reader.CurrentOffset()) != 0;
 		while (true) {
-			duck_manager.SetReplayCommitOffset(reader.CurrentOffset());
+			duck_manager.SetReplayCommitOffset(wal_reader.CurrentOffset());
 			// read the current entry
-			auto deserializer = WriteAheadLogDeserializer::GetEntryDeserializer(state, reader, skip_batch);
+			auto deserializer = WriteAheadLogDeserializer::GetEntryDeserializer(state, wal_reader, skip_batch);
 			if (deserializer.ReplayEntry()) {
 				state.prepared_txid.reset();
 				con.Commit();
@@ -594,7 +622,7 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 					db_manager.CommitPrepared(decision.first, std::move(decision.second));
 				}
 				state.committed_prepared.clear();
-				skip_batch = undecided_batches.count(reader.CurrentOffset()) != 0;
+				skip_batch = undecided_batches.count(wal_reader.CurrentOffset()) != 0;
 
 				// Commit any outstanding indexes.
 				for (auto &info : state.replay_index_infos) {
@@ -605,9 +633,9 @@ unique_ptr<WriteAheadLog> WriteAheadLogReplayer::ReplayLog(unique_ptr<FileHandle
 					state.table_storage->AttachPendingIndexes();
 				}
 
-				successful_offset = reader.CurrentOffset();
+				successful_offset = wal_reader.CurrentOffset();
 				// check if the file is exhausted
-				if (reader.Finished()) {
+				if (wal_reader.Finished()) {
 					// we finished reading the file: break
 					all_succeeded = true;
 					break;
@@ -1596,6 +1624,9 @@ void WriteAheadLogDeserializer::ReplayUpdate() {
 }
 
 void WriteAheadLogDeserializer::ReplayCheckpoint() {
+	if (state.checkpoint_position.IsValid()) {
+		throw IOException("WAL cannot contain more than one checkpoint marker");
+	}
 	state.checkpoint_id = deserializer.ReadProperty<MetaBlockPointer>(101, "meta_block");
 	state.checkpoint_position = state.current_position;
 }

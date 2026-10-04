@@ -72,7 +72,7 @@ public:
 	void AddIndex(unique_ptr<Index> index);
 	//! Removes an index entry from the list of index entries and release any storage the index owns.
 	void RemoveIndex(const Identifier &name);
-	void RemoveIndexesOnColumn(column_t column_id);
+	void RemoveIndexesFromColumn(column_t column_id);
 	void SyncColumnLayout(const vector<idx_t> &old_column_oids, const vector<idx_t> &new_column_oids);
 	void RenameIndex(const Identifier &name, const Identifier &new_name);
 	//! Returns true, if the index name does not exist.

@@ -145,6 +145,9 @@ void CatalogEntry::Rollback(CatalogEntry &prev_entry) {
 void CatalogEntry::OnDrop() {
 }
 
+void CatalogEntry::OnAlter() {
+}
+
 InCatalogEntry::InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t oid)
     : CatalogEntry(type, catalog, std::move(name), oid), catalog(catalog) {
 }

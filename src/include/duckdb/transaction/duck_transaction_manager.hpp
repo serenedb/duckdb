@@ -11,6 +11,7 @@
 #include "duckdb/transaction/transaction_manager.hpp"
 #include "duckdb/storage/storage_lock.hpp"
 #include "duckdb/common/enums/checkpoint_type.hpp"
+#include "duckdb/common/deque.hpp"
 #include "duckdb/common/queue.hpp"
 
 #include <thread>
@@ -48,6 +49,7 @@ public:
 	ErrorData CommitTransaction(ClientContext &context, Transaction &transaction) override;
 	ErrorData PrepareTransaction(ClientContext &context, Transaction &transaction, WriteAheadLog &catalog_log,
 	                             const hugeint_t &txid, vector<pair<idx_t, idx_t>> &participants);
+	ErrorData ApplyPrepared(Transaction &transaction);
 	//! Rollback the given transaction
 	void RollbackTransaction(Transaction &transaction) override;
 
@@ -64,6 +66,11 @@ public:
 	transaction_t GetLastCommit() const {
 		return last_commit;
 	}
+	struct DurableSnapshot {
+		transaction_t start_time;
+		idx_t catalog_version;
+	};
+	DurableSnapshot DurableSnapshotStart();
 	idx_t GetLastCommittedCatalogVersion() const {
 		return last_committed_version;
 	}
@@ -98,6 +105,7 @@ public:
 	unique_ptr<StorageLockKey> SharedCheckpointLock();
 	//! Try to obtain an exclusive checkpoint lock
 	unique_ptr<StorageLockKey> TryGetCheckpointLock();
+	unique_ptr<StorageLockKey> TryGetIdleCheckpointLock();
 	unique_ptr<StorageLockKey> TryUpgradeCheckpointLock(StorageLockKey &lock);
 	unique_ptr<StorageLockKey> SharedVacuumLock();
 	unique_ptr<StorageLockKey> TryGetVacuumLock();
@@ -144,6 +152,8 @@ private:
 	//! Floor the version-cleanup horizon at last_durable_commit + 1 while any published commit is not yet durable:
 	//! DurableSnapshotBound can still hand out snapshots there, so versions above the floor must survive.
 	transaction_t ApplyDurableFloor(transaction_t lowest_start_time) const;
+	idx_t CatalogVersionAt(transaction_t start_time);
+	void PublishCatalogVersion(DuckTransaction &transaction, transaction_t commit_id, bool pending);
 	//! Move the prefix of recently_committed_transactions below the horizon into cleanup_info. Must be called with
 	//! transaction_lock held.
 	void MoveExpiredRecentlyCommitted(transaction_t lowest_start_time, DuckCleanupInfo &cleanup_info);
@@ -199,6 +209,11 @@ private:
 
 	atomic<idx_t> last_uncommitted_catalog_version = {TRANSACTION_ID_START};
 	atomic<idx_t> last_committed_version = {0};
+	struct PendingCatalogCommit {
+		transaction_t commit_id;
+		idx_t catalog_version;
+	};
+	deque<PendingCatalogCommit> pending_catalog_commits;
 
 	//! Only one cleanup can be active at any time.
 	mutex cleanup_lock;

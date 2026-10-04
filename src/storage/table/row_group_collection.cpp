@@ -1181,6 +1181,9 @@ void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableInd
 			}
 			continue;
 		}
+		if (removal_type == IndexRemovalType::DELETED_ROWS_IN_USE) {
+			continue;
+		}
 		// Buffering takes only the indexed columns in ordering of the column_ids mapping.
 		DataChunk index_column_chunk;
 		index_column_chunk.InitializeEmpty(column_types);

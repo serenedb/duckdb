@@ -52,6 +52,8 @@ public:
 	//! memory index data and also marks all blocks on disk as free blocks allowing for reclamation. Block marking for
 	//! indexes is handled implicitly along destruction paths for index memory.
 	void RemoveIndex(TableIndexList &indexes, Identifier name);
+	void DropEntry(CatalogEntry &entry);
+	void AlterEntry(CatalogEntry &entry);
 	//! Finalize accumulated block marks and index removals.
 	void FinalizeCommit();
 	//! True if no work has been queued.
@@ -61,6 +63,8 @@ private:
 	optional_ptr<BlockManager> block_manager;
 	vector<block_id_t> dropped_block_ids;
 	vector<PendingIndexRemoval> pending_index_removals;
+	vector<reference<CatalogEntry>> dropped_entries;
+	vector<reference<CatalogEntry>> altered_entries;
 };
 
 struct IndexDataRemover {

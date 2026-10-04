@@ -8,6 +8,7 @@
 #include "duckdb/common/index_map.hpp"
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/execution/index/art/art.hpp"
+#include "duckdb/execution/index/index_type_set.hpp"
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -135,23 +136,16 @@ static vector<idx_t> SyncIndexColumnLayout(DataTableInfo &info, const ColumnList
 	vector<idx_t> physical_oids;
 	for (auto &column : columns.Logical()) {
 		logical_oids.push_back(column.CatalogOid());
-		if (!column.Generated()) {
-			physical_oids.push_back(column.CatalogOid());
-		}
+	}
+	for (auto &column : columns.Physical()) {
+		physical_oids.push_back(column.CatalogOid());
 	}
 	return info.SetIndexColumnLayout(logical_oids, std::move(physical_oids));
 }
 
-static void AssignCatalogOids(Catalog &catalog, ColumnList &columns, vector<unique_ptr<Constraint>> &constraints) {
+static void AssignColumnOids(Catalog &catalog, ColumnList &columns) {
 	auto &manager = catalog.GetDatabase().GetDatabaseManager();
 	const bool assign = catalog.Compatibility() == SqlCompatibility::POSTGRES;
-	auto assign_oid = [&](idx_t &oid) {
-		if (oid) {
-			manager.ClaimOid(oid);
-		} else if (assign) {
-			oid = manager.NextOid();
-		}
-	};
 	for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
 		auto &column = columns.GetColumnMutable(LogicalIndex(i));
 		if (column.CatalogOid()) {
@@ -160,19 +154,13 @@ static void AssignCatalogOids(Catalog &catalog, ColumnList &columns, vector<uniq
 			column.SetCatalogOid(manager.NextOid());
 		}
 	}
-	for (auto &constraint : constraints) {
-		assign_oid(constraint->oid);
-		if (constraint->type == ConstraintType::UNIQUE) {
-			assign_oid(constraint->Cast<UniqueConstraint>().index_oid);
-		}
-	}
 }
 
 DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info,
                                shared_ptr<DataTable> inherited_storage, shared_ptr<CatalogSet> inherited_triggers)
     : TableCatalogEntry(catalog, schema, info.Base()), storage(std::move(inherited_storage)),
       column_dependency_manager(std::move(info.column_dependency_manager)) {
-	AssignCatalogOids(catalog, columns, constraints);
+	AssignColumnOids(catalog, columns);
 	if (inherited_triggers) {
 		triggers = std::move(inherited_triggers);
 	}
@@ -812,6 +800,17 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	create_info->tags = tags;
 	create_info->dependencies = dependencies;
 	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
+	const bool columns_own_serial_sequences = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (columns_own_serial_sequences) {
+		const SubDependency default_of {AlterTableType::SET_DEFAULT, columns.GetColumn(removed_index).Name()};
+		LogicalDependencyList kept;
+		for (auto &dependency : dependencies.Set()) {
+			if (!dependency.owned_by || !dependency.subdependencies.count(default_of)) {
+				kept.AddDependency(dependency);
+			}
+		}
+		create_info->dependencies = std::move(kept);
+	}
 
 	logical_index_set_t removed_columns;
 	if (column_dependency_manager.HasDependents(removed_index)) {
@@ -844,7 +843,13 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
 	info.new_dependencies = make_uniq<LogicalDependencyList>(std::move(bound_create_info->dependencies));
-	if (columns.GetColumn(LogicalIndex(removed_index)).Generated()) {
+	vector<idx_t> removed_physical;
+	for (auto &col : columns.Physical()) {
+		if (col.Logical() == removed_index || removed_columns.count(col.Logical())) {
+			removed_physical.push_back(col.Physical().index);
+		}
+	}
+	if (removed_physical.empty()) {
 		return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
 	}
 	const bool cascade_drops_column_dependents = info.cascade && catalog.Compatibility() == SqlCompatibility::POSTGRES;
@@ -861,8 +866,11 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 			}
 		}
 	}
-	auto new_storage =
-	    make_shared_ptr<DataTable>(context, *storage, columns.LogicalToPhysical(LogicalIndex(removed_index)).index);
+	std::sort(removed_physical.rbegin(), removed_physical.rend());
+	auto new_storage = storage;
+	for (auto physical : removed_physical) {
+		new_storage = make_shared_ptr<DataTable>(context, *new_storage, physical);
+	}
 	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers);
 }
 
@@ -1590,7 +1598,12 @@ void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction) {
 		for (idx_t i = 0; i < logical_oids.size(); i++) {
 			positions.emplace(logical_oids[i], i);
 		}
+		auto &index_types = catalog.GetDatabase().config.GetIndexTypes();
 		UpdateDependentIndexes(*transaction, *this, [&](DuckIndexEntry &index) {
+			auto index_type = index_types.FindByName(index.index_type);
+			if (!index_type || !index_type->remaps_columns) {
+				return;
+			}
 			for (auto &column_id : index.column_ids) {
 				if (column_id >= previous_logical_oids.size()) {
 					continue;

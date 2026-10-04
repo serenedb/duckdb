@@ -403,23 +403,6 @@ Catalog &Catalog::ReplayUseCatalog(ClientContext &context, idx_t catalog_oid) {
 	throw InternalException("Catalog \"%s\" has no catalog log to replay catalog %llu from", GetName(), catalog_oid);
 }
 
-void Catalog::SyncCatalogLog() {
-	auto log = CatalogLog();
-	if (!log) {
-		throw InternalException("Catalog \"%s\" has no catalog log to sync", GetName());
-	}
-	idx_t offset;
-	{
-		auto wal_lock = log->GetStorageManager().GetWALLock();
-		log = CatalogLog();
-		if (!log) {
-			throw InternalException("Catalog \"%s\" has no catalog log to sync", GetName());
-		}
-		offset = log->GetFlushedOffset();
-	}
-	log->GroupSync(offset);
-}
-
 bool Catalog::InRelationNamespace(CatalogType type) {
 	switch (type) {
 	case CatalogType::TABLE_ENTRY:

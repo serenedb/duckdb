@@ -8,6 +8,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/extra_type_info.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/constraints/list.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
@@ -31,11 +32,30 @@ namespace duckdb {
 
 constexpr const char *TableCatalogEntry::Name;
 
+static void AssignConstraintOids(Catalog &catalog, vector<unique_ptr<Constraint>> &constraints) {
+	auto &manager = catalog.GetDatabase().GetDatabaseManager();
+	const bool assign = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	auto assign_oid = [&](idx_t &oid) {
+		if (oid) {
+			manager.ClaimOid(oid);
+		} else if (assign) {
+			oid = manager.NextOid();
+		}
+	};
+	for (auto &constraint : constraints) {
+		assign_oid(constraint->oid);
+		if (constraint->type == ConstraintType::UNIQUE) {
+			assign_oid(constraint->Cast<UniqueConstraint>().index_oid);
+		}
+	}
+}
+
 TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info)
     : StandardEntry(CatalogType::TABLE_ENTRY, schema, catalog, info.GetTableName(), info.oid),
       columns(std::move(info.columns)), constraints(std::move(info.constraints)) {
 	if (catalog.IsDuckCatalog()) {
 		triggers = make_shared_ptr<CatalogSet>(catalog);
+		AssignConstraintOids(catalog, constraints);
 	}
 	this->temporary = info.temporary;
 	this->dependencies = info.dependencies;

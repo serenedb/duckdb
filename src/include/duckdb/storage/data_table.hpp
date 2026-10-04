@@ -242,6 +242,7 @@ public:
 	bool IsRoot() const {
 		return IsMainTable();
 	}
+	unique_lock<mutex> CommittedAppendLock();
 	string TableModification() const;
 
 	//! Get statistics of a physical column within the table
@@ -322,7 +323,7 @@ public:
 	void AddIndex(const ColumnList &columns, const vector<LogicalIndex> &column_indexes, const IndexConstraintType type,
 	              IndexStorageInfo index_info);
 	//! AddIndex moves an index to this table's index list.
-	void AddIndex(unique_ptr<Index> index);
+	idx_t AddIndex(unique_ptr<Index> index);
 
 	//! Returns a list of the partition stats
 	vector<PartitionStatistics> GetPartitionStats(ClientContext &context);

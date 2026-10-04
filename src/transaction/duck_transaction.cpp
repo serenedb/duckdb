@@ -182,23 +182,10 @@ void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, uint64_t
 	}
 }
 
-bool DuckTransaction::HasLoggedSequenceUsage() {
-	lock_guard<mutex> l(sequence_lock);
-	return !logged_sequence_usage.empty();
-}
-
 void DuckTransaction::CoverSequenceUsage() {
 	for (auto &usage : logged_sequence_usage) {
 		usage.first.get().Cover(usage.second);
 	}
-}
-
-vector<SequenceValue> DuckTransaction::ReserveSequenceUsage(WriteAheadLog &catalog_log) {
-	vector<SequenceValue> durable_after;
-	for (auto &usage : logged_sequence_usage) {
-		usage.first.get().ReserveInCommit(catalog_log, usage.second, durable_after);
-	}
-	return durable_after;
 }
 
 bool DuckTransaction::ChangesMade() {
@@ -358,8 +345,33 @@ ErrorData DuckTransaction::Commit(AttachedDatabase &db, CommitInfo &commit_info,
 	return error_data;
 }
 
+ErrorData DuckTransaction::ApplyPrepared(AttachedDatabase &db, transaction_t commit_id) noexcept {
+	this->commit_id = commit_id;
+	try {
+		optional_ptr<BlockManager> block_manager;
+		if (db.HasStorageManager()) {
+			block_manager = db.GetStorageManager().GetBlockManager();
+		}
+		prepared->drop_state = make_uniq<CommitDropState>(block_manager);
+		CommitInfo info;
+		info.commit_id = commit_id;
+		info.active_transactions = ActiveTransactionState::OTHER_TRANSACTIONS;
+		info.drop_state = prepared->drop_state.get();
+		undo_buffer.Commit(prepared->iterator_state, info);
+		if (!db.IsSystem() && !db.IsTemporary() && Settings::Get<DebugForceCommitFailureSetting>(db.GetDatabase())) {
+			throw InvalidInputException("Forced commit failure (debug_force_commit_failure)");
+		}
+		return ErrorData();
+	} catch (std::exception &ex) {
+		return ErrorData(ex);
+	}
+}
+
 ErrorData DuckTransaction::Rollback() {
 	try {
+		if (prepared && prepared->drop_state) {
+			undo_buffer.RevertCommit(prepared->iterator_state, transaction_id);
+		}
 		storage->Rollback();
 		undo_buffer.Rollback();
 		return ErrorData();

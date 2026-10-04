@@ -170,9 +170,9 @@ static void UseIndexLayoutOf(DuckTableEntry &table, DataTableInfo &info) {
 	vector<idx_t> physical_oids;
 	for (auto &column : table.GetColumns().Logical()) {
 		logical_oids.push_back(column.CatalogOid());
-		if (!column.Generated()) {
-			physical_oids.push_back(column.CatalogOid());
-		}
+	}
+	for (auto &column : table.GetColumns().Physical()) {
+		physical_oids.push_back(column.CatalogOid());
 	}
 	info.SetIndexColumnLayout(std::move(logical_oids), std::move(physical_oids));
 }
@@ -271,7 +271,12 @@ void TableStorageLoad::CreateIndex(optional_idx table_oid, unique_ptr<CreateInfo
 	if (!table_oid.IsValid()) {
 		return;
 	}
-	pending_indexes.push_back(PendingIndex {table_oid.GetIndex(), info->oid, std::move(storage_info)});
+	PendingIndex pending {table_oid.GetIndex(), info->oid, std::move(storage_info)};
+	if (info->Cast<CreateIndexInfo>().index_type != ART::TYPE_NAME) {
+		AttachIndex(std::move(pending));
+		return;
+	}
+	pending_indexes.push_back(std::move(pending));
 }
 
 void TableStorageLoad::AttachPendingIndexes() {
