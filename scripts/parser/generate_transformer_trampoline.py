@@ -774,16 +774,11 @@ class UseGramPreviewEmitter:
             )
             lines.append(f"{indent}if ({stack_child.var_name}_opt.HasResult()) {{")
             child_expr = stack_child.result_expr_template.format(opt=f"{stack_child.var_name}_opt")
-            lines.append(
-                f'{indent}\tprocess.PushChild({{transformer.GetRule("{stack_child.rule_name}"), {child_expr}}}, {slot_expr});'
-            )
+            lines.append(f"{indent}\tprocess.PushChild({{{child_expr}}}, {slot_expr});")
             lines.append(f"{indent}}}")
         else:
             slot_expr = self.adjusted_slot_expr(plan, stack_child.slot_idx)
-            lines.append(
-                f'{indent}process.PushChild({{transformer.GetRule("{stack_child.rule_name}"), {stack_child.parse_expr}}}, '
-                f"{slot_expr});"
-            )
+            lines.append(f"{indent}process.PushChild({{{stack_child.parse_expr}}}, {slot_expr});")
 
     def emit_dynamic_child_count(self, plan):
         dynamic_child = self.dynamic_child(plan)
@@ -1366,8 +1361,7 @@ class UseGramPreviewEmitter:
                     lines.append(f"\tif ({trailing_optional.var_name}_opt.HasResult()) {{")
                     child_expr = trailing_optional.result_expr_template.format(opt=f"{trailing_optional.var_name}_opt")
                     lines.append(
-                        f'\t\tprocess.PushChild({{transformer.GetRule("{trailing_optional.rule_name}"), {child_expr}}}, '
-                        f"{logical_child_slots} + dynamic_child_count - 1);"
+                        f"\t\tprocess.PushChild({{{child_expr}}}, {logical_child_slots} + dynamic_child_count - 1);"
                     )
                     lines.append("\t}")
                 else:
@@ -1377,8 +1371,7 @@ class UseGramPreviewEmitter:
                 lines.append("\tfor (idx_t i = list_items.size(); i > 0; i--) {")
                 lines.append("\t\tauto child_idx = i - 1;")
                 lines.append(
-                    f'\t\tprocess.PushChild({{transformer.GetRule("{list_child.rule_name}"), list_items[child_idx].get()}}, '
-                    f"{list_child.slot_start} + child_idx);"
+                    f"\t\tprocess.PushChild({{list_items[child_idx].get()}}, {list_child.slot_start} + child_idx);"
                 )
                 lines.append("\t}")
             elif plan.optional_list_child:
@@ -1395,8 +1388,7 @@ class UseGramPreviewEmitter:
                 lines.append("\t\tfor (idx_t i = list_items.size(); i > 0; i--) {")
                 lines.append("\t\t\tauto child_idx = i - 1;")
                 lines.append(
-                    f'\t\t\tprocess.PushChild({{transformer.GetRule("{list_child.rule_name}"), list_items[child_idx].get()}}, '
-                    f"{list_child.slot_start} + child_idx);"
+                    f"\t\t\tprocess.PushChild({{list_items[child_idx].get()}}, {list_child.slot_start} + child_idx);"
                 )
                 lines.append("\t\t}")
                 lines.append("\t} else {")
@@ -1421,8 +1413,7 @@ class UseGramPreviewEmitter:
                     lines.append(f"\tif ({trailing_optional.var_name}_opt.HasResult()) {{")
                     child_expr = trailing_optional.result_expr_template.format(opt=f"{trailing_optional.var_name}_opt")
                     lines.append(
-                        f'\t\tprocess.PushChild({{transformer.GetRule("{trailing_optional.rule_name}"), {child_expr}}}, '
-                        f"{logical_child_slots} + dynamic_child_count - 1);"
+                        f"\t\tprocess.PushChild({{{child_expr}}}, {logical_child_slots} + dynamic_child_count - 1);"
                     )
                     lines.append("\t}")
                 else:
@@ -1432,8 +1423,7 @@ class UseGramPreviewEmitter:
                 lines.append("\tfor (idx_t i = repeat_children.size(); i > 0; i--) {")
                 lines.append("\t\tauto child_idx = i - 1;")
                 lines.append(
-                    f'\t\tprocess.PushChild({{transformer.GetRule("{repeat_child.rule_name}"), repeat_children[child_idx].get()}}, '
-                    f"{repeat_child.slot_start} + child_idx);"
+                    f"\t\tprocess.PushChild({{repeat_children[child_idx].get()}}, {repeat_child.slot_start} + child_idx);"
                 )
                 lines.append("\t}")
             else:
@@ -1450,8 +1440,7 @@ class UseGramPreviewEmitter:
                 lines.append("\t\tfor (idx_t i = repeat_children.size(); i > 0; i--) {")
                 lines.append("\t\t\tauto child_idx = i - 1;")
                 lines.append(
-                    f'\t\t\tprocess.PushChild({{transformer.GetRule("{repeat_child.rule_name}"), repeat_children[child_idx].get()}}, '
-                    f"{repeat_child.slot_start} + child_idx);"
+                    f"\t\t\tprocess.PushChild({{repeat_children[child_idx].get()}}, {repeat_child.slot_start} + child_idx);"
                 )
                 lines.append("\t\t}")
                 lines.append("\t} else {")
