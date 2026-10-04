@@ -14,18 +14,16 @@ void ArrayStats::Construct(BaseStatistics &stats) {
 }
 
 BaseStatistics ArrayStats::CreateUnknown(LogicalType type) {
-	auto &child_type = ArrayType::GetChildType(type);
-	BaseStatistics result(std::move(type));
+	auto child_stats = BaseStatistics::CreateUnknown(ArrayType::GetChildType(type));
+	auto result = BaseStatistics::FromChildStats(std::move(type), {&child_stats, 1});
 	result.InitializeUnknown();
-	result.child_stats[0].Copy(BaseStatistics::CreateUnknown(child_type));
 	return result;
 }
 
 BaseStatistics ArrayStats::CreateEmpty(LogicalType type) {
-	auto &child_type = ArrayType::GetChildType(type);
-	BaseStatistics result(std::move(type));
+	auto child_stats = BaseStatistics::CreateEmpty(ArrayType::GetChildType(type));
+	auto result = BaseStatistics::FromChildStats(std::move(type), {&child_stats, 1});
 	result.InitializeEmpty();
-	result.child_stats[0].Copy(BaseStatistics::CreateEmpty(child_type));
 	return result;
 }
 
@@ -52,7 +50,7 @@ BaseStatistics &ArrayStats::GetChildStats(BaseStatistics &stats) {
 
 void ArrayStats::SetChildStats(BaseStatistics &stats, unique_ptr<BaseStatistics> new_stats) {
 	if (!new_stats) {
-		stats.child_stats[0].Copy(BaseStatistics::CreateUnknown(ArrayType::GetChildType(stats.GetType())));
+		stats.child_stats[0] = BaseStatistics::CreateUnknown(ArrayType::GetChildType(stats.GetType()));
 	} else {
 		stats.child_stats[0].Copy(*new_stats);
 	}
