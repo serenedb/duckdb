@@ -256,6 +256,36 @@ public:
 	virtual MatchStep Resume(const optional<MatcherResult> &child_result) = 0;
 };
 
+struct MatcherFirstSet {
+	bool nullable = true;
+	bool any_token = true;
+	vector<uint64_t> literals;
+
+	void AddLiteral(idx_t literal_id) {
+		auto word = literal_id / 64;
+		if (word >= literals.size()) {
+			literals.resize(word + 1, 0);
+		}
+		literals[word] |= uint64_t(1) << (literal_id % 64);
+	}
+	bool HasLiteral(idx_t literal_id) const {
+		auto word = literal_id / 64;
+		return word < literals.size() && (literals[word] >> (literal_id % 64)) & 1;
+	}
+	void MergeStart(const MatcherFirstSet &other) {
+		any_token = any_token || other.any_token;
+		if (other.literals.size() > literals.size()) {
+			literals.resize(other.literals.size(), 0);
+		}
+		for (idx_t i = 0; i < other.literals.size(); i++) {
+			literals[i] |= other.literals[i];
+		}
+	}
+	bool operator==(const MatcherFirstSet &other) const {
+		return nullable == other.nullable && any_token == other.any_token && literals == other.literals;
+	}
+};
+
 enum class MatcherType {
 	KEYWORD,
 	LIST,
@@ -282,6 +312,16 @@ public:
 	virtual arena_ptr<MatchProcess> StartMatch(MatchState &state) const = 0;
 	bool IsAtomic() const {
 		return atomic;
+	}
+	bool CanStartAt(TokenIterator &tokens) const {
+		if (!first_set_table) {
+			return true;
+		}
+		auto token = tokens.Current();
+		if (!token || token->type == TokenType::END_OF_INPUT_AUTOCOMPLETE) {
+			return true;
+		}
+		return first_set.HasLiteral(tokens.CurrentLiteralInfo(*first_set_table).LiteralId());
 	}
 	virtual SuggestionType AddSuggestion(MatchState &state) const;
 	virtual SuggestionType AddSuggestionInternal(MatchState &state) const = 0;
@@ -351,6 +391,8 @@ protected:
 	bool atomic = false;
 	bool collapsible = false;
 	optional_ptr<const CompiledGrammarRule> rule;
+	MatcherFirstSet first_set;
+	optional_ptr<const GrammarLiteralTable> first_set_table;
 };
 
 class AtomicMatcher : public Matcher {
@@ -379,6 +421,7 @@ class MatcherAllocator {
 public:
 	Matcher &Allocate(unique_ptr<Matcher> matcher);
 	void SetPackratMemoized(Matcher &matcher);
+	void ComputeFirstSets(const GrammarLiteralTable &table);
 	idx_t PackratSlotCount() const {
 		return packrat_slots;
 	}

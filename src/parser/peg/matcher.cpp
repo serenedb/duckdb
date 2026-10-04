@@ -2,6 +2,11 @@
 #include "duckdb/parser/peg/matcher_stack.hpp"
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/peg/matcher_factory.hpp"
+#include "duckdb/parser/peg/matcher/choice_matcher.hpp"
+#include "duckdb/parser/peg/matcher/keyword_matcher.hpp"
+#include "duckdb/parser/peg/matcher/list_matcher.hpp"
+#include "duckdb/parser/peg/matcher/optional_matcher.hpp"
+#include "duckdb/parser/peg/matcher/repeat_matcher.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 
@@ -63,6 +68,75 @@ Matcher &MatcherAllocator::Allocate(unique_ptr<Matcher> matcher) {
 void MatcherAllocator::SetPackratMemoized(Matcher &matcher) {
 	if (!matcher.packrat_slot.IsValid()) {
 		matcher.packrat_slot = optional_idx(packrat_slots++);
+	}
+}
+
+void MatcherAllocator::ComputeFirstSets(const GrammarLiteralTable &table) {
+	for (auto &entry : matchers) {
+		entry->first_set = MatcherFirstSet {false, false, {}};
+	}
+	bool changed = true;
+	while (changed) {
+		changed = false;
+		for (auto &entry : matchers) {
+			auto &matcher = *entry;
+			MatcherFirstSet updated {false, false, {}};
+			switch (matcher.Type()) {
+			case MatcherType::KEYWORD: {
+				auto literal_id = matcher.Cast<KeywordMatcher>().GetLiteralId();
+				if (literal_id.IsValid()) {
+					updated.AddLiteral(literal_id.GetIndex());
+				} else {
+					updated.any_token = true;
+				}
+				break;
+			}
+			case MatcherType::LIST:
+				updated.nullable = true;
+				for (auto &child : matcher.Cast<ListMatcher>().matchers) {
+					auto &child_set = child.get().first_set;
+					updated.MergeStart(child_set);
+					if (!child_set.nullable) {
+						updated.nullable = false;
+						break;
+					}
+				}
+				break;
+			case MatcherType::CHOICE:
+				for (auto &child : matcher.Cast<ChoiceMatcher>().matchers) {
+					auto &child_set = child.get().first_set;
+					updated.MergeStart(child_set);
+					updated.nullable = updated.nullable || child_set.nullable;
+				}
+				break;
+			case MatcherType::OPTIONAL:
+				updated.MergeStart(matcher.Cast<OptionalMatcher>().GetChildMatcher().first_set);
+				updated.nullable = true;
+				break;
+			case MatcherType::REPEAT: {
+				auto &child_set = matcher.Cast<RepeatMatcher>().GetChildMatcher().first_set;
+				updated.MergeStart(child_set);
+				updated.nullable = child_set.nullable;
+				break;
+			}
+			default:
+				updated.nullable = true;
+				updated.any_token = true;
+				break;
+			}
+			if (!(updated == matcher.first_set)) {
+				matcher.first_set = std::move(updated);
+				changed = true;
+			}
+		}
+	}
+	for (auto &entry : matchers) {
+		auto &matcher = *entry;
+		if (matcher.first_set.nullable || matcher.first_set.any_token) {
+			matcher.first_set.literals.clear();
+			continue;
+		}
+		matcher.first_set_table = table;
 	}
 }
 

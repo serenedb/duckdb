@@ -113,6 +113,10 @@ bool MatchStack::ExecuteFrame(MatchStackFrame &frame) {
 		frame.child_result = ExecuteAtomicMatcher(child);
 		return false;
 	}
+	if (!child.matcher.CanStartAt(child.state.token_iterator)) {
+		frame.child_result = MatcherResult::Failure();
+		return false;
+	}
 	PushFrame(child);
 	return false;
 }

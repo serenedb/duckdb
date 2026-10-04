@@ -61,6 +61,13 @@ public:
 		return optional_idx();
 	}
 
+	optional_idx GetLiteralId() const {
+		if (!literal_table) {
+			return optional_idx();
+		}
+		return optional_idx(literal_info.LiteralId());
+	}
+
 private:
 	bool MatchKeyword(MatchState &state) const {
 		auto token = state.token_iterator.Current();
