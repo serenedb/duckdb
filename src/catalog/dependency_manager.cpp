@@ -869,15 +869,40 @@ void DependencyManager::DropObject(CatalogTransaction transaction, CatalogEntry 
 	auto to_drop = CheckDropDependencies(transaction, object, cascade);
 	CleanupDependencies(transaction, object);
 
+	catalog_entry_set_t visited;
+	catalog_entry_vector_t order;
 	for (auto &entry : to_drop) {
-		auto &dependent = entry.first.get();
-		if (dependent.type == CatalogType::TABLE_ENTRY && !entry.second.empty()) {
-			DropSubDependencies(transaction, dependent, entry.second);
+		OrderDrop(transaction, entry.first, to_drop, visited, order);
+	}
+	for (auto &entry : order) {
+		auto &dependent = entry.get();
+		auto &subdependencies = to_drop.find(dependent)->second;
+		if (dependent.type == CatalogType::TABLE_ENTRY && !subdependencies.empty()) {
+			DropSubDependencies(transaction, dependent, subdependencies);
 			continue;
 		}
 		D_ASSERT(dependent.set);
 		dependent.set->DropEntry(transaction, dependent.name, cascade);
 	}
+}
+
+void DependencyManager::OrderDrop(CatalogTransaction transaction, CatalogEntry &entry,
+                                  const catalog_entry_map_t<subdependency_set_t> &to_drop, catalog_entry_set_t &visited,
+                                  catalog_entry_vector_t &order) {
+	if (!visited.insert(entry).second) {
+		return;
+	}
+	catalog_entry_vector_t dependents;
+	ScanDependents(transaction, GetLookupProperties(transaction, entry), [&](DependencyEntry &dep) {
+		auto dependent = LookupEntry(transaction, dep);
+		if (dependent && to_drop.find(*dependent) != to_drop.end()) {
+			dependents.push_back(*dependent);
+		}
+	});
+	for (auto &dependent : dependents) {
+		OrderDrop(transaction, dependent, to_drop, visited, order);
+	}
+	order.push_back(entry);
 }
 
 void DependencyManager::ReorderEntries(catalog_entry_vector_t &entries, ClientContext &context) {

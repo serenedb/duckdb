@@ -147,6 +147,9 @@ private:
 	void VerifyCommitDrop(CatalogTransaction transaction, VisibilityBound visibility_bound, CatalogEntry &object);
 	void DropSubDependencies(CatalogTransaction transaction, CatalogEntry &table,
 	                         const subdependency_set_t &subdependencies);
+	void OrderDrop(CatalogTransaction transaction, CatalogEntry &entry,
+	               const catalog_entry_map_t<subdependency_set_t> &to_drop, catalog_entry_set_t &visited,
+	               catalog_entry_vector_t &order);
 	void DropObject(CatalogTransaction transaction, CatalogEntry &object, bool cascade);
 	void AlterObject(CatalogTransaction transaction, CatalogEntry &old_obj, CatalogEntry &new_obj, AlterInfo &info);
 	void RenameSchema(CatalogTransaction transaction, CatalogEntry &old_schema, CatalogEntry &new_schema);
