@@ -4,6 +4,8 @@
 #include "duckdb/parser/qualified_name_set.hpp"
 #include "duckdb/parser/peg/transformer/parse_result.hpp"
 #include "duckdb/parser/peg/transformer/transform_result.hpp"
+#include "duckdb/common/arena_containers/arena_ptr.hpp"
+#include "duckdb/common/arena_containers/arena_vector.hpp"
 #include "duckdb/parser/peg/ast/add_column_entry.hpp"
 #include "duckdb/parser/peg/ast/column_constraint_entry.hpp"
 #include "duckdb/parser/peg/ast/analyze_target.hpp"
@@ -264,8 +266,8 @@ class TransformProcess;
 class GeneratedTransformProcess;
 
 using transform_process_initialize_t = void (*)(PEGTransformer &transformer, GeneratedTransformProcess &process);
-using transform_process_finalize_t = unique_ptr<TransformResultValue> (*)(PEGTransformer &transformer,
-                                                                          GeneratedTransformProcess &process);
+using transform_process_finalize_t = arena_ptr<TransformResultValue> (*)(PEGTransformer &transformer,
+                                                                         GeneratedTransformProcess &process);
 
 struct TransformFrameOps {
 	const char *name;
@@ -297,24 +299,23 @@ struct TransformInput {
 	ParseResult &parse_result;
 };
 
-//! Essentially a std::variant<TransformInput, unique_ptr<TransformResultValue>>.
 //! Produced by TransformProcess::Resume to control the next execution step.
 class TransformStep {
 public:
 	static TransformStep Child(TransformInput input);
-	static TransformStep Complete(unique_ptr<TransformResultValue> result);
+	static TransformStep Complete(arena_ptr<TransformResultValue> result);
 
 	optional<TransformInput> GetChild();
-	unique_ptr<TransformResultValue> TakeResult();
+	arena_ptr<TransformResultValue> TakeResult();
 
 private:
-	TransformStep(optional<TransformInput> child_p, unique_ptr<TransformResultValue> result_p)
+	TransformStep(optional<TransformInput> child_p, arena_ptr<TransformResultValue> result_p)
 	    : child(std::move(child_p)), result(std::move(result_p)) {
 	}
 
 private:
 	optional<TransformInput> child;
-	unique_ptr<TransformResultValue> result;
+	arena_ptr<TransformResultValue> result;
 };
 
 class TransformProcess {
@@ -322,7 +323,7 @@ public:
 	virtual ~TransformProcess() = default;
 
 	//! Resume transforming, optionally with the result of the previously requested child.
-	virtual TransformStep Resume(unique_ptr<TransformResultValue> child_result) = 0;
+	virtual TransformStep Resume(arena_ptr<TransformResultValue> child_result) = 0;
 };
 
 class GeneratedTransformProcess final : public TransformProcess {
@@ -330,9 +331,9 @@ public:
 	GeneratedTransformProcess(PEGTransformer &transformer, TransformInput input, const TransformFrameOps &info);
 
 	void ReserveChildSlots(idx_t count);
-	void SetChildResult(idx_t slot, unique_ptr<TransformResultValue> result);
+	void SetChildResult(idx_t slot, arena_ptr<TransformResultValue> result);
 	void PushChild(TransformInput input, idx_t slot);
-	TransformStep Resume(unique_ptr<TransformResultValue> child_result) override;
+	TransformStep Resume(arena_ptr<TransformResultValue> child_result) override;
 
 	template <class T>
 	T TakeResult(idx_t slot) {
@@ -369,7 +370,7 @@ public:
 	ParseResult &parse_result;
 	const TransformFrameOps &info;
 	idx_t manual_state = 0;
-	vector<unique_ptr<TransformResultValue>> child_results;
+	arena_vector<arena_ptr<TransformResultValue>> child_results;
 
 private:
 	struct PendingChild {
@@ -381,19 +382,19 @@ private:
 
 private:
 	PEGTransformer &transformer;
-	vector<PendingChild> pending_children;
+	arena_vector<PendingChild> pending_children;
 	optional_idx child_result_slot;
 	bool completed = false;
 };
 
 using transform_finalize_function_t =
-    std::function<unique_ptr<TransformResultValue>(PEGTransformer &transformer, ParseResult &parse_result)>;
+    std::function<arena_ptr<TransformResultValue>(PEGTransformer &transformer, ParseResult &parse_result)>;
 
 class FinalizeTransformProcess final : public TransformProcess {
 public:
 	FinalizeTransformProcess(PEGTransformer &transformer, ParseResult &parse_result,
 	                         transform_finalize_function_t finalize);
-	TransformStep Resume(unique_ptr<TransformResultValue> child_result) override;
+	TransformStep Resume(arena_ptr<TransformResultValue> child_result) override;
 
 private:
 	PEGTransformer &transformer;
@@ -407,8 +408,8 @@ struct TransformStackFrame {
 
 	optional_ptr<const CompiledGrammarRule> rule;
 	ParseResult &parse_result;
-	unique_ptr<TransformProcess> process;
-	unique_ptr<TransformResultValue> child_result;
+	arena_ptr<TransformProcess> process;
+	arena_ptr<TransformResultValue> child_result;
 };
 
 #ifdef DEBUG
@@ -420,7 +421,7 @@ using frame_stack_t = stack<TransformStackFrame>;
 class TransformStack {
 public:
 	explicit TransformStack(PEGTransformer &transformer);
-	unique_ptr<TransformResultValue> Execute(TransformInput input);
+	arena_ptr<TransformResultValue> Execute(TransformInput input);
 
 	template <class T>
 	T Execute(TransformInput input) {
@@ -439,7 +440,7 @@ public:
 private:
 	void PushFrame(TransformInput input);
 	void InitializeFrame(TransformStackFrame &frame);
-	unique_ptr<TransformResultValue> ExecuteFrame(TransformStackFrame &frame);
+	arena_ptr<TransformResultValue> ExecuteFrame(TransformStackFrame &frame);
 
 private:
 	PEGTransformer &transformer;
@@ -504,6 +505,16 @@ public:
 		return allocator.Make<T>(std::forward<Args>(args)...);
 	}
 
+	template <class T>
+	arena_ptr<TransformResultValue> MakeResult(T value) {
+		return arena_ptr<TransformResultValue>(allocator.Make<TypedTransformResult<T>>(std::move(value)));
+	}
+
+	template <class PROCESS, typename... Args>
+	arena_ptr<TransformProcess> MakeProcess(Args &&...args) {
+		return arena_ptr<TransformProcess>(allocator.Make<PROCESS>(std::forward<Args>(args)...));
+	}
+
 	void Clear();
 	void ClearParameters();
 	static void ParamTypeCheck(PreparedParamType last_type, PreparedParamType new_type);
@@ -521,7 +532,7 @@ public:
 	void SetQueryLocation(TableRef &ref, QueryLocation query_location);
 
 private:
-	unique_ptr<TransformResultValue> TransformInternal(ParseResult &parse_result);
+	arena_ptr<TransformResultValue> TransformInternal(ParseResult &parse_result);
 	void SetResultLocation(ParseResult &parse_result, TransformResultValue &result);
 
 	template <typename T>
@@ -683,36 +694,36 @@ public:
 	                                                               unique_ptr<ParsedExpression> expression);
 
 	static void InitializePivotStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static unique_ptr<TransformResultValue> FinalizePivotStatementTrampoline(PEGTransformer &transformer,
-	                                                                         GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizePivotStatementTrampoline(PEGTransformer &transformer,
+	                                                                        GeneratedTransformProcess &process);
 	static void InitializeUnpivotStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static unique_ptr<TransformResultValue> FinalizeUnpivotStatementTrampoline(PEGTransformer &transformer,
-	                                                                           GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeUnpivotStatementTrampoline(PEGTransformer &transformer,
+	                                                                          GeneratedTransformProcess &process);
 	static void InitializeLiteralExpressionTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static unique_ptr<TransformResultValue> FinalizeLiteralExpressionTrampoline(PEGTransformer &transformer,
-	                                                                            GeneratedTransformProcess &process);
-	static void InitializePrefixExpressionTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static unique_ptr<TransformResultValue> FinalizePrefixExpressionTrampoline(PEGTransformer &transformer,
+	static arena_ptr<TransformResultValue> FinalizeLiteralExpressionTrampoline(PEGTransformer &transformer,
 	                                                                           GeneratedTransformProcess &process);
+	static void InitializePrefixExpressionTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizePrefixExpressionTrampoline(PEGTransformer &transformer,
+	                                                                          GeneratedTransformProcess &process);
 	static void InitializeOverClauseTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static unique_ptr<TransformResultValue> FinalizeOverClauseTrampoline(PEGTransformer &transformer,
-	                                                                     GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeOverClauseTrampoline(PEGTransformer &transformer,
+	                                                                    GeneratedTransformProcess &process);
 	static void InitializeSelectStatementInternalTrampoline(PEGTransformer &transformer,
 	                                                        GeneratedTransformProcess &process);
-	static unique_ptr<TransformResultValue>
+	static arena_ptr<TransformResultValue>
 	FinalizeSelectStatementInternalTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static void InitializeSimpleSelectTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static unique_ptr<TransformResultValue> FinalizeSimpleSelectTrampoline(PEGTransformer &transformer,
-	                                                                       GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeSimpleSelectTrampoline(PEGTransformer &transformer,
+	                                                                      GeneratedTransformProcess &process);
 	static void InitializeTableRefTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static unique_ptr<TransformResultValue> FinalizeTableRefTrampoline(PEGTransformer &transformer,
-	                                                                   GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeTableRefTrampoline(PEGTransformer &transformer,
+	                                                                  GeneratedTransformProcess &process);
 	static void InitializeWithClauseTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static unique_ptr<TransformResultValue> FinalizeWithClauseTrampoline(PEGTransformer &transformer,
-	                                                                     GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeWithClauseTrampoline(PEGTransformer &transformer,
+	                                                                    GeneratedTransformProcess &process);
 	static void InitializeWindowDefinitionTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static unique_ptr<TransformResultValue> FinalizeWindowDefinitionTrampoline(PEGTransformer &transformer,
-	                                                                           GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeWindowDefinitionTrampoline(PEGTransformer &transformer,
+	                                                                          GeneratedTransformProcess &process);
 
 	//===--------------------------------------------------------------------===//
 	// START GENERATED TRAMPOLINE RULES
