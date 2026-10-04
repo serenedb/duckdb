@@ -7,6 +7,7 @@
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -24,6 +25,7 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_pragma_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/create_secret_info.hpp"
 #include "duckdb/parser/sql_statement.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
@@ -214,6 +216,12 @@ optional_ptr<CatalogEntry> Catalog::CreateJob(ClientContext &context, CreateJobI
 	auto transaction = GetCatalogTransaction(context);
 	auto &schema = GetEntrySchema(transaction, info.GetQualifiedName());
 	return schema.CreateJob(transaction, info);
+}
+
+optional_ptr<CatalogEntry> Catalog::CreateTokenizer(ClientContext &context, CreateTokenizerInfo &info) {
+	auto transaction = GetCatalogTransaction(context);
+	auto &schema = GetEntrySchema(transaction, info.GetQualifiedName());
+	return schema.CreateTokenizer(transaction, info);
 }
 
 //===--------------------------------------------------------------------===//
@@ -510,6 +518,18 @@ void Catalog::DropEntry(ClientContext &context, DropInfo &info) {
 	if (info.type == CatalogType::SCHEMA_ENTRY) {
 		// DROP SCHEMA
 		DropSchema(context, info);
+		return;
+	}
+	if (info.type == CatalogType::ROLE_ENTRY) {
+		Cast<DuckCatalog>().DropRole(GetCatalogTransaction(context), info);
+		return;
+	}
+	if (info.type == CatalogType::DATABASE_ENTRY) {
+		Cast<DuckCatalog>().DropDatabase(GetCatalogTransaction(context), info);
+		return;
+	}
+	if (info.type == CatalogType::FOREIGN_SERVER_ENTRY) {
+		Cast<DuckCatalog>().DropForeignServer(GetCatalogTransaction(context), info);
 		return;
 	}
 

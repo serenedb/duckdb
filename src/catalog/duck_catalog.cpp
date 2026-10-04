@@ -186,7 +186,8 @@ unique_ptr<InCatalogEntry> DuckCatalog::MakeForeignServerEntry(CreateForeignServ
 	throw NotImplementedException("Foreign servers are not supported by this catalog");
 }
 
-unique_ptr<StandardEntry> DuckCatalog::MakeTokenizerEntry(DuckSchemaEntry &schema, CreateTokenizerInfo &info) {
+unique_ptr<StandardEntry> DuckCatalog::MakeTokenizerEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
+                                                          CreateTokenizerInfo &info) {
 	throw NotImplementedException("Text search dictionaries are not supported by this catalog");
 }
 

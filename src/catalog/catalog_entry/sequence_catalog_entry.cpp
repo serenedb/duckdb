@@ -266,8 +266,6 @@ void SequenceCatalogEntry::AppendReservation(const SequenceData &target, bool wa
 	}
 	if (wait) {
 		log->SyncUpTo(offset);
-	} else {
-		catalog.RequestCatalogLogSync(std::move(log), offset);
 	}
 }
 

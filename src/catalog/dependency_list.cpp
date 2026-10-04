@@ -59,7 +59,7 @@ LogicalDependency::LogicalDependency(CatalogEntry &entry) {
 
 LogicalDependency::LogicalDependency(optional_ptr<Catalog> catalog_p, CatalogEntryInfo entry_p, Identifier catalog_str)
     : entry(std::move(entry_p)), catalog(std::move(catalog_str)) {
-	if (catalog_p) {
+	if (catalog_p && !catalog_p->UsesCatalogLog()) {
 		catalog = catalog_p->GetName();
 	}
 }
@@ -103,17 +103,6 @@ void LogicalDependencyList::AddDependency(const LogicalDependency &entry) {
 bool LogicalDependencyList::Contains(CatalogEntry &entry_p) {
 	LogicalDependency logical_entry(entry_p);
 	return set.count(logical_entry);
-}
-
-void LogicalDependencyList::VerifyDependencies(Catalog &catalog, const Identifier &name) {
-	for (auto &dep : set) {
-		if (dep.catalog != catalog.GetName()) {
-			throw DependencyException(
-			    "Error adding dependency for object %s - dependency %s is in catalog "
-			    "%s, which does not match the catalog %s.\nCross catalog dependencies are not supported.",
-			    name, dep.entry.name, dep.catalog, catalog.GetName());
-		}
-	}
 }
 
 const LogicalDependencyList::create_info_set_t &LogicalDependencyList::Set() const {

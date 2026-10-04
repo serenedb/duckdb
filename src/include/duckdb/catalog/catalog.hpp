@@ -26,6 +26,7 @@
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/types/string.hpp"
 #include "duckdb/storage/storage_index.hpp"
+#include "duckdb/storage/storage_lock.hpp"
 #include "duckdb/storage/table/row_group_collection.hpp"
 #include "duckdb/storage/table/table_index_list.hpp"
 #include "duckdb/storage/write_ahead_log.hpp"
@@ -47,6 +48,7 @@ struct CreateFunctionInfo;
 struct CreateViewInfo;
 struct CreateSequenceInfo;
 struct CreateJobInfo;
+struct CreateTokenizerInfo;
 struct CreateCollationInfo;
 struct CreateCoordinateSystemInfo;
 struct CreateIndexInfo;
@@ -164,11 +166,8 @@ public:
 	}
 	virtual void OnCatalogLogDecided() {
 	}
-	virtual void BeginCatalogLogCommit() {
-	}
-	virtual void EndCatalogLogCommit() {
-	}
-	virtual void RequestCatalogLogSync(shared_ptr<WriteAheadLog> log, idx_t offset) {
+	virtual unique_ptr<StorageLockKey> BeginCatalogLogCommit() {
+		return nullptr;
 	}
 	void SyncCatalogLog();
 	virtual bool AppendLocalIndexes(DuckTransaction &transaction, TableIndexList &index_list,
@@ -233,6 +232,7 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSequence(CatalogTransaction transaction, CreateSequenceInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSequence(ClientContext &context, CreateSequenceInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateJob(ClientContext &context, CreateJobInfo &info);
+	DUCKDB_API optional_ptr<CatalogEntry> CreateTokenizer(ClientContext &context, CreateTokenizerInfo &info);
 	//! Creates a Enum in the catalog.
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(ClientContext &context, CreateTypeInfo &info);

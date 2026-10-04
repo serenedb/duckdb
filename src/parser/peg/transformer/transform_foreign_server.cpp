@@ -1,16 +1,15 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
-#include "duckdb/parser/statement/pragma_statement.hpp"
-#include "duckdb/parser/expression/constant_expression.hpp"
-#include "duckdb/common/types/value.hpp"
+#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/statement/drop_statement.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
 
-// ServerOptions <- 'OPTIONS' Parens(List(ServerOption)) — the optional child at `child_idx`,
-// shared by CREATE SERVER and CREATE USER MAPPING. Emplaces each option into `info.named_parameters`.
+// ServerOptions <- 'OPTIONS' Parens(List(ServerOption)) — the optional child at `child_idx`.
 static void TransformServerOptionsInto(PEGTransformer &transformer, ListParseResult &list_pr, idx_t child_idx,
-                                       PragmaInfo &info) {
+                                       case_insensitive_map_t<string> &options) {
 	auto &options_opt = list_pr.Child<OptionalParseResult>(child_idx);
 	if (!options_opt.HasResult()) {
 		return;
@@ -23,18 +22,15 @@ static void TransformServerOptionsInto(PEGTransformer &transformer, ListParseRes
 		// ServerOption <- ColLabel StringLiteral. Pass raw children to
 		// Transform<string> so it dispatches on each node's actual type
 		// (ColLabel resolves a keyword/identifier; StringLiteral a literal).
-		auto opt_name = transformer.Transform<string>(elem_pr.GetChild(0));
+		auto opt_name = StringUtil::Lower(transformer.Transform<string>(elem_pr.GetChild(0)));
 		auto opt_value = transformer.Transform<string>(elem_pr.GetChild(1));
-		auto value_expr = ConstantExpression::String(opt_value);
-		auto [_, inserted] = info.named_parameters.emplace(opt_name, std::move(value_expr));
+		auto [_, inserted] = options.emplace(opt_name, std::move(opt_value));
 		if (!inserted) {
 			throw InvalidInputException("conflicting or redundant options: \"%s\" specified more than once", opt_name);
 		}
 	}
 }
 
-// CREATE SERVER [IF NOT EXISTS] name FOREIGN DATA WRAPPER fdw OPTIONS (k 'v', ...)
-//   -> PRAGMA create_foreign_server('name', 'fdw', if_not_exists, k := 'v', ...)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateServerStatement(PEGTransformer &transformer,
                                                                                ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -48,21 +44,18 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateServerStatement(P
 	//   6: 'WRAPPER'
 	//   7: Identifier (fdw name)
 	//   8: ServerOptions?
-	bool if_not_exists = list_pr.Child<OptionalParseResult>(2).HasResult();
-	auto server_name = transformer.Transform<string>(list_pr.GetChild(3));
+	auto info = make_uniq<CreateForeignServerInfo>();
+	info->SetName(Identifier(transformer.Transform<string>(list_pr.GetChild(3))));
 	// The fdw name is a plain Identifier leaf (not a choice/list rule).
-	auto &fdw_name = list_pr.Child<IdentifierParseResult>(7).identifier.GetIdentifierName();
-
-	auto result = make_uniq<PragmaStatement>();
-	result->info->name = "create_foreign_server";
-	result->info->parameters.push_back(ConstantExpression::String(server_name));
-	result->info->parameters.push_back(ConstantExpression::String(fdw_name));
-	result->info->parameters.push_back(ConstantExpression::Boolean(if_not_exists));
-	TransformServerOptionsInto(transformer, list_pr, 8, *result->info);
+	info->fdw_name = list_pr.Child<IdentifierParseResult>(7).identifier;
+	info->on_conflict = list_pr.Child<OptionalParseResult>(2).HasResult() ? OnCreateConflict::IGNORE_ON_CONFLICT
+	                                                                      : OnCreateConflict::ERROR_ON_CONFLICT;
+	TransformServerOptionsInto(transformer, list_pr, 8, info->options);
+	auto result = make_uniq<CreateStatement>();
+	result->info = std::move(info);
 	return std::move(result);
 }
 
-// DROP SERVER [IF EXISTS] name -> PRAGMA drop_foreign_server('name', missing_ok)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropServerStatement(PEGTransformer &transformer,
                                                                              ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -71,16 +64,13 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropServerStatement(PEG
 	//   2: IfExists?
 	//   3: ColId (server name)
 	//   4: DropBehavior? (CASCADE / RESTRICT; RESTRICT/absent = false)
-	bool missing_ok = list_pr.Child<OptionalParseResult>(2).HasResult();
-	auto server_name = transformer.Transform<string>(list_pr.GetChild(3));
-	bool cascade = false;
-	transformer.TransformOptional<bool>(list_pr, 4, cascade);
-
-	auto result = make_uniq<PragmaStatement>();
-	result->info->name = "drop_foreign_server";
-	result->info->parameters.push_back(ConstantExpression::String(server_name));
-	result->info->parameters.push_back(ConstantExpression::Boolean(missing_ok));
-	result->info->parameters.push_back(ConstantExpression::Boolean(cascade));
+	auto result = make_uniq<DropStatement>();
+	result->info->type = CatalogType::FOREIGN_SERVER_ENTRY;
+	result->info->SetQualifiedName(Identifier(), Identifier(),
+	                               Identifier(transformer.Transform<string>(list_pr.GetChild(3))));
+	result->info->if_not_found = list_pr.Child<OptionalParseResult>(2).HasResult() ? OnEntryNotFound::RETURN_NULL
+	                                                                               : OnEntryNotFound::THROW_EXCEPTION;
+	transformer.TransformOptional<bool>(list_pr, 4, result->info->cascade);
 	return std::move(result);
 }
 
