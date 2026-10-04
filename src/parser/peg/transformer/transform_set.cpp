@@ -307,6 +307,7 @@ unique_ptr<ParsedExpression>
 PEGTransformerFactory::TransformZoneIntervalWithInterval(PEGTransformer &transformer, const string &string_literal,
                                                          const optional<DatePartSpecifier> &interval) {
 	auto expr = ConstantExpression::String(string_literal);
+	transformer.AddDepth(1);
 	return make_uniq<CastExpression>(LogicalType::INTERVAL, std::move(expr));
 }
 
@@ -314,6 +315,7 @@ PEGTransformerFactory::TransformZoneIntervalWithInterval(PEGTransformer &transfo
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformZoneIntervalWithPrecision(
     PEGTransformer &transformer, unique_ptr<ParsedExpression> number_literal, const string &string_literal) {
 	auto expr = ConstantExpression::String(string_literal);
+	transformer.AddDepth(1);
 	return make_uniq<CastExpression>(LogicalType::INTERVAL, std::move(expr));
 }
 

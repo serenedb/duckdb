@@ -175,6 +175,7 @@ PEGTransformerFactory::TransformBaseExpression(PEGTransformer &transformer,
 		return expr;
 	}
 
+	transformer.AddDepth(indirection_list->size());
 	bool prev_indirection_was_cast = false;
 	for (auto &indirection_expr : *indirection_list) {
 		if (indirection_expr->GetExpressionClass() == ExpressionClass::CAST) {
@@ -607,6 +608,7 @@ PEGTransformerFactory::TransformArrayParensSelect(PEGTransformer &transformer,
 
 	subquery_expr->GetSubqueryTypeMutable() = SubqueryType::SCALAR;
 	subquery_expr->SetAlias("array");
+	transformer.AddDepth(3);
 	return std::move(subquery_expr);
 }
 
@@ -652,6 +654,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformLambdaArrowExpressi
 	if (!single_arrow_pair) {
 		return expr;
 	}
+	transformer.AddDepth(single_arrow_pair->size());
 	for (auto &right_expr : *single_arrow_pair) {
 		expr = make_uniq<LambdaExpression>(std::move(expr), std::move(right_expr));
 	}
@@ -672,7 +675,7 @@ static unique_ptr<ParsedExpression> FoldConjunctionExpression(PEGTransformer &tr
 	if (!tails) {
 		return expr;
 	}
-	auto depth_guard = transformer.StackCheck(tails->size());
+	transformer.AddDepth(tails->size());
 	for (auto &tail : *tails) {
 		expr = make_uniq<ConjunctionExpression>(conjunction_type, std::move(expr), std::move(tail));
 	}
@@ -738,6 +741,7 @@ PEGTransformerFactory::TransformLogicalNotExpression(PEGTransformer &transformer
 	if (!not_expression) {
 		return expr;
 	}
+	transformer.AddDepth(not_expression->size());
 	for (idx_t i = 0; i < not_expression->size(); i++) {
 		vector<unique_ptr<ParsedExpression>> inner_list_children;
 		inner_list_children.push_back(std::move(expr));
@@ -772,9 +776,10 @@ static unique_ptr<ParsedExpression> ApplyIsDistinctFromTail(unique_ptr<ParsedExp
 	return make_uniq<ComparisonExpression>(tail.comparison_type, std::move(expr), std::move(tail.expression));
 }
 
-static unique_ptr<ParsedExpression> ApplyComparisonTail(unique_ptr<ParsedExpression> expr,
+static unique_ptr<ParsedExpression> ApplyComparisonTail(PEGTransformer &transformer, unique_ptr<ParsedExpression> expr,
                                                         ComparisonExpressionTail tail) {
 	auto right_expr = std::move(tail.expression);
+	transformer.AddDepth(tail.not_keywords.size());
 	for (idx_t i = 0; i < tail.not_keywords.size(); i++) {
 		vector<unique_ptr<ParsedExpression>> inner_list_children;
 		inner_list_children.push_back(std::move(right_expr));
@@ -791,6 +796,7 @@ PEGTransformerFactory::TransformIsExpression(PEGTransformer &transformer,
 	if (!is_expression_continuation) {
 		return expr;
 	}
+	transformer.AddDepth(is_expression_continuation->size());
 	auto previous_type = ExpressionTailType::IS_TEST;
 	for (auto &tail : *is_expression_continuation) {
 		if (tail.type == previous_type &&
@@ -805,7 +811,7 @@ PEGTransformerFactory::TransformIsExpression(PEGTransformer &transformer,
 			expr = ApplyIsDistinctFromTail(std::move(expr), std::move(tail.distinct));
 			break;
 		case ExpressionTailType::COMPARISON:
-			expr = ApplyComparisonTail(std::move(expr), std::move(tail.comparison));
+			expr = ApplyComparisonTail(transformer, std::move(expr), std::move(tail.comparison));
 			break;
 		case ExpressionTailType::OTHER_OPERATOR: {
 			vector<OtherOperatorTail> other_tail;
@@ -872,6 +878,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformIsLiteral(PEGTransf
 		return make_uniq<OperatorExpression>(expr_type, nullptr);
 	}
 	auto expr_type = has_result ? ExpressionType::COMPARE_DISTINCT_FROM : ExpressionType::COMPARE_NOT_DISTINCT_FROM;
+	transformer.AddDepth(1);
 	return make_uniq<ComparisonExpression>(expr_type, nullptr, ConstantExpression::FromValue(is_literal_value));
 }
 
@@ -907,6 +914,7 @@ PEGTransformerFactory::TransformIsDistinctFromExpression(PEGTransformer &transfo
 	if (is_distinct_from_tail->size() > 1) {
 		throw ParserException("Chained comparisons are not supported, use AND to combine comparisons");
 	}
+	transformer.AddDepth(is_distinct_from_tail->size());
 	for (auto &is_distinct : *is_distinct_from_tail) {
 		expr = ApplyIsDistinctFromTail(std::move(expr), std::move(is_distinct));
 	}
@@ -923,9 +931,9 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformComparisonExpressio
 	if (comparison_expression_tail->size() > 1) {
 		throw ParserException("Chained comparisons are not supported, use AND to combine comparisons");
 	}
-	auto cmp_depth_guard = transformer.StackCheck(comparison_expression_tail->size());
+	transformer.AddDepth(comparison_expression_tail->size());
 	for (auto &comparison_expr : *comparison_expression_tail) {
-		expr = ApplyComparisonTail(std::move(expr), std::move(comparison_expr));
+		expr = ApplyComparisonTail(transformer, std::move(expr), std::move(comparison_expr));
 	}
 	return expr;
 }
@@ -1194,15 +1202,23 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformBetweenInLikeExpres
 	if (between_like_op) {
 		predicate_count++;
 	}
-	auto depth_guard = transformer.StackCheck(predicate_count);
+	transformer.AddDepth(predicate_count);
+	idx_t negations = 0;
+	auto apply = [&](BetweenInLikeOperator &predicate) {
+		expr = ApplyBetweenInLikeOperator(std::move(expr), predicate);
+		if (expr->GetExpressionType() == ExpressionType::OPERATOR_NOT) {
+			negations++;
+		}
+	};
 	if (in_predicate) {
 		for (auto &predicate : *in_predicate) {
-			expr = ApplyBetweenInLikeOperator(std::move(expr), predicate);
+			apply(predicate);
 		}
 	}
 	if (between_like_op) {
-		expr = ApplyBetweenInLikeOperator(std::move(expr), *between_like_op);
+		apply(*between_like_op);
 	}
+	transformer.AddDepth(negations);
 	return expr;
 }
 
@@ -1271,6 +1287,7 @@ PEGTransformerFactory::TransformBetweenClause(PEGTransformer &transformer, const
 		greatest_args.push_back(std::move(other_operator_expression_1));
 		auto greatest_expr = make_uniq<FunctionExpression>("greatest", std::move(greatest_args));
 
+		transformer.AddDepth(1);
 		return make_uniq<BetweenExpression>(nullptr, std::move(least_expr), std::move(greatest_expr));
 	}
 	auto result = make_uniq<BetweenExpression>(nullptr, std::move(other_operator_expression),
@@ -1301,6 +1318,7 @@ PEGTransformerFactory::TransformLikeClause(PEGTransformer &transformer, const st
 		}
 		other_operator_expression =
 		    make_uniq<FunctionExpression>(Identifier("similar_to_escape"), std::move(similar_args));
+		transformer.AddDepth(1);
 		like_variation = "regexp_full_match";
 	}
 	bool is_regex_operator = IsRegexMatchFunctionName(like_variation);
@@ -1408,6 +1426,7 @@ PEGTransformerFactory::TransformInfixOtherOperatorExpression(PEGTransformer &tra
 	if (!other_operator_tail) {
 		return expr;
 	}
+	transformer.AddDepth(other_operator_tail->size());
 	for (auto &other_operator_expr : *other_operator_tail) {
 		auto right_expr = std::move(other_operator_expr.expression);
 		if (other_operator_expr.op.is_any_all) {
@@ -1433,6 +1452,7 @@ PEGTransformerFactory::TransformInfixOtherOperatorExpression(PEGTransformer &tra
 					// first invert the comparison type
 					subquery_expr->GetComparisonTypeMutable() =
 					    NegateComparisonExpression(subquery_expr->GetComparisonType());
+					transformer.AddDepth(1);
 					return make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(subquery_expr));
 				}
 				expr = std::move(subquery_expr);
@@ -1489,6 +1509,7 @@ PEGTransformerFactory::TransformInfixOtherOperatorExpression(PEGTransformer &tra
 					auto exists_expr = make_uniq<SubqueryExpression>();
 					exists_expr->SubqueryMutable() = std::move(new_stmt);
 					exists_expr->GetSubqueryTypeMutable() = SubqueryType::EXISTS;
+					transformer.AddDepth(3);
 					if (!is_any) {
 						return make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(exists_expr));
 					}
@@ -1501,6 +1522,7 @@ PEGTransformerFactory::TransformInfixOtherOperatorExpression(PEGTransformer &tra
 				                             regex_case_insensitive)) {
 					expr = TransformRegexAnyAllList(std::move(expr), std::move(right_expr), regex_function_name,
 					                                regex_negated, regex_case_insensitive, is_any);
+					transformer.AddDepth(6);
 					continue;
 				}
 				if (expression_type == ExpressionType::INVALID) {
@@ -1545,12 +1567,14 @@ PEGTransformerFactory::TransformInfixOtherOperatorExpression(PEGTransformer &tra
 				subquery_expr->GetSubqueryTypeMutable() = SubqueryType::ANY;
 				subquery_expr->GetChildMutable() = std::move(expr);
 				subquery_expr->GetComparisonTypeMutable() = expression_type;
+				transformer.AddDepth(1);
 				if (!is_any) {
 					// ALL sublink is equivalent to NOT(ANY) with inverted comparison
 					// e.g. [= ALL()] is equivalent to [NOT(<> ANY())]
 					// first invert the comparison type
 					subquery_expr->GetComparisonTypeMutable() =
 					    NegateComparisonExpression(subquery_expr->GetComparisonType());
+					transformer.AddDepth(1);
 					return make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(subquery_expr));
 				}
 				return std::move(subquery_expr);
@@ -1584,6 +1608,7 @@ PEGTransformerFactory::TransformInfixOtherOperatorExpression(PEGTransformer &tra
 				regex_func_expr->IsOperatorMutable() = !regex_negated;
 				if (regex_negated) {
 					expr = make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(regex_func_expr));
+					transformer.AddDepth(1);
 				} else {
 					expr = std::move(regex_func_expr);
 				}
@@ -1665,7 +1690,7 @@ PEGTransformerFactory::TransformBitwiseExpression(PEGTransformer &transformer,
 	if (!bitwise_expression_tail) {
 		return expr;
 	}
-	auto bit_depth_guard = transformer.StackCheck(bitwise_expression_tail->size());
+	transformer.AddDepth(bitwise_expression_tail->size());
 	for (auto &bit_expr : *bitwise_expression_tail) {
 		vector<unique_ptr<ParsedExpression>> bit_children;
 		bit_children.push_back(std::move(expr));
@@ -1685,7 +1710,7 @@ PEGTransformerFactory::TransformAdditiveExpression(PEGTransformer &transformer,
 	if (!additive_expression_tail) {
 		return expr;
 	}
-	auto add_depth_guard = transformer.StackCheck(additive_expression_tail->size());
+	transformer.AddDepth(additive_expression_tail->size());
 	for (auto &term_expr : *additive_expression_tail) {
 		vector<unique_ptr<ParsedExpression>> term_children;
 		term_children.push_back(std::move(expr));
@@ -1707,7 +1732,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformMultiplicativeExpre
 	if (!multiplicative_expression_tail) {
 		return expr;
 	}
-	auto mul_depth_guard = transformer.StackCheck(multiplicative_expression_tail->size());
+	transformer.AddDepth(multiplicative_expression_tail->size());
 	for (auto &factor_expr : *multiplicative_expression_tail) {
 		auto factor = std::move(factor_expr.op);
 		if (factor == "/" && transformer.options.integer_division) {
@@ -1730,6 +1755,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformExponentiationExpre
 	if (!exponentiation_expression_tail) {
 		return expr;
 	}
+	transformer.AddDepth(exponentiation_expression_tail->size());
 	for (auto &exponent_expr : *exponentiation_expression_tail) {
 		vector<unique_ptr<ParsedExpression>> exponent_children;
 		exponent_children.push_back(std::move(expr));
@@ -1756,7 +1782,7 @@ PEGTransformerFactory::TransformTildeExpression(PEGTransformer &transformer,
 	if (!tilde_prefix_operator) {
 		return expr;
 	}
-	auto tilde_depth_guard = transformer.StackCheck(tilde_prefix_operator->size());
+	transformer.AddDepth(tilde_prefix_operator->size());
 	for (const auto &prefix : *tilde_prefix_operator) {
 		vector<unique_ptr<ParsedExpression>> children;
 		children.push_back(std::move(expr));
@@ -1790,6 +1816,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCollateExpression(
 	if (!collate_expression_tail) {
 		return expr;
 	}
+	transformer.AddDepth(collate_expression_tail->size());
 	for (auto &collate_string_expr : *collate_expression_tail) {
 		string collate_string;
 		if (collate_string_expr->GetExpressionClass() == ExpressionClass::CONSTANT) {
@@ -1821,6 +1848,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformAtTimeZoneExpressio
 	if (!at_time_zone_expression_tail) {
 		return expr;
 	}
+	transformer.AddDepth(at_time_zone_expression_tail->size());
 	for (auto &time_zone_expr : *at_time_zone_expression_tail) {
 		vector<unique_ptr<ParsedExpression>> time_zone_children;
 		time_zone_children.push_back(std::move(time_zone_expr));
@@ -1874,6 +1902,14 @@ PEGTransformerFactory::FinalizePrefixExpressionTrampoline(PEGTransformer &transf
 	for (idx_t i = 0; i < prefix_children.size(); i++) {
 		prefixes.push_back(process.TakeResult<string>(1 + i));
 	}
+	idx_t nested_prefixes = prefixes.size();
+	if (expr->GetExpressionType() == ExpressionType::VALUE_CONSTANT &&
+	    expr->Cast<ConstantExpression>().GetLiteral().IsNumeric()) {
+		for (auto it = prefixes.rbegin(); it != prefixes.rend() && *it == "-"; ++it) {
+			nested_prefixes--;
+		}
+	}
+	transformer.AddDepth(nested_prefixes);
 
 	for (auto it = prefixes.rbegin(); it != prefixes.rend(); ++it) {
 		const string &prefix = *it;
@@ -1995,12 +2031,20 @@ PEGTransformerFactory::TransformPositionalExpression(PEGTransformer &transformer
 	return make_uniq<PositionalReferenceExpression>(NumericCast<idx_t>(index));
 }
 
+static unique_ptr<ParsedExpression> TransformStringLiteralExpression(PEGTransformer &transformer,
+                                                                     StringLiteralParseResult &string_literal) {
+	auto result = string_literal.ToExpression();
+	if (result->GetExpressionClass() == ExpressionClass::CAST) {
+		transformer.AddDepth(1);
+	}
+	return result;
+}
+
 // LiteralExpression <- StringLiteral / NumberLiteral / 'NULL' / 'TRUE' / 'FALSE'
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformLiteralExpression(PEGTransformer &transformer,
                                                                                ParseResult &choice_result) {
 	if (choice_result.name == "StringLiteral") {
-		auto &string_literal = choice_result.Cast<StringLiteralParseResult>();
-		return string_literal.ToExpression();
+		return TransformStringLiteralExpression(transformer, choice_result.Cast<StringLiteralParseResult>());
 	}
 	return transformer.Transform<unique_ptr<ParsedExpression>>(choice_result);
 }
@@ -2018,8 +2062,7 @@ PEGTransformerFactory::FinalizeLiteralExpressionTrampoline(PEGTransformer &trans
 	auto &choice_result = choice_pr.GetResult();
 	unique_ptr<ParsedExpression> result;
 	if (choice_result.name == "StringLiteral") {
-		auto &string_literal = choice_result.Cast<StringLiteralParseResult>();
-		result = string_literal.ToExpression();
+		result = TransformStringLiteralExpression(transformer, choice_result.Cast<StringLiteralParseResult>());
 	} else if (choice_result.name == "NumberLiteral") {
 		result = TransformNumberLiteral(transformer, choice_result);
 	} else {
@@ -2638,11 +2681,13 @@ PEGTransformerFactory::TransformColumnsExpression(PEGTransformer &transformer, c
 		children.push_back(std::move(expression));
 		auto list_filter = make_uniq<FunctionExpression>("list_filter", std::move(children));
 		result->ExpressionMutable() = std::move(list_filter);
+		transformer.AddDepth(1);
 	} else {
 		result->ExpressionMutable() = std::move(expression);
 	}
 	result->IsColumnsMutable() = true;
 	if (unpack) {
+		transformer.AddDepth(1);
 		return make_uniq<OperatorExpression>(ExpressionType::OPERATOR_UNPACK, std::move(result));
 	}
 	return std::move(result);
@@ -2738,6 +2783,7 @@ PEGTransformerFactory::TransformSubstringSimilar(PEGTransformer &transformer, un
 	vector<unique_ptr<ParsedExpression>> regex_args;
 	regex_args.push_back(std::move(expression));
 	regex_args.push_back(std::move(similar_call));
+	transformer.AddDepth(1);
 	return make_uniq<FunctionExpression>(Identifier("regexp_extract"), std::move(regex_args));
 }
 
@@ -2917,6 +2963,9 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCaseExpression(
 	} else {
 		result->ElseMutable() = ConstantExpression::Null();
 	}
+	if (expression) {
+		transformer.AddDepth(1);
+	}
 	return std::move(result);
 }
 
@@ -2968,10 +3017,12 @@ PEGTransformerFactory::TransformIntervalLiteral(PEGTransformer &transformer,
 		children.push_back(std::move(expr));
 		expr = make_uniq<FunctionExpression>("trunc", std::move(children));
 		expr = make_uniq<CastExpression>(target_type, std::move(expr));
+		transformer.AddDepth(2);
 	}
 	vector<unique_ptr<ParsedExpression>> children;
 	children.push_back(std::move(expr));
 	auto result = make_uniq<FunctionExpression>(Identifier(func_name), std::move(children));
+	transformer.AddDepth(1);
 	return std::move(result);
 }
 
@@ -3007,6 +3058,7 @@ PEGTransformerFactory::TransformSubqueryExpression(PEGTransformer &transformer, 
 		vector<unique_ptr<ParsedExpression>> children;
 		children.push_back(std::move(result));
 		auto not_operator = make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(children));
+		transformer.AddDepth(1);
 		return std::move(not_operator);
 	}
 	return std::move(result);
@@ -3068,6 +3120,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformListComprehensionEx
 		apply_children.push_back(std::move(in_expr));
 		apply_children.push_back(std::move(lambda_expression));
 
+		transformer.AddDepth(1);
 		return make_uniq<FunctionExpression>("list_apply", std::move(apply_children));
 	}
 
@@ -3112,6 +3165,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformListComprehensionEx
 	stage3_apply_args.push_back(std::move(stage2_filter));
 	stage3_apply_args.push_back(std::move(stage3_lambda));
 
+	transformer.AddDepth(4);
 	return make_uniq<FunctionExpression>("list_apply", std::move(stage3_apply_args));
 }
 

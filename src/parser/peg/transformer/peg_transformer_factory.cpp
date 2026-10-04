@@ -49,7 +49,8 @@ static unique_ptr<SQLStatement> ExtractAndTransformStatement(PEGTransformer &tra
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(TokenIterator &token_iterator,
                                                                            ParserOptions &options,
-                                                                           const CompiledGrammar &grammar) {
+                                                                           const CompiledGrammar &grammar,
+                                                                           idx_t &height) {
 	if (!token_iterator.Current()) {
 		return nullptr;
 	}
@@ -60,6 +61,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 	ArenaAllocator process_allocator(Allocator::DefaultAllocator());
 	MatchContext match_context(suggestions, parse_result_allocator, process_allocator, max_token_index,
 	                           MatchMode::BUILD_PARSE_RESULT, options.identifier_case_mode, &packrat_cache);
+	match_context.max_expression_depth = options.max_expression_depth;
 	MatchState state(token_iterator, match_context);
 	auto match_result = grammar.TopLevelStatementMatcher().MatchParseResult(state);
 	process_allocator.FreeAll();
@@ -107,8 +109,9 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 
 	ArenaAllocator transformer_allocator(Allocator::DefaultAllocator());
 	PEGTransformer transformer(transformer_allocator, token_iterator, options, grammar);
-
-	return ExtractAndTransformStatement(transformer, token_iterator, stmt_opt.GetResult(), terminator_offset);
+	auto statement = ExtractAndTransformStatement(transformer, token_iterator, stmt_opt.GetResult(), terminator_offset);
+	height = transformer.StatementHeight();
+	return statement;
 }
 
 PEGTransformerFactory::PEGTransformerFactory(ParsedGrammar &grammar_p) : grammar(grammar_p) {

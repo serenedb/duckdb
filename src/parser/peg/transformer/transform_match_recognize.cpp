@@ -319,6 +319,7 @@ PEGTransformerFactory::TransformRowPattern(PEGTransformer &transformer, unique_p
 	if (!row_pattern_alternative) {
 		return result;
 	}
+	transformer.AddDepth(row_pattern_alternative->size());
 	// alternation is left-associative: A | B | C becomes ((A | B) | C)
 	for (auto &alternative : *row_pattern_alternative) {
 		result = make_uniq_base<ParsedExpression, AlternationExpression>(std::move(result), std::move(alternative));
@@ -369,6 +370,7 @@ PEGTransformerFactory::TransformRowPatternPermute(PEGTransformer &transformer,
 	}
 
 	unique_ptr<ParsedExpression> result;
+	idx_t alternations = 0;
 	do {
 		vector<unique_ptr<ParsedExpression>> parts;
 		parts.reserve(order.size());
@@ -379,10 +381,14 @@ PEGTransformerFactory::TransformRowPatternPermute(PEGTransformer &transformer,
 		                       ? std::move(parts[0])
 		                       : make_uniq_base<ParsedExpression, ConcatenationExpression>(std::move(parts));
 		// alternation is left-associative here, as it is when it is written out
-		result =
-		    result ? make_uniq_base<ParsedExpression, AlternationExpression>(std::move(result), std::move(arrangement))
-		           : std::move(arrangement);
+		if (result) {
+			result = make_uniq_base<ParsedExpression, AlternationExpression>(std::move(result), std::move(arrangement));
+			alternations++;
+		} else {
+			result = std::move(arrangement);
+		}
 	} while (std::next_permutation(order.begin(), order.end()));
+	transformer.AddDepth(alternations);
 	return result;
 }
 

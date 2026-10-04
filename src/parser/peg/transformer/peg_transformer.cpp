@@ -1,5 +1,7 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 
+#include "duckdb/common/exception/parser_exception.hpp"
+#include "duckdb/common/limits.hpp"
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
@@ -138,6 +140,7 @@ void TransformStack::InitializeFrame(TransformStackFrame &frame) {
 }
 
 arena_ptr<TransformResultValue> TransformStack::ExecuteFrame(TransformStackFrame &frame) {
+	transformer.running_frame = frame;
 	if (!frame.process) {
 		InitializeFrame(frame);
 	}
@@ -163,14 +166,23 @@ arena_ptr<TransformResultValue> TransformStack::Execute(TransformInput input) {
 		if (!result) {
 			continue;
 		}
+		auto result_height = frame.height + 1;
+		if (result_height >= transformer.max_height) {
+			ParserException::ThrowMaxExpressionDepth(transformer.options.max_expression_depth);
+		}
+#ifdef DEBUG
+		transformer.VerifyResultHeight(frame.parse_result, *result, result_height);
+#endif
 		transformer.SetResultLocation(frame.parse_result, *result);
 		frames.pop();
 		if (frames.empty()) {
+			height = result_height;
 			return result;
 		}
 		auto &parent = frames.top();
 		D_ASSERT(!parent.child_result);
 		parent.child_result = std::move(result);
+		parent.height = MaxValue(parent.height, result_height);
 	}
 	throw InternalException("Transformer stack completed without a result");
 }
@@ -198,9 +210,70 @@ arena_ptr<TransformResultValue> PEGTransformer::TransformInternal(ParseResult &p
 		throw InternalException("No registered data exists for rule '%s'", parse_result.name);
 	}
 	TransformInput input {*rule, parse_result};
+	auto caller = running_frame;
 	TransformStack stack(*this);
-	return stack.Execute(input);
+	auto result = stack.Execute(input);
+	running_frame = caller;
+	if (caller) {
+		caller->height = MaxValue(caller->height, stack.Height());
+	} else {
+		statement_height = MaxValue(statement_height, stack.Height());
+	}
+	return result;
 }
+
+PEGTransformer::PEGTransformer(ArenaAllocator &allocator, TokenIterator &token_iterator, ParserOptions &options_p,
+                               const CompiledGrammar &grammar_p)
+    : allocator(allocator), token_iterator(token_iterator), options(options_p), grammar(grammar_p),
+      max_height(options_p.max_expression_depth > NumericLimits<idx_t>::Maximum() / HEIGHT_PER_EXPRESSION_LEVEL
+                     ? NumericLimits<idx_t>::Maximum()
+                     : options_p.max_expression_depth * HEIGHT_PER_EXPRESSION_LEVEL) {
+}
+
+void PEGTransformer::AddDepth(idx_t levels) {
+	if (levels >= options.max_expression_depth) {
+		ParserException::ThrowMaxExpressionDepth(options.max_expression_depth);
+	}
+	if (!running_frame) {
+		return;
+	}
+	running_frame->height += levels;
+	if (running_frame->height >= max_height) {
+		ParserException::ThrowMaxExpressionDepth(options.max_expression_depth);
+	}
+}
+
+bool PEGTransformer::MayExceedDepth() const {
+	return !running_frame || running_frame->height > options.max_expression_depth;
+}
+
+#ifdef DEBUG
+void PEGTransformer::VerifyResultHeight(const ParseResult &parse_result, TransformResultValue &result, idx_t height) {
+	ExpressionDepthCheck measure {NumericLimits<idx_t>::Maximum(), {}};
+	auto verify = [&](ParsedExpression *expr) {
+		if (expr) {
+			measure.Verify(*expr);
+		}
+	};
+	if (auto expr = TryGetTransformResult<unique_ptr<ParsedExpression>>(result)) {
+		verify(expr->get());
+	} else if (auto window = TryGetTransformResult<unique_ptr<WindowExpression>>(result)) {
+		verify(window->get());
+	} else if (auto list = TryGetTransformResult<vector<unique_ptr<ParsedExpression>>>(result)) {
+		for (auto &entry : *list) {
+			verify(entry.get());
+		}
+	} else if (auto named = TryGetTransformResult<pair<Identifier, unique_ptr<ParsedExpression>>>(result)) {
+		verify(named->second.get());
+	} else if (auto named_string = TryGetTransformResult<pair<string, unique_ptr<ParsedExpression>>>(result)) {
+		verify(named_string->second.get());
+	}
+	if (measure.deepest > height) {
+		throw InternalException("Rule %s built an expression %llu levels deep at height %llu", parse_result.name,
+		                        measure.deepest, height);
+	}
+}
+#endif
 
 const CompiledGrammarRule &PEGTransformer::GetRule(const string &rule_name) const {
 	auto rule = grammar.GetRule(rule_name);
@@ -370,6 +443,19 @@ bool PEGTransformer::IsWindowFrameDefault(WindowBoundary start, WindowBoundary e
 	return start_is_default && end_is_default;
 }
 
+void PEGTransformer::RegisterWindowClause(const Identifier &window_name, const WindowExpression &window) {
+	if (window_clauses.empty()) {
+		throw InternalException("WINDOW clause registered outside of a SELECT");
+	}
+	auto &current_windows = window_clauses.back();
+	if (current_windows.find(window_name) != current_windows.end()) {
+		throw ParserException("window %s is already defined", window_name);
+	}
+	D_ASSERT(running_frame);
+	current_windows[window_name] = {unique_ptr_cast<ParsedExpression, WindowExpression>(window.Copy()),
+	                                running_frame->height};
+}
+
 unique_ptr<WindowExpression> PEGTransformer::GetWindowClause(const Identifier &window_name) {
 	if (window_clauses.empty()) {
 		throw ParserException("window %s does not exist", window_name);
@@ -379,7 +465,10 @@ unique_ptr<WindowExpression> PEGTransformer::GetWindowClause(const Identifier &w
 	if (it == current_windows.end()) {
 		throw ParserException("window %s does not exist", window_name);
 	}
-	return unique_ptr_cast<ParsedExpression, WindowExpression>(it->second->Copy());
+	if (running_frame) {
+		running_frame->height = MaxValue(running_frame->height, it->second.height);
+	}
+	return unique_ptr_cast<ParsedExpression, WindowExpression>(it->second.window->Copy());
 }
 
 void PEGTransformer::SetQueryLocation(ParsedExpression &expr, QueryLocation query_location) {

@@ -1,0 +1,81 @@
+# name: test/sql/peg_parser/rewrite_nesting.test
+# description: Rewrites that build several levels over their operands, and limits reached through them
+# group: [peg_parser]
+
+query IIII
+SELECT INTERVAL '1.5' YEAR, INTERVAL '90' MINUTE, INTERVAL 2 DAY, INTERVAL '1 day'
+----
+1 year	01:30:00	2 days	1 day
+
+query III
+SELECT N'national', 'abc' IS DISTINCT FROM 'abd', 1 IS NOT DISTINCT FROM 1
+----
+national	true	true
+
+query IIIIII
+SELECT NOT EXISTS (SELECT 1), 1 NOT IN (2, 3), 2 NOT BETWEEN 3 AND 4, 'a' NOT LIKE 'b', 'abc' !~ 'x', 'abc' !~* 'X'
+----
+false	true	true	true	true	true
+
+query III
+SELECT 5 BETWEEN SYMMETRIC 10 AND 1, 'abc' SIMILAR TO 'a#%' ESCAPE '#', SUBSTRING('foobar' SIMILAR '#"o_b#"%' ESCAPE '#') IS NOT NULL
+----
+true	false	true
+
+query IIIII
+SELECT 1 = ANY(SELECT 1), 1 = ALL(SELECT 2), 1 = ANY([1, 2]), 1 = ALL([1, 1]), 1 <> ALL('{2,3}')
+----
+true	false	true	true	true
+
+query IIIIII
+SELECT 'abc' ~~ ANY(['a%', 'x']), 'abc' !~~ ALL(['x%', 'y']), 'abc' ~~* ALL(['A%']), 'abc' ~ ANY(['^a', 'z']), 'abc' !~ ALL(['^z', 'y']), 'abc' ~* ANY(['^A'])
+----
+true	true	true	true	true	true
+
+query II
+SELECT ARRAY(SELECT i FROM range(3) t(i) ORDER BY i DESC), ARRAY(SELECT 1 UNION ALL SELECT 2 ORDER BY 1)
+----
+[2, 1, 0]	[1, 2]
+
+query II
+SELECT COLUMNS(lambda c: c LIKE 'a%'), struct_pack(*COLUMNS(lambda c: c LIKE 'a%')) FROM (SELECT 1 AS a1, 2 AS b1)
+----
+1	{'a1': 1}
+
+query III
+SELECT CASE 2 WHEN 1 THEN 'x' WHEN 2 THEN 'y' END, [x + 1 FOR x IN [1, 2, 3]], [x FOR x IN [1, 2, 3] IF x > 1]
+----
+y	[2, 3, 4]	[2, 3]
+
+query II
+SELECT CAST(1.5 AS FLOAT(10)), CAST(1.5 AS FLOAT(30))
+----
+1.5	1.5
+
+query II
+SELECT sum(i) OVER w, sum(i) OVER (w ORDER BY i) FROM range(3) t(i) WINDOW w AS (PARTITION BY abs(abs(abs(i % 2)))) ORDER BY i
+----
+2	0
+1	1
+2	2
+
+statement ok
+SET max_expression_depth = 10
+
+statement error
+SELECT sum(1) OVER w FROM range(1) WINDOW w AS (PARTITION BY abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(1)))))))))))
+----
+<REGEX>:.*Max expression depth limit of 10 exceeded.*
+
+statement ok
+SET max_expression_depth = 100
+
+statement error
+SELECT count(*) FROM range(5) t(i) MATCH_RECOGNIZE (ORDER BY i MEASURES count(*) AS len ONE ROW PER MATCH PATTERN (PERMUTE(A, B, C, D, E)) DEFINE A AS i = 0, B AS i = 1, C AS i = 2, D AS i = 3, E AS i = 4)
+----
+<REGEX>:.*Max expression depth limit of 100 exceeded.*
+
+query II
+SELECT count(*), max(len) FROM range(4) t(i) MATCH_RECOGNIZE (ORDER BY i MEASURES count(*) AS len ONE ROW PER MATCH PATTERN (PERMUTE(A, B, C, D)) DEFINE A AS i = 0, B AS i = 1, C AS i = 2, D AS i = 3)
+----
+1	4

@@ -43,7 +43,6 @@
 #include "duckdb/common/optional.hpp"
 #include "duckdb/parser/query_node/set_operation_node.hpp"
 #include "duckdb/parser/parser_options.hpp"
-#include "duckdb/common/stack_checker.hpp"
 #include "duckdb/parser/expression/case_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/parameter_expression.hpp"
@@ -411,6 +410,7 @@ struct TransformStackFrame {
 	ParseResult &parse_result;
 	arena_ptr<TransformProcess> process;
 	arena_ptr<TransformResultValue> child_result;
+	idx_t height = 0;
 };
 
 #ifdef DEBUG
@@ -434,6 +434,10 @@ public:
 		return std::move(*result_value);
 	}
 
+	idx_t Height() const {
+		return height;
+	}
+
 #ifdef DEBUG
 	string FormatStack() const;
 #endif
@@ -446,14 +450,18 @@ private:
 private:
 	PEGTransformer &transformer;
 	frame_stack_t frames;
+	idx_t height = 0;
+};
+
+struct NamedWindow {
+	unique_ptr<WindowExpression> window;
+	idx_t height;
 };
 
 class PEGTransformer {
 public:
 	PEGTransformer(ArenaAllocator &allocator, TokenIterator &token_iterator, ParserOptions &options_p,
-	               const CompiledGrammar &grammar_p)
-	    : allocator(allocator), token_iterator(token_iterator), options(options_p), grammar(grammar_p) {
-	}
+	               const CompiledGrammar &grammar_p);
 
 	const CompiledGrammarRule &GetRule(const string &rule_name) const;
 
@@ -528,6 +536,7 @@ public:
 	void PivotEntryCheck(const string &type);
 	void ExtractCTEsRecursive(CommonTableExpressionMap &cte_map);
 	bool IsWindowFrameDefault(WindowBoundary start, WindowBoundary end);
+	void RegisterWindowClause(const Identifier &window_name, const WindowExpression &window);
 	unique_ptr<WindowExpression> GetWindowClause(const Identifier &window_name);
 	void SetQueryLocation(ParsedExpression &expr, QueryLocation query_location);
 	void SetQueryLocation(TableRef &ref, QueryLocation query_location);
@@ -563,7 +572,7 @@ public:
 	idx_t prepared_statement_parameter_index = 0;
 	PreparedParamType last_param_type = PreparedParamType::INVALID;
 
-	deque<identifier_map_t<unique_ptr<WindowExpression>>> window_clauses;
+	deque<identifier_map_t<NamedWindow>> window_clauses;
 
 	vector<unique_ptr<CreatePivotEntry>> pivot_entries;
 	vector<reference<CommonTableExpressionMap>> stored_cte_map;
@@ -578,23 +587,27 @@ public:
 	bool in_window_definition = false;
 	bool has_anonymous_parameters = false;
 
-	friend class StackChecker<PEGTransformer>;
-	idx_t stack_depth = 0;
-
-	StackChecker<PEGTransformer> StackCheck(idx_t extra_stack = 1) {
-		if (stack_depth + extra_stack >= options.max_expression_depth) {
-			throw ParserException(
-			    "Max expression depth limit of %lld exceeded. Use \"SET max_expression_depth TO x\" to "
-			    "increase the maximum expression depth.",
-			    options.max_expression_depth);
-		}
-		return StackChecker<PEGTransformer>(*this, extra_stack);
+	void AddDepth(idx_t levels);
+	bool MayExceedDepth() const;
+	idx_t StatementHeight() const {
+		return statement_height;
 	}
 
 	ParserOptions options;
 	const CompiledGrammar &grammar;
 
 private:
+#ifdef DEBUG
+	void VerifyResultHeight(const ParseResult &parse_result, TransformResultValue &result, idx_t height);
+#endif
+
+private:
+	static constexpr idx_t HEIGHT_PER_EXPRESSION_LEVEL = 32;
+
+	optional_ptr<TransformStackFrame> running_frame;
+	idx_t max_height;
+	idx_t statement_height = 0;
+
 	friend class GeneratedTransformProcess;
 	friend class FinalizeTransformProcess;
 	friend class TransformStack;
@@ -651,7 +664,7 @@ public:
 	//! Throws on syntax error. `token_cursor` is in/out: it's the token index where matching
 	//! starts, and on return holds the token index immediately past the last consumed token.
 	static unique_ptr<SQLStatement> TransformTopLevelStatement(TokenIterator &token_iterator, ParserOptions &options,
-	                                                           const CompiledGrammar &grammar);
+	                                                           const CompiledGrammar &grammar, idx_t &height);
 	static ParseResult &ExtractResultFromParens(ParseResult &parse_result);
 	static vector<reference<ParseResult>> ExtractParseResultsFromList(ParseResult &parse_result);
 	static bool ExpressionIsEmptyStar(const ParsedExpression &expr);

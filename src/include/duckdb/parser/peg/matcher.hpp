@@ -15,6 +15,7 @@
 #include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/enums/identifier_case_mode.hpp"
 #include "duckdb/parser/parser_extension.hpp"
+#include "duckdb/parser/parser_options.hpp"
 #include "duckdb/parser/peg/keyword_helper.hpp"
 #include "duckdb/parser/token_iterator.hpp"
 #include "duckdb/parser/peg/parser_packrat.hpp"
@@ -166,6 +167,7 @@ struct MatchContext {
 	IdentifierCaseMode identifier_case_mode;
 	ParserPackratCache *packrat_cache;
 	MatchMode mode;
+	idx_t max_expression_depth = ParserOptions::DEFAULT_MAX_EXPRESSION_DEPTH;
 	vector<unique_ptr<reference_set_t<const Matcher>>> suggestion_scopes;
 };
 

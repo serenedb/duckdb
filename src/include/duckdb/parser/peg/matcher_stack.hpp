@@ -51,6 +51,7 @@ public:
 
 private:
 	static constexpr idx_t INITIAL_FRAME_CAPACITY = 64;
+	static constexpr idx_t FRAMES_PER_EXPRESSION_LEVEL = 64;
 
 	MatcherResult ExecuteAtomicMatcher(MatchInput input);
 	void DestroyTopFrame();
@@ -62,6 +63,7 @@ private:
 
 private:
 	vector<MatchStackFrame> frames;
+	idx_t max_frames = 0;
 };
 
 } // namespace duckdb

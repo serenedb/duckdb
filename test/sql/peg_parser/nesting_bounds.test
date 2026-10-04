@@ -1,0 +1,43 @@
+# name: test/sql/peg_parser/nesting_bounds.test
+# description: Input nested far beyond max_expression_depth is rejected while it is parsed
+# group: [peg_parser]
+
+statement error
+FROM query('SELECT ' || repeat('abs(', 300000) || '1' || repeat(')', 300000))
+----
+<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+
+statement error
+FROM query('SELECT ' || repeat('(', 300000) || '1' || repeat(')', 300000))
+----
+<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+
+statement error
+FROM query('SELECT ' || repeat('NOT ', 300000) || 'true')
+----
+<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+
+statement error
+FROM query('SELECT 1' || repeat('::INTEGER', 3000))
+----
+<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+
+statement error
+FROM query('SELECT ' || repeat(repeat('NOT ', 900) || 'abs(', 400) || 'true' || repeat(')', 400))
+----
+<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+
+statement error
+FROM query('SELECT 1 FROM range(1) t0' || repeat(' JOIN range(1) ON true', 2000))
+----
+<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+
+statement error
+FROM query('SELECT 1 FROM range(1)' || repeat(', range(1)', 2000))
+----
+<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+
+query I
+FROM query('SELECT ' || repeat('- ', 2000) || '1')
+----
+1
