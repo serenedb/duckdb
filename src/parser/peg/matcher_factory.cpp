@@ -272,11 +272,13 @@ unique_ptr<KeywordMatcher> MatcherFactory::CreateKeyword(const string &keyword, 
 }
 
 unique_ptr<ListMatcher> MatcherFactory::CreateList() const {
-	return make_uniq<ListMatcher>();
+	auto result = make_uniq<ListMatcher>();
+	result->SetBuiltInMatch();
+	return result;
 }
 
-unique_ptr<ChoiceMatcher> MatcherFactory::CreateChoice(vector<reference<Matcher>> &&matchers) const {
-	auto &table = keyword_helper.GetLiteralTable();
+static unique_ptr<ChoiceMatcher> CreateChoiceMatcher(vector<reference<Matcher>> &&matchers,
+                                                     const GrammarLiteralTable &table) {
 	if (matchers.size() > 1) {
 		unordered_map<uint32_t, idx_t> literal_children;
 		for (idx_t i = 0; i < matchers.size(); i++) {
@@ -296,12 +298,22 @@ unique_ptr<ChoiceMatcher> MatcherFactory::CreateChoice(vector<reference<Matcher>
 	return make_uniq<ChoiceMatcher>(std::move(matchers));
 }
 
+unique_ptr<ChoiceMatcher> MatcherFactory::CreateChoice(vector<reference<Matcher>> &&matchers) const {
+	auto result = CreateChoiceMatcher(std::move(matchers), keyword_helper.GetLiteralTable());
+	result->SetBuiltInMatch();
+	return result;
+}
+
 unique_ptr<OptionalMatcher> MatcherFactory::CreateOptional(Matcher &matcher) const {
-	return make_uniq<OptionalMatcher>(matcher);
+	auto result = make_uniq<OptionalMatcher>(matcher);
+	result->SetBuiltInMatch();
+	return result;
 }
 
 unique_ptr<RepeatMatcher> MatcherFactory::CreateRepeat(Matcher &matcher) const {
-	return make_uniq<RepeatMatcher>(matcher);
+	auto result = make_uniq<RepeatMatcher>(matcher);
+	result->SetBuiltInMatch();
+	return result;
 }
 
 KeywordMatcher &MatcherFactory::Keyword(const string &keyword) const {

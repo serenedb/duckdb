@@ -10,6 +10,10 @@
 #include "duckdb/common/optional.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/parser/peg/matcher.hpp"
+#include "duckdb/parser/peg/matcher/choice_matcher.hpp"
+#include "duckdb/parser/peg/matcher/list_matcher.hpp"
+#include "duckdb/parser/peg/matcher/optional_matcher.hpp"
+#include "duckdb/parser/peg/matcher/repeat_matcher.hpp"
 
 namespace duckdb {
 
@@ -53,7 +57,17 @@ public:
 private:
 	static constexpr idx_t INITIAL_FRAME_CAPACITY = 64;
 	static constexpr idx_t FRAMES_PER_EXPRESSION_LEVEL = 64;
+	static constexpr idx_t MAX_RECURSION_DEPTH = 1024;
 
+	MatcherResult MatchChild(const Matcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult Match(const Matcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchComposite(const Matcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchList(const ListMatcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchChoice(const ChoiceMatcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchOptional(const OptionalMatcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchRepeat(const RepeatMatcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchMemoized(const Matcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult ExecuteFrames(MatchInput input, idx_t depth);
 	MatcherResult ExecuteAtomicMatcher(MatchInput input);
 	void DestroyTopFrame();
 	void PushFrame(MatchInput input);
@@ -65,6 +79,8 @@ private:
 private:
 	vector<MatchStackFrame> frames;
 	idx_t max_frames = 0;
+	idx_t recursion_limit = 0;
+	idx_t frame_limit = 0;
 };
 
 } // namespace duckdb

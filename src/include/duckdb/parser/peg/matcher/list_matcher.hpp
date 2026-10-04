@@ -16,6 +16,16 @@ public:
 
 	DUCKDB_API arena_ptr<MatchProcess> StartMatch(MatchState &state) const override;
 
+	//! The child that can stand in for this rule's own result, or nullptr when the rule has to build one
+	static optional_ptr<ParseResult> FindCollapsibleResult(std::span<const reference<ParseResult>> children);
+
+	void DiscardSuggestions(vector<MatcherSuggestion> &suggestions, idx_t saved_suggestion_size) const {
+		if (!suppress_suggestions) {
+			return;
+		}
+		suggestions.erase(suggestions.begin() + NumericCast<int64_t>(saved_suggestion_size), suggestions.end());
+	}
+
 	SuggestionType AddSuggestionInternal(MatchState &state) const override {
 		if (suppress_suggestions) {
 			return SuggestionType::OPTIONAL;
