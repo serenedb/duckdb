@@ -24,6 +24,7 @@ struct StructStats {
 	DUCKDB_API static void Construct(BaseStatistics &stats);
 	DUCKDB_API static BaseStatistics CreateUnknown(LogicalType type);
 	DUCKDB_API static BaseStatistics CreateEmpty(LogicalType type);
+	DUCKDB_API static BaseStatistics Create(LogicalType type, vector<BaseStatistics> &child_stats);
 
 	DUCKDB_API static const BaseStatistics *GetChildStats(const BaseStatistics &stats);
 	DUCKDB_API static const BaseStatistics &GetChildStats(const BaseStatistics &stats, idx_t i);

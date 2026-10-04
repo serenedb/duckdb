@@ -592,18 +592,20 @@ BaseStatistics BaseStatistics::FromConstantType(const Value &input) {
 		return result;
 	}
 	case StatisticsType::STRUCT_STATS: {
-		auto result = StructStats::CreateEmpty(input.type());
 		auto &child_types = StructType::GetChildTypes(input.type());
+		vector<BaseStatistics> child_stats;
 		if (input.IsNull()) {
 			for (idx_t i = 0; i < child_types.size(); i++) {
-				StructStats::SetChildStats(result, i, FromConstant(Value(child_types[i].second)));
+				child_stats.push_back(FromConstant(Value(child_types[i].second)));
 			}
 		} else {
 			auto &struct_children = StructValue::GetChildren(input);
 			for (idx_t i = 0; i < child_types.size(); i++) {
-				StructStats::SetChildStats(result, i, FromConstant(struct_children[i]));
+				child_stats.push_back(FromConstant(struct_children[i]));
 			}
 		}
+		auto result = StructStats::Create(input.type(), child_stats);
+		result.InitializeEmpty();
 		return result;
 	}
 	case StatisticsType::ARRAY_STATS: {
