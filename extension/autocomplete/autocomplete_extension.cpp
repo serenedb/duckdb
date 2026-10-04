@@ -471,13 +471,11 @@ static unique_ptr<SQLTokenizeFunctionData> GenerateTokens(ClientContext &context
 	idx_t max_token_index = 0;
 	TokenIterator token_iterator(tokens);
 	auto identifier_case_mode = Settings::Get<PreserveIdentifierCaseSetting>(context);
-	ArenaAllocator process_allocator(Allocator::DefaultAllocator());
-	MatchContext match_context(suggestions, parse_allocator, process_allocator, max_token_index,
-	                           MatchMode::RECOGNIZE_ONLY, identifier_case_mode);
+	MatchContext match_context(suggestions, parse_allocator, max_token_index, MatchMode::RECOGNIZE_ONLY,
+	                           identifier_case_mode);
 	MatchState state(token_iterator, match_context);
 
 	compiled_grammar->ProgramMatcher().MatchParseResult(state);
-	process_allocator.FreeAll();
 
 	return make_uniq<SQLTokenizeFunctionData>(std::move(tokens));
 }
@@ -565,13 +563,11 @@ static duckdb::unique_ptr<FunctionData> CheckPEGParserBind(ClientContext &contex
 	idx_t max_token_index = 0;
 	TokenIterator token_iterator(root_tokens);
 	auto identifier_case_mode = Settings::Get<PreserveIdentifierCaseSetting>(context);
-	ArenaAllocator process_allocator(Allocator::DefaultAllocator());
-	MatchContext match_context(suggestions, parse_allocator, process_allocator, max_token_index,
-	                           MatchMode::RECOGNIZE_ONLY, identifier_case_mode);
+	MatchContext match_context(suggestions, parse_allocator, max_token_index, MatchMode::RECOGNIZE_ONLY,
+	                           identifier_case_mode);
 	MatchState state(token_iterator, match_context);
 
 	auto match_result = compiled_grammar->ProgramMatcher().MatchParseResult(state);
-	process_allocator.FreeAll();
 	// `+ 1` accounts for the EOI sentinel — the matcher walk may report success without
 	// consuming it.
 	if (!match_result.IsSuccess() || state.token_iterator.Position() + 1 < root_tokens.size()) {

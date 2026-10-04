@@ -29,8 +29,7 @@ MatchOutcome MatchTokenAt(const string &query, idx_t position) {
 	ParseResultAllocator parse_results;
 	ParserPackratCache packrat(0, 0);
 	idx_t max_position = 0;
-	ArenaAllocator process_allocator(Allocator::DefaultAllocator());
-	MatchContext context(suggestions, parse_results, process_allocator, max_position, MatchMode::BUILD_PARSE_RESULT,
+	MatchContext context(suggestions, parse_results, max_position, MatchMode::BUILD_PARSE_RESULT,
 	                     IdentifierCaseMode::PRESERVE_CASE, &packrat);
 	MatchState state(iterator, context);
 
