@@ -44,8 +44,9 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalSetOperation &op) {
 	for (auto &child : op.children) {
 		children.push_back(CreatePlan(*child));
 	}
-	for (idx_t i = 1; i < children.size(); i++) {
-		if (children[i].get().GetTypes() != children[0].get().GetTypes()) {
+	auto &first_types = children[0].get().GetTypes();
+	for (auto &child : children) {
+		if (child.get().GetTypes() != first_types) {
 			throw InvalidInputException("Type mismatch for SET OPERATION");
 		}
 	}
