@@ -32,7 +32,6 @@ That includes reading/parsing the base grammar definition, constructing its keyw
 helper/tables, and building its matchers. No compiled grammar is reused between
 iterations, and no SQL query is parsed. The standard warmup still applies, so this
 measures repeatable construction cost, not a cold process launch or cold filesystem.
-Grammar extensions are not included in any of these benchmarks.
 
 ## Fixed workloads
 
@@ -163,7 +162,7 @@ Both binaries must contain these C++ benchmark registrations. Adding the CSV to
 an old checkout alone is insufficient. For an older baseline, apply the same
 benchmark harness and build-system addition there before building its runner;
 keep the parser implementation under comparison unchanged.
-The harness requires `CompiledGrammar` and `ParserOptions::compiled_grammar`;
+The harness requires `CompiledGrammar`;
 older yacc-based revisions need an adapter that preserves the inputs and timed loop.
 
 From the checkout containing the regression scripts:

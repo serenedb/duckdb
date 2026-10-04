@@ -98,11 +98,6 @@ overrides = {
         "DESCENDING": ["DESCENDING", "DESC"],
         "ASCENDING": ["ASCENDING", "ASC"],
     },
-    "AllowParserOverride": {
-        "DEFAULT_OVERRIDE": "DEFAULT",
-        "FALLBACK_OVERRIDE": "FALLBACK",
-        "STRICT_OVERRIDE": "STRICT",
-    },
     "OrderByNullType": {
         "ORDER_DEFAULT": ["ORDER_DEFAULT", "DEFAULT"],
         "NULLS_FIRST": ["NULLS FIRST", "NULLS_FIRST"],

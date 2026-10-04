@@ -7,9 +7,6 @@
 namespace duckdb {
 
 class ClientContext;
-class DialectExtension;
-class GrammarExtension;
-class PassthroughDialect;
 
 using compiled_rules_map_t = case_insensitive_map_t<unique_ptr<CompiledGrammarRule>>;
 
@@ -18,7 +15,6 @@ public:
 	CompiledGrammar(MatcherAllocator &&allocator, unique_ptr<PEGKeywordHelper> &&keyword_helper,
 	                unique_ptr<Tokenizer> &&tokenizer, compiled_rules_map_t &&rules, const Matcher &program_matcher,
 	                const Matcher &top_level_statement_matcher);
-	static shared_ptr<CompiledGrammar> Create(const vector<reference<GrammarExtension>> &grammar_extensions);
 
 public:
 	const Matcher &ProgramMatcher() const {
@@ -39,12 +35,11 @@ public:
 	optional_ptr<const CompiledGrammarRule> GetRule(const string &rule_name) const;
 
 public:
-	static shared_ptr<CompiledGrammar> Get(ClientContext &context);
-	static const shared_ptr<CompiledGrammar> &Base();
-	//! Compile the base DuckDB grammar.
-	static shared_ptr<CompiledGrammar> Create();
-	//! Compile a grammar for the selected extensions without changing the client configuration.
-	static shared_ptr<CompiledGrammar> Create(const ClientContext &context, const vector<string> &active_extensions);
+	static const CompiledGrammar &Get(const ClientContext &context);
+	static const CompiledGrammar &Base();
+	static const CompiledGrammar &Passthrough();
+	static unique_ptr<CompiledGrammar> Create();
+	static unique_ptr<CompiledGrammar> Compile(ParsedGrammar &grammar);
 
 private:
 	MatcherAllocator allocator;
@@ -53,21 +48,6 @@ private:
 	case_insensitive_map_t<unique_ptr<CompiledGrammarRule>> rules;
 	const Matcher &program_matcher;
 	const Matcher &top_level_statement_matcher;
-};
-
-//! Per-database holder for the compiled base grammar.
-struct ParserCache {
-public:
-	ParserCache();
-	~ParserCache();
-
-	shared_ptr<CompiledGrammar> GetMatcher();
-	//! The grammar that forwards statements instead of interpreting them, used while CONNECT-ed
-	shared_ptr<CompiledGrammar> GetPassthroughMatcher(const ClientContext &context);
-
-private:
-	duckdb::mutex passthrough_mutex;
-	unique_ptr<PassthroughDialect> passthrough_dialect;
 };
 
 } // namespace duckdb

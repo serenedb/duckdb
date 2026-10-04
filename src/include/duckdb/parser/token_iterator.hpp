@@ -14,7 +14,6 @@
 #include "duckdb/parser/peg/matcher_token.hpp"
 
 namespace duckdb {
-struct SimpleToken;
 
 class TokenIterator {
 public:
@@ -72,7 +71,6 @@ public:
 	}
 	DUCKDB_API void SetPreviousTokenType(TokenType type);
 
-	DUCKDB_API vector<SimpleToken> RemainingTokens() const;
 	DUCKDB_API string ToString() const;
 
 private:

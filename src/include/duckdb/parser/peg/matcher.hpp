@@ -14,7 +14,6 @@
 #include "duckdb/common/vector.hpp"
 #include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/enums/identifier_case_mode.hpp"
-#include "duckdb/parser/parser_extension.hpp"
 #include "duckdb/parser/parser_options.hpp"
 #include "duckdb/parser/peg/keyword_helper.hpp"
 #include "duckdb/parser/token_iterator.hpp"

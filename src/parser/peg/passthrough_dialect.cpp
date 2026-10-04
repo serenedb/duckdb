@@ -30,8 +30,7 @@ arena_ptr<TransformProcess> StartPassthroughTransform(PEGTransformer &transforme
 
 } // namespace
 
-void PassthroughDialect::ApplyGrammarChanges(GrammarChangesInput &input) {
-	auto &grammar = input.parsed_grammar;
+void ApplyPassthroughDialect(ParsedGrammar &grammar) {
 	// the body is a placeholder: the terminal override below is what matches a token
 	grammar.AddRule("PassthroughToken <- Identifier");
 	grammar.AddTerminalRuleOverride("PassthroughToken", [](const PEGKeywordHelper &) -> unique_ptr<Matcher> {

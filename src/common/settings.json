@@ -9,17 +9,6 @@
         ]
     },
     {
-        "name": "active_grammar_extensions",
-        "description": "The grammar extensions used by the parser.",
-        "type": "VARCHAR[]",
-        "scope": "local",
-        "on_callbacks": [
-            "set",
-            "reset"
-        ],
-        "custom_implementation": true
-    },
-    {
         "name": "allocator_background_threads",
         "description": "Whether to enable the allocator background threads.",
         "type": "BOOLEAN",
@@ -72,13 +61,6 @@
         "type": "BOOLEAN",
         "scope": "global",
         "default_value": "false"
-    },
-    {
-        "name": "allow_parser_override_extension",
-        "description": "Allow extensions to override the current parser.",
-        "type": "ENUM<AllowParserOverride>",
-        "default_scope": "global",
-        "default_value": "DEFAULT"
     },
     {
         "name": "allow_persistent_secrets",
@@ -259,17 +241,6 @@
         "type": "BOOLEAN",
         "default_scope": "local",
         "default_value": "true"
-    },
-    {
-        "name": "current_dialect",
-        "description": "The SQL dialect used by the parser.",
-        "type": "VARCHAR",
-        "scope": "local",
-        "on_callbacks": [
-            "set",
-            "reset"
-        ],
-        "custom_implementation": true
     },
     {
         "name": "current_transaction_invalidation_policy",

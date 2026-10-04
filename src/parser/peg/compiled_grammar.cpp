@@ -4,12 +4,7 @@
 #include "duckdb/parser/peg/matcher_factory.hpp"
 #include "duckdb/parser/peg/keyword_helper/parsed_grammar_keyword_helper.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/main/database.hpp"
-#include "duckdb/main/client_config.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb/main/extension_callback_manager.hpp"
-#include "duckdb/parser/peg/dialect_extension.hpp"
-#include "duckdb/parser/grammar_extension.hpp"
 
 namespace duckdb {
 
@@ -21,25 +16,8 @@ CompiledGrammar::CompiledGrammar(MatcherAllocator &&allocator_p, unique_ptr<PEGK
       top_level_statement_matcher(top_level_statement_matcher) {
 }
 
-shared_ptr<CompiledGrammar> CompiledGrammar::Get(ClientContext &context) {
-	auto &client_config = ClientConfig::GetConfig(context);
-	auto &callback_manager = ExtensionCallbackManager::Get(context);
-	if (client_config.connected_grammar) {
-		// while CONNECT-ed, the database being talked to decides how its statements are parsed
-		return client_config.connected_grammar;
-	}
-	if (client_config.current_dialect) {
-		auto dialect_extension = callback_manager.GetDialectExtension(*client_config.current_dialect);
-		if (!dialect_extension) {
-			throw InternalException("Dialect extension set to '%s' but couldn't be located in the registry",
-			                        *client_config.current_dialect);
-		}
-		return dialect_extension->GetCompiledGrammar(context);
-	}
-	if (client_config.cached_grammar) {
-		return client_config.cached_grammar;
-	}
-	return DatabaseInstance::GetDatabase(context).GetParserCache().GetMatcher();
+const CompiledGrammar &CompiledGrammar::Get(const ClientContext &context) {
+	return context.IsConnected() ? Passthrough() : Base();
 }
 
 static void ValidateParsedGrammarRoots(const ParsedGrammar &grammar) {
@@ -139,14 +117,7 @@ terminal_rule_overrides_t ParsedGrammar::BuildTerminalRuleOverrides(const PEGKey
 	return overrides;
 }
 
-shared_ptr<CompiledGrammar> CompiledGrammar::Create(const vector<reference<GrammarExtension>> &grammar_extensions) {
-	auto grammar = ParsedGrammar::CreateDefault();
-	for (auto &extension : grammar_extensions) {
-		auto changes = extension.get().GetChanges();
-		for (auto &change : changes) {
-			change.Apply(grammar);
-		}
-	}
+unique_ptr<CompiledGrammar> CompiledGrammar::Compile(ParsedGrammar &grammar) {
 	ValidateParsedGrammarRoots(grammar);
 	for (auto &entry : grammar.rules) {
 		auto &parsed_rule = *entry.second;
@@ -170,51 +141,27 @@ shared_ptr<CompiledGrammar> CompiledGrammar::Create(const vector<reference<Gramm
 	auto &top_level_statement_matcher = factory.GetMatcher("TopLevelStatement");
 	allocator.ComputeFirstSets(keyword_helper->GetLiteralTable());
 
-	auto new_matcher = shared_ptr<CompiledGrammar>(new CompiledGrammar(std::move(allocator), std::move(keyword_helper),
-	                                                                   std::move(tokenizer), std::move(rules),
-	                                                                   program_matcher, top_level_statement_matcher));
-	return new_matcher;
+	return make_uniq<CompiledGrammar>(std::move(allocator), std::move(keyword_helper), std::move(tokenizer),
+	                                  std::move(rules), program_matcher, top_level_statement_matcher);
 }
 
-shared_ptr<CompiledGrammar> CompiledGrammar::Create() {
-	return Create({});
+unique_ptr<CompiledGrammar> CompiledGrammar::Create() {
+	auto grammar = ParsedGrammar::CreateDefault();
+	return Compile(grammar);
 }
 
-shared_ptr<CompiledGrammar> CompiledGrammar::Create(const ClientContext &context,
-                                                    const vector<string> &active_extensions) {
-	vector<reference<GrammarExtension>> selected_extensions;
-	auto &callback_manager = ExtensionCallbackManager::Get(context);
-	for (auto &name : active_extensions) {
-		auto grammar_extension = callback_manager.FindGrammarExtension(name);
-		if (grammar_extension) {
-			selected_extensions.emplace_back(*grammar_extension);
-		}
-	}
-	return Create(selected_extensions);
+const CompiledGrammar &CompiledGrammar::Base() {
+	static const unique_ptr<CompiledGrammar> grammar = Create();
+	return *grammar;
 }
 
-ParserCache::ParserCache() {
-}
-
-ParserCache::~ParserCache() {
-}
-
-shared_ptr<CompiledGrammar> ParserCache::GetPassthroughMatcher(const ClientContext &context) {
-	lock_guard<duckdb::mutex> lock(passthrough_mutex);
-	if (!passthrough_dialect) {
-		passthrough_dialect = make_uniq<PassthroughDialect>();
-	}
-	// the dialect caches the compiled grammar itself
-	return passthrough_dialect->GetCompiledGrammar(context);
-}
-
-const shared_ptr<CompiledGrammar> &CompiledGrammar::Base() {
-	static const shared_ptr<CompiledGrammar> grammar = Create();
-	return grammar;
-}
-
-shared_ptr<CompiledGrammar> ParserCache::GetMatcher() {
-	return CompiledGrammar::Base();
+const CompiledGrammar &CompiledGrammar::Passthrough() {
+	static const unique_ptr<CompiledGrammar> grammar = [] {
+		auto parsed_grammar = ParsedGrammar::CreateDefault();
+		ApplyPassthroughDialect(parsed_grammar);
+		return Compile(parsed_grammar);
+	}();
+	return *grammar;
 }
 
 optional_ptr<const CompiledGrammarRule> CompiledGrammar::GetRule(const string &rule_name) const {

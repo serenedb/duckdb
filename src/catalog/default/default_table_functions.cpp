@@ -2,7 +2,6 @@
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/parser/parser.hpp"
-#include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/function/table_macro_function.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -148,7 +147,6 @@ unique_ptr<CatalogEntry> DefaultTableFunctionGenerator::CreateTableMacroEntry(Ca
 unique_ptr<CatalogEntry> DefaultTableFunctionGenerator::CreateDefaultEntry(ClientContext &context,
                                                                            const Identifier &entry_name) {
 	ParserOptions options;
-	options.compiled_grammar = CompiledGrammar::Get(context);
 	auto macro = FindTableMacro(internal_table_macros, entry_name, schema.name);
 	if (macro) {
 		return CreateTableMacroEntry(catalog, schema, *macro, options);

@@ -44,7 +44,6 @@ public:
 	unique_ptr<BenchmarkState> Initialize(BenchmarkConfiguration &config) override {
 		auto state = make_uniq<ParserBenchmarkState>();
 		state->queries = LoadQueries();
-		state->options.compiled_grammar = CompiledGrammar::Create();
 		// Keep malformed-input backtracking under the runner's timeout in Run.
 		if (workload == ParserWorkload::MALFORMED_SELECT) {
 			return std::move(state);
@@ -309,7 +308,7 @@ public:
 
 	string BenchmarkInfo() override {
 		return "Construct and destroy the compiled base grammar; includes grammar parsing, keyword tables and matcher "
-		       "construction, excludes SQL parsing and grammar extensions";
+		       "construction, excludes SQL parsing";
 	}
 
 private:

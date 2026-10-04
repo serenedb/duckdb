@@ -10,7 +10,6 @@
 #include "duckdb/main/external_resources_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/attach_info.hpp"
-#include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/storage/storage_manager.hpp"
@@ -225,13 +224,6 @@ idx_t AttachedDatabase::GetVacuumRebuildIndexThreshold() const {
 		return vacuum_rebuild_threshold.GetIndex();
 	}
 	return Settings::Get<VacuumRebuildIndexesSetting>(db);
-}
-
-shared_ptr<CompiledGrammar> AttachedDatabase::GetConnectedGrammar(const ClientContext &context) {
-	if (connected_grammar) {
-		return connected_grammar;
-	}
-	return db.GetParserCache().GetPassthroughMatcher(context);
 }
 
 string AttachedDatabase::StoredPath() const {
