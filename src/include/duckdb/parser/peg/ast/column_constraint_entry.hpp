@@ -12,6 +12,7 @@ struct ColumnConstraintTypeInfo {
 	bool is_primary_key = false;
 	ConstraintType type = ConstraintType::INVALID;
 	ConstraintCheckMode check_mode = ConstraintCheckMode::DEFAULT;
+	string name;
 };
 
 struct ColumnConstraintEntry {

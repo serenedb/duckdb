@@ -183,8 +183,7 @@ PEGTransformerFactory::TransformCreateTableColumnList(PEGTransformer &transforme
 			for (auto &constraint : column_result.constraints) {
 				result.constraints.push_back(std::move(constraint));
 			}
-			bool pending_name_applied = column_result.constraint_name.empty();
-			for (auto constraint_type : column_result.constraint_types) {
+			for (auto &constraint_type : column_result.constraint_types) {
 				unique_ptr<Constraint> made;
 				if (constraint_type.type == ConstraintType::NOT_NULL) {
 					made = make_uniq<NotNullConstraint>(column_index);
@@ -195,10 +194,7 @@ PEGTransformerFactory::TransformCreateTableColumnList(PEGTransformer &transforme
 				if (!made) {
 					continue;
 				}
-				if (!pending_name_applied) {
-					made->constraint_name = column_result.constraint_name;
-					pending_name_applied = true;
-				}
+				made->constraint_name = std::move(constraint_type.name);
 				result.constraints.push_back(std::move(made));
 			}
 			if (column_result.serial) {
@@ -258,8 +254,7 @@ string PEGTransformerFactory::TransformDotColLabel(PEGTransformer &transformer, 
 
 ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
     PEGTransformer &transformer, const Identifier &identifier, const optional<LogicalType> &type,
-    optional<GeneratedColumnDefinition> generated_column, const optional<Identifier> &constraint_name_clause,
-    optional<vector<ColumnConstraintEntry>> column_constraint) {
+    optional<GeneratedColumnDefinition> generated_column, optional<vector<ColumnConstraintEntry>> column_constraint) {
 	auto qualified_name = QualifiedName(identifier);
 	bool has_type = type.has_value();
 	bool has_generated = generated_column && generated_column->expr != nullptr;
@@ -271,10 +266,6 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 	CompressionType compression_type = CompressionType::COMPRESSION_AUTO;
 	bool has_collation = false;
 	ColumnConstraint accumulated_constraints;
-	// ConstraintNameClause? -- an explicit `CONSTRAINT <name>` preceding the column's
-	// constraints binds to the first constraint object we build for this column.
-	string pending_constraint_name =
-	    constraint_name_clause ? string(constraint_name_clause->GetIdentifierName()) : string();
 	if (column_constraint) {
 		for (auto &cc_entry : *column_constraint) {
 			if (cc_entry.constraint_name == "DefaultValue") {
@@ -310,10 +301,6 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 					throw ParserException(
 					    "The number of referencing and referenced columns for foreign keys must be the same");
 				}
-				if (!pending_constraint_name.empty()) {
-					cc_entry.constraint->constraint_name = std::move(pending_constraint_name);
-					pending_constraint_name.clear();
-				}
 				accumulated_constraints.constraints.push_back(std::move(cc_entry.constraint));
 			} else if (cc_entry.constraint_name == "ColumnCollation") {
 				if (has_collation) {
@@ -325,10 +312,6 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 				}
 				column_type = ApplyColumnCollation(column_type, std::move(cc_entry.expression));
 			} else {
-				if (!pending_constraint_name.empty()) {
-					cc_entry.constraint->constraint_name = std::move(pending_constraint_name);
-					pending_constraint_name.clear();
-				}
 				accumulated_constraints.constraints.push_back(std::move(cc_entry.constraint));
 			}
 		}
@@ -400,7 +383,6 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 	result.has_primary_key = accumulated_constraints.has_primary_key;
 	result.has_duplicate_default = accumulated_constraints.has_duplicate_default;
 	result.serial = serial;
-	result.constraint_name = std::move(pending_constraint_name);
 	return result;
 }
 
@@ -461,6 +443,19 @@ PEGTransformerFactory::TransformTopUniqueConstraint(PEGTransformer &transformer,
                                                     const optional<ConstraintCheckMode> &constraint_timing) {
 	auto check_mode = constraint_timing.value_or(ConstraintCheckMode::DEFAULT);
 	return make_uniq<UniqueConstraint>(StringsToIdentifiers(column_id_list), false, check_mode);
+}
+
+ColumnConstraintEntry
+PEGTransformerFactory::TransformNamedColumnConstraint(PEGTransformer &transformer,
+                                                      const Identifier &constraint_name_clause,
+                                                      ColumnConstraintEntry column_constraint_element) {
+	string name(constraint_name_clause.GetIdentifierName());
+	if (column_constraint_element.constraint) {
+		column_constraint_element.constraint->constraint_name = std::move(name);
+	} else if (column_constraint_element.constraint_type_info.type != ConstraintType::INVALID) {
+		column_constraint_element.constraint_type_info.name = std::move(name);
+	}
+	return column_constraint_element;
 }
 
 ColumnConstraintEntry PEGTransformerFactory::TransformCheckConstraint(PEGTransformer &transformer,
