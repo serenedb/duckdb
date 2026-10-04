@@ -65,14 +65,6 @@ static void OffsetLine(ExplainLine &line, idx_t offset) {
 	line.insert(line.begin(), ExplainSpan(string(offset, ' '), TreeRenderType::LAYOUT));
 }
 
-static void PadLine(ExplainLine &line, idx_t width) {
-	idx_t current_width = LineWidth(line);
-	if (current_width >= width) {
-		return;
-	}
-	line.emplace_back(string(width - current_width, ' '), TreeRenderType::LAYOUT);
-}
-
 static idx_t LeadingSpaces(const ExplainLine &line) {
 	idx_t count = 0;
 	for (auto &span : line) {
@@ -87,13 +79,17 @@ static idx_t LeadingSpaces(const ExplainLine &line) {
 }
 
 //! Append `src` to `dst` so that the first non-space character of `src` lands at render column `content_col`.
-static void AppendAt(ExplainLine &dst, const ExplainLine &src, idx_t content_col) {
-	PadLine(dst, content_col);
+static idx_t AppendAt(ExplainLine &dst, idx_t dst_width, const ExplainLine &src, idx_t content_col) {
+	if (dst_width < content_col) {
+		dst.emplace_back(string(content_col - dst_width, ' '), TreeRenderType::LAYOUT);
+		dst_width = content_col;
+	}
 	idx_t to_skip = LeadingSpaces(src);
 	idx_t skipped = 0;
 	for (auto &span : src) {
 		if (skipped >= to_skip) {
 			dst.push_back(span);
+			dst_width += RenderLength(span.text);
 			continue;
 		}
 		idx_t i = 0;
@@ -104,9 +100,11 @@ static void AppendAt(ExplainLine &dst, const ExplainLine &src, idx_t content_col
 		if (i < span.text.size()) {
 			ExplainSpan trimmed = span;
 			trimmed.text = span.text.substr(i);
+			dst_width += RenderLength(trimmed.text);
 			dst.push_back(std::move(trimmed));
 		}
 	}
+	return dst_width;
 }
 
 //! Returns true if the codepoint at render column "col" equals the given (single-width) UTF8 character.
@@ -1217,10 +1215,11 @@ private:
 		}
 		for (idx_t line_idx = 0; line_idx < profile.size(); line_idx++) {
 			ExplainLine line;
+			idx_t line_width = 0;
 			for (idx_t i = 0; i < children.size(); i++) {
 				if (line_idx < children[i].lines.size()) {
 					auto &child_line = children[i].lines[line_idx];
-					AppendAt(line, child_line, offsets[i] + LeadingSpaces(child_line));
+					line_width = AppendAt(line, line_width, child_line, offsets[i] + LeadingSpaces(child_line));
 				}
 			}
 			row_lines.push_back(std::move(line));
@@ -1228,6 +1227,9 @@ private:
 	}
 
 	ExplainBlock AttachHorizontalLeft(ExplainBlock box, vector<ExplainBlock> &children) {
+		for (auto &child : children) {
+			DrawCap(child.lines.front(), child.spine, EdgeTier(child.output_rows), false);
+		}
 		vector<ExplainLine> row_lines;
 		vector<idx_t> spines;
 		idx_t row_width = 0;
@@ -1246,11 +1248,9 @@ private:
 			SetLayoutChar(box.lines.back(), box.spine, "┬");
 		}
 
-		// each child's top cap (┴ / ┸ / ┚┖) on the merged children-top border
 		idx_t bus_end = spines.back();
 		for (idx_t i = 0; i < children.size(); i++) {
 			idx_t tier = EdgeTier(children[i].output_rows);
-			DrawCap(row_lines.front(), spines[i], tier, false);
 			bus_end = MaxValue<idx_t>(bus_end, spines[i] + TierWidth(tier) - 1);
 		}
 
