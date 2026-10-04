@@ -41,3 +41,13 @@ query I
 FROM query('SELECT ' || repeat('- ', 2000) || '1')
 ----
 1
+
+query I
+FROM query('SELECT count(*) FROM range(10) t(i) WHERE ' || repeat('i = 11 OR ', 2000) || 'i < 3')
+----
+3
+
+query I
+FROM query('SELECT count(*) FROM range(10) t(i) WHERE ' || repeat('i < 11 AND ', 2000) || 'i < 3')
+----
+3
