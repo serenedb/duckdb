@@ -224,7 +224,8 @@ arena_ptr<TransformResultValue> PEGTransformer::TransformInternal(ParseResult &p
 
 PEGTransformer::PEGTransformer(ArenaAllocator &allocator, TokenIterator &token_iterator, ParserOptions &options_p,
                                const CompiledGrammar &grammar_p)
-    : allocator(allocator), token_iterator(token_iterator), options(options_p), grammar(grammar_p),
+    : allocator(allocator), token_iterator(token_iterator), type_depth_check {options_p.max_expression_depth, {}},
+      options(options_p), grammar(grammar_p),
       max_height(options_p.max_expression_depth > NumericLimits<idx_t>::Maximum() / HEIGHT_PER_EXPRESSION_LEVEL
                      ? NumericLimits<idx_t>::Maximum()
                      : options_p.max_expression_depth * HEIGHT_PER_EXPRESSION_LEVEL) {

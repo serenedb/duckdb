@@ -43,6 +43,7 @@
 #include "duckdb/common/optional.hpp"
 #include "duckdb/parser/query_node/set_operation_node.hpp"
 #include "duckdb/parser/parser_options.hpp"
+#include "duckdb/parser/expression_depth_check.hpp"
 #include "duckdb/parser/expression/case_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/parameter_expression.hpp"
@@ -586,6 +587,7 @@ public:
 
 	bool in_window_definition = false;
 	bool has_anonymous_parameters = false;
+	ExpressionDepthCheck type_depth_check;
 
 	void AddDepth(idx_t levels);
 	bool MayExceedDepth() const;

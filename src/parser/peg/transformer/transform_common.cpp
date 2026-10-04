@@ -68,6 +68,10 @@ LogicalType PEGTransformerFactory::TransformType(PEGTransformer &transformer,
 			}
 		}
 	}
+	if (transformer.MayExceedDepth() &&
+	    (type->GetExpressionClass() != ExpressionClass::TYPE || !type->Cast<TypeExpression>().GetChildren().empty())) {
+		transformer.type_depth_check.Verify(*type);
+	}
 	return LogicalType::UNBOUND(std::move(type));
 }
 
