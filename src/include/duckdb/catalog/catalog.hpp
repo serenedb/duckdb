@@ -152,6 +152,9 @@ public:
 	virtual bool UsesCatalogLog() const {
 		return false;
 	}
+	virtual bool IsDropped() const {
+		return false;
+	}
 	virtual shared_ptr<WriteAheadLog> CatalogLog() {
 		return nullptr;
 	}

@@ -149,6 +149,9 @@ DuckTransactionManager::CanCheckpoint(DuckTransaction &transaction, unique_ptr<S
 	if (db.IsSystem()) {
 		return CheckpointDecision("system transaction");
 	}
+	if (db.GetCatalog().IsDropped()) {
+		return CheckpointDecision("database is being dropped");
+	}
 	if (transaction.IsReadOnly()) {
 		return CheckpointDecision("transaction is read-only");
 	}

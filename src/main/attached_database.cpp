@@ -402,7 +402,7 @@ void AttachedDatabase::Close(const DatabaseCloseAction action) {
 		auto create_checkpoint = true;
 		if (action == DatabaseCloseAction::TRY_CHECKPOINT && Exception::UncaughtException()) {
 			create_checkpoint = false;
-		} else if (!storage || storage->InMemory() || ValidChecker::IsInvalidated(db) ||
+		} else if (!storage || storage->InMemory() || catalog->IsDropped() || ValidChecker::IsInvalidated(db) ||
 		           ValidChecker::IsInvalidated(*this)) {
 			create_checkpoint = false;
 		}
