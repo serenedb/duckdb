@@ -1,0 +1,390 @@
+# name: test/optimizer/expression_rewriter/filter_reorder.test
+# description: filter_reorder bounds how far filter reordering moves conjuncts that can throw
+# group: [expression_rewriter]
+
+statement ok
+CREATE TABLE t AS SELECT i % 300 AS a, i % 7 AS b, i % 5 AS c, i % 3 AS d, (i % 300)::VARCHAR AS s FROM range(1, 1001) r(i);
+
+statement ok
+PRAGMA explain_output = OPTIMIZED_ONLY
+
+query I
+SELECT current_setting('filter_reorder')
+----
+safe
+
+query II
+EXPLAIN SELECT a FROM t WHERE a <> b AND s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d
+----
+logical_opt	<REGEX>:.*a != b.*s AS INTEGER.*b != c.*reverse.*TINYINT.*c != d.*
+
+statement ok
+SET filter_reorder = 'never'
+
+query II
+EXPLAIN SELECT a FROM t WHERE a <> b AND s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d
+----
+logical_opt	<REGEX>:.*a != b.*s AS INTEGER.*reverse.*b != c.*TINYINT.*c != d.*
+
+statement ok
+SET filter_reorder = 'fast'
+
+query II
+EXPLAIN SELECT a FROM t WHERE a <> b AND s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d
+----
+logical_opt	<REGEX>:.*a != b.*b != c.*c != d.*s AS INTEGER.*reverse.*TINYINT.*
+
+statement ok
+SET filter_reorder = 'always'
+
+query II
+EXPLAIN SELECT a FROM t WHERE a <> b AND s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND b <> c AND a::TINYINT <> d AND c <> d
+----
+logical_opt	<REGEX>:.*a != b.*b != c.*c != d.*TINYINT.*s AS INTEGER.*reverse.*
+
+foreach level never safe fast always
+
+statement ok
+SET filter_reorder = '{level}'
+
+query II
+EXPLAIN SELECT a FROM t WHERE a::TINYINT <> d AND a::DOUBLE <> d::DOUBLE
+----
+logical_opt	<REGEX>:.*TINYINT.*DOUBLE.*
+
+endloop
+
+foreach level safe fast always
+
+statement ok
+SET filter_reorder = '{level}'
+
+query II
+EXPLAIN SELECT a FROM t WHERE s || b::VARCHAR <> reverse(s) AND s LIKE b::VARCHAR AND a <> b
+----
+logical_opt	<REGEX>:.*a != b.*~~.*reverse.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE (a::TINYINT <> d OR (s || b::VARCHAR <> reverse(s) AND a <> b)) AND c <> d
+----
+logical_opt	<REGEX>:.*TINYINT.*a != b.*reverse.*
+
+endloop
+
+foreach level never safe fast
+
+statement ok
+SET filter_reorder = '{level}'
+
+query II
+EXPLAIN SELECT a FROM t WHERE a + b <> length(s) AND s::INTEGER <> a AND a::TINYINT <> d
+----
+logical_opt	<REGEX>:.*length.*INTEGER.*TINYINT.*
+
+endloop
+
+foreach level never safe
+
+statement ok
+SET filter_reorder = '{level}'
+
+query II
+EXPLAIN SELECT a FROM t WHERE (a::TINYINT <> d OR (s || b::VARCHAR <> reverse(s) AND a <> b)) AND c <> d
+----
+logical_opt	<REGEX>:.*TINYINT.*c != d.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE a + b <> length(s) AND s LIKE b::VARCHAR
+----
+logical_opt	<REGEX>:.*length.*~~.*
+
+endloop
+
+foreach level fast always
+
+statement ok
+SET filter_reorder = '{level}'
+
+query II
+EXPLAIN SELECT a FROM t WHERE (a::TINYINT <> d OR (s || b::VARCHAR <> reverse(s) AND a <> b)) AND c <> d
+----
+logical_opt	<REGEX>:.*c != d.*TINYINT.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE a + b <> length(s) AND s LIKE b::VARCHAR
+----
+logical_opt	<REGEX>:.*~~.*length.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND a <> b
+----
+logical_opt	<REGEX>:.*a != b.*INTEGER.*reverse.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s::INTEGER <> a OR s || b::VARCHAR <> reverse(s) OR a <> b
+----
+logical_opt	<REGEX>:.*a != b.*INTEGER.*reverse.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE (b <> c OR a::TINYINT <> d) AND s || b::VARCHAR <> reverse(s) AND a <> b
+----
+logical_opt	<REGEX>:.*a != b.*b != c.*TINYINT.*reverse.*
+
+endloop
+
+statement ok
+SET filter_reorder = 'never'
+
+query II
+EXPLAIN SELECT a FROM t WHERE s || b::VARCHAR <> reverse(s) AND s LIKE b::VARCHAR AND a <> b
+----
+logical_opt	<REGEX>:.*reverse.*~~.*a != b.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE (a::TINYINT <> d OR (s || b::VARCHAR <> reverse(s) AND a <> b)) AND c <> d
+----
+logical_opt	<REGEX>:.*TINYINT.*reverse.*a != b.*c != d.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND a <> b
+----
+logical_opt	<REGEX>:.*INTEGER.*reverse.*a != b.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s || b::VARCHAR <> reverse(s) AND a <> b AND a::TINYINT <> d
+----
+logical_opt	<REGEX>:.*reverse.*a != b.*TINYINT.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s LIKE b::VARCHAR AND a + b <> length(s) AND a::TINYINT <> d AND s || b::VARCHAR <> reverse(s) AND a <> b
+----
+logical_opt	<REGEX>:.*~~.*length.*TINYINT.*reverse.*a != b.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s::INTEGER <> a OR s || b::VARCHAR <> reverse(s) OR a <> b
+----
+logical_opt	<REGEX>:.*INTEGER.*reverse.*a != b.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE (b <> c OR a::TINYINT <> d) AND s || b::VARCHAR <> reverse(s) AND a <> b
+----
+logical_opt	<REGEX>:.*b != c.*TINYINT.*reverse.*a != b.*
+
+statement ok
+SET filter_reorder = 'safe'
+
+query II
+EXPLAIN SELECT a FROM t WHERE s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND a <> b
+----
+logical_opt	<REGEX>:.*INTEGER.*a != b.*reverse.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s || b::VARCHAR <> reverse(s) AND a <> b AND a::TINYINT <> d
+----
+logical_opt	<REGEX>:.*a != b.*reverse.*TINYINT.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s LIKE b::VARCHAR AND a + b <> length(s) AND a::TINYINT <> d AND s || b::VARCHAR <> reverse(s) AND a <> b
+----
+logical_opt	<REGEX>:.*~~.*length.*TINYINT.*a != b.*reverse.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s::INTEGER <> a OR s || b::VARCHAR <> reverse(s) OR a <> b
+----
+logical_opt	<REGEX>:.*INTEGER.*a != b.*reverse.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE (b <> c OR a::TINYINT <> d) AND s || b::VARCHAR <> reverse(s) AND a <> b
+----
+logical_opt	<REGEX>:.*b != c.*TINYINT.*a != b.*reverse.*
+
+statement ok
+SET filter_reorder = 'fast'
+
+query II
+EXPLAIN SELECT a FROM t WHERE s || b::VARCHAR <> reverse(s) AND a <> b AND a::TINYINT <> d
+----
+logical_opt	<REGEX>:.*a != b.*reverse.*TINYINT.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s LIKE b::VARCHAR AND a + b <> length(s) AND a::TINYINT <> d AND s || b::VARCHAR <> reverse(s) AND a <> b
+----
+logical_opt	<REGEX>:.*a != b.*~~.*length.*TINYINT.*reverse.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE a <> b AND s || b::VARCHAR <> reverse(s) AND a::TINYINT <> d AND s LIKE b::VARCHAR
+----
+logical_opt	<REGEX>:.*a != b.*~~.*reverse.*TINYINT.*
+
+statement ok
+SET filter_reorder = 'FAST'
+
+query II
+EXPLAIN SELECT a FROM t WHERE s::INTEGER <> a AND s || b::VARCHAR <> reverse(s) AND a <> b
+----
+logical_opt	<REGEX>:.*a != b.*INTEGER.*reverse.*
+
+statement ok
+SET filter_reorder = 'always'
+
+query II
+EXPLAIN SELECT a FROM t WHERE a + b <> length(s) AND s::INTEGER <> a AND a::TINYINT <> d
+----
+logical_opt	<REGEX>:.*TINYINT.*INTEGER.*length.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s || b::VARCHAR <> reverse(s) AND a <> b AND a::TINYINT <> d
+----
+logical_opt	<REGEX>:.*a != b.*TINYINT.*reverse.*
+
+query II
+EXPLAIN SELECT a FROM t WHERE s LIKE b::VARCHAR AND a + b <> length(s) AND a::TINYINT <> d AND s || b::VARCHAR <> reverse(s) AND a <> b
+----
+logical_opt	<REGEX>:.*a != b.*TINYINT.*~~.*length.*reverse.*
+
+statement error
+SET filter_reorder = 'sometimes'
+----
+<REGEX>:.*unrecognized value.*
+
+statement error
+SET filter_reorder = NULL
+----
+<REGEX>:.*cannot be NULL.*
+
+statement ok
+RESET filter_reorder
+
+query I
+SELECT current_setting('filter_reorder')
+----
+safe
+
+statement error
+SELECT count(*) FROM range(1000) WHERE range < 100 AND range::TINYINT < range + 1
+----
+<REGEX>:.*out of range.*
+
+query I
+SELECT count(*) FROM t WHERE length(s) < length(b::VARCHAR || 'xx') AND a::TINYINT <> d
+----
+388
+
+statement ok
+SET filter_reorder = 'fast'
+
+query I
+SELECT count(*) FROM range(1000) WHERE range < 100 AND range::TINYINT < range + 1
+----
+100
+
+query I
+SELECT count(*) FROM t WHERE length(s) < length(b::VARCHAR || 'xx') AND a::TINYINT <> d
+----
+388
+
+statement ok
+SET filter_reorder = 'always'
+
+statement error
+SELECT count(*) FROM t WHERE length(s) < length(b::VARCHAR || 'xx') AND a::TINYINT <> d
+----
+<REGEX>:.*out of range.*
+
+statement ok
+CREATE TABLE big AS SELECT i % 300 AS a, i % 7 AS b, i % 5 AS c, i % 3 AS d, (i % 300)::VARCHAR AS s FROM range(1, 1000001) r(i);
+
+foreach level never safe fast always
+
+statement ok
+SET filter_reorder = '{level}'
+
+query I
+SELECT count(*) FROM big WHERE b <> c AND c <> d AND length(s) < length(b::VARCHAR || 'xx')
+----
+225758
+
+query I
+SELECT count(*) FROM big WHERE a + b <> length(s) AND b <> c AND c <> d
+----
+685712
+
+endloop
+
+foreach level never safe fast
+
+statement ok
+SET filter_reorder = '{level}'
+
+query I
+SELECT count(*) FROM big WHERE b <> c AND c <> d AND length(s) < length(b::VARCHAR || 'xx') AND a::TINYINT <> d
+----
+225758
+
+query I
+SELECT count(*) FROM big WHERE length(s) < length(b::VARCHAR || 'xx') AND a::TINYINT <> d AND a::TINYINT + b >= 0 AND b <> c
+----
+277199
+
+query I
+SELECT count(*) FROM big WHERE length(s) >= 3 OR b = c OR c = d OR a::TINYINT <> d
+----
+1000000
+
+endloop
+
+statement ok
+SET filter_reorder = 'always'
+
+statement error
+SELECT count(*) FROM big WHERE b <> c AND c <> d AND length(s) < length(b::VARCHAR || 'xx') AND a::TINYINT <> d
+----
+<REGEX>:.*out of range.*
+
+statement error
+SELECT count(*) FROM big WHERE length(s) < length(b::VARCHAR || 'xx') AND a::TINYINT <> d AND a::TINYINT + b >= 0 AND b <> c
+----
+<REGEX>:.*out of range.*
+
+statement error
+SELECT count(*) FROM big WHERE length(s) >= 3 OR b = c OR c = d OR a::TINYINT <> d
+----
+<REGEX>:.*out of range.*
+
+statement ok
+SET threads = 1
+
+statement ok
+CALL enable_logging('AdaptiveFilter')
+
+statement ok
+SET filter_reorder = 'never'
+
+statement ok
+CALL truncate_duckdb_logs()
+
+query I
+SELECT count(*) FROM big WHERE b <> c AND c <> d AND length(s) < length(b::VARCHAR || 'xx')
+----
+225758
+
+query II
+SELECT count(*) FILTER (event = 'INIT') > 0, count(*) FILTER (event = 'REORDER') FROM duckdb_logs_parsed('AdaptiveFilter')
+----
+true	0
+
+statement ok
+SET filter_reorder = 'safe'
+
+statement ok
+CALL truncate_duckdb_logs()
+
+query I
+SELECT count(*) FROM big WHERE b <> c AND c <> d AND length(s) < length(b::VARCHAR || 'xx')
+----
+225758
+
+query I
+SELECT count(*) FILTER (event = 'REORDER') > 0 FROM duckdb_logs_parsed('AdaptiveFilter')
+----
+true

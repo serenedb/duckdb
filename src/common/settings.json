@@ -984,6 +984,13 @@
         "default_value": ""
     },
     {
+        "name": "filter_reorder",
+        "description": "How far filter reordering may move conjuncts that can throw: 'never' does not reorder filters at all; 'safe' reorders only between them; 'fast' may move other conjuncts ahead of them, which can skip an error; 'always' orders by cost alone",
+        "type": "ENUM<FilterReorder>",
+        "default_scope": "local",
+        "default_value": "safe"
+    },
+    {
         "name": "force_column_metadata_reuse",
         "description": "Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.",
         "type": "BOOLEAN",

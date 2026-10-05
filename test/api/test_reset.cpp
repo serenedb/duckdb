@@ -81,6 +81,7 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 	    {"default_transaction_isolation", {"serializable"}},
 	    {"force_dict_fsst_mode", {"AUTO"}},
 	    {"file_search_path", {"test"}},
+	    {"filter_reorder", {"fast"}},
 	    {"force_compression", {"uncompressed", "uncompressed"}},
 	    {"fsync_mode", {"NONE"}},
 	    {"home_directory", {"test"}},

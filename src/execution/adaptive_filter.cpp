@@ -14,12 +14,15 @@
 
 namespace duckdb {
 
-AdaptiveFilter::AdaptiveFilter(const Expression &expr) : observe_interval(10), execute_interval(20), warmup(true) {
+AdaptiveFilter::AdaptiveFilter(const Expression &expr, FilterReorder reorder_p)
+    : disable_permutations(reorder_p == FilterReorder::NEVER), reorder(reorder_p), observe_interval(10),
+      execute_interval(20), warmup(true) {
 	auto &conj_expr = expr.Cast<BoundConjunctionExpression>();
 	D_ASSERT(conj_expr.GetChildren().size() > 1);
 	for (idx_t idx = 0; idx < conj_expr.GetChildren().size(); idx++) {
 		permutation.push_back(idx);
-		if (conj_expr.GetChildren()[idx]->CanThrow() || ExpressionBarrier::Contains(*conj_expr.GetChildren()[idx])) {
+		can_throw.push_back(conj_expr.GetChildren()[idx]->CanThrow());
+		if (ExpressionBarrier::Contains(*conj_expr.GetChildren()[idx])) {
 			disable_permutations = true;
 		}
 		if (idx != conj_expr.GetChildren().size() - 1) {
@@ -107,6 +110,21 @@ vector<pair<string, string>> AdaptiveFilter::BuildInitInfo(AdaptiveFilterSource 
 	return info;
 }
 
+bool AdaptiveFilter::CanSwap(idx_t idx) const {
+	auto left = permutation[idx];
+	auto right = permutation[idx + 1];
+	switch (reorder) {
+	case FilterReorder::SAFE:
+		return !can_throw[left] && !can_throw[right];
+	case FilterReorder::FAST:
+		return !can_throw[right] || right < left;
+	case FilterReorder::NEVER:
+		return false;
+	case FilterReorder::ALWAYS:
+		return true;
+	}
+}
+
 AdaptiveFilterState AdaptiveFilter::BeginFilter() const {
 	if (permutation.size() <= 1 || disable_permutations) {
 		return AdaptiveFilterState();
@@ -174,7 +192,7 @@ void AdaptiveFilter::AdaptRuntimeStatistics(double duration) {
 			idx_t likeliness = random_number - 100 * swap_idx; // random number between [0, 100)
 
 			// check if swap is going to happen
-			if (swap_likeliness[swap_idx] > likeliness) { // always true for the first swap of an index
+			if (swap_likeliness[swap_idx] > likeliness && CanSwap(swap_idx)) {
 				// swap
 				std::swap(permutation[swap_idx], permutation[swap_idx + 1]);
 
