@@ -42,6 +42,7 @@
 #include "duckdb/common/enums/file_sync_mode.hpp"
 #include "duckdb/common/enums/file_write_mode.hpp"
 #include "duckdb/common/enums/filter_propagate_result.hpp"
+#include "duckdb/common/enums/filter_reorder.hpp"
 #include "duckdb/common/enums/function_errors.hpp"
 #include "duckdb/common/enums/http_status_code.hpp"
 #include "duckdb/common/enums/identifier_case_mode.hpp"
@@ -2882,6 +2883,26 @@ const char* EnumUtil::ToChars<FilterPropagateResult>(FilterPropagateResult value
 template<>
 FilterPropagateResult EnumUtil::FromString<FilterPropagateResult>(const char *value) {
 	return static_cast<FilterPropagateResult>(StringUtil::StringToEnum(GetFilterPropagateResultValues(), 5, "FilterPropagateResult", value));
+}
+
+const StringUtil::EnumStringLiteral *GetFilterReorderValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(FilterReorder::NEVER), "NEVER" },
+		{ static_cast<uint32_t>(FilterReorder::SAFE), "SAFE" },
+		{ static_cast<uint32_t>(FilterReorder::FAST), "FAST" },
+		{ static_cast<uint32_t>(FilterReorder::ALWAYS), "ALWAYS" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<FilterReorder>(FilterReorder value) {
+	return StringUtil::EnumToString(GetFilterReorderValues(), 4, "FilterReorder", static_cast<uint32_t>(value));
+}
+
+template<>
+FilterReorder EnumUtil::FromString<FilterReorder>(const char *value) {
+	return static_cast<FilterReorder>(StringUtil::StringToEnum(GetFilterReorderValues(), 4, "FilterReorder", value));
 }
 
 const StringUtil::EnumStringLiteral *GetForeignKeyTypeValues() {

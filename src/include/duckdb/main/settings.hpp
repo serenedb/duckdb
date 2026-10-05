@@ -1735,6 +1735,23 @@ struct FileSearchPathSetting {
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
 };
 
+struct FilterReorderSetting {
+	using RETURN_TYPE = FilterReorder;
+	static constexpr const char *Name = "filter_reorder";
+	static constexpr const char *Description =
+	    "How far filter reordering may move conjuncts that can throw: 'never' does not reorder filters at all; 'safe' "
+	    "reorders only between them; 'fast' may move other conjuncts ahead of them, which can skip an error; 'always' "
+	    "orders by cost alone";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr bool IsDebug = false;
+	static constexpr bool IsDeprecated = false;
+	static constexpr bool NoResetAll = false;
+	static constexpr const char *DefaultValue = "safe";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+	static void OnSet(SettingCallbackInfo &info, Value &input);
+};
+
 struct ForceColumnMetadataReuseSetting {
 	using RETURN_TYPE = bool;
 	static constexpr const char *Name = "force_column_metadata_reuse";

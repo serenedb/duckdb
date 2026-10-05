@@ -274,6 +274,8 @@ enum class FileWriteMode : uint8_t;
 
 enum class FilterPropagateResult : uint8_t;
 
+enum class FilterReorder : uint8_t;
+
 enum class ForeignKeyType : uint8_t;
 
 enum class FormatArgumentType : uint8_t;
@@ -1057,6 +1059,9 @@ const char* EnumUtil::ToChars<FileWriteMode>(FileWriteMode value);
 
 template<>
 const char* EnumUtil::ToChars<FilterPropagateResult>(FilterPropagateResult value);
+
+template<>
+const char* EnumUtil::ToChars<FilterReorder>(FilterReorder value);
 
 template<>
 const char* EnumUtil::ToChars<ForeignKeyType>(ForeignKeyType value);
@@ -2051,6 +2056,9 @@ FileWriteMode EnumUtil::FromString<FileWriteMode>(const char *value);
 
 template<>
 FilterPropagateResult EnumUtil::FromString<FilterPropagateResult>(const char *value);
+
+template<>
+FilterReorder EnumUtil::FromString<FilterReorder>(const char *value);
 
 template<>
 ForeignKeyType EnumUtil::FromString<ForeignKeyType>(const char *value);

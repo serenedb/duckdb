@@ -187,6 +187,7 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING(ExternalFileCacheSpillSetting),
     DUCKDB_SETTING_CALLBACK(ExternalThreadsSetting),
     DUCKDB_SETTING(FileSearchPathSetting),
+    DUCKDB_SETTING_CALLBACK(FilterReorderSetting),
     DUCKDB_SETTING_CALLBACK(ForceColumnMetadataReuseSetting),
     DUCKDB_SETTING_CALLBACK(ForceCompressionSetting),
     DUCKDB_SETTING_CALLBACK(ForceDictFsstModeSetting),
