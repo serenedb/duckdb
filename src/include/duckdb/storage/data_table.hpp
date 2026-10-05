@@ -309,6 +309,8 @@ public:
 	void AddIndex(unique_ptr<Index> index, idx_t index_oid);
 	//! AddConstraintIndex moves a constraint-backed index to this table's index list.
 	void AddConstraintIndex(unique_ptr<Index> index);
+	void AddBuiltIndex(DuckTransaction &transaction, unique_ptr<BoundIndex> index, optional_idx index_oid,
+	                   idx_t built_row_end);
 
 	//! Returns a list of the partition stats
 	vector<PartitionStatistics> GetPartitionStats(ClientContext &context);

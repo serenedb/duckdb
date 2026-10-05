@@ -478,6 +478,34 @@ void DataTable::AddConstraintIndex(unique_ptr<Index> index) {
 	info->indexes.AddIndex(std::move(index), /*index_oid=*/optional_idx());
 }
 
+void DataTable::AddBuiltIndex(DuckTransaction &transaction, unique_ptr<BoundIndex> index, optional_idx index_oid,
+                              idx_t built_row_end) {
+	lock_guard<mutex> lock(append_lock);
+	auto row_end = row_groups->GetNextRowId();
+	if (row_end > built_row_end) {
+		row_t row_data[STANDARD_VECTOR_SIZE];
+		Vector row_identifiers(LogicalType::ROW_TYPE, data_ptr_cast(row_data), STANDARD_VECTOR_SIZE);
+		auto current_row = built_row_end;
+		ScanTableSegment(transaction, built_row_end, row_end - built_row_end, [&](DataChunk &chunk) {
+			auto row_id_writer = FlatVector::Writer<row_t>(row_identifiers, chunk.size());
+			for (idx_t i = 0; i < chunk.size(); i++) {
+				row_id_writer.WriteValue(NumericCast<row_t>(current_row + i));
+			}
+			IndexAppendInfo append_info;
+			auto error = index->Append(chunk, row_identifiers, append_info);
+			if (error.HasError()) {
+				error.Throw();
+			}
+			current_row += chunk.size();
+		});
+		auto error = index->FinishAppend();
+		if (error.HasError()) {
+			error.Throw();
+		}
+	}
+	info->indexes.AddIndex(std::move(index), index_oid);
+}
+
 bool DataTable::HasForeignKeyIndex(std::span<const PhysicalIndex> keys, ForeignKeyType type) {
 	auto index = info->indexes.FindForeignKeyIndex(keys, type);
 	return index != nullptr;

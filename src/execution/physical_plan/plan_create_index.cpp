@@ -11,17 +11,20 @@
 #include "duckdb/execution/operator/order/physical_order.hpp"
 #include "duckdb/execution/operator/projection/physical_projection.hpp"
 #include "duckdb/execution/operator/schema/physical_create_index.hpp"
+#include "duckdb/execution/operator/scan/physical_table_scan.hpp"
+#include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 
 namespace duckdb {
 
 static PhysicalOperator &AddCreateIndex(PhysicalPlanGenerator &plan, LogicalCreateIndex &op, PhysicalOperator &prev,
-                                        const IndexType &index_type, unique_ptr<IndexBuildBindData> bind_data) {
+                                        const IndexType &index_type, unique_ptr<IndexBuildBindData> bind_data,
+                                        shared_ptr<idx_t> scan_row_end) {
 	// Generic path: tables only; cast is safe.
 	auto &cindex =
 	    plan.Make<PhysicalCreateIndex>(op, op.table.Cast<TableCatalogEntry>(), op.info->column_ids, std::move(op.info),
 	                                   std::move(op.unbound_expressions), op.estimated_cardinality, index_type,
-	                                   std::move(bind_data), std::move(op.alter_table_info));
+	                                   std::move(bind_data), std::move(op.alter_table_info), std::move(scan_row_end));
 
 	cindex.children.push_back(prev);
 	return cindex;
@@ -162,6 +165,22 @@ PhysicalOperator &PhysicalPlanGenerator::CreateDefaultIndexPlan(LogicalCreateInd
 	const auto is_add_primary_key = op.alter_table_info && op.info->constraint_type == IndexConstraintType::PRIMARY;
 	auto need_filter = !is_add_primary_key;
 
+	reference<PhysicalOperator> source(scan);
+	while (source.get().type != PhysicalOperatorType::TABLE_SCAN && source.get().children.size() == 1) {
+		source = source.get().children[0];
+	}
+	auto scan_row_end = make_shared_ptr<idx_t>(0);
+	switch (source.get().type) {
+	case PhysicalOperatorType::TABLE_SCAN:
+		source.get().Cast<PhysicalTableScan>().bind_data->Cast<TableScanBindData>().create_index_row_end = scan_row_end;
+		break;
+	case PhysicalOperatorType::EMPTY_RESULT:
+		*scan_row_end = duck_table.GetStorage().GetNextRowId();
+		break;
+	default:
+		throw InternalException("CREATE INDEX plan does not read from a table scan");
+	}
+
 	// Construct the plan
 	auto plan = &scan;
 	plan = &AddProjection(*this, op, *plan);
@@ -172,7 +191,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreateDefaultIndexPlan(LogicalCreateInd
 	if (need_sort) {
 		plan = &AddSort(*this, op, *plan);
 	}
-	plan = &AddCreateIndex(*this, op, *plan, *index_type, std::move(bind_data));
+	plan = &AddCreateIndex(*this, op, *plan, *index_type, std::move(bind_data), std::move(scan_row_end));
 
 	return *plan;
 }
