@@ -35,6 +35,11 @@ SELECT ST_GeomFromWKB(ST_AsWKB('POINT(1 2)'::GEOMETRY) || ST_AsWKB('POINT(9 9)':
 ----
 Unexpected trailing data at position 21
 
+statement error
+SELECT octet_length(ST_AsWKB(g)) FROM (SELECT ST_GeomFromWKB(x) AS g FROM (VALUES (''::BLOB)) t(x));
+----
+Unexpected end of binary data at position 0
+
 # A collection must contain as many children as its header declares
 # (GEOMETRYCOLLECTION claiming two children but containing one; previously
 # accepted silently)
