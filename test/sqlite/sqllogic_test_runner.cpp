@@ -762,7 +762,9 @@ void SQLLogicTestRunner::ConfigureDefaultInMemoryTemporaryDirectory(DuckDB &data
 	}
 	auto normalized_script = StringUtil::Replace(file_name, "\\", "/");
 	auto temp_directory_name = StringUtil::Replace(normalized_script, "/", "_");
-	auto temp_directory = TestJoinPath(TestDirectoryPath(), "sqllogic_temp_" + temp_directory_name);
+	string test_directory = "{TEST_DIR}";
+	TestConfiguration::Get().ProcessPath(test_directory, file_name);
+	auto temp_directory = TestJoinPath(test_directory, "sqllogic_temp_" + temp_directory_name);
 	db_config.SetOption(database.instance.get(), *DBConfig::GetOptionByName("temp_directory"), temp_directory);
 }
 
