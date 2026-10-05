@@ -1,0 +1,110 @@
+# name: test/sql/storage/compression/dict_fsst/filter_partial_window.test
+# description: dictionary filters over windows shorter than a vector agree with an uncompressed copy
+# group: [dict_fsst]
+
+load __TEST_DIR__/dict_fsst_filter_partial_window.db
+
+statement ok
+pragma force_compression='DICT_FSST';
+
+statement ok
+CREATE TABLE t AS SELECT i AS id, CASE WHEN i % 11 = 4 THEN NULL WHEN i % 6 = 0 THEN '' ELSE 'https://site' || (i % 37)::VARCHAR || '.example/' || (i % 5)::VARCHAR END AS s FROM range(4100) r(i);
+
+statement ok
+CHECKPOINT;
+
+statement ok
+pragma force_compression='uncompressed';
+
+statement ok
+CREATE TABLE u AS SELECT * FROM t;
+
+statement ok
+CHECKPOINT;
+
+restart
+
+query I
+SELECT count(*) FROM pragma_storage_info('t') WHERE column_name = 's' AND segment_type = 'VARCHAR' AND compression <> 'DICT_FSST';
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s <> '' EXCEPT ALL SELECT id, s FROM u WHERE s <> '');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s <> '' EXCEPT ALL SELECT id, s FROM t WHERE s <> '');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s = '' EXCEPT ALL SELECT id, s FROM u WHERE s = '');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s = '' EXCEPT ALL SELECT id, s FROM t WHERE s = '');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s LIKE '%site3%' EXCEPT ALL SELECT id, s FROM u WHERE s LIKE '%site3%');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s LIKE '%site3%' EXCEPT ALL SELECT id, s FROM t WHERE s LIKE '%site3%');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s IS NULL EXCEPT ALL SELECT id, s FROM u WHERE s IS NULL);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s IS NULL EXCEPT ALL SELECT id, s FROM t WHERE s IS NULL);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE coalesce(s, 'n') = 'n' EXCEPT ALL SELECT id, s FROM u WHERE coalesce(s, 'n') = 'n');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE coalesce(s, 'n') = 'n' EXCEPT ALL SELECT id, s FROM t WHERE coalesce(s, 'n') = 'n');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s <> '' AND id % 3 = 0 EXCEPT ALL SELECT id, s FROM u WHERE s <> '' AND id % 3 = 0);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s <> '' AND id % 3 = 0 EXCEPT ALL SELECT id, s FROM t WHERE s <> '' AND id % 3 = 0);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s LIKE '%example/4' AND id > 4000 EXCEPT ALL SELECT id, s FROM u WHERE s LIKE '%example/4' AND id > 4000);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s LIKE '%example/4' AND id > 4000 EXCEPT ALL SELECT id, s FROM t WHERE s LIKE '%example/4' AND id > 4000);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s > 'https://site2' EXCEPT ALL SELECT id, s FROM u WHERE s > 'https://site2');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s > 'https://site2' EXCEPT ALL SELECT id, s FROM t WHERE s > 'https://site2');
+----
+0
