@@ -60,7 +60,7 @@ struct IndexStorageInfo {
 	//! The name.
 	Identifier name;
 	//! The storage root.
-	idx_t root;
+	idx_t root = 0;
 	//! Any index specialization can provide additional key-Value settings via this map.
 	case_insensitive_map_t<Value> options;
 	//! Serialization information for fixed-size allocator memory.
