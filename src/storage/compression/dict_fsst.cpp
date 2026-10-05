@@ -204,7 +204,8 @@ static void DictFSSTFilter(ColumnSegment &segment, ColumnScanState &state, idx_t
 	if (scan_state.deferred_dictionary) {
 		scan_state.MaterializeDictionary();
 	}
-	if (scan_state.AllowDictionaryScan(vector_count)) {
+	if (scan_state.dictionary && scan_state.mode != DictFSSTMode::FSST_ONLY &&
+	    scan_state.mode != DictFSSTMode::FSST_PLUS) {
 		// only pushdown filters on dictionaries
 		if (!scan_state.filter_result) {
 			// no filter result yet - apply filter to the dictionary
