@@ -678,6 +678,9 @@ unique_ptr<GlobalTableFunctionState> DuckTableScanInitGlobal(ClientContext &cont
 		}
 	}
 	storage.InitializeParallelScan(context, g_state->state, input.column_indexes);
+	if (bind_data.create_index_row_end) {
+		*bind_data.create_index_row_end = g_state->state.scan_state.max_row;
+	}
 	g_state->InitializeScanInfo(input);
 	const bool repeatable_percentage_sample =
 	    input.sample_options && input.sample_options->repeatable && input.sample_options->is_percentage;
@@ -967,6 +970,10 @@ unique_ptr<GlobalTableFunctionState> TableScanInitGlobal(ClientContext &context,
 		return DuckTableScanInitGlobal(context, input, storage, bind_data);
 	}
 
+	if (bind_data.is_create_index) {
+		return DuckTableScanInitGlobal(context, input, storage, bind_data);
+	}
+
 	// Only scan specific partitions
 	if (bind_data.partitions_to_scan) {
 		return DuckTableScanInitGlobal(context, input, storage, bind_data);
@@ -1045,6 +1052,9 @@ static unique_ptr<BaseStatistics> TableScanStatistics(ClientContext &context, Ta
 	}
 
 	auto &bind_data = input.bind_data->Cast<TableScanBindData>();
+	if (bind_data.is_create_index) {
+		return nullptr;
+	}
 	auto &duck_table = bind_data.table.Cast<DuckTableEntry>();
 	auto &column = duck_table.GetColumn(LogicalIndex(column_id.GetPrimaryIndex()));
 	if (column.Generated()) {

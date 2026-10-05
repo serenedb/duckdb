@@ -308,6 +308,8 @@ public:
 	              IndexStorageInfo index_info, idx_t index_oid, ConstraintCheckMode check_mode);
 	//! AddIndex moves an index to this table's index list.
 	void AddIndex(unique_ptr<Index> index, idx_t index_oid);
+	shared_ptr<IndexEntry> AddBuiltIndex(DuckTransaction &transaction, unique_ptr<BoundIndex> index, idx_t index_oid,
+	                                     ConstraintCheckMode check_mode, idx_t built_row_end);
 
 	//! Returns a list of the partition stats
 	vector<PartitionStatistics> GetPartitionStats(ClientContext &context);
