@@ -32,6 +32,7 @@ struct OptimizerExtensionInput {
 
 typedef void (*optimize_function_t)(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan);
 typedef void (*pre_optimize_function_t)(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan);
+typedef bool (*rewrite_barrier_t)(const Expression &parent, bool parent_frozen);
 
 //! Position of an anchored rule relative to the built-in pass it targets.
 enum class OptimizerHookPosition : uint8_t { Before, After };
@@ -54,6 +55,8 @@ public:
 	optimize_function_t rule = nullptr;
 	OptimizerType anchor = OptimizerType::INVALID;
 	OptimizerHookPosition where = OptimizerHookPosition::After;
+
+	rewrite_barrier_t rewrite_barrier = nullptr;
 
 	//! Additional optimizer info passed to the optimize functions
 	shared_ptr<OptimizerExtensionInfo> optimizer_info;

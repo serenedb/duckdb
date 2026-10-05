@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/optimizer/optimizer_extension.hpp"
 #include "duckdb/optimizer/rule.hpp"
 #include "duckdb/planner/logical_operator_visitor.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -39,10 +40,12 @@ public:
 private:
 	//! Apply a set of rules to a specific expression
 	static unique_ptr<Expression> ApplyRules(LogicalOperator &op, const vector<reference<Rule>> &rules,
-	                                         unique_ptr<Expression> expr, bool &changes_made, bool is_root = false);
+	                                         const vector<rewrite_barrier_t> &barriers, unique_ptr<Expression> expr,
+	                                         bool &changes_made, bool is_root = false);
 
 	optional_ptr<LogicalOperator> op;
 	vector<reference<Rule>> to_apply_rules;
+	vector<rewrite_barrier_t> to_apply_barriers;
 };
 
 } // namespace duckdb
