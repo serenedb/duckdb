@@ -1221,7 +1221,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::SetColumnCompression(ClientContext &con
 	auto &table_info = create_info->Cast<CreateTableInfo>();
 	auto &col = table_info.columns.GetColumnMutable(column_idx);
 	if (col.Generated()) {
-		throw BinderException("Cannot SET COMPRESSION for generated column \"%s\"", col.Name());
+		throw BinderException("Cannot SET COMPRESSION for generated column %s", col.Name());
 	}
 	col.SetCompressionType(info.compression_type);
 	col.SetCompressionLevel(info.compression_level);

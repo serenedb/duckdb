@@ -507,7 +507,7 @@ static uint8_t TransformCompressionLevel(optional<vector<unique_ptr<ParsedExpres
 		}
 		auto name =
 		    StringUtil::Lower(comparison.Left().Cast<ColumnRefExpression>().GetColumnName().GetIdentifierName());
-		auto &value = comparison.Right().Cast<ConstantExpression>().GetValue();
+		auto value = comparison.Right().Cast<ConstantExpression>().GetLiteral().ToValue();
 		if (name != "compression_level") {
 			throw ParserException("Unknown compression option '%s', expected compression_level", name);
 		}
