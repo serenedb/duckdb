@@ -42,6 +42,18 @@ public:
 	// Formats value in reverse and returns a pointer to the beginning.
 	template <class T>
 	static char *FormatUnsigned(T value, char *ptr) {
+		if constexpr (std::is_same<T, uint64_t>::value) {
+			while (value >= 100000000ULL) {
+				auto chunk = static_cast<uint32_t>(value % 100000000ULL);
+				value /= 100000000ULL;
+				for (idx_t i = 0; i < 4; i++) {
+					ptr -= 2;
+					memcpy(ptr, fmt::detail::digits2(chunk % 100), 2);
+					chunk /= 100;
+				}
+			}
+			return FormatUnsigned<uint32_t>(static_cast<uint32_t>(value), ptr);
+		}
 		while (value >= 100) {
 			// Integer division is slow so do it for a group of two digits instead
 			// of for every digit. The idea comes from the talk by Alexandrescu
