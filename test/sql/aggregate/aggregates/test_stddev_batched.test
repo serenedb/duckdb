@@ -1,0 +1,31 @@
+# name: test/sql/aggregate/aggregates/test_stddev_batched.test
+# description: stddev/variance/sem over flat, filtered, NULL-containing and grouped inputs match a two-pass formula
+# group: [aggregates]
+
+statement ok
+CREATE TABLE t AS SELECT i % 7 AS g, CASE WHEN i % 11 = 0 THEN NULL ELSE (i * 0.37 % 1000) + 1e6 END AS x FROM range(100000) r(i);
+
+query I
+WITH s AS (SELECT avg(x) AS m, count(x) AS n FROM t)
+SELECT abs((SELECT var_samp(x) FROM t) / ((SELECT sum((x - m) * (x - m)) FROM t, s) / (n - 1)) - 1) < 1e-9 FROM s;
+----
+true
+
+query I
+SELECT count(*) FROM (
+  SELECT g, var_pop(x) AS v, stddev_samp(x) AS sd, sem(x) AS se, count(x) AS n, avg(x) AS m FROM t GROUP BY g) a
+JOIN (SELECT t.g, sum((x - a2.m) * (x - a2.m)) AS ss FROM t JOIN (SELECT g, avg(x) AS m FROM t GROUP BY g) a2 USING (g) GROUP BY t.g) b USING (g)
+WHERE abs(v / (ss / n) - 1) > 1e-9 OR abs(sd / sqrt(ss / (n - 1)) - 1) > 1e-9 OR abs(se / sqrt(ss / n / n) - 1) > 1e-9;
+----
+0
+
+query I
+WITH f AS (SELECT x FROM t WHERE g IN (1, 3) AND x > 1000200)
+SELECT abs(stddev_pop(x) / sqrt((SELECT sum((x - (SELECT avg(x) FROM f)) ^ 2) FROM f) / count(x)) - 1) < 1e-9 FROM f;
+----
+true
+
+query IIII
+SELECT stddev_samp(x), var_pop(x), stddev_samp(NULL::DOUBLE), var_samp(1) FROM (VALUES (1.0), (2.0), (3.0), (4.0)) v(x);
+----
+1.2909944487358056	1.25	NULL	0.0
