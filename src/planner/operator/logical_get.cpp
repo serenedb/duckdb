@@ -310,6 +310,9 @@ bool LogicalGet::TryGetStorageIndex(const ColumnIndex &column_index, StorageInde
 		return true;
 	}
 
+	if (column_index.GetPrimaryIndex() >= table->GetColumns().LogicalColumnCount()) {
+		return false;
+	}
 	auto &column = table->GetColumn(LogicalIndex(column_index.GetPrimaryIndex()));
 	if (column.Category() == TableColumnType::GENERATED_VIRTUAL) {
 		//! This is a virtual generated column, can't use the row group pruner
