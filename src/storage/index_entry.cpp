@@ -277,7 +277,19 @@ void IndexEntry::RemoveFromIndex(DataChunk &chunk, Vector &row_ids, const IndexR
 	auto entry_lock = lock.GetExclusiveLock();
 	if (!owned_index->IsBound()) {
 		// Buffer the delete: chunk is in table layout with all indexed columns populated.
-		owned_index->Cast<UnboundIndex>().BufferChunk(chunk, row_ids, BufferedIndexReplay::DEL_ENTRY);
+		auto &unbound_index = owned_index->Cast<UnboundIndex>();
+		switch (removal_type) {
+		case IndexRemovalType::MAIN_INDEX:
+		case IndexRemovalType::MAIN_INDEX_ONLY:
+			unbound_index.BufferChunk(chunk, row_ids, BufferedIndexReplay::DEL_ENTRY);
+			break;
+		case IndexRemovalType::REVERT_MAIN_INDEX:
+		case IndexRemovalType::REVERT_MAIN_INDEX_ONLY:
+			unbound_index.BufferChunk(chunk, row_ids, BufferedIndexReplay::INSERT_ENTRY);
+			break;
+		case IndexRemovalType::DELETED_ROWS_IN_USE:
+			break;
+		}
 		return;
 	}
 
