@@ -203,6 +203,7 @@ struct MatchContext {
 	IdentifierCaseMode identifier_case_mode;
 	ParserPackratCache *packrat_cache;
 	MatchMode mode;
+	bool annotate_tokens = false;
 	idx_t max_expression_depth = ParserOptions::DEFAULT_MAX_EXPRESSION_DEPTH;
 	vector<unique_ptr<reference_set_t<const Matcher>>> suggestion_scopes;
 };
@@ -238,6 +239,12 @@ struct MatchState {
 
 	idx_t GetMaxTokenIndex() const {
 		return context.max_token_index;
+	}
+
+	void AnnotatePreviousToken(TokenType type) {
+		if (context.annotate_tokens) {
+			token_iterator.SetPreviousTokenType(type);
+		}
 	}
 
 	std::string_view FoldIdentifier(std::string_view text) const;

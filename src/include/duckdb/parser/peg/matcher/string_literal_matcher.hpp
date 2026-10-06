@@ -38,7 +38,7 @@ public:
 				Advance(state);
 			}
 		}
-		state.token_iterator.SetPreviousTokenType(TokenType::STRING_LITERAL);
+		state.AnnotatePreviousToken(TokenType::STRING_LITERAL);
 		if (!state.BuildParseResult()) {
 			return MatcherResult::Success();
 		}

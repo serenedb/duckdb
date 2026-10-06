@@ -61,7 +61,7 @@ public:
 		if (!MatchIdentifier(state)) {
 			return MatcherResult::Failure();
 		}
-		state.token_iterator.SetPreviousTokenType(GetTokenType());
+		state.AnnotatePreviousToken(GetTokenType());
 		if (!state.BuildParseResult()) {
 			return MatcherResult::Success();
 		}
@@ -194,7 +194,7 @@ public:
 		if (!MatchReservedIdentifier(state)) {
 			return MatcherResult::Failure();
 		}
-		state.token_iterator.SetPreviousTokenType(GetTokenType());
+		state.AnnotatePreviousToken(GetTokenType());
 		if (!state.BuildParseResult()) {
 			return MatcherResult::Success();
 		}

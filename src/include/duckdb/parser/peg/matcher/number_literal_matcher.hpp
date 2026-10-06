@@ -26,7 +26,7 @@ public:
 		if (!MatchNumberLiteral(state)) {
 			return MatcherResult::Failure();
 		}
-		state.token_iterator.SetPreviousTokenType(TokenType::NUMBER_LITERAL);
+		state.AnnotatePreviousToken(TokenType::NUMBER_LITERAL);
 		auto result = state.AllocateParseResult<NumberParseResult>(token_text, start_offset, token_length);
 		if (result.HasParseResult()) {
 			result.GetParseResult()->name = name;

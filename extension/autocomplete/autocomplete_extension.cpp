@@ -473,6 +473,7 @@ static unique_ptr<SQLTokenizeFunctionData> GenerateTokens(ClientContext &context
 	auto identifier_case_mode = Settings::Get<PreserveIdentifierCaseSetting>(context);
 	MatchContext match_context(suggestions, parse_allocator, max_token_index, MatchMode::RECOGNIZE_ONLY,
 	                           identifier_case_mode);
+	match_context.annotate_tokens = true;
 	MatchState state(token_iterator, match_context);
 
 	compiled_grammar.ProgramMatcher().MatchParseResult(state);
