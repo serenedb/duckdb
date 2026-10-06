@@ -30,8 +30,7 @@ struct MatcherToken {
 
 	LiteralInfo GetLiteralInfo(const GrammarLiteralTable &table) {
 		if (literal_table_id != table.CacheId()) {
-			literal_info = table.Lookup(text);
-			literal_table_id = table.CacheId();
+			CacheLiteralInfo(table);
 		}
 		return literal_info;
 	}
@@ -39,6 +38,9 @@ struct MatcherToken {
 	void ResetLiteralInfo() {
 		literal_table_id = 0;
 	}
+
+private:
+	DUCKDB_API void CacheLiteralInfo(const GrammarLiteralTable &table);
 
 private:
 	LiteralInfo literal_info;

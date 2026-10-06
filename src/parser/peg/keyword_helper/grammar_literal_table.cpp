@@ -2,6 +2,7 @@
 
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/parser/peg/matcher_token.hpp"
 #include "duckdb/parser/peg/parsed_grammar.hpp"
 
 namespace duckdb {
@@ -45,6 +46,11 @@ void GrammarLiteralTable::Register(const string &text, keyword_categories_t cate
 		entry = literals.emplace(text, LiteralInfo(id)).first;
 	}
 	entry->second.AddCategories(categories);
+}
+
+void MatcherToken::CacheLiteralInfo(const GrammarLiteralTable &table) {
+	literal_info = table.Lookup(text);
+	literal_table_id = table.CacheId();
 }
 
 } // namespace duckdb
