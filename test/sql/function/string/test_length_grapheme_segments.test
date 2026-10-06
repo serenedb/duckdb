@@ -1,0 +1,14 @@
+# name: test/sql/function/string/test_length_grapheme_segments.test
+# description: length_grapheme counts simple characters directly and clusters only around complex ones, matching full grapheme segmentation
+# group: [string]
+
+query IIII
+SELECT length_grapheme('a' || chr(13) || chr(10) || 'b'), length_grapheme('é' || chr(13) || chr(10)), length_grapheme('e' || chr(769) || 'x'), length_grapheme('Привет, мир! ' || chr(127465) || chr(127466) || ' ok');
+----
+4	2	2	17
+
+query III
+WITH tok(k, t) AS (VALUES (0, 'a'), (1, chr(13)), (2, chr(10)), (3, chr(233)), (4, chr(769)), (5, chr(127465) || chr(127466)), (6, chr(127465)), (7, chr(8205)), (8, chr(128104)), (9, '#' || chr(65039) || chr(8419)), (10, chr(4352)), (11, chr(4449)), (12, chr(1536)), (13, 'Ж'), (14, 'привет'), (15, chr(1155)), (16, chr(169)), (17, chr(173)), (18, chr(133)), (19, 'Ωλ'), (20, chr(768)), (21, chr(1327)))
+SELECT md5(string_agg(length_grapheme(a.t || b.t || c.t || d.t)::VARCHAR, '|' ORDER BY a.k, b.k, c.k, d.k)), md5(string_agg(length_grapheme(a.t || b.t || 'абвгдеёжзий' || c.t || d.t || 'lmnopqrstuvw' || a.t)::VARCHAR, '|' ORDER BY a.k, b.k, c.k, d.k)), md5(string_agg(length_grapheme(repeat('я' || chr(13) || chr(10), 3) || a.t || repeat(b.t || 'xyzабв', 2) || c.t || d.t || chr(13))::VARCHAR, '|' ORDER BY a.k, b.k, c.k, d.k)) FROM tok a, tok b, tok c, tok d;
+----
+421bacfe0e3dc14e9e9d185c49d0f0c7	d9517473f7842841171f5ffed2c85d63	160a2c40e1ad137074711fb97fc150c4

@@ -9,6 +9,7 @@ add_library_unity(
   length.cpp
   like.cpp
   ilike_ascii_fold.cpp
+  segmented_grapheme_count.cpp
   md5.cpp
   nfc_normalize.cpp
   overlay.cpp
