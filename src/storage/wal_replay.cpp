@@ -1116,8 +1116,10 @@ void WriteAheadLogDeserializer::ReplayIndexData(IndexStorageInfo &info) {
 			auto buffer_handle = buffer_manager.Allocate(MemoryTag::ART_INDEX, block_manager.get(), false);
 			auto block_handle = buffer_handle.GetBlockHandle();
 			auto data_ptr = buffer_handle.GetDataMutable();
+			auto allocation_size = data_info.allocation_sizes[j];
 
-			list.ReadElement<bool>(data_ptr, data_info.allocation_sizes[j]);
+			list.ReadElement<bool>(data_ptr, allocation_size);
+			memset(data_ptr + allocation_size, 0, buffer_handle.GetFileBuffer().Size() - allocation_size);
 
 			// For read-only mode, retain the transient block handle and release the pin held by the buffer handle. The
 			// buffer can then be evicted to temporary storage until the index is bound.
