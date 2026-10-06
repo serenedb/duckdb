@@ -7,6 +7,8 @@
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 
+#include "fmt/compile.h"
+
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
@@ -62,14 +64,16 @@ duckdb::string_t StringCast::Operation(hugeint_t input, StringHeap &heap) {
 
 template <>
 string_t StringCast::Operation(float input, StringHeap &heap) {
-	std::string s = duckdb_fmt::format("{}", input);
-	return heap.AddString(s);
+	char buffer[32];
+	auto end = duckdb_fmt::format_to(buffer, FMT_COMPILE("{}"), input);
+	return heap.AddString(buffer, UnsafeNumericCast<idx_t>(end - buffer));
 }
 
 template <>
 string_t StringCast::Operation(double input, StringHeap &heap) {
-	std::string s = duckdb_fmt::format("{}", input);
-	return heap.AddString(s);
+	char buffer[32];
+	auto end = duckdb_fmt::format_to(buffer, FMT_COMPILE("{}"), input);
+	return heap.AddString(buffer, UnsafeNumericCast<idx_t>(end - buffer));
 }
 
 template <>
