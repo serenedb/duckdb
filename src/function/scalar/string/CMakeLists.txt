@@ -10,6 +10,7 @@ add_library_unity(
   like.cpp
   ilike_ascii_fold.cpp
   segmented_grapheme_count.cpp
+  lower_equality_to_ilike.cpp
   md5.cpp
   nfc_normalize.cpp
   overlay.cpp
