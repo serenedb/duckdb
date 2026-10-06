@@ -1,0 +1,32 @@
+# name: test/sql/function/string/test_levenshtein_bit_parallel.test
+# description: levenshtein with a string of at most 64 bytes agrees with the dynamic-programming path used for longer strings
+# group: [string]
+
+statement ok
+CREATE TABLE w AS SELECT i, CASE i % 9
+    WHEN 0 THEN 'kitten'
+    WHEN 1 THEN 'sitting'
+    WHEN 2 THEN ''
+    WHEN 3 THEN repeat('ab', (i % 40)::INTEGER)
+    WHEN 4 THEN 'привет мир ' || (i % 100)::VARCHAR
+    WHEN 5 THEN repeat('x', (i % 70)::INTEGER) || 'yz'
+    WHEN 6 THEN 'yandex'
+    WHEN 7 THEN md5(i::VARCHAR) || md5((i + 1)::VARCHAR)
+    ELSE substr(md5(i::VARCHAR), 1, (i % 33)::INTEGER) END AS s FROM range(400) r(i);
+
+query I
+SELECT count(*) FROM w a, w b WHERE a.i % 7 = b.i % 11
+  AND levenshtein(a.s, b.s) <> levenshtein(repeat('#', 70) || a.s, repeat('#', 70) || b.s);
+----
+0
+
+query I
+SELECT count(*) FROM w WHERE levenshtein(s, 'yandex') <> levenshtein(repeat('#', 70) || s, repeat('#', 70) || 'yandex')
+   OR levenshtein('yandex', s) <> levenshtein(s, 'yandex');
+----
+0
+
+query IIIII
+SELECT levenshtein('kitten', 'sitting'), levenshtein('', 'abc'), levenshtein('abc', ''), levenshtein(repeat('a', 64), repeat('a', 63) || 'b'), levenshtein(repeat('a', 64), repeat('b', 64));
+----
+3	3	3	1	64
