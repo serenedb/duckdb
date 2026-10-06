@@ -23,6 +23,8 @@
 #include "duckdb/common/vector/dictionary_vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
+#include "duckdb/storage/checkpoint/string_checkpoint_state.hpp"
+#include "duckdb/storage/compression/dict_fsst/dictionary_cache.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
 
 namespace duckdb {
@@ -54,6 +56,18 @@ bool UseSparse(const CompressedStringScanState &scan_state, idx_t vector_count, 
 void CompressedStringScanState::MaterializeDictionary() {
 	D_ASSERT(deferred_dictionary && !dictionary);
 	deferred_dictionary = false;
+	optional_ptr<DictFSSTDictionaryCache> cache;
+	if (decoder) {
+		if (auto state = segment.GetSegmentState()) {
+			cache = state->Cast<UncompressedStringSegmentState>().dictionary_cache;
+		}
+	}
+	if (cache) {
+		dictionary = cache->Get();
+		if (dictionary) {
+			return;
+		}
+	}
 	dictionary = DictionaryVector::CreateReusableDictionary(segment.GetType(), dict_count);
 	auto &dict_data = dictionary->data;
 	auto dict_child_data = FlatVector::GetDataMutable<string_t>(dict_data);
@@ -65,6 +79,9 @@ void CompressedStringScanState::MaterializeDictionary() {
 		auto pid = prefix_count > 0 ? prefix_ids[i] : 0;
 		dict_child_data[i] = ReconstructEntry(allocator, pid, len, char_ptr_cast(dict_ptr + offset));
 		offset += len;
+	}
+	if (cache) {
+		cache->Put(dictionary, dict_count * sizeof(string_t) + allocator.AllocationSize());
 	}
 }
 

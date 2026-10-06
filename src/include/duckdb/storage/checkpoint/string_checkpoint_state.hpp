@@ -16,6 +16,7 @@
 
 namespace duckdb {
 struct UncompressedStringSegmentState;
+class DictFSSTDictionaryCache;
 
 class OverflowStringWriter {
 public:
@@ -75,6 +76,7 @@ struct UncompressedStringSegmentState : public CompressedSegmentState {
 	//! Position-addressed reader for column data streamed to an external file
 	//! (if any); its presence selects the streamed layout on scan
 	optional_ptr<ColumnStreamReader> stream_reader;
+	optional_ptr<DictFSSTDictionaryCache> dictionary_cache;
 	//! The block manager with which to write
 	optional_ptr<BlockManager> block_manager;
 
