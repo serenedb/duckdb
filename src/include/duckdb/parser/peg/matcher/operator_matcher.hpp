@@ -60,7 +60,7 @@ private:
 	}
 
 private:
-	static bool HasSpecialPrecedence(const string &operator_name);
+	static bool HasSpecialPrecedence(std::string_view operator_name);
 
 	OperatorMatcherMode mode;
 };

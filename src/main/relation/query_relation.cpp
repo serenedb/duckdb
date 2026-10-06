@@ -30,7 +30,7 @@ QueryRelation::~QueryRelation() {
 unique_ptr<SelectStatement> QueryRelation::ParseStatement(ClientContext &context, std::string_view query,
                                                           std::string_view error) {
 	Parser parser(context);
-	parser.ParseQuery(string(query));
+	parser.ParseQuery(query);
 	if (parser.statements.size() != 1) {
 		throw ParserException(error);
 	}

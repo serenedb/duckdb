@@ -25,7 +25,7 @@ public:
 		return cache_id;
 	}
 
-	LiteralInfo Lookup(const string &text) const {
+	LiteralInfo Lookup(std::string_view text) const {
 		auto entry = literals.find(text);
 		return entry == literals.end() ? LiteralInfo() : entry->second;
 	}

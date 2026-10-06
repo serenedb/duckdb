@@ -16,14 +16,14 @@ public:
 	      identifier_mask(keyword_helper_p.GetIdentifierMask(suggestion_type)) {
 	}
 
-	bool IsQuoted(const string &text) const {
+	bool IsQuoted(std::string_view text) const {
 		if (text.front() == '"' && text.back() == '"') {
 			return true;
 		}
 		return false;
 	}
 
-	bool IsSingleQuoted(const string &text) const {
+	bool IsSingleQuoted(std::string_view text) const {
 		if (text.front() == '\'' && text.back() == '\'') {
 			return true;
 		}
@@ -34,7 +34,7 @@ public:
 		return text.substr(1, text.size() - 2);
 	}
 
-	bool IsIdentifier(const string &text) const {
+	bool IsIdentifier(std::string_view text) const {
 		if (text.empty()) {
 			return false;
 		}

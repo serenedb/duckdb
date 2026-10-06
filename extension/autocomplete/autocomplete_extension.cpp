@@ -545,9 +545,8 @@ static duckdb::unique_ptr<FunctionData> CheckPEGParserBind(ClientContext &contex
 	const auto sql = StringValue::Get(input.inputs[0]);
 
 	vector<MatcherToken> root_tokens;
-	string clean_sql;
-	const string &sql_ref = Parser::StripUnicodeSpaces(sql, clean_sql) ? clean_sql : sql;
-	ParserTokenizerBehavior behavior(sql_ref, root_tokens);
+	vector<char> clean_sql;
+	ParserTokenizerBehavior behavior(Parser::StripUnicodeSpaces(sql, clean_sql), root_tokens);
 	auto &compiled_grammar = CompiledGrammar::Get(context);
 	if (!compiled_grammar.GetTokenizer().TokenizeInput(behavior)) {
 		return nullptr;

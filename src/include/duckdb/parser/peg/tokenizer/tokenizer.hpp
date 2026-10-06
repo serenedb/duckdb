@@ -30,13 +30,14 @@ class Tokenizer;
 
 class TokenizerBehavior {
 public:
-	TokenizerBehavior(const string &sql, vector<MatcherToken> &tokens);
+	TokenizerBehavior(std::string_view sql, vector<MatcherToken> &tokens);
 	virtual ~TokenizerBehavior() = default;
 
 public:
 	virtual void PushToken(idx_t start, idx_t end, TokenType type, bool unterminated = false);
 	virtual void OnStatementEnd(idx_t pos);
-	virtual void OnLastToken(const Tokenizer &tokenizer, TokenizeState state, string last_word, idx_t last_pos);
+	virtual void OnLastToken(const Tokenizer &tokenizer, TokenizeState state, std::string_view last_word,
+	                         idx_t last_pos);
 
 	//! Sentinel appended at the end of the token vector on a clean exit. Override to return
 	//! `END_OF_INPUT_AUTOCOMPLETE` for autocomplete behavior. Dirty exits (unterminated comment /
@@ -46,7 +47,7 @@ public:
 	}
 
 public:
-	const string &sql;
+	std::string_view sql;
 	vector<MatcherToken> &tokens;
 	bool has_block_comment = false;
 	idx_t last_block_comment_position = 0;
@@ -65,7 +66,7 @@ protected:
 	virtual bool BackslashEscapesStringLiterals() const;
 	virtual bool IsQuotedIdentifierDelimiter(char character) const;
 	virtual void PushOperatorToken(TokenizerBehavior &behavior, idx_t start, idx_t end) const;
-	virtual void HandleLastToken(TokenizerBehavior &behavior, TokenizeState state, const string &sql,
+	virtual void HandleLastToken(TokenizerBehavior &behavior, TokenizeState state, std::string_view sql,
 	                             idx_t last_pos) const;
 
 private:
@@ -74,8 +75,8 @@ private:
 	//! `TokenizeInput()` is the one that appends `GetTerminator()` (clean) or `END_OF_INPUT`
 	//! (dirty) based on the return value.
 	bool TokenizeInputInternal(TokenizerBehavior &behavior) const;
-	bool IsCompoundColonToken(const string &sql, idx_t pos, idx_t &token_length) const;
-	static bool IsHashOperatorToken(const string &sql, idx_t pos, idx_t &token_length);
+	bool IsCompoundColonToken(std::string_view sql, idx_t pos, idx_t &token_length) const;
+	static bool IsHashOperatorToken(std::string_view sql, idx_t pos, idx_t &token_length);
 
 public:
 	static bool IsSingleByteOperator(char c);

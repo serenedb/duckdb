@@ -48,7 +48,7 @@ private:
 	static string JoinLines(const vector<string> &lines);
 
 	// Phase 1: token-stream -> multiline string
-	string ApplyCase(const string &upper_kw, const string &orig_kw, bool is_structural = false) const;
+	string ApplyCase(const string &upper_kw, std::string_view orig_kw, bool is_structural = false) const;
 	string FormatMultiline(const string &sql, const vector<MatcherToken> &tokens) const;
 
 	// Phase 2: inline short struct literals
@@ -357,14 +357,17 @@ string SQLFormatter::JoinLines(const vector<string> &lines) {
 //! orig_kw is the original token text (or joined original tokens for compounds).
 //! is_structural=true means the keyword is a clause/set-operator keyword that is
 //! always uppercased in UPPER mode (bypasses the ShouldUppercase whitelist check).
-string SQLFormatter::ApplyCase(const string &upper_kw, const string &orig_kw, bool is_structural) const {
+string SQLFormatter::ApplyCase(const string &upper_kw, std::string_view orig_kw, bool is_structural) const {
 	switch (config.keyword_case) {
 	case KeywordCase::UPPER:
-		return (is_structural || ShouldUppercase(upper_kw)) ? upper_kw : orig_kw;
+		if (is_structural || ShouldUppercase(upper_kw)) {
+			return upper_kw;
+		}
+		return string(orig_kw);
 	case KeywordCase::LOWER:
 		return StringUtil::Lower(upper_kw);
 	case KeywordCase::PRESERVE:
-		return orig_kw;
+		return string(orig_kw);
 	default:
 		return upper_kw;
 	}
@@ -469,9 +472,9 @@ string SQLFormatter::FormatMultiline(const string &sql, const vector<MatcherToke
 
 		if (tok.type == TokenType::COMMENT) {
 			// Strip trailing newline from comment text — we manage newlines ourselves.
-			string comment_text = tok.text;
+			std::string_view comment_text = tok.text;
 			while (!comment_text.empty() && (comment_text.back() == '\n' || comment_text.back() == '\r')) {
-				comment_text.pop_back();
+				comment_text.remove_suffix(1);
 			}
 			bool is_block = comment_text.size() >= 2 && comment_text[0] == '/' && comment_text[1] == '*';
 			bool is_line = comment_text.size() >= 2 && comment_text[0] == '-' && comment_text[1] == '-';

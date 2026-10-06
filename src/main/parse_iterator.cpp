@@ -13,8 +13,8 @@
 
 namespace duckdb {
 
-ParseIterator::ParseIterator(ClientContext &context_p, const string &sql_p)
-    : context(context_p), sql(Parser::NormalizeSQLString(sql_p)) {
+ParseIterator::ParseIterator(ClientContext &context_p, std::string_view sql_p) : context(context_p) {
+	sql = Parser::NormalizeSQLString(sql_p, stripped);
 }
 
 ParseIterator::~ParseIterator() = default;
@@ -82,10 +82,9 @@ void ParseIterator::EnsureTokenized() {
 	if (!token_iterator) {
 		// Tokenize the full input once. Subsequent Peek/HasMore calls walk through the iterator;
 		// we never re-tokenize. Tokenization is grammar-free.
-		tokens = make_uniq<vector<MatcherToken>>();
-		ParserTokenizerBehavior behavior(sql, *tokens);
+		ParserTokenizerBehavior behavior(sql, tokens);
 		CompiledGrammar::Get(context).GetTokenizer().TokenizeInput(behavior);
-		token_iterator = make_uniq<TokenIterator>(*tokens);
+		token_iterator = make_uniq<TokenIterator>(tokens);
 	}
 }
 

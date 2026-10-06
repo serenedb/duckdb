@@ -78,7 +78,7 @@ void Connection::ForceParallelism() {
 	ClientConfig::GetConfig(*context).verify_parallelism = true;
 }
 
-unique_ptr<QueryResult> Connection::Query(const string &query) {
+unique_ptr<QueryResult> Connection::Query(std::string_view query) {
 	return context->Query(query, QueryParameters());
 }
 
@@ -86,11 +86,11 @@ unique_ptr<QueryResult> Connection::Query(unique_ptr<SQLStatement> statement, sh
 	return context->Query(std::move(statement), std::move(format));
 }
 
-unique_ptr<QueryResult> Connection::Query(const string &query, shared_ptr<ResultFormat> format) {
+unique_ptr<QueryResult> Connection::Query(std::string_view query, shared_ptr<ResultFormat> format) {
 	return context->Query(query, std::move(format));
 }
 
-unique_ptr<QueryResult> Connection::Submit(const string &query, const QueryParameters &query_parameters) {
+unique_ptr<QueryResult> Connection::Submit(std::string_view query, const QueryParameters &query_parameters) {
 	return context->Submit(query, query_parameters);
 }
 
@@ -99,7 +99,7 @@ unique_ptr<QueryResult> Connection::Submit(unique_ptr<SQLStatement> statement,
 	return context->Submit(std::move(statement), query_parameters);
 }
 
-unique_ptr<QueryResult> Connection::Submit(const string &query, shared_ptr<ResultFormat> format) {
+unique_ptr<QueryResult> Connection::Submit(std::string_view query, shared_ptr<ResultFormat> format) {
 	return context->Submit(query, std::move(format));
 }
 
@@ -107,7 +107,7 @@ unique_ptr<QueryResult> Connection::Submit(unique_ptr<SQLStatement> statement, s
 	return context->Submit(std::move(statement), std::move(format));
 }
 
-unique_ptr<QueryResult> Connection::Submit(const string &query, identifier_map_t<BoundParameterData> &named_values,
+unique_ptr<QueryResult> Connection::Submit(std::string_view query, identifier_map_t<BoundParameterData> &named_values,
                                            const QueryParameters &query_parameters) {
 	return context->Submit(query, named_values, query_parameters);
 }
@@ -127,7 +127,7 @@ static identifier_map_t<BoundParameterData> ConvertParamListToMap(vector<Value> 
 	return named_values;
 }
 
-unique_ptr<QueryResult> Connection::Submit(const string &query, vector<Value> &values,
+unique_ptr<QueryResult> Connection::Submit(std::string_view query, vector<Value> &values,
                                            const QueryParameters &query_parameters) {
 	auto named_params = ConvertParamListToMap(values);
 	return context->Submit(query, named_params, query_parameters);
@@ -140,7 +140,8 @@ unique_ptr<QueryResult> Connection::Submit(unique_ptr<SQLStatement> statement, v
 }
 
 unique_ptr<PreparedStatement>
-Connection::Prepare(const string &query, optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
+Connection::Prepare(std::string_view query,
+                    optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints) {
 	return context->Prepare(query, parameter_type_hints);
 }
 
@@ -150,7 +151,7 @@ Connection::Prepare(unique_ptr<SQLStatement> statement,
 	return context->Prepare(std::move(statement), parameter_type_hints);
 }
 
-unique_ptr<QueryResult> Connection::QueryParamsRecursive(const string &query, vector<Value> &values) {
+unique_ptr<QueryResult> Connection::QueryParamsRecursive(std::string_view query, vector<Value> &values) {
 	auto named_params = ConvertParamListToMap(values);
 	QueryParameters parameters;
 	parameters.statement_args = named_params;
@@ -171,8 +172,8 @@ unique_ptr<TableDescription> Connection::TableInfo(const Identifier &table_name)
 	return TableInfo(Identifier::InvalidCatalog(), Identifier::DefaultSchema(), table_name);
 }
 
-vector<unique_ptr<SQLStatement>> Connection::ExtractStatements(const string &query, vector<idx_t> *raw_statement_ends,
-                                                               bool wrap_multi) {
+vector<unique_ptr<SQLStatement>> Connection::ExtractStatements(std::string_view query,
+                                                               vector<idx_t> *raw_statement_ends, bool wrap_multi) {
 	// Eager convenience over the lazy ClientContext::ExtractStatements iterator: drain the
 	// engine-facing statements into a vector.
 	auto &client_context = *context;
@@ -189,7 +190,7 @@ vector<unique_ptr<SQLStatement>> Connection::ExtractStatements(const string &que
 	return result;
 }
 
-unique_ptr<LogicalOperator> Connection::ExtractPlan(const string &query) {
+unique_ptr<LogicalOperator> Connection::ExtractPlan(std::string_view query) {
 	return context->ExtractPlan(query);
 }
 
@@ -324,16 +325,16 @@ shared_ptr<Relation> Connection::ReadParquet(const string &parquet_file, bool bi
 	return TableFunction("parquet_scan", params, named_parameters)->Alias(parquet_file);
 }
 
-unordered_set<string> Connection::GetTableNames(const string &query, const bool qualified) {
+unordered_set<string> Connection::GetTableNames(std::string_view query, const bool qualified) {
 	return context->GetTableNames(query, qualified);
 }
 
-shared_ptr<Relation> Connection::RelationFromQuery(const string &query, const string &alias, const string &error) {
+shared_ptr<Relation> Connection::RelationFromQuery(std::string_view query, const string &alias, const string &error) {
 	return RelationFromQuery(QueryRelation::ParseStatement(*context, query, error), alias);
 }
 
 shared_ptr<Relation> Connection::RelationFromQuery(unique_ptr<SelectStatement> select_stmt, const string &alias,
-                                                   const string &query_p) {
+                                                   std::string_view query_p) {
 	return make_shared_ptr<QueryRelation>(context, std::move(select_stmt), alias, query_p);
 }
 

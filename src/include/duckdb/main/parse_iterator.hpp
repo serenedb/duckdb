@@ -32,7 +32,7 @@ class TokenIterator;
 //! always sees either a real statement or a clean exhaustion.
 class ParseIterator {
 public:
-	DUCKDB_API ParseIterator(ClientContext &context, const string &sql);
+	DUCKDB_API ParseIterator(ClientContext &context, std::string_view sql);
 	DUCKDB_API ~ParseIterator();
 
 	ParseIterator(const ParseIterator &) = delete;
@@ -64,11 +64,12 @@ private:
 
 private:
 	ClientContext &context;
-	string sql;
+	std::string_view sql;
+	vector<char> stripped;
 	//! Parser instance kept alive across Peek calls so its PEG matcher / transformer caches
 	//! stay warm. Constructed lazily on the first Peek.
 	unique_ptr<Parser> parser;
-	unique_ptr<vector<MatcherToken>> tokens;
+	vector<MatcherToken> tokens;
 	//! Tokenized view of `sql` and its current position. Populated once on the first Peek.
 	unique_ptr<TokenIterator> token_iterator;
 	//! Single-statement buffer holding the result of the most recent Peek. Cleared by

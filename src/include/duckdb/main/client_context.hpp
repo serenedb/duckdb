@@ -188,28 +188,28 @@ public:
 	DUCKDB_API void DisableProfiling();
 
 	//! Blocking. Runs the query to completion and returns its handle. The result is retained
-	DUCKDB_API unique_ptr<QueryResult> Query(const string &query, QueryParameters query_parameters);
+	DUCKDB_API unique_ptr<QueryResult> Query(std::string_view query, QueryParameters query_parameters);
 	DUCKDB_API unique_ptr<QueryResult> Query(unique_ptr<SQLStatement> statement, QueryParameters query_parameters);
 	//! As above, in the given result format
-	DUCKDB_API unique_ptr<QueryResult> Query(const string &query, shared_ptr<ResultFormat> format);
+	DUCKDB_API unique_ptr<QueryResult> Query(std::string_view query, shared_ptr<ResultFormat> format);
 	DUCKDB_API unique_ptr<QueryResult> Query(unique_ptr<SQLStatement> statement, shared_ptr<ResultFormat> format);
 
 	//! Non-blocking. Submits the query and returns its handle. The engine runs it iff threads - external_threads > 0,
 	//! but produces no data until the caller either calls a materializing method on the handle or opens a
 	//! QueryResultStream on it. The query may only contain a single statement.
-	DUCKDB_API unique_ptr<QueryResult> Submit(const string &query, const QueryParameters &query_parameters);
+	DUCKDB_API unique_ptr<QueryResult> Submit(std::string_view query, const QueryParameters &query_parameters);
 	//! Non-blocking. As above, for a parsed statement
 	DUCKDB_API unique_ptr<QueryResult> Submit(unique_ptr<SQLStatement> statement,
 	                                          const QueryParameters &query_parameters);
 	//! Non-blocking. As above, in the given result format
-	DUCKDB_API unique_ptr<QueryResult> Submit(const string &query, shared_ptr<ResultFormat> format);
+	DUCKDB_API unique_ptr<QueryResult> Submit(std::string_view query, shared_ptr<ResultFormat> format);
 	DUCKDB_API unique_ptr<QueryResult> Submit(unique_ptr<SQLStatement> statement, shared_ptr<ResultFormat> format);
 
 	//! Non-blocking. As above, for bound parameter values
 	DUCKDB_API unique_ptr<QueryResult> Submit(unique_ptr<SQLStatement> statement,
 	                                          identifier_map_t<BoundParameterData> &values,
 	                                          QueryParameters query_parameters);
-	DUCKDB_API unique_ptr<QueryResult> Submit(const string &query, identifier_map_t<BoundParameterData> &values,
+	DUCKDB_API unique_ptr<QueryResult> Submit(std::string_view query, identifier_map_t<BoundParameterData> &values,
 	                                          QueryParameters query_parameters);
 
 	//! Blocking. Runs a statement that was generated internally rather than parsed from user SQL. Statement
@@ -253,7 +253,7 @@ public:
 	//! Identifiers use the same scheme as named_param_map (positional "1",
 	//! "2", ... or named).
 	DUCKDB_API unique_ptr<PreparedStatement>
-	Prepare(const string &query,
+	Prepare(std::string_view query,
 	        optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
 	//! Directly prepare a SQL statement
 	DUCKDB_API unique_ptr<PreparedStatement>
@@ -273,7 +273,7 @@ public:
 
 	//! Iterate a query's statements as a StatementIterator (iterator-style API). The caller drives
 	//! Peek() + GetStatement() to walk through ready-to-execute statements one by one
-	DUCKDB_API StatementIterator IterateStatements(const string &query, bool wrap_multi = true);
+	DUCKDB_API StatementIterator IterateStatements(std::string_view query, bool wrap_multi = true);
 
 	//! Preprocess a peel of parse-facing statements into engine-facing ones (PRAGMA reparse,
 	//! MULTI_STATEMENT unpack, transaction wrapping), replacing `buffer` in place. Acquires the
@@ -283,7 +283,7 @@ public:
 	                                     optional_ptr<ClientContextLock> lock = nullptr, bool wrap_multi = true);
 
 	//! Extract the logical plan of a query
-	DUCKDB_API unique_ptr<LogicalOperator> ExtractPlan(const string &query);
+	DUCKDB_API unique_ptr<LogicalOperator> ExtractPlan(std::string_view query);
 
 	//! Runs a function with a valid transaction context, potentially starting a transaction if the context is in auto
 	//! commit mode.
@@ -325,7 +325,7 @@ public:
 	//! Fetch the set of tables names of the query.
 	//! Returns the fully qualified, escaped table names, if qualified is set to true,
 	//! else returns the not qualified, not escaped table names.
-	DUCKDB_API unordered_set<string> GetTableNames(const string &query, const bool qualified = false);
+	DUCKDB_API unordered_set<string> GetTableNames(std::string_view query, const bool qualified = false);
 
 	DUCKDB_API ClientProperties GetClientProperties();
 
@@ -357,7 +357,7 @@ private:
 	unique_ptr<QueryResult> CompleteDelegatedInternal(ClientContextLock &lock, QueryResult &result);
 
 	//! Parse statements from a query
-	vector<unique_ptr<SQLStatement>> ParseStatementsInternal(ClientContextLock &lock, const string &query);
+	vector<unique_ptr<SQLStatement>> ParseStatementsInternal(ClientContextLock &lock, std::string_view query);
 	void StatementVerification(ClientContextLock &lock, unique_ptr<SQLStatement> &statement,
 	                           QueryParameters query_parameters);
 
@@ -406,7 +406,7 @@ private:
 	                                       const QueryParameters &query_parameters);
 
 	template <class T>
-	unique_ptr<T> ErrorResult(ErrorData error, std::string_view query = string());
+	unique_ptr<T> ErrorResult(ErrorData error, std::string_view query = {});
 
 	shared_ptr<PreparedStatementData> CreatePreparedStatementInternal(ClientContextLock &lock,
 	                                                                  unique_ptr<SQLStatement> statement,

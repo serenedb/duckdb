@@ -71,7 +71,8 @@ void TokenIterator::SetPreviousTokenType(TokenType type) {
 string TokenIterator::ToString() const {
 	string result;
 	for (auto &token : tokens) {
-		result += token.text + " ";
+		result += token.text;
+		result += ' ';
 	}
 	return result;
 }

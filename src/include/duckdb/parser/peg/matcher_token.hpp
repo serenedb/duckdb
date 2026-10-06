@@ -16,13 +16,12 @@ namespace duckdb {
 
 struct MatcherToken {
 	// NOLINTNEXTLINE: allow implicit conversion from text
-	MatcherToken(string text_p, idx_t offset_p, TokenType type_p, bool unterminated_p = false)
-	    : type(type_p), text(std::move(text_p)), offset(offset_p), unterminated(unterminated_p) {
-		length = text.length();
+	MatcherToken(std::string_view text_p, idx_t offset_p, TokenType type_p, bool unterminated_p = false)
+	    : type(type_p), text(text_p), offset(offset_p), length(text_p.length()), unterminated(unterminated_p) {
 	}
 
 	TokenType type;
-	string text;
+	std::string_view text;
 	idx_t offset = 0;
 	idx_t length = 0;
 	bool unterminated = false;

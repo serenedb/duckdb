@@ -4,7 +4,7 @@
 
 namespace duckdb {
 
-TokenizerBehavior::TokenizerBehavior(const string &sql, vector<MatcherToken> &tokens) : sql(sql), tokens(tokens) {
+TokenizerBehavior::TokenizerBehavior(std::string_view sql, vector<MatcherToken> &tokens) : sql(sql), tokens(tokens) {
 }
 
 Tokenizer::Tokenizer(const PEGKeywordHelper &keyword_helper_p) : keyword_helper(keyword_helper_p) {
@@ -18,13 +18,12 @@ bool Tokenizer::IsQuotedIdentifierDelimiter(char character) const {
 	return character == '"';
 }
 
-void Tokenizer::HandleLastToken(TokenizerBehavior &behavior, TokenizeState state, const string &sql,
+void Tokenizer::HandleLastToken(TokenizerBehavior &behavior, TokenizeState state, std::string_view sql,
                                 idx_t last_pos) const {
-	string last_word = sql.substr(last_pos, sql.size() - last_pos);
-	behavior.OnLastToken(*this, state, last_word, last_pos);
+	behavior.OnLastToken(*this, state, sql.substr(last_pos), last_pos);
 }
 
-bool Tokenizer::IsCompoundColonToken(const string &sql, idx_t pos, idx_t &token_length) const {
+bool Tokenizer::IsCompoundColonToken(std::string_view sql, idx_t pos, idx_t &token_length) const {
 	if (pos + 1 >= sql.size() || sql[pos] != ':') {
 		return false;
 	}
@@ -35,8 +34,8 @@ bool Tokenizer::IsCompoundColonToken(const string &sql, idx_t pos, idx_t &token_
 	return true;
 }
 
-bool Tokenizer::IsHashOperatorToken(const string &sql, idx_t pos, idx_t &token_length) {
-	const auto rest = std::string_view(sql).substr(pos);
+bool Tokenizer::IsHashOperatorToken(std::string_view sql, idx_t pos, idx_t &token_length) {
+	const auto rest = sql.substr(pos);
 	switch (rest[0]) {
 	case '<':
 		if (rest.starts_with("<#>")) {
@@ -211,8 +210,7 @@ void TokenizerBehavior::PushToken(idx_t start, idx_t end, TokenType type, bool u
 	if (start >= end) {
 		return;
 	}
-	string last_token = sql.substr(start, end - start);
-	tokens.emplace_back(std::move(last_token), start, type, unterminated);
+	tokens.emplace_back(sql.substr(start, end - start), start, type, unterminated);
 	if (tokens.size() < 2) {
 		return;
 	}
@@ -301,7 +299,7 @@ void Tokenizer::PushOperatorToken(TokenizerBehavior &behavior, idx_t start, idx_
 	behavior.PushToken(start, end_pos, TokenType::OPERATOR);
 	// Push any trimmed '+' or '-' characters as individual tokens
 	for (idx_t pos = end_pos; pos < end; pos++) {
-		tokens.emplace_back(string(1, sql[pos]), pos, TokenType::OPERATOR);
+		tokens.emplace_back(sql.substr(pos, 1), pos, TokenType::OPERATOR);
 	}
 }
 
@@ -312,7 +310,7 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 	idx_t last_pos = 0;
 	bool escape_string = false;
 	char quoted_identifier_delimiter = '"';
-	string dollar_quote_marker;
+	std::string_view dollar_quote_marker;
 	idx_t dollar_marker_start = 0;
 	idx_t multi_line_comment_depth = 0;
 	for (idx_t i = 0; i < sql.size(); i++) {
@@ -345,7 +343,7 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 				}
 				if (sql[i + 1] >= '0' && sql[i + 1] <= '9') {
 					// $[numeric] is a parameter, not a dollar-quoted string
-					tokens.emplace_back(string(1, c), i, TokenType::OPERATOR);
+					tokens.emplace_back(sql.substr(i, 1), i, TokenType::OPERATOR);
 					break;
 				}
 				// Dollar-quoted string or collabel parameter ($collabel)
@@ -363,7 +361,7 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 				}
 				if (next_dollar == 0) {
 					// Collabel parameter ($collabel)
-					tokens.emplace_back(string(1, c), i, TokenType::OPERATOR);
+					tokens.emplace_back(sql.substr(i, 1), i, TokenType::OPERATOR);
 					break;
 				}
 				state = TokenizeState::DOLLAR_QUOTED_STRING;
@@ -413,7 +411,7 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 			}
 			if (IsSingleByteOperator(c)) {
 				// single-byte operator - directly push the token
-				tokens.emplace_back(string(1, c), last_pos, TokenType::OPERATOR);
+				tokens.emplace_back(sql.substr(i, 1), last_pos, TokenType::OPERATOR);
 				last_pos = i + 1;
 				break;
 			}
@@ -663,7 +661,7 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 			}
 			// Marker found! Revert to standard state
 			behavior.PushToken(last_pos, end + 1, TokenType::STRING_LITERAL);
-			dollar_quote_marker = string();
+			dollar_quote_marker = {};
 			state = TokenizeState::STANDARD;
 			i = end;
 			last_pos = i + 1;
@@ -698,7 +696,8 @@ void TokenizerBehavior::OnStatementEnd(idx_t pos) {
 	// Default: Do nothing
 }
 
-void TokenizerBehavior::OnLastToken(const Tokenizer &tokenizer, TokenizeState state, string last_word, idx_t last_pos) {
+void TokenizerBehavior::OnLastToken(const Tokenizer &tokenizer, TokenizeState state, std::string_view last_word,
+                                    idx_t last_pos) {
 	if (last_word.empty()) {
 		return;
 	}
@@ -707,7 +706,7 @@ void TokenizerBehavior::OnLastToken(const Tokenizer &tokenizer, TokenizeState st
 	}
 
 	bool is_unterminated = Tokenizer::IsUnterminatedState(state);
-	tokens.emplace_back(std::move(last_word), last_pos, Tokenizer::TokenizeStateToType(state), is_unterminated);
+	tokens.emplace_back(last_word, last_pos, Tokenizer::TokenizeStateToType(state), is_unterminated);
 }
 
 } // namespace duckdb
