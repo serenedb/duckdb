@@ -26,9 +26,19 @@ public:
 	const Matcher &GetChildMatcher() const {
 		return matcher;
 	}
+	MatcherResult EmptyResult(MatchState &state) const {
+		if (!state.BuildParseResult()) {
+			return MatcherResult::Success();
+		}
+		if (GetRule()) {
+			return state.AllocateParseResult<OptionalParseResult>();
+		}
+		return MatcherResult::Success(empty_result);
+	}
 
 private:
 	Matcher &matcher;
+	mutable OptionalParseResult empty_result;
 };
 
 } // namespace duckdb

@@ -200,7 +200,7 @@ MatcherResult MatchStack::MatchOptional(const OptionalMatcher &matcher, MatchSta
 	auto start_offset = StartOffset(child_state);
 	auto child_result = MatchChild(matcher.GetChildMatcher(), child_state, depth);
 	if (!child_result.IsSuccess()) {
-		return state.AllocateParseResult<OptionalParseResult>();
+		return matcher.EmptyResult(state);
 	}
 	state.token_iterator.SetPosition(child_state.token_iterator);
 	if (!child_result.HasParseResult()) {

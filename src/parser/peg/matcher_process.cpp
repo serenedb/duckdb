@@ -206,7 +206,7 @@ public:
 		}
 		awaiting_child = false;
 		if (!child_result->IsSuccess()) {
-			return MatchStep::Complete(state.AllocateParseResult<OptionalParseResult>());
+			return MatchStep::Complete(matcher.EmptyResult(state));
 		}
 		state.token_iterator.SetPosition(child_state.token_iterator);
 		if (!child_result->HasParseResult()) {
