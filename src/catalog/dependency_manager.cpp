@@ -604,14 +604,25 @@ string DependencyManager::FormatDropError(const CatalogEntry &object,
 
 string DependencyManager::CollectDependents(CatalogTransaction transaction, catalog_entry_set_t &entries,
                                             CatalogEntryInfo &info, catalog_entry_set_t &listed) {
-	string result;
+	struct Dependent {
+		string line;
+		reference<CatalogEntry> entry;
+		CatalogEntryInfo info;
+	};
+	vector<Dependent> ordered;
+	ordered.reserve(entries.size());
 	for (auto &entry : entries) {
 		D_ASSERT(!IsSystemEntry(entry.get()));
+		auto other_info = GetLookupProperties(transaction, entry);
+		ordered.push_back({DependencyToString(info, other_info), entry, std::move(other_info)});
+	}
+	std::sort(ordered.begin(), ordered.end(), [](const Dependent &a, const Dependent &b) { return a.line < b.line; });
+	string result;
+	for (auto &[line, entry, other_info] : ordered) {
 		if (!listed.insert(entry).second) {
 			continue;
 		}
-		auto other_info = GetLookupProperties(transaction, entry);
-		result += DependencyToString(info, other_info);
+		result += line;
 		catalog_entry_set_t entry_dependents;
 		ScanDependents(transaction, other_info, [&](DependencyEntry &dep) {
 			auto child = LookupEntry(transaction, dep);
