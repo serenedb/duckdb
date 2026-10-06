@@ -561,7 +561,6 @@ void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, CatalogEnt
 void CatalogSet::CommitDrop(transaction_t commit_id, VisibilityBound visibility_bound, CatalogEntry &entry) {
 	auto &duck_catalog = GetCatalog();
 
-	entry.OnDrop();
 	// Make sure that we don't see any uncommitted changes
 	auto transaction_id = MAX_TRANSACTION_ID;
 	D_ASSERT(IsCommitted(commit_id));

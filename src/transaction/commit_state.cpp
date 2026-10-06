@@ -43,6 +43,10 @@ void CommitDropState::RemoveIndex(TableIndexList &indexes, idx_t index_oid) {
 	pending_index_removals.push_back(PendingIndexRemoval {indexes, index_oid});
 }
 
+void CommitDropState::DropEntry(CatalogEntry &entry) {
+	dropped_entries.push_back(entry);
+}
+
 void CommitDropState::FinalizeCommit() {
 	if (block_manager) {
 		for (auto block_id : dropped_block_ids) {
@@ -55,12 +59,16 @@ void CommitDropState::FinalizeCommit() {
 	for (auto &removal : pending_index_removals) {
 		removal.indexes.get().RemoveIndex(removal.index_oid);
 	}
+	for (auto &entry : dropped_entries) {
+		entry.get().OnDrop();
+	}
 	dropped_block_ids.clear();
 	pending_index_removals.clear();
+	dropped_entries.clear();
 }
 
 bool CommitDropState::Empty() const {
-	return dropped_block_ids.empty() && pending_index_removals.empty();
+	return dropped_block_ids.empty() && pending_index_removals.empty() && dropped_entries.empty();
 }
 
 //===--------------------------------------------------------------------===//
@@ -302,6 +310,7 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 			}
 		} else if (new_entry.type == CatalogType::DELETED_ENTRY && old_entry.set) {
 			old_entry.set->CommitDrop(commit_id, transaction.view.visibility_bound, old_entry);
+			info.drop_state->DropEntry(old_entry);
 		}
 		lock_guard<mutex> read_lock(old_entry.set->GetCatalogLock());
 
