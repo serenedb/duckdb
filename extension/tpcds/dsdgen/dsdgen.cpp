@@ -559,7 +559,7 @@ private:
 	bool GenerateSequential() {
 		EnsureSequentialThreadState();
 		idx_t generated_count = 0;
-		while (generated_count < row_batch_size) {
+		while (generated_count < row_batch_size || (table_started && current_table_type_2)) {
 			if (!table_started && !StartNextTable()) {
 				Finish();
 				return true;
@@ -747,9 +747,9 @@ private:
 			current_row = 1;
 			current_table_remaining = GetRowCount(table_id);
 			current_table_progress_units_per_row = GetDSDGenTableProgressUnitsPerRow(table_id);
-			if (table_def.fl_small) {
-				ResetCountCount();
-			}
+			current_table_type_2 = table_def.fl_type_2;
+			InitializeDSDgen(scale);
+			RefreshSequentialAppendTableDefinitions();
 			builder_func = GetTDefFunctionByNumber(table_id);
 			D_ASSERT(builder_func);
 			table_started = true;
@@ -823,6 +823,7 @@ private:
 
 	int table_id = CALL_CENTER;
 	bool table_started = false;
+	bool current_table_type_2 = false;
 	ds_key_t current_row = 1;
 	ds_key_t current_table_remaining = 0;
 	idx_t current_table_progress_units_per_row = 1;
