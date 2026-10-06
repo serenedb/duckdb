@@ -8,6 +8,7 @@ add_library_unity(
   execute_function.cpp
   execute_lambda.cpp
   execute_operator.cpp
+  constant_in_list.cpp
   execute_parameter.cpp
   execute_reference.cpp)
 set(ALL_OBJECT_FILES

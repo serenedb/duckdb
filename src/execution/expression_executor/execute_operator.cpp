@@ -1,5 +1,6 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/execution/constant_in_list.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
@@ -30,6 +31,9 @@ void ExpressionExecutor::Execute(const BoundOperatorExpression &expr, Expression
 		Vector left(expr.GetChildren()[0]->GetReturnType());
 		// eval left side
 		Execute(*expr.GetChildren()[0], state->child_states[0].get(), sel, count, left);
+		if (ConstantInList::TryExecute(expr, left, count, result)) {
+			return;
+		}
 
 		// init result to false
 		Vector intermediate(LogicalType::BOOLEAN);
