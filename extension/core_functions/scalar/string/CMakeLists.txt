@@ -23,6 +23,7 @@ add_library_unity(
   fast_trim.cpp
   ascii_translate.cpp
   bit_parallel_levenshtein.cpp
+  simple_printf.cpp
   trim.cpp
   format_bytes.cpp
   parse_formatted_bytes.cpp
