@@ -393,6 +393,17 @@ bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntr
 	return CreateEntryInternal(transaction, new_name, std::move(renamed_node), read_lock);
 }
 
+static unique_ptr<StorageLockKey> LockTableStorage(CatalogEntry &entry) {
+	if (entry.type != CatalogType::TABLE_ENTRY) {
+		return nullptr;
+	}
+	auto &table = entry.Cast<TableCatalogEntry>();
+	if (!table.IsDuckTable()) {
+		return nullptr;
+	}
+	return table.Cast<DuckTableEntry>().GetStorage().GetDataTableInfo()->alter_lock.GetExclusiveLock();
+}
+
 bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info) {
 	// If the entry does not exist, we error
 	auto entry = GetEntry(transaction, name);
@@ -407,6 +418,7 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	    IdentifierEquality(map.IsCaseSensitive())(*new_name, entry->name)) {
 		ThrowRenameConflict(*entry, *new_name);
 	}
+	auto table_lock = LockTableStorage(*entry);
 
 	// Use the existing entry to create the altered entry
 	auto value = entry->AlterEntry(transaction, alter_info);
@@ -528,6 +540,8 @@ bool CatalogSet::DropEntry(CatalogTransaction transaction, const Identifier &nam
 	if (!DropDependencies(transaction, name, cascade, allow_drop_internal)) {
 		return false;
 	}
+	auto entry = GetEntry(transaction, name);
+	auto table_lock = entry ? LockTableStorage(*entry) : nullptr;
 	lock_guard<mutex> write_lock(catalog.GetWriteLock());
 	lock_guard<mutex> read_lock(catalog_lock);
 	return DropEntryInternal(transaction, name, allow_drop_internal);

@@ -431,6 +431,7 @@ ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Tra
 		return error;
 	}
 	auto &storage_manager = db.GetStorageManager();
+	prepared.table_locks = transaction.LockModifiedTables();
 	if (&catalog_owner != &db) {
 		prepared.commit_lock = storage_manager.GetCommitLock();
 	}
@@ -602,6 +603,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	auto undo_properties = transaction.GetUndoProperties();
 	auto checkpoint_decision = CanCheckpoint(transaction, lock, undo_properties);
 	// orders this commit's append and commit or revert against checkpoints; read-only transactions commit without it
+	vector<unique_ptr<StorageLockKey>> table_locks;
 	unique_lock<mutex> held_commit_lock;
 	unique_ptr<StorageCommitState> commit_state;
 	optional_ptr<WriteAheadLog> commit_wal;
@@ -627,6 +629,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		// the appended rows stay invisible until the commit below
 		// note: if we are checkpointing, we have already made certain decisions (e.g. the CheckpointType)
 		t_lock.unlock();
+		table_locks = transaction.LockModifiedTables();
 		// grab the commit lock and hold it until the entire commit is finished
 		held_commit_lock = db.GetStorageManager().GetCommitLock();
 
@@ -755,6 +758,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	// We do not need to hold the transaction lock during cleanup of transactions,
 	// as they (1) have been removed, or (2) enter cleanup_info.
 	t_lock.unlock();
+	table_locks.clear();
 	// if we have skipped the WAL write due to checkpoint, we keep the commit lock while checkpointing
 	// this prevents any concurrent transactions from happening during this time
 	if (!skip_wal_write_due_to_checkpoint && held_commit_lock.owns_lock()) {

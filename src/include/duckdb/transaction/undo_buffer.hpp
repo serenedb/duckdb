@@ -13,6 +13,7 @@
 #include "duckdb/transaction/undo_buffer_allocator.hpp"
 #include "duckdb/transaction/catalog_run.hpp"
 #include "duckdb/common/enums/active_transaction_state.hpp"
+#include "duckdb/storage/table/data_table_info.hpp"
 
 namespace duckdb {
 class BufferManager;
@@ -54,6 +55,7 @@ public:
 
 	bool ChangesMade();
 	UndoBufferProperties GetProperties();
+	void AddModifiedTables(vector<reference<DataTableInfo>> &tables);
 
 	//! Cleanup the undo buffer
 	void Cleanup(VisibilityBound lowest_visibility_bound);

@@ -95,6 +95,7 @@ public:
 
 	bool ChangesMade();
 	UndoBufferProperties GetUndoProperties();
+	vector<unique_ptr<StorageLockKey>> LockModifiedTables();
 
 	void PushDelete(DuckTableEntry &table_entry, RowVersionManager &info, idx_t vector_idx, row_t rows[], idx_t count,
 	                idx_t base_row);
@@ -125,6 +126,7 @@ public:
 		explicit PreparedCommit(optional_ptr<BlockManager> block_manager);
 		~PreparedCommit();
 
+		vector<unique_ptr<StorageLockKey>> table_locks;
 		unique_lock<mutex> commit_lock;
 		unique_ptr<StorageCommitState> commit_state;
 		idx_t prepared_offset = 0;

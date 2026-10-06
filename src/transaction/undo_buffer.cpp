@@ -14,6 +14,7 @@
 #include "duckdb/transaction/cleanup_state.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 #include "duckdb/transaction/delete_info.hpp"
+#include "duckdb/transaction/update_info.hpp"
 #include "duckdb/transaction/rollback_state.hpp"
 #include "duckdb/transaction/wal_write_state.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
@@ -106,6 +107,25 @@ void UndoBuffer::ReverseIterateEntries(T &&callback) {
 bool UndoBuffer::ChangesMade() {
 	// we need to search for any index creation entries
 	return allocator.head.get();
+}
+
+void UndoBuffer::AddModifiedTables(vector<reference<DataTableInfo>> &tables) {
+	if (!ChangesMade()) {
+		return;
+	}
+	IteratorState iterator_state;
+	IterateEntries(iterator_state, [&](UndoFlags entry_type, data_ptr_t data) {
+		switch (entry_type) {
+		case UndoFlags::DELETE_TUPLE:
+			tables.push_back(*reinterpret_cast<DeleteInfo *>(data)->table->GetStorage().GetDataTableInfo());
+			break;
+		case UndoFlags::UPDATE_TUPLE:
+			tables.push_back(*reinterpret_cast<UpdateInfo *>(data)->table->GetStorage().GetDataTableInfo());
+			break;
+		default:
+			break;
+		}
+	});
 }
 
 UndoBufferProperties UndoBuffer::GetProperties() {

@@ -25,6 +25,9 @@
 #include "duckdb/storage/storage_lock.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
+#include "duckdb/common/algorithm.hpp"
+
+#include <functional>
 
 namespace duckdb {
 
@@ -212,6 +215,27 @@ UndoBufferProperties DuckTransaction::GetUndoProperties() {
 	auto properties = undo_buffer.GetProperties();
 	properties.estimated_size += storage->EstimatedSize();
 	return properties;
+}
+
+vector<unique_ptr<StorageLockKey>> DuckTransaction::LockModifiedTables() {
+	vector<reference<DataTableInfo>> tables;
+	for (auto &table : storage->GetTables()) {
+		tables.push_back(*table.get().GetDataTableInfo());
+	}
+	undo_buffer.AddModifiedTables(tables);
+	std::sort(tables.begin(), tables.end(), [](const DataTableInfo &left, const DataTableInfo &right) {
+		return std::less<const DataTableInfo *>()(&left, &right);
+	});
+	vector<unique_ptr<StorageLockKey>> locks;
+	optional_ptr<DataTableInfo> previous;
+	for (auto &table : tables) {
+		if (previous.get() == &table.get()) {
+			continue;
+		}
+		previous = table.get();
+		locks.push_back(table.get().alter_lock.GetSharedLock());
+	}
+	return locks;
 }
 
 bool DuckTransaction::AutomaticCheckpoint(AttachedDatabase &db, const UndoBufferProperties &properties) {
