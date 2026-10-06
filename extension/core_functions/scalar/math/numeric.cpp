@@ -997,6 +997,35 @@ struct RoundOperatorPrecision {
 	}
 };
 
+template <class T, class ROUND_POLICY>
+static void RoundPrecisionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &precision_vector = args.data[1];
+	if (precision_vector.GetVectorType() != VectorType::CONSTANT_VECTOR || ConstantVector::IsNull(precision_vector)) {
+		ScalarFunction::BinaryFunction<T, int32_t, T, RoundOperatorPrecision<ROUND_POLICY>>(args, state, result);
+		return;
+	}
+	auto precision = ConstantVector::GetData<int32_t>(precision_vector)[0];
+	if (precision < 0) {
+		double modifier = std::pow(10, -T(precision));
+		UnaryExecutor::Execute<T, T>(args.data[0], result, args.size(), [&](T input) {
+			double rounded_value = ROUND_POLICY::Nearest(input / modifier) * modifier;
+			if (std::isinf(rounded_value) || std::isnan(rounded_value)) {
+				return T(0);
+			}
+			return LossyNumericCast<T>(rounded_value);
+		});
+	} else {
+		double modifier = std::pow(10, T(precision));
+		UnaryExecutor::Execute<T, T>(args.data[0], result, args.size(), [&](T input) {
+			double rounded_value = ROUND_POLICY::Nearest(input * modifier) / modifier;
+			if (std::isinf(rounded_value) || std::isnan(rounded_value)) {
+				return input;
+			}
+			return LossyNumericCast<T>(rounded_value);
+		});
+	}
+}
+
 struct RoundOperator {
 	template <class TA, class TR>
 	static inline TR Operation(TA input) {
@@ -1131,13 +1160,11 @@ ScalarFunctionSet RoundFun::GetFunctions() {
 		switch (type.id()) {
 		case LogicalTypeId::FLOAT:
 			round_func = ScalarFunction::UnaryFunction<float, float, RoundOperator>;
-			round_prec_func =
-			    ScalarFunction::BinaryFunction<float, int32_t, float, RoundOperatorPrecision<RoundHalfAwayFromZero>>;
+			round_prec_func = RoundPrecisionFunction<float, RoundHalfAwayFromZero>;
 			break;
 		case LogicalTypeId::DOUBLE:
 			round_func = ScalarFunction::UnaryFunction<double, double, RoundOperator>;
-			round_prec_func =
-			    ScalarFunction::BinaryFunction<double, int32_t, double, RoundOperatorPrecision<RoundHalfAwayFromZero>>;
+			round_prec_func = RoundPrecisionFunction<double, RoundHalfAwayFromZero>;
 			break;
 		case LogicalTypeId::DECIMAL:
 			bind_func = BindGenericRoundFunctionDecimal<RoundDecimalOperator>;
@@ -1205,12 +1232,10 @@ ScalarFunctionSet RoundEvenFun::GetFunctions() {
 		bind_scalar_function_t bind_prec_func = nullptr;
 		switch (type.id()) {
 		case LogicalTypeId::FLOAT:
-			round_prec_func =
-			    ScalarFunction::BinaryFunction<float, int32_t, float, RoundOperatorPrecision<RoundHalfToEven>>;
+			round_prec_func = RoundPrecisionFunction<float, RoundHalfToEven>;
 			break;
 		case LogicalTypeId::DOUBLE:
-			round_prec_func =
-			    ScalarFunction::BinaryFunction<double, int32_t, double, RoundOperatorPrecision<RoundHalfToEven>>;
+			round_prec_func = RoundPrecisionFunction<double, RoundHalfToEven>;
 			break;
 		case LogicalTypeId::DECIMAL:
 			bind_prec_func = BindDecimalRoundPrecision<DecimalRoundNegativePrecisionOperator<RoundHalfToEven>,
