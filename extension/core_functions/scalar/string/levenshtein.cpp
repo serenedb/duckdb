@@ -1,4 +1,5 @@
 #include "core_functions/scalar/string_functions.hpp"
+#include "core_functions/scalar/bit_parallel_levenshtein.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/common/string_util.hpp"
 
@@ -25,6 +26,12 @@ static idx_t LevenshteinDistance(const string_t &txt, const string_t &tgt) {
 
 	auto txt_str = txt.GetData();
 	auto tgt_str = tgt.GetData();
+	if (tgt_len <= BitParallelLevenshtein::MAX_PATTERN_SIZE) {
+		return BitParallelLevenshtein::Distance(tgt_str, tgt_len, txt_str, txt_len);
+	}
+	if (txt_len <= BitParallelLevenshtein::MAX_PATTERN_SIZE) {
+		return BitParallelLevenshtein::Distance(txt_str, txt_len, tgt_str, tgt_len);
+	}
 
 	// Create two working vectors
 	vector<idx_t> distances0(tgt_len + 1, 0);
@@ -56,9 +63,7 @@ static idx_t LevenshteinDistance(const string_t &txt, const string_t &tgt) {
 
 			distances1[pos_tgt + 1] = MinValue(cost_deletion, MinValue(cost_substitution, cost_insertion));
 		}
-		// copy distances1 (current row) to distances0 (previous row) for next iteration
-		// since data in distances1 is always invalidated, a swap without copy is more efficient
-		distances0 = distances1;
+		std::swap(distances0, distances1);
 	}
 
 	return distances0[tgt_len];

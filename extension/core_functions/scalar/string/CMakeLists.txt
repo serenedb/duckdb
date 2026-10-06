@@ -22,6 +22,7 @@ add_library_unity(
   fast_replace.cpp
   fast_trim.cpp
   ascii_translate.cpp
+  bit_parallel_levenshtein.cpp
   trim.cpp
   format_bytes.cpp
   parse_formatted_bytes.cpp
