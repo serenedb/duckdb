@@ -3,6 +3,10 @@
 #include "duckdb/storage/storage_manager.hpp"
 #include "test_helpers.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
+#include <filesystem>
+
 using namespace duckdb;
 
 static void test_in_memory_initialization(string dbdir) {
@@ -10,6 +14,14 @@ static void test_in_memory_initialization(string dbdir) {
 	duckdb::unique_ptr<DuckDB> db;
 	duckdb::unique_ptr<Connection> con;
 	string in_memory_tmp = ".tmp";
+
+	const auto work_dir = std::filesystem::absolute(TestCreatePath("in_memory_initialization"));
+	std::filesystem::create_directories(work_dir);
+	const auto previous_dir = std::filesystem::current_path();
+	std::filesystem::current_path(work_dir);
+	absl::Cleanup restore_dir = [&] {
+		std::filesystem::current_path(previous_dir);
+	};
 
 	// make sure the temporary folder does not exist
 	DeleteDatabase(dbdir);
