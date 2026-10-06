@@ -155,6 +155,9 @@ public:
 				if (!child_result->HasParseResult()) {
 					return MatchStep::Complete(MatcherResult::Success());
 				}
+				if (matcher.IsCollapsible() && child_result->GetParseResult()->GetRule()) {
+					return MatchStep::Complete(*child_result);
+				}
 				return MatchStep::Complete(state.AllocateParseResult<ChoiceParseResult>(*child_result->GetParseResult(),
 				                                                                        child_index, start_offset));
 			}

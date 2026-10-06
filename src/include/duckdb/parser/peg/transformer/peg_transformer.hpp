@@ -276,6 +276,7 @@ struct TransformFrameOps {
 	const char *name;
 	transform_process_initialize_t initialize;
 	transform_process_finalize_t finalize;
+	bool collapsible = false;
 };
 
 template <typename T>

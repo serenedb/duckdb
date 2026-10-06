@@ -190,6 +190,9 @@ MatcherResult MatchStack::MatchChoice(const ChoiceMatcher &matcher, MatchState &
 		if (!child_result.HasParseResult()) {
 			return MatcherResult::Success();
 		}
+		if (matcher.IsCollapsible() && child_result.GetParseResult()->GetRule()) {
+			return child_result;
+		}
 		return state.AllocateParseResult<ChoiceParseResult>(*child_result.GetParseResult(), child_index, start_offset);
 	}
 	return MatcherResult::Failure();

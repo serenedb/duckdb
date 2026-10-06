@@ -168,6 +168,9 @@ Matcher &MatcherFactory::CreateMatcher(string_t rule_name, vector<reference<Matc
 	}
 	if (compiled_rule.collapsible) {
 		matcher.SetCollapsible();
+		if (rule.expression.type == PEGExpression::Type::CHOICE) {
+			expression_matcher.SetCollapsible();
+		}
 	}
 	if (no_suggestion_rules.count(rule_name)) {
 		matcher.Cast<ListMatcher>().suppress_suggestions = true;

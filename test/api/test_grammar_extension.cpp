@@ -529,6 +529,16 @@ TEST_CASE("Overriding a transform opts its rule out of collapsing", "[api][gramm
 	REQUIRE(TransformFirstSelectExpression(grammar, "SELECT 1 + 1") == "7");
 }
 
+TEST_CASE("A collapsible choice rule hands out the alternative it matched", "[api][grammar_extension]") {
+	auto grammar = ParsedGrammar::CreateDefault();
+	grammar.SetTransformProcess("SingleExpression", StartConstantSevenTransform);
+	REQUIRE(TransformFirstSelectExpression(grammar, "SELECT 1") == "7");
+
+	grammar.SetTransformProcess("SingleExpression", StartConstantSevenTransform, true);
+	REQUIRE(TransformFirstSelectExpression(grammar, "SELECT 1") == "1");
+	REQUIRE(TransformFirstSelectExpression(grammar, "SELECT x") == "x");
+}
+
 struct MatchProcessLifetimeState {
 	idx_t active = 0;
 	idx_t started = 0;
