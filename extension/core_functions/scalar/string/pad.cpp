@@ -1,4 +1,5 @@
 #include "core_functions/scalar/string_functions.hpp"
+#include "core_functions/scalar/fast_pad.hpp"
 
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception.hpp"
@@ -81,6 +82,7 @@ static string_t LeftPadFunction(const string_t &str, const int32_t len, const st
 }
 
 struct LeftPadOperator {
+	static constexpr bool LEFT = true;
 	static inline string_t Operation(const string_t &str, const int32_t len, const string_t &pad,
 	                                 vector<char> &result) {
 		return LeftPadFunction(str, len, pad, result);
@@ -110,6 +112,7 @@ static string_t RightPadFunction(const string_t &str, const int32_t len, const s
 }
 
 struct RightPadOperator {
+	static constexpr bool LEFT = false;
 	static inline string_t Operation(const string_t &str, const int32_t len, const string_t &pad,
 	                                 vector<char> &result) {
 		return RightPadFunction(str, len, pad, result);
@@ -127,6 +130,10 @@ static void PadFunction(DataChunk &args, ExpressionState &state, Vector &result)
 	TernaryExecutor::Execute<string_t, int32_t, string_t, string_t>(
 	    str_vector, len_vector, pad_vector, result, [&](string_t str, int32_t len, string_t pad) {
 		    len = MaxValue<int32_t>(len, 0);
+		    string_t padded;
+		    if (FastPad::TryPad(OP::LEFT, str, UnsafeNumericCast<idx_t>(len), pad, result, padded)) {
+			    return padded;
+		    }
 		    return heap.AddString(OP::Operation(str, len, pad, buffer));
 	    });
 }
