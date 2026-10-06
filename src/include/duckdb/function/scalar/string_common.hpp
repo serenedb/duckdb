@@ -13,6 +13,7 @@ idx_t FirstNonAscii(const char *input, idx_t n);
 //! Decodes one codepoint and returns its length - throws an InternalException on invalid UTF-8
 idx_t DecodeCodepoint(const char *input, idx_t size, int32_t &codepoint);
 idx_t Utf8CharacterCount(const char *input, idx_t n);
+idx_t SegmentedGraphemeCount(const char *input, idx_t size);
 idx_t LowerLength(const char *input_data, idx_t input_length);
 void LowerCase(const char *input_data, idx_t input_length, char *result_data);
 idx_t FindStrInStr(const string_t &haystack_s, const string_t &needle_s);
@@ -49,7 +50,7 @@ static inline TR GraphemeCount(TA input) {
 		// ASCII: every byte is a grapheme cluster
 		return UnsafeNumericCast<TR>(input_length);
 	}
-	return UnsafeNumericCast<TR>(Utf8Proc::GraphemeCount(input_data, input_length));
+	return UnsafeNumericCast<TR>(SegmentedGraphemeCount(input_data, input_length));
 }
 
 } // namespace duckdb
