@@ -3,6 +3,7 @@
 #include "duckdb/common/vector/map_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/function/scalar/regexp.hpp"
+#include "duckdb/function/scalar/regexp_class_run.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -133,6 +134,8 @@ void RegexpExtractAll::Execute(DataChunk &args, ExpressionState &state, Vector &
 		}
 	}
 
+	RegexpClassRun class_run;
+	const bool use_class_run = info.constant_pattern && class_run.Init(GetPattern(info, state, stored_re));
 	auto list_writer = FlatVector::Writer<VectorListType<string_t>>(result, args.size());
 	for (idx_t row = 0; row < args.size(); row++) {
 		bool pattern_valid = true;
@@ -162,6 +165,16 @@ void RegexpExtractAll::Execute(DataChunk &args, ExpressionState &state, Vector &
 		                   : *non_const_args;
 		auto &string_val = string_entry.GetValue();
 		auto list = list_writer.WriteDynamicList();
+		if (use_class_run && group_index == 0) {
+			idx_t pos = 0;
+			idx_t begin;
+			idx_t end;
+			while (class_run.Next(string_val.GetData(), string_val.GetSize(), pos, begin, end)) {
+				list.WriteElement().WriteStringRef(
+				    string_t(string_val.GetData() + begin, UnsafeNumericCast<uint32_t>(end - begin)));
+			}
+			continue;
+		}
 		ExtractAllMatches(string_val, re, group_index, groups, [&](const duckdb_re2::StringPiece &match_group) {
 			auto &child_writer = list.WriteElement();
 			if (match_group.empty()) {

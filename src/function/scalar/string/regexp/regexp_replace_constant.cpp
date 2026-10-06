@@ -19,9 +19,12 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "duckdb/function/scalar/regexp_replace_constant.hpp"
+#include "duckdb/function/scalar/regexp_class_run.hpp"
 
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
+
+#include <cstring>
 
 namespace duckdb {
 
@@ -74,6 +77,31 @@ static bool ReplaceAll(const duckdb_re2::RE2 &re, const string_t &input, const d
 	return true;
 }
 
+static bool ReplaceRuns(const RegexpClassRun &class_run, const string_t &input, const duckdb_re2::StringPiece &rewrite,
+                        std::string &buffer) {
+	auto data = input.GetData();
+	auto size = input.GetSize();
+	idx_t pos = 0;
+	idx_t begin;
+	idx_t end;
+	idx_t copied = 0;
+	bool replaced = false;
+	while (class_run.Next(data, size, pos, begin, end)) {
+		if (!replaced) {
+			buffer.clear();
+			replaced = true;
+		}
+		buffer.append(data + copied, begin - copied);
+		buffer.append(rewrite.data(), rewrite.size());
+		copied = end;
+	}
+	if (!replaced) {
+		return false;
+	}
+	buffer.append(data + copied, size - copied);
+	return true;
+}
+
 void RegexpReplaceConstant::Execute(const Vector &strings, string_t replace, RegexLocalState &lstate, Vector &result,
                                     bool global) {
 	const auto &re = lstate.constant_pattern;
@@ -83,6 +111,8 @@ void RegexpReplaceConstant::Execute(const Vector &strings, string_t replace, Reg
 	StringVector::AddHeapReference(result, strings);
 	std::string buffer;
 	duckdb_re2::StringPiece vec[10];
+	RegexpClassRun class_run;
+	const bool use_class_run = global && !memchr(rewrite.data(), '\\', rewrite.size()) && class_run.Init(re);
 	UnaryExecutor::Execute<string_t, string_t>(strings, result, [&](string_t input) {
 		if (!rewrite_checked) {
 			std::string rewrite_error;
@@ -90,6 +120,12 @@ void RegexpReplaceConstant::Execute(const Vector &strings, string_t replace, Reg
 				throw InvalidInputException("Invalid replacement string for regexp_replace: %s", rewrite_error);
 			}
 			rewrite_checked = true;
+		}
+		if (use_class_run) {
+			if (!ReplaceRuns(class_run, input, rewrite, buffer)) {
+				return input;
+			}
+			return StringVector::AddString(result, buffer);
 		}
 		if (global) {
 			if (!ReplaceAll(re, input, rewrite, vec, nvec, buffer)) {
