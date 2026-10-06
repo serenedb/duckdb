@@ -870,6 +870,17 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	create_info->tags = tags;
 	create_info->dependencies = dependencies;
 	create_info->columns.SetCaseSensitive(columns.IsCaseSensitive());
+	const bool columns_own_serial_sequences = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (columns_own_serial_sequences) {
+		const SubDependency default_of {AlterTableType::SET_DEFAULT, columns.GetColumn(removed_index).Name()};
+		LogicalDependencyList kept;
+		for (auto &dependency : dependencies.Set()) {
+			if (!dependency.owned_by || !dependency.subdependencies.contains(default_of)) {
+				kept.AddDependency(dependency);
+			}
+		}
+		create_info->dependencies = std::move(kept);
+	}
 
 	logical_index_set_t removed_columns;
 	if (column_dependency_manager.HasDependents(removed_index)) {
