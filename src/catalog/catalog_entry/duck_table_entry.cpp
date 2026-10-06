@@ -865,7 +865,10 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 		throw CatalogException("Cannot drop column: column is a dependency of 1 or more generated column(s)");
 	}
 	bool dropped_column_is_generated = false;
+	vector<LogicalIndex> adjusted_indices;
+	adjusted_indices.reserve(columns.LogicalColumnCount());
 	for (auto &col : columns.Logical()) {
+		adjusted_indices.push_back(LogicalIndex(create_info->columns.LogicalColumnCount()));
 		if (col.Logical() == removed_index || removed_columns.count(col.Logical())) {
 			if (col.Generated()) {
 				dropped_column_is_generated = true;
@@ -878,7 +881,6 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	if (create_info->columns.empty() && !allow_zero_columns) {
 		throw CatalogException("Cannot drop column: table only has one column remaining!");
 	}
-	auto adjusted_indices = column_dependency_manager.RemoveColumn(removed_index, columns.LogicalColumnCount());
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_constraints = binder->BindConstraints(constraints, name, columns);
