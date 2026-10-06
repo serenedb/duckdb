@@ -1,20 +1,41 @@
+#include "duckdb/common/bit_utils.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "core_functions/scalar/string_functions.hpp"
 
+#include <array>
+#include <cstring>
+
 namespace duckdb {
+
+static const char *LowercaseHexPairs() {
+	static const auto pairs = [] {
+		std::array<char, 512> table {};
+		for (idx_t byte = 0; byte < 256; byte++) {
+			table[2 * byte] = "0123456789abcdef"[byte >> 4];
+			table[2 * byte + 1] = "0123456789abcdef"[byte & 0x0F];
+		}
+		return table;
+	}();
+	return pairs.data();
+}
 
 template <class T>
 static void LowercaseHexFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto pairs = LowercaseHexPairs();
 	UnaryExecutor::Execute<T, string_t>(args.data[0], result, args.size(), [&](T value) {
 		using UNSIGNED = typename std::make_unsigned<T>::type;
 		auto remaining = static_cast<UNSIGNED>(value);
-		char buffer[sizeof(UNSIGNED) * 2];
-		idx_t position = sizeof(buffer);
-		do {
-			buffer[--position] = "0123456789abcdef"[remaining & 0xF];
-			remaining >>= 4;
-		} while (remaining != 0);
-		return StringVector::AddString(result, buffer + position, sizeof(buffer) - position);
+		constexpr idx_t SIZE = sizeof(UNSIGNED) * 2;
+		char buffer[SIZE];
+		for (idx_t i = sizeof(UNSIGNED); i > 0; i--) {
+			memcpy(buffer + 2 * (i - 1), pairs + 2 * (remaining & 0xFF), 2);
+			remaining = static_cast<UNSIGNED>(remaining >> 4 >> 4);
+		}
+		auto leading = CountZeros<uint64_t>::Leading(static_cast<uint64_t>(static_cast<UNSIGNED>(value))) -
+		               (64 - 8 * sizeof(UNSIGNED));
+		idx_t digits = SIZE - leading / 4;
+		digits = MaxValue<idx_t>(digits, 1);
+		return StringVector::AddString(result, buffer + SIZE - digits, digits);
 	});
 }
 
