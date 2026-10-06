@@ -80,8 +80,9 @@ unique_ptr<GlobalTableFunctionState> DuckDBSequencesInit(ClientContext &context,
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
 	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::SEQUENCE_ENTRY,
-		                  [&](CatalogEntry &entry) { result->entries.push_back(entry.Cast<SequenceCatalogEntry>()); });
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::SEQUENCE_ENTRY, [&](CatalogEntry &entry) {
+			result->entries.push_back(entry.Cast<SequenceCatalogEntry>());
+		});
 	};
 	return std::move(result);
 }

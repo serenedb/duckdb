@@ -536,6 +536,8 @@ public:
 	DUCKDB_API static vector<reference<SchemaCatalogEntry>>
 	GetAllSchemas(ClientContext &context, bool include_hidden = false,
 	              const std::function<bool(AttachedDatabase &)> &needs_database = nullptr);
+	DUCKDB_API static void ScanListedEntries(ClientContext &context, SchemaCatalogEntry &schema, CatalogType type,
+	                                         const std::function<void(CatalogEntry &)> &callback);
 
 	static vector<reference<CatalogEntry>> GetAllEntries(ClientContext &context, CatalogType catalog_type);
 

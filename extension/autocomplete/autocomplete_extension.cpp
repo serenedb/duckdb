@@ -90,7 +90,7 @@ static vector<reference<CatalogEntry>> GetAllTables(ClientContext &context, bool
 	auto schemas = Catalog::GetAllSchemas(context);
 	for (auto &schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		schema.Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			if (!entry.internal || for_table_names) {
 				result.push_back(entry);
 			}
@@ -99,14 +99,14 @@ static vector<reference<CatalogEntry>> GetAllTables(ClientContext &context, bool
 	if (for_table_names) {
 		for (auto &schema_ref : schemas) {
 			auto &schema = schema_ref.get();
-			schema.Scan(context, CatalogType::TABLE_FUNCTION_ENTRY,
-			            [&](CatalogEntry &entry) { result.push_back(entry); });
+			Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_FUNCTION_ENTRY,
+			                           [&](CatalogEntry &entry) { result.push_back(entry); });
 		};
 	} else {
 		for (auto &schema_ref : schemas) {
 			auto &schema = schema_ref.get();
-			schema.Scan(context, CatalogType::SCALAR_FUNCTION_ENTRY,
-			            [&](CatalogEntry &entry) { result.push_back(entry); });
+			Catalog::ScanListedEntries(context, schema, CatalogType::SCALAR_FUNCTION_ENTRY,
+			                           [&](CatalogEntry &entry) { result.push_back(entry); });
 		};
 	}
 	return result;
@@ -118,7 +118,8 @@ static vector<reference<CatalogEntry>> GetAllTypes(ClientContext &context) {
 	auto schemas = Catalog::GetAllSchemas(context);
 	for (auto &schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		schema.Scan(context, CatalogType::TYPE_ENTRY, [&](CatalogEntry &entry) { result.push_back(entry); });
+		Catalog::ScanListedEntries(context, schema, CatalogType::TYPE_ENTRY,
+		                           [&](CatalogEntry &entry) { result.push_back(entry); });
 	};
 	return result;
 }

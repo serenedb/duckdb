@@ -71,8 +71,8 @@ unique_ptr<GlobalTableFunctionState> DuckDBViewsInit(ClientContext &context, Tab
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
 	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::VIEW_ENTRY,
-		                  [&](CatalogEntry &entry) { result->entries.push_back(entry); });
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::VIEW_ENTRY,
+		                           [&](CatalogEntry &entry) { result->entries.push_back(entry); });
 	};
 	result->column_ids = input.column_indexes;
 	return std::move(result);

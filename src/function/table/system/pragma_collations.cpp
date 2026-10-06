@@ -28,8 +28,9 @@ unique_ptr<GlobalTableFunctionState> PragmaCollateInit(ClientContext &context, T
 
 	auto schemas = Catalog::GetAllSchemas(context);
 	for (auto schema : schemas) {
-		schema.get().Scan(context, CatalogType::COLLATION_ENTRY,
-		                  [&](CatalogEntry &entry) { result->entries.push_back(entry.name.GetIdentifierName()); });
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::COLLATION_ENTRY, [&](CatalogEntry &entry) {
+			result->entries.push_back(entry.name.GetIdentifierName());
+		});
 	}
 	return std::move(result);
 }

@@ -75,20 +75,17 @@ unique_ptr<GlobalTableFunctionState> DuckDBTriggersInit(ClientContext &context, 
 	auto schemas = Catalog::GetAllSchemas(context, false, [&](AttachedDatabase &database) {
 		return database.GetCatalog().IsDuckCatalog() && (!database_filter || database_filter(database));
 	});
-	vector<reference<TableCatalogEntry>> tables;
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.type != CatalogType::TABLE_ENTRY) {
 				return;
 			}
-			tables.push_back(entry.Cast<TableCatalogEntry>());
-		});
-	}
-	for (auto &table : tables) {
-		auto &table_entry = table.get();
-		auto transaction = table_entry.ParentCatalog().GetCatalogTransaction(context);
-		table_entry.ScanTriggers(transaction, [&](CatalogEntry &trigger) {
-			result->entries.push_back(trigger.Cast<TriggerCatalogEntry>());
+			auto &table_entry = entry.Cast<TableCatalogEntry>();
+			auto transaction = table_entry.ParentCatalog().GetCatalogTransaction(context);
+			vector<reference<TriggerCatalogEntry>> triggers;
+			table_entry.ScanTriggers(
+			    transaction, [&](CatalogEntry &trigger) { triggers.push_back(trigger.Cast<TriggerCatalogEntry>()); });
+			result->entries.insert(result->entries.end(), triggers.begin(), triggers.end());
 		});
 	}
 	return std::move(result);

@@ -105,12 +105,12 @@ static unique_ptr<FunctionData> DuckDBFunctionsBind(ClientContext &context, Tabl
 
 static void ExtractFunctionsFromSchema(ClientContext &context, SchemaCatalogEntry &schema,
                                        DuckDBFunctionsData &result) {
-	schema.Scan(context, CatalogType::SCALAR_FUNCTION_ENTRY,
-	            [&](CatalogEntry &entry) { result.entries.push_back(entry); });
-	schema.Scan(context, CatalogType::TABLE_FUNCTION_ENTRY,
-	            [&](CatalogEntry &entry) { result.entries.push_back(entry); });
-	schema.Scan(context, CatalogType::PRAGMA_FUNCTION_ENTRY,
-	            [&](CatalogEntry &entry) { result.entries.push_back(entry); });
+	Catalog::ScanListedEntries(context, schema, CatalogType::SCALAR_FUNCTION_ENTRY,
+	                           [&](CatalogEntry &entry) { result.entries.push_back(entry); });
+	Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_FUNCTION_ENTRY,
+	                           [&](CatalogEntry &entry) { result.entries.push_back(entry); });
+	Catalog::ScanListedEntries(context, schema, CatalogType::PRAGMA_FUNCTION_ENTRY,
+	                           [&](CatalogEntry &entry) { result.entries.push_back(entry); });
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBFunctionsInit(ClientContext &context, TableFunctionInitInput &input) {

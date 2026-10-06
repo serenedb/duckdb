@@ -61,9 +61,9 @@ static unique_ptr<GlobalTableFunctionState> DuckDBCoordinateSystemsInit(ClientCo
 	auto result = make_uniq<DuckDBCoordinateSystemsData>();
 	auto schemas = Catalog::GetAllSchemas(context);
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::COORDINATE_SYSTEM_ENTRY, [&](CatalogEntry &entry) {
-			result->entries.push_back(entry.Cast<CoordinateSystemCatalogEntry>());
-		});
+		Catalog::ScanListedEntries(
+		    context, schema.get(), CatalogType::COORDINATE_SYSTEM_ENTRY,
+		    [&](CatalogEntry &entry) { result->entries.push_back(entry.Cast<CoordinateSystemCatalogEntry>()); });
 	};
 	return std::move(result);
 }

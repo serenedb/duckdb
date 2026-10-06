@@ -1,8 +1,11 @@
 #include "duckdb/function/table/system_functions.hpp"
 #include "duckdb/catalog/catalog.hpp"
 
+#include "duckdb/common/error_data.hpp"
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/to_string.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
@@ -12,12 +15,17 @@
 
 namespace duckdb {
 
+struct ListedDatabaseSize {
+	Identifier name;
+	DatabaseSize size;
+};
+
 struct PragmaDatabaseSizeData : public GlobalTableFunctionState {
 	PragmaDatabaseSizeData() : index(0) {
 	}
 
 	idx_t index;
-	vector<shared_ptr<AttachedDatabase>> databases;
+	vector<ListedDatabaseSize> databases;
 	Value memory_usage;
 	Value memory_limit;
 };
@@ -56,7 +64,20 @@ static unique_ptr<FunctionData> PragmaDatabaseSizeBind(ClientContext &context, T
 
 unique_ptr<GlobalTableFunctionState> PragmaDatabaseSizeInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<PragmaDatabaseSizeData>();
-	result->databases = DatabaseManager::Get(context).GetDatabases(context);
+	for (auto &database : DatabaseManager::Get(context).GetDatabases(context)) {
+		auto &db = *database;
+		if (db.IsSystem() || db.IsTemporary() || db.GetVisibility() == AttachVisibility::HIDDEN) {
+			continue;
+		}
+		try {
+			result->databases.push_back({db.GetName(), db.GetCatalog().GetDatabaseSize(context)});
+		} catch (const InterruptException &) {
+			throw;
+		} catch (const std::exception &ex) {
+			DUCKDB_LOG_DEBUG(context, StringUtil::Format("catalog listing skipped database \"%s\": %s", db.GetName(),
+			                                             ErrorData(ex).Message()));
+		}
+	}
 	auto &buffer_manager = BufferManager::GetBufferManager(context);
 	result->memory_usage = Value(StringUtil::BytesToHumanReadableString(buffer_manager.GetUsedMemory()));
 	auto max_memory = buffer_manager.GetMaxMemory();
@@ -81,12 +102,8 @@ void PragmaDatabaseSizeFunction(ClientContext &context, TableFunctionInput &data
 	auto &memory_limit = output.data[8];
 
 	for (; data.index < data.databases.size() && row < STANDARD_VECTOR_SIZE; data.index++) {
-		auto &db = *data.databases[data.index];
-		if (db.IsSystem() || db.IsTemporary() || db.GetVisibility() == AttachVisibility::HIDDEN) {
-			continue;
-		}
-		auto ds = db.GetCatalog().GetDatabaseSize(context);
-		database_name.Append(Value(db.GetName()));
+		auto &ds = data.databases[data.index].size;
+		database_name.Append(Value(data.databases[data.index].name));
 		database_size.Append(Value(StringUtil::BytesToHumanReadableString(ds.bytes)));
 		block_size.Append(Value::BIGINT(NumericCast<int64_t>(ds.block_size)));
 		total_blocks.Append(Value::BIGINT(NumericCast<int64_t>(ds.total_blocks)));

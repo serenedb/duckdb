@@ -8,11 +8,48 @@
 
 namespace duckdb {
 
+Value GetIndexExpressions(IndexCatalogEntry &index) {
+	auto create_info = index.GetInfo();
+	auto &create_index_info = create_info->Cast<CreateIndexInfo>();
+
+	auto vec = create_index_info.ExpressionsToList();
+
+	vector<Value> content;
+	content.reserve(vec.size());
+	for (auto &item : vec) {
+		content.push_back(Value(item));
+	}
+	return Value::LIST(LogicalType::VARCHAR, std::move(content));
+}
+
+struct ListedIndex {
+	ListedIndex(ClientContext &context, IndexCatalogEntry &index)
+	    : index(index), schema_name(index.ParentSchemaName(CatalogTransaction(index.ParentCatalog(), context))),
+	      expressions(GetIndexExpressions(index).ToString()) {
+		auto table_entry = index.GetRelation(index.catalog.GetCatalogTransaction(context));
+		table_name = Value(table_entry ? table_entry->name : index.GetTableName());
+		if (table_entry && table_entry->type == CatalogType::TABLE_ENTRY) {
+			table_oid = Value::BIGINT(NumericCast<int64_t>(table_entry->oid));
+		}
+		auto index_sql = index.ToSQL();
+		if (!index_sql.empty()) {
+			sql = Value(std::move(index_sql));
+		}
+	}
+
+	IndexCatalogEntry &index;
+	Value schema_name;
+	Value table_name;
+	Value table_oid;
+	Value expressions;
+	Value sql;
+};
+
 struct DuckDBIndexesData : public GlobalTableFunctionState {
 	DuckDBIndexesData() : offset(0) {
 	}
 
-	vector<reference<CatalogEntry>> entries;
+	vector<ListedIndex> entries;
 	idx_t offset;
 };
 
@@ -72,24 +109,11 @@ unique_ptr<GlobalTableFunctionState> DuckDBIndexesInit(ClientContext &context, T
 	// scan all the schemas for tables and collect them
 	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::INDEX_ENTRY,
-		                  [&](CatalogEntry &entry) { result->entries.push_back(entry); });
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
+			result->entries.emplace_back(context, entry.Cast<IndexCatalogEntry>());
+		});
 	};
 	return std::move(result);
-}
-
-Value GetIndexExpressions(IndexCatalogEntry &index) {
-	auto create_info = index.GetInfo();
-	auto &create_index_info = create_info->Cast<CreateIndexInfo>();
-
-	auto vec = create_index_info.ExpressionsToList();
-
-	vector<Value> content;
-	content.reserve(vec.size());
-	for (auto &item : vec) {
-		content.push_back(Value(item));
-	}
-	return Value::LIST(LogicalType::VARCHAR, std::move(content));
 }
 
 void DuckDBIndexesFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
@@ -132,30 +156,23 @@ void DuckDBIndexesFunction(ClientContext &context, TableFunctionInput &data_p, D
 	auto &sql_vec = output.data[13];
 
 	while (data.offset < data.entries.size() && count < STANDARD_VECTOR_SIZE) {
-		auto &entry = data.entries[data.offset++].get();
-
-		auto &index = entry.Cast<IndexCatalogEntry>();
+		auto &entry = data.entries[data.offset++];
+		auto &index = entry.index;
 
 		database_name.Append(Value(index.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(index.catalog.GetOid())));
-		schema_name.Append(Value(index.ParentSchemaName(CatalogTransaction(index.ParentCatalog(), context))));
+		schema_name.Append(entry.schema_name);
 		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(index.ParentSchemaOid())));
 		index_name.Append(Value(index.name));
 		index_oid.Append(Value::BIGINT(NumericCast<int64_t>(index.oid)));
-		auto table_entry = index.GetRelation(index.catalog.GetCatalogTransaction(context));
-		table_name.Append(Value(table_entry ? table_entry->name : index.GetTableName()));
-		if (table_entry && table_entry->type == CatalogType::TABLE_ENTRY) {
-			table_oid.Append(Value::BIGINT(NumericCast<int64_t>(table_entry->oid)));
-		} else {
-			table_oid.Append(Value());
-		}
+		table_name.Append(entry.table_name);
+		table_oid.Append(entry.table_oid);
 		comment.Append(Value(index.comment));
 		tags.Append(Value::MAP(index.tags));
 		is_unique.Append(Value::BOOLEAN(index.IsUnique()));
 		is_primary.Append(Value::BOOLEAN(index.IsPrimary()));
-		expressions.Append(Value(GetIndexExpressions(index).ToString()));
-		auto sql = index.ToSQL();
-		sql_vec.Append(sql.empty() ? Value() : Value(std::move(sql)));
+		expressions.Append(entry.expressions);
+		sql_vec.Append(entry.sql);
 
 		count++;
 	}

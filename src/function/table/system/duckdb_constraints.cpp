@@ -107,17 +107,20 @@ unique_ptr<GlobalTableFunctionState> DuckDBConstraintsInit(ClientContext &contex
 	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 
 	for (auto &schema : schemas) {
-		vector<reference<CatalogEntry>> entries;
+		vector<unique_ptr<ConstraintEntry>> entries;
 
-		schema.get().Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.type == CatalogType::TABLE_ENTRY) {
-				entries.push_back(entry);
+				entries.push_back(make_uniq<ConstraintEntry>(context, entry.Cast<TableCatalogEntry>()));
 			}
 		});
 
-		sort(entries.begin(), entries.end(), [&](CatalogEntry &x, CatalogEntry &y) { return (x.name < y.name); });
+		sort(entries.begin(), entries.end(),
+		     [&](const unique_ptr<ConstraintEntry> &x, const unique_ptr<ConstraintEntry> &y) {
+			     return x->table.name < y->table.name;
+		     });
 		for (auto &entry : entries) {
-			result->entries.emplace_back(context, entry.get().Cast<TableCatalogEntry>());
+			result->entries.push_back(std::move(*entry));
 		}
 	};
 
