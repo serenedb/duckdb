@@ -304,6 +304,7 @@ public:
 struct MatcherFirstSet {
 	bool nullable = true;
 	bool any_token = true;
+	uint8_t token_classes = 0;
 	vector<uint64_t> literals;
 
 	void AddLiteral(idx_t literal_id) {
@@ -319,6 +320,7 @@ struct MatcherFirstSet {
 	}
 	void MergeStart(const MatcherFirstSet &other) {
 		any_token = any_token || other.any_token;
+		token_classes |= other.token_classes;
 		if (other.literals.size() > literals.size()) {
 			literals.resize(other.literals.size(), 0);
 		}
@@ -327,7 +329,8 @@ struct MatcherFirstSet {
 		}
 	}
 	bool operator==(const MatcherFirstSet &other) const {
-		return nullable == other.nullable && any_token == other.any_token && literals == other.literals;
+		return nullable == other.nullable && any_token == other.any_token && token_classes == other.token_classes &&
+		       literals == other.literals;
 	}
 };
 
@@ -364,6 +367,9 @@ public:
 		}
 		auto token = tokens.Current();
 		if (!token || token->type == TokenType::END_OF_INPUT_AUTOCOMPLETE) {
+			return true;
+		}
+		if (token->token_classes & first_set.token_classes) {
 			return true;
 		}
 		return first_set.HasLiteral(tokens.CurrentLiteralInfo(*first_set_table).LiteralId());
@@ -454,6 +460,9 @@ public:
 
 	DUCKDB_API arena_ptr<MatchProcess> StartMatch(MatchState &state) const final;
 	virtual MatcherResult MatchAtomic(MatchState &state) const = 0;
+	virtual uint8_t FirstTokenClasses() const {
+		return 0;
+	}
 };
 
 class KeywordInfo {

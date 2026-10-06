@@ -61,13 +61,17 @@ public:
 		return "STRING_LITERAL";
 	}
 
-private:
+	uint8_t FirstTokenClasses() const override {
+		return MatcherTokenClass::STRING;
+	}
+
 	static bool IsStringLiteral(const MatcherToken &token, const SpecialStringInfo &string_info) {
 		idx_t dollar_quote_delimiter_length;
 		return IsSingleQuotedStringLiteral(token, string_info) ||
 		       TryGetDollarQuoteDelimiterLength(token, dollar_quote_delimiter_length);
 	}
 
+private:
 	static bool IsSingleQuotedStringLiteral(const MatcherToken &token, const SpecialStringInfo &string_info) {
 		if (string_info.prefix_len == 0) {
 			return false;

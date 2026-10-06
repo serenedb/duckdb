@@ -39,6 +39,10 @@ public:
 		return "OPERATOR";
 	}
 
+	uint8_t FirstTokenClasses() const override {
+		return MatcherTokenClass::OPERATOR;
+	}
+
 private:
 	bool MatchOperator(MatchState &state) const {
 		auto token = state.token_iterator.Current();

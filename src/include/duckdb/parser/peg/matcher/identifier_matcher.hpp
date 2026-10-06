@@ -103,6 +103,10 @@ public:
 		}
 	}
 
+	uint8_t FirstTokenClasses() const override {
+		return MatcherTokenClass::WORD | (SupportsStringLiteral() ? MatcherTokenClass::SINGLE_QUOTED : 0);
+	}
+
 	bool SupportsStringLiteral() const {
 		switch (suggestion_type) {
 		case SuggestionState::SUGGEST_TABLE_NAME:

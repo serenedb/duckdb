@@ -14,10 +14,19 @@
 
 namespace duckdb {
 
+struct MatcherTokenClass {
+	static constexpr uint8_t WORD = 1;
+	static constexpr uint8_t SINGLE_QUOTED = 2;
+	static constexpr uint8_t STRING = 4;
+	static constexpr uint8_t NUMBER = 8;
+	static constexpr uint8_t OPERATOR = 16;
+};
+
 struct MatcherToken {
 	// NOLINTNEXTLINE: allow implicit conversion from text
 	MatcherToken(std::string_view text_p, idx_t offset_p, TokenType type_p, bool unterminated_p = false)
 	    : type(type_p), text(text_p), offset(offset_p), length(text_p.length()), unterminated(unterminated_p) {
+		token_classes = ComputeClasses();
 	}
 
 	TokenType type;
@@ -27,6 +36,7 @@ struct MatcherToken {
 	bool unterminated = false;
 	bool preceded_by_newline = false;
 	bool preceded_by_block_comment = false;
+	uint8_t token_classes = 0;
 
 	LiteralInfo GetLiteralInfo(const GrammarLiteralTable &table) {
 		if (literal_table_id != table.CacheId()) {
@@ -41,6 +51,7 @@ struct MatcherToken {
 
 private:
 	DUCKDB_API void CacheLiteralInfo(const GrammarLiteralTable &table);
+	DUCKDB_API uint8_t ComputeClasses() const;
 
 private:
 	LiteralInfo literal_info;

@@ -1,8 +1,42 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/peg/tokenizer/tokenizer.hpp"
 #include "duckdb/parser/peg/keyword_helper.hpp"
+#include "duckdb/parser/peg/matcher/string_literal_matcher.hpp"
+#include "duckdb/parser/peg/special_string_utils.hpp"
 
 namespace duckdb {
+
+uint8_t MatcherToken::ComputeClasses() const {
+	uint8_t result = 0;
+	bool operator_text = true;
+	for (auto c : text) {
+		if (c != '#' && !Tokenizer::CharacterIsOperator(c)) {
+			operator_text = false;
+			break;
+		}
+	}
+	if (operator_text) {
+		result |= MatcherTokenClass::OPERATOR;
+	}
+	if (text.empty()) {
+		return result;
+	}
+	auto initial_number = Tokenizer::CharacterIsInitialNumber(text.front());
+	if (initial_number && text != ".") {
+		result |= MatcherTokenClass::NUMBER;
+	}
+	if ((text.front() == '"' && text.back() == '"') ||
+	    (!initial_number && Tokenizer::CharacterIsKeyword(text.front()))) {
+		result |= MatcherTokenClass::WORD;
+	}
+	if (text.front() == '\'' && text.back() == '\'') {
+		result |= MatcherTokenClass::SINGLE_QUOTED;
+	}
+	if (StringLiteralMatcher::IsStringLiteral(*this, GetSpecialStringInfo(text))) {
+		result |= MatcherTokenClass::STRING;
+	}
+	return result;
+}
 
 TokenizerBehavior::TokenizerBehavior(std::string_view sql, vector<MatcherToken> &tokens) : sql(sql), tokens(tokens) {
 }

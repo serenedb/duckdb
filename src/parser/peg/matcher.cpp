@@ -121,10 +121,17 @@ void MatcherAllocator::ComputeFirstSets(const GrammarLiteralTable &table) {
 				updated.nullable = child_set.nullable;
 				break;
 			}
-			default:
+			default: {
+				auto token_classes =
+				    matcher.IsAtomic() ? static_cast<const AtomicMatcher &>(matcher).FirstTokenClasses() : uint8_t(0);
+				if (token_classes) {
+					updated.token_classes = token_classes;
+					break;
+				}
 				updated.nullable = true;
 				updated.any_token = true;
 				break;
+			}
 			}
 			if (!(updated == matcher.first_set)) {
 				matcher.first_set = std::move(updated);
