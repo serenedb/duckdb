@@ -85,12 +85,12 @@ static bool IsValidDollarQuotedStringTagSubsequentChar(const unsigned char &c) {
 
 //! Throw a ParserException if `query` contains invalid UTF-8, so the tokenizer never reads past
 //! bad bytes (a bad-byte query can otherwise recurse the tokenizer — see ossfuzz clusterfuzz-test-24).
-static void ValidateUTF8Query(std::string_view query) {
+static UnicodeType ValidateUTF8Query(std::string_view query) {
 	UnicodeInvalidReason reason = UnicodeInvalidReason::INVALID_UNICODE;
 	size_t invalid_pos = 0;
 	auto unicode_type = Utf8Proc::Analyze(query.data(), query.size(), &reason, &invalid_pos);
 	if (unicode_type != UnicodeType::INVALID) {
-		return;
+		return unicode_type;
 	}
 	const char *reason_str =
 	    reason == UnicodeInvalidReason::BYTE_MISMATCH ? "byte sequence mismatch" : "invalid unicode";
@@ -235,7 +235,9 @@ end:
 
 std::string_view Parser::NormalizeSQLString(std::string_view query, vector<char> &stripped) {
 	// Validate before strip: StripUnicodeSpaces walks multi-byte sequences and assumes valid UTF-8.
-	ValidateUTF8Query(query);
+	if (ValidateUTF8Query(query) == UnicodeType::ASCII) {
+		return query;
+	}
 	return StripUnicodeSpaces(query, stripped);
 }
 
