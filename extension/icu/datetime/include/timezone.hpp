@@ -33,7 +33,7 @@ public:
 
 	//! Looks up a time zone by identifier - returns nullptr if it is not a known zone.
 	//! Identifiers of the form GMT[+-]hh[:mm[:ss]] describe a zone with a fixed offset.
-	static unique_ptr<TimeZone> TryCreate(const string &id);
+	static unique_ptr<TimeZone> TryCreate(std::string_view id);
 	//! The identifiers of all known time zones, in lexicographic order
 	static const vector<string> &GetAvailableIds();
 	//! The identifiers that refer to the same data as the given zone, including the zone itself.

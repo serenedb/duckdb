@@ -161,8 +161,7 @@ void ErrorData::AddErrorLocation(std::string_view query) {
 				}
 				extra_info.erase(location_entry);
 			}
-			raw_message =
-			    QueryErrorContext::Format(string(query), raw_message, std::stoull(entry->second), error_length);
+			raw_message = QueryErrorContext::Format(query, raw_message, std::stoull(entry->second), error_length);
 			extra_info.erase(entry);
 		}
 	}

@@ -235,11 +235,11 @@ static ScalarFunction GetICUCollateFunction(const string &collation, const strin
 	return result;
 }
 
-unique_ptr<TimeZone> GetKnownTimeZone(const string &tz_str) {
+unique_ptr<TimeZone> GetKnownTimeZone(std::string_view tz_str) {
 	return TimeZone::TryCreate(tz_str);
 }
 
-unique_ptr<TimeZone> GetNormalizedTimeZone(string &tz_str) {
+unique_ptr<TimeZone> GetNormalizedTimeZone(std::string_view tz_str, string *resolved) {
 	auto tz = GetKnownTimeZone(tz_str);
 	if (tz) {
 		return tz;
@@ -313,7 +313,9 @@ unique_ptr<TimeZone> GetNormalizedTimeZone(string &tz_str) {
 		// Final sanity check
 		tz = GetKnownTimeZone(mapped);
 		if (tz) {
-			tz_str = mapped;
+			if (resolved) {
+				*resolved = std::move(mapped);
+			}
 			return tz;
 		}
 	} while (false);
@@ -321,8 +323,8 @@ unique_ptr<TimeZone> GetNormalizedTimeZone(string &tz_str) {
 	return nullptr;
 }
 
-unique_ptr<TimeZone> GetTimeZoneInternal(string &tz_str, vector<string> &candidates) {
-	auto tz = GetNormalizedTimeZone(tz_str);
+unique_ptr<TimeZone> GetTimeZoneInternal(std::string_view tz_str, string *resolved, vector<string> *candidates) {
+	auto tz = GetNormalizedTimeZone(tz_str, resolved);
 	if (tz) {
 		return tz;
 	}
@@ -333,23 +335,30 @@ unique_ptr<TimeZone> GetTimeZoneInternal(string &tz_str, vector<string> &candida
 	for (const auto &candidate : TimeZone::GetAvailableIds()) {
 		if (StringUtil::CIEquals(candidate, tz_str)) {
 			// case insensitive match - return this timezone instead
-			tz_str = candidate;
-			return TimeZone::TryCreate(tz_str);
+			if (resolved) {
+				*resolved = candidate;
+			}
+			return TimeZone::TryCreate(candidate);
 		}
-		candidates.emplace_back(candidate);
+		if (candidates) {
+			candidates->emplace_back(candidate);
+		}
 	}
 	return nullptr;
 }
 
-unique_ptr<TimeZone> ICUHelpers::TryGetTimeZone(string &tz_str) {
-	vector<string> candidates;
-	return GetTimeZoneInternal(tz_str, candidates);
+unique_ptr<TimeZone> ICUHelpers::TryGetTimeZone(std::string_view tz_str) {
+	return GetTimeZoneInternal(tz_str, nullptr, nullptr);
 }
 
 unique_ptr<TimeZone> ICUHelpers::GetTimeZone(string &tz_str, string *error_message) {
 	vector<string> candidates;
-	auto tz = GetTimeZoneInternal(tz_str, candidates);
+	string resolved;
+	auto tz = GetTimeZoneInternal(tz_str, &resolved, &candidates);
 	if (tz) {
+		if (!resolved.empty()) {
+			tz_str = std::move(resolved);
+		}
 		return tz;
 	}
 	string candidate_str =

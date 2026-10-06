@@ -67,7 +67,7 @@ public:
 	static int32_t UTF8ToCodepoint(const char *c, int &sz, size_t length);
 	//! Returns the render width of a single character in a string
 	static size_t RenderWidth(const char *s, size_t len, size_t pos);
-	static size_t RenderWidth(const std::string &str);
+	static size_t RenderWidth(std::string_view str);
 
 	static int32_t CodepointToUpper(int32_t codepoint);
 	static int32_t CodepointToLower(int32_t codepoint);

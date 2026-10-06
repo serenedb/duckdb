@@ -61,7 +61,7 @@ optional_ptr<const ParsedGrammarRule> ParsedGrammar::GetRule(const string &rule_
 	}
 	return *entry->second;
 }
-ParsedGrammarRule &ParsedGrammar::GetMutableRule(const string &rule_name) {
+ParsedGrammarRule &ParsedGrammar::GetMutableRule(std::string_view rule_name) {
 	auto entry = rules.find(rule_name);
 	if (entry == rules.end()) {
 		throw InvalidInputException("Grammar rule '%s' does not exist", rule_name);
@@ -121,8 +121,8 @@ void ParsedGrammar::ReplaceRule(const string &rule_definition, grammar_transform
 	entry->second = make_uniq<ParsedGrammarRule>(std::move(rule));
 }
 
-void ParsedGrammar::SetTransformProcess(const string &rule_name, grammar_transform_process_function_t transform_process,
-                                        bool collapsible) {
+void ParsedGrammar::SetTransformProcess(std::string_view rule_name,
+                                        grammar_transform_process_function_t transform_process, bool collapsible) {
 	auto &rule = GetMutableRule(rule_name);
 	rule.transform_process = std::move(transform_process);
 	rule.collapsible = collapsible;

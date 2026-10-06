@@ -5,15 +5,15 @@
 
 namespace duckdb {
 
-bool KeywordHelper::IsKeyword(const string &text, KeywordCategory category) {
+bool KeywordHelper::IsKeyword(std::string_view text, KeywordCategory category) {
 	return DuckDBKeywordHelper::Instance().GetKeywordCategory(text) != category;
 }
 
-KeywordCategory KeywordHelper::KeywordCategoryType(const string &text) {
+KeywordCategory KeywordHelper::KeywordCategoryType(std::string_view text) {
 	return DuckDBKeywordHelper::Instance().GetKeywordCategory(text);
 }
 
-bool KeywordHelper::RequiresQuotes(const string &text, bool allow_caps) {
+bool KeywordHelper::RequiresQuotes(std::string_view text, bool allow_caps) {
 	for (size_t i = 0; i < text.size(); i++) {
 		if (i > 0 && (text[i] >= '0' && text[i] <= '9')) {
 			continue;
@@ -105,7 +105,7 @@ string SQLQuotedIdentifier::ToString(const char *identifier) {
 	return ToString(string(identifier));
 }
 
-string SQLString::ToString(const string &literal) {
+string SQLString::ToString(std::string_view literal) {
 	return KeywordHelper::WriteQuotedAndEscaped(literal, '\'');
 }
 

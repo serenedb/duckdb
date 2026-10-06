@@ -567,9 +567,9 @@ class UseGramPreviewEmitter:
     def emit_ops_lookup(self):
         lines = []
         lines.append(
-            "const case_insensitive_map_t<const TransformFrameOps *> &PEGTransformerFactory::GeneratedTransformFrameOps() {"
+            "std::span<const std::pair<std::string_view, const TransformFrameOps *>> PEGTransformerFactory::GeneratedTransformFrameOps() {"
         )
-        lines.append("\tstatic const case_insensitive_map_t<const TransformFrameOps *> result = {")
+        lines.append("\tstatic const std::pair<std::string_view, const TransformFrameOps *> result[] = {")
         for rule_name in self.emitted_ops_rules():
             lines.append(f'\t    {{"{rule_name}", &{ops_name(rule_name)}}},')
         lines.append("\t};")

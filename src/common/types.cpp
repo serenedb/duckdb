@@ -676,7 +676,7 @@ string LogicalType::ToString() const {
 	}
 }
 
-LogicalTypeId TransformStringToLogicalTypeId(const string &str) {
+LogicalTypeId TransformStringToLogicalTypeId(std::string_view str) {
 	auto type = DefaultTypeGenerator::GetDefaultType(Identifier(str));
 	if (type.id() == LogicalTypeId::INVALID) {
 		// This is a User Type, at this point we don't know if its one of the User Defined Types or an error

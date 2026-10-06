@@ -61,7 +61,8 @@ public:
 	//! other child with a result, such as a level of the operator precedence hierarchy that matched no tail. The
 	//! matcher then skips building a result for the rule and the child is transformed as itself. Setting a new
 	//! transform clears that promise unless the caller repeats it, since it is a property of the transform.
-	DUCKDB_API void SetTransformProcess(const string &rule_name, grammar_transform_process_function_t transform_process,
+	DUCKDB_API void SetTransformProcess(std::string_view rule_name,
+	                                    grammar_transform_process_function_t transform_process,
 	                                    bool collapsible = false);
 	DUCKDB_API void AddTerminalRuleOverride(const string &rule_name, terminal_rule_matcher_factory_t matcher_factory);
 
@@ -73,7 +74,7 @@ private:
 
 	void AddParsedRule(ParsedGrammarRule rule);
 	void RegisterStrings(PEGRule &rule);
-	ParsedGrammarRule &GetMutableRule(const string &rule_name);
+	ParsedGrammarRule &GetMutableRule(std::string_view rule_name);
 	static ParsedGrammarRule ParseSingleRule(const string &rule_definition);
 	static void AddTerminalRuleOverride(terminal_rule_overrides_t &overrides, const string &rule_name,
 	                                    unique_ptr<Matcher> matcher);

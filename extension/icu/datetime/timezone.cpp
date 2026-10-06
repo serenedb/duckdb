@@ -422,7 +422,7 @@ unique_ptr<TimeZone> OlsonTimeZone::Copy() const {
 // Lookup
 //===--------------------------------------------------------------------===//
 //! Finds the entry of a zone in the (lexicographically sorted) zone table, or nullptr
-static const TZZone *FindZone(const string &id) {
+static const TZZone *FindZone(std::string_view id) {
 	const auto &tz = GetTZData();
 	idx_t lower = 0;
 	idx_t upper = tz.zone_count;
@@ -441,7 +441,7 @@ static const TZZone *FindZone(const string &id) {
 }
 
 //! Parses the offset of a GMT[+-]hh[:mm[:ss]] identifier, returning false if it is not one
-static bool TryParseCustomOffset(const string &id, int32_t &offset) {
+static bool TryParseCustomOffset(std::string_view id, int32_t &offset) {
 	static constexpr idx_t GMT_LENGTH = 3;
 	// the maximum offset that can be expressed is 23:59:59
 	static constexpr int32_t MAX_HOUR = 23;
@@ -525,14 +525,14 @@ static bool TryParseCustomOffset(const string &id, int32_t &offset) {
 	return true;
 }
 
-unique_ptr<TimeZone> TimeZone::TryCreate(const string &id) {
+unique_ptr<TimeZone> TimeZone::TryCreate(std::string_view id) {
 	const auto zone = FindZone(id);
 	if (zone) {
-		return make_uniq<OlsonTimeZone>(id, GetTZData().zone_data[zone->data_index]);
+		return make_uniq<OlsonTimeZone>(string(id), GetTZData().zone_data[zone->data_index]);
 	}
 	int32_t offset;
 	if (TryParseCustomOffset(id, offset)) {
-		return make_uniq<SimpleTimeZone>(id, offset);
+		return make_uniq<SimpleTimeZone>(string(id), offset);
 	}
 	return nullptr;
 }

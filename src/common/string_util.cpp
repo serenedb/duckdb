@@ -800,7 +800,7 @@ string StringUtil::ExceptionToJSONMap(ExceptionType type, std::string_view messa
 	JSONWriter writer;
 	auto obj = writer.CreateObject();
 	obj.AddString("exception_type", Exception::ExceptionTypeToString(type));
-	obj.AddString("exception_message", string(message));
+	obj.AddString("exception_message", message);
 	for (auto &entry : map) {
 		obj.AddString(entry.first, entry.second);
 	}

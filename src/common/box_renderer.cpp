@@ -386,26 +386,26 @@ void BoxRendererImplementation::Render(BaseResultRenderer &ss) {
 	RenderFooter(ss, result.Count(), column_count);
 }
 
-string BoxRenderer::TruncateValue(const string &value, idx_t column_width, idx_t &pos, idx_t &current_render_width) {
+string BoxRenderer::TruncateValue(std::string_view value, idx_t column_width, idx_t &pos, idx_t &current_render_width) {
 	idx_t start_pos = pos;
 	while (pos < value.size()) {
 		if (value[pos] == '\n') {
 			// newline character - stop rendering for this line - but skip the newline
 			idx_t render_pos = pos;
 			pos++;
-			return value.substr(start_pos, render_pos - start_pos);
+			return string(value.substr(start_pos, render_pos - start_pos));
 		}
 		// check if this character fits...
-		auto char_size = Utf8Proc::RenderWidth(value.c_str(), value.size(), pos);
+		auto char_size = Utf8Proc::RenderWidth(value.data(), value.size(), pos);
 		if (current_render_width + char_size > column_width) {
 			// it doesn't! stop
 			break;
 		}
 		// it does! move to the next character
 		current_render_width += char_size;
-		pos = Utf8Proc::NextGraphemeCluster(value.c_str(), value.size(), pos);
+		pos = Utf8Proc::NextGraphemeCluster(value.data(), value.size(), pos);
 	}
-	return value.substr(start_pos, pos - start_pos);
+	return string(value.substr(start_pos, pos - start_pos));
 }
 
 string BoxRendererImplementation::TruncateValue(const string &value, idx_t column_width, idx_t &pos,

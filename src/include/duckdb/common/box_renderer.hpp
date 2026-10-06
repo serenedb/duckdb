@@ -163,7 +163,7 @@ public:
 	void Print(BoxRendererContext &context, const vector<string> &names, const ColumnDataCollectionRenderInterface &op);
 
 	static string TryFormatLargeNumber(const string &numeric, char decimal_sep);
-	static string TruncateValue(const string &value, idx_t column_width, idx_t &pos, idx_t &current_render_width);
+	static string TruncateValue(std::string_view value, idx_t column_width, idx_t &pos, idx_t &current_render_width);
 
 private:
 	//! The configuration used for rendering

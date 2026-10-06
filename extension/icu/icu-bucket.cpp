@@ -73,7 +73,7 @@ struct ICUBucket : public ICUDateFunc {
 			spec.origin_days = true;
 			return true;
 		}
-		return TryGetBucketSpec(GetDatePartSpecifier(string(name)), spec);
+		return TryGetBucketSpec(GetDatePartSpecifier(name), spec);
 	}
 
 	static bool TryGetBucketSpec(DatePartSpecifier part, BucketSpec &spec) {
@@ -556,9 +556,8 @@ struct ICUBucket : public ICUDateFunc {
 
 	class CyclicRewrite : public CyclicBucketRewrite {
 	public:
-		CyclicRewrite(const BindData &info_p, string part_p, ScalarFunction unbucket, int64_t lo, int64_t hi)
-		    : CyclicBucketRewrite(std::move(unbucket), lo, hi), info(make_uniq<BindData>(info_p)),
-		      part(std::move(part_p)) {
+		CyclicRewrite(const BindData &info_p, std::string_view part_p, ScalarFunction unbucket, int64_t lo, int64_t hi)
+		    : CyclicBucketRewrite(std::move(unbucket), lo, hi), info(make_uniq<BindData>(info_p)), part(part_p) {
 		}
 
 		unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const override {
@@ -579,7 +578,7 @@ struct ICUBucket : public ICUDateFunc {
 		if (!info) {
 			return nullptr;
 		}
-		return make_uniq<CyclicRewrite>(*info, string(part), std::move(unbucket), lo, hi);
+		return make_uniq<CyclicRewrite>(*info, part, std::move(unbucket), lo, hi);
 	}
 
 	static std::string_view PartName(const BucketSpec &spec) {

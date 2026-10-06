@@ -247,14 +247,14 @@ bool JSONMutableValue::IsValid() const {
 	return val != nullptr;
 }
 
-void JSONMutableValue::Add(const string &key, JSONMutableValue value) {
-	auto key_val = yyjson_mut_strncpy(doc, key.c_str(), key.size());
+void JSONMutableValue::Add(std::string_view key, JSONMutableValue value) {
+	auto key_val = yyjson_mut_strncpy(doc, key.data(), key.size());
 	yyjson_mut_obj_add(val, key_val, value.val);
 }
 
-void JSONMutableValue::AddString(const string &key, const string &value) {
-	auto key_val = yyjson_mut_strncpy(doc, key.c_str(), key.size());
-	auto value_val = yyjson_mut_strncpy(doc, value.c_str(), value.size());
+void JSONMutableValue::AddString(std::string_view key, std::string_view value) {
+	auto key_val = yyjson_mut_strncpy(doc, key.data(), key.size());
+	auto value_val = yyjson_mut_strncpy(doc, value.data(), value.size());
 	yyjson_mut_obj_add(val, key_val, value_val);
 }
 
@@ -262,8 +262,8 @@ void JSONMutableValue::Append(JSONMutableValue value) {
 	yyjson_mut_arr_append(val, value.val);
 }
 
-void JSONMutableValue::AppendString(const string &value) {
-	auto value_val = yyjson_mut_strncpy(doc, value.c_str(), value.size());
+void JSONMutableValue::AppendString(std::string_view value) {
+	auto value_val = yyjson_mut_strncpy(doc, value.data(), value.size());
 	yyjson_mut_arr_append(val, value_val);
 }
 
@@ -296,8 +296,8 @@ JSONMutableValue JSONWriter::CreateArray() {
 	return JSONMutableValue(doc, yyjson_mut_arr(doc));
 }
 
-JSONMutableValue JSONWriter::CreateString(const string &value) {
-	return JSONMutableValue(doc, yyjson_mut_strncpy(doc, value.c_str(), value.size()));
+JSONMutableValue JSONWriter::CreateString(std::string_view value) {
+	return JSONMutableValue(doc, yyjson_mut_strncpy(doc, value.data(), value.size()));
 }
 
 JSONMutableValue JSONWriter::CreateNull() {

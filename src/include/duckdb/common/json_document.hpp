@@ -169,14 +169,14 @@ public:
 	bool IsValid() const;
 
 	//! Add a key/value pair to this (object) value
-	void Add(const string &key, JSONMutableValue value);
+	void Add(std::string_view key, JSONMutableValue value);
 	//! Add a string key/value pair to this (object) value
-	void AddString(const string &key, const string &value);
+	void AddString(std::string_view key, std::string_view value);
 
 	//! Append a value to this (array) value
 	void Append(JSONMutableValue value);
 	//! Append a string value to this (array) value
-	void AppendString(const string &value);
+	void AppendString(std::string_view value);
 
 private:
 	JSONMutableValue(duckdb_yyjson::yyjson_mut_doc *doc, duckdb_yyjson::yyjson_mut_val *val);
@@ -202,7 +202,7 @@ public:
 	//! Create values that belong to this document
 	JSONMutableValue CreateObject();
 	JSONMutableValue CreateArray();
-	JSONMutableValue CreateString(const string &value);
+	JSONMutableValue CreateString(std::string_view value);
 	JSONMutableValue CreateNull();
 	JSONMutableValue CreateBoolean(bool value);
 	JSONMutableValue CreateUnsignedInteger(uint64_t value);

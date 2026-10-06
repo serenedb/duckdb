@@ -16,16 +16,16 @@ namespace duckdb {
 class KeywordHelper {
 public:
 	//! Returns true if the given text matches a keyword of the parser
-	static bool IsKeyword(const string &text, KeywordCategory category = KeywordCategory::KEYWORD_NONE);
+	static bool IsKeyword(std::string_view text, KeywordCategory category = KeywordCategory::KEYWORD_NONE);
 
-	static KeywordCategory KeywordCategoryType(const string &text);
+	static KeywordCategory KeywordCategoryType(std::string_view text);
 
 	[[deprecated("This function has been deprecated due to it having confusing syntax, use SQLString instead for "
 	             "literals, or SQLIdentifier/SQLQuotedIdentifier for identifiers")]] static string
 	EscapeQuotes(const string &text, char quote = '"');
 
 	//! Returns true if the given string needs to be quoted when written as an identifier
-	static bool RequiresQuotes(const string &text, bool allow_caps = true);
+	static bool RequiresQuotes(std::string_view text, bool allow_caps = true);
 
 	//! Writes a string that is quoted
 	[[deprecated("This function has been deprecated due to it having confusing syntax, use SQLString instead for "

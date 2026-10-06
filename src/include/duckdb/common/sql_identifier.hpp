@@ -103,7 +103,7 @@ public:
 	}
 
 	//! Emits a quoted string literal including required escapes (i.e. ident -> 'ident')
-	static string ToString(const string &literal);
+	static string ToString(std::string_view literal);
 
 public:
 	string raw_string;

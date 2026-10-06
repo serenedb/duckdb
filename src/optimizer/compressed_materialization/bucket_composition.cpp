@@ -851,7 +851,7 @@ bool PartFunctionSpecifier(std::string_view name, DatePartSpecifier &part) {
 	                   "millennium", "isoyear", "isodow", "yearweek", "dayofyear", "dayofweek", "weekofyear"})) {
 		return false;
 	}
-	return TryGetDatePartSpecifier(string(name), part);
+	return TryGetDatePartSpecifier(name, part);
 }
 
 bool ClassifyLabelPart(const Folder &folder, Expression &part_expr, DateCoordinates &coordinates, LabelPart &out) {

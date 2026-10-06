@@ -48,7 +48,7 @@ string QualifiedName::ToString(QualifiedNameToStringMode mode) const {
 //! characters like ()'- and keywords without requiring double quotes. It only requires double quotes around .
 //! characters and doubled double quotes (which collapse into a single double quote). It's only possible to fully
 //! double quote a component or not quote it at all.
-vector<Identifier> QualifiedName::ParseComponents(const string &input) {
+vector<Identifier> QualifiedName::ParseComponents(std::string_view input) {
 	vector<Identifier> result;
 	idx_t idx = 0;
 	while (idx < input.size()) {
@@ -107,7 +107,7 @@ bool QualifiedName::operator!=(const QualifiedName &rhs) const {
 	return !(*this == rhs);
 }
 
-QualifiedName QualifiedName::Parse(const string &input) {
+QualifiedName QualifiedName::Parse(std::string_view input) {
 	return FromPath(ParseComponents(input));
 }
 

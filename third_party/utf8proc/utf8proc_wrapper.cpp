@@ -462,14 +462,14 @@ size_t Utf8Proc::RenderWidth(const char *s, size_t len, size_t pos) {
 	return properties->charwidth;
 }
 
-size_t Utf8Proc::RenderWidth(const std::string &str) {
+size_t Utf8Proc::RenderWidth(std::string_view str) {
 	size_t render_width = 0;
-	for (auto cluster : Utf8Proc::GraphemeClusters(str.c_str(), str.size())) {
+	for (auto cluster : Utf8Proc::GraphemeClusters(str.data(), str.size())) {
 		// use the width of the first codepoint in the grapheme cluster
 		// combining marks, ZWJ, variation selectors, etc. have charwidth 0
 		// and multi-codepoint clusters (e.g. ZWJ emoji sequences) should only
 		// count the base character's width, not the sum of all codepoints
-		render_width += Utf8Proc::RenderWidth(str.c_str(), str.size(), cluster.start);
+		render_width += Utf8Proc::RenderWidth(str.data(), str.size(), cluster.start);
 	}
 	return render_width;
 }

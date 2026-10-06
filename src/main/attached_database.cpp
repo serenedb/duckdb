@@ -2,6 +2,7 @@
 #include "duckdb/logging/log_manager.hpp"
 
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/checkpoint_on_detach.hpp"
 #include "duckdb/common/file_system.hpp"
@@ -44,15 +45,14 @@ AttachOptions::AttachOptions(const DBConfigOptions &options)
 }
 
 //! The spellings of the access mode option, and whether `true` means read-only for each.
-static const unordered_map<string, bool> ACCESS_MODE_OPTIONS = {
+static const case_insensitive_map_view_t<bool> ACCESS_MODE_OPTIONS = {
     {"readonly", true}, {"read_only", true}, {"readwrite", false}, {"read_write", false}};
 
-string AttachOptions::OptionSetting(const string &name) {
-	auto lower = StringUtil::Lower(name);
-	if (ACCESS_MODE_OPTIONS.find(lower) != ACCESS_MODE_OPTIONS.end()) {
+string AttachOptions::OptionSetting(std::string_view name) {
+	if (ACCESS_MODE_OPTIONS.contains(name)) {
 		return "access_mode";
 	}
-	return lower;
+	return StringUtil::Lower(name);
 }
 
 AttachOptions::AttachOptions(const unordered_map<string, Value> &attach_options, const AccessMode default_access_mode)
