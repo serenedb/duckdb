@@ -101,7 +101,8 @@ shared_ptr<IndexEntry> TableIndexList::AddIndex(unique_ptr<Index> index, idx_t i
 	return index_entry;
 }
 
-void TableIndexList::InitializeLocalIndexes(TableIndexList &delete_indexes, TableIndexList &append_indexes) const {
+void TableIndexList::InitializeLocalIndexes(TableIndexList &delete_indexes, TableIndexList &append_indexes,
+                                            const unordered_set<idx_t> &dropped_indexes) const {
 	D_ASSERT(this != &delete_indexes);
 	D_ASSERT(this != &append_indexes);
 	D_ASSERT(&delete_indexes != &append_indexes);
@@ -110,6 +111,9 @@ void TableIndexList::InitializeLocalIndexes(TableIndexList &delete_indexes, Tabl
 
 	annotated_lock_guard lock(index_entries_lock);
 	for (const auto &entry : index_entries) {
+		if (dropped_indexes.contains(entry->GetIndexOid())) {
+			continue;
+		}
 		entry->InitializeLocalIndexes(delete_indexes, append_indexes);
 	}
 }
@@ -122,7 +126,8 @@ void TableIndexList::Append(DataChunk &chunk, Vector &row_ids) {
 }
 
 ErrorData TableIndexList::Append(optional_ptr<TableIndexList> delete_indexes, DataChunk &chunk, row_t row_start,
-                                 IndexAppendMode append_mode, optional_idx active_checkpoint) {
+                                 IndexAppendMode append_mode, optional_idx active_checkpoint,
+                                 optional_ptr<const unordered_set<idx_t>> dropped_indexes) {
 	Vector row_ids(LogicalType::ROW_TYPE);
 	VectorOperations::GenerateSequence(row_ids, chunk.size(), row_start, 1);
 
@@ -131,6 +136,9 @@ ErrorData TableIndexList::Append(optional_ptr<TableIndexList> delete_indexes, Da
 
 	ErrorData error;
 	for (const auto &entry : index_entries) {
+		if (dropped_indexes && dropped_indexes->contains(entry->GetIndexOid())) {
+			continue;
+		}
 		shared_ptr<IndexEntry> delete_entry;
 		if (delete_indexes && entry->IsUnique()) {
 			delete_entry = delete_indexes->FindEntry(*entry);
@@ -324,11 +332,16 @@ bool TableIndexList::HasUniqueIndexes() const {
 }
 
 void TableIndexList::VerifyUniqueIndexes(optional_ptr<const TableIndexList> delete_indexes, DataChunk &chunk,
-                                         optional_ptr<ConflictManager> manager) const {
+                                         optional_ptr<ConflictManager> manager,
+                                         optional_ptr<const unordered_set<idx_t>> dropped_indexes) const {
+	auto verifies = [&](const shared_ptr<IndexEntry> &entry) {
+		return entry->IsUnique() && !entry->IsDeferred() && entry->GetIndexType() == ART::TYPE_NAME &&
+		       !(dropped_indexes && dropped_indexes->contains(entry->GetIndexOid()));
+	};
 	annotated_lock_guard lock(index_entries_lock);
 	if (!manager) {
 		for (const auto &entry : index_entries) {
-			if (!entry->IsUnique() || entry->IsDeferred() || entry->GetIndexType() != ART::TYPE_NAME) {
+			if (!verifies(entry)) {
 				continue;
 			}
 			auto delete_entry = delete_indexes ? delete_indexes->FindEntry(*entry) : nullptr;
@@ -341,9 +354,7 @@ void TableIndexList::VerifyUniqueIndexes(optional_ptr<const TableIndexList> dele
 	const auto &conflict_info = manager->GetConflictInfo();
 	for (const auto &entry : index_entries) {
 		auto index_info = entry->GetStorageInfo();
-		if (!index_info.is_unique || index_info.check_mode == ConstraintCheckMode::DEFERRED ||
-		    entry->GetIndexType() != ART::TYPE_NAME ||
-		    !conflict_info.ConflictTargetMatches(index_info.is_unique, index_info.column_set)) {
+		if (!verifies(entry) || !conflict_info.ConflictTargetMatches(index_info.is_unique, index_info.column_set)) {
 			continue;
 		}
 		auto delete_entry = delete_indexes ? delete_indexes->FindEntry(*entry) : nullptr;
@@ -361,8 +372,7 @@ void TableIndexList::VerifyUniqueIndexes(optional_ptr<const TableIndexList> dele
 	// Scan the other indexes and throw if there are any conflicts.
 	manager->SetMode(ConflictManagerMode::THROW);
 	for (const auto &entry : index_entries) {
-		if (!entry->IsUnique() || entry->IsDeferred() || entry->GetIndexType() != ART::TYPE_NAME ||
-		    manager->IndexMatches(entry)) {
+		if (!verifies(entry) || manager->IndexMatches(entry)) {
 			continue;
 		}
 		auto delete_entry = delete_indexes ? delete_indexes->FindEntry(*entry) : nullptr;

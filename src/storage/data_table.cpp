@@ -1012,7 +1012,8 @@ void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, Clien
 	}
 
 	if (HasUniqueIndexes()) {
-		info->indexes.VerifyUniqueIndexes(storage ? &storage->delete_indexes : nullptr, chunk, manager);
+		info->indexes.VerifyUniqueIndexes(storage ? &storage->delete_indexes : nullptr, chunk, manager,
+		                                  LocalStorage::Get(context, db).DroppedIndexes());
 	}
 
 	auto &constraints = table.GetConstraints();

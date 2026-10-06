@@ -40,7 +40,7 @@ struct TransactionData;
 class LocalTableStorage : public enable_shared_from_this<LocalTableStorage> {
 public:
 	// Create a new LocalTableStorage
-	explicit LocalTableStorage(ClientContext &context, DataTable &table);
+	LocalTableStorage(ClientContext &context, DataTable &table, const unordered_set<idx_t> &dropped_indexes);
 	//! Create a LocalTableStorage from an ALTER TYPE.
 	LocalTableStorage(ClientContext &context, DataTable &new_data_table, LocalTableStorage &parent,
 	                  const idx_t alter_column_index, const LogicalType &target_type,
@@ -96,10 +96,12 @@ public:
 	void Rollback();
 	idx_t EstimatedSize() const;
 
-	void AppendToIndexes(DuckTransaction &transaction, TableAppendState &append_state);
+	void AppendToIndexes(DuckTransaction &transaction, TableAppendState &append_state,
+	                     const unordered_set<idx_t> &dropped_indexes);
 	void AppendToTable(DuckTransaction &transaction, TableAppendState &append_state);
 	ErrorData AppendToIndexes(DuckTransaction &transaction, RowGroupCollection &source, TableIndexList &index_list,
-	                          const vector<LogicalType> &table_types, row_t &start_row);
+	                          const vector<LogicalType> &table_types, row_t &start_row,
+	                          optional_ptr<const unordered_set<idx_t>> dropped_indexes);
 	void AppendToDeleteIndexes(Vector &row_ids, DataChunk &delete_chunk);
 
 	//! Create an optimistic row group collection for this table.
@@ -130,10 +132,13 @@ public:
 	bool IsEmpty() const;
 	vector<reference<DataTable>> GetTables() const;
 	void InsertEntry(DataTable &table, shared_ptr<LocalTableStorage> entry);
+	void DropIndex(idx_t index_oid);
+	const unordered_set<idx_t> &DroppedIndexes() const;
 
 private:
 	mutable mutex table_storage_lock;
 	reference_map_t<const DataTable, shared_ptr<LocalTableStorage>> table_storage;
+	unordered_set<idx_t> dropped_indexes;
 };
 
 //! The LocalStorage class holds appends that have not been committed yet
@@ -198,6 +203,8 @@ public:
 	idx_t EstimatedSize();
 
 	void DropTable(DataTable &table);
+	void DropIndex(DataTable &table, idx_t index_oid);
+	const unordered_set<idx_t> &DroppedIndexes() const;
 	bool Find(DataTable &table);
 	vector<reference<DataTable>> GetTables() const;
 

@@ -56,12 +56,14 @@ public:
 	//! Adds an index entry to the list of index entries, and returns it.
 	shared_ptr<IndexEntry> AddIndex(unique_ptr<Index> index, idx_t index_oid, ConstraintCheckMode check_mode);
 	//! Initializes the transaction-local delete and append indexes.
-	void InitializeLocalIndexes(TableIndexList &delete_indexes, TableIndexList &append_indexes) const;
+	void InitializeLocalIndexes(TableIndexList &delete_indexes, TableIndexList &append_indexes,
+	                            const unordered_set<idx_t> &dropped_indexes) const;
 	//! Appends a chunk to all index entries.
 	void Append(DataChunk &chunk, Vector &row_ids);
 	//! Appends a table chunk with generated row IDs, using delete and checkpoint indexes where required.
 	ErrorData Append(optional_ptr<TableIndexList> delete_indexes, DataChunk &chunk, row_t row_start,
-	                 IndexAppendMode append_mode, optional_idx active_checkpoint);
+	                 IndexAppendMode append_mode, optional_idx active_checkpoint,
+	                 optional_ptr<const unordered_set<idx_t>> dropped_indexes);
 	ErrorData FinishAppend();
 	//! Reverts an append to all index entries.
 	void RevertAppend(DataChunk &chunk, Vector &row_ids);
@@ -109,7 +111,8 @@ public:
 	bool HasUniqueIndexes() const;
 	//! Verifies all unique ART indexes that are not deferred, optionally recording conflicts.
 	void VerifyUniqueIndexes(optional_ptr<const TableIndexList> delete_indexes, DataChunk &chunk,
-	                         optional_ptr<ConflictManager> manager) const;
+	                         optional_ptr<ConflictManager> manager,
+	                         optional_ptr<const unordered_set<idx_t>> dropped_indexes) const;
 	//! Vacuums all bound indexes.
 	void Vacuum();
 	//! Rebuilds all indexes with chunks supplied by the scan callback.

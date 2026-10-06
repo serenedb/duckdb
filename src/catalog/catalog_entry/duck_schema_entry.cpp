@@ -728,6 +728,16 @@ void DuckSchemaEntry::OnDropEntry(CatalogTransaction transaction, CatalogEntry &
 	if (!transaction.transaction) {
 		return;
 	}
+	if (entry.type == CatalogType::INDEX_ENTRY) {
+		auto &index = entry.Cast<IndexCatalogEntry>();
+		auto table = GetCatalogSet(CatalogType::TABLE_ENTRY).GetEntry(transaction, index.GetTableName());
+		if (!table || table->type != CatalogType::TABLE_ENTRY || !table->Cast<TableCatalogEntry>().IsDuckTable()) {
+			return;
+		}
+		auto &local_storage = LocalStorage::Get(transaction.transaction->Cast<DuckTransaction>());
+		local_storage.DropIndex(table->Cast<TableCatalogEntry>().GetStorage(), index.oid);
+		return;
+	}
 	if (entry.type != CatalogType::TABLE_ENTRY) {
 		return;
 	}
