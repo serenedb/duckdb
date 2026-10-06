@@ -1881,10 +1881,6 @@ void DelimJoinAsCteSetting::OnSet(SettingCallbackInfo &info, Value &) {
 	WarnDeprecatedSetting(info, DelimJoinAsCteSetting::Name);
 }
 
-void EnableObjectCacheSetting::OnSet(SettingCallbackInfo &info, Value &) {
-	WarnDeprecatedSetting(info, EnableObjectCacheSetting::Name);
-}
-
 void ErrorOnDivisionByZeroSetting::OnSet(SettingCallbackInfo &info, Value &) {
 	WarnDeprecatedSetting(info, ErrorOnDivisionByZeroSetting::Name);
 }

@@ -1105,9 +1105,6 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                          LogicalType::BOOLEAN, Value(false));
 	config.AddExtensionOption("disable_parquet_prefetching", "Disable the prefetching mechanism in Parquet",
 	                          LogicalType::BOOLEAN, Value(false));
-	config.AddExtensionOption("prefetch_all_parquet_files",
-	                          "(deprecated) Parquet files are now always prefetched, this setting has no effect",
-	                          LogicalType::BOOLEAN, Value(false));
 	config.AddExtensionOption(
 	    "parquet_prefetch_column_gap",
 	    "Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)",

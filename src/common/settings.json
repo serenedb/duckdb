@@ -787,17 +787,6 @@
         "default_value": "false"
     },
     {
-        "name": "enable_object_cache",
-        "description": "Deprecated legacy setting, does nothing.",
-        "type": "BOOLEAN",
-        "default_scope": "global",
-        "default_value": "false",
-        "on_callbacks": [
-            "set"
-        ],
-        "is_deprecated": true
-    },
-    {
         "name": "enable_optimistic_write",
         "description": "Whether or not to optimistically write large appends to disk before committing. Disable this to keep bulk appends in memory, e.g. for in-memory benchmarks.",
         "type": "BOOLEAN",
@@ -1324,13 +1313,6 @@
         "default_value": "100"
     },
     {
-        "name": "password",
-        "description": "The password to use. Kept for legacy compatibility.",
-        "type": "VARCHAR",
-        "default_scope": "global",
-        "default_value": ""
-    },
-    {
         "name": "perfect_ht_threshold",
         "description": "Threshold in bytes for when to use a perfect hash table.",
         "type": "UBIGINT",
@@ -1576,16 +1558,6 @@
         "scope": "local",
         "custom_implementation": true,
         "no_reset_all": true
-    },
-    {
-        "name": "username",
-        "description": "The username to use. Kept for legacy compatibility.",
-        "type": "VARCHAR",
-        "default_scope": "global",
-        "default_value": "",
-        "aliases": [
-            "user"
-        ]
     },
     {
         "name": "vacuum_rebuild_indexes",

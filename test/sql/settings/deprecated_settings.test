@@ -40,11 +40,6 @@ SET force_column_metadata_reuse=true;
 The 'force_column_metadata_reuse' setting is deprecated and will be removed in a future release.
 
 statement error
-SET enable_object_cache=true;
-----
-The 'enable_object_cache' setting is deprecated and will be removed in a future release.
-
-statement error
 SET regex_match_operator_semantics='full';
 ----
 The 'regex_match_operator_semantics' setting is deprecated and will be removed in a future release.
@@ -65,9 +60,6 @@ statement ok
 RESET delim_join_as_cte;
 
 statement ok
-RESET enable_object_cache;
-
-statement ok
 RESET regex_match_operator_semantics;
 
 statement ok
@@ -83,27 +75,6 @@ statement error
 SET table_function_identifier_conversion=NULL;
 ----
 <REGEX>:.*table_function_identifier_conversion setting cannot be NULL.*
-
-# the no-op pragmas warn too
-statement error
-PRAGMA enable_verification;
-----
-The 'enable_verification' pragma no longer has any effect; it is deprecated and will be removed in a future release.
-
-statement error
-PRAGMA disable_verification;
-----
-The 'disable_verification' pragma no longer has any effect; it is deprecated and will be removed in a future release.
-
-statement error
-PRAGMA enable_object_cache;
-----
-The 'enable_object_cache' pragma no longer has any effect; it is deprecated and will be removed in a future release.
-
-statement error
-PRAGMA disable_object_cache;
-----
-The 'disable_object_cache' pragma no longer has any effect; it is deprecated and will be removed in a future release.
 
 # settings that are not deprecated do not warn
 statement ok
