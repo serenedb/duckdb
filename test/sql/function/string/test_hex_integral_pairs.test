@@ -1,0 +1,27 @@
+# name: test/sql/function/string/test_hex_integral_pairs.test
+# description: hex and to_hex of integers write the minimal number of digits for every bit length and for negative values
+# group: [string]
+
+query I
+SELECT count(*) FROM range(0, 63) r(p), range(-1, 2) s(d)
+WHERE (1::BIGINT << p) + d >= 0
+  AND (hex((1::BIGINT << p) + d) <> hex(((1::BIGINT << p) + d)::HUGEINT)
+   OR to_hex((1::BIGINT << p) + d) <> lower(hex((1::BIGINT << p) + d))
+   OR ((1::BIGINT << p) + d < 2147483647 AND to_hex(((1::BIGINT << p) + d)::INTEGER) <> lower(hex((1::BIGINT << p) + d))));
+----
+0
+
+query I
+SELECT count(*) FROM range(100000) r(i) WHERE hex(i * 1000003) <> hex((i * 1000003)::HUGEINT) OR to_hex(i * 1000003) <> lower(hex(i * 1000003));
+----
+0
+
+query IIIIII
+SELECT to_hex(0::BIGINT), to_hex(15::BIGINT), to_hex(16::INTEGER), to_hex(-1::BIGINT), to_hex(-1::INTEGER), to_hex((-9223372036854775808)::BIGINT);
+----
+0	f	10	ffffffffffffffff	ffffffff	8000000000000000
+
+query IIII
+SELECT hex(0::BIGINT), hex(255::BIGINT), hex(-1::BIGINT), hex(4096::UBIGINT);
+----
+0	FF	FFFFFFFFFFFFFFFF	1000
