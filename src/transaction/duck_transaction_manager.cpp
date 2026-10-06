@@ -434,6 +434,15 @@ ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Tra
 	if (&catalog_owner != &db) {
 		prepared.commit_lock = storage_manager.GetCommitLock();
 	}
+	if (context.registered_state) {
+		try {
+			for (auto &state : context.registered_state->States()) {
+				state->TransactionPreWalWrite(db, context);
+			}
+		} catch (std::exception &ex) {
+			return ErrorData(ex);
+		}
+	}
 	error = transaction.AppendLocalStorage(context, db, prepared.commit_state);
 	if (!error.HasError()) {
 		error = transaction.WriteToWAL(context, db, prepared.commit_state, prepared.catalog_run);
