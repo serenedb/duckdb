@@ -1,4 +1,5 @@
 #include "core_functions/scalar/string_functions.hpp"
+#include "core_functions/scalar/fast_trim.hpp"
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
@@ -10,58 +11,8 @@
 namespace duckdb {
 
 template <bool LTRIM, bool RTRIM>
-struct TrimOperator {
-	template <class INPUT_TYPE, class RESULT_TYPE>
-	static RESULT_TYPE Operation(INPUT_TYPE input, StringHeap &heap) {
-		auto data = input.GetData();
-		auto size = input.GetSize();
-
-		utf8proc_int32_t codepoint;
-		auto str = reinterpret_cast<const utf8proc_uint8_t *>(data);
-
-		// Find the first character that is not left trimmed
-		idx_t begin = 0;
-		if (LTRIM) {
-			while (begin < size) {
-				auto bytes =
-				    utf8proc_iterate(str + begin, UnsafeNumericCast<utf8proc_ssize_t>(size - begin), &codepoint);
-				D_ASSERT(bytes > 0);
-				if (utf8proc_category(codepoint) != UTF8PROC_CATEGORY_ZS) {
-					break;
-				}
-				begin += UnsafeNumericCast<idx_t>(bytes);
-			}
-		}
-
-		// Find the last character that is not right trimmed
-		idx_t end;
-		if (RTRIM) {
-			end = begin;
-			for (auto next = begin; next < size;) {
-				auto bytes = utf8proc_iterate(str + next, UnsafeNumericCast<utf8proc_ssize_t>(size - next), &codepoint);
-				D_ASSERT(bytes > 0);
-				next += UnsafeNumericCast<idx_t>(bytes);
-				if (utf8proc_category(codepoint) != UTF8PROC_CATEGORY_ZS) {
-					end = next;
-				}
-			}
-		} else {
-			end = size;
-		}
-
-		// Copy the trimmed string
-		auto target = heap.EmptyString(end - begin);
-		auto output = target.GetDataWriteable();
-		memcpy(output, data + begin, end - begin);
-
-		target.Finalize();
-		return target;
-	}
-};
-
-template <bool LTRIM, bool RTRIM>
 static void UnaryTrimFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	UnaryExecutor::ExecuteString<string_t, string_t, TrimOperator<LTRIM, RTRIM>>(args.data[0], result);
+	FastTrim::Execute(args.data[0], result, LTRIM, RTRIM);
 }
 
 static void GetIgnoredCodepoints(string_t ignored, unordered_set<utf8proc_int32_t> &ignored_codepoints) {

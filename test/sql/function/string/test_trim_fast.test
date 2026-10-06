@@ -1,0 +1,36 @@
+# name: test/sql/function/string/test_trim_fast.test
+# description: trim/ltrim/rtrim without characters strip Unicode space separators only, on ASCII and multi-byte text
+# group: [string]
+
+statement ok
+CREATE TABLE t AS SELECT i, CASE i % 8
+    WHEN 0 THEN '  hello world  '
+    WHEN 1 THEN chr(12288) || 'привет' || chr(160) || ' '
+    WHEN 2 THEN '    '
+    WHEN 3 THEN ''
+    WHEN 4 THEN chr(9) || ' tab ' || chr(10)
+    WHEN 5 THEN ' ' || repeat('x', (i % 40)::INTEGER) || ' мир' || chr(8195)
+    WHEN 6 THEN 'no spaces at all here at the edges'
+    ELSE NULL END AS s FROM range(2000) r(i);
+
+query I
+SELECT count(*) FROM t WHERE trim(s) IS DISTINCT FROM regexp_replace(s, '^\p{Zs}+|\p{Zs}+$', '', 'g')
+   OR ltrim(s) IS DISTINCT FROM regexp_replace(s, '^\p{Zs}+', '')
+   OR rtrim(s) IS DISTINCT FROM regexp_replace(s, '\p{Zs}+$', '');
+----
+0
+
+query III
+SELECT '[' || trim('  a b  ') || ']', '[' || ltrim('  a b  ') || ']', '[' || rtrim('  a b  ') || ']';
+----
+[a b]	[a b  ]	[  a b]
+
+query I
+SELECT '[' || trim(chr(12288) || 'Ж' || chr(160)) || ']';
+----
+[Ж]
+
+query I
+SELECT trim(chr(9) || 'x' || chr(9)) = chr(9) || 'x' || chr(9);
+----
+true
