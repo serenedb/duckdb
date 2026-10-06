@@ -143,7 +143,7 @@ bool ColumnList::ColumnExists(const Identifier &name) const {
 
 PhysicalIndex ColumnList::LogicalToPhysical(LogicalIndex logical) const {
 	auto &column = GetColumn(logical);
-	if (column.Generated()) {
+	if (column.Category() == TableColumnType::GENERATED_VIRTUAL) {
 		throw InternalException("Column at position %d is not a physical column", logical.index);
 	}
 	return column.Physical();

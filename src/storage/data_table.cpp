@@ -180,7 +180,7 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_co
 	for (idx_t i = 0; i < column_definitions.size(); i++) {
 		auto &col = column_definitions[i];
 		col.SetOid(i);
-		if (col.Generated()) {
+		if (col.Category() == TableColumnType::GENERATED_VIRTUAL) {
 			continue;
 		}
 		col.SetStorageOid(storage_idx++);

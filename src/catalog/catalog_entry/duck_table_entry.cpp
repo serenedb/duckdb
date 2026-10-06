@@ -10,6 +10,7 @@
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/execution/index/art/art.hpp"
+#include "duckdb/execution/index/index_type_set.hpp"
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -150,14 +151,27 @@ virtual_column_map_t DuckTableEntry::GetVirtualColumns() const {
 	return virtual_columns;
 }
 
-static vector<idx_t> SyncIndexColumnLayout(DataTableInfo &info, const ColumnList &columns,
-                                           vector<idx_t> &logical_oids) {
+vector<column_t> DuckTableEntry::StorageColumnIds(const IndexCatalogEntry &index) const {
+	auto index_type = catalog.GetDatabase().config.GetIndexTypes().FindByName(index.index_type);
+	if (!index_type || !index_type->remaps_columns) {
+		return index.column_ids;
+	}
+	vector<column_t> storage_ids;
+	storage_ids.reserve(index.column_ids.size());
+	for (auto column_id : index.column_ids) {
+		storage_ids.push_back(columns.LogicalToPhysical(LogicalIndex(column_id)).index);
+	}
+	return storage_ids;
+}
+
+vector<idx_t> DuckTableEntry::SyncIndexColumnLayout(DataTableInfo &info, const ColumnList &columns,
+                                                    vector<idx_t> &logical_oids) {
 	vector<idx_t> physical_oids;
 	for (auto &column : columns.Logical()) {
 		logical_oids.push_back(column.CatalogOid());
-		if (!column.Generated()) {
-			physical_oids.push_back(column.CatalogOid());
-		}
+	}
+	for (auto &column : columns.Physical()) {
+		physical_oids.push_back(column.CatalogOid());
 	}
 	return info.SetIndexColumnLayout(logical_oids, std::move(physical_oids));
 }
@@ -890,7 +904,13 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
 	SetAlterDependencies(*bound_create_info, info);
-	if (columns.GetColumn(LogicalIndex(removed_index)).Generated()) {
+	vector<idx_t> removed_physical;
+	for (auto &col : columns.Physical()) {
+		if (col.Logical() == removed_index || removed_columns.contains(col.Logical())) {
+			removed_physical.push_back(col.Physical().index);
+		}
+	}
+	if (removed_physical.empty()) {
 		return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
 	}
 	const bool cascade_drops_column_dependents = info.cascade && catalog.Compatibility() == SqlCompatibility::POSTGRES;
@@ -907,8 +927,11 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 			}
 		}
 	}
-	auto new_storage =
-	    make_shared_ptr<DataTable>(context, *storage, columns.LogicalToPhysical(LogicalIndex(removed_index)).index);
+	std::sort(removed_physical.rbegin(), removed_physical.rend());
+	auto new_storage = storage;
+	for (auto physical : removed_physical) {
+		new_storage = make_shared_ptr<DataTable>(context, *new_storage, physical);
+	}
 	return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, new_storage, triggers);
 }
 
@@ -1662,7 +1685,12 @@ void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction, opt
 		for (idx_t i = 0; i < logical_oids.size(); i++) {
 			positions.emplace(logical_oids[i], i);
 		}
+		auto &index_types = catalog.GetDatabase().config.GetIndexTypes();
 		UpdateDependentIndexes(*transaction, *this, [&](DuckIndexEntry &index) {
+			auto index_type = index_types.FindByName(index.index_type);
+			if (!index_type || !index_type->remaps_columns) {
+				return;
+			}
 			for (auto &column_id : index.column_ids) {
 				if (column_id >= previous_logical_oids.size()) {
 					continue;

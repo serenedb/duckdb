@@ -24,6 +24,7 @@
 #include "duckdb/catalog/default/default_types.hpp"
 #include "duckdb/catalog/default/default_views.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
+#include "duckdb/execution/index/index_type_set.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
@@ -526,12 +527,21 @@ static void DropIndexesOnRemovedColumn(DuckSchemaEntry &schema, CatalogTransacti
 	if (!table.ColumnExists(info.removed_column)) {
 		return;
 	}
-	const auto removed = table.GetColumn(info.removed_column).Logical().index;
+	auto &column = table.GetColumn(info.removed_column);
+	auto &index_types = schema.catalog.GetDatabase().config.GetIndexTypes();
 	vector<Identifier> victims;
 	schema.GetCatalogSet(CatalogType::INDEX_ENTRY).Scan(transaction, [&](CatalogEntry &index_entry) {
 		auto &index = index_entry.Cast<IndexCatalogEntry>();
-		if (index.table_oid == table.oid &&
-		    std::find(index.column_ids.begin(), index.column_ids.end(), removed) != index.column_ids.end()) {
+		if (index.table_oid != table.oid) {
+			return;
+		}
+		auto index_type = index_types.FindByName(index.index_type);
+		const bool logical_ids = index_type && index_type->remaps_columns;
+		if (!logical_ids && column.Category() == TableColumnType::GENERATED_VIRTUAL) {
+			return;
+		}
+		const auto removed = logical_ids ? column.Logical().index : column.Physical().index;
+		if (std::find(index.column_ids.begin(), index.column_ids.end(), removed) != index.column_ids.end()) {
 			victims.push_back(index.name);
 		}
 	});

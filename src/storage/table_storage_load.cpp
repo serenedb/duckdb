@@ -110,6 +110,7 @@ void AttachIndexInstance(DuckTableEntry &table, DataTable &storage, const IndexD
 	if (definition.entry) {
 		auto create_info = definition.entry->GetInfo();
 		create_info->oid = definition.entry->oid;
+		create_info->Cast<CreateIndexInfo>().column_ids = table.StorageColumnIds(*definition.entry);
 		storage.AddIndex(
 		    make_uniq<UnboundIndex>(std::move(create_info), std::move(info), TableIOManager::Get(storage), storage.db),
 		    definition.entry_oid);
@@ -175,14 +176,7 @@ void TableStorageLoad::Create(ClientContext &context, unique_ptr<CreateInfo> inf
 
 static void UseIndexLayoutOf(DuckTableEntry &table, DataTableInfo &info) {
 	vector<idx_t> logical_oids;
-	vector<idx_t> physical_oids;
-	for (auto &column : table.GetColumns().Logical()) {
-		logical_oids.push_back(column.CatalogOid());
-		if (!column.Generated()) {
-			physical_oids.push_back(column.CatalogOid());
-		}
-	}
-	info.SetIndexColumnLayout(std::move(logical_oids), std::move(physical_oids));
+	DuckTableEntry::SyncIndexColumnLayout(info, table.GetColumns(), logical_oids);
 }
 
 void TableStorageLoad::Attach(DuckTableEntry &table, unique_ptr<CatalogEntry> entry,

@@ -887,6 +887,7 @@ void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &d
 	D_ASSERT(!index_storage_info.name.empty());
 
 	// Create an unbound index and add it to the table.
+	info.column_ids = table.StorageColumnIds(index);
 	auto unbound_index = make_uniq<UnboundIndex>(std::move(create_info), std::move(index_storage_info),
 	                                             TableIOManager::Get(data_table), data_table.db);
 	table_info->GetIndexes().AddIndex(std::move(unbound_index), index.oid, ConstraintCheckMode::DEFAULT);

@@ -8,9 +8,11 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/planner/constraints/bound_unique_constraint.hpp"
+#include "duckdb/storage/table/data_table_info.hpp"
 
 namespace duckdb {
 
@@ -68,6 +70,9 @@ public:
 
 	void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) override;
 	void ReplaceStorage(DuckTableEntry &source);
+	static vector<idx_t> SyncIndexColumnLayout(DataTableInfo &info, const ColumnList &columns,
+	                                           vector<idx_t> &logical_oids);
+	vector<column_t> StorageColumnIds(const IndexCatalogEntry &index) const;
 
 	void CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state);
 	void CommitDropConstraint(const AlterInfo &info, CommitDropState &drop_state);
