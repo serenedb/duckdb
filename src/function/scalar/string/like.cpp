@@ -7,6 +7,7 @@
 
 #include "duckdb/execution/expression_executor.hpp"
 #include "re2/literal_finder.h"
+#include "duckdb/function/scalar/ilike_ascii_fold.hpp"
 
 #include <absl/strings/ascii.h>
 
@@ -628,7 +629,20 @@ void ILikeFunction(DataChunk &input, ExpressionState &state, Vector &result) {
 		// reusable scratch buffer for lowercasing each string value (grown on demand)
 		idx_t scratch_size = 0;
 		unsafe_unique_array<char> scratch;
+		const bool ascii_fold = matcher && ILikeAsciiFold::IsAscii(pat_lcase);
+		const bool special_check = ascii_fold && ILikeAsciiFold::NeedsSpecialCheck(pat_lcase);
 		UnaryExecutor::Execute<string_t, bool>(input.data[0], result, input.size(), [&](string_t str) {
+			if (ascii_fold) {
+				if (str.GetSize() > scratch_size) {
+					scratch = make_unsafe_uniq_array_uninitialized<char>(str.GetSize());
+					scratch_size = str.GetSize();
+				}
+				if (ILikeAsciiFold::Fold(str, scratch.get(), special_check)) {
+					string_t folded(scratch.get(), UnsafeNumericCast<uint32_t>(str.GetSize()));
+					bool match = matcher->Match(folded);
+					return INVERT ? !match : match;
+				}
+			}
 			idx_t str_llength = LowerLength(str.GetData(), str.GetSize());
 			if (str_llength > scratch_size) {
 				scratch = make_unsafe_uniq_array_uninitialized<char>(str_llength);

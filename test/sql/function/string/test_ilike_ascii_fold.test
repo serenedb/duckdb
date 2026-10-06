@@ -1,0 +1,103 @@
+# name: test/sql/function/string/test_ilike_ascii_fold.test
+# description: ILIKE with an ASCII constant pattern over non-ASCII data folds ASCII bytes only, except for code points whose lowercase is ASCII
+# group: [string]
+
+statement ok
+CREATE TABLE t(id INTEGER, s VARCHAR);
+
+statement ok
+INSERT INTO t VALUES
+    (1, 'Привет GOOGLE мир'),
+    (2, 'ПРИВЕТ google'),
+    (3, 'İstanbul'),
+    (4, 'KELVIN'),
+    (5, 'ГУГЛ'),
+    (6, NULL),
+    (7, ''),
+    (8, 'GoOgLe.Ru Ünïcödé'),
+    (9, 'ascii only Google'),
+    (10, 'xİx'),
+    (11, 'K');
+
+query I
+SELECT id FROM t WHERE s ILIKE '%google%' ORDER BY id;
+----
+1
+2
+8
+9
+
+query I
+SELECT id FROM t WHERE s NOT ILIKE '%google%' ORDER BY id;
+----
+3
+4
+5
+7
+10
+11
+
+query I
+SELECT id FROM t WHERE s ILIKE 'i%' ORDER BY id;
+----
+3
+
+query I
+SELECT id FROM t WHERE s ILIKE '%xix' ORDER BY id;
+----
+10
+
+query I
+SELECT id FROM t WHERE s ILIKE '%k%' ORDER BY id;
+----
+4
+11
+
+query I
+SELECT id FROM t WHERE s ILIKE 'k' ORDER BY id;
+----
+11
+
+query I
+SELECT id FROM t WHERE s ILIKE '%привет%' ORDER BY id;
+----
+1
+2
+
+query I
+SELECT count(*) FROM t WHERE (s ILIKE '%google%') IS DISTINCT FROM (lower(s) LIKE '%google%');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE (s ILIKE '%k%') IS DISTINCT FROM (lower(s) LIKE '%k%');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE (s ILIKE '%i%') IS DISTINCT FROM (lower(s) LIKE '%i%');
+----
+0
+
+statement ok
+INSERT INTO t VALUES (12, 'İSTANBUL and THE KELVIN scale ÄÖÜ GOOGLE'), (13, 'xxxxxxxxxxxxxxxxGoOgLexxxxxxxxxx@[`{');
+
+query I
+SELECT id FROM t WHERE s ILIKE '%stanbul%' ORDER BY id;
+----
+3
+12
+
+query I
+SELECT id FROM t WHERE s ILIKE '%google%' AND s ILIKE '%@[`{' ORDER BY id;
+----
+13
+
+statement ok
+CREATE TABLE chars AS SELECT chr(a::INTEGER) || chr(b::INTEGER) || 'Привет' || chr(a::INTEGER) || repeat(chr(b::INTEGER), 9) AS s FROM range(1, 128) r1(a), range(1, 128, 7) r2(b);
+
+query I
+SELECT count(*) FROM chars, (VALUES ('%z%'), ('%a%'), ('%@%'), ('%[%'), ('%`%'), ('%{%'), ('%привет%'), ('%zzzzzzzz%'), ('%^%')) p(pat)
+WHERE (s ILIKE pat) IS DISTINCT FROM (lower(s) LIKE lower(pat));
+----
+0

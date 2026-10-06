@@ -8,6 +8,7 @@ add_library_unity(
   hive_partition_component.cpp
   length.cpp
   like.cpp
+  ilike_ascii_fold.cpp
   md5.cpp
   nfc_normalize.cpp
   overlay.cpp
