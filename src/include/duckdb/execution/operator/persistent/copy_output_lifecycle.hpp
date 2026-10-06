@@ -29,7 +29,7 @@ public:
 	~CopyOutputLifecycle();
 
 public:
-	void RegisterFile(string path) DUCKDB_EXCLUDES(lock);
+	void RegisterFile(string path, bool fresh_path = false) DUCKDB_EXCLUDES(lock);
 	void RegisterCreatedDirectory(string path) DUCKDB_EXCLUDES(lock);
 	void MarkSuccessful() noexcept DUCKDB_EXCLUDES(lock);
 

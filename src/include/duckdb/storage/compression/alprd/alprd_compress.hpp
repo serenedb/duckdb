@@ -31,7 +31,6 @@ public:
 	AlpRDCompressionState(ColumnDataCheckpointData &checkpoint_data, AlpRDAnalyzeState<T> *analyze_state)
 	    : StandardCompressionState(checkpoint_data, CompressionType::COMPRESSION_ALPRD) {
 		//! State variables from the analyze step that are needed for compression
-		compression_data.left_parts_dict_map = std::move(analyze_state->compression_data.left_parts_dict_map);
 		compression_data.left_bit_width = analyze_state->compression_data.left_bit_width;
 		compression_data.right_bit_width = analyze_state->compression_data.right_bit_width;
 		compression_data.actual_dictionary_size = analyze_state->compression_data.actual_dictionary_size;

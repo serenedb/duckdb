@@ -3487,7 +3487,8 @@ void CopyToFileGlobalState::RegisterPendingFileStatePathLocked(PendingFileState 
 }
 
 unique_ptr<GlobalFileState> CopyToFileGlobalState::InitializeFileState(PendingFileState pending_file_state) {
-	output_lifecycle.RegisterFile(pending_file_state.output_path);
+	output_lifecycle.RegisterFile(pending_file_state.output_path,
+	                              op.filename_pattern.HasUUID() && pending_file_state.output_path != op.file_path);
 	auto data = op.function.copy_to_initialize_global(context, *op.bind_data, pending_file_state.output_path);
 	if (pending_file_state.written_file_info && pending_file_state.written_file_info->file_stats) {
 		op.function.copy_to_get_written_statistics(context, *op.bind_data, *data,

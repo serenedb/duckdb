@@ -55,7 +55,6 @@ public:
 	uint16_t exceptions_positions[AlpRDConstants::ALP_VECTOR_SIZE];
 	idx_t left_bit_packed_size;
 	idx_t right_bit_packed_size;
-	unordered_map<uint16_t, uint16_t> left_parts_dict_map;
 	uint8_t actual_dictionary_size;
 
 	idx_t RequiredSpace() const {
@@ -124,11 +123,6 @@ struct AlpRDCompression {
 				//! The dict keys are mapped to the left part themselves
 				compression_data.left_parts_dict[dict_idx] =
 				    UnsafeNumericCast<uint16_t>(left_parts_sorted_repetitions[dict_idx].hash);
-				compression_data.left_parts_dict_map.insert({compression_data.left_parts_dict[dict_idx], dict_idx});
-			}
-			//! Pararelly we store a map of the dictionary to quickly resolve exceptions during encoding
-			for (idx_t i = actual_dictionary_size + 1; i < left_parts_sorted_repetitions.size(); i++) {
-				compression_data.left_parts_dict_map.insert({left_parts_sorted_repetitions[i].hash, i});
 			}
 			compression_data.left_bit_width = left_bit_width;
 			compression_data.right_bit_width = right_bit_width;
@@ -175,14 +169,13 @@ struct AlpRDCompression {
 
 		// Dictionary encoding for left parts
 		for (idx_t i = 0; i < n_values; i++) {
-			uint16_t dictionary_index;
 			auto dictionary_key = left_parts[i];
-			if (compression_data.left_parts_dict_map.find(dictionary_key) ==
-			    compression_data.left_parts_dict_map.end()) {
-				//! If not found on the dictionary we store the smallest non-key index as exception (the dict size)
-				dictionary_index = compression_data.actual_dictionary_size;
-			} else {
-				dictionary_index = compression_data.left_parts_dict_map[dictionary_key];
+			uint16_t dictionary_index = compression_data.actual_dictionary_size;
+			for (uint16_t candidate = 0; candidate < compression_data.actual_dictionary_size; candidate++) {
+				if (compression_data.left_parts_dict[candidate] == dictionary_key) {
+					dictionary_index = candidate;
+					break;
+				}
 			}
 			left_parts[i] = dictionary_index;
 
