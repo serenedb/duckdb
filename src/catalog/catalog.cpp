@@ -1648,13 +1648,18 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(ClientContext &context
 	return GetSchemas(retriever, catalog_name);
 }
 
-vector<reference<SchemaCatalogEntry>> Catalog::GetAllSchemas(ClientContext &context, bool include_hidden) {
+vector<reference<SchemaCatalogEntry>>
+Catalog::GetAllSchemas(ClientContext &context, bool include_hidden,
+                       const std::function<bool(AttachedDatabase &)> &needs_database) {
 	vector<reference<SchemaCatalogEntry>> result;
 
 	auto &meta_transaction = MetaTransaction::Get(context);
 	auto &databases = meta_transaction.GetStatementDatabases(context);
 	for (auto &database : databases) {
 		if (!include_hidden && database->GetVisibility() == AttachVisibility::HIDDEN) {
+			continue;
+		}
+		if (needs_database && !needs_database(*database)) {
 			continue;
 		}
 		// Pin the database for the meta transaction: the returned schema (and downstream entry) references

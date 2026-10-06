@@ -7,7 +7,6 @@
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/main/attached_database.hpp"
-#include "duckdb/transaction/meta_transaction.hpp"
 
 namespace duckdb {
 
@@ -66,26 +65,15 @@ static unique_ptr<FunctionData> DuckDBTriggersBind(ClientContext &context, Table
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	return make_uniq<DuckDBSystemIncludeHiddenBindData>();
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBTriggersInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBTriggersData>();
 
-	auto &meta_transaction = MetaTransaction::Get(context);
-	vector<reference<SchemaCatalogEntry>> schemas;
-	for (auto &database : meta_transaction.GetStatementDatabases(context)) {
-		if (database->GetVisibility() == AttachVisibility::HIDDEN || !database->GetCatalog().IsDuckCatalog()) {
-			continue;
-		}
-		auto catalog_schemas = meta_transaction.UseDatabase(database).GetCatalog().GetSchemas(context);
-		schemas.insert(schemas.end(), catalog_schemas.begin(), catalog_schemas.end());
-	}
-	sort(schemas.begin(), schemas.end(), [](reference<SchemaCatalogEntry> left, reference<SchemaCatalogEntry> right) {
-		if (left.get().catalog.GetName() != right.get().catalog.GetName()) {
-			return left.get().catalog.GetName() < right.get().catalog.GetName();
-		}
-		return left.get().name < right.get().name;
+	auto database_filter = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>().DatabaseFilter(context);
+	auto schemas = Catalog::GetAllSchemas(context, false, [&](AttachedDatabase &database) {
+		return database.GetCatalog().IsDuckCatalog() && (!database_filter || database_filter(database));
 	});
 	vector<reference<TableCatalogEntry>> tables;
 	for (auto &schema : schemas) {
@@ -159,8 +147,9 @@ void DuckDBTriggersFunction(ClientContext &context, TableFunctionInput &data_p, 
 }
 
 void DuckDBTriggersFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(
-	    TableFunction("duckdb_triggers", {}, DuckDBTriggersFunction, DuckDBTriggersBind, DuckDBTriggersInit));
+	TableFunction fn("duckdb_triggers", {}, DuckDBTriggersFunction, DuckDBTriggersBind, DuckDBTriggersInit);
+	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

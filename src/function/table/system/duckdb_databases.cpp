@@ -56,11 +56,16 @@ static unique_ptr<FunctionData> DuckDBDatabasesBind(ClientContext &context, Tabl
 
 unique_ptr<GlobalTableFunctionState> DuckDBDatabasesInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBDatabasesData>();
-	result->include_hidden = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>().include_hidden;
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = bind_data.include_hidden;
 
 	// scan all the schemas for tables and collect them and collect them
 	auto &db_manager = DatabaseManager::Get(context);
 	result->entries = db_manager.GetDatabases(context);
+	if (auto needs_database = bind_data.DatabaseFilter(context)) {
+		std::erase_if(result->entries,
+		              [&](const shared_ptr<AttachedDatabase> &entry) { return !needs_database(*entry); });
+	}
 	return std::move(result);
 }
 
@@ -141,6 +146,7 @@ void DuckDBDatabasesFunction(ClientContext &context, TableFunctionInput &data_p,
 void DuckDBDatabasesFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction fn("duckdb_databases", {}, DuckDBDatabasesFunction, DuckDBDatabasesBind, DuckDBDatabasesInit);
 	fn.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
 	set.AddFunction(fn);
 }
 

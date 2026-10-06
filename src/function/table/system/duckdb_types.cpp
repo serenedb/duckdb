@@ -84,7 +84,7 @@ static unique_ptr<FunctionData> DuckDBTypesBind(ClientContext &context, TableFun
 unique_ptr<GlobalTableFunctionState> DuckDBTypesInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBTypesData>();
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden);
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
 		schema.get().Scan(context, CatalogType::TYPE_ENTRY,
 		                  [&](CatalogEntry &entry) { result->entries.push_back(entry.Cast<TypeCatalogEntry>()); });
@@ -264,6 +264,7 @@ void DuckDBTypesFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 
 void DuckDBTypesFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction fn("duckdb_types", {}, DuckDBTypesFunction, DuckDBTypesBind, DuckDBTypesInit);
+	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
 	fn.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	set.AddFunction(fn);
 }
