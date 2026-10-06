@@ -1,0 +1,55 @@
+# name: test/sql/function/string/test_reverse_mixed.test
+# description: reverse keeps grapheme clusters, CR LF pairs and combining marks around non-ASCII runs inside long ASCII text
+# group: [string]
+
+query I
+SELECT reverse('https://example.com/path/to/page?q=1&r=2');
+----
+2=r&1=q?egap/ot/htap/moc.elpmaxe//:sptth
+
+query I
+SELECT reverse('abcdefgh/привет/ijklmnop');
+----
+ponmlkji/тевирп/hgfedcba
+
+query I
+SELECT reverse('xxxxxxxxxxe' || chr(769) || 'yyyyyyyyyy') = 'yyyyyyyyyye' || chr(769) || 'xxxxxxxxxx';
+----
+true
+
+query I
+SELECT reverse('ab' || chr(13) || chr(10) || 'cdefghijk' || 'é' || 'lm' || chr(13) || chr(10) || 'n') = 'n' || chr(13) || chr(10) || 'ml' || 'é' || 'kjihgfedc' || chr(13) || chr(10) || 'ba';
+----
+true
+
+query I
+SELECT reverse('a' || chr(13) || chr(10) || 'b') = 'b' || chr(10) || chr(13) || 'a';
+----
+true
+
+query I
+SELECT reverse('abcdefghij' || chr(1536) || 'klmnopqrst');
+----
+tsrqponml؀kjihgfedcba
+
+query III
+WITH tok(k, t) AS (VALUES (0, 'a'), (1, chr(13)), (2, chr(10)), (3, chr(233)), (4, chr(769)), (5, chr(127465) || chr(127466)), (6, chr(127465)), (7, chr(8205)), (8, chr(128104)), (9, '#' || chr(65039) || chr(8419)), (10, chr(4352)), (11, chr(4449)), (12, chr(1536)), (13, 'Ж'), (14, ' '), (15, 'xyz'))
+SELECT md5(string_agg(reverse(a.t || b.t || c.t || d.t), '|' ORDER BY a.k, b.k, c.k, d.k)), md5(string_agg(reverse(a.t || b.t || 'abcdefghijk' || c.t || d.t || 'lmnopqrstuvw' || a.t), '|' ORDER BY a.k, b.k, c.k, d.k)), md5(string_agg(reverse(repeat('ab' || chr(13) || chr(10), 3) || a.t || repeat(b.t || 'xyzxyzxyz', 2) || c.t || d.t || chr(13)), '|' ORDER BY a.k, b.k, c.k, d.k)) FROM tok a, tok b, tok c, tok d;
+----
+f337f33f2ce8ad04e45a23e84f9014c8	65e956b070f38a7f5a075007c57633a7	a6dd6d5afe7e52e97a8c3ced95cecbe8
+
+query III
+WITH tok(k, t) AS (VALUES (0, 'a'), (1, chr(13)), (2, chr(10)), (3, chr(233)), (4, chr(769)), (5, chr(127465) || chr(127466)), (6, chr(127465)), (7, chr(8205)), (8, chr(128104)), (9, '#' || chr(65039) || chr(8419)), (10, chr(4352)), (11, chr(4449)), (12, chr(1536)), (13, 'Ж'), (14, 'привет'), (15, chr(1155)), (16, chr(169)), (17, chr(173)), (18, chr(133)), (19, 'Ωλ'), (20, chr(768)), (21, chr(1327)))
+SELECT md5(string_agg(reverse(a.t || b.t || c.t || d.t), '|' ORDER BY a.k, b.k, c.k, d.k)), md5(string_agg(reverse(a.t || b.t || 'абвгдеёжзий' || c.t || d.t || 'lmnopqrstuvw' || a.t), '|' ORDER BY a.k, b.k, c.k, d.k)), md5(string_agg(reverse(repeat('я' || chr(13) || chr(10), 3) || a.t || repeat(b.t || 'xyzабв', 2) || c.t || d.t || chr(13)), '|' ORDER BY a.k, b.k, c.k, d.k)) FROM tok a, tok b, tok c, tok d;
+----
+61ad868bee96542593fe9e9e012ae165	6503c4d60167f738bd113f5b8aa75174	1ec6fe25449e488fe1b0fe04654f701c
+
+query I
+SELECT reverse('Привет, мир! Ωλ é');
+----
+é λΩ !рим ,тевирП
+
+query I
+SELECT reverse('мир' || chr(1155) || 'да') = 'ад' || 'р' || chr(1155) || 'им';
+----
+true
