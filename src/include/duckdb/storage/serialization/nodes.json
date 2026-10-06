@@ -614,8 +614,7 @@
       {
         "id": 106,
         "name": "tags",
-        "type": "InsertionOrderPreservingMap<string>",
-        "default": "InsertionOrderPreservingMap<string>()"
+        "type": "InsertionOrderPreservingMap<string>"
       },
       {
         "id": 16484,
