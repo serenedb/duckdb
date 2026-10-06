@@ -20,11 +20,11 @@ public:
 	static optional_ptr<ParseResult> FindCollapsibleResult(std::span<const reference<ParseResult>> children);
 
 	void DiscardSuggestions(vector<MatcherSuggestion> &suggestions, idx_t saved_suggestion_size) const {
-		if (!suppress_suggestions) {
-			return;
+		if (suppress_suggestions) {
+			EraseSuggestions(suggestions, saved_suggestion_size);
 		}
-		suggestions.erase(suggestions.begin() + NumericCast<int64_t>(saved_suggestion_size), suggestions.end());
 	}
+	DUCKDB_API static void EraseSuggestions(vector<MatcherSuggestion> &suggestions, idx_t saved_suggestion_size);
 
 	SuggestionType AddSuggestionInternal(MatchState &state) const override {
 		if (suppress_suggestions) {

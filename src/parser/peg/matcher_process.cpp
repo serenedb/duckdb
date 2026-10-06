@@ -106,6 +106,10 @@ arena_ptr<MatchProcess> ListMatcher::StartMatch(MatchState &state) const {
 	return state.Make<ListMatchProcess>(*this, state);
 }
 
+void ListMatcher::EraseSuggestions(vector<MatcherSuggestion> &suggestions, idx_t saved_suggestion_size) {
+	suggestions.erase(suggestions.begin() + NumericCast<int64_t>(saved_suggestion_size), suggestions.end());
+}
+
 optional_ptr<ParseResult> ListMatcher::FindCollapsibleResult(std::span<const reference<ParseResult>> children) {
 	optional_ptr<ParseResult> collapsible;
 	for (auto &child : children) {
