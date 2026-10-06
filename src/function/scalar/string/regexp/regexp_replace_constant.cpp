@@ -25,7 +25,57 @@
 
 namespace duckdb {
 
-void RegexpReplaceConstant::Execute(const Vector &strings, string_t replace, RegexLocalState &lstate, Vector &result) {
+static idx_t Utf8SequenceLength(const char *data, idx_t remaining) {
+	auto lead = static_cast<unsigned char>(data[0]);
+	idx_t length = lead < 0xC0 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+	return length <= remaining ? length : 1;
+}
+
+static bool ReplaceAll(const duckdb_re2::RE2 &re, const string_t &input, const duckdb_re2::StringPiece &rewrite,
+                       duckdb_re2::StringPiece *vec, int nvec, std::string &buffer) {
+	const duckdb_re2::StringPiece text(input.GetData(), input.GetSize());
+	const char *begin = text.data();
+	const char *p = begin;
+	const char *end = p + text.size();
+	const char *last_end = nullptr;
+	bool replaced = false;
+	while (p <= end) {
+		if (!re.Match(text, static_cast<size_t>(p - begin), text.size(), duckdb_re2::RE2::UNANCHORED, vec, nvec)) {
+			break;
+		}
+		if (!replaced) {
+			buffer.clear();
+		}
+		if (p < vec[0].data()) {
+			buffer.append(p, static_cast<size_t>(vec[0].data() - p));
+		}
+		if (vec[0].data() == last_end && vec[0].empty()) {
+			if (p < end) {
+				auto step = Utf8SequenceLength(p, static_cast<idx_t>(end - p));
+				buffer.append(p, step);
+				p += step;
+			} else {
+				p++;
+			}
+			replaced = true;
+			continue;
+		}
+		re.Rewrite(&buffer, rewrite, vec, nvec);
+		p = vec[0].data() + vec[0].size();
+		last_end = p;
+		replaced = true;
+	}
+	if (!replaced || last_end == nullptr) {
+		return false;
+	}
+	if (p < end) {
+		buffer.append(p, static_cast<size_t>(end - p));
+	}
+	return true;
+}
+
+void RegexpReplaceConstant::Execute(const Vector &strings, string_t replace, RegexLocalState &lstate, Vector &result,
+                                    bool global) {
 	const auto &re = lstate.constant_pattern;
 	const duckdb_re2::StringPiece rewrite(replace.GetData(), replace.GetSize());
 	bool rewrite_checked = false;
@@ -40,6 +90,12 @@ void RegexpReplaceConstant::Execute(const Vector &strings, string_t replace, Reg
 				throw InvalidInputException("Invalid replacement string for regexp_replace: %s", rewrite_error);
 			}
 			rewrite_checked = true;
+		}
+		if (global) {
+			if (!ReplaceAll(re, input, rewrite, vec, nvec, buffer)) {
+				return input;
+			}
+			return StringVector::AddString(result, buffer);
 		}
 		const duckdb_re2::StringPiece piece(input.GetData(), input.GetSize());
 		if (!re.Match(piece, 0, piece.size(), duckdb_re2::RE2::UNANCHORED, vec, nvec)) {

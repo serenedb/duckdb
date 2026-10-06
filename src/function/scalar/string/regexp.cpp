@@ -195,10 +195,11 @@ static void RegexReplaceFunction(DataChunk &args, ExpressionState &state, Vector
 	const auto &patterns = args.data[1];
 	const auto &replaces = args.data[2];
 
-	if (info.constant_pattern && !info.global_replace && replaces.GetVectorType() == VectorType::CONSTANT_VECTOR &&
+	if (info.constant_pattern && replaces.GetVectorType() == VectorType::CONSTANT_VECTOR &&
 	    !ConstantVector::IsNull(replaces)) {
 		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexLocalState>();
-		RegexpReplaceConstant::Execute(strings, ConstantVector::GetData<string_t>(replaces)[0], lstate, result);
+		RegexpReplaceConstant::Execute(strings, ConstantVector::GetData<string_t>(replaces)[0], lstate, result,
+		                               info.global_replace);
 		return;
 	}
 	auto &heap = StringVector::GetStringHeap(result);

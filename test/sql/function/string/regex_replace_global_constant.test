@@ -1,0 +1,40 @@
+# name: test/sql/function/string/regex_replace_global_constant.test
+# description: global regexp_replace with a constant pattern and replacement agrees with the per-row path, including empty matches and UTF-8
+# group: [string]
+
+statement ok
+CREATE TABLE s AS SELECT i, CASE i % 6
+    WHEN 0 THEN 'http://site' || i::VARCHAR || '.ru/a/' || (i * 7)::VARCHAR || '?x=' || (i % 13)::VARCHAR
+    WHEN 1 THEN 'no digits here'
+    WHEN 2 THEN ''
+    WHEN 3 THEN 'Привет 123 мир 45 ёж'
+    WHEN 4 THEN 'aaa' || i::VARCHAR || 'bab'
+    ELSE NULL END AS v FROM range(3000) r(i);
+
+statement ok
+CREATE TABLE p AS SELECT * FROM (VALUES ('[0-9]+', 'N'), ('[0-9]', '<\0>'), ('a*', '-'), ('', '|'), ('\b', '#'), ('([a-z]+)([0-9]+)', '\2\1'), ('x*', ''), ('[а-я]+', 'R'), ('(?i)A', 'b')) t(pat, rep);
+
+foreach row 0 1 2 3 4 5 6 7 8
+
+query I
+SELECT count(*) FROM s, (SELECT pat, rep FROM p LIMIT 1 OFFSET ${row}) q
+WHERE regexp_replace(v, (SELECT pat FROM p LIMIT 1 OFFSET ${row}), (SELECT rep FROM p LIMIT 1 OFFSET ${row}), 'g') IS DISTINCT FROM regexp_replace(v, q.pat, q.rep, 'g');
+----
+0
+
+endloop
+
+query III
+SELECT regexp_replace('a1b22c333', '[0-9]+', 'N', 'g'), regexp_replace('abc', '', '-', 'g'), regexp_replace('ёжик', 'x*', '.', 'g');
+----
+aNbNcN	-a-b-c-	.ё.ж.и.к.
+
+query II
+SELECT regexp_replace('abc', 'z', 'N', 'g'), regexp_replace(NULL, 'z', 'N', 'g');
+----
+abc	NULL
+
+statement error
+SELECT regexp_replace('abc', 'b', '\1', 'g');
+----
+Invalid replacement string
