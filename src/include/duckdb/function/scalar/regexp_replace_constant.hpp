@@ -24,11 +24,8 @@
 
 namespace duckdb {
 
-//! First-match regexp_replace with a constant pattern and a constant replacement: the replacement is validated
-//! once (on the first non-NULL row, as the per-row path does), rows without a match are returned as-is without a
-//! copy, and a match is rewritten into a reused buffer instead of copying the whole input.
 struct RegexpReplaceConstant {
-	static void Execute(const Vector &strings, string_t replace, RegexLocalState &lstate, Vector &result);
+	static void Execute(const Vector &strings, string_t replace, RegexLocalState &lstate, Vector &result, bool global);
 };
 
 } // namespace duckdb
