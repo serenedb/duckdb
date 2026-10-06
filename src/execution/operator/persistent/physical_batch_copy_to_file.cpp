@@ -289,6 +289,9 @@ public:
 	TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override {
 		while (op.ExecuteTask(context, gstate)) {
 			op.FlushBatchData(context, gstate);
+			if (mode == TaskExecutionMode::PROCESS_PARTIAL) {
+				return TaskExecutionResult::TASK_NOT_FINISHED;
+			}
 		}
 		event->FinishTask();
 		return TaskExecutionResult::TASK_FINISHED;
