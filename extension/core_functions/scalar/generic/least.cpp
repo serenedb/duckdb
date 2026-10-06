@@ -1,4 +1,5 @@
 #include "core_functions/scalar/generic_functions.hpp"
+#include "core_functions/scalar/least_greatest_without_nulls.hpp"
 #include "duckdb/common/operator/comparison_operators.hpp"
 #include "duckdb/common/smaller_binary.hpp"
 #include "duckdb/function/create_sort_key.hpp"
@@ -115,6 +116,11 @@ void LeastGreatestFunction(DataChunk &args, ExpressionState &state, Vector &resu
 		// single input: nop
 		result.Reference(args.data[0]);
 		return;
+	}
+	if constexpr (std::is_same<BASE_OP, StandardLeastGreatest<false>>::value) {
+		if (TryLeastGreatestWithoutNulls<T, OP>(args, result)) {
+			return;
+		}
 	}
 	auto &input = BASE_OP::Prepare(args, state);
 	auto &result_vector = BASE_OP::TargetVector(result, state);
