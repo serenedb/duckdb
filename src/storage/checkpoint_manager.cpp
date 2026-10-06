@@ -47,6 +47,7 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/storage/table_storage_load.hpp"
+#include "duckdb/storage/storage_extension.hpp"
 
 namespace duckdb {
 
@@ -353,6 +354,10 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 
 	metadata_writer->Flush();
 	table_metadata_writer->Flush();
+
+	if (db.GetStorageExtension()) {
+		db.GetStorageExtension()->OnCheckpointBeforeHeader(db, options);
+	}
 
 	auto debug_checkpoint_abort = Settings::Get<DebugCheckpointAbortSetting>(db.GetDatabase());
 	if (debug_checkpoint_abort == CheckpointAbort::DEBUG_ABORT_BEFORE_HEADER) {
