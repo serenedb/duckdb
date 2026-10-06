@@ -1,0 +1,35 @@
+# name: test/sql/function/generic/test_least_greatest_no_nulls.test
+# description: least/greatest over columns without NULLs, with constants and with NULLs agree with CASE expressions
+# group: [generic]
+
+statement ok
+CREATE TABLE t AS SELECT (i % 97)::SMALLINT AS a, ((i * 7) % 89)::SMALLINT AS b, (i * 13 % 101)::INTEGER AS c,
+    (i % 11 - 5)::DOUBLE / 3 AS d, CASE WHEN i % 5 = 0 THEN 'nan'::DOUBLE ELSE (i % 7)::DOUBLE END AS e,
+    CASE WHEN i % 3 = 0 THEN NULL ELSE i % 50 END::INTEGER AS n FROM range(5000) r(i);
+
+query I
+SELECT count(*) FROM t WHERE greatest(a, b) <> CASE WHEN a > b THEN a ELSE b END
+   OR least(a, b) <> CASE WHEN a < b THEN a ELSE b END
+   OR greatest(a, b, c) <> CASE WHEN a >= b AND a >= c THEN a WHEN b >= c THEN b ELSE c END
+   OR least(c, 50) <> CASE WHEN c < 50 THEN c ELSE 50 END
+   OR greatest(40, a, 60) <> CASE WHEN a > 60 THEN a ELSE 60 END
+   OR greatest(d, e) IS DISTINCT FROM CASE WHEN e > d THEN e ELSE d END
+   OR least(d, e) IS DISTINCT FROM CASE WHEN e < d THEN e ELSE d END;
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE greatest(n, c) IS DISTINCT FROM CASE WHEN n IS NULL THEN c WHEN n > c THEN n ELSE c END
+   OR least(n, NULL::INTEGER) IS DISTINCT FROM n;
+----
+0
+
+query IIII
+SELECT greatest(1, 2, 3), least(4.5, 2.5), greatest(NULL::INTEGER, NULL::INTEGER), least('nan'::DOUBLE, 1);
+----
+3	2.5	NULL	1.0
+
+query II
+SELECT sum(greatest(a, b)), sum(least(a, b)) FROM t;
+----
+307328	151375
