@@ -714,6 +714,16 @@ timestamp_t Interval::Add(timestamp_t left, interval_t right) {
 	if (!left.IsFinite()) {
 		return left;
 	}
+	if (right.months == 0) {
+		int64_t delta;
+		int64_t value;
+		if (TryMultiplyOperator::Operation<int64_t, int64_t, int64_t>(right.days, Interval::MICROS_PER_DAY, delta) &&
+		    TryAddOperator::Operation<int64_t, int64_t, int64_t>(delta, right.micros, delta) &&
+		    TryAddOperator::Operation<int64_t, int64_t, int64_t>(left.value, delta, value) &&
+		    value > -(int64_t(1) << 62) && value < (int64_t(1) << 62)) {
+			return timestamp_t(value);
+		}
+	}
 	date_t date;
 	dtime_t time;
 	Timestamp::Convert(left, date, time);
