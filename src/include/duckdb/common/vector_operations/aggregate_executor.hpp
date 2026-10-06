@@ -757,6 +757,24 @@ public:
 		b.ToUnifiedFormat(bdata);
 		states.ToUnifiedFormat(sdata);
 
+		if constexpr (HasBinaryBatchUpdate<STATE_TYPE, A_TYPE, B_TYPE, OP>::value) {
+			auto state_ptrs = (STATE_TYPE **)sdata.data;
+			if (count > 0) {
+				auto first = state_ptrs[sdata.sel->get_index(0)];
+				bool single_state = true;
+				for (idx_t i = 1; i < count && single_state; i++) {
+					single_state = state_ptrs[sdata.sel->get_index(i)] == first;
+				}
+				if (single_state) {
+					OP::template BatchUpdate<A_TYPE, B_TYPE, STATE_TYPE>(
+					    *first, UnifiedVectorFormat::GetData<A_TYPE>(adata),
+					    UnifiedVectorFormat::GetData<B_TYPE>(bdata), *adata.sel, *bdata.sel, adata.validity,
+					    bdata.validity, count, aggr_input_data);
+					return;
+				}
+			}
+		}
+
 		BinaryScatterLoop<STATE_TYPE, A_TYPE, B_TYPE, OP>(
 		    UnifiedVectorFormat::GetData<A_TYPE>(adata), aggr_input_data, UnifiedVectorFormat::GetData<B_TYPE>(bdata),
 		    (STATE_TYPE **)sdata.data, count, *adata.sel, *bdata.sel, *sdata.sel, adata.validity, bdata.validity);
@@ -768,11 +786,25 @@ public:
 
 		a.ToUnifiedFormat(adata);
 		b.ToUnifiedFormat(bdata);
+		if constexpr (HasBinaryBatchUpdate<STATE_TYPE, A_TYPE, B_TYPE, OP>::value) {
+			OP::template BatchUpdate<A_TYPE, B_TYPE, STATE_TYPE>(
+			    *reinterpret_cast<STATE_TYPE *>(state), UnifiedVectorFormat::GetData<A_TYPE>(adata),
+			    UnifiedVectorFormat::GetData<B_TYPE>(bdata), *adata.sel, *bdata.sel, adata.validity, bdata.validity,
+			    count, aggr_input_data);
+			return;
+		}
 
 		BinaryUpdateLoop<STATE_TYPE, A_TYPE, B_TYPE, OP>(
 		    UnifiedVectorFormat::GetData<A_TYPE>(adata), aggr_input_data, UnifiedVectorFormat::GetData<B_TYPE>(bdata),
 		    (STATE_TYPE *)state, count, *adata.sel, *bdata.sel, adata.validity, bdata.validity);
 	}
+
+	template <class STATE_TYPE, class A_TYPE, class B_TYPE, class OP, class = void>
+	struct HasBinaryBatchUpdate : std::false_type {};
+	template <class STATE_TYPE, class A_TYPE, class B_TYPE, class OP>
+	struct HasBinaryBatchUpdate<STATE_TYPE, A_TYPE, B_TYPE, OP,
+	                            void_t_helper<decltype(&OP::template BatchUpdate<A_TYPE, B_TYPE, STATE_TYPE>)>>
+	    : std::true_type {};
 
 	template <class STATE_TYPE, class OP, class = void>
 	struct HasRepeatedCombine : std::false_type {};

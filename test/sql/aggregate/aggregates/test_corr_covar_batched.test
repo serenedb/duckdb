@@ -1,0 +1,30 @@
+# name: test/sql/aggregate/aggregates/test_corr_covar_batched.test
+# description: corr, covar_pop and covar_samp updated a chunk at a time match two-pass formulas, with NULLs in either input
+# group: [aggregates]
+
+statement ok
+CREATE TABLE t AS SELECT i % 5 AS g,
+    CASE WHEN i % 11 = 0 THEN NULL ELSE ((i * 7919) % 1000) / 10.0 + 1e5 END AS y,
+    CASE WHEN i % 13 = 0 THEN NULL ELSE ((i * 104729) % 777) / 7.0 + ((i * 7919) % 1000) / 50.0 END AS x
+FROM range(60000) r(i);
+
+query I
+WITH v AS (SELECT y, x FROM t WHERE y IS NOT NULL AND x IS NOT NULL),
+m AS (SELECT count(*) AS n, avg(y) AS my, avg(x) AS mx FROM v),
+s AS (SELECT sum((y - my) * (x - mx)) AS sxy, sum((y - my) ^ 2) AS syy, sum((x - mx) ^ 2) AS sxx, n FROM v, m GROUP BY n)
+SELECT abs((SELECT covar_pop(y, x) FROM t) / (sxy / n) - 1) < 1e-9
+   AND abs((SELECT covar_samp(y, x) FROM t) / (sxy / (n - 1)) - 1) < 1e-9
+   AND abs((SELECT corr(y, x) FROM t) / (sxy / sqrt(sxx * syy)) - 1) < 1e-9 FROM s;
+----
+true
+
+query I
+SELECT count(*) FROM (SELECT g, corr(y, x) AS c, covar_pop(y, x) AS cp FROM t GROUP BY g) a,
+    (SELECT corr(y, x) AS c_all FROM t) b WHERE c IS NULL OR cp IS NULL OR c_all IS NULL;
+----
+0
+
+query III
+SELECT corr(y, x), covar_pop(y, x), covar_samp(y, x) FROM (VALUES (1.0, 2.0), (2.0, 4.0), (3.0, 6.5), (NULL, 1.0), (4.0, NULL)) v(y, x);
+----
+0.9979487157886733	1.5	2.25
