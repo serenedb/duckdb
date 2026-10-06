@@ -22,7 +22,7 @@ query II
 EXPLAIN SELECT *
 FROM in_left, in_right
 WHERE in_left.i = in_right.i
-  AND (in_left.j IN (1, 2, 3, 4, 5, 6) OR in_right.i > 10);
+  AND (in_left.j IN (1, 2, 3, 4, 5, 6, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1025, 1026, 1027, 1028, 1029) OR in_right.i > 10);
 ----
 logical_opt	<REGEX>:.*MARK.*
 
@@ -39,7 +39,7 @@ logical_opt	<!REGEX>:.*MARK.*
 query II
 EXPLAIN SELECT *
 FROM in_left, in_right
-WHERE (CASE WHEN in_left.j IN (1, 2, 3, 4, 5, 6)
+WHERE (CASE WHEN in_left.j IN (1, 2, 3, 4, 5, 6, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1025, 1026, 1027, 1028, 1029)
 	THEN in_left.i ELSE 0 END)
 	IN (in_right.i, 10, 20, 30, 40, 50);
 ----
@@ -49,7 +49,7 @@ query III
 SELECT *
 FROM in_left, in_right
 WHERE in_left.i = in_right.i
-  AND (in_left.j IN (1, 2, 3, 4, 5, 6) OR in_right.i > 10)
+  AND (in_left.j IN (1, 2, 3, 4, 5, 6, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1025, 1026, 1027, 1028, 1029) OR in_right.i > 10)
 ORDER BY ALL;
 ----
 1	1	1
@@ -63,7 +63,7 @@ SET disabled_optimizers = {do};
 query III
 SELECT *
 FROM in_left, in_right
-WHERE (CASE WHEN in_left.j IN (1, 2, 3, 4, 5, 6)
+WHERE (CASE WHEN in_left.j IN (1, 2, 3, 4, 5, 6, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1025, 1026, 1027, 1028, 1029)
 	THEN in_left.i ELSE 0 END)
 	IN (in_right.i, 10, 20, 30, 40, 50)
 ORDER BY ALL;
