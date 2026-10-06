@@ -121,14 +121,14 @@ template <>
 const char *EnumUtil::ToChars<ParquetPrefetchStrategyOption>(ParquetPrefetchStrategyOption value);
 
 template <>
-ParquetPrefetchStrategyOption EnumUtil::FromString<ParquetPrefetchStrategyOption>(const char *value);
+ParquetPrefetchStrategyOption EnumUtil::FromString<ParquetPrefetchStrategyOption>(std::string_view value);
 
 template <>
 const char *EnumUtil::ToChars<StringColumnReader::Utf8ValidationOption>(StringColumnReader::Utf8ValidationOption value);
 
 template <>
 StringColumnReader::Utf8ValidationOption
-EnumUtil::FromString<StringColumnReader::Utf8ValidationOption>(const char *value);
+EnumUtil::FromString<StringColumnReader::Utf8ValidationOption>(std::string_view value);
 
 struct ParquetScanFilter {
 	ParquetScanFilter(ClientContext &context, ProjectionIndex filter_idx, TableFilter &filter);
@@ -333,7 +333,8 @@ template <>
 const char *EnumUtil::ToChars<ParquetReaderProjectionExpressionType>(ParquetReaderProjectionExpressionType value);
 
 template <>
-ParquetReaderProjectionExpressionType EnumUtil::FromString<ParquetReaderProjectionExpressionType>(const char *value);
+ParquetReaderProjectionExpressionType
+EnumUtil::FromString<ParquetReaderProjectionExpressionType>(std::string_view value);
 
 struct ParquetReaderProjectionExpression {
 	ParquetReaderProjectionExpressionType type;

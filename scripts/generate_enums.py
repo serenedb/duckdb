@@ -46,7 +46,7 @@ template<>
 const char* EnumUtil::ToChars<${ENUM_NAME}>(${ENUM_NAME} value);
 
 template<>
-${ENUM_NAME} EnumUtil::FromString<${ENUM_NAME}>(const char *value);
+${ENUM_NAME} EnumUtil::FromString<${ENUM_NAME}>(std::string_view value);
 '''
 
 enum_util_conversion_begin = '''
@@ -65,7 +65,7 @@ enum_util_conversion_end = '''	default:
 
 from_string_begin = '''
 template<>
-${ENUM_NAME} EnumUtil::FromString<${ENUM_NAME}>(const char *value) {
+${ENUM_NAME} EnumUtil::FromString<${ENUM_NAME}>(std::string_view value) {
 '''
 
 from_string_comparison = '''    if (StringUtil::Equals(value, "${ENUM_MEMBER}")) {

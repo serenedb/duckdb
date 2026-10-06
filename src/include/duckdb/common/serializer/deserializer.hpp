@@ -568,8 +568,7 @@ private:
 	template <typename T = void>
 	inline typename std::enable_if<std::is_enum<T>::value, T>::type Read(this auto &self) {
 		if (self.deserialize_enum_from_string) {
-			auto str = self.ReadString();
-			return EnumUtil::FromString<T>(str.c_str());
+			return EnumUtil::FromString<T>(self.ReadString());
 		} else {
 			return (T)self.template Read<typename std::underlying_type<T>::type>();
 		}

@@ -102,6 +102,12 @@ enum class TimeStampIsAdjustedToUTC : uint8_t {
 	ALWAYS_FALSE,
 };
 
+template <>
+const char *EnumUtil::ToChars<TimeStampIsAdjustedToUTC>(TimeStampIsAdjustedToUTC value);
+
+template <>
+TimeStampIsAdjustedToUTC EnumUtil::FromString<TimeStampIsAdjustedToUTC>(std::string_view value);
+
 class ParquetWriteTransformData {
 public:
 	ParquetWriteTransformData(ClientContext &context, const vector<LogicalType> &types,

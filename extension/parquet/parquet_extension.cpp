@@ -534,7 +534,8 @@ const char *EnumUtil::ToChars<duckdb_parquet::CompressionCodec::type>(duckdb_par
 }
 
 template <>
-duckdb_parquet::CompressionCodec::type EnumUtil::FromString<duckdb_parquet::CompressionCodec::type>(const char *value) {
+duckdb_parquet::CompressionCodec::type
+EnumUtil::FromString<duckdb_parquet::CompressionCodec::type>(std::string_view value) {
 	if (StringUtil::Equals(value, "UNCOMPRESSED")) {
 		return CompressionCodec::UNCOMPRESSED;
 	}
@@ -575,7 +576,7 @@ const char *EnumUtil::ToChars<ParquetVersion>(ParquetVersion value) {
 }
 
 template <>
-ParquetVersion EnumUtil::FromString<ParquetVersion>(const char *value) {
+ParquetVersion EnumUtil::FromString<ParquetVersion>(std::string_view value) {
 	if (StringUtil::Equals(value, "V1")) {
 		return ParquetVersion::V1;
 	}
@@ -598,7 +599,7 @@ const char *EnumUtil::ToChars<ParquetPrefetchStrategyOption>(ParquetPrefetchStra
 }
 
 template <>
-ParquetPrefetchStrategyOption EnumUtil::FromString<ParquetPrefetchStrategyOption>(const char *value) {
+ParquetPrefetchStrategyOption EnumUtil::FromString<ParquetPrefetchStrategyOption>(std::string_view value) {
 	if (StringUtil::Equals(value, "AUTO")) {
 		return ParquetPrefetchStrategyOption::AUTO;
 	}
@@ -625,7 +626,7 @@ EnumUtil::ToChars<StringColumnReader::Utf8ValidationOption>(StringColumnReader::
 
 template <>
 StringColumnReader::Utf8ValidationOption
-EnumUtil::FromString<StringColumnReader::Utf8ValidationOption>(const char *value) {
+EnumUtil::FromString<StringColumnReader::Utf8ValidationOption>(std::string_view value) {
 	if (StringUtil::Equals(value, "STRICT")) {
 		return StringColumnReader::Utf8ValidationOption::STRICT_UTF8;
 	}
@@ -649,7 +650,8 @@ const char *EnumUtil::ToChars<ParquetReaderProjectionExpressionType>(ParquetRead
 }
 
 template <>
-ParquetReaderProjectionExpressionType EnumUtil::FromString<ParquetReaderProjectionExpressionType>(const char *value) {
+ParquetReaderProjectionExpressionType
+EnumUtil::FromString<ParquetReaderProjectionExpressionType>(std::string_view value) {
 	if (StringUtil::Equals(value, "BYTE_LENGTH")) {
 		return ParquetReaderProjectionExpressionType::BYTE_LENGTH;
 	}
@@ -673,7 +675,7 @@ const char *EnumUtil::ToChars<GeoParquetVersion>(GeoParquetVersion value) {
 }
 
 template <>
-GeoParquetVersion EnumUtil::FromString<GeoParquetVersion>(const char *value) {
+GeoParquetVersion EnumUtil::FromString<GeoParquetVersion>(std::string_view value) {
 	if (StringUtil::Equals(value, "NONE")) {
 		return GeoParquetVersion::NONE;
 	}
@@ -704,7 +706,7 @@ const char *EnumUtil::ToChars<TimeStampIsAdjustedToUTC>(TimeStampIsAdjustedToUTC
 }
 
 template <>
-TimeStampIsAdjustedToUTC EnumUtil::FromString<TimeStampIsAdjustedToUTC>(const char *value) {
+TimeStampIsAdjustedToUTC EnumUtil::FromString<TimeStampIsAdjustedToUTC>(std::string_view value) {
 	if (StringUtil::Equals(value, "AUTO")) {
 		return TimeStampIsAdjustedToUTC::AUTO;
 	}

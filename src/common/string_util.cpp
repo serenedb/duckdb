@@ -983,7 +983,7 @@ string StringUtil::URLDecode(std::string_view input, bool plus_to_space) {
 }
 
 uint32_t StringUtil::StringToEnum(const EnumStringLiteral enum_list[], idx_t enum_count, const char *enum_name,
-                                  const char *str_value) {
+                                  std::string_view str_value) {
 	for (idx_t i = 0; i < enum_count; i++) {
 		if (CIEquals(enum_list[i].string, str_value)) {
 			return enum_list[i].number;
@@ -994,7 +994,7 @@ uint32_t StringUtil::StringToEnum(const EnumStringLiteral enum_list[], idx_t enu
 	for (idx_t i = 0; i < enum_count; i++) {
 		candidates.push_back(enum_list[i].string);
 	}
-	auto closest_values = TopNJaroWinkler(candidates, string(str_value));
+	auto closest_values = TopNJaroWinkler(candidates, str_value);
 	auto message = CandidatesMessage(closest_values, "Candidates");
 	throw NotImplementedException("Enum value: unrecognized value \"%s\" for enum \"%s\"\n%s", str_value, enum_name,
 	                              message);

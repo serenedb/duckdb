@@ -331,7 +331,7 @@ static unique_ptr<FunctionData> ListSortBind(ClientContext &context, BoundScalar
 template <class T>
 static T GetOrder(const Value &order_value) {
 	auto order_name = StringUtil::Upper(order_value.ToString());
-	return EnumUtil::FromString<T>(order_name.c_str());
+	return EnumUtil::FromString<T>(order_name);
 }
 
 static unique_ptr<FunctionData> ListGradeUpBind(BindScalarFunctionInput &input) {

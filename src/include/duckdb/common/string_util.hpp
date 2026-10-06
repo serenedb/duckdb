@@ -386,7 +386,7 @@ public:
 	};
 
 	DUCKDB_API static uint32_t StringToEnum(const EnumStringLiteral enum_list[], idx_t enum_count,
-	                                        const char *enum_name, const char *str_value);
+	                                        const char *enum_name, std::string_view str_value);
 	DUCKDB_API static const char *EnumToString(const EnumStringLiteral enum_list[], idx_t enum_count,
 	                                           const char *enum_name, uint32_t enum_value);
 };
