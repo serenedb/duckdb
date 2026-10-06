@@ -331,7 +331,7 @@ void Binder::BindGeneratedColumns(BoundCreateTableInfo &info) {
 		auto bound_expression = expr_binder.Bind(expression);
 		D_ASSERT(bound_expression);
 		if (bound_expression->HasSubquery()) {
-			throw BinderException("Failed to bind generated column '%s' because the expression contains a subquery",
+			throw BinderException("Failed to bind generated column %s because the expression contains a subquery",
 			                      col.Name());
 		}
 		if (col.Type().id() == LogicalTypeId::ANY) {
@@ -930,7 +930,7 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 	for (idx_t i = 0; i < base.columns.LogicalColumnCount(); i++) {
 		auto &column = base.columns.GetColumn(LogicalIndex(i));
 		if (TypeVisitor::Contains(column.Type(), LogicalTypeId::UNBOUND)) {
-			throw InternalException("Unbound type remaining in column \"%s\" during Create Table bind", column.Name());
+			throw InternalException("Unbound type remaining in column %s during Create Table bind", column.Name());
 		}
 	}
 #endif

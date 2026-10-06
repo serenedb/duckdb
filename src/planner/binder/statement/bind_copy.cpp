@@ -826,7 +826,7 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 			} else if (StringUtil::CIEquals(val, "stop")) {
 				// STOP is the default — do nothing.
 			} else {
-				throw ParserException("invalid value for parameter \"%s\": \"%s\"", option_name, val);
+				throw ParserException("invalid value for parameter %s: \"%s\"", option_name, val);
 			}
 			continue;
 		}

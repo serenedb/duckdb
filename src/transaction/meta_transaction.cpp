@@ -542,7 +542,7 @@ vector<shared_ptr<AttachedDatabase>> &MetaTransaction::GetStatementDatabases(Cli
 void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationType modification) {
 	if (IsReadOnly()) {
 		throw TransactionException(Exception::InitializeExtraInfo("READ_ONLY", optional_idx()),
-		                           "Cannot write to database \"%s\" - transaction is launched in read-only mode",
+		                           "Cannot write to database %s - transaction is launched in read-only mode",
 		                           db.GetName());
 	}
 	auto &transaction = GetTransaction(db);

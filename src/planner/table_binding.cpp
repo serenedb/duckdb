@@ -97,7 +97,7 @@ bool Binding::TryGetBindingIndex(const Identifier &column_name, column_t &result
 column_t Binding::GetBindingIndex(const Identifier &column_name) {
 	column_t result;
 	if (!TryGetBindingIndex(column_name, result)) {
-		throw InternalException("Binding index for column \"%s\" not found", column_name);
+		throw InternalException("Binding index for column %s not found", column_name);
 	}
 	return result;
 }
@@ -192,8 +192,7 @@ TableBinding::TableBinding(BindingAlias alias, vector<LogicalType> types_p, vect
 		auto &name = ventry.second.name;
 		if (idx < VIRTUAL_COLUMN_START) {
 			throw BinderException(
-			    "Virtual column index must be larger than VIRTUAL_COLUMN_START - found %d for column \"%s\"", idx,
-			    name);
+			    "Virtual column index must be larger than VIRTUAL_COLUMN_START - found %d for column %s", idx, name);
 		}
 		if (idx == COLUMN_IDENTIFIER_EMPTY) {
 			// the empty column cannot be queried by the user

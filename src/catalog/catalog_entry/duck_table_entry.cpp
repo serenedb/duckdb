@@ -1346,8 +1346,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context
 		// TODO: check if the generated_expression breaks, only delete it if it does
 		if (copy.Generated() && column_dependency_manager.IsDependencyOf(col.Logical(), change_idx)) {
 			throw BinderException(
-			    "This column is referenced by the generated column \"%s\", so its type can not be changed",
-			    copy.Name());
+			    "This column is referenced by the generated column %s, so its type can not be changed", copy.Name());
 		}
 		create_info->columns.AddColumn(std::move(copy));
 	}
@@ -1599,12 +1598,12 @@ void DuckTableEntry::ReplaceStorage(DuckTableEntry &source) {
 	idx_t column_count = 0;
 	for (auto &column : columns.Physical()) {
 		if (column_count >= source_columns.size() || source_columns[column_count].Type() != column.Type()) {
-			throw IOException("The stored rows of table \"%s\" do not match its columns", name);
+			throw IOException("The stored rows of table %s do not match its columns", name);
 		}
 		column_count++;
 	}
 	if (column_count != source_columns.size()) {
-		throw IOException("The stored rows of table \"%s\" do not match its columns", name);
+		throw IOException("The stored rows of table %s do not match its columns", name);
 	}
 	storage = source.storage;
 	SetAsRoot(nullptr, nullptr);

@@ -120,7 +120,7 @@ static void VerifyReattachOptions(AttachedDatabase &database, const AttachInfo &
 		}
 	}
 	if (database.GetCatalog().HasConflictingAttachOptions(info.path, options)) {
-		throw BinderException("Cannot attach \"%s\" - the database file \"%s\" is already attached with "
+		throw BinderException("Cannot attach %s - the database file \"%s\" is already attached with "
 		                      "different options",
 		                      info.name, info.path);
 	}

@@ -484,8 +484,8 @@ void TableCatalogEntry::RenameTriggerColumns(ClientContext &context, const Renam
 		    auto &trig = concurrent_entry.Cast<TriggerCatalogEntry>();
 		    for (const auto &col : trig.columns) {
 			    if (col == info.old_name) {
-				    throw TransactionException("Catalog write-write conflict on alter with \"%s\": trigger \"%s\" "
-				                               "references column \"%s\" which is being renamed",
+				    throw TransactionException("Catalog write-write conflict on alter with %s: trigger %s "
+				                               "references column %s which is being renamed",
 				                               name, trig.name, info.old_name);
 			    }
 		    }
@@ -577,7 +577,7 @@ void TableCatalogEntry::RenameColumn(ColumnList &columns, vector<unique_ptr<Cons
 			for (idx_t i = 0; i < fk_columns.size(); i++) {
 				if (same(fk_columns[i], info.old_name)) {
 					throw CatalogException(
-					    "Cannot rename column \"%s\" because this is involved in the foreign key constraint",
+					    "Cannot rename column %s because this is involved in the foreign key constraint",
 					    info.old_name);
 				}
 			}

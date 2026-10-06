@@ -135,7 +135,7 @@ BoundStatement Binder::BindNode(RecursiveCTENode &statement) {
 				auto names_iter = find(result.names.begin(), result.names.end(), func_expr.GetAlias());
 				if (names_iter == result.names.end()) {
 					throw BinderException(expr->GetQueryLocation(),
-					                      "Could not find column with name '%s' to bind aggregate to.",
+					                      "Could not find column with name %s to bind aggregate to.",
 					                      func_expr.GetAlias());
 				}
 				aggregate_idx = ProjectionIndex(NumericCast<idx_t>(std::distance(result.names.begin(), names_iter)));

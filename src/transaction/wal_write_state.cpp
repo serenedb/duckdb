@@ -38,7 +38,7 @@ WALWriteState::WALWriteState(DuckTransaction &transaction_p, optional_ptr<WriteA
 
 WriteAheadLog &WALWriteState::Log() {
 	if (!log) {
-		throw InternalException("WALWriteState - database \"%s\" has no WAL to write data to",
+		throw InternalException("WALWriteState - database %s has no WAL to write data to",
 		                        transaction.manager.GetDB().GetName());
 	}
 	return *log;

@@ -49,7 +49,7 @@ void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &resu
 		if (!context.TryGetCurrentSetting(key, val)) {
 			Catalog::AutoloadExtensionByConfigName(context, key);
 			if (!context.TryGetCurrentSetting(key, val)) {
-				throw InvalidInputException("unrecognized configuration parameter \"%s\"", key);
+				throw InvalidInputException("unrecognized configuration parameter %s", key);
 			}
 		}
 		val = Settings::FormatDisplayValue(context, val);

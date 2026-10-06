@@ -287,7 +287,7 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 			auto &old_storage = old_entry.Cast<DuckTableEntry>().GetStorage();
 			auto &new_storage = new_entry.Cast<DuckTableEntry>().GetStorage();
 			if (!RefersToSameObject(old_storage, new_storage) && old_storage.IsMainTable()) {
-				throw TransactionException("Failed to alter table \"%s\" because the underlying table state was "
+				throw TransactionException("Failed to alter table %s because the underlying table state was "
 				                           "reverted by a concurrent transaction",
 				                           old_entry.name);
 			}
