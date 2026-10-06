@@ -87,6 +87,8 @@ enum class FileType {
 	FILE_TYPE_INVALID,
 };
 
+enum class FileSyncParallelism : uint8_t { SERIAL, PARALLEL };
+
 struct FileMetadata {
 	int64_t file_size = -1;
 	timestamp_t last_modification_time = timestamp_t::ninfinity();
@@ -281,6 +283,7 @@ public:
 	DUCKDB_API virtual void RemoveFiles(const vector<string> &filenames, optional_ptr<FileOpener> opener = nullptr);
 	//! Sync a file handle to disk
 	DUCKDB_API virtual void FileSync(FileHandle &handle);
+	DUCKDB_API virtual FileSyncParallelism SyncParallelism(FileHandle &handle);
 	//! Abandon an incomplete write represented by this file handle.
 	DUCKDB_API virtual void AbortFileWrite(FileHandle &handle);
 	//! Sets the working directory

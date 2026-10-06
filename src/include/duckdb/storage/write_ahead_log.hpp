@@ -167,8 +167,10 @@ protected:
 	idx_t durable_offset = 0;
 	//! The highest logical offset for which a sync has been requested
 	idx_t requested_sync_offset = 0;
-	//! Whether a sync is in flight; only one runs at a time
-	bool sync_in_flight = false;
+	idx_t syncs_in_flight = 0;
+	idx_t sync_lanes = 1;
+	idx_t syncing_offset = 0;
+	idx_t syncs_settled = 0;
 	//! Set when a sync has failed; every further sync of this WAL fails
 	bool sync_failed = false;
 };

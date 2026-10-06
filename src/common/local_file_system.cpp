@@ -33,6 +33,12 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/vfs.h>
+#elif defined(__APPLE__)
+#include <sys/param.h>
+#include <sys/mount.h>
+#endif
 #else
 #include "duckdb/common/windows_util.hpp"
 
@@ -849,6 +855,61 @@ void LocalFileSystem::FileSync(FileHandle &handle) {
 	throw IOException("Could not fsync file \"%s\": %s", handle.GetPath(), strerror(errno));
 }
 
+FileSyncParallelism LocalFileSystem::SyncParallelism(FileHandle &handle) {
+#if defined(__linux__)
+	struct statfs fs_info;
+	if (fstatfs(handle.Cast<UnixFileHandle>().fd, &fs_info) != 0) {
+		return FileSyncParallelism::SERIAL;
+	}
+	static constexpr uint32_t NFS_MAGIC = 0x6969;
+	static constexpr uint32_t CIFS_MAGIC = 0xFF534D42;
+	static constexpr uint32_t SMB2_MAGIC = 0xFE534D42;
+	static constexpr uint32_t SMB_MAGIC = 0x517B;
+	static constexpr uint32_t FUSE_MAGIC = 0x65735546;
+	static constexpr uint32_t V9FS_MAGIC = 0x01021997;
+	static constexpr uint32_t CODA_MAGIC = 0x73757245;
+	static constexpr uint32_t AFS_MAGIC = 0x5346414F;
+	static constexpr uint32_t LUSTRE_MAGIC = 0x0BD00BD0;
+	static constexpr uint32_t CEPH_MAGIC = 0x00C36400;
+	static constexpr uint32_t IBRIX_MAGIC = 0x013111A8;
+	static constexpr uint32_t ACFS_MAGIC = 0x61756673;
+	static constexpr uint32_t BEEGFS_MAGIC = 0x0062656C;
+	static constexpr uint32_t VXFS_CLUSTER_MAGIC = 0xA501FCF5;
+	switch (static_cast<uint32_t>(fs_info.f_type)) {
+	case NFS_MAGIC:
+	case CIFS_MAGIC:
+	case SMB2_MAGIC:
+	case SMB_MAGIC:
+	case FUSE_MAGIC:
+	case V9FS_MAGIC:
+	case CODA_MAGIC:
+	case AFS_MAGIC:
+	case LUSTRE_MAGIC:
+	case CEPH_MAGIC:
+	case IBRIX_MAGIC:
+	case ACFS_MAGIC:
+	case BEEGFS_MAGIC:
+	case VXFS_CLUSTER_MAGIC:
+		return FileSyncParallelism::PARALLEL;
+	default:
+		return FileSyncParallelism::SERIAL;
+	}
+#elif defined(__APPLE__)
+	struct statfs fs_info;
+	if (fstatfs(handle.Cast<UnixFileHandle>().fd, &fs_info) != 0) {
+		return FileSyncParallelism::SERIAL;
+	}
+	const std::string_view fs_name(fs_info.f_fstypename);
+	if (fs_name == "nfs" || fs_name == "smbfs" || fs_name == "afpfs" || fs_name == "webdav" ||
+	    StringUtil::StartsWith(fs_name, "fuse") || fs_name == "macfuse" || fs_name == "osxfuse") {
+		return FileSyncParallelism::PARALLEL;
+	}
+	return FileSyncParallelism::SERIAL;
+#else
+	return FileSyncParallelism::SERIAL;
+#endif
+}
+
 void LocalFileSystem::MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {
 	auto normalized_source = ExpandPath(source, opener);
 	auto normalized_target = ExpandPath(target, opener);
@@ -1621,6 +1682,20 @@ void LocalFileSystem::FileSync(FileHandle &handle) {
 	if (FlushFileBuffers(hFile) == 0) {
 		throw IOException("Could not flush file handle to disk!");
 	}
+}
+
+FileSyncParallelism LocalFileSystem::SyncParallelism(FileHandle &handle) {
+	const auto &path = handle.GetPath();
+	if (path.size() >= 2 && path[0] == '\\' && path[1] == '\\') {
+		return FileSyncParallelism::PARALLEL;
+	}
+	if (path.size() >= 2 && path[1] == ':') {
+		wchar_t root[4] = {static_cast<wchar_t>(path[0]), L':', L'\\', L'\0'};
+		if (GetDriveTypeW(root) == DRIVE_REMOTE) {
+			return FileSyncParallelism::PARALLEL;
+		}
+	}
+	return FileSyncParallelism::SERIAL;
 }
 
 static bool TryMoveFileWithPosixSemantics(HANDLE source_handle, const std::wstring &target) {

@@ -667,6 +667,10 @@ void FileSystem::FileSync(FileHandle &handle) {
 	throw NotImplementedException("%s: FileSync is not implemented!", GetName());
 }
 
+FileSyncParallelism FileSystem::SyncParallelism(FileHandle &handle) {
+	return FileSyncParallelism::SERIAL;
+}
+
 void FileSystem::AbortFileWrite(FileHandle &handle) {
 	handle.Close();
 }

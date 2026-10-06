@@ -78,6 +78,7 @@ public:
 	void RemoveFile(const string &filename, optional_ptr<FileOpener> opener = nullptr) override;
 	//! Sync a file handle to disk
 	void FileSync(FileHandle &handle) override;
+	FileSyncParallelism SyncParallelism(FileHandle &handle) override;
 	//! Close and remove an incomplete output file
 	void AbortFileWrite(FileHandle &handle) override;
 

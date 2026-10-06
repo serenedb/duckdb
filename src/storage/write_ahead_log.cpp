@@ -65,6 +65,12 @@ BufferedFileWriter &WriteAheadLog::Initialize() {
 		} else {
 			storage_manager.SetWALSize(writer->GetFileSize());
 		}
+		const auto parallel =
+		    writer->handle->file_system.SyncParallelism(*writer->handle) == FileSyncParallelism::PARALLEL;
+		{
+			lock_guard<mutex> guard(sync_lock);
+			sync_lanes = parallel ? NumericLimits<idx_t>::Maximum() : 1;
+		}
 		init_state = WALInitState::INITIALIZED;
 	}
 	return *writer;
@@ -699,17 +705,18 @@ void WriteAheadLog::SyncUpTo(idx_t offset) {
 		if (sync_failed) {
 			throw IOException("Cannot sync WAL \"%s\": a previous sync of this WAL has failed", wal_path);
 		}
-		if (sync_in_flight) {
-			// one sync at a time: the next syncer covers every marker flushed meanwhile
-			auto sync_settled = [this]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
-				return !sync_in_flight;
+		if ((syncs_in_flight > 0 && syncing_offset >= offset) || syncs_in_flight >= sync_lanes) {
+			const auto seen = syncs_settled;
+			auto sync_settled = [this, seen]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+				return syncs_settled != seen;
 			};
 			sync_lock.Await(absl::Condition(&sync_settled));
 			continue;
 		}
 		// sync everything flushed so far, on behalf of every waiter
 		auto target = requested_sync_offset;
-		sync_in_flight = true;
+		syncs_in_flight++;
+		syncing_offset = MaxValue(syncing_offset, target);
 		guard.unlock();
 		ErrorData error;
 		try {
@@ -724,12 +731,13 @@ void WriteAheadLog::SyncUpTo(idx_t offset) {
 			error = ErrorData(ex);
 		}
 		guard.lock();
-		sync_in_flight = false;
+		syncs_in_flight--;
+		syncs_settled++;
 		if (error.HasError()) {
 			// the OS may have dropped the dirty pages: this WAL must never be synced again
 			sync_failed = true;
-		} else {
-			durable_offset = target;
+		} else if (!sync_failed) {
+			durable_offset = MaxValue(durable_offset, target);
 		}
 		if (error.HasError()) {
 			error.Throw();
