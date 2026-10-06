@@ -1,0 +1,31 @@
+# name: test/sql/function/string/test_length_utf8.test
+# description: length counts code points for short and long, ASCII and multi-byte strings
+# group: [string]
+
+query IIII
+SELECT length(''), length('a'), length('ü'), length('😀')
+----
+0	1	1	1
+
+query IIII
+SELECT length('héllo wörld'), length('привет'), length('日本語テキスト'), length('a😀b')
+----
+11	6	7	3
+
+statement ok
+CREATE TABLE strs AS SELECT i, repeat('ab', i) || repeat('я', i) || repeat('😀', i % 7) AS s FROM range(0, 300) t(i);
+
+query I
+SELECT COUNT(*) FROM strs WHERE length(s) <> 2 * i + i + i % 7
+----
+0
+
+query I
+SELECT SUM(length(s)) = SUM(2 * i + i + i % 7) FROM strs
+----
+true
+
+query II
+SELECT length(repeat('x', 1000)), length(repeat('xé', 1000))
+----
+1000	2000

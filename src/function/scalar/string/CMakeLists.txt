@@ -23,7 +23,8 @@ add_library_unity(
   string_split.cpp
   string_slice.cpp
   suffix.cpp
-  contains.cpp)
+  contains.cpp
+  utf8_character_count.cpp)
 set(ALL_OBJECT_FILES
     ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_func_string_main>
     PARENT_SCOPE)
