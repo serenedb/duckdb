@@ -2,8 +2,8 @@
 
 namespace duckdb {
 
-ParserPackratCache::ParserPackratCache(idx_t first_token_p, idx_t slot_count_p)
-    : arena(Allocator::DefaultAllocator()), first_token(first_token_p), slot_count(slot_count_p) {
+ParserPackratCache::ParserPackratCache(ArenaAllocator &arena_p, idx_t first_token_p, idx_t slot_count_p)
+    : arena(arena_p), first_token(first_token_p), slot_count(slot_count_p) {
 }
 
 void ParserPackratCache::Store(idx_t slot, idx_t token_index, const ParserPackratEntry &entry) {

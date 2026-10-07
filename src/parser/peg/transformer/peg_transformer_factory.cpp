@@ -58,7 +58,8 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 	}
 	vector<MatcherSuggestion> suggestions;
 	ParseResultAllocator parse_result_allocator;
-	ParserPackratCache packrat_cache(token_iterator.Position(), grammar.PackratSlotCount());
+	ParserPackratCache packrat_cache(parse_result_allocator.GetArena(), token_iterator.Position(),
+	                                 grammar.PackratSlotCount());
 	idx_t max_token_index = token_iterator.Position();
 	MatchContext match_context(suggestions, parse_result_allocator, max_token_index, MatchMode::BUILD_PARSE_RESULT,
 	                           options.identifier_case_mode, &packrat_cache);
@@ -108,8 +109,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 		}
 	}
 
-	ArenaAllocator transformer_allocator(Allocator::DefaultAllocator());
-	PEGTransformer transformer(transformer_allocator, token_iterator, options, grammar);
+	PEGTransformer transformer(parse_result_allocator.GetArena(), token_iterator, options, grammar);
 	auto statement = ExtractAndTransformStatement(transformer, token_iterator, stmt_opt.GetResult(), terminator_offset);
 	height = transformer.StatementHeight();
 	return statement;

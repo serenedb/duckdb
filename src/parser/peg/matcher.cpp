@@ -298,7 +298,7 @@ data_ptr_t MatchProcessArena::AllocateInNewChunk(idx_t size) {
 	return result;
 }
 
-ParseResultAllocator::ParseResultAllocator() : arena(Allocator::DefaultAllocator()) {
+ParseResultAllocator::ParseResultAllocator() : arena(Allocator::DefaultAllocator(), INITIAL_ARENA_CAPACITY) {
 }
 
 std::string_view ParseResultAllocator::Lower(std::string_view text) {

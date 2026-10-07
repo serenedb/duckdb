@@ -519,10 +519,16 @@ private:
 
 class ParseResultAllocator {
 public:
+	static constexpr idx_t INITIAL_ARENA_CAPACITY = 16384;
+
 	ParseResultAllocator();
 
 	ParseResultAllocator(const ParseResultAllocator &) = delete;
 	ParseResultAllocator &operator=(const ParseResultAllocator &) = delete;
+
+	ArenaAllocator &GetArena() {
+		return arena;
+	}
 
 	template <class RESULT, class... ARGS>
 	RESULT &Make(ARGS &&... args) {

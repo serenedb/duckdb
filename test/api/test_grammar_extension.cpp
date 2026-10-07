@@ -77,7 +77,7 @@ static LiteralChoiceTestResult MatchLiteralChoiceTest(const Matcher &matcher, co
 	TokenIterator iterator(tokens);
 	vector<MatcherSuggestion> suggestions;
 	ParseResultAllocator allocator;
-	ParserPackratCache packrat(0, 0);
+	ParserPackratCache packrat(allocator.GetArena(), 0, 0);
 	idx_t max_position = 0;
 	MatchContext context(suggestions, allocator, max_position, mode, IdentifierCaseMode::PRESERVE_CASE, &packrat);
 	MatchState state(iterator, context);
@@ -879,7 +879,7 @@ TEST_CASE("Packrat results outlive reset process arenas", "[api][grammar_extensi
 	MatcherAllocator matchers;
 	auto &matcher = matchers.Allocate(make_uniq<ArenaNestedTestMatcher>(lifetime));
 	matchers.SetPackratMemoized(matcher);
-	ParserPackratCache cache(0, matchers.PackratSlotCount());
+	ParserPackratCache cache(parse_results.GetArena(), 0, matchers.PackratSlotCount());
 	context.packrat_cache = &cache;
 	MatchState state(iterator, context);
 	MatchStack stack;

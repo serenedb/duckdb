@@ -24,7 +24,7 @@ struct ParserPackratEntry {
 
 class ParserPackratCache {
 public:
-	ParserPackratCache(idx_t first_token, idx_t slot_count);
+	ParserPackratCache(ArenaAllocator &arena, idx_t first_token, idx_t slot_count);
 
 	optional_ptr<const ParserPackratEntry> Lookup(idx_t slot, idx_t token_index) const {
 		auto offset = token_index - first_token;
@@ -47,7 +47,7 @@ private:
 		return reinterpret_cast<bool *>(block + BLOCK_TOKENS * slot_count);
 	}
 
-	ArenaAllocator arena;
+	ArenaAllocator &arena;
 	vector<ParserPackratEntry *> blocks;
 	idx_t first_token;
 	idx_t slot_count;
