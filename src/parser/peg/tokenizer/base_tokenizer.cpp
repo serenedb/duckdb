@@ -1,3 +1,4 @@
+#include "duckdb/common/array.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/peg/tokenizer/tokenizer.hpp"
 #include "duckdb/parser/peg/keyword_helper.hpp"
@@ -337,7 +338,19 @@ void Tokenizer::PushOperatorToken(TokenizerBehavior &behavior, idx_t start, idx_
 	}
 }
 
+static const array<bool, 256> &KeywordCharacters() {
+	static const auto table = [] {
+		array<bool, 256> result {};
+		for (idx_t c = 0; c < result.size(); c++) {
+			result[c] = Tokenizer::CharacterIsKeyword(static_cast<char>(c));
+		}
+		return result;
+	}();
+	return table;
+}
+
 bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
+	auto &keyword_characters = KeywordCharacters();
 	auto &sql = behavior.sql;
 	auto &tokens = behavior.tokens;
 	auto state = TokenizeState::STANDARD;
@@ -351,6 +364,10 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 		auto c = sql[i];
 		switch (state) {
 		case TokenizeState::STANDARD:
+			if (StringUtil::CharacterIsSpace(c)) {
+				last_pos = i + 1;
+				break;
+			}
 			if (c == '\'') {
 				state = TokenizeState::STRING_LITERAL;
 				last_pos = i;
@@ -417,11 +434,6 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 				i++;
 				state = TokenizeState::MULTI_LINE_COMMENT;
 				multi_line_comment_depth = 1;
-				break;
-			}
-			if (StringUtil::CharacterIsSpace(c)) {
-				// space character - skip
-				last_pos = i + 1;
 				break;
 			}
 			idx_t token_length;
@@ -606,8 +618,18 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 		case TokenizeState::KEYWORD:
 			// keyword - check if this is still a keyword
 			// '$' is valid as a non-initial identifier character in PostgreSQL
-			if (c != '$' && !CharacterIsKeyword(c)) {
-				// not a keyword - return to standard state
+			while (c == '$' || keyword_characters[static_cast<uint8_t>(c)]) {
+				if (++i == sql.size()) {
+					break;
+				}
+				c = sql[i];
+			}
+			if (i == sql.size()) {
+				i--;
+				break;
+			}
+			// not a keyword - return to standard state
+			{
 				auto word = sql.substr(last_pos, i - last_pos);
 				auto &literal_table = keyword_helper.GetLiteralTable();
 				auto literal_info = literal_table.Lookup(word);
@@ -616,10 +638,10 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 				if (behavior.tokens.size() > token_count) {
 					behavior.tokens.back().SetLiteralInfo(literal_table, literal_info);
 				}
-				state = TokenizeState::STANDARD;
-				last_pos = i;
-				i--;
 			}
+			state = TokenizeState::STANDARD;
+			last_pos = i;
+			i--;
 			break;
 		case TokenizeState::STRING_LITERAL:
 			if ((escape_string || BackslashEscapesStringLiterals()) && c == '\\' && i + 1 < sql.size()) {
