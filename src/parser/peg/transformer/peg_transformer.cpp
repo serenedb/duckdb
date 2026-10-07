@@ -349,6 +349,29 @@ arena_ptr<TransformResultValue> TransformStack::RunProcess(PROCESS &process, Tra
 	}
 }
 
+arena_ptr<TransformResultValue> TransformStack::RunProcess(GeneratedTransformProcess &process,
+                                                           TransformStackFrame &frame, idx_t depth) {
+	while (true) {
+		while (process.HasPendingChild()) {
+			idx_t slot;
+			auto child = process.PopPendingChild(slot);
+			idx_t child_height;
+			auto child_result = ExecuteRecursive(child, depth + 1, child_height);
+			frame.height = MaxValue(frame.height, child_height);
+			process.SetChildResult(slot, std::move(child_result));
+		}
+		transformer.running_frame = frame;
+		auto result = process.Finalize();
+		if (result) {
+			return result;
+		}
+		if (!process.HasPendingChild()) {
+			throw InternalException("Transformer process for rule '%s' returned nullptr without requesting a child",
+			                        process.info.name);
+		}
+	}
+}
+
 arena_ptr<TransformResultValue> TransformStack::ExecuteRecursive(TransformInput input, idx_t depth,
                                                                  idx_t &result_height) {
 	if (depth >= MAX_RECURSION_DEPTH) {

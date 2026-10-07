@@ -348,6 +348,19 @@ public:
 	void SetChildResult(idx_t slot, arena_ptr<TransformResultValue> result);
 	void PushChild(TransformInput input, idx_t slot);
 	TransformStep Resume(arena_ptr<TransformResultValue> child_result) override;
+	bool HasPendingChild() const {
+		return pending_count > 0;
+	}
+	TransformInput PopPendingChild(idx_t &slot) {
+		auto &child = pending_children[--pending_count];
+		slot = child.slot;
+		TransformInput input(child.parse_result.get());
+		input.rule = child.rule;
+		return input;
+	}
+	arena_ptr<TransformResultValue> Finalize() {
+		return info.finalize(transformer, *this);
+	}
 
 	template <class T>
 	T TakeResult(idx_t slot) {
@@ -476,6 +489,8 @@ private:
 	arena_ptr<TransformResultValue> ExecuteRecursive(TransformInput input, idx_t depth, idx_t &result_height);
 	template <class PROCESS>
 	arena_ptr<TransformResultValue> RunProcess(PROCESS &process, TransformStackFrame &frame, idx_t depth);
+	arena_ptr<TransformResultValue> RunProcess(GeneratedTransformProcess &process, TransformStackFrame &frame,
+	                                           idx_t depth);
 	arena_ptr<TransformResultValue> FinishFrame(TransformStackFrame &frame, arena_ptr<TransformResultValue> result,
 	                                            idx_t &result_height);
 	arena_ptr<TransformResultValue> ExecuteFrames(TransformInput input, idx_t &result_height);
