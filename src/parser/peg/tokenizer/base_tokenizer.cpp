@@ -45,14 +45,6 @@ TokenizerBehavior::TokenizerBehavior(std::string_view sql, vector<MatcherToken> 
 Tokenizer::Tokenizer(const PEGKeywordHelper &keyword_helper_p) : keyword_helper(keyword_helper_p) {
 }
 
-bool Tokenizer::BackslashEscapesStringLiterals() const {
-	return false;
-}
-
-bool Tokenizer::IsQuotedIdentifierDelimiter(char character) const {
-	return character == '"';
-}
-
 void Tokenizer::HandleLastToken(TokenizerBehavior &behavior, TokenizeState state, std::string_view sql,
                                 idx_t last_pos) const {
 	behavior.OnLastToken(*this, state, sql.substr(last_pos), last_pos);
@@ -88,122 +80,6 @@ bool Tokenizer::IsHashOperatorToken(std::string_view sql, idx_t pos, idx_t &toke
 			return true;
 		}
 		return false;
-	default:
-		return false;
-	}
-}
-
-bool Tokenizer::IsSingleByteOperator(char c) {
-	switch (c) {
-	case '(':
-	case ')':
-	case '{':
-	case '}':
-	case '[':
-	case ']':
-	case ',':
-	case ':':
-	case '?':
-	case '$':
-	case '#':
-		return true;
-	default:
-		return false;
-	}
-}
-
-bool Tokenizer::CharacterIsInitialNumber(char c) {
-	if (c >= '0' && c <= '9') {
-		return true;
-	}
-	return c == '.';
-}
-
-bool Tokenizer::CharacterIsSpecialStringCharacter(char c) {
-	if (c == 'N' || c == 'n') {
-		return true;
-	}
-	if (c == 'X' || c == 'x') {
-		return true;
-	}
-	if (c == 'E' || c == 'e') {
-		return true;
-	}
-	if (c == 'B' || c == 'b') {
-		return true;
-	}
-	return false;
-}
-
-bool Tokenizer::CharacterIsNumber(char c) {
-	if (CharacterIsInitialNumber(c)) {
-		return true;
-	}
-	switch (c) {
-	case 'e': // exponents
-	case 'E':
-	case '_':
-		return true;
-	default:
-		return false;
-	}
-}
-
-bool Tokenizer::CharacterIsScientific(char c) {
-	switch (c) {
-	case 'e':
-	case 'E':
-		return true;
-	default:
-		return false;
-	}
-}
-
-bool Tokenizer::CharacterIsControlFlow(char c) {
-	switch (c) {
-	case '\'':
-	case ';':
-	case '"':
-	case '.':
-		return true;
-	default:
-		return false;
-	}
-}
-
-bool Tokenizer::CharacterIsKeyword(char c) {
-	if (IsSingleByteOperator(c)) {
-		return false;
-	}
-	if (StringUtil::CharacterIsOperator(c)) {
-		return false;
-	}
-	if (StringUtil::CharacterIsSpace(c)) {
-		return false;
-	}
-	if (CharacterIsControlFlow(c)) {
-		return false;
-	}
-	return true;
-}
-
-bool Tokenizer::CharacterIsOperator(char c) {
-	switch (c) {
-	case '+':
-	case '-':
-	case '*':
-	case '/':
-	case '%':
-	case '^':
-	case '<':
-	case '>':
-	case '=':
-	case '~':
-	case '!':
-	case '@':
-	case '&':
-	case '|':
-		return true;
 	default:
 		return false;
 	}
