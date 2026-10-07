@@ -62,6 +62,16 @@ bool MatchStackFrame::IsInitialized() const {
 	return process || result;
 }
 
+[[gnu::always_inline]] static inline bool IsEmptyOptional(const Matcher &matcher, MatchState &state) {
+	return matcher.Type() == MatcherType::OPTIONAL && matcher.HasBuiltInMatch() &&
+	       !static_cast<const OptionalMatcher &>(matcher).GetChildMatcher().CanStartAt(state);
+}
+
+[[gnu::always_inline]] static inline MatcherResult EmptyOptional(const Matcher &matcher, MatchState &state) {
+	state.rule = matcher.GetRule();
+	return static_cast<const OptionalMatcher &>(matcher).EmptyResult(state);
+}
+
 MatcherResult MatchStack::MatchMemoized(const Matcher &matcher, MatchState &state, idx_t depth) {
 	PackratMatchState packrat_state;
 	auto cached_result = packrat_state.TryLoadCachedResult(matcher, state);
@@ -91,6 +101,9 @@ MatcherResult MatchStack::MatchChild(const Matcher &matcher, MatchState &state, 
 	}
 	if (!matcher.CanStartAt(state)) {
 		return MatcherResult::Failure();
+	}
+	if (IsEmptyOptional(matcher, state)) {
+		return EmptyOptional(matcher, state);
 	}
 	return Match(matcher, state, depth + 1);
 }
@@ -284,6 +297,10 @@ bool MatchStack::ExecuteFrame(MatchStackFrame &frame) {
 	}
 	if (!child.matcher.CanStartAt(child.state)) {
 		frame.child_result = MatcherResult::Failure();
+		return false;
+	}
+	if (IsEmptyOptional(child.matcher, child.state)) {
+		frame.child_result = EmptyOptional(child.matcher, child.state);
 		return false;
 	}
 	PushFrame(child);
