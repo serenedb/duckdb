@@ -96,11 +96,15 @@ MatcherResult MatchStack::ExecuteAtomicMatcher(MatchInput input) {
 }
 
 MatcherResult MatchStack::MatchChild(const Matcher &matcher, MatchState &state, idx_t depth) {
+	if (!matcher.IsAtomic() && !matcher.CanStartAt(state)) {
+		return MatcherResult::Failure();
+	}
+	return MatchStartedChild(matcher, state, depth);
+}
+
+MatcherResult MatchStack::MatchStartedChild(const Matcher &matcher, MatchState &state, idx_t depth) {
 	if (matcher.IsAtomic()) {
 		return ExecuteAtomicMatcher({matcher, state});
-	}
-	if (!matcher.CanStartAt(state)) {
-		return MatcherResult::Failure();
 	}
 	if (IsEmptyOptional(matcher, state)) {
 		return EmptyOptional(matcher, state);
@@ -227,7 +231,6 @@ MatcherResult MatchStack::ContinueList(const ListMatcher &matcher, MatchState &s
 }
 
 MatcherResult MatchStack::MatchChoice(const ChoiceMatcher &matcher, MatchState &state, idx_t depth) {
-	auto start_offset = StartOffset(state);
 	idx_t child_index = 0;
 	idx_t child_end = matcher.matchers.size();
 	if (matcher.dispatch_on_literal) {
@@ -235,18 +238,21 @@ MatcherResult MatchStack::MatchChoice(const ChoiceMatcher &matcher, MatchState &
 		child_end = MinValue(child_index + 1, child_end);
 	}
 	for (; child_index < child_end; child_index++) {
+		auto &child = matcher.matchers[child_index].get();
+		if (!child.IsAtomic() && !child.CanStartAt(state)) {
+			continue;
+		}
 		MatchState child_state(state);
-		auto child_result = MatchChild(matcher.matchers[child_index].get(), child_state, depth);
+		auto child_result = MatchStartedChild(child, child_state, depth);
 		if (!child_result.IsSuccess()) {
 			continue;
 		}
-		state.token_iterator.SetPosition(child_state.token_iterator);
-		if (!child_result.HasParseResult()) {
-			return MatcherResult::Success();
-		}
-		if (matcher.IsCollapsible() && child_result.GetParseResult()->GetRule()) {
+		if (!child_result.HasParseResult() || (matcher.IsCollapsible() && child_result.GetParseResult()->GetRule())) {
+			state.token_iterator.SetPosition(child_state.token_iterator);
 			return child_result;
 		}
+		auto start_offset = StartOffset(state);
+		state.token_iterator.SetPosition(child_state.token_iterator);
 		return state.AllocateParseResult<ChoiceParseResult>(*child_result.GetParseResult(), child_index, start_offset);
 	}
 	return MatcherResult::Failure();
