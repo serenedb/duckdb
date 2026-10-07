@@ -2042,7 +2042,7 @@ static unique_ptr<ParsedExpression> TransformStringLiteralExpression(PEGTransfor
 // LiteralExpression <- StringLiteral / NumberLiteral / 'NULL' / 'TRUE' / 'FALSE'
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformLiteralExpression(PEGTransformer &transformer,
                                                                                ParseResult &choice_result) {
-	if (choice_result.name == "StringLiteral") {
+	if (choice_result.type == ParseResultType::STRING) {
 		return TransformStringLiteralExpression(transformer, choice_result.Cast<StringLiteralParseResult>());
 	}
 	return transformer.Transform<unique_ptr<ParsedExpression>>(choice_result);
@@ -2060,23 +2060,24 @@ PEGTransformerFactory::FinalizeLiteralExpressionTrampoline(PEGTransformer &trans
 	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
 	auto &choice_result = choice_pr.GetResult();
 	unique_ptr<ParsedExpression> result;
-	if (choice_result.name == "StringLiteral") {
+	if (choice_result.type == ParseResultType::STRING) {
 		result = TransformStringLiteralExpression(transformer, choice_result.Cast<StringLiteralParseResult>());
-	} else if (choice_result.name == "NumberLiteral") {
+	} else if (choice_result.type == ParseResultType::NUMBER) {
 		result = TransformNumberLiteral(transformer, choice_result);
 	} else {
 		auto &constant_list_pr = choice_result.Cast<ListParseResult>();
 		auto &constant_choice_pr = constant_list_pr.Child<ChoiceParseResult>(0);
 		auto &constant_result = constant_choice_pr.GetResult();
+		auto constant_name = constant_result.Name();
 		Value value;
-		if (constant_result.name == "NullLiteral") {
+		if (constant_name == "NullLiteral") {
 			value = TransformNullLiteral(transformer);
-		} else if (constant_result.name == "TrueLiteral") {
+		} else if (constant_name == "TrueLiteral") {
 			value = TransformTrueLiteral(transformer);
-		} else if (constant_result.name == "FalseLiteral") {
+		} else if (constant_name == "FalseLiteral") {
 			value = TransformFalseLiteral(transformer);
 		} else {
-			throw InternalException("Unexpected literal expression process child '%s'", constant_result.name);
+			throw InternalException("Unexpected literal expression process child '%s'", constant_name);
 		}
 		result = TransformConstantLiteral(transformer, value);
 	}

@@ -87,8 +87,7 @@ public:
 			}
 		}
 		auto children = allocator.TakeChildren(children_begin);
-		return MatchStep::Complete(
-		    state.AllocateParseResult<ListParseResult>(children, matcher.GetDeclaredName(), start_offset));
+		return MatchStep::Complete(state.AllocateParseResult<ListParseResult>(children, start_offset));
 	}
 
 private:

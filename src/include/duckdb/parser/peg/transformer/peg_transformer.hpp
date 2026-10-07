@@ -447,7 +447,7 @@ public:
 		auto base_result = Execute(input);
 		auto *result_value = TryGetTransformResult<T>(*base_result);
 		if (!result_value) {
-			throw InternalException("Unexpected transformer result type for root rule '%s'", input.parse_result.name);
+			throw InternalException("Unexpected transformer result type for root rule '%s'", input.parse_result.Name());
 		}
 		return std::move(*result_value);
 	}
@@ -499,7 +499,7 @@ public:
 				SetResultLocation(bridged_result, parse_result.GetLocation());
 				return bridged_result;
 			}
-			throw InternalException("Transformer for rule '%s' returned an unexpected type.", parse_result.name);
+			throw InternalException("Transformer for rule '%s' returned an unexpected type.", parse_result.Name());
 		}
 
 		auto result = std::move(*result_value);

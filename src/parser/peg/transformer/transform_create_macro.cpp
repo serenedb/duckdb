@@ -134,11 +134,13 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 	for (auto &child_ref : children) {
 		auto &decorator_list = child_ref.get().Cast<ListParseResult>();
 		auto &decorator_choice = decorator_list.Child<ChoiceParseResult>(0).GetResult();
-		if (decorator_choice.name == "ReturnsClause") {
+		auto decorator_name = decorator_choice.Name();
+		if (decorator_name == "ReturnsClause") {
 			auto &returns_list = decorator_choice.Cast<ListParseResult>();
 			auto &inner_group = returns_list.Child<ListParseResult>(1);
 			auto &returns_choice = inner_group.Child<ChoiceParseResult>(0).GetResult();
-			if (returns_choice.name == "ReturnsTable") {
+			auto returns_name = returns_choice.Name();
+			if (returns_name == "ReturnsTable") {
 				auto &ret_table_list = returns_choice.Cast<ListParseResult>();
 				auto &inner_list =
 				    PEGTransformerFactory::ExtractResultFromParens(ret_table_list.Child<ListParseResult>(1));
@@ -148,12 +150,12 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 					macro_function.return_names.push_back(entry.first.GetIdentifierName());
 					macro_function.return_types.push_back(std::move(entry.second));
 				}
-			} else if (returns_choice.name == "ReturnsNull") {
+			} else if (returns_name == "ReturnsNull") {
 				// RETURNS NULL ON NULL INPUT -- a strictness marker, not a return type.
 			} else {
 				macro_function.return_types.push_back(transformer.Transform<LogicalType>(returns_choice));
 			}
-		} else if (decorator_choice.name == "LanguageClause") {
+		} else if (decorator_name == "LanguageClause") {
 			info.has_language = true;
 		}
 		// Other decorators (volatility, strict, security, cost, rows, parallel, leakproof) are accepted for PG-syntax

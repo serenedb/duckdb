@@ -139,8 +139,9 @@ public:
 	[[noreturn]] DUCKDB_API static void ThrowChildIndexError();
 	[[noreturn]] DUCKDB_API static void ThrowEmptyOptionalError();
 
+	DUCKDB_API std::string_view Name() const;
+
 	ParseResultType type;
-	std::string_view name;
 	optional_ptr<const CompiledGrammarRule> rule;
 	//! Set when a collapsible rule handed this result out in place of its own, so the transformer runs this
 	//! result's rule rather than the one the parent asked for
@@ -192,6 +193,7 @@ protected:
 
 	void HeaderToString(std::stringstream &ss, const std::string &indent, bool is_last) const {
 		ss << indent << (is_last ? "└─" : "├─") << " " << ParseResultToString(type);
+		auto name = Name();
 		if (!name.empty()) {
 			ss << " (" << name << ")";
 		}
@@ -261,9 +263,8 @@ struct ListParseResult : ParseResult {
 	static constexpr ParseResultType TYPE = ParseResultType::LIST;
 
 public:
-	ListParseResult(std::span<reference<ParseResult>> children_p, std::string_view name_p, optional_idx offset)
+	ListParseResult(std::span<reference<ParseResult>> children_p, optional_idx offset)
 	    : ParseResult(TYPE, offset), children(children_p) {
-		name = name_p;
 		for (auto &child : children) {
 			EncloseChild(child.get());
 		}
@@ -289,6 +290,7 @@ public:
 	                      const std::string &indent, bool is_last) const {
 		ss << indent << (is_last ? "└─" : "├─");
 
+		auto name = Name();
 		if (visited.count(this)) {
 			ss << " List (" << name << ") [... already printed ...]\n";
 			return;
@@ -337,6 +339,7 @@ struct RepeatParseResult : ParseResult {
 	                      const std::string &indent, bool is_last) const {
 		ss << indent << (is_last ? "└─" : "├─");
 
+		auto name = Name();
 		if (visited.count(this)) {
 			ss << " Repeat (" << name << ") [... already printed ...]\n";
 			return;
@@ -366,7 +369,6 @@ struct OptionalParseResult : ParseResult {
 	}
 	explicit OptionalParseResult(optional_ptr<ParseResult> result_p, optional_idx offset)
 	    : ParseResult(TYPE, offset), optional_result(result_p) {
-		name = result_p->name;
 		EncloseChild(*result_p);
 	}
 
@@ -380,6 +382,12 @@ struct OptionalParseResult : ParseResult {
 	}
 
 	ParseResult &GetResult() {
+		if (!optional_result) {
+			ThrowEmptyOptionalError();
+		}
+		return *optional_result;
+	}
+	const ParseResult &GetResult() const {
 		if (!optional_result) {
 			ThrowEmptyOptionalError();
 		}
@@ -408,11 +416,13 @@ public:
 
 	explicit ChoiceParseResult(ParseResult &parse_result_p, idx_t selected_idx_p, optional_idx offset)
 	    : ParseResult(TYPE, offset), result(parse_result_p), selected_idx(selected_idx_p) {
-		name = parse_result_p.name;
 		EncloseChild(parse_result_p);
 	}
 
 	ParseResult &GetResult() {
+		return result;
+	}
+	const ParseResult &GetResult() const {
 		return result;
 	}
 

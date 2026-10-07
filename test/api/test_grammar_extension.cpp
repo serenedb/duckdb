@@ -539,6 +539,8 @@ TEST_CASE("A collapsible choice rule hands out the alternative it matched", "[ap
 	REQUIRE(TransformFirstSelectExpression(grammar, "SELECT x") == "x");
 }
 
+static constexpr idx_t NESTED_RESULT_OFFSET = 42;
+
 struct MatchProcessLifetimeState {
 	idx_t active = 0;
 	idx_t started = 0;
@@ -584,7 +586,7 @@ public:
 		}
 		if (lifetime.create_result) {
 			return MatchStep::Complete(child_state.AllocateParseResult<ListParseResult>(
-			    std::span<reference<ParseResult>>(), "nested result", optional_idx()));
+			    std::span<reference<ParseResult>>(), optional_idx(NESTED_RESULT_OFFSET)));
 		}
 		return MatchStep::Complete(MatcherResult::Success());
 	}
@@ -644,7 +646,7 @@ TEST_CASE("Matcher stack vector growth preserves custom process lifetimes", "[ap
 			auto result = stack.Execute({matcher, state});
 			REQUIRE(result.IsSuccess());
 			REQUIRE(result.HasParseResult());
-			REQUIRE(result.GetParseResult()->name == "nested result");
+			REQUIRE(result.GetParseResult()->GetLocation().Start() == NESTED_RESULT_OFFSET);
 			REQUIRE(lifetime.active == 0);
 			REQUIRE(lifetime.state_valid);
 			REQUIRE(lifetime.started == depth);
@@ -910,7 +912,7 @@ TEST_CASE("Packrat results outlive reset process arenas", "[api][grammar_extensi
 	REQUIRE(lifetime.state_valid);
 	if (cached.IsSuccess()) {
 		REQUIRE(cached.HasParseResult());
-		REQUIRE(cached.GetParseResult()->name == "nested result");
+		REQUIRE(cached.GetParseResult()->GetLocation().Start() == NESTED_RESULT_OFFSET);
 	}
 }
 

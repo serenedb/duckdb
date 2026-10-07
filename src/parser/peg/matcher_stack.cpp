@@ -227,7 +227,7 @@ MatcherResult MatchStack::ContinueList(const ListMatcher &matcher, MatchState &s
 		}
 	}
 	auto children = allocator.TakeChildren(children_begin);
-	return state.AllocateParseResult<ListParseResult>(children, matcher.GetDeclaredName(), start_offset);
+	return state.AllocateParseResult<ListParseResult>(children, start_offset);
 }
 
 MatcherResult MatchStack::MatchChoice(const ChoiceMatcher &matcher, MatchState &state, idx_t depth) {

@@ -27,11 +27,7 @@ public:
 			return MatcherResult::Failure();
 		}
 		state.AnnotatePreviousToken(TokenType::NUMBER_LITERAL);
-		auto result = state.AllocateParseResult<NumberParseResult>(token_text, start_offset, token_length);
-		if (result.HasParseResult()) {
-			result.GetParseResult()->name = name;
-		}
-		return result;
+		return state.AllocateParseResult<NumberParseResult>(token_text, start_offset, token_length);
 	}
 
 	SuggestionType AddSuggestionInternal(MatchState &state) const override {

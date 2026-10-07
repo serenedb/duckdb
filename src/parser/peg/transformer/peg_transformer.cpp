@@ -10,9 +10,25 @@
 
 namespace duckdb {
 
+std::string_view ParseResult::Name() const {
+	if (rule) {
+		return rule->name;
+	}
+	switch (type) {
+	case ParseResultType::CHOICE:
+		return static_cast<const ChoiceParseResult &>(*this).GetResult().Name();
+	case ParseResultType::OPTIONAL: {
+		auto &optional = static_cast<const OptionalParseResult &>(*this);
+		return optional.HasResult() ? optional.GetResult().Name() : std::string_view();
+	}
+	default:
+		return std::string_view();
+	}
+}
+
 void ParseResult::ThrowCastError(ParseResultType target) const {
 	throw InternalException("Failed to cast parse result of type %s to type %s for rule %s",
-	                        ParseResultToString(target), ParseResultToString(type), name);
+	                        ParseResultToString(target), ParseResultToString(type), Name());
 }
 
 void ParseResult::ThrowChildIndexError() {
@@ -142,7 +158,7 @@ TransformStep FinalizeTransformProcess::Resume(arena_ptr<TransformResultValue> c
 	D_ASSERT(!child_result);
 	auto result = finalize(transformer, parse_result);
 	if (!result) {
-		throw InternalException("Transformer for rule '%s' returned a nullptr", parse_result.name);
+		throw InternalException("Transformer for rule '%s' returned a nullptr", parse_result.Name());
 	}
 	completed = true;
 	return TransformStep::Complete(std::move(result));
@@ -151,11 +167,11 @@ TransformStep FinalizeTransformProcess::Resume(arena_ptr<TransformResultValue> c
 arena_ptr<TransformProcess> CompiledGrammarRule::StartTransform(PEGTransformer &transformer,
                                                                 ParseResult &parse_result) const {
 	if (!transform_process) {
-		throw NotImplementedException("No transform process found for rule '%s'", parse_result.name);
+		throw NotImplementedException("No transform process found for rule '%s'", parse_result.Name());
 	}
 	auto result = transform_process(transformer, parse_result);
 	if (!result) {
-		throw InternalException("Transform process factory for rule '%s' returned a nullptr", parse_result.name);
+		throw InternalException("Transform process factory for rule '%s' returned a nullptr", parse_result.Name());
 	}
 	return result;
 }
@@ -184,7 +200,7 @@ void TransformStack::PushFrame(TransformInput input) {
 
 void TransformStack::InitializeFrame(TransformStackFrame &frame) {
 	if (!frame.rule) {
-		throw InternalException("No registered data exists for rule '%s'", frame.parse_result.name);
+		throw InternalException("No registered data exists for rule '%s'", frame.parse_result.Name());
 	}
 	frame.process = frame.rule->StartTransform(transformer, frame.parse_result);
 }
@@ -207,7 +223,7 @@ arena_ptr<TransformResultValue> TransformStack::ExecuteFrame(TransformStackFrame
 arena_ptr<TransformResultValue> TransformStack::Execute(TransformInput input) {
 	D_ASSERT(frames.empty());
 	if (!input.GetRule()) {
-		throw InternalException("No registered data exists for rule '%s'", input.parse_result.name);
+		throw InternalException("No registered data exists for rule '%s'", input.parse_result.Name());
 	}
 	PushFrame(input);
 	while (!frames.empty()) {
@@ -245,7 +261,7 @@ string TransformStack::FormatStack() const {
 			result << "\n";
 		}
 		auto &parse_result = frames[i].parse_result;
-		result << "#" << i << " " << parse_result.name;
+		result << "#" << i << " " << parse_result.Name();
 		if (parse_result.offset.IsValid()) {
 			result << " offset=" << parse_result.offset.GetIndex();
 		}
@@ -257,7 +273,7 @@ string TransformStack::FormatStack() const {
 arena_ptr<TransformResultValue> PEGTransformer::TransformInternal(ParseResult &parse_result) {
 	auto rule = parse_result.GetRule();
 	if (!rule) {
-		throw InternalException("No registered data exists for rule '%s'", parse_result.name);
+		throw InternalException("No registered data exists for rule '%s'", parse_result.Name());
 	}
 	TransformInput input {*rule, parse_result};
 	auto caller = running_frame;
@@ -320,7 +336,7 @@ void PEGTransformer::VerifyResultHeight(const ParseResult &parse_result, Transfo
 		verify(named_string->second.get());
 	}
 	if (measure.deepest > height) {
-		throw InternalException("Rule %s built an expression %llu levels deep at height %llu", parse_result.name,
+		throw InternalException("Rule %s built an expression %llu levels deep at height %llu", parse_result.Name(),
 		                        measure.deepest, height);
 	}
 }

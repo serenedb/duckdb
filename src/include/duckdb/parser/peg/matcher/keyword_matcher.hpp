@@ -36,12 +36,8 @@ public:
 		if (!state.BuildParseResult()) {
 			return MatcherResult::Success();
 		}
-		auto result =
-		    state.AllocateParseResult<KeywordParseResult>(state.FoldIdentifier(token_text), start_offset, token_length);
-		if (result.HasParseResult()) {
-			result.GetParseResult()->name = name;
-		}
-		return result;
+		return state.AllocateParseResult<KeywordParseResult>(state.FoldIdentifier(token_text), start_offset,
+		                                                     token_length);
 	}
 
 	SuggestionType AddSuggestionInternal(MatchState &state) const override {

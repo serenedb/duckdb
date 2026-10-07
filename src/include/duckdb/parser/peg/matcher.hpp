@@ -409,9 +409,6 @@ public:
 		return !name.empty();
 	}
 	string GetName() const;
-	const string &GetDeclaredName() const {
-		return name;
-	}
 	optional_idx GetPackratSlot() const {
 		return packrat_slot;
 	}
@@ -590,10 +587,7 @@ MatcherResult MatchState::AllocateParseResult(ARGS &&... args) {
 		return MatcherResult::Success();
 	}
 	auto &result = context.allocator.Make<RESULT>(std::forward<ARGS>(args)...);
-	if (rule) {
-		result.SetRule(*rule);
-		result.name = rule->name;
-	}
+	result.rule = rule;
 	return MatcherResult::Success(result);
 }
 

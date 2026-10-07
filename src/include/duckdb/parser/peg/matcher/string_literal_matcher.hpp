@@ -45,12 +45,7 @@ public:
 
 		auto token_length = optional_idx(end_offset - start_offset.GetIndex());
 		auto text = LiteralText(state, first_token, string_info);
-		auto result =
-		    state.AllocateParseResult<StringLiteralParseResult>(text, string_info.type, start_offset, token_length);
-		if (result.HasParseResult()) {
-			result.GetParseResult()->name = name;
-		}
-		return result;
+		return state.AllocateParseResult<StringLiteralParseResult>(text, string_info.type, start_offset, token_length);
 	}
 
 	SuggestionType AddSuggestionInternal(MatchState &state) const override {

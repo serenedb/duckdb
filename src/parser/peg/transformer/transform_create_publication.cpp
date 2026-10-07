@@ -37,7 +37,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreatePublicationStatem
 		auto &for_list = for_opt.GetResult().Cast<ListParseResult>();
 		auto &for_choice = for_list.Child<ListParseResult>(1).Child<ChoiceParseResult>(0).GetResult();
 
-		if (for_choice.name == "PublicationForAllTables") {
+		if (for_choice.Name() == "PublicationForAllTables") {
 			// FOR ALL TABLES
 			result->info->named_parameters["for_all_tables"] = ConstantExpression::Boolean(true);
 		} else {

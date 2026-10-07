@@ -254,54 +254,54 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateRoleStatement(PEG
 		// which is itself a CHOICE wrapping the concrete option/clause.
 		auto &wrapper = clause_ref.get().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 		auto &opt = wrapper.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-		if (opt.name == "LoginOption") {
+		if (opt.Name() == "LoginOption") {
 			once("login");
 			login = keyword_positive(opt, "LOGIN");
-		} else if (opt.name == "SuperuserOption") {
+		} else if (opt.Name() == "SuperuserOption") {
 			once("superuser");
 			superuser = keyword_positive(opt, "SUPERUSER");
-		} else if (opt.name == "CreateDbOption") {
+		} else if (opt.Name() == "CreateDbOption") {
 			once("createdb");
 			createdb = keyword_positive(opt, "CREATEDB");
-		} else if (opt.name == "CreateRoleOption") {
+		} else if (opt.Name() == "CreateRoleOption") {
 			once("createrole");
 			createrole = keyword_positive(opt, "CREATEROLE");
-		} else if (opt.name == "ReplicationOption") {
+		} else if (opt.Name() == "ReplicationOption") {
 			once("replication");
 			replication = keyword_positive(opt, "REPLICATION");
-		} else if (opt.name == "BypassRlsOption") {
+		} else if (opt.Name() == "BypassRlsOption") {
 			once("bypassrls");
 			bypassrls = keyword_positive(opt, "BYPASSRLS");
-		} else if (opt.name == "InheritOption") {
+		} else if (opt.Name() == "InheritOption") {
 			once("inherit");
 			inherit = keyword_positive(opt, "INHERIT");
-		} else if (opt.name == "ConnLimitOption") {
+		} else if (opt.Name() == "ConnLimitOption") {
 			once("connlimit");
 			has_conn_limit = true;
 			conn_limit = TransformConnLimit(opt);
-		} else if (opt.name == "ValidUntilOption") {
+		} else if (opt.Name() == "ValidUntilOption") {
 			once("validuntil");
 			has_valid_until = true;
 			valid_until = TransformValidUntil(opt);
-		} else if (opt.name == "PasswordOption") {
+		} else if (opt.Name() == "PasswordOption") {
 			// PasswordOption <- 'ENCRYPTED'? 'PASSWORD' StringLiteral
 			once("password");
 			has_password = true;
 			password = opt.Cast<ListParseResult>().GetChild(2).Cast<StringLiteralParseResult>().result;
-		} else if (opt.name == "PasswordNullOption") {
+		} else if (opt.Name() == "PasswordNullOption") {
 			once("password");
 			has_password = true;
 			password_is_null = true;
-		} else if (opt.name == "SysIdOption") {
+		} else if (opt.Name() == "SysIdOption") {
 			// SYSID is a legacy no-op accepted for compatibility.
-		} else if (opt.name == "InRoleClause") {
+		} else if (opt.Name() == "InRoleClause") {
 			collect_members(opt, in_roles);
-		} else if (opt.name == "RoleMembersClause") {
+		} else if (opt.Name() == "RoleMembersClause") {
 			collect_members(opt, role_members);
-		} else if (opt.name == "AdminClause") {
+		} else if (opt.Name() == "AdminClause") {
 			collect_members(opt, admin_members);
 		} else {
-			throw ParserException("Unexpected role option in CREATE ROLE: %s", opt.name);
+			throw ParserException("Unexpected role option in CREATE ROLE: %s", opt.Name());
 		}
 	}
 
@@ -454,7 +454,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterPolicyStatement(PE
 	result->info->parameters.push_back(StrConst(name));
 	result->info->parameters.push_back(StrConst(table));
 
-	if (chosen.name == "PolicyRename") {
+	if (chosen.Name() == "PolicyRename") {
 		// LIST(PolicyRename): 0:'RENAME' 1:'TO' 2:ColId
 		auto new_name = TransformColIdName(transformer, chosen.Cast<ListParseResult>().GetChild(2));
 		result->info->parameters.push_back(BoolConst(true)); // is_rename
@@ -547,17 +547,17 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 	auto info = make_uniq<AlterRoleInfo>(Identifier(name));
 	auto result = make_uniq<AlterStatement>();
 
-	if (chosen.name == "AlterRoleRename") {
+	if (chosen.Name() == "AlterRoleRename") {
 		// LIST(AlterRoleRename): 0:'RENAME' 1:'TO' 2:ColId
 		info->new_name = Identifier(TransformColIdName(transformer, chosen.Cast<ListParseResult>().GetChild(2)));
 		result->info = std::move(info);
 		return std::move(result);
 	}
 
-	if (chosen.name == "AlterRoleConfig") {
+	if (chosen.Name() == "AlterRoleConfig") {
 		// LIST(AlterRoleConfig) -> CHOICE(AlterRoleSet / AlterRoleReset).
 		auto &cfg = chosen.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-		if (cfg.name == "AlterRoleSet") {
+		if (cfg.Name() == "AlterRoleSet") {
 			// LIST(AlterRoleSet): 0:'SET' 1:SettingName 2:GROUP-LIST -> CHOICE(
 			// AlterRoleSetTo / AlterRoleSetFromCurrent). SettingName is a
 			// matcher-handled IdentifierParseResult; an inline (A / B) group is
@@ -566,7 +566,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 			auto &val_choice =
 			    cfg.Cast<ListParseResult>().Child<ListParseResult>(2).Child<ChoiceParseResult>(0).GetResult();
 			string value;
-			if (val_choice.name == "AlterRoleSetTo") {
+			if (val_choice.Name() == "AlterRoleSetTo") {
 				// LIST(AlterRoleSetTo): 0:GROUP-LIST('='|'TO') 1:List(Expression). Join
 				// the rendered expression values with ", " (PG's setconfig rendering).
 				for (auto &e : PEGTransformerFactory::ExtractParseResultsFromList(
@@ -587,7 +587,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 			// / SettingName).
 			auto &reset_choice =
 			    cfg.Cast<ListParseResult>().Child<ListParseResult>(1).Child<ChoiceParseResult>(0).GetResult();
-			if (reset_choice.name == "AlterRoleResetAll") {
+			if (reset_choice.Name() == "AlterRoleResetAll") {
 				info->reset_all_config = true;
 			} else {
 				// SettingName is a matcher-handled IdentifierParseResult.
@@ -608,26 +608,26 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 	auto &repeat = chosen.Cast<ListParseResult>().Child<RepeatParseResult>(1);
 	for (auto &opt_ref : repeat.GetChildren()) {
 		auto &opt = opt_ref.get().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-		if (opt.name == "PasswordOption") {
+		if (opt.Name() == "PasswordOption") {
 			// PasswordOption <- 'ENCRYPTED'? 'PASSWORD' StringLiteral
 			once("password");
 			info->set_password = true;
 			info->password = opt.Cast<ListParseResult>().GetChild(2).Cast<StringLiteralParseResult>().result;
 			continue;
 		}
-		if (opt.name == "PasswordNullOption") {
+		if (opt.Name() == "PasswordNullOption") {
 			once("password");
 			info->set_password = true;
 			info->null_password = true;
 			continue;
 		}
-		if (opt.name == "ConnLimitOption") {
+		if (opt.Name() == "ConnLimitOption") {
 			once("connlimit");
 			info->set_conn_limit = true;
 			info->conn_limit = NumericCast<int32_t>(TransformConnLimit(opt));
 			continue;
 		}
-		if (opt.name == "ValidUntilOption") {
+		if (opt.Name() == "ValidUntilOption") {
 			once("validuntil");
 			info->set_valid_until = true;
 			info->valid_until = TransformValidUntil(opt);
@@ -637,24 +637,24 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 		// positive form and its NO* negation), like LoginOption.
 		auto &kw = opt.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>();
 		const bool on = StringUtil::Upper(kw.keyword).rfind("NO", 0) != 0;
-		once(opt.name);
+		once(opt.Name());
 		RoleOption option;
-		if (opt.name == "LoginOption") {
+		if (opt.Name() == "LoginOption") {
 			option = RoleOption::Login;
-		} else if (opt.name == "SuperuserOption") {
+		} else if (opt.Name() == "SuperuserOption") {
 			option = RoleOption::Superuser;
-		} else if (opt.name == "CreateDbOption") {
+		} else if (opt.Name() == "CreateDbOption") {
 			option = RoleOption::CreateDb;
-		} else if (opt.name == "CreateRoleOption") {
+		} else if (opt.Name() == "CreateRoleOption") {
 			option = RoleOption::CreateRole;
-		} else if (opt.name == "ReplicationOption") {
+		} else if (opt.Name() == "ReplicationOption") {
 			option = RoleOption::Replication;
-		} else if (opt.name == "BypassRlsOption") {
+		} else if (opt.Name() == "BypassRlsOption") {
 			option = RoleOption::BypassRls;
-		} else if (opt.name == "InheritOption") {
+		} else if (opt.Name() == "InheritOption") {
 			option = RoleOption::Inherit;
 		} else {
-			throw ParserException("Unexpected role option in ALTER ROLE: %s", opt.name);
+			throw ParserException("Unexpected role option in ALTER ROLE: %s", opt.Name());
 		}
 		if (on) {
 			info->set_options = info->set_options | option;
@@ -725,7 +725,7 @@ static void TransformPrivilegeList(PEGTransformer &transformer, ParseResult &pri
 		}
 	};
 	auto &chosen = privs_list.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-	if (chosen.name == "AllPrivileges") {
+	if (chosen.Name() == "AllPrivileges") {
 		auto &columns = chosen.Cast<ListParseResult>().Child<OptionalParseResult>(2);
 		add("ALL", columns.HasResult() ? &columns.GetResult() : nullptr);
 		return;
@@ -742,7 +742,7 @@ static void TransformPrivilegeList(PEGTransformer &transformer, ParseResult &pri
 static void TransformGrantTarget(PEGTransformer &transformer, ParseResult &target_choice_holder,
                                  AlterPermissionsInfo &info) {
 	auto &chosen = target_choice_holder.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-	if (chosen.name == "GrantAllInSchema") {
+	if (chosen.Name() == "GrantAllInSchema") {
 		auto &all = chosen.Cast<ListParseResult>();
 		auto kind = StringUtil::Upper(all.GetChild(1)
 		                                  .Cast<ListParseResult>()
@@ -762,7 +762,7 @@ static void TransformGrantTarget(PEGTransformer &transformer, ParseResult &targe
 		info.all_in_schema = true;
 		return;
 	}
-	if (chosen.name == "GrantFunctionTarget") {
+	if (chosen.Name() == "GrantFunctionTarget") {
 		// 0:GrantRoutineKind 1:QualifiedName 2:FuncArgSignature?
 		info.entry_catalog_type = CatalogType::MACRO_ENTRY;
 		info.SetQualifiedName(transformer.Transform<QualifiedName>(chosen.Cast<ListParseResult>().GetChild(1)));
@@ -847,9 +847,9 @@ static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, List
 				if (v == -1) {
 					v = 1; // bare 'WITH ADMIN OPTION' / 'WITH INHERIT' means TRUE
 				}
-				if (chosen.name == "AdminOption") {
+				if (chosen.Name() == "AdminOption") {
 					info->admin_option = NumericCast<int8_t>(v);
-				} else if (chosen.name == "InheritMemberOption") {
+				} else if (chosen.Name() == "InheritMemberOption") {
 					info->inherit_option = NumericCast<int8_t>(v);
 				} else {
 					info->set_option = NumericCast<int8_t>(v);
@@ -870,20 +870,20 @@ static unique_ptr<SQLStatement> BuildGrant(PEGTransformer &transformer, ChoicePa
 	auto &form = inner.GetResult();
 
 	// GrantTablePrivilege / RevokeTablePrivilege: PrivilegeList at child 0.
-	if (form.name == "GrantTablePrivilege" || form.name == "RevokeTablePrivilege") {
+	if (form.Name() == "GrantTablePrivilege" || form.Name() == "RevokeTablePrivilege") {
 		return BuildGrantTable(transformer, form.Cast<ListParseResult>(), revoke, /*privs_child=*/0,
 		                       /*option_only=*/false);
 	}
 	// REVOKE GRANT OPTION FOR <priv> ... : 0:'GRANT' 1:'OPTION' 2:'FOR', then
 	// the same shape as RevokeTablePrivilege starting at child 3.
-	if (form.name == "RevokeGrantOptionFor") {
+	if (form.Name() == "RevokeGrantOptionFor") {
 		return BuildGrantTable(transformer, form.Cast<ListParseResult>(), /*revoke=*/true, /*privs_child=*/3,
 		                       /*option_only=*/true);
 	}
 	// REVOKE ADMIN OPTION FOR <role> FROM <member>: 0:'ADMIN' 1:'OPTION' 2:'FOR'
 	// 3:ColId(role) 4:'FROM' 5:ColId(member) 6:DropBehavior?. Reuse the role
 	// builder by viewing children 3.. as role/from/member.
-	if (form.name == "RevokeAdminOptionFor") {
+	if (form.Name() == "RevokeAdminOptionFor") {
 		auto &list_pr = form.Cast<ListParseResult>();
 		auto info = make_uniq<AlterRoleInfo>(Identifier(TransformColIdName(transformer, list_pr.GetChild(5))));
 		info->grant_role = TransformColIdName(transformer, list_pr.GetChild(3));
@@ -936,7 +936,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterDefaultPrivilegesS
 	}
 
 	auto &action = list_pr.GetChild(5).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-	info->revoke = action.name == "DefaultPrivRevoke";
+	info->revoke = action.Name() == "DefaultPrivRevoke";
 	auto &g = action.Cast<ListParseResult>();
 	const auto objtype_of = [&](idx_t child) {
 		auto &kw = g.GetChild(child)
