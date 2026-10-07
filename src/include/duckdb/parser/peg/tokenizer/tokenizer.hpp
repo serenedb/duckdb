@@ -195,6 +195,7 @@ public:
 
 public:
 	const PEGKeywordHelper &keyword_helper;
+	const GrammarLiteralTable &literal_table;
 };
 
 } // namespace duckdb

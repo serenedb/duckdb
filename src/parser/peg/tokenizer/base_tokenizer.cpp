@@ -42,7 +42,8 @@ uint8_t MatcherToken::ComputeClasses() const {
 TokenizerBehavior::TokenizerBehavior(std::string_view sql, vector<MatcherToken> &tokens) : sql(sql), tokens(tokens) {
 }
 
-Tokenizer::Tokenizer(const PEGKeywordHelper &keyword_helper_p) : keyword_helper(keyword_helper_p) {
+Tokenizer::Tokenizer(const PEGKeywordHelper &keyword_helper_p)
+    : keyword_helper(keyword_helper_p), literal_table(keyword_helper_p.GetLiteralTable()) {
 }
 
 void Tokenizer::HandleLastToken(TokenizerBehavior &behavior, TokenizeState state, std::string_view sql,
@@ -507,7 +508,6 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 			// not a keyword - return to standard state
 			{
 				auto word = sql.substr(last_pos, i - last_pos);
-				auto &literal_table = keyword_helper.GetLiteralTable();
 				auto literal_info = literal_table.Lookup(word);
 				auto token_count = behavior.tokens.size();
 				behavior.PushToken(last_pos, i, literal_info.IsKeyword() ? TokenType::KEYWORD : TokenType::IDENTIFIER);
@@ -639,7 +639,7 @@ void TokenizerBehavior::OnLastToken(const Tokenizer &tokenizer, TokenizeState st
 		return;
 	}
 	if (state == TokenizeState::KEYWORD) {
-		auto &literal_table = tokenizer.keyword_helper.GetLiteralTable();
+		auto &literal_table = tokenizer.literal_table;
 		auto literal_info = literal_table.Lookup(last_word);
 		auto type = literal_info.IsKeyword() ? TokenType::KEYWORD : TokenType::IDENTIFIER;
 		tokens.emplace_back(last_word, last_pos, type);
