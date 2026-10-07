@@ -40,8 +40,8 @@ static unique_ptr<SQLStatement> ExtractAndTransformStatement(PEGTransformer &tra
 	transformer.Clear();
 
 	// Calculate location and length cleanly
-	if (stmt_pr.offset.IsValid()) {
-		auto start = stmt_pr.offset.GetIndex();
+	if (stmt_pr.location.IsValid()) {
+		idx_t start = stmt_pr.location.Start();
 		idx_t end_index = terminator_offset.IsValid() ? terminator_offset.GetIndex() : token_iterator.EndOffset();
 		stmt->stmt_location = QueryLocation(start, end_index - start);
 	}
@@ -105,7 +105,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 	if (term_inner.type != ParseResultType::END_OF_INPUT) {
 		auto semi_children = term_inner.Cast<RepeatParseResult>().GetChildren();
 		if (!semi_children.empty()) {
-			terminator_offset = semi_children[0].get().offset;
+			terminator_offset = semi_children[0].get().location.GetOffset();
 		}
 	}
 

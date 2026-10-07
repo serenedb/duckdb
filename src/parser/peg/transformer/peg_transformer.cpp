@@ -262,8 +262,8 @@ string TransformStack::FormatStack() const {
 		}
 		auto &parse_result = frames[i].parse_result;
 		result << "#" << i << " " << parse_result.Name();
-		if (parse_result.offset.IsValid()) {
-			result << " offset=" << parse_result.offset.GetIndex();
+		if (parse_result.location.IsValid()) {
+			result << " offset=" << parse_result.location.Start();
 		}
 	}
 	return result.str();
@@ -351,7 +351,7 @@ const CompiledGrammarRule &PEGTransformer::GetRule(const string &rule_name) cons
 }
 
 void PEGTransformer::SetResultLocation(ParseResult &parse_result, TransformResultValue &result) {
-	if (!parse_result.offset.IsValid()) {
+	if (!parse_result.location.IsValid()) {
 		return;
 	}
 	auto expression_result = TryGetTransformResult<unique_ptr<ParsedExpression>>(result);

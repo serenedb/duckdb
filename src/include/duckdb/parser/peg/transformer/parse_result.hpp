@@ -123,7 +123,9 @@ inline const char *ParseResultToString(ParseResultType type) {
 class ParseResult {
 public:
 	explicit ParseResult(ParseResultType type, optional_idx offset, optional_idx length = optional_idx())
-	    : type(type), offset(offset), length(length) {
+	    : type(type),
+	      location(offset.IsValid() ? QueryLocation(offset.GetIndex(), length.IsValid() ? length.GetIndex() : 0)
+	                                : QueryLocation()) {
 	}
 	ParseResult(const ParseResult &) = delete;
 	ParseResult &operator=(const ParseResult &) = delete;
@@ -142,13 +144,11 @@ public:
 	DUCKDB_API std::string_view Name() const;
 
 	ParseResultType type;
-	optional_ptr<const CompiledGrammarRule> rule;
 	//! Set when a collapsible rule handed this result out in place of its own, so the transformer runs this
 	//! result's rule rather than the one the parent asked for
 	bool collapsed = false;
-	optional_idx offset;
-	//! Source length: for leaf tokens the token length; for composite results the enclosing extent of children
-	optional_idx length;
+	optional_ptr<const CompiledGrammarRule> rule;
+	QueryLocation location;
 
 	void SetRule(const CompiledGrammarRule &rule_p) {
 		rule = rule_p;
@@ -159,21 +159,16 @@ public:
 
 	//! Returns the source location [offset, offset+length) of this parse result (length 0 when unknown)
 	QueryLocation GetLocation() const {
-		if (!offset.IsValid()) {
-			return QueryLocation();
-		}
-		return QueryLocation(offset.GetIndex(), length.IsValid() ? length.GetIndex() : 0);
+		return location;
 	}
 
 	//! Grow this result's location so it encloses the given child's location (used to build composite
 	//! locations bottom-up)
 	void EncloseChild(const ParseResult &child) {
-		auto child_location = child.GetLocation();
-		if (!offset.IsValid() || !child_location.IsValid()) {
+		if (!location.IsValid() || !child.location.IsValid()) {
 			return;
 		}
-		auto enclosing = GetLocation().Merge(child_location);
-		length = enclosing.length;
+		location.length = location.Merge(child.location).length;
 	}
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
