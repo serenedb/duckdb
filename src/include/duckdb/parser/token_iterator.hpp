@@ -27,12 +27,12 @@ public:
 		return position;
 	}
 	idx_t Size() const {
-		return tokens.size();
+		return token_count;
 	}
 	DUCKDB_API idx_t EndOffset() const;
 
 	optional_ptr<const MatcherToken> Current() const {
-		if (position >= tokens.size()) {
+		if (position >= token_count) {
 			return nullptr;
 		}
 		return tokens[position];
@@ -41,33 +41,33 @@ public:
 		return LiteralInfoAt(position, table);
 	}
 	LiteralInfo LiteralInfoAt(idx_t index, const GrammarLiteralTable &table) {
-		if (index >= tokens.size()) {
+		if (index >= token_count) {
 			return LiteralInfo();
 		}
 		return tokens[index].GetLiteralInfo(table);
 	}
 	DUCKDB_API const MatcherToken &Previous() const;
 	const MatcherToken &GetToken(idx_t index) const {
-		if (index >= tokens.size()) {
+		if (index >= token_count) {
 			ThrowIndexOutOfRange(index);
 		}
 		return tokens[index];
 	}
 
 	void Advance(idx_t count = 1) {
-		if (count > tokens.size() - position) {
+		if (count > token_count - position) {
 			ThrowAdvanceOutOfRange(count);
 		}
 		position += count;
 	}
 	void SetPosition(idx_t position_p) {
-		if (position_p > tokens.size()) {
+		if (position_p > token_count) {
 			ThrowPositionOutOfRange(position_p);
 		}
 		position = position_p;
 	}
 	void SetPosition(const TokenIterator &other) {
-		if (&tokens != &other.tokens) {
+		if (tokens != other.tokens) {
 			ThrowForeignIterator();
 		}
 		position = other.position;
@@ -83,7 +83,8 @@ private:
 	[[noreturn]] DUCKDB_API void ThrowForeignIterator() const;
 
 private:
-	vector<MatcherToken> &tokens;
+	MatcherToken *tokens;
+	idx_t token_count;
 	idx_t position = 0;
 };
 

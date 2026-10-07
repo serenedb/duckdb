@@ -4,9 +4,9 @@
 
 namespace duckdb {
 
-TokenIterator::TokenIterator(vector<MatcherToken> &tokens_p) : tokens(tokens_p) {
+TokenIterator::TokenIterator(vector<MatcherToken> &tokens_p) : tokens(tokens_p.data()), token_count(tokens_p.size()) {
 	// A new root can receive tokens edited since an earlier match.
-	for (auto &token : tokens) {
+	for (auto &token : tokens_p) {
 		token.ResetLiteralInfo();
 	}
 }
@@ -17,7 +17,7 @@ bool TokenIterator::AtEnd() const {
 }
 
 bool TokenIterator::HasMoreStatements() const {
-	for (idx_t index = position; index < tokens.size(); index++) {
+	for (idx_t index = position; index < token_count; index++) {
 		auto type = tokens[index].type;
 		if (type == TokenType::END_OF_INPUT) {
 			return false;
@@ -30,10 +30,10 @@ bool TokenIterator::HasMoreStatements() const {
 }
 
 idx_t TokenIterator::EndOffset() const {
-	if (tokens.empty()) {
+	if (token_count == 0) {
 		return 0;
 	}
-	auto &last_token = tokens.back();
+	auto &last_token = tokens[token_count - 1];
 	return last_token.offset + last_token.length;
 }
 
@@ -45,16 +45,16 @@ const MatcherToken &TokenIterator::Previous() const {
 }
 
 void TokenIterator::ThrowIndexOutOfRange(idx_t index) const {
-	throw InternalException("Token index %llu is out of range (size %llu)", index, tokens.size());
+	throw InternalException("Token index %llu is out of range (size %llu)", index, token_count);
 }
 
 void TokenIterator::ThrowAdvanceOutOfRange(idx_t count) const {
 	throw InternalException("Cannot advance TokenIterator by %llu tokens from position %llu (size %llu)", count,
-	                        position, tokens.size());
+	                        position, token_count);
 }
 
 void TokenIterator::ThrowPositionOutOfRange(idx_t position_p) const {
-	throw InternalException("Token position %llu is out of range (size %llu)", position_p, tokens.size());
+	throw InternalException("Token position %llu is out of range (size %llu)", position_p, token_count);
 }
 
 void TokenIterator::ThrowForeignIterator() const {
@@ -70,8 +70,8 @@ void TokenIterator::SetPreviousTokenType(TokenType type) {
 
 string TokenIterator::ToString() const {
 	string result;
-	for (auto &token : tokens) {
-		result += token.text;
+	for (idx_t index = 0; index < token_count; index++) {
+		result += tokens[index].text;
 		result += ' ';
 	}
 	return result;
