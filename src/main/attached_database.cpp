@@ -435,6 +435,7 @@ void AttachedDatabase::Cleanup() {
 	catalog.reset();
 	storage.reset();
 	stored_database_path.reset();
+	held_until_closed.reset();
 }
 
 } // namespace duckdb
