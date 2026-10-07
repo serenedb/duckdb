@@ -224,9 +224,18 @@ void MatcherAllocator::ComputeFirstSets(const GrammarLiteralTable &table) {
 	}
 	for (auto &entry : matchers) {
 		auto &matcher = *entry;
-		if (matcher.Type() == MatcherType::LIST && matcher.Cast<ListMatcher>().chain_core.IsValid()) {
-			ComputeChainEdges(matcher, table);
+		if (matcher.Type() != MatcherType::LIST || !matcher.Cast<ListMatcher>().chain_core.IsValid()) {
+			continue;
 		}
+		auto &list = matcher.Cast<ListMatcher>();
+		auto &core = list.matchers[list.chain_core.GetIndex()].get();
+		if (core.Type() == MatcherType::LIST && core.HasBuiltInMatch() && !core.IsPackratMemoized()) {
+			auto &nested = core.Cast<ListMatcher>();
+			if (nested.chain_core.IsValid() && !nested.suppress_suggestions) {
+				list.nested_chain_level = nested;
+			}
+		}
+		ComputeChainEdges(matcher, table);
 	}
 }
 

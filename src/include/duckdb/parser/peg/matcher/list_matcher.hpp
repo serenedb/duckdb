@@ -58,6 +58,7 @@ public:
 	bool suppress_suggestions = false;
 	optional_idx chain_core;
 	optional_ptr<const ChainEdges> chain_edges;
+	optional_ptr<const ListMatcher> nested_chain_level;
 };
 
 } // namespace duckdb

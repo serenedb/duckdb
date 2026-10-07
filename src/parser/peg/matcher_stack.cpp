@@ -161,15 +161,6 @@ static optional_idx StartOffset(const MatchState &state) {
 	return true;
 }
 
-bool MatchStack::IsNestedChainLevel(const Matcher &matcher, const MatchState &state, idx_t depth) const {
-	if (matcher.Type() != MatcherType::LIST || depth >= recursion_limit || !matcher.HasBuiltInMatch() ||
-	    PackratMatchState::IsEnabled(matcher, state)) {
-		return false;
-	}
-	auto &list = static_cast<const ListMatcher &>(matcher);
-	return list.chain_core.IsValid() && !list.suppress_suggestions;
-}
-
 MatcherResult MatchStack::CloseChainLevel(const ListMatcher &matcher, MatchState &state, MatchState &list_state,
                                           MatcherResult core_result, idx_t depth, bool nested, bool suffixes_empty) {
 	auto &children = matcher.matchers;
@@ -211,20 +202,19 @@ MatcherResult MatchStack::CloseChainLevel(const ListMatcher &matcher, MatchState
 	idx_t nesting = 0;
 	auto level = &matcher;
 	while (nesting < MAX_CHAIN_LEVELS) {
-		auto &core = level->matchers[level->chain_core.GetIndex()].get();
-		if (!IsNestedChainLevel(core, list_state, depth + nesting + 1)) {
+		auto nested_level = level->nested_chain_level;
+		if (!nested_level || depth + nesting + 1 >= recursion_limit) {
 			break;
 		}
-		auto &nested_level = static_cast<const ListMatcher &>(core);
-		if (!nested_level.CanStartAt(list_state)) {
+		if (!nested_level->CanStartAt(list_state)) {
 			return MatcherResult::Failure();
 		}
-		list_state.rule = nested_level.GetRule();
-		if (!prefixes_empty && !PrefixesEmpty(nested_level, list_state)) {
+		list_state.rule = nested_level->GetRule();
+		if (!prefixes_empty && !PrefixesEmpty(*nested_level, list_state)) {
 			break;
 		}
 		outer_levels[nesting++] = level;
-		level = &nested_level;
+		level = nested_level.get();
 	}
 	auto result = MatchChild(level->matchers[level->chain_core.GetIndex()], list_state, depth + nesting);
 	auto suffixes_empty = edges && result.IsSuccess() && edges->suffixes.NoneCanStartAt(list_state);

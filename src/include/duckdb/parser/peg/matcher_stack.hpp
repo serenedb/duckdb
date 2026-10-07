@@ -66,7 +66,6 @@ private:
 	MatcherResult MatchComposite(const Matcher &matcher, MatchState &state, idx_t depth);
 	MatcherResult MatchList(const ListMatcher &matcher, MatchState &state, idx_t depth);
 	MatcherResult MatchChainLevel(const ListMatcher &matcher, MatchState &state, idx_t depth);
-	[[gnu::always_inline]] bool IsNestedChainLevel(const Matcher &matcher, const MatchState &state, idx_t depth) const;
 	[[gnu::always_inline]] MatcherResult CloseChainLevel(const ListMatcher &matcher, MatchState &state,
 	                                                     MatchState &list_state, MatcherResult core_result, idx_t depth,
 	                                                     bool nested, bool suffixes_empty);
