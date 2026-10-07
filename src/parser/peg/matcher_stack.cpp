@@ -72,7 +72,7 @@ bool MatchStackFrame::IsInitialized() const {
 	return static_cast<const OptionalMatcher &>(matcher).EmptyResult(state);
 }
 
-MatcherResult MatchStack::MatchMemoized(const Matcher &matcher, MatchState &state, idx_t depth) {
+[[gnu::aligned(64)]] MatcherResult MatchStack::MatchMemoized(const Matcher &matcher, MatchState &state, idx_t depth) {
 	PackratMatchState packrat_state;
 	auto cached_result = packrat_state.TryLoadCachedResult(matcher, state);
 	if (cached_result) {
@@ -84,7 +84,7 @@ MatcherResult MatchStack::MatchMemoized(const Matcher &matcher, MatchState &stat
 	return result;
 }
 
-MatcherResult MatchStack::ExecuteAtomicMatcher(MatchInput input) {
+[[gnu::aligned(64)]] MatcherResult MatchStack::ExecuteAtomicMatcher(MatchInput input) {
 	auto &matcher = input.matcher;
 	auto &state = input.state;
 	D_ASSERT(matcher.IsAtomic());
@@ -112,7 +112,7 @@ MatcherResult MatchStack::MatchStartedChild(const Matcher &matcher, MatchState &
 	return Match(matcher, state, depth + 1);
 }
 
-MatcherResult MatchStack::Match(const Matcher &matcher, MatchState &state, idx_t depth) {
+[[gnu::aligned(64)]] MatcherResult MatchStack::Match(const Matcher &matcher, MatchState &state, idx_t depth) {
 	if (depth >= recursion_limit || !matcher.HasBuiltInMatch()) {
 		return ExecuteFrames({matcher, state}, depth);
 	}
@@ -123,7 +123,7 @@ MatcherResult MatchStack::Match(const Matcher &matcher, MatchState &state, idx_t
 	return MatchComposite(matcher, state, depth);
 }
 
-MatcherResult MatchStack::MatchComposite(const Matcher &matcher, MatchState &state, idx_t depth) {
+[[gnu::aligned(64)]] MatcherResult MatchStack::MatchComposite(const Matcher &matcher, MatchState &state, idx_t depth) {
 	switch (matcher.Type()) {
 	case MatcherType::LIST:
 		return MatchList(static_cast<const ListMatcher &>(matcher), state, depth);
@@ -142,7 +142,7 @@ static optional_idx StartOffset(const MatchState &state) {
 	return current ? optional_idx(current->offset) : optional_idx();
 }
 
-MatcherResult MatchStack::MatchList(const ListMatcher &matcher, MatchState &state, idx_t depth) {
+[[gnu::aligned(64)]] MatcherResult MatchStack::MatchList(const ListMatcher &matcher, MatchState &state, idx_t depth) {
 	if (matcher.chain_core.IsValid() && state.BuildParseResult() && !matcher.suppress_suggestions) {
 		return MatchChainLevel(matcher, state, depth);
 	}
@@ -150,7 +150,8 @@ MatcherResult MatchStack::MatchList(const ListMatcher &matcher, MatchState &stat
 	return ContinueList(matcher, state, list_state, state.context.allocator.ChildCount(), 0, depth);
 }
 
-MatcherResult MatchStack::MatchChainLevel(const ListMatcher &matcher, MatchState &state, idx_t depth) {
+[[gnu::aligned(64)]] MatcherResult MatchStack::MatchChainLevel(const ListMatcher &matcher, MatchState &state,
+                                                               idx_t depth) {
 	auto &children = matcher.matchers;
 	auto core_index = matcher.chain_core.GetIndex();
 	for (idx_t i = 0; i < core_index; i++) {
@@ -184,8 +185,9 @@ MatcherResult MatchStack::MatchChainLevel(const ListMatcher &matcher, MatchState
 	return ContinueList(matcher, state, list_state, children_begin, end, depth);
 }
 
-MatcherResult MatchStack::ContinueList(const ListMatcher &matcher, MatchState &state, MatchState &list_state,
-                                       idx_t children_begin, idx_t next_child, idx_t depth) {
+[[gnu::aligned(64)]] MatcherResult MatchStack::ContinueList(const ListMatcher &matcher, MatchState &state,
+                                                            MatchState &list_state, idx_t children_begin,
+                                                            idx_t next_child, idx_t depth) {
 	auto &allocator = state.context.allocator;
 	auto &suggestions = state.context.suggestions;
 	auto saved_suggestion_size = matcher.suppress_suggestions ? suggestions.size() : 0;
@@ -230,7 +232,8 @@ MatcherResult MatchStack::ContinueList(const ListMatcher &matcher, MatchState &s
 	return state.AllocateParseResult<ListParseResult>(children, start_offset);
 }
 
-MatcherResult MatchStack::MatchChoice(const ChoiceMatcher &matcher, MatchState &state, idx_t depth) {
+[[gnu::aligned(64)]] MatcherResult MatchStack::MatchChoice(const ChoiceMatcher &matcher, MatchState &state,
+                                                           idx_t depth) {
 	idx_t child_index = 0;
 	idx_t child_end = matcher.matchers.size();
 	if (matcher.dispatch_on_literal) {
@@ -258,7 +261,8 @@ MatcherResult MatchStack::MatchChoice(const ChoiceMatcher &matcher, MatchState &
 	return MatcherResult::Failure();
 }
 
-MatcherResult MatchStack::MatchOptional(const OptionalMatcher &matcher, MatchState &state, idx_t depth) {
+[[gnu::aligned(64)]] MatcherResult MatchStack::MatchOptional(const OptionalMatcher &matcher, MatchState &state,
+                                                             idx_t depth) {
 	MatchState child_state(state);
 	auto start_offset = StartOffset(child_state);
 	auto child_result = MatchChild(matcher.GetChildMatcher(), child_state, depth);
@@ -272,7 +276,8 @@ MatcherResult MatchStack::MatchOptional(const OptionalMatcher &matcher, MatchSta
 	return state.AllocateParseResult<OptionalParseResult>(child_result.GetParseResult(), start_offset);
 }
 
-MatcherResult MatchStack::MatchRepeat(const RepeatMatcher &matcher, MatchState &state, idx_t depth) {
+[[gnu::aligned(64)]] MatcherResult MatchStack::MatchRepeat(const RepeatMatcher &matcher, MatchState &state,
+                                                           idx_t depth) {
 	auto &allocator = state.context.allocator;
 	auto &child = matcher.GetChildMatcher();
 	MatchState repeat_state(state);
