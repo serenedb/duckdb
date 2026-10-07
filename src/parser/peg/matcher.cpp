@@ -126,6 +126,7 @@ void MatcherAllocator::ComputeFirstSets(const GrammarLiteralTable &table) {
 				    matcher.IsAtomic() ? static_cast<const AtomicMatcher &>(matcher).FirstTokenClasses() : uint8_t(0);
 				if (token_classes) {
 					updated.token_classes = token_classes;
+					updated.word_categories = static_cast<const AtomicMatcher &>(matcher).FirstWordCategories();
 					break;
 				}
 				updated.nullable = true;
@@ -139,13 +140,132 @@ void MatcherAllocator::ComputeFirstSets(const GrammarLiteralTable &table) {
 			}
 		}
 	}
+	ComputeAfterWordSets();
 	for (auto &entry : matchers) {
 		auto &matcher = *entry;
 		if (matcher.first_set.nullable || matcher.first_set.any_token) {
 			matcher.first_set.literals.clear();
+			matcher.after_word_set.literals.clear();
 			continue;
 		}
 		matcher.first_set_table = table;
+		matcher.checks_after_word = (matcher.first_set.token_classes & MatcherTokenClass::WORD) &&
+		                            !matcher.can_end_after_word && !matcher.after_word_set.any_token;
+		if (!matcher.checks_after_word) {
+			matcher.after_word_set.literals.clear();
+		}
+	}
+}
+
+bool Matcher::CanFollowWord(MatchState &state) const {
+	auto &tokens = state.token_iterator;
+	auto info = tokens.CurrentLiteralInfo(*first_set_table);
+	if (first_set.HasLiteral(info.LiteralId())) {
+		return true;
+	}
+	if (info.IsKeyword() && !info.HasAnyFlags(first_set.word_categories)) {
+		return false;
+	}
+	auto next = tokens.Position() + 1;
+	if (next >= tokens.Size()) {
+		return true;
+	}
+	auto &next_token = tokens.GetToken(next);
+	if (next_token.type == TokenType::END_OF_INPUT_AUTOCOMPLETE ||
+	    (next_token.token_classes & after_word_set.token_classes) ||
+	    after_word_set.HasLiteral(tokens.LiteralInfoAt(next, *first_set_table).LiteralId())) {
+		return true;
+	}
+	state.context.max_token_index = MaxValue(state.context.max_token_index, next);
+	return false;
+}
+
+void MatcherAllocator::ComputeAfterWordSets() {
+	vector<reference<Matcher>> composites;
+	for (auto &entry : matchers) {
+		auto &matcher = *entry;
+		matcher.after_word_set = MatcherFirstSet {false, false, {}};
+		matcher.can_end_after_word = false;
+		if (!matcher.first_set.any_token && !(matcher.first_set.token_classes & MatcherTokenClass::WORD)) {
+			continue;
+		}
+		switch (matcher.Type()) {
+		case MatcherType::LIST:
+		case MatcherType::CHOICE:
+		case MatcherType::OPTIONAL:
+		case MatcherType::REPEAT:
+			composites.push_back(matcher);
+			break;
+		default: {
+			auto token_classes =
+			    matcher.IsAtomic() ? static_cast<const AtomicMatcher &>(matcher).FirstTokenClasses() : uint8_t(0);
+			if (!token_classes) {
+				matcher.after_word_set.any_token = true;
+				matcher.can_end_after_word = true;
+			} else {
+				matcher.can_end_after_word = token_classes & MatcherTokenClass::WORD;
+			}
+			break;
+		}
+		}
+	}
+	bool changed = true;
+	while (changed) {
+		changed = false;
+		for (auto entry = composites.rbegin(); entry != composites.rend(); entry++) {
+			auto &matcher = entry->get();
+			auto &after_word_set = matcher.after_word_set;
+			bool can_end = false;
+			switch (matcher.Type()) {
+			case MatcherType::LIST: {
+				bool prefix_nullable = true;
+				bool prefix_one_word = false;
+				for (auto &child_entry : matcher.Cast<ListMatcher>().matchers) {
+					auto &child = child_entry.get();
+					if (prefix_nullable) {
+						changed |= after_word_set.MergeChanged(child.after_word_set);
+					}
+					if (prefix_one_word) {
+						changed |= after_word_set.MergeChanged(child.first_set);
+					}
+					auto one_word =
+					    (prefix_nullable && child.can_end_after_word) || (prefix_one_word && child.first_set.nullable);
+					prefix_nullable = prefix_nullable && child.first_set.nullable;
+					prefix_one_word = one_word;
+					if (!prefix_nullable && !prefix_one_word) {
+						break;
+					}
+				}
+				can_end = prefix_one_word;
+				break;
+			}
+			case MatcherType::CHOICE:
+				for (auto &child : matcher.Cast<ChoiceMatcher>().matchers) {
+					changed |= after_word_set.MergeChanged(child.get().after_word_set);
+					can_end = can_end || child.get().can_end_after_word;
+				}
+				break;
+			case MatcherType::OPTIONAL: {
+				auto &child = matcher.Cast<OptionalMatcher>().GetChildMatcher();
+				changed |= after_word_set.MergeChanged(child.after_word_set);
+				can_end = child.can_end_after_word;
+				break;
+			}
+			default: {
+				auto &child = matcher.Cast<RepeatMatcher>().GetChildMatcher();
+				changed |= after_word_set.MergeChanged(child.after_word_set);
+				if (child.can_end_after_word) {
+					changed |= after_word_set.MergeChanged(child.first_set);
+				}
+				can_end = child.can_end_after_word;
+				break;
+			}
+			}
+			if (can_end && !matcher.can_end_after_word) {
+				matcher.can_end_after_word = true;
+				changed = true;
+			}
+		}
 	}
 }
 

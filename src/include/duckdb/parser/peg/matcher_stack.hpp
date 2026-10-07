@@ -59,7 +59,7 @@ private:
 	static constexpr idx_t FRAMES_PER_EXPRESSION_LEVEL = 64;
 	static constexpr idx_t MAX_RECURSION_DEPTH = 1024;
 
-	MatcherResult MatchChild(const Matcher &matcher, MatchState &state, idx_t depth);
+	[[gnu::always_inline]] MatcherResult MatchChild(const Matcher &matcher, MatchState &state, idx_t depth);
 	MatcherResult Match(const Matcher &matcher, MatchState &state, idx_t depth);
 	MatcherResult MatchComposite(const Matcher &matcher, MatchState &state, idx_t depth);
 	MatcherResult MatchList(const ListMatcher &matcher, MatchState &state, idx_t depth);

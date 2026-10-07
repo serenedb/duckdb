@@ -107,6 +107,10 @@ public:
 		return MatcherTokenClass::WORD | (SupportsStringLiteral() ? MatcherTokenClass::SINGLE_QUOTED : 0);
 	}
 
+	keyword_categories_t FirstWordCategories() const override {
+		return identifier_mask;
+	}
+
 	bool SupportsStringLiteral() const {
 		switch (suggestion_type) {
 		case SuggestionState::SUGGEST_TABLE_NAME:
@@ -211,6 +215,10 @@ public:
 			result_text = state.FoldIdentifier(token_text);
 		}
 		return state.AllocateParseResult<IdentifierParseResult>(result_text, start_offset, token_length);
+	}
+
+	keyword_categories_t FirstWordCategories() const override {
+		return ~keyword_categories_t();
 	}
 
 private:

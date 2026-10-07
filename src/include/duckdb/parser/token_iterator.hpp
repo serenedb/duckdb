@@ -38,10 +38,13 @@ public:
 		return tokens[position];
 	}
 	LiteralInfo CurrentLiteralInfo(const GrammarLiteralTable &table) {
-		if (position >= tokens.size()) {
+		return LiteralInfoAt(position, table);
+	}
+	LiteralInfo LiteralInfoAt(idx_t index, const GrammarLiteralTable &table) {
+		if (index >= tokens.size()) {
 			return LiteralInfo();
 		}
-		return tokens[position].GetLiteralInfo(table);
+		return tokens[index].GetLiteralInfo(table);
 	}
 	DUCKDB_API const MatcherToken &Previous() const;
 	const MatcherToken &GetToken(idx_t index) const {

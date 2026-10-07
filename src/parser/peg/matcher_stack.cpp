@@ -89,7 +89,7 @@ MatcherResult MatchStack::MatchChild(const Matcher &matcher, MatchState &state, 
 	if (matcher.IsAtomic()) {
 		return ExecuteAtomicMatcher({matcher, state});
 	}
-	if (!matcher.CanStartAt(state.token_iterator)) {
+	if (!matcher.CanStartAt(state)) {
 		return MatcherResult::Failure();
 	}
 	return Match(matcher, state, depth + 1);
@@ -282,7 +282,7 @@ bool MatchStack::ExecuteFrame(MatchStackFrame &frame) {
 		frame.child_result = ExecuteAtomicMatcher(child);
 		return false;
 	}
-	if (!child.matcher.CanStartAt(child.state.token_iterator)) {
+	if (!child.matcher.CanStartAt(child.state)) {
 		frame.child_result = MatcherResult::Failure();
 		return false;
 	}

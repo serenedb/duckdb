@@ -305,6 +305,7 @@ struct MatcherFirstSet {
 	bool nullable = true;
 	bool any_token = true;
 	uint8_t token_classes = 0;
+	keyword_categories_t word_categories;
 	vector<uint64_t> literals;
 
 	void AddLiteral(idx_t literal_id) {
@@ -321,6 +322,7 @@ struct MatcherFirstSet {
 	void MergeStart(const MatcherFirstSet &other) {
 		any_token = any_token || other.any_token;
 		token_classes |= other.token_classes;
+		word_categories |= other.word_categories;
 		if (other.literals.size() > literals.size()) {
 			literals.resize(other.literals.size(), 0);
 		}
@@ -328,9 +330,35 @@ struct MatcherFirstSet {
 			literals[i] |= other.literals[i];
 		}
 	}
+	bool MergeChanged(const MatcherFirstSet &other) {
+		bool changed = false;
+		if (other.any_token && !any_token) {
+			any_token = true;
+			changed = true;
+		}
+		if ((token_classes | other.token_classes) != token_classes) {
+			token_classes |= other.token_classes;
+			changed = true;
+		}
+		if ((word_categories | other.word_categories) != word_categories) {
+			word_categories |= other.word_categories;
+			changed = true;
+		}
+		if (other.literals.size() > literals.size()) {
+			literals.resize(other.literals.size(), 0);
+		}
+		for (idx_t i = 0; i < other.literals.size(); i++) {
+			auto merged = literals[i] | other.literals[i];
+			if (merged != literals[i]) {
+				literals[i] = merged;
+				changed = true;
+			}
+		}
+		return changed;
+	}
 	bool operator==(const MatcherFirstSet &other) const {
 		return nullable == other.nullable && any_token == other.any_token && token_classes == other.token_classes &&
-		       literals == other.literals;
+		       word_categories == other.word_categories && literals == other.literals;
 	}
 };
 
@@ -361,18 +389,18 @@ public:
 	bool IsAtomic() const {
 		return atomic;
 	}
-	bool CanStartAt(TokenIterator &tokens) const {
+	[[gnu::always_inline]] bool CanStartAt(MatchState &state) const {
 		if (!first_set_table) {
 			return true;
 		}
-		auto token = tokens.Current();
+		auto token = state.token_iterator.Current();
 		if (!token || token->type == TokenType::END_OF_INPUT_AUTOCOMPLETE) {
 			return true;
 		}
 		if (token->token_classes & first_set.token_classes) {
-			return true;
+			return !checks_after_word || token->token_classes != MatcherTokenClass::WORD || CanFollowWord(state);
 		}
-		return first_set.HasLiteral(tokens.CurrentLiteralInfo(*first_set_table).LiteralId());
+		return first_set.HasLiteral(state.token_iterator.CurrentLiteralInfo(*first_set_table).LiteralId());
 	}
 	virtual SuggestionType AddSuggestion(MatchState &state) const;
 	virtual SuggestionType AddSuggestionInternal(MatchState &state) const = 0;
@@ -451,6 +479,12 @@ protected:
 	optional_ptr<const CompiledGrammarRule> rule;
 	MatcherFirstSet first_set;
 	optional_ptr<const GrammarLiteralTable> first_set_table;
+	MatcherFirstSet after_word_set;
+	bool can_end_after_word = false;
+	bool checks_after_word = false;
+
+private:
+	DUCKDB_API bool CanFollowWord(MatchState &state) const;
 };
 
 class AtomicMatcher : public Matcher {
@@ -462,6 +496,9 @@ public:
 	virtual MatcherResult MatchAtomic(MatchState &state) const = 0;
 	virtual uint8_t FirstTokenClasses() const {
 		return 0;
+	}
+	virtual keyword_categories_t FirstWordCategories() const {
+		return keyword_categories_t();
 	}
 };
 
@@ -486,6 +523,9 @@ public:
 	idx_t PackratSlotCount() const {
 		return packrat_slots;
 	}
+
+private:
+	void ComputeAfterWordSets();
 
 private:
 	vector<unique_ptr<Matcher>> matchers;
