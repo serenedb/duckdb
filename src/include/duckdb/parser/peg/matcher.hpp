@@ -487,6 +487,7 @@ protected:
 protected:
 	friend class MatcherAllocator;
 	MatcherType type;
+	uint32_t allocation_index = 0;
 	string name;
 	optional_idx packrat_slot;
 	bool atomic = false;
@@ -541,7 +542,7 @@ public:
 	}
 
 private:
-	void ComputeAfterWordSets();
+	void ComputeAfterWordSets(const vector<idx_t> &parent_begin, const vector<idx_t> &parents);
 	optional_ptr<const ChainEdges> ComputeChainEdges(Matcher &matcher, const GrammarLiteralTable &table);
 
 private:

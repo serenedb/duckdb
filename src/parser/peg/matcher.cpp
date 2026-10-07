@@ -63,6 +63,7 @@ void MatchState::AddSuggestion(MatcherSuggestion suggestion) {
 
 Matcher &MatcherAllocator::Allocate(unique_ptr<Matcher> matcher) {
 	auto &result = *matcher;
+	result.allocation_index = NumericCast<uint32_t>(matchers.size());
 	matchers.push_back(std::move(matcher));
 	return result;
 }
@@ -109,51 +110,104 @@ void MatcherAllocator::ComputeFirstSets(const GrammarLiteralTable &table) {
 		}
 		}
 	}
-	bool changed = true;
-	while (changed) {
-		changed = false;
-		for (auto entry = composites.rbegin(); entry != composites.rend(); entry++) {
-			auto &matcher = entry->get();
-			auto &first_set = matcher.first_set;
-			bool nullable;
-			switch (matcher.Type()) {
-			case MatcherType::LIST:
-				nullable = true;
-				for (auto &child : matcher.Cast<ListMatcher>().matchers) {
-					auto &child_set = child.get().first_set;
-					changed |= first_set.MergeChanged(child_set);
-					if (!child_set.nullable) {
-						nullable = false;
-						break;
-					}
-				}
-				break;
-			case MatcherType::CHOICE:
-				nullable = false;
-				for (auto &child : matcher.Cast<ChoiceMatcher>().matchers) {
-					auto &child_set = child.get().first_set;
-					changed |= first_set.MergeChanged(child_set);
-					nullable = nullable || child_set.nullable;
-				}
-				break;
-			case MatcherType::OPTIONAL:
-				changed |= first_set.MergeChanged(matcher.Cast<OptionalMatcher>().GetChildMatcher().first_set);
-				nullable = true;
-				break;
-			default: {
-				auto &child_set = matcher.Cast<RepeatMatcher>().GetChildMatcher().first_set;
+	auto for_each_child = [](const Matcher &matcher, auto &&func) {
+		switch (matcher.Type()) {
+		case MatcherType::LIST:
+			for (auto &child : matcher.Cast<ListMatcher>().matchers) {
+				func(child.get());
+			}
+			break;
+		case MatcherType::CHOICE:
+			for (auto &child : matcher.Cast<ChoiceMatcher>().matchers) {
+				func(child.get());
+			}
+			break;
+		case MatcherType::OPTIONAL:
+			func(matcher.Cast<OptionalMatcher>().GetChildMatcher());
+			break;
+		default:
+			func(matcher.Cast<RepeatMatcher>().GetChildMatcher());
+			break;
+		}
+	};
+	vector<idx_t> parent_begin(matchers.size() + 1, 0);
+	for (auto &composite : composites) {
+		for_each_child(composite.get(), [&](const Matcher &child) { parent_begin[child.allocation_index + 1]++; });
+	}
+	for (idx_t i = 0; i < matchers.size(); i++) {
+		parent_begin[i + 1] += parent_begin[i];
+	}
+	vector<idx_t> parents(parent_begin.back());
+	vector<idx_t> parent_end(parent_begin.begin(), parent_begin.end() - 1);
+	for (auto &composite : composites) {
+		auto parent = composite.get().allocation_index;
+		for_each_child(composite.get(),
+		               [&](const Matcher &child) { parents[parent_end[child.allocation_index]++] = parent; });
+	}
+	auto update = [](Matcher &matcher) {
+		auto &first_set = matcher.first_set;
+		bool changed = false;
+		bool nullable;
+		switch (matcher.Type()) {
+		case MatcherType::LIST:
+			nullable = true;
+			for (auto &child : matcher.Cast<ListMatcher>().matchers) {
+				auto &child_set = child.get().first_set;
 				changed |= first_set.MergeChanged(child_set);
-				nullable = child_set.nullable;
-				break;
+				if (!child_set.nullable) {
+					nullable = false;
+					break;
+				}
 			}
+			break;
+		case MatcherType::CHOICE:
+			nullable = false;
+			for (auto &child : matcher.Cast<ChoiceMatcher>().matchers) {
+				auto &child_set = child.get().first_set;
+				changed |= first_set.MergeChanged(child_set);
+				nullable = nullable || child_set.nullable;
 			}
-			if (nullable && !first_set.nullable) {
-				first_set.nullable = true;
-				changed = true;
+			break;
+		case MatcherType::OPTIONAL:
+			changed |= first_set.MergeChanged(matcher.Cast<OptionalMatcher>().GetChildMatcher().first_set);
+			nullable = true;
+			break;
+		default: {
+			auto &child_set = matcher.Cast<RepeatMatcher>().GetChildMatcher().first_set;
+			changed |= first_set.MergeChanged(child_set);
+			nullable = child_set.nullable;
+			break;
+		}
+		}
+		if (nullable && !first_set.nullable) {
+			first_set.nullable = true;
+			changed = true;
+		}
+		return changed;
+	};
+	vector<idx_t> worklist;
+	worklist.reserve(composites.size());
+	vector<bool> queued(matchers.size(), false);
+	for (auto &composite : composites) {
+		worklist.push_back(composite.get().allocation_index);
+		queued[composite.get().allocation_index] = true;
+	}
+	while (!worklist.empty()) {
+		auto index = worklist.back();
+		worklist.pop_back();
+		queued[index] = false;
+		if (!update(*matchers[index])) {
+			continue;
+		}
+		for (idx_t i = parent_begin[index]; i < parent_begin[index + 1]; i++) {
+			auto parent = parents[i];
+			if (!queued[parent]) {
+				queued[parent] = true;
+				worklist.push_back(parent);
 			}
 		}
 	}
-	ComputeAfterWordSets();
+	ComputeAfterWordSets(parent_begin, parents);
 	for (auto &entry : matchers) {
 		auto &matcher = *entry;
 		if (matcher.first_set.nullable || matcher.first_set.any_token) {
@@ -252,8 +306,10 @@ bool Matcher::CanFollowWord(MatchState &state) const {
 	return false;
 }
 
-void MatcherAllocator::ComputeAfterWordSets() {
-	vector<reference<Matcher>> composites;
+void MatcherAllocator::ComputeAfterWordSets(const vector<idx_t> &parent_begin, const vector<idx_t> &parents) {
+	vector<idx_t> worklist;
+	vector<bool> tracked(matchers.size(), false);
+	vector<bool> queued(matchers.size(), false);
 	for (auto &entry : matchers) {
 		auto &matcher = *entry;
 		matcher.after_word_set = MatcherFirstSet {false, false, {}};
@@ -266,7 +322,9 @@ void MatcherAllocator::ComputeAfterWordSets() {
 		case MatcherType::CHOICE:
 		case MatcherType::OPTIONAL:
 		case MatcherType::REPEAT:
-			composites.push_back(matcher);
+			worklist.push_back(matcher.allocation_index);
+			tracked[matcher.allocation_index] = true;
+			queued[matcher.allocation_index] = true;
 			break;
 		default: {
 			auto token_classes =
@@ -281,61 +339,73 @@ void MatcherAllocator::ComputeAfterWordSets() {
 		}
 		}
 	}
-	bool changed = true;
-	while (changed) {
-		changed = false;
-		for (auto entry = composites.rbegin(); entry != composites.rend(); entry++) {
-			auto &matcher = entry->get();
-			auto &after_word_set = matcher.after_word_set;
-			bool can_end = false;
-			switch (matcher.Type()) {
-			case MatcherType::LIST: {
-				bool prefix_nullable = true;
-				bool prefix_one_word = false;
-				for (auto &child_entry : matcher.Cast<ListMatcher>().matchers) {
-					auto &child = child_entry.get();
-					if (prefix_nullable) {
-						changed |= after_word_set.MergeChanged(child.after_word_set);
-					}
-					if (prefix_one_word) {
-						changed |= after_word_set.MergeChanged(child.first_set);
-					}
-					auto one_word =
-					    (prefix_nullable && child.can_end_after_word) || (prefix_one_word && child.first_set.nullable);
-					prefix_nullable = prefix_nullable && child.first_set.nullable;
-					prefix_one_word = one_word;
-					if (!prefix_nullable && !prefix_one_word) {
-						break;
-					}
+	auto update = [](Matcher &matcher) {
+		auto &after_word_set = matcher.after_word_set;
+		bool changed = false;
+		bool can_end = false;
+		switch (matcher.Type()) {
+		case MatcherType::LIST: {
+			bool prefix_nullable = true;
+			bool prefix_one_word = false;
+			for (auto &child_entry : matcher.Cast<ListMatcher>().matchers) {
+				auto &child = child_entry.get();
+				if (prefix_nullable) {
+					changed |= after_word_set.MergeChanged(child.after_word_set);
 				}
-				can_end = prefix_one_word;
-				break;
-			}
-			case MatcherType::CHOICE:
-				for (auto &child : matcher.Cast<ChoiceMatcher>().matchers) {
-					changed |= after_word_set.MergeChanged(child.get().after_word_set);
-					can_end = can_end || child.get().can_end_after_word;
-				}
-				break;
-			case MatcherType::OPTIONAL: {
-				auto &child = matcher.Cast<OptionalMatcher>().GetChildMatcher();
-				changed |= after_word_set.MergeChanged(child.after_word_set);
-				can_end = child.can_end_after_word;
-				break;
-			}
-			default: {
-				auto &child = matcher.Cast<RepeatMatcher>().GetChildMatcher();
-				changed |= after_word_set.MergeChanged(child.after_word_set);
-				if (child.can_end_after_word) {
+				if (prefix_one_word) {
 					changed |= after_word_set.MergeChanged(child.first_set);
 				}
-				can_end = child.can_end_after_word;
-				break;
+				auto one_word =
+				    (prefix_nullable && child.can_end_after_word) || (prefix_one_word && child.first_set.nullable);
+				prefix_nullable = prefix_nullable && child.first_set.nullable;
+				prefix_one_word = one_word;
+				if (!prefix_nullable && !prefix_one_word) {
+					break;
+				}
 			}
+			can_end = prefix_one_word;
+			break;
+		}
+		case MatcherType::CHOICE:
+			for (auto &child : matcher.Cast<ChoiceMatcher>().matchers) {
+				changed |= after_word_set.MergeChanged(child.get().after_word_set);
+				can_end = can_end || child.get().can_end_after_word;
 			}
-			if (can_end && !matcher.can_end_after_word) {
-				matcher.can_end_after_word = true;
-				changed = true;
+			break;
+		case MatcherType::OPTIONAL: {
+			auto &child = matcher.Cast<OptionalMatcher>().GetChildMatcher();
+			changed |= after_word_set.MergeChanged(child.after_word_set);
+			can_end = child.can_end_after_word;
+			break;
+		}
+		default: {
+			auto &child = matcher.Cast<RepeatMatcher>().GetChildMatcher();
+			changed |= after_word_set.MergeChanged(child.after_word_set);
+			if (child.can_end_after_word) {
+				changed |= after_word_set.MergeChanged(child.first_set);
+			}
+			can_end = child.can_end_after_word;
+			break;
+		}
+		}
+		if (can_end && !matcher.can_end_after_word) {
+			matcher.can_end_after_word = true;
+			changed = true;
+		}
+		return changed;
+	};
+	while (!worklist.empty()) {
+		auto index = worklist.back();
+		worklist.pop_back();
+		queued[index] = false;
+		if (!update(*matchers[index])) {
+			continue;
+		}
+		for (idx_t i = parent_begin[index]; i < parent_begin[index + 1]; i++) {
+			auto parent = parents[i];
+			if (tracked[parent] && !queued[parent]) {
+				queued[parent] = true;
+				worklist.push_back(parent);
 			}
 		}
 	}
