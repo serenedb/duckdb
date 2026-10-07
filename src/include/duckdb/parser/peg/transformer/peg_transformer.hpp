@@ -333,6 +333,7 @@ public:
 class GeneratedTransformProcess final : public TransformProcess {
 public:
 	GeneratedTransformProcess(PEGTransformer &transformer, TransformInput input, const TransformFrameOps &info);
+	~GeneratedTransformProcess() override;
 
 	void ReserveChildSlots(idx_t count);
 	void SetChildResult(idx_t slot, arena_ptr<TransformResultValue> result);
@@ -342,7 +343,7 @@ public:
 	template <class T>
 	T TakeResult(idx_t slot) {
 		if (slot >= child_results.size() || !child_results[slot]) {
-			throw InternalException("Missing transformer result for slot %llu in rule '%s'", slot, info.name);
+			ThrowMissingResult(slot);
 		}
 		auto *result_value = TryGetTransformResult<T>(*child_results[slot]);
 		if (!result_value) {
@@ -352,7 +353,7 @@ public:
 				child_results[slot].reset();
 				return bridged_result;
 			}
-			throw InternalException("Unexpected transformer result type for slot %llu in rule '%s'", slot, info.name);
+			ThrowUnexpectedResult(slot);
 		}
 		auto result = std::move(*result_value);
 		child_results[slot].reset();
@@ -362,19 +363,35 @@ public:
 	template <class T>
 	T &GetResult(idx_t slot) {
 		if (slot >= child_results.size() || !child_results[slot]) {
-			throw InternalException("Missing transformer result for slot %llu in rule '%s'", slot, info.name);
+			ThrowMissingResult(slot);
 		}
 		auto *result_value = TryGetTransformResult<T>(*child_results[slot]);
 		if (!result_value) {
-			throw InternalException("Unexpected transformer result type for slot %llu in rule '%s'", slot, info.name);
+			ThrowUnexpectedResult(slot);
 		}
 		return *result_value;
 	}
 
+	struct ChildResultSlots {
+		arena_ptr<TransformResultValue> &operator[](idx_t index) {
+			return slots[index];
+		}
+		idx_t size() const {
+			return count;
+		}
+
+		arena_ptr<TransformResultValue> *slots = nullptr;
+		idx_t count = 0;
+	};
+
 	ParseResult &parse_result;
 	const TransformFrameOps &info;
 	idx_t manual_state = 0;
-	arena_vector<arena_ptr<TransformResultValue>> child_results;
+	ChildResultSlots child_results;
+
+private:
+	[[noreturn]] DUCKDB_API void ThrowMissingResult(idx_t slot) const;
+	[[noreturn]] DUCKDB_API void ThrowUnexpectedResult(idx_t slot) const;
 
 private:
 	struct PendingChild {

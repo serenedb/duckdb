@@ -44,26 +44,52 @@ arena_ptr<TransformResultValue> TransformStep::TakeResult() {
 
 GeneratedTransformProcess::GeneratedTransformProcess(PEGTransformer &transformer_p, TransformInput input,
                                                      const TransformFrameOps &info_p)
-    : parse_result(input.parse_result), info(info_p), child_results(transformer_p.allocator),
-      transformer(transformer_p) {
+    : parse_result(input.parse_result), info(info_p), transformer(transformer_p) {
 	if (!info.initialize || !info.finalize) {
 		throw InternalException("Incomplete transformer process for rule '%s'", info.name);
 	}
 	info.initialize(transformer, *this);
 }
 
+GeneratedTransformProcess::~GeneratedTransformProcess() {
+	for (idx_t i = 0; i < child_results.count; i++) {
+		std::destroy_at(child_results.slots + i);
+	}
+}
+
 void GeneratedTransformProcess::ReserveChildSlots(idx_t count) {
-	child_results.resize(count);
-	if (count <= pending_capacity) {
+	if (count == child_results.count && count <= pending_capacity) {
 		return;
 	}
-	auto pending =
-	    reinterpret_cast<PendingChild *>(transformer.allocator.AllocateAligned(count * sizeof(PendingChild)));
+	auto data =
+	    transformer.allocator.AllocateAligned(count * (sizeof(arena_ptr<TransformResultValue>) + sizeof(PendingChild)));
+	auto slots = reinterpret_cast<arena_ptr<TransformResultValue> *>(data);
+	auto pending = reinterpret_cast<PendingChild *>(data + count * sizeof(arena_ptr<TransformResultValue>));
+	for (idx_t i = 0; i < count; i++) {
+		if (i < child_results.count) {
+			new (slots + i) arena_ptr<TransformResultValue>(std::move(child_results.slots[i]));
+		} else {
+			new (slots + i) arena_ptr<TransformResultValue>();
+		}
+	}
+	for (idx_t i = 0; i < child_results.count; i++) {
+		std::destroy_at(child_results.slots + i);
+	}
 	for (idx_t i = 0; i < pending_count; i++) {
 		new (pending + i) PendingChild(pending_children[i]);
 	}
+	child_results.slots = slots;
+	child_results.count = count;
 	pending_children = pending;
 	pending_capacity = count;
+}
+
+void GeneratedTransformProcess::ThrowMissingResult(idx_t slot) const {
+	throw InternalException("Missing transformer result for slot %llu in rule '%s'", slot, info.name);
+}
+
+void GeneratedTransformProcess::ThrowUnexpectedResult(idx_t slot) const {
+	throw InternalException("Unexpected transformer result type for slot %llu in rule '%s'", slot, info.name);
 }
 
 void GeneratedTransformProcess::SetChildResult(idx_t slot, arena_ptr<TransformResultValue> result) {
