@@ -11,21 +11,21 @@ void ParserPackratCache::Store(idx_t slot, idx_t token_index, const ParserPackra
 		return;
 	}
 	auto offset = token_index - first_token;
-	auto block = offset / BLOCK_TOKENS;
-	if (block >= blocks.size()) {
-		blocks.resize(block + 1);
+	auto row = offset / BLOCK_TOKENS;
+	if (row >= row_count) {
+		row_count = row + 1;
+		blocks.resize(row_count * slot_count);
 	}
-	if (!blocks[block]) {
-		auto count = BLOCK_TOKENS * slot_count;
-		auto data = reinterpret_cast<ParserPackratEntry *>(
-		    arena.AllocateAligned(count * (sizeof(ParserPackratEntry) + sizeof(bool))));
-		memset(CachedFlags(data), 0, count * sizeof(bool));
-		blocks[block] = data;
+	auto &block = blocks[row * slot_count + slot];
+	if (!block) {
+		block = reinterpret_cast<ParserPackratEntry *>(
+		    arena.AllocateAligned(BLOCK_TOKENS * (sizeof(ParserPackratEntry) + sizeof(bool))));
+		memset(CachedFlags(block), 0, BLOCK_TOKENS * sizeof(bool));
 	}
-	auto index = offset % BLOCK_TOKENS * slot_count + slot;
-	auto cached = CachedFlags(blocks[block]);
+	auto index = offset % BLOCK_TOKENS;
+	auto cached = CachedFlags(block);
 	if (!cached[index]) {
-		new (blocks[block] + index) ParserPackratEntry(entry);
+		new (block + index) ParserPackratEntry(entry);
 		cached[index] = true;
 	}
 }

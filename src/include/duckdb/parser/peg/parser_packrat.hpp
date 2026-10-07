@@ -28,29 +28,31 @@ public:
 
 	optional_ptr<const ParserPackratEntry> Lookup(idx_t slot, idx_t token_index) const {
 		auto offset = token_index - first_token;
-		auto block = offset / BLOCK_TOKENS;
-		if (slot >= slot_count || block >= blocks.size() || !blocks[block]) {
+		auto row = offset / BLOCK_TOKENS;
+		if (slot >= slot_count || row >= row_count) {
 			return nullptr;
 		}
-		auto index = offset % BLOCK_TOKENS * slot_count + slot;
-		if (!CachedFlags(blocks[block])[index]) {
+		auto block = blocks[row * slot_count + slot];
+		auto index = offset % BLOCK_TOKENS;
+		if (!block || !CachedFlags(block)[index]) {
 			return nullptr;
 		}
-		return blocks[block][index];
+		return block[index];
 	}
 	void Store(idx_t slot, idx_t token_index, const ParserPackratEntry &entry);
 
 private:
 	static constexpr idx_t BLOCK_TOKENS = 32;
 
-	bool *CachedFlags(ParserPackratEntry *block) const {
-		return reinterpret_cast<bool *>(block + BLOCK_TOKENS * slot_count);
+	static bool *CachedFlags(ParserPackratEntry *block) {
+		return reinterpret_cast<bool *>(block + BLOCK_TOKENS);
 	}
 
 	ArenaAllocator &arena;
 	vector<ParserPackratEntry *> blocks;
 	idx_t first_token;
 	idx_t slot_count;
+	idx_t row_count = 0;
 };
 
 } // namespace duckdb
