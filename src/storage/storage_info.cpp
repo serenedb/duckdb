@@ -111,7 +111,9 @@ static const StorageVersionInfo storage_version_info[] = {
 	{"v1.5.5", StorageVersion::V1_5_5},
 	{"v1.5.6", StorageVersion::V1_5_6},
 	{"v2.0.0", StorageVersion::V2_0_0},
-	{"latest", StorageVersion::V2_0_0},
+	{"latest", StorageVersion::DUCKDB_LATEST},
+	{"serenedb_v1", StorageVersion::SERENEDB_V1},
+	{"serenedb_latest", StorageVersion::SERENEDB_LATEST},
 	{nullptr, StorageVersion::INVALID}
 };
 // END OF STORAGE_ARRAY VERSION INFO

@@ -97,4 +97,132 @@ struct ArrayNegativeDotProductFun {
 	static constexpr const char *Name = "array_negative_dot_product";
 };
 
+struct L2DistanceFun {
+	static constexpr const char *Name = "l2_distance";
+	static constexpr const char *Parameters = "vector1,vector2";
+	static constexpr const char *Description = "Computes the Euclidean distance between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.";
+	static constexpr const char *Example = "l2_distance([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct L2SqrDistanceFun {
+	static constexpr const char *Name = "l2_sqr_distance";
+	static constexpr const char *Parameters = "vector1,vector2";
+	static constexpr const char *Description = "Computes the squared Euclidean distance between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.";
+	static constexpr const char *Example = "l2_sqr_distance([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct L1DistanceFun {
+	static constexpr const char *Name = "l1_distance";
+	static constexpr const char *Parameters = "vector1,vector2";
+	static constexpr const char *Description = "Computes the Manhattan distance between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.";
+	static constexpr const char *Example = "l1_distance([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct L1DistanceFunAlias {
+	using ALIAS = L1DistanceFun;
+
+	static constexpr const char *Name = "<+>";
+};
+
+struct CosineDistanceFun {
+	static constexpr const char *Name = "cosine_distance";
+	static constexpr const char *Parameters = "vector1,vector2";
+	static constexpr const char *Description = "Computes the cosine distance between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`; a zero vector is at distance 1 from every vector.";
+	static constexpr const char *Example = "cosine_distance([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct CosineSimilarityFun {
+	static constexpr const char *Name = "cosine_similarity";
+	static constexpr const char *Parameters = "vector1,vector2";
+	static constexpr const char *Description = "Computes the cosine similarity between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`; a zero vector has similarity 0 with every vector.";
+	static constexpr const char *Example = "cosine_similarity([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct InnerProductFun {
+	static constexpr const char *Name = "inner_product";
+	static constexpr const char *Parameters = "vector1,vector2";
+	static constexpr const char *Description = "Computes the inner product between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.";
+	static constexpr const char *Example = "inner_product([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct NegativeInnerProductFun {
+	static constexpr const char *Name = "negative_inner_product";
+	static constexpr const char *Parameters = "vector1,vector2";
+	static constexpr const char *Description = "Computes the negative inner product between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.";
+	static constexpr const char *Example = "negative_inner_product([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct NegativeInnerProductFunAlias {
+	using ALIAS = NegativeInnerProductFun;
+
+	static constexpr const char *Name = "<#>";
+};
+
+struct L1NormFun {
+	static constexpr const char *Name = "l1_norm";
+	static constexpr const char *Parameters = "vector";
+	static constexpr const char *Description = "Computes the Manhattan norm of a vector given as a list or array of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.";
+	static constexpr const char *Example = "l1_norm([3.0, -4.0])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct L2NormFun {
+	static constexpr const char *Name = "l2_norm";
+	static constexpr const char *Parameters = "vector";
+	static constexpr const char *Description = "Computes the Euclidean norm of a vector given as a list or array of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.";
+	static constexpr const char *Example = "l2_norm([3.0, -4.0])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct VectorNormFun {
+	using ALIAS = L2NormFun;
+
+	static constexpr const char *Name = "vector_norm";
+};
+
+struct L1NormalizeFun {
+	static constexpr const char *Name = "l1_normalize";
+	static constexpr const char *Parameters = "vector";
+	static constexpr const char *Description = "Divides a vector, given as a list or array of `FLOAT` or `DOUBLE`, by its Manhattan norm. A zero vector stays zero. The elements can not be `NULL`.";
+	static constexpr const char *Example = "l1_normalize([3.0, -4.0])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct L2NormalizeFun {
+	static constexpr const char *Name = "l2_normalize";
+	static constexpr const char *Parameters = "vector";
+	static constexpr const char *Description = "Divides a vector, given as a list or array of `FLOAT` or `DOUBLE`, by its Euclidean norm. A zero vector stays zero. The elements can not be `NULL`.";
+	static constexpr const char *Example = "l2_normalize([3.0, -4.0])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
 } // namespace duckdb

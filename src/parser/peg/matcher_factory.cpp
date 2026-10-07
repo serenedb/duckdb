@@ -244,6 +244,9 @@ Matcher &MatcherFactory::CreateRootMatcher(const string &root_rule) {
 	AddPackratMemoizedRule("CatalogQualification");
 	AddPackratMemoizedRule("SchemaQualification");
 	AddPackratMemoizedRule("ReservedSchemaQualification");
+	AddPackratMemoizedRule("SelectParens");
+	AddPackratMemoizedRule("WithClause");
+	AddPackratMemoizedRule("TableRef");
 	//===--------------------------------------------------------------------===//
 	// END GENERATED PACKRAT MEMOIZED RULES
 	//===--------------------------------------------------------------------===//
