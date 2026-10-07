@@ -139,6 +139,8 @@ string CompressionTypeToString(CompressionType type) {
 		return "ZSTD";
 	case CompressionType::COMPRESSION_COL_SEQUENCE:
 		return "Sequence";
+	case CompressionType::COMPRESSION_COL_NUMERIC:
+		return "Numeric";
 	default:
 		throw InternalException("Unrecognized compression type!");
 	}
