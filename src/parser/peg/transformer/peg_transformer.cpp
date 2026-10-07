@@ -10,6 +10,19 @@
 
 namespace duckdb {
 
+void ParseResult::ThrowCastError(ParseResultType target) const {
+	throw InternalException("Failed to cast parse result of type %s to type %s for rule %s",
+	                        ParseResultToString(target), ParseResultToString(type), name);
+}
+
+void ParseResult::ThrowChildIndexError() {
+	throw InternalException("Child index out of bounds");
+}
+
+void ParseResult::ThrowEmptyOptionalError() {
+	throw InternalException("OptionalParseResult is null");
+}
+
 TransformStep TransformStep::Child(TransformInput input) {
 	return TransformStep(input, nullptr);
 }

@@ -131,11 +131,13 @@ public:
 	template <class TARGET>
 	TARGET &Cast() {
 		if (TARGET::TYPE != ParseResultType::INVALID && type != TARGET::TYPE) {
-			throw InternalException("Failed to cast parse result of type %s to type %s for rule %s",
-			                        ParseResultToString(TARGET::TYPE), ParseResultToString(type), name);
+			ThrowCastError(TARGET::TYPE);
 		}
 		return reinterpret_cast<TARGET &>(*this);
 	}
+	[[noreturn]] DUCKDB_API void ThrowCastError(ParseResultType target) const;
+	[[noreturn]] DUCKDB_API static void ThrowChildIndexError();
+	[[noreturn]] DUCKDB_API static void ThrowEmptyOptionalError();
 
 	ParseResultType type;
 	std::string_view name;
@@ -271,7 +273,7 @@ public:
 
 	ParseResult &GetChild(idx_t index) {
 		if (index >= children.size()) {
-			throw InternalException("Child index out of bounds");
+			ThrowChildIndexError();
 		}
 		return children[index].get();
 	}
@@ -324,7 +326,7 @@ struct RepeatParseResult : ParseResult {
 	template <class T>
 	T &Child(idx_t index) {
 		if (index >= children.size()) {
-			throw InternalException("Child index out of bounds");
+			ThrowChildIndexError();
 		}
 		return children[index].get().Cast<T>();
 	}
@@ -377,7 +379,7 @@ struct OptionalParseResult : ParseResult {
 
 	ParseResult &GetResult() {
 		if (!optional_result) {
-			throw InternalException("OptionalParseResult is null");
+			ThrowEmptyOptionalError();
 		}
 		return *optional_result;
 	}
