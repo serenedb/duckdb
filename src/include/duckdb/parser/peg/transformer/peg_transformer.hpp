@@ -378,7 +378,8 @@ public:
 			ThrowUnexpectedResult(slot);
 		}
 		auto result = std::move(*result_value);
-		child_results[slot].reset();
+		auto box = static_cast<TypedTransformResult<T> *>(child_results[slot].release());
+		box->TypedTransformResult<T>::~TypedTransformResult();
 		return result;
 	}
 
