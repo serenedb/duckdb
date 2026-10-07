@@ -84,7 +84,7 @@ void ParseIterator::EnsureTokenized() {
 		// we never re-tokenize. Tokenization is grammar-free.
 		ParserTokenizerBehavior behavior(sql, tokens);
 		CompiledGrammar::Get(context).GetTokenizer().TokenizeInput(behavior);
-		token_iterator = make_uniq<TokenIterator>(tokens);
+		token_iterator = make_uniq<TokenIterator>(TokenIterator::FromTokenizer(tokens));
 	}
 }
 

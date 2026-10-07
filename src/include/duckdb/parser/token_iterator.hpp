@@ -18,6 +18,7 @@ namespace duckdb {
 class TokenIterator {
 public:
 	DUCKDB_API explicit TokenIterator(vector<MatcherToken> &tokens);
+	DUCKDB_API static TokenIterator FromTokenizer(vector<MatcherToken> &tokens);
 	TokenIterator(const TokenIterator &other) = default;
 	TokenIterator &operator=(const TokenIterator &) = delete;
 
@@ -77,6 +78,8 @@ public:
 	DUCKDB_API string ToString() const;
 
 private:
+	TokenIterator(MatcherToken *tokens, idx_t token_count);
+
 	[[noreturn]] DUCKDB_API void ThrowIndexOutOfRange(idx_t index) const;
 	[[noreturn]] DUCKDB_API void ThrowAdvanceOutOfRange(idx_t count) const;
 	[[noreturn]] DUCKDB_API void ThrowPositionOutOfRange(idx_t position_p) const;

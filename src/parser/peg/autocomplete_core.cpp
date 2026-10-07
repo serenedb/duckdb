@@ -211,7 +211,7 @@ vector<AutoCompleteSuggestion> GenerateAutoCompleteSuggestions(AutoCompleteCatal
 	if (suggestions.empty()) {
 		// no suggestions found during tokenizing
 		// run the root matcher
-		TokenIterator token_iterator(tokens);
+		auto token_iterator = TokenIterator::FromTokenizer(tokens);
 		MatchContext match_context(suggestions, parse_allocator, max_token_index, MatchMode::RECOGNIZE_ONLY,
 		                           IdentifierCaseMode::PRESERVE_CASE);
 		MatchState state(token_iterator, match_context);

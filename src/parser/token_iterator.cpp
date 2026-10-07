@@ -4,11 +4,19 @@
 
 namespace duckdb {
 
-TokenIterator::TokenIterator(vector<MatcherToken> &tokens_p) : tokens(tokens_p.data()), token_count(tokens_p.size()) {
+TokenIterator::TokenIterator(MatcherToken *tokens_p, idx_t token_count_p)
+    : tokens(tokens_p), token_count(token_count_p) {
+}
+
+TokenIterator::TokenIterator(vector<MatcherToken> &tokens_p) : TokenIterator(tokens_p.data(), tokens_p.size()) {
 	// A new root can receive tokens edited since an earlier match.
 	for (auto &token : tokens_p) {
 		token.ResetLiteralInfo();
 	}
+}
+
+TokenIterator TokenIterator::FromTokenizer(vector<MatcherToken> &tokens_p) {
+	return TokenIterator(tokens_p.data(), tokens_p.size());
 }
 
 bool TokenIterator::AtEnd() const {

@@ -250,7 +250,7 @@ void Parser::ParseQuery(std::string_view query_p) {
 	ParserTokenizerBehavior behavior(query, tokens);
 	auto &tokenizer = GetGrammar().GetTokenizer();
 	tokenizer.TokenizeInput(behavior);
-	TokenIterator token_iterator(tokens);
+	auto token_iterator = TokenIterator::FromTokenizer(tokens);
 	while (token_iterator.Current()) {
 		auto stmt = ParseTopLevelStatement(token_iterator);
 		if (stmt) {
