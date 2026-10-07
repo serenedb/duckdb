@@ -609,8 +609,13 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 			if (c != '$' && !CharacterIsKeyword(c)) {
 				// not a keyword - return to standard state
 				auto word = sql.substr(last_pos, i - last_pos);
-				auto token_type = keyword_helper.IsKeyword(word) ? TokenType::KEYWORD : TokenType::IDENTIFIER;
-				behavior.PushToken(last_pos, i, token_type);
+				auto &literal_table = keyword_helper.GetLiteralTable();
+				auto literal_info = literal_table.Lookup(word);
+				auto token_count = behavior.tokens.size();
+				behavior.PushToken(last_pos, i, literal_info.IsKeyword() ? TokenType::KEYWORD : TokenType::IDENTIFIER);
+				if (behavior.tokens.size() > token_count) {
+					behavior.tokens.back().SetLiteralInfo(literal_table, literal_info);
+				}
 				state = TokenizeState::STANDARD;
 				last_pos = i;
 				i--;
@@ -735,8 +740,13 @@ void TokenizerBehavior::OnLastToken(const Tokenizer &tokenizer, TokenizeState st
 	if (last_word.empty()) {
 		return;
 	}
-	if (state == TokenizeState::KEYWORD && !tokenizer.keyword_helper.IsKeyword(last_word)) {
-		state = TokenizeState::STANDARD;
+	if (state == TokenizeState::KEYWORD) {
+		auto &literal_table = tokenizer.keyword_helper.GetLiteralTable();
+		auto literal_info = literal_table.Lookup(last_word);
+		auto type = literal_info.IsKeyword() ? TokenType::KEYWORD : TokenType::IDENTIFIER;
+		tokens.emplace_back(last_word, last_pos, type);
+		tokens.back().SetLiteralInfo(literal_table, literal_info);
+		return;
 	}
 
 	bool is_unterminated = Tokenizer::IsUnterminatedState(state);

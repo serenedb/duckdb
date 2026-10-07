@@ -45,6 +45,11 @@ struct MatcherToken {
 		return literal_info;
 	}
 
+	void SetLiteralInfo(const GrammarLiteralTable &table, LiteralInfo info) {
+		literal_info = info;
+		literal_table_id = table.CacheId();
+	}
+
 	void ResetLiteralInfo() {
 		literal_table_id = 0;
 	}
