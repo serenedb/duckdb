@@ -319,17 +319,6 @@ struct MatcherFirstSet {
 		auto word = literal_id / 64;
 		return word < literals.size() && (literals[word] >> (literal_id % 64)) & 1;
 	}
-	void MergeStart(const MatcherFirstSet &other) {
-		any_token = any_token || other.any_token;
-		token_classes |= other.token_classes;
-		word_categories |= other.word_categories;
-		if (other.literals.size() > literals.size()) {
-			literals.resize(other.literals.size(), 0);
-		}
-		for (idx_t i = 0; i < other.literals.size(); i++) {
-			literals[i] |= other.literals[i];
-		}
-	}
 	bool MergeChanged(const MatcherFirstSet &other) {
 		bool changed = false;
 		if (other.any_token && !any_token) {
@@ -355,10 +344,6 @@ struct MatcherFirstSet {
 			}
 		}
 		return changed;
-	}
-	bool operator==(const MatcherFirstSet &other) const {
-		return nullable == other.nullable && any_token == other.any_token && token_classes == other.token_classes &&
-		       word_categories == other.word_categories && literals == other.literals;
 	}
 };
 

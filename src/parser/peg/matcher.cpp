@@ -74,68 +74,81 @@ void MatcherAllocator::SetPackratMemoized(Matcher &matcher) {
 }
 
 void MatcherAllocator::ComputeFirstSets(const GrammarLiteralTable &table) {
+	vector<reference<Matcher>> composites;
 	for (auto &entry : matchers) {
-		entry->first_set = MatcherFirstSet {false, false, {}};
+		auto &matcher = *entry;
+		auto &first_set = matcher.first_set;
+		first_set = MatcherFirstSet {false, false, {}};
+		switch (matcher.Type()) {
+		case MatcherType::KEYWORD: {
+			auto literal_id = matcher.Cast<KeywordMatcher>().GetLiteralId();
+			if (literal_id.IsValid()) {
+				first_set.AddLiteral(literal_id.GetIndex());
+			} else {
+				first_set.any_token = true;
+			}
+			break;
+		}
+		case MatcherType::LIST:
+		case MatcherType::CHOICE:
+		case MatcherType::OPTIONAL:
+		case MatcherType::REPEAT:
+			composites.push_back(matcher);
+			break;
+		default: {
+			auto token_classes =
+			    matcher.IsAtomic() ? static_cast<const AtomicMatcher &>(matcher).FirstTokenClasses() : uint8_t(0);
+			if (token_classes) {
+				first_set.token_classes = token_classes;
+				first_set.word_categories = static_cast<const AtomicMatcher &>(matcher).FirstWordCategories();
+				break;
+			}
+			first_set.nullable = true;
+			first_set.any_token = true;
+			break;
+		}
+		}
 	}
 	bool changed = true;
 	while (changed) {
 		changed = false;
-		for (auto &entry : matchers) {
-			auto &matcher = *entry;
-			MatcherFirstSet updated {false, false, {}};
+		for (auto entry = composites.rbegin(); entry != composites.rend(); entry++) {
+			auto &matcher = entry->get();
+			auto &first_set = matcher.first_set;
+			bool nullable;
 			switch (matcher.Type()) {
-			case MatcherType::KEYWORD: {
-				auto literal_id = matcher.Cast<KeywordMatcher>().GetLiteralId();
-				if (literal_id.IsValid()) {
-					updated.AddLiteral(literal_id.GetIndex());
-				} else {
-					updated.any_token = true;
-				}
-				break;
-			}
 			case MatcherType::LIST:
-				updated.nullable = true;
+				nullable = true;
 				for (auto &child : matcher.Cast<ListMatcher>().matchers) {
 					auto &child_set = child.get().first_set;
-					updated.MergeStart(child_set);
+					changed |= first_set.MergeChanged(child_set);
 					if (!child_set.nullable) {
-						updated.nullable = false;
+						nullable = false;
 						break;
 					}
 				}
 				break;
 			case MatcherType::CHOICE:
+				nullable = false;
 				for (auto &child : matcher.Cast<ChoiceMatcher>().matchers) {
 					auto &child_set = child.get().first_set;
-					updated.MergeStart(child_set);
-					updated.nullable = updated.nullable || child_set.nullable;
+					changed |= first_set.MergeChanged(child_set);
+					nullable = nullable || child_set.nullable;
 				}
 				break;
 			case MatcherType::OPTIONAL:
-				updated.MergeStart(matcher.Cast<OptionalMatcher>().GetChildMatcher().first_set);
-				updated.nullable = true;
+				changed |= first_set.MergeChanged(matcher.Cast<OptionalMatcher>().GetChildMatcher().first_set);
+				nullable = true;
 				break;
-			case MatcherType::REPEAT: {
-				auto &child_set = matcher.Cast<RepeatMatcher>().GetChildMatcher().first_set;
-				updated.MergeStart(child_set);
-				updated.nullable = child_set.nullable;
-				break;
-			}
 			default: {
-				auto token_classes =
-				    matcher.IsAtomic() ? static_cast<const AtomicMatcher &>(matcher).FirstTokenClasses() : uint8_t(0);
-				if (token_classes) {
-					updated.token_classes = token_classes;
-					updated.word_categories = static_cast<const AtomicMatcher &>(matcher).FirstWordCategories();
-					break;
-				}
-				updated.nullable = true;
-				updated.any_token = true;
+				auto &child_set = matcher.Cast<RepeatMatcher>().GetChildMatcher().first_set;
+				changed |= first_set.MergeChanged(child_set);
+				nullable = child_set.nullable;
 				break;
 			}
 			}
-			if (!(updated == matcher.first_set)) {
-				matcher.first_set = std::move(updated);
+			if (nullable && !first_set.nullable) {
+				first_set.nullable = true;
 				changed = true;
 			}
 		}
