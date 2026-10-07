@@ -453,7 +453,7 @@ string SQLFormatter::FormatMultiline(const string &sql, const vector<MatcherToke
 			// Preserve blank lines from the original SQL between statements.
 			if (i + 1 < tokens.size()) {
 				write_newline();
-				idx_t end_of_semi = tok.offset + tok.length;
+				idx_t end_of_semi = tok.offset + tok.text.size();
 				idx_t next_start = tokens[i + 1].offset;
 				idx_t newline_count = 0;
 				for (idx_t k = end_of_semi; k < next_start && k < sql.size(); k++) {

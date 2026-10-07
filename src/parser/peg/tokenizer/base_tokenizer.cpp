@@ -127,7 +127,7 @@ void TokenizerBehavior::PushToken(idx_t start, idx_t end, TokenType type, bool u
 		return;
 	}
 	auto &previous_token = tokens[tokens.size() - 2];
-	auto previous_token_end = previous_token.offset + previous_token.length;
+	auto previous_token_end = previous_token.offset + previous_token.text.size();
 	if (has_block_comment && last_block_comment_position >= previous_token_end && last_block_comment_position < start) {
 		tokens.back().preceded_by_block_comment = true;
 	}

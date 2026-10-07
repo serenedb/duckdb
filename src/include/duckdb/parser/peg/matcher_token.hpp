@@ -25,14 +25,13 @@ struct MatcherTokenClass {
 struct MatcherToken {
 	// NOLINTNEXTLINE: allow implicit conversion from text
 	MatcherToken(std::string_view text_p, idx_t offset_p, TokenType type_p, bool unterminated_p = false)
-	    : type(type_p), text(text_p), offset(offset_p), length(text_p.length()), unterminated(unterminated_p) {
+	    : text(text_p), offset(offset_p), type(type_p), unterminated(unterminated_p) {
 		token_classes = ComputeClasses();
 	}
 
-	TokenType type;
 	std::string_view text;
 	idx_t offset = 0;
-	idx_t length = 0;
+	TokenType type;
 	bool unterminated = false;
 	bool preceded_by_newline = false;
 	bool preceded_by_block_comment = false;
@@ -60,7 +59,7 @@ private:
 
 private:
 	LiteralInfo literal_info;
-	uint64_t literal_table_id = 0;
+	uint32_t literal_table_id = 0;
 };
 
 } // namespace duckdb

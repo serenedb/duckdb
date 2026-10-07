@@ -7,8 +7,8 @@
 
 namespace duckdb {
 
-static uint64_t NextLiteralTableId() {
-	static atomic<uint64_t> next_id {1};
+static uint32_t NextLiteralTableId() {
+	static atomic<uint32_t> next_id {1};
 	auto result = next_id.fetch_add(1, std::memory_order_relaxed);
 	D_ASSERT(result != 0);
 	return result;

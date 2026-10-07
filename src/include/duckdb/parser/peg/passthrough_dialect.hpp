@@ -31,7 +31,7 @@ public:
 		// always advances, so a repeat over this matcher terminates
 		std::string_view text = current->text;
 		auto offset = current->offset;
-		auto length = current->length;
+		auto length = current->text.size();
 		state.token_iterator.Advance();
 		state.UpdateMaxTokenIndex();
 		return state.AllocateParseResult<TokenParseResult>(text, offset, length);

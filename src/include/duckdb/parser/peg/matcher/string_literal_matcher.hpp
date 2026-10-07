@@ -30,11 +30,11 @@ public:
 			return MatcherResult::Failure();
 		}
 
-		idx_t end_offset = token->offset + token->length;
+		idx_t end_offset = token->offset + token->text.size();
 		if (allows_continuation) {
 			while (IsStringLiteralContinuation(state)) {
 				token = state.token_iterator.Current();
-				end_offset = token->offset + token->length;
+				end_offset = token->offset + token->text.size();
 				Advance(state);
 			}
 		}

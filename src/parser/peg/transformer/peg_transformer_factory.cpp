@@ -84,7 +84,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 		auto &error_token = token_iterator.GetToken(error_token_idx);
 		auto error_message = absl::StrCat("syntax error at or near \"", error_token.text, "\"");
 		throw ParserException::SyntaxError(token_stream, error_message,
-		                                   QueryLocation(error_token.offset, error_token.length));
+		                                   QueryLocation(error_token.offset, error_token.text.size()));
 	}
 	D_ASSERT(match_result.HasParseResult());
 

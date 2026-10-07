@@ -23,7 +23,7 @@ public:
 	GrammarLiteralTable(const GrammarLiteralTable &) = delete;
 	GrammarLiteralTable &operator=(const GrammarLiteralTable &) = delete;
 
-	uint64_t CacheId() const {
+	uint32_t CacheId() const {
 		return cache_id;
 	}
 
@@ -41,7 +41,7 @@ private:
 	void Register(const string &text, keyword_categories_t categories = keyword_categories_t());
 
 private:
-	const uint64_t cache_id;
+	const uint32_t cache_id;
 	case_insensitive_map_t<LiteralInfo> literals;
 	array<LiteralInfo, SINGLE_BYTE_LITERALS> single_byte_literals;
 };

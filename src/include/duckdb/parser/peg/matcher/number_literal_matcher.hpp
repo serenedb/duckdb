@@ -22,7 +22,7 @@ public:
 		}
 		auto &token_text = token->text;
 		auto start_offset = optional_idx(token->offset);
-		auto token_length = optional_idx(token->length);
+		auto token_length = optional_idx(token->text.size());
 		if (!MatchNumberLiteral(state)) {
 			return MatcherResult::Failure();
 		}

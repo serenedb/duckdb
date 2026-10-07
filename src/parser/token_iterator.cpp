@@ -42,7 +42,7 @@ idx_t TokenIterator::EndOffset() const {
 		return 0;
 	}
 	auto &last_token = tokens[token_count - 1];
-	return last_token.offset + last_token.length;
+	return last_token.offset + last_token.text.size();
 }
 
 const MatcherToken &TokenIterator::Previous() const {
