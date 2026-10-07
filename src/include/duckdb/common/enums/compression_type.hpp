@@ -45,6 +45,7 @@ enum class CompressionType : uint8_t {
 	COMPRESSION_ZXC = 106,
 	COMPRESSION_COL_ZSTD = 107,
 	COMPRESSION_COL_SEQUENCE = 108, // internal only
+	COMPRESSION_COL_NUMERIC = 109,  // internal only
 	COMPRESSION_SERENEDB_COUNT      // This has to stay the last SereneDB entry!
 };
 
