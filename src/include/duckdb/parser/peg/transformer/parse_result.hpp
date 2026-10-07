@@ -175,13 +175,8 @@ public:
 		length = enclosing.length;
 	}
 
-	virtual void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                              const std::string &indent, bool is_last) const {
-		ss << indent << (is_last ? "└─" : "├─") << " " << ParseResultToString(type);
-		if (!name.empty()) {
-			ss << " (" << name << ")";
-		}
-	}
+	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
+	                      const std::string &indent, bool is_last) const;
 
 	// The public entry point
 	std::string ToString() const {
@@ -194,6 +189,13 @@ public:
 
 protected:
 	~ParseResult() = default;
+
+	void HeaderToString(std::stringstream &ss, const std::string &indent, bool is_last) const {
+		ss << indent << (is_last ? "└─" : "├─") << " " << ParseResultToString(type);
+		if (!name.empty()) {
+			ss << " (" << name << ")";
+		}
+	}
 };
 
 struct IdentifierParseResult : ParseResult {
@@ -205,8 +207,8 @@ struct IdentifierParseResult : ParseResult {
 	}
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                      const std::string &indent, bool is_last) const override {
-		ParseResult::ToStringInternal(ss, visited, indent, is_last);
+	                      const std::string &indent, bool is_last) const {
+		HeaderToString(ss, indent, is_last);
 		ss << ": " << identifier.GetIdentifierName() << "\n";
 	}
 };
@@ -221,8 +223,8 @@ struct TokenParseResult : ParseResult {
 	}
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                      const std::string &indent, bool is_last) const override {
-		ParseResult::ToStringInternal(ss, visited, indent, is_last);
+	                      const std::string &indent, bool is_last) const {
+		HeaderToString(ss, indent, is_last);
 		ss << ": " << text << "\n";
 	}
 };
@@ -234,8 +236,8 @@ struct EndOfInputParseResult : ParseResult {
 	}
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                      const std::string &indent, bool is_last) const override {
-		ParseResult::ToStringInternal(ss, visited, indent, is_last);
+	                      const std::string &indent, bool is_last) const {
+		HeaderToString(ss, indent, is_last);
 		ss << "\n";
 	}
 };
@@ -249,8 +251,8 @@ struct KeywordParseResult : ParseResult {
 	}
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                      const std::string &indent, bool is_last) const override {
-		ParseResult::ToStringInternal(ss, visited, indent, is_last);
+	                      const std::string &indent, bool is_last) const {
+		HeaderToString(ss, indent, is_last);
 		ss << ": \"" << keyword << "\"\n";
 	}
 };
@@ -284,7 +286,7 @@ public:
 	}
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                      const std::string &indent, bool is_last) const override {
+	                      const std::string &indent, bool is_last) const {
 		ss << indent << (is_last ? "└─" : "├─");
 
 		if (visited.count(this)) {
@@ -332,7 +334,7 @@ struct RepeatParseResult : ParseResult {
 	}
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                      const std::string &indent, bool is_last) const override {
+	                      const std::string &indent, bool is_last) const {
 		ss << indent << (is_last ? "└─" : "├─");
 
 		if (visited.count(this)) {
@@ -385,7 +387,7 @@ struct OptionalParseResult : ParseResult {
 	}
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                      const std::string &indent, bool is_last) const override {
+	                      const std::string &indent, bool is_last) const {
 		if (HasResult()) {
 			// The optional node has a value, so we "collapse" it by just printing its child.
 			// We pass the same indentation and is_last status, so it takes the place of the Optional node.
@@ -415,7 +417,7 @@ public:
 	}
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                      const std::string &indent, bool is_last) const override {
+	                      const std::string &indent, bool is_last) const {
 		// The choice was resolved. We print a marker and then print the child below it.
 		ss << indent << (is_last ? "└─" : "├─") << " [" << ParseResultToString(type) << " (idx: " << selected_idx
 		   << ")] ->\n";
@@ -440,8 +442,8 @@ public:
 	std::string_view number;
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                      const std::string &indent, bool is_last) const override {
-		ParseResult::ToStringInternal(ss, visited, indent, is_last);
+	                      const std::string &indent, bool is_last) const {
+		HeaderToString(ss, indent, is_last);
 		ss << ": " << number << "\n";
 	}
 };
@@ -459,7 +461,7 @@ public:
 		return string(result);
 	}
 
-	virtual unique_ptr<ParsedExpression> ToExpression() {
+	unique_ptr<ParsedExpression> ToExpression() {
 		switch (string_type) {
 		case SpecialStringCharacter::STANDARD:
 			return ConstantExpression::String(string(result));
@@ -563,8 +565,8 @@ public:
 	SpecialStringCharacter string_type;
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                      const std::string &indent, bool is_last) const override {
-		ParseResult::ToStringInternal(ss, visited, indent, is_last);
+	                      const std::string &indent, bool is_last) const {
+		HeaderToString(ss, indent, is_last);
 		string special_string;
 		if (string_type == SpecialStringCharacter::ESCAPE_STRING) {
 			special_string = "E";
@@ -587,10 +589,52 @@ public:
 	std::string_view operator_token;
 
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
-	                      const std::string &indent, bool is_last) const override {
-		ParseResult::ToStringInternal(ss, visited, indent, is_last);
+	                      const std::string &indent, bool is_last) const {
+		HeaderToString(ss, indent, is_last);
 		ss << ": " << operator_token << "\n";
 	}
 };
+
+inline void ParseResult::ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
+                                          const std::string &indent, bool is_last) const {
+	switch (type) {
+	case ParseResultType::LIST:
+		static_cast<const ListParseResult &>(*this).ToStringInternal(ss, visited, indent, is_last);
+		break;
+	case ParseResultType::OPTIONAL:
+		static_cast<const OptionalParseResult &>(*this).ToStringInternal(ss, visited, indent, is_last);
+		break;
+	case ParseResultType::REPEAT:
+		static_cast<const RepeatParseResult &>(*this).ToStringInternal(ss, visited, indent, is_last);
+		break;
+	case ParseResultType::CHOICE:
+		static_cast<const ChoiceParseResult &>(*this).ToStringInternal(ss, visited, indent, is_last);
+		break;
+	case ParseResultType::IDENTIFIER:
+		static_cast<const IdentifierParseResult &>(*this).ToStringInternal(ss, visited, indent, is_last);
+		break;
+	case ParseResultType::KEYWORD:
+		static_cast<const KeywordParseResult &>(*this).ToStringInternal(ss, visited, indent, is_last);
+		break;
+	case ParseResultType::OPERATOR:
+		static_cast<const OperatorParseResult &>(*this).ToStringInternal(ss, visited, indent, is_last);
+		break;
+	case ParseResultType::NUMBER:
+		static_cast<const NumberParseResult &>(*this).ToStringInternal(ss, visited, indent, is_last);
+		break;
+	case ParseResultType::STRING:
+		static_cast<const StringLiteralParseResult &>(*this).ToStringInternal(ss, visited, indent, is_last);
+		break;
+	case ParseResultType::END_OF_INPUT:
+		static_cast<const EndOfInputParseResult &>(*this).ToStringInternal(ss, visited, indent, is_last);
+		break;
+	case ParseResultType::TOKEN:
+		static_cast<const TokenParseResult &>(*this).ToStringInternal(ss, visited, indent, is_last);
+		break;
+	default:
+		HeaderToString(ss, indent, is_last);
+		break;
+	}
+}
 
 } // namespace duckdb
