@@ -149,10 +149,11 @@ TransformStackFrame::TransformStackFrame(TransformInput input)
 }
 
 TransformStack::TransformStack(PEGTransformer &transformer_p) : transformer(transformer_p) {
+	frames.reserve(INITIAL_FRAME_CAPACITY);
 }
 
 void TransformStack::PushFrame(TransformInput input) {
-	frames.emplace(input);
+	frames.emplace_back(input);
 }
 
 void TransformStack::InitializeFrame(TransformStackFrame &frame) {
@@ -184,7 +185,7 @@ arena_ptr<TransformResultValue> TransformStack::Execute(TransformInput input) {
 	}
 	PushFrame(input);
 	while (!frames.empty()) {
-		auto &frame = frames.top();
+		auto &frame = frames.back();
 		auto result = ExecuteFrame(frame);
 		if (!result) {
 			continue;
@@ -197,12 +198,12 @@ arena_ptr<TransformResultValue> TransformStack::Execute(TransformInput input) {
 		transformer.VerifyResultHeight(frame.parse_result, *result, result_height);
 #endif
 		transformer.SetResultLocation(frame.parse_result, *result);
-		frames.pop();
+		frames.pop_back();
 		if (frames.empty()) {
 			height = result_height;
 			return result;
 		}
-		auto &parent = frames.top();
+		auto &parent = frames.back();
 		D_ASSERT(!parent.child_result);
 		parent.child_result = std::move(result);
 		parent.height = MaxValue(parent.height, result_height);

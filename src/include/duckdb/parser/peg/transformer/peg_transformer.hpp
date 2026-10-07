@@ -420,12 +420,6 @@ struct TransformStackFrame {
 	idx_t height = 0;
 };
 
-#ifdef DEBUG
-using frame_stack_t = InspectableStack<TransformStackFrame>;
-#else
-using frame_stack_t = stack<TransformStackFrame>;
-#endif
-
 class TransformStack {
 public:
 	explicit TransformStack(PEGTransformer &transformer);
@@ -450,13 +444,15 @@ public:
 #endif
 
 private:
+	static constexpr idx_t INITIAL_FRAME_CAPACITY = 32;
+
 	void PushFrame(TransformInput input);
 	void InitializeFrame(TransformStackFrame &frame);
 	arena_ptr<TransformResultValue> ExecuteFrame(TransformStackFrame &frame);
 
 private:
 	PEGTransformer &transformer;
-	frame_stack_t frames;
+	vector<TransformStackFrame> frames;
 	idx_t height = 0;
 };
 
