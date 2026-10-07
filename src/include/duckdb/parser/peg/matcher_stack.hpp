@@ -69,7 +69,7 @@ private:
 	[[gnu::always_inline]] bool IsNestedChainLevel(const Matcher &matcher, const MatchState &state, idx_t depth) const;
 	[[gnu::always_inline]] MatcherResult CloseChainLevel(const ListMatcher &matcher, MatchState &state,
 	                                                     MatchState &list_state, MatcherResult core_result, idx_t depth,
-	                                                     bool nested);
+	                                                     bool nested, bool suffixes_empty);
 	MatcherResult ContinueList(const ListMatcher &matcher, MatchState &state, MatchState &list_state,
 	                           idx_t children_begin, idx_t next_child, idx_t depth);
 	MatcherResult MatchChoice(const ChoiceMatcher &matcher, MatchState &state, idx_t depth);

@@ -347,6 +347,40 @@ struct MatcherFirstSet {
 	}
 };
 
+struct ChainEdgeSet {
+	MatcherFirstSet first {false, false};
+	bool empty = true;
+	bool words_check_follow = true;
+	optional_ptr<const GrammarLiteralTable> table;
+
+	[[gnu::always_inline]] bool NoneCanStartAt(MatchState &state) const {
+		if (empty) {
+			return true;
+		}
+		if (first.any_token) {
+			return false;
+		}
+		auto token = state.token_iterator.Current();
+		if (!token || token->type == TokenType::END_OF_INPUT_AUTOCOMPLETE) {
+			return false;
+		}
+		auto info = state.token_iterator.CurrentLiteralInfo(*table);
+		if (first.HasLiteral(info.LiteralId())) {
+			return false;
+		}
+		if (token->token_classes & first.token_classes) {
+			return token->token_classes == MatcherTokenClass::WORD && words_check_follow && info.IsKeyword() &&
+			       !info.HasAnyFlags(first.word_categories);
+		}
+		return true;
+	}
+};
+
+struct ChainEdges {
+	ChainEdgeSet prefixes;
+	ChainEdgeSet suffixes;
+};
+
 enum class MatcherType {
 	KEYWORD,
 	LIST,
@@ -508,9 +542,11 @@ public:
 
 private:
 	void ComputeAfterWordSets();
+	optional_ptr<const ChainEdges> ComputeChainEdges(Matcher &matcher, const GrammarLiteralTable &table);
 
 private:
 	vector<unique_ptr<Matcher>> matchers;
+	vector<unique_ptr<ChainEdges>> chain_edges;
 	idx_t packrat_slots = 0;
 };
 

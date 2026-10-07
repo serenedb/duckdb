@@ -171,10 +171,10 @@ bool MatchStack::IsNestedChainLevel(const Matcher &matcher, const MatchState &st
 }
 
 MatcherResult MatchStack::CloseChainLevel(const ListMatcher &matcher, MatchState &state, MatchState &list_state,
-                                          MatcherResult core_result, idx_t depth, bool nested) {
+                                          MatcherResult core_result, idx_t depth, bool nested, bool suffixes_empty) {
 	auto &children = matcher.matchers;
 	auto core_index = matcher.chain_core.GetIndex();
-	auto end = core_index + 1;
+	auto end = suffixes_empty ? children.size() : core_index + 1;
 	while (end < children.size() && IsEmptyOptional(children[end], list_state)) {
 		end++;
 	}
@@ -200,7 +200,9 @@ MatcherResult MatchStack::CloseChainLevel(const ListMatcher &matcher, MatchState
 
 [[gnu::aligned(64)]] MatcherResult MatchStack::MatchChainLevel(const ListMatcher &matcher, MatchState &state,
                                                                idx_t depth) {
-	if (!PrefixesEmpty(matcher, state)) {
+	auto edges = matcher.chain_edges;
+	auto prefixes_empty = edges && edges->prefixes.NoneCanStartAt(state);
+	if (!prefixes_empty && !PrefixesEmpty(matcher, state)) {
 		MatchState list_state(state);
 		return ContinueList(matcher, state, list_state, state.context.allocator.ChildCount(), 0, depth);
 	}
@@ -218,18 +220,19 @@ MatcherResult MatchStack::CloseChainLevel(const ListMatcher &matcher, MatchState
 			return MatcherResult::Failure();
 		}
 		list_state.rule = nested_level.GetRule();
-		if (!PrefixesEmpty(nested_level, list_state)) {
+		if (!prefixes_empty && !PrefixesEmpty(nested_level, list_state)) {
 			break;
 		}
 		outer_levels[nesting++] = level;
 		level = &nested_level;
 	}
 	auto result = MatchChild(level->matchers[level->chain_core.GetIndex()], list_state, depth + nesting);
+	auto suffixes_empty = edges && result.IsSuccess() && edges->suffixes.NoneCanStartAt(list_state);
 	while (true) {
 		if (!result.IsSuccess()) {
 			return MatcherResult::Failure();
 		}
-		result = CloseChainLevel(*level, state, list_state, result, depth + nesting, nesting > 0);
+		result = CloseChainLevel(*level, state, list_state, result, depth + nesting, nesting > 0, suffixes_empty);
 		if (nesting == 0) {
 			break;
 		}

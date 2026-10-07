@@ -168,6 +168,65 @@ void MatcherAllocator::ComputeFirstSets(const GrammarLiteralTable &table) {
 			matcher.after_word_set.literals.clear();
 		}
 	}
+	for (auto &entry : matchers) {
+		auto &matcher = *entry;
+		if (matcher.Type() == MatcherType::LIST && matcher.Cast<ListMatcher>().chain_core.IsValid()) {
+			ComputeChainEdges(matcher, table);
+		}
+	}
+}
+
+optional_ptr<const ChainEdges> MatcherAllocator::ComputeChainEdges(Matcher &matcher, const GrammarLiteralTable &table) {
+	auto &list = matcher.Cast<ListMatcher>();
+	if (list.chain_edges) {
+		return list.chain_edges;
+	}
+	auto &core = list.matchers[list.chain_core.GetIndex()].get();
+	if (core.Type() != MatcherType::LIST || !core.HasBuiltInMatch()) {
+		return nullptr;
+	}
+	auto &nested = core.Cast<ListMatcher>();
+	if (!nested.chain_core.IsValid() || nested.suppress_suggestions) {
+		return nullptr;
+	}
+	auto add_edges = [](ChainEdges &edges, const ListMatcher &level) {
+		auto core_index = level.chain_core.GetIndex();
+		for (idx_t i = 0; i < level.matchers.size(); i++) {
+			if (i == core_index) {
+				continue;
+			}
+			auto &edge = level.matchers[i].get().Cast<OptionalMatcher>().GetChildMatcher();
+			auto &edge_set = i < core_index ? edges.prefixes : edges.suffixes;
+			edge_set.empty = false;
+			if (!edge.first_set_table) {
+				edge_set.first.any_token = true;
+				continue;
+			}
+			edge_set.first.MergeChanged(edge.first_set);
+			if (edge.first_set.token_classes & MatcherTokenClass::WORD) {
+				edge_set.words_check_follow = edge_set.words_check_follow && edge.checks_after_word;
+			}
+		}
+	};
+	auto merge_edges = [](ChainEdgeSet &edge_set, const ChainEdgeSet &nested_set) {
+		edge_set.empty = edge_set.empty && nested_set.empty;
+		edge_set.first.MergeChanged(nested_set.first);
+		edge_set.words_check_follow = edge_set.words_check_follow && nested_set.words_check_follow;
+	};
+	auto edges = make_uniq<ChainEdges>();
+	add_edges(*edges, list);
+	auto nested_edges = ComputeChainEdges(nested, table);
+	if (nested_edges) {
+		merge_edges(edges->prefixes, nested_edges->prefixes);
+		merge_edges(edges->suffixes, nested_edges->suffixes);
+	} else {
+		add_edges(*edges, nested);
+	}
+	edges->prefixes.table = table;
+	edges->suffixes.table = table;
+	list.chain_edges = *edges;
+	chain_edges.push_back(std::move(edges));
+	return list.chain_edges;
 }
 
 bool Matcher::CanFollowWord(MatchState &state) const {

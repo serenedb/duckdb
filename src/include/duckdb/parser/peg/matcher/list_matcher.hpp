@@ -57,6 +57,7 @@ public:
 	//! If true, this matcher will not contribute autocomplete suggestions (used for rules like ExpressionStatement)
 	bool suppress_suggestions = false;
 	optional_idx chain_core;
+	optional_ptr<const ChainEdges> chain_edges;
 };
 
 } // namespace duckdb
