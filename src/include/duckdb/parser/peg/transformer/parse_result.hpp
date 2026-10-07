@@ -171,6 +171,16 @@ public:
 		location.length = location.Merge(child.location).length;
 	}
 
+	void EncloseChildren(std::span<reference<ParseResult>> children) {
+		for (idx_t i = children.size(); i > 0; i--) {
+			auto &child = children[i - 1].get();
+			if (child.location.IsValid()) {
+				EncloseChild(child);
+				return;
+			}
+		}
+	}
+
 	void ToStringInternal(std::stringstream &ss, std::unordered_set<const ParseResult *> &visited,
 	                      const std::string &indent, bool is_last) const;
 
@@ -260,9 +270,7 @@ struct ListParseResult : ParseResult {
 public:
 	ListParseResult(std::span<reference<ParseResult>> children_p, optional_idx offset)
 	    : ParseResult(TYPE, offset), children(children_p) {
-		for (auto &child : children) {
-			EncloseChild(child.get());
-		}
+		EncloseChildren(children);
 	}
 
 	std::span<reference<ParseResult>> GetChildren() const {
@@ -313,9 +321,7 @@ struct RepeatParseResult : ParseResult {
 
 	RepeatParseResult(std::span<reference<ParseResult>> children_p, optional_idx offset)
 	    : ParseResult(TYPE, offset), children(children_p) {
-		for (auto &child : children) {
-			EncloseChild(child.get());
-		}
+		EncloseChildren(children);
 	}
 
 	std::span<reference<ParseResult>> GetChildren() const {
