@@ -150,27 +150,35 @@ static optional_idx StartOffset(const MatchState &state) {
 	return ContinueList(matcher, state, list_state, state.context.allocator.ChildCount(), 0, depth);
 }
 
-[[gnu::aligned(64)]] MatcherResult MatchStack::MatchChainLevel(const ListMatcher &matcher, MatchState &state,
-                                                               idx_t depth) {
+[[gnu::always_inline]] static inline bool PrefixesEmpty(const ListMatcher &matcher, MatchState &state) {
 	auto &children = matcher.matchers;
 	auto core_index = matcher.chain_core.GetIndex();
 	for (idx_t i = 0; i < core_index; i++) {
 		if (!IsEmptyOptional(children[i], state)) {
-			MatchState list_state(state);
-			return ContinueList(matcher, state, list_state, state.context.allocator.ChildCount(), 0, depth);
+			return false;
 		}
 	}
-	MatchState list_state(state);
-	auto core_result = MatchChild(children[core_index], list_state, depth);
-	if (!core_result.IsSuccess()) {
-		return MatcherResult::Failure();
+	return true;
+}
+
+bool MatchStack::IsNestedChainLevel(const Matcher &matcher, const MatchState &state, idx_t depth) const {
+	if (matcher.Type() != MatcherType::LIST || depth >= recursion_limit || !matcher.HasBuiltInMatch() ||
+	    PackratMatchState::IsEnabled(matcher, state)) {
+		return false;
 	}
+	auto &list = static_cast<const ListMatcher &>(matcher);
+	return list.chain_core.IsValid() && !list.suppress_suggestions;
+}
+
+MatcherResult MatchStack::CloseChainLevel(const ListMatcher &matcher, MatchState &state, MatchState &list_state,
+                                          MatcherResult core_result, idx_t depth, bool nested) {
+	auto &children = matcher.matchers;
+	auto core_index = matcher.chain_core.GetIndex();
 	auto end = core_index + 1;
 	while (end < children.size() && IsEmptyOptional(children[end], list_state)) {
 		end++;
 	}
 	if (end == children.size() && core_result.HasParseResult() && core_result.GetParseResult()->GetRule()) {
-		state.token_iterator.SetPosition(list_state.token_iterator);
 		core_result.GetParseResult()->collapsed = true;
 		return core_result;
 	}
@@ -182,7 +190,55 @@ static optional_idx StartOffset(const MatchState &state) {
 			allocator.PushChild(*child_result.GetParseResult());
 		}
 	}
-	return ContinueList(matcher, state, list_state, children_begin, end, depth);
+	if (!nested) {
+		return ContinueList(matcher, state, list_state, children_begin, end, depth);
+	}
+	MatchState level_state(state);
+	level_state.rule = matcher.GetRule();
+	return ContinueList(matcher, level_state, list_state, children_begin, end, depth);
+}
+
+[[gnu::aligned(64)]] MatcherResult MatchStack::MatchChainLevel(const ListMatcher &matcher, MatchState &state,
+                                                               idx_t depth) {
+	if (!PrefixesEmpty(matcher, state)) {
+		MatchState list_state(state);
+		return ContinueList(matcher, state, list_state, state.context.allocator.ChildCount(), 0, depth);
+	}
+	MatchState list_state(state);
+	const ListMatcher *outer_levels[MAX_CHAIN_LEVELS];
+	idx_t nesting = 0;
+	auto level = &matcher;
+	while (nesting < MAX_CHAIN_LEVELS) {
+		auto &core = level->matchers[level->chain_core.GetIndex()].get();
+		if (!IsNestedChainLevel(core, list_state, depth + nesting + 1)) {
+			break;
+		}
+		auto &nested_level = static_cast<const ListMatcher &>(core);
+		if (!nested_level.CanStartAt(list_state)) {
+			return MatcherResult::Failure();
+		}
+		list_state.rule = nested_level.GetRule();
+		if (!PrefixesEmpty(nested_level, list_state)) {
+			break;
+		}
+		outer_levels[nesting++] = level;
+		level = &nested_level;
+	}
+	auto result = MatchChild(level->matchers[level->chain_core.GetIndex()], list_state, depth + nesting);
+	while (true) {
+		if (!result.IsSuccess()) {
+			return MatcherResult::Failure();
+		}
+		result = CloseChainLevel(*level, state, list_state, result, depth + nesting, nesting > 0);
+		if (nesting == 0) {
+			break;
+		}
+		level = outer_levels[--nesting];
+	}
+	if (result.IsSuccess()) {
+		state.token_iterator.SetPosition(list_state.token_iterator);
+	}
+	return result;
 }
 
 [[gnu::aligned(64)]] MatcherResult MatchStack::ContinueList(const ListMatcher &matcher, MatchState &state,

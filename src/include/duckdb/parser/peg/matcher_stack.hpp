@@ -58,6 +58,7 @@ private:
 	static constexpr idx_t INITIAL_FRAME_CAPACITY = 64;
 	static constexpr idx_t FRAMES_PER_EXPRESSION_LEVEL = 64;
 	static constexpr idx_t MAX_RECURSION_DEPTH = 1024;
+	static constexpr idx_t MAX_CHAIN_LEVELS = 32;
 
 	[[gnu::always_inline]] MatcherResult MatchChild(const Matcher &matcher, MatchState &state, idx_t depth);
 	[[gnu::always_inline]] MatcherResult MatchStartedChild(const Matcher &matcher, MatchState &state, idx_t depth);
@@ -65,6 +66,10 @@ private:
 	MatcherResult MatchComposite(const Matcher &matcher, MatchState &state, idx_t depth);
 	MatcherResult MatchList(const ListMatcher &matcher, MatchState &state, idx_t depth);
 	MatcherResult MatchChainLevel(const ListMatcher &matcher, MatchState &state, idx_t depth);
+	[[gnu::always_inline]] bool IsNestedChainLevel(const Matcher &matcher, const MatchState &state, idx_t depth) const;
+	[[gnu::always_inline]] MatcherResult CloseChainLevel(const ListMatcher &matcher, MatchState &state,
+	                                                     MatchState &list_state, MatcherResult core_result, idx_t depth,
+	                                                     bool nested);
 	MatcherResult ContinueList(const ListMatcher &matcher, MatchState &state, MatchState &list_state,
 	                           idx_t children_begin, idx_t next_child, idx_t depth);
 	MatcherResult MatchChoice(const ChoiceMatcher &matcher, MatchState &state, idx_t depth);
