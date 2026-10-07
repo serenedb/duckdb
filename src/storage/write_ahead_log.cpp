@@ -67,10 +67,7 @@ BufferedFileWriter &WriteAheadLog::Initialize() {
 		}
 		const auto parallel =
 		    writer->handle->file_system.SyncParallelism(*writer->handle) == FileSyncParallelism::PARALLEL;
-		{
-			lock_guard<mutex> guard(sync_lock);
-			sync_lanes = parallel ? NumericLimits<idx_t>::Maximum() : 1;
-		}
+		sync_lanes.store(parallel ? NumericLimits<idx_t>::Maximum() : 1, std::memory_order_relaxed);
 		init_state = WALInitState::INITIALIZED;
 	}
 	return *writer;
@@ -91,13 +88,11 @@ idx_t WriteAheadLog::GetTotalWritten() const {
 }
 
 idx_t WriteAheadLog::GetFlushedOffset() {
-	lock_guard<mutex> guard(sync_lock);
-	return requested_sync_offset;
+	return requested_sync_offset.load(std::memory_order_acquire);
 }
 
 idx_t WriteAheadLog::GetDurableOffset() {
-	lock_guard<mutex> guard(sync_lock);
-	return durable_offset;
+	return durable_offset.load(std::memory_order_acquire);
 }
 
 void WriteAheadLog::Truncate(idx_t size) {
@@ -662,6 +657,13 @@ void WriteAheadLog::WriteAlter(CatalogEntry &entry, const AlterInfo &info, bool 
 //===--------------------------------------------------------------------===//
 // FLUSH
 //===--------------------------------------------------------------------===//
+static void RaiseTo(atomic<idx_t> &value, idx_t target) {
+	auto current = value.load(std::memory_order_relaxed);
+	while (current < target &&
+	       !value.compare_exchange_weak(current, target, std::memory_order_release, std::memory_order_relaxed)) {
+	}
+}
+
 void WriteAheadLog::Flush() {
 	if (!writer) {
 		return;
@@ -685,39 +687,42 @@ idx_t WriteAheadLog::FlushMarker(optional_ptr<const hugeint_t> prepared_txid) {
 	writer->Flush();
 	storage_manager.SetWALSize(writer->GetFileSize());
 	auto marker_offset = writer->GetTotalWritten();
-	{
-		lock_guard<mutex> guard(sync_lock);
-		if (marker_offset > requested_sync_offset) {
-			requested_sync_offset = marker_offset;
-		}
-	}
+	RaiseTo(requested_sync_offset, marker_offset);
 	return marker_offset;
 }
 
 void WriteAheadLog::SyncUpTo(idx_t offset) {
+	SyncUpTo(offset, [](idx_t) {});
+}
+
+void WriteAheadLog::SyncUpTo(idx_t offset, absl::FunctionRef<void(idx_t)> on_synced) {
 	D_ASSERT(writer && offset > 0);
 	auto &db_instance = GetDatabase().GetDatabase();
 	auto fsync_sleep_ms = Settings::Get<DebugWalFsyncSleepMsSetting>(db_instance);
 	auto force_fsync_failure = Settings::Get<DebugForceWalFsyncFailureSetting>(db_instance);
-	unique_lock<mutex> guard(sync_lock);
-	// durable_offset only advances on successful syncs, so an offset it covers stays durable
-	while (durable_offset < offset) {
-		if (sync_failed) {
+	while (true) {
+		const auto lane_seen = lane_epoch.load(std::memory_order_acquire);
+		const auto durable_seen = durable_epoch.load(std::memory_order_acquire);
+		// durable_offset only advances on successful syncs, so an offset it covers stays durable
+		if (durable_offset.load(std::memory_order_acquire) >= offset) {
+			return;
+		}
+		if (sync_failed.load(std::memory_order_acquire)) {
 			throw IOException("Cannot sync WAL \"%s\": a previous sync of this WAL has failed", wal_path);
 		}
-		if ((syncs_in_flight > 0 && syncing_offset >= offset) || syncs_in_flight >= sync_lanes) {
-			const auto seen = syncs_settled;
-			auto sync_settled = [this, seen]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
-				return syncs_settled != seen;
-			};
-			sync_lock.Await(absl::Condition(&sync_settled));
+		if (syncing_offset.load(std::memory_order_acquire) >= offset) {
+			durable_epoch.wait(durable_seen, std::memory_order_acquire);
+			continue;
+		}
+		auto in_flight = syncs_in_flight.load(std::memory_order_acquire);
+		if (in_flight >= sync_lanes.load(std::memory_order_relaxed) ||
+		    !syncs_in_flight.compare_exchange_strong(in_flight, in_flight + 1, std::memory_order_acq_rel)) {
+			lane_epoch.wait(lane_seen, std::memory_order_acquire);
 			continue;
 		}
 		// sync everything flushed so far, on behalf of every waiter
-		auto target = requested_sync_offset;
-		syncs_in_flight++;
-		syncing_offset = MaxValue(syncing_offset, target);
-		guard.unlock();
+		auto target = requested_sync_offset.load(std::memory_order_acquire);
+		RaiseTo(syncing_offset, target);
 		ErrorData error;
 		try {
 			if (fsync_sleep_ms > 0) {
@@ -730,15 +735,19 @@ void WriteAheadLog::SyncUpTo(idx_t offset) {
 		} catch (std::exception &ex) {
 			error = ErrorData(ex);
 		}
-		guard.lock();
-		syncs_in_flight--;
-		syncs_settled++;
 		if (error.HasError()) {
 			// the OS may have dropped the dirty pages: this WAL must never be synced again
-			sync_failed = true;
-		} else if (!sync_failed) {
-			durable_offset = MaxValue(durable_offset, target);
+			sync_failed.store(true, std::memory_order_release);
 		}
+		syncs_in_flight.fetch_sub(1, std::memory_order_acq_rel);
+		lane_epoch.fetch_add(1, std::memory_order_release);
+		lane_epoch.notify_all();
+		if (!error.HasError() && !sync_failed.load(std::memory_order_acquire)) {
+			on_synced(target);
+			RaiseTo(durable_offset, target);
+		}
+		durable_epoch.fetch_add(1, std::memory_order_release);
+		durable_epoch.notify_all();
 		if (error.HasError()) {
 			error.Throw();
 		}
