@@ -38,6 +38,7 @@ struct ParsedGrammarRule {
 	grammar_transform_process_function_t transform_process;
 	//! See ParsedGrammar::SetTransformProcess
 	bool collapsible = false;
+	optional_idx generated_transform;
 };
 
 //! Mutable, owning representation of a PEG grammar before matcher compilation.
@@ -63,7 +64,7 @@ public:
 	//! transform clears that promise unless the caller repeats it, since it is a property of the transform.
 	DUCKDB_API void SetTransformProcess(std::string_view rule_name,
 	                                    grammar_transform_process_function_t transform_process,
-	                                    bool collapsible = false);
+	                                    bool collapsible = false, optional_idx generated_transform = optional_idx());
 	DUCKDB_API void AddTerminalRuleOverride(const string &rule_name, terminal_rule_matcher_factory_t matcher_factory);
 
 private:
@@ -88,8 +89,9 @@ private:
 //! Immutable semantic data referenced directly by matchers and parse results.
 struct CompiledGrammarRule {
 	CompiledGrammarRule(string name_p, grammar_transform_process_function_t transform_process_p,
-	                    bool collapsible_p = false)
-	    : name(std::move(name_p)), transform_process(std::move(transform_process_p)), collapsible(collapsible_p) {
+	                    bool collapsible_p = false, optional_idx generated_transform_p = optional_idx())
+	    : name(std::move(name_p)), transform_process(std::move(transform_process_p)), collapsible(collapsible_p),
+	      generated_transform(generated_transform_p) {
 	}
 
 	arena_ptr<TransformProcess> StartTransform(PEGTransformer &transformer, ParseResult &parse_result) const;
@@ -98,6 +100,7 @@ struct CompiledGrammarRule {
 	grammar_transform_process_function_t transform_process;
 	//! See ParsedGrammar::SetTransformProcess
 	bool collapsible;
+	optional_idx generated_transform;
 };
 
 } // namespace duckdb

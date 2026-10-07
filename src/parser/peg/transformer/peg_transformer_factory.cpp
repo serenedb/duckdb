@@ -116,15 +116,16 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 }
 
 PEGTransformerFactory::PEGTransformerFactory(ParsedGrammar &grammar_p) : grammar(grammar_p) {
-	for (auto &entry : GeneratedTransformFrameOps()) {
-		auto process_info = entry.second;
+	auto generated_ops = GeneratedTransformFrameOps();
+	for (idx_t i = 0; i < generated_ops.size(); i++) {
+		auto process_info = generated_ops[i].second;
 		grammar.SetTransformProcess(
-		    entry.first,
+		    generated_ops[i].first,
 		    [process_info](PEGTransformer &transformer, ParseResult &parse_result) -> arena_ptr<TransformProcess> {
 			    return transformer.MakeProcess<GeneratedTransformProcess>(transformer, TransformInput {parse_result},
 			                                                              *process_info);
 		    },
-		    process_info->collapsible);
+		    process_info->collapsible, i);
 	}
 }
 

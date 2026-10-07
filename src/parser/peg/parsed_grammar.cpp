@@ -122,10 +122,12 @@ void ParsedGrammar::ReplaceRule(const string &rule_definition, grammar_transform
 }
 
 void ParsedGrammar::SetTransformProcess(std::string_view rule_name,
-                                        grammar_transform_process_function_t transform_process, bool collapsible) {
+                                        grammar_transform_process_function_t transform_process, bool collapsible,
+                                        optional_idx generated_transform) {
 	auto &rule = GetMutableRule(rule_name);
 	rule.transform_process = std::move(transform_process);
 	rule.collapsible = collapsible;
+	rule.generated_transform = generated_transform;
 }
 
 void ParsedGrammar::AddTerminalRuleOverride(const string &rule_name, terminal_rule_matcher_factory_t matcher_factory) {

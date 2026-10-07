@@ -190,8 +190,8 @@ TransformStackFrame::TransformStackFrame(TransformInput input)
     : rule(input.GetRule()), parse_result(input.parse_result) {
 }
 
-TransformStack::TransformStack(PEGTransformer &transformer_p) : transformer(transformer_p) {
-	frames.reserve(INITIAL_FRAME_CAPACITY);
+TransformStack::TransformStack(PEGTransformer &transformer_p)
+    : transformer(transformer_p), generated_ops(PEGTransformerFactory::GeneratedTransformFrameOps()) {
 }
 
 void TransformStack::PushFrame(TransformInput input) {
@@ -220,10 +220,62 @@ arena_ptr<TransformResultValue> TransformStack::ExecuteFrame(TransformStackFrame
 	return nullptr;
 }
 
-arena_ptr<TransformResultValue> TransformStack::Execute(TransformInput input) {
+arena_ptr<TransformResultValue>
+TransformStack::FinishFrame(TransformStackFrame &frame, arena_ptr<TransformResultValue> result, idx_t &result_height) {
+	result_height = frame.height + 1;
+	if (result_height >= transformer.max_height) {
+		ParserException::ThrowMaxExpressionDepth(transformer.options.max_expression_depth);
+	}
+#ifdef DEBUG
+	transformer.VerifyResultHeight(frame.parse_result, *result, result_height);
+#endif
+	transformer.SetResultLocation(frame.parse_result, *result);
+	return result;
+}
+
+template <class PROCESS>
+arena_ptr<TransformResultValue> TransformStack::RunProcess(PROCESS &process, TransformStackFrame &frame, idx_t depth) {
+	arena_ptr<TransformResultValue> child_result;
+	while (true) {
+		transformer.running_frame = frame;
+		auto step = process.Resume(std::move(child_result));
+		auto child = step.GetChild();
+		if (!child) {
+			return step.TakeResult();
+		}
+		idx_t child_height;
+		child_result = ExecuteRecursive(*child, depth + 1, child_height);
+		frame.height = MaxValue(frame.height, child_height);
+	}
+}
+
+arena_ptr<TransformResultValue> TransformStack::ExecuteRecursive(TransformInput input, idx_t depth,
+                                                                 idx_t &result_height) {
+	if (depth >= MAX_RECURSION_DEPTH) {
+		return ExecuteFrames(input, result_height);
+	}
+	TransformStackFrame frame(input);
+	if (!frame.rule) {
+		throw InternalException("No registered data exists for rule '%s'", frame.parse_result.Name());
+	}
+	transformer.running_frame = frame;
+	arena_ptr<TransformResultValue> result;
+	auto generated_transform = frame.rule->generated_transform;
+	if (generated_transform.IsValid()) {
+		GeneratedTransformProcess process(transformer, TransformInput {frame.parse_result},
+		                                  *generated_ops[generated_transform.GetIndex()].second);
+		result = RunProcess(process, frame, depth);
+	} else {
+		auto process = frame.rule->StartTransform(transformer, frame.parse_result);
+		result = RunProcess(*process, frame, depth);
+	}
+	return FinishFrame(frame, std::move(result), result_height);
+}
+
+arena_ptr<TransformResultValue> TransformStack::ExecuteFrames(TransformInput input, idx_t &result_height) {
 	D_ASSERT(frames.empty());
-	if (!input.GetRule()) {
-		throw InternalException("No registered data exists for rule '%s'", input.parse_result.Name());
+	if (frames.capacity() == 0) {
+		frames.reserve(INITIAL_FRAME_CAPACITY);
 	}
 	PushFrame(input);
 	while (!frames.empty()) {
@@ -232,25 +284,24 @@ arena_ptr<TransformResultValue> TransformStack::Execute(TransformInput input) {
 		if (!result) {
 			continue;
 		}
-		auto result_height = frame.height + 1;
-		if (result_height >= transformer.max_height) {
-			ParserException::ThrowMaxExpressionDepth(transformer.options.max_expression_depth);
-		}
-#ifdef DEBUG
-		transformer.VerifyResultHeight(frame.parse_result, *result, result_height);
-#endif
-		transformer.SetResultLocation(frame.parse_result, *result);
+		idx_t frame_height;
+		result = FinishFrame(frame, std::move(result), frame_height);
 		frames.pop_back();
 		if (frames.empty()) {
-			height = result_height;
+			result_height = frame_height;
 			return result;
 		}
 		auto &parent = frames.back();
 		D_ASSERT(!parent.child_result);
 		parent.child_result = std::move(result);
-		parent.height = MaxValue(parent.height, result_height);
+		parent.height = MaxValue(parent.height, frame_height);
 	}
 	throw InternalException("Transformer stack completed without a result");
+}
+
+arena_ptr<TransformResultValue> TransformStack::Execute(TransformInput input) {
+	D_ASSERT(frames.empty());
+	return ExecuteRecursive(input, 0, height);
 }
 
 #ifdef DEBUG

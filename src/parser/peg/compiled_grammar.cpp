@@ -124,7 +124,8 @@ CompiledGrammar CompiledGrammar::Compile(ParsedGrammar &grammar) {
 	compiled_rules_map_t rules;
 	for (auto &entry : grammar.rules) {
 		auto &rule = *entry.second;
-		rules.emplace(rule.name, make_uniq<CompiledGrammarRule>(rule.name, rule.transform_process, rule.collapsible));
+		rules.emplace(rule.name, make_uniq<CompiledGrammarRule>(rule.name, rule.transform_process, rule.collapsible,
+		                                                        rule.generated_transform));
 	}
 
 	MatcherAllocator allocator;
