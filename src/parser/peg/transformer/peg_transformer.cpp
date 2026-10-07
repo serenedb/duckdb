@@ -173,10 +173,7 @@ GeneratedTransformProcess::~GeneratedTransformProcess() {
 	}
 }
 
-void GeneratedTransformProcess::ReserveChildSlots(idx_t count) {
-	if (count == child_results.count && count <= pending_capacity) {
-		return;
-	}
+void GeneratedTransformProcess::ResizeChildSlots(idx_t count) {
 	auto data =
 	    transformer.allocator.AllocateAligned(count * (sizeof(arena_ptr<TransformResultValue>) + sizeof(PendingChild)));
 	auto slots = reinterpret_cast<arena_ptr<TransformResultValue> *>(data);

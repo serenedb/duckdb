@@ -414,6 +414,7 @@ public:
 private:
 	[[noreturn]] DUCKDB_API void ThrowMissingResult(idx_t slot) const;
 	[[noreturn]] DUCKDB_API void ThrowUnexpectedResult(idx_t slot) const;
+	DUCKDB_API void ResizeChildSlots(idx_t count);
 
 private:
 	struct PendingChild {
@@ -665,6 +666,26 @@ private:
 	friend class FinalizeTransformProcess;
 	friend class TransformStack;
 };
+
+inline void GeneratedTransformProcess::ReserveChildSlots(idx_t count) {
+	if (count == child_results.count && count <= pending_capacity) {
+		return;
+	}
+	if (child_results.count != 0 || pending_count != 0) {
+		ResizeChildSlots(count);
+		return;
+	}
+	auto data =
+	    transformer.allocator.AllocateAligned(count * (sizeof(arena_ptr<TransformResultValue>) + sizeof(PendingChild)));
+	auto slots = reinterpret_cast<arena_ptr<TransformResultValue> *>(data);
+	for (idx_t i = 0; i < count; i++) {
+		new (slots + i) arena_ptr<TransformResultValue>();
+	}
+	child_results.slots = slots;
+	child_results.count = count;
+	pending_children = reinterpret_cast<PendingChild *>(data + count * sizeof(arena_ptr<TransformResultValue>));
+	pending_capacity = count;
+}
 
 template <typename T>
 inline unique_ptr<TypedTransformResult<T>> TryBridgeTransformResultValue(TransformResultValue &base_result) {
