@@ -46,6 +46,9 @@ void GrammarLiteralTable::Register(const string &text, keyword_categories_t cate
 		entry = literals.emplace(text, LiteralInfo(id)).first;
 	}
 	entry->second.AddCategories(categories);
+	if (text.size() == 1 && static_cast<uint8_t>(text[0]) < SINGLE_BYTE_LITERALS) {
+		single_byte_literals[static_cast<uint8_t>(StringUtil::CharacterToLower(text[0]))] = entry->second;
+	}
 }
 
 void MatcherToken::CacheLiteralInfo(const GrammarLiteralTable &table) {
