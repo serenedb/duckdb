@@ -563,6 +563,10 @@ public:
 	ArenaAllocator &GetArena() {
 		return arena;
 	}
+	void Reset() {
+		arena.Reset();
+		children.clear();
+	}
 
 	template <class RESULT, class... ARGS>
 	RESULT &Make(ARGS &&... args) {

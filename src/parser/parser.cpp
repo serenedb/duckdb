@@ -43,7 +43,9 @@ Parser::Parser(const ParserOptions &options_p) : options(options_p), depth_check
 }
 
 Parser::~Parser() = default;
-Parser::Parser(Parser &&other) noexcept = default;
+Parser::Parser(Parser &&other) noexcept
+    : statements(std::move(other.statements)), options(other.options), depth_check(std::move(other.depth_check)) {
+}
 
 ParserOptions ParserOptions::Builtin() {
 	return ParserOptions();
@@ -382,8 +384,8 @@ unique_ptr<SQLStatement> Parser::ParseTopLevelStatement(TokenIterator &token_ite
 	}
 	auto &compiled_grammar = GetGrammar();
 	idx_t height = 0;
-	auto statement =
-	    PEGTransformerFactory::TransformTopLevelStatement(token_iterator, options, compiled_grammar, height);
+	auto statement = PEGTransformerFactory::TransformTopLevelStatement(token_iterator, options, compiled_grammar,
+	                                                                   parse_results, height);
 	if (!statement) {
 		return statement;
 	}

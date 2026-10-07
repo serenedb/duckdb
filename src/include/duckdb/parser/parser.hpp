@@ -15,6 +15,7 @@
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/simplified_token.hpp"
 #include "duckdb/parser/parser_options.hpp"
+#include "duckdb/parser/peg/matcher.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
 
 namespace duckdb {
@@ -109,5 +110,6 @@ private:
 
 	ParserOptions options;
 	ExpressionDepthCheck depth_check;
+	ParseResultAllocator parse_results;
 };
 } // namespace duckdb

@@ -52,12 +52,13 @@ static unique_ptr<SQLStatement> ExtractAndTransformStatement(PEGTransformer &tra
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(TokenIterator &token_iterator,
                                                                            ParserOptions &options,
                                                                            const CompiledGrammar &grammar,
+                                                                           ParseResultAllocator &parse_result_allocator,
                                                                            idx_t &height) {
 	if (!token_iterator.Current()) {
 		return nullptr;
 	}
 	vector<MatcherSuggestion> suggestions;
-	ParseResultAllocator parse_result_allocator;
+	parse_result_allocator.Reset();
 	ParserPackratCache packrat_cache(parse_result_allocator.GetArena(), token_iterator.Position(),
 	                                 grammar.PackratSlotCount());
 	idx_t max_token_index = token_iterator.Position();
