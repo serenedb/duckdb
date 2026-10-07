@@ -139,14 +139,55 @@ static optional_idx StartOffset(const MatchState &state) {
 }
 
 MatcherResult MatchStack::MatchList(const ListMatcher &matcher, MatchState &state, idx_t depth) {
+	if (matcher.chain_core.IsValid() && state.BuildParseResult() && !matcher.suppress_suggestions) {
+		return MatchChainLevel(matcher, state, depth);
+	}
+	MatchState list_state(state);
+	return ContinueList(matcher, state, list_state, state.context.allocator.ChildCount(), 0, depth);
+}
+
+MatcherResult MatchStack::MatchChainLevel(const ListMatcher &matcher, MatchState &state, idx_t depth) {
+	auto &children = matcher.matchers;
+	auto core_index = matcher.chain_core.GetIndex();
+	for (idx_t i = 0; i < core_index; i++) {
+		if (!IsEmptyOptional(children[i], state)) {
+			MatchState list_state(state);
+			return ContinueList(matcher, state, list_state, state.context.allocator.ChildCount(), 0, depth);
+		}
+	}
+	MatchState list_state(state);
+	auto core_result = MatchChild(children[core_index], list_state, depth);
+	if (!core_result.IsSuccess()) {
+		return MatcherResult::Failure();
+	}
+	auto end = core_index + 1;
+	while (end < children.size() && IsEmptyOptional(children[end], list_state)) {
+		end++;
+	}
+	if (end == children.size() && core_result.HasParseResult() && core_result.GetParseResult()->GetRule()) {
+		state.token_iterator.SetPosition(list_state.token_iterator);
+		core_result.GetParseResult()->collapsed = true;
+		return core_result;
+	}
+	auto &allocator = state.context.allocator;
+	auto children_begin = allocator.ChildCount();
+	for (idx_t i = 0; i < end; i++) {
+		auto child_result = i == core_index ? core_result : EmptyOptional(children[i], list_state);
+		if (child_result.HasParseResult()) {
+			allocator.PushChild(*child_result.GetParseResult());
+		}
+	}
+	return ContinueList(matcher, state, list_state, children_begin, end, depth);
+}
+
+MatcherResult MatchStack::ContinueList(const ListMatcher &matcher, MatchState &state, MatchState &list_state,
+                                       idx_t children_begin, idx_t next_child, idx_t depth) {
 	auto &allocator = state.context.allocator;
 	auto &suggestions = state.context.suggestions;
-	MatchState list_state(state);
-	auto children_begin = allocator.ChildCount();
 	auto saved_suggestion_size = matcher.suppress_suggestions ? suggestions.size() : 0;
-	auto start_offset = StartOffset(list_state);
-	for (auto &entry : matcher.matchers) {
-		auto &child = entry.get();
+	auto start_offset = StartOffset(state);
+	for (idx_t i = next_child; i < matcher.matchers.size(); i++) {
+		auto &child = matcher.matchers[i].get();
 		auto current = list_state.token_iterator.Current();
 		if (current && current->type == TokenType::END_OF_INPUT_AUTOCOMPLETE) {
 			if (matcher.suppress_suggestions) {

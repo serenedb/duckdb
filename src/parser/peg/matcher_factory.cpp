@@ -115,6 +115,21 @@ optional_ptr<const CompiledGrammarRule> MatcherFactory::GetRule(const string &ru
 	return *entry->second;
 }
 
+static optional_idx FindChainCore(const ListMatcher &matcher) {
+	optional_idx core;
+	for (idx_t i = 0; i < matcher.matchers.size(); i++) {
+		auto &child = matcher.matchers[i].get();
+		if (child.Type() == MatcherType::OPTIONAL && child.HasBuiltInMatch()) {
+			continue;
+		}
+		if (core.IsValid()) {
+			return optional_idx();
+		}
+		core = optional_idx(i);
+	}
+	return core;
+}
+
 Matcher &MatcherFactory::CreateMatcher(string_t rule_name, vector<reference<Matcher>> &parameters) {
 	bool is_function_call = !parameters.empty();
 	auto matcher_entry = matchers.find(rule_name);
@@ -171,6 +186,7 @@ Matcher &MatcherFactory::CreateMatcher(string_t rule_name, vector<reference<Matc
 		if (rule.expression.type == PEGExpression::Type::CHOICE) {
 			expression_matcher.SetCollapsible();
 		}
+		matcher.chain_core = FindChainCore(matcher);
 	}
 	if (no_suggestion_rules.count(rule_name)) {
 		matcher.Cast<ListMatcher>().suppress_suggestions = true;

@@ -63,6 +63,9 @@ private:
 	MatcherResult Match(const Matcher &matcher, MatchState &state, idx_t depth);
 	MatcherResult MatchComposite(const Matcher &matcher, MatchState &state, idx_t depth);
 	MatcherResult MatchList(const ListMatcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchChainLevel(const ListMatcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult ContinueList(const ListMatcher &matcher, MatchState &state, MatchState &list_state,
+	                           idx_t children_begin, idx_t next_child, idx_t depth);
 	MatcherResult MatchChoice(const ChoiceMatcher &matcher, MatchState &state, idx_t depth);
 	MatcherResult MatchOptional(const OptionalMatcher &matcher, MatchState &state, idx_t depth);
 	MatcherResult MatchRepeat(const RepeatMatcher &matcher, MatchState &state, idx_t depth);
