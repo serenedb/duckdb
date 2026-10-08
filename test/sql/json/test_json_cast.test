@@ -3,12 +3,12 @@
 
 require json
 
-# Types that cannot roundtrip through JSON
-statement error
+query I
 SELECT '1010'::BIT(4)::JSON::BIT(4)
 ----
-Not implemented Error: Cannot read a value of type BIT from a json file
+1010
 
+# Types that cannot roundtrip through JSON
 statement error
 SELECT 1::BIGNUM::JSON::BIGNUM
 ----
