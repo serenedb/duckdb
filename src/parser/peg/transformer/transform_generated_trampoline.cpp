@@ -116,6 +116,15 @@ static const TransformFrameOps RESET_OPTIONS_OPS = {"ResetOptions",
 static const TransformFrameOps ALTER_COLUMN_ENTRY_OPS = {
     "AlterColumnEntry", &PEGTransformerFactory::InitializeAlterColumnEntryTrampoline,
     &PEGTransformerFactory::FinalizeAlterColumnEntryTrampoline, true};
+static const TransformFrameOps SET_COMPRESSION_OPS = {"SetCompression",
+                                                      &PEGTransformerFactory::InitializeSetCompressionTrampoline,
+                                                      &PEGTransformerFactory::FinalizeSetCompressionTrampoline, true};
+static const TransformFrameOps SET_COMPRESSION_DEFAULT_OPS = {
+    "SetCompressionDefault", &PEGTransformerFactory::InitializeSetCompressionDefaultTrampoline,
+    &PEGTransformerFactory::FinalizeSetCompressionDefaultTrampoline};
+static const TransformFrameOps SET_COMPRESSION_CODEC_OPS = {
+    "SetCompressionCodec", &PEGTransformerFactory::InitializeSetCompressionCodecTrampoline,
+    &PEGTransformerFactory::FinalizeSetCompressionCodecTrampoline};
 static const TransformFrameOps ADD_OR_DROP_DEFAULT_OPS = {
     "AddOrDropDefault", &PEGTransformerFactory::InitializeAddOrDropDefaultTrampoline,
     &PEGTransformerFactory::FinalizeAddOrDropDefaultTrampoline, true};
@@ -3558,6 +3567,9 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"SetOptions", &SET_OPTIONS_OPS},
 	    {"ResetOptions", &RESET_OPTIONS_OPS},
 	    {"AlterColumnEntry", &ALTER_COLUMN_ENTRY_OPS},
+	    {"SetCompression", &SET_COMPRESSION_OPS},
+	    {"SetCompressionDefault", &SET_COMPRESSION_DEFAULT_OPS},
+	    {"SetCompressionCodec", &SET_COMPRESSION_CODEC_OPS},
 	    {"AddOrDropDefault", &ADD_OR_DROP_DEFAULT_OPS},
 	    {"AddDefault", &ADD_DEFAULT_OPS},
 	    {"DropDefault", &DROP_DEFAULT_OPS},
@@ -5410,6 +5422,82 @@ arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizeAlterColumnEntryTrampoline(PEGTransformer &transformer,
                                                           GeneratedTransformProcess &process) {
 	auto result = process.TakeResult<unique_ptr<AlterTableInfo>>(0);
+	return transformer.MakeResult<unique_ptr<AlterTableInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeSetCompressionTrampoline(PEGTransformer &transformer,
+                                                               GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto &choice_result = choice_pr.GetResult();
+	process.ReserveChildSlots(1);
+	auto child_rule = choice_result.GetRule();
+	auto has_transform_process = child_rule && child_rule->transform_process;
+	if (!has_transform_process) {
+		throw InternalException("No transform process registered for rule '%s'", choice_result.Name());
+	}
+	process.PushChild({*child_rule, choice_result}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeSetCompressionTrampoline(PEGTransformer &transformer,
+                                                        GeneratedTransformProcess &process) {
+	auto result = process.TakeResult<unique_ptr<AlterTableInfo>>(0);
+	return transformer.MakeResult<unique_ptr<AlterTableInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeSetCompressionDefaultTrampoline(PEGTransformer &transformer,
+                                                                      GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeSetCompressionDefaultTrampoline(PEGTransformer &transformer,
+                                                               GeneratedTransformProcess &process) {
+	auto result = TransformSetCompressionDefault(transformer);
+	return transformer.MakeResult<unique_ptr<AlterTableInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeSetCompressionCodecTrampoline(PEGTransformer &transformer,
+                                                                    GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto &list_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	idx_t dynamic_child_count = 0;
+	if (list_opt.HasResult()) {
+		auto list_items = ExtractParseResultsFromList(ExtractResultFromParens(list_opt.GetResult()));
+		dynamic_child_count = list_items.size();
+		process.ReserveChildSlots(2 + dynamic_child_count - 1);
+		for (idx_t i = list_items.size(); i > 0; i--) {
+			auto child_idx = i - 1;
+			process.PushChild({list_items[child_idx].get()}, 1 + child_idx);
+		}
+	} else {
+		process.ReserveChildSlots(2 - 1);
+	}
+	process.PushChild({list_pr.GetChild(2)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeSetCompressionCodecTrampoline(PEGTransformer &transformer,
+                                                             GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	idx_t dynamic_child_count = 0;
+	auto &dynamic_list_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	if (dynamic_list_opt.HasResult()) {
+		auto dynamic_list_items = ExtractParseResultsFromList(ExtractResultFromParens(dynamic_list_opt.GetResult()));
+		dynamic_child_count = dynamic_list_items.size();
+	}
+	auto col_id_or_string = process.TakeResult<Identifier>(0);
+	optional<vector<unique_ptr<ParsedExpression>>> expression {};
+	auto &expression_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	if (expression_opt.HasResult()) {
+		vector<unique_ptr<ParsedExpression>> expression_value;
+		for (idx_t i = 1; i < 1 + dynamic_child_count; i++) {
+			expression_value.push_back(process.TakeResult<unique_ptr<ParsedExpression>>(i));
+		}
+		expression = std::move(expression_value);
+	}
+	auto result = TransformSetCompressionCodec(transformer, col_id_or_string, std::move(expression));
 	return transformer.MakeResult<unique_ptr<AlterTableInfo>>(std::move(result));
 }
 
@@ -11539,15 +11627,43 @@ PEGTransformerFactory::FinalizeColumnCollationTrampoline(PEGTransformer &transfo
 void PEGTransformerFactory::InitializeColumnCompressionTrampoline(PEGTransformer &transformer,
                                                                   GeneratedTransformProcess &process) {
 	auto &list_pr = process.parse_result.Cast<ListParseResult>();
-	process.ReserveChildSlots(1);
+	auto &list_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	idx_t dynamic_child_count = 0;
+	if (list_opt.HasResult()) {
+		auto list_items = ExtractParseResultsFromList(ExtractResultFromParens(list_opt.GetResult()));
+		dynamic_child_count = list_items.size();
+		process.ReserveChildSlots(2 + dynamic_child_count - 1);
+		for (idx_t i = list_items.size(); i > 0; i--) {
+			auto child_idx = i - 1;
+			process.PushChild({list_items[child_idx].get()}, 1 + child_idx);
+		}
+	} else {
+		process.ReserveChildSlots(2 - 1);
+	}
 	process.PushChild({list_pr.GetChild(2)}, 0);
 }
 
 arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizeColumnCompressionTrampoline(PEGTransformer &transformer,
                                                            GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	idx_t dynamic_child_count = 0;
+	auto &dynamic_list_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	if (dynamic_list_opt.HasResult()) {
+		auto dynamic_list_items = ExtractParseResultsFromList(ExtractResultFromParens(dynamic_list_opt.GetResult()));
+		dynamic_child_count = dynamic_list_items.size();
+	}
 	auto col_id_or_string = process.TakeResult<Identifier>(0);
-	auto result = TransformColumnCompression(transformer, col_id_or_string);
+	optional<vector<unique_ptr<ParsedExpression>>> expression {};
+	auto &expression_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	if (expression_opt.HasResult()) {
+		vector<unique_ptr<ParsedExpression>> expression_value;
+		for (idx_t i = 1; i < 1 + dynamic_child_count; i++) {
+			expression_value.push_back(process.TakeResult<unique_ptr<ParsedExpression>>(i));
+		}
+		expression = std::move(expression_value);
+	}
+	auto result = TransformColumnCompression(transformer, col_id_or_string, std::move(expression));
 	return transformer.MakeResult<ColumnConstraintEntry>(std::move(result));
 }
 
