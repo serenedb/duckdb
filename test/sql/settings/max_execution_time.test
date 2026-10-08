@@ -158,6 +158,12 @@ SELECT DISTINCT i FROM range(50000000) t(i)
 ----
 Query exceeded maximum execution time
 
+# sleep_ms wakes up before its full duration once the deadline passes
+statement error
+SELECT sleep_ms(5000)
+----
+Query exceeded maximum execution time
+
 statement ok
 RESET max_execution_time
 
