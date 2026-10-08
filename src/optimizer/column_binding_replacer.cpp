@@ -17,17 +17,19 @@ ReplacementBinding::ReplacementBinding(ColumnBinding old_binding, ColumnBinding 
     : old_binding(old_binding), new_binding(new_binding), replace_type(true), new_type(std::move(new_type)) {
 }
 
+optional_ptr<const ReplacementBinding> BindingReplacementGraph::Find(ColumnBinding old_binding) const {
+	auto entry = replacement_positions.find(old_binding);
+	if (entry == replacement_positions.end()) {
+		return nullptr;
+	}
+	return replacement_bindings[entry->second];
+}
+
 ReplacementBinding BindingReplacementGraph::ResolveReplacement(ColumnBinding binding) const {
 	ReplacementBinding result(binding, binding);
 	column_binding_set_t visited;
 	while (visited.insert(result.new_binding).second) {
-		optional_ptr<const ReplacementBinding> replacement;
-		for (auto &entry : replacement_bindings) {
-			if (entry.old_binding == result.new_binding) {
-				replacement = entry;
-				break;
-			}
-		}
+		auto replacement = Find(result.new_binding);
 		if (!replacement) {
 			return result;
 		}
@@ -56,10 +58,9 @@ bool BindingReplacementGraph::TryAdd(const ReplacementBinding &replacement) {
 		}
 		return true;
 	}
-	for (auto &existing : replacement_bindings) {
-		if (existing.old_binding != replacement.old_binding) {
-			continue;
-		}
+	auto position = replacement_positions.emplace(replacement.old_binding, replacement_bindings.size());
+	if (!position.second) {
+		auto &existing = replacement_bindings[position.first->second];
 		if (existing.new_binding != replacement.new_binding ||
 		    (existing.replace_type && replacement.replace_type && existing.new_type != replacement.new_type)) {
 			return false;
@@ -259,16 +260,6 @@ void ColumnBindingRewrite::ApplyToOperatorBindings(LogicalOperator &op, const Bi
 	replacer.VisitOperatorBindings(op);
 }
 
-static optional_ptr<const ReplacementBinding> FindReplacement(const BindingReplacementGraph &replacements,
-                                                              ColumnBinding binding) {
-	for (auto &replacement : replacements) {
-		if (replacement.old_binding == binding) {
-			return replacement;
-		}
-	}
-	return nullptr;
-}
-
 static bool TryResolveToOutput(ColumnBinding binding, const column_binding_set_t &new_bindings,
                                const BindingReplacementGraph &replacements, ReplacementBinding &result) {
 	result = ReplacementBinding(binding, binding);
@@ -277,7 +268,7 @@ static bool TryResolveToOutput(ColumnBinding binding, const column_binding_set_t
 		if (!visited.insert(result.new_binding).second) {
 			throw InternalException("Cyclic column binding replacements");
 		}
-		auto next = FindReplacement(replacements, result.new_binding);
+		auto next = replacements.Find(result.new_binding);
 		if (!next) {
 			return false;
 		}
@@ -322,16 +313,6 @@ void ColumnBindingRewrite::ValidateOutput(const vector<ColumnBinding> &old_outpu
 	}
 }
 
-static ReplacementBinding ResolveBoundaryReplacement(ColumnBinding binding,
-                                                     const vector<ReplacementBinding> &replacements) {
-	for (auto &replacement : replacements) {
-		if (replacement.old_binding == binding) {
-			return replacement;
-		}
-	}
-	return ReplacementBinding(binding, binding);
-}
-
 void ColumnBindingRewrite::RewriteChild(
     unique_ptr<LogicalOperator> &op, idx_t child_index,
     const std::function<void(unique_ptr<LogicalOperator> &, BindingReplacementGraph &)> &rewrite) {
@@ -368,15 +349,15 @@ void ColumnBindingRewrite::ApplyToChild(unique_ptr<LogicalOperator> &op, idx_t c
 	column_binding_set_t new_bindings(new_child_bindings.begin(), new_child_bindings.end());
 	auto original_child_bindings = old_child_bindings;
 	for (auto &binding : old_child_bindings) {
-		if (new_bindings.find(binding) == new_bindings.end() && FindReplacement(replacements, binding)) {
-			ReplacementBinding resolved(binding, binding);
-			if (!TryResolveToOutput(binding, new_bindings, replacements, resolved)) {
-				throw InternalException("Binding rewrite moved child binding %s outside rewritten child output %s",
-				                        binding.ToString(),
-				                        LogicalOperator::ColumnBindingsToString(new_child_bindings));
-			}
+		if (new_bindings.find(binding) != new_bindings.end() || !replacements.Find(binding)) {
+			continue;
 		}
-		binding = ResolveBoundaryReplacement(binding, boundary_replacements).new_binding;
+		ReplacementBinding resolved(binding, binding);
+		if (!TryResolveToOutput(binding, new_bindings, replacements, resolved)) {
+			throw InternalException("Binding rewrite moved child binding %s outside rewritten child output %s",
+			                        binding.ToString(), LogicalOperator::ColumnBindingsToString(new_child_bindings));
+		}
+		binding = resolved.new_binding;
 	}
 	if (op->HasProjectionMap()) {
 		auto projection_map = LogicalOperatorVisitor::GetProjectionMap(*op, child_index);
