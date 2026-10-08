@@ -25,6 +25,7 @@ struct SequenceValue {
 	SequenceCatalogEntry *entry;
 	uint64_t usage_count;
 	int64_t counter;
+	optional<int64_t> last_value;
 };
 
 struct SequenceSessionValue {
@@ -33,6 +34,7 @@ struct SequenceSessionValue {
 	int64_t increment = 0;
 	uint64_t usage_count = 0;
 	int64_t counter = 0;
+	optional<int64_t> block_last;
 	optional<int64_t> last;
 };
 
@@ -78,6 +80,7 @@ struct SequenceState {
 	SequenceData data;
 	uint64_t reserved_usage_count;
 	int64_t reserved_counter;
+	optional<int64_t> reserved_last_value;
 	shared_ptr<WriteAheadLog> reserved_log;
 	idx_t reserved_offset = 0;
 	uint64_t durable_usage_count;
@@ -132,8 +135,9 @@ private:
 	void Fetch(SequenceSessionValue &cached, idx_t needed);
 	void FetchLocked(SequenceSessionValue &cached, idx_t needed);
 	void FinishAppend();
-	void RaiseReserved(uint64_t usage_count, int64_t counter, shared_ptr<WriteAheadLog> log, idx_t offset);
-	void RaiseDurable(uint64_t usage_count, int64_t counter);
+	void RaiseReserved(uint64_t usage_count, int64_t counter, optional<int64_t> last_value,
+	                   shared_ptr<WriteAheadLog> log, idx_t offset);
+	void RaiseDurable(uint64_t usage_count, int64_t counter, optional<int64_t> last_value);
 	void AppendReservation(const SequenceData &target, bool wait);
 	void MakeDurable(unique_lock<mutex> &seqlock, const SequenceData &target);
 

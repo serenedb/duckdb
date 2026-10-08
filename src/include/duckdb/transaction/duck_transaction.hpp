@@ -99,7 +99,7 @@ public:
 
 	void PushDelete(DuckTableEntry &table_entry, RowVersionManager &info, idx_t vector_idx, row_t rows[], idx_t count,
 	                idx_t base_row);
-	void PushSequenceUsage(SequenceCatalogEntry &entry, uint64_t usage_count, int64_t counter);
+	void PushSequenceUsage(const SequenceValue &value);
 	bool HasLoggedSequenceUsage();
 	void CoverSequenceUsage();
 	vector<SequenceValue> ReserveSequenceUsage(WriteAheadLog &catalog_log);

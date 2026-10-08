@@ -33,7 +33,7 @@ SequenceData::SequenceData(CreateSequenceInfo &info)
 
 SequenceState::SequenceState(const SequenceData &data_p)
     : data(data_p), reserved_usage_count(data.usage_count), reserved_counter(data.counter),
-      durable_usage_count(data.usage_count), durable_counter(data.counter) {
+      reserved_last_value(data.last_value), durable_usage_count(data.usage_count), durable_counter(data.counter) {
 }
 
 SequenceCatalogEntry::SequenceCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateSequenceInfo &info)
@@ -143,7 +143,7 @@ SequenceData SequenceCatalogEntry::GetData() const {
 
 SequenceValue SequenceCatalogEntry::GetReservedValue() {
 	lock_guard<mutex> seqlock(state->lock);
-	return SequenceValue {this, state->reserved_usage_count, state->reserved_counter};
+	return SequenceValue {this, state->reserved_usage_count, state->reserved_counter, state->reserved_last_value};
 }
 
 bool SequenceCatalogEntry::Committed() const {
@@ -166,6 +166,7 @@ static SequenceData LogAhead(SequenceData data, idx_t steps) {
 		    TryAddOperator::Operation(last, data.increment, next)) {
 			data.counter = next;
 			data.usage_count += steps;
+			data.last_value = last;
 			return data;
 		}
 		auto increment = hugeint_t(data.increment);
@@ -184,9 +185,13 @@ static SequenceData LogAhead(SequenceData data, idx_t steps) {
 		auto taken = MinValue<hugeint_t>(available, Hugeint::Convert(steps));
 		data.counter = Hugeint::Cast<int64_t>(counter + taken * increment);
 		data.usage_count += Hugeint::Cast<uint64_t>(taken);
+		if (taken > 0) {
+			data.last_value = Hugeint::Cast<int64_t>(counter + (taken - 1) * increment);
+		}
 		return data;
 	}
 	for (idx_t i = 0; i < steps; i++) {
+		data.last_value = data.counter;
 		int64_t next;
 		if (!TryAddOperator::Operation(data.counter, data.increment, next)) {
 			next = data.increment < 0 ? data.max_value : data.min_value;
@@ -218,21 +223,23 @@ SequenceData SequenceCatalogEntry::Reserved() const {
 	auto result = state->data;
 	result.usage_count = state->reserved_usage_count;
 	result.counter = state->reserved_counter;
+	result.last_value = state->reserved_last_value;
 	return result;
 }
 
-void SequenceCatalogEntry::RaiseReserved(uint64_t usage_count, int64_t counter, shared_ptr<WriteAheadLog> log,
-                                         idx_t offset) {
+void SequenceCatalogEntry::RaiseReserved(uint64_t usage_count, int64_t counter, optional<int64_t> last_value,
+                                         shared_ptr<WriteAheadLog> log, idx_t offset) {
 	if (usage_count > state->reserved_usage_count) {
 		state->reserved_usage_count = usage_count;
 		state->reserved_counter = counter;
+		state->reserved_last_value = last_value;
 		state->reserved_log = std::move(log);
 		state->reserved_offset = offset;
 	}
 }
 
-void SequenceCatalogEntry::RaiseDurable(uint64_t usage_count, int64_t counter) {
-	RaiseReserved(usage_count, counter, nullptr, 0);
+void SequenceCatalogEntry::RaiseDurable(uint64_t usage_count, int64_t counter, optional<int64_t> last_value) {
+	RaiseReserved(usage_count, counter, last_value, nullptr, 0);
 	if (usage_count > state->durable_usage_count) {
 		state->durable_usage_count = usage_count;
 		state->durable_counter = counter;
@@ -252,10 +259,10 @@ void SequenceCatalogEntry::AppendReservation(const SequenceData &target, bool wa
 			throw InternalException("Sequence %s advanced without a catalog log", name);
 		}
 		log->WriteUseCatalog(catalog.GetAttached().oid);
-		log->WriteSequenceValue(SequenceValue {this, target.usage_count, target.counter});
+		log->WriteSequenceValue(SequenceValue {this, target.usage_count, target.counter, target.last_value});
 		offset = log->FlushMarker();
 		lock_guard<mutex> seqlock(state->lock);
-		RaiseReserved(target.usage_count, target.counter, log, offset);
+		RaiseReserved(target.usage_count, target.counter, target.last_value, log, offset);
 	}
 	if (wait) {
 		log->SyncUpTo(offset);
@@ -276,7 +283,7 @@ void SequenceCatalogEntry::MakeDurable(unique_lock<mutex> &seqlock, const Sequen
 		throw;
 	}
 	seqlock.lock();
-	RaiseDurable(target.usage_count, target.counter);
+	RaiseDurable(target.usage_count, target.counter, target.last_value);
 	state->logging = false;
 }
 
@@ -290,7 +297,7 @@ void SequenceCatalogEntry::Cover(uint64_t usage_count) {
 			seqlock.unlock();
 			log->SyncUpTo(offset);
 			seqlock.lock();
-			RaiseDurable(target.usage_count, target.counter);
+			RaiseDurable(target.usage_count, target.counter, target.last_value);
 			continue;
 		}
 		if (state->logging) {
@@ -313,7 +320,7 @@ void SequenceCatalogEntry::Cover(uint64_t usage_count) {
 			throw;
 		}
 		seqlock.lock();
-		RaiseDurable(target.usage_count, target.counter);
+		RaiseDurable(target.usage_count, target.counter, target.last_value);
 		state->logging = false;
 	}
 }
@@ -329,19 +336,19 @@ void SequenceCatalogEntry::ReserveInCommit(WriteAheadLog &catalog_log, uint64_t 
 	seqlock.unlock();
 	if (append) {
 		catalog_log.WriteUseCatalog(catalog.GetAttached().oid);
-		catalog_log.WriteSequenceValue(SequenceValue {this, target.usage_count, target.counter});
+		catalog_log.WriteSequenceValue(SequenceValue {this, target.usage_count, target.counter, target.last_value});
 	}
-	durable_after.push_back(SequenceValue {this, target.usage_count, target.counter});
+	durable_after.push_back(SequenceValue {this, target.usage_count, target.counter, target.last_value});
 }
 
 void SequenceCatalogEntry::MarkReserved(const SequenceValue &value) {
 	lock_guard<mutex> seqlock(state->lock);
-	RaiseReserved(value.usage_count, value.counter, nullptr, 0);
+	RaiseReserved(value.usage_count, value.counter, value.last_value, nullptr, 0);
 }
 
 void SequenceCatalogEntry::MarkDurable(const SequenceValue &value) {
 	lock_guard<mutex> seqlock(state->lock);
-	RaiseDurable(value.usage_count, value.counter);
+	RaiseDurable(value.usage_count, value.counter, value.last_value);
 }
 
 void SequenceCatalogEntry::Fetch(SequenceSessionValue &cached, idx_t needed) {
@@ -415,6 +422,7 @@ void SequenceCatalogEntry::FetchLocked(SequenceSessionValue &cached, idx_t neede
 	cached.increment = data.increment;
 	cached.usage_count = data.usage_count;
 	cached.counter = data.counter;
+	cached.block_last = data.last_value;
 }
 
 int64_t SequenceCatalogEntry::CurrentValue(SequenceSession &session) {
@@ -447,7 +455,7 @@ int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction, SequenceSe
 	}
 	session_value.last = result;
 	if (!temporary) {
-		transaction.PushSequenceUsage(*this, cached.usage_count, cached.counter);
+		transaction.PushSequenceUsage(SequenceValue {this, cached.usage_count, cached.counter, cached.block_last});
 	}
 	return result;
 }
@@ -480,7 +488,7 @@ void SequenceCatalogEntry::NextValues(DuckTransaction &transaction, SequenceSess
 		}
 	}
 	if (!temporary) {
-		transaction.PushSequenceUsage(*this, cached.usage_count, cached.counter);
+		transaction.PushSequenceUsage(SequenceValue {this, cached.usage_count, cached.counter, cached.block_last});
 	}
 }
 
@@ -531,7 +539,7 @@ int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t val
 		return value;
 	}
 	if (!temporary) {
-		transaction.PushSequenceUsage(*this, data.usage_count, data.counter);
+		transaction.PushSequenceUsage(SequenceValue {this, data.usage_count, data.counter, data.last_value});
 	}
 	return value;
 }
@@ -563,7 +571,7 @@ int64_t SequenceCatalogEntry::NextValues(DuckTransaction &transaction, idx_t cou
 				    Hugeint::Cast<int64_t>(hugeint_t(base) + hugeint_t(count) * hugeint_t(data.increment));
 			}
 			if (!temporary) {
-				transaction.PushSequenceUsage(*this, data.usage_count, data.counter);
+				transaction.PushSequenceUsage(SequenceValue {this, data.usage_count, data.counter, data.last_value});
 			}
 			return base;
 		}
@@ -595,7 +603,7 @@ int64_t SequenceCatalogEntry::NextValues(DuckTransaction &transaction, idx_t cou
 	data.last_value = result;
 	data.usage_count += count;
 	if (!temporary) {
-		transaction.PushSequenceUsage(*this, data.usage_count, data.counter);
+		transaction.PushSequenceUsage(SequenceValue {this, data.usage_count, data.counter, data.last_value});
 	}
 	return base;
 }
@@ -606,7 +614,7 @@ void SequenceCatalogEntry::ReplayValue(uint64_t v_usage_count, int64_t v_counter
 		data.usage_count = v_usage_count;
 		data.counter = v_counter;
 		data.last_value = last_value;
-		RaiseDurable(v_usage_count, v_counter);
+		RaiseDurable(v_usage_count, v_counter, last_value);
 	}
 }
 
