@@ -585,10 +585,18 @@ FilterPushdownResult FilterCombiner::TryPushdownLikeFilter(TableFilterSet &table
 	}
 	string prefix;
 	bool equality = true;
-	for (char const &c : like_string) {
+	for (idx_t i = 0; i < like_string.size(); i++) {
+		const char c = like_string[i];
 		if (c == '%' || c == '_') {
 			equality = false;
 			break;
+		}
+		if (c == '\\') {
+			if (++i == like_string.size()) {
+				return FilterPushdownResult::NO_PUSHDOWN;
+			}
+			prefix += like_string[i];
+			continue;
 		}
 		prefix += c;
 	}
