@@ -5,12 +5,14 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/operator/add.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parallel/meta_pipeline.hpp"
 #include "duckdb/parallel/pipeline.hpp"
 #include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
+#include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/transaction/transaction.hpp"
@@ -136,6 +138,35 @@ static bool QualifyUserTypes(LogicalType &type, const unordered_map<idx_t, Quali
 	}
 }
 
+static string SequenceSetval(const CreateSequenceInfo &info, const QualifiedName &name) {
+	if (info.usage_count == 0) {
+		return string();
+	}
+	auto counter = info.start_value;
+	int64_t value;
+	bool is_called = true;
+	bool last_is_current = false;
+	if (info.last_value) {
+		int64_t next;
+		bool next_known = TryAddOperator::Operation(*info.last_value, info.increment, next);
+		if (info.cycle && (!next_known || next < info.min_value || next > info.max_value)) {
+			next = info.increment > 0 ? info.min_value : info.max_value;
+			next_known = true;
+		}
+		last_is_current = next_known && next == counter;
+	}
+	if (last_is_current) {
+		value = *info.last_value;
+	} else if (counter >= info.min_value && counter <= info.max_value) {
+		value = counter;
+		is_called = false;
+	} else {
+		value = info.increment > 0 ? info.max_value : info.min_value;
+	}
+	return "SELECT setval(" + KeywordHelper::WriteQuoted(name.ToString()) + ", " + to_string(value) + ", " +
+	       (is_called ? "true" : "false") + ");\n";
+}
+
 static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entries,
                                 const reference_set_t<CatalogEntry> &skip) {
 	unordered_map<idx_t, QualifiedName> user_types;
@@ -171,6 +202,14 @@ static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entrie
 				}
 			}
 		}
+		string setval;
+		if (create_info->type == CatalogType::SEQUENCE_ENTRY) {
+			auto &sequence = create_info->Cast<CreateSequenceInfo>();
+			setval = SequenceSetval(sequence, QualifiedName(entry.get().ParentSchemaPath(), entry.get().name));
+			if (sequence.recorded_start) {
+				sequence.start_value = *sequence.recorded_start;
+			}
+		}
 		try {
 			// the catalog is implied by the database the export is imported into - keep only the schema path
 			create_info->StripCatalogQualification();
@@ -180,6 +219,7 @@ static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entrie
 			ss << entry.get().ToSQL();
 		}
 		ss << '\n';
+		ss << setval;
 		WriteComments(ss, entry.get());
 	}
 	ss << '\n';
