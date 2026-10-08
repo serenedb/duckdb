@@ -1359,6 +1359,8 @@ void WriteAheadLogDeserializer::ReplayDropTrigger() {
 	auto entry = WALDropTrigger::Deserialize(deserializer);
 	DropInfo info;
 	info.type = CatalogType::TRIGGER_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
 	auto table_name = std::move(entry.table);
 	info.SetQualifiedName(ReplayEntryName(catalog, entry.qualified_name));
 	if (DeserializeOnly()) {
@@ -1370,10 +1372,13 @@ void WriteAheadLogDeserializer::ReplayDropTrigger() {
 	}
 	ReplayDropTarget(catalog, context, entry.oid, info);
 	// the trigger lives in the same (possibly nested) schema as its base table
-	auto &table =
-	    Catalog::GetEntry<TableCatalogEntry>(context, info.GetQualifiedName().WithName(std::move(table_name)));
+	auto table = Catalog::GetEntry<TableCatalogEntry>(context, info.GetQualifiedName().WithName(std::move(table_name)),
+	                                                  info.if_not_found);
+	if (!table) {
+		return;
+	}
 	auto transaction = catalog.GetCatalogTransaction(context);
-	table.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade);
+	table->DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade);
 }
 
 void WriteAheadLogDeserializer::ReplayCreateTokenizer() {
