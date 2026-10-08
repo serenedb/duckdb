@@ -3,11 +3,16 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parallel/meta_pipeline.hpp"
 #include "duckdb/parallel/pipeline.hpp"
+#include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/parser/parsed_data/create_macro_info.hpp"
+#include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/transaction/transaction.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
@@ -69,13 +74,103 @@ static void WriteComments(stringstream &ss, CatalogEntry &entry) {
 	}
 }
 
+static bool QualifyUserTypes(LogicalType &type, const unordered_map<idx_t, QualifiedName> &user_types,
+                             bool nested_only = false) {
+	if (!nested_only && type.HasExtensionInfo()) {
+		auto &properties = type.GetExtensionInfo()->properties;
+		auto oid = properties.find(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
+		if (oid != properties.end()) {
+			auto user_type = user_types.find(oid->second.GetValue<idx_t>());
+			if (user_type != user_types.end()) {
+				type = LogicalType::UNBOUND(
+				    make_uniq<TypeExpression>(user_type->second, vector<unique_ptr<ParsedExpression>>()));
+				return true;
+			}
+		}
+	}
+	switch (type.id()) {
+	case LogicalTypeId::LIST: {
+		auto child = ListType::GetChildType(type);
+		if (!QualifyUserTypes(child, user_types)) {
+			return false;
+		}
+		type = LogicalType::LIST(child);
+		return true;
+	}
+	case LogicalTypeId::ARRAY: {
+		auto child = ArrayType::GetChildType(type);
+		if (!QualifyUserTypes(child, user_types)) {
+			return false;
+		}
+		type = LogicalType::ARRAY(child, ArrayType::GetSize(type));
+		return true;
+	}
+	case LogicalTypeId::MAP: {
+		auto key = MapType::KeyType(type);
+		auto value = MapType::ValueType(type);
+		auto changed = QualifyUserTypes(key, user_types);
+		changed = QualifyUserTypes(value, user_types) || changed;
+		if (!changed) {
+			return false;
+		}
+		type = LogicalType::MAP(std::move(key), std::move(value));
+		return true;
+	}
+	case LogicalTypeId::STRUCT: {
+		if (type.HasAlias()) {
+			return false;
+		}
+		auto children = StructType::GetChildTypes(type);
+		bool changed = false;
+		for (auto &child : children) {
+			changed = QualifyUserTypes(child.second, user_types) || changed;
+		}
+		if (!changed) {
+			return false;
+		}
+		type = LogicalType::STRUCT(std::move(children));
+		return true;
+	}
+	default:
+		return false;
+	}
+}
+
 static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entries,
                                 const reference_set_t<CatalogEntry> &skip) {
+	unordered_map<idx_t, QualifiedName> user_types;
+	for (auto &entry : entries) {
+		if (entry.get().type == CatalogType::TYPE_ENTRY && !entry.get().internal) {
+			user_types.emplace(entry.get().oid, QualifiedName(entry.get().ParentSchemaPath(), entry.get().name));
+		}
+	}
 	for (auto &entry : entries) {
 		if (entry.get().internal || skip.contains(entry.get())) {
 			continue;
 		}
 		auto create_info = entry.get().GetInfo();
+		if (create_info->type == CatalogType::TABLE_ENTRY) {
+			auto &columns = create_info->Cast<CreateTableInfo>().columns;
+			for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
+				auto &column = columns.GetColumnMutable(LogicalIndex(i));
+				auto type = column.Type();
+				if (QualifyUserTypes(type, user_types)) {
+					column.SetType(type);
+				}
+			}
+		} else if (create_info->type == CatalogType::TYPE_ENTRY) {
+			QualifyUserTypes(create_info->Cast<CreateTypeInfo>().type, user_types, true);
+		} else if (create_info->type == CatalogType::MACRO_ENTRY ||
+		           create_info->type == CatalogType::TABLE_MACRO_ENTRY) {
+			for (auto &macro : create_info->Cast<CreateMacroInfo>().macros) {
+				for (auto &type : macro->types) {
+					QualifyUserTypes(type, user_types);
+				}
+				for (auto &type : macro->return_types) {
+					QualifyUserTypes(type, user_types);
+				}
+			}
+		}
 		try {
 			// the catalog is implied by the database the export is imported into - keep only the schema path
 			create_info->StripCatalogQualification();
