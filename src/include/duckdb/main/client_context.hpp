@@ -181,6 +181,7 @@ public:
 
 	//! Check for interrupt or timeout, throws InterruptException if triggered
 	DUCKDB_API void InterruptCheck() const;
+	DUCKDB_API void DeadlineCheck() const;
 
 	//! Enable query profiling
 	DUCKDB_API void EnableProfiling();
