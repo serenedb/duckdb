@@ -1332,6 +1332,12 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 		}
 		if (result.schema) {
 			schemas.insert(*result.schema);
+			if (lookup_info.GetCatalogType() == CatalogType::TABLE_ENTRY && lookup.catalog.IsDuckCatalog() &&
+			    result.schema->LookupEntry(
+			        transaction,
+			        EntryLookupInfo(CatalogType::INDEX_ENTRY, QualifiedName(lookup_info.GetEntryIdentifier())))) {
+				break;
+			}
 		}
 		if (!result.error.HasError()) {
 			all_errors = false;
