@@ -149,3 +149,35 @@ query T
 SELECT '' LIKE '%' ESCAPE '%';
 ----
 false
+
+statement ok
+CREATE TABLE escaped(id INTEGER, s VARCHAR);
+
+statement ok
+INSERT INTO escaped VALUES (1, 'admin_1'), (2, 'adminx1'), (3, 'admin\1'), (4, 'a%b'), (5, 'a%');
+
+query I
+SELECT id FROM escaped WHERE s LIKE 'admin\_%' ORDER BY id;
+----
+1
+
+query I
+SELECT id FROM escaped WHERE s LIKE 'a\%' ORDER BY id;
+----
+5
+
+query I
+SELECT id FROM escaped WHERE s LIKE 'a\%%' ORDER BY id;
+----
+4
+5
+
+query I
+SELECT id FROM escaped WHERE s ILIKE 'ADMIN\_%' ORDER BY id;
+----
+1
+
+query TT
+SELECT 'admin_1' ILIKE 'admin\_%', 'adminx1' ILIKE 'admin\_%';
+----
+true	false

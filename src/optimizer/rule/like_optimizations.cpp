@@ -30,7 +30,7 @@ static bool PatternIsConstant(const string &pattern, PatternMatchType match_type
 				return false;
 			}
 		} else {
-			if (pattern[i] == '%' || pattern[i] == '_') {
+			if (pattern[i] == '%' || pattern[i] == '_' || pattern[i] == '\\') {
 				return false;
 			}
 		}
@@ -59,7 +59,7 @@ static bool PatternIsPrefix(const string &pattern, PatternMatchType match_type) 
 				return false;
 			}
 		} else {
-			if (pattern[i - 1] == '%' || pattern[i - 1] == '_') {
+			if (pattern[i - 1] == '%' || pattern[i - 1] == '_' || pattern[i - 1] == '\\') {
 				return false;
 			}
 		}
@@ -88,7 +88,7 @@ static bool PatternIsSuffix(const string &pattern, PatternMatchType match_type) 
 				return false;
 			}
 		} else {
-			if (pattern[i] == '%' || pattern[i] == '_') {
+			if (pattern[i] == '%' || pattern[i] == '_' || pattern[i] == '\\') {
 				return false;
 			}
 		}
@@ -121,7 +121,7 @@ static bool PatternIsContains(const string &pattern, PatternMatchType match_type
 				return false;
 			}
 		} else {
-			if (pattern[i] == '%' || pattern[i] == '_') {
+			if (pattern[i] == '%' || pattern[i] == '_' || pattern[i] == '\\') {
 				return false;
 			}
 		}

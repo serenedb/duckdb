@@ -636,7 +636,7 @@ void ILikeFunction(DataChunk &input, ExpressionState &state, Vector &result) {
 			}
 			LowerCase(str.GetData(), str.GetSize(), scratch.get());
 			string_t str_lcase(scratch.get(), UnsafeNumericCast<uint32_t>(str_llength));
-			bool match = matcher ? matcher->Match(str_lcase) : LikeOperatorFunction(str_lcase, pat_lcase);
+			bool match = matcher ? matcher->Match(str_lcase) : LikeOperatorFunction(str_lcase, pat_lcase, '\\');
 			return INVERT ? !match : match;
 		});
 		return;
