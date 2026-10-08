@@ -699,6 +699,11 @@
         "id": 202,
         "name": "config",
         "type": "string"
+      },
+      {
+        "id": 203,
+        "name": "definition",
+        "type": "string"
       }
     ],
     "methods": {
