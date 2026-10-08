@@ -97,6 +97,8 @@ public:
 	DUCKDB_API EntryLookup GetEntryDetailed(CatalogTransaction transaction, const Identifier &name);
 	DUCKDB_API optional_ptr<CatalogEntry> GetEntry(CatalogTransaction transaction, const Identifier &name);
 	DUCKDB_API optional_ptr<CatalogEntry> GetEntry(ClientContext &context, const Identifier &name);
+	DUCKDB_API bool ReadEntry(CatalogTransaction transaction, const Identifier &name,
+	                          const std::function<void(CatalogEntry &)> &read);
 
 	//! Gets the entry that is most similar to the given name (i.e. smallest levenshtein distance), or empty string if
 	//! none is found. The returned pair consists of the entry name and the distance (smaller means closer).

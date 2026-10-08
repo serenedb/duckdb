@@ -744,6 +744,29 @@ optional_ptr<CatalogEntry> CatalogSet::GetEntry(ClientContext &context, const Id
 	return GetEntry(catalog.GetCatalogTransaction(context), name);
 }
 
+bool CatalogSet::ReadEntry(CatalogTransaction transaction, const Identifier &name,
+                           const std::function<void(CatalogEntry &)> &read) {
+	unique_lock<mutex> read_lock(catalog_lock);
+	auto entry_value = map.GetEntry(name);
+	if (!entry_value) {
+		read_lock.unlock();
+		if (!GetEntry(transaction, name)) {
+			return false;
+		}
+		read_lock.lock();
+		entry_value = map.GetEntry(name);
+		if (!entry_value) {
+			return false;
+		}
+	}
+	auto &current = GetEntryForTransaction(transaction, *entry_value);
+	if (current.deleted) {
+		return false;
+	}
+	read(current);
+	return true;
+}
+
 void CatalogSet::UpdateTimestamp(CatalogEntry &entry, transaction_t timestamp) {
 	entry.timestamp = timestamp;
 }
