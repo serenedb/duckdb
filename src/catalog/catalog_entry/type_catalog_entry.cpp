@@ -13,9 +13,16 @@ namespace duckdb {
 
 constexpr const char *TypeCatalogEntry::Name;
 
+static idx_t TypeOid(Catalog &catalog, const CreateTypeInfo &info) {
+	if (info.oid || info.internal || catalog.Compatibility() != SqlCompatibility::POSTGRES) {
+		return info.oid;
+	}
+	return catalog.GetDatabase().GetDatabaseManager().NextOid(2) + 1;
+}
+
 TypeCatalogEntry::TypeCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTypeInfo &info)
-    : StandardEntry(CatalogType::TYPE_ENTRY, schema, catalog, info.GetTypeName(), info.oid), user_type(info.type),
-      constructors(info.constructors) {
+    : StandardEntry(CatalogType::TYPE_ENTRY, schema, catalog, info.GetTypeName(), TypeOid(catalog, info)),
+      user_type(info.type), constructors(info.constructors) {
 	if (constructors.functions.empty()) {
 		// a type without constructors takes no modifiers and always resolves to its own type
 		constructors.AddFunction(TypeConstructor::Identity(name));

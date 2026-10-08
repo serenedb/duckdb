@@ -127,8 +127,8 @@ public:
 	transaction_t ActiveTransactionNumber() const {
 		return current_transaction_id;
 	}
-	idx_t NextOid() {
-		return next_oid++;
+	idx_t NextOid(idx_t count = 1) {
+		return next_oid.fetch_add(count, std::memory_order_relaxed);
 	}
 	idx_t ClaimOid(idx_t oid) {
 		for (auto current = next_oid.load(); current <= oid;) {
