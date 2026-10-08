@@ -42,6 +42,7 @@
 #include "duckdb/storage/table/column_data.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/storage/table/delete_state.hpp"
+#include "duckdb/storage/table/table_log_storage.hpp"
 #include "duckdb/storage/wal_entry.hpp"
 #include "duckdb/storage/write_ahead_log.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
@@ -69,6 +70,8 @@ public:
 	reference<Catalog> catalog;
 	optional_ptr<DuckTableEntry> current_table;
 	optional_idx current_table_oid;
+	optional_ptr<TableLogStorage> current_log_table;
+	idx_t current_tick = 0;
 	optional_ptr<TableStorageLoad> table_storage;
 	optional<hugeint_t> prepared_txid;
 	vector<pair<hugeint_t, vector<pair<idx_t, idx_t>>>> committed_prepared;
@@ -363,6 +366,8 @@ protected:
 	void ReplayRowGroupData();
 	void ReplayDelete();
 	void ReplayUpdate();
+	void ReplayTruncateTable();
+	void ReplayAdoptSegments();
 	void ReplayCheckpoint();
 
 private:
@@ -884,6 +889,12 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 		break;
 	case WALType::COMMIT_PREPARED:
 		ReplayCommitPrepared();
+		break;
+	case WALType::TRUNCATE_TABLE:
+		ReplayTruncateTable();
+		break;
+	case WALType::ADOPT_SEGMENTS:
+		ReplayAdoptSegments();
 		break;
 	default:
 		throw InternalException("Invalid WAL entry type!");
@@ -1710,6 +1721,11 @@ void WriteAheadLogDeserializer::ReplayUseTable() {
 	if (state.table_storage) {
 		state.current_table_oid = entry.table_oid;
 		state.current_table = state.table_storage->Find(entry.table_oid);
+		state.current_log_table = nullptr;
+		if (!state.current_table) {
+			state.current_log_table = state.table_storage->FindLogStorage(entry.table_oid);
+		}
+		state.current_tick = entry.tick;
 		return;
 	}
 	state.current_table = &catalog.GetEntry<DuckTableEntry>(context, ReplayEntryName(catalog, entry.qualified_name));
@@ -1718,7 +1734,15 @@ void WriteAheadLogDeserializer::ReplayUseTable() {
 void WriteAheadLogDeserializer::ReplayInsert() {
 	DataChunk chunk;
 	deserializer.ReadObject(101, "chunk", [&](Deserializer &object) { chunk.Deserialize(object); });
-	if (DeserializeOnly() || (!state.current_table && state.table_storage)) {
+	auto row_start = deserializer.ReadPropertyWithDefault<optional_idx>(16486, "row_start");
+	if (DeserializeOnly()) {
+		return;
+	}
+	if (!state.current_table && state.current_log_table) {
+		state.current_log_table->ReplayInsert(context, state.current_tick, chunk, row_start);
+		return;
+	}
+	if (!state.current_table && state.table_storage) {
 		return;
 	}
 	if (!state.current_table) {
@@ -1786,7 +1810,14 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 void WriteAheadLogDeserializer::ReplayDelete() {
 	DataChunk chunk;
 	deserializer.ReadObject(101, "chunk", [&](Deserializer &object) { chunk.Deserialize(object); });
-	if (DeserializeOnly() || (!state.current_table && state.table_storage)) {
+	if (DeserializeOnly()) {
+		return;
+	}
+	if (!state.current_table && state.current_log_table) {
+		state.current_log_table->ReplayDelete(context, state.current_tick, chunk);
+		return;
+	}
+	if (!state.current_table && state.table_storage) {
 		return;
 	}
 	if (!state.current_table) {
@@ -1833,6 +1864,35 @@ void WriteAheadLogDeserializer::ReplayUpdate() {
 
 	// now perform the update
 	state.current_table->GetStorage().UpdateColumn(*state.current_table, context, row_ids, column_path, chunk);
+}
+
+void WriteAheadLogDeserializer::ReplayTruncateTable() {
+	if (DeserializeOnly()) {
+		return;
+	}
+	if (!state.current_table && state.current_log_table) {
+		state.current_log_table->ReplayTruncate(context, state.current_tick);
+		return;
+	}
+	if (!state.current_table && state.table_storage) {
+		return;
+	}
+	throw DataCorruptionException("Corrupt WAL: truncate without a log table");
+}
+
+void WriteAheadLogDeserializer::ReplayAdoptSegments() {
+	auto entry = WALAdoptSegments::Deserialize(deserializer);
+	if (DeserializeOnly()) {
+		return;
+	}
+	if (!state.current_table && state.current_log_table) {
+		state.current_log_table->ReplayAdoptSegments(context, state.current_tick, std::move(entry.segments));
+		return;
+	}
+	if (!state.current_table && state.table_storage) {
+		return;
+	}
+	throw DataCorruptionException("Corrupt WAL: segments without a log table");
 }
 
 void WriteAheadLogDeserializer::ReplayCheckpoint() {

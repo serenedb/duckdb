@@ -312,10 +312,11 @@ struct WALUseTable {
 	// the table as a QualifiedName (the containing schema path + the table name)
 	QualifiedName qualified_name;
 	idx_t table_oid = 0;
+	idx_t tick = 0;
 
 	WALUseTable() = default;
-	WALUseTable(QualifiedName qualified_name_p, idx_t table_oid_p)
-	    : qualified_name(std::move(qualified_name_p)), table_oid(table_oid_p) {
+	WALUseTable(QualifiedName qualified_name_p, idx_t table_oid_p, idx_t tick_p = 0)
+	    : qualified_name(std::move(qualified_name_p)), table_oid(table_oid_p), tick(tick_p) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -408,6 +409,13 @@ struct WALCommitPrepared {
 
 	void Serialize(Serializer &serializer) const;
 	static WALCommitPrepared Deserialize(Deserializer &deserializer);
+};
+
+struct WALAdoptSegments {
+	vector<string> segments;
+
+	void Serialize(Serializer &serializer) const;
+	static WALAdoptSegments Deserialize(Deserializer &deserializer);
 };
 
 } // namespace duckdb

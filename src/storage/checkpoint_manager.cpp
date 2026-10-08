@@ -38,6 +38,7 @@
 #include "duckdb/storage/block_manager.hpp"
 #include "duckdb/storage/checkpoint/table_data_reader.hpp"
 #include "duckdb/storage/checkpoint/table_data_writer.hpp"
+#include "duckdb/storage/table/table_log_storage.hpp"
 #include "duckdb/storage/metadata/metadata_reader.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
@@ -313,6 +314,22 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 	// we scan the set of committed schemas
 	auto &catalog = Catalog::GetCatalog(db).Cast<DuckCatalog>();
 	catalog.ScanSchemas([&](SchemaCatalogEntry &entry) { schemas.push_back(entry); });
+
+	vector<reference<TableLogStorage>> log_tables;
+	for (auto &schema : schemas) {
+		schema.get().Scan(CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+			if (entry.type != CatalogType::TABLE_ENTRY) {
+				return;
+			}
+			auto log_storage = entry.Cast<TableCatalogEntry>().GetLogStorage();
+			if (log_storage) {
+				log_tables.push_back(*log_storage);
+			}
+		});
+	}
+	for (auto &log_table : log_tables) {
+		log_table.get().Checkpoint();
+	}
 
 	D_ASSERT(catalog.IsDuckCatalog());
 

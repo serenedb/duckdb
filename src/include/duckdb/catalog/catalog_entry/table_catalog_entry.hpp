@@ -29,6 +29,7 @@ namespace duckdb {
 
 class DataTable;
 class DuckTableEntry;
+class TableLogStorage;
 struct CreateTriggerInfo;
 
 struct RenameColumnInfo;
@@ -132,6 +133,9 @@ public:
 	}
 	//! Returns this entry as a DuckTableEntry, or nullptr if it is not one
 	virtual optional_ptr<DuckTableEntry> TryGetDuckTableEntry() {
+		return nullptr;
+	}
+	virtual optional_ptr<TableLogStorage> GetLogStorage() {
 		return nullptr;
 	}
 	virtual bool NumbersRowsWith(const CatalogEntry &sequence) const {
