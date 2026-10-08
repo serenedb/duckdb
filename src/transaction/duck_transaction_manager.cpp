@@ -16,6 +16,7 @@
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/local_storage.hpp"
 #include "duckdb/transaction/transaction_data.hpp"
+#include "duckdb/transaction/transaction_log_writer.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_context_state.hpp"
 #include "duckdb/main/connection_manager.hpp"
@@ -533,10 +534,13 @@ ErrorData DuckTransactionManager::FinishPreparedTransaction(ClientContext &conte
 		value.entry->MarkDurable(value);
 	}
 	auto undo_properties = transaction.GetUndoProperties();
+	auto log_writers = transaction.log_writers;
+	bool applied = false;
 	unique_ptr<DuckTransaction::PreparedCommit> prepared;
 	{
 		unique_lock<mutex> t_lock(transaction_lock);
 		if (transaction.prepared->applied) {
+			applied = true;
 			transaction.FinishPrepared();
 			if (context.registered_state && db.HasStorageManager()) {
 				auto &storage_manager = db.GetStorageManager();
@@ -559,6 +563,11 @@ ErrorData DuckTransactionManager::FinishPreparedTransaction(ClientContext &conte
 		QueueCleanup(RemoveTransaction(transaction, store_transaction, CreateCleanupInfo()));
 	}
 	prepared.reset();
+	if (applied && !ValidChecker::IsInvalidated(db)) {
+		for (auto &writer : log_writers) {
+			writer->OnDurable();
+		}
+	}
 	CleanupTransactions();
 	DatabaseManager::Get(db.GetDatabase()).DrainPendingTeardowns();
 	return ErrorData();
@@ -566,6 +575,7 @@ ErrorData DuckTransactionManager::FinishPreparedTransaction(ClientContext &conte
 
 ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Transaction &transaction_p) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
+	auto log_writers = transaction.log_writers;
 	// flush the transaction-local blocks of bulk appends before taking any commit locks (see PreFlushOptimisticBlocks)
 	ErrorData error = transaction.PreFlushOptimisticBlocks(db);
 	if (!error.HasError() && db.GetCatalog().UsesCatalogLog() && transaction.HasLoggedSequenceUsage()) {
@@ -604,7 +614,8 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		// any failure during checkpoint will cause this transactions' changes to be lost,
 		// while later concurrent commits will not be
 		// this can cause undefined state, as those commits were made assuming this one was already committed
-		if (undo_properties.estimated_size >= Settings::Get<AutoCheckpointSkipWalThresholdSetting>(context)) {
+		if (undo_properties.estimated_size >= Settings::Get<AutoCheckpointSkipWalThresholdSetting>(context) &&
+		    transaction.log_writers.empty()) {
 			skip_wal_write_due_to_checkpoint = true;
 		}
 	}
@@ -776,6 +787,11 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		}
 		QueueCleanup(RemoveTransaction(transaction, store_transaction, CreateCleanupInfo()));
 		t_lock.unlock();
+	}
+	if (!error.HasError()) {
+		for (auto &writer : log_writers) {
+			writer->OnDurable();
+		}
 	}
 
 	CleanupTransactions();

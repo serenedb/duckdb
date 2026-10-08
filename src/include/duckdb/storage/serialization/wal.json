@@ -578,6 +578,13 @@
         "type": "idx_t",
         "default": 0,
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16485,
+        "name": "tick",
+        "type": "idx_t",
+        "default": 0,
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -741,6 +748,17 @@
       {
         "id": 104,
         "name": "paths",
+        "type": "vector<string>"
+      }
+    ]
+  },
+  {
+    "class": "WALAdoptSegments",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "segments",
         "type": "vector<string>"
       }
     ]

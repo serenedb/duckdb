@@ -17,6 +17,7 @@
 #include "duckdb/transaction/delete_info.hpp"
 #include "duckdb/transaction/update_info.hpp"
 #include "duckdb/transaction/local_storage.hpp"
+#include "duckdb/transaction/transaction_log_writer.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/storage/table/column_data.hpp"
 #include "duckdb/main/client_data.hpp"
@@ -199,7 +200,7 @@ vector<SequenceValue> DuckTransaction::ReserveSequenceUsage(WriteAheadLog &catal
 }
 
 bool DuckTransaction::ChangesMade() {
-	return undo_buffer.ChangesMade() || storage->ChangesMade();
+	return undo_buffer.ChangesMade() || storage->ChangesMade() || !log_writers.empty();
 }
 
 UndoBufferProperties DuckTransaction::GetUndoProperties() {
@@ -304,6 +305,11 @@ ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &
 		auto &profiler = *context.client_data->profiler;
 		auto wal_timer = profiler.StartTimer<MetricStorageWriteToWALLatency>();
 		undo_buffer.WriteToWAL(wal, commit_state.get(), catalog_run);
+		if (wal) {
+			for (auto &writer : log_writers) {
+				writer->WriteToWAL(*wal);
+			}
+		}
 		wal_timer.EndTimer();
 
 		// no FileSync is required here: any optimistically written blocks that the WAL references

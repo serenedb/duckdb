@@ -29,6 +29,7 @@ namespace duckdb {
 
 class DataTable;
 class DuckTableEntry;
+class TableLogStorage;
 struct CreateTriggerInfo;
 
 struct RenameColumnInfo;
@@ -126,6 +127,9 @@ public:
 
 	virtual bool IsDuckTable() const {
 		return false;
+	}
+	virtual optional_ptr<TableLogStorage> GetLogStorage() {
+		return nullptr;
 	}
 	virtual bool NumbersRowsWith(const CatalogEntry &sequence) const {
 		return false;
