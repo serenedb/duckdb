@@ -67,6 +67,9 @@ public:
 	vector<unique_ptr<ParsedExpression>> &GetChildren() {
 		return children;
 	}
+	const LogicalType &GetBoundType() const {
+		return bound_type;
+	}
 
 public:
 	string ToString() const override;
@@ -89,6 +92,9 @@ private:
 
 	//! Children of the type expression (e.g. type parameters)
 	vector<unique_ptr<ParsedExpression>> children;
+
+	//! The catalog type this expression was made from, which binding returns as is
+	LogicalType bound_type = LogicalType::INVALID;
 };
 
 } // namespace duckdb

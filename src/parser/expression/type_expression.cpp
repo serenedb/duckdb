@@ -256,6 +256,14 @@ unique_ptr<TypeExpression> TypeExpression::FromLogicalType(const LogicalType &ty
 		return unique_ptr_cast<ParsedExpression, TypeExpression>(expr->Copy());
 	}
 
+	if (type.HasExtensionInfo() && type.GetExtensionInfo()->properties.count(ExtensionTypeInfo::CATALOG_OID_PROPERTY)) {
+		auto extension_info = make_uniq<ExtensionTypeInfo>(*type.GetExtensionInfo());
+		extension_info->properties.erase(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
+		auto result = FromLogicalType(type.WithExtensionInfo(std::move(extension_info)));
+		result->bound_type = type;
+		return result;
+	}
+
 	vector<unique_ptr<ParsedExpression>> children;
 
 	// A type that carries an alias is a user-defined type: name it, and let the binder resolve it again.
