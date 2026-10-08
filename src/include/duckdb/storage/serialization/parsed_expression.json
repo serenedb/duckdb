@@ -664,6 +664,14 @@
         "serialize_condition": "qualified_name.Path().size() > 3",
         "deserialize_default": "QualifiedName()",
         "deserialize_skip_assign": true
+      },
+      {
+        "id": 205,
+        "name": "bound_type",
+        "type": "LogicalType",
+        "version": "v2.0.0",
+        "default": "LogicalType::INVALID",
+        "hash_skip": true
       }
     ],
     "finalize_deserialization": [

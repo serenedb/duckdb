@@ -18,6 +18,11 @@ static bool IsValidTypeLookup(optional_ptr<CatalogEntry> entry) {
 }
 
 BindResult ExpressionBinder::BindExpression(TypeExpression &type_expr, idx_t depth) {
+	if (type_expr.GetBoundType().id() != LogicalTypeId::INVALID) {
+		auto result_expr = make_uniq<BoundConstantExpression>(Value::TYPE(type_expr.GetBoundType()));
+		result_expr->SetQueryLocation(type_expr.GetQueryLocation());
+		return BindResult(std::move(result_expr));
+	}
 	auto &type_name = type_expr.GetTypeName();
 
 	QueryErrorContext error_context(type_expr);
