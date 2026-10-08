@@ -563,14 +563,14 @@ void WriteAheadLog::WriteDropSchema(const SchemaCatalogEntry &entry) {
 //===--------------------------------------------------------------------===//
 // DATA
 //===--------------------------------------------------------------------===//
-void WriteAheadLog::WriteSetTable(const QualifiedName &table, idx_t table_oid) {
+void WriteAheadLog::WriteSetTable(const QualifiedName &table, idx_t table_oid, idx_t tick) {
 	WriteAheadLogSerializer serializer(*this, WALType::USE_TABLE);
-	serializer.WriteEntry(WALUseTable(table, table_oid));
+	serializer.WriteEntry(WALUseTable(table, table_oid, tick));
 	serializer.End();
 }
 
-void WriteAheadLog::WriteSetTable(const TableCatalogEntry &table) {
-	WriteSetTable(QualifiedName(table.ParentSchemaPath(), table.name), table.oid);
+void WriteAheadLog::WriteSetTable(const TableCatalogEntry &table, idx_t tick) {
+	WriteSetTable(QualifiedName(table.ParentSchemaPath(), table.name), table.oid, tick);
 }
 
 void WriteAheadLog::WriteUseCatalog(idx_t catalog_oid) {
@@ -597,12 +597,15 @@ void WriteAheadLog::WriteArtifact(CatalogType type, idx_t catalog_oid, idx_t oid
 	serializer.End();
 }
 
-void WriteAheadLog::WriteInsert(DataChunk &chunk) {
+void WriteAheadLog::WriteInsert(DataChunk &chunk, optional_idx row_start) {
 	D_ASSERT(chunk.size() > 0);
 	chunk.Verify(GetDatabase().GetDatabase());
 
 	WriteAheadLogSerializer serializer(*this, WALType::INSERT_TUPLE);
 	serializer.WriteProperty(101, "chunk", chunk);
+	if (row_start.IsValid()) {
+		serializer.WriteProperty(16486, "row_start", row_start.GetIndex());
+	}
 	serializer.End();
 }
 
@@ -627,6 +630,17 @@ void WriteAheadLog::WriteDelete(DataChunk &chunk) {
 
 	WriteAheadLogSerializer serializer(*this, WALType::DELETE_TUPLE);
 	serializer.WriteProperty(101, "chunk", chunk);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteTruncateTable() {
+	WriteAheadLogSerializer serializer(*this, WALType::TRUNCATE_TABLE);
+	serializer.End();
+}
+
+void WriteAheadLog::WriteAdoptSegments(const vector<string> &segments) {
+	WriteAheadLogSerializer serializer(*this, WALType::ADOPT_SEGMENTS);
+	serializer.WriteEntry(WALAdoptSegments {segments});
 	serializer.End();
 }
 

@@ -31,6 +31,7 @@ public:
 	~TableStorageLoad();
 
 	optional_ptr<DuckTableEntry> Find(idx_t table_oid);
+	optional_ptr<TableLogStorage> FindLogStorage(idx_t table_oid);
 	SchemaCatalogEntry &GetSchema(CatalogTransaction transaction, idx_t table_oid);
 	void LoadCheckpoint(BoundCreateTableInfo &info);
 	void Create(ClientContext &context, unique_ptr<CreateInfo> info);
@@ -57,6 +58,7 @@ private:
 	DuckCatalog &catalog;
 	ClientContext &load_context;
 	unordered_map<idx_t, reference<DuckTableEntry>> tables;
+	unordered_map<idx_t, reference<TableLogStorage>> log_tables;
 	unordered_map<idx_t, unique_ptr<CatalogEntry>> storage;
 	unordered_map<idx_t, unordered_set<idx_t>> loaded_indexes;
 	unordered_map<idx_t, Identifier> index_names;

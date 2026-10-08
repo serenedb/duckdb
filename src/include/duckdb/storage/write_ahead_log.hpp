@@ -116,17 +116,19 @@ public:
 	void WriteDropForeignServer(const InCatalogEntry &entry);
 	//! Sets the table used for subsequent insert/delete/update commands. The qualified name holds the (possibly
 	//! nested) schema path of the table followed by the table name.
-	void WriteSetTable(const QualifiedName &table, idx_t table_oid);
-	void WriteSetTable(const TableCatalogEntry &table);
+	void WriteSetTable(const QualifiedName &table, idx_t table_oid, idx_t tick = 0);
+	void WriteSetTable(const TableCatalogEntry &table, idx_t tick = 0);
 	void WriteUseCatalog(idx_t catalog_oid);
 	void WriteCommitPrepared(const hugeint_t &txid, const vector<pair<idx_t, idx_t>> &participants);
 	void WriteArtifact(CatalogType type, idx_t catalog_oid, idx_t oid, const vector<string> &paths);
 
 	void WriteAlter(CatalogEntry &entry, const AlterInfo &info, bool with_index_storage = true);
 
-	void WriteInsert(DataChunk &chunk);
+	void WriteInsert(DataChunk &chunk, optional_idx row_start = optional_idx());
 	void WriteRowGroupData(const PersistentCollectionData &data);
 	void WriteDelete(DataChunk &chunk);
+	void WriteTruncateTable();
+	void WriteAdoptSegments(const vector<string> &segments);
 	//! Write a single (sub-) column update to the WAL. Chunk must be a pair of (COL, ROW_ID).
 	//! The column_path vector is a *path* towards a column within the table
 	//! i.e. if we have a table with a single column S STRUCT(A INT, B INT)
