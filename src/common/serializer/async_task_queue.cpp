@@ -64,19 +64,24 @@ public:
 	}
 
 	~AsyncTaskQueueTask() override {
-		if (!started) {
+		if (!settled) {
 			queue.CancelScheduledTask();
 		}
 	}
 
 	void ExecuteTask() override {
-		started = true;
+		settled = true;
 		queue.DrainRequest();
+	}
+
+	void Cancel() override {
+		settled = true;
+		queue.CancelScheduledTask();
 	}
 
 private:
 	AsyncTaskQueue &queue;
-	bool started = false;
+	bool settled = false;
 };
 
 AsyncTaskQueue::AsyncTaskQueue(ClientContext &client_context_p, idx_t max_active_tasks_p)
