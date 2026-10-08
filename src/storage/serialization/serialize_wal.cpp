@@ -9,6 +9,16 @@
 
 namespace duckdb {
 
+void WALAdoptSegments::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<vector<string>>(101, "segments", segments);
+}
+
+WALAdoptSegments WALAdoptSegments::Deserialize(Deserializer &deserializer) {
+	WALAdoptSegments result;
+	deserializer.ReadPropertyWithDefault<vector<string>>(101, "segments", result.segments);
+	return result;
+}
+
 void WALArtifact::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<CatalogType>(101, "catalog_type", catalog_type);
 	serializer.WritePropertyWithDefault<idx_t>(102, "catalog_oid", catalog_oid);
@@ -565,6 +575,9 @@ void WALUseTable::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
 		serializer.WritePropertyWithDefault<idx_t>(16484, "table_oid", table_oid, 0);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16485, "tick", tick, 0);
+	}
 }
 
 WALUseTable WALUseTable::Deserialize(Deserializer &deserializer) {
@@ -573,6 +586,7 @@ WALUseTable WALUseTable::Deserialize(Deserializer &deserializer) {
 	auto table = deserializer.ReadPropertyWithDefault<Identifier>(102, "table");
 	deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(103, "qualified_name", result.qualified_name, QualifiedName());
 	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "table_oid", result.table_oid, 0);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16485, "tick", result.tick, 0);
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(table));
 	}
