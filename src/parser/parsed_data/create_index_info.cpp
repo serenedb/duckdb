@@ -127,21 +127,21 @@ string CreateIndexInfo::ToString() const {
 	result += "(";
 	result += ExpressionsToString();
 	result += ")";
-	string rendered_options;
+	vector<string> rendered_options;
 	for (auto &opt : options) {
 		if (opt.second.type().id() == LogicalTypeId::BLOB) {
 			continue;
 		}
-		if (!rendered_options.empty()) {
-			rendered_options += ", ";
-		}
-		rendered_options += SQLIdentifier(opt.first);
-		if (!opt.second.IsNull()) {
-			rendered_options += " = " + opt.second.ToSQLString();
+		if (opt.second.IsNull()) {
+			rendered_options.push_back(StringUtil::Format("%s", SQLIdentifier(opt.first)));
+		} else {
+			rendered_options.push_back(
+			    StringUtil::Format("%s = %s", SQLIdentifier(opt.first), opt.second.ToSQLString()));
 		}
 	}
 	if (!rendered_options.empty()) {
-		result += " WITH (" + rendered_options + " )";
+		sort(rendered_options.begin(), rendered_options.end());
+		result += " WITH (" + StringUtil::Join(rendered_options, ", ") + " )";
 	}
 	if (where_clause) {
 		result += " WHERE ";
