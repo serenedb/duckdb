@@ -2,9 +2,11 @@
 #include "caching_test_utils.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/opener_file_system.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/common/thread_annotation.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/external_file_cache/caching_file_system.hpp"
 #include "duckdb/storage/external_file_cache/caching_file_system_wrapper.hpp"
 
@@ -905,6 +907,20 @@ TEST_CASE("Fully cached read skips doesn't open file", "[file_system][caching]")
 		REQUIRE(result == content);
 		REQUIRE(counting_fs_ptr->GetOpenCount() == 1);
 	}
+}
+
+TEST_CASE("A caching file handle outlives the caching file system that opened it", "[file_system][caching]") {
+	TestFileGuard test_file("handle_outlives_file_system.txt", "payload");
+	DuckDB opened_in(nullptr);
+	DuckDB other(nullptr);
+	LocalFileSystem fs;
+	optional<CachingFileSystem> caching;
+	caching.emplace(fs, *opened_in.instance);
+	auto handle = caching->OpenFile(test_file.GetPath(), FileFlags::FILE_FLAGS_READ);
+	caching.reset();
+	caching.emplace(fs, *other.instance);
+	REQUIRE(&handle->GetBufferAllocator() ==
+	        &BufferManager::GetBufferManager(*opened_in.instance).GetBufferAllocator());
 }
 
 } // namespace duckdb

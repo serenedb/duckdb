@@ -87,8 +87,10 @@ private:
 
 private:
 	QueryContext context;
-	//! The client caching file system that was used to create this CachingFileHandle
-	CachingFileSystem &caching_file_system;
+	//! The client file system (copied, as the caching file system can be destroyed before the handle)
+	FileSystem &file_system;
+	//! The DatabaseInstance
+	DatabaseInstance &db;
 	//! For opening the file (possibly with extra info)
 	OpenFileInfo path;
 	//! Flags used to open the file
@@ -136,7 +138,7 @@ public:
 private:
 	//! Whether reads of [path] go through the external file cache: remote files, and local ones when
 	//! cache_local_files is set
-	bool ShouldCacheFile(const string &path) const;
+	static bool ShouldCacheFile(DatabaseInstance &db, const string &path);
 
 	//! The Client FileSystem (needs to be client-specific so we can do, e.g., HTTPFS profiling)
 	FileSystem &file_system;

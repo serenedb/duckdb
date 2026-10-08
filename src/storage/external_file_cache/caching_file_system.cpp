@@ -63,7 +63,7 @@ unique_ptr<CachingFileHandle> CachingFileSystem::OpenFile(QueryContext context, 
 	return make_uniq<CachingFileHandle>(context, *this, path, flags, opener);
 }
 
-bool CachingFileSystem::ShouldCacheFile(const string &path) const {
+bool CachingFileSystem::ShouldCacheFile(DatabaseInstance &db, const string &path) {
 	if (FileSystem::IsRemoteFile(path)) {
 		return true;
 	}
@@ -78,15 +78,15 @@ bool CachingFileSystem::ShouldCacheFile(const string &path) const {
 CachingFileHandle::CachingFileHandle(QueryContext context, CachingFileSystem &caching_file_system_p,
                                      const OpenFileInfo &path_p, FileOpenFlags flags_p,
                                      optional_ptr<FileOpener> opener_p)
-    : context(context), caching_file_system(caching_file_system_p), path(path_p), flags(std::move(flags_p)),
-      opener(opener_p), validate(ExternalFileCacheUtil::GetCacheValidationMode(path_p, context.GetClientContext(),
-                                                                               caching_file_system_p.db)),
+    : context(context), file_system(caching_file_system_p.file_system), db(caching_file_system_p.db), path(path_p),
+      flags(std::move(flags_p)), opener(opener_p), validate(ExternalFileCacheUtil::GetCacheValidationMode(
+                                                       path_p, context.GetClientContext(), caching_file_system_p.db)),
       position(0) {
 	// If caching is disabled, or if we must validate cache entries, we always have to open the file
-	if (!CacheAllowed() || Validate() || !ExternalFileCache::Get(caching_file_system.db).TryGetFile(path.path, info)) {
+	if (!CacheAllowed() || Validate() || !ExternalFileCache::Get(db).TryGetFile(path.path, info)) {
 		auto handle = GetFileHandle();
 		// Snapshot the metadata with a single Stats call, avoiding repeated metadata lookups (e.g., fstat)
-		info.validation = GetValidationInfo(caching_file_system.file_system, *handle);
+		info.validation = GetValidationInfo(file_system, *handle);
 		info.can_seek = handle->CanSeek();
 		info.on_disk = handle->OnDiskFile();
 	}
@@ -126,7 +126,7 @@ bool CachingFileHandle::StripForceFullDownloadIfPresent() {
 }
 
 bool CachingFileHandle::CacheAllowed() const {
-	return caching_file_system.ShouldCacheFile(path.path) && ExternalFileCache::Get(caching_file_system.db).IsEnabled();
+	return CachingFileSystem::ShouldCacheFile(db, path.path) && ExternalFileCache::Get(db).IsEnabled();
 }
 
 shared_ptr<FileHandle> CachingFileHandle::GetFileHandle() {
@@ -139,7 +139,7 @@ shared_ptr<FileHandle> CachingFileHandle::GetFileHandle() {
 	// implementations that require explicit opt-in for concurrent pread-style access (e.g., HTTPFS).
 	auto internal_flags = flags | FileFlags::FILE_FLAGS_PARALLEL_ACCESS;
 	internal_flags.SetCachingMode(CachingMode::NO_CACHING);
-	file_handle = caching_file_system.file_system.OpenFile(path, internal_flags, opener);
+	file_handle = file_system.OpenFile(path, internal_flags, opener);
 	return file_handle;
 }
 
@@ -157,7 +157,7 @@ shared_ptr<ExternalFileCacheFile> CachingFileHandle::GetCachedFile() {
 	if (!file) {
 		auto current = info;
 		current.validation.cache_valid_until = deadline;
-		auto &cache = ExternalFileCache::Get(caching_file_system.db);
+		auto &cache = ExternalFileCache::Get(db);
 		if (current.validation.IsCacheReuseProhibited() ||
 		    (Validate() && !deadline && !CacheValidation::HasValidationMetadata(current.validation))) {
 			cache.ForgetFile(path.path);
@@ -183,11 +183,11 @@ shared_ptr<ExternalFileCacheFile> CachingFileHandle::GetCachedFile() {
 }
 
 Allocator &CachingFileHandle::GetBufferAllocator() const {
-	return BufferManager::GetBufferManager(caching_file_system.db).GetBufferAllocator();
+	return BufferManager::GetBufferManager(db).GetBufferAllocator();
 }
 
 FileBufferHandleGroup CachingFileHandle::ReadUncached(idx_t nr_bytes, idx_t location) {
-	auto buf = ExternalFileCache::AllocateUncached(caching_file_system.db, nr_bytes);
+	auto buf = ExternalFileCache::AllocateUncached(db, nr_bytes);
 	auto handle = GetFileHandle();
 	const auto read_start = steady_clock::now();
 	handle->Read(context, buf.GetDataMutable(), nr_bytes, location);
@@ -210,7 +210,7 @@ FileBufferHandleGroup CachingFileHandle::Read(const idx_t nr_bytes, const idx_t 
 	if (location >= file->GetSize()) {
 		return FileBufferHandleGroup();
 	}
-	auto &cache = ExternalFileCache::Get(caching_file_system.db);
+	auto &cache = ExternalFileCache::Get(db);
 	vector<ExternalFileCachePin> pins;
 	if (!file->HasSource()) {
 		pins = cache.TryPinRange(*file, location, nr_bytes);
@@ -234,7 +234,7 @@ FileBufferHandleGroup CachingFileHandle::Read(idx_t &nr_bytes) {
 	// If we can't seek, we can't use the cache for these calls,
 	// because we won't be able to seek over any parts we skipped by reading from the cache
 	if (!CanSeek() || !GetCachedFile()) {
-		auto buf = ExternalFileCache::AllocateUncached(caching_file_system.db, nr_bytes);
+		auto buf = ExternalFileCache::AllocateUncached(db, nr_bytes);
 		auto file_handle = GetFileHandle();
 		// Do positional read if handle can seek, otherwise have to fallback to sequential read.
 		if (file_handle->CanSeek()) {
@@ -278,7 +278,7 @@ string CachingFileHandle::GetVersionTag() {
 }
 
 bool CachingFileHandle::Validate() const {
-	if (!caching_file_system.ShouldCacheFile(path.path)) {
+	if (!CachingFileSystem::ShouldCacheFile(db, path.path)) {
 		// uncached files have no stale state to serve, so their metadata must always be read fresh
 		return true;
 	}
