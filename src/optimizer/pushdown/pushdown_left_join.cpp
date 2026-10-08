@@ -50,8 +50,12 @@ static unique_ptr<LogicalOperator> CreateDummyRHS(Optimizer &optimizer, unique_p
 	auto &types = rhs_op->types;
 
 	for (idx_t i = 0; i < column_bindings.size(); i++) {
-		projections_groups[column_bindings[i].table_index].emplace_back(
-		    make_uniq<BoundConstantExpression>(Value(types[i])));
+		auto &group = projections_groups[column_bindings[i].table_index];
+		const auto column_index = column_bindings[i].column_index.GetIndex();
+		while (group.size() <= column_index) {
+			group.push_back(make_uniq<BoundConstantExpression>(Value(LogicalType::UTINYINT)));
+		}
+		group[column_index] = make_uniq<BoundConstantExpression>(Value(types[i]));
 	}
 
 	auto create_proj_dummy_scan = [&](TableIndex table_index) {
