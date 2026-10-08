@@ -52,6 +52,7 @@ const vector<string> ExtensionHelper::PathComponents() {
 }
 
 string ExtensionHelper::ExtensionInstallDocumentationLink(const string &extension_name) {
+	D_ASSERT(false);
 	auto components = PathComponents();
 
 	string link = "https://duckdb.org/docs/current/extensions/troubleshooting";
@@ -244,8 +245,12 @@ unique_ptr<ExtensionInstallInfo> ExtensionHelper::InstallExtensionInternal(Datab
                                                                            const string &extension,
                                                                            ExtensionInstallOptions &options,
                                                                            optional_ptr<ClientContext> context) {
-	return DBConfig::GetConfig(db).GetExternalExtensionProvider().Install(db, fs, local_path, extension, options,
-	                                                                      context);
+	auto &provider = DBConfig::GetConfig(db).GetExternalExtensionProvider();
+	if (!provider.SupportsExternalExtensions()) {
+		ExtensionHelper::ThrowExtensionRuntimeUnsupported(
+		    ExtensionHelper::ApplyExtensionAlias(ExtensionHelper::GetExtensionName(extension)), true);
+	}
+	return provider.Install(db, fs, local_path, extension, options, context);
 }
 
 } // namespace duckdb

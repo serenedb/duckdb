@@ -11,7 +11,7 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/types/interval.hpp"
-#include "zstd/common/xxhash.hpp"
+#include "common/xxhash.h"
 
 namespace duckdb {
 

@@ -47,6 +47,7 @@ idx_t StructColumnData::GetMaxEntry() {
 }
 
 FilterPropagateResult StructColumnData::CheckZonemap(ColumnScanState &state, TableFilter &filter,
+                                                     TableFilterState &filter_state,
                                                      optional_ptr<SegmentNode<ColumnSegment>> &checked_segment) {
 	if (state.expression_state) {
 		checked_segment = nullptr;
@@ -55,9 +56,9 @@ FilterPropagateResult StructColumnData::CheckZonemap(ColumnScanState &state, Tab
 	if (state.storage_index.IsPushdownExtract()) {
 		auto children = GetStructChildren(state);
 		D_ASSERT(children.size() == 1);
-		return children[0].col.CheckZonemap(children[0].state, filter, checked_segment);
+		return children[0].col.CheckZonemap(children[0].state, filter, filter_state, checked_segment);
 	}
-	return CheckValidityZonemap(state, filter, checked_segment, *validity);
+	return CheckValidityZonemap(state, filter, filter_state, checked_segment, *validity);
 }
 
 vector<StructColumnData::StructColumnDataChild> StructColumnData::GetStructChildren(ColumnScanState &state) const {
@@ -104,6 +105,20 @@ void StructColumnData::InitializeScan(ColumnScanState &state) {
 			continue;
 		}
 		child.col.InitializeScan(child.state);
+	}
+}
+
+void StructColumnData::ReinitializeScan(ColumnScanState &state) {
+	// no own data segments -- just reset the cursor and warm-keep validity + each scanned sub-column
+	state.offset_in_column = 0;
+	state.current = nullptr;
+	validity->ReinitializeScan(state.child_states[0]);
+	auto struct_children = GetStructChildren(state);
+	for (auto &child : struct_children) {
+		if (!child.should_scan) {
+			continue;
+		}
+		child.col.ReinitializeScan(child.state);
 	}
 }
 
@@ -541,7 +556,8 @@ void StructColumnData::GetColumnSegmentInfo(const QueryContext &context, idx_t r
 }
 
 void StructColumnData::Verify(RowGroup &parent) {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	ColumnData::Verify(parent);
 	validity->Verify(parent);
 	for (auto &sub_column : sub_columns) {

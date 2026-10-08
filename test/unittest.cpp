@@ -19,6 +19,11 @@
 #include <unistd.h>
 #endif
 
+#ifndef DUCKDB_WINDOWS
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "debug_fs_extension.hpp"
@@ -288,10 +293,13 @@ static bool ConfigureThreadStackSize(int argc, char *argv[], string &error) {
 
 struct TempDirReclaimer {
 	~TempDirReclaimer() {
-		DestroyTempDir(success);
+		if (active) {
+			DestroyTempDir(success);
+		}
 	}
 
 	bool success = false;
+	bool active = true;
 };
 
 } // namespace
@@ -359,6 +367,7 @@ int main(int argc_in, char *argv[]) {
 	}
 	bool keep_home = false;
 	bool use_stdin = false;
+	idx_t jobs = 1;
 	vector<string> input_files;
 	unordered_set<idx_t> input_file_arg_indices;
 
@@ -380,6 +389,8 @@ int main(int argc_in, char *argv[]) {
 			keep_home = true;
 		} else if (argument == "--stdin") {
 			use_stdin = true;
+		} else if (argument == "--jobs") {
+			jobs = std::stoull(argv[++i]);
 		} else if (argument == "--emit-test-events") {
 			SetEmitTestEvents(true);
 		} else if (argument == "--thread-stack-size") {
@@ -488,6 +499,73 @@ int main(int argc_in, char *argv[]) {
 	} else {
 		RegisterSqllogictests();
 	}
+
+	string worker_spec;
+#ifndef DUCKDB_WINDOWS
+	if (jobs > 1 && !use_stdin) {
+		Catch::ConfigData data;
+		data.testsOrTags.assign(new_argv.get() + 1, new_argv.get() + new_argc);
+		Catch::Config config(data);
+		auto &all_tests = Catch::getAllTestCasesSorted(config);
+		for (auto &match : config.testSpec().matchesByFilter(all_tests, config)) {
+			if (match.tests.empty()) {
+				std::cout << "No test cases matched '" << match.name << "'" << std::endl;
+			}
+		}
+		auto tests = Catch::filterTests(all_tests, config.testSpec(), config);
+		std::stable_partition(tests.begin(), tests.end(), [](const Catch::TestCase &test) {
+			return StringUtil::EndsWith(test.name, ".test_slow");
+		});
+		idx_t next = 0;
+		idx_t running = 0;
+		idx_t failed = 0;
+		while (next < tests.size() || running > 0) {
+			if (next < tests.size() && running < jobs) {
+				auto pid = fork();
+				if (pid < 0) {
+					perror("fork");
+					return 1;
+				}
+				if (pid == 0) {
+					temp_dir_reclaimer.active = false;
+					worker_spec = "\"";
+					for (auto c : tests[next].name) {
+						if (c == ',' || c == '\\' || c == '"') {
+							worker_spec += '\\';
+						}
+						worker_spec += c;
+					}
+					worker_spec += "\"";
+					break;
+				}
+				next++;
+				running++;
+				continue;
+			}
+			int status;
+			wait(&status);
+			running--;
+			if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+				failed++;
+			}
+		}
+		if (worker_spec.empty()) {
+			std::cout << "\n==============================================================================="
+			          << std::endl;
+			temp_dir_reclaimer.success = failed == 0;
+			if (failed == 0) {
+				std::cout << "All tests passed (" << tests.size() << " test cases)" << std::endl;
+				return 0;
+			}
+			std::cout << "test cases: " << tests.size() << " | " << tests.size() - failed << " passed | " << failed
+			          << " failed" << std::endl;
+			return 1;
+		}
+		new_argv[1] = &worker_spec[0];
+		new_argc = 2;
+	}
+#endif
+
 	int result = Catch::Session().run(new_argc, new_argv.get());
 
 	std::string failures_summary = FailureSummary::GetFailureSummary();

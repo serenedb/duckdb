@@ -72,8 +72,9 @@ struct StringAnalyzeState : public AnalyzeState {
 	idx_t overflow_strings;
 };
 
-unique_ptr<AnalyzeState> UncompressedStringStorage::StringInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	return make_uniq<StringAnalyzeState>(col_data.GetBlockManager());
+unique_ptr<AnalyzeState> UncompressedStringStorage::StringInitAnalyze(CompressionAnalyzeContext &ctx,
+                                                                      PhysicalType type) {
+	return make_uniq<StringAnalyzeState>(ctx.block_manager);
 }
 
 bool UncompressedStringStorage::StringAnalyze(AnalyzeState &state_p, const Vector &input) {
@@ -257,15 +258,16 @@ idx_t UncompressedStringStorage::FinalizeAppend(ColumnSegment &segment, BaseStat
 	auto total_size = offset_size + dict.size;
 
 	CompressionInfo info(segment.GetBlockHandle()->GetBlockManager());
+	auto dataptr = handle.GetDataMutable() + segment.GetBlockOffset();
 	if (total_size >= info.GetCompactionFlushLimit()) {
 		// the block is full enough, don't bother moving around the dictionary
+		memset(dataptr + offset_size, 0, dict.end - dict.size - offset_size);
 		return segment.SegmentSize();
 	}
 
 	// the block has space left: figure out how much space we can save
 	auto move_amount = segment.SegmentSize() - total_size;
 	// move the dictionary so it lines up exactly with the offsets
-	auto dataptr = handle.GetDataMutable() + segment.GetBlockOffset();
 	memmove(dataptr + offset_size, dataptr + dict.end - dict.size, dict.size);
 	dict.end -= move_amount;
 	D_ASSERT(dict.end == total_size);
@@ -549,6 +551,10 @@ string_t UncompressedStringStorage::ReadOverflowString(const QueryContext &conte
 	}
 	if (offset < 0) {
 		ThrowOverflowStringOffsetOutOfBounds();
+	}
+
+	if (state.overflow_reader) {
+		return state.overflow_reader->ReadString(result, block, offset);
 	}
 
 	if (block < MAXIMUM_BLOCK) {

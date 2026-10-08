@@ -13,12 +13,13 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/pair.hpp"
 #include "duckdb/common/reference_map.hpp"
+#include "duckdb/common/thread.hpp"
 #include "duckdb/main/query_result.hpp"
 #include "duckdb/execution/task_error_manager.hpp"
 #include "duckdb/execution/progress_data.hpp"
 #include "duckdb/parallel/pipeline.hpp"
 
-#include <condition_variable>
+#include <functional>
 
 namespace duckdb {
 class BufferedData;
@@ -63,7 +64,7 @@ public:
 		return task != nullptr;
 	}
 	//! Run one partial task slice on the calling thread and report the resulting state
-	QueryResultState ExecuteTask();
+	QueryResultState ExecuteTask(std::function<void()> on_reschedule_arg = {});
 	//! Report the execution state without running any task
 	QueryResultState Poll();
 	void WaitForTask();
@@ -87,6 +88,15 @@ public:
 	//! Work on tasks for this specific executor, until there are no tasks remaining
 	bool WorkOnTasks();
 
+	//! Hand a single task directly to this executor's driver, bypassing the
+	//! scheduler queue, when the calling thread is currently driving this
+	//! executor (inside Initialize/ExecuteTask/WorkOnTasks) and the slot is
+	//! free. The driver consumes the slot before polling the queue and before
+	//! it can park, so no scheduler wake-up is needed and the shared queue's
+	//! task-per-signal accounting stays intact (see Event::SetTasks). Returns
+	//! false (caller schedules normally) otherwise.
+	bool TrySubmitInlineTask(const shared_ptr<Task> &task);
+
 	//! Flush a thread context into the client context
 	void Flush(ThreadContext &context);
 
@@ -100,7 +110,11 @@ public:
 	idx_t GetPipelinesProgress(ProgressData &progress);
 
 	void CompletePipeline() {
-		completed_pipelines++;
+		if (++completed_pipelines == total_pipelines) {
+			// The query just finished: wake an async driver parked on NO_TASKS so it
+			// can observe completion instead of polling.
+			NotifyDriver();
+		}
 	}
 	ProducerToken &GetToken() {
 		return *producer;
@@ -128,6 +142,9 @@ public:
 	//! Set the buffer of the result this query produces. Called at submission, before execution starts
 	void SetResultBuffer(shared_ptr<BufferedData> result_buffer_p);
 	shared_ptr<BufferedData> GetResultBuffer();
+	void SetCallerDrives(bool caller_drives_p) {
+		caller_drives = caller_drives_p;
+	}
 
 	idx_t GetTotalPipelines() const {
 		return total_pipelines;
@@ -149,7 +166,16 @@ private:
 	//! Whether this query's store can park a producer for the consumer at all. A store settled on
 	//! retained never parks, so the retained hot path skips the readiness checks
 	bool ResultStoreCanPark();
+	//! Fire on_reschedule (if set) to wake an async driver parked on NO_TASKS_AVAILABLE. Takes executor_lock.
+	void NotifyDriver();
 	void InitializeInternal(PhysicalOperator &physical_plan);
+
+	struct DriverScope {
+		explicit DriverScope(Executor &executor);
+		~DriverScope();
+
+		Executor &executor;
+	};
 
 	void ScheduleEvents(const vector<shared_ptr<MetaPipeline>> &meta_pipelines);
 	void ScheduleEventsInternal(ScheduleEventData &event_data);
@@ -160,7 +186,7 @@ private:
 
 	bool NextExecutor();
 	//! The state to report when this thread has no task to run
-	QueryResultState IdleState();
+	QueryResultState IdleState(std::function<void()> on_reschedule_arg = {});
 	//! Cancel all tasks and throw the recorded error
 	void FailExecution();
 	//! Advance to the next executor, or record and return FINISHED
@@ -208,11 +234,18 @@ private:
 	QueryResultState execution_result;
 	//! The current task in process (if any)
 	shared_ptr<Task> task;
+	//! Driver-bypass slot (TrySubmitInlineTask). Own lock: submission happens
+	//! under executor_lock (Initialize holds it across ScheduleEvents), so the
+	//! slot lock must nest inside it, never the other way around.
+	mutex inline_task_lock;
+	shared_ptr<Task> inline_task;
+	vector<thread_id> drivers;
+	bool caller_drives = false;
 
 	//! Task that have been descheduled
 	reference_map_t<Task, shared_ptr<Task>> to_be_rescheduled_tasks;
 	//! The semaphore to signal task rescheduling
-	std::condition_variable task_reschedule;
+	absl::CondVar task_reschedule;
 
 	//! Currently alive executor tasks
 	atomic<idx_t> executor_tasks;
@@ -221,6 +254,9 @@ private:
 	mutex result_buffer_lock;
 	//! The buffer of the result this query produces, or null for a query that has none
 	shared_ptr<BufferedData> result_buffer;
+
+	//! External callback for task rescheduling notification
+	std::function<void()> on_reschedule;
 
 	//! Total time blocked while waiting on tasks, in microseconds
 	atomic<idx_t> blocked_thread_time;

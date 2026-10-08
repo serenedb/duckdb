@@ -61,8 +61,11 @@ void ExpressionState::ResetDictionaryStates() {
 }
 
 void ExpressionExecutorState::Verify() {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	D_ASSERT(executor);
 	root_state->Verify(*this);
+#endif
 }
 
 } // namespace duckdb

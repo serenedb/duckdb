@@ -17,7 +17,7 @@ NULL	NULL
 query TT
 EXPLAIN SELECT s."a'b",s.y.z FROM column_paths;
 ----
-physical_plan	<REGEX>:.*Seq Scan[^╰]*Projections:[^╰]*s[.]y[.]z.*
+physical_plan	<REGEX>:.*SEQ_SCAN[^╰]*Projections:[^╰]*s[.]y[.]z.*
 
 query I rowsort
 SELECT v.x.y::INTEGER FROM column_paths;
@@ -29,7 +29,7 @@ NULL
 query TT
 EXPLAIN SELECT v.x.y::INTEGER FROM column_paths;
 ----
-physical_plan	<REGEX>:.*Seq Scan[^╰]*Projections:[^╰]*v[.]x[.]y.*
+physical_plan	<REGEX>:.*SEQ_SCAN[^╰]*Projections:[^╰]*v[.]x[.]y.*
 
 query IT rowsort
 SELECT s.y.z,s.y.z::VARCHAR FROM column_paths WHERE s."a'b" IS NULL;
@@ -40,7 +40,7 @@ NULL	NULL
 query TT
 EXPLAIN SELECT s.y.z,s.y.z::VARCHAR FROM column_paths WHERE s."a'b" IS NULL;
 ----
-physical_plan	<REGEX>:.*Seq Scan[^╰]*Projections:[^╰]*s[.]y[.]z.*
+physical_plan	<REGEX>:.*SEQ_SCAN[^╰]*Projections:[^╰]*s[.]y[.]z.*
 
 statement ok
 COPY column_paths TO '__TEST_DIR__/sql_export_migration_paths.parquet' (FORMAT parquet);
@@ -55,7 +55,7 @@ NULL	NULL	0
 query TT
 EXPLAIN SELECT s."a'b",s.y.z,file_index FROM read_parquet('__TEST_DIR__/sql_export_migration_paths.parquet');
 ----
-physical_plan	<REGEX>:.*Read Parquet[^╰]*Projections:[^╰]*s[.]y[.]z.*
+physical_plan	<REGEX>:.*READ_PARQUET[^╰]*Projections:[^╰]*s[.]y[.]z.*
 
 query T rowsort
 SELECT s.y::STRUCT(z VARCHAR) FROM read_parquet('__TEST_DIR__/sql_export_migration_paths.parquet');
@@ -67,7 +67,7 @@ NULL
 query TT
 EXPLAIN SELECT s.y::STRUCT(z VARCHAR) FROM read_parquet('__TEST_DIR__/sql_export_migration_paths.parquet');
 ----
-physical_plan	<REGEX>:.*Read Parquet[^╰]*Projections:[^╰]*s[.]y.*
+physical_plan	<REGEX>:.*READ_PARQUET[^╰]*Projections:[^╰]*s[.]y.*
 
 
 query TT

@@ -7,6 +7,7 @@ add_library_unity(
   alter_table_info.cpp
   alter_database_info.cpp
   alter_schema_info.cpp
+  alter_sequence_info.cpp
   attach_info.cpp
   comment_on_column_info.cpp
   connect_info.cpp
@@ -19,10 +20,14 @@ add_library_unity(
   create_collation_info.cpp
   create_coordinate_system_info.cpp
   create_copy_function_info.cpp
+  create_database_info.cpp
+  create_foreign_server_info.cpp
   create_macro_info.cpp
   create_pragma_function_info.cpp
+  create_role_info.cpp
   create_secret_info.cpp
   create_sequence_info.cpp
+  create_tokenizer_info.cpp
   create_trigger_info.cpp
   create_schema_info.cpp
   create_scalar_function_info.cpp

@@ -46,7 +46,7 @@ BoundStatement Binder::Bind(ExpressionListRef &expr) {
 		if (result.names.empty()) {
 			// no names provided, generate them
 			for (idx_t val_idx = 0; val_idx < expression_list.size(); val_idx++) {
-				result.names.emplace_back("col" + to_string(val_idx));
+				result.names.emplace_back("column" + to_string(val_idx + 1));
 			}
 		}
 
@@ -123,7 +123,7 @@ BoundStatement Binder::Bind(ExpressionListRef &expr) {
 		}
 	}
 	auto bind_index = GenerateTableIndex();
-	bind_context.AddGenericBinding(bind_index, expr.alias, result.names, result.types);
+	bind_context.AddGenericBinding(bind_index, expr.alias, result.names, result.types, expr.case_sensitive_names);
 
 	// values list, first plan any subqueries in the list
 	auto root = make_uniq_base<LogicalOperator, LogicalDummyScan>(GenerateTableIndex());

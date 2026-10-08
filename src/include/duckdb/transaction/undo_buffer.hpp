@@ -11,7 +11,9 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/enums/undo_flags.hpp"
 #include "duckdb/transaction/undo_buffer_allocator.hpp"
+#include "duckdb/transaction/catalog_run.hpp"
 #include "duckdb/common/enums/active_transaction_state.hpp"
+#include "duckdb/storage/table/data_table_info.hpp"
 
 namespace duckdb {
 class BufferManager;
@@ -53,11 +55,13 @@ public:
 
 	bool ChangesMade();
 	UndoBufferProperties GetProperties();
+	void AddModifiedTables(vector<reference<DataTableInfo>> &tables);
 
 	//! Cleanup the undo buffer
 	void Cleanup(VisibilityBound lowest_visibility_bound);
 	//! Commit the changes made in the UndoBuffer: should be called on commit
-	void WriteToWAL(WriteAheadLog &wal, optional_ptr<StorageCommitState> commit_state);
+	void WriteToWAL(optional_ptr<WriteAheadLog> wal, optional_ptr<StorageCommitState> commit_state,
+	                optional_ptr<vector<CatalogRunEntry>> catalog_run);
 	//! Iterate the undo buffer and commit each entry. Deferred drop side effects accumulate in
 	//! info.drop_state so they can be applied after the commit chain succeeds.
 	void Commit(UndoBuffer::IteratorState &iterator_state, CommitInfo &info);

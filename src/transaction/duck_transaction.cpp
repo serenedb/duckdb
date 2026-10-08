@@ -25,6 +25,9 @@
 #include "duckdb/storage/storage_lock.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
+#include "duckdb/common/algorithm.hpp"
+
+#include <functional>
 
 namespace duckdb {
 
@@ -48,6 +51,12 @@ SnapshotView DuckTransaction::GetSnapshotView() const {
 }
 
 DuckTransaction::~DuckTransaction() {
+}
+
+DuckTransaction::PreparedCommit::PreparedCommit(optional_ptr<BlockManager> block_manager) : drop_state(block_manager) {
+}
+
+DuckTransaction::PreparedCommit::~PreparedCommit() {
 }
 
 DuckTransaction &DuckTransaction::Get(ClientContext &context, AttachedDatabase &db) {
@@ -148,22 +157,54 @@ UndoBufferReference DuckTransaction::CreateUpdateInfo(DuckTableEntry &table_entr
 	return undo_entry;
 }
 
-void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, const SequenceData &data) {
+void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, uint64_t usage_count, int64_t counter) {
 	lock_guard<mutex> l(sequence_lock);
+	if (sequence.LogsValues()) {
+		auto logged = logged_sequence_usage.emplace(sequence, usage_count);
+		logged.first->second = MaxValue(logged.first->second, usage_count);
+		return;
+	}
 	auto entry = sequence_usage.find(sequence);
 	if (entry == sequence_usage.end()) {
 		auto undo_entry = undo_buffer.CreateEntry(UndoFlags::SEQUENCE_VALUE, sizeof(SequenceValue));
 		auto sequence_info = reinterpret_cast<SequenceValue *>(undo_entry.GetDataMutable());
 		sequence_info->entry = &sequence;
-		sequence_info->usage_count = data.usage_count;
-		sequence_info->counter = data.counter;
+		sequence_info->usage_count = usage_count;
+		sequence_info->counter = counter;
 		sequence_usage.emplace(sequence, *sequence_info);
 	} else {
 		auto &sequence_info = entry->second.get();
 		D_ASSERT(RefersToSameObject(*sequence_info.entry, sequence));
-		sequence_info.usage_count = data.usage_count;
-		sequence_info.counter = data.counter;
+		if (usage_count > sequence_info.usage_count) {
+			sequence_info.usage_count = usage_count;
+			sequence_info.counter = counter;
+		}
 	}
+}
+
+bool DuckTransaction::HasLoggedSequenceUsage() {
+	lock_guard<mutex> l(sequence_lock);
+	return !logged_sequence_usage.empty();
+}
+
+void DuckTransaction::CoverSequenceUsage() {
+	for (auto &usage : logged_sequence_usage) {
+		usage.first.get().Cover(usage.second);
+	}
+}
+
+vector<SequenceValue> DuckTransaction::ReserveSequenceUsage(WriteAheadLog &catalog_log) {
+	vector<SequenceValue> durable_after;
+	for (auto &usage : sequence_usage) {
+		auto &value = usage.second.get();
+		catalog_log.WriteUseCatalog(manager.GetDB().oid);
+		catalog_log.WriteSequenceValue(value);
+		durable_after.push_back(value);
+	}
+	for (auto &usage : logged_sequence_usage) {
+		usage.first.get().ReserveInCommit(catalog_log, usage.second, durable_after);
+	}
+	return durable_after;
 }
 
 bool DuckTransaction::ChangesMade() {
@@ -174,6 +215,27 @@ UndoBufferProperties DuckTransaction::GetUndoProperties() {
 	auto properties = undo_buffer.GetProperties();
 	properties.estimated_size += storage->EstimatedSize();
 	return properties;
+}
+
+vector<unique_ptr<StorageLockKey>> DuckTransaction::LockModifiedTables() {
+	vector<reference<DataTableInfo>> tables;
+	for (auto &table : storage->GetTables()) {
+		tables.push_back(*table.get().GetDataTableInfo());
+	}
+	undo_buffer.AddModifiedTables(tables);
+	std::sort(tables.begin(), tables.end(), [](const DataTableInfo &left, const DataTableInfo &right) {
+		return std::less<const DataTableInfo *>()(&left, &right);
+	});
+	vector<unique_ptr<StorageLockKey>> locks;
+	optional_ptr<DataTableInfo> previous;
+	for (auto &table : tables) {
+		if (previous.get() == &table.get()) {
+			continue;
+		}
+		previous = table.get();
+		locks.push_back(table.get().alter_lock.GetSharedLock());
+	}
+	return locks;
 }
 
 bool DuckTransaction::AutomaticCheckpoint(AttachedDatabase &db, const UndoBufferProperties &properties) {
@@ -207,7 +269,7 @@ bool DuckTransaction::ShouldWriteToWAL(AttachedDatabase &db) {
 	}
 	auto &storage_manager = db.GetStorageManager();
 	if (!storage_manager.HasWAL()) {
-		return false;
+		return storage_manager.InMemory() && db.GetCatalog().CatalogLog() != nullptr;
 	}
 	return true;
 }
@@ -242,7 +304,10 @@ ErrorData DuckTransaction::AppendLocalStorage(ClientContext &context, AttachedDa
 	try {
 		if (ShouldWriteToWAL(db)) {
 			auto &storage_manager = db.GetStorageManager();
-			commit_state = storage_manager.GenStorageCommitState(*storage_manager.GetWAL());
+			auto wal = storage_manager.GetWAL();
+			if (wal) {
+				commit_state = storage_manager.GenStorageCommitState(*wal);
+			}
 		}
 		auto &profiler = *context.client_data->profiler;
 		auto commit_timer = profiler.StartTimer<MetricStorageCommitLocalStorageLatency>();
@@ -259,20 +324,21 @@ ErrorData DuckTransaction::AppendLocalStorage(ClientContext &context, AttachedDa
 }
 
 ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &db,
-                                      unique_ptr<StorageCommitState> &commit_state) noexcept {
+                                      unique_ptr<StorageCommitState> &commit_state,
+                                      optional_ptr<vector<CatalogRunEntry>> catalog_run) noexcept {
 	ErrorData error_data;
 	try {
 		// the append may have consumed the last local change: do not ask ShouldWriteToWAL again here
-		D_ASSERT(commit_state);
+		D_ASSERT(commit_state || catalog_run);
 		auto wal = db.GetStorageManager().GetWAL();
 		auto &profiler = *context.client_data->profiler;
 		auto wal_timer = profiler.StartTimer<MetricStorageWriteToWALLatency>();
-		undo_buffer.WriteToWAL(*wal, commit_state.get());
+		undo_buffer.WriteToWAL(wal, commit_state.get(), catalog_run);
 		wal_timer.EndTimer();
 
 		// no FileSync is required here: any optimistically written blocks that the WAL references
 		// have already been synced by FlushBulkAppendBlocksAndSync, before the commit locks were taken
-		D_ASSERT(!commit_state->HasRowGroupData() || storage->SyncedFlushedBlocks());
+		D_ASSERT(!commit_state || !commit_state->HasRowGroupData() || storage->SyncedFlushedBlocks());
 	} catch (std::exception &ex) {
 		// Call RevertCommit() outside this try-catch as it itself may throw
 		error_data = ErrorData(ex);
@@ -348,6 +414,54 @@ ErrorData DuckTransaction::Commit(AttachedDatabase &db, CommitInfo &commit_info,
 		                             error_data.RawMessage());
 	}
 	return error_data;
+}
+
+ErrorData DuckTransaction::ApplyPrepared(AttachedDatabase &db, CommitInfo &commit_info) noexcept {
+	D_ASSERT(prepared);
+	this->commit_id = commit_info.commit_id;
+	if (!ChangesMade()) {
+		return ErrorData();
+	}
+	commit_info.drop_state = &prepared->drop_state;
+
+	ErrorData error_data;
+	try {
+		storage->Commit(prepared->commit_state.get());
+		undo_buffer.Commit(prepared->iterator_state, commit_info);
+		if (!db.IsSystem() && !db.IsTemporary() && Settings::Get<DebugForceCommitFailureSetting>(db.GetDatabase())) {
+			throw InvalidInputException("Forced commit failure (debug_force_commit_failure)");
+		}
+		prepared->applied = true;
+		return ErrorData();
+	} catch (std::exception &ex) {
+		error_data = ErrorData(ex);
+	}
+
+	try {
+		undo_buffer.RevertCommit(prepared->iterator_state, GetTransactionId());
+	} catch (std::exception &ex) {
+		ValidChecker::Invalidate(db.GetDatabase(),
+		                         "Failed to revert transaction commit, database is in an undefined state. "
+		                         "Original commit error: " +
+		                             error_data.RawMessage() + ". RevertCommit error: " + ErrorData(ex).RawMessage());
+	} catch (...) {
+		ValidChecker::Invalidate(db.GetDatabase(),
+		                         "Failed to revert transaction commit (unknown error), database is in an "
+		                         "undefined state. Original commit error: " +
+		                             error_data.RawMessage());
+	}
+	return error_data;
+}
+
+void DuckTransaction::RevertPrepared() {
+	D_ASSERT(prepared && prepared->applied);
+	undo_buffer.RevertCommit(prepared->iterator_state, GetTransactionId());
+	prepared->applied = false;
+}
+
+void DuckTransaction::FinishPrepared() {
+	D_ASSERT(prepared && prepared->applied);
+	prepared->drop_state.FinalizeCommit();
 }
 
 ErrorData DuckTransaction::Rollback() {

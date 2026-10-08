@@ -46,6 +46,16 @@ void CommonSubExpressionOptimizer::VisitOperator(LogicalOperator &op) {
 	LogicalOperatorVisitor::VisitOperator(op);
 }
 
+static bool ShortCircuits(const Expression &expr) {
+	switch (expr.GetExpressionClass()) {
+	case ExpressionClass::BOUND_CONJUNCTION:
+	case ExpressionClass::BOUND_CASE:
+		return true;
+	default:
+		return expr.GetExpressionType() == ExpressionType::OPERATOR_COALESCE;
+	}
+}
+
 void CommonSubExpressionOptimizer::CountExpressions(Expression &expr, CSEReplacementState &state) {
 	// we only consider expressions with children for CSE elimination
 	switch (expr.GetExpressionClass()) {
@@ -75,23 +85,20 @@ void CommonSubExpressionOptimizer::CountExpressions(Expression &expr, CSEReplace
 
 	// If we have a function that uses short circuiting, then we can only extract CSEs from the leftmost
 	// side of the argument tree (child_no == 0)
-	switch (expr.GetExpressionClass()) {
-	case ExpressionClass::BOUND_CONJUNCTION:
-	case ExpressionClass::BOUND_CASE: {
-		// Save the short circuit reference
-		const auto save_short_circuit = state.short_circuited;
+	const auto save_short_circuit = state.short_circuited;
+	if (expr.GetExpressionType() == ExpressionType::OPERATOR_TRY) {
+		state.short_circuited = true;
+	}
+	if (ShortCircuits(expr)) {
 		ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
 			CountExpressions(child, state);
 			state.short_circuited = true;
 		});
-		state.short_circuited = save_short_circuit;
-		break;
-	}
-	default:
+	} else {
 		// recursively count the children
 		ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { CountExpressions(child, state); });
-		break;
 	}
+	state.short_circuited = save_short_circuit;
 }
 
 void CommonSubExpressionOptimizer::PerformCSEReplacement(unique_ptr<Expression> &expr_ptr, CSEReplacementState &state) {

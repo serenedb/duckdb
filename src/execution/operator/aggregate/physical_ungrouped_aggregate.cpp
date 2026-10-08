@@ -103,6 +103,7 @@ void UngroupedAggregateState::Move(UngroupedAggregateState &other) {
 	other.functions = std::move(functions);
 	other.aggregate_types = std::move(aggregate_types);
 	other.argument_counts = std::move(argument_counts);
+	other.counts = std::move(counts);
 }
 
 //===--------------------------------------------------------------------===//
@@ -125,36 +126,69 @@ public:
 	unique_ptr<DistinctAggregateState> distinct_state;
 };
 
-ArenaAllocator &GlobalUngroupedAggregateState::CreateAllocator() const {
-	lock_guard<mutex> glock(lock);
-	stored_allocators.emplace_back(make_uniq<ArenaAllocator>(client_allocator));
-	return *stored_allocators.back();
+GlobalUngroupedAggregateState::~GlobalUngroupedAggregateState() {
+	auto *node = pending.exchange(nullptr, std::memory_order_acquire);
+	while (node) {
+		auto *next = node->next;
+		delete node;
+		node = next;
+	}
 }
 
 void GlobalUngroupedAggregateState::Combine(LocalUngroupedAggregateState &other) {
+	auto node = make_uniq<PendingState>();
+	node->allocator = std::move(other.owned_allocator);
+	other.state.Move(node->state);
+	auto *raw = node.release();
+	raw->next = pending.load(std::memory_order_relaxed);
+	while (!pending.compare_exchange_weak(raw->next, raw, std::memory_order_release, std::memory_order_relaxed)) {
+	}
+}
+
+void GlobalUngroupedAggregateState::MergePending() {
+	PendingState *combined = nullptr;
+	for (auto *node = pending.load(std::memory_order_acquire); node;) {
+		auto *next = node->next;
+		node->next = combined;
+		combined = node;
+		node = next;
+	}
+	pending.store(combined, std::memory_order_relaxed);
 	lock_guard<mutex> glock(lock);
-	for (idx_t aggr_idx = 0; aggr_idx < state.functions.size(); aggr_idx++) {
-		if (state.aggregate_types[aggr_idx] == AggregateType::DISTINCT) {
-			continue;
+	while (auto *node = pending.load(std::memory_order_relaxed)) {
+		if (node->allocator) {
+			stored_allocators.push_back(std::move(node->allocator));
 		}
+		auto &other = node->state;
+		for (idx_t aggr_idx = 0; aggr_idx < state.functions.size(); aggr_idx++) {
+			if (state.aggregate_types[aggr_idx] == AggregateType::DISTINCT) {
+				continue;
+			}
 
-		auto &func = state.functions[aggr_idx];
-		Vector source_state(Value::POINTER(CastPointerToValue(other.state.aggregate_data[aggr_idx].get())), count_t(1));
-		Vector dest_state(Value::POINTER(CastPointerToValue(state.aggregate_data[aggr_idx].get())), count_t(1));
+			auto &func = state.functions[aggr_idx];
+			Vector source_state(Value::POINTER(CastPointerToValue(other.aggregate_data[aggr_idx].get())), count_t(1));
+			Vector dest_state(Value::POINTER(CastPointerToValue(state.aggregate_data[aggr_idx].get())), count_t(1));
 
-		AggregateInputData aggr_input_data(func, state.bind_data[aggr_idx].get(), allocator,
-		                                   AggregateCombineType::ALLOW_DESTRUCTIVE);
-		if (!func.HasStateCombineCallback()) {
-			throw InternalException("Aggregate function " + func.GetName() + " does not support combining of states");
+			AggregateInputData aggr_input_data(func, state.bind_data[aggr_idx].get(), allocator,
+			                                   AggregateCombineType::ALLOW_DESTRUCTIVE);
+			if (!func.HasStateCombineCallback()) {
+				throw InternalException("Aggregate function " + func.GetName() +
+				                        " does not support combining of states");
+			}
+			func.GetStateCombineCallback()(source_state, dest_state, aggr_input_data, 1);
+			state.counts[aggr_idx] += other.counts[aggr_idx];
 		}
-		func.GetStateCombineCallback()(source_state, dest_state, aggr_input_data, 1);
-		state.counts[aggr_idx] += other.state.counts[aggr_idx];
+		pending.store(node->next, std::memory_order_relaxed);
+		delete node;
 	}
 }
 
 void GlobalUngroupedAggregateState::CombineDistinct(LocalUngroupedAggregateState &other,
                                                     DistinctAggregateData &distinct_data) {
 	lock_guard<mutex> glock(lock);
+	if (other.owned_allocator) {
+		stored_allocators.push_back(std::move(other.owned_allocator));
+	}
 	for (idx_t aggr_idx = 0; aggr_idx < state.functions.size(); aggr_idx++) {
 		if (!distinct_data.IsDistinct(aggr_idx)) {
 			continue;
@@ -247,7 +281,8 @@ void UngroupedAggregateExecuteState::Sink(LocalUngroupedAggregateState &state, D
 // Local State
 //===--------------------------------------------------------------------===//
 LocalUngroupedAggregateState::LocalUngroupedAggregateState(GlobalUngroupedAggregateState &gstate)
-    : allocator(gstate.CreateAllocator()), state(gstate.state), repeated_state_vector(LogicalType::POINTER) {
+    : owned_allocator(make_uniq<ArenaAllocator>(gstate.client_allocator)), allocator(*owned_allocator),
+      state(gstate.state), repeated_state_vector(LogicalType::POINTER) {
 }
 
 class UngroupedAggregateLocalSinkState : public LocalSinkState {
@@ -473,6 +508,8 @@ private:
 
 public:
 	vector<unique_ptr<GlobalSourceState>> global_source_states;
+	//! Per radix table: indexes of the distinct aggregates reading that table
+	vector<vector<idx_t>> table_aggregate_indexes;
 };
 
 class UngroupedDistinctAggregateFinalizeTask : public ExecutorTask {
@@ -509,15 +546,8 @@ void UngroupedDistinctAggregateFinalizeEvent::Schedule() {
 	auto &distinct_data = *op.distinct_data;
 
 	idx_t n_tasks = 0;
-	idx_t payload_idx = 0;
-	idx_t next_payload_idx = 0;
+	table_aggregate_indexes.assign(distinct_data.radix_tables.size(), {});
 	for (idx_t agg_idx = 0; agg_idx < aggregates.size(); agg_idx++) {
-		auto &aggregate = aggregates[agg_idx]->Cast<BoundAggregateExpression>();
-
-		// Forward the payload idx
-		payload_idx = next_payload_idx;
-		next_payload_idx = payload_idx + aggregate.GetChildren().size();
-
 		// If aggregate is not distinct, skip it
 		if (!distinct_data.IsDistinct(agg_idx)) {
 			global_source_states.push_back(nullptr);
@@ -525,14 +555,21 @@ void UngroupedDistinctAggregateFinalizeEvent::Schedule() {
 		}
 		D_ASSERT(distinct_data.info.table_map.count(agg_idx));
 
-		// Create global state for scanning
+		// Distinct aggregates with equal inputs share a radix table: the first of them owns the
+		// table and scans it once for all of them, so only the owner gets a global source state
 		auto table_idx = distinct_data.info.table_map.at(agg_idx);
+		auto &table_aggregates = table_aggregate_indexes[table_idx];
+		table_aggregates.push_back(agg_idx);
+		if (table_aggregates.size() > 1) {
+			global_source_states.push_back(nullptr);
+			continue;
+		}
 		auto &radix_table_p = *distinct_data.radix_tables[table_idx];
 		n_tasks += radix_table_p.MaxThreads(*gstate.distinct_state->radix_states[table_idx]);
 		global_source_states.push_back(radix_table_p.GetGlobalSourceState(context));
 	}
 	n_tasks = MaxValue<idx_t>(n_tasks, 1);
-	n_tasks = MinValue<idx_t>(n_tasks, TaskScheduler::GetScheduler(context).NumberOfThreads());
+	n_tasks = MinValue<idx_t>(n_tasks, TaskScheduler::QueryThreads(context));
 
 	vector<shared_ptr<Task>> tasks;
 	for (idx_t i = 0; i < n_tasks; i++) {
@@ -572,15 +609,21 @@ TaskExecutionResult UngroupedDistinctAggregateFinalizeTask::AggregateDistinct() 
 	auto &agg_idx = aggregation_idx;
 
 	for (; agg_idx < aggregates.size(); agg_idx++) {
-		auto &aggregate = aggregates[agg_idx]->Cast<BoundAggregateExpression>();
-
 		// If aggregate is not distinct, skip it
 		if (!distinct_data.IsDistinct(agg_idx)) {
 			continue;
 		}
 
+		// Only the owner of a shared radix table scans it; the distinct rows it reads update the
+		// state of every aggregate sharing the table, so non-owners have no global source state
+		auto &global_source = finalize_event.global_source_states[agg_idx];
+		if (!global_source) {
+			continue;
+		}
+
 		const auto table_idx = distinct_data.info.table_map.at(agg_idx);
 		auto &radix_table = *distinct_data.radix_tables[table_idx];
+		auto &aggregate_indexes = finalize_event.table_aggregate_indexes[table_idx];
 		if (!blocked) {
 			// Because we can block, we need to make sure we preserve this state
 			radix_table_lstate = radix_table.GetLocalSourceState(execution_context);
@@ -589,7 +632,7 @@ TaskExecutionResult UngroupedDistinctAggregateFinalizeTask::AggregateDistinct() 
 
 		auto &sink = *distinct_state.radix_states[table_idx];
 		InterruptState interrupt_state(shared_from_this());
-		OperatorSourceInput source_input {*finalize_event.global_source_states[agg_idx], lstate, interrupt_state};
+		OperatorSourceInput source_input {*global_source, lstate, interrupt_state};
 
 		DataChunk output_chunk;
 		output_chunk.Initialize(executor.context, distinct_state.distinct_output_chunks[table_idx]->GetTypes());
@@ -597,6 +640,8 @@ TaskExecutionResult UngroupedDistinctAggregateFinalizeTask::AggregateDistinct() 
 		DataChunk payload_chunk;
 		payload_chunk.InitializeEmpty(distinct_data.grouped_aggregate_data[table_idx]->group_types);
 		payload_chunk.SetChildCardinality(0);
+
+		const idx_t payload_cnt = aggregates[agg_idx]->Cast<BoundAggregateExpression>().GetChildren().size();
 
 		while (true) {
 			output_chunk.Reset();
@@ -611,13 +656,14 @@ TaskExecutionResult UngroupedDistinctAggregateFinalizeTask::AggregateDistinct() 
 			}
 
 			// We dont need to resolve the filter, we already did this in Sink
-			idx_t payload_cnt = aggregate.GetChildren().size();
 			for (idx_t i = 0; i < payload_cnt; i++) {
 				payload_chunk.data[i].Reference(output_chunk.data[i]);
 			}
 
-			// Update the aggregate state
-			state.Sink(payload_chunk, 0, agg_idx, output_chunk.size());
+			// Update the aggregate state of every aggregate that shares this table
+			for (const auto aggregate_index : aggregate_indexes) {
+				state.Sink(payload_chunk, 0, aggregate_index, output_chunk.size());
+			}
 		}
 		blocked = false;
 	}
@@ -688,7 +734,7 @@ void VerifyNullHandling(DataChunk &chunk, UngroupedAggregateState &state,
 			chunk.data[aggr_idx].ToUnifiedFormat(vdata);
 			if (vdata.validity.RowIsValid(vdata.sel->get_index(0))) {
 				throw InternalException(
-				    "VerifyNullHandling failed for aggregate function \"%s\": no rows were aggregated but the result "
+				    "VerifyNullHandling failed for aggregate function %s: no rows were aggregated but the result "
 				    "is not NULL - aggregates with default NULL handling should return NULL when no rows are "
 				    "aggregated",
 				    aggr.Function().GetName());
@@ -698,6 +744,7 @@ void VerifyNullHandling(DataChunk &chunk, UngroupedAggregateState &state,
 }
 
 void GlobalUngroupedAggregateState::Finalize(DataChunk &result, idx_t column_offset) {
+	MergePending();
 	result.SetChildCardinality(1);
 	for (idx_t aggr_idx = 0; aggr_idx < state.functions.size(); aggr_idx++) {
 		auto &func = state.functions[aggr_idx];

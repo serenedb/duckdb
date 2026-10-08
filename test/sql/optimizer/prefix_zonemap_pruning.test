@@ -30,7 +30,7 @@ SELECT count(*) FROM prefix_pruning WHERE starts_with(s, '0040');
 query II
 EXPLAIN ANALYZE SELECT count(*) FROM prefix_pruning WHERE NOT prefix(s, '00');
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM prefix_pruning WHERE NOT prefix(s, '00');
@@ -41,7 +41,7 @@ SELECT count(*) FROM prefix_pruning WHERE NOT prefix(s, '00');
 query II
 EXPLAIN ANALYZE SELECT count(*) FROM prefix_pruning WHERE NOT starts_with(s, '00');
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM prefix_pruning WHERE NOT starts_with(s, '00');
@@ -87,7 +87,7 @@ FROM range(6144) r(i);
 query II
 EXPLAIN ANALYZE SELECT count(*) FROM prefix_truncated WHERE NOT starts_with(s, 'pppppppppppp');
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM prefix_truncated WHERE NOT starts_with(s, 'pppppppppppp');
@@ -114,7 +114,7 @@ FROM range(6144) r(i);
 query II
 EXPLAIN ANALYZE SELECT count(*) FROM prefix_nullable WHERE NOT starts_with(s, '00');
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM prefix_nullable WHERE NOT starts_with(s, '00');
@@ -150,7 +150,7 @@ FROM range(6144) r(i);
 query II
 EXPLAIN ANALYZE SELECT count(*) FROM prefix_utf8 WHERE NOT starts_with(s, '🦆');
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM prefix_utf8 WHERE NOT starts_with(s, '🦆');

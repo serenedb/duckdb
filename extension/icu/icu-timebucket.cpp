@@ -8,8 +8,11 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
+#include "duckdb/common/vector_operations/variadic_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "include/icu-bucket.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-timebucket-fast.hpp"
 
 namespace duckdb {
 
@@ -366,11 +369,14 @@ struct ICUTimeBucket : public ICUDateFunc {
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BindData>();
 		auto &cache = ExecuteFunctionState::GetFunctionState(state)->Cast<CalendarCacheState>();
-		TZCalendar calendar(*info.calendar, info.cal_setting);
-		cache.SetTimeZone(calendar.GetCalendar(), string_t("UTC"));
-
 		const auto &bucket_width_arg = args.data[0];
 		const auto &ts_arg = args.data[1];
+		if (ICUTimeBucketFast::TryBinary(args, result)) {
+			return;
+		}
+
+		TZCalendar calendar(*info.calendar, info.cal_setting);
+		cache.SetTimeZone(calendar.GetCalendar(), string_t("UTC"));
 
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg)) {
@@ -420,12 +426,15 @@ struct ICUTimeBucket : public ICUDateFunc {
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BindData>();
 		auto &cache = ExecuteFunctionState::GetFunctionState(state)->Cast<CalendarCacheState>();
-		TZCalendar calendar(*info.calendar, info.cal_setting);
-		cache.SetTimeZone(calendar.GetCalendar(), string_t("UTC"));
-
 		const auto &bucket_width_arg = args.data[0];
 		const auto &ts_arg = args.data[1];
 		const auto &offset_arg = args.data[2];
+		if (ICUTimeBucketFast::TryOffset(args, result)) {
+			return;
+		}
+
+		TZCalendar calendar(*info.calendar, info.cal_setting);
+		cache.SetTimeZone(calendar.GetCalendar(), string_t("UTC"));
 
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg)) {
@@ -483,12 +492,15 @@ struct ICUTimeBucket : public ICUDateFunc {
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BindData>();
 		auto &cache = ExecuteFunctionState::GetFunctionState(state)->Cast<CalendarCacheState>();
-		TZCalendar calendar(*info.calendar, info.cal_setting);
-		cache.SetTimeZone(calendar.GetCalendar(), string_t("UTC"));
-
 		const auto &bucket_width_arg = args.data[0];
 		const auto &ts_arg = args.data[1];
 		const auto &origin_arg = args.data[2];
+		if (ICUTimeBucketFast::TryOrigin(args, result)) {
+			return;
+		}
+
+		TZCalendar calendar(*info.calendar, info.cal_setting);
+		cache.SetTimeZone(calendar.GetCalendar(), string_t("UTC"));
 
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR &&
 		    origin_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
@@ -550,12 +562,15 @@ struct ICUTimeBucket : public ICUDateFunc {
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		auto &info = func_expr.BindInfo()->Cast<BindData>();
 		auto &cache = ExecuteFunctionState::GetFunctionState(state)->Cast<CalendarCacheState>();
-		TZCalendar calendar(*info.calendar, info.cal_setting);
-
 		const auto &bucket_width_arg = args.data[0];
 		const auto &ts_arg = args.data[1];
 		const auto &tz_arg = args.data[2];
 
+		if (ICUTimeBucketFast::TryTimeZone(args, result)) {
+			return;
+		}
+
+		TZCalendar calendar(*info.calendar, info.cal_setting);
 		if (bucket_width_arg.GetVectorType() == VectorType::CONSTANT_VECTOR &&
 		    tz_arg.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			if (ConstantVector::IsNull(bucket_width_arg) || ConstantVector::IsNull(tz_arg)) {
@@ -611,6 +626,27 @@ struct ICUTimeBucket : public ICUDateFunc {
 		}
 	}
 
+	static void ICUTimeBucketTimeZoneOriginFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.ColumnCount() == 4);
+
+		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+		auto &info = func_expr.BindInfo()->Cast<BindData>();
+		auto &cache = ExecuteFunctionState::GetFunctionState(state)->Cast<CalendarCacheState>();
+		if (ICUTimeBucketFast::TryTimeZoneOrigin(args, result)) {
+			return;
+		}
+
+		TZCalendar calendar(*info.calendar, info.cal_setting);
+
+		VariadicExecutor::Execute<timestamp_tz_t, interval_t, timestamp_tz_t, string_t, timestamp_tz_t>(
+		    args, result,
+		    [&](interval_t bucket_width, timestamp_tz_t ts, string_t tz,
+		        timestamp_tz_t origin) -> optional<timestamp_tz_t> {
+			    cache.SetTimeZone(calendar.GetCalendar(), tz);
+			    return OriginTernaryOperator::Operation(bucket_width, ts, origin, calendar);
+		    });
+	}
+
 	static void AddTimeBucketFunction(ExtensionLoader &loader) {
 		ScalarFunctionSet set("time_bucket");
 		ScalarFunction base_fun({}, LogicalType::TIMESTAMP_TZ, ICUTimeBucketFunction, Bind);
@@ -636,10 +672,18 @@ struct ICUTimeBucket : public ICUDateFunc {
 		    .AddParameter("timestamp", LogicalType::TIMESTAMP_TZ)
 		    .AddParameter("timezone", LogicalType::VARCHAR);
 		set.AddFunction(timezone_fun);
+		ScalarFunction timezone_origin_fun({}, LogicalType::TIMESTAMP_TZ, ICUTimeBucketTimeZoneOriginFunction, Bind);
+		timezone_origin_fun.GetSignature()
+		    .AddParameter("bucket_width", LogicalType::INTERVAL)
+		    .AddParameter("timestamp", LogicalType::TIMESTAMP_TZ)
+		    .AddParameter("timezone", LogicalType::VARCHAR)
+		    .AddParameter("origin", LogicalType::TIMESTAMP_TZ);
+		set.AddFunction(timezone_origin_fun);
 		set.ApplyToFunctions([](ScalarFunction &func) {
 			func.SetFallible();
 			func.SetInitStateCallback(InitCalendarCache);
 			func.SetArgProperties(1, ArgProperties().NonDecreasing());
+			func.SetBucketRewriteCallback(ICUTimeBucketBucketRewrite);
 		});
 		loader.RegisterFunction(set);
 	}

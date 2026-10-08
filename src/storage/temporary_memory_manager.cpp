@@ -96,12 +96,11 @@ void TemporaryMemoryManager::Unregister(TemporaryMemoryState &temporary_memory_s
 
 void TemporaryMemoryManager::UpdateConfiguration(ClientContext &context) {
 	auto &buffer_manager = BufferManager::GetBufferManager(context);
-	auto &task_scheduler = TaskScheduler::GetScheduler(context);
 
 	memory_limit =
 	    LossyNumericCast<idx_t>(MAXIMUM_MEMORY_LIMIT_RATIO * static_cast<double>(buffer_manager.GetMaxMemory()));
 	has_temporary_directory = buffer_manager.HasTemporaryDirectory();
-	num_threads = task_scheduler.NumberOfThreads();
+	num_threads = TaskScheduler::QueryThreads(context);
 	num_connections = ConnectionManager::Get(context).GetConnectionCount();
 	query_max_memory = buffer_manager.GetOperatorMemoryLimit();
 }
@@ -169,7 +168,7 @@ void TemporaryMemoryManager::UpdateState(ClientContext &context, TemporaryMemory
 void TemporaryMemoryManager::SetRemainingSize(TemporaryMemoryState &temporary_memory_state, idx_t new_remaining_size) {
 	D_ASSERT(this->remaining_size >= temporary_memory_state.GetRemainingSize());
 	this->remaining_size -= temporary_memory_state.GetRemainingSize();
-	temporary_memory_state.remaining_size = new_remaining_size;
+	temporary_memory_state.remaining_size = MinValue(new_remaining_size, MAXIMUM_REMAINING_SIZE);
 	this->remaining_size += temporary_memory_state.GetRemainingSize();
 }
 
@@ -348,7 +347,8 @@ idx_t TemporaryMemoryManager::ComputeReservation(const TemporaryMemoryState &tem
 }
 
 void TemporaryMemoryManager::Verify() const {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	idx_t total_reservation = 0;
 	idx_t total_remaining_size = 0;
 	for (auto &active_state : active_states) {

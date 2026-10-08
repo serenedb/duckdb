@@ -50,6 +50,7 @@ unique_ptr<CreateInfo> CreateSchemaInfo::Copy() const {
 	for (auto &option : options) {
 		result->options.emplace(option.first, option.second->Copy());
 	}
+	result->authorization = authorization;
 	return std::move(result);
 }
 

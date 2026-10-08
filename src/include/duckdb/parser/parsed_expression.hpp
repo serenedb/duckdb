@@ -185,6 +185,17 @@ public:
 	virtual bool Equals(const ParsedExpression &other) const;
 	hash_t Hash() const override;
 
+	//! True iff this expression appears as a function-call argument written
+	//! with the `name := value` (or `name => value`) named-parameter syntax.
+	//! Distinct from `alias` (which is also used for output-column labels and
+	//! display, and so cannot reliably indicate the user's intent).
+	bool IsNamedParameter() const {
+		return is_named_parameter;
+	}
+	void SetNamedParameter(bool v = true) {
+		is_named_parameter = v;
+	}
+
 	//! Create a copy of this expression
 	virtual unique_ptr<ParsedExpression> Copy() const = 0;
 
@@ -202,6 +213,12 @@ public:
 	static bool Equals(const unique_ptr<ParsedExpression> &left, const unique_ptr<ParsedExpression> &right);
 	static bool ListEquals(const vector<unique_ptr<ParsedExpression>> &left,
 	                       const vector<unique_ptr<ParsedExpression>> &right);
+
+protected:
+	//! Set only by the parser for `name := value` / `name => value` argument
+	//! syntax. Not serialized: the flag is consumed during binding (macro and
+	//! scalar-function argument classification) and irrelevant after.
+	bool is_named_parameter = false;
 };
 
 } // namespace duckdb

@@ -1251,6 +1251,17 @@ idx_t ART::GetInMemorySize(IndexLock &index_lock) const {
 	return in_memory_size;
 }
 
+idx_t ART::GetAllocationSize(IndexLock &index_lock) const {
+	index_lock.AssertHeld(*this);
+	D_ASSERT(owns_data);
+
+	idx_t allocation_size = 0;
+	for (const auto &allocator : *allocators) {
+		allocation_size += allocator->GetSegmentCount() * allocator->GetSegmentSize();
+	}
+	return allocation_size;
+}
+
 bool ART::SupportsDeltaIndexes() const {
 	return true;
 }

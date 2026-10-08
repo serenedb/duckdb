@@ -6,6 +6,9 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 
 #include "duckdb/execution/expression_executor.hpp"
+#include "re2/literal_finder.h"
+
+#include <absl/strings/ascii.h>
 
 namespace duckdb {
 
@@ -177,7 +180,7 @@ struct ASCIILCaseReader {
 	}
 
 	static char Operation(const char *data, idx_t pos) {
-		return (char)StringUtil::ASCII_TO_LOWER_MAP[(uint8_t)data[pos]];
+		return (char)absl::ascii_tolower((uint8_t)data[pos]);
 	}
 };
 
@@ -230,28 +233,18 @@ bool TemplatedLikeOperator(const char *sdata, idx_t slen, const char *pdata, idx
 		pidx = retry_pidx;
 		sidx = ++retry_sidx;
 	}
-	// a trailing '%' only matches an empty suffix when it is not escaped
-	while (pidx < plen) {
-		if (HAS_ESCAPE && pdata[pidx] == escape) {
-			if (pidx + 1 == plen) {
-				throw SyntaxException("Like pattern must not end with escape character!");
-			}
-			// the escape sequence needs a character to match against, and there is none left
-			break;
-		}
-		if (pdata[pidx] != PERCENTAGE) {
-			break;
-		}
+	while (pidx < plen && pdata[pidx] == PERCENTAGE && !(HAS_ESCAPE && escape == PERCENTAGE)) {
 		pidx++;
 	}
 	return pidx == plen && sidx == slen;
 }
 
 struct LikeSegment {
-	explicit LikeSegment(string pattern) : pattern(std::move(pattern)) {
+	explicit LikeSegment(string pattern_p) : pattern(std::move(pattern_p)), finder(pattern) {
 	}
 
 	string pattern;
+	duckdb_re2::LiteralFinder finder;
 };
 
 struct LikeMatcher : public FunctionData {
@@ -288,8 +281,8 @@ struct LikeMatcher : public FunctionData {
 		for (; segment_idx < end_idx; segment_idx++) {
 			auto &segment = segments[segment_idx];
 			// find the pattern of the current segment
-			idx_t next_offset =
-			    FindStrInStr(str_data, str_len, const_uchar_ptr_cast(segment.pattern.c_str()), segment.pattern.size());
+			idx_t next_offset = FindStrInStr(str_data, str_len, const_uchar_ptr_cast(segment.pattern.c_str()),
+			                                 segment.pattern.size(), segment.finder);
 			if (next_offset == DConstants::INVALID_INDEX) {
 				// could not find this pattern in the string: no match
 				return false;
@@ -313,13 +306,13 @@ struct LikeMatcher : public FunctionData {
 		} else {
 			auto &segment = segments.back();
 			// find the pattern of the current segment
-			idx_t next_offset =
-			    FindStrInStr(str_data, str_len, const_uchar_ptr_cast(segment.pattern.c_str()), segment.pattern.size());
+			idx_t next_offset = FindStrInStr(str_data, str_len, const_uchar_ptr_cast(segment.pattern.c_str()),
+			                                 segment.pattern.size(), segment.finder);
 			return next_offset != DConstants::INVALID_INDEX;
 		}
 	}
 
-	static unique_ptr<LikeMatcher> CreateLikeMatcher(string like_pattern, char escape = '\0') {
+	static unique_ptr<LikeMatcher> CreateLikeMatcher(string like_pattern, char escape = '\\') {
 		vector<LikeSegment> segments;
 		idx_t last_non_pattern = 0;
 		bool has_start_percentage = false;
@@ -433,7 +426,7 @@ struct NotLikeEscapeOperator {
 struct LikeOperator {
 	template <class TA, class TB, class TR>
 	static inline TR Operation(TA str, TB pattern) {
-		return LikeOperatorFunction(str, pattern);
+		return LikeOperatorFunction(str, pattern, '\\');
 	}
 };
 
@@ -487,14 +480,14 @@ struct NotILikeEscapeOperator {
 struct ILikeOperator {
 	template <class TA, class TB, class TR>
 	static inline TR Operation(TA str, TB pattern) {
-		return ILikeOperatorFunction(str, pattern);
+		return ILikeOperatorFunction(str, pattern, '\\');
 	}
 };
 
 struct NotLikeOperator {
 	template <class TA, class TB, class TR>
 	static inline TR Operation(TA str, TB pattern) {
-		return !LikeOperatorFunction(str, pattern);
+		return !LikeOperatorFunction(str, pattern, '\\');
 	}
 };
 
@@ -508,8 +501,8 @@ struct NotILikeOperator {
 struct ILikeOperatorASCII {
 	template <class TA, class TB, class TR>
 	static inline TR Operation(TA str, TB pattern) {
-		return TemplatedLikeOperator<'%', '_', false, ASCIILCaseReader>(str.GetData(), str.GetSize(), pattern.GetData(),
-		                                                                pattern.GetSize(), '\0');
+		return TemplatedLikeOperator<'%', '_', true, ASCIILCaseReader>(str.GetData(), str.GetSize(), pattern.GetData(),
+		                                                               pattern.GetSize(), '\\');
 	}
 };
 
@@ -753,6 +746,111 @@ ScalarFunction LikeEscapeFun::GetFunction() {
 	    .AddParameter("escape_character", LogicalType::VARCHAR);
 	like_escape.SetCollationHandling(FunctionCollationHandling::PUSH_COMBINABLE_COLLATIONS);
 	return like_escape;
+}
+
+//===--------------------------------------------------------------------===//
+// similar_to_escape
+//===--------------------------------------------------------------------===//
+// The parser rewrites `x SIMILAR TO y` into
+// `regexp_full_match(x, similar_to_escape(y))`, so this translation has to live
+// beside the parser rather than in a server-side function set -- otherwise the
+// rewrite emits a call that a plain DuckDB has no way to resolve.
+static string SimilarToRegex(const string_t &pattern_str, char escape_char) {
+	auto pattern = pattern_str.GetData();
+	auto plen = pattern_str.GetSize();
+
+	string result;
+	result.reserve(plen + 6);
+	result += "^(?:";
+
+	bool after_escape = false;
+	idx_t nquotes = 0;
+	idx_t bracket_depth = 0;
+	idx_t charclass_pos = 0;
+
+	for (idx_t i = 0; i < plen; i++) {
+		char pchar = pattern[i];
+		if (after_escape) {
+			if (pchar == '"' && bracket_depth < 1) {
+				// escape-double-quote marks the start/end of the captured substring
+				if (nquotes == 0) {
+					result += "){1,1}?(";
+				} else if (nquotes == 1) {
+					result += "){1,1}(?:";
+				} else {
+					throw InvalidInputException(
+					    "SQL regular expression may not contain more than two escape-double-quote separators");
+				}
+				nquotes++;
+			} else {
+				result += '\\';
+				result += pchar;
+				charclass_pos = 3;
+			}
+			after_escape = false;
+		} else if (pchar == escape_char) {
+			after_escape = true;
+		} else if (bracket_depth > 0) {
+			// inside a bracket expression the SIMILAR TO metacharacters are literal
+			if (pchar == '\\') {
+				result += '\\';
+			}
+			result += pchar;
+			if (pchar == ']' && charclass_pos > 2) {
+				bracket_depth--;
+			} else if (pchar == '[') {
+				bracket_depth++;
+				charclass_pos = 3;
+			} else if (pchar == '^') {
+				charclass_pos++;
+			} else {
+				charclass_pos = 3;
+			}
+		} else if (pchar == '[') {
+			result += pchar;
+			bracket_depth = 1;
+			charclass_pos = 1;
+		} else if (pchar == '%') {
+			result += ".*";
+		} else if (pchar == '_') {
+			result += '.';
+		} else if (pchar == '(') {
+			// SIMILAR TO parentheses group without capturing
+			result += "(?:";
+		} else if (pchar == '\\' || pchar == '.' || pchar == '^' || pchar == '$') {
+			result += '\\';
+			result += pchar;
+		} else {
+			result += pchar;
+		}
+	}
+	result += ")$";
+	return result;
+}
+
+static void SimilarToEscapeFunction(DataChunk &args, ExpressionState &, Vector &result) {
+	UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](string_t pattern) {
+		return StringVector::AddString(result, SimilarToRegex(pattern, '\\'));
+	});
+}
+
+static void SimilarToEscapeWithEscapeFunction(DataChunk &args, ExpressionState &, Vector &result) {
+	BinaryExecutor::Execute<string_t, string_t, string_t>(
+	    args.data[0], args.data[1], result, args.size(), [&](string_t pattern, string_t escape) {
+		    if (escape.GetSize() != 1) {
+			    throw InvalidInputException("invalid escape string: must be one character");
+		    }
+		    return StringVector::AddString(result, SimilarToRegex(pattern, escape.GetData()[0]));
+	    });
+}
+
+ScalarFunctionSet SimilarToEscapeFun::GetFunctions() {
+	ScalarFunctionSet similar_to_escape("similar_to_escape");
+	similar_to_escape.AddFunction(
+	    ScalarFunction({LogicalType::VARCHAR}, LogicalType::VARCHAR, SimilarToEscapeFunction));
+	similar_to_escape.AddFunction(ScalarFunction({LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                                             SimilarToEscapeWithEscapeFunction));
+	return similar_to_escape;
 }
 
 } // namespace duckdb

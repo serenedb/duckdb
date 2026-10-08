@@ -92,6 +92,7 @@ private:
 	//! Or, we leave room for between this many minimum reservations (if it is less than MAXIMUM_FREE_MEMORY_RATIO)
 	static constexpr idx_t MINIMUM_REMAINING_STATE_RESERVATIONS = 8ULL;
 	static constexpr idx_t MAXIMUM_REMAINING_STATE_RESERVATIONS = 32ULL;
+	static constexpr idx_t MAXIMUM_REMAINING_SIZE = 1ULL << 44ULL;
 
 public:
 	//! Get the TemporaryMemoryManager

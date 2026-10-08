@@ -35,8 +35,6 @@
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/parser/parser.hpp"
-#include "duckdb/parser/peg/matcher.hpp"
-#include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
@@ -48,8 +46,6 @@
 #include "duckdb/function/variant/variant_shredding.hpp"
 #include "duckdb/storage/statistics/variant_stats.hpp"
 #include "duckdb/storage/block_allocator.hpp"
-#include "duckdb/parser/peg/dialect_extension.hpp"
-#include "duckdb/parser/grammar_extension.hpp"
 
 #include "mbedtls_wrapper.hpp"
 
@@ -578,7 +574,7 @@ Value DisabledFilesystemsSetting::GetSetting(const ClientContext &context) {
 //===----------------------------------------------------------------------===//
 // Disabled Optimizers
 //===----------------------------------------------------------------------===//
-void DisabledOptimizersSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+static set<OptimizerType> ParseDisabledOptimizers(const Value &input) {
 	auto list = StringUtil::Split(input.ToString(), ",");
 	set<OptimizerType> disabled_optimizers;
 	for (auto &entry : list) {
@@ -589,17 +585,36 @@ void DisabledOptimizersSetting::SetGlobal(DatabaseInstance *db, DBConfig &config
 		}
 		disabled_optimizers.insert(OptimizerTypeFromString(param));
 	}
-	config.options.disabled_optimizers = std::move(disabled_optimizers);
+	return disabled_optimizers;
+}
+
+void DisabledOptimizersSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+	config.options.disabled_optimizers = ParseDisabledOptimizers(input);
 }
 
 void DisabledOptimizersSetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
 	config.options.disabled_optimizers = DBConfigOptions().disabled_optimizers;
 }
 
+void DisabledOptimizersSetting::SetLocal(ClientContext &context, const Value &input) {
+	auto &config = ClientConfig::GetConfig(context);
+	config.disabled_optimizers = ParseDisabledOptimizers(input);
+	config.has_disabled_optimizers = true;
+}
+
+void DisabledOptimizersSetting::ResetLocal(ClientContext &context) {
+	auto &config = ClientConfig::GetConfig(context);
+	config.disabled_optimizers.clear();
+	config.has_disabled_optimizers = false;
+}
+
 Value DisabledOptimizersSetting::GetSetting(const ClientContext &context) {
+	auto &client_config = ClientConfig::GetConfig(context);
 	auto &config = DBConfig::GetConfig(context);
+	auto &disabled =
+	    client_config.has_disabled_optimizers ? client_config.disabled_optimizers : config.options.disabled_optimizers;
 	string result;
-	for (auto &optimizer : config.options.disabled_optimizers) {
+	for (auto &optimizer : disabled) {
 		if (!result.empty()) {
 			result += ",";
 		}
@@ -1035,6 +1050,19 @@ void ForceCompressionSetting::OnSet(SettingCallbackInfo &info, Value &input) {
 			}
 		}
 	}
+}
+
+//===----------------------------------------------------------------------===//
+// Force Dict FSST Mode
+//===----------------------------------------------------------------------===//
+void ForceDictFsstModeSetting::OnSet(SettingCallbackInfo &info, Value &input) {
+	auto mode = StringUtil::Upper(input.ToString());
+	if (mode != "DEFAULT" && mode != "AUTO" && mode != "AUTO_NATIVE" && mode != "DICTIONARY" && mode != "DICT_FSST" &&
+	    mode != "FSST_ONLY" && mode != "DICT_FSST_PLUS" && mode != "FSST_PLUS") {
+		throw ParserException("force_dict_fsst_mode must be one of: DEFAULT, AUTO, AUTO_NATIVE, DICTIONARY, DICT_FSST, "
+		                      "FSST_ONLY, DICT_FSST_PLUS, FSST_PLUS");
+	}
+	input = Value(mode);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1487,7 +1515,7 @@ void SchemaSetting::ResetLocal(ClientContext &context) {
 
 Value SchemaSetting::GetSetting(const ClientContext &context) {
 	auto &client_data = ClientData::Get(context);
-	return client_data.catalog_search_path->GetDefault().GetSchema();
+	return client_data.catalog_search_path->GetResolvedDefault().GetSchema();
 }
 
 //===----------------------------------------------------------------------===//
@@ -1508,7 +1536,18 @@ void SearchPathSetting::ResetLocal(ClientContext &context) {
 Value SearchPathSetting::GetSetting(const ClientContext &context) {
 	auto &client_data = ClientData::Get(context);
 	auto &set_paths = client_data.catalog_search_path->GetSetPaths();
-	return Value(CatalogSearchEntry::ListToString(set_paths));
+	// PG-compliant: only show schemas from the current database, without catalog prefix.
+	auto current_catalog = DatabaseManager::TryGetDefaultDatabase(const_cast<ClientContext &>(context));
+	vector<CatalogSearchEntry> filtered;
+	filtered.reserve(set_paths.size());
+	for (auto &entry : set_paths) {
+		// an entry set without a catalog qualifier belongs to whichever database is current
+		if (!entry.GetCatalog().empty() && entry.GetCatalog() != current_catalog) {
+			continue;
+		}
+		filtered.emplace_back(Identifier(), entry.GetSchema());
+	}
+	return Value(CatalogSearchEntry::ListToString(filtered));
 }
 
 //===----------------------------------------------------------------------===//
@@ -1681,7 +1720,26 @@ void ThreadsSetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
 	config.options.maximum_threads = new_maximum_threads;
 }
 
+void ThreadsSetting::SetLocal(ClientContext &context, const Value &input) {
+	if (input.IsNull()) {
+		throw InvalidInputException("threads must be a positive integer");
+	}
+	auto new_val = input.GetValue<int64_t>();
+	if (new_val < 1) {
+		throw SyntaxException("Must have at least 1 thread!");
+	}
+	ClientConfig::GetConfig(context).threads = NumericCast<idx_t>(new_val);
+}
+
+void ThreadsSetting::ResetLocal(ClientContext &context) {
+	ClientConfig::GetConfig(context).threads = optional_idx();
+}
+
 Value ThreadsSetting::GetSetting(const ClientContext &context) {
+	auto &threads = ClientConfig::GetConfig(context).threads;
+	if (threads.IsValid()) {
+		return Value::BIGINT(NumericCast<int64_t>(threads.GetIndex()));
+	}
 	auto &config = DBConfig::GetConfig(context);
 	return Value::BIGINT(NumericCast<int64_t>(config.options.maximum_threads));
 }
@@ -1802,140 +1860,6 @@ void CurrentTransactionInvalidationPolicySetting::OnSet(SettingCallbackInfo &inf
 	    EnumUtil::FromString<TransactionInvalidationPolicy>(input.GetValue<string>()));
 }
 
-void CurrentDialectSetting::SetLocal(ClientContext &context, const Value &input) {
-	if (!OnLocalSet(context, input)) {
-		return;
-	}
-	auto &client_config = ClientConfig::GetConfig(context);
-	auto &config = DatabaseInstance::GetDatabase(context).config;
-
-	if (input.IsNull()) {
-		client_config.current_dialect = std::nullopt;
-		return;
-	}
-	auto dialect_name = input.GetValue<string>();
-
-	auto dialect_extension_p = config.GetCallbackManager().GetDialectExtension(dialect_name);
-	if (!dialect_extension_p) {
-		throw InvalidInputException("Dialect \"%s\" is not installed", dialect_name);
-	}
-	auto &dialect_extension = *dialect_extension_p;
-	//! The grammar gets lazily compiled, load it if it wasn't compiled yet
-	(void)dialect_extension.GetCompiledGrammar(context);
-	client_config.current_dialect = dialect_name;
-	auto &compatibility_mode = dialect_extension.GetCompatibilityMode();
-	if (compatibility_mode) {
-		Settings::Set<DialectCompatibilityModeSetting>(context, SetScope::LOCAL,
-		                                               Value(EnumUtil::ToString(*compatibility_mode)));
-	}
-}
-
-void CurrentDialectSetting::ResetLocal(ClientContext &context) {
-	if (!OnLocalReset(context)) {
-		return;
-	}
-	ClientConfig::GetConfig(context).current_dialect = std::nullopt;
-}
-
-bool CurrentDialectSetting::OnLocalSet(ClientContext &context, const Value &input) {
-	return true;
-}
-
-bool CurrentDialectSetting::OnLocalReset(ClientContext &context) {
-	return true;
-}
-
-Value CurrentDialectSetting::GetSetting(const ClientContext &context) {
-	auto &client_config = ClientConfig::GetConfig(context);
-	if (client_config.current_dialect) {
-		return Value(*client_config.current_dialect);
-	}
-	return Value();
-}
-
-void ActiveGrammarExtensionsSetting::SetLocal(ClientContext &context, const Value &input) {
-	if (!OnLocalSet(context, input)) {
-		return;
-	}
-	auto &client_config = ClientConfig::GetConfig(context);
-
-	if (input.IsNull()) {
-		client_config.active_grammar_extensions.clear();
-		client_config.cached_grammar.reset();
-		return;
-	}
-
-	auto &config = DatabaseInstance::GetDatabase(context).config;
-	auto &callback_manager = config.GetCallbackManager();
-	case_insensitive_set_t distinct_names;
-	vector<string> selected_extensions;
-	if (input.type().id() != LogicalTypeId::LIST) {
-		throw InvalidInputException("'active_grammar_extensions' setting value should be of type VARCHAR[], not %s",
-		                            input.type().ToString());
-	}
-	auto &list_input = ListValue::GetChildren(input);
-	for (auto &val : list_input) {
-		if (val.type().id() != LogicalTypeId::VARCHAR) {
-			throw InvalidInputException("'active_grammar_extensions' list values should be of type VARCHAR, not %s",
-			                            val.type().ToString());
-		}
-		auto val_str = val.GetValue<string>();
-		if (!distinct_names.insert(val_str).second) {
-			throw InvalidInputException("'active_grammar_extensions' list contains duplicate value '%s'", val_str);
-		}
-		selected_extensions.emplace_back(std::move(val_str));
-	}
-
-	vector<string> missing;
-	for (auto &ext : selected_extensions) {
-		auto extension = callback_manager.FindGrammarExtension(ext);
-		if (!extension) {
-			missing.push_back(ext);
-		}
-	}
-	if (!missing.empty()) {
-		auto missing_list = StringUtil::Join(missing, ",");
-		throw InvalidInputException("Can't set 'active_grammar_extensions', the following extensions don't exist: %s",
-		                            missing_list);
-	}
-	if (selected_extensions.empty()) {
-		client_config.active_grammar_extensions.clear();
-		client_config.cached_grammar.reset();
-		return;
-	}
-
-	auto compiled_grammar = CompiledGrammar::Create(context, selected_extensions);
-	client_config.active_grammar_extensions = std::move(selected_extensions);
-	client_config.cached_grammar = std::move(compiled_grammar);
-}
-
-void ActiveGrammarExtensionsSetting::ResetLocal(ClientContext &context) {
-	if (!OnLocalReset(context)) {
-		return;
-	}
-	auto &client_config = ClientConfig::GetConfig(context);
-	client_config.active_grammar_extensions.clear();
-	client_config.cached_grammar.reset();
-}
-
-bool ActiveGrammarExtensionsSetting::OnLocalSet(ClientContext &context, const Value &input) {
-	return true;
-}
-
-bool ActiveGrammarExtensionsSetting::OnLocalReset(ClientContext &context) {
-	return true;
-}
-
-Value ActiveGrammarExtensionsSetting::GetSetting(const ClientContext &context) {
-	auto &client_config = ClientConfig::GetConfig(context);
-	auto &active_extensions = client_config.active_grammar_extensions;
-	vector<Value> values;
-	for (auto &extension : active_extensions) {
-		values.push_back(extension);
-	}
-	return Value::LIST(LogicalType::VARCHAR, std::move(values));
-}
-
 //===----------------------------------------------------------------------===//
 // Deprecated Settings
 //===----------------------------------------------------------------------===//
@@ -1955,10 +1879,6 @@ static void WarnDeprecatedSetting(SettingCallbackInfo &info, const char *name) {
 
 void DelimJoinAsCteSetting::OnSet(SettingCallbackInfo &info, Value &) {
 	WarnDeprecatedSetting(info, DelimJoinAsCteSetting::Name);
-}
-
-void EnableObjectCacheSetting::OnSet(SettingCallbackInfo &info, Value &) {
-	WarnDeprecatedSetting(info, EnableObjectCacheSetting::Name);
 }
 
 void ErrorOnDivisionByZeroSetting::OnSet(SettingCallbackInfo &info, Value &) {
@@ -2008,4 +1928,37 @@ void TableFunctionIdentifierConversionSetting::OnSet(SettingCallbackInfo &info, 
 	EnumUtil::FromString<TableFunctionIdentifierConversion>(StringValue::Get(input));
 	WarnDeprecatedSetting(info, TableFunctionIdentifierConversionSetting::Name);
 }
+
+//===----------------------------------------------------------------------===//
+// Default Transaction Isolation
+//===----------------------------------------------------------------------===//
+void DefaultTransactionIsolationSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
+	auto level = EnumUtil::FromString<TransactionIsolationLevel>(StringValue::Get(parameter));
+	if (info.context && info.context->transaction.IsAutoCommit()) {
+		info.context->transaction.SetIsolationLevel(level);
+	}
+}
+
+//===----------------------------------------------------------------------===//
+// Transaction Isolation
+//===----------------------------------------------------------------------===//
+void TransactionIsolationSetting::SetLocal(ClientContext &context, const Value &input) {
+	if (context.transaction.IsAutoCommit()) {
+		// SET transaction_isolation outside a transaction has no effect;
+		// emit a PG-style warning if a handler is installed.
+		context.EmitWarning("SET TRANSACTION can only be used in transaction blocks");
+		return;
+	}
+	auto level = EnumUtil::FromString<TransactionIsolationLevel>(StringValue::Get(input));
+	context.transaction.SetIsolationLevel(level);
+}
+
+void TransactionIsolationSetting::ResetLocal(ClientContext &context) {
+	throw InvalidInputException("parameter \"transaction_isolation\" cannot be reset");
+}
+
+Value TransactionIsolationSetting::GetSetting(const ClientContext &context) {
+	return Value(EnumUtil::ToChars(context.transaction.GetIsolationLevel()));
+}
+
 } // namespace duckdb

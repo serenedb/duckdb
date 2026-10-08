@@ -278,8 +278,8 @@ public:
 			if (state.interrupted.load()) {
 				return;
 			}
-			auto grammar = CompiledGrammar::Create();
-			state.grammars_constructed += grammar != nullptr;
+			CompiledGrammar::Create();
+			state.grammars_constructed++;
 		}
 	}
 
@@ -308,7 +308,7 @@ public:
 
 	string BenchmarkInfo() override {
 		return "Construct and destroy the compiled base grammar; includes grammar parsing, keyword tables and matcher "
-		       "construction, excludes SQL parsing and grammar extensions";
+		       "construction, excludes SQL parsing";
 	}
 
 private:

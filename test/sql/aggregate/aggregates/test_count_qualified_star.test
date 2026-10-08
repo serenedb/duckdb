@@ -163,7 +163,7 @@ INSERT INTO s VALUES (1, 10), (2, NULL);
 query I
 SELECT column_name FROM (DESCRIBE SELECT count(r.*) FROM r);
 ----
-count(r.*)
+count
 
 query I
 SELECT column_name FROM (DESCRIBE SELECT count(r.*) AS my_count FROM r);

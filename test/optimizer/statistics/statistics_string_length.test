@@ -11,7 +11,7 @@ FROM range(0, 100000) tbl(i);
 query II
 EXPLAIN SELECT count(*) FROM strings WHERE length(v) > 30;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 # strlen uses byte-length statistics for row-group pruning
 statement ok
@@ -86,7 +86,7 @@ SELECT sum(length_grapheme(v)) FROM grapheme_clusters WHERE length_grapheme(v) <
 query II
 EXPLAIN ANALYZE SELECT sum(length(v)) FROM grapheme_clusters WHERE length(v) < 10;
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT sum(length(v)) FROM grapheme_clusters WHERE length(v) < 10;
@@ -120,7 +120,7 @@ FROM range(245760) tbl(i);
 query II
 EXPLAIN ANALYZE SELECT sum(length(v)) FROM null_mix WHERE length(v) < 10;
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT sum(length(v)) FROM null_mix WHERE length(v) < 10;

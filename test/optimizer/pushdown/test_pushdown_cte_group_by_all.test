@@ -28,7 +28,7 @@ from my_cte
 where
   group_1 = 2;
 ----
-logical_opt	<REGEX>:.*Filters:.*
+logical_opt	<REGEX>:.*Column Filter:.*
 
 
 query II
@@ -45,7 +45,7 @@ from my_cte
 where
  group_1 = 2;
 ----
-logical_opt	<REGEX>:.*Filters:.*
+logical_opt	<REGEX>:.*Column Filter:.*
 
 
 query II
@@ -61,4 +61,4 @@ with my_cte as (
 from my_cte
 where group_1 = 2;
 ----
-logical_opt	<REGEX>:.*FILTER.*Filters:.*
+logical_opt	<REGEX>:.*FILTER.*Column Filter:.*

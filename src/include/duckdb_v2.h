@@ -3777,9 +3777,9 @@ typedef struct _duckdb_v2_token_iterator {
 /*!
  * Tokenizes a SQL string into an iterator over its tokens.
  *
- * Lexical tokenization, in the context of whatever grammar extensions are loaded on the given connection. Closing the
- * connection or changing settings afterwards does not affect the tokens. The SQL string is borrowed for the call only,
- * the caller may free it once this call returns. Whitespace is not a token. Malformed input is not an error;
+ * Lexical tokenization, with the grammar of the given connection. Closing the connection or changing settings
+ * afterwards does not affect the tokens. The SQL string is borrowed for the call only, the caller may free it once this
+ * call returns. Whitespace is not a token. Malformed input is not an error;
  * `duckdb_v2_token_iterator_ends_unterminated()` reports whether the input ended inside an open token.
  *
  * *out_iterator is set to NULL on failure.
@@ -9076,10 +9076,10 @@ typedef struct _duckdb_v2_statement_iterator {
 /*!
  * Parses a SQL string into an iterator over its statements.
  *
- * Parses and nothing more: no binding, no catalog access, no transaction. The connection supplies the parser options
- * and parser extensions, and is not otherwise touched. Statements are raw parser output; statement-level rewrites
- * happen inside statement_execute. The SQL string is copied, so the caller may free it once this call returns. An input
- * with no statements — empty, whitespace, or separators only — yields an iterator that is immediately exhausted.
+ * Parses and nothing more: no binding, no catalog access, no transaction. The connection supplies the parser options,
+ * and is not otherwise touched. Statements are raw parser output; statement-level rewrites happen inside
+ * statement_execute. The SQL string is copied, so the caller may free it once this call returns. An input with no
+ * statements — empty, whitespace, or separators only — yields an iterator that is immediately exhausted.
  *
  * history:
  * - stable: v2.0.0
@@ -9174,8 +9174,7 @@ DUCKDB_C_API DUCKDB_V2_ERROR duckdb_v2_sql_statement_get_type(duckdb_v2_sql_stat
  *
  * The slice of the parsed string that belongs to this statement. A trailing terminator and the whitespace after it are
  * included, whitespace and comments before the first token are not. The statement holds its own copy, so the view
- * outlives the SQL string passed to parse_sql and the iterator, and stays valid until the statement is destroyed. A
- * statement produced by a parser extension that overrides parsing carries whatever text the extension recorded.
+ * outlives the SQL string passed to parse_sql and the iterator, and stays valid until the statement is destroyed.
  *
  * history:
  * - stable: v2.0.0

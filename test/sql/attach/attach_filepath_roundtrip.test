@@ -77,12 +77,10 @@ already attached by database
 statement ok con1
 DETACH con1;
 
-# we still can't attach (need to commit the DETACH)
+# the DETACH is not committed yet, so con1 still holds the file open - attaching hands that database back
 
-statement error con2
+statement ok con2
 ATTACH '{TEST_DIR}/con1.db';
-----
-already attached by database
 
 # commit con1 and roll back con2
 

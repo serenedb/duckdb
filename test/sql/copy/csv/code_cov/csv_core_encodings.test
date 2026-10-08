@@ -48,7 +48,5 @@ COPY (
 	SELECT from_hex('76616c75650a800a')
 ) TO '{TEST_DIR}/invalid_latin1.csv' (FORMAT BLOB)
 
-statement error
+statement ok
 FROM read_csv('{TEST_DIR}/invalid_latin1.csv', encoding = 'latin-1')
-----
-File is not latin-1 encoded

@@ -7,7 +7,9 @@
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
@@ -45,6 +47,10 @@ BoundStatement Binder::BindAlterAddIndex(BoundStatement &result, CatalogEntry &e
 	    BindUniqueConstraint(*constraint_info.constraint, table_info.GetQualifiedName().Name(), column_list);
 	VerifyConstraintCheckModeStorageVersion(*constraint_info.constraint, table.ParentCatalog(), table.temporary);
 	auto &bound_unique = bound_constraint->Cast<BoundUniqueConstraint>();
+	const auto existing_pk = table.GetPrimaryKey();
+	if (bound_unique.is_primary_key && existing_pk) {
+		throw CatalogException("table %s can have only one primary key: %s", table.name, existing_pk->ToString());
+	}
 	auto &unique_constraint = constraint_info.constraint->Cast<UniqueConstraint>();
 
 	// Create the CreateIndexInfo.
@@ -134,10 +140,57 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		return result;
 	}
 
+	if (stmt.info->type == AlterType::ALTER_PERMISSIONS || stmt.info->type == AlterType::ALTER_ROLE) {
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		const auto catalog_type = stmt.info->GetCatalogType();
+		if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY) {
+			stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
+			auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
+			properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
+		}
+		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
+		return result;
+	}
+
 	// resolve the (possibly nested) catalog/schema qualification of the altered entry
 	stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
 
+	// ALTER FUNCTION ... RENAME TO ... skips entry lookup (scalar-vs-table
+	// macro is ambiguous at parse time).
+	if (stmt.info->type == AlterType::ALTER_SCALAR_FUNCTION &&
+	    stmt.info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
+	        AlterScalarFunctionType::RENAME_SCALAR_FUNCTION) {
+		if (stmt.info->GetQualifiedName().Schema().empty()) {
+			optional_ptr<CatalogEntry> function;
+			for (auto type : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
+				EntryLookupInfo lookup_info(type, stmt.info->GetQualifiedName());
+				function = entry_retriever.GetEntry(lookup_info, OnEntryNotFound::RETURN_NULL);
+				if (function) {
+					break;
+				}
+			}
+			if (!function) {
+				EntryLookupInfo lookup_info(CatalogType::MACRO_ENTRY, stmt.info->GetQualifiedName());
+				function = entry_retriever.GetEntry(lookup_info, stmt.info->if_not_found);
+			}
+			if (function) {
+				stmt.info->SetQualifiedName(function->Cast<StandardEntry>().GetQualifiedName(function->name));
+			}
+		}
+		auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
+		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
+		return result;
+	}
+
 	optional_ptr<CatalogEntry> entry;
+	auto lookup = [&](CatalogType type, OnEntryNotFound if_not_found) {
+		EntryLookupInfo lookup_info(type, stmt.info->GetQualifiedName());
+		return entry_retriever.GetEntry(lookup_info, if_not_found);
+	};
 	if (stmt.info->type == AlterType::SET_COLUMN_COMMENT) {
 		// Extra step for column comments: They can alter a table or a view, and we resolve that here.
 		auto &info = stmt.info->Cast<SetColumnCommentInfo>();
@@ -147,10 +200,33 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			auto &view = entry->Cast<ViewCatalogEntry>();
 			view.BindView(context);
 		}
+	} else if (stmt.info->GetNewName() && (stmt.info->GetCatalogType() == CatalogType::TABLE_ENTRY ||
+	                                       stmt.info->GetCatalogType() == CatalogType::INDEX_ENTRY)) {
+		auto &target_catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
+		const bool rename_spans_tables_and_indexes = target_catalog.Compatibility() == SqlCompatibility::POSTGRES;
+		const auto declared = stmt.info->GetCatalogType();
+		const auto other = declared == CatalogType::TABLE_ENTRY ? CatalogType::INDEX_ENTRY : CatalogType::TABLE_ENTRY;
+		entry = lookup(declared, OnEntryNotFound::RETURN_NULL);
+		if (!entry && rename_spans_tables_and_indexes) {
+			entry = lookup(other, OnEntryNotFound::RETURN_NULL);
+			if (entry) {
+				auto data = stmt.info->GetAlterEntryData();
+				auto new_name = *stmt.info->GetNewName();
+				const auto allow_internal = stmt.info->allow_internal;
+				if (other == CatalogType::INDEX_ENTRY) {
+					stmt.info = make_uniq<RenameIndexInfo>(data, std::move(new_name));
+				} else {
+					stmt.info = make_uniq<RenameTableInfo>(data, std::move(new_name));
+				}
+				stmt.info->allow_internal = allow_internal;
+			}
+		}
+		if (!entry) {
+			entry = lookup(declared, stmt.info->if_not_found);
+		}
 	} else {
 		// For any other ALTER, we retrieve the catalog entry directly.
-		EntryLookupInfo lookup_info(stmt.info->GetCatalogType(), stmt.info->GetQualifiedName());
-		entry = entry_retriever.GetEntry(lookup_info, stmt.info->if_not_found);
+		entry = lookup(stmt.info->GetCatalogType(), stmt.info->if_not_found);
 	}
 
 	auto &properties = GetStatementProperties();
@@ -179,7 +255,9 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		// We can only alter temporary tables and views in read-only mode.
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
 	}
-	stmt.info->SetQualifiedName(entry->ParentSchema().GetQualifiedName(stmt.info->GetQualifiedName().Name()));
+	stmt.info->SetQualifiedName(QualifiedName::FromCatalogSchema(
+	    catalog.GetName(), entry->ParentSchemaPath(catalog.GetCatalogTransaction(context)),
+	    stmt.info->GetQualifiedName().Name()));
 
 	if (!stmt.info->IsAddUniqueConstraint()) {
 		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));

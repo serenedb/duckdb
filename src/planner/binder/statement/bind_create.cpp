@@ -1,7 +1,10 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
@@ -42,6 +45,7 @@
 #include "duckdb/planner/expression_binder/select_binder.hpp"
 #include "duckdb/planner/operator/logical_create.hpp"
 #include "duckdb/planner/operator/logical_create_table.hpp"
+#include "duckdb/planner/logical_operator_visitor.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
@@ -60,7 +64,7 @@ static unique_ptr<CommonTableExpressionInfo> MakeTriggerValidationCTE(const Tabl
 	auto alias_select = make_uniq<SelectNode>();
 	alias_select->select_list.push_back(make_uniq<StarExpression>());
 	auto alias_table_ref = make_uniq<BaseTableRef>();
-	alias_table_ref->SetQualifiedName(table.schema.GetQualifiedName(table.name));
+	alias_table_ref->SetQualifiedName(table.GetQualifiedName(table.name));
 	alias_select->from_table = std::move(alias_table_ref);
 	auto alias_cte = make_uniq<CommonTableExpressionInfo>();
 	alias_cte->query_node = std::move(alias_select);
@@ -173,14 +177,14 @@ void Binder::SearchSchema(CreateInfo &info) {
 	}
 	if (IsInvalidCatalog(catalog) && schema_path.empty()) {
 		// no catalog and no schema given: use the search path default for both
-		auto &default_entry = search_path->GetDefault();
+		auto default_entry = search_path->GetResolvedDefault();
 		catalog = default_entry.GetCatalog();
 		schema_path.push_back(default_entry.GetSchema());
 	} else if (schema_path.empty()) {
 		// a catalog was given but no schema: use the catalog's default schema
 		auto default_schema = search_path->GetDefaultSchema(context, catalog);
 		if (!default_schema) {
-			throw BinderException("Catalog \"%s\" has no default schema - specify a schema explicitly", catalog);
+			throw BinderException("Catalog %s has no default schema - specify a schema explicitly", catalog);
 		}
 		schema_path.push_back(*default_schema);
 	} else if (IsInvalidCatalog(catalog)) {
@@ -189,6 +193,10 @@ void Binder::SearchSchema(CreateInfo &info) {
 	}
 	if (IsInvalidCatalog(catalog)) {
 		catalog = DatabaseManager::GetDefaultDatabase(context);
+	}
+	if (IsInvalidSchema(schema_path.back())) {
+		// Empty search_path / no resolvable entry -> PG-style error.
+		throw CatalogException("no schema has been selected to create in");
 	}
 	if (!info.temporary) {
 		if (catalog == TEMP_CATALOG) {
@@ -287,8 +295,15 @@ void Binder::BindCreateSchema(CreateSchemaInfo &info) {
 		throw BinderException("Temporary schemas are not supported");
 	}
 	// the qualified name carries the dotted path with the new schema as the last component; resolve its leading
-	// component into a catalog (prepending the default catalog when it is a schema)
-	info.SetQualifiedName(ResolveCatalog(context, info.GetQualifiedName()));
+	// component into a catalog (prepending the default catalog when it is a schema). A lone name is the new schema
+	// itself, never a catalog.
+	auto &path = info.GetQualifiedName().Path();
+	if (path.size() == 2) {
+		info.SetQualifiedName(
+		    QualifiedName(vector<Identifier> {DatabaseManager::GetDefaultDatabase(context), path[0]}, Identifier()));
+	} else {
+		info.SetQualifiedName(ResolveCatalog(context, info.GetQualifiedName()));
+	}
 
 	auto &resolved_catalog = Catalog::GetCatalog(context, info.SchemaCatalog());
 	auto supports_create_schema = resolved_catalog.SupportsCreateSchema(info);
@@ -335,6 +350,33 @@ void Binder::SetCatalogLookupCallback(catalog_entry_callback_t callback) {
 	entry_retriever.SetCallback(std::move(callback));
 }
 
+class ViewColumnDependencies : public LogicalOperatorVisitor {
+public:
+	ViewColumnDependencies(Catalog &catalog, LogicalDependencyList &dependencies)
+	    : catalog(catalog), dependencies(dependencies) {
+	}
+
+	void VisitOperator(LogicalOperator &op) override {
+		if (op.type == LogicalOperatorType::LOGICAL_GET) {
+			auto &get = op.Cast<LogicalGet>();
+			auto table = get.GetTable();
+			if (table && &table->ParentCatalog() == &catalog) {
+				LogicalDependency dependency(*table);
+				for (auto &column : get.GetColumnIds()) {
+					dependency.subdependencies.insert(
+					    SubDependency {AlterTableType::REMOVE_COLUMN, table->GetColumn(column.ToLogical()).Name()});
+				}
+				dependencies.AddDependency(dependency);
+			}
+		}
+		VisitOperatorChildren(op);
+	}
+
+private:
+	Catalog &catalog;
+	LogicalDependencyList &dependencies;
+};
+
 void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const Identifier &catalog_name,
                       const Identifier &schema_name, optional_ptr<LogicalDependencyList> dependencies,
                       const vector<Identifier> &aliases, vector<LogicalType> &result_types,
@@ -358,11 +400,16 @@ void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const
 
 	auto copy = stmt.Copy();
 	auto query_node = view_binder->Bind(*copy);
+	const bool views_depend_on_columns = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (dependencies && views_depend_on_columns) {
+		ViewColumnDependencies(catalog, *dependencies).VisitOperator(*query_node.plan);
+	}
 	if (aliases.size() > query_node.names.size()) {
 		throw BinderException("More VIEW aliases than columns in query result");
 	}
 	result_types = query_node.types;
 	result_names = query_node.names;
+	QueryResult::DeduplicateColumns(result_names);
 }
 
 void Binder::BindCreateViewInfo(CreateViewInfo &base) {
@@ -397,6 +444,42 @@ void Binder::BindCreateViewInfo(CreateViewInfo &base) {
 	}
 	BindView(context, *base.query, base.GetQualifiedName().Catalog(), base.GetQualifiedName().Schema(), dependencies,
 	         base.aliases, base.types, base.names);
+}
+
+void Binder::MergeMacroOverloads(CreateInfo &info) {
+	SearchSchema(info);
+	auto &catalog = Catalog::GetCatalog(context, info.GetQualifiedName().Catalog());
+	const bool merge_overloads = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (!merge_overloads || info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
+		return;
+	}
+	EntryLookupInfo lookup(info.type, info.GetQualifiedName());
+	auto existing = Catalog::GetEntry(context, lookup, OnEntryNotFound::RETURN_NULL);
+	if (!existing) {
+		return;
+	}
+	auto &macro_info = info.Cast<CreateMacroInfo>();
+	for (auto &function : macro_info.macros) {
+		for (auto &type : function->types) {
+			if (type.id() == LogicalTypeId::UNBOUND) {
+				BindLogicalType(type);
+			}
+		}
+	}
+	const bool replace = info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT;
+	for (auto &overload : existing->Cast<MacroCatalogEntry>().macros) {
+		const bool redefined = std::any_of(macro_info.macros.begin(), macro_info.macros.end(),
+		                                   [&](const unique_ptr<MacroFunction> &function) {
+			                                   return function->HasParameterTypes(overload->ParameterTypes());
+		                                   });
+		if (!redefined) {
+			macro_info.macros.push_back(overload->Copy());
+		} else if (!replace) {
+			throw CatalogException("function \"%s\" already exists with same argument types",
+			                       macro_info.GetFunctionName().GetIdentifierName());
+		}
+	}
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 }
 
 SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
@@ -438,9 +521,8 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 	if (attached.HasStorageManager()) {
 		// If DuckDB is used as a storage, we must check the version.
 		auto &storage_manager = attached.GetStorageManager();
-		const auto since = StorageCompatibility::FromString("v1.4.0").storage_version;
 		store_types = info.temporary || attached.IsTemporary() || storage_manager.InMemory() ||
-		              storage_manager.GetStorageVersion() >= since;
+		              storage_manager.GetStorageVersion() >= StorageVersion::V1_4_0;
 	}
 	// try to bind each of the included functions
 	vector_of_logical_type_set_t type_overloads;
@@ -492,7 +574,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			auto default_expr = param_expr->Copy();
 			auto bound_default = binder.Bind(default_expr);
 			if (!bound_default->IsFoldable()) {
-				auto msg = StringUtil::Format("Default value '%s' for parameter '%s' is not a constant expression.",
+				auto msg = StringUtil::Format("Default value '%s' for parameter %s is not a constant expression.",
 				                              param_expr->ToString(), param_name);
 				throw BinderException(msg);
 			}
@@ -504,6 +586,20 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			const_expr->SetAlias(param_name);
 			it.second = std::move(const_expr);
 			default_values[param_name] = std::move(default_val);
+		}
+
+		auto &dependencies = base.dependencies;
+		const auto should_create_dependencies = Settings::Get<EnableMacroDependenciesSetting>(context);
+		const auto binder_callback = [&dependencies, &catalog](CatalogEntry &entry) {
+			if (&catalog != &entry.ParentCatalog()) {
+				// Don't register any cross-catalog dependencies
+				return;
+			}
+			// Register any catalog entry required to bind the macro function
+			dependencies.AddDependency(entry);
+		};
+		if (should_create_dependencies) {
+			SetCatalogLookupCallback(binder_callback);
 		}
 
 		// Resolve any user type arguments
@@ -525,7 +621,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				}
 				if (CastFunctionSet::ImplicitCastCost(context, val_type, type) < 0) {
 					auto msg = StringUtil::Format(
-					    "Default value '%s' for parameter '%s' cannot be implicitly cast to '%s'.",
+					    "Default value '%s' for parameter %s cannot be implicitly cast to '%s'.",
 					    function->default_parameters[param_name]->ToString(), param_name, type.ToString());
 					throw BinderException(msg + " Please add an explicit type cast.");
 				}
@@ -550,19 +646,23 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		    make_uniq<DummyBinding>(dummy_types, dummy_names, base.GetFunctionName().GetIdentifierName());
 		macro_binding = this_macro_binding.get();
 
-		auto &dependencies = base.dependencies;
-		const auto should_create_dependencies = Settings::Get<EnableMacroDependenciesSetting>(context);
-		const auto binder_callback = [&dependencies, &catalog](CatalogEntry &entry) {
-			if (&catalog != &entry.ParentCatalog()) {
-				// Don't register any cross-catalog dependencies
-				return;
-			}
-			// Register any catalog entry required to bind the macro function
-			dependencies.AddDependency(entry);
-		};
-
 		// bind it to verify the function was defined correctly
 		ErrorData error;
+		auto types_compatible = [&](const LogicalType &actual, const LogicalType &expected) -> bool {
+			if (expected.id() == LogicalTypeId::ANY) {
+				return true;
+			}
+			// PG-compat: RETURNS VOID accepts any body return; the macro callsite
+			// expects the function call to evaluate to NULL regardless of the
+			// body's last expression type.
+			if (expected.id() == LogicalTypeId::SQLNULL && expected.GetAlias() == "void") {
+				return true;
+			}
+			if (actual == expected) {
+				return true;
+			}
+			return CastFunctionSet::ImplicitCastCost(context, actual, expected) >= 0;
+		};
 		if (info.type == CatalogType::MACRO_ENTRY) {
 			BoundSelectNode sel_node;
 			SelectBinder binder(*this, context, sel_node);
@@ -574,10 +674,78 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			auto expression = function->Cast<ScalarMacroFunction>().expression->Copy();
 			ExpressionBinder::QualifyColumnNames(*this, expression);
 			try {
+				auto &ret_types = function->return_types;
+				// Resolve UNBOUND types from the grammar to concrete LogicalTypes
+				// so downstream consumers (pg_proc, serialization) see real IDs.
+				for (auto &rt : ret_types) {
+					BindLogicalType(rt);
+				}
+				// PG-compat: RETURNS VOID functions evaluate to a single NULL row
+				// regardless of body. Replace the stored body with a NULL constant
+				// so downstream macro expansion can't trip over the body's actual
+				// shape (e.g. multiple-column SELECTs).
+				if (ret_types.size() == 1 && ret_types[0].id() == LogicalTypeId::SQLNULL &&
+				    ret_types[0].GetAlias() == "void") {
+					function->Cast<ScalarMacroFunction>().expression = ConstantExpression::Null();
+					expression = function->Cast<ScalarMacroFunction>().expression->Copy();
+				}
+				// Scalar RETURNS with BEGIN ATOMIC/AS $$ SELECT $$ body was
+				// converted to ScalarMacroFunction wrapping a SubqueryExpression.
+				// Validate the inner SELECT against the declared RETURNS type by
+				// binding it as a query node first (yields clean PG-style errors
+				// instead of DuckDB's generic subquery errors).
+				if (!ret_types.empty() && expression->GetExpressionClass() == ExpressionClass::SUBQUERY) {
+					auto &sub_expr = expression->Cast<SubqueryExpression>();
+					if (sub_expr.Subquery() && sub_expr.Subquery()->node) {
+						auto dummy_binder = CreateBinder(context, this);
+						if (should_create_dependencies) {
+							dummy_binder->SetCatalogLookupCallback(binder_callback);
+						}
+						auto query_node = sub_expr.Subquery()->node->Copy();
+						ParsedExpressionIterator::EnumerateQueryNodeChildren(
+						    *query_node, [&dummy_binder](unique_ptr<ParsedExpression> &child) {
+							    ExpressionBinder::QualifyColumnNames(*dummy_binder, child);
+						    });
+						auto bound = dummy_binder->Bind(*query_node);
+						auto &resolved = ret_types[0];
+						const bool is_void_return =
+						    resolved.id() == LogicalTypeId::SQLNULL && resolved.GetAlias() == "void";
+						if (!is_void_return) {
+							if (!bound.types.empty() && !types_compatible(bound.types[0], resolved)) {
+								throw BinderException("return type mismatch in function declared to return %s\n"
+								                      "DETAIL: Actual return type is %s.",
+								                      StringUtil::Lower(resolved.ToString()),
+								                      StringUtil::Lower(bound.types[0].ToString()));
+							}
+							if (bound.types.size() != 1) {
+								throw BinderException("return type mismatch in function declared to return %s\n"
+								                      "DETAIL: Final statement must return exactly one column.",
+								                      StringUtil::Lower(resolved.ToString()));
+							}
+						}
+					}
+				}
+
 				auto bind_result = binder.Bind(expression, 0, false);
 				if (bind_result.HasError()) {
 					error = std::move(bind_result.error);
 					error.Throw();
+				}
+				// Validate scalar RETURN expr (non-subquery body).
+				if (!ret_types.empty() && bind_result.expression) {
+					auto &resolved = ret_types[0];
+					auto &actual = bind_result.expression->GetReturnType();
+					if (!types_compatible(actual, resolved)) {
+						throw BinderException("return type mismatch in function declared to return %s\n"
+						                      "DETAIL: Actual return type is %s.",
+						                      StringUtil::Lower(resolved.ToString()),
+						                      StringUtil::Lower(actual.ToString()));
+					}
+					if (ret_types.size() != 1) {
+						throw BinderException("return type mismatch in function declared to return %s\n"
+						                      "DETAIL: Final statement must return exactly one column.",
+						                      StringUtil::Lower(resolved.ToString()));
+					}
 				}
 			} catch (const std::exception &ex) {
 				error = ErrorData(ex);
@@ -596,7 +764,61 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				    ExpressionBinder::QualifyColumnNames(*dummy_binder, child);
 			    });
 			try {
-				dummy_binder->Bind(*query_node);
+				auto bound = dummy_binder->Bind(*query_node);
+				if (should_create_dependencies && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+					ViewColumnDependencies(catalog, dependencies).VisitOperator(*bound.plan);
+				}
+
+				// Validate declared return types against actual query output.
+				auto &declared = function->return_types;
+				if (!declared.empty() && bound.types.size() > 0) {
+					// is_scalar: RETURNS <type> (single scalar return, stored as TABLE_MACRO)
+					bool is_scalar = declared.size() == 1 && info.type == CatalogType::TABLE_MACRO_ENTRY;
+					bool is_table = declared.size() > 1 || (declared.size() == 1 && !is_scalar);
+
+					// Resolve unbound types (grammar produces UNBOUND type ids)
+					for (auto &dt : declared) {
+						dummy_binder->BindLogicalType(dt);
+					}
+
+					// PG-compat: RETURNS VOID accepts any body shape (PG discards the
+					// result and emits a single NULL row).
+					const bool is_void_return =
+					    is_scalar && declared[0].id() == LogicalTypeId::SQLNULL && declared[0].GetAlias() == "void";
+					// PG checks per-column types first (up to min columns),
+					// then reports column count mismatch.
+					const auto check_count = MinValue(bound.types.size(), declared.size());
+					if (is_scalar && !is_void_return) {
+						if (check_count >= 1 && !types_compatible(bound.types[0], declared[0])) {
+							throw BinderException("return type mismatch in function declared to return %s\n"
+							                      "DETAIL: Actual return type is %s.",
+							                      StringUtil::Lower(declared[0].ToString()),
+							                      StringUtil::Lower(bound.types[0].ToString()));
+						}
+						if (bound.types.size() != 1) {
+							throw BinderException("return type mismatch in function declared to return %s\n"
+							                      "DETAIL: Final statement must return exactly one column.",
+							                      StringUtil::Lower(declared[0].ToString()));
+						}
+					} else if (is_table) {
+						for (idx_t i = 0; i < check_count; i++) {
+							if (!types_compatible(bound.types[i], declared[i])) {
+								throw BinderException("return type mismatch in function declared to return record\n"
+								                      "DETAIL: Final statement returns %s instead of %s at column %d.",
+								                      StringUtil::Lower(bound.types[i].ToString()),
+								                      StringUtil::Lower(declared[i].ToString()), i + 1);
+							}
+						}
+						if (bound.types.size() > declared.size()) {
+							throw BinderException("return type mismatch in function declared to return record\n"
+							                      "DETAIL: Final statement returns too many columns.");
+						}
+						if (bound.types.size() < declared.size()) {
+							throw BinderException("return type mismatch in function declared to return record\n"
+							                      "DETAIL: Final statement returns too few columns.");
+						}
+					}
+				}
 			} catch (const std::exception &ex) {
 				error = ErrorData(ex);
 			}
@@ -681,7 +903,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	create_trigger_info.dependencies.AddDependency(table, DependencyDependentFlags());
 
 	// Trigger inherits the catalog and the (possibly nested) schema from the base table
-	create_trigger_info.SetQualifiedName(table.schema.GetQualifiedName(create_trigger_info.GetQualifiedName().Name()));
+	create_trigger_info.SetQualifiedName(table.GetQualifiedName(create_trigger_info.GetQualifiedName().Name()));
 	// ... and its temporariness, so that a trigger on a temporary table lands in the temp catalog
 	create_trigger_info.temporary = table.temporary;
 
@@ -709,7 +931,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	if (create_trigger_info.event_type == TriggerEventType::UPDATE_EVENT && !create_trigger_info.columns.empty()) {
 		for (const auto &col_name : create_trigger_info.columns) {
 			if (!table.ColumnExists(col_name)) {
-				throw BinderException("Column \"%s\" does not exist in table \"%s\"", col_name, table.name);
+				throw BinderException("Column %s does not exist in table %s", col_name, table.name);
 			}
 		}
 	}
@@ -774,7 +996,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 			if (entry.internal) {
 				return;
 			}
-			throw BinderException("Trigger \"%s\" cannot reference \"%s\" from a different catalog (\"%s\")",
+			throw BinderException("Trigger %s cannot reference %s from a different catalog (%s)",
 			                      create_trigger_info.GetTriggerName(), entry.name, entry.ParentCatalog().GetName());
 		}
 		DependencyDependentFlags flags;
@@ -823,7 +1045,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 		}
 		if (BoundBodyContainsTrigger(*bound_body.plan)) {
 			throw NotImplementedException(
-			    "FOR EACH ROW trigger \"%s\" on table \"%s\" writes to a table that has its own FOR EACH ROW "
+			    "FOR EACH ROW trigger %s on table %s writes to a table that has its own FOR EACH ROW "
 			    "trigger (cascading row triggers are not yet supported)",
 			    create_trigger_info.GetTriggerName(), table.name);
 		}
@@ -876,6 +1098,10 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 				}
 			}
 		}
+		const bool replace_alters_entry = schema.catalog.Compatibility() == SqlCompatibility::POSTGRES;
+		if (replace_alters_entry && stmt.info->on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+			stmt.info->on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		}
 		if (stmt.info->on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 			CatalogTransaction transaction(schema.ParentCatalog(), context);
 			auto existing_entry = schema.GetEntry(transaction, CatalogType::VIEW_ENTRY, base.GetViewName());
@@ -895,12 +1121,14 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::TABLE_MACRO_ENTRY: {
+		MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
 		result.plan =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
 		break;
 	}
 	case CatalogType::MACRO_ENTRY: {
+		MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
 		auto logical_create =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
@@ -919,21 +1147,40 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto table_ref = make_uniq<BaseTableRef>(table_description);
 		auto bound_table = Bind(*table_ref);
 		auto plan = std::move(bound_table.plan);
-		if (plan->type != LogicalOperatorType::LOGICAL_GET) {
-			throw BinderException("can only create an index on a base table");
+		// Tables go through the LOGICAL_GET; otherwise resolve a view and let its catalog decide.
+		optional_ptr<TableCatalogEntry> table_ptr;
+		if (plan->type == LogicalOperatorType::LOGICAL_GET) {
+			auto &get = plan->Cast<LogicalGet>();
+			table_ptr = get.GetTable();
 		}
-		auto &get = plan->Cast<LogicalGet>();
-		auto table_ptr = get.GetTable();
-		if (!table_ptr) {
-			throw BinderException("can only create an index on a base table");
+		if (table_ptr) {
+			// CREATE INDEX is dispatched on table.catalog (below). A facade
+			// catalog delegates the scan to a storage table in another catalog;
+			// dispatching on that scanned table would build the index in the
+			// store catalog and skip the owning catalog's index routing. Resolve
+			// the named entry so dispatch lands on the catalog that owns it.
+			EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY,
+			                             create_index_info.GetQualifiedName().WithName(create_index_info.table));
+			auto resolved = Catalog::GetEntry(context, table_lookup, OnEntryNotFound::RETURN_NULL);
+			if (resolved) {
+				table_ptr = resolved->type == CatalogType::TABLE_ENTRY ? &resolved->Cast<TableCatalogEntry>() : nullptr;
+			} else if (table_ptr->name != create_index_info.table) {
+				table_ptr = nullptr;
+			}
 		}
-
-		auto &table = *table_ptr;
-		if (table.temporary) {
-			stmt.info->temporary = true;
+		if (table_ptr) {
+			auto &table = *table_ptr;
+			if (table.temporary) {
+				stmt.info->temporary = true;
+			}
+			properties.RegisterDBModify(table.catalog, context, DatabaseModificationType::CREATE_INDEX);
+			result.plan = table.catalog.BindCreateIndex(*this, stmt, table, std::move(plan));
+		} else {
+			auto &view = Catalog::GetEntry<ViewCatalogEntry>(
+			    context, create_index_info.GetQualifiedName().WithName(create_index_info.table));
+			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
+			result.plan = view.catalog.BindCreateViewIndex(*this, stmt, view, std::move(plan));
 		}
-		properties.RegisterDBModify(table.catalog, context, DatabaseModificationType::CREATE_INDEX);
-		result.plan = table.catalog.BindCreateIndex(*this, stmt, table, std::move(plan));
 		break;
 	}
 	case CatalogType::TABLE_ENTRY: {

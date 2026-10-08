@@ -8,9 +8,11 @@
 
 #pragma once
 
+#include "duckdb/common/constants.hpp"
+
 namespace duckdb {
 
-enum class TokenType {
+enum class TokenType : uint8_t {
 	INVALID,
 	KEYWORD,
 	STRING_LITERAL,

@@ -53,3 +53,18 @@ query II
 EXPLAIN  SELECT dayofweek(d) dw from date_table ORDER BY dw;
 ----
 physical_plan	<REGEX>:.*Order By: dw ASC.*
+
+query II
+EXPLAIN SELECT d from date_table ORDER BY dayofweek(d);
+----
+physical_plan	<!REGEX>:.*Order By:[^╰]*memory\.main.*
+
+query II
+EXPLAIN SELECT d from date_table dt ORDER BY dayofweek(dt.d) LIMIT 10;
+----
+physical_plan	<!REGEX>:.*Order By:[^╰]*memory\.main.*
+
+query II
+EXPLAIN SELECT DISTINCT ON (dayofweek(d)) d from date_table ORDER BY dayofweek(d);
+----
+physical_plan	<!REGEX>:.*Order By:[^╰]*memory\.main.*

@@ -163,7 +163,7 @@ bool ReplaceUnicodeSpaces(const string &query, string &new_query, const vector<U
 
 class AutoCompleteTokenizerBehavior : public TokenizerBehavior {
 public:
-	AutoCompleteTokenizerBehavior(const string &sql, vector<MatcherToken> &tokens,
+	AutoCompleteTokenizerBehavior(std::string_view sql, vector<MatcherToken> &tokens,
 	                              vector<MatcherSuggestion> &suggestions_p)
 	    : TokenizerBehavior(sql, tokens), suggestions(suggestions_p) {
 		last_pos = 0;
@@ -173,15 +173,15 @@ public:
 		return TokenType::END_OF_INPUT_AUTOCOMPLETE;
 	}
 
-	void OnLastToken(const Tokenizer &, TokenizeState state, string last_word_p, idx_t last_pos_p) override {
+	void OnLastToken(const Tokenizer &, TokenizeState state, std::string_view last_word_p, idx_t last_pos_p) override {
 		if (Tokenizer::TokenizeStateToType(state) == TokenType::STRING_LITERAL) {
 			suggestions.emplace_back(SuggestionState::SUGGEST_FILE_NAME);
 		}
 		if (StringUtil::StartsWith(last_word_p, "'")) {
-			last_word_p = last_word_p.substr(1, last_word_p.size() - 1);
+			last_word_p.remove_prefix(1);
 			last_pos_p += 1;
 		}
-		last_word = std::move(last_word_p);
+		last_word.assign(last_word_p);
 		last_pos = last_pos_p;
 	}
 
@@ -197,27 +197,25 @@ public:
 vector<AutoCompleteSuggestion> GenerateAutoCompleteSuggestions(AutoCompleteCatalogProvider &provider, const string &sql,
                                                                AutoCompleteParameters &parameters) {
 	// tokenize the input
-	auto compiled_grammar = provider.GetCompiledGrammar();
+	auto &compiled_grammar = provider.GetCompiledGrammar();
 	vector<MatcherToken> tokens;
 	vector<MatcherSuggestion> suggestions;
 	ParseResultAllocator parse_allocator;
 	idx_t max_token_index = 0;
 	vector<UnicodeSpace> unicode_spaces;
-	string clean_sql;
-	const string &sql_ref = Parser::StripUnicodeSpaces(sql, clean_sql) ? clean_sql : sql;
-	AutoCompleteTokenizerBehavior behavior(sql_ref, tokens, suggestions);
-	if (!compiled_grammar->GetTokenizer().TokenizeInput(behavior)) {
+	vector<char> clean_sql;
+	AutoCompleteTokenizerBehavior behavior(Parser::StripUnicodeSpaces(sql, clean_sql), tokens, suggestions);
+	if (!compiled_grammar.GetTokenizer().TokenizeInput(behavior)) {
 		return {};
 	}
 	if (suggestions.empty()) {
 		// no suggestions found during tokenizing
 		// run the root matcher
-		TokenIterator token_iterator(tokens);
-		ArenaAllocator process_allocator(Allocator::DefaultAllocator());
-		MatchContext match_context(suggestions, parse_allocator, process_allocator, max_token_index,
-		                           MatchMode::RECOGNIZE_ONLY, IdentifierCaseMode::PRESERVE_CASE);
+		auto token_iterator = TokenIterator::FromTokenizer(tokens);
+		MatchContext match_context(suggestions, parse_allocator, max_token_index, MatchMode::RECOGNIZE_ONLY,
+		                           IdentifierCaseMode::PRESERVE_CASE);
 		MatchState state(token_iterator, match_context);
-		compiled_grammar->ProgramMatcher().MatchParseResult(state);
+		compiled_grammar.ProgramMatcher().MatchParseResult(state);
 	}
 	if (suggestions.empty()) {
 		return {};

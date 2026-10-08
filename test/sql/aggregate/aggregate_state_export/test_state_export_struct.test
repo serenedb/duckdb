@@ -85,91 +85,91 @@ SELECT finalize(regr_avgy(d, d+1) EXPORT_STATE) FROM dummy;
 query I
 SELECT regr_slope(d, d+1) FROM dummy;
 ----
-1.0
+1
 
 query I
 SELECT finalize(regr_slope(d, d+1) EXPORT_STATE) FROM dummy;
 ----
-1.0
+1
 
 query I
 SELECT regr_intercept(d, d+1) FROM dummy;
 ----
--1.0
+-1
 
 query I
 SELECT finalize(regr_intercept(d, d+1) EXPORT_STATE) FROM dummy;
 ----
--1.0
+-1
 
 query I
 SELECT regr_r2(d, d+1) FROM dummy;
 ----
-1.0
+1
 
 query I
 SELECT finalize(regr_r2(d, d+1) EXPORT_STATE) FROM dummy;
 ----
-1.0
+1
 
 query I
 SELECT regr_sxx(d, d+1) FROM dummy;
 ----
-83325.0
+83325
 
 query I
 SELECT finalize(regr_sxx(d, d+1) EXPORT_STATE) FROM dummy;
 ----
-83325.0
+83325
 
 query I
 SELECT regr_syy(d, d+1) FROM dummy;
 ----
-83325.0
+83325
 
 query I
 SELECT finalize(regr_syy(d, d+1) EXPORT_STATE) FROM dummy;
 ----
-83325.0
+83325
 
 query I
 SELECT regr_sxy(d, d+1) FROM dummy;
 ----
-83325.0
+83325
 
 query I
 SELECT finalize(regr_sxy(d, d+1) EXPORT_STATE) FROM dummy;
 ----
-83325.0
+83325
 
 # Regression aggregates: grouped direct vs EXPORT_STATE + finalize
 query IIIIIIIIII nosort
 SELECT g, regr_count(d, d+1), regr_avgx(d, d+1), regr_avgy(d, d+1), regr_slope(d, d+1), regr_intercept(d, d+1), regr_r2(d, d+1), regr_sxx(d, d+1), regr_syy(d, d+1), regr_sxy(d, d+1) FROM dummy GROUP BY g ORDER BY g;
 ----
-0	10	46.0	45.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-1	10	47.0	46.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-2	10	48.0	47.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-3	10	49.0	48.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-4	10	50.0	49.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-5	10	51.0	50.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-6	10	52.0	51.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-7	10	53.0	52.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-8	10	54.0	53.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-9	10	55.0	54.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
+0	10	46	45	1	-1	1	8250	8250	8250
+1	10	47	46	1	-1	1	8250	8250	8250
+2	10	48	47	1	-1	1	8250	8250	8250
+3	10	49	48	1	-1	1	8250	8250	8250
+4	10	50	49	1	-1	1	8250	8250	8250
+5	10	51	50	1	-1	1	8250	8250	8250
+6	10	52	51	1	-1	1	8250	8250	8250
+7	10	53	52	1	-1	1	8250	8250	8250
+8	10	54	53	1	-1	1	8250	8250	8250
+9	10	55	54	1	-1	1	8250	8250	8250
 
 query IIIIIIIIII nosort
 SELECT g, finalize(regr_count(d, d+1) EXPORT_STATE), finalize(regr_avgx(d, d+1) EXPORT_STATE), finalize(regr_avgy(d, d+1) EXPORT_STATE), finalize(regr_slope(d, d+1) EXPORT_STATE), finalize(regr_intercept(d, d+1) EXPORT_STATE), finalize(regr_r2(d, d+1) EXPORT_STATE), finalize(regr_sxx(d, d+1) EXPORT_STATE), finalize(regr_syy(d, d+1) EXPORT_STATE), finalize(regr_sxy(d, d+1) EXPORT_STATE) FROM dummy GROUP BY g ORDER BY g;
 ----
-0	10	46.0	45.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-1	10	47.0	46.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-2	10	48.0	47.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-3	10	49.0	48.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-4	10	50.0	49.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-5	10	51.0	50.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-6	10	52.0	51.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-7	10	53.0	52.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-8	10	54.0	53.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
-9	10	55.0	54.0	1.0	-1.0	1.0	8250.0	8250.0	8250.0
+0	10	46	45	1	-1	1	8250	8250	8250
+1	10	47	46	1	-1	1	8250	8250	8250
+2	10	48	47	1	-1	1	8250	8250	8250
+3	10	49	48	1	-1	1	8250	8250	8250
+4	10	50	49	1	-1	1	8250	8250	8250
+5	10	51	50	1	-1	1	8250	8250	8250
+6	10	52	51	1	-1	1	8250	8250	8250
+7	10	53	52	1	-1	1	8250	8250	8250
+8	10	54	53	1	-1	1	8250	8250	8250
+9	10	55	54	1	-1	1	8250	8250	8250
 
 # Regression: persist state and finalize later
 statement ok
@@ -178,30 +178,30 @@ CREATE TABLE state_regr AS SELECT g, regr_slope(d, d+1) EXPORT_STATE slope_state
 query III nosort
 SELECT g, regr_slope(d, d+1), regr_count(d, d+1) FROM dummy GROUP BY g ORDER BY g;
 ----
-0	1.0	10
-1	1.0	10
-2	1.0	10
-3	1.0	10
-4	1.0	10
-5	1.0	10
-6	1.0	10
-7	1.0	10
-8	1.0	10
-9	1.0	10
+0	1	10
+1	1	10
+2	1	10
+3	1	10
+4	1	10
+5	1	10
+6	1	10
+7	1	10
+8	1	10
+9	1	10
 
 query III nosort
 SELECT g, finalize(slope_state), finalize(count_state) FROM state_regr ORDER BY g;
 ----
-0	1.0	10
-1	1.0	10
-2	1.0	10
-3	1.0	10
-4	1.0	10
-5	1.0	10
-6	1.0	10
-7	1.0	10
-8	1.0	10
-9	1.0	10
+0	1	10
+1	1	10
+2	1	10
+3	1	10
+4	1	10
+5	1	10
+6	1	10
+7	1	10
+8	1	10
+9	1	10
 
 # Regression: struct shape for state export
 query T
@@ -212,17 +212,17 @@ SELECT (regr_count(1, 2) export_state)::ubigint
 query T
 SELECT (regr_avgx(1.0, 2.0) export_state)::struct(sum double, count ubigint);
 ----
-{'sum': 2.0, 'count': 1}
+{'sum': 2, 'count': 1}
 
 query T
 SELECT (covar_pop(1.0, 2.0) export_state)::struct(count ubigint, meanx double, meany double, co_moment double);
 ----
-{'count': 1, 'meanx': 2.0, 'meany': 1.0, 'co_moment': 0.0}
+{'count': 1, 'meanx': 2, 'meany': 1, 'co_moment': 0}
 
 query T
 SELECT (var_pop(42.0) export_state)::struct(count ubigint, mean double, dsquared double);
 ----
-{'count': 1, 'mean': 42.0, 'dsquared': 0.0}
+{'count': 1, 'mean': 42, 'dsquared': 0}
 
 query IIIIIIIIIIIII nosort res1
 SELECT g, sum(d), avg(d)::integer, count(d), min(d), max(d), stddev(d)::integer, first(d), last(d) FROM dummy GROUP BY g ORDER BY g;
@@ -393,12 +393,12 @@ SELECT g, finalize(kurtosis_pop(d) EXPORT_STATE) FROM dummy GROUP BY g ORDER BY 
 query T
 SELECT kurtosis(d) EXPORT_STATE FROM dummy;
 ----
-{'n': 100, 'sum': 4950.0, 'sum_sqr': 328350.0, 'sum_cub': 24502500.0, 'sum_four': 1950333330.0}
+{'n': 100, 'sum': 4950, 'sum_sqr': 328350, 'sum_cub': 24502500, 'sum_four': 1950333330}
 
 query T
 SELECT kurtosis_pop(d) EXPORT_STATE FROM dummy;
 ----
-{'n': 100, 'sum': 4950.0, 'sum_sqr': 328350.0, 'sum_cub': 24502500.0, 'sum_four': 1950333330.0}
+{'n': 100, 'sum': 4950, 'sum_sqr': 328350, 'sum_cub': 24502500, 'sum_four': 1950333330}
 
 # You're holding it wrong:
 
@@ -661,31 +661,31 @@ COPY (SELECT g, avg(d::DOUBLE) EXPORT_STATE s1 FROM dummy GROUP BY g) TO '{TEST_
 query II
 SELECT g, FINALIZE(COMBINE(s2, to_aggregate_state(s1, 'avg', ['DOUBLE']))) FROM (SELECT g, avg(d::DOUBLE) EXPORT_STATE s2 FROM dummy GROUP BY g) q1 JOIN '{TEST_DIR}/avg_state.parquet' USING(g) ORDER BY g;
 ----
-0	45.0
-1	46.0
-2	47.0
-3	48.0
-4	49.0
-5	50.0
-6	51.0
-7	52.0
-8	53.0
-9	54.0
+0	45
+1	46
+2	47
+3	48
+4	49
+5	50
+6	51
+7	52
+8	53
+9	54
 
 # the signature can also be passed as a list of TYPE values
 query II
 SELECT g, FINALIZE(to_aggregate_state(s1, 'avg', [make_type('DOUBLE')])) FROM '{TEST_DIR}/avg_state.parquet' ORDER BY g;
 ----
-0	45.0
-1	46.0
-2	47.0
-3	48.0
-4	49.0
-5	50.0
-6	51.0
-7	52.0
-8	53.0
-9	54.0
+0	45
+1	46
+2	47
+3	48
+4	49
+5	50
+6	51
+7	52
+8	53
+9	54
 
 # the input type must be convertable to the state layout
 statement error

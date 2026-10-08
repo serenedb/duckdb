@@ -16,7 +16,7 @@ INSERT INTO unit2 SELECT i, 20 FROM range(1000) t(i);
 query IIII
 SELECT * FROM unit2 JOIN (VALUES (2000)) t(total_profit) USING (total_profit);
 ----
-100	20	2000	2000
+2000	100	20	2000
 
 query IIIII
 SELECT * FROM unit2 JOIN (VALUES (2000)) t(total_profit) ON (t.total_profit = unit2.total_profit AND t.total_profit=unit2.also_total_profit);

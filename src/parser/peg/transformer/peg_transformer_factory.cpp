@@ -20,6 +20,8 @@
 #include "duckdb/parser/statement/merge_into_statement.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
 
+#include <absl/strings/str_cat.h>
+
 namespace duckdb {
 
 static unique_ptr<SQLStatement> ExtractAndTransformStatement(PEGTransformer &transformer,
@@ -38,8 +40,8 @@ static unique_ptr<SQLStatement> ExtractAndTransformStatement(PEGTransformer &tra
 	transformer.Clear();
 
 	// Calculate location and length cleanly
-	if (stmt_pr.offset.IsValid()) {
-		auto start = stmt_pr.offset.GetIndex();
+	if (stmt_pr.location.IsValid()) {
+		idx_t start = stmt_pr.location.Start();
 		idx_t end_index = terminator_offset.IsValid() ? terminator_offset.GetIndex() : token_iterator.EndOffset();
 		stmt->stmt_location = QueryLocation(start, end_index - start);
 	}
@@ -49,20 +51,23 @@ static unique_ptr<SQLStatement> ExtractAndTransformStatement(PEGTransformer &tra
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(TokenIterator &token_iterator,
                                                                            ParserOptions &options,
-                                                                           const CompiledGrammar &grammar) {
+                                                                           const CompiledGrammar &grammar,
+                                                                           ParseResultAllocator &parse_result_allocator,
+                                                                           idx_t &height) {
 	if (!token_iterator.Current()) {
 		return nullptr;
 	}
 	vector<MatcherSuggestion> suggestions;
-	ParseResultAllocator parse_result_allocator;
-	ParserPackratCache packrat_cache;
+	parse_result_allocator.Reset();
+	ParserPackratCache packrat_cache(parse_result_allocator.GetArena(), token_iterator.Position(),
+	                                 grammar.PackratSlotCount());
 	idx_t max_token_index = token_iterator.Position();
-	ArenaAllocator process_allocator(Allocator::DefaultAllocator());
-	MatchContext match_context(suggestions, parse_result_allocator, process_allocator, max_token_index,
-	                           MatchMode::BUILD_PARSE_RESULT, options.identifier_case_mode, &packrat_cache);
+	MatchContext match_context(suggestions, parse_result_allocator, max_token_index, MatchMode::BUILD_PARSE_RESULT,
+	                           options.identifier_case_mode, &packrat_cache);
+	match_context.max_expression_depth = options.max_expression_depth;
 	MatchState state(token_iterator, match_context);
 	auto match_result = grammar.TopLevelStatementMatcher().MatchParseResult(state);
-	process_allocator.FreeAll();
+	match_context.processes.FreeAll();
 	if (!match_result.IsSuccess()) {
 		// syntax error — surface as a parser exception in the same shape as Transform()
 		auto token_stream = token_iterator.ToString();
@@ -77,9 +82,9 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 			error_token_idx--;
 		}
 		auto &error_token = token_iterator.GetToken(error_token_idx);
-		auto error_message = "syntax error at or near \"" + error_token.text + "\"";
+		auto error_message = absl::StrCat("syntax error at or near \"", error_token.text, "\"");
 		throw ParserException::SyntaxError(token_stream, error_message,
-		                                   QueryLocation(error_token.offset, error_token.length));
+		                                   QueryLocation(error_token.offset, error_token.text.size()));
 	}
 	D_ASSERT(match_result.HasParseResult());
 
@@ -101,58 +106,27 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTopLevelStatement(Token
 	if (term_inner.type != ParseResultType::END_OF_INPUT) {
 		auto semi_children = term_inner.Cast<RepeatParseResult>().GetChildren();
 		if (!semi_children.empty()) {
-			terminator_offset = semi_children[0].get().offset;
+			terminator_offset = semi_children[0].get().location.GetOffset();
 		}
 	}
 
-	ArenaAllocator transformer_allocator(Allocator::DefaultAllocator());
-	PEGTransformer transformer(transformer_allocator, token_iterator, options, grammar);
-
-	return ExtractAndTransformStatement(transformer, token_iterator, stmt_opt.GetResult(), terminator_offset);
+	PEGTransformer transformer(parse_result_allocator.GetArena(), token_iterator, options, grammar);
+	auto statement = ExtractAndTransformStatement(transformer, token_iterator, stmt_opt.GetResult(), terminator_offset);
+	height = transformer.StatementHeight();
+	return statement;
 }
 
 PEGTransformerFactory::PEGTransformerFactory(ParsedGrammar &grammar_p) : grammar(grammar_p) {
-	case_insensitive_set_t collapsible_rules;
-	//===--------------------------------------------------------------------===//
-	// START GENERATED COLLAPSIBLE RULES
-	//===--------------------------------------------------------------------===//
-	collapsible_rules.insert("Expression");
-	collapsible_rules.insert("ColumnDefaultExpr");
-	collapsible_rules.insert("LambdaArrowExpression");
-	collapsible_rules.insert("LogicalOrExpression");
-	collapsible_rules.insert("ColDefOrExpr");
-	collapsible_rules.insert("LogicalAndExpression");
-	collapsible_rules.insert("ColDefAndExpr");
-	collapsible_rules.insert("LogicalNotExpression");
-	collapsible_rules.insert("IsExpression");
-	collapsible_rules.insert("IsDistinctFromExpression");
-	collapsible_rules.insert("ComparisonExpression");
-	collapsible_rules.insert("BetweenInLikeExpression");
-	collapsible_rules.insert("OtherOperatorExpression");
-	collapsible_rules.insert("InfixOtherOperatorExpression");
-	collapsible_rules.insert("BitwiseExpression");
-	collapsible_rules.insert("AdditiveExpression");
-	collapsible_rules.insert("MultiplicativeExpression");
-	collapsible_rules.insert("ExponentiationExpression");
-	collapsible_rules.insert("CollateExpression");
-	collapsible_rules.insert("AtTimeZoneExpression");
-	collapsible_rules.insert("PrefixExpression");
-	collapsible_rules.insert("BaseExpression");
-	collapsible_rules.insert("SelectSetOpChain");
-	collapsible_rules.insert("IntersectChain");
-	collapsible_rules.insert("TableRef");
-	//===--------------------------------------------------------------------===//
-	// END GENERATED COLLAPSIBLE RULES
-	//===--------------------------------------------------------------------===//
-
-	for (auto &entry : GeneratedTransformFrameOps()) {
-		auto process_info = entry.second;
+	auto generated_ops = GeneratedTransformFrameOps();
+	for (idx_t i = 0; i < generated_ops.size(); i++) {
+		auto process_info = generated_ops[i].second;
 		grammar.SetTransformProcess(
-		    entry.first,
-		    [process_info](PEGTransformer &transformer, ParseResult &parse_result) -> unique_ptr<TransformProcess> {
-			    return make_uniq<GeneratedTransformProcess>(transformer, TransformInput {parse_result}, *process_info);
+		    generated_ops[i].first,
+		    [process_info](PEGTransformer &transformer, ParseResult &parse_result) -> arena_ptr<TransformProcess> {
+			    return transformer.MakeProcess<GeneratedTransformProcess>(transformer, TransformInput {parse_result},
+			                                                              *process_info);
 		    },
-		    collapsible_rules.count(entry.first) > 0);
+		    process_info->collapsible, i);
 	}
 }
 
@@ -202,7 +176,7 @@ bool PEGTransformerFactory::ExpressionIsEmptyStar(const ParsedExpression &expr) 
 	return true;
 }
 
-QualifiedName PEGTransformerFactory::StringToQualifiedName(vector<string> input) {
+QualifiedName PEGTransformerFactory::StringToQualifiedName(std::span<const string> input) {
 	if (input.empty()) {
 		throw InternalException("QualifiedName cannot be made with an empty input.");
 	}

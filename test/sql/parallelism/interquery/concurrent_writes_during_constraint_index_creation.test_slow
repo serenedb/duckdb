@@ -1,0 +1,79 @@
+# name: test/sql/parallelism/interquery/concurrent_writes_during_constraint_index_creation.test_slow
+# description: Test concurrent writes during unique and primary key index creation
+# group: [interquery]
+
+statement ok
+CREATE TABLE unique_keys AS SELECT range AS i FROM range (1_000_000)
+
+concurrentloop threadid 0 11
+
+onlyif threadid=0
+statement ok
+CREATE UNIQUE INDEX unique_index ON unique_keys(i)
+
+loop x 0 2000
+
+onlyif threadid<>0
+statement ok
+INSERT INTO unique_keys VALUES (1_000_000 + {threadid} * 2000 + {x})
+
+endloop
+
+endloop
+
+query I
+SELECT COUNT(*) FROM unique_keys
+----
+1020000
+
+query I
+SELECT (SELECT COUNT(*) FROM unique_keys WHERE i = 1_002_000)
+     + (SELECT COUNT(*) FROM unique_keys WHERE i = 1_002_001)
+     + (SELECT COUNT(*) FROM unique_keys WHERE i = 1_010_000)
+     + (SELECT COUNT(*) FROM unique_keys WHERE i = 1_010_001)
+     + (SELECT COUNT(*) FROM unique_keys WHERE i = 1_020_000)
+     + (SELECT COUNT(*) FROM unique_keys WHERE i = 1_020_001)
+----
+6
+
+statement error
+INSERT INTO unique_keys VALUES (1_002_000)
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+statement error
+INSERT INTO unique_keys VALUES (1_020_001)
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+statement ok
+CREATE TABLE primary_keys AS SELECT range AS i FROM range (1_000_000)
+
+concurrentloop threadid 0 11
+
+onlyif threadid=0
+statement ok
+ALTER TABLE primary_keys ADD PRIMARY KEY (i)
+
+loop x 0 2000
+
+onlyif threadid<>0
+statement maybe
+INSERT INTO primary_keys VALUES (1_000_000 + {threadid} * 2000 + {x})
+----
+Transaction conflict
+
+endloop
+
+endloop
+
+query I
+SELECT (SELECT COUNT(*) FROM primary_keys WHERE i = 1_002_000)
+     + (SELECT COUNT(*) FROM primary_keys WHERE i = 1_002_001)
+     + (SELECT COUNT(*) FROM primary_keys WHERE i = 1_010_000)
+     + (SELECT COUNT(*) FROM primary_keys WHERE i = 1_010_001)
+     + (SELECT COUNT(*) FROM primary_keys WHERE i = 1_020_000)
+     + (SELECT COUNT(*) FROM primary_keys WHERE i = 1_020_001)
+     = (SELECT COUNT(*) FROM primary_keys WHERE i::VARCHAR IN ('1002000', '1002001', '1010000', '1010001', '1020000', '1020001'))
+----
+true

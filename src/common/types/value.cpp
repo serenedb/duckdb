@@ -621,8 +621,7 @@ bool Value::IsFinite(timestamp_tz_ns_t input) {
 }
 
 bool Value::StringIsValid(const char *str, idx_t length) {
-	auto utf_type = Utf8Proc::Analyze(str, length);
-	return utf_type != UnicodeType::INVALID;
+	return Utf8Proc::IsValid(str, length);
 }
 
 Value Value::DECIMAL(int16_t value, uint8_t width, uint8_t scale) {
@@ -992,7 +991,7 @@ Value Value::GEOMETRY(const_data_ptr_t data, idx_t len) {
 Value Value::TYPE(const LogicalType &type) {
 	MemoryStream stream;
 	SerializationOptions options;
-	options.storage_compatibility = StorageCompatibility::Latest();
+	options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 	BinarySerializer::Serialize(type, stream, options);
 	auto data_ptr = const_char_ptr_cast(stream.GetData());
 	auto data_len = stream.GetPosition();

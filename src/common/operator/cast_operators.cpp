@@ -3274,53 +3274,6 @@ static bool CanUseDecimalFloatingPointFastPath(SRC input, uint8_t scale) {
 	       IsRepresentableExactly<SRC, DST>(input, DST(0.0));
 }
 
-template <class UNSIGNED>
-static void FillDecimalDigits(UNSIGNED input, duckdb_fast_float::decimal &decimal) {
-	uint8_t digits[DecimalWidth<hugeint_t>::max];
-	while (input > 0) {
-		digits[decimal.num_digits++] = UnsafeNumericCast<uint8_t>(input % 10);
-		input /= 10;
-	}
-	for (uint32_t i = 0; i < decimal.num_digits; i++) {
-		decimal.digits[i] = digits[decimal.num_digits - i - 1];
-	}
-}
-
-template <class SRC>
-static void FillDecimalDigits(SRC input, duckdb_fast_float::decimal &decimal, bool &negative) {
-	using UNSIGNED = typename MakeUnsigned<SRC>::type;
-	if (input < 0) {
-		negative = true;
-		auto unsigned_input = UnsafeNumericCast<UNSIGNED>(-(input + 1));
-		FillDecimalDigits<UNSIGNED>(unsigned_input + 1, decimal);
-	} else {
-		negative = false;
-		FillDecimalDigits<UNSIGNED>(UnsafeNumericCast<UNSIGNED>(input), decimal);
-	}
-}
-
-static void FillDecimalDigits(hugeint_t input, duckdb_fast_float::decimal &decimal, bool &negative) {
-	if (input == 0) {
-		return;
-	}
-
-	if (input < 0) {
-		negative = true;
-		Hugeint::NegateInPlace(input);
-	} else {
-		negative = false;
-	}
-
-	char buffer[DecimalWidth<hugeint_t>::max];
-	auto end = buffer + sizeof(buffer);
-	auto begin = NumericHelper::FormatUnsigned(input, end);
-
-	decimal.num_digits = UnsafeNumericCast<uint32_t>(end - begin);
-	for (uint32_t i = 0; i < decimal.num_digits; i++) {
-		decimal.digits[i] = UnsafeNumericCast<uint8_t>(begin[i] - '0');
-	}
-}
-
 template <class SRC, class DST>
 bool TryCastDecimalToFloatingPoint(SRC input, DST &result, uint8_t width, uint8_t scale) {
 	if (scale == 0 || CanUseDecimalFloatingPointFastPath<SRC, DST>(input, scale)) {
@@ -3328,21 +3281,13 @@ bool TryCastDecimalToFloatingPoint(SRC input, DST &result, uint8_t width, uint8_
 		result = Cast::Operation<SRC, DST>(input) / DST(NumericHelper::DOUBLE_POWERS_OF_TEN[scale]);
 		return true;
 	}
-
-	duckdb_fast_float::decimal decimal;
-	bool negative;
-	FillDecimalDigits(input, decimal, negative);
-	decimal.decimal_point = UnsafeNumericCast<int32_t>(decimal.num_digits) - UnsafeNumericCast<int32_t>(scale);
-	while (decimal.num_digits > 0 && decimal.digits[decimal.num_digits - 1] == 0) {
-		decimal.num_digits--;
-	}
-	for (uint32_t i = decimal.num_digits; i < duckdb_fast_float::max_digit_without_overflow; i++) {
-		decimal.digits[i] = 0;
-	}
-
-	auto adjusted_mantissa = duckdb_fast_float::compute_float<duckdb_fast_float::binary_format<DST>>(decimal);
-	duckdb_fast_float::detail::to_float(negative, adjusted_mantissa, result);
-	return true;
+	char decimal_buffer[DecimalWidth<hugeint_t>::max + 3];
+	auto len = DecimalToString::DecimalLength<SRC>(input, width, scale);
+	D_ASSERT(len <= static_cast<int>(sizeof(decimal_buffer)));
+	DecimalToString::FormatDecimal<SRC>(input, width, scale, decimal_buffer, UnsafeNumericCast<idx_t>(len));
+	auto parse_result =
+	    duckdb_fast_float::from_chars(decimal_buffer, decimal_buffer + UnsafeNumericCast<idx_t>(len), result);
+	return parse_result.ec == std::errc();
 }
 
 // DECIMAL -> FLOAT
@@ -3393,6 +3338,89 @@ template <>
 bool TryCastFromDecimal::Operation(hugeint_t input, double &result, CastParameters &parameters, uint8_t width,
                                    uint8_t scale) {
 	return TryCastDecimalToFloatingPoint<hugeint_t, double>(input, result, width, scale);
+}
+
+template <>
+bool TryCast::Operation(dtime_ns_t input, dtime_tz_t &result, bool strict) {
+	dtime_t micros;
+	return TryCast::Operation(input, micros, strict) && TryCast::Operation(micros, result, strict);
+}
+
+template <>
+bool TryCast::Operation(dtime_t input, interval_t &result, bool strict) {
+	result.months = 0;
+	result.days = 0;
+	result.micros = input.value;
+	return true;
+}
+
+template <>
+bool TryCast::Operation(dtime_tz_t input, dtime_ns_t &result, bool strict) {
+	return TryCast::Operation(input.time(), result, strict);
+}
+
+template <>
+bool TryCast::Operation(interval_t input, dtime_t &result, bool strict) {
+	// The fractional-day portion; months/days are ignored and negatives wrap
+	// forward (PG semantics: '-2 hours' becomes '22:00:00').
+	auto micros = input.micros % Interval::MICROS_PER_DAY;
+	if (micros < 0) {
+		micros += Interval::MICROS_PER_DAY;
+	}
+	result = dtime_t(micros);
+	return true;
+}
+
+template <>
+bool TryCast::Operation(timestamp_ms_t input, dtime_ns_t &result, bool strict) {
+	if (!input.IsFinite()) {
+		return false;
+	}
+	return TryCast::Operation(Cast::Operation<timestamp_ms_t, dtime_t>(input), result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_ms_t input, dtime_tz_t &result, bool strict) {
+	timestamp_t micros;
+	return TryCast::Operation(input, micros, strict) && TryCast::Operation(micros, result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_ns_t input, dtime_tz_t &result, bool strict) {
+	timestamp_t micros;
+	return TryCast::Operation(input, micros, strict) && TryCast::Operation(micros, result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_ns_t input, timestamp_sec_t &result, bool strict) {
+	return TryCastTimestampBase<timestamp_ns_t, timestamp_sec_t>(input, result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_sec_t input, dtime_ns_t &result, bool strict) {
+	if (!input.IsFinite()) {
+		return false;
+	}
+	return TryCast::Operation(Cast::Operation<timestamp_sec_t, dtime_t>(input), result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_sec_t input, dtime_tz_t &result, bool strict) {
+	timestamp_t micros;
+	return TryCast::Operation(input, micros, strict) && TryCast::Operation(micros, result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_t input, dtime_ns_t &result, bool strict) {
+	if (!input.IsFinite()) {
+		return false;
+	}
+	return TryCast::Operation(Cast::Operation<timestamp_t, dtime_t>(input), result, strict);
+}
+
+template <>
+bool TryCast::Operation(timestamp_tz_t input, timestamp_tz_ns_t &result, bool strict) {
+	return TryCastTimestampBase<timestamp_tz_t, timestamp_tz_ns_t>(input, result, strict);
 }
 
 } // namespace duckdb

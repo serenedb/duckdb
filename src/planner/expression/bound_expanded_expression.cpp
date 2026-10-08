@@ -12,7 +12,7 @@ string BoundExpandedExpression::ToString() const {
 }
 
 bool BoundExpandedExpression::Equals(const BaseExpression &other_p) const {
-	return false;
+	return this == &other_p;
 }
 
 unique_ptr<Expression> BoundExpandedExpression::Copy() const {

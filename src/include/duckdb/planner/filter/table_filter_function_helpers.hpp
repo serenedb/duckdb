@@ -154,6 +154,10 @@ inline void ExecuteWithSelectivityTracking(DataChunk &args, Vector &result, TRAC
 void TableFilterFunctionSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
                                   const BoundScalarFunction &function);
 unique_ptr<FunctionData> TableFilterFunctionDeserialize(Deserializer &deserializer, BoundScalarFunction &function);
+//! Shared to_string callback for the internal tablefilter scalar functions: renders each via
+//! ExpressionFilter::InternalFunctionToString, so a rejected filter in a Filter node reads the same as
+//! when it is pushed into a scan (e.g. "optional: Dynamic Filter (col)" instead of the raw function call).
+string TableFilterFunctionToString(FunctionToStringInput &input);
 
 inline string FormatOptionalFilterString(const string &child_filter_string) {
 	if (child_filter_string.empty()) {

@@ -15,12 +15,19 @@ add_library_unity(
   transform_external_resource.cpp
   transform_external_resource_source.cpp
   transform_copy.cpp
+  transform_create_database.cpp
   transform_create_index.cpp
   transform_create_macro.cpp
   transform_create_schema.cpp
   transform_create_sequence.cpp
   transform_create_secret.cpp
   transform_create_table.cpp
+  transform_create_publication.cpp
+  transform_create_subscription.cpp
+  transform_notify.cpp
+  transform_foreign_server.cpp
+  transform_create_text_search_dictionary.cpp
+  transform_rbac.cpp
   transform_create_trigger.cpp
   transform_create_view.cpp
   transform_create_type.cpp
@@ -46,6 +53,7 @@ add_library_unity(
   transform_transaction.cpp
   transform_update.cpp
   transform_use.cpp
+  transform_reindex.cpp
   transform_vacuum.cpp)
 
 set(ALL_OBJECT_FILES

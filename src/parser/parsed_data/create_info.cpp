@@ -17,6 +17,7 @@ void CreateInfo::CopyProperties(CreateInfo &other) const {
 	other.dependencies = dependencies;
 	other.comment = comment;
 	other.tags = tags;
+	other.permissions = permissions;
 }
 
 unique_ptr<AlterInfo> CreateInfo::GetAlterInfo() const {

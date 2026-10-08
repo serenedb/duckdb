@@ -11,6 +11,7 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/parser/peg/matcher_token.hpp"
 
 namespace duckdb {
 class ClientContext;
@@ -31,9 +32,7 @@ class TokenIterator;
 //! always sees either a real statement or a clean exhaustion.
 class ParseIterator {
 public:
-	//! Peel parse-facing statements out of a SQL string (PEG / parser_override). The context is
-	//! bound for the lifetime of the iterator and must outlive it.
-	DUCKDB_API ParseIterator(ClientContext &context, const string &sql);
+	DUCKDB_API ParseIterator(ClientContext &context, std::string_view sql);
 	DUCKDB_API ~ParseIterator();
 
 	ParseIterator(const ParseIterator &) = delete;
@@ -64,12 +63,13 @@ private:
 	void EnsureTokenized();
 
 private:
-	//! The bound context, used for parser options / metrics / override extensions.
 	ClientContext &context;
-	string sql;
+	std::string_view sql;
+	vector<char> stripped;
 	//! Parser instance kept alive across Peek calls so its PEG matcher / transformer caches
 	//! stay warm. Constructed lazily on the first Peek.
 	unique_ptr<Parser> parser;
+	vector<MatcherToken> tokens;
 	//! Tokenized view of `sql` and its current position. Populated once on the first Peek.
 	unique_ptr<TokenIterator> token_iterator;
 	//! Single-statement buffer holding the result of the most recent Peek. Cleared by
@@ -78,14 +78,6 @@ private:
 	//! Once Peek determines there are no more statements (cursor past end of tokens), we stay
 	//! exhausted; subsequent Peek calls return false without re-invoking the parser.
 	bool exhausted = false;
-	//! Statements produced by a successful `parser_override` extension; if non-empty the
-	//! iterator yields these in order instead of running the PEG parser at all. Populated on
-	//! the first Peek when an extension claims the query.
-	unique_ptr<vector<unique_ptr<SQLStatement>>> overridden_statements;
-	//! Cursor into `overridden_statements`.
-	idx_t override_cursor = 0;
-	//! True once we've consulted parser_override extensions for this query.
-	bool override_resolved = false;
 };
 
 } // namespace duckdb

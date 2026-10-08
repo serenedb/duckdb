@@ -66,6 +66,8 @@ struct Completion {
 
 struct TabCompletion {
 	vector<Completion> completions;
+	optional_idx selected;
+	bool menu = false;
 };
 
 enum class RenderTruncation { NO_TRUNCATE, TRUNCATE_TOP, TRUNCATE_BOTTOM, TRUNCATE_BOTH };
@@ -142,7 +144,7 @@ public:
 
 #ifdef LINENOISE_EDITOR
 	bool EditBufferWithEditor(const char *editor);
-	bool EditFileWithEditor(const string &file_name, const char *editor);
+	bool EditFileWithEditor(std::string_view file_name, const char *editor);
 #endif
 
 	KeyPress Search(KeyPress key_press);
@@ -188,22 +190,22 @@ public:
 #ifdef LINENOISE_LOGGING
 	// Logging
 	template <typename... Args>
-	static void Log(const string &msg, Args... params) {
+	static void Log(std::string_view msg, Args... params) {
 		std::vector<ExceptionFormatValue> values;
 		LogMessageRecursive(msg, values, params...);
 	}
 
-	static void LogMessageRecursive(const string &msg, std::vector<ExceptionFormatValue> &values);
+	static void LogMessageRecursive(std::string_view msg, std::vector<ExceptionFormatValue> &values);
 
 	template <class T, typename... Args>
-	static void LogMessageRecursive(const string &msg, std::vector<ExceptionFormatValue> &values, T param,
+	static void LogMessageRecursive(std::string_view msg, std::vector<ExceptionFormatValue> &values, T param,
 	                                Args... params) {
 		values.push_back(ExceptionFormatValue::CreateFormatValue<T>(param));
 		LogMessageRecursive(msg, values, params...);
 	}
 #else
 	template <typename... Args>
-	static void Log(const string &msg, Args... params) {
+	static void Log(std::string_view msg, Args... params) {
 		// nop
 	}
 #endif
@@ -237,6 +239,7 @@ public:
 	optional_idx completion_idx;             //! Index in set of tab completions
 	idx_t rendered_completion_lines;         //! The number of completion lines rendered
 	bool render_completion_suggestion;       //! Whether or not to render auto-complete suggestions
+	idx_t completion_columns;
 };
 
 } // namespace duckdb

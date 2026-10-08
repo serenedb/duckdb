@@ -266,7 +266,7 @@ struct DynamicFilterScalarFun : public TableFilterDynamicFun {
 	static constexpr const char *NAME = TableFilterDynamicFun::Name;
 	static ScalarFunction GetFunction(const LogicalType &input_type);
 	static FilterPropagateResult FilterPrune(const FunctionStatisticsPruneInput &input);
-	static string ToString(const string &column_name, bool has_filter_data);
+	static string ToString(const string &column_name, optional_ptr<const DynamicFilterData> filter_data);
 };
 
 //! Factory for optional filter internal function (always returns TRUE)

@@ -131,8 +131,53 @@
                 "categories": ["numeric"]
             }
         ],
-        "type": "scalar_function_set",
-        "aliases": ["to_hex"]
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "to_hex",
+        "variants": [
+            {
+                "parameters": [
+                    {"name": "value", "type": "INTEGER"}
+                ],
+                "description": "Converts the `value` to lowercase hexadecimal, as PostgreSQL does: a negative value is shown in 32-bit two's complement.",
+                "example": "to_hex(255)",
+                "categories": ["numeric"]
+            },
+            {
+                "parameters": [
+                    {"name": "value", "type": "BIGINT"}
+                ],
+                "description": "Converts the `value` to lowercase hexadecimal, as PostgreSQL does: a negative value is shown in 64-bit two's complement.",
+                "example": "to_hex(-1::BIGINT)",
+                "categories": ["numeric"]
+            },
+            {
+                "parameters": [
+                    {"name": "string", "type": "VARCHAR"}
+                ],
+                "description": "Converts the `string` to hexadecimal representation.",
+                "example": "to_hex('Hello')",
+                "categories": ["string"]
+            },
+            {
+                "parameters": [
+                    {"name": "blob", "type": "BLOB"}
+                ],
+                "description": "Converts `blob` to `VARCHAR` using hexadecimal encoding.",
+                "example": "to_hex('\\xAA\\xBB'::BLOB)",
+                "categories": ["blob"]
+            },
+            {
+                "parameters": [
+                    {"name": "value", "type": "ANY"}
+                ],
+                "description": "Converts the `value` to `VARCHAR` using hexadecimal representation.",
+                "example": "to_hex(42::UBIGINT)",
+                "categories": ["numeric"]
+            }
+        ],
+        "type": "scalar_function_set"
     },
     {
         "name": "instr",

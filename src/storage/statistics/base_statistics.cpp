@@ -21,6 +21,16 @@ BaseStatistics::BaseStatistics(LogicalType type) {
 	Construct(*this, std::move(type));
 }
 
+BaseStatistics BaseStatistics::FromChildStats(LogicalType type, std::span<BaseStatistics> child_stats) {
+	BaseStatistics result;
+	result.type = std::move(type);
+	result.child_stats = unsafe_unique_array<BaseStatistics>(new BaseStatistics[child_stats.size()]);
+	for (idx_t i = 0; i < child_stats.size(); i++) {
+		result.child_stats[i] = std::move(child_stats[i]);
+	}
+	return result;
+}
+
 void BaseStatistics::Construct(BaseStatistics &stats, LogicalType type) {
 	stats.has_null = false;
 	stats.has_no_null = false;
@@ -592,18 +602,21 @@ BaseStatistics BaseStatistics::FromConstantType(const Value &input) {
 		return result;
 	}
 	case StatisticsType::STRUCT_STATS: {
-		auto result = StructStats::CreateEmpty(input.type());
 		auto &child_types = StructType::GetChildTypes(input.type());
+		vector<BaseStatistics> child_stats;
+		child_stats.reserve(child_types.size());
 		if (input.IsNull()) {
 			for (idx_t i = 0; i < child_types.size(); i++) {
-				StructStats::SetChildStats(result, i, FromConstant(Value(child_types[i].second)));
+				child_stats.push_back(FromConstant(Value(child_types[i].second)));
 			}
 		} else {
 			auto &struct_children = StructValue::GetChildren(input);
 			for (idx_t i = 0; i < child_types.size(); i++) {
-				StructStats::SetChildStats(result, i, FromConstant(struct_children[i]));
+				child_stats.push_back(FromConstant(struct_children[i]));
 			}
 		}
+		auto result = FromChildStats(input.type(), child_stats);
+		result.InitializeEmpty();
 		return result;
 	}
 	case StatisticsType::ARRAY_STATS: {

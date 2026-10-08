@@ -429,13 +429,21 @@ void RowGroup::InitializeColumnScans(CollectionScanState &state) {
 }
 
 bool RowGroup::InitializeScan(CollectionScanState &state, SegmentNode<RowGroup> &node) {
+	// Fast re-init when a new lookup batch lands on the row group the cursor already has loaded (the
+	// common docid~pk-order case, where consecutive batches walk the same row group): keep each
+	// column's warm decode state (pinned block + FSST dict) instead of rebuilding it from scratch.
+	const bool same_row_group = state.IsPinned(*this);
 	if (!InitializeScanInternal(state, node, 0)) {
 		return false;
 	}
 	const auto &column_ids = state.GetColumnIds();
 	for (idx_t i = 0; i < column_ids.size(); i++) {
 		auto &column_data = GetColumn(column_ids[i]);
-		column_data.InitializeScan(state.column_scans[i]);
+		if (same_row_group) {
+			column_data.ReinitializeScan(state.column_scans[i]);
+		} else {
+			column_data.InitializeScan(state.column_scans[i]);
+		}
 		state.column_scans[i].scan_options = &state.GetOptions();
 	}
 	return true;
@@ -720,7 +728,8 @@ static BaseStatistics CreateRowIdStats(idx_t beg_row, idx_t end_row) {
 	return result;
 }
 
-FilterPropagateResult RowGroup::CheckRowIdFilter(const TableFilter &filter, idx_t beg_row, idx_t end_row) {
+FilterPropagateResult RowGroup::CheckRowIdFilter(const TableFilter &filter, TableFilterState &filter_state,
+                                                 idx_t beg_row, idx_t end_row) {
 	if (end_row <= beg_row) {
 		return FilterPropagateResult::FILTER_ALWAYS_FALSE;
 	}
@@ -728,7 +737,7 @@ FilterPropagateResult RowGroup::CheckRowIdFilter(const TableFilter &filter, idx_
 	auto rowid_stats = CreateRowIdStats(beg_row, end_row);
 
 	auto &expr_filter = ExpressionFilter::GetExpressionFilter(filter, "RowGroup::CheckRowIdFilter");
-	return expr_filter.CheckStatistics(rowid_stats);
+	return expr_filter.CheckStatistics(rowid_stats, filter_state);
 }
 
 bool RowGroup::CheckZonemap(optional_ptr<ClientContext> context, ScanFilterInfo &filters, idx_t row_start) {
@@ -783,9 +792,9 @@ bool RowGroup::CheckZonemap(optional_ptr<ClientContext> context, ScanFilterInfo 
 		FilterPropagateResult prune_result;
 		if (base_column_index.IsRowIdColumn()) {
 			// the row ids in this row group span exactly [row_start, row_start + count)
-			prune_result = CheckRowIdFilter(filter, row_start, row_start + count);
+			prune_result = CheckRowIdFilter(filter, *entry.filter_state, row_start, row_start + count);
 		} else {
-			prune_result = GetColumn(base_column_index).CheckZonemap(context, base_column_index, filter);
+			prune_result = GetColumn(base_column_index).CheckZonemap(base_column_index, filter, *entry.filter_state);
 		}
 		if (prune_result == FilterPropagateResult::FILTER_ALWAYS_FALSE ||
 		    prune_result == FilterPropagateResult::FILTER_FALSE_OR_NULL) {
@@ -817,7 +826,8 @@ bool RowGroup::CheckZonemapSegments(CollectionScanState &state) {
 		auto &column_data = GetColumn(base_column_idx);
 
 		optional_ptr<SegmentNode<ColumnSegment>> current_segment;
-		auto prune_result = column_data.CheckZonemap(state.column_scans[column_idx], filter, current_segment);
+		auto prune_result =
+		    column_data.CheckZonemap(state.column_scans[column_idx], filter, *entry.filter_state, current_segment);
 		if (prune_result != FilterPropagateResult::FILTER_ALWAYS_FALSE &&
 		    prune_result != FilterPropagateResult::FILTER_FALSE_OR_NULL) {
 			continue;
@@ -892,13 +902,13 @@ vector<unique_ptr<AsyncTask>> RowGroup::CollectScanIOTasks(CollectionScanState &
 idx_t RowGroup::PrefetchRowCount(CollectionScanState &state) {
 	const idx_t start_row = state.vector_index * STANDARD_VECTOR_SIZE;
 	idx_t end_row = state.max_row_group_row;
-	auto context = state.context.GetClientContext();
 	for (auto &entry : state.GetFilterInfo().GetFilterList()) {
 		if (entry.IsAlwaysTrue() || entry.table_column_index.IsPushdownExtract()) {
 			continue;
 		}
 		auto &column_data = GetColumn(entry.table_column_index);
-		end_row = MinValue<idx_t>(end_row, column_data.ZonemapScanEnd(context, start_row, end_row, entry.filter));
+		end_row =
+		    MinValue<idx_t>(end_row, column_data.ZonemapScanEnd(start_row, end_row, entry.filter, *entry.filter_state));
 	}
 	return end_row > start_row ? end_row - start_row : 0;
 }
@@ -913,6 +923,31 @@ bool RowGroup::PrepareScan(ScanOptions options, CollectionScanState &state) {
 		if (remaining_rows == 0) {
 			// exceeded the amount of rows to scan
 			return false;
+		}
+		if (state.pk_lookups_it) {
+			// rowid lookup: advance to the vector holding the next requested id, skipping vectors that
+			// hold none of them. Requested ids below the scan cursor (rows deleted / never visited) drop.
+			const idx_t row_group_start = state.GetRowGroup()->GetRowStart();
+			const idx_t scan_pos = row_group_start + state.vector_index * STANDARD_VECTOR_SIZE;
+			while (state.pk_lookups_it != state.pk_lookups_end && static_cast<idx_t>(*state.pk_lookups_it) < scan_pos) {
+				++state.pk_lookups_it;
+			}
+			if (state.pk_lookups_it == state.pk_lookups_end) {
+				return false;
+			}
+			const idx_t target_vector =
+			    (static_cast<idx_t>(*state.pk_lookups_it) - row_group_start) / STANDARD_VECTOR_SIZE;
+			if (target_vector * STANDARD_VECTOR_SIZE >= state.max_row_group_row) {
+				return false;
+			}
+			if (target_vector > state.vector_index) {
+				const idx_t skip_rows = (target_vector - state.vector_index) * STANDARD_VECTOR_SIZE;
+				const auto &column_ids = state.GetColumnIds();
+				for (idx_t i = 0; i < column_ids.size(); i++) {
+					GetColumn(column_ids[i]).Skip(state.column_scans[i], skip_rows);
+				}
+				state.vector_index = target_vector;
+			}
 		}
 		idx_t current_row = state.vector_index * STANDARD_VECTOR_SIZE;
 		idx_t max_count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, remaining_rows);
@@ -961,6 +996,30 @@ bool RowGroup::PrepareScan(ScanOptions options, CollectionScanState &state) {
 		}
 		state.rows_scanned += count;
 
+		// rowid lookup: keep only rows whose id is requested (absent ids advance past and are dropped);
+		// the pushed table filters then drop the requested rows that fail them.
+		if (state.pk_lookups_it) {
+			const idx_t abs_base = state.GetRowGroup()->GetRowStart() + current_row;
+			const bool had_sel = count != max_count;
+			idx_t matched = 0;
+			for (idx_t i = 0; i < count; i++) {
+				const idx_t pos = had_sel ? state.valid_sel.get_index(i) : i;
+				const row_t rid = static_cast<row_t>(abs_base + pos);
+				while (state.pk_lookups_it != state.pk_lookups_end && *state.pk_lookups_it < rid) {
+					++state.pk_lookups_it;
+				}
+				if (state.pk_lookups_it != state.pk_lookups_end && *state.pk_lookups_it == rid) {
+					state.valid_sel.set_index(matched++, pos);
+					++state.pk_lookups_it;
+				}
+			}
+			count = matched;
+			if (count == 0) {
+				NextVector(state);
+				continue;
+			}
+		}
+
 		prepared.prepare_state = VectorPrepareState::PREPARED;
 		prepared.max_count = max_count;
 		prepared.visible_count = count;
@@ -997,6 +1056,12 @@ void RowGroup::ProcessPreparedScan(ScanOptions options, CollectionScanState &sta
 		}
 		if (has_sample_selection) {
 			count = sample_count;
+		}
+		if (state.pk_lookups_it) {
+			// every requested row is present and unfiltered, so the whole vector is survivors and is
+			// already compact -- valid_sel holds their slots (identity here).
+			state.lookup_count = count;
+			state.lookup_base = state.GetRowGroup()->GetRowStart() + state.vector_index * STANDARD_VECTOR_SIZE;
 		}
 	} else {
 		// partial scan: we have deletions or table filters
@@ -1070,6 +1135,7 @@ void RowGroup::ProcessPreparedScan(ScanOptions options, CollectionScanState &sta
 			return;
 		}
 		//! Now we use the selection vector to fetch data for the other columns.
+		const bool whole_vector_survives = approved_tuple_count == max_count;
 		for (idx_t i = 0; i < column_ids.size(); i++) {
 			if (has_filters && filter_info.ColumnHasFilters(i)) {
 				// column has already been scanned as part of the filtering process
@@ -1078,13 +1144,31 @@ void RowGroup::ProcessPreparedScan(ScanOptions options, CollectionScanState &sta
 			auto &column = column_ids[i];
 			auto &col_data = GetColumn(column);
 			state.column_scans[i].update_scan_type = options.update_type;
-			col_data.Select(transaction, state.vector_index, state.column_scans[i], result.data[i], sel,
-			                approved_tuple_count);
+			if (whole_vector_survives) {
+				// Every row survives (dense filter / match-all lookup): bulk-scan the vector -- the same
+				// fast ScanToFlatVector path a non-lookup scan takes. Select would decode the identical
+				// rows one-at-a-time, which the profile shows is measurably slower for a full vector.
+				col_data.Scan(transaction, state.vector_index, state.column_scans[i], result.data[i], max_count);
+			} else {
+				// Sparse survivors: decode only them, compactly into [0, approved_tuple_count). FSST_ONLY
+				// string columns then decode just the picked rows instead of the whole vector.
+				col_data.Select(transaction, state.vector_index, state.column_scans[i], result.data[i], sel,
+				                approved_tuple_count);
+			}
 		}
 		filter_info.EndFilter(filter_state);
 
 		D_ASSERT(approved_tuple_count > 0);
 		count = approved_tuple_count;
+		if (state.pk_lookups_it) {
+			// compacted lookup: survivors are decoded into [0, approved_tuple_count); record their
+			// in-vector slots so the caller maps each back to its row id (lookup_base + slot).
+			for (idx_t k = 0; k < approved_tuple_count; k++) {
+				state.valid_sel.set_index(k, sel.get_index(k));
+			}
+			state.lookup_count = approved_tuple_count;
+			state.lookup_base = state.GetRowGroup()->GetRowStart() + state.vector_index * STANDARD_VECTOR_SIZE;
+		}
 	}
 	result.SetChildCardinality(count);
 	FinishVector(state);
@@ -1337,7 +1421,7 @@ void RowGroup::CleanupAppend(VisibilityBound lowest_visibility_bound, idx_t star
 }
 
 void RowGroup::Update(TransactionData transaction, DuckTableEntry &table_entry, DataChunk &update_chunk, row_t *ids,
-                      idx_t offset, idx_t count, const vector<PhysicalIndex> &column_ids, idx_t row_group_start) {
+                      idx_t offset, idx_t count, std::span<const PhysicalIndex> column_ids, idx_t row_group_start) {
 #ifdef DEBUG
 	for (size_t i = offset; i < offset + count; i++) {
 		D_ASSERT(ids[i] >= row_t(row_group_start) && ids[i] < row_t(row_group_start + this->count));
@@ -2129,7 +2213,8 @@ idx_t RowGroup::Delete(TransactionData transaction, DuckTableEntry &table_entry,
 }
 
 void RowGroup::Verify() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	for (idx_t c = 0; c < columns.size(); c++) {
 		if (!ColumnIsLoaded(c)) {
 			continue;

@@ -20,17 +20,16 @@ MatchOutcome MatchTokenAt(const string &query, idx_t position) {
 	auto compiled = CompiledGrammar::Create();
 	vector<MatcherToken> tokens;
 	ParserTokenizerBehavior behavior(query, tokens);
-	compiled->GetTokenizer().TokenizeInput(behavior);
+	compiled.GetTokenizer().TokenizeInput(behavior);
 
 	TokenIterator iterator(tokens);
 	iterator.SetPosition(position);
 
 	vector<MatcherSuggestion> suggestions;
 	ParseResultAllocator parse_results;
-	ParserPackratCache packrat;
+	ParserPackratCache packrat(parse_results.GetArena(), 0, 0);
 	idx_t max_position = 0;
-	ArenaAllocator process_allocator(Allocator::DefaultAllocator());
-	MatchContext context(suggestions, parse_results, process_allocator, max_position, MatchMode::BUILD_PARSE_RESULT,
+	MatchContext context(suggestions, parse_results, max_position, MatchMode::BUILD_PARSE_RESULT,
 	                     IdentifierCaseMode::PRESERVE_CASE, &packrat);
 	MatchState state(iterator, context);
 

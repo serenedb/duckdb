@@ -1,0 +1,39 @@
+# name: test/sql/optimizer/compressed_materialization_bucket_distinct.test
+# description: DISTINCT over a GROUP BY whose group was compressed: the bucket rewrite of an integer division must read statistics of the compressed type
+# group: [optimizer]
+
+statement ok
+CREATE TABLE t1(col0 INTEGER);
+
+statement ok
+INSERT INTO t1 VALUES (51), (85);
+
+query I
+SELECT DISTINCT col0 // 42 FROM t1 GROUP BY col0 ORDER BY 1
+----
+1
+2
+
+query I
+SELECT DISTINCT col0 // 42 FROM t1 GROUP BY col0, col0 ORDER BY 1
+----
+1
+2
+
+statement ok
+CREATE TABLE t8(col0 BIGINT);
+
+statement ok
+INSERT INTO t8 VALUES (51), (85);
+
+query I
+SELECT DISTINCT col0 // 42 FROM t8 GROUP BY col0 ORDER BY 1
+----
+1
+2
+
+query I
+SELECT DISTINCT round(col0 / 42) FROM t1 GROUP BY col0 ORDER BY 1
+----
+1.0
+2.0

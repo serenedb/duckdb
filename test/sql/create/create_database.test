@@ -1,18 +1,17 @@
 # name: test/sql/create/create_database.test
-# description: The binder error from the feature not yet being supported in DuckDB
 # group: [create]
 
 statement error
 CREATE DATABASE mydb;
 ----
-syntax error at or near "DATABASE"
+If you need the "serenedb" extension
 
 statement error
 CREATE DATABASE mydb FROM './path';
 ----
-syntax error at or near "DATABASE"
+syntax error at or near "FROM"
 
 statement error
 DROP DATABASE mydb
 ----
-syntax error at or near "DATABASE"
+Failed to detach database with name "mydb": database not found

@@ -72,6 +72,9 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
 		}
+	} else {
+		entry_retriever.SetCallback(
+		    [this](CatalogEntry &entry) { GetStatementProperties().resolved_entries.push_back(&entry); });
 	}
 }
 
@@ -111,8 +114,6 @@ BoundStatement Binder::Bind(SQLStatement &statement) {
 		return Bind(statement.Cast<SetStatement>());
 	case StatementType::LOAD_STATEMENT:
 		return Bind(statement.Cast<LoadStatement>());
-	case StatementType::EXTENSION_STATEMENT:
-		return Bind(statement.Cast<ExtensionStatement>());
 	case StatementType::PREPARE_STATEMENT:
 		return Bind(statement.Cast<PrepareStatement>());
 	case StatementType::EXECUTE_STATEMENT:
@@ -223,7 +224,7 @@ void Binder::AddBoundView(ViewCatalogEntry &view) {
 	auto current = this;
 	while (current) {
 		if (current->bound_views.find(view) != current->bound_views.end()) {
-			throw BinderException("infinite recursion detected: attempting to recursively bind view \"%s\"", view.name);
+			throw BinderException("infinite recursion detected: attempting to recursively bind view %s", view.name);
 		}
 		current = current->parent.get();
 	}
@@ -450,7 +451,7 @@ void Binder::BindDeleteReturningColumns(TableCatalogEntry &table, LogicalGet &ge
 		// Get the column by logical index, then get its storage index
 		auto logical_idx = col_id.GetPrimaryIndex();
 		auto &col = columns.GetColumn(LogicalIndex(logical_idx));
-		if (!col.Generated()) {
+		if (col.Category() != TableColumnType::GENERATED_VIRTUAL) {
 			auto storage_idx = col.StorageOid();
 			return_columns[storage_idx] = chunk_idx;
 		}
@@ -526,7 +527,7 @@ void Binder::BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, v
 		}
 		auto logical_idx = col_id.GetPrimaryIndex();
 		auto &col = columns.GetColumn(LogicalIndex(logical_idx));
-		if (!col.Generated()) {
+		if (col.Category() != TableColumnType::GENERATED_VIRTUAL) {
 			auto storage_idx = col.StorageOid();
 			// Only map if this column is in a unique index
 			if (indexed_column_ids.count(storage_idx)) {
@@ -574,7 +575,7 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	for (auto &col : table.GetColumns().Logical()) {
 		names.emplace_back(col.Name());
 		types.push_back(col.Type());
-		if (!col.Generated()) {
+		if (col.Category() != TableColumnType::GENERATED_VIRTUAL) {
 			bound_columns.emplace_back(column_count);
 		}
 		column_count++;

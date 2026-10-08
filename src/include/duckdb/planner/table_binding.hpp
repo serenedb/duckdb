@@ -35,7 +35,7 @@ enum class BindingType { BASE, TABLE, DUMMY, CATALOG_ENTRY, CTE };
 //! A Binding represents a binding to a table, table-producing function or subquery with a specified table index.
 struct Binding {
 	Binding(BindingType binding_type, BindingAlias alias, vector<LogicalType> types, vector<Identifier> names,
-	        TableIndex index);
+	        TableIndex index, bool case_sensitive = false);
 	virtual ~Binding() = default;
 
 public:
@@ -110,7 +110,7 @@ public:
 	static constexpr const BindingType TYPE = BindingType::CATALOG_ENTRY;
 
 public:
-	EntryBinding(const Identifier &alias, vector<LogicalType> types, vector<Identifier> names, TableIndex index,
+	EntryBinding(BindingAlias alias, vector<LogicalType> types, vector<Identifier> names, TableIndex index,
 	             StandardEntry &entry);
 	StandardEntry &entry;
 
@@ -125,7 +125,7 @@ public:
 	static constexpr const BindingType TYPE = BindingType::TABLE;
 
 public:
-	TableBinding(const Identifier &alias, vector<LogicalType> types, vector<Identifier> names,
+	TableBinding(BindingAlias alias, vector<LogicalType> types, vector<Identifier> names,
 	             vector<ColumnIndex> &bound_column_ids, optional_ptr<StandardEntry> entry, TableIndex index,
 	             virtual_column_map_t virtual_columns);
 

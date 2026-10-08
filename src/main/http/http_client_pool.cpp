@@ -50,7 +50,6 @@ void HTTPClientPool::SetCapacity(idx_t new_capacity) {
 		}
 	}
 	capacity = new_capacity;
-	WakeNextAdmission();
 }
 
 idx_t HTTPClientPool::GetCapacity() const {
@@ -73,13 +72,10 @@ void HTTPClientPool::WaitForAdmission(annotated_unique_lock<annotated_mutex> &gu
 	}
 	AdmissionWaiter waiter;
 	admission_waiters.emplace_back(waiter);
-	try {
-		waiter.availability.wait(
-		    guard, [&]() { return closed || (admission_waiters.front().get() == &waiter && HasAdmissionResource()); });
-	} catch (...) {
-		RemoveAdmissionWaiter(waiter);
-		throw;
-	}
+	auto admitted = [&]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+		return closed || (admission_waiters.front().get() == &waiter && HasAdmissionResource());
+	};
+	guard.mutex()->Await(absl::Condition(&admitted));
 	if (closed) {
 		RemoveAdmissionWaiter(waiter);
 		throw InvalidInputException("HTTP transport manager is closed");
@@ -88,22 +84,12 @@ void HTTPClientPool::WaitForAdmission(annotated_unique_lock<annotated_mutex> &gu
 	admission_waiters.pop_front();
 }
 
-void HTTPClientPool::WakeNextAdmission() {
-	if (!admission_waiters.empty() && (closed || HasAdmissionResource())) {
-		admission_waiters.front()->availability.notify_one();
-	}
-}
-
 void HTTPClientPool::RemoveAdmissionWaiter(AdmissionWaiter &waiter) {
 	for (auto entry = admission_waiters.begin(); entry != admission_waiters.end(); ++entry) {
 		if (entry->get() != &waiter) {
 			continue;
 		}
-		const bool was_front = entry == admission_waiters.begin();
 		admission_waiters.erase(entry);
-		if (was_front) {
-			WakeNextAdmission();
-		}
 		return;
 	}
 	D_ASSERT(false);
@@ -111,9 +97,6 @@ void HTTPClientPool::RemoveAdmissionWaiter(AdmissionWaiter &waiter) {
 
 void HTTPClientPool::Close() noexcept {
 	closed = true;
-	for (auto waiter : admission_waiters) {
-		waiter->availability.notify_one();
-	}
 }
 
 bool HTTPClientPool::IsClosed() const {
@@ -132,7 +115,6 @@ HTTPClientPool::Reservation HTTPClientPool::Reserve(const ClientKey &key, const 
 		result.bucket = BucketHandle(exact->second);
 		result.client = TakeIdleClient(exact->second);
 		result.kind = ReservationKind::REUSE;
-		WakeNextAdmission();
 		return result;
 	}
 
@@ -153,7 +135,6 @@ HTTPClientPool::Reservation HTTPClientPool::Reserve(const ClientKey &key, const 
 		exact->second.reserved_clients++;
 		result.bucket = BucketHandle(exact->second);
 	}
-	WakeNextAdmission();
 	return result;
 }
 
@@ -211,7 +192,6 @@ void HTTPClientPool::Return(BucketHandle handle, unique_ptr<HTTPClient> client) 
 	if (was_empty) {
 		AddNonEmptyBucket(bucket);
 	}
-	WakeNextAdmission();
 }
 
 HTTPClientPool::Reservation HTTPClientPool::TakeIdleForDisposal(IdleFilter filter, idx_t first, uint64_t second) {
@@ -241,7 +221,6 @@ HTTPClientPool::DetachedBucket HTTPClientPool::FinishDestruction(BucketHandle ha
 			result.node = ExtractBucket(bucket);
 		}
 	}
-	WakeNextAdmission();
 	return result;
 }
 

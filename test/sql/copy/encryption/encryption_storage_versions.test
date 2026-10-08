@@ -118,7 +118,7 @@ not encrypted
 statement error
 ATTACH '{TEST_DIR}/unencrypted_v_1_2_0.duckdb' AS unencrypted_v_1_2_0 (STORAGE_VERSION 'v1.0.0');
 ----
-The storage version of an existing database cannot be lowered
+The storage format version of an existing DuckDB database file cannot be lowered
 
 statement ok
 ATTACH '{TEST_DIR}/unencrypted_v_1_2_0.duckdb' AS unencrypted_v_1_2_0;

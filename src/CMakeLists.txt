@@ -61,20 +61,12 @@ add_subdirectory(transaction)
 
 set(DUCKDB_LINK_LIBS
     duckdb_fsst
-    duckdb_fmt
-    duckdb_re2
-    duckdb_miniz
     duckdb_utf8proc
     duckdb_hyperloglog
     duckdb_fastpforlib
     duckdb_skiplistlib
     duckdb_mbedtls
-    duckdb_yyjson
-    duckdb_zstd)
-
-if(JEMALLOC_ENABLED)
-  list(APPEND DUCKDB_LINK_LIBS duckdb_jemalloc)
-endif()
+    duckdb_yyjson)
 
 foreach(LINK_LIB ${DUCKDB_LINK_LIBS})
   list(APPEND LINK_OBJECTS $<TARGET_OBJECTS:${LINK_LIB}>)

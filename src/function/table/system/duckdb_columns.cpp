@@ -89,17 +89,20 @@ static unique_ptr<FunctionData> DuckDBColumnsBind(ClientContext &context, TableF
 	names.emplace_back("generation_expression");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 static unique_ptr<GlobalTableFunctionState> DuckDBColumnsInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBColumnsData>();
 
 	// scan all the schemas for tables and views and collect them
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::TABLE_ENTRY,
-		                  [&](CatalogEntry &entry) { result->entries.push_back(entry); });
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TABLE_ENTRY,
+		                           [&](CatalogEntry &entry) { result->entries.push_back(entry); });
 	}
 	return std::move(result);
 }
@@ -123,6 +126,8 @@ public:
 	virtual const Value GenerationExpression(idx_t col) = 0;
 
 	void WriteColumns(idx_t start_col, idx_t end_col, DataChunk &output);
+
+	Identifier parent_schema_name;
 };
 
 class TableColumnHelper : public ColumnHelper {
@@ -194,6 +199,10 @@ public:
 		if (view_columns) {
 			column_names = view_columns->names;
 			types = view_columns->types;
+			// an explicit alias list names the view's columns, and it is not required to be unique
+			for (idx_t i = 0; i < column_names.size() && i < entry.aliases.size(); i++) {
+				column_names[i] = entry.aliases[i];
+			}
 			QueryResult::DeduplicateColumns(column_names);
 			bound_view = true;
 		} else {
@@ -212,7 +221,7 @@ public:
 		if (types[0].id() == LogicalTypeId::INVALID) {
 			return Value();
 		}
-		return Value(col < entry.aliases.size() ? entry.aliases[col] : column_names[col]);
+		return Value(column_names[col]);
 	}
 	const LogicalType &ColumnType(idx_t col) override {
 		return types[col];
@@ -245,15 +254,20 @@ private:
 };
 
 unique_ptr<ColumnHelper> ColumnHelper::Create(ClientContext &context, CatalogEntry &entry) {
+	unique_ptr<ColumnHelper> result;
 	switch (entry.type) {
 	case CatalogType::TABLE_ENTRY:
-		return make_uniq<TableColumnHelper>(entry.Cast<TableCatalogEntry>());
+		result = make_uniq<TableColumnHelper>(entry.Cast<TableCatalogEntry>());
+		break;
 	case CatalogType::VIEW_ENTRY:
-		return make_uniq<ViewColumnHelper>(context, entry.Cast<ViewCatalogEntry>());
+		result = make_uniq<ViewColumnHelper>(context, entry.Cast<ViewCatalogEntry>());
+		break;
 	default:
 		throw NotImplementedException({{"catalog_type", CatalogTypeToString(entry.type)}},
 		                              "Unsupported catalog type for duckdb_columns");
 	}
+	result->parent_schema_name = entry.ParentSchemaName(CatalogTransaction(entry.ParentCatalog(), context));
+	return result;
 }
 
 void ColumnHelper::WriteColumns(idx_t start_col, idx_t end_col, DataChunk &output) {
@@ -305,8 +319,8 @@ void ColumnHelper::WriteColumns(idx_t start_col, idx_t end_col, DataChunk &outpu
 
 		database_name.Append(Value(entry.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.catalog.GetOid())));
-		schema_name.Append(Value(entry.schema.name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.schema.oid)));
+		schema_name.Append(Value(parent_schema_name));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.ParentSchemaOid())));
 		table_name.Append(Value(entry.name));
 		table_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.oid)));
 		column_name.Append(ColumnName(i));
@@ -431,6 +445,8 @@ static double DuckDBColumnsProgress(ClientContext &context, const FunctionData *
 void DuckDBColumnsFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction columns("duckdb_columns", {}, DuckDBColumnsFunction, DuckDBColumnsBind, DuckDBColumnsInit);
 	columns.table_scan_progress = DuckDBColumnsProgress;
+	columns.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
+	columns.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	set.AddFunction(columns);
 }
 

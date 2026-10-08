@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/planner/column_binding_map.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 
 #include <functional>
@@ -36,6 +37,7 @@ public:
 class BindingReplacementGraph {
 public:
 	ColumnBinding Resolve(ColumnBinding binding) const;
+	optional_ptr<const ReplacementBinding> Find(ColumnBinding old_binding) const;
 	bool TryAdd(const ReplacementBinding &replacement);
 	void Add(ColumnBinding old_binding, ColumnBinding new_binding);
 	void Add(const ReplacementBinding &replacement);
@@ -55,6 +57,7 @@ public:
 private:
 	ReplacementBinding ResolveReplacement(ColumnBinding binding) const;
 	vector<ReplacementBinding> replacement_bindings;
+	column_binding_map_t<idx_t> replacement_positions;
 };
 
 //! The ColumnBindingReplacer updates column bindings (e.g., after changing the operator plan), utility for optimizers
@@ -110,6 +113,7 @@ public:
 
 private:
 	static void RemapProjectionMapStrict(vector<ProjectionIndex> &projection_map,
+	                                     const vector<ColumnBinding> &original_child_bindings,
 	                                     const vector<ColumnBinding> &child_bindings_before,
 	                                     const vector<ColumnBinding> &child_bindings_after);
 };

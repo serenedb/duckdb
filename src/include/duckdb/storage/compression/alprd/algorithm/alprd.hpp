@@ -76,12 +76,14 @@ struct AlpRDCompression {
 	/*
 	 * Estimate the bits per value of ALPRD within a sample
 	 */
-	static double EstimateCompressionSize(uint8_t right_bit_width, uint8_t left_bit_width, uint16_t exceptions_count,
+	static double EstimateCompressionSize(uint8_t right_bit_width, uint8_t left_bit_width, uint32_t exceptions_count,
 	                                      uint64_t sample_count) {
-		double exceptions_size =
-		    exceptions_count * ((AlpRDConstants::EXCEPTION_POSITION_SIZE + AlpRDConstants::EXCEPTION_SIZE) * 8);
-		double estimated_size =
-		    right_bit_width + left_bit_width + (exceptions_size / static_cast<double>(sample_count));
+		const auto exceptions_size =
+		    exceptions_count * ((static_cast<uint64_t>(AlpRDConstants::EXCEPTION_POSITION_SIZE) +
+		                         static_cast<uint64_t>(AlpRDConstants::EXCEPTION_SIZE)) *
+		                        8);
+		const auto estimated_size = static_cast<double>(right_bit_width + left_bit_width) +
+		                            (static_cast<double>(exceptions_size) / static_cast<double>(sample_count));
 		return estimated_size;
 	}
 
@@ -137,8 +139,8 @@ struct AlpRDCompression {
 			         compression_data.actual_dictionary_size <= AlpRDConstants::MAX_DICTIONARY_SIZE);
 		}
 
-		double estimated_size = EstimateCompressionSize(right_bit_width, left_bit_width,
-		                                                UnsafeNumericCast<uint16_t>(exceptions_count), values.size());
+		double estimated_size =
+		    EstimateCompressionSize(right_bit_width, left_bit_width, exceptions_count, values.size());
 		return estimated_size;
 	}
 

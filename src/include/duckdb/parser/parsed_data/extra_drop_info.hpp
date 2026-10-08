@@ -67,7 +67,7 @@ struct ExtraDropSecretInfo : public ExtraDropInfo {
 	ExtraDropSecretInfo(const ExtraDropSecretInfo &info);
 
 	//! Secret Persistence
-	SecretPersistType persist_mode;
+	SecretPersistType persist_mode = SecretPersistType::DEFAULT;
 	//! (optional) the name of the storage to drop from
 	string secret_storage;
 

@@ -74,19 +74,24 @@ public:
 	}
 
 	~AsyncWriteQueueTask() override {
-		if (!started) {
+		if (!settled) {
 			queue.CancelScheduledTask();
 		}
 	}
 
 	void ExecuteTask() override {
-		started = true;
+		settled = true;
 		queue.DrainRequests();
+	}
+
+	void Cancel() override {
+		settled = true;
+		queue.CancelScheduledTask();
 	}
 
 private:
 	AsyncWriteQueue &queue;
-	bool started = false;
+	bool settled = false;
 };
 
 AsyncWriteQueue::AsyncWriteQueue(ClientContext &client_context_p, AsyncWriteTarget &target_p)

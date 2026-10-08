@@ -16,21 +16,25 @@ public:
 	      identifier_mask(keyword_helper_p.GetIdentifierMask(suggestion_type)) {
 	}
 
-	bool IsQuoted(const string &text) const {
+	bool IsQuoted(std::string_view text) const {
 		if (text.front() == '"' && text.back() == '"') {
 			return true;
 		}
 		return false;
 	}
 
-	bool IsSingleQuoted(const string &text) const {
+	bool IsSingleQuoted(std::string_view text) const {
 		if (text.front() == '\'' && text.back() == '\'') {
 			return true;
 		}
 		return false;
 	}
 
-	bool IsIdentifier(const string &text) const {
+	static std::string_view Body(std::string_view text) {
+		return text.substr(1, text.size() - 2);
+	}
+
+	bool IsIdentifier(std::string_view text) const {
 		if (text.empty()) {
 			return false;
 		}
@@ -53,25 +57,23 @@ public:
 		}
 		const auto &token_text = token->text;
 		auto start_offset = optional_idx(token->offset);
-		auto token_length = optional_idx(token->length);
+		auto token_length = optional_idx(token->text.size());
 		if (!MatchIdentifier(state)) {
 			return MatcherResult::Failure();
 		}
-		state.token_iterator.SetPreviousTokenType(GetTokenType());
+		state.AnnotatePreviousToken(GetTokenType());
 		if (!state.BuildParseResult()) {
 			return MatcherResult::Success();
 		}
 
-		string result_text = token_text;
-		if (IsQuoted(result_text)) {
-			result_text = result_text.substr(1, result_text.size() - 2);
-			result_text = StringUtil::Replace(result_text, "\"\"", "\"");
-		} else if (IsSingleQuoted(result_text) && SupportsStringLiteral()) {
+		std::string_view result_text;
+		if (IsQuoted(token_text)) {
+			result_text = state.context.allocator.Unquote(Body(token_text), '"');
+		} else if (IsSingleQuoted(token_text) && SupportsStringLiteral()) {
 			// a single-quoted token in a table or file-name position is a path, so it is unwrapped but never folded
-			result_text = result_text.substr(1, result_text.size() - 2);
-			result_text = StringUtil::Replace(result_text, "''", "'");
+			result_text = state.context.allocator.Unquote(Body(token_text), '\'');
 		} else {
-			state.FoldIdentifier(result_text);
+			result_text = state.FoldIdentifier(token_text);
 		}
 		return state.AllocateParseResult<IdentifierParseResult>(result_text, start_offset, token_length);
 	}
@@ -99,6 +101,14 @@ public:
 		default:
 			return TokenType::IDENTIFIER;
 		}
+	}
+
+	uint8_t FirstTokenClasses() const override {
+		return MatcherTokenClass::WORD | (SupportsStringLiteral() ? MatcherTokenClass::SINGLE_QUOTED : 0);
+	}
+
+	keyword_categories_t FirstWordCategories() const override {
+		return identifier_mask;
 	}
 
 	bool SupportsStringLiteral() const {
@@ -188,24 +198,27 @@ public:
 		}
 		auto &token_text = token->text;
 		auto start_offset = optional_idx(token->offset);
-		auto token_length = optional_idx(token->length);
+		auto token_length = optional_idx(token->text.size());
 		if (!MatchReservedIdentifier(state)) {
 			return MatcherResult::Failure();
 		}
-		state.token_iterator.SetPreviousTokenType(GetTokenType());
+		state.AnnotatePreviousToken(GetTokenType());
 		if (!state.BuildParseResult()) {
 			return MatcherResult::Success();
 		}
-		string result_text = token_text;
+		std::string_view result_text = token_text;
 		// unlike IdentifierMatcher this rule does not unwrap path literals, it only has to avoid folding them
-		const bool is_path_literal = IsSingleQuoted(result_text) && SupportsStringLiteral();
-		if (IsQuoted(result_text)) {
-			result_text = result_text.substr(1, result_text.size() - 2);
-			result_text = StringUtil::Replace(result_text, "\"\"", "\"");
+		const bool is_path_literal = IsSingleQuoted(token_text) && SupportsStringLiteral();
+		if (IsQuoted(token_text)) {
+			result_text = state.context.allocator.Unquote(Body(token_text), '"');
 		} else if (!is_path_literal) {
-			state.FoldIdentifier(result_text);
+			result_text = state.FoldIdentifier(token_text);
 		}
 		return state.AllocateParseResult<IdentifierParseResult>(result_text, start_offset, token_length);
+	}
+
+	keyword_categories_t FirstWordCategories() const override {
+		return ~keyword_categories_t();
 	}
 
 private:

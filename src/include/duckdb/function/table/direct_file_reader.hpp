@@ -29,6 +29,8 @@ public:
 	void FinishFile(ClientContext &context, GlobalTableFunctionState &gstate) override;
 	double GetProgressInFile(ClientContext &context) override;
 
+	void AddVirtualColumn(column_t virtual_column_id) override;
+
 	string GetReaderType() const override {
 		return "File";
 	};

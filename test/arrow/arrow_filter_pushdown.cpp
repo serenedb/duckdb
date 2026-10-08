@@ -54,7 +54,7 @@ static bool FilterInScan(const std::string &explain_str) {
 	if (arrow_pos == std::string::npos) {
 		return false;
 	}
-	return explain_str.find("Filters:", arrow_pos) != std::string::npos;
+	return explain_str.find("Column Filter:", arrow_pos) != std::string::npos;
 }
 
 TEST_CASE("Arrow filter pushdown - view types disable pushdown", "[arrow]") {

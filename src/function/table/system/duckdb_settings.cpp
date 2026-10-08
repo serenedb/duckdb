@@ -1,6 +1,7 @@
 #include "duckdb/function/table/system_functions.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/common/enum_util.hpp"
 
 namespace duckdb {
@@ -83,6 +84,9 @@ unique_ptr<GlobalTableFunctionState> DuckDBSettingsInit(ClientContext &context, 
 	}
 
 	auto &config = DBConfig::GetConfig(context);
+	auto visible = [&](const string &name) {
+		return !context.setting_visibility || context.setting_visibility(context, name);
+	};
 	auto options_count = DBConfig::GetOptionCount();
 	for (idx_t i = 0; i < options_count; i++) {
 		auto option = DBConfig::GetOptionByIndex(i);
@@ -91,6 +95,9 @@ unique_ptr<GlobalTableFunctionState> DuckDBSettingsInit(ClientContext &context, 
 			continue;
 		}
 		if (bind_data.deprecated != option->is_deprecated) {
+			continue;
+		}
+		if (!visible(option->name)) {
 			continue;
 		}
 		DuckDBSettingValue value;
@@ -114,8 +121,12 @@ unique_ptr<GlobalTableFunctionState> DuckDBSettingsInit(ClientContext &context, 
 			value.aliases = std::move(entry->second);
 		}
 		for (auto &alias : value.aliases) {
+			auto alias_name = alias.GetValue<Identifier>();
+			if (!visible(alias_name.GetIdentifierName())) {
+				continue;
+			}
 			DuckDBSettingValue alias_value = value;
-			alias_value.name = alias.GetValue<Identifier>();
+			alias_value.name = std::move(alias_name);
 			alias_value.aliases.clear();
 			result->settings.push_back(std::move(alias_value));
 		}
@@ -126,6 +137,9 @@ unique_ptr<GlobalTableFunctionState> DuckDBSettingsInit(ClientContext &context, 
 			continue;
 		}
 		if (bind_data.deprecated != ext_param.second.is_deprecated) {
+			continue;
+		}
+		if (!visible(ext_param.first.GetIdentifierName())) {
 			continue;
 		}
 		Value setting_val;
@@ -176,7 +190,7 @@ void DuckDBSettingsFunction(ClientContext &context, TableFunctionInput &data_p, 
 		auto &entry = data.settings[data.offset++];
 
 		name.Append(Value(entry.name));
-		value.Append(entry.value.CastAs(context, LogicalType::VARCHAR));
+		value.Append(Settings::FormatDisplayValue(context, entry.value));
 		description.Append(Value(entry.description));
 		input_type.Append(Value(entry.input_type));
 		scope.Append(Value(entry.scope));

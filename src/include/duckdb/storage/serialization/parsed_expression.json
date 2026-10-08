@@ -48,6 +48,13 @@
         "version": "v2.0.0",
         "equals_skip": true,
         "hash_skip": true
+      },
+      {
+        "name": "is_named_parameter",
+        "type": "bool",
+        "serialize_skip": true,
+        "equals_skip": true,
+        "hash_skip": true
       }
     ]
   },
@@ -296,6 +303,15 @@
         "equals_skip": true,
         "accessor_mut": "IsOperatorMutable()",
         "accessor": "IsOperator()"
+      },
+      {
+        "id": 16584,
+        "name": "from_operator",
+        "type": "bool",
+        "version": "serenedb_v1",
+        "equals_skip": true,
+        "accessor_mut": "FromOperatorMutable()",
+        "accessor": "IsFromOperator()"
       },
       {
         "id": 207,

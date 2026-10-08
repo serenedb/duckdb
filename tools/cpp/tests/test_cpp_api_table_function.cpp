@@ -1000,8 +1000,8 @@ TEST_CASE("Stable C++API: table function partition callbacks feed a partitioned 
 	// The partitioning callback claims only part_col: GROUP BY part_col unlocks the partitioned aggregate, val does
 	// not.
 	REQUIRE(
-	    ExplainContains(conn, "SELECT part_col, count(*) FROM cpp_part(3) GROUP BY part_col", "Partitioned Aggregate"));
-	REQUIRE_FALSE(ExplainContains(conn, "SELECT val, count(*) FROM cpp_part(3) GROUP BY val", "Partitioned Aggregate"));
+	    ExplainContains(conn, "SELECT part_col, count(*) FROM cpp_part(3) GROUP BY part_col", "PARTITIONED_AGGREGATE"));
+	REQUIRE_FALSE(ExplainContains(conn, "SELECT val, count(*) FROM cpp_part(3) GROUP BY val", "PARTITIONED_AGGREGATE"));
 
 	auto rows = Collect2<int64_t, int64_t>(
 	    conn.Execute("SELECT part_col, count(*) FROM cpp_part(3) GROUP BY part_col ORDER BY part_col"), 0, 1);
@@ -1033,7 +1033,7 @@ TEST_CASE("Stable C++API: table function partition data reports declared columns
 
 	// Only part_col is scanned, so declared index 1 sits at scan position 0; the callback must still see 1.
 	REQUIRE(ExplainContains(conn, "SELECT part_col, count(*) FROM cpp_proj_part(3) GROUP BY part_col",
-	                        "Partitioned Aggregate"));
+	                        "PARTITIONED_AGGREGATE"));
 	proj_part_reported_column = 0;
 	auto rows = Collect2<int64_t, int64_t>(
 	    conn.Execute("SELECT part_col, max(val) FROM cpp_proj_part(3) GROUP BY part_col ORDER BY part_col"), 0, 1);
@@ -1122,5 +1122,5 @@ TEST_CASE("Stable C++API: table function partitioning requires partition data", 
 	function.SetName("cpp_info_cleared").SetPartitioningCallback(nullptr).SetPartitionDataCallback(nullptr);
 	function.Register();
 	REQUIRE_FALSE(ExplainContains(conn, "SELECT part_col, count(*) FROM cpp_info_cleared(2) GROUP BY part_col",
-	                              "Partitioned Aggregate"));
+	                              "PARTITIONED_AGGREGATE"));
 }

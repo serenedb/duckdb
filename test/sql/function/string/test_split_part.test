@@ -58,9 +58,9 @@ select split_part('','',1)
 (empty)
 
 query T
-select split_part('a,b,c','',3)
+select split_part('a,b,c','',1)
 ----
-b
+a,b,c
 
 query T
 select split_part('',',',1)

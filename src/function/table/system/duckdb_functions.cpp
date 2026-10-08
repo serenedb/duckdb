@@ -98,24 +98,27 @@ static unique_ptr<FunctionData> DuckDBFunctionsBind(ClientContext &context, Tabl
 	names.emplace_back("categories");
 	return_types.emplace_back(LogicalType::LIST(LogicalType::VARCHAR));
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 static void ExtractFunctionsFromSchema(ClientContext &context, SchemaCatalogEntry &schema,
                                        DuckDBFunctionsData &result) {
-	schema.Scan(context, CatalogType::SCALAR_FUNCTION_ENTRY,
-	            [&](CatalogEntry &entry) { result.entries.push_back(entry); });
-	schema.Scan(context, CatalogType::TABLE_FUNCTION_ENTRY,
-	            [&](CatalogEntry &entry) { result.entries.push_back(entry); });
-	schema.Scan(context, CatalogType::PRAGMA_FUNCTION_ENTRY,
-	            [&](CatalogEntry &entry) { result.entries.push_back(entry); });
+	Catalog::ScanListedEntries(context, schema, CatalogType::SCALAR_FUNCTION_ENTRY,
+	                           [&](CatalogEntry &entry) { result.entries.push_back(entry); });
+	Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_FUNCTION_ENTRY,
+	                           [&](CatalogEntry &entry) { result.entries.push_back(entry); });
+	Catalog::ScanListedEntries(context, schema, CatalogType::PRAGMA_FUNCTION_ENTRY,
+	                           [&](CatalogEntry &entry) { result.entries.push_back(entry); });
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBFunctionsInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBFunctionsData>();
 
 	// scan all the schemas for tables and collect them and collect them
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
 		ExtractFunctionsFromSchema(context, schema.get(), *result);
 	};
@@ -154,7 +157,7 @@ struct ScalarFunctionExtractor {
 		return entry.functions.Size();
 	}
 
-	static Value GetFunctionType() {
+	static Value GetFunctionType(ScalarFunctionCatalogEntry &entry, idx_t offset) {
 		return Value("scalar");
 	}
 
@@ -217,7 +220,7 @@ struct WindowFunctionExtractor {
 		return entry.functions.Size();
 	}
 
-	static Value GetFunctionType() {
+	static Value GetFunctionType(WindowFunctionCatalogEntry &entry, idx_t offset) {
 		return Value("window");
 	}
 
@@ -279,7 +282,7 @@ struct AggregateFunctionExtractor {
 		return entry.functions.Size();
 	}
 
-	static Value GetFunctionType() {
+	static Value GetFunctionType(AggregateFunctionCatalogEntry &entry, idx_t offset) {
 		return Value("aggregate");
 	}
 
@@ -342,8 +345,8 @@ struct MacroExtractor {
 		return entry.macros.size();
 	}
 
-	static Value GetFunctionType() {
-		return Value("macro");
+	static Value GetFunctionType(ScalarMacroCatalogEntry &entry, idx_t offset) {
+		return Value(entry.macros[offset]->type == MacroType::TABLE_MACRO ? "table_macro" : "macro");
 	}
 
 	static Value GetReturnType(ScalarMacroCatalogEntry &entry, idx_t offset) {
@@ -386,9 +389,10 @@ struct MacroExtractor {
 
 	static Value GetMacroDefinition(ScalarMacroCatalogEntry &entry, idx_t offset) {
 		auto &macro_entry = *entry.macros[offset];
-		D_ASSERT(macro_entry.type == MacroType::SCALAR_MACRO);
-		auto &func = macro_entry.Cast<ScalarMacroFunction>();
-		return func.expression->ToString();
+		if (macro_entry.type == MacroType::TABLE_MACRO) {
+			return macro_entry.Cast<TableMacroFunction>().query_node->ToString();
+		}
+		return macro_entry.Cast<ScalarMacroFunction>().expression->ToString();
 	}
 
 	static Value IsVolatile(ScalarMacroCatalogEntry &entry, idx_t offset) {
@@ -405,8 +409,8 @@ struct TableMacroExtractor {
 		return entry.macros.size();
 	}
 
-	static Value GetFunctionType() {
-		return Value("table_macro");
+	static Value GetFunctionType(TableMacroCatalogEntry &entry, idx_t offset) {
+		return Value(entry.macros[offset]->type == MacroType::TABLE_MACRO ? "table_macro" : "macro");
 	}
 
 	static Value GetReturnType(TableMacroCatalogEntry &entry, idx_t offset) {
@@ -450,10 +454,9 @@ struct TableMacroExtractor {
 	static Value GetMacroDefinition(TableMacroCatalogEntry &entry, idx_t offset) {
 		auto &macro_entry = *entry.macros[offset];
 		if (macro_entry.type == MacroType::TABLE_MACRO) {
-			auto &func = macro_entry.Cast<TableMacroFunction>();
-			return func.query_node->ToString();
+			return macro_entry.Cast<TableMacroFunction>().query_node->ToString();
 		}
-		return Value();
+		return macro_entry.Cast<ScalarMacroFunction>().expression->ToString();
 	}
 
 	static Value IsVolatile(TableMacroCatalogEntry &entry, idx_t offset) {
@@ -481,7 +484,7 @@ struct TableFunctionExtractor {
 		return entry.functions.Size();
 	}
 
-	static Value GetFunctionType() {
+	static Value GetFunctionType(TableFunctionCatalogEntry &entry, idx_t offset) {
 		return Value("table");
 	}
 
@@ -548,7 +551,7 @@ struct PragmaFunctionExtractor {
 		return entry.functions.Size();
 	}
 
-	static Value GetFunctionType() {
+	static Value GetFunctionType(PragmaFunctionCatalogEntry &entry, idx_t offset) {
 		return Value("pragma");
 	}
 
@@ -633,7 +636,7 @@ static Value GetParameterNames(CatalogEntry &entry, idx_t function_idx, Function
 			if (param_idx < function_description.parameter_names.size()) {
 				parameter_names.emplace_back(function_description.parameter_names[param_idx]);
 			} else {
-				parameter_names.emplace_back("col" + to_string(param_idx));
+				parameter_names.emplace_back("column" + to_string(param_idx + 1));
 			}
 		}
 	}
@@ -690,7 +693,7 @@ static optional_idx GetFunctionDescriptionIndex(vector<FunctionDescription> &fun
 }
 
 template <class T, class OP>
-bool ExtractFunctionData(CatalogEntry &entry, idx_t function_idx, DataChunk &output) {
+bool ExtractFunctionData(ClientContext &context, CatalogEntry &entry, idx_t function_idx, DataChunk &output) {
 	auto &function = entry.Cast<T>();
 	vector<LogicalType> parameter_types_vector = OP::GetParameterLogicalTypes(function, function_idx);
 	Value parameter_types_value = OP::GetParameterTypes(function, function_idx);
@@ -701,13 +704,13 @@ bool ExtractFunctionData(CatalogEntry &entry, idx_t function_idx, DataChunk &out
 	idx_t col = 0;
 
 	// database_name, LogicalType::VARCHAR
-	output.data[col++].Append(Value(function.schema.catalog.GetName()));
+	output.data[col++].Append(Value(function.ParentCatalog().GetName()));
 
 	// database_oid, BIGINT
-	output.data[col++].Append(Value::BIGINT(NumericCast<int64_t>(function.schema.catalog.GetOid())));
+	output.data[col++].Append(Value::BIGINT(NumericCast<int64_t>(function.ParentCatalog().GetOid())));
 
 	// schema_name, LogicalType::VARCHAR
-	output.data[col++].Append(Value(function.schema.name));
+	output.data[col++].Append(Value(function.ParentSchemaName(CatalogTransaction(function.ParentCatalog(), context))));
 
 	// function_name, LogicalType::VARCHAR
 	output.data[col++].Append(Value(function.name));
@@ -717,7 +720,7 @@ bool ExtractFunctionData(CatalogEntry &entry, idx_t function_idx, DataChunk &out
 	    function.alias_of.empty() || function.alias_of == function.name ? Value() : Value(function.alias_of));
 
 	// function_type, LogicalType::VARCHAR
-	output.data[col++].Append(Value(OP::GetFunctionType()));
+	output.data[col++].Append(Value(OP::GetFunctionType(function, function_idx)));
 
 	// function_description, LogicalType::VARCHAR
 	output.data[col++].Append(function_description.description.empty() ? Value()
@@ -792,31 +795,31 @@ void DuckDBFunctionsFunction(ClientContext &context, TableFunctionInput &data_p,
 		switch (entry.type) {
 		case CatalogType::SCALAR_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<ScalarFunctionCatalogEntry, ScalarFunctionExtractor>(
-			    entry, data.offset_in_entry, output);
+			    context, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::AGGREGATE_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<AggregateFunctionCatalogEntry, AggregateFunctionExtractor>(
-			    entry, data.offset_in_entry, output);
+			    context, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::TABLE_MACRO_ENTRY:
-			finished =
-			    ExtractFunctionData<TableMacroCatalogEntry, TableMacroExtractor>(entry, data.offset_in_entry, output);
+			finished = ExtractFunctionData<TableMacroCatalogEntry, TableMacroExtractor>(context, entry,
+			                                                                            data.offset_in_entry, output);
 			break;
 		case CatalogType::MACRO_ENTRY:
-			finished =
-			    ExtractFunctionData<ScalarMacroCatalogEntry, MacroExtractor>(entry, data.offset_in_entry, output);
+			finished = ExtractFunctionData<ScalarMacroCatalogEntry, MacroExtractor>(context, entry,
+			                                                                        data.offset_in_entry, output);
 			break;
 		case CatalogType::TABLE_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<TableFunctionCatalogEntry, TableFunctionExtractor>(
-			    entry, data.offset_in_entry, output);
+			    context, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::PRAGMA_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<PragmaFunctionCatalogEntry, PragmaFunctionExtractor>(
-			    entry, data.offset_in_entry, output);
+			    context, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::WINDOW_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<WindowFunctionCatalogEntry, WindowFunctionExtractor>(
-			    entry, data.offset_in_entry, output);
+			    context, entry, data.offset_in_entry, output);
 			break;
 		default:
 			throw InternalException("FIXME: unrecognized function type in duckdb_functions");
@@ -847,6 +850,8 @@ static double DuckDBFunctionsProgress(ClientContext &context, const FunctionData
 void DuckDBFunctionsFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction functions("duckdb_functions", {}, DuckDBFunctionsFunction, DuckDBFunctionsBind, DuckDBFunctionsInit);
 	functions.table_scan_progress = DuckDBFunctionsProgress;
+	functions.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
+	functions.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	set.AddFunction(functions);
 }
 

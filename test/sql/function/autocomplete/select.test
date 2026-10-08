@@ -252,7 +252,7 @@ CREATE TABLE MyTable(MyColumn Varchar);
 query II
 SELECT suggestion, suggestion_start FROM sql_auto_complete('SELECT My') LIMIT 1;
 ----
-MyColumn	7
+my_column	7
 
 # multi statements
 query II

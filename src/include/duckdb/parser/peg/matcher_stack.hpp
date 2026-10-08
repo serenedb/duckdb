@@ -10,12 +10,16 @@
 #include "duckdb/common/optional.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/parser/peg/matcher.hpp"
+#include "duckdb/parser/peg/matcher/choice_matcher.hpp"
+#include "duckdb/parser/peg/matcher/list_matcher.hpp"
+#include "duckdb/parser/peg/matcher/optional_matcher.hpp"
+#include "duckdb/parser/peg/matcher/repeat_matcher.hpp"
 
 namespace duckdb {
 
 struct PackratMatchState {
 	static bool IsEnabled(const Matcher &matcher, const MatchState &state) {
-		return state.context.packrat_cache && matcher.IsPackratMemoized() && matcher.GetPackratId().IsValid();
+		return state.context.packrat_cache && matcher.IsPackratMemoized();
 	}
 
 	optional<MatcherResult> TryLoadCachedResult(const Matcher &matcher, MatchState &state);
@@ -40,6 +44,7 @@ public:
 	optional<MatcherResult> child_result;
 	optional<MatcherResult> result;
 	PackratMatchState packrat_state;
+	idx_t process_mark;
 };
 
 class MatchStack {
@@ -51,7 +56,26 @@ public:
 
 private:
 	static constexpr idx_t INITIAL_FRAME_CAPACITY = 64;
+	static constexpr idx_t FRAMES_PER_EXPRESSION_LEVEL = 64;
+	static constexpr idx_t MAX_RECURSION_DEPTH = 1024;
+	static constexpr idx_t MAX_CHAIN_LEVELS = 32;
 
+	[[gnu::always_inline]] MatcherResult MatchChild(const Matcher &matcher, MatchState &state, idx_t depth);
+	[[gnu::always_inline]] MatcherResult MatchStartedChild(const Matcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult Match(const Matcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchComposite(const Matcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchList(const ListMatcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchChainLevel(const ListMatcher &matcher, MatchState &state, idx_t depth);
+	[[gnu::always_inline]] MatcherResult CloseChainLevel(const ListMatcher &matcher, MatchState &state,
+	                                                     MatchState &list_state, MatcherResult core_result, idx_t depth,
+	                                                     bool nested, bool suffixes_empty);
+	MatcherResult ContinueList(const ListMatcher &matcher, MatchState &state, MatchState &list_state,
+	                           idx_t children_begin, idx_t next_child, idx_t depth);
+	MatcherResult MatchChoice(const ChoiceMatcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchOptional(const OptionalMatcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchRepeat(const RepeatMatcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult MatchMemoized(const Matcher &matcher, MatchState &state, idx_t depth);
+	MatcherResult ExecuteFrames(MatchInput input, idx_t depth);
 	MatcherResult ExecuteAtomicMatcher(MatchInput input);
 	void DestroyTopFrame();
 	void PushFrame(MatchInput input);
@@ -62,6 +86,9 @@ private:
 
 private:
 	vector<MatchStackFrame> frames;
+	idx_t max_frames = 0;
+	idx_t recursion_limit = 0;
+	idx_t frame_limit = 0;
 };
 
 } // namespace duckdb

@@ -32,36 +32,37 @@ DebugVerificationMode DBConfigOptions::global_verification_mode = DebugVerificat
 #define DUCKDB_SETTING(_PARAM)                                                                                         \
 	{                                                                                                                  \
 		_PARAM::Name, _PARAM::Description, _PARAM::InputType, nullptr, nullptr, nullptr, nullptr, nullptr,             \
-		    _PARAM::Scope, _PARAM::DefaultValue, nullptr, _PARAM::SettingIndex, _PARAM::IsDebug, _PARAM::IsDeprecated  \
+		    _PARAM::Scope, _PARAM::DefaultValue, nullptr, _PARAM::SettingIndex, _PARAM::IsDebug, _PARAM::IsDeprecated, \
+		    _PARAM::NoResetAll                                                                                         \
 	}
 #define DUCKDB_SETTING_CALLBACK(_PARAM)                                                                                \
 	{                                                                                                                  \
 		_PARAM::Name, _PARAM::Description, _PARAM::InputType, nullptr, nullptr, nullptr, nullptr, nullptr,             \
 		    _PARAM::Scope, _PARAM::DefaultValue, _PARAM::OnSet, _PARAM::SettingIndex, _PARAM::IsDebug,                 \
-		    _PARAM::IsDeprecated                                                                                       \
+		    _PARAM::IsDeprecated, _PARAM::NoResetAll                                                                   \
 	}
 #define DUCKDB_GLOBAL(_PARAM)                                                                                          \
 	{                                                                                                                  \
 		_PARAM::Name, _PARAM::Description, _PARAM::InputType, _PARAM::SetGlobal, nullptr, _PARAM::ResetGlobal,         \
 		    nullptr, _PARAM::GetSetting, SettingScopeTarget::INVALID, nullptr, nullptr, optional_idx(),                \
-		    _PARAM::IsDebug, _PARAM::IsDeprecated                                                                      \
+		    _PARAM::IsDebug, _PARAM::IsDeprecated, _PARAM::NoResetAll                                                  \
 	}
 #define DUCKDB_LOCAL(_PARAM)                                                                                           \
 	{                                                                                                                  \
 		_PARAM::Name, _PARAM::Description, _PARAM::InputType, nullptr, _PARAM::SetLocal, nullptr, _PARAM::ResetLocal,  \
 		    _PARAM::GetSetting, SettingScopeTarget::INVALID, nullptr, nullptr, optional_idx(), _PARAM::IsDebug,        \
-		    _PARAM::IsDeprecated                                                                                       \
+		    _PARAM::IsDeprecated, _PARAM::NoResetAll                                                                   \
 	}
 #define DUCKDB_GLOBAL_LOCAL(_PARAM)                                                                                    \
 	{                                                                                                                  \
 		_PARAM::Name, _PARAM::Description, _PARAM::InputType, _PARAM::SetGlobal, _PARAM::SetLocal,                     \
 		    _PARAM::ResetGlobal, _PARAM::ResetLocal, _PARAM::GetSetting, SettingScopeTarget::INVALID, nullptr,         \
-		    nullptr, optional_idx(), _PARAM::IsDebug, _PARAM::IsDeprecated                                             \
+		    nullptr, optional_idx(), _PARAM::IsDebug, _PARAM::IsDeprecated, _PARAM::NoResetAll                         \
 	}
 #define FINAL_SETTING                                                                                                  \
 	{                                                                                                                  \
 		nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, SettingScopeTarget::INVALID, nullptr,  \
-		    nullptr, optional_idx(), false, false                                                                      \
+		    nullptr, optional_idx(), false, false, false                                                               \
 	}
 
 #define DUCKDB_SETTING_ALIAS(_ALIAS, _PARAM)                                                                           \
@@ -72,14 +73,12 @@ DebugVerificationMode DBConfigOptions::global_verification_mode = DebugVerificat
 static const ConfigurationOption internal_options[] = {
 
     DUCKDB_GLOBAL(AccessModeSetting),
-    DUCKDB_LOCAL(ActiveGrammarExtensionsSetting),
     DUCKDB_SETTING_CALLBACK(AllocatorBackgroundThreadsSetting),
     DUCKDB_GLOBAL(AllocatorBulkDeallocationFlushThresholdSetting),
     DUCKDB_SETTING_CALLBACK(AllocatorFlushThresholdSetting),
     DUCKDB_SETTING_CALLBACK(AllowCommunityExtensionsSetting),
     DUCKDB_SETTING_CALLBACK(AllowExtensionRepositoriesSetting),
     DUCKDB_SETTING(AllowExtensionsMetadataMismatchSetting),
-    DUCKDB_SETTING_CALLBACK(AllowParserOverrideExtensionSetting),
     DUCKDB_GLOBAL(AllowPersistentSecretsSetting),
     DUCKDB_SETTING_CALLBACK(AllowUnredactedSecretsSetting),
     DUCKDB_SETTING_CALLBACK(AllowUnsignedExtensionsSetting),
@@ -102,7 +101,7 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING(CatalogErrorMaxSchemasSetting),
     DUCKDB_SETTING_CALLBACK(CheckpointOnDetachSetting),
     DUCKDB_GLOBAL(CheckpointThresholdSetting),
-    DUCKDB_LOCAL(CurrentDialectSetting),
+    DUCKDB_SETTING(CopyCsvHeaderDefaultSetting),
     DUCKDB_SETTING_CALLBACK(CurrentTransactionInvalidationPolicySetting),
     DUCKDB_SETTING(CustomExtensionRepositorySetting),
     DUCKDB_GLOBAL(CustomUserAgentSetting),
@@ -148,6 +147,8 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING_CALLBACK(DefaultOrderSetting),
     DUCKDB_GLOBAL(DefaultSecretStorageSetting),
     DUCKDB_SETTING_CALLBACK(DefaultTransactionInvalidationPolicySetting),
+    DUCKDB_SETTING_CALLBACK(DefaultTransactionIsolationSetting),
+    DUCKDB_SETTING(DefaultTransactionReadOnlySetting),
     DUCKDB_SETTING_CALLBACK(DelimJoinAsCteSetting),
     DUCKDB_SETTING_CALLBACK(DialectCompatibilityModeSetting),
     DUCKDB_SETTING_CALLBACK(DisableDatabaseInvalidationSetting),
@@ -155,7 +156,7 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_GLOBAL(DisabledCompressionMethodsSetting),
     DUCKDB_GLOBAL(DisabledFilesystemsSetting),
     DUCKDB_GLOBAL(DisabledLogTypes),
-    DUCKDB_GLOBAL(DisabledOptimizersSetting),
+    DUCKDB_GLOBAL_LOCAL(DisabledOptimizersSetting),
     DUCKDB_SETTING_CALLBACK(DuckDBAPISetting),
     DUCKDB_SETTING(DynamicOrFilterThresholdSetting),
     DUCKDB_SETTING_CALLBACK(EnableExternalAccessSetting),
@@ -164,7 +165,6 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING(EnableHTTPMetadataCacheSetting),
     DUCKDB_GLOBAL(EnableLogging),
     DUCKDB_SETTING(EnableMacroDependenciesSetting),
-    DUCKDB_SETTING_CALLBACK(EnableObjectCacheSetting),
     DUCKDB_SETTING(EnableOptimisticWriteSetting),
     DUCKDB_SETTING(EnableOptimizerSetting),
     DUCKDB_LOCAL(EnableProfilingSetting),
@@ -176,6 +176,7 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING(ErrorsAsJSONSetting),
     DUCKDB_SETTING_CALLBACK(ExperimentalMetadataReuseSetting),
     DUCKDB_SETTING_CALLBACK(ExplainOutputSetting),
+    DUCKDB_SETTING_CALLBACK(ExplainOutputFormatSetting),
     DUCKDB_GLOBAL(ExtensionDirectoriesSetting),
     DUCKDB_SETTING_CALLBACK(ExtensionDirectorySetting),
     DUCKDB_SETTING_CALLBACK(ExtensionRepositoryDirectorySetting),
@@ -187,6 +188,7 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING(FileSearchPathSetting),
     DUCKDB_SETTING_CALLBACK(ForceColumnMetadataReuseSetting),
     DUCKDB_SETTING_CALLBACK(ForceCompressionSetting),
+    DUCKDB_SETTING_CALLBACK(ForceDictFsstModeSetting),
     DUCKDB_SETTING_CALLBACK(FsyncModeSetting),
     DUCKDB_SETTING(GeometryMinimumShreddingSize),
     DUCKDB_SETTING_CALLBACK(HomeDirectorySetting),
@@ -225,7 +227,6 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING_CALLBACK(OrderedAggregateThresholdSetting),
     DUCKDB_SETTING(PartitionedWriteFlushThresholdSetting),
     DUCKDB_SETTING(PartitionedWriteMaxOpenFilesSetting),
-    DUCKDB_SETTING(PasswordSetting),
     DUCKDB_SETTING_CALLBACK(PerfectHtThresholdSetting),
     DUCKDB_SETTING_CALLBACK(PinThreadsSetting),
     DUCKDB_SETTING(PivotFilterThresholdSetting),
@@ -253,9 +254,9 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING_CALLBACK(TableFunctionIdentifierConversionSetting),
     DUCKDB_GLOBAL(TempDirectorySetting),
     DUCKDB_SETTING_CALLBACK(TempFileEncryptionSetting),
-    DUCKDB_GLOBAL(ThreadsSetting),
+    DUCKDB_GLOBAL_LOCAL(ThreadsSetting),
     DUCKDB_LOCAL(TrackedMetricsSetting),
-    DUCKDB_SETTING(UsernameSetting),
+    DUCKDB_LOCAL(TransactionIsolationSetting),
     DUCKDB_SETTING_CALLBACK(VacuumRebuildIndexesSetting),
     DUCKDB_SETTING_CALLBACK(ValidateExternalFileCacheSetting),
     DUCKDB_SETTING(VariantMinimumShreddingSizeSetting),
@@ -277,7 +278,6 @@ static const ConfigurationAlias setting_aliases[] = {
     DUCKDB_SETTING_ALIAS("null_order", DefaultNullOrderSetting),
     DUCKDB_SETTING_ALIAS("profile_output", ProfilingOutputSetting),
     DUCKDB_SETTING_ALIAS("streaming_buffer_size", MaxStreamingBufferSizeSetting),
-    DUCKDB_SETTING_ALIAS("user", UsernameSetting),
     DUCKDB_SETTING_ALIAS("wal_autocheckpoint", CheckpointThresholdSetting),
     DUCKDB_SETTING_ALIAS("worker_threads", ThreadsSetting),
     FINAL_ALIAS};
@@ -340,10 +340,19 @@ optional_ptr<const ConfigurationAlias> DBConfig::GetAliasByIndex(idx_t target_in
 }
 
 static optional_ptr<const ConfigurationOption> FindOptionByName(const Identifier &name) {
-	for (idx_t index = 0; internal_options[index].name; index++) {
-		if (internal_options[index].name == name) {
-			return internal_options + index;
+	// option name -> option, built once. Names must be lowercase (asserted at build);
+	// the lookup lowercases the input first. The array stays for index iteration.
+	static const absl::flat_hash_map<std::string_view, const ConfigurationOption *> option_index = [] {
+		absl::flat_hash_map<std::string_view, const ConfigurationOption *> m;
+		for (idx_t index = 0; internal_options[index].name; index++) {
+			D_ASSERT(StringUtil::Lower(internal_options[index].name) == internal_options[index].name);
+			m.emplace(internal_options[index].name, &internal_options[index]);
 		}
+		return m;
+	}();
+	auto lname = StringUtil::Lower(name.GetIdentifierName());
+	if (auto it = option_index.find(lname); it != option_index.end()) {
+		return it->second;
 	}
 	return nullptr;
 }
@@ -559,6 +568,26 @@ bool DBConfig::TryGetExtensionOption(const Identifier &name, ExtensionOption &re
 }
 
 void DBConfig::AddExtensionOption(const Identifier &name, string description, LogicalType parameter,
+                                  const Value &default_value, set_option_callback_t function,
+                                  reset_option_callback_t reset_function, SetScope default_scope, bool no_reset_all) {
+	ExtensionOption extension_option(std::move(description), std::move(parameter), function, default_value,
+	                                 default_scope, false, false);
+	extension_option.reset_function = reset_function;
+	extension_option.no_reset_all = no_reset_all;
+	auto setting_index = user_settings.AddExtensionOption(name, std::move(extension_option));
+	// copy over unrecognized options, if they match the new extension option
+	auto iter = options.unrecognized_options.find(name);
+	if (iter != options.unrecognized_options.end()) {
+		user_settings.SetUserSetting(setting_index, iter->second);
+		options.unrecognized_options.erase(iter);
+	}
+	if (!default_value.IsNull() && !user_settings.IsSet(setting_index)) {
+		// Default value is set, insert it into the 'set_variables' list
+		user_settings.SetUserSetting(setting_index, default_value);
+	}
+}
+
+void DBConfig::AddExtensionOption(const Identifier &name, string description, LogicalType parameter,
                                   const Value &default_value, set_option_callback_t function, SetScope default_scope,
                                   bool is_debug, bool is_deprecated) {
 	ExtensionOption extension_option(std::move(description), std::move(parameter), function, default_value,
@@ -642,8 +671,8 @@ void DBConfig::CheckLock(const Identifier &name) {
 		// not locked
 		return;
 	}
-	identifier_set_t allowed_settings {"schema", "search_path"};
-	if (allowed_settings.find(name) != allowed_settings.end()) {
+	static const case_insensitive_set_view_t allowed_settings {"schema", "search_path"};
+	if (allowed_settings.contains(name.GetIdentifierName())) {
 		// we are always allowed to change these settings
 		return;
 	}
@@ -656,7 +685,7 @@ void DBConfig::CheckLock(const Identifier &name) {
 		}
 	}
 	// not allowed!
-	throw InvalidInputException("Cannot change configuration option \"%s\" - the configuration has been locked", name);
+	throw InvalidInputException("Cannot change configuration option %s - the configuration has been locked", name);
 }
 
 idx_t DBConfig::GetSystemMaxThreads(FileSystem &fs) {
@@ -909,8 +938,8 @@ void DBConfig::AddAllowedConfig(const Identifier &config_name) {
 	if (config_name.empty()) {
 		throw InvalidInputException("Cannot provide an empty string for allowed_configs");
 	}
-	duckdb::identifier_set_t always_disallowed_config {"allowed_configs", "lock_configuration"};
-	if (always_disallowed_config.find(config_name) != always_disallowed_config.end()) {
+	static const duckdb::case_insensitive_set_view_t always_disallowed_config {"allowed_configs", "lock_configuration"};
+	if (always_disallowed_config.contains(config_name.GetIdentifierName())) {
 		throw InvalidInputException("Cannot include %s in allowed_configs", config_name);
 	}
 	// Validate that the config name refers to a known setting (built-in or extension)

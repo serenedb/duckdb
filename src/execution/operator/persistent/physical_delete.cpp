@@ -1,5 +1,6 @@
 #include "duckdb/execution/operator/persistent/physical_delete.hpp"
 
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
@@ -12,6 +13,7 @@
 #include "duckdb/storage/table/delete_state.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
+#include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/transaction/local_storage.hpp"
 
 namespace duckdb {
@@ -89,6 +91,11 @@ public:
 SinkResultType PhysicalDelete::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
 	auto &g_state = input.global_state.Cast<DeleteGlobalState>();
 	auto &l_state = input.local_state.Cast<DeleteLocalState>();
+
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
+	if (progress_callback) {
+		progress_callback(chunk.size(), chunk.GetAllocationSize());
+	}
 
 	auto &row_ids = chunk.data[row_id_index];
 	row_ids.Flatten();
@@ -259,6 +266,10 @@ SinkCombineResultType PhysicalDelete::Combine(ExecutionContext &, OperatorSinkCo
 }
 
 unique_ptr<GlobalSinkState> PhysicalDelete::GetGlobalSinkState(ClientContext &context) const {
+	if (is_truncate && tableref.catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+		auto &transaction = DuckTransaction::Get(context, tableref.catalog);
+		transaction.GetTransactionManager().CheckTruncate(transaction, table);
+	}
 	return make_uniq<DeleteGlobalState>(context, GetTypes(), tableref, bound_constraints);
 }
 

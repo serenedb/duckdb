@@ -3,29 +3,68 @@
 # group: [rename_table]
 
 statement ok
+ATTACH '{TEST_DIR}/rename_table_dependency.db' AS db;
+
+statement ok
+CREATE TABLE db.t0 (c0 INT);
+
+statement ok
+CREATE UNIQUE INDEX i1 ON db.t0 (c0);
+
+statement ok
+INSERT INTO db.t0 VALUES (1);
+
+# in a DuckDB file an index blocks renaming its table, as in DuckDB
+statement error
+ALTER TABLE db.t0 RENAME TO t3;
+----
+Cannot alter entry "t0" because there are entries that depend on it
+
+query II
+SELECT index_name, table_name FROM duckdb_indexes() WHERE database_name='db';
+----
+i1	t0
+
+# the index is still the table's, across a reload
+statement ok
+DETACH db;
+
+statement ok
+ATTACH '{TEST_DIR}/rename_table_dependency.db' AS db;
+
+statement error
+INSERT INTO db.t0 VALUES (1);
+----
+violates unique constraint
+
+statement ok
+DROP TABLE db.t0;
+
+statement error
+ANALYZE db.t0;
+----
+Table with name t0 does not exist!
+
+# in memory the index follows the table
+statement ok
 CREATE TABLE t0 (c0 INT);
 
 statement ok
 CREATE UNIQUE INDEX i1 ON t0 (c0);
 
-statement error
+statement ok
 ALTER TABLE t0 RENAME TO t3;
-----
-Cannot alter entry "t0" because there are entries that depend on it
 
-# t3 is not exist
+query II
+SELECT index_name, table_name FROM duckdb_indexes() WHERE database_name='memory';
+----
+i1	t3
+
+# renaming onto a name that is taken still fails
 statement ok
-CREATE TABLE t3 (c0 INT);
+CREATE TABLE t4 (c0 INT);
 
 statement error
-ALTER TABLE t0 RENAME TO t4;
+ALTER TABLE t3 RENAME TO t4;
 ----
-Cannot alter entry "t0" because there are entries that depend on it
-
-statement ok
-DROP TABLE t0;
-
-statement error
-ANALYZE t4;
-----
-Table with name t4 does not exist!
+another entry with this name already exists

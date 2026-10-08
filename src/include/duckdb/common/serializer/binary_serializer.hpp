@@ -16,8 +16,11 @@
 
 namespace duckdb {
 
-class BinarySerializer : public Serializer {
+class BinarySerializer final : public Serializer {
 public:
+	using List = TypedList<BinarySerializer>;
+	using Serializer::WriteValue;
+
 	explicit BinarySerializer(WriteStream &stream, SerializationOptions options_p = SerializationOptions())
 	    : stream(stream) {
 		options = std::move(options_p);
@@ -69,7 +72,7 @@ public:
 		OnObjectEnd();
 	}
 
-protected:
+public:
 	//-------------------------------------------------------------------------
 	// Nested Type Hooks
 	//-------------------------------------------------------------------------

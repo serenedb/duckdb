@@ -136,6 +136,8 @@ struct BoundCastInfo {
 	    cast_function_t function, unique_ptr<BoundCastData> cast_data = nullptr,
 	    init_cast_local_state_t init_local_state = nullptr);
 
+	bucket_rewrite_t bucket_rewrite = nullptr;
+
 	bool Cast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) const {
 		auto all_ok = function(source, result, count, parameters);
 		FlatVector::SetSize(result, count);

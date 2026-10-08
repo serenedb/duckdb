@@ -1,6 +1,6 @@
 duckdb_extension_load(httpfs
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/duckdb_httpfs
+    INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/duckdb_httpfs/src/include
     LOAD_TESTS
-    GIT_URL https://github.com/duckdb/duckdb-httpfs
-    GIT_TAG 5e34903685e4d429cbb19b063406abdd8ce30591
-    APPLY_PATCHES
+    TEST_DIR ${CMAKE_SOURCE_DIR}/third_party/duckdb_httpfs/test
 )

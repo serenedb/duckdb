@@ -638,6 +638,7 @@ ScalarFunction PrefixRangeScalarFun::GetFunction(const LogicalType &input_type) 
 	func.SetFilterPruneCallback(PrefixRangeScalarFun::FilterPrune);
 	func.SetSerializeCallback(TableFilterFunctionSerialize);
 	func.SetDeserializeCallback(TableFilterFunctionDeserialize);
+	func.SetToStringCallback(TableFilterFunctionToString);
 	return func;
 }
 

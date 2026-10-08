@@ -16,6 +16,7 @@ add_library_unity(
   temporary_memory_manager.cpp
   block.cpp
   block_allocator.cpp
+  shared_object_cache.cpp
   database_handle.cpp
   data_pointer.cpp
   data_table.cpp
@@ -27,6 +28,7 @@ add_library_unity(
   standard_buffer_manager.cpp
   temporary_file_manager.cpp
   table_index_list.cpp
+  table_storage_load.cpp
   write_ahead_log.cpp
   open_file_storage_extension.cpp
   optimistic_data_writer.cpp

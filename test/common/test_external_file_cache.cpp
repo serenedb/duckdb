@@ -11,7 +11,6 @@
 #include "duckdb/storage/object_cache.hpp"
 
 #include <chrono>
-#include <condition_variable>
 
 namespace duckdb {
 
@@ -45,10 +44,12 @@ class BlockingCachePolicyFileSystem : public CachePolicyFileSystem {
 public:
 	void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
 		{
-			annotated_unique_lock<annotated_mutex> guard(lock);
+			annotated_lock_guard<annotated_mutex> guard(lock);
 			read_count++;
-			read_started.notify_all();
-			read_released.wait(guard, [&]() DUCKDB_REQUIRES(lock) { return !block_reads; });
+			auto released = [&]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+				return !block_reads;
+			};
+			lock.Await(absl::Condition(&released));
 		}
 		CachePolicyFileSystem::Read(handle, buffer, nr_bytes, location);
 	}
@@ -59,14 +60,16 @@ public:
 	}
 
 	void WaitForReadCount(idx_t count) {
-		annotated_unique_lock<annotated_mutex> guard(lock);
-		read_started.wait(guard, [&]() DUCKDB_REQUIRES(lock) { return read_count >= count; });
+		annotated_lock_guard<annotated_mutex> guard(lock);
+		auto reached = [&]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+			return read_count >= count;
+		};
+		lock.Await(absl::Condition(&reached));
 	}
 
 	void ReleaseReads() {
 		annotated_lock_guard<annotated_mutex> guard(lock);
 		block_reads = false;
-		read_released.notify_all();
 	}
 
 	idx_t GetReadCount() {
@@ -76,8 +79,6 @@ public:
 
 private:
 	annotated_mutex lock;
-	std::condition_variable read_started DUCKDB_GUARDED_BY(lock);
-	std::condition_variable read_released DUCKDB_GUARDED_BY(lock);
 	bool block_reads DUCKDB_GUARDED_BY(lock) = false;
 	idx_t read_count DUCKDB_GUARDED_BY(lock) = 0;
 };
@@ -1033,19 +1034,17 @@ TEST_CASE("Waiter on a loading block refetches when the response prohibits shari
 	policy_fs->WaitForReadCount(1);
 
 	annotated_mutex reader_b_lock;
-	std::condition_variable reader_b_started;
 	bool reader_b_is_started = false;
 	std::thread reader_b([&]() {
 		{
 			annotated_lock_guard<annotated_mutex> guard(reader_b_lock);
 			reader_b_is_started = true;
-			reader_b_started.notify_one();
 		}
 		result_b = ReadFull(*handle_b, block_size);
 	});
 	{
-		annotated_unique_lock<annotated_mutex> guard(reader_b_lock);
-		reader_b_started.wait(guard, [&]() DUCKDB_REQUIRES(reader_b_lock) { return reader_b_is_started; });
+		annotated_lock_guard<annotated_mutex> guard(reader_b_lock);
+		reader_b_lock.Await(absl::Condition(&reader_b_is_started));
 	}
 	policy_fs->ReleaseReads();
 

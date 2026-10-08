@@ -64,7 +64,7 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseData(Catalog &source_catalog
 		InsertStatement insert_stmt;
 		auto &insert_node = *insert_stmt.node;
 		// the table can live in a nested schema - carry the full schema path on both sides
-		auto source_name = table.ParentSchema().GetQualifiedName(table.name);
+		auto source_name = table.GetQualifiedName(table.name);
 		insert_node.qualified_name = source_name.WithCatalog(target_database_name);
 
 		auto from_tbl = make_uniq<BaseTableRef>();

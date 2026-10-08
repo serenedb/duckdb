@@ -16,10 +16,11 @@ idx_t RowIdColumnData::GetRowStart(ColumnScanState &state) {
 }
 
 FilterPropagateResult RowIdColumnData::CheckZonemap(ColumnScanState &state, TableFilter &filter,
+                                                    TableFilterState &filter_state,
                                                     optional_ptr<SegmentNode<ColumnSegment>> &checked_segment) {
 	checked_segment = nullptr;
 	auto row_start = GetRowStart(state);
-	return RowGroup::CheckRowIdFilter(filter, row_start, row_start + count);
+	return RowGroup::CheckRowIdFilter(filter, filter_state, row_start, row_start + count);
 }
 
 void RowIdColumnData::InitializePrefetch(PrefetchState &prefetch_state, ColumnScanState &scan_state, idx_t rows) {
@@ -27,6 +28,11 @@ void RowIdColumnData::InitializePrefetch(PrefetchState &prefetch_state, ColumnSc
 
 void RowIdColumnData::InitializeScan(ColumnScanState &state) {
 	InitializeScanWithOffset(state, 0);
+}
+
+void RowIdColumnData::ReinitializeScan(ColumnScanState &state) {
+	// generated column: no pinned block or per-segment decode state to keep warm; a fresh init is free.
+	InitializeScan(state);
 }
 
 void RowIdColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx) {
@@ -72,7 +78,7 @@ void RowIdColumnData::Filter(TransactionData transaction, idx_t vector_index, Co
 	// We do another quick statistics scan for row ids here
 	const auto rowid_start = current_row;
 	const auto rowid_end = current_row + max_count;
-	const auto prune_result = RowGroup::CheckRowIdFilter(filter, rowid_start, rowid_end);
+	const auto prune_result = RowGroup::CheckRowIdFilter(filter, filter_state, rowid_start, rowid_end);
 	if (prune_result == FilterPropagateResult::FILTER_ALWAYS_FALSE) {
 		// We can just break out of the loop here.
 		count = 0;

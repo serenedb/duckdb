@@ -20,7 +20,7 @@ USE db1;
 query I con1
 SELECT CURRENT_SETTING('search_path');
 ----
-db1.main
+main
 
 statement ok con2
 USE db2;
@@ -66,5 +66,5 @@ USE db2;
 query I con1
 SELECT CURRENT_SETTING('search_path');
 ----
-db2.main
+main
 

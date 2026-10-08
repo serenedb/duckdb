@@ -977,7 +977,7 @@ TEST_CASE("Test appender when the search path resolves into a read only database
 	Connection con(db);
 	REQUIRE_NO_FAIL(con.Query("ATTACH '" + dbdir + "' AS ro_attached (READ_ONLY)"));
 	// Keep memory.main as the default catalog so the name resolves into ro_attached via the search path.
-	REQUIRE_NO_FAIL(con.Query("SET search_path='memory.main,ro_attached.main'"));
+	REQUIRE_NO_FAIL(con.Query("SET search_path = memory.main, ro_attached.main"));
 
 	auto info = con.TableInfo("tbl");
 	REQUIRE(info);

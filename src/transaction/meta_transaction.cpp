@@ -4,7 +4,15 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/transaction/transaction_manager.hpp"
+#include "duckdb/common/types/uuid.hpp"
+#include "duckdb/storage/storage_manager.hpp"
+#include "duckdb/storage/write_ahead_log.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
+#include "duckdb/transaction/duck_transaction_manager.hpp"
+#include "duckdb/transaction/wal_write_state.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/secret/secret_storage.hpp"
 
@@ -13,8 +21,8 @@ namespace duckdb {
 MetaTransaction::MetaTransaction(ClientContext &context_p, timestamp_t start_timestamp_p,
                                  transaction_t transaction_id_p)
     : context(context_p), start_timestamp(start_timestamp_p), global_transaction_id(transaction_id_p),
-      transaction_validity(*context_p.db), active_query(MAXIMUM_QUERY_ID), modified_database(nullptr),
-      is_read_only(false) {
+      transaction_validity(*context_p.db, ValidChecker::Scope::TRANSACTION), active_query(MAXIMUM_QUERY_ID),
+      modified_database(nullptr), is_read_only(false) {
 }
 
 MetaTransaction::~MetaTransaction() = default;
@@ -25,6 +33,23 @@ MetaTransaction &MetaTransaction::Get(ClientContext &context) {
 
 ValidChecker &ValidChecker::Get(MetaTransaction &transaction) {
 	return transaction.transaction_validity;
+}
+
+void MetaTransaction::RefreshStartTime() {
+	vector<std::pair<reference<AttachedDatabase>, reference<Transaction>>> to_refresh;
+	{
+		lock_guard<mutex> guard(lock);
+		for (auto &db : all_transactions) {
+			auto entry = transactions.find(db.get());
+			if (entry == transactions.end()) {
+				continue;
+			}
+			to_refresh.emplace_back(db, entry->second.transaction);
+		}
+	}
+	for (auto &entry : to_refresh) {
+		entry.first.get().GetTransactionManager().RefreshStartTime(entry.second.get());
+	}
 }
 
 Transaction &Transaction::Get(ClientContext &context, AttachedDatabase &db) {
@@ -49,6 +74,9 @@ static void VerifyAllTransactionsUnique(AttachedDatabase &db, vector<reference<A
 
 optional_ptr<Transaction> MetaTransaction::TryGetTransaction(AttachedDatabase &db) {
 	lock_guard<mutex> guard(lock);
+	if (scoped_override_txn && scoped_override_db && RefersToSameObject(*scoped_override_db, db)) {
+		return scoped_override_txn;
+	}
 	auto entry = transactions.find(db);
 	if (entry == transactions.end()) {
 		return nullptr;
@@ -61,28 +89,40 @@ Transaction &MetaTransaction::GetTransaction(AttachedDatabase &db) {
 	if (ValidChecker::IsInvalidated(db)) {
 		throw IOException("%s", ValidChecker::InvalidatedMessage(db));
 	}
-	lock_guard<mutex> guard(lock);
-	auto entry = transactions.find(db);
-	if (entry == transactions.end()) {
-		auto &new_transaction = db.GetTransactionManager().StartTransaction(context);
-		new_transaction.active_query = active_query.load();
-#ifdef DEBUG
-		VerifyAllTransactionsUnique(db, all_transactions);
-#endif
-		// Rollback looks every entry of all_transactions up in transactions, so the two must not get out of sync:
-		// reserve first, then insert, so that a failing allocation happens before either is modified and the
-		// push_back that follows cannot allocate.
-		all_transactions.reserve(all_transactions.size() + 1);
-		transactions.insert(make_pair(reference<AttachedDatabase>(db), TransactionReference(new_transaction)));
-		all_transactions.push_back(db);
-		auto shared_db = db.shared_from_this();
-		UseDatabase(shared_db);
-
-		return new_transaction;
-	} else {
-		D_ASSERT(entry->second.transaction.active_query == active_query);
-		return entry->second.transaction;
+	{
+		lock_guard<mutex> guard(lock);
+		if (scoped_override_txn && scoped_override_db && RefersToSameObject(*scoped_override_db, db)) {
+			return *scoped_override_txn;
+		}
+		auto entry = transactions.find(db);
+		if (entry != transactions.end()) {
+			D_ASSERT(entry->second.transaction.active_query == active_query);
+			return entry->second.transaction;
+		}
 	}
+	auto &new_transaction = db.GetTransactionManager().StartTransaction(context);
+	new_transaction.active_query = active_query.load();
+	unique_lock<mutex> guard(lock);
+	auto existing = transactions.find(db);
+	if (existing != transactions.end()) {
+		auto &transaction = existing->second.transaction;
+		guard.unlock();
+		db.GetTransactionManager().RollbackTransaction(new_transaction);
+		return transaction;
+	}
+#ifdef DEBUG
+	VerifyAllTransactionsUnique(db, all_transactions);
+#endif
+	// Rollback looks every entry of all_transactions up in transactions, so the two must not get out of sync:
+	// reserve first, then insert, so that a failing allocation happens before either is modified and the
+	// push_back that follows cannot allocate.
+	all_transactions.reserve(all_transactions.size() + 1);
+	transactions.emplace(db, TransactionReference(new_transaction));
+	all_transactions.push_back(db);
+	auto shared_db = db.shared_from_this();
+	UseDatabase(shared_db);
+
+	return new_transaction;
 }
 
 void MetaTransaction::RemoveTransaction(AttachedDatabase &db) {
@@ -101,6 +141,24 @@ void MetaTransaction::RemoveTransaction(AttachedDatabase &db) {
 	}
 }
 
+void MetaTransaction::PushTransactionOverride(AttachedDatabase &db, Transaction &transaction) {
+	lock_guard<mutex> guard(lock);
+	if (scoped_override_txn) {
+		throw InternalException("MetaTransaction::PushTransactionOverride called while an override is already active");
+	}
+	scoped_override_db = &db;
+	scoped_override_txn = &transaction;
+}
+
+void MetaTransaction::PopTransactionOverride(AttachedDatabase &db) {
+	lock_guard<mutex> guard(lock);
+	if (!scoped_override_db || !RefersToSameObject(*scoped_override_db, db)) {
+		throw InternalException("MetaTransaction::PopTransactionOverride called without a matching active override");
+	}
+	scoped_override_db = nullptr;
+	scoped_override_txn = nullptr;
+}
+
 void MetaTransaction::SetReadOnly() {
 	if (modified_database) {
 		throw InternalException("Cannot set MetaTransaction to read only - modifications have already been made");
@@ -116,7 +174,225 @@ Transaction &Transaction::Get(ClientContext &context, Catalog &catalog) {
 	return Transaction::Get(context, catalog.GetAttached());
 }
 
+optional_ptr<Catalog> MetaTransaction::CatalogLogForCommit() {
+	optional_ptr<AttachedDatabase> writer;
+	idx_t writers = 0;
+	bool catalog_changes = false;
+	for (auto &db_ref : all_transactions) {
+		auto &db = db_ref.get();
+		if (db.IsSystem() || db.IsTemporary()) {
+			continue;
+		}
+		auto entry = transactions.find(db);
+		if (entry == transactions.end() || entry->second.state != TransactionState::UNCOMMITTED ||
+		    !entry->second.transaction.IsDuckTransaction()) {
+			continue;
+		}
+		auto &transaction = entry->second.transaction.Cast<DuckTransaction>();
+		if (!transaction.ChangesMade()) {
+			continue;
+		}
+		if (!db.GetCatalog().UsesCatalogLog()) {
+			return nullptr;
+		}
+		writer = db;
+		writers++;
+		catalog_changes = catalog_changes || transaction.catalog_version >= TRANSACTION_ID_START;
+	}
+	if ((!catalog_changes && writers < 2) || !writer->GetCatalog().CatalogLog()) {
+		return nullptr;
+	}
+	return writer->GetCatalog();
+}
+
+static optional_ptr<DuckTransaction> PreparedParticipant(Transaction &transaction) {
+	if (!transaction.IsDuckTransaction()) {
+		return nullptr;
+	}
+	auto &duck_transaction = transaction.Cast<DuckTransaction>();
+	if (!duck_transaction.prepared) {
+		return nullptr;
+	}
+	return duck_transaction;
+}
+
+ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
+	auto catalog_log_ref = catalog.CatalogLog();
+	auto &catalog_storage = catalog_log_ref->GetStorageManager();
+	auto &catalog_owner = catalog_storage.GetAttached();
+	auto &log_owner = catalog_owner.GetCatalog();
+	const auto txid = UUID::GenerateRandomUUID();
+	vector<pair<idx_t, idx_t>> prepared;
+	ErrorData error;
+	vector<reference<TransactionReference>> participants;
+	for (idx_t i = all_transactions.size(); i > 0; i--) {
+		auto &db = all_transactions[i - 1].get();
+		auto &transaction_ref = transactions.find(db)->second;
+		if (transaction_ref.state != TransactionState::UNCOMMITTED) {
+			continue;
+		}
+		if (ValidChecker::IsInvalidated(db)) {
+			error.Merge(ErrorData(IOException("%s", ValidChecker::InvalidatedMessage(db))));
+			break;
+		}
+		participants.push_back(transaction_ref);
+	}
+	std::sort(participants.begin(), participants.end(),
+	          [](const reference<TransactionReference> &a, const reference<TransactionReference> &b) {
+		          return a.get().transaction.manager.GetDB().oid < b.get().transaction.manager.GetDB().oid;
+	          });
+	auto rollback = [&]() {
+		for (auto &participant : participants) {
+			auto &transaction_ref = participant.get();
+			try {
+				transaction_ref.transaction.manager.RollbackTransaction(transaction_ref.transaction);
+			} catch (std::exception &ex) {
+				error.Merge(ErrorData(ex));
+			}
+			transaction_ref.state = TransactionState::ROLLED_BACK;
+		}
+	};
+	if (!error.HasError()) {
+		for (auto &participant : participants) {
+			auto &transaction = participant.get().transaction;
+			auto &transaction_manager = transaction.manager;
+			if (!transaction_manager.IsDuckTransactionManager()) {
+				continue;
+			}
+			error = transaction_manager.Cast<DuckTransactionManager>().PrepareTransaction(
+			    context, transaction, catalog_owner, txid, prepared);
+			if (error.HasError()) {
+				break;
+			}
+		}
+	}
+	if (!error.HasError()) {
+		for (auto &participant : participants) {
+			auto &transaction = participant.get().transaction;
+			if (!PreparedParticipant(transaction)) {
+				continue;
+			}
+			error = transaction.manager.Cast<DuckTransactionManager>().SyncPreparedTransaction(transaction);
+			if (error.HasError()) {
+				break;
+			}
+		}
+	}
+	if (error.HasError()) {
+		rollback();
+		return error;
+	}
+
+	auto catalog_lock = catalog_storage.GetCommitLock();
+	catalog_log_ref = catalog.CatalogLog();
+	auto &catalog_log = *catalog_log_ref;
+	auto commit_state = catalog_storage.GenStorageCommitState(catalog_log);
+	vector<reference<TransactionReference>> applied;
+	try {
+		log_owner.OnCatalogLogPrepared();
+	} catch (std::exception &ex) {
+		error = ErrorData(ex);
+	}
+	if (!error.HasError()) {
+		for (auto &participant : participants) {
+			auto &transaction = participant.get().transaction;
+			if (!PreparedParticipant(transaction)) {
+				continue;
+			}
+			error = transaction.manager.Cast<DuckTransactionManager>().ApplyPreparedTransaction(context, transaction);
+			if (error.HasError()) {
+				break;
+			}
+			applied.push_back(participant);
+		}
+	}
+	idx_t decision_offset = 0;
+	if (!error.HasError()) {
+		try {
+			for (auto &participant : participants) {
+				auto &transaction = participant.get().transaction;
+				auto duck_transaction = PreparedParticipant(transaction);
+				if (!duck_transaction) {
+					continue;
+				}
+				auto &db = transaction.manager.GetDB();
+				WALWriteState::WriteCatalogRun(catalog_log, db.oid, duck_transaction->prepared->catalog_run);
+				if (db.GetCatalog().UsesCatalogLog()) {
+					duck_transaction->prepared->sequences = duck_transaction->ReserveSequenceUsage(catalog_log);
+				}
+			}
+			if (!prepared.empty()) {
+				catalog_log.WriteCommitPrepared(txid, prepared);
+			}
+			decision_offset = commit_state->FlushCommit(false);
+			if (!prepared.empty()) {
+				DatabaseManager::Get(context).CommitPrepared(txid, std::move(prepared));
+			}
+		} catch (std::exception &ex) {
+			error = ErrorData(ex);
+		}
+	}
+	if (error.HasError()) {
+		for (idx_t i = applied.size(); i > 0; i--) {
+			auto &transaction = applied[i - 1].get().transaction;
+			transaction.manager.Cast<DuckTransactionManager>().RevertPreparedTransaction(transaction);
+		}
+		commit_state->RevertCommit();
+		rollback();
+		return error;
+	}
+	for (auto &participant : participants) {
+		auto duck_transaction = PreparedParticipant(participant.get().transaction);
+		if (!duck_transaction) {
+			continue;
+		}
+		for (auto &value : duck_transaction->prepared->sequences) {
+			value.entry->MarkReserved(value);
+		}
+		duck_transaction->manager.Cast<DuckTransactionManager>().DecidePreparedTransaction(
+		    *duck_transaction, catalog_log_ref, decision_offset);
+	}
+	log_owner.BeginCatalogLogCommit();
+	catalog_lock.unlock();
+	if (decision_offset > 0) {
+		try {
+			catalog_log.SyncUpTo(decision_offset);
+		} catch (std::exception &ex) {
+			error = ErrorData(ex);
+			for (auto &participant : participants) {
+				ValidChecker::Invalidate(participant.get().transaction.manager.GetDB(),
+				                         "Failed to sync the catalog log after committing: " + error.RawMessage());
+			}
+		}
+	}
+	log_owner.OnCatalogLogDecided();
+	for (auto &participant : participants) {
+		auto &transaction_ref = participant.get();
+		auto &transaction = transaction_ref.transaction;
+		auto &db = transaction.manager.GetDB();
+		ErrorData commit_error;
+		if (PreparedParticipant(transaction)) {
+			commit_error =
+			    transaction.manager.Cast<DuckTransactionManager>().FinishPreparedTransaction(context, transaction);
+		} else {
+			commit_error = transaction.manager.CommitTransaction(context, transaction);
+		}
+		transaction_ref.state = TransactionState::COMMITTED;
+		if (commit_error.HasError()) {
+			ValidChecker::Invalidate(db, "Failed to apply a transaction whose commit is durable: " +
+			                                 commit_error.RawMessage());
+			error.Merge(commit_error);
+		}
+	}
+	log_owner.EndCatalogLogCommit();
+	return error;
+}
+
 ErrorData MetaTransaction::Commit() {
+	auto catalog = CatalogLogForCommit();
+	if (catalog) {
+		return CommitThroughCatalogLog(*catalog);
+	}
 	ErrorData error;
 #ifdef DEBUG
 	reference_set_t<AttachedDatabase> committed_tx;
@@ -209,6 +485,7 @@ idx_t MetaTransaction::GetActiveQuery() {
 void MetaTransaction::SetActiveQuery(transaction_t query_number) {
 	lock_guard<mutex> guard(lock);
 	active_query = query_number;
+	statement_databases.clear();
 	for (auto &entry : transactions) {
 		entry.second.transaction.active_query = query_number;
 	}
@@ -233,6 +510,11 @@ shared_ptr<AttachedDatabase> MetaTransaction::GetReferencedDatabaseOwning(const 
 	return nullptr;
 }
 
+bool MetaTransaction::ReferencesDatabase(AttachedDatabase &database) {
+	lock_guard<mutex> guard(referenced_database_lock);
+	return referenced_databases.contains(database);
+}
+
 void MetaTransaction::DetachDatabase(AttachedDatabase &database) {
 	lock_guard<mutex> guard(referenced_database_lock);
 	used_databases.erase(database.GetName());
@@ -243,21 +525,24 @@ AttachedDatabase &MetaTransaction::UseDatabase(shared_ptr<AttachedDatabase> &dat
 	lock_guard<mutex> guard(referenced_database_lock);
 	auto entry = referenced_databases.find(db_ref);
 	if (entry == referenced_databases.end()) {
-		auto used_entry = used_databases.emplace(db_ref.GetName(), db_ref);
-		if (!used_entry.second) {
-			// return used_entry.first->second.get();
-			throw InternalException(
-			    "Database name %s was already used by a different database for this meta transaction",
-			    db_ref.GetName());
-		}
+		used_databases.emplace(db_ref.GetName(), db_ref);
 		referenced_databases.emplace(reference<AttachedDatabase>(db_ref), database);
 	}
 	return db_ref;
 }
 
+vector<shared_ptr<AttachedDatabase>> &MetaTransaction::GetStatementDatabases(ClientContext &context) {
+	lock_guard<mutex> guard(lock);
+	if (statement_databases.empty()) {
+		statement_databases = DatabaseManager::Get(context).GetDatabases(context);
+	}
+	return statement_databases;
+}
+
 void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationType modification) {
 	if (IsReadOnly()) {
-		throw TransactionException("Cannot write to database \"%s\" - transaction is launched in read-only mode",
+		throw TransactionException(Exception::InitializeExtraInfo("READ_ONLY", optional_idx()),
+		                           "Cannot write to database %s - transaction is launched in read-only mode",
 		                           db.GetName());
 	}
 	auto &transaction = GetTransaction(db);
@@ -273,8 +558,10 @@ void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationT
 		modified_database = &db;
 		return;
 	}
-	if (&db != modified_database.get()) {
+	if (&db != modified_database.get() &&
+	    !(db.GetCatalog().UsesCatalogLog() && modified_database->GetCatalog().UsesCatalogLog())) {
 		throw TransactionException(
+		    Exception::InitializeExtraInfo("CROSS_DATABASE_WRITE", optional_idx()),
 		    "Attempting to write to database %s in a transaction that has already modified database %s - a "
 		    "single transaction can only write to a single attached database.",
 		    db.GetName(), modified_database->GetName());

@@ -53,6 +53,7 @@ public:
 
 	//! The name of the index
 	virtual const Identifier &GetIndexName() const = 0;
+	virtual void SetIndexName(Identifier name) = 0;
 
 	//! The index constraint type
 	virtual IndexConstraintType GetConstraintType() const = 0;
@@ -82,6 +83,8 @@ public:
 	const unordered_set<column_t> &GetColumnIdSet() const {
 		return column_id_set;
 	}
+
+	virtual void RemapColumnIds(const vector<column_t> &new_column_ids);
 
 	virtual void ResetStorage() = 0;
 

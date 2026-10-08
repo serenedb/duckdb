@@ -13,6 +13,7 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/enums/catalog_lookup_behavior.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
+#include "duckdb/common/enums/sql_compatibility.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception/catalog_exception.hpp"
 #include "duckdb/common/map.hpp"
@@ -24,6 +25,11 @@
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/types/string.hpp"
+#include "duckdb/storage/storage_index.hpp"
+#include "duckdb/storage/table/row_group_collection.hpp"
+#include "duckdb/storage/table/table_index_list.hpp"
+#include "duckdb/storage/write_ahead_log.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
 
 #include <functional>
 
@@ -136,6 +142,40 @@ public:
 		return false;
 	}
 
+	virtual SqlCompatibility Compatibility() const {
+		return SqlCompatibility::DUCK;
+	}
+	bool IsCaseSensitive() const {
+		return Compatibility() == SqlCompatibility::POSTGRES;
+	}
+
+	virtual bool UsesCatalogLog() const {
+		return false;
+	}
+	virtual bool IsDropped() const {
+		return false;
+	}
+	virtual shared_ptr<WriteAheadLog> CatalogLog() {
+		return nullptr;
+	}
+	virtual Catalog &ReplayUseCatalog(ClientContext &context, idx_t catalog_oid);
+	virtual void OnCatalogLogPrepared() {
+	}
+	virtual void OnCatalogLogDecided() {
+	}
+	virtual void BeginCatalogLogCommit() {
+	}
+	virtual void EndCatalogLogCommit() {
+	}
+	virtual void RequestCatalogLogSync(shared_ptr<WriteAheadLog> log, idx_t offset) {
+	}
+	void SyncCatalogLog();
+	virtual bool AppendLocalIndexes(DuckTransaction &transaction, TableIndexList &index_list,
+	                                RowGroupCollection &source, const vector<StorageIndex> &mapped_column_ids,
+	                                row_t row_start, ErrorData &error) {
+		return false;
+	}
+
 	virtual void Initialize(bool load_builtin) = 0;
 	virtual void Initialize(optional_ptr<ClientContext> context, bool load_builtin);
 	virtual void FinalizeLoad(optional_ptr<ClientContext> context);
@@ -240,6 +280,7 @@ public:
 
 	//! Drops an entry from the catalog
 	DUCKDB_API void DropEntry(ClientContext &context, DropInfo &info);
+	static bool InRelationNamespace(CatalogType type);
 
 	DUCKDB_API virtual optional_ptr<SchemaCatalogEntry> LookupSchema(CatalogTransaction transaction,
 	                                                                 const EntryLookupInfo &schema_lookup,
@@ -367,7 +408,7 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> AddFunction(ClientContext &context, CreateFunctionInfo &info);
 
 	//! Alter an existing entry in the catalog.
-	DUCKDB_API void Alter(CatalogTransaction transaction, AlterInfo &info);
+	DUCKDB_API virtual void Alter(CatalogTransaction transaction, AlterInfo &info);
 	DUCKDB_API void Alter(ClientContext &context, AlterInfo &info);
 
 	virtual PhysicalOperator &PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
@@ -384,6 +425,8 @@ public:
 	                                        LogicalMergeInto &op, PhysicalOperator &plan);
 	virtual unique_ptr<LogicalOperator> BindCreateIndex(Binder &binder, CreateStatement &stmt, TableCatalogEntry &table,
 	                                                    unique_ptr<LogicalOperator> plan);
+	virtual unique_ptr<LogicalOperator> BindCreateViewIndex(Binder &binder, CreateStatement &stmt,
+	                                                        ViewCatalogEntry &view, unique_ptr<LogicalOperator> plan);
 	virtual unique_ptr<LogicalOperator> BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
 	                                                      unique_ptr<LogicalOperator> plan,
 	                                                      unique_ptr<CreateIndexInfo> create_info,
@@ -490,7 +533,11 @@ public:
 	                                                                   const string &catalog_name);
 	DUCKDB_API static vector<reference<SchemaCatalogEntry>> GetSchemas(CatalogEntryRetriever &retriever,
 	                                                                   const string &catalog_name);
-	DUCKDB_API static vector<reference<SchemaCatalogEntry>> GetAllSchemas(ClientContext &context);
+	DUCKDB_API static vector<reference<SchemaCatalogEntry>>
+	GetAllSchemas(ClientContext &context, bool include_hidden = false,
+	              const std::function<bool(AttachedDatabase &)> &needs_database = nullptr);
+	DUCKDB_API static void ScanListedEntries(ClientContext &context, SchemaCatalogEntry &schema, CatalogType type,
+	                                         const std::function<void(CatalogEntry &)> &callback);
 
 	static vector<reference<CatalogEntry>> GetAllEntries(ClientContext &context, CatalogType catalog_type);
 
@@ -570,6 +617,8 @@ private:
 	                                                           const reference_set_t<SchemaCatalogEntry> &schemas);
 
 	virtual void DropSchema(ClientContext &context, DropInfo &info) = 0;
+	DUCKDB_API virtual void AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntry &schema,
+	                                         AlterInfo &info);
 
 public:
 	template <class TARGET>

@@ -101,7 +101,7 @@ public:
 		const idx_t uncompressed_size = AlpConstants::EXCEPTIONS_COUNT_SIZE + sizeof(EXACT_TYPE) * vector_idx;
 		const idx_t compressed_size = compression_data.RequiredSpace();
 
-		const auto storage_version = checkpoint_data.GetStorageManager().GetStorageVersion();
+		const auto storage_version = checkpoint_data.GetStorageVersion();
 		const bool should_compress = compressed_size < uncompressed_size ||
 		                             StorageManager::IsPriorToVersion(StorageVersion::V1_5_0, storage_version);
 
@@ -220,6 +220,7 @@ public:
 #endif
 			total_segment_size = metadata_offset + bytes_used_by_metadata;
 		}
+		memset(dataptr + UsedSpace(), 0, total_segment_size - bytes_used_by_metadata - UsedSpace());
 
 		// Store the offset to the end of metadata (to be used as a backwards pointer in decoding)
 		Store<AlpRDConstants::METADATA_POINTER_TYPE>(

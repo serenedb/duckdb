@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 
 namespace duckdb {
@@ -41,6 +42,9 @@ public:
 	}
 
 	virtual void OnCheckpointStart(AttachedDatabase &db, CheckpointOptions checkpoint_options) {
+	}
+
+	virtual void OnCheckpointBeforeHeader(AttachedDatabase &db, CheckpointOptions checkpoint_options) {
 	}
 
 	virtual void OnCheckpointEnd(AttachedDatabase &db, CheckpointOptions checkpoint_options) {

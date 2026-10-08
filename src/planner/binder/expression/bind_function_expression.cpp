@@ -2,13 +2,16 @@
 #include "duckdb/logging/log_manager.hpp"
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/lambda_expression.hpp"
+#include "duckdb/parser/srf_utils.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -17,6 +20,7 @@
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/planner/column_qualifier.hpp"
+#include "duckdb/planner/expression_binder/select_binder.hpp"
 #include "duckdb/main/settings.hpp"
 
 #include <functional>
@@ -209,9 +213,8 @@ BindResult ExpressionBinder::TryBindLambdaOrJson(FunctionExpression &function, i
 	bool invalid_syntax = setting != LambdaSyntax::ENABLE_SINGLE_ARROW && syntax_type == LambdaSyntaxType::SINGLE_ARROW;
 	bool warn_deprecated_syntax = setting == LambdaSyntax::DEFAULT && syntax_type == LambdaSyntaxType::SINGLE_ARROW;
 	const string msg = "Deprecated lambda arrow (->) detected. Please transition to the new lambda syntax, "
-	                   "i.e.., lambda x, i: x + i, before DuckDB's next release.\n"
-	                   "Use SET lambda_syntax='ENABLE_SINGLE_ARROW' to revert to the deprecated behavior.\n"
-	                   "For more information, see https://duckdb.org/docs/current/sql/functions/lambda.html.";
+	                   "i.e., lambda x, i: x + i.\n"
+	                   "Use SET lambda_syntax='ENABLE_SINGLE_ARROW' to revert to the deprecated behavior.";
 
 	BindResult lambda_bind_result;
 	ErrorData error;
@@ -259,28 +262,78 @@ CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
 	ColumnQualifier qualifier(binder);
 	auto func = qualifier.QualifyFunction(function);
 	if (!func) {
-		// function was not found - check if we this is a table function (to throw a more helpful error message)
+		// scalar lookup missed - fall back to table function / table macro so the
+		// outer switch can route to the unnest rewrite (PG-compat SRF in SELECT)
+		// or surface the canonical procedure error.
 		EntryLookupInfo table_function_lookup(CatalogType::TABLE_FUNCTION_ENTRY, function.GetQualifiedName(),
 		                                      error_context);
 		auto table_func = GetCatalogEntry(table_function_lookup, OnEntryNotFound::RETURN_NULL);
 		if (table_func) {
-			throw BinderException(function,
-			                      "Function %s is a table function but it was used as a scalar function. This "
-			                      "function has to be called in a FROM clause (similar to a table).",
-			                      function.FunctionName());
+			if (table_func->type == CatalogType::TABLE_MACRO_ENTRY) {
+				auto &macro = table_func->Cast<MacroCatalogEntry>();
+				if (macro.is_procedure) {
+					throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
+					                      function.FunctionName().GetIdentifierName());
+				}
+			}
+			func = table_func;
 		}
-		// not a table function - rebind to throw an error
+	}
+	if (!func) {
+		// not a table function - rebind to throw a real catalog-missing error
 		EntryLookupInfo function_lookup(CatalogType::SCALAR_FUNCTION_ENTRY, function.GetQualifiedName(), error_context);
 		func = GetCatalogEntry(function_lookup, OnEntryNotFound::THROW_EXCEPTION);
 	}
 	return *func;
 }
 
+//! Runs `fun` with the select-list set-returning rewrite disabled, so a nested
+//! generate_series resolves to its scalar LIST-returning overload instead of being
+//! expanded into rows. Ordinary expression nesting (`generate_series(1,3) + 1`,
+//! `abs(generate_series(1,3))`) is unaffected -- PostgreSQL expands those.
+template <class FUN>
+static BindResult BindWithoutSetReturningExpansionImpl(ExpressionBinder &binder, FUN &&fun) {
+	auto *select_binder = dynamic_cast<SelectBinder *>(&binder);
+	if (!select_binder) {
+		return fun();
+	}
+	select_binder->function_arg_level++;
+	try {
+		auto result = fun();
+		select_binder->function_arg_level--;
+		return result;
+	} catch (...) {
+		select_binder->function_arg_level--;
+		throw;
+	}
+}
+
 BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t depth,
                                             unique_ptr<ParsedExpression> &expr_ptr) {
-	auto &func = BindFunction(function);
+	reference<CatalogEntry> func = BindFunction(function);
 
-	switch (func.type) {
+	// PG compat: in a SELECT list, if the scalar lookup won but a table
+	// function with the same name exists, prefer the table function so it
+	// expands to rows via the unnest rewrite below. Only when we're in a
+	// SelectBinder (not FROM-clause args) and not inside an UNNEST argument
+	// (unnest_level == 0), otherwise the rewrite creates nested UNNESTs.
+	auto *select_binder = dynamic_cast<SelectBinder *>(this);
+	// PG-compat: for the specific functions PG returns a set for, prefer the
+	// TABLE_FUNCTION_ENTRY over the SCALAR_FUNCTION_ENTRY when called in a
+	// SELECT list. Other scalar/table dual-name functions like `repeat` keep
+	// their scalar semantics.
+	if (func.get().type == CatalogType::SCALAR_FUNCTION_ENTRY && depth == 0 && select_binder &&
+	    select_binder->unnest_level == 0 && select_binder->function_arg_level == 0 &&
+	    IsSelectListSetReturningFunction(function.FunctionName())) {
+		QueryErrorContext error_context(function.GetQueryLocation());
+		EntryLookupInfo tbl_lookup(CatalogType::TABLE_FUNCTION_ENTRY, function.GetQualifiedName(), error_context);
+		auto tbl_func = GetCatalogEntry(tbl_lookup, OnEntryNotFound::RETURN_NULL);
+		if (tbl_func && tbl_func->type == CatalogType::TABLE_FUNCTION_ENTRY) {
+			func = *tbl_func;
+		}
+	}
+
+	switch (func.get().type) {
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
 	case CatalogType::WINDOW_FUNCTION_ENTRY:
 		break;
@@ -288,23 +341,36 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 		if (function.Distinct() || function.Filter() || !function.OrderBy()->orders.empty()) {
 			throw InvalidInputException("Function %s is a %s. \"DISTINCT\", \"FILTER\", and \"ORDER BY\" are only "
 			                            "applicable to window and aggregate functions.",
-			                            function.FunctionName(), CatalogTypeToString(func.type));
+			                            function.FunctionName(), CatalogTypeToString(func.get().type));
 		}
 		break;
 	}
 
-	switch (func.type) {
+	switch (func.get().type) {
 	case CatalogType::SCALAR_FUNCTION_ENTRY: {
 		auto child = function.IsLambdaFunction();
 		if (child) {
 			auto syntax_type = child->Cast<LambdaExpression>().GetLambdaSyntaxType();
-			return TryBindLambdaOrJson(function, depth, func, syntax_type);
+			// A lambda function consumes its argument as a LIST, so a set-returning
+			// function there has to stay scalar -- list_apply(generate_series(1, n), ...)
+			auto result = BindWithoutSetReturningExpansionImpl(
+			    *this, [&]() { return TryBindLambdaOrJson(function, depth, func, syntax_type); });
+			return result;
 		}
-		return BindFunction(function, func.Cast<ScalarFunctionCatalogEntry>(), depth);
+		return BindFunction(function, func.get().Cast<ScalarFunctionCatalogEntry>(), depth);
 	}
-	case CatalogType::MACRO_ENTRY:
+	case CatalogType::MACRO_ENTRY: {
+		// PG-compat: SELECT proc() / SELECT proc(...) when `proc` is a procedure
+		// must yield the canonical PG error pointing the user at CALL, matching
+		// the table-function path in bind_table_function.cpp.
+		auto &macro_entry = func.get().Cast<ScalarMacroCatalogEntry>();
+		if (macro_entry.is_procedure) {
+			throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
+			                      function.FunctionName().GetIdentifierName());
+		}
 		// macro function
-		return BindMacro(function, func.Cast<ScalarMacroCatalogEntry>(), depth, expr_ptr);
+		return BindMacro(function, macro_entry, depth, expr_ptr);
+	}
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY: {
 		// an aggregate belongs to the innermost query level in which one of its arguments resolves a
 		// column of that level, so that the level collecting it is the one the arguments refer to
@@ -314,11 +380,34 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 				return BindAggregateInEnclosingScope(function, owner.GetIndex(), depth, expr_ptr);
 			}
 		}
-		return BindAggregate(function, func.Cast<AggregateFunctionCatalogEntry>(), depth);
+		// PostgreSQL forbids a set-returning function in an aggregate argument, so generate_series stays the
+		// scalar LIST overload there
+		return BindWithoutSetReturningExpansionImpl(
+		    *this, [&]() { return BindAggregate(function, func.get().Cast<AggregateFunctionCatalogEntry>(), depth); });
 	}
 	case CatalogType::WINDOW_FUNCTION_ENTRY:
 		// window function
-		return BindWindow(function, func.Cast<WindowFunctionCatalogEntry>(), depth);
+		return BindWindow(function, func.get().Cast<WindowFunctionCatalogEntry>(), depth);
+	case CatalogType::TABLE_FUNCTION_ENTRY: {
+		// PG compat: table functions in SELECT -> unnest their results as rows.
+		// Routes through SelectBinder::BindUnnest, sharing BoundUnnestNode with other SRFs.
+		auto unnest_func = make_uniq<FunctionExpression>("unnest", vector<unique_ptr<ParsedExpression>> {});
+		unnest_func->GetArgumentsMutable().push_back(WrapTableFuncAsList(function.Copy()));
+		unnest_func->SetAlias(function.GetAlias().empty() ? function.FunctionName() : function.GetAlias());
+		expr_ptr = std::move(unnest_func);
+		return BindExpression(expr_ptr, depth, false);
+	}
+	case CatalogType::TABLE_MACRO_ENTRY: {
+		// PG-compat: procedures with a table body are catalogued as TABLE_MACRO.
+		// `SELECT proc()` for a procedure (CALL-only) must surface the canonical
+		// PG error rather than the generic "Unsupported catalog type" fallthrough.
+		auto &table_macro = func.get().Cast<TableMacroCatalogEntry>();
+		if (table_macro.is_procedure) {
+			throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
+			                      function.FunctionName().GetIdentifierName());
+		}
+		throw InvalidInputException("Unsupported catalog type when binding function");
+	}
 	default:
 		throw InvalidInputException("Unsupported catalog type when binding function");
 	}

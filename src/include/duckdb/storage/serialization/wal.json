@@ -56,6 +56,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -75,6 +81,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "info",
+        "type": "CreateInfo*",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -94,6 +106,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -140,6 +158,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -186,6 +210,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -238,6 +268,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -284,6 +320,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -330,6 +372,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -376,6 +424,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -427,6 +481,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -461,6 +521,12 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -495,6 +561,149 @@
         "type": "QualifiedName",
         "version": "v2.0.0",
         "default": "QualifiedName()"
+      },
+      {
+        "id": 16484,
+        "name": "table_oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
+      }
+    ]
+  },
+  {
+    "class": "WALCreateTokenizer",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "tokenizer",
+        "type": "CreateInfo*"
+      }
+    ]
+  },
+  {
+    "class": "WALDropTokenizer",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "qualified_name",
+        "type": "QualifiedName"
+      },
+      {
+        "id": 16484,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
+      }
+    ]
+  },
+  {
+    "class": "WALCreateRole",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "role",
+        "type": "CreateInfo*"
+      }
+    ]
+  },
+  {
+    "class": "WALDropRole",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "WALCreateDatabase",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "database",
+        "type": "CreateInfo*"
+      }
+    ]
+  },
+  {
+    "class": "WALDropDatabase",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "WALCreateForeignServer",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "server",
+        "type": "CreateInfo*"
+      }
+    ]
+  },
+  {
+    "class": "WALDropForeignServer",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "WALUseCatalog",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "catalog_oid",
+        "type": "idx_t"
+      }
+    ]
+  },
+  {
+    "class": "WALPrepared",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "txid",
+        "type": "hugeint_t"
+      }
+    ]
+  },
+  {
+    "class": "WALCommitPrepared",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "txid",
+        "type": "hugeint_t"
+      },
+      {
+        "id": 102,
+        "name": "participant_oids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 103,
+        "name": "participant_generations",
+        "type": "vector<idx_t>"
       }
     ]
   }

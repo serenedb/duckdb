@@ -9,7 +9,10 @@
 #pragma once
 
 #include "duckdb/catalog/standard_entry.hpp"
+#include "duckdb/common/query_context.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/storage/table/row_group_collection.hpp"
+#include "duckdb/storage/table_storage_info.hpp"
 
 namespace duckdb {
 
@@ -39,6 +42,13 @@ public:
 	//! The set of expressions to index by
 	vector<unique_ptr<ParsedExpression>> expressions;
 	vector<unique_ptr<ParsedExpression>> parsed_expressions;
+	//! The partial-index predicate (CREATE INDEX ... WHERE <predicate>)
+	unique_ptr<ParsedExpression> where_clause;
+	//! The opclass per indexed column; empty string means none was specified
+	vector<string> column_opclasses;
+	//! Per-column opclass options, parallel to column_opclasses
+	vector<std::optional<case_insensitive_map_t<Value>>> column_opclass_options;
+	idx_t table_oid;
 
 public:
 	//! Returns the CreateIndexInfo
@@ -48,6 +58,13 @@ public:
 
 	virtual Identifier GetSchemaName() const = 0;
 	virtual Identifier GetTableName() const = 0;
+	virtual optional_ptr<CatalogEntry> GetRelation(CatalogTransaction transaction) const;
+	virtual void InitializeColumnSegmentInfoScan(ColumnSegmentInfoScanState &state) const {
+	}
+	virtual bool ScanColumnSegmentInfo(const QueryContext &context, ColumnSegmentInfoScanState &state,
+	                                   vector<ColumnSegmentInfo> &result) const {
+		return false;
+	}
 
 	//! Returns true, if this index is UNIQUE
 	bool IsUnique() const;

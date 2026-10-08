@@ -22,4 +22,4 @@ query II
 SELECT points, centroid(points)
 FROM UNNEST([[[1], [2], [3]]]) t(points);
 ----
-[[1], [2], [3]]	[2.0]
+[[1], [2], [3]]	[2]

@@ -134,7 +134,7 @@ logical_opt	<REGEX>:.*FILTER.*WINDOW.*
 query II
 explain select * from window_no_filter where a != 'C' order by a;
 ----
-logical_opt	<REGEX>:.*WINDOW.*Filters.*
+logical_opt	<REGEX>:.*WINDOW.*Column Filter.*
 
 statement ok
 create table t2 as select range a, range%50 b, range%25 c from range(500);
@@ -174,28 +174,28 @@ explain
 FROM avg_price
 WHERE l_commitdate < '1997-02-15'::DATE;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* <= 1997.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* <= 1997.*
 
 query II
 explain
 FROM avg_price
 WHERE l_commitdate <= '1997-02-15'::DATE;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* <= 1997.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* <= 1997.*
 
 query II
 explain
 FROM avg_price
 WHERE l_commitdate > '1997-02-15'::DATE;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* >= 1997.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* >= 1997.*
 
 query II
 explain
 FROM avg_price
 WHERE l_commitdate >= '1997-02-15'::DATE;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* >= 1997.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* >= 1997.*
 
 # Strictly monotonic functions can be used directly, even for (in)equalities
 statement ok
@@ -214,49 +214,49 @@ explain
 FROM avg_price
 WHERE l_linenumber = 20;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* = '1970-01-21'::DATE.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* = '1970-01-21'::DATE.*
 
 query II
 explain
 FROM avg_price
 WHERE l_linenumber <> 20;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* != '1970-01-21'::DATE.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* != '1970-01-21'::DATE.*
 
 query II
 explain
 FROM avg_price
 WHERE l_linenumber IS NOT DISTINCT FROM 20;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* IS NOT DISTINCT FROM make_date.20.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* IS NOT DISTINCT FROM make_date.20.*
 
 query II
 explain
 FROM avg_price
 WHERE l_linenumber IS DISTINCT FROM 20;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* IS DISTINCT FROM make_date.20.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* IS DISTINCT FROM make_date.20.*
 
 query II
 explain
 FROM avg_price
 WHERE l_linenumber < 20;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* < '1970-01-21'::DATE.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* < '1970-01-21'::DATE.*
 
 query II
 explain
 FROM avg_price
 WHERE l_linenumber <= 20;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* <= '1970-01-21'::DATE.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* <= '1970-01-21'::DATE.*
 
 query II
 explain
 FROM avg_price
 WHERE l_linenumber > 20;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* > '1970-01-21'::DATE.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* > '1970-01-21'::DATE.*
 
 
 query II
@@ -264,7 +264,7 @@ explain
 FROM avg_price
 WHERE l_linenumber >= 20;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters:.* >= '1970-01-21'::DATE.*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter:.* >= '1970-01-21'::DATE.*
 
 # Don't use non-comparisons.
 statement ok 
@@ -289,4 +289,4 @@ query II
 explain
 from avg_id where var like '%hel%';
 ----
-logical_opt	<!REGEX>:.*SEQ_SCAN.*Filters:.*
+logical_opt	<!REGEX>:.*SEQ_SCAN.*Column Filter:.*

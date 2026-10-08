@@ -8,7 +8,8 @@ PrepareStatement::PrepareStatement() : SQLStatement(StatementType::PREPARE_STATE
 }
 
 PrepareStatement::PrepareStatement(const PrepareStatement &other)
-    : SQLStatement(other), statement(other.statement->Copy()), name(other.name) {
+    : SQLStatement(other), statement(other.statement->Copy()), name(other.name),
+      parameter_type_hints(other.parameter_type_hints) {
 }
 
 unique_ptr<SQLStatement> PrepareStatement::Copy() const {

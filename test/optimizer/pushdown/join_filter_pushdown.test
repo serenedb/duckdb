@@ -41,7 +41,7 @@ JOIN (
 	SELECT 'Comment' AS label, messageid FROM jfpp_comment
 ) x ON x.label = l.label AND x.messageid = l.messageid;
 ----
-analyzed_plan	<REGEX>:.*Dynamic Filters:.*messageid IN.*
+analyzed_plan	<REGEX>:.*Dynamic Column Filter:.*messageid IN.*
 
 query I
 WITH limited(label, messageid) AS MATERIALIZED (
@@ -73,7 +73,7 @@ JOIN (
 	SELECT 'Comment' AS label, 'Forum' AS source, messageid FROM jfpp_comment
 ) x ON x.label = l.label AND x.source = l.source AND x.messageid = l.messageid;
 ----
-analyzed_plan	<REGEX>:.*Dynamic Filters:.*messageid IN.*
+analyzed_plan	<REGEX>:.*Dynamic Column Filter:.*messageid IN.*
 
 query I
 WITH limited(label, source, messageid) AS MATERIALIZED (
@@ -112,7 +112,7 @@ JOIN (
 	SELECT 'Comment' AS label, 'Forum' AS source, messageid, creatorid FROM jfpp_multi_comment
 ) x ON x.label = l.label AND x.source = l.source AND x.messageid = l.messageid AND x.creatorid = l.creatorid;
 ----
-analyzed_plan	<REGEX>:.*Dynamic Filters:.*messageid IN.*
+analyzed_plan	<REGEX>:.*Dynamic Column Filter:.*messageid IN.*
 
 query II
 EXPLAIN ANALYZE
@@ -128,7 +128,7 @@ JOIN (
 	SELECT 'Comment' AS label, 'Forum' AS source, messageid, creatorid FROM jfpp_multi_comment
 ) x ON x.label = l.label AND x.source = l.source AND x.messageid = l.messageid AND x.creatorid = l.creatorid;
 ----
-analyzed_plan	<REGEX>:.*Dynamic Filters:.*creatorid IN.*
+analyzed_plan	<REGEX>:.*Dynamic Column Filter:.*creatorid IN.*
 
 query I
 WITH limited(label, source, messageid, creatorid) AS MATERIALIZED (

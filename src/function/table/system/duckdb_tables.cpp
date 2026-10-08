@@ -13,11 +13,26 @@
 
 namespace duckdb {
 
+struct ListedTable {
+	ListedTable(ClientContext &context, TableCatalogEntry &table)
+	    : table(table), schema_name(table.ParentSchemaName(CatalogTransaction(table.ParentCatalog(), context))),
+	      storage_info(table.GetStorageInfo(context)) {
+		auto table_info = table.GetInfo();
+		table_info->StripCatalogQualification();
+		sql = Value(table_info->ToString());
+	}
+
+	TableCatalogEntry &table;
+	Value schema_name;
+	TableStorageInfo storage_info;
+	Value sql;
+};
+
 struct DuckDBTablesData : public GlobalTableFunctionState {
 	DuckDBTablesData() : offset(0) {
 	}
 
-	vector<reference<CatalogEntry>> entries;
+	vector<ListedTable> entries;
 	idx_t offset;
 };
 
@@ -71,17 +86,23 @@ static unique_ptr<FunctionData> DuckDBTablesBind(ClientContext &context, TableFu
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBTablesInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBTablesData>();
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
 
 	// scan all the schemas for tables and collect themand collect them
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::TABLE_ENTRY,
-		                  [&](CatalogEntry &entry) { result->entries.push_back(entry); });
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+			if (entry.type == CatalogType::TABLE_ENTRY) {
+				result->entries.emplace_back(context, entry.Cast<TableCatalogEntry>());
+			}
+		});
 	};
 	return std::move(result);
 }
@@ -140,18 +161,14 @@ void DuckDBTablesFunction(ClientContext &context, TableFunctionInput &data_p, Da
 	auto &sql = output.data[15];
 
 	while (data.offset < data.entries.size() && count < STANDARD_VECTOR_SIZE) {
-		auto &entry = data.entries[data.offset++].get();
-
-		if (entry.type != CatalogType::TABLE_ENTRY) {
-			continue;
-		}
-		auto &table = entry.Cast<TableCatalogEntry>();
-		auto storage_info = table.GetStorageInfo(context);
+		auto &entry = data.entries[data.offset++];
+		auto &table = entry.table;
+		auto &storage_info = entry.storage_info;
 
 		database_name.Append(Value(table.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.catalog.GetOid())));
-		schema_name.Append(Value(table.schema.name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.schema.oid)));
+		schema_name.Append(entry.schema_name);
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.ParentSchemaOid())));
 		table_name.Append(Value(table.name));
 		table_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.oid)));
 		comment.Append(Value(table.comment));
@@ -167,15 +184,15 @@ void DuckDBTablesFunction(ClientContext &context, TableFunctionInput &data_p, Da
 		column_count.Append(Value::BIGINT(NumericCast<int64_t>(table.GetColumns().LogicalColumnCount())));
 		index_count.Append(Value::BIGINT(NumericCast<int64_t>(storage_info.index_info.size())));
 		check_constraint_count.Append(Value::BIGINT(NumericCast<int64_t>(CheckConstraintCount(table))));
-		auto table_info = table.GetInfo();
-		table_info->StripCatalogQualification();
-		sql.Append(Value(table_info->ToString()));
+		sql.Append(entry.sql);
 		count++;
 	}
 }
 
 void DuckDBTablesFun::RegisterFunction(BuiltinFunctions &set) {
 	auto function = TableFunction("duckdb_tables", {}, DuckDBTablesFunction, DuckDBTablesBind, DuckDBTablesInit);
+	function.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
+	function.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	set.AddFunction(std::move(function));
 }
 

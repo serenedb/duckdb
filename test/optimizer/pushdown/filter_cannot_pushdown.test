@@ -50,7 +50,7 @@ logical_opt	<!REGEX>:.*a > 1.*
 query II
 explain select rnd, a from (select random(), 2 as 'a') as t(rnd, a) where rnd < 1 and a > 0;
 ----
-logical_opt	<REGEX>:.*rnd < 1.0.*
+logical_opt	<REGEX>:.*rnd < 1.*
 
 statement ok
 create table t1 as select range as a, random() as b from range(10);
@@ -58,7 +58,7 @@ create table t1 as select range as a, random() as b from range(10);
 query II
 explain select a, b from (select random(), a, b from t1) as t(rnd, a, b) where rnd < 1 and a > 0;
 ----
-logical_opt	<REGEX>:.*rnd < 1.0.*
+logical_opt	<REGEX>:.*rnd < 1.*
 
 loop i 1 100
 

@@ -1,4 +1,5 @@
 #include "duckdb/storage/compression/dict_fsst/analyze.hpp"
+#include "fsst.h"
 
 namespace duckdb {
 namespace dict_fsst {
@@ -44,11 +45,19 @@ static idx_t GetStringSizeLimit(const idx_t available_space, const bool fsst_enc
 	return MinValue(DictFSSTCompression::STRING_SIZE_LIMIT, max_string_size + 1);
 }
 
+static idx_t GetPlusStringSizeLimit(const idx_t block_size) {
+	const idx_t overhead = DictFSSTCompression::PLUS_HEADER_SIZE + sizeof(duckdb_fsst_decoder_t) + 256;
+	if (block_size <= overhead + 2) {
+		return 1;
+	}
+	return MinValue<idx_t>(DictFSSTCompression::STRING_SIZE_LIMIT, (block_size - overhead) / 2);
+}
+
 DictFSSTAnalyzeState::DictFSSTAnalyzeState(BlockManager &block_manager) : AnalyzeState(block_manager) {
 	const auto block_size = info.GetBlockSize();
 
 	string_size_limit = GetStringSizeLimit(block_size, false);
-	fsst_string_size_limit = GetStringSizeLimit(block_size, true);
+	fsst_string_size_limit = MinValue(GetStringSizeLimit(block_size, true), GetPlusStringSizeLimit(block_size));
 }
 
 bool DictFSSTAnalyzeState::Analyze(const Vector &input) {

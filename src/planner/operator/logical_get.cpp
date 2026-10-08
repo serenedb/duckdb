@@ -83,9 +83,8 @@ optional_ptr<TableCatalogEntry> LogicalGet::GetTable() const {
 	return function.get_bind_info(bind_data.get()).table;
 }
 
-InsertionOrderPreservingMap<string> LogicalGet::ParamsToString() const {
-	InsertionOrderPreservingMap<string> result;
-
+template <class MAP>
+void LogicalGet::AddScanParams(MAP &result) const {
 	string filters_info;
 	bool first_item = true;
 	for (auto &kv : table_filters) {
@@ -111,7 +110,7 @@ InsertionOrderPreservingMap<string> LogicalGet::ParamsToString() const {
 			filters_info += filter.ToString(column_name);
 		}
 	}
-	result["Filters"] = filters_info;
+	result["Column Filter"] = filters_info;
 
 	if (extra_info.sample_options) {
 		if (extra_info.sample_options->is_percentage) {
@@ -128,13 +127,32 @@ InsertionOrderPreservingMap<string> LogicalGet::ParamsToString() const {
 			                                              extra_info.total_files.GetIndex());
 		}
 	}
+}
 
+InsertionOrderPreservingMap<string> LogicalGet::ParamsToString() const {
+	InsertionOrderPreservingMap<string> result;
+	AddScanParams(result);
 	if (function.to_string) {
 		TableFunctionToStringInput input(function, bind_data.get());
 		auto to_string_result = function.to_string(input);
 		for (const auto &it : to_string_result) {
 			result[it.first] = it.second;
 		}
+	}
+	SetParamsEstimatedCardinality(result);
+	return result;
+}
+
+InsertionOrderPreservingMap<ExplainValue> LogicalGet::ParamsToValue() const {
+	if (!function.to_string_value) {
+		return LogicalOperator::ParamsToValue();
+	}
+	InsertionOrderPreservingMap<ExplainValue> result;
+	AddScanParams(result);
+	TableFunctionToStringInput input(function, bind_data.get());
+	auto to_string_result = function.to_string_value(input);
+	for (auto &it : to_string_result) {
+		result[it.first] = std::move(it.second);
 	}
 	SetParamsEstimatedCardinality(result);
 	return result;
@@ -293,8 +311,8 @@ bool LogicalGet::TryGetStorageIndex(const ColumnIndex &column_index, StorageInde
 	}
 
 	auto &column = table->GetColumn(LogicalIndex(column_index.GetPrimaryIndex()));
-	if (column.Generated()) {
-		//! This is a generated column, can't use the row group pruner
+	if (column.Category() == TableColumnType::GENERATED_VIRTUAL) {
+		//! This is a virtual generated column, can't use the row group pruner
 		return false;
 	}
 	out_index = table->GetStorageIndex(column_index);
@@ -322,12 +340,12 @@ idx_t LogicalGet::EstimateSourceCardinality(ClientContext &context) {
 	return 1;
 }
 
-void LogicalGet::SetScanOrder(unique_ptr<RowGroupOrderOptions> options) {
+void LogicalGet::SetScanOrder(ClientContext &context, unique_ptr<RowGroupOrderOptions> options) {
 	if (!function.set_scan_order) {
 		throw InternalException("LogicalGet::SetScanOrder called but function does not have scan order defined");
 	}
 	row_group_order_options = make_uniq<RowGroupOrderOptions>(*options);
-	function.set_scan_order(std::move(options), bind_data.get());
+	function.set_scan_order(context, std::move(options), bind_data.get());
 }
 
 void LogicalGet::SetPartitionsToScan(vector<idx_t> partition_indices) {
@@ -432,7 +450,7 @@ unique_ptr<LogicalOperator> LogicalGet::Deserialize(Deserializer &deserializer) 
 		vector<LogicalType> bind_return_types;
 		vector<Identifier> bind_names;
 		if (!function.bind) {
-			throw InternalException("Table function \"%s\" has neither bind nor (de)serialize", function.GetName());
+			throw InternalException("Table function %s has neither bind nor (de)serialize", function.GetName());
 		}
 		bind_data = function.bind(context, input, bind_return_types, bind_names);
 		if (result->ordinality_idx.IsValid()) {
@@ -469,7 +487,7 @@ unique_ptr<LogicalOperator> LogicalGet::Deserialize(Deserializer &deserializer) 
 	result->bind_data = std::move(bind_data);
 	ConvertLegacyTableFilters(*result);
 	if (row_group_order_options) {
-		result->SetScanOrder(std::move(row_group_order_options));
+		result->SetScanOrder(context, std::move(row_group_order_options));
 	}
 	if (!scan_partition_indices.empty()) {
 		result->SetPartitionsToScan(std::move(scan_partition_indices));

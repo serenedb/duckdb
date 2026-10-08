@@ -6,6 +6,7 @@
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/main/attached_database.hpp"
 
 namespace duckdb {
 
@@ -64,27 +65,27 @@ static unique_ptr<FunctionData> DuckDBTriggersBind(ClientContext &context, Table
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	return make_uniq<DuckDBSystemIncludeHiddenBindData>();
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBTriggersInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBTriggersData>();
 
-	auto schemas = Catalog::GetAllSchemas(context);
-	vector<reference<TableCatalogEntry>> tables;
+	auto database_filter = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>().DatabaseFilter(context);
+	auto schemas = Catalog::GetAllSchemas(context, false, [&](AttachedDatabase &database) {
+		return database.GetCatalog().IsDuckCatalog() && (!database_filter || database_filter(database));
+	});
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.type != CatalogType::TABLE_ENTRY) {
 				return;
 			}
-			tables.push_back(entry.Cast<TableCatalogEntry>());
-		});
-	}
-	for (auto &table : tables) {
-		auto &table_entry = table.get();
-		auto transaction = table_entry.ParentCatalog().GetCatalogTransaction(context);
-		table_entry.ScanTriggers(transaction, [&](CatalogEntry &trigger) {
-			result->entries.push_back(trigger.Cast<TriggerCatalogEntry>());
+			auto &table_entry = entry.Cast<TableCatalogEntry>();
+			auto transaction = table_entry.ParentCatalog().GetCatalogTransaction(context);
+			vector<reference<TriggerCatalogEntry>> triggers;
+			table_entry.ScanTriggers(
+			    transaction, [&](CatalogEntry &trigger) { triggers.push_back(trigger.Cast<TriggerCatalogEntry>()); });
+			result->entries.insert(result->entries.end(), triggers.begin(), triggers.end());
 		});
 	}
 	return std::move(result);
@@ -119,8 +120,8 @@ void DuckDBTriggersFunction(ClientContext &context, TableFunctionInput &data_p, 
 
 		database_name.Append(Value(trigger.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.catalog.GetOid())));
-		schema_name.Append(Value(trigger.schema.name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.schema.oid)));
+		schema_name.Append(Value(trigger.ParentSchemaName(CatalogTransaction(trigger.ParentCatalog(), context))));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.ParentSchemaOid())));
 		trigger_name.Append(Value(trigger.name));
 		trigger_oid.Append(Value::BIGINT(NumericCast<int64_t>(trigger.oid)));
 		table_name.Append(Value(trigger.base_table->Table()));
@@ -143,8 +144,9 @@ void DuckDBTriggersFunction(ClientContext &context, TableFunctionInput &data_p, 
 }
 
 void DuckDBTriggersFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(
-	    TableFunction("duckdb_triggers", {}, DuckDBTriggersFunction, DuckDBTriggersBind, DuckDBTriggersInit));
+	TableFunction fn("duckdb_triggers", {}, DuckDBTriggersFunction, DuckDBTriggersBind, DuckDBTriggersInit);
+	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

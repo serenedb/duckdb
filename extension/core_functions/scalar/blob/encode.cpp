@@ -38,7 +38,7 @@ struct UnaryBlobDecodeOperator {
 	static RESULT_TYPE Operation(INPUT_TYPE input) {
 		auto input_data = input.GetData();
 		auto input_length = input.GetSize();
-		if (Utf8Proc::Analyze(input_data, input_length) == UnicodeType::INVALID) {
+		if (!Utf8Proc::IsValid(input_data, input_length)) {
 			throw ConversionException(
 			    "Failure in decode: could not convert blob to UTF8 string, the blob "
 			    "contained invalid UTF8 characters. \n"
@@ -63,7 +63,7 @@ void BinaryDecodeFunction(DataChunk &args, ExpressionState &state, Vector &resul
 		    auto input_data = input.GetData();
 		    auto input_length = input.GetSize();
 
-		    if (Utf8Proc::Analyze(input_data, input_length) != UnicodeType::INVALID) {
+		    if (Utf8Proc::IsValid(input_data, input_length)) {
 			    return input;
 		    }
 		    auto const error_behavior = GetDecodeErrorBehavior(error_option);

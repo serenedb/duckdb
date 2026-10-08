@@ -110,10 +110,10 @@ void ReorderTableEntries(catalog_entry_vector_t &tables) {
 
 string CreateFileName(const string &id_suffix, TableCatalogEntry &table, const string &extension) {
 	auto name = SanitizeExportIdentifier(table.name);
-	if (table.schema.name == DEFAULT_SCHEMA) {
+	if (table.ParentSchemaName() == DEFAULT_SCHEMA) {
 		return StringUtil::Format("%s%s.%s", name, id_suffix, extension);
 	}
-	auto schema = SanitizeExportIdentifier(table.schema.name);
+	auto schema = SanitizeExportIdentifier(table.ParentSchemaName());
 	return StringUtil::Format("%s_%s%s.%s", schema, name, id_suffix, extension);
 }
 
@@ -156,7 +156,11 @@ BoundStatement Binder::Bind(ExportStatement &stmt) {
 	result.names = {"Success"};
 
 	// bind copy options
+	const bool header_given = stmt.info->parsed_options.contains("header") || stmt.info->options.contains("header");
 	BindCopyOptions(*stmt.info);
+	if (!header_given && stmt.info->format == "csv") {
+		stmt.info->options["header"] = {Value::INTEGER(1)};
+	}
 
 	// lookup the format in the catalog
 	auto &copy_function = Catalog::GetEntry<CopyFunctionCatalogEntry>(
@@ -171,12 +175,12 @@ BoundStatement Binder::Bind(ExportStatement &stmt) {
 	catalog_entry_vector_t tables;
 	auto schemas = Catalog::GetSchemas(context, catalog);
 	for (auto &schema : schemas) {
-		auto &schema_entry = schema.get();
-		if (schema_entry.ParentCatalog().IsTemporaryCatalog()) {
+		auto &schema_catalog = schema.get().ParentCatalog();
+		if (schema_catalog.IsSystemCatalog() || schema_catalog.IsTemporaryCatalog()) {
 			continue;
 		}
 		schema.get().Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
-			if (entry.type == CatalogType::TABLE_ENTRY) {
+			if (entry.type == CatalogType::TABLE_ENTRY && !entry.internal) {
 				tables.push_back(entry.Cast<TableCatalogEntry>());
 			}
 		});
@@ -195,7 +199,7 @@ BoundStatement Binder::Bind(ExportStatement &stmt) {
 			}
 			auto &fk = constraint->Cast<ForeignKeyConstraint>();
 			if (fk.info.type == ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
-				throw BinderException("Failed to export database: table \"%s\" has a self-referencing foreign key "
+				throw BinderException("Failed to export database: table %s has a self-referencing foreign key "
 				                      "constraint which is currently not supported for exporting",
 				                      table.name);
 			}
@@ -233,7 +237,7 @@ BoundStatement Binder::Bind(ExportStatement &stmt) {
 		}
 		info->is_from = false;
 		// carry the full (possibly nested) schema path of the exported table
-		info->SetQualifiedName(table.schema.GetQualifiedName(table.name));
+		info->SetQualifiedName(table.GetQualifiedName(table.name));
 
 		// We can not export generated columns
 		child_list_t<LogicalType> select_list;
@@ -246,7 +250,9 @@ BoundStatement Binder::Bind(ExportStatement &stmt) {
 			}
 		}
 		for (auto &col : table.GetColumns().Physical()) {
-			select_list.emplace_back(std::make_pair(col.Name(), col.Type()));
+			if (!col.Generated()) {
+				select_list.emplace_back(std::make_pair(col.Name(), col.Type()));
+			}
 		}
 
 		ExportedTableData exported_data;

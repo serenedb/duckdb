@@ -393,7 +393,7 @@ TEST_CASE("Exported recursive payload aggregates resolve qualified schemas",
 		catalog.CreateFunction(*connection.context, info);
 	}
 	connection.Commit();
-	REQUIRE_NO_FAIL(connection.Query("SET search_path='payload_schema,main'"));
+	REQUIRE_NO_FAIL(connection.Query("SET search_path = payload_schema, main"));
 	REQUIRE_NO_FAIL(connection.Query("SET debug_verify_statement='explain_sql_strict'"));
 	for (auto name : {"memory.main.payload_choice", "memory.payload_schema.payload_choice",
 	                  "memory.outer_schema.inner_schema.payload_choice", "payload_choice"}) {

@@ -77,4 +77,4 @@ query II
 EXPLAIN ANALYZE
 SELECT count(*) FROM array_fold_db.inputs WHERE array_inner_product(a, b) IS NOT NULL;
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*

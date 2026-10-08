@@ -147,30 +147,31 @@ string ExtensionHelper::AddExtensionInstallHintToErrorMsg(ClientContext &context
                                                           const string &extension_name) {
 	return AddExtensionInstallHintToErrorMsg(DatabaseInstance::GetDatabase(context), base_error, extension_name);
 }
-string ExtensionHelper::AddExtensionInstallHintToErrorMsg(DatabaseInstance &db, const string &base_error,
-                                                          const string &extension_name) {
-	string install_hint;
+string ExtensionHelper::AddExtensionInstallHintToErrorMsg([[maybe_unused]] DatabaseInstance &db,
+                                                          const string &base_error,
+                                                          [[maybe_unused]] const string &extension_name) {
+	return base_error + " If you need it, tell us in https://github.com/serenedb/serenedb/issues/887.";
+}
 
-	if (!ExtensionHelper::CanAutoloadExtension(db, extension_name)) {
-		install_hint = "Please try installing and loading the " + extension_name + " extension:\nINSTALL " +
-		               extension_name + ";\nLOAD " + extension_name + ";\n\n";
-	} else if (!Settings::Get<AutoloadKnownExtensionsSetting>(db)) {
-		install_hint =
-		    "Please try installing and loading the " + extension_name + " extension by running:\nINSTALL " +
-		    extension_name + ";\nLOAD " + extension_name +
-		    ";\n\nAlternatively, consider enabling auto-install "
-		    "and auto-load by running:\nSET autoinstall_known_extensions=1;\nSET autoload_known_extensions=1;";
-	} else if (!Settings::Get<AutoinstallKnownExtensionsSetting>(db)) {
-		install_hint =
-		    "Please try installing the " + extension_name + " extension by running:\nINSTALL " + extension_name +
-		    ";\n\nAlternatively, consider enabling autoinstall by running:\nSET autoinstall_known_extensions=1;";
+bool ExtensionHelper::IsLinkedExtension(const string &extension_name) {
+	for (auto &linked : LinkedExtensionRegistry::Get()) {
+		if (linked.load && StringUtil::CIEquals(linked.name, extension_name)) {
+			return true;
+		}
 	}
+	return false;
+}
 
-	if (!install_hint.empty()) {
-		return base_error + "\n\n" + install_hint;
-	}
+string ExtensionHelper::ExtensionRuntimeUnsupportedMessage(const string &extension_name, bool is_install) {
+	const string action = is_install ? "INSTALL" : "LOAD";
+	const string verb = is_install ? "installed" : "loaded";
+	return action + " is not supported by SereneDB: extensions are compiled into the server binary and cannot be " +
+	       verb + " at runtime.\nIf you need the \"" + extension_name +
+	       "\" extension, please open an issue at https://github.com/serenedb/serenedb/issues/887.";
+}
 
-	return base_error;
+void ExtensionHelper::ThrowExtensionRuntimeUnsupported(const string &extension_name, bool is_install) {
+	throw NotImplementedException(ExtensionRuntimeUnsupportedMessage(extension_name, is_install));
 }
 
 // autoloading only ever targets core extensions, so it trusts the core keys exclusively
@@ -404,7 +405,12 @@ void ExtensionHelper::AutoLoadExtensionForPath(DatabaseInstance &db, const strin
 		return;
 	}
 	if (!CanAutoloadExtension(db, extension_name) || !Settings::Get<AutoloadKnownExtensionsSetting>(db)) {
-		auto error_message = path_kind + " " + path + " requires the extension " + extension_name + " to be loaded";
+		if (IsLinkedExtension(extension_name)) {
+			throw MissingExtensionException(path_kind + " " + path + " requires the extension " + extension_name +
+			                                " to be loaded");
+		}
+		auto error_message = path_kind + " " + path + " needs DuckDB's " + extension_name +
+		                     " extension, which does not exist in SereneDB.";
 		throw MissingExtensionException(AddExtensionInstallHintToErrorMsg(db, error_message, extension_name));
 	}
 	AutoLoadExtension(db, extension_name);

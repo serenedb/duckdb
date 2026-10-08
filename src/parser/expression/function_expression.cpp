@@ -158,6 +158,9 @@ void FunctionExpression::Serialize(Serializer &serializer) const {
 		// the catalog/schema properties above cannot represent a nested schema path
 		serializer.WriteProperty<QualifiedName>(210, "qualified_name", qualified_name);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<bool>(16584, "from_operator", from_operator);
+	}
 }
 
 unique_ptr<ParsedExpression> FunctionExpression::Deserialize(Deserializer &deserializer) {
@@ -198,6 +201,7 @@ unique_ptr<ParsedExpression> FunctionExpression::Deserialize(Deserializer &deser
 	if (!qualified_name.Path().empty()) {
 		result->SetQualifiedName(std::move(qualified_name));
 	}
+	deserializer.ReadPropertyWithDefault<bool>(16584, "from_operator", result->from_operator);
 
 	return std::move(result);
 }

@@ -341,6 +341,24 @@ TEST_CASE("Test ANALYZE", "[api]") {
 	REQUIRE(!res->HasError());
 }
 
+TEST_CASE("Test EXPLAIN ANALYZE with PreparedStatement", "[api]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+
+	auto prep = con.Prepare("EXPLAIN ANALYZE SELECT 42");
+	REQUIRE(!prep->HasError());
+	for (idx_t i = 0; i < 2; i++) {
+		auto result = prep->Execute();
+		REQUIRE(!result->HasError());
+		auto plan = result->Collection().GetValue(1, 0).ToString();
+		REQUIRE(plan.find("Total Time") != string::npos);
+		REQUIRE(StringUtil::Lower(plan).find("execute") == string::npos);
+		REQUIRE(StringUtil::Lower(plan).find("explain_analyze") == string::npos);
+	}
+	auto result = con.Query("SELECT 42");
+	REQUIRE(CHECK_COLUMN(result, 0, {42}));
+}
+
 TEST_CASE("Test DECIMAL with PreparedStatement", "[api]") {
 	duckdb::unique_ptr<QueryResult> result;
 	DuckDB db(nullptr);

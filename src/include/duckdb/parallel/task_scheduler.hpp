@@ -41,6 +41,7 @@ public:
 	unique_ptr<ProducerToken> CreateProducer();
 	//! Returns the number of threads
 	DUCKDB_API idx_t NumberOfThreads();
+	DUCKDB_API static idx_t QueryThreads(ClientContext &context);
 	//! Returns the number of async threads
 	DUCKDB_API idx_t NumberOfAsyncThreads();
 
@@ -75,6 +76,10 @@ public:
 	void SetThreads(idx_t total_threads, idx_t external_threads);
 	void SetAsyncThreads(idx_t n);
 	void RelaunchThreads();
+	//! Stop and join every worker thread in every pool without destroying the scheduler. Unlike SetThreads, this
+	//! reaches zero regular workers (RelaunchThreads with destroy=true bypasses the clamp-to-one), so after it returns
+	//! from a non-worker thread no worker is left running. Idempotent; the destructor runs the same loop.
+	void Join();
 
 	//! Yield to other threads
 	static void YieldThread();

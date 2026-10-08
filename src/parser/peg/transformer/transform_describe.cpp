@@ -2,6 +2,11 @@
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
+#include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/tableref/emptytableref.hpp"
 
 namespace duckdb {
 
@@ -67,11 +72,25 @@ unique_ptr<QueryNode> PEGTransformerFactory::TransformShowTables(PEGTransformer 
 }
 
 unique_ptr<QueryNode> PEGTransformerFactory::TransformShowAllTables(PEGTransformer &transformer,
-                                                                    const ShowType &show_or_describe,
-                                                                    const bool &has_result) {
+                                                                    const ShowType &show_or_describe) {
 	auto showref = make_uniq<ShowRef>();
 	SetShowAllTables(*showref);
 	return WrapShowRef(std::move(showref));
+}
+
+// SHOW ALL -> SELECT name, setting, short_desc AS description FROM pg_settings
+unique_ptr<QueryNode> PEGTransformerFactory::TransformShowAllSettings(PEGTransformer &transformer,
+                                                                      const ShowType &show_or_describe) {
+	auto result = make_uniq<SelectNode>();
+	result->select_list.emplace_back(make_uniq<ColumnRefExpression>("name"));
+	result->select_list.emplace_back(make_uniq<ColumnRefExpression>("setting"));
+	auto desc_col = make_uniq<ColumnRefExpression>("short_desc");
+	desc_col->SetAlias("description");
+	result->select_list.emplace_back(std::move(desc_col));
+	auto tableref = make_uniq<BaseTableRef>();
+	tableref->SetTable("pg_settings");
+	result->from_table = std::move(tableref);
+	return std::move(result);
 }
 
 // The special MySQL-inherited forms - "[SHOW|DESCRIBE] DATABASES|SCHEMAS|TABLES|VARIABLES" - which the binder
@@ -209,6 +228,38 @@ DescribeTarget PEGTransformerFactory::TransformDescribeBaseTableName(PEGTransfor
 	DescribeTarget result;
 	result.table_ref = std::move(base_table_name);
 	return result;
+}
+
+// ShowAliasedSetting <- ShowOrDescribe ShowSettingAlias
+// ShowSettingAlias  <- ('TRANSACTION' 'ISOLATION' 'LEVEL') / ('SESSION' 'AUTHORIZATION') / ('TIME' 'ZONE')
+unique_ptr<QueryNode> PEGTransformerFactory::TransformShowAliasedSetting(PEGTransformer &transformer,
+                                                                         ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &alias_list = list_pr.Child<ListParseResult>(1);
+	auto &choice_pr = alias_list.Child<ChoiceParseResult>(0);
+	auto &alts = choice_pr.GetResult().Cast<ListParseResult>();
+	auto &first_kw = alts.Child<KeywordParseResult>(0).keyword;
+
+	// PG-compat: PG-canonical GUC names. transaction_isolation / session_authorization are lowercase
+	// in PG; timezone is the rare CamelCase outlier (TimeZone). Drivers compare the
+	// result column header case-sensitively, so emit the canonical case verbatim.
+	string setting_name;
+	if (StringUtil::CIEquals(first_kw, "TRANSACTION")) {
+		setting_name = "transaction_isolation";
+	} else if (StringUtil::CIEquals(first_kw, "SESSION")) {
+		setting_name = "session_authorization";
+	} else {
+		setting_name = "TimeZone";
+	}
+
+	auto result = make_uniq<SelectNode>();
+	vector<unique_ptr<ParsedExpression>> args;
+	args.push_back(ConstantExpression::String(setting_name));
+	auto func_expr = make_uniq<FunctionExpression>("current_setting", std::move(args));
+	func_expr->SetAlias(Identifier(setting_name));
+	result->select_list.push_back(std::move(func_expr));
+	result->from_table = make_uniq<EmptyTableRef>();
+	return std::move(result);
 }
 
 DescribeTarget PEGTransformerFactory::TransformDescribeStringLiteral(PEGTransformer &transformer,

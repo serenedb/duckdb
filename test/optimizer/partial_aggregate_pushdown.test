@@ -1161,7 +1161,7 @@ EXPLAIN SELECT o.k, count(e.event_id)
 FROM outer_count_owner o LEFT JOIN outer_count_events e ON o.k = e.k
 GROUP BY o.k
 ----
-physical_plan	<REGEX>:(?s).*COALESCE.*Hash Join.*Hash Group By.*
+physical_plan	<REGEX>:(?s).*COALESCE.*HASH_JOIN.*HASH_GROUP_BY.*
 
 statement ok
 SET debug_verify_serializer = true

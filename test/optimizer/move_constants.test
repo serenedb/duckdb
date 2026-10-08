@@ -274,6 +274,21 @@ SELECT count(*) FROM floats_nan WHERE -x < -2.5
 ----
 1
 
+query I
+SELECT count(*) FROM floats_nan WHERE -x < 'NaN'::DOUBLE
+----
+2
+
+query I
+SELECT count(*) FROM floats_nan WHERE -x >= 'NaN'::DOUBLE
+----
+1
+
+query I
+SELECT count(*) FROM floats_nan WHERE 'NaN'::DOUBLE <= -x
+----
+1
+
 # FLOAT type
 statement ok
 CREATE TABLE floats32(x FLOAT);

@@ -41,13 +41,18 @@ unique_ptr<ColumnSegment> ColumnSegment::CreatePersistentSegment(DatabaseInstanc
 	shared_ptr<BlockHandle> block;
 
 	auto &type = statistics.GetType();
-	auto function = config.GetCompressionFunction(compression_type, type.InternalType());
+	auto function = config.TryGetCompressionFunction(compression_type, type.InternalType());
+	if (!function) {
+		throw IOException("Cannot read a column segment of type %s compressed with method %llu, which this release "
+		                  "of SereneDB does not have: the database file was written by a newer release",
+		                  type.ToString(), static_cast<uint64_t>(compression_type));
+	}
 	if (block_id != INVALID_BLOCK) {
 		block = block_manager.RegisterBlock(block_id);
 	}
 
 	auto segment_size = block_manager.GetBlockSize();
-	return make_uniq<ColumnSegment>(db, std::move(block), ColumnSegmentType::PERSISTENT, count, function,
+	return make_uniq<ColumnSegment>(db, std::move(block), ColumnSegmentType::PERSISTENT, count, *function,
 	                                std::move(statistics), block_id, offset, segment_size, std::move(segment_state),
 	                                byte_size);
 }
@@ -442,13 +447,21 @@ static idx_t ExecuteExpressionFilterSelection(SelectionVector &sel, Vector &vect
 		return 0;
 	}
 	D_ASSERT(state.executor);
-	SelectionVector result_sel(approved_tuple_count);
+	// Dictionary-level filtering can pass more entries than a vector holds.
+	if (!state.result_scratch || state.result_scratch->owned_data.GetSize() < approved_tuple_count * sizeof(sel_t)) {
+		state.result_scratch = make_buffer<SelectionData>(MaxValue<idx_t>(approved_tuple_count, STANDARD_VECTOR_SIZE));
+	}
+	SelectionVector result_sel(buffer_ptr<SelectionData>(state.result_scratch));
 	if (scan_count > STANDARD_VECTOR_SIZE) {
 		// scan count is > vector size - split up the vector into multiple chunks
 		idx_t offset = 0;
 		idx_t result_offset = 0;
 		idx_t current_sel_offset = 0;
-		SelectionVector current_sel(approved_tuple_count);
+		if (!state.chunk_scratch || state.chunk_scratch->owned_data.GetSize() < approved_tuple_count * sizeof(sel_t)) {
+			state.chunk_scratch =
+			    make_buffer<SelectionData>(MaxValue<idx_t>(approved_tuple_count, STANDARD_VECTOR_SIZE));
+		}
+		SelectionVector current_sel(buffer_ptr<SelectionData>(state.chunk_scratch));
 		while (offset < scan_count) {
 			idx_t chunk_count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, scan_count - offset);
 			idx_t chunk_end = offset + chunk_count;

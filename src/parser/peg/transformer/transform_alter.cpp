@@ -6,9 +6,12 @@
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_database_info.hpp"
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
+#include "duckdb/parser/parsed_data/alter_sequence_info.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
 #include "duckdb/parser/query_node/update_query_node.hpp"
@@ -45,7 +48,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterStatement(PEGTrans
 	const auto follow_ups = add_column.add_column_constraints;
 	const bool materialize_default =
 	    column_entry.HasDefaultValue() && !IsSimpleDefaultValue(column_entry.DefaultValue());
-	if (!follow_ups.add_not_null && !follow_ups.add_unique && !materialize_default) {
+	if (!follow_ups.add_not_null && !follow_ups.add_unique && !follow_ups.add_primary_key && !materialize_default) {
 		return std::move(result);
 	}
 
@@ -55,6 +58,9 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterStatement(PEGTrans
 		}
 		if (follow_ups.add_unique) {
 			throw NotImplementedException("Adding a UNIQUE column with IF NOT EXISTS is not supported");
+		}
+		if (follow_ups.add_primary_key) {
+			throw NotImplementedException("Adding a PRIMARY KEY column with IF NOT EXISTS is not supported");
 		}
 		// IF NOT EXISTS is not supported by the multi-statement rewrite - keep the plain ALTER
 		return std::move(result);
@@ -80,10 +86,10 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterStatement(PEGTrans
 		AddToMultiStatement(multi_statement,
 		                    make_uniq<SetNotNullInfo>(alter_entry_data, vector<Identifier> {column_name}));
 	}
-	if (follow_ups.add_unique) {
+	if (follow_ups.add_unique || follow_ups.add_primary_key) {
 		vector<Identifier> unique_columns;
 		unique_columns.push_back(column_name);
-		auto unique_constraint = make_uniq<UniqueConstraint>(std::move(unique_columns), /*is_primary_key=*/false);
+		auto unique_constraint = make_uniq<UniqueConstraint>(std::move(unique_columns), follow_ups.add_primary_key);
 		AddToMultiStatement(multi_statement,
 		                    make_uniq<AddConstraintInfo>(alter_entry_data, std::move(unique_constraint)));
 	}
@@ -92,7 +98,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterStatement(PEGTrans
 
 unique_ptr<AlterInfo>
 PEGTransformerFactory::TransformAlterTableStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
-                                               unique_ptr<BaseTableRef> base_table_name,
+                                               const bool &has_result, unique_ptr<BaseTableRef> base_table_name,
                                                vector<unique_ptr<AlterTableInfo>> alter_table_options) {
 	if (alter_table_options.size() > 1) {
 		throw ParserException("Only one ALTER command per statement is supported");
@@ -142,9 +148,52 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSchemaStmt(PEGTransfo
 		auto &reset_options = alter_schema_options->Cast<ResetTableOptionsInfo>();
 		return make_uniq<ResetSchemaOptionsInfo>(data, std::move(reset_options.table_options));
 	}
+	case AlterTableType::RENAME_TABLE: {
+		auto &rename = alter_schema_options->Cast<RenameTableInfo>();
+		return make_uniq<RenameSchemaInfo>(data, rename.new_table_name);
+	}
 	default:
 		throw NotImplementedException("Altering schemas is not yet supported");
 	}
+}
+
+// AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransformer &transformer,
+                                                                     const optional<bool> &if_exists,
+                                                                     unique_ptr<BaseTableRef> base_table_name,
+                                                                     unique_ptr<AlterTableInfo> alter_index_alter) {
+	AlterEntryData data(base_table_name->GetQualifiedName(),
+	                    if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION);
+	switch (alter_index_alter->alter_table_type) {
+	case AlterTableType::SET_TABLE_OPTIONS: {
+		auto &set_info = alter_index_alter->Cast<SetTableOptionsInfo>();
+		case_insensitive_map_t<Value> options;
+		for (auto &option : set_info.table_options) {
+			options.emplace(option.first, option.second->Cast<ConstantExpression>().GetLiteral().ToValue());
+		}
+		return make_uniq_base<AlterInfo, SetIndexOptionsInfo>(data, std::move(options));
+	}
+	case AlterTableType::RESET_TABLE_OPTIONS: {
+		auto &reset_info = alter_index_alter->Cast<ResetTableOptionsInfo>();
+		return make_uniq_base<AlterInfo, ResetIndexOptionsInfo>(data, std::move(reset_info.table_options));
+	}
+	case AlterTableType::RENAME_TABLE:
+		return make_uniq_base<AlterInfo, RenameIndexInfo>(data,
+		                                                  alter_index_alter->Cast<RenameTableInfo>().new_table_name);
+	default:
+		throw NotImplementedException("unsupported ALTER INDEX action");
+	}
+}
+
+// AlterFunctionStmt <- 'FUNCTION' IfExists? QualifiedName RenameAlter
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionStmt(PEGTransformer &transformer,
+                                                                        const optional<bool> &if_exists,
+                                                                        const QualifiedName &qualified_name,
+                                                                        unique_ptr<AlterTableInfo> rename_alter) {
+	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
+	auto not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	AlterEntryData data(qualified_name, not_found);
+	return make_uniq<RenameScalarFunctionInfo>(data, rename_info->new_table_name);
 }
 
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSequenceStmt(PEGTransformer &transformer,
@@ -176,32 +225,86 @@ QualifiedName PEGTransformerFactory::TransformQualifiedSequenceName(PEGTransform
 unique_ptr<AlterInfo>
 PEGTransformerFactory::TransformRenameAlterSequenceOptions(PEGTransformer &transformer,
                                                            unique_ptr<AlterTableInfo> rename_alter) {
-	throw NotImplementedException("Renaming sequences is not yet supported");
+	auto &rename = rename_alter->Cast<RenameTableInfo>();
+	return make_uniq<RenameSequenceInfo>(AlterEntryData(), rename.new_table_name);
 }
 
-unique_ptr<AlterInfo>
-PEGTransformerFactory::TransformSetSequenceOption(PEGTransformer &transformer,
-                                                  vector<pair<string, unique_ptr<SequenceOption>>> sequence_option) {
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformSetSequenceOption(
+    PEGTransformer &transformer, vector<pair<string, unique_ptr<SequenceOption>>> alter_sequence_option) {
 	bool has_owned = false;
 	unique_ptr<AlterInfo> owned_info;
-	for (auto &seq_option : sequence_option) {
-		if (seq_option.first == "owned") {
+	unique_ptr<AlterInfo> restart_info;
+	for (auto &seq_option : alter_sequence_option) {
+		if (seq_option.first == "restart") {
+			if (restart_info) {
+				throw ParserException("conflicting or redundant options");
+			}
+			auto restart = unique_ptr_cast<SequenceOption, ValueSequenceOption>(std::move(seq_option.second));
+			restart_info = make_uniq<RestartSequenceInfo>(
+			    AlterEntryData(), restart->value.IsNull() ? optional<int64_t>() : restart->value.GetValue<int64_t>());
+		} else if (seq_option.first == "owned") {
 			if (has_owned) {
 				throw ParserException("Owned by value should be passed at most once");
 			}
 			has_owned = true;
 			auto owned_by = unique_ptr_cast<SequenceOption, QualifiedSequenceOption>(std::move(seq_option.second));
-			auto schema = owned_by->qualified_name.Schema().empty() ? Identifier::DefaultSchema()
-			                                                        : owned_by->qualified_name.Schema();
-			owned_info =
-			    make_uniq<ChangeOwnershipInfo>(CatalogType::SEQUENCE_ENTRY, "", "", "", schema,
-			                                   owned_by->qualified_name.Name(), OnEntryNotFound::THROW_EXCEPTION);
+			auto &owner = owned_by->qualified_name;
+			auto schema =
+			    owner.Name().empty() || !owner.Schema().empty() ? owner.Schema() : Identifier::DefaultSchema();
+			auto ownership = make_uniq<ChangeOwnershipInfo>(CatalogType::SEQUENCE_ENTRY, "", "", "", schema,
+			                                                owner.Name(), OnEntryNotFound::THROW_EXCEPTION);
+			for (auto part : {&owner.Catalog(), &owner.Schema(), &owner.Name()}) {
+				if (!part->empty()) {
+					ownership->owner_path.push_back(*part);
+				}
+			}
+			owned_info = std::move(ownership);
+		} else {
+			throw NotImplementedException("ALTER SEQUENCE option not yet supported");
 		}
+	}
+	if (owned_info && restart_info) {
+		throw NotImplementedException("ALTER SEQUENCE cannot combine OWNED BY and RESTART");
 	}
 	if (owned_info) {
 		return owned_info;
 	}
-	throw NotImplementedException("ALTER SEQUENCE option not yet supported");
+	return restart_info;
+}
+
+pair<string, unique_ptr<SequenceOption>>
+PEGTransformerFactory::TransformSeqRestart(PEGTransformer &transformer,
+                                           optional<unique_ptr<ParsedExpression>> seq_restart_value) {
+	if (!seq_restart_value) {
+		return make_pair("restart", make_uniq<ValueSequenceOption>(SequenceInfo::SEQ_START, Value()));
+	}
+	auto expression = std::move(*seq_restart_value);
+	if (expression->GetExpressionClass() == ExpressionClass::FUNCTION) {
+		auto func_expr = unique_ptr_cast<ParsedExpression, FunctionExpression>(std::move(expression));
+		if (func_expr->FunctionName() != "-" || func_expr->GetArguments().size() != 1 ||
+		    func_expr->GetArguments()[0].GetExpression().GetExpressionClass() != ExpressionClass::CONSTANT) {
+			throw ParserException("Expected constant expression.");
+		}
+		auto &literal = func_expr->GetArguments()[0].GetExpression().Cast<ConstantExpression>().GetLiteral();
+		if (!literal.IsNumeric()) {
+			throw ParserException("Expected constant expression.");
+		}
+		expression = ConstantExpression::FromLiteral(literal.Negate());
+	}
+	if (expression->GetExpressionClass() != ExpressionClass::CONSTANT) {
+		throw ParserException("Expected constant expression.");
+	}
+	auto value = expression->Cast<ConstantExpression>().GetLiteral().ToValue();
+	if (value.IsNull()) {
+		throw ParserException("Expected constant expression.");
+	}
+	return make_pair("restart", make_uniq<ValueSequenceOption>(SequenceInfo::SEQ_START, std::move(value)));
+}
+
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSeqRestartValue(PEGTransformer &transformer,
+                                                                             const bool &has_result,
+                                                                             unique_ptr<ParsedExpression> expression) {
+	return expression;
 }
 
 void PEGTransformerFactory::AddToMultiStatement(const unique_ptr<MultiStatement> &multi_statement,
@@ -286,6 +389,9 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformAddColumn(PEGTransfor
 		if (add_column_entry.add_column_constraints.add_unique) {
 			throw NotImplementedException("Adding UNIQUE constraints to nested fields is not supported");
 		}
+		if (add_column_entry.add_column_constraints.add_primary_key) {
+			throw NotImplementedException("Adding PRIMARY KEY constraints to nested fields is not supported");
+		}
 		if (add_column_entry.compression_type != CompressionType::COMPRESSION_AUTO) {
 			throw NotImplementedException("Adding compression to nested fields is not supported");
 		}
@@ -316,6 +422,9 @@ AddColumnEntry PEGTransformerFactory::TransformAddColumnEntry(
 	}
 	if (column_constraint) {
 		for (auto &constraint : *column_constraint) {
+			if (!constraint.constraint_type_info.name.empty()) {
+				throw ParserException("Named constraints on a column added by ALTER TABLE are not supported yet");
+			}
 			auto constraint_type =
 			    constraint.constraint ? constraint.constraint->type : constraint.constraint_type_info.type;
 			if (constraint.constraint_name == "DefaultValue") {
@@ -325,13 +434,16 @@ AddColumnEntry PEGTransformerFactory::TransformAddColumnEntry(
 				new_column.default_value = std::move(constraint.expression);
 			} else if (constraint_type == ConstraintType::NOT_NULL) {
 				new_column.add_column_constraints.add_not_null = true;
-			} else if (constraint_type == ConstraintType::UNIQUE && constraint.constraint_type_info.is_primary_key) {
-				throw ParserException("Adding columns with PRIMARY KEY constraints is not supported yet");
 			} else if (constraint_type == ConstraintType::UNIQUE &&
-			           constraint.constraint_type_info.check_mode != ConstraintCheckMode::DEFAULT) {
-				throw ParserException("Adding columns with UNIQUE constraints with a check mode is not supported yet");
+			           constraint.constraint_type_info.check_mode == ConstraintCheckMode::DEFAULT) {
+				if (constraint.constraint_type_info.is_primary_key) {
+					new_column.add_column_constraints.add_primary_key = true;
+				} else {
+					new_column.add_column_constraints.add_unique = true;
+				}
 			} else if (constraint_type == ConstraintType::UNIQUE) {
-				new_column.add_column_constraints.add_unique = true;
+				throw ParserException("Adding columns with deferrable %s constraints is not supported yet",
+				                      constraint.constraint_type_info.is_primary_key ? "PRIMARY KEY" : "UNIQUE");
 			} else if (constraint_type == ConstraintType::CHECK) {
 				throw ParserException("Adding columns with CHECK constraints is not supported yet");
 			} else if (constraint_type == ConstraintType::FOREIGN_KEY) {
@@ -363,13 +475,6 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformDropColumn(
 	auto result = make_uniq<RemoveFieldInfo>(AlterEntryData(), nested_column_name->ColumnNames(), if_exists_value,
 	                                         drop_behavior_value);
 	return std::move(result);
-}
-
-unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformDropConstraint(PEGTransformer &transformer,
-                                                                          const optional<bool> &if_exists,
-                                                                          const Identifier &identifier,
-                                                                          const optional<bool> &drop_behavior) {
-	throw NotImplementedException("No support for that ALTER TABLE option yet!");
 }
 
 unique_ptr<AlterTableInfo>
@@ -470,6 +575,22 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformResetPartitionedBy(PE
 unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformAddConstraint(PEGTransformer &transformer,
                                                                          unique_ptr<Constraint> top_level_constraint) {
 	return make_uniq<AddConstraintInfo>(AlterEntryData(), std::move(top_level_constraint));
+}
+
+unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformDropConstraint(PEGTransformer &transformer,
+                                                                          const optional<bool> &if_exists,
+                                                                          const Identifier &identifier,
+                                                                          const optional<bool> &drop_behavior) {
+	bool cascade = drop_behavior.has_value() && *drop_behavior;
+	return make_uniq<DropConstraintInfo>(AlterEntryData(), identifier.GetIdentifierName(), if_exists.has_value(),
+	                                     cascade);
+}
+
+unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformRenameConstraint(PEGTransformer &transformer,
+                                                                            const Identifier &identifier,
+                                                                            const Identifier &identifier_1) {
+	return make_uniq<RenameConstraintInfo>(AlterEntryData(), identifier.GetIdentifierName(),
+	                                       identifier_1.GetIdentifierName());
 }
 
 unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformSetSortedBy(PEGTransformer &transformer,

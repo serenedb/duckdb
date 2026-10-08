@@ -128,8 +128,8 @@ ORDER BY i;
 1	nan
 2	nan
 3	nan
-4	1.0
-5	1.0
+4	1
+5	1
 
 query TT
 SELECT list_mode(values)::VARCHAR, round(list_entropy(values), 6)::VARCHAR
@@ -213,9 +213,6 @@ statement error
 SELECT mode(value ORDER BY value::INTEGER) FILTER (WHERE keep) FROM mode_rewrite_errors;
 ----
 <REGEX>:Conversion Error:.*
-
-statement ok
-PRAGMA disable_verification;
 
 statement ok
 CREATE SEQUENCE mode_rewrite_seq START 1;

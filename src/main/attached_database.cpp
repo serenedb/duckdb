@@ -2,6 +2,7 @@
 #include "duckdb/logging/log_manager.hpp"
 
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/checkpoint_on_detach.hpp"
 #include "duckdb/common/file_system.hpp"
@@ -10,7 +11,6 @@
 #include "duckdb/main/external_resources_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/attach_info.hpp"
-#include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/storage/storage_manager.hpp"
@@ -45,15 +45,14 @@ AttachOptions::AttachOptions(const DBConfigOptions &options)
 }
 
 //! The spellings of the access mode option, and whether `true` means read-only for each.
-static const unordered_map<string, bool> ACCESS_MODE_OPTIONS = {
+static const case_insensitive_map_view_t<bool> ACCESS_MODE_OPTIONS = {
     {"readonly", true}, {"read_only", true}, {"readwrite", false}, {"read_write", false}};
 
-string AttachOptions::OptionSetting(const string &name) {
-	auto lower = StringUtil::Lower(name);
-	if (ACCESS_MODE_OPTIONS.find(lower) != ACCESS_MODE_OPTIONS.end()) {
+string AttachOptions::OptionSetting(std::string_view name) {
+	if (ACCESS_MODE_OPTIONS.contains(name)) {
 		return "access_mode";
 	}
-	return lower;
+	return StringUtil::Lower(name);
 }
 
 AttachOptions::AttachOptions(const unordered_map<string, Value> &attach_options, const AccessMode default_access_mode)
@@ -120,13 +119,13 @@ ValidChecker &ValidChecker::Get(AttachedDatabase &db) {
 AttachedDatabase::AttachedDatabase(DatabaseInstance &db, AttachedDatabaseType type)
     : CatalogEntry(CatalogType::DATABASE_ENTRY,
                    Identifier(type == AttachedDatabaseType::SYSTEM_DATABASE ? SYSTEM_CATALOG : TEMP_CATALOG), 0),
-      db(db), validity(db), type(type), close_lock(make_shared_ptr<mutex>()) {
+      db(db), validity(db, ValidChecker::Scope::DATABASE), type(type), opened_read_only(false),
+      close_lock(make_shared_ptr<mutex>()) {
 	// This database does not have storage, or uses temporary_objects for in-memory storage.
 	D_ASSERT(type == AttachedDatabaseType::TEMP_DATABASE || type == AttachedDatabaseType::SYSTEM_DATABASE);
 	if (type == AttachedDatabaseType::TEMP_DATABASE) {
 		unordered_map<string, Value> options;
 		AttachOptions attach_options(options, AccessMode::READ_WRITE);
-		options["storage_version"] = "latest";
 		storage = make_uniq<SingleFileStorageManager>(*this, string(IN_MEMORY_PATH), attach_options);
 	}
 
@@ -137,13 +136,10 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, AttachedDatabaseType ty
 
 AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, Identifier name_p, string file_path_p,
                                    AttachOptions &options)
-    : CatalogEntry(CatalogType::DATABASE_ENTRY, catalog_p, std::move(name_p)), db(db), validity(db),
+    : CatalogEntry(CatalogType::DATABASE_ENTRY, catalog_p, std::move(name_p)), db(db),
+      validity(db, ValidChecker::Scope::DATABASE), opened_read_only(options.access_mode == AccessMode::READ_ONLY),
       parent_catalog(&catalog_p), close_lock(make_shared_ptr<mutex>()) {
-	if (options.access_mode == AccessMode::READ_ONLY) {
-		type = AttachedDatabaseType::READ_ONLY_DATABASE;
-	} else {
-		type = AttachedDatabaseType::READ_WRITE_DATABASE;
-	}
+	SetAccessMode(options.access_mode);
 	recovery_mode = options.recovery_mode;
 	visibility = options.visibility;
 	ephemeral = options.ephemeral;
@@ -166,13 +162,10 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, Ide
 
 AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, StorageExtension &storage_extension_p,
                                    ClientContext &context, Identifier name_p, AttachInfo &info, AttachOptions &options)
-    : CatalogEntry(CatalogType::DATABASE_ENTRY, catalog_p, std::move(name_p)), db(db), validity(db),
+    : CatalogEntry(CatalogType::DATABASE_ENTRY, catalog_p, std::move(name_p)), db(db),
+      validity(db, ValidChecker::Scope::DATABASE), opened_read_only(options.access_mode == AccessMode::READ_ONLY),
       parent_catalog(&catalog_p), storage_extension(&storage_extension_p), close_lock(make_shared_ptr<mutex>()) {
-	if (options.access_mode == AccessMode::READ_ONLY) {
-		type = AttachedDatabaseType::READ_ONLY_DATABASE;
-	} else {
-		type = AttachedDatabaseType::READ_WRITE_DATABASE;
-	}
+	SetAccessMode(options.access_mode);
 	recovery_mode = options.recovery_mode;
 	visibility = options.visibility;
 	ephemeral = options.ephemeral;
@@ -211,15 +204,15 @@ AttachedDatabase::~AttachedDatabase() {
 }
 
 bool AttachedDatabase::IsSystem() const {
-	D_ASSERT(!storage || type != AttachedDatabaseType::SYSTEM_DATABASE);
-	return type == AttachedDatabaseType::SYSTEM_DATABASE;
+	D_ASSERT(!storage || type.load(std::memory_order_relaxed) != AttachedDatabaseType::SYSTEM_DATABASE);
+	return type.load(std::memory_order_relaxed) == AttachedDatabaseType::SYSTEM_DATABASE;
 }
 
 bool AttachedDatabase::IsTemporary() const {
-	return type == AttachedDatabaseType::TEMP_DATABASE;
+	return type.load(std::memory_order_relaxed) == AttachedDatabaseType::TEMP_DATABASE;
 }
 bool AttachedDatabase::IsReadOnly() const {
-	return type == AttachedDatabaseType::READ_ONLY_DATABASE;
+	return type.load(std::memory_order_relaxed) == AttachedDatabaseType::READ_ONLY_DATABASE;
 }
 
 bool AttachedDatabase::NameIsReserved(const Identifier &name) {
@@ -231,13 +224,6 @@ idx_t AttachedDatabase::GetVacuumRebuildIndexThreshold() const {
 		return vacuum_rebuild_threshold.GetIndex();
 	}
 	return Settings::Get<VacuumRebuildIndexesSetting>(db);
-}
-
-shared_ptr<CompiledGrammar> AttachedDatabase::GetConnectedGrammar(const ClientContext &context) {
-	if (connected_grammar) {
-		return connected_grammar;
-	}
-	return db.GetParserCache().GetPassthroughMatcher(context);
 }
 
 string AttachedDatabase::StoredPath() const {
@@ -299,6 +285,11 @@ shared_ptr<AttachedDatabase> AttachedDatabase::TryGetReference(const weak_ptr<At
 		result.reset();
 	}
 	return result;
+}
+
+bool AttachedDatabase::TryReuse() {
+	lock_guard<mutex> guard(*close_lock);
+	return !is_closing && !is_closed;
 }
 
 void AttachedDatabase::Initialize(optional_ptr<ClientContext> context) {
@@ -367,8 +358,10 @@ void AttachedDatabase::SetInitialDatabase() {
 	is_initial_database = true;
 }
 
-void AttachedDatabase::SetReadOnlyDatabase() {
-	type = AttachedDatabaseType::READ_ONLY_DATABASE;
+void AttachedDatabase::SetAccessMode(AccessMode access_mode) {
+	type.store(access_mode == AccessMode::READ_ONLY ? AttachedDatabaseType::READ_ONLY_DATABASE
+	                                                : AttachedDatabaseType::READ_WRITE_DATABASE,
+	           std::memory_order_relaxed);
 }
 
 void AttachedDatabase::OnDetach(ClientContext &context) {
@@ -401,7 +394,7 @@ void AttachedDatabase::Close(const DatabaseCloseAction action) {
 		auto create_checkpoint = true;
 		if (action == DatabaseCloseAction::TRY_CHECKPOINT && Exception::UncaughtException()) {
 			create_checkpoint = false;
-		} else if (!storage || storage->InMemory() || ValidChecker::IsInvalidated(db) ||
+		} else if (!storage || storage->InMemory() || catalog->IsDropped() || ValidChecker::IsInvalidated(db) ||
 		           ValidChecker::IsInvalidated(*this)) {
 			create_checkpoint = false;
 		}
@@ -442,6 +435,7 @@ void AttachedDatabase::Cleanup() {
 	catalog.reset();
 	storage.reset();
 	stored_database_path.reset();
+	held_until_closed.reset();
 }
 
 } // namespace duckdb

@@ -1,4 +1,6 @@
 #include "duckdb/storage/table/row_group_collection.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 
@@ -12,6 +14,7 @@
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parallel/task_executor.hpp"
+#include "duckdb/planner/constraints/bound_check_constraint.hpp"
 #include "duckdb/planner/constraints/bound_not_null_constraint.hpp"
 #include "duckdb/storage/checkpoint/table_data_writer.hpp"
 #include "duckdb/storage/data_table.hpp"
@@ -34,6 +37,15 @@
 #include "duckdb/storage/buffer_manager.hpp"
 
 namespace duckdb {
+
+static optional_ptr<TableCatalogEntry> VisibleTable(ClientContext &context, DataTableInfo &info) {
+	auto &catalog = info.GetDB().GetCatalog().Cast<DuckCatalog>();
+	auto entry = catalog.GetOidIndex().GetVisible(info.GetTableOid(), catalog.GetCatalogTransaction(context).view);
+	if (!entry || entry->type != CatalogType::TABLE_ENTRY) {
+		return nullptr;
+	}
+	return &entry->Cast<TableCatalogEntry>();
+}
 
 static bool CanRebuildExistingIndexesAfterVacuum(DataTableInfo &info, AttachedDatabase &attached, idx_t total_rows) {
 	auto vacuum_rebuild_threshold = attached.GetVacuumRebuildIndexThreshold();
@@ -285,7 +297,8 @@ void RowGroupCollection::SetRowGroup(int64_t index, shared_ptr<RowGroup> new_row
 }
 
 void RowGroupCollection::Verify() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	idx_t current_total_rows = 0;
 	auto row_groups = GetRowGroups();
 	row_groups->Verify(SegmentTreeVerifyMode::NON_OVERLAPPING);
@@ -1002,7 +1015,7 @@ optional_ptr<SegmentNode<RowGroup>> RowGroupCollection::NextUpdateRowGroup(RowGr
 }
 
 void RowGroupCollection::Update(TransactionData transaction, DuckTableEntry &table_entry, row_t *ids,
-                                const vector<PhysicalIndex> &column_ids, DataChunk &updates) {
+                                std::span<const PhysicalIndex> column_ids, DataChunk &updates) {
 	D_ASSERT(updates.size() >= 1);
 	idx_t pos = 0;
 	auto row_groups = GetRowGroups();
@@ -1029,8 +1042,7 @@ void RowGroupCollection::Update(TransactionData transaction, DuckTableEntry &tab
 void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableIndexList &indexes,
                                            Vector &row_identifiers, idx_t count, IndexRemovalType removal_type,
                                            optional_idx active_checkpoint) {
-	// Collect all Indexed columns on the table.
-	auto indexed_column_id_set = indexes.GetIndexedColumns();
+	auto indexed_column_id_set = indexes.GetRemovalColumns();
 
 	// Sorted so that the fetched columns align with the ascending physical order used when
 	// referencing them into result_chunk below.
@@ -1044,12 +1056,15 @@ void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableInd
 	}
 
 	DataChunk fetch_chunk;
-	fetch_chunk.Initialize(GetAllocator(), column_types);
-
-	ColumnFetchState state;
-	state.fetch_type = FetchType::FORCE_FETCH;
-	TransactionData commit_transaction(MAX_TRANSACTION_ID, VisibilityBound::Before(MAX_COMMIT_ID));
-	Fetch(commit_transaction, fetch_chunk, column_ids, row_identifiers, count, state);
+	const bool fetch_values = !column_ids.empty();
+	if (fetch_values) {
+		fetch_chunk.Initialize(GetAllocator(), column_types);
+		ColumnFetchState state;
+		state.fetch_type = FetchType::FORCE_FETCH;
+		TransactionData commit_transaction(MAX_TRANSACTION_ID, VisibilityBound::Before(MAX_COMMIT_ID));
+		Fetch(commit_transaction, fetch_chunk, column_ids, row_identifiers, count, state);
+	}
+	const idx_t result_count = fetch_values ? fetch_chunk.size() : count;
 
 	// Used for index value removal.
 	// Contains all columns but only initializes indexed ones.
@@ -1068,7 +1083,7 @@ void RowGroupCollection::RemoveFromIndexes(const QueryContext &context, TableInd
 			result_chunk.data[j].Reference(fetch_chunk.data[fetch_idx++]);
 			continue;
 		}
-		result_chunk.data[j].Reference(Value(types[j]), count_t(fetch_chunk.size()));
+		result_chunk.data[j].Reference(Value(types[j]), count_t(result_count));
 	}
 
 	indexes.RemoveFromIndexes(result_chunk, row_identifiers, removal_type, active_checkpoint);
@@ -2292,10 +2307,10 @@ bool RowGroupCollection::ScanColumnSegmentInfo(const QueryContext &context, Colu
 
 bool RowGroupCollection::SupportsPerColumnWrites() {
 	auto version = StorageCompatibility::FromDatabase(GetAttached());
-	if (version.storage_version >= StorageCompatibility::FromString("v2.0.0").storage_version) {
+	if (version.storage_version >= StorageVersion::V2_0_0) {
 		return true;
 	}
-	if (version.storage_version >= StorageCompatibility::FromString("v1.4.0").storage_version) {
+	if (version.storage_version >= StorageVersion::V1_4_0) {
 		return Settings::Get<ForceColumnMetadataReuseSetting>(GetAttached().GetDatabase());
 	}
 	return false;
@@ -2411,6 +2426,51 @@ void RowGroupCollection::VerifyNewConstraint(const QueryContext &context, DuckTr
 		return;
 	}
 
+	if (constraint.type == ConstraintType::CHECK) {
+		// Scan every column so the bound CHECK expression's column references line up with the
+		// chunk, then evaluate it over the existing rows -- the validation SET NOT NULL performs,
+		// generalized to CHECK so ALTER TABLE ... ADD CHECK rejects pre-existing violators.
+		auto &check = constraint.Cast<BoundCheckConstraint>();
+		auto &client = *context.GetClientContext();
+
+		vector<StorageIndex> column_ids;
+		for (idx_t i = 0; i < types.size(); i++) {
+			column_ids.emplace_back(i);
+		}
+		DataChunk scan_chunk;
+		scan_chunk.Initialize(GetAllocator(), types);
+
+		CreateIndexScanState state;
+		state.Initialize(column_ids, nullptr);
+		InitializeScan(context, state.table_state, column_ids, nullptr);
+		InitializeCreateIndexScan(state);
+
+		auto &transaction_manager = DuckTransactionManager::Get(parent.db);
+		TransactionData constraint_visibility(transaction.GetTransactionId(),
+		                                      VisibilityBound::Through(transaction_manager.GetLastCommit()));
+		ScanOptions scan_options(constraint_visibility);
+		scan_options.insert_type = InsertedScanType::ALL_ROWS;
+		scan_options.update_type = UpdateScanType::DISALLOW_UPDATES;
+		ExpressionExecutor executor(client, *check.expression);
+		Vector result(LogicalType::INTEGER);
+		while (true) {
+			scan_chunk.Reset();
+			state.table_state.Scan(scan_options, scan_chunk, state.segment_lock);
+			if (scan_chunk.size() == 0) {
+				break;
+			}
+			executor.ExecuteExpression(scan_chunk, result);
+			for (auto entry : result.Values<int32_t>()) {
+				if (entry.IsValid() && entry.GetValue() == 0) {
+					auto table = VisibleTable(client, *info);
+					throw ConstraintException("CHECK constraint failed on table %s with expression CHECK(%s)",
+					                          table ? table->name : info->GetTableName(), check.expression->ToString());
+				}
+			}
+		}
+		return;
+	}
+
 	// Scan the original table for NULL values.
 	auto &not_null_constraint = constraint.Cast<BoundNotNullConstraint>();
 	vector<LogicalType> scan_types;
@@ -2445,9 +2505,12 @@ void RowGroupCollection::VerifyNewConstraint(const QueryContext &context, DuckTr
 
 		// Verify the NOT NULL constraint.
 		if (VectorOperations::HasNull(scan_chunk.data[0])) {
-			auto name = parent.Columns()[physical_index].GetName();
-			throw ConstraintException("NOT NULL constraint failed: %s.%s", SQLIdentifier(info->GetTableName()),
-			                          SQLIdentifier(name));
+			auto table = VisibleTable(*context.GetClientContext(), *info);
+			auto table_name = table ? table->name : info->GetTableName();
+			auto column_name = table ? table->GetColumns().GetColumn(PhysicalIndex(physical_index)).GetName()
+			                         : parent.Columns()[physical_index].GetName();
+			throw ConstraintException("NOT NULL constraint failed: %s.%s", SQLIdentifier(table_name),
+			                          SQLIdentifier(column_name));
 		}
 	}
 }

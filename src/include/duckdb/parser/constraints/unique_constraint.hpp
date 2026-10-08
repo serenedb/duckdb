@@ -72,6 +72,7 @@ public:
 	bool is_primary_key;
 	//! The declared constraint check mode, or DEFAULT when no modifier was specified.
 	ConstraintCheckMode check_mode;
+	idx_t index_oid = 0;
 };
 
 } // namespace duckdb

@@ -39,6 +39,20 @@ UnboundIndex::~UnboundIndex() {
 	}
 }
 
+void UnboundIndex::RemapColumnIds(const vector<column_t> &new_column_ids) {
+	D_ASSERT(new_column_ids.size() == column_ids.size());
+	for (auto &mapped : mapped_column_ids) {
+		for (idx_t i = 0; i < column_ids.size(); i++) {
+			if (column_ids[i] == mapped.GetPrimaryIndex()) {
+				mapped.SetIndex(new_column_ids[i]);
+				break;
+			}
+		}
+	}
+	create_info->Cast<CreateIndexInfo>().column_ids = new_column_ids;
+	Index::RemapColumnIds(new_column_ids);
+}
+
 void UnboundIndex::ResetStorage() {
 	if (storage_reclaimed) {
 		return;

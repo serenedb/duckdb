@@ -232,7 +232,7 @@ TEST_CASE("Test prepared statements in C API", "[capi]") {
 	status = duckdb_execute_prepared(stmt, &res);
 	REQUIRE(status == DuckDBSuccess);
 	value = duckdb_value_varchar(&res, 0, 0);
-	REQUIRE(string(value) == "3 months");
+	REQUIRE(string(value) == "3 mons");
 	duckdb_free(value);
 	duckdb_destroy_result(&res);
 
@@ -336,7 +336,7 @@ TEST_CASE("Test duckdb_prepared_statement return value APIs", "[capi]") {
 	auto column_name = duckdb_prepared_statement_column_name(stmt, 0);
 	std::string col_name_str = column_name;
 	duckdb_free((void *)column_name);
-	REQUIRE(col_name_str == "CAST($1 AS TEXT)");
+	REQUIRE(col_name_str == "text");
 
 	duckdb_destroy_prepare(&stmt);
 

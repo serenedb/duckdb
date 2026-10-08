@@ -14,8 +14,8 @@ static bool StatementIteratorIsExplainAnalyze(SQLStatement *statement) {
 	return statement->Cast<ExplainStatement>().explain_type == ExplainType::EXPLAIN_ANALYZE;
 }
 
-StatementIterator::StatementIterator(ParseIterator &&parse_iterator)
-    : source(std::move(parse_iterator)), context(source.GetClientContext()) {
+StatementIterator::StatementIterator(ParseIterator &&parse_iterator, bool wrap_multi_p)
+    : source(std::move(parse_iterator)), context(source.GetClientContext()), wrap_multi(wrap_multi_p) {
 }
 
 StatementIterator::~StatementIterator() = default;
@@ -81,7 +81,7 @@ unique_ptr<SQLStatement> StatementIterator::GetStatementInternal(optional_ptr<Cl
 	buffer.push_back(std::move(stmt));
 	// Preprocess the peel into one-or-more engine-facing statements. This runs in Get (not Peek) so it
 	// sees the transaction state left by the previously executed statement.
-	context.PreprocessStatements(buffer, lock);
+	context.PreprocessStatements(buffer, lock, wrap_multi);
 	if (buffer.empty()) {
 		parser_timer.Reset();
 		// Preprocessing swallowed the peel — caller skips with `continue`; the next Get pulls on.
@@ -112,6 +112,10 @@ unique_ptr<SQLStatement> StatementIterator::GetStatementForExecution() {
 
 unique_ptr<SQLStatement> StatementIterator::GetStatementForExecutionWithLock(ClientContextLock &lock) {
 	return GetStatementInternal(&lock, true);
+}
+
+bool StatementIterator::PeelDone() const {
+	return buffer_cursor >= buffer.size();
 }
 
 } // namespace duckdb

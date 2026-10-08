@@ -378,7 +378,7 @@ bool MultiFileReader::ParseCopyOption(const Identifier &key, const vector<Value>
 	string error_message;
 	auto value = values[0].DefaultTryCastAs(LogicalType::BOOLEAN, &error_message);
 	if (!value) {
-		throw InvalidInputException("Unable to cast \"%s\" to BOOLEAN for boolean option \"%s\"", values[0].ToString(),
+		throw InvalidInputException("Unable to cast \"%s\" to BOOLEAN for boolean option %s", values[0].ToString(),
 		                            key);
 	}
 	options.file_row_number = BooleanValue::Get(*value);
@@ -755,8 +755,7 @@ static string GetExtendedMultiFileError(const MultiFileBindData &bind_data, cons
 		    "In file \"%s\" the column %s has type %s, but we are trying to read it as type %s."
 		    "\nThis can happen when reading multiple %s files. The schema information is taken from "
 		    "the first %s file by default. Possible solutions:\n"
-		    "* Enable the union_by_name=True option to combine the schema of all %s files "
-		    "(https://duckdb.org/docs/current/data/multiple_files/combining_schemas)\n"
+		    "* Enable the union_by_name=True option to combine the schema of all %s files\n"
 		    "* Use a COPY statement to automatically derive types from an existing table.",
 		    reader.GetFileName(), local_col.name, source_type, target_type, reader_type, reader_type, reader_type);
 	}
@@ -1222,7 +1221,7 @@ void MultiFileOptions::SetMaximumSampleFiles(const Identifier &key, const Value 
 		throw BinderException("Cannot use NULL as argument to key %s", key);
 	}
 	if (!TrySetMaximumSampleFiles(val)) {
-		throw BinderException("\"%s\" parameter must be positive, or -1 to remove the limit on the number of files "
+		throw BinderException("%s parameter must be positive, or -1 to remove the limit on the number of files "
 		                      "used to determine the schema.",
 		                      key);
 	}

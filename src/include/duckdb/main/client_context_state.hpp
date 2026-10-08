@@ -16,8 +16,10 @@
 #include <mutex>
 
 namespace duckdb {
+class Binder;
 class ClientContext;
 class ErrorData;
+class LogicalOperator;
 class MetaTransaction;
 class PreparedStatementData;
 class SQLStatement;
@@ -47,6 +49,26 @@ public:
 	}
 	virtual void TransactionBegin(MetaTransaction &transaction, ClientContext &context) {
 	}
+	//! Fires before `ClearTransaction()` and the underlying commit/rollback,
+	//! while the transaction is still active. Use this when the hook needs to
+	//! issue catalog/setting operations that require ActiveTransaction (e.g.
+	//! reverting SET LOCAL values for custom-impl settings like search_path).
+	virtual void TransactionPreCommit(MetaTransaction &transaction, ClientContext &context) {
+	}
+	//! Fires inside the engine commit of a single database, on the committing thread while it still holds the commit
+	//! lock, right after this commit's WAL flush marker is written and before the group fsync -- so hooks across the
+	//! database's commits fire in WAL-append order even though the group fsyncs complete out of order. Use this to
+	//! commit dependent state (e.g. an out-of-band search-index leg) in WAL-append order; the dependent state gates
+	//! its own durability on the WAL becoming durable (it is not durable when this fires). wal_generation/
+	//! wal_end_offset identify this commit's exact WAL position, captured under the commit lock.
+	virtual void TransactionPreCheckpoint(AttachedDatabase &db, ClientContext &context, idx_t wal_generation,
+	                                      idx_t wal_end_offset) {
+	}
+	virtual void TransactionPreWalWrite(AttachedDatabase &db, ClientContext &context) {
+	}
+	virtual void TransactionPreRollback(MetaTransaction &transaction, ClientContext &context,
+	                                    optional_ptr<ErrorData> error) {
+	}
 	virtual void TransactionCommit(MetaTransaction &transaction, ClientContext &context) {
 	}
 	virtual void TransactionRollback(MetaTransaction &transaction, ClientContext &context) {
@@ -60,6 +82,8 @@ public:
 	}
 	virtual RebindQueryInfo OnPlanningError(ClientContext &context, SQLStatement &statement, ErrorData &error) {
 		return RebindQueryInfo::DO_NOT_REBIND;
+	}
+	virtual void OnBoundPlan(ClientContext &context, Binder &binder, LogicalOperator &plan) {
 	}
 	virtual RebindQueryInfo OnFinalizePrepare(ClientContext &context, PreparedStatementData &prepared_statement,
 	                                          PreparedStatementMode mode) {
@@ -105,7 +129,7 @@ public:
 
 	template <class T>
 	shared_ptr<T> Get(const string &key) {
-		lock_guard<mutex> l(lock);
+		absl::ReaderMutexLock l(lock);
 		auto lookup = registered_state.find(key);
 		if (lookup == registered_state.end()) {
 			return nullptr;
@@ -124,7 +148,7 @@ public:
 	}
 
 	vector<shared_ptr<ClientContextState>> States() {
-		lock_guard<mutex> l(lock);
+		absl::ReaderMutexLock l(lock);
 		vector<shared_ptr<ClientContextState>> states;
 		for (auto &entry : registered_state) {
 			states.push_back(entry.second);

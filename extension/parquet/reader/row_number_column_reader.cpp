@@ -44,7 +44,8 @@ void RowNumberColumnReader::Filter(ColumnReaderInput &input, Vector &result, con
 	// check the row id stats if this filter has any chance of passing
 
 	auto &num_values = input.num_values;
-	auto prune_result = RowGroup::CheckRowIdFilter(filter, row_group_offset, row_group_offset + num_values);
+	auto prune_result =
+	    RowGroup::CheckRowIdFilter(filter, filter_state, row_group_offset, row_group_offset + num_values);
 	if (prune_result == FilterPropagateResult::FILTER_ALWAYS_FALSE) {
 		// filter is always false - don't read anything
 		approved_tuple_count = 0;

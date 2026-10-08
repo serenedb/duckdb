@@ -95,14 +95,14 @@ v1
 
 # column_name | column_type | null | key | default | extra
 query TTTITI
-SHOW integers
+DESCRIBE integers
 ----
 i	INTEGER	YES	NULL	NULL	NULL
 j	INTEGER	YES	NULL	NULL	NULL
 
 # column_name | column_type | null | key | default | extra
 query TTTITI
-SHOW "select";
+DESCRIBE "select";
 ----
 i	INTEGER	YES	NULL	NULL	NULL
 

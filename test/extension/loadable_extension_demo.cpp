@@ -10,7 +10,6 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/execution/expression_executor_state.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
-#include "duckdb/parser/parser_extension.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
@@ -330,103 +329,6 @@ public:
 			}
 			result.SetValue(i, filler.GetValue(0));
 		}
-	}
-};
-
-//===--------------------------------------------------------------------===//
-// Parser extension
-//===--------------------------------------------------------------------===//
-struct QuackExtensionData : public ParserExtensionParseData {
-	explicit QuackExtensionData(idx_t number_of_quacks) : number_of_quacks(number_of_quacks) {
-	}
-
-	idx_t number_of_quacks;
-
-	duckdb::unique_ptr<ParserExtensionParseData> Copy() const override {
-		return make_uniq<QuackExtensionData>(number_of_quacks);
-	}
-
-	string ToString() const override {
-		vector<string> quacks;
-		for (idx_t i = 0; i < number_of_quacks; i++) {
-			quacks.push_back("QUACK");
-		}
-		return StringUtil::Join(quacks, " ");
-	}
-};
-
-class QuackExtension : public ParserExtension {
-public:
-	QuackExtension() {
-		parse_function = QuackParseFunction;
-		plan_function = QuackPlanFunction;
-		parser_override = QuackParser;
-	}
-
-	static ParserExtensionParseResult QuackParseFunction(ParserExtensionInfo *info, const vector<SimpleToken> &tokens) {
-		// Claim a maximal run of consecutive "quack" identifier tokens (case-insensitive) at the
-		// start of the view. PEG happily parses one or two identifiers (as `SELECT x AS y`), but
-		// three or more in a row without separators is the syntactic hole that invokes this
-		// parse_function; we then greedily consume every leading "quack".
-		idx_t quacks = 0;
-		while (quacks < tokens.size() && StringUtil::CIEquals(tokens[quacks].text, "quack")) {
-			quacks++;
-		}
-		if (quacks == 0) {
-			// Not our input — let the next extension or the original PEG error surface.
-			return ParserExtensionParseResult();
-		}
-		// To be a proper TopLevelStatement (`Statement? (';'+ / EndOfInput)`), the quack run must
-		// be followed by ';' or end-of-input. The tokenizer always appends an END_OF_INPUT
-		// sentinel, so tokens[quacks] is valid here. If a real token (e.g. SELECT) follows without
-		// a separator, decline so the original PEG syntax error surfaces.
-		const auto next_type = tokens[quacks].type;
-		if (next_type != TokenType::TERMINATOR && next_type != TokenType::END_OF_INPUT &&
-		    next_type != TokenType::END_OF_INPUT_AUTOCOMPLETE) {
-			return ParserExtensionParseResult();
-		}
-		// The QUACK row count is the number of quack words.
-		auto result = ParserExtensionParseResult(make_uniq<QuackExtensionData>(quacks));
-		// Consume the terminator token too — whether it's ';' or the end-of-input sentinel — so the
-		// QUACK statement owns its terminator, just like a real TopLevelStatement.
-		result.consumed_tokens = NumericCast<int64_t>(quacks + 1);
-		return result;
-	}
-
-	static ParserExtensionPlanResult QuackPlanFunction(ParserExtensionInfo *info, ClientContext &context,
-	                                                   duckdb::unique_ptr<ParserExtensionParseData> parse_data) {
-		auto &quack_data = parse_data->Cast<QuackExtensionData>();
-
-		ParserExtensionPlanResult result;
-		result.function = QuackFunction();
-		result.parameters.push_back(Value::BIGINT(UnsafeNumericCast<int64_t>(quack_data.number_of_quacks)));
-		result.requires_valid_transaction = false;
-		result.return_type = StatementReturnType::QUERY_RESULT;
-		return result;
-	}
-
-	static ParserOverrideResult QuackParser(ParserExtensionInfo *info, const string &query, ParserOptions &options) {
-		vector<string> queries = StringUtil::Split(query, ";");
-		vector<unique_ptr<SQLStatement>> statements;
-		for (const auto &query_input : queries) {
-			if (StringUtil::CIEquals(query_input, "override")) {
-				auto select_node = make_uniq<SelectNode>();
-				select_node->select_list.push_back(ConstantExpression::String("The DuckDB parser has been overridden"));
-				select_node->from_table = make_uniq<EmptyTableRef>();
-				auto select_statement = make_uniq<SelectStatement>();
-				select_statement->node = std::move(select_node);
-				statements.push_back(std::move(select_statement));
-			}
-			if (StringUtil::CIEquals(query_input, "overri")) {
-				auto exception = ParserException("Parser overridden, query equaled \"overri\" but not \"override\"");
-				return ParserOverrideResult(exception);
-			}
-		}
-		if (statements.empty()) {
-			// Return DISPLAY_ORIGINAL_ERROR so postgres parser + parse_function extensions can handle the query.
-			return ParserOverrideResult();
-		}
-		return ParserOverrideResult(std::move(statements));
 	}
 };
 
@@ -1397,9 +1299,7 @@ DUCKDB_CPP_EXTENSION_ENTRY(loadable_extension_demo, loader) {
 		con.Commit();
 	}
 
-	// add a parser extension
 	auto &config = DBConfig::GetConfig(db);
-	ParserExtension::Register(config, QuackExtension());
 	ExtensionCallback::Register(config, make_shared_ptr<QuackLoadExtension>());
 
 	// add a planner extension that adds an extra column to queries

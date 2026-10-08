@@ -13,6 +13,7 @@
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/unordered_set.hpp"
+#include "duckdb/common/vector.hpp"
 #include "duckdb/common/enums/database_modification_type.hpp"
 
 namespace duckdb {
@@ -59,7 +60,7 @@ enum class StatementType : uint8_t {
 	ENUM_SIZE // This has to stay the last entry of the type!
 };
 
-DUCKDB_API string StatementTypeToString(StatementType type);
+DUCKDB_API std::string_view StatementTypeToString(StatementType type);
 
 enum class StatementReturnType : uint8_t {
 	QUERY_RESULT, // the statement returns a query result (e.g. for display to the user)
@@ -67,10 +68,12 @@ enum class StatementReturnType : uint8_t {
 	NOTHING       // the statement returns nothing
 };
 
-string StatementReturnTypeToString(StatementReturnType type);
+std::string_view StatementReturnTypeToString(StatementReturnType type);
 
 class Catalog;
+class CatalogEntry;
 class ClientContext;
+class ViewCatalogEntry;
 
 //! A struct containing various properties of a SQL statement
 struct StatementProperties {
@@ -97,10 +100,20 @@ struct StatementProperties {
 		DatabaseModificationType modifications;
 	};
 
+	struct ViewScope {
+		const ViewCatalogEntry *view = nullptr;
+		idx_t begin = 0;
+		idx_t end = 0;
+		idx_t resolved_begin = 0;
+		idx_t resolved_end = 0;
+	};
+
 	//! The set of databases this statement will read from
 	identifier_map_t<CatalogIdentity> read_databases;
 	//! The set of databases this statement will modify
 	identifier_map_t<ModificationInfo> modified_databases;
+	vector<ViewScope> view_scopes;
+	vector<const CatalogEntry *> resolved_entries;
 	//! Whether or not the statement requires a valid transaction. Almost all statements require this, with the
 	//! exception of ROLLBACK
 	bool requires_valid_transaction;

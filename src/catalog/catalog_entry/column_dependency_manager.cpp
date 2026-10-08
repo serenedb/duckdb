@@ -65,19 +65,6 @@ void ColumnDependencyManager::AddGeneratedColumn(LogicalIndex index, const vecto
 	}
 }
 
-vector<LogicalIndex> ColumnDependencyManager::RemoveColumn(LogicalIndex index, idx_t column_amount) {
-	// Always add the initial column
-	deleted_columns.insert(index);
-
-	RemoveGeneratedColumn(index);
-	RemoveStandardColumn(index);
-
-	// Clean up the internal list
-	vector<LogicalIndex> new_indices = CleanupInternals(column_amount);
-	D_ASSERT(deleted_columns.empty());
-	return new_indices;
-}
-
 bool ColumnDependencyManager::IsDependencyOf(LogicalIndex gcol, LogicalIndex col) const {
 	auto entry = dependents_map.find(gcol);
 	if (entry == dependents_map.end()) {
@@ -113,109 +100,6 @@ const logical_index_set_t &ColumnDependencyManager::GetDependents(LogicalIndex i
 	auto entry = dependencies_map.find(index);
 	D_ASSERT(entry != dependencies_map.end());
 	return entry->second;
-}
-
-void ColumnDependencyManager::RemoveStandardColumn(LogicalIndex index) {
-	if (!HasDependents(index)) {
-		return;
-	}
-	auto dependents = dependencies_map[index];
-	for (auto &gcol : dependents) {
-		// If index is a direct dependency of gcol, remove it from the list
-		if (direct_dependencies.find(gcol) != direct_dependencies.end()) {
-			direct_dependencies[gcol].erase(index);
-		}
-		RemoveGeneratedColumn(gcol);
-	}
-	// Remove this column from the dependencies map
-	dependencies_map.erase(index);
-}
-
-void ColumnDependencyManager::RemoveGeneratedColumn(LogicalIndex index) {
-	deleted_columns.insert(index);
-	if (!HasDependencies(index)) {
-		return;
-	}
-	auto &dependencies = dependents_map[index];
-	for (auto &col : dependencies) {
-		// Remove this generated column from the list of this column
-		auto &col_dependents = dependencies_map[col];
-		D_ASSERT(col_dependents.count(index));
-		col_dependents.erase(index);
-		// If the resulting list is empty, remove the column from the dependencies map altogether
-		if (col_dependents.empty()) {
-			dependencies_map.erase(col);
-		}
-	}
-	// Remove this column from the dependents_map map
-	dependents_map.erase(index);
-}
-
-void ColumnDependencyManager::AdjustSingle(LogicalIndex idx, idx_t offset) {
-	D_ASSERT(idx.index >= offset);
-	LogicalIndex new_idx = LogicalIndex(idx.index - offset);
-	// Adjust this index in the dependents of this column
-	bool has_dependents = HasDependents(idx);
-	bool has_dependencies = HasDependencies(idx);
-
-	if (has_dependents) {
-		auto &dependents = GetDependents(idx);
-		for (auto &dep : dependents) {
-			auto &dep_dependencies = dependents_map[dep];
-			dep_dependencies.erase(idx);
-			D_ASSERT(!dep_dependencies.count(new_idx));
-			dep_dependencies.insert(new_idx);
-		}
-	}
-	if (has_dependencies) {
-		auto &dependencies = GetDependencies(idx);
-		for (auto &dep : dependencies) {
-			auto &dep_dependents = dependencies_map[dep];
-			dep_dependents.erase(idx);
-			D_ASSERT(!dep_dependents.count(new_idx));
-			dep_dependents.insert(new_idx);
-		}
-	}
-	if (has_dependents) {
-		D_ASSERT(!dependencies_map.count(new_idx));
-		dependencies_map[new_idx] = std::move(dependencies_map[idx]);
-		dependencies_map.erase(idx);
-	}
-	if (has_dependencies) {
-		D_ASSERT(!dependents_map.count(new_idx));
-		dependents_map[new_idx] = std::move(dependents_map[idx]);
-		dependents_map.erase(idx);
-	}
-}
-
-vector<LogicalIndex> ColumnDependencyManager::CleanupInternals(idx_t column_amount) {
-	vector<LogicalIndex> to_adjust;
-	D_ASSERT(!deleted_columns.empty());
-	// Get the lowest index that was deleted
-	vector<LogicalIndex> new_indices(column_amount, LogicalIndex(DConstants::INVALID_INDEX));
-	idx_t threshold = deleted_columns.begin()->index;
-
-	idx_t offset = 0;
-	for (idx_t i = 0; i < column_amount; i++) {
-		auto current_index = LogicalIndex(i);
-		auto new_index = LogicalIndex(i - offset);
-		new_indices[i] = new_index;
-		if (deleted_columns.count(current_index)) {
-			offset++;
-			continue;
-		}
-		if (i > threshold && (HasDependencies(current_index) || HasDependents(current_index))) {
-			to_adjust.push_back(current_index);
-		}
-	}
-
-	// Adjust all indices inside the dependency managers internal mappings
-	for (auto &col : to_adjust) {
-		auto offset = col.index - new_indices[col.index].index;
-		AdjustSingle(col, offset);
-	}
-	deleted_columns.clear();
-	return new_indices;
 }
 
 stack<LogicalIndex> ColumnDependencyManager::GetBindOrder(const ColumnList &columns) {

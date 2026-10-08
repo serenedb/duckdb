@@ -24,7 +24,7 @@ struct ConstraintEntry {
 			return;
 		}
 		auto binder = Binder::CreateBinder(context);
-		bound_constraints = binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
+		bound_constraints = binder->BindConstraints(table);
 	}
 
 	TableCatalogEntry &table;
@@ -94,27 +94,33 @@ static unique_ptr<FunctionData> DuckDBConstraintsBind(ClientContext &context, Ta
 	names.emplace_back("constraint_check_mode");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBConstraintsInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBConstraintsData>();
 
 	// scan all the schemas for tables and collect them
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 
 	for (auto &schema : schemas) {
-		vector<reference<CatalogEntry>> entries;
+		vector<unique_ptr<ConstraintEntry>> entries;
 
-		schema.get().Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			if (entry.type == CatalogType::TABLE_ENTRY) {
-				entries.push_back(entry);
+				entries.push_back(make_uniq<ConstraintEntry>(context, entry.Cast<TableCatalogEntry>()));
 			}
 		});
 
-		sort(entries.begin(), entries.end(), [&](CatalogEntry &x, CatalogEntry &y) { return (x.name < y.name); });
+		sort(entries.begin(), entries.end(),
+		     [&](const unique_ptr<ConstraintEntry> &x, const unique_ptr<ConstraintEntry> &y) {
+			     return x->table.name < y->table.name;
+		     });
 		for (auto &entry : entries) {
-			result->entries.emplace_back(context, entry.get().Cast<TableCatalogEntry>());
+			result->entries.push_back(std::move(*entry));
 		}
 	};
 
@@ -286,10 +292,10 @@ void DuckDBConstraintsFunction(ClientContext &context, TableFunctionInput &data_
 				throw NotImplementedException("Unimplemented constraint for duckdb_constraints");
 			}
 
-			database_name.Append(Value(table.schema.catalog.GetName()));
-			database_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.schema.catalog.GetOid())));
-			schema_name.Append(Value(table.schema.name));
-			schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.schema.oid)));
+			database_name.Append(Value(table.ParentCatalog().GetName()));
+			database_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.ParentCatalog().GetOid())));
+			schema_name.Append(Value(table.ParentSchemaName(CatalogTransaction(table.ParentCatalog(), context))));
+			schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.ParentSchemaOid())));
 			table_name.Append(Value(table.name));
 			table_oid.Append(Value::BIGINT(NumericCast<int64_t>(table.oid)));
 
@@ -347,8 +353,10 @@ void DuckDBConstraintsFunction(ClientContext &context, TableFunctionInput &data_
 }
 
 void DuckDBConstraintsFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("duckdb_constraints", {}, DuckDBConstraintsFunction, DuckDBConstraintsBind,
-	                              DuckDBConstraintsInit));
+	TableFunction fn("duckdb_constraints", {}, DuckDBConstraintsFunction, DuckDBConstraintsBind, DuckDBConstraintsInit);
+	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
+	fn.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

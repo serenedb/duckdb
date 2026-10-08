@@ -84,6 +84,13 @@ public:
 
 	string GetName() const override;
 	InsertionOrderPreservingMap<string> ParamsToString() const override;
+	InsertionOrderPreservingMap<ExplainValue> ParamsToValue() const override;
+
+private:
+	template <class MAP>
+	void AddScanParams(MAP &result) const;
+
+public:
 	//! Returns the underlying table that is being scanned, or nullptr if there is none
 	optional_ptr<TableCatalogEntry> GetTable() const;
 	//! Returns any column to query - preferably the cheapest column
@@ -105,7 +112,7 @@ public:
 	//! Estimate cardinality from the source without using this operator's cached estimate.
 	idx_t EstimateSourceCardinality(ClientContext &context);
 	bool TryGetStorageIndex(const ColumnIndex &column_index, StorageIndex &out_index) const;
-	void SetScanOrder(unique_ptr<RowGroupOrderOptions> options);
+	void SetScanOrder(ClientContext &context, unique_ptr<RowGroupOrderOptions> options);
 	void SetPartitionsToScan(vector<idx_t> partition_indices);
 
 	vector<TableIndex> GetTableIndex() const override;

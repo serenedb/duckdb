@@ -11,8 +11,36 @@
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/parser/column_definition.hpp"
 #include "duckdb/function/built_in_functions.hpp"
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/planner/column_binding.hpp"
+#include "duckdb/planner/expression.hpp"
+
+#include <functional>
 
 namespace duckdb {
+
+//! Bind data for the catalog-enumerating system table functions (duckdb_tables/indexes/databases) carrying
+//! the `include_hidden := true` named parameter, which makes them list HIDDEN attached databases too.
+struct DuckDBSystemIncludeHiddenBindData : public TableFunctionData {
+	bool include_hidden = false;
+	//! The filters of the scan that read database_name and nothing else, evaluated against each database it lists
+	vector<unique_ptr<Expression>> database_filters;
+	ColumnBinding database_column;
+
+	unique_ptr<FunctionData> Copy() const override;
+	bool Equals(const FunctionData &other_p) const override;
+	static bool ReadParameter(const TableFunctionBindInput &input) {
+		auto entry = input.named_parameters.find("include_hidden");
+		if (entry == input.named_parameters.end() || entry->second.IsNull()) {
+			return false;
+		}
+		return BooleanValue::Get(entry->second);
+	}
+	static void PushdownDatabaseFilters(ClientContext &context, LogicalGet &get, FunctionData *bind_data,
+	                                    vector<unique_ptr<Expression>> &filters);
+	//! Whether the database passes the filters on database_name, null when the scan has none
+	std::function<bool(AttachedDatabase &)> DatabaseFilter(ClientContext &context) const;
+};
 
 struct PragmaCollations {
 	static void RegisterFunction(BuiltinFunctions &set);
@@ -81,14 +109,6 @@ struct DuckDBDatabasesFun {
 };
 
 struct DuckDBDependenciesFun {
-	static void RegisterFunction(BuiltinFunctions &set);
-};
-
-struct DuckDBDialectsFun {
-	static void RegisterFunction(BuiltinFunctions &set);
-};
-
-struct DuckDBGrammarExtensionsFun {
 	static void RegisterFunction(BuiltinFunctions &set);
 };
 

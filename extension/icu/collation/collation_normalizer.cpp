@@ -1,11 +1,10 @@
 #include "collation_normalizer.hpp"
 
 #include "collation_data.hpp"
+#include "text_utf8.hpp"
 
 namespace duckdb {
 namespace collation {
-
-static constexpr uint32_t REPLACEMENT_CHARACTER = 0xFFFD;
 
 //! No character below these limits has a combining class or a canonical decomposition,
 //! which the tables are checked against
@@ -30,47 +29,9 @@ uint32_t Normalizer::Decode(const char *data, idx_t size, vector<uint32_t> &resu
 	result.clear();
 	uint32_t flags = 0;
 	auto bytes = reinterpret_cast<const uint8_t *>(data);
-	idx_t pos = 0;
+	size_t pos = 0;
 	while (pos < size) {
-		auto lead = bytes[pos];
-		uint32_t codepoint;
-		idx_t length;
-		if (lead < 0x80) {
-			codepoint = lead;
-			length = 1;
-		} else if ((lead & 0xE0) == 0xC0) {
-			codepoint = lead & 0x1F;
-			length = 2;
-		} else if ((lead & 0xF0) == 0xE0) {
-			codepoint = lead & 0x0F;
-			length = 3;
-		} else if ((lead & 0xF8) == 0xF0) {
-			codepoint = lead & 0x07;
-			length = 4;
-		} else {
-			result.push_back(REPLACEMENT_CHARACTER);
-			pos++;
-			continue;
-		}
-		if (pos + length > size) {
-			result.push_back(REPLACEMENT_CHARACTER);
-			pos++;
-			continue;
-		}
-		bool valid = true;
-		for (idx_t i = 1; i < length; i++) {
-			auto trail = bytes[pos + i];
-			if ((trail & 0xC0) != 0x80) {
-				valid = false;
-				break;
-			}
-			codepoint = (codepoint << 6) | (trail & 0x3F);
-		}
-		if (!valid) {
-			result.push_back(REPLACEMENT_CHARACTER);
-			pos++;
-			continue;
-		}
+		auto codepoint = text::DecodeUtf8(bytes, size, pos);
 		if (codepoint >= 0x80) {
 			// ASCII characters never carry a combining class and never decompose
 			flags |= TEXT_HAS_MARKS;
@@ -79,7 +40,6 @@ uint32_t Normalizer::Decode(const char *data, idx_t size, vector<uint32_t> &resu
 			}
 		}
 		result.push_back(codepoint);
-		pos += length;
 	}
 	return flags;
 }
@@ -159,7 +119,7 @@ bool Normalizer::IsFCD(const vector<uint32_t> &text) {
 	return true;
 }
 
-void Normalizer::DecomposeHangul(vector<uint32_t> &text) {
+void Normalizer::DecomposeHangul(vector<uint32_t> &text, vector<uint32_t> &scratch) {
 	bool has_syllable = false;
 	for (auto codepoint : text) {
 		if (IsHangulSyllable(codepoint)) {
@@ -170,63 +130,61 @@ void Normalizer::DecomposeHangul(vector<uint32_t> &text) {
 	if (!has_syllable) {
 		return;
 	}
-	vector<uint32_t> decomposed;
-	decomposed.reserve(text.size() + 2);
+	scratch.clear();
+	scratch.reserve(text.size() + 2);
 	for (auto codepoint : text) {
 		if (!IsHangulSyllable(codepoint)) {
-			decomposed.push_back(codepoint);
+			scratch.push_back(codepoint);
 			continue;
 		}
 		auto index = codepoint - HANGUL_S_BASE;
-		decomposed.push_back(HANGUL_L_BASE + index / HANGUL_N_COUNT);
-		decomposed.push_back(HANGUL_V_BASE + (index % HANGUL_N_COUNT) / HANGUL_T_COUNT);
+		scratch.push_back(HANGUL_L_BASE + index / HANGUL_N_COUNT);
+		scratch.push_back(HANGUL_V_BASE + (index % HANGUL_N_COUNT) / HANGUL_T_COUNT);
 		auto trailing = index % HANGUL_T_COUNT;
 		if (trailing != 0) {
-			decomposed.push_back(HANGUL_T_BASE + trailing);
+			scratch.push_back(HANGUL_T_BASE + trailing);
 		}
 	}
-	text = std::move(decomposed);
+	text.swap(scratch);
 }
 
-void Normalizer::Decompose(vector<uint32_t> &text) {
-	vector<uint32_t> decomposed;
-	decomposed.reserve(text.size() * 2);
+void Normalizer::Decompose(vector<uint32_t> &text, vector<uint32_t> &scratch) {
+	scratch.clear();
+	scratch.reserve(text.size() * 2);
 	for (auto codepoint : text) {
 		if (codepoint >= HANGUL_S_BASE && codepoint < HANGUL_S_BASE + HANGUL_S_COUNT) {
 			auto index = codepoint - HANGUL_S_BASE;
-			decomposed.push_back(HANGUL_L_BASE + index / HANGUL_N_COUNT);
-			decomposed.push_back(HANGUL_V_BASE + (index % HANGUL_N_COUNT) / HANGUL_T_COUNT);
+			scratch.push_back(HANGUL_L_BASE + index / HANGUL_N_COUNT);
+			scratch.push_back(HANGUL_V_BASE + (index % HANGUL_N_COUNT) / HANGUL_T_COUNT);
 			auto trailing = index % HANGUL_T_COUNT;
 			if (trailing != 0) {
-				decomposed.push_back(HANGUL_T_BASE + trailing);
+				scratch.push_back(HANGUL_T_BASE + trailing);
 			}
 			continue;
 		}
 		uint32_t length;
 		auto decomposition = GetDecomposition(codepoint, length);
 		if (!decomposition) {
-			decomposed.push_back(codepoint);
+			scratch.push_back(codepoint);
 			continue;
 		}
-		for (uint32_t i = 0; i < length; i++) {
-			decomposed.push_back(decomposition[i]);
-		}
+		scratch.insert(scratch.end(), decomposition, decomposition + length);
 	}
+	text.swap(scratch);
 	// put the combining marks in canonical order
-	for (idx_t i = 1; i < decomposed.size(); i++) {
-		auto current = CombiningClass(decomposed[i]);
+	for (idx_t i = 1; i < text.size(); i++) {
+		auto current = CombiningClass(text[i]);
 		if (current == 0) {
 			continue;
 		}
 		for (idx_t j = i; j > 0; j--) {
-			auto previous = CombiningClass(decomposed[j - 1]);
+			auto previous = CombiningClass(text[j - 1]);
 			if (previous == 0 || previous <= current) {
 				break;
 			}
-			std::swap(decomposed[j - 1], decomposed[j]);
+			std::swap(text[j - 1], text[j]);
 		}
 	}
-	text = std::move(decomposed);
 }
 
 } // namespace collation

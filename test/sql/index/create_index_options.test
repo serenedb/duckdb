@@ -74,4 +74,4 @@ CREATE TABLE t3 (a INT) WITH (default = 1);
 statement error
 CREATE VIEW v WITH (default) AS SELECT 1;
 ----
-<REGEX>:.*Parser Error.*Only DEFER_BINDING is currently supported.*
+<REGEX>:.*Parser Error.*Only DEFER_BINDING and SECURITY_INVOKER are currently supported.*

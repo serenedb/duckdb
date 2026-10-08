@@ -135,51 +135,96 @@ BindResult UnnestBinder::Bind(FunctionExpression &function, idx_t depth, bool ro
 		                            "applicable to \"UNNEST\"");
 	}
 
-	idx_t max_depth = 1;
-	bool keep_parent_names = false;
+	// All unnamed args are list args (come first), named args are keyword params
 	auto &args = function.GetArgumentsMutable();
+	idx_t num_list_args = 0;
+	while (num_list_args < args.size() && args[num_list_args].GetName().empty()) {
+		num_list_args++;
+	}
+	if (num_list_args == 0) {
+		return BindResult(BinderException(function, "UNNEST() requires at least one argument"));
+	}
 
-	if (args.size() != 1) {
-		bool supported_argument = false;
-		for (idx_t i = 1; i < args.size(); i++) {
-			if (args[i].GetExpression().HasParameter()) {
-				throw ParameterNotAllowedException("Parameter not allowed in unnest parameter");
+	// Parse keyword arguments (recursive, max_depth, keep_parent_names)
+	bool recursive = false;
+	optional_idx max_depth_opt;
+	bool keep_parent_names = false;
+	for (idx_t i = num_list_args; i < args.size(); i++) {
+		if (args[i].GetExpression().HasParameter()) {
+			throw ParameterNotAllowedException("Parameter not allowed in unnest parameter");
+		}
+		auto alias = StringUtil::Lower(args[i].GetName().GetIdentifierName());
+		auto const_child = expression_binder.BindChild(args[i].GetExpressionMutable(), depth, error);
+		if (error.HasError()) {
+			return BindResult(std::move(error));
+		}
+		auto value = ExpressionExecutor::EvaluateScalar(context, *const_child, true);
+		if (alias == "recursive") {
+			recursive = value.GetValue<bool>();
+		} else if (alias == "max_depth") {
+			max_depth_opt = value.GetValue<uint32_t>();
+			if (max_depth_opt.GetIndex() == 0) {
+				throw BinderException("UNNEST cannot have a max depth of 0");
 			}
-			if (!args[i].GetExpression().IsScalar()) {
-				break;
+		} else if (alias == "keep_parent_names") {
+			keep_parent_names = value.GetValue<bool>();
+		} else {
+			throw BinderException("Unsupported parameter \"%s\" for unnest", alias);
+		}
+	}
+	idx_t max_depth = max_depth_opt.IsValid() ? max_depth_opt.GetIndex()
+	                  : recursive             ? NumericLimits<idx_t>::Maximum()
+	                                          : 1;
+
+	auto outer_unnest_level = unnest_level;
+	// Multi-arg unnest: unnest(arr1, arr2, ...) -> multiple columns (PG-compatible)
+	if (num_list_args > 1) {
+		if (max_depth != 1) {
+			return BindResult(BinderException(function, "recursive unnest is not supported with multiple arguments"));
+		}
+		vector<unique_ptr<Expression>> result_exprs;
+		for (idx_t i = 0; i < num_list_args; i++) {
+			unique_ptr<Expression> bound_child;
+			{
+				UnnestLevelGuard unnest_level_guard(unnest_level);
+				bound_child = expression_binder.BindChild(args[i].GetExpressionMutable(), depth, error);
 			}
-			auto alias = args[i].GetExpression().GetAlias();
-			auto const_child = expression_binder.BindChild(args[i].GetExpressionMutable(), depth, error);
 			if (error.HasError()) {
 				return BindResult(std::move(error));
 			}
-			auto value = ExpressionExecutor::EvaluateScalar(context, *const_child, true);
-			if (alias == "recursive") {
-				auto recursive = value.GetValue<bool>();
-				if (recursive) {
-					max_depth = NumericLimits<idx_t>::Maximum();
-				}
-			} else if (alias == "max_depth") {
-				max_depth = value.GetValue<uint32_t>();
-				if (max_depth == 0) {
-					throw BinderException("UNNEST cannot have a max depth of 0");
-				}
-			} else if (alias == "keep_parent_names") {
-				keep_parent_names = value.GetValue<bool>();
-			} else if (!alias.empty()) {
-				throw BinderException("Unsupported parameter %s for unnest", alias);
-			} else {
+			bound_child = BoundCastExpression::AddArrayCastToList(context, std::move(bound_child));
+			auto &child_type = bound_child->GetReturnType();
+
+			LogicalType return_type;
+			switch (child_type.id()) {
+			case LogicalTypeId::UNKNOWN:
+				throw ParameterNotResolvedException();
+			case LogicalTypeId::LIST:
+				return_type = ListType::GetChildType(child_type);
 				break;
+			case LogicalTypeId::SQLNULL:
+				return_type = child_type;
+				break;
+			default:
+				return BindResult(BinderException(
+				    function, "UNNEST() can only be applied to lists, arrays and NULL, not %s", child_type.ToString()));
 			}
-			supported_argument = true;
+
+			auto unnest_result = make_uniq<BoundUnnestExpression>(return_type);
+			unnest_result->ChildMutable() = std::move(bound_child);
+
+			TableIndex unnest_table_index;
+			ProjectionIndex unnest_column_index;
+			AddUnnestExpression(binder, unnests, outer_unnest_level, std::move(unnest_result), unnest_table_index,
+			                    unnest_column_index);
+			Identifier col_name("unnest" + to_string(i + 1));
+			result_exprs.push_back(make_uniq<BoundColumnRefExpression>(
+			    std::move(col_name), return_type, ColumnBinding(unnest_table_index, unnest_column_index), depth));
 		}
-		if (!supported_argument) {
-			return BindResult(BinderException(
-			    function, "UNNEST - unsupported extra argument, unnest only supports "
-			              "recursive := [true/false], max_depth := # or keep_parent_names := [true/false]"));
-		}
+		return BindResult(make_uniq<BoundExpandedExpression>(std::move(result_exprs)));
 	}
-	auto outer_unnest_level = unnest_level;
+
+	// Single-arg unnest: supports recursive, struct unnest, etc.
 	UnnestLevelGuard unnest_level_guard(unnest_level);
 	auto child = expression_binder.BindChild(args[0].GetExpressionMutable(), depth, error);
 	if (error.HasError()) {

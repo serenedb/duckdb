@@ -1,0 +1,42 @@
+# name: test/sql/peg_parser/nested_reparse.test
+# description: Nesting that alternatives used to re-parse at every level parses in linear time
+# group: [peg_parser]
+
+statement ok
+SET max_expression_depth=1000000;
+
+statement ok
+CREATE TABLE t(i INTEGER);
+
+statement ok
+INSERT INTO t VALUES (1), (2);
+
+statement error
+FROM query(repeat('WITH a AS (', 40) || 'DELETE FROM t RETURNING i' || repeat(') DELETE FROM t RETURNING i', 39) || ') SELECT count(*) FROM a')
+----
+WITH clause containing a data-modifying statement must be at the top level
+
+statement error
+FROM query(repeat('WITH a AS (', 40))
+----
+Parser Error: syntax error at or near "("
+
+query I
+FROM query('SELECT count(*) FROM ' || repeat('t JOIN (SELECT * FROM ', 30) || 't' || repeat(') NEAREST BY DISTANCE t.i', 30))
+----
+2
+
+statement error
+FROM query('SELECT count(*) FROM t JOIN ' || repeat('(t JOIN ', 40))
+----
+Parser Error: syntax error at or near "JOIN"
+
+query I
+FROM query('SELECT count(*) FROM ' || repeat('(', 10000) || 't' || repeat(')', 10000))
+----
+2
+
+statement error
+FROM query('SELECT ' || repeat('(', 10000))
+----
+Parser Error: syntax error at or near "("

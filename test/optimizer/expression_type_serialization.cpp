@@ -51,7 +51,7 @@ static void CheckExpressionTypes(ClientContext &context, const Expression &expre
 	INFO("expression " << expression.ToString());
 	RequireExpressionType(expression, *expression.Copy());
 	for (const auto &compatibility :
-	     {StorageCompatibility::FromIndex(StorageVersion::V1_5_0), StorageCompatibility::Latest()}) {
+	     {StorageCompatibility::FromIndex(StorageVersion::V1_5_0), StorageCompatibility::SereneDBLatest()}) {
 		auto copy = CopyExpression(context, expression, compatibility);
 		RequireExpressionType(expression, *copy);
 	}
@@ -131,7 +131,7 @@ TEST_CASE("Deserialized bind-expression replacements retain result annotations",
 	auto &expression = *planner.plan->expressions[0];
 	REQUIRE(expression.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION);
 	CheckExpressionTypes(*connection.context, expression);
-	auto copy = CopyExpression(*connection.context, expression, StorageCompatibility::Latest());
+	auto copy = CopyExpression(*connection.context, expression, StorageCompatibility::SereneDBLatest());
 	REQUIRE(copy->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT);
 	REQUIRE(copy->Cast<BoundConstantExpression>().GetValue() == Value("A"));
 	parser.statements.clear();
@@ -140,7 +140,7 @@ TEST_CASE("Deserialized bind-expression replacements retain result annotations",
 	cast_planner.CreatePlan(std::move(parser.statements[0]));
 	auto &cast_expression = *cast_planner.plan->expressions[0];
 	CheckExpressionTypes(*connection.context, cast_expression);
-	auto cast_copy = CopyExpression(*connection.context, cast_expression, StorageCompatibility::Latest());
+	auto cast_copy = CopyExpression(*connection.context, cast_expression, StorageCompatibility::SereneDBLatest());
 	REQUIRE(cast_copy->GetExpressionType() == ExpressionType::OPERATOR_CAST);
 
 	connection.Rollback();

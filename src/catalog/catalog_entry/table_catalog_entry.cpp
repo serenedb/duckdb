@@ -1,16 +1,21 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/logical_type_info.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/constraints/list.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/constraints/bound_check_constraint.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
@@ -27,13 +32,39 @@ namespace duckdb {
 
 constexpr const char *TableCatalogEntry::Name;
 
-TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info)
-    : StandardEntry(CatalogType::TABLE_ENTRY, schema, catalog, info.GetTableName()),
-      constraints(std::move(info.constraints)) {
+static void AssignConstraintOids(Catalog &catalog, vector<unique_ptr<Constraint>> &constraints) {
+	auto &manager = catalog.GetDatabase().GetDatabaseManager();
+	const bool assign = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	auto assign_oid = [&](idx_t &oid) {
+		if (oid) {
+			manager.ClaimOid(oid);
+		} else if (assign) {
+			oid = manager.NextOid();
+		}
+	};
+	for (auto &constraint : constraints) {
+		assign_oid(constraint->oid);
+		if (constraint->type == ConstraintType::UNIQUE) {
+			assign_oid(constraint->Cast<UniqueConstraint>().index_oid);
+		}
+	}
+}
+
+TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
+                                     shared_ptr<CatalogSet> inherited_triggers)
+    : StandardEntry(CatalogType::TABLE_ENTRY, schema, catalog, info.GetTableName(), info.oid),
+      constraints(std::move(info.constraints)), triggers(std::move(inherited_triggers)) {
+	if (catalog.IsDuckCatalog()) {
+		if (!triggers) {
+			triggers = make_shared_ptr<CatalogSet>(catalog);
+		}
+		AssignConstraintOids(catalog, constraints);
+	}
 	this->temporary = info.temporary;
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 }
 
 bool TableCatalogEntry::HasGeneratedColumns() const {
@@ -99,7 +130,7 @@ vector<LogicalType> TableCatalogEntry::GetTypes() const {
 unique_ptr<CreateInfo> TableCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateTableInfo>();
 	// carry the full (possibly nested) schema path: [catalog, schema_path..., name]
-	result->SetQualifiedName(schema.GetQualifiedName(name));
+	result->SetQualifiedName(GetQualifiedName(name));
 	result->columns = GetColumns().Copy();
 	result->constraints.reserve(constraints.size());
 	result->dependencies = dependencies;
@@ -242,6 +273,10 @@ DataTable &TableCatalogEntry::GetStorage() {
 }
 // LCOV_EXCL_STOP
 
+DuckTableEntry &TableCatalogEntry::GetStorageTableEntry(ClientContext &context) {
+	return Cast<DuckTableEntry>();
+}
+
 void LogicalUpdate::BindExtraColumns(TableCatalogEntry &table, LogicalGet &get, LogicalProjection &proj,
                                      LogicalUpdate &update, physical_index_set_t &bound_columns,
                                      bool reuse_projected_columns) {
@@ -319,13 +354,8 @@ void TableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, L
 			LogicalUpdate::BindExtraColumns(*this, get, proj, update, check.bound_columns);
 		}
 	}
-	if (update.return_chunk) {
-		LogicalUpdate::BindAllColumns(*this, get, proj, update);
-	}
 	// for index updates we always turn any update into an insert and a delete
 	// we thus need all the columns to be available, hence we check if the update touches any index columns
-	// If the returning keyword is used, we need access to the whole row in case the user requests it.
-	// Therefore switch the update to a delete and insert.
 	update.update_is_del_and_insert = Settings::Get<ForceUpdateToDelAndInsertSetting>(context);
 	TableStorageInfo table_storage_info = GetStorageInfo(context);
 	for (auto index : table_storage_info.index_info) {
@@ -346,7 +376,8 @@ void TableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, L
 		}
 	}
 
-	if (update.update_is_del_and_insert) {
+	if (update.update_is_del_and_insert || update.return_chunk) {
+		update.update_column_count = update.update_is_del_and_insert ? 0 : update.columns.size();
 		// the update updates a column required by an index or requires returning the updated rows,
 		// push projections for all columns
 		LogicalUpdate::BindAllColumns(*this, get, proj, update);
@@ -397,21 +428,96 @@ vector<column_t> TableCatalogEntry::GetRowIdColumns() const {
 }
 
 optional_ptr<CatalogEntry> TableCatalogEntry::CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info) {
-	throw NotImplementedException("Triggers are not supported for this table type");
+	if (!triggers) {
+		throw NotImplementedException("Triggers are not supported for this table type");
+	}
+	auto trigger = make_uniq<TriggerCatalogEntry>(catalog, ParentSchema(transaction), info);
+	auto entry_name = trigger->name;
+	LogicalDependencyList dependencies = trigger->dependencies;
+	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
+		auto old_entry = triggers->GetEntry(transaction, entry_name);
+		if (old_entry) {
+			return nullptr;
+		}
+	} else if (info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		auto old_entry = triggers->GetEntry(transaction, entry_name);
+		if (old_entry) {
+			triggers->DropEntry(transaction, entry_name, false);
+		}
+	}
+	if (!triggers->CreateEntry(transaction, entry_name, std::move(trigger), dependencies)) {
+		throw CatalogException::EntryAlreadyExists(CatalogType::TRIGGER_ENTRY, entry_name);
+	}
+	return triggers->GetEntry(transaction, entry_name);
 }
 
 void TableCatalogEntry::ScanTriggers(CatalogTransaction transaction,
                                      const std::function<void(CatalogEntry &)> &callback) const {
-	// Default: no triggers (non-DuckDB tables do not support triggers)
+	if (triggers) {
+		triggers->Scan(transaction, callback);
+	}
+}
+
+void TableCatalogEntry::ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback) {
+	if (triggers) {
+		triggers->Scan(callback);
+	}
 }
 
 optional_ptr<CatalogEntry> TableCatalogEntry::GetTrigger(CatalogTransaction transaction, const Identifier &name) const {
-	// Default: no triggers (non-DuckDB tables do not support triggers)
-	return nullptr;
+	if (!triggers) {
+		return nullptr;
+	}
+	return triggers->GetEntry(transaction, name);
 }
 
 bool TableCatalogEntry::DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade) {
-	throw NotImplementedException("Triggers are not supported for this table type");
+	if (!triggers) {
+		throw NotImplementedException("Triggers are not supported for this table type");
+	}
+	return triggers->DropEntry(transaction, name, cascade);
+}
+
+void TableCatalogEntry::RenameTriggerColumns(ClientContext &context, const RenameColumnInfo &info) {
+	if (!triggers) {
+		return;
+	}
+	// Update any UPDATE OF triggers whose column list references the renamed column.
+	// Also detect concurrent uncommitted (or recently-committed) triggers that reference the same
+	// column: the snapshot scan cannot see them, so we raise a write-write conflict so the caller
+	// retries after the concurrent transaction completes.
+	auto txn = catalog.GetCatalogTransaction(context);
+	vector<Identifier> triggers_to_update;
+	triggers->ScanWithConflictDetection(
+	    txn,
+	    [&](CatalogEntry &raw_entry) {
+		    auto &trig = raw_entry.Cast<TriggerCatalogEntry>();
+		    for (const auto &col : trig.columns) {
+			    if (col == info.old_name) {
+				    triggers_to_update.push_back(trig.name);
+				    break;
+			    }
+		    }
+	    },
+	    [&](CatalogEntry &concurrent_entry) {
+		    if (concurrent_entry.type != CatalogType::TRIGGER_ENTRY || concurrent_entry.deleted) {
+			    return;
+		    }
+		    auto &trig = concurrent_entry.Cast<TriggerCatalogEntry>();
+		    for (const auto &col : trig.columns) {
+			    if (col == info.old_name) {
+				    throw TransactionException("Catalog write-write conflict on alter with %s: trigger %s "
+				                               "references column %s which is being renamed",
+				                               name, trig.name, info.old_name);
+			    }
+		    }
+	    });
+	// Use a copy of info without new_dependencies so AlterObject does not
+	// replace the trigger's own dependency edges with the table's dep list.
+	auto trigger_alter_info = info.Copy();
+	for (const auto &trigger_name : triggers_to_update) {
+		triggers->AlterEntry(txn, trigger_name, *trigger_alter_info);
+	}
 }
 
 vector<const_reference<TriggerCatalogEntry>> TableCatalogEntry::GetTriggersForEvent(CatalogTransaction transaction,
@@ -441,6 +547,69 @@ vector<const_reference<TriggerCatalogEntry>> TableCatalogEntry::GetTriggersForEv
 		}
 	});
 	return result;
+}
+
+static void RenameExpression(ParsedExpression &root_expr, const RenameColumnInfo &info,
+                             const IdentifierEquality &same) {
+	ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(root_expr, [&](ColumnRefExpression &colref) {
+		if (same(colref.ColumnNames().back(), info.old_name)) {
+			colref.ColumnNamesMutable().back() = info.new_name;
+		}
+	});
+}
+
+void TableCatalogEntry::RenameColumn(ColumnList &columns, vector<unique_ptr<Constraint>> &constraints,
+                                     const RenameColumnInfo &info) {
+	IdentifierEquality same(columns.IsCaseSensitive());
+	ColumnList renamed(false, columns.IsCaseSensitive());
+	for (auto &col : columns.Logical()) {
+		auto copy = col.Copy();
+		if (same(col.Name(), info.old_name)) {
+			copy.SetName(info.new_name);
+		}
+		if (col.Generated()) {
+			RenameExpression(copy.GeneratedExpressionMutable(), info, same);
+		}
+		renamed.AddColumn(std::move(copy));
+	}
+	for (auto &constraint : constraints) {
+		switch (constraint->type) {
+		case ConstraintType::NOT_NULL:
+			break;
+		case ConstraintType::CHECK:
+			RenameExpression(*constraint->Cast<CheckConstraint>().expression, info, same);
+			break;
+		case ConstraintType::UNIQUE:
+			for (auto &column_name : constraint->Cast<UniqueConstraint>().GetColumnNamesMutable()) {
+				if (same(column_name, info.old_name)) {
+					column_name = info.new_name;
+				}
+			}
+			break;
+		case ConstraintType::FOREIGN_KEY: {
+			auto &fk = constraint->Cast<ForeignKeyConstraint>();
+			vector<Identifier> fk_columns = fk.pk_columns;
+			if (fk.info.type == ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
+				fk_columns = fk.fk_columns;
+			} else if (fk.info.type == ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
+				for (idx_t i = 0; i < fk.fk_columns.size(); i++) {
+					fk_columns.push_back(fk.fk_columns[i]);
+				}
+			}
+			for (idx_t i = 0; i < fk_columns.size(); i++) {
+				if (same(fk_columns[i], info.old_name)) {
+					throw CatalogException(
+					    "Cannot rename column %s because this is involved in the foreign key constraint",
+					    info.old_name);
+				}
+			}
+			break;
+		}
+		default:
+			throw InternalException("Unsupported constraint for entry!");
+		}
+	}
+	columns = std::move(renamed);
 }
 
 } // namespace duckdb

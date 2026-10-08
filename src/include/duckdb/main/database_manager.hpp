@@ -16,6 +16,9 @@
 #include "duckdb/main/database_file_path_manager.hpp"
 #include "duckdb/common/checked_integer.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
+#include "duckdb/common/map.hpp"
+
+#include <functional>
 
 namespace duckdb {
 class AttachedDatabase;
@@ -36,6 +39,8 @@ class DatabaseManager {
 public:
 	explicit DatabaseManager(DatabaseInstance &db);
 	~DatabaseManager();
+
+	static constexpr idx_t FIRST_OID = 65536;
 
 public:
 	static DatabaseManager &Get(DatabaseInstance &db);
@@ -125,6 +130,17 @@ public:
 	idx_t NextOid() {
 		return next_oid++;
 	}
+	idx_t ClaimOid(idx_t oid) {
+		for (auto current = next_oid.load(); current <= oid;) {
+			if (next_oid.compare_exchange_weak(current, oid + 1)) {
+				break;
+			}
+		}
+		return oid;
+	}
+	void CommitPrepared(const hugeint_t &txid, vector<pair<idx_t, idx_t>> participants);
+	bool IsPreparedCommitted(const hugeint_t &txid);
+	void RetainPrepared(const std::function<bool(const hugeint_t &, const vector<pair<idx_t, idx_t>> &)> &keep);
 	bool HasAttachedDatabase() {
 		lock_guard<mutex> guard(databases_lock);
 		return !databases.empty();
@@ -135,8 +151,11 @@ public:
 	shared_ptr<AttachedDatabase> GetDatabaseInternal(const lock_guard<mutex> &, const Identifier &name);
 
 private:
-	optional_ptr<AttachedDatabase> FinalizeAttach(ClientContext &context, AttachInfo &info,
-	                                              shared_ptr<AttachedDatabase> database);
+	//! Register a database under `name`, renaming it to that name once it is claimed. Returns the database
+	//! that owns the name, which is a different one if IF NOT EXISTS lost a race for it
+	shared_ptr<AttachedDatabase> FinalizeAttach(ClientContext &context, AttachInfo &info,
+	                                            shared_ptr<AttachedDatabase> database, const Identifier &name);
+	shared_ptr<AttachedDatabase> ReattachDatabase(ClientContext &context, AttachInfo &info, AttachOptions &options);
 
 private:
 	DatabaseInstance &db;
@@ -150,6 +169,8 @@ private:
 	Identifier default_database;
 	//! The next object id handed out by the NextOid method
 	atomic<idx_t> next_oid;
+	mutex committed_prepared_lock;
+	map<hugeint_t, vector<pair<idx_t, idx_t>>> committed_prepared;
 	//! The current query number
 	atomic<transaction_t> current_query_number;
 	//! The current transaction number

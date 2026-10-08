@@ -8,7 +8,9 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/common/enums/wal_type.hpp"
@@ -16,7 +18,7 @@
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/storage/block.hpp"
 
-#include <condition_variable>
+#include <absl/functional/function_ref.h>
 
 namespace duckdb {
 
@@ -62,8 +64,11 @@ public:
 	const string &GetPath() const {
 		return wal_path;
 	}
+	idx_t GetCheckpointIteration();
 	//! Gets the total bytes written to the WAL since startup
 	idx_t GetTotalWritten() const;
+	idx_t GetFlushedOffset();
+	idx_t GetDurableOffset();
 
 	//! A WAL is initialized, if a writer to a file exists.
 	bool Initialized() const;
@@ -92,7 +97,7 @@ public:
 	void WriteCreateTableMacro(const TableMacroCatalogEntry &entry);
 	void WriteDropTableMacro(const TableMacroCatalogEntry &entry);
 
-	void WriteCreateIndex(const IndexCatalogEntry &entry);
+	void WriteCreateIndex(const IndexCatalogEntry &entry, bool with_index_storage = true);
 	void WriteDropIndex(const IndexCatalogEntry &entry);
 
 	void WriteCreateType(const TypeCatalogEntry &entry);
@@ -100,11 +105,26 @@ public:
 
 	void WriteCreateTrigger(const TriggerCatalogEntry &entry);
 	void WriteDropTrigger(const TriggerCatalogEntry &entry);
+
+	void WriteCreateTokenizer(const StandardEntry &entry);
+	void WriteDropTokenizer(const StandardEntry &entry);
+
+	void WriteCreateRole(const InCatalogEntry &entry);
+	void WriteDropRole(const InCatalogEntry &entry);
+
+	void WriteCreateDatabase(const InCatalogEntry &entry);
+	void WriteDropDatabase(const InCatalogEntry &entry);
+
+	void WriteCreateForeignServer(const InCatalogEntry &entry);
+	void WriteDropForeignServer(const InCatalogEntry &entry);
 	//! Sets the table used for subsequent insert/delete/update commands. The qualified name holds the (possibly
 	//! nested) schema path of the table followed by the table name.
-	void WriteSetTable(const QualifiedName &table);
+	void WriteSetTable(const QualifiedName &table, idx_t table_oid);
+	void WriteSetTable(const TableCatalogEntry &table);
+	void WriteUseCatalog(idx_t catalog_oid);
+	void WriteCommitPrepared(const hugeint_t &txid, const vector<pair<idx_t, idx_t>> &participants);
 
-	void WriteAlter(CatalogEntry &entry, const AlterInfo &info);
+	void WriteAlter(CatalogEntry &entry, const AlterInfo &info, bool with_index_storage = true);
 
 	void WriteInsert(DataChunk &chunk);
 	void WriteRowGroupData(const PersistentCollectionData &data);
@@ -126,9 +146,10 @@ public:
 	void Flush();
 	//! Write a WAL_FLUSH marker and push the buffer to the OS without syncing it. Returns the
 	//! offset covering the marker, to be passed to SyncUpTo. Caller must hold the WAL lock
-	idx_t FlushMarker();
+	idx_t FlushMarker(optional_ptr<const hugeint_t> prepared_txid = nullptr);
 	//! Block until the WAL is durable up to the given offset
 	void SyncUpTo(idx_t offset);
+	void SyncUpTo(idx_t offset, absl::FunctionRef<void(idx_t)> on_synced);
 	//! Increment the WAL entry count, which is used for the auto-checkpoint threshold.
 	void IncrementWALEntriesCount();
 	void WriteCheckpoint(MetaBlockPointer meta_block);
@@ -141,19 +162,19 @@ protected:
 	atomic<WALInitState> init_state;
 	optional_idx checkpoint_iteration;
 
-	//! Shared-sync state (guarded by sync_lock, which is independent of the WAL lock)
-	mutex sync_lock;
-	std::condition_variable sync_cv;
 	//! Sync offsets are logical (BufferedFileWriter::GetTotalWritten), not file positions: a
 	//! truncation rewinds the file, so a file position can be reused but a logical one cannot
 	//! The WAL is durable up to this logical offset
-	idx_t durable_offset = 0;
+	atomic<idx_t> durable_offset {0};
 	//! The highest logical offset for which a sync has been requested
-	idx_t requested_sync_offset = 0;
-	//! Whether a sync is in flight; only one runs at a time
-	bool sync_in_flight = false;
+	atomic<idx_t> requested_sync_offset {0};
+	atomic<idx_t> syncs_in_flight {0};
+	atomic<idx_t> sync_lanes {1};
+	atomic<idx_t> syncing_offset {0};
+	atomic<int32_t> lane_epoch {0};
+	atomic<int32_t> durable_epoch {0};
 	//! Set when a sync has failed; every further sync of this WAL fails
-	bool sync_failed = false;
+	atomic<bool> sync_failed {false};
 };
 
 } // namespace duckdb

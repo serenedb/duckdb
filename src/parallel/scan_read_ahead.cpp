@@ -89,18 +89,11 @@ private:
 	shared_ptr<ReadAheadJobCompletion> completion;
 };
 
-//! Async task that opens one file ahead of decoding and releases the pending-open count when destroyed
+//! Async task that opens one file ahead of decoding
 class FileOpenTask : public BaseExecutorTask {
 public:
-	FileOpenTask(TaskExecutor &executor, shared_ptr<atomic<idx_t>> pending_opens_p, std::function<void()> open_fn_p,
-	             std::function<void()> cancel_fn_p)
-	    : BaseExecutorTask(executor), pending_opens(std::move(pending_opens_p)), open_fn(std::move(open_fn_p)),
-	      cancel_fn(std::move(cancel_fn_p)) {
-		++*pending_opens;
-	}
-	~FileOpenTask() override {
-		// the executor counts the task as finished before it is destroyed, the read-ahead may be gone by now
-		--*pending_opens;
+	FileOpenTask(TaskExecutor &executor, std::function<void()> open_fn_p, std::function<void()> cancel_fn_p)
+	    : BaseExecutorTask(executor), open_fn(std::move(open_fn_p)), cancel_fn(std::move(cancel_fn_p)) {
 	}
 
 	void ExecuteTask() override {
@@ -113,7 +106,6 @@ public:
 	}
 
 private:
-	shared_ptr<atomic<idx_t>> pending_opens;
 	std::function<void()> open_fn;
 	std::function<void()> cancel_fn;
 };
@@ -127,7 +119,6 @@ ScanReadAhead::ScanReadAhead(ClientContext &context, idx_t read_ahead_depth_p,
                                   memory_governor ? 0 : read_ahead_depth)) {
 	D_ASSERT(read_ahead_depth_p > 0);
 	backlog_budget = memory_governor ? memory_governor->BackpressureBudget() : NumericLimits<idx_t>::Maximum();
-	pending_opens = make_shared_ptr<atomic<idx_t>>(0);
 	executor = make_shared_ptr<TaskExecutor>(context, TaskSchedulerType::ASYNC);
 }
 
@@ -303,12 +294,11 @@ void ScanReadAhead::PushError(ErrorData error) {
 }
 
 void ScanReadAhead::ScheduleFileOpen(std::function<void()> open_fn, std::function<void()> cancel_fn) {
-	// the task holds the count from construction to destruction, so it stays balanced even if scheduling throws
-	executor->ScheduleTask(make_uniq<FileOpenTask>(*executor, pending_opens, std::move(open_fn), std::move(cancel_fn)));
+	executor->ScheduleTask(make_uniq<FileOpenTask>(*executor, std::move(open_fn), std::move(cancel_fn)));
 }
 
-bool ScanReadAhead::CanScheduleOpen() const {
-	return pending_opens->load() < open_window;
+bool ScanReadAhead::CanScheduleOpen(idx_t files_open_ahead) const {
+	return files_open_ahead < open_window;
 }
 
 bool ScanReadAhead::TryRunPendingTask() {

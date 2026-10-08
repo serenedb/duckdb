@@ -30,8 +30,17 @@ struct Max {
 	}
 };
 
+#if defined(__clang__)
+#if __has_builtin(__builtin_elementwise_maximum)
+#define DUCKDB_NATIVE_FLOAT_MINMAX
+#endif
+#endif
+
 template <class T>
 inline T MinFloatingPoint(T left, T right) {
+#ifdef DUCKDB_NATIVE_FLOAT_MINMAX
+	return std::fmin(left, right);
+#else
 	if (std::isnan(left)) {
 		return right;
 	}
@@ -39,17 +48,22 @@ inline T MinFloatingPoint(T left, T right) {
 		return left;
 	}
 	return right > left ? left : right;
+#endif
 }
 
 template <class T>
 inline T MaxFloatingPoint(T left, T right) {
-	if (std::isnan(right)) {
-		return right;
-	}
+#ifdef DUCKDB_NATIVE_FLOAT_MINMAX
+	return __builtin_elementwise_maximum(left, right);
+#else
 	if (std::isnan(left)) {
 		return left;
 	}
-	return left > right ? left : right;
+	if (std::isnan(right)) {
+		return right;
+	}
+	return right < left ? left : right;
+#endif
 }
 
 template <>

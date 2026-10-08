@@ -15,6 +15,7 @@ struct RewriteFrame {
 	reference<unique_ptr<Expression>> expr;
 	bool is_root;
 	bool children_visited;
+	bool frozen = false;
 };
 
 static unique_ptr<Expression> ApplyRule(LogicalOperator &op, const vector<reference<Rule>> &rules,
@@ -54,7 +55,17 @@ static void CollectChildren(Expression &expr, vector<reference<unique_ptr<Expres
 	ExpressionIterator::EnumerateChildren(expr, [&](unique_ptr<Expression> &child) { children.push_back(child); });
 }
 
+static bool FreezesChildren(const vector<rewrite_barrier_t> &barriers, const Expression &parent, bool parent_frozen) {
+	for (auto barrier : barriers) {
+		if (barrier(parent, parent_frozen)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const vector<reference<Rule>> &rules,
+                                                      const vector<rewrite_barrier_t> &barriers,
                                                       unique_ptr<Expression> expr, bool &changes_made, bool is_root) {
 	vector<RewriteFrame> stack;
 	vector<reference<unique_ptr<Expression>>> children;
@@ -68,9 +79,14 @@ unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const
 			frame.children_visited = true;
 			// Rewrite the subtree bottom-up so parent rules see already-simplified children.
 			CollectChildren(*current_expr, children);
+			const bool children_frozen = FreezesChildren(barriers, *current_expr, frame.frozen);
 			for (idx_t i = children.size(); i > 0; i--) {
-				stack.push_back({children[i - 1], false, false});
+				stack.push_back({children[i - 1], false, false, children_frozen});
 			}
+			continue;
+		}
+		if (frame.frozen) {
+			stack.pop_back();
 			continue;
 		}
 		bool node_made_change = false;
@@ -107,6 +123,12 @@ void ExpressionRewriter::VisitOperator(LogicalOperator &op) {
 	for (auto &rule : rules) {
 		to_apply_rules.push_back(*rule);
 	}
+	to_apply_barriers.clear();
+	for (auto &extension : OptimizerExtension::Iterate(context)) {
+		if (extension.rewrite_barrier) {
+			to_apply_barriers.push_back(extension.rewrite_barrier);
+		}
+	}
 
 	if (op.type == LogicalOperatorType::LOGICAL_FILTER) {
 		// For FILTER we want to ensure we always visit the split predicates
@@ -126,7 +148,8 @@ void ExpressionRewriter::VisitOperator(LogicalOperator &op) {
 
 void ExpressionRewriter::VisitExpression(unique_ptr<Expression> *expression) {
 	bool changes_made = false;
-	*expression = ExpressionRewriter::ApplyRules(*op, to_apply_rules, std::move(*expression), changes_made, true);
+	*expression = ExpressionRewriter::ApplyRules(*op, to_apply_rules, to_apply_barriers, std::move(*expression),
+	                                             changes_made, true);
 }
 
 ClientContext &Rule::GetContext() const {

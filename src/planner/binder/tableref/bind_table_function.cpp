@@ -1,4 +1,5 @@
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/function/builtin_function_lookup.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -7,6 +8,8 @@
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
 #include "duckdb/parser/tableref/emptytableref.hpp"
+#include "duckdb/parser/statement/select_statement.hpp"
+#include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression_binder/table_function_binder.hpp"
@@ -55,20 +58,20 @@ static TableFunctionBindType GetTableFunctionBindType(TableFunctionCatalogEntry 
 		} else if (function.function || function.bind_replace || function.bind_operator) {
 			has_standard_table_function = true;
 		} else {
-			throw InternalException("Function \"%s\" has neither in_out_function nor function defined",
+			throw InternalException("Function %s has neither in_out_function nor function defined",
 			                        table_function.name);
 		}
 	}
 	if (has_table_parameter) {
 		if (table_function.functions.Size() != 1) {
 			throw InternalException(
-			    "Function \"%s\" has a TABLE parameter, and multiple function overloads - this is not supported",
+			    "Function %s has a TABLE parameter, and multiple function overloads - this is not supported",
 			    table_function.name);
 		}
 		return TableFunctionBindType::TABLE_PARAMETER_FUNCTION;
 	}
 	if (has_in_out_function && has_standard_table_function) {
-		throw InternalException("Function \"%s\" is both an in_out_function and a table function", table_function.name);
+		throw InternalException("Function %s is both an in_out_function and a table function", table_function.name);
 	}
 	return has_in_out_function ? TableFunctionBindType::TABLE_IN_OUT_FUNCTION
 	                           : TableFunctionBindType::STANDARD_TABLE_FUNCTION;
@@ -244,14 +247,13 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 				}
 				new_plan->ResolveOperatorTypes();
 				if (new_plan->types.size() != return_names.size()) {
-					throw InternalException("Failed to bind \"%s\": return_types/names must have same size",
+					throw InternalException("Failed to bind %s: return_types/names must have same size",
 					                        table_function.GetName());
 				}
 				for (auto &binding : new_plan->GetColumnBindings()) {
 					if (binding.table_index != bind_index) {
-						throw InternalException(
-						    "Failed to bind \"%s\": root bind index must be the passed in bind index",
-						    table_function.GetName());
+						throw InternalException("Failed to bind %s: root bind index must be the passed in bind index",
+						                        table_function.GetName());
 					}
 				}
 				auto setof_column_name = ApplyPostgresSetofAliasCompatibility(table_function, ref, return_names);
@@ -277,7 +279,7 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 			}
 		}
 		if (!table_function.bind) {
-			throw BinderException("Failed to bind \"%s\": nullptr returned from bind_replace without bind function",
+			throw BinderException("Failed to bind %s: nullptr returned from bind_replace without bind function",
 			                      table_function.GetName());
 		}
 		bind_data = table_function.bind(context, bind_input, return_types, return_names);
@@ -303,18 +305,17 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 			}
 		}
 	} else {
-		throw InvalidInputException("Cannot call function \"%s\" directly - it has no bind function",
+		throw InvalidInputException("Cannot call function %s directly - it has no bind function",
 		                            table_function.GetName());
 	}
 	if (bind_data && !bind_data->SupportStatementCache()) {
 		SetAlwaysRequireRebind();
 	}
 	if (return_types.size() != return_names.size()) {
-		throw InternalException("Failed to bind \"%s\": return_types/names must have same size",
-		                        table_function.GetName());
+		throw InternalException("Failed to bind %s: return_types/names must have same size", table_function.GetName());
 	}
 	if (return_types.empty()) {
-		throw InternalException("Failed to bind \"%s\": Table function must return at least one column",
+		throw InternalException("Failed to bind %s: Table function must return at least one column",
 		                        table_function.GetName());
 	}
 	auto setof_column_name = ApplyPostgresSetofAliasCompatibility(table_function, ref, return_names);
@@ -415,11 +416,80 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	EntryLookupInfo table_function_lookup(CatalogType::TABLE_FUNCTION_ENTRY, QualifiedName(fexpr.FunctionName()),
 	                                      error_context);
 	auto bound_name = BindTableName(fexpr.GetQualifiedName());
-	auto &func_catalog =
-	    *GetCatalogEntry(EntryLookupInfo(table_function_lookup, bound_name), OnEntryNotFound::THROW_EXCEPTION);
+	auto func_catalog_ptr =
+	    GetCatalogEntry(EntryLookupInfo(table_function_lookup, bound_name), OnEntryNotFound::RETURN_NULL);
+
+	// DuckDB's typed catalog lookup can return a MACRO_ENTRY even when asked
+	// for TABLE_FUNCTION_ENTRY (internal fallback). If we found a MACRO_ENTRY
+	// or SCALAR_FUNCTION_ENTRY here, or need to find a scalar macro, normalize
+	// dispatch:
+	// - SCALAR_FUNCTION_ENTRY: wrap as `(SELECT f())` scalar subquery.
+	// - MACRO_ENTRY (scalar macro, possibly mixed with table overloads):
+	//   dispatch via BindTableMacro which resolves the right overload and
+	//   synthesizes a query node from either a SCALAR_MACRO or TABLE_MACRO
+	//   (see bind_table_macro_node.cpp).
+	const bool need_scalar_wrap = !func_catalog_ptr || (func_catalog_ptr->type != CatalogType::TABLE_FUNCTION_ENTRY &&
+	                                                    func_catalog_ptr->type != CatalogType::TABLE_MACRO_ENTRY &&
+	                                                    func_catalog_ptr->type != CatalogType::MACRO_ENTRY);
+	if (need_scalar_wrap) {
+		if (!func_catalog_ptr) {
+			EntryLookupInfo scalar_function_lookup(CatalogType::SCALAR_FUNCTION_ENTRY, bound_name, error_context);
+			func_catalog_ptr = GetCatalogEntry(scalar_function_lookup, OnEntryNotFound::RETURN_NULL);
+			if (!func_catalog_ptr) {
+				EntryLookupInfo scalar_macro_lookup(CatalogType::MACRO_ENTRY, bound_name, error_context);
+				func_catalog_ptr = GetCatalogEntry(scalar_macro_lookup, OnEntryNotFound::RETURN_NULL);
+			}
+		}
+		if (func_catalog_ptr && func_catalog_ptr->type != CatalogType::MACRO_ENTRY) {
+			auto select = make_uniq<SelectNode>();
+			select->select_list.push_back(ref.function->Copy());
+			select->from_table = make_uniq<EmptyTableRef>();
+			auto subquery = make_uniq<SelectStatement>();
+			subquery->node = std::move(select);
+			SubqueryRef subquery_ref(std::move(subquery), ref.alias.empty() ? fexpr.FunctionName() : ref.alias);
+			subquery_ref.query_location = ref.query_location;
+			return Bind(subquery_ref);
+		}
+		if (!func_catalog_ptr) {
+			func_catalog_ptr =
+			    GetCatalogEntry(EntryLookupInfo(table_function_lookup, bound_name), OnEntryNotFound::THROW_EXCEPTION);
+		}
+	}
+	auto &func_catalog = *func_catalog_ptr;
+	if (func_catalog.type == CatalogType::MACRO_ENTRY) {
+		auto &macro_func = func_catalog.Cast<MacroCatalogEntry>();
+		if (macro_func.is_procedure && !allow_procedure_call) {
+			throw BinderException("%s() is a procedure\nHINT: To call a procedure, use CALL.",
+			                      fexpr.FunctionName().GetIdentifierName());
+		}
+		auto query_node = BindTableMacro(fexpr, macro_func, 0);
+		D_ASSERT(query_node);
+
+		auto binder_child = Binder::CreateBinder(context, this);
+		binder_child->SetCanContainNulls(true);
+		binder_child->alias = ref.alias.empty() ? "unnamed_query" : ref.alias;
+		BoundStatement query;
+		try {
+			query = binder_child->BindNode(*query_node);
+		} catch (std::exception &ex) {
+			ErrorData error(ex);
+			error.AddQueryLocation(ref);
+			error.Throw();
+		}
+		auto bind_index = query.plan->GetRootIndex();
+		string alias =
+		    (ref.alias.empty() ? "unnamed_query" + to_string(bind_index.index) : ref.alias.GetIdentifierName());
+		bind_context.AddSubquery(bind_index, Identifier(alias), ref, query);
+		MoveCorrelatedExpressions(*binder_child);
+		return query;
+	}
 
 	if (func_catalog.type == CatalogType::TABLE_MACRO_ENTRY) {
 		auto &macro_func = func_catalog.Cast<TableMacroCatalogEntry>();
+		if (macro_func.is_procedure && !allow_procedure_call) {
+			throw BinderException("%s() is a procedure\nHINT: To call a procedure, use CALL.",
+			                      fexpr.FunctionName().GetIdentifierName());
+		}
 		auto query_node = BindTableMacro(fexpr, macro_func, 0);
 		D_ASSERT(query_node);
 

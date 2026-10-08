@@ -44,6 +44,8 @@ BoundStatement Binder::BindNode(RecursiveCTENode &statement) {
 	for (idx_t i = 0; i < statement.aliases.size() && i < result.names.size(); i++) {
 		result.names[i] = statement.aliases[i];
 	}
+	// the names become a binding, which requires them to be unique
+	QueryResult::DeduplicateColumns(result.names);
 
 	// This allows the right side to reference the CTE recursively
 	bind_context.AddGenericBinding(setop_index, statement.ctename, result.names, result.types);
@@ -133,7 +135,7 @@ BoundStatement Binder::BindNode(RecursiveCTENode &statement) {
 				auto names_iter = find(result.names.begin(), result.names.end(), func_expr.GetAlias());
 				if (names_iter == result.names.end()) {
 					throw BinderException(expr->GetQueryLocation(),
-					                      "Could not find column with name '%s' to bind aggregate to.",
+					                      "Could not find column with name %s to bind aggregate to.",
 					                      func_expr.GetAlias());
 				}
 				aggregate_idx = ProjectionIndex(NumericCast<idx_t>(std::distance(result.names.begin(), names_iter)));

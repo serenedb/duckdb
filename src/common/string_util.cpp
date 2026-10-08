@@ -9,11 +9,17 @@
 #include "duckdb/common/exception/parser_exception.hpp"
 #include "duckdb/common/random_engine.hpp"
 #include "duckdb/original/std/sstream.hpp"
+#include "fast_float/fast_float.h"
 #include "jaro_winkler.hpp"
 #include "utf8proc_wrapper.hpp"
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 
+#include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/internal/memutil.h>
+#include <absl/strings/match.h>
+#include <absl/strings/str_split.h>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -82,11 +88,11 @@ bool StringUtil::Equals(const char *s1, const string_t &s2) {
 	return StringUtil::Equals(s2, s1);
 }
 
-bool StringUtil::Contains(const string &haystack, const string &needle) {
+bool StringUtil::Contains(std::string_view haystack, std::string_view needle) {
 	return Find(haystack, needle).IsValid();
 }
 
-optional_idx StringUtil::Find(const string &haystack, const string &needle) {
+optional_idx StringUtil::Find(std::string_view haystack, std::string_view needle) {
 	auto index = haystack.find(needle);
 	if (index == string::npos) {
 		return optional_idx();
@@ -94,20 +100,35 @@ optional_idx StringUtil::Find(const string &haystack, const string &needle) {
 	return optional_idx(index);
 }
 
-bool StringUtil::Contains(const string &haystack, const char &needle_char) {
+bool StringUtil::Contains(std::string_view haystack, char needle_char) {
 	return (haystack.find(needle_char) != string::npos);
 }
 
-idx_t StringUtil::ToUnsigned(const string &str) {
-	return std::stoull(str);
+idx_t StringUtil::ToUnsigned(std::string_view str) {
+	uint64_t result;
+	auto res = duckdb_fast_float::from_chars(str.data(), str.data() + str.size(), result);
+	if (res.ec != std::errc()) {
+		throw InternalException("Could not parse '%s' as an unsigned integer", str);
+	}
+	return result;
 }
 
-int64_t StringUtil::ToSigned(const string &str) {
-	return std::stoll(str);
+int64_t StringUtil::ToSigned(std::string_view str) {
+	int64_t result;
+	auto res = duckdb_fast_float::from_chars(str.data(), str.data() + str.size(), result);
+	if (res.ec != std::errc()) {
+		throw InternalException("Could not parse '%s' as a signed integer", str);
+	}
+	return result;
 }
 
-double StringUtil::ToDouble(const string &str) {
-	return std::stod(str);
+double StringUtil::ToDouble(std::string_view str) {
+	double result;
+	auto res = duckdb_fast_float::from_chars(str.data(), str.data() + str.size(), result);
+	if (res.ec != std::errc()) {
+		throw InternalException("Could not parse '%s' as a double", str);
+	}
+	return result;
 }
 
 void StringUtil::LTrim(string &str) {
@@ -123,7 +144,7 @@ void StringUtil::RTrim(string &str) {
 	str.erase(find_if(str.rbegin(), str.rend(), [](char ch) { return !CharacterIsSpace(ch); }).base(), str.end());
 }
 
-void StringUtil::RTrim(string &str, const string &chars_to_trim) {
+void StringUtil::RTrim(string &str, std::string_view chars_to_trim) {
 	str.erase(
 	    find_if(str.rbegin(), str.rend(), [&chars_to_trim](char ch) { return chars_to_trim.find(ch) == string::npos; })
 	        .base(),
@@ -135,21 +156,15 @@ void StringUtil::Trim(string &str) {
 	StringUtil::RTrim(str);
 }
 
-bool StringUtil::StartsWith(const string &str, const string &prefix) {
-	if (prefix.size() > str.size()) {
-		return false;
-	}
-	return equal(prefix.begin(), prefix.end(), str.begin());
+bool StringUtil::StartsWith(std::string_view str, std::string_view prefix) {
+	return str.starts_with(prefix);
 }
 
-bool StringUtil::EndsWith(const string &str, const string &suffix) {
-	if (suffix.size() > str.size()) {
-		return false;
-	}
-	return equal(suffix.rbegin(), suffix.rend(), str.rbegin());
+bool StringUtil::EndsWith(std::string_view str, std::string_view suffix) {
+	return str.ends_with(suffix);
 }
 
-idx_t StringUtil::GetCommonPrefixSize(const string &left, const string &right) {
+idx_t StringUtil::GetCommonPrefixSize(std::string_view left, std::string_view right) {
 	auto common_size = MinValue<idx_t>(left.size(), right.size());
 	idx_t prefix_size = 0;
 	while (prefix_size < common_size && left[prefix_size] == right[prefix_size]) {
@@ -171,7 +186,7 @@ bool StringUtil::FindNextPrefix(string &prefix) {
 	return false;
 }
 
-string StringUtil::Repeat(const string &str, idx_t n) {
+string StringUtil::Repeat(std::string_view str, idx_t n) {
 	std::ostringstream os;
 	for (idx_t i = 0; i < n; i++) {
 		os << str;
@@ -181,13 +196,13 @@ string StringUtil::Repeat(const string &str, idx_t n) {
 
 namespace string_util_internal {
 
-inline void SkipSpaces(const string &str, idx_t &index) {
+inline void SkipSpaces(std::string_view str, idx_t &index) {
 	while (index < str.size() && StringUtil::CharacterIsSpace(str[index])) {
 		index++;
 	}
 }
 
-inline void ConsumeLetter(const string &str, idx_t &index, char expected) {
+inline void ConsumeLetter(std::string_view str, idx_t &index, char expected) {
 	if (index >= str.size() || str[index] != expected) {
 		throw ParserException("Invalid quoted list: %s", str);
 	}
@@ -196,14 +211,14 @@ inline void ConsumeLetter(const string &str, idx_t &index, char expected) {
 }
 
 template <typename F>
-inline void TakeWhile(const string &str, idx_t &index, const F &cond, string &taker) {
+inline void TakeWhile(std::string_view str, idx_t &index, const F &cond, string &taker) {
 	while (index < str.size() && cond(str[index])) {
 		taker.push_back(str[index]);
 		index++;
 	}
 }
 
-inline string TakePossiblyQuotedItem(const string &str, idx_t &index, char delimiter, char quote) {
+inline string TakePossiblyQuotedItem(std::string_view str, idx_t &index, char delimiter, char quote) {
 	string entry;
 
 	if (str[index] == quote) {
@@ -223,7 +238,7 @@ inline string TakePossiblyQuotedItem(const string &str, idx_t &index, char delim
 
 } // namespace string_util_internal
 
-bool StringUtil::TryParseQuotedString(const string &str, idx_t &pos, string &result, char quote) {
+bool StringUtil::TryParseQuotedString(std::string_view str, idx_t &pos, string &result, char quote) {
 	if (pos >= str.size() || str[pos] != quote) {
 		return false;
 	}
@@ -243,7 +258,7 @@ bool StringUtil::TryParseQuotedString(const string &str, idx_t &pos, string &res
 	return false;
 }
 
-vector<string> StringUtil::SplitWithQuote(const string &str, char delimiter, char quote) {
+vector<string> StringUtil::SplitWithQuote(std::string_view str, char delimiter, char quote) {
 	vector<string> entries;
 	idx_t i = 0;
 
@@ -260,7 +275,7 @@ vector<string> StringUtil::SplitWithQuote(const string &str, char delimiter, cha
 	return entries;
 }
 
-vector<string> StringUtil::SplitWithParentheses(const string &str, char delimiter, char par_open, char par_close) {
+vector<string> StringUtil::SplitWithParentheses(std::string_view str, char delimiter, char par_open, char par_close) {
 	vector<string> result;
 	string current;
 	stack<char> parentheses;
@@ -302,11 +317,11 @@ string StringUtil::Join(const vector<Identifier> &input, const string &separator
 	                        [](const Identifier &id) { return id.GetIdentifierName(); });
 }
 
-string StringUtil::Join(const vector<string> &input, const string &separator) {
-	return StringUtil::Join(input, input.size(), separator, [](const string &s) { return s; });
+string StringUtil::Join(const vector<string> &input, std::string_view separator) {
+	return StringUtil::Join(input, input.size(), separator, [](std::string_view s) { return s; });
 }
 
-string StringUtil::Join(const set<string> &input, const string &separator) {
+string StringUtil::Join(const set<string> &input, std::string_view separator) {
 	// The result
 	std::string result;
 
@@ -360,11 +375,11 @@ string StringUtil::TryParseFormattedBytes(const string &arg, idx_t &result) {
 	if (idx == num_start) {
 		return "Memory must have a number (e.g. 1GB)";
 	}
-	string number = arg.substr(num_start, idx - num_start);
+	auto number = arg.substr(num_start, idx - num_start);
 
 	// try to parse the number
 	double limit;
-	bool success = TryCast::Operation<string_t, double>(string_t(number), limit);
+	bool success = TryCast::Operation<string_t, double>(string_t(number.data(), number.size()), limit);
 	if (!success) {
 		return StringUtil::Format("Invalid memory limit: '%s'", number);
 	}
@@ -431,21 +446,15 @@ idx_t StringUtil::ParseFormattedBytes(const string &arg) {
 	return result;
 }
 
-string StringUtil::Upper(const string &str) {
-	string copy(str);
-	transform(copy.begin(), copy.end(), copy.begin(),
-	          [](unsigned char c) { return StringUtil::CharacterToUpper(static_cast<char>(c)); });
-	return (copy);
+string StringUtil::Upper(std::string_view str) {
+	return absl::AsciiStrToUpper(str);
 }
 
-string StringUtil::Lower(const string &str) {
-	string copy(str);
-	transform(copy.begin(), copy.end(), copy.begin(),
-	          [](unsigned char c) { return StringUtil::CharacterToLower(static_cast<char>(c)); });
-	return (copy);
+string StringUtil::Lower(std::string_view str) {
+	return absl::AsciiStrToLower(str);
 }
 
-string StringUtil::Title(const string &str) {
+string StringUtil::Title(std::string_view str) {
 	string copy;
 	bool first_character = true;
 	for (auto c : str) {
@@ -465,79 +474,18 @@ string StringUtil::Title(const string &str) {
 	return copy;
 }
 
-bool StringUtil::IsLower(const string &str) {
-	return str == Lower(str);
+bool StringUtil::IsLower(std::string_view str) {
+	return absl::c_none_of(str, absl::ascii_isupper);
 }
 
-bool StringUtil::IsUpper(const string &str) {
-	return str == Upper(str);
+bool StringUtil::IsUpper(std::string_view str) {
+	return absl::c_none_of(str, absl::ascii_islower);
 }
 
-// Jenkins hash function: https://en.wikipedia.org/wiki/Jenkins_hash_function
-uint64_t StringUtil::CIHash(const string &str) {
-	return StringUtil::CIHash(str.c_str(), str.size());
-}
-
-uint64_t StringUtil::CIHash(const char *str, idx_t size) {
-	uint32_t hash = 0;
-	for (idx_t i = 0; i < size; i++) {
-		// convert through uint8_t so the hash is identical on platforms with signed and unsigned char
-		hash += static_cast<uint32_t>(static_cast<uint8_t>(StringUtil::CharacterToLower(static_cast<char>(str[i]))));
-		hash += hash << 10;
-		hash ^= hash >> 6;
-	}
-	hash += hash << 3;
-	hash ^= hash >> 11;
-	hash += hash << 15;
-	return hash;
-}
-
-bool StringUtil::CIEquals(const char *l1, idx_t l1_size, const char *l2, idx_t l2_size) {
-	if (l1_size != l2_size) {
-		return false;
-	}
-	const auto charmap = ASCII_TO_LOWER_MAP;
-	for (idx_t c = 0; c < l1_size; c++) {
-		if (charmap[(uint8_t)l1[c]] != charmap[(uint8_t)l2[c]]) {
-			return false;
-		}
-	}
-	return true;
-}
-
-bool StringUtil::CIEquals(const string &l1, const string &l2) {
-	return CIEquals(l1.c_str(), l1.size(), l2.c_str(), l2.size());
-}
-
-bool StringUtil::CIStartsWith(const string &str, const string &prefix) {
-	if (prefix.size() > str.size()) {
-		return false;
-	}
-	return CIEquals(str.c_str(), prefix.size(), prefix.c_str(), prefix.size());
-}
-
-bool StringUtil::CIEndsWith(const string &str, const string &suffix) {
-	if (suffix.size() > str.size()) {
-		return false;
-	}
-	return CIEquals(str.c_str() + str.size() - suffix.size(), suffix.size(), suffix.c_str(), suffix.size());
-}
-
-bool StringUtil::CILessThan(const string &s1, const string &s2) {
-	const auto charmap = ASCII_TO_UPPER_MAP;
-
-	unsigned char u1 {}, u2 {};
-
-	idx_t length = MinValue<idx_t>(s1.length(), s2.length());
-	length += s1.length() != s2.length();
-	for (idx_t i = 0; i < length; i++) {
-		u1 = (unsigned char)s1[i];
-		u2 = (unsigned char)s2[i];
-		if (charmap[u1] != charmap[u2]) {
-			break;
-		}
-	}
-	return (charmap[u1] - charmap[u2]) < 0;
+bool StringUtil::CILessThan(std::string_view s1, std::string_view s2) {
+	const auto size = std::min(s1.size(), s2.size());
+	const auto r = absl::strings_internal::memcasecmp(s1.data(), s2.data(), size);
+	return r != 0 ? r < 0 : s1.size() < s2.size();
 }
 
 idx_t StringUtil::CIFind(const vector<Identifier> &vector, const Identifier &search_string) {
@@ -549,7 +497,7 @@ idx_t StringUtil::CIFind(const vector<Identifier> &vector, const Identifier &sea
 	return DConstants::INVALID_INDEX;
 }
 
-idx_t StringUtil::CIFind(vector<string> &vector, const string &search_string) {
+idx_t StringUtil::CIFind(const vector<string> &vector, std::string_view search_string) {
 	for (idx_t i = 0; i < vector.size(); i++) {
 		const auto &string = vector[i];
 		if (CIEquals(string, search_string)) {
@@ -559,42 +507,25 @@ idx_t StringUtil::CIFind(vector<string> &vector, const string &search_string) {
 	return DConstants::INVALID_INDEX;
 }
 
-vector<string> StringUtil::Split(const string &str, char delimiter) {
-	duckdb::stringstream ss(str);
-	vector<string> lines;
-	string temp;
-	while (getline(ss, temp, delimiter)) {
-		lines.push_back(temp);
+vector<string> StringUtil::Split(std::string_view str, char delimiter) {
+	vector<string> result = absl::StrSplit(str, delimiter);
+	// getline semantics: interior empty fields are kept, but an empty input yields no field at all and a
+	// trailing delimiter does not add one
+	if (!result.empty() && result.back().empty()) {
+		result.pop_back();
 	}
-	return (lines);
+	return result;
 }
 
-vector<string> StringUtil::Split(const string &input, const string &split) {
-	vector<string> splits;
-
-	idx_t last = 0;
-	idx_t input_len = input.size();
-	idx_t split_len = split.size();
-	while (last <= input_len) {
-		idx_t next = input.find(split, last);
-		if (next == string::npos) {
-			next = input_len;
-		}
-
-		// Push the substring [last, next) on to splits
-		string substr = input.substr(last, next - last);
-		if (!substr.empty()) {
-			splits.push_back(substr);
-		}
-		last = next + split_len;
+vector<string> StringUtil::Split(std::string_view input, std::string_view split) {
+	vector<string> result = absl::StrSplit(input, split, absl::SkipEmpty());
+	if (result.empty()) {
+		result.emplace_back(input);
 	}
-	if (splits.empty()) {
-		splits.push_back(input);
-	}
-	return splits;
+	return result;
 }
 
-string StringUtil::Replace(string source, const string &from, const string &to) {
+string StringUtil::Replace(string source, std::string_view from, std::string_view to) {
 	if (from.empty()) {
 		throw InternalException("Invalid argument to StringUtil::Replace - empty FROM");
 	}
@@ -691,7 +622,7 @@ private:
 };
 
 // adapted from https://en.wikibooks.org/wiki/Algorithm_Implementation/Strings/Levenshtein_distance#C++
-idx_t StringUtil::LevenshteinDistance(const string &s1_p, const string &s2_p, idx_t not_equal_penalty) {
+idx_t StringUtil::LevenshteinDistance(std::string_view s1_p, std::string_view s2_p, idx_t not_equal_penalty) {
 	auto s1 = StringUtil::Lower(s1_p);
 	auto s2 = StringUtil::Lower(s2_p);
 	idx_t len1 = s1.size();
@@ -727,7 +658,7 @@ idx_t StringUtil::LevenshteinDistance(const string &s1_p, const string &s2_p, id
 	return array.Score(len1, len2);
 }
 
-idx_t StringUtil::SimilarityScore(const string &s1, const string &s2) {
+idx_t StringUtil::SimilarityScore(std::string_view s1, std::string_view s2) {
 	return LevenshteinDistance(s1, s2, 3);
 }
 
@@ -735,12 +666,12 @@ double StringUtil::SimilarityRating(const Identifier &s1, const Identifier &s2) 
 	return SimilarityRating(s1.GetIdentifierName(), s2.GetIdentifierName());
 }
 
-double StringUtil::SimilarityRating(const string &s1, const string &s2) {
+double StringUtil::SimilarityRating(std::string_view s1, std::string_view s2) {
 	return duckdb_jaro_winkler::jaro_winkler_similarity(s1.data(), s1.data() + s1.size(), s2.data(),
 	                                                    s2.data() + s2.size());
 }
 
-vector<string> StringUtil::TopNLevenshtein(const vector<string> &strings, const string &target, idx_t n,
+vector<string> StringUtil::TopNLevenshtein(const vector<string> &strings, std::string_view target, idx_t n,
                                            idx_t threshold) {
 	vector<pair<string, idx_t>> scores;
 	scores.reserve(strings.size());
@@ -759,7 +690,7 @@ vector<string> StringUtil::TopNJaroWinkler(const vector<string> &strings, const 
 	return TopNJaroWinkler(strings, StringUtil::Lower(target.GetIdentifierName()), n, threshold);
 }
 
-vector<string> StringUtil::TopNJaroWinkler(const vector<string> &strings, const string &target, idx_t n,
+vector<string> StringUtil::TopNJaroWinkler(const vector<string> &strings, std::string_view target, idx_t n,
                                            double threshold) {
 	vector<pair<string, double>> scores;
 	scores.reserve(strings.size());
@@ -769,10 +700,10 @@ vector<string> StringUtil::TopNJaroWinkler(const vector<string> &strings, const 
 	return TopNStrings(scores, n, threshold);
 }
 
-string StringUtil::CandidatesMessage(const vector<string> &candidates, const string &candidate) {
+string StringUtil::CandidatesMessage(const vector<string> &candidates, std::string_view candidate) {
 	string result_str;
 	if (!candidates.empty()) {
-		result_str = "\n" + candidate + ": ";
+		result_str = absl::StrCat("\n", candidate, ": ");
 		for (idx_t i = 0; i < candidates.size(); i++) {
 			if (i > 0) {
 				result_str += ", ";
@@ -783,15 +714,15 @@ string StringUtil::CandidatesMessage(const vector<string> &candidates, const str
 	return result_str;
 }
 
-string StringUtil::CandidatesErrorMessage(const vector<string> &strings, const string &target,
-                                          const string &message_prefix, idx_t n) {
+string StringUtil::CandidatesErrorMessage(const vector<string> &strings, std::string_view target,
+                                          std::string_view message_prefix, idx_t n) {
 	auto closest_strings = StringUtil::TopNLevenshtein(strings, target, n);
 	return StringUtil::CandidatesMessage(closest_strings, message_prefix);
 }
 
 //! Converts a single JSON value to its string representation: scalars become their literal value, nested
 //! objects/arrays are re-serialized as a JSON string.
-static string JSONValueToString(const string &json, JSONValue value) {
+static string JSONValueToString(std::string_view json, JSONValue value) {
 	switch (value.GetType()) {
 	case JSONValueType::STRING:
 		return value.GetString();
@@ -814,13 +745,13 @@ static string JSONValueToString(const string &json, JSONValue value) {
 	}
 }
 
-unordered_map<string, string> StringUtil::ParseJSONMap(const string &json, bool ignore_errors) {
+unordered_map<string, string> StringUtil::ParseJSONMap(std::string_view json, bool ignore_errors) {
 	unordered_map<string, string> result;
 	if (json.empty()) {
 		return result;
 	}
 	JSONParseError error;
-	auto doc = JSONDocument::TryParse(json.c_str(), json.size(), error, JSONReadFlags::ALLOW_INVALID_UNICODE);
+	auto doc = JSONDocument::TryParse(json.data(), json.size(), error, JSONReadFlags::ALLOW_INVALID_UNICODE);
 	if (!doc) {
 		if (ignore_errors) {
 			return result;
@@ -861,7 +792,7 @@ string StringUtil::ValidateJSON(const char *data, const idx_t &len) {
 	return string();
 }
 
-string StringUtil::ExceptionToJSONMap(ExceptionType type, const string &message,
+string StringUtil::ExceptionToJSONMap(ExceptionType type, std::string_view message,
                                       const unordered_map<string, string> &map) {
 	D_ASSERT(map.find("exception_type") == map.end());
 	D_ASSERT(map.find("exception_message") == map.end());
@@ -877,10 +808,10 @@ string StringUtil::ExceptionToJSONMap(ExceptionType type, const string &message,
 	return writer.ToString(JSONWriteFlags::ALLOW_INVALID_UNICODE);
 }
 
-string StringUtil::GetFileName(const string &file_path) {
+string StringUtil::GetFileName(std::string_view file_path) {
 	idx_t pos = file_path.find_last_of("/\\");
 	if (pos == string::npos) {
-		return file_path;
+		return string(file_path);
 	}
 	auto end = file_path.size() - 1;
 
@@ -894,14 +825,14 @@ string StringUtil::GetFileName(const string &file_path) {
 		// Now find the next slash
 		pos = file_path.find_last_of("/\\", end);
 		if (pos == string::npos) {
-			return file_path.substr(0, end + 1);
+			return string(file_path.substr(0, end + 1));
 		}
 	}
 
-	return file_path.substr(pos + 1, end - pos);
+	return string(file_path.substr(pos + 1, end - pos));
 }
 
-string StringUtil::GetFileExtension(const string &file_name) {
+string StringUtil::GetFileExtension(std::string_view file_name) {
 	auto name = GetFileName(file_name);
 	idx_t pos = name.find_last_of('.');
 	// We dont consider e.g. `.gitignore` to have an extension
@@ -911,7 +842,7 @@ string StringUtil::GetFileExtension(const string &file_name) {
 	return name.substr(pos + 1);
 }
 
-string StringUtil::GetFileStem(const string &file_name) {
+string StringUtil::GetFileStem(std::string_view file_name) {
 	auto name = GetFileName(file_name);
 	if (name.size() > 1 && name[0] == '.') {
 		return name;
@@ -923,7 +854,7 @@ string StringUtil::GetFileStem(const string &file_name) {
 	return name.substr(0, pos);
 }
 
-string StringUtil::GetFilePath(const string &file_path) {
+string StringUtil::GetFilePath(std::string_view file_path) {
 	// Trim the trailing slashes
 	auto end = file_path.size() - 1;
 	while (end > 0 && (file_path[end] == '/' || file_path[end] == '\\')) {
@@ -939,7 +870,7 @@ string StringUtil::GetFilePath(const string &file_path) {
 		pos--;
 	}
 
-	return file_path.substr(0, pos + 1);
+	return string(file_path.substr(0, pos + 1));
 }
 
 struct URLEncodeLength {
@@ -999,10 +930,10 @@ void StringUtil::URLEncodeBuffer(const char *input, idx_t input_size, char *outp
 	URLEncodeInternal<URLEncodeWrite>(input, input_size, output, encode_slash);
 }
 
-string StringUtil::URLEncode(const string &input, bool encode_slash) {
-	idx_t result_size = URLEncodeSize(input.c_str(), input.size(), encode_slash);
+string StringUtil::URLEncode(std::string_view input, bool encode_slash) {
+	idx_t result_size = URLEncodeSize(input.data(), input.size(), encode_slash);
 	auto result_data = make_uniq_array<char>(result_size);
-	URLEncodeBuffer(input.c_str(), input.size(), result_data.get(), encode_slash);
+	URLEncodeBuffer(input.data(), input.size(), result_data.get(), encode_slash);
 	return string(result_data.get(), result_size);
 }
 
@@ -1044,15 +975,15 @@ void StringUtil::SkipBOM(const char *buffer_ptr, const idx_t &buffer_size, idx_t
 	}
 }
 
-string StringUtil::URLDecode(const string &input, bool plus_to_space) {
-	idx_t result_size = URLDecodeSize(input.c_str(), input.size(), plus_to_space);
+string StringUtil::URLDecode(std::string_view input, bool plus_to_space) {
+	idx_t result_size = URLDecodeSize(input.data(), input.size(), plus_to_space);
 	auto result_data = make_uniq_array<char>(result_size);
-	URLDecodeBuffer(input.c_str(), input.size(), result_data.get(), plus_to_space);
+	URLDecodeBuffer(input.data(), input.size(), result_data.get(), plus_to_space);
 	return string(result_data.get(), result_size);
 }
 
 uint32_t StringUtil::StringToEnum(const EnumStringLiteral enum_list[], idx_t enum_count, const char *enum_name,
-                                  const char *str_value) {
+                                  std::string_view str_value) {
 	for (idx_t i = 0; i < enum_count; i++) {
 		if (CIEquals(enum_list[i].string, str_value)) {
 			return enum_list[i].number;
@@ -1063,7 +994,7 @@ uint32_t StringUtil::StringToEnum(const EnumStringLiteral enum_list[], idx_t enu
 	for (idx_t i = 0; i < enum_count; i++) {
 		candidates.push_back(enum_list[i].string);
 	}
-	auto closest_values = TopNJaroWinkler(candidates, string(str_value));
+	auto closest_values = TopNJaroWinkler(candidates, str_value);
 	auto message = CandidatesMessage(closest_values, "Candidates");
 	throw NotImplementedException("Enum value: unrecognized value \"%s\" for enum \"%s\"\n%s", str_value, enum_name,
 	                              message);
@@ -1078,33 +1009,5 @@ const char *StringUtil::EnumToString(const EnumStringLiteral enum_list[], idx_t 
 	}
 	throw NotImplementedException("Enum value: unrecognized enum value \"%d\" for enum \"%s\"", enum_value, enum_name);
 }
-
-const uint8_t StringUtil::ASCII_TO_UPPER_MAP[] = {
-    0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,  17,  18,  19,  20,  21,
-    22,  23,  24,  25,  26,  27,  28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,  39,  40,  41,  42,  43,
-    44,  45,  46,  47,  48,  49,  50,  51,  52,  53,  54,  55,  56,  57,  58,  59,  60,  61,  62,  63,  64,  65,
-    66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,  77,  78,  79,  80,  81,  82,  83,  84,  85,  86,  87,
-    88,  89,  90,  91,  92,  93,  94,  95,  96,  65,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,  77,
-    78,  79,  80,  81,  82,  83,  84,  85,  86,  87,  88,  89,  90,  123, 124, 125, 126, 127, 128, 129, 130, 131,
-    132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153,
-    154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
-    176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197,
-    198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219,
-    220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241,
-    242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255};
-
-const uint8_t StringUtil::ASCII_TO_LOWER_MAP[] = {
-    0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,  17,  18,  19,  20,  21,
-    22,  23,  24,  25,  26,  27,  28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,  39,  40,  41,  42,  43,
-    44,  45,  46,  47,  48,  49,  50,  51,  52,  53,  54,  55,  56,  57,  58,  59,  60,  61,  62,  63,  64,  97,
-    98,  99,  100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
-    120, 121, 122, 91,  92,  93,  94,  95,  96,  97,  98,  99,  100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
-    110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
-    132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153,
-    154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
-    176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197,
-    198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219,
-    220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241,
-    242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255};
 
 } // namespace duckdb

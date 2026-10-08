@@ -69,7 +69,10 @@
 
 namespace duckdb {
 
-Optimizer::Optimizer(Binder &binder, ClientContext &context) : context(context), binder(binder), rewriter(context) {
+Optimizer::Optimizer(Binder &binder, ClientContext &context)
+    : context(context), binder(binder), rewriter(context),
+      enable_optimizer(Settings::Get<EnableOptimizerSetting>(context)),
+      optimizer_extensions(OptimizerExtension::Iterate(context)) {
 	rewriter.rules.push_back(make_uniq<ConstantOrderNormalizationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ConstantFoldingRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<StructExtractStructPackFoldingRule>(rewriter));
@@ -79,6 +82,7 @@ Optimizer::Optimizer(Binder &binder, ClientContext &context) : context(context),
 	rewriter.rules.push_back(make_uniq<CaseSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ConjunctionSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<DatePartSimplificationRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<MonotonePredicateRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<DateTruncSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ComparisonSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<RowComparisonSimplificationRule>(rewriter));
@@ -121,7 +125,11 @@ ClientContext &Optimizer::GetContext() {
 }
 
 bool Optimizer::OptimizerDisabled(OptimizerType type) {
-	return OptimizerDisabled(context, type);
+	if (!enable_optimizer) {
+		// all optimizers are disabled
+		return true;
+	}
+	return OptimizerDisabledInternal(context, type);
 }
 
 bool Optimizer::OptimizerDisabled(ClientContext &context_p, OptimizerType type) {
@@ -129,8 +137,16 @@ bool Optimizer::OptimizerDisabled(ClientContext &context_p, OptimizerType type) 
 		// all optimizes are disabled
 		return true;
 	}
+	return OptimizerDisabledInternal(context_p, type);
+}
+
+bool Optimizer::OptimizerDisabledInternal(ClientContext &context_p, OptimizerType type) {
+	auto &client_config = ClientConfig::GetConfig(context_p);
+	if (client_config.has_disabled_optimizers) {
+		return client_config.disabled_optimizers.contains(type);
+	}
 	auto &config = DBConfig::GetConfig(context_p);
-	return config.options.disabled_optimizers.find(type) != config.options.disabled_optimizers.end();
+	return config.options.disabled_optimizers.contains(type);
 }
 
 void Optimizer::RunOptimizer(OptimizerType type, const std::function<void()> &callback) {
@@ -144,8 +160,33 @@ void Optimizer::RunOptimizer(OptimizerType type, const std::function<void()> &ca
 	}
 	auto &profiler = QueryProfiler::Get(context);
 	{
-		auto optimizer_timer = profiler.StartTimerInternal("optimizer." + StringUtil::Lower(EnumUtil::ToString(type)));
+		MetricsTimer optimizer_timer;
+		if (profiler.IsEnabled()) {
+			optimizer_timer = profiler.StartTimerInternal("optimizer." + StringUtil::Lower(EnumUtil::ToString(type)));
+		}
+		// Fire anchored Before-rules registered for this built-in pass.
+		for (auto &ext : optimizer_extensions) {
+			if (!ext.rule || ext.anchor != type || ext.where != OptimizerHookPosition::Before) {
+				continue;
+			}
+			OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
+			ext.rule(input, plan);
+			if (plan) {
+				Verify(*plan);
+			}
+		}
 		callback();
+		// Fire anchored After-rules registered for this built-in pass.
+		for (auto &ext : optimizer_extensions) {
+			if (!ext.rule || ext.anchor != type || ext.where != OptimizerHookPosition::After) {
+				continue;
+			}
+			OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
+			ext.rule(input, plan);
+			if (plan) {
+				Verify(*plan);
+			}
+		}
 	}
 	if (plan) {
 		Verify(*plan);
@@ -216,7 +257,7 @@ static bool CTEContainsDML(const LogicalOperator &op) {
 }
 
 void Optimizer::OptimizeStatement(unique_ptr<SQLStatement> &statement) {
-	if (!Settings::Get<EnableOptimizerSetting>(context)) {
+	if (!enable_optimizer) {
 		return;
 	}
 	if (DatabaseManager::Get(context).GetRemoteCatalogCount() > 0) {
@@ -224,6 +265,7 @@ void Optimizer::OptimizeStatement(unique_ptr<SQLStatement> &statement) {
 		RunOptimizer(OptimizerType::REMOTE_PUSHDOWN, [&]() {
 			RemotePushdownOptimizer optimizer(binder);
 			optimizer.Rewrite(statement);
+			optimizer.RevertUnshippedFolds();
 		});
 	}
 }
@@ -566,7 +608,7 @@ unique_ptr<LogicalOperator> Optimizer::LowerMandatoryAggregateRewrites(unique_pt
 
 unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan_p) {
 	plan_p = LowerMandatoryAggregateRewrites(std::move(plan_p));
-	if (!Settings::Get<EnableOptimizerSetting>(context)) {
+	if (!enable_optimizer) {
 		CTEFilterPusher::ClearDependencies(*plan_p);
 		return plan_p;
 	}
@@ -581,7 +623,10 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 		}
 	}
 
-	for (auto &pre_optimizer_extension : OptimizerExtension::Iterate(context)) {
+	for (auto &pre_optimizer_extension : optimizer_extensions) {
+		if (pre_optimizer_extension.anchor != OptimizerType::INVALID) {
+			continue; // anchored: fires inside RunOptimizer instead
+		}
 		RunOptimizer(OptimizerType::EXTENSION, [&]() {
 			OptimizerExtensionInput input {GetContext(), *this, pre_optimizer_extension.optimizer_info.get()};
 			if (pre_optimizer_extension.pre_optimize_function) {
@@ -593,7 +638,10 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 
 	RunBuiltInOptimizers();
 
-	for (auto &optimizer_extension : OptimizerExtension::Iterate(context)) {
+	for (auto &optimizer_extension : optimizer_extensions) {
+		if (optimizer_extension.anchor != OptimizerType::INVALID) {
+			continue; // anchored: fires inside RunOptimizer instead
+		}
 		RunOptimizer(OptimizerType::EXTENSION, [&]() {
 			OptimizerExtensionInput input {GetContext(), *this, optimizer_extension.optimizer_info.get()};
 			if (optimizer_extension.optimize_function) {

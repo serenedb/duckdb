@@ -24,7 +24,6 @@
 #include "fmt/format.h"
 
 #include <algorithm>
-#include <condition_variable>
 #include <exception>
 #include <functional>
 #include <type_traits>
@@ -133,7 +132,7 @@ private:
 
 private:
 	mutex lock;
-	std::condition_variable condition;
+	absl::CondVar condition;
 	unordered_map<string, DirectoryEntry> directories;
 };
 
@@ -318,7 +317,7 @@ public:
 	    : context(context_p), executor(context_p, TaskSchedulerType::ASYNC) {
 		auto &scheduler = TaskScheduler::GetScheduler(context);
 		async_threads = scheduler.NumberOfAsyncThreads();
-		auto regular_threads = scheduler.NumberOfThreads();
+		auto regular_threads = TaskScheduler::QueryThreads(context);
 		max_pending_tasks = MaxValue<idx_t>(MIN_PENDING_TASKS, (async_threads + regular_threads) * 4);
 	}
 
@@ -1745,7 +1744,7 @@ bool CopyDirectoryManager::EnsureDirectory(FileSystem &fs, const string &dir_pat
 			if (entry->second.state == CopyDirectoryState::FAILED) {
 				std::rethrow_exception(entry->second.error);
 			}
-			condition.wait(guard);
+			condition.Wait(guard.mutex());
 		}
 	}
 
@@ -1768,7 +1767,7 @@ bool CopyDirectoryManager::EnsureDirectory(FileSystem &fs, const string &dir_pat
 		entry->second.error = error;
 		entry->second.created = created;
 	}
-	condition.notify_all();
+	condition.SignalAll();
 
 	if (error) {
 		std::rethrow_exception(error);
@@ -2577,10 +2576,9 @@ void PartitionedCopyState::CreateTaskList() {
 	}
 	std::sort(partition_blocks.begin(), partition_blocks.end(), std::greater<PartitionBlock>());
 
-	auto &ts = TaskScheduler::GetScheduler(partitioned_copy.context);
 	const auto &max_block = partition_blocks.front();
 
-	const auto threads = MinValue<idx_t>(locals, ts.NumberOfThreads());
+	const auto threads = MinValue<idx_t>(locals, TaskScheduler::QueryThreads(partitioned_copy.context));
 	const auto aligned_scale = MaxValue<idx_t>(ValidityMask::BITS_PER_VALUE / STANDARD_VECTOR_SIZE, 1);
 	const auto aligned_count = PartitionedCopyHashGroup::BinValue(max_block.first, aligned_scale);
 	const auto per_thread = aligned_scale * PartitionedCopyHashGroup::BinValue(aligned_count, threads);
@@ -3964,15 +3962,22 @@ SinkResultType PhysicalCopyToFile::Sink(ExecutionContext &context, DataChunk &ch
 		// if we are only writing the file when there are rows to write we need to initialize here
 		gstate.Initialize();
 	}
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
 	if (partition_output) {
 		auto result =
 		    gstate.partitioned_copy->Sink(context, chunk, *lstate.partitioned_copy_local_state, input.interrupt_state);
 		if (result != SinkResultType::BLOCKED) {
 			lstate.total_rows_copied += chunk.size();
+			if (progress_callback) {
+				progress_callback(chunk.size(), chunk.GetAllocationSize());
+			}
 		}
 		return result;
 	}
 	lstate.total_rows_copied += chunk.size();
+	if (progress_callback) {
+		progress_callback(chunk.size(), chunk.GetAllocationSize());
+	}
 
 	if (per_thread_output) {
 		if (!lstate.global_file_state) {

@@ -17,17 +17,19 @@ ReplacementBinding::ReplacementBinding(ColumnBinding old_binding, ColumnBinding 
     : old_binding(old_binding), new_binding(new_binding), replace_type(true), new_type(std::move(new_type)) {
 }
 
+optional_ptr<const ReplacementBinding> BindingReplacementGraph::Find(ColumnBinding old_binding) const {
+	auto entry = replacement_positions.find(old_binding);
+	if (entry == replacement_positions.end()) {
+		return nullptr;
+	}
+	return replacement_bindings[entry->second];
+}
+
 ReplacementBinding BindingReplacementGraph::ResolveReplacement(ColumnBinding binding) const {
 	ReplacementBinding result(binding, binding);
 	column_binding_set_t visited;
 	while (visited.insert(result.new_binding).second) {
-		optional_ptr<const ReplacementBinding> replacement;
-		for (auto &entry : replacement_bindings) {
-			if (entry.old_binding == result.new_binding) {
-				replacement = entry;
-				break;
-			}
-		}
+		auto replacement = Find(result.new_binding);
 		if (!replacement) {
 			return result;
 		}
@@ -56,10 +58,9 @@ bool BindingReplacementGraph::TryAdd(const ReplacementBinding &replacement) {
 		}
 		return true;
 	}
-	for (auto &existing : replacement_bindings) {
-		if (existing.old_binding != replacement.old_binding) {
-			continue;
-		}
+	auto position = replacement_positions.emplace(replacement.old_binding, replacement_bindings.size());
+	if (!position.second) {
+		auto &existing = replacement_bindings[position.first->second];
 		if (existing.new_binding != replacement.new_binding ||
 		    (existing.replace_type && replacement.replace_type && existing.new_type != replacement.new_type)) {
 			return false;
@@ -197,35 +198,55 @@ unique_ptr<Expression> CorrelatedColumnBindingReplacer::VisitReplace(BoundSubque
 }
 
 void ColumnBindingRewrite::RemapProjectionMapStrict(vector<ProjectionIndex> &projection_map,
+                                                    const vector<ColumnBinding> &original_child_bindings,
                                                     const vector<ColumnBinding> &child_bindings_before,
                                                     const vector<ColumnBinding> &child_bindings_after) {
 	vector<ColumnBinding> selected_bindings;
+	column_binding_map_t<ColumnBinding> selected_origins;
+	auto select_binding = [&](idx_t position) {
+		auto &binding = child_bindings_before[position];
+		auto &origin = original_child_bindings[position];
+		auto entry = selected_origins.emplace(binding, origin);
+		if (entry.second || entry.first->second == origin) {
+			selected_bindings.push_back(binding);
+		}
+	};
 	if (projection_map.empty()) {
-		selected_bindings = child_bindings_before;
+		selected_bindings.reserve(child_bindings_before.size());
+		selected_origins.reserve(child_bindings_before.size());
+		for (idx_t position = 0; position < child_bindings_before.size(); position++) {
+			select_binding(position);
+		}
 	} else {
 		selected_bindings.reserve(projection_map.size());
+		selected_origins.reserve(projection_map.size());
 		for (auto projection_index : projection_map) {
 			if (projection_index.GetIndex() >= child_bindings_before.size()) {
 				throw InternalException("Projection map references column %llu in a child with %llu columns",
 				                        projection_index.GetIndex(), child_bindings_before.size());
 			}
-			selected_bindings.push_back(child_bindings_before[projection_index.GetIndex()]);
+			select_binding(projection_index.GetIndex());
 		}
 	}
 	if (selected_bindings == child_bindings_after) {
 		projection_map.clear();
 		return;
 	}
+	column_binding_map_t<idx_t> after_positions;
+	after_positions.reserve(child_bindings_after.size());
+	for (idx_t i = 0; i < child_bindings_after.size(); i++) {
+		after_positions.emplace(child_bindings_after[i], i);
+	}
 	vector<ProjectionIndex> new_projection_map;
 	new_projection_map.reserve(selected_bindings.size());
 	for (auto &binding : selected_bindings) {
-		auto entry = std::find(child_bindings_after.begin(), child_bindings_after.end(), binding);
-		if (entry == child_bindings_after.end()) {
+		auto entry = after_positions.find(binding);
+		if (entry == after_positions.end()) {
 			throw InternalException("Binding rewrite lost projected child binding %s (selected %s, child output %s)",
 			                        binding.ToString(), LogicalOperator::ColumnBindingsToString(selected_bindings),
 			                        LogicalOperator::ColumnBindingsToString(child_bindings_after));
 		}
-		new_projection_map.emplace_back(NumericCast<idx_t>(entry - child_bindings_after.begin()));
+		new_projection_map.emplace_back(entry->second);
 	}
 	projection_map = std::move(new_projection_map);
 }
@@ -239,16 +260,6 @@ void ColumnBindingRewrite::ApplyToOperatorBindings(LogicalOperator &op, const Bi
 	replacer.VisitOperatorBindings(op);
 }
 
-static optional_ptr<const ReplacementBinding> FindReplacement(const BindingReplacementGraph &replacements,
-                                                              ColumnBinding binding) {
-	for (auto &replacement : replacements) {
-		if (replacement.old_binding == binding) {
-			return replacement;
-		}
-	}
-	return nullptr;
-}
-
 static bool TryResolveToOutput(ColumnBinding binding, const column_binding_set_t &new_bindings,
                                const BindingReplacementGraph &replacements, ReplacementBinding &result) {
 	result = ReplacementBinding(binding, binding);
@@ -257,7 +268,7 @@ static bool TryResolveToOutput(ColumnBinding binding, const column_binding_set_t
 		if (!visited.insert(result.new_binding).second) {
 			throw InternalException("Cyclic column binding replacements");
 		}
-		auto next = FindReplacement(replacements, result.new_binding);
+		auto next = replacements.Find(result.new_binding);
 		if (!next) {
 			return false;
 		}
@@ -302,16 +313,6 @@ void ColumnBindingRewrite::ValidateOutput(const vector<ColumnBinding> &old_outpu
 	}
 }
 
-static ReplacementBinding ResolveBoundaryReplacement(ColumnBinding binding,
-                                                     const vector<ReplacementBinding> &replacements) {
-	for (auto &replacement : replacements) {
-		if (replacement.old_binding == binding) {
-			return replacement;
-		}
-	}
-	return ReplacementBinding(binding, binding);
-}
-
 void ColumnBindingRewrite::RewriteChild(
     unique_ptr<LogicalOperator> &op, idx_t child_index,
     const std::function<void(unique_ptr<LogicalOperator> &, BindingReplacementGraph &)> &rewrite) {
@@ -346,21 +347,22 @@ void ColumnBindingRewrite::ApplyToChild(unique_ptr<LogicalOperator> &op, idx_t c
 	auto new_child_bindings = op->children[child_index]->GetColumnBindings();
 	auto boundary_replacements = ScopeToOutput(new_child_bindings, replacements);
 	column_binding_set_t new_bindings(new_child_bindings.begin(), new_child_bindings.end());
+	auto original_child_bindings = old_child_bindings;
 	for (auto &binding : old_child_bindings) {
-		if (new_bindings.find(binding) == new_bindings.end() && FindReplacement(replacements, binding)) {
-			ReplacementBinding resolved(binding, binding);
-			if (!TryResolveToOutput(binding, new_bindings, replacements, resolved)) {
-				throw InternalException("Binding rewrite moved child binding %s outside rewritten child output %s",
-				                        binding.ToString(),
-				                        LogicalOperator::ColumnBindingsToString(new_child_bindings));
-			}
+		if (new_bindings.find(binding) != new_bindings.end() || !replacements.Find(binding)) {
+			continue;
 		}
-		binding = ResolveBoundaryReplacement(binding, boundary_replacements).new_binding;
+		ReplacementBinding resolved(binding, binding);
+		if (!TryResolveToOutput(binding, new_bindings, replacements, resolved)) {
+			throw InternalException("Binding rewrite moved child binding %s outside rewritten child output %s",
+			                        binding.ToString(), LogicalOperator::ColumnBindingsToString(new_child_bindings));
+		}
+		binding = resolved.new_binding;
 	}
 	if (op->HasProjectionMap()) {
 		auto projection_map = LogicalOperatorVisitor::GetProjectionMap(*op, child_index);
 		D_ASSERT(projection_map);
-		RemapProjectionMapStrict(*projection_map, old_child_bindings, new_child_bindings);
+		RemapProjectionMapStrict(*projection_map, original_child_bindings, old_child_bindings, new_child_bindings);
 	}
 	if (boundary_replacements.empty()) {
 		return;

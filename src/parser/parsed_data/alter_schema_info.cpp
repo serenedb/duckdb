@@ -126,4 +126,8 @@ string ResetSchemaOptionsInfo::ToString() const {
 	return result;
 }
 
+string RenameSchemaInfo::ToString() const {
+	return QualifiedSchemaToString() + " RENAME TO " + SQLIdentifier(new_name) + ";";
+}
+
 } // namespace duckdb

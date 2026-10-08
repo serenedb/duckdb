@@ -101,7 +101,7 @@ EXPLAIN SELECT t1.id, t2.id
 FROM t1 FULL OUTER JOIN t2 ON t1.id = t2.id
 WHERE COALESCE(t1.id, t2.id) >= 2 OR COALESCE(t2.id, t1.id) IS NULL;
 ----
-logical_opt	<REGEX>:.*SEQ_SCAN.*Filters.*\(id >= 2\) OR \(id IS NULL\).*
+logical_opt	<REGEX>:.*SEQ_SCAN.*Column Filter.*\(id >= 2\) OR \(id IS NULL\).*
 
 # should not pushdown a volatile filter
 query II
@@ -109,7 +109,7 @@ EXPLAIN SELECT id
 FROM t1 FULL OUTER JOIN t2 USING (id)
 WHERE trunc(random() * id) >= 2
 ----
-logical_opt	<!REGEX>:.*SEQ_SCAN.*Filters.*
+logical_opt	<!REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 # coalescing right and left is optimized like coalescing left and right
 query II nosort left_right_coalesce
@@ -141,13 +141,13 @@ CREATE TABLE t5 AS FROM VALUES
 query II
 EXPLAIN SELECT id FROM t1 FULL OUTER JOIN t4 USING (id) WHERE id = a;
 ----
-logical_opt	<!REGEX>:.*SEQ_SCAN.*Filters.*
+logical_opt	<!REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 # should not pushdown single filter containing coalesced keys from different join conditions
 query II
 EXPLAIN SELECT id FROM t4 FULL OUTER JOIN t5 USING (id, a) WHERE id IN (a, 1)
 ----
-logical_opt	<!REGEX>:.*SEQ_SCAN.*Filters.*
+logical_opt	<!REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 query II nosort nullif_func_join_keys
 EXPLAIN SELECT *

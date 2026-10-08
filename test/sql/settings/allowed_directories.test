@@ -169,12 +169,12 @@ Permission Error
 statement error
 LOAD my_ext
 ----
-Permission Error
+LOAD is not supported by SereneDB
 
 statement error
 INSTALL my_ext
 ----
-Permission Error
+INSTALL is not supported by SereneDB
 
 # export/import also work with allowed_directories
 statement ok

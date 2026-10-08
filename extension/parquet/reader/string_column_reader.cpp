@@ -33,12 +33,7 @@ bool StringColumnReader::IsValid(const char *str_data, uint32_t str_len, const b
 	if (!is_varchar) {
 		return true;
 	}
-	// verify if a string is actually UTF8, and if there are no null bytes in the middle of the string
-	// technically Parquet should guarantee this, but reality is often disappointing
-	UnicodeInvalidReason reason;
-	size_t pos;
-	auto utf_type = Utf8Proc::Analyze(str_data, str_len, &reason, &pos);
-	return utf_type != UnicodeType::INVALID;
+	return Utf8Proc::IsValid(str_data, str_len);
 }
 
 bool StringColumnReader::IsValid(const string &str, bool is_varchar) {
@@ -49,7 +44,7 @@ string_t StringColumnReader::VerifyString(const char *str_data, uint32_t str_len
 	if (!is_varchar) {
 		return string_t(str_data, str_len);
 	}
-	if (Utf8Proc::Analyze(str_data, str_len) != UnicodeType::INVALID) {
+	if (Utf8Proc::IsValid(str_data, str_len)) {
 		return string_t(str_data, str_len);
 	}
 
@@ -109,6 +104,10 @@ string_t StringColumnReader::VerifyString(const char *str_data, uint32_t str_len
 class ParquetStringVectorBuffer : public AuxiliaryDataHolder {
 public:
 	explicit ParquetStringVectorBuffer(shared_ptr<ResizeableBuffer> buffer_p) : buffer(std::move(buffer_p)) {
+	}
+
+	bool CertifiesImmutablePayloads() const override {
+		return true;
 	}
 
 private:

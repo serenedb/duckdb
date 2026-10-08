@@ -28,6 +28,23 @@ InsertDatabasePathResult DatabaseFilePathManager::InsertDatabasePath(DatabaseMan
 	auto entry = db_paths.emplace(path, DatabasePathInfo(manager, name, options.access_mode));
 	if (!entry.second) {
 		auto &existing = entry.first->second;
+		if (existing.reuse_claimed) {
+			// a re-attach of this path is in flight: wait for it to register the database (or to give the
+			// claim back), rather than handing the same database out twice
+			return InsertDatabasePathResult::ALREADY_EXISTS;
+		}
+		if (existing.attached_databases.empty() || (options.borrow_open_database && existing.name == name)) {
+			options.reused_database = existing.database.lock();
+			if (options.reused_database) {
+				// whether the database is still usable can only be checked while holding a reference to
+				// it rather than this lock, so the caller decides and gives the claim back if it does not
+				// go through with the re-attach
+				existing.reuse_claimed = true;
+				return InsertDatabasePathResult::REUSE_EXISTING;
+			}
+			return existing.attached_databases.empty() ? InsertDatabasePathResult::CLOSING
+			                                           : InsertDatabasePathResult::ALREADY_EXISTS;
+		}
 		bool already_exists = false;
 		bool attached_in_this_system = false;
 		if (on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT && existing.name == name) {
@@ -61,6 +78,37 @@ InsertDatabasePathResult DatabaseFilePathManager::InsertDatabasePath(DatabaseMan
 	return InsertDatabasePathResult::SUCCESS;
 }
 
+void DatabaseFilePathManager::CommitReuse(DatabaseManager &manager, const string &path, const Identifier &name) {
+	lock_guard<mutex> path_lock(db_paths_lock);
+	auto entry = db_paths.find(path);
+	if (entry == db_paths.end()) {
+		return;
+	}
+	entry->second.name = name.GetIdentifierName();
+	entry->second.attached_databases.insert(manager);
+	entry->second.reuse_claimed = false;
+}
+
+void DatabaseFilePathManager::ReleaseReuse(const string &path) {
+	lock_guard<mutex> path_lock(db_paths_lock);
+	auto entry = db_paths.find(path);
+	if (entry == db_paths.end()) {
+		return;
+	}
+	entry->second.reuse_claimed = false;
+}
+
+void DatabaseFilePathManager::SetDatabase(const string &path, shared_ptr<AttachedDatabase> database) {
+	if (path.empty() || path == IN_MEMORY_PATH) {
+		return;
+	}
+	lock_guard<mutex> path_lock(db_paths_lock);
+	auto entry = db_paths.find(path);
+	if (entry != db_paths.end()) {
+		entry->second.database = std::move(database);
+	}
+}
+
 void DatabaseFilePathManager::EraseDatabasePath(const string &path) {
 	if (path.empty() || path == IN_MEMORY_PATH) {
 		return;
@@ -73,6 +121,17 @@ void DatabaseFilePathManager::EraseDatabasePath(const string &path) {
 		} else {
 			entry->second.reference_count--;
 		}
+	}
+}
+
+void DatabaseFilePathManager::WaitForRelease(const string &path, ClientContext &context) {
+	lock_guard<mutex> path_lock(db_paths_lock);
+	auto released = [&] {
+		auto entry = db_paths.find(path);
+		return entry == db_paths.end() || !entry->second.attached_databases.empty();
+	};
+	while (!db_paths_lock.AwaitWithTimeout(absl::Condition(&released), absl::Milliseconds(100))) {
+		context.InterruptCheck();
 	}
 }
 

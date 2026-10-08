@@ -93,6 +93,14 @@ ErrorData IndexEntry::Append(DataChunk &chunk, Vector &row_ids, const shared_ptr
 	return error;
 }
 
+ErrorData IndexEntry::FinishAppend() {
+	auto entry_lock = lock.GetExclusiveLock();
+	if (!owned_index->IsBound()) {
+		return ErrorData();
+	}
+	return owned_index->Cast<BoundIndex>().FinishAppend();
+}
+
 void IndexEntry::RevertAppend(DataChunk &chunk, Vector &row_ids) {
 	auto entry_lock = lock.GetExclusiveLock();
 	if (auto delta = deltas.Find(IndexDeltaType::ADDED_DATA_DURING_CHECKPOINT)) {
@@ -269,7 +277,19 @@ void IndexEntry::RemoveFromIndex(DataChunk &chunk, Vector &row_ids, const IndexR
 	auto entry_lock = lock.GetExclusiveLock();
 	if (!owned_index->IsBound()) {
 		// Buffer the delete: chunk is in table layout with all indexed columns populated.
-		owned_index->Cast<UnboundIndex>().BufferChunk(chunk, row_ids, BufferedIndexReplay::DEL_ENTRY);
+		auto &unbound_index = owned_index->Cast<UnboundIndex>();
+		switch (removal_type) {
+		case IndexRemovalType::MAIN_INDEX:
+		case IndexRemovalType::MAIN_INDEX_ONLY:
+			unbound_index.BufferChunk(chunk, row_ids, BufferedIndexReplay::DEL_ENTRY);
+			break;
+		case IndexRemovalType::REVERT_MAIN_INDEX:
+		case IndexRemovalType::REVERT_MAIN_INDEX_ONLY:
+			unbound_index.BufferChunk(chunk, row_ids, BufferedIndexReplay::INSERT_ENTRY);
+			break;
+		case IndexRemovalType::DELETED_ROWS_IN_USE:
+			break;
+		}
 		return;
 	}
 
@@ -297,7 +317,7 @@ bool IndexEntry::IsDeferred() const {
 	return check_mode == ConstraintCheckMode::DEFERRED;
 }
 
-bool IndexEntry::IsForeignKeyIndex(const vector<PhysicalIndex> &fk_keys, const ForeignKeyType fk_type) const {
+bool IndexEntry::IsForeignKeyIndex(std::span<const PhysicalIndex> fk_keys, const ForeignKeyType fk_type) const {
 	auto entry_lock = lock.GetSharedLock();
 	if (fk_type == ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE) {
 		// Foreign keys cannot reference a deferred key.
@@ -417,7 +437,7 @@ string IndexEntry::GetConstraintViolationMessage(const VerifyExistenceType verif
 	return owned_index->Cast<BoundIndex>().GetConstraintViolationMessage(verify_type, failed_index, input);
 }
 
-void IndexEntry::VerifyUpdate(const vector<PhysicalIndex> &column_ids) const {
+void IndexEntry::VerifyUpdate(std::span<const PhysicalIndex> column_ids) const {
 #ifdef DEBUG
 	auto entry_lock = lock.GetSharedLock();
 	D_ASSERT(owned_index->IsBound());
@@ -445,7 +465,7 @@ void IndexEntry::Rebuild(const IndexRebuildScan &scan) {
 	IndexRebuildAppend append = [&](DataChunk &chunk, Vector &row_ids) {
 		auto error = bound_index.Append(chunk, row_ids);
 		if (error.HasError()) {
-			throw InternalException("Failed to rebuild index '%s' after vacuum: %s", bound_index.GetIndexName(),
+			throw InternalException("Failed to rebuild index %s after vacuum: %s", bound_index.GetIndexName(),
 			                        error.Message());
 		}
 	};
@@ -488,7 +508,20 @@ IndexInfo IndexEntry::GetStorageInfo() const {
 	result.is_foreign = owned_index->IsForeign();
 	result.check_mode = check_mode;
 	result.column_set = owned_index->GetColumnIdSet();
+	result.removal_needs_column_values =
+	    !owned_index->IsBound() || owned_index->Cast<BoundIndex>().RemovalNeedsColumnValues();
 	return result;
+}
+
+vector<column_t> IndexEntry::GetColumnIds() const {
+	auto entry_lock = lock.GetSharedLock();
+	return owned_index->GetColumnIds();
+}
+
+void IndexEntry::RemapColumnIds(const vector<column_t> &column_ids) {
+	auto entry_lock = lock.GetExclusiveLock();
+	owned_index->RemapColumnIds(column_ids);
+	deltas.RemapColumnIds(column_ids);
 }
 
 idx_t IndexEntry::GetInMemorySize() const {
@@ -611,6 +644,14 @@ void IndexDeltas::Reset() {
 	checkpoint.added_data.reset();
 	checkpoint.removed_data.reset();
 	checkpoint.last_written_checkpoint = optional_idx();
+}
+
+void IndexDeltas::RemapColumnIds(const vector<column_t> &column_ids) {
+	for (auto delta : {deleted_rows_in_use.get(), checkpoint.added_data.get(), checkpoint.removed_data.get()}) {
+		if (delta) {
+			delta->RemapColumnIds(column_ids);
+		}
+	}
 }
 
 } // namespace duckdb

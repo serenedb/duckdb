@@ -17,7 +17,7 @@ string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &trans
 		return parse_result.Cast<IdentifierParseResult>().identifier.GetIdentifierName();
 	}
 	if (parse_result.type == ParseResultType::KEYWORD) {
-		return parse_result.Cast<KeywordParseResult>().keyword;
+		return string(parse_result.Cast<KeywordParseResult>().keyword);
 	}
 	if (parse_result.type == ParseResultType::CHOICE) {
 		auto &choice_pr = parse_result.Cast<ChoiceParseResult>();
@@ -41,7 +41,7 @@ string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &trans
 				return child.get().Cast<IdentifierParseResult>().identifier.GetIdentifierName();
 			}
 			if (child.get().type == ParseResultType::KEYWORD) {
-				return child.get().Cast<KeywordParseResult>().keyword;
+				return string(child.get().Cast<KeywordParseResult>().keyword);
 			}
 			throw InternalException("Unexpected IdentifierOrKeyword type encountered %s.",
 			                        ParseResultToString(child.get().type));
@@ -53,7 +53,7 @@ string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &trans
 LogicalType PEGTransformerFactory::TransformType(PEGTransformer &transformer,
                                                  unique_ptr<ParsedExpression> type_variations,
                                                  const optional<vector<int64_t>> &array_bounds) {
-	auto array_depth_guard = transformer.StackCheck(array_bounds ? array_bounds->size() : 0);
+	transformer.AddDepth(array_bounds ? array_bounds->size() : 0);
 	auto type = std::move(type_variations);
 	if (array_bounds) {
 		for (auto array_size : *array_bounds) {
@@ -67,6 +67,10 @@ LogicalType PEGTransformerFactory::TransformType(PEGTransformer &transformer,
 				type = make_uniq<TypeExpression>(Identifier("array"), std::move(children_types));
 			}
 		}
+	}
+	if (transformer.MayExceedDepth() &&
+	    (type->GetExpressionClass() != ExpressionClass::TYPE || !type->Cast<TypeExpression>().GetChildren().empty())) {
+		transformer.type_depth_check.Verify(*type);
 	}
 	return LogicalType::UNBOUND(std::move(type));
 }
@@ -232,6 +236,7 @@ PEGTransformerFactory::TransformFloatType(PEGTransformer &transformer,
 	}
 	vector<unique_ptr<ParsedExpression>> modifiers;
 	modifiers.push_back(std::move(number_literal.value()));
+	transformer.AddDepth(1);
 	return make_uniq<TypeExpression>(Identifier("FLOAT"), std::move(modifiers));
 }
 
@@ -400,7 +405,11 @@ pair<Identifier, LogicalType> PEGTransformerFactory::TransformColIdType(PEGTrans
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformBitType(
     PEGTransformer &transformer, const bool &has_result,
     optional<vector<unique_ptr<ParsedExpression>>> expression) { // NOLINT(performance-unnecessary-value-param)
-	return make_uniq<TypeExpression>(Identifier("BIT"), vector<unique_ptr<ParsedExpression>> {});
+	vector<unique_ptr<ParsedExpression>> modifiers;
+	if (expression) {
+		modifiers = std::move(*expression);
+	}
+	return make_uniq<TypeExpression>(Identifier("BIT"), std::move(modifiers));
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformIntervalWithoutSpecifier(PEGTransformer &transformer) {
@@ -527,7 +536,7 @@ DatePartSpecifier PEGTransformerFactory::TransformMinuteToSecond(PEGTransformer 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformNumberLiteral(PEGTransformer &transformer,
                                                                            ParseResult &parse_result) {
 	auto &literal_pr = parse_result.Cast<NumberParseResult>();
-	return ConstantExpression::Number(literal_pr.number);
+	return ConstantExpression::Number(string(literal_pr.number));
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetofType(PEGTransformer &transformer,
@@ -538,7 +547,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetofType(PEGTransf
 // StringLiteral <- '\'' [^\']* '\''
 string PEGTransformerFactory::TransformStringLiteral(PEGTransformer &transformer, ParseResult &parse_result) {
 	auto &string_literal_pr = parse_result.Cast<StringLiteralParseResult>();
-	return string_literal_pr.result;
+	return string(string_literal_pr.result);
 }
 
 Identifier PEGTransformerFactory::TransformConstraintName(PEGTransformer &transformer,

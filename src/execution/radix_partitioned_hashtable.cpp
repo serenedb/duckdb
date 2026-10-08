@@ -242,6 +242,7 @@ public:
 	SpillPhase spill_phase DUCKDB_GUARDED_BY(lock);
 	//! Uncombined exported data, aligned one-to-one with the partitions of uncombined_data
 	vector<unique_ptr<ColumnDataCollection>> uncombined_exported_data;
+	vector<unique_ptr<PartitionedTupleData>> local_data;
 	//! Allocators used during the Sink/Finalize
 	vector<shared_ptr<ArenaAllocator>> stored_allocators;
 	idx_t stored_allocators_size;
@@ -261,8 +262,7 @@ public:
 
 RadixHTGlobalSinkState::RadixHTGlobalSinkState(ClientContext &context_p, const RadixPartitionedHashTable &radix_ht_p)
     : context(context_p), temporary_memory_state(TemporaryMemoryManager::Get(context).Register(context)),
-      finalized(false), external(false), active_threads(0),
-      number_of_threads(TaskScheduler::GetScheduler(context).NumberOfThreads()),
+      finalized(false), external(false), active_threads(0), number_of_threads(TaskScheduler::QueryThreads(context)),
       memory_limit(BufferManager::GetBufferManager(context).GetOperatorMemoryLimit()),
       block_alloc_size(BufferManager::GetBufferManager(context).GetBlockAllocSize()), any_combined(false),
       any_abandoned(false), radix_ht(radix_ht_p), config(*this), stored_allocators_size(0), finalize_done(0),
@@ -270,6 +270,8 @@ RadixHTGlobalSinkState::RadixHTGlobalSinkState(ClientContext &context_p, const R
       max_partition_size(0) {
 	spill_plan = AggregateStateSpilling::TryCreateSpillPlan(radix_ht.GetLayout());
 	spill_phase = SpillPhase::NATIVE_ALLOWED;
+	local_data.reserve(number_of_threads);
+	stored_allocators.reserve(number_of_threads);
 
 	// Compute minimum reservation
 	auto tuples_per_block = block_alloc_size / radix_ht.GetLayout().GetRowWidth();
@@ -284,7 +286,7 @@ RadixHTGlobalSinkState::RadixHTGlobalSinkState(ClientContext &context_p, const R
 	auto ht_size = num_partitions * blocks_per_partition * block_alloc_size + config.sink_capacity * sizeof(ht_entry_t);
 
 	// This really is the minimum reservation that we can do
-	auto num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+	auto num_threads = TaskScheduler::QueryThreads(context);
 	minimum_reservation = num_threads * ht_size;
 
 	temporary_memory_state->SetMinimumReservation(minimum_reservation);
@@ -506,6 +508,7 @@ void RadixPartitionedHashTable::ResetGlobalSinkState(ClientContext &context, Glo
 	gstate.config.Reset();
 	gstate.uncombined_data.reset();
 	gstate.uncombined_exported_data.clear();
+	gstate.local_data.clear();
 	{
 		const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
 		gstate.spill_phase = SpillPhase::NATIVE_ALLOWED;
@@ -942,11 +945,7 @@ void RadixPartitionedHashTable::Combine(ExecutionContext &context, GlobalSinkSta
 
 	const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
 	D_ASSERT(!gstate.finalized);
-	if (gstate.uncombined_data) {
-		gstate.uncombined_data->Combine(*lstate.abandoned_data);
-	} else {
-		gstate.uncombined_data = std::move(lstate.abandoned_data);
-	}
+	gstate.local_data.push_back(std::move(lstate.abandoned_data));
 	if (!lstate.abandoned_exported_data.empty()) {
 		if (gstate.uncombined_exported_data.empty()) {
 			gstate.uncombined_exported_data = std::move(lstate.abandoned_exported_data);
@@ -981,6 +980,15 @@ void RadixPartitionedHashTable::Finalize(ClientContext &context, GlobalSinkState
 	auto &gstate = gstate_p.Cast<RadixHTGlobalSinkState>();
 	const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
 	D_ASSERT(!gstate.finalized);
+
+	for (auto &data : gstate.local_data) {
+		if (gstate.uncombined_data) {
+			gstate.uncombined_data->Combine(*data);
+		} else {
+			gstate.uncombined_data = std::move(data);
+		}
+	}
+	gstate.local_data.clear();
 
 	if (!gstate.uncombined_exported_data.empty() &&
 	    (!gstate.uncombined_data ||
@@ -1062,8 +1070,7 @@ idx_t RadixPartitionedHashTable::MaxThreads(GlobalSinkState &sink_p) const {
 		return 0;
 	}
 
-	const auto max_threads =
-	    MinValue<idx_t>(TaskScheduler::GetScheduler(sink.context).NumberOfThreads(), sink.partitions.size());
+	const auto max_threads = MinValue<idx_t>(TaskScheduler::QueryThreads(sink.context), sink.partitions.size());
 	sink.temporary_memory_state->SetRemainingSizeAndUpdateReservation(
 	    sink.context, sink.stored_allocators_size + max_threads * sink.max_partition_size);
 
@@ -1269,7 +1276,7 @@ void RadixHTLocalSourceState::Finalize(RadixHTGlobalSinkState &sink, RadixHTGlob
 		const auto capacity = GroupedAggregateHashTable::GetCapacityForCount(partition.data->Count() + exported_count);
 
 		// However, we will limit the initial capacity so we don't do a huge over-allocation
-		const auto n_threads = TaskScheduler::GetScheduler(gstate.context).NumberOfThreads();
+		const auto n_threads = TaskScheduler::QueryThreads(gstate.context);
 		const auto memory_limit = BufferManager::GetBufferManager(gstate.context).GetMaxMemory();
 		const idx_t thread_limit = LossyNumericCast<idx_t>(0.6 * double(memory_limit) / double(n_threads));
 

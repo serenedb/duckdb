@@ -76,7 +76,7 @@ EXPLAIN WITH RECURSIVE t(x) AS
   WHERE  COALESCE(t.x, p) < 3
 ) SELECT * FROM t;
 ----
-physical_plan	<REGEX>:.*Nested Loop Join[\s\S]*Join Type: FULL.*
+physical_plan	<REGEX>:.*NESTED_LOOP_JOIN[\s\S]*Join Type: FULL.*
 
 # Equality conditions should continue to use a hash join
 query II
@@ -89,7 +89,7 @@ EXPLAIN WITH RECURSIVE t(x) AS
   WHERE  t.x < 3
 ) SELECT * FROM t;
 ----
-physical_plan	<REGEX>:.*Hash Join.*
+physical_plan	<REGEX>:.*HASH_JOIN.*
 
 # Inner nested loop joins do not use the outer source state
 query I

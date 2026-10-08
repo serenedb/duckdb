@@ -140,7 +140,7 @@ TEST_CASE("Test logical_alter", "[serialization]") {
 }
 
 TEST_CASE("Test logical_load", "[serialization]") {
-	test_helper("LOAD foo");
+	test_helper("LOAD parquet");
 }
 
 // below test cases are oriented towards multi-databases

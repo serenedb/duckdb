@@ -5,7 +5,7 @@
 
 namespace duckdb {
 
-struct JsonSerializer : Serializer {
+struct JsonSerializer final : Serializer {
 private:
 	yyjson_mut_doc *doc;
 	yyjson_mut_val *current_tag;
@@ -30,6 +30,9 @@ private:
 	void PushValue(yyjson_mut_val *val);
 
 public:
+	using List = TypedList<JsonSerializer>;
+	using Serializer::WriteValue;
+
 	explicit JsonSerializer(yyjson_mut_doc *doc, bool skip_if_null, bool skip_if_empty, bool skip_if_default,
 	                        SerializationOptions options_p = SerializationOptions())
 	    : doc(doc), stack({yyjson_mut_obj(doc)}), stack_can_be_omitted({false}), skip_if_null(skip_if_null),

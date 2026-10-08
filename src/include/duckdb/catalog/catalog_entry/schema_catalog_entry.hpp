@@ -11,6 +11,7 @@
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/catalog/schema_info.hpp"
 
 namespace duckdb {
 class ClientContext;
@@ -46,22 +47,28 @@ public:
 
 public:
 	SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info,
-	                   optional_ptr<SchemaCatalogEntry> parent_schema = nullptr);
+	                   optional_ptr<SchemaCatalogEntry> parent_schema = nullptr,
+	                   shared_ptr<SchemaInfo> schema_info = nullptr);
 
 public:
 	unique_ptr<CreateInfo> GetInfo() const override;
 
-	//! The parent schema if this is a nested schema, or nullptr for a top-level schema
-	virtual optional_ptr<SchemaCatalogEntry> GetParentSchema() const {
-		return parent_schema;
-	}
-
 	//! The full path of this schema (its parent chain outermost first, ending with this schema's own name)
 	vector<Identifier> GetSchemaPath() const;
+	//! The path of the schemas containing this one, empty for a top-level schema
+	vector<Identifier> GetParentSchemaPath() const;
+	vector<Identifier> GetParentSchemaPath(CatalogTransaction transaction) const;
+	idx_t ParentSchemaOid() const override {
+		return schema_info->parent ? schema_info->parent->oid : 0;
+	}
 	//! The schema path formatted as a SQL name, without the catalog.
 	DUCKDB_API string GetSchemaName() const;
 	//! The fully qualified name of an entry in this schema: [catalog, schema path..., entry_name]
 	QualifiedName GetQualifiedName(const Identifier &entry_name) const;
+
+	const shared_ptr<SchemaInfo> &GetSchemaInfo() const {
+		return schema_info;
+	}
 
 	//! Scan the specified catalog set, invoking the callback method for every entry
 	virtual void Scan(ClientContext &context, CatalogType type,
@@ -83,6 +90,9 @@ public:
 	virtual optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
 	                                               TableCatalogEntry &table) = 0;
 	optional_ptr<CatalogEntry> CreateIndex(ClientContext &context, CreateIndexInfo &info, TableCatalogEntry &table);
+	virtual optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
+	                                               CatalogEntry &relation);
+	optional_ptr<CatalogEntry> CreateIndex(ClientContext &context, CreateIndexInfo &info, CatalogEntry &relation);
 	//! Create a scalar or aggregate function within the given schema
 	virtual optional_ptr<CatalogEntry> CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) = 0;
 	//! Creates a table with the given name in the schema
@@ -139,6 +149,6 @@ public:
 	CatalogTransaction GetCatalogTransaction(ClientContext &context);
 
 protected:
-	optional_ptr<SchemaCatalogEntry> parent_schema;
+	shared_ptr<SchemaInfo> schema_info;
 };
 } // namespace duckdb

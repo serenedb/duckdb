@@ -19,6 +19,7 @@ add_library_unity(
   string_prefix.cpp
   like_optimizations.cpp
   list_comprehension_rewrite.cpp
+  monotone_predicate.cpp
   monotone_preimage.cpp
   move_constants.cpp
   not_comparison_simplification.cpp

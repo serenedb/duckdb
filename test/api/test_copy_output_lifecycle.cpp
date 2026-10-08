@@ -15,7 +15,6 @@
 #include "test_helpers.hpp"
 
 #include <chrono>
-#include <condition_variable>
 #include <future>
 
 using namespace duckdb;
@@ -221,20 +220,18 @@ void RemoveDirectoryIfPresent(FileSystem &fs, const string &path) {
 namespace {
 
 struct BackpressureCopyInfo : LifecycleCopyInfo {
-	std::condition_variable cv;
 	bool flush_started = false;
 	bool flush_released = false;
 	vector<int64_t> rows;
 
 	bool WaitForFlush() {
-		unique_lock<mutex> guard(lock);
-		return cv.wait_for(guard, std::chrono::seconds(10), [&]() { return flush_started; });
+		lock_guard<mutex> guard(lock);
+		return lock.AwaitWithTimeout(absl::Condition(&flush_started), absl::Seconds(10));
 	}
 
 	void ReleaseFlush() {
 		lock_guard<mutex> guard(lock);
 		flush_released = true;
-		cv.notify_all();
 	}
 };
 
@@ -246,11 +243,10 @@ unique_ptr<PreparedBatchData> BackpressurePrepare(ClientContext &, FunctionData 
                                                   unique_ptr<ColumnDataCollection> collection) {
 	auto &info = bind_data.Cast<LifecycleCopyBindData>().info->Cast<BackpressureCopyInfo>();
 	{
-		unique_lock<mutex> guard(info.lock);
+		lock_guard<mutex> guard(info.lock);
 		if (!info.flush_started) {
 			info.flush_started = true;
-			info.cv.notify_all();
-			info.cv.wait(guard, [&]() { return info.flush_released; });
+			info.lock.Await(absl::Condition(&info.flush_released));
 		}
 	}
 	auto result = make_uniq<BackpressurePreparedData>();

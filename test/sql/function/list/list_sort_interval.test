@@ -10,23 +10,23 @@
 query I
 SELECT i FROM (VALUES (INTERVAL '31 days'), (INTERVAL '1 month')) t(i) ORDER BY i
 ----
-1 month
+1 mon
 31 days
 
 query I
 SELECT list_sort([INTERVAL '31 days', INTERVAL '1 month'])
 ----
-[1 month, 31 days]
+[1 mon, 31 days]
 
 query I
 SELECT list_reverse_sort([INTERVAL '31 days', INTERVAL '1 month'])
 ----
-[31 days, 1 month]
+[31 days, 1 mon]
 
 query I
 SELECT list_sort([INTERVAL '31 days', INTERVAL '1 month'], 'DESC')
 ----
-[31 days, 1 month]
+[31 days, 1 mon]
 
 # list_grade_up returns the rank of each element (grade 1 = smallest).
 # 31 days > 1 month, so 31 days gets grade 2, 1 month grade 1.
@@ -42,7 +42,7 @@ SELECT list_grade_up([INTERVAL '31 days', INTERVAL '1 month'])
 query I
 SELECT list_sort(list_distinct([INTERVAL '31 days', INTERVAL '1 month', INTERVAL '31 days']))
 ----
-[1 month, 31 days]
+[1 mon, 31 days]
 
 # the original (non-normalized) values must be preserved by list_sort - the key is
 # normalized, the payload is not. '25 hours', '1500 minutes' and '1 day 1 hour' are
@@ -62,12 +62,12 @@ SELECT list_sort([INTERVAL '25 hours', INTERVAL '1 day 1 hour', INTERVAL '1500 m
 query I
 SELECT list_sort([INTERVAL '31 days', NULL, INTERVAL '1 month'], 'ASC', 'NULLS FIRST')
 ----
-[NULL, 1 month, 31 days]
+[NULL, 1 mon, 31 days]
 
 query I
 SELECT list_sort([INTERVAL '31 days', NULL, INTERVAL '1 month'], 'ASC', 'NULLS LAST')
 ----
-[1 month, 31 days, NULL]
+[1 mon, 31 days, NULL]
 
 # Negative intervals are exactly where the raw (months, days, micros) encoding
 # diverges from normalized ordering (-31 days vs -1 month: raw puts -1 month
@@ -77,17 +77,17 @@ query I
 SELECT i FROM (VALUES (INTERVAL '-31 days'), (INTERVAL '-1 month')) t(i) ORDER BY i
 ----
 -31 days
--1 month
+-1 mons
 
 query I
 SELECT list_sort([INTERVAL '-31 days', INTERVAL '-1 month'])
 ----
-[-31 days, -1 month]
+[-31 days, -1 mons]
 
 query I
 SELECT list_sort([INTERVAL '-31 days', INTERVAL '-1 month'], 'DESC')
 ----
-[-1 month, -31 days]
+[-1 mons, -31 days]
 
 # create_sort_key itself remains the raw-struct encoder (its contract: encode the
 # value as given; callers push collations - Sort::Sort wraps already-collated

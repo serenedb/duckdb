@@ -205,7 +205,8 @@ unique_ptr<QueryResult> ClientContext::SubmitPreparedStatementInternal(
 			    config.display_create_func ? config.display_create_func : ProgressBar::DefaultProgressBarDisplay;
 		}
 		active_query->progress_bar =
-		    make_uniq<ProgressBar>(executor, NumericCast<idx_t>(config.wait_time), display_create_func);
+		    make_uniq<ProgressBar>(executor, NumericCast<idx_t>(config.wait_time),
+		                           NumericCast<idx_t>(config.progress_update_interval_ms), display_create_func);
 		active_query->progress_bar->Start();
 		query_progress.Restart();
 	}
@@ -259,6 +260,7 @@ unique_ptr<QueryResult> ClientContext::SubmitPreparedStatementInternal(
 		sink.SetResultBuffer(buffer);
 	}
 	executor.SetResultBuffer(buffer);
+	executor.SetCallerDrives(parameters.caller_drives);
 
 	executor.Initialize(std::move(collector));
 
@@ -268,7 +270,7 @@ unique_ptr<QueryResult> ClientContext::SubmitPreparedStatementInternal(
 	auto result = make_uniq<QueryResult>(shared_from_this(), statement_data, std::move(types),
 	                                     std::move(client_properties), std::move(buffer));
 	active_query->SetOpenResult(*result);
-	if (delegating) {
+	if (delegating && !parameters.caller_drives) {
 		// The collector builds its own result object: run the query and hand that object out. The
 		// handle is released first, so destroying it never takes the context lock held here
 		result->context.reset();
@@ -310,7 +312,8 @@ void ClientContext::WaitForTask(ClientContextLock &lock, BaseQueryResult &result
 	executor.WaitForTask();
 }
 
-QueryResultState ClientContext::ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result) {
+QueryResultState ClientContext::ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result,
+                                                    std::function<void()> on_reschedule_arg) {
 	D_ASSERT(active_query);
 	D_ASSERT(active_query->IsOpenResult(result));
 	try {
@@ -320,7 +323,7 @@ QueryResultState ClientContext::ExecuteTaskInternal(ClientContextLock &lock, Bas
 		if (IsInterrupted() && !active_query->executor->HasError()) {
 			throw InterruptException();
 		}
-		auto state = active_query->executor->ExecuteTask();
+		auto state = active_query->executor->ExecuteTask(std::move(on_reschedule_arg));
 		UpdateProgressInternal(state);
 		return state;
 	} catch (std::exception &ex) {
@@ -349,8 +352,9 @@ void ClientContext::UpdateProgressInternal(QueryResultState state) {
 		return;
 	}
 	// todo: this is not correct for streaming results
-	active_query->progress_bar->Update(IsObservable(state));
-	query_progress = active_query->progress_bar->GetDetailedQueryProgress();
+	if (active_query->progress_bar->Update(IsObservable(state))) {
+		query_progress = active_query->progress_bar->GetDetailedQueryProgress();
+	}
 }
 
 QueryResultState ClientContext::FailQueryInternal(ClientContextLock &lock, BaseQueryResult &result, ErrorData error) {

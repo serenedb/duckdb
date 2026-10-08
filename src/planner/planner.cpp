@@ -192,7 +192,7 @@ void Planner::CreatePlan(SQLStatement &statement) {
 	auto &profiler = QueryProfiler::Get(context);
 	auto parameter_count = statement.named_param_map.size();
 
-	BoundParameterMap bound_parameters(parameter_data);
+	BoundParameterMap bound_parameters(parameter_data, &parameter_type_hints);
 
 	// first bind the tables and columns to the catalog
 	bool parameters_resolved = true;
@@ -360,7 +360,7 @@ void Planner::VerifyPlan(ClientContext &context, unique_ptr<LogicalOperator> &op
 			// Override the default of 'latest' if this was manually set (for testing, mostly)
 			options.storage_compatibility = config.options.storage_compatibility;
 		} else {
-			options.storage_compatibility = StorageCompatibility::Latest();
+			options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 		}
 
 		BinarySerializer::Serialize(*op, stream, options);

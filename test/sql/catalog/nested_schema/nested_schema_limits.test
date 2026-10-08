@@ -21,10 +21,11 @@ USE s1.s2;
 ----
 <REGEX>:.*nested schema.*cannot be used in the search path.*
 
-statement error
+statement ok
 SET search_path='s1.s2';
-----
-<REGEX>:.*nested schema.*cannot be used in the search path.*
+
+statement ok
+RESET search_path;
 
 # a path that is neither a catalog+schema nor a nested schema still reports "not found"
 

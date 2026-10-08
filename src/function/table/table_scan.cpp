@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/common/enums/expression_type.hpp"
 #include "duckdb/common/mutex.hpp"
@@ -21,6 +22,9 @@
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -674,6 +678,9 @@ unique_ptr<GlobalTableFunctionState> DuckTableScanInitGlobal(ClientContext &cont
 		}
 	}
 	storage.InitializeParallelScan(context, g_state->state, input.column_indexes);
+	if (bind_data.create_index_row_end) {
+		*bind_data.create_index_row_end = g_state->state.scan_state.max_row;
+	}
 	g_state->InitializeScanInfo(input);
 	const bool repeatable_percentage_sample =
 	    input.sample_options && input.sample_options->repeatable && input.sample_options->is_percentage;
@@ -963,6 +970,10 @@ unique_ptr<GlobalTableFunctionState> TableScanInitGlobal(ClientContext &context,
 		return DuckTableScanInitGlobal(context, input, storage, bind_data);
 	}
 
+	if (bind_data.is_create_index) {
+		return DuckTableScanInitGlobal(context, input, storage, bind_data);
+	}
+
 	// Only scan specific partitions
 	if (bind_data.partitions_to_scan) {
 		return DuckTableScanInitGlobal(context, input, storage, bind_data);
@@ -1041,6 +1052,9 @@ static unique_ptr<BaseStatistics> TableScanStatistics(ClientContext &context, Ta
 	}
 
 	auto &bind_data = input.bind_data->Cast<TableScanBindData>();
+	if (bind_data.is_create_index) {
+		return nullptr;
+	}
 	auto &duck_table = bind_data.table.Cast<DuckTableEntry>();
 	auto &column = duck_table.GetColumn(LogicalIndex(column_id.GetPrimaryIndex()));
 	if (column.Generated()) {
@@ -1109,8 +1123,14 @@ void TableScanGetMetrics(TableFunctionGetMetricsInput &input) {
 InsertionOrderPreservingMap<string> TableScanToString(TableFunctionToStringInput &input) {
 	InsertionOrderPreservingMap<string> result;
 	auto &bind_data = input.bind_data->Cast<TableScanBindData>();
-	result["Table"] = bind_data.table.schema.GetQualifiedName(bind_data.table.name)
-	                      .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (!bind_data.display_name.empty()) {
+		result["Table"] = bind_data.display_name;
+	} else if (bind_data.table.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES) {
+		result["Table"] = bind_data.table.name.GetIdentifierName();
+	} else {
+		result["Table"] = bind_data.table.GetQualifiedName(bind_data.table.name)
+		                      .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	}
 	result["Type"] = bind_data.is_index_scan ? "Index Scan" : "Sequential Scan";
 	return result;
 }
@@ -1120,14 +1140,14 @@ static void TableScanSerialize(Serializer &serializer, const optional_ptr<Functi
 	auto &bind_data = bind_data_p->Cast<TableScanBindData>();
 	// the catalog/schema/name are only the innermost qualification - "qualified_name" carries the full (possibly
 	// nested) schema path
-	serializer.WriteProperty(100, "catalog", bind_data.table.schema.catalog.GetName());
-	serializer.WriteProperty(101, "schema", bind_data.table.schema.name);
+	serializer.WriteProperty(100, "catalog", bind_data.table.ParentCatalog().GetName());
+	serializer.WriteProperty(101, "schema", bind_data.table.ParentSchemaName());
 	serializer.WriteProperty(102, "table", bind_data.table.name);
 	serializer.WriteProperty(103, "is_index_scan", bind_data.is_index_scan);
 	serializer.WriteProperty(104, "is_create_index", bind_data.is_create_index);
 	serializer.WritePropertyWithDefault(105, "result_ids", unsafe_vector<row_t>());
 	serializer.WritePropertyWithDefault<QualifiedName>(
-	    106, "qualified_name", bind_data.table.schema.GetQualifiedName(bind_data.table.name), QualifiedName());
+	    106, "qualified_name", bind_data.table.GetQualifiedName(bind_data.table.name), QualifiedName());
 }
 
 static unique_ptr<FunctionData> TableScanDeserialize(Deserializer &deserializer, BoundTableFunction &function) {
@@ -1178,7 +1198,8 @@ vector<column_t> TableScanGetRowIdColumns(ClientContext &context, optional_ptr<F
 	return result;
 }
 
-void SetScanOrder(unique_ptr<RowGroupOrderOptions> order_options, optional_ptr<FunctionData> bind_data_p) {
+void SetScanOrder(ClientContext &context, unique_ptr<RowGroupOrderOptions> order_options,
+                  optional_ptr<FunctionData> bind_data_p) {
 	auto &bind_data = bind_data_p->Cast<TableScanBindData>();
 	bind_data.order_options = std::move(order_options);
 }
@@ -1231,7 +1252,7 @@ static TableFunctionToSQLResult TableScanToSQL(ClientContext &, const LogicalGet
 	}
 	auto table = make_uniq<BaseTableRef>();
 	auto entry = get.GetTable();
-	table->SetQualifiedName(entry->schema.GetQualifiedName(entry->name));
+	table->SetQualifiedName(entry->GetQualifiedName(entry->name));
 	return {std::move(table), {}};
 }
 
@@ -1266,14 +1287,55 @@ TableFunction TableScanFunction::GetFunction() {
 	return scan_function;
 }
 
+static unique_ptr<FunctionData> IndexScanBind(ClientContext &context, TableFunctionBindInput &input,
+                                              vector<LogicalType> &return_types, vector<Identifier> &names) {
+	QualifiedName name(Identifier(StringValue::Get(input.inputs[0])), Identifier(StringValue::Get(input.inputs[1])),
+	                   Identifier(StringValue::Get(input.inputs[2])));
+	auto &index = Catalog::GetEntry<IndexCatalogEntry>(context, name);
+	auto relation = index.GetRelation(index.catalog.GetCatalogTransaction(context));
+	auto &table = relation && relation->type == CatalogType::TABLE_ENTRY
+	                  ? relation->Cast<TableCatalogEntry>()
+	                  : Catalog::GetEntry<TableCatalogEntry>(context, index.GetQualifiedName(index.GetTableName()));
+	auto result = make_uniq<TableScanBindData>(table);
+	result->display_name = index.name.GetIdentifierName();
+	for (auto &column : table.GetColumns().Logical()) {
+		return_types.push_back(column.Type());
+		names.push_back(column.Name());
+	}
+	return std::move(result);
+}
+
+unique_ptr<TableRef> TableScanFunction::IndexReplacementScan(ClientContext &context, ReplacementScanInput &input,
+                                                             optional_ptr<ReplacementScanData>) {
+	auto index = Catalog::GetEntry<IndexCatalogEntry>(context, input.name, OnEntryNotFound::RETURN_NULL);
+	if (!index || index->index_type != ART::TYPE_NAME ||
+	    index->ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES) {
+		return nullptr;
+	}
+	vector<unique_ptr<ParsedExpression>> arguments;
+	arguments.push_back(ConstantExpression::String(index->ParentCatalog().GetName().GetIdentifierName()));
+	arguments.push_back(ConstantExpression::String(index->ParentSchema(context).name.GetIdentifierName()));
+	arguments.push_back(ConstantExpression::String(index->name.GetIdentifierName()));
+	auto ref = make_uniq<TableFunctionRef>();
+	ref->function = make_uniq<FunctionExpression>("seq_scan", std::move(arguments));
+	return std::move(ref);
+}
+
 void TableScanFunction::RegisterFunction(BuiltinFunctions &set) {
 	TableFunctionSet table_scan_set("seq_scan");
 	table_scan_set.AddFunction(GetFunction());
+	auto index_scan = GetFunction();
+	index_scan.GetSignature() =
+	    FunctionSignature({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::INVALID);
+	index_scan.bind = IndexScanBind;
+	table_scan_set.AddFunction(std::move(index_scan));
 	set.AddFunction(std::move(table_scan_set));
 }
 
 void BuiltinFunctions::RegisterTableScanFunctions() {
 	TableScanFunction::RegisterFunction(*this);
+	auto &config = DBConfig::GetConfig(*transaction.db);
+	config.replacement_scans.emplace_back(TableScanFunction::IndexReplacementScan);
 }
 
 } // namespace duckdb

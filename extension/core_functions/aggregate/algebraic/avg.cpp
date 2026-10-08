@@ -266,6 +266,11 @@ static AggregateFunction NameXParameter(AggregateFunction fun) {
 
 AggregateFunction GetAverageAggregate(PhysicalType type) {
 	switch (type) {
+	case PhysicalType::INT8: {
+		return NameXParameter(
+		    AggregateFunction::UnaryAggregate<AvgState<int64_t>, int8_t, double, IntegerAverageOperation>(
+		        LogicalType::TINYINT, LogicalType::DOUBLE));
+	}
 	case PhysicalType::INT16: {
 		return NameXParameter(
 		    AggregateFunction::UnaryAggregate<AvgState<int64_t>, int16_t, double, IntegerAverageOperation>(
@@ -318,6 +323,7 @@ AggregateFunctionSet AvgFun::GetFunctions() {
 	                              FunctionNullHandling::DEFAULT_NULL_HANDLING, nullptr, BindDecimalAvg);
 	decimal_avg.GetSignature().AddParameter("x", LogicalTypeId::DECIMAL);
 	avg.AddFunction(decimal_avg);
+	avg.AddFunction(GetAverageAggregate(PhysicalType::INT8));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INT16));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INT32));
 	avg.AddFunction(GetAverageAggregate(PhysicalType::INT64));
@@ -327,6 +333,9 @@ AggregateFunctionSet AvgFun::GetFunctions() {
 	    LogicalType::DOUBLE, LogicalType::DOUBLE);
 	numeric_avg.GetSignature().GetParameter(0).SetName("x");
 	avg.AddFunction(numeric_avg);
+	avg.AddFunction(
+	    NameXParameter(AggregateFunction::UnaryAggregate<AvgState<double>, float, double, NumericAverageOperation>(
+	        LogicalType::FLOAT, LogicalType::DOUBLE)));
 
 	auto timestamp_avg =
 	    AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(
@@ -350,6 +359,13 @@ AggregateFunctionSet AvgFun::GetFunctions() {
 	        LogicalType::TIME_TZ, LogicalType::TIME_TZ);
 	time_tz_avg.GetSignature().GetParameter(0).SetName("x");
 	avg.AddFunction(time_tz_avg);
+
+	for (auto &type : {LogicalType::TIME_NS, LogicalType::TIMESTAMP_S, LogicalType::TIMESTAMP_MS,
+	                   LogicalType::TIMESTAMP_NS, LogicalType::TIMESTAMP_TZ_NS}) {
+		avg.AddFunction(NameXParameter(
+		    AggregateFunction::UnaryAggregate<AvgState<hugeint_t>, int64_t, int64_t, DiscreteAverageOperation>(type,
+		                                                                                                       type)));
+	}
 
 	return avg;
 }

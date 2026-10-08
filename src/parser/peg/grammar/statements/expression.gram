@@ -237,8 +237,10 @@ InExpression <- InExpressionList / InSelectStatement / InContainsExpression
 InContainsExpression <- OtherOperatorExpression
 InExpressionList <- Parens(List(Expression))
 InSelectStatement <- Parens(SelectStatementInternal)
-BetweenClause <- 'BETWEEN' Asymmetric? OtherOperatorExpression 'AND' OtherOperatorExpression
-Asymmetric <- 'ASYMMETRIC'
+BetweenClause <- 'BETWEEN' BetweenSymmetry? OtherOperatorExpression 'AND' OtherOperatorExpression
+BetweenSymmetry <- BetweenSymmetric / BetweenAsymmetric
+BetweenSymmetric <- 'SYMMETRIC'
+BetweenAsymmetric <- 'ASYMMETRIC'
 # LEVEL 8
 OtherOperatorExpression <- InfixOtherOperatorExpression / CustomPrefixExpression
 InfixOtherOperatorExpression <- BitwiseExpression OtherOperatorTail*
@@ -285,10 +287,11 @@ AtTimeZoneExpressionTail <- AtTimeZoneOperator PrefixExpression
 AtTimeZoneOperator <- 'AT' 'TIME' 'ZONE'
 # LEVEL 15
 PrefixExpression <- PrefixOperator* BaseExpression
-PrefixOperator <- QualifiedOperator / MinusPrefixOperator / PlusPrefixOperator
+PrefixOperator <- QualifiedOperator / MinusPrefixOperator / PlusPrefixOperator / DoubleNotPrefixOperator
 MinusPrefixOperator <- '-'
 PlusPrefixOperator <- '+'
 TildePrefixOperator <- '~'
+DoubleNotPrefixOperator <- '!!'
 # LEVEL 16 (Highest)
 BaseExpression <- SingleExpression IndirectionList?
 IndirectionList <- Indirection+
@@ -311,7 +314,7 @@ StepSliceBound <- ':' Expression?
 PostfixOperator <- '!'
 
 
-SpecialFunctionExpression <- CoalesceExpression / UnpackExpression / TryExpression / ColumnsExpression / ExtractExpression / LambdaExpression / NullIfExpression / PositionExpression / RowExpression / SubstringExpression / TrimExpression / OverlayExpression
+SpecialFunctionExpression <- CoalesceExpression / UnpackExpression / TryExpression / ColumnsExpression / ExtractExpression / LambdaExpression / NullIfExpression / PositionExpression / RowExpression / SubstringSimilarExpression / SubstringExpression / TrimExpression / OverlayExpression
 CoalesceExpression <- 'COALESCE' Parens(List(Expression))
 UnpackExpression <- 'UNPACK' Parens(Expression)
 TryExpression <- 'TRY' Parens(Expression)
@@ -331,6 +334,8 @@ SubstringParameters <- Expression SubstringFromFor
 SubstringFromFor <- SubstringFromOptionalFor / SubstringFor
 SubstringFromOptionalFor <- FromExpression ForExpression?
 SubstringFor <- ForExpression
+SubstringSimilarExpression <- 'SUBSTRING' Parens(SubstringSimilar)
+SubstringSimilar <- Expression 'SIMILAR' Expression 'ESCAPE' Expression
 TrimExpression <- 'TRIM' Parens(TrimArguments)
 TrimArguments <- TrimDirection? TrimSource? List(Expression)
 TrimDirection <- TrimBoth / TrimLeading / TrimTrailing

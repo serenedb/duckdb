@@ -4,9 +4,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
-#include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
-#include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/extra_drop_info.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 
@@ -19,11 +17,21 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
                                                OperatorSourceInput &input) const {
 	switch (info->type) {
 	case CatalogType::PREPARED_STATEMENT: {
-		// DEALLOCATE silently ignores errors
+		// Empty name == DEALLOCATE ALL / DISCARD <target>: always succeed.
+		// Named DEALLOCATE <name>: honour if_not_found so we match PG, which
+		// errors with "prepared statement \"X\" does not exist" rather than
+		// silently no-op'ing.
 		auto &statements = ClientData::Get(context.client).prepared_statements;
-		auto stmt_iter = statements.find(info->GetQualifiedName().Name());
-		if (stmt_iter != statements.end()) {
-			statements.erase(stmt_iter);
+		auto &name = info->GetQualifiedName().Name();
+		if (name.empty()) {
+			statements.clear();
+		} else {
+			auto stmt_iter = statements.find(name);
+			if (stmt_iter != statements.end()) {
+				statements.erase(stmt_iter);
+			} else if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+				throw CatalogException("prepared statement %s does not exist", name);
+			}
 		}
 		break;
 	}
@@ -32,21 +40,8 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
 		auto &catalog_name = info->GetQualifiedName().Path().front();
 		auto &catalog = Catalog::GetCatalog(context.client, catalog_name);
 		catalog.DropEntry(context.client, *info);
-
-		// Check if the dropped schema was set as the current schema. Compare the resolved catalog names: the dropped
-		// schema's catalog is catalog.GetName(); the current default catalog may be empty (= the default database).
-		auto &client_data = ClientData::Get(context.client);
-		auto &default_entry = client_data.catalog_search_path->GetDefault();
-		auto &current_catalog = default_entry.GetCatalog();
-		auto &current_schema = default_entry.GetSchema();
-		D_ASSERT(info->GetQualifiedName().Name() != DEFAULT_SCHEMA);
-
-		auto resolved_current_catalog =
-		    IsInvalidCatalog(current_catalog) ? DatabaseManager::GetDefaultDatabase(context.client) : current_catalog;
-		if (catalog.GetName() == resolved_current_catalog && current_schema == info->GetQualifiedName().Name()) {
-			// Reset the schema to default
-			SchemaSetting::SetLocal(context.client, DEFAULT_SCHEMA);
-		}
+		// PG-compatible: leave search_path alone. The dropped schema becomes an
+		// invalid entry that lookups will simply skip (see GetResolvedDefault).
 		break;
 	}
 	case CatalogType::SECRET_ENTRY: {

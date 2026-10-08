@@ -18,7 +18,7 @@ statement ok
 CREATE MACRO shadow.count(a) AS 999::BIGINT;
 
 statement ok
-SET search_path='shadow,main';
+SET search_path = shadow, main;
 
 foreach serializer false true
 

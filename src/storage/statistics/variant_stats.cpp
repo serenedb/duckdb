@@ -35,7 +35,7 @@ BaseStatistics VariantStats::CreateUnknown(LogicalType type) {
 	result.InitializeUnknown();
 	//! Unknown - we have no clue what's in this
 	GetDataUnsafe(result).shredding_state = VariantStatsShreddingState::INCONSISTENT;
-	result.child_stats[0].Copy(BaseStatistics::CreateUnknown(VariantShredding::GetUnshreddedType()));
+	result.child_stats[0] = BaseStatistics::CreateUnknown(VariantShredding::GetUnshreddedType());
 	return result;
 }
 
@@ -43,7 +43,7 @@ BaseStatistics VariantStats::CreateEmpty(LogicalType type) {
 	BaseStatistics result(std::move(type));
 	result.InitializeEmpty();
 	GetDataUnsafe(result).shredding_state = VariantStatsShreddingState::UNINITIALIZED;
-	result.child_stats[0].Copy(BaseStatistics::CreateEmpty(VariantShredding::GetUnshreddedType()));
+	result.child_stats[0] = BaseStatistics::CreateEmpty(VariantShredding::GetUnshreddedType());
 	return result;
 }
 
@@ -313,8 +313,8 @@ BaseStatistics VariantStats::CreateShredded(const LogicalType &shredded_type) {
 	result.InitializeEmpty();
 
 	CreateShreddedStats(result, shredded_type);
-	result.child_stats[0].Copy(BaseStatistics::CreateEmpty(VariantShredding::GetUnshreddedType()));
-	result.child_stats[1].Copy(BaseStatistics::CreateEmpty(shredded_type));
+	result.child_stats[0] = BaseStatistics::CreateEmpty(VariantShredding::GetUnshreddedType());
+	result.child_stats[1] = BaseStatistics::CreateEmpty(shredded_type);
 	return result;
 }
 

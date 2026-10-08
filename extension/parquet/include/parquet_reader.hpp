@@ -121,14 +121,14 @@ template <>
 const char *EnumUtil::ToChars<ParquetPrefetchStrategyOption>(ParquetPrefetchStrategyOption value);
 
 template <>
-ParquetPrefetchStrategyOption EnumUtil::FromString<ParquetPrefetchStrategyOption>(const char *value);
+ParquetPrefetchStrategyOption EnumUtil::FromString<ParquetPrefetchStrategyOption>(std::string_view value);
 
 template <>
 const char *EnumUtil::ToChars<StringColumnReader::Utf8ValidationOption>(StringColumnReader::Utf8ValidationOption value);
 
 template <>
 StringColumnReader::Utf8ValidationOption
-EnumUtil::FromString<StringColumnReader::Utf8ValidationOption>(const char *value);
+EnumUtil::FromString<StringColumnReader::Utf8ValidationOption>(std::string_view value);
 
 struct ParquetScanFilter {
 	ParquetScanFilter(ClientContext &context, ProjectionIndex filter_idx, TableFilter &filter);
@@ -202,12 +202,17 @@ struct ParquetPrefetchMetrics {
 struct ParquetReaderScanState {
 public:
 	ColumnReader &GetColumnReader(idx_t i);
+	optional_ptr<ParquetScanFilter> GetScanFilter(idx_t column);
 
 public:
 	//! The row group index this scan state decodes
 	idx_t group_index;
 	idx_t offset_in_group;
 	idx_t group_offset;
+	//! Absolute file row of the first row of the chunk most recently produced by Process(), captured before
+	//! offset_in_group advances -- lets a consumer derive each row's file position (base + r when dense,
+	//! base + sel[r] when pushed filters compacted the chunk) without a file_row_number column.
+	idx_t chunk_row_base = 0;
 	shared_ptr<CachingFileHandle> file_handle;
 	vector<unique_ptr<ColumnReader>> column_readers;
 	duckdb_base_std::unique_ptr<duckdb_apache::thrift::protocol::TProtocol> thrift_file_proto;
@@ -231,6 +236,8 @@ public:
 	MultiFileAdaptiveFilterCache adaptive_filter_cache;
 	//! Table filter list
 	vector<ParquetScanFilter> scan_filters;
+	//! The position in scan_filters of the filter on each column
+	vector<optional_idx> column_scan_filters;
 	//! true once the filter at this index has driven the surviving row count to zero
 	vector<bool> filter_eliminated_all_rows;
 
@@ -326,7 +333,8 @@ template <>
 const char *EnumUtil::ToChars<ParquetReaderProjectionExpressionType>(ParquetReaderProjectionExpressionType value);
 
 template <>
-ParquetReaderProjectionExpressionType EnumUtil::FromString<ParquetReaderProjectionExpressionType>(const char *value);
+ParquetReaderProjectionExpressionType
+EnumUtil::FromString<ParquetReaderProjectionExpressionType>(std::string_view value);
 
 struct ParquetReaderProjectionExpression {
 	ParquetReaderProjectionExpressionType type;
@@ -377,6 +385,11 @@ public:
 	AsyncResult Scan(ClientContext &context, GlobalTableFunctionState &global_state,
 	                 LocalTableFunctionState &local_state, DataChunk &chunk) override;
 	void FinishFile(ClientContext &context, GlobalTableFunctionState &gstate_p) override;
+	//! Skip `num_rows` forward in the currently-open row group WITHOUT decoding them -- each column reader
+	//! walks page headers (ColumnReader::Skip) instead of decompressing -- and advance offset_in_group. Lets
+	//! the lookup jump straight to a target row's vector rather than decoding every intervening row, like the
+	//! native storage lookup's skip-to-vector. Only valid on the no-filter scan path (dense decode).
+	void SkipRows(ParquetReaderScanState &state, idx_t num_rows);
 	double GetProgressInFile(ClientContext &context) override;
 	void PrepareReadAhead(ClientContext &context, GlobalTableFunctionState &gstate) override;
 

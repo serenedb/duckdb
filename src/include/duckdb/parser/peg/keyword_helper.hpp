@@ -24,10 +24,10 @@ public:
 	virtual ~PEGKeywordHelper() = default;
 
 public:
-	LiteralInfo LookupKeyword(const string &text) const {
+	LiteralInfo LookupKeyword(std::string_view text) const {
 		return GetLiteralTable().Lookup(text);
 	}
-	bool IsKeyword(const string &text) const {
+	bool IsKeyword(std::string_view text) const {
 		return LookupKeyword(text).IsKeyword();
 	}
 	//! Opaque flags accepted in this identifier position, computed when creating a matcher.

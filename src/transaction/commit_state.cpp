@@ -43,6 +43,10 @@ void CommitDropState::RemoveIndex(TableIndexList &indexes, idx_t index_oid) {
 	pending_index_removals.push_back(PendingIndexRemoval {indexes, index_oid});
 }
 
+void CommitDropState::DropEntry(CatalogEntry &entry) {
+	dropped_entries.push_back(entry);
+}
+
 void CommitDropState::FinalizeCommit() {
 	if (block_manager) {
 		for (auto block_id : dropped_block_ids) {
@@ -55,12 +59,16 @@ void CommitDropState::FinalizeCommit() {
 	for (auto &removal : pending_index_removals) {
 		removal.indexes.get().RemoveIndex(removal.index_oid);
 	}
+	for (auto &entry : dropped_entries) {
+		entry.get().OnDrop();
+	}
 	dropped_block_ids.clear();
 	pending_index_removals.clear();
+	dropped_entries.clear();
 }
 
 bool CommitDropState::Empty() const {
-	return dropped_block_ids.empty() && pending_index_removals.empty();
+	return dropped_block_ids.empty() && pending_index_removals.empty() && dropped_entries.empty();
 }
 
 //===--------------------------------------------------------------------===//
@@ -93,7 +101,8 @@ void IndexDataRemover::PushDelete(DeleteInfo &info) {
 }
 
 void IndexDataRemover::Verify() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	// Verify that our index memory is stable.
 	for (auto &table : verify_indexes) {
 		table.second->VerifyIndexBuffers();
@@ -189,12 +198,8 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 
 			switch (parent.type) {
 			case CatalogType::TABLE_ENTRY:
-				if (!column_name.empty()) {
-					D_ASSERT(entry.type != CatalogType::RENAMED_ENTRY);
-					auto &table_entry = entry.Cast<DuckTableEntry>();
-					D_ASSERT(table_entry.IsDuckTable());
-					// write the alter table in the log
-					table_entry.CommitAlter(column_name, drop_state);
+				if (entry.type == CatalogType::TABLE_ENTRY && entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+					entry.Cast<DuckTableEntry>().CommitAlter(column_name, parse_info->Cast<AlterInfo>(), drop_state);
 				}
 				break;
 			case CatalogType::VIEW_ENTRY:
@@ -233,8 +238,10 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 	case CatalogType::DELETED_ENTRY:
 		switch (entry.type) {
 		case CatalogType::TABLE_ENTRY: {
+			if (!entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+				break;
+			}
 			auto &table_entry = entry.Cast<DuckTableEntry>();
-			D_ASSERT(table_entry.IsDuckTable());
 
 			// If the table was renamed, we do not need to drop the DataTable.
 			table_entry.CommitDrop(drop_state);
@@ -251,6 +258,9 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 		}
 		break;
 	case CatalogType::DATABASE_ENTRY:
+	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::ROLE_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::PREPARED_STATEMENT:
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
 	case CatalogType::SCALAR_FUNCTION_ENTRY:
@@ -280,15 +290,19 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		D_ASSERT(catalog.IsDuckCatalog());
 
 		auto &new_entry = old_entry.Parent();
-		if (old_entry.type == CatalogType::TABLE_ENTRY && new_entry.type == CatalogType::TABLE_ENTRY) {
+		if (old_entry.type == CatalogType::TABLE_ENTRY && new_entry.type == CatalogType::TABLE_ENTRY &&
+		    old_entry.Cast<TableCatalogEntry>().IsDuckTable()) {
 			auto &old_storage = old_entry.Cast<DuckTableEntry>().GetStorage();
 			auto &new_storage = new_entry.Cast<DuckTableEntry>().GetStorage();
 			if (!RefersToSameObject(old_storage, new_storage) && old_storage.IsMainTable()) {
-				throw TransactionException("Failed to alter table \"%s\" because the underlying table state was "
+				throw TransactionException("Failed to alter table %s because the underlying table state was "
 				                           "reverted by a concurrent transaction",
 				                           old_entry.name);
 			}
 		}
+		// Grab a write lock on the catalog
+		auto &duck_catalog = catalog.Cast<DuckCatalog>();
+		lock_guard<mutex> write_lock(duck_catalog.GetWriteLock());
 		if (new_entry.type == CatalogType::DEPENDENCY_ENTRY) {
 			auto &dep = new_entry.Cast<DependencyEntry>();
 			if (dep.Side() == DependencyEntryType::SUBJECT) {
@@ -296,10 +310,8 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 			}
 		} else if (new_entry.type == CatalogType::DELETED_ENTRY && old_entry.set) {
 			old_entry.set->CommitDrop(commit_id, transaction.view.visibility_bound, old_entry);
+			info.drop_state->DropEntry(old_entry);
 		}
-		// Grab a write lock on the catalog
-		auto &duck_catalog = catalog.Cast<DuckCatalog>();
-		lock_guard<mutex> write_lock(duck_catalog.GetWriteLock());
 		lock_guard<mutex> read_lock(old_entry.set->GetCatalogLock());
 
 		// For a genuine CREATE TRIGGER (not an ALTER propagation), verify that the table version
@@ -314,7 +326,6 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		if (new_entry.type == CatalogType::TRIGGER_ENTRY && old_entry.type != CatalogType::TRIGGER_ENTRY) {
 			auto &trig = new_entry.Cast<TriggerCatalogEntry>();
 			if (!trig.columns.empty()) {
-				auto &table_set = trig.schema.Cast<DuckSchemaEntry>().GetCatalogSet(CatalogType::TABLE_ENTRY);
 				// Transaction view at bind time (what the trigger saw when it was created).
 				// Use commit_id as the transaction_id so that earlier catalog changes in this
 				// same transaction (already stamped with commit_id) are visible here.
@@ -322,15 +333,16 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 				// Transaction view at commit time (all changes committed before this commit)
 				CatalogTransaction commit_txn(duck_catalog.GetDatabase(), MAX_TRANSACTION_ID,
 				                              VisibilityBound::Through(commit_id));
+				auto &schema = trig.ParentSchema(commit_txn).Cast<DuckSchemaEntry>();
+				auto &table_set = schema.GetCatalogSet(CatalogType::TABLE_ENTRY);
 
-				auto bound_table = trig.schema.GetEntry(bind_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
-				auto current_table =
-				    trig.schema.GetEntry(commit_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
+				auto bound_table = schema.GetEntry(bind_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
+				auto current_table = schema.GetEntry(commit_txn, CatalogType::TABLE_ENTRY, trig.base_table->Table());
 
 				// Case (A): a concurrent alter was committed while this trigger was binding
 				if (bound_table && current_table && !RefersToSameObject(*bound_table, *current_table)) {
-					throw TransactionException("Catalog write-write conflict on create with \"%s\": "
-					                           "table \"%s\" was altered by a concurrent transaction",
+					throw TransactionException("Catalog write-write conflict on create with %s: "
+					                           "table %s was altered by a concurrent transaction",
 					                           trig.name, trig.base_table->Table());
 				}
 
@@ -339,8 +351,8 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 				auto head_entry = table_set.GetHeadEntry(trig.base_table->Table());
 				if (head_entry && table_set.HasConflict(commit_txn, head_entry->timestamp) &&
 				    head_entry->type == CatalogType::TABLE_ENTRY && !head_entry->deleted) {
-					throw TransactionException("Catalog write-write conflict on create with \"%s\": "
-					                           "table \"%s\" is being altered by a concurrent transaction",
+					throw TransactionException("Catalog write-write conflict on create with %s: "
+					                           "table %s is being altered by a concurrent transaction",
 					                           trig.name, trig.base_table->Table());
 				}
 			}
@@ -348,6 +360,8 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 
 		// Set the timestamp of the catalog entry to the given commit_id, marking it as committed
 		CatalogSet::UpdateTimestamp(old_entry.Parent(), commit_id);
+		catalog.Cast<DuckCatalog>().GetOidIndex().Commit(
+		    new_entry, new_entry.type == CatalogType::DELETED_ENTRY ? old_entry : new_entry);
 
 		// drop any blocks associated with the catalog entry if possible (e.g. in case of a DROP or ALTER)
 		CommitEntryDrop(old_entry, data + sizeof(CatalogEntry *), info);
@@ -364,7 +378,9 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 			                           table_name, table_modification);
 		}
 		// mark the tuples as committed
-		info->table->GetStorage().CommitAppend(commit_id, info->start_row, info->count);
+		auto &storage = info->table->GetStorage();
+		storage.CommitAppend(commit_id, info->start_row, info->count);
+		storage.GetDataTableInfo()->last_append_commit.store(commit_id);
 		break;
 	}
 	case UndoFlags::DELETE_TUPLE: {
@@ -416,10 +432,13 @@ void CommitState::RevertCommit(UndoFlags type, data_ptr_t data) {
 		// set the commit timestamp of the catalog entry to the given id
 		auto catalog_entry = Load<CatalogEntry *>(data);
 		D_ASSERT(catalog_entry->HasParent());
-		CatalogSet::UpdateTimestamp(catalog_entry->Parent(), transaction_id);
-		if (catalog_entry->name != catalog_entry->Parent().name) {
+		auto &reverted = catalog_entry->Parent();
+		CatalogSet::UpdateTimestamp(reverted, transaction_id);
+		if (catalog_entry->name != reverted.name) {
 			CatalogSet::UpdateTimestamp(*catalog_entry, transaction_id);
 		}
+		catalog_entry->ParentCatalog().Cast<DuckCatalog>().GetOidIndex().RevertCommit(
+		    reverted, reverted.type == CatalogType::DELETED_ENTRY ? *catalog_entry : reverted);
 		break;
 	}
 	case UndoFlags::INSERT_TUPLE: {

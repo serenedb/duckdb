@@ -4,9 +4,6 @@
 
 require json
 
-statement ok
-pragma enable_verification
-
 # Basic: add new key to object
 query T
 SELECT json_set('{"a":1}', '$.b', '2')
@@ -346,6 +343,21 @@ query T
 SELECT CASE WHEN false THEN json_set('{}', '$not_a_path', '1') ELSE '{}'::JSON END
 ----
 {}
+
+query T
+SELECT TRY(json_set('{}', (1 // 0)::VARCHAR, '1'))
+----
+NULL
+
+query T
+SELECT CASE WHEN false THEN json_remove('{}', (1 // 0)::VARCHAR) ELSE '{}'::JSON END
+----
+{}
+
+statement error
+SELECT json_set('{}', (1 // 0)::VARCHAR, '1')
+----
+Division by zero
 
 # Wildcards are not supported in modification functions
 statement error

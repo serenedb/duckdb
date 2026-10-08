@@ -41,4 +41,4 @@ SELECT datepart('month', i), datepart('day', i) FROM (SELECT INTERVAL '-19522578
 query I
 SELECT INTERVAL '2 days 3 months' * 1.1;
 ----
-3 months 11 days 04:48:00
+3 mons 11 days 04:48:00

@@ -5,12 +5,13 @@ namespace duckdb {
 
 class ParserTokenizerBehavior : public TokenizerBehavior {
 public:
-	ParserTokenizerBehavior(const string &sql, vector<MatcherToken> &tokens);
+	ParserTokenizerBehavior(std::string_view sql, vector<MatcherToken> &tokens);
 	~ParserTokenizerBehavior() override = default;
 
 	void PushToken(idx_t start, idx_t end, TokenType type, bool unterminated = false) override;
 	void OnStatementEnd(idx_t pos) override;
-	void OnLastToken(const Tokenizer &tokenizer, TokenizeState state, string last_word, idx_t last_pos) override;
+	void OnLastToken(const Tokenizer &tokenizer, TokenizeState state, std::string_view last_word,
+	                 idx_t last_pos) override;
 };
 
 } // namespace duckdb

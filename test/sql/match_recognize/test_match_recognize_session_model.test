@@ -123,7 +123,7 @@ FROM events MATCH_RECOGNIZE(
             AND action_type NOT IN ('staged_item', 'suppressed_item', 'escalated_item')
 ) ORDER BY opened_at;
 ----
-c1	i1	7.0	0.9	3.0
+c1	i1	7	0.9	3
 c1	i2	-	-	-
 c2	i2	-	-	-
 c2	i2	-	-	-

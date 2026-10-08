@@ -125,7 +125,7 @@ BIGINT	VARCHAR	DATE
 query II
 explain from parquet_scan('{TEMP_DIR}/partition-written/**/*.parquet', HIVE_PARTITIONING=0, HIVE_TYPES_AUTOCAST=0) where aired < '2006-1-1';
 ----
-physical_plan	<REGEX>:.*PARQUET_SCAN.*Filters:.*aired.*
+physical_plan	<REGEX>:.*PARQUET_SCAN.*Column Filter:.*aired.*
 
 statement ok
 copy (from values (42, 42), (null, null) tbl(i, j)) to '{TEMP_DIR}/hive_null' (format parquet, partition_by (i));

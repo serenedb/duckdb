@@ -14,27 +14,39 @@
 
 namespace duckdb {
 
+struct MatcherTokenClass {
+	static constexpr uint8_t WORD = 1;
+	static constexpr uint8_t SINGLE_QUOTED = 2;
+	static constexpr uint8_t STRING = 4;
+	static constexpr uint8_t NUMBER = 8;
+	static constexpr uint8_t OPERATOR = 16;
+};
+
 struct MatcherToken {
 	// NOLINTNEXTLINE: allow implicit conversion from text
-	MatcherToken(string text_p, idx_t offset_p, TokenType type_p, bool unterminated_p = false)
-	    : type(type_p), text(std::move(text_p)), offset(offset_p), unterminated(unterminated_p) {
-		length = text.length();
+	MatcherToken(std::string_view text_p, idx_t offset_p, TokenType type_p, bool unterminated_p = false)
+	    : text(text_p), offset(offset_p), type(type_p), unterminated(unterminated_p) {
+		token_classes = ComputeClasses();
 	}
 
-	TokenType type;
-	string text;
+	std::string_view text;
 	idx_t offset = 0;
-	idx_t length = 0;
+	TokenType type;
 	bool unterminated = false;
 	bool preceded_by_newline = false;
 	bool preceded_by_block_comment = false;
+	uint8_t token_classes = 0;
 
 	LiteralInfo GetLiteralInfo(const GrammarLiteralTable &table) {
 		if (literal_table_id != table.CacheId()) {
-			literal_info = table.Lookup(text);
-			literal_table_id = table.CacheId();
+			CacheLiteralInfo(table);
 		}
 		return literal_info;
+	}
+
+	void SetLiteralInfo(const GrammarLiteralTable &table, LiteralInfo info) {
+		literal_info = info;
+		literal_table_id = table.CacheId();
 	}
 
 	void ResetLiteralInfo() {
@@ -42,8 +54,12 @@ struct MatcherToken {
 	}
 
 private:
+	DUCKDB_API void CacheLiteralInfo(const GrammarLiteralTable &table);
+	DUCKDB_API uint8_t ComputeClasses() const;
+
+private:
 	LiteralInfo literal_info;
-	uint64_t literal_table_id = 0;
+	uint32_t literal_table_id = 0;
 };
 
 } // namespace duckdb

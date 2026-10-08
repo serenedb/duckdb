@@ -7,32 +7,12 @@
 
 namespace duckdb {
 
-MatchStep MatchStep::Child(MatchInput input) {
-	return MatchStep(input, nullopt);
-}
-
-MatchStep MatchStep::Complete(MatcherResult result) {
-	return MatchStep(nullopt, result);
-}
-
-optional<MatchInput> MatchStep::GetChild() {
-	return child;
-}
-
-MatcherResult MatchStep::GetResult() const {
-	D_ASSERT(!child);
-	if (!result) {
-		throw InternalException("Completed match step has no result");
-	}
-	return *result;
-}
-
 class AtomicMatchProcess : public MatchProcess {
 public:
 	AtomicMatchProcess(const AtomicMatcher &matcher_p, MatchState &state_p) : matcher(matcher_p), state(state_p) {
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(!child_result);
 		D_ASSERT(!completed);
 		completed = true;
@@ -52,23 +32,27 @@ arena_ptr<MatchProcess> AtomicMatcher::StartMatch(MatchState &state) const {
 class ListMatchProcess : public MatchProcess {
 public:
 	ListMatchProcess(const ListMatcher &matcher_p, MatchState &state_p)
-	    : matcher(matcher_p), state(state_p), list_state(state_p) {
+	    : matcher(matcher_p), state(state_p), list_state(state_p),
+	      children_begin(state_p.context.allocator.ChildCount()) {
 		saved_suggestion_size = matcher.suppress_suggestions ? list_state.context.suggestions.size() : 0;
 		if (auto current = list_state.token_iterator.Current()) {
 			start_offset = optional_idx(current->offset);
 		}
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(awaiting_child == child_result.has_value());
+		auto &allocator = state.context.allocator;
+		auto &suggestions = state.context.suggestions;
 		if (child_result) {
 			awaiting_child = false;
 			if (!child_result->IsSuccess()) {
-				DiscardSuggestions();
+				matcher.DiscardSuggestions(suggestions, saved_suggestion_size);
+				allocator.DiscardChildren(children_begin);
 				return MatchStep::Complete(MatcherResult::Failure());
 			}
 			if (child_result->HasParseResult()) {
-				results.push_back(*child_result->GetParseResult());
+				allocator.PushChild(*child_result->GetParseResult());
 			}
 			child_index++;
 		}
@@ -80,7 +64,8 @@ public:
 				return MatchStep::Child({matcher.matchers[child_index].get(), list_state});
 			}
 			if (matcher.suppress_suggestions) {
-				DiscardSuggestions();
+				matcher.DiscardSuggestions(suggestions, saved_suggestion_size);
+				allocator.DiscardChildren(children_begin);
 				return MatchStep::Complete(MatcherResult::Failure());
 			}
 			if (matcher.matchers[child_index].get().AddSuggestion(list_state) == SuggestionType::OPTIONAL) {
@@ -88,66 +73,28 @@ public:
 				continue;
 			}
 			state.token_iterator.SetPosition(list_state.token_iterator);
+			allocator.DiscardChildren(children_begin);
 			return MatchStep::Complete(MatcherResult::Failure());
 		}
 		state.token_iterator.SetPosition(list_state.token_iterator);
-		DiscardSuggestions();
+		matcher.DiscardSuggestions(suggestions, saved_suggestion_size);
 		if (matcher.IsCollapsible()) {
-			auto collapsible = FindCollapsibleResult();
+			auto collapsible = ListMatcher::FindCollapsibleResult(allocator.PendingChildren(children_begin));
 			if (collapsible) {
+				allocator.DiscardChildren(children_begin);
 				collapsible->collapsed = true;
 				return MatchStep::Complete(MatcherResult::Success(collapsible));
 			}
 		}
-		auto list_name = matcher.HasName() ? matcher.GetName() : string();
-		return MatchStep::Complete(
-		    state.AllocateParseResult<ListParseResult>(std::move(results), std::move(list_name), start_offset));
-	}
-
-private:
-	//! The child that can stand in for this rule's own result, or nullptr when the rule has to build one
-	optional_ptr<ParseResult> FindCollapsibleResult() const {
-		optional_ptr<ParseResult> collapsible;
-		for (auto &child : results) {
-			auto &child_result = child.get();
-			// an optional that matched nothing carries no value, so it does not stop the rule from collapsing
-			if (child_result.type == ParseResultType::OPTIONAL &&
-			    !child_result.Cast<OptionalParseResult>().HasResult()) {
-				continue;
-			}
-
-			// a second child with a result means the rule combines them rather than forwarding one of them
-			if (collapsible) {
-				return nullptr;
-			}
-
-			collapsible = child_result;
-		}
-
-		// only results that carry a rule of their own are collapsible into this one, since the result is
-		// transformed by that rule
-		if (collapsible && !collapsible->GetRule()) {
-			return nullptr;
-		}
-
-		// null when no child produced a result, so a rule that matched empty still gets a result of its own
-		return collapsible;
-	}
-
-	void DiscardSuggestions() {
-		if (!matcher.suppress_suggestions) {
-			return;
-		}
-		list_state.context.suggestions.erase(list_state.context.suggestions.begin() +
-		                                         NumericCast<int64_t>(saved_suggestion_size),
-		                                     list_state.context.suggestions.end());
+		auto children = allocator.TakeChildren(children_begin);
+		return MatchStep::Complete(state.AllocateParseResult<ListParseResult>(children, start_offset));
 	}
 
 private:
 	const ListMatcher &matcher;
 	MatchState &state;
 	MatchState list_state;
-	vector<reference<ParseResult>> results;
+	idx_t children_begin;
 	idx_t child_index = 0;
 	idx_t saved_suggestion_size = 0;
 	optional_idx start_offset;
@@ -156,6 +103,37 @@ private:
 
 arena_ptr<MatchProcess> ListMatcher::StartMatch(MatchState &state) const {
 	return state.Make<ListMatchProcess>(*this, state);
+}
+
+void ListMatcher::EraseSuggestions(vector<MatcherSuggestion> &suggestions, idx_t saved_suggestion_size) {
+	suggestions.erase(suggestions.begin() + NumericCast<int64_t>(saved_suggestion_size), suggestions.end());
+}
+
+optional_ptr<ParseResult> ListMatcher::FindCollapsibleResult(std::span<const reference<ParseResult>> children) {
+	optional_ptr<ParseResult> collapsible;
+	for (auto &child : children) {
+		auto &child_result = child.get();
+		// an optional that matched nothing carries no value, so it does not stop the rule from collapsing
+		if (child_result.type == ParseResultType::OPTIONAL && !child_result.Cast<OptionalParseResult>().HasResult()) {
+			continue;
+		}
+
+		// a second child with a result means the rule combines them rather than forwarding one of them
+		if (collapsible) {
+			return nullptr;
+		}
+
+		collapsible = child_result;
+	}
+
+	// only results that carry a rule of their own are collapsible into this one, since the result is
+	// transformed by that rule
+	if (collapsible && !collapsible->GetRule()) {
+		return nullptr;
+	}
+
+	// null when no child produced a result, so a rule that matched empty still gets a result of its own
+	return collapsible;
 }
 
 template <bool SINGLE_CHILD>
@@ -168,7 +146,7 @@ public:
 		}
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(awaiting_child == child_result.has_value());
 		if (child_result) {
 			awaiting_child = false;
@@ -179,6 +157,9 @@ public:
 				state.token_iterator.SetPosition(child_state->token_iterator);
 				if (!child_result->HasParseResult()) {
 					return MatchStep::Complete(MatcherResult::Success());
+				}
+				if (matcher.IsCollapsible() && child_result->GetParseResult()->GetRule()) {
+					return MatchStep::Complete(*child_result);
 				}
 				return MatchStep::Complete(state.AllocateParseResult<ChoiceParseResult>(*child_result->GetParseResult(),
 				                                                                        child_index, start_offset));
@@ -211,10 +192,7 @@ arena_ptr<MatchProcess> ChoiceMatcher::StartMatch(MatchState &state) const {
 }
 
 arena_ptr<MatchProcess> LiteralChoiceMatcher::StartMatch(MatchState &state) const {
-	auto literal = state.token_iterator.CurrentLiteralInfo(table);
-	auto entry = literal_children.find(literal.LiteralId());
-	auto child_index = entry == literal_children.end() ? matchers.size() : entry->second;
-	return state.Make<ChoiceMatchProcess<true>>(*this, state, child_index);
+	return state.Make<ChoiceMatchProcess<true>>(*this, state, SelectChild(state.token_iterator));
 }
 
 class OptionalMatchProcess : public MatchProcess {
@@ -226,7 +204,7 @@ public:
 		}
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(awaiting_child == child_result.has_value());
 		if (!child_result) {
 			awaiting_child = true;
@@ -234,7 +212,7 @@ public:
 		}
 		awaiting_child = false;
 		if (!child_result->IsSuccess()) {
-			return MatchStep::Complete(state.AllocateParseResult<OptionalParseResult>());
+			return MatchStep::Complete(matcher.EmptyResult(state));
 		}
 		state.token_iterator.SetPosition(child_state.token_iterator);
 		if (!child_result->HasParseResult()) {
@@ -259,13 +237,14 @@ arena_ptr<MatchProcess> OptionalMatcher::StartMatch(MatchState &state) const {
 class RepeatMatchProcess : public MatchProcess {
 public:
 	RepeatMatchProcess(const RepeatMatcher &matcher_p, MatchState &state_p)
-	    : matcher(matcher_p), state(state_p), repeat_state(state_p) {
+	    : matcher(matcher_p), state(state_p), repeat_state(state_p),
+	      children_begin(state_p.context.allocator.ChildCount()) {
 		if (auto current = repeat_state.token_iterator.Current()) {
 			start_offset = optional_idx(current->offset);
 		}
 	}
 
-	MatchStep Resume(optional<MatcherResult> child_result) override {
+	MatchStep Resume(const optional<MatcherResult> &child_result) override {
 		D_ASSERT(awaiting_child == child_result.has_value());
 		if (child_result) {
 			awaiting_child = false;
@@ -277,7 +256,7 @@ public:
 			}
 			matched_once = true;
 			if (child_result->HasParseResult()) {
-				results.push_back(*child_result->GetParseResult());
+				state.context.allocator.PushChild(*child_result->GetParseResult());
 			}
 			state.token_iterator.SetPosition(repeat_state.token_iterator);
 			auto current = repeat_state.token_iterator.Current();
@@ -292,14 +271,15 @@ public:
 
 private:
 	MatcherResult CreateResult() {
-		return state.AllocateParseResult<RepeatParseResult>(std::move(results), start_offset);
+		auto children = state.context.allocator.TakeChildren(children_begin);
+		return state.AllocateParseResult<RepeatParseResult>(children, start_offset);
 	}
 
 private:
 	const RepeatMatcher &matcher;
 	MatchState &state;
 	MatchState repeat_state;
-	vector<reference<ParseResult>> results;
+	idx_t children_begin;
 	bool matched_once = false;
 	optional_idx start_offset;
 	bool awaiting_child = false;

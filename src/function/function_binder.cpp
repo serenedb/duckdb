@@ -589,7 +589,7 @@ static void PlaceArguments(ClientContext &context, const T &function,
 		}
 		if (param_idx.GetIndex() < passed_count) {
 			throw BinderException(named_argument.second->GetQueryLocation(),
-			                      "Named argument '%s' cannot be used for parameter '%s' because it has already "
+			                      "Named argument '%s' cannot be used for parameter %s because it has already "
 			                      "been provided as a positional argument in function call to '%s'",
 			                      named_argument.second->ToString(), argument_name,
 			                      function.GetName().GetIdentifierName());
@@ -1283,13 +1283,13 @@ static vector<Identifier> ResolveArguments(const SimpleFunction &function, Bound
 		if (name.empty()) {
 			// Somehow this was not a named argument, throw an error.
 			throw BinderException(location,
-			                      "Positional arguments cannot follow named arguments in a function call to '%s'",
+			                      "Positional arguments cannot follow named arguments in a function call to %s",
 			                      function.GetName());
 		}
 
 		if (seen_names.count(name)) {
 			// This should also not really happen when invoked through SQL
-			throw BinderException(location, "Duplicate named argument %s in function call to '%s'", name,
+			throw BinderException(location, "Duplicate named argument %s in function call to %s", name,
 			                      function.GetName());
 		}
 		seen_names.insert(name);
@@ -1297,8 +1297,8 @@ static vector<Identifier> ResolveArguments(const SimpleFunction &function, Bound
 		const auto opt_param_idx = sig.GetParameterIndexByName(name);
 		if (!opt_param_idx.IsValid()) {
 			if (!kwargs_param) {
-				throw BinderException(location, "Function '%s' does not have a parameter named '%s'",
-				                      function.GetName(), name);
+				throw BinderException(location, "Function %s does not have a parameter named %s", function.GetName(),
+				                      name);
 			}
 			kwargs.emplace_back(name, std::move(arg));
 			continue;
@@ -1307,8 +1307,8 @@ static vector<Identifier> ResolveArguments(const SimpleFunction &function, Bound
 		const auto param_idx = opt_param_idx.GetIndex();
 		if (sig.GetParameter(param_idx).AcceptsPosition() && param_idx < passed_count) {
 			throw BinderException(location,
-			                      "Named argument '%s' cannot be used for parameter '%s' because it has already "
-			                      "been provided as a positional argument in function call to '%s'",
+			                      "Named argument '%s' cannot be used for parameter %s because it has already "
+			                      "been provided as a positional argument in function call to %s",
 			                      arg->ToString(), name, function.GetName());
 		}
 		keyword_arguments[param_idx] = std::move(arg);
@@ -1380,7 +1380,7 @@ static vector<Identifier> ResolveArguments(const SimpleFunction &function, Bound
 // The names of the named arguments have to stay parallel to the last arguments
 static void VerifyArgumentCount(const BoundSimpleFunction &bound_function, idx_t resolved_count, idx_t argument_count) {
 	if (resolved_count != argument_count && !bound_function.GetNamedArguments().empty()) {
-		throw InternalException("Function '%s' cannot add or remove arguments in its bind callback when it is "
+		throw InternalException("Function %s cannot add or remove arguments in its bind callback when it is "
 		                        "called with keyword-only or '**kwargs' arguments",
 		                        bound_function.GetName());
 	}

@@ -58,7 +58,6 @@ set(TEST_API_OBJECTS
     test_dbdir.cpp
     test_pending_with_parameters.cpp
     test_parse_statement_iterator.cpp
-    test_dialect_extension.cpp
     test_query_node_copy.cpp
     test_grammar_extension.cpp
     test_passthrough_dialect.cpp
@@ -75,6 +74,7 @@ set(TEST_API_OBJECTS
     test_buffer_pool_eviction.cpp
     test_block_allocator_tls.cpp
     test_group_commit_bound.cpp
+    test_wal_sync_parallelism.cpp
     test_data_table_scan_without_row_groups.cpp)
 
 if(NOT WIN32)

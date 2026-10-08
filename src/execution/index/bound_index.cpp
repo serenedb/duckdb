@@ -98,8 +98,11 @@ bool BoundIndex::MergeIndexes(BoundIndex &other_index) {
 }
 
 void BoundIndex::Verify() {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	IndexLock l(*this);
 	Verify(l);
+#endif
 }
 
 string BoundIndex::ToString(bool display_ascii) {
@@ -132,6 +135,11 @@ idx_t BoundIndex::GetInMemorySize() const {
 	return GetInMemorySize(state);
 }
 
+idx_t BoundIndex::GetAllocationSize() const {
+	IndexLock state(*this);
+	return GetAllocationSize(state);
+}
+
 void BoundIndex::ExecuteExpressions(DataChunk &input, DataChunk &result) const {
 	executor.Execute(input, result);
 }
@@ -147,6 +155,17 @@ unique_ptr<Expression> BoundIndex::CopyUnboundExpression(const idx_t index) cons
 	return expression->Copy();
 }
 
+void BoundIndex::RemapColumnIds(const vector<column_t> &new_column_ids) {
+	IndexLock index_lock(*this);
+	Index::RemapColumnIds(new_column_ids);
+	bound_expressions.clear();
+	executor.ClearExpressions();
+	for (auto &expr : unbound_expressions) {
+		bound_expressions.push_back(BindExpression(expr->Copy()));
+		executor.AddExpression(*bound_expressions.back());
+	}
+}
+
 unique_ptr<Expression> BoundIndex::BindExpression(unique_ptr<Expression> root_expr) {
 	ExpressionIterator::VisitExpressionMutable<BoundColumnRefExpression>(
 	    root_expr, [&](BoundColumnRefExpression &bound_colref, unique_ptr<Expression> &expr) {
@@ -156,7 +175,7 @@ unique_ptr<Expression> BoundIndex::BindExpression(unique_ptr<Expression> root_ex
 	return root_expr;
 }
 
-bool BoundIndex::IndexIsUpdated(const vector<PhysicalIndex> &column_ids_p) const {
+bool BoundIndex::IndexIsUpdated(std::span<const PhysicalIndex> column_ids_p) const {
 	for (auto &column : column_ids_p) {
 		if (column_id_set.find(column.index) != column_id_set.end()) {
 			return true;

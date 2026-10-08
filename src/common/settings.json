@@ -9,17 +9,6 @@
         ]
     },
     {
-        "name": "active_grammar_extensions",
-        "description": "The grammar extensions used by the parser.",
-        "type": "VARCHAR[]",
-        "scope": "local",
-        "on_callbacks": [
-            "set",
-            "reset"
-        ],
-        "custom_implementation": true
-    },
-    {
         "name": "allocator_background_threads",
         "description": "Whether to enable the allocator background threads.",
         "type": "BOOLEAN",
@@ -72,13 +61,6 @@
         "type": "BOOLEAN",
         "scope": "global",
         "default_value": "false"
-    },
-    {
-        "name": "allow_parser_override_extension",
-        "description": "Allow extensions to override the current parser.",
-        "type": "ENUM<AllowParserOverride>",
-        "default_scope": "global",
-        "default_value": "DEFAULT"
     },
     {
         "name": "allow_persistent_secrets",
@@ -254,15 +236,11 @@
         ]
     },
     {
-        "name": "current_dialect",
-        "description": "The SQL dialect used by the parser.",
-        "type": "VARCHAR",
-        "scope": "local",
-        "on_callbacks": [
-            "set",
-            "reset"
-        ],
-        "custom_implementation": true
+        "name": "copy_csv_header_default",
+        "description": "Whether COPY ... TO a CSV file writes a header line when HEADER is not specified",
+        "type": "BOOLEAN",
+        "default_scope": "local",
+        "default_value": "true"
     },
     {
         "name": "current_transaction_invalidation_policy",
@@ -660,6 +638,23 @@
         "default_value": "ALL_ERRORS_INVALIDATE_TRANSACTION"
     },
     {
+        "name": "default_transaction_isolation",
+        "description": "Sets the transaction isolation level of each new transaction.",
+        "type": "ENUM<TransactionIsolationLevel>",
+        "default_scope": "local",
+        "default_value": "repeatable read",
+        "custom_implementation": [
+            "set"
+        ]
+    },
+    {
+        "name": "default_transaction_read_only",
+        "description": "Sets the default read-only status of new transactions.",
+        "type": "BOOLEAN",
+        "default_scope": "local",
+        "default_value": "false"
+    },
+    {
         "name": "delim_join_as_cte",
         "description": "Rewrite delim joins to materialized CTEs during dependent join flattening.",
         "type": "BOOLEAN",
@@ -719,7 +714,7 @@
         "name": "disabled_optimizers",
         "description": "Disable a specific, comma-separated set of optimizers.",
         "type": "VARCHAR",
-        "scope": "global",
+        "scope": "global_local",
         "custom_implementation": true
     },
     {
@@ -790,17 +785,6 @@
         "type": "BOOLEAN",
         "default_scope": "global",
         "default_value": "false"
-    },
-    {
-        "name": "enable_object_cache",
-        "description": "Deprecated legacy setting, does nothing.",
-        "type": "BOOLEAN",
-        "default_scope": "global",
-        "default_value": "false",
-        "on_callbacks": [
-            "set"
-        ],
-        "is_deprecated": true
     },
     {
         "name": "enable_optimistic_write",
@@ -889,6 +873,13 @@
         "type": "ENUM<ExplainOutputType>",
         "default_scope": "local",
         "default_value": "PHYSICAL_ONLY"
+    },
+    {
+        "name": "explain_output_format",
+        "description": "Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)",
+        "type": "ENUM<ExplainFormatShape>",
+        "default_scope": "local",
+        "default_value": "DUCKDB_NATIVE"
     },
     {
         "name": "extension_directories",
@@ -998,6 +989,16 @@
         "scope": "global",
         "default_value": "auto",
         "custom_implementation": [
+            "set"
+        ]
+    },
+    {
+        "name": "force_dict_fsst_mode",
+        "description": "DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage ownership (serenedb-owned -> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'",
+        "type": "VARCHAR",
+        "scope": "global",
+        "default_value": "DEFAULT",
+        "on_callbacks": [
             "set"
         ]
     },
@@ -1312,13 +1313,6 @@
         "default_value": "100"
     },
     {
-        "name": "password",
-        "description": "The password to use. Kept for legacy compatibility.",
-        "type": "VARCHAR",
-        "default_scope": "global",
-        "default_value": ""
-    },
-    {
         "name": "perfect_ht_threshold",
         "description": "Threshold in bytes for when to use a perfect hash table.",
         "type": "UBIGINT",
@@ -1485,7 +1479,7 @@
         "name": "show_behavior",
         "description": "Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.",
         "type": "ENUM<ShowBehaviorType>",
-        "default_scope": "global",
+        "default_scope": "local",
         "default_value": "AUTO"
     },
     {
@@ -1542,9 +1536,9 @@
     },
     {
         "name": "threads",
-        "description": "The number of total background threads used by the system.",
+        "description": "The number of total background threads used by the system; a session or transaction value caps the threads its queries use.",
         "type": "BIGINT",
-        "scope": "global",
+        "scope": "global_local",
         "custom_implementation": true,
         "aliases": [
             "worker_threads"
@@ -1558,14 +1552,12 @@
         "custom_implementation": true
     },
     {
-        "name": "username",
-        "description": "The username to use. Kept for legacy compatibility.",
-        "type": "VARCHAR",
-        "default_scope": "global",
-        "default_value": "",
-        "aliases": [
-            "user"
-        ]
+        "name": "transaction_isolation",
+        "description": "Sets the current transaction's isolation level.",
+        "type": "ENUM<TransactionIsolationLevel>",
+        "scope": "local",
+        "custom_implementation": true,
+        "no_reset_all": true
     },
     {
         "name": "vacuum_rebuild_indexes",

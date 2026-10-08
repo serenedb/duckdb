@@ -1,6 +1,8 @@
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/parser/statement/merge_into_statement.hpp"
 #include "duckdb/parser/query_node/merge_query_node.hpp"
+#include "duckdb/parser/tableref.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/planner/tableref/bound_joinref.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/expression_binder/where_binder.hpp"
@@ -88,9 +90,17 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		update.bound_defaults = std::move(merge_into.bound_defaults);
 		update.bound_constraints = std::move(merge_into.bound_constraints);
 		update.update_is_del_and_insert = false;
+		update.update_column_count = 0;
 
-		// call BindUpdateConstraints
-		table.BindUpdateConstraints(*this, get, proj, update, context);
+		// call BindUpdateConstraints -- storage-derived decisions (an index
+		// update forces delete+insert) come from the scan-bound table when the
+		// catalog delegates storage, exactly as plan UPDATE does.
+		auto storage_table = get.GetTable();
+		if (storage_table && storage_table.get() != &table) {
+			storage_table->BindUpdateConstraints(*this, get, proj, update, context);
+		} else {
+			table.BindUpdateConstraints(*this, get, proj, update, context);
+		}
 
 		// move all moved values back
 		merge_into.bound_defaults = std::move(update.bound_defaults);
@@ -99,6 +109,7 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		result->columns = std::move(update.columns);
 		result->expressions = std::move(update.expressions);
 		result->update_is_del_and_insert = update.update_is_del_and_insert;
+		result->update_column_count = update.update_column_count;
 		break;
 	}
 	case MergeActionType::MERGE_INSERT: {
@@ -139,17 +150,25 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 			insert_types.push_back(std::move(insert_type));
 		}
 
+		// Fill the non-generated columns' value expressions, then inline the stored generated ones against them
+		// (same single-projection model as INSERT/COPY -- no BoundReferenceExpression in the plan).
+		result->expressions.resize(table.GetColumns().PhysicalColumnCount());
+		idx_t phys_idx = 0;
 		for (auto &col : table.GetColumns().Physical()) {
-			auto storage_idx = col.StorageOid();
-			auto mapped_index = column_index_map.empty() ? storage_idx : column_index_map[col.Physical()];
-			if (mapped_index == DConstants::INVALID_INDEX) {
-				result->expressions.push_back(merge_into.bound_defaults[storage_idx]->Copy());
-			} else {
-				result->expressions.push_back(table.GetDefaultExpressionForColumn(
-				    context, insert_types[mapped_index], col.Type(), insert_bindings[mapped_index],
-				    *merge_into.bound_defaults[storage_idx]));
+			if (col.Category() != TableColumnType::GENERATED_STORED) {
+				auto storage_idx = col.StorageOid();
+				auto mapped_index = column_index_map.empty() ? storage_idx : column_index_map[col.Physical()];
+				if (mapped_index == DConstants::INVALID_INDEX) {
+					result->expressions[phys_idx] = merge_into.bound_defaults[storage_idx]->Copy();
+				} else {
+					result->expressions[phys_idx] = table.GetDefaultExpressionForColumn(
+					    context, insert_types[mapped_index], col.Type(), insert_bindings[mapped_index],
+					    *merge_into.bound_defaults[storage_idx]);
+				}
 			}
+			phys_idx++;
 		}
+		ComputeStoredGeneratedColumns(table, result->expressions);
 		break;
 	}
 	case MergeActionType::MERGE_ERROR: {
@@ -221,6 +240,16 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	if (!table_ptr) {
 		throw BinderException("Can only merge into base tables!");
 	}
+	if (node.target->type == TableReferenceType::BASE_TABLE) {
+		// A catalog may delegate the scan of its table to a storage table in
+		// another catalog; the merge targets the entry the name resolves to.
+		auto &target_ref = node.target->Cast<BaseTableRef>();
+		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.GetQualifiedName());
+		auto resolved = Catalog::GetEntry(context, table_lookup, OnEntryNotFound::RETURN_NULL);
+		if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
+			table_ptr = &resolved->Cast<TableCatalogEntry>();
+		}
+	}
 	auto &table = *table_ptr;
 
 	bool has_triggers = false;
@@ -253,7 +282,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 				}
 			}
 		}
-		properties.RegisterDBModify(table.catalog, context, modification);
+		properties.RegisterDBModify(table.GetStorageCatalog(context), context, modification);
 	}
 
 	// bind the source
@@ -281,11 +310,17 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 
 	// bind table constraints/default values in case these are referenced
 	auto &catalog_name = table.ParentCatalog().GetName();
-	auto &schema_name = table.ParentSchema().name;
+	auto schema_name = table.ParentSchema(context).name;
 	BindDefaultValues(table.GetColumns(), merge_into->bound_defaults, catalog_name.GetIdentifierName(),
 	                  schema_name.GetIdentifierName());
 
 	merge_into->bound_constraints = BindConstraints(table);
+
+	// must be set before ANY action is bound: update actions bound with return_chunk
+	// project every table column (PhysicalUpdate builds the full RETURNING row from them)
+	if (!node.returning_list.empty()) {
+		merge_into->return_chunk = true;
+	}
 
 	for (auto &entry : node.actions) {
 		if (entry.first == MergeActionCondition::WHEN_MATCHED) {
@@ -414,12 +449,14 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 			auto &target_binding = join_ref.get().children[inverted ? 0 : 1];
 			BindDeleteReturningColumns(table, get, merge_into->delete_return_columns, projection_expressions,
 			                           *target_binding);
-		} else if (table.IsDuckTable()) {
-			// Only optimize for DuckDB tables (not attached external tables like SQLite)
-			auto &storage = table.GetStorage();
-			if (storage.HasUniqueIndexes()) {
+		} else {
+			// Only optimize for DuckDB tables (not attached external tables like
+			// SQLite). Consult the scan-bound table: a catalog may delegate its
+			// storage to a duck table in another catalog.
+			auto storage_table = get.GetTable();
+			if (storage_table && storage_table->IsDuckTable() && storage_table->GetStorage().HasUniqueIndexes()) {
 				auto &target_binding = join_ref.get().children[inverted ? 0 : 1];
-				BindDeleteIndexColumns(table, get, merge_into->delete_return_columns, projection_expressions,
+				BindDeleteIndexColumns(*storage_table, get, merge_into->delete_return_columns, projection_expressions,
 				                       *target_binding);
 			}
 		}

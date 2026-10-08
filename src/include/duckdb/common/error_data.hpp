@@ -10,6 +10,7 @@
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string.hpp"
+#include <exception>
 
 namespace duckdb {
 class ParsedExpression;
@@ -20,15 +21,17 @@ public:
 	//! Not initialized, default constructor
 	DUCKDB_API ErrorData();
 	//! From std::exception
-	DUCKDB_API ErrorData(const std::exception &ex); // NOLINT: allow implicit construction from exception
+	DUCKDB_API
+	ErrorData(const std::exception &ex, // NOLINT: allow implicit construction from exception
+	          const std::exception_ptr &ptr = std::current_exception());
 	//! From a raw string and exception type
-	DUCKDB_API ErrorData(ExceptionType type, const string &raw_message);
+	DUCKDB_API ErrorData(ExceptionType type, std::string raw_message);
 	//! From a raw string
-	DUCKDB_API explicit ErrorData(const string &raw_message);
+	DUCKDB_API explicit ErrorData(std::string_view raw_message);
 
 public:
 	//! Throw the error
-	[[noreturn]] DUCKDB_API void Throw(const string &prepended_message = "") const;
+	[[noreturn]] DUCKDB_API void Throw(std::string_view prepended_message = "") const;
 	//! Get the internal exception type of the error.
 	DUCKDB_API const ExceptionType &Type() const;
 	//! Used in clients like C-API, creates the final message and returns a reference to it
@@ -50,7 +53,7 @@ public:
 	}
 
 	DUCKDB_API void FinalizeError();
-	DUCKDB_API void AddErrorLocation(const string &query);
+	DUCKDB_API void AddErrorLocation(std::string_view query);
 	DUCKDB_API void ConvertErrorToJSON();
 
 	DUCKDB_API void AddQueryLocation(QueryLocation query_location);
@@ -69,6 +72,8 @@ private:
 	string final_message;
 	//! Extra exception info
 	unordered_map<string, string> extra_info;
+	//! Original exception
+	std::exception_ptr exception_ptr;
 
 private:
 	DUCKDB_API static string SanitizeErrorMessage(string error);

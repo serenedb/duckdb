@@ -2,6 +2,8 @@
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/function/arg_properties.hpp"
+#include "duckdb/planner/filter/zonemap_checker.hpp"
+#include "duckdb/planner/table_filter_state.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/function/cast/cast_statistics.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -194,6 +196,11 @@ FilterPropagateResult ExpressionFilter::CheckStatistics(const BaseStatistics &st
 
 FilterPropagateResult ExpressionFilter::CheckStatistics(ClientContext &context, const BaseStatistics &stats) const {
 	return CheckExpressionStatistics(&context, *expr, stats);
+}
+
+FilterPropagateResult ExpressionFilter::CheckStatistics(const BaseStatistics &stats, TableFilterState &state) const {
+	auto &expr_state = state.Cast<ExpressionFilterState>();
+	return expr_state.zonemap_checker->Check(stats, &expr_state.GetContext());
 }
 
 static FilterPropagateResult CheckZonemapAgainstConstants(const BaseStatistics &stats, ExpressionType comparison_type,
@@ -1007,6 +1014,10 @@ shared_ptr<DynamicFilterData> ExpressionFilter::GetOptionalDynamicFilterData(con
 	return TryGetOptionalDynamicFilterData(*expr_filter.expr);
 }
 
+shared_ptr<DynamicFilterData> ExpressionFilter::GetOptionalDynamicFilterData(const Expression &expr) {
+	return TryGetOptionalDynamicFilterData(expr);
+}
+
 unique_ptr<ExpressionFilter> ExpressionFilter::FromTableFilter(const TableFilter &filter, const LogicalType &col_type) {
 	if (filter.filter_type == TableFilterType::EXPRESSION_FILTER) {
 		auto &expr_filter = filter.Cast<ExpressionFilter>();
@@ -1021,23 +1032,36 @@ unique_ptr<ExpressionFilter> ExpressionFilter::FromTableFilter(const TableFilter
 	return make_uniq<ExpressionFilter>(std::move(expr));
 }
 
-string ExpressionFilter::InternalFunctionToString(const BoundFunctionExpression &func_expr, const string &column_name) {
-	auto &func_name = func_expr.Function().GetName();
+string ExpressionFilter::InternalFunctionToString(const string &func_name, optional_ptr<FunctionData> bind_data,
+                                                  const string &column_name) {
 	if (func_name == BloomFilterScalarFun::NAME) {
-		auto &data = func_expr.BindInfo()->Cast<BloomFilterFunctionData>();
+		auto &data = bind_data->Cast<BloomFilterFunctionData>();
 		return BloomFilterScalarFun::ToString(column_name, data.key_column_name);
 	} else if (func_name == PrefixRangeScalarFun::NAME) {
-		auto &data = func_expr.BindInfo()->Cast<PrefixRangeFunctionData>();
+		auto &data = bind_data->Cast<PrefixRangeFunctionData>();
 		return PrefixRangeScalarFun::ToString(column_name, data.key_column_name);
 	} else if (func_name == DynamicFilterScalarFun::NAME) {
-		const auto has_filter_data =
-		    func_expr.BindInfo() && func_expr.BindInfo()->Cast<DynamicFilterFunctionData>().filter_data;
-		return DynamicFilterScalarFun::ToString(column_name, has_filter_data);
-	} else if (IsOptionalInternalFunction(func_expr)) {
-		auto optional_child = GetOptionalFilterChild(func_expr);
-		auto child_filter_string = optional_child ? ExpressionToFriendlyString(*optional_child, column_name) : string();
-		if (func_name == OptionalFilterScalarFun::NAME) {
-			return OptionalFilterScalarFun::ToString(child_filter_string);
+		optional_ptr<const DynamicFilterData> filter_data;
+		if (bind_data) {
+			filter_data = bind_data->Cast<DynamicFilterFunctionData>().filter_data.get();
+		}
+		return DynamicFilterScalarFun::ToString(column_name, filter_data);
+	} else if (func_name == OptionalFilterScalarFun::NAME) {
+		string child_filter_string;
+		if (bind_data) {
+			auto &data = bind_data->Cast<OptionalFilterFunctionData>();
+			if (data.child_filter_expr) {
+				child_filter_string = ExpressionToFriendlyString(*data.child_filter_expr, column_name);
+			}
+		}
+		return OptionalFilterScalarFun::ToString(child_filter_string);
+	} else if (func_name == SelectivityOptionalFilterScalarFun::NAME) {
+		string child_filter_string;
+		if (bind_data) {
+			auto &data = bind_data->Cast<SelectivityOptionalFilterFunctionData>();
+			if (data.child_filter_expr) {
+				child_filter_string = ExpressionToFriendlyString(*data.child_filter_expr, column_name);
+			}
 		}
 		return SelectivityOptionalFilterScalarFun::ToString(child_filter_string);
 	}
@@ -1047,7 +1071,8 @@ string ExpressionFilter::InternalFunctionToString(const BoundFunctionExpression 
 string ExpressionFilter::ExpressionToFriendlyString(const Expression &expression, const string &column_name) {
 	if (expression.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
 		auto &func_expr = expression.Cast<BoundFunctionExpression>();
-		auto result = InternalFunctionToString(func_expr, column_name);
+		auto result = InternalFunctionToString(func_expr.Function().GetName().GetIdentifierName(), func_expr.BindInfo(),
+		                                       column_name);
 		if (!result.empty()) {
 			return result;
 		}

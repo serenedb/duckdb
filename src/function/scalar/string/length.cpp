@@ -5,6 +5,7 @@
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "duckdb/storage/statistics/numeric_stats.hpp"
 #include "duckdb/storage/statistics/string_stats.hpp"
+#include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -185,16 +186,65 @@ unique_ptr<FunctionData> ArrayOrListLengthBind(BindScalarFunctionInput &input) {
 // ARRAY / LIST WITH DIMENSION
 //------------------------------------------------------------------
 void ListLengthBinaryFunction(DataChunk &args, ExpressionState &, Vector &result) {
-	auto type = args.data[0].GetType();
-	const auto &input = args.data[0];
-	const auto &dimension = args.data[1];
-	BinaryExecutor::Execute<list_entry_t, int64_t, int64_t>(
-	    input, dimension, result, [](list_entry_t input, int64_t dimension) {
-		    if (dimension != 1) {
-			    throw NotImplementedException("array_length for lists with dimensions other than 1 not implemented");
-		    }
-		    return UnsafeNumericCast<int64_t>(input.length);
-	    });
+	auto &input = args.data[0];
+	auto &dim_vec = args.data[1];
+	auto count = args.size();
+
+	UnifiedVectorFormat input_data, dim_data;
+	input.ToUnifiedFormat(count, input_data);
+	dim_vec.ToUnifiedFormat(count, dim_data);
+
+	auto *result_data = FlatVector::GetDataMutable<int64_t>(result);
+	auto &result_validity = FlatVector::ValidityMutable(result);
+
+	for (idx_t i = 0; i < count; i++) {
+		auto input_idx = input_data.sel->get_index(i);
+		auto dim_idx = dim_data.sel->get_index(i);
+
+		if (!input_data.validity.RowIsValid(input_idx) || !dim_data.validity.RowIsValid(dim_idx)) {
+			result_validity.SetInvalid(i);
+			continue;
+		}
+
+		auto dim = UnifiedVectorFormat::GetData<int64_t>(dim_data)[dim_idx];
+		if (dim <= 0) {
+			result_validity.SetInvalid(i);
+			continue;
+		}
+
+		// Walk down dim-1 levels of nesting to find the target list
+		auto entry = UnifiedVectorFormat::GetData<list_entry_t>(input_data)[input_idx];
+		Vector *current_vec = &input;
+		bool valid = true;
+
+		for (int64_t d = 1; d < dim; d++) {
+			if (entry.length == 0) {
+				valid = false;
+				break;
+			}
+			// Descend into the first element of this list
+			auto &child = ListVector::GetEntry(*current_vec);
+			if (child.GetType().id() != LogicalTypeId::LIST) {
+				valid = false;
+				break;
+			}
+			UnifiedVectorFormat child_data;
+			child.ToUnifiedFormat(ListVector::GetListSize(*current_vec), child_data);
+			auto child_idx = child_data.sel->get_index(entry.offset);
+			if (!child_data.validity.RowIsValid(child_idx)) {
+				valid = false;
+				break;
+			}
+			entry = UnifiedVectorFormat::GetData<list_entry_t>(child_data)[child_idx];
+			current_vec = &child;
+		}
+
+		if (!valid || entry.length == 0) {
+			result_validity.SetInvalid(i);
+			continue;
+		}
+		result_data[i] = UnsafeNumericCast<int64_t>(entry.length);
+	}
 }
 
 struct ArrayLengthBinaryFunctionData : public FunctionData {

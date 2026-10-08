@@ -9,6 +9,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/tree_renderer.hpp"
 #include "duckdb/common/tree_renderer/text_tree_renderer.hpp"
+#include "duckdb/execution/operator/helper/physical_execute.hpp"
 #include "duckdb/execution/operator/scan/physical_column_data_scan.hpp"
 #include "duckdb/execution/operator/scan/physical_table_scan.hpp"
 #include "duckdb/execution/physical_operator.hpp"
@@ -26,7 +27,7 @@
 
 namespace duckdb {
 
-void QueryProfileResult::AddValue(const string &k, Value val) {
+void QueryProfileResult::AddValue(std::string_view k, Value val) {
 	D_ASSERT(kind == QueryProfileResultKind::OBJECT);
 	auto child = make_uniq<QueryProfileResult>();
 	child->kind = QueryProfileResultKind::VALUE;
@@ -35,7 +36,7 @@ void QueryProfileResult::AddValue(const string &k, Value val) {
 	children.push_back(std::move(child));
 }
 
-QueryProfileResult &QueryProfileResult::AddObject(const string &k) {
+QueryProfileResult &QueryProfileResult::AddObject(std::string_view k) {
 	D_ASSERT(kind == QueryProfileResultKind::OBJECT);
 	auto child = make_uniq<QueryProfileResult>();
 	child->kind = QueryProfileResultKind::OBJECT;
@@ -45,7 +46,7 @@ QueryProfileResult &QueryProfileResult::AddObject(const string &k) {
 	return ref;
 }
 
-QueryProfileResult &QueryProfileResult::AddList(const string &k) {
+QueryProfileResult &QueryProfileResult::AddList(std::string_view k) {
 	D_ASSERT(kind == QueryProfileResultKind::OBJECT);
 	auto child = make_uniq<QueryProfileResult>();
 	child->kind = QueryProfileResultKind::LIST;
@@ -118,7 +119,7 @@ QueryProfiler &QueryProfiler::Get(ClientContext &context) {
 	return *ClientData::Get(context).profiler;
 }
 
-void QueryProfiler::Start(const string &query) {
+void QueryProfiler::Start(std::string_view query) {
 	Reset();
 	running = true;
 	query_metrics.query_sql = query;
@@ -135,8 +136,8 @@ void QueryProfiler::Reset() {
 	metrics_finalized = false;
 }
 
-void QueryProfiler::StartQuery(const string &query, bool is_explain_analyze_p, bool start_at_optimizer) {
-	lock_guard<std::mutex> guard(lock);
+void QueryProfiler::StartQuery(std::string_view query, bool is_explain_analyze_p, bool start_at_optimizer) {
+	lock_guard<mutex> guard(lock);
 	// Always reset byte counters at the start of each query so the progress bar shows per-query values
 	query_metrics.bytes_read = 0;
 	query_metrics.bytes_written = 0;
@@ -222,7 +223,7 @@ void QueryProfiler::StartExplainAnalyze() {
 }
 
 void QueryProfiler::EndQuery() {
-	unique_lock<std::mutex> guard(lock);
+	unique_lock<mutex> guard(lock);
 	if (!running) {
 		return;
 	}
@@ -263,7 +264,7 @@ void QueryProfiler::EndQuery() {
 }
 
 void QueryProfiler::FinalizeMetrics() {
-	lock_guard<std::mutex> guard(lock);
+	lock_guard<mutex> guard(lock);
 	FinalizeMetricsInternal();
 }
 
@@ -283,20 +284,20 @@ void QueryProfiler::TrackTotalMemoryAllocated(const idx_t amount) {
 	query_metrics.UpdateTotalMemoryAllocated(amount);
 }
 
-void QueryProfiler::AddToMetricCounter(const string &key, const idx_t amount) {
+void QueryProfiler::AddToMetricCounter(std::string_view key, const idx_t amount) {
 	if (IsEnabled()) {
 		query_metrics.UpdateMetricCounter(key, amount);
 	}
 }
 
-void QueryProfiler::SetMetric(const string &key, Value new_value) {
+void QueryProfiler::SetMetric(std::string_view key, Value new_value) {
 	if (!IsEnabled()) {
 		return;
 	}
 	metrics->SetMetric(key, std::move(new_value));
 }
 
-bool QueryProfiler::MetricIsTracked(const string &key) const {
+bool QueryProfiler::MetricIsTracked(std::string_view key) const {
 	if (!IsEnabled()) {
 		return false;
 	}
@@ -311,8 +312,8 @@ idx_t QueryProfiler::GetBytesWritten() const {
 	return query_metrics.GetBytesWritten();
 }
 
-MetricsTimer QueryProfiler::StartTimerInternal(const string &key) {
-	return MetricsTimer(query_metrics, key, IsEnabled());
+MetricsTimer QueryProfiler::StartTimerInternal(std::string key) {
+	return MetricsTimer(query_metrics, std::move(key), IsEnabled());
 }
 
 string QueryProfiler::ToString(const ProfilerPrintFormat &format) const {
@@ -411,7 +412,7 @@ void QueryProfiler::PrintProfilerOutput(optional_ptr<TreeRenderer> renderer) con
 }
 
 void QueryProfiler::RenderProfilingNodeTree(TreeRenderer &renderer, BaseTreeRenderer &ss) const {
-	lock_guard<std::mutex> guard(lock);
+	lock_guard<mutex> guard(lock);
 	// checking the tree to ensure the query is really empty
 	// the query string is empty when a logical plan is deserialized
 	if (query_metrics.query_sql.empty() || !root) {
@@ -436,7 +437,7 @@ void OperatorProfiler::StartOperator(optional_ptr<const PhysicalOperator> phys_o
 	if (!OperatorMetricsIsInitialized(*active_operator)) {
 		// first time calling into this operator - fetch the info
 		auto &info = GetOperatorMetrics(*active_operator);
-		info.SetExtraInfo(active_operator->ParamsToString());
+		info.SetExtraInfo(active_operator->ParamsToValue());
 	}
 
 	// Start the timing of the current operator.
@@ -546,7 +547,10 @@ void OperatorProfiler::Flush(const PhysicalOperator &phys_op) {
 }
 
 void QueryProfiler::Flush(OperatorProfiler &profiler) {
-	lock_guard<std::mutex> guard(lock);
+	if (!profiler.IsEnabled()) {
+		return;
+	}
+	lock_guard<mutex> guard(lock);
 	if (!IsEnabled() || !running) {
 		return;
 	}
@@ -578,7 +582,7 @@ void QueryProfiler::Flush(OperatorProfiler &profiler) {
 }
 
 void QueryProfiler::SetBlockedTime(const double &blocked_thread_time) {
-	lock_guard<std::mutex> guard(lock);
+	lock_guard<mutex> guard(lock);
 	if (!IsEnabled() || !running) {
 		return;
 	}
@@ -587,16 +591,16 @@ void QueryProfiler::SetBlockedTime(const double &blocked_thread_time) {
 }
 
 void QueryProfiler::SetStreamingPeakBufferSize(idx_t peak_bytes) {
-	lock_guard<std::mutex> guard(lock);
+	lock_guard<mutex> guard(lock);
 	if (!IsEnabled() || !running) {
 		return;
 	}
 	query_metrics.system_peak_streaming_buffer_size = peak_bytes;
 }
 
-string QueryProfiler::DrawPadded(const string &str, idx_t width) {
+string QueryProfiler::DrawPadded(std::string_view str, idx_t width) {
 	if (str.size() > width) {
-		return str.substr(0, width);
+		return string(str.substr(0, width));
 	} else {
 		width -= str.size();
 		auto half_spaces = width / 2;
@@ -630,7 +634,7 @@ void QueryProfiler::QueryTreeToStream(std::ostream &ss) const {
 }
 
 void QueryProfiler::RenderQueryTree(BaseTreeRenderer &ss) const {
-	lock_guard<std::mutex> guard(lock);
+	lock_guard<mutex> guard(lock);
 
 	// the query string is empty when a logical plan is deserialized
 	if (query_metrics.query_sql.empty() && !root) {
@@ -644,16 +648,25 @@ void QueryProfiler::RenderQueryTree(BaseTreeRenderer &ss) const {
 	}
 	ss << state_info.str();
 
+	// "deterministic" renderer setting: zero out non-deterministic values (timing, IO bytes) so
+	// EXPLAIN ANALYZE output is byte-stable in tests.
+	auto &render_settings = ClientConfig::GetConfig(context).profiling_renderer_settings;
+	auto det_entry = render_settings.find("deterministic");
+	bool deterministic =
+	    det_entry != render_settings.end() && det_entry->second.DefaultCastAs(LogicalType::BOOLEAN).GetValue<bool>();
+
 	// summary box, styled to match the operator boxes (rounded corners, title in the top border)
 	const string title = "Summary";
 	vector<pair<string, string>> rows;
-	rows.emplace_back("Total Time: ", RenderTiming(query_metrics.GetStringMetricInSeconds("query.total_time")));
+	rows.emplace_back("Total Time: ", deterministic
+	                                      ? RenderTiming(0.0)
+	                                      : RenderTiming(query_metrics.GetStringMetricInSeconds("query.total_time")));
 	auto bytes_read = query_metrics.GetBytesRead();
-	if (bytes_read > 0) {
+	if (!deterministic && bytes_read > 0) {
 		rows.emplace_back("Data Read: ", StringUtil::BytesToHumanReadableString(bytes_read, 1000));
 	}
 	auto bytes_written = query_metrics.GetBytesWritten();
-	if (bytes_written > 0) {
+	if (!deterministic && bytes_written > 0) {
 		rows.emplace_back("Data Written: ", StringUtil::BytesToHumanReadableString(bytes_written, 1000));
 	}
 	idx_t content_width = title.size() + 2;
@@ -702,7 +715,7 @@ Value QueryProfiler::JSONSanitize(const Value &input) {
 	return Value::MAP(result);
 }
 
-string QueryProfiler::JSONSanitize(const std::string &text) {
+string QueryProfiler::JSONSanitize(std::string_view text) {
 	string result;
 	result.reserve(text.size());
 	for (char i : text) {
@@ -761,7 +774,12 @@ profiler_metrics_t OperatorMetrics::GetMetrics(const GatheredMetrics &info) cons
 		result["total_row_groups_to_scan"] = Value::UBIGINT(total_row_groups_to_scan);
 	}
 	if (info.MetricIsTracked<MetricOperatorExtraInfo>()) {
-		result["extra_info"] = QueryProfiler::JSONSanitize(Value::MAP(extra_info));
+		// structured values are flattened here: the metrics MAP schema is MAP(VARCHAR, VARCHAR)
+		InsertionOrderPreservingMap<string> flat_info;
+		for (auto &entry : extra_info) {
+			flat_info[entry.first] = entry.second.ToString();
+		}
+		result["extra_info"] = QueryProfiler::JSONSanitize(Value::MAP(flat_info));
 	}
 	return result;
 }
@@ -845,7 +863,7 @@ void QueryProfiler::ToLogInternal() const {
 }
 
 void QueryProfiler::ToLog() const {
-	lock_guard<std::mutex> guard(lock);
+	lock_guard<mutex> guard(lock);
 	ToLogInternal();
 }
 
@@ -873,7 +891,7 @@ static LegacyCumulative LegacyOperatorToResultTree(const GatheredMetrics &info, 
                                                    QueryProfileResult &result) {
 	auto operator_metrics = node.GetOperatorMetrics().GetMetrics(info);
 
-	auto emit_as = [&](const string &old_key, const string &new_key) {
+	auto emit_as = [&](std::string_view old_key, std::string_view new_key) {
 		auto it = operator_metrics.find(old_key);
 		if (it != operator_metrics.end()) {
 			result.AddValue(new_key, it->second);
@@ -934,7 +952,7 @@ unique_ptr<QueryProfileResult> QueryProfiler::ToLegacyResultTree() const {
 
 	const auto &gathered = metrics->GetMetrics();
 
-	auto emit = [&](const string &new_key, const string &old_key) {
+	auto emit = [&](std::string_view new_key, std::string_view old_key) {
 		auto it = gathered.find(old_key);
 		if (it != gathered.end()) {
 			result->AddValue(new_key, it->second);
@@ -1004,7 +1022,7 @@ unique_ptr<QueryProfileResult> QueryProfiler::ToResultTree() const {
 }
 
 QueryProfileResult &QueryProfiler::GetResult() {
-	lock_guard<std::mutex> guard(lock);
+	lock_guard<mutex> guard(lock);
 	if (!result_tree) {
 		result_tree = ToResultTree();
 	}
@@ -1016,7 +1034,7 @@ bool QueryProfiler::HasRoot() const {
 }
 
 string QueryProfiler::ToJSON() const {
-	lock_guard<std::mutex> guard(lock);
+	lock_guard<mutex> guard(lock);
 	JSONWriter writer;
 	auto result = ToResultTree();
 	writer.SetRoot(QueryProfileResultToJSON(writer, *result));
@@ -1032,6 +1050,9 @@ void QueryProfiler::WriteToFile(const char *path, string &info) const {
 }
 
 unique_ptr<ProfilingNode> QueryProfiler::CreateTree(const PhysicalOperator &root_p, const idx_t depth) {
+	if (root_p.type == PhysicalOperatorType::EXECUTE) {
+		return CreateTree(root_p.Cast<PhysicalExecute>().plan, depth);
+	}
 	if (OperatorRequiresProfiling(root_p.type)) {
 		query_requires_profiling = true;
 	}
@@ -1042,7 +1063,7 @@ unique_ptr<ProfilingNode> QueryProfiler::CreateTree(const PhysicalOperator &root
 
 	info.name = EnumUtil::ToString(root_p.type);
 	info.operator_type = root_p.type;
-	auto params = root_p.ParamsToString();
+	auto params = root_p.ParamsToValue();
 	info.SetExtraInfo(std::move(params));
 
 	tree_map.insert(make_pair(reference<const PhysicalOperator>(root_p), reference<ProfilingNode>(*node)));
@@ -1062,7 +1083,7 @@ unique_ptr<ProfilingNode> QueryProfiler::CreateTree(const PhysicalOperator &root
 }
 
 void QueryProfiler::Initialize(const PhysicalOperator &root_op) {
-	lock_guard<std::mutex> guard(lock);
+	lock_guard<mutex> guard(lock);
 	if (!IsEnabled() || !running) {
 		return;
 	}

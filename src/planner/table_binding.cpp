@@ -8,6 +8,7 @@
 #include "duckdb/planner/bind_context.hpp"
 #include "duckdb/planner/bound_query_node.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_lambdaref_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 
@@ -15,9 +16,15 @@
 
 namespace duckdb {
 
+static bool EntryIsCaseSensitive(optional_ptr<StandardEntry> entry) {
+	return entry && entry->type == CatalogType::TABLE_ENTRY &&
+	       entry->Cast<TableCatalogEntry>().GetColumns().IsCaseSensitive();
+}
+
 Binding::Binding(BindingType binding_type, BindingAlias alias_p, vector<LogicalType> coltypes,
-                 vector<Identifier> colnames, TableIndex index)
-    : binding_type(binding_type), alias(std::move(alias_p)), index(index), types(std::move(coltypes)) {
+                 vector<Identifier> colnames, TableIndex index, bool case_sensitive)
+    : binding_type(binding_type), alias(std::move(alias_p)), index(index), types(std::move(coltypes)),
+      name_map(0, IdentifierHashFunction(case_sensitive), IdentifierEquality(case_sensitive)) {
 	names.reserve(colnames.size());
 	for (auto &colname : colnames) {
 		names.emplace_back(std::move(colname));
@@ -90,7 +97,7 @@ bool Binding::TryGetBindingIndex(const Identifier &column_name, column_t &result
 column_t Binding::GetBindingIndex(const Identifier &column_name) {
 	column_t result;
 	if (!TryGetBindingIndex(column_name, result)) {
-		throw InternalException("Binding index for column \"%s\" not found", column_name);
+		throw InternalException("Binding index for column %s not found", column_name);
 	}
 	return result;
 }
@@ -164,9 +171,9 @@ BindingAlias Binding::GetAlias(const Identifier &explicit_alias, optional_ptr<St
 	return BindingAlias(*entry);
 }
 
-EntryBinding::EntryBinding(const Identifier &alias, vector<LogicalType> types_p, vector<Identifier> names_p,
+EntryBinding::EntryBinding(BindingAlias alias, vector<LogicalType> types_p, vector<Identifier> names_p,
                            TableIndex index, StandardEntry &entry)
-    : Binding(BindingType::CATALOG_ENTRY, GetAlias(alias, entry), std::move(types_p), std::move(names_p), index),
+    : Binding(BindingType::CATALOG_ENTRY, std::move(alias), std::move(types_p), std::move(names_p), index),
       entry(entry) {
 }
 
@@ -174,18 +181,18 @@ optional_ptr<StandardEntry> EntryBinding::GetStandardEntry() {
 	return &entry;
 }
 
-TableBinding::TableBinding(const Identifier &alias, vector<LogicalType> types_p, vector<Identifier> names_p,
+TableBinding::TableBinding(BindingAlias alias, vector<LogicalType> types_p, vector<Identifier> names_p,
                            vector<ColumnIndex> &bound_column_ids, optional_ptr<StandardEntry> entry, TableIndex index,
                            virtual_column_map_t virtual_columns_p)
-    : Binding(BindingType::TABLE, GetAlias(alias, entry), std::move(types_p), std::move(names_p), index),
+    : Binding(BindingType::TABLE, std::move(alias), std::move(types_p), std::move(names_p), index,
+              EntryIsCaseSensitive(entry)),
       bound_column_ids(bound_column_ids), entry(entry), virtual_columns(std::move(virtual_columns_p)) {
 	for (auto &ventry : virtual_columns) {
 		auto idx = ventry.first;
 		auto &name = ventry.second.name;
 		if (idx < VIRTUAL_COLUMN_START) {
 			throw BinderException(
-			    "Virtual column index must be larger than VIRTUAL_COLUMN_START - found %d for column \"%s\"", idx,
-			    name);
+			    "Virtual column index must be larger than VIRTUAL_COLUMN_START - found %d for column %s", idx, name);
 		}
 		if (idx == COLUMN_IDENTIFIER_EMPTY) {
 			// the empty column cannot be queried by the user
@@ -304,12 +311,17 @@ BindResult TableBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 		auto &column_entry = table_entry.GetColumn(LogicalIndex(column_index));
 		(void)table_entry;
 		(void)column_entry;
-		D_ASSERT(column_entry.Category() == TableColumnType::STANDARD);
+		D_ASSERT(column_entry.Category() != TableColumnType::GENERATED_VIRTUAL);
 	}
 	// fetch the type of the column
 	LogicalType col_type;
 	auto ventry = virtual_columns.find(column_index);
 	if (ventry != virtual_columns.end()) {
+		if (column_index == COLUMN_IDENTIFIER_TABLE_OID && entry) {
+			auto oid = make_uniq<BoundConstantExpression>(Value::BIGINT(NumericCast<int64_t>(entry->oid)));
+			oid->SetAlias(Identifier(colref.GetName()));
+			return BindResult(std::move(oid));
+		}
 		// virtual column - fetch type from there
 		col_type = ventry->second.type;
 	} else {
@@ -326,9 +338,9 @@ optional_ptr<StandardEntry> TableBinding::GetStandardEntry() {
 }
 
 ErrorData TableBinding::ColumnNotFoundError(const Identifier &column_name) const {
-	auto candidate_message = StringUtil::CandidatesErrorMessage(
-	    IdentifiersToStrings(names), column_name.GetIdentifierName(), "Candidate bindings: ");
-	return ErrorData(ExceptionType::BINDER, StringUtil::Format("Table %s does not have a column named %s\n%s",
+	auto candidate_message = StringUtil::CandidatesErrorMessage(IdentifiersToStrings(names),
+	                                                            column_name.GetIdentifierName(), "Candidate bindings");
+	return ErrorData(ExceptionType::BINDER, StringUtil::Format("Table %s does not have a column named %s%s",
 	                                                           alias.GetAlias(), column_name, candidate_message));
 }
 

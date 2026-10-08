@@ -2,12 +2,13 @@
 
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/parser/peg/matcher_token.hpp"
 #include "duckdb/parser/peg/parsed_grammar.hpp"
 
 namespace duckdb {
 
-static uint64_t NextLiteralTableId() {
-	static atomic<uint64_t> next_id {1};
+static uint32_t NextLiteralTableId() {
+	static atomic<uint32_t> next_id {1};
 	auto result = next_id.fetch_add(1, std::memory_order_relaxed);
 	D_ASSERT(result != 0);
 	return result;
@@ -45,6 +46,14 @@ void GrammarLiteralTable::Register(const string &text, keyword_categories_t cate
 		entry = literals.emplace(text, LiteralInfo(id)).first;
 	}
 	entry->second.AddCategories(categories);
+	if (text.size() == 1 && static_cast<uint8_t>(text[0]) < SINGLE_BYTE_LITERALS) {
+		single_byte_literals[static_cast<uint8_t>(StringUtil::CharacterToLower(text[0]))] = entry->second;
+	}
+}
+
+void MatcherToken::CacheLiteralInfo(const GrammarLiteralTable &table) {
+	literal_info = table.Lookup(text);
+	literal_table_id = table.CacheId();
 }
 
 } // namespace duckdb

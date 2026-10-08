@@ -8,8 +8,12 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
+#include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/parser/column_definition.hpp"
+#include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/result_modifier.hpp"
 
@@ -33,6 +37,7 @@ struct ChangeOwnershipInfo : public AlterInfo {
 
 	Identifier owner_schema;
 	Identifier owner_name;
+	vector<Identifier> owner_path;
 
 public:
 	CatalogType GetCatalogType() const override;
@@ -66,6 +71,92 @@ public:
 	explicit SetCommentInfo();
 };
 
+struct AlterPermissionsInfo : public AlterInfo {
+	AlterPermissionsInfo(CatalogType entry_catalog_type, QualifiedName entry_name);
+
+	CatalogType entry_catalog_type;
+	string new_owner;
+	idx_t new_owner_id = 0;
+	AclMode privileges = AclMode::NoRights;
+	vector<ColumnPrivilege> column_privileges;
+	string grantee;
+	idx_t grantee_id = ACL_ID_PUBLIC;
+	string granted_by;
+	vector<idx_t> grantors;
+	bool revoke = false;
+	bool with_grant_option = false;
+	bool option_only = false;
+	bool cascade = false;
+	CatalogType default_objtype = CatalogType::INVALID;
+	string for_role;
+	string default_schema;
+	idx_t target_role = 0;
+	idx_t default_scope = 0;
+	bool all_in_schema = false;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+	void ApplyTo(Permissions &permissions, CatalogType entry_type, optional_ptr<ColumnList> columns) const;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit AlterPermissionsInfo();
+};
+
+struct ReplaceDefinitionInfo : public AlterInfo {
+	explicit ReplaceDefinitionInfo(unique_ptr<CreateInfo> definition);
+	~ReplaceDefinitionInfo() override;
+
+	unique_ptr<CreateInfo> definition;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+};
+
+struct AlterRoleInfo : public AlterInfo {
+	explicit AlterRoleInfo(Identifier role);
+
+	RoleOption set_options = RoleOption::None;
+	RoleOption clear_options = RoleOption::None;
+	bool set_password = false;
+	bool null_password = false;
+	string password;
+	bool set_conn_limit = false;
+	int32_t conn_limit = -1;
+	bool set_valid_until = false;
+	int64_t valid_until = 0;
+	Identifier new_name;
+	bool reset_all_config = false;
+	vector<string> reset_config;
+	vector<string> set_config;
+	string grant_role;
+	bool revoke = false;
+	bool option_only = false;
+	int8_t admin_option = -1;
+	int8_t inherit_option = -1;
+	int8_t set_option = -1;
+	idx_t grant_role_id = 0;
+	idx_t grantor_id = 0;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit AlterRoleInfo();
+};
+
 //===--------------------------------------------------------------------===//
 // Alter Table
 //===--------------------------------------------------------------------===//
@@ -89,6 +180,8 @@ enum class AlterTableType : uint8_t {
 	RENAME_FIELD = 16,
 	SET_TABLE_OPTIONS = 17,
 	RESET_TABLE_OPTIONS = 18,
+	DROP_CONSTRAINT = 200,
+	RENAME_CONSTRAINT = 201,
 };
 
 struct AlterTableInfo : public AlterInfo {
@@ -169,6 +262,9 @@ struct RenameTableInfo : public AlterTableInfo {
 public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+	optional_ptr<const Identifier> GetNewName() const override {
+		return &new_table_name;
+	}
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
@@ -184,6 +280,7 @@ private:
 struct AddColumnConstraints {
 	bool add_not_null = false;
 	bool add_unique = false;
+	bool add_primary_key = false;
 };
 
 struct AddColumnInfo : public AlterTableInfo {
@@ -442,11 +539,83 @@ struct RenameViewInfo : public AlterViewInfo {
 public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+	optional_ptr<const Identifier> GetNewName() const override {
+		return &new_view_name;
+	}
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterViewInfo> Deserialize(Deserializer &deserializer);
 
 private:
 	RenameViewInfo();
+};
+
+//===--------------------------------------------------------------------===//
+// AlterIndexInfo
+//===--------------------------------------------------------------------===//
+enum class AlterIndexType : uint8_t { INVALID = 0, SET_INDEX_OPTIONS = 1, RESET_INDEX_OPTIONS = 2, RENAME_INDEX = 3 };
+
+struct AlterIndexInfo : public AlterInfo {
+	AlterIndexInfo(AlterIndexType type, const AlterEntryData &data);
+	~AlterIndexInfo() override;
+
+	AlterIndexType alter_index_type;
+
+public:
+	CatalogType GetCatalogType() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+protected:
+	explicit AlterIndexInfo(AlterIndexType type);
+};
+
+//===--------------------------------------------------------------------===//
+// SetIndexOptionsInfo
+//===--------------------------------------------------------------------===//
+struct SetIndexOptionsInfo : public AlterIndexInfo {
+	SetIndexOptionsInfo(const AlterEntryData &data, case_insensitive_map_t<Value> options);
+	~SetIndexOptionsInfo() override;
+
+	case_insensitive_map_t<Value> options;
+
+public:
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterIndexInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	SetIndexOptionsInfo();
+};
+
+//===--------------------------------------------------------------------===//
+// ResetIndexOptionsInfo
+//===--------------------------------------------------------------------===//
+struct ResetIndexOptionsInfo : public AlterIndexInfo {
+	ResetIndexOptionsInfo(const AlterEntryData &data, identifier_set_t options);
+	~ResetIndexOptionsInfo() override;
+
+	identifier_set_t options;
+
+public:
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterIndexInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	ResetIndexOptionsInfo();
+};
+
+struct RenameIndexInfo : public RenameEntryInfo<RenameIndexInfo, AlterIndexInfo, AlterIndexType::RENAME_INDEX> {
+	using RenameEntryInfo::RenameEntryInfo;
+
+public:
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterIndexInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	RenameIndexInfo() = default;
 };
 
 //===--------------------------------------------------------------------===//
@@ -467,6 +636,53 @@ public:
 
 private:
 	AddConstraintInfo();
+};
+
+//===--------------------------------------------------------------------===//
+// DropConstraintInfo
+//===--------------------------------------------------------------------===//
+struct DropConstraintInfo : public AlterTableInfo {
+	DropConstraintInfo(AlterEntryData data, string constraint_name, bool if_constraint_not_found, bool cascade);
+	~DropConstraintInfo() override;
+
+	//! The constraint to drop
+	string constraint_name;
+	//! Whether or not an error should be thrown if the constraint does not exist
+	bool if_constraint_not_found;
+	//! Whether or not to cascade
+	bool cascade;
+
+public:
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	DropConstraintInfo();
+};
+
+//===--------------------------------------------------------------------===//
+// RenameConstraintInfo
+//===--------------------------------------------------------------------===//
+struct RenameConstraintInfo : public AlterTableInfo {
+	RenameConstraintInfo(const AlterEntryData &data, string old_name, string new_name);
+	~RenameConstraintInfo() override;
+
+	//! Constraint old name
+	string old_name;
+	//! Constraint new name
+	string new_name;
+
+public:
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	RenameConstraintInfo();
 };
 
 //===--------------------------------------------------------------------===//

@@ -14,7 +14,7 @@
 #include "duckdb/common/vector.hpp"
 #include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/enums/identifier_case_mode.hpp"
-#include "duckdb/parser/parser_extension.hpp"
+#include "duckdb/parser/parser_options.hpp"
 #include "duckdb/parser/peg/keyword_helper.hpp"
 #include "duckdb/parser/token_iterator.hpp"
 #include "duckdb/parser/peg/parser_packrat.hpp"
@@ -102,33 +102,35 @@ enum class MatchMode : uint8_t { BUILD_PARSE_RESULT, RECOGNIZE_ONLY };
 class MatcherResult {
 public:
 	static MatcherResult Success(optional_ptr<ParseResult> parse_result = nullptr) {
-		return MatcherResult(true, parse_result);
+		return MatcherResult(parse_result.get());
 	}
 
 	static MatcherResult Failure() {
-		return MatcherResult(false, nullptr);
+		return MatcherResult(FailureMarker());
 	}
 
 	bool IsSuccess() const {
-		return success;
+		return parse_result != FailureMarker();
 	}
 
 	bool HasParseResult() const {
-		return parse_result != nullptr;
+		return parse_result && IsSuccess();
 	}
 
 	optional_ptr<ParseResult> GetParseResult() const {
-		return parse_result;
+		return IsSuccess() ? parse_result : nullptr;
 	}
 
 private:
-	MatcherResult(bool success_p, optional_ptr<ParseResult> parse_result_p)
-	    : success(success_p), parse_result(parse_result_p) {
+	explicit MatcherResult(ParseResult *parse_result_p) : parse_result(parse_result_p) {
+	}
+
+	static ParseResult *FailureMarker() {
+		return reinterpret_cast<ParseResult *>(alignof(ParseResult));
 	}
 
 private:
-	bool success;
-	optional_ptr<ParseResult> parse_result;
+	ParseResult *parse_result;
 };
 
 struct MatcherSuggestion {
@@ -146,24 +148,64 @@ struct MatcherSuggestion {
 	char extra_char = '\0';
 };
 
+class MatchProcessArena {
+public:
+	template <class PROCESS, class... ARGS>
+	PROCESS *Make(ARGS &&... args) {
+		static_assert(alignof(PROCESS) <= sizeof(idx_t), "match processes are allocated with 8-byte alignment");
+		return new (Allocate(sizeof(PROCESS))) PROCESS(std::forward<ARGS>(args)...);
+	}
+	idx_t Mark() const {
+		return chunk_index * CHUNK_SIZE + position;
+	}
+	void Rewind(idx_t mark) {
+		chunk_index = mark / CHUNK_SIZE;
+		position = mark % CHUNK_SIZE;
+	}
+	void FreeAll() {
+		chunks.clear();
+		chunk_index = 0;
+		position = 0;
+	}
+
+private:
+	static constexpr idx_t CHUNK_SIZE = 16384;
+
+	data_ptr_t Allocate(idx_t size) {
+		size = AlignValue(size);
+		if (position + size > CHUNK_SIZE || chunk_index >= chunks.size()) {
+			return AllocateInNewChunk(size);
+		}
+		auto result = chunks[chunk_index].get() + position;
+		position += size;
+		return result;
+	}
+	data_ptr_t AllocateInNewChunk(idx_t size);
+
+	vector<AllocatedData> chunks;
+	idx_t chunk_index = 0;
+	idx_t position = 0;
+};
+
 struct MatchContext {
-	MatchContext(vector<MatcherSuggestion> &suggestions_p, ParseResultAllocator &allocator_p,
-	             ArenaAllocator &process_allocator_p, idx_t &max_token_index_p,
+	MatchContext(vector<MatcherSuggestion> &suggestions_p, ParseResultAllocator &allocator_p, idx_t &max_token_index_p,
 	             MatchMode mode_p = MatchMode::BUILD_PARSE_RESULT,
 	             IdentifierCaseMode identifier_case_mode_p = IdentifierCaseMode::PRESERVE_CASE,
 	             ParserPackratCache *packrat_cache_p = nullptr)
-	    : suggestions(suggestions_p), allocator(allocator_p), process_allocator(process_allocator_p),
-	      max_token_index(max_token_index_p), identifier_case_mode(identifier_case_mode_p),
-	      packrat_cache(packrat_cache_p), mode(mode_p) {
+	    : suggestions(suggestions_p), allocator(allocator_p), max_token_index(max_token_index_p),
+	      identifier_case_mode(identifier_case_mode_p), packrat_cache(packrat_cache_p), mode(mode_p) {
 	}
 
 	vector<MatcherSuggestion> &suggestions;
 	ParseResultAllocator &allocator;
-	ArenaAllocator &process_allocator;
+	MatchProcessArena processes;
 	idx_t &max_token_index;
 	IdentifierCaseMode identifier_case_mode;
 	ParserPackratCache *packrat_cache;
 	MatchMode mode;
+	bool annotate_tokens = false;
+	idx_t max_expression_depth = ParserOptions::DEFAULT_MAX_EXPRESSION_DEPTH;
+	vector<unique_ptr<reference_set_t<const Matcher>>> suggestion_scopes;
 };
 
 struct MatchState {
@@ -176,7 +218,7 @@ struct MatchState {
 
 	TokenIterator token_iterator;
 	MatchContext &context;
-	unique_ptr<reference_set_t<const Matcher>> added_suggestions;
+	optional_ptr<reference_set_t<const Matcher>> added_suggestions;
 	optional_ptr<const CompiledGrammarRule> rule;
 
 	bool BuildParseResult() const {
@@ -199,19 +241,13 @@ struct MatchState {
 		return context.max_token_index;
 	}
 
-	//! Fold a non-quoted identifier in-place according to the configured case mode
-	void FoldIdentifier(string &text) const {
-		switch (context.identifier_case_mode) {
-		case IdentifierCaseMode::LOWERCASE:
-			text = StringUtil::Lower(text);
-			break;
-		case IdentifierCaseMode::UPPERCASE:
-			text = StringUtil::Upper(text);
-			break;
-		default:
-			break;
+	void AnnotatePreviousToken(TokenType type) {
+		if (context.annotate_tokens) {
+			token_iterator.SetPreviousTokenType(type);
 		}
 	}
+
+	std::string_view FoldIdentifier(std::string_view text) const;
 
 	void AddSuggestion(MatcherSuggestion suggestion);
 };
@@ -226,20 +262,35 @@ struct MatchInput {
 //! Produced by a MatchProcess::Resume call, controlling the next step in the execution
 class MatchStep {
 public:
-	static MatchStep Child(MatchInput input);
-	static MatchStep Complete(MatcherResult result);
+	static MatchStep Child(MatchInput input) {
+		return MatchStep(input.matcher, input.state);
+	}
+	static MatchStep Complete(MatcherResult result) {
+		return MatchStep(result);
+	}
 
-	optional<MatchInput> GetChild();
-	MatcherResult GetResult() const;
-
-private:
-	MatchStep(optional<MatchInput> child_p, optional<MatcherResult> result_p)
-	    : child(std::move(child_p)), result(result_p) {
+	bool HasChild() const {
+		return matcher;
+	}
+	MatchInput GetChild() const {
+		return MatchInput {*matcher, *state};
+	}
+	MatcherResult GetResult() const {
+		return result;
 	}
 
 private:
-	optional<MatchInput> child;
-	optional<MatcherResult> result;
+	MatchStep(const Matcher &matcher_p, MatchState &state_p) : matcher(&matcher_p), state(&state_p) {
+	}
+	explicit MatchStep(MatcherResult result_p) : matcher(nullptr), result(result_p) {
+	}
+
+private:
+	const Matcher *matcher;
+	union {
+		MatchState *state;
+		MatcherResult result;
+	};
 };
 
 class MatchProcess {
@@ -247,7 +298,87 @@ public:
 	virtual ~MatchProcess() = default;
 
 	//! Resume matching, optionally with the result of the previously requested child.
-	virtual MatchStep Resume(optional<MatcherResult> child_result) = 0;
+	virtual MatchStep Resume(const optional<MatcherResult> &child_result) = 0;
+};
+
+struct MatcherFirstSet {
+	bool nullable = true;
+	bool any_token = true;
+	uint8_t token_classes = 0;
+	keyword_categories_t word_categories;
+	vector<uint64_t> literals;
+
+	void AddLiteral(idx_t literal_id) {
+		auto word = literal_id / 64;
+		if (word >= literals.size()) {
+			literals.resize(word + 1, 0);
+		}
+		literals[word] |= uint64_t(1) << (literal_id % 64);
+	}
+	bool HasLiteral(idx_t literal_id) const {
+		auto word = literal_id / 64;
+		return word < literals.size() && (literals[word] >> (literal_id % 64)) & 1;
+	}
+	bool MergeChanged(const MatcherFirstSet &other) {
+		bool changed = false;
+		if (other.any_token && !any_token) {
+			any_token = true;
+			changed = true;
+		}
+		if ((token_classes | other.token_classes) != token_classes) {
+			token_classes |= other.token_classes;
+			changed = true;
+		}
+		if ((word_categories | other.word_categories) != word_categories) {
+			word_categories |= other.word_categories;
+			changed = true;
+		}
+		if (other.literals.size() > literals.size()) {
+			literals.resize(other.literals.size(), 0);
+		}
+		for (idx_t i = 0; i < other.literals.size(); i++) {
+			auto merged = literals[i] | other.literals[i];
+			if (merged != literals[i]) {
+				literals[i] = merged;
+				changed = true;
+			}
+		}
+		return changed;
+	}
+};
+
+struct ChainEdgeSet {
+	MatcherFirstSet first {false, false};
+	bool empty = true;
+	bool words_check_follow = true;
+	optional_ptr<const GrammarLiteralTable> table;
+
+	[[gnu::always_inline]] bool NoneCanStartAt(MatchState &state) const {
+		if (empty) {
+			return true;
+		}
+		if (first.any_token) {
+			return false;
+		}
+		auto token = state.token_iterator.Current();
+		if (!token || token->type == TokenType::END_OF_INPUT_AUTOCOMPLETE) {
+			return false;
+		}
+		auto info = state.token_iterator.CurrentLiteralInfo(*table);
+		if (first.HasLiteral(info.LiteralId())) {
+			return false;
+		}
+		if (token->token_classes & first.token_classes) {
+			return token->token_classes == MatcherTokenClass::WORD && words_check_follow && info.IsKeyword() &&
+			       !info.HasAnyFlags(first.word_categories);
+		}
+		return true;
+	}
+};
+
+struct ChainEdges {
+	ChainEdgeSet prefixes;
+	ChainEdgeSet suffixes;
 };
 
 enum class MatcherType {
@@ -274,8 +405,21 @@ public:
 	MatcherResult MatchParseResult(MatchState &state) const;
 	//! Create matcher-local state with state.Make<PROCESS>() for either execution driver.
 	virtual arena_ptr<MatchProcess> StartMatch(MatchState &state) const = 0;
-	virtual bool IsAtomic() const {
-		return false;
+	bool IsAtomic() const {
+		return atomic;
+	}
+	[[gnu::always_inline]] bool CanStartAt(MatchState &state) const {
+		if (!first_set_table) {
+			return true;
+		}
+		auto token = state.token_iterator.Current();
+		if (!token || token->type == TokenType::END_OF_INPUT_AUTOCOMPLETE) {
+			return true;
+		}
+		if (token->token_classes & first_set.token_classes) {
+			return !checks_after_word || token->token_classes != MatcherTokenClass::WORD || CanFollowWord(state);
+		}
+		return first_set.HasLiteral(state.token_iterator.CurrentLiteralInfo(*first_set_table).LiteralId());
 	}
 	virtual SuggestionType AddSuggestion(MatchState &state) const;
 	virtual SuggestionType AddSuggestionInternal(MatchState &state) const = 0;
@@ -299,14 +443,11 @@ public:
 		return !name.empty();
 	}
 	string GetName() const;
-	optional_idx GetPackratId() const {
-		return packrat_id;
-	}
-	void SetPackratMemoized() {
-		packrat_memoized = true;
+	optional_idx GetPackratSlot() const {
+		return packrat_slot;
 	}
 	bool IsPackratMemoized() const {
-		return packrat_memoized;
+		return packrat_slot.IsValid();
 	}
 	//! See ParsedGrammar::SetTransformProcess
 	void SetCollapsible() {
@@ -314,6 +455,12 @@ public:
 	}
 	bool IsCollapsible() const {
 		return collapsible;
+	}
+	void SetBuiltInMatch() {
+		built_in_match = true;
+	}
+	bool HasBuiltInMatch() const {
+		return built_in_match;
 	}
 
 public:
@@ -334,25 +481,42 @@ public:
 	}
 
 protected:
+	Matcher(MatcherType type, bool atomic_p) : type(type), atomic(atomic_p) {
+	}
+
+protected:
 	friend class MatcherAllocator;
 	MatcherType type;
+	uint32_t allocation_index = 0;
 	string name;
-	optional_idx packrat_id;
-	bool packrat_memoized = false;
+	optional_idx packrat_slot;
+	bool atomic = false;
 	bool collapsible = false;
+	bool built_in_match = false;
 	optional_ptr<const CompiledGrammarRule> rule;
+	MatcherFirstSet first_set;
+	optional_ptr<const GrammarLiteralTable> first_set_table;
+	MatcherFirstSet after_word_set;
+	bool can_end_after_word = false;
+	bool checks_after_word = false;
+
+private:
+	DUCKDB_API bool CanFollowWord(MatchState &state) const;
 };
 
 class AtomicMatcher : public Matcher {
 public:
-	explicit AtomicMatcher(MatcherType type) : Matcher(type) {
+	explicit AtomicMatcher(MatcherType type) : Matcher(type, true) {
 	}
 
-	bool IsAtomic() const final {
-		return true;
-	}
 	DUCKDB_API arena_ptr<MatchProcess> StartMatch(MatchState &state) const final;
 	virtual MatcherResult MatchAtomic(MatchState &state) const = 0;
+	virtual uint8_t FirstTokenClasses() const {
+		return 0;
+	}
+	virtual keyword_categories_t FirstWordCategories() const {
+		return keyword_categories_t();
+	}
 };
 
 class KeywordInfo {
@@ -371,23 +535,91 @@ public:
 class MatcherAllocator {
 public:
 	Matcher &Allocate(unique_ptr<Matcher> matcher);
+	void SetPackratMemoized(Matcher &matcher);
+	void ComputeFirstSets(const GrammarLiteralTable &table);
+	idx_t PackratSlotCount() const {
+		return packrat_slots;
+	}
+
+private:
+	void ComputeAfterWordSets(const vector<idx_t> &parent_begin, const vector<idx_t> &parents);
+	optional_ptr<const ChainEdges> ComputeChainEdges(Matcher &matcher, const GrammarLiteralTable &table);
 
 private:
 	vector<unique_ptr<Matcher>> matchers;
+	vector<unique_ptr<ChainEdges>> chain_edges;
+	idx_t packrat_slots = 0;
 };
 
 class ParseResultAllocator {
 public:
-	optional_ptr<ParseResult> Allocate(unique_ptr<ParseResult> parse_result);
+	static constexpr idx_t INITIAL_ARENA_CAPACITY = 16384;
+
+	ParseResultAllocator();
+
+	ParseResultAllocator(const ParseResultAllocator &) = delete;
+	ParseResultAllocator &operator=(const ParseResultAllocator &) = delete;
+
+	ArenaAllocator &GetArena() {
+		return arena;
+	}
+	void Reset() {
+		arena.Reset();
+		children.clear();
+	}
+
+	template <class RESULT, class... ARGS>
+	RESULT &Make(ARGS &&... args) {
+		static_assert(std::is_trivially_destructible_v<RESULT>, "parse results are never destroyed");
+		return *arena.Make<RESULT>(std::forward<ARGS>(args)...);
+	}
+
+	std::string_view Lower(std::string_view text);
+	std::string_view Upper(std::string_view text);
+	std::string_view Unquote(std::string_view body, char quote);
+	char *AllocateText(idx_t capacity) {
+		return char_ptr_cast(arena.Allocate(capacity));
+	}
+	std::string_view FinishText(char *data, idx_t capacity, idx_t size) {
+		arena.ShrinkHead(capacity - size);
+		return std::string_view(data, size);
+	}
+	static idx_t CopyUnquoted(std::string_view body, char quote, char *target);
+
+	idx_t ChildCount() const {
+		return children.size();
+	}
+	void PushChild(ParseResult &child) {
+		children.push_back(child);
+	}
+	std::span<const reference<ParseResult>> PendingChildren(idx_t begin) const {
+		return std::span<const reference<ParseResult>>(children).subspan(begin);
+	}
+	void DiscardChildren(idx_t begin) {
+		children.erase(children.begin() + NumericCast<int64_t>(begin), children.end());
+	}
+	std::span<reference<ParseResult>> TakeChildren(idx_t begin);
 
 private:
-	vector<unique_ptr<ParseResult>> parse_results;
+	ArenaAllocator arena;
+	vector<reference<ParseResult>> children;
 };
+
+inline std::string_view MatchState::FoldIdentifier(std::string_view text) const {
+	switch (context.identifier_case_mode) {
+	case IdentifierCaseMode::LOWERCASE:
+		return context.allocator.Lower(text);
+	case IdentifierCaseMode::UPPERCASE:
+		return context.allocator.Upper(text);
+	default:
+		return text;
+	}
+}
 
 template <class PROCESS, class... ARGS>
 arena_ptr<MatchProcess> MatchState::Make(ARGS &&... args) {
 	static_assert(std::is_base_of<MatchProcess, PROCESS>::value, "Expected a matcher process");
-	return arena_ptr<MatchProcess>(context.process_allocator.Make<PROCESS>(std::forward<ARGS>(args)...));
+	return arena_ptr<MatchProcess>(context.processes.Make<PROCESS>(std::forward<ARGS>(args)...));
 }
 
 template <class RESULT, class... ARGS>
@@ -395,11 +627,8 @@ MatcherResult MatchState::AllocateParseResult(ARGS &&... args) {
 	if (!BuildParseResult()) {
 		return MatcherResult::Success();
 	}
-	auto result = context.allocator.Allocate(make_uniq<RESULT>(std::forward<ARGS>(args)...));
-	if (rule) {
-		result->SetRule(*rule);
-		result->name = rule->name;
-	}
+	auto &result = context.allocator.Make<RESULT>(std::forward<ARGS>(args)...);
+	result.rule = rule;
 	return MatcherResult::Success(result);
 }
 

@@ -165,4 +165,15 @@ private:
 	static TableFunctionSet GetExecuteJsonSerializedSqlFunction();
 };
 
+//! Builds a standalone lookup-mode TableFunction for JSON. Shares
+//! MultiFileBindData shape with read_json (caller passes a pre-bound JSON
+//! bind_data via TableFunctionInput::bind_data). Its `function` reads the
+//! byte offsets from TableFunctionInput::pk_lookups per batch and seek-reads
+//! one record per offset.
+TableFunction MakeJSONLookupTableFunction();
+
+//! Lookup-mode TableFunction for read_json_objects: same byte-offset seek
+//! per pk, but emits the raw JSON document text instead of transforming it.
+TableFunction MakeJSONObjectsLookupTableFunction();
+
 } // namespace duckdb

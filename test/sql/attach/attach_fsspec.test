@@ -8,7 +8,7 @@ require notwindows
 statement error
 ATTACH 'dummy_extension:/hello.world';
 ----
-not found
+If you need the "dummy_extension" extension
 
 statement ok
 ATTACH 'file://{TEMP_DIR_ABSOLUTE}/dummy.csv'

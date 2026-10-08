@@ -45,7 +45,11 @@ public:
 	virtual bool IsDuckTransactionManager() {
 		return false;
 	}
-
+	//! Move a writeless transaction's read visibility forward to the present
+	//! (statement-level snapshots for READ COMMITTED semantics). No-op by
+	//! default; managers without MVCC snapshots have nothing to refresh.
+	virtual void RefreshStartTime(Transaction &transaction) {
+	}
 	AttachedDatabase &GetDB() {
 		return db;
 	}

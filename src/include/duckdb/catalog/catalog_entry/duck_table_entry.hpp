@@ -8,9 +8,11 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/planner/constraints/bound_unique_constraint.hpp"
+#include "duckdb/storage/table/data_table_info.hpp"
 
 namespace duckdb {
 
@@ -18,6 +20,25 @@ class CommitDropState;
 
 struct AddConstraintInfo;
 struct CreateTriggerInfo;
+
+// Result of computing a nested-STRUCT field DDL (ADD/DROP/RENAME FIELD): the
+// column's new full type and the remap_struct USING expression that rewrites
+// existing data. Used by DuckTableEntry::AddField/RemoveField/RenameField; also
+// callable directly so an external catalog can produce the same ALTER COLUMN
+// TYPE USING form instead of reimplementing the (subtle, by-name) struct remap.
+struct StructFieldRemap {
+	LogicalType new_type;
+	unique_ptr<ParsedExpression> remap_expression;
+};
+
+//! Build the (new_type, remap_struct(...)) pair for ADD FIELD on column_path.
+StructFieldRemap BuildAddFieldRemap(const LogicalType &column_type, const Identifier &column_name,
+                                    const vector<Identifier> &column_path, const ColumnDefinition &new_field);
+//! Build the pair for DROP FIELD on column_path.
+StructFieldRemap BuildRemoveFieldRemap(const LogicalType &column_type, const vector<Identifier> &column_path);
+//! Build the pair for RENAME FIELD on column_path -> new_name.
+StructFieldRemap BuildRenameFieldRemap(const LogicalType &column_type, const vector<Identifier> &column_path,
+                                       const string &new_name);
 
 //! A table catalog entry
 class DuckTableEntry : public TableCatalogEntry {
@@ -47,9 +68,14 @@ public:
 
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
 
-	void SetAsRoot() override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) override;
+	void ReplaceStorage(DuckTableEntry &source);
+	static vector<idx_t> SyncIndexColumnLayout(DataTableInfo &info, const ColumnList &columns,
+	                                           vector<idx_t> &logical_oids);
+	vector<column_t> StorageColumnIds(const IndexCatalogEntry &index) const;
 
-	void CommitAlter(string &column_name, CommitDropState &drop_state);
+	void CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state);
+	void CommitDropConstraint(const AlterInfo &info, CommitDropState &drop_state);
 	void CommitDrop(CommitDropState &drop_state);
 
 	//! Returns the backing index OIDs of UNIQUE constraints that are not in prev_table.
@@ -76,15 +102,6 @@ public:
 	//! Returns the virtual columns for this table
 	virtual_column_map_t GetVirtualColumns() const override;
 
-	optional_ptr<CatalogEntry> CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info) override;
-	optional_ptr<CatalogEntry> GetTrigger(CatalogTransaction transaction, const Identifier &name) const override;
-	void ScanTriggers(CatalogTransaction transaction,
-	                  const std::function<void(CatalogEntry &)> &callback) const override;
-	//! Scan all triggers without a transaction (used by checkpoint writer)
-	void ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback);
-	//! Drop a trigger by name
-	bool DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade) override;
-
 private:
 	unique_ptr<CatalogEntry> RenameColumn(ClientContext &context, RenameColumnInfo &info);
 	unique_ptr<CatalogEntry> RenameField(ClientContext &context, RenameFieldInfo &info);
@@ -97,9 +114,12 @@ private:
 	                                          AlterTableType alter_table_type);
 	unique_ptr<CatalogEntry> SetNotNull(ClientContext &context, SetNotNullInfo &info);
 	unique_ptr<CatalogEntry> DropNotNull(ClientContext &context, DropNotNullInfo &info);
-	unique_ptr<CatalogEntry> AddForeignKeyConstraint(AlterForeignKeyInfo &info);
+	unique_ptr<CatalogEntry> DropConstraint(ClientContext &context, DropConstraintInfo &info);
+	unique_ptr<CatalogEntry> RenameConstraint(ClientContext &context, RenameConstraintInfo &info);
+	unique_ptr<CatalogEntry> AddForeignKeyConstraint(CatalogTransaction transaction, AlterForeignKeyInfo &info);
 	unique_ptr<CatalogEntry> DropForeignKeyConstraint(ClientContext &context, AlterForeignKeyInfo &info);
 	unique_ptr<CatalogEntry> SetColumnComment(ClientContext &context, SetColumnCommentInfo &info);
+	unique_ptr<CatalogEntry> AlterPermissions(ClientContext &context, AlterPermissionsInfo &info);
 	unique_ptr<CatalogEntry> AddConstraint(ClientContext &context, AddConstraintInfo &info);
 
 	void UpdateConstraintsOnColumnDrop(const LogicalIndex &removed_index, const vector<LogicalIndex> &adjusted_indices,
@@ -113,8 +133,6 @@ protected:
 private:
 	//! A reference to the underlying storage unit used for this table
 	shared_ptr<DataTable> storage;
-	//! The catalog set holding triggers for this table
-	shared_ptr<CatalogSet> triggers;
 	//! Manages dependencies of the individual columns of the table
 	ColumnDependencyManager column_dependency_manager;
 };

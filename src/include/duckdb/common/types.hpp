@@ -705,7 +705,7 @@ struct GeoType {
 // **DEPRECATED**: Use EnumUtil directly instead.
 DUCKDB_API string LogicalTypeIdToString(LogicalTypeId type);
 
-DUCKDB_API LogicalTypeId TransformStringToLogicalTypeId(const string &str);
+DUCKDB_API LogicalTypeId TransformStringToLogicalTypeId(std::string_view str);
 
 DUCKDB_API LogicalType TransformStringToLogicalType(const string &str, ClientContext &context);
 

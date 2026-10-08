@@ -23,6 +23,11 @@ FROM query('SELECT (' || repeat('[', {depth}) || '1' || repeat(']', {depth}) || 
 
 endloop
 
+query I
+FROM query('SELECT ' || repeat('1 - (2 - (', 50) || '3' || repeat('))', 50));
+----
+-47
+
 statement ok
 SET max_expression_depth=100;
 

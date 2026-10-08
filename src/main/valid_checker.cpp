@@ -3,7 +3,7 @@
 
 namespace duckdb {
 
-ValidChecker::ValidChecker(DatabaseInstance &db) : is_invalidated(false), db(db) {
+ValidChecker::ValidChecker(DatabaseInstance &db, Scope scope) : is_invalidated(false), db(db), scope(scope) {
 }
 
 void ValidChecker::Invalidate(string error) {
@@ -16,7 +16,10 @@ bool ValidChecker::IsInvalidated() {
 	if (!is_invalidated) {
 		return false;
 	}
-	return !Settings::Get<DisableDatabaseInvalidationSetting>(db);
+	// disable_database_invalidation only suppresses DB-level invalidation; the
+	// per-transaction aborted bit must still be honored so PG-style
+	// "aborted transaction" semantics can work independently.
+	return !(scope == Scope::DATABASE && Settings::Get<DisableDatabaseInvalidationSetting>(db));
 }
 
 string ValidChecker::InvalidatedMessage() {

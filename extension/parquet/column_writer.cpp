@@ -18,7 +18,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "brotli/encode.h"
-#include "lz4.hpp"
+#include "lz4.h"
 #include "miniz_wrapper.hpp"
 #include "snappy.h"
 #include "zstd.h"
@@ -33,7 +33,6 @@
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/types/validity_mask.hpp"
 #include "duckdb/common/uhugeint.hpp"
-#include "miniz.hpp"
 #include "parquet_field_id.hpp"
 #include "parquet_shredding.hpp"
 #include "parquet_timestamp.hpp"
@@ -46,7 +45,6 @@ class ClientContext;
 struct GeometryStatsData;
 
 using namespace duckdb_parquet; // NOLINT
-using namespace duckdb_miniz;   // NOLINT
 
 using duckdb_parquet::CompressionCodec;
 using duckdb_parquet::ConvertedType;

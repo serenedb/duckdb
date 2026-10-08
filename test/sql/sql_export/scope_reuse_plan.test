@@ -175,7 +175,7 @@ PRAGMA enable_optimizer;
 
 # Ordering, windows, and UNNEST reuse the same plain input scope.
 statement ok
-SET disabled_optimizers='compressed_materialization';
+SET disabled_optimizers='compressed_materialization,window_self_join';
 
 statement ok
 CREATE TABLE scope_input(i INTEGER,xs INTEGER[]);

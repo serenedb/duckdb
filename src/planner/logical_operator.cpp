@@ -53,6 +53,20 @@ void LogicalOperator::SetParamsEstimatedCardinality(InsertionOrderPreservingMap<
 	}
 }
 
+void LogicalOperator::SetParamsEstimatedCardinality(InsertionOrderPreservingMap<ExplainValue> &result) const {
+	if (has_estimated_cardinality) {
+		result[RenderTreeNode::ESTIMATED_CARDINALITY] = StringUtil::Format("%llu", estimated_cardinality);
+	}
+}
+
+InsertionOrderPreservingMap<ExplainValue> LogicalOperator::ParamsToValue() const {
+	InsertionOrderPreservingMap<ExplainValue> result;
+	for (auto &entry : ParamsToString()) {
+		result[entry.first] = std::move(entry.second);
+	}
+	return result;
+}
+
 void LogicalOperator::SetEstimatedCardinality(idx_t _estimated_cardinality) {
 	estimated_cardinality = _estimated_cardinality;
 	has_estimated_cardinality = true;
@@ -191,7 +205,8 @@ string LogicalOperator::ToString(optional_ptr<ClientContext> context, const Prof
 }
 
 void LogicalOperator::Verify(ClientContext &context) {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	// verify expressions
 	for (idx_t expr_idx = 0; expr_idx < expressions.size(); expr_idx++) {
 		auto str = expressions[expr_idx]->ToString();
@@ -227,7 +242,7 @@ void LogicalOperator::Verify(ClientContext &context) {
 			if (config.options.storage_compatibility.manually_set) {
 				options.storage_compatibility = config.options.storage_compatibility;
 			} else {
-				options.storage_compatibility = StorageCompatibility::Latest();
+				options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 			}
 
 			BinarySerializer::Serialize(*expressions[expr_idx], stream, options);
@@ -283,7 +298,7 @@ vector<TableIndex> LogicalOperator::GetTableIndex() const {
 unique_ptr<LogicalOperator> LogicalOperator::Copy(ClientContext &context) const {
 	MemoryStream stream(Allocator::Get(context));
 	SerializationOptions options;
-	options.storage_compatibility = StorageCompatibility::Latest();
+	options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 	BinarySerializer serializer(stream, options);
 	try {
 		serializer.Begin();

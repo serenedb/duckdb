@@ -2,10 +2,8 @@
 # description: Usage of STORED generated column
 # group: [stored]
 
-statement error
+statement ok
 CREATE TABLE tbl (
 	price INTEGER,
 	gcol AS (price) STORED,
 );
-----
-<REGEX>:.*Invalid Input Error.*Can not create.*

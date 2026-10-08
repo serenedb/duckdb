@@ -57,7 +57,7 @@ endloop
 # thread 21 is force checkpointing
 loop i 0 20
 
-onlyif threadid==20
+onlyif threadid=20
 statement ok
 FORCE CHECKPOINT
 

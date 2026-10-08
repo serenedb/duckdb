@@ -68,7 +68,7 @@ ORDER BY p.ts ASC
 
 query II
 WITH samples AS (
-	SELECT col0 AS starts, col1 AS ends
+	SELECT column1 AS starts, column2 AS ends
 	FROM (VALUES
 		(5, 9),
 		(10, 13),

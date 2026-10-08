@@ -409,6 +409,7 @@ void FileLogStorage::UpdateConfigInternal(DatabaseInstance &db, case_insensitive
 	auto config_copy = config;
 
 	string new_path;
+	bool path_provided = false;
 	bool normalize_contexts_new_value = normalize_contexts;
 	bool normalize_set_explicitly = false;
 	bool require_reinitializing_files = false;
@@ -417,6 +418,7 @@ void FileLogStorage::UpdateConfigInternal(DatabaseInstance &db, case_insensitive
 	for (const auto &it : config_copy) {
 		auto key = StringUtil::Lower(it.first);
 		if (key == "path") {
+			path_provided = true;
 			auto path_value = it.second.ToString();
 			//! We implicitly set normalize to false when a path ending in .csv is specified
 			if (!normalize_set_explicitly && StringUtil::EndsWith(path_value, ".csv")) {
@@ -466,8 +468,9 @@ void FileLogStorage::UpdateConfigInternal(DatabaseInstance &db, case_insensitive
 		}
 	}
 
-	// Apply any path change
-	if (new_path != base_path) {
+	// Apply any path change. Only when a path was actually provided -- a config update
+	// without a "path" key (e.g. buffer_size only) must not clobber the existing path with "".
+	if (path_provided && new_path != base_path) {
 		base_path = new_path;
 		SetPaths(new_path);
 	}
@@ -637,17 +640,21 @@ static void WriteLoggingContextsToChunk(DataChunk &chunk, const RegisteredLoggin
 	chunk.SetChildCardinality(size + 1);
 }
 
-void BufferingLogStorage::WriteLogEntry(timestamp_t timestamp, LogLevel level, const string &log_type,
-                                        const string &log_message, const RegisteredLoggingContext &context) {
+void BufferingLogStorage::WriteLogEntry(timestamp_t timestamp, LogLevel level, std::string_view log_type,
+                                        std::string_view log_message, const RegisteredLoggingContext &context) {
 	unique_lock<mutex> lck(lock);
 
 	auto &log_entries_buffer =
 	    normalize_contexts ? buffers[LoggingTargetTable::LOG_ENTRIES] : buffers[LoggingTargetTable::ALL_LOGS];
 
-	auto size = log_entries_buffer->size();
-	if (size >= buffer_limit && buffer_limit != 0) {
-		throw InternalException("Log buffer limit exceeded: code should have flushed before");
+	// The buffer holds at most MaxValue(buffer_limit, 1) rows. It can still be full on entry when
+	// buffer_limit is 0 (capacity 1) or when a previous flush threw (e.g. a file I/O error left the
+	// row un-reset): flush before writing so we never index past the buffer's capacity.
+	if (log_entries_buffer->size() >= MaxValue<idx_t>(buffer_limit, 1)) {
+		FlushInternal(normalize_contexts ? LoggingTargetTable::LOG_ENTRIES : LoggingTargetTable::ALL_LOGS);
 	}
+
+	auto size = log_entries_buffer->size();
 
 	if (registered_contexts.find(context.context_id) == registered_contexts.end()) {
 		WriteLoggingContext(context);
@@ -668,14 +675,15 @@ void BufferingLogStorage::WriteLogEntry(timestamp_t timestamp, LogLevel level, c
 	timestamp_data[size] = timestamp;
 
 	auto type_data = FlatVector::GetDataMutable<string_t>(log_entries_buffer->data[col]);
-	type_data[size] = StringVector::AddString(log_entries_buffer->data[col++], log_type);
+	type_data[size] = StringVector::AddString(log_entries_buffer->data[col++], log_type.data(), log_type.size());
 
 	auto level_data = FlatVector::GetDataMutable<string_t>(log_entries_buffer->data[col]);
 	level_data[size] = StringVector::AddString(log_entries_buffer->data[col++],
 	                                           EnumUtil::ToString(level)); // TODO: do cast on write out
 
 	auto message_data = FlatVector::GetDataMutable<string_t>(log_entries_buffer->data[col]);
-	message_data[size] = StringVector::AddString(log_entries_buffer->data[col++], log_message);
+	message_data[size] =
+	    StringVector::AddString(log_entries_buffer->data[col++], log_message.data(), log_message.size());
 
 	log_entries_buffer->SetChildCardinality(size + 1);
 
@@ -735,6 +743,10 @@ void BufferingLogStorage::FlushInternal(LoggingTargetTable table) {
 	if (!IsEnabledInternal(table)) {
 		throw InvalidConfigurationException("Cannot flush disabled logging target");
 	}
+	if (buffers[table]->size() == 0) {
+		// Nothing buffered -- skip the cast + CSV write of an empty chunk.
+		return;
+	}
 	FlushChunk(table, *buffers[table]);
 	buffers[table]->Reset();
 }
@@ -751,7 +763,10 @@ void BufferingLogStorage::WriteLoggingContext(const RegisteredLoggingContext &co
 
 	auto &log_contexts_buffer = buffers[LoggingTargetTable::LOG_CONTEXTS];
 
-	if (log_contexts_buffer->size() + 1 > buffer_limit) {
+	// Flush before writing whenever the buffer is full so we never index past its capacity
+	// (MaxValue(buffer_limit, 1)). The buffer can be full on entry when buffer_limit is 0 or when a
+	// previous flush threw and left the row un-reset.
+	if (log_contexts_buffer->size() >= MaxValue<idx_t>(buffer_limit, 1)) {
 		FlushInternal(LoggingTargetTable::LOG_CONTEXTS);
 	}
 

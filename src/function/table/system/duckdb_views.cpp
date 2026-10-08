@@ -59,17 +59,20 @@ static unique_ptr<FunctionData> DuckDBViewsBind(ClientContext &context, TableFun
 	names.emplace_back("is_bound");
 	return_types.emplace_back(LogicalType::BOOLEAN);
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBViewsInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBViewsData>();
 
 	// scan all the schemas for tables and collect them and collect them
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::VIEW_ENTRY,
-		                  [&](CatalogEntry &entry) { result->entries.push_back(entry); });
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::VIEW_ENTRY,
+		                           [&](CatalogEntry &entry) { result->entries.push_back(entry); });
 	};
 	result->column_ids = input.column_indexes;
 	return std::move(result);
@@ -106,11 +109,11 @@ void DuckDBViewsFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 				break;
 			case 2:
 				// schema_name, LogicalType::VARCHAR
-				col_vector.Append(Value(view.schema.name));
+				col_vector.Append(Value(view.ParentSchemaName(CatalogTransaction(view.ParentCatalog(), context))));
 				break;
 			case 3:
 				// schema_oid, LogicalType::BIGINT
-				col_vector.Append(Value::BIGINT(NumericCast<int64_t>(view.schema.oid)));
+				col_vector.Append(Value::BIGINT(NumericCast<int64_t>(view.ParentSchemaOid())));
 				break;
 			case 4:
 				// view_name, LogicalType::VARCHAR
@@ -168,6 +171,8 @@ void DuckDBViewsFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 void DuckDBViewsFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction duckdb_views("duckdb_views", {}, DuckDBViewsFunction, DuckDBViewsBind, DuckDBViewsInit);
 	duckdb_views.projection_pushdown = true;
+	duckdb_views.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
+	duckdb_views.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	set.AddFunction(std::move(duckdb_views));
 }
 

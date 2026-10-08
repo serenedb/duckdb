@@ -16,6 +16,16 @@ public:
 
 	DUCKDB_API arena_ptr<MatchProcess> StartMatch(MatchState &state) const override;
 
+	//! The child that can stand in for this rule's own result, or nullptr when the rule has to build one
+	static optional_ptr<ParseResult> FindCollapsibleResult(std::span<const reference<ParseResult>> children);
+
+	void DiscardSuggestions(vector<MatcherSuggestion> &suggestions, idx_t saved_suggestion_size) const {
+		if (suppress_suggestions) {
+			EraseSuggestions(suggestions, saved_suggestion_size);
+		}
+	}
+	DUCKDB_API static void EraseSuggestions(vector<MatcherSuggestion> &suggestions, idx_t saved_suggestion_size);
+
 	SuggestionType AddSuggestionInternal(MatchState &state) const override {
 		if (suppress_suggestions) {
 			return SuggestionType::OPTIONAL;
@@ -46,6 +56,9 @@ public:
 	vector<reference<Matcher>> matchers;
 	//! If true, this matcher will not contribute autocomplete suggestions (used for rules like ExpressionStatement)
 	bool suppress_suggestions = false;
+	optional_idx chain_core;
+	optional_ptr<const ChainEdges> chain_edges;
+	optional_ptr<const ListMatcher> nested_chain_level;
 };
 
 } // namespace duckdb

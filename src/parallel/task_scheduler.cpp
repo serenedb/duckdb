@@ -34,12 +34,18 @@ TaskScheduler::TaskScheduler(DatabaseInstance &db) : db(db) {
 	}
 }
 
+void TaskScheduler::Join() {
+#ifndef DUCKDB_NO_THREADS
+	for (auto &pool : pools) {
+		pool->RelaunchThreads(*this, true);
+	}
+#endif
+}
+
 TaskScheduler::~TaskScheduler() {
 #ifndef DUCKDB_NO_THREADS
 	try {
-		for (auto &pool : pools) {
-			pool->RelaunchThreads(*this, true);
-		}
+		Join();
 		BlockAllocator::Get(db).FlushAll();
 	} catch (...) {
 		// nothing we can do in the destructor if this fails
@@ -279,6 +285,12 @@ idx_t TaskScheduler::NumberOfThreads() {
 	return GetPool(TaskSchedulerType::REGULAR).NumberOfThreads();
 }
 
+idx_t TaskScheduler::QueryThreads(ClientContext &context) {
+	const auto pool = GetScheduler(context).NumberOfThreads();
+	const auto &cap = ClientConfig::GetConfig(context).threads;
+	return cap.IsValid() ? MinValue<idx_t>(pool, cap.GetIndex()) : pool;
+}
+
 idx_t TaskScheduler::NumberOfAsyncThreads() {
 	return GetPool(TaskSchedulerType::ASYNC).NumberOfThreads();
 }
@@ -397,7 +409,10 @@ idx_t TaskScheduler::GetEstimatedCPUId() {
 }
 
 void TaskScheduler::RelaunchThreads() {
-	lock_guard<mutex> t(thread_lock);
+	unique_lock<mutex> t(thread_lock, std::try_to_lock);
+	if (!t.owns_lock()) {
+		return;
+	}
 	for (auto &pool : pools) {
 		pool->RelaunchThreads(*this, false);
 	}

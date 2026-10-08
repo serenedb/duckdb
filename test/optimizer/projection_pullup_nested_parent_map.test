@@ -1,0 +1,38 @@
+# name: test/optimizer/projection_pullup_nested_parent_map.test
+# description: A projection pulled up while the projection below it is removed reads its parents' current output
+# group: [optimizer]
+
+statement ok
+CREATE TABLE pu_u(id INTEGER);
+
+statement ok
+INSERT INTO pu_u VALUES (1), (2);
+
+statement ok
+CREATE TABLE pu_p(x INTEGER);
+
+statement ok
+INSERT INTO pu_p VALUES (5), (6), (5);
+
+statement ok
+CREATE TABLE pu_s(x INTEGER);
+
+statement ok
+INSERT INTO pu_s VALUES (5);
+
+statement ok
+CREATE TABLE pu_f(feature_id VARCHAR);
+
+statement ok
+INSERT INTO pu_f VALUES ('f');
+
+query I
+SELECT s1.c0 FROM pu_u u,
+    LATERAL (SELECT u.id AS c0 FROM pu_p WHERE pu_p.x = (SELECT x FROM pu_s)
+             AND EXISTS (SELECT (SELECT feature_id FROM pu_f) FROM pu_s)) s1
+ORDER BY 1
+----
+1
+1
+2
+2

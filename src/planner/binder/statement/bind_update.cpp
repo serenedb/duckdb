@@ -1,6 +1,10 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
+#include "duckdb/parser/tableref.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/query_node/update_query_node.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/tableref/bound_joinref.hpp"
@@ -15,9 +19,34 @@
 #include "duckdb/planner/operator/logical_update.hpp"
 #include "duckdb/storage/data_table.hpp"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
 
 namespace duckdb {
+
+void Binder::ExpandStoredGeneratedExpression(unique_ptr<ParsedExpression> &expr, TableCatalogEntry &table) {
+	ExpandStoredGeneratedExpression(expr, table, [](const Identifier &) { return unique_ptr<ParsedExpression>(); });
+}
+
+void Binder::ExpandStoredGeneratedExpression(
+    unique_ptr<ParsedExpression> &expr, TableCatalogEntry &table,
+    absl::FunctionRef<unique_ptr<ParsedExpression>(const Identifier &)> substitute) {
+	if (expr->GetExpressionClass() != ExpressionClass::COLUMN_REF) {
+		ParsedExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<ParsedExpression> &child) {
+			ExpandStoredGeneratedExpression(child, table, substitute);
+		});
+		return;
+	}
+	const auto &name = expr->Cast<ColumnRefExpression>().GetColumnName();
+	if (auto replacement = substitute(name)) {
+		expr = std::move(replacement);
+		return;
+	}
+	// A reference to another generated column is inlined and expanded, so chains resolve here.
+	if (table.ColumnExists(name) && table.GetColumn(name).Generated()) {
+		expr = table.GetColumn(name).GeneratedExpression().Copy();
+		ExpandStoredGeneratedExpression(expr, table, substitute);
+	}
+}
 
 void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &root, UpdateSetInfo &set_info,
                            TableCatalogEntry &table, vector<PhysicalIndex> &columns,
@@ -31,8 +60,50 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 
 	if (prioritize_table_when_binding) {
 		binder_with_search_path =
-		    CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema().name);
+		    CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema(context).name);
 		expr_binder_ptr = binder_with_search_path.get();
+	}
+
+	auto &all_columns = table.GetColumns();
+
+	// Bind one column assignment and add it to the UPDATE projection. Shared by
+	// the explicit SET list and the stored-generated recompute below so the two
+	// paths stay in lockstep.
+	auto append_assignment = [&](const ColumnDefinition &column, unique_ptr<ParsedExpression> &expr) {
+		columns.push_back(column.Physical());
+		if (expr->GetExpressionType() == ExpressionType::VALUE_DEFAULT) {
+			auto bound_default = bound_defaults[column.StorageOid()]->Copy();
+			auto expr_index = ColumnBinding::PushExpression(projection_expressions, std::move(bound_default));
+			update_expressions.push_back(
+			    make_uniq<BoundColumnRefExpression>(column.Type(), ColumnBinding(proj_index, expr_index)));
+			return;
+		}
+		UpdateBinder binder(*expr_binder_ptr, context);
+		binder.target_type = table.GetExpectedTypeForInsert(column);
+		auto bound_expr = binder.Bind(expr);
+		if (root) {
+			PlanSubqueries(bound_expr, root);
+		}
+		auto bound_type = bound_expr->GetReturnType();
+		auto expr_index = ColumnBinding::PushExpression(projection_expressions, std::move(bound_expr));
+		auto source_binding = ColumnBinding(proj_index, expr_index);
+		update_expressions.push_back(table.GetDefaultExpressionForColumn(
+		    context, bound_type, column.Type(), source_binding, *bound_defaults[column.StorageOid()]));
+	};
+
+	// Stored generated columns are recomputed below when an UPDATE assigns a
+	// column they derive from; with none present, skip all of that work.
+	const bool has_stored_generated = absl::c_any_of(all_columns.Logical(), [](const ColumnDefinition &col) {
+		return col.Category() == TableColumnType::GENERATED_STORED;
+	});
+
+	// Snapshot the parsed SET expressions before the bind loop consumes them.
+	identifier_map_t<unique_ptr<ParsedExpression>> parsed_set_exprs;
+	if (has_stored_generated) {
+		parsed_set_exprs.reserve(set_info.columns.size());
+		for (idx_t i = 0; i < set_info.columns.size(); i++) {
+			parsed_set_exprs[set_info.columns[i]] = set_info.expressions[i]->Copy();
+		}
 	}
 
 	for (idx_t i = 0; i < set_info.columns.size(); i++) {
@@ -40,7 +111,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 		auto &expr = set_info.expressions[i];
 		if (!table.ColumnExists(colname)) {
 			vector<string> column_names;
-			for (auto &col : table.GetColumns().Physical()) {
+			for (auto &col : all_columns.Physical()) {
 				column_names.emplace_back(col.Name().GetIdentifierName());
 			}
 			auto candidates =
@@ -52,29 +123,43 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 		if (column.Generated()) {
 			throw BinderException("Cant update column %s because it is a generated column!", column.Name());
 		}
-		if (std::find(columns.begin(), columns.end(), column.Physical()) != columns.end()) {
+		if (absl::c_contains(columns, column.Physical())) {
 			throw BinderException("Multiple assignments to same column %s", colname);
 		}
-		columns.push_back(column.Physical());
-		if (expr->GetExpressionType() == ExpressionType::VALUE_DEFAULT) {
-			auto bound_default = bound_defaults[column.StorageOid()]->Copy();
-			auto expr_index = ColumnBinding::PushExpression(projection_expressions, std::move(bound_default));
-			update_expressions.push_back(
-			    make_uniq<BoundColumnRefExpression>(column.Type(), ColumnBinding(proj_index, expr_index)));
-		} else {
-			UpdateBinder binder(*expr_binder_ptr, context);
-			binder.target_type = table.GetExpectedTypeForInsert(column);
-			auto bound_expr = binder.Bind(expr);
-			if (root) {
-				PlanSubqueries(bound_expr, root);
+		append_assignment(column, expr);
+	}
+
+	if (!has_stored_generated) {
+		return;
+	}
+	// Recompute each stored generated column whose value depends on an assigned
+	// column. Generated-column references are expanded inline -- the same
+	// recursion the binder uses for INSERT defaults and SELECT -- and assigned
+	// columns are substituted with their new value, so chained and virtual
+	// dependencies resolve without an explicit ordering pass.
+	for (auto &column : all_columns.Logical()) {
+		if (column.Category() != TableColumnType::GENERATED_STORED) {
+			continue;
+		}
+		auto recompute = column.GeneratedExpression().Copy();
+		bool depends_on_update = false;
+		ExpandStoredGeneratedExpression(recompute, table, [&](const Identifier &name) -> unique_ptr<ParsedExpression> {
+			auto entry = parsed_set_exprs.find(name);
+			if (entry == parsed_set_exprs.end()) {
+				return nullptr;
 			}
-
-			auto bound_type = bound_expr->GetReturnType();
-			auto expr_index = ColumnBinding::PushExpression(projection_expressions, std::move(bound_expr));
-			auto source_binding = ColumnBinding(proj_index, expr_index);
-
-			update_expressions.push_back(table.GetDefaultExpressionForColumn(
-			    context, bound_type, column.Type(), source_binding, *bound_defaults[column.StorageOid()]));
+			// Assigned column: substitute its new value (DEFAULT means the column's default expression, or NULL
+			// when it has none). Its own refs read the old row, so it is not expanded further.
+			depends_on_update = true;
+			if (entry->second->GetExpressionType() != ExpressionType::VALUE_DEFAULT) {
+				return entry->second->Copy();
+			}
+			auto &base_col = table.GetColumn(name);
+			return base_col.HasDefaultValue() ? base_col.DefaultValue().Copy()
+			                                  : ConstantExpression::FromValue(Value(base_col.Type()));
+		});
+		if (depends_on_update) {
+			append_assignment(column, recompute);
 		}
 	}
 }
@@ -170,6 +255,16 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	if (!table_ptr) {
 		throw BinderException("Can only update base table");
 	}
+	if (node.table->type == TableReferenceType::BASE_TABLE) {
+		// A catalog may delegate the scan of its table to a storage table in
+		// another catalog; the update targets the entry the name resolves to.
+		auto &target_ref = node.table->Cast<BaseTableRef>();
+		EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, target_ref.GetQualifiedName());
+		auto resolved = Catalog::GetEntry(context, table_lookup, OnEntryNotFound::RETURN_NULL);
+		if (resolved && resolved->type == CatalogType::TABLE_ENTRY) {
+			table_ptr = &resolved->Cast<TableCatalogEntry>();
+		}
+	}
 	auto &table = *table_ptr;
 
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::UPDATE_EVENT)) {
@@ -193,7 +288,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	if (!table.temporary) {
 		// update of persistent table: not read only!
 		auto &properties = GetStatementProperties();
-		properties.RegisterDBModify(table.catalog, context, DatabaseModificationType::UPDATE_DATA);
+		properties.RegisterDBModify(table.GetStorageCatalog(context), context, DatabaseModificationType::UPDATE_DATA);
 	}
 	auto update = make_uniq<LogicalUpdate>(table);
 
@@ -211,7 +306,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	update->row_id_handling = node.from_table ? RowIdHandling::KEEP_FIRST : RowIdHandling::ASSUME_UNIQUE;
 	// bind the default values
 	auto &catalog_name = table.ParentCatalog().GetName();
-	auto &schema_name = table.ParentSchema().name;
+	auto schema_name = table.ParentSchema(context).name;
 	BindDefaultValues(table.GetColumns(), update->bound_defaults, catalog_name.GetIdentifierName(),
 	                  schema_name.GetIdentifierName());
 	update->bound_constraints = BindConstraints(table);
@@ -235,8 +330,15 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	D_ASSERT(proj_tmp->type == LogicalOperatorType::LOGICAL_PROJECTION);
 	auto proj = unique_ptr_cast<LogicalOperator, LogicalProjection>(std::move(proj_tmp));
 
-	// bind any extra columns necessary for CHECK constraints or indexes
-	table.BindUpdateConstraints(*this, *get, *proj, *update, context);
+	// bind any extra columns necessary for CHECK constraints or indexes;
+	// storage-derived decisions (index updates force delete+insert) come
+	// from the scan-bound table when the catalog delegates storage
+	auto storage_table = get->GetTable();
+	if (storage_table && storage_table.get() != &table) {
+		storage_table->BindUpdateConstraints(*this, *get, *proj, *update, context);
+	} else {
+		table.BindUpdateConstraints(*this, *get, *proj, *update, context);
+	}
 
 	// capture the pre-update (OLD) row image before rowid so rowid stays the final input column
 	if (update->capture_old_rows) {

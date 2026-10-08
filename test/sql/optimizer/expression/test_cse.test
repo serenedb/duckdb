@@ -76,3 +76,23 @@ SELECT substring(a, 1, 3)=substring(a, 1, 3) AS b FROM test2 GROUP BY b ORDER BY
 NULL
 1
 
+query I
+SELECT COALESCE(a, CASE WHEN (a // 0) > 0 THEN 1 WHEN (a // 0) < 0 THEN 2 END) FROM (VALUES (42)) t(a)
+----
+42
+
+query I
+SELECT COALESCE(a, (a // 0) + (a // 0)) FROM (VALUES (42)) t(a)
+----
+42
+
+query I
+SELECT TRY((a // 0) + (a // 0)) FROM test
+----
+NULL
+
+statement error
+SELECT (a // 0) + (a // 0) FROM test
+----
+Division by zero
+

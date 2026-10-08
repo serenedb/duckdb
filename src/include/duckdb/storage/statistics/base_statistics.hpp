@@ -19,6 +19,8 @@
 #include "duckdb/storage/statistics/variant_stats.hpp"
 #include "duckdb/storage/statistics/stats_merge_type.hpp"
 
+#include <span>
+
 namespace duckdb {
 struct SelectionVector;
 
@@ -161,6 +163,8 @@ private:
 	static BaseStatistics CreateUnknownType(LogicalType type);
 	static BaseStatistics CreateEmptyType(LogicalType type);
 	static BaseStatistics FromConstantType(const Value &input);
+	//! Statistics of a nested type, taking over the statistics already built for its children
+	static BaseStatistics FromChildStats(LogicalType type, std::span<BaseStatistics> child_stats);
 
 private:
 	//! The type of the logical segment

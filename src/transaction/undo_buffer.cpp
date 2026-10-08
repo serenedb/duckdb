@@ -14,6 +14,7 @@
 #include "duckdb/transaction/cleanup_state.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 #include "duckdb/transaction/delete_info.hpp"
+#include "duckdb/transaction/update_info.hpp"
 #include "duckdb/transaction/rollback_state.hpp"
 #include "duckdb/transaction/wal_write_state.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
@@ -108,6 +109,25 @@ bool UndoBuffer::ChangesMade() {
 	return allocator.head.get();
 }
 
+void UndoBuffer::AddModifiedTables(vector<reference<DataTableInfo>> &tables) {
+	if (!ChangesMade()) {
+		return;
+	}
+	IteratorState iterator_state;
+	IterateEntries(iterator_state, [&](UndoFlags entry_type, data_ptr_t data) {
+		switch (entry_type) {
+		case UndoFlags::DELETE_TUPLE:
+			tables.push_back(*reinterpret_cast<DeleteInfo *>(data)->table->GetStorage().GetDataTableInfo());
+			break;
+		case UndoFlags::UPDATE_TUPLE:
+			tables.push_back(*reinterpret_cast<UpdateInfo *>(data)->table->GetStorage().GetDataTableInfo());
+			break;
+		default:
+			break;
+		}
+	});
+}
+
 UndoBufferProperties UndoBuffer::GetProperties() {
 	UndoBufferProperties properties;
 	if (!ChangesMade()) {
@@ -184,8 +204,9 @@ void UndoBuffer::Cleanup(VisibilityBound lowest_visibility_bound) {
 	});
 }
 
-void UndoBuffer::WriteToWAL(WriteAheadLog &wal, optional_ptr<StorageCommitState> commit_state) {
-	WALWriteState state(transaction, wal, commit_state);
+void UndoBuffer::WriteToWAL(optional_ptr<WriteAheadLog> wal, optional_ptr<StorageCommitState> commit_state,
+                            optional_ptr<vector<CatalogRunEntry>> catalog_run) {
+	WALWriteState state(transaction, wal, commit_state, catalog_run);
 	UndoBuffer::IteratorState iterator_state;
 	IterateEntries(iterator_state, [&](UndoFlags type, data_ptr_t data) { state.CommitEntry(type, data); });
 }

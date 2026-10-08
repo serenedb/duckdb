@@ -31,6 +31,7 @@ public:
 	vector<LogicalType> expected_types;
 	//! Expected table names.
 	vector<Identifier> expected_names;
+	bool case_sensitive_names = false;
 
 public:
 	string ToString() const override;

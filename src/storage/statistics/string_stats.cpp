@@ -628,6 +628,22 @@ void StringStats::MergeStats(BaseStatistics &stats, string_t &target, StringStat
 	bool new_is_more_extreme = is_min ? comparison < 0 : comparison > 0;
 	if (!new_is_more_extreme) {
 		// old value is more extreme - bail
+		// exception: a truncated max only stores a prefix of the true maximum - if the source is a
+		// truncated prefix of (or equal to) the target, the true source max can extend past the target
+		if (!is_min && source_type == StringStatsType::TRUNCATED_STATS && source.GetSize() <= target.GetSize() &&
+		    memcmp(source.GetData(), target.GetData(), source.GetSize()) == 0) {
+			// truncate the merged max to the shared prefix
+			if (source.GetSize() < target.GetSize()) {
+				target = AssignString(stats, source, is_min);
+			}
+			target_type = StringStatsType::TRUNCATED_STATS;
+		}
+		return;
+	}
+	// exception: if the target is a truncated prefix of the source, the true target max can extend
+	// past the source - keep the truncated target
+	if (!is_min && target_type == StringStatsType::TRUNCATED_STATS && target.GetSize() < source.GetSize() &&
+	    memcmp(source.GetData(), target.GetData(), target.GetSize()) == 0) {
 		return;
 	}
 	// assign the new value
@@ -699,33 +715,11 @@ void StringStats::Merge(BaseStatistics &stats, const StatsWriter<string_t> &stat
 
 FilterPropagateResult StringStats::CheckZonemap(const BaseStatistics &stats, ExpressionType comparison_type,
                                                 array_ptr<const Value> constants) {
-	auto &string_data = GetDataUnsafe(stats);
 	D_ASSERT(stats.CanHaveNoNull());
 	for (auto &constant_value : constants) {
 		D_ASSERT(constant_value.type() == stats.GetType());
 		D_ASSERT(!constant_value.IsNull());
-		auto &constant = StringValue::Get(constant_value);
-		FilterPropagateResult prune_result;
-		if (HasMinMax(stats)) {
-			// Special handle cases where constant is equal to the truncated min bound, but we're able to prune a few
-			// row groups. For example, a truncated "bbbbbbbbbbbb" with minimum length 13 has the lower bound
-			// "bbbbbbbbbbbb\0" -- the min bound is obviously larger than the constant.
-			auto min = string_data.min;
-			auto min_type = string_data.min_type;
-			string min_bound;
-			auto min_string_length = MinStringLength(stats);
-			if (min_type == StringStatsType::TRUNCATED_STATS && constant.size() == min.GetSize() &&
-			    min_string_length.IsValid() && min_string_length.GetIndex() > constant.size() &&
-			    CompareStringStats(constant, min, min_type) == 0) {
-				min_bound = min.GetString() + '\0';
-				min = string_t(min_bound);
-				min_type = StringStatsType::EXACT_STATS;
-			}
-			prune_result =
-			    CheckZonemap(min, min_type, string_data.max, string_data.max_type, comparison_type, constant);
-		} else {
-			prune_result = FilterPropagateResult::NO_PRUNING_POSSIBLE;
-		}
+		auto prune_result = CheckZonemap(stats, comparison_type, string_t(StringValue::Get(constant_value)));
 		if (prune_result == FilterPropagateResult::NO_PRUNING_POSSIBLE) {
 			return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 		} else if (prune_result == FilterPropagateResult::FILTER_ALWAYS_TRUE) {
@@ -741,6 +735,29 @@ int8_t StringStats::CompareStringStats(string_t input, string_t stats, StringSta
 		return Comparator::Operation(string_t(input.GetData(), static_cast<uint32_t>(stats.GetSize())), stats);
 	}
 	return Comparator::Operation(input, stats);
+}
+
+FilterPropagateResult StringStats::CheckZonemap(const BaseStatistics &stats, ExpressionType comparison_type,
+                                                string_t constant) {
+	if (!HasMinMax(stats)) {
+		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+	}
+	auto &string_data = GetDataUnsafe(stats);
+	// Special handle cases where constant is equal to the truncated min bound, but we're able to prune a few
+	// row groups. For example, a truncated "bbbbbbbbbbbb" with minimum length 13 has the lower bound
+	// "bbbbbbbbbbbb\0" -- the min bound is obviously larger than the constant.
+	auto min = string_data.min;
+	auto min_type = string_data.min_type;
+	string min_bound;
+	auto min_string_length = MinStringLength(stats);
+	if (min_type == StringStatsType::TRUNCATED_STATS && constant.GetSize() == min.GetSize() &&
+	    min_string_length.IsValid() && min_string_length.GetIndex() > constant.GetSize() &&
+	    CompareStringStats(constant, min, min_type) == 0) {
+		min_bound = min.GetString() + '\0';
+		min = string_t(min_bound);
+		min_type = StringStatsType::EXACT_STATS;
+	}
+	return CheckZonemap(min, min_type, string_data.max, string_data.max_type, comparison_type, constant);
 }
 
 FilterPropagateResult StringStats::CheckZonemap(string_t min, StringStatsType min_type, string_t max,

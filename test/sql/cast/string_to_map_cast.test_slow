@@ -114,7 +114,7 @@ query I
 SELECT CAST($$   { { a:[2,    3], b:  Duckster      }=         {50.0        =50}, {a    : [9,1,4], b:Duck          }
                 ={  1      =    0}  }$$ AS MAP(STRUCT(a INT[], b VARCHAR), MAP(INT, DOUBLE)));
 ----
-{{'a': [2, 3], 'b': Duckster}={50=50.0}, {'a': [9, 1, 4], 'b': Duck}={1=0.0}}
+{{'a': [2, 3], 'b': Duckster}={50=50}, {'a': [9, 1, 4], 'b': Duck}={1=0}}
 
 #               NULL values
 # ---------------------------------------------------
@@ -281,7 +281,7 @@ foreach type DOUBLE FLOAT
 query I
 SELECT CAST('{-9.01=9.13 ,3=0.00002}' AS MAP({type}, {type}));
 ----
-{-9.01=9.13, 3.0=2e-05}
+{-9.01=9.13, 3=2e-05}
 
 endloop
 

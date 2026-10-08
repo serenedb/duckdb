@@ -18,6 +18,12 @@ void MacroFunction::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V1_4_0)) {
 		serializer.WritePropertyWithDefault<vector<LogicalType>>(103, "types", types, vector<LogicalType>());
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<vector<LogicalType>>(16484, "return_types", return_types);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<vector<string>>(16485, "return_names", return_names);
+	}
 }
 
 unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer) {
@@ -25,6 +31,8 @@ unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer)
 	auto parameters = deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(101, "parameters");
 	auto default_parameters = deserializer.ReadPropertyWithDefault<InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>>>(102, "default_parameters");
 	auto types = deserializer.ReadPropertyWithExplicitDefault<vector<LogicalType>>(103, "types", vector<LogicalType>());
+	auto return_types = deserializer.ReadPropertyWithDefault<vector<LogicalType>>(16484, "return_types");
+	auto return_names = deserializer.ReadPropertyWithDefault<vector<string>>(16485, "return_names");
 	unique_ptr<MacroFunction> result;
 	switch (type) {
 	case MacroType::SCALAR_MACRO:
@@ -39,6 +47,8 @@ unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer)
 	result->parameters = std::move(parameters);
 	result->default_parameters = std::move(default_parameters);
 	result->types = std::move(types);
+	result->return_types = std::move(return_types);
+	result->return_names = std::move(return_names);
 	result->FinalizeDeserialization();
 	return result;
 }

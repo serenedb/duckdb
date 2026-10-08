@@ -287,17 +287,17 @@ SELECT d, DATE_PART(['epoch', 'second', 'timezone', 'timezone_hour', 'timezone_m
 FROM timetzs
 ORDER BY 1;
 ----
-00:00:00+15:59	{'epoch': 0.0, 'second': 0, 'timezone': 57540, 'timezone_hour': 15, 'timezone_minute': 59}
-00:00:00+15:58	{'epoch': 0.0, 'second': 0, 'timezone': 57480, 'timezone_hour': 15, 'timezone_minute': 58}
-02:30:00+12	{'epoch': 9000.0, 'second': 0, 'timezone': 43200, 'timezone_hour': 12, 'timezone_minute': 0}
-02:30:00+04:30:45	{'epoch': 9000.0, 'second': 0, 'timezone': 16245, 'timezone_hour': 4, 'timezone_minute': 30}
-02:30:00+04:30	{'epoch': 9000.0, 'second': 0, 'timezone': 16200, 'timezone_hour': 4, 'timezone_minute': 30}
-02:30:00+04	{'epoch': 9000.0, 'second': 0, 'timezone': 14400, 'timezone_hour': 4, 'timezone_minute': 0}
-02:30:00+00	{'epoch': 9000.0, 'second': 0, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
-02:30:00-12	{'epoch': 9000.0, 'second': 0, 'timezone': -43200, 'timezone_hour': -12, 'timezone_minute': 0}
+00:00:00+15:59	{'epoch': 0, 'second': 0, 'timezone': 57540, 'timezone_hour': 15, 'timezone_minute': 59}
+00:00:00+15:58	{'epoch': 0, 'second': 0, 'timezone': 57480, 'timezone_hour': 15, 'timezone_minute': 58}
+02:30:00+12	{'epoch': 9000, 'second': 0, 'timezone': 43200, 'timezone_hour': 12, 'timezone_minute': 0}
+02:30:00+04:30:45	{'epoch': 9000, 'second': 0, 'timezone': 16245, 'timezone_hour': 4, 'timezone_minute': 30}
+02:30:00+04:30	{'epoch': 9000, 'second': 0, 'timezone': 16200, 'timezone_hour': 4, 'timezone_minute': 30}
+02:30:00+04	{'epoch': 9000, 'second': 0, 'timezone': 14400, 'timezone_hour': 4, 'timezone_minute': 0}
+02:30:00+00	{'epoch': 9000, 'second': 0, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
+02:30:00-12	{'epoch': 9000, 'second': 0, 'timezone': -43200, 'timezone_hour': -12, 'timezone_minute': 0}
 16:15:03.123456+00	{'epoch': 58503.123456, 'second': 3, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
-24:00:00-15:58	{'epoch': 86400.0, 'second': 0, 'timezone': -57480, 'timezone_hour': -15, 'timezone_minute': -58}
-24:00:00-15:59	{'epoch': 86400.0, 'second': 0, 'timezone': -57540, 'timezone_hour': -15, 'timezone_minute': -59}
+24:00:00-15:58	{'epoch': 86400, 'second': 0, 'timezone': -57480, 'timezone_hour': -15, 'timezone_minute': -58}
+24:00:00-15:59	{'epoch': 86400, 'second': 0, 'timezone': -57540, 'timezone_hour': -15, 'timezone_minute': -59}
 NULL	NULL
 
 # Function-only parts

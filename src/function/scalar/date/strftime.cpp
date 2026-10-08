@@ -1,4 +1,5 @@
 #include "duckdb/function/scalar/strftime_format.hpp"
+#include "duckdb/function/scalar/date_bucket_rewrite.hpp"
 
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -337,6 +338,8 @@ ScalarFunctionSet StrfTimeFun::GetFunctions() {
 
 	// throws for unsupported format specifiers
 	strftime.SetFallible();
+	strftime.ApplyToFunctions(
+	    [](ScalarFunction &function) { function.SetBucketRewriteCallback(StrfTimeBucketRewrite); });
 	return strftime;
 }
 ScalarFunctionSet StrpTimeFun::GetFunctions() {

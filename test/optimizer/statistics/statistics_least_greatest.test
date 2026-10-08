@@ -10,12 +10,12 @@ FROM range(0, 100000) tbl(i);
 query II
 EXPLAIN SELECT count(*) FROM integers WHERE greatest(id, 5) < 3;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query II
 EXPLAIN SELECT count(*) FROM integers WHERE least(id, 5) > 10;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 # nullable input: the non-null constant still anchors the bound, so pruning applies
 statement ok
@@ -26,18 +26,18 @@ FROM range(0, 100000) tbl(i);
 query II
 EXPLAIN SELECT count(*) FROM nullable_integers WHERE greatest(id, 5) < 3;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query II
 EXPLAIN SELECT count(*) FROM nullable_integers WHERE least(id, 5) > 10;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 # result range [5, 99999] overlaps the predicate: must NOT be pruned
 query II
 EXPLAIN SELECT count(*) FROM nullable_integers WHERE greatest(id, 5) < 100;
 ----
-physical_plan	<!REGEX>:.*Empty Result.*
+physical_plan	<!REGEX>:.*EMPTY_RESULT.*
 
 # verify the actual results match the pruning decisions
 query I
@@ -67,19 +67,19 @@ FROM range(0, 100000) tbl(i);
 query II
 EXPLAIN SELECT count(*) FROM nullable_pairs WHERE greatest(a, b) < 0;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 # least(a, b) ranges over [1, 1099998], so > 2000000 can never hold
 query II
 EXPLAIN SELECT count(*) FROM nullable_pairs WHERE least(a, b) > 2000000;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 # predicate falls inside the range: must NOT be pruned
 query II
 EXPLAIN SELECT count(*) FROM nullable_pairs WHERE greatest(a, b) < 1050000;
 ----
-physical_plan	<!REGEX>:.*Empty Result.*
+physical_plan	<!REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM nullable_pairs WHERE greatest(a, b) < 0;

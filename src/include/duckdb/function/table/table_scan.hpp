@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/function/table_function.hpp"
+#include "duckdb/function/replacement_scan.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/function/built_in_functions.hpp"
@@ -31,10 +32,14 @@ struct TableScanBindData : public TableFunctionData {
 	bool is_index_scan;
 	//! Whether or not the table scan is for index creation.
 	bool is_create_index;
+	shared_ptr<idx_t> create_index_row_end;
 	//! In what order to scan the row groups
 	unique_ptr<RowGroupOrderOptions> order_options;
 	//! Subset of partition indices to scan, if null, scan all
 	unique_ptr<unordered_set<idx_t>> partitions_to_scan;
+	//! Display-only override for EXPLAIN output: a catalog delegating its
+	//! scan to a storage table sets the user-facing name here.
+	string display_name;
 
 public:
 	bool Equals(const FunctionData &other_p) const override {
@@ -45,10 +50,12 @@ public:
 		auto bind_data = make_uniq<TableScanBindData>(table);
 		bind_data->is_index_scan = is_index_scan;
 		bind_data->is_create_index = is_create_index;
+		bind_data->create_index_row_end = create_index_row_end;
 		bind_data->column_ids = column_ids;
 		bind_data->order_options = order_options ? make_uniq<RowGroupOrderOptions>(*order_options) : nullptr;
 		bind_data->partitions_to_scan =
 		    partitions_to_scan ? make_uniq<unordered_set<idx_t>>(*partitions_to_scan) : nullptr;
+		bind_data->display_name = display_name;
 		return std::move(bind_data);
 	}
 };
@@ -57,6 +64,8 @@ public:
 struct TableScanFunction {
 	static void RegisterFunction(BuiltinFunctions &set);
 	static TableFunction GetFunction();
+	static unique_ptr<TableRef> IndexReplacementScan(ClientContext &context, ReplacementScanInput &input,
+	                                                 optional_ptr<ReplacementScanData> data);
 };
 
 } // namespace duckdb

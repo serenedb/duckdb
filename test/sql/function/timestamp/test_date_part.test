@@ -197,12 +197,12 @@ foreach tstype TIMESTAMP TIMESTAMP_S TIMESTAMP_MS TIMESTAMP_NS
 query I
 SELECT EXTRACT(EPOCH FROM {tstype} '1992-09-20 11:30:00.0');
 ----
-716988600.0
+716988600
 
 query I
 SELECT EXTRACT(JULIAN FROM {tstype} '1992-09-20 00:00:00.0');
 ----
-2448886.0
+2448886
 
 endloop
 
@@ -500,9 +500,9 @@ NULL	NULL
 1992-01-01 01:01:01.4	{'epoch': 694227661.4, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
 1992-01-01 01:01:02.2	{'epoch': 694227662.2, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
 1992-01-01 01:01:02.4	{'epoch': 694227662.4, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
-1993-08-14 08:22:33	{'epoch': 745316553.0, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
+1993-08-14 08:22:33	{'epoch': 745316553, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
 1993-08-14 08:22:33.42	{'epoch': 745316553.42, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
-2001-04-20 14:42:11	{'epoch': 987777731.0, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
+2001-04-20 14:42:11	{'epoch': 987777731, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
 2001-04-20 14:42:11.123	{'epoch': 987777731.123, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
 2004-01-31 12:00:00.00005	{'epoch': 1075550400.00005, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
 2004-01-31 12:00:00.05	{'epoch': 1075550400.05, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
@@ -525,7 +525,7 @@ NULL	NULL
 2021-04-15 14:55:17.915	{'epoch': 1618498517.915, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
 2021-05-02 12:11:49.5	{'epoch': 1619957509.5, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
 2021-12-01 13:54:48.123456	{'epoch': 1638366888.123456, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
-2022-01-01 00:00:41	{'epoch': 1640995241.0, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
+2022-01-01 00:00:41	{'epoch': 1640995241, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
 infinity	{'epoch': NULL, 'timezone': NULL, 'timezone_hour': NULL, 'timezone_minute': NULL}
 
 query II
@@ -533,11 +533,11 @@ SELECT ts, DATE_PART(['epoch', 'timezone', 'timezone_hour', 'timezone_minute'], 
 FROM millennia
 ORDER BY 1;
 ----
-1001-03-15 (BC) 20:38:40	{'epoch': -93717746480.0, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
-0044-03-15 (BC) 20:38:40	{'epoch': -63517749680.0, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
-0998-02-16 20:38:40	{'epoch': -30669247280.0, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
-1998-02-16 20:38:40	{'epoch': 887661520.0, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
-2001-02-16 20:38:40	{'epoch': 982355920.0, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
+1001-03-15 (BC) 20:38:40	{'epoch': -93717746480, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
+0044-03-15 (BC) 20:38:40	{'epoch': -63517749680, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
+0998-02-16 20:38:40	{'epoch': -30669247280, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
+1998-02-16 20:38:40	{'epoch': 887661520, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
+2001-02-16 20:38:40	{'epoch': 982355920, 'timezone': 0, 'timezone_hour': 0, 'timezone_minute': 0}
 
 query I
 SELECT DATE_PART(['hour', 'minute', 'microsecond'], NULL::TIMESTAMP);

@@ -62,8 +62,7 @@
       {
         "id": 108,
         "name": "tags",
-        "type": "InsertionOrderPreservingMap<string>",
-        "default": "InsertionOrderPreservingMap<string>()"
+        "type": "InsertionOrderPreservingMap<string>"
       },
       {
         "id": 109,
@@ -87,6 +86,24 @@
         "serialize_condition": "qualified_name.Path().size() > 3",
         "deserialize_default": "QualifiedName()",
         "deserialize_skip_assign": true
+      },
+      {
+        "id": 16484,
+        "name": "permissions",
+        "type": "Permissions",
+        "default": "Permissions()"
+      },
+      {
+        "id": 16485,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
+      },
+      {
+        "id": 16486,
+        "name": "schema_oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ],
     "methods": {
@@ -156,7 +173,33 @@
         "name": "index_type_name",
         "type": "string",
         "property": "index_type"
+      },
+      {
+        "id": 16584,
+        "name": "where_clause",
+        "type": "ParsedExpression*"
+      },
+      {
+        "id": 16585,
+        "name": "column_opclasses",
+        "type": "vector<string>",
+        "serialize_property": "GetOpclassesForSerialization()"
+      },
+      {
+        "id": 16586,
+        "name": "column_opclass_options",
+        "type": "vector<optional<case_insensitive_map_t<Value>>>",
+        "serialize_property": "GetOpclassOptionsForSerialization()"
+      },
+      {
+        "id": 16587,
+        "name": "table_oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
+    ],
+    "finalize_deserialization": [
+      "result->FinalizeDeserialization();"
     ],
     "methods": {
       "SetName": [
@@ -285,6 +328,11 @@
         "type": "ViewSecurityType",
         "default": "ViewSecurityType::REGULAR_VIEW",
         "version": "v2.0.0"
+      },
+      {
+        "id": 16584,
+        "name": "security_invoker",
+        "type": "bool"
       }
     ],
     "constructor": [
@@ -353,6 +401,12 @@
         "name": "extra_functions",
         "type": "vector<MacroFunction*>",
         "serialize_property": "GetAllButFirstFunction()"
+      },
+      {
+        "id": 16584,
+        "name": "is_procedure",
+        "type": "bool",
+        "version": "serenedb_v1"
       }
     ],
     "constructor": [
@@ -415,6 +469,25 @@
         "name": "last_value",
         "type": "optional<int64_t>",
         "version": "v2.0.0"
+      },
+      {
+        "id": 16584,
+        "name": "cache",
+        "type": "uint64_t",
+        "default": "1ULL",
+        "version": "serenedb_v1"
+      },
+      {
+        "id": 16585,
+        "name": "recorded_start",
+        "type": "optional<int64_t>",
+        "version": "serenedb_v1"
+      },
+      {
+        "id": 16586,
+        "name": "owned_by",
+        "type": "vector<Identifier>",
+        "version": "serenedb_v1"
       }
     ],
     "methods": {
@@ -482,6 +555,155 @@
     "methods": {
       "SetName": [
         "trigger_name"
+      ]
+    }
+  },
+  {
+    "class": "CreateRoleInfo",
+    "base": "CreateInfo",
+    "enum": "ROLE_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_role_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "options",
+        "type": "RoleOption"
+      },
+      {
+        "id": 202,
+        "name": "conn_limit",
+        "type": "int32_t"
+      },
+      {
+        "id": 203,
+        "name": "valid_until",
+        "type": "int64_t"
+      },
+      {
+        "id": 204,
+        "name": "password",
+        "type": "string"
+      },
+      {
+        "id": 205,
+        "name": "member_of",
+        "type": "vector<Membership>"
+      },
+      {
+        "id": 206,
+        "name": "config",
+        "type": "vector<string>"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
+  },
+  {
+    "class": "CreateDatabaseInfo",
+    "base": "CreateInfo",
+    "enum": "DATABASE_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_database_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "options",
+        "type": "case_insensitive_map_t<Value>"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
+  },
+  {
+    "class": "CreateForeignServerInfo",
+    "base": "CreateInfo",
+    "enum": "FOREIGN_SERVER_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "server_type",
+        "type": "string"
+      },
+      {
+        "id": 202,
+        "name": "version",
+        "type": "string"
+      },
+      {
+        "id": 203,
+        "name": "fdw_name",
+        "type": "string"
+      },
+      {
+        "id": 204,
+        "name": "options",
+        "type": "case_insensitive_map_t<string>"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
+  },
+  {
+    "class": "CreateTokenizerInfo",
+    "base": "CreateInfo",
+    "enum": "TOKENIZER_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "features",
+        "type": "uint64_t"
+      },
+      {
+        "id": 202,
+        "name": "config",
+        "type": "string"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
       ]
     }
   }

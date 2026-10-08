@@ -15,7 +15,7 @@ SELECT quantile_disc(x, 0.0 ORDER BY x DESC) FROM (VALUES (1), (2), (2), (NULL))
 query T
 SELECT quantile_cont(x, [0.0] ORDER BY x DESC) FROM (VALUES (1), (2), (2), (NULL)) t(x)
 ----
-[2.0]
+[2]
 
 query T
 SELECT quantile_disc(x, [0.0] ORDER BY x DESC) FROM (VALUES (1), (2), (2), (NULL)) t(x)

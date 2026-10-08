@@ -8,7 +8,6 @@ add_library_unity(
   list_filter.cpp
   list_has_any_or_all.cpp
   list_aggregates.cpp
-  list_distance.cpp
   array_slice.cpp
   list_sort.cpp
   list_reduce.cpp)

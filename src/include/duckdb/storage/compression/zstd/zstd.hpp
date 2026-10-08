@@ -171,8 +171,10 @@ public:
 	}
 	void AlignCurrentOffset() {
 		auto &offset = GetCurrentOffset();
-		offset = UnsafeNumericCast<page_offset_t>(
+		auto aligned = UnsafeNumericCast<page_offset_t>(
 		    AlignValue<idx_t, sizeof(string_length_t)>(UnsafeNumericCast<idx_t>(offset)));
+		memset(BufferHandleMutable().GetDataMutable() + offset, 0, aligned - offset);
+		offset = aligned;
 	}
 	BufferHandle &BufferHandleMutable() {
 		if (!buffer_index.IsValid()) {
@@ -277,18 +279,25 @@ public:
 		}
 		auto base = buffer_collection.segment_handle.GetDataMutable();
 		page_offset_t offset = 0;
+		page_offset_t aligned;
 		page_ids = reinterpret_cast<page_id_t *>(base + offset);
 		offset += (sizeof(page_id_t) * vectors_in_segment);
 
-		offset = AlignValue<page_offset_t, sizeof(page_offset_t)>(offset);
+		aligned = AlignValue<page_offset_t, sizeof(page_offset_t)>(offset);
+		memset(base + offset, 0, aligned - offset);
+		offset = aligned;
 		page_offsets = reinterpret_cast<page_offset_t *>(base + offset);
 		offset += (sizeof(page_offset_t) * vectors_in_segment);
 
-		offset = AlignValue<page_offset_t, sizeof(uncompressed_size_t)>(offset);
+		aligned = AlignValue<page_offset_t, sizeof(uncompressed_size_t)>(offset);
+		memset(base + offset, 0, aligned - offset);
+		offset = aligned;
 		uncompressed_sizes = reinterpret_cast<uncompressed_size_t *>(base + offset);
 		offset += (sizeof(uncompressed_size_t) * vectors_in_segment);
 
-		offset = AlignValue<page_offset_t, sizeof(compressed_size_t)>(offset);
+		aligned = AlignValue<page_offset_t, sizeof(compressed_size_t)>(offset);
+		memset(base + offset, 0, aligned - offset);
+		offset = aligned;
 		compressed_sizes = reinterpret_cast<compressed_size_t *>(base + offset);
 		offset += (sizeof(compressed_size_t) * vectors_in_segment);
 

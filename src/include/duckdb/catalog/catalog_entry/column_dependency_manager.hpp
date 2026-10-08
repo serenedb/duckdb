@@ -35,9 +35,6 @@ public:
 	//! Add a generated column from a column definition
 	void AddGeneratedColumn(const ColumnDefinition &column, const ColumnList &list);
 
-	//! Removes the column(s) and outputs the new column indices
-	vector<LogicalIndex> RemoveColumn(LogicalIndex index, idx_t column_amount);
-
 	bool IsDependencyOf(LogicalIndex dependent, LogicalIndex dependency) const;
 	bool HasDependencies(LogicalIndex index) const;
 	const logical_index_set_t &GetDependencies(LogicalIndex index) const;
@@ -46,21 +43,12 @@ public:
 	const logical_index_set_t &GetDependents(LogicalIndex index) const;
 
 private:
-	void RemoveStandardColumn(LogicalIndex index);
-	void RemoveGeneratedColumn(LogicalIndex index);
-
-	void AdjustSingle(LogicalIndex idx, idx_t offset);
-	// Clean up the gaps created by a Remove operation
-	vector<LogicalIndex> CleanupInternals(idx_t column_amount);
-
-private:
 	//! A map of column dependency to generated column(s)
 	logical_index_map_t<logical_index_set_t> dependencies_map;
 	//! A map of generated column name to (potentially generated)column dependencies
 	logical_index_map_t<logical_index_set_t> dependents_map;
 	//! For resolve-order purposes, keep track of the 'direct' (not inherited) dependencies of a generated column
 	logical_index_map_t<logical_index_set_t> direct_dependencies;
-	logical_index_set_t deleted_columns;
 };
 
 } // namespace duckdb

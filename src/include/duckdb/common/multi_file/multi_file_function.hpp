@@ -451,7 +451,7 @@ public:
 			}
 			PushAsyncOpenError(gstate, ErrorData("Unknown exception while opening a file"));
 		} // LCOV_EXCL_STOP
-		gstate.async_open_settled.notify_all();
+		gstate.async_open_settled.SignalAll();
 	}
 
 	//! Schedule async opens for upcoming unopened files on the async pool, ahead of decoding. Lock held on entry.
@@ -460,8 +460,9 @@ public:
 	                              MultiFileGlobalState &gstate, unique_lock<mutex> &parallel_lock) {
 		auto &read_ahead = *gstate.read_ahead;
 		idx_t file_index = gstate.file_index;
+		idx_t files_open_ahead = 0;
 		bool progress_guaranteed = false;
-		while (!progress_guaranteed || read_ahead.CanScheduleOpen()) {
+		while (!progress_guaranteed || read_ahead.CanScheduleOpen(files_open_ahead)) {
 			const bool has_file_to_read = file_index < gstate.readers.size();
 			if (!has_file_to_read && !TryGetNextFile(gstate, parallel_lock)) {
 				return;
@@ -483,14 +484,16 @@ public:
 					    [&gstate]() {
 						    // the reader stays in OPENING, so tell every waiter to stop instead of polling forever
 						    gstate.error_opening_file = true;
-						    gstate.async_open_settled.notify_all();
+						    gstate.async_open_settled.SignalAll();
 					    });
 				}
+				files_open_ahead++;
 				progress_guaranteed = true;
 				break;
 			case MultiFileFileState::OPENING:
 			case MultiFileFileState::OPEN:
 				// the front file is already being/been opened - forward progress is guaranteed
+				files_open_ahead++;
 				progress_guaranteed = true;
 				break;
 			default:
@@ -506,7 +509,7 @@ public:
 			throw InternalException("parallel_lock is not held in TryOpenNextFile, this should not happen");
 		}
 
-		const auto file_lookahead_limit = TaskScheduler::GetScheduler(context).NumberOfThreads();
+		const auto file_lookahead_limit = TaskScheduler::QueryThreads(context);
 
 		idx_t file_index = global_state.file_index;
 		idx_t i = 0;
@@ -581,7 +584,7 @@ public:
 			}
 			// the open is in flight: sleep until it settles; the timeout bounds interrupt latency and
 			// covers a cancellation that signals without the lock
-			gstate.async_open_settled.wait_for(parallel_lock, std::chrono::milliseconds(10));
+			gstate.async_open_settled.WaitWithTimeout(parallel_lock.mutex(), absl::Milliseconds(10));
 			parallel_lock.unlock();
 			context.InterruptCheck();
 			parallel_lock.lock();
@@ -837,7 +840,7 @@ public:
 		result->filters = input.filters.get();
 		result->op = input.op;
 		result->global_state = bind_data.interface->InitializeGlobalState(context, bind_data, *result);
-		result->max_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+		result->max_threads = TaskScheduler::QueryThreads(context);
 
 		// Ensure all readers are initialized and FileListScan is sync with readers list
 		for (auto &reader_data : result->readers) {

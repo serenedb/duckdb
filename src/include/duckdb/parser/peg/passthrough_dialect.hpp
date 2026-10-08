@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include "duckdb/parser/peg/dialect_extension.hpp"
 #include "duckdb/parser/peg/matcher.hpp"
 
 namespace duckdb {
@@ -30,12 +29,12 @@ public:
 			return MatcherResult::Failure();
 		}
 		// always advances, so a repeat over this matcher terminates
-		auto text = current->text;
+		std::string_view text = current->text;
 		auto offset = current->offset;
-		auto length = current->length;
+		auto length = current->text.size();
 		state.token_iterator.Advance();
 		state.UpdateMaxTokenIndex();
-		return state.AllocateParseResult<TokenParseResult>(std::move(text), offset, length);
+		return state.AllocateParseResult<TokenParseResult>(text, offset, length);
 	}
 
 	SuggestionType AddSuggestionInternal(MatchState &state) const override {
@@ -55,15 +54,6 @@ public:
 //!
 //! DISCONNECT stays interpreted so the client can always end the connection; every other statement is handed to
 //! the remote verbatim. The tokenizer is unchanged, so statement boundaries are DuckDB's.
-class PassthroughDialect : public DialectExtension {
-public:
-	static constexpr const char *NAME = "passthrough";
-
-public:
-	PassthroughDialect() : DialectExtension(NAME) {
-	}
-
-	void ApplyGrammarChanges(GrammarChangesInput &input) override;
-};
+void ApplyPassthroughDialect(ParsedGrammar &grammar);
 
 } // namespace duckdb

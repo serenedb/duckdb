@@ -34,7 +34,7 @@ SELECT 1;
 query IIIII
 SELECT * EXCLUDE (context_id, timestamp, connection_id, transaction_id, query_id) FROM duckdb_logs
 ----
-CONNECTION	NULL	QueryLog	INFO	SELECT 1;
+CONNECTION	NULL	QueryLog	DEBUG	SELECT 1;
 
 statement ok
 set enable_logging=false;
@@ -43,9 +43,9 @@ set enable_logging=false;
 query IIIII
 SELECT * EXCLUDE (context_id, timestamp, connection_id, transaction_id, query_id) FROM duckdb_logs where type = 'QueryLog'
 ----
-CONNECTION	NULL	QueryLog	INFO	SELECT 1;
-CONNECTION	NULL	QueryLog	INFO	SELECT * EXCLUDE (context_id, timestamp, connection_id, transaction_id, query_id) FROM duckdb_logs
-CONNECTION	NULL	QueryLog	INFO	set enable_logging=false;
+CONNECTION	NULL	QueryLog	DEBUG	SELECT 1;
+CONNECTION	NULL	QueryLog	DEBUG	SELECT * EXCLUDE (context_id, timestamp, connection_id, transaction_id, query_id) FROM duckdb_logs
+CONNECTION	NULL	QueryLog	DEBUG	set enable_logging=false;
 
 statement ok
 set logging_storage='stdout';

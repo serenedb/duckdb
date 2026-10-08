@@ -14,6 +14,7 @@
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/compression/compression_segment_reader.hpp"
+#include "duckdb/storage/statistics/base_statistics.hpp"
 
 #include "duckdb/storage/table/column_segment.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
@@ -126,6 +127,8 @@ public:
 	SegmentLayout layout;
 	idx_t total_value_count = 0;
 	AlpVectorState<T> vector_state;
+	//! Reusable statistics shell for AlpFilter's vector-bounds checks
+	unique_ptr<BaseStatistics> filter_group_stats;
 
 	idx_t LeftInVector() const {
 		return AlpConstants::ALP_VECTOR_SIZE - (total_value_count % AlpConstants::ALP_VECTOR_SIZE);

@@ -11,6 +11,7 @@
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/operator/string_cast.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "yyjson.hpp"
 
@@ -49,6 +50,21 @@ struct JSONKeyEquality {
 template <typename T>
 using json_key_map_t = unordered_map<JSONKey, T, JSONKeyHash, JSONKeyEquality>;
 using json_key_set_t = unordered_set<JSONKey, JSONKeyHash, JSONKeyEquality>;
+
+struct JSONKeyCIHash {
+	inline std::size_t operator()(const JSONKey &k) const {
+		return StringUtil::CIHash(k.ptr, k.len);
+	}
+};
+
+struct JSONKeyCIEquality {
+	inline bool operator()(const JSONKey &a, const JSONKey &b) const {
+		return StringUtil::CIEquals(a.ptr, a.len, b.ptr, b.len);
+	}
+};
+
+template <typename T>
+using json_key_ci_map_t = unordered_map<JSONKey, T, JSONKeyCIHash, JSONKeyCIEquality>;
 
 //! The type of a single element of a JSON path
 enum class JSONPathElementType : uint8_t {

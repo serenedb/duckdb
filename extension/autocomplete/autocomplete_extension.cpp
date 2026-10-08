@@ -22,7 +22,6 @@
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/parser/peg/tokenizer/highlight_tokenizer.hpp"
 #include "duckdb/parser/peg/tokenizer/parser_tokenizer.hpp"
-#include "duckdb/parser/parser_extension.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -91,7 +90,7 @@ static vector<reference<CatalogEntry>> GetAllTables(ClientContext &context, bool
 	auto schemas = Catalog::GetAllSchemas(context);
 	for (auto &schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		schema.Scan(context, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
 			if (!entry.internal || for_table_names) {
 				result.push_back(entry);
 			}
@@ -100,14 +99,14 @@ static vector<reference<CatalogEntry>> GetAllTables(ClientContext &context, bool
 	if (for_table_names) {
 		for (auto &schema_ref : schemas) {
 			auto &schema = schema_ref.get();
-			schema.Scan(context, CatalogType::TABLE_FUNCTION_ENTRY,
-			            [&](CatalogEntry &entry) { result.push_back(entry); });
+			Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_FUNCTION_ENTRY,
+			                           [&](CatalogEntry &entry) { result.push_back(entry); });
 		};
 	} else {
 		for (auto &schema_ref : schemas) {
 			auto &schema = schema_ref.get();
-			schema.Scan(context, CatalogType::SCALAR_FUNCTION_ENTRY,
-			            [&](CatalogEntry &entry) { result.push_back(entry); });
+			Catalog::ScanListedEntries(context, schema, CatalogType::SCALAR_FUNCTION_ENTRY,
+			                           [&](CatalogEntry &entry) { result.push_back(entry); });
 		};
 	}
 	return result;
@@ -119,7 +118,8 @@ static vector<reference<CatalogEntry>> GetAllTypes(ClientContext &context) {
 	auto schemas = Catalog::GetAllSchemas(context);
 	for (auto &schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		schema.Scan(context, CatalogType::TYPE_ENTRY, [&](CatalogEntry &entry) { result.push_back(entry); });
+		Catalog::ScanListedEntries(context, schema, CatalogType::TYPE_ENTRY,
+		                           [&](CatalogEntry &entry) { result.push_back(entry); });
 	};
 	return result;
 }
@@ -366,7 +366,7 @@ public:
 	vector<AutoCompleteCandidate> SuggestSettingName() override {
 		return ::duckdb::SuggestSettingName(context);
 	}
-	shared_ptr<CompiledGrammar> GetCompiledGrammar() override {
+	const CompiledGrammar &GetCompiledGrammar() override {
 		return CompiledGrammar::Get(context);
 	}
 
@@ -460,10 +460,10 @@ void SQLAutoCompleteFunction(ClientContext &context, TableFunctionInput &data_p,
 }
 
 static unique_ptr<SQLTokenizeFunctionData> GenerateTokens(ClientContext &context, const string &sql) {
-	auto compiled_grammar = CompiledGrammar::Get(context);
+	auto &compiled_grammar = CompiledGrammar::Get(context);
 	vector<MatcherToken> tokens;
 	HighlightTokenizerBehavior behavior(sql, tokens);
-	compiled_grammar->GetTokenizer().TokenizeInput(behavior);
+	compiled_grammar.GetTokenizer().TokenizeInput(behavior);
 
 	// use the parser to annotate any tokens
 	vector<MatcherSuggestion> suggestions;
@@ -471,13 +471,12 @@ static unique_ptr<SQLTokenizeFunctionData> GenerateTokens(ClientContext &context
 	idx_t max_token_index = 0;
 	TokenIterator token_iterator(tokens);
 	auto identifier_case_mode = Settings::Get<PreserveIdentifierCaseSetting>(context);
-	ArenaAllocator process_allocator(Allocator::DefaultAllocator());
-	MatchContext match_context(suggestions, parse_allocator, process_allocator, max_token_index,
-	                           MatchMode::RECOGNIZE_ONLY, identifier_case_mode);
+	MatchContext match_context(suggestions, parse_allocator, max_token_index, MatchMode::RECOGNIZE_ONLY,
+	                           identifier_case_mode);
+	match_context.annotate_tokens = true;
 	MatchState state(token_iterator, match_context);
 
-	compiled_grammar->ProgramMatcher().MatchParseResult(state);
-	process_allocator.FreeAll();
+	compiled_grammar.ProgramMatcher().MatchParseResult(state);
 
 	return make_uniq<SQLTokenizeFunctionData>(std::move(tokens));
 }
@@ -548,11 +547,10 @@ static duckdb::unique_ptr<FunctionData> CheckPEGParserBind(ClientContext &contex
 	const auto sql = StringValue::Get(input.inputs[0]);
 
 	vector<MatcherToken> root_tokens;
-	string clean_sql;
-	const string &sql_ref = Parser::StripUnicodeSpaces(sql, clean_sql) ? clean_sql : sql;
-	ParserTokenizerBehavior behavior(sql_ref, root_tokens);
-	auto compiled_grammar = CompiledGrammar::Get(context);
-	if (!compiled_grammar->GetTokenizer().TokenizeInput(behavior)) {
+	vector<char> clean_sql;
+	ParserTokenizerBehavior behavior(Parser::StripUnicodeSpaces(sql, clean_sql), root_tokens);
+	auto &compiled_grammar = CompiledGrammar::Get(context);
+	if (!compiled_grammar.GetTokenizer().TokenizeInput(behavior)) {
 		return nullptr;
 	}
 
@@ -565,13 +563,11 @@ static duckdb::unique_ptr<FunctionData> CheckPEGParserBind(ClientContext &contex
 	idx_t max_token_index = 0;
 	TokenIterator token_iterator(root_tokens);
 	auto identifier_case_mode = Settings::Get<PreserveIdentifierCaseSetting>(context);
-	ArenaAllocator process_allocator(Allocator::DefaultAllocator());
-	MatchContext match_context(suggestions, parse_allocator, process_allocator, max_token_index,
-	                           MatchMode::RECOGNIZE_ONLY, identifier_case_mode);
+	MatchContext match_context(suggestions, parse_allocator, max_token_index, MatchMode::RECOGNIZE_ONLY,
+	                           identifier_case_mode);
 	MatchState state(token_iterator, match_context);
 
-	auto match_result = compiled_grammar->ProgramMatcher().MatchParseResult(state);
-	process_allocator.FreeAll();
+	auto match_result = compiled_grammar.ProgramMatcher().MatchParseResult(state);
 	// `+ 1` accounts for the EOI sentinel — the matcher walk may report success without
 	// consuming it.
 	if (!match_result.IsSuccess() || state.token_iterator.Position() + 1 < root_tokens.size()) {

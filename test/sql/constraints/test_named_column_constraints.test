@@ -1,0 +1,103 @@
+# name: test/sql/constraints/test_named_column_constraints.test
+# description: Every column constraint can carry its own name
+# group: [constraints]
+
+statement ok
+CREATE TABLE p(id INT PRIMARY KEY);
+
+statement ok
+INSERT INTO p VALUES (1), (2);
+
+statement ok
+CREATE TABLE t(
+    a INT
+      CONSTRAINT a_pos CHECK (a > 0)
+      CONSTRAINT a_nn NOT NULL,
+    b INT DEFAULT 5 CONSTRAINT b_pos CHECK (b > 0) CONSTRAINT b_key UNIQUE,
+    c INT CONSTRAINT c_pk PRIMARY KEY CONSTRAINT c_fk REFERENCES p(id)
+);
+
+query IIII
+SELECT constraint_type, constraint_name, constraint_column_names, constraint_text
+FROM duckdb_constraints() WHERE table_name = 't' ORDER BY constraint_index;
+----
+CHECK	t_a_check	[a]	CHECK((a > 0))
+NOT NULL	t_a_not_null	[a]	NOT NULL
+CHECK	t_b_check	[b]	CHECK((b > 0))
+UNIQUE	t_b_key	[b]	UNIQUE(b)
+FOREIGN KEY	t_c_id_fkey	[c]	FOREIGN KEY (c) REFERENCES p(id)
+PRIMARY KEY	t_c_pkey	[c]	PRIMARY KEY(c)
+NOT NULL	t_c_not_null	[c]	NOT NULL
+
+query III
+SELECT column_name, column_default, is_nullable FROM duckdb_columns() WHERE table_name = 't' ORDER BY column_index;
+----
+a	NULL	false
+b	5	true
+c	NULL	false
+
+statement ok
+INSERT INTO t (a, c) VALUES (1, 1);
+
+query III
+SELECT * FROM t;
+----
+1	5	1
+
+statement error
+INSERT INTO t VALUES (0, 6, 2);
+----
+Constraint Error: CHECK constraint failed
+
+statement error
+INSERT INTO t VALUES (NULL, 6, 2);
+----
+Constraint Error: NOT NULL constraint failed
+
+statement error
+INSERT INTO t VALUES (1, -1, 2);
+----
+Constraint Error: CHECK constraint failed
+
+statement error
+INSERT INTO t VALUES (1, 5, 2);
+----
+Constraint Error: Duplicate key "b: 5"
+
+statement error
+INSERT INTO t VALUES (1, 6, 3);
+----
+Constraint Error: Violates foreign key constraint
+
+statement ok
+ALTER TABLE t DROP CONSTRAINT b_pos
+
+statement ok
+INSERT INTO t VALUES (1, -1, 2);
+
+statement ok
+ALTER TABLE t DROP CONSTRAINT a_pos
+
+statement ok
+INSERT INTO p VALUES (3);
+
+statement ok
+INSERT INTO t VALUES (-1, 7, 3);
+
+statement error
+INSERT INTO t VALUES (0, 8, 4);
+----
+Constraint Error: Violates foreign key constraint
+
+statement error
+CREATE TABLE t_err(a INT CONSTRAINT c CONSTRAINT d CHECK (a > 0));
+----
+Parser Error: syntax error
+
+statement error
+ALTER TABLE p ADD COLUMN u INT CONSTRAINT u_key UNIQUE
+----
+Parser Error: Named constraints on a column added by ALTER TABLE are not supported yet
+
+statement ok
+ALTER TABLE p ADD COLUMN v INT CONSTRAINT v_default DEFAULT 1

@@ -48,6 +48,8 @@ public:
 	//! The security type of the view
 	ViewSecurityType security_type = ViewSecurityType::REGULAR_VIEW;
 
+	bool security_invoker = false;
+
 	//! Returns the view column info, if the view is bound. Otherwise returns `nullptr`
 	virtual shared_ptr<ViewColumnInfo> GetColumnInfo() const;
 	//! Bind a view so we know the types / names returned by it

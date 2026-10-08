@@ -28,9 +28,6 @@ CALL check_peg_parser($TEST_PEG_PARSER$CREATE TABLE numerics(i NUMERIC(), j NUME
 statement ok
 CALL check_peg_parser($TEST_PEG_PARSER$CREATE TYPE bla AS ENUM ();$TEST_PEG_PARSER$);
 
-statement ok
-set allow_parser_override_extension=strict;
-
 query I
 SELECT typeof(NULL::INTEGER ARRAY[3]);
 ----

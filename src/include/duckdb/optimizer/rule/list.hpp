@@ -12,6 +12,7 @@
 #include "duckdb/optimizer/rule/like_optimizations.hpp"
 #include "duckdb/optimizer/rule/least_greatest_simplification.hpp"
 #include "duckdb/optimizer/rule/list_comprehension_rewrite.hpp"
+#include "duckdb/optimizer/rule/monotone_predicate.hpp"
 #include "duckdb/optimizer/rule/move_constants.hpp"
 #include "duckdb/optimizer/rule/not_comparison_simplification.hpp"
 #include "duckdb/optimizer/rule/not_conjunction_simplification.hpp"

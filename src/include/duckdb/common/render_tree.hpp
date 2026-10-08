@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/explain_value.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/optional_ptr.hpp"
@@ -37,7 +38,7 @@ public:
 		idx_t x;
 		idx_t y;
 	};
-	RenderTreeNode(const string &name, InsertionOrderPreservingMap<string> extra_text)
+	RenderTreeNode(const string &name, InsertionOrderPreservingMap<ExplainValue> extra_text)
 	    : name(name), extra_text(std::move(extra_text)) {
 	}
 
@@ -48,7 +49,7 @@ public:
 
 public:
 	string name;
-	InsertionOrderPreservingMap<string> extra_text;
+	InsertionOrderPreservingMap<ExplainValue> extra_text;
 	vector<Coordinate> child_positions;
 };
 

@@ -31,7 +31,7 @@ SELECT u FROM tbl1;
 ----
 1
 text
-2.0
+2
 
 
 query I

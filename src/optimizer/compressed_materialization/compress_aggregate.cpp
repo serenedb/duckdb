@@ -1,6 +1,7 @@
 #include "duckdb/optimizer/compressed_materialization.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 
 namespace duckdb {
@@ -35,6 +36,7 @@ void CompressedMaterialization::CompressAggregate(unique_ptr<LogicalOperator> &o
 	vector<CompressedMaterializationType> materialization_types(groups.size(), CompressedMaterializationType::INVALID);
 	vector<unique_ptr<BaseStatistics>> stored_group_stats;
 	stored_group_stats.resize(groups.size());
+	const auto bindings_out = aggregate.GetColumnBindings();
 	auto try_compress_group = [&](idx_t group_idx, Expression &group_expr, optional_ptr<BaseStatistics> stats) {
 		if (!stats) {
 			return false;
@@ -51,14 +53,23 @@ void CompressedMaterialization::CompressAggregate(unique_ptr<LogicalOperator> &o
 	};
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
 		auto &group_expr = *groups[group_idx];
+		const bool bucketed = bucketed_groups.contains(bindings_out[group_idx]);
 		if (group_expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 			auto &colref = group_expr.Cast<BoundColumnRefExpression>();
-			group_bindings[group_idx] = colref.Binding();
+			if (bucketed) {
+				referenced_bindings.insert(colref.Binding());
+			} else {
+				group_bindings[group_idx] = colref.Binding();
+			}
 			continue; // Will be compressed generically
 		}
 
 		// Mark the bindings referenced by the non-colref expression so they won't be modified
 		GetReferencedBindings(group_expr, referenced_bindings);
+
+		if (bucketed) {
+			continue;
+		}
 
 		// The non-colref expression won't be compressed generically, so try to compress it here
 		if (try_compress_group(group_idx, group_expr, GetVariantWrapperStats(group_expr))) {
@@ -92,7 +103,6 @@ void CompressedMaterialization::CompressAggregate(unique_ptr<LogicalOperator> &o
 	CompressedMaterializationInfo info(*op, {0}, referenced_bindings);
 
 	// Create binding mapping
-	const auto bindings_out = aggregate.GetColumnBindings();
 	const auto &types = aggregate.types;
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
 		// Aggregate changes bindings as it has a table idx
@@ -126,22 +136,23 @@ void CompressedMaterialization::UpdateAggregateStats(unique_ptr<LogicalOperator>
 	auto &compressed_aggregate = op->children[0]->Cast<LogicalAggregate>();
 	auto &groups = compressed_aggregate.groups;
 	auto &group_stats = compressed_aggregate.group_stats;
+	const auto bindings = compressed_aggregate.GetColumnBindings();
 
 	for (idx_t group_idx = 0; group_idx < groups.size(); group_idx++) {
 		auto &group_expr = *groups[group_idx];
-		if (group_expr.GetExpressionType() != ExpressionType::BOUND_COLUMN_REF) {
-			continue;
-		}
-		auto &colref = group_expr.Cast<BoundColumnRefExpression>();
 		if (!group_stats[group_idx]) {
 			continue;
 		}
-		if (colref.GetReturnType() == group_stats[group_idx]->GetType()) {
-			continue;
+		if (group_expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF &&
+		    group_expr.GetReturnType() != group_stats[group_idx]->GetType()) {
+			auto &colref = group_expr.Cast<BoundColumnRefExpression>();
+			auto it = statistics_map.find(colref.Binding());
+			if (it != statistics_map.end() && it->second) {
+				group_stats[group_idx] = it->second->ToUnique();
+			}
 		}
-		auto it = statistics_map.find(colref.Binding());
-		if (it != statistics_map.end() && it->second) {
-			group_stats[group_idx] = it->second->ToUnique();
+		if (group_stats[group_idx]->GetType() == group_expr.GetReturnType()) {
+			statistics_map[bindings[group_idx]] = group_stats[group_idx]->ToUnique();
 		}
 	}
 }

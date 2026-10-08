@@ -16,6 +16,7 @@ BoundStatement Binder::Bind(CallStatement &stmt) {
 	select_statement.node = std::move(select_node);
 
 	// CALL is `SELECT * FROM func()` (which already propagates call_return_type) forced to materialize.
+	allow_procedure_call = true;
 	auto result = Bind(select_statement);
 	GetStatementProperties().result_eagerness = ResultEagerness::FORCED;
 	return result;

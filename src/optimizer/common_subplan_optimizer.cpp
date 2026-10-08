@@ -255,13 +255,19 @@ private:
 				get.source_ordinality = OrdinalityType::WITHOUT_ORDINALITY;
 				D_ASSERT(column_ids.empty());
 				// Grab selected GET columns and populate with all possible columns
-				column_ids = std::move(get.GetMutableColumnIds());
+				auto &mut_column_ids = get.GetMutableColumnIds();
+				column_ids = std::move(mut_column_ids);
 				for (idx_t col_idx = 0; col_idx < get.names.size(); col_idx++) {
-					get.GetMutableColumnIds().push_back(ColumnIndex(col_idx));
+					mut_column_ids.push_back(ColumnIndex(col_idx));
 				}
+				const auto virtual_start = mut_column_ids.size();
 				for (const auto &vc : get.virtual_columns) {
-					get.GetMutableColumnIds().push_back(ColumnIndex(vc.first));
+					mut_column_ids.push_back(ColumnIndex(vc.first));
 				}
+				std::sort(mut_column_ids.begin() + virtual_start, mut_column_ids.end(),
+				          [](const ColumnIndex &lhs, const ColumnIndex &rhs) {
+					          return lhs.GetPrimaryIndex() < rhs.GetPrimaryIndex();
+				          });
 
 				// Also temporarily don't project any columns out
 				projection_ids = std::move(get.projection_ids);
@@ -738,11 +744,6 @@ private:
 
 public:
 	void FindCommonSubplans(reference<unique_ptr<LogicalOperator>> root) {
-		// Find first operator with more than 1 child
-		while (root.get()->children.size() == 1) {
-			root = root.get()->children[0];
-		}
-
 		// Recurse through query plan using stack-based recursion
 		arena_vector<StackNode> stack(state.allocator);
 		stack.emplace_back(root);
@@ -1305,9 +1306,19 @@ CommonSubplanOptimizer::CommonSubplanOptimizer(Optimizer &optimizer_p) : optimiz
 }
 
 unique_ptr<LogicalOperator> CommonSubplanOptimizer::Optimize(unique_ptr<LogicalOperator> op) {
+	// Find first operator with more than 1 child
+	reference<unique_ptr<LogicalOperator>> root(op);
+	while (root.get()->children.size() == 1) {
+		root = root.get()->children[0];
+	}
+	if (root.get()->children.empty()) {
+		// The plan is a single-child chain: identical disjoint subplans require
+		// a branching operator above them, so there is nothing to deduplicate
+		return op;
+	}
 	// Bottom-up identification of identical subplans
 	CommonSubplanFinder finder(optimizer.context);
-	finder.FindCommonSubplans(op);
+	finder.FindCommonSubplans(root);
 	finder.FilterSubplans();
 	finder.ConvertSubplansToCTEs(optimizer, op);
 	return op;

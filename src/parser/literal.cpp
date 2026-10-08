@@ -8,6 +8,8 @@
 #include "duckdb/common/types/decimal.hpp"
 #include "duckdb/common/types/value.hpp"
 
+#include <absl/strings/str_replace.h>
+
 namespace duckdb {
 
 Literal::Literal(LiteralKind kind_p, string text_p) : kind(kind_p), text(std::move(text_p)) {
@@ -154,6 +156,10 @@ static Value NumberToValue(const string &val) {
 		}
 	}
 	// there is an exponent, or the value is too wide for a decimal
+	if (num_underscores > 0) {
+		auto cleaned = absl::StrReplaceAll(val, {{"_", ""}});
+		return Value::DOUBLE(Cast::Operation<string_t, double>(string_t(cleaned)));
+	}
 	double dbl_value = Cast::Operation<string_t, double>(str_val);
 	return Value::DOUBLE(dbl_value);
 }

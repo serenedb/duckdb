@@ -13,6 +13,7 @@
 #include "duckdb/parser/expression/case_expression.hpp"
 #include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/parser/expression/window_expression.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
 
@@ -201,23 +202,33 @@ void TryTransformStarLike(unique_ptr<ParsedExpression> &root) {
 		// COLUMNS(*) has different semantics
 		return;
 	}
-	unordered_set<string> supported_ops {"~~",
-	                                     "!~~",
-	                                     "~~~",
-	                                     "!~~~",
-	                                     "~~*",
-	                                     "!~~*",
-	                                     "regexp_full_match",
-	                                     "regexp_matches",
-	                                     "not_like_escape",
-	                                     "ilike_escape",
-	                                     "not_ilike_escape",
-	                                     "like_escape"};
+	static const case_insensitive_set_view_t supported_ops {"~~",
+	                                                        "!~~",
+	                                                        "~~~",
+	                                                        "!~~~",
+	                                                        "~~*",
+	                                                        "!~~*",
+	                                                        "regexp_full_match",
+	                                                        "regexp_matches",
+	                                                        "not_like_escape",
+	                                                        "ilike_escape",
+	                                                        "not_ilike_escape",
+	                                                        "like_escape"};
 	if (supported_ops.count(function.FunctionName().GetIdentifierName()) == 0) {
 		// unsupported op for * expression
-		throw BinderException(*root, "Function \"%s\" cannot be applied to a star expression", function.FunctionName());
+		throw BinderException(*root, "Function %s cannot be applied to a star expression", function.FunctionName());
 	}
 	auto &right = function.GetArgumentsMutable()[1];
+	// `* SIMILAR TO '[regex]'` filters column names by regex (it becomes COLUMNS('[regex]') below), so it
+	// is not the SQL SIMILAR TO predicate the parser translates through similar_to_escape. Undo that
+	// translation here to keep the pattern a regex -- and a constant.
+	if (right.GetExpression().GetExpressionClass() == ExpressionClass::FUNCTION) {
+		auto &pattern_function = right.GetExpressionMutable()->Cast<FunctionExpression>();
+		if (pattern_function.FunctionName() == "similar_to_escape" && pattern_function.GetArguments().size() == 1 &&
+		    pattern_function.GetArguments()[0].GetExpression().GetExpressionClass() == ExpressionClass::CONSTANT) {
+			right = std::move(pattern_function.GetArgumentsMutable()[0]);
+		}
+	}
 	if (right.GetExpression().GetExpressionClass() != ExpressionClass::CONSTANT) {
 		throw BinderException(*root, "Pattern applied to a star expression must be a constant");
 	}

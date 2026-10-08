@@ -109,8 +109,7 @@ static RecursiveCTEParallelism GetRecursiveParallelism(const RecursiveCTEState &
 	D_ASSERT(row_limit > 1);
 	D_ASSERT(schedule_plan.execute_pipeline_count > 0);
 	auto &op = state.GetOperator();
-	const auto configured_threads =
-	    TaskScheduler::GetScheduler(op.recursive_meta_pipeline->GetExecutor().context).NumberOfThreads();
+	const auto configured_threads = TaskScheduler::QueryThreads(op.recursive_meta_pipeline->GetExecutor().context);
 	const auto worker_count = MinValue(MinValue(row_limit, work_units), configured_threads);
 	if (worker_count <= 1) {
 		return RecursiveCTEParallelism(1);
@@ -757,8 +756,7 @@ static void ScheduleRecursivePlan(const RecursiveCTEPipelineSchedulePlan &plan, 
 	}
 
 	const auto configured_threads =
-	    TaskScheduler::GetScheduler(state.GetOperator().recursive_meta_pipeline->GetExecutor().context)
-	        .NumberOfThreads();
+	    TaskScheduler::QueryThreads(state.GetOperator().recursive_meta_pipeline->GetExecutor().context);
 	events.reserve(plan.stages.size());
 	for (auto &stage : plan.stages) {
 		auto pipeline = stage.pipeline.get().shared_from_this();
@@ -829,7 +827,7 @@ static void ExecuteRecursiveInlinePlan(RecursiveCTEState &state, Executor &execu
 			pipeline.ResetForReschedule(false);
 			// Invariant builds have independent source work even when the recursive frontier is tiny.
 			const auto worker_limit =
-			    stage.is_invariant_build ? TaskScheduler::GetScheduler(executor.context).NumberOfThreads() : idx_t(1);
+			    stage.is_invariant_build ? TaskScheduler::QueryThreads(executor.context) : idx_t(1);
 			const auto max_threads = GetRecursivePipelineMaxThreads(pipeline, worker_limit);
 			if (max_threads > 1) {
 				auto event = make_shared_ptr<RecursiveCTEPipelineEvent>(pipeline.shared_from_this(), state,

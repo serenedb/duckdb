@@ -298,7 +298,8 @@
         "description": "Returns `true` if `string` contains the `regex`, `false` otherwise. A set of optional regex `options` can be set.",
         "example": "regexp_matches('anabanana', '(an)*')",
         "categories": ["regex"],
-        "type": "scalar_function_set"
+        "type": "scalar_function_set",
+        "aliases": ["regexp_like"]
     },
     {
         "name": "regexp_replace",
@@ -457,6 +458,14 @@
         "example": "like_escape('a%c', 'a$%c', '$')",
         "categories": ["string"],
         "type": "scalar_function"
+    },
+    {
+        "name": "similar_to_escape",
+        "parameters": "pattern,escape_character",
+        "description": "Translates a SQL `SIMILAR TO` pattern into the equivalent regular expression, so that `string SIMILAR TO pattern` can be evaluated as `regexp_full_match(string, similar_to_escape(pattern))`. `escape_character` defaults to a backslash.",
+        "example": "similar_to_escape('a%c')",
+        "categories": ["string"],
+        "type": "scalar_function_set"
     },
     {
         "name": "not_like_escape",

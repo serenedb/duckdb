@@ -53,6 +53,7 @@ LogicalDependency::LogicalDependency(CatalogEntry &entry) {
 		this->entry.name = entry.name;
 		this->entry.type = entry.type;
 		catalog = entry.ParentCatalog().GetName();
+		oid = entry.oid;
 	}
 }
 
@@ -78,6 +79,12 @@ void LogicalDependencyList::AddDependency(CatalogEntry &entry, DependencyDepende
 	AddDependency(dependency);
 }
 
+void LogicalDependencyList::AddOwnedDependency(CatalogEntry &entry) {
+	LogicalDependency dependency(entry);
+	dependency.owned_by = true;
+	AddDependency(dependency);
+}
+
 void LogicalDependencyList::AddDependency(const LogicalDependency &entry) {
 	auto it = set.find(entry);
 	if (it == set.end()) {
@@ -87,6 +94,8 @@ void LogicalDependencyList::AddDependency(const LogicalDependency &entry) {
 	// Merge flags instead of discarding the new ones - the same subject can be depended on for multiple reasons
 	auto merged = *it;
 	merged.flags.Apply(entry.flags);
+	merged.owned_by = merged.owned_by || entry.owned_by;
+	merged.subdependencies.insert(entry.subdependencies.begin(), entry.subdependencies.end());
 	set.erase(it);
 	set.insert(std::move(merged));
 }
@@ -100,8 +109,8 @@ void LogicalDependencyList::VerifyDependencies(Catalog &catalog, const Identifie
 	for (auto &dep : set) {
 		if (dep.catalog != catalog.GetName()) {
 			throw DependencyException(
-			    "Error adding dependency for object \"%s\" - dependency \"%s\" is in catalog "
-			    "\"%s\", which does not match the catalog \"%s\".\nCross catalog dependencies are not supported.",
+			    "Error adding dependency for object %s - dependency %s is in catalog "
+			    "%s, which does not match the catalog %s.\nCross catalog dependencies are not supported.",
 			    name, dep.entry.name, dep.catalog, catalog.GetName());
 		}
 	}

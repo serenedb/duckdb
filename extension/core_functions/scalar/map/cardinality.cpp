@@ -12,14 +12,14 @@ static void CardinalityFunction(DataChunk &args, ExpressionState &state, Vector 
 	const auto &map = args.data[0];
 	auto entries = map.Values<list_entry_t>();
 
-	auto result_data = FlatVector::Writer<uint64_t>(result, args.size());
+	auto result_data = FlatVector::Writer<int64_t>(result, args.size());
 	for (idx_t row = 0; row < args.size(); row++) {
 		auto entry = entries[row];
 		if (!entry.IsValid()) {
 			result_data.WriteNull();
 			continue;
 		}
-		result_data.WriteValue(entries.GetValueUnsafe(row).length);
+		result_data.WriteValue(static_cast<int64_t>(entries.GetValueUnsafe(row).length));
 	}
 }
 
@@ -45,12 +45,12 @@ static unique_ptr<FunctionData> CardinalityBind(BindScalarFunctionInput &input) 
 		throw BinderException("Cardinality can only operate on MAPs, LISTs and ARRAYs");
 	}
 
-	bound_function.SetReturnType(LogicalType::UBIGINT);
+	bound_function.SetReturnType(LogicalType::BIGINT);
 	return make_uniq<VariableReturnBindData>(bound_function.GetReturnType());
 }
 
 ScalarFunction CardinalityFun::GetFunction() {
-	ScalarFunction fun({}, LogicalType::UBIGINT, CardinalityFunction, CardinalityBind);
+	ScalarFunction fun({}, LogicalType::BIGINT, CardinalityFunction, CardinalityBind);
 	fun.GetSignature().AddParameter("map", LogicalType::ANY);
 	fun.GetSignature().AddArgs("args", LogicalType::ANY);
 	fun.SetNullHandling(FunctionNullHandling::DEFAULT_NULL_HANDLING);

@@ -61,6 +61,22 @@ void JSONTreeRenderer::Render(const Pipeline &op, BaseTreeRenderer &ss) {
 	ToStream(*tree, ss);
 }
 
+static JSONMutableValue RenderExplainNode(JSONWriter &writer, const ExplainNode &node) {
+	auto object = writer.CreateObject();
+	object.AddString("name", node.label);
+	for (auto &attr : node.attributes) {
+		object.AddString(attr.first, attr.second);
+	}
+	if (!node.children.empty()) {
+		auto children = writer.CreateArray();
+		for (auto &child : node.children) {
+			children.Append(RenderExplainNode(writer, child));
+		}
+		object.Add("children", children);
+	}
+	return object;
+}
+
 static JSONMutableValue RenderRecursive(JSONWriter &writer, RenderTree &tree, idx_t x, idx_t y) {
 	auto node_p = tree.GetNode(x, y);
 	D_ASSERT(node_p);
@@ -77,7 +93,11 @@ static JSONMutableValue RenderRecursive(JSONWriter &writer, RenderTree &tree, id
 	for (auto &it : node.extra_text) {
 		auto &key = it.first;
 		auto &value = it.second;
-		auto splits = StringUtil::Split(value, "\n");
+		if (value.IsStructured()) {
+			extra_info.Add(key, RenderExplainNode(writer, value.Structured()));
+			continue;
+		}
+		auto splits = StringUtil::Split(value.Scalar(), "\n");
 		if (splits.size() > 1) {
 			auto list_items = writer.CreateArray();
 			for (auto &split : splits) {
@@ -85,7 +105,7 @@ static JSONMutableValue RenderRecursive(JSONWriter &writer, RenderTree &tree, id
 			}
 			extra_info.Add(key, list_items);
 		} else {
-			extra_info.AddString(key, value);
+			extra_info.AddString(key, value.Scalar());
 		}
 	}
 	object.Add("extra_info", extra_info);

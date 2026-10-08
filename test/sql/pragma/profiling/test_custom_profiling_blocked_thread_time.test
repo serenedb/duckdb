@@ -26,7 +26,7 @@ statement ok
 PRAGMA disable_profiling;
 
 query I
-SELECT unnest(current_setting('tracked_metrics')) ORDER BY ALL
+SELECT unnest(current_setting('tracked_metrics')::VARCHAR[]) ORDER BY ALL
 ----
 system.blocked_thread_time
 

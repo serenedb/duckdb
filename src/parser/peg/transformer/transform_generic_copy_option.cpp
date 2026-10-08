@@ -179,6 +179,20 @@ PEGTransformerFactory::TransformGenericCopyOptionExpression(PEGTransformer &tran
 	return result;
 }
 
+GenericCopyOptionValue PEGTransformerFactory::TransformCopyFormatKeyword(PEGTransformer &transformer) {
+	GenericCopyOptionValue result;
+	result.has_value = true;
+	result.expression = ConstantExpression::String("binary");
+	return result;
+}
+
+GenericCopyOptionValue PEGTransformerFactory::TransformCopyBooleanKeyword(PEGTransformer &transformer) {
+	GenericCopyOptionValue result;
+	result.has_value = true;
+	result.expression = ConstantExpression::String("on");
+	return result;
+}
+
 vector<OrderByNode> PEGTransformerFactory::TransformGenericCopyOptionParenthesizedExpressionList(
     PEGTransformer &transformer, vector<OrderByNode> order_by_expression_list) {
 	return order_by_expression_list;
@@ -196,7 +210,7 @@ void PEGTransformerFactory::SplitGenericOptions(const vector<GenericCopyOption> 
 			options[option.name.GetIdentifierName()] = Value(true);
 		} else if (option.children.size() == 1) {
 			if (option.children[0].IsNull()) {
-				throw BinderException("NULL is not supported as a valid option for %s option \"%s\"", statement_name,
+				throw BinderException("NULL is not supported as a valid option for %s option %s", statement_name,
 				                      option.name);
 			}
 			options[option.name.GetIdentifierName()] = option.children[0];

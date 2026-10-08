@@ -14,8 +14,6 @@
 #include "duckdb/common/typedefs.hpp"
 #include "duckdb/storage/external_file_cache/external_file_cache_block_state.hpp"
 
-#include <condition_variable>
-
 namespace duckdb {
 
 // Forward declaration.
@@ -29,7 +27,7 @@ struct CacheBlock {
 	const idx_t size;
 
 	mutable annotated_mutex mtx;
-	mutable std::condition_variable cv DUCKDB_GUARDED_BY(mtx);
+	mutable absl::CondVar cv DUCKDB_GUARDED_BY(mtx);
 	CacheBlockState state DUCKDB_GUARDED_BY(mtx) = CacheBlockState::EMPTY;
 	shared_ptr<BlockHandle> block_handle DUCKDB_GUARDED_BY(mtx);
 	//! Number of valid bytes that were read into this block

@@ -37,5 +37,89 @@
         "example": "try_strptime('Wed, 1 January 1992 - 08:38:40 PM', '%a, %-d %B %Y - %I:%M:%S %p')",
         "type": "scalar_function_set",
         "struct": "TryStrpTimeFun"
+    },
+    {
+        "name": "__internal_date_trunc_bucket",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "__internal_date_trunc_unbucket",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
+    },
+    {
+        "name": "__internal_date_trunc_unbucket_tz",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
+    },
+    {
+        "name": "__internal_date_trunc_month_bucket",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "__internal_date_trunc_month_unbucket",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
+    },
+    {
+        "name": "__internal_date_trunc_month_unbucket_tz",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
+    },
+    {
+        "name": "__internal_date_trunc_unbucket_time",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
+    },
+    {
+        "name": "__internal_time_of_day_bucket",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "__internal_month_of_year",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "__internal_day_of_week",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "__internal_month_name",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
+    },
+    {
+        "name": "__internal_day_name",
+        "parameters": "",
+        "description": "",
+        "example": "",
+        "type": "scalar_function"
     }
 ]

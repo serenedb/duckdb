@@ -5,15 +5,21 @@
 
 namespace duckdb {
 
-ParserException::ParserException(const string &msg) : Exception(ExceptionType::PARSER, msg) {
+ParserException::ParserException(std::string_view msg) : Exception(ExceptionType::PARSER, msg) {
 }
 
-ParserException::ParserException(const unordered_map<string, string> &extra_info, const string &msg)
+ParserException::ParserException(const unordered_map<string, string> &extra_info, std::string_view msg)
     : Exception(extra_info, ExceptionType::PARSER, msg) {
 }
 
-ParserException ParserException::SyntaxError(const string &query, const string &error_message,
+ParserException ParserException::SyntaxError(std::string_view query, std::string_view error_message,
                                              QueryLocation error_location) {
 	return ParserException(Exception::InitializeExtraInfo("SYNTAX_ERROR", error_location), error_message);
+}
+
+void ParserException::ThrowMaxExpressionDepth(idx_t max_expression_depth) {
+	throw ParserException("Max expression depth limit of %lld exceeded. Use \"SET max_expression_depth TO x\" to "
+	                      "increase the maximum expression depth.",
+	                      max_expression_depth);
 }
 } // namespace duckdb

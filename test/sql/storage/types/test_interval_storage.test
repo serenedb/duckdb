@@ -22,7 +22,7 @@ SELECT * FROM interval
 ----
 1 day
 NULL
-3 months 2 days 00:00:05
+3 mons 2 days 00:00:05
 
 query I
 SELECT t FROM interval WHERE t = INTERVAL '1' DAY;
@@ -33,7 +33,7 @@ query I
 SELECT t FROM interval WHERE t >= INTERVAL '1' DAY ORDER BY 1;
 ----
 1 day
-3 months 2 days 00:00:05
+3 mons 2 days 00:00:05
 
 query I
 SELECT t FROM interval WHERE t > INTERVAL '10' YEAR ORDER BY 1;

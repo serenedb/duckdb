@@ -30,7 +30,7 @@ public:
 	                    const vector<column_t> &column_ids, unique_ptr<CreateIndexInfo> info,
 	                    vector<unique_ptr<Expression>> unbound_expressions, idx_t estimated_cardinality,
 	                    IndexType index_type, unique_ptr<IndexBuildBindData> bind_data,
-	                    unique_ptr<AlterTableInfo> alter_table_info);
+	                    unique_ptr<AlterTableInfo> alter_table_info, shared_ptr<idx_t> scan_row_end);
 
 	//! The table to create the index for.
 	DuckTableEntry &table;
@@ -46,6 +46,7 @@ public:
 	unique_ptr<IndexBuildBindData> bind_data;
 	//! Alter table information for adding indexes.
 	unique_ptr<AlterTableInfo> alter_table_info;
+	shared_ptr<idx_t> scan_row_end;
 
 	//! Types of the indexed columns.
 	vector<LogicalType> indexed_column_types;

@@ -622,8 +622,7 @@ PipelineBroadcastExchange::PipelineBroadcastExchange(ClientContext &context, vec
       order_mode(use_batch_index_p                                   ? PipelineBroadcastExchangeOrderMode::BATCH_INDEX
                  : source_order_p == OrderPreservationType::NO_ORDER ? PipelineBroadcastExchangeOrderMode::UNORDERED
                                                                      : PipelineBroadcastExchangeOrderMode::SEQUENTIAL),
-      source_order(source_order_p),
-      max_threads(NumericCast<idx_t>(TaskScheduler::GetScheduler(context).NumberOfThreads())) {
+      source_order(source_order_p), max_threads(TaskScheduler::QueryThreads(context)) {
 	D_ASSERT(!use_batch_index_p || source_order_p != OrderPreservationType::NO_ORDER);
 	buffer = make_uniq<BufferState>(context, types, max_threads);
 }

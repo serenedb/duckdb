@@ -15,7 +15,9 @@
 #include "duckdb/common/map.hpp"
 #include "duckdb/common/vector.hpp"
 
+#include <absl/strings/match.h>
 #include <iosfwd>
+#include <string_view>
 
 namespace duckdb {
 
@@ -67,6 +69,10 @@ public:
 		return value;
 	}
 
+	bool operator==(std::string_view other) const {
+		return absl::EqualsIgnoreCase(value, other);
+	}
+
 	bool empty() const { // NOLINT: match std::string interface
 		return value.empty();
 	}
@@ -91,6 +97,36 @@ public:
 
 private:
 	string value;
+};
+
+class IdentifierRef {
+public:
+	IdentifierRef() = default;
+	explicit IdentifierRef(std::string_view value_p) : value(value_p) {
+	}
+
+	const IdentifierRef &GetIdentifierName() const {
+		return *this;
+	}
+
+	operator string() const { // NOLINT: allow implicit conversion to string
+		return string(value);
+	}
+
+	operator Identifier() const { // NOLINT: allow implicit conversion to Identifier
+		return Identifier(value);
+	}
+
+	operator std::string_view() const { // NOLINT: allow implicit conversion to std::string_view
+		return value;
+	}
+
+	friend std::ostream &operator<<(std::ostream &os, const IdentifierRef &id) {
+		return os << id.value;
+	}
+
+private:
+	std::string_view value;
 };
 
 //! Generate an internal name: the given prefix followed by a random UUID
@@ -155,21 +191,43 @@ inline string &operator+=(string &a, const Identifier &b) {
 }
 
 struct IdentifierHashFunction {
-	uint64_t operator()(const Identifier &id) const {
-		return id.Hash();
+	IdentifierHashFunction() = default;
+	explicit IdentifierHashFunction(bool case_sensitive_p) : case_sensitive(case_sensitive_p) {
 	}
+
+	DUCKDB_API uint64_t operator()(const Identifier &id) const;
+
+	bool case_sensitive = false;
 };
 
 struct IdentifierEquality {
+	IdentifierEquality() = default;
+	explicit IdentifierEquality(bool case_sensitive_p) : case_sensitive(case_sensitive_p) {
+	}
+
 	bool operator()(const Identifier &a, const Identifier &b) const {
+		if (case_sensitive) {
+			return a.GetIdentifierName() == b.GetIdentifierName();
+		}
 		return a == b;
 	}
+
+	bool case_sensitive = false;
 };
 
 struct IdentifierCompare {
+	IdentifierCompare() = default;
+	explicit IdentifierCompare(bool case_sensitive_p) : case_sensitive(case_sensitive_p) {
+	}
+
 	bool operator()(const Identifier &a, const Identifier &b) const {
+		if (case_sensitive) {
+			return a.GetIdentifierName() < b.GetIdentifierName();
+		}
 		return a < b;
 	}
+
+	bool case_sensitive = false;
 };
 
 template <typename T>

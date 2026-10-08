@@ -37,8 +37,24 @@ static bool TryDoubleCast(const char *buf, idx_t len, T &result, bool strict, ch
 		}
 	}
 	auto endptr = buf + len;
-	auto parse_result = duckdb_fast_float::from_chars(buf, buf + len, result, strict, decimal_separator);
-	if (parse_result.ec != std::errc()) {
+	if (!strict && memchr(buf, '_', len)) {
+		string digits;
+		digits.reserve(len);
+		for (auto it = buf; it != endptr; it++) {
+			if (*it != '_') {
+				digits += *it;
+				continue;
+			}
+			if (it == buf || it + 1 == endptr || !StringUtil::CharacterIsDigit(it[-1]) ||
+			    !StringUtil::CharacterIsDigit(it[1])) {
+				return false;
+			}
+		}
+		return TryDoubleCast<T>(digits.data(), digits.size(), result, strict, decimal_separator);
+	}
+	duckdb_fast_float::parse_options opts(duckdb_fast_float::chars_format::general, decimal_separator);
+	auto parse_result = duckdb_fast_float::from_chars_advanced(buf, endptr, result, opts);
+	if (parse_result.ec != std::errc() && parse_result.ec != std::errc::result_out_of_range) {
 		return false;
 	}
 	auto current_end = parse_result.ptr;

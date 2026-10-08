@@ -183,8 +183,8 @@ struct ValidityAnalyzeState : public AnalyzeState {
 	idx_t count;
 };
 
-unique_ptr<AnalyzeState> ValidityInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	return make_uniq<ValidityAnalyzeState>(col_data.GetBlockManager());
+unique_ptr<AnalyzeState> ValidityInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
+	return make_uniq<ValidityAnalyzeState>(ctx.block_manager);
 }
 
 bool ValidityAnalyze(AnalyzeState &state_p, const Vector &input) {
@@ -621,8 +621,11 @@ void ValidityRevertAppend(ColumnSegment &segment, idx_t new_count) {
 		// handle sub-bit stuff (yay)
 		idx_t byte_pos = start_bit / 8;
 		idx_t bit_end = (byte_pos + 1) * 8;
-		ValidityMask mask(reinterpret_cast<validity_t *>(buffer_ptr), segment.count);
-		for (idx_t i = start_bit; i < bit_end && i < segment.count; i++) {
+		// the trailing bits of the partial byte are reset to the valid default even when they lie beyond
+		// segment.count (the memset below does the same for the remaining bytes), so the mask must be
+		// sized to the byte boundary rather than the row count
+		ValidityMask mask(reinterpret_cast<validity_t *>(buffer_ptr), bit_end);
+		for (idx_t i = start_bit; i < bit_end; i++) {
 			mask.SetValid(i);
 		}
 		revert_start = bit_end / 8;

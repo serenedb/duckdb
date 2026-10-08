@@ -118,7 +118,7 @@ struct DBConfigOptions {
 	//! Run a checkpoint on successful shutdown and delete the WAL, to leave only a single database file behind
 	bool checkpoint_on_shutdown = true;
 	//! Serialize the metadata on checkpoint with compatibility for a given DuckDB version.
-	StorageCompatibility storage_compatibility = StorageCompatibility::Default();
+	StorageCompatibility storage_compatibility = StorageCompatibility::DuckDBDefault();
 	//! Initialize the database with the standard set of DuckDB functions
 	//! You should probably not touch this unless you know what you are doing
 	bool initialize_default_database = true;
@@ -230,6 +230,10 @@ public:
 	                                   const Value &default_value = Value(), set_option_callback_t function = nullptr,
 	                                   SetScope default_scope = SetScope::SESSION, bool is_debug = false,
 	                                   bool is_deprecated = false);
+	DUCKDB_API void AddExtensionOption(const Identifier &name, string description, LogicalType parameter,
+	                                   const Value &default_value, set_option_callback_t function,
+	                                   reset_option_callback_t reset_function,
+	                                   SetScope default_scope = SetScope::SESSION, bool no_reset_all = false);
 	DUCKDB_API bool HasExtensionOption(const Identifier &name) const;
 	DUCKDB_API identifier_map_t<ExtensionOption> GetExtensionSettings() const;
 	DUCKDB_API bool TryGetExtensionOption(const Identifier &name, ExtensionOption &result) const;

@@ -19,6 +19,7 @@
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/parser/column_definition.hpp"
 #include "duckdb/parser/tableref/match_recognize_ref.hpp"
+#include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/parser/query_node.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/parser/result_modifier.hpp"
@@ -36,6 +37,8 @@
 #include "duckdb/common/enums/copy_option_mode.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
 
+#include <absl/functional/function_ref.h>
+
 //! fwd declare
 namespace duckdb_re2 {
 class RE2;
@@ -52,6 +55,7 @@ class OrderBinder;
 class TableCatalogEntry;
 class ViewCatalogEntry;
 class TableMacroCatalogEntry;
+class MacroCatalogEntry;
 class UpdateSetInfo;
 class LogicalProjection;
 class LogicalGet;
@@ -226,6 +230,11 @@ class Binder : public enable_shared_from_this<Binder> {
 public:
 	DUCKDB_API static shared_ptr<Binder> CreateBinder(ClientContext &context, optional_ptr<Binder> parent = nullptr,
 	                                                  BinderType binder_type = BinderType::REGULAR_BINDER);
+	static vector<reference<TableCatalogEntry>> TruncateReferencingTables(ClientContext &context,
+	                                                                      TableCatalogEntry &table);
+	static vector<QualifiedName> TruncateIdentitySequences(ClientContext &context, TableCatalogEntry &table);
+	static bool DefaultNamesSequence(const ColumnDefinition &column, const QualifiedName &sequence,
+	                                 const IdentifierEquality &equals);
 
 	//! The client context
 	ClientContext &context;
@@ -272,8 +281,7 @@ public:
 	vector<unique_ptr<BoundConstraint>> BindConstraints(const vector<unique_ptr<Constraint>> &constraints,
 	                                                    const Identifier &table_name, const ColumnList &columns);
 	vector<unique_ptr<BoundConstraint>> BindConstraints(const TableCatalogEntry &table);
-	vector<unique_ptr<BoundConstraint>> BindNewConstraints(vector<unique_ptr<Constraint>> &constraints,
-	                                                       const Identifier &table_name, const ColumnList &columns);
+	vector<unique_ptr<BoundConstraint>> BindNewConstraints(BoundCreateTableInfo &info);
 	unique_ptr<BoundConstraint> BindConstraint(const Constraint &constraint, const Identifier &table,
 	                                           const ColumnList &columns);
 	unique_ptr<BoundConstraint> BindUniqueConstraint(const Constraint &constraint, const Identifier &table,
@@ -433,6 +441,8 @@ private:
 	bool legacy_can_contain_nulls = false;
 	//! Whether this binder is inside a subquery boundary
 	bool inside_subquery = false;
+	//! Whether procedure calls are allowed (set by CALL statement binding)
+	bool allow_procedure_call = false;
 	//! The set of bound views
 	reference_set_t<ViewCatalogEntry> bound_views;
 	//! Used to retrieve CatalogEntry's
@@ -479,7 +489,6 @@ private:
 	BoundStatement Bind(RelationStatement &stmt);
 	BoundStatement Bind(CallStatement &stmt);
 	BoundStatement Bind(ExportStatement &stmt);
-	BoundStatement Bind(ExtensionStatement &stmt);
 	BoundStatement Bind(SetStatement &stmt);
 	BoundStatement Bind(SetVariableStatement &stmt);
 	BoundStatement Bind(ResetVariableStatement &stmt);
@@ -529,7 +538,7 @@ private:
 	                             unique_ptr<LogicalOperator> child_operator,
 	                             virtual_column_map_t virtual_columns = virtual_column_map_t());
 
-	unique_ptr<QueryNode> BindTableMacro(FunctionExpression &function, TableMacroCatalogEntry &macro_func, idx_t depth);
+	unique_ptr<QueryNode> BindTableMacro(FunctionExpression &function, MacroCatalogEntry &macro_func, idx_t depth);
 
 	BoundStatement BindCTE(const Identifier &ctename, CommonTableExpressionInfo &info);
 
@@ -560,6 +569,7 @@ private:
 	static string RowScopeName(TriggerEventType event_type);
 	BoundStatement BindNode(UpdateQueryNode &node);
 	BoundStatement BindNode(DeleteQueryNode &node);
+	vector<idx_t> BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry &table);
 	BoundStatement BindNode(MergeQueryNode &node);
 	BoundStatement BindNode(CopyQueryNode &node);
 
@@ -663,6 +673,7 @@ private:
 	static void BindSchemaOrCatalog(CatalogEntryRetriever &retriever, QualifiedName &qualified_name);
 	Identifier BindCatalog(const Identifier &catalog_name);
 	SchemaCatalogEntry &BindCreateSchema(CreateInfo &info);
+	void MergeMacroOverloads(CreateInfo &info);
 
 	vector<CatalogSearchEntry> GetSearchPath(Catalog &catalog, const Identifier &schema_name,
 	                                         bool default_schema_precedence = false);
@@ -680,6 +691,7 @@ private:
 	BoundStatement BindShow(ShowRef &ref);
 	//! Binds "SHOW name" to the value of the setting "name", returns false if no such setting exists
 	bool TryBindShowSetting(ShowRef &ref, BoundStatement &result);
+	BoundStatement BindShowSetting(ShowRef &ref);
 	BoundStatement BindSummarize(ShowRef &ref);
 
 	void BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &columns, bool default_values,
@@ -694,6 +706,17 @@ private:
 	                                                   const IndexVector<idx_t, PhysicalIndex> &column_index_map,
 	                                                   unique_ptr<LogicalOperator> root,
 	                                                   const vector<LogicalType> &source_types);
+	//! Expand a stored generated column's expression into a self-contained parsed expression by inlining every
+	//! reference to another generated column, so chains resolve without an ordering pass.
+	static void ExpandStoredGeneratedExpression(unique_ptr<ParsedExpression> &expr, TableCatalogEntry &table);
+	//! As above, but `substitute` may also replace a reference with a caller-supplied value (the assigned value
+	//! in UPDATE); every other reference is left for the caller to bind.
+	static void
+	ExpandStoredGeneratedExpression(unique_ptr<ParsedExpression> &expr, TableCatalogEntry &table,
+	                                absl::FunctionRef<unique_ptr<ParsedExpression>(const Identifier &name)> substitute);
+	//! Fill the stored-generated slots of `column_values` (indexed by physical position; non-generated slots
+	//! already filled) by expanding each generated expression and inlining the surrounding value expressions.
+	void ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<unique_ptr<Expression>> &column_values);
 
 	unique_ptr<BoundMergeIntoAction>
 	BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, LogicalGet &get, TableIndex proj_index,

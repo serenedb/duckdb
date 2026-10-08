@@ -66,6 +66,8 @@ enum class VacuumIndexStrategy : uint8_t {
 struct ColumnSegmentInfoScanState {
 	shared_ptr<RowGroupSegmentTree> row_groups;
 	optional_ptr<SegmentNode<RowGroup>> current_row_group;
+	//! Scan position for table implementations that do not iterate row groups.
+	idx_t position = 0;
 	ColumnSegmentInfoScanOptions options;
 };
 
@@ -160,7 +162,7 @@ public:
 
 	idx_t Delete(TransactionData transaction, DuckTableEntry &table_entry, row_t *ids, idx_t count);
 	void Update(TransactionData transaction, DuckTableEntry &table_entry, row_t *ids,
-	            const vector<PhysicalIndex> &column_ids, DataChunk &updates);
+	            std::span<const PhysicalIndex> column_ids, DataChunk &updates);
 	void UpdateColumn(TransactionData transaction, DuckTableEntry &table_entry, Vector &row_ids,
 	                  const vector<column_t> &column_path, DataChunk &updates);
 

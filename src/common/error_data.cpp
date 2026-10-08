@@ -15,18 +15,19 @@ namespace duckdb {
 ErrorData::ErrorData() : initialized(false), type(ExceptionType::INVALID) {
 }
 
-ErrorData::ErrorData(const std::exception &ex) : ErrorData(ex.what()) {
+ErrorData::ErrorData(const std::exception &ex, const std::exception_ptr &ptr) : ErrorData(ex.what()) {
+	this->exception_ptr = ptr;
 }
 
-ErrorData::ErrorData(ExceptionType type, const string &message)
-    : initialized(true), type(type), raw_message(SanitizeErrorMessage(message)) {
+ErrorData::ErrorData(ExceptionType type, std::string message)
+    : initialized(true), type(type), raw_message(SanitizeErrorMessage(std::move(message))) {
 	// In the case of ExceptionType::INTERNAL, the stack trace is part of the final message.
 	// To construct it, we need to access extra_info, which has to be initialized first.
 	// Thus, we only set final_message in the constructor's body.
 	final_message = ConstructFinalMessage();
 }
 
-ErrorData::ErrorData(const string &message)
+ErrorData::ErrorData(std::string_view message)
     : initialized(true), type(ExceptionType::INVALID), raw_message(string()), final_message(string()) {
 	// parse the constructed JSON
 	if (message.empty() || message[0] != '{') {
@@ -67,9 +68,9 @@ string ErrorData::ConstructFinalMessage() const {
 	}
 	error += "Error: " + raw_message;
 	if (type == ExceptionType::INTERNAL) {
-		error += "\nThis error signals an assertion failure within DuckDB. This usually occurs due to "
-		         "unexpected conditions or errors in the program's logic.\nFor more information, see "
-		         "https://duckdb.org/docs/current/dev/internal_errors";
+		error += "\nThis error signals an assertion failure within SereneDB. This usually occurs due to "
+		         "unexpected conditions or errors in the program's logic.\nPlease open an issue at "
+		         "https://github.com/serenedb/serenedb/issues";
 
 		// Ensure that we print the stack trace for internal and fatal exceptions.
 		auto entry = extra_info.find("stack_trace_pointers");
@@ -81,8 +82,11 @@ string ErrorData::ConstructFinalMessage() const {
 	return error;
 }
 
-void ErrorData::Throw(const string &prepended_message) const {
+void ErrorData::Throw(std::string_view prepended_message) const {
 	D_ASSERT(initialized);
+	if (exception_ptr) {
+		std::rethrow_exception(exception_ptr);
+	}
 	if (!prepended_message.empty()) {
 		string new_message = prepended_message + raw_message;
 		throw Exception(extra_info, type, new_message);
@@ -138,7 +142,7 @@ void ErrorData::FinalizeError() {
 	}
 }
 
-void ErrorData::AddErrorLocation(const string &query) {
+void ErrorData::AddErrorLocation(std::string_view query) {
 	if (!query.empty()) {
 		auto entry = extra_info.find("position");
 		if (entry != extra_info.end()) {

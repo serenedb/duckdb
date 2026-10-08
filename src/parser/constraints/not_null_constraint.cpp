@@ -15,7 +15,10 @@ string NotNullConstraint::ToString() const {
 }
 
 unique_ptr<Constraint> NotNullConstraint::Copy() const {
-	return make_uniq<NotNullConstraint>(index);
+	auto result = make_uniq<NotNullConstraint>(index);
+	result->constraint_name = constraint_name;
+	result->oid = oid;
+	return std::move(result);
 }
 
 } // namespace duckdb

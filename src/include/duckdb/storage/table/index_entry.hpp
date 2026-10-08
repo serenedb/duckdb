@@ -45,6 +45,7 @@ public:
 	ErrorData MergeCheckpointDeltas(BoundIndex &index);
 	void MarkWritten(optional_idx checkpoint_id);
 	void Reset();
+	void RemapColumnIds(const vector<column_t> &column_ids);
 
 private:
 	const unique_ptr<BoundIndex> &GetPointer(IndexDeltaType type) const;
@@ -118,6 +119,7 @@ public:
 	//! Appends a chunk using delete and checkpoint indexes where required.
 	ErrorData Append(DataChunk &chunk, Vector &row_ids, const shared_ptr<IndexEntry> &delete_entry,
 	                 IndexAppendMode append_mode, optional_idx active_checkpoint);
+	ErrorData FinishAppend();
 	//! Reverts an append to the physical index or its checkpoint delta.
 	void RevertAppend(DataChunk &chunk, Vector &row_ids);
 	//! Appends deleted rows to the bound physical index if it enforces uniqueness.
@@ -130,7 +132,7 @@ public:
 	//! Returns whether the constraint enforced by the physical index is only checked when committing.
 	bool IsDeferred() const;
 	//! Returns whether the physical index matches the foreign key columns and role.
-	bool IsForeignKeyIndex(const vector<PhysicalIndex> &fk_keys, ForeignKeyType fk_type) const;
+	bool IsForeignKeyIndex(std::span<const PhysicalIndex> fk_keys, ForeignKeyType fk_type) const;
 	//! Returns the name of the physical index.
 	Identifier GetName() const;
 	//! Returns the physical index type.
@@ -152,7 +154,7 @@ public:
 	//! Constructs the physical index's constraint violation message.
 	string GetConstraintViolationMessage(VerifyExistenceType verify_type, idx_t failed_index, DataChunk &input) const;
 	//! Verifies that the physical index is not updated by the given columns.
-	void VerifyUpdate(const vector<PhysicalIndex> &column_ids) const;
+	void VerifyUpdate(std::span<const PhysicalIndex> column_ids) const;
 	//! Vacuums the physical index if it is bound.
 	void Vacuum();
 	//! Rebuilds the bound physical index with chunks supplied by the scan callback.
@@ -164,6 +166,8 @@ public:
 	void VerifyBuffers();
 	//! Returns a copy of the physical index's table storage metadata.
 	IndexInfo GetStorageInfo() const;
+	vector<column_t> GetColumnIds() const;
+	void RemapColumnIds(const vector<column_t> &column_ids);
 	//! Returns the in-memory size of the physical index, or zero if it is unbound.
 	idx_t GetInMemorySize() const;
 	//! Serializes the physical index for a checkpoint.
@@ -203,12 +207,14 @@ private:
 	friend class IndexReadHandle;
 	template <class>
 	friend class IndexWriteHandle;
+	friend class TableIndexList;
 	void InitializeLocalIndexesInternal(TableIndexList &delete_indexes,
 	                                    optional_ptr<TableIndexList> append_indexes) const;
 
 	atomic<IndexBindState> bind_state;
 	//! The OID of this index.
 	const idx_t index_oid;
+	vector<idx_t> column_oids;
 	//! Phase-fair lock protecting the physical index and all delta indexes owned by this entry.
 	mutable StorageLock lock;
 	//! The physical index owned by this stable logical entry.

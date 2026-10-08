@@ -68,17 +68,21 @@ static unique_ptr<FunctionData> DuckDBSequencesBind(ClientContext &context, Tabl
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBSequencesInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBSequencesData>();
 
 	// scan all the schemas for tables and collect themand collect them
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::SEQUENCE_ENTRY,
-		                  [&](CatalogEntry &entry) { result->entries.push_back(entry.Cast<SequenceCatalogEntry>()); });
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::SEQUENCE_ENTRY, [&](CatalogEntry &entry) {
+			result->entries.push_back(entry.Cast<SequenceCatalogEntry>());
+		});
 	};
 	return std::move(result);
 }
@@ -132,8 +136,8 @@ void DuckDBSequencesFunction(ClientContext &context, TableFunctionInput &data_p,
 
 		database_name.Append(Value(seq.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(seq.catalog.GetOid())));
-		schema_name.Append(Value(seq.schema.name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(seq.schema.oid)));
+		schema_name.Append(Value(seq.ParentSchemaName(CatalogTransaction(seq.ParentCatalog(), context))));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(seq.ParentSchemaOid())));
 		sequence_name.Append(Value(seq.name));
 		sequence_oid.Append(Value::BIGINT(NumericCast<int64_t>(seq.oid)));
 		comment.Append(Value(seq.comment));
@@ -158,6 +162,8 @@ void DuckDBSequencesFunction(ClientContext &context, TableFunctionInput &data_p,
 void DuckDBSequencesFun::RegisterFunction(BuiltinFunctions &set) {
 	auto function =
 	    TableFunction("duckdb_sequences", {}, DuckDBSequencesFunction, DuckDBSequencesBind, DuckDBSequencesInit);
+	function.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
+	function.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	set.AddFunction(std::move(function));
 }
 

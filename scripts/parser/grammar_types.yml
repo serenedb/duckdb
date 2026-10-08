@@ -63,6 +63,26 @@ SQLStatement:
     - AlterStatement
     - AnalyzeStatement
     - AttachStatement
+    - CreateDatabaseStatement
+    - DropDatabaseStatement
+    - CreateTSDictionaryStatement
+    - DropTSDictionaryStatement
+    - ListenStatement
+    - NotifyStatement
+    - UnlistenStatement
+    - CreateRoleStatement
+    - DropRoleStatement
+    - AlterRoleStatement
+    - AlterOwnerStatement
+    - AlterDefaultPrivilegesStatement
+    - GrantStatement
+    - RevokeStatement
+    - CreatePolicyStatement
+    - AlterPolicyStatement
+    - DropPolicyStatement
+    - AlterTableRowSecurityStatement
+    - CreateServerStatement
+    - DropServerStatement
     - CallStatement
     - CheckpointStatement
     - CommentStatement
@@ -76,11 +96,14 @@ SQLStatement:
     - CopyTable
     - CreateStatement
     - DeallocateStatement
+    - DiscardStatement
     - DeleteStatement
     - TruncateStatement
     - DetachStatement
     - DisconnectStatement
     - DropStatement
+    - CreatePublicationStatement
+    - CreateSubscriptionStatement
     - ExecuteStatement
     - ExplainStatement
     - ExplainableStatements
@@ -119,6 +142,7 @@ SQLStatement:
     - ExtensionRepositoryStatement
     - CreateExtensionRepositoryStmt
     - DropExtensionRepositoryStmt
+    - ReindexStatement
 
 SelectStatement:
   type: "unique_ptr<SelectStatement>"
@@ -147,6 +171,10 @@ SetStatement:
     - SetSchema
     - SetTimeZone
     - StandardAssignment
+    - SetTransactionIsolation
+    - SetSessionCharacteristics
+    - SetRole
+    - SetSessionAuthorization
 
 QueryNode:
   type: "unique_ptr<QueryNode>"
@@ -156,6 +184,8 @@ QueryNode:
     - DescribeSelect
     - ShowTables
     - ShowAllTables
+    - ShowAliasedSetting
+    - ShowAllSettings
     - ShowByName
     - DescribeByName
 
@@ -214,6 +244,8 @@ AlterInfo:
     - AlterTableStmt
     - AlterDatabaseStmt
     - AlterViewStmt
+    - AlterIndexStmt
+    - AlterFunctionStmt
     - AlterSchemaStmt
     - AlterSequenceStmt
     - AlterSequenceOptions
@@ -225,6 +257,7 @@ AlterTableInfo:
   by_value: true
   rules:
     - AlterTableOptions
+    - AlterIndexAlter
     - AlterSchemaOptions
     - AddColumn
     - DropConstraint
@@ -241,6 +274,7 @@ AlterTableInfo:
     - RenameColumn
     - RenameAlter
     - AddConstraint
+    - RenameConstraint
     - SetSortedBy
     - ResetSortedBy
     - SetOptions
@@ -251,6 +285,7 @@ CreateTypeInfo:
   by_value: true
   rules:
     - CreateType
+    - CreateTypeComposite
     - CreateTypeFromType
     - EnumSelectType
     - EnumStringLiteralList
@@ -270,6 +305,9 @@ MacroFunction:
   rules:
     - MacroDefinition
     - MacroDefinitionBody
+    - AsMacroBody
+    - AtomicMacroBody
+    - ReturnMacroBody
     - TableMacroDefinition
     - ScalarMacroDefinition
 
@@ -471,6 +509,8 @@ Expression:
     - NullIfExpression
     - RowExpression
     - SubstringExpression
+    - SubstringSimilarExpression
+    - SubstringSimilar
     - TrimExpression
     - TrimSource
     - OverlayExpression
@@ -508,6 +548,10 @@ Expression:
     - ZoneDefault
     - ZoneStringLiteral
     - ZoneIdentifier
+    - RoleSpec
+    - SetValue
+    - SetValueOn
+    - SetValueOff
     - DefArg
     - DefArgNull
     - DefArgKeyword
@@ -548,7 +592,7 @@ Expression:
     - CopyFileNameIdentifierColId
     - DatabasePath
     - UsingExpression
-    - IndexElement
+    - SeqRestartValue
     - RelOptionArgumentOpt
     - ExpressionAlias
     - MeasuresElement
@@ -633,6 +677,8 @@ BaseTableRef:
     - QualifiedTableName
     - TargetOptAlias
     - InsertTarget
+    - TruncateTarget
+    - SelectIntoClause
 
 # ---------------------------------------------------------------------------
 # vector<T> categories
@@ -808,6 +854,8 @@ QualifiedName:
   by_value: false
   rules:
     - QualifiedSequenceName
+    - SeqOwner
+    - SeqOwnerNone
     - IdentifierOrStringLiteral
     - QualifiedTypeName
     - TypeNameAsQualifiedName
@@ -980,6 +1028,8 @@ GenericCopyOptionValue:
   rules:
     - GenericCopyOptionValue
     - GenericCopyOptionOrderList
+    - CopyFormatKeyword
+    - CopyBooleanKeyword
     - GenericCopyOptionExpression
 
 MacroParameter:
@@ -1024,6 +1074,9 @@ SettingInfo:
     - SetVariableOrSetting
     - SetSetting
     - SetVariable
+    - ResetTarget
+    - ResetAll
+    - ResetAliasedSetting
 
 PartitionSortedOptions:
   type: "PartitionSortedOptions"
@@ -1103,6 +1156,7 @@ String:
     - MinusPrefixOperator
     - PlusPrefixOperator
     - TildePrefixOperator
+    - DoubleNotPrefixOperator
     - Framing
     - RowsFraming
     - RangeFraming
@@ -1145,6 +1199,8 @@ String:
     - BooleanType
     - DoubleType
     - UpdateSetColumnTarget
+    - ReindexKind
+    - ReindexConcurrently
 
 ConstraintCheckMode:
   type: "ConstraintCheckMode"
@@ -1195,10 +1251,22 @@ Bool:
     - NearestApprox
     - NearestExact
     - Materialized
+    - BetweenSymmetry
+    - BetweenSymmetric
+    - BetweenAsymmetric
     - SampleUnit
     - DropBehavior
     - CascadeDropBehavior
     - RestrictDropBehavior
+    - TruncateOnly
+    - TruncateStar
+    - TruncateIdentityClause
+    - TruncateRestart
+    - TruncateContinue
+    - OverridingClause
+    - OverridingKind
+    - OverridingSystem
+    - OverridingUser
     - AnyOrAll
     - SubqueryAny
     - SubqueryAll
@@ -1224,6 +1292,8 @@ Bool:
     - MacroOrFunction
     - MacroKeyword
     - FunctionKeyword
+    - ProcedureKeyword
+    - FunctionTypeProcedure
     - DeallocatePrepare
     - CreateRecursive
     - CreateSecure
@@ -1239,6 +1309,7 @@ Bool:
     - ForceNotNull
     - WithRule
     - WithoutRule
+    - DropDatabaseForce
 
 
 Int64:
@@ -1271,6 +1342,17 @@ TransactionModifierType:
     - ReadOrWrite
     - ReadOnlyOrReadWrite
 
+TransactionIsolationLevel:
+  type: "TransactionIsolationLevel"
+  by_value: false
+  rules:
+    - IsolationLevel
+    - IsolationLevelClause
+    - ReadCommitted
+    - ReadUncommitted
+    - RepeatableRead
+    - Serializable
+
 # ---------------------------------------------------------------------------
 # Structs passed by value (contain move-only members like unique_ptr<T>)
 # ---------------------------------------------------------------------------
@@ -1286,6 +1368,8 @@ ColumnConstraintEntry:
   by_value: true
   rules:
     - ColumnConstraint
+    - NamedColumnConstraint
+    - ColumnConstraintElement
     - NotNullConstraint
     - UniqueConstraint
     - PrimaryKeyConstraint
@@ -1587,7 +1671,11 @@ SequenceOptionEntry:
     - SeqSetMinMax
     - SeqNoMinMax
     - SeqStartWith
+    - SeqCache
+    - SeqAsType
     - SeqOwnedBy
+    - AlterSequenceOption
+    - SeqRestart
 
 SetOperationTail:
   type: "pair<unique_ptr<SetOperationNode>, unique_ptr<SelectStatement>>"
@@ -1647,6 +1735,28 @@ overrides:
   # create_index.gram
   RelOption:
     type: "pair<Identifier, unique_ptr<ParsedExpression>>"
+    by_value: true
+  IndexElement:
+    type: "IndexElementDefinition"
+    by_value: true
+  IndexOpclass:
+    type: "IndexOpclassDefinition"
+    by_value: true
+  IndexOpclassOptions:
+    type: "case_insensitive_map_t<Value>"
+    by_value: true
+  IndexOpclassOption: "pair<string, Value>"
+  IndexColumns:
+    type: "IndexColumnsDefinition"
+    by_value: true
+  IndexKeyColumns:
+    type: "IndexColumnsDefinition"
+    by_value: true
+  IncludeClause:
+    type: "IndexColumnsDefinition"
+    by_value: true
+  IncludedColumn:
+    type: "IncludedColumnDefinition"
     by_value: true
   # create_table.gram
   ColumnDefinition:
@@ -1757,11 +1867,14 @@ IdentifierType:
     - AnalyzeKeyword
     - ColId
     - ColIdOrString
+    - DeallocateTarget
+    - DeallocateAll
     - UsingColumnName
     - ColLabelOrString
     - ColLabelIdentifier
     - StringLiteralIdentifier
     - TypeFuncName
+    - NamedParameterName
     - IdentifierColId
     - CopyFileNameSuffix
     - ReservedIdentifierOrStringLiteral
@@ -1780,10 +1893,12 @@ IdentifierType:
     - UpdateAlias
     - TableAliasColon
     - SecretStorageSpecifier
+    - SchemaAuthorization
     - SecretName
     - TriggerName
     - DropSecretStorage
     - ConstraintName
+    - ConstraintNameClause
     - ExplainOptionName
     - DotIdentifier
     - IdentifierDot
@@ -1889,6 +2004,7 @@ collapsible_rules:
   - OtherOperatorExpression
   - InfixOtherOperatorExpression
   - BitwiseExpression
+  - TildeExpression
   - AdditiveExpression
   - MultiplicativeExpression
   - ExponentiationExpression
@@ -1907,6 +2023,9 @@ packrat_memoized_rules:
   - CatalogQualification
   - SchemaQualification
   - ReservedSchemaQualification
+  - SelectParens
+  - WithClause
+  - TableRef
 
 # ---------------------------------------------------------------------------
 # excluded_rules: no transformer stub generated, no semantic value extracted
@@ -1921,12 +2040,81 @@ excluded_rules:
   - ShowSpecialForm
   - PivotStatement
   - UnpivotStatement
+  - TSDictionaryDefinition
+  - TSDictionaryDefElement
+  - TSDictionaryDefArg
+  - TSDictionaryExpression
+  - TSDictionaryWith
+  - CreateRoleClause
+  - RoleMembershipClause
+  - InRoleClause
+  - RoleMembersClause
+  - AdminClause
+  - AlterRoleRename
+  - AlterRoleConfig
+  - AlterRoleSet
+  - AlterRoleSetTo
+  - AlterRoleReset
+  - AlterRoleOptionList
+  - AlterRoleOption
+  - ConnLimitOption
+  - ValidUntilOption
+  - OwnerRoleSpec
+  - DefaultPrivForRole
+  - DefaultPrivInSchema
+  - DefaultPrivAction
+  - DefaultPrivGrant
+  - DefaultPrivRevoke
+  - GrantTablePrivilege
+  - RevokeTablePrivilege
+  - GrantRoleMembership
+  - RevokeRoleMembership
+  - RevokeGrantOptionFor
+  - RevokeAdminOptionFor
+  - GrantTarget
+  - GrantAllInSchema
+  - GrantFunctionTarget
+  - FuncArgSignature
+  - FuncArg
+  - GrantNamedTarget
+  - GrantedBy
+  - MemberOptionList
+  - Grantee
+  - RoleOptionList
+  - RoleOption
+  - SysIdOption
+  - PasswordOption
+  - PolicyRename
+  - PolicyAlterClauses
+  - PolicyToRoles
+  - PolicyUsing
+  - PolicyCheck
+  - PrivilegeList
+  - AllPrivileges
+  - Privilege
+  - PrivilegeColumns
+  - ServerOptions
+  - ServerOption
   - Program
   - TopLevelStatement
   - Statement
   - "%whitespace"
   - List
   - Parens
+  - DropFunctionItem
+  - DropFunctionArgs
+  - FunctionDecorator
+  - ReturnsClause
+  - ReturnsTable
+  - ReturnsNull
+  - VolatilityKeyword
+  - StrictClause
+  - LanguageClause
+  - SecurityClause
+  - CostClause
+  - RowsClause
+  - ParallelClause
+  - LeakproofClause
   - Database
   - AbortOrRollback
   - CommitOrEnd
@@ -1942,7 +2130,11 @@ excluded_rules:
   - CharacterType
   - IntervalNumber
   - AtTimeZoneOperator
-  - ConstraintNameClause
+  - PublicationFor
+  - PublicationForAllTables
+  - PublicationForTable
+  - SubscriptionConnection
+  - SubscriptionPublication
   - UsingSample
   - TableSample
   - NamedParameterAssignment
@@ -1964,6 +2156,13 @@ excluded_rules:
   # expression.gram rules kept manual during incremental transformer generation migration
   - OverClause
   - PrefixExpression
+  - DiscardTarget
+  - ShowSettingAlias
+  - ChainClause
+  - NoChain
+  - DeferrableClause
+  - Deferrable
+  - NotDeferrable
 
 MatchRecognizeClauseEntry:
   type: "MatchRecognizeClause"

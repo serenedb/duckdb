@@ -38,7 +38,7 @@ statement ok
 RESET http_client_pool_capacity
 
 query I
-SELECT current_setting('http_client_pool_capacity') >= 1
+SELECT current_setting('http_client_pool_capacity')::BIGINT >= 1
 ----
 true
 

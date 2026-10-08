@@ -43,8 +43,8 @@ INSERT INTO test VALUES (1, 2), (1, 3), (2, 4)
 query I
 SELECT LIST(i) FROM test GROUP BY g ORDER BY g
 ----
-[2.0, 3.0]
-[4.0]
+[2, 3]
+[4]
 
 statement ok
 DROP TABLE test

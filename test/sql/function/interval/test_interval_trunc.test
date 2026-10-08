@@ -39,32 +39,32 @@ INSERT INTO intervals VALUES
 query I
 SELECT i FROM intervals;
 ----
-1247 years 4 months
--1448 years -5 months
-548 years 7 months
--118 years -3 months
-45 years 1 month
--97 years -11 months
-5 years 6 months
--4 years -8 months
-2 years 2 months
--3 years -10 months
-3 years 4 months 5 days
--7 years -3 months 29 days
-4 months 22 days
--3 months -3 days
-5 months 7 days 12:34:56.789012
--3 months -3 days 12:34:56.789012
-1 month 11 days 12:34:56.789012
--1 month -2 days 12:34:56.789012
-1 month 16 days 12:34:56.789012
--1 month -9 days 12:34:56.789012
-1 month 24 days 12:34:56.789012
--1 month -17 days 12:34:56.789012
-1 month 29 days 12:34:56.789012
--1 month -26 days 12:34:56.789012
-1 month 7 days 12:34:56.789012
--1 month -29 days 12:34:56.789012
+1247 years 4 mons
+-1448 years -5 mons
+548 years 7 mons
+-118 years -3 mons
+45 years 1 mon
+-97 years -11 mons
+5 years 6 mons
+-4 years -8 mons
+2 years 2 mons
+-3 years -10 mons
+3 years 4 mons 5 days
+-7 years -3 mons +29 days
+4 mons 22 days
+-3 mons -3 days
+5 mons 7 days 12:34:56.789012
+-3 mons -3 days +12:34:56.789012
+1 mon 11 days 12:34:56.789012
+-1 mons -2 days +12:34:56.789012
+1 mon 16 days 12:34:56.789012
+-1 mons -9 days +12:34:56.789012
+1 mon 24 days 12:34:56.789012
+-1 mons -17 days +12:34:56.789012
+1 mon 29 days 12:34:56.789012
+-1 mons -26 days +12:34:56.789012
+1 mon 7 days 12:34:56.789012
+-1 mons -29 days +12:34:56.789012
 NULL
 
 query I
@@ -200,32 +200,32 @@ foreach datepart week yearweek
 query I
 SELECT DATE_TRUNC('{datepart}', i) FROM intervals
 ----
-1247 years 4 months
--1448 years -5 months
-548 years 7 months
--118 years -3 months
-45 years 1 month
--97 years -11 months
-5 years 6 months
--4 years -8 months
-2 years 2 months
--3 years -10 months
-3 years 4 months
--7 years -3 months 28 days
-4 months 21 days
--3 months
-5 months 7 days
--3 months
-1 month 7 days
--1 month
-1 month 14 days
--1 month -7 days
-1 month 21 days
--1 month -14 days
-1 month 28 days
--1 month -21 days
-1 month 7 days
--1 month -28 days
+1247 years 4 mons
+-1448 years -5 mons
+548 years 7 mons
+-118 years -3 mons
+45 years 1 mon
+-97 years -11 mons
+5 years 6 mons
+-4 years -8 mons
+2 years 2 mons
+-3 years -10 mons
+3 years 4 mons
+-7 years -3 mons +28 days
+4 mons 21 days
+-3 mons
+5 mons 7 days
+-3 mons
+1 mon 7 days
+-1 mons
+1 mon 14 days
+-1 mons -7 days
+1 mon 21 days
+-1 mons -14 days
+1 mon 28 days
+-1 mons -21 days
+1 mon 7 days
+-1 mons -28 days
 NULL
 
 endloop
@@ -235,32 +235,32 @@ foreach datepart dayofmonth dayofweek isodow dayofyear
 query I
 SELECT DATE_TRUNC('{datepart}', i) FROM intervals
 ----
-1247 years 4 months
--1448 years -5 months
-548 years 7 months
--118 years -3 months
-45 years 1 month
--97 years -11 months
-5 years 6 months
--4 years -8 months
-2 years 2 months
--3 years -10 months
-3 years 4 months 5 days
--7 years -3 months 29 days
-4 months 22 days
--3 months -3 days
-5 months 7 days
--3 months -3 days
-1 month 11 days
--1 month -2 days
-1 month 16 days
--1 month -9 days
-1 month 24 days
--1 month -17 days
-1 month 29 days
--1 month -26 days
-1 month 7 days
--1 month -29 days
+1247 years 4 mons
+-1448 years -5 mons
+548 years 7 mons
+-118 years -3 mons
+45 years 1 mon
+-97 years -11 mons
+5 years 6 mons
+-4 years -8 mons
+2 years 2 mons
+-3 years -10 mons
+3 years 4 mons 5 days
+-7 years -3 mons +29 days
+4 mons 22 days
+-3 mons -3 days
+5 mons 7 days
+-3 mons -3 days
+1 mon 11 days
+-1 mons -2 days
+1 mon 16 days
+-1 mons -9 days
+1 mon 24 days
+-1 mons -17 days
+1 mon 29 days
+-1 mons -26 days
+1 mon 7 days
+-1 mons -29 days
 NULL
 
 endloop
@@ -268,63 +268,63 @@ endloop
 query I
 SELECT DATE_TRUNC('hour', i) FROM intervals
 ----
-1247 years 4 months
--1448 years -5 months
-548 years 7 months
--118 years -3 months
-45 years 1 month
--97 years -11 months
-5 years 6 months
--4 years -8 months
-2 years 2 months
--3 years -10 months
-3 years 4 months 5 days
--7 years -3 months 29 days
-4 months 22 days
--3 months -3 days
-5 months 7 days 12:00:00
--3 months -3 days 12:00:00
-1 month 11 days 12:00:00
--1 month -2 days 12:00:00
-1 month 16 days 12:00:00
--1 month -9 days 12:00:00
-1 month 24 days 12:00:00
--1 month -17 days 12:00:00
-1 month 29 days 12:00:00
--1 month -26 days 12:00:00
-1 month 7 days 12:00:00
--1 month -29 days 12:00:00
+1247 years 4 mons
+-1448 years -5 mons
+548 years 7 mons
+-118 years -3 mons
+45 years 1 mon
+-97 years -11 mons
+5 years 6 mons
+-4 years -8 mons
+2 years 2 mons
+-3 years -10 mons
+3 years 4 mons 5 days
+-7 years -3 mons +29 days
+4 mons 22 days
+-3 mons -3 days
+5 mons 7 days 12:00:00
+-3 mons -3 days +12:00:00
+1 mon 11 days 12:00:00
+-1 mons -2 days +12:00:00
+1 mon 16 days 12:00:00
+-1 mons -9 days +12:00:00
+1 mon 24 days 12:00:00
+-1 mons -17 days +12:00:00
+1 mon 29 days 12:00:00
+-1 mons -26 days +12:00:00
+1 mon 7 days 12:00:00
+-1 mons -29 days +12:00:00
 NULL
 
 query I
 SELECT DATE_TRUNC('minute', i) FROM intervals
 ----
-1247 years 4 months
--1448 years -5 months
-548 years 7 months
--118 years -3 months
-45 years 1 month
--97 years -11 months
-5 years 6 months
--4 years -8 months
-2 years 2 months
--3 years -10 months
-3 years 4 months 5 days
--7 years -3 months 29 days
-4 months 22 days
--3 months -3 days
-5 months 7 days 12:34:00
--3 months -3 days 12:34:00
-1 month 11 days 12:34:00
--1 month -2 days 12:34:00
-1 month 16 days 12:34:00
--1 month -9 days 12:34:00
-1 month 24 days 12:34:00
--1 month -17 days 12:34:00
-1 month 29 days 12:34:00
--1 month -26 days 12:34:00
-1 month 7 days 12:34:00
--1 month -29 days 12:34:00
+1247 years 4 mons
+-1448 years -5 mons
+548 years 7 mons
+-118 years -3 mons
+45 years 1 mon
+-97 years -11 mons
+5 years 6 mons
+-4 years -8 mons
+2 years 2 mons
+-3 years -10 mons
+3 years 4 mons 5 days
+-7 years -3 mons +29 days
+4 mons 22 days
+-3 mons -3 days
+5 mons 7 days 12:34:00
+-3 mons -3 days +12:34:00
+1 mon 11 days 12:34:00
+-1 mons -2 days +12:34:00
+1 mon 16 days 12:34:00
+-1 mons -9 days +12:34:00
+1 mon 24 days 12:34:00
+-1 mons -17 days +12:34:00
+1 mon 29 days 12:34:00
+-1 mons -26 days +12:34:00
+1 mon 7 days 12:34:00
+-1 mons -29 days +12:34:00
 NULL
 
 foreach datepart second epoch
@@ -332,32 +332,32 @@ foreach datepart second epoch
 query I
 SELECT DATE_TRUNC('{datepart}', i) FROM intervals
 ----
-1247 years 4 months
--1448 years -5 months
-548 years 7 months
--118 years -3 months
-45 years 1 month
--97 years -11 months
-5 years 6 months
--4 years -8 months
-2 years 2 months
--3 years -10 months
-3 years 4 months 5 days
--7 years -3 months 29 days
-4 months 22 days
--3 months -3 days
-5 months 7 days 12:34:56
--3 months -3 days 12:34:56
-1 month 11 days 12:34:56
--1 month -2 days 12:34:56
-1 month 16 days 12:34:56
--1 month -9 days 12:34:56
-1 month 24 days 12:34:56
--1 month -17 days 12:34:56
-1 month 29 days 12:34:56
--1 month -26 days 12:34:56
-1 month 7 days 12:34:56
--1 month -29 days 12:34:56
+1247 years 4 mons
+-1448 years -5 mons
+548 years 7 mons
+-118 years -3 mons
+45 years 1 mon
+-97 years -11 mons
+5 years 6 mons
+-4 years -8 mons
+2 years 2 mons
+-3 years -10 mons
+3 years 4 mons 5 days
+-7 years -3 mons +29 days
+4 mons 22 days
+-3 mons -3 days
+5 mons 7 days 12:34:56
+-3 mons -3 days +12:34:56
+1 mon 11 days 12:34:56
+-1 mons -2 days +12:34:56
+1 mon 16 days 12:34:56
+-1 mons -9 days +12:34:56
+1 mon 24 days 12:34:56
+-1 mons -17 days +12:34:56
+1 mon 29 days 12:34:56
+-1 mons -26 days +12:34:56
+1 mon 7 days 12:34:56
+-1 mons -29 days +12:34:56
 NULL
 
 endloop
@@ -365,63 +365,63 @@ endloop
 query I
 SELECT DATE_TRUNC('millisecond', i) FROM intervals
 ----
-1247 years 4 months
--1448 years -5 months
-548 years 7 months
--118 years -3 months
-45 years 1 month
--97 years -11 months
-5 years 6 months
--4 years -8 months
-2 years 2 months
--3 years -10 months
-3 years 4 months 5 days
--7 years -3 months 29 days
-4 months 22 days
--3 months -3 days
-5 months 7 days 12:34:56.789
--3 months -3 days 12:34:56.789
-1 month 11 days 12:34:56.789
--1 month -2 days 12:34:56.789
-1 month 16 days 12:34:56.789
--1 month -9 days 12:34:56.789
-1 month 24 days 12:34:56.789
--1 month -17 days 12:34:56.789
-1 month 29 days 12:34:56.789
--1 month -26 days 12:34:56.789
-1 month 7 days 12:34:56.789
--1 month -29 days 12:34:56.789
+1247 years 4 mons
+-1448 years -5 mons
+548 years 7 mons
+-118 years -3 mons
+45 years 1 mon
+-97 years -11 mons
+5 years 6 mons
+-4 years -8 mons
+2 years 2 mons
+-3 years -10 mons
+3 years 4 mons 5 days
+-7 years -3 mons +29 days
+4 mons 22 days
+-3 mons -3 days
+5 mons 7 days 12:34:56.789
+-3 mons -3 days +12:34:56.789
+1 mon 11 days 12:34:56.789
+-1 mons -2 days +12:34:56.789
+1 mon 16 days 12:34:56.789
+-1 mons -9 days +12:34:56.789
+1 mon 24 days 12:34:56.789
+-1 mons -17 days +12:34:56.789
+1 mon 29 days 12:34:56.789
+-1 mons -26 days +12:34:56.789
+1 mon 7 days 12:34:56.789
+-1 mons -29 days +12:34:56.789
 NULL
 
 query I
 SELECT DATE_TRUNC('microsecond', i) FROM intervals
 ----
-1247 years 4 months
--1448 years -5 months
-548 years 7 months
--118 years -3 months
-45 years 1 month
--97 years -11 months
-5 years 6 months
--4 years -8 months
-2 years 2 months
--3 years -10 months
-3 years 4 months 5 days
--7 years -3 months 29 days
-4 months 22 days
--3 months -3 days
-5 months 7 days 12:34:56.789012
--3 months -3 days 12:34:56.789012
-1 month 11 days 12:34:56.789012
--1 month -2 days 12:34:56.789012
-1 month 16 days 12:34:56.789012
--1 month -9 days 12:34:56.789012
-1 month 24 days 12:34:56.789012
--1 month -17 days 12:34:56.789012
-1 month 29 days 12:34:56.789012
--1 month -26 days 12:34:56.789012
-1 month 7 days 12:34:56.789012
--1 month -29 days 12:34:56.789012
+1247 years 4 mons
+-1448 years -5 mons
+548 years 7 mons
+-118 years -3 mons
+45 years 1 mon
+-97 years -11 mons
+5 years 6 mons
+-4 years -8 mons
+2 years 2 mons
+-3 years -10 mons
+3 years 4 mons 5 days
+-7 years -3 mons +29 days
+4 mons 22 days
+-3 mons -3 days
+5 mons 7 days 12:34:56.789012
+-3 mons -3 days +12:34:56.789012
+1 mon 11 days 12:34:56.789012
+-1 mons -2 days +12:34:56.789012
+1 mon 16 days 12:34:56.789012
+-1 mons -9 days +12:34:56.789012
+1 mon 24 days 12:34:56.789012
+-1 mons -17 days +12:34:56.789012
+1 mon 29 days 12:34:56.789012
+-1 mons -26 days +12:34:56.789012
+1 mon 7 days 12:34:56.789012
+-1 mons -29 days +12:34:56.789012
 NULL
 
 # Variable part name
@@ -437,23 +437,23 @@ SELECT DATE_TRUNC(s, i) FROM intervals
 5 years
 -4 years
 2 years
--3 years -9 months
-3 years 4 months
--7 years -3 months
-4 months 21 days
--3 months
-5 months 7 days
--3 months -3 days
-1 month 11 days 12:00:00
--1 month -2 days 12:00:00
-1 month 16 days 12:34:00
--1 month -9 days 12:34:00
-1 month 24 days 12:34:56
--1 month -17 days 12:34:56
-1 month 29 days 12:34:56.789
--1 month -26 days 12:34:56.789
-1 month 7 days 12:34:56.789012
--1 month -29 days 12:34:56.789012
+-3 years -9 mons
+3 years 4 mons
+-7 years -3 mons
+4 mons 21 days
+-3 mons
+5 mons 7 days
+-3 mons -3 days
+1 mon 11 days 12:00:00
+-1 mons -2 days +12:00:00
+1 mon 16 days 12:34:00
+-1 mons -9 days +12:34:00
+1 mon 24 days 12:34:56
+-1 mons -17 days +12:34:56
+1 mon 29 days 12:34:56.789
+-1 mons -26 days +12:34:56.789
+1 mon 7 days 12:34:56.789012
+-1 mons -29 days +12:34:56.789012
 NULL
 
 # NULL part name

@@ -42,7 +42,7 @@ static void AssertMaxFileSize(const string &file_name, idx_t file_size) {
 }
 
 static inline void VERIFY(const string &filename, const string_t &content) {
-	if (Utf8Proc::Analyze(content.GetData(), content.GetSize()) == UnicodeType::INVALID) {
+	if (!Utf8Proc::IsValid(content.GetData(), content.GetSize())) {
 		throw InvalidInputException("read_text: could not read content of file '%s' as valid UTF-8 encoded text. You "
 		                            "may want to use read_blob instead.",
 		                            filename);
@@ -92,6 +92,13 @@ AsyncResult DirectFileReader::Scan(ClientContext &context, GlobalTableFunctionSt
 		// We utilize projection pushdown to avoid potentially expensive fs operations.
 		auto proj_idx = state.column_ids[col_idx];
 		if (proj_idx == COLUMN_IDENTIFIER_ROW_ID) {
+			continue;
+		}
+		if (proj_idx == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+			FlatVector::GetDataMutable<int64_t>(output.data[col_idx])[out_idx] = 0;
+			continue;
+		}
+		if (IsVirtualColumn(proj_idx)) {
 			continue;
 		}
 		try {
@@ -202,6 +209,13 @@ void DirectFileReader::FinishFile(ClientContext &context, GlobalTableFunctionSta
 
 double DirectFileReader::GetProgressInFile(ClientContext &context) {
 	return done.load(std::memory_order_relaxed) ? 100.0 : 0.0;
+}
+
+void DirectFileReader::AddVirtualColumn(column_t virtual_column_id) {
+	if (virtual_column_id != MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+		throw InternalException("read_text/read_blob only supports file_row_number as a virtual column (got id %llu)",
+		                        static_cast<uint64_t>(virtual_column_id));
+	}
 }
 
 } // namespace duckdb

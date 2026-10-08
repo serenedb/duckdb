@@ -4,6 +4,12 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/parser/parsed_data/alter_sequence_info.hpp"
+#include "duckdb/parser/query_node/delete_query_node.hpp"
+#include "duckdb/parser/statement/alter_statement.hpp"
+#include "duckdb/parser/statement/delete_statement.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
 #include "duckdb/parser/parsed_data/bound_pragma_info.hpp"
 #include "duckdb/function/function.hpp"
@@ -86,7 +92,7 @@ PreprocessingTransactionHandling GetTransactionHandling(vector<unique_ptr<SQLSta
 }
 
 void UnpackMultiStatement(MultiStatement &multi_statement, const CurrentTransactionState current_transaction_state,
-                          vector<unique_ptr<SQLStatement>> &new_statements) {
+                          vector<unique_ptr<SQLStatement>> &new_statements, bool wrap_multi) {
 #ifdef DEBUG // MultiStatement should not contain transaction statements
 	for (auto &sub_statement : multi_statement.statements) {
 		D_ASSERT(sub_statement->type != StatementType::TRANSACTION_STATEMENT);
@@ -99,8 +105,87 @@ void UnpackMultiStatement(MultiStatement &multi_statement, const CurrentTransact
 			has_select = true;
 		}
 	}
-	auto handling = GetTransactionHandling(multi_statement.statements, current_transaction_state, has_select);
+	// !wrap_multi: the caller owns the transaction (pg-wire extended Parse), so emit the bare body.
+	auto handling =
+	    GetTransactionHandling(multi_statement.statements, current_transaction_state, has_select || !wrap_multi);
 	AddStatements(multi_statement.statements, handling, new_statements);
+}
+
+static unique_ptr<TableRef> TruncateTargetRef(ClientContext &context, TableCatalogEntry &table) {
+	auto ref = make_uniq<BaseTableRef>();
+	auto &catalog = table.ParentCatalog();
+	ref->SetQualifiedName(QualifiedName::FromCatalogSchema(
+	    catalog.GetName(), table.ParentSchemaPath(catalog.GetCatalogTransaction(context)), table.name));
+	return std::move(ref);
+}
+
+void StatementPreprocessor::ExpandTruncate(MultiStatement &multi_statement) const {
+	bool cascade = false;
+	bool restart_identity = false;
+	for (auto &statement : multi_statement.statements) {
+		if (statement->type != StatementType::DELETE_STATEMENT) {
+			return;
+		}
+		auto &node = *statement->Cast<DeleteStatement>().node;
+		if (!node.is_truncate) {
+			return;
+		}
+		cascade = cascade || node.truncate_cascade;
+		restart_identity = restart_identity || node.truncate_restart_identity;
+	}
+	if (!cascade && !restart_identity) {
+		return;
+	}
+	vector<reference<TableCatalogEntry>> group;
+	auto add = [&](TableCatalogEntry &table) {
+		for (auto &member : group) {
+			if (member.get().oid == table.oid) {
+				return;
+			}
+		}
+		group.push_back(table);
+	};
+	for (auto &statement : multi_statement.statements) {
+		auto &node = *statement->Cast<DeleteStatement>().node;
+		add(Catalog::GetEntry<TableCatalogEntry>(context, node.table->Cast<BaseTableRef>().GetQualifiedName()));
+	}
+	const auto named = group.size();
+	for (idx_t i = 0; cascade && i < group.size(); i++) {
+		for (auto &referencing : Binder::TruncateReferencingTables(context, group[i].get())) {
+			add(referencing.get());
+		}
+	}
+	auto &first = multi_statement.statements[0]->Cast<DeleteStatement>();
+	const auto query = first.query;
+	for (idx_t i = named; i < group.size(); i++) {
+		auto statement = make_uniq<DeleteStatement>();
+		statement->node = unique_ptr_cast<QueryNode, DeleteQueryNode>(first.node->Copy());
+		statement->node->table = TruncateTargetRef(context, group[i].get());
+		statement->query = query;
+		multi_statement.statements.push_back(std::move(statement));
+	}
+	for (auto &statement : multi_statement.statements) {
+		auto &node = *statement->Cast<DeleteStatement>().node;
+		node.truncate_group.clear();
+		for (auto &member : group) {
+			node.truncate_group.push_back(TruncateTargetRef(context, member.get()));
+		}
+	}
+	if (!restart_identity) {
+		return;
+	}
+	vector<unique_ptr<SQLStatement>> restarts;
+	for (auto &member : group) {
+		for (auto &sequence : Binder::TruncateIdentitySequences(context, member.get())) {
+			auto statement = make_uniq<AlterStatement>();
+			statement->info = make_uniq<RestartSequenceInfo>(
+			    AlterEntryData(std::move(sequence), OnEntryNotFound::THROW_EXCEPTION), optional<int64_t>());
+			statement->query = query;
+			restarts.push_back(std::move(statement));
+		}
+	}
+	multi_statement.statements.insert(multi_statement.statements.begin(), std::make_move_iterator(restarts.begin()),
+	                                  std::make_move_iterator(restarts.end()));
 }
 
 vector<unique_ptr<SQLStatement>> StatementPreprocessor::TryReparsePragma(unique_ptr<SQLStatement> statement) const {
@@ -123,7 +208,7 @@ vector<unique_ptr<SQLStatement>> StatementPreprocessor::TryReparsePragma(unique_
 }
 
 void StatementPreprocessor::Preprocess(ClientContextLock &lock, vector<unique_ptr<SQLStatement>> &statements,
-                                       CurrentTransactionState transaction_context_state) {
+                                       CurrentTransactionState transaction_context_state, bool wrap_multi) {
 	// Quick check: do we need preprocessing at all?
 	bool needs_preprocessing = false;
 	for (auto &stmt : statements) {
@@ -136,12 +221,13 @@ void StatementPreprocessor::Preprocess(ClientContextLock &lock, vector<unique_pt
 		return;
 	}
 
-	context.RunFunctionInTransactionInternal(lock,
-	                                         [&] { PreprocessInternal(lock, statements, transaction_context_state); });
+	context.RunFunctionInTransactionInternal(
+	    lock, [&] { PreprocessInternal(lock, statements, transaction_context_state, wrap_multi); });
 }
 
 void StatementPreprocessor::PreprocessInternal(ClientContextLock &lock, vector<unique_ptr<SQLStatement>> &statements,
-                                               const CurrentTransactionState transaction_context_state) {
+                                               const CurrentTransactionState transaction_context_state,
+                                               bool wrap_multi) {
 	CurrentTransactionState chained_transaction_state = NOT_IN_ACTIVE_TRANSACTION;
 	vector<unique_ptr<SQLStatement>> new_statements;
 	for (idx_t i = 0; i < statements.size(); i++) {
@@ -160,7 +246,8 @@ void StatementPreprocessor::PreprocessInternal(ClientContextLock &lock, vector<u
 		}
 		case StatementType::MULTI_STATEMENT: {
 			auto &multi_statement = statements[i]->Cast<MultiStatement>();
-			UnpackMultiStatement(multi_statement, full_transaction_state, new_statements);
+			ExpandTruncate(multi_statement);
+			UnpackMultiStatement(multi_statement, full_transaction_state, new_statements, wrap_multi);
 			break;
 		}
 		case StatementType::TRANSACTION_STATEMENT: {

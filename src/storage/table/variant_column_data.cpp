@@ -201,6 +201,16 @@ void VariantColumnData::InitializeScan(ColumnScanState &state) {
 	}
 }
 
+void VariantColumnData::ReinitializeScan(ColumnScanState &state) {
+	// Same row group => same variant shape, so the child scan states from InitializeScan are still valid --
+	// keep them (skip CreateScanStates) and just warm-keep each sub-column.
+	state.current = nullptr;
+	validity->ReinitializeScan(state.child_states[0]);
+	for (idx_t i = 0; i < sub_columns.size(); i++) {
+		sub_columns[i]->ReinitializeScan(state.child_states[i + 1]);
+	}
+}
+
 void VariantColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx) {
 	CreateScanStates(state);
 	state.current = nullptr;
@@ -863,7 +873,8 @@ void VariantColumnData::GetColumnSegmentInfo(const QueryContext &context, idx_t 
 }
 
 void VariantColumnData::Verify(RowGroup &parent) {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	ColumnData::Verify(parent);
 	validity->Verify(parent);
 	for (idx_t i = 0; i < sub_columns.size(); i++) {

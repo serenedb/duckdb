@@ -14,13 +14,15 @@
 #include "duckdb/common/enums/on_create_conflict.hpp"
 #include "duckdb/common/enums/access_mode.hpp"
 #include "duckdb/common/reference_map.hpp"
+#include "duckdb/main/client_context.hpp"
 
 namespace duckdb {
 struct AttachInfo;
 struct AttachOptions;
+class AttachedDatabase;
 class DatabaseManager;
 
-enum class InsertDatabasePathResult { SUCCESS, ALREADY_EXISTS };
+enum class InsertDatabasePathResult { SUCCESS, ALREADY_EXISTS, REUSE_EXISTING, CLOSING };
 
 struct DatabasePathInfo {
 	DatabasePathInfo(DatabaseManager &manager, const Identifier &name_p, AccessMode access_mode);
@@ -29,6 +31,8 @@ struct DatabasePathInfo {
 	AccessMode access_mode;
 	reference_set_t<DatabaseManager> attached_databases;
 	idx_t reference_count = 1;
+	weak_ptr<AttachedDatabase> database;
+	bool reuse_claimed = false;
 };
 
 //! The DatabaseFilePathManager is used to ensure we only ever open a single database file once
@@ -37,10 +41,17 @@ public:
 	idx_t ApproxDatabaseCount() const;
 	InsertDatabasePathResult InsertDatabasePath(DatabaseManager &manager, const string &path, const Identifier &name,
 	                                            OnCreateConflict on_conflict, AttachOptions &options);
+	//! Record which database holds a path open, so a re-attach can hand back that same database
+	void SetDatabase(const string &path, shared_ptr<AttachedDatabase> database);
+	//! Keep the reuse claim that InsertDatabasePath made, under the name the database is re-attached as
+	void CommitReuse(DatabaseManager &manager, const string &path, const Identifier &name);
+	//! Give up that claim, when the re-attach does not go through
+	void ReleaseReuse(const string &path);
 	//! Erase a database path - indicating we are done with using it
 	void EraseDatabasePath(const string &path);
 	//! Called when a database is detached, but before it is fully finished being used
 	void DetachDatabase(DatabaseManager &manager, const string &path);
+	void WaitForRelease(const string &path, ClientContext &context);
 
 private:
 	//! The lock to add entries to the db_paths map

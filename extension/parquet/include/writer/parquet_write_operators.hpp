@@ -11,7 +11,7 @@
 #include "writer/parquet_write_stats.hpp"
 #include "parquet_interval.hpp"
 #include "parquet_timestamp.hpp"
-#include "zstd/common/xxhash.hpp"
+#include "common/xxhash.h"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/uhugeint.hpp"
 #include "duckdb/common/types/uuid.hpp"

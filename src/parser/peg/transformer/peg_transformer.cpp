@@ -1,18 +1,149 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 
+#include "duckdb/common/exception/parser_exception.hpp"
+#include "duckdb/common/limits.hpp"
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
+#include "utf8proc_wrapper.hpp"
 
 namespace duckdb {
+
+std::string_view ParseResult::Name() const {
+	if (rule) {
+		return rule->name;
+	}
+	switch (type) {
+	case ParseResultType::CHOICE:
+		return static_cast<const ChoiceParseResult &>(*this).GetResult().Name();
+	case ParseResultType::OPTIONAL: {
+		auto &optional = static_cast<const OptionalParseResult &>(*this);
+		return optional.HasResult() ? optional.GetResult().Name() : std::string_view();
+	}
+	default:
+		return std::string_view();
+	}
+}
+
+void ParseResult::ThrowCastError(ParseResultType target) const {
+	throw InternalException("Failed to cast parse result of type %s to type %s for rule %s",
+	                        ParseResultToString(target), ParseResultToString(type), Name());
+}
+
+void ParseResult::ThrowChildIndexError() {
+	throw InternalException("Child index out of bounds");
+}
+
+unique_ptr<ParsedExpression> StringLiteralParseResult::ToExpression() {
+	switch (string_type) {
+	case SpecialStringCharacter::STANDARD:
+		return ConstantExpression::String(string(result));
+	case SpecialStringCharacter::NATIONAL_STRING:
+		return make_uniq<CastExpression>(LogicalType::VARCHAR, ConstantExpression::String(string(result)));
+	case SpecialStringCharacter::HEXADECIMAL_STRING:
+		// result contains raw hex digits (e.g. "FF" for X'FF')
+		return ConstantExpression::Hex(string(result));
+	case SpecialStringCharacter::BIT_STRING:
+		return ConstantExpression::Bit(string(result));
+	case SpecialStringCharacter::ESCAPE_STRING:
+		string escaped_result;
+		escaped_result.reserve(result.size());
+
+		for (size_t i = 0; i < result.size(); ++i) {
+			if (result[i] == '\\' && i + 1 < result.size()) {
+				i++;
+				switch (result[i]) {
+				case 'b':
+					escaped_result += '\b';
+					break;
+				case 'f':
+					escaped_result += '\f';
+					break;
+				case '0':
+				case '1':
+				case '2':
+				case '3':
+				case '4':
+				case '5':
+				case '6':
+				case '7': {
+					size_t oct_start = i;
+					size_t oct_end = oct_start + 1;
+					while (oct_end < result.size() && oct_end - oct_start < 3 && result[oct_end] >= '0' &&
+					       result[oct_end] <= '7') {
+						oct_end++;
+					}
+					string oct_str(result.substr(oct_start, oct_end - oct_start));
+					escaped_result += static_cast<char>(strtoul(oct_str.c_str(), nullptr, 8));
+					i = oct_end - 1;
+					break;
+				}
+				case 'x': {
+					size_t hex_start = i + 1;
+					size_t hex_end = hex_start;
+					while (hex_end < result.size() && hex_end - hex_start < 2 &&
+					       StringUtil::CharacterIsHex(result[hex_end])) {
+						hex_end++;
+					}
+					if (hex_end > hex_start) {
+						string hex_str(result.substr(hex_start, hex_end - hex_start));
+						escaped_result += static_cast<char>(strtoul(hex_str.c_str(), nullptr, 16));
+						i = hex_end - 1;
+					} else {
+						escaped_result += 'x';
+					}
+					break;
+				}
+				case 'n':
+					escaped_result += '\n';
+					break;
+				case 't':
+					escaped_result += '\t';
+					break;
+				case 'r':
+					escaped_result += '\r';
+					break;
+				case '\\':
+					escaped_result += '\\';
+					break;
+				case '\'':
+					escaped_result += '\'';
+					break;
+				default:
+					escaped_result += result[i];
+					break;
+				}
+			} else {
+				escaped_result += result[i];
+			}
+		}
+		if (escaped_result.find('\0') != string::npos) {
+			throw ParserException("Null character not permitted in escape string literal");
+		}
+		UnicodeInvalidReason reason;
+		size_t pos;
+		auto utf_validity = Utf8Proc::Analyze(escaped_result.c_str(), escaped_result.size(), &reason, &pos);
+		if (utf_validity == UnicodeType::INVALID) {
+			const char *reason_str =
+			    reason == UnicodeInvalidReason::BYTE_MISMATCH ? "byte mismatch" : "invalid unicode codepoint";
+			throw ParserException("Invalid UTF-8 in escape string literal at byte offset %d: %s", pos, reason_str);
+		}
+		return ConstantExpression::String(escaped_result);
+	}
+	return ConstantExpression::String(string(result));
+}
+
+void ParseResult::ThrowEmptyOptionalError() {
+	throw InternalException("OptionalParseResult is null");
+}
 
 TransformStep TransformStep::Child(TransformInput input) {
 	return TransformStep(input, nullptr);
 }
 
-TransformStep TransformStep::Complete(unique_ptr<TransformResultValue> result) {
+TransformStep TransformStep::Complete(arena_ptr<TransformResultValue> result) {
 	D_ASSERT(result);
 	return TransformStep(nullopt, std::move(result));
 }
@@ -21,7 +152,7 @@ optional<TransformInput> TransformStep::GetChild() {
 	return child;
 }
 
-unique_ptr<TransformResultValue> TransformStep::TakeResult() {
+arena_ptr<TransformResultValue> TransformStep::TakeResult() {
 	D_ASSERT(!child);
 	D_ASSERT(result);
 	return std::move(result);
@@ -36,11 +167,45 @@ GeneratedTransformProcess::GeneratedTransformProcess(PEGTransformer &transformer
 	info.initialize(transformer, *this);
 }
 
-void GeneratedTransformProcess::ReserveChildSlots(idx_t count) {
-	child_results.resize(count);
+GeneratedTransformProcess::~GeneratedTransformProcess() {
+	for (idx_t i = 0; i < child_results.count; i++) {
+		std::destroy_at(child_results.slots + i);
+	}
 }
 
-void GeneratedTransformProcess::SetChildResult(idx_t slot, unique_ptr<TransformResultValue> result) {
+void GeneratedTransformProcess::ResizeChildSlots(idx_t count) {
+	auto data =
+	    transformer.allocator.AllocateAligned(count * (sizeof(arena_ptr<TransformResultValue>) + sizeof(PendingChild)));
+	auto slots = reinterpret_cast<arena_ptr<TransformResultValue> *>(data);
+	auto pending = reinterpret_cast<PendingChild *>(data + count * sizeof(arena_ptr<TransformResultValue>));
+	for (idx_t i = 0; i < count; i++) {
+		if (i < child_results.count) {
+			new (slots + i) arena_ptr<TransformResultValue>(std::move(child_results.slots[i]));
+		} else {
+			new (slots + i) arena_ptr<TransformResultValue>();
+		}
+	}
+	for (idx_t i = 0; i < child_results.count; i++) {
+		std::destroy_at(child_results.slots + i);
+	}
+	for (idx_t i = 0; i < pending_count; i++) {
+		new (pending + i) PendingChild(pending_children[i]);
+	}
+	child_results.slots = slots;
+	child_results.count = count;
+	pending_children = pending;
+	pending_capacity = count;
+}
+
+void GeneratedTransformProcess::ThrowMissingResult(idx_t slot) const {
+	throw InternalException("Missing transformer result for slot %llu in rule '%s'", slot, info.name);
+}
+
+void GeneratedTransformProcess::ThrowUnexpectedResult(idx_t slot) const {
+	throw InternalException("Unexpected transformer result type for slot %llu in rule '%s'", slot, info.name);
+}
+
+void GeneratedTransformProcess::SetChildResult(idx_t slot, arena_ptr<TransformResultValue> result) {
 	if (slot >= child_results.size()) {
 		throw InternalException("Invalid transformer result slot %llu for rule '%s'", slot, info.name);
 	}
@@ -54,25 +219,26 @@ void GeneratedTransformProcess::SetChildResult(idx_t slot, unique_ptr<TransformR
 }
 
 void GeneratedTransformProcess::PushChild(TransformInput input, idx_t slot) {
-	if (slot >= child_results.size()) {
+	if (slot >= child_results.size() || pending_count >= pending_capacity) {
 		throw InternalException("Invalid transformer child slot %llu for rule '%s'", slot, info.name);
 	}
-	pending_children.push_back({input, slot});
+	new (pending_children + pending_count++) PendingChild {input.rule, slot, input.parse_result};
 }
 
 TransformStep GeneratedTransformProcess::NextStep() {
-	if (!pending_children.empty()) {
-		auto child = pending_children.back();
-		pending_children.pop_back();
+	if (pending_count > 0) {
+		auto &child = pending_children[--pending_count];
 		child_result_slot = child.slot;
-		return TransformStep::Child(child.input);
+		TransformInput input(child.parse_result.get());
+		input.rule = child.rule;
+		return TransformStep::Child(input);
 	}
 	auto result = info.finalize(transformer, *this);
 	if (result) {
 		completed = true;
 		return TransformStep::Complete(std::move(result));
 	}
-	if (pending_children.empty()) {
+	if (pending_count == 0) {
 		throw InternalException("Transformer process for rule '%s' returned nullptr without requesting a child",
 		                        info.name);
 	}
@@ -84,30 +250,30 @@ FinalizeTransformProcess::FinalizeTransformProcess(PEGTransformer &transformer_p
     : transformer(transformer_p), parse_result(parse_result_p), finalize(std::move(finalize_p)) {
 }
 
-TransformStep FinalizeTransformProcess::Resume(unique_ptr<TransformResultValue> child_result) {
+TransformStep FinalizeTransformProcess::Resume(arena_ptr<TransformResultValue> child_result) {
 	D_ASSERT(!completed);
 	D_ASSERT(!child_result);
 	auto result = finalize(transformer, parse_result);
 	if (!result) {
-		throw InternalException("Transformer for rule '%s' returned a nullptr", parse_result.name);
+		throw InternalException("Transformer for rule '%s' returned a nullptr", parse_result.Name());
 	}
 	completed = true;
 	return TransformStep::Complete(std::move(result));
 }
 
-unique_ptr<TransformProcess> CompiledGrammarRule::StartTransform(PEGTransformer &transformer,
-                                                                 ParseResult &parse_result) const {
+arena_ptr<TransformProcess> CompiledGrammarRule::StartTransform(PEGTransformer &transformer,
+                                                                ParseResult &parse_result) const {
 	if (!transform_process) {
-		throw NotImplementedException("No transform process found for rule '%s'", parse_result.name);
+		throw NotImplementedException("No transform process found for rule '%s'", parse_result.Name());
 	}
 	auto result = transform_process(transformer, parse_result);
 	if (!result) {
-		throw InternalException("Transform process factory for rule '%s' returned a nullptr", parse_result.name);
+		throw InternalException("Transform process factory for rule '%s' returned a nullptr", parse_result.Name());
 	}
 	return result;
 }
 
-TransformStep GeneratedTransformProcess::Resume(unique_ptr<TransformResultValue> child_result) {
+TransformStep GeneratedTransformProcess::Resume(arena_ptr<TransformResultValue> child_result) {
 	D_ASSERT(!completed);
 	D_ASSERT(child_result_slot.IsValid() == bool(child_result));
 	if (child_result) {
@@ -121,21 +287,23 @@ TransformStackFrame::TransformStackFrame(TransformInput input)
     : rule(input.GetRule()), parse_result(input.parse_result) {
 }
 
-TransformStack::TransformStack(PEGTransformer &transformer_p) : transformer(transformer_p) {
+TransformStack::TransformStack(PEGTransformer &transformer_p)
+    : transformer(transformer_p), generated_ops(PEGTransformerFactory::GeneratedTransformFrameOps()) {
 }
 
 void TransformStack::PushFrame(TransformInput input) {
-	frames.emplace(input);
+	frames.emplace_back(input);
 }
 
 void TransformStack::InitializeFrame(TransformStackFrame &frame) {
 	if (!frame.rule) {
-		throw InternalException("No registered data exists for rule '%s'", frame.parse_result.name);
+		throw InternalException("No registered data exists for rule '%s'", frame.parse_result.Name());
 	}
 	frame.process = frame.rule->StartTransform(transformer, frame.parse_result);
 }
 
-unique_ptr<TransformResultValue> TransformStack::ExecuteFrame(TransformStackFrame &frame) {
+arena_ptr<TransformResultValue> TransformStack::ExecuteFrame(TransformStackFrame &frame) {
+	transformer.running_frame = frame;
 	if (!frame.process) {
 		InitializeFrame(frame);
 	}
@@ -149,28 +317,111 @@ unique_ptr<TransformResultValue> TransformStack::ExecuteFrame(TransformStackFram
 	return nullptr;
 }
 
-unique_ptr<TransformResultValue> TransformStack::Execute(TransformInput input) {
+arena_ptr<TransformResultValue>
+TransformStack::FinishFrame(TransformStackFrame &frame, arena_ptr<TransformResultValue> result, idx_t &result_height) {
+	result_height = frame.height + 1;
+	if (result_height >= transformer.max_height) {
+		ParserException::ThrowMaxExpressionDepth(transformer.options.max_expression_depth);
+	}
+#ifdef DEBUG
+	transformer.VerifyResultHeight(frame.parse_result, *result, result_height);
+#endif
+	transformer.SetResultLocation(frame.parse_result, *result);
+	return result;
+}
+
+template <class PROCESS>
+arena_ptr<TransformResultValue> TransformStack::RunProcess(PROCESS &process, TransformStackFrame &frame, idx_t depth) {
+	arena_ptr<TransformResultValue> child_result;
+	while (true) {
+		transformer.running_frame = frame;
+		auto step = process.Resume(std::move(child_result));
+		auto child = step.GetChild();
+		if (!child) {
+			return step.TakeResult();
+		}
+		idx_t child_height;
+		child_result = ExecuteRecursive(*child, depth + 1, child_height);
+		frame.height = MaxValue(frame.height, child_height);
+	}
+}
+
+arena_ptr<TransformResultValue> TransformStack::RunProcess(GeneratedTransformProcess &process,
+                                                           TransformStackFrame &frame, idx_t depth) {
+	while (true) {
+		while (process.HasPendingChild()) {
+			idx_t slot;
+			auto child = process.PopPendingChild(slot);
+			idx_t child_height;
+			auto child_result = ExecuteRecursive(child, depth + 1, child_height);
+			frame.height = MaxValue(frame.height, child_height);
+			process.SetChildResult(slot, std::move(child_result));
+		}
+		transformer.running_frame = frame;
+		auto result = process.Finalize();
+		if (result) {
+			return result;
+		}
+		if (!process.HasPendingChild()) {
+			throw InternalException("Transformer process for rule '%s' returned nullptr without requesting a child",
+			                        process.info.name);
+		}
+	}
+}
+
+arena_ptr<TransformResultValue> TransformStack::ExecuteRecursive(TransformInput input, idx_t depth,
+                                                                 idx_t &result_height) {
+	if (depth >= MAX_RECURSION_DEPTH) {
+		return ExecuteFrames(input, result_height);
+	}
+	TransformStackFrame frame(input);
+	if (!frame.rule) {
+		throw InternalException("No registered data exists for rule '%s'", frame.parse_result.Name());
+	}
+	transformer.running_frame = frame;
+	arena_ptr<TransformResultValue> result;
+	auto generated_transform = frame.rule->generated_transform;
+	if (generated_transform.IsValid()) {
+		GeneratedTransformProcess process(transformer, TransformInput {frame.parse_result},
+		                                  *generated_ops[generated_transform.GetIndex()].second);
+		result = RunProcess(process, frame, depth);
+	} else {
+		auto process = frame.rule->StartTransform(transformer, frame.parse_result);
+		result = RunProcess(*process, frame, depth);
+	}
+	return FinishFrame(frame, std::move(result), result_height);
+}
+
+arena_ptr<TransformResultValue> TransformStack::ExecuteFrames(TransformInput input, idx_t &result_height) {
 	D_ASSERT(frames.empty());
-	if (!input.GetRule()) {
-		throw InternalException("No registered data exists for rule '%s'", input.parse_result.name);
+	if (frames.capacity() == 0) {
+		frames.reserve(INITIAL_FRAME_CAPACITY);
 	}
 	PushFrame(input);
 	while (!frames.empty()) {
-		auto &frame = frames.top();
+		auto &frame = frames.back();
 		auto result = ExecuteFrame(frame);
 		if (!result) {
 			continue;
 		}
-		transformer.SetResultLocation(frame.parse_result, *result);
-		frames.pop();
+		idx_t frame_height;
+		result = FinishFrame(frame, std::move(result), frame_height);
+		frames.pop_back();
 		if (frames.empty()) {
+			result_height = frame_height;
 			return result;
 		}
-		auto &parent = frames.top();
+		auto &parent = frames.back();
 		D_ASSERT(!parent.child_result);
 		parent.child_result = std::move(result);
+		parent.height = MaxValue(parent.height, frame_height);
 	}
 	throw InternalException("Transformer stack completed without a result");
+}
+
+arena_ptr<TransformResultValue> TransformStack::Execute(TransformInput input) {
+	D_ASSERT(frames.empty());
+	return ExecuteRecursive(input, 0, height);
 }
 
 #ifdef DEBUG
@@ -181,24 +432,86 @@ string TransformStack::FormatStack() const {
 			result << "\n";
 		}
 		auto &parse_result = frames[i].parse_result;
-		result << "#" << i << " " << parse_result.name;
-		if (parse_result.offset.IsValid()) {
-			result << " offset=" << parse_result.offset.GetIndex();
+		result << "#" << i << " " << parse_result.Name();
+		if (parse_result.location.IsValid()) {
+			result << " offset=" << parse_result.location.Start();
 		}
 	}
 	return result.str();
 }
 #endif
 
-unique_ptr<TransformResultValue> PEGTransformer::TransformInternal(ParseResult &parse_result) {
+arena_ptr<TransformResultValue> PEGTransformer::TransformInternal(ParseResult &parse_result) {
 	auto rule = parse_result.GetRule();
 	if (!rule) {
-		throw InternalException("No registered data exists for rule '%s'", parse_result.name);
+		throw InternalException("No registered data exists for rule '%s'", parse_result.Name());
 	}
 	TransformInput input {*rule, parse_result};
+	auto caller = running_frame;
 	TransformStack stack(*this);
-	return stack.Execute(input);
+	auto result = stack.Execute(input);
+	running_frame = caller;
+	if (caller) {
+		caller->height = MaxValue(caller->height, stack.Height());
+	} else {
+		statement_height = MaxValue(statement_height, stack.Height());
+	}
+	return result;
 }
+
+PEGTransformer::PEGTransformer(ArenaAllocator &allocator, TokenIterator &token_iterator, ParserOptions &options_p,
+                               const CompiledGrammar &grammar_p)
+    : allocator(allocator), token_iterator(token_iterator), type_depth_check {options_p.max_expression_depth, {}},
+      options(options_p), grammar(grammar_p),
+      max_height(options_p.max_expression_depth > NumericLimits<idx_t>::Maximum() / HEIGHT_PER_EXPRESSION_LEVEL
+                     ? NumericLimits<idx_t>::Maximum()
+                     : options_p.max_expression_depth * HEIGHT_PER_EXPRESSION_LEVEL) {
+}
+
+void PEGTransformer::AddDepth(idx_t levels) {
+	if (levels >= options.max_expression_depth) {
+		ParserException::ThrowMaxExpressionDepth(options.max_expression_depth);
+	}
+	if (!running_frame) {
+		return;
+	}
+	running_frame->height += levels;
+	if (running_frame->height >= max_height) {
+		ParserException::ThrowMaxExpressionDepth(options.max_expression_depth);
+	}
+}
+
+bool PEGTransformer::MayExceedDepth() const {
+	return !running_frame || running_frame->height > options.max_expression_depth;
+}
+
+#ifdef DEBUG
+void PEGTransformer::VerifyResultHeight(const ParseResult &parse_result, TransformResultValue &result, idx_t height) {
+	ExpressionDepthCheck measure {NumericLimits<idx_t>::Maximum(), {}};
+	auto verify = [&](ParsedExpression *expr) {
+		if (expr) {
+			measure.Verify(*expr);
+		}
+	};
+	if (auto expr = TryGetTransformResult<unique_ptr<ParsedExpression>>(result)) {
+		verify(expr->get());
+	} else if (auto window = TryGetTransformResult<unique_ptr<WindowExpression>>(result)) {
+		verify(window->get());
+	} else if (auto list = TryGetTransformResult<vector<unique_ptr<ParsedExpression>>>(result)) {
+		for (auto &entry : *list) {
+			verify(entry.get());
+		}
+	} else if (auto named = TryGetTransformResult<pair<Identifier, unique_ptr<ParsedExpression>>>(result)) {
+		verify(named->second.get());
+	} else if (auto named_string = TryGetTransformResult<pair<string, unique_ptr<ParsedExpression>>>(result)) {
+		verify(named_string->second.get());
+	}
+	if (measure.deepest > height) {
+		throw InternalException("Rule %s built an expression %llu levels deep at height %llu", parse_result.Name(),
+		                        measure.deepest, height);
+	}
+}
+#endif
 
 const CompiledGrammarRule &PEGTransformer::GetRule(const string &rule_name) const {
 	auto rule = grammar.GetRule(rule_name);
@@ -209,7 +522,7 @@ const CompiledGrammarRule &PEGTransformer::GetRule(const string &rule_name) cons
 }
 
 void PEGTransformer::SetResultLocation(ParseResult &parse_result, TransformResultValue &result) {
-	if (!parse_result.offset.IsValid()) {
+	if (!parse_result.location.IsValid()) {
 		return;
 	}
 	auto expression_result = TryGetTransformResult<unique_ptr<ParsedExpression>>(result);
@@ -368,6 +681,19 @@ bool PEGTransformer::IsWindowFrameDefault(WindowBoundary start, WindowBoundary e
 	return start_is_default && end_is_default;
 }
 
+void PEGTransformer::RegisterWindowClause(const Identifier &window_name, const WindowExpression &window) {
+	if (window_clauses.empty()) {
+		throw InternalException("WINDOW clause registered outside of a SELECT");
+	}
+	auto &current_windows = window_clauses.back();
+	if (current_windows.find(window_name) != current_windows.end()) {
+		throw ParserException("window %s is already defined", window_name);
+	}
+	D_ASSERT(running_frame);
+	current_windows[window_name] = {unique_ptr_cast<ParsedExpression, WindowExpression>(window.Copy()),
+	                                running_frame->height};
+}
+
 unique_ptr<WindowExpression> PEGTransformer::GetWindowClause(const Identifier &window_name) {
 	if (window_clauses.empty()) {
 		throw ParserException("window %s does not exist", window_name);
@@ -377,7 +703,10 @@ unique_ptr<WindowExpression> PEGTransformer::GetWindowClause(const Identifier &w
 	if (it == current_windows.end()) {
 		throw ParserException("window %s does not exist", window_name);
 	}
-	return unique_ptr_cast<ParsedExpression, WindowExpression>(it->second->Copy());
+	if (running_frame) {
+		running_frame->height = MaxValue(running_frame->height, it->second.height);
+	}
+	return unique_ptr_cast<ParsedExpression, WindowExpression>(it->second.window->Copy());
 }
 
 void PEGTransformer::SetQueryLocation(ParsedExpression &expr, QueryLocation query_location) {

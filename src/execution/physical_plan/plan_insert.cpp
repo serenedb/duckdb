@@ -58,8 +58,7 @@ bool PhysicalPlanGenerator::PreserveInsertionOrder(PhysicalOperator &plan) {
 }
 
 bool PhysicalPlanGenerator::UseBatchIndex(ClientContext &context, PhysicalOperator &plan) {
-	auto &scheduler = TaskScheduler::GetScheduler(context);
-	if (scheduler.NumberOfThreads() == 1) {
+	if (TaskScheduler::QueryThreads(context) == 1) {
 		// batch index usage only makes sense if we are using multiple threads
 		return false;
 	}
@@ -103,7 +102,7 @@ PhysicalOperator &DuckCatalog::PlanInsert(ClientContext &context, PhysicalPlanGe
 	D_ASSERT(plan);
 	bool parallel_streaming_insert = !PhysicalPlanGenerator::PreserveInsertionOrder(context, *plan);
 	bool use_batch_index = PhysicalPlanGenerator::UseBatchIndex(context, *plan);
-	auto num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+	auto num_threads = TaskScheduler::QueryThreads(context);
 	if (op.return_chunk) {
 		// not supported for RETURNING (yet?)
 		parallel_streaming_insert = false;
@@ -122,15 +121,16 @@ PhysicalOperator &DuckCatalog::PlanInsert(ClientContext &context, PhysicalPlanGe
 		//! Deprecated: The column_index_map is only populated by older versions.
 		plan = planner.ResolveDefaultsProjection(op, *plan);
 	}
+	auto &storage_table = op.table.GetStorageTableEntry(context);
 	if (use_batch_index && !parallel_streaming_insert) {
-		auto &insert = planner.Make<PhysicalBatchInsert>(op.types, op.table.Cast<DuckTableEntry>(),
-		                                                 std::move(op.bound_constraints), op.estimated_cardinality);
+		auto &insert = planner.Make<PhysicalBatchInsert>(op.types, storage_table, std::move(op.bound_constraints),
+		                                                 op.estimated_cardinality);
 		insert.children.push_back(*plan);
 		return insert;
 	}
 
 	auto &insert = planner.Make<PhysicalInsert>(
-	    op.types, op.table.Cast<DuckTableEntry>(), std::move(op.bound_constraints), std::move(op.expressions),
+	    op.types, storage_table, std::move(op.bound_constraints), std::move(op.expressions),
 	    std::move(op.on_conflict_info.set_columns), std::move(op.on_conflict_info.set_types), op.estimated_cardinality,
 	    op.return_chunk, parallel_streaming_insert && num_threads > 1, op.on_conflict_info.action_type,
 	    std::move(op.on_conflict_info.on_conflict_condition), std::move(op.on_conflict_info.do_update_condition),

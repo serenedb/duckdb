@@ -2,6 +2,7 @@
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -13,7 +14,7 @@ namespace duckdb {
 constexpr const char *TypeCatalogEntry::Name;
 
 TypeCatalogEntry::TypeCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTypeInfo &info)
-    : StandardEntry(CatalogType::TYPE_ENTRY, schema, catalog, info.GetTypeName()), user_type(info.type),
+    : StandardEntry(CatalogType::TYPE_ENTRY, schema, catalog, info.GetTypeName(), info.oid), user_type(info.type),
       constructors(info.constructors) {
 	if (constructors.functions.empty()) {
 		// a type without constructors takes no modifiers and always resolves to its own type
@@ -31,23 +32,36 @@ TypeCatalogEntry::TypeCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema,
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
+	const bool postgres = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	if (postgres && !internal && user_type.id() == LogicalTypeId::ENUM && !user_type.HasAlias()) {
+		user_type = user_type.WithAlias(name.GetIdentifierName());
+	}
+	if (postgres && !internal) {
+		auto extension_info = user_type.HasExtensionInfo() ? make_uniq<ExtensionTypeInfo>(*user_type.GetExtensionInfo())
+		                                                   : make_uniq<ExtensionTypeInfo>();
+		extension_info->properties[ExtensionTypeInfo::CATALOG_OID_PROPERTY] = Value::UBIGINT(oid);
+		user_type = user_type.WithExtensionInfo(std::move(extension_info));
+	}
 }
 
 unique_ptr<CatalogEntry> TypeCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateTypeInfo>();
-	auto result = make_uniq<TypeCatalogEntry>(catalog, schema, cast_info);
+	cast_info.oid = oid;
+	auto result = make_uniq<TypeCatalogEntry>(catalog, ParentSchema(context), cast_info);
 	return std::move(result);
 }
 
 unique_ptr<CreateInfo> TypeCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateTypeInfo>();
-	result->SetQualifiedName(schema.GetQualifiedName(name));
+	result->SetQualifiedName(GetQualifiedName(name));
 	result->type = user_type;
 	result->extension_name = extension_name;
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	result->constructors = constructors;
 	return std::move(result);
 }

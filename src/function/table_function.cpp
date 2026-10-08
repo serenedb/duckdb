@@ -95,6 +95,7 @@ BoundTableFunction::BoundTableFunction(shared_ptr<const TableFunction> function_
 	pushdown_complex_filter = function.pushdown_complex_filter;
 	pushdown_expression = function.pushdown_expression;
 	to_string = function.to_string;
+	to_string_value = function.to_string_value;
 	to_sql = function.to_sql;
 	table_scan_progress = function.table_scan_progress;
 	get_partition_data = function.get_partition_data;
@@ -102,6 +103,7 @@ BoundTableFunction::BoundTableFunction(shared_ptr<const TableFunction> function_
 	projection_expression_pushdown = function.projection_expression_pushdown;
 	get_multi_file_reader = function.get_multi_file_reader;
 	supports_pushdown_type = function.supports_pushdown_type;
+	supports_pushdown_filter = function.supports_pushdown_filter;
 	supports_pushdown_extract = function.supports_pushdown_extract;
 	is_repeatable = function.is_repeatable;
 	get_partition_info = function.get_partition_info;
@@ -109,6 +111,7 @@ BoundTableFunction::BoundTableFunction(shared_ptr<const TableFunction> function_
 	get_virtual_columns = function.get_virtual_columns;
 	get_row_id_columns = function.get_row_id_columns;
 	set_scan_order = function.set_scan_order;
+	consume_top_n = function.consume_top_n;
 	set_partitions_to_scan = function.set_partitions_to_scan;
 	serialize = function.serialize;
 	deserialize = function.deserialize;

@@ -1,5 +1,6 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
+#include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/logical_type_info.hpp"
 #include "duckdb/parser/constraint.hpp"
@@ -28,9 +29,11 @@ CatalogType ChangeOwnershipInfo::GetCatalogType() const {
 }
 
 unique_ptr<AlterInfo> ChangeOwnershipInfo::Copy() const {
-	return make_uniq_base<AlterInfo, ChangeOwnershipInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
-	                                                      GetQualifiedName().Schema(), GetQualifiedName().Name(),
-	                                                      owner_schema, owner_name, if_not_found);
+	auto result =
+	    make_uniq<ChangeOwnershipInfo>(entry_catalog_type, GetQualifiedName().Catalog(), GetQualifiedName().Schema(),
+	                                   GetQualifiedName().Name(), owner_schema, owner_name, if_not_found);
+	result->owner_path = owner_path;
+	return std::move(result);
 }
 
 string ChangeOwnershipInfo::ToString() const {
@@ -44,8 +47,19 @@ string ChangeOwnershipInfo::ToString() const {
 	}
 	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	result += " OWNED BY ";
-	result += QualifiedName(GetQualifiedName().Catalog(), owner_schema, owner_name)
-	              .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (!owner_path.empty()) {
+		for (idx_t i = 0; i < owner_path.size(); i++) {
+			if (i) {
+				result += ".";
+			}
+			result += SQLIdentifier(owner_path[i].GetIdentifierName());
+		}
+	} else if (owner_name.empty()) {
+		result += "NONE";
+	} else {
+		result += QualifiedName(GetQualifiedName().Catalog(), owner_schema, owner_name)
+		              .ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	}
 	result += ";";
 	return result;
 }
@@ -86,6 +100,129 @@ string SetCommentInfo::ToString() const {
 }
 
 SetCommentInfo::SetCommentInfo() : AlterInfo(AlterType::SET_COMMENT) {
+}
+
+//===--------------------------------------------------------------------===//
+// AlterPermissionsInfo
+//===--------------------------------------------------------------------===//
+AlterPermissionsInfo::AlterPermissionsInfo(CatalogType entry_catalog_type, QualifiedName entry_name)
+    : AlterInfo(AlterType::ALTER_PERMISSIONS, std::move(entry_name), OnEntryNotFound::THROW_EXCEPTION),
+      entry_catalog_type(entry_catalog_type) {
+}
+
+CatalogType AlterPermissionsInfo::GetCatalogType() const {
+	return entry_catalog_type;
+}
+
+unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
+	auto result = make_uniq<AlterPermissionsInfo>(entry_catalog_type, GetQualifiedName());
+	result->if_not_found = if_not_found;
+	result->new_owner = new_owner;
+	result->new_owner_id = new_owner_id;
+	result->privileges = privileges;
+	result->column_privileges = column_privileges;
+	result->grantee = grantee;
+	result->grantee_id = grantee_id;
+	result->granted_by = granted_by;
+	result->grantors = grantors;
+	result->revoke = revoke;
+	result->with_grant_option = with_grant_option;
+	result->option_only = option_only;
+	result->cascade = cascade;
+	result->default_objtype = default_objtype;
+	result->for_role = for_role;
+	result->default_schema = default_schema;
+	result->target_role = target_role;
+	result->default_scope = default_scope;
+	result->all_in_schema = all_in_schema;
+	return std::move(result);
+}
+
+string AlterPermissionsInfo::ToString() const {
+	auto object = ParseInfo::TypeToString(entry_catalog_type) + " " +
+	              GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (!new_owner.empty()) {
+		return "ALTER " + object + " OWNER TO " + new_owner + ";";
+	}
+	return string(revoke ? "REVOKE " : "GRANT ") + EnumUtil::ToString(privileges) + " ON " + object +
+	       (revoke ? " FROM " : " TO ") + grantee + ";";
+}
+
+ReplaceDefinitionInfo::ReplaceDefinitionInfo(unique_ptr<CreateInfo> definition_p)
+    : AlterInfo(AlterType::REPLACE_DEFINITION, definition_p->GetQualifiedName(), OnEntryNotFound::THROW_EXCEPTION),
+      definition(std::move(definition_p)) {
+	new_dependencies = make_uniq<LogicalDependencyList>(definition->dependencies);
+}
+
+ReplaceDefinitionInfo::~ReplaceDefinitionInfo() {
+}
+
+CatalogType ReplaceDefinitionInfo::GetCatalogType() const {
+	return definition->type;
+}
+
+unique_ptr<AlterInfo> ReplaceDefinitionInfo::Copy() const {
+	auto result = make_uniq<ReplaceDefinitionInfo>(definition->Copy());
+	result->if_not_found = if_not_found;
+	return std::move(result);
+}
+
+string ReplaceDefinitionInfo::ToString() const {
+	return definition->ToString();
+}
+
+AlterPermissionsInfo::AlterPermissionsInfo()
+    : AlterInfo(AlterType::ALTER_PERMISSIONS), entry_catalog_type(CatalogType::INVALID) {
+}
+
+//===--------------------------------------------------------------------===//
+// AlterRoleInfo
+//===--------------------------------------------------------------------===//
+AlterRoleInfo::AlterRoleInfo(Identifier role)
+    : AlterInfo(AlterType::ALTER_ROLE, QualifiedName(Identifier(), Identifier(), std::move(role)),
+                OnEntryNotFound::THROW_EXCEPTION) {
+}
+
+AlterRoleInfo::AlterRoleInfo() : AlterInfo(AlterType::ALTER_ROLE) {
+}
+
+CatalogType AlterRoleInfo::GetCatalogType() const {
+	return CatalogType::ROLE_ENTRY;
+}
+
+unique_ptr<AlterInfo> AlterRoleInfo::Copy() const {
+	auto result = make_uniq<AlterRoleInfo>(GetQualifiedName().Name());
+	result->if_not_found = if_not_found;
+	result->set_options = set_options;
+	result->clear_options = clear_options;
+	result->set_password = set_password;
+	result->null_password = null_password;
+	result->password = password;
+	result->set_conn_limit = set_conn_limit;
+	result->conn_limit = conn_limit;
+	result->set_valid_until = set_valid_until;
+	result->valid_until = valid_until;
+	result->new_name = new_name;
+	result->reset_all_config = reset_all_config;
+	result->reset_config = reset_config;
+	result->set_config = set_config;
+	result->grant_role = grant_role;
+	result->revoke = revoke;
+	result->option_only = option_only;
+	result->admin_option = admin_option;
+	result->inherit_option = inherit_option;
+	result->set_option = set_option;
+	result->grant_role_id = grant_role_id;
+	result->grantor_id = grantor_id;
+	return std::move(result);
+}
+
+string AlterRoleInfo::ToString() const {
+	if (!grant_role.empty()) {
+		return string(revoke ? "REVOKE " : "GRANT ") + grant_role + (revoke ? " FROM " : " TO ") +
+		       GetQualifiedName().Name().GetIdentifierName() + ";";
+	}
+	return "ALTER ROLE " + GetQualifiedName().Name().GetIdentifierName() + ";";
 }
 
 //===--------------------------------------------------------------------===//
@@ -241,7 +378,9 @@ string AddColumnInfo::ToString() const {
 	if (add_column_constraints.add_not_null) {
 		result += " NOT NULL";
 	}
-	if (add_column_constraints.add_unique) {
+	if (add_column_constraints.add_primary_key) {
+		result += " PRIMARY KEY";
+	} else if (add_column_constraints.add_unique) {
 		result += " UNIQUE";
 	}
 	if (this->new_column.HasDefaultValue()) {
@@ -610,6 +749,96 @@ string RenameViewInfo::ToString() const {
 }
 
 //===--------------------------------------------------------------------===//
+// AlterIndexInfo
+//===--------------------------------------------------------------------===//
+AlterIndexInfo::AlterIndexInfo(AlterIndexType type) : AlterInfo(AlterType::ALTER_INDEX), alter_index_type(type) {
+}
+
+AlterIndexInfo::AlterIndexInfo(AlterIndexType type, const AlterEntryData &data)
+    : AlterInfo(AlterType::ALTER_INDEX, data.GetQualifiedName(), data.if_not_found), alter_index_type(type) {
+}
+AlterIndexInfo::~AlterIndexInfo() {
+}
+
+CatalogType AlterIndexInfo::GetCatalogType() const {
+	return CatalogType::INDEX_ENTRY;
+}
+
+//===--------------------------------------------------------------------===//
+// SetIndexOptionsInfo
+//===--------------------------------------------------------------------===//
+SetIndexOptionsInfo::SetIndexOptionsInfo() : AlterIndexInfo(AlterIndexType::SET_INDEX_OPTIONS) {
+}
+SetIndexOptionsInfo::SetIndexOptionsInfo(const AlterEntryData &data, case_insensitive_map_t<Value> options_p)
+    : AlterIndexInfo(AlterIndexType::SET_INDEX_OPTIONS, data), options(std::move(options_p)) {
+}
+SetIndexOptionsInfo::~SetIndexOptionsInfo() {
+}
+
+unique_ptr<AlterInfo> SetIndexOptionsInfo::Copy() const {
+	return make_uniq_base<AlterInfo, SetIndexOptionsInfo>(GetAlterEntryData(), options);
+}
+
+string SetIndexOptionsInfo::ToString() const {
+	string result = "";
+	result += "ALTER INDEX ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " SET (";
+	idx_t i = 0;
+	for (auto &option : options) {
+		if (i > 0) {
+			result += ", ";
+		}
+		result += SQLString(option.first) + "=" + option.second.ToSQLString();
+		i++;
+	}
+	result += ");";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
+// ResetIndexOptionsInfo
+//===--------------------------------------------------------------------===//
+ResetIndexOptionsInfo::ResetIndexOptionsInfo() : AlterIndexInfo(AlterIndexType::RESET_INDEX_OPTIONS) {
+}
+ResetIndexOptionsInfo::ResetIndexOptionsInfo(const AlterEntryData &data, identifier_set_t options_p)
+    : AlterIndexInfo(AlterIndexType::RESET_INDEX_OPTIONS, data), options(std::move(options_p)) {
+}
+ResetIndexOptionsInfo::~ResetIndexOptionsInfo() {
+}
+
+unique_ptr<AlterInfo> ResetIndexOptionsInfo::Copy() const {
+	identifier_set_t options_copy;
+	for (auto &option : options) {
+		options_copy.emplace(option);
+	}
+	return make_uniq_base<AlterInfo, ResetIndexOptionsInfo>(GetAlterEntryData(), options_copy);
+}
+
+string ResetIndexOptionsInfo::ToString() const {
+	string result = "";
+	result += "ALTER INDEX ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " RESET (";
+	idx_t i = 0;
+	for (auto &option : options) {
+		if (i > 0) {
+			result += ", ";
+		}
+		result += SQLString(option.GetIdentifierName());
+		i++;
+	}
+	result += ");";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
 // AddConstraintInfo
 //===--------------------------------------------------------------------===//
 AddConstraintInfo::AddConstraintInfo() : AlterTableInfo(AlterTableType::ADD_CONSTRAINT) {
@@ -631,6 +860,70 @@ string AddConstraintInfo::ToString() const {
 	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	result += " ADD ";
 	result += constraint->ToString();
+	result += ";";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
+// DropConstraintInfo
+//===--------------------------------------------------------------------===//
+DropConstraintInfo::DropConstraintInfo() : AlterTableInfo(AlterTableType::DROP_CONSTRAINT) {
+}
+
+DropConstraintInfo::DropConstraintInfo(AlterEntryData data, string constraint_name_p, bool if_constraint_not_found_p,
+                                       bool cascade_p)
+    : AlterTableInfo(AlterTableType::DROP_CONSTRAINT, std::move(data)), constraint_name(std::move(constraint_name_p)),
+      if_constraint_not_found(if_constraint_not_found_p), cascade(cascade_p) {
+}
+
+DropConstraintInfo::~DropConstraintInfo() {
+}
+
+unique_ptr<AlterInfo> DropConstraintInfo::Copy() const {
+	return make_uniq_base<AlterInfo, DropConstraintInfo>(GetAlterEntryData(), constraint_name, if_constraint_not_found,
+	                                                     cascade);
+}
+
+string DropConstraintInfo::ToString() const {
+	string result = "ALTER TABLE ";
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " DROP CONSTRAINT ";
+	if (if_constraint_not_found) {
+		result += "IF EXISTS ";
+	}
+	result += SQLIdentifier(constraint_name);
+	if (cascade) {
+		result += " CASCADE";
+	}
+	result += ";";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
+// RenameConstraintInfo
+//===--------------------------------------------------------------------===//
+RenameConstraintInfo::RenameConstraintInfo() : AlterTableInfo(AlterTableType::RENAME_CONSTRAINT) {
+}
+
+RenameConstraintInfo::RenameConstraintInfo(const AlterEntryData &data, string old_name_p, string new_name_p)
+    : AlterTableInfo(AlterTableType::RENAME_CONSTRAINT, data), old_name(std::move(old_name_p)),
+      new_name(std::move(new_name_p)) {
+}
+
+RenameConstraintInfo::~RenameConstraintInfo() {
+}
+
+unique_ptr<AlterInfo> RenameConstraintInfo::Copy() const {
+	return make_uniq_base<AlterInfo, RenameConstraintInfo>(GetAlterEntryData(), old_name, new_name);
+}
+
+string RenameConstraintInfo::ToString() const {
+	string result = "ALTER TABLE ";
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " RENAME CONSTRAINT ";
+	result += SQLIdentifier(old_name);
+	result += " TO ";
+	result += SQLIdentifier(new_name);
 	result += ";";
 	return result;
 }

@@ -83,6 +83,7 @@ public:
 
 public:
 	virtual FilterPropagateResult CheckZonemap(ColumnScanState &state, TableFilter &filter,
+	                                           TableFilterState &filter_state,
 	                                           optional_ptr<SegmentNode<ColumnSegment>> &checked_segment);
 
 	BlockManager &GetBlockManager() const {
@@ -144,6 +145,10 @@ public:
 	virtual void InitializeScan(ColumnScanState &state);
 	//! Initialize a scan starting at the specified offset
 	virtual void InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx);
+	//! Re-seek to the column start for another lookup batch on the same row group, keeping the decode
+	//! state (pinned block + dict) warm for position-independent compressions; full reset otherwise.
+	//! Nested columns (e.g. a string's validity child) recurse so every level stays warm.
+	virtual void ReinitializeScan(ColumnScanState &state);
 	//! Scan the next vector from the column
 	idx_t Scan(TransactionData transaction, idx_t vector_index, ColumnScanState &state, Vector &result);
 	virtual idx_t Scan(TransactionData transaction, idx_t vector_index, ColumnScanState &state, Vector &result,
@@ -216,10 +221,9 @@ public:
 	                                  vector<ColumnSegmentInfo> &result, const ColumnSegmentInfoScanOptions &options);
 	virtual void Verify(RowGroup &parent);
 
-	FilterPropagateResult CheckZonemap(optional_ptr<ClientContext> context, const StorageIndex &index,
-	                                   TableFilter &filter);
+	FilterPropagateResult CheckZonemap(const StorageIndex &index, TableFilter &filter, TableFilterState &filter_state);
 	//! End of the last vector in [start_row, end_row) that the segment zonemaps do not reject for the filter
-	idx_t ZonemapScanEnd(optional_ptr<ClientContext> context, idx_t start_row, idx_t end_row, TableFilter &filter);
+	idx_t ZonemapScanEnd(idx_t start_row, idx_t end_row, TableFilter &filter, TableFilterState &filter_state);
 
 	static shared_ptr<ColumnData> CreateColumn(BlockManager &block_manager, DataTableInfo &info, idx_t column_index,
 	                                           const LogicalType &type,
@@ -238,6 +242,9 @@ protected:
 	void AppendSegment(SegmentLock &l, unique_ptr<ColumnSegment> segment);
 
 	void BeginScanVectorInternal(ColumnScanState &state);
+	//! Keep this column's own root-segment cursor warm for a same-row-group re-seek (no child recursion).
+	//! Returns false when the decode state cannot be reused and a full re-init is required.
+	bool TryReinitializeScan(ColumnScanState &state);
 	//! Scans a base vector from the column
 	idx_t ScanVector(ColumnScanState &state, Vector &result, idx_t remaining, ScanVectorType scan_type,
 	                 idx_t result_offset = 0);
@@ -263,9 +270,10 @@ protected:
 
 	static bool IsDirectNullCheckFilter(const TableFilter &filter);
 	//! Checks the filter against the statistics of one segment
-	FilterPropagateResult CheckSegmentStatistics(optional_ptr<ClientContext> context,
-	                                             SegmentNode<ColumnSegment> &segment, ExpressionFilter &expr_filter);
+	FilterPropagateResult CheckSegmentStatistics(SegmentNode<ColumnSegment> &segment, ExpressionFilter &expr_filter,
+	                                             TableFilterState &filter_state);
 	FilterPropagateResult CheckValidityZonemap(ColumnScanState &state, TableFilter &filter,
+	                                           TableFilterState &filter_state,
 	                                           optional_ptr<SegmentNode<ColumnSegment>> &checked_segment,
 	                                           ColumnData &validity_column);
 

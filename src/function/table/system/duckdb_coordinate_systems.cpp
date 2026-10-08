@@ -61,9 +61,9 @@ static unique_ptr<GlobalTableFunctionState> DuckDBCoordinateSystemsInit(ClientCo
 	auto result = make_uniq<DuckDBCoordinateSystemsData>();
 	auto schemas = Catalog::GetAllSchemas(context);
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::COORDINATE_SYSTEM_ENTRY, [&](CatalogEntry &entry) {
-			result->entries.push_back(entry.Cast<CoordinateSystemCatalogEntry>());
-		});
+		Catalog::ScanListedEntries(
+		    context, schema.get(), CatalogType::COORDINATE_SYSTEM_ENTRY,
+		    [&](CatalogEntry &entry) { result->entries.push_back(entry.Cast<CoordinateSystemCatalogEntry>()); });
 	};
 	return std::move(result);
 }
@@ -104,8 +104,8 @@ static void DuckDBCoordinateSystemsFunction(ClientContext &context, TableFunctio
 
 		database_name.Append(Value(crs_entry.catalog.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(crs_entry.catalog.GetOid())));
-		schema_name.Append(Value(crs_entry.schema.name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(crs_entry.schema.oid)));
+		schema_name.Append(Value(crs_entry.ParentSchemaName(CatalogTransaction(crs_entry.ParentCatalog(), context))));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(crs_entry.ParentSchemaOid())));
 		int64_t oid = NumericCast<int64_t>(crs_entry.oid);
 		Value oid_val;
 		if (data.oids.find(oid) == data.oids.end()) {

@@ -30,7 +30,7 @@ foreach option 'ANY' 'any'
 statement error
 COPY (SELECT 42::VARIANT AS v) TO '{TEST_DIR}/variant_invalid_shredding_option.parquet' (SHREDDING {v: {option}});
 ----
-can not be converted to a DuckDB Type
+can not be converted to a valid type
 
 endloop
 

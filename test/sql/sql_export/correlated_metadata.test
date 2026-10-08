@@ -124,7 +124,7 @@ NULL	50	true
 query TT
 EXPLAIN SELECT o.k,o.x,o.x=ANY(SELECT r.y FROM rhs r WHERE r.k=o.k) FROM lhs o;
 ----
-physical_plan	<REGEX>:.*Hash Join.*
+physical_plan	<REGEX>:.*HASH_JOIN.*
 
 query TTT rowsort
 SELECT o.k,o.x,o.x=ANY(SELECT r.y FROM rhs r WHERE r.k=o.k) FROM lhs o;
@@ -139,7 +139,7 @@ NULL	50	false
 query TT
 EXPLAIN SELECT o.k,o.x,o.x<>ALL(SELECT r.y FROM rhs r WHERE r.k=o.k) FROM lhs o;
 ----
-physical_plan	<REGEX>:.*Hash Join.*
+physical_plan	<REGEX>:.*HASH_JOIN.*
 
 query TTT rowsort
 SELECT o.k,o.x,o.x<>ALL(SELECT r.y FROM rhs r WHERE r.k=o.k) FROM lhs o;

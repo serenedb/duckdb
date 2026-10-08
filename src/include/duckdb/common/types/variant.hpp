@@ -38,7 +38,7 @@ struct VariantPathComponent {
 public:
 	explicit VariantPathComponent() : lookup_mode(VariantChildLookupMode::INVALID) {
 	}
-	explicit VariantPathComponent(const string &key) : lookup_mode(VariantChildLookupMode::BY_KEY), key(key) {
+	explicit VariantPathComponent(std::string_view key) : lookup_mode(VariantChildLookupMode::BY_KEY), key(key) {
 	}
 	explicit VariantPathComponent(uint32_t index) : lookup_mode(VariantChildLookupMode::BY_INDEX), index(index) {
 	}

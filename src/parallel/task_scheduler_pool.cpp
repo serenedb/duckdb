@@ -10,6 +10,8 @@
 #ifndef DUCKDB_NO_THREADS
 #include "lightweightsemaphore.h"
 
+#include <functional>
+#include <stdexcept>
 #include <type_traits>
 #endif
 
@@ -35,14 +37,90 @@ struct LightWeightSemaphoreWrapper {
 };
 #endif
 
+#ifdef DUCKDB_NO_THREADS
+
+struct TaskSchedulerThread {};
+
+#elif defined(__APPLE__)
+
+// macOS pthreads default to a 512KB stack and ignore RLIMIT_STACK, whereas glibc
+// sizes them from it (~8MB). duckdb's recursive optimizer overflows 512KB, and
+// std::thread has no stack-size knob, so run workers on pthreads with an 8MB stack.
 struct TaskSchedulerThread {
-#ifndef DUCKDB_NO_THREADS
-	explicit TaskSchedulerThread(unique_ptr<thread> thread_p) : internal_thread(std::move(thread_p)) {
+	explicit TaskSchedulerThread(std::function<void()> entry) {
+		// Box the entry on the heap so it can pass through pthread's void* arg;
+		// the running thread adopts and frees it in Trampoline.
+		auto boxed_entry = make_uniq<std::function<void()>>(std::move(entry));
+		pthread_attr_t attr;
+		pthread_attr_init(&attr);
+		pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
+		const int rc = pthread_create(&handle, &attr, &Trampoline, boxed_entry.get());
+		pthread_attr_destroy(&attr);
+		if (rc != 0) {
+			throw std::runtime_error("could not create task scheduler thread");
+		}
+		boxed_entry.release(); // ownership passes to the running thread
+	}
+	void Join() {
+		pthread_join(handle, nullptr);
+	}
+	bool IsCurrentThread() const {
+		return pthread_equal(handle, pthread_self()) != 0;
+	}
+	void SetAffinity(const vector<int> &, idx_t) {
+	}
+	void SetAffinityAll(const vector<int> &) {
 	}
 
-	unique_ptr<thread> internal_thread;
-#endif
+	static void *Trampoline(void *arg) {
+		unique_ptr<std::function<void()>> fn(static_cast<std::function<void()> *>(arg));
+		(*fn)();
+		return nullptr;
+	}
+	pthread_t handle;
 };
+
+#else
+
+struct TaskSchedulerThread {
+	explicit TaskSchedulerThread(std::function<void()> entry) : internal_thread(std::move(entry)) {
+	}
+	void Join() {
+		internal_thread.join();
+	}
+	bool IsCurrentThread() const {
+		return internal_thread.get_id() == std::this_thread::get_id();
+	}
+	void SetAffinity(const vector<int> &available_cpus, idx_t thread_idx) {
+#if defined(__GLIBC__)
+		if (thread_idx < available_cpus.size()) {
+			const auto cpu_id = available_cpus[thread_idx];
+			cpu_set_t cpuset;
+			CPU_ZERO(&cpuset);
+			CPU_SET(cpu_id, &cpuset);
+			// if we did not manage to set affinity, the thread just does not have affinity, which is OK
+			pthread_setaffinity_np(internal_thread.native_handle(), sizeof(cpu_set_t), &cpuset);
+		}
+#endif
+	}
+	void SetAffinityAll(const vector<int> &available_cpus) {
+#if defined(__GLIBC__)
+		if (available_cpus.empty()) {
+			return;
+		}
+		cpu_set_t cpuset;
+		CPU_ZERO(&cpuset);
+		for (const auto cpu_id : available_cpus) {
+			CPU_SET(cpu_id, &cpuset);
+		}
+		pthread_setaffinity_np(internal_thread.native_handle(), sizeof(cpu_set_t), &cpuset);
+#endif
+	}
+
+	thread internal_thread;
+};
+
+#endif
 
 TaskSchedulerPool::TaskSchedulerPool(DatabaseInstance &db_p, TaskSchedulerType pool_type_p)
     : db(db_p), pool_type(pool_type_p), requested_thread_count(0),
@@ -88,7 +166,7 @@ static vector<int> GetProcessCPUMask() {
 #if defined(__GLIBC__)
 	cpu_set_t cpuset;
 	CPU_ZERO(&cpuset);
-	if (sched_getaffinity(0, sizeof(cpu_set_t), &cpuset) != 0) {
+	if (sched_getaffinity(getpid(), sizeof(cpu_set_t), &cpuset) != 0) {
 		return {};
 	}
 	vector<int> available_cpus;
@@ -100,21 +178,6 @@ static vector<int> GetProcessCPUMask() {
 	return available_cpus;
 #else
 	return {};
-#endif
-}
-
-static void SetThreadAffinity(thread &thread, const vector<int> &available_cpus, idx_t thread_idx) {
-#if defined(__GLIBC__)
-	if (thread_idx < available_cpus.size()) {
-		const auto cpu_id = available_cpus[thread_idx];
-		cpu_set_t cpuset;
-		CPU_ZERO(&cpuset);
-		CPU_SET(cpu_id, &cpuset);
-
-		// note that we don't care about the return value here
-		// if we did not manage to set affinity, the thread just does not have affinity, which is OK
-		pthread_setaffinity_np(thread.native_handle(), sizeof(cpu_set_t), &cpuset);
-	}
 #endif
 }
 
@@ -173,43 +236,75 @@ void TaskSchedulerPool::RelaunchThreads(TaskScheduler &scheduler, bool destroy) 
 		current_thread_count = threads.size() + (pool_type == TaskSchedulerType::REGULAR ? external_threads : 0);
 		return;
 	}
-	if (threads.size() != new_thread_count) {
-		// we are changing the number of threads: clear all threads first
-		// we do this even when increasing the number of threads to make sure that all threads follow the current
-		// affinity mask
-		for (idx_t i = 0; i < threads.size(); i++) {
-			*markers[i] = false;
+
+	// Resolve thread pinning once: it applies both to the kept caller (re-pinned to its new index below) and to the
+	// threads spawned afterwards.
+	const auto available_cpus = GetAvailableCPUsForPinning(pool_type, pin_thread_mode, new_thread_count);
+	const auto process_cpus = available_cpus.empty() ? GetProcessCPUMask() : vector<int>();
+
+	// Stop every worker except the calling thread, detecting it in the same pass. A SET threads runs on the session's
+	// own pool worker, which cannot join itself, so it is kept alive and reconciled by the spawn step below. We stop
+	// even when increasing so the survivors follow the current affinity mask.
+	idx_t self = threads.size();
+	idx_t stopped = 0;
+	for (idx_t i = 0; i < threads.size(); i++) {
+		if (self == threads.size() && threads[i]->IsCurrentThread()) {
+			self = i;
+			continue;
 		}
-		Signal(threads.size());
-		// now join the threads to ensure they are fully stopped before erasing them
-		for (idx_t i = 0; i < threads.size(); i++) {
-			threads[i]->internal_thread->join();
+		*markers[i] = false;
+		stopped++;
+	}
+	Signal(stopped);
+	// now join the stopped threads to ensure they are fully stopped before erasing them
+	for (idx_t i = 0; i < threads.size(); i++) {
+		if (i != self) {
+			threads[i]->Join();
 		}
-		// erase the threads/markers
+	}
+	// erase the threads/markers, keeping the calling worker (if any) as thread 0
+	if (self < threads.size()) {
+		auto kept_thread = std::move(threads[self]);
+		auto kept_marker = std::move(markers[self]);
+		threads.clear();
+		markers.clear();
+		// re-pin the survivor to index 0 so the pinned set stays contiguous with the new threads, which pin to
+		// 1..N-1 below
+		if (!available_cpus.empty()) {
+			kept_thread->SetAffinity(available_cpus, 0);
+		} else {
+			kept_thread->SetAffinityAll(process_cpus);
+		}
+		threads.push_back(std::move(kept_thread));
+		markers.push_back(std::move(kept_marker));
+	} else {
 		threads.clear();
 		markers.clear();
 	}
+
 	if (threads.size() < new_thread_count) {
 		// we are increasing the number of threads: launch them and run tasks on them
 		idx_t create_new_threads = new_thread_count - threads.size();
 
-		const auto available_cpus = GetAvailableCPUsForPinning(pool_type, pin_thread_mode, new_thread_count);
 		for (idx_t i = 0; i < create_new_threads; i++) {
 			// launch a thread and assign it a cancellation marker
 			auto marker = unique_ptr<atomic<bool>>(new atomic<bool>(true));
-			unique_ptr<thread> worker_thread;
+			unique_ptr<TaskSchedulerThread> thread_wrapper;
 			try {
-				worker_thread = make_uniq<thread>(ThreadExecuteTasks, &scheduler, marker.get(), pool_type);
+				thread_wrapper =
+				    make_uniq<TaskSchedulerThread>([&scheduler, marker_ptr = marker.get(), pool_type = pool_type] {
+					    ThreadExecuteTasks(&scheduler, marker_ptr, pool_type);
+				    });
 				if (!available_cpus.empty()) {
-					SetThreadAffinity(*worker_thread, available_cpus, threads.size());
+					thread_wrapper->SetAffinity(available_cpus, threads.size());
+				} else {
+					thread_wrapper->SetAffinityAll(process_cpus);
 				}
 			} catch (std::exception &ex) {
 				// thread constructor failed - this can happen when the system has too many threads allocated
 				// in this case we cannot allocate more threads - stop launching them
 				break;
 			}
-			auto thread_wrapper = make_uniq<TaskSchedulerThread>(std::move(worker_thread));
-
 			threads.push_back(std::move(thread_wrapper));
 			markers.push_back(std::move(marker));
 		}

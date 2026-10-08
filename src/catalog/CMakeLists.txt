@@ -6,6 +6,8 @@ add_library_unity(
   OBJECT
   catalog_entry.cpp
   catalog_entry_retriever.cpp
+  catalog_versions.cpp
+  permissions.cpp
   catalog.cpp
   catalog_search_path.cpp
   catalog_set.cpp
@@ -15,7 +17,8 @@ add_library_unity(
   dependency_list.cpp
   dependency_catalog_set.cpp
   entry_lookup_info.cpp
-  similar_catalog_entry.cpp)
+  similar_catalog_entry.cpp
+  standard_entry.cpp)
 set(ALL_OBJECT_FILES
     ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_catalog>
     PARENT_SCOPE)

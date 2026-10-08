@@ -1,0 +1,126 @@
+# name: test/sql/function/array/vector_distance.test
+# description: Vector distances, norms and normalization over lists and fixed-size arrays
+# group: [array]
+
+foreach type FLOAT DOUBLE
+
+statement ok
+CREATE OR REPLACE TABLE vectors (id INTEGER, l {type}[], a {type}[3]);
+
+statement ok
+INSERT INTO vectors VALUES (1, [1, 2, 3], [1, 2, 3]), (2, [2, 3, 5], [2, 3, 5]), (3, [0, 0, 0], [0, 0, 0]), (4, NULL, NULL);
+
+query IIIIIII
+SELECT l2_distance(l, [1, 2, 3]::{type}[]), l2_sqr_distance(l, [1, 2, 3]::{type}[]), l1_distance(l, [1, 2, 3]::{type}[]), inner_product(l, [1, 2, 3]::{type}[]), negative_inner_product(l, [1, 2, 3]::{type}[]), cosine_similarity(l, [1, 2, 3]::{type}[]), cosine_distance(l, [1, 2, 3]::{type}[]) FROM vectors ORDER BY id
+----
+0.0	0.0	0.0	14.0	-14.0	1.0	0.0
+2.4494898	6.0	4.0	23.0	-23.0	0.9971765	0.0028235
+3.7416575	14.0	6.0	0.0	0.0	0.0	1.0
+NULL	NULL	NULL	NULL	NULL	NULL	NULL
+
+query IIIIIII
+SELECT l2_distance(a, [1, 2, 3]::{type}[3]), l2_sqr_distance(a, [1, 2, 3]::{type}[3]), l1_distance(a, [1, 2, 3]::{type}[3]), inner_product(a, [1, 2, 3]::{type}[3]), negative_inner_product(a, [1, 2, 3]::{type}[3]), cosine_similarity(a, [1, 2, 3]::{type}[3]), cosine_distance(a, [1, 2, 3]::{type}[3]) FROM vectors ORDER BY id
+----
+0.0	0.0	0.0	14.0	-14.0	1.0	0.0
+2.4494898	6.0	4.0	23.0	-23.0	0.9971765	0.0028235
+3.7416575	14.0	6.0	0.0	0.0	0.0	1.0
+NULL	NULL	NULL	NULL	NULL	NULL	NULL
+
+query IIII
+SELECT l <-> [1, 2, 3]::{type}[], l <=> [1, 2, 3]::{type}[], l <#> [1, 2, 3]::{type}[], l <+> [1, 2, 3]::{type}[] FROM vectors ORDER BY id
+----
+0.0	0.0	-14.0	0.0
+2.4494898	0.0028235	-23.0	4.0
+3.7416575	1.0	0.0	6.0
+NULL	NULL	NULL	NULL
+
+query IIII
+SELECT a <-> [1, 2, 3]::{type}[3], a <=> [1, 2, 3]::{type}[3], a <#> [1, 2, 3]::{type}[3], a <+> [1, 2, 3]::{type}[3] FROM vectors ORDER BY id
+----
+0.0	0.0	-14.0	0.0
+2.4494898	0.0028235	-23.0	4.0
+3.7416575	1.0	0.0	6.0
+NULL	NULL	NULL	NULL
+
+query III
+SELECT a <-> '[1, 2, 4]', inner_product('[1, 2, 4]', a), array_distance(a, '[1, 2, 4]') FROM vectors WHERE id = 1
+----
+1.0	17.0	1.0
+
+query IIII
+SELECT list_distance(a, [1, 2, 3]::{type}[3]), array_distance(l, [1, 2, 3]::{type}[]), list_cosine_distance(a, [1, 2, 3]::{type}[3]), array_negative_dot_product(l, [1, 2, 3]::{type}[]) FROM vectors WHERE id = 2
+----
+2.4494898	2.4494898	0.0028235	-23.0
+
+query IIIIII
+SELECT typeof(l2_distance(l, l)) = '{type}', typeof(l2_distance(a, a)) = '{type}', typeof(l2_norm(l)) = '{type}', typeof(l2_norm(a)) = '{type}', typeof(l2_normalize(l)) = '{type}[]', typeof(l2_normalize(a)) = '{type}[3]' FROM vectors WHERE id = 1
+----
+true	true	true	true	true	true
+
+query IIIII
+SELECT l1_norm(l), l2_norm(l), vector_norm(l), l1_norm(a), l2_norm(a) FROM vectors ORDER BY id
+----
+6.0	3.7416575	3.7416575	6.0	3.7416575
+10.0	6.164414	6.164414	10.0	6.164414
+0.0	0.0	0.0	0.0	0.0
+NULL	NULL	NULL	NULL	NULL
+
+query IIII
+SELECT l2_norm(l2_normalize(l)), l1_norm(l1_normalize(l)), l2_norm(l2_normalize(a)), l1_norm(l1_normalize(a)) FROM vectors ORDER BY id
+----
+1.0	1.0	1.0	1.0
+1.0	1.0	1.0	1.0
+0.0	0.0	0.0	0.0
+NULL	NULL	NULL	NULL
+
+query II
+SELECT list_transform(l2_normalize([3, -4]::{type}[]), lambda x: round(x, 6)), list_transform(l1_normalize([3, -4]::{type}[]), lambda x: round(x, 6))
+----
+[0.6, -0.8]	[0.428571, -0.571429]
+
+query IIII
+SELECT l2_normalize([3, -4]::{type}[2])[1], l2_normalize([3, -4]::{type}[2])[2], l1_normalize([3, -4]::{type}[2])[1], l1_normalize([3, -4]::{type}[2])[2]
+----
+0.6	-0.8	0.42857143	-0.5714286
+
+query II
+SELECT l2_normalize([0, 0]::{type}[]), l1_normalize([0, 0]::{type}[2])
+----
+[0, 0]	[0, 0]
+
+query IIIII
+SELECT l2_norm([]::{type}[]), l1_norm([]::{type}[]), l2_normalize([]::{type}[]), l2_distance([]::{type}[], []::{type}[]), cosine_distance([]::{type}[], []::{type}[])
+----
+0.0	0.0	[]	0.0	NULL
+
+statement error
+SELECT l2_norm([1, NULL, 3]::{type}[])
+----
+l2_norm: argument can not contain NULL values
+
+statement error
+SELECT l1_normalize([1, NULL, 3]::{type}[3])
+----
+l1_normalize: argument can not contain NULL values
+
+statement error
+SELECT [1, NULL, 3]::{type}[] <#> [1, 2, 3]::{type}[]
+----
+"<#>": left argument can not contain NULL values
+
+statement error
+SELECT [1, 2, 3]::{type}[3] <+> [1, NULL, 3]::{type}[3]
+----
+"<+>": right argument can not contain NULL values
+
+statement error
+SELECT l1_distance([1, 2, 3]::{type}[], [1, 2]::{type}[])
+----
+l1_distance: list dimensions must be equal, got left length '3' and right length '2'
+
+statement error
+SELECT inner_product([1, 2, 3]::{type}[3], [1, 2]::{type}[2])
+----
+inner_product: Array arguments must be of the same size
+
+endloop

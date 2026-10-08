@@ -9,7 +9,7 @@ CREATE TABLE unit (
 	amount_sold AS (price) NOT NULL,
 );
 ----
-<REGEX>:.*Binder Error.*not supported yet.*
+<REGEX>:.*Binder Error.*Constraints on virtual generated columns are not supported.*
 
 # Show that proper NOT NULL constraints still work when mixed in when generated columns
 statement ok
