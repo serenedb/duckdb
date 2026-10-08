@@ -8,16 +8,31 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "core_functions/scalar/string_functions.hpp"
 
+#include <array>
+
 namespace duckdb {
 
-static void WriteHexBytes(uint64_t x, char *&output, idx_t buffer_size) {
-	idx_t offset = buffer_size * 4;
+static const char *HexPairs() {
+	static const auto pairs = [] {
+		std::array<char, 512> table {};
+		for (idx_t byte = 0; byte < 256; byte++) {
+			table[2 * byte] = Blob::HEX_TABLE[byte >> 4];
+			table[2 * byte + 1] = Blob::HEX_TABLE[byte & 0x0F];
+		}
+		return table;
+	}();
+	return pairs.data();
+}
 
-	for (; offset >= 4; offset -= 4) {
-		uint8_t byte = (x >> (offset - 4)) & 0x0F;
-		*output = Blob::HEX_TABLE[byte];
-		output++;
+static void WriteHexBytes(uint64_t x, char *&output, idx_t buffer_size) {
+	auto pairs = HexPairs();
+	char digits[16];
+	for (idx_t i = 8; i > 0; i--) {
+		memcpy(digits + 2 * (i - 1), pairs + 2 * (x & 0xFF), 2);
+		x >>= 8;
 	}
+	memcpy(output, digits + 16 - buffer_size, buffer_size);
+	output += buffer_size;
 }
 
 template <class T>

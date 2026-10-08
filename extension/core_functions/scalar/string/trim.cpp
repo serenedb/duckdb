@@ -1,4 +1,5 @@
 #include "core_functions/scalar/string_functions.hpp"
+#include "core_functions/scalar/fast_trim.hpp"
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
@@ -11,53 +12,8 @@
 namespace duckdb {
 
 template <bool LTRIM, bool RTRIM>
-struct TrimOperator {
-	template <class INPUT_TYPE, class RESULT_TYPE>
-	static RESULT_TYPE Operation(INPUT_TYPE input, StringHeap &heap) {
-		auto data = input.GetData();
-		auto size = input.GetSize();
-
-		int32_t codepoint;
-
-		// Find the first character that is not left trimmed
-		idx_t begin = 0;
-		if (LTRIM) {
-			while (begin < size) {
-				auto bytes = DecodeCodepoint(data + begin, size - begin, codepoint);
-				if (utf8proc_category(codepoint) != UTF8PROC_CATEGORY_ZS) {
-					break;
-				}
-				begin += bytes;
-			}
-		}
-
-		// Find the last character that is not right trimmed
-		idx_t end;
-		if (RTRIM) {
-			end = begin;
-			for (auto next = begin; next < size;) {
-				next += DecodeCodepoint(data + next, size - next, codepoint);
-				if (utf8proc_category(codepoint) != UTF8PROC_CATEGORY_ZS) {
-					end = next;
-				}
-			}
-		} else {
-			end = size;
-		}
-
-		// Copy the trimmed string
-		auto target = heap.EmptyString(end - begin);
-		auto output = target.GetDataWriteable();
-		memcpy(output, data + begin, end - begin);
-
-		target.Finalize();
-		return target;
-	}
-};
-
-template <bool LTRIM, bool RTRIM>
 static void UnaryTrimFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	UnaryExecutor::ExecuteString<string_t, string_t, TrimOperator<LTRIM, RTRIM>>(args.data[0], result);
+	FastTrim::Execute(args.data[0], result, LTRIM, RTRIM);
 }
 
 static void GetIgnoredCodepoints(string_t ignored, unordered_set<int32_t> &ignored_codepoints) {

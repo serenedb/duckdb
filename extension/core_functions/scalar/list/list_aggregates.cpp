@@ -1,3 +1,4 @@
+#include "core_functions/scalar/list_distinct_strings.hpp"
 #include "core_functions/aggregate/nested_functions.hpp"
 #include "core_functions/scalar/list_functions.hpp"
 #include "duckdb/catalog/catalog.hpp"
@@ -393,6 +394,9 @@ void ListAggregateFunction(DataChunk &args, ExpressionState &state, Vector &resu
 
 void ListDistinctFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.ColumnCount() == 1);
+	if (ListDistinctStrings::TryExecute(args, result)) {
+		return;
+	}
 	ListAggregatesFunction<DistinctFunctor>(args, state, result);
 }
 
