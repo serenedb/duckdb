@@ -157,27 +157,24 @@ UndoBufferReference DuckTransaction::CreateUpdateInfo(DuckTableEntry &table_entr
 	return undo_entry;
 }
 
-void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, uint64_t usage_count, int64_t counter) {
+void DuckTransaction::PushSequenceUsage(const SequenceValue &value) {
 	lock_guard<mutex> l(sequence_lock);
+	auto &sequence = *value.entry;
 	if (sequence.LogsValues()) {
-		auto logged = logged_sequence_usage.emplace(sequence, usage_count);
-		logged.first->second = MaxValue(logged.first->second, usage_count);
+		auto logged = logged_sequence_usage.emplace(sequence, value.usage_count);
+		logged.first->second = MaxValue(logged.first->second, value.usage_count);
 		return;
 	}
 	auto entry = sequence_usage.find(sequence);
 	if (entry == sequence_usage.end()) {
 		auto undo_entry = undo_buffer.CreateEntry(UndoFlags::SEQUENCE_VALUE, sizeof(SequenceValue));
-		auto sequence_info = reinterpret_cast<SequenceValue *>(undo_entry.GetDataMutable());
-		sequence_info->entry = &sequence;
-		sequence_info->usage_count = usage_count;
-		sequence_info->counter = counter;
+		auto sequence_info = new (undo_entry.GetDataMutable()) SequenceValue(value);
 		sequence_usage.emplace(sequence, *sequence_info);
 	} else {
 		auto &sequence_info = entry->second.get();
 		D_ASSERT(RefersToSameObject(*sequence_info.entry, sequence));
-		if (usage_count > sequence_info.usage_count) {
-			sequence_info.usage_count = usage_count;
-			sequence_info.counter = counter;
+		if (value.usage_count > sequence_info.usage_count) {
+			sequence_info = value;
 		}
 	}
 }
