@@ -1008,6 +1008,9 @@ bool TypeExpression::Equals(const ParsedExpression &other) const {
 	if (qualified_name != other_p.qualified_name) {
 		return false;
 	}
+	if (bound_type != other_p.bound_type) {
+		return false;
+	}
 	return true;
 }
 
@@ -1023,6 +1026,7 @@ unique_ptr<ParsedExpression> TypeExpression::Copy() const {
 		copy->children.push_back(child->Copy());
 	}
 	copy->qualified_name = qualified_name;
+	copy->bound_type = bound_type;
 	copy->CopyBase(*this);
 	return std::move(copy);
 }

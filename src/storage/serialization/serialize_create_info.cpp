@@ -330,6 +330,7 @@ void CreateTokenizerInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<Identifier>(200, "name", qualified_name.Name());
 	serializer.WritePropertyWithDefault<uint64_t>(201, "features", features);
 	serializer.WritePropertyWithDefault<string>(202, "config", config);
+	serializer.WritePropertyWithDefault<string>(203, "definition", definition);
 }
 
 unique_ptr<CreateInfo> CreateTokenizerInfo::Deserialize(Deserializer &deserializer) {
@@ -337,6 +338,7 @@ unique_ptr<CreateInfo> CreateTokenizerInfo::Deserialize(Deserializer &deserializ
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(200, "name");
 	deserializer.ReadPropertyWithDefault<uint64_t>(201, "features", result->features);
 	deserializer.ReadPropertyWithDefault<string>(202, "config", result->config);
+	deserializer.ReadPropertyWithDefault<string>(203, "definition", result->definition);
 	result->SetName(std::move(name));
 	return std::move(result);
 }
