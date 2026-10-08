@@ -257,7 +257,7 @@ struct ParquetIntervalOperator : public BaseParquetOperator {
 	template <class SRC, class TGT>
 	static TGT Operation(SRC input) {
 		if (input.days < 0 || input.months < 0 || input.micros < 0) {
-			throw IOException("Parquet files do not support negative intervals");
+			throw NotImplementedException("Parquet files do not support negative intervals");
 		}
 		TGT result;
 		ParquetIntervalUtils::Encode(input, result.bytes);

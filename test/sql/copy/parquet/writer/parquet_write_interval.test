@@ -33,7 +33,7 @@ NULL
 statement error
 COPY (SELECT -interval '1 day') TO '{TEST_DIR}/intervals.parquet'
 ----
-<REGEX>:.*IO Error.*do not support negative intervals.*
+<REGEX>:.*Not implemented Error.*do not support negative intervals.*
 
 # Store complete days from a large microseconds component in Parquet's days field.
 statement ok
