@@ -88,6 +88,14 @@ void ProjectionPullup::PullUpColrefProjection(unique_ptr<LogicalOperator> &op, L
 	replacer.stop_operator = proj.children[0];
 	replacer.VisitOperator(*root);
 
+	for (auto &parent : parents) {
+		for (idx_t child_index = 0; child_index < parent.get().children.size(); child_index++) {
+			if (auto projection_map = GetProjectionMap(parent.get(), child_index)) {
+				projection_map->clear();
+			}
+		}
+	}
+
 	// Re-run optimization after removing this projection.
 	// Binding rewrites can make parent projections redundant, and without
 	// another pass they would not be eliminated.
