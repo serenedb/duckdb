@@ -21,6 +21,7 @@ unique_ptr<CreateInfo> CreateTriggerInfo::Copy() const {
 	result->referencing_new_table = referencing_new_table;
 	result->referencing_old_table = referencing_old_table;
 	result->trigger_action = trigger_action->Copy();
+	result->firing = firing;
 	return std::move(result);
 }
 

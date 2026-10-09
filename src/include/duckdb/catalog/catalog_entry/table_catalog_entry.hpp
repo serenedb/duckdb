@@ -32,6 +32,7 @@ class DuckTableEntry;
 struct CreateTriggerInfo;
 
 struct RenameColumnInfo;
+struct SetTriggerFiringInfo;
 struct RenameFieldInfo;
 struct AddColumnInfo;
 struct AddFieldInfo;
@@ -194,6 +195,7 @@ public:
 
 protected:
 	void RenameTriggerColumns(ClientContext &context, const RenameColumnInfo &info);
+	void SetTriggerFiring(ClientContext &context, const SetTriggerFiringInfo &info);
 
 	//! A list of constraints that are part of this table
 	vector<unique_ptr<Constraint>> constraints;

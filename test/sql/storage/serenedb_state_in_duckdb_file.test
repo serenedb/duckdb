@@ -57,6 +57,20 @@ ALTER SCHEMA sch RENAME TO sch2
 Cannot write RENAME_SCHEMA to a database file with DuckDB storage version
 
 statement ok
+CREATE TABLE trig (a INTEGER)
+
+statement ok
+CREATE TABLE trig_audit (a INTEGER)
+
+statement ok
+CREATE TRIGGER trig_log AFTER INSERT ON trig INSERT INTO trig_audit VALUES (0)
+
+statement error
+ALTER TABLE trig DISABLE TRIGGER trig_log
+----
+Cannot write SET_TRIGGER_FIRING to a database file with DuckDB storage version
+
+statement ok
 CREATE TABLE u (a INTEGER)
 
 statement ok

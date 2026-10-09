@@ -646,6 +646,37 @@ Identifier PEGTransformerFactory::TransformIdentifierDot(PEGTransformer &transfo
 	return identifier;
 }
 
+unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformEnableTrigger(PEGTransformer &transformer,
+                                                                         const optional<string> &trigger_fire_mode,
+                                                                         const Identifier &trigger_target) {
+	auto firing = TriggerFiring::ORIGIN;
+	if (trigger_fire_mode) {
+		firing = *trigger_fire_mode == "replica" ? TriggerFiring::REPLICA : TriggerFiring::ALWAYS;
+	}
+	return make_uniq<SetTriggerFiringInfo>(AlterEntryData(), trigger_target, firing);
+}
+
+unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformDisableTrigger(PEGTransformer &transformer,
+                                                                          const Identifier &trigger_target) {
+	return make_uniq<SetTriggerFiringInfo>(AlterEntryData(), trigger_target, TriggerFiring::DISABLED);
+}
+
+string PEGTransformerFactory::TransformReplicaFireMode(PEGTransformer &transformer) {
+	return "replica";
+}
+
+string PEGTransformerFactory::TransformAlwaysFireMode(PEGTransformer &transformer) {
+	return "always";
+}
+
+Identifier PEGTransformerFactory::TransformAllTriggers(PEGTransformer &transformer) {
+	return Identifier();
+}
+
+Identifier PEGTransformerFactory::TransformUserTriggers(PEGTransformer &transformer) {
+	return Identifier();
+}
+
 string PEGTransformerFactory::TransformDropNullability(PEGTransformer &transformer) {
 	return "drop";
 }

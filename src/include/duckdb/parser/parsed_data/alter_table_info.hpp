@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/permissions.hpp"
+#include "duckdb/common/enums/trigger_type.hpp"
 #include "duckdb/common/optional.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
@@ -182,6 +183,7 @@ enum class AlterTableType : uint8_t {
 	RESET_TABLE_OPTIONS = 18,
 	DROP_CONSTRAINT = 200,
 	RENAME_CONSTRAINT = 201,
+	SET_TRIGGER_FIRING = 202,
 };
 
 struct AlterTableInfo : public AlterInfo {
@@ -683,6 +685,28 @@ public:
 
 private:
 	RenameConstraintInfo();
+};
+
+//===--------------------------------------------------------------------===//
+// SetTriggerFiringInfo
+//===--------------------------------------------------------------------===//
+struct SetTriggerFiringInfo : public AlterTableInfo {
+	SetTriggerFiringInfo(const AlterEntryData &data, Identifier trigger_name, TriggerFiring firing);
+	~SetTriggerFiringInfo() override;
+
+	//! The trigger to change, or every trigger of the table when empty
+	Identifier trigger_name;
+	TriggerFiring firing;
+
+public:
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	SetTriggerFiringInfo();
 };
 
 //===--------------------------------------------------------------------===//

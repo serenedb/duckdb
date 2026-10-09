@@ -277,6 +277,8 @@ AlterTableInfo:
     - RenameAlter
     - AddConstraint
     - RenameConstraint
+    - EnableTrigger
+    - DisableTrigger
     - SetSortedBy
     - ResetSortedBy
     - SetOptions
@@ -1120,6 +1122,9 @@ String:
   rules:
     - StringLiteral
     - DropOrSet
+    - TriggerFireMode
+    - ReplicaFireMode
+    - AlwaysFireMode
     - SequenceName
     - DottedColLabel
     - DotColLabel
@@ -1869,6 +1874,9 @@ IdentifierType:
     - AnalyzeKeyword
     - ColId
     - ColIdOrString
+    - TriggerTarget
+    - AllTriggers
+    - UserTriggers
     - DeallocateTarget
     - DeallocateAll
     - UsingColumnName

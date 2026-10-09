@@ -32,13 +32,20 @@ public:
 	Identifier referencing_old_table;
 	//! The trigger action (INSERT/UPDATE/DELETE as QueryNode)
 	unique_ptr<QueryNode> trigger_action;
+	//! Which replication roles fire the trigger
+	TriggerFiring firing;
 
 public:
+	bool Fires(ReplicationRole role) const;
+
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
 	unique_ptr<CatalogEntry> AlterEntry(CatalogTransaction transaction, AlterInfo &info) override;
 	unique_ptr<CreateInfo> GetInfo() const override;
 
 	string ToSQL() const override;
 };
+
+//! The session's session_replication_role, origin when the setting does not exist
+ReplicationRole GetReplicationRole(ClientContext &context);
 
 } // namespace duckdb

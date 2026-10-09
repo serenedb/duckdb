@@ -520,6 +520,25 @@ void TableCatalogEntry::RenameTriggerColumns(ClientContext &context, const Renam
 	}
 }
 
+void TableCatalogEntry::SetTriggerFiring(ClientContext &context, const SetTriggerFiringInfo &info) {
+	if (!triggers) {
+		throw NotImplementedException("Triggers are not supported for this table type");
+	}
+	auto txn = catalog.GetCatalogTransaction(context);
+	vector<Identifier> names;
+	if (info.trigger_name.empty()) {
+		triggers->Scan(txn, [&](CatalogEntry &entry) { names.push_back(entry.name); });
+	} else if (triggers->GetEntry(txn, info.trigger_name)) {
+		names.push_back(info.trigger_name);
+	} else {
+		throw CatalogException("trigger %s for table %s does not exist", info.trigger_name, name);
+	}
+	auto alter_info = info.Copy();
+	for (const auto &trigger_name : names) {
+		triggers->AlterEntry(txn, trigger_name, *alter_info);
+	}
+}
+
 vector<const_reference<TriggerCatalogEntry>> TableCatalogEntry::GetTriggersForEvent(CatalogTransaction transaction,
                                                                                     TriggerEventType event_type,
                                                                                     TriggerForEach for_each) const {

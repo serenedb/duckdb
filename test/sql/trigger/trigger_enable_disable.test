@@ -1,0 +1,114 @@
+# name: test/sql/trigger/trigger_enable_disable.test
+# description: ALTER TABLE ENABLE and DISABLE TRIGGER, and triggers that fire only in replica sessions
+# group: [trigger]
+
+require noforcestorage
+
+statement ok
+CREATE TABLE t (a INTEGER);
+
+statement ok
+CREATE TABLE log (name VARCHAR);
+
+statement ok
+CREATE TRIGGER t_origin AFTER INSERT ON t INSERT INTO log VALUES ('origin');
+
+statement ok
+CREATE TRIGGER t_row AFTER INSERT ON t INSERT INTO log VALUES ('row');
+
+statement ok
+INSERT INTO t VALUES (1);
+
+query I
+SELECT name FROM log ORDER BY name;
+----
+origin
+row
+
+statement ok
+ALTER TABLE t DISABLE TRIGGER t_origin;
+
+statement ok
+DELETE FROM log;
+
+statement ok
+INSERT INTO t VALUES (2);
+
+query I
+SELECT name FROM log ORDER BY name;
+----
+row
+
+statement ok
+ALTER TABLE t DISABLE TRIGGER ALL;
+
+statement ok
+DELETE FROM log;
+
+statement ok
+INSERT INTO t VALUES (3);
+
+query I
+SELECT count(*) FROM log;
+----
+0
+
+statement ok
+ALTER TABLE t ENABLE REPLICA TRIGGER t_origin;
+
+statement ok
+ALTER TABLE t ENABLE ALWAYS TRIGGER t_row;
+
+statement ok
+INSERT INTO t VALUES (4);
+
+query I
+SELECT name FROM log ORDER BY name;
+----
+row
+
+statement ok
+ALTER TABLE t ENABLE TRIGGER USER;
+
+statement ok
+DELETE FROM log;
+
+statement ok
+INSERT INTO t VALUES (5);
+
+query I
+SELECT name FROM log ORDER BY name;
+----
+origin
+row
+
+statement ok
+BEGIN;
+
+statement ok
+ALTER TABLE t DISABLE TRIGGER t_origin;
+
+statement ok
+ROLLBACK;
+
+statement ok
+DELETE FROM log;
+
+statement ok
+INSERT INTO t VALUES (6);
+
+query I
+SELECT name FROM log ORDER BY name;
+----
+origin
+row
+
+statement error
+ALTER TABLE t DISABLE TRIGGER missing;
+----
+trigger "missing" for table "t" does not exist
+
+statement error
+ALTER TABLE t ENABLE SOMETIMES TRIGGER t_origin;
+----
+Parser Error

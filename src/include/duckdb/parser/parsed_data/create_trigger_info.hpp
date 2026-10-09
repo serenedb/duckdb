@@ -42,6 +42,8 @@ struct CreateTriggerInfo : public CreateInfo {
 	Identifier referencing_old_table;
 	//! The trigger action (INSERT/UPDATE/DELETE as QueryNode)
 	unique_ptr<QueryNode> trigger_action;
+	//! Which replication roles fire the trigger
+	TriggerFiring firing = TriggerFiring::ORIGIN;
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;
