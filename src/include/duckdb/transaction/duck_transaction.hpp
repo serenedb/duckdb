@@ -24,6 +24,7 @@ class RowVersionManager;
 class DuckTransactionManager;
 class StorageLockKey;
 class StorageCommitState;
+class SubscriptionCatalogEntry;
 struct UndoBufferProperties;
 
 struct CommitInfo {
@@ -103,6 +104,10 @@ public:
 	bool HasLoggedSequenceUsage();
 	void CoverSequenceUsage();
 	vector<SequenceValue> ReserveSequenceUsage(WriteAheadLog &catalog_log);
+	void PushSubscriptionLsn(SubscriptionCatalogEntry &subscription, uint64_t remote_lsn);
+	bool HasSubscriptionLsns();
+	void WriteSubscriptionLsns(WriteAheadLog &catalog_log);
+	void RaiseSubscriptionLsns();
 	void PushAppend(DuckTableEntry &table_entry, idx_t row_start, idx_t row_count);
 	UndoBufferReference CreateUpdateInfo(DuckTableEntry &table_entry, idx_t type_size, idx_t entries,
 	                                     idx_t row_group_start);
@@ -152,6 +157,8 @@ private:
 	mutex sequence_lock;
 	reference_map_t<SequenceCatalogEntry, reference<SequenceValue>> sequence_usage;
 	reference_map_t<SequenceCatalogEntry, uint64_t> logged_sequence_usage;
+	mutex subscription_lock;
+	reference_map_t<SubscriptionCatalogEntry, uint64_t> subscription_lsns;
 	//! Flag to prevent auto-checkpointing inside a checkpoint transaction.
 	bool is_checkpoint_transaction = false;
 };

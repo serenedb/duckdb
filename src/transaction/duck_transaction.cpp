@@ -6,6 +6,7 @@
 #include "duckdb/main/settings.hpp"
 #include "duckdb/main/valid_checker.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/subscription_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/parser/column_definition.hpp"
@@ -187,6 +188,38 @@ bool DuckTransaction::HasLoggedSequenceUsage() {
 void DuckTransaction::CoverSequenceUsage() {
 	for (auto &usage : logged_sequence_usage) {
 		usage.first.get().Cover(usage.second);
+	}
+}
+
+void DuckTransaction::PushSubscriptionLsn(SubscriptionCatalogEntry &subscription, uint64_t remote_lsn) {
+	if (!subscription.ParentCatalog().UsesCatalogLog()) {
+		throw InternalException("Subscription %s advanced without a catalog log", subscription.name);
+	}
+	lock_guard<mutex> l(subscription_lock);
+	auto entry = subscription_lsns.emplace(subscription, remote_lsn);
+	entry.first->second = MaxValue(entry.first->second, remote_lsn);
+}
+
+bool DuckTransaction::HasSubscriptionLsns() {
+	lock_guard<mutex> l(subscription_lock);
+	return !subscription_lsns.empty();
+}
+
+void DuckTransaction::WriteSubscriptionLsns(WriteAheadLog &catalog_log) {
+	lock_guard<mutex> l(subscription_lock);
+	if (subscription_lsns.empty()) {
+		return;
+	}
+	catalog_log.WriteUseCatalog(manager.GetDB().oid);
+	for (auto &entry : subscription_lsns) {
+		catalog_log.WriteSubscriptionLsn(entry.first.get(), entry.second);
+	}
+}
+
+void DuckTransaction::RaiseSubscriptionLsns() {
+	lock_guard<mutex> l(subscription_lock);
+	for (auto &entry : subscription_lsns) {
+		entry.first.get().RaiseRemoteLsn(entry.second);
 	}
 }
 
