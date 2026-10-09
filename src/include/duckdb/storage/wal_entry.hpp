@@ -387,6 +387,29 @@ struct WALDropForeignServer {
 	static WALDropForeignServer Deserialize(Deserializer &deserializer);
 };
 
+struct WALCreateSubscription {
+	unique_ptr<CreateInfo> subscription;
+
+	void Serialize(Serializer &serializer) const;
+	static WALCreateSubscription Deserialize(Deserializer &deserializer);
+};
+
+struct WALDropSubscription {
+	Identifier name;
+
+	void Serialize(Serializer &serializer) const;
+	static WALDropSubscription Deserialize(Deserializer &deserializer);
+};
+
+struct WALSubscriptionLsn {
+	Identifier name;
+	uint64_t remote_lsn = 0;
+	idx_t oid = 0;
+
+	void Serialize(Serializer &serializer) const;
+	static WALSubscriptionLsn Deserialize(Deserializer &deserializer);
+};
+
 struct WALUseCatalog {
 	idx_t catalog_oid = 0;
 

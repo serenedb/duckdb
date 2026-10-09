@@ -51,6 +51,8 @@ string CatalogTypeToString(CatalogType type) {
 		return "Role";
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 		return "Foreign Server";
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return "Subscription";
 	case CatalogType::SECRET_ENTRY:
 		return "Secret";
 	case CatalogType::SECRET_TYPE_ENTRY:
@@ -129,6 +131,9 @@ CatalogType CatalogTypeFromString(const string &type) {
 	}
 	if (type == "Foreign Server") {
 		return CatalogType::FOREIGN_SERVER_ENTRY;
+	}
+	if (type == "Subscription") {
+		return CatalogType::SUBSCRIPTION_ENTRY;
 	}
 	if (type == "INVALID") {
 		return CatalogType::INVALID;
