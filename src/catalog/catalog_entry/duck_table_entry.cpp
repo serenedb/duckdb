@@ -475,6 +475,10 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		auto &rename_constraint_info = table_info.Cast<RenameConstraintInfo>();
 		return RenameConstraint(context, rename_constraint_info);
 	}
+	case AlterTableType::SET_TRIGGER_FIRING: {
+		SetTriggerFiring(context, table_info.Cast<SetTriggerFiringInfo>());
+		return Copy(context);
+	}
 	case AlterTableType::DROP_NOT_NULL: {
 		auto &drop_not_null_info = table_info.Cast<DropNotNullInfo>();
 		return DropNotNull(context, drop_not_null_info);

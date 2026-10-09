@@ -1467,6 +1467,23 @@
     ]
   },
   {
+    "class": "SetTriggerFiringInfo",
+    "base": "AlterTableInfo",
+    "enum": "SET_TRIGGER_FIRING",
+    "members": [
+      {
+        "id": 400,
+        "name": "trigger_name",
+        "type": "Identifier"
+      },
+      {
+        "id": 401,
+        "name": "firing",
+        "type": "TriggerFiring"
+      }
+    ]
+  },
+  {
     "class": "SetPartitionedByInfo",
     "base": "AlterTableInfo",
     "enum": "SET_PARTITIONED_BY",

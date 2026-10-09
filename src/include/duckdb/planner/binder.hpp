@@ -548,6 +548,8 @@ private:
 	BoundStatement BindNode(QueryNode &node);
 	BoundStatement BindNode(StatementNode &node);
 	BoundStatement BindNode(InsertQueryNode &node);
+	vector<const_reference<TriggerCatalogEntry>> FiringTriggers(TableCatalogEntry &table, TriggerTiming timing,
+	                                                            TriggerEventType event_type, TriggerForEach for_each);
 	unique_ptr<BoundStatement> TryExpandTriggers(QueryNode &node, TableCatalogEntry &table,
 	                                             TriggerEventType event_type);
 	BoundStatement ExpandTriggers(QueryNode &node, TableCatalogEntry &table,
