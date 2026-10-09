@@ -358,7 +358,7 @@ Value Vector::GetValueInternal(const Vector &v_p, idx_t index_p) {
 Value Vector::GetValue(const Vector &v_p, idx_t index_p) {
 	auto value = GetValueInternal(v_p, index_p);
 	// the value's type is reconstructed from the data - restore the source type so that the alias survives
-	if (v_p.GetType().HasAlias()) {
+	if (v_p.GetType().HasAlias() || v_p.GetType().HasExtensionInfo()) {
 		value = value.WithType(v_p.GetType());
 	}
 	if (v_p.GetType().id() != LogicalTypeId::LEGACY_AGGREGATE_STATE &&

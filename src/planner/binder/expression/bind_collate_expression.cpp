@@ -21,7 +21,9 @@ BindResult ExpressionBinder::BindExpression(CollateExpression &expr, idx_t depth
 	// Validate the collation, but don't use it
 	auto collation_test = make_uniq_base<Expression, BoundConstantExpression>(Value(child->GetReturnType()));
 	auto collation_type = LogicalType::VARCHAR_COLLATION(expr.Collation());
-	PushCollation(context, collation_test, collation_type);
+	if (!PushCollation(context, collation_test, collation_type)) {
+		return BindResult(std::move(child));
+	}
 	child->SetReturnType(collation_type);
 	return BindResult(std::move(child));
 }

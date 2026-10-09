@@ -1372,6 +1372,19 @@ void DependencyManager::Scan(
 	}
 }
 
+void DependencyManager::ScanEdges(
+    CatalogTransaction transaction, CatalogEntry &entry, bool subjects,
+    const std::function<void(CatalogEntry &, const DependencyDependentFlags &)> &callback) {
+	if (IsSystemEntry(entry)) {
+		return;
+	}
+	ScanSetInternal(transaction, GetLookupProperties(transaction, entry), subjects, [&](DependencyEntry &edge) {
+		if (auto other = LookupEntry(transaction, edge)) {
+			callback(*other, edge.Dependent().flags);
+		}
+	});
+}
+
 catalog_entry_vector_t DependencyManager::OwnedEntries(CatalogTransaction transaction, CatalogEntry &owner) {
 	catalog_entry_vector_t result;
 	if (IsSystemEntry(owner)) {

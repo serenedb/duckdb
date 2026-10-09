@@ -149,6 +149,7 @@ BindResult UnnestBinder::Bind(FunctionExpression &function, idx_t depth, bool ro
 	bool recursive = false;
 	optional_idx max_depth_opt;
 	bool keep_parent_names = false;
+	bool set_returning = false;
 	for (idx_t i = num_list_args; i < args.size(); i++) {
 		if (args[i].GetExpression().HasParameter()) {
 			throw ParameterNotAllowedException("Parameter not allowed in unnest parameter");
@@ -168,6 +169,8 @@ BindResult UnnestBinder::Bind(FunctionExpression &function, idx_t depth, bool ro
 			}
 		} else if (alias == "keep_parent_names") {
 			keep_parent_names = value.GetValue<bool>();
+		} else if (alias == "set_returning") {
+			set_returning = value.GetValue<bool>();
 		} else {
 			throw BinderException("Unsupported parameter \"%s\" for unnest", alias);
 		}
@@ -353,6 +356,13 @@ BindResult UnnestBinder::Bind(FunctionExpression &function, idx_t depth, bool ro
 			}
 		}
 		unnest_expr = make_uniq<BoundExpandedExpression>(std::move(struct_expressions));
+	}
+	if (set_returning && unnest_expr->GetReturnType().id() == LogicalTypeId::STRUCT &&
+	    StructType::GetChildCount(unnest_expr->GetReturnType()) == 1) {
+		auto alias = unnest_expr->GetAlias();
+		vector<string> key_path {StructType::GetChildName(unnest_expr->GetReturnType(), 0).GetIdentifierName()};
+		unnest_expr = CreateBoundStructExtract(context, std::move(unnest_expr), key_path, false);
+		unnest_expr->SetAlias(std::move(alias));
 	}
 	return BindResult(std::move(unnest_expr));
 }

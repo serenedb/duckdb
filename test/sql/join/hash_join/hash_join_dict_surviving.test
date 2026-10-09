@@ -479,3 +479,25 @@ LABEL_1	104880
 LABEL_2	104880
 LABEL_3	104880
 LABEL_4	104880
+
+statement ok
+SET disabled_optimizers='join_order,build_side_probe_side'
+
+statement ok
+CREATE TABLE roshan_pit AS SELECT i * 1000 AS ek FROM range(4000) t(i)
+
+statement ok
+CREATE TABLE roshan_probe AS SELECT (i % 4000) * 1000 AS ek FROM range(8000) t(i)
+
+query II
+SELECT r.n_name, COUNT(*) AS cnt
+FROM roshan_probe p
+JOIN ((nation n JOIN customer c ON n.nk = c.nk) RIGHT JOIN roshan_pit e ON c.ck = e.ek) r ON p.ek = r.ek
+GROUP BY r.n_name ORDER BY r.n_name NULLS LAST
+----
+NATION_0	800
+NATION_1	800
+NATION_2	800
+NATION_3	800
+NATION_4	800
+NULL	4000

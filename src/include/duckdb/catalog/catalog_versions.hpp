@@ -13,6 +13,7 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
+#include "duckdb/common/vector.hpp"
 #include "duckdb/transaction/transaction_data.hpp"
 
 namespace duckdb {
@@ -31,9 +32,12 @@ public:
 	void Unlink(CatalogEntry &version);
 
 private:
+	friend class CatalogOidIndex;
+
 	atomic<CatalogEntry *> committed {nullptr};
 	atomic<CatalogEntry *> pending {nullptr};
 	atomic<transaction_t> pending_transaction {MAX_TRANSACTION_ID};
+	vector<idx_t> aliases;
 };
 
 class CatalogOidIndex {
@@ -42,6 +46,7 @@ public:
 
 	shared_ptr<CatalogVersions> Find(idx_t oid) const;
 	optional_ptr<CatalogEntry> GetVisible(idx_t oid, const SnapshotView &view) const;
+	optional_ptr<CatalogEntry> GetVisibleOwner(idx_t oid, const SnapshotView &view) const;
 	optional_ptr<CatalogEntry> GetCommitted(idx_t oid) const;
 
 	void Install(CatalogEntry &version, const CatalogEntry &object);
@@ -52,6 +57,8 @@ public:
 
 private:
 	shared_ptr<CatalogVersions> GetOrCreate(const CatalogEntry &object);
+	void AddAliases(const CatalogEntry &version, const shared_ptr<CatalogVersions> &object_versions);
+	void Erase(unordered_map<idx_t, shared_ptr<CatalogVersions>>::iterator it) ABSL_EXCLUSIVE_LOCKS_REQUIRED(lock);
 
 private:
 	mutable absl::Mutex lock;

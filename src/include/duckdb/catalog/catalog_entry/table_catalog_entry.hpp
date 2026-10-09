@@ -90,6 +90,9 @@ public:
 	DUCKDB_API virtual vector<LogicalType> GetTypes() const;
 	//! Returns a list of the columns of the table
 	DUCKDB_API virtual const ColumnList &GetColumns() const = 0;
+
+	vector<idx_t> GetSubObjectOids() const override;
+
 	//! Returns the underlying storage of the table
 	virtual DataTable &GetStorage();
 	//! Returns the DuckTableEntry whose storage backs this table. A catalog that

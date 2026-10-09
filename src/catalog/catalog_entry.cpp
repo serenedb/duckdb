@@ -157,6 +157,10 @@ unique_ptr<CreateInfo> CatalogEntry::Deserialize(Deserializer &deserializer) {
 	return CreateInfo::Deserialize(deserializer);
 }
 
+vector<idx_t> CatalogEntry::GetSubObjectOids() const {
+	return {};
+}
+
 void CatalogEntry::Verify(Catalog &catalog_p) {
 }
 

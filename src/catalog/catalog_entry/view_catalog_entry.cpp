@@ -151,8 +151,7 @@ Identifier ViewCatalogEntry::ResolveColumnName(const Identifier &column_name) co
 	}
 	auto &names = view_columns->names;
 	for (idx_t i = 0; i < names.size(); i++) {
-		auto &visible_name = i < aliases.size() ? aliases[i] : names[i];
-		if (visible_name == column_name) {
+		if (ColumnName(*view_columns, i) == column_name) {
 			return names[i];
 		}
 	}
