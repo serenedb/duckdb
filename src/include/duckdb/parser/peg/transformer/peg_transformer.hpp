@@ -1766,6 +1766,14 @@ public:
 	                                                            GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue>
 	FinalizeCreateSubscriptionStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeDropSubscriptionStatementTrampoline(PEGTransformer &transformer,
+	                                                          GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeDropSubscriptionStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeAlterSubscriptionStatementTrampoline(PEGTransformer &transformer,
+	                                                           GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeAlterSubscriptionStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static void InitializeCreateStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCreateStatementTrampoline(PEGTransformer &transformer,
 	                                                                         GeneratedTransformProcess &process);
@@ -5240,6 +5248,10 @@ public:
 	                                                             ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformCreateSubscriptionStatement(PEGTransformer &transformer,
 	                                                                     ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformDropSubscriptionStatement(PEGTransformer &transformer,
+	                                                                   ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterSubscriptionStatement(PEGTransformer &transformer,
+	                                                                    ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformCreateStatement(PEGTransformer &transformer,
 	                                                         const optional<bool> &or_replace,
 	                                                         const optional<SecretPersistType> &temporary,

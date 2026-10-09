@@ -111,6 +111,16 @@ WALCreateSequence WALCreateSequence::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
+void WALCreateSubscription::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "subscription", subscription);
+}
+
+WALCreateSubscription WALCreateSubscription::Deserialize(Deserializer &deserializer) {
+	WALCreateSubscription result;
+	deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(101, "subscription", result.subscription);
+	return result;
+}
+
 void WALCreateTable::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "table", table);
@@ -322,6 +332,16 @@ WALDropSequence WALDropSequence::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
+void WALDropSubscription::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+}
+
+WALDropSubscription WALDropSubscription::Deserialize(Deserializer &deserializer) {
+	WALDropSubscription result;
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
+	return result;
+}
+
 void WALDropTable::Serialize(Serializer &serializer) const {
 	if (!serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<Identifier>(101, "schema", LegacySchema());
@@ -523,6 +543,20 @@ WALSequenceValue WALSequenceValue::Deserialize(Deserializer &deserializer) {
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
+	return result;
+}
+
+void WALSubscriptionLsn::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+	serializer.WritePropertyWithDefault<uint64_t>(102, "remote_lsn", remote_lsn);
+	serializer.WritePropertyWithDefault<idx_t>(103, "oid", oid);
+}
+
+WALSubscriptionLsn WALSubscriptionLsn::Deserialize(Deserializer &deserializer) {
+	WALSubscriptionLsn result;
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
+	deserializer.ReadPropertyWithDefault<uint64_t>(102, "remote_lsn", result.remote_lsn);
+	deserializer.ReadPropertyWithDefault<idx_t>(103, "oid", result.oid);
 	return result;
 }
 
