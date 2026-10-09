@@ -123,6 +123,7 @@ struct ConstraintState {
 
 	TableCatalogEntry &table;
 	const vector<unique_ptr<BoundConstraint>> &bound_constraints;
+	bool defer_unique = false;
 };
 
 struct LocalAppendState {

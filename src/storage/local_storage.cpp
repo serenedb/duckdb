@@ -507,8 +507,11 @@ void LocalStorage::Append(LocalAppendState &state, DuckTableEntry &table_entry, 
 	idx_t base_id = offset + state.append_state.total_append_count;
 
 	if (!storage->append_indexes.Empty()) {
+		auto append_mode = state.constraint_state && state.constraint_state->defer_unique
+		                       ? IndexAppendMode::INSERT_DUPLICATES
+		                       : storage->index_append_mode;
 		auto error = storage->append_indexes.Append(storage->delete_indexes, table_chunk, NumericCast<row_t>(base_id),
-		                                            storage->index_append_mode, optional_idx(), nullptr);
+		                                            append_mode, optional_idx(), nullptr);
 		if (error.HasError()) {
 			error.Throw();
 		}

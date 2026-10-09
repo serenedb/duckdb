@@ -1015,7 +1015,7 @@ void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, Clien
 		}
 	}
 
-	if (HasUniqueIndexes()) {
+	if (HasUniqueIndexes() && !constraint_state.defer_unique) {
 		info->indexes.VerifyUniqueIndexes(storage ? &storage->delete_indexes : nullptr, chunk, manager,
 		                                  LocalStorage::Get(context, db).DroppedIndexes());
 	}
@@ -1187,6 +1187,7 @@ void DataTable::LocalAppend(DuckTableEntry &table, ClientContext &context, DataC
 	LocalAppendState append_state;
 	auto &storage = table.GetStorage();
 	storage.InitializeLocalAppend(append_state, table, context, bound_constraints);
+	append_state.constraint_state->defer_unique = true;
 	append_state.storage->AppendToDeleteIndexes(row_ids, delete_chunk);
 
 	storage.LocalAppend(append_state, table, context, chunk, false);
