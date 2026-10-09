@@ -454,7 +454,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 			// SQLite). Consult the scan-bound table: a catalog may delegate its
 			// storage to a duck table in another catalog.
 			auto storage_table = get.GetTable();
-			if (storage_table && storage_table->IsDuckTable() && storage_table->GetStorage().HasUniqueIndexes()) {
+			if (storage_table && storage_table->IsDuckTable() && storage_table->GetStorage().HasDeleteIndexes()) {
 				auto &target_binding = join_ref.get().children[inverted ? 0 : 1];
 				BindDeleteIndexColumns(*storage_table, get, merge_into->delete_return_columns, projection_expressions,
 				                       *target_binding);
