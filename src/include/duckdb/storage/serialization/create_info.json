@@ -677,6 +677,119 @@
     }
   },
   {
+    "class": "CreateSubscriptionInfo",
+    "base": "CreateInfo",
+    "enum": "SUBSCRIPTION_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_subscription_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "conninfo",
+        "type": "string"
+      },
+      {
+        "id": 202,
+        "name": "publications",
+        "type": "vector<string>"
+      },
+      {
+        "id": 203,
+        "name": "slot_name",
+        "type": "string"
+      },
+      {
+        "id": 204,
+        "name": "enabled",
+        "type": "bool",
+        "default": "true"
+      },
+      {
+        "id": 205,
+        "name": "binary",
+        "type": "bool"
+      },
+      {
+        "id": 206,
+        "name": "copy_data",
+        "type": "bool",
+        "default": "true"
+      },
+      {
+        "id": 207,
+        "name": "create_slot",
+        "type": "bool",
+        "default": "true"
+      },
+      {
+        "id": 208,
+        "name": "disable_on_error",
+        "type": "bool"
+      },
+      {
+        "id": 209,
+        "name": "password_required",
+        "type": "bool",
+        "default": "true"
+      },
+      {
+        "id": 210,
+        "name": "run_as_owner",
+        "type": "bool"
+      },
+      {
+        "id": 211,
+        "name": "failover",
+        "type": "bool"
+      },
+      {
+        "id": 212,
+        "name": "origin",
+        "type": "string",
+        "default": "\"any\""
+      },
+      {
+        "id": 213,
+        "name": "synchronous_commit",
+        "type": "string",
+        "default": "\"off\""
+      },
+      {
+        "id": 214,
+        "name": "remote_lsn",
+        "type": "uint64_t"
+      },
+      {
+        "id": 215,
+        "name": "skip_lsn",
+        "type": "uint64_t"
+      },
+      {
+        "id": 216,
+        "name": "streaming",
+        "type": "string",
+        "default": "\"off\""
+      },
+      {
+        "id": 217,
+        "name": "relations",
+        "type": "vector<SubscriptionRelation>"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
+  },
+  {
     "class": "CreateTokenizerInfo",
     "base": "CreateInfo",
     "enum": "TOKENIZER_ENTRY",
@@ -711,5 +824,35 @@
         "name"
       ]
     }
+  },
+  {
+    "class": "SubscriptionRelation",
+    "includes": [
+      "duckdb/parser/parsed_data/create_subscription_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "schema",
+        "type": "string"
+      },
+      {
+        "id": 101,
+        "name": "table",
+        "type": "string"
+      },
+      {
+        "id": 102,
+        "name": "state",
+        "type": "uint8_t",
+        "default": "'i'"
+      },
+      {
+        "id": 103,
+        "name": "lsn",
+        "type": "uint64_t"
+      }
+    ],
+    "pointer_type": "none"
   }
 ]

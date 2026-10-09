@@ -665,6 +665,49 @@
     ]
   },
   {
+    "class": "WALCreateSubscription",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "subscription",
+        "type": "CreateInfo*"
+      }
+    ]
+  },
+  {
+    "class": "WALDropSubscription",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "WALSubscriptionLsn",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "name",
+        "type": "Identifier"
+      },
+      {
+        "id": 102,
+        "name": "remote_lsn",
+        "type": "uint64_t"
+      },
+      {
+        "id": 103,
+        "name": "oid",
+        "type": "idx_t"
+      }
+    ]
+  },
+  {
     "class": "WALUseCatalog",
     "pointer_type": "none",
     "members": [

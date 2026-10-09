@@ -529,6 +529,24 @@ void WriteAheadLog::WriteDropForeignServer(const InCatalogEntry &entry) {
 	serializer.End();
 }
 
+void WriteAheadLog::WriteCreateSubscription(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_SUBSCRIPTION);
+	serializer.WriteEntry(WALCreateSubscription {entry.GetSerializedInfo()});
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropSubscription(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_SUBSCRIPTION);
+	serializer.WriteEntry(WALDropSubscription {entry.name});
+	serializer.End();
+}
+
+void WriteAheadLog::WriteSubscriptionLsn(const InCatalogEntry &entry, uint64_t remote_lsn) {
+	WriteAheadLogSerializer serializer(*this, WALType::SUBSCRIPTION_LSN);
+	serializer.WriteEntry(WALSubscriptionLsn {entry.name, remote_lsn, entry.oid});
+	serializer.End();
+}
+
 //===--------------------------------------------------------------------===//
 // VIEWS
 //===--------------------------------------------------------------------===//

@@ -1,6 +1,7 @@
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/subscription_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/assert.hpp"
@@ -30,6 +31,7 @@
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/parser/parsed_data/create_trigger_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
@@ -355,6 +357,10 @@ protected:
 
 	void ReplayCreateForeignServer();
 	void ReplayDropForeignServer();
+
+	void ReplayCreateSubscription();
+	void ReplayDropSubscription();
+	void ReplaySubscriptionLsn();
 
 	void ReplayUseCatalog();
 	void ReplayCommitPrepared();
@@ -879,6 +885,15 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::DROP_FOREIGN_SERVER:
 		ReplayDropForeignServer();
 		break;
+	case WALType::CREATE_SUBSCRIPTION:
+		ReplayCreateSubscription();
+		break;
+	case WALType::DROP_SUBSCRIPTION:
+		ReplayDropSubscription();
+		break;
+	case WALType::SUBSCRIPTION_LSN:
+		ReplaySubscriptionLsn();
+		break;
 	case WALType::USE_CATALOG:
 		ReplayUseCatalog();
 		break;
@@ -967,6 +982,7 @@ static bool ReplayHasSchemaPath(const CatalogEntry &entry) {
 	case CatalogType::ROLE_ENTRY:
 	case CatalogType::DATABASE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::SUBSCRIPTION_ENTRY:
 		return false;
 	default:
 		return true;
@@ -1471,6 +1487,45 @@ void WriteAheadLogDeserializer::ReplayDropForeignServer() {
 		return;
 	}
 	catalog.Cast<DuckCatalog>().DropForeignServer(catalog.GetCatalogTransaction(context), info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateSubscription() {
+	auto wal_entry = WALCreateSubscription::Deserialize(deserializer);
+	auto &info = wal_entry.subscription;
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().CreateSubscription(catalog.GetCatalogTransaction(context),
+	                                               info->Cast<CreateSubscriptionInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropSubscription() {
+	auto entry = WALDropSubscription::Deserialize(deserializer);
+	DropInfo info;
+	info.type = CatalogType::SUBSCRIPTION_ENTRY;
+	info.SetName(std::move(entry.name));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DropSubscription(catalog.GetCatalogTransaction(context), info);
+}
+
+void WriteAheadLogDeserializer::ReplaySubscriptionLsn() {
+	auto entry = WALSubscriptionLsn::Deserialize(deserializer);
+	if (DeserializeOnly()) {
+		return;
+	}
+	auto transaction = catalog.GetCatalogTransaction(context);
+	auto target = ReplayEntryByOid(catalog, transaction, entry.oid);
+	if (!target || target->type != CatalogType::SUBSCRIPTION_ENTRY) {
+		target = catalog.Cast<DuckCatalog>()
+		             .GetCatalogSet(CatalogType::SUBSCRIPTION_ENTRY)
+		             .GetEntry(transaction, entry.name);
+	}
+	if (target) {
+		target->Cast<SubscriptionCatalogEntry>().RaiseRemoteLsn(entry.remote_lsn);
+	}
 }
 
 //===--------------------------------------------------------------------===//
