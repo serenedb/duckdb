@@ -1,4 +1,5 @@
-add_library_unity(duckdb_func_date OBJECT strftime.cpp date_trunc_bucket.cpp)
+add_library_unity(duckdb_func_date OBJECT strftime.cpp date_trunc_bucket.cpp
+                  fast_strftime.cpp)
 
 set(ALL_OBJECT_FILES
     ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_func_date>
