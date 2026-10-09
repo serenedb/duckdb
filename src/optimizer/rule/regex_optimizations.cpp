@@ -94,7 +94,11 @@ static LikeString LikeMatchFromRegex(duckdb_re2::RE2 &pattern) {
 	auto subs = pattern.Regexp()->sub();
 	auto cur_sub_index = 0;
 	while (cur_sub_index < num_subs) {
-		switch (subs[cur_sub_index]->op()) {
+		auto sub = subs[cur_sub_index];
+		while (sub->op() == duckdb_re2::kRegexpCapture && sub->nsub() == 1) {
+			sub = sub->sub()[0];
+		}
+		switch (sub->op()) {
 		case duckdb_re2::kRegexpAnyChar:
 			if (cur_sub_index == 0) {
 				ret.like_string += "%";
@@ -107,7 +111,7 @@ static LikeString LikeMatchFromRegex(duckdb_re2::RE2 &pattern) {
 		case duckdb_re2::kRegexpStar:
 			// .* is a Star operator is a anyChar operator as a child.
 			// any other child operator would represent a pattern LIKE cannot match.
-			if (subs[cur_sub_index]->nsub() == 1 && subs[cur_sub_index]->sub()[0]->op() == duckdb_re2::kRegexpAnyChar) {
+			if (sub->nsub() == 1 && sub->sub()[0]->op() == duckdb_re2::kRegexpAnyChar) {
 				ret.like_string += "%";
 				break;
 			}
@@ -123,7 +127,7 @@ static LikeString LikeMatchFromRegex(duckdb_re2::RE2 &pattern) {
 			}
 			// if the kRegexpLiteral or kRegexpLiteralString is the only op to match
 			// the string can directly be converted into a contains
-			LikeString escaped_like_string = GetLikeStringEscaped(subs[cur_sub_index], false);
+			LikeString escaped_like_string = GetLikeStringEscaped(sub, false);
 			if (!escaped_like_string.exists) {
 				return escaped_like_string;
 			}
