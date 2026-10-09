@@ -11,6 +11,8 @@ Statement <-
 	DropTSDictionaryStatement /
 	CreateServerStatement /
 	DropServerStatement /
+	DropSubscriptionStatement /
+	AlterSubscriptionStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
 	CreatePolicyStatement /

@@ -104,6 +104,8 @@ SQLStatement:
     - DropStatement
     - CreatePublicationStatement
     - CreateSubscriptionStatement
+    - DropSubscriptionStatement
+    - AlterSubscriptionStatement
     - ExecuteStatement
     - ExplainStatement
     - ExplainableStatements
@@ -2133,8 +2135,19 @@ excluded_rules:
   - PublicationFor
   - PublicationForAllTables
   - PublicationForTable
-  - SubscriptionConnection
-  - SubscriptionPublication
+  - SubscriptionWith
+  - SubscriptionOption
+  - SubscriptionOptionArg
+  - SubscriptionAlterAction
+  - SubscriptionEnableAction
+  - SubscriptionConnectionAction
+  - SubscriptionPublicationAction
+  - SubscriptionPublicationMode
+  - SubscriptionRefreshAction
+  - SubscriptionSkipAction
+  - SubscriptionRenameAction
+  - SubscriptionOwnerAction
+  - SubscriptionSetOptions
   - UsingSample
   - TableSample
   - NamedParameterAssignment
