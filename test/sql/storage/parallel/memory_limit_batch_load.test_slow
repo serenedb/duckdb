@@ -11,6 +11,10 @@ load {TEST_DIR}/memory_limit_batch_load.db
 statement ok
 SET memory_limit='300MB'
 
+# per-thread buffers grow past the memory limit with more threads
+statement ok
+SET threads=16
+
 foreach row_group_size 5000 150000 1000000
 
 statement ok

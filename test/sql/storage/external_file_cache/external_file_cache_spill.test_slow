@@ -18,6 +18,10 @@ SET external_file_cache_local_max_block_size=2097152;
 statement ok
 SET memory_limit='200MB';
 
+# per-thread buffers grow past the memory limit with more threads
+statement ok
+SET threads=16
+
 statement ok
 SET temp_directory='{TEST_DIR}/external_file_cache_spill';
 
