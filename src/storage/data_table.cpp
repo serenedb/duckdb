@@ -476,6 +476,10 @@ bool DataTable::HasUniqueIndexes() const {
 	return info->indexes.HasUniqueIndexes();
 }
 
+bool DataTable::HasDeleteIndexes() const {
+	return info->indexes.HasDeleteIndexes();
+}
+
 void DataTable::AddIndex(unique_ptr<Index> index, idx_t index_oid) {
 	info->indexes.AddIndex(std::move(index), index_oid, ConstraintCheckMode::DEFAULT);
 }
