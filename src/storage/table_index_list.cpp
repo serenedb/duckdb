@@ -331,6 +331,16 @@ bool TableIndexList::HasUniqueIndexes() const {
 	return false;
 }
 
+bool TableIndexList::HasDeleteIndexes() const {
+	annotated_lock_guard lock(index_entries_lock);
+	for (const auto &entry : index_entries) {
+		if (entry->IsUnique() || entry->IsForeign()) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void TableIndexList::VerifyUniqueIndexes(optional_ptr<const TableIndexList> delete_indexes, DataChunk &chunk,
                                          optional_ptr<ConflictManager> manager,
                                          optional_ptr<const unordered_set<idx_t>> dropped_indexes) const {
@@ -692,12 +702,12 @@ vector<unordered_set<column_t>> TableIndexList::GetConflictTargetColumns(const C
 	return result;
 }
 
-unordered_set<column_t> TableIndexList::GetUniqueIndexColumns() const {
+unordered_set<column_t> TableIndexList::GetDeleteIndexColumns() const {
 	annotated_lock_guard lock(index_entries_lock);
 	unordered_set<column_t> result;
 	for (const auto &entry : index_entries) {
 		auto index_info = entry->GetStorageInfo();
-		if (!index_info.is_unique) {
+		if (!index_info.is_unique && !index_info.is_foreign) {
 			continue;
 		}
 		result.insert(index_info.column_set.begin(), index_info.column_set.end());
