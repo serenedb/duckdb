@@ -10,6 +10,10 @@
 
 #include "duckdb/parser/column_definition.hpp"
 #include "duckdb/common/identifier.hpp"
+#include "duckdb/common/optional_ptr.hpp"
+
+#include <cstddef>
+#include <iterator>
 
 namespace duckdb {
 
@@ -84,52 +88,67 @@ public:
 	// logical iterator
 	class ColumnListIterator {
 	public:
-		ColumnListIterator(const ColumnList &list, bool physical) : list(list), physical(physical) {
+		ColumnListIterator(const ColumnList &list, bool physical) : list(&list), physical(physical) {
 		}
 
 	private:
-		const ColumnList &list;
+		optional_ptr<const ColumnList> list;
 		bool physical;
 
 	private:
 		class ColumnLogicalIteratorInternal {
 		public:
+			using iterator_category = std::forward_iterator_tag;
+			using value_type = ColumnDefinition;
+			using difference_type = std::ptrdiff_t;
+			using pointer = const ColumnDefinition *;
+			using reference = const ColumnDefinition &;
+
+			ColumnLogicalIteratorInternal() = default;
 			ColumnLogicalIteratorInternal(const ColumnList &list, bool physical, idx_t pos, idx_t end)
-			    : list(list), physical(physical), pos(pos), end(end) {
+			    : list(&list), physical(physical), pos(pos), end(end) {
 			}
 
-			const ColumnList &list;
-			bool physical;
-			idx_t pos;
-			idx_t end;
+			optional_ptr<const ColumnList> list;
+			bool physical = false;
+			idx_t pos = 0;
+			idx_t end = 0;
 
 		public:
 			ColumnLogicalIteratorInternal &operator++() {
 				pos++;
 				return *this;
 			}
+			ColumnLogicalIteratorInternal operator++(int) {
+				auto result = *this;
+				pos++;
+				return result;
+			}
+			bool operator==(const ColumnLogicalIteratorInternal &other) const {
+				return pos == other.pos && end == other.end && list.get() == other.list.get();
+			}
 			bool operator!=(const ColumnLogicalIteratorInternal &other) const {
-				return pos != other.pos || end != other.end || &list != &other.list;
+				return !(*this == other);
 			}
 			const ColumnDefinition &operator*() const {
 				if (physical) {
-					return list.GetColumn(PhysicalIndex(pos));
+					return list->GetColumn(PhysicalIndex(pos));
 				} else {
-					return list.GetColumn(LogicalIndex(pos));
+					return list->GetColumn(LogicalIndex(pos));
 				}
 			}
 		};
 
 	public:
 		idx_t Size() const {
-			return physical ? list.PhysicalColumnCount() : list.LogicalColumnCount();
+			return physical ? list->PhysicalColumnCount() : list->LogicalColumnCount();
 		}
 
 		ColumnLogicalIteratorInternal begin() const { // NOLINT: match stl API
-			return ColumnLogicalIteratorInternal(list, physical, 0, Size());
+			return ColumnLogicalIteratorInternal(*list, physical, 0, Size());
 		}
 		ColumnLogicalIteratorInternal end() const { // NOLINT: match stl API
-			return ColumnLogicalIteratorInternal(list, physical, Size(), Size());
+			return ColumnLogicalIteratorInternal(*list, physical, Size(), Size());
 		}
 	};
 };
