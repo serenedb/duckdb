@@ -317,6 +317,12 @@ static bool BuildSideHasMultipleSources(const PhysicalOperator &op) {
 		// Single-input sinks materialize their input and become the source of a new pipeline.
 		return false;
 	}
+	if ((op.type == PhysicalOperatorType::HASH_JOIN || op.type == PhysicalOperatorType::NESTED_LOOP_JOIN ||
+	     op.type == PhysicalOperatorType::PIECEWISE_MERGE_JOIN || op.type == PhysicalOperatorType::IE_JOIN ||
+	     op.type == PhysicalOperatorType::BLOCKWISE_NL_JOIN || op.type == PhysicalOperatorType::ASOF_JOIN) &&
+	    PropagatesBuildSide(op.Cast<PhysicalJoin>().join_type)) {
+		return true;
+	}
 	for (const auto &child : op.children) {
 		if (BuildSideHasMultipleSources(child.get())) {
 			return true;
