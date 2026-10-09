@@ -65,6 +65,9 @@ enum class WALType : uint8_t {
 	CREATE_FOREIGN_SERVER = 206,
 	DROP_FOREIGN_SERVER = 207,
 	USE_CATALOG = 208,
+	CREATE_SUBSCRIPTION = 211,
+	DROP_SUBSCRIPTION = 212,
+	REPLICATION_LSN = 213,
 	// -----------------------------
 	// Flush
 	// -----------------------------
