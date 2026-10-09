@@ -612,6 +612,8 @@ static string DefaultConstraintName(const CreateTableInfo &base, const Constrain
 	}
 	case ConstraintType::FOREIGN_KEY:
 		return table + "_" + StringUtil::Join(constraint.Cast<ForeignKeyConstraint>().fk_columns, "_") + "_fkey";
+	case ConstraintType::NOT_NULL:
+		return table + "_" + base.columns.GetColumn(constraint.Cast<NotNullConstraint>().index).Name() + "_not_null";
 	default:
 		return string();
 	}
