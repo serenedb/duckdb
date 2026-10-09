@@ -84,14 +84,16 @@ string ErrorData::ConstructFinalMessage() const {
 
 void ErrorData::Throw(std::string_view prepended_message) const {
 	D_ASSERT(initialized);
-	if (exception_ptr) {
-		std::rethrow_exception(exception_ptr);
+	try {
+		if (exception_ptr) {
+			std::rethrow_exception(exception_ptr);
+		}
+	} catch (const Exception &) {
+		if (prepended_message.empty()) {
+			throw;
+		}
 	}
-	if (!prepended_message.empty()) {
-		string new_message = prepended_message + raw_message;
-		throw Exception(extra_info, type, new_message);
-	}
-	throw Exception(extra_info, type, raw_message);
+	throw Exception(extra_info, type, prepended_message + raw_message);
 }
 
 const ExceptionType &ErrorData::Type() const {
