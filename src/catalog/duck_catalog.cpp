@@ -12,6 +12,7 @@
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_subscription_info.hpp"
+#include "duckdb/catalog/catalog_entry/replication_origin_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/function/built_in_functions.hpp"
@@ -29,7 +30,8 @@ DuckCatalog::DuckCatalog(AttachedDatabase &db, bool case_sensitive_names)
       roles(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
       databases(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
       foreign_servers(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
-      subscriptions(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names))) {
+      subscriptions(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
+      replication_origins(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)) {
 }
 
 DuckCatalog::~DuckCatalog() {
@@ -239,6 +241,11 @@ optional_ptr<CatalogEntry> DuckCatalog::CreateSubscription(CatalogTransaction tr
 	return AddEntry(transaction, MakeSubscriptionEntry(info), info.on_conflict);
 }
 
+optional_ptr<CatalogEntry> DuckCatalog::CreateReplicationOrigin(CatalogTransaction transaction,
+                                                                CreateReplicationOriginInfo &info) {
+	return AddEntry(transaction, make_uniq<ReplicationOriginCatalogEntry>(*this, info), info.on_conflict);
+}
+
 void DuckCatalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
 	D_ASSERT(!info.GetQualifiedName().Name().empty());
 	if (!roles->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
@@ -267,6 +274,16 @@ void DuckCatalog::DropForeignServer(CatalogTransaction transaction, DropInfo &in
 	}
 }
 
+void DuckCatalog::DropReplicationOrigin(CatalogTransaction transaction, DropInfo &info) {
+	D_ASSERT(!info.GetQualifiedName().Name().empty());
+	if (!replication_origins->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
+		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingEntry(CatalogType::REPLICATION_ORIGIN_ENTRY, info.GetQualifiedName().Name(),
+			                                     string());
+		}
+	}
+}
+
 void DuckCatalog::DropSubscription(CatalogTransaction transaction, DropInfo &info) {
 	D_ASSERT(!info.GetQualifiedName().Name().empty());
 	if (!subscriptions->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
@@ -289,6 +306,8 @@ CatalogSet &DuckCatalog::GetCatalogSet(CatalogType type) {
 		return *foreign_servers;
 	case CatalogType::SUBSCRIPTION_ENTRY:
 		return *subscriptions;
+	case CatalogType::REPLICATION_ORIGIN_ENTRY:
+		return *replication_origins;
 	default:
 		throw InternalException("Unsupported catalog type in catalog: %s", CatalogTypeToString(type));
 	}
@@ -360,6 +379,7 @@ void DuckCatalog::Verify() {
 	databases->Verify(*this);
 	foreign_servers->Verify(*this);
 	subscriptions->Verify(*this);
+	replication_origins->Verify(*this);
 #endif
 }
 

@@ -68,6 +68,8 @@ enum class WALType : uint8_t {
 	CREATE_SUBSCRIPTION = 211,
 	DROP_SUBSCRIPTION = 212,
 	REPLICATION_LSN = 213,
+	CREATE_REPLICATION_ORIGIN = 214,
+	DROP_REPLICATION_ORIGIN = 215,
 	// -----------------------------
 	// Flush
 	// -----------------------------

@@ -29,6 +29,7 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_replication_origin_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_subscription_info.hpp"
@@ -360,6 +361,8 @@ protected:
 
 	void ReplayCreateSubscription();
 	void ReplayDropSubscription();
+	void ReplayCreateReplicationOrigin();
+	void ReplayDropReplicationOrigin();
 	void ReplayReplicationLsn();
 
 	void ReplayUseCatalog();
@@ -891,6 +894,12 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::DROP_SUBSCRIPTION:
 		ReplayDropSubscription();
 		break;
+	case WALType::CREATE_REPLICATION_ORIGIN:
+		ReplayCreateReplicationOrigin();
+		break;
+	case WALType::DROP_REPLICATION_ORIGIN:
+		ReplayDropReplicationOrigin();
+		break;
 	case WALType::REPLICATION_LSN:
 		ReplayReplicationLsn();
 		break;
@@ -983,6 +992,7 @@ static bool ReplayHasSchemaPath(const CatalogEntry &entry) {
 	case CatalogType::DATABASE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SUBSCRIPTION_ENTRY:
+	case CatalogType::REPLICATION_ORIGIN_ENTRY:
 		return false;
 	default:
 		return true;
@@ -1509,6 +1519,28 @@ void WriteAheadLogDeserializer::ReplayDropSubscription() {
 		return;
 	}
 	catalog.Cast<DuckCatalog>().DropSubscription(catalog.GetCatalogTransaction(context), info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateReplicationOrigin() {
+	auto wal_entry = WALCreateReplicationOrigin::Deserialize(deserializer);
+	auto &info = wal_entry.origin;
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().CreateReplicationOrigin(catalog.GetCatalogTransaction(context),
+	                                                    info->Cast<CreateReplicationOriginInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropReplicationOrigin() {
+	auto entry = WALDropReplicationOrigin::Deserialize(deserializer);
+	DropInfo info;
+	info.type = CatalogType::REPLICATION_ORIGIN_ENTRY;
+	info.SetName(std::move(entry.name));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DropReplicationOrigin(catalog.GetCatalogTransaction(context), info);
 }
 
 void WriteAheadLogDeserializer::ReplayReplicationLsn() {

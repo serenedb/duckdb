@@ -262,6 +262,7 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 	case CatalogType::ROLE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SUBSCRIPTION_ENTRY:
+	case CatalogType::REPLICATION_ORIGIN_ENTRY:
 	case CatalogType::PREPARED_STATEMENT:
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
 	case CatalogType::SCALAR_FUNCTION_ENTRY:
