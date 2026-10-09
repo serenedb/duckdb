@@ -636,8 +636,12 @@ ErrorData DuckTransactionManager::FinishPreparedTransaction(ClientContext &conte
 						wal_end_offset = storage_manager.GetWALSize();
 					}
 				}
-				for (auto &state : context.registered_state->States()) {
+				const auto states = context.registered_state->States();
+				for (auto &state : states) {
 					state->TransactionPreCheckpoint(db, context, wal_generation, wal_end_offset);
+				}
+				for (auto &state : states) {
+					state->TransactionDurable(db, context);
 				}
 			}
 		}
@@ -775,6 +779,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	}
 	bool store_transaction = undo_properties.has_updates || undo_properties.has_index_deletes ||
 	                         undo_properties.has_catalog_changes || error.HasError();
+	vector<shared_ptr<ClientContextState>> states;
 
 	if (error.HasError()) {
 		DUCKDB_LOG(context, TransactionLogType, db, "Rollback (after failed commit)", info.commit_id);
@@ -802,7 +807,8 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 					wal_end_offset = storage_manager.GetWALSize();
 				}
 			}
-			for (auto &state : context.registered_state->States()) {
+			states = context.registered_state->States();
+			for (auto &state : states) {
 				state->TransactionPreCheckpoint(db, context, wal_generation, wal_end_offset);
 			}
 		}
@@ -816,6 +822,11 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 				transaction.catalog_version_before_commit = last_committed_version;
 				unsynced_commits.push_back(UnsyncedCommit {transaction, commit_wal, store_transaction, retired});
 				sync_window.fetch_add(1, std::memory_order_relaxed);
+			}
+		}
+		if (!commit_wal) {
+			for (auto &state : states) {
+				state->TransactionDurable(db, context);
 			}
 		}
 
@@ -866,6 +877,11 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 			// no checkpoint after a failed commit, as on the rollback path above
 			checkpoint_decision = CheckpointDecision(error.Message());
 			lock.reset();
+		}
+		if (synced) {
+			for (auto &state : states) {
+				state->TransactionDurable(db, context);
+			}
 		}
 		if (!retired.load(std::memory_order_acquire)) {
 			t_lock.lock();
