@@ -102,6 +102,7 @@ protected:
 	virtual void WriteDatabase(InCatalogEntry &database, Serializer &serializer);
 	virtual void WriteForeignServer(InCatalogEntry &server, Serializer &serializer);
 	virtual void WriteSubscription(InCatalogEntry &subscription, Serializer &serializer);
+	virtual void WriteReplicationOrigin(InCatalogEntry &origin, Serializer &serializer);
 };
 
 class CheckpointReader {
@@ -131,6 +132,7 @@ protected:
 	virtual void ReadDatabase(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadForeignServer(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadSubscription(CatalogTransaction transaction, Deserializer &deserializer);
+	virtual void ReadReplicationOrigin(CatalogTransaction transaction, Deserializer &deserializer);
 
 	virtual void ReadTableData(CatalogTransaction transaction, Deserializer &deserializer,
 	                           BoundCreateTableInfo &bound_info, MetaBlockPointer table_pointer);

@@ -18,6 +18,7 @@
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_replication_origin_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
@@ -78,10 +79,13 @@ public:
 	                                                          CreateForeignServerInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSubscription(CatalogTransaction transaction,
 	                                                         CreateSubscriptionInfo &info);
+	DUCKDB_API optional_ptr<CatalogEntry> CreateReplicationOrigin(CatalogTransaction transaction,
+	                                                              CreateReplicationOriginInfo &info);
 	DUCKDB_API void DropRole(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API void DropDatabase(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API void DropSubscription(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API void DropReplicationOrigin(CatalogTransaction transaction, DropInfo &info);
 
 	DUCKDB_API void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) override;
 	DUCKDB_API void ScanSchemas(std::function<void(SchemaCatalogEntry &)> callback);
@@ -147,6 +151,7 @@ private:
 	unique_ptr<CatalogSet> databases;
 	unique_ptr<CatalogSet> foreign_servers;
 	unique_ptr<CatalogSet> subscriptions;
+	unique_ptr<CatalogSet> replication_origins;
 
 	//! Identifies whether the db is encrypted
 	bool is_encrypted = false;

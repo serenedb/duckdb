@@ -541,6 +541,18 @@ void WriteAheadLog::WriteDropSubscription(const InCatalogEntry &entry) {
 	serializer.End();
 }
 
+void WriteAheadLog::WriteCreateReplicationOrigin(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::CREATE_REPLICATION_ORIGIN);
+	serializer.WriteEntry(WALCreateReplicationOrigin {entry.GetSerializedInfo()});
+	serializer.End();
+}
+
+void WriteAheadLog::WriteDropReplicationOrigin(const InCatalogEntry &entry) {
+	WriteAheadLogSerializer serializer(*this, WALType::DROP_REPLICATION_ORIGIN);
+	serializer.WriteEntry(WALDropReplicationOrigin {entry.name});
+	serializer.End();
+}
+
 void WriteAheadLog::WriteReplicationLsn(const InCatalogEntry &entry, uint64_t remote_lsn, bool assign, idx_t relation) {
 	WriteAheadLogSerializer serializer(*this, WALType::REPLICATION_LSN);
 	serializer.WriteEntry(WALReplicationLsn {entry.name, remote_lsn, entry.oid, entry.type, assign, relation});

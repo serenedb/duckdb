@@ -790,6 +790,32 @@
     }
   },
   {
+    "class": "CreateReplicationOriginInfo",
+    "base": "CreateInfo",
+    "enum": "REPLICATION_ORIGIN_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_replication_origin_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "remote_lsn",
+        "type": "uint64_t"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
+  },
+  {
     "class": "CreateTokenizerInfo",
     "base": "CreateInfo",
     "enum": "TOKENIZER_ENTRY",

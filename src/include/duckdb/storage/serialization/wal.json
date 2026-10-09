@@ -687,6 +687,28 @@
     ]
   },
   {
+    "class": "WALCreateReplicationOrigin",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "origin",
+        "type": "CreateInfo*"
+      }
+    ]
+  },
+  {
+    "class": "WALDropReplicationOrigin",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
     "class": "WALReplicationLsn",
     "pointer_type": "none",
     "members": [

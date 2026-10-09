@@ -31,6 +31,7 @@
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_subscription_info.hpp"
+#include "duckdb/parser/parsed_data/create_replication_origin_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
@@ -150,7 +151,7 @@ static catalog_entry_vector_t GetTableEntries(vector<reference<SchemaCatalogEntr
 static catalog_entry_vector_t GetCatalogEntries(DuckCatalog &catalog, vector<reference<SchemaCatalogEntry>> &schemas) {
 	catalog_entry_vector_t entries;
 	for (auto type : {CatalogType::ROLE_ENTRY, CatalogType::DATABASE_ENTRY, CatalogType::FOREIGN_SERVER_ENTRY,
-	                  CatalogType::SUBSCRIPTION_ENTRY}) {
+	                  CatalogType::SUBSCRIPTION_ENTRY, CatalogType::REPLICATION_ORIGIN_ENTRY}) {
 		catalog.GetCatalogSet(type).Scan([&](CatalogEntry &entry) {
 			if (entry.internal) {
 				return;
@@ -517,6 +518,9 @@ void WriteCatalogEntries(WriteAheadLog &log, DuckCatalog &catalog) {
 		case CatalogType::SUBSCRIPTION_ENTRY:
 			log.WriteCreateSubscription(entry.Cast<InCatalogEntry>());
 			break;
+		case CatalogType::REPLICATION_ORIGIN_ENTRY:
+			log.WriteCreateReplicationOrigin(entry.Cast<InCatalogEntry>());
+			break;
 		default:
 			throw InternalException("Unrecognized catalog type in WriteCatalogEntries");
 		}
@@ -657,6 +661,11 @@ void CheckpointWriter::WriteEntry(CatalogEntry &entry, Serializer &serializer) {
 		WriteSubscription(subscription, serializer);
 		break;
 	}
+	case CatalogType::REPLICATION_ORIGIN_ENTRY: {
+		auto &origin = entry.Cast<InCatalogEntry>();
+		WriteReplicationOrigin(origin, serializer);
+		break;
+	}
 	default:
 		throw InternalException("Unrecognized catalog type in CheckpointWriter::WriteEntry");
 	}
@@ -741,6 +750,10 @@ void CheckpointReader::ReadEntry(CatalogTransaction transaction, Deserializer &d
 	}
 	case CatalogType::SUBSCRIPTION_ENTRY: {
 		ReadSubscription(transaction, deserializer);
+		break;
+	}
+	case CatalogType::REPLICATION_ORIGIN_ENTRY: {
+		ReadReplicationOrigin(transaction, deserializer);
 		break;
 	}
 	default:
@@ -853,6 +866,16 @@ void CheckpointReader::ReadSubscription(CatalogTransaction transaction, Deserial
 	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "subscription");
 	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	catalog.Cast<DuckCatalog>().CreateSubscription(transaction, info->Cast<CreateSubscriptionInfo>());
+}
+
+void CheckpointWriter::WriteReplicationOrigin(InCatalogEntry &origin, Serializer &serializer) {
+	serializer.WriteProperty(100, "replication_origin", &origin);
+}
+
+void CheckpointReader::ReadReplicationOrigin(CatalogTransaction transaction, Deserializer &deserializer) {
+	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "replication_origin");
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	catalog.Cast<DuckCatalog>().CreateReplicationOrigin(transaction, info->Cast<CreateReplicationOriginInfo>());
 }
 
 //===--------------------------------------------------------------------===//

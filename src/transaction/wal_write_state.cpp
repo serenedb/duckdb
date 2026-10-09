@@ -66,6 +66,7 @@ static bool IsAlterableLoggedEntry(CatalogType type) {
 	case CatalogType::DATABASE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SUBSCRIPTION_ENTRY:
+	case CatalogType::REPLICATION_ORIGIN_ENTRY:
 	case CatalogType::SCHEMA_ENTRY:
 		return true;
 	default:
@@ -202,6 +203,7 @@ void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry
 	case CatalogType::DATABASE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SUBSCRIPTION_ENTRY:
+	case CatalogType::REPLICATION_ORIGIN_ENTRY:
 	case CatalogType::SCHEMA_ENTRY:
 		if (alter_info) {
 			target.WriteAlter(entry, *alter_info, with_index_storage);
@@ -247,6 +249,9 @@ void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry
 				break;
 			case CatalogType::SUBSCRIPTION_ENTRY:
 				target.WriteCreateSubscription(parent.Cast<InCatalogEntry>());
+				break;
+			case CatalogType::REPLICATION_ORIGIN_ENTRY:
+				target.WriteCreateReplicationOrigin(parent.Cast<InCatalogEntry>());
 				break;
 			case CatalogType::SCHEMA_ENTRY:
 				target.WriteCreateSchema(parent.Cast<SchemaCatalogEntry>());
@@ -303,6 +308,9 @@ void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry
 			break;
 		case CatalogType::SUBSCRIPTION_ENTRY:
 			target.WriteDropSubscription(entry.Cast<InCatalogEntry>());
+			break;
+		case CatalogType::REPLICATION_ORIGIN_ENTRY:
+			target.WriteDropReplicationOrigin(entry.Cast<InCatalogEntry>());
 			break;
 		case CatalogType::RENAMED_ENTRY:
 		case CatalogType::PREPARED_STATEMENT:
