@@ -27,6 +27,7 @@ add_library_unity(
   create_role_info.cpp
   create_secret_info.cpp
   create_sequence_info.cpp
+  create_subscription_info.cpp
   create_tokenizer_info.cpp
   create_trigger_info.cpp
   create_schema_info.cpp

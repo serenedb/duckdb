@@ -11,6 +11,7 @@
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/function/built_in_functions.hpp"
@@ -27,7 +28,8 @@ DuckCatalog::DuckCatalog(AttachedDatabase &db, bool case_sensitive_names)
                                     case_sensitive_names)),
       roles(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
       databases(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
-      foreign_servers(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)) {
+      foreign_servers(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
+      subscriptions(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names))) {
 }
 
 DuckCatalog::~DuckCatalog() {
@@ -186,6 +188,10 @@ unique_ptr<InCatalogEntry> DuckCatalog::MakeForeignServerEntry(CreateForeignServ
 	throw NotImplementedException("Foreign servers are not supported by this catalog");
 }
 
+unique_ptr<InCatalogEntry> DuckCatalog::MakeSubscriptionEntry(CreateSubscriptionInfo &info) {
+	throw NotImplementedException("Subscriptions are not supported by this catalog");
+}
+
 unique_ptr<StandardEntry> DuckCatalog::MakeTokenizerEntry(DuckSchemaEntry &schema, CreateTokenizerInfo &info) {
 	throw NotImplementedException("Text search dictionaries are not supported by this catalog");
 }
@@ -228,6 +234,11 @@ optional_ptr<CatalogEntry> DuckCatalog::CreateForeignServer(CatalogTransaction t
 	return AddEntry(transaction, MakeForeignServerEntry(info), info.on_conflict);
 }
 
+optional_ptr<CatalogEntry> DuckCatalog::CreateSubscription(CatalogTransaction transaction,
+                                                           CreateSubscriptionInfo &info) {
+	return AddEntry(transaction, MakeSubscriptionEntry(info), info.on_conflict);
+}
+
 void DuckCatalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
 	D_ASSERT(!info.GetQualifiedName().Name().empty());
 	if (!roles->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
@@ -256,6 +267,16 @@ void DuckCatalog::DropForeignServer(CatalogTransaction transaction, DropInfo &in
 	}
 }
 
+void DuckCatalog::DropSubscription(CatalogTransaction transaction, DropInfo &info) {
+	D_ASSERT(!info.GetQualifiedName().Name().empty());
+	if (!subscriptions->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
+		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingEntry(CatalogType::SUBSCRIPTION_ENTRY, info.GetQualifiedName().Name(),
+			                                     string());
+		}
+	}
+}
+
 CatalogSet &DuckCatalog::GetCatalogSet(CatalogType type) {
 	switch (type) {
 	case CatalogType::SCHEMA_ENTRY:
@@ -266,6 +287,8 @@ CatalogSet &DuckCatalog::GetCatalogSet(CatalogType type) {
 		return *databases;
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 		return *foreign_servers;
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return *subscriptions;
 	default:
 		throw InternalException("Unsupported catalog type in catalog: %s", CatalogTypeToString(type));
 	}
@@ -336,6 +359,7 @@ void DuckCatalog::Verify() {
 	roles->Verify(*this);
 	databases->Verify(*this);
 	foreign_servers->Verify(*this);
+	subscriptions->Verify(*this);
 #endif
 }
 
