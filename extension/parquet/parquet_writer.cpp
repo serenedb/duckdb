@@ -486,7 +486,7 @@ public:
 	};
 
 	vector<unique_ptr<ColumnStatsUnifier>> stats_unifiers;
-	map<idx_t, NestedColumnStats> nested_stats;
+	unordered_map<idx_t, NestedColumnStats> nested_stats;
 };
 
 ParquetWriteTransformData::ParquetWriteTransformData(ClientContext &context, const vector<LogicalType> &types,
