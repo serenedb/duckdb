@@ -24,6 +24,7 @@ class RowVersionManager;
 class DuckTransactionManager;
 class StorageLockKey;
 class StorageCommitState;
+class ReplicationLsnEntry;
 struct UndoBufferProperties;
 
 struct CommitInfo {
@@ -103,6 +104,18 @@ public:
 	bool HasLoggedSequenceUsage();
 	void CoverSequenceUsage();
 	vector<SequenceValue> ReserveSequenceUsage(WriteAheadLog &catalog_log);
+	//! Raises the entry's remote LSN to at least remote_lsn when the transaction commits
+	void PushReplicationLsn(ReplicationLsnEntry &entry, uint64_t remote_lsn);
+	//! Sets the entry's remote LSN to remote_lsn when the transaction commits, even if that moves it back
+	void AssignReplicationLsn(ReplicationLsnEntry &entry, uint64_t remote_lsn);
+	void ForgetReplicationLsn(ReplicationLsnEntry &entry);
+	//! Records at commit that the relation with this sync id was copied at remote_lsn
+	void PushRelationSync(ReplicationLsnEntry &entry, idx_t relation, uint64_t remote_lsn);
+	bool HasReplicationLsns();
+	void WriteReplicationLsns(WriteAheadLog &catalog_log);
+	void ApplyReplicationLsns();
+	//! Marks the relations synchronized; only once the commit is durable, as snapshots see it only from then on
+	void ApplyRelationSyncs();
 	void PushAppend(DuckTableEntry &table_entry, idx_t row_start, idx_t row_count);
 	UndoBufferReference CreateUpdateInfo(DuckTableEntry &table_entry, idx_t type_size, idx_t entries,
 	                                     idx_t row_group_start);
@@ -152,6 +165,18 @@ private:
 	mutex sequence_lock;
 	reference_map_t<SequenceCatalogEntry, reference<SequenceValue>> sequence_usage;
 	reference_map_t<SequenceCatalogEntry, uint64_t> logged_sequence_usage;
+	struct ReplicationLsnUpdate {
+		uint64_t remote_lsn;
+		bool assign;
+	};
+	mutex replication_lock;
+	reference_map_t<ReplicationLsnEntry, ReplicationLsnUpdate> replication_lsns;
+	struct RelationSync {
+		reference<ReplicationLsnEntry> entry;
+		idx_t relation;
+		uint64_t remote_lsn;
+	};
+	vector<RelationSync> relation_syncs;
 	//! Flag to prevent auto-checkpointing inside a checkpoint transaction.
 	bool is_checkpoint_transaction = false;
 };
