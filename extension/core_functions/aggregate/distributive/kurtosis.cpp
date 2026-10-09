@@ -37,9 +37,10 @@ struct KurtosisOperation {
 	static void Operation(STATE &state, const INPUT_TYPE &input, AggregateUnaryInput &unary_input) {
 		state.n++;
 		state.sum += input;
-		state.sum_sqr += pow(input, 2);
-		state.sum_cub += pow(input, 3);
-		state.sum_four += pow(input, 4);
+		const double square = static_cast<double>(input) * static_cast<double>(input);
+		state.sum_sqr += square;
+		state.sum_cub += square * static_cast<double>(input);
+		state.sum_four += square * square;
 	}
 
 	template <class STATE, class OP>

@@ -1,4 +1,5 @@
 #include "core_functions/aggregate/holistic_functions.hpp"
+#include "core_functions/aggregate/quantile_histogram.hpp"
 #include "core_functions/aggregate/quantile_state.hpp"
 #include "duckdb/common/enums/quantile_enum.hpp"
 #include "duckdb/common/operator/abs.hpp"
@@ -179,7 +180,16 @@ struct QuantileScalarOperation : public QuantileOperation {
 		D_ASSERT(bind_data.quantiles.size() == 1);
 		auto &flattened = FlattenedQuantileValues<typename STATE::InputType>::Flatten(finalize_data, state.linked_list);
 		QuantileInterpolator<DISCRETE> interp(bind_data.quantiles[0], state.linked_list.total_capacity, bind_data.desc);
-		target = interp.template Operation<typename STATE::InputType, T>(flattened.Data(), finalize_data.result);
+		using INPUT = typename STATE::InputType;
+		if constexpr (QuantileHistogram<INPUT>::SUPPORTED) {
+			INPUT selected[2];
+			if (QuantileHistogram<INPUT>::Select(flattened.Data(), state.linked_list.total_capacity, interp.FRN,
+			                                     interp.CRN, bind_data.desc, selected)) {
+				target = interp.template Extract<INPUT, T>(selected, finalize_data.result);
+				return;
+			}
+		}
+		target = interp.template Operation<INPUT, T>(flattened.Data(), finalize_data.result);
 	}
 
 	template <class STATE, class INPUT_TYPE, class RESULT_TYPE>
