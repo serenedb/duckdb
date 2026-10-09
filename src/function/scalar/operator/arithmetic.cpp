@@ -21,6 +21,7 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/function/scalar/operators.hpp"
 #include "duckdb/function/scalar/operator_functions.hpp"
+#include "duckdb/function/scalar/overflow_check_function.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -493,7 +494,7 @@ ScalarFunction AddFunction::GetFunction(const LogicalType &left_type, const Logi
 			return function;
 		} else if (left_type.IsIntegral()) {
 			ScalarFunction function("+", {left_type, right_type}, left_type,
-			                        GetScalarIntegerFunction<AddOperatorOverflowCheck>(left_type.InternalType()),
+			                        GetOverflowCheckFunction<AddOperatorOverflowCheck>(left_type.InternalType()),
 			                        nullptr,
 			                        PropagateNumericStats<TryAddOperator, AddPropagateStatistics, AddOperator>);
 			function.SetFallible();
@@ -836,7 +837,7 @@ ScalarFunction SubtractFunction::GetFunction(const LogicalType &left_type, const
 		} else if (left_type.IsIntegral()) {
 			ScalarFunction function(
 			    "-", {left_type, right_type}, left_type,
-			    GetScalarIntegerFunction<SubtractOperatorOverflowCheck>(left_type.InternalType()), nullptr,
+			    GetOverflowCheckFunction<SubtractOperatorOverflowCheck>(left_type.InternalType()), nullptr,
 			    PropagateNumericStats<TrySubtractOperator, SubtractPropagateStatistics, SubtractOperator>);
 			function.SetFallible();
 			function.SetArgProperties({ArgProperties().StrictlyIncreasing(), ArgProperties().StrictlyDecreasing()});
@@ -1099,7 +1100,7 @@ ScalarFunctionSet OperatorMultiplyFun::GetFunctions() {
 			multiply.AddFunction(function);
 		} else if (TypeIsIntegral(type.InternalType())) {
 			multiply.AddFunction(ScalarFunction(
-			    {type, type}, type, GetScalarIntegerFunction<MultiplyOperatorOverflowCheck>(type.InternalType()),
+			    {type, type}, type, GetOverflowCheckFunction<MultiplyOperatorOverflowCheck>(type.InternalType()),
 			    nullptr, PropagateNumericStats<TryMultiplyOperator, MultiplyPropagateStatistics, MultiplyOperator>));
 		} else if (type.IsFloating()) {
 			multiply.AddFunction(ScalarFunction({type, type}, type,
