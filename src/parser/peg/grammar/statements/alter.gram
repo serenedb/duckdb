@@ -11,9 +11,18 @@ AlterSchemaStmt <- 'SCHEMA' IfExists? QualifiedName AlterSchemaOptions
 AlterSchemaOptions <- RenameAlter / SetOptions / ResetOptions
 
 AlterTableOptions <- AddColumn / DropConstraint / DropColumn / AlterColumn / AddConstraint / ChangeNullability /
-        RenameConstraint / RenameColumn / RenameAlter / SetPartitionedBy / ResetPartitionedBy / SetSortedBy / ResetSortedBy / SetOptions / ResetOptions
+        RenameConstraint / RenameColumn / RenameAlter / SetPartitionedBy / ResetPartitionedBy / SetSortedBy / ResetSortedBy / SetOptions / ResetOptions /
+        EnableTrigger / DisableTrigger
 
 AddConstraint <- 'ADD' TopLevelConstraint
+EnableTrigger <- 'ENABLE' TriggerFireMode? 'TRIGGER' TriggerTarget
+DisableTrigger <- 'DISABLE' 'TRIGGER' TriggerTarget
+TriggerFireMode <- ReplicaFireMode / AlwaysFireMode
+ReplicaFireMode <- 'REPLICA'
+AlwaysFireMode <- 'ALWAYS'
+TriggerTarget <- AllTriggers / UserTriggers / ColId
+AllTriggers <- 'ALL'
+UserTriggers <- 'USER'
 DropConstraint <- 'DROP' 'CONSTRAINT' IfExists? ConstraintName DropBehavior?
 RenameConstraint <- 'RENAME' 'CONSTRAINT' ConstraintName 'TO' ConstraintName
 AddColumn <- 'ADD' 'COLUMN'? IfNotExists? AddColumnEntry

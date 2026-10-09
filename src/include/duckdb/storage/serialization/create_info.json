@@ -550,6 +550,13 @@
         "id": 210,
         "name": "referencing_old_table",
         "type": "Identifier"
+      },
+      {
+        "id": 16595,
+        "name": "firing",
+        "type": "TriggerFiring",
+        "default": "TriggerFiring::ORIGIN",
+        "version": "serenedb_v1"
       }
     ],
     "methods": {

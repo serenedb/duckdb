@@ -929,6 +929,52 @@ string RenameConstraintInfo::ToString() const {
 }
 
 //===--------------------------------------------------------------------===//
+// SetTriggerFiringInfo
+//===--------------------------------------------------------------------===//
+SetTriggerFiringInfo::SetTriggerFiringInfo()
+    : AlterTableInfo(AlterTableType::SET_TRIGGER_FIRING), firing(TriggerFiring::ORIGIN) {
+}
+
+SetTriggerFiringInfo::SetTriggerFiringInfo(const AlterEntryData &data, Identifier trigger_name_p,
+                                           TriggerFiring firing_p)
+    : AlterTableInfo(AlterTableType::SET_TRIGGER_FIRING, data), trigger_name(std::move(trigger_name_p)),
+      firing(firing_p) {
+}
+
+SetTriggerFiringInfo::~SetTriggerFiringInfo() {
+}
+
+unique_ptr<AlterInfo> SetTriggerFiringInfo::Copy() const {
+	return make_uniq_base<AlterInfo, SetTriggerFiringInfo>(GetAlterEntryData(), trigger_name, firing);
+}
+
+string SetTriggerFiringInfo::ToString() const {
+	string result = "ALTER TABLE ";
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	switch (firing) {
+	case TriggerFiring::ORIGIN:
+		result += " ENABLE TRIGGER ";
+		break;
+	case TriggerFiring::REPLICA:
+		result += " ENABLE REPLICA TRIGGER ";
+		break;
+	case TriggerFiring::ALWAYS:
+		result += " ENABLE ALWAYS TRIGGER ";
+		break;
+	case TriggerFiring::DISABLED:
+		result += " DISABLE TRIGGER ";
+		break;
+	}
+	if (trigger_name.empty()) {
+		result += "ALL";
+	} else {
+		result += SQLIdentifier(trigger_name);
+	}
+	result += ";";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
 // SetPartitionedByInfo
 //===--------------------------------------------------------------------===//
 SetPartitionedByInfo::SetPartitionedByInfo() : AlterTableInfo(AlterTableType::SET_PARTITIONED_BY) {
