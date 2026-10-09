@@ -223,7 +223,7 @@ private:
 	//! The block id where the free list can be found
 	idx_t free_list_id;
 	//! The current header iteration count.
-	uint64_t iteration_count;
+	atomic<uint64_t> iteration_count;
 	//! The storage manager options
 	StorageManagerOptions options;
 	//! Lock for performing various operations in the single file block manager
