@@ -58,6 +58,8 @@ public:
 	virtual void TransactionPreCheckpoint(AttachedDatabase &db, ClientContext &context, idx_t wal_generation,
 	                                      idx_t wal_end_offset) {
 	}
+	virtual void TransactionDurable(AttachedDatabase &db, ClientContext &context) {
+	}
 	virtual void TransactionPreWalWrite(AttachedDatabase &db, ClientContext &context) {
 	}
 	virtual void TransactionPreRollback(MetaTransaction &transaction, ClientContext &context,
