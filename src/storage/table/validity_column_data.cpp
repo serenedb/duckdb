@@ -19,7 +19,7 @@ void ValidityColumnData::UpdateWithBase(TransactionData transaction, DuckTableEn
                                         idx_t row_group_start) {
 	Vector base_vector(base.type);
 	ColumnScanState validity_scan_state(nullptr);
-	FetchUpdateData(validity_scan_state, row_ids, base_vector, row_group_start);
+	FetchUpdateData(validity_scan_state, row_ids, update_count, base_vector, row_group_start);
 	if (validity_scan_state.current.get()->ReferenceNode().get()->GetCompressionFunction().type ==
 	    CompressionType::COMPRESSION_EMPTY) {
 		// The validity is actually covered by the data, so we read it to get the validity for UpdateInternal.

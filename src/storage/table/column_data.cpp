@@ -791,20 +791,41 @@ void ColumnData::FetchRowsAtSegmentLevel(TransactionData transaction, ColumnFetc
 	}
 }
 
-idx_t ColumnData::FetchUpdateData(ColumnScanState &state, row_t *row_ids, Vector &base_vector, idx_t row_group_start) {
+idx_t ColumnData::FetchUpdateData(ColumnScanState &state, row_t *row_ids, idx_t update_count, Vector &base_vector,
+                                  idx_t row_group_start) {
 	if (row_ids[0] < UnsafeNumericCast<row_t>(row_group_start)) {
 		throw InternalException("ColumnData::FetchUpdateData out of range");
 	}
-	auto fetch_count = ColumnData::Fetch(state, row_ids[0] - UnsafeNumericCast<row_t>(row_group_start), base_vector);
-	base_vector.Flatten();
-	return fetch_count;
+	const auto first = UnsafeNumericCast<idx_t>(row_ids[0]) - row_group_start;
+	if (update_count * 8 >= STANDARD_VECTOR_SIZE) {
+		auto fetch_count = ColumnData::Fetch(state, UnsafeNumericCast<row_t>(first), base_vector);
+		base_vector.Flatten();
+		return fetch_count;
+	}
+	// An update reads only the base values of its own rows, so a sparse update fetches just those rows.
+	const auto vector_start = first / STANDARD_VECTOR_SIZE * STANDARD_VECTOR_SIZE;
+	ColumnFetchState fetch_state;
+	idx_t segment_start = 0;
+	idx_t segment_end = 0;
+	for (idx_t i = 0; i < update_count; i++) {
+		const auto offset = UnsafeNumericCast<idx_t>(row_ids[i]) - row_group_start;
+		if (!state.current || offset < segment_start || offset >= segment_end) {
+			state.current = data.GetSegment(offset);
+			segment_start = state.current->GetRowStart();
+			segment_end = segment_start + state.current->GetNode().count;
+		}
+		state.current->GetNode().FetchRow(fetch_state, UnsafeNumericCast<row_t>(offset - segment_start), base_vector,
+		                                  offset - vector_start);
+	}
+	state.current = data.GetSegment(first);
+	return MinValue<idx_t>(STANDARD_VECTOR_SIZE, count - vector_start);
 }
 
 void ColumnData::Update(TransactionData transaction, DuckTableEntry &table_entry, idx_t column_index,
                         Vector &update_vector, row_t *row_ids, idx_t update_count, idx_t row_group_start) {
 	Vector base_vector(type);
 	ColumnScanState state(nullptr);
-	FetchUpdateData(state, row_ids, base_vector, row_group_start);
+	FetchUpdateData(state, row_ids, update_count, base_vector, row_group_start);
 
 	UpdateInternal(transaction, table_entry, column_index, update_vector, row_ids, update_count, base_vector,
 	               row_group_start);
