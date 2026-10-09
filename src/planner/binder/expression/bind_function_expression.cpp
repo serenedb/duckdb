@@ -9,6 +9,7 @@
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/function_binder.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/lambda_expression.hpp"
 #include "duckdb/parser/srf_utils.hpp"
@@ -388,25 +389,23 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 	case CatalogType::WINDOW_FUNCTION_ENTRY:
 		// window function
 		return BindWindow(function, func.get().Cast<WindowFunctionCatalogEntry>(), depth);
-	case CatalogType::TABLE_FUNCTION_ENTRY: {
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY: {
+		// PG-compat: procedures with a table body are catalogued as TABLE_MACRO.
+		// `SELECT proc()` for a procedure (CALL-only) must surface the canonical PG error.
+		if (func.get().type == CatalogType::TABLE_MACRO_ENTRY &&
+		    func.get().Cast<TableMacroCatalogEntry>().is_procedure) {
+			throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
+			                      function.FunctionName().GetIdentifierName());
+		}
 		// PG compat: table functions in SELECT -> unnest their results as rows.
 		// Routes through SelectBinder::BindUnnest, sharing BoundUnnestNode with other SRFs.
 		auto unnest_func = make_uniq<FunctionExpression>("unnest", vector<unique_ptr<ParsedExpression>> {});
 		unnest_func->GetArgumentsMutable().push_back(WrapTableFuncAsList(function.Copy()));
+		unnest_func->GetArgumentsMutable().emplace_back(Identifier("set_returning"), ConstantExpression::Boolean(true));
 		unnest_func->SetAlias(function.GetAlias().empty() ? function.FunctionName() : function.GetAlias());
 		expr_ptr = std::move(unnest_func);
 		return BindExpression(expr_ptr, depth, false);
-	}
-	case CatalogType::TABLE_MACRO_ENTRY: {
-		// PG-compat: procedures with a table body are catalogued as TABLE_MACRO.
-		// `SELECT proc()` for a procedure (CALL-only) must surface the canonical
-		// PG error rather than the generic "Unsupported catalog type" fallthrough.
-		auto &table_macro = func.get().Cast<TableMacroCatalogEntry>();
-		if (table_macro.is_procedure) {
-			throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
-			                      function.FunctionName().GetIdentifierName());
-		}
-		throw InvalidInputException("Unsupported catalog type when binding function");
 	}
 	default:
 		throw InvalidInputException("Unsupported catalog type when binding function");

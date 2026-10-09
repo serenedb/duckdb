@@ -20,8 +20,6 @@
 
 namespace duckdb {
 
-// Wrap a table function call as: (SELECT list(__c) FROM (SELECT * FROM func()) __t(__c))
-// Returns a scalar subquery expression producing a LIST from the table function's results.
 inline unique_ptr<ParsedExpression> WrapTableFuncAsList(unique_ptr<ParsedExpression> func_expr, idx_t idx = 0) {
 	// Inner: SELECT * FROM func()
 	auto inner_select = make_uniq<SelectNode>();
@@ -32,14 +30,12 @@ inline unique_ptr<ParsedExpression> WrapTableFuncAsList(unique_ptr<ParsedExpress
 	auto inner_stmt = make_uniq<SelectStatement>();
 	inner_stmt->node = std::move(inner_select);
 
-	// Wrap: (...) __srf_N(__c)
-	auto subquery_ref = make_uniq<SubqueryRef>(std::move(inner_stmt), Identifier("__srf_" + to_string(idx)));
-	subquery_ref->column_name_alias.emplace_back("__c");
+	Identifier alias("__srf_" + to_string(idx));
+	auto subquery_ref = make_uniq<SubqueryRef>(std::move(inner_stmt), alias);
 
-	// Outer: SELECT list(__c) FROM __srf_N
 	auto outer_select = make_uniq<SelectNode>();
 	auto list_func = make_uniq<FunctionExpression>("list", vector<unique_ptr<ParsedExpression>> {});
-	list_func->GetArgumentsMutable().push_back(unique_ptr<ParsedExpression>(make_uniq<ColumnRefExpression>("__c")));
+	list_func->GetArgumentsMutable().push_back(unique_ptr<ParsedExpression>(make_uniq<ColumnRefExpression>(alias)));
 	outer_select->select_list.push_back(std::move(list_func));
 	outer_select->from_table = std::move(subquery_ref);
 	auto outer_stmt = make_uniq<SelectStatement>();
