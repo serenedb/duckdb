@@ -264,7 +264,8 @@ protected:
 	void UpdateInternal(TransactionData transaction, DuckTableEntry &table_entry, idx_t column_index,
 	                    Vector &update_vector, row_t *row_ids, idx_t update_count, Vector &base_vector,
 	                    idx_t row_group_start);
-	idx_t FetchUpdateData(ColumnScanState &state, row_t *row_ids, Vector &base_vector, idx_t row_group_start);
+	idx_t FetchUpdateData(ColumnScanState &state, row_t *row_ids, idx_t update_count, Vector &base_vector,
+	                      idx_t row_group_start);
 
 	idx_t GetVectorCount(idx_t vector_index) const;
 
