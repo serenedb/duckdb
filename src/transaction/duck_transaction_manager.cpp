@@ -483,9 +483,10 @@ ErrorData DuckTransactionManager::PrepareTransaction(ClientContext &context, Tra
                                                      AttachedDatabase &catalog_owner, const hugeint_t &txid,
                                                      vector<pair<idx_t, idx_t>> &participants) {
 	auto &transaction = transaction_p.Cast<DuckTransaction>();
-	const bool logs_sequences = db.GetCatalog().UsesCatalogLog() && transaction.HasLoggedSequenceUsage();
+	const bool logs_catalog =
+	    db.GetCatalog().UsesCatalogLog() && (transaction.HasLoggedSequenceUsage() || transaction.HasReplicationLsns());
 	const bool writes = transaction.ChangesMade() && db.HasStorageManager() && transaction.ShouldWriteToWAL(db);
-	if (!writes && !logs_sequences) {
+	if (!writes && !logs_catalog) {
 		return ErrorData();
 	}
 	optional_ptr<BlockManager> block_manager;
