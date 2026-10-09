@@ -1,0 +1,114 @@
+# name: test/sql/function/string/regex_replace_constant.test
+# description: regexp_replace with a constant pattern and replacement matches the per-row RE2::Replace path
+# group: [string]
+
+statement ok
+CREATE TABLE r AS SELECT * FROM (VALUES
+	(1, 'http://www.example.com/path?x=1', 'X'),
+	(2, 'no digits here', 'Y'),
+	(3, 'a1b22c333', 'Z'),
+	(4, 'ünïcödé 42 ünïcödé', 'W'),
+	(5, '', 'V'),
+	(6, NULL, 'U')
+) v(id, s, rep)
+
+query IT
+SELECT id, regexp_replace(s, '[0-9]+', '<\0>') FROM r ORDER BY id
+----
+1	http://www.example.com/path?x=<1>
+2	no digits here
+3	a<1>b22c333
+4	ünïcödé <42> ünïcödé
+5	(empty)
+6	NULL
+
+query IT
+SELECT id, regexp_replace(s, '[0-9]+', '<\0>', 'g') FROM r ORDER BY id
+----
+1	http://www.example.com/path?x=<1>
+2	no digits here
+3	a<1>b<22>c<333>
+4	ünïcödé <42> ünïcödé
+5	(empty)
+6	NULL
+
+query IT
+SELECT id, regexp_replace(s, '(w+)\.(example)', '\2.\1') FROM r ORDER BY id
+----
+1	http://example.www.com/path?x=1
+2	no digits here
+3	a1b22c333
+4	ünïcödé 42 ünïcödé
+5	(empty)
+6	NULL
+
+query IT
+SELECT id, regexp_replace(s, 'x*', '-') FROM r ORDER BY id
+----
+1	-http://www.example.com/path?x=1
+2	-no digits here
+3	-a1b22c333
+4	-ünïcödé 42 ünïcödé
+5	-
+6	NULL
+
+query IT
+SELECT id, regexp_replace(s, 'x*', '-', 'g') FROM r ORDER BY id
+----
+1	-h-t-t-p-:-/-/-w-w-w-.-e-a-m-p-l-e-.-c-o-m-/-p-a-t-h-?-=-1-
+2	-n-o- -d-i-g-i-t-s- -h-e-r-e-
+3	-a-1-b-2-2-c-3-3-3-
+4	-ü-n-ï-c-ö-d-é- -4-2- -ü-n-ï-c-ö-d-é-
+5	-
+6	NULL
+
+query IT
+SELECT id, regexp_replace(s, 'ö', 'o', 'g') FROM r ORDER BY id
+----
+1	http://www.example.com/path?x=1
+2	no digits here
+3	a1b22c333
+4	ünïcodé 42 ünïcodé
+5	(empty)
+6	NULL
+
+query IT
+SELECT id, regexp_replace(s, '[0-9]', rep) FROM r ORDER BY id
+----
+1	http://www.example.com/path?x=X
+2	no digits here
+3	aZb22c333
+4	ünïcödé W2 ünïcödé
+5	(empty)
+6	NULL
+
+query IT
+SELECT id, regexp_replace(s, '[0-9]', NULL) FROM r ORDER BY id
+----
+1	NULL
+2	NULL
+3	NULL
+4	NULL
+5	NULL
+6	NULL
+
+query IT
+SELECT id, regexp_replace(s, '^http://([^/]+)/.*$', '\1') FROM r ORDER BY id
+----
+1	www.example.com
+2	no digits here
+3	a1b22c333
+4	ünïcödé 42 ünïcödé
+5	(empty)
+6	NULL
+
+# the replacement is only validated once a non-NULL row reaches it
+query I
+SELECT count(regexp_replace(s, '[0-9]+', '\3')) FROM r WHERE s IS NULL
+----
+0
+
+statement error
+SELECT regexp_replace(s, '[0-9]+', '\3') FROM r
+----
+<REGEX>:.*Invalid replacement string.*
