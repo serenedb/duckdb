@@ -792,10 +792,6 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	} else {
 		DUCKDB_LOG(context, TransactionLogType, db, "Commit", info.commit_id);
 		last_commit = info.commit_id;
-		// Let registered client states commit dependent changes (serenedb's out-of-band search-index leg) now that
-		// this commit's WAL entries and flush marker are appended, while the commit lock still orders WAL appends
-		// (so hooks fire in WAL-append order across the database's commits) and before the sync below -- the
-		// dependent state gates its own durability on the WAL becoming durable.
 		if (context.registered_state && db.HasStorageManager()) {
 			auto &storage_manager = db.GetStorageManager();
 			idx_t wal_generation = storage_manager.GetBlockManager().GetCheckpointIteration();
