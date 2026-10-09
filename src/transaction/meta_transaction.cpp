@@ -197,7 +197,8 @@ optional_ptr<Catalog> MetaTransaction::CatalogLogForCommit() {
 		}
 		writer = db;
 		writers++;
-		catalog_changes = catalog_changes || transaction.catalog_version >= TRANSACTION_ID_START;
+		catalog_changes =
+		    catalog_changes || transaction.catalog_version >= TRANSACTION_ID_START || transaction.HasSubscriptionLsns();
 	}
 	if ((!catalog_changes && writers < 2) || !writer->GetCatalog().CatalogLog()) {
 		return nullptr;
@@ -319,6 +320,7 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 				WALWriteState::WriteCatalogRun(catalog_log, db.oid, duck_transaction->prepared->catalog_run);
 				if (db.GetCatalog().UsesCatalogLog()) {
 					duck_transaction->prepared->sequences = duck_transaction->ReserveSequenceUsage(catalog_log);
+					duck_transaction->WriteSubscriptionLsns(catalog_log);
 				}
 			}
 			if (!prepared.empty()) {
@@ -349,6 +351,7 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 		for (auto &value : duck_transaction->prepared->sequences) {
 			value.entry->MarkReserved(value);
 		}
+		duck_transaction->RaiseSubscriptionLsns();
 		duck_transaction->manager.Cast<DuckTransactionManager>().DecidePreparedTransaction(
 		    *duck_transaction, catalog_log_ref, decision_offset);
 	}
