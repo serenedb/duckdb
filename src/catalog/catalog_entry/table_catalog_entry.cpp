@@ -421,6 +421,27 @@ virtual_column_map_t TableCatalogEntry::GetVirtualColumns() const {
 	return virtual_columns;
 }
 
+vector<idx_t> TableCatalogEntry::GetSubObjectOids() const {
+	vector<idx_t> oids;
+	for (auto &column : GetColumns().Logical()) {
+		if (column.CatalogOid()) {
+			oids.push_back(column.CatalogOid());
+		}
+	}
+	for (auto &constraint : constraints) {
+		if (constraint->oid) {
+			oids.push_back(constraint->oid);
+		}
+		if (constraint->type == ConstraintType::UNIQUE) {
+			auto index_oid = constraint->Cast<UniqueConstraint>().index_oid;
+			if (index_oid) {
+				oids.push_back(index_oid);
+			}
+		}
+	}
+	return oids;
+}
+
 vector<column_t> TableCatalogEntry::GetRowIdColumns() const {
 	vector<column_t> result;
 	result.push_back(COLUMN_IDENTIFIER_ROW_ID);
