@@ -142,7 +142,7 @@ void IndexEntry::InitializeLocalIndexesInternal(TableIndexList &delete_indexes,
 void IndexEntry::AppendToDeleteIndexes(DataChunk &chunk, Vector &row_ids) {
 	auto entry_lock = lock.GetExclusiveLock();
 	D_ASSERT(owned_index->IsBound());
-	if (!owned_index->IsUnique()) {
+	if (!owned_index->IsUnique() && !owned_index->IsForeign()) {
 		return;
 	}
 	auto &bound_index = owned_index->Cast<BoundIndex>();
@@ -311,6 +311,11 @@ void IndexEntry::RemoveFromIndex(DataChunk &chunk, Vector &row_ids, const IndexR
 bool IndexEntry::IsUnique() const {
 	auto entry_lock = lock.GetSharedLock();
 	return owned_index->IsUnique();
+}
+
+bool IndexEntry::IsForeign() const {
+	auto entry_lock = lock.GetSharedLock();
+	return owned_index->IsForeign();
 }
 
 bool IndexEntry::IsDeferred() const {

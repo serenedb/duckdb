@@ -109,6 +109,7 @@ public:
 	bool HasBufferedReplays() const;
 	//! Returns true, if there are unique indexes.
 	bool HasUniqueIndexes() const;
+	bool HasDeleteIndexes() const;
 	//! Verifies all unique ART indexes that are not deferred, optionally recording conflicts.
 	void VerifyUniqueIndexes(optional_ptr<const TableIndexList> delete_indexes, DataChunk &chunk,
 	                         optional_ptr<ConflictManager> manager,
@@ -154,8 +155,7 @@ public:
 	unordered_set<column_t> GetRemovalColumns() const;
 	//! Returns the column sets of unique indexes matching the conflict target.
 	vector<unordered_set<column_t>> GetConflictTargetColumns(const ConflictInfo &conflict_info) const;
-	//! Get the combined column ids of the unique indexes.
-	unordered_set<column_t> GetUniqueIndexColumns() const;
+	unordered_set<column_t> GetDeleteIndexColumns() const;
 	//! Serialize all indexes of the table.
 	IndexSerializationResult SerializeToDisk(QueryContext context, const IndexSerializationInfo &info);
 	//! Serializes the index matching the OID for the write-ahead log, if it exists.

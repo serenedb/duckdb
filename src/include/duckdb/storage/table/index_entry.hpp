@@ -129,6 +129,7 @@ public:
 	                     optional_idx active_checkpoint);
 	//! Returns whether the physical index enforces a unique constraint.
 	bool IsUnique() const;
+	bool IsForeign() const;
 	//! Returns whether the constraint enforced by the physical index is only checked when committing.
 	bool IsDeferred() const;
 	//! Returns whether the physical index matches the foreign key columns and role.
