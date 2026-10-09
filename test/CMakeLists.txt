@@ -105,8 +105,4 @@ endif()
 target_link_libraries(unittest duckdb_static test_helpers duckdb_cpp_api)
 link_extension_libraries(unittest "")
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  target_link_libraries(unittest atomic)
-endif()
-
 duckdb_codesign_for_debugging(unittest)
