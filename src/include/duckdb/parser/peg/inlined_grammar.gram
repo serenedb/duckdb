@@ -11,6 +11,8 @@ Statement <-
 	DropTSDictionaryStatement /
 	CreateServerStatement /
 	DropServerStatement /
+	DropSubscriptionStatement /
+	AlterSubscriptionStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
 	CreatePolicyStatement /
@@ -1061,9 +1063,24 @@ DropServerStatement <- 'DROP' 'SERVER' IfExists? ColId DropBehavior?
 ServerOptions <- 'OPTIONS' Parens(List(ServerOption))
 ServerOption <- ColLabel StringLiteral
 
-CreateSubscriptionStatement <- 'CREATE' 'SUBSCRIPTION' Identifier SubscriptionConnection?
-SubscriptionConnection <- 'CONNECTION' StringLiteral SubscriptionPublication?
-SubscriptionPublication <- 'PUBLICATION' List(Identifier)
+CreateSubscriptionStatement <- 'CREATE' 'SUBSCRIPTION' ColId 'CONNECTION' StringLiteral 'PUBLICATION' List(ColId) SubscriptionWith?
+DropSubscriptionStatement <- 'DROP' 'SUBSCRIPTION' IfExists? ColId DropBehavior?
+AlterSubscriptionStatement <- 'ALTER' 'SUBSCRIPTION' ColId SubscriptionAlterAction
+
+SubscriptionWith <- 'WITH' Parens(List(SubscriptionOption))
+SubscriptionOption <- ColLabel SubscriptionOptionArg?
+SubscriptionOptionArg <- '=' DefArg
+
+SubscriptionAlterAction <- SubscriptionEnableAction / SubscriptionConnectionAction / SubscriptionPublicationAction / SubscriptionRefreshAction / SubscriptionSkipAction / SubscriptionRenameAction / SubscriptionOwnerAction / SubscriptionSetOptions
+SubscriptionEnableAction <- 'ENABLE' / 'DISABLE'
+SubscriptionConnectionAction <- 'CONNECTION' StringLiteral
+SubscriptionPublicationAction <- SubscriptionPublicationMode 'PUBLICATION' List(ColId) SubscriptionWith?
+SubscriptionPublicationMode <- 'SET' / 'ADD' / 'DROP'
+SubscriptionRefreshAction <- 'REFRESH' 'PUBLICATION' SubscriptionWith?
+SubscriptionSkipAction <- 'SKIP' Parens(SubscriptionOption)
+SubscriptionRenameAction <- 'RENAME' 'TO' ColId
+SubscriptionOwnerAction <- 'OWNER' 'TO' OwnerRoleSpec
+SubscriptionSetOptions <- 'SET' Parens(List(SubscriptionOption))
 
 CreateStatement <- 'CREATE' OrReplace? Temporary? CreateStatementVariation
 CreateStatementVariation <- CreateTableStmt / CreateMacroStmt / CreateSequenceStmt / CreateTypeStmt / CreateSchemaStmt / CreateViewStmt / CreateIndexStmt / CreateSecretStmt / CreateTriggerStmt

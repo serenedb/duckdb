@@ -1284,6 +1284,7 @@ const StringUtil::EnumStringLiteral *GetCatalogTypeValues() {
 		{ static_cast<uint32_t>(CatalogType::TOKENIZER_ENTRY), "TOKENIZER_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::ROLE_ENTRY), "ROLE_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::FOREIGN_SERVER_ENTRY), "FOREIGN_SERVER_ENTRY" },
+		{ static_cast<uint32_t>(CatalogType::SUBSCRIPTION_ENTRY), "SUBSCRIPTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::TABLE_FUNCTION_ENTRY), "TABLE_FUNCTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::SCALAR_FUNCTION_ENTRY), "SCALAR_FUNCTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::AGGREGATE_FUNCTION_ENTRY), "AGGREGATE_FUNCTION_ENTRY" },
@@ -1304,12 +1305,12 @@ const StringUtil::EnumStringLiteral *GetCatalogTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<CatalogType>(CatalogType value) {
-	return StringUtil::EnumToString(GetCatalogTypeValues(), 29, "CatalogType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetCatalogTypeValues(), 30, "CatalogType", static_cast<uint32_t>(value));
 }
 
 template<>
 CatalogType EnumUtil::FromString<CatalogType>(std::string_view value) {
-	return static_cast<CatalogType>(StringUtil::StringToEnum(GetCatalogTypeValues(), 29, "CatalogType", value));
+	return static_cast<CatalogType>(StringUtil::StringToEnum(GetCatalogTypeValues(), 30, "CatalogType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetCheckpointAbortValues() {
@@ -7616,6 +7617,9 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 		{ static_cast<uint32_t>(WALType::CREATE_FOREIGN_SERVER), "CREATE_FOREIGN_SERVER" },
 		{ static_cast<uint32_t>(WALType::DROP_FOREIGN_SERVER), "DROP_FOREIGN_SERVER" },
 		{ static_cast<uint32_t>(WALType::USE_CATALOG), "USE_CATALOG" },
+		{ static_cast<uint32_t>(WALType::CREATE_SUBSCRIPTION), "CREATE_SUBSCRIPTION" },
+		{ static_cast<uint32_t>(WALType::DROP_SUBSCRIPTION), "DROP_SUBSCRIPTION" },
+		{ static_cast<uint32_t>(WALType::SUBSCRIPTION_LSN), "SUBSCRIPTION_LSN" },
 		{ static_cast<uint32_t>(WALType::WAL_VERSION), "WAL_VERSION" },
 		{ static_cast<uint32_t>(WALType::CHECKPOINT), "CHECKPOINT" },
 		{ static_cast<uint32_t>(WALType::WAL_FLUSH), "WAL_FLUSH" },
@@ -7627,12 +7631,12 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<WALType>(WALType value) {
-	return StringUtil::EnumToString(GetWALTypeValues(), 40, "WALType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetWALTypeValues(), 43, "WALType", static_cast<uint32_t>(value));
 }
 
 template<>
 WALType EnumUtil::FromString<WALType>(std::string_view value) {
-	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 40, "WALType", value));
+	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 43, "WALType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetWindowAggregationModeValues() {

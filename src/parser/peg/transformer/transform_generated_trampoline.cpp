@@ -866,6 +866,12 @@ static const TransformFrameOps DROP_SERVER_STATEMENT_OPS = {
 static const TransformFrameOps CREATE_SUBSCRIPTION_STATEMENT_OPS = {
     "CreateSubscriptionStatement", &PEGTransformerFactory::InitializeCreateSubscriptionStatementTrampoline,
     &PEGTransformerFactory::FinalizeCreateSubscriptionStatementTrampoline};
+static const TransformFrameOps DROP_SUBSCRIPTION_STATEMENT_OPS = {
+    "DropSubscriptionStatement", &PEGTransformerFactory::InitializeDropSubscriptionStatementTrampoline,
+    &PEGTransformerFactory::FinalizeDropSubscriptionStatementTrampoline};
+static const TransformFrameOps ALTER_SUBSCRIPTION_STATEMENT_OPS = {
+    "AlterSubscriptionStatement", &PEGTransformerFactory::InitializeAlterSubscriptionStatementTrampoline,
+    &PEGTransformerFactory::FinalizeAlterSubscriptionStatementTrampoline};
 static const TransformFrameOps CREATE_STATEMENT_OPS = {"CreateStatement",
                                                        &PEGTransformerFactory::InitializeCreateStatementTrampoline,
                                                        &PEGTransformerFactory::FinalizeCreateStatementTrampoline};
@@ -3825,6 +3831,8 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"CreateServerStatement", &CREATE_SERVER_STATEMENT_OPS},
 	    {"DropServerStatement", &DROP_SERVER_STATEMENT_OPS},
 	    {"CreateSubscriptionStatement", &CREATE_SUBSCRIPTION_STATEMENT_OPS},
+	    {"DropSubscriptionStatement", &DROP_SUBSCRIPTION_STATEMENT_OPS},
+	    {"AlterSubscriptionStatement", &ALTER_SUBSCRIPTION_STATEMENT_OPS},
 	    {"CreateStatement", &CREATE_STATEMENT_OPS},
 	    {"CreateStatementVariation", &CREATE_STATEMENT_VARIATION_OPS},
 	    {"OrReplace", &OR_REPLACE_OPS},
@@ -10447,6 +10455,30 @@ arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizeCreateSubscriptionStatementTrampoline(PEGTransformer &transformer,
                                                                      GeneratedTransformProcess &process) {
 	auto result = TransformCreateSubscriptionStatement(transformer, process.parse_result);
+	return transformer.MakeResult<unique_ptr<SQLStatement>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDropSubscriptionStatementTrampoline(PEGTransformer &transformer,
+                                                                          GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDropSubscriptionStatementTrampoline(PEGTransformer &transformer,
+                                                                   GeneratedTransformProcess &process) {
+	auto result = TransformDropSubscriptionStatement(transformer, process.parse_result);
+	return transformer.MakeResult<unique_ptr<SQLStatement>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeAlterSubscriptionStatementTrampoline(PEGTransformer &transformer,
+                                                                           GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeAlterSubscriptionStatementTrampoline(PEGTransformer &transformer,
+                                                                    GeneratedTransformProcess &process) {
+	auto result = TransformAlterSubscriptionStatement(transformer, process.parse_result);
 	return transformer.MakeResult<unique_ptr<SQLStatement>>(std::move(result));
 }
 
