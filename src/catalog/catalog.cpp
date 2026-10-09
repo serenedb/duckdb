@@ -1025,11 +1025,17 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 		                 return ListingRank(left->GetCatalog()) < ListingRank(right->GetCatalog());
 	                 });
 
+	auto default_database = DatabaseManager::TryGetDefaultDatabase(context);
+	identifier_set_t search_path_catalogs;
+	for (auto &entry : retriever.GetSearchPath().Get()) {
+		search_path_catalogs.insert(IsInvalidCatalog(entry.GetCatalog()) ? default_database : entry.GetCatalog());
+	}
 	for (const auto &database : databases) {
 		if (unseen_schemas.size() >= max_schema_count) {
 			break;
 		}
-		if (database->GetVisibility() == AttachVisibility::HIDDEN) {
+		if (database->GetVisibility() == AttachVisibility::HIDDEN ||
+		    (!database->GetCatalog().IsDuckCatalog() && !search_path_catalogs.count(database->GetName()))) {
 			continue;
 		}
 		vector<reference<SchemaCatalogEntry>> current_schemas;
