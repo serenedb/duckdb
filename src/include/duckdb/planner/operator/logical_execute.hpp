@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "duckdb/common/identifier.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/main/prepared_statement_data.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 
@@ -25,6 +27,7 @@ public:
 	}
 
 	shared_ptr<PreparedStatementData> prepared;
+	optional<Identifier> replaces;
 
 public:
 	//! Skips the serialization check in VerifyPlan

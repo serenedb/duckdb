@@ -8,11 +8,13 @@
 
 #pragma once
 
+#include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/winapi.hpp"
+#include "duckdb/function/plan_data_version.hpp"
 #include "duckdb/planner/expression/bound_parameter_data.hpp"
 #include "duckdb/planner/bound_parameter_map.hpp"
 
@@ -45,10 +47,14 @@ public:
 	//! The map of parameter index to the actual value entry
 	bound_parameter_map_t value_map;
 
+	case_insensitive_map_t<LogicalType> parameter_type_hints;
+	vector<shared_ptr<PlanDataVersion>> data_versions;
+
 public:
 	void CheckParameterCount(idx_t parameter_count);
 	//! Whether or not the prepared statement data requires the query to rebound for the given parameters
 	bool RequireRebind(ClientContext &context, optional_ptr<identifier_map_t<BoundParameterData>> values);
+	bool DataIsCurrent(ClientContext &context) const;
 	//! Fill in missing parameter values from user variables
 	void PopulateMissingParameterValues(ClientContext &context, identifier_map_t<BoundParameterData> &values) const;
 	//! Bind a set of values to the prepared statement data

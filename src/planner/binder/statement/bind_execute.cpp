@@ -80,6 +80,21 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 			rebind = RebindQueryInfo::ATTEMPT_TO_REBIND;
 		}
 	}
+	optional<Identifier> replaces;
+	if (rebind != RebindQueryInfo::ATTEMPT_TO_REBIND && !prepared->DataIsCurrent(context)) {
+		Planner generic_planner(context);
+		generic_planner.parameter_type_hints = prepared->parameter_type_hints;
+		auto replanned = generic_planner.PrepareSQLStatement(prepared->unbound_statement->Copy());
+		if (replanned->properties.bound_all_parameters) {
+			replanned->parameter_type_hints = prepared->parameter_type_hints;
+			prepared = std::move(replanned);
+			rebound_plan = std::move(generic_planner.plan);
+			replaces = stmt.name;
+			global_binder_state->bound_tables = generic_planner.binder->global_binder_state->bound_tables;
+		} else {
+			rebind = RebindQueryInfo::ATTEMPT_TO_REBIND;
+		}
+	}
 	if (rebind == RebindQueryInfo::ATTEMPT_TO_REBIND) {
 		// catalog was modified or statement does not have clear types: rebind the statement before running the execute
 		Planner prepared_planner(context);
@@ -101,6 +116,7 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 	prepared->Bind(context, bind_values);
 	if (rebound_plan) {
 		auto execute_plan = make_uniq<LogicalExecute>(std::move(prepared));
+		execute_plan->replaces = std::move(replaces);
 		execute_plan->children.push_back(std::move(rebound_plan));
 		result.plan = std::move(execute_plan);
 	} else {

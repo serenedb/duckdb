@@ -7,8 +7,9 @@ namespace duckdb {
 
 BoundStatement Binder::Bind(PrepareStatement &stmt) {
 	Planner prepared_planner(context);
-	prepared_planner.parameter_type_hints = std::move(stmt.parameter_type_hints);
+	prepared_planner.parameter_type_hints = stmt.parameter_type_hints;
 	auto prepared_data = prepared_planner.PrepareSQLStatement(std::move(stmt.statement));
+	prepared_data->parameter_type_hints = std::move(stmt.parameter_type_hints);
 	global_binder_state->bound_tables = prepared_planner.binder->global_binder_state->bound_tables;
 
 	if (prepared_planner.properties.always_require_rebind) {

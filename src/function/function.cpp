@@ -144,6 +144,14 @@ bool FunctionData::SupportStatementCache() const {
 	return true;
 }
 
+bool FunctionData::ReadsParametersAtExecution() const {
+	return false;
+}
+
+shared_ptr<PlanDataVersion> FunctionData::GetPlanDataVersion() const {
+	return nullptr;
+}
+
 Function::Function(Identifier name_p) : name(std::move(name_p)) {
 }
 Function::~Function() {

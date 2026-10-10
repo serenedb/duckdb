@@ -139,6 +139,15 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 	return false;
 }
 
+bool PreparedStatementData::DataIsCurrent(ClientContext &context) const {
+	for (auto &version : data_versions) {
+		if (!version->IsCurrent(context)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 void PreparedStatementData::Bind(ClientContext &context, const identifier_map_t<BoundParameterData> &values) {
 	// set parameters
 	D_ASSERT(!unbound_statement || unbound_statement->named_param_map.size() == properties.parameter_count);
