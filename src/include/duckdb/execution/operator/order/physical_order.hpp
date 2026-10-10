@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/sorting/sort.hpp"
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/parallel/pipeline.hpp"
 #include "duckdb/planner/bound_query_node.hpp"
@@ -22,12 +23,14 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::ORDER_BY;
 
 public:
-	PhysicalOrder(PhysicalPlan &physical_plan, vector<LogicalType> types, vector<BoundOrderByNode> orders,
-	              vector<idx_t> projections, idx_t estimated_cardinality, bool is_index_sort = false);
+	PhysicalOrder(PhysicalPlan &physical_plan, ClientContext &context, const vector<LogicalType> &input_types,
+	              vector<LogicalType> types, vector<BoundOrderByNode> orders, vector<idx_t> projections,
+	              idx_t estimated_cardinality, bool is_index_sort = false);
 
 	vector<BoundOrderByNode> orders;
 	vector<idx_t> projections;
 	bool is_index_sort;
+	Sort sort;
 
 public:
 	//===--------------------------------------------------------------------===//
