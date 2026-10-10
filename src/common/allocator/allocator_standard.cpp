@@ -57,6 +57,10 @@ void Allocator::FlushAll() {
 	MallocTrim(0);
 }
 
+optional_idx Allocator::UnpurgedBytes() {
+	return optional_idx();
+}
+
 void Allocator::SetBackgroundThreads(bool enable) {
 	/* no-op */
 }
