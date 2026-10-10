@@ -1210,17 +1210,14 @@ void IEJoinLocalSourceState::ResolveComplexJoin(ExecutionContext &context, DataC
 		op.ProjectResult(chunk, result);
 
 		// found matches: mark the found matches if required
-		// NOTE: threadsan reports this as a data race because this can be set concurrently by separate
-		// threads Technically it is, but it does not matter, since the only value that can be written is
-		// "true"
 		if (left_table.found_match) {
 			for (idx_t i = 0; i < result_count; i++) {
-				left_table.found_match[left_base + lsel[sel->get_index(i)]] = true;
+				StoreRacy(left_table.found_match[left_base + lsel[sel->get_index(i)]], true);
 			}
 		}
 		if (right_table.found_match) {
 			for (idx_t i = 0; i < result_count; i++) {
-				right_table.found_match[right_base + rsel[sel->get_index(i)]] = true;
+				StoreRacy(right_table.found_match[right_base + rsel[sel->get_index(i)]], true);
 			}
 		}
 		result.Verify(context.client.db);

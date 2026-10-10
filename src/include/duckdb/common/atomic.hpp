@@ -8,11 +8,31 @@
 
 #pragma once
 
+#include <absl/base/config.h>
+
 #include <atomic>
 
 namespace duckdb {
 
 using std::atomic;
+
+template <class T>
+inline void StoreRacy(T &target, T value) {
+#ifdef ABSL_HAVE_THREAD_SANITIZER
+	__atomic_store_n(&target, value, __ATOMIC_RELAXED);
+#else
+	target = value;
+#endif
+}
+
+template <class T>
+inline T LoadRacy(const T &source) {
+#ifdef ABSL_HAVE_THREAD_SANITIZER
+	return __atomic_load_n(&source, __ATOMIC_RELAXED);
+#else
+	return source;
+#endif
+}
 
 //! NOTE: When repeatedly trying to atomically set a value in a loop, you can use as the loop condition:
 //! * std::atomic_compare_exchange_weak
