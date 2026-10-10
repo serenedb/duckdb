@@ -163,8 +163,6 @@ public:
 	}
 	virtual void OnCatalogLogDecided() {
 	}
-	virtual void BeginCatalogLogCommit() {
-	}
 	virtual void EndCatalogLogCommit() {
 	}
 	virtual void RequestCatalogLogSync(shared_ptr<WriteAheadLog> log, idx_t offset) {

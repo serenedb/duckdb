@@ -352,7 +352,6 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 		duck_transaction->manager.Cast<DuckTransactionManager>().DecidePreparedTransaction(
 		    *duck_transaction, catalog_log_ref, decision_offset);
 	}
-	log_owner.BeginCatalogLogCommit();
 	catalog_lock.unlock();
 	if (decision_offset > 0) {
 		try {
