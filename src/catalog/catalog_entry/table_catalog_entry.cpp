@@ -377,7 +377,7 @@ void TableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, L
 	}
 
 	if (update.update_is_del_and_insert || update.return_chunk) {
-		update.update_column_count = update.update_is_del_and_insert ? 0 : update.columns.size();
+		update.update_column_count = update.columns.size();
 		// the update updates a column required by an index or requires returning the updated rows,
 		// push projections for all columns
 		LogicalUpdate::BindAllColumns(*this, get, proj, update);
