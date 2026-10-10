@@ -663,6 +663,8 @@ private:
 	ValidityMask current_partitions;
 	//! Bits set to 1 for completed partitions
 	ValidityMask completed_partitions;
+	atomic<idx_t> current_partition_count {0};
+	atomic<idx_t> finished_partition_count {0};
 };
 
 } // namespace duckdb
