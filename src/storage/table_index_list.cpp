@@ -1,4 +1,7 @@
 #include "duckdb/storage/table/table_index_list.hpp"
+
+#include <absl/cleanup/cleanup.h>
+
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
@@ -586,6 +589,10 @@ void TableIndexList::Bind(ClientContext &context, TableCatalogEntry &table, cons
 		} else {
 			throw InternalException("index entry bind state cannot be BOUND here");
 		}
+		absl::Cleanup unbind = [&]() noexcept {
+			lock.lock();
+			index_entry->SetBindState(IndexBindState::UNBOUND);
+		};
 
 		// Create a binder to bind this index.
 		auto binder = Binder::CreateBinder(context);
@@ -610,6 +617,7 @@ void TableIndexList::Bind(ClientContext &context, TableCatalogEntry &table, cons
 
 		// Commit the bound index to the index entry.
 		lock.lock();
+		std::move(unbind).Cancel();
 		auto current_entry = std::find(index_entries.begin(), index_entries.end(), index_entry);
 		if (current_entry == index_entries.end()) {
 			continue;
