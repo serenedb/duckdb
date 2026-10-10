@@ -147,8 +147,11 @@ void DictFSSTCompressionStorage::StringScan(ColumnSegment &segment, ColumnScanSt
 void DictFSSTCompressionStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id,
                                                 Vector &result, idx_t result_idx) {
 	// fetch a single row from the string segment
-	CompressedStringScanState scan_state(segment, state.GetOrInsertHandle(segment));
-	scan_state.Initialize(false);
+	auto &scan_state = state.GetOrInsertSegmentState<CompressedStringScanState>(segment, [&]() {
+		auto result = make_uniq<CompressedStringScanState>(segment, state.GetOrInsertHandle(segment));
+		result->Initialize(false);
+		return result;
+	});
 	scan_state.ScanToFlatVector(result, result_idx, NumericCast<idx_t>(row_id), 1);
 }
 

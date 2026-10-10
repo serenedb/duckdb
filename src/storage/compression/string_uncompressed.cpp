@@ -198,6 +198,17 @@ BufferHandle &ColumnFetchState::GetOrInsertHandle(ColumnSegment &segment) {
 	}
 }
 
+const CompressionSegmentReader &ColumnFetchState::GetOrInsertSegmentReader(ColumnSegment &segment,
+                                                                           const char *reader_context) {
+	return GetOrInsertSegmentState<SegmentReaderFetchState>(
+	           segment,
+	           [&]() {
+		           return make_uniq<SegmentReaderFetchState>(
+		               CompressionSegmentReader::FromSegment(GetOrInsertHandle(segment), segment, reader_context));
+	           })
+	    .reader;
+}
+
 void UncompressedStringStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id,
                                                Vector &result, idx_t result_idx) {
 	D_ASSERT(row_id >= 0);

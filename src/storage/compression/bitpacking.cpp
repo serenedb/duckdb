@@ -1087,56 +1087,103 @@ void BitpackingScan(ColumnSegment &segment, ColumnScanState &state, idx_t scan_c
 // Fetch
 //===--------------------------------------------------------------------===//
 template <class T, class T_U = typename MakeUnsigned<T>::type>
+struct BitpackingFetchState : public SegmentScanState {
+	static constexpr idx_t ALGORITHM_GROUP_SIZE = BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
+	using Group = typename BitpackingScanState<T>::CurrentGroup;
+
+	BitpackingFetchState(ColumnSegment &segment, ColumnFetchState &state)
+	    : scan(BufferManager::GetBufferManager(segment.GetDatabase()).Pin(state.context, segment.GetBlockHandle()),
+	           segment),
+	      groups(scan.group_count), delta_starts(scan.group_count) {
+	}
+
+	T Fetch(idx_t row) {
+		const idx_t offset = row % BITPACKING_METADATA_GROUP_SIZE;
+		auto &group = GetGroup(row / BITPACKING_METADATA_GROUP_SIZE);
+		if (offset >= group.count) {
+			ThrowBitpackingReadPastEnd();
+		}
+		switch (group.metadata.mode) {
+		case BitpackingMode::CONSTANT:
+			return group.constant;
+		case BitpackingMode::CONSTANT_DELTA:
+			return static_cast<T>((static_cast<T_U>(group.constant) * offset) +
+			                      static_cast<T_U>(group.frame_of_reference));
+		case BitpackingMode::FOR: {
+			const T packed = group.width == 0
+			                     ? T(0)
+			                     : BitpackingPrimitives::UnPackValue<T>(group.payload->data(), offset, group.width);
+			return static_cast<T>(static_cast<T_U>(packed) + static_cast<T_U>(group.frame_of_reference));
+		}
+		case BitpackingMode::DELTA_FOR:
+			break;
+		default:
+			ThrowBitpackingUnknownMode();
+		}
+		const idx_t block = offset / ALGORITHM_GROUP_SIZE;
+		T_U value = DeltaStarts(group)[block];
+		T decoded[ALGORITHM_GROUP_SIZE];
+		UnpackBlock(group, block, decoded);
+		for (idx_t i = 0; i <= offset - block * ALGORITHM_GROUP_SIZE; i++) {
+			value = value + (static_cast<T_U>(decoded[i]) + static_cast<T_U>(group.frame_of_reference));
+		}
+		return static_cast<T>(value);
+	}
+
+	const Group &GetGroup(idx_t group_index) {
+		if (group_index >= scan.group_count) {
+			ThrowBitpackingReadPastEnd();
+		}
+		auto &group = groups[group_index];
+		if (!group) {
+			group = scan.ReadGroup(group_index);
+		}
+		return *group;
+	}
+
+	static void UnpackBlock(const Group &group, idx_t block, T *target) {
+		if (group.width == 0) {
+			std::fill(target, target + ALGORITHM_GROUP_SIZE, T(0));
+			return;
+		}
+		auto algorithm_group = group.payload->SubArray(block * group.algorithm_group_size, group.algorithm_group_size);
+		BitpackingPrimitives::UnPackBlock<T>(data_ptr_cast(target), algorithm_group.data(), group.width, true);
+	}
+
+	const unsafe_unique_array<T_U> &DeltaStarts(const Group &group) {
+		auto &starts = delta_starts[group.index];
+		if (starts) {
+			return starts;
+		}
+		const idx_t blocks = group.algorithm_group_count;
+		starts = make_unsafe_uniq_array_uninitialized<T_U>(blocks);
+		T decoded[ALGORITHM_GROUP_SIZE];
+		auto value = static_cast<T_U>(group.delta_offset);
+		for (idx_t b = 0; b < blocks; b++) {
+			starts[b] = value;
+			if (b + 1 == blocks) {
+				break;
+			}
+			UnpackBlock(group, b, decoded);
+			for (idx_t i = 0; i < ALGORITHM_GROUP_SIZE; i++) {
+				value = value + (static_cast<T_U>(decoded[i]) + static_cast<T_U>(group.frame_of_reference));
+			}
+		}
+		return starts;
+	}
+
+	BitpackingScanState<T> scan;
+	vector<optional<Group>> groups;
+	vector<unsafe_unique_array<T_U>> delta_starts;
+};
+
+template <class T>
 void BitpackingFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
                         idx_t result_idx) {
-	D_ASSERT(row_id >= 0);
-	auto row_index = NumericCast<idx_t>(row_id);
-	D_ASSERT(row_index < segment.count);
-	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
-	auto handle = buffer_manager.Pin(state.context, segment.GetBlockHandle());
-	BitpackingScanState<T> scan_state(std::move(handle), segment);
-	scan_state.Skip(row_index);
-
-	if (!scan_state.HasCurrentGroup()) {
-		ThrowBitpackingReadPastEnd();
-	}
-	auto &group = scan_state.GetCurrentGroup();
-	D_ASSERT(!group.AtEnd());
-
+	auto &fetch_state = state.GetOrInsertSegmentState<BitpackingFetchState<T>>(
+	    segment, [&]() { return make_uniq<BitpackingFetchState<T>>(segment, state); });
 	D_ASSERT(result.GetVectorType() == VectorType::FLAT_VECTOR);
-	T *result_data = FlatVector::GetDataMutable<T>(result);
-	T *current_result_ptr = result_data + result_idx;
-
-	if (group.metadata.mode == BitpackingMode::CONSTANT) {
-		*current_result_ptr = group.constant;
-		return;
-	}
-
-	if (group.metadata.mode == BitpackingMode::CONSTANT_DELTA) {
-		// Operands read from disk can contain any T value, so use defined wrapping.
-		idx_t multiplier = group.offset;
-		*current_result_ptr = static_cast<T>((static_cast<T_U>(group.constant) * multiplier) +
-		                                     static_cast<T_U>(group.frame_of_reference));
-		return;
-	}
-
-	D_ASSERT(group.metadata.mode == BitpackingMode::FOR || group.metadata.mode == BitpackingMode::DELTA_FOR);
-
-	idx_t offset_in_compression_group = group.offset % BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
-
-	// FOR residuals are non-negative.
-	bool skip_sign_extend = true;
-
-	group.UnpackAlgorithmGroup(scan_state.decompression_buffer, skip_sign_extend);
-
-	// Use unsigned arithmetic to avoid signed overflow on corrupt data.
-	T_U value = static_cast<T_U>(scan_state.decompression_buffer[offset_in_compression_group]);
-	value += static_cast<T_U>(group.frame_of_reference);
-
-	if (group.metadata.mode == BitpackingMode::DELTA_FOR) {
-		value += static_cast<T_U>(group.delta_offset);
-	}
-	*current_result_ptr = static_cast<T>(value);
+	FlatVector::GetDataMutable<T>(result)[result_idx] = fetch_state.Fetch(NumericCast<idx_t>(row_id));
 }
 
 template <class T>

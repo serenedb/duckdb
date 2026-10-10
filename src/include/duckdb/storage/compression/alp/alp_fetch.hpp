@@ -16,24 +16,78 @@
 namespace duckdb {
 
 template <class T>
-void AlpFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result, idx_t result_idx) {
-	using EXACT_TYPE = typename FloatingToExact<T>::TYPE;
-
-	D_ASSERT(row_id >= 0);
-	auto row_index = NumericCast<idx_t>(row_id);
-	D_ASSERT(row_index < segment.count);
-	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
-	auto handle = buffer_manager.Pin(state.context, segment.GetBlockHandle());
-	AlpScanState<T> scan_state(std::move(handle), segment);
-	scan_state.Skip(segment, row_index);
-	auto result_data = FlatVector::GetDataMutableUnsafe<EXACT_TYPE>(result);
-	result_data[result_idx] = (EXACT_TYPE)0;
-
-	if (scan_state.VectorFinished() && scan_state.total_value_count < scan_state.count) {
-		scan_state.LoadVector(scan_state.vector_state.decoded_values);
+struct AlpFetchState : public SegmentScanState {
+	AlpFetchState(ColumnSegment &segment, ColumnFetchState &state)
+	    : scan(BufferManager::GetBufferManager(segment.GetDatabase()).Pin(state.context, segment.GetBlockHandle()),
+	           segment) {
 	}
-	scan_state.vector_state.Scan((uint8_t *)(result_data + result_idx), 1);
-	scan_state.total_value_count++;
+
+	T Fetch(idx_t row) const {
+		D_ASSERT(row < scan.count);
+		const idx_t vector_index = row / AlpConstants::ALP_VECTOR_SIZE;
+		const idx_t index = row % AlpConstants::ALP_VECTOR_SIZE;
+		auto reader = scan.GetVectorReader(vector_index);
+		const idx_t vector_size =
+		    MinValue<idx_t>(AlpConstants::ALP_VECTOR_SIZE, scan.count - vector_index * AlpConstants::ALP_VECTOR_SIZE);
+		const auto exponent = reader.template Read<AlpConstants::EXPONENT_TYPE>();
+		if (exponent == AlpConstants::UNCOMPRESSED_MODE_SENTINEL) {
+			return reader.template Get<T>(reader.Position() + index * sizeof(T));
+		}
+		if (exponent > AlpTypedConstants<T>::MAX_EXPONENT) {
+			ThrowAlpExponentOutOfRange(exponent, AlpTypedConstants<T>::MAX_EXPONENT);
+		}
+		const auto factor = reader.template Read<AlpConstants::FACTOR_TYPE>();
+		const auto exceptions_count = reader.template Read<AlpConstants::EXCEPTIONS_COUNT_TYPE>();
+		const auto frame_of_reference = reader.template Read<AlpConstants::FRAME_OF_REFERENCE_TYPE>();
+		const auto bit_width = reader.template Read<AlpConstants::BIT_WIDTH_TYPE>();
+		if (exceptions_count > vector_size) {
+			ThrowAlpExceptionCountOutOfRange(exceptions_count, vector_size);
+		}
+		if (factor > exponent) {
+			ThrowAlpFactorOutOfRange(factor, exponent);
+		}
+		if (bit_width > AlpConstants::MAX_BIT_WIDTH) {
+			ThrowAlpBitWidthOutOfRange(bit_width);
+		}
+		AlpConstants::ENCODED_VALUE_TYPE encoded = 0;
+		if (bit_width > 0) {
+			auto packed = reader.ReadBytes(BitpackingPrimitives::GetRequiredSize(vector_size, bit_width));
+			encoded =
+			    BitpackingPrimitives::UnPackValue<AlpConstants::ENCODED_VALUE_TYPE>(packed.data(), index, bit_width);
+		}
+		if (exceptions_count > 0) {
+			auto exceptions = reader.ReadBytes(exceptions_count * sizeof(T));
+			auto positions = reader.ReadBytes(exceptions_count * AlpConstants::EXCEPTION_POSITION_SIZE);
+			idx_t low = 0;
+			idx_t high = exceptions_count;
+			while (low < high) {
+				const idx_t mid = (low + high) / 2;
+				if (Load<AlpConstants::EXCEPTION_POSITION_TYPE>(positions.data() +
+				                                                mid * AlpConstants::EXCEPTION_POSITION_SIZE) < index) {
+					low = mid + 1;
+				} else {
+					high = mid;
+				}
+			}
+			if (low < exceptions_count &&
+			    Load<AlpConstants::EXCEPTION_POSITION_TYPE>(positions.data() +
+			                                                low * AlpConstants::EXCEPTION_POSITION_SIZE) == index) {
+				return Load<T>(exceptions.data() + low * sizeof(T));
+			}
+		}
+		return alp::AlpCompression<T, true>::DecodeValue(static_cast<int64_t>(encoded + frame_of_reference),
+		                                                 alp::AlpEncodingIndices(exponent, factor));
+	}
+
+	AlpScanState<T> scan;
+};
+
+template <class T>
+void AlpFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result, idx_t result_idx) {
+	D_ASSERT(row_id >= 0);
+	auto &fetch_state = state.GetOrInsertSegmentState<AlpFetchState<T>>(
+	    segment, [&]() { return make_uniq<AlpFetchState<T>>(segment, state); });
+	FlatVector::GetDataMutable<T>(result)[result_idx] = fetch_state.Fetch(NumericCast<idx_t>(row_id));
 }
 
 } // namespace duckdb
