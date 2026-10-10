@@ -244,6 +244,7 @@ public:
 
 	void Schedule() override {
 		if (!prepared_for_schedule) {
+			state.GetScheduler().ResetOperators(*pipeline);
 			pipeline->ResetSourceForReschedule();
 		}
 
@@ -736,20 +737,12 @@ static void WaitForRecursiveEvent(Executor &executor, Event &event) {
 	}
 }
 
-static void ResetRecursiveOperators(const RecursiveCTEPipelineSchedulePlan &plan) {
-	for (auto &stage : plan.stages) {
-		if (stage.type == PipelineScheduleStageType::EXECUTE) {
-			stage.pipeline.get().ResetOperatorsForReschedule();
-		}
-	}
-}
-
 static void ScheduleRecursivePlan(const RecursiveCTEPipelineSchedulePlan &plan, RecursiveCTEState &state,
                                   vector<shared_ptr<Event>> &events, const RecursiveCTEParallelism &parallelism) {
 	for (auto &pipeline : plan.initialize_on_schedule_pipelines) {
 		pipeline.get().ResetSource(true);
 	}
-	ResetRecursiveOperators(plan);
+	state.GetScheduler().ClearOperatorResets();
 
 	const auto configured_threads =
 	    TaskScheduler::QueryThreads(state.GetOperator().recursive_meta_pipeline->GetExecutor().context);
@@ -808,7 +801,7 @@ static void ExecuteRecursiveInlinePlan(RecursiveCTEState &state, Executor &execu
 	for (auto &pipeline : plan.initialize_on_schedule_pipelines) {
 		pipeline.get().ResetSource(true);
 	}
-	ResetRecursiveOperators(plan);
+	state.GetScheduler().ClearOperatorResets();
 
 	state.GetScheduler().InitializeInlinePlan(plan);
 
@@ -818,6 +811,7 @@ static void ExecuteRecursiveInlinePlan(RecursiveCTEState &state, Executor &execu
 		auto &pipeline = stage.pipeline.get();
 		switch (stage.type) {
 		case PipelineScheduleStageType::EXECUTE: {
+			state.GetScheduler().ResetOperators(pipeline);
 			pipeline.ResetSourceForReschedule();
 			// Invariant builds have independent source work even when the recursive frontier is tiny.
 			const auto worker_limit =

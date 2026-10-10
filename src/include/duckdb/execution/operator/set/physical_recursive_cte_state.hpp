@@ -241,6 +241,8 @@ public:
 	idx_t ReadyStageCount() const;
 	idx_t ReadyStage(idx_t index) const;
 	void CompleteInlineStage(const RecursiveCTEPipelineSchedulePlan &plan, idx_t stage_idx);
+	void ClearOperatorResets();
+	void ResetOperators(Pipeline &pipeline);
 
 private:
 	shared_ptr<RecursiveExecutorPool> executor_pool;
@@ -248,6 +250,8 @@ private:
 	PhysicalRecursiveCTE::executor_cache_t cached_executors;
 	vector<idx_t> remaining_schedule_dependencies;
 	vector<idx_t> ready_schedule_stages;
+	mutex operator_reset_lock;
+	reference_set_t<PhysicalOperator> reset_operators;
 };
 
 //! The source state of a recursive CTE - tracks the rows emitted to estimate the progress, as the number of recursive

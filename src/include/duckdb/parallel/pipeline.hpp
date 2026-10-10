@@ -145,7 +145,7 @@ public:
 	void Reset();
 	void ResetSink();
 	void ResetSinkForReschedule();
-	void ResetOperatorsForReschedule();
+	void ResetOperatorsForReschedule(reference_set_t<PhysicalOperator> &reset_operators);
 	void ResetSourceForReschedule();
 	void ResetSource(bool force);
 	void PrepareExternalInput();

@@ -453,6 +453,16 @@ void RecursiveCTESchedulerState::CompleteInlineStage(const RecursiveCTEPipelineS
 	}
 }
 
+void RecursiveCTESchedulerState::ClearOperatorResets() {
+	lock_guard<mutex> guard(operator_reset_lock);
+	reset_operators.clear();
+}
+
+void RecursiveCTESchedulerState::ResetOperators(Pipeline &pipeline) {
+	lock_guard<mutex> guard(operator_reset_lock);
+	pipeline.ResetOperatorsForReschedule(reset_operators);
+}
+
 void RecursiveCTESchedulerState::PrepareExecutorEntry(Pipeline &pipeline) {
 	cached_executors.emplace(reference<Pipeline>(pipeline), vector<unique_ptr<PipelineExecutor>>());
 }
