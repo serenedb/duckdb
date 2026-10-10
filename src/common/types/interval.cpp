@@ -107,9 +107,8 @@ standard_interval:
 			// start parsing a positive number
 			negative = false;
 			goto interval_parse_number;
-		} else if (c == '-') {
-			// negative number
-			negative = true;
+		} else if (c == '-' || c == '+') {
+			negative = c == '-';
 			pos++;
 			goto interval_parse_number;
 		} else if (c == 'a' || c == 'A') {
