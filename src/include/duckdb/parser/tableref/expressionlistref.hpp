@@ -35,6 +35,7 @@ public:
 
 public:
 	string ToString() const override;
+	//! The VALUES list without its alias
 	string ValuesToString() const;
 	bool Equals(const TableRef &other_p) const override;
 
