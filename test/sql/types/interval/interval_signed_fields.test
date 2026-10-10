@@ -1,0 +1,33 @@
+# name: test/sql/types/interval/interval_signed_fields.test
+# description: Explicitly signed interval fields, as PostgreSQL prints intervals whose fields differ in sign
+# group: [interval]
+
+query I
+SELECT INTERVAL '-1 days +02:03:04' = INTERVAL '-1 days' + INTERVAL '02:03:04'
+----
+true
+
+query I
+SELECT INTERVAL '-1 years +2 mons -3 days +04:05:06.5' = INTERVAL '-1 years' + INTERVAL '2 mons' + INTERVAL '-3 days' + INTERVAL '04:05:06.5'
+----
+true
+
+query II
+SELECT INTERVAL '+1 day' = INTERVAL '1 day', INTERVAL '+02:03:04' = INTERVAL '02:03:04'
+----
+true	true
+
+query I
+SELECT '1 year -2 mons +3 days'::INTERVAL = INTERVAL '10 mons 3 days'
+----
+true
+
+statement error
+SELECT '+-1 day'::INTERVAL
+----
+<REGEX>:Conversion Error.*Could not convert string.*
+
+statement error
+SELECT '1 day +'::INTERVAL
+----
+<REGEX>:Conversion Error.*Could not convert string.*
