@@ -1,0 +1,80 @@
+# name: test/sql/storage/compression/rle/rle_fetch_cursor.test
+# description: Index fetches from an RLE column across runs of every length and several segments
+# group: [rle]
+
+load {TEST_DIR}/rle_fetch_cursor.db
+
+statement ok
+PRAGMA force_compression = 'rle'
+
+statement ok
+CREATE TABLE t(id BIGINT PRIMARY KEY, v BIGINT);
+
+statement ok
+INSERT INTO t SELECT i, i * i // 1000003 FROM range(300000) tbl(i);
+
+statement ok
+CHECKPOINT
+
+query I
+SELECT DISTINCT compression FROM pragma_storage_info('t') WHERE column_name = 'v' AND segment_type ILIKE 'BIGINT'
+----
+RLE
+
+query II
+SELECT id, v FROM t WHERE id = 123456
+----
+123456	15241
+
+query II
+SELECT count(*), count(*) FILTER (WHERE v <> id * id // 1000003) FROM t WHERE id IN (299999, 0, 1, 150000, 149999, 77777, 3, 250001, 1000, 1001, 999, 200000)
+----
+12	0
+
+loop i 0 60
+
+query I
+SELECT v = id * id // 1000003 FROM t WHERE id = {i} * 5003
+----
+true
+
+endloop
+
+query II
+SELECT id, v FROM t WHERE id IN (295177, 5003, 0) ORDER BY id
+----
+0	0
+5003	25
+295177	87129
+
+statement ok
+PRAGMA force_compression = 'auto'
+
+statement ok
+CREATE TABLE r(id BIGINT PRIMARY KEY, v BIGINT);
+
+statement ok
+INSERT INTO r SELECT i, hash(i // 1000) % 1000000 FROM range(300000) tbl(i);
+
+statement ok
+CHECKPOINT
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('r') WHERE column_name = 'v' AND segment_type = 'BIGINT' AND compression = 'RLE'
+----
+true
+
+query I
+SELECT count(*) FROM pragma_storage_info('r') WHERE column_name = 'id' AND segment_type = 'BIGINT' AND compression = 'RLE'
+----
+0
+
+query II
+SELECT count(*), count(*) FILTER (WHERE v <> hash(id // 1000) % 1000000) FROM r WHERE id IN (3, 4, 998, 999, 1000, 1001, 77777, 150000, 199999, 200000, 250001, 299999)
+----
+12	0
+
+query II
+SELECT count(*), count(*) FILTER (WHERE v <> hash(id // 1000) % 1000000) FROM r WHERE id IN (299999, 250001, 200000, 3, 1001, 150000, 4, 77777)
+----
+8	0

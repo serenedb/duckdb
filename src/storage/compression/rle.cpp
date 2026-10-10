@@ -1037,17 +1037,40 @@ void RLEFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 // Fetch
 //===--------------------------------------------------------------------===//
 template <class T>
+struct RLEFetchCursor final : public SegmentScanState {
+	RLEFetchCursor(BufferHandle handle, ColumnSegment &segment)
+	    : scan(std::move(handle), segment), block_id(segment.GetBlockHandle()->BlockId()),
+	      block_offset(segment.GetBlockOffset()) {
+	}
+
+	bool Covers(ColumnSegment &segment, idx_t row_index) const {
+		return block_id == segment.GetBlockHandle()->BlockId() && block_offset == segment.GetBlockOffset() &&
+		       row_index >= row;
+	}
+
+	RLEScanState<T> scan;
+	block_id_t block_id;
+	idx_t block_offset;
+	idx_t row = 0;
+};
+
+template <class T>
 void RLEFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result, idx_t result_idx) {
 	D_ASSERT(row_id >= 0);
 	auto row_index = NumericCast<idx_t>(row_id);
 	D_ASSERT(row_index < segment.count);
-	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
-	auto handle = buffer_manager.Pin(state.context, segment.GetBlockHandle());
-	RLEScanState<T> scan_state(std::move(handle), segment);
-	scan_state.Skip(segment, row_index);
+	auto cursor = dynamic_cast<RLEFetchCursor<T> *>(state.codec_state.get());
+	if (!cursor || !cursor->Covers(segment, row_index)) {
+		auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
+		auto fresh = make_uniq<RLEFetchCursor<T>>(buffer_manager.Pin(state.context, segment.GetBlockHandle()), segment);
+		cursor = fresh.get();
+		state.codec_state = std::move(fresh);
+	}
+	cursor->scan.Skip(segment, row_index - cursor->row);
+	cursor->row = row_index;
 
 	auto result_data = FlatVector::GetDataMutable<T>(result);
-	result_data[result_idx] = scan_state.CurrentValue();
+	result_data[result_idx] = cursor->scan.CurrentValue();
 }
 
 //===--------------------------------------------------------------------===//
