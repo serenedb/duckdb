@@ -1,5 +1,7 @@
 #include "duckdb/common/types/row/tuple_data_allocator.hpp"
 
+#include "duckdb/common/atomic.hpp"
+
 #include "duckdb/common/radix_partitioning.hpp"
 #include "duckdb/common/types/row/tuple_data_segment.hpp"
 #include "duckdb/common/types/row/tuple_data_states.hpp"
@@ -434,11 +436,12 @@ void TupleDataAllocator::InitializeChunkStateInternal(TupleDataPinState &pin_sta
 		}
 
 		// Check if heap block has changed - re-compute the pointers within each row if so
+		std::atomic_ref<data_ptr_t> base_heap_ptr(part.base_heap_ptr);
 		if (recompute && pin_state.properties != TupleDataPinProperties::ALREADY_PINNED) {
 			const auto new_base_heap_ptr = GetBaseHeapPointer(pin_state, part);
-			if (part.base_heap_ptr != new_base_heap_ptr) {
+			if (base_heap_ptr.load(std::memory_order_acquire) != new_base_heap_ptr) {
 				lock_guard<mutex> guard(part.lock);
-				const auto old_base_heap_ptr = part.base_heap_ptr;
+				const auto old_base_heap_ptr = base_heap_ptr.load(std::memory_order_relaxed);
 				if (old_base_heap_ptr != new_base_heap_ptr) {
 					Vector old_heap_ptrs(Value::POINTER(CastPointerToValue(old_base_heap_ptr + part.heap_block_offset)),
 					                     count_t(next));
@@ -446,7 +449,7 @@ void TupleDataAllocator::InitializeChunkStateInternal(TupleDataPinState &pin_sta
 					                     count_t(next));
 					RecomputeHeapPointers(old_heap_ptrs, *ConstantVector::ZeroSelectionVector(), row_locations,
 					                      new_heap_ptrs, offset, next, layout, 0);
-					part.base_heap_ptr = new_base_heap_ptr;
+					base_heap_ptr.store(new_base_heap_ptr, std::memory_order_release);
 				}
 			}
 		}
@@ -457,7 +460,7 @@ void TupleDataAllocator::InitializeChunkStateInternal(TupleDataPinState &pin_sta
 
 		if (init_heap_pointers) {
 			// Set the pointers where the heap data will be written (if needed)
-			heap_locations[offset] = part.base_heap_ptr + part.heap_block_offset;
+			heap_locations[offset] = base_heap_ptr.load(std::memory_order_acquire) + part.heap_block_offset;
 			for (idx_t i = 1; i < next; i++) {
 				auto idx = offset + i;
 				heap_locations[idx] = heap_locations[idx - 1] + heap_sizes[idx - 1];
