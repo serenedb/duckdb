@@ -25,6 +25,14 @@ using ScanStructure = JoinHashTable::ScanStructure;
 using ProbeSpill = JoinHashTable::ProbeSpill;
 using ProbeSpillLocalState = JoinHashTable::ProbeSpillLocalAppendState;
 
+static void MarkFound(data_ptr_t found) {
+	std::atomic_ref<bool>(*reinterpret_cast<bool *>(found)).store(true, std::memory_order_relaxed);
+}
+
+static bool IsFound(data_ptr_t found) {
+	return std::atomic_ref<bool>(*reinterpret_cast<bool *>(found)).load(std::memory_order_relaxed);
+}
+
 JoinHashTable::SharedState::SharedState()
     : salt_v(LogicalType::UBIGINT), keys_to_compare_sel(STANDARD_VECTOR_SIZE), keys_no_match_sel(STANDARD_VECTOR_SIZE) {
 }
@@ -1783,10 +1791,7 @@ void ScanStructure::NextInnerJoin(DataChunk &keys, DataChunk &probe_data, DataCh
 				auto ptrs = FlatVector::GetData<data_ptr_t>(pointers);
 				for (idx_t i = 0; i < result_count; i++) {
 					auto idx = chain_match_sel_vector.get_index(i);
-					// NOTE: threadsan reports this as a data race because this can be set concurrently by separate
-					// threads Technically it is, but it does not matter, since the only value that can be written is
-					// "true"
-					Store<bool>(true, ptrs[idx] + ht.tuple_size);
+					MarkFound(ptrs[idx] + ht.tuple_size);
 				}
 			}
 
@@ -1909,17 +1914,14 @@ static void MarkChainsAsFoundLoop(JoinHashTable &ht, data_ptr_t ptrs[], const Se
 	for (idx_t i = 0; i < result_count; i++) {
 		const auto idx = chain_match_sel_vector.get_index(i);
 		auto &ptr = ptrs[idx];
-		if (Load<bool>(ptr + ht.tuple_size)) { // Early out: chain has been fully marked as found before
+		if (IsFound(ptr + ht.tuple_size)) { // Early out: chain has been fully marked as found before
 			ptr = dead_end_ptr;
 			continue;
 		}
 
 		// Fully mark chain as found
 		while (true) {
-			// NOTE: threadsan reports this as a data race because this can be set concurrently by separate
-			// threads Technically it is, but it does not matter, since the only value that can be written is
-			// "true"
-			Store<bool>(true, ptr + ht.tuple_size);
+			MarkFound(ptr + ht.tuple_size);
 			auto next_ptr = ht.GetNextPointer<USE_DICT_EMISSION>(ptr);
 			if (!next_ptr) {
 				break;
@@ -1948,7 +1950,7 @@ void ScanStructure::NextRightSemiOrAntiJoin(DataChunk &keys, DataChunk &probe_da
 			// for each match found in the current pass - mark the match as found
 			for (idx_t i = 0; i < result_count; i++) {
 				auto idx = chain_match_sel_vector.get_index(i);
-				Store<bool>(true, ptrs[idx] + ht.tuple_size);
+				MarkFound(ptrs[idx] + ht.tuple_size);
 			}
 		}
 

@@ -1,4 +1,5 @@
 #include "duckdb/execution/operator/join/outer_join_marker.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/vector/constant_vector.hpp"
 #include "duckdb/common/types/vector.hpp"
 
@@ -44,7 +45,7 @@ void OuterJoinMarker::SetMatch(idx_t position) {
 		return;
 	}
 	D_ASSERT(position < count);
-	found_match[position] = true;
+	std::atomic_ref<bool>(found_match[position]).store(true, std::memory_order_relaxed);
 }
 
 void OuterJoinMarker::SetMatches(const SelectionVector &sel, idx_t count, idx_t base_idx) {
@@ -55,7 +56,7 @@ void OuterJoinMarker::SetMatches(const SelectionVector &sel, idx_t count, idx_t 
 		auto idx = sel.get_index(i);
 		auto pos = base_idx + idx;
 		D_ASSERT(pos < this->count);
-		found_match[pos] = true;
+		std::atomic_ref<bool>(found_match[pos]).store(true, std::memory_order_relaxed);
 	}
 }
 
