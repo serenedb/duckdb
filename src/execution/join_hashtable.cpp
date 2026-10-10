@@ -25,6 +25,14 @@ using ScanStructure = JoinHashTable::ScanStructure;
 using ProbeSpill = JoinHashTable::ProbeSpill;
 using ProbeSpillLocalState = JoinHashTable::ProbeSpillLocalAppendState;
 
+static void MarkFound(data_ptr_t found) {
+	std::atomic_ref<bool>(*reinterpret_cast<bool *>(found)).store(true, std::memory_order_relaxed);
+}
+
+static bool IsFound(data_ptr_t found) {
+	return std::atomic_ref<bool>(*reinterpret_cast<bool *>(found)).load(std::memory_order_relaxed);
+}
+
 JoinHashTable::SharedState::SharedState()
     : salt_v(LogicalType::UBIGINT), keys_to_compare_sel(STANDARD_VECTOR_SIZE), keys_no_match_sel(STANDARD_VECTOR_SIZE) {
 }
@@ -1783,10 +1791,7 @@ void ScanStructure::NextInnerJoin(DataChunk &keys, DataChunk &probe_data, DataCh
 				auto ptrs = FlatVector::GetData<data_ptr_t>(pointers);
 				for (idx_t i = 0; i < result_count; i++) {
 					auto idx = chain_match_sel_vector.get_index(i);
-					// NOTE: threadsan reports this as a data race because this can be set concurrently by separate
-					// threads Technically it is, but it does not matter, since the only value that can be written is
-					// "true"
-					Store<bool>(true, ptrs[idx] + ht.tuple_size);
+					MarkFound(ptrs[idx] + ht.tuple_size);
 				}
 			}
 
@@ -1909,17 +1914,14 @@ static void MarkChainsAsFoundLoop(JoinHashTable &ht, data_ptr_t ptrs[], const Se
 	for (idx_t i = 0; i < result_count; i++) {
 		const auto idx = chain_match_sel_vector.get_index(i);
 		auto &ptr = ptrs[idx];
-		if (Load<bool>(ptr + ht.tuple_size)) { // Early out: chain has been fully marked as found before
+		if (IsFound(ptr + ht.tuple_size)) { // Early out: chain has been fully marked as found before
 			ptr = dead_end_ptr;
 			continue;
 		}
 
 		// Fully mark chain as found
 		while (true) {
-			// NOTE: threadsan reports this as a data race because this can be set concurrently by separate
-			// threads Technically it is, but it does not matter, since the only value that can be written is
-			// "true"
-			Store<bool>(true, ptr + ht.tuple_size);
+			MarkFound(ptr + ht.tuple_size);
 			auto next_ptr = ht.GetNextPointer<USE_DICT_EMISSION>(ptr);
 			if (!next_ptr) {
 				break;
@@ -1948,7 +1950,7 @@ void ScanStructure::NextRightSemiOrAntiJoin(DataChunk &keys, DataChunk &probe_da
 			// for each match found in the current pass - mark the match as found
 			for (idx_t i = 0; i < result_count; i++) {
 				auto idx = chain_match_sel_vector.get_index(i);
-				Store<bool>(true, ptrs[idx] + ht.tuple_size);
+				MarkFound(ptrs[idx] + ht.tuple_size);
 			}
 		}
 
@@ -2498,12 +2500,13 @@ void JoinHashTable::InitializePartitionMasks() {
 
 	completed_partitions.Initialize(num_partitions);
 	completed_partitions.SetAllInvalid(num_partitions);
+
+	current_partition_count = 0;
+	finished_partition_count = 0;
 }
 
 idx_t JoinHashTable::CurrentPartitionCount() const {
-	const auto num_partitions = RadixPartitioning::NumberOfPartitions(radix_bits);
-	D_ASSERT(current_partitions.Capacity() == num_partitions);
-	return current_partitions.CountValid(num_partitions);
+	return current_partition_count.load(std::memory_order_relaxed);
 }
 
 const ValidityMask &JoinHashTable::GetCurrentPartitions() const {
@@ -2511,10 +2514,7 @@ const ValidityMask &JoinHashTable::GetCurrentPartitions() const {
 }
 
 idx_t JoinHashTable::FinishedPartitionCount() const {
-	const auto num_partitions = RadixPartitioning::NumberOfPartitions(radix_bits);
-	D_ASSERT(completed_partitions.Capacity() == num_partitions);
-	// We already marked the active partitions as done, so we have to subtract them here
-	return completed_partitions.CountValid(num_partitions) - CurrentPartitionCount();
+	return finished_partition_count.load(std::memory_order_relaxed);
 }
 
 void JoinHashTable::Repartition(JoinHashTable &global_ht) {
@@ -2530,6 +2530,8 @@ void JoinHashTable::Reset() {
 	data_collection->Reset();
 	hash_map.Reset();
 	current_partitions.SetAllInvalid(RadixPartitioning::NumberOfPartitions(radix_bits));
+	finished_partition_count.fetch_add(current_partition_count.exchange(0, std::memory_order_relaxed),
+	                                   std::memory_order_relaxed);
 	finalized = false;
 }
 
@@ -2652,7 +2654,8 @@ bool JoinHashTable::PrepareExternalFinalize(const idx_t max_ht_size) {
 		}
 		count = incl_count;
 		data_size = incl_data_size;
-		current_partitions.SetValidUnsafe(partition_idx);     // Mark as currently active
+		current_partitions.SetValidUnsafe(partition_idx); // Mark as currently active
+		current_partition_count.fetch_add(1, std::memory_order_relaxed);
 		data_collection->Combine(*partitions[partition_idx]); // Move partition to the main data collection
 		completed_partitions.SetValidUnsafe(partition_idx);   // Also already mark as done
 	}

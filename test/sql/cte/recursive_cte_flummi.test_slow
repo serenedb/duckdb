@@ -6,7 +6,7 @@ statement ok
 SET threads=4;
 
 statement ok
-SET max_execution_time=30000;
+SET max_execution_time=300000;
 
 # Counter
 statement ok

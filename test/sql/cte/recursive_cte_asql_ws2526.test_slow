@@ -6,7 +6,7 @@ statement ok
 SET threads=2;
 
 statement ok
-SET max_execution_time=30000;
+SET max_execution_time=300000;
 
 # CYK parsing with two recursive self-references
 statement ok

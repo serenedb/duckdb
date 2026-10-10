@@ -1,5 +1,7 @@
 #include "duckdb/parser/peg/matcher_stack.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
+
+#include <absl/cleanup/cleanup.h>
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/optional.hpp"
 #include "duckdb/parser/peg/matcher/literal_choice_matcher.hpp"
@@ -7,13 +9,6 @@
 namespace duckdb {
 
 MatchStack::MatchStack() {
-}
-
-MatchStack::~MatchStack() {
-	// Child processes can reference state owned by their parents.
-	while (!frames.empty()) {
-		DestroyTopFrame();
-	}
 }
 
 void MatchStack::DestroyTopFrame() {
@@ -434,6 +429,11 @@ MatcherResult MatchStack::ExecuteFrames(MatchInput input, idx_t depth) {
 	if (frames.capacity() == 0) {
 		frames.reserve(INITIAL_FRAME_CAPACITY);
 	}
+	absl::Cleanup unwind = [&]() noexcept {
+		while (!frames.empty()) {
+			DestroyTopFrame();
+		}
+	};
 	PushFrame(input);
 	while (!frames.empty()) {
 		if (!ExecuteFrame(frames.back())) {
