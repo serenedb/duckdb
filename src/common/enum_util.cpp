@@ -700,19 +700,20 @@ const StringUtil::EnumStringLiteral *GetAlterTableTypeValues() {
 		{ static_cast<uint32_t>(AlterTableType::SET_TABLE_OPTIONS), "SET_TABLE_OPTIONS" },
 		{ static_cast<uint32_t>(AlterTableType::RESET_TABLE_OPTIONS), "RESET_TABLE_OPTIONS" },
 		{ static_cast<uint32_t>(AlterTableType::DROP_CONSTRAINT), "DROP_CONSTRAINT" },
-		{ static_cast<uint32_t>(AlterTableType::RENAME_CONSTRAINT), "RENAME_CONSTRAINT" }
+		{ static_cast<uint32_t>(AlterTableType::RENAME_CONSTRAINT), "RENAME_CONSTRAINT" },
+		{ static_cast<uint32_t>(AlterTableType::SET_TRIGGER_FIRING), "SET_TRIGGER_FIRING" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<AlterTableType>(AlterTableType value) {
-	return StringUtil::EnumToString(GetAlterTableTypeValues(), 21, "AlterTableType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterTableTypeValues(), 22, "AlterTableType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterTableType EnumUtil::FromString<AlterTableType>(std::string_view value) {
-	return static_cast<AlterTableType>(StringUtil::StringToEnum(GetAlterTableTypeValues(), 21, "AlterTableType", value));
+	return static_cast<AlterTableType>(StringUtil::StringToEnum(GetAlterTableTypeValues(), 22, "AlterTableType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAlterTypeValues() {
@@ -1285,6 +1286,8 @@ const StringUtil::EnumStringLiteral *GetCatalogTypeValues() {
 		{ static_cast<uint32_t>(CatalogType::TOKENIZER_ENTRY), "TOKENIZER_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::ROLE_ENTRY), "ROLE_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::FOREIGN_SERVER_ENTRY), "FOREIGN_SERVER_ENTRY" },
+		{ static_cast<uint32_t>(CatalogType::SUBSCRIPTION_ENTRY), "SUBSCRIPTION_ENTRY" },
+		{ static_cast<uint32_t>(CatalogType::REPLICATION_ORIGIN_ENTRY), "REPLICATION_ORIGIN_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::TABLE_FUNCTION_ENTRY), "TABLE_FUNCTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::SCALAR_FUNCTION_ENTRY), "SCALAR_FUNCTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::AGGREGATE_FUNCTION_ENTRY), "AGGREGATE_FUNCTION_ENTRY" },
@@ -1305,12 +1308,12 @@ const StringUtil::EnumStringLiteral *GetCatalogTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<CatalogType>(CatalogType value) {
-	return StringUtil::EnumToString(GetCatalogTypeValues(), 29, "CatalogType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetCatalogTypeValues(), 31, "CatalogType", static_cast<uint32_t>(value));
 }
 
 template<>
 CatalogType EnumUtil::FromString<CatalogType>(std::string_view value) {
-	return static_cast<CatalogType>(StringUtil::StringToEnum(GetCatalogTypeValues(), 29, "CatalogType", value));
+	return static_cast<CatalogType>(StringUtil::StringToEnum(GetCatalogTypeValues(), 31, "CatalogType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetCheckpointAbortValues() {
@@ -5693,6 +5696,25 @@ RenderMode EnumUtil::FromString<RenderMode>(std::string_view value) {
 	return static_cast<RenderMode>(StringUtil::StringToEnum(GetRenderModeValues(), 2, "RenderMode", value));
 }
 
+const StringUtil::EnumStringLiteral *GetReplicationRoleValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(ReplicationRole::ORIGIN), "ORIGIN" },
+		{ static_cast<uint32_t>(ReplicationRole::REPLICA), "REPLICA" },
+		{ static_cast<uint32_t>(ReplicationRole::LOCAL), "LOCAL" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<ReplicationRole>(ReplicationRole value) {
+	return StringUtil::EnumToString(GetReplicationRoleValues(), 3, "ReplicationRole", static_cast<uint32_t>(value));
+}
+
+template<>
+ReplicationRole EnumUtil::FromString<ReplicationRole>(std::string_view value) {
+	return static_cast<ReplicationRole>(StringUtil::StringToEnum(GetReplicationRoleValues(), 3, "ReplicationRole", value));
+}
+
 const StringUtil::EnumStringLiteral *GetRequestSizingValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(RequestSizing::BY_CACHE), "BY_CACHE" },
@@ -7176,6 +7198,26 @@ TriggerEventType EnumUtil::FromString<TriggerEventType>(std::string_view value) 
 	return static_cast<TriggerEventType>(StringUtil::StringToEnum(GetTriggerEventTypeValues(), 3, "TriggerEventType", value));
 }
 
+const StringUtil::EnumStringLiteral *GetTriggerFiringValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(TriggerFiring::ORIGIN), "ORIGIN" },
+		{ static_cast<uint32_t>(TriggerFiring::DISABLED), "DISABLED" },
+		{ static_cast<uint32_t>(TriggerFiring::REPLICA), "REPLICA" },
+		{ static_cast<uint32_t>(TriggerFiring::ALWAYS), "ALWAYS" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<TriggerFiring>(TriggerFiring value) {
+	return StringUtil::EnumToString(GetTriggerFiringValues(), 4, "TriggerFiring", static_cast<uint32_t>(value));
+}
+
+template<>
+TriggerFiring EnumUtil::FromString<TriggerFiring>(std::string_view value) {
+	return static_cast<TriggerFiring>(StringUtil::StringToEnum(GetTriggerFiringValues(), 4, "TriggerFiring", value));
+}
+
 const StringUtil::EnumStringLiteral *GetTriggerForEachValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(TriggerForEach::STATEMENT), "STATEMENT" },
@@ -7637,6 +7679,11 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 		{ static_cast<uint32_t>(WALType::CREATE_FOREIGN_SERVER), "CREATE_FOREIGN_SERVER" },
 		{ static_cast<uint32_t>(WALType::DROP_FOREIGN_SERVER), "DROP_FOREIGN_SERVER" },
 		{ static_cast<uint32_t>(WALType::USE_CATALOG), "USE_CATALOG" },
+		{ static_cast<uint32_t>(WALType::CREATE_SUBSCRIPTION), "CREATE_SUBSCRIPTION" },
+		{ static_cast<uint32_t>(WALType::DROP_SUBSCRIPTION), "DROP_SUBSCRIPTION" },
+		{ static_cast<uint32_t>(WALType::REPLICATION_LSN), "REPLICATION_LSN" },
+		{ static_cast<uint32_t>(WALType::CREATE_REPLICATION_ORIGIN), "CREATE_REPLICATION_ORIGIN" },
+		{ static_cast<uint32_t>(WALType::DROP_REPLICATION_ORIGIN), "DROP_REPLICATION_ORIGIN" },
 		{ static_cast<uint32_t>(WALType::WAL_VERSION), "WAL_VERSION" },
 		{ static_cast<uint32_t>(WALType::CHECKPOINT), "CHECKPOINT" },
 		{ static_cast<uint32_t>(WALType::WAL_FLUSH), "WAL_FLUSH" },
@@ -7648,12 +7695,12 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<WALType>(WALType value) {
-	return StringUtil::EnumToString(GetWALTypeValues(), 40, "WALType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetWALTypeValues(), 45, "WALType", static_cast<uint32_t>(value));
 }
 
 template<>
 WALType EnumUtil::FromString<WALType>(std::string_view value) {
-	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 40, "WALType", value));
+	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 45, "WALType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetWindowAggregationModeValues() {
