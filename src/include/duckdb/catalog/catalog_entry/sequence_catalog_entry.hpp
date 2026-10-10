@@ -77,6 +77,7 @@ struct SequenceState {
 	explicit SequenceState(const SequenceData &data);
 
 	mutable mutex lock;
+	mutex log_lock;
 	SequenceData data;
 	uint64_t reserved_usage_count;
 	int64_t reserved_counter;
@@ -85,10 +86,6 @@ struct SequenceState {
 	idx_t reserved_offset = 0;
 	uint64_t durable_usage_count;
 	int64_t durable_counter;
-	int64_t block_next = 0;
-	idx_t block_remaining = 0;
-	bool logging = false;
-	idx_t appending = 0;
 	idx_t generation = 0;
 };
 
@@ -134,12 +131,10 @@ private:
 	SequenceData Reserved() const;
 	void Fetch(SequenceSessionValue &cached, idx_t needed);
 	void FetchLocked(SequenceSessionValue &cached, idx_t needed);
-	void FinishAppend();
 	void RaiseReserved(uint64_t usage_count, int64_t counter, optional<int64_t> last_value,
 	                   shared_ptr<WriteAheadLog> log, idx_t offset);
 	void RaiseDurable(uint64_t usage_count, int64_t counter, optional<int64_t> last_value);
-	void AppendReservation(const SequenceData &target, bool wait);
-	void MakeDurable(unique_lock<mutex> &seqlock, const SequenceData &target);
+	pair<shared_ptr<WriteAheadLog>, idx_t> AppendReservation(const SequenceData &target);
 
 private:
 	shared_ptr<SequenceState> state;
