@@ -228,8 +228,7 @@ private:
 //! We still use BasePipelineEvent for dependency tracking and task bookkeeping, but the stock
 //! pipeline scheduling path is too expensive here: it assumes a one-shot execution, creates fresh
 //! PipelineExecutors/tasks every time, and resets shared pipeline state immediately before launch.
-//! Recursive CTEs need the same dependency semantics while reusing cached PipelineExecutors, and
-//! root events must sometimes be reset up-front on the main thread to avoid reset-vs-execute races.
+//! Recursive CTEs need the same dependency semantics while reusing cached PipelineExecutors.
 class RecursiveCTEPipelineEvent : public BasePipelineEvent {
 public:
 	RecursiveCTEPipelineEvent(shared_ptr<Pipeline> pipeline_p, RecursiveCTEState &state_p, idx_t worker_limit_p,
@@ -243,21 +242,9 @@ public:
 	RecursiveCTEPipelineMetricType metric_type;
 	bool prepared_for_schedule = false;
 
-	void PrepareForSchedule() {
-		// Root recursive pipeline events can be scheduled back-to-back while sharing operator instances.
-		// Prepare their global pipeline state up-front on the main thread so later task execution does
-		// not race with another root event resetting the same operator state.
-		pipeline->ResetForReschedule(false);
-		prepared_for_schedule = true;
-	}
-
 	void Schedule() override {
-		// Sink state is prepared up-front from the main thread. Reinitialize the remaining
-		// global state here, reusing existing state objects when operators expose reset hooks.
-		// Dependency-free pipeline events can be prepared up-front on the main thread to avoid
-		// racing with another root event that shares operator instances.
 		if (!prepared_for_schedule) {
-			pipeline->ResetForReschedule(false);
+			pipeline->ResetSourceForReschedule();
 		}
 
 		SchedulePrepared(GetRecursivePipelineMaxThreads(*pipeline, worker_limit));
@@ -749,11 +736,20 @@ static void WaitForRecursiveEvent(Executor &executor, Event &event) {
 	}
 }
 
+static void ResetRecursiveOperators(const RecursiveCTEPipelineSchedulePlan &plan) {
+	for (auto &stage : plan.stages) {
+		if (stage.type == PipelineScheduleStageType::EXECUTE) {
+			stage.pipeline.get().ResetOperatorsForReschedule();
+		}
+	}
+}
+
 static void ScheduleRecursivePlan(const RecursiveCTEPipelineSchedulePlan &plan, RecursiveCTEState &state,
                                   vector<shared_ptr<Event>> &events, const RecursiveCTEParallelism &parallelism) {
 	for (auto &pipeline : plan.initialize_on_schedule_pipelines) {
 		pipeline.get().ResetSource(true);
 	}
+	ResetRecursiveOperators(plan);
 
 	const auto configured_threads =
 	    TaskScheduler::QueryThreads(state.GetOperator().recursive_meta_pipeline->GetExecutor().context);
@@ -789,9 +785,6 @@ static void ScheduleRecursivePlan(const RecursiveCTEPipelineSchedulePlan &plan, 
 		if (event->HasDependencies()) {
 			continue;
 		}
-		if (plan.stages[stage_idx].type == PipelineScheduleStageType::EXECUTE) {
-			event->Cast<RecursiveCTEPipelineEvent>().PrepareForSchedule();
-		}
 		event->Schedule();
 		if (!event->HasTasks() && !event->IsFinished() && event->AutoFinishWithoutTasks()) {
 			event->Finish();
@@ -815,6 +808,7 @@ static void ExecuteRecursiveInlinePlan(RecursiveCTEState &state, Executor &execu
 	for (auto &pipeline : plan.initialize_on_schedule_pipelines) {
 		pipeline.get().ResetSource(true);
 	}
+	ResetRecursiveOperators(plan);
 
 	state.GetScheduler().InitializeInlinePlan(plan);
 
@@ -824,7 +818,7 @@ static void ExecuteRecursiveInlinePlan(RecursiveCTEState &state, Executor &execu
 		auto &pipeline = stage.pipeline.get();
 		switch (stage.type) {
 		case PipelineScheduleStageType::EXECUTE: {
-			pipeline.ResetForReschedule(false);
+			pipeline.ResetSourceForReschedule();
 			// Invariant builds have independent source work even when the recursive frontier is tiny.
 			const auto worker_limit =
 			    stage.is_invariant_build ? TaskScheduler::QueryThreads(executor.context) : idx_t(1);

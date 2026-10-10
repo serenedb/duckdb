@@ -145,7 +145,8 @@ public:
 	void Reset();
 	void ResetSink();
 	void ResetSinkForReschedule();
-	void ResetForReschedule(bool reset_sink);
+	void ResetOperatorsForReschedule();
+	void ResetSourceForReschedule();
 	void ResetSource(bool force);
 	void PrepareExternalInput();
 	void ClearSource();

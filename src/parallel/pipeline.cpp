@@ -402,11 +402,7 @@ void Pipeline::Reset() {
 	initialized = true;
 }
 
-void Pipeline::ResetForReschedule(bool reset_sink) {
-	NotifyProgressReset();
-	if (reset_sink) {
-		ResetSinkForReschedule();
-	}
+void Pipeline::ResetOperatorsForReschedule() {
 	auto &client = GetClientContext();
 	auto allow_reuse = Settings::Get<EnableCachingOperatorsSetting>(client);
 	for (auto &op_ref : operators) {
@@ -417,6 +413,12 @@ void Pipeline::ResetForReschedule(bool reset_sink) {
 		}
 		op.op_state = op.GetGlobalOperatorState(client);
 	}
+}
+
+void Pipeline::ResetSourceForReschedule() {
+	NotifyProgressReset();
+	auto &client = GetClientContext();
+	auto allow_reuse = Settings::Get<EnableCachingOperatorsSetting>(client);
 	if (source && !source->IsSource()) {
 		throw InternalException("Source of pipeline does not have IsSource set");
 	}
