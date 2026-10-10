@@ -8,8 +8,11 @@
 
 #pragma once
 
+#include "duckdb/common/typedefs.hpp"
+
 #include <absl/base/config.h>
 
+#include <algorithm>
 #include <atomic>
 
 namespace duckdb {
@@ -31,6 +34,17 @@ inline T LoadRacy(const T &source) {
 	return __atomic_load_n(&source, __ATOMIC_RELAXED);
 #else
 	return source;
+#endif
+}
+
+template <class T>
+inline void FillRacy(T *target, idx_t count, T value) {
+#ifdef ABSL_HAVE_THREAD_SANITIZER
+	for (idx_t i = 0; i < count; i++) {
+		__atomic_store_n(target + i, value, __ATOMIC_RELAXED);
+	}
+#else
+	std::fill_n(target, count, value);
 #endif
 }
 

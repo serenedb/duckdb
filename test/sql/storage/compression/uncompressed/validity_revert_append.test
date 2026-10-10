@@ -1,0 +1,55 @@
+# name: test/sql/storage/compression/uncompressed/validity_revert_append.test
+# description: A reverted append restores the validity bits of the rows it wrote
+# group: [uncompressed]
+
+require no_alternative_verify
+
+require skip_reload
+
+statement ok
+CREATE TABLE inside_word(v INTEGER);
+
+statement ok
+INSERT INTO inside_word SELECT CASE WHEN x % 3 = 0 THEN NULL ELSE x END FROM range(100) r(x);
+
+statement ok
+CREATE TABLE word_aligned(v INTEGER);
+
+statement ok
+INSERT INTO word_aligned SELECT CASE WHEN x % 3 = 0 THEN NULL ELSE x END FROM range(128) r(x);
+
+statement ok
+SET debug_force_commit_failure=true;
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO inside_word SELECT NULL FROM range(1000);
+
+statement ok
+INSERT INTO word_aligned SELECT NULL FROM range(1000);
+
+statement error
+COMMIT
+----
+Forced commit failure
+
+statement ok
+SET debug_force_commit_failure=false;
+
+statement ok
+INSERT INTO inside_word SELECT x FROM range(1000) r(x);
+
+statement ok
+INSERT INTO word_aligned SELECT x FROM range(1000) r(x);
+
+query II
+SELECT count(*), count(v) FROM inside_word;
+----
+1100	1066
+
+query II
+SELECT count(*), count(v) FROM word_aligned;
+----
+1128	1085
