@@ -230,6 +230,9 @@ unique_ptr<AlterInfo> AlterTableInfo::Deserialize(Deserializer &deserializer) {
 	case AlterTableType::SET_TABLE_OPTIONS:
 		result = SetTableOptionsInfo::Deserialize(deserializer);
 		break;
+	case AlterTableType::SET_TRIGGER_FIRING:
+		result = SetTriggerFiringInfo::Deserialize(deserializer);
+		break;
 	default:
 		throw SerializationException("Unsupported type for deserialization of AlterTableInfo!");
 	}
@@ -1118,6 +1121,19 @@ void SetTableOptionsInfo::Serialize(Serializer &serializer) const {
 unique_ptr<AlterTableInfo> SetTableOptionsInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<SetTableOptionsInfo>(new SetTableOptionsInfo());
 	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(400, "table_options", result->table_options);
+	return std::move(result);
+}
+
+void SetTriggerFiringInfo::Serialize(Serializer &serializer) const {
+	AlterTableInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(400, "trigger_name", trigger_name);
+	serializer.WriteProperty<TriggerFiring>(401, "firing", firing);
+}
+
+unique_ptr<AlterTableInfo> SetTriggerFiringInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<SetTriggerFiringInfo>(new SetTriggerFiringInfo());
+	deserializer.ReadPropertyWithDefault<Identifier>(400, "trigger_name", result->trigger_name);
+	deserializer.ReadProperty<TriggerFiring>(401, "firing", result->firing);
 	return std::move(result);
 }
 

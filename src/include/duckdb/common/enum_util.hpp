@@ -512,6 +512,8 @@ enum class RemoveUnusedColumnsMode : uint8_t;
 
 enum class RenderMode : uint8_t;
 
+enum class ReplicationRole : uint8_t;
+
 enum class RequestSizing : uint8_t;
 
 enum class RequestType : uint8_t;
@@ -647,6 +649,8 @@ enum class TransactionModifierType : uint8_t;
 enum class TransactionType : uint8_t;
 
 enum class TriggerEventType : uint8_t;
+
+enum class TriggerFiring : uint8_t;
 
 enum class TriggerForEach : uint8_t;
 
@@ -1421,6 +1425,9 @@ template<>
 const char* EnumUtil::ToChars<RenderMode>(RenderMode value);
 
 template<>
+const char* EnumUtil::ToChars<ReplicationRole>(ReplicationRole value);
+
+template<>
 const char* EnumUtil::ToChars<RequestSizing>(RequestSizing value);
 
 template<>
@@ -1623,6 +1630,9 @@ const char* EnumUtil::ToChars<TransactionType>(TransactionType value);
 
 template<>
 const char* EnumUtil::ToChars<TriggerEventType>(TriggerEventType value);
+
+template<>
+const char* EnumUtil::ToChars<TriggerFiring>(TriggerFiring value);
 
 template<>
 const char* EnumUtil::ToChars<TriggerForEach>(TriggerForEach value);
@@ -2421,6 +2431,9 @@ template<>
 RenderMode EnumUtil::FromString<RenderMode>(std::string_view value);
 
 template<>
+ReplicationRole EnumUtil::FromString<ReplicationRole>(std::string_view value);
+
+template<>
 RequestSizing EnumUtil::FromString<RequestSizing>(std::string_view value);
 
 template<>
@@ -2623,6 +2636,9 @@ TransactionType EnumUtil::FromString<TransactionType>(std::string_view value);
 
 template<>
 TriggerEventType EnumUtil::FromString<TriggerEventType>(std::string_view value);
+
+template<>
+TriggerFiring EnumUtil::FromString<TriggerFiring>(std::string_view value);
 
 template<>
 TriggerForEach EnumUtil::FromString<TriggerForEach>(std::string_view value);
