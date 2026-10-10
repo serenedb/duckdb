@@ -833,8 +833,7 @@ public:
 			// Not the same vector
 			return false;
 		}
-		if (current_vector->scanned_count != internal_offset) {
-			// Not the same scan offset
+		if (current_vector->scanned_count > internal_offset) {
 			return false;
 		}
 		return true;
@@ -842,6 +841,9 @@ public:
 
 	ZSTDVectorScanState &LoadVector(idx_t vector_idx, idx_t internal_offset) {
 		if (UseVectorStateCache(vector_idx, internal_offset)) {
+			if (current_vector->scanned_count < internal_offset) {
+				Skip(*current_vector, internal_offset - current_vector->scanned_count);
+			}
 			return *current_vector;
 		}
 		current_vector = make_uniq<ZSTDVectorScanState>();
