@@ -5,8 +5,10 @@
 statement ok
 SET threads=4;
 
+test-env TEST_MAX_EXECUTION_TIME 30000
+
 statement ok
-SET max_execution_time=30000;
+SET max_execution_time={TEST_MAX_EXECUTION_TIME};
 
 # Counter
 statement ok
