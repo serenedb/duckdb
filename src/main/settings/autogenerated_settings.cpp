@@ -236,6 +236,16 @@ void ExplainOutputFormatSetting::OnSet(SettingCallbackInfo &info, Value &paramet
 }
 
 //===----------------------------------------------------------------------===//
+// Filter Reorder
+//===----------------------------------------------------------------------===//
+void FilterReorderSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
+	if (parameter.IsNull()) {
+		throw InvalidInputException("filter_reorder setting cannot be NULL");
+	}
+	EnumUtil::FromString<FilterReorder>(StringValue::Get(parameter));
+}
+
+//===----------------------------------------------------------------------===//
 // Fsync Mode
 //===----------------------------------------------------------------------===//
 void FsyncModeSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
