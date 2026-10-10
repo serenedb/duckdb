@@ -2500,12 +2500,13 @@ void JoinHashTable::InitializePartitionMasks() {
 
 	completed_partitions.Initialize(num_partitions);
 	completed_partitions.SetAllInvalid(num_partitions);
+
+	current_partition_count = 0;
+	finished_partition_count = 0;
 }
 
 idx_t JoinHashTable::CurrentPartitionCount() const {
-	const auto num_partitions = RadixPartitioning::NumberOfPartitions(radix_bits);
-	D_ASSERT(current_partitions.Capacity() == num_partitions);
-	return current_partitions.CountValid(num_partitions);
+	return current_partition_count.load(std::memory_order_relaxed);
 }
 
 const ValidityMask &JoinHashTable::GetCurrentPartitions() const {
@@ -2513,10 +2514,7 @@ const ValidityMask &JoinHashTable::GetCurrentPartitions() const {
 }
 
 idx_t JoinHashTable::FinishedPartitionCount() const {
-	const auto num_partitions = RadixPartitioning::NumberOfPartitions(radix_bits);
-	D_ASSERT(completed_partitions.Capacity() == num_partitions);
-	// We already marked the active partitions as done, so we have to subtract them here
-	return completed_partitions.CountValid(num_partitions) - CurrentPartitionCount();
+	return finished_partition_count.load(std::memory_order_relaxed);
 }
 
 void JoinHashTable::Repartition(JoinHashTable &global_ht) {
@@ -2532,6 +2530,8 @@ void JoinHashTable::Reset() {
 	data_collection->Reset();
 	hash_map.Reset();
 	current_partitions.SetAllInvalid(RadixPartitioning::NumberOfPartitions(radix_bits));
+	finished_partition_count.fetch_add(current_partition_count.exchange(0, std::memory_order_relaxed),
+	                                   std::memory_order_relaxed);
 	finalized = false;
 }
 
@@ -2654,7 +2654,8 @@ bool JoinHashTable::PrepareExternalFinalize(const idx_t max_ht_size) {
 		}
 		count = incl_count;
 		data_size = incl_data_size;
-		current_partitions.SetValidUnsafe(partition_idx);     // Mark as currently active
+		current_partitions.SetValidUnsafe(partition_idx); // Mark as currently active
+		current_partition_count.fetch_add(1, std::memory_order_relaxed);
 		data_collection->Combine(*partitions[partition_idx]); // Move partition to the main data collection
 		completed_partitions.SetValidUnsafe(partition_idx);   // Also already mark as done
 	}
