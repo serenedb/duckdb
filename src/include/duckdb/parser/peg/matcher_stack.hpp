@@ -50,7 +50,6 @@ public:
 class MatchStack {
 public:
 	MatchStack();
-	~MatchStack();
 
 	MatcherResult Execute(MatchInput input);
 
