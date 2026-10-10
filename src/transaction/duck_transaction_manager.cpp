@@ -462,7 +462,8 @@ void DuckTransactionManager::CleanupTransactions() {
 
 void DuckTransactionManager::CheckTruncate(DuckTransaction &transaction, DataTable &table) {
 	auto &info = *table.GetDataTableInfo();
-	bool concurrent = info.last_append_commit.load() > transaction.start_time;
+	auto alter_lock = info.alter_lock.GetExclusiveLock();
+	bool concurrent = info.last_append_commit.load() >= transaction.view.visibility_bound;
 	if (!concurrent) {
 		lock_guard<mutex> guard(transaction_lock);
 		for (auto &active : active_transactions) {
