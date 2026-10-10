@@ -53,6 +53,16 @@ WALCreateForeignServer WALCreateForeignServer::Deserialize(Deserializer &deseria
 	return result;
 }
 
+void WALCreateJob::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "job", job);
+}
+
+WALCreateJob WALCreateJob::Deserialize(Deserializer &deserializer) {
+	WALCreateJob result;
+	deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(101, "job", result.job);
+	return result;
+}
+
 void WALCreateMacro::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "macro", macro);
@@ -235,6 +245,20 @@ WALDropIndex WALDropIndex::Deserialize(Deserializer &deserializer) {
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
+	return result;
+}
+
+void WALDropJob::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<QualifiedName>(101, "qualified_name", qualified_name);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16484, "oid", oid, 0);
+	}
+}
+
+WALDropJob WALDropJob::Deserialize(Deserializer &deserializer) {
+	WALDropJob result;
+	deserializer.ReadProperty<QualifiedName>(101, "qualified_name", result.qualified_name);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16484, "oid", result.oid, 0);
 	return result;
 }
 

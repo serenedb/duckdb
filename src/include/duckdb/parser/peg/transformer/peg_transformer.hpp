@@ -129,6 +129,7 @@ DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.InsertColumnOrder
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.InsertValues", InsertValues);
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.IsDistinctFromTail", IsDistinctFromTail);
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.IsExpressionTail", IsExpressionTail);
+DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.JobScheduleInfo", JobScheduleInfo);
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.JoinPrefix", JoinPrefix);
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.JoinQualifier", JoinQualifier);
 DUCKDB_REGISTER_TRANSFORM_RESULT_TYPE("duckdb.transform_result.JoinType", JoinType);
@@ -833,6 +834,25 @@ public:
 	static void InitializeAlterOptionsTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterOptionsTrampoline(PEGTransformer &transformer,
 	                                                                      GeneratedTransformProcess &process);
+	static void InitializeAlterJobStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAlterJobStmtTrampoline(PEGTransformer &transformer,
+	                                                                      GeneratedTransformProcess &process);
+	static void InitializeAlterJobActionTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAlterJobActionTrampoline(PEGTransformer &transformer,
+	                                                                        GeneratedTransformProcess &process);
+	static void InitializeAlterJobRenameTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAlterJobRenameTrampoline(PEGTransformer &transformer,
+	                                                                        GeneratedTransformProcess &process);
+	static void InitializeAlterJobSuspendTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAlterJobSuspendTrampoline(PEGTransformer &transformer,
+	                                                                         GeneratedTransformProcess &process);
+	static void InitializeAlterJobResumeTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAlterJobResumeTrampoline(PEGTransformer &transformer,
+	                                                                        GeneratedTransformProcess &process);
+	static void InitializeAlterJobSetScheduleTrampoline(PEGTransformer &transformer,
+	                                                    GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAlterJobSetScheduleTrampoline(PEGTransformer &transformer,
+	                                                                             GeneratedTransformProcess &process);
 	static void InitializeAlterIndexStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterIndexStmtTrampoline(PEGTransformer &transformer,
 	                                                                        GeneratedTransformProcess &process);
@@ -1632,6 +1652,43 @@ public:
 	static void InitializeNoneLiteralTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeNoneLiteralTrampoline(PEGTransformer &transformer,
 	                                                                     GeneratedTransformProcess &process);
+	static void InitializeCreateJobStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeCreateJobStmtTrampoline(PEGTransformer &transformer,
+	                                                                       GeneratedTransformProcess &process);
+	static void InitializeJobScheduleTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobScheduleTrampoline(PEGTransformer &transformer,
+	                                                                     GeneratedTransformProcess &process);
+	static void InitializeJobEveryTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobEveryTrampoline(PEGTransformer &transformer,
+	                                                                  GeneratedTransformProcess &process);
+	static void InitializeJobAfterTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobAfterTrampoline(PEGTransformer &transformer,
+	                                                                  GeneratedTransformProcess &process);
+	static void InitializeJobOffsetTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobOffsetTrampoline(PEGTransformer &transformer,
+	                                                                   GeneratedTransformProcess &process);
+	static void InitializeJobRandomizeTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobRandomizeTrampoline(PEGTransformer &transformer,
+	                                                                      GeneratedTransformProcess &process);
+	static void InitializeJobIntervalTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobIntervalTrampoline(PEGTransformer &transformer,
+	                                                                     GeneratedTransformProcess &process);
+	static void InitializeJobIntervalShortTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobIntervalShortTrampoline(PEGTransformer &transformer,
+	                                                                          GeneratedTransformProcess &process);
+	static void InitializeJobIntervalUnitTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobIntervalUnitTrampoline(PEGTransformer &transformer,
+	                                                                         GeneratedTransformProcess &process);
+	static void InitializeJobIntervalExpressionTrampoline(PEGTransformer &transformer,
+	                                                      GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobIntervalExpressionTrampoline(PEGTransformer &transformer,
+	                                                                               GeneratedTransformProcess &process);
+	static void InitializeJobConcurrentTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobConcurrentTrampoline(PEGTransformer &transformer,
+	                                                                       GeneratedTransformProcess &process);
+	static void InitializeJobSuspendedTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobSuspendedTrampoline(PEGTransformer &transformer,
+	                                                                      GeneratedTransformProcess &process);
 	static void InitializeCreateMacroStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCreateMacroStmtTrampoline(PEGTransformer &transformer,
 	                                                                         GeneratedTransformProcess &process);
@@ -2320,6 +2377,9 @@ public:
 	static void InitializeDropTriggerTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeDropTriggerTrampoline(PEGTransformer &transformer,
 	                                                                     GeneratedTransformProcess &process);
+	static void InitializeDropJobTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDropJobTrampoline(PEGTransformer &transformer,
+	                                                                 GeneratedTransformProcess &process);
 	static void InitializeDropTableTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeDropTableTrampoline(PEGTransformer &transformer,
 	                                                                   GeneratedTransformProcess &process);
@@ -2404,6 +2464,10 @@ public:
 	static void InitializeExecuteStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeExecuteStatementTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
+	static void InitializeExecuteJobStatementTrampoline(PEGTransformer &transformer,
+	                                                    GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeExecuteJobStatementTrampoline(PEGTransformer &transformer,
+	                                                                             GeneratedTransformProcess &process);
 	static void InitializeExplainStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeExplainStatementTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
@@ -4768,6 +4832,14 @@ public:
 	                                                                  GeneratedTransformProcess &process);
 	static unique_ptr<SQLStatement> TransformAlterStatement(PEGTransformer &transformer,
 	                                                        unique_ptr<AlterInfo> alter_options);
+	static unique_ptr<AlterInfo> TransformAlterJobStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
+	                                                   const QualifiedName &qualified_name,
+	                                                   unique_ptr<AlterInfo> alter_job_action);
+	static unique_ptr<AlterInfo> TransformAlterJobRename(PEGTransformer &transformer, const Identifier &col_id);
+	static unique_ptr<AlterInfo> TransformAlterJobSuspend(PEGTransformer &transformer);
+	static unique_ptr<AlterInfo> TransformAlterJobResume(PEGTransformer &transformer);
+	static unique_ptr<AlterInfo> TransformAlterJobSetSchedule(PEGTransformer &transformer,
+	                                                          JobScheduleInfo job_schedule);
 	static unique_ptr<AlterInfo> TransformAlterIndexStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                     unique_ptr<BaseTableRef> base_table_name,
 	                                                     unique_ptr<AlterTableInfo> alter_index_alter);
@@ -5115,7 +5187,8 @@ public:
 	static unique_ptr<SQLStatement> TransformDropDatabaseStatement(PEGTransformer &transformer,
 	                                                               const optional<bool> &if_exists,
 	                                                               const Identifier &catalog_name,
-	                                                               const optional<bool> &drop_database_force);
+	                                                               const optional<bool> &drop_database_force,
+	                                                               const optional<bool> &drop_behavior);
 	static bool TransformDropDatabaseForce(PEGTransformer &transformer);
 	static unique_ptr<CreateStatement>
 	TransformCreateIndexStmt(PEGTransformer &transformer, const optional<bool> &unique_index,
@@ -5170,6 +5243,23 @@ public:
 	static unique_ptr<ParsedExpression> TransformDefArgStringLiteral(PEGTransformer &transformer,
 	                                                                 const string &string_literal);
 	static unique_ptr<ParsedExpression> TransformNoneLiteral(PEGTransformer &transformer);
+	static unique_ptr<CreateStatement>
+	TransformCreateJobStmt(PEGTransformer &transformer, const optional<bool> &if_not_exists,
+	                       const QualifiedName &qualified_name, JobScheduleInfo job_schedule,
+	                       const optional<bool> &job_suspended, unique_ptr<SQLStatement> statement);
+	static JobScheduleInfo TransformJobEvery(PEGTransformer &transformer, unique_ptr<ParsedExpression> job_interval,
+	                                         optional<unique_ptr<ParsedExpression>> job_offset,
+	                                         optional<unique_ptr<ParsedExpression>> job_randomize,
+	                                         const optional<bool> &job_concurrent);
+	static JobScheduleInfo TransformJobAfter(PEGTransformer &transformer, unique_ptr<ParsedExpression> job_interval,
+	                                         optional<unique_ptr<ParsedExpression>> job_randomize);
+	static unique_ptr<ParsedExpression>
+	TransformJobIntervalShort(PEGTransformer &transformer, vector<unique_ptr<ParsedExpression>> job_interval_unit);
+	static unique_ptr<ParsedExpression> TransformJobIntervalUnit(PEGTransformer &transformer,
+	                                                             unique_ptr<ParsedExpression> number_literal,
+	                                                             const DatePartSpecifier &interval);
+	static bool TransformJobConcurrent(PEGTransformer &transformer);
+	static bool TransformJobSuspended(PEGTransformer &transformer);
 	static unique_ptr<CreateStatement> TransformCreateMacroStmt(PEGTransformer &transformer,
 	                                                            const bool &macro_or_function,
 	                                                            const optional<bool> &if_not_exists,
@@ -5488,6 +5578,8 @@ public:
 	static unique_ptr<DropStatement> TransformDropTrigger(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                      const Identifier &trigger_name,
 	                                                      unique_ptr<BaseTableRef> base_table_name);
+	static unique_ptr<DropStatement> TransformDropJob(PEGTransformer &transformer, const optional<bool> &if_exists,
+	                                                  const vector<QualifiedName> &qualified_name);
 	static unique_ptr<DropStatement> TransformDropTable(PEGTransformer &transformer, const CatalogType &table_or_view,
 	                                                    const optional<bool> &if_exists,
 	                                                    vector<unique_ptr<BaseTableRef>> base_table_name);
@@ -5530,6 +5622,8 @@ public:
 	static unique_ptr<SQLStatement>
 	TransformExecuteStatement(PEGTransformer &transformer, const Identifier &identifier,
 	                          optional<vector<FunctionArgument>> table_function_arguments);
+	static unique_ptr<SQLStatement> TransformExecuteJobStatement(PEGTransformer &transformer,
+	                                                             const QualifiedName &qualified_name);
 	static unique_ptr<SQLStatement>
 	TransformExplainStatement(PEGTransformer &transformer, const optional<Identifier> &analyze_keyword,
 	                          const optional<vector<GenericCopyOption>> &explain_option_list,
