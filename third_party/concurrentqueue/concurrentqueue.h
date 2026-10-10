@@ -1617,19 +1617,15 @@ private:
 			MOODYCAMEL_CONSTEXPR_IF (context == explicit_context && BLOCK_SIZE <= EXPLICIT_BLOCK_EMPTY_COUNTER_THRESHOLD) {
 				// Check flags
 				for (size_t i = 0; i < BLOCK_SIZE; ++i) {
-					if (!emptyFlags[i].load(std::memory_order_relaxed)) {
+					if (!emptyFlags[i].load(std::memory_order_acquire)) {
 						return false;
 					}
 				}
-				
-				// Aha, empty; make sure we have all other memory effects that happened before the empty flags were set
-				std::atomic_thread_fence(std::memory_order_acquire);
 				return true;
 			}
 			else {
 				// Check counter
-				if (elementsCompletelyDequeued.load(std::memory_order_relaxed) == BLOCK_SIZE) {
-					std::atomic_thread_fence(std::memory_order_acquire);
+				if (elementsCompletelyDequeued.load(std::memory_order_acquire) == BLOCK_SIZE) {
 					return true;
 				}
 				assert(elementsCompletelyDequeued.load(std::memory_order_relaxed) <= BLOCK_SIZE);
@@ -1662,11 +1658,10 @@ private:
 		{
 			MOODYCAMEL_CONSTEXPR_IF (context == explicit_context && BLOCK_SIZE <= EXPLICIT_BLOCK_EMPTY_COUNTER_THRESHOLD) {
 				// Set flags
-				std::atomic_thread_fence(std::memory_order_release);
 				i = BLOCK_SIZE - 1 - static_cast<size_t>(i & static_cast<index_t>(BLOCK_SIZE - 1)) - count + 1;
 				for (size_t j = 0; j != count; ++j) {
 					assert(!emptyFlags[i + j].load(std::memory_order_relaxed));
-					emptyFlags[i + j].store(true, std::memory_order_relaxed);
+					emptyFlags[i + j].store(true, std::memory_order_release);
 				}
 				return false;
 			}
