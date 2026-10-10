@@ -146,6 +146,7 @@ public:
 	vector<shared_ptr<ClientContextState>> States() {
 		absl::ReaderMutexLock l(lock);
 		vector<shared_ptr<ClientContextState>> states;
+		states.reserve(registered_state.size());
 		for (auto &entry : registered_state) {
 			states.push_back(entry.second);
 		}
