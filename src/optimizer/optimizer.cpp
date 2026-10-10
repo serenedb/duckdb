@@ -242,6 +242,26 @@ static bool ContainsDataSource(const LogicalOperator &op) {
 	return false;
 }
 
+static void CollectScans(const LogicalOperator &op, vector<TableIndex> &scans) {
+	if (op.type == LogicalOperatorType::LOGICAL_GET) {
+		scans.push_back(op.Cast<LogicalGet>().table_index);
+	}
+	for (auto &child : op.children) {
+		CollectScans(*child, scans);
+	}
+}
+
+static bool LostScan(const LogicalOperator &op, const vector<TableIndex> &bound_scans) {
+	vector<TableIndex> scans;
+	CollectScans(op, scans);
+	for (auto &index : bound_scans) {
+		if (std::find(scans.begin(), scans.end(), index) == scans.end()) {
+			return true;
+		}
+	}
+	return false;
+}
+
 // Returns true if the plan contains a DML statement inside a CTE body. A top-level
 // DML statement is not flagged. COPY TO is side-effecting, but does not invalidate
 // table statistics and is deliberately excluded here.
@@ -620,8 +640,10 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 
 	this->plan = std::move(plan_p);
 	shared_ptr<PreparedStatementData> prepared;
+	vector<TableIndex> bound_scans;
 	if (plan->type == LogicalOperatorType::LOGICAL_PREPARE) {
 		prepared = plan->Cast<LogicalPrepare>().prepared;
+		CollectScans(*plan, bound_scans);
 	}
 
 	for (auto &pre_optimizer_extension : optimizer_extensions) {
@@ -652,7 +674,8 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	}
 
 	// Optimizers can embed the current database state in the executable plan.
-	if (prepared && !prepared->properties.read_databases.empty() && ContainsDataSource(*plan)) {
+	if (prepared && !prepared->properties.read_databases.empty() &&
+	    (ContainsDataSource(*plan) || LostScan(*plan, bound_scans))) {
 		prepared->properties.always_require_rebind = true;
 	}
 
