@@ -1,0 +1,36 @@
+# name: test/sql/storage/compression/fsst/fsst_mixed_lengths.test
+# description: FSST round trip of empty strings, strings around 511 bytes and longer ones mixed in every vector
+# group: [fsst]
+
+statement ok
+SET force_compression = 'fsst';
+
+statement ok
+ATTACH '{TEST_DIR}/fsst_mixed_lengths.db' AS db (BLOCK_SIZE 262144, STORAGE_VERSION 'v1.2.0');
+
+statement ok
+CREATE TABLE db.t AS SELECT i, left(repeat('https://example.org/' || (i % 97)::VARCHAR || '/item/' || ((i * 31) % 1000)::VARCHAR || '?q=', 120), CASE WHEN i % 11 = 0 THEN 0 WHEN i % 7 = 0 THEN 510 + (i % 4) ELSE (i * 7919) % 1300 END) AS s FROM range(20000) tbl(i);
+
+statement ok
+CHECKPOINT db;
+
+statement ok
+DETACH db;
+
+statement ok
+ATTACH '{TEST_DIR}/fsst_mixed_lengths.db' AS db;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('db.t') WHERE column_name = 's' AND compression = 'FSST';
+----
+true
+
+query I
+SELECT count(DISTINCT length(s)) FILTER (WHERE length(s) BETWEEN 509 AND 514) FROM db.t;
+----
+6
+
+query II
+SELECT count(*), count(*) FILTER (WHERE s IS DISTINCT FROM left(repeat('https://example.org/' || (i % 97)::VARCHAR || '/item/' || ((i * 31) % 1000)::VARCHAR || '?q=', 120), CASE WHEN i % 11 = 0 THEN 0 WHEN i % 7 = 0 THEN 510 + (i % 4) ELSE (i * 7919) % 1300 END)) FROM db.t;
+----
+20000	0
