@@ -250,6 +250,14 @@ Identifier AttachedDatabase::ExtractDatabaseName(const string &dbpath, FileSyste
 	return Identifier(name);
 }
 
+static bool IsLastReference(const shared_ptr<AttachedDatabase> &attached_db) {
+	if (attached_db.use_count() != 1) {
+		return false;
+	}
+	shared_ptr<AttachedDatabase>(attached_db).reset();
+	return true;
+}
+
 void AttachedDatabase::InvokeCloseIfLastReference(shared_ptr<AttachedDatabase> &attached_db, ClientContext &context) {
 	auto close_action = DatabaseCloseAction::CHECKPOINT;
 	auto checkpoint_on_detach = Settings::Get<CheckpointOnDetachSetting>(context);
@@ -264,7 +272,7 @@ void AttachedDatabase::InvokeCloseIfLastReference(shared_ptr<AttachedDatabase> &
 	auto close_lock = attached_db->close_lock;
 	{
 		lock_guard<mutex> guard(*close_lock);
-		if (attached_db.use_count() != 1) {
+		if (!IsLastReference(attached_db)) {
 			attached_db.reset();
 			return;
 		}
