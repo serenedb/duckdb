@@ -45,6 +45,7 @@ FixedSizeBuffer::FixedSizeBuffer(BlockManager &block_manager, MemoryTag memory_t
 	// Zero-initialize the buffer as it might get serialized to storage.
 	auto block_size = block_manager.GetBlockSize();
 	memset(buffer_handle.GetDataMutable(), 0, block_size);
+	memory.store(buffer_handle.GetDataMutable(), std::memory_order_relaxed);
 }
 
 FixedSizeBuffer::FixedSizeBuffer(BlockManager &block_manager, const idx_t segment_count, const idx_t allocation_size,
@@ -54,6 +55,7 @@ FixedSizeBuffer::FixedSizeBuffer(BlockManager &block_manager, const idx_t segmen
 	D_ASSERT(block_handle);
 	buffer_handle = block_manager.buffer_manager.Pin(block_handle);
 	D_ASSERT(buffer_handle.IsValid());
+	memory.store(buffer_handle.GetDataMutable(), std::memory_order_relaxed);
 }
 
 FixedSizeBuffer::FixedSizeBuffer(BlockManager &block_manager, const idx_t segment_count, const idx_t allocation_size,
@@ -72,6 +74,7 @@ FixedSizeBuffer::~FixedSizeBuffer() {
 	if (InMemory()) {
 		// we can have multiple readers on a pinned block, and unpinning the buffer handle
 		// decrements the reader count on the underlying block handle (Destroy() unpins)
+		memory.store(nullptr, std::memory_order_relaxed);
 		buffer_handle.Destroy();
 	}
 	if (OnDisk()) {
@@ -134,6 +137,7 @@ void FixedSizeBuffer::Serialize(PartialBlockManager &partial_block_manager, cons
 
 	// We are done with this buffer.
 	// To use the fixed-size buffer again, we need to re-load it from disk.
+	memory.store(nullptr, std::memory_order_relaxed);
 	buffer_handle.Destroy();
 
 	// Register the partial block and the block handle.
@@ -163,6 +167,7 @@ void FixedSizeBuffer::LoadFromDisk() {
 
 	buffer_handle = std::move(new_buffer_handle);
 	block_handle = std::move(new_block_handle);
+	memory.store(buffer_handle.GetDataMutable(), std::memory_order_release);
 }
 
 uint32_t FixedSizeBuffer::GetOffset(const idx_t bitmask_count, const idx_t available_segments) {
