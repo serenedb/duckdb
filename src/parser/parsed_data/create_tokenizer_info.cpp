@@ -11,6 +11,10 @@ unique_ptr<CreateInfo> CreateTokenizerInfo::Copy() const {
 	result->features = features;
 	result->config = config;
 	result->definition = definition;
+	for (auto &entry : parsed_options) {
+		result->parsed_options[entry.first] = entry.second->Copy();
+	}
+	result->options = options;
 	return std::move(result);
 }
 

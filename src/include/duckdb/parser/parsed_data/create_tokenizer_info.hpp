@@ -8,7 +8,10 @@
 
 #pragma once
 
+#include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/named_parameter_map.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
+#include "duckdb/parser/parsed_expression.hpp"
 
 #include <string_view>
 
@@ -32,6 +35,8 @@ struct CreateTokenizerInfo : public CreateInfo {
 	uint64_t features = 0;
 	string config;
 	string definition;
+	case_insensitive_map_t<unique_ptr<ParsedExpression>> parsed_options;
+	named_parameter_map_t options;
 
 public:
 	DUCKDB_API void Serialize(Serializer &serializer) const override;

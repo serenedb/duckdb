@@ -46,6 +46,10 @@ struct CreatePragmaFunctionInfo;
 struct CreateFunctionInfo;
 struct CreateViewInfo;
 struct CreateSequenceInfo;
+struct CreateJobInfo;
+struct CreateTokenizerInfo;
+struct CreateRoleInfo;
+struct CreateForeignServerInfo;
 struct CreateCollationInfo;
 struct CreateCoordinateSystemInfo;
 struct CreateIndexInfo;
@@ -163,10 +167,6 @@ public:
 	}
 	virtual void OnCatalogLogDecided() {
 	}
-	virtual void EndCatalogLogCommit() {
-	}
-	virtual void RequestCatalogLogSync(shared_ptr<WriteAheadLog> log, idx_t offset) {
-	}
 	void SyncCatalogLog();
 	virtual bool AppendLocalIndexes(DuckTransaction &transaction, TableIndexList &index_list,
 	                                RowGroupCollection &source, const vector<StorageIndex> &mapped_column_ids,
@@ -229,6 +229,14 @@ public:
 	//! Creates a sequence in the catalog.
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSequence(CatalogTransaction transaction, CreateSequenceInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSequence(ClientContext &context, CreateSequenceInfo &info);
+	DUCKDB_API optional_ptr<CatalogEntry> CreateJob(ClientContext &context, CreateJobInfo &info);
+	DUCKDB_API optional_ptr<CatalogEntry> CreateTokenizer(ClientContext &context, CreateTokenizerInfo &info);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateRole(CatalogTransaction transaction, CreateRoleInfo &info);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateForeignServer(CatalogTransaction transaction,
+	                                                                  CreateForeignServerInfo &info);
+	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void DropDatabase(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
 	//! Creates a Enum in the catalog.
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(ClientContext &context, CreateTypeInfo &info);

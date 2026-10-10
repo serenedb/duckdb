@@ -76,6 +76,9 @@ class BoundAtClause;
 struct CreateInfo;
 struct CreateSchemaInfo;
 struct CreateTriggerInfo;
+struct CreateJobInfo;
+struct JobSchedule;
+struct JobScheduleInfo;
 struct QualifiedName;
 struct BoundCreateTableInfo;
 struct BoundOnConflictInfo;
@@ -319,6 +322,8 @@ public:
 	SchemaCatalogEntry &BindSchema(CreateInfo &info);
 	SchemaCatalogEntry &BindCreateFunctionInfo(CreateInfo &info);
 	SchemaCatalogEntry &BindCreateTriggerInfo(CreateTriggerInfo &info);
+	SchemaCatalogEntry &BindCreateJobInfo(CreateJobInfo &info);
+	void BindJobSchedule(JobSchedule &schedule, unique_ptr<JobScheduleInfo> &parsed_schedule);
 
 	unique_ptr<BoundPragmaInfo> BindPragma(PragmaInfo &info, QueryErrorContext error_context);
 

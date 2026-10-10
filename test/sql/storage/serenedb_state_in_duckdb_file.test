@@ -62,6 +62,11 @@ CREATE TABLE u (a INTEGER)
 statement ok
 ALTER TABLE u ADD UNIQUE (a)
 
+statement error
+CREATE JOB j AFTER 1 HOUR AS SELECT 1
+----
+Jobs are not supported by this catalog
+
 statement ok
 CREATE TABLE sch.in_schema AS SELECT range AS a FROM range(3)
 

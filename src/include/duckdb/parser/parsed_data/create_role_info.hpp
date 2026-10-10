@@ -22,6 +22,9 @@ struct CreateRoleInfo : public CreateInfo {
 	string password;
 	vector<Membership> member_of;
 	vector<string> config;
+	vector<Identifier> in_roles;
+	vector<Identifier> role_members;
+	vector<Identifier> admin_members;
 
 public:
 	DUCKDB_API void Serialize(Serializer &serializer) const override;

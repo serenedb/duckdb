@@ -383,7 +383,6 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 			error.Merge(commit_error);
 		}
 	}
-	log_owner.EndCatalogLogCommit();
 	return error;
 }
 

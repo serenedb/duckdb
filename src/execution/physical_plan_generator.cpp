@@ -159,6 +159,10 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlanInternal(LogicalOperator &op)
 	case LogicalOperatorType::LOGICAL_CREATE_MACRO:
 	case LogicalOperatorType::LOGICAL_CREATE_TYPE:
 	case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
+	case LogicalOperatorType::LOGICAL_CREATE_JOB:
+	case LogicalOperatorType::LOGICAL_CREATE_ROLE:
+	case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
+	case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
 		return CreatePlan(op.Cast<LogicalCreate>());
 	case LogicalOperatorType::LOGICAL_PRAGMA:
 		return CreatePlan(op.Cast<LogicalPragma>());

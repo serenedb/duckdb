@@ -28,6 +28,7 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
@@ -346,6 +347,9 @@ protected:
 
 	void ReplayCreateTokenizer();
 	void ReplayDropTokenizer();
+
+	void ReplayCreateJob();
+	void ReplayDropJob();
 
 	void ReplayCreateRole();
 	void ReplayDropRole();
@@ -860,6 +864,12 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 		break;
 	case WALType::DROP_TOKENIZER:
 		ReplayDropTokenizer();
+		break;
+	case WALType::CREATE_JOB:
+		ReplayCreateJob();
+		break;
+	case WALType::DROP_JOB:
+		ReplayDropJob();
 		break;
 	case WALType::CREATE_ROLE:
 		ReplayCreateRole();
@@ -1408,6 +1418,30 @@ void WriteAheadLogDeserializer::ReplayDropTokenizer() {
 	catalog.DropEntry(context, info);
 }
 
+void WriteAheadLogDeserializer::ReplayCreateJob() {
+	auto wal_entry = WALCreateJob::Deserialize(deserializer);
+	auto &info = wal_entry.job;
+	if (DeserializeOnly()) {
+		return;
+	}
+	ReplayParentSchema(catalog, context, *info);
+	catalog.CreateJob(context, info->Cast<CreateJobInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropJob() {
+	auto entry = WALDropJob::Deserialize(deserializer);
+	DropInfo info;
+	info.type = CatalogType::JOB_ENTRY;
+	info.cascade = true;
+	info.if_not_found = OnEntryNotFound::RETURN_NULL;
+	info.SetQualifiedName(ReplayEntryName(catalog, entry.qualified_name));
+	if (DeserializeOnly()) {
+		return;
+	}
+	ReplayDropTarget(catalog, context, entry.oid, info);
+	catalog.DropEntry(context, info);
+}
+
 void WriteAheadLogDeserializer::ReplayCreateRole() {
 	auto wal_entry = WALCreateRole::Deserialize(deserializer);
 	auto &info = wal_entry.role;
@@ -1415,7 +1449,8 @@ void WriteAheadLogDeserializer::ReplayCreateRole() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().CreateRole(catalog.GetCatalogTransaction(context), info->Cast<CreateRoleInfo>());
+	catalog.Cast<DuckCatalog>().DuckCatalog::CreateRole(catalog.GetCatalogTransaction(context),
+	                                                    info->Cast<CreateRoleInfo>());
 }
 
 void WriteAheadLogDeserializer::ReplayDropRole() {
@@ -1426,7 +1461,7 @@ void WriteAheadLogDeserializer::ReplayDropRole() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().DropRole(catalog.GetCatalogTransaction(context), info);
+	catalog.Cast<DuckCatalog>().DuckCatalog::DropRole(catalog.GetCatalogTransaction(context), info);
 }
 
 void WriteAheadLogDeserializer::ReplayCreateDatabase() {
@@ -1448,7 +1483,7 @@ void WriteAheadLogDeserializer::ReplayDropDatabase() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().DropDatabase(catalog.GetCatalogTransaction(context), info);
+	catalog.Cast<DuckCatalog>().DuckCatalog::DropDatabase(catalog.GetCatalogTransaction(context), info);
 }
 
 void WriteAheadLogDeserializer::ReplayCreateForeignServer() {
@@ -1458,8 +1493,8 @@ void WriteAheadLogDeserializer::ReplayCreateForeignServer() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().CreateForeignServer(catalog.GetCatalogTransaction(context),
-	                                                info->Cast<CreateForeignServerInfo>());
+	catalog.Cast<DuckCatalog>().DuckCatalog::CreateForeignServer(catalog.GetCatalogTransaction(context),
+	                                                             info->Cast<CreateForeignServerInfo>());
 }
 
 void WriteAheadLogDeserializer::ReplayDropForeignServer() {
@@ -1470,7 +1505,7 @@ void WriteAheadLogDeserializer::ReplayDropForeignServer() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().DropForeignServer(catalog.GetCatalogTransaction(context), info);
+	catalog.Cast<DuckCatalog>().DuckCatalog::DropForeignServer(catalog.GetCatalogTransaction(context), info);
 }
 
 //===--------------------------------------------------------------------===//

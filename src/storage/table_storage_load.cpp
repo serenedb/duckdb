@@ -75,7 +75,8 @@ vector<IndexDefinition> GetIndexDefinitions(DuckTableEntry &table, const DataTab
 			result.push_back(std::move(definition));
 		}
 	}
-	auto transaction = CatalogTransaction::GetSystemTransaction(table.ParentCatalog().GetDatabase());
+	CatalogTransaction transaction(table.ParentCatalog().GetDatabase(), MAX_COMMIT_ID,
+	                               VisibilityBound::Before(MAX_COMMIT_ID));
 	table.ParentSchema(transaction).Scan(CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
 		auto &index = entry.Cast<DuckIndexEntry>();
 		if (!index.info || index.info->info.get() != &info) {
@@ -147,7 +148,8 @@ optional_ptr<DuckTableEntry> TableStorageLoad::Find(idx_t table_oid) {
 SchemaCatalogEntry &TableStorageLoad::GetSchema(CatalogTransaction transaction, idx_t table_oid) {
 	auto table = tables.find(table_oid);
 	if (table != tables.end()) {
-		return table->second.get().ParentSchema(transaction);
+		return table->second.get().ParentSchema(
+		    CatalogTransaction(catalog.GetDatabase(), MAX_COMMIT_ID, VisibilityBound::Before(MAX_COMMIT_ID)));
 	}
 	return catalog.GetSchema(transaction, *catalog.GetDefaultSchema());
 }
@@ -159,7 +161,8 @@ void TableStorageLoad::LoadCheckpoint(BoundCreateTableInfo &info) {
 	}
 	auto index_infos = std::move(info.indexes);
 	info.indexes.clear();
-	auto &schema = table->second.get().ParentSchema(CatalogTransaction::GetSystemTransaction(catalog.GetDatabase()));
+	auto &schema = table->second.get().ParentSchema(
+	    CatalogTransaction(catalog.GetDatabase(), MAX_COMMIT_ID, VisibilityBound::Before(MAX_COMMIT_ID)));
 	Attach(table->second, make_uniq<DuckTableEntry>(catalog, schema, info), std::move(index_infos));
 }
 

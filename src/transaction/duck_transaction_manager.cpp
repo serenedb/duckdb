@@ -97,7 +97,7 @@ Transaction &DuckTransactionManager::StartTransaction(ClientContext &context) {
 	transaction_t start_time = current_start_timestamp++;
 	transaction_t transaction_id = current_transaction_id++;
 	// snapshots must not observe commits that are not yet durable, nor a newer catalog version
-	auto durable = GetDurableSnapshot();
+	auto durable = GetDurableSnapshotInternal();
 	// the transaction sees its own writes, and every durable commit before its start time
 	SnapshotView view(transaction_id,
 	                  VisibilityBound::Min(VisibilityBound::Before(start_time), durable.visibility_bound));
@@ -295,7 +295,7 @@ transaction_t DuckTransactionManager::GetCommitTimestamp() {
 	return current_start_timestamp++;
 }
 
-DuckTransactionManager::DurableSnapshot DuckTransactionManager::GetDurableSnapshot() {
+DuckTransactionManager::DurableSnapshot DuckTransactionManager::GetDurableSnapshotInternal() {
 	DurableSnapshot durable;
 	for (auto &commit : unsynced_commits) {
 		auto &transaction = commit.transaction.get();
@@ -309,6 +309,13 @@ DuckTransactionManager::DurableSnapshot DuckTransactionManager::GetDurableSnapsh
 		break;
 	}
 	return durable;
+}
+
+DuckTransactionManager::DurableSnapshot DuckTransactionManager::GetDurableSnapshot() {
+	lock_guard<mutex> lock(transaction_lock);
+	auto durable = GetDurableSnapshotInternal();
+	return DurableSnapshot {VisibilityBound::Min(VisibilityBound::Through(last_commit), durable.visibility_bound),
+	                        MinValue<idx_t>(last_committed_version, durable.catalog_version)};
 }
 
 void DuckTransactionManager::WaitForDurability() {
@@ -425,7 +432,7 @@ void DuckTransactionManager::AdvanceStartTime(DuckTransaction &transaction) {
 	// the refreshed snapshot is a snapshot acquisition like StartTransaction: bound it at the durable horizon so a
 	// per-statement refresh never observes a commit that is not yet durable
 	auto start_time = current_start_timestamp++;
-	auto durable = GetDurableSnapshot();
+	auto durable = GetDurableSnapshotInternal();
 	transaction.start_time = start_time;
 	transaction.view.visibility_bound =
 	    VisibilityBound::Min(VisibilityBound::Before(start_time), durable.visibility_bound);

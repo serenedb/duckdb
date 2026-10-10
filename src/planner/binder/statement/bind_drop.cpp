@@ -59,6 +59,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	case CatalogType::INDEX_ENTRY:
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::TYPE_ENTRY:
+	case CatalogType::JOB_ENTRY:
 	case CatalogType::TOKENIZER_ENTRY: {
 		// Resolve the catalog + (possibly nested) schema path. A leading component is the catalog when it names an
 		// attached database, and otherwise the outermost schema of a nested schema path. The entry lookup below
@@ -134,6 +135,16 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	case CatalogType::TRIGGER_ENTRY:
 		BindDropTrigger(stmt, properties);
 		break;
+	case CatalogType::ROLE_ENTRY:
+	case CatalogType::DATABASE_ENTRY:
+		break;
+	case CatalogType::FOREIGN_SERVER_ENTRY: {
+		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
+		stmt.info->SetQualifiedName(QualifiedName(catalog, Identifier(), stmt.info->GetQualifiedName().Name()));
+		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog), context,
+		                            DatabaseModificationType::DROP_CATALOG_ENTRY);
+		break;
+	}
 	default:
 		throw BinderException("Unknown catalog type for drop statement: '%s'", CatalogTypeToString(stmt.info->type));
 	}
