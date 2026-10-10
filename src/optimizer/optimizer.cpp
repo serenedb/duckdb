@@ -61,6 +61,7 @@
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/logical_plan_verifier.hpp"
 #include "duckdb/planner/planner.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_prepare.hpp"
 #include "duckdb/planner/operator/logical_secure_view.hpp"
 #include "duckdb/optimizer/remote_pushdown_optimizer.hpp"
@@ -228,7 +229,10 @@ static bool ContainsDML(const LogicalOperator &op) {
 
 static bool ContainsDataSource(const LogicalOperator &op) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
-		return true;
+		auto &get = op.Cast<LogicalGet>();
+		if (!get.bind_data || !get.bind_data->CachePlanWithParameters()) {
+			return true;
+		}
 	}
 	for (auto &child : op.children) {
 		if (ContainsDataSource(*child)) {
@@ -615,12 +619,9 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	Verify(*plan_p);
 
 	this->plan = std::move(plan_p);
+	shared_ptr<PreparedStatementData> prepared;
 	if (plan->type == LogicalOperatorType::LOGICAL_PREPARE) {
-		auto &prepared = plan->Cast<LogicalPrepare>().prepared;
-		// Optimizers can embed the current database state in the executable plan.
-		if (!prepared->properties.read_databases.empty() && ContainsDataSource(*plan)) {
-			prepared->properties.always_require_rebind = true;
-		}
+		prepared = plan->Cast<LogicalPrepare>().prepared;
 	}
 
 	for (auto &pre_optimizer_extension : optimizer_extensions) {
@@ -648,6 +649,11 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 				optimizer_extension.optimize_function(input, plan);
 			}
 		});
+	}
+
+	// Optimizers can embed the current database state in the executable plan.
+	if (prepared && !prepared->properties.read_databases.empty() && ContainsDataSource(*plan)) {
+		prepared->properties.always_require_rebind = true;
 	}
 
 	Planner::VerifyPlan(context, plan);
