@@ -402,21 +402,26 @@ void Pipeline::Reset() {
 	initialized = true;
 }
 
-void Pipeline::ResetForReschedule(bool reset_sink) {
-	NotifyProgressReset();
-	if (reset_sink) {
-		ResetSinkForReschedule();
-	}
+void Pipeline::ResetOperatorsForReschedule(reference_set_t<PhysicalOperator> &reset_operators) {
 	auto &client = GetClientContext();
 	auto allow_reuse = Settings::Get<EnableCachingOperatorsSetting>(client);
 	for (auto &op_ref : operators) {
 		auto &op = op_ref.get();
+		if (!reset_operators.insert(op).second) {
+			continue;
+		}
 		lock_guard<mutex> guard(op.lock);
 		if (allow_reuse && op.op_state && op.ResetGlobalOperatorState(client, *op.op_state)) {
 			continue;
 		}
 		op.op_state = op.GetGlobalOperatorState(client);
 	}
+}
+
+void Pipeline::ResetSourceForReschedule() {
+	NotifyProgressReset();
+	auto &client = GetClientContext();
+	auto allow_reuse = Settings::Get<EnableCachingOperatorsSetting>(client);
 	if (source && !source->IsSource()) {
 		throw InternalException("Source of pipeline does not have IsSource set");
 	}
