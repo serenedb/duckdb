@@ -8,6 +8,7 @@
 #include "duckdb/execution/row_id_deduplicator.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parallel/thread_context.hpp"
+#include "duckdb/planner/constraints/bound_check_constraint.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
@@ -49,6 +50,79 @@ PhysicalUpdate::PhysicalUpdate(PhysicalPlan &physical_plan, vector<LogicalType> 
 		index_update = true;
 		break;
 	}
+}
+
+//! Whether equal values of the type are also identical, so that an unchanged value does not need to be written
+static bool EqualityIsIdentity(const LogicalType &type) {
+	if (type.id() == LogicalTypeId::TIME_TZ) {
+		return false;
+	}
+	switch (type.InternalType()) {
+	case PhysicalType::BOOL:
+	case PhysicalType::INT8:
+	case PhysicalType::INT16:
+	case PhysicalType::INT32:
+	case PhysicalType::INT64:
+	case PhysicalType::INT128:
+	case PhysicalType::UINT8:
+	case PhysicalType::UINT16:
+	case PhysicalType::UINT32:
+	case PhysicalType::UINT64:
+	case PhysicalType::UINT128:
+	case PhysicalType::VARCHAR:
+		return true;
+	default:
+		return false;
+	}
+}
+
+void PhysicalUpdate::InitializeInPlaceUnchangedRows() {
+	if (!index_update || return_chunk || update_column_count == 0) {
+		return;
+	}
+	auto index_columns = table.GetDataTableInfo()->GetIndexes().GetIndexedColumns();
+	physical_index_set_t in_place;
+	idx_t compared = 0;
+	for (idx_t i = 0; i < update_column_count; i++) {
+		auto &type = tableref.GetColumns().GetColumn(columns[i]).Type();
+		if (index_columns.find(columns[i].index) != index_columns.end()) {
+			if (!EqualityIsIdentity(type)) {
+				return;
+			}
+			compared++;
+		} else if (type.SupportsRegularUpdate()) {
+			in_place.insert(columns[i]);
+		} else {
+			return;
+		}
+	}
+	if (compared == 0 || in_place.empty()) {
+		return;
+	}
+	// CHECK constraints are verified on the columns updated in place, so these must hold all of a CHECK's columns
+	for (auto &constraint : bound_constraints) {
+		if (constraint->type != ConstraintType::CHECK) {
+			continue;
+		}
+		auto &check = constraint->Cast<BoundCheckConstraint>();
+		idx_t found = 0;
+		for (auto &column : check.bound_columns) {
+			found += in_place.count(column);
+		}
+		if (found != 0 && found != check.bound_columns.size()) {
+			return;
+		}
+	}
+	for (idx_t i = 0; i < update_column_count; i++) {
+		if (in_place.count(columns[i])) {
+			in_place_positions.push_back(i);
+			in_place_columns.push_back(columns[i]);
+		} else {
+			compare_positions.push_back(i);
+			compare_columns.emplace_back(columns[i].index);
+		}
+	}
+	in_place_unchanged_rows = true;
 }
 
 //===--------------------------------------------------------------------===//
@@ -111,6 +185,11 @@ public:
 	DataChunk mock_chunk;
 	DataChunk delete_chunk;
 	DataChunk combined_chunk;
+	DataChunk compare_chunk;
+	DataChunk in_place_chunk;
+	SelectionVector unchanged_sel;
+	SelectionVector next_sel;
+	SelectionVector changed_sel;
 	ExpressionExecutor default_executor;
 	unique_ptr<TableDeleteState> delete_state;
 	unique_ptr<TableUpdateState> update_state;
@@ -150,6 +229,53 @@ static void AppendReturnRows(ColumnDataCollection &collection, DataChunk &combin
 	}
 	combined.CheckCardinality(count);
 	collection.Append(combined);
+}
+
+// Updates in place the rows whose indexed values the update leaves unchanged and returns their count; the other rows
+// remain in update_chunk and row_ids for the DELETE + INSERT.
+static idx_t UpdateUnchangedRows(const PhysicalUpdate &op, ExecutionContext &context, UpdateLocalState &state,
+                                 DataChunk &update_chunk, Vector &row_ids, idx_t count) {
+	row_ids.Flatten();
+	auto &current = state.compare_chunk;
+	current.Reset();
+	ColumnFetchState fetch_state;
+	op.table.Fetch(DuckTransaction::Get(context.client, op.table.db), current, op.compare_columns, row_ids, count,
+	               fetch_state);
+
+	idx_t unchanged = count;
+	optional_ptr<const SelectionVector> sel;
+	for (idx_t i = 0; i < op.compare_positions.size() && unchanged > 0; i++) {
+		unchanged = VectorOperations::NotDistinctFrom(update_chunk.data[op.compare_positions[i]], current.data[i], sel,
+		                                              unchanged, &state.next_sel, nullptr);
+		std::swap(state.unchanged_sel, state.next_sel);
+		sel = &state.unchanged_sel;
+	}
+	if (unchanged == 0) {
+		return 0;
+	}
+
+	idx_t changed = 0;
+	for (idx_t row = 0, next = 0; row < count; row++) {
+		if (next < unchanged && state.unchanged_sel.get_index(next) == row) {
+			next++;
+		} else {
+			state.changed_sel.set_index(changed++, row);
+		}
+	}
+
+	auto &values = state.in_place_chunk;
+	for (idx_t i = 0; i < op.in_place_positions.size(); i++) {
+		values.data[i].Slice(update_chunk.data[op.in_place_positions[i]], state.unchanged_sel, unchanged);
+	}
+	values.CheckCardinality(unchanged);
+	Vector unchanged_row_ids(row_ids, state.unchanged_sel, unchanged);
+	auto &update_state = state.GetUpdateState(op.table, op.tableref, context.client);
+	op.table.Update(update_state, context.client, op.tableref, unchanged_row_ids, op.in_place_columns, values);
+	if (changed != 0) {
+		update_chunk.Slice(state.changed_sel, changed);
+		row_ids.Slice(state.changed_sel, changed);
+	}
+	return unchanged;
 }
 
 SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
@@ -263,6 +389,16 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 		del_row_ids.Slice(row_ids, sel, update_count);
 	}
 
+	idx_t unchanged_count = 0;
+	if (in_place_unchanged_rows) {
+		unchanged_count = UpdateUnchangedRows(*this, context, l_state, update_chunk, del_row_ids, update_count);
+		update_count -= unchanged_count;
+		if (update_count == 0) {
+			g_state.updated_count += unchanged_count;
+			return SinkResultType::NEED_MORE_INPUT;
+		}
+	}
+
 	auto &delete_chunk = index_update ? l_state.delete_chunk : l_state.mock_chunk;
 	delete_chunk.Reset();
 
@@ -301,7 +437,7 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 		}
 	}
 
-	g_state.updated_count += update_count;
+	g_state.updated_count += unchanged_count + update_count;
 	return SinkResultType::NEED_MORE_INPUT;
 }
 
@@ -310,8 +446,25 @@ unique_ptr<GlobalSinkState> PhysicalUpdate::GetGlobalSinkState(ClientContext &co
 }
 
 unique_ptr<LocalSinkState> PhysicalUpdate::GetLocalSinkState(ExecutionContext &context) const {
-	return make_uniq<UpdateLocalState>(context.client, expressions, table.GetTypes(), bound_defaults, bound_constraints,
-	                                   capture_old_rows, columns, update_column_count);
+	auto state = make_uniq<UpdateLocalState>(context.client, expressions, table.GetTypes(), bound_defaults,
+	                                         bound_constraints, capture_old_rows, columns, update_column_count);
+	if (in_place_unchanged_rows) {
+		auto table_types = table.GetTypes();
+		vector<LogicalType> compare_types;
+		for (auto &column : compare_columns) {
+			compare_types.push_back(table_types[column.GetPrimaryIndex()]);
+		}
+		state->compare_chunk.Initialize(Allocator::Get(context.client), compare_types);
+		vector<LogicalType> in_place_types;
+		for (auto &column : in_place_columns) {
+			in_place_types.push_back(table_types[column.index]);
+		}
+		state->in_place_chunk.InitializeEmpty(in_place_types);
+		state->unchanged_sel.Initialize();
+		state->next_sel.Initialize();
+		state->changed_sel.Initialize();
+	}
+	return std::move(state);
 }
 
 SinkCombineResultType PhysicalUpdate::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {

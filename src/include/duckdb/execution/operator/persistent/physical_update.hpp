@@ -12,6 +12,7 @@
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
 #include "duckdb/common/enums/row_id_handling.hpp"
+#include "duckdb/storage/storage_index.hpp"
 
 namespace duckdb {
 class DataTable;
@@ -48,6 +49,19 @@ public:
 	RowIdHandling row_id_handling;
 	//! Set to true, if we are updating an index column.
 	bool index_update;
+	//! Set when the UPDATE is a DELETE + INSERT only because it sets indexed columns: rows whose indexed values do
+	//! not change are then updated in place instead
+	bool in_place_unchanged_rows = false;
+	//! The update chunk positions and physical columns of the indexed columns it sets
+	vector<idx_t> compare_positions;
+	vector<StorageIndex> compare_columns;
+	//! The update chunk positions and physical columns of the other columns it sets
+	vector<idx_t> in_place_positions;
+	vector<PhysicalIndex> in_place_columns;
+
+public:
+	//! Sets up updating in place the rows of a DELETE + INSERT update that keep their indexed values
+	void InitializeInPlaceUnchangedRows();
 
 public:
 	// Source interface
