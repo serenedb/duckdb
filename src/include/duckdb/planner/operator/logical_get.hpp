@@ -133,6 +133,9 @@ public:
 	const ColumnIndex &GetColumnIndex(ColumnBinding binding) const;
 	const ColumnIndex &GetColumnIndex(ProjectionIndex proj_index) const;
 
+	static optional_ptr<LogicalGet> TopNConsumer(LogicalOperator &input, idx_t order_count, const BoundLimitNode &limit,
+	                                             const BoundLimitNode &offset);
+
 protected:
 	void ResolveTypes() override;
 

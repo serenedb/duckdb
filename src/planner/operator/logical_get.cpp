@@ -9,6 +9,7 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
+#include "duckdb/planner/bound_result_modifier.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
 
 namespace duckdb {
@@ -66,6 +67,42 @@ static void MapLegacyTableFilterKeys(LogicalGet &get) {
 }
 
 LogicalGet::LogicalGet() : LogicalOperator(LogicalOperatorType::LOGICAL_GET) {
+}
+
+static bool OnlyColumnReferences(const LogicalOperator &op) {
+	for (auto &expr : op.expressions) {
+		const auto type = expr->GetExpressionType();
+		if (type != ExpressionType::BOUND_REF && type != ExpressionType::BOUND_COLUMN_REF) {
+			return false;
+		}
+	}
+	return true;
+}
+
+optional_ptr<LogicalGet> LogicalGet::TopNConsumer(LogicalOperator &input, idx_t order_count,
+                                                  const BoundLimitNode &limit, const BoundLimitNode &offset) {
+	if (order_count != 1) {
+		return nullptr;
+	}
+	if (limit.Type() != LimitNodeType::CONSTANT_VALUE && limit.Type() != LimitNodeType::EXPRESSION_VALUE) {
+		return nullptr;
+	}
+	if (offset.Type() != LimitNodeType::UNSET && offset.Type() != LimitNodeType::CONSTANT_VALUE &&
+	    offset.Type() != LimitNodeType::EXPRESSION_VALUE) {
+		return nullptr;
+	}
+	reference<LogicalOperator> source = input;
+	while (source.get().type == LogicalOperatorType::LOGICAL_PROJECTION && OnlyColumnReferences(source.get())) {
+		source = *source.get().children[0];
+	}
+	if (source.get().type != LogicalOperatorType::LOGICAL_GET) {
+		return nullptr;
+	}
+	auto &get = source.get().Cast<LogicalGet>();
+	if (!get.function.consume_top_n || !get.bind_data) {
+		return nullptr;
+	}
+	return &get;
 }
 
 LogicalGet::LogicalGet(TableIndex table_index, BoundTableFunction function, unique_ptr<FunctionData> bind_data,
