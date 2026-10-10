@@ -221,6 +221,11 @@ static validity_t LoadValidityEntry(const validity_t &entry) {
 	return __atomic_load_n(&entry, __ATOMIC_RELAXED);
 }
 
+static validity_t LoadValidityEntry(const CompressionSegmentReader &reader, idx_t row_idx) {
+	auto entry = reader.GetBytes(row_idx / ValidityMask::BITS_PER_VALUE * sizeof(validity_t), sizeof(validity_t));
+	return LoadValidityEntry(*reinterpret_cast<const validity_t *>(entry.data()));
+}
+
 static void StoreValidityEntry(validity_t &entry, validity_t value) {
 	__atomic_store_n(&entry, value, __ATOMIC_RELAXED);
 }
@@ -544,8 +549,7 @@ void ValiditySelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector
 		auto selected_index = sel.get_index(i);
 		D_ASSERT(selected_index < vector_count);
 		auto source_idx = start + selected_index;
-		auto entry = LoadValidityEntry(
-		    scan_state.reader.GetArraySlice<validity_t>(0, source_idx / ValidityMask::BITS_PER_VALUE, 1)[0]);
+		auto entry = LoadValidityEntry(scan_state.reader, source_idx);
 		if (!ValidityMask::RowIsValid(entry, source_idx % ValidityMask::BITS_PER_VALUE)) {
 			result_mask.SetInvalid(i);
 		}
@@ -561,7 +565,7 @@ void ValidityFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row
 	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
 	auto handle = buffer_manager.Pin(state.context, segment.GetBlockHandle());
 	auto reader = CompressionSegmentReader::FromSegment(handle, segment, "validity segment");
-	auto entry = LoadValidityEntry(reader.GetArraySlice<validity_t>(0, row_index / ValidityMask::BITS_PER_VALUE, 1)[0]);
+	auto entry = LoadValidityEntry(reader, row_index);
 	auto &result_mask = FlatVector::ValidityMutable(result);
 	if (!ValidityMask::RowIsValid(entry, row_index % ValidityMask::BITS_PER_VALUE)) {
 		result_mask.SetInvalid(result_idx);
