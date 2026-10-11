@@ -4,6 +4,7 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/planner/operator/logical_update.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -17,6 +18,9 @@ PhysicalOperator &DuckCatalog::PlanUpdate(ClientContext &context, PhysicalPlanGe
 	auto &cast_update = update.Cast<PhysicalUpdate>();
 	cast_update.update_is_del_and_insert = op.update_is_del_and_insert;
 	cast_update.update_column_count = op.update_column_count;
+	if (op.update_is_del_and_insert && !Settings::Get<ForceUpdateToDelAndInsertSetting>(context)) {
+		cast_update.InitializeInPlaceUnchangedRows();
+	}
 	cast_update.children.push_back(plan);
 	return update;
 }

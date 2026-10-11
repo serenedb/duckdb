@@ -387,6 +387,47 @@ struct WALDropForeignServer {
 	static WALDropForeignServer Deserialize(Deserializer &deserializer);
 };
 
+struct WALCreateSubscription {
+	unique_ptr<CreateInfo> subscription;
+
+	void Serialize(Serializer &serializer) const;
+	static WALCreateSubscription Deserialize(Deserializer &deserializer);
+};
+
+struct WALDropSubscription {
+	Identifier name;
+
+	void Serialize(Serializer &serializer) const;
+	static WALDropSubscription Deserialize(Deserializer &deserializer);
+};
+
+struct WALCreateReplicationOrigin {
+	unique_ptr<CreateInfo> origin;
+
+	void Serialize(Serializer &serializer) const;
+	static WALCreateReplicationOrigin Deserialize(Deserializer &deserializer);
+};
+
+struct WALDropReplicationOrigin {
+	Identifier name;
+
+	void Serialize(Serializer &serializer) const;
+	static WALDropReplicationOrigin Deserialize(Deserializer &deserializer);
+};
+
+struct WALReplicationLsn {
+	Identifier name;
+	uint64_t remote_lsn = 0;
+	idx_t oid = 0;
+	CatalogType type = CatalogType::SUBSCRIPTION_ENTRY;
+	bool assign = false;
+	//! The sync id of a relation whose initial synchronization the LSN finishes, or 0 for the entry's own LSN
+	idx_t relation = 0;
+
+	void Serialize(Serializer &serializer) const;
+	static WALReplicationLsn Deserialize(Deserializer &deserializer);
+};
+
 struct WALUseCatalog {
 	idx_t catalog_oid = 0;
 

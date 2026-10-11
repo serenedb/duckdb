@@ -104,6 +104,8 @@ SQLStatement:
     - DropStatement
     - CreatePublicationStatement
     - CreateSubscriptionStatement
+    - DropSubscriptionStatement
+    - AlterSubscriptionStatement
     - ExecuteStatement
     - ExplainStatement
     - ExplainableStatements
@@ -275,6 +277,8 @@ AlterTableInfo:
     - RenameAlter
     - AddConstraint
     - RenameConstraint
+    - EnableTrigger
+    - DisableTrigger
     - SetSortedBy
     - ResetSortedBy
     - SetOptions
@@ -1118,6 +1122,9 @@ String:
   rules:
     - StringLiteral
     - DropOrSet
+    - TriggerFireMode
+    - ReplicaFireMode
+    - AlwaysFireMode
     - SequenceName
     - DottedColLabel
     - DotColLabel
@@ -1867,6 +1874,9 @@ IdentifierType:
     - AnalyzeKeyword
     - ColId
     - ColIdOrString
+    - TriggerTarget
+    - AllTriggers
+    - UserTriggers
     - DeallocateTarget
     - DeallocateAll
     - UsingColumnName
@@ -2133,8 +2143,19 @@ excluded_rules:
   - PublicationFor
   - PublicationForAllTables
   - PublicationForTable
-  - SubscriptionConnection
-  - SubscriptionPublication
+  - SubscriptionWith
+  - SubscriptionOption
+  - SubscriptionOptionArg
+  - SubscriptionAlterAction
+  - SubscriptionEnableAction
+  - SubscriptionConnectionAction
+  - SubscriptionPublicationAction
+  - SubscriptionPublicationMode
+  - SubscriptionRefreshAction
+  - SubscriptionSkipAction
+  - SubscriptionRenameAction
+  - SubscriptionOwnerAction
+  - SubscriptionSetOptions
   - UsingSample
   - TableSample
   - NamedParameterAssignment

@@ -292,7 +292,7 @@ CREATE TABLE fkt(j INTEGER, FOREIGN KEY (j) REFERENCES pkt(i))
 statement ok
 INSERT INTO fkt VALUES (NULL)
 
-# Truncate on self-reference is not yet supported.
+# Truncate on self-reference removes the referencing rows together with the referenced ones.
 statement ok
 CREATE TABLE t (id INT PRIMARY KEY, parent INT REFERENCES t (id));
 
@@ -302,7 +302,10 @@ INSERT INTO t VALUES (1, NULL);
 statement ok
 INSERT INTO t VALUES (2, 1), (3, 1);
 
-statement error
+statement ok
 TRUNCATE t;
+
+query I
+SELECT count(*) FROM t;
 ----
-Violates foreign key constraint
+0

@@ -377,7 +377,7 @@ void TableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, L
 	}
 
 	if (update.update_is_del_and_insert || update.return_chunk) {
-		update.update_column_count = update.update_is_del_and_insert ? 0 : update.columns.size();
+		update.update_column_count = update.columns.size();
 		// the update updates a column required by an index or requires returning the updated rows,
 		// push projections for all columns
 		LogicalUpdate::BindAllColumns(*this, get, proj, update);
@@ -517,6 +517,25 @@ void TableCatalogEntry::RenameTriggerColumns(ClientContext &context, const Renam
 	auto trigger_alter_info = info.Copy();
 	for (const auto &trigger_name : triggers_to_update) {
 		triggers->AlterEntry(txn, trigger_name, *trigger_alter_info);
+	}
+}
+
+void TableCatalogEntry::SetTriggerFiring(ClientContext &context, const SetTriggerFiringInfo &info) {
+	if (!triggers) {
+		throw NotImplementedException("Triggers are not supported for this table type");
+	}
+	auto txn = catalog.GetCatalogTransaction(context);
+	vector<Identifier> names;
+	if (info.trigger_name.empty()) {
+		triggers->Scan(txn, [&](CatalogEntry &entry) { names.push_back(entry.name); });
+	} else if (triggers->GetEntry(txn, info.trigger_name)) {
+		names.push_back(info.trigger_name);
+	} else {
+		throw CatalogException("trigger %s for table %s does not exist", info.trigger_name, name);
+	}
+	auto alter_info = info.Copy();
+	for (const auto &trigger_name : names) {
+		triggers->AlterEntry(txn, trigger_name, *alter_info);
 	}
 }
 

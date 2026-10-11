@@ -117,6 +117,12 @@ public:
 
 	void WriteCreateForeignServer(const InCatalogEntry &entry);
 	void WriteDropForeignServer(const InCatalogEntry &entry);
+
+	void WriteCreateSubscription(const InCatalogEntry &entry);
+	void WriteDropSubscription(const InCatalogEntry &entry);
+	void WriteCreateReplicationOrigin(const InCatalogEntry &entry);
+	void WriteDropReplicationOrigin(const InCatalogEntry &entry);
+	void WriteReplicationLsn(const InCatalogEntry &entry, uint64_t remote_lsn, bool assign, idx_t relation = 0);
 	//! Sets the table used for subsequent insert/delete/update commands. The qualified name holds the (possibly
 	//! nested) schema path of the table followed by the table name.
 	void WriteSetTable(const QualifiedName &table, idx_t table_oid);

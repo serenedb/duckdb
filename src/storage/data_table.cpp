@@ -1,4 +1,6 @@
 #include "duckdb/storage/data_table.hpp"
+
+#include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/transaction/commit_state.hpp"
@@ -474,6 +476,10 @@ bool DataTable::HasIndexes() const {
 
 bool DataTable::HasUniqueIndexes() const {
 	return info->indexes.HasUniqueIndexes();
+}
+
+bool DataTable::HasDeleteIndexes() const {
+	return info->indexes.HasDeleteIndexes();
 }
 
 void DataTable::AddIndex(unique_ptr<Index> index, idx_t index_oid) {
@@ -1049,7 +1055,8 @@ void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, Clien
 		}
 		case ConstraintType::FOREIGN_KEY: {
 			auto &bound_foreign_key = constraint->Cast<BoundForeignKeyConstraint>();
-			if (bound_foreign_key.info.IsAppendConstraint()) {
+			if (bound_foreign_key.info.IsAppendConstraint() &&
+			    GetReplicationRole(context) != ReplicationRole::REPLICA) {
 				VerifyAppendForeignKeyConstraint(storage, bound_foreign_key, context, chunk);
 			}
 			break;
@@ -1491,7 +1498,8 @@ void DataTable::VerifyDeleteConstraints(optional_ptr<LocalTableStorage> storage,
 			break;
 		case ConstraintType::FOREIGN_KEY: {
 			auto &bound_foreign_key = constraint->Cast<BoundForeignKeyConstraint>();
-			if (bound_foreign_key.info.IsDeleteConstraint()) {
+			if (bound_foreign_key.info.IsDeleteConstraint() &&
+			    GetReplicationRole(context) != ReplicationRole::REPLICA) {
 				VerifyDeleteForeignKeyConstraint(storage, bound_foreign_key, context, chunk);
 			}
 			break;
