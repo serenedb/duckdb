@@ -127,32 +127,97 @@ void TaskScheduler::ExecuteForever(atomic<bool> *marker) {
 	ExecuteForever(marker, TaskSchedulerType::REGULAR);
 }
 
+namespace {
+
+thread_local TaskScheduler *next_task_owner = nullptr;
+thread_local shared_ptr<Task> *next_task_slot = nullptr;
+thread_local bool next_task_allowed = false;
+thread_local idx_t driving_depth = 0;
+thread_local idx_t executing_depth = 0;
+
+} // namespace
+
+void TaskScheduler::BeginDriving() {
+	driving_depth++;
+}
+
+void TaskScheduler::EndDriving() {
+	driving_depth--;
+}
+
+void TaskScheduler::FlushNextTask() {
+	if (!next_task_owner || !next_task_slot || !*next_task_slot) {
+		return;
+	}
+	auto task = std::move(*next_task_slot);
+	auto &token = *task->token;
+	next_task_owner->GetQueue(TaskSchedulerType::REGULAR).Enqueue(token, std::move(task));
+	next_task_owner->Signal(TaskSchedulerType::REGULAR, 1);
+}
+
+TaskScheduler::ExecutingScope::ExecutingScope() {
+	executing_depth++;
+}
+
+TaskScheduler::ExecutingScope::~ExecutingScope() {
+	executing_depth--;
+}
+
+TaskScheduler::NextTaskScope::NextTaskScope() : previous(next_task_allowed) {
+	next_task_allowed = true;
+}
+
+TaskScheduler::NextTaskScope::~NextTaskScope() {
+	next_task_allowed = previous;
+}
+
+bool TaskScheduler::TrySetNextTask(ProducerToken &producer, shared_ptr<Task> &task) {
+	if (!next_task_allowed || executing_depth != 1 || driving_depth != 0 || next_task_owner != this ||
+	    !next_task_slot || *next_task_slot) {
+		return false;
+	}
+	task->token = producer;
+	*next_task_slot = std::move(task);
+	return true;
+}
+
+void TaskScheduler::ScheduleTaskNext(ProducerToken &producer, shared_ptr<Task> task) {
+	if (TrySetNextTask(producer, task)) {
+		return;
+	}
+	ScheduleTask(producer, std::move(task));
+}
+
+void TaskScheduler::ProcessTask(const DBConfig &config, TaskSchedulerQueue &queue, shared_ptr<Task> &task) {
+	auto process_mode = TaskExecutionMode::PROCESS_ALL;
+	if (Settings::Get<SchedulerProcessPartialSetting>(config)) {
+		process_mode = TaskExecutionMode::PROCESS_PARTIAL;
+	}
+	auto execute_result = task->Execute(process_mode);
+
+	switch (execute_result) {
+	case TaskExecutionResult::TASK_FINISHED:
+	case TaskExecutionResult::TASK_ERROR:
+		task.reset();
+		break;
+	case TaskExecutionResult::TASK_NOT_FINISHED: {
+		// task is not finished - reschedule immediately
+		auto &token = *task->token;
+		queue.Enqueue(token, std::move(task));
+		SignalForTaskType(queue.GetPoolType(), 1);
+		break;
+	}
+	case TaskExecutionResult::TASK_BLOCKED:
+		task->Deschedule();
+		task.reset();
+		break;
+	}
+}
+
 bool TaskScheduler::TryDequeueAndProcessTask(const DBConfig &config, TaskSchedulerQueue &queue,
                                              shared_ptr<Task> &task) {
 	if (queue.Dequeue(task)) {
-		auto process_mode = TaskExecutionMode::PROCESS_ALL;
-		if (Settings::Get<SchedulerProcessPartialSetting>(config)) {
-			process_mode = TaskExecutionMode::PROCESS_PARTIAL;
-		}
-		auto execute_result = task->Execute(process_mode);
-
-		switch (execute_result) {
-		case TaskExecutionResult::TASK_FINISHED:
-		case TaskExecutionResult::TASK_ERROR:
-			task.reset();
-			break;
-		case TaskExecutionResult::TASK_NOT_FINISHED: {
-			// task is not finished - reschedule immediately
-			auto &token = *task->token;
-			queue.Enqueue(token, std::move(task));
-			SignalForTaskType(queue.GetPoolType(), 1);
-			break;
-		}
-		case TaskExecutionResult::TASK_BLOCKED:
-			task->Deschedule();
-			task.reset();
-			break;
-		}
+		ProcessTask(config, queue, task);
 		return true;
 	}
 
@@ -172,8 +237,18 @@ void TaskScheduler::ExecuteForever(atomic<bool> *marker, const TaskSchedulerType
 	auto &pool = GetPool(pool_type);
 
 	shared_ptr<Task> task;
+	shared_ptr<Task> next;
+	if (pool_type == TaskSchedulerType::REGULAR) {
+		next_task_owner = this;
+		next_task_slot = &next;
+	}
 	// loop until the marker is set to false
 	while (*marker) {
+		if (next) {
+			task = std::move(next);
+			ProcessTask(config, GetQueue(TaskSchedulerType::REGULAR), task);
+			continue;
+		}
 		if (!block_allocator.SupportsFlush()) {
 			// allocator can't flush, just start an untimed wait
 			pool.Wait();
@@ -207,6 +282,13 @@ void TaskScheduler::ExecuteForever(atomic<bool> *marker, const TaskSchedulerType
 		} else {
 			TryDequeueAndProcessTask(config, GetQueue(pool_type), task);
 		}
+	}
+	next_task_slot = nullptr;
+	next_task_owner = nullptr;
+	if (next) {
+		auto &token = *next->token;
+		GetQueue(TaskSchedulerType::REGULAR).Enqueue(token, std::move(next));
+		Signal(TaskSchedulerType::REGULAR, 1);
 	}
 	// this thread will exit, flush all of its outstanding allocations
 	if (block_allocator.SupportsFlush()) {

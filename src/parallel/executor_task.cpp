@@ -37,6 +37,7 @@ void ExecutorTask::Reschedule() {
 }
 
 TaskExecutionResult ExecutorTask::Execute(TaskExecutionMode mode) {
+	TaskScheduler::ExecutingScope executing;
 	try {
 		if (thread_context) {
 			TaskExecutionResult result;

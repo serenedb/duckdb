@@ -168,6 +168,7 @@ void TaskExecutor::FinishTask() {
 
 void TaskExecutor::DrainTasks() {
 	// wait for all active tasks to finish, executing queued tasks on this thread where possible
+	TaskScheduler::FlushNextTask();
 	shared_ptr<Task> task_from_producer;
 	while (true) {
 		{

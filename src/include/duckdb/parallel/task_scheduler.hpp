@@ -55,6 +55,26 @@ public:
 	//! Helpers for regular tasks
 	void ScheduleTask(ProducerToken &producer, shared_ptr<Task> task);
 	void ScheduleTasks(ProducerToken &producer, vector<shared_ptr<Task>> &tasks);
+	void ScheduleTaskNext(ProducerToken &producer, shared_ptr<Task> task);
+	bool TrySetNextTask(ProducerToken &producer, shared_ptr<Task> &task);
+	static void BeginDriving();
+	static void EndDriving();
+	static void FlushNextTask();
+
+	class ExecutingScope {
+	public:
+		ExecutingScope();
+		~ExecutingScope();
+	};
+
+	class NextTaskScope {
+	public:
+		NextTaskScope();
+		~NextTaskScope();
+
+	private:
+		bool previous;
+	};
 	//! Fetches a task from a specific producer, returns true if successful or false if no tasks were available
 	bool GetTaskFromProducer(ProducerToken &token, shared_ptr<Task> &task);
 	//! Fetches a task from a specific producer, returns whether a task was found and assigned to `task`.
@@ -96,6 +116,7 @@ private:
 	bool GetTaskInternal(shared_ptr<Task> &task);
 	bool GetTaskInternal(shared_ptr<Task> &task, TaskSchedulerType pool_type);
 	bool TryDequeueAndProcessTask(const DBConfig &config, TaskSchedulerQueue &queue, shared_ptr<Task> &task);
+	void ProcessTask(const DBConfig &config, TaskSchedulerQueue &queue, shared_ptr<Task> &task);
 
 	void SetThreadsInternal(TaskSchedulerType pool_type, idx_t n);
 	void Signal(TaskSchedulerType pool_type, idx_t n);

@@ -113,6 +113,7 @@ public:
 		if (++completed_pipelines == total_pipelines) {
 			// The query just finished: wake an async driver parked on NO_TASKS so it
 			// can observe completion instead of polling.
+			TaskScheduler::NextTaskScope next_task;
 			NotifyDriver();
 		}
 	}
