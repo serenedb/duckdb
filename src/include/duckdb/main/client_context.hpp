@@ -170,6 +170,7 @@ public:
 	bool EmitWarning(const char *message) {
 		return warning_handler && warning_handler(*this, message);
 	}
+	DUCKDB_API void WarnUser(const string &message);
 
 	//! Interrupts the running query. Async-signal-safe: sets a flag and nothing else
 	DUCKDB_API void Interrupt();

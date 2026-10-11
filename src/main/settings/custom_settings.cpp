@@ -1424,8 +1424,8 @@ void ProfilingModeSetting::SetLocal(ClientContext &context, const Value &input) 
 	if (parameter == "standard" || parameter == "detailed" || parameter == "all") {
 		// the profiling_mode setting is deprecated - detailed profiling information is always gathered, and all
 		// modes behave the same
-		DUCKDB_LOG_WARNING(context, "the profiling_mode setting is deprecated: detailed profiling information is "
-		                            "always collected - use \"PRAGMA enable_profiling\" to enable profiling instead");
+		context.WarnUser("the profiling_mode setting is deprecated: detailed profiling information is "
+		                 "always collected - use \"PRAGMA enable_profiling\" to enable profiling instead");
 		config.enable_profiler = true;
 	} else {
 		throw ParserException("Unrecognized profiling mode \"%s\", supported formats: [standard, detailed, all]",
@@ -1890,9 +1890,9 @@ static void WarnDeprecatedSetting(SettingCallbackInfo &info, const char *name) {
 	}
 	auto message = StringUtil::Format("The '%s' setting is deprecated and will be removed in a future release.", name);
 	if (info.context) {
-		DUCKDB_LOG_WARNING(*info.context, message);
+		info.context->WarnUser(message);
 	} else if (info.db) {
-		DUCKDB_LOG_WARNING(*info.db, message);
+		DUCKDB_LOG_DEBUG(*info.db, message);
 	}
 }
 

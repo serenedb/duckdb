@@ -274,17 +274,17 @@ BoundStatement Binder::BindShowSetting(ShowRef &ref) {
 
 //! Warn that using "SHOW name" to describe a table is deprecated in favor of DESCRIBE
 static void WarnShowDescribesTable(ClientContext &context, const string &name) {
-	DUCKDB_LOG_WARNING(context,
-	                   "\"SHOW %s\" resolved to a table. Describing a table with SHOW is deprecated and will be "
-	                   "removed in a future release - use \"DESCRIBE %s\" instead, or \"SET show_behavior='setting'\" "
-	                   "to make SHOW resolve settings only.",
-	                   name, name);
+	context.WarnUser(StringUtil::Format(
+	    "\"SHOW %s\" resolved to a table. Describing a table with SHOW is deprecated and will be "
+	    "removed in a future release - use \"DESCRIBE %s\" instead, or \"SET show_behavior='setting'\" "
+	    "to make SHOW resolve settings only.",
+	    name, name));
 }
 
 //! Warn that using "SHOW (query)" to describe a query is deprecated in favor of DESCRIBE
 static void WarnShowDescribesQuery(ClientContext &context) {
-	DUCKDB_LOG_WARNING(context, "Using \"SHOW (query)\" to describe a query is deprecated and will be removed in a "
-	                            "future release, use \"DESCRIBE (query)\" instead.");
+	context.WarnUser("Using \"SHOW (query)\" to describe a query is deprecated and will be removed in a "
+	                 "future release, use \"DESCRIBE (query)\" instead.");
 }
 
 BoundStatement Binder::BindShow(ShowRef &ref) {

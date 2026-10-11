@@ -141,11 +141,10 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalLimit &op) {
 	auto *limit_child = &plan;
 	auto total_limit = GetLimit(op.limit_val, op.offset_val);
 	if (op.offset_val.Type() != LimitNodeType::UNSET && !PreserveInsertionOrder(plan)) {
-		DUCKDB_LOG_WARNING(context,
-		                   "OFFSET is applied to a query whose row order is not guaranteed - the result may "
-		                   "differ between runs. This happens when the query contains order-breaking operators (e.g. "
-		                   "hash joins or aggregations), reads from a source that does not preserve order, or when "
-		                   "preserve_insertion_order=false. Add an ORDER BY to make the result deterministic.");
+		context.WarnUser("OFFSET is applied to a query whose row order is not guaranteed - the result may "
+		                 "differ between runs. This happens when the query contains order-breaking operators (e.g. "
+		                 "hash joins or aggregations), reads from a source that does not preserve order, or when "
+		                 "preserve_insertion_order=false. Add an ORDER BY to make the result deterministic.");
 	}
 	// Unpartitioned hash tables become expensive to Combine at large sizes
 	static constexpr idx_t LIMITED_DISTINCT_THRESHOLD = 100000;

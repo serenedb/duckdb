@@ -972,6 +972,12 @@ unique_ptr<QueryResult> ClientContext::SubmitInternal(ClientContextLock &lock, u
 	return SubmitStatement(lock, std::move(statement), parameters);
 }
 
+void ClientContext::WarnUser(const string &message) {
+	if (!EmitWarning(message.c_str())) {
+		DUCKDB_LOG_WARNING(*this, message);
+	}
+}
+
 void ClientContext::Interrupt() {
 	ClientInterruptState expected = ClientInterruptState::NOT_INTERRUPTED;
 	interrupt_state.compare_exchange_strong(expected, ClientInterruptState::INTERRUPTED);

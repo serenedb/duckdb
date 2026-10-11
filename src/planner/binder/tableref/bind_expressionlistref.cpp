@@ -23,11 +23,11 @@ static void WarnIfDecimalScaleIsReduced(ClientContext &context, const LogicalTyp
 	if (source_scale <= target_scale) {
 		return;
 	}
-	DUCKDB_LOG_WARNING(context,
-	                   "Potential loss of decimal precision while resolving a VALUES column: type %s is being cast "
-	                   "to %s, reducing the scale from %d to %d. This may cause values to be rounded. Explicitly "
-	                   "cast all values to a compatible DECIMAL type to avoid this warning.",
-	                   source_type.ToString(), target_type.ToString(), source_scale, target_scale);
+	context.WarnUser(
+	    StringUtil::Format("Potential loss of decimal precision while resolving a VALUES column: type %s is being cast "
+	                       "to %s, reducing the scale from %d to %d. This may cause values to be rounded. Explicitly "
+	                       "cast all values to a compatible DECIMAL type to avoid this warning.",
+	                       source_type.ToString(), target_type.ToString(), source_scale, target_scale));
 	warned_about_scale_reduction[column_idx] = true;
 }
 
