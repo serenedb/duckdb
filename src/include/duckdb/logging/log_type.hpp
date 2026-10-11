@@ -216,7 +216,7 @@ public:
 class ExternalResourceLogType : public LogType {
 public:
 	static constexpr const char *NAME = "ExternalResource";
-	static constexpr LogLevel LEVEL = LogLevel::LOG_INFO;
+	static constexpr LogLevel LEVEL = LogLevel::LOG_DEBUG;
 
 	ExternalResourceLogType();
 

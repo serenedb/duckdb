@@ -392,7 +392,7 @@ void ExtensionHelper::AutoLoadExtension(DatabaseInstance &db, const string &exte
 		}
 #endif
 		ExtensionHelper::LoadExternalExtension(db, fs, AutoLoadOptions(extension_name));
-		DUCKDB_LOG_INFO(db, "Loaded extension '%s'", extension_name);
+		DUCKDB_LOG_DEBUG(db, "Loaded extension '%s'", extension_name);
 	} catch (std::exception &e) {
 		ErrorData error(e);
 		throw AutoloadException(extension_name, error.RawMessage());

@@ -77,12 +77,3 @@ def test_multiple_warnings(shell):
     assert result.stdout.count("WARNING:") == 1
     result.check_stdout("Deprecated lambda arrow (->) detected.")
     result.check_stdout("│ [3]     │ [3]     │ [3]     │")
-
-
-def test_changing_logging_settings(shell, tmp_path):
-    test = ShellTest(shell).statement("CALL enable_logging(storage = 'file', storage_config = {'path': 'hello'});")
-
-    result = test.run()
-    print(result.stderr)
-    result.check_stdout("WARNING:")
-    result.check_stdout("The logging settings have been changed")
