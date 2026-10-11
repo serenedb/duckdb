@@ -56,6 +56,7 @@ struct RegexpStringSplit {
 	                  idx_t &match_size, void *data) {
 		duckdb_re2::RE2::Options options;
 		options.set_thread_safe(false);
+		options.set_valid_utf8(true);
 		duckdb_re2::RE2 regex(duckdb_re2::StringPiece(delim_data, delim_size), options);
 		if (!regex.ok()) {
 			throw InvalidInputException(regex.error());
