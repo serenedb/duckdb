@@ -44,14 +44,32 @@ bool Executor::TrySubmitInlineTask(const shared_ptr<Task> &task_p) {
 	if (!caller_drives) {
 		return false;
 	}
-	lock_guard<mutex> slot_lock(inline_task_lock);
-	if (inline_task || std::find(drivers.begin(), drivers.end(), ThreadUtil::GetThreadId()) == drivers.end()) {
+	{
+		lock_guard<mutex> slot_lock(inline_task_lock);
+		if (inline_task) {
+			return false;
+		}
+		if (std::find(drivers.begin(), drivers.end(), ThreadUtil::GetThreadId()) != drivers.end()) {
+			inline_task = task_p;
+			// The slot bypasses ConcurrentQueue::Enqueue, which normally stamps the
+			// token (the ProcessPartial reschedule path reads it).
+			inline_task->token = *producer;
+			return true;
+		}
+	}
+	lock_guard<mutex> elock(executor_lock);
+	if (cancelled || !on_reschedule) {
 		return false;
 	}
-	inline_task = task_p;
-	// The slot bypasses ConcurrentQueue::Enqueue, which normally stamps the
-	// token (the ProcessPartial reschedule path reads it).
-	inline_task->token = *producer;
+	{
+		lock_guard<mutex> slot_lock(inline_task_lock);
+		if (inline_task) {
+			return false;
+		}
+		inline_task = task_p;
+		inline_task->token = *producer;
+	}
+	std::exchange(on_reschedule, {})();
 	return true;
 }
 

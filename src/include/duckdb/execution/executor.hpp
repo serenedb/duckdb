@@ -90,13 +90,6 @@ public:
 	//! Work on tasks for this specific executor, until there are no tasks remaining
 	bool WorkOnTasks();
 
-	//! Hand a single task directly to this executor's driver, bypassing the
-	//! scheduler queue, when the calling thread is currently driving this
-	//! executor (inside Initialize/ExecuteTask/WorkOnTasks) and the slot is
-	//! free. The driver consumes the slot before polling the queue and before
-	//! it can park, so no scheduler wake-up is needed and the shared queue's
-	//! task-per-signal accounting stays intact (see Event::SetTasks). Returns
-	//! false (caller schedules normally) otherwise.
 	bool TrySubmitInlineTask(const shared_ptr<Task> &task);
 
 	//! Flush a thread context into the client context
