@@ -31,6 +31,7 @@ namespace duckdb {
 Executor::DriverScope::DriverScope(Executor &executor_p) : executor(executor_p) {
 	lock_guard<mutex> slot_lock(executor.inline_task_lock);
 	executor.drivers.push_back(ThreadUtil::GetThreadId());
+	TaskScheduler::BeginDriving();
 }
 
 Executor::DriverScope::~DriverScope() {
@@ -38,6 +39,7 @@ Executor::DriverScope::~DriverScope() {
 	auto entry = std::find(executor.drivers.rbegin(), executor.drivers.rend(), ThreadUtil::GetThreadId());
 	D_ASSERT(entry != executor.drivers.rend());
 	executor.drivers.erase(std::next(entry).base());
+	TaskScheduler::EndDriving();
 }
 
 bool Executor::TrySubmitInlineTask(const shared_ptr<Task> &task_p) {
@@ -341,6 +343,7 @@ void Executor::CancelTasks() {
 #ifndef DUCKDB_NO_THREADS
 	if (producer) {
 		auto &scheduler = TaskScheduler::GetScheduler(context);
+		TaskScheduler::FlushNextTask();
 		shared_ptr<Task> task_from_producer;
 		while (true) {
 			{
@@ -422,6 +425,7 @@ void Executor::UnregisterTask() {
 
 void Executor::WaitForTask() {
 #ifndef DUCKDB_NO_THREADS
+	TaskScheduler::FlushNextTask();
 	static constexpr std::chrono::microseconds WAIT_TIME_MS = std::chrono::microseconds(WAIT_TIME * 1000);
 	auto begin = TimePoint::Tick();
 	std::unique_lock<mutex> l(executor_lock);

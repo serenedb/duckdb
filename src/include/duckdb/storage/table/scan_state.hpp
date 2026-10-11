@@ -11,6 +11,7 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
+#include "duckdb/storage/compression/compression_segment_reader.hpp"
 #include "duckdb/storage/storage_lock.hpp"
 #include "duckdb/storage/table/row_group_reorderer.hpp"
 #include "duckdb/common/random_engine.hpp"
@@ -150,6 +151,13 @@ public:
 	idx_t GetPositionInSegment() const;
 };
 
+struct SegmentReaderFetchState : public SegmentScanState {
+	explicit SegmentReaderFetchState(CompressionSegmentReader reader_p) : reader(reader_p) {
+	}
+
+	CompressionSegmentReader reader;
+};
+
 enum class FetchType {
 	//! Verify if each row is valid for the transaction prior to fetching
 	TRANSACTIONAL_FETCH,
@@ -163,12 +171,40 @@ struct ColumnFetchState {
 	QueryContext context;
 	//! The set of pinned block handles for this set of fetches
 	buffer_handle_set_t handles;
+	unordered_map<const ColumnSegment *, unique_ptr<SegmentScanState>> segment_states;
 	//! Any child states of the fetch
 	vector<unique_ptr<ColumnFetchState>> child_states;
 	//! The current row group we are fetching from
 	optional_ptr<SegmentNode<RowGroup>> row_group;
 
 	BufferHandle &GetOrInsertHandle(ColumnSegment &segment);
+	const CompressionSegmentReader &GetOrInsertSegmentReader(ColumnSegment &segment, const char *reader_context);
+
+	template <class STATE, class FACTORY>
+	STATE &GetOrInsertSegmentState(ColumnSegment &segment, FACTORY &&factory) {
+		if (last_segment.get() != &segment) {
+			auto &entry = segment_states[&segment];
+			if (!entry) {
+				entry = factory();
+			}
+			last_segment = &segment;
+			last_segment_state = entry.get();
+		}
+		return last_segment_state->Cast<STATE>();
+	}
+
+	void ReleaseSegments() {
+		last_segment = nullptr;
+		last_segment_state = nullptr;
+		segment_states.clear();
+		child_states.clear();
+		handles.clear();
+		row_group = nullptr;
+	}
+
+private:
+	optional_ptr<const ColumnSegment> last_segment;
+	optional_ptr<SegmentScanState> last_segment_state;
 };
 
 struct ScanFilter {

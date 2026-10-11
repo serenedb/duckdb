@@ -119,6 +119,12 @@ struct RLEValueCodec<T, true> {
 			}
 		}
 	}
+
+	static T UnpackOne(const_data_ptr_t src, idx_t index, T frame, bitpacking_width_t width) {
+		auto value = BitpackingPrimitives::UnPackValue<T>(src, index, width);
+		reinterpret_cast<T_U &>(value) += static_cast<T_U>(frame);
+		return value;
+	}
 };
 
 template <class T>
@@ -144,6 +150,10 @@ struct RLEValueCodec<T, false> {
 
 	static void Unpack(T *dst, const_data_ptr_t src, idx_t count, T frame, bitpacking_width_t width) {
 		memcpy(dst, src, count * sizeof(T));
+	}
+
+	static T UnpackOne(const_data_ptr_t src, idx_t index, T frame, bitpacking_width_t width) {
+		return Load<T>(src + index * sizeof(T));
 	}
 };
 
@@ -1037,17 +1047,62 @@ void RLEFilter(ColumnSegment &segment, ColumnScanState &state, idx_t vector_coun
 // Fetch
 //===--------------------------------------------------------------------===//
 template <class T>
-void RLEFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result, idx_t result_idx) {
-	D_ASSERT(row_id >= 0);
-	auto row_index = NumericCast<idx_t>(row_id);
-	D_ASSERT(row_index < segment.count);
-	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
-	auto handle = buffer_manager.Pin(state.context, segment.GetBlockHandle());
-	RLEScanState<T> scan_state(std::move(handle), segment);
-	scan_state.Skip(segment, row_index);
+struct RLEFetchState : public SegmentScanState {
+	RLEFetchState(ColumnSegment &segment, ColumnFetchState &state)
+	    : layout(RLELayout<T>::Parse(state.GetOrInsertHandle(segment), segment)),
+	      run_ends(make_unsafe_uniq_array_uninitialized<uint32_t>(layout.entry_capacity)) {
+		const idx_t row_count = segment.count.load();
+		idx_t total = 0;
+		auto add_run = [&](rle_count_t run_length) {
+			if (run_length > row_count - total) {
+				ThrowRLERunCountExceedsRemaining(run_length, row_count - total);
+			}
+			total += run_length;
+			run_ends[run_count++] = NumericCast<uint32_t>(total);
+		};
+		if (!layout.packed) {
+			while (total < row_count && run_count < layout.entry_capacity) {
+				add_run(Load<rle_count_t>(layout.counts + run_count * sizeof(rle_count_t)));
+			}
+		} else {
+			rle_count_t counts[RLE_GROUP_SIZE];
+			for (idx_t start = 0; total < row_count && start < layout.entry_capacity; start += RLE_GROUP_SIZE) {
+				RLEValueCodec<rle_count_t>::Unpack(counts, layout.counts + start * layout.count_width / 8,
+				                                   RLE_GROUP_SIZE, layout.count_frame, layout.count_width);
+				const auto group_count = MinValue<idx_t>(RLE_GROUP_SIZE, layout.entry_capacity - start);
+				for (idx_t i = 0; total < row_count && i < group_count; i++) {
+					add_run(counts[i]);
+				}
+			}
+		}
+		if (total < row_count) {
+			ThrowRLERunCountArrayExhausted();
+		}
+	}
 
-	auto result_data = FlatVector::GetDataMutable<T>(result);
-	result_data[result_idx] = scan_state.CurrentValue();
+	T Fetch(idx_t row) const {
+		const auto end = run_ends.get() + run_count;
+		const auto run = std::upper_bound(run_ends.get(), end, row);
+		if (run == end) {
+			throw DataCorruptionException("Corrupted RLE segment: row %llu is past the last run", row);
+		}
+		const auto entry = NumericCast<idx_t>(run - run_ends.get());
+		if (!layout.packed) {
+			return Load<T>(layout.values + entry * sizeof(T));
+		}
+		return RLEValueCodec<T>::UnpackOne(layout.values, entry, layout.value_frame, layout.value_width);
+	}
+
+	const RLELayout<T> layout;
+	unsafe_unique_array<uint32_t> run_ends;
+	idx_t run_count = 0;
+};
+
+template <class T>
+void RLEFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result, idx_t result_idx) {
+	auto &fetch_state = state.GetOrInsertSegmentState<RLEFetchState<T>>(
+	    segment, [&]() { return make_uniq<RLEFetchState<T>>(segment, state); });
+	FlatVector::GetDataMutable<T>(result)[result_idx] = fetch_state.Fetch(NumericCast<idx_t>(row_id));
 }
 
 //===--------------------------------------------------------------------===//

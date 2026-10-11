@@ -788,7 +788,10 @@ SortedRunMerger::SortedRunMerger(const Sort &sort_p, vector<unique_ptr<SortedRun
 }
 
 SortedRunMerger::~SortedRunMerger() {
-	ParallelDestroyTask<decltype(sorted_runs)>::Schedule(scheduler, sorted_runs);
+	static constexpr idx_t PARALLEL_DESTROY_THRESHOLD = 1048576;
+	if (total_count > PARALLEL_DESTROY_THRESHOLD) {
+		ParallelDestroyTask<decltype(sorted_runs)>::Schedule(scheduler, sorted_runs);
+	}
 }
 
 unique_ptr<LocalSourceState> SortedRunMerger::GetLocalSourceState(ExecutionContext &,

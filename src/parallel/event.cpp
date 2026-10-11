@@ -59,6 +59,7 @@ void Event::FinishTask() {
 	idx_t current_finished = ++finished_tasks;
 	D_ASSERT(current_finished <= current_tasks);
 	if (current_finished == current_tasks) {
+		TaskScheduler::NextTaskScope next_task;
 		Finish();
 	}
 }
@@ -81,7 +82,8 @@ void Event::SetTasks(vector<shared_ptr<Task>> tasks) {
 	D_ASSERT(total_tasks == 0);
 	D_ASSERT(!tasks.empty());
 	this->total_tasks = tasks.size();
-	if (tasks.size() == 1 && executor.TrySubmitInlineTask(tasks[0])) {
+	if (tasks.size() == 1 &&
+	    (executor.TrySubmitInlineTask(tasks[0]) || ts.TrySetNextTask(executor.GetToken(), tasks[0]))) {
 		// Lazy kickoff: a single task born on the driver's own thread goes into
 		// the executor's driver-bypass slot instead of the shared scheduler
 		// queue. The driver consumes the slot before polling the queue and

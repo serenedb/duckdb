@@ -32,6 +32,10 @@ public:
 		return false;
 	}
 
+	bool RequireOptimizer() const override {
+		return !children.empty() && children[0]->RequireOptimizer();
+	}
+
 protected:
 	void ResolveTypes() override {
 		types = prepared->types;

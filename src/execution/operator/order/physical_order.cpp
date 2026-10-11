@@ -16,14 +16,21 @@ PhysicalOrder::PhysicalOrder(PhysicalPlan &physical_plan, vector<LogicalType> ty
 class OrderGlobalSinkState : public GlobalSinkState {
 public:
 	OrderGlobalSinkState(const PhysicalOrder &op, ClientContext &context)
-	    : sort(context, op.orders, op.children[0].get().types, op.projections, op.is_index_sort),
-	      state(sort.GetGlobalSinkState(context)) {
+	    : sort(op.GetSort(context)), state(sort.GetGlobalSinkState(context)) {
 	}
 
 public:
-	Sort sort;
+	Sort &sort;
 	unique_ptr<GlobalSinkState> state;
 };
+
+Sort &PhysicalOrder::GetSort(ClientContext &context) const {
+	lock_guard<mutex> guard(sort_lock);
+	if (!sort) {
+		sort = make_uniq<Sort>(context, orders, children[0].get().types, projections, is_index_sort);
+	}
+	return *sort;
+}
 
 class OrderLocalSinkState : public LocalSinkState {
 public:

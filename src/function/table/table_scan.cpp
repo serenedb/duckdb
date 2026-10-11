@@ -269,6 +269,7 @@ public:
 				// Scan (in parallel) storage
 				auto row_id_data = reinterpret_cast<data_ptr_t>(row_ids.data() + offset);
 				Vector local_vector(LogicalType::ROW_TYPE, row_id_data, scan_count);
+				l_state.fetch_state.ReleaseSegments();
 
 				if (CanRemoveFilterColumns()) {
 					l_state.all_columns.Reset();
