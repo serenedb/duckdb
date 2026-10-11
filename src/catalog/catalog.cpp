@@ -753,7 +753,10 @@ static idx_t ListingRank(Catalog &catalog) {
 }
 
 static void LogSkippedListing(ClientContext &context, const string &what, const std::exception &ex) {
-	DUCKDB_LOG_DEBUG(context, StringUtil::Format("catalog listing skipped %s: %s", what, ErrorData(ex).Message()));
+	auto message = StringUtil::Format("catalog listing skipped %s: %s", what, ErrorData(ex).Message());
+	if (!context.EmitWarning(message.c_str())) {
+		DUCKDB_LOG_DEBUG(context, message);
+	}
 }
 
 //===--------------------------------------------------------------------===//
