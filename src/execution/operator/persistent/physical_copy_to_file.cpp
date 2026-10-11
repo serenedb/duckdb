@@ -315,8 +315,7 @@ class CopyFileLifecycleExecutor {
 public:
 	explicit CopyFileLifecycleExecutor(ClientContext &context_p)
 	    : context(context_p), executor(context_p, TaskSchedulerType::ASYNC) {
-		auto &scheduler = TaskScheduler::GetScheduler(context);
-		async_threads = scheduler.NumberOfAsyncThreads();
+		async_threads = TaskScheduler::QueryAsyncThreads(context);
 		auto regular_threads = TaskScheduler::QueryThreads(context);
 		max_pending_tasks = MaxValue<idx_t>(MIN_PENDING_TASKS, (async_threads + regular_threads) * 4);
 	}

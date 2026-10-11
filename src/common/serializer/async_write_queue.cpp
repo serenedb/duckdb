@@ -96,8 +96,7 @@ private:
 
 AsyncWriteQueue::AsyncWriteQueue(ClientContext &client_context_p, AsyncWriteTarget &target_p)
     : client_context(client_context_p), target(target_p) {
-	auto &scheduler = TaskScheduler::GetScheduler(client_context);
-	auto async_threads = scheduler.NumberOfAsyncThreads();
+	auto async_threads = TaskScheduler::QueryAsyncThreads(client_context);
 	max_active_tasks = MaxValue<idx_t>(async_threads, 1);
 	if (async_threads == 0) {
 		return;
@@ -513,8 +512,7 @@ idx_t ManagedAsyncWriteQueue::PendingWrite::Size() const {
 
 ManagedAsyncWriteQueue::ManagedAsyncWriteQueue(ClientContext &client_context_p, AsyncWriteTarget &target_p)
     : client_context(client_context_p), target(target_p), memory_governor(client_context_p) {
-	auto &scheduler = TaskScheduler::GetScheduler(client_context);
-	auto async_threads = scheduler.NumberOfAsyncThreads();
+	auto async_threads = TaskScheduler::QueryAsyncThreads(client_context);
 	max_active_drain_tasks = MaxValue<idx_t>(async_threads, 1);
 
 	AsyncWriteTarget &async_target = *this;
@@ -1037,8 +1035,7 @@ ManagedAsyncWriteStreamQueue::ManagedAsyncWriteStreamQueue(ClientContext &client
 	drain_task_byte_budget = MaxValue(AsyncWriteConfig::DRAIN_TASK_BYTE_BUDGET, coalesce_threshold);
 	limit_coalesced_write_size = local_file;
 
-	auto &scheduler = TaskScheduler::GetScheduler(client_context);
-	auto async_threads = scheduler.NumberOfAsyncThreads();
+	auto async_threads = TaskScheduler::QueryAsyncThreads(client_context);
 
 	write_mode = target.GetWriteMode();
 	// Explicit-offset writes let multiple async requests drain one logical write queue concurrently. Sequential writes

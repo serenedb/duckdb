@@ -129,11 +129,27 @@ TEST_CASE("Test async threads", "[api]") {
 	Connection con(db);
 	auto &scheduler = TaskScheduler::GetScheduler(*con.context);
 
-	con.Query("SET async_threads=0");
+	con.Query("SET GLOBAL async_threads=0");
 	REQUIRE(scheduler.NumberOfAsyncThreads() == 0);
 
-	con.Query("SET async_threads=2");
+	con.Query("SET GLOBAL async_threads=2");
 	REQUIRE(scheduler.NumberOfAsyncThreads() == 2);
+
+	con.Query("SET async_threads=1");
+	REQUIRE(scheduler.NumberOfAsyncThreads() == 2);
+	REQUIRE(TaskScheduler::QueryAsyncThreads(*con.context) == 1);
+	REQUIRE(TaskScheduler::QueryAsyncPool(*con.context) == TaskSchedulerType::ASYNC);
+
+	con.Query("SET async_threads=0");
+	REQUIRE(scheduler.NumberOfAsyncThreads() == 2);
+	REQUIRE(TaskScheduler::QueryAsyncThreads(*con.context) == 0);
+	REQUIRE(TaskScheduler::QueryAsyncPool(*con.context) == TaskSchedulerType::REGULAR);
+
+	Connection other(db);
+	REQUIRE(TaskScheduler::QueryAsyncThreads(*other.context) == 2);
+
+	con.Query("RESET async_threads");
+	REQUIRE(TaskScheduler::QueryAsyncThreads(*con.context) == 2);
 }
 
 static idx_t ColumnDataScanMaxThreads(Connection &con, QueryResult &result,

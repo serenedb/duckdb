@@ -121,13 +121,16 @@ void AsyncResult::ScheduleTasks(InterruptState &interrupt_state, Executor &execu
 		throw InternalException("AsyncResult::ScheduleTasks called with no available tasks");
 	}
 
-	DUCKDB_LOG(executor.context, AsyncTaskScheduleLogType, EnumUtil::ToString(pool_type), async_tasks.size());
+	const auto target_pool =
+	    pool_type == TaskSchedulerType::ASYNC ? TaskScheduler::QueryAsyncPool(executor.context) : pool_type;
+	DUCKDB_LOG(executor.context, AsyncTaskScheduleLogType, EnumUtil::ToString(target_pool), async_tasks.size());
 
 	shared_ptr<AsyncBatchCompletion> completion = make_shared_ptr<AsyncBatchCompletion>(async_tasks.size());
 
+	auto &scheduler = TaskScheduler::GetScheduler(executor.context);
 	for (auto &async_task : async_tasks) {
 		auto task = make_uniq<AsyncExecutionTask>(executor, std::move(async_task), interrupt_state, completion);
-		TaskScheduler::GetScheduler(executor.context).ScheduleTask(executor.GetToken(), std::move(task), pool_type);
+		scheduler.ScheduleTask(executor.GetToken(), std::move(task), target_pool);
 	}
 
 	async_tasks.clear();

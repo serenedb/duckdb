@@ -155,9 +155,9 @@
     },
     {
         "name": "async_threads",
-        "description": "The number of total async threads used by the system for tasks like I/O.",
+        "description": "The number of total async threads used by the system for tasks like I/O; a session or transaction value caps the async threads its queries use.",
         "type": "BIGINT",
-        "scope": "global",
+        "scope": "global_local",
         "custom_implementation": true
     },
     {

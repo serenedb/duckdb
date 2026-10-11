@@ -1,0 +1,90 @@
+# name: test/sql/settings/setting_async_threads_scope.test
+# description: A session value of async_threads caps that session's queries, SET GLOBAL async_threads sizes the pool
+# group: [settings]
+
+require parquet
+
+statement ok
+SET GLOBAL async_threads = 4
+
+statement ok con1
+SET async_threads = 0
+
+query I con1
+SELECT current_setting('async_threads')
+----
+0
+
+query I con2
+SELECT current_setting('async_threads')
+----
+4
+
+statement ok con1
+COPY (SELECT i, 'v' || i AS s FROM range(100000) t(i)) TO '{TEST_DIR}/async_threads_scope.parquet'
+
+query II con1
+SELECT count(*), sum(i) FROM '{TEST_DIR}/async_threads_scope.parquet'
+----
+100000	4999950000
+
+statement ok con1
+SET async_threads = 100
+
+query I con1
+SELECT current_setting('async_threads')
+----
+100
+
+statement error con1
+SET async_threads = -1
+----
+<REGEX>:Syntax Error.*Cannot have negative async_threads.*
+
+query I con1
+SELECT current_setting('async_threads')
+----
+100
+
+statement ok con2
+SET SESSION async_threads = 3
+
+statement ok
+SET GLOBAL async_threads = 6
+
+query I con2
+SELECT current_setting('async_threads')
+----
+3
+
+query I con1
+SELECT current_setting('async_threads')
+----
+100
+
+statement ok con1
+RESET async_threads
+
+query I con1
+SELECT current_setting('async_threads')
+----
+6
+
+statement ok con2
+PRAGMA async_threads = 1
+
+query I con2
+SELECT current_setting('async_threads')
+----
+1
+
+statement ok con2
+RESET async_threads
+
+query I con2
+SELECT current_setting('async_threads')
+----
+6
+
+statement ok
+RESET GLOBAL async_threads

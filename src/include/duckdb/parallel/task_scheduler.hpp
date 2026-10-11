@@ -44,6 +44,8 @@ public:
 	DUCKDB_API static idx_t QueryThreads(ClientContext &context);
 	//! Returns the number of async threads
 	DUCKDB_API idx_t NumberOfAsyncThreads();
+	DUCKDB_API static idx_t QueryAsyncThreads(ClientContext &context);
+	DUCKDB_API static TaskSchedulerType QueryAsyncPool(ClientContext &context);
 
 	idx_t GetNumberOfTasks() const;
 	idx_t GetProducerCount() const;

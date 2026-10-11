@@ -64,6 +64,7 @@ struct ClientConfig {
 	set<OptimizerType> disabled_optimizers;
 
 	optional_idx threads;
+	optional_idx async_threads;
 
 	//! Force parallelism of small tables, used for testing
 	bool verify_parallelism = false;

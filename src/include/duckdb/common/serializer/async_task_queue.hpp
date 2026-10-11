@@ -132,7 +132,6 @@ private:
 //! - Call WaitAll then Close in the consumer's finalize step; the destructor asserts the queue is drained.
 class ManagedAsyncTaskQueue {
 public:
-	//! max_active_tasks == 0 -> use TaskScheduler::NumberOfAsyncThreads().
 	DUCKDB_API explicit ManagedAsyncTaskQueue(ClientContext &client_context, idx_t max_active_tasks = 0);
 	DUCKDB_API ~ManagedAsyncTaskQueue();
 

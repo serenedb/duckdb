@@ -86,8 +86,7 @@ private:
 
 AsyncTaskQueue::AsyncTaskQueue(ClientContext &client_context_p, idx_t max_active_tasks_p)
     : client_context(client_context_p) {
-	auto &scheduler = TaskScheduler::GetScheduler(client_context);
-	auto async_threads = NumericCast<idx_t>(scheduler.NumberOfAsyncThreads());
+	auto async_threads = TaskScheduler::QueryAsyncThreads(client_context);
 	max_active_tasks = max_active_tasks_p > 0 ? max_active_tasks_p : MaxValue<idx_t>(async_threads, 1);
 	if (async_threads == 0) {
 		return;
@@ -374,8 +373,7 @@ void AsyncTaskQueue::VerifyOpen() const {
 //===--------------------------------------------------------------------===//
 ManagedAsyncTaskQueue::ManagedAsyncTaskQueue(ClientContext &client_context_p, idx_t max_active_tasks)
     : client_context(client_context_p), memory_governor(client_context_p) {
-	auto &scheduler = TaskScheduler::GetScheduler(client_context);
-	auto async_threads = NumericCast<idx_t>(scheduler.NumberOfAsyncThreads());
+	auto async_threads = TaskScheduler::QueryAsyncThreads(client_context);
 	max_active_drain_tasks = max_active_tasks > 0 ? max_active_tasks : MaxValue<idx_t>(async_threads, 1);
 	task_queue = make_uniq<AsyncTaskQueue>(client_context, max_active_drain_tasks);
 }

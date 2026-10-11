@@ -9,9 +9,8 @@ namespace duckdb {
 
 ManagedAsyncMemoryGovernor::ManagedAsyncMemoryGovernor(ClientContext &client_context_p)
     : client_context(client_context_p) {
-	auto &scheduler = TaskScheduler::GetScheduler(client_context);
 	auto regular_threads = MaxValue<idx_t>(TaskScheduler::QueryThreads(client_context), 1);
-	auto async_threads = NumericCast<idx_t>(scheduler.NumberOfAsyncThreads());
+	auto async_threads = TaskScheduler::QueryAsyncThreads(client_context);
 	max_pending_bytes = ManagedAsyncMemoryConfig::MAX_PENDING_BYTES_PER_THREAD * regular_threads;
 	min_pending_bytes =
 	    MinValue(max_pending_bytes, ManagedAsyncMemoryConfig::MIN_PENDING_BYTES_PER_THREAD * regular_threads);

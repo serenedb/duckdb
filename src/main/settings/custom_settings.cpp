@@ -1779,7 +1779,26 @@ void AsyncThreadsSetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
 	ResizeAutomaticHTTPClientPool(db, config);
 }
 
+void AsyncThreadsSetting::SetLocal(ClientContext &context, const Value &input) {
+	if (input.IsNull()) {
+		throw InvalidInputException("async_threads must be a positive integer");
+	}
+	auto new_val = input.GetValue<int64_t>();
+	if (new_val < 0) {
+		throw SyntaxException("Cannot have negative async_threads!");
+	}
+	ClientConfig::GetConfig(context).async_threads = NumericCast<idx_t>(new_val);
+}
+
+void AsyncThreadsSetting::ResetLocal(ClientContext &context) {
+	ClientConfig::GetConfig(context).async_threads = optional_idx();
+}
+
 Value AsyncThreadsSetting::GetSetting(const ClientContext &context) {
+	auto &async_threads = ClientConfig::GetConfig(context).async_threads;
+	if (async_threads.IsValid()) {
+		return Value::BIGINT(NumericCast<int64_t>(async_threads.GetIndex()));
+	}
 	auto &config = DBConfig::GetConfig(context);
 	return Value::BIGINT(NumericCast<int64_t>(config.options.async_threads));
 }

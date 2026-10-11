@@ -105,7 +105,8 @@ TaskExecutor::TaskExecutor(TaskScheduler &scheduler, TaskSchedulerType type_p)
 }
 
 TaskExecutor::TaskExecutor(ClientContext &context_p, TaskSchedulerType type_p)
-    : TaskExecutor(TaskScheduler::GetScheduler(context_p), type_p) {
+    : TaskExecutor(TaskScheduler::GetScheduler(context_p),
+                   type_p == TaskSchedulerType::ASYNC ? TaskScheduler::QueryAsyncPool(context_p) : type_p) {
 	context = context_p;
 }
 

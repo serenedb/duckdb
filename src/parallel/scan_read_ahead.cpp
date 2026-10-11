@@ -115,8 +115,8 @@ ScanReadAheadJob::~ScanReadAheadJob() = default;
 ScanReadAhead::ScanReadAhead(ClientContext &context, idx_t read_ahead_depth_p,
                              unique_ptr<ManagedAsyncMemoryGovernor> memory_governor_p)
     : context(context), read_ahead_depth(read_ahead_depth_p), memory_governor(std::move(memory_governor_p)),
-      open_window(MaxValue<idx_t>(TaskScheduler::GetScheduler(context).NumberOfAsyncThreads() * 2,
-                                  memory_governor ? 0 : read_ahead_depth)) {
+      open_window(
+          MaxValue<idx_t>(TaskScheduler::QueryAsyncThreads(context) * 2, memory_governor ? 0 : read_ahead_depth)) {
 	D_ASSERT(read_ahead_depth_p > 0);
 	backlog_budget = memory_governor ? memory_governor->BackpressureBudget() : NumericLimits<idx_t>::Maximum();
 	executor = make_shared_ptr<TaskExecutor>(context, TaskSchedulerType::ASYNC);
@@ -131,7 +131,7 @@ void ScanReadAhead::CancelAndDrain() {
 }
 
 unique_ptr<ScanReadAhead> ScanReadAhead::Create(ClientContext &context) {
-	if (TaskScheduler::GetScheduler(context).NumberOfAsyncThreads() == 0) {
+	if (TaskScheduler::QueryAsyncThreads(context) == 0) {
 		// read-ahead schedules its I/O on the async pool, without async threads there is nothing to gain
 		return nullptr;
 	}
