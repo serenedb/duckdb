@@ -7,6 +7,9 @@ statement ok
 set threads=1
 
 statement ok
+set async_threads=0
+
+statement ok
 set preserve_insertion_order=false;
 
 # 8 strings ~8 MB each for a total of ~64 mb per file, 8 files so 512 mb total
