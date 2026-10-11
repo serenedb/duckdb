@@ -282,18 +282,17 @@ static bool CTEContainsDML(const LogicalOperator &op) {
 	return false;
 }
 
-void Optimizer::OptimizeStatement(unique_ptr<SQLStatement> &statement) {
-	if (!enable_optimizer) {
+void Optimizer::OptimizeStatement(Binder &binder, ClientContext &context, unique_ptr<SQLStatement> &statement) {
+	if (!Settings::Get<EnableOptimizerSetting>(context) || DatabaseManager::Get(context).GetRemoteCatalogCount() == 0) {
 		return;
 	}
-	if (DatabaseManager::Get(context).GetRemoteCatalogCount() > 0) {
-		// if we have any remote catalogs attached then pushdown into remote
-		RunOptimizer(OptimizerType::REMOTE_PUSHDOWN, [&]() {
-			RemotePushdownOptimizer optimizer(binder);
-			optimizer.Rewrite(statement);
-			optimizer.RevertUnshippedFolds();
-		});
-	}
+	// if we have any remote catalogs attached then pushdown into remote
+	Optimizer optimizer(binder, context);
+	optimizer.RunOptimizer(OptimizerType::REMOTE_PUSHDOWN, [&] {
+		RemotePushdownOptimizer pushdown(binder);
+		pushdown.Rewrite(statement);
+		pushdown.RevertUnshippedFolds();
+	});
 }
 
 void Optimizer::RunBuiltInOptimizers() {

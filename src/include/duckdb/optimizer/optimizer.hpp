@@ -37,7 +37,7 @@ public:
 	static bool OptimizerDisabled(ClientContext &context, OptimizerType type);
 
 	//! Pre-binder statement-level optimization pass
-	void OptimizeStatement(unique_ptr<SQLStatement> &statement);
+	static void OptimizeStatement(Binder &binder, ClientContext &context, unique_ptr<SQLStatement> &statement);
 
 public:
 	ClientContext &context;
