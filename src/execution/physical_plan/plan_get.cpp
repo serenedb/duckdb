@@ -110,6 +110,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 
 	optional_ptr<PhysicalOperator> filter;
 	auto &projection_ids = op.projection_ids;
+	const auto output_count = projection_ids.empty() ? column_ids.size() : projection_ids.size();
 
 	if (table_filters && (op.function.supports_pushdown_filter || op.function.supports_pushdown_type)) {
 		vector<unique_ptr<Expression>> select_list;
@@ -255,11 +256,22 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 	    std::move(op.parameters), std::move(op.virtual_columns));
 	auto &cast_table_scan = table_scan.Cast<PhysicalTableScan>();
 	cast_table_scan.dynamic_filters = op.dynamic_filters;
-	if (filter) {
-		filter->children.push_back(table_scan);
+	if (!filter) {
+		return table_scan;
+	}
+	filter->children.push_back(table_scan);
+	if (filter->types.size() == output_count) {
 		return *filter;
 	}
-	return table_scan;
+	vector<LogicalType> types;
+	vector<unique_ptr<Expression>> expressions;
+	for (idx_t i = 0; i < output_count; i++) {
+		types.push_back(filter->types[i]);
+		expressions.push_back(make_uniq<BoundReferenceExpression>(filter->types[i], i));
+	}
+	auto &projection = Make<PhysicalProjection>(std::move(types), std::move(expressions), op.estimated_cardinality);
+	projection.children.push_back(*filter);
+	return projection;
 }
 
 } // namespace duckdb
