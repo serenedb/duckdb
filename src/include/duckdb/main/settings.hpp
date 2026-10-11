@@ -390,13 +390,16 @@ struct AsyncThreadsSetting {
 	using RETURN_TYPE = int64_t;
 	static constexpr const char *Name = "async_threads";
 	static constexpr const char *Description =
-	    "The number of total async threads used by the system for tasks like I/O.";
+	    "The number of total async threads used by the system for tasks like I/O; a session or transaction value caps "
+	    "the async threads its queries use.";
 	static constexpr const char *InputType = "BIGINT";
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
+	static void SetLocal(ClientContext &context, const Value &parameter);
+	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
 };
 
