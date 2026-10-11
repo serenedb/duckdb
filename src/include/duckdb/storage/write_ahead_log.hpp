@@ -175,6 +175,8 @@ protected:
 	atomic<int32_t> durable_epoch {0};
 	//! Set when a sync has failed; every further sync of this WAL fails
 	atomic<bool> sync_failed {false};
+	mutex sync_failure_lock;
+	string sync_failure;
 };
 
 } // namespace duckdb

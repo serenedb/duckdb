@@ -34,7 +34,7 @@ SELECT count(*) FROM t
 statement error
 INSERT INTO t VALUES (3)
 ----
-a previous sync of this WAL has failed
+a previous sync of this WAL has failed: debug_force_wal_fsync_failure: injected WAL fsync failure
 
 restart
 

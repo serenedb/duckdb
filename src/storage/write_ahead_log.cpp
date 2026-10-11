@@ -708,7 +708,8 @@ void WriteAheadLog::SyncUpTo(idx_t offset, absl::FunctionRef<void(idx_t)> on_syn
 			return;
 		}
 		if (sync_failed.load(std::memory_order_acquire)) {
-			throw IOException("Cannot sync WAL \"%s\": a previous sync of this WAL has failed", wal_path);
+			throw IOException("Cannot sync WAL \"%s\": a previous sync of this WAL has failed: %s", wal_path,
+			                  sync_failure);
 		}
 		if (syncing_offset.load(std::memory_order_acquire) >= offset) {
 			durable_epoch.wait(durable_seen, std::memory_order_acquire);
@@ -735,9 +736,13 @@ void WriteAheadLog::SyncUpTo(idx_t offset, absl::FunctionRef<void(idx_t)> on_syn
 		} catch (std::exception &ex) {
 			error = ErrorData(ex);
 		}
-		if (error.HasError()) {
-			// the OS may have dropped the dirty pages: this WAL must never be synced again
-			sync_failed.store(true, std::memory_order_release);
+		if (error.HasError() && !sync_failed.load(std::memory_order_relaxed)) {
+			lock_guard<mutex> guard(sync_failure_lock);
+			if (!sync_failed.load(std::memory_order_relaxed)) {
+				sync_failure = error.RawMessage();
+				// the OS may have dropped the dirty pages: this WAL must never be synced again
+				sync_failed.store(true, std::memory_order_release);
+			}
 		}
 		syncs_in_flight.fetch_sub(1, std::memory_order_acq_rel);
 		lane_epoch.fetch_add(1, std::memory_order_release);
