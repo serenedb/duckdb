@@ -46,22 +46,20 @@ struct AlpRDFetchState : public SegmentScanState {
 		if (exceptions_count > 0) {
 			auto exceptions = reader.ReadBytes(exceptions_count * AlpRDConstants::EXCEPTION_SIZE);
 			auto positions = reader.ReadBytes(exceptions_count * AlpRDConstants::EXCEPTION_POSITION_SIZE);
-			idx_t low = 0;
-			idx_t high = exceptions_count;
-			while (low < high) {
-				const idx_t mid = (low + high) / 2;
-				if (Load<AlpRDConstants::EXCEPTION_POSITION_TYPE>(
-				        positions.data() + mid * AlpRDConstants::EXCEPTION_POSITION_SIZE) < index) {
-					low = mid + 1;
-				} else {
-					high = mid;
+			idx_t found = exceptions_count;
+			for (idx_t i = 0; i < exceptions_count; i++) {
+				const auto position = Load<AlpRDConstants::EXCEPTION_POSITION_TYPE>(
+				    positions.data() + i * AlpRDConstants::EXCEPTION_POSITION_SIZE);
+				if (position >= vector_size) {
+					ThrowAlpRDExceptionPositionOutOfRange(position, vector_size);
+				}
+				if (position == index) {
+					found = i;
 				}
 			}
-			if (low < exceptions_count &&
-			    Load<AlpRDConstants::EXCEPTION_POSITION_TYPE>(positions.data() +
-			                                                  low * AlpRDConstants::EXCEPTION_POSITION_SIZE) == index) {
+			if (found < exceptions_count) {
 				const auto exception =
-				    Load<AlpRDConstants::EXCEPTION_TYPE>(exceptions.data() + low * AlpRDConstants::EXCEPTION_SIZE);
+				    Load<AlpRDConstants::EXCEPTION_TYPE>(exceptions.data() + found * AlpRDConstants::EXCEPTION_SIZE);
 				return (static_cast<EXACT_TYPE>(exception) << vector_state.right_bit_width) | right_value;
 			}
 		}

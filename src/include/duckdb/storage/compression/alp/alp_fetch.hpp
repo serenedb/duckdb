@@ -58,21 +58,19 @@ struct AlpFetchState : public SegmentScanState {
 		if (exceptions_count > 0) {
 			auto exceptions = reader.ReadBytes(exceptions_count * sizeof(T));
 			auto positions = reader.ReadBytes(exceptions_count * AlpConstants::EXCEPTION_POSITION_SIZE);
-			idx_t low = 0;
-			idx_t high = exceptions_count;
-			while (low < high) {
-				const idx_t mid = (low + high) / 2;
-				if (Load<AlpConstants::EXCEPTION_POSITION_TYPE>(positions.data() +
-				                                                mid * AlpConstants::EXCEPTION_POSITION_SIZE) < index) {
-					low = mid + 1;
-				} else {
-					high = mid;
+			idx_t found = exceptions_count;
+			for (idx_t i = 0; i < exceptions_count; i++) {
+				const auto position = Load<AlpConstants::EXCEPTION_POSITION_TYPE>(
+				    positions.data() + i * AlpConstants::EXCEPTION_POSITION_SIZE);
+				if (position >= vector_size) {
+					ThrowAlpExceptionPositionOutOfRange(position, vector_size);
+				}
+				if (position == index) {
+					found = i;
 				}
 			}
-			if (low < exceptions_count &&
-			    Load<AlpConstants::EXCEPTION_POSITION_TYPE>(positions.data() +
-			                                                low * AlpConstants::EXCEPTION_POSITION_SIZE) == index) {
-				return Load<T>(exceptions.data() + low * sizeof(T));
+			if (found < exceptions_count) {
+				return Load<T>(exceptions.data() + found * sizeof(T));
 			}
 		}
 		return alp::AlpCompression<T, true>::DecodeValue(static_cast<int64_t>(encoded + frame_of_reference),
