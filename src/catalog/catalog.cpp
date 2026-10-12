@@ -1275,6 +1275,54 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	}
 }
 
+optional_ptr<ResolvedSearchPath> Catalog::ResolveSearchPath(CatalogEntryRetriever &retriever, CatalogType type,
+                                                            const Identifier &schema) {
+	for (auto &path : retriever.resolved_paths) {
+		if (path.type == type && path.schema == schema) {
+			return path;
+		}
+	}
+	ResolvedSearchPath resolved {type, schema, {}};
+	vector<ResolvedSearchEntry> lower_priority;
+	for (auto &entry : GetCatalogEntries(retriever, Identifier::InvalidCatalog(), schema, type)) {
+		auto catalog_entry = Catalog::GetCatalogEntry(retriever, entry.GetCatalog());
+		if (!catalog_entry) {
+			if (IsInvalidCatalog(entry.GetCatalog())) {
+				continue;
+			}
+			return nullptr;
+		}
+		switch (catalog_entry->CatalogTypeLookupRule(type)) {
+		case CatalogLookupBehavior::STANDARD:
+			resolved.entries.emplace_back(*catalog_entry, entry.GetSchema());
+			break;
+		case CatalogLookupBehavior::LOWER_PRIORITY:
+			lower_priority.emplace_back(*catalog_entry, entry.GetSchema());
+			break;
+		case CatalogLookupBehavior::NEVER_LOOKUP:
+			break;
+		}
+	}
+	for (auto &entry : lower_priority) {
+		resolved.entries.push_back(std::move(entry));
+	}
+	retriever.resolved_paths.push_back(std::move(resolved));
+	return retriever.resolved_paths.back();
+}
+
+bool Catalog::HasDefaultTables(CatalogEntryRetriever &retriever) {
+	if (!retriever.default_tables) {
+		auto &context = retriever.GetContext();
+		bool found = ClientData::Get(context).temporary_objects->GetCatalog().HasDefaultTable() ||
+		             GetSystemCatalog(context).HasDefaultTable();
+		for (auto &database : DatabaseManager::Get(context).GetDatabases(context)) {
+			found = found || database->GetCatalog().HasDefaultTable();
+		}
+		retriever.default_tables = found;
+	}
+	return *retriever.default_tables;
+}
+
 CatalogEntryLookup Catalog::TryLookupEntryAcrossCatalogs(CatalogEntryRetriever &retriever,
                                                          const EntryLookupInfo &lookup_info,
                                                          OnEntryNotFound if_not_found) {
@@ -1282,6 +1330,17 @@ CatalogEntryLookup Catalog::TryLookupEntryAcrossCatalogs(CatalogEntryRetriever &
 	auto &schema = lookup_info.GetSchema();
 	vector<CatalogLookup> lookups;
 	auto &lookup_path = lookup_info.GetQualifiedName().Path();
+	if (IsInvalidCatalog(catalog) && lookup_path.size() <= 3 && !lookup_info.GetAtClause()) {
+		if (auto path = ResolveSearchPath(retriever, lookup_info.GetCatalogType(), schema)) {
+			auto result = TryLookupEntry(retriever, *path, lookup_info);
+			if (result.Found()) {
+				return result;
+			}
+			if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+				return {nullptr, nullptr, ErrorData()};
+			}
+		}
+	}
 	if (lookup_path.size() > 3) {
 		// the entry is qualified with a nested schema path ([catalog, schema path..., name]) - this is unambiguous,
 		// so we look it up directly in the given catalog instead of expanding the search path
@@ -1479,6 +1538,65 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	}
 }
 
+CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, ResolvedSearchPath &path,
+                                           const EntryLookupInfo &lookup_info) {
+	auto &context = retriever.GetContext();
+	const auto type = lookup_info.GetCatalogType();
+	CatalogEntryLookup result;
+	for (auto &entry : path.entries) {
+		auto &catalog = entry.catalog.get();
+		if (!entry.transaction) {
+			entry.transaction.emplace(catalog.GetCatalogTransaction(context));
+			entry.schema_entry = catalog.LookupSchema(
+			    *entry.transaction, EntryLookupInfo::SchemaLookup(lookup_info, {catalog.GetName(), entry.schema}),
+			    OnEntryNotFound::RETURN_NULL);
+			if (entry.schema_entry && catalog.IsDuckCatalog()) {
+				auto &schema = entry.schema_entry->Cast<DuckSchemaEntry>();
+				entry.empty = schema.GetCatalogSet(type).IsEmpty();
+				entry.indexes = !schema.GetCatalogSet(CatalogType::INDEX_ENTRY).IsEmpty();
+			}
+		}
+		if (!entry.schema_entry || entry.empty) {
+			continue;
+		}
+		result.schema = entry.schema_entry;
+		if (catalog.IsDuckCatalog()) {
+			result.entry = entry.schema_entry->LookupEntry(*entry.transaction, lookup_info);
+		} else {
+			result.entry = entry.schema_entry->LookupEntry(
+			    *entry.transaction, EntryLookupInfo(lookup_info, QualifiedName(catalog.GetName(), entry.schema,
+			                                                                   lookup_info.GetEntryIdentifier())));
+		}
+		if (result.entry) {
+			break;
+		}
+		if (type == CatalogType::TABLE_ENTRY && catalog.IsDuckCatalog() && entry.indexes &&
+		    entry.schema_entry->LookupEntry(
+		        *entry.transaction,
+		        EntryLookupInfo(CatalogType::INDEX_ENTRY, QualifiedName(lookup_info.GetEntryIdentifier())))) {
+			break;
+		}
+	}
+	if (!IsInvalidSchema(path.schema)) {
+		return result;
+	}
+	if (type == CatalogType::TABLE_ENTRY) {
+		if (HasDefaultTables(retriever)) {
+			if (!result.Found()) {
+				result = TryLookupDefaultTable(retriever, lookup_info, false);
+			} else {
+				auto ambiguity_lookup = TryLookupDefaultTable(retriever, lookup_info, true);
+				if (ambiguity_lookup.Found()) {
+					ThrowDefaultTableAmbiguityException(result, ambiguity_lookup, lookup_info.GetEntryName());
+				}
+			}
+		}
+	} else if (!result.Found()) {
+		result = TryLookupDefaultSchema(retriever, lookup_info);
+	}
+	return result;
+}
+
 CatalogEntryLookup Catalog::TryLookupDefaultTable(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info,
                                                   bool allow_ignore_at_clause) {
 	auto catalog_by_name = GetCatalogEntry(retriever, lookup_info.GetEntryIdentifier());
@@ -1538,6 +1656,7 @@ optional_ptr<CatalogEntry> Catalog::GetEntry(CatalogEntryRetriever &retriever, c
 	if (!result.Found()) {
 		if (AutoLoadExtensionByCatalogEntry(*retriever.GetContext().db, lookup_info.GetCatalogType(),
 		                                    lookup_info.GetEntryIdentifier())) {
+			retriever.resolved_paths.clear();
 			result = TryLookupEntryAcrossCatalogs(retriever, lookup_info, if_not_found);
 		}
 	}
