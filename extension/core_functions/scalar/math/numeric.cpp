@@ -986,9 +986,14 @@ struct RoundOperatorPrecision {
 	static inline TA Round(TA input, int32_t precision, double modifier) {
 		double rounded_value;
 		if (precision < 0) {
+			if (std::isinf(modifier)) {
+				// every finite value rounds to zero
+				return Value::IsFinite(input) ? 0 : input;
+			}
 			rounded_value = ROUND_POLICY::Nearest(input / modifier) * modifier;
 			if (std::isinf(rounded_value) || std::isnan(rounded_value)) {
-				return 0;
+				// the input is too large to be rounded to this precision
+				return input;
 			}
 		} else {
 			rounded_value = ROUND_POLICY::Nearest(input * modifier) / modifier;
