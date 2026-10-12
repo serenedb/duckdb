@@ -201,6 +201,31 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 		}
 	}
 
+	if (get.bind_data && (get.function.supports_pushdown_filter || get.function.supports_pushdown_type)) {
+		vector<ProjectionIndex> rejected;
+		for (auto &entry : get.table_filters) {
+			auto &column_index = get.GetColumnIndex(entry.GetIndex());
+			auto column_id = column_index.GetPrimaryIndex();
+			const bool reject = get.function.supports_pushdown_filter
+			                        ? get.function.supports_pushdown_filter(
+			                              *get.bind_data, column_id, entry.Filter()) == TableFilterPushdown::Reject
+			                        : !get.function.supports_pushdown_type(*get.bind_data, column_id);
+			if (!reject) {
+				continue;
+			}
+			BoundColumnRefExpression column(get.GetColumnType(column_index),
+			                                ColumnBinding(get.table_index, entry.GetIndex()));
+			auto filter = make_uniq<Filter>(entry.Filter().ToExpression(column));
+			NormalizeColumnRefAliases(filter->filter, get);
+			filter->ExtractBindings();
+			filters.push_back(std::move(filter));
+			rejected.push_back(entry.GetIndex());
+		}
+		for (auto index : rejected) {
+			get.table_filters.RemoveFilterByColumnIndex(index);
+		}
+	}
+
 	PushdownBarrierFilters(get, barrier_filters);
 	restore_barrier_filters();
 

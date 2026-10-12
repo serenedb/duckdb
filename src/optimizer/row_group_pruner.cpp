@@ -78,9 +78,6 @@ bool RowGroupPruner::TryOptimize(LogicalOperator &op) const {
 	if (logical_get->table_filters.HasFilters()) {
 		bool invalidate;
 		if (logical_get->function.supports_pushdown_filter && logical_get->bind_data) {
-			// Per-filter: keep the pushed limit only if EVERY filter is applied before it
-			// (BeforeLimit, e.g. an INCLUDE column). AfterLimit (lookup source) applies after the
-			// limit, and Reject becomes a Filter node above the scan -- both force us to drop it.
 			invalidate = false;
 			for (auto &entry : logical_get->table_filters) {
 				const auto col_id = logical_get->GetColumnIndex(entry.GetIndex()).GetPrimaryIndex();

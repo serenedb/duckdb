@@ -11,7 +11,6 @@
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
-#include "duckdb/execution/operator/filter/physical_filter.hpp"
 
 namespace duckdb {
 
@@ -108,92 +107,26 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 		op.function.dependency(dependencies, op.bind_data.get());
 	}
 
-	optional_ptr<PhysicalOperator> filter;
-	auto &projection_ids = op.projection_ids;
-	const auto output_count = projection_ids.empty() ? column_ids.size() : projection_ids.size();
-
 	if (table_filters && (op.function.supports_pushdown_filter || op.function.supports_pushdown_type)) {
-		vector<unique_ptr<Expression>> select_list;
-		unique_ptr<Expression> unsupported_filter;
 		unordered_set<ProjectionIndex> to_remove;
-
-		virtual_column_map_t virtual_columns;
-		if (op.function.get_virtual_columns) {
-			virtual_columns = op.function.get_virtual_columns(context, op.bind_data.get());
-		}
 		for (auto &entry : *table_filters) {
 			auto filter_idx = entry.GetIndex();
 			auto &filter_expr = entry.Filter();
-			auto &column_idx = op.GetColumnIndex(filter_idx);
-			auto column_id = column_idx.GetPrimaryIndex();
+			auto column_id = op.GetColumnIndex(filter_idx).GetPrimaryIndex();
 			const auto pushdown =
 			    op.function.supports_pushdown_filter
 			        ? op.function.supports_pushdown_filter(*op.bind_data, column_id, filter_expr)
 			        : (op.function.supports_pushdown_type(*op.bind_data, column_id) ? TableFilterPushdown::BeforeLimit
 			                                                                        : TableFilterPushdown::Reject);
-			if (pushdown == TableFilterPushdown::Drop) {
-				// A redundant filter (e.g. the top-k collector's own score boundary that TOP_N pushed
-				// back into the scan): remove it entirely -- neither pushed into the scan nor rehosted
-				// as a Filter node above it.
-				to_remove.insert(filter_idx);
-				continue;
+			if (pushdown == TableFilterPushdown::Reject && !ExpressionFilter::IsRootOptionalFilter(filter_expr)) {
+				throw InternalException("The scan rejected a table filter that filter pushdown kept in it");
 			}
-			if (pushdown == TableFilterPushdown::Reject) {
-				// column_ids is already pruned to only the columns this scan reads -- the
-				// filter column plus the query's outputs (e.g. a delete/update row-id). An
-				// empty projection_ids means "emit all of them". Declining a filter appends
-				// its column to projection_ids below; leaving it empty would make that append
-				// narrow the output to only the filter column, dropping the row-id. Emit the
-				// pruned set explicitly first so every output survives (and so the Filter node
-				// built from projection_ids below gets its output types).
-				if (projection_ids.empty()) {
-					for (idx_t i = 0; i < column_ids.size(); i++) {
-						projection_ids.push_back(ProjectionIndex(i));
-					}
-				}
-				Identifier column_name;
-				LogicalType column_type;
-				if (IsVirtualColumn(column_id)) {
-					auto &column = virtual_columns.at(column_id);
-					column_name = column.name;
-					column_type = column.type;
-				} else {
-					column_name = op.names[column_id];
-					column_type = op.returned_types[column_id];
-				}
-				optional_idx column_id_filter;
-				for (idx_t i = 0; i < projection_ids.size(); i++) {
-					if (column_ids[projection_ids[i]] == column_idx) {
-						column_id_filter = i;
-						break;
-					}
-				}
-				if (!column_id_filter.IsValid()) {
-					projection_ids.push_back(filter_idx);
-					column_id_filter = projection_ids.size() - 1;
-				}
-				auto column =
-				    make_uniq<BoundReferenceExpression>(column_name, column_type, column_id_filter.GetIndex());
-				select_list.push_back(filter_expr.ToExpression(*column));
+			if (pushdown == TableFilterPushdown::Drop || pushdown == TableFilterPushdown::Reject) {
 				to_remove.insert(filter_idx);
 			}
 		}
 		for (auto &col : to_remove) {
 			table_filters->RemoveFilterByColumnIndex(col);
-		}
-
-		if (!select_list.empty()) {
-			vector<LogicalType> filter_types;
-			for (auto &c : projection_ids) {
-				auto column_id = column_ids[c].GetPrimaryIndex();
-				if (IsVirtualColumn(column_id)) {
-					auto &column = virtual_columns.at(column_id);
-					filter_types.push_back(column.type);
-				} else {
-					filter_types.push_back(op.returned_types[column_id]);
-				}
-			}
-			filter = Make<PhysicalFilter>(filter_types, std::move(select_list), op.estimated_cardinality);
 		}
 	}
 	op.ResolveOperatorTypes();
@@ -216,10 +149,6 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 			if (!projection_necessary) {
 				// a projection is not necessary if all columns have been requested in-order
 				// in that case we just return the node
-				if (filter) {
-					filter->children.push_back(table_scan);
-					return *filter;
-				}
 				return table_scan;
 			}
 		}
@@ -237,11 +166,6 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 			}
 		}
 		auto &proj = Make<PhysicalProjection>(std::move(types), std::move(expressions), op.estimated_cardinality);
-		if (filter) {
-			filter->children.push_back(table_scan);
-			proj.children.push_back(*filter);
-			return proj;
-		}
 		proj.children.push_back(table_scan);
 		return proj;
 	}
@@ -256,22 +180,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 	    std::move(op.parameters), std::move(op.virtual_columns));
 	auto &cast_table_scan = table_scan.Cast<PhysicalTableScan>();
 	cast_table_scan.dynamic_filters = op.dynamic_filters;
-	if (!filter) {
-		return table_scan;
-	}
-	filter->children.push_back(table_scan);
-	if (filter->types.size() == output_count) {
-		return *filter;
-	}
-	vector<LogicalType> types;
-	vector<unique_ptr<Expression>> expressions;
-	for (idx_t i = 0; i < output_count; i++) {
-		types.push_back(filter->types[i]);
-		expressions.push_back(make_uniq<BoundReferenceExpression>(filter->types[i], i));
-	}
-	auto &projection = Make<PhysicalProjection>(std::move(types), std::move(expressions), op.estimated_cardinality);
-	projection.children.push_back(*filter);
-	return projection;
+	return table_scan;
 }
 
 } // namespace duckdb
