@@ -742,7 +742,7 @@ void WriteAheadLog::SyncUpTo(idx_t offset, absl::FunctionRef<void(idx_t)> on_syn
 		syncs_in_flight.fetch_sub(1, std::memory_order_acq_rel);
 		lane_epoch.fetch_add(1, std::memory_order_release);
 		lane_epoch.notify_all();
-		if (!error.HasError() && !sync_failed.load(std::memory_order_acquire)) {
+		if (!error.HasError() && !sync_failed.load(std::memory_order_relaxed)) {
 			on_synced(target);
 			RaiseTo(durable_offset, target);
 		}
