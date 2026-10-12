@@ -17,7 +17,7 @@ PhysicalOperator &DuckCatalog::PlanUpdate(ClientContext &context, PhysicalPlanGe
 	auto &cast_update = update.Cast<PhysicalUpdate>();
 	cast_update.update_is_del_and_insert = op.update_is_del_and_insert;
 	cast_update.update_column_count = op.update_column_count;
-	cast_update.InitializeDelAndInsert(context);
+	cast_update.InitializeDelAndInsert(op.old_value_positions, op.old_value_inputs, op.in_place_unchanged_rows);
 	cast_update.children.push_back(plan);
 	return update;
 }

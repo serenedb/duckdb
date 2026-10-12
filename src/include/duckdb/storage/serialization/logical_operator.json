@@ -883,6 +883,21 @@
         "id": 16584,
         "name": "update_column_count",
         "type": "idx_t"
+      },
+      {
+        "id": 16585,
+        "name": "old_value_positions",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 16586,
+        "name": "old_value_inputs",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 16587,
+        "name": "in_place_unchanged_rows",
+        "type": "bool"
       }
     ],
     "constructor": [
@@ -981,6 +996,21 @@
         "id": 16584,
         "name": "update_column_count",
         "type": "idx_t"
+      },
+      {
+        "id": 16585,
+        "name": "old_value_positions",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 16586,
+        "name": "old_value_inputs",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 16587,
+        "name": "in_place_unchanged_rows",
+        "type": "bool"
       }
     ]
   },

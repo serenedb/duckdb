@@ -47,26 +47,25 @@ public:
 	//! How to handle a target row-id that appears more than once in the input (e.g. UPDATE ... FROM): keep the
 	//! lock-free path (ASSUME_UNIQUE), deduplicate keeping the first match (KEEP_FIRST), or error (ERROR).
 	RowIdHandling row_id_handling;
-	//! Set to true, if we are updating an index column.
-	bool index_update;
 	//! Set when the UPDATE is a DELETE + INSERT only because it sets indexed columns: rows whose indexed values do
 	//! not change are then updated in place instead
 	bool in_place_unchanged_rows = false;
-	//! The update chunk positions and physical columns of the columns whose previous values a DELETE + INSERT fetches:
-	//! the indexed columns it sets when it compares them, otherwise the ones it sets that the delete indexes read
+	//! The update chunk positions of the columns whose previous values a DELETE + INSERT reads, and the input chunk
+	//! indexes of those values, or DConstants::INVALID_INDEX for the ones it fetches by row id: the indexed columns it
+	//! sets when it compares them, otherwise the ones it sets that the delete indexes read
 	vector<idx_t> old_value_positions;
-	vector<StorageIndex> old_value_columns;
+	vector<idx_t> old_value_inputs;
+	//! The physical columns of the previous values it fetches
+	vector<StorageIndex> fetched_old_value_columns;
 	//! The update chunk positions and physical columns of the other columns it sets
 	vector<idx_t> in_place_positions;
 	vector<PhysicalIndex> in_place_columns;
 
 public:
-	//! Sets up which previous values a DELETE + INSERT update fetches, and whether it updates in place the rows that
-	//! keep their indexed values
-	void InitializeDelAndInsert(ClientContext &context);
-
-private:
-	bool InitializeInPlaceUnchangedRows();
+	//! Sets up which previous values a DELETE + INSERT update reads, and whether it updates in place the rows that keep
+	//! their indexed values
+	void InitializeDelAndInsert(const vector<idx_t> &old_value_positions_p, const vector<idx_t> &old_value_inputs_p,
+	                            bool in_place_unchanged_rows_p);
 
 public:
 	// Source interface

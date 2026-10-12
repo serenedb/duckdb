@@ -34,6 +34,13 @@ public:
 	//! Whether or not an UPDATE is a DELETE + INSERT
 	bool update_is_del_and_insert = false;
 	idx_t update_column_count = 0;
+	//! The positions in columns of the columns a DELETE + INSERT update sets whose previous values it reads
+	vector<idx_t> old_value_positions;
+	//! For each of those, the input-chunk index of the previous value that the scan reads, or DConstants::INVALID_INDEX
+	//! when the scan does not read the column and the update fetches the previous value by row id
+	vector<idx_t> old_value_inputs;
+	//! Whether a DELETE + INSERT update updates in place the rows whose indexed values it leaves unchanged
+	bool in_place_unchanged_rows = false;
 
 	void Serialize(Serializer &serializer) const;
 	static unique_ptr<BoundMergeIntoAction> Deserialize(Deserializer &deserializer);

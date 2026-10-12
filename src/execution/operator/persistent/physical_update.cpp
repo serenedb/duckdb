@@ -7,9 +7,7 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/execution/row_id_deduplicator.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb/main/settings.hpp"
 #include "duckdb/parallel/thread_context.hpp"
-#include "duckdb/planner/constraints/bound_check_constraint.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
@@ -31,117 +29,30 @@ PhysicalUpdate::PhysicalUpdate(PhysicalPlan &physical_plan, vector<LogicalType> 
       tableref(tableref), table(table), columns(std::move(columns)), expressions(std::move(expressions)),
       bound_defaults(std::move(bound_defaults)), bound_constraints(std::move(bound_constraints)),
       return_chunk(return_chunk), capture_old_rows(capture_old_rows), old_row_columns(std::move(old_row_columns)),
-      row_id_handling(row_id_handling), index_update(false) {
-	auto &indexes = table.GetDataTableInfo().get()->GetIndexes();
-	auto index_columns = indexes.GetIndexedColumns();
-
-	unordered_set<column_t> update_columns;
-	update_columns.reserve(this->columns.size());
-	for (const auto col : this->columns) {
-		update_columns.insert(col.index);
-	}
-
-	for (const auto &col : table.Columns()) {
-		if (index_columns.find(col.Physical().index) == index_columns.end()) {
-			continue;
-		}
-		if (update_columns.find(col.Physical().index) == update_columns.end()) {
-			continue;
-		}
-		index_update = true;
-		break;
-	}
+      row_id_handling(row_id_handling) {
 }
 
-//! Whether equal values of the type are also identical, so that an unchanged value does not need to be written
-static bool EqualityIsIdentity(const LogicalType &type) {
-	if (type.id() == LogicalTypeId::TIME_TZ) {
-		return false;
-	}
-	switch (type.InternalType()) {
-	case PhysicalType::BOOL:
-	case PhysicalType::INT8:
-	case PhysicalType::INT16:
-	case PhysicalType::INT32:
-	case PhysicalType::INT64:
-	case PhysicalType::INT128:
-	case PhysicalType::UINT8:
-	case PhysicalType::UINT16:
-	case PhysicalType::UINT32:
-	case PhysicalType::UINT64:
-	case PhysicalType::UINT128:
-	case PhysicalType::VARCHAR:
-		return true;
-	default:
-		return false;
-	}
-}
-
-bool PhysicalUpdate::InitializeInPlaceUnchangedRows() {
-	if (update_column_count == 0) {
-		return false;
-	}
-	auto index_columns = table.GetDataTableInfo()->GetIndexes().GetIndexedColumns();
-	physical_index_set_t in_place;
-	idx_t compared = 0;
-	for (idx_t i = 0; i < update_column_count; i++) {
-		auto &type = tableref.GetColumns().GetColumn(columns[i]).Type();
-		if (index_columns.find(columns[i].index) != index_columns.end()) {
-			if (!EqualityIsIdentity(type)) {
-				return false;
-			}
-			compared++;
-		} else if (type.SupportsRegularUpdate()) {
-			in_place.insert(columns[i]);
-		} else {
-			return false;
+void PhysicalUpdate::InitializeDelAndInsert(const vector<idx_t> &old_value_positions_p,
+                                            const vector<idx_t> &old_value_inputs_p, bool in_place_unchanged_rows_p) {
+	D_ASSERT(old_value_positions_p.size() == old_value_inputs_p.size());
+	old_value_positions = old_value_positions_p;
+	old_value_inputs = old_value_inputs_p;
+	in_place_unchanged_rows = in_place_unchanged_rows_p;
+	for (idx_t i = 0; i < old_value_positions.size(); i++) {
+		if (old_value_inputs[i] == DConstants::INVALID_INDEX) {
+			fetched_old_value_columns.emplace_back(columns[old_value_positions[i]].index);
 		}
 	}
-	if (compared == 0 || in_place.empty()) {
-		return false;
-	}
-	// CHECK constraints are verified on the columns updated in place, so these must hold all of a CHECK's columns
-	for (auto &constraint : bound_constraints) {
-		if (constraint->type != ConstraintType::CHECK) {
-			continue;
-		}
-		auto &check = constraint->Cast<BoundCheckConstraint>();
-		idx_t found = 0;
-		for (auto &column : check.bound_columns) {
-			found += in_place.count(column);
-		}
-		if (found != 0 && found != check.bound_columns.size()) {
-			return false;
-		}
-	}
-	for (idx_t i = 0; i < update_column_count; i++) {
-		if (in_place.count(columns[i])) {
-			in_place_positions.push_back(i);
-			in_place_columns.push_back(columns[i]);
-		} else {
-			old_value_positions.push_back(i);
-			old_value_columns.emplace_back(columns[i].index);
-		}
-	}
-	in_place_unchanged_rows = true;
-	return true;
-}
-
-void PhysicalUpdate::InitializeDelAndInsert(ClientContext &context) {
-	if (!update_is_del_and_insert || !index_update) {
+	if (!in_place_unchanged_rows) {
 		return;
 	}
-	if (!Settings::Get<ForceUpdateToDelAndInsertSetting>(context) && InitializeInPlaceUnchangedRows()) {
-		return;
-	}
-	// The delete indexes read the previous values of their columns; the projected columns that are not set hold them
-	auto delete_index_columns = table.GetDataTableInfo()->GetIndexes().GetDeleteIndexColumns();
-	const auto set_count = update_column_count == 0 ? columns.size() : update_column_count;
-	for (idx_t i = 0; i < set_count; i++) {
-		if (delete_index_columns.find(columns[i].index) != delete_index_columns.end()) {
-			old_value_positions.push_back(i);
-			old_value_columns.emplace_back(columns[i].index);
+	for (idx_t i = 0, next = 0; i < update_column_count; i++) {
+		if (next < old_value_positions.size() && old_value_positions[next] == i) {
+			next++;
+			continue;
 		}
+		in_place_positions.push_back(i);
+		in_place_columns.push_back(columns[i]);
 	}
 }
 
@@ -206,6 +117,7 @@ public:
 	DataChunk delete_chunk;
 	DataChunk combined_chunk;
 	DataChunk old_values;
+	DataChunk fetched_old_values;
 	DataChunk in_place_chunk;
 	SelectionVector unchanged_sel;
 	SelectionVector next_sel;
@@ -409,7 +321,8 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 
 	// The update chunk now contains exactly those rows that we are deleting.
 	Vector del_row_ids(Vector::Ref(row_ids));
-	if (deduplicate && update_count != update_chunk.size()) {
+	const bool sliced = deduplicate && update_count != update_chunk.size();
+	if (sliced) {
 		update_chunk.Slice(sel, update_count);
 		del_row_ids.Slice(row_ids, sel, update_count);
 	}
@@ -427,16 +340,28 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 	}
 
 	idx_t unchanged_count = 0;
-	if (!old_value_columns.empty()) {
-		// Fetch the previous values for exactly the rows we update; flatten first because deduplication slices
-		// del_row_ids into a dictionary vector, which Fetch cannot read.
-		del_row_ids.Flatten();
+	if (!old_value_positions.empty()) {
+		auto &fetched = l_state.fetched_old_values;
+		if (!fetched_old_value_columns.empty()) {
+			// Flatten first because deduplication slices del_row_ids into a dictionary vector, which Fetch cannot read.
+			del_row_ids.Flatten();
+			fetched.Reset();
+			ColumnFetchState fetch_state;
+			table.Fetch(DuckTransaction::Get(context.client, table.db), fetched, fetched_old_value_columns, del_row_ids,
+			            update_count, fetch_state);
+		}
 		auto &old_values = l_state.old_values;
 		old_values.Reset();
-		ColumnFetchState fetch_state;
-		table.Fetch(DuckTransaction::Get(context.client, table.db), old_values, old_value_columns, del_row_ids,
-		            update_count, fetch_state);
-		D_ASSERT(old_values.size() == update_count);
+		for (idx_t i = 0, fetched_index = 0; i < old_value_positions.size(); i++) {
+			if (old_value_inputs[i] == DConstants::INVALID_INDEX) {
+				old_values.data[i].Reference(fetched.data[fetched_index++]);
+			} else if (sliced) {
+				old_values.data[i].Slice(chunk.data[old_value_inputs[i]], sel, update_count);
+			} else {
+				old_values.data[i].Reference(chunk.data[old_value_inputs[i]]);
+			}
+		}
+		old_values.CheckCardinality(update_count);
 		if (in_place_unchanged_rows) {
 			unchanged_count = UpdateUnchangedRows(*this, context, l_state, update_chunk, del_row_ids, update_count);
 			update_count -= unchanged_count;
@@ -451,10 +376,10 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 	table.Delete(delete_state, context.client, tableref, del_row_ids, update_count);
 
 	ArrangeTableColumns(mock_chunk, columns, update_chunk, update_count);
-	// The delete indexes read the previous values of the deleted rows: the fetched ones of the columns we set, and
+	// The delete indexes read the previous values of the deleted rows: the read ones of the columns we set, and
 	// those the mock chunk holds for the other columns.
-	auto &delete_chunk = old_value_columns.empty() ? mock_chunk : l_state.delete_chunk;
-	if (!old_value_columns.empty()) {
+	auto &delete_chunk = old_value_positions.empty() ? mock_chunk : l_state.delete_chunk;
+	if (!old_value_positions.empty()) {
 		delete_chunk.Reset();
 		for (idx_t i = 0; i < mock_chunk.ColumnCount(); i++) {
 			delete_chunk.data[i].Reference(mock_chunk.data[i]);
@@ -478,15 +403,22 @@ unique_ptr<GlobalSinkState> PhysicalUpdate::GetGlobalSinkState(ClientContext &co
 unique_ptr<LocalSinkState> PhysicalUpdate::GetLocalSinkState(ExecutionContext &context) const {
 	auto state = make_uniq<UpdateLocalState>(context.client, expressions, table.GetTypes(), bound_defaults,
 	                                         bound_constraints, capture_old_rows, columns, update_column_count);
-	if (old_value_columns.empty()) {
+	if (old_value_positions.empty()) {
 		return std::move(state);
 	}
 	auto table_types = table.GetTypes();
 	vector<LogicalType> old_value_types;
-	for (auto &column : old_value_columns) {
-		old_value_types.push_back(table_types[column.GetPrimaryIndex()]);
+	for (auto position : old_value_positions) {
+		old_value_types.push_back(table_types[columns[position].index]);
 	}
-	state->old_values.Initialize(Allocator::Get(context.client), old_value_types);
+	state->old_values.InitializeEmpty(old_value_types);
+	if (!fetched_old_value_columns.empty()) {
+		vector<LogicalType> fetched_types;
+		for (auto &column : fetched_old_value_columns) {
+			fetched_types.push_back(table_types[column.GetPrimaryIndex()]);
+		}
+		state->fetched_old_values.Initialize(Allocator::Get(context.client), fetched_types);
+	}
 	if (in_place_unchanged_rows) {
 		vector<LogicalType> in_place_types;
 		for (auto &column : in_place_columns) {

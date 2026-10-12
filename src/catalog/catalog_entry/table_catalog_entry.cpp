@@ -339,6 +339,70 @@ bool TableCatalogEntry::ScanColumnSegmentInfo(const QueryContext &context, Colum
 	return false;
 }
 
+//! Whether equal values of the type are also identical, so that an unchanged value does not need to be written
+static bool EqualityIsIdentity(const LogicalType &type) {
+	if (type.id() == LogicalTypeId::TIME_TZ) {
+		return false;
+	}
+	switch (type.InternalType()) {
+	case PhysicalType::BOOL:
+	case PhysicalType::INT8:
+	case PhysicalType::INT16:
+	case PhysicalType::INT32:
+	case PhysicalType::INT64:
+	case PhysicalType::INT128:
+	case PhysicalType::UINT8:
+	case PhysicalType::UINT16:
+	case PhysicalType::UINT32:
+	case PhysicalType::UINT64:
+	case PhysicalType::UINT128:
+	case PhysicalType::VARCHAR:
+		return true;
+	default:
+		return false;
+	}
+}
+
+//! Whether a DELETE + INSERT update can update in place the rows whose indexed values it leaves unchanged: it sets
+//! indexed columns whose equal values are identical and columns that can be updated in place
+static bool CanUpdateUnchangedRowsInPlace(const ColumnList &columns, const LogicalUpdate &update,
+                                          const unordered_set<column_t> &indexed_columns,
+                                          const vector<unique_ptr<BoundConstraint>> &bound_constraints) {
+	physical_index_set_t in_place;
+	idx_t compared = 0;
+	for (idx_t i = 0; i < update.update_column_count; i++) {
+		auto &type = columns.GetColumn(update.columns[i]).Type();
+		if (indexed_columns.find(update.columns[i].index) != indexed_columns.end()) {
+			if (!EqualityIsIdentity(type)) {
+				return false;
+			}
+			compared++;
+		} else if (type.SupportsRegularUpdate()) {
+			in_place.insert(update.columns[i]);
+		} else {
+			return false;
+		}
+	}
+	if (compared == 0 || in_place.empty()) {
+		return false;
+	}
+	// CHECK constraints are verified on the columns updated in place, so these must hold all of a CHECK's columns
+	for (auto &constraint : bound_constraints) {
+		if (constraint->type != ConstraintType::CHECK) {
+			continue;
+		}
+		auto &check = constraint->Cast<BoundCheckConstraint>();
+		idx_t found = 0;
+		for (auto &column : check.bound_columns) {
+			found += in_place.count(column);
+		}
+		if (found != 0 && found != check.bound_columns.size()) {
+			return false;
+		}
+	}
+	return true;
+}
+
 void TableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, LogicalProjection &proj,
                                               LogicalUpdate &update, ClientContext &context) {
 	// check the constraints and indexes of the table to see if we need to project any additional columns
@@ -356,7 +420,8 @@ void TableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, L
 	}
 	// for index updates we always turn any update into an insert and a delete
 	// we thus need all the columns to be available, hence we check if the update touches any index columns
-	update.update_is_del_and_insert = Settings::Get<ForceUpdateToDelAndInsertSetting>(context);
+	const bool force_del_and_insert = Settings::Get<ForceUpdateToDelAndInsertSetting>(context);
+	update.update_is_del_and_insert = force_del_and_insert;
 	TableStorageInfo table_storage_info = GetStorageInfo(context);
 	for (auto index : table_storage_info.index_info) {
 		for (auto &column : update.columns) {
@@ -381,6 +446,40 @@ void TableCatalogEntry::BindUpdateConstraints(Binder &binder, LogicalGet &get, L
 		// the update updates a column required by an index or requires returning the updated rows,
 		// push projections for all columns
 		LogicalUpdate::BindAllColumns(*this, get, proj, update);
+	}
+	if (!update.update_is_del_and_insert || !IsDuckTable()) {
+		return;
+	}
+	// the DELETE + INSERT reads the previous values of the indexed columns it sets: all of them to compare when it
+	// updates unchanged rows in place, otherwise those that the delete indexes read
+	unordered_set<column_t> indexed_columns;
+	unordered_set<column_t> delete_index_columns;
+	for (auto &index : table_storage_info.index_info) {
+		indexed_columns.insert(index.column_set.begin(), index.column_set.end());
+		if (index.is_unique || index.is_foreign) {
+			delete_index_columns.insert(index.column_set.begin(), index.column_set.end());
+		}
+	}
+	update.in_place_unchanged_rows =
+	    !force_del_and_insert &&
+	    CanUpdateUnchangedRowsInPlace(GetColumns(), update, indexed_columns, bound_constraints);
+	auto &read_columns = update.in_place_unchanged_rows ? indexed_columns : delete_index_columns;
+	for (idx_t i = 0; i < update.update_column_count; i++) {
+		if (read_columns.find(update.columns[i].index) == read_columns.end()) {
+			continue;
+		}
+		update.old_value_positions.push_back(i);
+		// a column the scan does not read otherwise is fetched by row id for the updated rows only, instead of being
+		// scanned for every row that the scan reads
+		auto &column = GetColumns().GetColumn(update.columns[i]);
+		auto get_index = get.TryGetProjectionIndex(column.Logical().index);
+		if (!get_index.IsValid()) {
+			update.old_value_inputs.push_back(DConstants::INVALID_INDEX);
+			continue;
+		}
+		update.old_value_inputs.push_back(proj.expressions.size());
+		proj.expressions.push_back(make_uniq<BoundColumnRefExpression>(column.Name(), column.Type(),
+		                                                               ColumnBinding(get.table_index, get_index)));
 	}
 }
 

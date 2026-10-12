@@ -44,6 +44,13 @@ public:
 	//! lock-free path (ASSUME_UNIQUE), deduplicate keeping the first match (KEEP_FIRST), or error (ERROR)
 	RowIdHandling row_id_handling = RowIdHandling::ASSUME_UNIQUE;
 	idx_t update_column_count = 0;
+	//! the positions in columns of the columns a DELETE + INSERT update sets whose previous values it reads
+	vector<idx_t> old_value_positions;
+	//! for each of those, the input-chunk index of the previous value that the scan reads, or DConstants::INVALID_INDEX
+	//! when the scan does not read the column and the update fetches the previous value by row id
+	vector<idx_t> old_value_inputs;
+	//! if set, the DELETE + INSERT updates in place the rows whose indexed values it leaves unchanged
+	bool in_place_unchanged_rows = false;
 
 public:
 	void Serialize(Serializer &serializer) const override;

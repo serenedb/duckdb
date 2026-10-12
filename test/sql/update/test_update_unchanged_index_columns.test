@@ -311,6 +311,60 @@ INSERT INTO g_{force} VALUES (3000, 0, 0);
 ----
 <REGEX>:Constraint Error.*Duplicate key.*
 
+# an UPDATE ... FROM that matches each row twice updates it once, with the previous values of that row
+statement ok
+CREATE TABLE f_{force} (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER);
+
+statement ok
+INSERT INTO f_{force} SELECT i, i * 10, 0 FROM range(1, 1001) r(i);
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE f_{force} SET u = CASE WHEN f_{force}.id % 2 = 0 THEN -f_{force}.u ELSE f_{force}.u END, v = src.i
+FROM (SELECT (i + 1) // 2 AS i FROM range(2000, 0, -1) r(i)) src WHERE f_{force}.id = src.i;
+
+statement ok
+INSERT INTO f_{force} SELECT i + 2000, i * 10, 0 FROM range(2, 1001, 2) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*) FILTER (WHERE id <= 1000 AND u = CASE WHEN id % 2 = 0 THEN -id * 10 ELSE id * 10 END AND v = id), count(*) FILTER (WHERE id > 2000 AND u = (id - 2000) * 10), count(*) FROM f_{force};
+----
+1000	500	1500
+
+statement error
+INSERT INTO f_{force} VALUES (5000, 10, 0);
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+# the same when the UPDATE does not read the column it sets, so it fetches the previous values by row id
+statement ok
+BEGIN;
+
+statement ok
+UPDATE f_{force} SET u = -src.i * 10, v = -src.i
+FROM (SELECT (i + 1) // 2 AS i FROM range(2000, 0, -1) r(i)) src WHERE f_{force}.id = src.i;
+
+statement ok
+INSERT INTO f_{force} SELECT i + 4000, i * 10, 0 FROM range(1, 1001, 2) r(i);
+
+statement ok
+COMMIT;
+
+query IIII
+SELECT count(*) FILTER (WHERE id <= 1000 AND u = -id * 10 AND v = -id), count(*) FILTER (WHERE id BETWEEN 2001 AND 3000 AND u = (id - 2000) * 10), count(*) FILTER (WHERE id > 4000 AND u = (id - 4000) * 10), count(*) FROM f_{force};
+----
+1000	500	500	2000
+
+statement error
+INSERT INTO f_{force} VALUES (6000, 30, 0);
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
 endloop
 
 statement ok
@@ -355,6 +409,28 @@ INSERT	4	40	400
 UPDATE	1	10	103
 UPDATE	3	32	303
 
+# each UPDATE action of a MERGE reads the previous values of the indexed columns that it sets
+statement ok
+MERGE INTO mp USING (VALUES (3, 34, 304), (4, 40, 401)) s(id, u, v) ON mp.id = s.id
+WHEN MATCHED AND s.u = mp.u THEN UPDATE SET u = s.u, v = s.v
+WHEN MATCHED THEN UPDATE SET v = s.v, u = s.u;
+
+query III
+SELECT * FROM mp WHERE id >= 3 ORDER BY id;
+----
+3	34	304
+4	40	401
+
+query I
+SELECT id FROM mp WHERE u = 34;
+----
+3
+
+query I
+SELECT count(*) FROM mp WHERE u = 32;
+----
+0
+
 # INSERT ... ON CONFLICT DO UPDATE is a MERGE
 statement ok
 INSERT INTO mp VALUES (2, 20, 202), (5, 50, 500) ON CONFLICT (id) DO UPDATE SET u = excluded.u, v = excluded.v;
@@ -374,8 +450,8 @@ SELECT * FROM mp ORDER BY id;
 ----
 1	10	104
 2	20	202
-3	32	303
-4	40	400
+3	34	304
+4	40	401
 5	50	500
 
 # INSERT OR REPLACE sets every column but the unique ones, here one of a non-unique index

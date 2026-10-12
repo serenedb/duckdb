@@ -110,6 +110,9 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		result->expressions = std::move(update.expressions);
 		result->update_is_del_and_insert = update.update_is_del_and_insert;
 		result->update_column_count = update.update_column_count;
+		result->old_value_positions = std::move(update.old_value_positions);
+		result->old_value_inputs = std::move(update.old_value_inputs);
+		result->in_place_unchanged_rows = update.in_place_unchanged_rows;
 		break;
 	}
 	case MergeActionType::MERGE_INSERT: {
