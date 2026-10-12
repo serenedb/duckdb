@@ -48,6 +48,7 @@
 #include "duckdb/common/enums/http_status_code.hpp"
 #include "duckdb/common/enums/identifier_case_mode.hpp"
 #include "duckdb/common/enums/index_constraint_type.hpp"
+#include "duckdb/common/enums/job_schedule_kind.hpp"
 #include "duckdb/common/enums/join_type.hpp"
 #include "duckdb/common/enums/joinref_type.hpp"
 #include "duckdb/common/enums/lambda_syntax.hpp"
@@ -602,6 +603,26 @@ AlterIndexType EnumUtil::FromString<AlterIndexType>(std::string_view value) {
 	return static_cast<AlterIndexType>(StringUtil::StringToEnum(GetAlterIndexTypeValues(), 4, "AlterIndexType", value));
 }
 
+const StringUtil::EnumStringLiteral *GetAlterJobTypeValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(AlterJobType::SUSPEND), "SUSPEND" },
+		{ static_cast<uint32_t>(AlterJobType::RESUME), "RESUME" },
+		{ static_cast<uint32_t>(AlterJobType::SET_SCHEDULE), "SET_SCHEDULE" },
+		{ static_cast<uint32_t>(AlterJobType::RENAME), "RENAME" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<AlterJobType>(AlterJobType value) {
+	return StringUtil::EnumToString(GetAlterJobTypeValues(), 4, "AlterJobType", static_cast<uint32_t>(value));
+}
+
+template<>
+AlterJobType EnumUtil::FromString<AlterJobType>(std::string_view value) {
+	return static_cast<AlterJobType>(StringUtil::StringToEnum(GetAlterJobTypeValues(), 4, "AlterJobType", value));
+}
+
 const StringUtil::EnumStringLiteral *GetAlterScalarFunctionTypeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(AlterScalarFunctionType::INVALID), "INVALID" },
@@ -732,19 +753,20 @@ const StringUtil::EnumStringLiteral *GetAlterTypeValues() {
 		{ static_cast<uint32_t>(AlterType::ALTER_PERMISSIONS), "ALTER_PERMISSIONS" },
 		{ static_cast<uint32_t>(AlterType::ALTER_ROLE), "ALTER_ROLE" },
 		{ static_cast<uint32_t>(AlterType::ALTER_INDEX), "ALTER_INDEX" },
-		{ static_cast<uint32_t>(AlterType::REPLACE_DEFINITION), "REPLACE_DEFINITION" }
+		{ static_cast<uint32_t>(AlterType::REPLACE_DEFINITION), "REPLACE_DEFINITION" },
+		{ static_cast<uint32_t>(AlterType::ALTER_JOB), "ALTER_JOB" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<AlterType>(AlterType value) {
-	return StringUtil::EnumToString(GetAlterTypeValues(), 15, "AlterType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterTypeValues(), 16, "AlterType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterType EnumUtil::FromString<AlterType>(std::string_view value) {
-	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 15, "AlterType", value));
+	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 16, "AlterType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAlterViewTypeValues() {
@@ -1288,6 +1310,7 @@ const StringUtil::EnumStringLiteral *GetCatalogTypeValues() {
 		{ static_cast<uint32_t>(CatalogType::FOREIGN_SERVER_ENTRY), "FOREIGN_SERVER_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::SUBSCRIPTION_ENTRY), "SUBSCRIPTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::REPLICATION_ORIGIN_ENTRY), "REPLICATION_ORIGIN_ENTRY" },
+		{ static_cast<uint32_t>(CatalogType::JOB_ENTRY), "JOB_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::TABLE_FUNCTION_ENTRY), "TABLE_FUNCTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::SCALAR_FUNCTION_ENTRY), "SCALAR_FUNCTION_ENTRY" },
 		{ static_cast<uint32_t>(CatalogType::AGGREGATE_FUNCTION_ENTRY), "AGGREGATE_FUNCTION_ENTRY" },
@@ -1308,12 +1331,12 @@ const StringUtil::EnumStringLiteral *GetCatalogTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<CatalogType>(CatalogType value) {
-	return StringUtil::EnumToString(GetCatalogTypeValues(), 31, "CatalogType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetCatalogTypeValues(), 32, "CatalogType", static_cast<uint32_t>(value));
 }
 
 template<>
 CatalogType EnumUtil::FromString<CatalogType>(std::string_view value) {
-	return static_cast<CatalogType>(StringUtil::StringToEnum(GetCatalogTypeValues(), 31, "CatalogType", value));
+	return static_cast<CatalogType>(StringUtil::StringToEnum(GetCatalogTypeValues(), 32, "CatalogType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetCheckpointAbortValues() {
@@ -3409,6 +3432,24 @@ InterruptMode EnumUtil::FromString<InterruptMode>(std::string_view value) {
 	return static_cast<InterruptMode>(StringUtil::StringToEnum(GetInterruptModeValues(), 3, "InterruptMode", value));
 }
 
+const StringUtil::EnumStringLiteral *GetJobScheduleKindValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(JobScheduleKind::EVERY), "EVERY" },
+		{ static_cast<uint32_t>(JobScheduleKind::AFTER), "AFTER" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<JobScheduleKind>(JobScheduleKind value) {
+	return StringUtil::EnumToString(GetJobScheduleKindValues(), 2, "JobScheduleKind", static_cast<uint32_t>(value));
+}
+
+template<>
+JobScheduleKind EnumUtil::FromString<JobScheduleKind>(std::string_view value) {
+	return static_cast<JobScheduleKind>(StringUtil::StringToEnum(GetJobScheduleKindValues(), 2, "JobScheduleKind", value));
+}
+
 const StringUtil::EnumStringLiteral *GetJoinFilterPushdownModeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(JoinFilterPushdownMode::RECONSTRUCT_EXPRESSION), "RECONSTRUCT_EXPRESSION" },
@@ -3817,6 +3858,10 @@ const StringUtil::EnumStringLiteral *GetLogicalOperatorTypeValues() {
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_ATTACH), "LOGICAL_ATTACH" },
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_DETACH), "LOGICAL_DETACH" },
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_CREATE_TRIGGER), "LOGICAL_CREATE_TRIGGER" },
+		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_CREATE_JOB), "LOGICAL_CREATE_JOB" },
+		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_CREATE_ROLE), "LOGICAL_CREATE_ROLE" },
+		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER), "LOGICAL_CREATE_FOREIGN_SERVER" },
+		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_CREATE_TOKENIZER), "LOGICAL_CREATE_TOKENIZER" },
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_EXPLAIN), "LOGICAL_EXPLAIN" },
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_PREPARE), "LOGICAL_PREPARE" },
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_EXECUTE), "LOGICAL_EXECUTE" },
@@ -3837,12 +3882,12 @@ const StringUtil::EnumStringLiteral *GetLogicalOperatorTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<LogicalOperatorType>(LogicalOperatorType value) {
-	return StringUtil::EnumToString(GetLogicalOperatorTypeValues(), 68, "LogicalOperatorType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetLogicalOperatorTypeValues(), 72, "LogicalOperatorType", static_cast<uint32_t>(value));
 }
 
 template<>
 LogicalOperatorType EnumUtil::FromString<LogicalOperatorType>(std::string_view value) {
-	return static_cast<LogicalOperatorType>(StringUtil::StringToEnum(GetLogicalOperatorTypeValues(), 68, "LogicalOperatorType", value));
+	return static_cast<LogicalOperatorType>(StringUtil::StringToEnum(GetLogicalOperatorTypeValues(), 72, "LogicalOperatorType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetLogicalPlanVerificationIssueCodeValues() {
@@ -5027,6 +5072,10 @@ const StringUtil::EnumStringLiteral *GetPhysicalOperatorTypeValues() {
 		{ static_cast<uint32_t>(PhysicalOperatorType::TRANSACTION), "TRANSACTION" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::CREATE_TYPE), "CREATE_TYPE" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::CREATE_TRIGGER), "CREATE_TRIGGER" },
+		{ static_cast<uint32_t>(PhysicalOperatorType::CREATE_JOB), "CREATE_JOB" },
+		{ static_cast<uint32_t>(PhysicalOperatorType::CREATE_ROLE), "CREATE_ROLE" },
+		{ static_cast<uint32_t>(PhysicalOperatorType::CREATE_FOREIGN_SERVER), "CREATE_FOREIGN_SERVER" },
+		{ static_cast<uint32_t>(PhysicalOperatorType::CREATE_TOKENIZER), "CREATE_TOKENIZER" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::ATTACH), "ATTACH" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::DETACH), "DETACH" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::EXPLAIN), "EXPLAIN" },
@@ -5058,12 +5107,12 @@ const StringUtil::EnumStringLiteral *GetPhysicalOperatorTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<PhysicalOperatorType>(PhysicalOperatorType value) {
-	return StringUtil::EnumToString(GetPhysicalOperatorTypeValues(), 90, "PhysicalOperatorType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetPhysicalOperatorTypeValues(), 94, "PhysicalOperatorType", static_cast<uint32_t>(value));
 }
 
 template<>
 PhysicalOperatorType EnumUtil::FromString<PhysicalOperatorType>(std::string_view value) {
-	return static_cast<PhysicalOperatorType>(StringUtil::StringToEnum(GetPhysicalOperatorTypeValues(), 90, "PhysicalOperatorType", value));
+	return static_cast<PhysicalOperatorType>(StringUtil::StringToEnum(GetPhysicalOperatorTypeValues(), 94, "PhysicalOperatorType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetPhysicalTableScanExecutionStrategyValues() {
@@ -7684,6 +7733,8 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 		{ static_cast<uint32_t>(WALType::REPLICATION_LSN), "REPLICATION_LSN" },
 		{ static_cast<uint32_t>(WALType::CREATE_REPLICATION_ORIGIN), "CREATE_REPLICATION_ORIGIN" },
 		{ static_cast<uint32_t>(WALType::DROP_REPLICATION_ORIGIN), "DROP_REPLICATION_ORIGIN" },
+		{ static_cast<uint32_t>(WALType::CREATE_JOB), "CREATE_JOB" },
+		{ static_cast<uint32_t>(WALType::DROP_JOB), "DROP_JOB" },
 		{ static_cast<uint32_t>(WALType::WAL_VERSION), "WAL_VERSION" },
 		{ static_cast<uint32_t>(WALType::CHECKPOINT), "CHECKPOINT" },
 		{ static_cast<uint32_t>(WALType::WAL_FLUSH), "WAL_FLUSH" },
@@ -7695,12 +7746,12 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<WALType>(WALType value) {
-	return StringUtil::EnumToString(GetWALTypeValues(), 45, "WALType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetWALTypeValues(), 47, "WALType", static_cast<uint32_t>(value));
 }
 
 template<>
 WALType EnumUtil::FromString<WALType>(std::string_view value) {
-	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 45, "WALType", value));
+	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 47, "WALType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetWindowAggregationModeValues() {

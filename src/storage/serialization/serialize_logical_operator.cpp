@@ -53,10 +53,19 @@ unique_ptr<LogicalOperator> LogicalOperator::Deserialize(Deserializer &deseriali
 	case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
 		result = LogicalCopyToFile::Deserialize(deserializer);
 		break;
+	case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
+		result = LogicalCreate::Deserialize(deserializer);
+		break;
 	case LogicalOperatorType::LOGICAL_CREATE_INDEX:
 		result = LogicalCreateIndex::Deserialize(deserializer);
 		break;
+	case LogicalOperatorType::LOGICAL_CREATE_JOB:
+		result = LogicalCreate::Deserialize(deserializer);
+		break;
 	case LogicalOperatorType::LOGICAL_CREATE_MACRO:
+		result = LogicalCreate::Deserialize(deserializer);
+		break;
+	case LogicalOperatorType::LOGICAL_CREATE_ROLE:
 		result = LogicalCreate::Deserialize(deserializer);
 		break;
 	case LogicalOperatorType::LOGICAL_CREATE_SCHEMA:
@@ -67,6 +76,9 @@ unique_ptr<LogicalOperator> LogicalOperator::Deserialize(Deserializer &deseriali
 		break;
 	case LogicalOperatorType::LOGICAL_CREATE_TABLE:
 		result = LogicalCreateTable::Deserialize(deserializer);
+		break;
+	case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
+		result = LogicalCreate::Deserialize(deserializer);
 		break;
 	case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
 		result = LogicalCreate::Deserialize(deserializer);
