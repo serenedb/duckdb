@@ -2,7 +2,6 @@
 #include "duckdb/storage/table/table_index_list.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
-#include "duckdb/common/types/constraint_conflict_info.hpp"
 #include "duckdb/common/types/conflict_manager.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/storage/table/append_state.hpp"
@@ -75,7 +74,7 @@ ErrorData IndexEntry::Append(DataChunk &chunk, Vector &row_ids, const shared_ptr
 			if (auto delta = deltas.Find(IndexDeltaType::REMOVED_DATA_DURING_CHECKPOINT)) {
 				lookup_append_info.delete_indexes.push_back(*delta);
 			}
-			bound_index.VerifyAppend(chunk, lookup_append_info, optional_ptr<ConflictManager>());
+			bound_index.VerifyAppend(chunk, lookup_append_info);
 		}
 
 		IndexAppendInfo index_append_info(append_mode, nullptr);
@@ -389,8 +388,7 @@ void IndexEntry::CommitBind(unique_ptr<BoundIndex> bound_index) {
 	bind_state = IndexBindState::BOUND;
 }
 
-void IndexEntry::VerifyAppend(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk,
-                              optional_ptr<ConflictManager> manager) {
+void IndexEntry::VerifyAppend(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk) {
 	auto entry_lock = lock.GetExclusiveLock();
 	D_ASSERT(owned_index->IsBound());
 	auto &bound_index = owned_index->Cast<BoundIndex>();
@@ -402,12 +400,10 @@ void IndexEntry::VerifyAppend(const shared_ptr<IndexEntry> &delete_entry, DataCh
 		D_ASSERT(delete_entry->owned_index->IsBound());
 		index_append_info.delete_indexes.push_back(delete_entry->owned_index->Cast<BoundIndex>());
 	}
-	if (!manager) {
-		if (auto delta = deltas.Find(IndexDeltaType::REMOVED_DATA_DURING_CHECKPOINT)) {
-			index_append_info.delete_indexes.push_back(*delta);
-		}
+	if (auto delta = deltas.Find(IndexDeltaType::REMOVED_DATA_DURING_CHECKPOINT)) {
+		index_append_info.delete_indexes.push_back(*delta);
 	}
-	bound_index.VerifyAppend(chunk, index_append_info, manager);
+	bound_index.VerifyAppend(chunk, index_append_info);
 }
 
 void IndexEntry::VerifyForeignKey(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk,

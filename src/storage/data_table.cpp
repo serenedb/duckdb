@@ -13,7 +13,6 @@
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/types/conflict_manager.hpp"
-#include "duckdb/common/types/constraint_conflict_info.hpp"
 #include "duckdb/common/vector_size.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -876,12 +875,9 @@ void DataTable::VerifyForeignKeyConstraint(optional_ptr<LocalTableStorage> stora
 	}
 
 	// Record conflicts instead of throwing immediately.
-	unordered_set<column_t> empty_column_list;
-	ConflictInfo empty_conflict_info(empty_column_list, false);
-
-	ConflictManager global_conflict_manager(verify_type, count, &empty_conflict_info);
+	ConflictManager global_conflict_manager(verify_type, count);
 	global_conflict_manager.SetMode(ConflictManagerMode::SCAN);
-	ConflictManager local_conflict_manager(verify_type, count, &empty_conflict_info);
+	ConflictManager local_conflict_manager(verify_type, count);
 	local_conflict_manager.SetMode(ConflictManagerMode::SCAN);
 
 	// Global constraint verification.
@@ -940,8 +936,8 @@ void DataTable::VerifyForeignKeyConstraint(optional_ptr<LocalTableStorage> stora
 		} else if (global_conflicts && !local_conflicts) {
 			conflict = global_conflict_manager.GetFirstInvalidIndex(count, /*negate=*/true);
 		} else {
-			auto &global_validity = global_conflict_manager.GetFirstValidity();
-			auto &local_validity = local_conflict_manager.GetFirstValidity();
+			auto &global_validity = global_conflict_manager.GetValidity();
+			auto &local_validity = local_conflict_manager.GetValidity();
 			for (idx_t i = 0; i < count; i++) {
 				auto global_match = global_validity.RowIsValid(i);
 				auto local_match = local_validity.RowIsValid(i);
@@ -997,8 +993,7 @@ void DataTable::VerifyNewConstraint(LocalStorage &local_storage, DataTable &pare
 }
 
 void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, ClientContext &context, DataChunk &chunk,
-                                        optional_ptr<LocalTableStorage> storage,
-                                        optional_ptr<ConflictManager> manager) {
+                                        optional_ptr<LocalTableStorage> storage) {
 	auto &table = constraint_state.table;
 	if (table.HasGeneratedColumns()) {
 		// Verify the generated columns against the inserted values.
@@ -1018,7 +1013,7 @@ void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, Clien
 	}
 
 	if (HasUniqueIndexes()) {
-		info->indexes.VerifyUniqueIndexes(storage ? &storage->delete_indexes : nullptr, chunk, manager,
+		info->indexes.VerifyUniqueIndexes(storage ? &storage->delete_indexes : nullptr, chunk,
 		                                  LocalStorage::Get(context, db).DroppedIndexes());
 	}
 
@@ -1127,7 +1122,7 @@ void DataTable::LocalAppend(LocalAppendState &state, DuckTableEntry &table_entry
 	// This happens only for the global indexes.
 	if (!unsafe) {
 		auto &constraint_state = *state.constraint_state;
-		VerifyAppendConstraints(constraint_state, context, chunk, *state.storage, nullptr);
+		VerifyAppendConstraints(constraint_state, context, chunk, *state.storage);
 	}
 
 	// Append to the transaction-local data.

@@ -116,8 +116,7 @@ public:
 	                     optional_ptr<DataChunk> chunk = nullptr);
 
 	//! Verify that data can be appended to the index without a constraint violation.
-	void VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager) override
-	    DUCKDB_EXCLUDES(lock);
+	void VerifyAppend(DataChunk &chunk, IndexAppendInfo &info) override DUCKDB_EXCLUDES(lock);
 
 	//! Delete a chunk from the ART.
 	idx_t TryDelete(IndexLock &state, DataChunk &entries, Vector &row_identifiers,

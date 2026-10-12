@@ -8,7 +8,6 @@
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
-#include "duckdb/common/types/constraint_conflict_info.hpp"
 #include "duckdb/common/types/conflict_manager.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/storage/table/append_state.hpp"
@@ -345,51 +344,15 @@ bool TableIndexList::HasDeleteIndexes() const {
 }
 
 void TableIndexList::VerifyUniqueIndexes(optional_ptr<const TableIndexList> delete_indexes, DataChunk &chunk,
-                                         optional_ptr<ConflictManager> manager,
                                          optional_ptr<const unordered_set<idx_t>> dropped_indexes) const {
-	auto verifies = [&](const shared_ptr<IndexEntry> &entry) {
-		return entry->IsUnique() && !entry->IsDeferred() && entry->GetIndexType() == ART::TYPE_NAME &&
-		       !(dropped_indexes && dropped_indexes->contains(entry->GetIndexOid()));
-	};
 	annotated_lock_guard lock(index_entries_lock);
-	if (!manager) {
-		for (const auto &entry : index_entries) {
-			if (!verifies(entry)) {
-				continue;
-			}
-			auto delete_entry = delete_indexes ? delete_indexes->FindEntry(*entry) : nullptr;
-			entry->VerifyAppend(delete_entry, chunk, nullptr);
-		}
-		return;
-	}
-
-	// Find all indexes matching the conflict target.
-	const auto &conflict_info = manager->GetConflictInfo();
 	for (const auto &entry : index_entries) {
-		auto index_info = entry->GetStorageInfo();
-		if (!verifies(entry) || !conflict_info.ConflictTargetMatches(index_info.is_unique, index_info.column_set)) {
+		if (!entry->IsUnique() || entry->IsDeferred() || entry->GetIndexType() != ART::TYPE_NAME ||
+		    (dropped_indexes && dropped_indexes->contains(entry->GetIndexOid()))) {
 			continue;
 		}
 		auto delete_entry = delete_indexes ? delete_indexes->FindEntry(*entry) : nullptr;
-		manager->AddIndex(entry, std::move(delete_entry));
-	}
-
-	// Verify indexes matching the conflict target.
-	manager->SetMode(ConflictManagerMode::SCAN);
-	const auto &matching_indexes = manager->MatchingIndexes();
-	const auto &matching_delete_indexes = manager->MatchingDeleteIndexes();
-	for (idx_t i = 0; i < matching_indexes.size(); i++) {
-		matching_indexes[i]->VerifyAppend(matching_delete_indexes[i], chunk, manager);
-	}
-
-	// Scan the other indexes and throw if there are any conflicts.
-	manager->SetMode(ConflictManagerMode::THROW);
-	for (const auto &entry : index_entries) {
-		if (!verifies(entry) || manager->IndexMatches(entry)) {
-			continue;
-		}
-		auto delete_entry = delete_indexes ? delete_indexes->FindEntry(*entry) : nullptr;
-		entry->VerifyAppend(delete_entry, chunk, manager);
+		entry->VerifyAppend(delete_entry, chunk);
 	}
 }
 
@@ -693,21 +656,6 @@ unordered_set<column_t> TableIndexList::GetRemovalColumns() const {
 		column_ids.insert(index_info.column_set.begin(), index_info.column_set.end());
 	}
 	return column_ids;
-}
-
-vector<unordered_set<column_t>> TableIndexList::GetConflictTargetColumns(const ConflictInfo &conflict_info) const {
-	annotated_lock_guard lock(index_entries_lock);
-	vector<unordered_set<column_t>> result;
-	for (const auto &entry : index_entries) {
-		auto index_info = entry->GetStorageInfo();
-		if (!index_info.is_unique || index_info.check_mode == ConstraintCheckMode::DEFERRED ||
-		    !conflict_info.ConflictTargetMatches(index_info.is_unique, index_info.column_set)) {
-			continue;
-		}
-		D_ASSERT(entry->GetBindState() == IndexBindState::BOUND);
-		result.push_back(std::move(index_info.column_set));
-	}
-	return result;
 }
 
 unordered_set<column_t> TableIndexList::GetDeleteIndexColumns() const {

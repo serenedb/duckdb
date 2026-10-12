@@ -20,7 +20,6 @@
 namespace duckdb {
 
 class ConflictManager;
-class ConflictInfo;
 class IndexEntry;
 class TableIndexList;
 template <class TARGET>
@@ -110,9 +109,8 @@ public:
 	//! Returns true, if there are unique indexes.
 	bool HasUniqueIndexes() const;
 	bool HasDeleteIndexes() const;
-	//! Verifies all unique ART indexes that are not deferred, optionally recording conflicts.
+	//! Verifies all unique ART indexes that are not deferred.
 	void VerifyUniqueIndexes(optional_ptr<const TableIndexList> delete_indexes, DataChunk &chunk,
-	                         optional_ptr<ConflictManager> manager,
 	                         optional_ptr<const unordered_set<idx_t>> dropped_indexes) const;
 	//! Vacuums all bound indexes.
 	void Vacuum();
@@ -153,8 +151,6 @@ public:
 	//! Returns the physical table columns referenced by any index.
 	unordered_set<column_t> GetIndexedColumns() const;
 	unordered_set<column_t> GetRemovalColumns() const;
-	//! Returns the column sets of unique indexes matching the conflict target.
-	vector<unordered_set<column_t>> GetConflictTargetColumns(const ConflictInfo &conflict_info) const;
 	unordered_set<column_t> GetDeleteIndexColumns() const;
 	//! Serialize all indexes of the table.
 	IndexSerializationResult SerializeToDisk(QueryContext context, const IndexSerializationInfo &info);

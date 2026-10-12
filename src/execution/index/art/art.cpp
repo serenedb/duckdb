@@ -659,13 +659,9 @@ ErrorData ART::Append(IndexLock &l, DataChunk &chunk, Vector &row_ids, IndexAppe
 	return Insert(l, expr_chunk, row_ids, info);
 }
 
-void ART::VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager) {
-	if (manager) {
-		D_ASSERT(manager->GetVerifyExistenceType() == VerifyExistenceType::APPEND);
-		return VerifyConstraint(chunk, info, *manager);
-	}
-	ConflictManager local_manager(VerifyExistenceType::APPEND, chunk.size());
-	VerifyConstraint(chunk, info, local_manager);
+void ART::VerifyAppend(DataChunk &chunk, IndexAppendInfo &info) {
+	ConflictManager manager(VerifyExistenceType::APPEND, chunk.size());
+	VerifyConstraint(chunk, info, manager);
 }
 
 //===--------------------------------------------------------------------===//
@@ -1009,11 +1005,10 @@ void ART::VerifyLeaf(const NodePtr &leaf_ptr, const ARTKey &key, DeleteIndexInfo
 	};
 
 	if (leaf_ptr.GetType() == NType::LEAF_INLINED) {
-		auto this_row_id = leaf_ptr.GetRowId();
-		if (deleted(this_row_id)) {
+		if (deleted(leaf_ptr.GetRowId())) {
 			return;
 		}
-		if (manager.AddHit(i, this_row_id)) {
+		if (manager.AddHit(i)) {
 			conflict_idx = i;
 		}
 		return;
@@ -1021,14 +1016,14 @@ void ART::VerifyLeaf(const NodePtr &leaf_ptr, const ARTKey &key, DeleteIndexInfo
 
 	if (index_constraint_type == IndexConstraintType::FOREIGN) {
 		if (deleted_row_ids.empty()) {
-			if (manager.AddHit(i, MAX_ROW_ID)) {
+			if (manager.AddHit(i)) {
 				conflict_idx = i;
 			}
 			return;
 		}
 		LiveRowIdFinder finder {deleted_row_ids, nullopt};
 		ScanLeafRowIds(*this, leaf_ptr, finder);
-		if (finder.row_id && manager.AddHit(i, *finder.row_id)) {
+		if (finder.row_id && manager.AddHit(i)) {
 			conflict_idx = i;
 		}
 		return;
@@ -1051,12 +1046,9 @@ void ART::VerifyLeaf(const NodePtr &leaf_ptr, const ARTKey &key, DeleteIndexInfo
 		}
 	}
 
-	auto row_id_it = row_ids.begin();
-	if (manager.AddHit(i, *row_id_it)) {
+	if (manager.AddHit(i)) {
 		conflict_idx = i;
 	}
-	row_id_it++;
-	manager.AddSecondHit(i, *row_id_it);
 }
 
 void ART::VerifyConstraint(DataChunk &chunk, IndexAppendInfo &info, ConflictManager &manager) {
@@ -1087,7 +1079,6 @@ void ART::VerifyConstraint(DataChunk &chunk, IndexAppendInfo &info, ConflictMana
 		VerifyLeaf(leaf_ptr.Get(), keys[i], DeleteIndexInfo(info.delete_indexes), manager, conflict_idx, i);
 	}
 
-	manager.FinishLookup();
 	if (!conflict_idx.IsValid()) {
 		return;
 	}

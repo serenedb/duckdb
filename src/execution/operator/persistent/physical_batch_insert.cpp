@@ -474,8 +474,7 @@ SinkResultType PhysicalBatchInsert::Sink(ExecutionContext &context, DataChunk &i
 	auto &storage = table.GetStorage();
 	auto &local_storage = LocalStorage::Get(context.client, storage.db);
 	auto local_table_storage = local_storage.GetStorage(table.GetStorage());
-	storage.VerifyAppendConstraints(*lstate.constraint_state, context.client, insert_chunk, local_table_storage,
-	                                nullptr);
+	storage.VerifyAppendConstraints(*lstate.constraint_state, context.client, insert_chunk, local_table_storage);
 
 	auto &optimistic_collection = table.GetStorage().GetOptimisticCollection(context.client, lstate.collection_index);
 	auto &collection = *optimistic_collection.collection;

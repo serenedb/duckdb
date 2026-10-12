@@ -12,7 +12,6 @@
 
 #include "duckdb/execution/index/unbound_index.hpp"
 #include "duckdb/common/enums/index_constraint_type.hpp"
-#include "duckdb/common/types/constraint_conflict_info.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -128,8 +127,7 @@ public:
 	}
 
 	//! Verify that data can be appended to the index without a constraint violation.
-	virtual void VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager)
-	    DUCKDB_EXCLUDES(lock);
+	virtual void VerifyAppend(DataChunk &chunk, IndexAppendInfo &info) DUCKDB_EXCLUDES(lock);
 	//! Verifies the constraint for a chunk of data.
 	virtual void VerifyConstraint(DataChunk &chunk, IndexAppendInfo &info, ConflictManager &manager)
 	    DUCKDB_EXCLUDES(lock);

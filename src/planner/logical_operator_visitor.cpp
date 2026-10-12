@@ -135,16 +135,6 @@ static void EnumerateOperatorExpressions(OPERATOR &op, const FUNC &callback) {
 		}
 		break;
 	}
-	case LogicalOperatorType::LOGICAL_INSERT: {
-		auto &insert = op.template Cast<LogicalInsert>();
-		if (insert.on_conflict_info.on_conflict_condition) {
-			callback(&insert.on_conflict_info.on_conflict_condition);
-		}
-		if (insert.on_conflict_info.do_update_condition) {
-			callback(&insert.on_conflict_info.do_update_condition);
-		}
-		break;
-	}
 	case LogicalOperatorType::LOGICAL_DEPENDENT_JOIN: {
 		auto &join = op.template Cast<LogicalDependentJoin>();
 		if (join.condition) {

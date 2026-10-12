@@ -48,7 +48,7 @@ ErrorData BoundIndex::Append(DataChunk &chunk, Vector &row_ids, IndexAppendInfo 
 	return Append(l, chunk, row_ids, info);
 }
 
-void BoundIndex::VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager) {
+void BoundIndex::VerifyAppend(DataChunk &chunk, IndexAppendInfo &info) {
 	throw NotImplementedException("this implementation of VerifyAppend does not exist.");
 }
 

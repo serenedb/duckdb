@@ -147,8 +147,7 @@ public:
 	//! Replaces the unbound physical index with its bound representation.
 	void CommitBind(unique_ptr<BoundIndex> bound_index);
 	//! Verifies that rows can be appended to the bound physical index.
-	void VerifyAppend(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk,
-	                  optional_ptr<ConflictManager> manager);
+	void VerifyAppend(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk);
 	//! Verifies a foreign key constraint against the physical index and its checkpoint deltas.
 	void VerifyForeignKey(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk,
 	                      ConflictManager &conflict_manager);

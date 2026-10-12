@@ -91,12 +91,6 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 		break;
 	}
 	case MergeActionType::MERGE_INSERT: {
-		vector<unique_ptr<Expression>> set_expressions;
-		vector<PhysicalIndex> set_columns;
-		vector<LogicalType> set_types;
-		unordered_set<column_t> on_conflict_filter;
-		vector<column_t> columns_to_fetch;
-
 		// transform expressions if required
 		if (!action.column_index_map.empty()) {
 			//! Deprecated: plan expressions for default expressions, now set at bind time
@@ -118,10 +112,7 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 		auto &action_input = PlanMergeActionSource(planner, plan, condition, *result);
 
 		result->op = planner.Make<PhysicalInsert>(std::move(return_types), storage_table, std::move(bound_constraints),
-		                                          std::move(set_expressions), std::move(set_columns),
-		                                          std::move(set_types), cardinality, op.return_chunk, !op.return_chunk,
-		                                          OnConflictAction::THROW, nullptr, nullptr,
-		                                          std::move(on_conflict_filter), std::move(columns_to_fetch), false);
+		                                          cardinality, op.return_chunk, !op.return_chunk);
 		result->op->children.push_back(action_input);
 		break;
 	}

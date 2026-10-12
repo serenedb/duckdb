@@ -108,15 +108,6 @@ PhysicalOperator &DuckCatalog::PlanInsert(ClientContext &context, PhysicalPlanGe
 		parallel_streaming_insert = false;
 		use_batch_index = false;
 	}
-	if (op.on_conflict_info.action_type != OnConflictAction::THROW) {
-		// We don't support ON CONFLICT clause in batch insertion operation currently
-		use_batch_index = false;
-	}
-	if (op.on_conflict_info.action_type == OnConflictAction::UPDATE) {
-		// When we potentially need to perform updates, we have to check that row is not updated twice
-		// that currently needs to be done for every chunk, which would add a huge bottleneck to parallelized insertion
-		parallel_streaming_insert = false;
-	}
 	if (!op.column_index_map.empty()) {
 		//! Deprecated: The column_index_map is only populated by older versions.
 		plan = planner.ResolveDefaultsProjection(op, *plan);
@@ -129,13 +120,9 @@ PhysicalOperator &DuckCatalog::PlanInsert(ClientContext &context, PhysicalPlanGe
 		return insert;
 	}
 
-	auto &insert = planner.Make<PhysicalInsert>(
-	    op.types, storage_table, std::move(op.bound_constraints), std::move(op.expressions),
-	    std::move(op.on_conflict_info.set_columns), std::move(op.on_conflict_info.set_types), op.estimated_cardinality,
-	    op.return_chunk, parallel_streaming_insert && num_threads > 1, op.on_conflict_info.action_type,
-	    std::move(op.on_conflict_info.on_conflict_condition), std::move(op.on_conflict_info.do_update_condition),
-	    std::move(op.on_conflict_info.on_conflict_filter), std::move(op.on_conflict_info.columns_to_fetch),
-	    op.on_conflict_info.update_is_del_and_insert);
+	auto &insert =
+	    planner.Make<PhysicalInsert>(op.types, storage_table, std::move(op.bound_constraints), op.estimated_cardinality,
+	                                 op.return_chunk, parallel_streaming_insert && num_threads > 1);
 	insert.children.push_back(*plan);
 	return insert;
 }

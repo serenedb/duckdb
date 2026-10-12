@@ -10,7 +10,6 @@ add_library_unity(
   blob.cpp
   cast_helpers.cpp
   conflict_manager.cpp
-  conflict_info.cpp
   data_chunk.cpp
   date.cpp
   decimal.cpp

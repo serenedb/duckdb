@@ -8,7 +8,6 @@
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_create_index.hpp"
 #include "duckdb/planner/operator/logical_extension_operator.hpp"
-#include "duckdb/planner/operator/logical_insert.hpp"
 
 namespace duckdb {
 
@@ -178,34 +177,6 @@ void ColumnBindingResolver::VisitOperator(LogicalOperator &op) {
 		types = op.types;
 		VisitOperatorExpressions(op);
 		return;
-	}
-	case LogicalOperatorType::LOGICAL_INSERT: {
-		//! We want to execute the normal path, but also add a dummy 'excluded' binding if there is a
-		// ON CONFLICT DO UPDATE clause
-		auto &insert_op = op.Cast<LogicalInsert>();
-		if (insert_op.on_conflict_info.action_type != OnConflictAction::THROW) {
-			// Get the bindings from the children
-			VisitOperatorChildren(op);
-			auto column_count = insert_op.table.GetColumns().PhysicalColumnCount();
-			auto dummy_bindings =
-			    LogicalOperator::GenerateColumnBindings(insert_op.on_conflict_info.excluded_table_index, column_count);
-			// Now insert our dummy bindings at the start of the bindings,
-			// so the first 'column_count' indices of the chunk are reserved for our 'excluded' columns
-			bindings.insert(bindings.begin(), dummy_bindings.begin(), dummy_bindings.end());
-			// TODO: fill types in too (clearing skips type checks)
-			types.clear();
-			if (insert_op.on_conflict_info.on_conflict_condition) {
-				VisitExpression(&insert_op.on_conflict_info.on_conflict_condition);
-			}
-			if (insert_op.on_conflict_info.do_update_condition) {
-				VisitExpression(&insert_op.on_conflict_info.do_update_condition);
-			}
-			VisitOperatorExpressions(op);
-			bindings = op.GetColumnBindings();
-			types = op.types;
-			return;
-		}
-		break;
 	}
 	case LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR: {
 		auto &ext_op = op.Cast<LogicalExtensionOperator>();
