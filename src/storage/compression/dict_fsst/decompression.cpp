@@ -245,6 +245,21 @@ idx_t CompressedStringScanState::UnpackCodes(idx_t start, idx_t scan_count) {
 	return start_offset;
 }
 
+void CompressedStringScanState::FetchRow(Vector &result, idx_t result_idx, idx_t row) {
+	if (mode == DictFSSTMode::FSST_ONLY || mode == DictFSSTMode::FSST_PLUS || dictionary) {
+		ScanToFlatVector(result, result_idx, row, 1);
+		return;
+	}
+	const auto string_number =
+	    BitpackingPrimitives::UnPackValue<sel_t>(dictionary_indices_ptr, row, dictionary_indices_width);
+	if (string_number == 0) {
+		FlatVector::ValidityMutable(result).SetInvalid(result_idx);
+		return;
+	}
+	FlatVector::GetDataMutable<string_t>(result)[result_idx] =
+	    FetchEntry(StringVector::GetStringAllocator(result), string_number);
+}
+
 const SelectionVector &CompressedStringScanState::GetSelVec(idx_t start, idx_t scan_count) {
 	const idx_t start_offset = UnpackCodes(start, scan_count);
 	sel_vec->ShiftLeft(start_offset, scan_count);

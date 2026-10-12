@@ -154,7 +154,7 @@ void DictFSSTCompressionStorage::StringFetchRows(ColumnSegment &segment, ColumnF
 		return segment_state;
 	});
 	for (idx_t i = 0; i < count; i++) {
-		scan_state.ScanToFlatVector(result, result_offset + result_sel.get_index(i), rows[i], 1);
+		scan_state.FetchRow(result, result_offset + result_sel.get_index(i), rows[i]);
 	}
 }
 

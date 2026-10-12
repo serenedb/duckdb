@@ -616,6 +616,8 @@ public:
 	ContainerMetadata GetContainerMetadata(idx_t container_index);
 	data_ptr_t GetStartOfContainerData(idx_t container_index);
 	ContainerScanState &LoadContainer(idx_t container_index, idx_t internal_offset);
+	bool RowIsValid(idx_t row);
+	const idx_t *CompressedSegmentStarts(idx_t container_index, const uint8_t *segments, idx_t count);
 	void ScanInternal(ContainerScanState &scan_state, idx_t to_scan, ValidityMask &result, idx_t offset);
 	idx_t GetContainerIndex(idx_t start_index, idx_t &offset);
 	void ScanPartial(idx_t start_idx, ValidityMask &result, idx_t offset, idx_t count);
@@ -629,6 +631,8 @@ public:
 	ContainerMetadataCollection metadata_collection;
 	vector<ContainerMetadata> container_metadata;
 	vector<idx_t> data_start_position;
+	idx_t lookup_container = DConstants::INVALID_INDEX;
+	idx_t lookup_starts[COMPRESSED_SEGMENT_COUNT + 1];
 };
 
 //! Boolean BitPacking

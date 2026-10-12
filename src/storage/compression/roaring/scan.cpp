@@ -330,6 +330,62 @@ ContainerScanState &RoaringScanState::LoadContainer(idx_t container_index, idx_t
 	return *current_container;
 }
 
+const idx_t *RoaringScanState::CompressedSegmentStarts(idx_t container_index, const uint8_t *segments, idx_t count) {
+	if (lookup_container != container_index) {
+		idx_t start = 0;
+		lookup_starts[0] = 0;
+		for (idx_t i = 0; i < COMPRESSED_SEGMENT_COUNT; i++) {
+			start += segments[i];
+			lookup_starts[i + 1] = MinValue<idx_t>(start, count);
+		}
+		lookup_container = container_index;
+	}
+	return lookup_starts;
+}
+
+bool RoaringScanState::RowIsValid(idx_t row) {
+	idx_t offset;
+	auto container_index = GetContainerIndex(row, offset);
+	auto metadata = GetContainerMetadata(container_index);
+	auto data = GetStartOfContainerData(container_index);
+	if (metadata.IsUncompressed()) {
+		auto bitset = reinterpret_cast<const validity_t *>(data);
+		return ValidityMask::RowIsValid(bitset[offset / ValidityMask::BITS_PER_VALUE],
+		                                offset % ValidityMask::BITS_PER_VALUE);
+	}
+	const auto segment = offset / COMPRESSED_SEGMENT_SIZE;
+	const auto low = static_cast<uint8_t>(offset % COMPRESSED_SEGMENT_SIZE);
+	if (metadata.IsRun()) {
+		D_ASSERT(metadata.IsInverted());
+		auto number_of_runs = metadata.NumberOfRuns();
+		if (number_of_runs >= COMPRESSED_RUN_THRESHOLD) {
+			auto starts = CompressedSegmentStarts(container_index, data, number_of_runs * 2);
+			auto values = data + COMPRESSED_SEGMENT_COUNT;
+			auto last = std::upper_bound(values + starts[segment], values + starts[segment + 1], low);
+			return NumericCast<idx_t>(last - values) % 2 == 0;
+		}
+		auto runs = reinterpret_cast<const RunContainerRLEPair *>(data);
+		auto next = std::upper_bound(runs, runs + number_of_runs, offset,
+		                             [](idx_t value, const RunContainerRLEPair &run) { return value < run.start; });
+		if (next == runs) {
+			return true;
+		}
+		auto &run = *(next - 1);
+		return offset >= idx_t(run.start) + 1 + run.length;
+	}
+	auto cardinality = metadata.Cardinality();
+	bool listed;
+	if (cardinality >= COMPRESSED_ARRAY_THRESHOLD) {
+		auto starts = CompressedSegmentStarts(container_index, data, cardinality);
+		auto values = data + COMPRESSED_SEGMENT_COUNT;
+		listed = std::binary_search(values + starts[segment], values + starts[segment + 1], low);
+	} else {
+		auto array = reinterpret_cast<const uint16_t *>(data);
+		listed = std::binary_search(array, array + cardinality, static_cast<uint16_t>(offset));
+	}
+	return metadata.IsInverted() ? !listed : listed;
+}
+
 void RoaringScanState::ScanInternal(ContainerScanState &scan_state, idx_t to_scan, ValidityMask &result, idx_t offset) {
 	scan_state.ScanPartial(result, offset, to_scan);
 }
