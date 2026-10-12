@@ -50,8 +50,9 @@ public:
 		return false;
 	}
 
-	bool FileExists(const string &path, optional_ptr<FileOpener> opener) override {
-		return LocalFileSystem::FileExists(MapPath(path), opener);
+	FileExistence TryFileExists(const string &path, optional_ptr<FileOpener> opener,
+	                            optional_ptr<ErrorData> error) override {
+		return LocalFileSystem::TryFileExists(MapPath(path), opener, error);
 	}
 
 	vector<OpenFileInfo> Glob(const string &path, FileOpener *opener) override {

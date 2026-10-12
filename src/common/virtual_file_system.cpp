@@ -271,8 +271,13 @@ void VirtualFileSystem::FileSync(FileHandle &handle) {
 }
 
 // need to look up correct fs for this
-bool VirtualFileSystem::DirectoryExists(const string &directory, optional_ptr<FileOpener> opener) {
-	return FindFileSystem(directory, opener).DirectoryExists(directory, opener);
+FileExistence VirtualFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
+                                                    optional_ptr<ErrorData> error) {
+	try {
+		return FindFileSystem(directory, opener).TryDirectoryExists(directory, opener, error);
+	} catch (std::exception &ex) {
+		return ClassifyExistenceFailure(ex, error);
+	}
 }
 void VirtualFileSystem::CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) {
 	CreateDirectoryExtended(directory, {CreateDirectoryMode::SINGLE}, opener);
@@ -306,8 +311,13 @@ void VirtualFileSystem::MoveFile(const string &source, const string &target, opt
 	FindFileSystem(source, opener).MoveFile(source, target, opener);
 }
 
-bool VirtualFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
-	return FindFileSystem(filename, opener).FileExists(filename, opener);
+FileExistence VirtualFileSystem::TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
+                                               optional_ptr<ErrorData> error) {
+	try {
+		return FindFileSystem(filename, opener).TryFileExists(filename, opener, error);
+	} catch (std::exception &ex) {
+		return ClassifyExistenceFailure(ex, error);
+	}
 }
 
 bool VirtualFileSystem::IsPipe(const string &filename, optional_ptr<FileOpener> opener) {

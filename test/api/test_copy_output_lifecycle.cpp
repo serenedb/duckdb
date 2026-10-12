@@ -78,14 +78,14 @@ public:
 	unique_ptr<FileHandle> OpenFile(const string &path, FileOpenFlags flags, optional_ptr<FileOpener>) override {
 		return make_uniq<Handle>(*this, path, flags);
 	}
-	bool FileExists(const string &, optional_ptr<FileOpener>) override {
-		return false;
+	FileExistence TryFileExists(const string &, optional_ptr<FileOpener>, optional_ptr<ErrorData>) override {
+		return FileExistence::MISSING;
 	}
 	bool IsPipe(const string &, optional_ptr<FileOpener>) override {
 		return false;
 	}
-	bool DirectoryExists(const string &, optional_ptr<FileOpener>) override {
-		return false;
+	FileExistence TryDirectoryExists(const string &, optional_ptr<FileOpener>, optional_ptr<ErrorData>) override {
+		return FileExistence::MISSING;
 	}
 	bool CreateDirectoryExtended(const string &, const CreateDirectoryOptions &, optional_ptr<FileOpener>) override {
 		return false;
@@ -93,6 +93,43 @@ public:
 	bool ListFiles(const string &, const std::function<void(const string &, bool)> &, FileOpener *) override {
 		return true;
 	}
+};
+
+class RefusedExistenceFileSystem : public FileSystem {
+public:
+	explicit RefusedExistenceFileSystem(shared_ptr<vector<string>> removed_p) : removed(std::move(removed_p)) {
+	}
+
+	string GetName() const override {
+		return "RefusedExistenceFileSystem";
+	}
+	bool CanHandleFile(const string &path) override {
+		return StringUtil::StartsWith(path, "refused-existence-test://");
+	}
+	bool IsManuallySet() override {
+		return true;
+	}
+	FileExistence TryFileExists(const string &path, optional_ptr<FileOpener>, optional_ptr<ErrorData> error) override {
+		return Refuse(path, error);
+	}
+	FileExistence TryDirectoryExists(const string &path, optional_ptr<FileOpener>,
+	                                 optional_ptr<ErrorData> error) override {
+		return Refuse(path, error);
+	}
+	static FileExistence Refuse(const string &path, optional_ptr<ErrorData> error) {
+		if (error) {
+			*error = ErrorData(PermissionException("checking \"%s\" is refused", path));
+		}
+		return FileExistence::FORBIDDEN;
+	}
+	void RemoveFile(const string &path, optional_ptr<FileOpener>) override {
+		removed->push_back(path);
+	}
+	void RemoveFiles(const vector<string> &paths, optional_ptr<FileOpener>) override {
+		removed->insert(removed->end(), paths.begin(), paths.end());
+	}
+
+	shared_ptr<vector<string>> removed;
 };
 
 struct LifecycleCopyGlobalData : GlobalFunctionData {
@@ -531,6 +568,19 @@ TEST_CASE("COPY output lifecycle removes owned files after failure", "[api][copy
 	}
 	REQUIRE(fs.FileExists(successful_path));
 	fs.RemoveFile(successful_path);
+}
+
+TEST_CASE("COPY output lifecycle keeps an output whose existence it cannot check", "[api][copy]") {
+	DuckDB db(nullptr);
+	Connection connection(db);
+	auto &fs = FileSystem::GetFileSystem(*connection.context);
+	auto removed = make_shared_ptr<vector<string>>();
+	fs.RegisterSubSystem(make_uniq<RefusedExistenceFileSystem>(removed));
+	{
+		CopyOutputLifecycle lifecycle(*connection.context);
+		lifecycle.RegisterFile("refused-existence-test://bucket/out.csv");
+	}
+	REQUIRE(removed->empty());
 }
 
 TEST_CASE("COPY output lifecycle removes only empty query-created directories", "[api][copy]") {

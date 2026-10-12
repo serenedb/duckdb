@@ -15,8 +15,12 @@ namespace duckdb {
 
 namespace {
 
-static constexpr const char *CGROUP_PATH = "/proc/self/cgroup";
+static constexpr string CGROUP_PATH = "/proc/self/cgroup";
 static constexpr const int64_t DEFAULT_CGROUP_FILE_BUFFER_SIZE = 1024;
+
+static bool Readable(FileSystem &fs, const string &path) {
+	return fs.TryFileExists(path) == FileExistence::EXISTS;
+}
 
 struct CGroupEntry {
 public:
@@ -43,7 +47,7 @@ public:
 
 static vector<CGroupEntry> ParseGroupEntries(FileSystem &fs) {
 	vector<CGroupEntry> result;
-	if (!fs.FileExists(CGROUP_PATH)) {
+	if (!Readable(fs, CGROUP_PATH)) {
 		return result;
 	}
 
@@ -98,7 +102,7 @@ static optional_idx GetCPUCountV2(const string &cgroup_path, FileSystem &fs) {
 	//! the length of a period (in microseconds)
 	int64_t period;
 
-	if (!fs.FileExists(cpu_max)) {
+	if (!Readable(fs, cpu_max)) {
 		return optional_idx();
 	}
 
@@ -124,7 +128,7 @@ static optional_idx GetCPUCountV1(const string &cgroup_path, FileSystem &fs) {
 	auto cfs_quota = StringUtil::Format(CFS_QUOTA, cgroup_path);
 	auto cfs_period = StringUtil::Format(CFS_PERIOD, cgroup_path);
 
-	if (!fs.FileExists(cfs_quota) || !fs.FileExists(cfs_period)) {
+	if (!Readable(fs, cfs_quota) || !Readable(fs, cfs_period)) {
 		return optional_idx();
 	}
 
@@ -160,7 +164,7 @@ static optional_idx GetCPUCountV1(const string &cgroup_path, FileSystem &fs) {
 }
 
 static optional_idx ReadMemoryLimit(FileSystem &fs, const string &file_path) {
-	if (!fs.FileExists(file_path)) {
+	if (!Readable(fs, file_path)) {
 		return optional_idx();
 	}
 

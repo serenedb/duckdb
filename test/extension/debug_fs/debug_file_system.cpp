@@ -231,8 +231,9 @@ unique_ptr<FileHandle> DebugFileSystem::OpenCompressedFile(QueryContext context,
 	return make_uniq<DebugFileHandle>(*this, std::move(compressed));
 }
 
-bool DebugFileSystem::DirectoryExists(const string &directory, optional_ptr<FileOpener> opener) {
-	return inner_fs->DirectoryExists(directory, opener);
+FileExistence DebugFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
+                                                  optional_ptr<ErrorData> error) {
+	return inner_fs->TryDirectoryExists(directory, opener, error);
 }
 
 void DebugFileSystem::CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) {
@@ -261,8 +262,9 @@ void DebugFileSystem::MoveFile(const string &source, const string &target, optio
 	inner_fs->MoveFile(source, target, opener);
 }
 
-bool DebugFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
-	return inner_fs->FileExists(filename, opener);
+FileExistence DebugFileSystem::TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
+                                             optional_ptr<ErrorData> error) {
+	return inner_fs->TryFileExists(filename, opener, error);
 }
 
 bool DebugFileSystem::IsPipe(const string &filename, optional_ptr<FileOpener> opener) {

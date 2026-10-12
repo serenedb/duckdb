@@ -67,29 +67,51 @@ extern "C" WINBASEAPI BOOL QueryFullProcessImageNameW(HANDLE, DWORD, LPWSTR, PDW
 
 namespace duckdb {
 
-#ifndef _WIN32
-bool LocalFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
-	if (!filename.empty()) {
-		auto normalized_file = ExpandPath(filename, opener);
-		struct stat status;
-		if (stat(normalized_file.c_str(), &status) == 0 && S_ISREG(status.st_mode)) {
-			return true;
-		}
+static FileExistence StatFailure(const string &path, int error_code, optional_ptr<ErrorData> error) {
+	if (error_code == ENOENT || error_code == ENOTDIR) {
+		return FileExistence::MISSING;
 	}
-	// if any condition fails
-	return false;
+	if (error) {
+		*error = ErrorData(IOException({{"errno", std::to_string(error_code)}},
+		                               "Cannot check whether \"%s\" exists: %s", path, strerror(error_code)));
+	}
+	return error_code == EACCES || error_code == EPERM ? FileExistence::FORBIDDEN : FileExistence::UNKNOWN;
+}
+
+static bool IsPipeOrThrow(const string &path, bool stat_ok, bool is_pipe, int error_code) {
+	if (stat_ok) {
+		return is_pipe;
+	}
+	ErrorData error;
+	if (StatFailure(path, error_code, &error) == FileExistence::MISSING) {
+		return false;
+	}
+	error.Throw();
+}
+
+#ifndef _WIN32
+FileExistence LocalFileSystem::TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
+                                             optional_ptr<ErrorData> error) {
+	if (filename.empty()) {
+		return FileExistence::MISSING;
+	}
+	auto normalized_file = ExpandPath(filename, opener);
+	struct stat status;
+	if (stat(normalized_file.c_str(), &status) != 0) {
+		return StatFailure(normalized_file, errno, error);
+	}
+	return S_ISREG(status.st_mode) ? FileExistence::EXISTS : FileExistence::MISSING;
 }
 
 bool LocalFileSystem::IsPipe(const string &filename, optional_ptr<FileOpener> opener) {
-	if (!filename.empty()) {
-		auto normalized_file = ExpandPath(filename, opener);
-		struct stat status;
-		if (stat(normalized_file.c_str(), &status) == 0 && (S_ISFIFO(status.st_mode) || S_ISCHR(status.st_mode))) {
-			return true;
-		}
+	if (filename.empty()) {
+		return false;
 	}
-	// if any condition fails
-	return false;
+	auto normalized_file = ExpandPath(filename, opener);
+	struct stat status;
+	const bool stat_ok = stat(normalized_file.c_str(), &status) == 0;
+	return IsPipeOrThrow(normalized_file, stat_ok, stat_ok && (S_ISFIFO(status.st_mode) || S_ISCHR(status.st_mode)),
+	                     errno);
 }
 
 #else
@@ -161,23 +183,22 @@ static std::wstring NormalizePathAndConvertToUnicode(FileSystem &fs, const strin
 	return WINDOWS_LOCAL_LONG_PATH_PREFIX + abs_path;
 }
 
-bool LocalFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
+FileExistence LocalFileSystem::TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
+                                             optional_ptr<ErrorData> error) {
 	auto unicode_path = NormalizePathAndConvertToUnicode(*this, filename, opener);
 	const wchar_t *wpath = unicode_path.c_str();
 	struct _stati64 status; // typos:ignore
-	if (_wstati64(wpath, &status) == 0 && (status.st_mode & S_IFREG)) {
-		return true;
+	if (_wstati64(wpath, &status) != 0) {
+		return StatFailure(filename, errno, error);
 	}
-	return false;
+	return (status.st_mode & S_IFREG) ? FileExistence::EXISTS : FileExistence::MISSING;
 }
 bool LocalFileSystem::IsPipe(const string &filename, optional_ptr<FileOpener> opener) {
 	auto unicode_path = NormalizePathAndConvertToUnicode(*this, filename, opener);
 	const wchar_t *wpath = unicode_path.c_str();
 	struct _stati64 status; // typos:ignore
-	if (_wstati64(wpath, &status) == 0 && (status.st_mode & _S_IFCHR)) {
-		return true;
-	}
-	return false;
+	const bool stat_ok = _wstati64(wpath, &status) == 0;
+	return IsPipeOrThrow(filename, stat_ok, stat_ok && (status.st_mode & _S_IFCHR), errno);
 }
 #endif
 
@@ -653,18 +674,19 @@ void LocalFileSystem::Truncate(FileHandle &handle, int64_t new_size) {
 	}
 }
 
-bool LocalFileSystem::DirectoryExists(const string &directory, optional_ptr<FileOpener> opener) {
+FileExistence LocalFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
+                                                  optional_ptr<ErrorData> error) {
 	ApplyLocalFileSystemDelay(opener);
 
-	if (!directory.empty()) {
-		auto normalized_dir = ExpandPath(directory, opener);
-		struct stat status;
-		if (stat(normalized_dir.c_str(), &status) == 0 && S_ISDIR(status.st_mode)) {
-			return true;
-		}
+	if (directory.empty()) {
+		return FileExistence::MISSING;
 	}
-	// if any condition fails
-	return false;
+	auto normalized_dir = ExpandPath(directory, opener);
+	struct stat status;
+	if (stat(normalized_dir.c_str(), &status) != 0) {
+		return StatFailure(normalized_dir, errno, error);
+	}
+	return S_ISDIR(status.st_mode) ? FileExistence::EXISTS : FileExistence::MISSING;
 }
 
 void LocalFileSystem::CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) {
@@ -1506,9 +1528,21 @@ static DWORD WindowsGetFileAttributes(const std::wstring &filename) {
 	return GetFileAttributesW(filename.c_str());
 }
 
-bool LocalFileSystem::DirectoryExists(const string &directory, optional_ptr<FileOpener> opener) {
+FileExistence LocalFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
+                                                  optional_ptr<ErrorData> error) {
 	DWORD attrs = WindowsGetFileAttributes(*this, directory, opener);
-	return (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY));
+	if (attrs != INVALID_FILE_ATTRIBUTES) {
+		return (attrs & FILE_ATTRIBUTE_DIRECTORY) ? FileExistence::EXISTS : FileExistence::MISSING;
+	}
+	auto error_code = GetLastError();
+	if (error_code == ERROR_FILE_NOT_FOUND || error_code == ERROR_PATH_NOT_FOUND) {
+		return FileExistence::MISSING;
+	}
+	if (error) {
+		auto message = LocalFileSystem::GetLastErrorAsString();
+		*error = ErrorData(IOException("Cannot check whether \"%s\" exists: %s", directory, message));
+	}
+	return error_code == ERROR_ACCESS_DENIED ? FileExistence::FORBIDDEN : FileExistence::UNKNOWN;
 }
 
 void LocalFileSystem::CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) {

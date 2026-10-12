@@ -33,8 +33,8 @@ public:
 		return "ExistingDirectoryFileSystem";
 	}
 
-	bool DirectoryExists(const string &, optional_ptr<FileOpener>) override {
-		return true;
+	FileExistence TryDirectoryExists(const string &, optional_ptr<FileOpener>, optional_ptr<ErrorData>) override {
+		return FileExistence::EXISTS;
 	}
 
 	void CreateDirectory(const string &, optional_ptr<FileOpener>) override {
@@ -658,6 +658,38 @@ void TestCreateSymlink(const string &source, const string &target, bool director
 	}
 #endif
 }
+
+#ifdef TEST_HAVE_SYMLINK
+TEST_CASE("Existence checks tell a missing path from one they cannot check", "[file_system]") {
+	auto fs = FileSystem::CreateLocal();
+	auto dir = TestCreatePath("existence_checks");
+	if (fs->DirectoryExists(dir)) {
+		fs->RemoveDirectory(dir);
+	}
+	fs->CreateDirectory(dir);
+	auto file = fs->JoinPath(dir, "file");
+	CreateDummyFile(file);
+
+	REQUIRE(fs->TryFileExists(file) == FileExistence::EXISTS);
+	REQUIRE(fs->TryDirectoryExists(dir) == FileExistence::EXISTS);
+	REQUIRE(fs->TryFileExists(fs->JoinPath(dir, "missing")) == FileExistence::MISSING);
+	REQUIRE(fs->TryFileExists(fs->JoinPath(file, "below_a_file")) == FileExistence::MISSING);
+	REQUIRE(fs->TryFileExists(dir) == FileExistence::MISSING);
+	REQUIRE(fs->TryDirectoryExists(file) == FileExistence::MISSING);
+	REQUIRE(!fs->IsPipe(fs->JoinPath(dir, "missing")));
+
+	auto loop = fs->JoinPath(dir, "loop");
+	TestCreateSymlink(loop, "loop", false);
+	ErrorData looped;
+	REQUIRE(fs->TryFileExists(loop, nullptr, &looped) == FileExistence::UNKNOWN);
+	REQUIRE(StringUtil::Contains(looped.RawMessage(), loop));
+	REQUIRE_THROWS(fs->FileExists(loop));
+	REQUIRE_THROWS(fs->DirectoryExists(loop));
+	REQUIRE_THROWS(fs->IsPipe(loop));
+
+	fs->RemoveDirectory(dir);
+}
+#endif
 
 TEST_CASE("Test path canonicalization with symlinks", "[file_system]") {
 	auto fs = FileSystem::CreateLocal();

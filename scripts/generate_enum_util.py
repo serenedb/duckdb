@@ -32,6 +32,7 @@ blacklist = [
     "CreateDirectoryMode",
     "MatchRecognizeScope",
     "RemoveDirectoryMode",
+    "FileExistence",
     "CopyOutputOwnership",
     "CopyOutputPublicationState",
     "PendingTaskCountMode",
