@@ -3,6 +3,7 @@
 #include "duckdb/function/builtin_function_lookup.hpp"
 #include "duckdb/main/client_config.hpp"
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/collation_binding.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_case_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
@@ -89,11 +90,7 @@ static unique_ptr<Expression> PlanExtremumRewrite(Binder &binder, BoundSubqueryE
 	auto &compare_type = expr.GetChildTargets()[0];
 	vector<unique_ptr<Expression>> min_max_children;
 	auto min_max_child = bound_colref->Copy();
-	// The comparison may carry a collation the subquery column does not, and the extremum has to be taken
-	// under that collation, so it is pushed here. BIT and VARIANT are the exception: min/max pushes its own
-	// collation for those, and doing it first makes that branch a no-op, after which the aggregate falls
-	// through to its binary-key implementation whose return type is BLOB.
-	if (compare_type.id() != LogicalTypeId::BIT && compare_type.id() != LogicalTypeId::VARIANT) {
+	if (!CollationBinding::Get(binder.context).HasTypeCollation(binder.context, compare_type)) {
 		ExpressionBinder::PushCollation(binder.context, min_max_child, compare_type);
 	}
 	min_max_children.push_back(std::move(min_max_child));

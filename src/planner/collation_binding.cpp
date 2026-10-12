@@ -220,6 +220,18 @@ static bool PushNestedCollation(ClientContext &context, unique_ptr<Expression> &
 	return true;
 }
 
+bool CollationBinding::HasTypeCollation(ClientContext &context, const LogicalType &sql_type) const {
+	if (sql_type.id() == LogicalTypeId::VARCHAR) {
+		return false;
+	}
+	for (auto &collation : collations) {
+		if (!collation.get_collation_functions(context, sql_type, CollationType::ALL_COLLATIONS).empty()) {
+			return true;
+		}
+	}
+	return false;
+}
+
 bool CollationBinding::PushCollation(ClientContext &context, unique_ptr<Expression> &source,
                                      const LogicalType &sql_type, CollationType type) const {
 	// Leave collation of aliased structs, lists and arrays to the registered callbacks.

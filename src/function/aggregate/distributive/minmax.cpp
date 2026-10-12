@@ -17,6 +17,7 @@
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
+#include "duckdb/planner/collation_binding.hpp"
 #include "duckdb/main/settings.hpp"
 
 namespace duckdb {
@@ -34,6 +35,9 @@ struct MinMaxState {
 
 template <class OP>
 static AggregateFunction GetUnaryAggregate(const LogicalType &type) {
+	if (type.id() == LogicalTypeId::TIME_TZ) {
+		return AggregateFunction::UnaryAggregate<MinMaxState<dtime_tz_t>, dtime_tz_t, dtime_tz_t, OP>(type, type);
+	}
 	switch (type.InternalType()) {
 	case PhysicalType::BOOL:
 		return AggregateFunction::UnaryAggregate<MinMaxState<int8_t>, int8_t, int8_t, OP>(type, type);
@@ -566,7 +570,7 @@ unique_ptr<FunctionData> MinMaxNBind(BindAggregateFunctionInput &input) {
 			throw ParameterNotResolvedException();
 		}
 	}
-	if (arguments[0]->GetReturnType().id() == LogicalTypeId::VARIANT) {
+	if (CollationBinding::Get(context).HasTypeCollation(context, arguments[0]->GetReturnType())) {
 		auto collated_arg = arguments[0]->Copy();
 		if (ExpressionBinder::PushCollation(context, collated_arg, collated_arg->GetReturnType())) {
 			vector<LogicalType> types {arguments[0]->GetReturnType(), collated_arg->GetReturnType(),

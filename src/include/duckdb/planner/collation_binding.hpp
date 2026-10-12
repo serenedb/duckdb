@@ -38,6 +38,7 @@ public:
 	DUCKDB_API static CollationBinding &Get(DatabaseInstance &db);
 
 	DUCKDB_API void RegisterCollation(CollationCallback callback);
+	DUCKDB_API bool HasTypeCollation(ClientContext &context, const LogicalType &sql_type) const;
 	DUCKDB_API bool PushCollation(ClientContext &context, unique_ptr<Expression> &source, const LogicalType &sql_type,
 	                              CollationType type) const;
 

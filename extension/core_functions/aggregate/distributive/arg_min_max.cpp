@@ -9,6 +9,7 @@
 #include "duckdb/function/function_set.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
+#include "duckdb/planner/collation_binding.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 
 namespace duckdb {
@@ -379,8 +380,10 @@ struct VectorArgMinMaxBase : ArgMinMaxBase<COMPARATOR> {
 		auto &context = input.GetClientContext();
 		auto &function = input.GetBoundFunction();
 		auto &arguments = input.GetArguments();
-		if (arguments[1]->GetReturnType().InternalType() == PhysicalType::VARCHAR) {
-			ExpressionBinder::PushCollation(context, arguments[1], arguments[1]->GetReturnType());
+		const auto by_type = arguments[1]->GetReturnType();
+		if (by_type.InternalType() == PhysicalType::VARCHAR ||
+		    CollationBinding::Get(context).HasTypeCollation(context, by_type)) {
+			ExpressionBinder::PushCollation(context, arguments[1], by_type);
 		}
 		function.GetArguments()[0] = arguments[0]->GetReturnType();
 		function.GetArguments()[1] = arguments[1]->GetReturnType();
@@ -886,12 +889,17 @@ void SpecializeArgMinMaxNullNFunction(PhysicalType val_type, PhysicalType arg_ty
 
 template <ArgMinMaxNullHandling NULL_HANDLING, bool NULLS_LAST, class COMPARATOR>
 unique_ptr<FunctionData> ArgMinMaxNBind(BindAggregateFunctionInput &input) {
+	auto &context = input.GetClientContext();
 	auto &function = input.GetBoundFunction();
 	auto &arguments = input.GetArguments();
 	for (auto &arg : arguments) {
 		if (arg->GetReturnType().id() == LogicalTypeId::UNKNOWN) {
 			throw ParameterNotResolvedException();
 		}
+	}
+	const auto by_type = arguments[1]->GetReturnType();
+	if (CollationBinding::Get(context).HasTypeCollation(context, by_type)) {
+		ExpressionBinder::PushCollation(context, arguments[1], by_type);
 	}
 
 	const auto val_type = arguments[0]->GetReturnType().InternalType();

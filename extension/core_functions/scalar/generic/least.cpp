@@ -1,8 +1,18 @@
 #include "core_functions/scalar/generic_functions.hpp"
 #include "duckdb/common/operator/comparison_operators.hpp"
 #include "duckdb/common/smaller_binary.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/function/create_sort_key.hpp"
+#include "duckdb/function/function_binder.hpp"
+#include "duckdb/planner/collation_binding.hpp"
+#include "duckdb/planner/expression/bound_case_expression.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_lambda_expression.hpp"
+#include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "duckdb/storage/statistics/numeric_stats.hpp"
@@ -56,6 +66,21 @@ unique_ptr<FunctionLocalState> LeastGreatestSortKeyInit(ExpressionState &state, 
 	return make_uniq<LeastGreatestSortKeyState>(expr.GetChildren().size(), OP::NullOrdering());
 }
 
+struct LeastGreatestCollatedState : public LeastGreatestSortKeyState {
+	LeastGreatestCollatedState(idx_t column_count, OrderByNullType null_ordering, const LogicalType &pair_type)
+	    : LeastGreatestSortKeyState(column_count, null_ordering), pairs(pair_type) {
+	}
+
+	Vector pairs;
+};
+
+template <class OP>
+unique_ptr<FunctionLocalState> LeastGreatestCollatedInit(ExpressionState &state, const BoundFunctionExpression &expr,
+                                                         FunctionData *bind_data) {
+	return make_uniq<LeastGreatestCollatedState>(expr.GetChildren().size(), OP::NullOrdering(),
+	                                             expr.GetChildren()[0]->GetReturnType());
+}
+
 template <bool STRING>
 struct StandardLeastGreatest {
 	static constexpr bool IS_STRING = STRING;
@@ -105,6 +130,23 @@ struct SortKeyLeastGreatest {
 			} else {
 				CreateSortKeyHelpers::DecodeSortKey(result_keys[i], result, i, lstate.modifiers);
 			}
+		}
+	}
+};
+
+struct CollatedSortKeyLeastGreatest : public SortKeyLeastGreatest {
+	static void FinalizeResult(idx_t rows, bool result_has_value[], Vector &result, ExpressionState &state) {
+		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<LeastGreatestCollatedState>();
+		auto result_keys = FlatVector::GetData<string_t>(lstate.intermediate);
+		auto &values = StructVector::GetEntries(lstate.pairs)[1];
+		auto &result_mask = FlatVector::ValidityMutable(result);
+		for (idx_t i = 0; i < rows; i++) {
+			if (!result_has_value[i]) {
+				result_mask.SetInvalid(i);
+				continue;
+			}
+			CreateSortKeyHelpers::DecodeSortKey(result_keys[i], lstate.pairs, i, lstate.modifiers);
+			VectorOperations::Copy(values, result, i + 1, i, i);
 		}
 	}
 };
@@ -239,6 +281,55 @@ unique_ptr<BaseStatistics> PropagateLeastGreatestStats(ClientContext &context, F
 }
 
 template <class LEAST_GREATER_OP>
+bool TryBindCollatedLeastGreatest(ClientContext &context, BoundScalarFunction &bound_function,
+                                  vector<unique_ptr<Expression>> &arguments, const LogicalType &child_type) {
+	if (arguments.size() < 2 || !CollationBinding::Get(context).HasTypeCollation(context, child_type)) {
+		return false;
+	}
+	const Identifier parameter("x");
+	const BoundReferenceExpression parameter_ref(parameter, child_type, idx_t(0));
+	unique_ptr<Expression> key = parameter_ref.Copy();
+	if (!ExpressionBinder::PushCollation(context, key, child_type)) {
+		return false;
+	}
+	key->SetAlias(Identifier("key"));
+	auto value = parameter_ref.Copy();
+	value->SetAlias(Identifier("value"));
+	FunctionBinder function_binder(context);
+	vector<unique_ptr<Expression>> fields;
+	fields.push_back(std::move(key));
+	fields.push_back(std::move(value));
+	auto pair =
+	    function_binder.BindScalarFunction(Identifier::DefaultSchema(), Identifier("struct_pack"), std::move(fields));
+	auto is_null = make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_IS_NULL, LogicalType::BOOLEAN);
+	is_null->GetChildrenMutable().push_back(parameter_ref.Copy());
+	auto null_pair = make_uniq<BoundConstantExpression>(Value(pair->GetReturnType()));
+	const auto body = make_uniq<BoundCaseExpression>(std::move(is_null), std::move(null_pair), std::move(pair));
+
+	vector<unique_ptr<Expression>> pairs;
+	for (auto &argument : arguments) {
+		auto lambda =
+		    make_uniq<BoundLambdaExpression>(ExpressionType::LAMBDA, LogicalType::LAMBDA, body->Copy(), idx_t(1));
+		lambda->SetParameterNames({parameter});
+		vector<unique_ptr<Expression>> invoke_arguments;
+		invoke_arguments.push_back(std::move(lambda));
+		invoke_arguments.push_back(BoundCastExpression::AddCastToType(context, std::move(argument), child_type));
+		pairs.push_back(
+		    function_binder.BindScalarFunction(Identifier::DefaultSchema(), "invoke", std::move(invoke_arguments)));
+	}
+	const auto pair_type = pairs[0]->GetReturnType();
+	arguments = std::move(pairs);
+	for (auto &arg : bound_function.GetArguments()) {
+		arg = pair_type;
+	}
+	bound_function.SetReturnType(child_type);
+	bound_function.SetFunctionCallback(
+	    LeastGreatestFunction<string_t, typename LEAST_GREATER_OP::OP, CollatedSortKeyLeastGreatest>);
+	bound_function.SetInitStateCallback(LeastGreatestCollatedInit<LEAST_GREATER_OP>);
+	return true;
+}
+
+template <class LEAST_GREATER_OP>
 unique_ptr<FunctionData> BindLeastGreatest(BindScalarFunctionInput &input) {
 	auto &context = input.GetClientContext();
 	auto &bound_function = input.GetBoundFunction();
@@ -263,6 +354,9 @@ unique_ptr<FunctionData> BindLeastGreatest(BindScalarFunctionInput &input) {
 		break;
 	default:
 		break;
+	}
+	if (TryBindCollatedLeastGreatest<LEAST_GREATER_OP>(context, bound_function, arguments, child_type)) {
+		return nullptr;
 	}
 	using OP = typename LEAST_GREATER_OP::OP;
 	switch (child_type.InternalType()) {
