@@ -214,3 +214,200 @@ query III
 UPDATE t SET u = u, v = 'ret' WHERE id = 3 RETURNING *;
 ----
 3	30	ret
+
+query III rowsort
+UPDATE p SET u = u, v = v + 1 RETURNING *;
+----
+1	10	102
+2	21	202
+
+# the previous values of the indexed columns an UPDATE sets reach the delete indexes, so later statements of the
+# same transaction can take them, also when every row is deleted and inserted
+foreach force false true
+
+statement ok
+SET force_update_to_del_and_insert = {force};
+
+statement ok
+CREATE TABLE w_{force} (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER);
+
+statement ok
+INSERT INTO w_{force} VALUES (1, 10, 1), (2, 20, 2);
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE w_{force} SET u = 30, v = 3 WHERE id = 1;
+
+statement ok
+UPDATE w_{force} SET u = 10, v = 4 WHERE id = 2;
+
+statement ok
+INSERT INTO w_{force} VALUES (3, 20, 5);
+
+statement ok
+COMMIT;
+
+query III
+SELECT * FROM w_{force} ORDER BY id;
+----
+1	30	3
+2	10	4
+3	20	5
+
+statement ok
+CREATE TABLE l_{force} (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, xs INTEGER[]);
+
+statement ok
+INSERT INTO l_{force} VALUES (1, 10, [1]), (2, 20, [2]);
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE l_{force} SET xs = xs || [3];
+
+statement ok
+UPDATE l_{force} SET u = u + 1, xs = [0] WHERE id = 1;
+
+statement ok
+INSERT INTO l_{force} VALUES (3, 10, []);
+
+statement ok
+COMMIT;
+
+query III
+SELECT * FROM l_{force} ORDER BY id;
+----
+1	11	[0]
+2	20	[2, 3]
+3	10	[]
+
+statement ok
+CREATE TABLE g_{force} (id INTEGER PRIMARY KEY, a INTEGER, v INTEGER);
+
+statement ok
+CREATE INDEX g_a_{force} ON g_{force} (a);
+
+statement ok
+INSERT INTO g_{force} SELECT i, i % 7, i FROM range(1, 3001) r(i);
+
+statement ok
+UPDATE g_{force} SET a = CASE WHEN id % 3 = 0 THEN a + 100 ELSE a END, v = -v;
+
+query II
+SELECT count(*), sum(v) FROM g_{force} WHERE a >= 100;
+----
+1000	-1501500
+
+query I
+SELECT count(*) FROM g_{force} WHERE a = 3;
+----
+286
+
+statement error
+INSERT INTO g_{force} VALUES (3000, 0, 0);
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+endloop
+
+statement ok
+RESET force_update_to_del_and_insert;
+
+# MERGE updates in place the rows that keep their indexed values
+statement ok
+CREATE TABLE mp (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER);
+
+statement ok
+CREATE TABLE mc (pu INTEGER REFERENCES mp (u));
+
+statement ok
+INSERT INTO mp VALUES (1, 10, 100), (2, 20, 200), (3, 30, 300);
+
+statement ok
+INSERT INTO mc VALUES (10), (20);
+
+statement ok
+MERGE INTO mp USING (VALUES (1, 10, 101), (3, 31, 301)) s(id, u, v) ON mp.id = s.id
+WHEN MATCHED THEN UPDATE SET u = s.u, v = s.v;
+
+query III
+SELECT * FROM mp ORDER BY id;
+----
+1	10	101
+2	20	200
+3	31	301
+
+statement error
+MERGE INTO mp USING (VALUES (1, 11, 102)) s(id, u, v) ON mp.id = s.id WHEN MATCHED THEN UPDATE SET u = s.u, v = s.v;
+----
+<REGEX>:Constraint Error.*foreign key.*
+
+query IIII rowsort
+MERGE INTO mp USING (VALUES (1, 10, 103), (3, 32, 303), (4, 40, 400)) s(id, u, v) ON mp.id = s.id
+WHEN MATCHED THEN UPDATE SET u = s.u, v = s.v
+WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.u, s.v)
+RETURNING merge_action, *;
+----
+INSERT	4	40	400
+UPDATE	1	10	103
+UPDATE	3	32	303
+
+# INSERT ... ON CONFLICT DO UPDATE is a MERGE
+statement ok
+INSERT INTO mp VALUES (2, 20, 202), (5, 50, 500) ON CONFLICT (id) DO UPDATE SET u = excluded.u, v = excluded.v;
+
+query III
+INSERT INTO mp VALUES (1, 10, 104) ON CONFLICT (id) DO UPDATE SET u = excluded.u, v = excluded.v RETURNING *;
+----
+1	10	104
+
+statement error
+INSERT INTO mp VALUES (2, 21, 203) ON CONFLICT (id) DO UPDATE SET u = excluded.u, v = excluded.v;
+----
+<REGEX>:Constraint Error.*foreign key.*
+
+query III
+SELECT * FROM mp ORDER BY id;
+----
+1	10	104
+2	20	202
+3	32	303
+4	40	400
+5	50	500
+
+# INSERT OR REPLACE sets every column but the unique ones, here one of a non-unique index
+statement ok
+CREATE TABLE rp (id INTEGER PRIMARY KEY, a INTEGER, v INTEGER);
+
+statement ok
+CREATE INDEX rp_a ON rp (a);
+
+statement ok
+INSERT INTO rp VALUES (1, 1, 1), (2, 2, 2);
+
+statement ok
+INSERT OR REPLACE INTO rp VALUES (1, 1, 10), (2, 3, 20);
+
+query III
+SELECT * FROM rp ORDER BY id;
+----
+1	1	10
+2	3	20
+
+query I
+SELECT id FROM rp WHERE a = 1;
+----
+1
+
+query I
+SELECT id FROM rp WHERE a = 3;
+----
+2
+
+query I
+SELECT count(*) FROM rp WHERE a = 2;
+----
+0

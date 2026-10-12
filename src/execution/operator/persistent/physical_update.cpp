@@ -7,6 +7,7 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/execution/row_id_deduplicator.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/parallel/thread_context.hpp"
 #include "duckdb/planner/constraints/bound_check_constraint.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
@@ -76,9 +77,9 @@ static bool EqualityIsIdentity(const LogicalType &type) {
 	}
 }
 
-void PhysicalUpdate::InitializeInPlaceUnchangedRows() {
-	if (!index_update || return_chunk || update_column_count == 0) {
-		return;
+bool PhysicalUpdate::InitializeInPlaceUnchangedRows() {
+	if (update_column_count == 0) {
+		return false;
 	}
 	auto index_columns = table.GetDataTableInfo()->GetIndexes().GetIndexedColumns();
 	physical_index_set_t in_place;
@@ -87,17 +88,17 @@ void PhysicalUpdate::InitializeInPlaceUnchangedRows() {
 		auto &type = tableref.GetColumns().GetColumn(columns[i]).Type();
 		if (index_columns.find(columns[i].index) != index_columns.end()) {
 			if (!EqualityIsIdentity(type)) {
-				return;
+				return false;
 			}
 			compared++;
 		} else if (type.SupportsRegularUpdate()) {
 			in_place.insert(columns[i]);
 		} else {
-			return;
+			return false;
 		}
 	}
 	if (compared == 0 || in_place.empty()) {
-		return;
+		return false;
 	}
 	// CHECK constraints are verified on the columns updated in place, so these must hold all of a CHECK's columns
 	for (auto &constraint : bound_constraints) {
@@ -110,7 +111,7 @@ void PhysicalUpdate::InitializeInPlaceUnchangedRows() {
 			found += in_place.count(column);
 		}
 		if (found != 0 && found != check.bound_columns.size()) {
-			return;
+			return false;
 		}
 	}
 	for (idx_t i = 0; i < update_column_count; i++) {
@@ -118,11 +119,30 @@ void PhysicalUpdate::InitializeInPlaceUnchangedRows() {
 			in_place_positions.push_back(i);
 			in_place_columns.push_back(columns[i]);
 		} else {
-			compare_positions.push_back(i);
-			compare_columns.emplace_back(columns[i].index);
+			old_value_positions.push_back(i);
+			old_value_columns.emplace_back(columns[i].index);
 		}
 	}
 	in_place_unchanged_rows = true;
+	return true;
+}
+
+void PhysicalUpdate::InitializeDelAndInsert(ClientContext &context) {
+	if (!update_is_del_and_insert || !index_update) {
+		return;
+	}
+	if (!Settings::Get<ForceUpdateToDelAndInsertSetting>(context) && InitializeInPlaceUnchangedRows()) {
+		return;
+	}
+	// The delete indexes read the previous values of their columns; the projected columns that are not set hold them
+	auto delete_index_columns = table.GetDataTableInfo()->GetIndexes().GetDeleteIndexColumns();
+	const auto set_count = update_column_count == 0 ? columns.size() : update_column_count;
+	for (idx_t i = 0; i < set_count; i++) {
+		if (delete_index_columns.find(columns[i].index) != delete_index_columns.end()) {
+			old_value_positions.push_back(i);
+			old_value_columns.emplace_back(columns[i].index);
+		}
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -169,7 +189,7 @@ public:
 
 		// Initialize the mock and delete chunk.
 		mock_chunk.Initialize(allocator, table_types);
-		delete_chunk.Initialize(allocator, table_types);
+		delete_chunk.InitializeEmpty(table_types);
 
 		// When capturing OLD rows, the return chunk holds the NEW image followed by the OLD image.
 		if (capture_old_rows) {
@@ -185,7 +205,7 @@ public:
 	DataChunk mock_chunk;
 	DataChunk delete_chunk;
 	DataChunk combined_chunk;
-	DataChunk compare_chunk;
+	DataChunk old_values;
 	DataChunk in_place_chunk;
 	SelectionVector unchanged_sel;
 	SelectionVector next_sel;
@@ -231,22 +251,26 @@ static void AppendReturnRows(ColumnDataCollection &collection, DataChunk &combin
 	collection.Append(combined);
 }
 
+// Arrange the columns in the standard table order, then validate + set the cardinality from the referenced columns.
+// The del+insert path projects every table column (it re-inserts the full row), so all are referenced.
+static void ArrangeTableColumns(DataChunk &mock_chunk, const vector<PhysicalIndex> &columns, DataChunk &update_chunk,
+                                idx_t count) {
+	for (idx_t i = 0; i < columns.size(); i++) {
+		mock_chunk.data[columns[i].index].Reference(update_chunk.data[i]);
+	}
+	mock_chunk.CheckCardinality(count);
+}
+
 // Updates in place the rows whose indexed values the update leaves unchanged and returns their count; the other rows
-// remain in update_chunk and row_ids for the DELETE + INSERT.
+// remain in update_chunk, row_ids and old_values for the DELETE + INSERT.
 static idx_t UpdateUnchangedRows(const PhysicalUpdate &op, ExecutionContext &context, UpdateLocalState &state,
                                  DataChunk &update_chunk, Vector &row_ids, idx_t count) {
-	row_ids.Flatten();
-	auto &current = state.compare_chunk;
-	current.Reset();
-	ColumnFetchState fetch_state;
-	op.table.Fetch(DuckTransaction::Get(context.client, op.table.db), current, op.compare_columns, row_ids, count,
-	               fetch_state);
-
+	auto &old_values = state.old_values;
 	idx_t unchanged = count;
 	optional_ptr<const SelectionVector> sel;
-	for (idx_t i = 0; i < op.compare_positions.size() && unchanged > 0; i++) {
-		unchanged = VectorOperations::NotDistinctFrom(update_chunk.data[op.compare_positions[i]], current.data[i], sel,
-		                                              unchanged, &state.next_sel, nullptr);
+	for (idx_t i = 0; i < op.old_value_positions.size() && unchanged > 0; i++) {
+		unchanged = VectorOperations::NotDistinctFrom(update_chunk.data[op.old_value_positions[i]], old_values.data[i],
+		                                              sel, unchanged, &state.next_sel, nullptr);
 		std::swap(state.unchanged_sel, state.next_sel);
 		sel = &state.unchanged_sel;
 	}
@@ -274,6 +298,7 @@ static idx_t UpdateUnchangedRows(const PhysicalUpdate &op, ExecutionContext &con
 	if (changed != 0) {
 		update_chunk.Slice(state.changed_sel, changed);
 		row_ids.Slice(state.changed_sel, changed);
+		old_values.Slice(state.changed_sel, changed);
 	}
 	return unchanged;
 }
@@ -389,45 +414,9 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 		del_row_ids.Slice(row_ids, sel, update_count);
 	}
 
-	idx_t unchanged_count = 0;
-	if (in_place_unchanged_rows) {
-		unchanged_count = UpdateUnchangedRows(*this, context, l_state, update_chunk, del_row_ids, update_count);
-		update_count -= unchanged_count;
-		if (update_count == 0) {
-			g_state.updated_count += unchanged_count;
-			return SinkResultType::NEED_MORE_INPUT;
-		}
-	}
-
-	auto &delete_chunk = index_update ? l_state.delete_chunk : l_state.mock_chunk;
-	delete_chunk.Reset();
-
-	if (index_update) {
-		auto &transaction = DuckTransaction::Get(context.client, table.db);
-		vector<StorageIndex> column_ids;
-		for (idx_t i = 0; i < table.ColumnCount(); i++) {
-			column_ids.emplace_back(i);
-		};
-		// Fetch the previous index keys for exactly the rows we delete. Use the deduplicated row-ids
-		// (del_row_ids) so Fetch, Delete, and LocalAppend all operate on the same rows; flatten first because
-		// deduplication slices del_row_ids into a dictionary vector, which Fetch cannot read.
-		del_row_ids.Flatten();
-		auto fetch_state = ColumnFetchState();
-		table.Fetch(transaction, delete_chunk, column_ids, del_row_ids, update_count, fetch_state);
-	}
-
-	auto &delete_state = l_state.GetDeleteState(table, tableref, context.client);
-	table.Delete(delete_state, context.client, tableref, del_row_ids, update_count);
-
-	// Arrange the columns in the standard table order, then validate + set the cardinality from the referenced
-	// columns. The del+insert path projects every table column (it re-inserts the full row), so all are referenced.
-	for (idx_t i = 0; i < columns.size(); i++) {
-		mock_chunk.data[columns[i].index].Reference(update_chunk.data[i]);
-	}
-	mock_chunk.CheckCardinality(update_count);
-
-	table.LocalAppend(tableref, context.client, mock_chunk, bound_constraints, del_row_ids, delete_chunk);
+	// Every row is returned with its new values, whether it is updated in place or deleted and inserted.
 	if (return_chunk) {
+		ArrangeTableColumns(mock_chunk, columns, update_chunk, update_count);
 		if (capture_old_rows) {
 			// Apply the dedup selection vector to the OLD columns so they line up with the NEW image.
 			AppendReturnRows(g_state.return_collection, l_state.combined_chunk, mock_chunk, chunk,
@@ -436,6 +425,47 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 			g_state.return_collection.Append(mock_chunk);
 		}
 	}
+
+	idx_t unchanged_count = 0;
+	if (!old_value_columns.empty()) {
+		// Fetch the previous values for exactly the rows we update; flatten first because deduplication slices
+		// del_row_ids into a dictionary vector, which Fetch cannot read.
+		del_row_ids.Flatten();
+		auto &old_values = l_state.old_values;
+		old_values.Reset();
+		ColumnFetchState fetch_state;
+		table.Fetch(DuckTransaction::Get(context.client, table.db), old_values, old_value_columns, del_row_ids,
+		            update_count, fetch_state);
+		D_ASSERT(old_values.size() == update_count);
+		if (in_place_unchanged_rows) {
+			unchanged_count = UpdateUnchangedRows(*this, context, l_state, update_chunk, del_row_ids, update_count);
+			update_count -= unchanged_count;
+			if (update_count == 0) {
+				g_state.updated_count += unchanged_count;
+				return SinkResultType::NEED_MORE_INPUT;
+			}
+		}
+	}
+
+	auto &delete_state = l_state.GetDeleteState(table, tableref, context.client);
+	table.Delete(delete_state, context.client, tableref, del_row_ids, update_count);
+
+	ArrangeTableColumns(mock_chunk, columns, update_chunk, update_count);
+	// The delete indexes read the previous values of the deleted rows: the fetched ones of the columns we set, and
+	// those the mock chunk holds for the other columns.
+	auto &delete_chunk = old_value_columns.empty() ? mock_chunk : l_state.delete_chunk;
+	if (!old_value_columns.empty()) {
+		delete_chunk.Reset();
+		for (idx_t i = 0; i < mock_chunk.ColumnCount(); i++) {
+			delete_chunk.data[i].Reference(mock_chunk.data[i]);
+		}
+		for (idx_t i = 0; i < old_value_positions.size(); i++) {
+			delete_chunk.data[columns[old_value_positions[i]].index].Reference(l_state.old_values.data[i]);
+		}
+		delete_chunk.CheckCardinality(update_count);
+	}
+
+	table.LocalAppend(tableref, context.client, mock_chunk, bound_constraints, del_row_ids, delete_chunk);
 
 	g_state.updated_count += unchanged_count + update_count;
 	return SinkResultType::NEED_MORE_INPUT;
@@ -448,13 +478,16 @@ unique_ptr<GlobalSinkState> PhysicalUpdate::GetGlobalSinkState(ClientContext &co
 unique_ptr<LocalSinkState> PhysicalUpdate::GetLocalSinkState(ExecutionContext &context) const {
 	auto state = make_uniq<UpdateLocalState>(context.client, expressions, table.GetTypes(), bound_defaults,
 	                                         bound_constraints, capture_old_rows, columns, update_column_count);
+	if (old_value_columns.empty()) {
+		return std::move(state);
+	}
+	auto table_types = table.GetTypes();
+	vector<LogicalType> old_value_types;
+	for (auto &column : old_value_columns) {
+		old_value_types.push_back(table_types[column.GetPrimaryIndex()]);
+	}
+	state->old_values.Initialize(Allocator::Get(context.client), old_value_types);
 	if (in_place_unchanged_rows) {
-		auto table_types = table.GetTypes();
-		vector<LogicalType> compare_types;
-		for (auto &column : compare_columns) {
-			compare_types.push_back(table_types[column.GetPrimaryIndex()]);
-		}
-		state->compare_chunk.Initialize(Allocator::Get(context.client), compare_types);
 		vector<LogicalType> in_place_types;
 		for (auto &column : in_place_columns) {
 			in_place_types.push_back(table_types[column.index]);

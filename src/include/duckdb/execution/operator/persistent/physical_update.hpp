@@ -52,16 +52,21 @@ public:
 	//! Set when the UPDATE is a DELETE + INSERT only because it sets indexed columns: rows whose indexed values do
 	//! not change are then updated in place instead
 	bool in_place_unchanged_rows = false;
-	//! The update chunk positions and physical columns of the indexed columns it sets
-	vector<idx_t> compare_positions;
-	vector<StorageIndex> compare_columns;
+	//! The update chunk positions and physical columns of the columns whose previous values a DELETE + INSERT fetches:
+	//! the indexed columns it sets when it compares them, otherwise the ones it sets that the delete indexes read
+	vector<idx_t> old_value_positions;
+	vector<StorageIndex> old_value_columns;
 	//! The update chunk positions and physical columns of the other columns it sets
 	vector<idx_t> in_place_positions;
 	vector<PhysicalIndex> in_place_columns;
 
 public:
-	//! Sets up updating in place the rows of a DELETE + INSERT update that keep their indexed values
-	void InitializeInPlaceUnchangedRows();
+	//! Sets up which previous values a DELETE + INSERT update fetches, and whether it updates in place the rows that
+	//! keep their indexed values
+	void InitializeDelAndInsert(ClientContext &context);
+
+private:
+	bool InitializeInPlaceUnchangedRows();
 
 public:
 	// Source interface

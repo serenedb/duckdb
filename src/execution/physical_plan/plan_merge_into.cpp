@@ -76,6 +76,7 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 		auto &cast_update = result->op->Cast<PhysicalUpdate>();
 		cast_update.update_is_del_and_insert = action.update_is_del_and_insert;
 		cast_update.update_column_count = action.update_column_count;
+		cast_update.InitializeDelAndInsert(context);
 		result->op->children.push_back(action_input);
 		break;
 	}

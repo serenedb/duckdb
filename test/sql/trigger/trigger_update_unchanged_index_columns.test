@@ -1,0 +1,69 @@
+# name: test/sql/trigger/trigger_update_unchanged_index_columns.test
+# description: AFTER UPDATE transition tables see every row of an UPDATE that updates in place the rows keeping their indexed values
+# group: [trigger]
+
+require noforcestorage
+
+statement ok
+CREATE TABLE p (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER);
+
+statement ok
+CREATE TABLE c (pu INTEGER REFERENCES p (u));
+
+statement ok
+INSERT INTO p SELECT i, i * 10, i FROM range(1, 3001) r(i);
+
+statement ok
+INSERT INTO c VALUES (10), (20);
+
+statement ok
+CREATE TABLE audit (id INTEGER, old_u INTEGER, new_u INTEGER, old_v INTEGER, new_v INTEGER);
+
+statement ok
+CREATE TRIGGER trg AFTER UPDATE ON p
+REFERENCING OLD TABLE AS o NEW TABLE AS n
+FOR EACH STATEMENT
+    INSERT INTO audit SELECT o.id, o.u, n.u, o.v, n.v FROM o JOIN n ON o.id = n.id;
+
+statement ok
+UPDATE p SET u = CASE WHEN id % 2 = 0 AND id > 2 THEN -u ELSE u END, v = v + 1;
+
+query IIII
+SELECT count(*), count(*) FILTER (WHERE new_u = -old_u), count(*) FILTER (WHERE new_u = old_u), count(*) FILTER (WHERE new_v = old_v + 1) FROM audit;
+----
+3000	1499	1501	3000
+
+query III
+SELECT * FROM p WHERE id <= 4 ORDER BY id;
+----
+1	10	2
+2	20	3
+3	30	4
+4	-40	5
+
+# UPDATE ... FROM matching each row twice: one image per row in the transition tables
+statement ok
+DELETE FROM audit;
+
+statement ok
+CREATE TABLE src (id INTEGER, u INTEGER, v INTEGER);
+
+statement ok
+INSERT INTO src VALUES (1, 10, 100), (1, 10, 101), (2, 20, 200), (2, 20, 201), (3, 31, 300), (3, 31, 301);
+
+statement ok
+UPDATE p SET u = src.u, v = src.v FROM src WHERE p.id = src.id;
+
+query IIIII
+SELECT id, old_u, new_u, old_v, new_v IN (100 * id, 100 * id + 1) FROM audit ORDER BY id;
+----
+1	10	10	2	true
+2	20	20	3	true
+3	30	31	4	true
+
+query III
+SELECT id, u, v IN (100 * id, 100 * id + 1) FROM p WHERE id <= 3 ORDER BY id;
+----
+1	10	true
+2	20	true
+3	31	true
