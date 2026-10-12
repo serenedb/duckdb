@@ -60,8 +60,8 @@ struct DictionaryCompressionStorage {
 	static void StringScanPartial(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result,
 	                              idx_t result_offset);
 	static void StringScan(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result);
-	static void StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
-	                           idx_t result_idx);
+	static void StringFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx_t *rows, idx_t count,
+	                            Vector &result, const SelectionVector &result_sel, idx_t result_offset);
 };
 
 //===--------------------------------------------------------------------===//
@@ -154,13 +154,14 @@ void DictionaryCompressionStorage::StringScan(ColumnSegment &segment, ColumnScan
 //===--------------------------------------------------------------------===//
 // Fetch
 //===--------------------------------------------------------------------===//
-void DictionaryCompressionStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id,
-                                                  Vector &result, idx_t result_idx) {
-	D_ASSERT(row_id >= 0);
-	D_ASSERT(NumericCast<idx_t>(row_id) < segment.count.load());
-	// fetch a single row from the string segment
+void DictionaryCompressionStorage::StringFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx_t *rows,
+                                                   idx_t count, Vector &result, const SelectionVector &result_sel,
+                                                   idx_t result_offset) {
+	// fetch rows from the string segment
 	CompressedStringScanState scan_state(state.GetOrInsertHandle(segment), segment);
-	scan_state.ScanToFlatVector<true>(result, result_idx, NumericCast<idx_t>(row_id), 1);
+	for (idx_t i = 0; i < count; i++) {
+		scan_state.ScanToFlatVector<true>(result, result_offset + result_sel.get_index(i), rows[i], 1);
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -173,7 +174,7 @@ CompressionFunction DictionaryCompressionFun::GetFunction(PhysicalType data_type
 	    DictionaryCompressionStorage::InitCompression, DictionaryCompressionStorage::Compress,
 	    DictionaryCompressionStorage::FinalizeCompress, DictionaryCompressionStorage::StringInitScan,
 	    DictionaryCompressionStorage::StringScan, DictionaryCompressionStorage::StringScanPartial<false>,
-	    DictionaryCompressionStorage::StringFetchRow, UncompressedFunctions::EmptySkip,
+	    DictionaryCompressionStorage::StringFetchRows, UncompressedFunctions::EmptySkip,
 	    UncompressedStringStorage::StringInitSegment);
 }
 

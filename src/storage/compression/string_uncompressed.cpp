@@ -198,21 +198,21 @@ BufferHandle &ColumnFetchState::GetOrInsertHandle(ColumnSegment &segment) {
 	}
 }
 
-void UncompressedStringStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id,
-                                               Vector &result, idx_t result_idx) {
-	D_ASSERT(row_id >= 0);
-	auto row_index = NumericCast<idx_t>(row_id);
-	D_ASSERT(row_index < segment.count.load());
-
-	// fetch a single row from the string segment
+void UncompressedStringStorage::StringFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx_t *rows,
+                                                idx_t count, Vector &result, const SelectionVector &result_sel,
+                                                idx_t result_offset) {
+	// fetch rows from the string segment
 	// first pin the main buffer if it is not already pinned
 	auto &handle = state.GetOrInsertHandle(segment);
 	auto layout = StringSegmentLayout::Read(handle, segment);
 
 	auto result_data = FlatVector::GetDataMutable<string_t>(result);
 
-	auto entry = layout.ValidateAndGetEntry(row_index);
-	result_data[result_idx] = FetchStringFromEntry(state.context, segment, result, entry);
+	for (idx_t i = 0; i < count; i++) {
+		auto entry = layout.ValidateAndGetEntry(rows[i]);
+		result_data[result_offset + result_sel.get_index(i)] =
+		    FetchStringFromEntry(state.context, segment, result, entry);
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -311,7 +311,7 @@ CompressionFunction StringUncompressed::GetFunction(PhysicalType data_type) {
 	                           UncompressedStringStorage::StringFinalAnalyze, UncompressedFunctions::InitCompression,
 	                           UncompressedFunctions::Compress, UncompressedFunctions::FinalizeCompress,
 	                           UncompressedStringStorage::StringInitScan, UncompressedStringStorage::StringScan,
-	                           UncompressedStringStorage::StringScanPartial, UncompressedStringStorage::StringFetchRow,
+	                           UncompressedStringStorage::StringScanPartial, UncompressedStringStorage::StringFetchRows,
 	                           UncompressedFunctions::EmptySkip, UncompressedStringStorage::StringInitSegment,
 	                           UncompressedStringStorage::StringInitAppend, UncompressedStringStorage::StringAppend,
 	                           UncompressedStringStorage::FinalizeAppend, UncompressedStringStorage::StringRevertAppend,

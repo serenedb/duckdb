@@ -52,8 +52,6 @@ struct FSSTStorage {
 	static void StringScanPartial(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result,
 	                              idx_t result_offset);
 	static void StringScan(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result);
-	static void StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
-	                           idx_t result_idx);
 	static void Select(ColumnSegment &segment, ColumnScanState &state, idx_t vector_count, Vector &result,
 	                   const SelectionVector &sel, idx_t sel_count);
 
@@ -781,24 +779,6 @@ void FSSTStorage::Select(ColumnSegment &segment, ColumnScanState &state, idx_t v
 }
 
 //===--------------------------------------------------------------------===//
-// Fetch
-//===--------------------------------------------------------------------===//
-void FSSTStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
-                                 idx_t result_idx) {
-	D_ASSERT(row_id >= 0);
-	auto row_index = NumericCast<idx_t>(row_id);
-	D_ASSERT(row_index < segment.count.load());
-
-	// The offsets are delta encoded: a later fetch of the segment continues decoding where this one stopped
-	auto &scan_state =
-	    state.GetOrCreateSegmentState<FSSTScanState>(segment, [&]() { return StringInitScan(state.context, segment); });
-	auto strings = scan_state.ValidateRange(row_index, 1);
-	auto &str_allocator = StringVector::GetStringAllocator(result);
-	FlatVector::GetDataMutable<string_t>(result)[result_idx] =
-	    scan_state.DecompressString(strings.GetCompressedString(0), str_allocator);
-}
-
-//===--------------------------------------------------------------------===//
 // Get Function
 //===--------------------------------------------------------------------===//
 CompressionFunction FSSTFun::GetFunction(PhysicalType data_type) {
@@ -807,9 +787,9 @@ CompressionFunction FSSTFun::GetFunction(PhysicalType data_type) {
 	                           FSSTStorage::StringAnalyze, FSSTStorage::StringFinalAnalyze,
 	                           FSSTStorage::InitCompression, FSSTStorage::Compress, FSSTStorage::FinalizeCompress,
 	                           FSSTStorage::StringInitScan, FSSTStorage::StringScan,
-	                           FSSTStorage::StringScanPartial<false>, FSSTStorage::StringFetchRow,
-	                           UncompressedFunctions::EmptySkip, UncompressedStringStorage::StringInitSegment, nullptr,
-	                           nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, FSSTStorage::Select);
+	                           FSSTStorage::StringScanPartial<false>, nullptr, UncompressedFunctions::EmptySkip,
+	                           UncompressedStringStorage::StringInitSegment, nullptr, nullptr, nullptr, nullptr,
+	                           nullptr, nullptr, nullptr, nullptr, FSSTStorage::Select);
 }
 
 bool FSSTFun::TypeIsSupported(const PhysicalType physical_type) {

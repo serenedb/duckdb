@@ -187,11 +187,63 @@ void ColumnSegment::ScanPartial(ColumnScanState &state, idx_t scan_count, Vector
 //===--------------------------------------------------------------------===//
 // Fetch
 //===--------------------------------------------------------------------===//
+namespace {
+
+//! A scan of the segment that the fetches of a ColumnFetchState continue
+struct SegmentFetchCursor : public SegmentScanState {
+	explicit SegmentFetchCursor(const QueryContext &context) : scan(nullptr) {
+		scan.context = context;
+	}
+
+	ColumnScanState scan;
+};
+
+} // namespace
+
+void ColumnSegment::FetchRows(ColumnFetchState &state, const idx_t *rows, idx_t row_count, Vector &result,
+                              const SelectionVector &result_sel, idx_t result_offset) {
+	if (row_count == 0) {
+		return;
+	}
+	if (rows[row_count - 1] >= count) {
+		throw InternalException("ColumnSegment::FetchRows - row out of range for segment");
+	}
+#ifdef DEBUG
+	for (idx_t i = 1; i < row_count; i++) {
+		D_ASSERT(rows[i - 1] < rows[i]);
+	}
+#endif
+	if (function.get().fetch_rows) {
+		function.get().fetch_rows(*this, state, rows, row_count, result, result_sel, result_offset);
+		return;
+	}
+	// Without random access, read the rows through the segment's scan: a later row continues it, an earlier row
+	// restarts it
+	auto &scan = state
+	                 .GetOrCreateSegmentState<SegmentFetchCursor>(
+	                     *this, [&]() { return make_uniq<SegmentFetchCursor>(state.context); })
+	                 .scan;
+	for (idx_t i = 0; i < row_count; i++) {
+		const auto row_index = rows[i];
+		if (!scan.scan_state || row_index < scan.internal_index) {
+			InitializeScan(scan);
+			scan.internal_index = 0;
+		}
+		scan.offset_in_column = row_index;
+		if (scan.internal_index < row_index) {
+			Skip(scan);
+		}
+		ScanPartial(scan, 1, result, result_offset + result_sel.get_index(i));
+		scan.internal_index = row_index + 1;
+	}
+}
+
 void ColumnSegment::FetchRow(ColumnFetchState &state, row_t row_id, Vector &result, idx_t result_idx) {
-	if (row_id < 0 || NumericCast<idx_t>(row_id) >= count) {
+	if (row_id < 0) {
 		throw InternalException("ColumnSegment::FetchRow - row_id out of range for segment");
 	}
-	function.get().fetch_row(*this, state, row_id, result, result_idx);
+	const auto row = NumericCast<idx_t>(row_id);
+	FetchRows(state, &row, 1, result, *FlatVector::IncrementalSelectionVector(), result_idx);
 }
 
 //===--------------------------------------------------------------------===//

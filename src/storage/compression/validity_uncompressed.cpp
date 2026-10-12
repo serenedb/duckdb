@@ -552,16 +552,16 @@ void ValiditySelect(ColumnSegment &segment, ColumnScanState &state, idx_t vector
 //===--------------------------------------------------------------------===//
 // Fetch
 //===--------------------------------------------------------------------===//
-void ValidityFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result, idx_t result_idx) {
-	D_ASSERT(row_id >= 0 && row_id < row_t(segment.count));
-	auto row_index = NumericCast<idx_t>(row_id);
-	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
-	auto handle = buffer_manager.Pin(state.context, segment.GetBlockHandle());
-	auto reader = CompressionSegmentReader::FromSegment(handle, segment, "validity segment");
-	auto entry = LoadValidityEntry(reader, row_index);
+void ValidityFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx_t *rows, idx_t count, Vector &result,
+                       const SelectionVector &result_sel, idx_t result_offset) {
+	auto reader = CompressionSegmentReader::FromSegment(state.GetOrInsertHandle(segment), segment, "validity segment");
 	auto &result_mask = FlatVector::ValidityMutable(result);
-	if (!ValidityMask::RowIsValid(entry, row_index % ValidityMask::BITS_PER_VALUE)) {
-		result_mask.SetInvalid(result_idx);
+	for (idx_t i = 0; i < count; i++) {
+		const auto row_index = rows[i];
+		auto entry = LoadValidityEntry(reader, row_index);
+		if (!ValidityMask::RowIsValid(entry, row_index % ValidityMask::BITS_PER_VALUE)) {
+			result_mask.SetInvalid(result_offset + result_sel.get_index(i));
+		}
 	}
 }
 
@@ -641,7 +641,7 @@ CompressionFunction ValidityUncompressed::GetFunction(PhysicalType data_type) {
 	return CompressionFunction(CompressionType::COMPRESSION_UNCOMPRESSED, data_type, ValidityInitAnalyze,
 	                           ValidityAnalyze, ValidityFinalAnalyze, UncompressedFunctions::InitCompression,
 	                           UncompressedFunctions::Compress, UncompressedFunctions::FinalizeCompress,
-	                           ValidityInitScan, ValidityScan, ValidityScanPartial, ValidityFetchRow,
+	                           ValidityInitScan, ValidityScan, ValidityScanPartial, ValidityFetchRows,
 	                           UncompressedFunctions::EmptySkip, ValidityInitSegment, ValidityInitAppend,
 	                           ValidityAppend, ValidityFinalizeAppend, ValidityRevertAppend);
 }

@@ -89,8 +89,8 @@ struct ZSTDStorage {
 	static void StringScanPartial(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result,
 	                              idx_t result_offset);
 	static void StringScan(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result);
-	static void StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
-	                           idx_t result_idx);
+	static void StringFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx_t *rows, idx_t count,
+	                            Vector &result, const SelectionVector &result_sel, idx_t result_offset);
 	static void StringSkip(ColumnSegment &segment, ColumnScanState &state, idx_t skip_count) {
 		// NO OP
 	}
@@ -1149,10 +1149,57 @@ void ZSTDStorage::StringScan(ColumnSegment &segment, ColumnScanState &state, idx
 //===--------------------------------------------------------------------===//
 // Fetch
 //===--------------------------------------------------------------------===//
-void ZSTDStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
-                                 idx_t result_idx) {
-	ZSTDScanState scan_state(segment);
-	scan_state.ScanPartial(UnsafeNumericCast<idx_t>(row_id), result, result_idx, 1);
+struct ZSTDFetchState : public SegmentScanState {
+	explicit ZSTDFetchState(ColumnSegment &segment) : scan_state(segment) {
+	}
+
+	ZSTDScanState scan_state;
+	//! The vector that the fetches read last, decompressed from its first string up to decompressed_count
+	idx_t vector_idx = DConstants::INVALID_INDEX;
+	idx_t decompressed_count = 0;
+	//! The decompressed strings of that vector, kept once a fetch went back within it
+	unique_ptr<Vector> values;
+};
+
+void ZSTDStorage::StringFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx_t *rows, idx_t count,
+                                  Vector &result, const SelectionVector &result_sel, idx_t result_offset) {
+	// A vector is decompressed from its first string: a later row of it continues the decompression, and an earlier
+	// one decompresses it again, keeping its strings from then on for the rows that the fetches go back to
+	auto &fetch_state =
+	    state.GetOrCreateSegmentState<ZSTDFetchState>(segment, [&]() { return make_uniq<ZSTDFetchState>(segment); });
+	auto &scan_state = fetch_state.scan_state;
+	auto result_data = FlatVector::GetDataMutable<string_t>(result);
+	for (idx_t i = 0; i < count; i++) {
+		idx_t offset_in_vector;
+		auto vector_idx = scan_state.GetVectorIndex(rows[i], offset_in_vector);
+		auto result_idx = result_offset + result_sel.get_index(i);
+		if (vector_idx != fetch_state.vector_idx ||
+		    (offset_in_vector < fetch_state.decompressed_count && !fetch_state.values)) {
+			if (vector_idx == fetch_state.vector_idx) {
+				fetch_state.values = make_uniq<Vector>(LogicalType::VARCHAR, ZSTD_VECTOR_SIZE);
+			} else {
+				fetch_state.values.reset();
+			}
+			fetch_state.vector_idx = vector_idx;
+			fetch_state.decompressed_count = 0;
+		}
+		auto &vector_state = scan_state.LoadVector(vector_idx, fetch_state.decompressed_count);
+		if (!fetch_state.values) {
+			if (offset_in_vector > fetch_state.decompressed_count) {
+				scan_state.Skip(vector_state, offset_in_vector - fetch_state.decompressed_count);
+			}
+			scan_state.ScanInternal(vector_state, 1, result, result_idx);
+			fetch_state.decompressed_count = offset_in_vector + 1;
+			continue;
+		}
+		if (offset_in_vector >= fetch_state.decompressed_count) {
+			scan_state.ScanInternal(vector_state, offset_in_vector + 1 - fetch_state.decompressed_count,
+			                        *fetch_state.values, fetch_state.decompressed_count);
+			fetch_state.decompressed_count = offset_in_vector + 1;
+		}
+		auto value = FlatVector::GetData<string_t>(*fetch_state.values)[offset_in_vector];
+		result_data[result_idx] = StringVector::AddStringOrBlob(result, value);
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -1200,7 +1247,7 @@ CompressionFunction ZSTDFun::GetFunction(PhysicalType data_type) {
 	    CompressionType::COMPRESSION_ZSTD, data_type, ZSTDStorage::StringInitAnalyze, ZSTDStorage::StringAnalyze,
 	    ZSTDStorage::StringFinalAnalyze, ZSTDStorage::InitCompression, ZSTDStorage::Compress,
 	    ZSTDStorage::FinalizeCompress, ZSTDStorage::StringInitScan, ZSTDStorage::StringScan,
-	    ZSTDStorage::StringScanPartial, ZSTDStorage::StringFetchRow, ZSTDStorage::StringSkip);
+	    ZSTDStorage::StringScanPartial, ZSTDStorage::StringFetchRows, ZSTDStorage::StringSkip);
 	zstd.init_segment = ZSTDStorage::StringInitSegment;
 	zstd.serialize_state = ZSTDStorage::SerializeState;
 	zstd.deserialize_state = ZSTDStorage::DeserializeState;

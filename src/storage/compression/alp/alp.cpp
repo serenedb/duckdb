@@ -180,7 +180,7 @@ CompressionFunction GetAlpFunction<float>(PhysicalType data_type) {
 	CompressionFunction alpfun(CompressionType::COMPRESSION_ALP, data_type, AlpInitAnalyze<float>, AlpAnalyze<float>,
 	                           AlpFinalAnalyze<float>, AlpInitCompression<float>, AlpCompress<float>,
 	                           AlpFinalizeCompress<float>, AlpInitScan<float>, AlpScan<float>, AlpScanPartial<float>,
-	                           AlpFetchRow<float>, AlpSkip<float>);
+	                           AlpFetchRows<float>, AlpSkip<float>);
 	alpfun.filter = AlpFilter<float>;
 	return alpfun;
 }
@@ -190,7 +190,7 @@ CompressionFunction GetAlpFunction<double>(PhysicalType data_type) {
 	CompressionFunction alpfun(CompressionType::COMPRESSION_ALP, data_type, AlpInitAnalyze<double>, AlpAnalyze<double>,
 	                           AlpFinalAnalyze<double>, AlpInitCompression<double>, AlpCompress<double>,
 	                           AlpFinalizeCompress<double>, AlpInitScan<double>, AlpScan<double>,
-	                           AlpScanPartial<double>, AlpFetchRow<double>, AlpSkip<double>);
+	                           AlpScanPartial<double>, AlpFetchRows<double>, AlpSkip<double>);
 	alpfun.filter = AlpFilter<double>;
 	return alpfun;
 }

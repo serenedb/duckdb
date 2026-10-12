@@ -8,10 +8,10 @@ statement ok
 PRAGMA force_compression = 'dict_fsst';
 
 statement ok
-CREATE TABLE t (id INTEGER PRIMARY KEY, s VARCHAR UNIQUE, v INTEGER);
+CREATE TABLE t (id INTEGER PRIMARY KEY, s VARCHAR);
 
 statement ok
-INSERT INTO t SELECT i, 'string number ' || i || ' with some text to compress', 0 FROM range(1, 50001) r(i);
+INSERT INTO t SELECT i, 'string number ' || i || ' with some text to compress' FROM range(1, 50001) r(i);
 
 statement ok
 CHECKPOINT
@@ -21,6 +21,7 @@ SELECT count(*) > 1 FROM pragma_storage_info('t') WHERE segment_type = 'VARCHAR'
 ----
 true
 
+# the index scan fetches the rows it finds by row id
 query II
 SELECT id, s FROM t WHERE id IN (49999, 3, 25000, 1, 50000, 7777) ORDER BY id;
 ----
@@ -31,19 +32,27 @@ SELECT id, s FROM t WHERE id IN (49999, 3, 25000, 1, 50000, 7777) ORDER BY id;
 49999	string number 49999 with some text to compress
 50000	string number 50000 with some text to compress
 
-# the UPDATE compares the unique column it sets with the stored values, fetched in the order of the join
 statement ok
-UPDATE t SET s = CASE WHEN t.id % 3 = 0 THEN t.s || '!' ELSE t.s END, v = src.id
-FROM (SELECT i AS id FROM range(50000, 0, -1) r(i)) src WHERE t.id = src.id;
+BEGIN
+
+# joined with a larger source in descending order, the UPDATE of every tenth row fetches the previous values of s of
+# the rows it updates in a descending row id order
+statement ok
+UPDATE t SET s = 'new ' || t.id FROM (SELECT i FROM range(600000, 0, -10) r(i)) src WHERE t.id = src.i;
+
+# the rollback restores the previous values that the UPDATE fetched
+statement ok
+ROLLBACK
 
 query II
-SELECT count(*), count(*) FILTER (WHERE s = 'string number ' || id || ' with some text to compress' || CASE WHEN id % 3 = 0 THEN '!' ELSE '' END AND v = id) FROM t;
+SELECT count(*), count(*) FILTER (WHERE s = 'string number ' || id || ' with some text to compress') FROM t;
 ----
 50000	50000
 
-query II rowsort
-DELETE FROM t WHERE id IN (49998, 2, 25001) RETURNING id, s;
+statement ok
+UPDATE t SET s = 'new ' || t.id FROM (SELECT i FROM range(600000, 0, -10) r(i)) src WHERE t.id = src.i;
+
+query II
+SELECT count(*) FILTER (WHERE id % 10 = 0 AND s = 'new ' || id), count(*) FILTER (WHERE id % 10 <> 0 AND s = 'string number ' || id || ' with some text to compress') FROM t;
 ----
-2	string number 2 with some text to compress
-25001	string number 25001 with some text to compress
-49998	string number 49998 with some text to compress!
+5000	45000

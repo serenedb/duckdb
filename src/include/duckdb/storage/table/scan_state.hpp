@@ -168,18 +168,18 @@ struct ColumnFetchState {
 	vector<unique_ptr<ColumnFetchState>> child_states;
 	//! The current row group we are fetching from
 	optional_ptr<SegmentNode<RowGroup>> row_group;
-	//! The decoded segment headers of compression methods whose single row fetch would decode them again per row
+	//! Per segment fetched from, what its compression decoded that later fetches from it reuse, or a scan of it
 	reference_map_t<ColumnSegment, unique_ptr<SegmentScanState>> segment_states;
 
 	BufferHandle &GetOrInsertHandle(ColumnSegment &segment);
 
 	template <class T, class CREATE>
 	T &GetOrCreateSegmentState(ColumnSegment &segment, CREATE &&create) {
-		auto entry = segment_states.find(segment);
-		if (entry == segment_states.end()) {
-			entry = segment_states.emplace(segment, create()).first;
+		auto &state = segment_states[segment];
+		if (!state) {
+			state = create();
 		}
-		return entry->second->template Cast<T>();
+		return state->template Cast<T>();
 	}
 };
 

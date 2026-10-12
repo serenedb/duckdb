@@ -253,8 +253,8 @@ bool RoaringScanState::UseContainerStateCache(idx_t container_index, idx_t inter
 		// Not the same container
 		return false;
 	}
-	if (current_container->scanned_count != internal_offset) {
-		// Not the same scan offset
+	if (current_container->scanned_count > internal_offset) {
+		// Already past the scan offset
 		return false;
 	}
 	return true;
@@ -270,6 +270,9 @@ data_ptr_t RoaringScanState::GetStartOfContainerData(idx_t container_index) {
 
 ContainerScanState &RoaringScanState::LoadContainer(idx_t container_index, idx_t internal_offset) {
 	if (UseContainerStateCache(container_index, internal_offset)) {
+		if (current_container->scanned_count < internal_offset) {
+			Skip(*current_container, internal_offset - current_container->scanned_count);
+		}
 		return *current_container;
 	}
 	auto metadata = GetContainerMetadata(container_index);

@@ -1,0 +1,778 @@
+# name: test/sql/storage/compression/fetch_rows_any_order.test
+# description: Rows of the segments of each compression fetched by row id, also in a descending order
+# group: [compression]
+
+load {TEST_DIR}/test_fetch_rows_any_order.db readwrite v1.5.0
+
+# rle
+statement ok
+PRAGMA force_compression = 'rle';
+
+statement ok
+CREATE TABLE t_rle (id INTEGER PRIMARY KEY, v INTEGER);
+
+statement ok
+INSERT INTO t_rle SELECT i, i // 3 FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('t_rle') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'rle';
+----
+true
+
+# the index scan fetches the rows it finds by row id
+query II
+SELECT id, v IS NOT DISTINCT FROM (id // 3) FROM t_rle WHERE id IN (20010, 3, 10000, 1, 7777) ORDER BY id;
+----
+1	true
+3	true
+7777	true
+10000	true
+20010	true
+
+statement ok
+BEGIN;
+
+# joined with a larger source in descending order, the UPDATE of every tenth row fetches the previous values of v
+# of the rows it updates in a descending row id order
+statement ok
+UPDATE t_rle SET v = -t_rle.id FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_rle.id = src.i;
+
+# the rollback restores the previous values that the UPDATE fetched
+statement ok
+ROLLBACK;
+
+query II
+SELECT count(*), count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id // 3)) FROM t_rle;
+----
+20010	20010
+
+statement ok
+UPDATE t_rle SET v = -t_rle.id FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_rle.id = src.i;
+
+query II
+SELECT count(*) FILTER (WHERE id % 10 = 0 AND v IS NOT DISTINCT FROM (-id)), count(*) FILTER (WHERE id % 10 <> 0 AND v IS NOT DISTINCT FROM (id // 3)) FROM t_rle;
+----
+2001	18009
+
+statement ok
+CREATE TABLE k_rle (id INTEGER, u INTEGER UNIQUE);
+
+statement ok
+INSERT INTO k_rle SELECT i, CASE WHEN i % 4 = 1 THEN i ELSE NULL END FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('k_rle') WHERE column_name = 'u' AND segment_type <> 'VALIDITY' AND compression ILIKE 'rle';
+----
+true
+
+statement ok
+BEGIN;
+
+# the UPDATE does not read u, so it fetches the previous values of u for its delete index, one row at a time in
+# the descending row order of its join
+statement ok
+UPDATE k_rle SET u = CASE WHEN src.i % 4 = 1 THEN -src.i ELSE NULL END FROM (SELECT i FROM range(30000, 0, -1) r(i)) src WHERE k_rle.id = src.i;
+
+# a previous value that did not reach the delete index fails as a duplicate key
+statement ok
+INSERT INTO k_rle SELECT i + 100000, CASE WHEN i % 4 = 1 THEN i ELSE NULL END FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM (CASE WHEN id % 4 = 1 THEN -id ELSE NULL END)), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM (CASE WHEN (id - 100000) % 4 = 1 THEN (id - 100000) ELSE NULL END)) FROM k_rle;
+----
+40020	20010	20010
+
+statement ok
+CREATE TABLE b_rle (id INTEGER, u INTEGER UNIQUE);
+
+statement ok
+INSERT INTO b_rle SELECT i, CASE WHEN i % 4 = 1 THEN i ELSE NULL END FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('b_rle') WHERE column_name = 'u' AND segment_type <> 'VALIDITY' AND compression ILIKE 'rle';
+----
+true
+
+statement ok
+BEGIN;
+
+# joined with blocks of a thousand ascending rows in a descending order of the blocks, the UPDATE fetches the
+# previous values of u forward within a block and back from one block to the next
+statement ok
+UPDATE b_rle SET u = CASE WHEN src.i % 4 = 1 THEN -src.i ELSE NULL END FROM (SELECT (29 - j // 1000) * 1000 + j % 1000 + 1 AS i FROM range(0, 30000) r(j)) src WHERE b_rle.id = src.i;
+
+statement ok
+INSERT INTO b_rle SELECT i + 100000, CASE WHEN i % 4 = 1 THEN i ELSE NULL END FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM (CASE WHEN id % 4 = 1 THEN -id ELSE NULL END)), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM (CASE WHEN (id - 100000) % 4 = 1 THEN (id - 100000) ELSE NULL END)) FROM b_rle;
+----
+40020	20010	20010
+
+# bitpacking
+statement ok
+PRAGMA force_compression = 'bitpacking';
+
+statement ok
+CREATE TABLE t_bitpacking (id INTEGER PRIMARY KEY, v BIGINT);
+
+statement ok
+INSERT INTO t_bitpacking SELECT i, i * 3 FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('t_bitpacking') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'bitpacking';
+----
+true
+
+# the index scan fetches the rows it finds by row id
+query II
+SELECT id, v IS NOT DISTINCT FROM (id * 3) FROM t_bitpacking WHERE id IN (20010, 3, 10000, 1, 7777) ORDER BY id;
+----
+1	true
+3	true
+7777	true
+10000	true
+20010	true
+
+statement ok
+BEGIN;
+
+# joined with a larger source in descending order, the UPDATE of every tenth row fetches the previous values of v
+# of the rows it updates in a descending row id order
+statement ok
+UPDATE t_bitpacking SET v = -t_bitpacking.id FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_bitpacking.id = src.i;
+
+# the rollback restores the previous values that the UPDATE fetched
+statement ok
+ROLLBACK;
+
+query II
+SELECT count(*), count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id * 3)) FROM t_bitpacking;
+----
+20010	20010
+
+statement ok
+UPDATE t_bitpacking SET v = -t_bitpacking.id FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_bitpacking.id = src.i;
+
+query II
+SELECT count(*) FILTER (WHERE id % 10 = 0 AND v IS NOT DISTINCT FROM (-id)), count(*) FILTER (WHERE id % 10 <> 0 AND v IS NOT DISTINCT FROM (id * 3)) FROM t_bitpacking;
+----
+2001	18009
+
+statement ok
+CREATE TABLE k_bitpacking (id INTEGER, u BIGINT UNIQUE);
+
+statement ok
+INSERT INTO k_bitpacking SELECT i, i * 3 FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('k_bitpacking') WHERE column_name = 'u' AND segment_type <> 'VALIDITY' AND compression ILIKE 'bitpacking';
+----
+true
+
+statement ok
+BEGIN;
+
+# the UPDATE does not read u, so it fetches the previous values of u for its delete index, one row at a time in
+# the descending row order of its join
+statement ok
+UPDATE k_bitpacking SET u = -src.i FROM (SELECT i FROM range(30000, 0, -1) r(i)) src WHERE k_bitpacking.id = src.i;
+
+# a previous value that did not reach the delete index fails as a duplicate key
+statement ok
+INSERT INTO k_bitpacking SELECT i + 100000, i * 3 FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM (-id)), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM ((id - 100000) * 3)) FROM k_bitpacking;
+----
+40020	20010	20010
+
+statement ok
+CREATE TABLE b_bitpacking (id INTEGER, u BIGINT UNIQUE);
+
+statement ok
+INSERT INTO b_bitpacking SELECT i, i * 3 FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('b_bitpacking') WHERE column_name = 'u' AND segment_type <> 'VALIDITY' AND compression ILIKE 'bitpacking';
+----
+true
+
+statement ok
+BEGIN;
+
+# joined with blocks of a thousand ascending rows in a descending order of the blocks, the UPDATE fetches the
+# previous values of u forward within a block and back from one block to the next
+statement ok
+UPDATE b_bitpacking SET u = -src.i FROM (SELECT (29 - j // 1000) * 1000 + j % 1000 + 1 AS i FROM range(0, 30000) r(j)) src WHERE b_bitpacking.id = src.i;
+
+statement ok
+INSERT INTO b_bitpacking SELECT i + 100000, i * 3 FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM (-id)), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM ((id - 100000) * 3)) FROM b_bitpacking;
+----
+40020	20010	20010
+
+# alp
+statement ok
+PRAGMA force_compression = 'alp';
+
+statement ok
+CREATE TABLE t_alp (id INTEGER PRIMARY KEY, v DOUBLE);
+
+statement ok
+INSERT INTO t_alp SELECT i, i / 8.0 FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('t_alp') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'alp';
+----
+true
+
+# the index scan fetches the rows it finds by row id
+query II
+SELECT id, v IS NOT DISTINCT FROM (id / 8.0) FROM t_alp WHERE id IN (20010, 3, 10000, 1, 7777) ORDER BY id;
+----
+1	true
+3	true
+7777	true
+10000	true
+20010	true
+
+statement ok
+BEGIN;
+
+# joined with a larger source in descending order, the UPDATE of every tenth row fetches the previous values of v
+# of the rows it updates in a descending row id order
+statement ok
+UPDATE t_alp SET v = -(t_alp.id / 8.0) FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_alp.id = src.i;
+
+# the rollback restores the previous values that the UPDATE fetched
+statement ok
+ROLLBACK;
+
+query II
+SELECT count(*), count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id / 8.0)) FROM t_alp;
+----
+20010	20010
+
+statement ok
+UPDATE t_alp SET v = -(t_alp.id / 8.0) FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_alp.id = src.i;
+
+query II
+SELECT count(*) FILTER (WHERE id % 10 = 0 AND v IS NOT DISTINCT FROM (-(id / 8.0))), count(*) FILTER (WHERE id % 10 <> 0 AND v IS NOT DISTINCT FROM (id / 8.0)) FROM t_alp;
+----
+2001	18009
+
+statement ok
+CREATE TABLE k_alp (id INTEGER, u DOUBLE UNIQUE);
+
+statement ok
+INSERT INTO k_alp SELECT i, i / 8.0 FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('k_alp') WHERE column_name = 'u' AND segment_type <> 'VALIDITY' AND compression ILIKE 'alp';
+----
+true
+
+statement ok
+BEGIN;
+
+# the UPDATE does not read u, so it fetches the previous values of u for its delete index, one row at a time in
+# the descending row order of its join
+statement ok
+UPDATE k_alp SET u = -(src.i / 8.0) FROM (SELECT i FROM range(30000, 0, -1) r(i)) src WHERE k_alp.id = src.i;
+
+# a previous value that did not reach the delete index fails as a duplicate key
+statement ok
+INSERT INTO k_alp SELECT i + 100000, i / 8.0 FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM (-(id / 8.0))), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM ((id - 100000) / 8.0)) FROM k_alp;
+----
+40020	20010	20010
+
+statement ok
+CREATE TABLE b_alp (id INTEGER, u DOUBLE UNIQUE);
+
+statement ok
+INSERT INTO b_alp SELECT i, i / 8.0 FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('b_alp') WHERE column_name = 'u' AND segment_type <> 'VALIDITY' AND compression ILIKE 'alp';
+----
+true
+
+statement ok
+BEGIN;
+
+# joined with blocks of a thousand ascending rows in a descending order of the blocks, the UPDATE fetches the
+# previous values of u forward within a block and back from one block to the next
+statement ok
+UPDATE b_alp SET u = -(src.i / 8.0) FROM (SELECT (29 - j // 1000) * 1000 + j % 1000 + 1 AS i FROM range(0, 30000) r(j)) src WHERE b_alp.id = src.i;
+
+statement ok
+INSERT INTO b_alp SELECT i + 100000, i / 8.0 FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM (-(id / 8.0))), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM ((id - 100000) / 8.0)) FROM b_alp;
+----
+40020	20010	20010
+
+# alprd
+statement ok
+PRAGMA force_compression = 'alprd';
+
+statement ok
+CREATE TABLE t_alprd (id INTEGER PRIMARY KEY, v DOUBLE);
+
+statement ok
+INSERT INTO t_alprd SELECT i, i * 0.123456789012345::DOUBLE FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('t_alprd') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'alprd';
+----
+true
+
+# the index scan fetches the rows it finds by row id
+query II
+SELECT id, v IS NOT DISTINCT FROM (id * 0.123456789012345::DOUBLE) FROM t_alprd WHERE id IN (20010, 3, 10000, 1, 7777) ORDER BY id;
+----
+1	true
+3	true
+7777	true
+10000	true
+20010	true
+
+statement ok
+BEGIN;
+
+# joined with a larger source in descending order, the UPDATE of every tenth row fetches the previous values of v
+# of the rows it updates in a descending row id order
+statement ok
+UPDATE t_alprd SET v = -(t_alprd.id * 0.123456789012345::DOUBLE) FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_alprd.id = src.i;
+
+# the rollback restores the previous values that the UPDATE fetched
+statement ok
+ROLLBACK;
+
+query II
+SELECT count(*), count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id * 0.123456789012345::DOUBLE)) FROM t_alprd;
+----
+20010	20010
+
+statement ok
+UPDATE t_alprd SET v = -(t_alprd.id * 0.123456789012345::DOUBLE) FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_alprd.id = src.i;
+
+query II
+SELECT count(*) FILTER (WHERE id % 10 = 0 AND v IS NOT DISTINCT FROM (-(id * 0.123456789012345::DOUBLE))), count(*) FILTER (WHERE id % 10 <> 0 AND v IS NOT DISTINCT FROM (id * 0.123456789012345::DOUBLE)) FROM t_alprd;
+----
+2001	18009
+
+statement ok
+CREATE TABLE k_alprd (id INTEGER, u DOUBLE UNIQUE);
+
+statement ok
+INSERT INTO k_alprd SELECT i, i * 0.123456789012345::DOUBLE FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('k_alprd') WHERE column_name = 'u' AND segment_type <> 'VALIDITY' AND compression ILIKE 'alprd';
+----
+true
+
+statement ok
+BEGIN;
+
+# the UPDATE does not read u, so it fetches the previous values of u for its delete index, one row at a time in
+# the descending row order of its join
+statement ok
+UPDATE k_alprd SET u = -(src.i * 0.123456789012345::DOUBLE) FROM (SELECT i FROM range(30000, 0, -1) r(i)) src WHERE k_alprd.id = src.i;
+
+# a previous value that did not reach the delete index fails as a duplicate key
+statement ok
+INSERT INTO k_alprd SELECT i + 100000, i * 0.123456789012345::DOUBLE FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM (-(id * 0.123456789012345::DOUBLE))), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM ((id - 100000) * 0.123456789012345::DOUBLE)) FROM k_alprd;
+----
+40020	20010	20010
+
+statement ok
+CREATE TABLE b_alprd (id INTEGER, u DOUBLE UNIQUE);
+
+statement ok
+INSERT INTO b_alprd SELECT i, i * 0.123456789012345::DOUBLE FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('b_alprd') WHERE column_name = 'u' AND segment_type <> 'VALIDITY' AND compression ILIKE 'alprd';
+----
+true
+
+statement ok
+BEGIN;
+
+# joined with blocks of a thousand ascending rows in a descending order of the blocks, the UPDATE fetches the
+# previous values of u forward within a block and back from one block to the next
+statement ok
+UPDATE b_alprd SET u = -(src.i * 0.123456789012345::DOUBLE) FROM (SELECT (29 - j // 1000) * 1000 + j % 1000 + 1 AS i FROM range(0, 30000) r(j)) src WHERE b_alprd.id = src.i;
+
+statement ok
+INSERT INTO b_alprd SELECT i + 100000, i * 0.123456789012345::DOUBLE FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM (-(id * 0.123456789012345::DOUBLE))), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM ((id - 100000) * 0.123456789012345::DOUBLE)) FROM b_alprd;
+----
+40020	20010	20010
+
+# zstd
+statement ok
+PRAGMA force_compression = 'zstd';
+
+statement ok
+CREATE TABLE t_zstd (id INTEGER PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO t_zstd SELECT i, repeat('z', 40) || i FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('t_zstd') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'zstd';
+----
+true
+
+# the index scan fetches the rows it finds by row id
+query II
+SELECT id, v IS NOT DISTINCT FROM (repeat('z', 40) || id) FROM t_zstd WHERE id IN (20010, 3, 10000, 1, 7777) ORDER BY id;
+----
+1	true
+3	true
+7777	true
+10000	true
+20010	true
+
+statement ok
+BEGIN;
+
+# joined with a larger source in descending order, the UPDATE of every tenth row fetches the previous values of v
+# of the rows it updates in a descending row id order
+statement ok
+UPDATE t_zstd SET v = 'new ' || t_zstd.id FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_zstd.id = src.i;
+
+# the rollback restores the previous values that the UPDATE fetched
+statement ok
+ROLLBACK;
+
+query II
+SELECT count(*), count(*) FILTER (WHERE v IS NOT DISTINCT FROM (repeat('z', 40) || id)) FROM t_zstd;
+----
+20010	20010
+
+statement ok
+UPDATE t_zstd SET v = 'new ' || t_zstd.id FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_zstd.id = src.i;
+
+query II
+SELECT count(*) FILTER (WHERE id % 10 = 0 AND v IS NOT DISTINCT FROM ('new ' || id)), count(*) FILTER (WHERE id % 10 <> 0 AND v IS NOT DISTINCT FROM (repeat('z', 40) || id)) FROM t_zstd;
+----
+2001	18009
+
+statement ok
+CREATE TABLE k_zstd (id INTEGER, u VARCHAR UNIQUE);
+
+statement ok
+INSERT INTO k_zstd SELECT i, repeat('z', 40) || i FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('k_zstd') WHERE column_name = 'u' AND segment_type <> 'VALIDITY' AND compression ILIKE 'zstd';
+----
+true
+
+statement ok
+BEGIN;
+
+# the UPDATE does not read u, so it fetches the previous values of u for its delete index, one row at a time in
+# the descending row order of its join
+statement ok
+UPDATE k_zstd SET u = 'new ' || src.i FROM (SELECT i FROM range(30000, 0, -1) r(i)) src WHERE k_zstd.id = src.i;
+
+# a previous value that did not reach the delete index fails as a duplicate key
+statement ok
+INSERT INTO k_zstd SELECT i + 100000, repeat('z', 40) || i FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM ('new ' || id)), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM (repeat('z', 40) || (id - 100000))) FROM k_zstd;
+----
+40020	20010	20010
+
+statement ok
+CREATE TABLE b_zstd (id INTEGER, u VARCHAR UNIQUE);
+
+statement ok
+INSERT INTO b_zstd SELECT i, repeat('z', 40) || i FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('b_zstd') WHERE column_name = 'u' AND segment_type <> 'VALIDITY' AND compression ILIKE 'zstd';
+----
+true
+
+statement ok
+BEGIN;
+
+# joined with blocks of a thousand ascending rows in a descending order of the blocks, the UPDATE fetches the
+# previous values of u forward within a block and back from one block to the next
+statement ok
+UPDATE b_zstd SET u = 'new ' || src.i FROM (SELECT (29 - j // 1000) * 1000 + j % 1000 + 1 AS i FROM range(0, 30000) r(j)) src WHERE b_zstd.id = src.i;
+
+statement ok
+INSERT INTO b_zstd SELECT i + 100000, repeat('z', 40) || i FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM ('new ' || id)), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM (repeat('z', 40) || (id - 100000))) FROM b_zstd;
+----
+40020	20010	20010
+
+# roaring validity
+statement ok
+PRAGMA force_compression = 'roaring';
+
+statement ok
+CREATE TABLE t_roaring_validity (id INTEGER PRIMARY KEY, v INTEGER);
+
+statement ok
+INSERT INTO t_roaring_validity SELECT i, CASE WHEN i % 7 = 0 THEN NULL ELSE i END FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('t_roaring_validity') WHERE column_name = 'v' AND segment_type = 'VALIDITY' AND compression ILIKE 'roaring';
+----
+true
+
+# the index scan fetches the rows it finds by row id
+query II
+SELECT id, v IS NOT DISTINCT FROM (CASE WHEN id % 7 = 0 THEN NULL ELSE id END) FROM t_roaring_validity WHERE id IN (20010, 3, 10000, 1, 7777) ORDER BY id;
+----
+1	true
+3	true
+7777	true
+10000	true
+20010	true
+
+statement ok
+BEGIN;
+
+# joined with a larger source in descending order, the UPDATE of every tenth row fetches the previous values of v
+# of the rows it updates in a descending row id order
+statement ok
+UPDATE t_roaring_validity SET v = CASE WHEN t_roaring_validity.id % 7 = 0 THEN -t_roaring_validity.id ELSE NULL END FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_roaring_validity.id = src.i;
+
+# the rollback restores the previous values that the UPDATE fetched
+statement ok
+ROLLBACK;
+
+query II
+SELECT count(*), count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 7 = 0 THEN NULL ELSE id END)) FROM t_roaring_validity;
+----
+20010	20010
+
+statement ok
+UPDATE t_roaring_validity SET v = CASE WHEN t_roaring_validity.id % 7 = 0 THEN -t_roaring_validity.id ELSE NULL END FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_roaring_validity.id = src.i;
+
+query II
+SELECT count(*) FILTER (WHERE id % 10 = 0 AND v IS NOT DISTINCT FROM (CASE WHEN id % 7 = 0 THEN -id ELSE NULL END)), count(*) FILTER (WHERE id % 10 <> 0 AND v IS NOT DISTINCT FROM (CASE WHEN id % 7 = 0 THEN NULL ELSE id END)) FROM t_roaring_validity;
+----
+2001	18009
+
+statement ok
+CREATE TABLE k_roaring_validity (id INTEGER, u INTEGER UNIQUE);
+
+statement ok
+INSERT INTO k_roaring_validity SELECT i, CASE WHEN i % 7 = 0 THEN NULL ELSE i END FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('k_roaring_validity') WHERE column_name = 'u' AND segment_type = 'VALIDITY' AND compression ILIKE 'roaring';
+----
+true
+
+statement ok
+BEGIN;
+
+# the UPDATE does not read u, so it fetches the previous values of u for its delete index, one row at a time in
+# the descending row order of its join
+statement ok
+UPDATE k_roaring_validity SET u = CASE WHEN src.i % 7 = 0 THEN NULL ELSE -src.i END FROM (SELECT i FROM range(30000, 0, -1) r(i)) src WHERE k_roaring_validity.id = src.i;
+
+# a previous value that did not reach the delete index fails as a duplicate key
+statement ok
+INSERT INTO k_roaring_validity SELECT i + 100000, CASE WHEN i % 7 = 0 THEN NULL ELSE i END FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM (CASE WHEN id % 7 = 0 THEN NULL ELSE -id END)), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM (CASE WHEN (id - 100000) % 7 = 0 THEN NULL ELSE (id - 100000) END)) FROM k_roaring_validity;
+----
+40020	20010	20010
+
+statement ok
+CREATE TABLE b_roaring_validity (id INTEGER, u INTEGER UNIQUE);
+
+statement ok
+INSERT INTO b_roaring_validity SELECT i, CASE WHEN i % 7 = 0 THEN NULL ELSE i END FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('b_roaring_validity') WHERE column_name = 'u' AND segment_type = 'VALIDITY' AND compression ILIKE 'roaring';
+----
+true
+
+statement ok
+BEGIN;
+
+# joined with blocks of a thousand ascending rows in a descending order of the blocks, the UPDATE fetches the
+# previous values of u forward within a block and back from one block to the next
+statement ok
+UPDATE b_roaring_validity SET u = CASE WHEN src.i % 7 = 0 THEN NULL ELSE -src.i END FROM (SELECT (29 - j // 1000) * 1000 + j % 1000 + 1 AS i FROM range(0, 30000) r(j)) src WHERE b_roaring_validity.id = src.i;
+
+statement ok
+INSERT INTO b_roaring_validity SELECT i + 100000, CASE WHEN i % 7 = 0 THEN NULL ELSE i END FROM range(1, 20011) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE id < 100000 AND u IS NOT DISTINCT FROM (CASE WHEN id % 7 = 0 THEN NULL ELSE -id END)), count(*) FILTER (WHERE id > 100000 AND u IS NOT DISTINCT FROM (CASE WHEN (id - 100000) % 7 = 0 THEN NULL ELSE (id - 100000) END)) FROM b_roaring_validity;
+----
+40020	20010	20010
+
+# roaring bool
+statement ok
+PRAGMA force_compression = 'roaring';
+
+statement ok
+CREATE TABLE t_roaring_bool (id INTEGER PRIMARY KEY, v BOOLEAN);
+
+statement ok
+INSERT INTO t_roaring_bool SELECT i, i % 3 = 0 FROM range(1, 20011) r(i);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('t_roaring_bool') WHERE column_name = 'v' AND segment_type = 'BOOLEAN' AND compression ILIKE 'roaring';
+----
+true
+
+# the index scan fetches the rows it finds by row id
+query II
+SELECT id, v IS NOT DISTINCT FROM (id % 3 = 0) FROM t_roaring_bool WHERE id IN (20010, 3, 10000, 1, 7777) ORDER BY id;
+----
+1	true
+3	true
+7777	true
+10000	true
+20010	true
+
+statement ok
+BEGIN;
+
+# joined with a larger source in descending order, the UPDATE of every tenth row fetches the previous values of v
+# of the rows it updates in a descending row id order
+statement ok
+UPDATE t_roaring_bool SET v = t_roaring_bool.id % 3 <> 0 FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_roaring_bool.id = src.i;
+
+# the rollback restores the previous values that the UPDATE fetched
+statement ok
+ROLLBACK;
+
+query II
+SELECT count(*), count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id % 3 = 0)) FROM t_roaring_bool;
+----
+20010	20010
+
+statement ok
+UPDATE t_roaring_bool SET v = t_roaring_bool.id % 3 <> 0 FROM (SELECT i FROM range(300000, 0, -10) r(i)) src WHERE t_roaring_bool.id = src.i;
+
+query II
+SELECT count(*) FILTER (WHERE id % 10 = 0 AND v IS NOT DISTINCT FROM (id % 3 <> 0)), count(*) FILTER (WHERE id % 10 <> 0 AND v IS NOT DISTINCT FROM (id % 3 = 0)) FROM t_roaring_bool;
+----
+2001	18009

@@ -62,8 +62,8 @@ struct DictFSSTCompressionStorage {
 	static void StringScanPartial(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result,
 	                              idx_t result_offset);
 	static void StringScan(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result);
-	static void StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
-	                           idx_t result_idx);
+	static void StringFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx_t *rows, idx_t count,
+	                            Vector &result, const SelectionVector &result_sel, idx_t result_offset);
 };
 
 //===--------------------------------------------------------------------===//
@@ -144,15 +144,18 @@ void DictFSSTCompressionStorage::StringScan(ColumnSegment &segment, ColumnScanSt
 //===--------------------------------------------------------------------===//
 // Fetch
 //===--------------------------------------------------------------------===//
-void DictFSSTCompressionStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id,
-                                                Vector &result, idx_t result_idx) {
-	// fetch a single row from the string segment, decoding its symbol table and string lengths once per fetch
+void DictFSSTCompressionStorage::StringFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx_t *rows,
+                                                 idx_t count, Vector &result, const SelectionVector &result_sel,
+                                                 idx_t result_offset) {
+	// fetch rows from the string segment, decoding its symbol table and string lengths once per fetch state
 	auto &scan_state = state.GetOrCreateSegmentState<CompressedStringScanState>(segment, [&]() {
 		auto segment_state = make_uniq<CompressedStringScanState>(segment, state.GetOrInsertHandle(segment));
 		segment_state->Initialize(false);
 		return segment_state;
 	});
-	scan_state.ScanToFlatVector(result, result_idx, NumericCast<idx_t>(row_id), 1);
+	for (idx_t i = 0; i < count; i++) {
+		scan_state.ScanToFlatVector(result, result_offset + result_sel.get_index(i), rows[i], 1);
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -283,7 +286,7 @@ CompressionFunction DictFSSTCompressionFun::GetFunction(PhysicalType data_type) 
 	    dict_fsst::DictFSSTCompressionStorage::FinalizeCompress, dict_fsst::DictFSSTCompressionStorage::StringInitScan,
 	    dict_fsst::DictFSSTCompressionStorage::StringScan,
 	    dict_fsst::DictFSSTCompressionStorage::StringScanPartial<false>,
-	    dict_fsst::DictFSSTCompressionStorage::StringFetchRow, UncompressedFunctions::EmptySkip,
+	    dict_fsst::DictFSSTCompressionStorage::StringFetchRows, UncompressedFunctions::EmptySkip,
 	    UncompressedStringStorage::StringInitSegment);
 	res.validity = CompressionValidity::NO_VALIDITY_REQUIRED;
 	res.select = dict_fsst::DictFSSTSelect;

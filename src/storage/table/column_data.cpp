@@ -263,10 +263,16 @@ idx_t ColumnData::ScanVector(ColumnScanState &state, Vector &result, idx_t remai
 		idx_t result_offset = base_result_offset + initial_remaining - remaining;
 		if (scan_count > 0) {
 			if (state.scan_options && state.scan_options->force_fetch_row) {
-				for (idx_t i = 0; i < scan_count; i++) {
-					ColumnFetchState fetch_state;
-					current.FetchRow(fetch_state, UnsafeNumericCast<row_t>(state.offset_in_column + i - current_start),
-					                 result, result_offset + i);
+				ColumnFetchState fetch_state;
+				idx_t rows[STANDARD_VECTOR_SIZE];
+				for (idx_t fetched = 0; fetched < scan_count;) {
+					const auto batch = MinValue<idx_t>(scan_count - fetched, STANDARD_VECTOR_SIZE);
+					for (idx_t i = 0; i < batch; i++) {
+						rows[i] = state.offset_in_column + fetched + i - current_start;
+					}
+					current.FetchRows(fetch_state, rows, batch, result, *FlatVector::IncrementalSelectionVector(),
+					                  result_offset + fetched);
+					fetched += batch;
 				}
 			} else {
 				current.Scan(state, scan_count, result, result_offset, scan_type);
@@ -301,11 +307,13 @@ void ColumnData::SelectVector(ColumnScanState &state, Vector &result, idx_t targ
 		throw InternalException("ColumnData::SelectVector should be able to fetch everything from one segment");
 	}
 	if (state.scan_options && state.scan_options->force_fetch_row) {
+		const auto segment_offset = state.offset_in_column - state.current->GetRowStart();
+		idx_t rows[STANDARD_VECTOR_SIZE];
 		for (idx_t i = 0; i < sel_count; i++) {
-			auto source_idx = sel.get_index(i);
-			ColumnFetchState fetch_state;
-			current.FetchRow(fetch_state, UnsafeNumericCast<row_t>(state.offset_in_column + source_idx), result, i);
+			rows[i] = segment_offset + sel.get_index(i);
 		}
+		ColumnFetchState fetch_state;
+		current.FetchRows(fetch_state, rows, sel_count, result, *FlatVector::IncrementalSelectionVector(), 0);
 	} else {
 		current.Select(state, target_count, result, sel, sel_count);
 	}
@@ -766,23 +774,45 @@ void ColumnData::FetchRowsAtSegmentLevel(TransactionData transaction, ColumnFetc
 		return;
 	}
 
+	// The rows are fetched in runs of ascending rows of one segment
+	idx_t rows[STANDARD_VECTOR_SIZE];
+	idx_t run_start = 0;
+	idx_t run_count = 0;
 	optional_ptr<SegmentNode<ColumnSegment>> current_segment;
 	idx_t segment_start = 0;
 	idx_t segment_end = 0;
+	auto fetch_run = [&]() {
+		if (run_count > 0) {
+			current_segment->GetNode().FetchRows(state, rows, run_count, result,
+			                                     *FlatVector::IncrementalSelectionVector(), result_offset + run_start);
+		}
+	};
 	for (idx_t idx = 0; idx < fetch_count; idx++) {
 		const idx_t offset = offsets[sel.get_index(idx)];
 		if (offset > count) {
 			throw InternalException("ColumnData::FetchRowsAtSegmentLevel - row_id %lld out of range for count %lld",
 			                        offset, count);
 		}
-		if (!current_segment || offset < segment_start || offset >= segment_end) {
+		const bool other_segment = !current_segment || offset < segment_start || offset >= segment_end;
+		if (other_segment || offset - segment_start <= rows[run_count - 1]) {
+			fetch_run();
+			run_start = idx;
+			run_count = 0;
+		}
+		if (other_segment) {
+			// What the fetches kept for a segment is dropped once they are done with it, so that a fetch state that
+			// lives long, like that of an index scan, holds none
+			if (current_segment) {
+				state.segment_states.erase(current_segment->GetNode());
+			}
 			current_segment = data.GetSegment(offset);
 			segment_start = current_segment->GetRowStart();
 			segment_end = segment_start + current_segment->GetNode().count;
 		}
-		const idx_t index_in_segment = offset - segment_start;
-		current_segment->GetNode().FetchRow(state, NumericCast<row_t>(index_in_segment), result, result_offset + idx);
+		rows[run_count++] = offset - segment_start;
 	}
+	fetch_run();
+	state.segment_states.erase(current_segment->GetNode());
 	{
 		const lock_guard<mutex> update_guard(update_lock);
 		if (updates) {
@@ -802,20 +832,30 @@ idx_t ColumnData::FetchUpdateData(ColumnScanState &state, row_t *row_ids, idx_t 
 		base_vector.Flatten();
 		return fetch_count;
 	}
-	// An update reads only the base values of its own rows, so a sparse update fetches just those rows.
+	// An update reads only the base values of its own rows, so a sparse update fetches just those rows, in ascending
+	// order and each once.
 	const auto vector_start = first / STANDARD_VECTOR_SIZE * STANDARD_VECTOR_SIZE;
-	ColumnFetchState fetch_state;
-	idx_t segment_start = 0;
-	idx_t segment_end = 0;
+	idx_t offsets[STANDARD_VECTOR_SIZE];
 	for (idx_t i = 0; i < update_count; i++) {
-		const auto offset = UnsafeNumericCast<idx_t>(row_ids[i]) - row_group_start;
-		if (!state.current || offset < segment_start || offset >= segment_end) {
-			state.current = data.GetSegment(offset);
-			segment_start = state.current->GetRowStart();
-			segment_end = segment_start + state.current->GetNode().count;
+		offsets[i] = UnsafeNumericCast<idx_t>(row_ids[i]) - row_group_start;
+	}
+	std::sort(offsets, offsets + update_count);
+	const auto offset_count = NumericCast<idx_t>(std::unique(offsets, offsets + update_count) - offsets);
+	ColumnFetchState fetch_state;
+	idx_t rows[STANDARD_VECTOR_SIZE];
+	sel_t positions[STANDARD_VECTOR_SIZE];
+	for (idx_t i = 0; i < offset_count;) {
+		auto segment = data.GetSegment(offsets[i]);
+		const auto segment_start = segment->GetRowStart();
+		const auto segment_end = segment_start + segment->GetNode().count;
+		idx_t row_count = 0;
+		for (; i < offset_count && offsets[i] < segment_end; i++) {
+			rows[row_count] = offsets[i] - segment_start;
+			positions[row_count] = UnsafeNumericCast<sel_t>(offsets[i] - vector_start);
+			row_count++;
 		}
-		state.current->GetNode().FetchRow(fetch_state, UnsafeNumericCast<row_t>(offset - segment_start), base_vector,
-		                                  offset - vector_start);
+		segment->GetNode().FetchRows(fetch_state, rows, row_count, base_vector,
+		                             SelectionVector(positions, STANDARD_VECTOR_SIZE), 0);
 	}
 	state.current = data.GetSegment(first);
 	return MinValue<idx_t>(STANDARD_VECTOR_SIZE, count - vector_start);
@@ -918,11 +958,13 @@ unique_ptr<ColumnCheckpointState> ColumnData::CreateCheckpointState(const RowGro
 void ColumnData::CheckpointScan(ColumnSegment &segment, ColumnScanState &state, idx_t count,
                                 Vector &scan_vector) const {
 	if (state.scan_options && state.scan_options->force_fetch_row) {
+		ColumnFetchState fetch_state;
+		fetch_state.row_group = state.parent->GetRowGroup();
+		idx_t rows[STANDARD_VECTOR_SIZE];
 		for (idx_t i = 0; i < count; i++) {
-			ColumnFetchState fetch_state;
-			fetch_state.row_group = state.parent->GetRowGroup();
-			segment.FetchRow(fetch_state, UnsafeNumericCast<row_t>(state.offset_in_column + i), scan_vector, i);
+			rows[i] = state.offset_in_column + i;
 		}
+		segment.FetchRows(fetch_state, rows, count, scan_vector, *FlatVector::IncrementalSelectionVector(), 0);
 	} else {
 		segment.Scan(state, count, scan_vector, 0, ScanVectorType::SCAN_FLAT_VECTOR);
 	}

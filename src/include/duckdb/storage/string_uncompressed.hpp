@@ -122,8 +122,8 @@ public:
 	static void Select(ColumnSegment &segment, ColumnScanState &state, idx_t vector_count, Vector &result,
 	                   const SelectionVector &sel, idx_t sel_count);
 
-	static void StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
-	                           idx_t result_idx);
+	static void StringFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx_t *rows, idx_t count,
+	                            Vector &result, const SelectionVector &result_sel, idx_t result_offset);
 	static unique_ptr<CompressedSegmentState> StringInitSegment(ColumnSegment &segment, block_id_t block_id,
 	                                                            optional_ptr<ColumnSegmentState> segment_state);
 
