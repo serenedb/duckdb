@@ -856,6 +856,30 @@ public:
 	static void InitializeAddConstraintTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAddConstraintTrampoline(PEGTransformer &transformer,
 	                                                                       GeneratedTransformProcess &process);
+	static void InitializeEnableTriggerTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeEnableTriggerTrampoline(PEGTransformer &transformer,
+	                                                                       GeneratedTransformProcess &process);
+	static void InitializeDisableTriggerTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDisableTriggerTrampoline(PEGTransformer &transformer,
+	                                                                        GeneratedTransformProcess &process);
+	static void InitializeTriggerFireModeTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeTriggerFireModeTrampoline(PEGTransformer &transformer,
+	                                                                         GeneratedTransformProcess &process);
+	static void InitializeReplicaFireModeTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeReplicaFireModeTrampoline(PEGTransformer &transformer,
+	                                                                         GeneratedTransformProcess &process);
+	static void InitializeAlwaysFireModeTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAlwaysFireModeTrampoline(PEGTransformer &transformer,
+	                                                                        GeneratedTransformProcess &process);
+	static void InitializeTriggerTargetTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeTriggerTargetTrampoline(PEGTransformer &transformer,
+	                                                                       GeneratedTransformProcess &process);
+	static void InitializeAllTriggersTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAllTriggersTrampoline(PEGTransformer &transformer,
+	                                                                     GeneratedTransformProcess &process);
+	static void InitializeUserTriggersTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeUserTriggersTrampoline(PEGTransformer &transformer,
+	                                                                      GeneratedTransformProcess &process);
 	static void InitializeDropConstraintTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeDropConstraintTrampoline(PEGTransformer &transformer,
 	                                                                        GeneratedTransformProcess &process);
@@ -1766,6 +1790,14 @@ public:
 	                                                            GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue>
 	FinalizeCreateSubscriptionStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeDropSubscriptionStatementTrampoline(PEGTransformer &transformer,
+	                                                          GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeDropSubscriptionStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeAlterSubscriptionStatementTrampoline(PEGTransformer &transformer,
+	                                                           GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeAlterSubscriptionStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static void InitializeCreateStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCreateStatementTrampoline(PEGTransformer &transformer,
 	                                                                         GeneratedTransformProcess &process);
@@ -4783,6 +4815,15 @@ public:
 	                                                      unique_ptr<AlterTableInfo> alter_schema_options);
 	static unique_ptr<AlterTableInfo> TransformAddConstraint(PEGTransformer &transformer,
 	                                                         unique_ptr<Constraint> top_level_constraint);
+	static unique_ptr<AlterTableInfo> TransformEnableTrigger(PEGTransformer &transformer,
+	                                                         const optional<string> &trigger_fire_mode,
+	                                                         const Identifier &trigger_target);
+	static unique_ptr<AlterTableInfo> TransformDisableTrigger(PEGTransformer &transformer,
+	                                                          const Identifier &trigger_target);
+	static string TransformReplicaFireMode(PEGTransformer &transformer);
+	static string TransformAlwaysFireMode(PEGTransformer &transformer);
+	static Identifier TransformAllTriggers(PEGTransformer &transformer);
+	static Identifier TransformUserTriggers(PEGTransformer &transformer);
 	static unique_ptr<AlterTableInfo> TransformDropConstraint(PEGTransformer &transformer,
 	                                                          const optional<bool> &if_exists,
 	                                                          const Identifier &identifier,
@@ -5240,6 +5281,10 @@ public:
 	                                                             ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformCreateSubscriptionStatement(PEGTransformer &transformer,
 	                                                                     ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformDropSubscriptionStatement(PEGTransformer &transformer,
+	                                                                   ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterSubscriptionStatement(PEGTransformer &transformer,
+	                                                                    ParseResult &parse_result);
 	static unique_ptr<SQLStatement> TransformCreateStatement(PEGTransformer &transformer,
 	                                                         const optional<bool> &or_replace,
 	                                                         const optional<SecretPersistType> &temporary,

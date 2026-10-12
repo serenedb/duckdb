@@ -223,6 +223,9 @@ void BoundMergeIntoAction::Serialize(Serializer &serializer) const {
 	}
 	serializer.WritePropertyWithDefault<bool>(205, "update_is_del_and_insert", update_is_del_and_insert);
 	serializer.WritePropertyWithDefault<idx_t>(16584, "update_column_count", update_column_count);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(16585, "old_value_positions", old_value_positions);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(16586, "old_value_inputs", old_value_inputs);
+	serializer.WritePropertyWithDefault<bool>(16587, "in_place_unchanged_rows", in_place_unchanged_rows);
 }
 
 unique_ptr<BoundMergeIntoAction> BoundMergeIntoAction::Deserialize(Deserializer &deserializer) {
@@ -234,6 +237,9 @@ unique_ptr<BoundMergeIntoAction> BoundMergeIntoAction::Deserialize(Deserializer 
 	deserializer.ReadPropertyWithExplicitDefault<IndexVector<idx_t, PhysicalIndex>>(204, "column_index_map", result->column_index_map, IndexVector<idx_t, PhysicalIndex>());
 	deserializer.ReadPropertyWithDefault<bool>(205, "update_is_del_and_insert", result->update_is_del_and_insert);
 	deserializer.ReadPropertyWithDefault<idx_t>(16584, "update_column_count", result->update_column_count);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(16585, "old_value_positions", result->old_value_positions);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(16586, "old_value_inputs", result->old_value_inputs);
+	deserializer.ReadPropertyWithDefault<bool>(16587, "in_place_unchanged_rows", result->in_place_unchanged_rows);
 	return result;
 }
 
@@ -639,18 +645,6 @@ void LogicalInsert::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<TableIndex>(204, "table_index", table_index);
 	serializer.WritePropertyWithDefault<bool>(205, "return_chunk", return_chunk);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(206, "bound_defaults", bound_defaults);
-	serializer.WriteProperty<OnConflictAction>(207, "action_type", on_conflict_info.action_type);
-	serializer.WritePropertyWithDefault<vector<LogicalType>>(208, "expected_set_types", on_conflict_info.expected_set_types);
-	serializer.WritePropertyWithDefault<unordered_set<idx_t>>(209, "on_conflict_filter", on_conflict_info.on_conflict_filter);
-	serializer.WritePropertyWithDefault<unique_ptr<Expression>>(210, "on_conflict_condition", on_conflict_info.on_conflict_condition);
-	serializer.WritePropertyWithDefault<unique_ptr<Expression>>(211, "do_update_condition", on_conflict_info.do_update_condition);
-	serializer.WritePropertyWithDefault<vector<PhysicalIndex>>(212, "set_columns", on_conflict_info.set_columns);
-	serializer.WritePropertyWithDefault<vector<LogicalType>>(213, "set_types", on_conflict_info.set_types);
-	serializer.WritePropertyWithDefault<TableIndex>(214, "excluded_table_index", on_conflict_info.excluded_table_index);
-	serializer.WritePropertyWithDefault<vector<column_t>>(215, "columns_to_fetch", on_conflict_info.columns_to_fetch);
-	serializer.WritePropertyWithDefault<vector<column_t>>(216, "source_columns", on_conflict_info.source_columns);
-	serializer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(217, "expressions", expressions);
-	serializer.WritePropertyWithDefault<bool>(218, "update_is_del_and_insert", on_conflict_info.update_is_del_and_insert, false);
 }
 
 unique_ptr<LogicalOperator> LogicalInsert::Deserialize(Deserializer &deserializer) {
@@ -662,18 +656,6 @@ unique_ptr<LogicalOperator> LogicalInsert::Deserialize(Deserializer &deserialize
 	deserializer.ReadPropertyWithDefault<TableIndex>(204, "table_index", result->table_index);
 	deserializer.ReadPropertyWithDefault<bool>(205, "return_chunk", result->return_chunk);
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(206, "bound_defaults", result->bound_defaults);
-	deserializer.ReadProperty<OnConflictAction>(207, "action_type", result->on_conflict_info.action_type);
-	deserializer.ReadPropertyWithDefault<vector<LogicalType>>(208, "expected_set_types", result->on_conflict_info.expected_set_types);
-	deserializer.ReadPropertyWithDefault<unordered_set<idx_t>>(209, "on_conflict_filter", result->on_conflict_info.on_conflict_filter);
-	deserializer.ReadPropertyWithDefault<unique_ptr<Expression>>(210, "on_conflict_condition", result->on_conflict_info.on_conflict_condition);
-	deserializer.ReadPropertyWithDefault<unique_ptr<Expression>>(211, "do_update_condition", result->on_conflict_info.do_update_condition);
-	deserializer.ReadPropertyWithDefault<vector<PhysicalIndex>>(212, "set_columns", result->on_conflict_info.set_columns);
-	deserializer.ReadPropertyWithDefault<vector<LogicalType>>(213, "set_types", result->on_conflict_info.set_types);
-	deserializer.ReadPropertyWithDefault<TableIndex>(214, "excluded_table_index", result->on_conflict_info.excluded_table_index);
-	deserializer.ReadPropertyWithDefault<vector<column_t>>(215, "columns_to_fetch", result->on_conflict_info.columns_to_fetch);
-	deserializer.ReadPropertyWithDefault<vector<column_t>>(216, "source_columns", result->on_conflict_info.source_columns);
-	deserializer.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(217, "expressions", result->expressions);
-	deserializer.ReadPropertyWithExplicitDefault<bool>(218, "update_is_del_and_insert", result->on_conflict_info.update_is_del_and_insert, false);
 	return std::move(result);
 }
 
@@ -959,6 +941,9 @@ void LogicalUpdate::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<idx_t>>(208, "old_row_columns", old_row_columns);
 	serializer.WritePropertyWithDefault<RowIdHandling>(209, "row_id_handling", row_id_handling, RowIdHandling::ASSUME_UNIQUE);
 	serializer.WritePropertyWithDefault<idx_t>(16584, "update_column_count", update_column_count);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(16585, "old_value_positions", old_value_positions);
+	serializer.WritePropertyWithDefault<vector<idx_t>>(16586, "old_value_inputs", old_value_inputs);
+	serializer.WritePropertyWithDefault<bool>(16587, "in_place_unchanged_rows", in_place_unchanged_rows);
 }
 
 unique_ptr<LogicalOperator> LogicalUpdate::Deserialize(Deserializer &deserializer) {
@@ -974,6 +959,9 @@ unique_ptr<LogicalOperator> LogicalUpdate::Deserialize(Deserializer &deserialize
 	deserializer.ReadPropertyWithDefault<vector<idx_t>>(208, "old_row_columns", result->old_row_columns);
 	deserializer.ReadPropertyWithExplicitDefault<RowIdHandling>(209, "row_id_handling", result->row_id_handling, RowIdHandling::ASSUME_UNIQUE);
 	deserializer.ReadPropertyWithDefault<idx_t>(16584, "update_column_count", result->update_column_count);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(16585, "old_value_positions", result->old_value_positions);
+	deserializer.ReadPropertyWithDefault<vector<idx_t>>(16586, "old_value_inputs", result->old_value_inputs);
+	deserializer.ReadPropertyWithDefault<bool>(16587, "in_place_unchanged_rows", result->in_place_unchanged_rows);
 	return std::move(result);
 }
 

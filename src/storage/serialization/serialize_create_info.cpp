@@ -17,6 +17,8 @@
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_subscription_info.hpp"
+#include "duckdb/parser/parsed_data/create_replication_origin_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 
 namespace duckdb {
@@ -82,6 +84,9 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 	case CatalogType::MACRO_ENTRY:
 		result = CreateMacroInfo::Deserialize(deserializer);
 		break;
+	case CatalogType::REPLICATION_ORIGIN_ENTRY:
+		result = CreateReplicationOriginInfo::Deserialize(deserializer);
+		break;
 	case CatalogType::ROLE_ENTRY:
 		result = CreateRoleInfo::Deserialize(deserializer);
 		break;
@@ -90,6 +95,9 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 		break;
 	case CatalogType::SEQUENCE_ENTRY:
 		result = CreateSequenceInfo::Deserialize(deserializer);
+		break;
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		result = CreateSubscriptionInfo::Deserialize(deserializer);
 		break;
 	case CatalogType::TABLE_ENTRY:
 		result = CreateTableInfo::Deserialize(deserializer);
@@ -226,6 +234,20 @@ unique_ptr<CreateInfo> CreateMacroInfo::Deserialize(Deserializer &deserializer) 
 	return std::move(result);
 }
 
+void CreateReplicationOriginInfo::Serialize(Serializer &serializer) const {
+	CreateInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(200, "name", qualified_name.Name());
+	serializer.WritePropertyWithDefault<uint64_t>(201, "remote_lsn", remote_lsn);
+}
+
+unique_ptr<CreateInfo> CreateReplicationOriginInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<CreateReplicationOriginInfo>(new CreateReplicationOriginInfo());
+	auto name = deserializer.ReadPropertyWithDefault<Identifier>(200, "name");
+	deserializer.ReadPropertyWithDefault<uint64_t>(201, "remote_lsn", result->remote_lsn);
+	result->SetName(std::move(name));
+	return std::move(result);
+}
+
 void CreateRoleInfo::Serialize(Serializer &serializer) const {
 	CreateInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<Identifier>(200, "name", qualified_name.Name());
@@ -301,6 +323,52 @@ unique_ptr<CreateInfo> CreateSequenceInfo::Deserialize(Deserializer &deserialize
 	return std::move(result);
 }
 
+void CreateSubscriptionInfo::Serialize(Serializer &serializer) const {
+	CreateInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(200, "name", qualified_name.Name());
+	serializer.WritePropertyWithDefault<string>(201, "conninfo", conninfo);
+	serializer.WritePropertyWithDefault<vector<string>>(202, "publications", publications);
+	serializer.WritePropertyWithDefault<string>(203, "slot_name", slot_name);
+	serializer.WritePropertyWithDefault<bool>(204, "enabled", enabled, true);
+	serializer.WritePropertyWithDefault<bool>(205, "binary", binary);
+	serializer.WritePropertyWithDefault<bool>(206, "copy_data", copy_data, true);
+	serializer.WritePropertyWithDefault<bool>(207, "create_slot", create_slot, true);
+	serializer.WritePropertyWithDefault<bool>(208, "disable_on_error", disable_on_error);
+	serializer.WritePropertyWithDefault<bool>(209, "password_required", password_required, true);
+	serializer.WritePropertyWithDefault<bool>(210, "run_as_owner", run_as_owner);
+	serializer.WritePropertyWithDefault<bool>(211, "failover", failover);
+	serializer.WritePropertyWithDefault<string>(212, "origin", origin, "any");
+	serializer.WritePropertyWithDefault<string>(213, "synchronous_commit", synchronous_commit, "off");
+	serializer.WritePropertyWithDefault<uint64_t>(214, "remote_lsn", remote_lsn);
+	serializer.WritePropertyWithDefault<uint64_t>(215, "skip_lsn", skip_lsn);
+	serializer.WritePropertyWithDefault<string>(216, "streaming", streaming, "off");
+	serializer.WritePropertyWithDefault<vector<SubscriptionRelation>>(217, "relations", relations);
+}
+
+unique_ptr<CreateInfo> CreateSubscriptionInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<CreateSubscriptionInfo>(new CreateSubscriptionInfo());
+	auto name = deserializer.ReadPropertyWithDefault<Identifier>(200, "name");
+	deserializer.ReadPropertyWithDefault<string>(201, "conninfo", result->conninfo);
+	deserializer.ReadPropertyWithDefault<vector<string>>(202, "publications", result->publications);
+	deserializer.ReadPropertyWithDefault<string>(203, "slot_name", result->slot_name);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(204, "enabled", result->enabled, true);
+	deserializer.ReadPropertyWithDefault<bool>(205, "binary", result->binary);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(206, "copy_data", result->copy_data, true);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(207, "create_slot", result->create_slot, true);
+	deserializer.ReadPropertyWithDefault<bool>(208, "disable_on_error", result->disable_on_error);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(209, "password_required", result->password_required, true);
+	deserializer.ReadPropertyWithDefault<bool>(210, "run_as_owner", result->run_as_owner);
+	deserializer.ReadPropertyWithDefault<bool>(211, "failover", result->failover);
+	deserializer.ReadPropertyWithExplicitDefault<string>(212, "origin", result->origin, "any");
+	deserializer.ReadPropertyWithExplicitDefault<string>(213, "synchronous_commit", result->synchronous_commit, "off");
+	deserializer.ReadPropertyWithDefault<uint64_t>(214, "remote_lsn", result->remote_lsn);
+	deserializer.ReadPropertyWithDefault<uint64_t>(215, "skip_lsn", result->skip_lsn);
+	deserializer.ReadPropertyWithExplicitDefault<string>(216, "streaming", result->streaming, "off");
+	deserializer.ReadPropertyWithDefault<vector<SubscriptionRelation>>(217, "relations", result->relations);
+	result->SetName(std::move(name));
+	return std::move(result);
+}
+
 void CreateTableInfo::Serialize(Serializer &serializer) const {
 	CreateInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<Identifier>(200, "table", qualified_name.Name());
@@ -354,6 +422,9 @@ void CreateTriggerInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<unique_ptr<QueryNode>>(208, "trigger_action", trigger_action);
 	serializer.WritePropertyWithDefault<Identifier>(209, "referencing_new_table", referencing_new_table);
 	serializer.WritePropertyWithDefault<Identifier>(210, "referencing_old_table", referencing_old_table);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<TriggerFiring>(16595, "firing", firing, TriggerFiring::ORIGIN);
+	}
 }
 
 unique_ptr<CreateInfo> CreateTriggerInfo::Deserialize(Deserializer &deserializer) {
@@ -368,6 +439,7 @@ unique_ptr<CreateInfo> CreateTriggerInfo::Deserialize(Deserializer &deserializer
 	deserializer.ReadPropertyWithDefault<unique_ptr<QueryNode>>(208, "trigger_action", result->trigger_action);
 	deserializer.ReadPropertyWithDefault<Identifier>(209, "referencing_new_table", result->referencing_new_table);
 	deserializer.ReadPropertyWithDefault<Identifier>(210, "referencing_old_table", result->referencing_old_table);
+	deserializer.ReadPropertyWithExplicitDefault<TriggerFiring>(16595, "firing", result->firing, TriggerFiring::ORIGIN);
 	result->SetName(std::move(trigger_name));
 	return std::move(result);
 }
@@ -421,6 +493,24 @@ unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<bool>(16584, "security_invoker", result->security_invoker);
 	result->SetName(std::move(view_name));
 	return std::move(result);
+}
+
+void SubscriptionRelation::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<string>(100, "schema", schema);
+	serializer.WritePropertyWithDefault<string>(101, "table", table);
+	serializer.WritePropertyWithDefault<uint8_t>(102, "state", state, 'i');
+	serializer.WritePropertyWithDefault<uint64_t>(103, "lsn", lsn);
+	serializer.WritePropertyWithDefault<idx_t>(104, "sync_id", sync_id);
+}
+
+SubscriptionRelation SubscriptionRelation::Deserialize(Deserializer &deserializer) {
+	SubscriptionRelation result;
+	deserializer.ReadPropertyWithDefault<string>(100, "schema", result.schema);
+	deserializer.ReadPropertyWithDefault<string>(101, "table", result.table);
+	deserializer.ReadPropertyWithExplicitDefault<uint8_t>(102, "state", result.state, 'i');
+	deserializer.ReadPropertyWithDefault<uint64_t>(103, "lsn", result.lsn);
+	deserializer.ReadPropertyWithDefault<idx_t>(104, "sync_id", result.sync_id);
+	return result;
 }
 
 } // namespace duckdb

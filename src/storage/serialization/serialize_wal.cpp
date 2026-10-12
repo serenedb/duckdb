@@ -67,6 +67,16 @@ WALCreateMacro WALCreateMacro::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
+void WALCreateReplicationOrigin::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "origin", origin);
+}
+
+WALCreateReplicationOrigin WALCreateReplicationOrigin::Deserialize(Deserializer &deserializer) {
+	WALCreateReplicationOrigin result;
+	deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(101, "origin", result.origin);
+	return result;
+}
+
 void WALCreateRole::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "role", role);
 }
@@ -108,6 +118,16 @@ void WALCreateSequence::Serialize(Serializer &serializer) const {
 WALCreateSequence WALCreateSequence::Deserialize(Deserializer &deserializer) {
 	WALCreateSequence result;
 	deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(101, "sequence", result.sequence);
+	return result;
+}
+
+void WALCreateSubscription::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "subscription", subscription);
+}
+
+WALCreateSubscription WALCreateSubscription::Deserialize(Deserializer &deserializer) {
+	WALCreateSubscription result;
+	deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(101, "subscription", result.subscription);
 	return result;
 }
 
@@ -265,6 +285,16 @@ WALDropMacro WALDropMacro::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
+void WALDropReplicationOrigin::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+}
+
+WALDropReplicationOrigin WALDropReplicationOrigin::Deserialize(Deserializer &deserializer) {
+	WALDropReplicationOrigin result;
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
+	return result;
+}
+
 void WALDropRole::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
 }
@@ -319,6 +349,16 @@ WALDropSequence WALDropSequence::Deserialize(Deserializer &deserializer) {
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
+	return result;
+}
+
+void WALDropSubscription::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+}
+
+WALDropSubscription WALDropSubscription::Deserialize(Deserializer &deserializer) {
+	WALDropSubscription result;
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
 	return result;
 }
 
@@ -480,6 +520,26 @@ void WALPrepared::Serialize(Serializer &serializer) const {
 WALPrepared WALPrepared::Deserialize(Deserializer &deserializer) {
 	WALPrepared result;
 	deserializer.ReadProperty<hugeint_t>(101, "txid", result.txid);
+	return result;
+}
+
+void WALReplicationLsn::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+	serializer.WritePropertyWithDefault<uint64_t>(102, "remote_lsn", remote_lsn);
+	serializer.WritePropertyWithDefault<idx_t>(103, "oid", oid);
+	serializer.WriteProperty<CatalogType>(104, "type", type);
+	serializer.WritePropertyWithDefault<bool>(105, "assign", assign);
+	serializer.WritePropertyWithDefault<idx_t>(106, "relation", relation);
+}
+
+WALReplicationLsn WALReplicationLsn::Deserialize(Deserializer &deserializer) {
+	WALReplicationLsn result;
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
+	deserializer.ReadPropertyWithDefault<uint64_t>(102, "remote_lsn", result.remote_lsn);
+	deserializer.ReadPropertyWithDefault<idx_t>(103, "oid", result.oid);
+	deserializer.ReadProperty<CatalogType>(104, "type", result.type);
+	deserializer.ReadPropertyWithDefault<bool>(105, "assign", result.assign);
+	deserializer.ReadPropertyWithDefault<idx_t>(106, "relation", result.relation);
 	return result;
 }
 
