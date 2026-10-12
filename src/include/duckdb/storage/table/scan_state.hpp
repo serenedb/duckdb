@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/common.hpp"
+#include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
 #include "duckdb/storage/storage_lock.hpp"
@@ -167,8 +168,19 @@ struct ColumnFetchState {
 	vector<unique_ptr<ColumnFetchState>> child_states;
 	//! The current row group we are fetching from
 	optional_ptr<SegmentNode<RowGroup>> row_group;
+	//! The decoded segment headers of compression methods whose single row fetch would decode them again per row
+	reference_map_t<ColumnSegment, unique_ptr<SegmentScanState>> segment_states;
 
 	BufferHandle &GetOrInsertHandle(ColumnSegment &segment);
+
+	template <class T, class CREATE>
+	T &GetOrCreateSegmentState(ColumnSegment &segment, CREATE &&create) {
+		auto entry = segment_states.find(segment);
+		if (entry == segment_states.end()) {
+			entry = segment_states.emplace(segment, create()).first;
+		}
+		return entry->second->template Cast<T>();
+	}
 };
 
 struct ScanFilter {

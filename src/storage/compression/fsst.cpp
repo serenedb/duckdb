@@ -789,35 +789,13 @@ void FSSTStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state
 	auto row_index = NumericCast<idx_t>(row_id);
 	D_ASSERT(row_index < segment.count.load());
 
-	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
-	auto handle = buffer_manager.Pin(state.context, segment.GetBlockHandle());
-	auto reader = CompressionSegmentReader::FromSegment(handle, segment, "FSST");
-	duckdb_fsst_decoder_t decoder;
-	auto layout = FSSTScanState::ParseFSSTSegmentHeader(reader, segment.count.load());
-	auto have_symbol_table = FSSTScanState::TryImportSymbolTable(layout, &decoder);
-
-	auto result_data = FlatVector::GetDataMutable<string_t>(result);
-
-	// We basically just do a scan of 1 which is kinda expensive as we need to repeatedly delta decode until we
-	// reach the row we want, we could consider a more clever caching trick if this is slow
-	auto offsets = CalculateBpDeltaOffsets(-1, row_index, 1);
-
-	auto bitunpack_buffer = unique_ptr<uint32_t[]>(new uint32_t[offsets.total_bitunpack_count]);
-	BitUnpackRange(layout.lengths, data_ptr_cast(bitunpack_buffer.get()), offsets.total_bitunpack_count,
-	               offsets.bitunpack_start_row, layout.width);
-	auto delta_decode_buffer = unique_ptr<uint32_t[]>(new uint32_t[offsets.total_delta_decode_count]);
-	auto strings = FSSTScanState::DecodeAndValidateOffsets(
-	    layout, bitunpack_buffer.get() + offsets.bitunpack_alignment_offset, delta_decode_buffer.get(),
-	    offsets.total_delta_decode_count, 0, have_symbol_table);
-	auto compressed_string = strings.GetCompressedString(offsets.unused_delta_decoded_values);
-	if (compressed_string.empty()) {
-		result_data[result_idx] = string_t(nullptr, 0);
-		return;
-	}
-
+	// The offsets are delta encoded: a later fetch of the segment continues decoding where this one stopped
+	auto &scan_state =
+	    state.GetOrCreateSegmentState<FSSTScanState>(segment, [&]() { return StringInitScan(state.context, segment); });
+	auto strings = scan_state.ValidateRange(row_index, 1);
 	auto &str_allocator = StringVector::GetStringAllocator(result);
-	result_data[result_idx] = FSSTPrimitives::DecompressValue(
-	    (void *)&decoder, str_allocator, const_char_ptr_cast(compressed_string.data()), compressed_string.size());
+	FlatVector::GetDataMutable<string_t>(result)[result_idx] =
+	    scan_state.DecompressString(strings.GetCompressedString(0), str_allocator);
 }
 
 //===--------------------------------------------------------------------===//
