@@ -1,0 +1,29 @@
+# name: test/sql/catalog/function/test_sql_function_literal_arguments.test
+# description: A literal argument reaches a typed macro parameter as it reaches a scalar function's, as in PostgreSQL
+# group: [function]
+
+statement ok
+CREATE FUNCTION next_day(d date) RETURNS date LANGUAGE sql RETURN d + 1;
+
+query I
+SELECT next_day('2024-01-31');
+----
+2024-02-01
+
+query I
+SELECT next_day(d := '2024-02-28');
+----
+2024-02-29
+
+statement error
+SELECT next_day('2024-01-31'::varchar);
+----
+does not support the supplied arguments
+
+statement ok
+CREATE MACRO typed_next_day(d DATE) AS d + 1;
+
+query I
+SELECT typed_next_day('2024-12-31');
+----
+2025-01-01
