@@ -42,6 +42,9 @@ class ColumnAliasBinder;
 
 struct DummyBinding;
 struct SelectBindState;
+struct MacroArgumentScan;
+struct MacroBodyUse;
+struct MacroFunctionLookup;
 
 struct BoundColumnReferenceInfo {
 	Identifier name;
@@ -294,6 +297,13 @@ protected:
 	virtual BindResult BindGroupingFunction(OperatorExpression &op, idx_t depth);
 	virtual BindResult BindFunction(FunctionExpression &expr, ScalarFunctionCatalogEntry &function, idx_t depth);
 	virtual BindResult BindLambdaFunction(FunctionExpression &expr, ScalarFunctionCatalogEntry &function, idx_t depth);
+	BindResult BindLambdaFunction(const FunctionExpression &function, ScalarFunctionCatalogEntry &func,
+	                              LambdaExpression &lambda_expr, idx_t lambda_expr_idx,
+	                              vector<unique_ptr<Expression>> bound_children,
+	                              vector<LogicalType> function_child_types, idx_t depth);
+	virtual bool CanShareMacroArguments() const {
+		return true;
+	}
 	virtual BindResult BindAggregate(FunctionExpression &expr, AggregateFunctionCatalogEntry &function, idx_t depth);
 	virtual BindResult BindWindow(FunctionExpression &expr, WindowFunctionCatalogEntry &function, idx_t depth);
 	virtual BindResult BindUnnest(FunctionExpression &expr, idx_t depth, bool root_expression);
@@ -302,7 +312,14 @@ protected:
 	void FindAggregateExprs(unique_ptr<ParsedExpression> &expr, vector<reference<unique_ptr<ParsedExpression>>> &exprs);
 	void UnfoldWindowMacroExpression(unique_ptr<ParsedExpression> &expr, ScalarMacroFunction &macro_def);
 	void UnfoldMacroExpression(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func,
-	                           unique_ptr<ParsedExpression> &expr, idx_t depth);
+	                           unique_ptr<ParsedExpression> &expr, idx_t depth,
+	                           vector<unique_ptr<Expression>> &shared_arguments);
+	MacroFunctionLookup LookupMacroFunction(const FunctionExpression &function);
+	const MacroBodyUse &GetMacroBodyUse(const ScalarMacroFunction &macro_def, const Identifier &name);
+	vector<bool> MacroArgumentsBindInPlace(const FunctionExpression &function, ScalarMacroCatalogEntry &macro_func);
+	void AnalyzeMacroBody(ParsedExpression &expr, bool conditional, bool shareable,
+	                      vector<identifier_set_t> &lambda_params, DummyBinding &parameters, MacroBodyUse &use);
+	void ScanMacroArgument(ParsedExpression &argument, MacroArgumentScan &scan);
 
 	virtual string UnsupportedAggregateMessage();
 	virtual string UnsupportedWindowMessage();

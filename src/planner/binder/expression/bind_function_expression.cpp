@@ -546,8 +546,17 @@ BindResult ExpressionBinder::BindLambdaFunction(FunctionExpression &function, Sc
 		}
 	}
 
-	// bind the lambda parameter
 	auto &lambda_expr = args[lambda_expr_idx].GetExpressionMutable()->Cast<LambdaExpression>();
+	return BindLambdaFunction(function, func, lambda_expr, lambda_expr_idx, std::move(bound_children),
+	                          std::move(function_child_types), depth);
+}
+
+BindResult ExpressionBinder::BindLambdaFunction(const FunctionExpression &function, ScalarFunctionCatalogEntry &func,
+                                                LambdaExpression &lambda_expr, idx_t lambda_expr_idx,
+                                                vector<unique_ptr<Expression>> bound_children,
+                                                vector<LogicalType> function_child_types, idx_t depth) {
+	auto bind_lambda_function = func.functions.functions.front()->GetBindLambdaCallback();
+	ErrorData error;
 
 	unique_ptr<ParsedExpression> lambda_expr_copy;
 	const bool is_list_reduce = func.name == "list_reduce";
@@ -592,7 +601,7 @@ BindResult ExpressionBinder::BindLambdaFunction(FunctionExpression &function, Sc
 	}
 
 	// successfully bound: keep the bound lambda alongside the other bound children
-	auto alias = args[lambda_expr_idx].GetExpression().GetAlias();
+	auto alias = lambda_expr.GetAlias();
 	bind_lambda_result.expression->SetAlias(alias);
 
 	bound_children[lambda_expr_idx] = std::move(bind_lambda_result.expression);

@@ -56,6 +56,8 @@ class TableCatalogEntry;
 class ViewCatalogEntry;
 class TableMacroCatalogEntry;
 class MacroCatalogEntry;
+class MacroFunction;
+class ScalarMacroCatalogEntry;
 class UpdateSetInfo;
 class LogicalProjection;
 class LogicalGet;
@@ -188,9 +190,47 @@ private:
 };
 
 //! GlobalBinderState is state shared over the ENTIRE query, including subqueries, views, etc
+struct MacroParameterUse {
+	idx_t references = 0;
+	bool unconditional = false;
+	bool shareable = true;
+	identifier_set_t lambda_names;
+};
+
+struct MacroArgumentScan {
+	bool blocked = false;
+	bool is_volatile = false;
+	bool constant = true;
+	bool has_parameter = false;
+	identifier_set_t names;
+};
+
+struct MacroBodyUse {
+	identifier_map_t<MacroParameterUse> parameters;
+	bool is_volatile = false;
+	bool lambda_body = true;
+};
+
+enum class MacroFunctionKind : uint8_t {
+	FUNCTION,
+	VOLATILE_FUNCTION,
+	MACRO,
+	AGGREGATE,
+	OTHER,
+};
+
+struct MacroFunctionLookup {
+	MacroFunctionKind kind = MacroFunctionKind::OTHER;
+	optional_ptr<ScalarMacroCatalogEntry> macro;
+};
+
 struct GlobalBinderState {
 	//! The count of bound_tables
 	idx_t bound_tables = 0;
+	unordered_map<const MacroFunction *, MacroBodyUse> macro_body_uses;
+	unordered_map<const ScalarMacroCatalogEntry *, Value> constant_macros;
+	identifier_map_t<MacroFunctionLookup> macro_functions;
+	idx_t shared_macro_arguments = 0;
 	//! Statement properties
 	StatementProperties prop;
 	//! Binding mode

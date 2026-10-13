@@ -12,6 +12,8 @@
 #include "duckdb/planner/expression/bound_lambda_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 namespace duckdb {
 
 static idx_t GetLambdaParamCount(vector<DummyBinding> &lambda_bindings) {
@@ -240,18 +242,20 @@ BindResult ExpressionBinder::BindExpression(LambdaExpression &expr, idx_t depth,
 	}
 	DummyBinding new_lambda_binding(column_types, column_names, table_alias);
 	lambda_bindings->push_back(new_lambda_binding);
+	absl::Cleanup pop_lambda_binding = [&] {
+		lambda_bindings->pop_back();
+		// successfully bound a subtree of nested lambdas, set this to nullptr in case other parts of the
+		// query also contain lambdas
+		if (lambda_bindings->empty()) {
+			lambda_bindings = nullptr;
+		}
+	};
 
 	if (expr.CopiedExprMutable()) {
 		expr.RightMutable() = std::move(expr.CopiedExprMutable());
 	}
 	auto result = BindExpression(expr.RightMutable(), depth, false);
-	lambda_bindings->pop_back();
-
-	// successfully bound a subtree of nested lambdas, set this to nullptr in case other parts of the
-	// query also contain lambdas
-	if (lambda_bindings->empty()) {
-		lambda_bindings = nullptr;
-	}
+	std::move(pop_lambda_binding).Invoke();
 
 	if (result.HasError()) {
 		result.error.Throw();

@@ -375,6 +375,10 @@ protected:
 		return "aggregate functions are not allowed in PARTITION_PATH";
 	}
 
+	bool CanShareMacroArguments() const override {
+		return false;
+	}
+
 private:
 	BindResult BindColumnReference(ColumnRefExpression &col_ref) {
 		if (col_ref.ColumnNames().size() == 1) {
