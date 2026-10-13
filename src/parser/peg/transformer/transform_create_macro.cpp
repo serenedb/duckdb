@@ -177,8 +177,8 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 	// children: 0 = Parens(MacroParameters?), 1 = FunctionDecorator* (Repeat), 2 = body choice group, 3 =
 	// FunctionDecorator* (Repeat).
 	auto &body_pr = list_pr.Child<ListParseResult>(2);
-	auto macro_function =
-	    transformer.Transform<unique_ptr<MacroFunction>>(body_pr.Child<ChoiceParseResult>(0).GetResult());
+	auto &body_choice = body_pr.Child<ChoiceParseResult>(0);
+	auto macro_function = transformer.Transform<unique_ptr<MacroFunction>>(body_choice.GetResult());
 	auto &parameters_pr = ExtractResultFromParens(list_pr.Child<ListParseResult>(0)).Cast<OptionalParseResult>();
 	// Collect parameters up front but defer applying them; bare `TYPE` params need to know whether LANGUAGE was
 	// specified to pick PG vs DuckDB semantics.
@@ -238,7 +238,8 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 
 	// PG-style SQL body: when LANGUAGE was specified AND the body is a string constant scalar macro (parsed via
 	// `AS 'SELECT ...'`), re-parse the string as SQL and replace the scalar body with the parsed query node.
-	if (decorator_info.has_language && macro_function->type == MacroType::SCALAR_MACRO) {
+	if (decorator_info.has_language && macro_function->type == MacroType::SCALAR_MACRO &&
+	    body_choice.Name() == "AsMacroBody") {
 		auto &scalar = macro_function->Cast<ScalarMacroFunction>();
 		if (scalar.expression && scalar.expression->GetExpressionClass() == ExpressionClass::CONSTANT) {
 			auto &literal = scalar.expression->Cast<ConstantExpression>().GetLiteral();
