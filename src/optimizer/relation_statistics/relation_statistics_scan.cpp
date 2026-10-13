@@ -238,27 +238,24 @@ RelationStats RelationStatisticsHelper::ExtractColumnDataGetStats(LogicalColumnD
 	return result;
 }
 
-idx_t RelationStatisticsHelper::InspectTableFilter(idx_t cardinality, const TableFilter &filter,
-                                                   BaseStatistics &base_stats) {
+static idx_t InspectFilterExpression(idx_t cardinality, const Expression &expr, BaseStatistics &base_stats) {
 	auto cardinality_after_filters = cardinality;
-	auto &expr_filter = ExpressionFilter::GetExpressionFilter(filter, "RelationStatisticsHelper::InspectTableFilter");
-	auto &expr = *expr_filter.expr;
 	if (expr.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
 		auto &function = expr.Cast<BoundFunctionExpression>();
 		if (function.Function().GetName() == "!~~" && !base_stats.CanHaveNull()) {
 			if (cardinality == 0) {
 				return 0;
 			}
-			return MaxValue<idx_t>(
-			    LossyNumericCast<idx_t>(static_cast<double>(cardinality) * (1.0 - DEFAULT_SELECTIVITY)), 1);
+			return MaxValue<idx_t>(LossyNumericCast<idx_t>(static_cast<double>(cardinality) *
+			                                               (1.0 - RelationStatisticsHelper::DEFAULT_SELECTIVITY)),
+			                       1);
 		}
 	}
 	if (expr.GetExpressionType() == ExpressionType::CONJUNCTION_AND) {
 		auto &conjunction = expr.Cast<BoundConjunctionExpression>();
 		for (auto &child : conjunction.GetChildren()) {
-			ExpressionFilter child_filter(child->Copy());
 			cardinality_after_filters =
-			    MinValue(cardinality_after_filters, InspectTableFilter(cardinality, child_filter, base_stats));
+			    MinValue(cardinality_after_filters, InspectFilterExpression(cardinality, *child, base_stats));
 		}
 		return cardinality_after_filters;
 	}
@@ -274,6 +271,12 @@ idx_t RelationStatisticsHelper::InspectTableFilter(idx_t cardinality, const Tabl
 		cardinality_after_filters = (cardinality + column_count - 1) / column_count;
 	}
 	return cardinality_after_filters;
+}
+
+idx_t RelationStatisticsHelper::InspectTableFilter(idx_t cardinality, const TableFilter &filter,
+                                                   BaseStatistics &base_stats) {
+	auto &expr_filter = ExpressionFilter::GetExpressionFilter(filter, "RelationStatisticsHelper::InspectTableFilter");
+	return InspectFilterExpression(cardinality, *expr_filter.expr, base_stats);
 }
 
 } // namespace duckdb

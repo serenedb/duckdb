@@ -119,7 +119,7 @@ void CTEFilterPusher::PushFilterIntoCTE(MaterializedCTEInfo &info) {
 	}
 
 	// Create an OR expression with all the filters on all references of the CTE
-	unique_ptr<Expression> outer_expr;
+	auto outer_expr = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_OR);
 	for (auto &filter : info.filters) {
 		D_ASSERT(filter.get().type == LogicalOperatorType::LOGICAL_FILTER);
 
@@ -139,7 +139,7 @@ void CTEFilterPusher::PushFilterIntoCTE(MaterializedCTEInfo &info) {
 		}
 
 		// We copy the filters and replace the CTE reference bindings with the bindings in the CTE definition
-		unique_ptr<Expression> inner_expr;
+		auto inner_expr = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
 		for (auto &filter_expr : filter.get().expressions) {
 			// Dropping a conjunct must not expose errors it previously short-circuited.
 			if (filter_expr->IsVolatile() || ExpressionBarrier::Contains(*filter_expr) ||
@@ -148,29 +148,29 @@ void CTEFilterPusher::PushFilterIntoCTE(MaterializedCTEInfo &info) {
 			}
 			auto filter_expr_copy = filter_expr->Copy();
 			replacer.VisitExpression(&filter_expr_copy);
-			if (inner_expr) {
-				inner_expr = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND,
-				                                                   std::move(inner_expr), std::move(filter_expr_copy));
-			} else {
-				inner_expr = std::move(filter_expr_copy);
-			}
+			inner_expr->GetChildrenMutable().push_back(std::move(filter_expr_copy));
 		}
 
 		// An unrestricted consumer makes the disjunction true.
-		if (!inner_expr) {
+		if (inner_expr->GetChildren().empty()) {
 			return;
 		}
 
-		if (outer_expr) {
-			outer_expr = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_OR, std::move(outer_expr),
-			                                                   std::move(inner_expr));
+		if (inner_expr->GetChildren().size() == 1) {
+			outer_expr->GetChildrenMutable().push_back(std::move(inner_expr->GetChildrenMutable()[0]));
 		} else {
-			outer_expr = std::move(inner_expr);
+			outer_expr->GetChildrenMutable().push_back(std::move(inner_expr));
 		}
 	}
 
 	// Add the filter on top of the CTE definition and split the predicates
-	auto new_cte = make_uniq_base<LogicalOperator, LogicalFilter>(std::move(outer_expr));
+	unique_ptr<Expression> cte_filter;
+	if (outer_expr->GetChildren().size() == 1) {
+		cte_filter = std::move(outer_expr->GetChildrenMutable()[0]);
+	} else {
+		cte_filter = std::move(outer_expr);
+	}
+	auto new_cte = make_uniq_base<LogicalOperator, LogicalFilter>(std::move(cte_filter));
 	LogicalFilter::SplitPredicates(new_cte->Cast<LogicalFilter>().expressions);
 
 	// Rewrite the operator expressions before adding the child op (children should be rewritten already)

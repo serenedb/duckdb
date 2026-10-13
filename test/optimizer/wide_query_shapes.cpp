@@ -28,6 +28,27 @@ static idx_t CheckSharedLambdaBodies(const Expression &expr) {
 	return lambdas;
 }
 
+TEST_CASE("Filters derived from a wide disjunction keep the plan shallow", "[optimizer]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query(
+	    "CREATE TABLE t AS SELECT i AS a, i % 7 AS b, DATE '2000-01-01' + i::INTEGER AS d FROM range(100000) r(i)"));
+
+	vector<string> terms;
+	for (idx_t i = 0; i < 50000; i++) {
+		terms.push_back(StringUtil::Format("(a = %d AND b = %d)", i, i % 7));
+	}
+	auto result = con.Query("SELECT count(*) FROM t WHERE " + StringUtil::Join(terms, " OR "));
+	REQUIRE(CHECK_COLUMN(result, 0, {50000}));
+
+	vector<string> years;
+	for (idx_t year = 1; year <= 20000; year++) {
+		years.push_back(to_string(year));
+	}
+	result = con.Query("SELECT count(*) FROM t WHERE year(d) IN (" + StringUtil::Join(years, ", ") + ")");
+	REQUIRE(CHECK_COLUMN(result, 0, {100000}));
+}
+
 TEST_CASE("Decorrelating a long chain of EXISTS subqueries stops at the query deadline", "[optimizer]") {
 	DuckDB db(nullptr);
 	Connection con(db);

@@ -37,6 +37,8 @@ using ExpressionValueInformation = FilterCombiner::ExpressionValueInformation;
 
 static ValueComparisonResult CompareValueInformation(ExpressionValueInformation &left,
                                                      ExpressionValueInformation &right);
+static bool IsGreaterThan(ExpressionType type);
+static bool IsLessThan(ExpressionType type);
 
 FilterCombiner::FilterCombiner(ClientContext &context) : context(context) {
 }
@@ -73,11 +75,59 @@ idx_t FilterCombiner::GetEquivalenceSet(Expression &expr) {
 	}
 }
 
-FilterResult FilterCombiner::AddConstantComparison(vector<ExpressionValueInformation> &info_list,
-                                                   ExpressionValueInformation info) {
+FilterResult FilterCombiner::AddConstantComparison(idx_t equivalence_set, ExpressionValueInformation info) {
+	static constexpr idx_t INDEXED_LIST_SIZE = 16;
+	D_ASSERT(constant_values.find(equivalence_set) != constant_values.end());
+	auto &info_list = constant_values.find(equivalence_set)->second;
 	if (info.constant.IsNull()) {
 		return FilterResult::UNSATISFIABLE;
 	}
+	auto &index = constant_indexes[equivalence_set];
+	if (info.comparison_type == ExpressionType::COMPARE_NOTEQUAL && info_list.size() >= INDEXED_LIST_SIZE) {
+		if (!index.valid) {
+			index = ConstantComparisonIndex();
+			for (auto &entry : info_list) {
+				if (entry.comparison_type == ExpressionType::COMPARE_NOTEQUAL) {
+					index.not_equal.insert(entry.constant);
+				} else if (entry.comparison_type == ExpressionType::COMPARE_EQUAL) {
+					index.equal = entry;
+				} else if (IsGreaterThan(entry.comparison_type)) {
+					index.lower = entry;
+				} else {
+					D_ASSERT(IsLessThan(entry.comparison_type));
+					index.upper = entry;
+				}
+			}
+			index.valid = true;
+		}
+		for (auto existing : {index.equal, index.lower, index.upper}) {
+			if (!existing) {
+				continue;
+			}
+			switch (CompareValueInformation(*existing, info)) {
+			case ValueComparisonResult::PRUNE_RIGHT:
+				return FilterResult::SUCCESS;
+			case ValueComparisonResult::UNSATISFIABLE_CONDITION:
+				info_list.push_back(info);
+				index.valid = false;
+				return FilterResult::UNSATISFIABLE;
+			default:
+				break;
+			}
+		}
+		if (!index.not_equal.insert(info.constant).second) {
+			for (idx_t i = 0; i < info_list.size(); i++) {
+				if (info_list[i].comparison_type == ExpressionType::COMPARE_NOTEQUAL &&
+				    info_list[i].constant == info.constant) {
+					info_list.erase_at(i);
+					break;
+				}
+			}
+		}
+		info_list.push_back(info);
+		return FilterResult::SUCCESS;
+	}
+	index.valid = false;
 	for (idx_t i = 0; i < info_list.size(); i++) {
 		auto comparison = CompareValueInformation(info_list[i], info);
 		switch (comparison) {
@@ -241,6 +291,7 @@ void FilterCombiner::GenerateFilters(const std::function<void(unique_ptr<Express
 	stored_expressions.clear();
 	equivalence_set_map.clear();
 	constant_values.clear();
+	constant_indexes.clear();
 	equivalence_map.clear();
 }
 
@@ -1018,10 +1069,6 @@ FilterPushdownResult FilterCombiner::TryPushdownExpression(TableFilterSet &table
 	if (pushdown_result != FilterPushdownResult::NO_PUSHDOWN) {
 		return pushdown_result;
 	}
-	pushdown_result = TryPushdownOrClause(table_filters, column_ids, expr);
-	if (pushdown_result != FilterPushdownResult::NO_PUSHDOWN) {
-		return pushdown_result;
-	}
 	return TryPushdownTemporalCastFilter(table_filters, column_ids, expr);
 }
 
@@ -1103,12 +1150,11 @@ FilterResult FilterCombiner::AddBoundComparisonFilter(Expression &expr) {
 
 		// get the current bucket of constant values
 		D_ASSERT(constant_values.find(equivalence_set) != constant_values.end());
-		auto &info_list = constant_values.find(equivalence_set)->second;
 		if (node.GetReturnType() != info.constant.type()) {
 			return FilterResult::UNSUPPORTED;
 		}
 		// check the existing constant comparisons to see if we can do any pruning
-		auto ret = AddConstantComparison(info_list, info);
+		auto ret = AddConstantComparison(equivalence_set, info);
 
 		auto &non_scalar = left_is_scalar ? *right : *left;
 		auto transitive_filter = FindTransitiveFilter(non_scalar);
@@ -1160,10 +1206,9 @@ FilterResult FilterCombiner::AddBoundComparisonFilter(Expression &expr) {
 		// now add all constant values from the right bucket to the left bucket
 		D_ASSERT(constant_values.find(left_equivalence_set) != constant_values.end());
 		D_ASSERT(constant_values.find(right_equivalence_set) != constant_values.end());
-		auto &left_constant_bucket = constant_values.find(left_equivalence_set)->second;
 		auto &right_constant_bucket = constant_values.find(right_equivalence_set)->second;
 		for (auto &right_constant : right_constant_bucket) {
-			if (AddConstantComparison(left_constant_bucket, right_constant) == FilterResult::UNSATISFIABLE) {
+			if (AddConstantComparison(left_equivalence_set, right_constant) == FilterResult::UNSATISFIABLE) {
 				return FilterResult::UNSATISFIABLE;
 			}
 		}
@@ -1226,9 +1271,8 @@ FilterResult FilterCombiner::AddFilter(Expression &expr) {
 
 				// get the current bucket of constant values
 				D_ASSERT(constant_values.find(equivalence_set) != constant_values.end());
-				auto &info_list = constant_values.find(equivalence_set)->second;
 				// check the existing constant comparisons to see if we can do any pruning
-				result = AddConstantComparison(info_list, info);
+				result = AddConstantComparison(equivalence_set, info);
 			} else {
 				D_ASSERT(upper_is_scalar);
 				const auto type = lower_inclusive ? ExpressionType::COMPARE_GREATERTHANOREQUALTO
@@ -1263,7 +1307,7 @@ FilterResult FilterCombiner::AddFilter(Expression &expr) {
 				// get the current bucket of constant values
 				D_ASSERT(constant_values.find(equivalence_set) != constant_values.end());
 				// check the existing constant comparisons to see if we can do any pruning
-				result = AddConstantComparison(constant_values.find(equivalence_set)->second, info);
+				result = AddConstantComparison(equivalence_set, info);
 			} else {
 				D_ASSERT(lower_is_scalar);
 				const auto type =
@@ -1343,7 +1387,6 @@ FilterResult FilterCombiner::AddTransitiveFilters(BoundFunctionExpression &compa
 	}
 	D_ASSERT(constant_values.find(left_equivalence_set) != constant_values.end());
 	D_ASSERT(constant_values.find(right_equivalence_set) != constant_values.end());
-	vector<ExpressionValueInformation> &left_constants = constant_values.find(left_equivalence_set)->second;
 	vector<ExpressionValueInformation> &right_constants = constant_values.find(right_equivalence_set)->second;
 	bool is_successful = false;
 	bool is_inserted = false;
@@ -1396,7 +1439,7 @@ FilterResult FilterCombiner::AddTransitiveFilters(BoundFunctionExpression &compa
 			continue;
 		}
 		// Add the new filer into the left set
-		if (AddConstantComparison(left_constants, info) == FilterResult::UNSATISFIABLE) {
+		if (AddConstantComparison(left_equivalence_set, info) == FilterResult::UNSATISFIABLE) {
 			return FilterResult::UNSATISFIABLE;
 		}
 		is_successful = true;
