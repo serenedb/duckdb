@@ -161,7 +161,7 @@ bool PEGTransformerFactory::ExpressionIsEmptyStar(const ParsedExpression &expr) 
 		return false;
 	}
 	auto &star = expr.Cast<StarExpression>();
-	if (star.IsColumns()) {
+	if (star.IsColumns() || star.Expression()) {
 		return false;
 	}
 	if (!star.ExcludeList().empty()) {

@@ -16,8 +16,7 @@ StarExpression::StarExpression(Identifier relation_name_p)
 string StarExpression::ToString() const {
 	string result;
 	if (expr) {
-		D_ASSERT(columns);
-		result += "COLUMNS(" + expr->ToString() + ")";
+		result += columns ? "COLUMNS(" + expr->ToString() + ")" : "(" + expr->ToString() + ").*";
 		return result;
 	}
 	if (columns) {
