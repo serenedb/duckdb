@@ -388,6 +388,7 @@ BuildRecursivePipelineSchedulePlan(const vector<shared_ptr<MetaPipeline>> &meta_
 		}
 		auto &pipeline = *stage.pipeline;
 		bool has_source_tasks = false;
+		bool scans_invariant_source = false;
 		if (stage.type == PipelineScheduleStageType::EXECUTE) {
 			plan->execute_pipeline_count++;
 			auto source = pipeline.GetSource();
@@ -395,6 +396,8 @@ BuildRecursivePipelineSchedulePlan(const vector<shared_ptr<MetaPipeline>> &meta_
 				plan->cte_scan_pipeline_count++;
 			}
 			has_source_tasks = source && source->HasSourceTasks();
+			scans_invariant_source = source && source->type == PhysicalOperatorType::TABLE_SCAN &&
+			                         pipeline.GetSink().get() != &recursive_cte;
 			if (has_source_tasks) {
 				plan->has_source_tasks = true;
 				plan->source_tasks_write_recursive_output =
@@ -405,7 +408,8 @@ BuildRecursivePipelineSchedulePlan(const vector<shared_ptr<MetaPipeline>> &meta_
 		auto metric_type = pipeline_metric_types.find(pipeline);
 		D_ASSERT(metric_type != pipeline_metric_types.end());
 		plan->stages.emplace_back(stage.type, pipeline, has_source_tasks, metric_type->second,
-		                          invariant_build_pipelines.find(pipeline) != invariant_build_pipelines.end());
+		                          invariant_build_pipelines.find(pipeline) != invariant_build_pipelines.end(),
+		                          scans_invariant_source);
 	}
 	for (idx_t stage_idx = 0; stage_idx < schedule->stages.size(); stage_idx++) {
 		const auto recursive_stage_idx = recursive_stage_indices[stage_idx];
@@ -704,11 +708,11 @@ static bool InvariantRecursiveBuildsRemainReusable(const PhysicalRecursiveCTE &o
 	return true;
 }
 
-static void ProcessRecursiveExecutorTasks(Executor &executor) {
+static void ProcessRecursiveExecutorTasks(Executor &executor, absl::FunctionRef<bool()> is_done) {
 	// Only drain the recursive executor here. Re-entering the outer query executor while waiting for
 	// recursive work can run unrelated tasks and used to break recursive completion tracking.
 	if (!executor.WorkOnTasks()) {
-		executor.WaitForTask();
+		executor.WaitForTask(is_done);
 	}
 	if (executor.HasError()) {
 		executor.ThrowException();
@@ -716,24 +720,25 @@ static void ProcessRecursiveExecutorTasks(Executor &executor) {
 }
 
 static void WaitForRecursiveEvents(Executor &executor, vector<shared_ptr<Event>> &events) {
-	while (true) {
-		ProcessRecursiveExecutorTasks(executor);
-		bool finished = true;
+	const auto finished = [&events]() {
 		for (auto &event : events) {
 			if (!event->IsFinished()) {
-				finished = false;
-				break;
+				return false;
 			}
 		}
-		if (finished) {
-			break;
-		}
-	}
+		return true;
+	};
+	do {
+		ProcessRecursiveExecutorTasks(executor, finished);
+	} while (!finished());
 }
 
 static void WaitForRecursiveEvent(Executor &executor, Event &event) {
-	while (!event.IsFinished()) {
-		ProcessRecursiveExecutorTasks(executor);
+	const auto finished = [&event]() {
+		return event.IsFinished();
+	};
+	while (!finished()) {
+		ProcessRecursiveExecutorTasks(executor, finished);
 	}
 }
 
@@ -753,7 +758,7 @@ static void ScheduleRecursivePlan(const RecursiveCTEPipelineSchedulePlan &plan, 
 		case PipelineScheduleStageType::EXECUTE:
 			events.push_back(make_shared_ptr<RecursiveCTEPipelineEvent>(
 			    std::move(pipeline), state,
-			    stage.is_invariant_build ? configured_threads : parallelism.WorkerCount(stage.has_source_tasks),
+			    stage.HasIndependentWork() ? configured_threads : parallelism.WorkerCount(stage.has_source_tasks),
 			    stage.metric_type));
 			break;
 		case PipelineScheduleStageType::PREPARE_FINISH:
@@ -813,9 +818,8 @@ static void ExecuteRecursiveInlinePlan(RecursiveCTEState &state, Executor &execu
 		case PipelineScheduleStageType::EXECUTE: {
 			state.GetScheduler().ResetOperators(pipeline);
 			pipeline.ResetSourceForReschedule();
-			// Invariant builds have independent source work even when the recursive frontier is tiny.
 			const auto worker_limit =
-			    stage.is_invariant_build ? TaskScheduler::QueryThreads(executor.context) : idx_t(1);
+			    stage.HasIndependentWork() ? TaskScheduler::QueryThreads(executor.context) : idx_t(1);
 			const auto max_threads = GetRecursivePipelineMaxThreads(pipeline, worker_limit);
 			if (max_threads > 1) {
 				auto event = make_shared_ptr<RecursiveCTEPipelineEvent>(pipeline.shared_from_this(), state,
@@ -1092,6 +1096,7 @@ void PhysicalRecursiveCTE::BuildPipelines(Pipeline &current, MetaPipeline &meta_
 
 	auto &state = meta_pipeline.GetState();
 	state.SetPipelineSource(current, *this);
+	parallel_source = !using_key && !current.IsOrderDependent();
 
 	auto &executor = meta_pipeline.GetExecutor();
 	executor.AddRecursiveCTE(*this);

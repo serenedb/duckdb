@@ -19,6 +19,7 @@
 #include "duckdb/execution/progress_data.hpp"
 #include "duckdb/parallel/pipeline.hpp"
 
+#include <absl/functional/function_ref.h>
 #include <functional>
 
 namespace duckdb {
@@ -68,6 +69,7 @@ public:
 	//! Report the execution state without running any task
 	QueryResultState Poll();
 	void WaitForTask();
+	void WaitForTask(absl::FunctionRef<bool()> is_done);
 	void SignalTaskRescheduled(lock_guard<mutex> &);
 
 	void Reset();

@@ -421,6 +421,10 @@ void Executor::UnregisterTask() {
 }
 
 void Executor::WaitForTask() {
+	WaitForTask([] { return false; });
+}
+
+void Executor::WaitForTask(absl::FunctionRef<bool()> is_done) {
 #ifndef DUCKDB_NO_THREADS
 	static constexpr std::chrono::microseconds WAIT_TIME_MS = std::chrono::microseconds(WAIT_TIME * 1000);
 	auto begin = TimePoint::Tick();
@@ -428,7 +432,7 @@ void Executor::WaitForTask() {
 	auto end = TimePoint::Tick();
 	auto blocked_micros = NumericCast<idx_t>(TimePoint::ElapsedMicros(begin, end));
 
-	if (ExecutionIsFinished()) {
+	if (ExecutionIsFinished() || is_done()) {
 		blocked_thread_time += blocked_micros;
 		return;
 	}

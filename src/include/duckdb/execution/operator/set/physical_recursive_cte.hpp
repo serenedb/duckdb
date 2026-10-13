@@ -104,12 +104,18 @@ public:
 public:
 	// Source interface
 	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
+	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context,
+	                                                 GlobalSourceState &gstate) const override;
 	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
 	                                 OperatorSourceInput &input) const override;
 	ProgressData GetProgress(ClientContext &context, GlobalSourceState &gstate) const override;
 
 	bool IsSource() const override {
 		return true;
+	}
+
+	bool ParallelSource() const override {
+		return parallel_source;
 	}
 
 public:
@@ -146,6 +152,7 @@ private:
 	unique_ptr<RecursiveCTEPipelineSchedulePlan> recursive_schedule_plan;
 	unique_ptr<RecursiveCTEPipelineSchedulePlan> invariant_recursive_schedule_plan;
 	mutable atomic<idx_t> metrics_invocations {0};
+	bool parallel_source = false;
 };
 
 //! Scans the frozen USING KEY state during a recursive epoch.
