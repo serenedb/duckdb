@@ -860,6 +860,9 @@ static const TransformFrameOps MACRO_PARAMETERS_OPS = {"MacroParameters",
 static const TransformFrameOps MACRO_PARAMETER_OPS = {"MacroParameter",
                                                       &PEGTransformerFactory::InitializeMacroParameterTrampoline,
                                                       &PEGTransformerFactory::FinalizeMacroParameterTrampoline, true};
+static const TransformFrameOps MODE_PARAMETER_OPS = {"ModeParameter",
+                                                     &PEGTransformerFactory::InitializeModeParameterTrampoline,
+                                                     &PEGTransformerFactory::FinalizeModeParameterTrampoline};
 static const TransformFrameOps SIMPLE_PARAMETER_OPS = {"SimpleParameter",
                                                        &PEGTransformerFactory::InitializeSimpleParameterTrampoline,
                                                        &PEGTransformerFactory::FinalizeSimpleParameterTrampoline};
@@ -2211,6 +2214,9 @@ static const TransformFrameOps DOT_METHOD_OPERATOR_OPS = {"DotMethodOperator",
 static const TransformFrameOps DOT_COLUMN_OPERATOR_OPS = {"DotColumnOperator",
                                                           &PEGTransformerFactory::InitializeDotColumnOperatorTrampoline,
                                                           &PEGTransformerFactory::FinalizeDotColumnOperatorTrampoline};
+static const TransformFrameOps DOT_STAR_OPERATOR_OPS = {"DotStarOperator",
+                                                        &PEGTransformerFactory::InitializeDotStarOperatorTrampoline,
+                                                        &PEGTransformerFactory::FinalizeDotStarOperatorTrampoline};
 static const TransformFrameOps METHOD_EXPRESSION_OPS = {"MethodExpression",
                                                         &PEGTransformerFactory::InitializeMethodExpressionTrampoline,
                                                         &PEGTransformerFactory::FinalizeMethodExpressionTrampoline};
@@ -3907,6 +3913,7 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"MacroDefinitionBody", &MACRO_DEFINITION_BODY_OPS},
 	    {"MacroParameters", &MACRO_PARAMETERS_OPS},
 	    {"MacroParameter", &MACRO_PARAMETER_OPS},
+	    {"ModeParameter", &MODE_PARAMETER_OPS},
 	    {"SimpleParameter", &SIMPLE_PARAMETER_OPS},
 	    {"ScalarMacroDefinition", &SCALAR_MACRO_DEFINITION_OPS},
 	    {"TableMacroDefinition", &TABLE_MACRO_DEFINITION_OPS},
@@ -4377,6 +4384,7 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"DotOperator", &DOT_OPERATOR_OPS},
 	    {"DotMethodOperator", &DOT_METHOD_OPERATOR_OPS},
 	    {"DotColumnOperator", &DOT_COLUMN_OPERATOR_OPS},
+	    {"DotStarOperator", &DOT_STAR_OPERATOR_OPS},
 	    {"MethodExpression", &METHOD_EXPRESSION_OPS},
 	    {"MethodExpressionArguments", &METHOD_EXPRESSION_ARGUMENTS_OPS},
 	    {"MethodExpressionArgumentList", &METHOD_EXPRESSION_ARGUMENT_LIST_OPS},
@@ -10520,6 +10528,18 @@ arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizeMacroParameterTrampoline(PEGTransformer &transformer,
                                                         GeneratedTransformProcess &process) {
 	auto result = process.TakeResult<MacroParameter>(0);
+	return transformer.MakeResult<MacroParameter>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeModeParameterTrampoline(PEGTransformer &transformer,
+                                                              GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeModeParameterTrampoline(PEGTransformer &transformer,
+                                                       GeneratedTransformProcess &process) {
+	auto result = TransformModeParameter(transformer, process.parse_result);
 	return transformer.MakeResult<MacroParameter>(std::move(result));
 }
 
@@ -20044,6 +20064,18 @@ PEGTransformerFactory::FinalizeDotColumnOperatorTrampoline(PEGTransformer &trans
                                                            GeneratedTransformProcess &process) {
 	auto col_label = process.TakeResult<string>(0);
 	auto result = TransformDotColumnOperator(transformer, col_label);
+	return transformer.MakeResult<unique_ptr<ParsedExpression>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDotStarOperatorTrampoline(PEGTransformer &transformer,
+                                                                GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDotStarOperatorTrampoline(PEGTransformer &transformer,
+                                                         GeneratedTransformProcess &process) {
+	auto result = TransformDotStarOperator(transformer);
 	return transformer.MakeResult<unique_ptr<ParsedExpression>>(std::move(result));
 }
 

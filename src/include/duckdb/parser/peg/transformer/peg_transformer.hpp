@@ -1750,6 +1750,9 @@ public:
 	static void InitializeMacroParameterTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeMacroParameterTrampoline(PEGTransformer &transformer,
 	                                                                        GeneratedTransformProcess &process);
+	static void InitializeModeParameterTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeModeParameterTrampoline(PEGTransformer &transformer,
+	                                                                       GeneratedTransformProcess &process);
 	static void InitializeSimpleParameterTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeSimpleParameterTrampoline(PEGTransformer &transformer,
 	                                                                         GeneratedTransformProcess &process);
@@ -3298,6 +3301,9 @@ public:
 	static void InitializeDotColumnOperatorTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeDotColumnOperatorTrampoline(PEGTransformer &transformer,
 	                                                                           GeneratedTransformProcess &process);
+	static void InitializeDotStarOperatorTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDotStarOperatorTrampoline(PEGTransformer &transformer,
+	                                                                         GeneratedTransformProcess &process);
 	static void InitializeMethodExpressionTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeMethodExpressionTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
@@ -5319,6 +5325,7 @@ public:
 	                                                          unique_ptr<ParsedExpression> expression);
 	static vector<MacroParameter> TransformMacroParameters(PEGTransformer &transformer,
 	                                                       vector<MacroParameter> macro_parameter);
+	static MacroParameter TransformModeParameter(PEGTransformer &transformer, ParseResult &parse_result);
 	static MacroParameter TransformSimpleParameter(PEGTransformer &transformer, const Identifier &type_func_name,
 	                                               const optional<LogicalType> &type);
 	static unique_ptr<MacroFunction> TransformScalarMacroDefinition(PEGTransformer &transformer,
@@ -6082,6 +6089,7 @@ public:
 	                                                               unique_ptr<ParsedExpression> method_expression);
 	static unique_ptr<ParsedExpression> TransformDotColumnOperator(PEGTransformer &transformer,
 	                                                               const string &col_label);
+	static unique_ptr<ParsedExpression> TransformDotStarOperator(PEGTransformer &transformer);
 	static unique_ptr<ParsedExpression> TransformMethodExpression(PEGTransformer &transformer, const string &col_label,
 	                                                              MethodArguments method_expression_arguments);
 	static MethodArguments TransformMethodExpressionArguments(PEGTransformer &transformer,
