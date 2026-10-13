@@ -688,6 +688,31 @@ TEST_CASE("Existence checks tell a missing path from one they cannot check", "[f
 	REQUIRE_THROWS(fs->IsPipe(loop));
 
 	fs->RemoveDirectory(dir);
+	REQUIRE(!fs->DirectoryExists(dir));
+}
+
+TEST_CASE("Removing a directory removes its symlinks without following them", "[file_system]") {
+	auto fs = FileSystem::CreateLocal();
+	auto target = TestCreatePath("remove_symlinks_target");
+	auto dir = TestCreatePath("remove_symlinks");
+	for (auto &path : {target, dir}) {
+		if (fs->DirectoryExists(path)) {
+			fs->RemoveDirectory(path);
+		}
+		fs->CreateDirectory(path);
+	}
+	auto kept = fs->JoinPath(target, "kept");
+	CreateDummyFile(kept);
+
+	TestCreateSymlink(fs->JoinPath(dir, "directory"), fs->JoinPath(fs->GetWorkingDirectory(), target), true);
+	TestCreateSymlink(fs->JoinPath(dir, "dangling"), "missing", false);
+	TestCreateSymlink(fs->JoinPath(dir, "loop"), "loop", false);
+
+	fs->RemoveDirectory(dir);
+	REQUIRE(!fs->DirectoryExists(dir));
+	REQUIRE(fs->FileExists(kept));
+
+	fs->RemoveDirectory(target);
 }
 #endif
 
