@@ -1059,6 +1059,7 @@ MacroParameter:
     - MacroParameter
     - SimpleParameter
     - NamedParameter
+    - ModeParameter
 
 JobScheduleInfo:
   type: "JobScheduleInfo"

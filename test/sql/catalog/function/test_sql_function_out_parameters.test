@@ -1,0 +1,56 @@
+# name: test/sql/catalog/function/test_sql_function_out_parameters.test
+# description: OUT and INOUT parameters of a SQL function make its result
+# group: [function]
+
+statement ok
+CREATE FUNCTION split(IN a INTEGER, OUT b INTEGER, OUT c VARCHAR) LANGUAGE sql AS 'SELECT a + 1, a::VARCHAR';
+
+query IT
+SELECT * FROM split(5);
+----
+6	5
+
+query T
+SELECT split(5);
+----
+{'b': 6, 'c': 5}
+
+query T
+SELECT split(5).c;
+----
+5
+
+statement ok
+CREATE FUNCTION doubled(a INTEGER, OUT b BIGINT) LANGUAGE sql AS 'SELECT a * 2';
+
+query IT
+SELECT doubled(4), typeof(doubled(4));
+----
+8	BIGINT
+
+query I
+SELECT b FROM doubled(4);
+----
+8
+
+statement ok
+CREATE FUNCTION swap(INOUT a INTEGER, OUT b VARCHAR) LANGUAGE sql AS 'SELECT a * 10, a::VARCHAR';
+
+query IT
+SELECT * FROM swap(2);
+----
+20	2
+
+statement ok
+CREATE FUNCTION upto(a INTEGER, OUT n INTEGER) RETURNS SETOF INTEGER LANGUAGE sql AS 'SELECT * FROM range(1, a + 1)';
+
+query IT
+SELECT n, typeof(n) FROM upto(2) ORDER BY 1;
+----
+1	INTEGER
+2	INTEGER
+
+statement error
+CREATE FUNCTION bad(a INTEGER, OUT b INTEGER) RETURNS TABLE(c INTEGER) LANGUAGE sql AS 'SELECT 1';
+----
+OUT and INOUT arguments aren't allowed in TABLE functions

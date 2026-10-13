@@ -49,12 +49,19 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 
 	unique_ptr<QueryNode> node;
 	if (macro_def.type == MacroType::SCALAR_MACRO) {
-		auto select_node = make_uniq<SelectNode>();
 		auto expr = macro_def.Cast<ScalarMacroFunction>().expression->Copy();
-		expr->SetAlias(macro_func.name);
-		select_node->select_list.push_back(std::move(expr));
-		select_node->from_table = make_uniq<EmptyTableRef>();
-		node = std::move(select_node);
+		if (macro_def.return_names.size() > 1 && expr->GetExpressionClass() == ExpressionClass::SUBQUERY) {
+			node = std::move(expr->Cast<SubqueryExpression>().SubqueryMutable()->node);
+			auto &record = node->Cast<SelectNode>();
+			record.select_list.clear();
+			record.select_list.emplace_back(make_uniq<StarExpression>());
+		} else {
+			auto select_node = make_uniq<SelectNode>();
+			expr->SetAlias(macro_def.return_names.empty() ? macro_func.name : Identifier(macro_def.return_names[0]));
+			select_node->select_list.push_back(std::move(expr));
+			select_node->from_table = make_uniq<EmptyTableRef>();
+			node = std::move(select_node);
+		}
 	} else {
 		node = macro_def.Cast<TableMacroFunction>().query_node->Copy();
 	}
