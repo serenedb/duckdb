@@ -127,6 +127,9 @@ TaskScheduler::~TaskScheduler() {
 }
 
 TaskScheduler &TaskScheduler::GetScheduler(ClientContext &context) {
+	if (context.task_scheduler) {
+		return *context.task_scheduler;
+	}
 	return GetScheduler(DatabaseInstance::GetDatabase(context));
 }
 

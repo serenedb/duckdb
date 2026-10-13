@@ -60,6 +60,7 @@ class ClientContextState;
 class Connection;
 class PhysicalTransaction;
 class RegisteredStateManager;
+class TaskScheduler;
 struct TransactionInfo;
 
 //! A statement parameter: identifier ($1 -> "1"), binding index, and inferred type (UNKNOWN if not inferred).
@@ -143,6 +144,8 @@ public:
 	typedef void (*setting_change_handler_t)(ClientContext &context, const string &name, SetScope scope,
 	                                         const Value *new_value);
 	setting_change_handler_t setting_change_handler = nullptr;
+
+	optional_ptr<TaskScheduler> task_scheduler;
 
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
