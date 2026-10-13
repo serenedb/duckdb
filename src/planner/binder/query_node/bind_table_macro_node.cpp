@@ -22,7 +22,8 @@
 
 namespace duckdb {
 
-unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, MacroCatalogEntry &macro_func, idx_t depth) {
+unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, MacroCatalogEntry &macro_func, idx_t depth,
+                                             optional_ptr<MacroFunction> &definition) {
 	// validate the arguments and separate positional and default arguments
 	vector<unique_ptr<ParsedExpression>> positional_arguments;
 	InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> named_arguments;
@@ -34,6 +35,7 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 		throw BinderException(function, bind_result.error);
 	}
 	auto &macro_def = *macro_func.macros[bind_result.function_idx.GetIndex()];
+	definition = macro_def;
 
 	auto new_macro_binding =
 	    MacroFunction::CreateDummyBinding(macro_def, macro_func.name, positional_arguments, named_arguments);
