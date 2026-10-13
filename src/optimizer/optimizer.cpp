@@ -75,6 +75,7 @@ Optimizer::Optimizer(Binder &binder, ClientContext &context)
       optimizer_extensions(OptimizerExtension::Iterate(context)) {
 	rewriter.rules.push_back(make_uniq<ConstantOrderNormalizationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ConstantFoldingRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<ConcatFlatteningRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<StructExtractStructPackFoldingRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<DistributivityRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ArithmeticSimplificationRule>(rewriter));

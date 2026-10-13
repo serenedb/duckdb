@@ -30,6 +30,7 @@ add_library_unity(
   struct_extract_struct_pack_folding.cpp
   timestamp_comparison.cpp
   constant_order_normalization.cpp
+  concat_flattening.cpp
   contains_to_in_clause.cpp)
 set(ALL_OBJECT_FILES
     ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_optimizer_rules>
