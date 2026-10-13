@@ -59,6 +59,7 @@ public:
 	bool Equals(const BaseExpression &other) const override;
 
 	unique_ptr<Expression> Copy() const override;
+	unique_ptr<Expression> CopyWithChildren(vector<unique_ptr<Expression>> new_children) const;
 	void Verify() const override;
 
 	void Serialize(Serializer &serializer) const override;

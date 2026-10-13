@@ -19,8 +19,7 @@ bool TryEvaluateAtConstants(ClientContext &context, const BoundFunctionExpressio
 		children.push_back(make_uniq<BoundConstantExpression>(v));
 	}
 	// Functions such as alias() inspect expression metadata during execution.
-	auto clone = func.Copy();
-	clone->Cast<BoundFunctionExpression>().GetChildrenMutable() = std::move(children);
+	auto clone = func.CopyWithChildren(std::move(children));
 	return ExpressionExecutor::TryEvaluateScalar(context, *clone, result);
 }
 

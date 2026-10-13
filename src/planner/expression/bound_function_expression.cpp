@@ -141,6 +141,10 @@ unique_ptr<Expression> BoundFunctionExpression::Copy() const {
 	for (auto &child : children) {
 		new_children.push_back(child->Copy());
 	}
+	return CopyWithChildren(std::move(new_children));
+}
+
+unique_ptr<Expression> BoundFunctionExpression::CopyWithChildren(vector<unique_ptr<Expression>> new_children) const {
 	unique_ptr<FunctionData> new_bind_info = bind_info ? bind_info->Copy() : nullptr;
 
 	auto copy =
