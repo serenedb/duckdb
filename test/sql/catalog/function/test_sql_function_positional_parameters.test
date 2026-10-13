@@ -1,0 +1,32 @@
+# name: test/sql/catalog/function/test_sql_function_positional_parameters.test
+# description: $n in the body of a LANGUAGE sql function names its n-th parameter, as in PostgreSQL
+# group: [function]
+
+statement ok
+CREATE FUNCTION add_one(integer) RETURNS integer LANGUAGE sql RETURN $1 + 1;
+
+query I
+SELECT add_one(41);
+----
+42
+
+statement ok
+CREATE FUNCTION add_mixed(a integer, b integer) RETURNS integer LANGUAGE sql RETURN $1 + b;
+
+query I
+SELECT add_mixed(40, 2);
+----
+42
+
+statement ok
+CREATE FUNCTION add_atomic(integer, integer) RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT $1 + $2; END;
+
+query I
+SELECT add_atomic(40, 2);
+----
+42
+
+statement error
+CREATE FUNCTION add_missing(integer) RETURNS integer LANGUAGE sql RETURN $2;
+----
+Parameter expressions within macro's are not supported
