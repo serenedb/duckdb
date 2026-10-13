@@ -857,13 +857,13 @@ vector<CatalogSearchEntry> GetCatalogEntries(CatalogEntryRetriever &retriever, c
 			entries = search_path.GetWithPrecedenceSchemas(context);
 		}
 	} else if (IsInvalidCatalog(catalog)) {
-		const bool pg_catalog_is_system_main =
-		    schema == "pg_catalog" &&
+		const bool builtins_in_system_main =
+		    (schema == "pg_catalog" || (schema == "information_schema" && lookup_type == CatalogType::TYPE_ENTRY)) &&
 		    Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
 		        SqlCompatibility::POSTGRES;
 		auto catalogs = search_path.GetCatalogsForSchema(schema);
 		for (auto &catalog_name : catalogs) {
-			if (pg_catalog_is_system_main && catalog_name == SYSTEM_CATALOG) {
+			if (builtins_in_system_main && catalog_name == SYSTEM_CATALOG) {
 				entries.emplace_back(catalog_name, DEFAULT_SCHEMA);
 			}
 			entries.emplace_back(catalog_name, schema);
