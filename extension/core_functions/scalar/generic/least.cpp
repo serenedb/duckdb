@@ -1,8 +1,11 @@
 #include "core_functions/scalar/generic_functions.hpp"
 #include "duckdb/common/operator/comparison_operators.hpp"
 #include "duckdb/common/smaller_binary.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/create_sort_key.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "duckdb/storage/statistics/numeric_stats.hpp"
@@ -36,17 +39,18 @@ struct LeastOperator {
 
 struct LeastGreatestSortKeyState : public FunctionLocalState {
 	explicit LeastGreatestSortKeyState(idx_t column_count, OrderByNullType null_ordering)
-	    : intermediate(LogicalType::BLOB), modifiers(OrderType::ASCENDING, null_ordering) {
+	    : modifiers(OrderType::ASCENDING, null_ordering) {
 		vector<LogicalType> types;
 		// initialize sort key chunk
 		for (idx_t i = 0; i < column_count; i++) {
 			types.push_back(LogicalType::BLOB);
 		}
 		sort_keys.Initialize(Allocator::DefaultAllocator(), types);
+		intermediate.Initialize(Allocator::DefaultAllocator(), {LogicalType::BLOB});
 	}
 
 	DataChunk sort_keys;
-	Vector intermediate;
+	DataChunk intermediate;
 	OrderModifiers modifiers;
 };
 
@@ -54,6 +58,52 @@ template <class OP>
 unique_ptr<FunctionLocalState> LeastGreatestSortKeyInit(ExpressionState &state, const BoundFunctionExpression &expr,
                                                         FunctionData *bind_data) {
 	return make_uniq<LeastGreatestSortKeyState>(expr.GetChildren().size(), OP::NullOrdering());
+}
+
+struct LeastGreatestCollatedBindData : public FunctionData {
+	explicit LeastGreatestCollatedBindData(unique_ptr<Expression> key_p) : key(std::move(key_p)) {
+	}
+
+	unique_ptr<Expression> key;
+
+	unique_ptr<FunctionData> Copy() const override {
+		return make_uniq<LeastGreatestCollatedBindData>(key->Copy());
+	}
+
+	bool Equals(const FunctionData &other_p) const override {
+		return key->Equals(*other_p.Cast<LeastGreatestCollatedBindData>().key);
+	}
+};
+
+struct LeastGreatestCollatedState : public FunctionLocalState {
+	LeastGreatestCollatedState(ExpressionState &state, const Expression &key, const LogicalType &value_type,
+	                           idx_t column_count)
+	    : executor(state.root.executor->GetContextPtr(), key),
+	      encode_keys(key.GetReturnType().id() != LogicalTypeId::BLOB), column_offsets(column_count) {
+		input.InitializeEmpty({value_type});
+		keys.Initialize(state.GetAllocator(), vector<LogicalType>(column_count, key.GetReturnType()));
+		if (encode_keys) {
+			sort_keys.Initialize(state.GetAllocator(), vector<LogicalType>(column_count, LogicalType::BLOB));
+		}
+	}
+
+	ExpressionExecutor executor;
+	OrderModifiers modifiers {OrderType::ASCENDING, OrderByNullType::NULLS_LAST};
+	const bool encode_keys;
+	DataChunk input;
+	DataChunk keys;
+	DataChunk sort_keys;
+	vector<idx_t> column_offsets;
+	SelectionVector gather_sel {STANDARD_VECTOR_SIZE};
+	bool has_key[STANDARD_VECTOR_SIZE];
+	string_t best_keys[STANDARD_VECTOR_SIZE];
+	idx_t winners[STANDARD_VECTOR_SIZE];
+};
+
+unique_ptr<FunctionLocalState> LeastGreatestCollatedInit(ExpressionState &state, const BoundFunctionExpression &expr,
+                                                         FunctionData *bind_data) {
+	auto &key = *bind_data->Cast<LeastGreatestCollatedBindData>().key;
+	return make_uniq<LeastGreatestCollatedState>(state, key, expr.GetReturnType(), expr.GetChildren().size());
 }
 
 template <bool STRING>
@@ -84,6 +134,7 @@ struct SortKeyLeastGreatest {
 	static DataChunk &Prepare(DataChunk &args, ExpressionState &state) {
 		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<LeastGreatestSortKeyState>();
 		lstate.sort_keys.Reset();
+		lstate.intermediate.Reset();
 		for (idx_t c_idx = 0; c_idx < args.ColumnCount(); c_idx++) {
 			CreateSortKeyHelpers::CreateSortKey(args.data[c_idx], lstate.modifiers, lstate.sort_keys.data[c_idx]);
 		}
@@ -92,12 +143,12 @@ struct SortKeyLeastGreatest {
 
 	static Vector &TargetVector(Vector &result, ExpressionState &state) {
 		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<LeastGreatestSortKeyState>();
-		return lstate.intermediate;
+		return lstate.intermediate.data[0];
 	}
 
 	static void FinalizeResult(idx_t rows, bool result_has_value[], Vector &result, ExpressionState &state) {
 		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<LeastGreatestSortKeyState>();
-		auto result_keys = FlatVector::GetData<string_t>(lstate.intermediate);
+		auto result_keys = FlatVector::GetData<string_t>(lstate.intermediate.data[0]);
 		auto &result_mask = FlatVector::ValidityMutable(result);
 		for (idx_t i = 0; i < rows; i++) {
 			if (!result_has_value[i]) {
@@ -108,6 +159,85 @@ struct SortKeyLeastGreatest {
 		}
 	}
 };
+
+template <class OP>
+void PickCollatedWinners(DataChunk &args, LeastGreatestCollatedState &lstate) {
+	const auto rows = args.size();
+	memset(lstate.has_key, 0, rows * sizeof(bool));
+	memset(lstate.winners, 0, rows * sizeof(idx_t));
+	lstate.input.SetCardinality(rows);
+	lstate.keys.Reset();
+	lstate.sort_keys.Reset();
+	for (idx_t col_idx = 0; col_idx < args.ColumnCount(); col_idx++) {
+		auto &arg = args.data[col_idx];
+		if (arg.GetVectorType() == VectorType::CONSTANT_VECTOR && ConstantVector::IsNull(arg)) {
+			continue;
+		}
+		lstate.input.data[0].Reference(arg);
+		auto &key = lstate.keys.data[col_idx];
+		lstate.executor.ExecuteExpression(lstate.input, key);
+		auto &comparable = lstate.encode_keys ? lstate.sort_keys.data[col_idx] : key;
+		if (lstate.encode_keys) {
+			CreateSortKeyHelpers::CreateSortKey(key, rows, lstate.modifiers, comparable);
+		}
+		auto validity = arg.Validity();
+		auto values = comparable.Values<string_t>();
+		for (idx_t i = 0; i < rows; i++) {
+			if (!validity.IsValid(i)) {
+				continue;
+			}
+			const auto value = values[i].GetValue();
+			if (!lstate.has_key[i] || OP::template Operation<string_t>(value, lstate.best_keys[i])) {
+				lstate.has_key[i] = true;
+				lstate.best_keys[i] = value;
+				lstate.winners[i] = col_idx;
+			}
+		}
+	}
+}
+
+void GatherCollatedWinners(DataChunk &args, LeastGreatestCollatedState &lstate, Vector &result) {
+	const auto rows = args.size();
+	auto &offsets = lstate.column_offsets;
+	memset(offsets.data(), 0, offsets.size() * sizeof(idx_t));
+	for (idx_t i = 0; i < rows; i++) {
+		offsets[lstate.winners[i]]++;
+	}
+	idx_t start = 0;
+	for (idx_t col_idx = 0; col_idx < offsets.size(); col_idx++) {
+		const auto wins = offsets[col_idx];
+		if (wins == rows) {
+			result.Reference(args.data[col_idx]);
+			return;
+		}
+		offsets[col_idx] = start;
+		start += wins;
+	}
+
+	SelectionVector result_sel(rows);
+	for (idx_t i = 0; i < rows; i++) {
+		const auto position = offsets[lstate.winners[i]]++;
+		lstate.gather_sel.set_index(position, i);
+		result_sel.set_index(i, position);
+	}
+	Vector gathered(result.GetType(), rows);
+	idx_t begin = 0;
+	for (idx_t col_idx = 0; col_idx < offsets.size(); col_idx++) {
+		const auto end = offsets[col_idx];
+		if (end != begin) {
+			VectorOperations::Copy(args.data[col_idx], gathered, lstate.gather_sel, end, begin, begin);
+			begin = end;
+		}
+	}
+	result.Slice(gathered, result_sel, rows);
+}
+
+template <class OP>
+void CollatedLeastGreatestFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<LeastGreatestCollatedState>();
+	PickCollatedWinners<OP>(args, lstate);
+	GatherCollatedWinners(args, lstate, result);
+}
 
 template <class T, class OP, class BASE_OP = StandardLeastGreatest<false>>
 void LeastGreatestFunction(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -239,6 +369,21 @@ unique_ptr<BaseStatistics> PropagateLeastGreatestStats(ClientContext &context, F
 }
 
 template <class LEAST_GREATER_OP>
+unique_ptr<FunctionData> TryBindCollatedLeastGreatest(ClientContext &context, BoundScalarFunction &bound_function,
+                                                      idx_t argument_count, const LogicalType &child_type) {
+	if (argument_count < 2) {
+		return nullptr;
+	}
+	unique_ptr<Expression> key = make_uniq<BoundReferenceExpression>(child_type, storage_t(0));
+	if (!ExpressionBinder::PushCollation(context, key, child_type)) {
+		return nullptr;
+	}
+	bound_function.SetFunctionCallback(CollatedLeastGreatestFunction<typename LEAST_GREATER_OP::OP>);
+	bound_function.SetInitStateCallback(LeastGreatestCollatedInit);
+	return make_uniq<LeastGreatestCollatedBindData>(std::move(key));
+}
+
+template <class LEAST_GREATER_OP>
 unique_ptr<FunctionData> BindLeastGreatest(BindScalarFunctionInput &input) {
 	auto &context = input.GetClientContext();
 	auto &bound_function = input.GetBoundFunction();
@@ -263,6 +408,15 @@ unique_ptr<FunctionData> BindLeastGreatest(BindScalarFunctionInput &input) {
 		break;
 	default:
 		break;
+	}
+	for (auto &arg : bound_function.GetArguments()) {
+		arg = child_type;
+	}
+	bound_function.SetReturnType(child_type);
+	auto collated =
+	    TryBindCollatedLeastGreatest<LEAST_GREATER_OP>(context, bound_function, arguments.size(), child_type);
+	if (collated) {
+		return collated;
 	}
 	using OP = typename LEAST_GREATER_OP::OP;
 	switch (child_type.InternalType()) {
@@ -296,10 +450,6 @@ unique_ptr<FunctionData> BindLeastGreatest(BindScalarFunctionInput &input) {
 		bound_function.SetInitStateCallback(LeastGreatestSortKeyInit<LEAST_GREATER_OP>);
 		break;
 	}
-	for (auto &arg : bound_function.GetArguments()) {
-		arg = child_type;
-	}
-	bound_function.SetReturnType(child_type);
 	return nullptr;
 }
 

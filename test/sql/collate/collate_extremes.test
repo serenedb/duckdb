@@ -1,0 +1,76 @@
+# name: test/sql/collate/collate_extremes.test
+# description: least/greatest, list_min/list_max, arg_min/arg_max, min/max(x, n) and ANY/ALL honor collations
+# group: [collate]
+
+query II
+SELECT least('B' COLLATE NOCASE, 'a'), greatest('B' COLLATE NOCASE, 'a')
+----
+a	B
+
+query II
+SELECT least({'s': 'B' COLLATE NOCASE}, {'s': 'a'}).s, least({'s': 'B' COLLATE NOCASE, 'i': INTERVAL '1 day'}, {'s': 'a', 'i': INTERVAL '1 day'}).s
+----
+a	a
+
+query II
+SELECT list_min(['B' COLLATE NOCASE, 'a']), list_max(['B' COLLATE NOCASE, 'a'])
+----
+a	B
+
+query II
+SELECT list_min(['11'::BIT, '0'::BIT]), list_max(['11'::BIT, '0'::BIT])
+----
+0	11
+
+query II
+SELECT list_min([x::VARIANT for x in range(5000, 0, -1)]), list_max([x::VARIANT for x in range(5000, 0, -1)])
+----
+1	5000
+
+statement ok
+SET default_collation='nocase'
+
+query II
+SELECT list_min(['B', 'a']), list_aggregate(['B', 'a', 'C'], 'max', 2)
+----
+a	[C, B]
+
+statement ok
+RESET default_collation
+
+statement ok
+CREATE TABLE intervals AS SELECT * FROM (VALUES (1, INTERVAL '1 month'), (2, INTERVAL '29 days'), (3, INTERVAL '31 days')) t(id, i)
+
+query IIII
+SELECT arg_min(id, i), arg_max(id, i), arg_max(id, i, 2), min(i, 2) FROM intervals
+----
+2	3	[3, 1]	[29 days, 1 mon]
+
+query I
+SELECT arg_min(id, b) FROM (VALUES (1, '11'::BIT), (2, '0'::BIT)) t(id, b)
+----
+2
+
+query II
+SELECT {'s': 'B' COLLATE NOCASE} > ANY (SELECT {'s': s} FROM (VALUES ('a'), ('C')) t(s)), {'s': 'B' COLLATE NOCASE, 'i': INTERVAL '1 day'} > ANY (SELECT {'s': s, 'i': INTERVAL '1 day'} FROM (VALUES ('a'), ('C')) t(s))
+----
+true	true
+
+query II
+SELECT INTERVAL '1 month' <= ALL (SELECT i FROM intervals WHERE id <> 2), INTERVAL '1 month' > ANY (SELECT i FROM intervals)
+----
+true	true
+
+statement ok
+CREATE TABLE interval_lists (a INTERVAL[], b INTERVAL[])
+
+statement ok
+CREATE INDEX interval_lists_idx ON interval_lists ((epoch(greatest(a, b)[1])))
+
+statement ok
+INSERT INTO interval_lists VALUES ([INTERVAL '25 hours'], [INTERVAL '1 day'])
+
+query I
+SELECT greatest(a, b) FROM interval_lists
+----
+['25:00:00']

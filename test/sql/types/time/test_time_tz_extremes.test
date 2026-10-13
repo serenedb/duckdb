@@ -1,0 +1,56 @@
+# name: test/sql/types/time/test_time_tz_extremes.test
+# description: Extremum functions order TIMETZ like comparisons and ORDER BY
+# group: [time]
+
+statement ok
+CREATE TABLE tz (id INTEGER, t TIMETZ);
+
+statement ok
+INSERT INTO tz VALUES (1, '10:00:00+05'), (2, '08:00:00+00'), (3, NULL);
+
+query I
+SELECT id FROM tz ORDER BY t NULLS LAST
+----
+1
+2
+3
+
+query II
+SELECT min(t), max(t) FROM tz
+----
+10:00:00+05	08:00:00+00
+
+query I
+SELECT greatest('10:00:00+05'::TIMETZ, '08:00:00+00'::TIMETZ)
+----
+08:00:00+00
+
+query I
+SELECT least('10:00:00+05'::TIMETZ, '08:00:00+00'::TIMETZ, NULL)
+----
+10:00:00+05
+
+query I
+SELECT max(t, 1) FROM tz
+----
+['08:00:00+00']
+
+query II
+SELECT arg_min(id, t), arg_max(id, t) FROM tz
+----
+1	2
+
+query I
+SELECT arg_max(id, t, 1) FROM tz
+----
+[2]
+
+query I
+SELECT '09:00:00+00'::TIMETZ > ANY (SELECT t FROM tz WHERE id = 1)
+----
+true
+
+query I
+SELECT '09:00:00+00'::TIMETZ > ALL (SELECT t FROM tz WHERE t IS NOT NULL)
+----
+true

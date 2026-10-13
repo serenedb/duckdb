@@ -34,6 +34,9 @@ struct MinMaxState {
 
 template <class OP>
 static AggregateFunction GetUnaryAggregate(const LogicalType &type) {
+	if (type.id() == LogicalTypeId::TIME_TZ) {
+		return AggregateFunction::UnaryAggregate<MinMaxState<dtime_tz_t>, dtime_tz_t, dtime_tz_t, OP>(type, type);
+	}
 	switch (type.InternalType()) {
 	case PhysicalType::BOOL:
 		return AggregateFunction::UnaryAggregate<MinMaxState<int8_t>, int8_t, int8_t, OP>(type, type);
@@ -566,25 +569,22 @@ unique_ptr<FunctionData> MinMaxNBind(BindAggregateFunctionInput &input) {
 			throw ParameterNotResolvedException();
 		}
 	}
-	if (arguments[0]->GetReturnType().id() == LogicalTypeId::VARIANT) {
-		auto collated_arg = arguments[0]->Copy();
-		if (ExpressionBinder::PushCollation(context, collated_arg, collated_arg->GetReturnType())) {
-			vector<LogicalType> types {arguments[0]->GetReturnType(), collated_arg->GetReturnType(),
-			                           arguments[1]->GetReturnType()};
-			auto collated_function = GetCollatedMinMaxFunction(context, function.GetName(), types);
+	auto collated_arg = arguments[0]->Copy();
+	if (ExpressionBinder::PushCollation(context, collated_arg, collated_arg->GetReturnType())) {
+		vector<LogicalType> types {arguments[0]->GetReturnType(), arguments[0]->GetReturnType(),
+		                           arguments[1]->GetReturnType()};
+		auto collated_function = GetCollatedMinMaxFunction(context, function.GetName(), types);
 
-			vector<unique_ptr<Expression>> collated_arguments;
-			collated_arguments.reserve(3);
-			collated_arguments.push_back(std::move(arguments[0]));
-			collated_arguments.push_back(std::move(collated_arg));
-			collated_arguments.push_back(std::move(arguments[1]));
-			FunctionBinder function_binder(context);
-			auto expr =
-			    function_binder.BindAggregateFunction(std::move(collated_function), std::move(collated_arguments));
-			arguments = std::move(expr->GetChildrenMutable());
-			function.ReplaceImplementation(expr->Function());
-			return std::move(expr->BindInfoMutable());
-		}
+		vector<unique_ptr<Expression>> collated_arguments;
+		collated_arguments.reserve(3);
+		collated_arguments.push_back(arguments[0]->Copy());
+		collated_arguments.push_back(std::move(arguments[0]));
+		collated_arguments.push_back(std::move(arguments[1]));
+		FunctionBinder function_binder(context);
+		auto expr = function_binder.BindAggregateFunction(std::move(collated_function), std::move(collated_arguments));
+		arguments = std::move(expr->GetChildrenMutable());
+		function.ReplaceImplementation(expr->Function());
+		return std::move(expr->BindInfoMutable());
 	}
 
 	const auto val_type = arguments[0]->GetReturnType().InternalType();
