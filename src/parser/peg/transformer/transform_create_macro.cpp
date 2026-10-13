@@ -279,6 +279,9 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 	// AFTER any LANGUAGE-SQL rewrite above (which may flip scalar -> table macro) and BEFORE the scalar-shoehorn wrap
 	// below.
 	ApplyPositionalParamRewrite(*macro_function);
+	if (decorator_info.has_language) {
+		transformer.ClearParameters();
+	}
 
 	// Scalar `RETURNS <type>` with a SELECT-shaped body is a "scalar shoehorn": wrap the table macro's query as a
 	// scalar subquery (LIMIT 1).
