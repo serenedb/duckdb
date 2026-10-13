@@ -20,7 +20,7 @@ bool TryEvaluateAtConstants(ClientContext &context, const BoundFunctionExpressio
 	}
 	// Functions such as alias() inspect expression metadata during execution.
 	auto clone = func.CopyWithChildren(std::move(children));
-	return ExpressionExecutor::TryEvaluateScalar(context, *clone, result);
+	return ExpressionExecutor::TryEvaluateFoldable(context, *clone, result);
 }
 
 // Equal bounds need not imply identical inputs for certain types, so we skip this optimization for those values.
@@ -83,10 +83,8 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateConstantInputs(ClientC
 		auto &child = *func.GetChildren()[idx];
 		auto &stats = child_stats[idx];
 		Value value;
-		if (child.IsFoldable()) {
-			if (!ExpressionExecutor::TryEvaluateScalar(context, child, value)) {
-				return nullptr;
-			}
+		if (child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+			value = child.Cast<BoundConstantExpression>().GetValue();
 		} else if (!TryInferConstantBounds(stats, value)) {
 			return nullptr;
 		}
@@ -125,13 +123,13 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateMonotoneBounds(ClientC
 		auto &cs = child_stats[i];
 		auto &props = func.Function().GetArgProperties(i);
 
-		if (child.IsFoldable()) {
-			Value v;
-			if (!ExpressionExecutor::TryEvaluateScalar(context, child, v) || v.IsNull()) {
+		if (child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+			auto &v = child.Cast<BoundConstantExpression>().GetValue();
+			if (v.IsNull()) {
 				return nullptr;
 			}
 			lo_args[i] = v;
-			hi_args[i] = std::move(v);
+			hi_args[i] = v;
 			continue;
 		}
 

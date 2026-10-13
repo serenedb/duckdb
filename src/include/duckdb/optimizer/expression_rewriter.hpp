@@ -40,6 +40,12 @@ public:
 	optional_ptr<Expression> CurrentParent() const {
 		return current_parent;
 	}
+	bool ChildThrows() const {
+		return child_throws;
+	}
+	void MarkThrows() {
+		throws = true;
+	}
 
 private:
 	//! Apply a set of rules to a specific expression
@@ -49,6 +55,8 @@ private:
 
 	optional_ptr<LogicalOperator> op;
 	optional_ptr<Expression> current_parent;
+	bool child_throws = false;
+	bool throws = false;
 	vector<reference<Rule>> to_apply_rules;
 	vector<rewrite_barrier_t> to_apply_barriers;
 };

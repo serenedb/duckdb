@@ -199,7 +199,7 @@ unique_ptr<Expression> ComparisonSimplificationRule::Apply(LogicalOperator &op, 
 	// use an ExpressionExecutor to execute the expression
 	D_ASSERT(constant_expr.IsFoldable());
 	Value constant_value;
-	if (!ExpressionExecutor::TryEvaluateScalar(GetContext(), constant_expr, constant_value)) {
+	if (!ExpressionExecutor::TryEvaluateFoldable(GetContext(), constant_expr, constant_value)) {
 		return nullptr;
 	}
 	if (constant_value.IsNull() && column_ref_expr.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {

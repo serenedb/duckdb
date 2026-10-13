@@ -5,6 +5,7 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/optimizer/expression_rewriter.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 
 namespace duckdb {
 
@@ -25,15 +26,39 @@ ConstantFoldingRule::ConstantFoldingRule(ExpressionRewriter &rewriter) : Rule(re
 	root = std::move(op);
 }
 
+static bool EvaluatesEveryChild(const Expression &expr) {
+	switch (expr.GetExpressionClass()) {
+	case ExpressionClass::BOUND_FUNCTION:
+		return !ExpressionIterator::AnyChild(expr, [](const Expression &child) {
+			return child.GetExpressionClass() == ExpressionClass::BOUND_LAMBDA ||
+			       (child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT &&
+			        child.Cast<BoundConstantExpression>().GetValue().IsNull());
+		});
+	case ExpressionClass::BOUND_OPERATOR:
+		return expr.GetExpressionType() != ExpressionType::OPERATOR_COALESCE &&
+		       expr.GetExpressionType() != ExpressionType::OPERATOR_TRY;
+	default:
+		return false;
+	}
+}
+
 unique_ptr<Expression> ConstantFoldingRule::Apply(LogicalOperator &op, vector<reference<Expression>> &bindings,
                                                   bool &changes_made, bool is_root) {
 	auto &root = bindings[0].get();
 	// the root is a scalar expression that we have to fold
 	D_ASSERT(root.IsFoldable() && root.GetExpressionType() != ExpressionType::VALUE_CONSTANT);
 
+	if (rewriter.ChildThrows() && EvaluatesEveryChild(root)) {
+		rewriter.MarkThrows();
+		return nullptr;
+	}
 	// use an ExpressionExecutor to execute the expression
 	Value result_value;
-	if (!ExpressionExecutor::TryEvaluateScalar(GetContext(), root, result_value)) {
+	auto fold_result = ExpressionExecutor::EvaluateFoldable(GetContext(), root, result_value);
+	if (fold_result == ExpressionExecutor::FoldResult::THROWS) {
+		rewriter.MarkThrows();
+	}
+	if (fold_result != ExpressionExecutor::FoldResult::FOLDED) {
 		return nullptr;
 	}
 	D_ASSERT(result_value.type().InternalType() == root.GetReturnType().InternalType());

@@ -771,7 +771,7 @@ static bool FoldConstantInputs(ClientContext &context, Expression &expr, bool fo
 		}
 		Value value;
 		if (!(foldable || input->IsFoldable()) || !FoldConstantInputs(context, *input, true) ||
-		    !ExpressionExecutor::TryEvaluateScalar(context, *input, value)) {
+		    !ExpressionExecutor::TryEvaluateFoldable(context, *input, value)) {
 			folded = false;
 			return;
 		}
@@ -800,8 +800,8 @@ static bool FoldsToNull(ClientContext &context, Expression &child, bool keep_arg
 	}
 	auto &probe = copy ? *copy : child;
 	Value result;
-	return FoldConstantInputs(context, probe, true) && ExpressionExecutor::TryEvaluateScalar(context, probe, result) &&
-	       result.IsNull();
+	return FoldConstantInputs(context, probe, true) &&
+	       ExpressionExecutor::TryEvaluateFoldable(context, probe, result) && result.IsNull();
 }
 
 unique_ptr<Expression> FunctionBinder::BindScalarFunction(const Identifier &schema, const Identifier &name,

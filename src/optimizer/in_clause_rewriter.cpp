@@ -115,7 +115,7 @@ unique_ptr<Expression> InClauseRewriter::VisitReplace(BoundOperatorExpression &e
 	for (idx_t i = 1; i < expr.GetChildrenMutable().size(); i++) {
 		// resolve this expression to a constant
 		Value value;
-		if (!ExpressionExecutor::TryEvaluateScalar(context, *expr.GetChildrenMutable()[i], value)) {
+		if (!ExpressionExecutor::TryEvaluateFoldable(context, *expr.GetChildrenMutable()[i], value)) {
 			// error while evaluating scalar
 			return nullptr;
 		}

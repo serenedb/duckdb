@@ -30,6 +30,8 @@ namespace duckdb {
 
 namespace {
 
+constexpr idx_t MAX_ARGUMENT_LITERAL_SIZE = 1 << 12;
+
 bool IsTrivialMacroArgument(const ParsedExpression &argument) {
 	switch (argument.GetExpressionClass()) {
 	case ExpressionClass::CONSTANT:
@@ -665,10 +667,10 @@ void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, Scala
 			}
 			if (bound->IsFoldable()) {
 				Value value;
-				if (ExpressionExecutor::TryEvaluateScalar(context, *bound, value)) {
+				if (ExpressionExecutor::TryEvaluateFoldable(context, *bound, value, MAX_ARGUMENT_LITERAL_SIZE)) {
 					argument = ConstantExpression::FromValue(value);
+					continue;
 				}
-				continue;
 			}
 			if (!share) {
 				continue;
@@ -732,7 +734,7 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 		if (constant_candidate && !result.HasError() && result.expression->IsFoldable() &&
 		    !result.expression->IsVolatile()) {
 			Value value;
-			if (ExpressionExecutor::TryEvaluateScalar(context, *result.expression, value)) {
+			if (ExpressionExecutor::TryEvaluateFoldable(context, *result.expression, value)) {
 				constant_macros.emplace(&macro_func, value);
 				return BindResult(make_uniq<BoundConstantExpression>(std::move(value)));
 			}

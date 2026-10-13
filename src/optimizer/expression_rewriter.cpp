@@ -17,6 +17,8 @@ struct RewriteFrame {
 	bool children_visited;
 	bool frozen = false;
 	optional_ptr<Expression> parent;
+	optional_idx parent_frame;
+	bool child_throws = false;
 };
 
 static bool ApplyRule(LogicalOperator &op, const vector<reference<Rule>> &rules, unique_ptr<Expression> &expr,
@@ -77,12 +79,14 @@ unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const
 		D_ASSERT(current_expr);
 		if (!frame.children_visited) {
 			frame.children_visited = true;
+			frame.child_throws = false;
 			// Rewrite the subtree bottom-up so parent rules see already-simplified children.
 			CollectChildren(*current_expr, children);
 			const bool children_frozen = FreezesChildren(barriers, *current_expr, frame.frozen);
 			const auto parent = frame.frozen ? nullptr : current_expr.get();
+			const optional_idx parent_frame(stack.size() - 1);
 			for (idx_t i = children.size(); i > 0; i--) {
-				stack.push_back({children[i - 1], false, false, children_frozen, parent});
+				stack.push_back({children[i - 1], false, false, children_frozen, parent, parent_frame});
 			}
 			continue;
 		}
@@ -91,10 +95,15 @@ unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const
 			continue;
 		}
 		current_parent = frame.parent;
+		child_throws = frame.child_throws;
+		throws = false;
 		if (ApplyRule(op, rules, current_expr, frame.is_root)) {
 			changes_made = true;
 			frame.children_visited = false;
 			continue;
+		}
+		if (throws && frame.parent_frame.IsValid()) {
+			stack[frame.parent_frame.GetIndex()].child_throws = true;
 		}
 		stack.pop_back();
 	}

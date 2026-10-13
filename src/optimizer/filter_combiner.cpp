@@ -1134,7 +1134,7 @@ FilterResult FilterCombiner::AddBoundComparisonFilter(Expression &expr) {
 		idx_t equivalence_set = GetEquivalenceSet(node);
 		auto &scalar = left_is_scalar ? left : right;
 		Value constant_value;
-		if (!ExpressionExecutor::TryEvaluateScalar(context, *scalar, constant_value)) {
+		if (!ExpressionExecutor::TryEvaluateFoldable(context, *scalar, constant_value)) {
 			return FilterResult::UNSUPPORTED;
 		}
 		if (constant_value.IsNull()) {
@@ -1256,7 +1256,7 @@ FilterResult FilterCombiner::AddFilter(Expression &expr) {
 			if (lower_is_scalar) {
 				auto &scalar = lower_bound;
 				Value constant_value;
-				if (!ExpressionExecutor::TryEvaluateScalar(context, scalar, constant_value)) {
+				if (!ExpressionExecutor::TryEvaluateFoldable(context, scalar, constant_value)) {
 					return FilterResult::UNSUPPORTED;
 				}
 
@@ -1291,7 +1291,7 @@ FilterResult FilterCombiner::AddFilter(Expression &expr) {
 			if (upper_is_scalar) {
 				auto &scalar = upper_bound;
 				Value constant_value;
-				if (!ExpressionExecutor::TryEvaluateScalar(context, scalar, constant_value)) {
+				if (!ExpressionExecutor::TryEvaluateFoldable(context, scalar, constant_value)) {
 					return FilterResult::UNSUPPORTED;
 				}
 
