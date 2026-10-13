@@ -546,11 +546,11 @@ void PipelineExecutor::FinishProcessing(int32_t operator_idx) {
 
 void PipelineExecutor::NotifySourceFinished() {
 	if (source_finish_notification_state == SourceFinishNotificationState::SENT || pipeline.IsExternalInput() ||
-	    !pipeline.GetSource() || !global_source_state) {
+	    !pipeline.GetSource() || !global_source_state || !local_source_state) {
 		return;
 	}
 	source_finish_notification_state = SourceFinishNotificationState::SENT;
-	pipeline.source->SourceFinished(context.client, *global_source_state);
+	pipeline.source->LocalSourceFinished(context, *global_source_state, *local_source_state);
 }
 
 bool PipelineExecutor::IsFinished() const {

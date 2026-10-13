@@ -192,6 +192,8 @@ public:
 	//! Returns the current progress percentage, or a negative value if progress bars are not supported
 	virtual ProgressData GetProgress(ClientContext &context, GlobalSourceState &gstate) const;
 	virtual void SourceFinished(ClientContext &context, GlobalSourceState &gstate) const;
+	virtual void LocalSourceFinished(ExecutionContext &context, GlobalSourceState &gstate,
+	                                 LocalSourceState &lstate) const;
 
 	//! Returns the current progress percentage, or a negative value if progress bars are not supported
 	virtual ProgressData GetSinkProgress(ClientContext &context, GlobalSinkState &gstate,

@@ -1708,6 +1708,37 @@ void PipelineBroadcastExchange::CompleteSpoolReadLocked(idx_t consumer_idx, cons
 	WakeReadersLocked(readers, ReaderWakeMode::DATA_AVAILABLE);
 }
 
+void PipelineBroadcastExchange::FinishScan(idx_t consumer_idx, PipelineBroadcastExchangeScanState &scan_state) {
+	vector<InterruptState> readers;
+	vector<InterruptState> writers;
+	vector<ExchangeLogEntry> log_entries;
+	{
+		annotated_lock_guard<annotated_mutex> guard(lock);
+		if (!scan_state.batch_sequence.IsValid()) {
+			return;
+		}
+		auto batch_sequence = scan_state.batch_sequence.GetIndex();
+		scan_state.batch_sequence = optional_idx();
+		D_ASSERT(consumer_idx < consumers.size());
+		auto &consumer = consumers[consumer_idx];
+		if (consumer.lifecycle != ConsumerLifecycle::ACTIVE) {
+			return;
+		}
+		consumer.active_batch_positions.erase(batch_sequence);
+		if (consumer.exhausted && consumer.in_flight_reads.empty() && consumer.active_batch_positions.empty()) {
+			consumer.lifecycle = ConsumerLifecycle::INACTIVE;
+			D_ASSERT(active_consumers > 0);
+			active_consumers--;
+		}
+		RetireChunksLocked();
+		WakeReadersLocked(readers);
+		WakeWritersLocked(writers, log_entries, WriterWakeMode::FORCE);
+	}
+	CallbackAll(readers);
+	CallbackAll(writers);
+	LogTransitions(log_entries);
+}
+
 void PipelineBroadcastExchange::UnregisterConsumer(idx_t consumer_idx) {
 	vector<InterruptState> readers;
 	vector<InterruptState> writers;
