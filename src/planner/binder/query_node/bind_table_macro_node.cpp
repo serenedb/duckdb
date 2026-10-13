@@ -57,23 +57,17 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 		node = std::move(select_node);
 	} else {
 		node = macro_def.Cast<TableMacroFunction>().query_node->Copy();
-		if (macro_def.return_names.empty() && macro_def.return_types.size() == 1 &&
-		    node->type == QueryNodeType::SELECT_NODE) {
-			// PG-compat: scalar RETURNS <type> body re-parsed as SELECT. The
-			// caller expects the column to be named after the function.
-			auto &select_node = node->Cast<SelectNode>();
-			if (select_node.select_list.size() == 1) {
-				select_node.select_list[0]->SetAlias(macro_func.name);
-			}
-		}
 	}
 	ParsedExpressionIterator::EnumerateQueryNodeChildren(
 	    *node, [&](unique_ptr<ParsedExpression> &child) { eb.ReplaceMacroParameters(child, lambda_params); });
 
-	if (macro_def.type == MacroType::TABLE_MACRO && !macro_def.return_names.empty()) {
+	if (macro_def.type == MacroType::TABLE_MACRO && !macro_def.return_types.empty()) {
 		auto body = make_uniq<SelectStatement>();
 		body->node = std::move(node);
 		auto body_ref = make_uniq<SubqueryRef>(std::move(body), macro_func.name);
+		if (macro_def.return_names.empty()) {
+			body_ref->column_name_alias.emplace_back(macro_func.name);
+		}
 		for (auto &name : macro_def.return_names) {
 			body_ref->column_name_alias.emplace_back(name);
 		}

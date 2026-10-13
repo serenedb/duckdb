@@ -39,6 +39,15 @@ SELECT typeof(a), b FROM pair();
 ----
 BIGINT	42
 
+statement ok
+CREATE FUNCTION numbers() RETURNS SETOF BIGINT LANGUAGE sql AS 'SELECT 1 UNION ALL SELECT 2';
+
+query TI
+SELECT typeof(numbers), numbers FROM numbers() ORDER BY 2;
+----
+BIGINT	1
+BIGINT	2
+
 query T
 SELECT typeof(n) FROM widened() AS t(n);
 ----
