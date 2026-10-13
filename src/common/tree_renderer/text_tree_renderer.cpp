@@ -32,11 +32,65 @@ static bool IsCharacter(char c) {
 //===--------------------------------------------------------------------===//
 // Styled text primitives
 //===--------------------------------------------------------------------===//
-struct ExplainSpan {
-	ExplainSpan(string text_p, TreeRenderType type_p) : text(std::move(text_p)), type(type_p) {
+class ExplainSpan {
+public:
+	ExplainSpan(string text_p, TreeRenderType type_p) : type(type_p), text(std::move(text_p)) {
+		Measure();
 	}
-	string text;
+
+	static ExplainSpan Spaces(idx_t count) {
+		ExplainSpan span(string(), TreeRenderType::LAYOUT);
+		span.spaces = count;
+		span.width = count;
+		span.leading = count;
+		return span;
+	}
+
+	bool IsSpaces() const {
+		return text.empty() && spaces > 0;
+	}
+	string Text() const {
+		return IsSpaces() ? string(spaces, ' ') : text;
+	}
+	const string &RawText() const {
+		return text;
+	}
+	const string &TextRef() {
+		if (IsSpaces()) {
+			SetText(string(spaces, ' '));
+		}
+		return text;
+	}
+	void SetText(string text_p) {
+		text = std::move(text_p);
+		spaces = 0;
+		Measure();
+	}
+	idx_t Width() const {
+		return width;
+	}
+	idx_t LeadingSpaces() const {
+		return leading;
+	}
+	bool AllSpaces() const {
+		return IsSpaces() || leading == text.size();
+	}
+
 	TreeRenderType type;
+
+private:
+	void Measure() {
+		width = RenderLength(text);
+		leading = 0;
+		while (leading < text.size() && text[leading] == ' ') {
+			leading++;
+		}
+	}
+
+	string text;
+	idx_t spaces = 0;
+	idx_t width = 0;
+	idx_t leading = 0;
 };
 
 using ExplainLine = vector<ExplainSpan>;
@@ -53,7 +107,7 @@ struct ExplainBlock {
 static idx_t LineWidth(const ExplainLine &line) {
 	idx_t width = 0;
 	for (auto &span : line) {
-		width += RenderLength(span.text);
+		width += span.Width();
 	}
 	return width;
 }
@@ -62,69 +116,100 @@ static void OffsetLine(ExplainLine &line, idx_t offset) {
 	if (offset == 0) {
 		return;
 	}
-	line.insert(line.begin(), ExplainSpan(string(offset, ' '), TreeRenderType::LAYOUT));
+	line.insert(line.begin(), ExplainSpan::Spaces(offset));
 }
 
 static idx_t LeadingSpaces(const ExplainLine &line) {
 	idx_t count = 0;
 	for (auto &span : line) {
-		for (char c : span.text) {
-			if (c != ' ') {
-				return count;
-			}
-			count++;
+		count += span.LeadingSpaces();
+		if (!span.AllSpaces()) {
+			return count;
 		}
 	}
 	return count;
 }
 
 //! Append `src` to `dst` so that the first non-space character of `src` lands at render column `content_col`.
-static idx_t AppendAt(ExplainLine &dst, idx_t dst_width, const ExplainLine &src, idx_t content_col) {
+static idx_t AppendAt(ExplainLine &dst, idx_t dst_width, ExplainLine &src, idx_t content_col) {
 	if (dst_width < content_col) {
-		dst.emplace_back(string(content_col - dst_width, ' '), TreeRenderType::LAYOUT);
+		dst.push_back(ExplainSpan::Spaces(content_col - dst_width));
 		dst_width = content_col;
 	}
 	idx_t to_skip = LeadingSpaces(src);
 	idx_t skipped = 0;
 	for (auto &span : src) {
 		if (skipped >= to_skip) {
-			dst.push_back(span);
-			dst_width += RenderLength(span.text);
+			dst_width += span.Width();
+			dst.push_back(std::move(span));
 			continue;
 		}
-		idx_t i = 0;
-		while (i < span.text.size() && span.text[i] == ' ' && skipped < to_skip) {
-			i++;
-			skipped++;
+		idx_t skip = MinValue<idx_t>(span.LeadingSpaces(), to_skip - skipped);
+		skipped += skip;
+		if (span.AllSpaces() && skip == span.LeadingSpaces()) {
+			continue;
 		}
-		if (i < span.text.size()) {
-			ExplainSpan trimmed = span;
-			trimmed.text = span.text.substr(i);
-			dst_width += RenderLength(trimmed.text);
-			dst.push_back(std::move(trimmed));
+		if (skip > 0) {
+			span.SetText(span.TextRef().substr(skip));
 		}
+		dst_width += span.Width();
+		dst.push_back(std::move(span));
 	}
 	return dst_width;
+}
+
+static idx_t PlaceAt(ExplainLine &line, idx_t line_width, idx_t content_col) {
+	idx_t to_skip = LeadingSpaces(line);
+	idx_t dropped = 0;
+	idx_t skipped = 0;
+	while (dropped < line.size() && skipped < to_skip) {
+		auto &span = line[dropped];
+		idx_t skip = MinValue<idx_t>(span.LeadingSpaces(), to_skip - skipped);
+		skipped += skip;
+		if (span.AllSpaces() && skip == span.LeadingSpaces()) {
+			dropped++;
+			continue;
+		}
+		if (skip > 0) {
+			span.SetText(span.TextRef().substr(skip));
+		}
+		break;
+	}
+	if (content_col > 0) {
+		if (dropped > 0) {
+			line[dropped - 1] = ExplainSpan::Spaces(content_col);
+			line.erase(line.begin(), line.begin() + static_cast<int64_t>(dropped - 1));
+		} else {
+			line.insert(line.begin(), ExplainSpan::Spaces(content_col));
+		}
+	} else if (dropped > 0) {
+		line.erase(line.begin(), line.begin() + static_cast<int64_t>(dropped));
+	}
+	return content_col + line_width - to_skip;
 }
 
 //! Returns true if the codepoint at render column "col" equals the given (single-width) UTF8 character.
 static bool RenderCharEquals(const ExplainLine &line, idx_t col, const char *expected) {
 	idx_t col_offset = 0;
 	for (auto &span : line) {
-		idx_t span_width = RenderLength(span.text);
+		idx_t span_width = span.Width();
 		if (col >= col_offset + span_width) {
 			col_offset += span_width;
 			continue;
 		}
+		if (span.IsSpaces()) {
+			return string(expected) == " ";
+		}
+		auto &text = span.RawText();
 		idx_t char_idx = 0;
-		for (idx_t i = 0; i < span.text.size(); i++) {
-			if (IsCharacter(span.text[i])) {
+		for (idx_t i = 0; i < text.size(); i++) {
+			if (IsCharacter(text[i])) {
 				if (char_idx == col - col_offset) {
 					idx_t j = i + 1;
-					while (j < span.text.size() && !IsCharacter(span.text[j])) {
+					while (j < text.size() && !IsCharacter(text[j])) {
 						j++;
 					}
-					return span.text.compare(i, j - i, expected) == 0;
+					return text.compare(i, j - i, expected) == 0;
 				}
 				char_idx++;
 			}
@@ -138,16 +223,17 @@ static bool RenderCharEquals(const ExplainLine &line, idx_t col, const char *exp
 static void SetLayoutChar(ExplainLine &line, idx_t col, const char *replacement) {
 	idx_t col_offset = 0;
 	for (auto &span : line) {
-		idx_t span_width = RenderLength(span.text);
+		idx_t span_width = span.Width();
 		if (col >= col_offset + span_width) {
 			col_offset += span_width;
 			continue;
 		}
+		auto &text = span.TextRef();
 		idx_t char_idx = 0;
 		idx_t byte_start = 0;
-		idx_t byte_end = span.text.size();
-		for (idx_t i = 0; i < span.text.size(); i++) {
-			if (IsCharacter(span.text[i])) {
+		idx_t byte_end = text.size();
+		for (idx_t i = 0; i < text.size(); i++) {
+			if (IsCharacter(text[i])) {
 				if (char_idx == col - col_offset) {
 					byte_start = i;
 				} else if (char_idx == col - col_offset + 1) {
@@ -157,7 +243,7 @@ static void SetLayoutChar(ExplainLine &line, idx_t col, const char *replacement)
 				char_idx++;
 			}
 		}
-		span.text = span.text.substr(0, byte_start) + replacement + span.text.substr(byte_end);
+		span.SetText(text.substr(0, byte_start) + replacement + text.substr(byte_end));
 		return;
 	}
 }
@@ -1181,6 +1267,7 @@ private:
 	               idx_t &row_width) {
 		bool compact = alignment == ExplainAlignment::LEFT;
 		vector<idx_t> offsets(children.size(), 0);
+		vector<vector<idx_t>> line_widths(children.size());
 		vector<idx_t> profile;
 		idx_t cumulative = 0;
 		for (idx_t i = 0; i < children.size(); i++) {
@@ -1201,11 +1288,13 @@ private:
 			}
 			offsets[i] = offset;
 			spines.push_back(offset + children[i].spine);
+			line_widths[i].reserve(lines.size());
 			for (idx_t r = 0; r < lines.size(); r++) {
 				if (r >= profile.size()) {
 					profile.resize(r + 1, 0);
 				}
-				profile[r] = MaxValue<idx_t>(profile[r], offset + LineWidth(lines[r]));
+				line_widths[i].push_back(LineWidth(lines[r]));
+				profile[r] = MaxValue<idx_t>(profile[r], offset + line_widths[i][r]);
 			}
 			cumulative = offset + children[i].width + HORIZONTAL_GAP;
 		}
@@ -1213,16 +1302,25 @@ private:
 		for (auto width : profile) {
 			row_width = MaxValue<idx_t>(row_width, width);
 		}
+		row_lines.resize(profile.size());
 		for (idx_t line_idx = 0; line_idx < profile.size(); line_idx++) {
-			ExplainLine line;
+			auto &line = row_lines[line_idx];
 			idx_t line_width = 0;
+			bool placed = false;
 			for (idx_t i = 0; i < children.size(); i++) {
-				if (line_idx < children[i].lines.size()) {
-					auto &child_line = children[i].lines[line_idx];
-					line_width = AppendAt(line, line_width, child_line, offsets[i] + LeadingSpaces(child_line));
+				if (line_idx >= children[i].lines.size()) {
+					continue;
 				}
+				auto &child_line = children[i].lines[line_idx];
+				idx_t content_col = offsets[i] + LeadingSpaces(child_line);
+				if (placed) {
+					line_width = AppendAt(line, line_width, child_line, content_col);
+					continue;
+				}
+				line_width = PlaceAt(child_line, line_widths[i][line_idx], content_col);
+				line = std::move(child_line);
+				placed = true;
 			}
-			row_lines.push_back(std::move(line));
 		}
 	}
 
@@ -1506,7 +1604,7 @@ void TextTreeRenderer::ToStreamInternal(RenderTree &root, BaseTreeRenderer &ss) 
 	for (auto &line : lines) {
 		max_width = MaxValue<idx_t>(max_width, LineWidth(line));
 		for (auto &span : line) {
-			ss.Render(span.text, span.type);
+			ss.Render(span.Text(), span.type);
 		}
 		ss << "\n";
 	}
