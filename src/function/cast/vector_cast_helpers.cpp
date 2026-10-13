@@ -268,11 +268,14 @@ static inline bool ValueStateTransition(StringCastInputState &input_state, optio
 	return true;
 }
 
+static constexpr idx_t NESTED_CAST_CHECK_BYTES = 1 << 20;
+
 template <class OP>
-static bool SplitStringListInternal(const string_t &input, OP &state) {
+static bool SplitStringListInternal(const string_t &input, OP &state, const CastParameters &parameters) {
 	const char *buf = input.GetData();
 	idx_t len = input.GetSize();
 	idx_t pos = 0;
+	idx_t checked_pos = 0;
 
 	StringCastInputState input_state(buf, pos, len);
 
@@ -312,6 +315,10 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 		if (buf[pos] == close_bracket) {
 			break;
 		}
+		if (pos - checked_pos >= NESTED_CAST_CHECK_BYTES) {
+			parameters.InterruptCheck();
+			checked_pos = pos;
+		}
 
 		pos++;
 		SkipWhitespace(input_state);
@@ -321,15 +328,15 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 	return (pos == len);
 }
 
-bool VectorStringToList::SplitStringList(const string_t &input, string_t *child_data, idx_t &child_start,
-                                         Vector &child) {
+bool VectorStringToList::SplitStringList(const string_t &input, string_t *child_data, idx_t &child_start, Vector &child,
+                                         const CastParameters &parameters) {
 	SplitStringListOperation state(child_data, child_start, child);
-	return SplitStringListInternal<SplitStringListOperation>(input, state);
+	return SplitStringListInternal<SplitStringListOperation>(input, state, parameters);
 }
 
-idx_t VectorStringToList::CountPartsList(const string_t &input) {
+idx_t VectorStringToList::CountPartsList(const string_t &input, const CastParameters &parameters) {
 	CountPartOperation state;
-	SplitStringListInternal<CountPartOperation>(input, state);
+	SplitStringListInternal<CountPartOperation>(input, state, parameters);
 	return state.count;
 }
 
@@ -370,10 +377,11 @@ struct SplitStringMapOperation {
 };
 
 template <class OP>
-static bool SplitStringMapInternal(const string_t &input, OP &state) {
+static bool SplitStringMapInternal(const string_t &input, OP &state, const CastParameters &parameters) {
 	const char *buf = input.GetData();
 	idx_t len = input.GetSize();
 	idx_t pos = 0;
+	idx_t checked_pos = 0;
 	StringCastInputState input_state(buf, pos, len);
 
 	SkipWhitespace(input_state);
@@ -431,6 +439,10 @@ static bool SplitStringMapInternal(const string_t &input, OP &state) {
 		if (buf[pos] == '}') {
 			break;
 		}
+		if (pos - checked_pos >= NESTED_CAST_CHECK_BYTES) {
+			parameters.InterruptCheck();
+			checked_pos = pos;
+		}
 		pos++;
 		SkipWhitespace(input_state);
 	}
@@ -440,14 +452,15 @@ static bool SplitStringMapInternal(const string_t &input, OP &state) {
 }
 
 bool VectorStringToMap::SplitStringMap(const string_t &input, string_t *child_key_data, string_t *child_val_data,
-                                       idx_t &child_start, Vector &varchar_key, Vector &varchar_val) {
+                                       idx_t &child_start, Vector &varchar_key, Vector &varchar_val,
+                                       const CastParameters &parameters) {
 	SplitStringMapOperation state(child_key_data, child_val_data, child_start, varchar_key, varchar_val);
-	return SplitStringMapInternal<SplitStringMapOperation>(input, state);
+	return SplitStringMapInternal<SplitStringMapOperation>(input, state, parameters);
 }
 
-idx_t VectorStringToMap::CountPartsMap(const string_t &input) {
+idx_t VectorStringToMap::CountPartsMap(const string_t &input, const CastParameters &parameters) {
 	CountPartOperation state;
-	SplitStringMapInternal<CountPartOperation>(input, state);
+	SplitStringMapInternal<CountPartOperation>(input, state, parameters);
 	return state.count;
 }
 

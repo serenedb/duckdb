@@ -14,6 +14,7 @@
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "re2/stringpiece.h"
+#include "util/utf.h"
 #include "utf8proc_wrapper.hpp"
 
 namespace duckdb {
@@ -188,6 +189,72 @@ static unique_ptr<FunctionData> RegexReplaceBind(BindScalarFunctionInput &input)
 	return std::move(data);
 }
 
+static constexpr idx_t REGEXP_REPLACE_CHECK_MATCHES = 1 << 10;
+
+static void RegexpGlobalReplace(ExpressionState &state, std::string &str, const RE2 &re,
+                                duckdb_re2::StringPiece rewrite) {
+	duckdb_re2::StringPiece vec[10];
+	const int nvec = 1 + RE2::MaxSubmatch(rewrite);
+	if (nvec > 1 + re.NumberOfCapturingGroups() || nvec > static_cast<int>(sizeof(vec) / sizeof(vec[0]))) {
+		return;
+	}
+	const char *p = str.data();
+	const char *ep = p + str.size();
+	const char *lastend = nullptr;
+	std::string out;
+	idx_t count = 0;
+	idx_t unchecked = 0;
+	while (p <= ep) {
+		if (++unchecked == REGEXP_REPLACE_CHECK_MATCHES) {
+			unchecked = 0;
+			state.InterruptCheck();
+			if (out.size() > string_t::MAX_STRING_SIZE) {
+				throw OutOfRangeException("Cannot create a string of size: '%d' in REGEXP_REPLACE, the maximum "
+				                          "supported string size is: '%d'",
+				                          out.size(), string_t::MAX_STRING_SIZE);
+			}
+		}
+		if (!re.Match(str, static_cast<size_t>(p - str.data()), str.size(), RE2::UNANCHORED, vec, nvec)) {
+			break;
+		}
+		if (p < vec[0].data()) {
+			out.append(p, vec[0].data() - p);
+		}
+		if (vec[0].data() == lastend && vec[0].empty()) {
+			if (re.options().encoding() == RE2::Options::EncodingUTF8 &&
+			    duckdb_re2::fullrune(p, static_cast<int>(MinValue<ptrdiff_t>(4, ep - p)))) {
+				duckdb_re2::Rune r;
+				int n = duckdb_re2::chartorune(&r, p);
+				if (r > duckdb_re2::Runemax) {
+					n = 1;
+					r = duckdb_re2::Runeerror;
+				}
+				if (!(n == 1 && r == duckdb_re2::Runeerror)) {
+					out.append(p, NumericCast<idx_t>(n));
+					p += n;
+					continue;
+				}
+			}
+			if (p < ep) {
+				out.append(p, 1);
+			}
+			p++;
+			continue;
+		}
+		re.Rewrite(&out, rewrite, vec, nvec);
+		p = vec[0].data() + vec[0].size();
+		lastend = p;
+		count++;
+	}
+	if (count == 0) {
+		return;
+	}
+	if (p < ep) {
+		out.append(p, ep - p);
+	}
+	str.swap(out);
+}
+
 static void RegexReplaceFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<RegexpReplaceBindData>();
@@ -208,7 +275,7 @@ static void RegexReplaceFunction(DataChunk &args, ExpressionState &state, Vector
 			    }
 			    std::string sstring = input.GetString();
 			    if (info.global_replace) {
-				    RE2::GlobalReplace(&sstring, lstate.constant_pattern, replace_piece);
+				    RegexpGlobalReplace(state, sstring, lstate.constant_pattern, replace_piece);
 			    } else {
 				    RE2::Replace(&sstring, lstate.constant_pattern, replace_piece);
 			    }
@@ -229,7 +296,7 @@ static void RegexReplaceFunction(DataChunk &args, ExpressionState &state, Vector
 			    }
 			    std::string sstring = input.GetString();
 			    if (info.global_replace) {
-				    RE2::GlobalReplace(&sstring, re, replace_piece);
+				    RegexpGlobalReplace(state, sstring, re, replace_piece);
 			    } else {
 				    RE2::Replace(&sstring, re, replace_piece);
 			    }

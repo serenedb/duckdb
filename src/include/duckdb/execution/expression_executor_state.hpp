@@ -38,6 +38,7 @@ public:
 	Allocator &GetAllocator();
 	bool HasContext();
 	DUCKDB_API ClientContext &GetContext();
+	void InterruptCheck();
 
 	void Verify(ExpressionExecutorState &root);
 

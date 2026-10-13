@@ -423,6 +423,7 @@ bool PlanEnumerator::SolveJoinOrderApproximately() {
 		bool found_connection = false;
 		double best_cost = NumericLimits<double>::Maximum();
 		for (idx_t i = 0; i < join_relations.size(); i++) {
+			query_graph_manager.context.InterruptCheck();
 			auto left = join_relations[i];
 			for (idx_t j = i + 1; j < join_relations.size(); j++) {
 				auto right = join_relations[j];

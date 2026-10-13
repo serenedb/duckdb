@@ -1,0 +1,32 @@
+# name: test/sql/function/string/test_edit_distance_limits.test
+# description: Edit distances of long strings stop at the query deadline and respect the memory limit
+# group: [string]
+
+query IIIIII
+SELECT levenshtein(repeat('ab', 300), repeat('ba', 300)), damerau_levenshtein(repeat('ab', 300), repeat('ba', 300)), damerau_levenshtein(repeat('abcdefgh', 100), repeat('hgfedcba', 100)), levenshtein('kitten', 'sitting'), damerau_levenshtein('ca', 'abc'), damerau_levenshtein(chr(200) || 'x' || chr(250), chr(250) || 'x' || chr(200))
+----
+2	2	601	3	2	2
+
+statement ok
+SET max_execution_time=200
+
+statement error
+SELECT levenshtein(repeat('a', 300000), repeat('b', 300000))
+----
+Query exceeded maximum execution time
+
+statement error
+SELECT damerau_levenshtein(repeat('a', 16000), repeat('b', 16000))
+----
+Query exceeded maximum execution time
+
+statement ok
+RESET max_execution_time
+
+statement ok
+SET memory_limit='256MB'
+
+statement error
+SELECT damerau_levenshtein(repeat('a', 30000), repeat('b', 30000))
+----
+Out of Memory Error

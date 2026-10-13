@@ -3,12 +3,29 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/execution/expression_executor_state.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "duckdb/storage/statistics/string_stats.hpp"
 
 namespace duckdb {
+
+void FillRepeated(ExpressionState &state, char *data, idx_t unit_size, idx_t size) {
+	static constexpr idx_t CHECK_BYTES = 1 << 20;
+	idx_t filled = MinValue(unit_size, size);
+	idx_t period = filled;
+	while (filled < size) {
+		auto chunk = MinValue(period, size - filled);
+		memcpy(data + filled, data, chunk);
+		filled += chunk;
+		if (period < CHECK_BYTES) {
+			period = filled;
+		} else {
+			state.InterruptCheck();
+		}
+	}
+}
 
 FilterPropagateResult PrefixFilterPrune(const FunctionStatisticsPruneInput &input) {
 	auto &children = input.function.GetChildren();

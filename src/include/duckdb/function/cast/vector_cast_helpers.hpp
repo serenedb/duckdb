@@ -261,8 +261,9 @@ struct VectorCastHelpers {
 };
 
 struct VectorStringToList {
-	static idx_t CountPartsList(const string_t &input);
-	static bool SplitStringList(const string_t &input, string_t *child_data, idx_t &child_start, Vector &child);
+	static idx_t CountPartsList(const string_t &input, const CastParameters &parameters);
+	static bool SplitStringList(const string_t &input, string_t *child_data, idx_t &child_start, Vector &child,
+	                            const CastParameters &parameters);
 	static bool StringToNestedTypeCastLoop(const string_t *source_data, ValidityMask &source_mask, Vector &result,
 	                                       ValidityMask &result_mask, idx_t count, CastParameters &parameters,
 	                                       const SelectionVector *sel);
@@ -283,9 +284,10 @@ struct VectorStringToStruct {
 };
 
 struct VectorStringToMap {
-	static idx_t CountPartsMap(const string_t &input);
+	static idx_t CountPartsMap(const string_t &input, const CastParameters &parameters);
 	static bool SplitStringMap(const string_t &input, string_t *child_key_data, string_t *child_val_data,
-	                           idx_t &child_start, Vector &varchar_key, Vector &varchar_val);
+	                           idx_t &child_start, Vector &varchar_key, Vector &varchar_val,
+	                           const CastParameters &parameters);
 	static bool StringToNestedTypeCastLoop(const string_t *source_data, ValidityMask &source_mask, Vector &result,
 	                                       ValidityMask &result_mask, idx_t count, CastParameters &parameters,
 	                                       const SelectionVector *sel);

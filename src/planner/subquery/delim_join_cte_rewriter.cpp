@@ -9,6 +9,7 @@
 #include "duckdb/planner/subquery/delim_join_cte_rewriter.hpp"
 
 #include "duckdb/common/enums/optimizer_type.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/main/settings.hpp"
@@ -2791,6 +2792,7 @@ BindingReplacementGraph DelimJoinCTERewriter::RewriteDelimJoinsToCTEs(unique_ptr
                                                                       LogicalOperator &rewrite_root,
                                                                       bool null_rejecting_filter_above,
                                                                       bool preserve_evidence_side) {
+	binder.context.InterruptCheck();
 	BindingReplacementGraph output_replacements;
 	bool preserve_nested_evidence_side = false;
 	bool has_non_subquery_selection = false;
@@ -2851,6 +2853,7 @@ void DelimJoinCTERewriter::Rewrite(unique_ptr<LogicalOperator> &plan) {
 	preserve_marker_indexes.insert(preserve_nested_marker_indexes.begin(), preserve_nested_marker_indexes.end());
 	bool filters_pushed;
 	do {
+		binder.context.InterruptCheck();
 		filters_pushed = PushEligibleFiltersIntoDelimJoinInputs(plan);
 	} while (filters_pushed);
 	RewriteDelimJoinsToCTEs(plan, *plan);

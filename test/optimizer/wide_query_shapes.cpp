@@ -28,6 +28,24 @@ static idx_t CheckSharedLambdaBodies(const Expression &expr) {
 	return lambdas;
 }
 
+TEST_CASE("Decorrelating a long chain of EXISTS subqueries stops at the query deadline", "[optimizer]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("SET max_execution_time = 1000"));
+
+	vector<string> terms;
+	for (idx_t k = 0; k < 400; k++) {
+		terms.push_back(
+		    StringUtil::Format("EXISTS (SELECT 1 FROM range(10) s%d(b) WHERE s%d.b = (t.a + %d) %% 10)", k, k, k));
+	}
+	auto start = std::chrono::steady_clock::now();
+	auto result = con.Query("SELECT count(*) FROM range(10) t(a) WHERE " + StringUtil::Join(terms, " AND "));
+	auto elapsed = std::chrono::steady_clock::now() - start;
+	REQUIRE(result->HasError());
+	REQUIRE(StringUtil::Contains(result->GetError(), "maximum execution time"));
+	REQUIRE(elapsed < std::chrono::seconds(20));
+}
+
 TEST_CASE("Nested lambdas share one body with their bind data and copies", "[optimizer]") {
 	DuckDB db(nullptr);
 	Connection con(db);

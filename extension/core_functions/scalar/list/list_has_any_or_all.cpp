@@ -4,9 +4,13 @@
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/common/string_map_set.hpp"
 
+#include <absl/container/flat_hash_set.h>
+
 namespace duckdb {
 
-static void ListHasAnyFunction(DataChunk &args, ExpressionState &, Vector &result) {
+static constexpr idx_t LIST_HAS_CHECK_ELEMENTS = 1 << 20;
+
+static void ListHasAnyFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &l_vec = args.data[0];
 	auto &r_vec = args.data[1];
 
@@ -42,7 +46,14 @@ static void ListHasAnyFunction(DataChunk &args, ExpressionState &, Vector &resul
 	const auto l_sortkey_ptr = FlatVector::GetData<string_t>(l_sortkey_vec);
 	const auto r_sortkey_ptr = FlatVector::GetData<string_t>(r_sortkey_vec);
 
-	string_set_t set;
+	absl::flat_hash_set<string_t, StringHash, StringEquality> set;
+	idx_t unchecked = 0;
+	auto check = [&] {
+		if (++unchecked == LIST_HAS_CHECK_ELEMENTS) {
+			state.InterruptCheck();
+			unchecked = 0;
+		}
+	};
 
 	BinaryExecutor::Execute<list_entry_t, list_entry_t, bool>(
 	    l_vec, r_vec, result, [&](const list_entry_t &l_list, const list_entry_t &r_list) {
@@ -77,6 +88,7 @@ static void ListHasAnyFunction(DataChunk &args, ExpressionState &, Vector &resul
 
 		    // Build the set
 		    for (auto idx = build_list.offset; idx < build_list.offset + build_list.length; idx++) {
+			    check();
 			    const auto entry_idx = build_format->sel->get_index(idx);
 			    if (build_format->validity.RowIsValid(entry_idx)) {
 				    set.insert(build_data[entry_idx]);
@@ -84,6 +96,7 @@ static void ListHasAnyFunction(DataChunk &args, ExpressionState &, Vector &resul
 		    }
 		    // Probe the set
 		    for (auto idx = probe_list.offset; idx < probe_list.offset + probe_list.length; idx++) {
+			    check();
 			    const auto entry_idx = probe_format->sel->get_index(idx);
 			    if (probe_format->validity.RowIsValid(entry_idx) && set.find(probe_data[entry_idx]) != set.end()) {
 				    return true;
@@ -132,7 +145,14 @@ static void ListHasAllFunction(DataChunk &args, ExpressionState &state, Vector &
 	const auto build_data = FlatVector::GetData<string_t>(l_sortkey_vec);
 	const auto probe_data = FlatVector::GetData<string_t>(r_sortkey_vec);
 
-	string_set_t set;
+	absl::flat_hash_set<string_t, StringHash, StringEquality> set;
+	idx_t unchecked = 0;
+	auto check = [&] {
+		if (++unchecked == LIST_HAS_CHECK_ELEMENTS) {
+			state.InterruptCheck();
+			unchecked = 0;
+		}
+	};
 
 	BinaryExecutor::Execute<list_entry_t, list_entry_t, bool>(
 	    l_vec, r_vec, result, [&](const list_entry_t &build_list, const list_entry_t &probe_list) {
@@ -146,6 +166,7 @@ static void ListHasAllFunction(DataChunk &args, ExpressionState &state, Vector &
 
 		    // Build the set
 		    for (auto idx = build_list.offset; idx < build_list.offset + build_list.length; idx++) {
+			    check();
 			    const auto entry_idx = build_format.sel->get_index(idx);
 			    if (build_format.validity.RowIsValid(entry_idx)) {
 				    set.insert(build_data[entry_idx]);
@@ -154,6 +175,7 @@ static void ListHasAllFunction(DataChunk &args, ExpressionState &state, Vector &
 
 		    // Probe the set
 		    for (auto idx = probe_list.offset; idx < probe_list.offset + probe_list.length; idx++) {
+			    check();
 			    const auto entry_idx = probe_format.sel->get_index(idx);
 			    if (probe_format.validity.RowIsValid(entry_idx) && set.find(probe_data[entry_idx]) == set.end()) {
 				    return false;

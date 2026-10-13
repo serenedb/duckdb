@@ -244,6 +244,7 @@ public:
 private:
 	//! Current stack depth
 	idx_t stack_depth = DConstants::INVALID_INDEX;
+	idx_t binds_since_interrupt_check = 0;
 
 	void InitializeStackCheck();
 	StackChecker<ExpressionBinder> StackCheck(const ParsedExpression &expr, idx_t extra_stack = 1);

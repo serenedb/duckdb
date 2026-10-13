@@ -1,5 +1,7 @@
 #include "duckdb/main/client_context.hpp"
 
+#include <ctime>
+
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
@@ -995,26 +997,21 @@ void ClientContext::SuppressInterrupts() {
 	interrupt_state = ClientInterruptState::INTERRUPTS_SUPPRESSED;
 }
 
-void ClientContext::InterruptCheck() const {
-	// Counter for throttling timeout checks - only check every N iterations
-	static constexpr uint32_t TIMEOUT_CHECK_INTERVAL = 256;
-	thread_local uint32_t timeout_check_counter = 0;
+idx_t ClientContext::DeadlineClockMs() {
+#ifdef CLOCK_MONOTONIC_COARSE
+	timespec now;
+	clock_gettime(CLOCK_MONOTONIC_COARSE, &now);
+	return NumericCast<idx_t>(now.tv_sec) * 1000 + NumericCast<idx_t>(now.tv_nsec) / 1000000;
+#else
+	return NumericCast<idx_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+#endif
+}
 
+void ClientContext::InterruptCheck() const {
 	if (interrupt_state.load(std::memory_order_relaxed) == ClientInterruptState::INTERRUPTED) {
 		throw InterruptException();
 	}
-	// Only check timeout every N calls to avoid expensive steady_clock::now() syscall
-	if (query_deadline.IsValid() && ++timeout_check_counter % TIMEOUT_CHECK_INTERVAL == 0) {
-		DeadlineCheck();
-	}
-}
-
-void ClientContext::DeadlineCheck() const {
-	if (!query_deadline.IsValid()) {
-		return;
-	}
-	auto now = NumericCast<idx_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
-	if (now >= query_deadline.GetIndex()) {
+	if (query_deadline.IsValid() && DeadlineClockMs() >= query_deadline.GetIndex()) {
 		throw InterruptException("Query exceeded maximum execution time");
 	}
 }

@@ -182,7 +182,6 @@ public:
 
 	//! Check for interrupt or timeout, throws InterruptException if triggered
 	DUCKDB_API void InterruptCheck() const;
-	DUCKDB_API void DeadlineCheck() const;
 
 	//! Enable query profiling
 	DUCKDB_API void EnableProfiling();
@@ -343,6 +342,7 @@ private:
 	friend class Parser;
 	friend class ParseIterator;
 	ParserOptions GetParserOptions();
+	static idx_t DeadlineClockMs();
 
 	//! Runs a transaction statement without going through the local query processing pipeline.
 	void RunTransactionStatement(const TransactionInfo &info);

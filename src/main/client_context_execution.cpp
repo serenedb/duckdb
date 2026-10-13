@@ -50,9 +50,7 @@ void ClientContext::BeginQueryInternal(ClientContextLock &lock, const SQLStateme
 	// Set query deadline if max_execution_time is configured
 	auto max_execution_time = Settings::Get<MaxExecutionTimeSetting>(*this);
 	if (max_execution_time > 0) {
-		auto now = steady_clock::now();
-		auto deadline_tp = now + milliseconds(max_execution_time);
-		query_deadline = NumericCast<idx_t>(duration_cast<milliseconds>(deadline_tp.time_since_epoch()).count());
+		query_deadline = DeadlineClockMs() + NumericCast<idx_t>(max_execution_time);
 	} else {
 		query_deadline.SetInvalid();
 	}

@@ -135,3 +135,23 @@ statement error
 select TRANSLATE(1, 2, 3, 4)
 ----
 <REGEX>:.*Binder Error.*No function matches.*
+
+# from and to differ per row
+query T
+SELECT translate(s, f, t) FROM (VALUES ('abcde', 'aabcc', '14235'), ('MotörHeadΩ', 'aeΩ', 'eÄ'), ('hello', 'lo', ''),
+	('x', NULL, 'y'), ('🦆 duck', '🦆', 'D')) v(s, f, t)
+----
+123de
+MotörHÄed
+he
+NULL
+D duck
+
+query T
+select TRANSLATE(a, NULL, 'x') FROM strings
+----
+NULL
+NULL
+NULL
+NULL
+NULL

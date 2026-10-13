@@ -3,13 +3,16 @@
 #include "core_functions/scalar/string_functions.hpp"
 #include "duckdb/common/operator/add.hpp"
 #include "duckdb/common/operator/multiply.hpp"
+#include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/storage/statistics/string_stats.hpp"
 
 namespace duckdb {
 
-static void RepeatFunction(DataChunk &args, ExpressionState &, Vector &result) {
+static constexpr idx_t REPEAT_CHECK_ELEMENTS = 1 << 20;
+
+static void RepeatFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	const auto &str_vector = args.data[0];
 	const auto &cnt_vector = args.data[1];
 
@@ -23,8 +26,9 @@ static void RepeatFunction(DataChunk &args, ExpressionState &, Vector &result) {
 		    if (TryMultiplyOperator::Operation(size_str, copy_count, copy_size)) {
 			    auto result_str = StringVector::EmptyString(result, copy_size);
 			    auto result_data = result_str.GetDataWriteable();
-			    for (idx_t i = 0; i < copy_count; i++) {
-				    memcpy(result_data + i * size_str, input_str, size_str);
+			    if (copy_size > 0) {
+				    memcpy(result_data, input_str, size_str);
+				    FillRepeated(state, result_data, size_str, copy_size);
 			    }
 			    result_str.Finalize();
 			    return result_str;
@@ -36,7 +40,7 @@ static void RepeatFunction(DataChunk &args, ExpressionState &, Vector &result) {
 	    });
 }
 
-static void RepeatListFunction(DataChunk &args, ExpressionState &, Vector &result) {
+static void RepeatListFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &list_vector = args.data[0];
 	auto &cnt_vector = args.data[1];
 	auto &source_child = ListVector::GetChildMutable(list_vector);
@@ -46,6 +50,7 @@ static void RepeatListFunction(DataChunk &args, ExpressionState &, Vector &resul
 	auto cnt_entries = cnt_vector.Values<int64_t>();
 
 	auto result_writer = FlatVector::Writer<list_entry_t>(result, count);
+	idx_t appended = 0;
 	for (idx_t i = 0; i < count; i++) {
 		auto list_entry = list_entries[i];
 		auto cnt_entry = cnt_entries[i];
@@ -68,6 +73,11 @@ static void RepeatListFunction(DataChunk &args, ExpressionState &, Vector &resul
 		for (idx_t j = 0; j < copy_count; j++) {
 			list.Append(source_child, *FlatVector::IncrementalSelectionVector(), list_input.offset + list_input.length,
 			            list_input.offset, list_input.length);
+			appended += list_input.length;
+			if (appended >= REPEAT_CHECK_ELEMENTS) {
+				state.InterruptCheck();
+				appended = 0;
+			}
 		}
 	}
 	result.Verify();

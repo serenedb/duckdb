@@ -17,6 +17,8 @@
 
 namespace duckdb {
 
+class ClientContext;
+
 enum class JoinOrderOperatorType : uint8_t { INNER, LEFT, SEMI, ANTI, CROSS_PRODUCT };
 
 struct JoinOrderConflictRule {
@@ -68,7 +70,8 @@ struct JoinOrderOperator {
 class JoinOrderConflictDetector {
 public:
 	static void Build(vector<unique_ptr<JoinOrderOperator>> &operators, JoinRelationSetManager &set_manager,
-	                  const unordered_map<TableIndex, RelationIndex> &relation_mapping);
+	                  const unordered_map<TableIndex, RelationIndex> &relation_mapping,
+	                  optional_ptr<ClientContext> context = nullptr);
 	static bool IsApplicable(const JoinOrderOperator &op, const JoinRelationSet &left, const JoinRelationSet &right);
 	static bool MustApplyAsOperator(const JoinOrderOperator &op);
 	static bool IsCompletedBy(const JoinOrderOperator &op, const JoinRelationSet &relations);

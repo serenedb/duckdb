@@ -14,6 +14,8 @@ namespace duckdb {
 
 namespace {
 
+constexpr idx_t STRING_SPLIT_CHECK_ELEMENTS = 1 << 14;
+
 struct RegularStringSplit {
 	static constexpr bool VERIFY_UTF8 = false;
 	// PG's string_to_array and regexp_split_to_array disagree on both degenerate separators, so the
@@ -111,6 +113,13 @@ void StringSplitExecutor(DataChunk &args, ExpressionState &state, Vector &result
 	result.SetVectorType(VectorType::FLAT_VECTOR);
 
 	auto list_writer = FlatVector::Writer<VectorListType<string_t>>(result, args.size());
+	idx_t unchecked = 0;
+	auto count_element = [&] {
+		if (++unchecked == STRING_SPLIT_CHECK_ELEMENTS) {
+			unchecked = 0;
+			state.InterruptCheck();
+		}
+	};
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto input_entry = input_entries[i];
 		if (!input_entry.IsValid()) {
@@ -139,6 +148,7 @@ void StringSplitExecutor(DataChunk &args, ExpressionState &state, Vector &result
 				}
 				list.WriteElement().WriteStringRef(string_t(input_data + pos, UnsafeNumericCast<uint32_t>(char_len)));
 				pos += static_cast<idx_t>(char_len);
+				count_element();
 			}
 			continue;
 		}
@@ -160,6 +170,7 @@ void StringSplitExecutor(DataChunk &args, ExpressionState &state, Vector &result
 				    regexp_util::VerifyUTF8Result(split_data, split_size);
 			    }
 			    list.WriteElement().WriteStringRef(string_t(split_data, UnsafeNumericCast<uint32_t>(split_size)));
+			    count_element();
 		    });
 	}
 

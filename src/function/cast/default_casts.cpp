@@ -13,10 +13,17 @@
 #include "duckdb/common/types/null_value.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/function/cast/vector_cast_helpers.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
 
 namespace duckdb {
+
+void CastParameters::InterruptCheck() const {
+	if (context) {
+		context->InterruptCheck();
+	}
+}
 
 BindCastInfo::~BindCastInfo() {
 }

@@ -12,8 +12,8 @@ namespace duckdb {
 
 static pair<idx_t, idx_t> PadCountChars(const idx_t len, const char *data, const idx_t size) {
 	//  Count how much of str will fit in the output
-	idx_t nbytes = 0;
-	idx_t nchars = 0;
+	idx_t nbytes = FirstNonAscii(data, MinValue(len, size));
+	idx_t nchars = nbytes;
 	for (; nchars < len && nbytes < size; ++nchars) {
 		int32_t codepoint;
 		nbytes += DecodeCodepoint(data + nbytes, size - nbytes, codepoint);
@@ -34,123 +34,45 @@ static idx_t PaddingByteCount(const idx_t len, const string_t &pad) {
 	return (len / pad_chars) * size + remainder;
 }
 
-static void CheckPadResultSize(const idx_t len, const string_t &pad, const pair<idx_t, idx_t> &written,
-                               const char *name) {
-	auto result_size = written.first + PaddingByteCount(len - written.second, pad);
+template <bool LEFT>
+static string_t PadString(ExpressionState &state, Vector &result, const string_t &str, const idx_t len,
+                          const string_t &pad) {
+	const char *name = LEFT ? "LPAD" : "RPAD";
+	auto data_str = str.GetData();
+	auto written = PadCountChars(len, data_str, str.GetSize());
+	auto padding_chars = len - written.second;
+	if (padding_chars > 0 && pad.GetSize() == 0) {
+		throw InvalidInputException("Insufficient padding in %s.", name);
+	}
+	auto padding_size = PaddingByteCount(padding_chars, pad);
+	auto result_size = written.first + padding_size;
 	if (result_size > string_t::MAX_STRING_SIZE) {
 		throw OutOfRangeException(
 		    "Cannot create a string of size: '%d' in %s, the maximum supported string size is: '%d'", result_size, name,
 		    string_t::MAX_STRING_SIZE);
 	}
+	auto target = StringVector::EmptyString(result, result_size);
+	auto target_data = target.GetDataWriteable();
+	auto padding_data = LEFT ? target_data : target_data + written.first;
+	memcpy(LEFT ? target_data + padding_size : target_data, data_str, written.first);
+	if (padding_size > 0) {
+		memcpy(padding_data, pad.GetData(), MinValue<idx_t>(pad.GetSize(), padding_size));
+		FillRepeated(state, padding_data, pad.GetSize(), padding_size);
+	}
+	target.Finalize();
+	return target;
 }
 
-static bool InsertPadding(const idx_t len, const string_t &pad, vector<char> &result) {
-	//  Copy the padding until the output is long enough
-	auto data = pad.GetData();
-	auto size = pad.GetSize();
-
-	//  Check whether we need data that we don't have
-	if (len > 0 && size == 0) {
-		return false;
-	}
-
-	//  Insert characters until we have all we need.
-	idx_t nbytes = 0;
-	for (idx_t nchars = 0; nchars < len; ++nchars) {
-		//  If we are at the end of the pad, flush all of it and loop back
-		if (nbytes >= size) {
-			result.insert(result.end(), data, data + size);
-			nbytes = 0;
-		}
-
-		//  Write the next character
-		int32_t codepoint;
-		nbytes += DecodeCodepoint(data + nbytes, size - nbytes, codepoint);
-	}
-
-	//  Flush the remaining pad
-	result.insert(result.end(), data, data + nbytes);
-
-	return true;
-}
-
-static string_t LeftPadFunction(const string_t &str, const int32_t len, const string_t &pad, vector<char> &result) {
-	//  Reuse the buffer
-	result.clear();
-
-	// Get information about the base string
-	auto data_str = str.GetData();
-	auto size_str = str.GetSize();
-
-	//  Count how much of str will fit in the output
-	auto written = PadCountChars(UnsafeNumericCast<idx_t>(len), data_str, size_str);
-	CheckPadResultSize(UnsafeNumericCast<idx_t>(len), pad, written, "LPAD");
-
-	//  Left pad by the number of characters still needed
-	if (!InsertPadding(UnsafeNumericCast<idx_t>(len) - written.second, pad, result)) {
-		throw InvalidInputException("Insufficient padding in LPAD.");
-	}
-
-	//  Append as much of the original string as fits
-	result.insert(result.end(), data_str, data_str + written.first);
-
-	return string_t(result.data(), UnsafeNumericCast<uint32_t>(result.size()));
-}
-
-struct LeftPadOperator {
-	static inline string_t Operation(const string_t &str, const int32_t len, const string_t &pad,
-	                                 vector<char> &result) {
-		return LeftPadFunction(str, len, pad, result);
-	}
-};
-
-static string_t RightPadFunction(const string_t &str, const int32_t len, const string_t &pad, vector<char> &result) {
-	//  Reuse the buffer
-	result.clear();
-
-	// Get information about the base string
-	auto data_str = str.GetData();
-	auto size_str = str.GetSize();
-
-	// Count how much of str will fit in the output
-	auto written = PadCountChars(UnsafeNumericCast<idx_t>(len), data_str, size_str);
-	CheckPadResultSize(UnsafeNumericCast<idx_t>(len), pad, written, "RPAD");
-
-	//  Append as much of the original string as fits
-	result.insert(result.end(), data_str, data_str + written.first);
-
-	//  Right pad by the number of characters still needed
-	if (!InsertPadding(UnsafeNumericCast<idx_t>(len) - written.second, pad, result)) {
-		throw InvalidInputException("Insufficient padding in RPAD.");
-	};
-
-	return string_t(result.data(), UnsafeNumericCast<uint32_t>(result.size()));
-}
-
-struct RightPadOperator {
-	static inline string_t Operation(const string_t &str, const int32_t len, const string_t &pad,
-	                                 vector<char> &result) {
-		return RightPadFunction(str, len, pad, result);
-	}
-};
-
-template <class OP>
+template <bool LEFT>
 static void PadFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	const auto &str_vector = args.data[0];
-	const auto &len_vector = args.data[1];
-	const auto &pad_vector = args.data[2];
-
-	vector<char> buffer;
-	auto &heap = StringVector::GetStringHeap(result);
 	TernaryExecutor::Execute<string_t, int32_t, string_t, string_t>(
-	    str_vector, len_vector, pad_vector, result, [&](string_t str, int32_t len, string_t pad) {
-		    len = MaxValue<int32_t>(len, 0);
-		    return heap.AddString(OP::Operation(str, len, pad, buffer));
+	    args.data[0], args.data[1], args.data[2], result, [&](string_t str, int32_t len, string_t pad) {
+		    return PadString<LEFT>(state, result, str, UnsafeNumericCast<idx_t>(MaxValue<int32_t>(len, 0)), pad);
 	    });
 }
 
 ScalarFunction LpadFun::GetFunction() {
-	ScalarFunction func({}, LogicalType::VARCHAR, PadFunction<LeftPadOperator>);
+	ScalarFunction func({}, LogicalType::VARCHAR, PadFunction<true>);
 	func.GetSignature()
 	    .AddParameter("string", LogicalType::VARCHAR)
 	    .AddParameter("count", LogicalType::INTEGER)
@@ -160,7 +82,7 @@ ScalarFunction LpadFun::GetFunction() {
 }
 
 ScalarFunction RpadFun::GetFunction() {
-	ScalarFunction func({}, LogicalType::VARCHAR, PadFunction<RightPadOperator>);
+	ScalarFunction func({}, LogicalType::VARCHAR, PadFunction<false>);
 	func.GetSignature()
 	    .AddParameter("string", LogicalType::VARCHAR)
 	    .AddParameter("count", LogicalType::INTEGER)

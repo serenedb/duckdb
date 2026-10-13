@@ -1,4 +1,5 @@
 #include "core_functions/scalar/string_functions.hpp"
+#include "duckdb/common/allocator.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/common/string_util.hpp"
 
@@ -12,7 +13,10 @@ namespace duckdb {
 // Note: A first implementation using the array algorithm version resulted in an error raised by duckdb
 // (too muach memory usage)
 
-static idx_t LevenshteinDistance(const string_t &txt, const string_t &tgt) {
+static constexpr idx_t LEVENSHTEIN_UNTRACKED_BYTES = 64 * 1024;
+static constexpr idx_t LEVENSHTEIN_CHECK_CELLS = 1 << 20;
+
+static idx_t LevenshteinDistance(ExpressionState &state, const string_t &txt, const string_t &tgt) {
 	auto txt_len = txt.GetSize();
 	auto tgt_len = tgt.GetSize();
 
@@ -27,8 +31,19 @@ static idx_t LevenshteinDistance(const string_t &txt, const string_t &tgt) {
 	auto tgt_str = tgt.GetData();
 
 	// Create two working vectors
-	vector<idx_t> distances0(tgt_len + 1, 0);
-	vector<idx_t> distances1(tgt_len + 1, 0);
+	const idx_t row_size = tgt_len + 1;
+	vector<idx_t> small_rows;
+	AllocatedData large_rows;
+	idx_t *distances0;
+	if (2 * row_size * sizeof(idx_t) <= LEVENSHTEIN_UNTRACKED_BYTES) {
+		small_rows.resize(2 * row_size);
+		distances0 = small_rows.data();
+	} else {
+		auto &allocator = state.HasContext() ? BufferAllocator::Get(state.GetContext()) : Allocator::DefaultAllocator();
+		large_rows = allocator.Allocate(2 * row_size * sizeof(idx_t));
+		distances0 = reinterpret_cast<idx_t *>(large_rows.get());
+	}
+	auto distances1 = distances0 + row_size;
 
 	idx_t cost_substitution = 0;
 	idx_t cost_insertion = 0;
@@ -40,7 +55,13 @@ static idx_t LevenshteinDistance(const string_t &txt, const string_t &tgt) {
 		distances0[pos_tgt] = pos_tgt;
 	}
 
+	idx_t unchecked_cells = 0;
 	for (idx_t pos_txt = 0; pos_txt < txt_len; pos_txt++) {
+		unchecked_cells += tgt_len;
+		if (unchecked_cells >= LEVENSHTEIN_CHECK_CELLS) {
+			unchecked_cells = 0;
+			state.InterruptCheck();
+		}
 		// calculate distances1 (current raw distances) from the previous row
 
 		distances1[0] = pos_txt + 1;
@@ -56,16 +77,11 @@ static idx_t LevenshteinDistance(const string_t &txt, const string_t &tgt) {
 
 			distances1[pos_tgt + 1] = MinValue(cost_deletion, MinValue(cost_substitution, cost_insertion));
 		}
-		// copy distances1 (current row) to distances0 (previous row) for next iteration
 		// since data in distances1 is always invalidated, a swap without copy is more efficient
-		distances0 = distances1;
+		std::swap(distances0, distances1);
 	}
 
 	return distances0[tgt_len];
-}
-
-static int64_t LevenshteinScalarFunction(Vector &result, const string_t str, string_t tgt) {
-	return (int64_t)LevenshteinDistance(str, tgt);
 }
 
 static void LevenshteinFunction(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -73,7 +89,7 @@ static void LevenshteinFunction(DataChunk &args, ExpressionState &state, Vector 
 	const auto &tgt_vec = args.data[1];
 
 	BinaryExecutor::Execute<string_t, string_t, int64_t>(str_vec, tgt_vec, result, [&](string_t str, string_t tgt) {
-		return LevenshteinScalarFunction(result, str, tgt);
+		return UnsafeNumericCast<int64_t>(LevenshteinDistance(state, str, tgt));
 	});
 }
 

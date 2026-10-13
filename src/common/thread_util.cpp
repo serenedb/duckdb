@@ -15,10 +15,7 @@ void ThreadUtil::SleepMs(idx_t sleep_ms, optional_ptr<ClientContext> context) {
 
 	while (true) {
 		if (context) {
-			if (context->IsInterrupted()) {
-				throw InterruptException();
-			}
-			context->DeadlineCheck();
+			context->InterruptCheck();
 		}
 		auto elapsed_ms = static_cast<idx_t>(start_time.ElapsedMillis());
 		if (elapsed_ms >= sleep_ms) {
