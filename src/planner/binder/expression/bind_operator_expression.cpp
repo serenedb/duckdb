@@ -56,7 +56,7 @@ LogicalType ExpressionBinder::ResolveCoalesceType(OperatorExpression &op, vector
 		child = BoundCastExpression::AddCastToType(context, std::move(child), max_type);
 		if (is_in_operator) {
 			// If it's IN/NOT_IN operator, push collation functions.
-			ExpressionBinder::PushCollation(context, child, max_type);
+			ExpressionBinder::PushCollation(context, child, max_type, CollationType::EQUALITY_COLLATIONS);
 		}
 	}
 	return max_type;

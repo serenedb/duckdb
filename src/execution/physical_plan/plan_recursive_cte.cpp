@@ -93,8 +93,8 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalRecursiveCTE &op) {
 	FunctionBinder function_binder(context);
 	for (idx_t key_idx = 0; key_idx < distinct_types.size(); key_idx++) {
 		unique_ptr<Expression> normalizer = make_uniq<BoundReferenceExpression>(distinct_types[key_idx], key_idx);
-		const auto requires_normalization =
-		    ExpressionBinder::PushCollation(context, normalizer, distinct_types[key_idx]);
+		const auto requires_normalization = ExpressionBinder::PushCollation(
+		    context, normalizer, distinct_types[key_idx], CollationType::EQUALITY_COLLATIONS);
 		has_key_normalizers = has_key_normalizers || requires_normalization;
 		key_requires_normalization.push_back(requires_normalization);
 		hash_key_types.push_back(normalizer->GetReturnType());
@@ -119,12 +119,14 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalRecursiveCTE &op) {
 			unique_ptr<Expression> previous = make_uniq<BoundReferenceExpression>(payload_types[i], i);
 			unique_ptr<Expression> current =
 			    make_uniq<BoundReferenceExpression>(payload_types[i], payload_types.size() + i);
-			const auto normalize_previous = ExpressionBinder::PushCollation(context, previous, payload_types[i]);
+			const auto normalize_previous = ExpressionBinder::PushCollation(context, previous, payload_types[i],
+			                                                                CollationType::EQUALITY_COLLATIONS);
 #ifdef D_ASSERT_IS_ENABLED
-			const auto normalize_current = ExpressionBinder::PushCollation(context, current, payload_types[i]);
+			const auto normalize_current =
+			    ExpressionBinder::PushCollation(context, current, payload_types[i], CollationType::EQUALITY_COLLATIONS);
 			D_ASSERT(normalize_previous == normalize_current);
 #else
-			ExpressionBinder::PushCollation(context, current, payload_types[i]);
+			ExpressionBinder::PushCollation(context, current, payload_types[i], CollationType::EQUALITY_COLLATIONS);
 #endif
 			if (normalize_previous) {
 				payload_comparisons.push_back(BoundComparisonExpression::Create(

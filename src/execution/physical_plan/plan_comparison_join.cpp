@@ -44,7 +44,8 @@ static unique_ptr<Expression> CreateRecursiveKeyNormalizer(ClientContext &contex
                                                            idx_t reference_idx,
                                                            optional_ptr<bool> normalized = nullptr) {
 	unique_ptr<Expression> result = make_uniq<BoundReferenceExpression>(type, reference_idx);
-	const auto normalization_applied = ExpressionBinder::PushCollation(context, result, type);
+	const auto normalization_applied =
+	    ExpressionBinder::PushCollation(context, result, type, CollationType::EQUALITY_COLLATIONS);
 	if (normalized) {
 		*normalized = normalization_applied;
 	}

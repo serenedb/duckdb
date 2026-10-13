@@ -371,8 +371,11 @@ static unique_ptr<Expression> PlanUncorrelatedSubquery(Binder &binder, BoundSubq
 			JoinCondition cond(std::move(expr.GetChildrenMutable()[0]), std::move(struct_expr), expr.ComparisonType());
 
 			// push collations
-			ExpressionBinder::PushCollation(binder.context, cond.LeftReference(), cond.GetLHS().GetReturnType());
-			ExpressionBinder::PushCollation(binder.context, cond.RightReference(), cond.GetRHS().GetReturnType());
+			const auto collation_type = ExpressionBinder::ComparisonCollationType(cond.GetComparisonType());
+			ExpressionBinder::PushCollation(binder.context, cond.LeftReference(), cond.GetLHS().GetReturnType(),
+			                                collation_type);
+			ExpressionBinder::PushCollation(binder.context, cond.RightReference(), cond.GetRHS().GetReturnType(),
+			                                collation_type);
 
 			join->conditions.push_back(std::move(cond));
 		} else {
@@ -386,8 +389,9 @@ static unique_ptr<Expression> PlanUncorrelatedSubquery(Binder &binder, BoundSubq
 				                   expr.ComparisonType());
 
 				// push collations
-				ExpressionBinder::PushCollation(binder.context, cond.LeftReference(), compare_type);
-				ExpressionBinder::PushCollation(binder.context, cond.RightReference(), compare_type);
+				const auto collation_type = ExpressionBinder::ComparisonCollationType(cond.GetComparisonType());
+				ExpressionBinder::PushCollation(binder.context, cond.LeftReference(), compare_type, collation_type);
+				ExpressionBinder::PushCollation(binder.context, cond.RightReference(), compare_type, collation_type);
 
 				join->conditions.push_back(std::move(cond));
 			}
@@ -556,8 +560,9 @@ static unique_ptr<Expression> PlanCorrelatedSubquery(Binder &binder, BoundSubque
 		auto &compare_type = expr.GetChildTargets()[0];
 		auto right_expr = BoundCastExpression::AddDefaultCastToType(
 		    make_uniq<BoundColumnRefExpression>(child_type, plan_columns[0]), compare_type);
-		ExpressionBinder::PushCollation(binder.context, left_expr, compare_type);
-		ExpressionBinder::PushCollation(binder.context, right_expr, compare_type);
+		const auto collation_type = ExpressionBinder::ComparisonCollationType(expr.ComparisonType());
+		ExpressionBinder::PushCollation(binder.context, left_expr, compare_type, collation_type);
+		ExpressionBinder::PushCollation(binder.context, right_expr, compare_type, collation_type);
 		delim_join->condition =
 		    BoundComparisonExpression::Create(expr.ComparisonType(), std::move(left_expr), std::move(right_expr));
 

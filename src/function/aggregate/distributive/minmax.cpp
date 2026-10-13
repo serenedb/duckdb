@@ -16,6 +16,7 @@
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/main/settings.hpp"
 
@@ -569,8 +570,9 @@ unique_ptr<FunctionData> MinMaxNBind(BindAggregateFunctionInput &input) {
 			throw ParameterNotResolvedException();
 		}
 	}
-	auto collated_arg = arguments[0]->Copy();
-	if (ExpressionBinder::PushCollation(context, collated_arg, collated_arg->GetReturnType())) {
+	const auto arg_type = arguments[0]->GetReturnType();
+	unique_ptr<Expression> collation_probe = make_uniq<BoundReferenceExpression>(arg_type, storage_t(0));
+	if (ExpressionBinder::PushCollation(context, collation_probe, arg_type)) {
 		vector<LogicalType> types {arguments[0]->GetReturnType(), arguments[0]->GetReturnType(),
 		                           arguments[1]->GetReturnType()};
 		auto collated_function = GetCollatedMinMaxFunction(context, function.GetName(), types);

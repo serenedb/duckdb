@@ -353,7 +353,8 @@ void Binder::BindModifiers(BoundQueryNode &result, TableIndex table_index, const
 				}
 			}
 			for (auto &expr : distinct.target_distincts) {
-				ExpressionBinder::PushCollation(context, expr, expr->GetReturnType());
+				ExpressionBinder::PushCollation(context, expr, expr->GetReturnType(),
+				                                CollationType::EQUALITY_COLLATIONS);
 			}
 			break;
 		}
@@ -628,7 +629,8 @@ BoundStatement Binder::BindSelectNode(SelectNode &statement, BoundStatement from
 			unique_ptr<Expression> uncollated_expr = contains_subquery ? nullptr : bound_expr->Copy();
 
 			// push a potential collation, if necessary
-			bool requires_collation = ExpressionBinder::PushCollation(context, bound_expr, group_type);
+			bool requires_collation =
+			    ExpressionBinder::PushCollation(context, bound_expr, group_type, CollationType::EQUALITY_COLLATIONS);
 			if (!contains_subquery && requires_collation) {
 				// if there is a collation on a group x, we should group by the collated expr,
 				// but also push a first(x) aggregate in case x is selected (uncollated)

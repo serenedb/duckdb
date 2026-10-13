@@ -21,6 +21,18 @@ bool ExpressionBinder::PushCollation(ClientContext &context, unique_ptr<Expressi
 	return collation_binding.PushCollation(context, source, sql_type, type);
 }
 
+CollationType ExpressionBinder::ComparisonCollationType(ExpressionType comparison_type) {
+	switch (comparison_type) {
+	case ExpressionType::COMPARE_EQUAL:
+	case ExpressionType::COMPARE_NOTEQUAL:
+	case ExpressionType::COMPARE_DISTINCT_FROM:
+	case ExpressionType::COMPARE_NOT_DISTINCT_FROM:
+		return CollationType::EQUALITY_COLLATIONS;
+	default:
+		return CollationType::ALL_COLLATIONS;
+	}
+}
+
 void ExpressionBinder::TestCollation(ClientContext &context, const string &collation) {
 	auto expr = make_uniq_base<Expression, BoundConstantExpression>(Value(""));
 	PushCollation(context, expr, LogicalType::VARCHAR_COLLATION(collation));
@@ -179,8 +191,9 @@ unique_ptr<Expression> ExpressionBinder::CreateBoundComparison(ExpressionType co
 	right = BoundCastExpression::AddCastToType(context, std::move(right), input_type,
 	                                           input_type.id() == LogicalTypeId::ENUM);
 
-	PushCollation(context, left, input_type);
-	PushCollation(context, right, input_type);
+	const auto collation_type = ComparisonCollationType(comparison_type);
+	PushCollation(context, left, input_type, collation_type);
+	PushCollation(context, right, input_type, collation_type);
 
 	// now create the bound comparison expression
 	return BoundComparisonExpression::Create(comparison_type, std::move(left), std::move(right));

@@ -163,6 +163,7 @@ public:
 
 	static bool PushCollation(ClientContext &context, unique_ptr<Expression> &source, const LogicalType &sql_type,
 	                          CollationType type = CollationType::ALL_COLLATIONS);
+	static CollationType ComparisonCollationType(ExpressionType comparison_type);
 	static void TestCollation(ClientContext &context, const string &collation);
 
 	//! The query scopes an expression can be resolved against, innermost first: this binder followed by
