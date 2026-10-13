@@ -17,8 +17,11 @@
 #include "duckdb/parser/expression/parameter_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/result_modifier.hpp"
+#include "duckdb/parser/tableref/subqueryref.hpp"
+#include "duckdb/common/string_util.hpp"
 
 #include <charconv>
 
@@ -208,10 +211,14 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 	if (!parameters.empty()) {
 		bool default_value_found = false;
 		identifier_set_t parameter_names;
+		vector<string> output_names;
+		vector<LogicalType> output_types;
 		for (auto &parameter : parameters) {
 			if (parameter.ambiguous_bare_type) {
 				if (decorator_info.has_language) {
-					auto pos_name = Identifier("$" + std::to_string(macro_function->parameters.size() + 1));
+					auto pos_name = parameter.mode == 'o'
+					                    ? Identifier("column" + std::to_string(output_names.size() + 1))
+					                    : Identifier("$" + std::to_string(macro_function->parameters.size() + 1));
 					auto builtin = DefaultTypeGenerator::GetDefaultType(parameter.name);
 					parameter.type = builtin.id() != LogicalTypeId::INVALID ? builtin : LogicalType::UNKNOWN;
 					parameter.name = pos_name;
@@ -226,6 +233,14 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 				                      parameter.name.GetIdentifierName());
 			}
 			parameter_names.insert(parameter.name);
+			macro_function->parameter_modes.push_back(parameter.mode);
+			if (parameter.mode != 'i') {
+				output_names.push_back(parameter.name.GetIdentifierName());
+				output_types.push_back(parameter.type);
+			}
+			if (parameter.mode == 'o') {
+				continue;
+			}
 			if (parameter.is_default) {
 				auto default_expr = std::move(parameter.expression);
 				default_expr->SetAlias(parameter.name);
@@ -239,6 +254,15 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 				macro_function->parameters.push_back(std::move(parameter.expression));
 			}
 			macro_function->types.push_back(parameter.type);
+		}
+		if (output_names.empty()) {
+			macro_function->parameter_modes.clear();
+		} else {
+			if (!macro_function->return_names.empty()) {
+				throw ParserException("OUT and INOUT arguments aren't allowed in TABLE functions");
+			}
+			macro_function->return_names = std::move(output_names);
+			macro_function->return_types = std::move(output_types);
 		}
 	}
 
@@ -278,6 +302,7 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 				table_macro->query_node = std::move(body_node);
 				table_macro->return_types = std::move(macro_function->return_types);
 				table_macro->return_names = std::move(macro_function->return_names);
+				table_macro->parameter_modes = std::move(macro_function->parameter_modes);
 				table_macro->parameters = std::move(macro_function->parameters);
 				table_macro->default_parameters = std::move(macro_function->default_parameters);
 				table_macro->types = std::move(macro_function->types);
@@ -297,8 +322,8 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 
 	// Scalar `RETURNS <type>` with a SELECT-shaped body is a "scalar shoehorn": wrap the table macro's query as a
 	// scalar subquery (LIMIT 1).
-	const bool is_scalar_returns =
-	    !macro_function->return_types.empty() && !decorator_info.returns_set && macro_function->return_names.empty();
+	const bool is_scalar_returns = !macro_function->return_types.empty() && !decorator_info.returns_set &&
+	                               (macro_function->return_names.empty() || !macro_function->parameter_modes.empty());
 	if (is_scalar_returns && macro_function->type == MacroType::TABLE_MACRO) {
 		auto &table_macro = macro_function->Cast<TableMacroFunction>();
 		if (table_macro.query_node) {
@@ -313,6 +338,23 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 
 			auto inner_stmt = make_uniq<SelectStatement>();
 			inner_stmt->node = std::move(table_macro.query_node);
+			if (table_macro.return_names.size() > 1) {
+				vector<unique_ptr<ParsedExpression>> fields;
+				const Identifier record_alias("result");
+				auto body_ref = make_uniq<SubqueryRef>(std::move(inner_stmt), record_alias);
+				for (auto &name : table_macro.return_names) {
+					auto field = make_uniq<ColumnRefExpression>(Identifier(name), record_alias);
+					field->SetAlias(Identifier(name));
+					fields.emplace_back(std::move(field));
+					body_ref->column_name_alias.emplace_back(name);
+				}
+				auto record = make_uniq<SelectNode>();
+				record->select_list.emplace_back(
+				    make_uniq<FunctionExpression>(Identifier("struct_pack"), std::move(fields)));
+				record->from_table = std::move(body_ref);
+				inner_stmt = make_uniq<SelectStatement>();
+				inner_stmt->node = std::move(record);
+			}
 			auto subquery = make_uniq<SubqueryExpression>();
 			subquery->SubqueryMutable() = std::move(inner_stmt);
 			subquery->GetSubqueryTypeMutable() = SubqueryType::SCALAR;
@@ -323,6 +365,7 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 			scalar_macro->default_parameters = std::move(table_macro.default_parameters);
 			scalar_macro->return_types = std::move(table_macro.return_types);
 			scalar_macro->return_names = std::move(table_macro.return_names);
+			scalar_macro->parameter_modes = std::move(table_macro.parameter_modes);
 			scalar_macro->is_procedure = table_macro.is_procedure;
 			macro_function = std::move(scalar_macro);
 		}
@@ -371,6 +414,41 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformReturnMacroBody(PEGTra
 vector<MacroParameter> PEGTransformerFactory::TransformMacroParameters(PEGTransformer &transformer,
                                                                        vector<MacroParameter> macro_parameter) {
 	return macro_parameter;
+}
+
+static char TransformParameterMode(ParseResult &mode_pr) {
+	reference<ParseResult> result = mode_pr;
+	while (result.get().type != ParseResultType::KEYWORD) {
+		if (result.get().type == ParseResultType::CHOICE) {
+			result = result.get().Cast<ChoiceParseResult>().GetResult();
+		} else {
+			result = result.get().Cast<ListParseResult>().GetChild(0);
+		}
+	}
+	const auto keyword = StringUtil::Upper(result.get().Cast<KeywordParseResult>().keyword);
+	if (keyword == "OUT") {
+		return 'o';
+	}
+	if (keyword == "INOUT") {
+		return 'b';
+	}
+	if (keyword == "VARIADIC") {
+		throw NotImplementedException("VARIADIC parameters are not supported");
+	}
+	return 'i';
+}
+
+// ModeParameter <- FuncArgMode TypeFuncName Type?
+MacroParameter PEGTransformerFactory::TransformModeParameter(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	optional<LogicalType> type;
+	auto &type_pr = list_pr.Child<OptionalParseResult>(2);
+	if (type_pr.HasResult()) {
+		type = transformer.Transform<LogicalType>(type_pr.GetResult());
+	}
+	auto result = TransformSimpleParameter(transformer, transformer.Transform<Identifier>(list_pr.GetChild(1)), type);
+	result.mode = TransformParameterMode(list_pr.GetChild(0));
+	return result;
 }
 
 MacroParameter PEGTransformerFactory::TransformSimpleParameter(PEGTransformer &transformer,

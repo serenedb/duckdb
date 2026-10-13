@@ -70,6 +70,19 @@ static bool IsTimestampType(const LogicalTypeId type) {
 }
 
 static bool IsAssignmentCast(ClientContext &context, const LogicalType &source, const LogicalType &target) {
+	if (source.id() == LogicalTypeId::STRUCT && target.id() == LogicalTypeId::STRUCT) {
+		auto &source_fields = StructType::GetChildTypes(source);
+		auto &target_fields = StructType::GetChildTypes(target);
+		if (source_fields.size() != target_fields.size()) {
+			return false;
+		}
+		for (idx_t i = 0; i < source_fields.size(); i++) {
+			if (!IsAssignmentCast(context, source_fields[i].second, target_fields[i].second)) {
+				return false;
+			}
+		}
+		return true;
+	}
 	if (CastFunctionSet::ImplicitCastCost(context, source, target) >= 0) {
 		return true;
 	}
@@ -734,7 +747,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 							    ExpressionBinder::QualifyColumnNames(*dummy_binder, child);
 						    });
 						auto bound = dummy_binder->Bind(*query_node);
-						auto &resolved = ret_types[0];
+						const auto resolved = function->ResultType();
 						const bool is_void_return =
 						    resolved.id() == LogicalTypeId::SQLNULL && resolved.GetAlias() == "void";
 						if (!is_void_return) {
@@ -760,18 +773,13 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				}
 				// Validate scalar RETURN expr (non-subquery body).
 				if (!ret_types.empty() && bind_result.expression) {
-					auto &resolved = ret_types[0];
+					const auto resolved = function->ResultType();
 					auto &actual = bind_result.expression->GetReturnType();
 					if (!types_compatible(actual, resolved)) {
 						throw BinderException("return type mismatch in function declared to return %s\n"
 						                      "DETAIL: Actual return type is %s.",
 						                      StringUtil::Lower(resolved.ToString()),
 						                      StringUtil::Lower(actual.ToString()));
-					}
-					if (ret_types.size() != 1) {
-						throw BinderException("return type mismatch in function declared to return %s\n"
-						                      "DETAIL: Final statement must return exactly one column.",
-						                      StringUtil::Lower(resolved.ToString()));
 					}
 				}
 			} catch (const std::exception &ex) {

@@ -227,10 +227,10 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 
 	// bind the unfolded macro
 	auto result = BindExpression(expr, depth);
-	if (result.HasError() || macro_def.return_types.size() != 1) {
+	if (result.HasError() || macro_def.return_types.empty()) {
 		return result;
 	}
-	const auto &declared = macro_def.return_types[0];
+	auto declared = macro_def.ResultType();
 	if (MacroFunction::ResultNeedsCast(result.expression->GetReturnType(), declared)) {
 		result.expression = BoundCastExpression::AddCastToType(context, std::move(result.expression), declared);
 	}

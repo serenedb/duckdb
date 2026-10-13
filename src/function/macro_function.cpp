@@ -299,6 +299,17 @@ vector<LogicalType> MacroFunction::ParameterTypes() const {
 	return result;
 }
 
+LogicalType MacroFunction::ResultType() const {
+	if (type == MacroType::SCALAR_MACRO && return_types.size() > 1) {
+		child_list_t<LogicalType> fields;
+		for (idx_t i = 0; i < return_types.size(); i++) {
+			fields.emplace_back(Identifier(return_names[i]), return_types[i]);
+		}
+		return LogicalType::STRUCT(std::move(fields));
+	}
+	return return_types.size() == 1 ? return_types[0] : LogicalType::INVALID;
+}
+
 bool MacroFunction::ResultNeedsCast(const LogicalType &result, const LogicalType &declared) {
 	if (result == declared || declared.id() == LogicalTypeId::ANY) {
 		return false;
@@ -329,6 +340,7 @@ void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.types = types;
 	other.return_types = return_types;
 	other.return_names = return_names;
+	other.parameter_modes = parameter_modes;
 	other.is_procedure = is_procedure;
 }
 
