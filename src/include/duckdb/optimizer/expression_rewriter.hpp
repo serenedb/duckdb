@@ -37,13 +37,18 @@ public:
 	static unique_ptr<Expression> ConstantOrNull(ClientContext &context, vector<unique_ptr<Expression>> children,
 	                                             Value value);
 
+	optional_ptr<Expression> CurrentParent() const {
+		return current_parent;
+	}
+
 private:
 	//! Apply a set of rules to a specific expression
-	static unique_ptr<Expression> ApplyRules(LogicalOperator &op, const vector<reference<Rule>> &rules,
-	                                         const vector<rewrite_barrier_t> &barriers, unique_ptr<Expression> expr,
-	                                         bool &changes_made, bool is_root = false);
+	unique_ptr<Expression> ApplyRules(LogicalOperator &op, const vector<reference<Rule>> &rules,
+	                                  const vector<rewrite_barrier_t> &barriers, unique_ptr<Expression> expr,
+	                                  bool &changes_made, bool is_root = false);
 
 	optional_ptr<LogicalOperator> op;
+	optional_ptr<Expression> current_parent;
 	vector<reference<Rule>> to_apply_rules;
 	vector<rewrite_barrier_t> to_apply_barriers;
 };

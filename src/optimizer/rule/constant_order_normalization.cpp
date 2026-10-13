@@ -10,10 +10,21 @@ static bool MultiplicationConstantBelongsAtEnd(const BoundFunctionExpression &ex
 	return expr.Function().GetName() == "*";
 }
 
+static bool ContinuesChain(const Expression &parent, const BoundFunctionExpression &expr) {
+	if (parent.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION || !parent.GetReturnType().IsIntegral()) {
+		return false;
+	}
+	auto &parent_function = parent.Cast<BoundFunctionExpression>();
+	auto &children = parent_function.GetChildren();
+	return parent_function.Function().GetName() == expr.Function().GetName() && children.size() == 2 &&
+	       children[0]->GetReturnType().IsIntegral() && children[1]->GetReturnType().IsIntegral();
+}
+
 class RecursiveFunctionExpressionMatcher : public ExpressionMatcher {
 public:
-	explicit RecursiveFunctionExpressionMatcher(vector<unique_ptr<FunctionExpressionMatcher>> func_matchers)
-	    : func_matchers(std::move(func_matchers)) {
+	RecursiveFunctionExpressionMatcher(ExpressionRewriter &rewriter,
+	                                   vector<unique_ptr<FunctionExpressionMatcher>> func_matchers)
+	    : rewriter(rewriter), func_matchers(std::move(func_matchers)) {
 	}
 	bool Match(Expression &expr, vector<reference<Expression>> &bindings) override {
 		FunctionExpressionMatcher *target_matcher = nullptr;
@@ -24,6 +35,10 @@ public:
 			}
 		}
 		if (target_matcher == nullptr) {
+			return false;
+		}
+		auto parent = rewriter.CurrentParent();
+		if (parent && ContinuesChain(*parent, expr.Cast<BoundFunctionExpression>())) {
 			return false;
 		}
 		bindings.clear();
@@ -46,6 +61,7 @@ private:
 		}
 	}
 
+	ExpressionRewriter &rewriter;
 	vector<unique_ptr<FunctionExpressionMatcher>> func_matchers;
 };
 
@@ -76,7 +92,7 @@ ConstantOrderNormalizationRule::ConstantOrderNormalizationRule(ExpressionRewrite
 	vector<unique_ptr<FunctionExpressionMatcher>> func_matchers;
 	func_matchers.push_back(std::move(add_matcher));
 	func_matchers.push_back(std::move(multiply_matcher));
-	auto op = make_uniq<RecursiveFunctionExpressionMatcher>(std::move(func_matchers));
+	auto op = make_uniq<RecursiveFunctionExpressionMatcher>(rewriter, std::move(func_matchers));
 	root = std::move(op);
 }
 

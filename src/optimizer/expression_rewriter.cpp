@@ -16,10 +16,11 @@ struct RewriteFrame {
 	bool is_root;
 	bool children_visited;
 	bool frozen = false;
+	optional_ptr<Expression> parent;
 };
 
-static unique_ptr<Expression> ApplyRule(LogicalOperator &op, const vector<reference<Rule>> &rules,
-                                        unique_ptr<Expression> expr, bool &changes_made, bool is_root) {
+static bool ApplyRule(LogicalOperator &op, const vector<reference<Rule>> &rules, unique_ptr<Expression> &expr,
+                      bool is_root) {
 	for (auto &rule : rules) {
 		vector<reference<Expression>> bindings;
 		if (rule.get().root->Match(*expr, bindings)) {
@@ -33,21 +34,20 @@ static unique_ptr<Expression> ApplyRule(LogicalOperator &op, const vector<refere
 			if (result) {
 				D_ASSERT(result->GetReturnType() != return_type ||
 				         result->GetReturnType().EqualsIncludingCollation(return_type));
-				changes_made = true;
 				// the base node changed: the rule applied changes
 				if (!alias.empty()) {
 					result->SetAlias(std::move(alias));
 				}
-				return result;
-			} else if (rule_made_change) {
-				changes_made = true;
-				return expr;
+				expr = std::move(result);
+				return true;
+			}
+			if (rule_made_change) {
+				return true;
 			}
 			// else nothing changed, continue to the next rule
-			continue;
 		}
 	}
-	return expr;
+	return false;
 }
 
 static void CollectChildren(Expression &expr, vector<reference<unique_ptr<Expression>>> &children) {
@@ -80,8 +80,9 @@ unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const
 			// Rewrite the subtree bottom-up so parent rules see already-simplified children.
 			CollectChildren(*current_expr, children);
 			const bool children_frozen = FreezesChildren(barriers, *current_expr, frame.frozen);
+			const auto parent = frame.frozen ? nullptr : current_expr.get();
 			for (idx_t i = children.size(); i > 0; i--) {
-				stack.push_back({children[i - 1], false, false, children_frozen});
+				stack.push_back({children[i - 1], false, false, children_frozen, parent});
 			}
 			continue;
 		}
@@ -89,9 +90,8 @@ unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const
 			stack.pop_back();
 			continue;
 		}
-		bool node_made_change = false;
-		current_expr = ApplyRule(op, rules, std::move(current_expr), node_made_change, frame.is_root);
-		if (node_made_change) {
+		current_parent = frame.parent;
+		if (ApplyRule(op, rules, current_expr, frame.is_root)) {
 			changes_made = true;
 			frame.children_visited = false;
 			continue;
@@ -148,8 +148,8 @@ void ExpressionRewriter::VisitOperator(LogicalOperator &op) {
 
 void ExpressionRewriter::VisitExpression(unique_ptr<Expression> *expression) {
 	bool changes_made = false;
-	*expression = ExpressionRewriter::ApplyRules(*op, to_apply_rules, to_apply_barriers, std::move(*expression),
-	                                             changes_made, true);
+	*expression = ApplyRules(*op, to_apply_rules, to_apply_barriers, std::move(*expression), changes_made, true);
+	current_parent = nullptr;
 }
 
 ClientContext &Rule::GetContext() const {
