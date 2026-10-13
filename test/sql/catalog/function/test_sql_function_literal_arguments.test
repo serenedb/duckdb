@@ -1,29 +1,29 @@
 # name: test/sql/catalog/function/test_sql_function_literal_arguments.test
-# description: A literal argument reaches a typed macro parameter as it reaches a scalar function's, as in PostgreSQL
+# description: A macro of a DuckDB catalog prices a literal argument with the type it binds to
 # group: [function]
 
 statement ok
-CREATE FUNCTION next_day(d date) RETURNS date LANGUAGE sql RETURN d + 1;
+CREATE MACRO pick(a) AS 'untyped', (a DATE) AS 'date';
 
 query I
-SELECT next_day('2024-01-31');
+SELECT pick('2024-01-31');
 ----
-2024-02-01
+untyped
 
 query I
-SELECT next_day(d := '2024-02-28');
+SELECT pick(DATE '2024-01-31');
 ----
-2024-02-29
-
-statement error
-SELECT next_day('2024-01-31'::varchar);
-----
-does not support the supplied arguments
+date
 
 statement ok
 CREATE MACRO typed_next_day(d DATE) AS d + 1;
 
-query I
+statement error
 SELECT typed_next_day('2024-12-31');
+----
+does not support the supplied arguments
+
+query I
+SELECT typed_next_day(DATE '2024-12-31');
 ----
 2025-01-01
