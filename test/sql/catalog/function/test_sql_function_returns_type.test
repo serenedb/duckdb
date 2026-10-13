@@ -1,5 +1,5 @@
 # name: test/sql/catalog/function/test_sql_function_returns_type.test
-# description: A function of a DuckDB catalog returns its body's type and accepts only bodies that cast implicitly to its RETURNS type
+# description: A SQL function returns its RETURNS type, reached from its body by an assignment cast
 # group: [function]
 
 statement ok
@@ -8,14 +8,38 @@ CREATE FUNCTION widened() RETURNS BIGINT LANGUAGE sql RETURN 1;
 query T
 SELECT typeof(widened());
 ----
-INTEGER
+BIGINT
 
-statement error
+statement ok
 CREATE FUNCTION as_text() RETURNS VARCHAR LANGUAGE sql RETURN 42;
+
+query T
+SELECT as_text();
 ----
-return type mismatch in function declared to return varchar
+42
+
+statement ok
+CREATE FUNCTION rounded() RETURNS INTEGER LANGUAGE sql RETURN 4.7;
+
+query I
+SELECT rounded();
+----
+5
 
 statement error
-CREATE FUNCTION narrowed() RETURNS INTEGER LANGUAGE sql RETURN 4.7;
+CREATE FUNCTION to_bool() RETURNS BOOLEAN LANGUAGE sql RETURN 1;
 ----
-return type mismatch in function declared to return integer
+return type mismatch in function declared to return boolean
+
+statement ok
+CREATE FUNCTION pair() RETURNS TABLE(a BIGINT, b VARCHAR) LANGUAGE sql AS 'SELECT 1, 42';
+
+query TT
+SELECT typeof(a), b FROM pair();
+----
+BIGINT	42
+
+query T
+SELECT typeof(n) FROM widened() AS t(n);
+----
+BIGINT

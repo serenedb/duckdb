@@ -227,18 +227,13 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 
 	// bind the unfolded macro
 	auto result = BindExpression(expr, depth);
-	if (result.HasError() || macro_def.return_types.size() != 1 ||
-	    macro_func.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES) {
+	if (result.HasError() || macro_def.return_types.size() != 1) {
 		return result;
 	}
-	const auto &return_type = macro_def.return_types[0];
-	const auto &body_type = result.expression->GetReturnType();
-	const bool void_return = return_type.id() == LogicalTypeId::SQLNULL && return_type.GetAlias() == "void";
-	if (return_type.id() == LogicalTypeId::ANY || void_return ||
-	    (return_type.id() == LogicalTypeId::DECIMAL && body_type.id() == LogicalTypeId::DECIMAL)) {
-		return result;
+	const auto &declared = macro_def.return_types[0];
+	if (MacroFunction::ResultNeedsCast(result.expression->GetReturnType(), declared)) {
+		result.expression = BoundCastExpression::AddCastToType(context, std::move(result.expression), declared);
 	}
-	result.expression = BoundCastExpression::AddCastToType(context, std::move(result.expression), return_type);
 	return result;
 }
 

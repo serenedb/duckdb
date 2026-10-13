@@ -299,6 +299,16 @@ vector<LogicalType> MacroFunction::ParameterTypes() const {
 	return result;
 }
 
+bool MacroFunction::ResultNeedsCast(const LogicalType &result, const LogicalType &declared) {
+	if (result == declared || declared.id() == LogicalTypeId::ANY) {
+		return false;
+	}
+	if (declared.id() == LogicalTypeId::SQLNULL && declared.GetAlias() == "void") {
+		return false;
+	}
+	return declared.id() != LogicalTypeId::DECIMAL || result.id() != LogicalTypeId::DECIMAL;
+}
+
 bool MacroFunction::HasParameterTypes(const vector<LogicalType> &parameter_types) const {
 	return ParameterTypes() == parameter_types;
 }

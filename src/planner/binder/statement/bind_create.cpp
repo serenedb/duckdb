@@ -688,10 +688,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			if (actual == expected) {
 				return true;
 			}
-			if (info.type == CatalogType::MACRO_ENTRY && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
-				return IsAssignmentCast(context, actual, expected);
-			}
-			return CastFunctionSet::ImplicitCastCost(context, actual, expected) >= 0;
+			return IsAssignmentCast(context, actual, expected);
 		};
 		if (info.type == CatalogType::MACRO_ENTRY) {
 			BoundSelectNode sel_node;

@@ -66,6 +66,7 @@ public:
 	vector<LogicalType> ParameterTypes() const;
 	bool HasParameterTypes(const vector<LogicalType> &parameter_types) const;
 	static string ParameterTypesToString(const vector<LogicalType> &parameter_types);
+	static bool ResultNeedsCast(const LogicalType &result, const LogicalType &declared);
 
 	vector<unique_ptr<ParsedExpression>> GetPositionalParametersForSerialization(Serializer &serializer) const;
 	void FinalizeDeserialization();
