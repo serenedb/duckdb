@@ -371,9 +371,27 @@ BindResult SelectBinder::BindUnnest(FunctionExpression &function, idx_t depth, b
 	if (inside_window || inside_aggregate || inside_try) {
 		return BindResult(BinderException(function, UnsupportedUnnestMessage()));
 	}
+	const bool select_list_level = depth == 0 && unnest_level == 0;
+	unique_ptr<ParsedExpression> call;
+	if (select_list_level) {
+		for (auto &bound_unnest : bound_unnests) {
+			if (bound_unnest.first->Equals(function)) {
+				auto result = bound_unnest.second->Copy();
+				if (!function.GetAlias().empty()) {
+					result->SetAlias(function.GetAlias());
+				}
+				return BindResult(std::move(result));
+			}
+		}
+		call = function.Copy();
+	}
 	UnnestBinder unnest_binder(*this, binder, context, node.unnests.SelectList(), unnest_level,
 	                           StructUnnestHandling::ALLOW_ROOT, "UNNEST of struct cannot be used in GROUP BY clause");
-	return unnest_binder.Bind(function, depth, root_expression);
+	auto result = unnest_binder.Bind(function, depth, root_expression);
+	if (call && !result.HasError() && result.expression->GetExpressionClass() != ExpressionClass::BOUND_EXPANDED) {
+		bound_unnests.emplace_back(std::move(call), result.expression->Copy());
+	}
+	return result;
 }
 
 BindResult GroupBinder::BindUnnest(FunctionExpression &function, idx_t depth, bool root_expression) {
