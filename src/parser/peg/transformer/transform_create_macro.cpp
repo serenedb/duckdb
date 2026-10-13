@@ -128,6 +128,7 @@ bool PEGTransformerFactory::TransformProcedureKeyword(PEGTransformer &transforme
 
 struct FunctionDecoratorInfo {
 	bool has_language = false;
+	bool returns_set = false;
 };
 
 // Process the FunctionDecorator* repeat block of a MacroDefinition and apply it to the macro function. The decorators
@@ -157,6 +158,11 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 				}
 			} else if (returns_name == "ReturnsNull") {
 				// RETURNS NULL ON NULL INPUT -- a strictness marker, not a return type.
+			} else if (returns_name == "ReturnsSetof") {
+				auto &setof_list = returns_choice.Cast<ListParseResult>();
+				macro_function.return_types.push_back(
+				    transformer.Transform<LogicalType>(setof_list.Child<ListParseResult>(1)));
+				info.returns_set = true;
 			} else {
 				macro_function.return_types.push_back(transformer.Transform<LogicalType>(returns_choice));
 			}
@@ -291,7 +297,8 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 
 	// Scalar `RETURNS <type>` with a SELECT-shaped body is a "scalar shoehorn": wrap the table macro's query as a
 	// scalar subquery (LIMIT 1).
-	const bool is_scalar_returns = !macro_function->return_types.empty() && macro_function->return_names.empty();
+	const bool is_scalar_returns =
+	    !macro_function->return_types.empty() && !decorator_info.returns_set && macro_function->return_names.empty();
 	if (is_scalar_returns && macro_function->type == MacroType::TABLE_MACRO) {
 		auto &table_macro = macro_function->Cast<TableMacroFunction>();
 		if (table_macro.query_node) {
