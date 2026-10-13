@@ -356,9 +356,10 @@ unique_ptr<CompressExpression> CMHelper::CreateIntegralFunctionCompress(unique_p
 // CompressedMaterialization
 //===--------------------------------------------------------------------===//
 CompressedMaterialization::CompressedMaterialization(Optimizer &optimizer_p, LogicalOperator &root_p,
-                                                     statistics_map_t &statistics_map_p, bool &types_resolved_p)
+                                                     statistics_map_t &statistics_map_p, bool &types_resolved_p,
+                                                     const vector<reference<unique_ptr<LogicalOperator>>> &path_p)
     : optimizer(optimizer_p), context(optimizer.context), root(&root_p), statistics_map(statistics_map_p),
-      types_resolved(types_resolved_p) {
+      types_resolved(types_resolved_p), path(path_p) {
 }
 
 #ifdef D_ASSERT_IS_ENABLED
@@ -369,6 +370,19 @@ static void CollectOperatorTypes(const LogicalOperator &op, vector<vector<Logica
 	}
 }
 #endif
+
+void CompressedMaterialization::ReplaceAbove(ColumnBindingReplacer &replacer, optional_ptr<LogicalOperator> first,
+                                             LogicalOperator &replaced_subtree) {
+	AncestorBindingReplacer ancestors(replacer);
+	bool passes_through = !first || ancestors.Replace(*first);
+	if (passes_through && materializing_parent) {
+		passes_through = ancestors.Replace(*materializing_parent);
+	}
+	for (idx_t path_idx = path.size() - 1; passes_through && path_idx > 0; path_idx--) {
+		passes_through = ancestors.Replace(*path[path_idx - 1].get());
+	}
+	ancestors.Verify(*root, replaced_subtree);
+}
 
 void CompressedMaterialization::GetReferencedBindings(const Expression &root_expr,
                                                       column_binding_set_t &referenced_bindings) {
@@ -460,13 +474,19 @@ void CompressedMaterialization::Compress(unique_ptr<LogicalOperator> &op) {
 	switch (op->type) {
 	case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY:
 		BucketDateTruncGroups(op);
-		CompressAggregate(op->type == LogicalOperatorType::LOGICAL_PROJECTION ? op->children[0] : op);
+		if (op->type == LogicalOperatorType::LOGICAL_PROJECTION) {
+			materializing_parent = op.get();
+			CompressAggregate(op->children[0]);
+		} else {
+			CompressAggregate(op);
+		}
 		break;
 	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
 		CompressComparisonJoin(op);
 		break;
 	case LogicalOperatorType::LOGICAL_DISTINCT:
 		if (BucketDistinct(op)) {
+			materializing_parent = op.get();
 			CompressAggregate(op->children[0]);
 		} else {
 			CompressDistinct(op);
@@ -491,14 +511,14 @@ void CompressedMaterialization::CreateProjections(unique_ptr<LogicalOperator> &o
 		if (TryCompressChild(info, child_info, compress_exprs)) {
 			// We can compress: Create a projection on top of the child operator
 			const auto child_idx = info.child_idxs[i];
-			CreateCompressProjection(materializing_op.children[child_idx], std::move(compress_exprs), info, child_info);
+			CreateCompressProjection(materializing_op, materializing_op.children[child_idx], std::move(compress_exprs),
+			                         info, child_info);
 			compressed_anything = true;
 		}
 	}
 
 	if (compressed_anything) {
 		CreateDecompressProjection(op, info);
-		types_resolved = false;
 	}
 }
 
@@ -533,7 +553,8 @@ bool CompressedMaterialization::TryCompressChild(CompressedMaterializationInfo &
 	return compressed_anything;
 }
 
-void CompressedMaterialization::CreateCompressProjection(unique_ptr<LogicalOperator> &child_op,
+void CompressedMaterialization::CreateCompressProjection(LogicalOperator &materializing_op,
+                                                         unique_ptr<LogicalOperator> &child_op,
                                                          vector<unique_ptr<CompressExpression>> compress_exprs,
                                                          CompressedMaterializationInfo &info, CMChildInfo &child_info) {
 	// Replace child op with a projection
@@ -565,11 +586,7 @@ void CompressedMaterialization::CreateCompressProjection(unique_ptr<LogicalOpera
 		statistics_map.erase(old_binding);
 	}
 
-	// Make sure we stop at the compress operator when replacing bindings
-	replacer.stop_operator = child_op.get();
-
-	// Make the plan consistent again
-	replacer.VisitOperator(*root);
+	ReplaceAbove(replacer, materializing_op, *child_op);
 
 	// Replace in/out exprs in the binding map too
 	CMHelper::RemapBindingMap(info, replacement_bindings);
@@ -604,7 +621,7 @@ unique_ptr<Expression> CompressedMaterialization::CreateRestoreExpression(unique
 void CompressedMaterialization::CreateDecompressProjection(unique_ptr<LogicalOperator> &op,
                                                            CompressedMaterializationInfo &info) {
 	const auto bindings = op->GetColumnBindings();
-	op->ResolveOperatorTypes();
+	op->ResolveOwnTypes();
 	const auto &types = op->types;
 
 	// Create decompress expressions for everything we compressed
@@ -643,7 +660,7 @@ void CompressedMaterialization::CreateDecompressProjection(unique_ptr<LogicalOpe
 
 	// Get the new bindings and types
 	auto new_bindings = op->GetColumnBindings();
-	op->ResolveOperatorTypes();
+	op->ResolveOwnTypes();
 	auto &new_types = op->types;
 
 	// Initialize a ColumnBindingReplacer with the new bindings and types
@@ -671,11 +688,7 @@ void CompressedMaterialization::CreateDecompressProjection(unique_ptr<LogicalOpe
 		}
 	}
 
-	// Make sure we skip the decompress operator when replacing bindings
-	replacer.stop_operator = op.get();
-
-	// Make the plan consistent again
-	replacer.VisitOperator(*root);
+	ReplaceAbove(replacer, nullptr, *op);
 }
 
 unique_ptr<CompressExpression> CompressedMaterialization::GetCompressExpression(const ColumnBinding &binding,

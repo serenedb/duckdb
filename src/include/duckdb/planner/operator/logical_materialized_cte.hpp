@@ -53,7 +53,11 @@ public:
 public:
 	InsertionOrderPreservingMap<string> ParamsToString() const override;
 	vector<ColumnBinding> GetColumnBindings() override {
-		return children[1]->GetColumnBindings();
+		reference<LogicalOperator> body(*children[1]);
+		while (body.get().type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
+			body = *body.get().children[1];
+		}
+		return body.get().GetColumnBindings();
 	}
 
 	void Serialize(Serializer &serializer) const override;

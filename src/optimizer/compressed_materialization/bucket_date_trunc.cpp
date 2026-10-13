@@ -563,7 +563,6 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 	}
 	if (projection_changed) {
 		op->children[0]->ResolveOperatorTypes();
-		types_resolved = false;
 	}
 	for (idx_t group_idx = groups.size(); group_idx > 0; group_idx--) {
 		if (removed[group_idx - 1]) {
@@ -579,8 +578,7 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 		aggregate.grouping_sets[0] = std::move(all);
 	}
 
-	op->ResolveOperatorTypes();
-	types_resolved = false;
+	op->ResolveOwnTypes();
 	const auto &types = op->types;
 	const auto kept_bindings = op->GetColumnBindings();
 	vector<idx_t> kept_position(old_bindings.size(), DConstants::INVALID_INDEX);
@@ -632,8 +630,7 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 	const bool was_root = RefersToSameObject(*op, *root);
 	projection->children.push_back(std::move(op));
 	op = std::move(projection);
-	op->ResolveOperatorTypes();
-	types_resolved = false;
+	op->ResolveOwnTypes();
 	const auto new_bindings = op->GetColumnBindings();
 	for (idx_t col_idx = 0; col_idx < old_bindings.size(); col_idx++) {
 		if (auto group = bucket_of[col_idx]) {
@@ -655,8 +652,7 @@ void CompressedMaterialization::BucketDateTruncGroups(unique_ptr<LogicalOperator
 	for (idx_t col_idx = 0; col_idx < old_bindings.size(); col_idx++) {
 		replacer.replacement_bindings.emplace_back(old_bindings[col_idx], new_bindings[col_idx], op->types[col_idx]);
 	}
-	replacer.stop_operator = op.get();
-	replacer.VisitOperator(*root);
+	ReplaceAbove(replacer, nullptr, *op);
 }
 
 } // namespace duckdb

@@ -151,12 +151,16 @@ bool LogicalOperator::HasVolatileExpressions() const {
 }
 
 void LogicalOperator::ResolveOperatorTypes() {
-	types.clear();
 	// first resolve child types
 	for (auto &child : children) {
 		child->ResolveOperatorTypes();
 	}
 	// now resolve the types for this operator
+	ResolveOwnTypes();
+}
+
+void LogicalOperator::ResolveOwnTypes() {
+	types.clear();
 	ResolveTypes();
 	D_ASSERT(types.size() == GetColumnBindings().size());
 }

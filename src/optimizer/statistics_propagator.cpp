@@ -107,7 +107,7 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalOper
 	if (mode == StatisticsPropagationMode::FULL &&
 	    !optimizer.OptimizerDisabled(OptimizerType::COMPRESSED_MATERIALIZATION)) {
 		// compress data based on statistics for materializing operators
-		CompressedMaterialization compressed_materialization(optimizer, *root, statistics_map, types_resolved);
+		CompressedMaterialization compressed_materialization(optimizer, *root, statistics_map, types_resolved, path);
 		compressed_materialization.Compress(node_ptr);
 	}
 
@@ -115,7 +115,10 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalOper
 }
 
 unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(unique_ptr<LogicalOperator> &node_ptr) {
-	return PropagateStatistics(*node_ptr, node_ptr);
+	path.push_back(node_ptr);
+	auto result = PropagateStatistics(*node_ptr, node_ptr);
+	path.pop_back();
+	return result;
 }
 
 unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalCopyToFile &op,

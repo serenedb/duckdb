@@ -67,8 +67,7 @@ bool CompressedMaterialization::BucketDistinct(unique_ptr<LogicalOperator> &op) 
 	const bool was_root = RefersToSameObject(*op, *root);
 	auto original = std::move(op);
 	op = std::move(aggregate);
-	op->ResolveOperatorTypes();
-	types_resolved = false;
+	op->ResolveOwnTypes();
 	if (was_root) {
 		root = op;
 	}
