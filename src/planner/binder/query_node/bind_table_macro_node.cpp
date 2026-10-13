@@ -1,3 +1,4 @@
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
@@ -26,7 +27,8 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	vector<unique_ptr<ParsedExpression>> positional_arguments;
 	InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> named_arguments;
 
-	auto bind_result = MacroFunction::BindMacroFunction(*this, macro_func.macros, macro_func.name, function,
+	auto bind_result = MacroFunction::BindMacroFunction(*this, macro_func.macros, macro_func.name,
+	                                                    macro_func.ParentCatalog().Compatibility(), function,
 	                                                    positional_arguments, named_arguments, depth);
 	if (!bind_result.error.empty()) {
 		throw BinderException(function, bind_result.error);

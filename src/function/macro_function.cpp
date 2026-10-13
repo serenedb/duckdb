@@ -47,7 +47,8 @@ string FormatMacroFunction(const MacroFunction &function, const Identifier &name
 
 MacroBindResult MacroFunction::BindMacroFunction(
     Binder &binder, const vector<unique_ptr<MacroFunction>> &functions, const Identifier &name,
-    FunctionExpression &function_expr, vector<unique_ptr<ParsedExpression>> &positional_arguments,
+    SqlCompatibility compatibility, FunctionExpression &function_expr,
+    vector<unique_ptr<ParsedExpression>> &positional_arguments,
     InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> &named_arguments,
     idx_t depth) {
 	ExpressionBinder expr_binder(binder, binder.context);
@@ -77,9 +78,13 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			const auto correlated_columns = binder.correlated_columns;
 			const auto arg_bind_result = expr_binder.BindExpression(arg_copy, depth + 1);
 			binder.correlated_columns = correlated_columns;
-			arg_type = arg_bind_result.HasError()
-			               ? LogicalType::UNKNOWN
-			               : ExpressionBinder::GetExpressionReturnType(*arg_bind_result.expression);
+			if (arg_bind_result.HasError()) {
+				arg_type = LogicalType::UNKNOWN;
+			} else if (compatibility == SqlCompatibility::POSTGRES) {
+				arg_type = ExpressionBinder::GetExpressionReturnType(*arg_bind_result.expression);
+			} else {
+				arg_type = arg_bind_result.expression->GetReturnType();
+			}
 		}
 		if (arg.GetExpression().IsNamedParameter()) {
 			// User-written `name := value` (or `name => value`) named argument.

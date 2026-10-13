@@ -1,3 +1,4 @@
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -184,7 +185,8 @@ void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, Scala
 	vector<unique_ptr<ParsedExpression>> positional_arguments;
 	InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> named_arguments;
 	binder.lambda_bindings = lambda_bindings;
-	auto bind_result = MacroFunction::BindMacroFunction(binder, macro_func.macros, macro_func.name, function,
+	auto bind_result = MacroFunction::BindMacroFunction(binder, macro_func.macros, macro_func.name,
+	                                                    macro_func.ParentCatalog().Compatibility(), function,
 	                                                    positional_arguments, named_arguments, depth);
 	if (!bind_result.error.empty()) {
 		throw BinderException(*expr, bind_result.error);
