@@ -63,6 +63,32 @@
 
 namespace duckdb {
 
+static bool IsTimestampType(const LogicalTypeId type) {
+	return type == LogicalTypeId::TIMESTAMP || type == LogicalTypeId::TIMESTAMP_TZ ||
+	       type == LogicalTypeId::TIMESTAMP_SEC || type == LogicalTypeId::TIMESTAMP_MS ||
+	       type == LogicalTypeId::TIMESTAMP_NS;
+}
+
+static bool IsAssignmentCast(ClientContext &context, const LogicalType &source, const LogicalType &target) {
+	if (CastFunctionSet::ImplicitCastCost(context, source, target) >= 0) {
+		return true;
+	}
+	if (source.IsNumeric() && target.IsNumeric()) {
+		return true;
+	}
+	if (target.id() == LogicalTypeId::VARCHAR && !target.HasAlias()) {
+		return true;
+	}
+	const auto from = source.id();
+	const auto to = target.id();
+	if (IsTimestampType(from)) {
+		return to == LogicalTypeId::DATE || to == LogicalTypeId::TIME ||
+		       (from == LogicalTypeId::TIMESTAMP_TZ &&
+		        (to == LogicalTypeId::TIMESTAMP || to == LogicalTypeId::TIME_TZ));
+	}
+	return (from == LogicalTypeId::TIME_TZ || from == LogicalTypeId::INTERVAL) && to == LogicalTypeId::TIME;
+}
+
 static unique_ptr<CommonTableExpressionInfo> MakeTriggerValidationCTE(const TableCatalogEntry &table) {
 	auto alias_select = make_uniq<SelectNode>();
 	alias_select->select_list.push_back(make_uniq<StarExpression>());
@@ -661,6 +687,9 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			}
 			if (actual == expected) {
 				return true;
+			}
+			if (info.type == CatalogType::MACRO_ENTRY && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+				return IsAssignmentCast(context, actual, expected);
 			}
 			return CastFunctionSet::ImplicitCastCost(context, actual, expected) >= 0;
 		};

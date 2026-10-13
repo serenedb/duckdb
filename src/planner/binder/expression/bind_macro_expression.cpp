@@ -1,6 +1,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/enums/expression_type.hpp"
@@ -179,8 +180,9 @@ void ExpressionBinder::UnfoldWindowMacroExpression(unique_ptr<ParsedExpression> 
 	expr = std::move(macro_copy);
 }
 
-void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func,
-                                             unique_ptr<ParsedExpression> &expr, idx_t depth) {
+ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function,
+                                                             ScalarMacroCatalogEntry &macro_func,
+                                                             unique_ptr<ParsedExpression> &expr, idx_t depth) {
 	// validate the arguments and separate positional and default arguments
 	vector<unique_ptr<ParsedExpression>> positional_arguments;
 	InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> named_arguments;
@@ -213,6 +215,7 @@ void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, Scala
 	// now replace the parameters
 	vector<identifier_set_t> lambda_params;
 	ReplaceMacroParameters(expr, lambda_params);
+	return macro_def;
 }
 
 BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func, idx_t depth,
@@ -220,10 +223,23 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 	auto stack_checker = StackCheck(*expr, 3);
 
 	// unfold the macro expression
-	UnfoldMacroExpression(function, macro_func, expr, depth);
+	auto &macro_def = UnfoldMacroExpression(function, macro_func, expr, depth);
 
 	// bind the unfolded macro
-	return BindExpression(expr, depth);
+	auto result = BindExpression(expr, depth);
+	if (result.HasError() || macro_def.return_types.size() != 1 ||
+	    macro_func.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES) {
+		return result;
+	}
+	const auto &return_type = macro_def.return_types[0];
+	const auto &body_type = result.expression->GetReturnType();
+	const bool void_return = return_type.id() == LogicalTypeId::SQLNULL && return_type.GetAlias() == "void";
+	if (return_type.id() == LogicalTypeId::ANY || void_return ||
+	    (return_type.id() == LogicalTypeId::DECIMAL && body_type.id() == LogicalTypeId::DECIMAL)) {
+		return result;
+	}
+	result.expression = BoundCastExpression::AddCastToType(context, std::move(result.expression), return_type);
+	return result;
 }
 
 } // namespace duckdb
