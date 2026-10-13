@@ -48,9 +48,7 @@ struct PipelineBroadcastExchange::ChunkPool : public enable_shared_from_this<Pip
 		if (!result) {
 			result = make_uniq<DataChunk>();
 			result->Initialize(allocator, types);
-		} else if (reset_mode == ResetMode::RESET) {
-			result->Reset();
-		} else {
+		} else if (reset_mode == ResetMode::CLEAR_CARDINALITY) {
 			result->SetChildCardinality(0);
 		}
 
@@ -77,6 +75,9 @@ struct PipelineBroadcastExchange::ChunkPool : public enable_shared_from_this<Pip
 	}
 
 	void Release(unique_ptr<DataChunk> chunk, idx_t release_generation) {
+		if (reset_mode == ResetMode::RESET) {
+			chunk->Reset();
+		}
 		annotated_lock_guard<annotated_mutex> guard(lock);
 		if (!caching_enabled || release_generation != generation || cached_chunks.size() >= max_cached_chunks) {
 			return;
