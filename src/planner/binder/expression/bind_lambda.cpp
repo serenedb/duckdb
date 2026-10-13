@@ -320,55 +320,55 @@ void ExpressionBinder::TransformCapturedLambdaColumn(unique_ptr<Expression> &ori
 	bound_lambda_expr.CapturesMutable().push_back(std::move(original));
 }
 
-void ExpressionBinder::CaptureLambdaColumns(BoundLambdaExpression &bound_lambda_expr, unique_ptr<Expression> &expr,
-                                            const optional_ptr<bind_lambda_function_t> bind_lambda_function,
-                                            const optional_ptr<BindLambdaContext> bind_lambda_context,
-                                            const vector<LogicalType> &function_child_types) {
-	if (expr->GetExpressionClass() == ExpressionClass::BOUND_SUBQUERY) {
+unique_ptr<Expression>
+ExpressionBinder::CaptureLambdaColumns(BoundLambdaExpression &bound_lambda_expr, Expression &expr,
+                                       const optional_ptr<bind_lambda_function_t> bind_lambda_function,
+                                       const optional_ptr<BindLambdaContext> bind_lambda_context,
+                                       const vector<LogicalType> &function_child_types) {
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_SUBQUERY) {
 		throw BinderException("subqueries in lambda expressions are not supported");
 	}
 
 	// lambdas are bound depth-first, so an inner lambda has already had its own columns captured by the
 	// time we get here - its captures are children of the function it belongs to, which we do visit
-	if (expr->GetExpressionClass() == ExpressionClass::BOUND_LAMBDA) {
-		return;
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_LAMBDA) {
+		return nullptr;
 	}
 
 	// we do not need to replace anything, as these will be constant in the lambda expression
 	// when executed by the expression executor
-	if (expr->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
-		return;
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+		return nullptr;
 	}
 
 	// these expression classes do not have children, transform them
-	if (expr->GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF ||
-	    expr->GetExpressionClass() == ExpressionClass::BOUND_PARAMETER ||
-	    expr->GetExpressionClass() == ExpressionClass::BOUND_LAMBDA_REF) {
-		if (expr->GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF ||
+	    expr.GetExpressionClass() == ExpressionClass::BOUND_PARAMETER ||
+	    expr.GetExpressionClass() == ExpressionClass::BOUND_LAMBDA_REF) {
+		if (expr.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {
 			// Search for UNNEST.
-			auto &column_binding = expr->Cast<BoundColumnRefExpression>().Binding();
+			auto &column_binding = expr.Cast<BoundColumnRefExpression>().Binding();
 			ThrowIfUnnestInLambda(column_binding);
 		}
 
-		// move the expr because we are going to replace it
-		auto original = std::move(expr);
+		auto original = expr.Copy();
 		unique_ptr<Expression> replacement;
-
 		TransformCapturedLambdaColumn(original, replacement, bound_lambda_expr, bind_lambda_function,
 		                              bind_lambda_context, function_child_types);
-
-		// replace the expression
-		expr = std::move(replacement);
-
-	} else {
-		// recursively enumerate the children of the expression
-		ExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<Expression> &child) {
-			CaptureLambdaColumns(bound_lambda_expr, child, bind_lambda_function, bind_lambda_context,
-			                     function_child_types);
-		});
+		replacement->Verify();
+		return replacement;
 	}
 
-	expr->Verify();
+	// recursively enumerate the children of the expression
+	ExpressionIterator::EnumerateChildren(expr, [&](unique_ptr<Expression> &child) {
+		auto replacement = CaptureLambdaColumns(bound_lambda_expr, *child, bind_lambda_function, bind_lambda_context,
+		                                        function_child_types);
+		if (replacement) {
+			child = std::move(replacement);
+		}
+	});
+	expr.Verify();
+	return nullptr;
 }
 
 } // namespace duckdb

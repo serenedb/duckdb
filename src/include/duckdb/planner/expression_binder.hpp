@@ -278,10 +278,10 @@ protected:
 	                                   const optional_ptr<BindLambdaContext> bind_lambda_context,
 	                                   const vector<LogicalType> &function_child_types);
 
-	void CaptureLambdaColumns(BoundLambdaExpression &bound_lambda_expr, unique_ptr<Expression> &expr,
-	                          const optional_ptr<bind_lambda_function_t> bind_lambda_function,
-	                          const optional_ptr<BindLambdaContext> bind_lambda_context,
-	                          const vector<LogicalType> &function_child_types);
+	unique_ptr<Expression> CaptureLambdaColumns(BoundLambdaExpression &bound_lambda_expr, Expression &expr,
+	                                            const optional_ptr<bind_lambda_function_t> bind_lambda_function,
+	                                            const optional_ptr<BindLambdaContext> bind_lambda_context,
+	                                            const vector<LogicalType> &function_child_types);
 
 	unique_ptr<ParsedExpression> GetSQLValueFunction(const Identifier &column_name);
 

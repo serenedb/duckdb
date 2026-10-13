@@ -253,16 +253,18 @@ unique_ptr<FunctionData> ListReduceBind(BindScalarFunctionInput &input) {
 	auto has_index = bound_lambda_expr.ParameterCount() == 3;
 
 	const auto lambda_return_type = bound_lambda_expr.LambdaExpr()->GetReturnType();
-	auto cast_lambda_expr =
-	    BoundCastExpression::AddCastToType(context, std::move(bound_lambda_expr.LambdaExprMutable()), accumulator_type);
-	if (!cast_lambda_expr) {
-		throw BinderException("Could not cast lambda return type %s to accumulator type %s",
-		                      lambda_return_type.ToString(), accumulator_type.ToString());
+	if (lambda_return_type != accumulator_type) {
+		auto cast_lambda_expr =
+		    BoundCastExpression::AddCastToType(context, bound_lambda_expr.LambdaExpr()->Copy(), accumulator_type);
+		if (!cast_lambda_expr) {
+			throw BinderException("Could not cast lambda return type %s to accumulator type %s",
+			                      lambda_return_type.ToString(), accumulator_type.ToString());
+		}
+		// cast in place, so that the bound lambda expression stays intact as a child of the function
+		bound_lambda_expr.SetLambdaExpr(std::move(cast_lambda_expr));
 	}
-	// cast in place, so that the bound lambda expression stays intact as a child of the function
-	bound_lambda_expr.LambdaExprMutable() = std::move(cast_lambda_expr);
 	bound_function.SetReturnType(bound_lambda_expr.LambdaExpr()->GetReturnType());
-	return make_uniq<ListLambdaBindData>(bound_function.GetReturnType(), bound_lambda_expr.LambdaExpr()->Copy(),
+	return make_uniq<ListLambdaBindData>(bound_function.GetReturnType(), bound_lambda_expr.SharedLambdaExpr(),
 	                                     has_index, has_initial);
 }
 

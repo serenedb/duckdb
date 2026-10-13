@@ -14,7 +14,8 @@ add_library_unity(
   relation_statistics.cpp
   remove_unused_columns.cpp
   unchecked_cast.cpp
-  union_alls.cpp)
+  union_alls.cpp
+  wide_query_shapes.cpp)
 
 set(UNITTEST_OBJECT_FILES
     ${UNITTEST_OBJECT_FILES} $<TARGET_OBJECTS:test_optimizer>

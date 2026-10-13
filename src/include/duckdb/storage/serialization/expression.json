@@ -225,7 +225,7 @@
       {
         "id": 201,
         "name": "lambda_expr",
-        "type": "Expression*"
+        "type": "shared_ptr<Expression>"
       },
       {
         "id": 202,
