@@ -78,6 +78,9 @@ public:
 	}
 
 public:
+	bool RendersLines() override {
+		return true;
+	}
 	string ToString(const LogicalOperator &op);
 	string ToString(const PhysicalOperator &op);
 	string ToString(const ProfilingNode &op);

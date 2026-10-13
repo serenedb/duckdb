@@ -1,0 +1,57 @@
+# name: test/sql/explain/explain_pg_shape.test
+# description: The PG shape of EXPLAIN returns a text plan one row per line and a document one row per plan
+# group: [explain]
+
+statement ok
+SET explain_output_format = 'PG';
+
+query I
+EXPLAIN (FORMAT json) SELECT 1
+----
+<REGEX>:\[\s*\{\s*"name": "PROJECTION".*"name": "DUMMY_SCAN".*\}\s*\]
+
+query I
+EXPLAIN (FORMAT compact) SELECT 1
+----
+<REGEX>:PROJECTION .*
+<REGEX>:\s+DUMMY_SCAN.*
+
+query I
+EXPLAIN ANALYZE (FORMAT json) SELECT 1
+----
+<REGEX>:\{.*"children".*\}
+
+statement ok
+SET explain_output = 'all';
+
+query I
+EXPLAIN SELECT 1
+----
+logical_plan
+╭─ PROJECTION ───╮
+│ Expressions: 1 │
+╰────────┬───────╯
+╭─ DUMMY_SCAN ───╮
+╰────────────────╯
+logical_opt
+╭─ PROJECTION ───╮
+│ Expressions: 1 │
+│ ~1 row         │
+╰────────┬───────╯
+╭─ DUMMY_SCAN ───╮
+│ ~1 row         │
+╰────────────────╯
+physical_plan
+╭─ PROJECTION ───╮
+│ Projections: 1 │
+│ ~1 row         │
+╰────────┬───────╯
+╭─ DUMMY_SCAN ───╮
+╰────────────────╯
+
+query I
+EXPLAIN (FORMAT yaml) SELECT 1
+----
+<REGEX>:- name: "PROJECTION".*
+<REGEX>:- name: "PROJECTION".*
+<REGEX>:- name: "PROJECTION".*

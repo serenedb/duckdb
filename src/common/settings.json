@@ -876,7 +876,7 @@
     },
     {
         "name": "explain_output_format",
-        "description": "Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)",
+        "description": "Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)",
         "type": "ENUM<ExplainFormatShape>",
         "default_scope": "local",
         "default_value": "DUCKDB_NATIVE"

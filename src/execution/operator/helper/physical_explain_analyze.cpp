@@ -1,5 +1,6 @@
 #include "duckdb/execution/operator/helper/physical_explain_analyze.hpp"
 #include "duckdb/common/allocator.hpp"
+#include "duckdb/common/tree_renderer.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/types/column/column_data_scan_states.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -22,6 +23,23 @@ void AppendExplainLines(const string &text, DataChunk &chunk, ColumnDataCollecti
 			collection.Append(chunk);
 			chunk.Reset();
 		}
+	}
+}
+
+void AppendExplainOutput(const string &text, bool split_lines, DataChunk &chunk, ColumnDataCollection &collection) {
+	if (split_lines) {
+		AppendExplainLines(text, chunk, collection);
+		return;
+	}
+	auto end = text.find_last_not_of('\n');
+	if (end == string::npos) {
+		return;
+	}
+	chunk.SetValue(0, chunk.size(), Value(text.substr(0, end + 1)));
+	chunk.SetCardinality(chunk.size() + 1);
+	if (chunk.size() == STANDARD_VECTOR_SIZE) {
+		collection.Append(chunk);
+		chunk.Reset();
 	}
 }
 
@@ -52,8 +70,8 @@ SinkFinalizeType PhysicalExplainAnalyze::Finalize(Pipeline &pipeline, Event &eve
 	DataChunk chunk;
 	chunk.Initialize(Allocator::Get(context), types);
 	if (types.size() == 1) {
-		// PG shape: one row per plan line.
-		AppendExplainLines(analyzed_plan, chunk, gstate.collection);
+		auto renderer = TreeRenderer::CreateRenderer(context, format);
+		AppendExplainOutput(analyzed_plan, renderer && renderer->RendersLines(), chunk, gstate.collection);
 	} else {
 		// DuckDB native shape: a single {key, value} row.
 		chunk.SetValue(0, 0, Value("analyzed_plan"));
