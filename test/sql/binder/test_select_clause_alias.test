@@ -37,11 +37,11 @@ statement error
 SELECT a + 1 AS b, i + 1 AS a FROM integers
 ----
 
-# expressions with side effects are not supported yet
-statement error
-SELECT RANDOM() AS a, a + 1 AS b FROM integers
+# an alias with side effects is computed once and its value is referenced
+query I
+SELECT bool_and(b = a + 1) FROM (SELECT RANDOM() AS a, a + 1 AS b FROM integers)
 ----
-This is not yet supported
+true
 
 statement ok
 create table orders as
