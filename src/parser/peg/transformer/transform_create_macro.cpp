@@ -24,6 +24,8 @@
 
 namespace duckdb {
 
+static void ReplacePositionalParamsInQuery(QueryNode &node, const vector<Identifier> &param_names);
+
 static void ReplacePositionalParams(unique_ptr<ParsedExpression> &expr, const vector<Identifier> &param_names) {
 	if (!expr) {
 		return;
@@ -39,6 +41,9 @@ static void ReplacePositionalParams(unique_ptr<ParsedExpression> &expr, const ve
 			expr = std::move(replacement);
 			return;
 		}
+	}
+	if (expr->GetExpressionClass() == ExpressionClass::SUBQUERY) {
+		ReplacePositionalParamsInQuery(*expr->Cast<SubqueryExpression>().SubqueryMutable()->node, param_names);
 	}
 	ParsedExpressionIterator::EnumerateChildren(
 	    *expr, [&](unique_ptr<ParsedExpression> &child) { ReplacePositionalParams(child, param_names); });

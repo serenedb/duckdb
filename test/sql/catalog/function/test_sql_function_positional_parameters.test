@@ -30,3 +30,43 @@ statement error
 CREATE FUNCTION add_missing(integer) RETURNS integer LANGUAGE sql RETURN $2;
 ----
 Parameter expressions within macro's are not supported
+
+statement ok
+CREATE FUNCTION add_one_subquery(a integer) RETURNS integer LANGUAGE sql RETURN (SELECT $1 + 1);
+
+query I
+SELECT add_one_subquery(41);
+----
+42
+
+statement ok
+CREATE FUNCTION count_below(integer) RETURNS bigint LANGUAGE sql RETURN (SELECT count(*) FROM range(10) t(i) WHERE i < $1);
+
+query I
+SELECT count_below(4);
+----
+4
+
+statement ok
+CREATE FUNCTION in_range(integer) RETURNS boolean LANGUAGE sql BEGIN ATOMIC SELECT EXISTS (SELECT 1 FROM range(10) t(i) WHERE i = $1); END;
+
+query II
+SELECT in_range(4), in_range(40);
+----
+true	false
+
+statement ok
+CREATE FUNCTION is_double_above(integer) RETURNS boolean LANGUAGE sql BEGIN ATOMIC SELECT $1 IN (SELECT i * 2 FROM range(10) t(i) WHERE i > $1 - 3); END;
+
+query II
+SELECT is_double_above(4), is_double_above(5);
+----
+true	false
+
+statement ok
+CREATE FUNCTION add_one_nested(integer) RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT (SELECT (SELECT $1) + 1); END;
+
+query I
+SELECT add_one_nested(41);
+----
+42
