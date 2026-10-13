@@ -17,6 +17,7 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_window_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/binder.hpp"
 
 namespace duckdb {
@@ -758,6 +759,51 @@ void FunctionBinder::CastToFunctionArguments(BoundSimpleFunction &function, vect
 	}
 }
 
+static bool FoldConstantInputs(ClientContext &context, Expression &expr, bool foldable) {
+	bool folded = true;
+	ExpressionIterator::EnumerateChildren(expr, [&](unique_ptr<Expression> &input) {
+		if (input->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT ||
+		    input->GetReturnType().id() == LogicalTypeId::LAMBDA ||
+		    (BoundCastExpression::IsCast(*input) &&
+		     BoundCastExpression::Child(input->Cast<BoundFunctionExpression>()).GetExpressionClass() ==
+		         ExpressionClass::BOUND_CONSTANT)) {
+			return;
+		}
+		Value value;
+		if (!(foldable || input->IsFoldable()) || !FoldConstantInputs(context, *input, true) ||
+		    !ExpressionExecutor::TryEvaluateScalar(context, *input, value)) {
+			folded = false;
+			return;
+		}
+		auto constant = make_uniq<BoundConstantExpression>(std::move(value));
+		constant->SetAlias(input->GetAlias());
+		constant->SetQueryLocation(input->GetQueryLocation());
+		input = std::move(constant);
+	});
+	return folded;
+}
+
+static bool FoldsToNull(ClientContext &context, Expression &child, bool keep_arguments) {
+	auto &type = child.GetReturnType();
+	if (type.id() == LogicalTypeId::SQLNULL) {
+		return true;
+	}
+	if (child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+		return child.Cast<BoundConstantExpression>().GetValue().IsNull();
+	}
+	if (type.id() == LogicalTypeId::LAMBDA || !child.IsFoldable()) {
+		return false;
+	}
+	unique_ptr<Expression> copy;
+	if (keep_arguments) {
+		copy = child.Copy();
+	}
+	auto &probe = copy ? *copy : child;
+	Value result;
+	return FoldConstantInputs(context, probe, true) && ExpressionExecutor::TryEvaluateScalar(context, probe, result) &&
+	       result.IsNull();
+}
+
 unique_ptr<Expression> FunctionBinder::BindScalarFunction(const Identifier &schema, const Identifier &name,
                                                           vector<unique_ptr<Expression>> children, ErrorData &error,
                                                           bool is_operator, optional_ptr<Binder> binder) {
@@ -815,40 +861,26 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(const ScalarFunctionCa
 	// In those cases, we default to SQLNULL.
 	const auto return_type_if_null =
 	    bound_function.GetReturnType().IsComplete() ? bound_function.GetReturnType() : LogicalType::SQLNULL;
-	if (bound_function.GetNullHandling() == FunctionNullHandling::DEFAULT_NULL_HANDLING) {
+	const bool probe_nulls = bound_function.GetNullHandling() == FunctionNullHandling::DEFAULT_NULL_HANDLING;
+	const bool keep_arguments = bound_function.HasBindExpressionCallback();
+	if (probe_nulls) {
 		for (auto &child : regular_args) {
-			if (child->GetReturnType() == LogicalTypeId::SQLNULL) {
-				return make_uniq<BoundConstantExpression>(Value(return_type_if_null));
-			}
-			if (!child->IsFoldable()) {
-				continue;
-			}
-			Value result;
-			if (!ExpressionExecutor::TryEvaluateScalar(context, *child, result)) {
-				continue;
-			}
-			if (result.IsNull()) {
+			if (FoldsToNull(context, *child, keep_arguments)) {
 				return make_uniq<BoundConstantExpression>(Value(return_type_if_null));
 			}
 		}
 		for (auto &child : keyword_args) {
-			if (child.second->GetReturnType() == LogicalTypeId::SQLNULL) {
-				return make_uniq<BoundConstantExpression>(Value(return_type_if_null));
-			}
-			if (!child.second->IsFoldable()) {
-				continue;
-			}
-			Value result;
-			if (!ExpressionExecutor::TryEvaluateScalar(context, *child.second, result)) {
-				continue;
-			}
-			if (result.IsNull()) {
+			if (FoldsToNull(context, *child.second, keep_arguments)) {
 				return make_uniq<BoundConstantExpression>(Value(return_type_if_null));
 			}
 		}
 	}
-	return BindScalarFunction(std::move(selected_function), std::move(regular_args), std::move(keyword_args),
-	                          is_operator, binder);
+	auto result = BindScalarFunction(std::move(selected_function), std::move(regular_args), std::move(keyword_args),
+	                                 is_operator, binder);
+	if (probe_nulls && keep_arguments) {
+		FoldConstantInputs(context, *result, false);
+	}
+	return result;
 }
 
 static bool RequiresCollationPropagation(const LogicalType &type) {
