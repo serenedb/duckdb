@@ -310,6 +310,8 @@ static bool BuildSideHasMultipleSources(const PhysicalOperator &op) {
 	case PhysicalOperatorType::RECURSIVE_RECURRING_CTE_SCAN:
 		// CTE producers are not children of their scans and may forward different dictionaries.
 		return true;
+	case PhysicalOperatorType::HASH_JOIN:
+		return op.Cast<PhysicalHashJoin>().HasMultipleSources();
 	default:
 		break;
 	}
@@ -323,6 +325,17 @@ static bool BuildSideHasMultipleSources(const PhysicalOperator &op) {
 		}
 	}
 	return false;
+}
+
+bool PhysicalHashJoin::HasMultipleSources() const {
+	auto state = multiple_sources.load(std::memory_order_relaxed);
+	if (state == 0) {
+		const bool result =
+		    BuildSideHasMultipleSources(children[0].get()) || BuildSideHasMultipleSources(children[1].get());
+		state = result ? 2 : 1;
+		multiple_sources.store(state, std::memory_order_relaxed);
+	}
+	return state == 2;
 }
 
 //! Synchronisation state for the first-chunk publication of the TupleDataLayout: the canonical layout

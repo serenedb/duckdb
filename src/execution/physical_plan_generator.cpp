@@ -74,10 +74,13 @@ unique_ptr<PhysicalPlan> PhysicalPlanGenerator::PlanInternal(LogicalOperator &op
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalOperator &op) {
 	const auto repeatable = ClassifyLogicalOperatorRepeatability(op) == LogicalOperatorRepeatability::REPEATABLE;
+	const auto planned_side_effects = subtree_has_side_effects;
+	subtree_has_side_effects = op.HasOwnSideEffects();
 	auto &result = CreatePlanInternal(op);
-	if (!repeatable) {
+	if (!repeatable || subtree_has_side_effects) {
 		non_repeatable_operators.insert(result);
 	}
+	subtree_has_side_effects = subtree_has_side_effects || planned_side_effects;
 	return result;
 }
 

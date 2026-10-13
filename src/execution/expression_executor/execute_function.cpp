@@ -8,6 +8,13 @@ namespace duckdb {
 
 ExecuteFunctionState::ExecuteFunctionState(const Expression &expr, ExpressionExecutorState &root)
     : ExpressionState(expr, root) {
+}
+
+ExecuteFunctionState::~ExecuteFunctionState() {
+}
+
+void ExecuteFunctionState::ResolveDictionaryInput() {
+	dictionary_input_resolved = true;
 	// Check if the expression is eligible for dictionary optimization
 	if (!expr.IsConsistent() || expr.IsVolatile() || expr.CanThrow()) {
 		return; // Needs to be consistent, non-volatile, and non-throwing
@@ -43,14 +50,20 @@ ExecuteFunctionState::ExecuteFunctionState(const Expression &expr, ExpressionExe
 	}
 }
 
-ExecuteFunctionState::~ExecuteFunctionState() {
-}
-
 bool ExecuteFunctionState::TryExecuteDictionaryExpression(const BoundFunctionExpression &expr, DataChunk &args,
                                                           ExpressionState &state, Vector &result) {
 	static constexpr idx_t MAX_DICTIONARY_SIZE_THRESHOLD = 20000;
 	static constexpr double CHUNK_FILL_RATIO_THRESHOLD = 0.5;
 
+	if (!dictionary_input_resolved) {
+		auto is_dictionary = [](const Vector &arg) {
+			return arg.GetVectorType() == VectorType::DICTIONARY_VECTOR;
+		};
+		if (std::none_of(args.data.begin(), args.data.end(), is_dictionary)) {
+			return false;
+		}
+		ResolveDictionaryInput();
+	}
 	if (!input_col_idx.IsValid()) {
 		return false; // This expression is not eligible for dictionary optimization
 	}

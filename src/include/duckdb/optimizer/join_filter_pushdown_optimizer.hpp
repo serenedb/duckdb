@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/reference_map.hpp"
 #include "duckdb/planner/logical_operator_visitor.hpp"
 #include "duckdb/planner/column_binding_map.hpp"
 
@@ -27,12 +28,13 @@ public:
 	static void GetPushdownFilterTargets(LogicalOperator &op, vector<JoinFilterPushdownColumn> columns,
 	                                     vector<PushdownFilterTarget> &targets, bool for_scan_order = false);
 
-	static bool IsFiltering(const unique_ptr<LogicalOperator> &op);
+	static bool IsFiltering(const LogicalOperator &op, reference_map_t<const LogicalOperator, bool> &filtering);
 
 private:
 	void GenerateJoinFilters(LogicalComparisonJoin &join);
 
 private:
 	Optimizer &optimizer;
+	reference_map_t<const LogicalOperator, bool> filtering;
 };
 } // namespace duckdb

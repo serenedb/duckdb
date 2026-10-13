@@ -201,6 +201,7 @@ private:
 	ClientContext &context;
 	unique_ptr<PhysicalPlan> physical_plan;
 	reference_set_t<const PhysicalOperator> non_repeatable_operators;
+	bool subtree_has_side_effects = false;
 
 private:
 	PhysicalOperator &CreatePlanInternal(LogicalOperator &op);

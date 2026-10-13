@@ -30,14 +30,16 @@ static bool ExpressionsBecomeFilters(const LogicalOperator &op) {
 	}
 }
 
-void FilterPushdown::CheckMarkToSemi(LogicalOperator &op, const unordered_set<TableIndex> &table_bindings) {
-	auto referenced_bindings = table_bindings;
+void FilterPushdown::CheckMarkToSemi(LogicalOperator &op, unordered_set<TableIndex> &referenced_bindings) {
+	vector<TableIndex> added_bindings;
 	if (!ExpressionsBecomeFilters(op)) {
 		LogicalOperatorVisitor::EnumerateExpressions(
 		    static_cast<const LogicalOperator &>(op), [&](const unique_ptr<Expression> *expression) {
 			    ExpressionIterator::VisitExpression<BoundColumnRefExpression>(
 			        **expression, [&](const BoundColumnRefExpression &column_ref) {
-				        referenced_bindings.insert(column_ref.Binding().table_index);
+				        if (referenced_bindings.insert(column_ref.Binding().table_index).second) {
+					        added_bindings.push_back(column_ref.Binding().table_index);
+				        }
 			        });
 		    });
 	}
@@ -71,6 +73,9 @@ void FilterPushdown::CheckMarkToSemi(LogicalOperator &op, const unordered_set<Ta
 	// Recurse into each child with the bindings referenced on this path.
 	for (auto &child : op.children) {
 		CheckMarkToSemi(*child, referenced_bindings);
+	}
+	for (auto &binding : added_bindings) {
+		referenced_bindings.erase(binding);
 	}
 }
 

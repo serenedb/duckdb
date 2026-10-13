@@ -274,6 +274,9 @@ public:
 		}
 		return reinterpret_cast<const TARGET &>(*this);
 	}
+
+private:
+	mutable optional_idx estimated_thread_count;
 };
 
 //! Accumulator that lets a dictionary column survive the cache: pinned entry + concatenated per-chunk sels

@@ -91,6 +91,7 @@ private:
 	reference_map_t<LogicalOperator, RelationIndex> operator_relations;
 	column_binding_map_t<ColumnBinding> normalized_bindings;
 	bool stats_complete = true;
+	bool in_recursive_cte = false;
 };
 
 } // namespace duckdb

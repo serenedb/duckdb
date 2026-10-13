@@ -230,7 +230,7 @@ static bool ContainsRecurringCTERef(const LogicalOperator &op) {
 	return false;
 }
 
-static bool JoinIsReorderable(LogicalOperator &op) {
+static bool JoinIsReorderable(LogicalOperator &op, bool in_recursive_cte) {
 	if (op.type == LogicalOperatorType::LOGICAL_CROSS_PRODUCT) {
 		return true;
 	}
@@ -240,7 +240,8 @@ static bool JoinIsReorderable(LogicalOperator &op) {
 		if (join.HasProjectionMap()) {
 			return false;
 		}
-		if ((join.join_type == JoinType::LEFT || join.join_type == JoinType::SEMI ||
+		if (in_recursive_cte &&
+		    (join.join_type == JoinType::LEFT || join.join_type == JoinType::SEMI ||
 		     join.join_type == JoinType::ANTI) &&
 		    ContainsRecurringCTERef(*join.children[1])) {
 			return false;
@@ -265,6 +266,9 @@ static bool JoinIsReorderable(LogicalOperator &op) {
 }
 
 static bool IsProjectedRecursiveCTERef(const LogicalOperator &op, const JoinOrderOptimizer &optimizer) {
+	if (optimizer.recursive_cte_indexes.empty()) {
+		return false;
+	}
 	optional_ptr<const LogicalOperator> source = op;
 	while (source->children.size() == 1) {
 		if (OperatorIsNonReorderable(source->type) ||
@@ -289,7 +293,7 @@ static bool RecursiveCTERefCanReorder(optional_ptr<LogicalOperator> parent) {
 	return join.HasEquality(range_count);
 }
 
-static bool HasNonReorderableChild(LogicalOperator &op) {
+static bool HasNonReorderableChild(LogicalOperator &op, bool in_recursive_cte) {
 	LogicalOperator *tmp = &op;
 	while (tmp->children.size() == 1) {
 		if (OperatorNeedsRelation(tmp->type) || OperatorIsNonReorderable(tmp->type)) {
@@ -297,7 +301,7 @@ static bool HasNonReorderableChild(LogicalOperator &op) {
 		}
 		tmp = tmp->children[0].get();
 		if (tmp->type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
-			if (!JoinIsReorderable(*tmp)) {
+			if (!JoinIsReorderable(*tmp, in_recursive_cte)) {
 				return true;
 			}
 		}
@@ -406,6 +410,7 @@ bool RelationManager::AddRelationWithChildren(JoinOrderOptimizer &optimizer, Log
 bool RelationManager::ExtractJoinRelations(JoinOrderOptimizer &optimizer, LogicalOperator &input_op,
                                            vector<reference<LogicalOperator>> &filter_operators,
                                            optional_ptr<LogicalOperator> parent) {
+	in_recursive_cte = !optimizer.recursive_cte_indexes.empty();
 	optional_ptr<LogicalOperator> op = &input_op;
 	vector<reference<LogicalOperator>> datasource_filters;
 	optional_ptr<LogicalOperator> limit_op = nullptr;
@@ -413,7 +418,7 @@ bool RelationManager::ExtractJoinRelations(JoinOrderOptimizer &optimizer, Logica
 	// must be preserved as its own relation rather than skipped over and dropped during reconstruction)
 	while (op->children.size() == 1 && !OperatorNeedsRelation(op->type) && !OperatorIsNonReorderable(op->type)) {
 		if (op->type == LogicalOperatorType::LOGICAL_FILTER) {
-			if (HasNonReorderableChild(*op)) {
+			if (HasNonReorderableChild(*op, in_recursive_cte)) {
 				datasource_filters.push_back(*op);
 			}
 			filter_operators.push_back(*op);
@@ -430,7 +435,7 @@ bool RelationManager::ExtractJoinRelations(JoinOrderOptimizer &optimizer, Logica
 	}
 
 	if (op->type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
-		if (JoinIsReorderable(*op)) {
+		if (JoinIsReorderable(*op, in_recursive_cte)) {
 			// extract join conditions from inner join
 			filter_operators.push_back(*op);
 		} else {
@@ -1094,7 +1099,7 @@ JoinOrderExtraction RelationManager::ExtractEdges(LogicalOperator &op,
 		if (current.children.size() == 1) {
 			return extract_operator_tree(*current.children[0]);
 		}
-		if (current.children.size() != 2 || !JoinIsReorderable(current)) {
+		if (current.children.size() != 2 || !JoinIsReorderable(current, in_recursive_cte)) {
 			throw InternalException("Could not map operator %s into the extracted join-order tree",
 			                        EnumUtil::ToChars(current.type));
 		}

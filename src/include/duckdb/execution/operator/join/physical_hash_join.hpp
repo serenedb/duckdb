@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/execution/operator/join/physical_comparison_join.hpp"
 #include "duckdb/execution/physical_operator.hpp"
 
@@ -130,8 +131,10 @@ public:
 	bool ParallelSink() const override {
 		return true;
 	}
+	bool HasMultipleSources() const;
 
 private:
+	mutable atomic<uint8_t> multiple_sources {0};
 	static void ExtractResidualPredicateColumns(unique_ptr<Expression> &predicate, idx_t probe_column_count,
 	                                            vector<idx_t> &probe_column_ids, vector<idx_t> &build_column_ids);
 

@@ -74,6 +74,9 @@ InsertionOrderPreservingMap<ExplainValue> PhysicalOperator::ParamsToValue() cons
 }
 
 idx_t PhysicalOperator::EstimatedThreadCount() const {
+	if (estimated_thread_count.IsValid()) {
+		return estimated_thread_count.GetIndex();
+	}
 	idx_t result = 0;
 	if (children.empty()) {
 		// Terminal operator, e.g., base table, these decide the degree of parallelism of pipelines
@@ -89,6 +92,7 @@ idx_t PhysicalOperator::EstimatedThreadCount() const {
 			result = MaxValue(child.get().EstimatedThreadCount(), result);
 		}
 	}
+	estimated_thread_count = result;
 	return result;
 }
 

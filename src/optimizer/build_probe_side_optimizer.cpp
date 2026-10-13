@@ -130,8 +130,9 @@ static idx_t MaxDynamicFilterTargetCardinality(LogicalOperator &op, const Expres
 }
 
 static double DynamicFilterBuildBonus(LogicalComparisonJoin &join, const idx_t probe_idx, const idx_t build_idx,
-                                      const idx_t build_cardinality) {
-	if (!JoinFilterPushdownOptimizer::IsFiltering(join.children[build_idx])) {
+                                      const idx_t build_cardinality,
+                                      reference_map_t<const LogicalOperator, bool> &filtering) {
+	if (!JoinFilterPushdownOptimizer::IsFiltering(*join.children[build_idx], filtering)) {
 		return 1;
 	}
 
@@ -221,18 +222,22 @@ double BuildProbeSideOptimizer::GetBuildSize(vector<LogicalType> types, const id
 	return static_cast<double>(row_width * cardinality);
 }
 
-idx_t BuildProbeSideOptimizer::ChildHasJoins(LogicalOperator &op) {
-	if (op.children.empty()) {
-		return 0;
-	} else if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
-	           op.type == LogicalOperatorType::LOGICAL_ASOF_JOIN ||
-	           op.type == LogicalOperatorType::LOGICAL_CROSS_PRODUCT) {
-		return 1 + ChildHasJoins(*op.children[0]) + ChildHasJoins(*op.children[1]);
+bool BuildProbeSideOptimizer::ChildHasJoins(LogicalOperator &op) {
+	reference<LogicalOperator> current = op;
+	while (!current.get().children.empty()) {
+		switch (current.get().type) {
+		case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
+		case LogicalOperatorType::LOGICAL_ASOF_JOIN:
+		case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
+			return true;
+		default:
+			current = *current.get().children[0];
+		}
 	}
-	return ChildHasJoins(*op.children[0]);
+	return false;
 }
 
-bool BuildProbeSideOptimizer::TryFlipJoinChildren(LogicalOperator &op) const {
+bool BuildProbeSideOptimizer::TryFlipJoinChildren(LogicalOperator &op) {
 	auto recursive_preference = GetRecursiveProbeSidePreference(op);
 	if (recursive_preference != RecursiveProbeSidePreference::NONE) {
 		if (recursive_preference == RecursiveProbeSidePreference::SWAP) {
@@ -258,13 +263,14 @@ bool BuildProbeSideOptimizer::TryFlipJoinChildren(LogicalOperator &op) const {
 	if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
 		auto &join = op.Cast<LogicalComparisonJoin>();
 		if (JoinFilterPushdownUtil::JoinTypeIsSupported(join.join_type)) {
-			right_side_build_cost /= DynamicFilterBuildBonus(join, 0, 1, rhs_cardinality);
+			right_side_build_cost /= DynamicFilterBuildBonus(join, 0, 1, rhs_cardinality, filtering);
 		}
 		if (HasInverseJoinType(join.join_type) &&
 		    JoinFilterPushdownUtil::JoinTypeIsSupported(InverseJoinType(join.join_type))) {
-			left_side_build_cost /= DynamicFilterBuildBonus(join, 1, 0, lhs_cardinality);
+			left_side_build_cost /= DynamicFilterBuildBonus(join, 1, 0, lhs_cardinality, filtering);
 		}
-		if (join.join_type == JoinType::SEMI && JoinFilterPushdownOptimizer::IsFiltering(join.children[0])) {
+		if (join.join_type == JoinType::SEMI &&
+		    JoinFilterPushdownOptimizer::IsFiltering(*join.children[0], filtering)) {
 			// SEMI joins often have a filtered domain on the LHS and a larger RHS with residual filters. If flipping
 			// lets that domain generate a runtime filter for a much larger RHS scan, prefer the domain build side.
 			auto right_filter_target = MaxDynamicFilterTargetCardinality(join, 1);
@@ -276,12 +282,10 @@ bool BuildProbeSideOptimizer::TryFlipJoinChildren(LogicalOperator &op) const {
 		}
 	}
 
-	idx_t left_child_joins = ChildHasJoins(*op.children[0]);
-	idx_t right_child_joins = ChildHasJoins(*op.children[1]);
 	// if the right child is a table scan, and the left child has joins, we should prefer the left child
 	// to be the build side. Since the tuples of the left side will already have been built on/be in flight,
 	// it will be faster to build on them again.
-	if (right_child_joins == 0 && left_child_joins > 0) {
+	if (!ChildHasJoins(*op.children[1]) && ChildHasJoins(*op.children[0])) {
 		right_side_build_cost *= (1 + PREFER_RIGHT_DEEP_PENALTY);
 	}
 

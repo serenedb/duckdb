@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/planner/logical_operator.hpp"
@@ -37,8 +38,8 @@ public:
 	void VisitExpression(unique_ptr<Expression> *expression) override {};
 
 private:
-	bool TryFlipJoinChildren(LogicalOperator &op) const;
-	static idx_t ChildHasJoins(LogicalOperator &op);
+	bool TryFlipJoinChildren(LogicalOperator &op);
+	static bool ChildHasJoins(LogicalOperator &op);
 	bool ContainsActiveRecursiveReference(const LogicalOperator &op) const;
 	bool ContainsCorrelationSensitiveOperators(const LogicalOperator &op) const;
 	RecursiveProbeSidePreference GetRecursiveProbeSidePreference(const LogicalOperator &op) const;
@@ -50,6 +51,7 @@ private:
 	ClientContext &context;
 	vector<ColumnBinding> preferred_on_probe_side;
 	vector<TableIndex> active_recursive_cte_indexes;
+	reference_map_t<const LogicalOperator, bool> filtering;
 };
 
 } // namespace duckdb

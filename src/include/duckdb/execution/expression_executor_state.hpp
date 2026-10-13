@@ -76,6 +76,10 @@ public:
 	unique_ptr<FunctionLocalState> local_state;
 
 private:
+	void ResolveDictionaryInput();
+
+private:
+	bool dictionary_input_resolved = false;
 	//! The column index of the "unary" input column that may be a dictionary vector
 	//! Only valid when the expression is eligible for the dictionary expression optimization
 	//! This is the case when the input is "practically unary", i.e., only one non-const input column

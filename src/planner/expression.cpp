@@ -24,51 +24,27 @@ Expression::~Expression() {
 }
 
 bool Expression::IsAggregate() const {
-	bool is_aggregate = false;
-	ExpressionIterator::EnumerateChildren(*this, [&](const Expression &child) { is_aggregate |= child.IsAggregate(); });
-	return is_aggregate;
+	return ExpressionIterator::AnyChild(*this, [](const Expression &child) { return child.IsAggregate(); });
 }
 
 bool Expression::IsWindow() const {
-	bool is_window = false;
-	ExpressionIterator::EnumerateChildren(*this, [&](const Expression &child) { is_window |= child.IsWindow(); });
-	return is_window;
+	return ExpressionIterator::AnyChild(*this, [](const Expression &child) { return child.IsWindow(); });
 }
 
 bool Expression::IsScalar() const {
-	bool is_scalar = true;
-	ExpressionIterator::EnumerateChildren(*this, [&](const Expression &child) {
-		if (!child.IsScalar()) {
-			is_scalar = false;
-		}
-	});
-	return is_scalar;
+	return ExpressionIterator::AllChild(*this, [](const Expression &child) { return child.IsScalar(); });
 }
 
 bool Expression::IsVolatile() const {
-	bool is_volatile = false;
-	ExpressionIterator::EnumerateChildren(*this, [&](const Expression &child) {
-		if (child.IsVolatile()) {
-			is_volatile = true;
-		}
-	});
-	return is_volatile;
+	return ExpressionIterator::AnyChild(*this, [](const Expression &child) { return child.IsVolatile(); });
 }
 
 bool Expression::IsConsistent() const {
-	bool is_consistent = true;
-	ExpressionIterator::EnumerateChildren(*this, [&](const Expression &child) {
-		if (!child.IsConsistent()) {
-			is_consistent = false;
-		}
-	});
-	return is_consistent;
+	return ExpressionIterator::AllChild(*this, [](const Expression &child) { return child.IsConsistent(); });
 }
 
 bool Expression::CanThrow() const {
-	bool can_throw = false;
-	ExpressionIterator::EnumerateChildren(*this, [&](const Expression &child) { can_throw |= child.CanThrow(); });
-	return can_throw;
+	return ExpressionIterator::AnyChild(*this, [](const Expression &child) { return child.CanThrow(); });
 }
 
 bool Expression::PropagatesNullValues() const {
@@ -78,36 +54,40 @@ bool Expression::PropagatesNullValues() const {
 	    type == ExpressionType::OPERATOR_COALESCE || type == ExpressionType::CASE_EXPR) {
 		return false;
 	}
-	bool propagate_null_values = true;
-	ExpressionIterator::EnumerateChildren(*this, [&](const Expression &child) {
-		if (!child.PropagatesNullValues()) {
-			propagate_null_values = false;
-		}
-	});
-	return propagate_null_values;
+	return ExpressionIterator::AllChild(*this, [](const Expression &child) { return child.PropagatesNullValues(); });
+}
+
+static bool IsNeverFoldable(const Expression &expr) {
+	switch (expr.GetExpressionClass()) {
+	case ExpressionClass::BOUND_AGGREGATE:
+	case ExpressionClass::BOUND_COLUMN_REF:
+	case ExpressionClass::BOUND_DEFAULT:
+	case ExpressionClass::BOUND_LAMBDA_REF:
+	case ExpressionClass::BOUND_PARAMETER:
+	case ExpressionClass::BOUND_REF:
+	case ExpressionClass::BOUND_SUBQUERY:
+	case ExpressionClass::BOUND_UNNEST:
+	case ExpressionClass::BOUND_WINDOW:
+		D_ASSERT(!expr.IsFoldable());
+		return true;
+	default:
+		return false;
+	}
 }
 
 bool Expression::IsFoldable() const {
-	bool is_foldable = true;
-	ExpressionIterator::EnumerateChildren(*this, [&](const Expression &child) {
-		if (!child.IsFoldable()) {
-			is_foldable = false;
-		}
-	});
-	return is_foldable;
+	if (ExpressionIterator::AnyChild(*this, [](const Expression &child) { return IsNeverFoldable(child); })) {
+		return false;
+	}
+	return ExpressionIterator::AllChild(*this, [](const Expression &child) { return child.IsFoldable(); });
 }
 
 bool Expression::HasParameter() const {
-	bool has_parameter = false;
-	ExpressionIterator::EnumerateChildren(*this,
-	                                      [&](const Expression &child) { has_parameter |= child.HasParameter(); });
-	return has_parameter;
+	return ExpressionIterator::AnyChild(*this, [](const Expression &child) { return child.HasParameter(); });
 }
 
 bool Expression::HasSubquery() const {
-	bool has_subquery = false;
-	ExpressionIterator::EnumerateChildren(*this, [&](const Expression &child) { has_subquery |= child.HasSubquery(); });
-	return has_subquery;
+	return ExpressionIterator::AnyChild(*this, [](const Expression &child) { return child.HasSubquery(); });
 }
 
 hash_t Expression::Hash() const {
