@@ -667,6 +667,10 @@ BindResult ExpressionBinder::BindUnnest(FunctionExpression &expr, idx_t depth, b
 	return BindUnsupportedExpression(expr, depth, UnsupportedUnnestMessage());
 }
 
+BindResult ExpressionBinder::BindStar(StarExpression &expr, idx_t depth, bool root_expression) {
+	return BindResult(BinderException::Unsupported(expr, "STAR expression is not supported here"));
+}
+
 void ExpressionBinder::ThrowIfUnnestInLambda(const ColumnBinding &column_binding) {
 }
 

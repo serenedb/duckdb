@@ -224,6 +224,11 @@ PEGTransformerFactory::TransformBaseExpression(PEGTransformer &transformer,
 			    make_uniq<OperatorExpression>(ExpressionType::STRUCT_EXTRACT, std::move(struct_children));
 			expr = std::move(struct_expr);
 			prev_indirection_was_cast = false;
+		} else if (indirection_expr->GetExpressionClass() == ExpressionClass::STAR) {
+			auto star_expr = unique_ptr_cast<ParsedExpression, StarExpression>(std::move(indirection_expr));
+			star_expr->ExpressionMutable() = std::move(expr);
+			expr = std::move(star_expr);
+			prev_indirection_was_cast = false;
 		} else {
 			throw NotImplementedException("Unhandled case for Base Expression with indirection");
 		}
@@ -2137,6 +2142,10 @@ PEGTransformerFactory::TransformDotMethodOperator(PEGTransformer &transformer,
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformDotColumnOperator(PEGTransformer &transformer,
                                                                                const string &col_label) {
 	return ConstantExpression::String(col_label);
+}
+
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformDotStarOperator(PEGTransformer &transformer) {
+	return make_uniq<StarExpression>();
 }
 
 unique_ptr<ParsedExpression>

@@ -298,9 +298,10 @@ IndirectionList <- Indirection+
 
 Indirection <- CastOperator / DotOperator / SliceExpression / PostfixOperator
 CastOperator <- '::' Type
-DotOperator <- DotMethodOperator / DotColumnOperator
+DotOperator <- DotMethodOperator / DotColumnOperator / DotStarOperator
 DotMethodOperator <- '.' MethodExpression
 DotColumnOperator <- '.' ColLabel
+DotStarOperator <- '.' '*'
 MethodExpression <- ColLabel MethodExpressionArguments
 MethodExpressionArguments <- Parens(MethodExpressionArgumentList)
 MethodExpressionArgumentList <- DistinctOrAll? MethodFunctionArguments? OrderByClause? IgnoreOrRespectNulls?

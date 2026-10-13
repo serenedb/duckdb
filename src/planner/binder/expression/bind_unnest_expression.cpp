@@ -3,6 +3,7 @@
 #include "duckdb/function/scalar/struct_functions.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -49,6 +50,49 @@ static unique_ptr<Expression> CreateBoundStructExtractIndex(ClientContext &conte
 
 	result->SetAlias(Identifier("element" + to_string(key)));
 	return std::move(result);
+}
+
+static unique_ptr<Expression> ExpandStructFields(ClientContext &context, unique_ptr<Expression> struct_expr,
+                                                 idx_t struct_unnests, bool keep_parent_names) {
+	vector<unique_ptr<Expression>> struct_expressions;
+	struct_expressions.push_back(std::move(struct_expr));
+	for (idx_t i = 0; i < struct_unnests; i++) {
+		vector<unique_ptr<Expression>> new_expressions;
+		// check if there are any structs left
+		bool has_structs = false;
+		for (auto &expr : struct_expressions) {
+			if (StructType::IsStruct(expr->GetReturnType())) {
+				// struct! push a struct_extract
+				auto &child_types = StructType::GetChildTypes(expr->GetReturnType());
+				if (expr->GetReturnType().id() == LogicalTypeId::TUPLE) {
+					for (idx_t child_index = 0; child_index < child_types.size(); child_index++) {
+						new_expressions.push_back(
+						    CreateBoundStructExtractIndex(context, expr->Copy(), child_index + 1));
+					}
+				} else {
+					for (auto &entry : child_types) {
+						vector<string> current_key_path;
+						// During recursive expansion, not all expressions are BoundFunctionExpression
+						if (keep_parent_names && expr->GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
+							current_key_path.emplace_back(expr->GetAlias());
+						}
+						current_key_path.emplace_back(entry.first);
+						new_expressions.push_back(
+						    CreateBoundStructExtract(context, expr->Copy(), current_key_path, keep_parent_names));
+					}
+				}
+				has_structs = true;
+			} else {
+				// not a struct - push as-is
+				new_expressions.push_back(std::move(expr));
+			}
+		}
+		struct_expressions = std::move(new_expressions);
+		if (!has_structs) {
+			break;
+		}
+	}
+	return make_uniq<BoundExpandedExpression>(std::move(struct_expressions));
 }
 
 void SelectBinder::ThrowIfUnnestInLambda(const ColumnBinding &column_binding) {
@@ -317,45 +361,7 @@ BindResult UnnestBinder::Bind(FunctionExpression &function, idx_t depth, bool ro
 	}
 	// now perform struct unnests, if any
 	if (struct_unnests > 0) {
-		vector<unique_ptr<Expression>> struct_expressions;
-		struct_expressions.push_back(std::move(unnest_expr));
-		for (idx_t i = 0; i < struct_unnests; i++) {
-			vector<unique_ptr<Expression>> new_expressions;
-			// check if there are any structs left
-			bool has_structs = false;
-			for (auto &expr : struct_expressions) {
-				if (StructType::IsStruct(expr->GetReturnType())) {
-					// struct! push a struct_extract
-					auto &child_types = StructType::GetChildTypes(expr->GetReturnType());
-					if (expr->GetReturnType().id() == LogicalTypeId::TUPLE) {
-						for (idx_t child_index = 0; child_index < child_types.size(); child_index++) {
-							new_expressions.push_back(
-							    CreateBoundStructExtractIndex(context, expr->Copy(), child_index + 1));
-						}
-					} else {
-						for (auto &entry : child_types) {
-							vector<string> current_key_path;
-							// During recursive expansion, not all expressions are BoundFunctionExpression
-							if (keep_parent_names && expr->GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
-								current_key_path.emplace_back(expr->GetAlias());
-							}
-							current_key_path.emplace_back(entry.first);
-							new_expressions.push_back(
-							    CreateBoundStructExtract(context, expr->Copy(), current_key_path, keep_parent_names));
-						}
-					}
-					has_structs = true;
-				} else {
-					// not a struct - push as-is
-					new_expressions.push_back(std::move(expr));
-				}
-			}
-			struct_expressions = std::move(new_expressions);
-			if (!has_structs) {
-				break;
-			}
-		}
-		unnest_expr = make_uniq<BoundExpandedExpression>(std::move(struct_expressions));
+		unnest_expr = ExpandStructFields(context, std::move(unnest_expr), struct_unnests, keep_parent_names);
 	}
 	if (set_returning && unnest_expr->GetReturnType().id() == LogicalTypeId::STRUCT &&
 	    StructType::GetChildCount(unnest_expr->GetReturnType()) == 1) {
@@ -392,6 +398,22 @@ BindResult SelectBinder::BindUnnest(FunctionExpression &function, idx_t depth, b
 		bound_unnests.emplace_back(std::move(call), result.expression->Copy());
 	}
 	return result;
+}
+
+BindResult SelectBinder::BindStar(StarExpression &expr, idx_t depth, bool root_expression) {
+	if (!expr.Expression() || expr.IsColumns() || !root_expression) {
+		return ExpressionBinder::BindStar(expr, depth, root_expression);
+	}
+	ErrorData error;
+	auto struct_expr = BindChild(expr.ExpressionMutable(), depth, error);
+	if (error.HasError()) {
+		return BindResult(std::move(error));
+	}
+	if (!StructType::IsStruct(struct_expr->GetReturnType())) {
+		return BindResult(BinderException(
+		    expr, "Cannot extract field from expression \"%s\" because it is not a struct", expr.ToString()));
+	}
+	return BindResult(ExpandStructFields(context, std::move(struct_expr), 1, false));
 }
 
 BindResult GroupBinder::BindUnnest(FunctionExpression &function, idx_t depth, bool root_expression) {

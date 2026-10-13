@@ -297,6 +297,7 @@ protected:
 	virtual BindResult BindAggregate(FunctionExpression &expr, AggregateFunctionCatalogEntry &function, idx_t depth);
 	virtual BindResult BindWindow(FunctionExpression &expr, WindowFunctionCatalogEntry &function, idx_t depth);
 	virtual BindResult BindUnnest(FunctionExpression &expr, idx_t depth, bool root_expression);
+	virtual BindResult BindStar(StarExpression &expr, idx_t depth, bool root_expression);
 	virtual BindResult BindMacro(FunctionExpression &expr, ScalarMacroCatalogEntry &macro, idx_t depth,
 	                             unique_ptr<ParsedExpression> &expr_ptr);
 	void FindAggregateExprs(unique_ptr<ParsedExpression> &expr, vector<reference<unique_ptr<ParsedExpression>>> &exprs);

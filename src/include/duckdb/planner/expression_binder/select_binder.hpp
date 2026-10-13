@@ -23,6 +23,7 @@ public:
 protected:
 	void ThrowIfUnnestInLambda(const ColumnBinding &column_binding) override;
 	BindResult BindUnnest(FunctionExpression &function, idx_t depth, bool root_expression) override;
+	BindResult BindStar(StarExpression &expr, idx_t depth, bool root_expression) override;
 
 public:
 	idx_t unnest_level = 0;

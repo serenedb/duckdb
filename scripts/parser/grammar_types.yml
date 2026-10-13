@@ -507,6 +507,7 @@ Expression:
     - MethodExpression
     - DotMethodOperator
     - DotColumnOperator
+    - DotStarOperator
     - SliceExpression
     - EndSliceBound
     - EndSliceValue

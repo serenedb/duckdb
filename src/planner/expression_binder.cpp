@@ -104,7 +104,7 @@ BindResult ExpressionBinder::BindExpression(unique_ptr<ParsedExpression> &expr, 
 	case ExpressionClass::POSITIONAL_REFERENCE:
 		return BindPositionalReference(expr, depth, root_expression);
 	case ExpressionClass::STAR:
-		return BindResult(BinderException::Unsupported(expr_ref, "STAR expression is not supported here"));
+		return BindStar(expr_ref.Cast<StarExpression>(), depth, root_expression);
 	case ExpressionClass::WINDOW:
 		// a binder that does not handle windows itself reports that they are unsupported here
 		return BindUnsupportedExpression(expr_ref, depth, UnsupportedWindowMessage());
