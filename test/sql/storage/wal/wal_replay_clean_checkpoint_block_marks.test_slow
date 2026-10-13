@@ -18,7 +18,7 @@ CREATE TABLE t (r BIGINT, s VARCHAR);
 
 # large insert - row groups are written to disk optimistically, the WAL only references their blocks
 statement ok
-INSERT INTO t SELECT r, repeat(md5(r::VARCHAR), 10) FROM range(200000) tt(r);
+INSERT INTO t SELECT r, repeat(md5(r::VARCHAR), 10) FROM range_st(200000) tt(r);
 
 # simulate a crash after the checkpoint header is written but before the WAL is truncated
 statement ok

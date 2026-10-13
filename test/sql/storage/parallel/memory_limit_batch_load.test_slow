@@ -18,7 +18,7 @@ SET threads=16
 foreach row_group_size 5000 150000 1000000
 
 statement ok
-COPY (FROM range(100000000) tbl(i)) TO '{TEST_DIR}/giant_row_groups.parquet' (ROW_GROUP_SIZE {row_group_size})
+COPY (FROM range_st(100000000) tbl(i)) TO '{TEST_DIR}/giant_row_groups.parquet' (ROW_GROUP_SIZE {row_group_size})
 
 statement ok
 CREATE TABLE integers AS FROM '{TEST_DIR}/giant_row_groups.parquet'
@@ -42,7 +42,7 @@ DROP TABLE integers
 
 # now with NULL values
 statement ok
-COPY (SELECT CASE WHEN i%2=0 THEN NULL ELSE i END AS i FROM range(100000000) tbl(i)) TO '{TEST_DIR}/giant_row_groups_nulls.parquet' (ROW_GROUP_SIZE {row_group_size})
+COPY (SELECT CASE WHEN i%2=0 THEN NULL ELSE i END AS i FROM range_st(100000000) tbl(i)) TO '{TEST_DIR}/giant_row_groups_nulls.parquet' (ROW_GROUP_SIZE {row_group_size})
 
 statement ok
 CREATE TABLE integers AS FROM '{TEST_DIR}/giant_row_groups_nulls.parquet'

@@ -13,7 +13,7 @@ PRAGMA force_compression='rle'
 # Compressed size: 1 x 64bit + 1x 16bit (sizeof rle_count_t)
 # Ratio: (5*64) / (64 + 16) = 4
 statement ok
-CREATE TABLE test_rle AS SELECT (i//5)::INT64 FROM range(0, 2500000) tbl(i);
+CREATE TABLE test_rle AS SELECT (i//5)::INT64 FROM range_st(0, 2500000) tbl(i);
 
 statement ok
 checkpoint
@@ -22,7 +22,7 @@ statement ok
 PRAGMA force_compression='uncompressed'
 
 statement ok
-CREATE TABLE test_uncompressed AS SELECT (i//10)::INT64 FROM range(0, 2500000) tbl(i);
+CREATE TABLE test_uncompressed AS SELECT (i//10)::INT64 FROM range_st(0, 2500000) tbl(i);
 
 statement ok
 checkpoint
@@ -51,7 +51,7 @@ statement ok
 PRAGMA force_compression='uncompressed';
 
 statement ok
-CREATE TABLE test_uncompressed AS SELECT ((i//10)%100)::{type} FROM range(0, 2500000) tbl(i);
+CREATE TABLE test_uncompressed AS SELECT ((i//10)%100)::{type} FROM range_st(0, 2500000) tbl(i);
 
 statement ok
 checkpoint
@@ -60,7 +60,7 @@ statement ok
 PRAGMA force_compression='rle'
 
 statement ok
-CREATE TABLE test_rle AS SELECT ((i//10)%100)::{type} FROM range(0, 2500000) tbl(i);
+CREATE TABLE test_rle AS SELECT ((i//10)%100)::{type} FROM range_st(0, 2500000) tbl(i);
 
 statement ok
 checkpoint

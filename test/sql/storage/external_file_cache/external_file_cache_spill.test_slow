@@ -30,7 +30,7 @@ SET preserve_insertion_order=false;
 
 # roughly 290MB of incompressible data, well above the memory limit
 statement ok
-COPY (SELECT hash(i) a, hash(i * 2) b, hash(i * 3) c FROM range(12000000) t(i))
+COPY (SELECT hash(i) a, hash(i * 2) b, hash(i * 3) c FROM range_st(12000000) t(i))
 TO '{TEST_DIR}/efc_spill.parquet' (FORMAT parquet);
 
 # local files can be re-read at the same cost as a spilled block, so even with spilling

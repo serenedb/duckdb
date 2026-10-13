@@ -160,7 +160,7 @@ TEST_CASE("A formatted Arrow stream drains an ordered plan in row order", "[api]
 	REQUIRE_NO_FAIL(con.Query("CREATE TABLE t AS SELECT range i FROM range(50000)"));
 
 	SECTION("through the simple store") {
-		auto handle = SubmitArrow(con, "SELECT i FROM range(50000) t(i)", 4096);
+		auto handle = SubmitArrow(con, "SELECT i FROM range_st(50000) t(i)", 4096);
 		DrainWatchdog watchdog(con);
 		QueryResultStream<ArrowFormat> stream(std::move(handle));
 		REQUIRE_NOTHROW(stream.GetBufferedData().Cast<SimpleBufferedData>());
@@ -378,7 +378,7 @@ TEST_CASE("Query with an Arrow format returns its arrays and their schema", "[ap
 	DuckDB db(nullptr);
 	Connection con(db);
 
-	auto result = con.Query("SELECT i, 'r' || i AS s FROM range(20000) t(i)", make_shared_ptr<ArrowFormat>(4096));
+	auto result = con.Query("SELECT i, 'r' || i AS s FROM range_st(20000) t(i)", make_shared_ptr<ArrowFormat>(4096));
 	REQUIRE_NO_FAIL(*result);
 	REQUIRE(result->RowCount() == ROWS);
 

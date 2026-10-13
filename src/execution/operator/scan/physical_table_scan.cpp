@@ -32,7 +32,8 @@ PhysicalTableScan::PhysicalTableScan(PhysicalPlan &physical_plan, vector<Logical
 
 class TableScanGlobalSourceState : public GlobalSourceState {
 public:
-	TableScanGlobalSourceState(ClientContext &context, const PhysicalTableScan &op) {
+	TableScanGlobalSourceState(ClientContext &context, const PhysicalTableScan &op,
+	                           const OperatorPartitionInfo &partition_info) {
 		physical_table_scan_execution_strategy = Settings::Get<DebugPhysicalTableScanExecutionStrategySetting>(context);
 
 		if (op.dynamic_filters && op.dynamic_filters->HasFilters()) {
@@ -43,6 +44,7 @@ public:
 			auto filters = table_filters ? *table_filters : GetTableFilters(op);
 			TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids, filters,
 			                             op.extra_info.sample_options, &op);
+			input.partition_info = &partition_info;
 
 			global_state = op.function.init_global(context, input);
 			if (global_state) {
@@ -100,7 +102,12 @@ unique_ptr<LocalSourceState> PhysicalTableScan::GetLocalSourceState(ExecutionCon
 }
 
 unique_ptr<GlobalSourceState> PhysicalTableScan::GetGlobalSourceState(ClientContext &context) const {
-	return make_uniq<TableScanGlobalSourceState>(context, *this);
+	return GetGlobalSourceState(context, OperatorPartitionInfo::NoPartitionInfo());
+}
+
+unique_ptr<GlobalSourceState>
+PhysicalTableScan::GetGlobalSourceState(ClientContext &context, const OperatorPartitionInfo &partition_info) const {
+	return make_uniq<TableScanGlobalSourceState>(context, *this, partition_info);
 }
 
 static void ValidateAsyncStrategyResult(const PhysicalTableScanExecutionStrategy &strategy,
@@ -452,12 +459,7 @@ bool PhysicalTableScan::Equals(const PhysicalOperator &other_p) const {
 }
 
 bool PhysicalTableScan::ParallelSource() const {
-	if (!function.function) {
-		// table in-out functions cannot be executed in parallel as part of a PhysicalTableScan
-		// since they have only a single input row
-		return false;
-	}
-	return true;
+	return function.function || function.get_partition_data;
 }
 
 TableFunctionParallelism PhysicalTableScan::SourceParallelism() const {

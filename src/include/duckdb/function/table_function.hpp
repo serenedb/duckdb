@@ -174,6 +174,7 @@ struct TableFunctionInitInput {
 	optional_ptr<const PhysicalOperator> op;
 	//! (Optional) Set when a multi-file scan initializes this function to read one of its files
 	optional_ptr<const TableFunctionFileInitInput> multi_file_input;
+	optional_ptr<const OperatorPartitionInfo> partition_info;
 
 	bool CanRemoveFilterColumns() const {
 		if (projection_ids.empty()) {

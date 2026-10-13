@@ -161,7 +161,7 @@ TEST_CASE("A formatted stream drains an ordered plan in row order", "[api][query
 	REQUIRE_NO_FAIL(con.Query("CREATE TABLE t AS SELECT range i FROM range(200000)"));
 
 	SECTION("through the simple store") {
-		auto handle = SubmitFormatted(con, "SELECT i FROM range(200000) t(i)", 4096);
+		auto handle = SubmitFormatted(con, "SELECT i FROM range_st(200000) t(i)", 4096);
 		DrainWatchdog watchdog(con);
 		QueryResultStream<TestFormat> stream(std::move(handle));
 		REQUIRE(stream.GetBufferedData().Lifetime() == ResultLifetime::DRAINING);
@@ -236,7 +236,7 @@ TEST_CASE("Slicing at the cap finishes several units from one append", "[api][qu
 
 	// A cap below one chunk, so a single append seals several units at once
 	SECTION("drained") {
-		auto handle = SubmitFormatted(con, "SELECT i FROM range(50000) t(i)", cap);
+		auto handle = SubmitFormatted(con, "SELECT i FROM range_st(50000) t(i)", cap);
 		DrainWatchdog watchdog(con);
 		QueryResultStream<TestFormat> stream(std::move(handle));
 		vector<int64_t> rows;
@@ -257,7 +257,7 @@ TEST_CASE("Slicing at the cap finishes several units from one append", "[api][qu
 		REQUIRE(units > 1);
 	}
 	SECTION("retained") {
-		auto handle = SubmitFormatted(con, "SELECT i FROM range(50000) t(i)", cap);
+		auto handle = SubmitFormatted(con, "SELECT i FROM range_st(50000) t(i)", cap);
 		DrainWatchdog watchdog(con);
 		handle->Complete();
 		auto &collection = handle->Collection<TestFormat>();
@@ -921,7 +921,7 @@ TEST_CASE("SOURCE_ORDERED has exactly one local state under threads=4, drained a
 	Connection con(db);
 	REQUIRE_NO_FAIL(con.Query("SET threads=4"));
 	const idx_t row_count = 100000;
-	const string query = "SELECT i FROM range(" + to_string(row_count) + ") t(i)";
+	const string query = "SELECT i FROM range_st(" + to_string(row_count) + ") t(i)";
 
 	SECTION("drained") {
 		auto handle = SubmitFormatted(con, query, 4096);

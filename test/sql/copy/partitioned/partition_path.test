@@ -234,7 +234,7 @@ statement ok
 SET partitioned_write_max_open_files=1;
 
 statement ok
-COPY (SELECT i % 5 AS p, i AS v FROM range(10000) t(i)) TO '{TEST_DIR}/partition_path_reopen'
+COPY (SELECT i % 5 AS p, i AS v FROM range_st(10000) t(i)) TO '{TEST_DIR}/partition_path_reopen'
 (FORMAT parquet, PARTITION_BY (p), PARTITION_PATH 'part_' || p::VARCHAR);
 
 # every partition was reopened, so it has more than one file

@@ -64,7 +64,7 @@ BEGIN TRANSACTION
 loop i 0 50
 
 query I
-INSERT INTO integers_batched_load SELECT CASE WHEN i % 50000 = 0 THEN 1 ELSE 0 END AS i FROM range(1000000) tbl(i);
+INSERT INTO integers_batched_load SELECT CASE WHEN i % 50000 = 0 THEN 1 ELSE 0 END AS i FROM range_st(1000000) tbl(i);
 ----
 1000000
 
@@ -94,7 +94,7 @@ BEGIN TRANSACTION
 loop i 0 50
 
 query I
-INSERT INTO integers_batched_load_nulls SELECT CASE WHEN i % 50000 = 0 THEN 1 ELSE NULL END AS i FROM range(1000000) tbl(i);
+INSERT INTO integers_batched_load_nulls SELECT CASE WHEN i % 50000 = 0 THEN 1 ELSE NULL END AS i FROM range_st(1000000) tbl(i);
 ----
 1000000
 
