@@ -49,6 +49,26 @@ TEST_CASE("Filters derived from a wide disjunction keep the plan shallow", "[opt
 	REQUIRE(CHECK_COLUMN(result, 0, {100000}));
 }
 
+TEST_CASE("Order dependencies of a wide UNION ALL stay linear", "[optimizer]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+
+	vector<string> branches;
+	for (idx_t i = 0; i < 20000; i++) {
+		branches.push_back(StringUtil::Format("SELECT %d AS v", i));
+	}
+	auto result = con.Query(StringUtil::Join(branches, " UNION ALL "));
+	REQUIRE_NO_FAIL(*result);
+	REQUIRE(result->RowCount() == 20000);
+	idx_t row = 0;
+	for (auto &chunk : result->Collection().Chunks()) {
+		for (idx_t i = 0; i < chunk.size(); i++) {
+			REQUIRE(chunk.GetValue(0, i) == Value::INTEGER(NumericCast<int32_t>(row++)));
+		}
+	}
+	REQUIRE(row == 20000);
+}
+
 TEST_CASE("Decorrelating a long chain of EXISTS subqueries stops at the query deadline", "[optimizer]") {
 	DuckDB db(nullptr);
 	Connection con(db);
