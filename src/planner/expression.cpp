@@ -36,7 +36,7 @@ bool Expression::IsScalar() const {
 }
 
 bool Expression::IsVolatile() const {
-	return ExpressionIterator::AnyChild(*this, [](const Expression &child) { return child.IsVolatile(); });
+	return IsVolatile([](const Expression &child) { return child.IsVolatile(); });
 }
 
 bool Expression::IsConsistent() const {
@@ -91,11 +91,11 @@ bool Expression::HasSubquery() const {
 }
 
 hash_t Expression::Hash() const {
-	hash_t hash = duckdb::Hash<uint32_t>(static_cast<uint32_t>(type));
-	hash = CombineHash(hash, return_type.Hash());
-	ExpressionIterator::EnumerateChildren(*this,
-	                                      [&](const Expression &child) { hash = CombineHash(child.Hash(), hash); });
-	return hash;
+	return Hash([](const Expression &child) { return child.Hash(); });
+}
+
+hash_t Expression::NodeHash() const {
+	return CombineHash(duckdb::Hash<uint32_t>(static_cast<uint32_t>(type)), return_type.Hash());
 }
 
 bool Expression::Equals(const unique_ptr<Expression> &left, const unique_ptr<Expression> &right) {

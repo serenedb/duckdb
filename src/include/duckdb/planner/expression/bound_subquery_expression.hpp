@@ -78,8 +78,7 @@ public:
 	bool IsFoldable() const override {
 		return false;
 	}
-	bool IsVolatile() const override;
-
+	using Expression::IsVolatile;
 	string ToString() const override;
 
 	bool Equals(const BaseExpression &other) const override;
@@ -87,6 +86,9 @@ public:
 	unique_ptr<Expression> Copy() const override;
 
 	bool PropagatesNullValues() const override;
+
+protected:
+	bool IsNodeVolatile() const override;
 
 private:
 	//! The binder used to bind the subquery node

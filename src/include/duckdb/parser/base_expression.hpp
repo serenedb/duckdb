@@ -135,9 +135,6 @@ public:
 	//! Print the expression to stdout
 	void Print() const;
 
-	//! Creates a hash value of this expression. It is important that if two expressions are identical (i.e.
-	//! Expression::Equals() returns true), that their hash value is identical as well.
-	virtual hash_t Hash() const = 0;
 	//! Returns true if this expression is equal to another expression
 	virtual bool Equals(const BaseExpression &other) const;
 
@@ -166,6 +163,9 @@ public:
 		}
 		return reinterpret_cast<const TARGET &>(*this);
 	}
+
+protected:
+	virtual hash_t NodeHash() const = 0;
 };
 
 } // namespace duckdb

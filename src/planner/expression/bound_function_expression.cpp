@@ -51,10 +51,9 @@ bool BoundFunctionExpression::RequiresOrderedExecution() const {
 	return has_value;
 }
 
-bool BoundFunctionExpression::IsVolatile() const {
+bool BoundFunctionExpression::IsNodeVolatile() const {
 	auto lambda_expr = GetLambdaExpression(*this);
-	return function.GetStability() == FunctionStability::VOLATILE || (lambda_expr && lambda_expr->IsVolatile()) ||
-	       Expression::IsVolatile();
+	return function.GetStability() == FunctionStability::VOLATILE || (lambda_expr && lambda_expr->IsVolatile());
 }
 
 bool BoundFunctionExpression::IsConsistent() const {
@@ -115,9 +114,8 @@ bool BoundFunctionExpression::PropagatesNullValues() const {
 	                                                                            : Expression::PropagatesNullValues();
 }
 
-hash_t BoundFunctionExpression::Hash() const {
-	hash_t result = Expression::Hash();
-	return CombineHash(result, function.Hash());
+hash_t BoundFunctionExpression::NodeHash() const {
+	return CombineHash(Expression::NodeHash(), function.Hash());
 }
 
 bool BoundFunctionExpression::Equals(const BaseExpression &other_p) const {

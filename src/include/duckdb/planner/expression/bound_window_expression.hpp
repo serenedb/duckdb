@@ -167,8 +167,7 @@ public:
 	bool IsFoldable() const override {
 		return false;
 	}
-	bool IsVolatile() const override;
-
+	using Expression::IsVolatile;
 	string ToString() const override;
 
 	//! The number of ordering clauses the functions share
@@ -183,6 +182,9 @@ public:
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
+
+protected:
+	bool IsNodeVolatile() const override;
 
 private:
 	//! Remove LEAD/LAG offset/default

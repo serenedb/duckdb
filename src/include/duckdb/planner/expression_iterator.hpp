@@ -205,4 +205,17 @@ private:
 	}
 };
 
+template <class F>
+bool Expression::IsVolatile(F &&child_is_volatile) const {
+	return IsNodeVolatile() || ExpressionIterator::AnyChild(*this, child_is_volatile);
+}
+
+template <class F>
+hash_t Expression::Hash(F &&child_hash) const {
+	hash_t hash = NodeHash();
+	ExpressionIterator::EnumerateChildren(
+	    *this, [&](const Expression &child) { hash += duckdb::Hash<hash_t>(child_hash(child)); });
+	return hash;
+}
+
 } // namespace duckdb
