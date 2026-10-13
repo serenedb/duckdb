@@ -27,10 +27,15 @@ static optional<RelationStats> CombineReorderableStats(const vector<ColumnBindin
 		}
 		result.table_name = Identifier(result.table_name + stats.table_name);
 	}
+	vector<RelationColumnLookup> lookups;
+	lookups.reserve(relation_stats.size());
+	for (auto &stats : relation_stats) {
+		lookups.emplace_back(stats);
+	}
 	for (auto &binding : bindings) {
 		optional_ptr<const RelationColumnStats> source;
-		for (auto &stats : relation_stats) {
-			source = stats.GetColumnStats(binding);
+		for (auto &lookup : lookups) {
+			source = lookup.GetColumnStats(binding);
 			if (source) {
 				break;
 			}

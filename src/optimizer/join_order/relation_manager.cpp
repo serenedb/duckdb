@@ -366,10 +366,15 @@ static optional<RelationStats> CombineNonReorderableStats(LogicalOperator &op, c
 	auto ordinal_set_output = op.type == LogicalOperatorType::LOGICAL_UNION ||
 	                          op.type == LogicalOperatorType::LOGICAL_INTERSECT ||
 	                          op.type == LogicalOperatorType::LOGICAL_EXCEPT;
+	vector<RelationColumnLookup> lookups;
+	lookups.reserve(child_stats.size());
+	for (auto &stats : child_stats) {
+		lookups.emplace_back(stats);
+	}
 	for (idx_t column_idx = 0; column_idx < bindings.size(); column_idx++) {
 		optional_ptr<const RelationColumnStats> source;
-		for (auto &stats : child_stats) {
-			source = stats.GetColumnStats(bindings[column_idx]);
+		for (auto &lookup : lookups) {
+			source = lookup.GetColumnStats(bindings[column_idx]);
 			if (source) {
 				break;
 			}
