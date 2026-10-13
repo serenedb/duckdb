@@ -1,0 +1,31 @@
+# name: test/sql/function/list/lambdas/lambda_captures.test
+# description: Lambdas that capture outer columns, over one element per row, mixed list lengths and NULL lists
+# group: [lambdas]
+
+statement ok
+SET lambda_syntax='DISABLE_SINGLE_ARROW'
+
+query I
+SELECT sum(list_transform([i], lambda a: list_transform([a + 1], lambda b: list_transform([b * 2], lambda c: c + a + b + i)[1])[1])[1]) FROM range(5000) t(i)
+----
+62502500
+
+query I
+SELECT sum(list_sum(list_transform(range(i % 4), lambda x: x * 10 + i))) FROM range(3000) t(i)
+----
+6781500
+
+query I
+SELECT sum(list_sum(list_transform(CASE WHEN i % 3 = 0 THEN NULL ELSE [i, i + 1] END, lambda x: x + i))) FROM range(3000) t(i)
+----
+12002000
+
+query I
+SELECT sum(len(list_filter(range(10), lambda x, idx: (x + idx + i) % 3 = 0))) FROM range(2000) t(i)
+----
+6666
+
+query I
+SELECT list_sum(list_transform(range(5000), lambda x: x + 1))
+----
+12502500

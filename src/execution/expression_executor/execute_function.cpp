@@ -1,6 +1,7 @@
 #include "duckdb/common/enums/debug_verification_mode.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/function/lambda_functions.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 
@@ -15,38 +16,39 @@ ExecuteFunctionState::~ExecuteFunctionState() {
 
 void ExecuteFunctionState::ResolveDictionaryInput() {
 	dictionary_input_resolved = true;
-	// Check if the expression is eligible for dictionary optimization
-	if (!expr.IsConsistent() || expr.IsVolatile() || expr.CanThrow()) {
-		return; // Needs to be consistent, non-volatile, and non-throwing
-	}
-
-	if (expr.GetReturnType().InternalType() == PhysicalType::STRUCT) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION ||
+	    expr.GetReturnType().InternalType() == PhysicalType::STRUCT) {
 		return; // FIXME: get this working for STRUCT
+	}
+	auto &bound_function = expr.Cast<BoundFunctionExpression>();
+	auto &function = bound_function.Function();
+	if (function.GetStability() != FunctionStability::CONSISTENT ||
+	    function.GetErrorMode() == FunctionErrors::CAN_THROW_RUNTIME_ERROR) {
+		return;
+	}
+	if (function.HasBindLambdaCallback()) {
+		auto lambda_expr = bound_function.BindInfo()->Cast<LambdaFunctionData>().GetLambdaExpression();
+		if (lambda_expr && (!lambda_expr->IsConsistent() || lambda_expr->IsVolatile() || lambda_expr->CanThrow())) {
+			return;
+		}
 	}
 
 	// Set input_col_idx accordingly, marking the expression as eligible for dictionary optimization
-	switch (expr.GetExpressionClass()) {
-	case ExpressionClass::BOUND_FUNCTION: {
-		auto &bound_function = expr.Cast<BoundFunctionExpression>();
-		auto &children = bound_function.GetChildren();
-		for (idx_t child_idx = 0; child_idx < children.size(); child_idx++) {
-			auto &child = *children[child_idx];
-			if (child.IsFoldable()) {
-				continue; // Constant
-			}
-			if (input_col_idx.IsValid()) {
-				input_col_idx.SetInvalid(); // Found more than 1 non-constant
-				break;
-			}
-			if (child.GetReturnType().InternalType() == PhysicalType::STRUCT) {
-				break; // FIXME
-			}
-			input_col_idx = child_idx;
+	auto &children = bound_function.GetChildren();
+	for (idx_t child_idx = 0; child_idx < children.size(); child_idx++) {
+		auto &child = *children[child_idx];
+		if (child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT ||
+		    child.GetExpressionClass() == ExpressionClass::BOUND_LAMBDA) {
+			continue;
 		}
-		break;
-	}
-	default:
-		break;
+		if (input_col_idx.IsValid()) {
+			input_col_idx.SetInvalid(); // Found more than 1 non-constant
+			break;
+		}
+		if (child.GetReturnType().InternalType() == PhysicalType::STRUCT) {
+			break; // FIXME
+		}
+		input_col_idx = child_idx;
 	}
 }
 

@@ -222,6 +222,16 @@ void ListValueFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 		return;
 	}
 
+	if (args.ColumnCount() == 1 && args.data[0].GetType() == ListType::GetChildType(result.GetType())) {
+		ListVector::SetListSize(result, 0);
+		ListVector::Append(result, args.data[0], args.size());
+		auto result_data = FlatVector::Writer<list_entry_t>(result, args.size());
+		for (idx_t row = 0; row < args.size(); row++) {
+			result_data.WriteValue(list_entry_t(row, 1));
+		}
+		return;
+	}
+
 	ListVector::Reserve(result, args.size() * args.ColumnCount());
 	auto &result_child = ListVector::GetChildMutable(result);
 

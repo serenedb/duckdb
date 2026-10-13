@@ -7,8 +7,11 @@
 #include "duckdb/function/scalar/nested_functions.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/function/scalar/list_functions.hpp"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/function/function_binder.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_lambda_expression.hpp"
 #include "duckdb/storage/statistics/list_stats.hpp"
 
 namespace duckdb {
@@ -38,9 +41,28 @@ static optional_idx TryGetChildOffset(const list_entry_t &list_entry, const int6
 	return optional_idx(list_entry.offset + unsigned_offset);
 }
 
+static bool IsFirstOfSingleElementLists(const Vector &list, const Vector &offsets, const idx_t count) {
+	if (count == 0 || offsets.GetVectorType() != VectorType::CONSTANT_VECTOR || ConstantVector::IsNull(offsets) ||
+	    ConstantVector::GetData<int64_t>(offsets)[0] != 1 || list.GetVectorType() != VectorType::FLAT_VECTOR ||
+	    !FlatVector::Validity(list).AllValid() || ListVector::GetListSize(list) != count ||
+	    ListVector::GetChild(list).GetVectorType() != VectorType::FLAT_VECTOR) {
+		return false;
+	}
+	auto entries = FlatVector::GetData<list_entry_t>(list);
+	bool single = true;
+	for (idx_t i = 0; i < count; i++) {
+		single &= entries[i].length == 1 && entries[i].offset == i;
+	}
+	return single;
+}
+
 static void ExecuteListExtract(Vector &result, const Vector &list, const Vector &offsets) {
 	D_ASSERT(list.GetType().id() == LogicalTypeId::LIST);
 	const auto count = list.size();
+	if (IsFirstOfSingleElementLists(list, offsets, count)) {
+		result.Reference(ListVector::GetChild(list));
+		return;
+	}
 
 	auto list_entries = list.Values<list_entry_t>();
 	auto offsets_entries = offsets.Values<int64_t>();
@@ -130,6 +152,58 @@ static unique_ptr<FunctionData> ListExtractBind(BindScalarFunctionInput &input) 
 	return nullptr;
 }
 
+static bool IsListTransform(const BoundFunctionExpression &expr) {
+	auto &name = expr.Function().GetName();
+	return name == "list_transform" || name == "array_transform" || name == "list_apply" || name == "array_apply" ||
+	       name == "apply";
+}
+
+static unique_ptr<Expression> ListExtractBindExpression(FunctionBindExpressionInput &input) {
+	auto &children = input.children;
+	if (children.size() != 2 || children[0]->GetExpressionClass() != ExpressionClass::BOUND_FUNCTION ||
+	    !children[1]->IsFoldable()) {
+		return nullptr;
+	}
+	auto &transform = children[0]->Cast<BoundFunctionExpression>();
+	if (!IsListTransform(transform)) {
+		return nullptr;
+	}
+	auto &transform_children = transform.GetChildrenMutable();
+	if (transform_children.size() < 2 ||
+	    transform_children[0]->GetExpressionClass() != ExpressionClass::BOUND_FUNCTION ||
+	    transform_children[1]->GetExpressionClass() != ExpressionClass::BOUND_LAMBDA ||
+	    transform_children[1]->Cast<BoundLambdaExpression>().ParameterCount() != 1) {
+		return nullptr;
+	}
+	auto &list = transform_children[0]->Cast<BoundFunctionExpression>();
+	if (list.Function().GetName() != "list_value" || list.GetChildren().size() != 1) {
+		return nullptr;
+	}
+	Value index;
+	if (!ExpressionExecutor::TryEvaluateScalar(input.context, *children[1], index) || index.IsNull() ||
+	    index.type().id() != LogicalTypeId::BIGINT || BigIntValue::Get(index) != 1) {
+		return nullptr;
+	}
+
+	vector<unique_ptr<Expression>> arguments;
+	arguments.reserve(2);
+	arguments.push_back(std::move(transform_children[1]));
+	arguments.push_back(std::move(list.GetChildrenMutable()[0]));
+	ErrorData error;
+	FunctionBinder function_binder(input.context);
+	auto result =
+	    function_binder.BindScalarFunction(Identifier::DefaultSchema(), "invoke", std::move(arguments), error);
+	if (!result) {
+		error.Throw();
+	}
+	auto &invoke_children = result->Cast<BoundFunctionExpression>().GetChildrenMutable();
+	invoke_children.reserve(invoke_children.size() + transform_children.size() - 2);
+	for (idx_t i = 2; i < transform_children.size(); i++) {
+		invoke_children.push_back(std::move(transform_children[i]));
+	}
+	return result;
+}
+
 //! Extracting from a string throws if the index is outside of the range supported by substring - if the index is a
 //! constant within that range the extract cannot throw
 //! Extracting from a list returns NULL for indexes that are out of range instead
@@ -180,6 +254,7 @@ ScalarFunctionSet ListExtractFun::GetFunctions() {
 	sfun.GetSignature().GetParameter(1).SetName("index");
 
 	lfun.SetFallible();
+	lfun.SetBindExpressionCallback(ListExtractBindExpression);
 	list_extract_set.AddFunction(lfun);
 	list_extract_set.AddFunction(sfun);
 	return list_extract_set;
@@ -194,6 +269,7 @@ ScalarFunctionSet ArrayExtractFun::GetFunctions() {
 
 	lfun.GetSignature().GetParameter(0).SetName("list");
 	lfun.GetSignature().GetParameter(1).SetName("index");
+	lfun.SetBindExpressionCallback(ListExtractBindExpression);
 
 	ScalarFunction sfun({}, LogicalType::VARCHAR, ListExtractFunction, StringExtractBind);
 	sfun.GetSignature().AddParameter("string", LogicalType::VARCHAR).AddParameter("index", LogicalType::BIGINT);

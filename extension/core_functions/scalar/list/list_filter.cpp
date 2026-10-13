@@ -39,7 +39,7 @@ static LogicalType ListFilterBindLambda(ClientContext &context, const vector<Log
 
 ScalarFunction ListFilterFun::GetFunction() {
 	ScalarFunction fun({}, LogicalType::LIST(LogicalType::ANY), LambdaFunctions::ListFilterFunction, ListFilterBind,
-	                   nullptr, nullptr);
+	                   nullptr, LambdaFunctions::ListLambdaInitLocalState);
 	fun.GetSignature()
 	    .AddParameter("list", LogicalType::LIST(LogicalType::ANY))
 	    .AddParameter("lambda", LogicalType::LAMBDA);

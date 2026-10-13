@@ -19,10 +19,11 @@ namespace duckdb {
 
 //! LambdaExecuteInfo holds information for executing the lambda expression on an input chunk and
 //! a resulting lambda chunk.
-struct LambdaExecuteInfo {
-	LambdaExecuteInfo(ClientContext &context, const Expression &lambda_expr, const DataChunk &args,
-	                  const bool has_index, const Vector &child_vector)
-	    : has_index(has_index) {
+struct LambdaExecuteInfo final : public FunctionLocalState {
+	LambdaExecuteInfo(ClientContext &context, const Expression &lambda_expr, const BoundFunctionExpression &expr,
+	                  const bool has_index)
+	    : has_index(has_index), index_vector(LogicalType::BIGINT), child_sel(STANDARD_VECTOR_SIZE),
+	      row_sel(STANDARD_VECTOR_SIZE) {
 		expr_executor = make_uniq<ExpressionExecutor>(context, lambda_expr);
 
 		// get the input types for the input chunk
@@ -30,13 +31,14 @@ struct LambdaExecuteInfo {
 		if (has_index) {
 			input_types.push_back(LogicalType::BIGINT);
 		}
-		input_types.push_back(child_vector.GetType());
-		for (idx_t i = 1; i < args.ColumnCount(); i++) {
-			if (args.data[i].GetType().id() == LogicalTypeId::LAMBDA) {
+		auto &children = expr.GetChildren();
+		input_types.push_back(ListType::GetChildType(children[0]->GetReturnType()));
+		for (idx_t i = 1; i < children.size(); i++) {
+			if (children[i]->GetReturnType().id() == LogicalTypeId::LAMBDA) {
 				// placeholder slot for the lambda argument itself
 				continue;
 			}
-			input_types.push_back(args.data[i].GetType());
+			input_types.push_back(children[i]->GetReturnType());
 		}
 
 		// get the result types
@@ -45,6 +47,10 @@ struct LambdaExecuteInfo {
 		// initialize the data chunks
 		input_chunk.InitializeEmpty(input_types);
 		lambda_chunk.Initialize(Allocator::DefaultAllocator(), result_types);
+		slice_sels.reserve(input_types.size());
+		for (idx_t i = 0; i < input_types.size(); i++) {
+			slice_sels.emplace_back(STANDARD_VECTOR_SIZE);
+		}
 		// Spark Compatibility Mode: zero-based index for lambdas
 		if (Settings::Get<DialectCompatibilityModeSetting>(context) == DialectCompatibilityMode::SPARK) {
 			// Spark's lambda index parameter is 0-based; default SQL is 1-based
@@ -62,6 +68,33 @@ struct LambdaExecuteInfo {
 	bool has_index;
 	//! Added to child_idx to form the value the lambda sees in its index parameter (1 by default).
 	idx_t index_offset = 1;
+	Vector index_vector;
+	SelectionVector child_sel;
+	SelectionVector row_sel;
+	vector<SelectionVector> slice_sels;
+};
+
+struct LambdaBatch {
+	void Add(LambdaExecuteInfo &info, const idx_t child_position, const idx_t row_idx) {
+		info.child_sel.set_index(count, child_position);
+		info.row_sel.set_index(count, row_idx);
+		if (count == 0) {
+			first_child = child_position;
+			first_row = row_idx;
+			consecutive_children = true;
+			consecutive_rows = true;
+		} else {
+			consecutive_children = consecutive_children && child_position == first_child + count;
+			consecutive_rows = consecutive_rows && row_idx == first_row + count;
+		}
+		count++;
+	}
+
+	idx_t count = 0;
+	idx_t first_child = 0;
+	idx_t first_row = 0;
+	bool consecutive_children = true;
+	bool consecutive_rows = true;
 };
 
 //! A helper struct with information that is specific to the list_filter function
@@ -167,54 +200,56 @@ struct ListFilterFunctor {
 	}
 };
 
-vector<LambdaFunctions::ColumnInfo> LambdaFunctions::GetColumnInfo(DataChunk &args, const idx_t row_count) {
-	vector<ColumnInfo> data;
-	// skip the input list and the lambda placeholder, then insert all remaining input vectors
-	for (idx_t i = 1; i < args.ColumnCount(); i++) {
-		if (args.data[i].GetType().id() == LogicalTypeId::LAMBDA) {
-			continue;
-		}
-		data.emplace_back(args.data[i]);
-		args.data[i].ToUnifiedFormat(data.back().format);
+unique_ptr<FunctionLocalState> LambdaFunctions::ListLambdaInitLocalState(ExpressionState &state,
+                                                                         const BoundFunctionExpression &expr,
+                                                                         FunctionData *bind_data) {
+	if (!bind_data) {
+		return nullptr;
 	}
-	return data;
+	auto &info = bind_data->Cast<ListLambdaBindData>();
+	if (!info.lambda_expr) {
+		return nullptr;
+	}
+	return make_uniq<LambdaExecuteInfo>(state.GetContext(), *info.lambda_expr, expr, info.has_index);
 }
 
-vector<reference<LambdaFunctions::ColumnInfo>>
-LambdaFunctions::GetMutableColumnInfo(vector<LambdaFunctions::ColumnInfo> &data) {
-	vector<reference<ColumnInfo>> inconstant_info;
-	for (auto &entry : data) {
-		if (entry.vector.get().GetVectorType() != VectorType::CONSTANT_VECTOR) {
-			inconstant_info.push_back(entry);
+static void SliceBatchInput(Vector &target, Vector &source, const bool consecutive, const idx_t first,
+                            const SelectionVector &sel, const idx_t count, SelectionVector &composed_sel) {
+	if (consecutive && first == 0 && count == source.size() && source.GetVectorType() != VectorType::CONSTANT_VECTOR) {
+		target.Reference(source);
+		return;
+	}
+	if (source.GetVectorType() == VectorType::DICTIONARY_VECTOR) {
+		auto &dictionary = DictionaryVector::Child(source);
+		if (dictionary.GetVectorType() == VectorType::FLAT_VECTOR) {
+			auto &dictionary_sel = DictionaryVector::SelVector(source);
+			for (idx_t i = 0; i < count; i++) {
+				composed_sel.set_index(i, dictionary_sel.get_index(sel.get_index(i)));
+			}
+			target.Slice(dictionary, composed_sel, count);
+			return;
 		}
 	}
-	return inconstant_info;
+	target.Slice(source, sel, count);
 }
 
-static void ExecuteExpression(const idx_t elem_cnt, const LambdaFunctions::ColumnInfo &column_info,
-                              const vector<LambdaFunctions::ColumnInfo> &column_infos, const Vector &index_vector,
+static void ExecuteExpression(const LambdaBatch &batch, Vector &child_vector, std::span<Vector> columns,
                               LambdaExecuteInfo &info) {
-	// slice the child vector
-	Vector slice(column_info.vector, column_info.sel, elem_cnt);
-
-	// reference the child vector (and the index vector)
+	idx_t column_idx = 0;
 	if (info.has_index) {
-		info.input_chunk.data[0].Reference(index_vector);
-		info.input_chunk.data[1].Reference(slice);
-	} else {
-		info.input_chunk.data[0].Reference(slice);
+		info.input_chunk.data[column_idx++].Reference(info.index_vector);
 	}
-	idx_t slice_offset = info.has_index ? 2 : 1;
-
-	// (slice and) reference the other columns
-	vector<Vector> slices;
-	for (idx_t i = 0; i < column_infos.size(); i++) {
-		slices.emplace_back(column_infos[i].vector, column_infos[i].sel, elem_cnt);
-		info.input_chunk.data[i + slice_offset].Reference(slices.back());
+	SliceBatchInput(info.input_chunk.data[column_idx], child_vector, batch.consecutive_children, batch.first_child,
+	                info.child_sel, batch.count, info.slice_sels[column_idx]);
+	column_idx++;
+	for (auto &column : columns) {
+		SliceBatchInput(info.input_chunk.data[column_idx], column, batch.consecutive_rows, batch.first_row,
+		                info.row_sel, batch.count, info.slice_sels[column_idx]);
+		column_idx++;
 	}
 
 	// ensure all input vectors are sized to the chunk cardinality (some references inherit a different size)
-	info.input_chunk.SetChildCardinality(elem_cnt);
+	info.input_chunk.SetChildCardinality(batch.count);
 
 	// execute the lambda expression
 	info.expr_executor->Execute(info.input_chunk, info.lambda_chunk);
@@ -272,6 +307,20 @@ LogicalType LambdaFunctions::BindBinaryChildren(const vector<LogicalType> &funct
 	}
 }
 
+static bool IsSingleElementRun(const LambdaFunctions::LambdaInfo &info) {
+	if (info.row_count == 0 || info.row_count > STANDARD_VECTOR_SIZE || info.list_column_format.sel->IsSet() ||
+	    !info.list_column_format.validity.AllValid()) {
+		return false;
+	}
+	const auto first_offset = info.list_entries[0].offset;
+	bool single = true;
+	for (idx_t row_idx = 0; row_idx < info.row_count; row_idx++) {
+		const auto &entry = info.list_entries[row_idx];
+		single &= entry.length == 1 && entry.offset == first_offset + row_idx;
+	}
+	return single;
+}
+
 template <class FUNCTION_FUNCTOR>
 static void ExecuteLambda(DataChunk &args, ExpressionState &state, Vector &result) {
 	bool result_is_null = false;
@@ -281,25 +330,43 @@ static void ExecuteLambda(DataChunk &args, ExpressionState &state, Vector &resul
 	}
 
 	auto result_entries = FlatVector::GetDataMutable<list_entry_t>(result);
-	auto mutable_column_infos = LambdaFunctions::GetMutableColumnInfo(info.column_infos);
-
-	// special-handling for the child_vector
-	LambdaFunctions::ColumnInfo child_info(*info.child_vector);
-	info.child_vector->ToUnifiedFormat(child_info.format);
-
-	// get the expression executor
-	LambdaExecuteInfo execute_info(state.GetContext(), *info.lambda_expr, args, info.has_index, *info.child_vector);
+	auto &execute_info = ExecuteFunctionState::GetFunctionState(state)->Cast<LambdaExecuteInfo>();
+	auto index_data = FlatVector::GetDataMutable<int64_t>(execute_info.index_vector);
 
 	// get list_filter specific info
 	ListFilterInfo list_filter_info;
 	FUNCTION_FUNCTOR::ReserveNewLengths(list_filter_info.entry_lengths, info.row_count);
 
-	// additional index vector
-	Vector index_vector(LogicalType::BIGINT);
-
 	// loop over the child entries and create chunks to be executed by the expression executor
-	idx_t elem_cnt = 0;
+	LambdaBatch batch;
 	idx_t offset = 0;
+	if constexpr (std::is_same_v<FUNCTION_FUNCTOR, ListTransformFunctor>) {
+		if (IsSingleElementRun(info)) {
+			const auto first_child = info.list_entries[0].offset;
+			for (idx_t row_idx = 0; row_idx < info.row_count; row_idx++) {
+				execute_info.child_sel.set_index(row_idx, first_child + row_idx);
+				execute_info.row_sel.set_index(row_idx, row_idx);
+				result_entries[row_idx] = list_entry_t(row_idx, 1);
+			}
+			if (info.has_index) {
+				for (idx_t row_idx = 0; row_idx < info.row_count; row_idx++) {
+					index_data[row_idx] = NumericCast<int64_t>(execute_info.index_offset);
+				}
+			}
+			batch.count = info.row_count;
+			batch.first_child = first_child;
+			batch.first_row = 0;
+			execute_info.lambda_chunk.Reset();
+			ExecuteExpression(batch, *info.child_vector, info.columns, execute_info);
+			FUNCTION_FUNCTOR::AppendResult(result, execute_info.lambda_chunk.data[0], batch.count, result_entries,
+			                               list_filter_info, execute_info);
+			if (info.is_all_constant && !info.is_volatile) {
+				result.SetVectorType(VectorType::CONSTANT_VECTOR);
+			}
+			FlatVector::SetSize(result, count_t(info.row_count));
+			return;
+		}
+	}
 	for (idx_t row_idx = 0; row_idx < info.row_count; row_idx++) {
 		auto list_idx = info.list_column_format.sel->get_index(row_idx);
 		const auto &list_entry = info.list_entries[list_idx];
@@ -321,43 +388,31 @@ static void ExecuteLambda(DataChunk &args, ExpressionState &state, Vector &resul
 		// iterate the elements of the current list and create the corresponding selection vectors
 		for (idx_t child_idx = 0; child_idx < list_entry.length; child_idx++) {
 			// reached STANDARD_VECTOR_SIZE elements
-			if (elem_cnt == STANDARD_VECTOR_SIZE) {
+			if (batch.count == STANDARD_VECTOR_SIZE) {
 				state.GetContext().InterruptCheck();
 				execute_info.lambda_chunk.Reset();
-				ExecuteExpression(elem_cnt, child_info, info.column_infos, index_vector, execute_info);
+				ExecuteExpression(batch, *info.child_vector, info.columns, execute_info);
 				auto &lambda_vector = execute_info.lambda_chunk.data[0];
 
-				FUNCTION_FUNCTOR::AppendResult(result, lambda_vector, elem_cnt, result_entries, list_filter_info,
+				FUNCTION_FUNCTOR::AppendResult(result, lambda_vector, batch.count, result_entries, list_filter_info,
 				                               execute_info);
-				elem_cnt = 0;
+				batch.count = 0;
 			}
 
-			// FIXME: reuse same selection vector for inconstant rows
-			// adjust indexes for slicing
-			child_info.sel.set_index(elem_cnt, list_entry.offset + child_idx);
-			for (auto &entry : mutable_column_infos) {
-				entry.get().sel.set_index(elem_cnt, row_idx);
-			}
-
-			// set the index vector
 			if (info.has_index) {
-				index_vector.SetValue(elem_cnt,
-				                      Value::BIGINT(NumericCast<int64_t>(child_idx + execute_info.index_offset)));
+				index_data[batch.count] = NumericCast<int64_t>(child_idx + execute_info.index_offset);
 			}
-
-			elem_cnt++;
+			batch.Add(execute_info, list_entry.offset + child_idx, row_idx);
 		}
 	}
 
 	execute_info.lambda_chunk.Reset();
-	if (elem_cnt > 0) {
-		// only execute when there are remaining list elements; calling with elem_cnt = 0 would
-		// resize the (shared) source buffers down to size 0
-		ExecuteExpression(elem_cnt, child_info, info.column_infos, index_vector, execute_info);
+	if (batch.count > 0) {
+		ExecuteExpression(batch, *info.child_vector, info.columns, execute_info);
 	}
 	auto &lambda_vector = execute_info.lambda_chunk.data[0];
 
-	FUNCTION_FUNCTOR::AppendResult(result, lambda_vector, elem_cnt, result_entries, list_filter_info, execute_info);
+	FUNCTION_FUNCTOR::AppendResult(result, lambda_vector, batch.count, result_entries, list_filter_info, execute_info);
 
 	if (info.is_all_constant && !info.is_volatile) {
 		result.SetVectorType(VectorType::CONSTANT_VECTOR);
@@ -393,12 +448,12 @@ unique_ptr<FunctionData> LambdaFunctions::ListLambdaBind(ClientContext &context,
 	}
 
 	auto &bound_lambda_expr = arguments[1]->Cast<BoundLambdaExpression>();
-	auto lambda_expr = bound_lambda_expr.SharedLambdaExpr();
-	if (lambda_expr->IsVolatile()) {
+	auto lambda_bind_data =
+	    make_uniq<ListLambdaBindData>(bound_function.GetReturnType(), bound_lambda_expr.SharedLambdaExpr(), has_index);
+	if (lambda_bind_data->is_volatile) {
 		bound_function.SetVolatile();
 	}
-
-	return make_uniq<ListLambdaBindData>(bound_function.GetReturnType(), std::move(lambda_expr), has_index);
+	return std::move(lambda_bind_data);
 }
 
 void LambdaFunctions::ListTransformFunction(DataChunk &args, ExpressionState &state, Vector &result) {
