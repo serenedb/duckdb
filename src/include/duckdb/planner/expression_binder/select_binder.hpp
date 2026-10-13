@@ -31,6 +31,9 @@ public:
 	//! argument the value is wanted, so generate_series must stay the scalar
 	//! LIST-returning overload there (`list_apply(generate_series(1, n), ...)`).
 	idx_t function_arg_level = 0;
+
+private:
+	vector<pair<unique_ptr<ParsedExpression>, unique_ptr<Expression>>> bound_unnests;
 };
 
 } // namespace duckdb
