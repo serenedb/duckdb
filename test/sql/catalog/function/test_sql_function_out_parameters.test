@@ -33,6 +33,11 @@ SELECT b FROM doubled(4);
 ----
 8
 
+query IT
+SELECT x, typeof(x) FROM doubled(4) AS x;
+----
+8	BIGINT
+
 statement ok
 CREATE FUNCTION swap(INOUT a INTEGER, OUT b VARCHAR) LANGUAGE sql AS 'SELECT a * 10, a::VARCHAR';
 
