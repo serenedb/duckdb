@@ -299,7 +299,9 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 			parameter_names.insert(parameter.name);
 			macro_function->parameter_modes.push_back(parameter.mode);
 			if (parameter.mode != 'i') {
-				output_names.push_back(parameter.name.GetIdentifierName());
+				output_names.push_back(parameter.ambiguous_bare_type && sql_body
+				                           ? "column" + std::to_string(output_names.size() + 1)
+				                           : parameter.name.GetIdentifierName());
 				output_types.push_back(parameter.type);
 			}
 			if (parameter.mode == 'o') {

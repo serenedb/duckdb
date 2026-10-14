@@ -137,3 +137,11 @@ query IIII
 SELECT * FROM record_pair(), same_integer(), any_scale();
 ----
 1	2	3	1.5
+
+statement ok
+CREATE FUNCTION two_inouts(INOUT INTEGER, INOUT INTEGER) LANGUAGE sql AS 'SELECT $1 * 10, $2 * 10';
+
+query II
+SELECT column1, column2 FROM two_inouts(1, 2);
+----
+10	20
