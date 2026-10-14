@@ -1,6 +1,7 @@
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/smaller_binary.hpp"
+#include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/function/scalar/comparison_functions.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/parser/expression/between_expression.hpp"
@@ -138,6 +139,14 @@ static idx_t BetweenLoopTypeSwitch(const Vector &input, const Vector &lower, con
 	}
 }
 
+static idx_t BetweenNestedSelect(DataChunk &args, ExpressionState &state, optional_ptr<const SelectionVector> sel,
+                                 optional_ptr<SelectionVector> true_sel, optional_ptr<SelectionVector> false_sel) {
+	Vector result(LogicalType::BOOLEAN, args.size());
+	BetweenFunction(args, state, result);
+	return UnaryExecutor::Select<bool>(
+	    result, sel.get(), args.size(), [](bool value) { return value; }, true_sel.get(), false_sel.get());
+}
+
 idx_t BetweenSelect(DataChunk &args, ExpressionState &state, optional_ptr<const SelectionVector> sel,
                     optional_ptr<SelectionVector> true_sel, optional_ptr<SelectionVector> false_sel) {
 	auto &between_expr = state.expr.Cast<BoundFunctionExpression>();
@@ -149,6 +158,9 @@ idx_t BetweenSelect(DataChunk &args, ExpressionState &state, optional_ptr<const 
 	const auto &upper = args.data[2];
 	auto count = args.size();
 
+	if (input.GetType().IsNested()) {
+		return BetweenNestedSelect(args, state, sel, true_sel, false_sel);
+	}
 	if (upper_inclusive && lower_inclusive) {
 		return BetweenLoopTypeSwitch<BothInclusiveBetweenOperator>(input, lower, upper, sel, count, true_sel,
 		                                                           false_sel);
