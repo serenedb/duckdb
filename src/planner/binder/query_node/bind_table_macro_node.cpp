@@ -8,6 +8,7 @@
 #include "duckdb/common/limits.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
@@ -61,6 +62,13 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 			auto select_node = make_uniq<SelectNode>();
 			select_node->select_list.emplace_back(make_uniq<StarExpression>());
 			select_node->from_table = std::move(join);
+			node = std::move(select_node);
+		} else if (macro_def.return_names.size() > 1) {
+			auto fields = make_uniq<StarExpression>();
+			fields->ExpressionMutable() = make_uniq<CastExpression>(macro_def.ResultType(), std::move(expr));
+			auto select_node = make_uniq<SelectNode>();
+			select_node->select_list.emplace_back(std::move(fields));
+			select_node->from_table = make_uniq<EmptyTableRef>();
 			node = std::move(select_node);
 		} else {
 			auto select_node = make_uniq<SelectNode>();
