@@ -88,7 +88,7 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTableStmt(
 	info->columns = std::move(create_table_definition.columns);
 	info->constraints = std::move(create_table_definition.constraints);
 	info->partition_keys = std::move(create_table_definition.partition_keys);
-	info->sort_keys = std::move(create_table_definition.sort_keys);
+	info->sort_orders = std::move(create_table_definition.sort_keys);
 	info->options = std::move(create_table_definition.options);
 	info->serial_columns = std::move(create_table_definition.serial_columns);
 
@@ -728,15 +728,15 @@ PEGTransformerFactory::TransformPartitionOptions(PEGTransformer &transformer,
 	return expression;
 }
 
-vector<unique_ptr<ParsedExpression>>
-PEGTransformerFactory::TransformSortedOptions(PEGTransformer &transformer,
-                                              vector<unique_ptr<ParsedExpression>> expression) {
-	return expression;
+vector<OrderByNode> PEGTransformerFactory::TransformSortedOptions(PEGTransformer &transformer,
+                                                                  vector<OrderByNode> order_by_expression) {
+	return order_by_expression;
 }
 
-PartitionSortedOptions PEGTransformerFactory::TransformPartitionOptSortedOptions(
-    PEGTransformer &transformer, vector<unique_ptr<ParsedExpression>> partition_options,
-    optional<vector<unique_ptr<ParsedExpression>>> sorted_options) {
+PartitionSortedOptions
+PEGTransformerFactory::TransformPartitionOptSortedOptions(PEGTransformer &transformer,
+                                                          vector<unique_ptr<ParsedExpression>> partition_options,
+                                                          optional<vector<OrderByNode>> sorted_options) {
 	PartitionSortedOptions result;
 	result.partition_keys = std::move(partition_options);
 	if (sorted_options) {
@@ -746,7 +746,7 @@ PartitionSortedOptions PEGTransformerFactory::TransformPartitionOptSortedOptions
 }
 
 PartitionSortedOptions PEGTransformerFactory::TransformSortedOptPartitionOptions(
-    PEGTransformer &transformer, vector<unique_ptr<ParsedExpression>> sorted_options,
+    PEGTransformer &transformer, vector<OrderByNode> sorted_options,
     optional<vector<unique_ptr<ParsedExpression>>> partition_options) {
 	PartitionSortedOptions result;
 	result.sort_keys = std::move(sorted_options);

@@ -8,6 +8,7 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateIndexStmt(
     PEGTransformer &transformer, const optional<bool> &unique_index, const optional<bool> &if_not_exists,
     const optional<Identifier> &index_name, unique_ptr<BaseTableRef> base_table_name,
     const optional<Identifier> &index_type, IndexColumnsDefinition index_columns,
+    optional<vector<OrderByNode>> sorted_options,
     optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
     optional<unique_ptr<ParsedExpression>> where_clause) {
 	auto result = make_uniq<CreateStatement>();
@@ -36,6 +37,8 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateIndexStmt(
 		}
 		index_info->column_opclasses.push_back(element.opclass);
 		index_info->column_opclass_options.push_back(element.opclass_options);
+		index_info->column_orders.push_back(element.order);
+		index_info->column_null_orders.push_back(element.null_order);
 		index_info->expressions.push_back(expr->Copy());
 		index_info->parsed_expressions.push_back(std::move(expr));
 	}
@@ -49,6 +52,11 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateIndexStmt(
 		    make_uniq<ColumnRefExpression>(Identifier(included.name), base_table_name->Table()));
 		index_info->column_opclasses.push_back(included.opclass);
 		index_info->column_opclass_options.push_back(std::move(included.opclass_options));
+		index_info->column_orders.push_back(OrderType::ORDER_DEFAULT);
+		index_info->column_null_orders.push_back(OrderByNullType::ORDER_DEFAULT);
+	}
+	if (sorted_options) {
+		index_info->sort_orders = std::move(*sorted_options);
 	}
 	if (where_clause) {
 		index_info->where_clause = std::move(*where_clause);
@@ -85,12 +93,17 @@ PEGTransformerFactory::TransformIndexElement(PEGTransformer &transformer, unique
                                              optional<IndexOpclassDefinition> index_opclass,
                                              const optional<OrderType> &desc_or_asc,
                                              const optional<OrderByNullType> &nulls_first_or_last) {
-	// TODO(Dtenwolde): We currently ignore desc_or_asc and nulls_first_or_last
 	IndexElementDefinition result;
 	result.expr = std::move(expression);
 	if (index_opclass) {
 		result.opclass = std::move(index_opclass->name);
 		result.opclass_options = std::move(index_opclass->options);
+	}
+	if (desc_or_asc) {
+		result.order = *desc_or_asc;
+	}
+	if (nulls_first_or_last) {
+		result.null_order = *nulls_first_or_last;
 	}
 	return result;
 }

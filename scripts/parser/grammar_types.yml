@@ -735,7 +735,6 @@ ExpressionList:
     - OverlayParameters
     - OverlayExpressionList
     - PartitionOptions
-    - SortedOptions
     - PivotUsing
     - WindowClause
     - SetAssignment
@@ -793,6 +792,7 @@ OrderByNodeList:
     - OrderByAll
     - WithinGroupClause
     - GenericCopyOptionParenthesizedExpressionList
+    - SortedOptions
 
 MacroParameterList:
   type: "vector<MacroParameter>"
