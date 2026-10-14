@@ -219,6 +219,8 @@ ExpressionExecutor::FoldResult ExpressionExecutor::EvaluateFoldable(ClientContex
 }
 
 void ExpressionExecutor::Verify(const Expression &expr, Vector &vector, idx_t count) {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	D_ASSERT(expr.GetReturnType().id() == vector.GetType().id());
 	vector.Verify();
 	if (expr.GetVerificationStats()) {
@@ -280,6 +282,7 @@ void ExpressionExecutor::Verify(const Expression &expr, Vector &vector, idx_t co
 			vector.Verify();
 		}
 	}
+#endif
 }
 
 unique_ptr<ExpressionState> ExpressionExecutor::InitializeState(const Expression &expr,
