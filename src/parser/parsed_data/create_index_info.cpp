@@ -11,7 +11,8 @@ CreateIndexInfo::CreateIndexInfo() : CreateInfo(CatalogType::INDEX_ENTRY, Identi
 CreateIndexInfo::CreateIndexInfo(const duckdb::CreateIndexInfo &info)
     : CreateInfo(CatalogType::INDEX_ENTRY), table(info.table), options(info.options), index_type(info.index_type),
       constraint_type(info.constraint_type), column_ids(info.column_ids), column_opclasses(info.column_opclasses),
-      column_opclass_options(info.column_opclass_options), scan_types(info.scan_types), names(info.names) {
+      column_opclass_options(info.column_opclass_options), column_orders(info.column_orders),
+      column_null_orders(info.column_null_orders), scan_types(info.scan_types), names(info.names) {
 	SetQualifiedName(info.GetQualifiedName());
 }
 
@@ -134,6 +135,13 @@ string CreateIndexInfo::ToString() const {
 	result += "(";
 	result += ExpressionsToString();
 	result += ")";
+	if (!sort_orders.empty()) {
+		vector<string> keys;
+		for (auto &order : sort_orders) {
+			keys.push_back(order.ToString());
+		}
+		result += " SORTED BY (" + StringUtil::Join(keys, ", ") + ")";
+	}
 	vector<string> rendered_options;
 	for (auto &opt : options) {
 		if (opt.second.type().id() == LogicalTypeId::BLOB) {
@@ -167,6 +175,9 @@ unique_ptr<CreateInfo> CreateIndexInfo::Copy() const {
 	}
 	for (auto &expr : parsed_expressions) {
 		result->parsed_expressions.push_back(expr->Copy());
+	}
+	for (auto &order : sort_orders) {
+		result->sort_orders.emplace_back(order.type, order.null_order, order.expression->Copy());
 	}
 	if (where_clause) {
 		result->where_clause = where_clause->Copy();
