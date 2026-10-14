@@ -19,6 +19,45 @@
 #include <utility>
 
 namespace duckdb {
+static optional_idx InnerChildIndex(JoinType join_type) {
+	switch (join_type) {
+	case JoinType::LEFT:
+	case JoinType::SINGLE:
+		return 1;
+	case JoinType::RIGHT:
+		return 0;
+	default:
+		return optional_idx();
+	}
+}
+
+void PlanPositions::Build(LogicalOperator &op) {
+	auto position = next_position++;
+	for (auto table_index : op.GetTableIndex()) {
+		auto entry = table_positions.emplace(table_index, optional_idx(position));
+		if (!entry.second) {
+			entry.first->second = optional_idx();
+		}
+	}
+	for (auto &child : op.children) {
+		Build(*child);
+	}
+	subtrees.emplace(op, make_pair(position, next_position));
+}
+
+bool PlanPositions::InSubtree(LogicalOperator &subtree_root, TableIndex table_index) const {
+	auto table = table_positions.find(table_index);
+	if (table == table_positions.end() || !table->second.IsValid()) {
+		return true;
+	}
+	auto subtree = subtrees.find(subtree_root);
+	if (subtree == subtrees.end()) {
+		return true;
+	}
+	auto position = table->second.GetIndex();
+	return position >= subtree->second.first && position < subtree->second.second;
+}
+
 void JoinElimination::OptimizeChildren(LogicalOperator &op, optional_ptr<LogicalOperator> parent, idx_t idx) {
 	if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
 		if (!parent) {
@@ -27,8 +66,17 @@ void JoinElimination::OptimizeChildren(LogicalOperator &op, optional_ptr<Logical
 		D_ASSERT(!pipe_info.join_parent);
 		pipe_info.join_parent = parent;
 		pipe_info.join_index = idx;
-		left_child = CreateChildren();
-		right_child = CreateChildren();
+		auto inner_idx = InnerChildIndex(op.Cast<LogicalComparisonJoin>().join_type);
+		if (inner_idx.IsValid()) {
+			for (auto &binding : op.children[inner_idx.GetIndex()]->GetColumnBindings()) {
+				if (referenced_tables.find(binding.table_index) != referenced_tables.end()) {
+					pipe_info.inner_referenced_above = true;
+					break;
+				}
+			}
+		}
+		left_child = CreateChildren(*op.children[0]);
+		right_child = CreateChildren(*op.children[1]);
 		left_child->OptimizeInternal(std::move(op.children[0]));
 		right_child->OptimizeInternal(std::move(op.children[1]));
 		return;
@@ -140,7 +188,7 @@ void JoinElimination::OptimizeChildren(LogicalOperator &op, optional_ptr<Logical
 	} else {
 		children_root = op;
 		for (auto &child : op.children) {
-			auto child_optimizer = CreateChildren();
+			auto child_optimizer = CreateChildren(*child);
 			child_optimizer->OptimizeInternal(std::move(child));
 			children.emplace_back(std::move(child_optimizer));
 		}
@@ -186,6 +234,7 @@ void JoinElimination::OptimizeChildren(LogicalOperator &op, optional_ptr<Logical
 }
 
 unique_ptr<LogicalOperator> JoinElimination::Optimize(unique_ptr<LogicalOperator> op) {
+	positions.Build(*op);
 	OptimizeInternal(std::move(op));
 	if (pipe_info.join_parent || !children.empty()) {
 		pipe_info.root = TryEliminateJoin();
@@ -196,6 +245,14 @@ unique_ptr<LogicalOperator> JoinElimination::Optimize(unique_ptr<LogicalOperator
 void JoinElimination::OptimizeInternal(unique_ptr<LogicalOperator> op) {
 	pipe_info.root = std::move(op);
 	OptimizeChildren(*pipe_info.root, nullptr, 0);
+	for (auto table_index : references) {
+		auto entry = referenced_tables.find(table_index);
+		D_ASSERT(entry != referenced_tables.end());
+		if (--entry->second == 0) {
+			referenced_tables.erase(entry);
+		}
+	}
+	references.clear();
 }
 
 unique_ptr<LogicalOperator> JoinElimination::TryEliminateJoin() {
@@ -221,23 +278,13 @@ unique_ptr<LogicalOperator> JoinElimination::TryEliminateJoin() {
 	join_op->children[1] = right_child->TryEliminateJoin();
 
 	auto &join = join_op->Cast<LogicalComparisonJoin>();
-	bool is_output_unique = false;
-	idx_t inner_idx = 1;
-	idx_t outer_idx = 0;
-	switch (join.join_type) {
-	case JoinType::LEFT:
-		break;
-	case JoinType::SINGLE: {
-		is_output_unique = true;
-		break;
-	case JoinType::RIGHT:
-		inner_idx = 0;
-		outer_idx = 1;
-		break;
-	}
-	default:
+	auto inner_child_idx = InnerChildIndex(join.join_type);
+	if (!inner_child_idx.IsValid()) {
 		return std::move(pipe_info.root);
 	}
+	bool is_output_unique = join.join_type == JoinType::SINGLE;
+	const idx_t inner_idx = inner_child_idx.GetIndex();
+	const idx_t outer_idx = 1 - inner_idx;
 	auto &inner_child = inner_idx == 0 ? left_child : right_child;
 	if (inner_child->pipe_info.has_filter) {
 		return std::move(pipe_info.root);
@@ -245,12 +292,9 @@ unique_ptr<LogicalOperator> JoinElimination::TryEliminateJoin() {
 	if (join.filter_pushdown) {
 		return std::move(pipe_info.root);
 	}
-	auto inner_bindings = join.children[inner_idx]->GetColumnBindings();
 	// ensure join output columns only contains outer table columns
-	for (auto &binding : inner_bindings) {
-		if (pipe_info.ref_table_ids.find(binding.table_index) != pipe_info.ref_table_ids.end()) {
-			return std::move(pipe_info.root);
-		}
+	if (pipe_info.inner_referenced_above) {
+		return std::move(pipe_info.root);
 	}
 
 	if (inner_idx == 1) {
@@ -319,7 +363,8 @@ bool JoinElimination::ContainDistinctGroup(vector<ColumnBinding> &column_binding
 }
 
 unique_ptr<Expression> JoinElimination::VisitReplace(BoundColumnRefExpression &expr, unique_ptr<Expression> *expr_ptr) {
-	pipe_info.ref_table_ids.insert(expr.Binding().table_index);
+	referenced_tables[expr.Binding().table_index]++;
+	references.push_back(expr.Binding().table_index);
 	return nullptr;
 }
 
