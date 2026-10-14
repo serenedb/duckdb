@@ -6,6 +6,7 @@ add_library_unity(
   natural_sort.cpp
   partition_key_tracker.cpp
   partitioned_sort.cpp
+  presorted_merge.cpp
   sort.cpp
   sort_strategy.cpp
   sorted_run.cpp
