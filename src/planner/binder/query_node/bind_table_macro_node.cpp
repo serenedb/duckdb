@@ -9,6 +9,7 @@
 #include "duckdb/main/config.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
@@ -51,10 +52,16 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	if (macro_def.type == MacroType::SCALAR_MACRO) {
 		auto expr = macro_def.Cast<ScalarMacroFunction>().expression->Copy();
 		if (macro_def.return_names.size() > 1 && expr->GetExpressionClass() == ExpressionClass::SUBQUERY) {
-			node = std::move(expr->Cast<SubqueryExpression>().SubqueryMutable()->node);
-			auto &record = node->Cast<SelectNode>();
-			record.select_list.clear();
-			record.select_list.emplace_back(make_uniq<StarExpression>());
+			auto &record = expr->Cast<SubqueryExpression>().SubqueryMutable()->node->Cast<SelectNode>();
+			auto join = make_uniq<JoinRef>();
+			join->type = JoinType::LEFT;
+			join->left = make_uniq<EmptyTableRef>();
+			join->right = std::move(record.from_table);
+			join->condition = ConstantExpression::Boolean(true);
+			auto select_node = make_uniq<SelectNode>();
+			select_node->select_list.emplace_back(make_uniq<StarExpression>());
+			select_node->from_table = std::move(join);
+			node = std::move(select_node);
 		} else {
 			auto select_node = make_uniq<SelectNode>();
 			expr->SetAlias(macro_def.return_names.empty() ? macro_func.name : Identifier(macro_def.return_names[0]));

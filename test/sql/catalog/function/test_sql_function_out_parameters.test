@@ -59,3 +59,11 @@ statement error
 CREATE FUNCTION bad(a INTEGER, OUT b INTEGER) RETURNS TABLE(c INTEGER) LANGUAGE sql AS 'SELECT 1';
 ----
 OUT and INOUT arguments aren't allowed in TABLE functions
+
+statement ok
+CREATE FUNCTION empty_pair(OUT a INTEGER, OUT b VARCHAR) LANGUAGE sql AS 'SELECT 1, ''x'' WHERE false';
+
+query II
+SELECT a IS NULL, b IS NULL FROM empty_pair();
+----
+true	true
