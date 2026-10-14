@@ -20,6 +20,16 @@ SELECT split(5).c;
 ----
 5
 
+query IT
+SELECT (split(5)).*;
+----
+6	5
+
+query II
+SELECT ((SELECT {'a': 1, 'b': 2})).*;
+----
+1	2
+
 statement ok
 CREATE FUNCTION doubled(a INTEGER, OUT b BIGINT) LANGUAGE sql AS 'SELECT a * 2';
 

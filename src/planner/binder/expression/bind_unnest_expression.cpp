@@ -404,6 +404,7 @@ BindResult SelectBinder::BindStar(StarExpression &expr, idx_t depth, bool root_e
 	if (!expr.Expression() || expr.IsColumns() || !root_expression) {
 		return ExpressionBinder::BindStar(expr, depth, root_expression);
 	}
+	auto parsed = expr.Expression()->Copy();
 	ErrorData error;
 	auto struct_expr = BindChild(expr.ExpressionMutable(), depth, error);
 	if (error.HasError()) {
@@ -413,7 +414,27 @@ BindResult SelectBinder::BindStar(StarExpression &expr, idx_t depth, bool root_e
 		return BindResult(BinderException(
 		    expr, "Cannot extract field from expression \"%s\" because it is not a struct", expr.ToString()));
 	}
-	return BindResult(ExpandStructFields(context, std::move(struct_expr), 1, false));
+	if (!struct_expr->HasSubquery()) {
+		return BindResult(ExpandStructFields(context, std::move(struct_expr), 1, false));
+	}
+	const auto type = struct_expr->GetReturnType();
+	const bool tuple = type.id() == LogicalTypeId::TUPLE;
+	const auto &children = StructType::GetChildTypes(type);
+	vector<unique_ptr<Expression>> fields;
+	for (idx_t i = 0; i < children.size(); i++) {
+		auto source = std::move(struct_expr);
+		if (!source) {
+			auto copy = parsed->Copy();
+			source = BindChild(copy, depth, error);
+			if (error.HasError()) {
+				return BindResult(std::move(error));
+			}
+		}
+		fields.push_back(tuple ? CreateBoundStructExtractIndex(context, std::move(source), i + 1)
+		                       : CreateBoundStructExtract(context, std::move(source),
+		                                                  {children[i].first.GetIdentifierName()}, false));
+	}
+	return BindResult(make_uniq<BoundExpandedExpression>(std::move(fields)));
 }
 
 BindResult GroupBinder::BindUnnest(FunctionExpression &function, idx_t depth, bool root_expression) {
