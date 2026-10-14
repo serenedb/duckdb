@@ -7,6 +7,7 @@
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/default/default_types.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
@@ -115,6 +116,22 @@ static bool IsAssignmentCast(ClientContext &context, const LogicalType &source, 
 		return to == LogicalTypeId::INTERVAL || to == LogicalTypeId::TIME_TZ;
 	}
 	return (from == LogicalTypeId::TIME_TZ || from == LogicalTypeId::INTERVAL) && to == LogicalTypeId::TIME;
+}
+
+static LogicalType WithoutTypmod(const LogicalType &type) {
+	if (type.HasAlias()) {
+		return type;
+	}
+	if (type.id() == LogicalTypeId::DECIMAL) {
+		return DefaultTypeGenerator::TryDefaultBind("decimal", {});
+	}
+	if (type.id() == LogicalTypeId::LIST) {
+		return LogicalType::LIST(WithoutTypmod(ListType::GetChildType(type)));
+	}
+	if (type.id() == LogicalTypeId::ARRAY) {
+		return LogicalType::ARRAY(WithoutTypmod(ArrayType::GetChildType(type)), ArrayType::GetSize(type));
+	}
+	return type;
 }
 
 static unique_ptr<CommonTableExpressionInfo> MakeTriggerValidationCTE(const TableCatalogEntry &table) {
@@ -733,6 +750,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				// so downstream consumers (pg_proc, serialization) see real IDs.
 				for (auto &rt : ret_types) {
 					BindLogicalType(rt);
+					rt = WithoutTypmod(rt);
 				}
 				// PG-compat: RETURNS VOID functions evaluate to a single NULL row
 				// regardless of body. Replace the stored body with a NULL constant
@@ -826,6 +844,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				auto &declared = function->return_types;
 				for (auto &dt : declared) {
 					dummy_binder->BindLogicalType(dt);
+					dt = WithoutTypmod(dt);
 				}
 				auto bound = dummy_binder->Bind(*query_node);
 				if (should_create_dependencies && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
