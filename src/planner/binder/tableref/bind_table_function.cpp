@@ -201,9 +201,11 @@ static Identifier ApplyPostgresSetofAliasCompatibility(const BaseTableFunction &
 
 static Identifier ApplyPostgresBaseResultAlias(const MacroFunction &definition, const TableFunctionRef &ref,
                                                vector<Identifier> &names) {
-	if (definition.return_types.size() != 1 || !definition.return_names.empty() || ref.alias.empty() ||
-	    !ref.column_name_alias.empty() || names.empty()) {
+	if (definition.return_types.size() != 1 || ref.alias.empty() || !ref.column_name_alias.empty() || names.empty()) {
 		return Identifier();
+	}
+	if (!definition.return_names.empty()) {
+		return ref.alias;
 	}
 	auto original_name = names[0];
 	names[0] = ref.alias;
