@@ -87,3 +87,18 @@ SELECT relname, grantee, prtype FROM (SELECT relname, (acl_items(relacl)).* FROM
 t1	alice	r
 t1	bob	w
 t3	carol	a
+
+query II
+SELECT (NULL::STRUCT(a INTEGER, b INTEGER)).*;
+----
+NULL	NULL
+
+query II
+SELECT (CASE WHEN 1 = 0 THEN {'a': 1, 'b': 2} END).*;
+----
+NULL	NULL
+
+query II
+SELECT unnest(NULL::STRUCT(a INTEGER, b INTEGER));
+----
+NULL	NULL

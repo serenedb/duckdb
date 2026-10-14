@@ -27,7 +27,7 @@ static unique_ptr<Expression> CreateBoundStructExtract(ClientContext &context, u
 	vector<unique_ptr<Expression>> arguments;
 	arguments.push_back(std::move(expr));
 	arguments.push_back(make_uniq<BoundConstantExpression>(Value(key_path.back())));
-	auto result = BindBuiltinScalarFunction(context, StructExtractFun::Name, std::move(arguments));
+	auto result = BindBuiltinScalarExpression(context, StructExtractFun::Name, std::move(arguments));
 
 	if (keep_parent_names) {
 		auto alias = StringUtil::Join(key_path, ".");
@@ -46,7 +46,7 @@ static unique_ptr<Expression> CreateBoundStructExtractIndex(ClientContext &conte
 	vector<unique_ptr<Expression>> arguments;
 	arguments.push_back(std::move(expr));
 	arguments.push_back(make_uniq<BoundConstantExpression>(Value::BIGINT(int64_t(key))));
-	auto result = BindBuiltinScalarFunction(context, StructExtractFun::Name, std::move(arguments));
+	auto result = BindBuiltinScalarExpression(context, StructExtractFun::Name, std::move(arguments));
 
 	result->SetAlias(Identifier("element" + to_string(key)));
 	return std::move(result);
