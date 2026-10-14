@@ -785,7 +785,9 @@ Value Value::STRUCT(const LogicalType &type, vector<Value> struct_values) {
 	Value result;
 	auto child_types = StructType::GetChildTypes(type);
 	for (size_t i = 0; i < struct_values.size(); i++) {
-		struct_values[i] = struct_values[i].DefaultCastAs(child_types[i].second);
+		if (struct_values[i].type() != child_types[i].second) {
+			struct_values[i] = struct_values[i].DefaultCastAs(child_types[i].second);
+		}
 	}
 	result.value_info_ = make_shared_ptr<NestedValueInfo>(std::move(struct_values));
 	result.type_ = type;
@@ -873,11 +875,14 @@ Value Value::MAP(const LogicalType &key_type, const LogicalType &value_type, vec
 		struct_types.emplace_back(make_pair("key", key_type));
 		struct_types.emplace_back(make_pair("value", value_type));
 
-		auto key = keys[i].DefaultCastAs(key_type);
+		auto &key = keys[i];
+		if (key.type() != key_type) {
+			key = key.DefaultCastAs(key_type);
+		}
 		MapKeyCheck(unique_keys, key);
 
-		new_children.push_back(key);
-		new_children.push_back(values[i]);
+		new_children.push_back(std::move(key));
+		new_children.push_back(std::move(values[i]));
 		auto struct_type = LogicalType::STRUCT(std::move(struct_types));
 		values[i] = Value::STRUCT(struct_type, std::move(new_children));
 	}
@@ -928,7 +933,9 @@ Value Value::LIST(const LogicalType &child_type, vector<Value> values) {
 	result.type_ = LogicalType::LIST(child_type);
 	result.is_null = false;
 	for (auto &val : values) {
-		val = val.DefaultCastAs(child_type);
+		if (val.type() != child_type) {
+			val = val.DefaultCastAs(child_type);
+		}
 	}
 	result.value_info_ = make_shared_ptr<NestedValueInfo>(std::move(values));
 	return result;
@@ -947,7 +954,9 @@ Value Value::ARRAY(const LogicalType &child_type, vector<Value> values) {
 	Value result;
 	result.type_ = LogicalType::ARRAY(child_type, values.size());
 	for (auto &val : values) {
-		val = val.DefaultCastAs(child_type);
+		if (val.type() != child_type) {
+			val = val.DefaultCastAs(child_type);
+		}
 	}
 	result.value_info_ = make_shared_ptr<NestedValueInfo>(std::move(values));
 	result.is_null = false;
@@ -1726,6 +1735,9 @@ hash_t Value::Hash() const {
 string Value::ToString() const {
 	if (IsNull()) {
 		return "NULL";
+	}
+	if (type_ == LogicalType::VARCHAR) {
+		return StringValue::Get(*this);
 	}
 	return StringValue::Get(DefaultCastAs(LogicalType::VARCHAR));
 }
