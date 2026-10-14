@@ -201,9 +201,17 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 
 	// replace current expression with stored macro expression
 	// special case: If this is a window function, then we need to return a window expression
-	if (expr->GetExpressionClass() == ExpressionClass::WINDOW) {
+	const bool window = expr->GetExpressionClass() == ExpressionClass::WINDOW;
+	const bool distinct = !window && function.Distinct();
+	unique_ptr<ParsedExpression> filter;
+	unique_ptr<OrderModifier> order_by;
+	Identifier function_name;
+	if (window) {
 		UnfoldWindowMacroExpression(expr, macro_def);
 	} else {
+		filter = std::move(function.FilterMutable());
+		order_by = std::move(function.OrderByMutable());
+		function_name = function.FunctionName();
 		expr = macro_def.expression->Copy();
 	}
 
@@ -215,6 +223,37 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	// now replace the parameters
 	vector<identifier_set_t> lambda_params;
 	ReplaceMacroParameters(expr, lambda_params);
+
+	const bool ordered = order_by && !order_by->orders.empty();
+	if (!distinct && !filter && !ordered) {
+		return macro_def;
+	}
+	vector<reference<unique_ptr<ParsedExpression>>> aggregates;
+	FindAggregateExprs(expr, aggregates);
+	if (aggregates.empty() || (distinct && aggregates.size() != 1)) {
+		throw InvalidInputException("Function %s is a %s. \"DISTINCT\", \"FILTER\", and \"ORDER BY\" are only "
+		                            "applicable to window and aggregate functions.",
+		                            function_name, CatalogTypeToString(CatalogType::MACRO_ENTRY));
+	}
+	for (auto &aggregate : aggregates) {
+		auto &target = aggregate.get()->Cast<FunctionExpression>();
+		target.DistinctMutable() = target.Distinct() || distinct;
+		if (filter) {
+			auto combined = filter->Copy();
+			if (target.Filter()) {
+				combined = make_uniq<ConjunctionExpression>(ExpressionType::CONJUNCTION_AND,
+				                                            std::move(target.FilterMutable()), std::move(combined));
+			}
+			target.FilterMutable() = std::move(combined);
+		}
+		if (ordered) {
+			auto prefix = order_by->Copy();
+			auto &call_orders = prefix->Cast<OrderModifier>().orders;
+			auto &orders = target.OrderByMutable()->orders;
+			orders.insert(orders.begin(), std::make_move_iterator(call_orders.begin()),
+			              std::make_move_iterator(call_orders.end()));
+		}
+	}
 	return macro_def;
 }
 
