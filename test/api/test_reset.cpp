@@ -84,6 +84,7 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 	    {"filter_reorder", {"safe"}},
 	    {"force_compression", {"uncompressed", "uncompressed"}},
 	    {"fsync_mode", {"NONE"}},
+	    {"integer_overflow", {"WRAP"}},
 	    {"home_directory", {"test"}},
 	    {"allow_extensions_metadata_mismatch", {"true"}},
 	    {"extension_directory", {"test"}},

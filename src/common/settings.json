@@ -1125,6 +1125,13 @@
         "default_value": "false"
     },
     {
+        "name": "integer_overflow",
+        "description": "What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP keeps the low bits of the result (two's complement wraparound).",
+        "type": "ENUM<IntegerOverflowMode>",
+        "default_scope": "local",
+        "default_value": "ERROR"
+    },
+    {
         "name": "lambda_syntax",
         "description": "Deprecated setting. Configures the use of the deprecated single arrow operator (->) for lambda functions.",
         "type": "ENUM<LambdaSyntax>",
