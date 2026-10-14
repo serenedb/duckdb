@@ -18,6 +18,7 @@
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/expression/positional_reference_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/result_modifier.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
@@ -340,13 +341,12 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 			inner_stmt->node = std::move(table_macro.query_node);
 			if (table_macro.return_names.size() > 1) {
 				vector<unique_ptr<ParsedExpression>> fields;
-				const Identifier record_alias("result");
-				auto body_ref = make_uniq<SubqueryRef>(std::move(inner_stmt), record_alias);
-				for (auto &name : table_macro.return_names) {
-					auto field = make_uniq<ColumnRefExpression>(Identifier(name), record_alias);
-					field->SetAlias(Identifier(name));
+				auto body_ref = make_uniq<SubqueryRef>(std::move(inner_stmt), Identifier("result"));
+				for (idx_t i = 0; i < table_macro.return_names.size(); i++) {
+					auto field = make_uniq<PositionalReferenceExpression>(i + 1);
+					field->SetAlias(Identifier(table_macro.return_names[i]));
 					fields.emplace_back(std::move(field));
-					body_ref->column_name_alias.emplace_back(name);
+					body_ref->column_name_alias.emplace_back(table_macro.return_names[i]);
 				}
 				auto record = make_uniq<SelectNode>();
 				record->select_list.emplace_back(
