@@ -86,6 +86,16 @@ CREATE FUNCTION bad(a INTEGER, OUT b INTEGER) RETURNS TABLE(c INTEGER) LANGUAGE 
 ----
 OUT and INOUT arguments aren't allowed in TABLE functions
 
+statement error
+CREATE FUNCTION too_wide(OUT a INTEGER, OUT b INTEGER) LANGUAGE sql AS 'SELECT 1, 2, 3';
+----
+Final statement returns too many columns
+
+statement error
+CREATE FUNCTION too_narrow(OUT a INTEGER, OUT b INTEGER) LANGUAGE sql AS 'SELECT 1';
+----
+Final statement returns too few columns
+
 statement ok
 CREATE FUNCTION empty_pair(OUT a INTEGER, OUT b VARCHAR) LANGUAGE sql AS 'SELECT 1, ''x'' WHERE false';
 

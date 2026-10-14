@@ -37,6 +37,7 @@
 #include "duckdb/parser/common_table_expression_info.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/planner/binder.hpp"
@@ -746,6 +747,16 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 						    *query_node, [&dummy_binder](unique_ptr<ParsedExpression> &child) {
 							    ExpressionBinder::QualifyColumnNames(*dummy_binder, child);
 						    });
+						if (ret_types.size() > 1) {
+							auto &record = query_node->Cast<SelectNode>().from_table->Cast<SubqueryRef>();
+							auto body = record.subquery->node->Copy();
+							const auto columns = CreateBinder(context, this)->Bind(*body).types.size();
+							if (columns != ret_types.size()) {
+								throw BinderException("return type mismatch in function declared to return record\n"
+								                      "DETAIL: Final statement returns too %s columns.",
+								                      columns > ret_types.size() ? "many" : "few");
+							}
+						}
 						auto bound = dummy_binder->Bind(*query_node);
 						const auto resolved = function->ResultType();
 						const bool is_void_return =
