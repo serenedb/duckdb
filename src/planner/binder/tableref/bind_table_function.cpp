@@ -502,6 +502,13 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 			auto select = make_uniq<SelectNode>();
 			select->select_list.push_back(ref.function->Copy());
 			select->from_table = make_uniq<EmptyTableRef>();
+			auto probe = select->Copy();
+			const auto types = Binder::CreateBinder(context, this)->BindNode(*probe).types;
+			if (types.size() == 1 && types[0].id() == LogicalTypeId::STRUCT) {
+				auto fields = make_uniq<StarExpression>();
+				fields->ExpressionMutable() = std::move(select->select_list[0]);
+				select->select_list[0] = std::move(fields);
+			}
 			auto subquery = make_uniq<SelectStatement>();
 			subquery->node = std::move(select);
 			SubqueryRef subquery_ref(std::move(subquery), ref.alias.empty() ? fexpr.FunctionName() : ref.alias);

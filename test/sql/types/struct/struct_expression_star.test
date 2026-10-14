@@ -102,3 +102,18 @@ query II
 SELECT unnest(NULL::STRUCT(a INTEGER, b INTEGER));
 ----
 NULL	NULL
+
+query II
+SELECT * FROM struct_pack(a := 1, b := 'x');
+----
+1	x
+
+query I
+SELECT s.b FROM struct_pack(a := 1, b := 'x') AS s;
+----
+x
+
+query I
+SELECT * FROM abs(-3);
+----
+3
