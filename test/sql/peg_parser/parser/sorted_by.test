@@ -1,0 +1,20 @@
+# name: test/sql/peg_parser/parser/sorted_by.test
+# description: SORTED BY keys with ASC/DESC and NULLS FIRST/LAST in CREATE TABLE and CREATE INDEX
+# group: [parser]
+
+require autocomplete
+
+statement ok
+CALL check_peg_parser($TEST_PEG_PARSER$CREATE TABLE tbl (i INTEGER, j VARCHAR) SORTED BY (i DESC NULLS FIRST, j)$TEST_PEG_PARSER$);
+
+statement ok
+CALL check_peg_parser($TEST_PEG_PARSER$CREATE TABLE tbl (i INTEGER) SORTED BY (i ASC NULLS LAST) PARTITIONED BY (i)$TEST_PEG_PARSER$);
+
+statement ok
+CALL check_peg_parser($TEST_PEG_PARSER$CREATE TABLE tbl PARTITIONED BY (i) SORTED BY (i DESC) AS SELECT 1 AS i$TEST_PEG_PARSER$);
+
+statement ok
+CALL check_peg_parser($TEST_PEG_PARSER$CREATE INDEX idx ON tbl USING inverted (j) SORTED BY (i DESC NULLS FIRST, k) WITH (a = 1)$TEST_PEG_PARSER$);
+
+statement ok
+CALL check_peg_parser($TEST_PEG_PARSER$CREATE INDEX idx ON tbl (i DESC NULLS LAST, j)$TEST_PEG_PARSER$);

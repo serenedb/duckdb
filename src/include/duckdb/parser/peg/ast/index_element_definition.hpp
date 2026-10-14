@@ -1,5 +1,6 @@
 #pragma once
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/enums/order_type.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
 
@@ -16,6 +17,8 @@ struct IndexElementDefinition {
 	unique_ptr<ParsedExpression> expr;
 	string opclass;
 	std::optional<case_insensitive_map_t<Value>> opclass_options;
+	OrderType order = OrderType::ORDER_DEFAULT;
+	OrderByNullType null_order = OrderByNullType::ORDER_DEFAULT;
 };
 
 struct IncludedColumnDefinition {
