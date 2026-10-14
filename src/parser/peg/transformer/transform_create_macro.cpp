@@ -19,6 +19,7 @@
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/positional_reference_expression.hpp"
+#include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/result_modifier.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
@@ -180,6 +181,46 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 	}
 }
 
+static const Identifier &TypeName(const LogicalType &type) {
+	return UnboundType::GetTypeExpression(type)->Cast<TypeExpression>().GetTypeName();
+}
+
+static LogicalTypeId ResultTypeId(const LogicalType &type) {
+	if (type.id() == LogicalTypeId::TIMESTAMP_SEC || type.id() == LogicalTypeId::TIMESTAMP_MS ||
+	    type.id() == LogicalTypeId::TIMESTAMP_NS) {
+		return LogicalTypeId::TIMESTAMP;
+	}
+	return type.id();
+}
+
+static bool IsSameResultType(const LogicalType &declared, const LogicalType &output) {
+	if (declared.IsUnbound() || output.IsUnbound()) {
+		return declared.IsUnbound() && output.IsUnbound() && TypeName(declared) == TypeName(output);
+	}
+	if (ResultTypeId(declared) != ResultTypeId(output) || declared.GetAlias() != output.GetAlias()) {
+		return false;
+	}
+	if (declared.id() == LogicalTypeId::LIST) {
+		return IsSameResultType(ListType::GetChildType(declared), ListType::GetChildType(output));
+	}
+	return declared.id() != LogicalTypeId::ARRAY ||
+	       IsSameResultType(ArrayType::GetChildType(declared), ArrayType::GetChildType(output));
+}
+
+static void CheckOutputResultType(const LogicalType &declared, const vector<LogicalType> &output_types) {
+	if (output_types.size() > 1) {
+		if (!declared.IsUnbound() || TypeName(declared) != "record") {
+			throw ParserException("function result type must be record because of OUT parameters");
+		}
+		return;
+	}
+	const auto output = UnboundType::TryDefaultBind(output_types[0]);
+	if (!IsSameResultType(UnboundType::TryDefaultBind(declared), output)) {
+		throw ParserException("function result type must be %s because of OUT parameters",
+		                      StringUtil::Lower(output.ToString()));
+	}
+}
+
 unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTransformer &transformer,
                                                                           ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -264,6 +305,9 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 		} else {
 			if (!macro_function->return_names.empty()) {
 				throw ParserException("OUT and INOUT arguments aren't allowed in TABLE functions");
+			}
+			if (!macro_function->return_types.empty()) {
+				CheckOutputResultType(macro_function->return_types[0], output_types);
 			}
 			macro_function->return_names = std::move(output_names);
 			macro_function->return_types = std::move(output_types);

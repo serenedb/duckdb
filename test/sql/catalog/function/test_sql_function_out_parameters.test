@@ -103,3 +103,37 @@ query II
 SELECT a IS NULL, b IS NULL FROM empty_pair();
 ----
 true	true
+
+statement error
+CREATE FUNCTION out_as_integer(OUT a INTEGER, OUT b INTEGER) RETURNS INTEGER LANGUAGE sql AS 'SELECT 1, 2';
+----
+function result type must be record because of OUT parameters
+
+statement error
+CREATE FUNCTION out_as_setof(OUT a INTEGER, OUT b INTEGER) RETURNS SETOF INTEGER LANGUAGE sql AS 'SELECT 1, 2';
+----
+function result type must be record because of OUT parameters
+
+statement error
+CREATE FUNCTION out_as_varchar(OUT a INTEGER) RETURNS VARCHAR LANGUAGE sql AS 'SELECT 1';
+----
+function result type must be integer because of OUT parameters
+
+statement error
+CREATE FUNCTION out_as_record(OUT a INTEGER) RETURNS record LANGUAGE sql AS 'SELECT 1';
+----
+function result type must be integer because of OUT parameters
+
+statement ok
+CREATE FUNCTION record_pair(OUT a INTEGER, OUT b INTEGER) RETURNS record LANGUAGE sql AS 'SELECT 1, 2';
+
+statement ok
+CREATE FUNCTION same_integer(OUT a INT4) RETURNS INTEGER LANGUAGE sql AS 'SELECT 3';
+
+statement ok
+CREATE FUNCTION any_scale(OUT a DECIMAL(4,2)) RETURNS DECIMAL LANGUAGE sql AS 'SELECT 1.5';
+
+query IIII
+SELECT * FROM record_pair(), same_integer(), any_scale();
+----
+1	2	3	1.5
