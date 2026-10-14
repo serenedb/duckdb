@@ -103,3 +103,35 @@ query IT
 SELECT * FROM pair_of(3);
 ----
 3	3
+
+statement ok
+CREATE FUNCTION wide_numeric() RETURNS DECIMAL(4,2) LANGUAGE sql AS 'SELECT 12345';
+
+query I
+SELECT wide_numeric();
+----
+12345.000
+
+statement ok
+CREATE FUNCTION wide_numerics() RETURNS SETOF DECIMAL(3,1) LANGUAGE sql AS 'SELECT 12345';
+
+query I
+SELECT * FROM wide_numerics();
+----
+12345.000
+
+statement ok
+CREATE FUNCTION wide_numeric_list() RETURNS DECIMAL(4,2)[] LANGUAGE sql AS 'SELECT [123.456]';
+
+query I
+SELECT wide_numeric_list();
+----
+[123.456]
+
+statement ok
+CREATE FUNCTION wide_out(OUT a DECIMAL(4,2), OUT b INTEGER) LANGUAGE sql AS 'SELECT 123.456, 1';
+
+query I
+SELECT wide_out();
+----
+{'a': 123.456, 'b': 1}
