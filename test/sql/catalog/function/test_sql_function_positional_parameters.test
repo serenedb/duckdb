@@ -100,3 +100,32 @@ query I
 SELECT count_named_below('c');
 ----
 2
+
+statement ok
+CREATE FUNCTION numeric_kind(numeric) RETURNS VARCHAR LANGUAGE sql AS 'SELECT typeof($1)';
+
+query T
+SELECT numeric_kind(5);
+----
+DECIMAL(18,3)
+
+statement ok
+CREATE TYPE feeling AS ENUM ('sad', 'ok');
+
+statement ok
+CREATE FUNCTION feeling_kind(feeling) RETURNS VARCHAR RETURN typeof($1);
+
+query T
+SELECT feeling_kind('ok'::feeling);
+----
+ENUM('sad', 'ok')
+
+statement error
+SELECT feeling_kind('ok');
+----
+does not support the supplied arguments
+
+statement error
+CREATE FUNCTION missing_kind(no_such_type) RETURNS VARCHAR RETURN typeof($1);
+----
+no_such_type
