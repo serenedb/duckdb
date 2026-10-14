@@ -59,6 +59,9 @@ void SetOpAliasGatherer::GatherAliases(BoundStatement &stmt, const vector<idx_t>
 	auto &select_list = stmt.extra_info.original_expressions;
 	for (idx_t i = 0; i < select_list.size(); i++) {
 		auto &expr = select_list[i];
+		if (!expr) {
+			continue;
+		}
 		idx_t index = reorder_idx[i];
 		// now check if the node is already in the set of expressions
 		auto expr_entry = bind_state.projection_map.find(*expr);

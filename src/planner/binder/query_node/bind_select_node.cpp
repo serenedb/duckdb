@@ -569,6 +569,8 @@ BoundStatement Binder::BindSelectNode(SelectNode &statement, BoundStatement from
 	statement.select_list = std::move(new_select_list);
 
 	auto &bind_state = result.bind_state;
+	const bool has_modifiers = !statement.modifiers.empty();
+	vector<bool> has_alias(statement.select_list.size(), false);
 	for (idx_t i = 0; i < statement.select_list.size(); i++) {
 		auto &expr = statement.select_list[i];
 		result.names.emplace_back(expr->GetColumnName());
@@ -576,9 +578,16 @@ BoundStatement Binder::BindSelectNode(SelectNode &statement, BoundStatement from
 		if (!expr->GetAlias().empty()) {
 			bind_state.alias_map[expr->GetAlias()] = i;
 			result.names[i] = expr->GetAlias();
+			has_alias[i] = true;
 		}
-		bind_state.projection_map[*expr] = i;
-		bind_state.original_expressions.push_back(expr->Copy());
+		if (has_modifiers) {
+			bind_state.projection_map[*expr] = i;
+		}
+		if (has_modifiers || has_alias[i] || !expr->HasSubquery()) {
+			bind_state.original_expressions.push_back(expr->Copy());
+		} else {
+			bind_state.original_expressions.push_back(nullptr);
+		}
 	}
 	result.column_count = statement.select_list.size();
 
@@ -747,7 +756,7 @@ BoundStatement Binder::BindSelectNode(SelectNode &statement, BoundStatement from
 			continue;
 		}
 
-		if (expr->IsVolatile()) {
+		if (i < has_alias.size() && has_alias[i] && expr->IsVolatile()) {
 			bind_state.SetExpressionIsVolatile(i);
 		}
 		if (expr->HasSubquery()) {

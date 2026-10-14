@@ -442,8 +442,8 @@ static bool PerformDelimOnType(const LogicalType &type) {
 }
 
 static bool PerformDuplicateElimination(Binder &binder, CorrelatedColumns &correlated_columns,
-                                        optional_ptr<LogicalOperator> dependent_plan = nullptr) {
-	bool perform_delim = !dependent_plan || !dependent_plan->HasVolatileExpressions();
+                                        bool dependent_plan_is_volatile) {
+	bool perform_delim = !dependent_plan_is_volatile;
 	if (perform_delim && !Settings::Get<EnableOptimizerSetting>(binder.context)) {
 		// if optimizations are disabled we always do a delim join
 		return true;
@@ -475,9 +475,10 @@ static unique_ptr<Expression> PlanCorrelatedSubquery(Binder &binder, BoundSubque
 	// Preserve the existing duplicate-elimination path for deterministic ANY queries. Volatile ANY queries require
 	// row identity for the same reason as other correlated subqueries: sharing one result between equal outer values
 	// changes their evaluation cardinality.
-	bool perform_delim = expr.GetSubqueryType() == SubqueryType::ANY && !plan->HasVolatileExpressions()
+	const bool plan_is_volatile = plan->HasVolatileExpressions();
+	bool perform_delim = expr.GetSubqueryType() == SubqueryType::ANY && !plan_is_volatile
 	                         ? true
-	                         : PerformDuplicateElimination(binder, correlated_columns, plan);
+	                         : PerformDuplicateElimination(binder, correlated_columns, plan_is_volatile);
 	D_ASSERT(expr.IsCorrelated());
 	// correlated subquery
 	// for a more in-depth explanation of this code, read the paper "Unnesting Arbitrary Subqueries"
@@ -810,7 +811,7 @@ unique_ptr<LogicalOperator> Binder::PlanLateralJoin(unique_ptr<LogicalOperator> 
 		}
 	}
 
-	auto perform_delim = PerformDuplicateElimination(*this, correlated, right);
+	auto perform_delim = PerformDuplicateElimination(*this, correlated, right->HasVolatileExpressions());
 	auto delim_join = CreateDuplicateEliminatedJoin(correlated, join_type, std::move(left), perform_delim);
 
 	// Store all information required to perform UNNESTING later.
