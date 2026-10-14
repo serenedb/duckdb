@@ -63,3 +63,43 @@ query T
 SELECT * FROM moods('ok');
 ----
 ok
+
+statement ok
+CREATE FUNCTION as_text_list() RETURNS VARCHAR[] LANGUAGE sql AS 'SELECT [1, 2]';
+
+query T
+SELECT as_text_list();
+----
+[1, 2]
+
+statement ok
+CREATE FUNCTION rounded_list() RETURNS INTEGER[] LANGUAGE sql AS 'SELECT [1.6]';
+
+query T
+SELECT rounded_list();
+----
+[2]
+
+statement ok
+CREATE FUNCTION time_as_interval() RETURNS INTERVAL LANGUAGE sql AS 'SELECT TIME ''01:02:03''';
+
+query T
+SELECT time_as_interval();
+----
+01:02:03
+
+statement ok
+CREATE FUNCTION in_seconds() RETURNS TIMESTAMP_S LANGUAGE sql AS 'SELECT TIMESTAMP ''2024-01-01 10:00:00''';
+
+query T
+SELECT in_seconds();
+----
+2024-01-01 10:00:00
+
+statement ok
+CREATE FUNCTION pair_of(x INTEGER, OUT b BIGINT, OUT c VARCHAR) LANGUAGE sql RETURN (x, x);
+
+query IT
+SELECT * FROM pair_of(3);
+----
+3	3

@@ -70,8 +70,12 @@ static bool IsTimestampType(const LogicalTypeId type) {
 	       type == LogicalTypeId::TIMESTAMP_NS;
 }
 
+static bool IsRecordType(const LogicalType &type) {
+	return type.id() == LogicalTypeId::STRUCT || type.id() == LogicalTypeId::TUPLE;
+}
+
 static bool IsAssignmentCast(ClientContext &context, const LogicalType &source, const LogicalType &target) {
-	if (source.id() == LogicalTypeId::STRUCT && target.id() == LogicalTypeId::STRUCT) {
+	if (IsRecordType(source) && IsRecordType(target)) {
 		auto &source_fields = StructType::GetChildTypes(source);
 		auto &target_fields = StructType::GetChildTypes(target);
 		if (source_fields.size() != target_fields.size()) {
@@ -84,21 +88,31 @@ static bool IsAssignmentCast(ClientContext &context, const LogicalType &source, 
 		}
 		return true;
 	}
+	if (source.id() == LogicalTypeId::LIST && target.id() == LogicalTypeId::LIST) {
+		return IsAssignmentCast(context, ListType::GetChildType(source), ListType::GetChildType(target));
+	}
+	if (source.id() == LogicalTypeId::ARRAY && target.id() == LogicalTypeId::ARRAY) {
+		return IsAssignmentCast(context, ArrayType::GetChildType(source), ArrayType::GetChildType(target));
+	}
 	if (CastFunctionSet::ImplicitCastCost(context, source, target) >= 0) {
 		return true;
 	}
 	if (source.IsNumeric() && target.IsNumeric()) {
 		return true;
 	}
-	if (target.id() == LogicalTypeId::VARCHAR && !target.HasAlias()) {
+	if (target.id() == LogicalTypeId::VARCHAR && (!target.HasAlias() || target.GetAlias() == "name")) {
 		return true;
 	}
 	const auto from = source.id();
 	const auto to = target.id();
 	if (IsTimestampType(from)) {
+		const bool zoned = from == LogicalTypeId::TIMESTAMP_TZ;
 		return to == LogicalTypeId::DATE || to == LogicalTypeId::TIME ||
-		       (from == LogicalTypeId::TIMESTAMP_TZ &&
-		        (to == LogicalTypeId::TIMESTAMP || to == LogicalTypeId::TIME_TZ));
+		       (IsTimestampType(to) && zoned == (to == LogicalTypeId::TIMESTAMP_TZ)) ||
+		       (zoned && (to == LogicalTypeId::TIMESTAMP || to == LogicalTypeId::TIME_TZ));
+	}
+	if (from == LogicalTypeId::TIME) {
+		return to == LogicalTypeId::INTERVAL || to == LogicalTypeId::TIME_TZ;
 	}
 	return (from == LogicalTypeId::TIME_TZ || from == LogicalTypeId::INTERVAL) && to == LogicalTypeId::TIME;
 }
