@@ -208,6 +208,7 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 	};
 	apply_decorators_at(1);
 	apply_decorators_at(3);
+	const bool sql_body = decorator_info.has_language || body_choice.Name() != "AsMacroBody";
 
 	if (!parameters.empty()) {
 		bool default_value_found = false;
@@ -216,7 +217,7 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 		vector<LogicalType> output_types;
 		for (auto &parameter : parameters) {
 			if (parameter.ambiguous_bare_type) {
-				if (decorator_info.has_language) {
+				if (sql_body) {
 					auto pos_name = parameter.mode == 'o'
 					                    ? Identifier("column" + std::to_string(output_names.size() + 1))
 					                    : Identifier("$" + std::to_string(macro_function->parameters.size() + 1));
@@ -317,7 +318,7 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 	// AFTER any LANGUAGE-SQL rewrite above (which may flip scalar -> table macro) and BEFORE the scalar-shoehorn wrap
 	// below.
 	ApplyPositionalParamRewrite(*macro_function);
-	if (decorator_info.has_language) {
+	if (sql_body) {
 		transformer.ClearParameters();
 	}
 
