@@ -3712,6 +3712,15 @@ static void CollectScanEstimates(duckdb::ClientContext &context, duckdb::Logical
 	}
 }
 
+static bool StdinIsPipe() {
+#if defined(_WIN32) || defined(WIN32)
+	return GetFileType(GetStdHandle(STD_INPUT_HANDLE)) == FILE_TYPE_PIPE;
+#else
+	struct stat info;
+	return fstat(STDIN_FILENO, &info) == 0 && (S_ISFIFO(info.st_mode) || S_ISSOCK(info.st_mode));
+#endif
+}
+
 void ShellState::PrintQueryEstimate(const string &sql, const duckdb::SQLStatement &statement) {
 	switch (statement.type) {
 	case duckdb::StatementType::SELECT_STATEMENT:
@@ -3723,6 +3732,9 @@ void ShellState::PrintQueryEstimate(const string &sql, const duckdb::SQLStatemen
 		break;
 	default:
 		// nothing to estimate
+		return;
+	}
+	if (!readStdin && StdinIsPipe()) {
 		return;
 	}
 	try {
