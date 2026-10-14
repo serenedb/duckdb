@@ -31,6 +31,14 @@ SELECT ((SELECT {'a': 1, 'b': 2})).*;
 1	2
 
 statement ok
+CREATE FUNCTION next_pair(x INTEGER, OUT a INTEGER, OUT b INTEGER) LANGUAGE sql RETURN (x, x + 1);
+
+query II
+SELECT a, b FROM next_pair(1);
+----
+1	2
+
+statement ok
 CREATE FUNCTION doubled(a INTEGER, OUT b BIGINT) LANGUAGE sql AS 'SELECT a * 2';
 
 query IT
