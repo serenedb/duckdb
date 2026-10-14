@@ -70,3 +70,19 @@ query I
 SELECT add_one_nested(41);
 ----
 42
+
+statement ok
+CREATE FUNCTION doubled_return(integer) RETURNS integer RETURN $1 * 2;
+
+query I
+SELECT doubled_return(21);
+----
+42
+
+statement ok
+CREATE FUNCTION add_one_atomic(integer) RETURNS integer BEGIN ATOMIC SELECT $1 + 1; END;
+
+query I
+SELECT add_one_atomic(41);
+----
+42
