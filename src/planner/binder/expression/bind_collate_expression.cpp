@@ -20,8 +20,13 @@ BindResult ExpressionBinder::BindExpression(CollateExpression &expr, idx_t depth
 	}
 	// Validate the collation, but don't use it
 	auto collation_test = make_uniq_base<Expression, BoundConstantExpression>(Value(child->GetReturnType()));
-	auto collation_type = LogicalType::VARCHAR_COLLATION(expr.Collation());
-	if (!PushCollation(context, collation_test, collation_type)) {
+	auto &collation = expr.Collation();
+	auto collation_type = LogicalType::VARCHAR_COLLATION(collation);
+	PushCollation(context, collation_test, collation_type);
+	if (StringUtil::CIEquals(collation, "default") || StringUtil::CIEquals(collation, "pg_catalog.default")) {
+		if (!StringType::GetCollation(child->GetReturnType()).empty()) {
+			child->SetReturnType(LogicalType::VARCHAR);
+		}
 		return BindResult(std::move(child));
 	}
 	child->SetReturnType(collation_type);
