@@ -205,7 +205,7 @@ void RegisterEnumConstructors(TypeConstructorSet &set) {
 // LIST Type
 //----------------------------------------------------------------------------------------------------------------------
 LogicalType BindListType(BindLogicalTypeInput &input) {
-	return LogicalType::LIST(TypeValue::GetType(input.modifiers[0].GetValue()));
+	return LogicalType::LIST(input.modifiers[0].GetTypeArgument());
 }
 
 void RegisterListConstructors(TypeConstructorSet &set) {
@@ -218,7 +218,7 @@ void RegisterListConstructors(TypeConstructorSet &set) {
 // ARRAY Type
 //----------------------------------------------------------------------------------------------------------------------
 LogicalType BindArrayType(BindLogicalTypeInput &input) {
-	auto child_type = TypeValue::GetType(input.modifiers[0].GetValue());
+	auto child_type = input.modifiers[0].GetTypeArgument();
 	auto array_size = input.modifiers[1].GetValue().GetValue<int64_t>();
 
 	if (array_size < 1) {
@@ -248,7 +248,7 @@ LogicalType BindStructType(BindLogicalTypeInput &input) {
 	children.reserve(arguments.size());
 
 	for (auto &arg : arguments) {
-		children.emplace_back(Identifier(arg.GetName()), TypeValue::GetType(arg.GetValue()));
+		children.emplace_back(Identifier(arg.GetName()), arg.GetTypeArgument());
 	}
 
 	return LogicalType::STRUCT(std::move(children));
@@ -267,7 +267,7 @@ LogicalType BindTupleType(BindLogicalTypeInput &input) {
 	vector<LogicalType> children;
 	children.reserve(input.modifiers.size());
 	for (auto &arg : input.modifiers) {
-		children.push_back(TypeValue::GetType(arg.GetValue()));
+		children.push_back(arg.GetTypeArgument());
 	}
 	return LogicalType::TUPLE(std::move(children));
 }
@@ -282,8 +282,8 @@ void RegisterTupleConstructors(TypeConstructorSet &set) {
 // MAP Type
 //----------------------------------------------------------------------------------------------------------------------
 LogicalType BindMapType(BindLogicalTypeInput &input) {
-	auto key_type = TypeValue::GetType(input.modifiers[0].GetValue());
-	auto val_type = TypeValue::GetType(input.modifiers[1].GetValue());
+	auto key_type = input.modifiers[0].GetTypeArgument();
+	auto val_type = input.modifiers[1].GetTypeArgument();
 	return LogicalType::MAP(std::move(key_type), std::move(val_type));
 }
 
@@ -310,7 +310,7 @@ LogicalType BindUnionType(BindLogicalTypeInput &input) {
 
 	child_list_t<LogicalType> children;
 	for (auto &arg : arguments) {
-		children.emplace_back(arg.GetName(), TypeValue::GetType(arg.GetValue()));
+		children.emplace_back(arg.GetName(), arg.GetTypeArgument());
 	}
 
 	return LogicalType::UNION(std::move(children));

@@ -51,6 +51,9 @@ namespace {
 //! parameter, as the literal is known to fit.
 //! Only overload matching uses this; errors report the value's own type.
 LogicalType MatchType(const TypeArgument &arg) {
+	if (arg.IsTypeArgument()) {
+		return arg.GetType();
+	}
 	auto &value = arg.GetValue();
 	auto &type = value.type();
 	if (type.IsIntegral() && !value.IsNull()) {
@@ -115,6 +118,10 @@ string ArgumentName(const Identifier &name, idx_t position) {
 		return StringUtil::Format("%llu", position + 1);
 	}
 	return StringUtil::Format("%s", name);
+}
+
+bool KeepsTypeArgument(const TypeArgument &arg, const LogicalType &target) {
+	return arg.IsTypeArgument() && (target.id() == LogicalTypeId::TYPE || target.id() == LogicalTypeId::ANY);
 }
 
 //! Cast a modifier to the type its parameter declares. Overload selection already established the cast is possible.
@@ -199,6 +206,10 @@ vector<TypeArgument> NormalizeArguments(const Identifier &type_name, const TypeC
 		auto supplied = slots[i];
 		// a parameter filled in from its default has no source text - point at the type instead
 		auto location = supplied ? supplied->GetQueryLocation() : type_location;
+		if (supplied && KeepsTypeArgument(*supplied, param.GetType())) {
+			result.emplace_back(param.GetName().GetIdentifierName(), supplied->GetTypeArgument(), location);
+			continue;
+		}
 		optional_ptr<const Value> value = supplied ? &supplied->GetValue() : param.GetDefaultValue().get();
 		if (!value) {
 			throw BinderException(type_location, "Missing type parameter %s for type %s", param.GetName(), type_name);
@@ -215,6 +226,10 @@ vector<TypeArgument> NormalizeArguments(const Identifier &type_name, const TypeC
 		// a named modifier is received by "**kwargs", an unnamed one by "*args"
 		auto param = arg.HasName() ? sig.GetKwargs() : sig.GetArgs();
 		auto &target = param ? param->GetType() : LogicalType::ANY;
+		if (KeepsTypeArgument(arg, target)) {
+			result.emplace_back(arg.GetName(), arg.GetTypeArgument(), location);
+			continue;
+		}
 		result.emplace_back(arg.GetName(), CastArgument(type_name, arg_name, arg.GetValue(), target, location),
 		                    location);
 	}

@@ -1016,14 +1016,12 @@ ColumnDataCopyFunction ColumnDataCollection::GetCopyFunction(const LogicalType &
 	}
 	case PhysicalType::LIST: {
 		function = ColumnDataCopy<list_entry_t>;
-		auto child_function = GetCopyFunction(ListType::GetChildType(type));
-		result.child_functions.push_back(child_function);
+		result.child_functions.push_back(GetCopyFunction(ListType::GetChildType(type)));
 		break;
 	}
 	case PhysicalType::ARRAY: {
 		function = ColumnDataCopyArray;
-		auto child_function = GetCopyFunction(ArrayType::GetChildType(type));
-		result.child_functions.push_back(child_function);
+		result.child_functions.push_back(GetCopyFunction(ArrayType::GetChildType(type)));
 		break;
 	}
 	default:
