@@ -1,5 +1,4 @@
 #include "duckdb/parser/peg/ast/macro_parameter.hpp"
-#include "duckdb/catalog/default/default_types.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/function/table_macro_function.hpp"
 #include "duckdb/parser/tableref/expressionlistref.hpp"
@@ -284,8 +283,8 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 					auto pos_name = parameter.mode == 'o'
 					                    ? Identifier("column" + std::to_string(output_names.size() + 1))
 					                    : Identifier("$" + std::to_string(macro_function->parameters.size() + 1));
-					auto builtin = DefaultTypeGenerator::GetDefaultType(parameter.name);
-					parameter.type = builtin.id() != LogicalTypeId::INVALID ? builtin : LogicalType::UNKNOWN;
+					parameter.type = LogicalType::UNBOUND(
+					    make_uniq<TypeExpression>(parameter.name, vector<unique_ptr<ParsedExpression>>()));
 					parameter.name = pos_name;
 					parameter.expression = make_uniq<ColumnRefExpression>(pos_name);
 				} else {
