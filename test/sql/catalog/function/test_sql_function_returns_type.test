@@ -135,3 +135,29 @@ query I
 SELECT wide_out();
 ----
 {'a': 123.456, 'b': 1}
+
+statement ok
+CREATE FUNCTION doubled_rows(x INTEGER) RETURNS SETOF INTEGER RETURN x * 2;
+
+statement ok
+CREATE FUNCTION one_row_table() RETURNS TABLE(a INTEGER) RETURN 5;
+
+statement ok
+CREATE FUNCTION pair_rows(OUT a INTEGER, OUT b VARCHAR) RETURNS SETOF record RETURN (1, 'x');
+
+query TT
+SELECT function_name, function_type FROM duckdb_functions() WHERE function_name IN ('doubled_rows', 'one_row_table', 'pair_rows') ORDER BY 1;
+----
+doubled_rows	table_macro
+one_row_table	table_macro
+pair_rows	table_macro
+
+query III
+SELECT doubled_rows(21), (SELECT * FROM doubled_rows(4)), (SELECT a FROM one_row_table());
+----
+42	8	5
+
+query IT
+SELECT * FROM pair_rows();
+----
+1	x
