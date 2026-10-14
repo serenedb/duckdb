@@ -61,7 +61,7 @@ vector<string> CreateIndexInfo::ExpressionsToList() const {
 		}
 		if (i < column_opclasses.size() && !column_opclasses[i].empty()) {
 			entry += " " + column_opclasses[i];
-			if (i < column_opclass_options.size() && column_opclass_options[i] && !column_opclass_options[i]->empty()) {
+			if (i < column_opclass_options.size() && column_opclass_options[i]) {
 				vector<string> opclass_options;
 				for (auto &option : *column_opclass_options[i]) {
 					opclass_options.push_back(StringUtil::Format("%s = %s", option.first, option.second.ToSQLString()));
