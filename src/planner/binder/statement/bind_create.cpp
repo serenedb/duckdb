@@ -799,22 +799,20 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				    ExpressionBinder::QualifyColumnNames(*dummy_binder, child);
 			    });
 			try {
+				auto &declared = function->return_types;
+				for (auto &dt : declared) {
+					dummy_binder->BindLogicalType(dt);
+				}
 				auto bound = dummy_binder->Bind(*query_node);
 				if (should_create_dependencies && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
 					ViewColumnDependencies(catalog, dependencies).VisitOperator(*bound.plan);
 				}
 
 				// Validate declared return types against actual query output.
-				auto &declared = function->return_types;
 				if (!declared.empty() && bound.types.size() > 0) {
 					// is_scalar: RETURNS <type> (single scalar return, stored as TABLE_MACRO)
 					bool is_scalar = declared.size() == 1 && info.type == CatalogType::TABLE_MACRO_ENTRY;
 					bool is_table = declared.size() > 1 || (declared.size() == 1 && !is_scalar);
-
-					// Resolve unbound types (grammar produces UNBOUND type ids)
-					for (auto &dt : declared) {
-						dummy_binder->BindLogicalType(dt);
-					}
 
 					// PG-compat: RETURNS VOID accepts any body shape (PG discards the
 					// result and emits a single NULL row).

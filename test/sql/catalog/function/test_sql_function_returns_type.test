@@ -52,3 +52,14 @@ query T
 SELECT typeof(n) FROM widened() AS t(n);
 ----
 BIGINT
+
+statement ok
+CREATE TYPE mood AS ENUM ('sad', 'ok');
+
+statement ok
+CREATE FUNCTION moods(mood) RETURNS SETOF mood LANGUAGE sql AS 'SELECT $1';
+
+query T
+SELECT * FROM moods('ok');
+----
+ok
