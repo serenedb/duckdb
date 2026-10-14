@@ -9,6 +9,7 @@
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/function_binder.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/lambda_expression.hpp"
@@ -400,9 +401,16 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 		}
 		// PG compat: table functions in SELECT -> unnest their results as rows.
 		// Routes through SelectBinder::BindUnnest, sharing BoundUnnestNode with other SRFs.
+		const bool whole_row =
+		    func.get().type == CatalogType::TABLE_MACRO_ENTRY ||
+		    Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
+		        SqlCompatibility::POSTGRES;
 		auto unnest_func = make_uniq<FunctionExpression>("unnest", vector<unique_ptr<ParsedExpression>> {});
-		unnest_func->GetArgumentsMutable().push_back(WrapTableFuncAsList(function.Copy()));
-		unnest_func->GetArgumentsMutable().emplace_back(Identifier("set_returning"), ConstantExpression::Boolean(true));
+		unnest_func->GetArgumentsMutable().push_back(WrapTableFuncAsList(function.Copy(), whole_row));
+		if (whole_row) {
+			unnest_func->GetArgumentsMutable().emplace_back(Identifier("set_returning"),
+			                                                ConstantExpression::Boolean(true));
+		}
 		unnest_func->SetAlias(function.GetAlias().empty() ? function.FunctionName() : function.GetAlias());
 		expr_ptr = std::move(unnest_func);
 		return BindExpression(expr_ptr, depth, false);

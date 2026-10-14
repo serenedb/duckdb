@@ -20,7 +20,8 @@
 
 namespace duckdb {
 
-inline unique_ptr<ParsedExpression> WrapTableFuncAsList(unique_ptr<ParsedExpression> func_expr, idx_t idx = 0) {
+inline unique_ptr<ParsedExpression> WrapTableFuncAsList(unique_ptr<ParsedExpression> func_expr, bool whole_row,
+                                                        idx_t idx = 0) {
 	// Inner: SELECT * FROM func()
 	auto inner_select = make_uniq<SelectNode>();
 	inner_select->select_list.push_back(make_uniq<StarExpression>());
@@ -32,10 +33,15 @@ inline unique_ptr<ParsedExpression> WrapTableFuncAsList(unique_ptr<ParsedExpress
 
 	Identifier alias("__srf_" + to_string(idx));
 	auto subquery_ref = make_uniq<SubqueryRef>(std::move(inner_stmt), alias);
+	Identifier column = alias;
+	if (!whole_row) {
+		column = Identifier("__c");
+		subquery_ref->column_name_alias.emplace_back(column);
+	}
 
 	auto outer_select = make_uniq<SelectNode>();
 	auto list_func = make_uniq<FunctionExpression>("list", vector<unique_ptr<ParsedExpression>> {});
-	list_func->GetArgumentsMutable().push_back(unique_ptr<ParsedExpression>(make_uniq<ColumnRefExpression>(alias)));
+	list_func->GetArgumentsMutable().push_back(unique_ptr<ParsedExpression>(make_uniq<ColumnRefExpression>(column)));
 	outer_select->select_list.push_back(std::move(list_func));
 	outer_select->from_table = std::move(subquery_ref);
 	auto outer_stmt = make_uniq<SelectStatement>();
