@@ -45,6 +45,14 @@ string FormatMacroFunction(const MacroFunction &function, const Identifier &name
 	return result;
 }
 
+static int64_t ArgumentCastCost(ClientContext &context, const LogicalType &argument, const LogicalType &parameter) {
+	if (argument.id() == LogicalTypeId::INTEGER_LITERAL && parameter.IsIntegral() && parameter.IsSigned() &&
+	    !parameter.HasAlias()) {
+		return CastFunctionSet::ImplicitCastCost(context, IntegerLiteral::GetType(argument), parameter);
+	}
+	return CastFunctionSet::ImplicitCastCost(context, argument, parameter);
+}
+
 MacroBindResult MacroFunction::BindMacroFunction(
     Binder &binder, const vector<unique_ptr<MacroFunction>> &functions, const Identifier &name,
     SqlCompatibility compatibility, FunctionExpression &function_expr,
@@ -158,8 +166,7 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			if (param_type == LogicalType::UNKNOWN) {
 				macro_cost += 1000000;
 			} else {
-				const auto cast_cost =
-				    CastFunctionSet::ImplicitCastCost(binder.context, positional_arg_types[param_idx], param_type);
+				const auto cast_cost = ArgumentCastCost(binder.context, positional_arg_types[param_idx], param_type);
 				if (cast_cost < 0) {
 					bail = true;
 					break;
@@ -188,8 +195,7 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			if (param_type == LogicalType::UNKNOWN) {
 				macro_cost += 1000000;
 			} else {
-				const auto cast_cost =
-				    CastFunctionSet::ImplicitCastCost(binder.context, named_arg_types[param_name], param_type);
+				const auto cast_cost = ArgumentCastCost(binder.context, named_arg_types[param_name], param_type);
 				if (cast_cost < 0) {
 					break; // No cast possible
 				}
