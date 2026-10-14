@@ -104,7 +104,8 @@ private:
 	static constexpr double JOIN_CARDINALITY_RATIO_THRESHOLD = 8;
 
 public:
-	CompressedMaterialization(Optimizer &optimizer, LogicalOperator &root, statistics_map_t &statistics_map);
+	CompressedMaterialization(Optimizer &optimizer, LogicalOperator &root, statistics_map_t &statistics_map,
+	                          bool &types_resolved);
 
 	void Compress(unique_ptr<LogicalOperator> &op);
 
@@ -176,6 +177,7 @@ private:
 	optional_ptr<LogicalOperator> root;
 	//! The map of ColumnBinding -> statistics for the various nodes
 	statistics_map_t &statistics_map;
+	bool &types_resolved;
 	column_binding_set_t bucketed_groups;
 };
 

@@ -330,7 +330,11 @@ static bool FindLiftPlacement(LogicalProjection &projection, idx_t expression_in
 			break;
 		}
 
+#ifdef D_ASSERT_IS_ENABLED
+		const auto resolved_types = op.types;
 		op.ResolveOperatorTypes();
+		D_ASSERT(resolved_types == op.types);
+#endif
 		LiftPathStep step {op, ancestor.child_index, op.GetColumnBindings(), current_bindings};
 		path.push_back(std::move(step));
 		if (!IsEligibleJoin(op)) {
@@ -991,6 +995,7 @@ ProjectionPlacementOptimizer::ProjectionPlacementOptimizer(
 
 void ProjectionPlacementOptimizer::Optimize(unique_ptr<LogicalOperator> &plan) {
 	vector<PathStep> ancestors;
+	plan->ResolveOperatorTypes();
 	while (LiftFirstProfitableExpression(optimizer, statistics_map, plan, plan, ancestors)) {
 		plan->ResolveOperatorTypes();
 	}

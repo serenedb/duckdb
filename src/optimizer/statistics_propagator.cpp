@@ -34,6 +34,7 @@ StatisticsPropagator::StatisticsPropagator(Optimizer &optimizer_p, unique_ptr<Lo
 
 void StatisticsPropagator::ReplaceWithEmptyResult(unique_ptr<LogicalOperator> &node) {
 	node = make_uniq<LogicalEmptyResult>(std::move(node));
+	node->ResolveOperatorTypes();
 }
 
 unique_ptr<NodeStatistics> StatisticsPropagator::PropagateChildren(LogicalOperator &node,
@@ -106,7 +107,7 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalOper
 	if (mode == StatisticsPropagationMode::FULL &&
 	    !optimizer.OptimizerDisabled(OptimizerType::COMPRESSED_MATERIALIZATION)) {
 		// compress data based on statistics for materializing operators
-		CompressedMaterialization compressed_materialization(optimizer, *root, statistics_map);
+		CompressedMaterialization compressed_materialization(optimizer, *root, statistics_map, types_resolved);
 		compressed_materialization.Compress(node_ptr);
 	}
 

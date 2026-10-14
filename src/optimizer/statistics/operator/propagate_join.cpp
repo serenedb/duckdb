@@ -28,6 +28,7 @@ bool StatisticsPropagator::HandleJoinNeverMatches(LogicalJoin &join, unique_ptr<
 		}
 		// If the filter is always false or Null, just return the left child.
 		node_ptr = std::move(join.children[0]);
+		types_resolved = false;
 		return true;
 	}
 	case JoinType::LEFT:
@@ -64,6 +65,7 @@ bool StatisticsPropagator::HandleJoinAlwaysMatches(LogicalJoin &join, unique_ptr
 		auto cross_product = LogicalCrossProduct::Create(std::move(join.children[0]), std::move(limit));
 		cross_product->SetEstimatedCardinality(join.estimated_cardinality);
 		node_ptr = std::move(cross_product);
+		types_resolved = false;
 		return true;
 	}
 	case JoinType::INNER: {
@@ -71,6 +73,7 @@ bool StatisticsPropagator::HandleJoinAlwaysMatches(LogicalJoin &join, unique_ptr
 		auto cross_product = LogicalCrossProduct::Create(std::move(join.children[0]), std::move(join.children[1]));
 		cross_product->SetEstimatedCardinality(join.estimated_cardinality);
 		node_ptr = std::move(cross_product);
+		types_resolved = false;
 		return true;
 	}
 	default:
@@ -388,6 +391,7 @@ void StatisticsPropagator::CreateFilterFromJoinStats(unique_ptr<LogicalOperator>
 	// semi joins are potentially slower AND the conversion can ruin column binding information
 	FilterPushdown filter_pushdown(optimizer, false);
 	child = filter_pushdown.Rewrite(std::move(child));
+	types_resolved = false;
 	PropagateExpression(expr);
 }
 

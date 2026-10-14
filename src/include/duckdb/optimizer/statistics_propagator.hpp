@@ -153,6 +153,7 @@ private:
 	unique_ptr<LogicalOperator> &root;
 	//! The map of ColumnBinding -> statistics for the various nodes
 	column_binding_map_t<unique_ptr<BaseStatistics>> statistics_map;
+	bool types_resolved = true;
 	//! The statistics of a materialized CTE definition, which hold for every reference to it
 	struct CTEStatistics {
 		//! Statistics of the columns emitted by the definition, by position

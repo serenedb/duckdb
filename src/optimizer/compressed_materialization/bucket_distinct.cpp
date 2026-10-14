@@ -68,6 +68,7 @@ bool CompressedMaterialization::BucketDistinct(unique_ptr<LogicalOperator> &op) 
 	auto original = std::move(op);
 	op = std::move(aggregate);
 	op->ResolveOperatorTypes();
+	types_resolved = false;
 	if (was_root) {
 		root = op;
 	}

@@ -356,9 +356,19 @@ unique_ptr<CompressExpression> CMHelper::CreateIntegralFunctionCompress(unique_p
 // CompressedMaterialization
 //===--------------------------------------------------------------------===//
 CompressedMaterialization::CompressedMaterialization(Optimizer &optimizer_p, LogicalOperator &root_p,
-                                                     statistics_map_t &statistics_map_p)
-    : optimizer(optimizer_p), context(optimizer.context), root(&root_p), statistics_map(statistics_map_p) {
+                                                     statistics_map_t &statistics_map_p, bool &types_resolved_p)
+    : optimizer(optimizer_p), context(optimizer.context), root(&root_p), statistics_map(statistics_map_p),
+      types_resolved(types_resolved_p) {
 }
+
+#ifdef D_ASSERT_IS_ENABLED
+static void CollectOperatorTypes(const LogicalOperator &op, vector<vector<LogicalType>> &types) {
+	types.push_back(op.types);
+	for (auto &child : op.children) {
+		CollectOperatorTypes(*child, types);
+	}
+}
+#endif
 
 void CompressedMaterialization::GetReferencedBindings(const Expression &root_expr,
                                                       column_binding_set_t &referenced_bindings) {
@@ -433,7 +443,19 @@ void CompressedMaterialization::Compress(unique_ptr<LogicalOperator> &op) {
 		return;
 	}
 
-	root->ResolveOperatorTypes();
+	if (!types_resolved) {
+		root->ResolveOperatorTypes();
+		types_resolved = true;
+	} else {
+#ifdef D_ASSERT_IS_ENABLED
+		vector<vector<LogicalType>> resolved;
+		CollectOperatorTypes(*root, resolved);
+		root->ResolveOperatorTypes();
+		vector<vector<LogicalType>> reresolved;
+		CollectOperatorTypes(*root, reresolved);
+		D_ASSERT(resolved == reresolved);
+#endif
+	}
 
 	switch (op->type) {
 	case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY:
@@ -476,6 +498,7 @@ void CompressedMaterialization::CreateProjections(unique_ptr<LogicalOperator> &o
 
 	if (compressed_anything) {
 		CreateDecompressProjection(op, info);
+		types_resolved = false;
 	}
 }
 
