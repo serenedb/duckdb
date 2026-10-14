@@ -17,8 +17,9 @@ CatalogEntry::CatalogEntry(CatalogType type, Identifier name_p, idx_t oid)
 
 CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p, idx_t oid)
     : CatalogEntry(type, std::move(name_p),
-                   oid ? catalog.GetDatabase().GetDatabaseManager().ClaimOid(oid)
-                       : catalog.GetDatabase().GetDatabaseManager().NextOid()) {
+                   oid                         ? catalog.GetDatabase().GetDatabaseManager().ClaimOid(oid)
+                   : catalog.IsSystemCatalog() ? catalog.GetDatabase().GetDatabaseManager().NextSystemOid()
+                                               : catalog.GetDatabase().GetDatabaseManager().NextOid()) {
 }
 
 CatalogEntry::~CatalogEntry() {
