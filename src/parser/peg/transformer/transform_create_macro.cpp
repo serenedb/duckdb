@@ -22,6 +22,7 @@
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/result_modifier.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
+#include "duckdb/planner/table_binding.hpp"
 #include "duckdb/common/string_util.hpp"
 
 #include <charconv>
@@ -40,7 +41,8 @@ static void ReplacePositionalParams(unique_ptr<ParsedExpression> &expr, const ve
 		idx_t idx = 0;
 		auto [ptr, ec] = std::from_chars(param_id.data(), param_id.data() + param_id.size(), idx);
 		if (ec == std::errc() && ptr == param_id.data() + param_id.size() && idx >= 1 && idx <= param_names.size()) {
-			auto replacement = make_uniq<ColumnRefExpression>(param_names[idx - 1]);
+			auto replacement =
+			    make_uniq<ColumnRefExpression>(param_names[idx - 1], Identifier(DummyBinding::DUMMY_NAME));
 			replacement->SetAlias(expr->GetAlias());
 			expr = std::move(replacement);
 			return;

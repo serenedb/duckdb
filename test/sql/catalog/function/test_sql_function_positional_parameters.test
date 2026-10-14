@@ -86,3 +86,17 @@ query I
 SELECT add_one_atomic(41);
 ----
 42
+
+statement ok
+CREATE TABLE named_rows (id INTEGER, v VARCHAR);
+
+statement ok
+INSERT INTO named_rows VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+CREATE FUNCTION count_named_below(v VARCHAR) RETURNS BIGINT LANGUAGE sql AS 'SELECT count(*) FROM named_rows WHERE named_rows.v < $1';
+
+query I
+SELECT count_named_below('c');
+----
+2

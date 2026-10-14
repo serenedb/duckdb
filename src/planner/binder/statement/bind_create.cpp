@@ -697,8 +697,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			    base.GetFunctionName().GetIdentifierName());
 		}
 
-		auto this_macro_binding =
-		    make_uniq<DummyBinding>(dummy_types, dummy_names, base.GetFunctionName().GetIdentifierName());
+		auto this_macro_binding = make_uniq<DummyBinding>(dummy_types, dummy_names, string());
 		macro_binding = this_macro_binding.get();
 
 		// bind it to verify the function was defined correctly
