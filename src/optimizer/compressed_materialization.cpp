@@ -625,21 +625,23 @@ void CompressedMaterialization::CreateDecompressProjection(unique_ptr<LogicalOpe
 	const auto &types = op->types;
 
 	// Create decompress expressions for everything we compressed
-	auto &binding_map = info.binding_map;
+	column_binding_map_t<vector<reference<CMBindingInfo>>> binding_infos;
+	for (auto &entry : info.binding_map) {
+		binding_infos[entry.second.binding].emplace_back(entry.second);
+	}
 	vector<unique_ptr<Expression>> decompress_exprs;
 	vector<optional_ptr<BaseStatistics>> statistics;
 	for (idx_t col_idx = 0; col_idx < bindings.size(); col_idx++) {
 		const auto &binding = bindings[col_idx];
 		auto decompress_expr = make_uniq_base<Expression, BoundColumnRefExpression>(types[col_idx], binding);
 		optional_ptr<BaseStatistics> stats;
-		for (auto &entry : binding_map) {
-			auto &binding_info = entry.second;
-			if (binding_info.binding != binding) {
-				continue;
-			}
-			stats = binding_info.stats.get();
-			if (CMHelper::TypeRequiresRestore(binding_info.materialization_type)) {
-				decompress_expr = CreateRestoreExpression(std::move(decompress_expr), binding_info, *stats);
+		auto infos = binding_infos.find(binding);
+		if (infos != binding_infos.end()) {
+			for (auto &binding_info : infos->second) {
+				stats = binding_info.get().stats.get();
+				if (CMHelper::TypeRequiresRestore(binding_info.get().materialization_type)) {
+					decompress_expr = CreateRestoreExpression(std::move(decompress_expr), binding_info.get(), *stats);
+				}
 			}
 		}
 		statistics.push_back(stats);
