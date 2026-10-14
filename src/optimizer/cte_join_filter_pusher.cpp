@@ -24,12 +24,13 @@ void CTEJoinFilterPusher::FindCandidates(LogicalOperator &op) {
 	if (op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
 		auto &cte = op.Cast<LogicalMaterializedCTE>();
 		auto info = make_uniq<MaterializedCTEInfo>(op);
-		info->ancestors = available_ctes;
+		auto &cte_info = *info;
+		cte_info.position = cte_count++;
 		cte_info_map.insert(to_string(cte.table_index.index), std::move(info));
 		FindCandidates(*op.children[0]);
-		available_ctes.push_back(cte.table_index);
+		cte_info.body_begin = cte_count;
 		FindCandidates(*op.children[1]);
-		available_ctes.pop_back();
+		cte_info.body_end = cte_count;
 		return;
 	}
 	if (op.type == LogicalOperatorType::LOGICAL_CTE_REF) {
@@ -51,6 +52,7 @@ void CTEJoinFilterPusher::Optimize(LogicalOperator &op) {
 	static constexpr double MAX_KEY_RATIO = 0.5;
 	unordered_map<TableIndex, TableIndex> join_targets;
 	cte_info_map.clear();
+	cte_count = 0;
 	FindCandidates(op);
 	for (auto &entry : cte_info_map) {
 		if (HasValidDependency(*entry.second)) {
@@ -66,17 +68,12 @@ void CTEJoinFilterPusher::Optimize(LogicalOperator &op) {
 		return;
 	}
 
-	cte_info_map.clear();
-	FindCandidates(op);
 	vector<TableIndex> targets;
 	for (auto &entry : cte_info_map) {
 		targets.push_back(entry.second->materialized_cte.Cast<LogicalMaterializedCTE>().table_index);
 	}
 	unordered_map<TableIndex, RelationStats> restricted_stats;
 	for (auto target : targets) {
-		// Producer rewrites invalidate operator references and cached statistics.
-		cte_info_map.clear();
-		FindCandidates(op);
 		auto target_entry = cte_info_map.find(to_string(target.index));
 		if (target_entry == cte_info_map.end() || !HasValidDependency(*target_entry->second)) {
 			continue;
@@ -95,15 +92,18 @@ void CTEJoinFilterPusher::Optimize(LogicalOperator &op) {
 		double best_fraction = 1;
 		idx_t best_source_count = 0;
 		for (auto &filter : join_filters) {
-			if (filter.target != target || filter.target_scan != cte.filter_dependency->row_scan ||
-			    std::find(info.ancestors.begin(), info.ancestors.end(), filter.source) == info.ancestors.end()) {
+			if (filter.target != target || filter.target_scan != cte.filter_dependency->row_scan) {
 				continue;
 			}
 			auto source_entry = cte_info_map.find(to_string(filter.source.index));
 			if (source_entry == cte_info_map.end()) {
 				continue;
 			}
-			auto &source_cte = source_entry->second->materialized_cte;
+			auto &source_info = *source_entry->second;
+			if (info.position < source_info.body_begin || info.position >= source_info.body_end) {
+				continue;
+			}
+			auto &source_cte = source_info.materialized_cte;
 			auto cached = restricted_stats.find(filter.source);
 			optional_ptr<const RelationStats> source_stats =
 			    cached == restricted_stats.end() ? extractor.Extract(*source_cte.children[0]) : &cached->second;
@@ -168,9 +168,30 @@ void CTEJoinFilterPusher::Optimize(LogicalOperator &op) {
 			column.distinct_count.distinct_count = MinValue(column.distinct_count.distinct_count, stats.cardinality);
 		}
 		restricted_stats.emplace(target, std::move(stats));
+		cte_info_map[to_string(best->source.index)]->references.push_back(*source_ref);
 		join->children.push_back(std::move(cte.children[0]));
 		join->children.push_back(std::move(source_ref));
 		cte.children[0] = std::move(join);
+#ifdef D_ASSERT_IS_ENABLED
+		CTEJoinFilterPusher fresh(optimizer);
+		fresh.FindCandidates(op);
+		D_ASSERT(fresh.cte_info_map.size() == cte_info_map.size());
+		for (auto &fresh_entry : fresh.cte_info_map) {
+			auto current = cte_info_map.find(fresh_entry.first);
+			D_ASSERT(current != cte_info_map.end());
+			auto &fresh_info = *fresh_entry.second;
+			auto &current_info = *current->second;
+			D_ASSERT(&fresh_info.materialized_cte == &current_info.materialized_cte);
+			D_ASSERT(fresh_info.position == current_info.position && fresh_info.body_begin == current_info.body_begin &&
+			         fresh_info.body_end == current_info.body_end);
+			reference_set_t<LogicalCTERef> current_references(current_info.references.begin(),
+			                                                  current_info.references.end());
+			D_ASSERT(current_references.size() == fresh_info.references.size());
+			for (auto &ref : fresh_info.references) {
+				D_ASSERT(current_references.find(ref) != current_references.end());
+			}
+		}
+#endif
 	}
 	return;
 }

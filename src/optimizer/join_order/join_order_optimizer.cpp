@@ -50,15 +50,18 @@ static optional<RelationStats> CombineReorderableStats(const vector<ColumnBindin
 }
 
 JoinOrderOptimizer::JoinOrderOptimizer(ClientContext &context)
-    : context(context), query_graph_manager(context), depth(1) {
+    : JoinOrderOptimizer(context, make_shared_ptr<CTEScopes>()) {
+}
+
+JoinOrderOptimizer::JoinOrderOptimizer(ClientContext &context, shared_ptr<CTEScopes> cte_scopes_p)
+    : context(context), cte_scopes(std::move(cte_scopes_p)), query_graph_manager(context), depth(1),
+      recursive_cte_indexes(cte_scopes->recursive_cte_indexes) {
 }
 
 JoinOrderOptimizer JoinOrderOptimizer::CreateChildOptimizer() {
-	JoinOrderOptimizer child_optimizer(context);
-	child_optimizer.materialized_cte_stats = materialized_cte_stats;
+	JoinOrderOptimizer child_optimizer(context, cte_scopes);
 	child_optimizer.delim_scan_stats = delim_scan_stats;
 	child_optimizer.depth = depth + 1;
-	child_optimizer.recursive_cte_indexes = recursive_cte_indexes;
 	return child_optimizer;
 }
 
@@ -134,13 +137,17 @@ unique_ptr<LogicalOperator> JoinOrderOptimizer::Optimize(unique_ptr<LogicalOpera
 	return new_logical_plan;
 }
 
-void JoinOrderOptimizer::AddMaterializedCTEStats(TableIndex index, RelationStats &&stats) {
-	materialized_cte_stats.emplace(index, std::move(stats));
+bool JoinOrderOptimizer::AddMaterializedCTEStats(TableIndex index, RelationStats &&stats) {
+	return cte_scopes->materialized_cte_stats.emplace(index, std::move(stats)).second;
+}
+
+void JoinOrderOptimizer::RemoveMaterializedCTEStats(TableIndex index) {
+	cte_scopes->materialized_cte_stats.erase(index);
 }
 
 RelationStats JoinOrderOptimizer::GetMaterializedCTEStats(TableIndex index) {
-	auto it = materialized_cte_stats.find(index);
-	if (it == materialized_cte_stats.end()) {
+	auto it = cte_scopes->materialized_cte_stats.find(index);
+	if (it == cte_scopes->materialized_cte_stats.end()) {
 		throw InternalException("Unable to find materialized CTE stats with index %llu", index.index);
 	}
 	return it->second;

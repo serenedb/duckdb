@@ -37,6 +37,8 @@
 #include "duckdb/common/enums/copy_option_mode.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
 
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/functional/function_ref.h>
 
 //! fwd declare
@@ -495,6 +497,16 @@ private:
 	idx_t unnamed_subquery_index = 1;
 	//! Binder depth
 	idx_t depth;
+	struct CTEChain {
+		explicit CTEChain(Binder &root_p) : root(root_p) {
+		}
+		reference<Binder> root;
+		absl::flat_hash_map<Identifier, absl::InlinedVector<pair<idx_t, reference<CTEBinding>>, 1>,
+		                    IdentifierHashFunction, IdentifierEquality>
+		    bindings;
+	};
+	shared_ptr<CTEChain> cte_chain;
+	idx_t cte_chain_position = 0;
 
 private:
 	//! Determine the depth of the binder
@@ -775,7 +787,7 @@ private:
 	static void CheckInsertColumnCountMismatch(idx_t expected_columns, idx_t result_columns, bool columns_provided,
 	                                           const Identifier &tname);
 
-	BoundCTEData PrepareCTE(const Identifier &ctename, CommonTableExpressionInfo &statement);
+	BoundCTEData PrepareCTE(const Identifier &ctename, CommonTableExpressionInfo &statement, bool continues_chain);
 	BoundStatement FinishCTE(BoundCTEData &bound_cte, BoundStatement child_data);
 
 	shared_ptr<Binder> CreateBinderWithSearchPath(const Identifier &catalog_name, const Identifier &schema_name);
