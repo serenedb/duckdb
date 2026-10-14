@@ -28,7 +28,6 @@ static void SimplifyNullSafeSemiJoinConditions(ClientContext &context, LogicalCo
 unique_ptr<LogicalOperator> FilterPushdown::PushdownMarkJoin(unique_ptr<LogicalOperator> op,
                                                              unordered_set<TableIndex> &left_bindings,
                                                              unordered_set<TableIndex> &right_bindings) {
-	auto op_bindings = op->GetColumnBindings();
 	auto &join = op->Cast<LogicalJoin>();
 	auto &comp_join = op->Cast<LogicalComparisonJoin>();
 	D_ASSERT(join.join_type == JoinType::MARK);

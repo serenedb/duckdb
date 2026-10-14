@@ -1,3 +1,5 @@
+#include <absl/algorithm/container.h>
+
 #include "duckdb/function/aggregate/distributive_functions.hpp"
 #include "duckdb/function/aggregate/distributive_function_utils.hpp"
 #include "duckdb/function/builtin_function_lookup.hpp"
@@ -607,6 +609,71 @@ static unique_ptr<LogicalOperator> &GetJoinSideRoot(LogicalJoin &join, JoinSide 
 	                              "the join");
 }
 
+namespace {
+
+class OutputValidation {
+public:
+	explicit OutputValidation([[maybe_unused]] LogicalOperator &op) {
+#ifdef D_ASSERT_IS_ENABLED
+		old_output = op.GetColumnBindings();
+#endif
+	}
+
+	void Validate([[maybe_unused]] LogicalOperator &op,
+	              [[maybe_unused]] const BindingReplacementGraph &replacements) const {
+#ifdef D_ASSERT_IS_ENABLED
+		ColumnBindingRewrite::ValidateOutput(old_output, op.GetColumnBindings(), replacements);
+#endif
+	}
+
+private:
+	vector<ColumnBinding> old_output;
+};
+
+template <class PLAN_EXPRESSION>
+bool PlanSubqueryConjunctsSeparately(LogicalFilter &filter, PLAN_EXPRESSION &&plan_expression) {
+	if (!filter.projection_map.empty() || absl::c_count_if(filter.expressions, [](const unique_ptr<Expression> &expr) {
+		                                      return expr->HasSubquery();
+	                                      }) < 2) {
+		return false;
+	}
+	auto child = std::move(filter.children[0]);
+	const auto input_bindings = child->GetColumnBindings();
+	vector<unique_ptr<Expression>> remaining;
+	for (auto &expr : filter.expressions) {
+		if (!expr->HasSubquery()) {
+			remaining.push_back(std::move(expr));
+			continue;
+		}
+		plan_expression(expr, child);
+#ifdef D_ASSERT_IS_ENABLED
+		const auto planned_bindings = child->GetColumnBindings();
+		D_ASSERT(planned_bindings.size() >= input_bindings.size());
+		D_ASSERT(std::equal(input_bindings.begin(), input_bindings.end(), planned_bindings.begin()));
+#endif
+		auto conjunct_filter = make_uniq<LogicalFilter>();
+		conjunct_filter->projection_map.reserve(input_bindings.size());
+		for (idx_t i = 0; i < input_bindings.size(); i++) {
+			conjunct_filter->projection_map.emplace_back(i);
+		}
+		conjunct_filter->expressions.push_back(std::move(expr));
+		conjunct_filter->children.push_back(std::move(child));
+		child = std::move(conjunct_filter);
+	}
+	if (remaining.empty()) {
+		auto &top = child->Cast<LogicalFilter>();
+		filter.expressions = std::move(top.expressions);
+		filter.projection_map = std::move(top.projection_map);
+		filter.children[0] = std::move(top.children[0]);
+	} else {
+		filter.expressions = std::move(remaining);
+		filter.children[0] = std::move(child);
+	}
+	return true;
+}
+
+} // namespace
+
 static bool HasJoinConditionExpressions(LogicalOperatorType type) {
 	switch (type) {
 	case LogicalOperatorType::LOGICAL_ASOF_JOIN:
@@ -675,6 +742,12 @@ void RecursiveDependentJoinPlanner::PlanJoinChildFilters(LogicalOperator &op) {
 		}
 		auto &filter = child->Cast<LogicalFilter>();
 		D_ASSERT(filter.children.size() == 1);
+		if (PlanSubqueryConjunctsSeparately(
+		        filter, [&](unique_ptr<Expression> &expr, unique_ptr<LogicalOperator> &filter_child) {
+			        binder.PlanSubqueries(expr, filter_child);
+		        })) {
+			continue;
+		}
 		for (auto &expr : filter.expressions) {
 			binder.PlanSubqueries(expr, filter.children[0]);
 		}
@@ -687,7 +760,7 @@ BindingReplacementGraph RecursiveDependentJoinPlanner::PlanOperator(unique_ptr<L
 	    op_ptr->Cast<LogicalAnyJoin>().condition->HasSubquery()) {
 		return PlanAnyJoinCondition(op_ptr);
 	}
-	auto old_output = op_ptr->GetColumnBindings();
+	const OutputValidation output_validation(*op_ptr);
 	BindingReplacementGraph operator_replacements;
 	if (!op_ptr->children.empty()) {
 		// Collect all recursive CTEs during recursive descend
@@ -696,9 +769,15 @@ BindingReplacementGraph RecursiveDependentJoinPlanner::PlanOperator(unique_ptr<L
 			auto &rec_cte = op_ptr->Cast<LogicalCTE>();
 			binder.recursive_ctes[rec_cte.table_index] = op_ptr.get();
 		}
+		auto plan_conjunct = [&](unique_ptr<Expression> &expr, unique_ptr<LogicalOperator> &filter_child) {
+			root = std::move(filter_child);
+			VisitExpression(&expr);
+			filter_child = std::move(root);
+		};
 		if (HasJoinConditionExpressions(op_ptr->type)) {
 			PlanJoinExpressions(*op_ptr);
-		} else {
+		} else if (op_ptr->type != LogicalOperatorType::LOGICAL_FILTER ||
+		           !PlanSubqueryConjunctsSeparately(op_ptr->Cast<LogicalFilter>(), plan_conjunct)) {
 			for (idx_t i = 0; i < op_ptr->children.size(); i++) {
 				root = std::move(op_ptr->children[i]);
 				D_ASSERT(root);
@@ -709,6 +788,10 @@ BindingReplacementGraph RecursiveDependentJoinPlanner::PlanOperator(unique_ptr<L
 
 		for (idx_t i = 0; i < op_ptr->children.size(); i++) {
 			D_ASSERT(op_ptr->children[i]);
+			if (!HasUnplannedSubqueries(*op_ptr->children[i])) {
+				RegisterCTEs(*op_ptr->children[i]);
+				continue;
+			}
 			ColumnBindingRewrite::RewriteChild(
 			    op_ptr, i, [&](unique_ptr<LogicalOperator> &child, BindingReplacementGraph &child_replacements) {
 				    child_replacements = PlanOperator(child);
@@ -716,12 +799,51 @@ BindingReplacementGraph RecursiveDependentJoinPlanner::PlanOperator(unique_ptr<L
 			    });
 		}
 	}
-	ColumnBindingRewrite::ValidateOutput(old_output, op_ptr->GetColumnBindings(), operator_replacements);
+	output_validation.Validate(*op_ptr, operator_replacements);
 	return operator_replacements;
 }
 
+static bool OwnExpressionsHaveSubqueries(LogicalOperator &op) {
+	bool result = false;
+	LogicalOperatorVisitor::EnumerateExpressions(
+	    op, [&](unique_ptr<Expression> *expr) { result = result || (*expr)->HasSubquery(); });
+	return result;
+}
+
+#ifdef D_ASSERT_IS_ENABLED
+static bool SubtreeHasSubqueries(LogicalOperator &op) {
+	return OwnExpressionsHaveSubqueries(op) ||
+	       absl::c_any_of(op.children,
+	                      [](const unique_ptr<LogicalOperator> &child) { return SubtreeHasSubqueries(*child); });
+}
+#endif
+
+bool RecursiveDependentJoinPlanner::HasUnplannedSubqueries(LogicalOperator &op) {
+	auto entry = unplanned_subqueries.find(op);
+	if (entry != unplanned_subqueries.end()) {
+		D_ASSERT(entry->second || !SubtreeHasSubqueries(op));
+		return entry->second;
+	}
+	bool result = OwnExpressionsHaveSubqueries(op);
+	for (auto &child : op.children) {
+		result = result || HasUnplannedSubqueries(*child);
+	}
+	unplanned_subqueries.emplace(op, result);
+	return result;
+}
+
+void RecursiveDependentJoinPlanner::RegisterCTEs(LogicalOperator &op) {
+	if (op.type == LogicalOperatorType::LOGICAL_RECURSIVE_CTE ||
+	    op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
+		binder.recursive_ctes[op.Cast<LogicalCTE>().table_index] = &op;
+	}
+	for (auto &child : op.children) {
+		RegisterCTEs(*child);
+	}
+}
+
 BindingReplacementGraph RecursiveDependentJoinPlanner::PlanAnyJoinCondition(unique_ptr<LogicalOperator> &op_ptr) {
-	auto old_output = op_ptr->GetColumnBindings();
+	const OutputValidation output_validation(*op_ptr);
 	BindingReplacementGraph operator_replacements;
 
 	for (idx_t child_index = 0; child_index < op_ptr->children.size(); child_index++) {
@@ -737,7 +859,7 @@ BindingReplacementGraph RecursiveDependentJoinPlanner::PlanAnyJoinCondition(uniq
 		operator_replacements.Merge(pair_replacements);
 		auto recursive_replacements = PlanOperator(op_ptr);
 		operator_replacements.Merge(recursive_replacements);
-		ColumnBindingRewrite::ValidateOutput(old_output, op_ptr->GetColumnBindings(), operator_replacements);
+		output_validation.Validate(*op_ptr, operator_replacements);
 		return operator_replacements;
 	}
 
@@ -751,7 +873,7 @@ BindingReplacementGraph RecursiveDependentJoinPlanner::PlanAnyJoinCondition(uniq
 			    operator_replacements.Merge(child_replacements);
 		    });
 	}
-	ColumnBindingRewrite::ValidateOutput(old_output, op_ptr->GetColumnBindings(), operator_replacements);
+	output_validation.Validate(*op_ptr, operator_replacements);
 	return operator_replacements;
 }
 

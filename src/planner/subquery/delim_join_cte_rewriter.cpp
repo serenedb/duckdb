@@ -1149,7 +1149,7 @@ bool GeneratedDedupRefEliminator::RewriteSubtree(unique_ptr<LogicalOperator> &op
 	bool rewritten = false;
 	auto child_under_aggregate = under_aggregate || op->type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY;
 	for (idx_t child_idx = 0; child_idx < op->children.size(); child_idx++) {
-		auto old_child_bindings = op->children[child_idx]->GetColumnBindings();
+		auto old_child_bindings = ColumnBindingRewrite::CaptureChildBindings(*op, child_idx);
 		BindingReplacementGraph child_replacements;
 		if (RewriteSubtree(op->children[child_idx], preserve_selected_domain, child_replacements, child_under_aggregate,
 		                   under_evidence_side)) {
@@ -2422,7 +2422,7 @@ bool GeneratedDomainJoinEliminator::TryRewriteOnce(unique_ptr<LogicalOperator> &
 	auto child_under_aggregate = under_aggregate || op->type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY;
 	for (idx_t child_idx = 0; child_idx < op->children.size(); child_idx++) {
 		auto &child = op->children[child_idx];
-		auto old_child_bindings = child->GetColumnBindings();
+		auto old_child_bindings = ColumnBindingRewrite::CaptureChildBindings(*op, child_idx);
 		auto child_under_evidence_side = under_evidence_side;
 		if (negated_marker_filter_above && IsEvidenceSide(*op, child_idx)) {
 			child_under_evidence_side = true;
@@ -2805,7 +2805,7 @@ BindingReplacementGraph DelimJoinCTERewriter::RewriteDelimJoinsToCTEs(unique_ptr
 	}
 	for (idx_t child_idx = 0; child_idx < plan->children.size(); child_idx++) {
 		auto &child = plan->children[child_idx];
-		auto old_child_bindings = child->GetColumnBindings();
+		auto old_child_bindings = ColumnBindingRewrite::CaptureChildBindings(*plan, child_idx);
 		bool child_null_rejecting_filter_above = false;
 		bool child_preserve_evidence_side = false;
 		if (plan->type == LogicalOperatorType::LOGICAL_FILTER &&

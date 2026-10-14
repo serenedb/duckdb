@@ -442,8 +442,9 @@ void ColumnBindingRewrite::RewriteChild(
 	if (child_index >= op->children.size()) {
 		throw InternalException("Binding rewrite child index %llu out of range", child_index);
 	}
-	auto old_child_bindings = op->children[child_index]->GetColumnBindings();
 	auto projection_map = LogicalOperatorVisitor::GetProjectionMap(*op, child_index);
+	auto old_child_bindings =
+	    projection_map ? op->children[child_index]->GetColumnBindings() : CaptureChildBindings(*op, child_index);
 	if (projection_map && projection_map->empty()) {
 		// Freeze the implicit selection before the callback can change the child's output layout.
 		for (idx_t i = 0; i < old_child_bindings.size(); i++) {
@@ -461,11 +462,23 @@ void ColumnBindingRewrite::RewriteChild(
 	ApplyToChild(op, child_index, std::move(old_child_bindings), replacements);
 }
 
+vector<ColumnBinding> ColumnBindingRewrite::CaptureChildBindings(LogicalOperator &op, idx_t child_index) {
+#ifndef D_ASSERT_IS_ENABLED
+	if (!op.HasProjectionMap()) {
+		return {};
+	}
+#endif
+	return op.children[child_index]->GetColumnBindings();
+}
+
 void ColumnBindingRewrite::ApplyToChild(unique_ptr<LogicalOperator> &op, idx_t child_index,
                                         vector<ColumnBinding> old_child_bindings,
                                         const BindingReplacementGraph &replacements) {
 	if (child_index >= op->children.size()) {
 		throw InternalException("Binding rewrite child index %llu out of range", child_index);
+	}
+	if (replacements.Empty() && !op->HasProjectionMap()) {
+		return;
 	}
 	auto new_child_bindings = op->children[child_index]->GetColumnBindings();
 	column_binding_set_t new_bindings(new_child_bindings.begin(), new_child_bindings.end());

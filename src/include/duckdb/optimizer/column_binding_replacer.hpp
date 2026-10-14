@@ -131,6 +131,7 @@ public:
 	//! Apply the output-boundary view of a complete replacement graph to one parent-child edge.
 	static void ApplyToChild(unique_ptr<LogicalOperator> &op, idx_t child_index,
 	                         vector<ColumnBinding> old_child_bindings, const BindingReplacementGraph &replacements);
+	static vector<ColumnBinding> CaptureChildBindings(LogicalOperator &op, idx_t child_index);
 	static void ApplyToOperatorBindings(LogicalOperator &op, const BindingReplacementGraph &replacements);
 	//! Verify that every previous public output binding is still reachable at the rewritten output boundary.
 	static void ValidateOutput(const vector<ColumnBinding> &old_output, const vector<ColumnBinding> &new_output,
