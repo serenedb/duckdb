@@ -24,6 +24,12 @@ void MacroFunction::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
 		serializer.WritePropertyWithDefault<vector<string>>(16485, "return_names", return_names);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<bool>(16486, "is_procedure", is_procedure, false);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<string>(16487, "parameter_modes", parameter_modes, "");
+	}
 }
 
 unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer) {
@@ -33,6 +39,8 @@ unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer)
 	auto types = deserializer.ReadPropertyWithExplicitDefault<vector<LogicalType>>(103, "types", vector<LogicalType>());
 	auto return_types = deserializer.ReadPropertyWithDefault<vector<LogicalType>>(16484, "return_types");
 	auto return_names = deserializer.ReadPropertyWithDefault<vector<string>>(16485, "return_names");
+	auto is_procedure = deserializer.ReadPropertyWithExplicitDefault<bool>(16486, "is_procedure", false);
+	auto parameter_modes = deserializer.ReadPropertyWithExplicitDefault<string>(16487, "parameter_modes", "");
 	unique_ptr<MacroFunction> result;
 	switch (type) {
 	case MacroType::SCALAR_MACRO:
@@ -49,6 +57,8 @@ unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer)
 	result->types = std::move(types);
 	result->return_types = std::move(return_types);
 	result->return_names = std::move(return_names);
+	result->is_procedure = is_procedure;
+	result->parameter_modes = std::move(parameter_modes);
 	result->FinalizeDeserialization();
 	return result;
 }
