@@ -42,6 +42,7 @@ add_library_unity(
   test_versioning_utils.cpp
   test_value_to_sql_string.cpp
   test_value_to_expression.cpp
+  test_vector_borrowed_data.cpp
   test_musl_stack_size.cpp)
 
 set(UNITTEST_OBJECT_FILES
