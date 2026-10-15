@@ -210,8 +210,8 @@ int64_t CastFunctionSet::ImplicitCastCost(optional_ptr<ClientContext> context, c
 	if (registration_probe && registration_probe->HasRegisteredCast(source, target)) {
 		registered_cast_found = true;
 	}
-	// check if a cast has been registered
-	if (map_info) {
+	// check if a cast has been registered - a type never casts to itself, so none applies to it
+	if (map_info && source != target) {
 		auto entry = map_info->GetEntry(source, target);
 		if (entry) {
 			return entry->implicit_cast_cost;

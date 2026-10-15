@@ -48,3 +48,26 @@ TEST_CASE("A cast registered for a family of types applies where a member's own 
 	RequireCast(con, "SELECT DATE '2026-10-15'::bytes", FROM_DATE_TO_ANY_TYPE);
 	RequireCast(con, "SELECT DATE '2026-10-15'::UUID", FROM_DATE_TO_ANY_TYPE);
 }
+
+static constexpr char FROM_PAIR[] = "from pair";
+
+static void IsPair(DataChunk &args, ExpressionState &, Vector &result) {
+	auto writer = FlatVector::Writer<bool>(result, args.size());
+	for (idx_t row = 0; row < args.size(); row++) {
+		writer.WriteValue(true);
+	}
+}
+
+TEST_CASE("A cast registered from a type does not stop the type's own values from binding", "[api][cast]") {
+	DuckDB db(nullptr);
+	ExtensionLoader loader(*db.instance, "cast_lookup");
+	auto pair = LogicalType::STRUCT({{"a", LogicalType::INTEGER}}).WithAlias("pair");
+	loader.RegisterType("pair", pair);
+	loader.RegisterCastFunction(pair, LogicalType::STRUCT({{"any", LogicalType::ANY}}), Refuse<FROM_PAIR>);
+	loader.RegisterFunction(ScalarFunction("is_pair", {pair}, LogicalType::BOOLEAN, IsPair));
+	Connection con(db);
+
+	auto result = con.Query("SELECT is_pair({'a': 1}::pair)");
+	REQUIRE(CHECK_COLUMN(result, 0, {true}));
+	RequireCast(con, "SELECT {'a': 1}::pair::STRUCT(b INTEGER)", FROM_PAIR);
+}
