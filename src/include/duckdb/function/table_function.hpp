@@ -456,7 +456,7 @@ typedef void (*table_function_set_partitions_to_scan_t)(vector<idx_t> partition_
 //! When to call init_global to initialize the table function
 enum class TableFunctionInitialization { INITIALIZE_ON_EXECUTE, INITIALIZE_ON_SCHEDULE };
 
-enum class TableFunctionReturnType { TABLE_RETURNING_FUNCTION, SET_RETURNING_FUNCTION };
+enum class TableFunctionReturnType { TABLE_RETURNING_FUNCTION, SET_RETURNING_FUNCTION, RECORD_RETURNING_FUNCTION };
 
 //! The callbacks and flags that make up a table function's behaviour, shared by the unbound TableFunction and by the
 //! BoundTableFunction that a bound call produces. It deliberately does not derive from Function, so that each of the

@@ -242,6 +242,14 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
                                                  vector<LogicalType> input_table_types,
                                                  vector<Identifier> input_table_names,
                                                  optional_ptr<unique_ptr<LogicalOperator>> input_plan) {
+	const bool returns_record =
+	    table_function.BaseTableFunction::return_type == TableFunctionReturnType::RECORD_RETURNING_FUNCTION;
+	if (returns_record && ref.column_types.empty()) {
+		throw BinderException(ref, "a column definition list is required for functions returning \"record\"");
+	}
+	if (!returns_record && !ref.column_types.empty()) {
+		throw BinderException(ref, "a column definition list is only allowed for functions returning \"record\"");
+	}
 	auto function_name = GetAlias(ref);
 	auto &column_name_alias = ref.column_name_alias;
 	auto bind_index = GenerateTableIndex();
@@ -451,6 +459,16 @@ static void CastToReturnTypes(Binder &binder, ClientContext &context, BoundState
 	query.plan = std::move(projection);
 }
 
+static void RejectColumnDefinitions(const TableFunctionRef &ref, const MacroFunction &definition) {
+	if (ref.column_types.empty()) {
+		return;
+	}
+	if (!definition.return_names.empty()) {
+		throw BinderException(ref, "a column definition list is redundant for a function with OUT parameters");
+	}
+	throw BinderException(ref, "a column definition list is only allowed for functions returning \"record\"");
+}
+
 static unique_ptr<QueryNode> WithOrdinality(unique_ptr<QueryNode> node) {
 	auto subquery = make_uniq<SelectStatement>();
 	subquery->node = std::move(node);
@@ -468,6 +486,19 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 
 	D_ASSERT(ref.function->GetExpressionType() == ExpressionType::FUNCTION);
 	auto &fexpr = ref.function->Cast<FunctionExpression>();
+	if (!ref.column_types.empty()) {
+		if (ref.with_ordinality == OrdinalityType::WITH_ORDINALITY) {
+			throw BinderException(ref, "WITH ORDINALITY cannot be used with a column definition list");
+		}
+		identifier_set_t column_names;
+		for (idx_t i = 0; i < ref.column_types.size(); i++) {
+			if (!column_names.insert(ref.column_name_alias[i]).second) {
+				throw BinderException(ref, "column name \"%s\" specified more than once",
+				                      ref.column_name_alias[i].GetIdentifierName());
+			}
+			BindLogicalType(ref.column_types[i]);
+		}
+	}
 
 	// fetch the function from the catalog. Resolve the qualification first: a leading component is the catalog when
 	// it names an attached database, and otherwise the outermost schema of a (possibly nested) schema path.
@@ -499,6 +530,10 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 			}
 		}
 		if (func_catalog_ptr && func_catalog_ptr->type != CatalogType::MACRO_ENTRY) {
+			if (!ref.column_types.empty()) {
+				throw BinderException(ref,
+				                      "a column definition list is only allowed for functions returning \"record\"");
+			}
 			auto select = make_uniq<SelectNode>();
 			select->select_list.push_back(ref.function->Copy());
 			select->from_table = make_uniq<EmptyTableRef>();
@@ -530,6 +565,7 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 		optional_ptr<MacroFunction> definition;
 		auto query_node = BindTableMacro(fexpr, macro_func, 0, definition);
 		D_ASSERT(query_node);
+		RejectColumnDefinitions(ref, *definition);
 		if (ref.with_ordinality == OrdinalityType::WITH_ORDINALITY) {
 			query_node = WithOrdinality(std::move(query_node));
 		}
@@ -565,6 +601,7 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 		optional_ptr<MacroFunction> definition;
 		auto query_node = BindTableMacro(fexpr, macro_func, 0, definition);
 		D_ASSERT(query_node);
+		RejectColumnDefinitions(ref, *definition);
 		if (ref.with_ordinality == OrdinalityType::WITH_ORDINALITY) {
 			query_node = WithOrdinality(std::move(query_node));
 		}
