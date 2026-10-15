@@ -68,11 +68,19 @@ string_t View(const string &key) {
 
 class KeyEncoder {
 public:
-	KeyEncoder(const vector<LogicalType> &types, const vector<OrderModifiers> &modifiers_p) : modifiers(modifiers_p) {
+	KeyEncoder(const vector<LogicalType> &types_p, const vector<OrderModifiers> &modifiers_p, bool byte_keys_p)
+	    : types(types_p), modifiers(modifiers_p), byte_keys(byte_keys_p) {
 		chunk.Initialize(Allocator::DefaultAllocator(), types);
 	}
 
 	unique_ptr<Vector> Load(PresortedMergeReader &reader, idx_t begin, idx_t count) {
+		if (byte_keys) {
+			DataChunk bytes;
+			bytes.Initialize(Allocator::DefaultAllocator(), types, count);
+			reader.Read(begin, count, bytes);
+			bytes.data[0].Flatten();
+			return make_uniq<Vector>(std::move(bytes.data[0]));
+		}
 		chunk.Reset();
 		reader.Read(begin, count, chunk);
 		auto keys = make_uniq<Vector>(LogicalType::BLOB, count);
@@ -87,7 +95,9 @@ public:
 	}
 
 private:
+	const vector<LogicalType> &types;
 	const vector<OrderModifiers> &modifiers;
+	const bool byte_keys;
 	DataChunk chunk;
 };
 
@@ -132,8 +142,9 @@ struct Cursor {
 
 class CursorMerge : public PresortedMergeState {
 public:
-	CursorMerge(vector<Cursor> cursors_p, const vector<LogicalType> &types, const vector<OrderModifiers> &modifiers)
-	    : cursors(std::move(cursors_p)), encoder(types, modifiers), losers(cursors.size()) {
+	CursorMerge(vector<Cursor> cursors_p, const vector<LogicalType> &types, const vector<OrderModifiers> &modifiers,
+	            bool byte_keys)
+	    : cursors(std::move(cursors_p)), encoder(types, modifiers, byte_keys), losers(cursors.size()) {
 		done = cursors.empty();
 	}
 
@@ -342,6 +353,10 @@ PresortedMerge::PresortedMerge(vector<LogicalType> key_types_p, vector<OrderModi
 	D_ASSERT(key_types.size() == modifiers.size());
 }
 
+PresortedMerge::PresortedMerge(vector<shared_ptr<PresortedMergeInput>> inputs_p)
+    : key_types({LogicalType::BLOB}), inputs(std::move(inputs_p)), byte_keys(true) {
+}
+
 PresortedMerge::~PresortedMerge() {
 }
 
@@ -353,7 +368,7 @@ void PresortedMerge::Partition(idx_t max_partitions) {
 		total += input->Count();
 	}
 	if (max_partitions > 1 && total != 0) {
-		KeyEncoder encoder(key_types, modifiers);
+		KeyEncoder encoder(key_types, modifiers, byte_keys);
 		vector<unique_ptr<PresortedMergeReader>> readers(inputs.size());
 		const auto per_input = max_partitions * SAMPLES_PER_PARTITION;
 		vector<KeyRow> samples;
@@ -428,7 +443,7 @@ unique_ptr<PresortedMergeState> PresortedMerge::BeginMerge(idx_t partition) cons
 		cursor.reader = inputs[i]->CreateReader();
 		cursors.push_back(std::move(cursor));
 	}
-	return make_uniq<CursorMerge>(std::move(cursors), key_types, modifiers);
+	return make_uniq<CursorMerge>(std::move(cursors), key_types, modifiers, byte_keys);
 }
 
 bool PresortedMerge::Merge(PresortedMergeState &state, vector<PresortedRun> &runs, idx_t max_runs,
