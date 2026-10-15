@@ -46,16 +46,22 @@ inline void ListUpdateFunction(Vector inputs[], AggregateInputData &aggr_input_d
 	ListSegmentFunctions functions;
 	GetSegmentDataFunctions(functions, input.GetType());
 
-	for (idx_t i = 0; i < count; i++) {
-		if (IGNORE_NULLS) {
-			const auto idx = input_data.unified.sel->get_index(i);
-			if (!input_data.unified.validity.RowIsValid(idx)) {
-				continue;
-			}
+	const auto is_appended = [&](idx_t i) {
+		return !IGNORE_NULLS || input_data.unified.validity.RowIsValid(input_data.unified.sel->get_index(i));
+	};
+	for (idx_t i = 0; i < count;) {
+		if (!is_appended(i)) {
+			i++;
+			continue;
 		}
-		auto &state = *states[i].GetValue();
+		auto state = states[i].GetValue();
+		idx_t run_end = i + 1;
+		while (run_end < count && states[run_end].GetValue() == state && is_appended(run_end)) {
+			run_end++;
+		}
 		aggr_input_data.allocator.AlignNext();
-		functions.AppendRows(aggr_input_data.allocator, state.linked_list, input_data, i, 1);
+		functions.AppendRows(aggr_input_data.allocator, state->linked_list, input_data, i, run_end - i);
+		i = run_end;
 	}
 }
 
@@ -83,17 +89,28 @@ inline void ListClusterUpdate(Vector inputs[], AggregateInputData &aggr_input_da
 			continue;
 		}
 
-		// scattered run and/or NULL filtering - append the rows one by one
-		for (idx_t k = 0; k < run.count; k++) {
-			idx_t entry_idx = run_sel ? run_sel[k] : k;
-			if (IGNORE_NULLS) {
-				const auto idx = input_data.unified.sel->get_index(entry_idx);
-				if (!input_data.unified.validity.RowIsValid(idx)) {
-					continue;
-				}
+		// scattered run and/or NULL filtering - append the consecutive valid rows together
+		const auto entry_at = [&](idx_t k) -> idx_t {
+			return run_sel ? run_sel[k] : k;
+		};
+		const auto is_appended = [&](idx_t entry_idx) {
+			return !IGNORE_NULLS ||
+			       input_data.unified.validity.RowIsValid(input_data.unified.sel->get_index(entry_idx));
+		};
+		for (idx_t k = 0; k < run.count;) {
+			const auto entry_idx = entry_at(k);
+			if (!is_appended(entry_idx)) {
+				k++;
+				continue;
+			}
+			idx_t run_end = k + 1;
+			while (run_end < run.count && entry_at(run_end) == entry_idx + (run_end - k) &&
+			       is_appended(entry_at(run_end))) {
+				run_end++;
 			}
 			aggr_input_data.allocator.AlignNext();
-			functions.AppendRows(aggr_input_data.allocator, state.linked_list, input_data, entry_idx, 1);
+			functions.AppendRows(aggr_input_data.allocator, state.linked_list, input_data, entry_idx, run_end - k);
+			k = run_end;
 		}
 	}
 }
