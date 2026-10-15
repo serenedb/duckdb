@@ -21,6 +21,7 @@ set(TEST_API_OBJECTS
     test_task_executor_concurrency.cpp
     test_function_signature_variadic.cpp
     test_scalar_function_decimal_return.cpp
+    test_alias_type_overload.cpp
     test_aggregate_state_bind_data.cpp
     test_config.cpp
     test_connection_secrets.cpp
