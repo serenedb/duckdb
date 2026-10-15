@@ -114,6 +114,7 @@ public:
 	DUCKDB_API AggregateFunctionCatalogEntry &GetAggregateFunction(const Identifier &name);
 	DUCKDB_API optional_ptr<CatalogEntry> TryGetFunction(const Identifier &name);
 	DUCKDB_API optional_ptr<CatalogEntry> TryGetTableFunction(const Identifier &name);
+	DUCKDB_API optional_ptr<CatalogEntry> TryGetAggregateFunction(const Identifier &name);
 
 	//! Add a function overload
 	DUCKDB_API void AddFunctionOverload(ScalarFunction function);

@@ -357,8 +357,12 @@ TableFunctionCatalogEntry &ExtensionLoader::GetTableFunction(const Identifier &n
 	return catalog_entry->Cast<TableFunctionCatalogEntry>();
 }
 
+optional_ptr<CatalogEntry> ExtensionLoader::TryGetAggregateFunction(const Identifier &name) {
+	return TryGetEntry(db, name, CatalogType::AGGREGATE_FUNCTION_ENTRY);
+}
+
 AggregateFunctionCatalogEntry &ExtensionLoader::GetAggregateFunction(const Identifier &name) {
-	auto catalog_entry = TryGetEntry(db, name, CatalogType::AGGREGATE_FUNCTION_ENTRY);
+	auto catalog_entry = TryGetAggregateFunction(name);
 	if (!catalog_entry) {
 		throw InvalidInputException("Function with name %s not found in ExtensionLoader::GetAggregateFunction", name);
 	}
