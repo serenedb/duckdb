@@ -1,7 +1,10 @@
+#include "duckdb/common/vector/array_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector/map_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
-#include "duckdb/common/types/value_map.hpp"
+#include "duckdb/common/type_visitor.hpp"
+#include "duckdb/common/vector_operations/unary_executor.hpp"
+#include "duckdb/function/create_sort_key.hpp"
 
 namespace duckdb {
 
@@ -23,41 +26,86 @@ const Vector &MapVector::GetValues(const Vector &vector) {
 	return GetValues((Vector &)vector);
 }
 
-MapInvalidReason MapVector::CheckMapValidity(const Vector &map, idx_t count, const SelectionVector &sel) {
-	D_ASSERT(map.GetType().id() == LogicalTypeId::MAP);
-
-	// unify the MAP vector, which is a physical LIST vector
-	auto map_entries = map.Values<list_entry_t>();
-
-	// unify the child vector containing the keys
-	auto &keys = MapVector::GetKeys(map);
-
-	auto key_validity = keys.Validity();
-	for (idx_t row_idx = 0; row_idx < count; row_idx++) {
-		auto mapped_row = sel.get_index(row_idx);
-		auto map_entry = map_entries[mapped_row];
-		if (!map_entry.IsValid()) {
-			continue;
+static void NormalizeIntervals(Vector &vector) {
+	switch (vector.GetType().InternalType()) {
+	case PhysicalType::INTERVAL: {
+		Vector normalized(vector.GetType(), vector.size());
+		UnaryExecutor::Execute<interval_t, interval_t>(vector, normalized, vector.size(),
+		                                               [](interval_t input) { return input.Normalize(); });
+		vector.Reference(normalized);
+		break;
+	}
+	case PhysicalType::STRUCT:
+		for (auto &child : StructVector::GetEntries(vector)) {
+			NormalizeIntervals(child);
 		}
-		auto &map_list = map_entry.GetValue();
+		break;
+	case PhysicalType::LIST:
+		NormalizeIntervals(ListVector::GetChildMutable(vector));
+		break;
+	case PhysicalType::ARRAY:
+		NormalizeIntervals(ArrayVector::GetChildMutable(vector));
+		break;
+	default:
+		break;
+	}
+}
 
-		value_set_t unique_keys;
-		auto length = map_list.length;
-		auto offset = map_list.offset;
+void MapVector::CreateKeySortKeys(const Vector &keys, Vector &result) {
+	const OrderModifiers modifiers(OrderType::ASCENDING, OrderByNullType::NULLS_LAST);
+	if (!TypeVisitor::Contains(keys.GetType(), LogicalTypeId::INTERVAL)) {
+		CreateSortKeyHelpers::CreateSortKey(keys, modifiers, result);
+		return;
+	}
+	Vector normalized(keys.GetType(), keys.size());
+	normalized.Append(keys, keys.size(), VectorAppendMode::ALLOW_RESIZE);
+	NormalizeIntervals(normalized);
+	CreateSortKeyHelpers::CreateSortKey(normalized, modifiers, result);
+}
 
-		for (idx_t child_idx = 0; child_idx < length; child_idx++) {
-			if (!key_validity.IsValid(offset + child_idx)) {
-				return MapInvalidReason::NULL_KEY;
-			}
+MapValidityChecker::MapValidityChecker(const Vector &lists, const Vector &keys)
+    : entries(lists.Values<list_entry_t>()), keys(keys), key_validity(keys.Validity()) {
+}
 
-			auto value = keys.GetValue(offset + child_idx);
-			auto unique = unique_keys.insert(value).second;
-			if (!unique) {
-				return MapInvalidReason::DUPLICATE_KEY;
-			}
+MapInvalidReason MapValidityChecker::CheckRow(idx_t row) {
+	auto entry = entries[row];
+	if (!entry.IsValid()) {
+		return MapInvalidReason::VALID;
+	}
+	auto &list = entry.GetValue();
+	const bool check_duplicates = list.length > 1;
+	if (check_duplicates) {
+		if (!sort_keys) {
+			sort_key_data = make_uniq<Vector>(LogicalType::BLOB, keys.size());
+			MapVector::CreateKeySortKeys(keys, *sort_key_data);
+			sort_keys = make_uniq<VectorIterator<string_t>>(*sort_key_data);
+		}
+		seen.clear();
+	}
+	for (idx_t i = 0; i < list.length; i++) {
+		const auto key = list.offset + i;
+		if (!key_validity.IsValid(key)) {
+			return MapInvalidReason::NULL_KEY;
+		}
+		if (check_duplicates && !seen.insert((*sort_keys)[key].GetValue()).second) {
+			return MapInvalidReason::DUPLICATE_KEY;
 		}
 	}
+	return MapInvalidReason::VALID;
+}
 
+MapInvalidReason MapVector::CheckMapValidity(const Vector &map, idx_t count, const SelectionVector &sel) {
+	D_ASSERT(map.GetType().id() == LogicalTypeId::MAP);
+	if (map.GetVectorType() == VectorType::CONSTANT_VECTOR) {
+		count = MinValue<idx_t>(count, 1);
+	}
+	MapValidityChecker checker(map, MapVector::GetKeys(map));
+	for (idx_t row_idx = 0; row_idx < count; row_idx++) {
+		auto reason = checker.CheckRow(sel.get_index(row_idx));
+		if (reason != MapInvalidReason::VALID) {
+			return reason;
+		}
+	}
 	return MapInvalidReason::VALID;
 }
 
