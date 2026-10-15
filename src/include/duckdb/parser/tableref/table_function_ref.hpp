@@ -35,6 +35,8 @@ public:
 	//! Whether or not WITH ORDINALITY has been invoked
 	OrdinalityType with_ordinality = OrdinalityType::WITHOUT_ORDINALITY;
 
+	vector<LogicalType> column_types;
+
 public:
 	string ToString() const override;
 

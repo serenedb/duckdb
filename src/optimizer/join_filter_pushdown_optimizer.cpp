@@ -170,10 +170,26 @@ void JoinFilterPushdownOptimizer::GetPushdownFilterTargets(LogicalOperator &op,
 		break;
 	case LogicalOperatorType::LOGICAL_ORDER_BY:
 	case LogicalOperatorType::LOGICAL_DISTINCT:
-	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
 		// does not affect probe side - recurse into left child
 		// FIXME: we can probably recurse into more operators here (e.g. window, unnest)
 		GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets, for_scan_order);
+		break;
+	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
+		for (auto &child : probe_child.children) {
+			unordered_set<TableIndex> child_tables;
+			for (auto &binding : child->GetColumnBindings()) {
+				child_tables.insert(binding.table_index);
+			}
+			vector<JoinFilterPushdownColumn> child_columns;
+			for (auto &column : columns) {
+				if (child_tables.count(column.probe_column_index.table_index)) {
+					child_columns.push_back(column);
+				}
+			}
+			if (!child_columns.empty()) {
+				GetPushdownFilterTargets(*child, std::move(child_columns), targets, for_scan_order);
+			}
+		}
 		break;
 	case LogicalOperatorType::LOGICAL_FILTER:
 	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:

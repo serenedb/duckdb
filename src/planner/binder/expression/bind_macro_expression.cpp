@@ -1,5 +1,7 @@
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/enums/expression_type.hpp"
@@ -178,13 +180,15 @@ void ExpressionBinder::UnfoldWindowMacroExpression(unique_ptr<ParsedExpression> 
 	expr = std::move(macro_copy);
 }
 
-void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func,
-                                             unique_ptr<ParsedExpression> &expr, idx_t depth) {
+ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function,
+                                                             ScalarMacroCatalogEntry &macro_func,
+                                                             unique_ptr<ParsedExpression> &expr, idx_t depth) {
 	// validate the arguments and separate positional and default arguments
 	vector<unique_ptr<ParsedExpression>> positional_arguments;
 	InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> named_arguments;
 	binder.lambda_bindings = lambda_bindings;
-	auto bind_result = MacroFunction::BindMacroFunction(binder, macro_func.macros, macro_func.name, function,
+	auto bind_result = MacroFunction::BindMacroFunction(binder, macro_func.macros, macro_func.name,
+	                                                    macro_func.ParentCatalog().Compatibility(), function,
 	                                                    positional_arguments, named_arguments, depth);
 	if (!bind_result.error.empty()) {
 		throw BinderException(*expr, bind_result.error);
@@ -197,9 +201,17 @@ void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, Scala
 
 	// replace current expression with stored macro expression
 	// special case: If this is a window function, then we need to return a window expression
-	if (expr->GetExpressionClass() == ExpressionClass::WINDOW) {
+	const bool window = expr->GetExpressionClass() == ExpressionClass::WINDOW;
+	const bool distinct = !window && function.Distinct();
+	unique_ptr<ParsedExpression> filter;
+	unique_ptr<OrderModifier> order_by;
+	Identifier function_name;
+	if (window) {
 		UnfoldWindowMacroExpression(expr, macro_def);
 	} else {
+		filter = std::move(function.FilterMutable());
+		order_by = std::move(function.OrderByMutable());
+		function_name = function.FunctionName();
 		expr = macro_def.expression->Copy();
 	}
 
@@ -211,6 +223,38 @@ void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, Scala
 	// now replace the parameters
 	vector<identifier_set_t> lambda_params;
 	ReplaceMacroParameters(expr, lambda_params);
+
+	const bool ordered = order_by && !order_by->orders.empty();
+	if (!distinct && !filter && !ordered) {
+		return macro_def;
+	}
+	vector<reference<unique_ptr<ParsedExpression>>> aggregates;
+	FindAggregateExprs(expr, aggregates);
+	if (aggregates.empty() || (distinct && aggregates.size() != 1)) {
+		throw InvalidInputException("Function %s is a %s. \"DISTINCT\", \"FILTER\", and \"ORDER BY\" are only "
+		                            "applicable to window and aggregate functions.",
+		                            function_name, CatalogTypeToString(CatalogType::MACRO_ENTRY));
+	}
+	for (auto &aggregate : aggregates) {
+		auto &target = aggregate.get()->Cast<FunctionExpression>();
+		target.DistinctMutable() = target.Distinct() || distinct;
+		if (filter) {
+			auto combined = filter->Copy();
+			if (target.Filter()) {
+				combined = make_uniq<ConjunctionExpression>(ExpressionType::CONJUNCTION_AND,
+				                                            std::move(target.FilterMutable()), std::move(combined));
+			}
+			target.FilterMutable() = std::move(combined);
+		}
+		if (ordered) {
+			auto prefix = order_by->Copy();
+			auto &call_orders = prefix->Cast<OrderModifier>().orders;
+			auto &orders = target.OrderByMutable()->orders;
+			orders.insert(orders.begin(), std::make_move_iterator(call_orders.begin()),
+			              std::make_move_iterator(call_orders.end()));
+		}
+	}
+	return macro_def;
 }
 
 BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func, idx_t depth,
@@ -218,10 +262,18 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 	auto stack_checker = StackCheck(*expr, 3);
 
 	// unfold the macro expression
-	UnfoldMacroExpression(function, macro_func, expr, depth);
+	auto &macro_def = UnfoldMacroExpression(function, macro_func, expr, depth);
 
 	// bind the unfolded macro
-	return BindExpression(expr, depth);
+	auto result = BindExpression(expr, depth);
+	if (result.HasError() || macro_def.return_types.empty()) {
+		return result;
+	}
+	auto declared = macro_def.ResultType();
+	if (MacroFunction::ResultNeedsCast(result.expression->GetReturnType(), declared)) {
+		result.expression = BoundCastExpression::AddCastToType(context, std::move(result.expression), declared);
+	}
+	return result;
 }
 
 } // namespace duckdb

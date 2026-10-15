@@ -205,6 +205,9 @@ struct DefaultCasts {
 	DUCKDB_API static BoundCastInfo GetDefaultCastFunction(BindCastInput &input, const LogicalType &source,
 	                                                       const LogicalType &target);
 
+	DUCKDB_API static BoundCastInfo StringToListCast(BindCastInput &input, const LogicalType &target,
+	                                                 char array_delimiter);
+
 	DUCKDB_API static bool NopCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
 	DUCKDB_API static bool TryVectorNullCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
 	DUCKDB_API static bool ReinterpretCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters);

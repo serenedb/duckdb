@@ -319,6 +319,12 @@ void ExtensionLoader::AddFunctionOverload(TableFunctionSet functions) { // NOLIN
 	}
 }
 
+void ExtensionLoader::AddFunctionOverload(AggregateFunction function) {
+	auto &aggregate_function = GetAggregateFunction(function.name);
+	aggregate_function.FinalizeFunction(function);
+	aggregate_function.functions.AddFunction(std::move(function));
+}
+
 static optional_ptr<CatalogEntry> TryGetEntry(DatabaseInstance &db, const Identifier &name, CatalogType type) {
 	D_ASSERT(!name.empty());
 	auto &system_catalog = Catalog::GetSystemCatalog(db);
@@ -349,6 +355,18 @@ TableFunctionCatalogEntry &ExtensionLoader::GetTableFunction(const Identifier &n
 		throw InvalidInputException("Function with name %s not found in ExtensionLoader::GetTableFunction", name);
 	}
 	return catalog_entry->Cast<TableFunctionCatalogEntry>();
+}
+
+optional_ptr<CatalogEntry> ExtensionLoader::TryGetAggregateFunction(const Identifier &name) {
+	return TryGetEntry(db, name, CatalogType::AGGREGATE_FUNCTION_ENTRY);
+}
+
+AggregateFunctionCatalogEntry &ExtensionLoader::GetAggregateFunction(const Identifier &name) {
+	auto catalog_entry = TryGetAggregateFunction(name);
+	if (!catalog_entry) {
+		throw InvalidInputException("Function with name %s not found in ExtensionLoader::GetAggregateFunction", name);
+	}
+	return catalog_entry->Cast<AggregateFunctionCatalogEntry>();
 }
 
 void ExtensionLoader::RegisterType(string type_name, LogicalType type, bind_logical_type_function_t bind_modifiers) {

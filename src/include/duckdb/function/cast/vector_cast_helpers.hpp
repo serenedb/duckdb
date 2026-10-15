@@ -261,8 +261,9 @@ struct VectorCastHelpers {
 };
 
 struct VectorStringToList {
-	static idx_t CountPartsList(const string_t &input);
-	static bool SplitStringList(const string_t &input, string_t *child_data, idx_t &child_start, Vector &child);
+	static idx_t CountPartsList(const string_t &input, char array_delimiter);
+	static bool SplitStringList(const string_t &input, char array_delimiter, string_t *child_data, idx_t &child_start,
+	                            Vector &child);
 	static bool StringToNestedTypeCastLoop(const string_t *source_data, ValidityMask &source_mask, Vector &result,
 	                                       ValidityMask &result_mask, idx_t count, CastParameters &parameters,
 	                                       const SelectionVector *sel);

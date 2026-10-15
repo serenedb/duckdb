@@ -451,6 +451,7 @@ Expression:
     - IsExpression
     - IsTest
     - IsLiteral
+    - IsDocument
     - NotNull
     - NotNullKeyword
     - NotNullOperator
@@ -501,12 +502,14 @@ Expression:
     - FilterClauseExpression
     - FilterClauseContents
     - ParenthesisExpression
+    - OverlapsExpression
     - Indirection
     - CastOperator
     - DotOperator
     - MethodExpression
     - DotMethodOperator
     - DotColumnOperator
+    - DotStarOperator
     - SliceExpression
     - EndSliceBound
     - EndSliceValue
@@ -516,6 +519,7 @@ Expression:
     - StarExpression
     - SpecialFunctionExpression
     - CoalesceExpression
+    - XmlConcatExpression
     - UnpackExpression
     - TryExpression
     - ColumnsExpression
@@ -720,6 +724,9 @@ ExpressionList:
     - MapStructExpression
     - MapStructField
     - ExtractArguments
+    - OverlapsRow
+    - OverlapsRowConstructor
+    - OverlapsRowList
     - NullIfArguments
     - PositionArguments
     - SubstringParameters
@@ -943,6 +950,9 @@ TableAlias:
     - TableAlias
     - TableAliasAs
     - TableAliasWithoutAs
+    - TableFunctionAlias
+    - ColumnDefinitionAliasAs
+    - ColumnDefinitionAliasWithoutAs
 
 JoinPrefix:
   type: "JoinPrefix"
@@ -1058,6 +1068,7 @@ MacroParameter:
     - MacroParameter
     - SimpleParameter
     - NamedParameter
+    - ModeParameter
 
 JobScheduleInfo:
   type: "JobScheduleInfo"
@@ -2142,6 +2153,7 @@ excluded_rules:
   - ReturnsClause
   - ReturnsTable
   - ReturnsNull
+  - ReturnsSetof
   - VolatilityKeyword
   - StrictClause
   - LanguageClause

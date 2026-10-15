@@ -1,0 +1,13 @@
+# name: test/sql/function/generic/function_style_cast.test
+# description: A call of a type's name is a cast only in PostgreSQL mode
+# group: [generic]
+
+statement error
+SELECT int4('42')
+----
+<REGEX>:Catalog Error:.*int4 does not exist.*
+
+statement error
+SELECT uuid('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')
+----
+<REGEX>:Binder Error:.*No function matches.*

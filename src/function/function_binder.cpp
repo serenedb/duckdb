@@ -794,15 +794,25 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(const ScalarFunctionCa
                                                           vector<pair<Identifier, unique_ptr<Expression>>> arguments,
                                                           ErrorData &error, bool is_operator,
                                                           optional_ptr<Binder> binder) {
-	// select the best matching overload (this may name positional arguments by their alias for functions that opt
-	// into implicit argument naming, e.g. struct_pack/row)
-	auto best_function = BindFunctionFromArguments(func.name, func.functions, arguments, error);
+	auto best_function = SelectScalarFunction(func, arguments, error);
 	if (!best_function.IsValid()) {
 		return nullptr;
 	}
+	return BindScalarFunction(func, best_function.GetIndex(), std::move(arguments), is_operator, binder);
+}
 
-	// found a matching function!
-	auto selected_function = func.functions.GetFunctionByOffset(best_function.GetIndex());
+optional_idx FunctionBinder::SelectScalarFunction(const ScalarFunctionCatalogEntry &func,
+                                                  vector<pair<Identifier, unique_ptr<Expression>>> &arguments,
+                                                  ErrorData &error) {
+	// select the best matching overload (this may name positional arguments by their alias for functions that opt
+	// into implicit argument naming, e.g. struct_pack/row)
+	return BindFunctionFromArguments(func.name, func.functions, arguments, error);
+}
+
+unique_ptr<Expression> FunctionBinder::BindScalarFunction(const ScalarFunctionCatalogEntry &func, idx_t overload,
+                                                          vector<pair<Identifier, unique_ptr<Expression>>> arguments,
+                                                          bool is_operator, optional_ptr<Binder> binder) {
+	auto selected_function = func.functions.GetFunctionByOffset(overload);
 	auto &bound_function = *selected_function;
 
 	// now that the overload is fixed, split the arguments into their final positional/named children

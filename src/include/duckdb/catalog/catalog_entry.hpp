@@ -102,6 +102,8 @@ public:
 
 	virtual void Verify(Catalog &catalog);
 
+	virtual vector<idx_t> GetSubObjectOids() const;
+
 	void Serialize(Serializer &serializer) const;
 	static unique_ptr<CreateInfo> Deserialize(Deserializer &deserializer);
 

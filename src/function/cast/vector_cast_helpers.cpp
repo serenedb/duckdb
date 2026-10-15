@@ -269,7 +269,7 @@ static inline bool ValueStateTransition(StringCastInputState &input_state, optio
 }
 
 template <class OP>
-static bool SplitStringListInternal(const string_t &input, OP &state) {
+static bool SplitStringListInternal(const string_t &input, char array_delimiter, OP &state) {
 	const char *buf = input.GetData();
 	idx_t len = input.GetSize();
 	idx_t pos = 0;
@@ -283,6 +283,7 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 		return false;
 	}
 	const char close_bracket = buf[pos] == '[' ? ']' : '}';
+	const char delimiter = buf[pos] == '[' ? ',' : array_delimiter;
 
 	//! Skip the opening bracket
 	pos++;
@@ -292,7 +293,7 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 		optional_idx start_pos;
 		idx_t end_pos;
 
-		while (pos < len && (buf[pos] != ',' && buf[pos] != close_bracket)) {
+		while (pos < len && (buf[pos] != delimiter && buf[pos] != close_bracket)) {
 			if (!ValueStateTransition(input_state, start_pos, end_pos)) {
 				return false;
 			}
@@ -321,15 +322,15 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 	return (pos == len);
 }
 
-bool VectorStringToList::SplitStringList(const string_t &input, string_t *child_data, idx_t &child_start,
-                                         Vector &child) {
+bool VectorStringToList::SplitStringList(const string_t &input, char array_delimiter, string_t *child_data,
+                                         idx_t &child_start, Vector &child) {
 	SplitStringListOperation state(child_data, child_start, child);
-	return SplitStringListInternal<SplitStringListOperation>(input, state);
+	return SplitStringListInternal<SplitStringListOperation>(input, array_delimiter, state);
 }
 
-idx_t VectorStringToList::CountPartsList(const string_t &input) {
+idx_t VectorStringToList::CountPartsList(const string_t &input, char array_delimiter) {
 	CountPartOperation state;
-	SplitStringListInternal<CountPartOperation>(input, state);
+	SplitStringListInternal<CountPartOperation>(input, array_delimiter, state);
 	return state.count;
 }
 

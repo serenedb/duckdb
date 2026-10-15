@@ -51,6 +51,7 @@ public:
 	vector<MatcherToken> &tokens;
 	bool has_block_comment = false;
 	idx_t last_block_comment_position = 0;
+	bool question_mark_operators = false;
 };
 
 class Tokenizer {
@@ -78,9 +79,11 @@ private:
 	//! (dirty) based on the return value.
 	bool TokenizeInputInternal(TokenizerBehavior &behavior) const;
 	bool IsCompoundColonToken(std::string_view sql, idx_t pos, idx_t &token_length) const;
-	static bool IsHashOperatorToken(std::string_view sql, idx_t pos, idx_t &token_length);
+	static bool IsSingleByteOperatorPrefix(std::string_view sql, idx_t pos, bool question_mark_operators,
+	                                       idx_t &token_length);
 
 public:
+	static bool IsOperatorText(std::string_view text);
 	static bool IsSingleByteOperator(char c) {
 		switch (c) {
 		case '(':

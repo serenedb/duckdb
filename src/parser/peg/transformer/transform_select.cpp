@@ -783,15 +783,16 @@ JoinType PEGTransformerFactory::TransformInnerJoin(PEGTransformer &transformer) 
 unique_ptr<TableRef> PEGTransformerFactory::TransformTableFunctionLateralOpt(
     PEGTransformer &transformer, const optional<bool> &lateral, const QualifiedName &qualified_table_function,
     vector<FunctionArgument> table_function_arguments, const optional<bool> &with_ordinality,
-    const optional<TableAlias> &table_alias) {
+    const optional<TableAlias> &table_function_alias) {
 	auto result = make_uniq<TableFunctionRef>();
 
 	result->with_ordinality =
 	    with_ordinality.value_or(false) ? OrdinalityType::WITH_ORDINALITY : OrdinalityType::WITHOUT_ORDINALITY;
 	result->function = make_uniq<FunctionExpression>(qualified_table_function, std::move(table_function_arguments));
-	if (table_alias) {
-		result->alias = table_alias->name;
-		result->column_name_alias = table_alias->column_name_alias;
+	if (table_function_alias) {
+		result->alias = table_function_alias->name;
+		result->column_name_alias = table_function_alias->column_name_alias;
+		result->column_types = table_function_alias->column_types;
 	}
 	return std::move(result);
 }
@@ -1587,6 +1588,29 @@ TableAlias PEGTransformerFactory::TransformTableAliasWithoutAs(PEGTransformer &t
 		result.column_name_alias = StringsToIdentifiers(*column_aliases);
 	}
 	return result;
+}
+
+static TableAlias ColumnDefinitionAlias(const Identifier &name, const child_list_t<LogicalType> &col_id_type_list) {
+	TableAlias result;
+	result.name = name;
+	for (auto &column : col_id_type_list) {
+		result.column_name_alias.push_back(column.first);
+		result.column_types.push_back(column.second);
+	}
+	return result;
+}
+
+TableAlias
+PEGTransformerFactory::TransformColumnDefinitionAliasAs(PEGTransformer &transformer,
+                                                        const optional<QualifiedName> &identifier_or_string_literal,
+                                                        const child_list_t<LogicalType> &col_id_type_list) {
+	return ColumnDefinitionAlias(identifier_or_string_literal ? identifier_or_string_literal->Name() : Identifier(),
+	                             col_id_type_list);
+}
+
+TableAlias PEGTransformerFactory::TransformColumnDefinitionAliasWithoutAs(
+    PEGTransformer &transformer, const Identifier &identifier, const child_list_t<LogicalType> &col_id_type_list) {
+	return ColumnDefinitionAlias(identifier, col_id_type_list);
 }
 
 unique_ptr<AtClause> PEGTransformerFactory::TransformAtClause(PEGTransformer &transformer,

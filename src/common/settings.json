@@ -1425,6 +1425,13 @@
         "custom_implementation": true
     },
     {
+        "name": "question_mark_operators",
+        "description": "Whether ?# ?- ?| ?-| and ?|| are operators, as in PostgreSQL, instead of a ? parameter followed by an operator.",
+        "type": "BOOLEAN",
+        "default_scope": "local",
+        "default_value": "false"
+    },
+    {
         "name": "read_ahead_depth",
         "description": "The number of scan jobs prefetched ahead of decoding. -1 = automatic, with the backlog being bound by a memory budget, 0 = disabled.",
         "type": "BIGINT",

@@ -109,7 +109,6 @@ struct MapCastNode {
 
 template <class MAP>
 static auto RelaxedTypeMatch(MAP &map, const LogicalType &type) -> decltype(map.find(type)) {
-	D_ASSERT(map.find(type) == map.end()); // we shouldn't be here
 	switch (type.id()) {
 	case LogicalTypeId::LIST:
 		return map.find(LogicalType::LIST(LogicalType::ANY));
@@ -144,45 +143,40 @@ static auto RelaxedTypeMatch(MAP &map, const LogicalType &type) -> decltype(map.
 	}
 }
 
+template <class T, class FIND>
+static optional_ptr<const MapCastNode> FindWidening(const type_id_map_t<type_map_t<T>> &entries,
+                                                    const LogicalType &type, FIND &&find) {
+	for (auto id : {type.id(), LogicalTypeId::ANY}) {
+		auto id_entry = entries.find(id);
+		if (id_entry != entries.end()) {
+			auto &type_entries = id_entry->second;
+			auto exact = type_entries.find(type);
+			if (exact != type_entries.end()) {
+				if (auto entry = find(exact->second)) {
+					return entry;
+				}
+			}
+			auto relaxed = RelaxedTypeMatch(type_entries, type);
+			if (relaxed != type_entries.end() && relaxed != exact) {
+				if (auto entry = find(relaxed->second)) {
+					return entry;
+				}
+			}
+		}
+		if (id == LogicalTypeId::ANY) {
+			break;
+		}
+	}
+	return nullptr;
+}
+
 struct MapCastInfo : public BindCastInfo {
 public:
 	optional_ptr<const MapCastNode> GetEntry(const LogicalType &source, const LogicalType &target) const {
-		auto source_type_id_entry = casts.find(source.id());
-		if (source_type_id_entry == casts.end()) {
-			source_type_id_entry = casts.find(LogicalTypeId::ANY);
-			if (source_type_id_entry == casts.end()) {
-				return nullptr;
-			}
-		}
-
-		auto &source_type_entries = source_type_id_entry->second;
-		auto source_type_entry = source_type_entries.find(source);
-		if (source_type_entry == source_type_entries.end()) {
-			source_type_entry = RelaxedTypeMatch(source_type_entries, source);
-			if (source_type_entry == source_type_entries.end()) {
-				return nullptr;
-			}
-		}
-
-		auto &target_type_id_entries = source_type_entry->second;
-		auto target_type_id_entry = target_type_id_entries.find(target.id());
-		if (target_type_id_entry == target_type_id_entries.end()) {
-			target_type_id_entry = target_type_id_entries.find(LogicalTypeId::ANY);
-			if (target_type_id_entry == target_type_id_entries.end()) {
-				return nullptr;
-			}
-		}
-
-		auto &target_type_entries = target_type_id_entry->second;
-		auto target_type_entry = target_type_entries.find(target);
-		if (target_type_entry == target_type_entries.end()) {
-			target_type_entry = RelaxedTypeMatch(target_type_entries, target);
-			if (target_type_entry == target_type_entries.end()) {
-				return nullptr;
-			}
-		}
-
-		return &target_type_entry->second;
+		return FindWidening(casts, source, [&](const type_id_map_t<type_map_t<MapCastNode>> &targets) {
+			return FindWidening(targets, target,
+			                    [](const MapCastNode &node) { return optional_ptr<const MapCastNode>(&node); });
+		});
 	}
 
 	void AddEntry(const LogicalType &source, const LogicalType &target, MapCastNode node) {
@@ -216,11 +210,17 @@ int64_t CastFunctionSet::ImplicitCastCost(optional_ptr<ClientContext> context, c
 	if (registration_probe && registration_probe->HasRegisteredCast(source, target)) {
 		registered_cast_found = true;
 	}
-	// check if a cast has been registered
-	if (map_info) {
+	// check if a cast has been registered - a type never casts to itself, so none applies to it
+	if (map_info && source != target) {
 		auto entry = map_info->GetEntry(source, target);
 		if (entry) {
 			return entry->implicit_cast_cost;
+		}
+		if (source.id() == LogicalTypeId::INTEGER_LITERAL) {
+			auto type_entry = map_info->GetEntry(IntegerLiteral::GetType(source), target);
+			if (type_entry && type_entry->implicit_cast_cost < 0) {
+				return type_entry->implicit_cast_cost;
+			}
 		}
 	}
 	// if not, fallback to the default implicit cast rules

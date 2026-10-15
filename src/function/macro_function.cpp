@@ -45,9 +45,18 @@ string FormatMacroFunction(const MacroFunction &function, const Identifier &name
 	return result;
 }
 
+static int64_t ArgumentCastCost(ClientContext &context, const LogicalType &argument, const LogicalType &parameter) {
+	if (argument.id() == LogicalTypeId::INTEGER_LITERAL && parameter.IsIntegral() && parameter.IsSigned() &&
+	    !parameter.HasAlias()) {
+		return CastFunctionSet::ImplicitCastCost(context, IntegerLiteral::GetType(argument), parameter);
+	}
+	return CastFunctionSet::ImplicitCastCost(context, argument, parameter);
+}
+
 MacroBindResult MacroFunction::BindMacroFunction(
     Binder &binder, const vector<unique_ptr<MacroFunction>> &functions, const Identifier &name,
-    FunctionExpression &function_expr, vector<unique_ptr<ParsedExpression>> &positional_arguments,
+    SqlCompatibility compatibility, FunctionExpression &function_expr,
+    vector<unique_ptr<ParsedExpression>> &positional_arguments,
     InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> &named_arguments,
     idx_t depth) {
 	ExpressionBinder expr_binder(binder, binder.context);
@@ -77,7 +86,13 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			const auto correlated_columns = binder.correlated_columns;
 			const auto arg_bind_result = expr_binder.BindExpression(arg_copy, depth + 1);
 			binder.correlated_columns = correlated_columns;
-			arg_type = arg_bind_result.HasError() ? LogicalType::UNKNOWN : arg_bind_result.expression->GetReturnType();
+			if (arg_bind_result.HasError()) {
+				arg_type = LogicalType::UNKNOWN;
+			} else if (compatibility == SqlCompatibility::POSTGRES) {
+				arg_type = ExpressionBinder::GetExpressionReturnType(*arg_bind_result.expression);
+			} else {
+				arg_type = arg_bind_result.expression->GetReturnType();
+			}
 		}
 		if (arg.GetExpression().IsNamedParameter()) {
 			// User-written `name := value` (or `name => value`) named argument.
@@ -151,8 +166,7 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			if (param_type == LogicalType::UNKNOWN) {
 				macro_cost += 1000000;
 			} else {
-				const auto cast_cost =
-				    CastFunctionSet::ImplicitCastCost(binder.context, positional_arg_types[param_idx], param_type);
+				const auto cast_cost = ArgumentCastCost(binder.context, positional_arg_types[param_idx], param_type);
 				if (cast_cost < 0) {
 					bail = true;
 					break;
@@ -181,8 +195,7 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			if (param_type == LogicalType::UNKNOWN) {
 				macro_cost += 1000000;
 			} else {
-				const auto cast_cost =
-				    CastFunctionSet::ImplicitCastCost(binder.context, named_arg_types[param_name], param_type);
+				const auto cast_cost = ArgumentCastCost(binder.context, named_arg_types[param_name], param_type);
 				if (cast_cost < 0) {
 					break; // No cast possible
 				}
@@ -292,6 +305,27 @@ vector<LogicalType> MacroFunction::ParameterTypes() const {
 	return result;
 }
 
+LogicalType MacroFunction::ResultType() const {
+	if (type == MacroType::SCALAR_MACRO && return_types.size() > 1) {
+		child_list_t<LogicalType> fields;
+		for (idx_t i = 0; i < return_types.size(); i++) {
+			fields.emplace_back(Identifier(return_names[i]), return_types[i]);
+		}
+		return LogicalType::STRUCT(std::move(fields));
+	}
+	return return_types.size() == 1 ? return_types[0] : LogicalType::INVALID;
+}
+
+bool MacroFunction::ResultNeedsCast(const LogicalType &result, const LogicalType &declared) {
+	if (result == declared || declared.id() == LogicalTypeId::ANY) {
+		return false;
+	}
+	if (declared.id() == LogicalTypeId::SQLNULL && declared.GetAlias() == "void") {
+		return false;
+	}
+	return declared.id() != LogicalTypeId::DECIMAL || result.id() != LogicalTypeId::DECIMAL;
+}
+
 bool MacroFunction::HasParameterTypes(const vector<LogicalType> &parameter_types) const {
 	return ParameterTypes() == parameter_types;
 }
@@ -312,6 +346,7 @@ void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.types = types;
 	other.return_types = return_types;
 	other.return_names = return_names;
+	other.parameter_modes = parameter_modes;
 	other.is_procedure = is_procedure;
 }
 

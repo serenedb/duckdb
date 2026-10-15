@@ -23,6 +23,11 @@ string_t SubstringUnicode(Vector &result, string_t input, int64_t offset, int64_
 string_t SubstringGrapheme(Vector &result, string_t input, int64_t offset, int64_t length);
 //! Whether the offset and length are within the range supported by substring - it throws for values outside of it
 bool SubstringInSupportedRange(int64_t offset, int64_t length);
+//! Turns PostgreSQL's substring offset and length into a positive offset and a non-negative length with the same
+//! result - it throws for a negative length
+void PostgresSubstringBounds(int64_t &offset, int64_t &length);
+//! The position after the part PostgreSQL's overlay replaces - it throws for a start before the first position
+int64_t PostgresOverlayEnd(int64_t start, int64_t count);
 unique_ptr<BaseStatistics> PropagateStringSliceStats(FunctionStatisticsInput &input, idx_t start_character_index,
                                                      optional_idx character_count);
 //! Common util zonemap pruning for `prefix(s, constant)`.
