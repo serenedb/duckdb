@@ -120,6 +120,7 @@ static void ExecuteStringExtract(Vector &result, const Vector &input_vector, con
 	BinaryExecutor::Execute<string_t, int64_t, string_t>(
 	    input_vector, subscript_vector, result,
 	    [&](string_t input_string, int64_t subscript) { return SubstringUnicode(result, input_string, subscript, 1); });
+	StringVector::AddHeapReference(result, input_vector);
 }
 
 static void ListExtractFunction(DataChunk &args, ExpressionState &state, Vector &result) {

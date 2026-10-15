@@ -162,6 +162,68 @@ struct ListConcatInputData {
 	VectorIterator<list_entry_t> list_data;
 };
 
+template <class T>
+void ListConcatTyped(const vector<ListConcatInputData> &input_data, const vector<bool> &row_invalid, Vector &result,
+                     idx_t count) {
+	idx_t total = 0;
+	for (idx_t r = 0; r < count; r++) {
+		if (row_invalid[r]) {
+			continue;
+		}
+		for (auto &input : input_data) {
+			auto list_val = input.list_data[r];
+			if (list_val.IsValid()) {
+				total += list_val.GetValue().length;
+			}
+		}
+	}
+	vector<VectorIterator<T>> child_values;
+	child_values.reserve(input_data.size());
+	for (auto &input : input_data) {
+		child_values.emplace_back(input.child_vec.template Values<T>());
+	}
+	const auto base = ListVector::GetListSize(result);
+	ListVector::Reserve(result, base + total);
+	auto &child = ListVector::GetChildMutable(result);
+	{
+		auto child_writer = FlatVector::Writer<T>(child, total, base);
+		auto result_writer = FlatVector::Writer<list_entry_t>(result, count);
+		idx_t offset = base;
+		for (idx_t r = 0; r < count; r++) {
+			if (row_invalid[r]) {
+				result_writer.WriteNull();
+				continue;
+			}
+			const auto start = offset;
+			for (idx_t i = 0; i < input_data.size(); i++) {
+				auto list_val = input_data[i].list_data[r];
+				if (!list_val.IsValid()) {
+					continue;
+				}
+				const auto &list_entry = list_val.GetValue();
+				const auto &values = child_values[i];
+				for (idx_t k = list_entry.offset; k < list_entry.offset + list_entry.length; k++) {
+					auto value = values[k];
+					if (!value.IsValid()) {
+						child_writer.WriteNull();
+					} else if constexpr (std::is_same_v<T, string_t>) {
+						child_writer.WriteStringRef(value.GetValue());
+					} else {
+						child_writer.WriteValue(value.GetValue());
+					}
+				}
+				offset += list_entry.length;
+			}
+			result_writer.WriteValue(list_entry_t(start, offset - start));
+		}
+	}
+	if constexpr (std::is_same_v<T, string_t>) {
+		for (auto &input : input_data) {
+			StringVector::AddHeapReference(child, input.child_vec);
+		}
+	}
+}
+
 void ListConcatFunction(DataChunk &args, ExpressionState &state, Vector &result, bool is_operator) {
 	auto count = args.size();
 
@@ -184,6 +246,41 @@ void ListConcatFunction(DataChunk &args, ExpressionState &state, Vector &result,
 				}
 			}
 		}
+	}
+
+	switch (ListType::GetChildType(result.GetType()).InternalType()) {
+	case PhysicalType::BOOL:
+		return ListConcatTyped<bool>(input_data, row_invalid, result, count);
+	case PhysicalType::INT8:
+		return ListConcatTyped<int8_t>(input_data, row_invalid, result, count);
+	case PhysicalType::INT16:
+		return ListConcatTyped<int16_t>(input_data, row_invalid, result, count);
+	case PhysicalType::INT32:
+		return ListConcatTyped<int32_t>(input_data, row_invalid, result, count);
+	case PhysicalType::INT64:
+		return ListConcatTyped<int64_t>(input_data, row_invalid, result, count);
+	case PhysicalType::INT128:
+		return ListConcatTyped<hugeint_t>(input_data, row_invalid, result, count);
+	case PhysicalType::UINT8:
+		return ListConcatTyped<uint8_t>(input_data, row_invalid, result, count);
+	case PhysicalType::UINT16:
+		return ListConcatTyped<uint16_t>(input_data, row_invalid, result, count);
+	case PhysicalType::UINT32:
+		return ListConcatTyped<uint32_t>(input_data, row_invalid, result, count);
+	case PhysicalType::UINT64:
+		return ListConcatTyped<uint64_t>(input_data, row_invalid, result, count);
+	case PhysicalType::UINT128:
+		return ListConcatTyped<uhugeint_t>(input_data, row_invalid, result, count);
+	case PhysicalType::FLOAT:
+		return ListConcatTyped<float>(input_data, row_invalid, result, count);
+	case PhysicalType::DOUBLE:
+		return ListConcatTyped<double>(input_data, row_invalid, result, count);
+	case PhysicalType::INTERVAL:
+		return ListConcatTyped<interval_t>(input_data, row_invalid, result, count);
+	case PhysicalType::VARCHAR:
+		return ListConcatTyped<string_t>(input_data, row_invalid, result, count);
+	default:
+		break;
 	}
 
 	auto result_writer = FlatVector::Writer<list_entry_t>(result, count);

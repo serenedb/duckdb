@@ -23,7 +23,7 @@ struct LambdaExecuteInfo final : public FunctionLocalState {
 	LambdaExecuteInfo(ClientContext &context, const Expression &lambda_expr, const BoundFunctionExpression &expr,
 	                  const bool has_index)
 	    : has_index(has_index), index_vector(LogicalType::BIGINT), child_sel(STANDARD_VECTOR_SIZE),
-	      row_sel(STANDARD_VECTOR_SIZE) {
+	      row_sel(STANDARD_VECTOR_SIZE), filter_sel(STANDARD_VECTOR_SIZE) {
 		expr_executor = make_uniq<ExpressionExecutor>(context, lambda_expr);
 
 		// get the input types for the input chunk
@@ -72,6 +72,8 @@ struct LambdaExecuteInfo final : public FunctionLocalState {
 	SelectionVector child_sel;
 	SelectionVector row_sel;
 	vector<SelectionVector> slice_sels;
+	SelectionVector filter_sel;
+	vector<idx_t> entry_lengths;
 };
 
 struct LambdaBatch {
@@ -99,8 +101,12 @@ struct LambdaBatch {
 
 //! A helper struct with information that is specific to the list_filter function
 struct ListFilterInfo {
+	explicit ListFilterInfo(vector<idx_t> &entry_lengths) : entry_lengths(entry_lengths) {
+		entry_lengths.clear();
+	}
+
 	//! The new list lengths after filtering out elements
-	vector<idx_t> entry_lengths;
+	vector<idx_t> &entry_lengths;
 	//! The length of the current list
 	idx_t length = 0;
 	//! The offset of the current list
@@ -110,6 +116,32 @@ struct ListFilterInfo {
 	//! The length of the source list
 	idx_t src_length = 0;
 };
+
+static void AppendToListChild(Vector &result, const Vector &source, const idx_t count) {
+	if (count == 0) {
+		return;
+	}
+	if (source.GetType().InternalType() != PhysicalType::VARCHAR) {
+		ListVector::Append(result, source, count);
+		return;
+	}
+	const auto offset = ListVector::GetListSize(result);
+	ListVector::Reserve(result, offset + count);
+	auto &child = ListVector::GetChildMutable(result);
+	{
+		auto values = source.Values<string_t>();
+		auto writer = FlatVector::Writer<string_t>(child, count, offset);
+		for (idx_t i = 0; i < count; i++) {
+			auto entry = values[i];
+			if (entry.IsValid()) {
+				writer.WriteStringRef(entry.GetValue());
+			} else {
+				writer.WriteNull();
+			}
+		}
+	}
+	StringVector::AddHeapReference(child, source);
+}
 
 //! ListTransformFunctor contains list_transform specific functionality
 struct ListTransformFunctor {
@@ -129,7 +161,7 @@ struct ListTransformFunctor {
 	//! Appends the lambda vector to the result's child vector
 	static void AppendResult(Vector &result, const Vector &lambda_vector, const idx_t elem_cnt, list_entry_t *,
 	                         ListFilterInfo &, LambdaExecuteInfo &) {
-		ListVector::Append(result, lambda_vector, elem_cnt);
+		AppendToListChild(result, lambda_vector, elem_cnt);
 	}
 };
 
@@ -152,7 +184,7 @@ struct ListFilterFunctor {
 	static void AppendResult(Vector &result, const Vector &lambda_vector, const idx_t elem_cnt,
 	                         list_entry_t *result_entries, ListFilterInfo &info, LambdaExecuteInfo &execute_info) {
 		idx_t count = 0;
-		SelectionVector sel(elem_cnt);
+		auto &sel = execute_info.filter_sel;
 
 		// compute the new lengths and offsets, and create a selection vector
 		for (auto entry : lambda_vector.Values<bool>()) {
@@ -196,7 +228,7 @@ struct ListFilterFunctor {
 		// and append them to the result
 		idx_t source_list_idx = execute_info.has_index ? 1 : 0;
 		Vector result_lists(execute_info.input_chunk.data[source_list_idx], sel, count);
-		ListVector::Append(result, result_lists, count);
+		AppendToListChild(result, result_lists, count);
 	}
 };
 
@@ -334,7 +366,7 @@ static void ExecuteLambda(DataChunk &args, ExpressionState &state, Vector &resul
 	auto index_data = FlatVector::GetDataMutable<int64_t>(execute_info.index_vector);
 
 	// get list_filter specific info
-	ListFilterInfo list_filter_info;
+	ListFilterInfo list_filter_info(execute_info.entry_lengths);
 	FUNCTION_FUNCTOR::ReserveNewLengths(list_filter_info.entry_lengths, info.row_count);
 
 	// loop over the child entries and create chunks to be executed by the expression executor

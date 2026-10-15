@@ -170,7 +170,7 @@ void ExecuteFlatSlice(Vector &result, Vector &list_vector, Vector &begin_vector,
 	end_vector.ToUnifiedFormat(end_data);
 	if (step_vector) {
 		step_vector->ToUnifiedFormat(step_data);
-		sel.Initialize(ListVector::GetListSize(list_vector));
+		sel.Initialize(ListVector::GetTotalEntryCount(list_vector));
 	}
 
 	auto result_data = FlatVector::Writer<INPUT_TYPE>(result, count);
@@ -215,18 +215,16 @@ void ExecuteFlatSlice(Vector &result, Vector &list_vector, Vector &begin_vector,
 
 		if (!clamp_result) {
 			result_data.WriteNull();
-		} else if (!step_vector) {
-			result_data.WriteValue(OP::SliceValue(result, sliced, begin, end));
-		} else {
+		} else if (step_vector) {
 			result_data.WriteValue(OP::SliceValueWithSteps(result, sel, sliced, begin, end, step, sel_idx));
+		} else if constexpr (std::is_same_v<INPUT_TYPE, string_t>) {
+			result_data.WriteStringRef(OP::SliceValue(result, sliced, begin, end));
+		} else {
+			result_data.WriteValue(OP::SliceValue(result, sliced, begin, end));
 		}
 	}
 	if (step_vector) {
-		SelectionVector new_sel(sel_length);
-		for (idx_t i = 0; i < sel_length; ++i) {
-			new_sel.set_index(i, sel.get_index(i));
-		}
-		result_child_vector->Slice(new_sel, sel_length);
+		result_child_vector->Slice(sel, sel_length);
 		result_child_vector->Flatten();
 		ListVector::SetListSize(result, sel_length);
 	}
@@ -254,15 +252,12 @@ void ArraySliceFunction(DataChunk &args, ExpressionState &state, Vector &result)
 	D_ASSERT(args.data.size() == 3 || args.data.size() == 4);
 	auto count = args.size();
 
-	Vector &list_or_str_vector = result;
-	// this ensures that we do not change the input chunk
-	VectorOperations::Copy(args.data[0], list_or_str_vector, count, 0, 0);
-
-	if (list_or_str_vector.GetType().id() == LogicalTypeId::SQLNULL) {
+	if (result.GetType().id() == LogicalTypeId::SQLNULL) {
 		ConstantVector::SetNull(result, count_t(count));
 		return;
 	}
 
+	Vector &input = args.data[0];
 	Vector &begin_vector = args.data[1];
 	Vector &end_vector = args.data[2];
 
@@ -277,22 +272,20 @@ void ArraySliceFunction(DataChunk &args, ExpressionState &state, Vector &result)
 	auto end_is_empty = info.end_is_empty;
 	switch (result.GetType().id()) {
 	case LogicalTypeId::LIST: {
-		// Share the value dictionary as we are just going to slice it
-		if (list_or_str_vector.GetVectorType() != VectorType::FLAT_VECTOR &&
-		    list_or_str_vector.GetVectorType() != VectorType::CONSTANT_VECTOR) {
-			list_or_str_vector.Flatten();
-		}
-		ExecuteSlice<list_entry_t, int64_t, ListSliceOperations>(result, list_or_str_vector, begin_vector, end_vector,
-		                                                         step_vector, count, begin_is_empty, end_is_empty);
+		ListVector::GetChildMutable(result).Reference(ListVector::GetChild(input));
+		ExecuteSlice<list_entry_t, int64_t, ListSliceOperations>(result, input, begin_vector, end_vector, step_vector,
+		                                                         count, begin_is_empty, end_is_empty);
 		break;
 	}
 	case LogicalTypeId::BLOB:
-		ExecuteSlice<string_t, int64_t, BlobSliceOperations>(result, list_or_str_vector, begin_vector, end_vector,
-		                                                     step_vector, count, begin_is_empty, end_is_empty);
+		ExecuteSlice<string_t, int64_t, BlobSliceOperations>(result, input, begin_vector, end_vector, step_vector,
+		                                                     count, begin_is_empty, end_is_empty);
+		StringVector::AddHeapReference(result, input);
 		break;
 	case LogicalTypeId::VARCHAR:
-		ExecuteSlice<string_t, int64_t, StringSliceOperations>(result, list_or_str_vector, begin_vector, end_vector,
-		                                                       step_vector, count, begin_is_empty, end_is_empty);
+		ExecuteSlice<string_t, int64_t, StringSliceOperations>(result, input, begin_vector, end_vector, step_vector,
+		                                                       count, begin_is_empty, end_is_empty);
+		StringVector::AddHeapReference(result, input);
 		break;
 	default:
 		throw NotImplementedException("Specifier type not implemented");

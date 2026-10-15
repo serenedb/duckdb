@@ -55,6 +55,8 @@ static void ListIntersectFunction(DataChunk &args, ExpressionState &state, Vecto
 		}
 	};
 
+	const auto result_offset = ListVector::GetListSize(result);
+	vector<sel_t> result_rows;
 	auto result_data = FlatVector::Writer<list_entry_t>(result, row_count);
 	for (idx_t i = 0; i < row_count; i++) {
 		auto l_entry = l_entries[i];
@@ -65,8 +67,9 @@ static void ListIntersectFunction(DataChunk &args, ExpressionState &state, Vecto
 			continue;
 		}
 
-		auto list = result_data.WriteDynamicList();
+		const auto row_start = result_rows.size();
 		if (!r_entry.IsValid()) {
+			result_data.WriteValue(list_entry_t(result_offset + row_start, 0));
 			continue;
 		}
 
@@ -74,6 +77,7 @@ static void ListIntersectFunction(DataChunk &args, ExpressionState &state, Vecto
 		const auto &r_list = r_entry.GetValue();
 
 		if (l_list.length == 0 || r_list.length == 0) {
+			result_data.WriteValue(list_entry_t(result_offset + row_start, 0));
 			continue;
 		}
 
@@ -99,9 +103,6 @@ static void ListIntersectFunction(DataChunk &args, ExpressionState &state, Vecto
 		}
 
 		// Iterate the chosen side, but ALWAYS emit a LEFT index
-		const idx_t row_max_length = MinValue(l_list.length, r_list.length);
-		SelectionVector row_sel(row_max_length);
-		idx_t row_result_length = 0;
 		for (idx_t j = 0; j < iter_list.length; j++) {
 			check();
 			const idx_t it_idx = iter_list.offset + j;
@@ -116,12 +117,12 @@ static void ListIntersectFunction(DataChunk &args, ExpressionState &state, Vecto
 			const idx_t emit_left_idx = use_l_for_hash ? entry->second : it_idx;
 			entry->second = DConstants::INVALID_INDEX;
 
-			row_sel.set_index(row_result_length, emit_left_idx);
-			row_result_length++;
+			result_rows.push_back(UnsafeNumericCast<sel_t>(emit_left_idx));
 		}
 
-		list.Append(l_child, row_sel, l_size, 0, row_result_length);
+		result_data.WriteValue(list_entry_t(result_offset + row_start, result_rows.size() - row_start));
 	}
+	ListVector::Append(result, l_child, SelectionVector(result_rows.data(), result_rows.size()), result_rows.size());
 }
 static unique_ptr<FunctionData> ListIntersectBind(BindScalarFunctionInput &input) {
 	auto &context = input.GetClientContext();

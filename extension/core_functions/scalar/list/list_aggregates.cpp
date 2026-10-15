@@ -96,13 +96,12 @@ ListAggregatesBindData::~ListAggregatesBindData() {
 }
 
 struct StateVector {
-	StateVector(idx_t count_p, unique_ptr<Expression> aggr_expr_p)
-	    : count(count_p), aggr_expr(std::move(aggr_expr_p)), state_vector(Vector(LogicalType::POINTER, count_p)) {
+	StateVector(idx_t count_p, const BoundAggregateExpression &aggr_p)
+	    : count(count_p), aggr(aggr_p), state_vector(Vector(LogicalType::POINTER, count_p)) {
 	}
 
 	~StateVector() { // NOLINT
 		// destroy objects within the aggregate states
-		auto &aggr = aggr_expr->Cast<BoundAggregateExpression>();
 		if (initialized_count != 0 && aggr.Function().HasStateDestructorCallback()) {
 			ArenaAllocator allocator(Allocator::DefaultAllocator());
 			AggregateInputData aggr_input_data(aggr, allocator);
@@ -114,7 +113,7 @@ struct StateVector {
 	//! The number of states that have been initialized so far. The vector holds uninitialized memory until then,
 	//! so an exception during initialization must not leave the destructor reading it as state pointers.
 	idx_t initialized_count = 0;
-	unique_ptr<Expression> aggr_expr;
+	const BoundAggregateExpression &aggr;
 	Vector state_vector;
 };
 
@@ -259,8 +258,13 @@ void ListAggregatesFunction(DataChunk &args, ExpressionState &state, Vector &res
 	auto state_buffer = make_unsafe_uniq_array_uninitialized<data_t>(size * count);
 
 	// state vector for initialize and finalize
-	StateVector state_vector(count, info.aggr_expr->Copy());
+	StateVector state_vector(count, aggr);
 	auto states = FlatVector::GetDataMutable<data_ptr_t>(state_vector.state_vector);
+	for (idx_t i = 0; i < count; i++) {
+		states[i] = state_buffer.get() + size * i;
+	}
+	aggr.Function().GetStateInitCallback()(state_input, states, count);
+	state_vector.initialized_count = count;
 
 	// state vector of STANDARD_VECTOR_SIZE holds the pointers to the states
 	Vector state_vector_update = Vector(LogicalType::POINTER);
@@ -286,11 +290,7 @@ void ListAggregatesFunction(DataChunk &args, ExpressionState &state, Vector &res
 	idx_t states_idx = 0;
 
 	for (idx_t i = 0; i < count; i++) {
-		// initialize the state for this list
-		auto state_ptr = state_buffer.get() + size * i;
-		states[i] = state_ptr;
-		aggr.Function().GetStateInitCallback()(state_input, &states[i], 1);
-		state_vector.initialized_count = i + 1;
+		auto state_ptr = states[i];
 
 		auto lists_index = lists_data.sel->get_index(i);
 		const auto &list_entry = list_entries[lists_index];

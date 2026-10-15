@@ -274,4 +274,24 @@ SELECT concat([42], [84], 'str')
 ----
 an explicit cast is required
 
+statement ok
+CREATE TABLE concat_rows AS
+SELECT i, CASE WHEN i % 7 = 0 THEN NULL ELSE range(i % 3) END AS a, [repeat('x', i % 20) || i::VARCHAR, NULL] AS b,
+	[INTERVAL (i) DAY] AS c
+FROM range(3000) t(i)
+
+query IIIIIII
+SELECT count(list_concat(a, a)), sum(len(list_concat(a, a))), count(a || a), sum(len(a || a)),
+	max(list_concat(b, b))[3], sum(len(list_concat(c, c, c))), max(list_concat(c, NULL, c))[2]
+FROM concat_rows
+----
+3000	5142	2571	5142	xxxxxxxxxxxxxxxxxxx999	9000	2999 days
+
+query II
+SELECT list_concat(a, NULL, a), b || b FROM concat_rows WHERE i IN (5, 7, 13) ORDER BY i
+----
+[0, 1, 0, 1]	[xxxxx5, NULL, xxxxx5, NULL]
+[]	[xxxxxxx7, NULL, xxxxxxx7, NULL]
+[0, 0]	[xxxxxxxxxxxxx13, NULL, xxxxxxxxxxxxx13, NULL]
+
 

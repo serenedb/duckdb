@@ -1,3 +1,4 @@
+#include "duckdb/common/vector/dictionary_vector.hpp"
 #include "duckdb/common/vector/map_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
@@ -202,6 +203,13 @@ bool StructFunction(DataChunk &args, Vector &result) {
 		chunk.InitializeEmpty(types);
 		for (idx_t col = 0; col < column_count; col++) {
 			auto &struct_vector = args.data[col];
+			if (struct_vector.GetVectorType() == VectorType::DICTIONARY_VECTOR &&
+			    DictionaryVector::Child(struct_vector).GetVectorType() == VectorType::FLAT_VECTOR) {
+				auto &dictionary_members = StructVector::GetEntries(DictionaryVector::Child(struct_vector));
+				chunk.data[col].Slice(dictionary_members[member_idx], DictionaryVector::SelVector(struct_vector),
+				                      args.size());
+				continue;
+			}
 			if (struct_vector.GetVectorType() != VectorType::CONSTANT_VECTOR) {
 				struct_vector.Flatten();
 			}
@@ -215,14 +223,15 @@ bool StructFunction(DataChunk &args, Vector &result) {
 	}
 
 	// Set the top level result validity
-	const auto unified_format = args.ToUnifiedFormat();
 	auto &result_validity = FlatVector::ValidityMutable(result);
-	for (idx_t row = 0; row < args.size(); row++) {
-		for (idx_t col = 0; col < column_count; col++) {
-			const auto input_idx = unified_format[col].sel->get_index(row);
-			const auto result_idx = row * column_count + col;
-			if (!unified_format[col].validity.RowIsValid(input_idx)) {
-				result_validity.SetInvalid(result_idx);
+	for (idx_t col = 0; col < column_count; col++) {
+		const auto validity = args.data[col].Validity();
+		if (!validity.CanHaveNull()) {
+			continue;
+		}
+		for (idx_t row = 0; row < args.size(); row++) {
+			if (!validity.IsValid(row)) {
+				result_validity.SetInvalid(row * column_count + col);
 			}
 		}
 	}
