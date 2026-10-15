@@ -12,6 +12,7 @@
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/encryption_state.hpp"
 #include "duckdb/common/enums/http_status_code.hpp"
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/time_point.hpp"
 #include <functional>
@@ -39,6 +40,8 @@ struct HTTPParams {
 
 	uint64_t timeout = DEFAULT_TIMEOUT_SECONDS; // seconds component of a timeout
 	uint64_t timeout_usec = 0;                  // usec component of a timeout
+	//! Steady-clock milliseconds, as ClientContext::query_deadline, by which a request must be done
+	optional_idx deadline;
 	uint64_t retries = DEFAULT_RETRIES;
 	uint64_t retry_wait_ms = DEFAULT_RETRY_WAIT_MS;
 	float retry_backoff = DEFAULT_RETRY_BACKOFF;

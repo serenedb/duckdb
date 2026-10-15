@@ -183,6 +183,8 @@ public:
 	//! Check for interrupt or timeout, throws InterruptException if triggered
 	DUCKDB_API void InterruptCheck() const;
 	DUCKDB_API void DeadlineCheck() const;
+	//! The timeout check of a query with `deadline`, for a thread that must not touch the context
+	DUCKDB_API static void DeadlineCheck(optional_idx deadline);
 
 	//! Enable query profiling
 	DUCKDB_API void EnableProfiling();
