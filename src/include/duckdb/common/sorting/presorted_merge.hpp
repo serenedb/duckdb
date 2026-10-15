@@ -22,6 +22,7 @@
 
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/optional_idx.hpp"
+#include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
@@ -32,6 +33,8 @@
 #include <functional>
 
 namespace duckdb {
+
+class TaskScheduler;
 
 class PresortedMergeReader {
 public:
@@ -82,7 +85,9 @@ public:
 	PresortedMerge(const PresortedMerge &) = delete;
 	PresortedMerge &operator=(const PresortedMerge &) = delete;
 
-	void Partition(idx_t max_partitions, bool keep_equal_keys = false);
+	//! With a scheduler, the reads of the inputs spread over at most `threads` of its tasks
+	void Partition(idx_t max_partitions, bool keep_equal_keys = false, optional_ptr<TaskScheduler> scheduler = nullptr,
+	               idx_t threads = 1);
 	idx_t PartitionCount() const;
 	idx_t PartitionBegin(idx_t partition, idx_t input) const;
 	unique_ptr<PresortedMergeState> BeginMerge(idx_t partition) const;
