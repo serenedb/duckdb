@@ -188,8 +188,9 @@ IsTestTail <- IsTest
 IsDistinctTail <- IsDistinctFromTail
 IsComparisonTail <- ComparisonExpressionTail
 IsOtherOperatorTail <- OtherOperatorTail
-IsTest <- IsLiteral / NotNull / IsNull
+IsTest <- IsLiteral / IsDocument / NotNull / IsNull
 IsLiteral <- 'IS' 'NOT'? IsLiteralValue
+IsDocument <- 'IS' 'NOT'? 'DOCUMENT'
 IsLiteralValue <- TrueLiteral / FalseLiteral / NullLiteral / UnknownLiteral
 UnknownLiteral <- 'UNKNOWN'
 NotNull <- NotNullKeyword / NotNullOperator
@@ -321,8 +322,9 @@ StepSliceBound <- ':' Expression?
 PostfixOperator <- '!'
 
 
-SpecialFunctionExpression <- CoalesceExpression / UnpackExpression / TryExpression / ColumnsExpression / ExtractExpression / LambdaExpression / NullIfExpression / PositionExpression / RowExpression / SubstringSimilarExpression / SubstringExpression / TrimExpression / OverlayExpression
+SpecialFunctionExpression <- CoalesceExpression / UnpackExpression / TryExpression / ColumnsExpression / ExtractExpression / LambdaExpression / NullIfExpression / PositionExpression / RowExpression / SubstringSimilarExpression / SubstringExpression / TrimExpression / OverlayExpression / XmlConcatExpression
 CoalesceExpression <- 'COALESCE' Parens(List(Expression))
+XmlConcatExpression <- 'XMLCONCAT' Parens(List(Expression))
 UnpackExpression <- 'UNPACK' Parens(Expression)
 TryExpression <- 'TRY' Parens(Expression)
 ColumnsExpression <- StarSymbol? 'COLUMNS' Parens(Expression)

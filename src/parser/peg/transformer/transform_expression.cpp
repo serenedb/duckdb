@@ -797,6 +797,16 @@ static unique_ptr<ParsedExpression> ApplyIsTest(unique_ptr<ParsedExpression> exp
 		compare_expr->LeftMutable() = make_uniq<CastExpression>(LogicalType::BOOLEAN, std::move(expr));
 		return std::move(compare_expr);
 	}
+	if (is_expr->GetExpressionType() == ExpressionType::OPERATOR_NOT) {
+		auto &test = is_expr->Cast<OperatorExpression>().GetChildrenMutable()[0];
+		test = ApplyIsTest(std::move(expr), std::move(test));
+		return is_expr;
+	}
+	if (is_expr->GetExpressionClass() == ExpressionClass::FUNCTION) {
+		auto &arguments = is_expr->Cast<FunctionExpression>().GetArgumentsMutable();
+		arguments.insert(arguments.begin(), FunctionArgument(std::move(expr)));
+		return is_expr;
+	}
 	if (is_expr->GetExpressionClass() == ExpressionClass::OPERATOR) {
 		auto operator_expr = unique_ptr_cast<ParsedExpression, OperatorExpression>(std::move(is_expr));
 		operator_expr->GetChildrenMutable().insert(operator_expr->GetChildrenMutable().begin(), std::move(expr));
@@ -915,6 +925,17 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformIsLiteral(PEGTransf
 	auto expr_type = has_result ? ExpressionType::COMPARE_DISTINCT_FROM : ExpressionType::COMPARE_NOT_DISTINCT_FROM;
 	transformer.AddDepth(1);
 	return make_uniq<ComparisonExpression>(expr_type, nullptr, ConstantExpression::FromValue(is_literal_value));
+}
+
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformIsDocument(PEGTransformer &transformer,
+                                                                        const bool &has_result) {
+	auto is_document =
+	    make_uniq<FunctionExpression>("xml_is_well_formed_document", vector<unique_ptr<ParsedExpression>>());
+	if (!has_result) {
+		return std::move(is_document);
+	}
+	transformer.AddDepth(1);
+	return make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(is_document));
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformNotNullKeyword(PEGTransformer &transformer) {
@@ -2686,6 +2707,12 @@ PEGTransformerFactory::TransformCoalesceExpression(PEGTransformer &transformer,
 		result->GetChildrenMutable().push_back(std::move(expr));
 	}
 	return std::move(result);
+}
+
+unique_ptr<ParsedExpression>
+PEGTransformerFactory::TransformXmlConcatExpression(PEGTransformer &transformer,
+                                                    vector<unique_ptr<ParsedExpression>> expression) {
+	return make_uniq<FunctionExpression>("xmlconcat", std::move(expression));
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformUnpackExpression(PEGTransformer &transformer,

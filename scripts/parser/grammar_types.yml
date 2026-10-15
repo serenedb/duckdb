@@ -451,6 +451,7 @@ Expression:
     - IsExpression
     - IsTest
     - IsLiteral
+    - IsDocument
     - NotNull
     - NotNullKeyword
     - NotNullOperator
@@ -518,6 +519,7 @@ Expression:
     - StarExpression
     - SpecialFunctionExpression
     - CoalesceExpression
+    - XmlConcatExpression
     - UnpackExpression
     - TryExpression
     - ColumnsExpression
