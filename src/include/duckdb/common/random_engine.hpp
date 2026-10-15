@@ -45,6 +45,8 @@ public:
 	mutex lock;
 
 private:
+	RandomState &GetState();
+
 	unique_ptr<RandomState> random_state;
 };
 
