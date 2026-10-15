@@ -952,6 +952,17 @@ public:
 	static void InitializeAlterColumnEntryTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterColumnEntryTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
+	static void InitializeSetCompressionTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeSetCompressionTrampoline(PEGTransformer &transformer,
+	                                                                        GeneratedTransformProcess &process);
+	static void InitializeSetCompressionDefaultTrampoline(PEGTransformer &transformer,
+	                                                      GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeSetCompressionDefaultTrampoline(PEGTransformer &transformer,
+	                                                                               GeneratedTransformProcess &process);
+	static void InitializeSetCompressionCodecTrampoline(PEGTransformer &transformer,
+	                                                    GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeSetCompressionCodecTrampoline(PEGTransformer &transformer,
+	                                                                             GeneratedTransformProcess &process);
 	static void InitializeAddOrDropDefaultTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAddOrDropDefaultTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
@@ -4938,6 +4949,10 @@ public:
 	static unique_ptr<AlterTableInfo>
 	TransformResetOptions(PEGTransformer &transformer,
 	                      case_insensitive_map_t<unique_ptr<ParsedExpression>> rel_option_list);
+	static unique_ptr<AlterTableInfo> TransformSetCompressionDefault(PEGTransformer &transformer);
+	static unique_ptr<AlterTableInfo>
+	TransformSetCompressionCodec(PEGTransformer &transformer, const Identifier &col_id_or_string,
+	                             optional<vector<unique_ptr<ParsedExpression>>> expression);
 	static unique_ptr<AlterTableInfo> TransformAddDefault(PEGTransformer &transformer,
 	                                                      unique_ptr<ParsedExpression> expression);
 	static unique_ptr<AlterTableInfo> TransformDropDefault(PEGTransformer &transformer);
@@ -5235,7 +5250,7 @@ public:
 	TransformCreateIndexStmt(PEGTransformer &transformer, const optional<bool> &unique_index,
 	                         const optional<bool> &if_not_exists, const optional<Identifier> &index_name,
 	                         unique_ptr<BaseTableRef> base_table_name, const optional<Identifier> &index_type,
-	                         IndexColumnsDefinition index_columns,
+	                         IndexColumnsDefinition index_columns, optional<vector<OrderByNode>> sorted_options,
 	                         optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
 	                         optional<unique_ptr<ParsedExpression>> where_clause);
 	static IndexColumnsDefinition TransformIndexKeyColumns(PEGTransformer &transformer,
@@ -5397,14 +5412,14 @@ public:
 	static PartitionSortedOptions
 	TransformPartitionOptSortedOptions(PEGTransformer &transformer,
 	                                   vector<unique_ptr<ParsedExpression>> partition_options,
-	                                   optional<vector<unique_ptr<ParsedExpression>>> sorted_options);
+	                                   optional<vector<OrderByNode>> sorted_options);
 	static PartitionSortedOptions
-	TransformSortedOptPartitionOptions(PEGTransformer &transformer, vector<unique_ptr<ParsedExpression>> sorted_options,
+	TransformSortedOptPartitionOptions(PEGTransformer &transformer, vector<OrderByNode> sorted_options,
 	                                   optional<vector<unique_ptr<ParsedExpression>>> partition_options);
 	static vector<unique_ptr<ParsedExpression>>
 	TransformPartitionOptions(PEGTransformer &transformer, vector<unique_ptr<ParsedExpression>> expression);
-	static vector<unique_ptr<ParsedExpression>> TransformSortedOptions(PEGTransformer &transformer,
-	                                                                   vector<unique_ptr<ParsedExpression>> expression);
+	static vector<OrderByNode> TransformSortedOptions(PEGTransformer &transformer,
+	                                                  vector<OrderByNode> order_by_expression);
 	static bool TransformWithDataOnly(PEGTransformer &transformer);
 	static bool TransformWithNoData(PEGTransformer &transformer);
 	static ColumnList TransformIdentifierList(PEGTransformer &transformer, const vector<Identifier> &identifier);
@@ -5462,7 +5477,8 @@ public:
 	static ColumnConstraintEntry TransformColumnCollation(PEGTransformer &transformer,
 	                                                      const vector<string> &dotted_identifier);
 	static ColumnConstraintEntry TransformColumnCompression(PEGTransformer &transformer,
-	                                                        const Identifier &col_id_or_string);
+	                                                        const Identifier &col_id_or_string,
+	                                                        optional<vector<unique_ptr<ParsedExpression>>> expression);
 	static KeyActions TransformUpdateFirstKeyActions(PEGTransformer &transformer, const string &update_action,
 	                                                 const optional<string> &delete_action);
 	static KeyActions TransformDeleteFirstKeyActions(PEGTransformer &transformer, const string &delete_action,
