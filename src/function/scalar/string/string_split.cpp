@@ -56,9 +56,8 @@ struct RegexpStringSplit {
 
 	static idx_t Find(const char *input_data, idx_t input_size, const char *delim_data, idx_t delim_size,
 	                  idx_t &match_size, void *data) {
-		duckdb_re2::RE2::Options options;
-		options.set_thread_safe(false);
-		duckdb_re2::RE2 regex(duckdb_re2::StringPiece(delim_data, delim_size), options);
+		D_ASSERT(data);
+		auto &regex = reinterpret_cast<RegexPatternCache *>(data)->Get(duckdb_re2::StringPiece(delim_data, delim_size));
 		if (!regex.ok()) {
 			throw InvalidInputException(regex.error());
 		}
@@ -189,8 +188,8 @@ void StringSplitRegexFunction(DataChunk &args, ExpressionState &state, Vector &r
 		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexLocalState>();
 		StringSplitExecutor<ConstantRegexpStringSplit>(args, state, result, &lstate.constant_pattern);
 	} else {
-		// slow path: have to re-compile regex for every row
-		StringSplitExecutor<RegexpStringSplit>(args, state, result);
+		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexPatternCacheState>();
+		StringSplitExecutor<RegexpStringSplit>(args, state, result, &lstate.cache);
 	}
 }
 

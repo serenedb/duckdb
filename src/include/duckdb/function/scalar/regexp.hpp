@@ -189,6 +189,29 @@ struct RegexLocalState : public FunctionLocalState {
 	RegexStringPieceArgs group_buffer;
 };
 
+class RegexPatternCache {
+public:
+	explicit RegexPatternCache(duckdb_re2::RE2::Options options);
+
+	duckdb_re2::RE2 &Get(duckdb_re2::StringPiece pattern);
+
+private:
+	static constexpr idx_t CAPACITY = 8;
+
+	duckdb_re2::RE2::Options options;
+	vector<pair<string, unique_ptr<duckdb_re2::RE2>>> entries;
+	idx_t last_used = 0;
+	idx_t next_replaced = 0;
+};
+
+struct RegexPatternCacheState : public FunctionLocalState {
+	explicit RegexPatternCacheState(const RegexpBaseBindData &info) : cache(info.options) {
+		D_ASSERT(!info.constant_pattern);
+	}
+
+	RegexPatternCache cache;
+};
+
 unique_ptr<FunctionLocalState> RegexInitLocalState(ExpressionState &state, const BoundFunctionExpression &expr,
                                                    FunctionData *bind_data);
 unique_ptr<FunctionData> RegexpMatchesBind(BindScalarFunctionInput &input);
