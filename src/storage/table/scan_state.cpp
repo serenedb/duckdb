@@ -57,6 +57,12 @@ void TableScanState::Initialize(vector<StorageIndex> column_ids_p, optional_ptr<
 	}
 }
 
+void TableScanState::ResetForReuse() {
+	table_state.ResetForReuse();
+	local_state.ResetForReuse();
+	filters.CheckAllFilters();
+}
+
 const vector<StorageIndex> &TableScanState::GetColumnIds() {
 	D_ASSERT(!column_ids.empty());
 	return column_ids;
@@ -237,6 +243,24 @@ ParallelCollectionScanState::GetNextRowGroup(RowGroupSegmentTree &row_groups, Se
 CollectionScanState::CollectionScanState(TableScanState &parent_p)
     : vector_index(0), max_row_group_row(0), row_groups(nullptr), max_row(0), batch_index(0),
       valid_sel(STANDARD_VECTOR_SIZE), random(-1), row_group(nullptr), parent(parent_p) {
+}
+
+void CollectionScanState::ResetForReuse() {
+	vector_index = 0;
+	max_row_group_row = 0;
+	row_groups.reset();
+	max_row = 0;
+	batch_index = 0;
+	row_number_base = optional_idx();
+	prepared_vector.Reset();
+	assignment_io_registered = false;
+	column_scans_pending = false;
+	rows_scanned = 0;
+	pk_lookups_it = nullptr;
+	pk_lookups_end = nullptr;
+	lookup_count = 0;
+	lookup_base = 0;
+	SetRowGroup(nullptr);
 }
 
 optional_ptr<SegmentNode<RowGroup>> CollectionScanState::GetRowGroup() const {

@@ -87,8 +87,17 @@ struct RecursiveCTEScheduleStage {
 	idx_t dependency_count;
 };
 
+struct RecursiveCTESinkStages {
+	explicit RecursiveCTESinkStages(Pipeline &pipeline_p) : pipeline(pipeline_p) {
+	}
+
+	reference<Pipeline> pipeline;
+	vector<idx_t> execute_stages;
+};
+
 struct RecursiveCTEPipelineSchedulePlan {
 	vector<RecursiveCTEScheduleStage> stages;
+	vector<RecursiveCTESinkStages> sinks;
 	vector<reference<Pipeline>> initialize_on_schedule_pipelines;
 	idx_t execute_pipeline_count = 0;
 	idx_t cte_scan_pipeline_count = 0;

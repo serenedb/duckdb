@@ -354,7 +354,7 @@ void Pipeline::ResetSink() {
 	}
 }
 
-void Pipeline::ResetSinkForReschedule() {
+void Pipeline::ResetSinkForReschedule(idx_t thread_count) {
 	if (!sink) {
 		return;
 	}
@@ -366,7 +366,7 @@ void Pipeline::ResetSinkForReschedule() {
 	auto &client = GetClientContext();
 	auto allow_reuse = Settings::Get<EnableCachingOperatorsSetting>(client);
 	if (allow_reuse && sink->sink_state && sink->sink_state->SupportsReuse()) {
-		sink->sink_state->Reset(client);
+		sink->sink_state->ResetForThreads(client, thread_count);
 		return;
 	}
 	sink->sink_state = sink->GetGlobalSinkState(client);

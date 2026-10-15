@@ -144,7 +144,7 @@ public:
 	void Ready();
 	void Reset();
 	void ResetSink();
-	void ResetSinkForReschedule();
+	void ResetSinkForReschedule(idx_t thread_count);
 	void ResetOperatorsForReschedule(reference_set_t<PhysicalOperator> &reset_operators);
 	void ResetSourceForReschedule();
 	void ResetSource(bool force);

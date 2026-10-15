@@ -347,6 +347,7 @@ public:
 public:
 	ParallelTableScanState state;
 	unique_ptr<ScanReadAhead> read_ahead;
+	bool scans_row_number = false;
 
 private:
 	const TableScanBindData &bind_data;
@@ -356,6 +357,7 @@ private:
 	const idx_t total_rows;
 	//! Scan initialization info retained for creating scan states
 	vector<StorageIndex> storage_ids;
+	vector<ColumnIndex> column_indexes;
 	optional_ptr<TableFilterSet> filters;
 	optional_ptr<SampleOptions> sample_options;
 	//! Guards assignment claims, keeping job batch indexes dense in claim order
@@ -372,6 +374,7 @@ public:
 		for (auto &col : input.column_indexes) {
 			storage_ids.push_back(bind_data.table.GetStorageIndex(col));
 		}
+		column_indexes = input.column_indexes;
 		filters = input.filters;
 		sample_options = input.sample_options;
 	}
@@ -400,6 +403,33 @@ public:
 			l_state->all_columns.Initialize(context.client, scanned_types);
 		}
 		return std::move(l_state);
+	}
+
+	bool ResetForReuse(ClientContext &context) override {
+		if (read_ahead || bind_data.order_options || bind_data.is_create_index || sample_options) {
+			return false;
+		}
+		storage.InitializeParallelScan(context, state, column_indexes);
+		state.scan_state.row_number_base = scans_row_number ? optional_idx(0) : optional_idx();
+		state.local_state.row_number_base = optional_idx();
+		scanned_rows = 0;
+		next_job_index = 0;
+		return true;
+	}
+
+	bool ResetLocalStateForReuse(ExecutionContext &context, LocalTableFunctionState &local_state) override {
+		auto &l_state = local_state.Cast<TableScanLocalState>();
+		if (l_state.job) {
+			return false;
+		}
+		l_state.scan_state.ResetForReuse();
+		l_state.job_rows_scanned = 0;
+		l_state.assignment_progress = ScanAssignmentProgress();
+		l_state.row_groups_scanned = 0;
+		if (!read_ahead) {
+			ClaimAssignment(context.client, l_state);
+		}
+		return true;
 	}
 
 	//! Claims the next assignment into the thread's own scan state, returns false when none are left
@@ -674,6 +704,7 @@ unique_ptr<GlobalTableFunctionState> DuckTableScanInitGlobal(ClientContext &cont
 	for (idx_t i = 0; i < input.column_ids.size(); i++) {
 		if (input.column_ids[i] == COLUMN_IDENTIFIER_ROW_NUMBER) {
 			g_state->state.scan_state.row_number_base = 0;
+			g_state->scans_row_number = true;
 			break;
 		}
 	}

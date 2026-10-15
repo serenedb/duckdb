@@ -312,6 +312,8 @@ void PartitionedTupleData::Combine(PartitionedTupleData &other) {
 	}
 	this->count += other.count;
 	this->data_size += other.data_size;
+	other.count = 0;
+	other.data_size = 0;
 	Verify();
 }
 

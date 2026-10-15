@@ -145,7 +145,7 @@ public:
 	                  idx_t group_count, DataChunk &result) const;
 
 	const PartitionedTupleData &GetPartitionedData() const;
-	unique_ptr<PartitionedTupleData> AcquirePartitionedData();
+	unique_ptr<PartitionedTupleData> AcquirePartitionedData(unique_ptr<PartitionedTupleData> replacement = nullptr);
 	void Abandon();
 	void Repartition();
 	shared_ptr<ArenaAllocator> GetAggregateAllocator();

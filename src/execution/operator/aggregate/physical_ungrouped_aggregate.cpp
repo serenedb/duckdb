@@ -289,13 +289,27 @@ class UngroupedAggregateLocalSinkState : public LocalSinkState {
 public:
 	UngroupedAggregateLocalSinkState(const PhysicalUngroupedAggregate &op, const vector<LogicalType> &child_types,
 	                                 UngroupedAggregateGlobalSinkState &gstate_p, ExecutionContext &context)
-	    : state(gstate_p.state), execute_state(context.client, op.aggregates, child_types) {
+	    : op(op), state(make_uniq<LocalUngroupedAggregateState>(gstate_p.state)),
+	      execute_state(context.client, op.aggregates, child_types) {
 		auto &gstate = gstate_p.Cast<UngroupedAggregateGlobalSinkState>();
 		InitializeDistinctAggregates(op, gstate, context);
 	}
 
+	bool SupportsReuse() const override {
+		return true;
+	}
+
+	void Reset(ExecutionContext &context, GlobalSinkState &gstate_p) override {
+		auto &gstate = gstate_p.Cast<UngroupedAggregateGlobalSinkState>();
+		state = make_uniq<LocalUngroupedAggregateState>(gstate.state);
+		execute_state.Reset();
+		radix_states.clear();
+		InitializeDistinctAggregates(op, gstate, context);
+	}
+
+	const PhysicalUngroupedAggregate &op;
 	//! The local aggregate state
-	LocalUngroupedAggregateState state;
+	unique_ptr<LocalUngroupedAggregateState> state;
 	//! The ungrouped aggregate execute state
 	UngroupedAggregateExecuteState execute_state;
 	//! The local sink states of the distinct aggregates hash tables
@@ -404,7 +418,7 @@ SinkResultType PhysicalUngroupedAggregate::Sink(ExecutionContext &context, DataC
 		SinkDistinct(context, chunk, input);
 	}
 
-	sink.execute_state.Sink(sink.state, chunk);
+	sink.execute_state.Sink(*sink.state, chunk);
 	return SinkResultType::NEED_MORE_INPUT;
 }
 
@@ -465,7 +479,7 @@ SinkCombineResultType PhysicalUngroupedAggregate::Combine(ExecutionContext &cont
 	OperatorSinkCombineInput distinct_input {gstate, lstate, input.interrupt_state};
 	CombineDistinct(context, distinct_input);
 
-	gstate.state.Combine(lstate.state);
+	gstate.state.Combine(*lstate.state);
 
 	auto &client_profiler = QueryProfiler::Get(context.client);
 	context.thread.profiler.Flush(*this);

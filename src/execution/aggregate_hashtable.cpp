@@ -106,8 +106,7 @@ void GroupedAggregateHashTable::InitializePartitionedData() {
 	D_ASSERT(GetLayout().GetDataWidth() == layout_ptr->GetDataWidth());
 	D_ASSERT(GetLayout().GetRowWidth() == layout_ptr->GetRowWidth());
 
-	partitioned_data->InitializeAppendState(state.partitioned_append_state,
-	                                        TupleDataPinProperties::KEEP_EVERYTHING_PINNED);
+	partitioned_data->ResetAppendState(state.partitioned_append_state, TupleDataPinProperties::KEEP_EVERYTHING_PINNED);
 }
 
 void GroupedAggregateHashTable::InitializeUnpartitionedData() {
@@ -118,15 +117,16 @@ void GroupedAggregateHashTable::InitializeUnpartitionedData() {
 	} else {
 		unpartitioned_data->Reset();
 	}
-	unpartitioned_data->InitializeAppendState(state.unpartitioned_append_state,
-	                                          TupleDataPinProperties::KEEP_EVERYTHING_PINNED);
+	unpartitioned_data->ResetAppendState(state.unpartitioned_append_state,
+	                                     TupleDataPinProperties::KEEP_EVERYTHING_PINNED);
 }
 
 const PartitionedTupleData &GroupedAggregateHashTable::GetPartitionedData() const {
 	return *partitioned_data;
 }
 
-unique_ptr<PartitionedTupleData> GroupedAggregateHashTable::AcquirePartitionedData() {
+unique_ptr<PartitionedTupleData>
+GroupedAggregateHashTable::AcquirePartitionedData(unique_ptr<PartitionedTupleData> replacement) {
 	if (radix_bits >= UNPARTITIONED_RADIX_BITS_THRESHOLD) {
 		// Flush/unpin unpartitioned data and append to partitioned data
 		if (unpartitioned_data) {
@@ -143,6 +143,7 @@ unique_ptr<PartitionedTupleData> GroupedAggregateHashTable::AcquirePartitionedDa
 
 	// Return and re-initialize
 	auto result = std::move(partitioned_data);
+	partitioned_data = std::move(replacement);
 	InitializePartitionedData();
 	return result;
 }
@@ -230,6 +231,11 @@ idx_t GroupedAggregateHashTable::InitialCapacity() {
 idx_t GroupedAggregateHashTable::GetCapacityForCount(idx_t count) {
 	count = MaxValue<idx_t>(InitialCapacity(), count);
 	return NextPowerOfTwo(LossyNumericCast<uint64_t>(static_cast<double>(count) * LOAD_FACTOR));
+}
+
+static idx_t MinimumCapacityForCount(idx_t count) {
+	return NextPowerOfTwo(
+	    LossyNumericCast<uint64_t>(static_cast<double>(count) * GroupedAggregateHashTable::LOAD_FACTOR) + 1);
 }
 
 idx_t GroupedAggregateHashTable::Capacity() const {
@@ -815,7 +821,7 @@ idx_t GroupedAggregateHashTable::FindOrCreateGroupsInternal(DataChunk &groups, V
 	const auto chunk_size = groups.size();
 	if (Count() + chunk_size > capacity || Count() + chunk_size > ResizeThreshold()) {
 		Verify();
-		Resize(capacity * 2);
+		Resize(MaxValue(capacity * 2, MinimumCapacityForCount(Count() + chunk_size)));
 	}
 	D_ASSERT(capacity - Count() >= chunk_size); // we need to be able to fit at least one vector of data
 
@@ -1288,8 +1294,8 @@ void GroupedAggregateHashTable::ResetForNewIteration(idx_t radix_bits_p) {
 	// Compute effective capacity based on the previous iteration's actual group count.
 	// This avoids clearing a large pointer table (O(max_capacity)) when prior iterations
 	// processed few rows. The HT will grow during the iteration if more groups are encountered.
-	const auto effective_capacity = GetCapacityForCount(prev_count);
-	if (!hash_map.IsSet() || capacity < effective_capacity) {
+	const auto effective_capacity = MinimumCapacityForCount(prev_count);
+	if (!hash_map.IsSet() || hash_map.GetSize() < effective_capacity * sizeof(ht_entry_t)) {
 		Resize(effective_capacity);
 	} else {
 		// Logically shrink to effective_capacity: only zero the portion we need.
