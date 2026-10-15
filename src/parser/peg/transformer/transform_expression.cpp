@@ -517,6 +517,37 @@ PEGTransformerFactory::TransformParenthesisExpression(PEGTransformer &transforme
 	return make_uniq<FunctionExpression>("row", std::move(children));
 }
 
+unique_ptr<ParsedExpression>
+PEGTransformerFactory::TransformOverlapsExpression(PEGTransformer &transformer,
+                                                   vector<unique_ptr<ParsedExpression>> overlaps_row,
+                                                   vector<unique_ptr<ParsedExpression>> overlaps_row_1) {
+	if (overlaps_row.size() != 2) {
+		throw ParserException("wrong number of parameters on left side of OVERLAPS expression");
+	}
+	if (overlaps_row_1.size() != 2) {
+		throw ParserException("wrong number of parameters on right side of OVERLAPS expression");
+	}
+	for (auto &bound : overlaps_row_1) {
+		overlaps_row.push_back(std::move(bound));
+	}
+	return make_uniq<FunctionExpression>("overlaps", std::move(overlaps_row));
+}
+
+vector<unique_ptr<ParsedExpression>>
+PEGTransformerFactory::TransformOverlapsRowConstructor(PEGTransformer &transformer,
+                                                       optional<vector<unique_ptr<ParsedExpression>>> expression) {
+	if (!expression) {
+		return {};
+	}
+	return std::move(*expression);
+}
+
+vector<unique_ptr<ParsedExpression>>
+PEGTransformerFactory::TransformOverlapsRowList(PEGTransformer &transformer,
+                                                vector<unique_ptr<ParsedExpression>> expression) {
+	return expression;
+}
+
 void PEGTransformerFactory::RemoveOrderQualificationRecursive(unique_ptr<ParsedExpression> &root_expr) {
 	ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(
 	    *root_expr, [&](ColumnRefExpression &col_ref) {
