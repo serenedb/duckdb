@@ -185,6 +185,11 @@ for root, dirs, files in os.walk(os.path.join("..", "src")):
             hpp_files.append(os.path.join(root, file))
 
 
+sentinels = {
+    "CompressionType": ["ENUM_SIZE", "COMPRESSION_SERENEDB_COUNT"],
+}
+
+
 def remove_prefix(str, prefix):
     if str.startswith(prefix):
         return str[len(prefix) :]
@@ -221,6 +226,8 @@ for hpp_file in hpp_files:
             enum_values = {}
             for member in re.finditer(r"(\w+)(\s*\=\s*-?\w*)?", s):
                 key = member.group(1)
+                if key in sentinels.get(enum_name, ()):
+                    continue
                 strings = [key]
                 if enum_name in overrides and key in overrides[enum_name]:
                     override = overrides[enum_name][key]
