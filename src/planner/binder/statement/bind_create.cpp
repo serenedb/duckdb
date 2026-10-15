@@ -688,6 +688,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				if (ret_types.size() == 1 && ret_types[0].id() == LogicalTypeId::SQLNULL &&
 				    ret_types[0].GetAlias() == "void") {
 					function->Cast<ScalarMacroFunction>().expression = ConstantExpression::Null();
+					function->Cast<ScalarMacroFunction>().query_body = false;
 					expression = function->Cast<ScalarMacroFunction>().expression->Copy();
 				}
 				// Scalar RETURNS with BEGIN ATOMIC/AS $$ SELECT $$ body was
@@ -727,6 +728,11 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 					}
 				}
 
+				auto &scalar_function = function->Cast<ScalarMacroFunction>();
+				if (binder.InlineSqlFunctionBody(scalar_function)) {
+					expression = scalar_function.expression->Copy();
+					ExpressionBinder::QualifyColumnNames(*this, expression);
+				}
 				auto bind_result = binder.Bind(expression, 0, false);
 				if (bind_result.HasError()) {
 					error = std::move(bind_result.error);

@@ -29,6 +29,7 @@ class Binder;
 class ClientContext;
 class ColumnQualifier;
 class QueryNode;
+class SelectNode;
 
 class ScalarFunctionCatalogEntry;
 class AggregateFunctionCatalogEntry;
@@ -108,6 +109,10 @@ public:
 
 	// Returns true if the ColumnRef could be an alias reference (unqualified or qualified with table name "alias")
 	static bool IsPotentialAlias(const ColumnRefExpression &colref);
+
+	bool InlineSqlFunctionBody(ScalarMacroFunction &function);
+	void ExpandSqlFunctionBody(DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments,
+	                           unique_ptr<ParsedExpression> &expr);
 
 	//! The target type that should result from the binder. If the result is not of this type, a cast to this type will
 	//! be added. Defaults to INVALID.
@@ -319,6 +324,10 @@ protected:
 	MacroFunctionLookup LookupMacroFunction(const FunctionExpression &function);
 	const MacroBodyUse &GetMacroBodyUse(const ScalarMacroFunction &macro_def, const Identifier &name);
 	vector<bool> MacroArgumentsBindInPlace(const FunctionExpression &function, ScalarMacroCatalogEntry &macro_func);
+	bool IsSetReturningFunction(const FunctionExpression &function);
+	bool ReturnsAtMostOneRow(SelectNode &node, bool from_parameters_only);
+	void AddSqlFunctionParameters(unique_ptr<ParsedExpression> &expr, const Identifier &alias,
+	                              const vector<Identifier> &names, vector<unique_ptr<ParsedExpression>> arguments);
 	void AnalyzeMacroBody(ParsedExpression &expr, bool conditional, bool shareable,
 	                      vector<identifier_set_t> &lambda_params, DummyBinding &parameters, MacroBodyUse &use);
 	void ScanMacroArgument(ParsedExpression &argument, MacroArgumentScan &scan);

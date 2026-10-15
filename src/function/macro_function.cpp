@@ -343,6 +343,7 @@ void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.return_types = return_types;
 	other.return_names = return_names;
 	other.is_procedure = is_procedure;
+	other.source = source;
 }
 
 vector<unique_ptr<ParsedExpression>>

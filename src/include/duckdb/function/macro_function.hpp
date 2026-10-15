@@ -59,6 +59,7 @@ public:
 	vector<string> return_names;
 	//! Whether this overload is a procedure (CALL only, not usable in SELECT/FROM)
 	bool is_procedure = false;
+	string source;
 
 public:
 	virtual ~MacroFunction() {

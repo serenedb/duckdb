@@ -24,6 +24,7 @@ public:
 
 	//! The macro expression
 	unique_ptr<ParsedExpression> expression;
+	bool query_body = false;
 
 public:
 	unique_ptr<MacroFunction> Copy() const override;

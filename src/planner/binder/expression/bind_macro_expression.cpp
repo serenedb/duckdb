@@ -18,9 +18,17 @@
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
+#include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/expression/window_expression.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
+#include "duckdb/parser/qualified_name.hpp"
+#include "duckdb/parser/statement/select_statement.hpp"
+#include "duckdb/parser/result_modifier.hpp"
+#include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/tableref/emptytableref.hpp"
+#include "duckdb/parser/tableref/joinref.hpp"
+#include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -578,6 +586,179 @@ void ExpressionBinder::ScanMacroArgument(ParsedExpression &argument, MacroArgume
 	});
 }
 
+bool ExpressionBinder::IsSetReturningFunction(const FunctionExpression &function) {
+	if (function.FunctionName() == "unnest" || function.FunctionName() == "unlist") {
+		return true;
+	}
+	if (GetCatalogEntry(EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, function.GetQualifiedName()),
+	                    OnEntryNotFound::RETURN_NULL)) {
+		return false;
+	}
+	return GetCatalogEntry(EntryLookupInfo(CatalogType::TABLE_FUNCTION_ENTRY, function.GetQualifiedName()),
+	                       OnEntryNotFound::RETURN_NULL) != nullptr;
+}
+
+bool ExpressionBinder::InlineSqlFunctionBody(ScalarMacroFunction &function) {
+	if (!function.query_body) {
+		return false;
+	}
+	auto &subquery = function.expression->Cast<SubqueryExpression>();
+	if (subquery.Subquery()->node->type != QueryNodeType::SELECT_NODE) {
+		return false;
+	}
+	auto &node = subquery.SubqueryMutable()->node->Cast<SelectNode>();
+	if (!node.cte_map.map.empty() || node.select_list.size() != 1 || !node.modifiers.empty() ||
+	    (node.from_table && node.from_table->type != TableReferenceType::EMPTY_FROM) || node.where_clause ||
+	    !node.groups.group_expressions.empty() || !node.groups.grouping_sets.empty() || node.having || node.qualify ||
+	    node.sample || node.aggregate_handling != AggregateHandling::STANDARD_HANDLING) {
+		return false;
+	}
+	auto &item = node.select_list[0];
+	bool blocked = false;
+	for (auto expression_class : {ExpressionClass::WINDOW, ExpressionClass::STAR, ExpressionClass::SUBQUERY}) {
+		ParsedExpressionIterator::VisitExpressionClass(*item, expression_class,
+		                                               [&](const ParsedExpression &) { blocked = true; });
+	}
+	ParsedExpressionIterator::VisitExpressionClass(*item, ExpressionClass::FUNCTION, [&](const ParsedExpression &expr) {
+		blocked = blocked || IsSetReturningFunction(expr.Cast<FunctionExpression>());
+	});
+	if (blocked) {
+		return false;
+	}
+	vector<reference<unique_ptr<ParsedExpression>>> aggregates;
+	FindAggregateExprs(item, aggregates);
+	if (!aggregates.empty()) {
+		return false;
+	}
+	auto result = std::move(item);
+	result->ClearAlias();
+	function.expression = std::move(result);
+	function.query_body = false;
+	return true;
+}
+
+bool ExpressionBinder::ReturnsAtMostOneRow(SelectNode &node, bool from_parameters_only) {
+	bool blocked = false;
+	for (auto &item : node.select_list) {
+		ParsedExpressionIterator::VisitExpressionClass(
+		    *item, ExpressionClass::FUNCTION, [&](const ParsedExpression &expr) {
+			    blocked = blocked || IsSetReturningFunction(expr.Cast<FunctionExpression>());
+		    });
+	}
+	if (blocked) {
+		return false;
+	}
+	if (from_parameters_only) {
+		return true;
+	}
+	if (!node.groups.group_expressions.empty() || !node.groups.grouping_sets.empty() ||
+	    node.aggregate_handling != AggregateHandling::STANDARD_HANDLING) {
+		return false;
+	}
+	bool has_aggregate = false;
+	for (auto &item : node.select_list) {
+		ParsedExpressionIterator::VisitExpressionClass(*item, ExpressionClass::WINDOW,
+		                                               [&](const ParsedExpression &) { blocked = true; });
+		vector<reference<unique_ptr<ParsedExpression>>> aggregates;
+		FindAggregateExprs(item, aggregates);
+		has_aggregate = has_aggregate || !aggregates.empty();
+	}
+	return has_aggregate && !blocked;
+}
+
+void ExpressionBinder::ExpandSqlFunctionBody(DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments,
+                                             unique_ptr<ParsedExpression> &expr) {
+	const Identifier alias("__params_" + to_string(binder.global_binder_state->shared_macro_arguments++));
+	auto &names = binding.GetColumnNames();
+	vector<unique_ptr<ParsedExpression>> values;
+	values.reserve(arguments.size());
+	for (idx_t i = 0; i < arguments.size(); i++) {
+		values.push_back(std::move(arguments[i]));
+		arguments[i] = make_uniq<ColumnRefExpression>(names[i], alias);
+	}
+	macro_binding = &binding;
+	vector<identifier_set_t> lambda_params;
+	ReplaceMacroParameters(expr, lambda_params);
+	AddSqlFunctionParameters(expr, alias, names, std::move(values));
+}
+
+void ExpressionBinder::AddSqlFunctionParameters(unique_ptr<ParsedExpression> &expr, const Identifier &alias,
+                                                const vector<Identifier> &names,
+                                                vector<unique_ptr<ParsedExpression>> arguments) {
+	auto has_limit = [](const QueryNode &query) {
+		return absl::c_any_of(query.modifiers, [](const unique_ptr<ResultModifier> &modifier) {
+			return modifier->type == ResultModifierType::LIMIT_MODIFIER ||
+			       modifier->type == ResultModifierType::LEGACY_LIMIT_PERCENT_MODIFIER;
+		});
+	};
+	auto add_limit = [](QueryNode &query) {
+		auto limit = make_uniq<LimitModifier>();
+		limit->limit = ConstantExpression::Integer(1);
+		query.modifiers.push_back(std::move(limit));
+	};
+	auto &subquery = expr->Cast<SubqueryExpression>();
+	auto &body = subquery.SubqueryMutable()->node;
+	bool first_row = false;
+	if (body->type != QueryNodeType::SELECT_NODE) {
+		if (!has_limit(*body)) {
+			add_limit(*body);
+			first_row = true;
+		}
+		auto inner = make_uniq<SelectStatement>();
+		inner->node = std::move(body);
+		auto wrapper = make_uniq<SelectNode>();
+		wrapper->select_list.push_back(make_uniq<StarExpression>());
+		wrapper->from_table = make_uniq<SubqueryRef>(std::move(inner));
+		body = std::move(wrapper);
+	}
+	auto &node = body->Cast<SelectNode>();
+	const bool from_parameters_only = !node.from_table || node.from_table->type == TableReferenceType::EMPTY_FROM;
+	if (!arguments.empty()) {
+		auto parameters = make_uniq<SelectNode>();
+		parameters->from_table = make_uniq<EmptyTableRef>();
+		parameters->select_list.reserve(arguments.size());
+		for (idx_t i = 0; i < arguments.size(); i++) {
+			arguments[i]->SetAlias(names[i]);
+			parameters->select_list.push_back(std::move(arguments[i]));
+		}
+		auto statement = make_uniq<SelectStatement>();
+		statement->node = std::move(parameters);
+		auto parameters_ref = make_uniq<SubqueryRef>(std::move(statement), alias);
+		for (auto &item : node.select_list) {
+			if (item->GetExpressionClass() != ExpressionClass::STAR) {
+				continue;
+			}
+			auto &star = item->Cast<StarExpression>();
+			if (!star.RelationName().empty()) {
+				continue;
+			}
+			for (auto &name : names) {
+				star.ExcludeListMutable().insert(QualifiedColumnName(alias, name));
+			}
+		}
+		if (from_parameters_only) {
+			node.from_table = std::move(parameters_ref);
+		} else {
+			auto join = make_uniq<JoinRef>(JoinRefType::CROSS);
+			join->left = std::move(parameters_ref);
+			join->right = std::move(node.from_table);
+			node.from_table = std::move(join);
+		}
+	}
+	if (first_row || ReturnsAtMostOneRow(node, from_parameters_only)) {
+		return;
+	}
+	if (has_limit(node)) {
+		auto inner = make_uniq<SelectStatement>();
+		inner->node = std::move(body);
+		auto first = make_uniq<SelectNode>();
+		first->select_list.push_back(make_uniq<StarExpression>());
+		first->from_table = make_uniq<SubqueryRef>(std::move(inner));
+		body = std::move(first);
+	}
+	add_limit(*body);
+}
+
 void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func,
                                              unique_ptr<ParsedExpression> &expr, idx_t depth,
                                              vector<unique_ptr<Expression>> &shared_arguments) {
@@ -681,6 +862,12 @@ void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, Scala
 			shared_parsed.push_back(std::move(parsed));
 			shared_arguments.push_back(std::move(bound));
 		}
+	}
+
+	if (macro_def.query_body && !is_window) {
+		D_ASSERT(shared_names.empty());
+		ExpandSqlFunctionBody(*new_macro_binding, positional_arguments, expr);
+		return;
 	}
 
 	// now replace the parameters
