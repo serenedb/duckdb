@@ -5,7 +5,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <map>
 #include <memory>
+#include <mutex>
+#include <utility>
 
 namespace duckdb {
 namespace text {
@@ -55,6 +58,14 @@ TransformOptions Canonical(TransformOptions options) {
 	if (!options.strip_marks || options.case_mapping == CaseMapping::NONE) {
 		options.strip_before_case = false;
 	}
+	auto &keep = options.keep_marks;
+	if (!options.strip_marks) {
+		keep.clear();
+	}
+	keep.erase(std::remove_if(keep.begin(), keep.end(), [](uint32_t c) { return !Normalizer::IsNonspacingMark(c); }),
+	           keep.end());
+	std::sort(keep.begin(), keep.end());
+	keep.erase(std::unique(keep.begin(), keep.end()), keep.end());
 	return options;
 }
 
@@ -140,12 +151,7 @@ Transform::Transform(const TransformOptions &options_p) : options(Canonical(opti
 	                      : AsciiMode::TABLE;
 }
 
-const Transform::Tables &Transform::GetTables() const {
-	static std::atomic<const Tables *> cache[TABLES_COUNT];
-	auto &slot = cache[TablesIndex(options)];
-	if (auto cached = slot.load(std::memory_order_acquire)) {
-		return *cached;
-	}
+std::unique_ptr<Transform::Tables> Transform::BuildTables() const {
 	auto built = std::make_unique<Tables>();
 	TransformBuffer buffer;
 	for (uint32_t c = 0; c < 0x80; c++) {
@@ -155,6 +161,32 @@ const Transform::Tables &Transform::GetTables() const {
 	for (uint32_t c = 0x80; c < 0x800; c++) {
 		built->two_byte[c] = TableEntry(StableMapping(c, buffer));
 	}
+	return built;
+}
+
+const Transform::Tables &Transform::GetTables() const {
+	if (!options.keep_marks.empty()) {
+		using Key = std::pair<size_t, std::vector<uint32_t>>;
+		static std::mutex lock;
+		static auto &cache = *new std::map<Key, std::unique_ptr<const Tables>>();
+		Key key(TablesIndex(options), options.keep_marks);
+		{
+			std::lock_guard<std::mutex> guard(lock);
+			auto it = cache.find(key);
+			if (it != cache.end()) {
+				return *it->second;
+			}
+		}
+		auto built = BuildTables();
+		std::lock_guard<std::mutex> guard(lock);
+		return *cache.try_emplace(std::move(key), std::move(built)).first->second;
+	}
+	static std::atomic<const Tables *> cache[TABLES_COUNT];
+	auto &slot = cache[TablesIndex(options)];
+	if (auto cached = slot.load(std::memory_order_acquire)) {
+		return *cached;
+	}
+	auto built = BuildTables();
 	const Tables *expected = nullptr;
 	if (slot.compare_exchange_strong(expected, built.get(), std::memory_order_acq_rel)) {
 		return *built.release();
@@ -235,7 +267,18 @@ void Transform::MapNormalized(TransformBuffer &buffer, uint32_t before, uint32_t
 
 void Transform::StripMarks(TransformBuffer &buffer) const {
 	NormalizeInPlace(strip_form, buffer);
-	Normalizer::RemoveNonspacingMarks(buffer.text);
+	auto &keep = options.keep_marks;
+	if (keep.empty()) {
+		Normalizer::RemoveNonspacingMarks(buffer.text);
+	} else {
+		auto &text = buffer.text;
+		text.erase(std::remove_if(text.begin(), text.end(),
+		                          [&](uint32_t c) {
+			                          return Normalizer::IsNonspacingMark(c) &&
+			                                 !std::binary_search(keep.begin(), keep.end(), c);
+		                          }),
+		           text.end());
+	}
 	if (composes) {
 		NormalizeInPlace(renormalize_form, buffer);
 	}
