@@ -151,9 +151,6 @@ static const DefaultMacro internal_macros[] = {
      "-1) ELSE generate_series(1, array_length(arr, dim)) END)"},
     {DEFAULT_SCHEMA, "fdiv", "(x, y) AS floor(x/y)"},
     {DEFAULT_SCHEMA, "fmod", "(x, y) AS (x-y*floor(x/y))"},
-    {DEFAULT_SCHEMA, "split_part",
-     "(string, delimiter, \"position\") AS if(string IS NOT NULL AND delimiter IS NOT NULL AND position IS NOT NULL, "
-     "coalesce(string_split(string, delimiter)[position],''), NULL)"},
     {DEFAULT_SCHEMA, "geomean", "(x) AS exp(avg(ln(x)))"},
     {DEFAULT_SCHEMA, "geometric_mean", "(x) AS geomean(x)"},
 

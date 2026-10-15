@@ -1,6 +1,7 @@
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
+#include "duckdb/common/vector_operations/ternary_executor.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/common/exception.hpp"
@@ -180,6 +181,66 @@ void StringSplitFunction(DataChunk &args, ExpressionState &state, Vector &result
 	StringSplitExecutor<RegularStringSplit>(args, state, result, nullptr);
 }
 
+string_t SplitPart(const string_t &input, const string_t &delimiter, int64_t position, vector<idx_t> &delimiters) {
+	const auto input_data = input.GetData();
+	const auto input_size = input.GetSize();
+	const auto empty = string_t(input_data, 0);
+	if (input_size == 0 || position == 0) {
+		return empty;
+	}
+	const auto delimiter_size = delimiter.GetSize();
+	if (delimiter_size == 0) {
+		return position == 1 || position == -1 ? input : empty;
+	}
+	const duckdb_re2::LiteralFinder finder(absl::string_view(delimiter.GetData(), delimiter_size));
+	const auto find = [&](idx_t start) {
+		return FindStrInStr(const_uchar_ptr_cast(input_data) + start, input_size - start,
+		                    const_uchar_ptr_cast(delimiter.GetData()), delimiter_size, finder);
+	};
+	const auto part = [&](idx_t start, idx_t end) {
+		return string_t(input_data + start, UnsafeNumericCast<uint32_t>(end - start));
+	};
+	if (position > 0) {
+		idx_t start = 0;
+		for (int64_t current = 1;; current++) {
+			const auto pos = find(start);
+			if (pos > input_size - start) {
+				return current == position ? part(start, input_size) : empty;
+			}
+			if (current == position) {
+				return part(start, start + pos);
+			}
+			start += pos + delimiter_size;
+		}
+	}
+	delimiters.clear();
+	for (idx_t start = 0;;) {
+		const auto pos = find(start);
+		if (pos > input_size - start) {
+			break;
+		}
+		delimiters.push_back(start + pos);
+		start += pos + delimiter_size;
+	}
+	const auto from_end = static_cast<idx_t>(-(position + 1)) + 1;
+	if (from_end > delimiters.size() + 1) {
+		return empty;
+	}
+	const auto index = delimiters.size() + 1 - from_end;
+	const auto start = index == 0 ? 0 : delimiters[index - 1] + delimiter_size;
+	const auto end = index == delimiters.size() ? input_size : delimiters[index];
+	return part(start, end);
+}
+
+void SplitPartFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	vector<idx_t> delimiters;
+	TernaryExecutor::Execute<string_t, string_t, int64_t, string_t>(
+	    args.data[0], args.data[1], args.data[2], result, [&](string_t input, string_t delimiter, int64_t position) {
+		    return SplitPart(input, delimiter, position, delimiters);
+	    });
+	StringVector::AddHeapReference(result, args.data[0]);
+}
+
 void StringSplitRegexFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<RegexpMatchesBindData>();
@@ -204,6 +265,15 @@ ScalarFunction StringSplitFun::GetFunction() {
 	    .AddParameter("separator", LogicalType::VARCHAR);
 	string_split.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
 	return string_split;
+}
+
+ScalarFunction SplitPartFun::GetFunction() {
+	ScalarFunction split_part({}, LogicalType::VARCHAR, SplitPartFunction);
+	split_part.GetSignature()
+	    .AddParameter("string", LogicalType::VARCHAR)
+	    .AddParameter("delimiter", LogicalType::VARCHAR)
+	    .AddParameter("position", LogicalType::BIGINT);
+	return split_part;
 }
 
 ScalarFunctionSet StringSplitRegexFun::GetFunctions() {

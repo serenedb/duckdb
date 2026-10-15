@@ -266,6 +266,14 @@
         "type": "scalar_function_set"
     },
     {
+        "name": "split_part",
+        "parameters": "string,delimiter,position",
+        "description": "Splits the `string` along the `delimiter` and returns the part at `position`, counted from 1, or from the end when `position` is negative. Returns an empty string when there is no such part.",
+        "example": "split_part('a;b;c', ';', 2)",
+        "categories": ["string"],
+        "type": "scalar_function"
+    },
+    {
         "name": "string_split",
         "parameters": "string,separator",
         "description": "Splits the `string` along the `separator`.",
