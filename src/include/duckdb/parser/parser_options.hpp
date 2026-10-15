@@ -32,6 +32,7 @@ public:
 public:
 	IdentifierCaseMode identifier_case_mode = IdentifierCaseMode::PRESERVE_CASE;
 	bool integer_division = false;
+	bool question_mark_operators = false;
 	RegexMatchOperatorSemantics regex_match_operator_semantics = RegexMatchOperatorSemantics::PARTIAL;
 	idx_t max_expression_depth = DEFAULT_MAX_EXPRESSION_DEPTH;
 	optional_ptr<const CompiledGrammar> grammar;
