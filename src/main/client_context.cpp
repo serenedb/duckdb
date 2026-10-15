@@ -1010,11 +1010,15 @@ void ClientContext::InterruptCheck() const {
 }
 
 void ClientContext::DeadlineCheck() const {
-	if (!query_deadline.IsValid()) {
+	DeadlineCheck(query_deadline);
+}
+
+void ClientContext::DeadlineCheck(optional_idx deadline) {
+	if (!deadline.IsValid()) {
 		return;
 	}
 	auto now = NumericCast<idx_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
-	if (now >= query_deadline.GetIndex()) {
+	if (now >= deadline.GetIndex()) {
 		throw InterruptException("Query exceeded maximum execution time");
 	}
 }
