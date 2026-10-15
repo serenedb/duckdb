@@ -28,6 +28,7 @@ add_library_unity(
   predicate_factoring.cpp
   regex_optimizations.cpp
   struct_extract_struct_pack_folding.cpp
+  list_extract_list_value_folding.cpp
   timestamp_comparison.cpp
   constant_order_normalization.cpp
   concat_flattening.cpp

@@ -77,6 +77,7 @@ Optimizer::Optimizer(Binder &binder, ClientContext &context)
 	rewriter.rules.push_back(make_uniq<ConstantFoldingRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ConcatFlatteningRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<StructExtractStructPackFoldingRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<ListExtractListValueFoldingRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<DistributivityRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ArithmeticSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<LeastGreatestSimplificationRule>(rewriter));
