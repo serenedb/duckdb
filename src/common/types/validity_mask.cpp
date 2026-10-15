@@ -116,8 +116,7 @@ idx_t ValidityMask::Capacity() const {
 
 void ValidityMask::Slice(const ValidityMask &other, idx_t source_offset, idx_t count) {
 	if (other.CannotHaveNull()) {
-		validity_mask = nullptr;
-		validity_data.reset();
+		Reset(MaxValue<idx_t>(count, STANDARD_VECTOR_SIZE));
 		return;
 	}
 	if (source_offset == 0) {
