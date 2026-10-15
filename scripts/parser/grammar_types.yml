@@ -944,6 +944,9 @@ TableAlias:
     - TableAlias
     - TableAliasAs
     - TableAliasWithoutAs
+    - TableFunctionAlias
+    - ColumnDefinitionAliasAs
+    - ColumnDefinitionAliasWithoutAs
 
 JoinPrefix:
   type: "JoinPrefix"
