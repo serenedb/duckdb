@@ -1555,7 +1555,6 @@ const StringUtil::EnumStringLiteral *GetCompressionTypeValues() {
 		{ static_cast<uint32_t>(CompressionType::COMPRESSION_ROARING), "ROARING" },
 		{ static_cast<uint32_t>(CompressionType::COMPRESSION_EMPTY), "EMPTY" },
 		{ static_cast<uint32_t>(CompressionType::COMPRESSION_DICT_FSST), "DICT_FSST" },
-		{ static_cast<uint32_t>(CompressionType::ENUM_SIZE), "ENUM_SIZE" },
 		{ static_cast<uint32_t>(CompressionType::COMPRESSION_DICT_LZ4), "DICT_LZ4" },
 		{ static_cast<uint32_t>(CompressionType::COMPRESSION_DICT_ZSTD), "DICT_ZSTD" },
 		{ static_cast<uint32_t>(CompressionType::COMPRESSION_LZ4), "LZ4" },
@@ -1565,20 +1564,19 @@ const StringUtil::EnumStringLiteral *GetCompressionTypeValues() {
 		{ static_cast<uint32_t>(CompressionType::COMPRESSION_ZXC), "ZXC" },
 		{ static_cast<uint32_t>(CompressionType::COMPRESSION_COL_ZSTD), "ZSTD" },
 		{ static_cast<uint32_t>(CompressionType::COMPRESSION_COL_SEQUENCE), "COMPRESSION_COL_SEQUENCE" },
-		{ static_cast<uint32_t>(CompressionType::COMPRESSION_COL_NUMERIC), "COMPRESSION_COL_NUMERIC" },
-		{ static_cast<uint32_t>(CompressionType::COMPRESSION_SERENEDB_COUNT), "COMPRESSION_SERENEDB_COUNT" }
+		{ static_cast<uint32_t>(CompressionType::COMPRESSION_COL_NUMERIC), "COMPRESSION_COL_NUMERIC" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<CompressionType>(CompressionType value) {
-	return StringUtil::EnumToString(GetCompressionTypeValues(), 28, "CompressionType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetCompressionTypeValues(), 26, "CompressionType", static_cast<uint32_t>(value));
 }
 
 template<>
 CompressionType EnumUtil::FromString<CompressionType>(std::string_view value) {
-	return static_cast<CompressionType>(StringUtil::StringToEnum(GetCompressionTypeValues(), 28, "CompressionType", value));
+	return static_cast<CompressionType>(StringUtil::StringToEnum(GetCompressionTypeValues(), 26, "CompressionType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetCompressionValidityValues() {
