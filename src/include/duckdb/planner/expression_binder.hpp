@@ -289,6 +289,10 @@ protected:
 	BindResult BindUnsupportedExpression(ParsedExpression &expr, idx_t depth, const string &message);
 
 	CatalogEntry &BindFunction(FunctionExpression &function);
+	optional_ptr<CatalogEntry> TryBindFunction(FunctionExpression &function);
+	optional_ptr<CatalogEntry> GetTypeEntry(const QualifiedName &name, QueryErrorContext error_context,
+	                                        OnEntryNotFound on_entry_not_found);
+	unique_ptr<TypeExpression> FunctionStyleCastType(FunctionExpression &function);
 
 protected:
 	virtual BindResult BindGroupingFunction(OperatorExpression &op, idx_t depth);

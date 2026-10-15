@@ -5,11 +5,13 @@
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/lambda_expression.hpp"
@@ -258,7 +260,7 @@ BindResult ExpressionBinder::TryBindLambdaOrJson(FunctionExpression &function, i
 	                  json_bind_result.error.RawMessage());
 }
 
-CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
+optional_ptr<CatalogEntry> ExpressionBinder::TryBindFunction(FunctionExpression &function) {
 	QueryErrorContext error_context(function.GetQueryLocation());
 
 	ColumnQualifier qualifier(binder);
@@ -281,12 +283,38 @@ CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
 			func = table_func;
 		}
 	}
+	return func;
+}
+
+CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
+	auto func = TryBindFunction(function);
 	if (!func) {
 		// not a table function - rebind to throw a real catalog-missing error
+		QueryErrorContext error_context(function.GetQueryLocation());
 		EntryLookupInfo function_lookup(CatalogType::SCALAR_FUNCTION_ENTRY, function.GetQualifiedName(), error_context);
 		func = GetCatalogEntry(function_lookup, OnEntryNotFound::THROW_EXCEPTION);
 	}
 	return *func;
+}
+
+unique_ptr<TypeExpression> ExpressionBinder::FunctionStyleCastType(FunctionExpression &function) {
+	if (Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() !=
+	    SqlCompatibility::POSTGRES) {
+		return nullptr;
+	}
+	auto &arguments = function.GetArguments();
+	if (arguments.size() != 1 || !arguments[0].GetName().empty() || function.IsOperator() || function.Distinct() ||
+	    function.Filter() || !function.OrderBy()->orders.empty()) {
+		return nullptr;
+	}
+	auto entry = GetTypeEntry(function.GetQualifiedName(), QueryErrorContext(function.GetQueryLocation()),
+	                          OnEntryNotFound::RETURN_NULL);
+	if (!entry || entry->Cast<TypeCatalogEntry>().user_type.id() == LogicalTypeId::INVALID) {
+		return nullptr;
+	}
+	auto type = make_uniq<TypeExpression>(function.GetQualifiedName(), vector<unique_ptr<ParsedExpression>>());
+	type->SetQueryLocation(function.GetQueryLocation());
+	return type;
 }
 
 //! Runs `fun` with the select-list set-returning rewrite disabled, so a nested
@@ -312,7 +340,19 @@ static BindResult BindWithoutSetReturningExpansionImpl(ExpressionBinder &binder,
 
 BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t depth,
                                             unique_ptr<ParsedExpression> &expr_ptr) {
-	reference<CatalogEntry> func = BindFunction(function);
+	auto entry = TryBindFunction(function);
+	if (!entry) {
+		auto cast_type = FunctionStyleCastType(function);
+		if (cast_type) {
+			auto cast = make_uniq<CastExpression>(std::move(cast_type),
+			                                      std::move(function.GetArgumentsMutable()[0].GetExpressionMutable()));
+			cast->SetAlias(function.GetAlias().empty() ? function.FunctionName() : function.GetAlias());
+			cast->SetQueryLocation(function.GetQueryLocation());
+			expr_ptr = std::move(cast);
+			return BindExpression(expr_ptr, depth, false);
+		}
+	}
+	reference<CatalogEntry> func = entry ? *entry : BindFunction(function);
 
 	// PG compat: in a SELECT list, if the scalar lookup won but a table
 	// function with the same name exists, prefer the table function so it
@@ -487,11 +527,20 @@ BindResult ExpressionBinder::BindFunction(FunctionExpression &function, ScalarFu
 	}
 
 	FunctionBinder function_binder(binder);
-	auto result = function_binder.BindScalarFunction(func, std::move(arguments), error, function.IsOperator(), &binder);
-	if (!result) {
+	auto overload = function_binder.SelectScalarFunction(func, arguments, error);
+	if (!overload.IsValid()) {
+		auto cast_type = FunctionStyleCastType(function);
+		if (cast_type) {
+			auto cast = BoundCastExpression::AddCastToType(context, std::move(arguments[0].second),
+			                                               binder.BindLogicalType(*cast_type));
+			cast->SetAlias(function.GetAlias().empty() ? function.FunctionName() : function.GetAlias());
+			return BindResult(std::move(cast));
+		}
 		error.AddQueryLocation(function);
 		error.Throw();
 	}
+	auto result = function_binder.BindScalarFunction(func, overload.GetIndex(), std::move(arguments),
+	                                                 function.IsOperator(), &binder);
 	if (result->GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
 		auto &bound_function = result->Cast<BoundFunctionExpression>();
 		if (bound_function.Function().GetStability() == FunctionStability::CONSISTENT_WITHIN_QUERY) {
