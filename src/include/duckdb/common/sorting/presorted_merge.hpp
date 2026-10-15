@@ -76,6 +76,7 @@ class PresortedMerge {
 public:
 	PresortedMerge(vector<LogicalType> key_types, vector<OrderModifiers> modifiers,
 	               vector<shared_ptr<PresortedMergeInput>> inputs);
+	explicit PresortedMerge(vector<shared_ptr<PresortedMergeInput>> inputs);
 	~PresortedMerge();
 
 	PresortedMerge(const PresortedMerge &) = delete;
@@ -97,6 +98,7 @@ private:
 	vector<OrderModifiers> modifiers;
 	vector<shared_ptr<PresortedMergeInput>> inputs;
 	vector<vector<idx_t>> bounds;
+	bool byte_keys = false;
 };
 
 } // namespace duckdb
