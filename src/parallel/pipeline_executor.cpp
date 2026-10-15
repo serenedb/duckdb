@@ -55,19 +55,13 @@ PipelineExecutor::PipelineExecutor(ClientContext &context_p, Pipeline &pipeline_
 		local_source_state = pipeline.source->GetLocalSourceState(context, *global_source_state);
 	}
 
-	intermediate_chunks.reserve(pipeline.operators.size());
-	intermediate_states.reserve(pipeline.operators.size());
-	for (idx_t i = 0; i < pipeline.operators.size(); i++) {
-		auto &prev_operator = i == 0 ? *pipeline.source : pipeline.operators[i - 1].get();
-		auto &current_operator = pipeline.operators[i].get();
-
+	if (!pipeline.operators.empty()) {
 		auto chunk = make_uniq<DataChunk>();
-		chunk->Initialize(BufferAllocator::Get(context.client), prev_operator.GetTypes());
+		chunk->Initialize(BufferAllocator::Get(context.client), pipeline.source->GetTypes());
 		intermediate_chunks.push_back(std::move(chunk));
-
-		auto op_state = current_operator.GetOperatorState(context);
-		intermediate_states.push_back(std::move(op_state));
-
+	}
+	for (auto &op : pipeline.operators) {
+		auto &current_operator = op.get();
 		if (current_operator.IsSink() && current_operator.sink_state->state == SinkFinalizeType::NO_OUTPUT_POSSIBLE) {
 			// one of the operators has already figured out no output is possible
 			// we can skip executing the pipeline
@@ -75,6 +69,23 @@ PipelineExecutor::PipelineExecutor(ClientContext &context_p, Pipeline &pipeline_
 		}
 	}
 	InitializeChunk(final_chunk);
+}
+
+void PipelineExecutor::InitializeOperators() {
+	if (!intermediate_states.empty() || pipeline.operators.empty()) {
+		return;
+	}
+	intermediate_chunks.reserve(pipeline.operators.size());
+	intermediate_states.reserve(pipeline.operators.size());
+	for (idx_t i = 0; i < pipeline.operators.size(); i++) {
+		context.client.InterruptCheck();
+		if (i > 0) {
+			auto chunk = make_uniq<DataChunk>();
+			chunk->Initialize(BufferAllocator::Get(context.client), pipeline.operators[i - 1].get().GetTypes());
+			intermediate_chunks.push_back(std::move(chunk));
+		}
+		intermediate_states.push_back(pipeline.operators[i].get().GetOperatorState(context));
+	}
 }
 
 void PipelineExecutor::Reset() {
@@ -135,10 +146,12 @@ void PipelineExecutor::Reset() {
 	// Keep intermediate_chunks — reuse their allocated memory
 	for (idx_t i = 0; i < pipeline.operators.size(); i++) {
 		auto &current_operator = pipeline.operators[i].get();
-		if (!allow_reuse || !intermediate_states[i] || !intermediate_states[i]->SupportsReuse()) {
-			intermediate_states[i] = current_operator.GetOperatorState(context);
-		} else {
-			intermediate_states[i]->Reset();
+		if (i < intermediate_states.size()) {
+			if (!allow_reuse || !intermediate_states[i] || !intermediate_states[i]->SupportsReuse()) {
+				intermediate_states[i] = current_operator.GetOperatorState(context);
+			} else {
+				intermediate_states[i]->Reset();
+			}
 		}
 
 		if (current_operator.IsSink() && current_operator.sink_state->state == SinkFinalizeType::NO_OUTPUT_POSSIBLE) {
@@ -170,10 +183,13 @@ bool PipelineExecutor::TryFlushCachingOperators(ExecutionBudget &chunk_budget) {
 	// extract every chunk from it and push it through the rest of the pipeline
 	// before moving onto the next operators' FinalExecute
 	while (flushing_idx < pipeline.operators.size()) {
-		if (!pipeline.operators[flushing_idx].get().RequiresFinalExecute()) {
+		auto &flushing_operator = pipeline.operators[flushing_idx].get();
+		if (!flushing_operator.RequiresFinalExecute() ||
+		    (intermediate_states.empty() && flushing_operator.FinalExecuteNeedsInput())) {
 			flushing_idx++;
 			continue;
 		}
+		InitializeOperators();
 
 		// This slightly awkward way of increasing the flushing idx is to make the code re-entrant: We need to call this
 		// method again in the case of a Sink returning BLOCKED.
@@ -746,6 +762,7 @@ OperatorResultType PipelineExecutor::Execute(DataChunk &input, DataChunk &result
 		return OperatorResultType::NEED_MORE_INPUT;
 	} // LCOV_EXCL_STOP
 	D_ASSERT(!pipeline.operators.empty());
+	InitializeOperators();
 
 	idx_t current_idx;
 	GoToSource(current_idx, initial_idx);

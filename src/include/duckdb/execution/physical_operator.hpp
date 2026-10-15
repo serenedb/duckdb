@@ -133,6 +133,10 @@ public:
 		return false;
 	}
 
+	virtual bool FinalExecuteNeedsInput() const {
+		return false;
+	}
+
 	virtual bool RequiresOperatorFinalize() const {
 		return false;
 	}
@@ -346,6 +350,10 @@ public:
 
 	bool RequiresFinalExecute() const final {
 		return caching_supported;
+	}
+
+	bool FinalExecuteNeedsInput() const final {
+		return true;
 	}
 
 protected:

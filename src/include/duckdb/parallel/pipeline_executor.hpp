@@ -177,6 +177,7 @@ private:
 	idx_t unsampled_progress_rows = 0;
 
 private:
+	void InitializeOperators();
 	void StartOperator(PhysicalOperator &op);
 	void EndOperator(PhysicalOperator &op, optional_ptr<DataChunk> chunk);
 
