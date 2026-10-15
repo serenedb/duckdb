@@ -1290,7 +1290,14 @@ ColumnDataRowCollection ColumnDataCollection::GetRows() const {
 }
 
 Value ColumnDataCollection::GetValue(idx_t column, idx_t index) const {
-	return GetRows().GetValue(column, index);
+	ColumnDataScanState state;
+	InitializeScan(state, vector<column_t> {column});
+	DataChunk chunk;
+	InitializeScanChunk(state, chunk);
+	if (!Seek(index, state, chunk)) {
+		throw InternalException("ColumnDataCollection::GetValue - row %llu is out of range", index);
+	}
+	return chunk.GetValue(0, index - state.current_row_index);
 }
 
 //===--------------------------------------------------------------------===//
