@@ -70,6 +70,7 @@ public:
 
 	bool TryExecuteDictionaryExpression(const BoundFunctionExpression &expr, DataChunk &args, ExpressionState &state,
 	                                    Vector &result);
+	bool MayExecuteDictionaryExpression(const DataChunk &args);
 
 	void ResetDictionaryStates() override;
 

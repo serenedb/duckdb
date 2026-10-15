@@ -1,3 +1,4 @@
+#include "duckdb/common/vector/dictionary_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector/map_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
@@ -144,6 +145,74 @@ void ValidityFillLoop(const Vector &vector, Vector &result, const SelectionVecto
 	}
 }
 
+static void ListFillLoop(const Vector &vector, Vector &result, const SelectionVector &sel, sel_t count) {
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	const auto offset = ListVector::GetListSize(result);
+	auto &list_child = ListVector::GetChild(vector);
+	if (vector.GetVectorType() == VectorType::CONSTANT_VECTOR) {
+		auto &result_mask = FlatVector::ValidityMutable(result);
+		if (ConstantVector::IsNull(vector)) {
+			for (idx_t i = 0; i < count; i++) {
+				result_mask.SetInvalid(sel.get_index(i));
+			}
+			return;
+		}
+		const auto entry = ConstantVector::GetData<list_entry_t>(vector)[0];
+		Vector elements(list_child, entry.offset, entry.offset + entry.length);
+		ListVector::Append(result, elements, entry.length);
+		auto res = FlatVector::GetDataMutable<list_entry_t>(result);
+		for (idx_t i = 0; i < count; i++) {
+			res[sel.get_index(i)] = list_entry_t(offset, entry.length);
+		}
+		return;
+	}
+
+	auto entries = vector.Values<list_entry_t>();
+	idx_t selected = 0;
+	bool in_order = true;
+	for (idx_t i = 0; i < count; i++) {
+		auto entry = entries[i];
+		if (!entry.IsValid()) {
+			continue;
+		}
+		const auto &list_entry = entry.GetValue();
+		in_order = in_order && (list_entry.length == 0 || list_entry.offset == selected);
+		selected += list_entry.length;
+	}
+	if (in_order && selected == ListVector::GetListSize(vector)) {
+		ListVector::Append(result, list_child, selected);
+	} else {
+		SelectionVector child_sel(selected);
+		idx_t child_idx = 0;
+		for (idx_t i = 0; i < count; i++) {
+			auto entry = entries[i];
+			if (!entry.IsValid()) {
+				continue;
+			}
+			const auto &list_entry = entry.GetValue();
+			for (idx_t k = 0; k < list_entry.length; k++) {
+				child_sel.set_index(child_idx++, list_entry.offset + k);
+			}
+		}
+		ListVector::Append(result, list_child, child_sel, selected);
+	}
+
+	auto res = FlatVector::GetDataMutable<list_entry_t>(result);
+	auto &result_mask = FlatVector::ValidityMutable(result);
+	idx_t child_offset = offset;
+	for (idx_t i = 0; i < count; i++) {
+		auto entry = entries[i];
+		const auto res_idx = sel.get_index(i);
+		if (!entry.IsValid()) {
+			result_mask.SetInvalid(res_idx);
+			continue;
+		}
+		const auto length = entry.GetValue().length;
+		res[res_idx] = list_entry_t(child_offset, length);
+		child_offset += length;
+	}
+}
+
 void ExpressionExecutor::FillSwitch(const Vector &vector, Vector &result, const SelectionVector &sel, sel_t count) {
 	switch (result.GetType().InternalType()) {
 	case PhysicalType::BOOL:
@@ -191,6 +260,19 @@ void ExpressionExecutor::FillSwitch(const Vector &vector, Vector &result, const 
 		StringVector::AddHeapReference(result, vector);
 		break;
 	case PhysicalType::STRUCT: {
+		if (vector.GetVectorType() == VectorType::DICTIONARY_VECTOR &&
+		    DictionaryVector::Child(vector).GetVectorType() == VectorType::FLAT_VECTOR) {
+			auto &dictionary_entries = StructVector::GetEntries(DictionaryVector::Child(vector));
+			auto &dictionary_sel = DictionaryVector::SelVector(vector);
+			auto &result_entries = StructVector::GetEntries(result);
+			ValidityFillLoop(vector, result, sel, count);
+			D_ASSERT(dictionary_entries.size() == result_entries.size());
+			for (idx_t i = 0; i < dictionary_entries.size(); i++) {
+				Vector entry(dictionary_entries[i], dictionary_sel, count);
+				FillSwitch(entry, result_entries[i], sel, count);
+			}
+			break;
+		}
 		if (vector.GetVectorType() != VectorType::CONSTANT_VECTOR) {
 			// below code needs constant or flat structs
 			vector.Flatten();
@@ -204,26 +286,9 @@ void ExpressionExecutor::FillSwitch(const Vector &vector, Vector &result, const 
 		}
 		break;
 	}
-	case PhysicalType::LIST: {
-		idx_t offset = ListVector::GetListSize(result);
-		auto &list_child = ListVector::GetChild(vector);
-		ListVector::Append(result, list_child, ListVector::GetListSize(vector));
-
-		// all the false offsets need to be incremented by true_child.count
-		TemplatedFillLoop<list_entry_t>(vector, result, sel, count);
-		if (offset == 0) {
-			break;
-		}
-
-		auto result_data = FlatVector::ScatterWriter<list_entry_t>(result);
-		for (idx_t i = 0; i < count; i++) {
-			auto result_idx = sel.get_index(i);
-			result_data[result_idx].offset += offset;
-		}
-
-		result.Verify();
+	case PhysicalType::LIST:
+		ListFillLoop(vector, result, sel, count);
 		break;
-	}
 	default:
 		throw NotImplementedException("Unimplemented type for case expression: %s", result.GetType().ToString());
 	}
