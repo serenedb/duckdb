@@ -28,5 +28,7 @@ public:
 	AggregateFunctionSet functions;
 
 private:
+	friend class ExtensionLoader;
+	void FinalizeFunction(AggregateFunction &function) const;
 };
 } // namespace duckdb
