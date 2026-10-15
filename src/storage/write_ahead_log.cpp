@@ -746,6 +746,13 @@ void WALEntryBuffer::WriteAdoptSegments(const vector<string> &segments) {
 	entry_count++;
 }
 
+void WALEntryBuffer::WriteExpireRows(idx_t column, const Value &cutoff) {
+	WriteAheadLogSerializer serializer(database, stream, WALType::EXPIRE_ROWS);
+	serializer.WriteEntry(WALExpireRows {column, cutoff});
+	serializer.End();
+	entry_count++;
+}
+
 void WriteAheadLog::WriteUpdate(DataChunk &chunk, const vector<column_t> &column_indexes) {
 	D_ASSERT(chunk.size() > 0);
 	D_ASSERT(chunk.ColumnCount() == 2);

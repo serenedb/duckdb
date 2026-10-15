@@ -11,6 +11,7 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/optional.hpp"
+#include "duckdb/common/types/value.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/storage/block.hpp"
@@ -471,6 +472,14 @@ struct WALAdoptSegments {
 
 	void Serialize(Serializer &serializer) const;
 	static WALAdoptSegments Deserialize(Deserializer &deserializer);
+};
+
+struct WALExpireRows {
+	idx_t column;
+	Value cutoff;
+
+	void Serialize(Serializer &serializer) const;
+	static WALExpireRows Deserialize(Deserializer &deserializer);
 };
 
 } // namespace duckdb

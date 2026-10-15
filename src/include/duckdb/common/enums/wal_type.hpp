@@ -74,6 +74,7 @@ enum class WALType : uint8_t {
 	DROP_JOB = 217,
 	TRUNCATE_TABLE = 218,
 	ADOPT_SEGMENTS = 219,
+	EXPIRE_ROWS = 220,
 	// -----------------------------
 	// Flush
 	// -----------------------------

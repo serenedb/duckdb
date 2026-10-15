@@ -295,6 +295,7 @@ protected:
 		case WALType::DELETE_TUPLE:
 		case WALType::TRUNCATE_TABLE:
 		case WALType::ADOPT_SEGMENTS:
+		case WALType::EXPIRE_ROWS:
 			return true;
 		default:
 			return false;
@@ -398,6 +399,7 @@ protected:
 	void ReplayUpdate();
 	void ReplayTruncateTable();
 	void ReplayAdoptSegments();
+	void ReplayExpireRows();
 	void ReplayCheckpoint();
 
 private:
@@ -1057,6 +1059,9 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 		break;
 	case WALType::ADOPT_SEGMENTS:
 		ReplayAdoptSegments();
+		break;
+	case WALType::EXPIRE_ROWS:
+		ReplayExpireRows();
 		break;
 	default:
 		throw InternalException("Invalid WAL entry type!");
@@ -2158,6 +2163,21 @@ void WriteAheadLogDeserializer::ReplayAdoptSegments() {
 		return;
 	}
 	throw DataCorruptionException("Corrupt WAL: segments without a log table");
+}
+
+void WriteAheadLogDeserializer::ReplayExpireRows() {
+	auto entry = WALExpireRows::Deserialize(deserializer);
+	if (DeserializeOnly()) {
+		return;
+	}
+	if (!state.current_table && state.current_log_table) {
+		state.current_log_table->ReplayExpire(context, entry.column, entry.cutoff);
+		return;
+	}
+	if (!state.current_table && state.table_storage) {
+		return;
+	}
+	throw DataCorruptionException("Corrupt WAL: expiry without a log table");
 }
 
 void WriteAheadLogDeserializer::ReplayCheckpoint() {
