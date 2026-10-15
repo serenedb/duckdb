@@ -82,7 +82,7 @@ public:
 	PresortedMerge(const PresortedMerge &) = delete;
 	PresortedMerge &operator=(const PresortedMerge &) = delete;
 
-	void Partition(idx_t max_partitions);
+	void Partition(idx_t max_partitions, bool keep_equal_keys = false);
 	idx_t PartitionCount() const;
 	idx_t PartitionBegin(idx_t partition, idx_t input) const;
 	unique_ptr<PresortedMergeState> BeginMerge(idx_t partition) const;
