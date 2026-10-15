@@ -237,14 +237,14 @@ struct WindowQuantileState {
 
 	template <typename RESULT_TYPE, bool DISCRETE>
 	RESULT_TYPE WindowScalar(CursorType &data, const SubFrames &frames, const idx_t n, Vector &result,
-	                         const QuantileValue &q) const {
+	                         const QuantileValue &q, const bool postgres) const {
 		D_ASSERT(n > 0);
 		if (qst) {
-			return qst->WindowScalar<INPUT_TYPE, RESULT_TYPE, DISCRETE>(data, frames, n, result, q);
+			return qst->WindowScalar<INPUT_TYPE, RESULT_TYPE, DISCRETE>(data, frames, n, result, q, postgres);
 		} else if (s) {
 			// Find the position(s) needed
 			try {
-				QuantileInterpolator<DISCRETE> interp(q, s->size(), false);
+				QuantileInterpolator<DISCRETE> interp(q, s->size(), false, postgres);
 				s->at(interp.FRN, interp.CRN - interp.FRN + 1, skips);
 				array<INPUT_TYPE, 2> dest;
 				dest[0] = skips[0].second;
@@ -280,8 +280,10 @@ struct WindowQuantileState {
 
 		for (const auto &q : bind_data.order) {
 			const auto &quantile = bind_data.quantiles[q];
-			rdata[lentry.offset + q] = WindowScalar<CHILD_TYPE, DISCRETE>(data, frames, n, result, quantile);
+			rdata[lentry.offset + q] =
+			    WindowScalar<CHILD_TYPE, DISCRETE>(data, frames, n, result, quantile, bind_data.postgres_interpolation);
 		}
+		bind_data.SetNullQuantiles(result, lentry.offset);
 	}
 };
 
@@ -367,7 +369,7 @@ inline Value QuantileParameterValue(const QuantileBindData &bind_data, const Log
 	vector<Value> quantiles;
 	for (auto &q : bind_data.quantiles) {
 		// the bind data holds the normalized (absolute) quantiles - restore the sign of descending quantiles
-		quantiles.push_back(bind_data.desc ? QuantileNeg(q.val) : q.val);
+		quantiles.push_back(bind_data.desc && !q.val.IsNull() ? QuantileNeg(q.val) : q.val);
 	}
 	if (param_type.id() != LogicalTypeId::LIST && param_type.id() != LogicalTypeId::ARRAY) {
 		D_ASSERT(quantiles.size() == 1);

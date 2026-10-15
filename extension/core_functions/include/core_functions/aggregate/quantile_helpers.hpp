@@ -16,7 +16,10 @@ namespace duckdb {
 
 //	Avoid using naked Values in inner loops...
 struct QuantileValue {
-	explicit QuantileValue(const Value &v) : val(v), dbl(v.GetValue<double>()) {
+	explicit QuantileValue(const Value &v) : val(v), dbl(v.IsNull() ? 0 : v.GetValue<double>()) {
+		if (v.IsNull()) {
+			return;
+		}
 		const auto &type = val.type();
 		switch (type.id()) {
 		case LogicalTypeId::DECIMAL: {
@@ -46,7 +49,7 @@ struct QuantileValue {
 struct QuantileBindData : public FunctionData {
 	QuantileBindData();
 	explicit QuantileBindData(const Value &quantile_p);
-	explicit QuantileBindData(const vector<Value> &quantiles_p);
+	QuantileBindData(const vector<Value> &quantiles_p, bool postgres_interpolation_p);
 	QuantileBindData(const QuantileBindData &other);
 
 	unique_ptr<FunctionData> Copy() const override;
@@ -57,9 +60,12 @@ struct QuantileBindData : public FunctionData {
 
 	static unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, BoundAggregateFunction &function);
 
+	void SetNullQuantiles(Vector &result, idx_t offset) const;
+
 	vector<QuantileValue> quantiles;
 	vector<idx_t> order;
 	bool desc;
+	bool postgres_interpolation = false;
 };
 
 } // namespace duckdb

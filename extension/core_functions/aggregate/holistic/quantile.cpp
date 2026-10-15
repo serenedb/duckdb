@@ -1,5 +1,6 @@
 #include "core_functions/aggregate/holistic_functions.hpp"
 #include "core_functions/aggregate/quantile_state.hpp"
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/enums/quantile_enum.hpp"
 #include "duckdb/common/operator/abs.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
@@ -13,6 +14,7 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/aggregate/list_aggregate.hpp"
 #include "duckdb/function/create_sort_key.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/planner/expression.hpp"
 
 #include <cmath>
@@ -78,12 +80,17 @@ QuantileBindData::QuantileBindData(const Value &quantile_p)
     : quantiles(1, QuantileValue(QuantileAbs(quantile_p))), order(1, 0), desc(QuantileDescending(quantile_p)) {
 }
 
-QuantileBindData::QuantileBindData(const vector<Value> &quantiles_p) {
+QuantileBindData::QuantileBindData(const vector<Value> &quantiles_p, bool postgres_interpolation_p)
+    : postgres_interpolation(postgres_interpolation_p) {
 	vector<Value> normalised;
 	size_t pos = 0;
 	size_t neg = 0;
 	for (idx_t i = 0; i < quantiles_p.size(); ++i) {
 		const auto &q = quantiles_p[i];
+		if (q.IsNull()) {
+			normalised.push_back(q);
+			continue;
+		}
 		pos += (q > 0);
 		neg += QuantileDescending(q);
 		normalised.push_back(QuantileAbs(q));
@@ -103,7 +110,7 @@ QuantileBindData::QuantileBindData(const vector<Value> &quantiles_p) {
 }
 
 QuantileBindData::QuantileBindData(const QuantileBindData &other)
-    : FunctionData(other), order(other.order), desc(other.desc) {
+    : FunctionData(other), order(other.order), desc(other.desc), postgres_interpolation(other.postgres_interpolation) {
 	for (const auto &q : other.quantiles) {
 		quantiles.emplace_back(q);
 	}
@@ -115,7 +122,16 @@ unique_ptr<FunctionData> QuantileBindData::Copy() const {
 
 bool QuantileBindData::Equals(const FunctionData &other_p) const {
 	auto &other = other_p.Cast<QuantileBindData>();
-	return desc == other.desc && quantiles == other.quantiles && order == other.order;
+	return desc == other.desc && quantiles == other.quantiles && order == other.order &&
+	       postgres_interpolation == other.postgres_interpolation;
+}
+
+void QuantileBindData::SetNullQuantiles(Vector &result, idx_t offset) const {
+	for (idx_t q = 0; q < quantiles.size(); ++q) {
+		if (quantiles[q].val.IsNull()) {
+			FlatVector::SetNull(result, offset + q, true);
+		}
+	}
 }
 
 void QuantileBindData::Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
@@ -128,6 +144,7 @@ void QuantileBindData::Serialize(Serializer &serializer, const optional_ptr<Func
 	serializer.WriteProperty(100, "quantiles", raw);
 	serializer.WriteProperty(101, "order", bind_data.order);
 	serializer.WriteProperty(102, "desc", bind_data.desc);
+	serializer.WritePropertyWithDefault<bool>(105, "postgres_interpolation", bind_data.postgres_interpolation, false);
 }
 
 unique_ptr<FunctionData> QuantileBindData::Deserialize(Deserializer &deserializer, BoundAggregateFunction &function) {
@@ -143,6 +160,8 @@ unique_ptr<FunctionData> QuantileBindData::Deserialize(Deserializer &deserialize
 	if (deserialization_type != QuantileSerializationType::NON_DECIMAL) {
 		deserializer.ReadDeletedProperty<LogicalType>(104, "logical_type");
 	}
+	deserializer.ReadPropertyWithExplicitDefault<bool>(105, "postgres_interpolation", result->postgres_interpolation,
+	                                                   false);
 
 	for (const auto &r : raw) {
 		result->quantiles.emplace_back(r);
@@ -178,7 +197,8 @@ struct QuantileScalarOperation : public QuantileOperation {
 		auto &bind_data = finalize_data.input.bind_data->Cast<QuantileBindData>();
 		D_ASSERT(bind_data.quantiles.size() == 1);
 		auto &flattened = FlattenedQuantileValues<typename STATE::InputType>::Flatten(finalize_data, state.linked_list);
-		QuantileInterpolator<DISCRETE> interp(bind_data.quantiles[0], state.linked_list.total_capacity, bind_data.desc);
+		QuantileInterpolator<DISCRETE> interp(bind_data.quantiles[0], state.linked_list.total_capacity, bind_data.desc,
+		                                      bind_data.postgres_interpolation);
 		target = interp.template Operation<typename STATE::InputType, T>(flattened.Data(), finalize_data.result);
 	}
 
@@ -210,8 +230,8 @@ struct QuantileScalarOperation : public QuantileOperation {
 					continue;
 				}
 
-				rdata[ridx] = gstate->GetWindowState().template WindowScalar<RESULT_TYPE, DISCRETE>(data, frames, n,
-				                                                                                    result, quantile);
+				rdata[ridx] = gstate->GetWindowState().template WindowScalar<RESULT_TYPE, DISCRETE>(
+				    data, frames, n, result, quantile, bind_data.postgres_interpolation);
 			}
 		} else {
 			auto &window_state = state.GetOrCreateWindowState();
@@ -228,8 +248,8 @@ struct QuantileScalarOperation : public QuantileOperation {
 				window_state.UpdateSkip(data, frames, included);
 
 				// Find the position(s) needed
-				rdata[ridx] =
-				    window_state.template WindowScalar<RESULT_TYPE, DISCRETE>(data, frames, n, result, quantile);
+				rdata[ridx] = window_state.template WindowScalar<RESULT_TYPE, DISCRETE>(
+				    data, frames, n, result, quantile, bind_data.postgres_interpolation);
 
 				//	Save the previous state for next time
 				window_state.prevs = frames;
@@ -266,7 +286,8 @@ struct QuantileScalarFallback : QuantileOperation {
 		auto &bind_data = finalize_data.input.bind_data->Cast<QuantileBindData>();
 		D_ASSERT(bind_data.quantiles.size() == 1);
 		auto &flattened = FlattenedQuantileValues<string_t>::Flatten(finalize_data, state.linked_list);
-		QuantileInterpolator<true> interp(bind_data.quantiles[0], state.linked_list.total_capacity, bind_data.desc);
+		QuantileInterpolator<true> interp(bind_data.quantiles[0], state.linked_list.total_capacity, bind_data.desc,
+		                                  bind_data.postgres_interpolation);
 		auto interpolation_result = interp.InterpolateInternal<string_t>(flattened.Data());
 		CreateSortKeyHelpers::DecodeSortKey(interpolation_result, finalize_data.result, finalize_data.result_idx,
 		                                    OrderModifiers(OrderType::ASCENDING, OrderByNullType::NULLS_LAST));
@@ -302,11 +323,13 @@ struct QuantileListOperation : QuantileOperation {
 		idx_t lower = 0;
 		for (const auto &q : bind_data.order) {
 			const auto &quantile = bind_data.quantiles[q];
-			QuantileInterpolator<DISCRETE> interp(quantile, state.linked_list.total_capacity, bind_data.desc);
+			QuantileInterpolator<DISCRETE> interp(quantile, state.linked_list.total_capacity, bind_data.desc,
+			                                      bind_data.postgres_interpolation);
 			interp.begin = lower;
 			rdata[ridx + q] = interp.template Operation<typename STATE::InputType, CHILD_TYPE>(v_t, result);
 			lower = interp.FRN;
 		}
+		bind_data.SetNullQuantiles(result, ridx);
 		entry.length = bind_data.quantiles.size();
 
 		ListVector::SetListSize(finalize_data.result, entry.offset + entry.length);
@@ -387,13 +410,15 @@ struct QuantileListFallback : QuantileOperation {
 		idx_t lower = 0;
 		for (const auto &q : bind_data.order) {
 			const auto &quantile = bind_data.quantiles[q];
-			QuantileInterpolator<true> interp(quantile, state.linked_list.total_capacity, bind_data.desc);
+			QuantileInterpolator<true> interp(quantile, state.linked_list.total_capacity, bind_data.desc,
+			                                  bind_data.postgres_interpolation);
 			interp.begin = lower;
 			auto interpolation_result = interp.InterpolateInternal<string_t>(flattened.Data());
 			CreateSortKeyHelpers::DecodeSortKey(interpolation_result, result, ridx + q,
 			                                    OrderModifiers(OrderType::ASCENDING, OrderByNullType::NULLS_LAST));
 			lower = interp.FRN;
 		}
+		bind_data.SetNullQuantiles(result, ridx);
 		entry.length = bind_data.quantiles.size();
 
 		ListVector::SetListSize(finalize_data.result, entry.offset + entry.length);
@@ -606,8 +631,11 @@ AggregateFunction GetContinuousQuantileList(const LogicalType &type) {
 //===--------------------------------------------------------------------===//
 // Quantile binding
 //===--------------------------------------------------------------------===//
-static Value CheckQuantile(const Value &quantile_val) {
+static Value CheckQuantile(const Value &quantile_val, bool postgres) {
 	if (quantile_val.IsNull()) {
+		if (postgres) {
+			return quantile_val;
+		}
 		throw BinderException("QUANTILE parameter cannot be NULL");
 	}
 	auto quantile = quantile_val.GetValue<double>();
@@ -623,30 +651,52 @@ static Value CheckQuantile(const Value &quantile_val) {
 
 //! Binds the quantile parameter into the bind data. It stays part of the expression tree, and the aggregate is
 //! handed it along with the input - the update callbacks only consume the leading input argument
+static bool PostgresQuantile(ClientContext &context) {
+	return Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
+	       SqlCompatibility::POSTGRES;
+}
+
 unique_ptr<FunctionData> BindQuantile(BindAggregateFunctionInput &input) {
 	auto &arguments = input.GetArguments();
 	if (arguments.size() < 2) {
 		throw BinderException("QUANTILE requires a range argument between [0, 1]");
 	}
-	auto quantile_val = input.GetNonNullConstant(1);
+	const auto postgres = PostgresQuantile(input.GetClientContext());
+	auto quantile_val = input.GetConstant(1, postgres);
+	if (quantile_val.IsNull()) {
+		arguments[0] = make_uniq<BoundConstantExpression>(Value(arguments[0]->GetReturnType()));
+		quantile_val = Value::DOUBLE(0);
+	}
 	vector<Value> quantiles;
 	switch (quantile_val.type().id()) {
 	case LogicalTypeId::LIST:
 		for (const auto &element_val : ListValue::GetChildren(quantile_val)) {
-			quantiles.push_back(CheckQuantile(element_val));
+			quantiles.push_back(CheckQuantile(element_val, postgres));
 		}
 		break;
 	case LogicalTypeId::ARRAY:
 		for (const auto &element_val : ArrayValue::GetChildren(quantile_val)) {
-			quantiles.push_back(CheckQuantile(element_val));
+			quantiles.push_back(CheckQuantile(element_val, postgres));
 		}
 		break;
 	default:
-		quantiles.push_back(CheckQuantile(quantile_val));
+		quantiles.push_back(CheckQuantile(quantile_val, postgres));
 		break;
 	}
 
-	return make_uniq<QuantileBindData>(quantiles);
+	return make_uniq<QuantileBindData>(quantiles, postgres);
+}
+
+static LogicalType BindContinuousQuantileInput(BindAggregateFunctionInput &input) {
+	auto &function = input.GetBoundFunction();
+	auto &arguments = input.GetArguments();
+	auto type = function.GetArguments()[0].id() == LogicalTypeId::DECIMAL ? arguments[0]->GetReturnType()
+	                                                                      : function.GetArguments()[0];
+	if ((type.id() == LogicalTypeId::DECIMAL || type.id() == LogicalTypeId::FLOAT) &&
+	    PostgresQuantile(input.GetClientContext())) {
+		return LogicalType::DOUBLE;
+	}
+	return type;
 }
 
 //===--------------------------------------------------------------------===//
@@ -800,12 +850,7 @@ struct ContinuousQuantileFunction {
 	}
 
 	static unique_ptr<FunctionData> Bind(BindAggregateFunctionInput &input) {
-		auto &function = input.GetBoundFunction();
-		auto &arguments = input.GetArguments();
-		auto impl =
-		    GetAggregate(function.GetArguments()[0].id() == LogicalTypeId::DECIMAL ? arguments[0]->GetReturnType()
-		                                                                           : function.GetArguments()[0]);
-		function.ReplaceImplementation(impl);
+		input.GetBoundFunction().ReplaceImplementation(GetAggregate(BindContinuousQuantileInput(input)));
 		return BindQuantile(input);
 	}
 };
@@ -834,12 +879,7 @@ struct ContinuousQuantileListFunction {
 	}
 
 	static unique_ptr<FunctionData> Bind(BindAggregateFunctionInput &input) {
-		auto &function = input.GetBoundFunction();
-		auto &arguments = input.GetArguments();
-		auto impl =
-		    GetAggregate(function.GetArguments()[0].id() == LogicalTypeId::DECIMAL ? arguments[0]->GetReturnType()
-		                                                                           : function.GetArguments()[0]);
-		function.ReplaceImplementation(impl);
+		input.GetBoundFunction().ReplaceImplementation(GetAggregate(BindContinuousQuantileInput(input)));
 		return BindQuantile(input);
 	}
 };
@@ -881,7 +921,7 @@ static vector<LogicalType> GetContinuousQuantileTypes() {
 	return {LogicalType::TINYINT,   LogicalType::SMALLINT, LogicalType::INTEGER,      LogicalType::BIGINT,
 	        LogicalType::HUGEINT,   LogicalType::FLOAT,    LogicalType::DOUBLE,       LogicalType::DATE,
 	        LogicalType::TIMESTAMP, LogicalType::TIME,     LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_TZ_NS,
-	        LogicalType::TIME_TZ};
+	        LogicalType::TIME_TZ,   LogicalType::INTERVAL};
 }
 
 AggregateFunctionSet QuantileContFun::GetFunctions() {

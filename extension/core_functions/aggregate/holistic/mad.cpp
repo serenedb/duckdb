@@ -150,7 +150,7 @@ struct MedianAbsoluteDeviationOperation : QuantileOperation {
 		D_ASSERT(bind_data.quantiles.size() == 1);
 		const auto &q = bind_data.quantiles[0];
 		auto &flattened = FlattenedQuantileValues<INPUT_TYPE>::Flatten(finalize_data, state.linked_list);
-		QuantileInterpolator<false> interp(q, state.linked_list.total_capacity, false);
+		QuantileInterpolator<false> interp(q, state.linked_list.total_capacity, false, false);
 		const auto med = interp.template Operation<INPUT_TYPE, MEDIAN_TYPE>(flattened.Data(), finalize_data.result);
 
 		MadAccessor<INPUT_TYPE, T, MEDIAN_TYPE> accessor(med);
@@ -195,13 +195,13 @@ struct MedianAbsoluteDeviationOperation : QuantileOperation {
 
 			if (gstate && gstate->HasTree()) {
 				med = gstate->GetWindowState().template WindowScalar<MEDIAN_TYPE, false>(data, frames, n, result,
-				                                                                         quantile);
+				                                                                         quantile, false);
 			} else {
 				window_state.UpdateSkip(data, frames, included);
-				med = window_state.template WindowScalar<MEDIAN_TYPE, false>(data, frames, n, result, quantile);
+				med = window_state.template WindowScalar<MEDIAN_TYPE, false>(data, frames, n, result, quantile, false);
 			}
 
-			QuantileInterpolator<false> interp(quantile, n, false);
+			QuantileInterpolator<false> interp(quantile, n, false, false);
 			MAD mad(med);
 
 			if (gstate && gstate->HasTree()) {
