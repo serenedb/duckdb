@@ -571,20 +571,20 @@ static bool IsUnrelatedNullableJoinSide(const LogicalOperator &op, idx_t child_i
 	return false;
 }
 
-static bool HasSelection(const LogicalOperator &op) {
+static bool NodeHasSelection(const LogicalOperator &op) {
 	switch (op.type) {
 	case LogicalOperatorType::LOGICAL_GET: {
 		auto &get = op.Cast<LogicalGet>();
 		for (const auto &entry : get.table_filters) {
 			auto &expr_filter =
-			    ExpressionFilter::GetExpressionFilter(entry.Filter(), "DelimJoinCTERewriter::HasSelection");
+			    ExpressionFilter::GetExpressionFilter(entry.Filter(), "DelimJoinCTERewriter::NodeHasSelection");
 			auto &expr = *expr_filter.expr;
 			if (expr.GetExpressionClass() != ExpressionClass::BOUND_OPERATOR ||
 			    expr.GetExpressionType() != ExpressionType::OPERATOR_IS_NOT_NULL) {
 				return true;
 			}
 		}
-		break;
+		return false;
 	}
 	case LogicalOperatorType::LOGICAL_FILTER: {
 		auto &filter = op.Cast<LogicalFilter>();
@@ -593,18 +593,11 @@ static bool HasSelection(const LogicalOperator &op) {
 				return true;
 			}
 		}
-		break;
+		return false;
 	}
 	default:
-		break;
+		return false;
 	}
-
-	for (auto &child : op.children) {
-		if (HasSelection(*child)) {
-			return true;
-		}
-	}
-	return false;
 }
 
 static bool HasDelimiterDomainSelection(const LogicalOperator &op, const set<TableIndex> &marker_indexes,
@@ -1848,7 +1841,7 @@ struct GeneratedDomainRef {
 
 class GeneratedDomainJoinEliminator {
 public:
-	GeneratedDomainJoinEliminator(unique_ptr<LogicalOperator> &rewrite_root,
+	GeneratedDomainJoinEliminator(ClientContext &context, unique_ptr<LogicalOperator> &rewrite_root,
 	                              const vector<TableIndex> &generated_dedup_cte_indexes,
 	                              const set<TableIndex> &preserve_marker_indexes);
 
@@ -1857,17 +1850,18 @@ public:
 private:
 	void CollectCTEs(LogicalOperator &op);
 	optional_ptr<LogicalCTE> FindCTE(TableIndex cte_index) const;
-	bool TryRewriteOnce(unique_ptr<LogicalOperator> &op, BindingReplacementGraph &replacements,
-	                    bool under_aggregate = false, bool under_evidence_side = false,
-	                    bool negated_marker_filter_above = false);
+	bool IsGeneratedDedupCTE(TableIndex cte_index) const;
+	bool TryRewrite(unique_ptr<LogicalOperator> &op, BindingReplacementGraph &replacements,
+	                bool under_aggregate = false, bool under_evidence_side = false,
+	                bool negated_marker_filter_above = false);
 
 	unique_ptr<GeneratedDedupRef> GetGeneratedDedupRef(LogicalOperator &op, bool collect_filters = false,
 	                                                   bool allow_projection = false) const;
 	unique_ptr<GeneratedDomainRef> GetGeneratedDomainDefinition(LogicalOperator &op) const;
 	unique_ptr<GeneratedDomainRef> GetGeneratedDomainRef(LogicalOperator &op, bool collect_filters = false,
 	                                                     bool allow_projection = false) const;
-	bool CTEHasSelection(TableIndex cte_index, vector<TableIndex> &seen_ctes) const;
-	bool OperatorHasSelection(LogicalOperator &op, vector<TableIndex> &seen_ctes) const;
+	bool CTEHasSelection(TableIndex cte_index, unordered_set<TableIndex> &seen_ctes) const;
+	bool OperatorHasSelection(LogicalOperator &op, unordered_set<TableIndex> &seen_ctes) const;
 	bool GeneratedDedupRefHasSelection(const GeneratedDedupRef &dedup_ref) const;
 
 	optional_idx FindOutputBinding(Expression &expr, const vector<ColumnBinding> &bindings) const;
@@ -1879,23 +1873,29 @@ private:
 	                               bool under_aggregate, bool under_evidence_side);
 
 private:
+	ClientContext &context;
 	unique_ptr<LogicalOperator> &rewrite_root;
-	const vector<TableIndex> &generated_dedup_cte_indexes;
+	unordered_set<TableIndex> generated_dedup_ctes;
 	const set<TableIndex> &preserve_marker_indexes;
-	vector<reference<LogicalCTE>> ctes;
+	unordered_map<TableIndex, reference<LogicalCTE>> ctes;
+	bool has_recursive_cte = false;
 };
 
-GeneratedDomainJoinEliminator::GeneratedDomainJoinEliminator(unique_ptr<LogicalOperator> &rewrite_root,
+GeneratedDomainJoinEliminator::GeneratedDomainJoinEliminator(ClientContext &context,
+                                                             unique_ptr<LogicalOperator> &rewrite_root,
                                                              const vector<TableIndex> &generated_dedup_cte_indexes,
                                                              const set<TableIndex> &preserve_marker_indexes)
-    : rewrite_root(rewrite_root), generated_dedup_cte_indexes(generated_dedup_cte_indexes),
+    : context(context), rewrite_root(rewrite_root),
+      generated_dedup_ctes(generated_dedup_cte_indexes.begin(), generated_dedup_cte_indexes.end()),
       preserve_marker_indexes(preserve_marker_indexes) {
 }
 
 void GeneratedDomainJoinEliminator::CollectCTEs(LogicalOperator &op) {
 	if (op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE ||
 	    op.type == LogicalOperatorType::LOGICAL_RECURSIVE_CTE) {
-		ctes.push_back(op.Cast<LogicalCTE>());
+		auto &cte = op.Cast<LogicalCTE>();
+		ctes.emplace(cte.table_index, cte);
+		has_recursive_cte = has_recursive_cte || op.type == LogicalOperatorType::LOGICAL_RECURSIVE_CTE;
 	}
 	for (auto &child : op.children) {
 		CollectCTEs(*child);
@@ -1903,19 +1903,21 @@ void GeneratedDomainJoinEliminator::CollectCTEs(LogicalOperator &op) {
 }
 
 optional_ptr<LogicalCTE> GeneratedDomainJoinEliminator::FindCTE(TableIndex cte_index) const {
-	for (auto &cte : ctes) {
-		if (cte.get().table_index == cte_index) {
-			return cte.get();
-		}
+	auto entry = ctes.find(cte_index);
+	if (entry == ctes.end()) {
+		return nullptr;
 	}
-	return nullptr;
+	return entry->second.get();
 }
 
-bool GeneratedDomainJoinEliminator::CTEHasSelection(TableIndex cte_index, vector<TableIndex> &seen_ctes) const {
-	if (std::find(seen_ctes.begin(), seen_ctes.end(), cte_index) != seen_ctes.end()) {
+bool GeneratedDomainJoinEliminator::IsGeneratedDedupCTE(TableIndex cte_index) const {
+	return generated_dedup_ctes.find(cte_index) != generated_dedup_ctes.end();
+}
+
+bool GeneratedDomainJoinEliminator::CTEHasSelection(TableIndex cte_index, unordered_set<TableIndex> &seen_ctes) const {
+	if (!seen_ctes.insert(cte_index).second) {
 		return false;
 	}
-	seen_ctes.push_back(cte_index);
 	auto cte = FindCTE(cte_index);
 	if (!cte || cte->children.empty()) {
 		return false;
@@ -1923,8 +1925,9 @@ bool GeneratedDomainJoinEliminator::CTEHasSelection(TableIndex cte_index, vector
 	return OperatorHasSelection(*cte->children[0], seen_ctes);
 }
 
-bool GeneratedDomainJoinEliminator::OperatorHasSelection(LogicalOperator &op, vector<TableIndex> &seen_ctes) const {
-	if (HasSelection(op)) {
+bool GeneratedDomainJoinEliminator::OperatorHasSelection(LogicalOperator &op,
+                                                         unordered_set<TableIndex> &seen_ctes) const {
+	if (NodeHasSelection(op)) {
 		return true;
 	}
 	if (op.type == LogicalOperatorType::LOGICAL_CTE_REF) {
@@ -1942,7 +1945,7 @@ bool GeneratedDomainJoinEliminator::GeneratedDedupRefHasSelection(const Generate
 	if (!dedup_ref.cte_ref) {
 		return false;
 	}
-	vector<TableIndex> seen_ctes;
+	unordered_set<TableIndex> seen_ctes;
 	return CTEHasSelection(dedup_ref.cte_ref->cte_index, seen_ctes);
 }
 
@@ -1951,8 +1954,7 @@ unique_ptr<GeneratedDedupRef> GeneratedDomainJoinEliminator::GetGeneratedDedupRe
                                                                                   bool allow_projection) const {
 	if (op.type == LogicalOperatorType::LOGICAL_CTE_REF) {
 		auto &cteref = op.Cast<LogicalCTERef>();
-		if (std::find(generated_dedup_cte_indexes.begin(), generated_dedup_cte_indexes.end(), cteref.cte_index) ==
-		    generated_dedup_cte_indexes.end()) {
+		if (!IsGeneratedDedupCTE(cteref.cte_index)) {
 			return nullptr;
 		}
 
@@ -2013,8 +2015,7 @@ unique_ptr<GeneratedDedupRef> GeneratedDomainJoinEliminator::GetGeneratedDedupRe
 unique_ptr<GeneratedDomainRef> GeneratedDomainJoinEliminator::GetGeneratedDomainDefinition(LogicalOperator &op) const {
 	if (op.type == LogicalOperatorType::LOGICAL_CTE_REF) {
 		auto &cteref = op.Cast<LogicalCTERef>();
-		if (std::find(generated_dedup_cte_indexes.begin(), generated_dedup_cte_indexes.end(), cteref.cte_index) ==
-		    generated_dedup_cte_indexes.end()) {
+		if (!IsGeneratedDedupCTE(cteref.cte_index)) {
 			return nullptr;
 		}
 
@@ -2074,8 +2075,7 @@ unique_ptr<GeneratedDomainRef> GeneratedDomainJoinEliminator::GetGeneratedDomain
                                                                                     bool allow_projection) const {
 	if (op.type == LogicalOperatorType::LOGICAL_CTE_REF) {
 		auto &cteref = op.Cast<LogicalCTERef>();
-		if (std::find(generated_dedup_cte_indexes.begin(), generated_dedup_cte_indexes.end(), cteref.cte_index) !=
-		    generated_dedup_cte_indexes.end()) {
+		if (IsGeneratedDedupCTE(cteref.cte_index)) {
 			return nullptr;
 		}
 
@@ -2093,7 +2093,7 @@ unique_ptr<GeneratedDomainRef> GeneratedDomainJoinEliminator::GetGeneratedDomain
 
 		result->cte_ref = cteref;
 		result->output_bindings = cteref.GetColumnBindings();
-		vector<TableIndex> seen_ctes;
+		unordered_set<TableIndex> seen_ctes;
 		result->has_selection = CTEHasSelection(cteref.cte_index, seen_ctes);
 		return result;
 	}
@@ -2150,12 +2150,13 @@ optional_idx GeneratedDomainJoinEliminator::FindOutputBinding(Expression &expr,
 }
 
 bool GeneratedDomainJoinEliminator::ContainsRecursiveCTERef(LogicalOperator &op) const {
+	if (!has_recursive_cte) {
+		return false;
+	}
 	if (op.type == LogicalOperatorType::LOGICAL_CTE_REF) {
-		auto &cteref = op.Cast<LogicalCTERef>();
-		for (auto &cte : ctes) {
-			if (cte.get().table_index == cteref.cte_index) {
-				return cte.get().type == LogicalOperatorType::LOGICAL_RECURSIVE_CTE;
-			}
+		auto cte = FindCTE(op.Cast<LogicalCTERef>().cte_index);
+		if (cte) {
+			return cte->type == LogicalOperatorType::LOGICAL_RECURSIVE_CTE;
 		}
 	}
 	for (auto &child : op.children) {
@@ -2416,9 +2417,10 @@ bool GeneratedDomainJoinEliminator::RemoveGeneratedDomainJoin(unique_ptr<Logical
 	return true;
 }
 
-bool GeneratedDomainJoinEliminator::TryRewriteOnce(unique_ptr<LogicalOperator> &op,
-                                                   BindingReplacementGraph &replacements, bool under_aggregate,
-                                                   bool under_evidence_side, bool negated_marker_filter_above) {
+bool GeneratedDomainJoinEliminator::TryRewrite(unique_ptr<LogicalOperator> &op, BindingReplacementGraph &replacements,
+                                               bool under_aggregate, bool under_evidence_side,
+                                               bool negated_marker_filter_above) {
+	bool changed = false;
 	auto child_under_aggregate = under_aggregate || op->type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY;
 	for (idx_t child_idx = 0; child_idx < op->children.size(); child_idx++) {
 		auto &child = op->children[child_idx];
@@ -2447,31 +2449,33 @@ bool GeneratedDomainJoinEliminator::TryRewriteOnce(unique_ptr<LogicalOperator> &
 		}
 
 		BindingReplacementGraph child_replacements;
-		if (TryRewriteOnce(child, child_replacements, child_under_aggregate, child_under_evidence_side,
-		                   child_negated_marker_filter_above)) {
+		if (TryRewrite(child, child_replacements, child_under_aggregate, child_under_evidence_side,
+		               child_negated_marker_filter_above)) {
 			ColumnBindingRewrite::ApplyToChild(op, child_idx, std::move(old_child_bindings), child_replacements);
 			replacements.Merge(child_replacements);
-			return true;
+			changed = true;
 		}
 	}
 	if (op->type != LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
-		return false;
+		return changed;
 	}
 	return RemoveGeneratedDomainJoin(op, replacements, under_aggregate, under_evidence_side) ||
-	       RemoveGeneratedDedupJoin(op, replacements, under_aggregate, under_evidence_side);
+	       RemoveGeneratedDedupJoin(op, replacements, under_aggregate, under_evidence_side) || changed;
 }
 
 bool GeneratedDomainJoinEliminator::Rewrite() {
-	if (generated_dedup_cte_indexes.empty()) {
+	if (generated_dedup_ctes.empty()) {
 		return false;
 	}
 
 	bool changed = false;
 	while (true) {
+		context.InterruptCheck();
 		ctes.clear();
+		has_recursive_cte = false;
 		CollectCTEs(*rewrite_root);
 		BindingReplacementGraph replacements;
-		if (!TryRewriteOnce(rewrite_root, replacements)) {
+		if (!TryRewrite(rewrite_root, replacements)) {
 			break;
 		}
 		changed = true;
@@ -2860,8 +2864,8 @@ void DelimJoinCTERewriter::Rewrite(unique_ptr<LogicalOperator> &plan) {
 	if (cte_deliminator_enabled) {
 		auto cte_deliminator_timer =
 		    QueryProfiler::Get(binder.context).StartTimerInternal(CTE_DELIMINATOR_PROFILER_KEY);
-		GeneratedDomainJoinEliminator generated_domain_join_eliminator(plan, generated_dedup_cte_indexes,
-		                                                               preserve_marker_indexes);
+		GeneratedDomainJoinEliminator generated_domain_join_eliminator(
+		    binder.context, plan, generated_dedup_cte_indexes, preserve_marker_indexes);
 		generated_domain_join_eliminator.Rewrite();
 	}
 	VerifyNoDelim(*plan);
