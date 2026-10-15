@@ -360,7 +360,7 @@ PresortedMerge::PresortedMerge(vector<shared_ptr<PresortedMergeInput>> inputs_p)
 PresortedMerge::~PresortedMerge() {
 }
 
-void PresortedMerge::Partition(idx_t max_partitions) {
+void PresortedMerge::Partition(idx_t max_partitions, bool keep_equal_keys) {
 	bounds.clear();
 	bounds.emplace_back(inputs.size(), 0);
 	idx_t total = 0;
@@ -402,7 +402,10 @@ void PresortedMerge::Partition(idx_t max_partitions) {
 				auto hi = inputs[i]->Count();
 				while (lo < hi) {
 					const auto mid = lo + (hi - lo) / 2;
-					if (Before({encoder.Encode(*readers[i], mid), i, mid}, sample)) {
+					KeyRow row {encoder.Encode(*readers[i], mid), i, mid};
+					const bool before =
+					    keep_equal_keys ? CompareKeys(View(row.key), View(sample.key)) < 0 : Before(row, sample);
+					if (before) {
 						lo = mid + 1;
 					} else {
 						hi = mid;
