@@ -30,6 +30,13 @@ typedef unique_ptr<Catalog> (*attach_function_t)(optional_ptr<StorageExtensionIn
 typedef unique_ptr<TransactionManager> (*create_transaction_manager_t)(optional_ptr<StorageExtensionInfo> storage_info,
                                                                        AttachedDatabase &db, Catalog &catalog);
 
+//! Held by a CHECKPOINT statement until its checkpoint ends
+class CheckpointRequest {
+public:
+	virtual ~CheckpointRequest() {
+	}
+};
+
 class StorageExtension {
 public:
 	attach_function_t attach;
@@ -39,6 +46,11 @@ public:
 	shared_ptr<StorageExtensionInfo> storage_info;
 
 	virtual ~StorageExtension() {
+	}
+
+	//! Called by a CHECKPOINT statement before it takes any lock; throws to refuse the checkpoint
+	virtual unique_ptr<CheckpointRequest> OnCheckpointRequest(AttachedDatabase &db) {
+		return nullptr;
 	}
 
 	virtual void OnCheckpointStart(AttachedDatabase &db, CheckpointOptions checkpoint_options) {

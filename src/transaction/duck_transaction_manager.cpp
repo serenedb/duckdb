@@ -12,6 +12,7 @@
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/storage/block_manager.hpp"
 #include "duckdb/storage/data_table.hpp"
+#include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/local_storage.hpp"
@@ -255,6 +256,10 @@ DuckTransactionManager::GetCheckpointType(DuckTransaction &transaction, const Un
 void DuckTransactionManager::Checkpoint(ClientContext &context, bool force) {
 	if (ValidChecker::IsInvalidated(db)) {
 		throw IOException("%s", ValidChecker::InvalidatedMessage(db));
+	}
+	unique_ptr<CheckpointRequest> request;
+	if (db.GetStorageExtension()) {
+		request = db.GetStorageExtension()->OnCheckpointRequest(db);
 	}
 	auto &storage_manager = db.GetStorageManager();
 	auto current = Transaction::TryGet(context, db);
