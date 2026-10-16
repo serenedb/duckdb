@@ -1744,63 +1744,23 @@ Value ThreadsSetting::GetSetting(const ClientContext &context) {
 	return Value::BIGINT(NumericCast<int64_t>(config.options.maximum_threads));
 }
 
-static void ResizeAutomaticHTTPClientPool(optional_ptr<DatabaseInstance> db, DBConfig &config) {
-	if (!db || config.options.http_client_pool_capacity != DConstants::INVALID_INDEX) {
-		return;
-	}
-	config.GetHTTPTransportManager().SetCapacity(HTTPTransportManager::AutomaticCapacity(config));
-}
-
 //===----------------------------------------------------------------------===//
 // Async Threads
 //===----------------------------------------------------------------------===//
-void AsyncThreadsSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+void AsyncThreadsSetting::OnSet(SettingCallbackInfo &info, Value &input) {
 	if (input.IsNull()) {
-		throw InvalidInputException("async_threads must be a positive integer");
+		throw InvalidInputException("async_threads setting cannot be NULL");
 	}
-	auto new_val = input.GetValue<int64_t>();
-	if (new_val < 0) {
-		throw SyntaxException("Cannot have negative async_threads!");
+	const auto async_threads = BigIntValue::Get(input);
+	if (async_threads < -1) {
+		throw InvalidInputException("async_threads must be -1 (automatic), 0 or a positive number");
 	}
-	auto new_async_threads = NumericCast<idx_t>(new_val);
-	if (db) {
-		TaskScheduler::GetScheduler(*db).SetAsyncThreads(new_async_threads);
+	auto &config = info.config;
+	if (info.scope != SetScope::GLOBAL || !info.db ||
+	    config.options.http_client_pool_capacity != DConstants::INVALID_INDEX) {
+		return;
 	}
-	config.options.async_threads = new_async_threads;
-	ResizeAutomaticHTTPClientPool(db, config);
-}
-
-void AsyncThreadsSetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
-	idx_t new_async_threads = config.GetSystemMaxAsyncThreads(*config.file_system);
-	if (db) {
-		TaskScheduler::GetScheduler(*db).SetAsyncThreads(new_async_threads);
-	}
-	config.options.async_threads = new_async_threads;
-	ResizeAutomaticHTTPClientPool(db, config);
-}
-
-void AsyncThreadsSetting::SetLocal(ClientContext &context, const Value &input) {
-	if (input.IsNull()) {
-		throw InvalidInputException("async_threads must be a positive integer");
-	}
-	auto new_val = input.GetValue<int64_t>();
-	if (new_val < 0) {
-		throw SyntaxException("Cannot have negative async_threads!");
-	}
-	ClientConfig::GetConfig(context).async_threads = NumericCast<idx_t>(new_val);
-}
-
-void AsyncThreadsSetting::ResetLocal(ClientContext &context) {
-	ClientConfig::GetConfig(context).async_threads = optional_idx();
-}
-
-Value AsyncThreadsSetting::GetSetting(const ClientContext &context) {
-	auto &async_threads = ClientConfig::GetConfig(context).async_threads;
-	if (async_threads.IsValid()) {
-		return Value::BIGINT(NumericCast<int64_t>(async_threads.GetIndex()));
-	}
-	auto &config = DBConfig::GetConfig(context);
-	return Value::BIGINT(NumericCast<int64_t>(config.options.async_threads));
+	config.GetHTTPTransportManager().SetCapacity(HTTPTransportManager::AutomaticCapacity(config, async_threads));
 }
 
 void HTTPClientPoolCapacitySetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {

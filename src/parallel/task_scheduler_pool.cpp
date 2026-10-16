@@ -1,6 +1,7 @@
 #include "duckdb/parallel/task_scheduler_pool.hpp"
 
 #include "duckdb/parallel/task_scheduler.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/common/numeric_utils.hpp"
@@ -8,8 +9,6 @@
 #include "duckdb/storage/block_allocator.hpp"
 
 #ifndef DUCKDB_NO_THREADS
-#include "lightweightsemaphore.h"
-
 #include <functional>
 #include <stdexcept>
 #include <type_traits>
@@ -28,13 +27,8 @@
 namespace duckdb {
 
 #ifndef DUCKDB_NO_THREADS
-typedef duckdb_moodycamel::LightweightSemaphore lightweight_semaphore_t;
 // Threshold for AUTO thread pinning.
 static constexpr idx_t THREAD_PIN_THRESHOLD = 64;
-
-struct LightWeightSemaphoreWrapper {
-	lightweight_semaphore_t s;
-};
 #endif
 
 #ifdef DUCKDB_NO_THREADS
@@ -122,12 +116,14 @@ struct TaskSchedulerThread {
 
 #endif
 
-TaskSchedulerPool::TaskSchedulerPool(DatabaseInstance &db_p, TaskSchedulerType pool_type_p)
-    : db(db_p), pool_type(pool_type_p), requested_thread_count(0),
-      current_thread_count(pool_type == TaskSchedulerType::REGULAR ? 1 : 0) {
-#ifndef DUCKDB_NO_THREADS
-	semaphore = make_uniq<LightWeightSemaphoreWrapper>();
-#endif
+struct TaskSchedulerSpare {
+	unique_ptr<TaskSchedulerThread> thread;
+	atomic<bool> marker {true};
+	atomic<bool> done {false};
+};
+
+TaskSchedulerPool::TaskSchedulerPool(DatabaseInstance &db_p)
+    : db(db_p), requested_thread_count(0), current_thread_count(1) {
 }
 
 TaskSchedulerPool::~TaskSchedulerPool() {
@@ -140,26 +136,6 @@ void TaskSchedulerPool::SetThreads(idx_t n) {
 idx_t TaskSchedulerPool::NumberOfThreads() {
 	return current_thread_count.load();
 }
-
-void TaskSchedulerPool::Signal(idx_t n) {
-#ifndef DUCKDB_NO_THREADS
-	if (n == 0) {
-		return;
-	}
-	typedef std::make_signed<std::size_t>::type ssize_t;
-	semaphore->s.signal(NumericCast<ssize_t>(n));
-#endif
-}
-
-#ifndef DUCKDB_NO_THREADS
-void TaskSchedulerPool::Wait() {
-	semaphore->s.wait();
-}
-
-bool TaskSchedulerPool::Wait(int64_t timeout_usecs) {
-	return semaphore->s.wait(timeout_usecs);
-}
-#endif
 
 #ifndef DUCKDB_NO_THREADS
 static vector<int> GetProcessCPUMask() {
@@ -183,13 +159,8 @@ static vector<int> GetProcessCPUMask() {
 
 // Returns the available CPU ids when the pool should pin its threads, or an empty vector to skip pinning.
 // Thread count means the number of threads that the pool should contain.
-static vector<int> GetAvailableCPUsForPinning(TaskSchedulerType pool_type, ThreadPinMode pin_thread_mode,
-                                              idx_t thread_count) {
+static vector<int> GetAvailableCPUsForPinning(ThreadPinMode pin_thread_mode, idx_t thread_count) {
 	if (pin_thread_mode == ThreadPinMode::OFF) {
-		return {};
-	}
-	// Only pin regular threads.
-	if (pool_type != TaskSchedulerType::REGULAR) {
 		return {};
 	}
 
@@ -214,10 +185,66 @@ static vector<int> GetAvailableCPUsForPinning(TaskSchedulerType pool_type, Threa
 #endif
 
 #ifndef DUCKDB_NO_THREADS
-static void ThreadExecuteTasks(TaskScheduler *scheduler, atomic<bool> *marker, const TaskSchedulerType pool_type) {
-	scheduler->ExecuteForever(marker, pool_type);
+static void ThreadExecuteTasks(TaskScheduler *scheduler, atomic<bool> *marker) {
+	scheduler->ExecuteForever(marker);
 }
 #endif
+
+void TaskSchedulerPool::ReapSpares() {
+#ifndef DUCKDB_NO_THREADS
+	auto reaped = std::remove_if(spares.begin(), spares.end(), [](const unique_ptr<TaskSchedulerSpare> &spare) {
+		if (!spare->done.load()) {
+			return false;
+		}
+		spare->thread->Join();
+		return true;
+	});
+	spares.erase(reaped, spares.end());
+#endif
+}
+
+void TaskSchedulerPool::StopSpares(TaskScheduler &scheduler) {
+#ifndef DUCKDB_NO_THREADS
+	vector<unique_ptr<TaskSchedulerSpare>> stopped;
+	{
+		lock_guard<mutex> guard(spare_lock);
+		spares_stopped = true;
+		for (auto &spare : spares) {
+			spare->marker = false;
+		}
+		stopped = std::move(spares);
+		spares.clear();
+	}
+	scheduler.WakeAll();
+	for (auto &spare : stopped) {
+		spare->thread->Join();
+	}
+#endif
+}
+
+bool TaskSchedulerPool::SpawnSpare(TaskScheduler &scheduler) {
+#ifndef DUCKDB_NO_THREADS
+	lock_guard<mutex> guard(spare_lock);
+	if (spares_stopped) {
+		return false;
+	}
+	ReapSpares();
+	auto spare = make_uniq<TaskSchedulerSpare>();
+	try {
+		spare->thread = make_uniq<TaskSchedulerThread>([&scheduler, spare_ptr = spare.get()] {
+			scheduler.ExecuteSpare(&spare_ptr->marker);
+			spare_ptr->done = true;
+		});
+	} catch (std::exception &ex) {
+		return false;
+	}
+	spare->thread->SetAffinityAll(GetProcessCPUMask());
+	spares.push_back(std::move(spare));
+	return true;
+#else
+	return false;
+#endif
+}
 
 void TaskSchedulerPool::RelaunchThreads(TaskScheduler &scheduler, bool destroy) {
 #ifndef DUCKDB_NO_THREADS
@@ -232,14 +259,22 @@ void TaskSchedulerPool::RelaunchThreads(TaskScheduler &scheduler, bool destroy) 
 		pin_thread_mode = Settings::Get<PinThreadsSetting>(db);
 	}
 
+	if (destroy) {
+		StopSpares(scheduler);
+	} else if (spares_stopped.load(std::memory_order_relaxed)) {
+		lock_guard<mutex> guard(spare_lock);
+		spares_stopped = false;
+	}
+
 	if (threads.size() == new_thread_count) {
-		current_thread_count = threads.size() + (pool_type == TaskSchedulerType::REGULAR ? external_threads : 0);
+		current_thread_count = threads.size() + external_threads;
+		scheduler.SetTargetThreads(threads.size());
 		return;
 	}
 
 	// Resolve thread pinning once: it applies both to the kept caller (re-pinned to its new index below) and to the
 	// threads spawned afterwards.
-	const auto available_cpus = GetAvailableCPUsForPinning(pool_type, pin_thread_mode, new_thread_count);
+	const auto available_cpus = GetAvailableCPUsForPinning(pin_thread_mode, new_thread_count);
 	const auto process_cpus = available_cpus.empty() ? GetProcessCPUMask() : vector<int>();
 
 	// Stop every worker except the calling thread, detecting it in the same pass. A SET threads runs on the session's
@@ -255,7 +290,10 @@ void TaskSchedulerPool::RelaunchThreads(TaskScheduler &scheduler, bool destroy) 
 		*markers[i] = false;
 		stopped++;
 	}
-	Signal(stopped);
+	scheduler.SetTargetThreads(self < threads.size() ? 1 : 0);
+	if (stopped > 0) {
+		scheduler.WakeAll();
+	}
 	// now join the stopped threads to ensure they are fully stopped before erasing them
 	for (idx_t i = 0; i < threads.size(); i++) {
 		if (i != self) {
@@ -291,10 +329,8 @@ void TaskSchedulerPool::RelaunchThreads(TaskScheduler &scheduler, bool destroy) 
 			auto marker = unique_ptr<atomic<bool>>(new atomic<bool>(true));
 			unique_ptr<TaskSchedulerThread> thread_wrapper;
 			try {
-				thread_wrapper =
-				    make_uniq<TaskSchedulerThread>([&scheduler, marker_ptr = marker.get(), pool_type = pool_type] {
-					    ThreadExecuteTasks(&scheduler, marker_ptr, pool_type);
-				    });
+				thread_wrapper = make_uniq<TaskSchedulerThread>(
+				    [&scheduler, marker_ptr = marker.get()] { ThreadExecuteTasks(&scheduler, marker_ptr); });
 				if (!available_cpus.empty()) {
 					thread_wrapper->SetAffinity(available_cpus, threads.size());
 				} else {
@@ -309,7 +345,8 @@ void TaskSchedulerPool::RelaunchThreads(TaskScheduler &scheduler, bool destroy) 
 			markers.push_back(std::move(marker));
 		}
 	}
-	current_thread_count = threads.size() + (pool_type == TaskSchedulerType::REGULAR ? external_threads : 0);
+	current_thread_count = threads.size() + external_threads;
+	scheduler.SetTargetThreads(threads.size());
 	// on destroy the scheduler flushes once after every pool is joined
 	if (!destroy) {
 		BlockAllocator::Get(db).FlushAll();

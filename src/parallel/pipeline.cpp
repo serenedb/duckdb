@@ -45,7 +45,7 @@ TaskExecutionResult PipelineTask::ExecuteTask(TaskExecutionMode mode) {
 	pipeline_executor->SetTaskForInterrupts(shared_from_this());
 
 	if (mode == TaskExecutionMode::PROCESS_PARTIAL) {
-		auto res = pipeline_executor->Execute(PARTIAL_CHUNK_COUNT);
+		auto res = pipeline_executor->Execute(TaskExecutionMode::PROCESS_PARTIAL);
 
 		switch (res) {
 		case PipelineExecuteResult::NOT_FINISHED:
@@ -56,7 +56,7 @@ TaskExecutionResult PipelineTask::ExecuteTask(TaskExecutionMode mode) {
 			break;
 		}
 	} else {
-		auto res = pipeline_executor->Execute();
+		auto res = pipeline_executor->Execute(TaskExecutionMode::PROCESS_ALL);
 		switch (res) {
 		case PipelineExecuteResult::NOT_FINISHED:
 			throw InternalException("Execute without limit should not return NOT_FINISHED");

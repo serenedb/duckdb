@@ -750,8 +750,8 @@ private:
 
 class AsyncThreadBlocker {
 public:
-	AsyncThreadBlocker(ClientContext &context, idx_t task_count_p)
-	    : task_count(task_count_p), executor(context, TaskSchedulerType::ASYNC) {
+	AsyncThreadBlocker(ClientContext &context, idx_t task_count_p, TaskSchedulerType type = TaskSchedulerType::ASYNC)
+	    : task_count(task_count_p), executor(context, type) {
 		for (idx_t task_idx = 0; task_idx < task_count; task_idx++) {
 			executor.ScheduleTask(make_uniq<BlockingAsyncTask>(executor, state));
 		}
@@ -975,10 +975,11 @@ TEST_CASE("ManagedAsyncWriteQueue reports accounted request adoption ownership",
 }
 
 static void TestQueuedDrainTaskCoversNewTinyTail(bool local_file, const string &path_name) {
-	DuckDB db(nullptr);
+	DBConfig config;
+	config.options.maximum_threads = 2;
+	DuckDB db(nullptr, &config);
 	auto con = CreateConnectionWithAsyncThreads(db, 2);
-	auto &scheduler = TaskScheduler::GetScheduler(*con->context);
-	AsyncThreadBlocker async_thread_blocker(*con->context, NumericCast<idx_t>(scheduler.NumberOfAsyncThreads()));
+	AsyncThreadBlocker async_thread_blocker(*con->context, 1, TaskSchedulerType::REGULAR);
 	REQUIRE(async_thread_blocker.WaitForStarted());
 
 	BlockingWriteFileSystem fs(FileWriteMode::POSITIONAL, local_file);

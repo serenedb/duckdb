@@ -269,7 +269,7 @@ void AsyncTaskQueue::WorkOnPendingTask() {
 	}
 	shared_ptr<Task> task;
 	if (!executor->GetTask(task)) {
-		TaskScheduler::YieldThread();
+		executor->WaitForProgress();
 		return;
 	}
 #ifdef D_ASSERT_IS_ENABLED

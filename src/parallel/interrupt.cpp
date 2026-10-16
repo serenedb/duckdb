@@ -3,6 +3,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 
 namespace duckdb {
 
@@ -44,6 +45,7 @@ void InterruptDoneSignalState::Signal() {
 }
 
 void InterruptDoneSignalState::Await() {
+	TaskScheduler::BlockingScope blocking;
 	lock.LockWhen(absl::Condition(&done));
 	done = false;
 	lock.Unlock();

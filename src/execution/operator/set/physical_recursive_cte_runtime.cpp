@@ -20,6 +20,7 @@
 #include "duckdb/parallel/task_scheduler.hpp"
 
 #include "duckdb/common/atomic.hpp"
+#include "duckdb/common/time_point.hpp"
 
 namespace duckdb {
 
@@ -166,7 +167,7 @@ static void ExecuteRecursivePipelineInline(PipelineExecutor &pipeline_executor) 
 	auto signal_state = make_shared_ptr<InterruptDoneSignalState>();
 	pipeline_executor.SetInterruptState(InterruptState(weak_ptr<InterruptDoneSignalState>(signal_state)));
 	while (true) {
-		auto result = pipeline_executor.Execute();
+		auto result = pipeline_executor.Execute(TaskExecutionMode::PROCESS_ALL);
 		switch (result) {
 		case PipelineExecuteResult::FINISHED:
 			return;
@@ -211,16 +212,11 @@ public:
 
 	TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override {
 		pipeline_executor.SetTaskForInterrupts(shared_from_this());
-		const auto execute_start =
-		    COLLECT_METRICS ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
-		const auto result = mode == TaskExecutionMode::PROCESS_PARTIAL ? pipeline_executor.Execute(PARTIAL_CHUNK_COUNT)
-		                                                               : pipeline_executor.Execute();
+		const auto execute_start = COLLECT_METRICS ? TimePoint::Tick() : TimePoint();
+		const auto result = pipeline_executor.Execute(mode);
 		if constexpr (COLLECT_METRICS) {
-			const auto execute_end = std::chrono::steady_clock::now();
-			this->state.GetEpochMetrics().RecordPipelineExecution(
-			    this->metric_type,
-			    NumericCast<idx_t>(
-			        std::chrono::duration_cast<std::chrono::nanoseconds>(execute_end - execute_start).count()));
+			this->state.GetEpochMetrics().RecordPipelineExecution(this->metric_type,
+			                                                      NumericCast<idx_t>(execute_start.ElapsedNanos()));
 		}
 		switch (result) {
 		case PipelineExecuteResult::NOT_FINISHED:
@@ -237,10 +233,6 @@ public:
 		event->FinishTask();
 		return TaskExecutionResult::TASK_FINISHED;
 	}
-
-private:
-	// Keep partial execution reasonably coarse so blocked pipelines make progress without creating tiny tasks.
-	static constexpr const idx_t PARTIAL_CHUNK_COUNT = 50;
 };
 
 //! Recursive execute event.
@@ -869,15 +861,11 @@ static void ExecuteRecursiveInlinePlan(RecursiveCTEState &state, Executor &execu
 			if constexpr (COLLECT_METRICS) {
 				state.GetMetrics().RecordTasks(1);
 			}
-			const auto execute_start =
-			    COLLECT_METRICS ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+			const auto execute_start = COLLECT_METRICS ? TimePoint::Tick() : TimePoint();
 			ExecuteRecursivePipelineInline(*executors[0]);
 			if constexpr (COLLECT_METRICS) {
-				const auto execute_end = std::chrono::steady_clock::now();
-				state.GetEpochMetrics().RecordPipelineExecution(
-				    stage.metric_type,
-				    NumericCast<idx_t>(
-				        std::chrono::duration_cast<std::chrono::nanoseconds>(execute_end - execute_start).count()));
+				state.GetEpochMetrics().RecordPipelineExecution(stage.metric_type,
+				                                                NumericCast<idx_t>(execute_start.ElapsedNanos()));
 			}
 			break;
 		}
@@ -1004,8 +992,7 @@ void PhysicalRecursiveCTE::ExecuteRecursivePipelines(ExecutionContext &context) 
 		const auto partition_count = MinValue<idx_t>(NextPowerOfTwo(max_worker_count), 4);
 		gstate.PromoteDistinctState(context.client, partition_count);
 	}
-	const auto epoch_start =
-	    collect_metrics ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+	const auto epoch_start = collect_metrics ? TimePoint::Tick() : TimePoint();
 	auto inline_execution = allow_reuse && parallelism.IsInline();
 
 	if (inline_execution) {
@@ -1021,9 +1008,7 @@ void PhysicalRecursiveCTE::ExecuteRecursivePipelines(ExecutionContext &context) 
 	}
 
 	if (collect_metrics) {
-		const auto epoch_end = std::chrono::steady_clock::now();
-		const auto elapsed_us =
-		    NumericCast<idx_t>(std::chrono::duration_cast<std::chrono::microseconds>(epoch_end - epoch_start).count());
+		const auto elapsed_us = NumericCast<idx_t>(epoch_start.ElapsedMicros());
 		gstate.GetMetrics().RecordEpoch(max_worker_count, elapsed_us, frontier_rows, frontier_chunks,
 		                                scheduler_input_rows);
 		const auto epoch_tasks = gstate.GetMetrics().TaskCount() - epoch_task_start;

@@ -11,6 +11,7 @@
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/parallel/interrupt.hpp"
 #include "duckdb/parallel/pipeline.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/parallel/thread_context.hpp"
 #include "duckdb/execution/execution_context.hpp"
@@ -34,12 +35,17 @@ enum class PipelineExecuteResult {
 
 class ExecutionBudget {
 public:
-	explicit ExecutionBudget(idx_t maximum) : processed(0), maximum_to_process(maximum) {
+	explicit ExecutionBudget(idx_t maximum, TaskExecutionMode mode_p = TaskExecutionMode::PROCESS_ALL)
+	    : processed(0), maximum_to_process(maximum), mode(mode_p) {
 	}
 
 public:
 	bool Next() {
 		if (IsDepleted()) {
+			return false;
+		}
+		if (TaskScheduler::ShouldYield(mode)) {
+			maximum_to_process = processed;
 			return false;
 		}
 		processed++;
@@ -52,6 +58,7 @@ public:
 private:
 	idx_t processed;
 	idx_t maximum_to_process;
+	TaskExecutionMode mode;
 };
 
 //! The Pipeline class represents an execution pipeline
@@ -59,11 +66,9 @@ class PipelineExecutor {
 public:
 	PipelineExecutor(ClientContext &context, Pipeline &pipeline, optional_idx reserved_batch_index = optional_idx());
 
-	//! Fully execute a pipeline with a source and a sink until the source is completely exhausted
-	PipelineExecuteResult Execute();
-	//! Execute a pipeline with a source and a sink until finished, or until max_chunks were processed from the source
+	//! Execute a pipeline with a source and a sink until finished, or in PROCESS_PARTIAL mode until it should yield
 	//! Returns true if execution is finished, false if Execute should be called again
-	PipelineExecuteResult Execute(idx_t max_chunks);
+	PipelineExecuteResult Execute(TaskExecutionMode mode);
 	//! Pushes a chunk from an external producer through this pipeline into the sink
 	PipelineExecuteResult PushExternal(DataChunk &input, const OperatorPartitionData &partition_data,
 	                                   optional_idx source_min_batch_index);

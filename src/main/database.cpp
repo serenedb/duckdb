@@ -323,7 +323,7 @@ void DatabaseInstance::InitializeEmpty(DBConfig *user_config) {
 
 void DatabaseInstance::StartScheduler() {
 	scheduler->SetThreads(config.options.maximum_threads, Settings::Get<ExternalThreadsSetting>(config));
-	scheduler->SetAsyncThreads(config.options.async_threads);
+	scheduler->SetAsyncThreads(DBConfig::GetSystemMaxAsyncThreads(*config.file_system));
 	scheduler->RelaunchThreads();
 }
 
@@ -569,9 +569,6 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 	}
 	if (new_config.options.maximum_threads == DConstants::INVALID_INDEX) {
 		config.options.maximum_threads = config.GetSystemMaxThreads(*config.file_system);
-	}
-	if (new_config.options.async_threads == DConstants::INVALID_INDEX) {
-		config.options.async_threads = config.GetSystemMaxAsyncThreads(*config.file_system);
 	}
 	config.allocator = std::move(new_config.allocator);
 	if (!config.allocator) {

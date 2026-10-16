@@ -211,7 +211,6 @@ bool OptionIsExcludedFromTest(const string &name) {
 	    "profiling_output", // just an alias
 	    "profiling_renderer_settings",
 	    "progress_bar_time",
-	    "scheduler_process_partial",
 	    "schema",
 	    "search_path",
 	    "standard_vector_size",

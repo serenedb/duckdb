@@ -23,10 +23,9 @@ public:
 		TaskExecutionResult result;
 		try {
 			TaskNotifier task_notifier {executor.context};
-			// PROCESS_ALL must run to completion, so loop the steps; PROCESS_PARTIAL does one and yields
 			do {
 				result = task->ExecuteTaskStep();
-			} while (result == TaskExecutionResult::TASK_NOT_FINISHED && mode == TaskExecutionMode::PROCESS_ALL);
+			} while (result == TaskExecutionResult::TASK_NOT_FINISHED && !TaskScheduler::ShouldYield(mode));
 		} catch (std::exception &ex) {
 			executor.PushError(ErrorData(ex));
 			return TaskExecutionResult::TASK_ERROR;
@@ -104,9 +103,14 @@ TaskExecutor::TaskExecutor(TaskScheduler &scheduler, TaskSchedulerType type_p)
     : scheduler(scheduler), type(type_p), token(scheduler.CreateProducer()) {
 }
 
+TaskExecutor::TaskExecutor(TaskScheduler &scheduler, shared_ptr<SchedulerAccount> account, TaskSchedulerType type_p)
+    : scheduler(scheduler), type(type_p), token(scheduler.CreateProducer(std::move(account))) {
+}
+
 TaskExecutor::TaskExecutor(ClientContext &context_p, TaskSchedulerType type_p)
-    : TaskExecutor(TaskScheduler::GetScheduler(context_p),
-                   type_p == TaskSchedulerType::ASYNC ? TaskScheduler::QueryAsyncPool(context_p) : type_p) {
+    : scheduler(TaskScheduler::GetScheduler(context_p)),
+      type(type_p == TaskSchedulerType::ASYNC ? TaskScheduler::QueryAsyncPool(context_p) : type_p),
+      token(scheduler.CreateProducer(context_p.GetSchedulerAccount())) {
 	context = context_p;
 }
 
@@ -164,7 +168,14 @@ void TaskExecutor::ScheduleTask(unique_ptr<BaseExecutorTask> task) {
 void TaskExecutor::FinishTask() {
 	const annotated_lock_guard<annotated_mutex> lk(token->producer_lock);
 	++completed_tasks;
-	token->producer_cv.Signal();
+	token->producer_cv.SignalAll();
+}
+
+void TaskExecutor::WaitForProgress() {
+	static constexpr auto WAIT = absl::Milliseconds(1);
+	TaskScheduler::BlockingScope blocking;
+	annotated_unique_lock<annotated_mutex> lk(token->producer_lock);
+	token->producer_cv.WaitWithTimeout(lk.mutex(), WAIT);
 }
 
 void TaskExecutor::DrainTasks() {
@@ -177,6 +188,7 @@ void TaskExecutor::DrainTasks() {
 				break;
 			}
 			if (!scheduler.GetTaskFromProducerLocked(*token, task_from_producer)) {
+				TaskScheduler::BlockingScope blocking;
 				token->producer_cv.Wait(lk.mutex());
 				continue;
 			}

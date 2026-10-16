@@ -48,6 +48,7 @@ class Relation;
 class BufferedFileWriter;
 class QueryProfiler;
 class ClientContextLock;
+class SchedulerAccount;
 struct CreateScalarFunctionInfo;
 class ScalarFunctionCatalogEntry;
 struct ActiveQueryContext;
@@ -99,7 +100,6 @@ public:
 	shared_ptr<DatabaseInstance> db;
 	//! Interrupt state for the current query
 	atomic<ClientInterruptState> interrupt_state {ClientInterruptState::NOT_INTERRUPTED};
-	//! The deadline for the current query (milliseconds since epoch)
 	optional_idx query_deadline;
 	//! Set of optional states (e.g. Caches) that can be held by the ClientContext
 	unique_ptr<RegisteredStateManager> registered_state;
@@ -315,6 +315,11 @@ public:
 	//! Returns the current executor
 	Executor &GetExecutor();
 
+	const shared_ptr<SchedulerAccount> &GetSchedulerAccount() const {
+		return scheduler_account;
+	}
+	DUCKDB_API void SetSchedulerAccount(shared_ptr<SchedulerAccount> account);
+
 	//! Return the current logger
 	Logger &GetLogger() const;
 
@@ -342,7 +347,6 @@ private:
 	friend class Parser;
 	friend class ParseIterator;
 	ParserOptions GetParserOptions();
-	static idx_t DeadlineClockMs();
 
 	//! Runs a transaction statement without going through the local query processing pipeline.
 	void RunTransactionStatement(const TransactionInfo &info);
@@ -430,6 +434,7 @@ private:
 	//! `Catalog::RemoteExecute(string)` and wraps the returned TableRef into a SelectStatement.
 	weak_ptr<AttachedDatabase> connected_to_database;
 	bool is_connected = false;
+	shared_ptr<SchedulerAccount> scheduler_account;
 };
 
 class ClientContextLock {

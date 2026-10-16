@@ -32,7 +32,7 @@ Invalid Input Error: external_threads must be a positive integer
 statement error
 SET async_threads = NULL;
 ----
-Invalid Input Error: async_threads must be a positive integer
+Invalid Input Error: async_threads setting cannot be NULL
 
 statement error
 SET ordered_aggregate_threshold = NULL;

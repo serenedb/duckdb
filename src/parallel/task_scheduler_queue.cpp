@@ -2,208 +2,204 @@
 
 #include "duckdb/parallel/task.hpp"
 
-#ifndef DUCKDB_NO_THREADS
-#include "concurrentqueue.h"
-#endif
-
 namespace duckdb {
 
-TaskSchedulerType TaskSchedulerQueue::GetPoolType() {
-	return pool_type;
+static constexpr double QUANTUM_NANOS = 1000000;
+
+SchedulerAccount::SchedulerAccount(SchedulerClass scheduler_class_p)
+    : scheduler_class(scheduler_class_p), deficit(QUANTUM_NANOS) {
 }
 
-#ifndef DUCKDB_NO_THREADS
-typedef duckdb_moodycamel::ConcurrentQueue<shared_ptr<Task>> concurrent_queue_t;
+TaskSchedulerQueue::TaskSchedulerQueue() {
+	classes[static_cast<uint8_t>(SchedulerClass::FOREGROUND)].weight = 4;
+	classes[static_cast<uint8_t>(SchedulerClass::BACKGROUND)].weight = 1;
+}
 
-struct ConcurrentQueueWrapper {
-	concurrent_queue_t q;
-};
+TaskSchedulerQueue::ClassState &TaskSchedulerQueue::GetClass(SchedulerAccount &account) {
+	return classes[static_cast<uint8_t>(account.scheduler_class)];
+}
 
-struct QueueProducerToken {
-public:
-	explicit QueueProducerToken(TaskSchedulerQueue &queue) : token(queue.GetQueue().q) {
+optional_ptr<TaskSchedulerQueue::ClassState> TaskSchedulerQueue::PickClass() {
+	auto &foreground = classes[static_cast<uint8_t>(SchedulerClass::FOREGROUND)];
+	auto &background = classes[static_cast<uint8_t>(SchedulerClass::BACKGROUND)];
+	if (foreground.active && background.active) {
+		return background.vruntime < foreground.vruntime ? &background : &foreground;
 	}
+	if (foreground.active) {
+		return &foreground;
+	}
+	if (background.active) {
+		return &background;
+	}
+	return nullptr;
+}
 
-public:
-	duckdb_moodycamel::ProducerToken token;
-};
+void TaskSchedulerQueue::PushBack(AccountList &list, SchedulerAccount &account) {
+	account.prev_active = list.tail;
+	account.next_active = nullptr;
+	if (list.tail) {
+		list.tail->next_active = &account;
+	} else {
+		list.head = &account;
+	}
+	list.tail = &account;
+}
 
-TaskSchedulerQueue::TaskSchedulerQueue(TaskSchedulerType pool_type_p)
-    : pool_type(pool_type_p), queue(make_uniq<ConcurrentQueueWrapper>()) {
+void TaskSchedulerQueue::Erase(AccountList &list, SchedulerAccount &account) {
+	if (account.prev_active) {
+		account.prev_active->next_active = account.next_active;
+	} else {
+		list.head = account.next_active;
+	}
+	if (account.next_active) {
+		account.next_active->prev_active = account.prev_active;
+	} else {
+		list.tail = account.prev_active;
+	}
+	account.prev_active = nullptr;
+	account.next_active = nullptr;
+}
+
+void TaskSchedulerQueue::Activate(SchedulerAccount &account) {
+	auto &state = GetClass(account);
+	if (!state.active) {
+		state.vruntime = MaxValue(state.vruntime, root_vruntime);
+		state.active = true;
+	}
+	account.deficit = MinValue(account.deficit, QUANTUM_NANOS);
+	account.fresh = account.deficit > 0;
+	PushBack(account.fresh ? state.fresh : state.backlog, account);
+}
+
+void TaskSchedulerQueue::Deactivate(SchedulerAccount &account) {
+	auto &state = GetClass(account);
+	Erase(account.fresh ? state.fresh : state.backlog, account);
+	if (!state.fresh.head && !state.backlog.head) {
+		state.active = false;
+	}
+}
+
+SchedulerAccount &TaskSchedulerQueue::NextAccount(ClassState &state) {
+	while (true) {
+		auto &account = state.fresh.head ? *state.fresh.head : *state.backlog.head;
+		if (account.deficit > 0) {
+			return account;
+		}
+		Erase(account.fresh ? state.fresh : state.backlog, account);
+		account.fresh = false;
+		account.deficit += QUANTUM_NANOS;
+		PushBack(state.backlog, account);
+	}
+}
+
+void TaskSchedulerQueue::Append(ProducerToken &producer) {
+	auto &account = *producer.account;
+	producer.runnable.store(true, std::memory_order_relaxed);
+	producer.prev_runnable = account.runnable_tail;
+	producer.next_runnable = nullptr;
+	if (account.runnable_tail) {
+		account.runnable_tail->next_runnable = &producer;
+	} else {
+		account.runnable_head = &producer;
+	}
+	account.runnable_tail = &producer;
+}
+
+void TaskSchedulerQueue::Unlink(ProducerToken &producer) {
+	auto &account = *producer.account;
+	if (producer.prev_runnable) {
+		producer.prev_runnable->next_runnable = producer.next_runnable;
+	} else {
+		account.runnable_head = producer.next_runnable;
+	}
+	if (producer.next_runnable) {
+		producer.next_runnable->prev_runnable = producer.prev_runnable;
+	} else {
+		account.runnable_tail = producer.prev_runnable;
+	}
+	producer.prev_runnable = nullptr;
+	producer.next_runnable = nullptr;
+	producer.runnable.store(false, std::memory_order_release);
 }
 
 void TaskSchedulerQueue::Enqueue(ProducerToken &token, shared_ptr<Task> task) {
-	const annotated_lock_guard<annotated_mutex> producer_lock(token.producer_lock);
-	task->token = token;
-	if (queue->q.enqueue(token.GetQueueProducerToken(pool_type).token, std::move(task))) {
-		++tasks_in_queue;
-		token.producer_cv.Signal();
-	} else {
-		throw InternalException("Could not schedule task!");
+	auto &account = *token.account;
+	token.tasks.push_back(std::move(task));
+	if (!token.runnable.load(std::memory_order_relaxed)) {
+		const bool account_was_idle = account.runnable_head == nullptr;
+		Append(token);
+		if (account_was_idle) {
+			Activate(account);
+		}
 	}
+	account.queued_tasks.store(account.queued_tasks.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+	queued.store(queued.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
 }
 
-void TaskSchedulerQueue::EnqueueBulk(ProducerToken &token, vector<shared_ptr<Task>> &tasks) {
-	const annotated_lock_guard<annotated_mutex> producer_lock(token.producer_lock);
-	for (auto &task : tasks) {
-		task->token = token;
-	}
-	if (queue->q.enqueue_bulk(token.GetQueueProducerToken(pool_type).token, std::make_move_iterator(tasks.begin()),
-	                          tasks.size())) {
-		tasks_in_queue += tasks.size();
-		token.producer_cv.Signal();
-	} else {
-		throw InternalException("Could not schedule tasks!");
-	}
-}
-
-bool TaskSchedulerQueue::DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task) {
-	const annotated_lock_guard<annotated_mutex> producer_lock(token.producer_lock);
-	return DequeueFromProducerLocked(token, task);
-}
-
-bool TaskSchedulerQueue::DequeueFromProducerLocked(ProducerToken &token, shared_ptr<Task> &task) {
-	if (!queue->q.try_dequeue_from_producer(token.GetQueueProducerToken(pool_type).token, task)) {
-		return false;
-	}
-	--tasks_in_queue;
-	return true;
+void TaskSchedulerQueue::TakeFront(ProducerToken &producer, shared_ptr<Task> &task) {
+	auto &account = *producer.account;
+	task = std::move(producer.tasks.front());
+	producer.tasks.pop_front();
+	account.queued_tasks.store(account.queued_tasks.load(std::memory_order_relaxed) - 1, std::memory_order_relaxed);
+	queued.store(queued.load(std::memory_order_relaxed) - 1, std::memory_order_relaxed);
 }
 
 bool TaskSchedulerQueue::Dequeue(shared_ptr<Task> &task) {
-	if (!queue->q.try_dequeue(task)) {
+	auto state = PickClass();
+	if (!state) {
 		return false;
 	}
-	--tasks_in_queue;
+	root_vruntime = state->vruntime;
+	auto &account = NextAccount(*state);
+	auto &producer = *account.runnable_head;
+	TakeFront(producer, task);
+	Unlink(producer);
+	if (!producer.tasks.empty()) {
+		Append(producer);
+	} else if (!account.runnable_head) {
+		Deactivate(account);
+	}
 	return true;
-}
-
-idx_t TaskSchedulerQueue::GetTasksInQueue() const {
-	return tasks_in_queue;
-}
-idx_t TaskSchedulerQueue::GetApproxSize() const {
-	return queue->q.size_approx();
-}
-idx_t TaskSchedulerQueue::GetProducerCount() const {
-	return queue->q.size_producers_approx();
-}
-
-idx_t TaskSchedulerQueue::GetTaskCountForProducer(ProducerToken &token) const {
-	const annotated_lock_guard<annotated_mutex> producer_lock(token.producer_lock);
-	return queue->q.size_producer_approx(token.GetQueueProducerToken(pool_type).token);
-}
-
-ConcurrentQueueWrapper &TaskSchedulerQueue::GetQueue() {
-	return *queue;
-}
-
-#else
-
-struct QueueProducerToken {
-public:
-	explicit QueueProducerToken(TaskSchedulerQueue &queue) : queue(&queue) {
-	}
-
-	~QueueProducerToken() {
-		queue->RemoveToken(*this);
-	}
-
-private:
-	TaskSchedulerQueue *queue;
-};
-
-TaskSchedulerQueue::TaskSchedulerQueue(TaskSchedulerType pool_type_p) : pool_type(pool_type_p) {
-}
-
-void TaskSchedulerQueue::Enqueue(ProducerToken &token, shared_ptr<Task> task) {
-	annotated_lock_guard<annotated_mutex> producer_lock(token.producer_lock);
-	lock_guard<mutex> lock(qlock);
-	task->token = token;
-	q[token.GetQueueProducerToken(pool_type)].push(std::move(task));
-	token.producer_cv.Signal();
-}
-
-void TaskSchedulerQueue::EnqueueBulk(ProducerToken &token, vector<shared_ptr<Task>> &tasks) {
-	const annotated_lock_guard<annotated_mutex> producer_lock(token.producer_lock);
-	lock_guard<mutex> lock(qlock);
-	for (auto &task : tasks) {
-		task->token = token;
-		q[token.GetQueueProducerToken(pool_type)].push(std::move(task));
-	}
-	token.producer_cv.Signal();
 }
 
 bool TaskSchedulerQueue::DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task) {
-	annotated_lock_guard<annotated_mutex> producer_lock(token.producer_lock);
-	return DequeueFromProducerLocked(token, task);
-}
-
-bool TaskSchedulerQueue::DequeueFromProducerLocked(ProducerToken &token, shared_ptr<Task> &task) {
-	lock_guard<mutex> lock(qlock);
-
-	const auto it = q.find(token.GetQueueProducerToken(pool_type));
-	if (it == q.end() || it->second.empty()) {
+	if (token.tasks.empty()) {
 		return false;
 	}
-
-	task = std::move(it->second.front());
-	it->second.pop();
-
+	TakeFront(token, task);
+	if (token.tasks.empty()) {
+		auto &account = *token.account;
+		Unlink(token);
+		if (!account.runnable_head) {
+			Deactivate(account);
+		}
+	}
 	return true;
 }
 
-bool TaskSchedulerQueue::Dequeue(shared_ptr<Task> &task) {
-	throw InternalException("Global dequeue not supported for no threads queue");
-}
-
-idx_t TaskSchedulerQueue::GetTasksInQueue() const {
-	lock_guard<mutex> lock(qlock);
-	idx_t task_count = 0;
-	for (auto &producer : q) {
-		task_count += producer.second.size();
-	}
-	return task_count;
-}
-
-idx_t TaskSchedulerQueue::GetApproxSize() const {
-	return GetTasksInQueue();
-}
-
-idx_t TaskSchedulerQueue::GetProducerCount() const {
-	lock_guard<mutex> lock(qlock);
-	return q.size();
+void TaskSchedulerQueue::Charge(SchedulerAccount &account, double cost) {
+	auto &state = GetClass(account);
+	account.deficit = MaxValue(account.deficit - cost, -QUANTUM_NANOS);
+	state.vruntime += cost / state.weight;
 }
 
 idx_t TaskSchedulerQueue::GetTaskCountForProducer(ProducerToken &token) const {
-	lock_guard<mutex> lock(qlock);
-	const auto it = q.find(token.GetQueueProducerToken(pool_type));
-	if (it == q.end()) {
-		return 0;
+	return token.tasks.size();
+}
+
+void TaskSchedulerQueue::RemoveToken(ProducerToken &token) {
+	if (!token.runnable.load(std::memory_order_relaxed)) {
+		return;
 	}
-	return it->second.size();
-}
-
-void TaskSchedulerQueue::RemoveToken(QueueProducerToken &token) {
-	lock_guard<mutex> lock(qlock);
-	q.erase(token);
-}
-
-#endif
-
-TaskSchedulerQueue::~TaskSchedulerQueue() {
-}
-
-ProducerToken::ProducerToken(array<unique_ptr<TaskSchedulerQueue>, TASK_SCHEDULER_TYPE_COUNT> &queues) {
-	for (uint8_t i = 0; i < TASK_SCHEDULER_TYPE_COUNT; i++) {
-		tokens[i] = make_uniq<QueueProducerToken>(*queues[i]);
+	auto &account = *token.account;
+	const auto count = token.tasks.size();
+	token.tasks.clear();
+	account.queued_tasks.store(account.queued_tasks.load(std::memory_order_relaxed) - count, std::memory_order_relaxed);
+	queued.store(queued.load(std::memory_order_relaxed) - count, std::memory_order_relaxed);
+	Unlink(token);
+	if (!account.runnable_head) {
+		Deactivate(account);
 	}
-}
-
-ProducerToken::~ProducerToken() {
-}
-
-QueueProducerToken &ProducerToken::GetQueueProducerToken(TaskSchedulerType pool_type) {
-	return *tokens[static_cast<uint8_t>(pool_type)];
 }
 
 } // namespace duckdb

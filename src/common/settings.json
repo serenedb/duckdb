@@ -155,10 +155,13 @@
     },
     {
         "name": "async_threads",
-        "description": "The number of total async threads used by the system for tasks like I/O; a session or transaction value caps the async threads its queries use.",
+        "description": "The number of async tasks, such as I/O, a query runs at once. -1 = automatic, four times the number of CPU cores, at most 256; 0 runs the I/O on the threads that run the query.",
         "type": "BIGINT",
-        "scope": "global_local",
-        "custom_implementation": true
+        "default_scope": "local",
+        "default_value": "-1",
+        "on_callbacks": [
+            "set"
+        ]
     },
     {
         "name": "auto_checkpoint_skip_wal_threshold",
@@ -1457,16 +1460,6 @@
         "type": "BOOLEAN",
         "default_scope": "local",
         "default_value": "true"
-    },
-    {
-        "name": "scheduler_process_partial",
-        "description": "Partially process tasks before rescheduling. Enabling this allows for more scheduler fairness between separate queries.",
-        "type": "BOOLEAN",
-        "scope": "global",
-        "default_value": "false",
-        "conditional_defaults": {
-            "#ifdef DUCKDB_ALTERNATIVE_VERIFY": "true"
-        }
     },
     {
         "name": "schema",

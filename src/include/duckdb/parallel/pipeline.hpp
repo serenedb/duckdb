@@ -46,8 +46,6 @@ enum class ExternalInputEventState : uint8_t {
 };
 
 class PipelineTask : public ExecutorTask {
-	static constexpr const idx_t PARTIAL_CHUNK_COUNT = 50;
-
 public:
 	explicit PipelineTask(Pipeline &pipeline_p, shared_ptr<Event> event_p);
 

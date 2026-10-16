@@ -1,7 +1,5 @@
 #include "duckdb/main/client_context.hpp"
 
-#include <ctime>
-
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
@@ -10,6 +8,7 @@
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/common/progress_bar/progress_bar.hpp"
 #include "duckdb/common/serializer/buffered_file_writer.hpp"
+#include "duckdb/common/time_point.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/execution/column_binding_resolver.hpp"
@@ -29,6 +28,7 @@
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/main/query_result.hpp"
 #include "duckdb/main/relation.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
@@ -142,7 +142,8 @@ struct DebugClientContextState : public ClientContextState {
 
 ClientContext::ClientContext(shared_ptr<DatabaseInstance> database)
     : db(std::move(database)), interrupt_state(ClientInterruptState::NOT_INTERRUPTED), transaction(*this),
-      connection_id(DConstants::INVALID_INDEX) {
+      connection_id(DConstants::INVALID_INDEX),
+      scheduler_account(TaskScheduler::GetScheduler(*db).CreateAccount(SchedulerClass::FOREGROUND)) {
 	registered_state = make_uniq<RegisteredStateManager>();
 #ifdef DEBUG
 	registered_state->GetOrCreate<DebugClientContextState>("debug_client_context_state");
@@ -997,21 +998,11 @@ void ClientContext::SuppressInterrupts() {
 	interrupt_state = ClientInterruptState::INTERRUPTS_SUPPRESSED;
 }
 
-idx_t ClientContext::DeadlineClockMs() {
-#ifdef CLOCK_MONOTONIC_COARSE
-	timespec now;
-	clock_gettime(CLOCK_MONOTONIC_COARSE, &now);
-	return NumericCast<idx_t>(now.tv_sec) * 1000 + NumericCast<idx_t>(now.tv_nsec) / 1000000;
-#else
-	return NumericCast<idx_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
-#endif
-}
-
 void ClientContext::InterruptCheck() const {
 	if (interrupt_state.load(std::memory_order_relaxed) == ClientInterruptState::INTERRUPTED) {
 		throw InterruptException();
 	}
-	if (query_deadline.IsValid() && DeadlineClockMs() >= query_deadline.GetIndex()) {
+	if (query_deadline.IsValid() && static_cast<idx_t>(TimePoint::Now()) >= query_deadline.GetIndex()) {
 		throw InterruptException("Query exceeded maximum execution time");
 	}
 }
