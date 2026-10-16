@@ -998,20 +998,14 @@ void SingleFileBlockManager::MarkBlockAsModified(block_id_t block_id) {
 	auto newly_used_entry = newly_used_blocks.find(block_id);
 	if (newly_used_entry != newly_used_blocks.end()) {
 		// this block was newly used - and now we are labeling it as no longer being required
-		newly_used_blocks.erase(newly_used_entry);
-		if (!defer_block_reuse) {
-			// we can directly add it back to the free list
-			AddFreeBlock(lock, block_id);
-			return;
-		}
+		// we can directly add it back to the free list
+		newly_used_blocks.erase(block_id);
+		AddFreeBlock(lock, block_id);
+	} else {
+		// this block was used in storage, we cannot directly re-use it
+		// add it to the modified blocks indicating it will be re-usable after the next checkpoint
+		modified_blocks.insert(block_id);
 	}
-	// add it to the modified blocks indicating it will be re-usable after the next checkpoint
-	modified_blocks.insert(block_id);
-}
-
-void SingleFileBlockManager::SetDeferBlockReuse(bool defer) noexcept {
-	lock_guard<mutex> lock(single_file_block_lock);
-	defer_block_reuse = defer;
 }
 
 void SingleFileBlockManager::IncreaseBlockReferenceCountInternal(block_id_t block_id) {
@@ -1062,9 +1056,6 @@ void SingleFileBlockManager::VerifyBlocks(const unordered_map<block_id_t, idx_t>
 	}
 	for (auto &newly_used_block : newly_used_blocks) {
 		referenced_blocks.insert(newly_used_block);
-	}
-	for (auto &modified_block : modified_blocks) {
-		referenced_blocks.insert(modified_block);
 	}
 	for (auto &free_block : free_list) {
 		referenced_blocks.insert(free_block);
