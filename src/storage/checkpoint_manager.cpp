@@ -427,6 +427,10 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 	if (debug_checkpoint_abort == CheckpointAbort::DEBUG_ABORT_BEFORE_WAL_FINISH) {
 		throw FatalException("Checkpoint aborted before truncate because of PRAGMA checkpoint_abort flag");
 	}
+	if (debug_checkpoint_abort == CheckpointAbort::DEBUG_ABORT_BEFORE_WAL_FINISH_NON_FATAL) {
+		throw IOException(
+		    "Checkpoint aborted before finishing the WAL (non-fatal) because of PRAGMA checkpoint_abort flag");
+	}
 
 	// truncate the WAL
 	if (has_wal) {
