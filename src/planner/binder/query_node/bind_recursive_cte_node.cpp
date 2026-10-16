@@ -283,7 +283,8 @@ BoundStatement Binder::BindNode(RecursiveCTENode &statement) {
 			const auto column_index = group.Binding().column_index;
 			const auto group_type = group.GetReturnType();
 			auto uncollated_group = key_targets[group_idx]->Copy();
-			if (ExpressionBinder::PushCollation(context, key_targets[group_idx], group_type)) {
+			if (ExpressionBinder::PushCollation(context, key_targets[group_idx], group_type,
+			                                    CollationType::EQUALITY_COLLATIONS)) {
 				vector<unique_ptr<Expression>> first_children;
 				first_children.push_back(std::move(uncollated_group));
 				FunctionBinder function_binder(*this);

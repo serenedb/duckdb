@@ -219,7 +219,8 @@ BindResult BaseSelectBinder::BindWindowExpression(WindowExpression &window, idx_
 		ExpressionBinder::PushCollation(context, bound_order, bound_order->GetReturnType());
 	}
 	for (auto &bound_partition : bound_partitions) {
-		ExpressionBinder::PushCollation(context, bound_partition, bound_partition->GetReturnType());
+		ExpressionBinder::PushCollation(context, bound_partition, bound_partition->GetReturnType(),
+		                                CollationType::EQUALITY_COLLATIONS);
 	}
 	for (auto &bound_order : bound_orders) {
 		ExpressionBinder::PushCollation(context, bound_order, bound_order->GetReturnType());

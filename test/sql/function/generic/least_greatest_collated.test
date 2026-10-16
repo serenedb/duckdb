@@ -1,0 +1,61 @@
+# name: test/sql/function/generic/least_greatest_collated.test
+# description: least/greatest on types with a collation hook compare the collated key and keep the first of equal keys
+# group: [generic]
+
+query II
+SELECT least(INTERVAL '1 month', INTERVAL '30 days'), least(INTERVAL '30 days', INTERVAL '1 month')
+----
+1 mon	30 days
+
+query II
+SELECT greatest(INTERVAL '1 month', INTERVAL '30 days'), greatest(INTERVAL '30 days', INTERVAL '1 month')
+----
+1 mon	30 days
+
+query I
+SELECT greatest(INTERVAL '1 day', NULL, INTERVAL '25 hours')
+----
+25:00:00
+
+query I
+SELECT least(NULL::INTERVAL, NULL::INTERVAL)
+----
+NULL
+
+query I
+SELECT least(i * INTERVAL '1 hour', INTERVAL '1 day') FROM range(22, 26) t(i)
+----
+22:00:00
+23:00:00
+24:00:00
+1 day
+
+query I
+SELECT greatest([i * INTERVAL '1 hour'], [INTERVAL '1 day']) FROM range(23, 26) t(i)
+----
+[1 day]
+['24:00:00']
+['25:00:00']
+
+query I
+SELECT least({'a': '10:00:00+05'::TIMETZ}, {'a': '08:00:00+00'::TIMETZ})
+----
+{'a': '10:00:00+05'}
+
+query II
+SELECT list_min([INTERVAL '25 hours', INTERVAL '1 day', INTERVAL '23 hours']), list_max(['10:00:00+05'::TIMETZ, '08:00:00+00'::TIMETZ])
+----
+23:00:00	08:00:00+00
+
+statement ok
+CREATE TABLE intervals AS SELECT i, i * INTERVAL '1 minute' AS a, (4000 - i) * INTERVAL '1 minute' AS b FROM range(4000) t(i)
+
+query II
+SELECT count(*), sum(epoch(greatest(a, b))) FROM intervals
+----
+4000	720000000.0
+
+query I
+SELECT count(*) FROM intervals WHERE least(a, b) = a
+----
+2001

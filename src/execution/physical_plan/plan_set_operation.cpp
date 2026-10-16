@@ -23,7 +23,8 @@ static vector<unique_ptr<Expression>> CreatePartitionedRowNumExpression(ClientCo
 	expr->WindowEndMutable() = WindowBoundary::UNBOUNDED_FOLLOWING;
 	for (idx_t i = 0; i < types.size(); i++) {
 		expr->PartitionsMutable().push_back(make_uniq<BoundReferenceExpression>(types[i], i));
-		ExpressionBinder::PushCollation(client, expr->PartitionsMutable().back(), types[i]);
+		ExpressionBinder::PushCollation(client, expr->PartitionsMutable().back(), types[i],
+		                                CollationType::EQUALITY_COLLATIONS);
 	}
 	res.push_back(std::move(expr));
 	return res;
@@ -33,8 +34,8 @@ static JoinCondition CreateNotDistinctComparison(ClientContext &context, const L
 	auto left = make_uniq<BoundReferenceExpression>(type, i);
 	auto right = make_uniq<BoundReferenceExpression>(type, i);
 	JoinCondition cond(std::move(left), std::move(right), ExpressionType::COMPARE_NOT_DISTINCT_FROM);
-	ExpressionBinder::PushCollation(context, cond.LeftReference(), type);
-	ExpressionBinder::PushCollation(context, cond.RightReference(), type);
+	ExpressionBinder::PushCollation(context, cond.LeftReference(), type, CollationType::EQUALITY_COLLATIONS);
+	ExpressionBinder::PushCollation(context, cond.RightReference(), type, CollationType::EQUALITY_COLLATIONS);
 
 	return cond;
 }

@@ -13,7 +13,9 @@
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 
 namespace duckdb {
 
@@ -24,11 +26,16 @@ struct ListAggregatesLocalState : public FunctionLocalState {
 	}
 
 	ArenaAllocator arena_allocator;
+	unique_ptr<ExpressionExecutor> element_executor;
+	DataChunk elements;
+	DataChunk element_results;
 };
 
-unique_ptr<FunctionLocalState> ListAggregatesInitLocalState(ExpressionState &state, const BoundFunctionExpression &expr,
-                                                            FunctionData *bind_data) {
-	return make_uniq<ListAggregatesLocalState>(BufferAllocator::Get(state.GetContext()));
+bool ReferencesListElement(const Expression &expr) {
+	bool result = false;
+	ExpressionIterator::VisitExpression<BoundReferenceExpression>(
+	    expr, [&](const BoundReferenceExpression &) { result = true; });
+	return result;
 }
 // FIXME: benchmark the use of cluster_update against using update (if applicable)
 
@@ -91,6 +98,33 @@ ListAggregatesBindData::ListAggregatesBindData(const LogicalType &stype_p, uniqu
 }
 
 ListAggregatesBindData::~ListAggregatesBindData() {
+}
+
+unique_ptr<FunctionLocalState> ListAggregatesInitLocalState(ExpressionState &state, const BoundFunctionExpression &expr,
+                                                            FunctionData *bind_data) {
+	auto result = make_uniq<ListAggregatesLocalState>(BufferAllocator::Get(state.GetContext()));
+	if (!bind_data) {
+		return std::move(result);
+	}
+	auto &aggr = bind_data->Cast<ListAggregatesBindData>().aggr_expr->Cast<BoundAggregateExpression>();
+	auto &aggr_children = aggr.GetChildren();
+	vector<LogicalType> result_types;
+	for (idx_t child_idx = 1; child_idx < aggr_children.size(); child_idx++) {
+		auto &child = *aggr_children[child_idx];
+		if (child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+			continue;
+		}
+		if (!result->element_executor) {
+			result->element_executor = make_uniq<ExpressionExecutor>(state.GetContext());
+		}
+		result->element_executor->AddExpression(child);
+		result_types.push_back(child.GetReturnType());
+	}
+	if (result->element_executor) {
+		result->elements.InitializeEmpty({aggr_children[0]->GetReturnType()});
+		result->element_results.Initialize(state.GetAllocator(), result_types);
+	}
+	return std::move(result);
 }
 
 struct StateVector {
@@ -226,7 +260,8 @@ void ListAggregatesFunction(DataChunk &args, ExpressionState &state, Vector &res
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<ListAggregatesBindData>();
 	auto &aggr = info.aggr_expr->Cast<BoundAggregateExpression>();
-	auto &allocator = ExecuteFunctionState::GetFunctionState(state)->Cast<ListAggregatesLocalState>().arena_allocator;
+	auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<ListAggregatesLocalState>();
+	auto &allocator = lstate.arena_allocator;
 	allocator.Reset();
 	AggregateFinalizeInputData aggr_input_data(aggr, allocator);
 
@@ -258,15 +293,24 @@ void ListAggregatesFunction(DataChunk &args, ExpressionState &state, Vector &res
 	// selection vector pointing to the data
 	SelectionVector sel_vector(STANDARD_VECTOR_SIZE);
 
-	// the aggregate's trailing arguments (e.g. the separator of string_agg) are constants that its bind folded into
-	// the bind data - they are still part of its argument list, so they are passed along as constant vectors
 	auto update_states = [&](idx_t update_count) {
 		vector<Vector> inputs;
 		inputs.reserve(aggr.GetChildren().size());
 		inputs.emplace_back(child_vector, sel_vector, update_count);
+		if (lstate.element_executor) {
+			lstate.elements.data[0].Slice(child_vector, sel_vector, update_count);
+			lstate.elements.SetCardinality(update_count);
+			lstate.element_results.Reset();
+			lstate.element_executor->Execute(lstate.elements, lstate.element_results);
+		}
+		idx_t element_result_idx = 0;
 		for (idx_t child_idx = 1; child_idx < aggr.GetChildren().size(); child_idx++) {
-			auto &constant = aggr.GetChildren()[child_idx]->Cast<BoundConstantExpression>().GetValue();
-			inputs.emplace_back(constant, count_t(update_count));
+			auto &child = *aggr.GetChildren()[child_idx];
+			if (child.GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
+				inputs.emplace_back(lstate.element_results.data[element_result_idx++], 0, update_count);
+				continue;
+			}
+			inputs.emplace_back(child.Cast<BoundConstantExpression>().GetValue(), count_t(update_count));
 		}
 		aggr.Function().GetStateUpdateCallback()(inputs.data(), aggr_input_data, inputs.size(), state_vector_update,
 		                                         update_count);
@@ -408,7 +452,7 @@ unique_ptr<FunctionData> ListAggregatesBindFunction(ClientContext &context, Boun
                                                     vector<unique_ptr<Expression>> &arguments) {
 	// create the child expression and its type
 	vector<unique_ptr<Expression>> children;
-	auto expr = make_uniq<BoundConstantExpression>(Value(list_child_type));
+	auto expr = make_uniq<BoundReferenceExpression>(list_child_type, storage_t(0));
 	children.push_back(std::move(expr));
 	// push any extra arguments into the list aggregate bind
 	if (arguments.size() > 2) {
@@ -425,22 +469,26 @@ unique_ptr<FunctionData> ListAggregatesBindFunction(ClientContext &context, Boun
 	if (IS_AGGR) {
 		bound_function.SetReturnType(bound_aggr_function->Function().GetReturnType());
 	}
-	// the extra arguments are passed to the aggregate as constant vectors, so they have to be constant
 	auto &aggr_children = bound_aggr_function->GetChildrenMutable();
+	vector<reference<Expression>> folded_children;
 	for (idx_t child_idx = 1; child_idx < aggr_children.size(); child_idx++) {
 		auto &child = aggr_children[child_idx];
+		if (ReferencesListElement(*child)) {
+			continue;
+		}
 		if (!child->IsFoldable()) {
 			throw InvalidInputException(
 			    "Aggregate function %s is not supported for list_aggr: extra arguments must be constant",
 			    bound_aggr_function->ToString());
 		}
 		child = make_uniq<BoundConstantExpression>(ExpressionExecutor::EvaluateScalar(context, *child));
+		folded_children.push_back(*child);
 	}
 
 	// Preserve folded SQL arguments without evaluating them again.
-	if (aggr_children.size() + 1 == bound_function.GetLogicalArguments().size()) {
-		for (idx_t child_idx = 1; child_idx < aggr_children.size(); child_idx++) {
-			arguments.push_back(aggr_children[child_idx]->Copy());
+	if (folded_children.size() + 2 == bound_function.GetLogicalArguments().size()) {
+		for (auto &child : folded_children) {
+			arguments.push_back(child.get().Copy());
 		}
 	}
 
