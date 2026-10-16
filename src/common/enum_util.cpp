@@ -7738,7 +7738,7 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 		{ static_cast<uint32_t>(WALType::DROP_JOB), "DROP_JOB" },
 		{ static_cast<uint32_t>(WALType::TRUNCATE_TABLE), "TRUNCATE_TABLE" },
 		{ static_cast<uint32_t>(WALType::ADOPT_SEGMENTS), "ADOPT_SEGMENTS" },
-		{ static_cast<uint32_t>(WALType::EXPIRE_ROWS), "EXPIRE_ROWS" },
+		{ static_cast<uint32_t>(WALType::DELETE_ROW_RANGES), "DELETE_ROW_RANGES" },
 		{ static_cast<uint32_t>(WALType::WAL_VERSION), "WAL_VERSION" },
 		{ static_cast<uint32_t>(WALType::CHECKPOINT), "CHECKPOINT" },
 		{ static_cast<uint32_t>(WALType::WAL_FLUSH), "WAL_FLUSH" },

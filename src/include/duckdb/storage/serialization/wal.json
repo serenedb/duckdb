@@ -826,21 +826,5 @@
         "type": "vector<string>"
       }
     ]
-  },
-  {
-    "class": "WALExpireRows",
-    "pointer_type": "none",
-    "members": [
-      {
-        "id": 101,
-        "name": "column",
-        "type": "idx_t"
-      },
-      {
-        "id": 102,
-        "name": "cutoff",
-        "type": "Value"
-      }
-    ]
   }
 ]

@@ -746,9 +746,11 @@ void WALEntryBuffer::WriteAdoptSegments(const vector<string> &segments) {
 	entry_count++;
 }
 
-void WALEntryBuffer::WriteExpireRows(idx_t column, const Value &cutoff) {
-	WriteAheadLogSerializer serializer(database, stream, WALType::EXPIRE_ROWS);
-	serializer.WriteEntry(WALExpireRows {column, cutoff});
+void WALEntryBuffer::WriteDeleteRowRanges(const vector<row_t> &starts, const vector<idx_t> &counts) {
+	D_ASSERT(!starts.empty() && starts.size() == counts.size());
+	WriteAheadLogSerializer serializer(database, stream, WALType::DELETE_ROW_RANGES);
+	serializer.WriteProperty(101, "starts", starts);
+	serializer.WriteProperty(102, "counts", counts);
 	serializer.End();
 	entry_count++;
 }

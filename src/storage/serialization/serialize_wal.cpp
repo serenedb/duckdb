@@ -547,18 +547,6 @@ WALDropView WALDropView::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
-void WALExpireRows::Serialize(Serializer &serializer) const {
-	serializer.WritePropertyWithDefault<idx_t>(101, "column", column);
-	serializer.WriteProperty<Value>(102, "cutoff", cutoff);
-}
-
-WALExpireRows WALExpireRows::Deserialize(Deserializer &deserializer) {
-	WALExpireRows result;
-	deserializer.ReadPropertyWithDefault<idx_t>(101, "column", result.column);
-	deserializer.ReadProperty<Value>(102, "cutoff", result.cutoff);
-	return result;
-}
-
 void WALPrepared::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<hugeint_t>(101, "txid", txid);
 }
