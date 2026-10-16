@@ -1351,19 +1351,20 @@ const StringUtil::EnumStringLiteral *GetCheckpointAbortValues() {
 		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_BEFORE_HEADER_NON_FATAL), "BEFORE_HEADER_NON_FATAL" },
 		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_IN_MEMORY_CHECKPOINT), "IN_MEMORY_CHECKPOINT" },
 		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_BEFORE_WAL_FLUSH), "BEFORE_WAL_FLUSH" },
-		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_BEFORE_MOVING_CHECKPOINT_WAL), "BEFORE_MOVING_CHECKPOINT_WAL" }
+		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_BEFORE_MOVING_CHECKPOINT_WAL), "BEFORE_MOVING_CHECKPOINT_WAL" },
+		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_BEFORE_WAL_FINISH_NON_FATAL), "BEFORE_WAL_FINISH_NON_FATAL" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<CheckpointAbort>(CheckpointAbort value) {
-	return StringUtil::EnumToString(GetCheckpointAbortValues(), 11, "CheckpointAbort", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetCheckpointAbortValues(), 12, "CheckpointAbort", static_cast<uint32_t>(value));
 }
 
 template<>
 CheckpointAbort EnumUtil::FromString<CheckpointAbort>(std::string_view value) {
-	return static_cast<CheckpointAbort>(StringUtil::StringToEnum(GetCheckpointAbortValues(), 11, "CheckpointAbort", value));
+	return static_cast<CheckpointAbort>(StringUtil::StringToEnum(GetCheckpointAbortValues(), 12, "CheckpointAbort", value));
 }
 
 const StringUtil::EnumStringLiteral *GetCheckpointOnDetachValues() {
