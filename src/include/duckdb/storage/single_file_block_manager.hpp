@@ -96,7 +96,6 @@ public:
 	void MarkBlockAsUsed(block_id_t block_id) override;
 	//! Mark a block as modified (re-writeable after a checkpoint)
 	void MarkBlockAsModified(block_id_t block_id) override;
-	void SetDeferBlockReuse(bool defer) noexcept;
 	//! Increase the reference count of a block. The block should hold at least one reference
 	void IncreaseBlockReferenceCount(block_id_t block_id) override;
 	//! UnregisterBlock, only accepts non-temporary block ids
@@ -217,7 +216,6 @@ private:
 	unordered_map<block_id_t, uint32_t> multi_use_blocks;
 	//! The list of blocks that are no longer in-use, but cannot be re-used until the next checkpoint
 	unordered_set<block_id_t> modified_blocks;
-	bool defer_block_reuse = false;
 	//! The current meta block id
 	idx_t meta_block;
 	//! The current maximum block id, this id will be given away first after the free_list runs out
