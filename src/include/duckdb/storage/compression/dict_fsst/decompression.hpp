@@ -23,6 +23,8 @@ public:
 
 public:
 	void Initialize(bool initialize_dictionary = true);
+	//! Charge `count` on-demand decodes of a deferred dictionary; materializes it once they reach dict_count
+	void ChargeDecodes(idx_t count);
 	void ScanToFlatVector(Vector &result, idx_t result_offset, idx_t start, idx_t scan_count);
 	void ScanToDictionaryVector(ColumnSegment &segment, Vector &result, idx_t result_offset, idx_t start,
 	                            idx_t scan_count);
@@ -30,10 +32,14 @@ public:
 	const SelectionVector &GetSelVec(idx_t start, idx_t scan_count, const SelectionVector &sel, idx_t sel_count);
 	void Select(Vector &result, idx_t start, const SelectionVector &sel, idx_t sel_count);
 	void SelectDictionary(Vector &result, idx_t start, idx_t span, const SelectionVector &sel, idx_t sel_count);
+	//! Select with the dictionary deferred: decodes only the selected rows' entries
+	void SelectEntries(Vector &result, idx_t start, idx_t span, const SelectionVector &sel, idx_t sel_count);
 
 	bool AllowDictionaryScan(idx_t scan_count);
 
 private:
+	//! Materialize the deferred dictionary from the entry_lengths / prefix_ids that Initialize(false) unpacked
+	void MaterializeDictionary();
 	idx_t UnpackCodes(idx_t start, idx_t scan_count);
 	//! Byte offset of entry `string_number` in dict_ptr. Forward reads extend the running offset (the cheap path
 	//! every sequential scan takes); a backward re-seek materializes the full prefix sum once and is O(1) thereafter.
@@ -86,6 +92,9 @@ public:
 	data_ptr_t dictionary_indices_ptr;
 
 	buffer_ptr<DictionaryEntry> dictionary;
+	//! A sparse scan state's dictionary is not materialized yet; the on-demand decodes charged against it
+	bool deferred_dictionary = false;
+	idx_t decoded_on_demand = 0;
 	void *decoder = nullptr;
 	bool all_values_inlined = false;
 
