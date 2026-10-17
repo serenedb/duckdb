@@ -17,6 +17,7 @@
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/optional.hpp"
 #include "duckdb/common/optional_ptr.hpp"
+#include "duckdb/function/plan_data_version.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 
 namespace duckdb {
@@ -70,6 +71,8 @@ public:
 	DUCKDB_API virtual bool Equals(const FunctionData &other) const = 0;
 	DUCKDB_API static bool Equals(const FunctionData *left, const FunctionData *right);
 	DUCKDB_API virtual bool SupportStatementCache() const;
+	DUCKDB_API virtual bool ReadsParametersAtExecution() const;
+	DUCKDB_API virtual shared_ptr<PlanDataVersion> GetPlanDataVersion() const;
 
 	template <class TARGET>
 	TARGET &Cast() {

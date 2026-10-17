@@ -120,6 +120,12 @@ struct RLEValueCodec<T, true> {
 			}
 		}
 	}
+
+	static T UnpackValue(const_data_ptr_t src, idx_t index, T frame, bitpacking_width_t width) {
+		T value = BitpackingPrimitives::UnPackValue<T>(src, index, width);
+		reinterpret_cast<T_U &>(value) += static_cast<T_U>(frame);
+		return value;
+	}
 };
 
 template <class T>
@@ -145,6 +151,10 @@ struct RLEValueCodec<T, false> {
 
 	static void Unpack(T *dst, const_data_ptr_t src, idx_t count, T frame, bitpacking_width_t width) {
 		memcpy(dst, src, count * sizeof(T));
+	}
+
+	static T UnpackValue(const_data_ptr_t src, idx_t index, T frame, bitpacking_width_t width) {
+		return Load<T>(src + index * sizeof(T));
 	}
 };
 
@@ -605,11 +615,31 @@ struct RLEScanState : public SegmentScanState {
 	}
 
 	void LoadGroup() {
+		LoadValues();
+		LoadCounts();
+	}
+
+	void LoadValues() {
 		idx_t group_start = entry_pos & ~(RLE_GROUP_SIZE - 1);
 		ValueCodec::Unpack(value_window, layout.values + group_start * layout.value_width / 8, RLE_GROUP_SIZE,
 		                   layout.value_frame, layout.value_width);
+		values_loaded = true;
+	}
+
+	void LoadCounts() {
+		idx_t group_start = entry_pos & ~(RLE_GROUP_SIZE - 1);
 		CountCodec::Unpack(count_window, layout.counts + group_start * layout.count_width / 8, RLE_GROUP_SIZE,
 		                   layout.count_frame, layout.count_width);
+	}
+
+	T PackedValue() const {
+		D_ASSERT(layout.packed);
+		if (values_loaded) {
+			return value_window[entry_pos & (RLE_GROUP_SIZE - 1)];
+		}
+		idx_t group_start = entry_pos & ~(RLE_GROUP_SIZE - 1);
+		return ValueCodec::UnpackValue(layout.values + group_start * layout.value_width / 8,
+		                               entry_pos & (RLE_GROUP_SIZE - 1), layout.value_frame, layout.value_width);
 	}
 
 	template <bool PACKED>
@@ -806,6 +836,7 @@ struct RLEScanState : public SegmentScanState {
 
 	T value_window[RLE_GROUP_SIZE];
 	rle_count_t count_window[RLE_GROUP_SIZE];
+	bool values_loaded = false;
 };
 
 template <class T>
@@ -1052,7 +1083,8 @@ struct RLEFetchState : public SegmentScanState {
 			scan_state.entry_pos = group * RLE_GROUP_SIZE;
 			scan_state.position_in_entry = 0;
 			if (scan_state.layout.packed && group != current_group) {
-				scan_state.LoadGroup();
+				scan_state.LoadCounts();
+				scan_state.values_loaded = false;
 			}
 			row = group_rows[group];
 		}
@@ -1066,16 +1098,17 @@ struct RLEFetchState : public SegmentScanState {
 	//! Walks forward to the row, past the rest of a group of runs at once when the row is not in it
 	template <bool PACKED>
 	void WalkTo(idx_t target) {
-		// The group that holds the row, once known, which the walk does not try to skip
-		auto target_group = scan_state.entry_pos / RLE_GROUP_SIZE;
-		if (target_group + 1 >= group_rows.size() || group_rows[target_group + 1] <= target) {
-			target_group = DConstants::INVALID_INDEX;
+		auto group = scan_state.entry_pos / RLE_GROUP_SIZE;
+		if (group + 1 < group_rows.size()) {
+			D_ASSERT(group_rows[group + 1] > target);
+			WalkInGroup<PACKED>(target);
+			return;
 		}
 		while (true) {
 			while (group_rows.size() <= scan_state.entry_pos / RLE_GROUP_SIZE) {
 				group_rows.push_back(row);
 			}
-			if (scan_state.position_in_entry == 0 && scan_state.entry_pos / RLE_GROUP_SIZE != target_group) {
+			if (scan_state.position_in_entry == 0) {
 				const idx_t lane = scan_state.entry_pos & (RLE_GROUP_SIZE - 1);
 				const idx_t runs =
 				    MinValue<idx_t>(RLE_GROUP_SIZE - lane, scan_state.max_entry_pos - scan_state.entry_pos);
@@ -1088,11 +1121,13 @@ struct RLEFetchState : public SegmentScanState {
 					scan_state.entry_pos += runs;
 					row += total;
 					if (PACKED && scan_state.entry_pos < scan_state.max_entry_pos) {
-						scan_state.LoadGroup();
+						scan_state.LoadCounts();
+						scan_state.values_loaded = false;
 					}
 					continue;
 				}
-				target_group = scan_state.entry_pos / RLE_GROUP_SIZE;
+				WalkInGroup<PACKED>(target);
+				return;
 			}
 			auto run_length = scan_state.CurrentRunLength();
 			if (row == target) {
@@ -1107,9 +1142,33 @@ struct RLEFetchState : public SegmentScanState {
 		}
 	}
 
+	template <bool PACKED>
+	void WalkInGroup(idx_t target) {
+		const idx_t group_end =
+		    MinValue<idx_t>((scan_state.entry_pos / RLE_GROUP_SIZE + 1) * RLE_GROUP_SIZE, scan_state.max_entry_pos);
+		scan_state.template ValidateThrough<PACKED>(group_end - 1);
+		idx_t entry = scan_state.entry_pos;
+		idx_t remaining = scan_state.position_in_entry + (target - row);
+		while (true) {
+			if (entry >= group_end) {
+				ThrowRLERunCountArrayExhausted();
+			}
+			const idx_t run_length = scan_state.template RawCount<PACKED>(entry);
+			if (remaining < run_length) {
+				break;
+			}
+			remaining -= run_length;
+			entry++;
+		}
+		scan_state.entry_pos = entry;
+		scan_state.position_in_entry = remaining;
+		row = target;
+	}
+
 	RLEScanState<T> scan_state;
 	//! The row of the segment the scan state is at
 	idx_t row = 0;
+	idx_t previous_group = DConstants::INVALID_INDEX;
 	//! The first row of each group of runs that the scan state reached: runs are only found by walking them, so a row
 	//! is walked to from the start of its group
 	vector<idx_t> group_rows = {0};
@@ -1126,7 +1185,19 @@ void RLEFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx_t *
 	auto result_data = FlatVector::GetDataMutable<T>(result);
 	for (idx_t i = 0; i < count; i++) {
 		fetch_state.Seek(rows[i]);
-		result_data[result_offset + result_sel.get_index(i)] = scan_state.CurrentValue();
+		scan_state.CurrentRunLength();
+		if (!scan_state.layout.packed) {
+			result_data[result_offset + result_sel.get_index(i)] = scan_state.Value();
+			continue;
+		}
+		if (!scan_state.values_loaded) {
+			auto group = scan_state.entry_pos / RLE_GROUP_SIZE;
+			if (group == fetch_state.previous_group) {
+				scan_state.LoadValues();
+			}
+			fetch_state.previous_group = group;
+		}
+		result_data[result_offset + result_sel.get_index(i)] = scan_state.PackedValue();
 	}
 }
 

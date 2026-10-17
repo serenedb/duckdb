@@ -122,6 +122,29 @@ void Allocator::FlushAll() {
 	MallocTrim(0);
 }
 
+optional_idx Allocator::UnpurgedBytes() {
+	uint64_t epoch = 1;
+	if (mallctl("epoch", nullptr, nullptr, &epoch, sizeof(epoch)) != 0) {
+		return optional_idx();
+	}
+	size_t page = 0;
+	size_t page_len = sizeof(page);
+	if (mallctl("arenas.page", &page, &page_len, nullptr, 0) != 0) {
+		return optional_idx();
+	}
+	idx_t pages = 0;
+	for (const auto stat : {"pdirty", "pmuzzy"}) {
+		const auto name = StringUtil::Format("stats.arenas.%llu.%s", static_cast<idx_t>(MALLCTL_ARENAS_ALL), stat);
+		size_t value = 0;
+		size_t len = sizeof(value);
+		if (mallctl(name.c_str(), &value, &len, nullptr, 0) != 0) {
+			return optional_idx();
+		}
+		pages += value;
+	}
+	return pages * page;
+}
+
 void Allocator::SetBackgroundThreads(bool enable) {
 #ifndef __APPLE__
 	SetJemallocCTL("background_thread", enable);

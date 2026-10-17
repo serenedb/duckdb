@@ -78,7 +78,8 @@ static PhysicalOperator &AddProjection(PhysicalPlanGenerator &plan, LogicalCreat
 	return select;
 }
 
-static PhysicalOperator &AddSort(PhysicalPlanGenerator &plan, LogicalCreateIndex &op, PhysicalOperator &prev) {
+static PhysicalOperator &AddSort(PhysicalPlanGenerator &plan, ClientContext &context, LogicalCreateIndex &op,
+                                 PhysicalOperator &prev) {
 	auto cardinality = op.estimated_cardinality;
 
 	vector<BoundOrderByNode> orders;
@@ -91,7 +92,8 @@ static PhysicalOperator &AddSort(PhysicalPlanGenerator &plan, LogicalCreateIndex
 	// add row id column to projections
 	projections.emplace_back(prev.types.size() - 1);
 
-	auto &sortby = plan.Make<PhysicalOrder>(prev.types, std::move(orders), std::move(projections), cardinality, true);
+	auto &sortby = plan.Make<PhysicalOrder>(context, prev.types, prev.types, std::move(orders), std::move(projections),
+	                                        cardinality, true);
 
 	sortby.children.push_back(prev);
 
@@ -202,7 +204,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreateDefaultIndexPlan(LogicalCreateInd
 		plan = &AddFilter(*this, op, *plan);
 	}
 	if (need_sort) {
-		plan = &AddSort(*this, op, *plan);
+		plan = &AddSort(*this, context, op, *plan);
 	}
 	plan = &AddCreateIndex(*this, op, *plan, *index_type, std::move(bind_data), std::move(scan_row_end));
 

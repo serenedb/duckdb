@@ -1,0 +1,736 @@
+# name: test/sql/storage/compression/fetch_rows_lone_rows.test
+# description: Rows of the segments of each compression fetched alone, in clusters and at a stride
+# group: [compression]
+
+load {TEST_DIR}/test_fetch_rows_lone_rows.db readwrite serenedb_latest
+
+statement ok
+PRAGMA force_compression = 'bitpacking';
+
+statement ok
+CREATE TABLE for_wide (id INTEGER PRIMARY KEY, v BIGINT);
+
+statement ok
+INSERT INTO for_wide SELECT id, (id * 2654435761 % 1000000007) * 1000003 FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('for_wide') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'bitpacking';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id * 2654435761 % 1000000007) * 1000003)) = 86 FROM for_wide WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id * 2654435761 % 1000000007) * 1000003)) FROM for_wide WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id * 2654435761 % 1000000007) * 1000003)) FROM for_wide WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id * 2654435761 % 1000000007) * 1000003)) FROM for_wide WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'bitpacking';
+
+statement ok
+CREATE TABLE delta_for (id INTEGER PRIMARY KEY, v BIGINT);
+
+statement ok
+INSERT INTO delta_for SELECT id, id * 3 + (id * 7919) % 5 FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('delta_for') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'bitpacking';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id * 3 + (id * 7919) % 5)) = 86 FROM delta_for WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id * 3 + (id * 7919) % 5)) FROM delta_for WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id * 3 + (id * 7919) % 5)) FROM delta_for WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id * 3 + (id * 7919) % 5)) FROM delta_for WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'bitpacking';
+
+statement ok
+CREATE TABLE for_nulls (id INTEGER PRIMARY KEY, v INTEGER);
+
+statement ok
+INSERT INTO for_nulls SELECT id, CASE WHEN id % 50 = 0 THEN NULL ELSE (id * 31) % 30000 - 15000 END FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('for_nulls') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'bitpacking';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 50 = 0 THEN NULL ELSE (id * 31) % 30000 - 15000 END)) = 86 FROM for_nulls WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 50 = 0 THEN NULL ELSE (id * 31) % 30000 - 15000 END)) FROM for_nulls WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 50 = 0 THEN NULL ELSE (id * 31) % 30000 - 15000 END)) FROM for_nulls WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 50 = 0 THEN NULL ELSE (id * 31) % 30000 - 15000 END)) FROM for_nulls WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'bitpacking';
+
+statement ok
+CREATE TABLE for_tinyint (id INTEGER PRIMARY KEY, v TINYINT);
+
+statement ok
+INSERT INTO for_tinyint SELECT id, (id % 100)::TINYINT FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('for_tinyint') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'bitpacking';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id % 100)::TINYINT)) = 86 FROM for_tinyint WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id % 100)::TINYINT)) FROM for_tinyint WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id % 100)::TINYINT)) FROM for_tinyint WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id % 100)::TINYINT)) FROM for_tinyint WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'bitpacking';
+
+statement ok
+CREATE TABLE for_smallint (id INTEGER PRIMARY KEY, v SMALLINT);
+
+statement ok
+INSERT INTO for_smallint SELECT id, ((id * 31) % 30000 - 15000)::SMALLINT FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('for_smallint') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'bitpacking';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (((id * 31) % 30000 - 15000)::SMALLINT)) = 86 FROM for_smallint WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (((id * 31) % 30000 - 15000)::SMALLINT)) FROM for_smallint WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (((id * 31) % 30000 - 15000)::SMALLINT)) FROM for_smallint WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (((id * 31) % 30000 - 15000)::SMALLINT)) FROM for_smallint WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'bitpacking';
+
+statement ok
+CREATE TABLE for_hugeint (id INTEGER PRIMARY KEY, v HUGEINT);
+
+statement ok
+INSERT INTO for_hugeint SELECT id, (id * 31 % 100000)::HUGEINT * 1000000000000 FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('for_hugeint') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'bitpacking';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id * 31 % 100000)::HUGEINT * 1000000000000)) = 86 FROM for_hugeint WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id * 31 % 100000)::HUGEINT * 1000000000000)) FROM for_hugeint WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id * 31 % 100000)::HUGEINT * 1000000000000)) FROM for_hugeint WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((id * 31 % 100000)::HUGEINT * 1000000000000)) FROM for_hugeint WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'rle';
+
+statement ok
+CREATE TABLE rle_bigint (id INTEGER PRIMARY KEY, v BIGINT);
+
+statement ok
+INSERT INTO rle_bigint SELECT id, id // 7 FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('rle_bigint') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'rle';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id // 7)) = 86 FROM rle_bigint WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id // 7)) FROM rle_bigint WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id // 7)) FROM rle_bigint WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (id // 7)) FROM rle_bigint WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'rle';
+
+statement ok
+CREATE TABLE rle_double (id INTEGER PRIMARY KEY, v DOUBLE);
+
+statement ok
+INSERT INTO rle_double SELECT id, ((id // 50) % 7) + 0.5 FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('rle_double') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'rle';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (((id // 50) % 7) + 0.5)) = 86 FROM rle_double WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (((id // 50) % 7) + 0.5)) FROM rle_double WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (((id // 50) % 7) + 0.5)) FROM rle_double WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (((id // 50) % 7) + 0.5)) FROM rle_double WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'alp';
+
+statement ok
+CREATE TABLE alp_double (id INTEGER PRIMARY KEY, v DOUBLE);
+
+statement ok
+INSERT INTO alp_double SELECT id, CASE WHEN id % 97 = 0 THEN pi() * id ELSE id / 8.0 END FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('alp_double') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'alp';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 97 = 0 THEN pi() * id ELSE id / 8.0 END)) = 86 FROM alp_double WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 97 = 0 THEN pi() * id ELSE id / 8.0 END)) FROM alp_double WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 97 = 0 THEN pi() * id ELSE id / 8.0 END)) FROM alp_double WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 97 = 0 THEN pi() * id ELSE id / 8.0 END)) FROM alp_double WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'alp';
+
+statement ok
+CREATE TABLE alp_float (id INTEGER PRIMARY KEY, v FLOAT);
+
+statement ok
+INSERT INTO alp_float SELECT id, (CASE WHEN id % 89 = 0 THEN pi() * id ELSE id / 4.0 END)::FLOAT FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('alp_float') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'alp';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((CASE WHEN id % 89 = 0 THEN pi() * id ELSE id / 4.0 END)::FLOAT)) = 86 FROM alp_float WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((CASE WHEN id % 89 = 0 THEN pi() * id ELSE id / 4.0 END)::FLOAT)) FROM alp_float WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((CASE WHEN id % 89 = 0 THEN pi() * id ELSE id / 4.0 END)::FLOAT)) FROM alp_float WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((CASE WHEN id % 89 = 0 THEN pi() * id ELSE id / 4.0 END)::FLOAT)) FROM alp_float WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'alprd';
+
+statement ok
+CREATE TABLE alprd_double (id INTEGER PRIMARY KEY, v DOUBLE);
+
+statement ok
+INSERT INTO alprd_double SELECT id, CASE WHEN id % 97 = 0 THEN -1e300 * id ELSE sin(id) END FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('alprd_double') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'alprd';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 97 = 0 THEN -1e300 * id ELSE sin(id) END)) = 86 FROM alprd_double WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 97 = 0 THEN -1e300 * id ELSE sin(id) END)) FROM alprd_double WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 97 = 0 THEN -1e300 * id ELSE sin(id) END)) FROM alprd_double WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 97 = 0 THEN -1e300 * id ELSE sin(id) END)) FROM alprd_double WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'alprd';
+
+statement ok
+CREATE TABLE alprd_float (id INTEGER PRIMARY KEY, v FLOAT);
+
+statement ok
+INSERT INTO alprd_float SELECT id, (CASE WHEN id % 89 = 0 THEN -1e30 * id ELSE sin(id) END)::FLOAT FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('alprd_float') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'alprd';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((CASE WHEN id % 89 = 0 THEN -1e30 * id ELSE sin(id) END)::FLOAT)) = 86 FROM alprd_float WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((CASE WHEN id % 89 = 0 THEN -1e30 * id ELSE sin(id) END)::FLOAT)) FROM alprd_float WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((CASE WHEN id % 89 = 0 THEN -1e30 * id ELSE sin(id) END)::FLOAT)) FROM alprd_float WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM ((CASE WHEN id % 89 = 0 THEN -1e30 * id ELSE sin(id) END)::FLOAT)) FROM alprd_float WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'dict_fsst';
+
+statement ok
+CREATE TABLE dict_fsst_nulls (id INTEGER PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO dict_fsst_nulls SELECT id, CASE WHEN id % 17 = 0 THEN NULL ELSE 'category_' || (id % 50) END FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('dict_fsst_nulls') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'dict_fsst';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 17 = 0 THEN NULL ELSE 'category_' || (id % 50) END)) = 86 FROM dict_fsst_nulls WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 17 = 0 THEN NULL ELSE 'category_' || (id % 50) END)) FROM dict_fsst_nulls WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 17 = 0 THEN NULL ELSE 'category_' || (id % 50) END)) FROM dict_fsst_nulls WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 17 = 0 THEN NULL ELSE 'category_' || (id % 50) END)) FROM dict_fsst_nulls WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'roaring';
+
+statement ok
+CREATE TABLE roaring_sparse (id INTEGER PRIMARY KEY, v BOOLEAN);
+
+statement ok
+INSERT INTO roaring_sparse SELECT id, CASE WHEN id % 997 = 0 THEN NULL ELSE id % 97 = 0 END FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('roaring_sparse') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'roaring';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 997 = 0 THEN NULL ELSE id % 97 = 0 END)) = 86 FROM roaring_sparse WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 997 = 0 THEN NULL ELSE id % 97 = 0 END)) FROM roaring_sparse WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 997 = 0 THEN NULL ELSE id % 97 = 0 END)) FROM roaring_sparse WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 997 = 0 THEN NULL ELSE id % 97 = 0 END)) FROM roaring_sparse WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'roaring';
+
+statement ok
+CREATE TABLE roaring_runs (id INTEGER PRIMARY KEY, v BOOLEAN);
+
+statement ok
+INSERT INTO roaring_runs SELECT id, CASE WHEN (id // 50) % 4 = 0 THEN NULL ELSE (id // 30) % 2 = 0 END FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('roaring_runs') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'roaring';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN (id // 50) % 4 = 0 THEN NULL ELSE (id // 30) % 2 = 0 END)) = 86 FROM roaring_runs WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN (id // 50) % 4 = 0 THEN NULL ELSE (id // 30) % 2 = 0 END)) FROM roaring_runs WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN (id // 50) % 4 = 0 THEN NULL ELSE (id // 30) % 2 = 0 END)) FROM roaring_runs WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN (id // 50) % 4 = 0 THEN NULL ELSE (id // 30) % 2 = 0 END)) FROM roaring_runs WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'roaring';
+
+statement ok
+CREATE TABLE roaring_mostly_null (id INTEGER PRIMARY KEY, v BOOLEAN);
+
+statement ok
+INSERT INTO roaring_mostly_null SELECT id, CASE WHEN id % 50 = 0 THEN id % 3 = 0 ELSE NULL END FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('roaring_mostly_null') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'roaring';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 50 = 0 THEN id % 3 = 0 ELSE NULL END)) = 86 FROM roaring_mostly_null WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 50 = 0 THEN id % 3 = 0 ELSE NULL END)) FROM roaring_mostly_null WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 50 = 0 THEN id % 3 = 0 ELSE NULL END)) FROM roaring_mostly_null WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN id % 50 = 0 THEN id % 3 = 0 ELSE NULL END)) FROM roaring_mostly_null WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;
+
+statement ok
+PRAGMA force_compression = 'roaring';
+
+statement ok
+CREATE TABLE roaring_dense (id INTEGER PRIMARY KEY, v BOOLEAN);
+
+statement ok
+INSERT INTO roaring_dense SELECT id, CASE WHEN hash(id) % 3 = 0 THEN NULL ELSE hash(id) % 2 = 0 END FROM range(1, 40001) r(id);
+
+statement ok
+CHECKPOINT;
+
+query I
+SELECT count(*) > 0 FROM pragma_storage_info('roaring_dense') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression ILIKE 'roaring';
+----
+true
+
+query I
+SELECT count(*) = 86 AND count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN hash(id) % 3 = 0 THEN NULL ELSE hash(id) % 2 = 0 END)) = 86 FROM roaring_dense WHERE id IN (117,349,860,1000,1001,1003,1009,1015,1016,1017,1031,1040,1901,2047,2048,2049,2050,2051,2056,2057,2062,2063,2064,2065,2078,2079,2087,2088,3399,4715,6683,7420,8191,8192,8194,8200,8206,8207,8208,8222,8231,8304,8667,9095,10280,10460,10870,10911,11933,13035,13421,13727,14122,14204,16160,16322,16341,16741,18317,18960,20000,20001,20003,20009,20015,20016,20017,20031,20040,20556,23497,24366,24954,25523,26749,29153,30516,30741,34737,35339,35636,37614,39990,39991,39993,39999);
+----
+true
+
+statement ok
+SET debug_force_fetch_row = true;
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN hash(id) % 3 = 0 THEN NULL ELSE hash(id) % 2 = 0 END)) FROM roaring_dense WHERE id % 37 = 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN hash(id) % 3 = 0 THEN NULL ELSE hash(id) % 2 = 0 END)) FROM roaring_dense WHERE id % 3 <> 0;
+----
+true
+
+query I
+SELECT count(*) > 0 AND count(*) = count(*) FILTER (WHERE v IS NOT DISTINCT FROM (CASE WHEN hash(id) % 3 = 0 THEN NULL ELSE hash(id) % 2 = 0 END)) FROM roaring_dense WHERE hash(id) % 101 = 0;
+----
+true
+
+statement ok
+RESET debug_force_fetch_row;

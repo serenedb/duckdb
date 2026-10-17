@@ -286,8 +286,7 @@ shared_ptr<PreparedStatementData> Planner::PrepareSQLStatement(unique_ptr<SQLSta
 
 void Planner::CreatePlan(unique_ptr<SQLStatement> statement) {
 	D_ASSERT(statement);
-	Optimizer optimizer(*binder, context);
-	optimizer.OptimizeStatement(statement);
+	Optimizer::OptimizeStatement(*binder, context, statement);
 
 	switch (statement->type) {
 	case StatementType::SELECT_STATEMENT:

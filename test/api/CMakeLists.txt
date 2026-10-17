@@ -16,6 +16,7 @@ set(TEST_API_OBJECTS
     test_remove_directory_extended.cpp
     test_temporary_file_owner.cpp
     test_bind_statement.cpp
+    test_caller_driven_query.cpp
     test_function_signature_variadic.cpp
     test_scalar_function_decimal_return.cpp
     test_aggregate_state_bind_data.cpp
@@ -73,6 +74,7 @@ set(TEST_API_OBJECTS
     test_partial_executor.cpp
     test_buffer_pool_eviction.cpp
     test_block_allocator_tls.cpp
+    test_allocator_unpurged.cpp
     test_group_commit_bound.cpp
     test_wal_sync_parallelism.cpp
     test_data_table_scan_without_row_groups.cpp)

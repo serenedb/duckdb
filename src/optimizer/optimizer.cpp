@@ -61,6 +61,8 @@
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/logical_plan_verifier.hpp"
 #include "duckdb/planner/planner.hpp"
+#include "duckdb/planner/operator/logical_execute.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_prepare.hpp"
 #include "duckdb/planner/operator/logical_secure_view.hpp"
 #include "duckdb/optimizer/remote_pushdown_optimizer.hpp"
@@ -226,16 +228,40 @@ static bool ContainsDML(const LogicalOperator &op) {
 	return false;
 }
 
-static bool ContainsDataSource(const LogicalOperator &op) {
+static bool CollectDataVersions(const LogicalOperator &op, vector<shared_ptr<PlanDataVersion>> &versions) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
-		return true;
+		auto &get = op.Cast<LogicalGet>();
+		auto version = get.bind_data ? get.bind_data->GetPlanDataVersion() : nullptr;
+		if (!version) {
+			return false;
+		}
+		versions.push_back(std::move(version));
+	}
+	if (op.type == LogicalOperatorType::LOGICAL_EXECUTE && op.children.empty()) {
+		auto &executed = *op.Cast<LogicalExecute>().prepared;
+		if (executed.properties.always_require_rebind) {
+			return false;
+		}
+		versions.insert(versions.end(), executed.data_versions.begin(), executed.data_versions.end());
 	}
 	for (auto &child : op.children) {
-		if (ContainsDataSource(*child)) {
-			return true;
+		if (!CollectDataVersions(*child, versions)) {
+			return false;
 		}
 	}
-	return false;
+	return true;
+}
+
+static void TrackDataVersions(const LogicalOperator &plan, PreparedStatementData &prepared) {
+	if (prepared.properties.read_databases.empty()) {
+		return;
+	}
+	vector<shared_ptr<PlanDataVersion>> versions;
+	if (CollectDataVersions(plan, versions)) {
+		prepared.data_versions = std::move(versions);
+	} else {
+		prepared.properties.always_require_rebind = true;
+	}
 }
 
 // Returns true if the plan contains a DML statement inside a CTE body. A top-level
@@ -256,18 +282,17 @@ static bool CTEContainsDML(const LogicalOperator &op) {
 	return false;
 }
 
-void Optimizer::OptimizeStatement(unique_ptr<SQLStatement> &statement) {
-	if (!enable_optimizer) {
+void Optimizer::OptimizeStatement(Binder &binder, ClientContext &context, unique_ptr<SQLStatement> &statement) {
+	if (!Settings::Get<EnableOptimizerSetting>(context) || DatabaseManager::Get(context).GetRemoteCatalogCount() == 0) {
 		return;
 	}
-	if (DatabaseManager::Get(context).GetRemoteCatalogCount() > 0) {
-		// if we have any remote catalogs attached then pushdown into remote
-		RunOptimizer(OptimizerType::REMOTE_PUSHDOWN, [&]() {
-			RemotePushdownOptimizer optimizer(binder);
-			optimizer.Rewrite(statement);
-			optimizer.RevertUnshippedFolds();
-		});
-	}
+	// if we have any remote catalogs attached then pushdown into remote
+	Optimizer optimizer(binder, context);
+	optimizer.RunOptimizer(OptimizerType::REMOTE_PUSHDOWN, [&] {
+		RemotePushdownOptimizer pushdown(binder);
+		pushdown.Rewrite(statement);
+		pushdown.RevertUnshippedFolds();
+	});
 }
 
 void Optimizer::RunBuiltInOptimizers() {
@@ -615,11 +640,14 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	Verify(*plan_p);
 
 	this->plan = std::move(plan_p);
-	if (plan->type == LogicalOperatorType::LOGICAL_PREPARE) {
-		auto &prepared = plan->Cast<LogicalPrepare>().prepared;
-		// Optimizers can embed the current database state in the executable plan.
-		if (!prepared->properties.read_databases.empty() && ContainsDataSource(*plan)) {
-			prepared->properties.always_require_rebind = true;
+	for (optional_ptr<LogicalOperator> op = plan.get(); op;
+	     op = op->children.empty() ? nullptr : op->children[0].get()) {
+		if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
+			TrackDataVersions(*plan, *op->Cast<LogicalPrepare>().prepared);
+		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE && op->Cast<LogicalExecute>().replaces) {
+			TrackDataVersions(*op->children[0], *op->Cast<LogicalExecute>().prepared);
+		} else {
+			break;
 		}
 	}
 

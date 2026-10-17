@@ -277,24 +277,17 @@ void RoaringFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx
 	auto &scan_state = GetFetchScanState(segment, state);
 	auto &result_mask = FlatVector::ValidityMutable(result);
 	for (idx_t i = 0; i < count; i++) {
-		idx_t internal_offset;
-		idx_t container_idx = scan_state.GetContainerIndex(rows[i], internal_offset);
-		auto &container_state = scan_state.LoadContainer(container_idx, internal_offset);
-
-		scan_state.ScanInternal(container_state, 1, result_mask, result_offset + result_sel.get_index(i));
+		if (!scan_state.RowIsValid(rows[i])) {
+			result_mask.SetInvalid(result_offset + result_sel.get_index(i));
+		}
 	}
 }
 void RoaringFetchRowsBoolean(ColumnSegment &segment, ColumnFetchState &state, const idx_t *rows, idx_t count,
                              Vector &result, const SelectionVector &result_sel, idx_t result_offset) {
 	auto &scan_state = GetFetchScanState(segment, state);
+	auto result_data = FlatVector::GetDataMutable<uint8_t>(result);
 	for (idx_t i = 0; i < count; i++) {
-		idx_t internal_offset;
-		idx_t container_idx = scan_state.GetContainerIndex(rows[i], internal_offset);
-		auto &container_state = scan_state.LoadContainer(container_idx, internal_offset);
-
-		ValidityMask validity(1);
-		scan_state.ScanInternal(container_state, 1, validity, 0);
-		ExtractValidityMaskToData(validity, result, result_offset + result_sel.get_index(i), 1);
+		result_data[result_offset + result_sel.get_index(i)] = scan_state.RowIsValid(rows[i]);
 	}
 }
 

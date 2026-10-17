@@ -566,6 +566,26 @@ TEST_CASE("Test prepared statements that require rebind", "[api]") {
 	REQUIRE_NO_FAIL(prepared->Execute());
 }
 
+TEST_CASE("Test a PREPARE run as a prepared statement rebinds on its data", "[api]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("CREATE TABLE filter_t (i INTEGER)"));
+	REQUIRE_NO_FAIL(con.Query("INSERT INTO filter_t SELECT range FROM range(100)"));
+
+	auto prepare = con.Prepare("PREPARE stale_filter AS SELECT count(*) FROM filter_t WHERE i = 200");
+	REQUIRE_NO_FAIL(prepare->Execute());
+	auto execute = con.Prepare("EXECUTE stale_filter");
+	auto result = execute->Execute();
+	REQUIRE(CHECK_COLUMN(result, 0, {0}));
+
+	REQUIRE_NO_FAIL(con.Query("INSERT INTO filter_t VALUES (200)"));
+	result = con.Query("EXECUTE stale_filter");
+	REQUIRE(CHECK_COLUMN(result, 0, {1}));
+	execute = con.Prepare("EXECUTE stale_filter");
+	result = execute->Execute();
+	REQUIRE(CHECK_COLUMN(result, 0, {1}));
+}
+
 class TestExtensionState : public ClientContextState {
 public:
 	bool CanRequestRebind() override {
