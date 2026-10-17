@@ -810,7 +810,11 @@ ResetSortedBy <- 'RESET' 'SORTED' 'BY'
 SetOptions <- 'SET' RelOptionList
 ResetOptions <- 'RESET' RelOptionList
 
-AlterColumnEntry <- AddOrDropDefault / ChangeNullability / AlterType
+AlterColumnEntry <- AddOrDropDefault / ChangeNullability / AlterType / SetCompression
+
+SetCompression <- SetCompressionDefault / SetCompressionCodec
+SetCompressionDefault <- 'SET' 'COMPRESSION' 'DEFAULT'
+SetCompressionCodec <- 'SET' 'COMPRESSION' ColIdOrString Parens(List(Expression))?
 
 AddOrDropDefault <- AddDefault / DropDefault
 AddDefault <- 'SET' 'DEFAULT' Expression
@@ -964,7 +968,7 @@ CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName WithList
 DropDatabaseStatement <- 'DROP' 'DATABASE' IfExists? CatalogName DropDatabaseForce? DropBehavior?
 DropDatabaseForce <- '(' 'FORCE' ')'
 
-CreateIndexStmt <- UniqueIndex? 'INDEX' IfNotExists? IndexName? 'ON' BaseTableName IndexType? IndexColumns WithList? WhereClause?
+CreateIndexStmt <- UniqueIndex? 'INDEX' IfNotExists? IndexName? 'ON' BaseTableName IndexType? IndexColumns SortedOptions? WithList? WhereClause?
 
 IndexColumns <- IndexKeyColumns / IncludeClause
 IndexKeyColumns <- Parens(List(IndexElement)) IncludeClause?
@@ -1129,7 +1133,7 @@ PartitionSortedOptions <- PartitionOptSortedOptions / SortedOptPartitionOptions
 PartitionOptSortedOptions <- PartitionOptions SortedOptions?
 SortedOptPartitionOptions <- SortedOptions PartitionOptions?
 PartitionOptions <- 'PARTITIONED' 'BY' Parens(List(Expression))
-SortedOptions <- 'SORTED' 'BY' Parens(List(Expression))
+SortedOptions <- 'SORTED' 'BY' Parens(List(OrderByExpression))
 
 WithData <- WithDataOnly / WithNoData
 WithDataOnly <- 'WITH' 'DATA'
@@ -1168,7 +1172,7 @@ DefaultValue <- 'DEFAULT' ColumnDefaultExpr
 CheckConstraint <- 'CHECK' Parens(Expression)
 ForeignKeyConstraint <- 'REFERENCES' BaseTableName Parens(ColumnList)? KeyActions?
 ColumnCollation <- 'COLLATE' DottedIdentifier
-ColumnCompression <- 'USING' 'COMPRESSION' ColIdOrString
+ColumnCompression <- 'USING' 'COMPRESSION' ColIdOrString Parens(List(Expression))?
 
 KeyActions <- UpdateFirstKeyActions / DeleteFirstKeyActions
 UpdateFirstKeyActions <- UpdateAction DeleteAction?

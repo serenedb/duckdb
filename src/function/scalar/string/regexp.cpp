@@ -107,6 +107,7 @@ unique_ptr<FunctionData> RegexpMatchesBind(BindScalarFunctionInput &input) {
 	RE2::Options options;
 	options.set_log_errors(false);
 	options.set_thread_safe(false);
+	options.set_valid_utf8(true);
 	if (arguments.size() == 3) {
 		ParseRegexOptions(input.GetConstant(2), options);
 	}
@@ -185,6 +186,7 @@ static unique_ptr<FunctionData> RegexReplaceBind(BindScalarFunctionInput &input)
 	}
 	data->options.set_log_errors(false);
 	data->options.set_thread_safe(false);
+	data->options.set_valid_utf8(true);
 	return std::move(data);
 }
 
@@ -378,6 +380,7 @@ static unique_ptr<FunctionData> RegexExtractBind(BindScalarFunctionInput &input)
 
 	duckdb_re2::RE2::Options options;
 	options.set_thread_safe(false);
+	options.set_valid_utf8(true);
 
 	string constant_string;
 	bool constant_pattern = TryParseConstantPattern(input.TryGetConstant(1), constant_string);

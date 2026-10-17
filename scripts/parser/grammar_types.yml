@@ -282,6 +282,9 @@ AlterTableInfo:
     - AlterType
     - AddOrDropDefault
     - AddDefault
+    - SetCompression
+    - SetCompressionDefault
+    - SetCompressionCodec
     - RenameColumn
     - RenameAlter
     - AddConstraint
@@ -732,7 +735,6 @@ ExpressionList:
     - OverlayParameters
     - OverlayExpressionList
     - PartitionOptions
-    - SortedOptions
     - PivotUsing
     - WindowClause
     - SetAssignment
@@ -790,6 +792,7 @@ OrderByNodeList:
     - OrderByAll
     - WithinGroupClause
     - GenericCopyOptionParenthesizedExpressionList
+    - SortedOptions
 
 MacroParameterList:
   type: "vector<MacroParameter>"

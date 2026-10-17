@@ -85,6 +85,12 @@ unique_ptr<LogicalOperator> IndexBinder::BindCreateIndex(ClientContext &context,
                                                          TableCatalogEntry &table_entry,
                                                          unique_ptr<LogicalOperator> plan,
                                                          unique_ptr<AlterTableInfo> alter_table_info) {
+	if (!create_index_info->sort_orders.empty()) {
+		auto index_type = context.db->config.GetIndexTypes().FindByName(create_index_info->index_type);
+		if (!index_type || !index_type->supports_sorted_by) {
+			throw NotImplementedException("SORTED BY is not supported for %s indexes", create_index_info->index_type);
+		}
+	}
 	// Add the dependencies.
 	auto &dependencies = create_index_info->dependencies;
 	auto &catalog = table_entry.ParentCatalog();
