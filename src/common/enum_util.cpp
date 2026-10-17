@@ -48,6 +48,7 @@
 #include "duckdb/common/enums/http_status_code.hpp"
 #include "duckdb/common/enums/identifier_case_mode.hpp"
 #include "duckdb/common/enums/index_constraint_type.hpp"
+#include "duckdb/common/enums/integer_overflow_mode.hpp"
 #include "duckdb/common/enums/job_schedule_kind.hpp"
 #include "duckdb/common/enums/join_type.hpp"
 #include "duckdb/common/enums/joinref_type.hpp"
@@ -3414,6 +3415,24 @@ InsertColumnOrder EnumUtil::FromString<InsertColumnOrder>(std::string_view value
 	return static_cast<InsertColumnOrder>(StringUtil::StringToEnum(GetInsertColumnOrderValues(), 2, "InsertColumnOrder", value));
 }
 
+const StringUtil::EnumStringLiteral *GetIntegerOverflowModeValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(IntegerOverflowMode::ERROR), "ERROR" },
+		{ static_cast<uint32_t>(IntegerOverflowMode::WRAP), "WRAP" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<IntegerOverflowMode>(IntegerOverflowMode value) {
+	return StringUtil::EnumToString(GetIntegerOverflowModeValues(), 2, "IntegerOverflowMode", static_cast<uint32_t>(value));
+}
+
+template<>
+IntegerOverflowMode EnumUtil::FromString<IntegerOverflowMode>(std::string_view value) {
+	return static_cast<IntegerOverflowMode>(StringUtil::StringToEnum(GetIntegerOverflowModeValues(), 2, "IntegerOverflowMode", value));
+}
+
 const StringUtil::EnumStringLiteral *GetInterruptModeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(InterruptMode::NO_INTERRUPTS), "NO_INTERRUPTS" },
@@ -5591,6 +5610,7 @@ const StringUtil::EnumStringLiteral *GetRecursiveCTESourcePhaseValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(RecursiveCTESourcePhase::INITIAL), "INITIAL" },
 		{ static_cast<uint32_t>(RecursiveCTESourcePhase::SCANNING_UNION), "SCANNING_UNION" },
+		{ static_cast<uint32_t>(RecursiveCTESourcePhase::ADVANCING_UNION), "ADVANCING_UNION" },
 		{ static_cast<uint32_t>(RecursiveCTESourcePhase::RECURSING_KEY), "RECURSING_KEY" },
 		{ static_cast<uint32_t>(RecursiveCTESourcePhase::DRAINING_FINAL_KEY_STATE), "DRAINING_FINAL_KEY_STATE" },
 		{ static_cast<uint32_t>(RecursiveCTESourcePhase::FINISHED), "FINISHED" }
@@ -5600,12 +5620,12 @@ const StringUtil::EnumStringLiteral *GetRecursiveCTESourcePhaseValues() {
 
 template<>
 const char* EnumUtil::ToChars<RecursiveCTESourcePhase>(RecursiveCTESourcePhase value) {
-	return StringUtil::EnumToString(GetRecursiveCTESourcePhaseValues(), 5, "RecursiveCTESourcePhase", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetRecursiveCTESourcePhaseValues(), 6, "RecursiveCTESourcePhase", static_cast<uint32_t>(value));
 }
 
 template<>
 RecursiveCTESourcePhase EnumUtil::FromString<RecursiveCTESourcePhase>(std::string_view value) {
-	return static_cast<RecursiveCTESourcePhase>(StringUtil::StringToEnum(GetRecursiveCTESourcePhaseValues(), 5, "RecursiveCTESourcePhase", value));
+	return static_cast<RecursiveCTESourcePhase>(StringUtil::StringToEnum(GetRecursiveCTESourcePhaseValues(), 6, "RecursiveCTESourcePhase", value));
 }
 
 const StringUtil::EnumStringLiteral *GetRecursiveProbeSidePreferenceValues() {

@@ -318,6 +318,8 @@ enum class IndexDeltaType : uint8_t;
 
 enum class InsertColumnOrder : uint8_t;
 
+enum class IntegerOverflowMode : uint8_t;
+
 enum class InterruptMode : uint8_t;
 
 enum class JobScheduleKind : uint8_t;
@@ -1138,6 +1140,9 @@ const char* EnumUtil::ToChars<IndexDeltaType>(IndexDeltaType value);
 
 template<>
 const char* EnumUtil::ToChars<InsertColumnOrder>(InsertColumnOrder value);
+
+template<>
+const char* EnumUtil::ToChars<IntegerOverflowMode>(IntegerOverflowMode value);
 
 template<>
 const char* EnumUtil::ToChars<InterruptMode>(InterruptMode value);
@@ -2153,6 +2158,9 @@ IndexDeltaType EnumUtil::FromString<IndexDeltaType>(std::string_view value);
 
 template<>
 InsertColumnOrder EnumUtil::FromString<InsertColumnOrder>(std::string_view value);
+
+template<>
+IntegerOverflowMode EnumUtil::FromString<IntegerOverflowMode>(std::string_view value);
 
 template<>
 InterruptMode EnumUtil::FromString<InterruptMode>(std::string_view value);

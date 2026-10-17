@@ -24,6 +24,9 @@ void MacroFunction::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
 		serializer.WritePropertyWithDefault<vector<string>>(16485, "return_names", return_names);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<string>(16486, "source", source, string());
+	}
 }
 
 unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer) {
@@ -33,6 +36,7 @@ unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer)
 	auto types = deserializer.ReadPropertyWithExplicitDefault<vector<LogicalType>>(103, "types", vector<LogicalType>());
 	auto return_types = deserializer.ReadPropertyWithDefault<vector<LogicalType>>(16484, "return_types");
 	auto return_names = deserializer.ReadPropertyWithDefault<vector<string>>(16485, "return_names");
+	auto source = deserializer.ReadPropertyWithExplicitDefault<string>(16486, "source", string());
 	unique_ptr<MacroFunction> result;
 	switch (type) {
 	case MacroType::SCALAR_MACRO:
@@ -49,6 +53,7 @@ unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer)
 	result->types = std::move(types);
 	result->return_types = std::move(return_types);
 	result->return_names = std::move(return_names);
+	result->source = std::move(source);
 	result->FinalizeDeserialization();
 	return result;
 }
@@ -56,11 +61,15 @@ unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer)
 void ScalarMacroFunction::Serialize(Serializer &serializer) const {
 	MacroFunction::Serialize(serializer);
 	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(200, "expression", expression);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<bool>(16487, "query_body", query_body, false);
+	}
 }
 
 unique_ptr<MacroFunction> ScalarMacroFunction::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<ScalarMacroFunction>(new ScalarMacroFunction());
 	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(200, "expression", result->expression);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(16487, "query_body", result->query_body, false);
 	return std::move(result);
 }
 

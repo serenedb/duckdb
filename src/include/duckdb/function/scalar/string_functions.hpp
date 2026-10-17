@@ -275,6 +275,16 @@ struct SubstringGraphemeFun {
 	static ScalarFunctionSet GetFunctions();
 };
 
+struct SplitPartFun {
+	static constexpr const char *Name = "split_part";
+	static constexpr const char *Parameters = "string,delimiter,position";
+	static constexpr const char *Description = "Splits the `string` along the `delimiter` and returns the part at `position`, counted from 1, or from the end when `position` is negative. Returns an empty string when there is no such part.";
+	static constexpr const char *Example = "split_part('a;b;c', ';', 2)";
+	static constexpr const char *Categories = "string";
+
+	static ScalarFunction GetFunction();
+};
+
 struct StringSplitFun {
 	static constexpr const char *Name = "string_split";
 	static constexpr const char *Parameters = "string,separator";
