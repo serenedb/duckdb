@@ -142,7 +142,7 @@ static unique_ptr<RenderTreeNode> CreateNode(const ProfilingNode &op) {
 		    to_string(info.row_groups_scanned) + " / " + to_string(info.total_row_groups_to_scan);
 	}
 	result->extra_text[RenderTreeNode::CARDINALITY] = to_string(info.elements_returned);
-	string timing = StringUtil::Format("%.2f", info.time);
+	string timing = StringUtil::Format("%.6f", info.time);
 	result->extra_text[RenderTreeNode::TIMING] = timing + "s";
 	return result;
 }
