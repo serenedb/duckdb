@@ -2619,10 +2619,8 @@ static bool CanRestrictCorrelationDomain(LogicalOperator &op, unordered_set<Tabl
 	}
 	bool repeatable = true;
 	LogicalOperatorVisitor::EnumerateExpressions(op, [&](unique_ptr<Expression> *expr) {
-		repeatable &= !(*expr)->IsVolatile() && !ExpressionBarrier::Contains(**expr);
-		ExpressionIterator::VisitExpression<BoundFunctionExpression>(**expr, [&](const BoundFunctionExpression &func) {
-			repeatable &= !func.Function().RequiresOrderedExecution();
-		});
+		repeatable &=
+		    !(*expr)->IsVolatile() && !(*expr)->RequiresOrderedExecution() && !ExpressionBarrier::Contains(**expr);
 	});
 	if (!repeatable) {
 		return false;

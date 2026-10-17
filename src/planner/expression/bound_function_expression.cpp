@@ -36,21 +36,6 @@ ExpressionType BoundFunctionExpression::GetFunctionExpressionType(const BoundSca
 	return bound_function.GetExpressionType(input);
 }
 
-bool BoundFunctionExpression::RequiresOrderedExecution() const {
-	if (function.RequiresOrderedExecution()) {
-		return true;
-	}
-	bool has_value = false;
-	ExpressionIterator::EnumerateChildren(*this, [&](const Expression &child) {
-		if (child.GetExpressionType() != ExpressionType::BOUND_FUNCTION) {
-			return;
-		}
-		auto &child_function = child.Cast<BoundFunctionExpression>().Function();
-		has_value |= child_function.RequiresOrderedExecution();
-	});
-	return has_value;
-}
-
 bool BoundFunctionExpression::IsNodeVolatile() const {
 	auto lambda_expr = GetLambdaExpression(*this);
 	return function.GetStability() == FunctionStability::VOLATILE || (lambda_expr && lambda_expr->IsVolatile());
@@ -75,6 +60,12 @@ bool BoundFunctionExpression::CanThrow() const {
 	auto lambda_expr = GetLambdaExpression(*this);
 	return function.GetErrorMode() == FunctionErrors::CAN_THROW_RUNTIME_ERROR ||
 	       (lambda_expr && lambda_expr->CanThrow()) || Expression::CanThrow();
+}
+
+bool BoundFunctionExpression::RequiresOrderedExecution() const {
+	auto lambda_expr = GetLambdaExpression(*this);
+	return function.RequiresOrderedExecution() || (lambda_expr && lambda_expr->RequiresOrderedExecution()) ||
+	       Expression::RequiresOrderedExecution();
 }
 
 string BoundFunctionExpression::ToString() const {

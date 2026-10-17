@@ -47,6 +47,11 @@ bool Expression::CanThrow() const {
 	return ExpressionIterator::AnyChild(*this, [](const Expression &child) { return child.CanThrow(); });
 }
 
+bool Expression::RequiresOrderedExecution() const {
+	return ExpressionIterator::AnyChild(*this,
+	                                    [](const Expression &child) { return child.RequiresOrderedExecution(); });
+}
+
 bool Expression::PropagatesNullValues() const {
 	if (type == ExpressionType::OPERATOR_IS_NULL || type == ExpressionType::OPERATOR_IS_NOT_NULL ||
 	    type == ExpressionType::COMPARE_NOT_DISTINCT_FROM || type == ExpressionType::COMPARE_DISTINCT_FROM ||

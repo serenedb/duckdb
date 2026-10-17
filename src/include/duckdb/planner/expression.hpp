@@ -58,6 +58,7 @@ public:
 	virtual bool PropagatesNullValues() const;
 	virtual bool IsFoldable() const;
 	virtual bool CanThrow() const;
+	virtual bool RequiresOrderedExecution() const;
 
 	hash_t Hash() const;
 	template <class F>

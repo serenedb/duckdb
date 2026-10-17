@@ -48,12 +48,12 @@ public:
 	bool &IsOperatorMutable() {
 		return is_operator;
 	}
-	bool RequiresOrderedExecution() const;
 
 	using Expression::IsVolatile;
 	bool IsConsistent() const override;
 	bool IsFoldable() const override;
 	bool CanThrow() const override;
+	bool RequiresOrderedExecution() const override;
 	string ToString() const override;
 	bool PropagatesNullValues() const override;
 	bool Equals(const BaseExpression &other) const override;
