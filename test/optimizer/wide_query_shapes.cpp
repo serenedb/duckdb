@@ -107,3 +107,20 @@ TEST_CASE("Nested lambdas share one body with their bind data and copies", "[opt
 	auto result = con.Query("SELECT " + expr + " FROM range(3) t(x) ORDER BY 1");
 	REQUIRE(CHECK_COLUMN(result, 0, {19900, 19901, 19902}));
 }
+
+TEST_CASE("Ordering a long join chain greedily evaluates each pair once", "[optimizer]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+
+	vector<string> tables;
+	vector<string> predicates;
+	for (idx_t k = 0; k < 300; k++) {
+		tables.push_back(StringUtil::Format("range(10) r%d(c)", k));
+		if (k > 0) {
+			predicates.push_back(StringUtil::Format("r%d.c = r%d.c", k - 1, k));
+		}
+	}
+	auto result = con.Query("SELECT count(*) FROM " + StringUtil::Join(tables, ", ") + " WHERE " +
+	                        StringUtil::Join(predicates, " AND "));
+	REQUIRE(CHECK_COLUMN(result, 0, {10}));
+}
