@@ -186,7 +186,9 @@ void TaskScheduler::Enqueue(ProducerToken &producer, shared_ptr<Task> *tasks, id
 	if (activated) {
 		queue.Publish(*producer.account);
 	}
-	Wake(count, producer.account.get());
+	if (!keep_claim) {
+		Wake(count, producer.account.get());
+	}
 }
 
 bool TaskScheduler::GetTaskFromProducer(ProducerToken &token, shared_ptr<Task> &task) {
