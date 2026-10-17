@@ -1,5 +1,6 @@
 #include "duckdb/common/vector/map_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "core_functions/scalar/list_functions.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -41,14 +42,33 @@ void TemplatedPopulateChild(DataChunk &args, Vector &result) {
 
 void PopulateChildFallback(DataChunk &args, Vector &result) {
 	auto &child_type = ListType::GetChildType(result.GetType());
-	auto result_data = FlatVector::Writer<list_entry_t>(result, args.size());
-	for (idx_t i = 0; i < args.size(); i++) {
-		const auto entry_offset = ListVector::GetListSize(result);
-		for (idx_t col_idx = 0; col_idx < args.ColumnCount(); col_idx++) {
-			auto val = args.GetValue(col_idx, i).DefaultCastAs(child_type);
-			ListVector::PushBack(result, val);
+	const auto row_count = args.size();
+	const auto column_count = args.ColumnCount();
+	const auto total = row_count * column_count;
+	Vector staged(child_type, MaxValue<idx_t>(total, 1));
+	for (auto &column : args.data) {
+		if (column.GetType() == child_type) {
+			staged.Append(column, row_count, VectorAppendMode::ALLOW_RESIZE);
+		} else {
+			Vector cast(child_type, row_count);
+			string error;
+			if (!VectorOperations::DefaultTryCast(column, cast, row_count, &error)) {
+				throw InvalidInputException("Failed to cast value: %s", error);
+			}
+			staged.Append(cast, row_count, VectorAppendMode::ALLOW_RESIZE);
 		}
-		result_data.WriteValue(list_entry_t(entry_offset, args.ColumnCount()));
+	}
+	SelectionVector interleave(MaxValue<idx_t>(total, 1));
+	for (idx_t row = 0; row < row_count; row++) {
+		for (idx_t col = 0; col < column_count; col++) {
+			interleave.set_index(row * column_count + col, col * row_count + row);
+		}
+	}
+	const auto offset = ListVector::GetListSize(result);
+	ListVector::Append(result, staged, interleave, total);
+	auto result_data = FlatVector::Writer<list_entry_t>(result, row_count);
+	for (idx_t row = 0; row < row_count; row++) {
+		result_data.WriteValue(list_entry_t(offset + row * column_count, column_count));
 	}
 }
 

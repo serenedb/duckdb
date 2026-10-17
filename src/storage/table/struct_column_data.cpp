@@ -1,6 +1,7 @@
 #include "duckdb/storage/table/struct_column_data.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/storage/statistics/struct_stats.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/storage/table/column_checkpoint_state.hpp"
@@ -364,14 +365,11 @@ void StructColumnData::FetchRows(TransactionData transaction, ColumnFetchState &
 		if (!child_storage_index.HasChildren() && child_storage_index.HasType() &&
 		    child_storage_index.GetType() != child_type) {
 			auto context = transaction.transaction->context.lock();
-			for (idx_t idx = 0; idx < fetch_count; idx++) {
-				const idx_t offset = offsets[sel.get_index(idx)];
-				Vector intermediate(child_type, 1);
-				sub_column.FetchRows(transaction, state, child_storage_index, &offset,
-				                     *FlatVector::IncrementalSelectionVector(), /*count=*/1, intermediate, 0);
-				auto fetched_row = intermediate.GetValue(0).CastAs(*context, result.GetType());
-				result.SetValue(result_offset + idx, fetched_row);
-			}
+			Vector intermediate(child_type, fetch_count);
+			sub_column.FetchRows(transaction, state, child_storage_index, offsets, sel, fetch_count, intermediate, 0);
+			Vector cast(result.GetType(), fetch_count);
+			VectorOperations::Cast(*context, intermediate, cast, fetch_count);
+			VectorOperations::Copy(cast, result, fetch_count, 0, result_offset);
 			return;
 		} else {
 			sub_column.FetchRows(transaction, state, child_storage_index, offsets, sel, fetch_count, result,

@@ -2,6 +2,9 @@
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/function/function_set.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/vector/vector_iterator.hpp"
+#include "duckdb/common/vector/vector_writer.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 
 // this function makes not that much sense on its own but is a demo for table-parameter table-producing functions
 
@@ -22,18 +25,32 @@ static unique_ptr<FunctionData> SummaryFunctionBind(ClientContext &context, Tabl
 
 static OperatorResultType SummaryFunction(ExecutionContext &context, TableFunctionInput &data_p, DataChunk &input,
                                           DataChunk &output) {
-	auto &summary_col = output.data[0];
+	vector<Vector> text_columns;
+	vector<VectorIterator<string_t>> texts;
+	text_columns.reserve(input.ColumnCount());
+	texts.reserve(input.ColumnCount());
+	for (auto &column : input.data) {
+		text_columns.emplace_back(LogicalType::VARCHAR, input.size());
+		VectorOperations::DefaultCast(column, text_columns.back(), input.size());
+		texts.emplace_back(text_columns.back());
+	}
+	auto writer = FlatVector::Writer<string_t>(output.data[0], input.size());
+	string summary_val;
 	for (idx_t row_idx = 0; row_idx < input.size(); row_idx++) {
-		string summary_val = "[";
-
-		for (idx_t col_idx = 0; col_idx < input.ColumnCount(); col_idx++) {
-			summary_val += input.GetValue(col_idx, row_idx).ToString();
-			if (col_idx < input.ColumnCount() - 1) {
+		summary_val = "[";
+		for (idx_t col_idx = 0; col_idx < texts.size(); col_idx++) {
+			auto text = texts[col_idx][row_idx];
+			if (text.IsValid()) {
+				summary_val += text.GetValue().GetString();
+			} else {
+				summary_val += "NULL";
+			}
+			if (col_idx + 1 < texts.size()) {
 				summary_val += ", ";
 			}
 		}
 		summary_val += "]";
-		summary_col.Append(Value(summary_val));
+		writer.WriteValue(string_t(summary_val.c_str(), UnsafeNumericCast<uint32_t>(summary_val.size())));
 	}
 	for (idx_t col_idx = 0; col_idx < input.ColumnCount(); col_idx++) {
 		output.data[col_idx + 1].Reference(input.data[col_idx]);

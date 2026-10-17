@@ -9,9 +9,22 @@ namespace duckdb {
 
 namespace {
 
+struct ListReduceLocalState final : public FunctionLocalState {
+	ListReduceLocalState(ClientContext &context, const Expression &lambda_expr) : expr_executor(context, lambda_expr) {
+		odd_result_chunk.Initialize(Allocator::DefaultAllocator(), {lambda_expr.GetReturnType()});
+		even_result_chunk.Initialize(Allocator::DefaultAllocator(), {lambda_expr.GetReturnType()});
+	}
+
+	ExpressionExecutor expr_executor;
+	DataChunk odd_result_chunk;
+	DataChunk even_result_chunk;
+};
+
 struct ReduceExecuteInfo {
-	ReduceExecuteInfo(LambdaFunctions::LambdaInfo &info, ClientContext &context)
-	    : context(context), left_slice(make_uniq<Vector>(Vector::Ref(*info.child_vector))) {
+	ReduceExecuteInfo(LambdaFunctions::LambdaInfo &info, ClientContext &context, ExpressionExecutor &expr_executor)
+	    : context(context), left_slice(make_uniq<Vector>(Vector::Ref(*info.child_vector))),
+	      expr_executor(expr_executor), index_vector(LogicalType::BIGINT, 1),
+	      finished(info.result.GetType(), info.row_count) {
 		if (info.has_initial) {
 			initial_value_offset = 0;
 		}
@@ -21,6 +34,10 @@ struct ReduceExecuteInfo {
 
 		left_sel.Initialize(info.row_count);
 		active_rows_sel.Initialize(info.row_count);
+		finished_position.Initialize(info.row_count);
+		finished_source.Initialize(info.row_count);
+		finished_rows.Initialize(info.row_count);
+		initial_rows.Initialize(info.row_count);
 
 		idx_t reduced_row_idx = 0;
 
@@ -40,6 +57,8 @@ struct ReduceExecuteInfo {
 				// Set the row as invalid and remove it from the active rows.
 				FlatVector::SetNull(info.result, original_row_idx, true);
 				active_rows.SetInvalid(original_row_idx);
+				finished_position.set_index(original_row_idx, 0);
+				null_rows.push_back(original_row_idx);
 			}
 		}
 		left_slice->Slice(left_vector, reduced_row_idx);
@@ -57,19 +76,59 @@ struct ReduceExecuteInfo {
 		}
 
 		accumulator_cast = make_uniq<Vector>(info.lambda_expr->GetReturnType(), info.row_count);
-		expr_executor = make_uniq<ExpressionExecutor>(context, *info.lambda_expr);
 	};
+
+	void AppendFinished(Vector &source, const SelectionVector &source_sel, const SelectionVector &rows,
+	                    const idx_t count) {
+		if (count == 0) {
+			return;
+		}
+		if (source.GetType() == finished.GetType()) {
+			finished.Append(source, source_sel, count, VectorAppendMode::ALLOW_RESIZE);
+		} else {
+			Vector selected(source, source_sel, count);
+			Vector cast(finished.GetType(), count);
+			string error;
+			if (!VectorOperations::DefaultTryCast(selected, cast, count, &error)) {
+				throw InvalidInputException("Failed to cast value: %s", error);
+			}
+			finished.Append(cast, count, VectorAppendMode::ALLOW_RESIZE);
+		}
+		for (idx_t i = 0; i < count; i++) {
+			finished_position.set_index(rows.get_index(i), finished_count + i);
+		}
+		finished_count += count;
+	}
+
+	void WriteResult(Vector &result, const idx_t count) {
+		if (finished_count == 0) {
+			return;
+		}
+		VectorOperations::Copy(finished, result, finished_position, count, 0, 0);
+		for (auto row : null_rows) {
+			FlatVector::SetNull(result, row, true);
+		}
+	}
 
 	ValidityMask active_rows;
 	ClientContext &context;
 	unique_ptr<Vector> left_slice;
 	unique_ptr<Vector> accumulator_cast;
-	unique_ptr<ExpressionExecutor> expr_executor;
+	ExpressionExecutor &expr_executor;
+	Vector index_vector;
 	vector<LogicalType> input_types;
 
 	idx_t initial_value_offset = 1;
 	SelectionVector left_sel;
 	SelectionVector active_rows_sel;
+
+	Vector finished;
+	idx_t finished_count = 0;
+	SelectionVector finished_position;
+	SelectionVector finished_source;
+	SelectionVector finished_rows;
+	SelectionVector initial_rows;
+	vector<idx_t> null_rows;
 };
 
 void ReferenceAccumulator(ReduceExecuteInfo &execute_info, Vector &target, Vector &source, const idx_t count,
@@ -103,6 +162,8 @@ bool ExecuteReduce(const idx_t loops, ReduceExecuteInfo &execute_info, LambdaFun
 	SelectionVector right_sel;
 	right_sel.Initialize(info.row_count);
 
+	idx_t finished_in_step = 0;
+	idx_t initial_count = 0;
 	idx_t bits_per_entry = sizeof(idx_t) * 8;
 	for (idx_t entry_idx = 0; original_row_idx < info.row_count; entry_idx++) {
 		if (data[entry_idx] == 0) {
@@ -127,26 +188,29 @@ bool ExecuteReduce(const idx_t loops, ReduceExecuteInfo &execute_info, LambdaFun
 			           loops_offset == 0) {
 				// If the list is empty and there is an initial value, use the initial value
 				execute_info.active_rows.SetInvalid(original_row_idx);
-				auto val = info.columns[0].GetValue(original_row_idx);
-				info.result.SetValue(original_row_idx, val);
+				execute_info.initial_rows.set_index(initial_count++, original_row_idx);
 			} else {
 				// If the list has no more entries, write the result
 				execute_info.active_rows.SetInvalid(original_row_idx);
-				auto val = execute_info.left_slice->GetValue(valid_row_idx);
-				info.result.SetValue(original_row_idx, val);
+				execute_info.finished_source.set_index(finished_in_step, valid_row_idx);
+				execute_info.finished_rows.set_index(finished_in_step, original_row_idx);
+				finished_in_step++;
 			}
 
 			original_row_idx++;
 			valid_row_idx++;
 		}
 	}
+	execute_info.AppendFinished(*execute_info.left_slice, execute_info.finished_source, execute_info.finished_rows,
+	                            finished_in_step);
+	if (initial_count > 0) {
+		execute_info.AppendFinished(info.columns[0], execute_info.initial_rows, execute_info.initial_rows,
+		                            initial_count);
+	}
 
 	if (reduced_row_idx == 0) {
 		return true;
 	}
-
-	// create the index vector, where the index is that of the current node.
-	Vector index_vector(Value::BIGINT(UnsafeNumericCast<int64_t>(loops_offset + 1)), count_t(reduced_row_idx));
 
 	// slice the left and right slice
 	execute_info.left_slice->Slice(*execute_info.left_slice, execute_info.left_sel, reduced_row_idx);
@@ -160,6 +224,10 @@ bool ExecuteReduce(const idx_t loops, ReduceExecuteInfo &execute_info, LambdaFun
 	const idx_t element_offset = info.has_index ? 1 : 0;
 	const idx_t accumulator_offset = element_offset + 1;
 	if (info.has_index) {
+		auto &index_vector = execute_info.index_vector;
+		index_vector.SetVectorType(VectorType::CONSTANT_VECTOR);
+		ConstantVector::GetData<int64_t>(index_vector)[0] = UnsafeNumericCast<int64_t>(loops_offset + 1);
+		FlatVector::SetSize(index_vector, reduced_row_idx);
 		input_chunk.data[0].Reference(index_vector);
 	}
 
@@ -190,7 +258,7 @@ bool ExecuteReduce(const idx_t loops, ReduceExecuteInfo &execute_info, LambdaFun
 
 	result_chunk.Reset();
 	result_chunk.SetChildCardinality(reduced_row_idx);
-	execute_info.expr_executor->Execute(input_chunk, result_chunk);
+	execute_info.expr_executor.Execute(input_chunk, result_chunk);
 
 	// We need to copy the result into left_slice to avoid data loss due to vector.Reference(...).
 	// Otherwise, we only keep the data of the previous iteration alive, not that of previous iterations.
@@ -288,6 +356,18 @@ LogicalType ListReduceBindLambda(ClientContext &context, const vector<LogicalTyp
 	return BindReduceChildren(context, function_child_types, parameter_idx, bind_lambda_context);
 }
 
+unique_ptr<FunctionLocalState> ListReduceInitLocalState(ExpressionState &state, const BoundFunctionExpression &expr,
+                                                        FunctionData *bind_data) {
+	if (!bind_data) {
+		return nullptr;
+	}
+	auto &info = bind_data->Cast<ListLambdaBindData>();
+	if (!info.lambda_expr) {
+		return nullptr;
+	}
+	return make_uniq<ListReduceLocalState>(state.GetContext(), *info.lambda_expr);
+}
+
 } // namespace
 
 void LambdaFunctions::ListReduceFunction(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -298,16 +378,16 @@ void LambdaFunctions::ListReduceFunction(DataChunk &args, ExpressionState &state
 		return;
 	}
 
-	ReduceExecuteInfo execute_info(info, state.GetContext());
+	auto &local_state = ExecuteFunctionState::GetFunctionState(state)->Cast<ListReduceLocalState>();
+	ReduceExecuteInfo execute_info(info, state.GetContext(), local_state.expr_executor);
 
 	// Since the left slice references the result chunk, we need to create two result chunks.
 	// This means there is always an empty result chunk for the next iteration,
 	// without the referenced chunk having to be reset until the current iteration is complete.
-	DataChunk odd_result_chunk;
-	odd_result_chunk.Initialize(Allocator::DefaultAllocator(), {info.lambda_expr->GetReturnType()});
-
-	DataChunk even_result_chunk;
-	even_result_chunk.Initialize(Allocator::DefaultAllocator(), {info.lambda_expr->GetReturnType()});
+	auto &odd_result_chunk = local_state.odd_result_chunk;
+	auto &even_result_chunk = local_state.even_result_chunk;
+	odd_result_chunk.Reset();
+	even_result_chunk.Reset();
 
 	// Execute reduce until all rows are finished.
 	idx_t loops = 0;
@@ -321,6 +401,7 @@ void LambdaFunctions::ListReduceFunction(DataChunk &args, ExpressionState &state
 		spare_result_chunk.Reset();
 		loops++;
 	}
+	execute_info.WriteResult(info.result, info.row_count);
 
 	if (info.is_all_constant && !info.is_volatile) {
 		info.result.SetVectorType(VectorType::CONSTANT_VECTOR);
@@ -328,7 +409,8 @@ void LambdaFunctions::ListReduceFunction(DataChunk &args, ExpressionState &state
 }
 
 ScalarFunctionSet ListReduceFun::GetFunctions() {
-	ScalarFunction fun({}, LogicalType::ANY, LambdaFunctions::ListReduceFunction, ListReduceBind, nullptr, nullptr);
+	ScalarFunction fun({}, LogicalType::ANY, LambdaFunctions::ListReduceFunction, ListReduceBind, nullptr,
+	                   ListReduceInitLocalState);
 	fun.GetSignature()
 	    .AddParameter("list", LogicalType::LIST(LogicalType::ANY))
 	    .AddParameter("lambda", LogicalType::LAMBDA);

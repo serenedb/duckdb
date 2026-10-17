@@ -41,6 +41,8 @@ private:
 	[[noreturn]] static void ThrowInvalidCompressedString();
 
 public:
+	[[noreturn]] static void ThrowDecodedStringTooLarge();
+
 	static string_t DecompressValue(void *duckdb_fsst_decoder, ArenaAllocator &str_allocator,
 	                                const char *compressed_string, const idx_t compressed_string_len) {
 		const auto max_uncompressed_length = compressed_string_len * 8;
