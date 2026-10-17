@@ -63,6 +63,10 @@ static ExpressionBinding GetChildColumnBinding(Expression &expr) {
 	return result;
 }
 
+static Identifier ColumnStatsName(const Expression &expression, const ColumnBinding &binding) {
+	return expression.HasAlias() ? expression.GetAlias() : Identifier(binding.ToString());
+}
+
 optional<RelationStats> RelationStatisticsHelper::ExtractProjectionStats(LogicalProjection &projection,
                                                                          const RelationStats &child_stats) {
 	RelationStats result;
@@ -85,7 +89,8 @@ optional<RelationStats> RelationStatisticsHelper::ExtractProjectionStats(Logical
 			}
 			distinct_count = child_column->distinct_count;
 		}
-		result.columns.emplace_back(bindings[expression_idx], distinct_count, Identifier(expression.GetName()));
+		result.columns.emplace_back(bindings[expression_idx], distinct_count,
+		                            ColumnStatsName(expression, bindings[expression_idx]));
 	}
 	result.Verify(bindings);
 	return result;
@@ -147,12 +152,13 @@ optional<RelationStats> RelationStatisticsHelper::ExtractAggregationStats(Logica
 			}
 			distinct_count = child_column->distinct_count;
 		}
-		result.columns.emplace_back(bindings[result.columns.size()], distinct_count, Identifier(group.GetName()));
+		auto &binding = bindings[result.columns.size()];
+		result.columns.emplace_back(binding, distinct_count, ColumnStatsName(group, binding));
 	}
 	for (auto &expression : aggregate.expressions) {
-		result.columns.emplace_back(bindings[result.columns.size()],
-		                            DistinctCount(result.cardinality, DistinctCountSource::CARDINALITY),
-		                            Identifier(expression->GetName()));
+		auto &binding = bindings[result.columns.size()];
+		result.columns.emplace_back(binding, DistinctCount(result.cardinality, DistinctCountSource::CARDINALITY),
+		                            ColumnStatsName(*expression, binding));
 	}
 	for (idx_t grouping_idx = 0; grouping_idx < aggregate.grouping_functions.size(); grouping_idx++) {
 		auto grouping_count = MinValue<idx_t>(result.cardinality, MaxValue<idx_t>(aggregate.grouping_sets.size(), 1));

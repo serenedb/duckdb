@@ -17,16 +17,18 @@ static optional<RelationStats> CombineReorderableStats(const vector<ColumnBindin
 	RelationStats result;
 	result.cardinality = 0;
 	result.stats_initialized = true;
+	string table_name;
 	for (auto &stats : relation_stats) {
 		if (!stats.stats_initialized) {
 			return {};
 		}
 		result.cardinality = MaxValue(result.cardinality, stats.cardinality);
-		if (!result.table_name.empty()) {
-			result.table_name = Identifier(result.table_name + " joined with ");
+		if (!table_name.empty()) {
+			table_name += " joined with ";
 		}
-		result.table_name = Identifier(result.table_name + stats.table_name);
+		table_name += stats.table_name.GetIdentifierName();
 	}
+	result.table_name = Identifier(std::move(table_name));
 	vector<RelationColumnLookup> lookups;
 	lookups.reserve(relation_stats.size());
 	for (auto &stats : relation_stats) {
