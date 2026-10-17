@@ -1061,7 +1061,7 @@ unique_ptr<ProfilingNode> QueryProfiler::CreateTree(const PhysicalOperator &root
 	auto &info = node->GetOperatorMetrics();
 	node->depth = depth;
 
-	info.name = EnumUtil::ToString(root_p.type);
+	info.name = root_p.type == PhysicalOperatorType::EXTENSION ? root_p.GetName() : EnumUtil::ToString(root_p.type);
 	info.operator_type = root_p.type;
 	auto params = root_p.ParamsToValue();
 	info.SetExtraInfo(std::move(params));
