@@ -8,9 +8,11 @@
 
 #pragma once
 
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/shared_ptr.hpp"
+#include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
 
 namespace duckdb {
@@ -55,20 +57,24 @@ public:
 	optional_ptr<ProfilerExtension> FindProfilerExtension(const string &name) const;
 
 private:
+	ExtensionCallbackRegistry &NextVersion();
+	void Publish(ExtensionCallbackRegistry &registry);
+	const ExtensionCallbackRegistry &Current() const;
+
 	mutex registry_lock;
-	shared_ptr<ExtensionCallbackRegistry> callback_registry;
+	atomic<ExtensionCallbackRegistry *> callback_registry;
+	vector<unique_ptr<ExtensionCallbackRegistry>> registry_versions;
 	vector<string> extension_schemas;
 };
 
 template <class T>
 class ExtensionCallbackIteratorHelper {
 public:
-	ExtensionCallbackIteratorHelper(const vector<T> &vec, shared_ptr<ExtensionCallbackRegistry> callback_registry);
+	explicit ExtensionCallbackIteratorHelper(const vector<T> &vec);
 	~ExtensionCallbackIteratorHelper();
 
 private:
 	const vector<T> &vec;
-	shared_ptr<ExtensionCallbackRegistry> callback_registry;
 
 public:
 	typename vector<T>::const_iterator begin() { // NOLINT: match stl API
