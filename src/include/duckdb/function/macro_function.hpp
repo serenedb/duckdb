@@ -21,6 +21,12 @@ class ScalarMacroFunction;
 
 enum class MacroType : uint8_t { VOID_MACRO = 0, TABLE_MACRO = 1, SCALAR_MACRO = 2 };
 
+struct MacroBoundArguments {
+	vector<bool> bind_in_place;
+	vector<unique_ptr<Expression>> positional;
+	identifier_map_t<unique_ptr<Expression>> named;
+};
+
 struct MacroBindResult {
 	explicit MacroBindResult(string error_p) : error(std::move(error_p)) {
 	}
@@ -53,6 +59,7 @@ public:
 	vector<string> return_names;
 	//! Whether this overload is a procedure (CALL only, not usable in SELECT/FROM)
 	bool is_procedure = false;
+	string source;
 
 public:
 	virtual ~MacroFunction() {
@@ -73,7 +80,8 @@ public:
 	    Binder &binder, const vector<unique_ptr<MacroFunction>> &macro_functions, const Identifier &name,
 	    FunctionExpression &function_expr, vector<unique_ptr<ParsedExpression>> &positional_arguments,
 	    InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> &named_arguments,
-	    idx_t depth);
+	    idx_t depth, optional_ptr<ExpressionBinder> argument_binder = nullptr,
+	    optional_ptr<MacroBoundArguments> bound_arguments = nullptr);
 	static unique_ptr<DummyBinding>
 	CreateDummyBinding(const MacroFunction &macro_def, const Identifier &name,
 	                   vector<unique_ptr<ParsedExpression>> &positional_arguments,

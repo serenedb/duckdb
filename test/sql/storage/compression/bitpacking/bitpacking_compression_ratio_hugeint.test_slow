@@ -17,7 +17,7 @@ statement ok
 PRAGMA force_bitpacking_mode='constant'
 
 statement ok
-CREATE TABLE test_bitpacked AS SELECT (i//119000::INT64)::HUGEINT AS i FROM range(0, 120000000) tbl(i);
+CREATE TABLE test_bitpacked AS SELECT (i//119000::INT64)::HUGEINT AS i FROM range_st(0, 120000000) tbl(i);
 
 statement ok
 checkpoint
@@ -26,7 +26,7 @@ statement ok
 PRAGMA force_compression='uncompressed'
 
 statement ok
-CREATE TABLE test_uncompressed AS SELECT i::HUGEINT FROM range(0, 120000000) tbl(i);
+CREATE TABLE test_uncompressed AS SELECT i::HUGEINT FROM range_st(0, 120000000) tbl(i);
 
 statement ok
 checkpoint
@@ -61,7 +61,7 @@ statement ok
 PRAGMA force_bitpacking_mode='constant_delta'
 
 statement ok
-CREATE TABLE test_bitpacked AS SELECT i::HUGEINT AS i FROM range(0, 120000000) tbl(i);
+CREATE TABLE test_bitpacked AS SELECT i::HUGEINT AS i FROM range_st(0, 120000000) tbl(i);
 
 statement ok
 checkpoint
@@ -70,7 +70,7 @@ statement ok
 PRAGMA force_compression='uncompressed'
 
 statement ok
-CREATE TABLE test_uncompressed AS SELECT i::HUGEINT AS i FROM range(0, 120000000) tbl(i);
+CREATE TABLE test_uncompressed AS SELECT i::HUGEINT AS i FROM range_st(0, 120000000) tbl(i);
 
 statement ok
 checkpoint
@@ -108,7 +108,7 @@ statement ok
 PRAGMA force_bitpacking_mode='delta_for'
 
 statement ok
-CREATE TABLE test_bitpacked AS SELECT i//2::HUGEINT AS i FROM range(0, 120000000) tbl(i);
+CREATE TABLE test_bitpacked AS SELECT i//2::HUGEINT AS i FROM range_st(0, 120000000) tbl(i);
 
 statement ok
 checkpoint
@@ -117,7 +117,7 @@ statement ok
 PRAGMA force_compression='uncompressed'
 
 statement ok
-CREATE TABLE test_uncompressed AS SELECT i AS i FROM range(0, 120000000) tbl(i);
+CREATE TABLE test_uncompressed AS SELECT i AS i FROM range_st(0, 120000000) tbl(i);
 
 statement ok
 checkpoint
@@ -155,7 +155,7 @@ statement ok
 PRAGMA force_bitpacking_mode='for'
 
 statement ok
-CREATE TABLE test_bitpacked AS SELECT i%2::HUGEINT AS i FROM range(0, 120000000) tbl(i);
+CREATE TABLE test_bitpacked AS SELECT i%2::HUGEINT AS i FROM range_st(0, 120000000) tbl(i);
 
 statement ok
 checkpoint
@@ -164,7 +164,7 @@ statement ok
 PRAGMA force_compression='uncompressed'
 
 statement ok
-CREATE TABLE test_uncompressed AS SELECT i::HUGEINT AS i FROM range(0, 120000000) tbl(i);
+CREATE TABLE test_uncompressed AS SELECT i::HUGEINT AS i FROM range_st(0, 120000000) tbl(i);
 
 statement ok
 checkpoint

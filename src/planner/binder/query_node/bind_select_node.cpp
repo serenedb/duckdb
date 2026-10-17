@@ -23,8 +23,10 @@
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_expanded_expression.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/expression_binder/column_alias_binder.hpp"
 #include "duckdb/planner/expression_binder/constant_binder.hpp"
 #include "duckdb/planner/expression_binder/group_binder.hpp"
@@ -507,6 +509,33 @@ Identifier Binder::GetExpressionName(const ParsedExpression &expr) {
 	return expr.GetName();
 }
 
+static void InlineLateralAliases(unique_ptr<Expression> &expr, const BoundSelectNode &node) {
+	if (!node.lateral_index.IsValid()) {
+		return;
+	}
+	if (expr->GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {
+		auto &colref = expr->Cast<BoundColumnRefExpression>();
+		if (colref.Depth() == 0 && colref.Binding().table_index == node.lateral_index) {
+			auto &source = *node.select_list[colref.Binding().column_index.GetIndex()];
+			if (source.IsVolatile()) {
+				throw BinderException("Alias %s referenced - but the expression has side effects. This is not yet "
+				                      "supported.",
+				                      source.GetAlias());
+			}
+			if (source.HasSubquery()) {
+				throw BinderException("Alias %s referenced in a SELECT clause - but the expression has a subquery. "
+				                      "This is not yet supported.",
+				                      source.GetAlias());
+			}
+			expr = source.Copy();
+			InlineLateralAliases(expr, node);
+			return;
+		}
+	}
+	ExpressionIterator::EnumerateChildren(*expr,
+	                                      [&](unique_ptr<Expression> &child) { InlineLateralAliases(child, node); });
+}
+
 BoundStatement Binder::BindSelectNode(SelectNode &statement, BoundStatement from_table) {
 	D_ASSERT(from_table.plan);
 	D_ASSERT(!statement.from_table);
@@ -540,6 +569,8 @@ BoundStatement Binder::BindSelectNode(SelectNode &statement, BoundStatement from
 	statement.select_list = std::move(new_select_list);
 
 	auto &bind_state = result.bind_state;
+	const bool has_modifiers = !statement.modifiers.empty();
+	vector<bool> has_alias(statement.select_list.size(), false);
 	for (idx_t i = 0; i < statement.select_list.size(); i++) {
 		auto &expr = statement.select_list[i];
 		result.names.emplace_back(expr->GetColumnName());
@@ -547,9 +578,16 @@ BoundStatement Binder::BindSelectNode(SelectNode &statement, BoundStatement from
 		if (!expr->GetAlias().empty()) {
 			bind_state.alias_map[expr->GetAlias()] = i;
 			result.names[i] = expr->GetAlias();
+			has_alias[i] = true;
 		}
-		bind_state.projection_map[*expr] = i;
-		bind_state.original_expressions.push_back(expr->Copy());
+		if (has_modifiers) {
+			bind_state.projection_map[*expr] = i;
+		}
+		if (has_modifiers || has_alias[i] || !expr->HasSubquery()) {
+			bind_state.original_expressions.push_back(expr->Copy());
+		} else {
+			bind_state.original_expressions.push_back(nullptr);
+		}
 	}
 	result.column_count = statement.select_list.size();
 
@@ -675,6 +713,7 @@ BoundStatement Binder::BindSelectNode(SelectNode &statement, BoundStatement from
 	}
 
 	// after that, we bind to the SELECT list
+	result.lateral_aliases_by_value = true;
 	SelectBinder select_binder(*this, context, result);
 
 	// if we expand select-list expressions, e.g., via UNNEST, then we need to possibly
@@ -717,7 +756,7 @@ BoundStatement Binder::BindSelectNode(SelectNode &statement, BoundStatement from
 			continue;
 		}
 
-		if (expr->IsVolatile()) {
+		if (i < has_alias.size() && has_alias[i] && expr->IsVolatile()) {
 			bind_state.SetExpressionIsVolatile(i);
 		}
 		if (expr->HasSubquery()) {
@@ -737,6 +776,7 @@ BoundStatement Binder::BindSelectNode(SelectNode &statement, BoundStatement from
 			}
 			// we are forcing aggregates, and the node has columns bound
 			// this entry becomes a group
+			InlineLateralAliases(expr, result);
 			group_by_all_indexes.push_back(i);
 		}
 

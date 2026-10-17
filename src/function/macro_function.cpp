@@ -1,4 +1,5 @@
 #include "duckdb/function/macro_function.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 
@@ -49,7 +50,7 @@ MacroBindResult MacroFunction::BindMacroFunction(
     Binder &binder, const vector<unique_ptr<MacroFunction>> &functions, const Identifier &name,
     FunctionExpression &function_expr, vector<unique_ptr<ParsedExpression>> &positional_arguments,
     InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> &named_arguments,
-    idx_t depth) {
+    idx_t depth, optional_ptr<ExpressionBinder> argument_binder, optional_ptr<MacroBoundArguments> bound_arguments) {
 	ExpressionBinder expr_binder(binder, binder.context);
 	expr_binder.lambda_bindings = binder.lambda_bindings;
 
@@ -70,10 +71,21 @@ MacroBindResult MacroFunction::BindMacroFunction(
 	// Find argument types and separate positional and default arguments
 	vector<LogicalType> positional_arg_types;
 	InsertionOrderPreservingMap<LogicalType, Identifier, identifier_map_t<idx_t>> named_arg_types;
+	idx_t argument_idx = 0;
 	for (auto &arg : function_expr.GetArgumentsMutable()) {
 		auto arg_copy = arg.GetExpression().Copy();
 		LogicalType arg_type = LogicalType::UNKNOWN;
-		if (requires_bind) {
+		unique_ptr<Expression> bound_arg;
+		const bool bind_in_place = bound_arguments && argument_idx < bound_arguments->bind_in_place.size() &&
+		                           bound_arguments->bind_in_place[argument_idx];
+		argument_idx++;
+		if (requires_bind && argument_binder && bind_in_place && !arg_copy->HasParameter()) {
+			ErrorData error;
+			bound_arg = argument_binder->BindChild(arg_copy, depth, error);
+			if (bound_arg) {
+				arg_type = bound_arg->GetReturnType();
+			}
+		} else if (requires_bind) {
 			const auto correlated_columns = binder.correlated_columns;
 			const auto arg_bind_result = expr_binder.BindExpression(arg_copy, depth + 1);
 			binder.correlated_columns = correlated_columns;
@@ -90,6 +102,9 @@ MacroBindResult MacroFunction::BindMacroFunction(
 				                                          arg.GetExpression().GetAlias()));
 			}
 			named_arg_types.insert(arg.GetExpression().GetAlias(), std::move(arg_type));
+			if (bound_arguments && bound_arg) {
+				bound_arguments->named[arg.GetExpression().GetAlias()] = std::move(bound_arg);
+			}
 			named_arguments[arg.GetExpression().GetAlias()] = std::move(arg.GetExpressionMutable());
 		} else if (!named_arguments.empty()) {
 			return MacroBindResult(
@@ -98,6 +113,9 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			// Positional argument
 			positional_arguments.push_back(std::move(arg.GetExpressionMutable()));
 			positional_arg_types.push_back(std::move(arg_type));
+			if (bound_arguments) {
+				bound_arguments->positional.push_back(std::move(bound_arg));
+			}
 		}
 	}
 
@@ -236,6 +254,11 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			// This macro parameter is typed, add a cast
 			auto &positional_arg = positional_arguments[param_idx];
 			positional_arg = make_uniq<CastExpression>(parameter_types[param_idx], std::move(positional_arg));
+			if (bound_arguments && bound_arguments->positional[param_idx]) {
+				auto &bound = bound_arguments->positional[param_idx];
+				bound =
+				    BoundCastExpression::AddCastToType(binder.context, std::move(bound), parameter_types[param_idx]);
+			}
 		}
 	}
 
@@ -249,6 +272,13 @@ MacroBindResult MacroFunction::BindMacroFunction(
 				// This macro parameter is typed, add a cast
 				auto &named_arg = named_arg_it->second;
 				named_arg = make_uniq<CastExpression>(parameter_types[param_idx], std::move(named_arg));
+				if (bound_arguments) {
+					auto bound = bound_arguments->named.find(param_name);
+					if (bound != bound_arguments->named.end()) {
+						bound->second = BoundCastExpression::AddCastToType(binder.context, std::move(bound->second),
+						                                                   parameter_types[param_idx]);
+					}
+				}
 			}
 			continue;
 		}
@@ -313,6 +343,7 @@ void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.return_types = return_types;
 	other.return_names = return_names;
 	other.is_procedure = is_procedure;
+	other.source = source;
 }
 
 vector<unique_ptr<ParsedExpression>>

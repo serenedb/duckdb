@@ -4,7 +4,7 @@
 
 query I
 SELECT first([i]) = CASE WHEN i >= 2500 THEN [2500] ELSE [0] END
-FROM range(3000) r(i)
+FROM range_st(3000) r(i)
 GROUP BY i >= 2500
 ORDER BY i >= 2500;
 ----
@@ -13,7 +13,7 @@ true
 
 query I
 SELECT last([i]) = CASE WHEN i >= 2500 THEN [2999] ELSE [2499] END
-FROM range(3000) r(i)
+FROM range_st(3000) r(i)
 GROUP BY i >= 2500
 ORDER BY i >= 2500;
 ----
@@ -22,7 +22,7 @@ true
 
 query I
 SELECT any_value(CASE WHEN i % 5 = 0 THEN {'value': i, 'items': [i, i + 1]} END) IS NOT NULL
-FROM range(3000) r(i)
+FROM range_st(3000) r(i)
 GROUP BY i >= 2500
 ORDER BY i >= 2500;
 ----

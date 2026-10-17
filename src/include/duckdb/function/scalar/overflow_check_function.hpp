@@ -1,9 +1,14 @@
 #pragma once
 
+#include "duckdb/common/enums/integer_overflow_mode.hpp"
 #include "duckdb/common/operator/add.hpp"
 #include "duckdb/common/operator/multiply.hpp"
 #include "duckdb/common/operator/subtract.hpp"
+#include "duckdb/common/types/hugeint.hpp"
+#include "duckdb/common/types/uhugeint.hpp"
+#include "duckdb/execution/expression_executor_state.hpp"
 #include "duckdb/function/scalar_function.hpp"
+#include "duckdb/main/settings.hpp"
 
 #include <type_traits>
 
@@ -12,14 +17,24 @@ namespace duckdb {
 struct AddWrappingOperator {
 	template <class T>
 	static inline T Operation(T left, T right, bool &overflow) {
-		using UNSIGNED = std::make_unsigned_t<T>;
-		auto result = static_cast<T>(static_cast<UNSIGNED>(left) + static_cast<UNSIGNED>(right));
-		if constexpr (std::is_signed_v<T>) {
-			overflow |= ((left ^ result) & (right ^ result)) < 0;
-		} else {
+		if constexpr (std::is_same_v<T, hugeint_t>) {
+			const auto result = left + right;
+			overflow |= ((left.upper ^ result.upper) & (right.upper ^ result.upper)) < 0;
+			return result;
+		} else if constexpr (std::is_same_v<T, uhugeint_t>) {
+			const auto result = left + right;
 			overflow |= result < left;
+			return result;
+		} else {
+			using UNSIGNED = std::make_unsigned_t<T>;
+			auto result = static_cast<T>(static_cast<UNSIGNED>(left) + static_cast<UNSIGNED>(right));
+			if constexpr (std::is_signed_v<T>) {
+				overflow |= ((left ^ result) & (right ^ result)) < 0;
+			} else {
+				overflow |= result < left;
+			}
+			return result;
 		}
-		return result;
 	}
 
 	template <class T>
@@ -31,14 +46,23 @@ struct AddWrappingOperator {
 struct SubtractWrappingOperator {
 	template <class T>
 	static inline T Operation(T left, T right, bool &overflow) {
-		using UNSIGNED = std::make_unsigned_t<T>;
-		auto result = static_cast<T>(static_cast<UNSIGNED>(left) - static_cast<UNSIGNED>(right));
-		if constexpr (std::is_signed_v<T>) {
-			overflow |= ((left ^ right) & (left ^ result)) < 0;
-		} else {
+		if constexpr (std::is_same_v<T, hugeint_t>) {
+			const auto result = left - right;
+			overflow |= ((left.upper ^ right.upper) & (left.upper ^ result.upper)) < 0;
+			return result;
+		} else if constexpr (std::is_same_v<T, uhugeint_t>) {
 			overflow |= left < right;
+			return left - right;
+		} else {
+			using UNSIGNED = std::make_unsigned_t<T>;
+			auto result = static_cast<T>(static_cast<UNSIGNED>(left) - static_cast<UNSIGNED>(right));
+			if constexpr (std::is_signed_v<T>) {
+				overflow |= ((left ^ right) & (left ^ result)) < 0;
+			} else {
+				overflow |= left < right;
+			}
+			return result;
 		}
-		return result;
 	}
 
 	template <class T>
@@ -51,11 +75,18 @@ struct MultiplyWrappingOperator {
 	template <class T>
 	static inline T Operation(T left, T right, bool &overflow) {
 		T result;
+		if constexpr (std::is_same_v<T, hugeint_t> || std::is_same_v<T, uhugeint_t>) {
+			if (!TryMultiplyOperator::Operation(left, right, result)) {
+				overflow = true;
+				result = left * right;
+			}
+		} else {
 #if (__GNUC__ >= 5) || defined(__clang__)
-		overflow |= __builtin_mul_overflow(left, right, &result);
+			overflow |= __builtin_mul_overflow(left, right, &result);
 #else
-		overflow |= !TryMultiplyOperator::Operation(left, right, result);
+			overflow |= !TryMultiplyOperator::Operation(left, right, result);
 #endif
+		}
 		return result;
 	}
 
@@ -176,6 +207,10 @@ bool TryOverflowCheckFlat(const Vector &left, const Vector &right, Vector &resul
 	return true;
 }
 
+inline bool IntegerOverflowWraps(ExpressionState &state) {
+	return state.HasContext() && Settings::Get<IntegerOverflowSetting>(state.GetContext()) == IntegerOverflowMode::WRAP;
+}
+
 template <class T, class CHECKED_OP>
 void OverflowCheckFunction(DataChunk &input, ExpressionState &state, Vector &result) {
 	D_ASSERT(input.ColumnCount() == 2);
@@ -186,7 +221,7 @@ void OverflowCheckFunction(DataChunk &input, ExpressionState &state, Vector &res
 			return WRAPPING_OP::Operation(left, right, overflow);
 		});
 	}
-	if (overflow) {
+	if (overflow && !IntegerOverflowWraps(state)) {
 		BinaryExecutor::ExecuteStandard<T, T, T, CHECKED_OP>(input.data[0], input.data[1], result);
 	}
 }
@@ -211,9 +246,9 @@ scalar_function_t GetOverflowCheckFunction(PhysicalType type) {
 	case PhysicalType::UINT64:
 		return &OverflowCheckFunction<uint64_t, CHECKED_OP>;
 	case PhysicalType::INT128:
-		return &ScalarFunction::BinaryFunction<hugeint_t, hugeint_t, hugeint_t, CHECKED_OP>;
+		return &OverflowCheckFunction<hugeint_t, CHECKED_OP>;
 	case PhysicalType::UINT128:
-		return &ScalarFunction::BinaryFunction<uhugeint_t, uhugeint_t, uhugeint_t, CHECKED_OP>;
+		return &OverflowCheckFunction<uhugeint_t, CHECKED_OP>;
 	default:
 		throw NotImplementedException("Unimplemented type for GetOverflowCheckFunction: %s", TypeIdToString(type));
 	}

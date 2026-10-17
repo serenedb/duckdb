@@ -93,6 +93,10 @@ public:
 		state = SinkFinalizeType::READY;
 	}
 
+	virtual void ResetForThreads(ClientContext &context, idx_t thread_count) {
+		Reset(context);
+	}
+
 	template <class TARGET>
 	TARGET &Cast() {
 		DynamicCastCheck<TARGET>(this);

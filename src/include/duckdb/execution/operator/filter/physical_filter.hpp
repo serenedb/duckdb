@@ -31,7 +31,7 @@ public:
 	unique_ptr<OperatorState> GetOperatorState(ExecutionContext &context) const override;
 
 	bool ParallelOperator() const override {
-		return true;
+		return !expression->RequiresOrderedExecution();
 	}
 	PipelineExternalInputSupport GetExternalInputSupport() const override {
 		return PipelineExternalInputSupport::SUPPORTED;

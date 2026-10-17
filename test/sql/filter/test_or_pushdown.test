@@ -57,7 +57,19 @@ physical_plan	<REGEX>:.*optional.*
 query II
 explain select * from t1 where a = 1 or a = 5 or a = 10;
 ----
+physical_plan	<!REGEX>:.*optional.*
+
+query II
+explain select * from t1 where a = 1 or a = 5;
+----
 physical_plan	<REGEX>:.*optional.*
+
+query I
+select a from t1 where a = 1 or a = 5 or a = 10 order by a;
+----
+1
+5
+10
 
 query II
 explain select * from t1 where a in (1, 2, 3);

@@ -30,27 +30,18 @@ PhysicalTableScan::PhysicalTableScan(PhysicalPlan &physical_plan, vector<Logical
       virtual_columns(std::move(virtual_columns_p)) {
 }
 
+static idx_t NextTableFunctionStateId() {
+	static atomic<idx_t> next_id {0};
+	return ++next_id;
+}
+
 class TableScanGlobalSourceState : public GlobalSourceState {
 public:
-	TableScanGlobalSourceState(ClientContext &context, const PhysicalTableScan &op) {
+	TableScanGlobalSourceState(ClientContext &context, const PhysicalTableScan &op_p,
+	                           const OperatorPartitionInfo &partition_info_p)
+	    : op(op_p), partition_info(partition_info_p) {
 		physical_table_scan_execution_strategy = Settings::Get<DebugPhysicalTableScanExecutionStrategySetting>(context);
-
-		if (op.dynamic_filters && op.dynamic_filters->HasFilters()) {
-			table_filters = op.dynamic_filters->GetFinalTableFilters(op, op.table_filters.get());
-		}
-
-		if (op.function.init_global) {
-			auto filters = table_filters ? *table_filters : GetTableFilters(op);
-			TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids, filters,
-			                             op.extra_info.sample_options, &op);
-
-			global_state = op.function.init_global(context, input);
-			if (global_state) {
-				max_threads = global_state->MaxThreads();
-			}
-		} else {
-			max_threads = 1;
-		}
+		InitializeFunction(context);
 		if (op.function.in_out_function) {
 			// this is an in-out function, we need to setup the input chunk
 			vector<LogicalType> input_types;
@@ -64,34 +55,92 @@ public:
 		}
 	}
 
+	const PhysicalTableScan &op;
+	const OperatorPartitionInfo partition_info;
 	idx_t max_threads = 0;
 	PhysicalTableScanExecutionStrategy physical_table_scan_execution_strategy;
 	//! Combined dynamic table filters - before global_state, which references them during teardown
 	unique_ptr<TableFilterSet> table_filters;
 	unique_ptr<GlobalTableFunctionState> global_state;
+	idx_t function_state_id = 0;
 	bool in_out_final = false;
 	DataChunk input_chunk;
 
-	optional_ptr<TableFilterSet> GetTableFilters(const PhysicalTableScan &op) const {
+	optional_ptr<TableFilterSet> GetTableFilters() const {
 		return table_filters ? table_filters.get() : op.table_filters.get();
 	}
 	idx_t MaxThreads() override {
 		return max_threads;
+	}
+
+	bool SupportsReuse() const override {
+		return true;
+	}
+
+	void Reset(ClientContext &context) override {
+		const auto dynamic_filters = table_filters || (op.dynamic_filters && op.dynamic_filters->HasFilters());
+		if (dynamic_filters || !global_state || !global_state->ResetForReuse(context)) {
+			InitializeFunction(context);
+		}
+		in_out_final = false;
+		GlobalSourceState::Reset(context);
+	}
+
+private:
+	void InitializeFunction(ClientContext &context) {
+		global_state.reset();
+		table_filters.reset();
+		function_state_id = NextTableFunctionStateId();
+		if (op.dynamic_filters && op.dynamic_filters->HasFilters()) {
+			table_filters = op.dynamic_filters->GetFinalTableFilters(op, op.table_filters.get());
+		}
+		if (!op.function.init_global) {
+			max_threads = 1;
+			return;
+		}
+		TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids, GetTableFilters(),
+		                             op.extra_info.sample_options, &op);
+		input.partition_info = &partition_info;
+		global_state = op.function.init_global(context, input);
+		max_threads = global_state ? global_state->MaxThreads() : 0;
 	}
 };
 
 class TableScanLocalSourceState : public LocalSourceState {
 public:
 	TableScanLocalSourceState(ExecutionContext &context, TableScanGlobalSourceState &gstate,
-	                          const PhysicalTableScan &op) {
+	                          const PhysicalTableScan &op_p)
+	    : op(op_p) {
+		Initialize(context, gstate);
+	}
+
+	const PhysicalTableScan &op;
+	unique_ptr<LocalTableFunctionState> local_state;
+	idx_t function_state_id = 0;
+
+	bool SupportsReuse() const override {
+		return true;
+	}
+
+	void Reset(ExecutionContext &context, GlobalSourceState &gstate_p) override {
+		auto &gstate = gstate_p.Cast<TableScanGlobalSourceState>();
+		if (local_state && gstate.global_state && function_state_id == gstate.function_state_id &&
+		    gstate.global_state->ResetLocalStateForReuse(context, *local_state)) {
+			return;
+		}
+		Initialize(context, gstate);
+	}
+
+private:
+	void Initialize(ExecutionContext &context, TableScanGlobalSourceState &gstate) {
+		local_state.reset();
+		function_state_id = gstate.function_state_id;
 		if (op.function.init_local) {
-			TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids,
-			                             gstate.GetTableFilters(op), op.extra_info.sample_options, &op);
+			TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids, gstate.GetTableFilters(),
+			                             op.extra_info.sample_options, &op);
 			local_state = op.function.init_local(context, input, gstate.global_state.get());
 		}
 	}
-
-	unique_ptr<LocalTableFunctionState> local_state;
 };
 
 unique_ptr<LocalSourceState> PhysicalTableScan::GetLocalSourceState(ExecutionContext &context,
@@ -100,7 +149,12 @@ unique_ptr<LocalSourceState> PhysicalTableScan::GetLocalSourceState(ExecutionCon
 }
 
 unique_ptr<GlobalSourceState> PhysicalTableScan::GetGlobalSourceState(ClientContext &context) const {
-	return make_uniq<TableScanGlobalSourceState>(context, *this);
+	return GetGlobalSourceState(context, OperatorPartitionInfo::NoPartitionInfo());
+}
+
+unique_ptr<GlobalSourceState>
+PhysicalTableScan::GetGlobalSourceState(ClientContext &context, const OperatorPartitionInfo &partition_info) const {
+	return make_uniq<TableScanGlobalSourceState>(context, *this, partition_info);
 }
 
 static void ValidateAsyncStrategyResult(const PhysicalTableScanExecutionStrategy &strategy,
@@ -452,12 +506,7 @@ bool PhysicalTableScan::Equals(const PhysicalOperator &other_p) const {
 }
 
 bool PhysicalTableScan::ParallelSource() const {
-	if (!function.function) {
-		// table in-out functions cannot be executed in parallel as part of a PhysicalTableScan
-		// since they have only a single input row
-		return false;
-	}
-	return true;
+	return function.function || function.get_partition_data;
 }
 
 TableFunctionParallelism PhysicalTableScan::SourceParallelism() const {

@@ -31,6 +31,9 @@ protected:
 	BindResult BindCheckColumn(ColumnRefExpression &expr);
 
 	string UnsupportedAggregateMessage() override;
+	bool CanShareMacroArguments() const override {
+		return false;
+	}
 };
 
 } // namespace duckdb

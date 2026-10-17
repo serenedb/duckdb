@@ -399,7 +399,7 @@ FlattenDependentJoins::DecorrelateSubtreeInternal(unique_ptr<LogicalOperator> &p
 
 	UnnestingState result(std::move(state));
 	for (idx_t child_index = 0; child_index < plan->children.size(); child_index++) {
-		auto old_child_bindings = plan->children[child_index]->GetColumnBindings();
+		auto old_child_bindings = ColumnBindingRewrite::CaptureChildBindings(*plan, child_index);
 		auto child_state =
 		    DecorrelateSubtree(plan->children[child_index], propagate_null_values, std::move(result.bindings));
 		ColumnBindingRewrite::ApplyToChild(plan, child_index, std::move(old_child_bindings),
@@ -497,7 +497,7 @@ FlattenDependentJoins::UnnestingState FlattenDependentJoins::PushDownChild(uniqu
                                                                            bool propagate_null_values,
                                                                            vector<ColumnBinding> state,
                                                                            bool rewrite_parent, idx_t child_idx) {
-	auto old_child_bindings = plan->children[child_idx]->GetColumnBindings();
+	auto old_child_bindings = ColumnBindingRewrite::CaptureChildBindings(*plan, child_idx);
 	auto result = PushDownCorrelatedNode(plan->children[child_idx], propagate_null_values, std::move(state));
 	ColumnBindingRewrite::ApplyToChild(plan, child_idx, std::move(old_child_bindings), result.replacement_graph);
 	if (plan->type == LogicalOperatorType::LOGICAL_FILTER) {

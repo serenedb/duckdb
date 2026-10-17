@@ -5,6 +5,8 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
 
 // This function efficiently checks if a string is valid UTF8.
@@ -463,6 +465,9 @@ size_t Utf8Proc::RenderWidth(const char *s, size_t len, size_t pos) {
 }
 
 size_t Utf8Proc::RenderWidth(std::string_view str) {
+	if (absl::c_all_of(str, [](unsigned char byte) { return byte >= 0x20 && byte <= 0x7E; })) {
+		return str.size();
+	}
 	size_t render_width = 0;
 	for (auto cluster : Utf8Proc::GraphemeClusters(str.data(), str.size())) {
 		// use the width of the first codepoint in the grapheme cluster

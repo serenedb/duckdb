@@ -89,6 +89,9 @@ void CastFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto error_ref = cast_data.try_cast ? &error_message : nullptr;
 	CastParameters parameters(cast_data.bound_cast.GetCastData(), false, error_ref, lstate);
 	parameters.query_location = cast_expr.GetQueryLocation();
+	if (state.HasContext()) {
+		parameters.context = &state.GetContext();
+	}
 	parameters.cast_source = &BoundCastExpression::Child(cast_expr);
 	parameters.cast_target = cast_expr;
 	cast_data.bound_cast.Cast(source, result, count, parameters);

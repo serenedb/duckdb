@@ -33,6 +33,11 @@ struct SelectBindState {
 
 public:
 	unique_ptr<ParsedExpression> BindAlias(idx_t index);
+	void ReferenceAlias(idx_t index);
+	bool IsExpandedColumn(idx_t index) const {
+		return index + 1 < expanded_column_indices.size() &&
+		       expanded_column_indices[index + 1].GetIndex() - expanded_column_indices[index].GetIndex() != 1;
+	}
 
 	void SetExpressionIsVolatile(idx_t index);
 	void SetExpressionHasSubquery(idx_t index);

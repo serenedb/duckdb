@@ -27,8 +27,11 @@ static bool StringEnumCastLoop(const VectorIterator<string_t> &source_data, Vect
 		auto &source_val = source_entry.GetValue();
 		auto pos = EnumType::GetPos(result_type, source_val);
 		if (pos == -1) {
-			result_data[i] = HandleVectorCastError::Operation<T>(CastExceptionText<string_t>(source_val, result_type),
-			                                                     result_data, i, vector_cast_data);
+			result_data[i] =
+			    HandleVectorCastError::Operation<T>(HandleVectorCastError::NeedsMessage(vector_cast_data)
+			                                            ? CastExceptionText<string_t>(source_val, result_type)
+			                                            : string(),
+			                                        result_data, i, vector_cast_data);
 		} else {
 			result_data[i] = UnsafeNumericCast<T>(pos);
 		}
@@ -116,7 +119,7 @@ bool VectorStringToList::StringToNestedTypeCastLoop(const string_t *source_data,
 		if (!source_mask.RowIsValid(idx)) {
 			continue;
 		}
-		total_list_size += VectorStringToList::CountPartsList(source_data[idx]);
+		total_list_size += VectorStringToList::CountPartsList(source_data[idx], parameters);
 	}
 
 	Vector varchar_vector(LogicalType::VARCHAR, total_list_size);
@@ -139,9 +142,12 @@ bool VectorStringToList::StringToNestedTypeCastLoop(const string_t *source_data,
 		}
 
 		list_data[i].offset = total;
-		if (!VectorStringToList::SplitStringList(source_data[idx], child_data, total, varchar_vector)) {
-			auto error = StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
-			                                source_data[idx].GetString(), result.GetType().ToString());
+		if (!VectorStringToList::SplitStringList(source_data[idx], child_data, total, varchar_vector, parameters)) {
+			auto error =
+			    HandleVectorCastError::NeedsMessage(vector_cast_data)
+			        ? StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
+			                             source_data[idx].GetString(), result.GetType().ToString())
+			        : string();
 			HandleVectorCastError::Operation<string_t>(error, result_mask, i, vector_cast_data);
 		}
 		list_data[i].length = total - list_data[i].offset; // length is the amount of parts coming from this string
@@ -217,8 +223,11 @@ bool VectorStringToStruct::StringToNestedTypeCastLoop(const string_t *source_dat
 			continue;
 		}
 		if (!VectorStringToStruct::SplitStruct(source_data[idx], child_vectors, i, child_names, child_masks)) {
-			auto error = StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
-			                                source_data[idx].GetString(), result.GetType().ToString());
+			auto error =
+			    HandleVectorCastError::NeedsMessage(vector_cast_data)
+			        ? StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
+			                             source_data[idx].GetString(), result.GetType().ToString())
+			        : string();
 			for (auto &child_mask : child_masks) {
 				child_mask.get().SetInvalid(i); // some values may have already been found and set valid
 			}
@@ -272,7 +281,7 @@ bool VectorStringToMap::StringToNestedTypeCastLoop(const string_t *source_data, 
 		if (!source_mask.RowIsValid(idx)) {
 			continue;
 		}
-		total_elements += (VectorStringToMap::CountPartsMap(source_data[idx]) + 1) / 2;
+		total_elements += (VectorStringToMap::CountPartsMap(source_data[idx], parameters) + 1) / 2;
 	}
 
 	Vector varchar_key_vector(LogicalType::VARCHAR, total_elements);
@@ -297,9 +306,12 @@ bool VectorStringToMap::StringToNestedTypeCastLoop(const string_t *source_data, 
 
 		list_data[i].offset = total;
 		if (!VectorStringToMap::SplitStringMap(source_data[idx], child_key_data, child_val_data, total,
-		                                       varchar_key_vector, varchar_val_vector)) {
-			auto error = StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
-			                                source_data[idx].GetString(), result.GetType().ToString());
+		                                       varchar_key_vector, varchar_val_vector, parameters)) {
+			auto error =
+			    HandleVectorCastError::NeedsMessage(vector_cast_data)
+			        ? StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
+			                             source_data[idx].GetString(), result.GetType().ToString())
+			        : string();
 			FlatVector::SetNull(result, i, true);
 			HandleVectorCastError::Operation<string_t>(error, result_mask, i, vector_cast_data);
 		}
@@ -359,7 +371,7 @@ bool VectorStringToArray::StringToNestedTypeCastLoop(const string_t *source_data
 		if (!source_mask.RowIsValid(idx)) {
 			continue;
 		}
-		auto str_array_size = VectorStringToList::CountPartsList(source_data[idx]);
+		auto str_array_size = VectorStringToList::CountPartsList(source_data[idx], parameters);
 		if (array_size != str_array_size) {
 			if (all_lengths_match) {
 				all_lengths_match = false;
@@ -400,9 +412,12 @@ bool VectorStringToArray::StringToNestedTypeCastLoop(const string_t *source_data
 			continue;
 		}
 
-		if (!VectorStringToList::SplitStringList(source_data[idx], child_data, total, varchar_vector)) {
-			auto error = StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
-			                                source_data[idx].GetString(), result.GetType().ToString());
+		if (!VectorStringToList::SplitStringList(source_data[idx], child_data, total, varchar_vector, parameters)) {
+			auto error =
+			    HandleVectorCastError::NeedsMessage(vector_cast_data)
+			        ? StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
+			                             source_data[idx].GetString(), result.GetType().ToString())
+			        : string();
 			HandleVectorCastError::Operation<string_t>(error, result_mask, i, vector_cast_data);
 		}
 	}

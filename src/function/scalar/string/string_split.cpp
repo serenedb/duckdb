@@ -1,6 +1,7 @@
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
+#include "duckdb/common/vector_operations/ternary_executor.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/common/exception.hpp"
@@ -13,6 +14,8 @@
 namespace duckdb {
 
 namespace {
+
+constexpr idx_t STRING_SPLIT_CHECK_ELEMENTS = 1 << 14;
 
 struct RegularStringSplit {
 	static constexpr bool VERIFY_UTF8 = false;
@@ -54,9 +57,8 @@ struct RegexpStringSplit {
 
 	static idx_t Find(const char *input_data, idx_t input_size, const char *delim_data, idx_t delim_size,
 	                  idx_t &match_size, void *data) {
-		duckdb_re2::RE2::Options options;
-		options.set_thread_safe(false);
-		duckdb_re2::RE2 regex(duckdb_re2::StringPiece(delim_data, delim_size), options);
+		D_ASSERT(data);
+		auto &regex = reinterpret_cast<RegexPatternCache *>(data)->Get(duckdb_re2::StringPiece(delim_data, delim_size));
 		if (!regex.ok()) {
 			throw InvalidInputException(regex.error());
 		}
@@ -111,6 +113,13 @@ void StringSplitExecutor(DataChunk &args, ExpressionState &state, Vector &result
 	result.SetVectorType(VectorType::FLAT_VECTOR);
 
 	auto list_writer = FlatVector::Writer<VectorListType<string_t>>(result, args.size());
+	idx_t unchecked = 0;
+	auto count_element = [&] {
+		if (++unchecked == STRING_SPLIT_CHECK_ELEMENTS) {
+			unchecked = 0;
+			state.InterruptCheck();
+		}
+	};
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto input_entry = input_entries[i];
 		if (!input_entry.IsValid()) {
@@ -139,6 +148,7 @@ void StringSplitExecutor(DataChunk &args, ExpressionState &state, Vector &result
 				}
 				list.WriteElement().WriteStringRef(string_t(input_data + pos, UnsafeNumericCast<uint32_t>(char_len)));
 				pos += static_cast<idx_t>(char_len);
+				count_element();
 			}
 			continue;
 		}
@@ -160,6 +170,7 @@ void StringSplitExecutor(DataChunk &args, ExpressionState &state, Vector &result
 				    regexp_util::VerifyUTF8Result(split_data, split_size);
 			    }
 			    list.WriteElement().WriteStringRef(string_t(split_data, UnsafeNumericCast<uint32_t>(split_size)));
+			    count_element();
 		    });
 	}
 
@@ -170,6 +181,66 @@ void StringSplitFunction(DataChunk &args, ExpressionState &state, Vector &result
 	StringSplitExecutor<RegularStringSplit>(args, state, result, nullptr);
 }
 
+string_t SplitPart(const string_t &input, const string_t &delimiter, int64_t position, vector<idx_t> &delimiters) {
+	const auto input_data = input.GetData();
+	const auto input_size = input.GetSize();
+	const auto empty = string_t(input_data, 0);
+	if (input_size == 0 || position == 0) {
+		return empty;
+	}
+	const auto delimiter_size = delimiter.GetSize();
+	if (delimiter_size == 0) {
+		return position == 1 || position == -1 ? input : empty;
+	}
+	const duckdb_re2::LiteralFinder finder(absl::string_view(delimiter.GetData(), delimiter_size));
+	const auto find = [&](idx_t start) {
+		return FindStrInStr(const_uchar_ptr_cast(input_data) + start, input_size - start,
+		                    const_uchar_ptr_cast(delimiter.GetData()), delimiter_size, finder);
+	};
+	const auto part = [&](idx_t start, idx_t end) {
+		return string_t(input_data + start, UnsafeNumericCast<uint32_t>(end - start));
+	};
+	if (position > 0) {
+		idx_t start = 0;
+		for (int64_t current = 1;; current++) {
+			const auto pos = find(start);
+			if (pos > input_size - start) {
+				return current == position ? part(start, input_size) : empty;
+			}
+			if (current == position) {
+				return part(start, start + pos);
+			}
+			start += pos + delimiter_size;
+		}
+	}
+	delimiters.clear();
+	for (idx_t start = 0;;) {
+		const auto pos = find(start);
+		if (pos > input_size - start) {
+			break;
+		}
+		delimiters.push_back(start + pos);
+		start += pos + delimiter_size;
+	}
+	const auto from_end = static_cast<idx_t>(-(position + 1)) + 1;
+	if (from_end > delimiters.size() + 1) {
+		return empty;
+	}
+	const auto index = delimiters.size() + 1 - from_end;
+	const auto start = index == 0 ? 0 : delimiters[index - 1] + delimiter_size;
+	const auto end = index == delimiters.size() ? input_size : delimiters[index];
+	return part(start, end);
+}
+
+void SplitPartFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	vector<idx_t> delimiters;
+	TernaryExecutor::Execute<string_t, string_t, int64_t, string_t>(
+	    args.data[0], args.data[1], args.data[2], result, [&](string_t input, string_t delimiter, int64_t position) {
+		    return SplitPart(input, delimiter, position, delimiters);
+	    });
+	StringVector::AddHeapReference(result, args.data[0]);
+}
+
 void StringSplitRegexFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<RegexpMatchesBindData>();
@@ -178,8 +249,8 @@ void StringSplitRegexFunction(DataChunk &args, ExpressionState &state, Vector &r
 		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexLocalState>();
 		StringSplitExecutor<ConstantRegexpStringSplit>(args, state, result, &lstate.constant_pattern);
 	} else {
-		// slow path: have to re-compile regex for every row
-		StringSplitExecutor<RegexpStringSplit>(args, state, result);
+		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexPatternCacheState>();
+		StringSplitExecutor<RegexpStringSplit>(args, state, result, &lstate.cache);
 	}
 }
 
@@ -194,6 +265,15 @@ ScalarFunction StringSplitFun::GetFunction() {
 	    .AddParameter("separator", LogicalType::VARCHAR);
 	string_split.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
 	return string_split;
+}
+
+ScalarFunction SplitPartFun::GetFunction() {
+	ScalarFunction split_part({}, LogicalType::VARCHAR, SplitPartFunction);
+	split_part.GetSignature()
+	    .AddParameter("string", LogicalType::VARCHAR)
+	    .AddParameter("delimiter", LogicalType::VARCHAR)
+	    .AddParameter("position", LogicalType::BIGINT);
+	return split_part;
 }
 
 ScalarFunctionSet StringSplitRegexFun::GetFunctions() {

@@ -58,6 +58,9 @@ buffer_ptr<VectorBuffer> VectorFSSTStringBuffer::FlattenSliceInternal(const Logi
 		if (compressed_string.GetSize() > 0) {
 			result_data[target_idx] = FSSTPrimitives::DecompressValue(
 			    decoder, str_allocator, compressed_string.GetData(), compressed_string.GetSize());
+			if (result_data[target_idx].GetSize() > decompress_buffer.size()) {
+				FSSTPrimitives::ThrowDecodedStringTooLarge();
+			}
 		} else {
 			// empty string
 			result_data[target_idx] = string_t(nullptr, 0);

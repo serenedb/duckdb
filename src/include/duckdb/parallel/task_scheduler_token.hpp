@@ -8,31 +8,58 @@
 
 #pragma once
 
-#include "duckdb/common/array.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/common.hpp"
-#include "duckdb/common/enums/task_scheduler_type.hpp"
+#include "duckdb/common/deque.hpp"
 #include "duckdb/common/mutex.hpp"
 
 namespace duckdb {
 
 // Forward declarations.
-struct QueueProducerToken;
+class Task;
+class TaskScheduler;
 class TaskSchedulerQueue;
+struct ProducerToken;
+
+enum class SchedulerClass : uint8_t { FOREGROUND, BACKGROUND };
+
+class SchedulerAccount {
+public:
+	explicit SchedulerAccount(SchedulerClass scheduler_class);
+
+private:
+	friend class TaskSchedulerQueue;
+	friend class TaskScheduler;
+
+	const SchedulerClass scheduler_class;
+	double deficit;
+	SchedulerAccount *prev_active = nullptr;
+	SchedulerAccount *next_active = nullptr;
+	bool fresh = false;
+	ProducerToken *runnable_head = nullptr;
+	ProducerToken *runnable_tail = nullptr;
+	atomic<idx_t> queued_tasks {0};
+};
 
 struct ProducerToken {
 public:
-	explicit ProducerToken(array<unique_ptr<TaskSchedulerQueue>, TASK_SCHEDULER_TYPE_COUNT> &queues);
+	ProducerToken(TaskScheduler &scheduler, shared_ptr<SchedulerAccount> account);
 	~ProducerToken();
-
-public:
-	QueueProducerToken &GetQueueProducerToken(TaskSchedulerType pool_type);
 
 public:
 	annotated_mutex producer_lock;
 	absl::CondVar producer_cv;
 
 private:
-	array<unique_ptr<QueueProducerToken>, TASK_SCHEDULER_TYPE_COUNT> tokens;
+	friend class TaskSchedulerQueue;
+	friend class TaskScheduler;
+
+	TaskScheduler &scheduler;
+	shared_ptr<SchedulerAccount> account;
+	deque<shared_ptr<Task>> tasks;
+	ProducerToken *prev_runnable = nullptr;
+	ProducerToken *next_runnable = nullptr;
+	atomic<bool> runnable {false};
 };
 
 } // namespace duckdb

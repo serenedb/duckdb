@@ -84,6 +84,7 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 	    {"filter_reorder", {"safe"}},
 	    {"force_compression", {"uncompressed", "uncompressed"}},
 	    {"fsync_mode", {"NONE"}},
+	    {"integer_overflow", {"WRAP"}},
 	    {"home_directory", {"test"}},
 	    {"allow_extensions_metadata_mismatch", {"true"}},
 	    {"extension_directory", {"test"}},
@@ -210,7 +211,6 @@ bool OptionIsExcludedFromTest(const string &name) {
 	    "profiling_output", // just an alias
 	    "profiling_renderer_settings",
 	    "progress_bar_time",
-	    "scheduler_process_partial",
 	    "schema",
 	    "search_path",
 	    "standard_vector_size",

@@ -2,6 +2,7 @@
 
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/error_data.hpp"
+#include "duckdb/common/time_point.hpp"
 #include "duckdb/common/progress_bar/progress_bar.hpp"
 #include "duckdb/execution/executor.hpp"
 #include "duckdb/execution/operator/helper/physical_result_collector.hpp"
@@ -50,9 +51,7 @@ void ClientContext::BeginQueryInternal(ClientContextLock &lock, const SQLStateme
 	// Set query deadline if max_execution_time is configured
 	auto max_execution_time = Settings::Get<MaxExecutionTimeSetting>(*this);
 	if (max_execution_time > 0) {
-		auto now = steady_clock::now();
-		auto deadline_tp = now + milliseconds(max_execution_time);
-		query_deadline = NumericCast<idx_t>(duration_cast<milliseconds>(deadline_tp.time_since_epoch()).count());
+		query_deadline = NumericCast<idx_t>(TimePoint::Now() + TimePoint::FromNanos(max_execution_time * 1000000));
 	} else {
 		query_deadline.SetInvalid();
 	}
@@ -166,6 +165,10 @@ Executor &ClientContext::GetExecutor() {
 	D_ASSERT(active_query);
 	D_ASSERT(active_query->executor);
 	return *active_query->executor;
+}
+
+void ClientContext::SetSchedulerAccount(shared_ptr<SchedulerAccount> account) {
+	scheduler_account = std::move(account);
 }
 
 const string &ClientContext::GetCurrentQuery() {

@@ -158,7 +158,7 @@ unique_ptr<Expression> BoundDefaultExpression::Deserialize(Deserializer &deseria
 void BoundLambdaExpression::Serialize(Serializer &serializer) const {
 	Expression::Serialize(serializer);
 	serializer.WriteProperty<LogicalType>(200, "return_type", return_type);
-	serializer.WritePropertyWithDefault<unique_ptr<Expression>>(201, "lambda_expr", lambda_expr);
+	serializer.WritePropertyWithDefault<shared_ptr<Expression>>(201, "lambda_expr", lambda_expr);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(202, "captures", captures);
 	serializer.WritePropertyWithDefault<idx_t>(203, "parameter_count", parameter_count);
 	serializer.WritePropertyWithDefault<vector<Identifier>>(204, "parameter_names", parameter_names);
@@ -166,7 +166,7 @@ void BoundLambdaExpression::Serialize(Serializer &serializer) const {
 
 unique_ptr<Expression> BoundLambdaExpression::Deserialize(Deserializer &deserializer) {
 	auto return_type = deserializer.ReadProperty<LogicalType>(200, "return_type");
-	auto lambda_expr = deserializer.ReadPropertyWithDefault<unique_ptr<Expression>>(201, "lambda_expr");
+	auto lambda_expr = deserializer.ReadPropertyWithDefault<shared_ptr<Expression>>(201, "lambda_expr");
 	auto captures = deserializer.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(202, "captures");
 	auto parameter_count = deserializer.ReadPropertyWithDefault<idx_t>(203, "parameter_count");
 	auto result = duckdb::unique_ptr<BoundLambdaExpression>(new BoundLambdaExpression(deserializer.Get<ExpressionType>(), std::move(return_type), std::move(lambda_expr), parameter_count));

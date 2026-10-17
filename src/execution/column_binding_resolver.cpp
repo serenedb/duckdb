@@ -66,8 +66,7 @@ void ColumnBindingResolver::VisitOperator(LogicalOperator &op) {
 		combined_bindings.insert(combined_bindings.end(), right_bindings.begin(), right_bindings.end());
 		auto combined_types = CombineJoinTypes(left_bindings, left_types, right_bindings, right_types);
 
-		bindings = combined_bindings;
-		types = combined_types;
+		SetBindings(std::move(combined_bindings), std::move(combined_types));
 		for (auto &cond : comp_join.conditions) {
 			if (!cond.IsComparison()) {
 				VisitExpression(&cond.JoinExpressionReference());
@@ -75,8 +74,7 @@ void ColumnBindingResolver::VisitOperator(LogicalOperator &op) {
 		}
 
 		// update to join output bindings
-		bindings = op.GetColumnBindings();
-		types = op.types;
+		SetBindings(op.GetColumnBindings(), op.types);
 
 		return;
 	}
@@ -117,16 +115,14 @@ void ColumnBindingResolver::VisitOperator(LogicalOperator &op) {
 		auto &left_types = comp_join.delim_flipped ? other_types : delim_types;
 		auto &right_types = comp_join.delim_flipped ? delim_types : other_types;
 		auto combined_types = CombineJoinTypes(left_bindings, left_types, right_bindings, right_types);
-		bindings = std::move(combined_bindings);
-		types = std::move(combined_types);
+		SetBindings(std::move(combined_bindings), std::move(combined_types));
 		for (auto &cond : comp_join.conditions) {
 			if (!cond.IsComparison()) {
 				VisitExpression(&cond.JoinExpressionReference());
 			}
 		}
 		// finally update the bindings with the result bindings of the join
-		bindings = op.GetColumnBindings();
-		types = op.types;
+		SetBindings(op.GetColumnBindings(), op.types);
 		return;
 	}
 	case LogicalOperatorType::LOGICAL_ANY_JOIN: {
@@ -134,23 +130,23 @@ void ColumnBindingResolver::VisitOperator(LogicalOperator &op) {
 		// once i.e. we set the bindings first to the bindings of the entire join, and then resolve the expressions of
 		// this operator
 		VisitOperatorChildren(op);
-		bindings = op.GetColumnBindings();
-		types = op.types;
+		auto any_join_bindings = op.GetColumnBindings();
+		auto any_join_types = op.types;
 		auto &any_join = op.Cast<LogicalAnyJoin>();
 		if (any_join.join_type == JoinType::SEMI || any_join.join_type == JoinType::ANTI) {
 			auto right_bindings = op.children[1]->GetColumnBindings();
-			bindings.insert(bindings.end(), right_bindings.begin(), right_bindings.end());
+			any_join_bindings.insert(any_join_bindings.end(), right_bindings.begin(), right_bindings.end());
 			auto &right_types = op.children[1]->types;
-			types.insert(types.end(), right_types.begin(), right_types.end());
+			any_join_types.insert(any_join_types.end(), right_types.begin(), right_types.end());
 		}
+		SetBindings(std::move(any_join_bindings), std::move(any_join_types));
 		if (any_join.join_type == JoinType::RIGHT_SEMI || any_join.join_type == JoinType::RIGHT_ANTI) {
 			throw InternalException("RIGHT SEMI/ANTI any join not supported yet");
 		}
 		VisitOperatorExpressions(op);
 
 		//	Restore bindings for the caller
-		bindings = op.GetColumnBindings();
-		types = op.types;
+		SetBindings(op.GetColumnBindings(), op.types);
 		return;
 	}
 	case LogicalOperatorType::LOGICAL_CREATE_INDEX: {
@@ -165,42 +161,39 @@ void ColumnBindingResolver::VisitOperator(LogicalOperator &op) {
 		} else {
 			logical_column_count = create_index.table.Cast<TableCatalogEntry>().GetColumns().LogicalColumnCount();
 		}
-		bindings = LogicalOperator::GenerateColumnBindings(TableIndex(0), logical_column_count);
 		// TODO: fill types in too (clearing skips type checks)
-		types.clear();
+		SetBindings(LogicalOperator::GenerateColumnBindings(TableIndex(0), logical_column_count), {});
 		VisitOperatorExpressions(op);
 		return;
 	}
 	case LogicalOperatorType::LOGICAL_GET: {
 		//! We first need to update the current set of bindings and then visit operator expressions
-		bindings = op.GetColumnBindings();
-		types = op.types;
+		SetBindings(op.GetColumnBindings(), op.types);
 		VisitOperatorExpressions(op);
 		return;
 	}
 	case LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR: {
 		auto &ext_op = op.Cast<LogicalExtensionOperator>();
 		if (ext_op.GetTypeBindingVerificationIdentifier()) {
-			bindings.clear();
-			types.clear();
+			SetBindings({}, {});
 			VisitOperatorChildren(op);
 			VisitOperatorExpressions(op);
-			bindings = op.GetColumnBindings();
-			types = op.types;
+			SetBindings(op.GetColumnBindings(), op.types);
 			return;
 		}
 		// Just to be very sure, we clear before and after resolving extension operator column bindings
 		// This skips checks, but makes sure we don't break any extension operators with type verification
 		types.clear();
+		external_binding_updates++;
 		ext_op.ResolveColumnBindings(*this, bindings);
+		external_binding_updates--;
+		binding_positions_valid = false;
 		types.clear();
 		return;
 	}
 	case LogicalOperatorType::LOGICAL_RECURSIVE_CTE: {
 		VisitOperatorChildren(op);
-		bindings = op.GetColumnBindings();
-
-		types.clear();
+		SetBindings(op.GetColumnBindings(), {});
 		VisitOperatorExpressions(op);
 		types = op.types;
 		return;
@@ -215,38 +208,67 @@ void ColumnBindingResolver::VisitOperator(LogicalOperator &op) {
 	// now visit the expressions of this operator to resolve any bound column references
 	VisitOperatorExpressions(op);
 	// finally update the current set of bindings to the current set of column bindings
-	bindings = op.GetColumnBindings();
-	types = op.types;
+	SetBindings(op.GetColumnBindings(), op.types);
+}
+
+void ColumnBindingResolver::SetBindings(vector<ColumnBinding> new_bindings, vector<LogicalType> new_types) {
+	bindings = std::move(new_bindings);
+	types = std::move(new_types);
+	binding_positions_valid = false;
+}
+
+optional_idx ColumnBindingResolver::FindBinding(ColumnBinding binding) {
+	static constexpr idx_t LINEAR_SCAN_BINDINGS = 16;
+	if (bindings.size() <= LINEAR_SCAN_BINDINGS || external_binding_updates > 0) {
+		for (idx_t i = 0; i < bindings.size(); i++) {
+			if (bindings[i] == binding) {
+				return i;
+			}
+		}
+		return optional_idx();
+	}
+	if (!binding_positions_valid) {
+		binding_positions.clear();
+		binding_positions.reserve(bindings.size());
+		for (idx_t i = 0; i < bindings.size(); i++) {
+			binding_positions.emplace(bindings[i], i);
+		}
+		binding_positions_valid = true;
+	}
+	auto entry = binding_positions.find(binding);
+	if (entry == binding_positions.end()) {
+		return optional_idx();
+	}
+	return entry->second;
 }
 
 unique_ptr<Expression> ColumnBindingResolver::VisitReplace(BoundColumnRefExpression &expr,
                                                            unique_ptr<Expression> *expr_ptr) {
 	D_ASSERT(expr.Depth() == 0);
 	// check the current set of column bindings to see which index corresponds to the column reference
-	for (idx_t i = 0; i < bindings.size(); i++) {
-		if (expr.Binding() == bindings[i]) {
-			if (!types.empty()) {
-				// LCOV_EXCL_START
-				if (bindings.size() != types.size()) {
-					throw InternalException(
-					    "Failed to bind column reference %s [%d.%d]: inequal num bindings/types (%llu != %llu)",
-					    expr.GetAlias(), expr.Binding().table_index.index, expr.Binding().column_index, bindings.size(),
-					    types.size());
-				}
-				if (expr.GetReturnType() != types[i]) {
-					throw InternalException("Failed to bind column reference %s [%d.%d]: inequal types (%s != %s)",
-					                        expr.GetAlias(), expr.Binding().table_index.index,
-					                        expr.Binding().column_index, expr.GetReturnType().ToString(),
-					                        types[i].ToString());
-				}
-				// LCOV_EXCL_STOP
+	auto position = FindBinding(expr.Binding());
+	if (position.IsValid()) {
+		auto i = position.GetIndex();
+		if (!types.empty()) {
+			// LCOV_EXCL_START
+			if (bindings.size() != types.size()) {
+				throw InternalException(
+				    "Failed to bind column reference %s [%d.%d]: inequal num bindings/types (%llu != %llu)",
+				    expr.GetAlias(), expr.Binding().table_index.index, expr.Binding().column_index, bindings.size(),
+				    types.size());
 			}
-			if (verify_only) {
-				// in verification mode
-				return nullptr;
+			if (expr.GetReturnType() != types[i]) {
+				throw InternalException("Failed to bind column reference %s [%d.%d]: inequal types (%s != %s)",
+				                        expr.GetAlias(), expr.Binding().table_index.index, expr.Binding().column_index,
+				                        expr.GetReturnType().ToString(), types[i].ToString());
 			}
-			return make_uniq<BoundReferenceExpression>(expr.GetAlias(), expr.GetReturnType(), i);
+			// LCOV_EXCL_STOP
 		}
+		if (verify_only) {
+			// in verification mode
+			return nullptr;
+		}
+		return make_uniq<BoundReferenceExpression>(expr.GetAlias(), expr.GetReturnType(), i);
 	}
 	// LCOV_EXCL_START
 	// could not bind the column reference, this should never happen and indicates a bug in the code

@@ -45,41 +45,36 @@ unique_ptr<Expression> CommonAggregateOptimizer::VisitReplace(BoundColumnRefExpr
 
 void CommonAggregateOptimizer::ExtractCommonAggregates(LogicalAggregate &aggr) {
 	expression_map_t<ProjectionIndex> aggregate_remap;
-	idx_t total_erased = 0;
+	vector<unique_ptr<Expression>> kept_expressions;
+	kept_expressions.reserve(aggr.expressions.size());
 	for (idx_t i = 0; i < aggr.expressions.size(); i++) {
-		ProjectionIndex original_index(i + total_erased);
-		ProjectionIndex new_index(i);
+		auto &expr = aggr.expressions[i];
+		ProjectionIndex original_index(i);
+		ProjectionIndex new_index(kept_expressions.size());
 		// volatile aggregates must not be deduplicated: each call is independent
-		if (aggr.expressions[i]->IsVolatile()) {
-			if (new_index != original_index) {
+		if (!expr->IsVolatile()) {
+			auto entry = aggregate_remap.find(*expr);
+			if (entry != aggregate_remap.end()) {
+				// aggregate already exists! we can remove this entry
+				// we need to remap any references to this aggregate so they point to the other aggregate
 				ColumnBinding original_binding(aggr.aggregate_index, original_index);
-				ColumnBinding new_binding(aggr.aggregate_index, new_index);
+				ColumnBinding new_binding(aggr.aggregate_index, entry->second);
 				aggregate_map[original_binding] = new_binding;
+				continue;
 			}
-			continue;
-		}
-		auto entry = aggregate_remap.find(*aggr.expressions[i]);
-		if (entry == aggregate_remap.end()) {
 			// aggregate does not exist yet: add it to the map
-			aggregate_remap[*aggr.expressions[i]] = new_index;
-			if (new_index != original_index) {
-				// this aggregate is not erased, however an aggregate BEFORE it has been erased
-				// so we need to remap this aggregate
-				ColumnBinding original_binding(aggr.aggregate_index, original_index);
-				ColumnBinding new_binding(aggr.aggregate_index, new_index);
-				aggregate_map[original_binding] = new_binding;
-			}
-		} else {
-			// aggregate already exists! we can remove this entry
-			total_erased++;
-			aggr.expressions.erase_at(i);
-			i--;
-			// we need to remap any references to this aggregate so they point to the other aggregate
+			aggregate_remap[*expr] = new_index;
+		}
+		if (new_index != original_index) {
+			// this aggregate is not erased, however an aggregate BEFORE it has been erased
+			// so we need to remap this aggregate
 			ColumnBinding original_binding(aggr.aggregate_index, original_index);
-			ColumnBinding new_binding(aggr.aggregate_index, entry->second);
+			ColumnBinding new_binding(aggr.aggregate_index, new_index);
 			aggregate_map[original_binding] = new_binding;
 		}
+		kept_expressions.push_back(std::move(expr));
 	}
+	aggr.expressions = std::move(kept_expressions);
 }
 
 } // namespace duckdb

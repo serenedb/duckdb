@@ -181,13 +181,30 @@ void ConstantVector::Reference(Vector &vector, count_t count, const Vector &sour
 		FlatVector::SetSize(vector, count);
 		break;
 	}
-	default:
-		// default behavior: get a value from the vector and reference it
-		// this is not that expensive for scalar types
-		auto value = source.GetValue(position);
-		vector.Reference(value, count);
-		D_ASSERT(vector.GetVectorType() == VectorType::CONSTANT_VECTOR);
+	default: {
+		UnifiedVectorFormat vdata;
+		source.ToUnifiedFormat(vdata);
+		auto source_idx = vdata.sel->get_index(position);
+		if (!vdata.validity.RowIsValid(source_idx)) {
+			SetNull(vector, count);
+			break;
+		}
+		auto internal_type = source_type.InternalType();
+		capacity_t capacity(1ULL);
+		if (internal_type == PhysicalType::VARCHAR) {
+			vector.SetBuffer(make_buffer<VectorStringBuffer>(capacity));
+			auto &str = UnifiedVectorFormat::GetData<string_t>(vdata)[source_idx];
+			FlatVector::GetDataMutable<string_t>(vector)[0] = StringVector::AddStringOrBlob(vector, str);
+		} else {
+			auto type_size = GetTypeIdSize(internal_type);
+			auto buffer = make_buffer<StandardVectorBuffer>(capacity, type_size);
+			memcpy(buffer->GetData(), vdata.data + source_idx * type_size, type_size);
+			vector.SetBuffer(std::move(buffer));
+		}
+		vector.SetVectorType(VectorType::CONSTANT_VECTOR);
+		FlatVector::SetSize(vector, count);
 		break;
+	}
 	}
 }
 

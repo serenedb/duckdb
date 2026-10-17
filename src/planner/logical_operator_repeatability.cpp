@@ -129,9 +129,6 @@ static LogicalOperatorRepeatability ClassifyOperatorType(LogicalOperator &op) {
 }
 
 LogicalOperatorRepeatability ClassifyLogicalOperatorRepeatability(LogicalOperator &op) {
-	if (op.HasSideEffects()) {
-		return LogicalOperatorRepeatability::NON_REPEATABLE;
-	}
 	auto classification = ClassifyOperatorType(op);
 	if (classification != LogicalOperatorRepeatability::REPEATABLE) {
 		return classification;

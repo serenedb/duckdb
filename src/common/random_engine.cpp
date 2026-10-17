@@ -17,29 +17,37 @@ struct RandomState {
 	pcg32 pcg;
 };
 
-RandomEngine::RandomEngine(int64_t seed) : random_state(make_uniq<RandomState>()) {
-	if (seed < 0) {
-#ifdef __linux__
-		idx_t random_seed = 0;
-		int result = -1;
-#if defined(SYS_getrandom)
-		result = static_cast<int>(syscall(SYS_getrandom, &random_seed, sizeof(random_seed), 0));
-#endif
-		if (result == -1) {
-			// Something went wrong with the syscall, we use chrono
-			const auto now = std::chrono::high_resolution_clock::now();
-			random_seed = now.time_since_epoch().count();
-		}
-		random_state->pcg.seed(random_seed);
-#else
-		random_state->pcg.seed(pcg_extras::seed_seq_from<std::random_device>());
-#endif
-	} else {
+RandomEngine::RandomEngine(int64_t seed) {
+	if (seed >= 0) {
+		random_state = make_uniq<RandomState>();
 		random_state->pcg.seed(NumericCast<uint64_t>(seed));
 	}
 }
 
 RandomEngine::~RandomEngine() {
+}
+
+RandomState &RandomEngine::GetState() {
+	if (random_state) {
+		return *random_state;
+	}
+	random_state = make_uniq<RandomState>();
+#ifdef __linux__
+	idx_t random_seed = 0;
+	int result = -1;
+#if defined(SYS_getrandom)
+	result = static_cast<int>(syscall(SYS_getrandom, &random_seed, sizeof(random_seed), 0));
+#endif
+	if (result == -1) {
+		// Something went wrong with the syscall, we use chrono
+		const auto now = std::chrono::high_resolution_clock::now();
+		random_seed = now.time_since_epoch().count();
+	}
+	random_state->pcg.seed(random_seed);
+#else
+	random_state->pcg.seed(pcg_extras::seed_seq_from<std::random_device>());
+#endif
+	return *random_state;
 }
 
 double RandomEngine::NextRandom(double min, double max) {
@@ -63,7 +71,7 @@ double RandomEngine::NextRandom32() {
 }
 
 uint32_t RandomEngine::NextRandomInteger() {
-	return random_state->pcg();
+	return GetState().pcg();
 }
 
 uint64_t RandomEngine::NextRandomInteger64() {
@@ -79,6 +87,9 @@ uint32_t RandomEngine::NextRandomInteger32(uint32_t min, uint32_t max) {
 }
 
 void RandomEngine::SetSeed(uint64_t seed) {
+	if (!random_state) {
+		random_state = make_uniq<RandomState>();
+	}
 	random_state->pcg.seed(seed);
 }
 

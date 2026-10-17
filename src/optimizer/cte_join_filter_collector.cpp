@@ -1,8 +1,6 @@
 #include "duckdb/optimizer/cte_join_filter_collector.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
-#include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/expression_barrier.hpp"
-#include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/logical_operator_visitor.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
@@ -26,9 +24,8 @@ vector<CTEJoinFilter> CTEJoinFilterCollector::Collect(LogicalOperator &op,
 static bool CanPassCTEJoinFilter(LogicalOperator &op) {
 	bool safe = true;
 	LogicalOperatorVisitor::EnumerateExpressions(op, [&](unique_ptr<Expression> *expr) {
-		safe &= !(*expr)->IsVolatile() && !(*expr)->CanThrow() && !ExpressionBarrier::Contains(**expr);
-		ExpressionIterator::VisitExpression<BoundFunctionExpression>(
-		    **expr, [&](const BoundFunctionExpression &func) { safe &= !func.Function().RequiresOrderedExecution(); });
+		safe &= !(*expr)->IsVolatile() && !(*expr)->CanThrow() && !(*expr)->RequiresOrderedExecution() &&
+		        !ExpressionBarrier::Contains(**expr);
 	});
 	return safe;
 }

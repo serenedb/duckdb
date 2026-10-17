@@ -133,6 +133,10 @@ public:
 		return false;
 	}
 
+	virtual bool FinalExecuteNeedsInput() const {
+		return false;
+	}
+
 	virtual bool RequiresOperatorFinalize() const {
 		return false;
 	}
@@ -192,6 +196,8 @@ public:
 	//! Returns the current progress percentage, or a negative value if progress bars are not supported
 	virtual ProgressData GetProgress(ClientContext &context, GlobalSourceState &gstate) const;
 	virtual void SourceFinished(ClientContext &context, GlobalSourceState &gstate) const;
+	virtual void LocalSourceFinished(ExecutionContext &context, GlobalSourceState &gstate,
+	                                 LocalSourceState &lstate) const;
 
 	//! Returns the current progress percentage, or a negative value if progress bars are not supported
 	virtual ProgressData GetSinkProgress(ClientContext &context, GlobalSinkState &gstate,
@@ -274,6 +280,9 @@ public:
 		}
 		return reinterpret_cast<const TARGET &>(*this);
 	}
+
+private:
+	mutable optional_idx estimated_thread_count;
 };
 
 //! Accumulator that lets a dictionary column survive the cache: pinned entry + concatenated per-chunk sels
@@ -341,6 +350,10 @@ public:
 
 	bool RequiresFinalExecute() const final {
 		return caching_supported;
+	}
+
+	bool FinalExecuteNeedsInput() const final {
+		return true;
 	}
 
 protected:

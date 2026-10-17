@@ -50,7 +50,7 @@ TEST_CASE("A unit larger than the cap is admitted into an empty queue", "[api][q
 	// Every unit is far past the cap, so each admission is the oversized-into-an-empty-queue case
 	REQUIRE_NO_FAIL(con.Query("SET max_streaming_buffer_size='1000b'"));
 
-	auto handle = SubmitFormatted(con, "SELECT i FROM range(100000) t(i)", 20000);
+	auto handle = SubmitFormatted(con, "SELECT i FROM range_st(100000) t(i)", 20000);
 	DrainWatchdog watchdog(con);
 	QueryResultStream<TestFormat> stream(std::move(handle));
 	auto report = Drain(stream);
@@ -68,7 +68,7 @@ TEST_CASE("Queued bytes stay under the cap plus one unit", "[api][query_result_f
 	REQUIRE_NO_FAIL(con.Query("SET max_streaming_buffer_size='250KB'"));
 
 	SECTION("the simple store") {
-		auto handle = SubmitFormatted(con, "SELECT i FROM range(200000) t(i)", 8192);
+		auto handle = SubmitFormatted(con, "SELECT i FROM range_st(200000) t(i)", 8192);
 		DrainWatchdog watchdog(con);
 		QueryResultStream<TestFormat> stream(std::move(handle));
 		auto report = Drain(stream);
@@ -97,7 +97,7 @@ TEST_CASE("A producer parks while several sliced units are still pending in its 
 	REQUIRE_NO_FAIL(con.Query("SET max_streaming_buffer_size='2KB'"));
 
 	SECTION("the simple store") {
-		auto handle = SubmitFormatted(con, "SELECT i FROM range(20000) t(i)", 300);
+		auto handle = SubmitFormatted(con, "SELECT i FROM range_st(20000) t(i)", 300);
 		DrainWatchdog watchdog(con);
 		QueryResultStream<TestFormat> stream(std::move(handle));
 		auto report = Drain(stream);

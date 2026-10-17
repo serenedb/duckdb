@@ -51,3 +51,24 @@ select case when i=[1] then [3] else [4] end from a
 [4]
 [4]
 [4]
+
+statement ok
+CREATE TABLE case_lists AS SELECT i, range(i % 5) AS l FROM range(3000) t(i)
+
+query III
+SELECT sum(len(CASE WHEN i % 3 = 0 THEN l WHEN i % 3 = 1 THEN l[2:] ELSE [42] END)),
+	sum(list_sum(CASE WHEN i % 4 = 0 THEN l WHEN i % 4 = 1 THEN NULL WHEN i % 4 = 2 THEN [i] ELSE l END)),
+	count(CASE WHEN i % 2 = 0 THEN l END)
+FROM case_lists
+----
+4200	1128000	1500
+
+query I
+SELECT CASE WHEN i % 3 = 0 THEN l WHEN i % 3 = 1 THEN l[2:] ELSE [42] END FROM case_lists WHERE i < 6 ORDER BY i
+----
+[]
+[]
+[42]
+[0, 1, 2]
+[1, 2, 3]
+[42]

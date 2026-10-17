@@ -155,27 +155,30 @@ static bool GetExpressionWidth(const Expression &expression,
 	return true;
 }
 
-static idx_t GetExclusiveInputWidth(const LogicalProjection &projection, idx_t expression_index,
+static column_binding_map_t<idx_t> CountReferencingExpressions(const LogicalProjection &projection) {
+	column_binding_map_t<idx_t> result;
+	column_binding_set_t expression_bindings;
+	for (auto &expression : projection.expressions) {
+		expression_bindings.clear();
+		ExpressionIterator::VisitExpression<BoundColumnRefExpression>(
+		    *expression, [&](const BoundColumnRefExpression &colref) {
+			    if (colref.Depth() == 0 && expression_bindings.insert(colref.Binding()).second) {
+				    result[colref.Binding()]++;
+			    }
+		    });
+	}
+	return result;
+}
+
+static idx_t GetExclusiveInputWidth(const column_binding_map_t<idx_t> &reference_counts,
                                     const vector<ExpressionBindingWidth> &binding_widths) {
 	idx_t result = 0;
 	for (auto &binding_width : binding_widths) {
-		auto &binding = binding_width.binding;
-		bool referenced_elsewhere = false;
-		for (idx_t other_index = 0; other_index < projection.expressions.size(); other_index++) {
-			if (other_index == expression_index) {
-				continue;
-			}
-			ExpressionIterator::VisitExpression<BoundColumnRefExpression>(
-			    *projection.expressions[other_index], [&](const BoundColumnRefExpression &colref) {
-				    if (colref.Depth() == 0 && colref.Binding() == binding) {
-					    referenced_elsewhere = true;
-				    }
-			    });
+		auto entry = reference_counts.find(binding_width.binding);
+		D_ASSERT(entry != reference_counts.end());
+		if (entry->second == 1) {
+			result += binding_width.width;
 		}
-		if (referenced_elsewhere) {
-			continue;
-		}
-		result += binding_width.width;
 	}
 	return result;
 }
@@ -280,7 +283,7 @@ static bool TraceProjectionResult(LogicalProjection &projection, const column_bi
 
 static bool FindLiftPlacement(LogicalProjection &projection, idx_t expression_index, const vector<PathStep> &ancestors,
                               const column_binding_map_t<unique_ptr<BaseStatistics>> &statistics_map,
-                              LiftPlacement &result) {
+                              const column_binding_map_t<idx_t> &reference_counts, LiftPlacement &result) {
 	auto &expression = *projection.expressions[expression_index];
 	if (expression.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF || expression.IsVolatile() ||
 	    expression.CanThrow() || !projection.children[0]->has_estimated_cardinality) {
@@ -293,7 +296,6 @@ static bool FindLiftPlacement(LogicalProjection &projection, idx_t expression_in
 	if (!GetExpressionWidth(expression, statistics_map, input_width, dependencies)) {
 		return false;
 	}
-	auto exclusive_input_width = GetExclusiveInputWidth(projection, expression_index, dependencies);
 
 	column_binding_set_t current_bindings;
 	current_bindings.insert(source_binding);
@@ -330,7 +332,11 @@ static bool FindLiftPlacement(LogicalProjection &projection, idx_t expression_in
 			break;
 		}
 
+#ifdef D_ASSERT_IS_ENABLED
+		const auto resolved_types = op.types;
 		op.ResolveOperatorTypes();
+		D_ASSERT(resolved_types == op.types);
+#endif
 		LiftPathStep step {op, ancestor.child_index, op.GetColumnBindings(), current_bindings};
 		path.push_back(std::move(step));
 		if (!IsEligibleJoin(op)) {
@@ -356,6 +362,7 @@ static bool FindLiftPlacement(LogicalProjection &projection, idx_t expression_in
 	if (!has_output_width) {
 		return false;
 	}
+	auto exclusive_input_width = GetExclusiveInputWidth(reference_counts, dependencies);
 	auto evaluation_width = static_cast<double>(input_width) + static_cast<double>(output_width) +
 	                        static_cast<double>(ExpressionHeuristics::Cost(expression));
 	const auto source_cardinality = static_cast<double>(projection.children[0]->estimated_cardinality);
@@ -718,6 +725,21 @@ static void ApplyLiftPlacement(Optimizer &optimizer, column_binding_map_t<unique
 	replacer.VisitOperator(*root);
 }
 
+static bool HasLiftTarget(const vector<PathStep> &ancestors) {
+	for (idx_t ancestor_idx = ancestors.size(); ancestor_idx > 0; ancestor_idx--) {
+		auto &op = ancestors[ancestor_idx - 1].op.get();
+		if (IsEligibleJoin(op)) {
+			return op.has_estimated_cardinality;
+		}
+		if (op.type == LogicalOperatorType::LOGICAL_PROJECTION ||
+		    (op.type == LogicalOperatorType::LOGICAL_FILTER && op.children.size() == 1)) {
+			continue;
+		}
+		return false;
+	}
+	return false;
+}
+
 static bool LiftFirstProfitableExpression(Optimizer &optimizer,
                                           column_binding_map_t<unique_ptr<BaseStatistics>> &statistics_map,
                                           unique_ptr<LogicalOperator> &root, unique_ptr<LogicalOperator> &op,
@@ -731,13 +753,14 @@ static bool LiftFirstProfitableExpression(Optimizer &optimizer,
 			return true;
 		}
 	}
-	if (op->type != LogicalOperatorType::LOGICAL_PROJECTION) {
+	if (op->type != LogicalOperatorType::LOGICAL_PROJECTION || !HasLiftTarget(ancestors)) {
 		return false;
 	}
 	auto &projection = op->Cast<LogicalProjection>();
+	auto reference_counts = CountReferencingExpressions(projection);
 	for (idx_t expression_idx = 0; expression_idx < projection.expressions.size(); expression_idx++) {
 		LiftPlacement placement;
-		if (!FindLiftPlacement(projection, expression_idx, ancestors, statistics_map, placement)) {
+		if (!FindLiftPlacement(projection, expression_idx, ancestors, statistics_map, reference_counts, placement)) {
 			continue;
 		}
 		ApplyLiftPlacement(optimizer, statistics_map, root, placement);
@@ -757,7 +780,7 @@ static optional_idx GetExpressionChild(const Expression &expression, LogicalOper
 
 static bool FindPlacement(LogicalProjection &projection, idx_t expression_index,
                           const column_binding_map_t<unique_ptr<BaseStatistics>> &statistics_map,
-                          ExpressionPlacement &result) {
+                          const column_binding_map_t<idx_t> &reference_counts, ExpressionPlacement &result) {
 	auto &expression = *projection.expressions[expression_index];
 	if (expression.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF || expression.IsVolatile() ||
 	    expression.CanThrow() || !projection.children[0]->has_estimated_cardinality) {
@@ -769,7 +792,6 @@ static bool FindPlacement(LogicalProjection &projection, idx_t expression_index,
 	if (!GetExpressionWidth(expression, statistics_map, input_width, input_bindings)) {
 		return false;
 	}
-	auto exclusive_input_width = GetExclusiveInputWidth(projection, expression_index, input_bindings);
 	idx_t output_width;
 	if (!GetBindingWidth(ColumnBinding(projection.table_index, ProjectionIndex(expression_index)),
 	                     expression.GetReturnType(), statistics_map, output_width)) {
@@ -851,7 +873,11 @@ static bool FindPlacement(LogicalProjection &projection, idx_t expression_index,
 		candidates.push_back(std::move(candidate));
 		current = child;
 	}
+	if (candidates.empty()) {
+		return false;
+	}
 
+	auto exclusive_input_width = GetExclusiveInputWidth(reference_counts, input_bindings);
 	const double current_cost =
 	    current_evaluation_cost + input_transport_savings_cardinality * static_cast<double>(exclusive_input_width);
 	double best_cost = current_cost * MINIMUM_COST_RATIO;
@@ -963,9 +989,10 @@ static void OptimizeOperator(Optimizer &optimizer, column_binding_map_t<unique_p
 	auto &projection = op->Cast<LogicalProjection>();
 	while (true) {
 		PlacementGroup group;
+		auto reference_counts = CountReferencingExpressions(projection);
 		for (idx_t expression_index = 0; expression_index < projection.expressions.size(); expression_index++) {
 			ExpressionPlacement placement;
-			if (!FindPlacement(projection, expression_index, statistics_map, placement)) {
+			if (!FindPlacement(projection, expression_index, statistics_map, reference_counts, placement)) {
 				continue;
 			}
 			if (group.placements.empty()) {
@@ -991,6 +1018,7 @@ ProjectionPlacementOptimizer::ProjectionPlacementOptimizer(
 
 void ProjectionPlacementOptimizer::Optimize(unique_ptr<LogicalOperator> &plan) {
 	vector<PathStep> ancestors;
+	plan->ResolveOperatorTypes();
 	while (LiftFirstProfitableExpression(optimizer, statistics_map, plan, plan, ancestors)) {
 		plan->ResolveOperatorTypes();
 	}

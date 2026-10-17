@@ -22,6 +22,8 @@
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/function/scalar/struct_utils.hpp"
 
+#include <ranges>
+
 namespace duckdb {
 
 static bool ContainsInternalTableFilterFunction(const Expression &expr) {
@@ -403,6 +405,10 @@ unique_ptr<TableFilterSet> TableFilterSet::Copy() const {
 	return copy;
 }
 
+static bool IsConjunctionAnd(const Expression &expr) {
+	return expr.GetExpressionType() == ExpressionType::CONJUNCTION_AND;
+}
+
 void TableFilterSet::PushFilter(ProjectionIndex col_idx, unique_ptr<TableFilter> filter) {
 	if (!col_idx.IsValid()) {
 		throw InternalException("Cannot push a filter over an invalid ProjectionIndex");
@@ -415,14 +421,27 @@ void TableFilterSet::PushFilter(ProjectionIndex col_idx, unique_ptr<TableFilter>
 	if (entry == filters.end()) {
 		// no filter yet: push the filter directly
 		filters[col_idx] = std::move(filter);
-	} else {
-		// there is already a filter: AND it together
-		auto &existing = ExpressionFilter::GetExpressionFilter(*entry->second, "TableFilterSet::PushFilter");
-		auto and_expr = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
-		and_expr->GetChildrenMutable().push_back(std::move(existing.expr));
-		and_expr->GetChildrenMutable().push_back(std::move(new_filter.expr));
-		filters[col_idx] = make_uniq<ExpressionFilter>(std::move(and_expr));
+		return;
 	}
+	// there is already a filter: AND it together
+	auto &existing = ExpressionFilter::GetExpressionFilter(*entry->second, "TableFilterSet::PushFilter");
+	if (IsConjunctionAnd(*existing.expr)) {
+		auto &children = existing.expr->Cast<BoundConjunctionExpression>().GetChildrenMutable();
+		if (IsConjunctionAnd(*new_filter.expr)) {
+			children.append_range(new_filter.expr->Cast<BoundConjunctionExpression>().GetChildrenMutable() |
+			                      std::views::as_rvalue);
+		} else {
+			children.push_back(std::move(new_filter.expr));
+		}
+		return;
+	}
+	if (IsConjunctionAnd(*new_filter.expr)) {
+		new_filter.expr->Cast<BoundConjunctionExpression>().GetChildrenMutable().push_back(std::move(existing.expr));
+		entry->second = std::move(filter);
+		return;
+	}
+	entry->second = make_uniq<ExpressionFilter>(make_uniq<BoundConjunctionExpression>(
+	    ExpressionType::CONJUNCTION_AND, std::move(existing.expr), std::move(new_filter.expr)));
 }
 
 void TableFilterSet::PushMultiColumnFilter(unique_ptr<TableFilter> filter) {

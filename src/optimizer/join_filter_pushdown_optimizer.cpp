@@ -292,26 +292,32 @@ void JoinFilterPushdownOptimizer::GetPushdownFilterTargets(LogicalOperator &op,
 	}
 }
 
-bool JoinFilterPushdownOptimizer::IsFiltering(const unique_ptr<LogicalOperator> &op) {
-	switch (op->type) {
-	case LogicalOperatorType::LOGICAL_GET: {
-		auto &get = op->Cast<LogicalGet>();
-		return get.table_filters.HasFilters();
+bool JoinFilterPushdownOptimizer::IsFiltering(const LogicalOperator &op,
+                                              reference_map_t<const LogicalOperator, bool> &filtering) {
+	auto entry = filtering.find(op);
+	if (entry != filtering.end()) {
+		return entry->second;
 	}
-	case LogicalOperatorType::LOGICAL_FILTER: {
-		return true;
-	}
-	case LogicalOperatorType::LOGICAL_TOP_N: {
-		return true;
-	}
+	bool result = false;
+	switch (op.type) {
+	case LogicalOperatorType::LOGICAL_GET:
+		result = op.Cast<LogicalGet>().table_filters.HasFilters();
+		break;
+	case LogicalOperatorType::LOGICAL_FILTER:
+	case LogicalOperatorType::LOGICAL_TOP_N:
+		result = true;
+		break;
 	default:
-		for (const unique_ptr<LogicalOperator> &child : op->children) {
-			if (IsFiltering(child)) {
-				return true;
+		for (auto &child : op.children) {
+			if (IsFiltering(*child, filtering)) {
+				result = true;
+				break;
 			}
 		}
-		return false;
+		break;
 	}
+	filtering.emplace(op, result);
+	return result;
 }
 
 void JoinFilterPushdownOptimizer::GenerateJoinFilters(LogicalComparisonJoin &join) {
@@ -403,7 +409,7 @@ void JoinFilterPushdownOptimizer::GenerateJoinFilters(LogicalComparisonJoin &joi
 	}
 	if (!pushdown_info->probe_info.empty()) {
 		const idx_t child_idx = join.children[1]->type == LogicalOperatorType::LOGICAL_DELIM_GET ? 0 : 1;
-		pushdown_info->build_side_has_filter = IsFiltering(join.children[child_idx]);
+		pushdown_info->build_side_has_filter = IsFiltering(*join.children[child_idx], filtering);
 	}
 
 	// set up the filter pushdown in the join itself

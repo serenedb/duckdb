@@ -1,49 +1,69 @@
 #include "duckdb/common/enums/debug_verification_mode.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/function/lambda_functions.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+
+#include <absl/algorithm/container.h>
 
 namespace duckdb {
 
 ExecuteFunctionState::ExecuteFunctionState(const Expression &expr, ExpressionExecutorState &root)
     : ExpressionState(expr, root) {
-	// Check if the expression is eligible for dictionary optimization
-	if (!expr.IsConsistent() || expr.IsVolatile() || expr.CanThrow()) {
-		return; // Needs to be consistent, non-volatile, and non-throwing
-	}
-
-	if (expr.GetReturnType().InternalType() == PhysicalType::STRUCT) {
-		return; // FIXME: get this working for STRUCT
-	}
-
-	// Set input_col_idx accordingly, marking the expression as eligible for dictionary optimization
-	switch (expr.GetExpressionClass()) {
-	case ExpressionClass::BOUND_FUNCTION: {
-		auto &bound_function = expr.Cast<BoundFunctionExpression>();
-		auto &children = bound_function.GetChildren();
-		for (idx_t child_idx = 0; child_idx < children.size(); child_idx++) {
-			auto &child = *children[child_idx];
-			if (child.IsFoldable()) {
-				continue; // Constant
-			}
-			if (input_col_idx.IsValid()) {
-				input_col_idx.SetInvalid(); // Found more than 1 non-constant
-				break;
-			}
-			if (child.GetReturnType().InternalType() == PhysicalType::STRUCT) {
-				break; // FIXME
-			}
-			input_col_idx = child_idx;
-		}
-		break;
-	}
-	default:
-		break;
-	}
 }
 
 ExecuteFunctionState::~ExecuteFunctionState() {
+}
+
+void ExecuteFunctionState::ResolveDictionaryInput() {
+	dictionary_input_resolved = true;
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION ||
+	    expr.GetReturnType().InternalType() == PhysicalType::STRUCT) {
+		return; // FIXME: get this working for STRUCT
+	}
+	auto &bound_function = expr.Cast<BoundFunctionExpression>();
+	auto &function = bound_function.Function();
+	if (function.GetStability() != FunctionStability::CONSISTENT ||
+	    function.GetErrorMode() == FunctionErrors::CAN_THROW_RUNTIME_ERROR) {
+		return;
+	}
+	if (function.HasBindLambdaCallback()) {
+		auto lambda_expr = bound_function.BindInfo()->Cast<LambdaFunctionData>().GetLambdaExpression();
+		if (lambda_expr && (!lambda_expr->IsConsistent() || lambda_expr->IsVolatile() || lambda_expr->CanThrow())) {
+			return;
+		}
+	}
+
+	// Set input_col_idx accordingly, marking the expression as eligible for dictionary optimization
+	auto &children = bound_function.GetChildren();
+	for (idx_t child_idx = 0; child_idx < children.size(); child_idx++) {
+		auto &child = *children[child_idx];
+		if (child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT ||
+		    child.GetExpressionClass() == ExpressionClass::BOUND_LAMBDA) {
+			continue;
+		}
+		if (input_col_idx.IsValid()) {
+			input_col_idx.SetInvalid(); // Found more than 1 non-constant
+			break;
+		}
+		if (child.GetReturnType().InternalType() == PhysicalType::STRUCT) {
+			break; // FIXME
+		}
+		input_col_idx = child_idx;
+	}
+}
+
+bool ExecuteFunctionState::MayExecuteDictionaryExpression(const DataChunk &args) {
+	if (!dictionary_input_resolved) {
+		if (absl::c_none_of(args.data,
+		                    [](const Vector &arg) { return arg.GetVectorType() == VectorType::DICTIONARY_VECTOR; })) {
+			return false;
+		}
+		ResolveDictionaryInput();
+	}
+	return input_col_idx.IsValid() &&
+	       args.data[input_col_idx.GetIndex()].GetVectorType() == VectorType::DICTIONARY_VECTOR;
 }
 
 bool ExecuteFunctionState::TryExecuteDictionaryExpression(const BoundFunctionExpression &expr, DataChunk &args,
@@ -51,15 +71,10 @@ bool ExecuteFunctionState::TryExecuteDictionaryExpression(const BoundFunctionExp
 	static constexpr idx_t MAX_DICTIONARY_SIZE_THRESHOLD = 20000;
 	static constexpr double CHUNK_FILL_RATIO_THRESHOLD = 0.5;
 
-	if (!input_col_idx.IsValid()) {
-		return false; // This expression is not eligible for dictionary optimization
-	}
-
+	D_ASSERT(dictionary_input_resolved && input_col_idx.IsValid());
 	// Figure out if we can do the optimization
 	const auto &unary_input = args.data[input_col_idx.GetIndex()];
-	if (unary_input.GetVectorType() != VectorType::DICTIONARY_VECTOR) {
-		return false; // Not a dictionary
-	}
+	D_ASSERT(unary_input.GetVectorType() == VectorType::DICTIONARY_VECTOR);
 
 	const auto input_dictionary_size_opt = DictionaryVector::DictionarySize(unary_input);
 	const auto &input_dictionary_id = DictionaryVector::DictionaryId(unary_input);
@@ -232,6 +247,7 @@ void ExpressionExecutor::Execute(const BoundFunctionExpression &expr, Expression
 
 	auto &execute_function_state = state->Cast<ExecuteFunctionState>();
 	auto dictionary_executed = expr.Function().HasFunctionCallback() && !all_constant &&
+	                           execute_function_state.MayExecuteDictionaryExpression(arguments) &&
 	                           execute_function_state.TryExecuteDictionaryExpression(expr, arguments, *state, result);
 	if (!dictionary_executed) {
 		if (expr.Function().HasFunctionCallback()) {
@@ -304,7 +320,7 @@ idx_t ExpressionExecutor::Select(const BoundFunctionExpression &expr, Expression
 		return SelectBooleanResult(result, sel, count, true_sel, false_sel);
 	}
 	auto &execute_function_state = state->Cast<ExecuteFunctionState>();
-	if (expr.Function().HasFunctionCallback()) {
+	if (expr.Function().HasFunctionCallback() && execute_function_state.MayExecuteDictionaryExpression(arguments)) {
 		Vector result(LogicalType::BOOLEAN);
 		auto dictionary_executed =
 		    execute_function_state.TryExecuteDictionaryExpression(expr, arguments, *state, result);

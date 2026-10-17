@@ -63,6 +63,10 @@ static ExpressionBinding GetChildColumnBinding(Expression &expr) {
 	return result;
 }
 
+static Identifier ColumnStatsName(const Expression &expression, const ColumnBinding &binding) {
+	return expression.HasAlias() ? expression.GetAlias() : Identifier(binding.ToString());
+}
+
 optional<RelationStats> RelationStatisticsHelper::ExtractProjectionStats(LogicalProjection &projection,
                                                                          const RelationStats &child_stats) {
 	RelationStats result;
@@ -71,6 +75,7 @@ optional<RelationStats> RelationStatisticsHelper::ExtractProjectionStats(Logical
 	result.stats_initialized = true;
 	auto bindings = projection.GetColumnBindings();
 	D_ASSERT(bindings.size() == projection.expressions.size());
+	RelationColumnLookup child_columns(child_stats);
 	for (idx_t expression_idx = 0; expression_idx < projection.expressions.size(); expression_idx++) {
 		auto &expression = *projection.expressions[expression_idx];
 		auto expression_binding = GetChildColumnBinding(expression);
@@ -78,13 +83,14 @@ optional<RelationStats> RelationStatisticsHelper::ExtractProjectionStats(Logical
 		if (expression_binding.expression_is_constant) {
 			distinct_count = DistinctCount(MinValue<idx_t>(result.cardinality, 1), DistinctCountSource::EXACT);
 		} else if (expression_binding.FoundColumnRef()) {
-			auto child_column = child_stats.GetColumnStats(expression_binding.child_binding);
+			auto child_column = child_columns.GetColumnStats(expression_binding.child_binding);
 			if (!child_column) {
 				return {};
 			}
 			distinct_count = child_column->distinct_count;
 		}
-		result.columns.emplace_back(bindings[expression_idx], distinct_count, Identifier(expression.GetName()));
+		result.columns.emplace_back(bindings[expression_idx], distinct_count,
+		                            ColumnStatsName(expression, bindings[expression_idx]));
 	}
 	result.Verify(bindings);
 	return result;
@@ -109,6 +115,7 @@ idx_t RelationStatisticsHelper::EstimateDistinctCardinality(const vector<Distinc
 optional<RelationStats> RelationStatisticsHelper::ExtractAggregationStats(LogicalAggregate &aggregate,
                                                                           const RelationStats &child_stats) {
 	vector<DistinctCount> cardinality_counts;
+	RelationColumnLookup child_columns(child_stats);
 	for (auto &grouping_set : aggregate.grouping_sets) {
 		vector<DistinctCount> set_counts;
 		for (auto group_idx : grouping_set) {
@@ -116,7 +123,7 @@ optional<RelationStats> RelationStatisticsHelper::ExtractAggregationStats(Logica
 			if (group.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
 				continue;
 			}
-			auto column = child_stats.GetColumnStats(group.Cast<BoundColumnRefExpression>().Binding());
+			auto column = child_columns.GetColumnStats(group.Cast<BoundColumnRefExpression>().Binding());
 			if (!column) {
 				return {};
 			}
@@ -139,18 +146,19 @@ optional<RelationStats> RelationStatisticsHelper::ExtractAggregationStats(Logica
 		auto &group = *aggregate.groups[group_idx];
 		DistinctCount distinct_count(result.cardinality, DistinctCountSource::CARDINALITY);
 		if (group.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {
-			auto child_column = child_stats.GetColumnStats(group.Cast<BoundColumnRefExpression>().Binding());
+			auto child_column = child_columns.GetColumnStats(group.Cast<BoundColumnRefExpression>().Binding());
 			if (!child_column) {
 				return {};
 			}
 			distinct_count = child_column->distinct_count;
 		}
-		result.columns.emplace_back(bindings[result.columns.size()], distinct_count, Identifier(group.GetName()));
+		auto &binding = bindings[result.columns.size()];
+		result.columns.emplace_back(binding, distinct_count, ColumnStatsName(group, binding));
 	}
 	for (auto &expression : aggregate.expressions) {
-		result.columns.emplace_back(bindings[result.columns.size()],
-		                            DistinctCount(result.cardinality, DistinctCountSource::CARDINALITY),
-		                            Identifier(expression->GetName()));
+		auto &binding = bindings[result.columns.size()];
+		result.columns.emplace_back(binding, DistinctCount(result.cardinality, DistinctCountSource::CARDINALITY),
+		                            ColumnStatsName(*expression, binding));
 	}
 	for (idx_t grouping_idx = 0; grouping_idx < aggregate.grouping_functions.size(); grouping_idx++) {
 		auto grouping_count = MinValue<idx_t>(result.cardinality, MaxValue<idx_t>(aggregate.grouping_sets.size(), 1));
@@ -168,8 +176,9 @@ optional<RelationStats> RelationStatisticsHelper::ExtractWindowStats(LogicalWind
 	result.cardinality = child_stats.cardinality;
 	result.table_name = Identifier(window.GetName());
 	result.stats_initialized = true;
+	RelationColumnLookup child_columns(child_stats);
 	for (auto &binding : window.GetColumnBindings()) {
-		auto child_column = child_stats.GetColumnStats(binding);
+		auto child_column = child_columns.GetColumnStats(binding);
 		if (child_column) {
 			result.columns.emplace_back(binding, child_column->distinct_count, child_column->name);
 		} else if (binding.table_index == window.window_index) {
@@ -250,8 +259,9 @@ optional<RelationStats> RelationStatisticsHelper::ProjectOutputStats(const Relat
 	result.filter_strength = stats.filter_strength;
 	result.stats_initialized = true;
 	result.table_name = stats.table_name;
+	RelationColumnLookup columns(stats);
 	for (auto &binding : op.GetColumnBindings()) {
-		auto column = stats.GetColumnStats(binding);
+		auto column = columns.GetColumnStats(binding);
 		if (!column) {
 			return {};
 		}

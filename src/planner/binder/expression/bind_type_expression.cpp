@@ -18,10 +18,14 @@ static bool IsValidTypeLookup(optional_ptr<CatalogEntry> entry) {
 }
 
 BindResult ExpressionBinder::BindExpression(TypeExpression &type_expr, idx_t depth) {
+	auto result_expr = make_uniq<BoundConstantExpression>(Value::TYPE(BindTypeExpression(type_expr)));
+	result_expr->SetQueryLocation(type_expr.GetQueryLocation());
+	return BindResult(std::move(result_expr));
+}
+
+LogicalType ExpressionBinder::BindTypeExpression(TypeExpression &type_expr) {
 	if (type_expr.GetBoundType().id() != LogicalTypeId::INVALID) {
-		auto result_expr = make_uniq<BoundConstantExpression>(Value::TYPE(type_expr.GetBoundType()));
-		result_expr->SetQueryLocation(type_expr.GetQueryLocation());
-		return BindResult(std::move(result_expr));
+		return type_expr.GetBoundType();
 	}
 	auto &type_name = type_expr.GetTypeName();
 
@@ -83,6 +87,11 @@ BindResult ExpressionBinder::BindExpression(TypeExpression &type_expr, idx_t dep
 	vector<TypeArgument> bound_parameters;
 
 	for (auto &param : unbound_parameters) {
+		if (param->GetExpressionClass() == ExpressionClass::TYPE) {
+			bound_parameters.emplace_back(param->GetAlias().GetIdentifierName(),
+			                              BindTypeExpression(param->Cast<TypeExpression>()), param->GetQueryLocation());
+			continue;
+		}
 		// Otherwise, try to fold it to a constant value
 		ConstantBinder binder(this->binder, context, StringUtil::Format("Type parameter for type %s", type_name));
 
@@ -110,13 +119,7 @@ BindResult ExpressionBinder::BindExpression(TypeExpression &type_expr, idx_t dep
 	};
 
 	// Select the matching constructor and call it
-	auto result_type =
-	    type_entry.constructors.Bind(context, type_entry.user_type, bound_parameters, type_expr.GetQueryLocation());
-
-	// Return the resulting type!
-	auto result_expr = make_uniq<BoundConstantExpression>(Value::TYPE(result_type));
-	result_expr->SetQueryLocation(type_expr.GetQueryLocation());
-	return BindResult(std::move(result_expr));
+	return type_entry.constructors.Bind(context, type_entry.user_type, bound_parameters, type_expr.GetQueryLocation());
 }
 
 } // namespace duckdb

@@ -19,6 +19,8 @@ namespace duckdb {
 
 namespace {
 
+constexpr idx_t LIST_AGGREGATES_CHECK_ELEMENTS = 1 << 20;
+
 struct ListAggregatesLocalState : public FunctionLocalState {
 	explicit ListAggregatesLocalState(Allocator &allocator) : arena_allocator(allocator) {
 	}
@@ -94,13 +96,12 @@ ListAggregatesBindData::~ListAggregatesBindData() {
 }
 
 struct StateVector {
-	StateVector(idx_t count_p, unique_ptr<Expression> aggr_expr_p)
-	    : count(count_p), aggr_expr(std::move(aggr_expr_p)), state_vector(Vector(LogicalType::POINTER, count_p)) {
+	StateVector(idx_t count_p, const BoundAggregateExpression &aggr_p)
+	    : count(count_p), aggr(aggr_p), state_vector(Vector(LogicalType::POINTER, count_p)) {
 	}
 
 	~StateVector() { // NOLINT
 		// destroy objects within the aggregate states
-		auto &aggr = aggr_expr->Cast<BoundAggregateExpression>();
 		if (initialized_count != 0 && aggr.Function().HasStateDestructorCallback()) {
 			ArenaAllocator allocator(Allocator::DefaultAllocator());
 			AggregateInputData aggr_input_data(aggr, allocator);
@@ -112,7 +113,7 @@ struct StateVector {
 	//! The number of states that have been initialized so far. The vector holds uninitialized memory until then,
 	//! so an exception during initialization must not leave the destructor reading it as state pointers.
 	idx_t initialized_count = 0;
-	unique_ptr<Expression> aggr_expr;
+	const BoundAggregateExpression &aggr;
 	Vector state_vector;
 };
 
@@ -140,13 +141,14 @@ struct FinalizeGenericValueFunctor {
 
 struct AggregateFunctor {
 	template <class OP, class T, class MAP_TYPE = sql_value_map_t<T, idx_t>>
-	static void ListExecuteFunction(Vector &result, const Vector &state_vector, idx_t count) {
+	static void ListExecuteFunction(Vector &result, const Vector &state_vector, idx_t count, ExpressionState &state) {
 	}
 };
 
 struct DistinctFunctor {
 	template <class OP, class T, class MAP_TYPE = sql_value_map_t<T, idx_t>>
-	static void ListExecuteFunction(Vector &result, const Vector &state_vector, idx_t count) {
+	static void ListExecuteFunction(Vector &result, const Vector &state_vector, idx_t count,
+	                                ExpressionState &expr_state) {
 		UnifiedVectorFormat sdata;
 		state_vector.ToUnifiedFormat(sdata);
 		auto states = UnifiedVectorFormat::GetData<HistogramAggState<T, MAP_TYPE> *>(sdata);
@@ -175,9 +177,17 @@ struct DistinctFunctor {
 				continue;
 			}
 
-			for (auto &entry : *state.hist) {
-				OP::template HistogramFinalize<T>(entry.first, child_elements, current_offset);
-				current_offset++;
+			auto entry = state.hist->begin();
+			const auto entry_end = current_offset + state.hist->size();
+			while (true) {
+				const auto block_end = MinValue<idx_t>(entry_end, current_offset + LIST_AGGREGATES_CHECK_ELEMENTS);
+				for (; current_offset < block_end; ++entry, ++current_offset) {
+					OP::template HistogramFinalize<T>(entry->first, child_elements, current_offset);
+				}
+				if (current_offset == entry_end) {
+					break;
+				}
+				expr_state.InterruptCheck();
 			}
 			list_entries.WriteValue(list_entry_t(entry_offset, current_offset - entry_offset));
 		}
@@ -189,7 +199,7 @@ struct DistinctFunctor {
 
 struct UniqueFunctor {
 	template <class OP, class T, class MAP_TYPE = sql_value_map_t<T, idx_t>>
-	static void ListExecuteFunction(Vector &result, const Vector &state_vector, idx_t count) {
+	static void ListExecuteFunction(Vector &result, const Vector &state_vector, idx_t count, ExpressionState &state) {
 		UnifiedVectorFormat sdata;
 		state_vector.ToUnifiedFormat(sdata);
 		auto states = UnifiedVectorFormat::GetData<HistogramAggState<T, MAP_TYPE> *>(sdata);
@@ -248,8 +258,13 @@ void ListAggregatesFunction(DataChunk &args, ExpressionState &state, Vector &res
 	auto state_buffer = make_unsafe_uniq_array_uninitialized<data_t>(size * count);
 
 	// state vector for initialize and finalize
-	StateVector state_vector(count, info.aggr_expr->Copy());
+	StateVector state_vector(count, aggr);
 	auto states = FlatVector::GetDataMutable<data_ptr_t>(state_vector.state_vector);
+	for (idx_t i = 0; i < count; i++) {
+		states[i] = state_buffer.get() + size * i;
+	}
+	aggr.Function().GetStateInitCallback()(state_input, states, count);
+	state_vector.initialized_count = count;
 
 	// state vector of STANDARD_VECTOR_SIZE holds the pointers to the states
 	Vector state_vector_update = Vector(LogicalType::POINTER);
@@ -261,6 +276,7 @@ void ListAggregatesFunction(DataChunk &args, ExpressionState &state, Vector &res
 	// the aggregate's trailing arguments (e.g. the separator of string_agg) are constants that its bind folded into
 	// the bind data - they are still part of its argument list, so they are passed along as constant vectors
 	auto update_states = [&](idx_t update_count) {
+		state.InterruptCheck();
 		vector<Vector> inputs;
 		inputs.reserve(aggr.GetChildren().size());
 		inputs.emplace_back(child_vector, sel_vector, update_count);
@@ -274,11 +290,7 @@ void ListAggregatesFunction(DataChunk &args, ExpressionState &state, Vector &res
 	idx_t states_idx = 0;
 
 	for (idx_t i = 0; i < count; i++) {
-		// initialize the state for this list
-		auto state_ptr = state_buffer.get() + size * i;
-		states[i] = state_ptr;
-		aggr.Function().GetStateInitCallback()(state_input, &states[i], 1);
-		state_vector.initialized_count = i + 1;
+		auto state_ptr = states[i];
 
 		auto lists_index = lists_data.sel->get_index(i);
 		const auto &list_entry = list_entries[lists_index];
@@ -329,58 +341,58 @@ void ListAggregatesFunction(DataChunk &args, ExpressionState &state, Vector &res
 #if !DUCKDB_SMALLER_BINARY(list_aggregate_types)
 		case PhysicalType::BOOL:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeValueFunctor, bool>(
-			    result, state_vector.state_vector, count);
+			    result, state_vector.state_vector, count, state);
 			break;
 		case PhysicalType::UINT8:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeValueFunctor, uint8_t>(
-			    result, state_vector.state_vector, count);
+			    result, state_vector.state_vector, count, state);
 			break;
 		case PhysicalType::UINT16:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeValueFunctor, uint16_t>(
-			    result, state_vector.state_vector, count);
+			    result, state_vector.state_vector, count, state);
 			break;
 		case PhysicalType::UINT32:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeValueFunctor, uint32_t>(
-			    result, state_vector.state_vector, count);
+			    result, state_vector.state_vector, count, state);
 			break;
 		case PhysicalType::UINT64:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeValueFunctor, uint64_t>(
-			    result, state_vector.state_vector, count);
+			    result, state_vector.state_vector, count, state);
 			break;
 		case PhysicalType::INT8:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeValueFunctor, int8_t>(
-			    result, state_vector.state_vector, count);
+			    result, state_vector.state_vector, count, state);
 			break;
 		case PhysicalType::INT16:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeValueFunctor, int16_t>(
-			    result, state_vector.state_vector, count);
+			    result, state_vector.state_vector, count, state);
 			break;
 		case PhysicalType::INT32:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeValueFunctor, int32_t>(
-			    result, state_vector.state_vector, count);
+			    result, state_vector.state_vector, count, state);
 			break;
 		case PhysicalType::INT64:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeValueFunctor, int64_t>(
-			    result, state_vector.state_vector, count);
+			    result, state_vector.state_vector, count, state);
 			break;
 		case PhysicalType::FLOAT:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeValueFunctor, float>(
-			    result, state_vector.state_vector, count);
+			    result, state_vector.state_vector, count, state);
 			break;
 		case PhysicalType::DOUBLE:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeValueFunctor, double>(
-			    result, state_vector.state_vector, count);
+			    result, state_vector.state_vector, count, state);
 			break;
 		case PhysicalType::VARCHAR:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeStringValueFunctor, string_t,
 			                                               OwningStringMap<idx_t>>(result, state_vector.state_vector,
-			                                                                       count);
+			                                                                       count, state);
 			break;
 #endif
 		default:
 			FUNCTION_FUNCTOR::template ListExecuteFunction<FinalizeGenericValueFunctor, string_t,
 			                                               OwningStringMap<idx_t>>(result, state_vector.state_vector,
-			                                                                       count);
+			                                                                       count, state);
 			break;
 		}
 	}

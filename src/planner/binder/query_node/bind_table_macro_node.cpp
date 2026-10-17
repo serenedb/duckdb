@@ -45,11 +45,18 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 
 	unique_ptr<QueryNode> node;
 	if (macro_def.type == MacroType::SCALAR_MACRO) {
+		auto &scalar_macro = macro_def.Cast<ScalarMacroFunction>();
 		auto select_node = make_uniq<SelectNode>();
-		auto expr = macro_def.Cast<ScalarMacroFunction>().expression->Copy();
+		auto expr = scalar_macro.expression->Copy();
+		if (scalar_macro.query_body) {
+			eb.ExpandSqlFunctionBody(*new_macro_binding, positional_arguments, expr);
+		}
 		expr->SetAlias(macro_func.name);
 		select_node->select_list.push_back(std::move(expr));
 		select_node->from_table = make_uniq<EmptyTableRef>();
+		if (scalar_macro.query_body) {
+			return std::move(select_node);
+		}
 		node = std::move(select_node);
 	} else {
 		node = macro_def.Cast<TableMacroFunction>().query_node->Copy();

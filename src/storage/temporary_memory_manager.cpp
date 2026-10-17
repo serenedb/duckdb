@@ -1,5 +1,7 @@
 #include "duckdb/storage/temporary_memory_manager.hpp"
 
+#include "duckdb/common/map.hpp"
+#include "duckdb/common/set.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/connection_manager.hpp"
 #include "duckdb/main/settings.hpp"
@@ -224,6 +226,104 @@ static void ComputeDerivatives(const vector<reference<const TemporaryMemoryState
 	}
 }
 
+namespace {
+
+class ReservationCandidates {
+public:
+	ReservationCandidates(const vector<reference<const TemporaryMemoryState>> &states_p, vector<idx_t> &res_p)
+	    : states(states_p), res(res_p), state_group(states_p.size()), count(static_cast<double>(states_p.size())) {
+		map<pair<idx_t, idx_t>, idx_t> group_index;
+		for (idx_t i = 0; i < states.size(); i++) {
+			AddToSums(i, 1);
+			auto &state = states[i].get();
+			if (res[i] >= state.GetRemainingSize()) {
+				continue;
+			}
+			auto entry = group_index.emplace(make_pair(state.GetRemainingSize(), state.GetMaterializationPenalty()),
+			                                 groups.size());
+			if (entry.second) {
+				groups.push_back({Size(i), Penalty(i), {}, {}});
+			}
+			state_group[i] = entry.first->second;
+			groups[state_group[i]].by_reservation.emplace(res[i], i);
+			groups[state_group[i]].by_index.insert(i);
+			if (state.GetMaterializationPenalty() != 0) {
+				penalized_candidates++;
+			}
+		}
+	}
+
+	optional_idx LowestDerivative() const {
+		const double throughput_geomean = std::exp(log_throughput_sum / count);
+		const double tp_mult = 1 - throughput_geomean;
+		const double intermediate =
+		    -(throughput_geomean * (penalized_candidates == 0 ? 0.0 : materialization_cost)) / count;
+		optional_idx result;
+		double lowest = 0;
+		for (auto &group : groups) {
+			if (group.by_index.empty()) {
+				continue;
+			}
+			const auto i = intermediate < 0 ? group.by_reservation.begin()->second : *group.by_index.begin();
+			const auto derivative = intermediate / static_cast<double>(res[i]) - group.penalty * tp_mult / group.size;
+			if (!result.IsValid() || derivative < lowest || (derivative == lowest && i < result.GetIndex())) {
+				result = i;
+				lowest = derivative;
+			}
+		}
+		return result;
+	}
+
+	void Grow(idx_t i, idx_t delta) {
+		auto &group = groups[state_group[i]];
+		group.by_reservation.erase(make_pair(res[i], i));
+		AddToSums(i, -1);
+		res[i] += delta;
+		AddToSums(i, 1);
+		if (res[i] < states[i].get().GetRemainingSize()) {
+			group.by_reservation.emplace(res[i], i);
+		} else {
+			group.by_index.erase(i);
+			if (states[i].get().GetMaterializationPenalty() != 0) {
+				penalized_candidates--;
+			}
+		}
+	}
+
+private:
+	struct Group {
+		double size;
+		double penalty;
+		set<pair<idx_t, idx_t>> by_reservation;
+		set<idx_t> by_index;
+	};
+
+	double Size(idx_t i) const {
+		return static_cast<double>(MaxValue<idx_t>(states[i].get().GetRemainingSize(), 1));
+	}
+
+	double Penalty(idx_t i) const {
+		return static_cast<double>(states[i].get().GetMaterializationPenalty());
+	}
+
+	void AddToSums(idx_t i, double sign) {
+		const auto throughput = static_cast<double>(res[i]) / Size(i);
+		log_throughput_sum += sign * std::log(throughput);
+		materialization_cost += sign * Penalty(i) * (1 - throughput);
+	}
+
+	const vector<reference<const TemporaryMemoryState>> &states;
+	vector<idx_t> &res;
+	vector<idx_t> state_group;
+	vector<Group> groups;
+	const double count;
+	double log_throughput_sum = 0;
+	double materialization_cost = 0;
+	idx_t penalized_candidates = 0;
+};
+
+} // namespace
+
 idx_t TemporaryMemoryManager::ComputeReservation(const TemporaryMemoryState &temporary_memory_state) const {
 	static constexpr idx_t OPTIMIZATION_ITERATIONS_MULTIPLIER = 5;
 
@@ -258,27 +358,13 @@ idx_t TemporaryMemoryManager::ComputeReservation(const TemporaryMemoryState &tem
 	// Distribute memory in OPTIMIZATION_ITERATIONS
 	idx_t remaining_memory = free_memory;
 	const idx_t optimization_iterations = OPTIMIZATION_ITERATIONS_MULTIPLIER * n;
+	ReservationCandidates candidates(states, res);
 	for (idx_t opt_idx = 0; opt_idx < optimization_iterations && remaining_memory > 0; opt_idx++) {
-		ComputeDerivatives(states, res, der, n);
-
-		// Find the index of the state with the lowest derivative
-		idx_t min_idx = 0;
-		double min_der = NumericLimits<double>::Maximum();
-		bool found_candidate = false;
-		for (i = 0; i < n; i++) {
-			auto &state = states[i].get();
-			if (res[i] >= state.GetRemainingSize()) {
-				continue; // We can't increase the reservation of "maxed" states, so we skip these
-			}
-			if (!found_candidate || der[i] < min_der) {
-				min_idx = i;
-				min_der = der[i];
-				found_candidate = true;
-			}
-		}
-		if (!found_candidate) {
+		const auto lowest = candidates.LowestDerivative();
+		if (!lowest.IsValid()) {
 			break;
 		}
+		const auto min_idx = lowest.GetIndex();
 		auto &min_state = states[min_idx].get();
 
 		// This is how much memory we will distribute in this round
@@ -291,7 +377,7 @@ idx_t TemporaryMemoryManager::ComputeReservation(const TemporaryMemoryState &tem
 		D_ASSERT(delta <= remaining_memory);
 
 		// Update counts
-		res[min_idx] += delta;
+		candidates.Grow(min_idx, delta);
 		remaining_memory -= delta;
 
 		// If we aren't able to assign the remaining memory to the lowest-derivative state in the last iteration,

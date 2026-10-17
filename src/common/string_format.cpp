@@ -3,6 +3,7 @@
 #include "duckdb/common/exception.hpp"
 #include "fmt/format.h"
 
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 #include <iterator>
 #include <locale>
@@ -827,6 +828,18 @@ void AppendFormatField(string &out, std::string_view format, idx_t &pos, const v
 
 string StringFormat::Printf(std::string_view format, const vector<FormatArgument> &args) {
 	string result;
+	Printf(result, format, args);
+	return result;
+}
+
+string StringFormat::Format(std::string_view format, const vector<FormatArgument> &args) {
+	string result;
+	Format(result, format, args);
+	return result;
+}
+
+void StringFormat::Printf(string &result, std::string_view format, const vector<FormatArgument> &args) {
+	result.clear();
 	FormatArgumentIds ids(args.size());
 	idx_t start = 0;
 	idx_t pos = 0;
@@ -881,17 +894,16 @@ string StringFormat::Printf(std::string_view format, const vector<FormatArgument
 		AppendPrintfArgument(result, arg, length, empty_precision, specs);
 	}
 	result.append(format.substr(start));
-	return result;
 }
 
-string StringFormat::Format(std::string_view format, const vector<FormatArgument> &args) {
-	vector<fmt::basic_format_arg<fmt::format_context>> fmt_arg_values;
+void StringFormat::Format(string &result, std::string_view format, const vector<FormatArgument> &args) {
+	absl::InlinedVector<fmt::basic_format_arg<fmt::format_context>, 8> fmt_arg_values;
 	fmt_arg_values.reserve(args.size());
 	for (auto &arg : args) {
 		fmt_arg_values.push_back(ToFmtArgument(arg));
 	}
 	fmt::format_args fmt_args(fmt_arg_values.data(), static_cast<int>(fmt_arg_values.size()));
-	string result;
+	result.clear();
 	FormatArgumentIds ids(args.size());
 	idx_t pos = 0;
 	while (pos < format.size()) {
@@ -920,7 +932,6 @@ string StringFormat::Format(std::string_view format, const vector<FormatArgument
 		}
 		AppendFormatField(result, format, pos, args, fmt_args, ids);
 	}
-	return result;
 }
 
 } // namespace duckdb

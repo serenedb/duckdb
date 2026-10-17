@@ -390,3 +390,21 @@ endloop
 
 statement ok
 SET disabled_optimizers = '';
+
+# substrings longer than the inline size point into the input strings
+statement ok
+CREATE TABLE long_strings AS
+SELECT i, repeat(chr((97 + i % 26)::INTEGER), 20) || i::VARCHAR || 'é' || repeat('z', 15) AS s FROM range(3000) t(i)
+
+query IIIIII
+SELECT max(substring(s, 5, 30)), min(right(s, 20)), max(left(s, 23)), min(s[2:30]), max(s[-18:]),
+	count(*) FILTER (WHERE substring(s, 2) <> s[2:])
+FROM long_strings
+----
+zzzzzzzzzzzzzzzz987ézzzzzzzzzz	1000ézzzzzzzzzzzzzzz	zzzzzzzzzzzzzzzzzzzz987	aaaaaaaaaaaaaaaaaaa0ézzzzzzzz	j9ézzzzzzzzzzzzzzz	0
+
+query III
+SELECT substring(s, 18, 20), left(s, -15), right(s, -10) FROM long_strings ORDER BY i DESC LIMIT 2
+----
+jjj2999ézzzzzzzzzzzz	jjjjjjjjjjjjjjjjjjjj2999é	jjjjjjjjjj2999ézzzzzzzzzzzzzzz
+iii2998ézzzzzzzzzzzz	iiiiiiiiiiiiiiiiiiii2998é	iiiiiiiiii2998ézzzzzzzzzzzzzzz

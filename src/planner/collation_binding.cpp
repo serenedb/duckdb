@@ -167,7 +167,7 @@ static bool PushStructCollation(ClientContext &context, unique_ptr<Expression> &
 	auto is_null = make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_IS_NULL, LogicalType::BOOLEAN);
 	is_null->GetChildrenMutable().push_back(lambda_parameter_expr->Copy());
 	auto null_result = make_uniq<BoundConstantExpression>(Value(result->GetReturnType()));
-	auto body = make_uniq<BoundCaseExpression>(std::move(is_null), std::move(null_result), std::move(result));
+	auto body = make_shared_ptr<BoundCaseExpression>(std::move(is_null), std::move(null_result), std::move(result));
 	auto lambda = make_uniq<BoundLambdaExpression>(ExpressionType::LAMBDA, LogicalType::LAMBDA, std::move(body), 1);
 	lambda->SetParameterNames({lambda_parameter});
 

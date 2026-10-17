@@ -17,6 +17,19 @@ class WindowExpression;
 
 class BoundSelectNode;
 
+class FunctionalDependencies {
+public:
+	void Add(const Expression &expression);
+	void Remove(const Expression &expression);
+	bool IsDependent(const Expression &expression) const;
+
+private:
+	hash_t Visit(const Expression &expression, bool &dependent) const;
+
+private:
+	unordered_map<hash_t, vector<reference<const Expression>>> dependencies;
+};
+
 //! The BaseSelectBinder is the base binder of the SELECT, HAVING and QUALIFY binders. It can bind aggregates and window
 //! functions.
 class BaseSelectBinder : public ExpressionBinder {

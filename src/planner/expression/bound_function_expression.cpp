@@ -36,25 +36,9 @@ ExpressionType BoundFunctionExpression::GetFunctionExpressionType(const BoundSca
 	return bound_function.GetExpressionType(input);
 }
 
-bool BoundFunctionExpression::RequiresOrderedExecution() const {
-	if (function.RequiresOrderedExecution()) {
-		return true;
-	}
-	bool has_value = false;
-	ExpressionIterator::EnumerateChildren(*this, [&](const Expression &child) {
-		if (child.GetExpressionType() != ExpressionType::BOUND_FUNCTION) {
-			return;
-		}
-		auto &child_function = child.Cast<BoundFunctionExpression>().Function();
-		has_value |= child_function.RequiresOrderedExecution();
-	});
-	return has_value;
-}
-
-bool BoundFunctionExpression::IsVolatile() const {
+bool BoundFunctionExpression::IsNodeVolatile() const {
 	auto lambda_expr = GetLambdaExpression(*this);
-	return function.GetStability() == FunctionStability::VOLATILE || (lambda_expr && lambda_expr->IsVolatile()) ||
-	       Expression::IsVolatile();
+	return function.GetStability() == FunctionStability::VOLATILE || (lambda_expr && lambda_expr->IsVolatile());
 }
 
 bool BoundFunctionExpression::IsConsistent() const {
@@ -76,6 +60,12 @@ bool BoundFunctionExpression::CanThrow() const {
 	auto lambda_expr = GetLambdaExpression(*this);
 	return function.GetErrorMode() == FunctionErrors::CAN_THROW_RUNTIME_ERROR ||
 	       (lambda_expr && lambda_expr->CanThrow()) || Expression::CanThrow();
+}
+
+bool BoundFunctionExpression::RequiresOrderedExecution() const {
+	auto lambda_expr = GetLambdaExpression(*this);
+	return function.RequiresOrderedExecution() || (lambda_expr && lambda_expr->RequiresOrderedExecution()) ||
+	       Expression::RequiresOrderedExecution();
 }
 
 string BoundFunctionExpression::ToString() const {
@@ -115,9 +105,8 @@ bool BoundFunctionExpression::PropagatesNullValues() const {
 	                                                                            : Expression::PropagatesNullValues();
 }
 
-hash_t BoundFunctionExpression::Hash() const {
-	hash_t result = Expression::Hash();
-	return CombineHash(result, function.Hash());
+hash_t BoundFunctionExpression::NodeHash() const {
+	return CombineHash(Expression::NodeHash(), function.Hash());
 }
 
 bool BoundFunctionExpression::Equals(const BaseExpression &other_p) const {
@@ -143,6 +132,10 @@ unique_ptr<Expression> BoundFunctionExpression::Copy() const {
 	for (auto &child : children) {
 		new_children.push_back(child->Copy());
 	}
+	return CopyWithChildren(std::move(new_children));
+}
+
+unique_ptr<Expression> BoundFunctionExpression::CopyWithChildren(vector<unique_ptr<Expression>> new_children) const {
 	unique_ptr<FunctionData> new_bind_info = bind_info ? bind_info->Copy() : nullptr;
 
 	auto copy =

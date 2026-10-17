@@ -59,6 +59,9 @@ void SetOpAliasGatherer::GatherAliases(BoundStatement &stmt, const vector<idx_t>
 	auto &select_list = stmt.extra_info.original_expressions;
 	for (idx_t i = 0; i < select_list.size(); i++) {
 		auto &expr = select_list[i];
+		if (!expr) {
+			continue;
+		}
 		idx_t index = reorder_idx[i];
 		// now check if the node is already in the set of expressions
 		auto expr_entry = bind_state.projection_map.find(*expr);
@@ -235,6 +238,39 @@ void Binder::BuildUnionByNameInfo(BoundSetOperationNode &result) {
 	}
 }
 
+static bool IsPositionalOrderExpression(const ParsedExpression &expr) {
+	if (expr.GetExpressionClass() == ExpressionClass::POSITIONAL_REFERENCE) {
+		return true;
+	}
+	int64_t index;
+	return expr.GetExpressionClass() == ExpressionClass::CONSTANT &&
+	       expr.Cast<ConstantExpression>().GetLiteral().TryGetInt64(index);
+}
+
+static bool ModifiersReferenceColumns(const SetOperationNode &statement) {
+	for (auto &modifier : statement.modifiers) {
+		switch (modifier->type) {
+		case ResultModifierType::DISTINCT_MODIFIER:
+			if (!modifier->Cast<DistinctModifier>().distinct_on_targets.empty()) {
+				return true;
+			}
+			break;
+		case ResultModifierType::ORDER_MODIFIER:
+			for (auto &order : modifier->Cast<OrderModifier>().orders) {
+				if (!IsPositionalOrderExpression(*order.expression)) {
+					return true;
+				}
+			}
+			break;
+		case ResultModifierType::LIMIT_MODIFIER:
+			break;
+		default:
+			return true;
+		}
+	}
+	return false;
+}
+
 static void GatherSetOpBinders(vector<BoundStatement> &children, vector<shared_ptr<Binder>> &binders,
                                vector<reference<Binder>> &result) {
 	for (auto &child_binder : binders) {
@@ -388,8 +424,12 @@ BoundStatement Binder::BindNode(SetOperationNode &statement) {
 	if (!statement.modifiers.empty()) {
 		// handle the ORDER BY/DISTINCT clauses
 		vector<reference<Binder>> binders;
-		GatherSetOpBinders(result.bound_children, result.child_binders, binders);
-		GatherAliases(result, result.bound_children, bind_state);
+		if (ModifiersReferenceColumns(statement)) {
+			GatherSetOpBinders(result.bound_children, result.child_binders, binders);
+			GatherAliases(result, result.bound_children, bind_state);
+		} else {
+			binders.push_back(*result.child_binders[0]);
+		}
 
 		// now we perform the actual resolution of the ORDER BY/DISTINCT expressions
 		OrderBinder order_binder(binders, bind_state);

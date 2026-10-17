@@ -156,6 +156,23 @@ vector<shared_ptr<Pipeline>> MetaPipeline::AddDependenciesFrom(Pipeline &dependa
 	return created_pipelines;
 }
 
+vector<shared_ptr<Pipeline>> MetaPipeline::AddDependenciesFrom(Pipeline &dependant, optional_idx previous_idx,
+                                                               idx_t begin, PipelineDependencyType dependency_type) {
+	vector<shared_ptr<Pipeline>> dependencies;
+	if (previous_idx.IsValid()) {
+		dependencies.push_back(pipelines[previous_idx.GetIndex()]);
+	}
+	for (idx_t pipeline_idx = begin; pipeline_idx < pipelines.size(); pipeline_idx++) {
+		if (!RefersToSameObject(*pipelines[pipeline_idx], dependant)) {
+			dependencies.push_back(pipelines[pipeline_idx]);
+		}
+	}
+	for (auto &dependency : dependencies) {
+		AddPipelineDependency(dependant, *dependency, dependency_type);
+	}
+	return dependencies;
+}
+
 static bool PipelineExceedsThreadCount(Pipeline &pipeline, const idx_t thread_count) {
 #ifdef DEBUG
 	// we always add the dependency in debug mode so that this is well-tested

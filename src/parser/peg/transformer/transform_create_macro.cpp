@@ -18,7 +18,6 @@
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
-#include "duckdb/parser/result_modifier.hpp"
 
 #include <charconv>
 
@@ -123,7 +122,30 @@ bool PEGTransformerFactory::TransformProcedureKeyword(PEGTransformer &transforme
 
 struct FunctionDecoratorInfo {
 	bool has_language = false;
+	bool returns_set = false;
 };
+
+static bool IsSetofType(ParseResult &type_pr) {
+	reference<ParseResult> current = type_pr;
+	while (true) {
+		auto &node = current.get();
+		if (node.Name() == "SetofType") {
+			return true;
+		}
+		if (node.type == ParseResultType::CHOICE) {
+			current = node.Cast<ChoiceParseResult>().GetResult();
+			continue;
+		}
+		if (node.type != ParseResultType::LIST || (node.Name() != "Type" && node.Name() != "TypeVariations")) {
+			return false;
+		}
+		auto &list = node.Cast<ListParseResult>();
+		if (list.GetChildren().empty()) {
+			return false;
+		}
+		current = list.GetChild(0);
+	}
+}
 
 // Process the FunctionDecorator* repeat block of a MacroDefinition and apply it to the macro function. The decorators
 // are PG-compat extras (RETURNS, ...). Most semantics are dropped, but RETURNS TABLE/Type populates
@@ -153,6 +175,7 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 			} else if (returns_name == "ReturnsNull") {
 				// RETURNS NULL ON NULL INPUT -- a strictness marker, not a return type.
 			} else {
+				info.returns_set = IsSetofType(returns_choice);
 				macro_function.return_types.push_back(transformer.Transform<LogicalType>(returns_choice));
 			}
 		} else if (decorator_name == "LanguageClause") {
@@ -270,6 +293,7 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 				table_macro->default_parameters = std::move(macro_function->default_parameters);
 				table_macro->types = std::move(macro_function->types);
 				table_macro->is_procedure = macro_function->is_procedure;
+				table_macro->source = body_string;
 				macro_function = std::move(table_macro);
 			}
 		}
@@ -280,21 +304,11 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 	// below.
 	ApplyPositionalParamRewrite(*macro_function);
 
-	// Scalar `RETURNS <type>` with a SELECT-shaped body is a "scalar shoehorn": wrap the table macro's query as a
-	// scalar subquery (LIMIT 1).
-	const bool is_scalar_returns = !macro_function->return_types.empty() && macro_function->return_names.empty();
+	const bool is_scalar_returns =
+	    !macro_function->return_types.empty() && macro_function->return_names.empty() && !decorator_info.returns_set;
 	if (is_scalar_returns && macro_function->type == MacroType::TABLE_MACRO) {
 		auto &table_macro = macro_function->Cast<TableMacroFunction>();
 		if (table_macro.query_node) {
-			auto &modifiers = table_macro.query_node->modifiers;
-			std::erase_if(modifiers, [](const unique_ptr<ResultModifier> &mod) {
-				return mod->type == ResultModifierType::LIMIT_MODIFIER ||
-				       mod->type == ResultModifierType::LEGACY_LIMIT_PERCENT_MODIFIER;
-			});
-			auto limit_mod = make_uniq<LimitModifier>();
-			limit_mod->limit = ConstantExpression::Integer(1);
-			modifiers.push_back(std::move(limit_mod));
-
 			auto inner_stmt = make_uniq<SelectStatement>();
 			inner_stmt->node = std::move(table_macro.query_node);
 			auto subquery = make_uniq<SubqueryExpression>();
@@ -302,12 +316,14 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 			subquery->GetSubqueryTypeMutable() = SubqueryType::SCALAR;
 
 			auto scalar_macro = make_uniq<ScalarMacroFunction>(std::move(subquery));
+			scalar_macro->query_body = true;
 			scalar_macro->parameters = std::move(table_macro.parameters);
 			scalar_macro->types = std::move(table_macro.types);
 			scalar_macro->default_parameters = std::move(table_macro.default_parameters);
 			scalar_macro->return_types = std::move(table_macro.return_types);
 			scalar_macro->return_names = std::move(table_macro.return_names);
 			scalar_macro->is_procedure = table_macro.is_procedure;
+			scalar_macro->source = std::move(table_macro.source);
 			macro_function = std::move(scalar_macro);
 		}
 	}

@@ -75,7 +75,9 @@ Optimizer::Optimizer(Binder &binder, ClientContext &context)
       optimizer_extensions(OptimizerExtension::Iterate(context)) {
 	rewriter.rules.push_back(make_uniq<ConstantOrderNormalizationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ConstantFoldingRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<ConcatFlatteningRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<StructExtractStructPackFoldingRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<ListExtractListValueFoldingRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<DistributivityRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ArithmeticSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<LeastGreatestSimplificationRule>(rewriter));
@@ -150,9 +152,7 @@ bool Optimizer::OptimizerDisabledInternal(ClientContext &context_p, OptimizerTyp
 }
 
 void Optimizer::RunOptimizer(OptimizerType type, const std::function<void()> &callback) {
-	if (context.IsInterrupted()) {
-		throw InterruptException();
-	}
+	context.InterruptCheck();
 
 	if (OptimizerDisabled(type)) {
 		// optimizer is marked as disabled: skip
@@ -384,6 +384,7 @@ void Optimizer::RunBuiltInOptimizers() {
 
 	// Pull up projection from joins
 	RunOptimizer(OptimizerType::PROJECTION_PULLUP, [&]() {
+		plan->ResolveOperatorTypes();
 		ProjectionPullup projection_pullup(*this, plan);
 		projection_pullup.Optimize(plan);
 	});

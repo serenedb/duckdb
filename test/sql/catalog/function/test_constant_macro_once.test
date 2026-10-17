@@ -1,0 +1,267 @@
+# name: test/sql/catalog/function/test_constant_macro_once.test
+# description: A zero-argument macro with a constant body is bound and evaluated once per statement
+# group: [function]
+
+statement ok
+CREATE MACRO c0() AS 1::BIGINT
+
+statement ok
+CREATE MACRO c1() AS c0() + c0()
+
+statement ok
+CREATE MACRO c2() AS c1() + c1()
+
+statement ok
+CREATE MACRO c3() AS c2() + c2()
+
+statement ok
+CREATE MACRO c4() AS c3() + c3()
+
+statement ok
+CREATE MACRO c5() AS c4() + c4()
+
+statement ok
+CREATE MACRO c6() AS c5() + c5()
+
+statement ok
+CREATE MACRO c7() AS c6() + c6()
+
+statement ok
+CREATE MACRO c8() AS c7() + c7()
+
+statement ok
+CREATE MACRO c9() AS c8() + c8()
+
+statement ok
+CREATE MACRO c10() AS c9() + c9()
+
+statement ok
+CREATE MACRO c11() AS c10() + c10()
+
+statement ok
+CREATE MACRO c12() AS c11() + c11()
+
+statement ok
+CREATE MACRO c13() AS c12() + c12()
+
+statement ok
+CREATE MACRO c14() AS c13() + c13()
+
+statement ok
+CREATE MACRO c15() AS c14() + c14()
+
+statement ok
+CREATE MACRO c16() AS c15() + c15()
+
+statement ok
+CREATE MACRO c17() AS c16() + c16()
+
+statement ok
+CREATE MACRO c18() AS c17() + c17()
+
+statement ok
+CREATE MACRO c19() AS c18() + c18()
+
+statement ok
+CREATE MACRO c20() AS c19() + c19()
+
+statement ok
+CREATE MACRO c21() AS c20() + c20()
+
+statement ok
+CREATE MACRO c22() AS c21() + c21()
+
+statement ok
+CREATE MACRO c23() AS c22() + c22()
+
+statement ok
+CREATE MACRO c24() AS c23() + c23()
+
+statement ok
+CREATE MACRO c25() AS c24() + c24()
+
+statement ok
+CREATE MACRO c26() AS c25() + c25()
+
+statement ok
+CREATE MACRO c27() AS c26() + c26()
+
+statement ok
+CREATE MACRO c28() AS c27() + c27()
+
+statement ok
+CREATE MACRO c29() AS c28() + c28()
+
+statement ok
+CREATE MACRO c30() AS c29() + c29()
+
+statement ok
+CREATE MACRO c31() AS c30() + c30()
+
+statement ok
+CREATE MACRO c32() AS c31() + c31()
+
+statement ok
+CREATE MACRO c33() AS c32() + c32()
+
+statement ok
+CREATE MACRO c34() AS c33() + c33()
+
+statement ok
+CREATE MACRO c35() AS c34() + c34()
+
+statement ok
+CREATE MACRO c36() AS c35() + c35()
+
+statement ok
+CREATE MACRO c37() AS c36() + c36()
+
+statement ok
+CREATE MACRO c38() AS c37() + c37()
+
+statement ok
+CREATE MACRO c39() AS c38() + c38()
+
+statement ok
+CREATE MACRO c40() AS c39() + c39()
+
+query I
+SELECT c40()
+----
+1099511627776
+
+query I
+SELECT c40() + c39() + c38() FROM range(3)
+----
+1924145348608
+1924145348608
+1924145348608
+
+statement ok
+CREATE MACRO r() AS random()
+
+query I
+SELECT count(DISTINCT r()) > 1 FROM range(100)
+----
+true
+
+statement ok
+CREATE MACRO row_total() AS (SELECT count(*) FROM range(5))
+
+query II
+SELECT row_total(), row_total() + c3()
+----
+5	13
+
+statement ok
+CREATE MACRO bad() AS CAST('x' AS INTEGER)
+
+statement error
+SELECT bad() + bad()
+----
+Conversion Error
+
+# a macro whose body has lambdas of its own still folds where it is expanded inside other lambdas
+statement ok
+CREATE MACRO l0() AS list_transform([1, 2], lambda x: x)[1]::BIGINT
+
+statement ok
+CREATE MACRO l1() AS l0() + l0()
+
+statement ok
+CREATE MACRO l2() AS l1() + l1()
+
+statement ok
+CREATE MACRO l3() AS l2() + l2()
+
+statement ok
+CREATE MACRO l4() AS l3() + l3()
+
+statement ok
+CREATE MACRO l5() AS l4() + l4()
+
+statement ok
+CREATE MACRO l6() AS l5() + l5()
+
+statement ok
+CREATE MACRO l7() AS l6() + l6()
+
+statement ok
+CREATE MACRO l8() AS l7() + l7()
+
+statement ok
+CREATE MACRO l9() AS l8() + l8()
+
+statement ok
+CREATE MACRO l10() AS l9() + l9()
+
+statement ok
+CREATE MACRO l11() AS l10() + l10()
+
+statement ok
+CREATE MACRO l12() AS l11() + l11()
+
+statement ok
+CREATE MACRO l13() AS l12() + l12()
+
+statement ok
+CREATE MACRO l14() AS l13() + l13()
+
+statement ok
+CREATE MACRO l15() AS l14() + l14()
+
+statement ok
+CREATE MACRO l16() AS l15() + l15()
+
+statement ok
+CREATE MACRO l17() AS l16() + l16()
+
+statement ok
+CREATE MACRO l18() AS l17() + l17()
+
+statement ok
+CREATE MACRO l19() AS l18() + l18()
+
+statement ok
+CREATE MACRO l20() AS l19() + l19()
+
+statement ok
+CREATE MACRO l21() AS l20() + l20()
+
+statement ok
+CREATE MACRO l22() AS l21() + l21()
+
+statement ok
+CREATE MACRO l23() AS l22() + l22()
+
+statement ok
+CREATE MACRO l24() AS l23() + l23()
+
+statement ok
+CREATE MACRO l25() AS l24() + l24()
+
+statement ok
+CREATE MACRO l26() AS l25() + l25()
+
+statement ok
+CREATE MACRO l27() AS l26() + l26()
+
+statement ok
+CREATE MACRO l28() AS l27() + l27()
+
+statement ok
+CREATE MACRO l29() AS l28() + l28()
+
+statement ok
+CREATE MACRO l30() AS l29() + l29()
+
+query I
+SELECT list_transform([1], lambda y: l30() + y)[1]
+----
+1073741825
+
+query I
+SELECT list_transform([r], lambda y: list_transform([y], lambda z: l30() + z)[1])[1] FROM range(2) t(r)
+----
+1073741824
+1073741825

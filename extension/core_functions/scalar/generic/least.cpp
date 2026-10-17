@@ -34,6 +34,115 @@ struct LeastOperator {
 	}
 };
 
+template <class OP>
+struct DenseCompare {
+	template <class T>
+	static inline bool Operation(T left, T right) {
+		if constexpr (std::is_floating_point_v<T>) {
+			if constexpr (std::is_same_v<OP, GreaterThan>) {
+				return ((left > right) | (left != left)) & (right == right);
+			} else {
+				return ((left < right) | (right != right)) & (left == left);
+			}
+		} else {
+			return OP::Operation(left, right);
+		}
+	}
+};
+
+template <class OP>
+struct DenseLeastGreatestOperator {
+	template <class T>
+	static inline T Operation(T candidate, T current) {
+		return DenseCompare<OP>::Operation(candidate, current) ? candidate : current;
+	}
+};
+
+template <class T, class OP, bool LEFT_CONSTANT, bool RIGHT_CONSTANT>
+void DenseLeastGreatestPair(const T *__restrict left, const T *__restrict right, T *__restrict result, idx_t count) {
+	for (idx_t i = 0; i < count; i++) {
+		result[i] =
+		    DenseLeastGreatestOperator<OP>::Operation(right[RIGHT_CONSTANT ? 0 : i], left[LEFT_CONSTANT ? 0 : i]);
+	}
+}
+
+template <class T, class OP, bool CONSTANT>
+void DenseLeastGreatestFold(const T *__restrict input, T *__restrict result, idx_t count) {
+	for (idx_t i = 0; i < count; i++) {
+		result[i] = DenseLeastGreatestOperator<OP>::Operation(input[CONSTANT ? 0 : i], result[i]);
+	}
+}
+
+template <class T>
+const T *DenseInputData(const Vector &input) {
+	return input.GetVectorType() == VectorType::CONSTANT_VECTOR ? ConstantVector::GetData<T>(input)
+	                                                            : FlatVector::GetData<T>(input);
+}
+
+template <class T, class OP>
+bool TryDenseLeastGreatest(DataChunk &args, Vector &result) {
+	const auto count = args.size();
+	bool has_flat = false;
+	idx_t input_count = 0;
+	for (auto &input : args.data) {
+		if (input.GetVectorType() == VectorType::CONSTANT_VECTOR) {
+			if (!ConstantVector::IsNull(input)) {
+				input_count++;
+			}
+			continue;
+		}
+		if (input.GetVectorType() != VectorType::FLAT_VECTOR || !FlatVector::Validity(input).CheckAllValid(count)) {
+			return false;
+		}
+		has_flat = true;
+		input_count++;
+	}
+	if (!has_flat || input_count < 2) {
+		return false;
+	}
+
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	if (result.size() != count) {
+		FlatVector::SetSize(result, count);
+	}
+	FlatVector::ValidityMutable(result).Reset(count);
+	auto result_data = FlatVector::GetDataMutable<T>(result);
+	optional_ptr<const Vector> first;
+	bool folded = false;
+	for (auto &input : args.data) {
+		const auto constant = input.GetVectorType() == VectorType::CONSTANT_VECTOR;
+		if (constant && ConstantVector::IsNull(input)) {
+			continue;
+		}
+		if (!first) {
+			first = input;
+			continue;
+		}
+		auto input_data = DenseInputData<T>(input);
+		if (folded) {
+			if (constant) {
+				DenseLeastGreatestFold<T, OP, true>(input_data, result_data, count);
+			} else {
+				DenseLeastGreatestFold<T, OP, false>(input_data, result_data, count);
+			}
+			continue;
+		}
+		auto first_data = DenseInputData<T>(*first);
+		const auto first_constant = first->GetVectorType() == VectorType::CONSTANT_VECTOR;
+		if (first_constant && constant) {
+			DenseLeastGreatestPair<T, OP, true, true>(first_data, input_data, result_data, count);
+		} else if (first_constant) {
+			DenseLeastGreatestPair<T, OP, true, false>(first_data, input_data, result_data, count);
+		} else if (constant) {
+			DenseLeastGreatestPair<T, OP, false, true>(first_data, input_data, result_data, count);
+		} else {
+			DenseLeastGreatestPair<T, OP, false, false>(first_data, input_data, result_data, count);
+		}
+		folded = true;
+	}
+	return true;
+}
+
 struct LeastGreatestSortKeyState : public FunctionLocalState {
 	explicit LeastGreatestSortKeyState(idx_t column_count, OrderByNullType null_ordering)
 	    : intermediate(LogicalType::BLOB), modifiers(OrderType::ASCENDING, null_ordering) {
@@ -115,6 +224,11 @@ void LeastGreatestFunction(DataChunk &args, ExpressionState &state, Vector &resu
 		// single input: nop
 		result.Reference(args.data[0]);
 		return;
+	}
+	if constexpr (std::is_same_v<BASE_OP, StandardLeastGreatest<false>>) {
+		if (TryDenseLeastGreatest<T, OP>(args, result)) {
+			return;
+		}
 	}
 	auto &input = BASE_OP::Prepare(args, state);
 	auto &result_vector = BASE_OP::TargetVector(result, state);
@@ -265,7 +379,8 @@ unique_ptr<FunctionData> BindLeastGreatest(BindScalarFunctionInput &input) {
 		break;
 	}
 	using OP = typename LEAST_GREATER_OP::OP;
-	switch (child_type.InternalType()) {
+	auto physical_type = child_type.id() == LogicalTypeId::TIME_TZ ? PhysicalType::INVALID : child_type.InternalType();
+	switch (physical_type) {
 #if !DUCKDB_SMALLER_BINARY(least_greatest_types)
 	case PhysicalType::BOOL:
 	case PhysicalType::INT8:
@@ -282,6 +397,24 @@ unique_ptr<FunctionData> BindLeastGreatest(BindScalarFunctionInput &input) {
 		break;
 	case PhysicalType::INT128:
 		bound_function.SetFunctionCallback(LeastGreatestFunction<hugeint_t, OP>);
+		break;
+	case PhysicalType::UINT8:
+		bound_function.SetFunctionCallback(LeastGreatestFunction<uint8_t, OP>);
+		break;
+	case PhysicalType::UINT16:
+		bound_function.SetFunctionCallback(LeastGreatestFunction<uint16_t, OP>);
+		break;
+	case PhysicalType::UINT32:
+		bound_function.SetFunctionCallback(LeastGreatestFunction<uint32_t, OP>);
+		break;
+	case PhysicalType::UINT64:
+		bound_function.SetFunctionCallback(LeastGreatestFunction<uint64_t, OP>);
+		break;
+	case PhysicalType::UINT128:
+		bound_function.SetFunctionCallback(LeastGreatestFunction<uhugeint_t, OP>);
+		break;
+	case PhysicalType::FLOAT:
+		bound_function.SetFunctionCallback(LeastGreatestFunction<float, OP>);
 		break;
 	case PhysicalType::DOUBLE:
 		bound_function.SetFunctionCallback(LeastGreatestFunction<double, OP>);

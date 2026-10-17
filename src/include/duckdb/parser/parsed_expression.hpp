@@ -183,7 +183,7 @@ public:
 
 	bool Equals(const BaseExpression &other) const override;
 	virtual bool Equals(const ParsedExpression &other) const;
-	hash_t Hash() const override;
+	hash_t Hash() const;
 
 	//! True iff this expression appears as a function-call argument written
 	//! with the `name := value` (or `name => value`) named-parameter syntax.
@@ -215,6 +215,8 @@ public:
 	                       const vector<unique_ptr<ParsedExpression>> &right);
 
 protected:
+	hash_t NodeHash() const override;
+
 	//! Set only by the parser for `name := value` / `name => value` argument
 	//! syntax. Not serialized: the flag is consumed during binding (macro and
 	//! scalar-function argument classification) and irrelevant after.

@@ -5,6 +5,8 @@
 #include "duckdb/common/operator/add.hpp"
 #include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/common/atomic.hpp"
+#include "duckdb/common/vector/vector_iterator.hpp"
+#include "duckdb/main/client_config.hpp"
 
 namespace duckdb {
 
@@ -75,11 +77,54 @@ struct RangeFunctionGlobalState : public GlobalTableFunctionState {
 	//! The number of values of the input rows, and the number of values that were generated
 	atomic<idx_t> total_values {0};
 	atomic<idx_t> generated_values {0};
+	bool source = false;
+	idx_t max_threads = 1;
+	idx_t morsel_size = STANDARD_VECTOR_SIZE;
+	atomic<idx_t> next_index {0};
+
+	idx_t MaxThreads() const override {
+		return max_threads;
+	}
 };
+
+static idx_t RangeMorselSize(ClientContext &context, optional_ptr<const OperatorPartitionInfo> partition_info) {
+	if (!partition_info || !partition_info->RequiresBatchIndex() || !partition_info->preferred_batch_size.IsValid() ||
+	    ClientConfig::GetConfig(context).verify_parallelism) {
+		return STANDARD_VECTOR_SIZE;
+	}
+	auto vector_count =
+	    (partition_info->preferred_batch_size.GetIndex() + STANDARD_VECTOR_SIZE - 1) / STANDARD_VECTOR_SIZE;
+	return MaxValue<idx_t>(vector_count, 1) * STANDARD_VECTOR_SIZE;
+}
+
+static idx_t RangeMorselCount(idx_t count, idx_t morsel_size) {
+	return MaxValue<idx_t>(1, count / morsel_size);
+}
+
+static bool NextRangeMorsel(atomic<idx_t> &next_index, idx_t morsel_size, idx_t count, idx_t &begin, idx_t &end,
+                            idx_t &batch_index) {
+	auto start = next_index.fetch_add(morsel_size, std::memory_order_relaxed);
+	auto morsel_idx = start / morsel_size;
+	auto morsel_count = RangeMorselCount(count, morsel_size);
+	if (start >= count || morsel_idx >= morsel_count) {
+		return false;
+	}
+	begin = start;
+	end = morsel_idx + 1 == morsel_count ? count : start + morsel_size;
+	batch_index = morsel_idx;
+	return true;
+}
 
 static unique_ptr<GlobalTableFunctionState> RangeFunctionGlobalInit(ClientContext &context,
                                                                     TableFunctionInitInput &input) {
-	return make_uniq<RangeFunctionGlobalState>();
+	auto result = make_uniq<RangeFunctionGlobalState>();
+	if (input.bind_data) {
+		auto cardinality = input.bind_data->Cast<RangeFunctionBindData>().cardinality;
+		result->source = true;
+		result->morsel_size = RangeMorselSize(context, input.partition_info);
+		result->max_threads = RangeMorselCount(cardinality, result->morsel_size);
+	}
+	return std::move(result);
 }
 
 static double RangeFunctionProgress(ClientContext &context, const FunctionData *bind_data,
@@ -111,6 +156,10 @@ struct RangeFunctionLocalState : public LocalTableFunctionState {
 	idx_t row_count = 0;
 
 	bool empty_range = false;
+	idx_t morsel_end = 0;
+	idx_t batch_index = 0;
+
+	vector<VectorIterator<int64_t>> parameters;
 };
 
 static unique_ptr<LocalTableFunctionState> RangeFunctionLocalInit(ExecutionContext &context,
@@ -119,26 +168,32 @@ static unique_ptr<LocalTableFunctionState> RangeFunctionLocalInit(ExecutionConte
 	return make_uniq<RangeFunctionLocalState>(global_state);
 }
 
+static void ReadRangeParameters(const DataChunk &input, RangeFunctionLocalState &state) {
+	if (input.ColumnCount() > 3) {
+		throw InternalException("Unsupported parameter count for range function");
+	}
+	state.parameters.clear();
+	state.parameters.reserve(input.ColumnCount());
+	for (auto &column : input.data) {
+		state.parameters.emplace_back(column);
+	}
+}
+
 template <bool GENERATE_SERIES>
-static void GenerateRangeParameters(DataChunk &input, idx_t row_id, RangeFunctionLocalState &result) {
-	input.Flatten();
-	for (idx_t c = 0; c < input.ColumnCount(); c++) {
-		if (FlatVector::IsNull(input.data[c], row_id)) {
+static void GenerateRangeParameters(idx_t row_id, RangeFunctionLocalState &result) {
+	int64_t values[3];
+	for (idx_t c = 0; c < result.parameters.size(); c++) {
+		auto entry = result.parameters[c][row_id];
+		if (!entry.IsValid()) {
 			result.start = GENERATE_SERIES ? 1 : 0;
 			result.end = 0;
 			result.increment = 1;
 			result.row_count = 0;
 			return;
 		}
+		values[c] = entry.GetValue();
 	}
-	int64_t values[3];
-	for (idx_t c = 0; c < input.ColumnCount(); c++) {
-		if (c >= 3) {
-			throw InternalException("Unsupported parameter count for range function");
-		}
-		values[c] = FlatVector::GetValue<int64_t>(input.data[c], row_id);
-	}
-	GetParameters(values, input.ColumnCount(), result.start, result.end, result.increment);
+	GetParameters(values, result.parameters.size(), result.start, result.end, result.increment);
 	if (result.increment == 0) {
 		throw BinderException("interval cannot be 0!");
 	}
@@ -171,10 +226,44 @@ static void GenerateRangeParameters(DataChunk &input, idx_t row_id, RangeFunctio
 	}
 }
 
+static OperatorResultType RangeSourceFunction(RangeFunctionLocalState &state, DataChunk &output) {
+	auto &global_state = *state.global_state;
+	if (state.empty_range) {
+		return OperatorResultType::NEED_MORE_INPUT;
+	}
+	if (state.current_idx >= state.morsel_end &&
+	    !NextRangeMorsel(global_state.next_index, global_state.morsel_size, state.row_count, state.current_idx,
+	                     state.morsel_end, state.batch_index)) {
+		return OperatorResultType::NEED_MORE_INPUT;
+	}
+	hugeint_t current_value = state.start + state.increment * UnsafeNumericCast<int64_t>(state.current_idx);
+	int64_t current_value_i64;
+	if (!Hugeint::TryCast<int64_t>(current_value, current_value_i64)) {
+		return OperatorResultType::NEED_MORE_INPUT;
+	}
+	auto count = MinValue<idx_t>(state.morsel_end - state.current_idx, STANDARD_VECTOR_SIZE);
+	output.data[0].Sequence(current_value_i64, Hugeint::Cast<int64_t>(state.increment), count);
+	state.current_idx += count;
+	global_state.generated_values.fetch_add(count, std::memory_order_relaxed);
+	return OperatorResultType::HAVE_MORE_OUTPUT;
+}
+
 template <bool GENERATE_SERIES>
 static OperatorResultType RangeFunction(ExecutionContext &context, TableFunctionInput &data_p, DataChunk &input,
                                         DataChunk &output) {
 	auto &state = data_p.local_state->Cast<RangeFunctionLocalState>();
+	if (state.global_state && state.global_state->source) {
+		if (!state.initialized_row) {
+			ReadRangeParameters(input, state);
+			GenerateRangeParameters<GENERATE_SERIES>(0, state);
+			state.initialized_row = true;
+			state.current_idx = 0;
+			state.morsel_end = 0;
+			idx_t expected = 0;
+			state.global_state->total_values.compare_exchange_strong(expected, state.row_count);
+		}
+		return RangeSourceFunction(state, output);
+	}
 	while (true) {
 		if (!state.initialized_row) {
 			// initialize for the current input row
@@ -184,7 +273,10 @@ static OperatorResultType RangeFunction(ExecutionContext &context, TableFunction
 				state.initialized_row = false;
 				return OperatorResultType::NEED_MORE_INPUT;
 			}
-			GenerateRangeParameters<GENERATE_SERIES>(input, state.current_input_row, state);
+			if (state.current_input_row == 0) {
+				ReadRangeParameters(input, state);
+			}
+			GenerateRangeParameters<GENERATE_SERIES>(state.current_input_row, state);
 			state.initialized_row = true;
 			state.current_idx = 0;
 			if (state.global_state) {
@@ -227,6 +319,10 @@ static OperatorResultType RangeFunction(ExecutionContext &context, TableFunction
 	}
 }
 
+static OperatorPartitionData RangeGetPartitionData(ClientContext &context, TableFunctionGetPartitionInput &input) {
+	return OperatorPartitionData(input.local_state->Cast<RangeFunctionLocalState>().batch_index);
+}
+
 unique_ptr<NodeStatistics> RangeCardinality(ClientContext &context, const FunctionData *bind_data_p) {
 	if (!bind_data_p) {
 		return nullptr;
@@ -239,7 +335,7 @@ unique_ptr<NodeStatistics> RangeCardinality(ClientContext &context, const Functi
 // Range (timestamp)
 //===--------------------------------------------------------------------===//
 struct RangeDateTimeBindData : public TableFunctionData {
-	explicit RangeDateTimeBindData(const vector<Value> &inputs) : cardinality(0) {
+	RangeDateTimeBindData(const vector<Value> &inputs, bool generate_series) : cardinality(0) {
 		timestamp_t bounds[2];
 		interval_t step;
 		for (idx_t i = 0; i < inputs.size(); i++) {
@@ -251,6 +347,10 @@ struct RangeDateTimeBindData : public TableFunctionData {
 			} else {
 				bounds[i] = inputs[i].GetValue<timestamp_t>();
 			}
+		}
+		if (TryCountSequence(bounds[0], bounds[1], step, generate_series)) {
+			cardinality = count;
+			return;
 		}
 		// Estimate cardinality using micros.
 		int64_t increment = 0;
@@ -265,7 +365,42 @@ struct RangeDateTimeBindData : public TableFunctionData {
 		cardinality = idx_t(delta / increment);
 	}
 
+	bool TryCountSequence(timestamp_t start_p, timestamp_t end_p, interval_t step, bool inclusive) {
+		if (!start_p.IsFinite() || !end_p.IsFinite() || step.months != 0) {
+			return false;
+		}
+		if ((step.days > 0 && step.micros < 0) || (step.days < 0 && step.micros > 0)) {
+			return false;
+		}
+		hugeint_t step_value = hugeint_t(step.days) * hugeint_t(Interval::MICROS_PER_DAY) + hugeint_t(step.micros);
+		if (step_value == 0 || !Hugeint::TryCast<int64_t>(step_value, step_micros)) {
+			return false;
+		}
+		hugeint_t delta = hugeint_t(end_p.value) - hugeint_t(start_p.value);
+		hugeint_t abs_step = step_value;
+		if (step_value < 0) {
+			delta = -delta;
+			abs_step = -step_value;
+		}
+		hugeint_t rows = 0;
+		if (inclusive && delta >= 0) {
+			rows = delta / abs_step + 1;
+		} else if (!inclusive && delta > 0) {
+			rows = (delta - 1) / abs_step + 1;
+		}
+		if (!Hugeint::TryCast<idx_t>(rows, count)) {
+			return false;
+		}
+		start = start_p;
+		sequenced = true;
+		return true;
+	}
+
 	idx_t cardinality;
+	bool sequenced = false;
+	timestamp_t start;
+	int64_t step_micros = 0;
+	idx_t count = 0;
 };
 
 template <bool GENERATE_SERIES>
@@ -280,7 +415,7 @@ static unique_ptr<FunctionData> RangeDateTimeBind(ClientContext &context, TableF
 	if (input.inputs.size() != 3) {
 		return nullptr;
 	}
-	return make_uniq<RangeDateTimeBindData>(input.inputs);
+	return make_uniq<RangeDateTimeBindData>(input.inputs, GENERATE_SERIES);
 }
 
 unique_ptr<NodeStatistics> RangeDateTimeCardinality(ClientContext &context, const FunctionData *bind_data_p) {
@@ -298,6 +433,19 @@ struct RangeDateTimeGlobalState : public GlobalTableFunctionState {
 	atomic<int64_t> end {0};
 	atomic<int64_t> current {0};
 
+	bool sequenced = false;
+	timestamp_t sequence_start;
+	int64_t step_micros = 0;
+	idx_t count = 0;
+	idx_t morsel_size = STANDARD_VECTOR_SIZE;
+	idx_t max_threads = 1;
+	atomic<idx_t> next_index {0};
+	atomic<idx_t> generated {0};
+
+	idx_t MaxThreads() const override {
+		return max_threads;
+	}
+
 	void Initialize(timestamp_t start_p, timestamp_t end_p) {
 		start.store(start_p.value, std::memory_order_relaxed);
 		end.store(end_p.value, std::memory_order_relaxed);
@@ -307,12 +455,31 @@ struct RangeDateTimeGlobalState : public GlobalTableFunctionState {
 
 static unique_ptr<GlobalTableFunctionState> RangeDateTimeGlobalInit(ClientContext &context,
                                                                     TableFunctionInitInput &input) {
-	return make_uniq<RangeDateTimeGlobalState>();
+	auto result = make_uniq<RangeDateTimeGlobalState>();
+	if (input.bind_data) {
+		auto &bind_data = input.bind_data->Cast<RangeDateTimeBindData>();
+		if (bind_data.sequenced) {
+			result->sequenced = true;
+			result->sequence_start = bind_data.start;
+			result->step_micros = bind_data.step_micros;
+			result->count = bind_data.count;
+			result->morsel_size = RangeMorselSize(context, input.partition_info);
+			result->max_threads = RangeMorselCount(result->count, result->morsel_size);
+		}
+	}
+	return std::move(result);
 }
 
 static double RangeDateTimeProgress(ClientContext &context, const FunctionData *bind_data,
                                     const GlobalTableFunctionState *global_state) {
 	auto &state = global_state->Cast<RangeDateTimeGlobalState>();
+	if (state.sequenced) {
+		if (state.count == 0) {
+			return 0;
+		}
+		auto generated = MinValue<idx_t>(state.generated.load(std::memory_order_relaxed), state.count);
+		return 100.0 * static_cast<double>(generated) / static_cast<double>(state.count);
+	}
 	auto start = static_cast<double>(state.start.load(std::memory_order_relaxed));
 	auto range = static_cast<double>(state.end.load(std::memory_order_relaxed)) - start;
 	if (range == 0) {
@@ -340,6 +507,10 @@ struct RangeDateTimeLocalState : public LocalTableFunctionState {
 	bool greater_than_check;
 
 	bool empty_range = false;
+
+	idx_t current_idx = 0;
+	idx_t morsel_end = 0;
+	idx_t batch_index = 0;
 
 	bool Finished(timestamp_t current_value) const {
 		if (greater_than_check) {
@@ -417,10 +588,36 @@ static unique_ptr<LocalTableFunctionState> RangeDateTimeLocalInit(ExecutionConte
 	return make_uniq<RangeDateTimeLocalState>(global_state);
 }
 
+static OperatorResultType RangeDateTimeSequence(RangeDateTimeLocalState &state, DataChunk &output) {
+	auto &global_state = *state.global_state;
+	if (state.current_idx >= state.morsel_end &&
+	    !NextRangeMorsel(global_state.next_index, global_state.morsel_size, global_state.count, state.current_idx,
+	                     state.morsel_end, state.batch_index)) {
+		return OperatorResultType::NEED_MORE_INPUT;
+	}
+	auto count = MinValue<idx_t>(state.morsel_end - state.current_idx, STANDARD_VECTOR_SIZE);
+	auto value = Hugeint::Cast<int64_t>(hugeint_t(global_state.sequence_start.value) +
+	                                    hugeint_t(global_state.step_micros) * hugeint_t(state.current_idx));
+	auto result_data = FlatVector::ScatterWriter<timestamp_t>(output.data[0]);
+	for (idx_t i = 0; i < count; i++) {
+		result_data[i] = timestamp_t(value);
+		if (i + 1 < count) {
+			value += global_state.step_micros;
+		}
+	}
+	output.SetChildCardinality(count);
+	state.current_idx += count;
+	global_state.generated.fetch_add(count, std::memory_order_relaxed);
+	return OperatorResultType::HAVE_MORE_OUTPUT;
+}
+
 template <bool GENERATE_SERIES>
 static OperatorResultType RangeDateTimeFunction(ExecutionContext &context, TableFunctionInput &data_p, DataChunk &input,
                                                 DataChunk &output) {
 	auto &state = data_p.local_state->Cast<RangeDateTimeLocalState>();
+	if (state.global_state && state.global_state->sequenced) {
+		return RangeDateTimeSequence(state, output);
+	}
 	while (true) {
 		if (!state.initialized_row) {
 			// initialize for the current input row
@@ -471,6 +668,11 @@ static OperatorResultType RangeDateTimeFunction(ExecutionContext &context, Table
 	}
 }
 
+static OperatorPartitionData RangeDateTimeGetPartitionData(ClientContext &context,
+                                                           TableFunctionGetPartitionInput &input) {
+	return OperatorPartitionData(input.local_state->Cast<RangeDateTimeLocalState>().batch_index);
+}
+
 static bool RangeIsRepeatable(optional_ptr<const FunctionData>) {
 	return true;
 }
@@ -495,7 +697,7 @@ void RangeTableFunction::RegisterFunction(BuiltinFunctions &set) {
 	range_function.in_out_function = RangeFunction<false>;
 	range_function.cardinality = RangeCardinality;
 	range_function.is_repeatable = RangeIsRepeatable;
-	range_function.parallelism = TableFunctionParallelism::FORCE_SINGLE_THREADED;
+	range_function.get_partition_data = RangeGetPartitionData;
 	range_function.return_type = TableFunctionReturnType::SET_RETURNING_FUNCTION;
 
 	// single argument range: (end) - implicit start = 0 and increment = 1
@@ -512,10 +714,14 @@ void RangeTableFunction::RegisterFunction(BuiltinFunctions &set) {
 	range_in_out.in_out_function = RangeDateTimeFunction<false>;
 	range_in_out.cardinality = RangeDateTimeCardinality;
 	range_in_out.is_repeatable = RangeIsRepeatable;
-	range_in_out.parallelism = TableFunctionParallelism::FORCE_SINGLE_THREADED;
+	range_in_out.get_partition_data = RangeDateTimeGetPartitionData;
 	range_in_out.return_type = TableFunctionReturnType::SET_RETURNING_FUNCTION;
 	range.AddFunction(range_in_out);
 	set.AddFunction(range);
+	TableFunctionSet range_st("range_st");
+	range_st.functions = range.functions;
+	range_st.ApplyToFunctions([](TableFunction &function) { function.get_partition_data = nullptr; });
+	set.AddFunction(std::move(range_st));
 	// generate_series: similar to range, but inclusive instead of exclusive bounds on the RHS
 	TableFunctionSet generate_series("generate_series");
 	range_function.bind = RangeFunctionBind<true>;
@@ -532,7 +738,7 @@ void RangeTableFunction::RegisterFunction(BuiltinFunctions &set) {
 	generate_series_in_out.table_scan_progress = RangeDateTimeProgress;
 	generate_series_in_out.in_out_function = RangeDateTimeFunction<true>;
 	generate_series_in_out.is_repeatable = RangeIsRepeatable;
-	generate_series_in_out.parallelism = TableFunctionParallelism::FORCE_SINGLE_THREADED;
+	generate_series_in_out.get_partition_data = RangeDateTimeGetPartitionData;
 	generate_series_in_out.return_type = TableFunctionReturnType::SET_RETURNING_FUNCTION;
 	generate_series.AddFunction(generate_series_in_out);
 	set.AddFunction(generate_series);

@@ -370,3 +370,10 @@ statement error
 SELECT string_split_regex(s, p, 'c') FROM split_patterns
 ----
 <REGEX>:.*Invalid Input Error.*missing.*
+
+# options apply to non-constant patterns
+query II
+SELECT string_split_regex(s, p, 'i'), string_split_regex(s, p) FROM (VALUES ('aXbxc', 'x'), ('1a2A3', 'a')) t(s, p)
+----
+[a, b, c]	[aXb, c]
+[1, 2, 3]	[1, 2A3]

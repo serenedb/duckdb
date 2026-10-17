@@ -1,64 +1,64 @@
 #include "duckdb/common/time_point.hpp"
-#include "duckdb/common/assert.hpp"
 
 namespace duckdb {
 
-TimePoint::TimePoint() : value() {
+static double TicksPerNano() {
+	static const double ticks_per_nano = absl::base_internal::CycleClock::Frequency() / 1e9;
+	return ticks_per_nano;
+}
+
+int64_t TimePoint::FromNanos(int64_t nanos) {
+	return static_cast<int64_t>(static_cast<double>(nanos) * TicksPerNano());
+}
+
+int64_t TimePoint::ToNanos(int64_t ticks) {
+	return static_cast<int64_t>(static_cast<double>(ticks) / TicksPerNano());
+}
+
+TimePoint::TimePoint() : ticks(0) {
 }
 
 TimePoint TimePoint::Tick() {
-	return TimePoint(steady_clock::now());
+	return TimePoint(Now());
 }
 
 int64_t TimePoint::GetTickMs() {
-	return std::chrono::duration_cast<std::chrono::milliseconds>(steady_clock::now().time_since_epoch()).count();
+	return ToNanos(Now()) / 1000000;
 }
 
 double TimePoint::ElapsedSeconds(const TimePoint &start, const TimePoint &end) {
-	D_ASSERT(start.value <= end.value);
-	return std::chrono::duration_cast<std::chrono::duration<double>>(end.value - start.value).count();
+	return static_cast<double>(ElapsedNanos(start, end)) / 1e9;
 }
 
 int64_t TimePoint::ElapsedMillis(const TimePoint &start, const TimePoint &end) {
-	D_ASSERT(start.value <= end.value);
-	return std::chrono::duration_cast<std::chrono::milliseconds>(end.value - start.value).count();
+	return ElapsedNanos(start, end) / 1000000;
 }
 
 int64_t TimePoint::ElapsedMicros(const TimePoint &start, const TimePoint &end) {
-	D_ASSERT(start.value <= end.value);
-	return std::chrono::duration_cast<std::chrono::microseconds>(end.value - start.value).count();
+	return ElapsedNanos(start, end) / 1000;
 }
 
 int64_t TimePoint::ElapsedNanos(const TimePoint &start, const TimePoint &end) {
-	D_ASSERT(start.value <= end.value);
-	return std::chrono::duration_cast<std::chrono::nanoseconds>(end.value - start.value).count();
+	return ToNanos(MaxValue<int64_t>(end.ticks - start.ticks, 0));
 }
 
 double TimePoint::ElapsedSeconds() const {
-	auto now = steady_clock::now();
-	D_ASSERT(value <= now);
-	return std::chrono::duration_cast<std::chrono::duration<double>>(now - value).count();
+	return ElapsedSeconds(*this, Tick());
 }
 
 int64_t TimePoint::ElapsedMillis() const {
-	auto now = steady_clock::now();
-	D_ASSERT(value <= now);
-	return std::chrono::duration_cast<std::chrono::milliseconds>(now - value).count();
+	return ElapsedMillis(*this, Tick());
 }
 
 int64_t TimePoint::ElapsedMicros() const {
-	auto now = steady_clock::now();
-	D_ASSERT(value <= now);
-	return std::chrono::duration_cast<std::chrono::microseconds>(now - value).count();
+	return ElapsedMicros(*this, Tick());
 }
 
 int64_t TimePoint::ElapsedNanos() const {
-	auto now = steady_clock::now();
-	D_ASSERT(value <= now);
-	return std::chrono::duration_cast<std::chrono::nanoseconds>(now - value).count();
+	return ElapsedNanos(*this, Tick());
 }
 
-TimePoint::TimePoint(time_point<steady_clock> value_p) : value(value_p) {
+TimePoint::TimePoint(int64_t ticks_p) : ticks(ticks_p) {
 }
 
 } // namespace duckdb

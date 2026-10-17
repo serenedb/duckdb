@@ -1,6 +1,10 @@
 #include "duckdb/execution/expression_executor.hpp"
 
+#include "duckdb/common/vector/array_vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
+#include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector/vector_iterator.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
@@ -160,12 +164,63 @@ bool ExpressionExecutor::TryEvaluateScalar(ClientContext &context, const Express
 		return true;
 	} catch (InternalException &ex) {
 		throw;
+	} catch (InterruptException &ex) {
+		throw;
 	} catch (...) {
 		return false;
 	}
 }
 
+static idx_t FoldedValueSize(const Vector &vector, idx_t count, idx_t max_size) {
+	idx_t size = count * sizeof(Value);
+	if (size > max_size) {
+		return size;
+	}
+	auto &type = vector.GetType();
+	switch (type.InternalType()) {
+	case PhysicalType::LIST:
+		return size + FoldedValueSize(ListVector::GetChild(vector), ListVector::GetListSize(vector), max_size);
+	case PhysicalType::ARRAY:
+		return size + FoldedValueSize(ArrayVector::GetChild(vector), count * ArrayType::GetSize(type), max_size);
+	case PhysicalType::STRUCT:
+		for (auto &child : StructVector::GetEntries(vector)) {
+			size += FoldedValueSize(child, count, max_size);
+			if (size > max_size) {
+				break;
+			}
+		}
+		return size;
+	default:
+		return size;
+	}
+}
+
+ExpressionExecutor::FoldResult ExpressionExecutor::EvaluateFoldable(ClientContext &context, const Expression &expr,
+                                                                    Value &result, idx_t max_size) {
+	D_ASSERT(expr.IsFoldable());
+	D_ASSERT(expr.IsScalar());
+	try {
+		ExpressionExecutor executor(context, expr);
+		Vector vector(expr.GetReturnType());
+		executor.ExecuteExpression(vector);
+		D_ASSERT(vector.GetVectorType() == VectorType::CONSTANT_VECTOR);
+		if (FoldedValueSize(vector, 1, max_size) > max_size) {
+			return FoldResult::TOO_LARGE;
+		}
+		result = vector.GetValue(0).WithType(expr.GetReturnType());
+		return FoldResult::FOLDED;
+	} catch (InternalException &ex) {
+		throw;
+	} catch (InterruptException &ex) {
+		throw;
+	} catch (...) {
+		return FoldResult::THROWS;
+	}
+}
+
 void ExpressionExecutor::Verify(const Expression &expr, Vector &vector, idx_t count) {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	D_ASSERT(expr.GetReturnType().id() == vector.GetType().id());
 	vector.Verify();
 	if (expr.GetVerificationStats()) {
@@ -227,6 +282,7 @@ void ExpressionExecutor::Verify(const Expression &expr, Vector &vector, idx_t co
 			vector.Verify();
 		}
 	}
+#endif
 }
 
 unique_ptr<ExpressionState> ExpressionExecutor::InitializeState(const Expression &expr,

@@ -31,6 +31,7 @@ struct PartitionStatistics;
 struct TableFunctionFileBindInput;
 struct TableFunctionFileBindInfo;
 struct TableFunctionFileInitInput;
+struct LocalTableFunctionState;
 
 //! Controls how a table function manages parallelism.
 enum class TableFunctionParallelism : uint8_t {
@@ -85,6 +86,14 @@ public:
 
 	virtual idx_t MaxThreads() const {
 		return 1;
+	}
+
+	virtual bool ResetForReuse(ClientContext &context) {
+		return false;
+	}
+
+	virtual bool ResetLocalStateForReuse(ExecutionContext &context, LocalTableFunctionState &local_state) {
+		return false;
 	}
 
 	template <class TARGET>
@@ -174,6 +183,7 @@ struct TableFunctionInitInput {
 	optional_ptr<const PhysicalOperator> op;
 	//! (Optional) Set when a multi-file scan initializes this function to read one of its files
 	optional_ptr<const TableFunctionFileInitInput> multi_file_input;
+	optional_ptr<const OperatorPartitionInfo> partition_info;
 
 	bool CanRemoveFilterColumns() const {
 		if (projection_ids.empty()) {

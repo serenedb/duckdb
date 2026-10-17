@@ -17,14 +17,21 @@ public:
 	static constexpr const ExpressionClass TYPE = ExpressionClass::BOUND_LAMBDA;
 
 public:
-	BoundLambdaExpression(ExpressionType type_p, LogicalType return_type_p, unique_ptr<Expression> lambda_expr_p,
+	BoundLambdaExpression(ExpressionType type_p, LogicalType return_type_p, shared_ptr<Expression> lambda_expr_p,
 	                      idx_t parameter_count_p);
 
 public:
-	const unique_ptr<Expression> &LambdaExpr() const {
-		return lambda_expr;
+	optional_ptr<const Expression> LambdaExpr() const {
+		return lambda_expr.get();
 	}
-	unique_ptr<Expression> &LambdaExprMutable() {
+	Expression &LambdaExprMutable() {
+		D_ASSERT(lambda_expr.use_count() == 1);
+		return *lambda_expr;
+	}
+	void SetLambdaExpr(shared_ptr<Expression> expr) {
+		lambda_expr = std::move(expr);
+	}
+	const shared_ptr<Expression> &SharedLambdaExpr() const {
 		return lambda_expr;
 	}
 	const vector<unique_ptr<Expression>> &Captures() const {
@@ -55,7 +62,7 @@ public:
 
 private:
 	//! The lambda expression that we'll use in the expression executor during execution
-	unique_ptr<Expression> lambda_expr;
+	shared_ptr<Expression> lambda_expr;
 	//! Non-lambda constants, column references, and outer lambda parameters that we need to pass
 	//! into the execution chunk
 	vector<unique_ptr<Expression>> captures;

@@ -277,3 +277,26 @@ statement error
 SELECT regexp_replace(s, pat, repl) FROM t_repl_invalid;
 ----
 Invalid replacement string for regexp_replace
+
+# Non-constant patterns cycling through more distinct values than the compiled pattern cache holds
+statement ok
+CREATE TABLE regex_patterns AS
+SELECT i, 'needle' || (i % 11)::VARCHAR AS pat, repeat('hay', 10) || 'needle' || (i % 13)::VARCHAR || repeat('stack', 5) AS s
+FROM range(3000) t(i)
+
+query IIIIII
+SELECT count(*),
+	count(*) FILTER (WHERE regexp_replace(s, pat, 'X') <> replace(s, pat, 'X')),
+	count(*) FILTER (WHERE regexp_replace(s, pat, 'X', 'g') <> replace(s, pat, 'X')),
+	count(*) FILTER (WHERE regexp_matches(s, pat) <> contains(s, pat)),
+	count(*) FILTER (WHERE regexp_extract(s, pat) <> CASE WHEN contains(s, pat) THEN pat ELSE '' END),
+	count(*) FILTER (WHERE regexp_replace(s, pat, 'X') = s)
+FROM regex_patterns
+----
+3000	0	0	0	0	2706
+
+# Rows without a match return the input string unchanged
+query II
+SELECT max(regexp_replace(s, 'zzz', 'Y')) = max(s), min(regexp_replace(s, 'zzz', 'Y', 'g')) = min(s) FROM regex_patterns
+----
+true	true

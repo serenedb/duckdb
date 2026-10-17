@@ -1,5 +1,7 @@
+#include "duckdb/common/vector/dictionary_vector.hpp"
 #include "duckdb/common/vector/map_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "core_functions/scalar/list_functions.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -41,14 +43,33 @@ void TemplatedPopulateChild(DataChunk &args, Vector &result) {
 
 void PopulateChildFallback(DataChunk &args, Vector &result) {
 	auto &child_type = ListType::GetChildType(result.GetType());
-	auto result_data = FlatVector::Writer<list_entry_t>(result, args.size());
-	for (idx_t i = 0; i < args.size(); i++) {
-		const auto entry_offset = ListVector::GetListSize(result);
-		for (idx_t col_idx = 0; col_idx < args.ColumnCount(); col_idx++) {
-			auto val = args.GetValue(col_idx, i).DefaultCastAs(child_type);
-			ListVector::PushBack(result, val);
+	const auto row_count = args.size();
+	const auto column_count = args.ColumnCount();
+	const auto total = row_count * column_count;
+	Vector staged(child_type, MaxValue<idx_t>(total, 1));
+	for (auto &column : args.data) {
+		if (column.GetType() == child_type) {
+			staged.Append(column, row_count, VectorAppendMode::ALLOW_RESIZE);
+		} else {
+			Vector cast(child_type, row_count);
+			string error;
+			if (!VectorOperations::DefaultTryCast(column, cast, row_count, &error)) {
+				throw InvalidInputException("Failed to cast value: %s", error);
+			}
+			staged.Append(cast, row_count, VectorAppendMode::ALLOW_RESIZE);
 		}
-		result_data.WriteValue(list_entry_t(entry_offset, args.ColumnCount()));
+	}
+	SelectionVector interleave(MaxValue<idx_t>(total, 1));
+	for (idx_t row = 0; row < row_count; row++) {
+		for (idx_t col = 0; col < column_count; col++) {
+			interleave.set_index(row * column_count + col, col * row_count + row);
+		}
+	}
+	const auto offset = ListVector::GetListSize(result);
+	ListVector::Append(result, staged, interleave, total);
+	auto result_data = FlatVector::Writer<list_entry_t>(result, row_count);
+	for (idx_t row = 0; row < row_count; row++) {
+		result_data.WriteValue(list_entry_t(offset + row * column_count, column_count));
 	}
 }
 
@@ -182,6 +203,13 @@ bool StructFunction(DataChunk &args, Vector &result) {
 		chunk.InitializeEmpty(types);
 		for (idx_t col = 0; col < column_count; col++) {
 			auto &struct_vector = args.data[col];
+			if (struct_vector.GetVectorType() == VectorType::DICTIONARY_VECTOR &&
+			    DictionaryVector::Child(struct_vector).GetVectorType() == VectorType::FLAT_VECTOR) {
+				auto &dictionary_members = StructVector::GetEntries(DictionaryVector::Child(struct_vector));
+				chunk.data[col].Slice(dictionary_members[member_idx], DictionaryVector::SelVector(struct_vector),
+				                      args.size());
+				continue;
+			}
 			if (struct_vector.GetVectorType() != VectorType::CONSTANT_VECTOR) {
 				struct_vector.Flatten();
 			}
@@ -195,14 +223,15 @@ bool StructFunction(DataChunk &args, Vector &result) {
 	}
 
 	// Set the top level result validity
-	const auto unified_format = args.ToUnifiedFormat();
 	auto &result_validity = FlatVector::ValidityMutable(result);
-	for (idx_t row = 0; row < args.size(); row++) {
-		for (idx_t col = 0; col < column_count; col++) {
-			const auto input_idx = unified_format[col].sel->get_index(row);
-			const auto result_idx = row * column_count + col;
-			if (!unified_format[col].validity.RowIsValid(input_idx)) {
-				result_validity.SetInvalid(result_idx);
+	for (idx_t col = 0; col < column_count; col++) {
+		const auto validity = args.data[col].Validity();
+		if (!validity.CanHaveNull()) {
+			continue;
+		}
+		for (idx_t row = 0; row < args.size(); row++) {
+			if (!validity.IsValid(row)) {
+				result_validity.SetInvalid(row * column_count + col);
 			}
 		}
 	}
@@ -219,6 +248,16 @@ void ListValueFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 		auto result_data = ConstantVector::GetData<list_entry_t>(result);
 		result_data[0].length = 0;
 		result_data[0].offset = 0;
+		return;
+	}
+
+	if (args.ColumnCount() == 1 && args.data[0].GetType() == ListType::GetChildType(result.GetType())) {
+		ListVector::SetListSize(result, 0);
+		ListVector::Append(result, args.data[0], args.size());
+		auto result_data = FlatVector::Writer<list_entry_t>(result, args.size());
+		for (idx_t row = 0; row < args.size(); row++) {
+			result_data.WriteValue(list_entry_t(row, 1));
+		}
 		return;
 	}
 

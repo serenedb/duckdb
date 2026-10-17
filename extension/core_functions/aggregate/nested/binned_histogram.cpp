@@ -298,6 +298,10 @@ void HistogramBinFinalizeFunction(Vector &state_vector, AggregateFinalizeInputDa
 	auto &values = MapVector::GetValues(result);
 	auto list_entries = FlatVector::GetDataMutable<list_entry_t>(result);
 	auto count_entries = FlatVector::GetDataMutable<uint64_t>(values);
+	unique_ptr<Vector> other_key;
+	if (supports_other_bucket) {
+		other_key = make_uniq<Vector>(OtherBucketValue(keys.GetType()), count_t(1));
+	}
 
 	idx_t current_offset = old_len;
 	for (idx_t i = 0; i < count; i++) {
@@ -318,7 +322,7 @@ void HistogramBinFinalizeFunction(Vector &state_vector, AggregateFinalizeInputDa
 		if (state.counts->back() > 0 && supports_other_bucket) {
 			// add overflow bucket ("others")
 			// set bin boundary to NULL for overflow bucket
-			keys.SetValue(current_offset, OtherBucketValue(keys.GetType()));
+			VectorOperations::Copy(*other_key, keys, 1, 0, current_offset);
 			count_entries[current_offset] = state.counts->back();
 			current_offset++;
 		}

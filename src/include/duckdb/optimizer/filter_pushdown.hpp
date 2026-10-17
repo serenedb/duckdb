@@ -29,7 +29,7 @@ public:
 	//! Return a reference to the client context (from the optimizer)
 	ClientContext &GetContext();
 
-	void CheckMarkToSemi(LogicalOperator &op, const unordered_set<TableIndex> &table_bindings);
+	void CheckMarkToSemi(LogicalOperator &op, unordered_set<TableIndex> &referenced_bindings);
 
 	//! Whether a filter carrying a barrier may be pushed through this operator - i.e. whether the operator is
 	//! guaranteed not to remove any rows. A barred expression must never be evaluated on rows that an operator below

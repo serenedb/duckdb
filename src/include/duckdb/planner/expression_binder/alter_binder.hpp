@@ -27,6 +27,9 @@ protected:
 	                          bool root_expression = false) override;
 
 	string UnsupportedAggregateMessage() override;
+	bool CanShareMacroArguments() const override {
+		return false;
+	}
 
 private:
 	TableCatalogEntry &table;

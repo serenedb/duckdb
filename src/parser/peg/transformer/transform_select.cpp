@@ -996,6 +996,10 @@ GroupByNode PEGTransformerFactory::TransformGroupByList(PEGTransformer &transfor
 
 		if (result.grouping_sets.empty()) {
 			result.grouping_sets = std::move(next_sets);
+		} else if (next_sets.size() == 1) {
+			for (auto &current_set : result.grouping_sets) {
+				current_set.insert(next_sets[0].begin(), next_sets[0].end());
+			}
 		} else {
 			vector<GroupingSet> new_sets;
 			idx_t grouping_set_count = result.grouping_sets.size() * next_sets.size();

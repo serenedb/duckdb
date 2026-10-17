@@ -30,6 +30,8 @@ public:
 	DUCKDB_API ExpressionExecutor(ClientContext &context, const vector<unique_ptr<Expression>> &expressions);
 	ExpressionExecutor(ExpressionExecutor &&) = delete;
 
+	static constexpr idx_t MAX_FOLDED_VALUE_SIZE = 1 << 22;
+
 	//! The expressions of the executor
 	vector<const Expression *> expressions;
 	//! The data chunk of the current physical operator, used to resolve
@@ -81,6 +83,13 @@ public:
 	                                       bool allow_unfoldable = false);
 	//! Try to evaluate a scalar expression and fold it into a single value, returns false if an exception is thrown
 	DUCKDB_API static bool TryEvaluateScalar(ClientContext &context, const Expression &expr, Value &result);
+	enum class FoldResult : uint8_t { FOLDED, TOO_LARGE, THROWS };
+	DUCKDB_API static FoldResult EvaluateFoldable(ClientContext &context, const Expression &expr, Value &result,
+	                                              idx_t max_size = MAX_FOLDED_VALUE_SIZE);
+	static bool TryEvaluateFoldable(ClientContext &context, const Expression &expr, Value &result,
+	                                idx_t max_size = MAX_FOLDED_VALUE_SIZE) {
+		return EvaluateFoldable(context, expr, result, max_size) == FoldResult::FOLDED;
+	}
 
 	//! Initialize the state of a given expression
 	static unique_ptr<ExpressionState> InitializeState(const Expression &expr, ExpressionExecutorState &state);

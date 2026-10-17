@@ -197,25 +197,72 @@ BoundStatement Binder::Bind(TableRef &ref) {
 }
 
 optional_ptr<CTEBinding> Binder::GetCTEBinding(const BindingAlias &name) {
+#ifdef D_ASSERT_IS_ENABLED
+	auto get_by_walk = [&] {
+		reference<Binder> current_binder(*this);
+		optional_ptr<CTEBinding> result;
+		while (true) {
+			auto &current = current_binder.get();
+			auto entry = current.bind_context.GetCTEBinding(name);
+			if (entry) {
+				if (entry->CanBeReferenced()) {
+					return entry;
+				}
+				result = entry;
+			}
+			if (!current.parent || current.binder_type != BinderType::REGULAR_BINDER) {
+				break;
+			}
+			current_binder = *current.parent;
+		}
+		return result;
+	};
+#endif
 	reference<Binder> current_binder(*this);
 	optional_ptr<CTEBinding> result;
 	while (true) {
 		auto &current = current_binder.get();
-		auto entry = current.bind_context.GetCTEBinding(name);
-		if (entry) {
-			// we only directly return the CTE if it can be referenced
-			// if it cannot be referenced (circular reference) we keep going up the stack
-			// to look for a CTE that can be referenced
-			if (entry->CanBeReferenced()) {
-				return entry;
+		if (current.cte_chain) {
+			auto &chain = *current.cte_chain;
+			auto entry = name.IsSet() ? chain.bindings.find(name.GetAlias()) : chain.bindings.end();
+			if (entry != chain.bindings.end()) {
+				for (idx_t i = entry->second.size(); i > 0; i--) {
+					auto &candidate = entry->second[i - 1];
+					if (candidate.first > current.cte_chain_position) {
+						continue;
+					}
+					auto &binding = candidate.second.get();
+					if (!binding.GetBindingAlias().Matches(name)) {
+						continue;
+					}
+					// we only directly return the CTE if it can be referenced
+					// if it cannot be referenced (circular reference) we keep going up the stack
+					// to look for a CTE that can be referenced
+					if (binding.CanBeReferenced()) {
+						D_ASSERT(&binding == get_by_walk().get());
+						return binding;
+					}
+					result = binding;
+				}
 			}
-			result = entry;
+			current_binder = chain.root;
+		} else {
+			auto entry = current.bind_context.GetCTEBinding(name);
+			if (entry) {
+				if (entry->CanBeReferenced()) {
+					D_ASSERT(entry == get_by_walk());
+					return entry;
+				}
+				result = entry;
+			}
 		}
-		if (!current.parent || current.binder_type != BinderType::REGULAR_BINDER) {
+		auto &last = current_binder.get();
+		if (!last.parent || last.binder_type != BinderType::REGULAR_BINDER) {
 			break;
 		}
-		current_binder = *current.parent;
+		current_binder = *last.parent;
 	}
+	D_ASSERT(result == get_by_walk());
 	return result;
 }
 

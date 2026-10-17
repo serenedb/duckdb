@@ -63,9 +63,11 @@ struct DecimalScaleUpCheckOperator {
 	static RESULT_TYPE Operation(INPUT_TYPE input, ValidityMask &mask, idx_t idx,
 	                             DecimalScaleInput<INPUT_TYPE, RESULT_TYPE> &data) {
 		if (input >= data.limit || input <= -data.limit) {
-			auto error = StringUtil::Format("Casting value \"%s\" to type %s failed: value is out of range!",
-			                                Decimal::ToString(input, data.source_width, data.source_scale),
-			                                data.result.GetType().ToString());
+			auto error = HandleVectorCastError::NeedsMessage(data.vector_cast_data)
+			                 ? StringUtil::Format("Casting value \"%s\" to type %s failed: value is out of range!",
+			                                      Decimal::ToString(input, data.source_width, data.source_scale),
+			                                      data.result.GetType().ToString())
+			                 : string();
 			return HandleVectorCastError::Operation<RESULT_TYPE>(std::move(error), mask, idx, data.vector_cast_data);
 		}
 		return Cast::Operation<INPUT_TYPE, RESULT_TYPE>(input) * data.factor;
@@ -148,9 +150,11 @@ struct DecimalScaleDownCheckOperator {
 	template <class INPUT_TYPE, class RESULT_TYPE>
 	static RESULT_TYPE Operation(INPUT_TYPE input, ValidityMask &mask, idx_t idx, DecimalScaleInput<INPUT_TYPE> &data) {
 		if (!CanScaleDownDecimal(input, data)) {
-			auto error = StringUtil::Format("Casting value \"%s\" to type %s failed: value is out of range!",
-			                                Decimal::ToString(input, data.source_width, data.source_scale),
-			                                data.result.GetType().ToString());
+			auto error = HandleVectorCastError::NeedsMessage(data.vector_cast_data)
+			                 ? StringUtil::Format("Casting value \"%s\" to type %s failed: value is out of range!",
+			                                      Decimal::ToString(input, data.source_width, data.source_scale),
+			                                      data.result.GetType().ToString())
+			                 : string();
 			return HandleVectorCastError::Operation<RESULT_TYPE>(std::move(error), mask, idx, data.vector_cast_data);
 		}
 		return DecimalScaleDownOperator::Operation<INPUT_TYPE, RESULT_TYPE>(input, mask, idx, data);

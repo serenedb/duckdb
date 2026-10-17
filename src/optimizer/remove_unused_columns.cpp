@@ -41,6 +41,7 @@
 
 namespace duckdb {
 
+#ifdef D_ASSERT_IS_ENABLED
 static void GatherCTEScans(const TableIndex cte_index, const LogicalOperator &op,
                            unordered_set<TableIndex> &expected_readers) {
 	if (op.type == LogicalOperatorType::LOGICAL_CTE_REF) {
@@ -52,6 +53,20 @@ static void GatherCTEScans(const TableIndex cte_index, const LogicalOperator &op
 	}
 	for (auto &child : op.children) {
 		GatherCTEScans(cte_index, *child, expected_readers);
+	}
+}
+#endif
+
+static void GatherCTEReaders(const LogicalOperator &op,
+                             unordered_map<TableIndex, unordered_set<TableIndex>> &cte_readers) {
+	if (op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
+		cte_readers[op.Cast<LogicalCTE>().table_index];
+	} else if (op.type == LogicalOperatorType::LOGICAL_CTE_REF) {
+		auto &cte_scan = op.Cast<LogicalCTERef>();
+		cte_readers[cte_scan.cte_index].insert(cte_scan.table_index);
+	}
+	for (auto &child : op.children) {
+		GatherCTEReaders(*child, cte_readers);
 	}
 }
 
@@ -488,7 +503,47 @@ void RemoveUnusedColumns::VisitSecureView(LogicalSecureView &view) {
 	view.output_expressions = std::move(new_expressions);
 }
 
+void RemoveUnusedColumns::PruneCTEReferences(LogicalOperator &subtree,
+                                             const unordered_map<TableIndex, unordered_set<ProjectionIndex>> &pruned,
+                                             bool apply_secure_views) {
+	// After pruning the left-hand side of a CTE, we need to rewrite the CTE references to account for the
+	// removed columns.
+	CTERefPruner cte_ref_pruner(pruned);
+	cte_ref_pruner.VisitOperator(subtree);
+	for (auto &replacement : cte_ref_pruner.binding_replacements) {
+		root.projection_map_replacements[replacement.old_binding] = {replacement.new_binding};
+		RecordSecureViewReplacement(replacement.old_binding, replacement.new_binding);
+	}
+
+	if (apply_secure_views) {
+		ApplySecureViewReplacements();
+	}
+
+	// We also need to rewrite the column bindings that read the CTE to account for the removed columns on the
+	// left-hand side. Conveniently, the CTERefPruner already has the information about which columns were removed,
+	// so we can reuse it for the column binding replacement.
+	ColumnBindingReplacer column_binding_replacer;
+	column_binding_replacer.replacement_bindings = std::move(cte_ref_pruner.binding_replacements);
+	column_binding_replacer.VisitOperator(subtree);
+}
+
 void RemoveUnusedColumns::VisitOperator(unique_ptr<LogicalOperator> &op_ref) {
+	if (op_ref->type != LogicalOperatorType::LOGICAL_MATERIALIZED_CTE || root.cte_region ||
+	    mode != RemoveUnusedColumnsMode::APPLY ||
+	    root.cte_readers.find(op_ref->Cast<LogicalCTE>().table_index) != root.cte_readers.end()) {
+		PruneOperator(op_ref);
+		return;
+	}
+	root.cte_region = op_ref.get();
+	PruneOperator(op_ref);
+	root.cte_region = nullptr;
+	if (!root.pending_cte_ref_pruning.empty()) {
+		PruneCTEReferences(*op_ref, root.pending_cte_ref_pruning, false);
+		root.pending_cte_ref_pruning.clear();
+	}
+}
+
+void RemoveUnusedColumns::PruneOperator(unique_ptr<LogicalOperator> &op_ref) {
 	const bool analyze = mode == RemoveUnusedColumnsMode::ANALYZE;
 	auto &op = *op_ref;
 	switch (op.type) {
@@ -843,7 +898,18 @@ void RemoveUnusedColumns::VisitOperator(unique_ptr<LogicalOperator> &op_ref) {
 		auto &cte_map_entry = cte_map_ref[cte.table_index];
 
 		// Gather all scans of this CTE in the query and mark them as expected readers of this CTE
-		GatherCTEScans(cte.table_index, *cte.children[1], cte_map_entry.expected_readers);
+		auto &cte_readers = root.cte_readers;
+		auto readers = cte_readers.find(cte.table_index);
+		if (readers == cte_readers.end()) {
+			GatherCTEReaders(op, cte_readers);
+			readers = cte_readers.find(cte.table_index);
+		}
+		cte_map_entry.expected_readers.insert(readers->second.begin(), readers->second.end());
+#ifdef D_ASSERT_IS_ENABLED
+		unordered_set<TableIndex> expected_readers;
+		GatherCTEScans(cte.table_index, *cte.children[1], expected_readers);
+		D_ASSERT(expected_readers == readers->second);
+#endif
 		cte_map_entry.everything_referenced = false;
 		auto output_bindings = cte.GetColumnBindings();
 		bool has_output_references = false;
@@ -936,23 +1002,19 @@ void RemoveUnusedColumns::VisitOperator(unique_ptr<LogicalOperator> &op_ref) {
 
 			lhs_child_optimizer.VisitOperator(cte.children[0]);
 
-			// After pruning the left-hand side of the CTE, we need to rewrite the CTE references to account for the
-			// removed columns.
-			CTERefPruner cte_ref_pruner(cte.table_index, referenced_columns_in_rhs);
-			cte_ref_pruner.VisitOperator(*cte.children[1]);
-			for (auto &replacement : cte_ref_pruner.binding_replacements) {
-				root.projection_map_replacements[replacement.old_binding] = {replacement.new_binding};
-				RecordSecureViewReplacement(replacement.old_binding, replacement.new_binding);
+			auto &pending = root.pending_cte_ref_pruning;
+			if (root.cte_region && root.active_secure_views.empty()) {
+				if (pending.find(cte.table_index) == pending.end()) {
+					ApplySecureViewReplacements();
+					pending.emplace(cte.table_index, std::move(referenced_columns_in_rhs));
+					return;
+				}
+				PruneCTEReferences(*root.cte_region, pending, false);
+				pending.clear();
 			}
-
-			ApplySecureViewReplacements();
-
-			// We also need to rewrite the column bindings in the right-hand side of the CTE to account for the removed
-			// columns on the left-hand side. Conveniently, the CTERefPruner already has the information about which
-			// columns were removed, so we can reuse it for the column binding replacement.
-			ColumnBindingReplacer column_binding_replacer;
-			column_binding_replacer.replacement_bindings = cte_ref_pruner.binding_replacements;
-			column_binding_replacer.VisitOperator(*cte.children[1]);
+			unordered_map<TableIndex, unordered_set<ProjectionIndex>> pruned;
+			pruned.emplace(cte.table_index, std::move(referenced_columns_in_rhs));
+			PruneCTEReferences(*cte.children[1], pruned, true);
 			return;
 		}
 	}
@@ -1515,16 +1577,23 @@ void RemoveUnusedColumns::RemoveColumnsFromLogicalGet(LogicalGet &get, unique_pt
 	}
 }
 
-CTERefPruner::CTERefPruner(const TableIndex cte_index, const unordered_set<ProjectionIndex> &referenced_columns)
-    : cte_index(cte_index), referenced_columns(referenced_columns) {
+CTERefPruner::CTERefPruner(const TableIndex cte_index, const unordered_set<ProjectionIndex> &columns)
+    : referenced_columns(own_referenced_columns) {
+	own_referenced_columns.emplace(cte_index, columns);
+}
+
+CTERefPruner::CTERefPruner(const unordered_map<TableIndex, unordered_set<ProjectionIndex>> &columns)
+    : referenced_columns(columns) {
 }
 
 void CTERefPruner::VisitOperator(LogicalOperator &op) {
 	if (op.type == LogicalOperatorType::LOGICAL_CTE_REF) {
 		auto &cte_ref = op.Cast<LogicalCTERef>();
-		if (cte_ref.cte_index != cte_index) {
+		auto pruned_cte = referenced_columns.find(cte_ref.cte_index);
+		if (pruned_cte == referenced_columns.end()) {
 			return;
 		}
+		auto &kept_columns = pruned_cte->second;
 		// We have to regenerate the chunk_types of the CTE reference to only include the referenced columns/
 		// Otherwise, we would run into issues during execution.
 		vector<LogicalType> types;
@@ -1532,7 +1601,7 @@ void CTERefPruner::VisitOperator(LogicalOperator &op) {
 		// skipped.
 		idx_t skipped = 0;
 		for (idx_t i = 0; i < cte_ref.chunk_types.size(); i++) {
-			if (referenced_columns.find(ProjectionIndex(i)) != referenced_columns.end()) {
+			if (kept_columns.find(ProjectionIndex(i)) != kept_columns.end()) {
 				// This column is referenced, keep it and add any necessary binding replacements for the skipped columns
 				// if necessary.
 				types.push_back(cte_ref.chunk_types[i]);

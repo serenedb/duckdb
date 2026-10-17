@@ -1,0 +1,85 @@
+# name: test/sql/function/generic/least_greatest_dense.test
+# description: LEAST/GREATEST over flat, constant and NULL inputs of every numeric type
+# group: [generic]
+
+statement ok
+CREATE TABLE nums AS SELECT i::INTEGER AS a, (1000 - i)::INTEGER AS b, CASE WHEN i % 7 = 0 THEN NULL ELSE i::INTEGER END AS n FROM range(1000) t(i)
+
+query II
+SELECT sum(greatest(a, b)), sum(least(a, b)) FROM nums
+----
+750000	250000
+
+query II
+SELECT sum(greatest(a, 500)), sum(least(400, b)) FROM nums
+----
+624750	320200
+
+query II
+SELECT sum(greatest(a, b, 600)), sum(least(a, NULL::INTEGER, b)) FROM nums
+----
+760000	250000
+
+query II
+SELECT sum(greatest(n, b)), sum(least(n, b)) FROM nums
+----
+714642	286216
+
+query II
+SELECT count(greatest(n, NULL::INTEGER)), count(least(NULL::INTEGER, n)) FROM nums
+----
+857	857
+
+statement ok
+CREATE TABLE unsigned_nums AS SELECT (i % 256)::UTINYINT AS u8, ((i * 7) % 256)::UTINYINT AS v8, (i % 256)::USMALLINT AS u16, ((i * 7) % 256)::USMALLINT AS v16, (i % 256)::UINTEGER AS u32, ((i * 7) % 256)::UINTEGER AS v32, (i % 256)::UBIGINT AS u64, ((i * 7) % 256)::UBIGINT AS v64, (i % 256)::UHUGEINT AS u128, ((i * 7) % 256)::UHUGEINT AS v128 FROM range(1000) t(i)
+
+query IIIIIIIIII
+SELECT sum(greatest(u8, v8)), sum(least(u8, v8)), sum(greatest(u16, v16)), sum(least(u16, v16)), sum(greatest(u32, v32)), sum(least(u32, v32)), sum(greatest(u64, v64)), sum(least(u64, v64)), sum(greatest(u128, v128)), sum(least(u128, v128)) FROM unsigned_nums
+----
+165356	85876	165356	85876	165356	85876	165356	85876	165356	85876
+
+query II
+SELECT greatest(18446744073709551615::UBIGINT, 1::UBIGINT), least(340282366920938463463374607431768211455::UHUGEINT, 2::UHUGEINT)
+----
+18446744073709551615	2
+
+statement ok
+CREATE TABLE floats AS SELECT * FROM (VALUES ('nan'::DOUBLE, 1::DOUBLE), (1, 'nan'), ('-0.0', -1), (2, 3), ('nan', 'nan')) t(x, y)
+
+query II
+SELECT greatest(x, y), least(x, y) FROM floats
+----
+nan	1.0
+nan	1.0
+-0.0	-1.0
+3.0	2.0
+nan	nan
+
+query II
+SELECT greatest(x::FLOAT, y::FLOAT), least(x::FLOAT, y::FLOAT) FROM floats
+----
+nan	1.0
+nan	1.0
+-0.0	-1.0
+3.0	2.0
+nan	nan
+
+query II
+SELECT greatest(x, 0.5), least(0.5, x) FROM floats
+----
+nan	0.5
+1.0	0.5
+0.5	-0.0
+2.0	0.5
+nan	0.5
+
+query II
+SELECT greatest(12.25::DECIMAL(9,2), a), least(DATE '2026-01-01' + a, DATE '2026-02-01') FROM nums WHERE a IN (3, 900)
+----
+12.25	2026-01-04
+900.00	2026-02-01
+
+query III
+SELECT greatest('12:00:00+05'::TIMETZ, '10:00:00+00'::TIMETZ), least('12:00:00+05'::TIMETZ, '10:00:00+00'::TIMETZ), greatest('10:00:00+00'::TIMETZ, '10:00:00-03'::TIMETZ)
+----
+12:00:00+05	10:00:00+00	10:00:00-03

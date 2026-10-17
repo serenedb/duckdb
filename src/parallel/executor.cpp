@@ -272,7 +272,7 @@ void Executor::InitializeInternal(PhysicalOperator &plan) {
 		physical_plan = &plan;
 
 		this->profiler = ClientData::Get(context).profiler;
-		this->producer = scheduler.CreateProducer();
+		this->producer = scheduler.CreateProducer(context.GetSchedulerAccount());
 
 		auto verify_progress = Settings::Get<DebugVerifyProgressSetting>(context);
 		if (verify_progress != DebugProgressVerification::NONE) {
@@ -350,6 +350,7 @@ void Executor::CancelTasks() {
 				}
 				if (!scheduler.GetTaskFromProducerLocked(*producer, task_from_producer)) {
 					// Nothing to execute on this thread: wait until a task completes or is enqueued
+					TaskScheduler::BlockingScope blocking;
 					producer->producer_cv.Wait(lk.mutex());
 					continue;
 				}
@@ -421,6 +422,10 @@ void Executor::UnregisterTask() {
 }
 
 void Executor::WaitForTask() {
+	WaitForTask([] { return false; });
+}
+
+void Executor::WaitForTask(absl::FunctionRef<bool()> is_done) {
 #ifndef DUCKDB_NO_THREADS
 	static constexpr std::chrono::microseconds WAIT_TIME_MS = std::chrono::microseconds(WAIT_TIME * 1000);
 	auto begin = TimePoint::Tick();
@@ -428,7 +433,7 @@ void Executor::WaitForTask() {
 	auto end = TimePoint::Tick();
 	auto blocked_micros = NumericCast<idx_t>(TimePoint::ElapsedMicros(begin, end));
 
-	if (ExecutionIsFinished()) {
+	if (ExecutionIsFinished() || is_done()) {
 		blocked_thread_time += blocked_micros;
 		return;
 	}
@@ -445,6 +450,7 @@ void Executor::WaitForTask() {
 	// Nothing to run on this thread, all remaining tasks are either running on other threads or descheduled.
 	// Wait (bounded), but wake up on task completion or reschedule.
 	const auto wait_begin = TimePoint::Tick();
+	TaskScheduler::BlockingScope blocking;
 	task_reschedule.WaitWithTimeout(l.mutex(), absl::FromChrono(WAIT_TIME_MS));
 	const auto wait_micros = NumericCast<idx_t>(TimePoint::ElapsedMicros(wait_begin, TimePoint::Tick()));
 	blocked_thread_time += blocked_micros + wait_micros;
@@ -524,6 +530,7 @@ QueryResultState Executor::ExecuteTask(std::function<void()> on_reschedule_arg) 
 		}
 		if (task) {
 			// partially process the task
+			TaskScheduler::DriverSlice slice;
 			auto result = task->Execute(TaskExecutionMode::PROCESS_PARTIAL);
 			if (result == TaskExecutionResult::TASK_BLOCKED) {
 				task->Deschedule();
@@ -541,7 +548,7 @@ QueryResultState Executor::ExecuteTask(std::function<void()> on_reschedule_arg) 
 		if (!HasError()) {
 			// we (partially) processed a task and no exceptions were thrown
 			// give back control to the caller
-			if (task && Settings::Get<SchedulerProcessPartialSetting>(context)) {
+			if (task && TaskScheduler::ShouldYield()) {
 				auto &token = *task->token;
 				TaskScheduler::GetScheduler(context).ScheduleTask(token, task);
 				task.reset();

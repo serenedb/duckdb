@@ -157,7 +157,7 @@ public:
 	//! Width of tuples
 	const idx_t row_width;
 	//! Capacity of HTs during the Sink
-	const idx_t sink_capacity;
+	idx_t sink_capacity;
 
 private:
 	//! Sink radix bits to initialize with
@@ -171,7 +171,7 @@ private:
 	//! Current thread-global sink radix bits
 	atomic<idx_t> sink_radix_bits;
 	//! Maximum Sink radix bits (set based on number of threads, if not external)
-	const idx_t maximum_sink_radix_bits;
+	idx_t maximum_sink_radix_bits;
 
 	//! Thresholds at which we reduce the sink radix bits
 	//! This needed to reduce cache misses when we have very wide rows
@@ -205,6 +205,9 @@ public:
 	idx_t GetThreadLimit() const {
 		return temporary_memory_state->GetReservation() / number_of_threads / 10 * 8;
 	}
+	idx_t MinimumReservation() const;
+	unique_ptr<PartitionedTupleData> TakeSpareData(idx_t radix_bits);
+	void RecycleData() DUCKDB_REQUIRES(lock);
 
 public:
 	ClientContext &context;
@@ -218,8 +221,7 @@ public:
 	atomic<bool> external;
 	//! Threads that have called Sink
 	atomic<idx_t> active_threads;
-	//! Number of threads (from TaskScheduler)
-	const idx_t number_of_threads;
+	idx_t number_of_threads;
 	//! Memory limit (from BufferManager)
 	const idx_t memory_limit;
 	//! Block size (from BufferManager)
@@ -243,6 +245,7 @@ public:
 	//! Uncombined exported data, aligned one-to-one with the partitions of uncombined_data
 	vector<unique_ptr<ColumnDataCollection>> uncombined_exported_data;
 	vector<unique_ptr<PartitionedTupleData>> local_data;
+	vector<unique_ptr<PartitionedTupleData>> spare_data DUCKDB_GUARDED_BY(lock);
 	//! Allocators used during the Sink/Finalize
 	vector<shared_ptr<ArenaAllocator>> stored_allocators;
 	idx_t stored_allocators_size;
@@ -273,7 +276,12 @@ RadixHTGlobalSinkState::RadixHTGlobalSinkState(ClientContext &context_p, const R
 	local_data.reserve(number_of_threads);
 	stored_allocators.reserve(number_of_threads);
 
-	// Compute minimum reservation
+	minimum_reservation = MinimumReservation();
+	temporary_memory_state->SetMinimumReservation(minimum_reservation);
+	temporary_memory_state->SetRemainingSizeAndUpdateReservation(context, minimum_reservation);
+}
+
+idx_t RadixHTGlobalSinkState::MinimumReservation() const {
 	auto tuples_per_block = block_alloc_size / radix_ht.GetLayout().GetRowWidth();
 	idx_t ht_count =
 	    LossyNumericCast<idx_t>(static_cast<double>(config.sink_capacity) / GroupedAggregateHashTable::LOAD_FACTOR);
@@ -284,13 +292,45 @@ RadixHTGlobalSinkState::RadixHTGlobalSinkState(ClientContext &context_p, const R
 		blocks_per_partition += 1;
 	}
 	auto ht_size = num_partitions * blocks_per_partition * block_alloc_size + config.sink_capacity * sizeof(ht_entry_t);
+	return number_of_threads * ht_size;
+}
 
-	// This really is the minimum reservation that we can do
-	auto num_threads = TaskScheduler::QueryThreads(context);
-	minimum_reservation = num_threads * ht_size;
+unique_ptr<PartitionedTupleData> RadixHTGlobalSinkState::TakeSpareData(idx_t radix_bits) {
+	const auto partition_count = RadixPartitioning::NumberOfPartitions(radix_bits);
+	const annotated_lock_guard<annotated_mutex> guard {lock};
+	for (idx_t i = spare_data.size(); i > 0; i--) {
+		if (spare_data[i - 1]->PartitionCount() != partition_count) {
+			continue;
+		}
+		auto result = std::move(spare_data[i - 1]);
+		spare_data.erase_at(i - 1);
+		return result;
+	}
+	return nullptr;
+}
 
-	temporary_memory_state->SetMinimumReservation(minimum_reservation);
-	temporary_memory_state->SetRemainingSizeAndUpdateReservation(context, minimum_reservation);
+void RadixHTGlobalSinkState::RecycleData() {
+	for (auto &data : local_data) {
+		if (data) {
+			data->Reset();
+			spare_data.push_back(std::move(data));
+		}
+	}
+	local_data.clear();
+	auto recyclable = uncombined_data && uncombined_data->PartitionCount() == partitions.size();
+	for (idx_t i = 0; recyclable && i < partitions.size(); i++) {
+		recyclable = !uncombined_data->GetPartitions()[i] && partitions[i]->data;
+	}
+	if (recyclable) {
+		auto &collections = uncombined_data->GetPartitions();
+		for (idx_t i = 0; i < partitions.size(); i++) {
+			collections[i] = std::move(partitions[i]->data);
+		}
+		uncombined_data->Reset();
+		spare_data.push_back(std::move(uncombined_data));
+	}
+	uncombined_data.reset();
+	partitions.clear();
 }
 
 RadixHTGlobalSinkState::~RadixHTGlobalSinkState() {
@@ -334,7 +374,9 @@ RadixHTConfig::RadixHTConfig(RadixHTGlobalSinkState &sink_p)
 }
 
 void RadixHTConfig::Reset() {
+	sink_capacity = SinkCapacity();
 	sink_radix_bits = InitialSinkRadixBits();
+	maximum_sink_radix_bits = MaximumSinkRadixBits();
 }
 
 void RadixHTConfig::SetRadixBits(const idx_t &radix_bits_p) {
@@ -495,9 +537,14 @@ unique_ptr<LocalSinkState> RadixPartitionedHashTable::GetLocalSinkState(Executio
 	return make_uniq<RadixHTLocalSinkState>(context.client, *this);
 }
 
-void RadixPartitionedHashTable::ResetGlobalSinkState(ClientContext &context, GlobalSinkState &gstate_p) const {
+void RadixPartitionedHashTable::ResetGlobalSinkState(ClientContext &context, GlobalSinkState &gstate_p,
+                                                     idx_t thread_count) const {
+	D_ASSERT(thread_count > 0);
 	auto &gstate = gstate_p.Cast<RadixHTGlobalSinkState>();
 	gstate.Destroy();
+	gstate.number_of_threads = thread_count;
+	gstate.config.Reset();
+	gstate.minimum_reservation = gstate.MinimumReservation();
 	gstate.temporary_memory_state->SetMinimumReservation(gstate.minimum_reservation);
 	gstate.temporary_memory_state->SetRemainingSizeAndUpdateReservation(context, gstate.minimum_reservation);
 	gstate.finalized = false;
@@ -505,17 +552,14 @@ void RadixPartitionedHashTable::ResetGlobalSinkState(ClientContext &context, Glo
 	gstate.active_threads = 0;
 	gstate.any_combined = false;
 	gstate.any_abandoned = false;
-	gstate.config.Reset();
-	gstate.uncombined_data.reset();
 	gstate.uncombined_exported_data.clear();
-	gstate.local_data.clear();
 	{
 		const annotated_lock_guard<annotated_mutex> guard {gstate.lock};
 		gstate.spill_phase = SpillPhase::NATIVE_ALLOWED;
+		gstate.RecycleData();
 	}
 	gstate.stored_allocators.clear();
 	gstate.stored_allocators_size = 0;
-	gstate.partitions.clear();
 	gstate.finalize_done = 0;
 	gstate.scan_pin_properties = TupleDataPinProperties::DESTROY_AFTER_DONE;
 	gstate.count_before_combining = 0;
@@ -908,7 +952,7 @@ void RadixPartitionedHashTable::Combine(ExecutionContext &context, GlobalSinkSta
 	MaybeRepartition(context.client, gstate, lstate, true);
 
 	auto &ht = *lstate.ht;
-	auto lstate_data = ht.AcquirePartitionedData();
+	auto lstate_data = ht.AcquirePartitionedData(gstate.TakeSpareData(ht.GetRadixBits()));
 	if (lstate.abandoned_data) {
 		// Data is abandoned when the sink goes external, and also when aggregate state pressure
 		// forces the states to be exported without the sink being external
@@ -982,11 +1026,12 @@ void RadixPartitionedHashTable::Finalize(ClientContext &context, GlobalSinkState
 	D_ASSERT(!gstate.finalized);
 
 	for (auto &data : gstate.local_data) {
-		if (gstate.uncombined_data) {
-			gstate.uncombined_data->Combine(*data);
-		} else {
+		if (!gstate.uncombined_data) {
 			gstate.uncombined_data = std::move(data);
+			continue;
 		}
+		gstate.uncombined_data->Combine(*data);
+		gstate.spare_data.push_back(std::move(data));
 	}
 	gstate.local_data.clear();
 

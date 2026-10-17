@@ -1,5 +1,7 @@
 #include "duckdb/planner/expression_binder/select_binder.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/query_node/bound_select_node.hpp"
 
 namespace duckdb {
@@ -29,6 +31,17 @@ bool SelectBinder::TryResolveAliasReference(ColumnRefExpression &colref, idx_t d
 		                      colref.ColumnNames().back());
 	}
 
+	if (depth == 0 && node.lateral_aliases_by_value && !inside_window && !inside_aggregate &&
+	    !inside_aggregate_filter && !node.bind_state.IsExpandedColumn(alias_index)) {
+		if (!node.lateral_index.IsValid()) {
+			node.lateral_index = binder.GenerateTableIndex();
+		}
+		auto column = node.bind_state.GetFinalIndex(alias_index);
+		result = BindResult(make_uniq<BoundColumnRefExpression>(colref.GetColumnName(),
+		                                                        node.select_list[column]->GetReturnType(),
+		                                                        ColumnBinding(node.lateral_index, column)));
+		return true;
+	}
 	if (node.bind_state.AliasHasSubquery(alias_index)) {
 		throw BinderException(colref,
 		                      "Alias %s referenced in a SELECT clause - but the expression has a subquery. This is "

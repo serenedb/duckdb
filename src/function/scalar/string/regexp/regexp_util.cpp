@@ -151,4 +151,34 @@ void VerifyUTF8Result(const char *data, idx_t size) {
 
 } // namespace regexp_util
 
+RegexPatternCache::RegexPatternCache(duckdb_re2::RE2::Options options_p) : options(std::move(options_p)) {
+	entries.reserve(CAPACITY);
+}
+
+duckdb_re2::RE2 &RegexPatternCache::Get(duckdb_re2::StringPiece pattern) {
+	const auto matches = [&](const string &key) {
+		return key.size() == pattern.size() && memcmp(key.data(), pattern.data(), pattern.size()) == 0;
+	};
+	if (last_used < entries.size() && matches(entries[last_used].first)) {
+		return *entries[last_used].second;
+	}
+	for (idx_t i = 0; i < entries.size(); i++) {
+		if (matches(entries[i].first)) {
+			last_used = i;
+			return *entries[i].second;
+		}
+	}
+	auto re = make_uniq<duckdb_re2::RE2>(pattern, options);
+	string key(pattern.data(), pattern.size());
+	if (entries.size() < CAPACITY) {
+		entries.emplace_back(std::move(key), std::move(re));
+		last_used = entries.size() - 1;
+	} else {
+		last_used = next_replaced;
+		next_replaced = (next_replaced + 1) % CAPACITY;
+		entries[last_used] = make_pair(std::move(key), std::move(re));
+	}
+	return *entries[last_used].second;
+}
+
 } // namespace duckdb

@@ -51,13 +51,18 @@ public:
 	bool IsScalar() const override;
 	bool HasParameter() const override;
 
-	virtual bool IsVolatile() const;
+	bool IsVolatile() const;
+	template <class F>
+	bool IsVolatile(F &&child_is_volatile) const;
 	virtual bool IsConsistent() const;
 	virtual bool PropagatesNullValues() const;
 	virtual bool IsFoldable() const;
 	virtual bool CanThrow() const;
+	virtual bool RequiresOrderedExecution() const;
 
-	hash_t Hash() const override;
+	hash_t Hash() const;
+	template <class F>
+	hash_t Hash(F &&child_hash) const;
 
 	bool Equals(const BaseExpression &other) const override {
 		if (!BaseExpression::Equals(other)) {
@@ -77,6 +82,11 @@ public:
 	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
 
 protected:
+	virtual bool IsNodeVolatile() const {
+		return false;
+	}
+	hash_t NodeHash() const override;
+
 	//! Copy base Expression properties from another expression to this one,
 	//! used in Copy method
 	void CopyProperties(const Expression &other) {

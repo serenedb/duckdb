@@ -1,0 +1,56 @@
+# name: test/sql/index/art/types/test_art_expression_kernels.test
+# description: Index keys evaluate kernels that check the query deadline without a client context
+# group: [types]
+
+statement ok
+CREATE TABLE t(s VARCHAR, n INTEGER)
+
+statement ok
+CREATE INDEX i_repeat ON t (repeat(s, 2))
+
+statement ok
+CREATE INDEX i_repeat_list ON t (len(repeat([s], n)))
+
+statement ok
+CREATE INDEX i_range ON t (len(range(n)))
+
+statement ok
+CREATE INDEX i_resize ON t (len(list_resize([1], n)))
+
+statement ok
+CREATE INDEX i_lpad ON t (lpad(s, 5, 'x'))
+
+statement ok
+CREATE INDEX i_rpad ON t (rpad(s, 400, 'yz'))
+
+statement ok
+CREATE INDEX i_replace ON t (replace(s, 'b', 'cc'))
+
+statement ok
+CREATE INDEX i_regexp_replace ON t (regexp_replace(s, '[ab]', 'x', 'g'))
+
+statement ok
+CREATE INDEX i_regexp_extract ON t (len(regexp_extract_all(s, '[ab]')))
+
+statement ok
+CREATE INDEX i_split ON t (len(string_split(s, 'b')))
+
+statement ok
+CREATE INDEX i_levenshtein ON t (levenshtein(repeat(s, 100), repeat('ba', 100)))
+
+statement ok
+CREATE INDEX i_damerau ON t (damerau_levenshtein(repeat(s, 100), repeat('ba', 100)))
+
+statement ok
+INSERT INTO t VALUES ('ab', 3), ('abab', 5)
+
+query IIIIIIIIIIIII
+SELECT repeat(s, 2), len(repeat([s], n)), len(range(n)), len(list_resize([1], n)), lpad(s, 5, 'x'), length(rpad(s, 400, 'yz')), replace(s, 'b', 'cc'), regexp_replace(s, '[ab]', 'x', 'g'), len(regexp_extract_all(s, '[ab]')), len(string_split(s, 'b')), levenshtein(repeat(s, 100), repeat('ba', 100)), damerau_levenshtein(repeat(s, 100), repeat('ba', 100)), n FROM t ORDER BY n
+----
+abab	3	3	3	xxxab	400	acc	xx	2	2	2	2	3
+abababab	5	5	5	xabab	400	accacc	xxxx	4	3	200	200	5
+
+query I
+SELECT n FROM t WHERE lpad(s, 5, 'x') = 'xabab'
+----
+5

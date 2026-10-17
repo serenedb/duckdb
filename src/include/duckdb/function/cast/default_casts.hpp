@@ -69,8 +69,10 @@ struct CastParameters {
 	CastParameters(CastParameters &parent, optional_ptr<BoundCastData> cast_data,
 	               optional_ptr<FunctionLocalState> local_state)
 	    : cast_data(cast_data), strict(parent.strict), error_message(parent.error_message), local_state(local_state),
-	      query_location(parent.query_location) {
+	      query_location(parent.query_location), context(parent.context) {
 	}
+
+	DUCKDB_API void InterruptCheck() const;
 
 	//! The bound cast data (if any)
 	optional_ptr<BoundCastData> cast_data;
@@ -88,6 +90,7 @@ struct CastParameters {
 	QueryLocation query_location;
 	//! In the case of a nested type, when facing a cast error, if we nullify the parent
 	bool nullify_parent = false;
+	optional_ptr<ClientContext> context;
 };
 
 struct CastLocalStateParameters {

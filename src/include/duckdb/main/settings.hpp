@@ -390,17 +390,16 @@ struct AsyncThreadsSetting {
 	using RETURN_TYPE = int64_t;
 	static constexpr const char *Name = "async_threads";
 	static constexpr const char *Description =
-	    "The number of total async threads used by the system for tasks like I/O; a session or transaction value caps "
-	    "the async threads its queries use.";
+	    "The number of async tasks, such as I/O, a query runs at once. -1 = automatic, four times the number of CPU "
+	    "cores, at most 256; 0 runs the I/O on the threads that run the query.";
 	static constexpr const char *InputType = "BIGINT";
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
-	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
-	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
-	static void SetLocal(ClientContext &context, const Value &parameter);
-	static void ResetLocal(ClientContext &context);
-	static Value GetSetting(const ClientContext &context);
+	static constexpr const char *DefaultValue = "-1";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+	static void OnSet(SettingCallbackInfo &info, Value &input);
 };
 
 struct AutoCheckpointSkipWalThresholdSetting {
@@ -1579,8 +1578,9 @@ struct ExplainOutputSetting {
 struct ExplainOutputFormatSetting {
 	using RETURN_TYPE = ExplainFormatShape;
 	static constexpr const char *Name = "explain_output_format";
-	static constexpr const char *Description = "Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column "
-	                                           "key/value, PG = single QUERY PLAN column with one row per line)";
+	static constexpr const char *Description =
+	    "Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column "
+	    "with one row per line of a text or compact plan and one row per plan in other formats)";
 	static constexpr const char *InputType = "VARCHAR";
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
@@ -1988,6 +1988,22 @@ struct IntegerDivisionSetting {
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
+struct IntegerOverflowSetting {
+	using RETURN_TYPE = IntegerOverflowMode;
+	static constexpr const char *Name = "integer_overflow";
+	static constexpr const char *Description =
+	    "What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP "
+	    "keeps the low bits of the result (two's complement wraparound).";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr bool IsDebug = false;
+	static constexpr bool IsDeprecated = false;
+	static constexpr bool NoResetAll = false;
+	static constexpr const char *DefaultValue = "ERROR";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+	static void OnSet(SettingCallbackInfo &info, Value &input);
 };
 
 struct LambdaSyntaxSetting {
@@ -2556,24 +2572,6 @@ struct ScalarSubqueryErrorOnMultipleRowsSetting {
 	static constexpr bool NoResetAll = false;
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
-	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
-};
-
-struct SchedulerProcessPartialSetting {
-	using RETURN_TYPE = bool;
-	static constexpr const char *Name = "scheduler_process_partial";
-	static constexpr const char *Description = "Partially process tasks before rescheduling. Enabling this allows for "
-	                                           "more scheduler fairness between separate queries.";
-	static constexpr const char *InputType = "BOOLEAN";
-	static constexpr bool IsDebug = false;
-	static constexpr bool IsDeprecated = false;
-	static constexpr bool NoResetAll = false;
-#ifdef DUCKDB_ALTERNATIVE_VERIFY
-	static constexpr const char *DefaultValue = "true";
-#else
-	static constexpr const char *DefaultValue = "false";
-#endif
-	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
 };
 

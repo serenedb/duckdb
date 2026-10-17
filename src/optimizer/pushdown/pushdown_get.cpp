@@ -2,6 +2,7 @@
 #include "duckdb/optimizer/in_clause_rewriter.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_parameter_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
@@ -189,15 +190,23 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 		    (expr.CanThrow() || InClauseRewriter::HasRewritableInClause(expr))) {
 			continue;
 		}
-		// Allow pushing down filters that can throw only if there is a single expression
-		if (expr.CanThrow() && filters.size() > 1) {
+		if (expr.GetExpressionType() == ExpressionType::CONJUNCTION_OR &&
+		    expr.Cast<BoundConjunctionExpression>().GetChildren().size() == 2 &&
+		    combiner.TryPushdownOrClause(get.table_filters, column_ids, expr) != FilterPushdownResult::NO_PUSHDOWN) {
 			continue;
 		}
-		pushdown_result = combiner.TryPushdownGenericExpression(get, expr);
-		if (pushdown_result == FilterPushdownResult::PUSHED_DOWN_FULLY) {
-			filters.erase_at(i);
-			pushdown_results.erase_at(i);
-			i--;
+		// Allow pushing down filters that can throw only if there is a single expression
+		if (!expr.CanThrow() || filters.size() == 1) {
+			pushdown_result = combiner.TryPushdownGenericExpression(get, expr);
+			if (pushdown_result == FilterPushdownResult::PUSHED_DOWN_FULLY) {
+				filters.erase_at(i);
+				pushdown_results.erase_at(i);
+				i--;
+				continue;
+			}
+		}
+		if (pushdown_result == FilterPushdownResult::NO_PUSHDOWN) {
+			combiner.TryPushdownOrClause(get.table_filters, column_ids, expr);
 		}
 	}
 

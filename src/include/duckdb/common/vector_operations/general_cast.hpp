@@ -23,6 +23,10 @@ struct VectorTryCastData {
 };
 
 struct HandleVectorCastError {
+	static bool NeedsMessage(const VectorTryCastData &cast_data) {
+		return !cast_data.parameters.error_message || cast_data.parameters.error_message->empty();
+	}
+
 	template <class RESULT_TYPE, class MASK_TYPE>
 	static RESULT_TYPE Operation(const string &error_message, MASK_TYPE &mask, idx_t idx,
 	                             VectorTryCastData &cast_data) {

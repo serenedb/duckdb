@@ -33,7 +33,7 @@ SELECT m['2048'] IS NULL FROM (SELECT TRY_CAST(map_from_entries(list({'k': i::VA
 true
 
 query I
-SELECT x[2049]['b'] FROM (SELECT list({'a': NULL, 'b': i})::MAP(VARCHAR, INT)[] x FROM range(2049) t(i));
+SELECT x[2049]['b'] FROM (SELECT list({'a': NULL, 'b': i})::MAP(VARCHAR, INT)[] x FROM range_st(2049) t(i));
 ----
 2048
 

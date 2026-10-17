@@ -1362,25 +1362,26 @@ SinkCombineResultType PhysicalRecursiveCTE::Combine(ExecutionContext &context, O
 SourceResultType PhysicalRecursiveCTE::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                        OperatorSourceInput &input) const {
 	auto &gstate = sink_state->Cast<RecursiveCTEState>();
-	return gstate.GetData(context, chunk, input.global_state.Cast<RecursiveCTEGlobalSourceState>());
+	return gstate.GetData(context, chunk, input);
 }
 
 unique_ptr<GlobalSourceState> PhysicalRecursiveCTE::GetGlobalSourceState(ClientContext &context) const {
-	return make_uniq<RecursiveCTEGlobalSourceState>();
+	return make_uniq<RecursiveCTEGlobalSourceState>(TaskScheduler::QueryThreads(context));
 }
 
-SourceResultType RecursiveCTEState::GetData(ExecutionContext &context, DataChunk &chunk,
-                                            RecursiveCTEGlobalSourceState &source) {
-	if (source_phase == RecursiveCTESourcePhase::INITIAL) {
-		if (op.using_key) {
-			source_phase = RecursiveCTESourcePhase::RECURSING_KEY;
-		} else {
-			CurrentOutputTable().InitializeScan(scan_state);
-			source.StartIteration(CurrentOutputTable().Count());
-			source_phase = RecursiveCTESourcePhase::SCANNING_UNION;
-		}
+unique_ptr<LocalSourceState> PhysicalRecursiveCTE::GetLocalSourceState(ExecutionContext &context,
+                                                                       GlobalSourceState &gstate) const {
+	return make_uniq<RecursiveCTELocalSourceState>();
+}
+
+SourceResultType RecursiveCTEState::GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) {
+	if (!op.using_key) {
+		return GetUnionData(context, chunk, input);
 	}
-	return op.using_key ? GetUsingKeyData(context, chunk, source) : GetUnionData(context, chunk, source);
+	if (source_phase == RecursiveCTESourcePhase::INITIAL) {
+		source_phase = RecursiveCTESourcePhase::RECURSING_KEY;
+	}
+	return GetUsingKeyData(context, chunk, input.global_state.Cast<RecursiveCTEGlobalSourceState>());
 }
 
 SourceResultType RecursiveCTEState::GetUsingKeyData(ExecutionContext &context, DataChunk &chunk,
@@ -1466,82 +1467,133 @@ SourceResultType RecursiveCTEState::GetUsingKeyDataInternal(ExecutionContext &co
 }
 
 SourceResultType RecursiveCTEState::GetUnionData(ExecutionContext &context, DataChunk &chunk,
-                                                 RecursiveCTEGlobalSourceState &source) {
+                                                 OperatorSourceInput &input) {
 	D_ASSERT(!op.using_key);
-	while (chunk.size() == 0) {
-		if (source_phase == RecursiveCTESourcePhase::SCANNING_UNION) {
-			// scan any chunks we have collected so far
-			CurrentOutputTable().Scan(scan_state, chunk);
-			if (chunk.size() != 0) {
-				source.AddEmittedRows(chunk.size());
+	auto &source = input.global_state.Cast<RecursiveCTEGlobalSourceState>();
+	auto &local = input.local_state.Cast<RecursiveCTELocalSourceState>();
+	while (true) {
+		if (!local.scanning) {
+			annotated_lock_guard<annotated_mutex> guard(source.lock);
+			switch (source.union_phase) {
+			case RecursiveCTESourcePhase::INITIAL:
+				InitializeUnionScan(source);
+				source.union_phase = RecursiveCTESourcePhase::SCANNING_UNION;
 				break;
+			case RecursiveCTESourcePhase::SCANNING_UNION:
+				break;
+			case RecursiveCTESourcePhase::ADVANCING_UNION:
+				return source.BlockSource(input.interrupt_state);
+			case RecursiveCTESourcePhase::FINISHED:
+				return SourceResultType::FINISHED;
+			default:
+				throw InternalException("Unsupported recursive CTE union source phase");
 			}
-		} else if (source_phase == RecursiveCTESourcePhase::FINISHED) {
-			break;
-		} else {
-			throw InternalException("Unsupported recursive CTE union source phase");
+			source.active_union_scans++;
+			local.scanning = true;
 		}
-
-		if (chunk.size() == 0) {
-			// we have run out of chunks
-			// now we need to recurse
-			// we set up the working table as the data we gathered in this iteration of the recursion
-			auto &current_output = CurrentOutputTable();
-
-			// After an iteration, we reset the recurring table
-			// and fill it up with the new hash table rows for the next iteration.
-			if (op.ref_recurring && current_output.Count() != 0) {
-				// copy since Combine would destroy the intermediate table
-				op.recurring_table->Append(current_output);
+		const auto chunk_idx = source.next_union_chunk.fetch_add(1, std::memory_order_relaxed);
+		if (chunk_idx < source.union_chunks.size()) {
+			auto &entry = source.union_chunks[chunk_idx];
+			CurrentOutputTable().ScanAtIndex(source.union_scan, local.scan_state, chunk, entry.chunk_index,
+			                                 entry.segment_index, entry.row_index);
+			source.AddEmittedRows(chunk.size());
+			return SourceResultType::HAVE_MORE_OUTPUT;
+		}
+		local.scan_state.current_chunk_state.handles.clear();
+		{
+			annotated_lock_guard<annotated_mutex> guard(source.lock);
+			if (--source.active_union_scans > 0) {
+				local.scanning = false;
+				return source.BlockSource(input.interrupt_state);
 			}
+			if (!source.CanBlock()) {
+				source.Finish();
+				source.union_phase = RecursiveCTESourcePhase::FINISHED;
+				return SourceResultType::FINISHED;
+			}
+			source.union_phase = RecursiveCTESourcePhase::ADVANCING_UNION;
+		}
+		const auto has_output = AdvanceUnionIteration(context);
+		vector<InterruptState> woken_tasks;
+		{
+			annotated_lock_guard<annotated_mutex> guard(source.lock);
+			if (has_output) {
+				InitializeUnionScan(source);
+				source.union_phase = RecursiveCTESourcePhase::SCANNING_UNION;
+				source.active_union_scans++;
+				woken_tasks = source.TakeBlockedTasks(source.union_chunks.size() - 1);
+			} else {
+				source.Finish();
+				source.union_phase = RecursiveCTESourcePhase::FINISHED;
+				woken_tasks = source.TakeBlockedTasks();
+			}
+		}
+		for (auto &task : woken_tasks) {
+			task.Callback();
+		}
+		if (!has_output) {
+			return SourceResultType::FINISHED;
+		}
+	}
+}
 
-			AdvanceIterationBuffers();
-			ResetCurrentOutputTableForReuse();
-			RebindRecursiveScans();
+void RecursiveCTEState::InitializeUnionScan(RecursiveCTEGlobalSourceState &source) {
+	auto &output = CurrentOutputTable();
+	output.InitializeScan(source.union_scan);
+	source.union_chunks.clear();
+	idx_t chunk_index;
+	idx_t segment_index;
+	idx_t row_index;
+	while (output.NextScanIndex(source.union_scan.scan_state, chunk_index, segment_index, row_index)) {
+		source.union_chunks.push_back({chunk_index, segment_index, row_index});
+	}
+	source.next_union_chunk.store(0, std::memory_order_relaxed);
+	source.StartIteration(output.Count());
+}
 
-			// Pre-grow the dedup HT to avoid costly Resize + ReinsertTuples during the next Sink phase.
-			// current_output.Count() is the count of rows output in the previous iteration — an upper bound
-			// on the number of new unique rows the next iteration can add (since the recursion is converging).
-			if (!op.union_all) {
-				const idx_t expected_new = current_output.Count();
-				if (expected_new > 0) {
-					if (distinct_partitions.empty()) {
-						const idx_t desired_capacity =
-						    GroupedAggregateHashTable::GetCapacityForCount(ht->Count() + expected_new);
-						if (desired_capacity > ht->Capacity()) {
-							ht->Resize(desired_capacity);
-						}
-					} else {
-						const auto expected_per_partition =
-						    (expected_new + distinct_partitions.size() - 1) / distinct_partitions.size();
-						for (auto &partition : distinct_partitions) {
-							const auto desired_capacity = GroupedAggregateHashTable::GetCapacityForCount(
-							    partition->ht.Count() + expected_per_partition);
-							if (desired_capacity > partition->ht.Capacity()) {
-								partition->ht.Resize(desired_capacity);
-							}
-						}
+bool RecursiveCTEState::AdvanceUnionIteration(ExecutionContext &context) {
+	auto &current_output = CurrentOutputTable();
+
+	// After an iteration, we reset the recurring table
+	// and fill it up with the new hash table rows for the next iteration.
+	if (op.ref_recurring && current_output.Count() != 0) {
+		// copy since Combine would destroy the intermediate table
+		op.recurring_table->Append(current_output);
+	}
+
+	AdvanceIterationBuffers();
+	ResetCurrentOutputTableForReuse();
+	RebindRecursiveScans();
+
+	// Pre-grow the dedup HT to avoid costly Resize + ReinsertTuples during the next Sink phase.
+	// current_output.Count() is the count of rows output in the previous iteration — an upper bound
+	// on the number of new unique rows the next iteration can add (since the recursion is converging).
+	if (!op.union_all) {
+		const idx_t expected_new = current_output.Count();
+		if (expected_new > 0) {
+			if (distinct_partitions.empty()) {
+				const idx_t desired_capacity =
+				    GroupedAggregateHashTable::GetCapacityForCount(ht->Count() + expected_new);
+				if (desired_capacity > ht->Capacity()) {
+					ht->Resize(desired_capacity);
+				}
+			} else {
+				const auto expected_per_partition =
+				    (expected_new + distinct_partitions.size() - 1) / distinct_partitions.size();
+				for (auto &partition : distinct_partitions) {
+					const auto desired_capacity =
+					    GroupedAggregateHashTable::GetCapacityForCount(partition->ht.Count() + expected_per_partition);
+					if (desired_capacity > partition->ht.Capacity()) {
+						partition->ht.Resize(desired_capacity);
 					}
 				}
 			}
-
-			// now we need to re-execute all of the pipelines that depend on the recursion
-			op.ExecuteRecursivePipelines(context);
-
-			// check if we obtained any results
-			// if not, we are done
-			if (CurrentOutputTable().Count() == 0) {
-				source_phase = RecursiveCTESourcePhase::FINISHED;
-				source.Finish();
-				break;
-			}
-			// set up the scan again
-			CurrentOutputTable().InitializeScan(scan_state);
-			source.StartIteration(CurrentOutputTable().Count());
 		}
 	}
 
-	return chunk.size() == 0 ? SourceResultType::FINISHED : SourceResultType::HAVE_MORE_OUTPUT;
+	// now we need to re-execute all of the pipelines that depend on the recursion
+	op.ExecuteRecursivePipelines(context);
+	return CurrentOutputTable().Count() != 0;
 }
 
 void RecursiveCTEGlobalSourceState::StartIteration(idx_t row_count) {

@@ -15,6 +15,8 @@
 
 namespace duckdb {
 
+struct CorrelatedColumns;
+
 class BoundColumnRefExpression;
 class BoundSubqueryExpression;
 class ColumnBindingReplacer;
@@ -70,11 +72,24 @@ public:
 	void VisitOperator(LogicalOperator &op) override;
 	//! Update bindings owned by this operator without visiting its children
 	virtual void VisitOperatorBindings(LogicalOperator &op);
+	void VisitExpression(unique_ptr<Expression> *expression) override;
 	//! Add binding replacements by position
 	void AddReplacements(const vector<ColumnBinding> &old_bindings, const vector<ColumnBinding> &new_bindings);
 
 protected:
 	unique_ptr<Expression> VisitReplace(BoundColumnRefExpression &expr, unique_ptr<Expression> *expr_ptr) override;
+
+	class IndexScope {
+	public:
+		explicit IndexScope(ColumnBindingReplacer &replacer);
+		~IndexScope();
+
+	private:
+		ColumnBindingReplacer &replacer;
+	};
+
+	template <class F>
+	void ApplyReplacements(ColumnBinding binding, F &&apply);
 
 public:
 	//! Do not recurse further than this operator (optional)
@@ -82,6 +97,15 @@ public:
 
 	//! Contains all bindings that need to be updated
 	vector<ReplacementBinding> replacement_bindings;
+
+private:
+	void BuildReplacementIndex();
+
+	idx_t index_depth = 0;
+	idx_t scope_lookups = 0;
+	bool index_built = false;
+	column_binding_map_t<idx_t> first_replacement;
+	vector<idx_t> next_replacement;
 };
 
 //! Like ColumnBindingReplacer, but also updates correlated-column metadata and nested subquery plans.
@@ -90,6 +114,7 @@ public:
 	void VisitOperatorBindings(LogicalOperator &op) override;
 
 protected:
+	void ReplaceCorrelatedColumns(CorrelatedColumns &columns);
 	using ColumnBindingReplacer::VisitReplace;
 	unique_ptr<Expression> VisitReplace(BoundSubqueryExpression &expr, unique_ptr<Expression> *expr_ptr) override;
 };
@@ -106,6 +131,7 @@ public:
 	//! Apply the output-boundary view of a complete replacement graph to one parent-child edge.
 	static void ApplyToChild(unique_ptr<LogicalOperator> &op, idx_t child_index,
 	                         vector<ColumnBinding> old_child_bindings, const BindingReplacementGraph &replacements);
+	static vector<ColumnBinding> CaptureChildBindings(LogicalOperator &op, idx_t child_index);
 	static void ApplyToOperatorBindings(LogicalOperator &op, const BindingReplacementGraph &replacements);
 	//! Verify that every previous public output binding is still reachable at the rewritten output boundary.
 	static void ValidateOutput(const vector<ColumnBinding> &old_output, const vector<ColumnBinding> &new_output,
@@ -116,6 +142,21 @@ private:
 	                                     const vector<ColumnBinding> &original_child_bindings,
 	                                     const vector<ColumnBinding> &child_bindings_before,
 	                                     const vector<ColumnBinding> &child_bindings_after);
+};
+
+//! Replaces bindings in the ancestors of a replaced subtree, which the caller visits bottom-up
+class AncestorBindingReplacer {
+public:
+	explicit AncestorBindingReplacer(ColumnBindingReplacer &replacer);
+
+	//! Update the bindings owned by the ancestor and return whether its output still carries a new binding
+	bool Replace(LogicalOperator &ancestor);
+	//! Verify that no operator outside the replaced subtree still references a replaced binding
+	void Verify(LogicalOperator &root, LogicalOperator &replaced_subtree) const;
+
+private:
+	ColumnBindingReplacer &replacer;
+	column_binding_set_t new_bindings;
 };
 
 } // namespace duckdb

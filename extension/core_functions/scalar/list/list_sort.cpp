@@ -16,9 +16,11 @@
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/settings.hpp"
-#include "duckdb/common/sorting/sort.hpp"
+#include "duckdb/common/bswap.hpp"
+#include "duckdb/function/create_sort_key.hpp"
 #include "duckdb/planner/expression_binder.hpp"
-#include "duckdb/parallel/thread_context.hpp"
+
+#include <algorithm>
 
 namespace duckdb {
 
@@ -39,7 +41,6 @@ struct ListSortBindData : public FunctionData {
 	ClientContext &context;
 	unique_ptr<Expression> sort_key;
 	optional<string> default_collation;
-	unique_ptr<Sort> sort;
 
 public:
 	bool Equals(const FunctionData &other_p) const override;
@@ -61,8 +62,6 @@ ListSortBindData::ListSortBindData(OrderType order_type_p, OrderByNullType null_
 	types.emplace_back(LogicalType::UINTEGER);
 	D_ASSERT(types.size() == 3);
 
-	// get the BoundOrderByNode
-	auto idx_col_expr = make_uniq_base<Expression, BoundReferenceExpression>(LogicalType::USMALLINT, 0U);
 	if (!sort_key_p) {
 		default_collation = Settings::Get<DefaultCollationSetting>(context);
 		sort_key_p = make_uniq_base<Expression, BoundReferenceExpression>(child_type, 1U);
@@ -74,12 +73,7 @@ ListSortBindData::ListSortBindData(OrderType order_type_p, OrderByNullType null_
 		// payload keeps the original (non-normalized) values.
 		ExpressionBinder::PushCollation(context, sort_key_p, child_type);
 	}
-	sort_key = sort_key_p->Copy();
-	vector<BoundOrderByNode> orders;
-	orders.emplace_back(OrderType::ASCENDING, OrderByNullType::ORDER_DEFAULT, std::move(idx_col_expr));
-	orders.emplace_back(order_type, null_order, std::move(sort_key_p));
-	sort =
-	    unique_ptr<Sort>(new Sort(context, orders, {LogicalType::USMALLINT, child_type, LogicalType::UINTEGER}, {2}));
+	sort_key = std::move(sort_key_p);
 }
 
 unique_ptr<FunctionData> ListSortBindData::Copy() const {
@@ -122,27 +116,97 @@ unique_ptr<FunctionData> ListSortBindData::Deserialize(Deserializer &deserialize
 ListSortBindData::~ListSortBindData() {
 }
 
-// create the key_chunk and the payload_chunk and sink them into the local_sort_state
-static void SinkDataChunk(const Sort &sort, ExecutionContext &context, OperatorSinkInput &sink_input,
-                          Vector *child_vector, SelectionVector &sel, idx_t offset_lists_indices,
-                          vector<LogicalType> &types, Vector &payload_vector, bool &data_to_sort,
-                          Vector &lists_indices) {
-	// slice the child vector
-	Vector slice(*child_vector, sel, offset_lists_indices);
+struct ListSortEntry {
+	static constexpr idx_t PREFIX_SIZE = 2 * sizeof(uint64_t);
 
-	// initialize and fill chunk
-	DataChunk chunk;
-	chunk.InitializeEmpty(types);
-	chunk.data[0].Reference(lists_indices);
-	chunk.data[1].Reference(slice);
-	chunk.data[2].Reference(payload_vector);
-	chunk.SetChildCardinality(offset_lists_indices);
-	chunk.Verify(context.client.db);
+	ListSortEntry() = default;
+	ListSortEntry(const string_t &key, sel_t index_p)
+	    : length(UnsafeNumericCast<uint32_t>(key.GetSize())), index(index_p) {
+		data_t prefix[PREFIX_SIZE] = {};
+		memcpy(prefix, key.GetData(), MinValue<idx_t>(length, PREFIX_SIZE));
+		high = BSwapIfLE(Load<uint64_t>(prefix));
+		low = BSwapIfLE(Load<uint64_t>(prefix + sizeof(uint64_t)));
+	}
 
-	// sink
-	chunk.Flatten();
-	sort.Sink(context, chunk, sink_input);
-	data_to_sort = true;
+	uint64_t high;
+	uint64_t low;
+	uint32_t length;
+	sel_t index;
+};
+
+static bool ListSortLess(const ListSortEntry &l, const ListSortEntry &r, const vector<string_t> &keys) {
+	if (l.high != r.high) {
+		return l.high < r.high;
+	}
+	if (l.low != r.low) {
+		return l.low < r.low;
+	}
+	if (l.length > ListSortEntry::PREFIX_SIZE && r.length > ListSortEntry::PREFIX_SIZE) {
+		const auto rest = MinValue(l.length, r.length) - ListSortEntry::PREFIX_SIZE;
+		const auto cmp = memcmp(keys[l.index].GetData() + ListSortEntry::PREFIX_SIZE,
+		                        keys[r.index].GetData() + ListSortEntry::PREFIX_SIZE, rest);
+		if (cmp != 0) {
+			return cmp < 0;
+		}
+	}
+	if (l.length != r.length) {
+		return l.length < r.length;
+	}
+	return l.index < r.index;
+}
+
+struct ListSortLocalState : public FunctionLocalState {
+	ListSortLocalState(ClientContext &context, const ListSortBindData &info)
+	    : key_is_element(info.sort_key->GetExpressionClass() == ExpressionClass::BOUND_REF), key_executor(context) {
+		if (!key_is_element) {
+			key_executor.AddExpression(*info.sort_key);
+			key_input.InitializeEmpty(info.types);
+		}
+	}
+
+	bool key_is_element;
+	ExpressionExecutor key_executor;
+	DataChunk key_input;
+	vector<sel_t> positions;
+	vector<string_t> keys;
+	vector<Vector> key_vectors;
+	vector<ListSortEntry> entries;
+	vector<sel_t> order;
+};
+
+static unique_ptr<FunctionLocalState>
+ListSortInitLocalState(ExpressionState &state, const BoundFunctionExpression &expr, FunctionData *bind_data) {
+	return make_uniq<ListSortLocalState>(state.GetContext(), bind_data->Cast<ListSortBindData>());
+}
+
+static void CreateListSortKeys(ListSortLocalState &lstate, const ListSortBindData &info, const Vector &child) {
+	const OrderModifiers modifiers(info.order_type, info.null_order);
+	const auto total = lstate.positions.size();
+	lstate.keys.resize(total);
+	lstate.key_vectors.clear();
+	for (idx_t start = 0; start < total; start += STANDARD_VECTOR_SIZE) {
+		const auto batch = MinValue<idx_t>(STANDARD_VECTOR_SIZE, total - start);
+		const SelectionVector batch_sel(lstate.positions.data() + start, batch);
+		Vector elements(child, batch_sel, batch);
+		auto &batch_keys = lstate.key_vectors.emplace_back(LogicalType::BLOB, batch);
+		if (lstate.key_is_element) {
+			CreateSortKeyHelpers::CreateSortKey(elements, batch, modifiers, batch_keys);
+		} else {
+			auto &key_input = lstate.key_input;
+			key_input.Reset();
+			key_input.data[0].Reference(Value(info.types[0]), count_t(batch));
+			key_input.data[1].Reference(elements);
+			key_input.data[2].Reference(Value(info.types[2]), count_t(batch));
+			key_input.SetCardinality(batch);
+			Vector key_values(info.sort_key->GetReturnType(), batch);
+			lstate.key_executor.ExecuteExpression(key_input, key_values);
+			CreateSortKeyHelpers::CreateSortKey(key_values, batch, modifiers, batch_keys);
+		}
+		const auto batch_values = batch_keys.Values<string_t>();
+		for (idx_t i = 0; i < batch; i++) {
+			lstate.keys[start + i] = batch_values[i].GetValue();
+		}
+	}
 }
 
 static void ListSortFunction(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -160,147 +224,87 @@ static void ListSortFunction(DataChunk &args, ExpressionState &state, Vector &re
 
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<ListSortBindData>();
+	auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<ListSortLocalState>();
+	auto &child = ListVector::GetChild(input_lists);
+	auto list_entries = input_lists.Values<list_entry_t>();
 
-	// initialize the global and local sorting state
-	auto global_sink_state = info.sort->GetGlobalSinkState(info.context);
-	ThreadContext thread_context(info.context);
-	ExecutionContext execution_context(info.context, thread_context, nullptr);
-	auto local_sink_state = info.sort->GetLocalSinkState(execution_context);
-	InterruptState interrupt_state;
-	OperatorSinkInput sink_input {*global_sink_state, *local_sink_state, interrupt_state};
-
-	Vector sort_result_vec = info.is_grade_up ? Vector(input_lists.GetType()) : Vector::Ref(result);
-
-	// this ensures that we do not change the order of the entries in the input chunk
-	VectorOperations::Copy(input_lists, sort_result_vec, count, 0, 0);
-
-	// get the child vector
-	auto lists_size = ListVector::GetListSize(sort_result_vec);
-	auto &child_vector = ListVector::GetChildMutable(sort_result_vec);
-
-	// get the lists data
-	auto list_entries = sort_result_vec.Values<list_entry_t>();
-
-	// create the lists_indices vector, this contains an element for each list's entry,
-	// the element corresponds to the list's index, e.g. for [1, 2, 4], [5, 4]
-	// lists_indices contains [0, 0, 0, 1, 1]
-	Vector lists_indices(LogicalType::USMALLINT);
-	auto lists_indices_data = FlatVector::ScatterWriter<uint16_t>(lists_indices);
-
-	// create the payload_vector, this is just a vector containing incrementing integers
-	// this will later be used as the 'new' selection vector of the child_vector, after
-	// rearranging the payload according to the sorting order
-	Vector payload_vector(LogicalType::UINTEGER);
-	auto payload_vector_data = FlatVector::ScatterWriter<uint32_t>(payload_vector);
-
-	// selection vector pointing to the data of the child vector,
-	// used for slicing the child_vector correctly
-	SelectionVector sel(STANDARD_VECTOR_SIZE);
-
-	idx_t offset_lists_indices = 0;
-	uint32_t incr_payload_count = 0;
-	bool data_to_sort = false;
-
+	auto &positions = lstate.positions;
+	positions.clear();
 	for (idx_t i = 0; i < count; i++) {
 		auto entry = list_entries[i];
-
-		// nothing to do for this list
 		if (!entry.IsValid()) {
-			result_validity.SetInvalid(i);
 			continue;
 		}
+		const auto &list = entry.GetValue();
+		for (idx_t k = 0; k < list.length; k++) {
+			positions.push_back(UnsafeNumericCast<sel_t>(list.offset + k));
+		}
+	}
+	const auto total = positions.size();
+	CreateListSortKeys(lstate, info, child);
 
-		const auto &list_entry = entry.GetValue();
-
-		// empty list, no sorting required
-		if (list_entry.length == 0) {
+	const auto &keys = lstate.keys;
+	auto &entries = lstate.entries;
+	entries.resize(total);
+	for (idx_t k = 0; k < total; k++) {
+		entries[k] = ListSortEntry(keys[k], UnsafeNumericCast<sel_t>(k));
+	}
+	idx_t list_start = 0;
+	for (idx_t i = 0; i < count; i++) {
+		auto entry = list_entries[i];
+		if (!entry.IsValid()) {
 			continue;
 		}
-
-		for (idx_t child_idx = 0; child_idx < list_entry.length; child_idx++) {
-			// lists_indices vector is full, sink
-			if (offset_lists_indices == STANDARD_VECTOR_SIZE) {
-				SinkDataChunk(*info.sort, execution_context, sink_input, &child_vector, sel, offset_lists_indices,
-				              info.types, payload_vector, data_to_sort, lists_indices);
-				offset_lists_indices = 0;
-			}
-
-			auto source_idx = list_entry.offset + child_idx;
-			sel.set_index(offset_lists_indices, source_idx);
-			lists_indices_data[offset_lists_indices] = UnsafeNumericCast<uint16_t>(i);
-			payload_vector_data[offset_lists_indices] = NumericCast<uint32_t>(source_idx);
-			offset_lists_indices++;
-			incr_payload_count++;
-		}
+		const auto length = entry.GetValue().length;
+		const auto begin = entries.begin() + NumericCast<int64_t>(list_start);
+		std::sort(begin, begin + NumericCast<int64_t>(length),
+		          [&](const ListSortEntry &l, const ListSortEntry &r) { return ListSortLess(l, r, keys); });
+		list_start += length;
+	}
+	auto &order = lstate.order;
+	order.resize(total);
+	for (idx_t k = 0; k < total; k++) {
+		order[k] = entries[k].index;
 	}
 
-	if (offset_lists_indices != 0) {
-		SinkDataChunk(*info.sort, execution_context, sink_input, &child_vector, sel, offset_lists_indices, info.types,
-		              payload_vector, data_to_sort, lists_indices);
-	}
-
+	const auto result_offset = ListVector::GetListSize(result);
 	if (info.is_grade_up) {
-		ListVector::Reserve(result, lists_size);
-		ListVector::SetListSize(result, lists_size);
-		auto result_list_data = FlatVector::Writer<list_entry_t>(result, count);
+		ListVector::Reserve(result, result_offset + total);
+		auto &result_child = ListVector::GetChildMutable(result);
+		auto grades = FlatVector::Writer<int64_t>(result_child, total, result_offset);
+		auto result_lists = FlatVector::Writer<list_entry_t>(result, count);
+		list_start = 0;
 		for (idx_t i = 0; i < count; i++) {
-			result_list_data.WriteValue(list_entries.GetValueUnsafe(i));
+			auto entry = list_entries[i];
+			if (!entry.IsValid()) {
+				result_lists.WriteNull();
+				continue;
+			}
+			const auto length = entry.GetValue().length;
+			for (idx_t k = 0; k < length; k++) {
+				grades.WriteValue(UnsafeNumericCast<int64_t>(order[list_start + k] - list_start + 1));
+			}
+			result_lists.WriteValue(list_entry_t(result_offset + list_start, length));
+			list_start += length;
 		}
+		return;
 	}
 
-	if (data_to_sort) {
-		// add local state to global state, which sorts the data
-		OperatorSinkCombineInput combine_input {*global_sink_state, *local_sink_state, interrupt_state};
-		info.sort->Combine(execution_context, combine_input);
-
-		OperatorSinkFinalizeInput finalize_input {*global_sink_state, interrupt_state};
-		info.sort->Finalize(info.context, finalize_input);
-
-		// selection vector that is to be filled with the 'sorted' payload
-		SelectionVector sel_sorted(incr_payload_count);
-		idx_t sel_sorted_idx = 0;
-
-		// scan the sorted row data
-		auto global_source_state = info.sort->GetGlobalSourceState(info.context, *global_sink_state);
-		auto local_source_state = info.sort->GetLocalSourceState(execution_context, *global_source_state);
-		OperatorSourceInput source_input {*global_source_state, *local_source_state, interrupt_state};
-		for (;;) {
-			DataChunk result_chunk;
-			result_chunk.Initialize(Allocator::DefaultAllocator(), {LogicalType::UINTEGER});
-			info.sort->GetData(execution_context, result_chunk, source_input);
-			if (result_chunk.size() == 0) {
-				break;
-			}
-
-			// construct the selection vector with the new order from the result vectors
-			auto row_count = result_chunk.size();
-			Vector result_vector(Vector::Ref(result_chunk.data[0]));
-
-			auto result_data = FlatVector::GetData<uint32_t>(result_vector);
-			for (idx_t i = 0; i < row_count; i++) {
-				sel_sorted.set_index(sel_sorted_idx, result_data[i]);
-				D_ASSERT(result_data[i] < lists_size);
-				sel_sorted_idx++;
-			}
+	for (auto &position : order) {
+		position = positions[position];
+	}
+	ListVector::Append(result, child, SelectionVector(order.data(), total), total);
+	auto result_lists = FlatVector::Writer<list_entry_t>(result, count);
+	list_start = 0;
+	for (idx_t i = 0; i < count; i++) {
+		auto entry = list_entries[i];
+		if (!entry.IsValid()) {
+			result_lists.WriteNull();
+			continue;
 		}
-
-		D_ASSERT(sel_sorted_idx == incr_payload_count);
-		if (info.is_grade_up) {
-			auto &result_entry = ListVector::GetChildMutable(result);
-			auto result_data = FlatVector::GetData<list_entry_t>(result);
-			for (idx_t i = 0; i < count; i++) {
-				if (!result_validity.RowIsValid(i)) {
-					continue;
-				}
-				for (idx_t j = result_data[i].offset; j < result_data[i].offset + result_data[i].length; j++) {
-					auto b = sel_sorted.get_index(j) - result_data[i].offset;
-					result_entry.SetValue(j, Value::BIGINT(UnsafeNumericCast<int64_t>(b + 1)));
-				}
-			}
-		} else {
-			child_vector.Slice(sel_sorted, sel_sorted_idx);
-			child_vector.Flatten();
-		}
+		const auto length = entry.GetValue().length;
+		result_lists.WriteValue(list_entry_t(result_offset + list_start, length));
+		list_start += length;
 	}
 }
 
@@ -459,7 +463,8 @@ static unique_ptr<ParsedExpression> ListSortUnbind(FunctionUnbindInput &input) {
 	return make_uniq<FunctionExpression>(QualifiedName("system", "main", "cast_to_type"), std::move(result));
 }
 
-static void SetListSortSerialization(ScalarFunction &function) {
+static void SetListSortCallbacks(ScalarFunction &function) {
+	function.SetInitStateCallback(ListSortInitLocalState);
 	function.SetUnbindCallback(ListSortUnbind);
 	function.SetSerializeCallback(ListSortBindData::Serialize);
 	function.SetDeserializeCallback(ListSortBindData::Deserialize);
@@ -482,9 +487,9 @@ ScalarFunctionSet ListSortFun::GetFunctions() {
 	    .AddParameter("list", LogicalType::LIST(LogicalType::ANY))
 	    .AddParameter("sort_order", LogicalType::VARCHAR)
 	    .AddParameter("null_order", LogicalType::VARCHAR);
-	SetListSortSerialization(sort);
-	SetListSortSerialization(sort_order);
-	SetListSortSerialization(sort_orders);
+	SetListSortCallbacks(sort);
+	SetListSortCallbacks(sort_order);
+	SetListSortCallbacks(sort_orders);
 
 	ScalarFunctionSet list_sort;
 	list_sort.AddFunction(sort);
@@ -510,9 +515,9 @@ ScalarFunctionSet ListGradeUpFun::GetFunctions() {
 	    .AddParameter("list", LogicalType::LIST(LogicalType::ANY))
 	    .AddParameter("sort_order", LogicalType::VARCHAR)
 	    .AddParameter("null_order", LogicalType::VARCHAR);
-	SetListSortSerialization(sort);
-	SetListSortSerialization(sort_order);
-	SetListSortSerialization(sort_orders);
+	SetListSortCallbacks(sort);
+	SetListSortCallbacks(sort_order);
+	SetListSortCallbacks(sort_orders);
 
 	ScalarFunctionSet list_grade_up;
 	list_grade_up.AddFunction(sort);
@@ -532,8 +537,8 @@ ScalarFunctionSet ListReverseSortFun::GetFunctions() {
 	sort_reverse_null_order.GetSignature()
 	    .AddParameter("list", LogicalType::LIST(LogicalType::ANY))
 	    .AddParameter("null_order", LogicalType::VARCHAR);
-	SetListSortSerialization(sort_reverse);
-	SetListSortSerialization(sort_reverse_null_order);
+	SetListSortCallbacks(sort_reverse);
+	SetListSortCallbacks(sort_reverse_null_order);
 
 	ScalarFunctionSet list_reverse_sort;
 	list_reverse_sort.AddFunction(sort_reverse);

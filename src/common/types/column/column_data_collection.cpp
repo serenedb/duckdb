@@ -1016,14 +1016,12 @@ ColumnDataCopyFunction ColumnDataCollection::GetCopyFunction(const LogicalType &
 	}
 	case PhysicalType::LIST: {
 		function = ColumnDataCopy<list_entry_t>;
-		auto child_function = GetCopyFunction(ListType::GetChildType(type));
-		result.child_functions.push_back(child_function);
+		result.child_functions.push_back(GetCopyFunction(ListType::GetChildType(type)));
 		break;
 	}
 	case PhysicalType::ARRAY: {
 		function = ColumnDataCopyArray;
-		auto child_function = GetCopyFunction(ArrayType::GetChildType(type));
-		result.child_functions.push_back(child_function);
+		result.child_functions.push_back(GetCopyFunction(ArrayType::GetChildType(type)));
 		break;
 	}
 	default:
@@ -1292,7 +1290,14 @@ ColumnDataRowCollection ColumnDataCollection::GetRows() const {
 }
 
 Value ColumnDataCollection::GetValue(idx_t column, idx_t index) const {
-	return GetRows().GetValue(column, index);
+	ColumnDataScanState state;
+	InitializeScan(state, vector<column_t> {column});
+	DataChunk chunk;
+	InitializeScanChunk(state, chunk);
+	if (!Seek(index, state, chunk)) {
+		throw InternalException("ColumnDataCollection::GetValue - row %llu is out of range", index);
+	}
+	return chunk.GetValue(0, index - state.current_row_index);
 }
 
 //===--------------------------------------------------------------------===//

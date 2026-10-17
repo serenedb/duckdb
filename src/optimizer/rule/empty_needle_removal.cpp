@@ -6,27 +6,52 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/bound_case_expression.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/function/function_binder.hpp"
 #include "duckdb/optimizer/expression_rewriter.hpp"
+#include "duckdb/optimizer/rule/concat_flattening.hpp"
 
 namespace duckdb {
+
+static bool IsEmptyString(ClientContext &context, Expression &expr) {
+	if (!expr.IsFoldable()) {
+		return false;
+	}
+	Value value;
+	return ExpressionExecutor::TryEvaluateScalar(context, expr, value) && !value.IsNull() &&
+	       value.type().id() == LogicalTypeId::VARCHAR && StringValue::Get(value).empty();
+}
 
 static unique_ptr<Expression> TryRemoveEmptyStringConcat(ClientContext &context, BoundFunctionExpression &root) {
 	if (root.GetReturnType().id() != LogicalTypeId::VARCHAR) {
 		return nullptr;
 	}
 	auto &children = root.GetChildrenMutable();
+	vector<bool> empty(children.size());
+	idx_t empty_count = 0;
 	for (idx_t child_idx = 0; child_idx < children.size(); child_idx++) {
-		if (!children[child_idx]->IsFoldable()) {
-			continue;
-		}
-		Value value;
-		if (!ExpressionExecutor::TryEvaluateScalar(context, *children[child_idx], value) || value.IsNull() ||
-		    value.type().id() != LogicalTypeId::VARCHAR || !StringValue::Get(value).empty()) {
-			continue;
-		}
-		return Expression::PreserveReturnType(root.GetReturnType(), std::move(children[1 - child_idx]));
+		empty[child_idx] = IsEmptyString(context, *children[child_idx]);
+		empty_count += empty[child_idx];
 	}
-	return nullptr;
+	if (empty_count == 0 || empty_count == children.size()) {
+		return nullptr;
+	}
+	vector<unique_ptr<Expression>> remaining;
+	for (idx_t child_idx = 0; child_idx < children.size(); child_idx++) {
+		if (!empty[child_idx]) {
+			remaining.push_back(std::move(children[child_idx]));
+		}
+	}
+	if (remaining.size() == 1) {
+		return Expression::PreserveReturnType(root.GetReturnType(), std::move(remaining[0]));
+	}
+	FunctionBinder binder(context);
+	auto result = binder.BindScalarFunction(Identifier::DefaultSchema(), root.Function().GetName(),
+	                                        std::move(remaining), root.IsOperator());
+	if (result->GetReturnType() != root.GetReturnType()) {
+		return BoundCastExpression::AddCastToType(context, std::move(result), root.GetReturnType());
+	}
+	return result;
 }
 
 EmptyNeedleRemovalRule::EmptyNeedleRemovalRule(ExpressionRewriter &rewriter) : Rule(rewriter) {
@@ -44,10 +69,13 @@ EmptyNeedleRemovalRule::EmptyNeedleRemovalRule(ExpressionRewriter &rewriter) : R
 unique_ptr<Expression> EmptyNeedleRemovalRule::Apply(LogicalOperator &op, vector<reference<Expression>> &bindings,
                                                      bool &changes_made, bool is_root) {
 	auto &root = bindings[0].get().Cast<BoundFunctionExpression>();
-	D_ASSERT(root.GetChildren().size() == 2);
 	if (root.Function().GetName() == "||") {
+		if (!ConcatFlatteningRule::IsConcatOperator(root)) {
+			return nullptr;
+		}
 		return TryRemoveEmptyStringConcat(GetContext(), root);
 	}
+	D_ASSERT(root.GetChildren().size() == 2);
 	auto &prefix_expr = bindings[2].get();
 
 	// the constant_expr is a scalar expression that we have to fold

@@ -48,9 +48,7 @@ struct PipelineBroadcastExchange::ChunkPool : public enable_shared_from_this<Pip
 		if (!result) {
 			result = make_uniq<DataChunk>();
 			result->Initialize(allocator, types);
-		} else if (reset_mode == ResetMode::RESET) {
-			result->Reset();
-		} else {
+		} else if (reset_mode == ResetMode::CLEAR_CARDINALITY) {
 			result->SetChildCardinality(0);
 		}
 
@@ -77,6 +75,9 @@ struct PipelineBroadcastExchange::ChunkPool : public enable_shared_from_this<Pip
 	}
 
 	void Release(unique_ptr<DataChunk> chunk, idx_t release_generation) {
+		if (reset_mode == ResetMode::RESET) {
+			chunk->Reset();
+		}
 		annotated_lock_guard<annotated_mutex> guard(lock);
 		if (!caching_enabled || release_generation != generation || cached_chunks.size() >= max_cached_chunks) {
 			return;
@@ -1706,6 +1707,37 @@ void PipelineBroadcastExchange::CompleteSpoolReadLocked(idx_t consumer_idx, cons
 	RetireChunksLocked();
 	WakeWritersLocked(writers, log_entries);
 	WakeReadersLocked(readers, ReaderWakeMode::DATA_AVAILABLE);
+}
+
+void PipelineBroadcastExchange::FinishScan(idx_t consumer_idx, PipelineBroadcastExchangeScanState &scan_state) {
+	vector<InterruptState> readers;
+	vector<InterruptState> writers;
+	vector<ExchangeLogEntry> log_entries;
+	{
+		annotated_lock_guard<annotated_mutex> guard(lock);
+		if (!scan_state.batch_sequence.IsValid()) {
+			return;
+		}
+		auto batch_sequence = scan_state.batch_sequence.GetIndex();
+		scan_state.batch_sequence = optional_idx();
+		D_ASSERT(consumer_idx < consumers.size());
+		auto &consumer = consumers[consumer_idx];
+		if (consumer.lifecycle != ConsumerLifecycle::ACTIVE) {
+			return;
+		}
+		consumer.active_batch_positions.erase(batch_sequence);
+		if (consumer.exhausted && consumer.in_flight_reads.empty() && consumer.active_batch_positions.empty()) {
+			consumer.lifecycle = ConsumerLifecycle::INACTIVE;
+			D_ASSERT(active_consumers > 0);
+			active_consumers--;
+		}
+		RetireChunksLocked();
+		WakeReadersLocked(readers);
+		WakeWritersLocked(writers, log_entries, WriterWakeMode::FORCE);
+	}
+	CallbackAll(readers);
+	CallbackAll(writers);
+	LogTransitions(log_entries);
 }
 
 void PipelineBroadcastExchange::UnregisterConsumer(idx_t consumer_idx) {

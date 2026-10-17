@@ -91,14 +91,66 @@ NULL
 statement error
 select split_part()
 ----
-<REGEX>:.*Binder Error.*does not support the supplied arguments.*
+<REGEX>:.*Binder Error.*No function matches the given name and argument types.*
 
 statement error
 select split_part('a')
 ----
-<REGEX>:.*Binder Error.*does not support the supplied arguments.*
+<REGEX>:.*Binder Error.*No function matches the given name and argument types.*
 
 statement error
 select split_part('a','a')
 ----
-<REGEX>:.*Binder Error.*does not support the supplied arguments.*
+<REGEX>:.*Binder Error.*No function matches the given name and argument types.*
+
+query II
+SELECT p, split_part('a,,b,c,', ',', p) FROM range(-7, 8) t(p) ORDER BY p
+----
+-7	(empty)
+-6	(empty)
+-5	a
+-4	(empty)
+-3	b
+-2	c
+-1	(empty)
+0	(empty)
+1	a
+2	(empty)
+3	b
+4	c
+5	(empty)
+6	(empty)
+7	(empty)
+
+query IIIIIIII
+SELECT split_part(',a,b', ',', 1), split_part(',a,b', ',', -3), split_part('a||b||', '||', -1),
+	split_part('a||b||', '||', 3), split_part('éàü,ß', ',', 2), split_part('abc', 'abcd', 1), split_part('abc', 'abc', 2),
+	split_part('abc', 'abc', -2)
+----
+(empty)	(empty)	(empty)	(empty)	ß	abc	(empty)	(empty)
+
+query III
+SELECT split_part('a,b,c', ',', 9223372036854775807), split_part('a,b,c', ',', -9223372036854775808),
+	split_part('a,b,c', ',', -9223372036854775807)
+----
+(empty)	(empty)	(empty)
+
+query IIIII
+SELECT count(*), sum(len(split_part(s, '/', 3))), max(split_part(s, '/', -1)), min(split_part(s, '/', 2)),
+	count(*) FILTER (WHERE split_part(s, '/', 5) = '')
+FROM (SELECT 'prefix-that-is-long/' || i::VARCHAR || '/' || repeat('z', i % 30) || '/end' AS s FROM range(4000) t(i))
+----
+4000	57900	end	0	4000
+
+# the delimiter differs per row
+query T
+SELECT split_part(s, d, p) FROM (VALUES ('a--b--c', '--', 2), ('x||y||z', '||', -1), ('abcabc', 'bc', 2), ('aaa', 'aa', 2),
+	('aaaa', 'aa', 2), ('one', 'none', 1), ('éàü,ß', 'àü', 2)) t(s, d, p)
+----
+b
+z
+a
+a
+(empty)
+one
+,ß

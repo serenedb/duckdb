@@ -25,7 +25,7 @@ unique_ptr<Expression> ContainsToInClauseRule::Apply(LogicalOperator &op, vector
 	auto &probe_arg = expr.GetChildren()[1];
 
 	Value list_val;
-	if (!ExpressionExecutor::TryEvaluateScalar(GetContext(), *list_arg, list_val)) {
+	if (!ExpressionExecutor::TryEvaluateFoldable(GetContext(), *list_arg, list_val)) {
 		return nullptr;
 	}
 

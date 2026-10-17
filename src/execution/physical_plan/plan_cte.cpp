@@ -7,6 +7,7 @@
 
 namespace duckdb {
 
+#ifdef D_ASSERT_IS_ENABLED
 static bool ContainsRecursiveCTE(const LogicalOperator &op) {
 	if (op.type == LogicalOperatorType::LOGICAL_RECURSIVE_CTE) {
 		return true;
@@ -18,13 +19,47 @@ static bool ContainsRecursiveCTE(const LogicalOperator &op) {
 	}
 	return false;
 }
+#endif
+
+struct SubtreeShape {
+	bool has_side_effects = false;
+	bool contains_recursive_cte = false;
+};
+
+template <class SHAPES>
+static SubtreeShape GetSubtreeShape(const LogicalOperator &op, SHAPES &shapes) {
+	SubtreeShape result;
+	result.has_side_effects = op.HasOwnSideEffects();
+	result.contains_recursive_cte = op.type == LogicalOperatorType::LOGICAL_RECURSIVE_CTE;
+	bool first_child_has_side_effects = false;
+	for (idx_t child_idx = 0; child_idx < op.children.size(); child_idx++) {
+		auto child_shape = GetSubtreeShape(*op.children[child_idx], shapes);
+		if (child_idx == 0) {
+			first_child_has_side_effects = child_shape.has_side_effects;
+		}
+		result.has_side_effects |= child_shape.has_side_effects;
+		result.contains_recursive_cte |= child_shape.contains_recursive_cte;
+	}
+	if (op.type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) {
+		shapes[op.Cast<LogicalMaterializedCTE>().table_index] = {first_child_has_side_effects,
+		                                                         result.contains_recursive_cte};
+	}
+	return result;
+}
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalMaterializedCTE &op) {
 	D_ASSERT(op.children.size() == 2);
 
-	auto cte_body_has_side_effects = op.children[0]->HasSideEffects();
-	auto use_exchange = planning_recursive_cte_depth == 0 && !ContainsRecursiveCTE(*op.children[0]) &&
-	                    !ContainsRecursiveCTE(*op.children[1]);
+	auto shape = materialized_cte_shapes.find(op.table_index);
+	if (shape == materialized_cte_shapes.end()) {
+		GetSubtreeShape(op, materialized_cte_shapes);
+		shape = materialized_cte_shapes.find(op.table_index);
+	}
+	D_ASSERT(shape->second.definition_has_side_effects == op.children[0]->HasSideEffects());
+	D_ASSERT(shape->second.contains_recursive_cte ==
+	         (ContainsRecursiveCTE(*op.children[0]) || ContainsRecursiveCTE(*op.children[1])));
+	auto cte_body_has_side_effects = shape->second.definition_has_side_effects;
+	auto use_exchange = planning_recursive_cte_depth == 0 && !shape->second.contains_recursive_cte;
 
 	// Create the working_table that the PhysicalCTE will use for evaluation.
 	auto working_table = make_shared_ptr<ColumnDataCollection>(context, op.children[0]->types);

@@ -264,6 +264,16 @@ Value HTTPProxySetting::GetSetting(const ClientContext &context) {
 }
 
 //===----------------------------------------------------------------------===//
+// Integer Overflow
+//===----------------------------------------------------------------------===//
+void IntegerOverflowSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
+	if (parameter.IsNull()) {
+		throw InvalidInputException("integer_overflow setting cannot be NULL");
+	}
+	EnumUtil::FromString<IntegerOverflowMode>(StringValue::Get(parameter));
+}
+
+//===----------------------------------------------------------------------===//
 // Lambda Syntax
 //===----------------------------------------------------------------------===//
 void LambdaSyntaxSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {

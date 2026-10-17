@@ -53,7 +53,7 @@ public:
 	bool Equals(const ParsedExpression &other) const override;
 
 	unique_ptr<ParsedExpression> Copy() const override;
-	hash_t Hash() const override;
+	hash_t NodeHash() const override;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<ParsedExpression> Deserialize(Deserializer &deserializer);

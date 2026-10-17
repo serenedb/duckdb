@@ -40,10 +40,22 @@ public:
 		exchange->UnregisterConsumer(consumer_idx);
 	}
 
+	void StartScan() {
+		active_scans.fetch_add(1, std::memory_order_relaxed);
+	}
+
+	void FinishScan(PipelineBroadcastExchangeScanState &scan_state) {
+		exchange->FinishScan(consumer_idx, scan_state);
+		if (active_scans.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+			Unregister();
+		}
+	}
+
 	shared_ptr<PipelineBroadcastExchange> exchange;
 	idx_t consumer_idx;
 	idx_t max_threads;
 	atomic<bool> unregistered {false};
+	atomic<idx_t> active_scans {0};
 	//! The exchange total grows while the producer outruns its estimate - keeps the scan progress monotonic
 	MonotonicProgress scan_progress;
 };
@@ -56,6 +68,7 @@ public:
 
 	shared_ptr<PipelineBroadcastExchangeScanState> scan_state;
 	optional_idx exchange_batch_index;
+	bool scan_finished = false;
 };
 
 PhysicalCTEConsumerSource::PhysicalCTEConsumerSource(PhysicalPlan &physical_plan, vector<LogicalType> types,
@@ -77,6 +90,7 @@ PhysicalCTEConsumerSource::GetGlobalSourceState(ClientContext &context,
 
 unique_ptr<LocalSourceState> PhysicalCTEConsumerSource::GetLocalSourceState(ExecutionContext &context,
                                                                             GlobalSourceState &gstate) const {
+	gstate.Cast<CTEConsumerGlobalSourceState>().StartScan();
 	return make_uniq<CTEConsumerLocalSourceState>(exchange->GetScanState());
 }
 
@@ -117,6 +131,16 @@ ProgressData PhysicalCTEConsumerSource::GetProgress(ClientContext &context, Glob
 
 void PhysicalCTEConsumerSource::SourceFinished(ClientContext &context, GlobalSourceState &gstate) const {
 	gstate.Cast<CTEConsumerGlobalSourceState>().Unregister();
+}
+
+void PhysicalCTEConsumerSource::LocalSourceFinished(ExecutionContext &context, GlobalSourceState &gstate,
+                                                    LocalSourceState &lstate_p) const {
+	auto &lstate = lstate_p.Cast<CTEConsumerLocalSourceState>();
+	if (lstate.scan_finished) {
+		return;
+	}
+	lstate.scan_finished = true;
+	gstate.Cast<CTEConsumerGlobalSourceState>().FinishScan(*lstate.scan_state);
 }
 
 InsertionOrderPreservingMap<string> PhysicalCTEConsumerSource::ParamsToString() const {

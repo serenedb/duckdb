@@ -192,9 +192,11 @@ template <class OP, bool INCLUSIVE_BOUND>
 void ListRangeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(result.GetType().id() == LogicalTypeId::LIST);
 
+	static constexpr idx_t RANGE_CHECK_ELEMENTS = 1 << 20;
 	RangeInfoStruct<OP, INCLUSIVE_BOUND> info(args);
 	auto args_size = args.size();
 	auto list_writer = FlatVector::Writer<VectorListType<typename OP::TYPE>>(result, args_size);
+	idx_t written = 0;
 	for (idx_t i = 0; i < args_size; i++) {
 		if (!info.RowIsValid(i)) {
 			list_writer.WriteNull();
@@ -212,6 +214,10 @@ void ListRangeFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 			}
 			child_writer.WriteValue(range_value);
 			seen_value = true;
+			if (++written == RANGE_CHECK_ELEMENTS) {
+				state.InterruptCheck();
+				written = 0;
+			}
 		}
 	}
 }

@@ -62,7 +62,7 @@ void ReadAheadJobCompletion::WaitForIO() {
 			continue;
 		}
 		// the remaining I/O is running on other threads, wait for it to finish
-		TaskScheduler::YieldThread();
+		executor->WaitForProgress();
 	}
 }
 

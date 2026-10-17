@@ -8,7 +8,9 @@
 
 namespace duckdb {
 
-static void ListResizeFunction(DataChunk &args, ExpressionState &, Vector &result) {
+static constexpr idx_t LIST_RESIZE_BATCH = 1 << 20;
+
+static void ListResizeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	// Early-out, if the return value is a constant NULL.
 	if (result.GetType().id() == LogicalTypeId::SQLNULL) {
 		ConstantVector::SetNull(result, count_t(args.size()));
@@ -40,6 +42,15 @@ static void ListResizeFunction(DataChunk &args, ExpressionState &, Vector &resul
 	ListVector::Reserve(result, total_child_size.GetValue());
 	auto result_entries = FlatVector::Writer<list_entry_t>(result, row_count);
 
+	idx_t unchecked = 0;
+	auto check_interrupt = [&](idx_t appended) {
+		unchecked += appended;
+		if (unchecked >= LIST_RESIZE_BATCH) {
+			state.InterruptCheck();
+			unchecked = 0;
+		}
+	};
+
 	for (idx_t row_idx = 0; row_idx < row_count; row_idx++) {
 		auto list_entry = list_entries[row_idx];
 		// Set to NULL, if the list is NULL.
@@ -61,25 +72,37 @@ static void ListResizeFunction(DataChunk &args, ExpressionState &, Vector &resul
 		ubigint_t source_count = source_offset + copy_count;
 		list.Append(child_vector, *FlatVector::IncrementalSelectionVector(), source_count.GetValue(),
 		            source_offset.GetValue(), copy_count.GetValue());
+		check_interrupt(copy_count.GetValue());
 
 		if (copy_count >= new_size) {
 			continue;
 		}
-		ubigint_t remaining_count = new_size - copy_count;
+		idx_t remaining = (new_size - copy_count).GetValue();
 
 		// if a default value is provided fill the list with the default value
 		if (has_default_vector) {
-			SelectionVector sel(remaining_count.GetValue());
-			for (idx_t j = 0; j < remaining_count.GetValue(); j++) {
+			const auto batch_size = MinValue(remaining, LIST_RESIZE_BATCH);
+			SelectionVector sel(batch_size);
+			for (idx_t j = 0; j < batch_size; j++) {
 				sel.set_index(j, row_idx);
 			}
 			const auto &default_vector = args.data[2];
-			list.Append(default_vector, sel, args.size(), 0, remaining_count.GetValue());
+			while (remaining > 0) {
+				const auto batch = MinValue(remaining, LIST_RESIZE_BATCH);
+				list.Append(default_vector, sel, args.size(), 0, batch);
+				remaining -= batch;
+				check_interrupt(batch);
+			}
 			continue;
 		}
 
 		// Fill the remaining space with NULL.
-		list.AppendNulls(remaining_count.GetValue());
+		while (remaining > 0) {
+			const auto batch = MinValue(remaining, LIST_RESIZE_BATCH);
+			list.AppendNulls(batch);
+			remaining -= batch;
+			check_interrupt(batch);
+		}
 	}
 }
 

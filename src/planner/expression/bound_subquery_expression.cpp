@@ -27,10 +27,7 @@ bool BoundSubqueryExpression::PropagatesNullValues() const {
 	return false;
 }
 
-bool BoundSubqueryExpression::IsVolatile() const {
-	if (Expression::IsVolatile()) {
-		return true;
-	}
+bool BoundSubqueryExpression::IsNodeVolatile() const {
 	return subquery.plan && subquery.plan->HasVolatileExpressions();
 }
 

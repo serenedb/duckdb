@@ -1,6 +1,7 @@
 #include "duckdb/execution/expression_executor_state.hpp"
 
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
@@ -31,6 +32,12 @@ Allocator &ExpressionState::GetAllocator() {
 
 bool ExpressionState::HasContext() {
 	return root.executor->HasContext();
+}
+
+void ExpressionState::InterruptCheck() {
+	if (HasContext()) {
+		GetContext().InterruptCheck();
+	}
 }
 
 ClientContext &ExpressionState::GetContext() {

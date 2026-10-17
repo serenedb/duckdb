@@ -43,7 +43,8 @@ bool IsStructPack(const BoundFunctionExpression &expr) {
 	return expr.Function().GetName() == "struct_pack";
 }
 
-optional_ptr<Expression> FindStructPackChildByName(BoundFunctionExpression &struct_pack, const string &name) {
+optional_ptr<const Expression> FindStructPackChildByName(const BoundFunctionExpression &struct_pack,
+                                                         const string &name) {
 	D_ASSERT(struct_pack.GetReturnType().id() == LogicalTypeId::STRUCT);
 	for (auto &child : struct_pack.GetChildren()) {
 		if (child->GetAlias() == name) {
@@ -53,29 +54,11 @@ optional_ptr<Expression> FindStructPackChildByName(BoundFunctionExpression &stru
 	return nullptr;
 }
 
-bool UsesIndexParameter(Expression &expr) {
+bool UsesIndexParameter(const Expression &expr) {
 	if (expr.GetExpressionClass() == ExpressionClass::BOUND_REF) {
-		auto &ref = expr.Cast<BoundReferenceExpression>();
-		if (ref.Index() == 0) {
-			return true;
-		}
+		return expr.Cast<BoundReferenceExpression>().Index() == 0;
 	}
-	bool uses_index = false;
-	ExpressionIterator::EnumerateChildren(expr, [&uses_index](unique_ptr<Expression> &child) {
-		ExpressionIterator::EnumerateExpression(child, [&uses_index](Expression &child) {
-			if (uses_index) {
-				return;
-			}
-			if (child.GetExpressionClass() == ExpressionClass::BOUND_REF) {
-				auto &ref = child.Cast<BoundReferenceExpression>();
-				if (ref.Index() == 0) {
-					uses_index = true;
-					return;
-				}
-			}
-		});
-	});
-	return uses_index;
+	return ExpressionIterator::AnyChild(expr, [](const Expression &child) { return UsesIndexParameter(child); });
 }
 
 void RemoveIndexInputSlot(unique_ptr<Expression> &expr) {
@@ -87,15 +70,15 @@ void RemoveIndexInputSlot(unique_ptr<Expression> &expr) {
 	                                                });
 }
 
-bool MatchesStructFieldProjection(Expression &expr, const string &field_name, bool allow_boolean_cast = false) {
-	optional_ptr<Expression> base = expr;
+bool MatchesStructFieldProjection(const Expression &expr, const string &field_name, bool allow_boolean_cast = false) {
+	optional_ptr<const Expression> base = expr;
 	if (allow_boolean_cast && BoundCastExpression::IsCast(*base) && base->GetReturnType() == LogicalType::BOOLEAN) {
 		auto &cast_expr = base->Cast<BoundFunctionExpression>();
 		if (BoundCastExpression::IsTryCast(cast_expr)) {
 			return false;
 		}
 		// The rewritten filter recreates this single BOOLEAN cast.
-		base = BoundCastExpression::ChildMutable(cast_expr).get();
+		base = BoundCastExpression::Child(cast_expr);
 	}
 	if (base->GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
 		return false;
@@ -131,8 +114,8 @@ struct ListComprehensionMatch {
 	optional_ptr<BoundFunctionExpression> list_filter_expr;
 	optional_ptr<BoundFunctionExpression> inner_apply;
 	optional_ptr<ListLambdaBindData> inner_bind;
-	optional_ptr<Expression> filter_expr;
-	optional_ptr<Expression> result_expr;
+	optional_ptr<const Expression> filter_expr;
+	optional_ptr<const Expression> result_expr;
 	vector<unique_ptr<Expression>> captured_children;
 };
 

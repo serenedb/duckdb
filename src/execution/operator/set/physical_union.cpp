@@ -60,6 +60,7 @@ void PhysicalUnion::BuildPipelines(Pipeline &current, MetaPipeline &meta_pipelin
 	}
 
 	// create union pipelines that has identical dependencies to 'current'
+	const auto union_begin = meta_pipeline.PipelineCount();
 	vector<reference<Pipeline>> union_pipelines;
 	for (idx_t i = 0; i + 1 < children.size(); i++) {
 		auto &union_pipeline = meta_pipeline.CreateUnionPipeline(current, order_matters);
@@ -67,13 +68,15 @@ void PhysicalUnion::BuildPipelines(Pipeline &current, MetaPipeline &meta_pipelin
 	}
 	// continue with the current pipeline
 	auto child = children.begin();
+	auto previous_build_begin = meta_pipeline.PipelineCount();
 	(*child).get().BuildPipelines(current, meta_pipeline);
 	bool can_saturate_threads =
 	    ContainsSink((*child).get()) && (*child).get().CanSaturateThreads(current.GetClientContext());
 	for (idx_t i = 1; i < children.size(); i++) {
 		auto &previous = (*child).get();
 		++child;
-		auto &union_pipeline = union_pipelines[children.size() - i - 1].get();
+		const auto union_idx = children.size() - i - 1;
+		auto &union_pipeline = union_pipelines[union_idx].get();
 		vector<shared_ptr<Pipeline>> dependencies;
 		optional_ptr<MetaPipeline> last_child_ptr;
 		if (ContainsSink(previous) && previous.CanSaturateThreads(current.GetClientContext())) {
@@ -84,7 +87,12 @@ void PhysicalUnion::BuildPipelines(Pipeline &current, MetaPipeline &meta_pipelin
 			// current
 			auto dependency_type =
 			    order_matters ? PipelineDependencyType::REQUIRED : PipelineDependencyType::OPTIONAL_DEPENDENCY;
-			dependencies = meta_pipeline.AddDependenciesFrom(union_pipeline, union_pipeline, false, dependency_type);
+			optional_idx previous_union;
+			if (i > 1) {
+				previous_union = union_begin + union_idx + 1;
+			}
+			dependencies = meta_pipeline.AddDependenciesFrom(union_pipeline, previous_union, previous_build_begin,
+			                                                 dependency_type);
 			// we also add dependencies if the LHS child can saturate all available threads
 			// in that case, we recursively make all RHS children depend on the LHS.
 			// This prevents breadth-first plan evaluation
@@ -95,6 +103,7 @@ void PhysicalUnion::BuildPipelines(Pipeline &current, MetaPipeline &meta_pipelin
 		// Assign proper batch index to the union pipeline
 		meta_pipeline.AssignNextBatchIndex(union_pipeline);
 		// build the union pipeline
+		previous_build_begin = meta_pipeline.PipelineCount();
 		(*child).get().BuildPipelines(union_pipeline, meta_pipeline);
 
 		if (last_child_ptr) {

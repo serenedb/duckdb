@@ -51,6 +51,8 @@ class StringFormat {
 public:
 	DUCKDB_API static string Printf(std::string_view format, const vector<FormatArgument> &args);
 	DUCKDB_API static string Format(std::string_view format, const vector<FormatArgument> &args);
+	DUCKDB_API static void Printf(string &result, std::string_view format, const vector<FormatArgument> &args);
+	DUCKDB_API static void Format(string &result, std::string_view format, const vector<FormatArgument> &args);
 };
 
 } // namespace duckdb

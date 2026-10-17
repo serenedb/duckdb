@@ -16,13 +16,15 @@ using regexp_util::CreateStringPiece;
 using regexp_util::ParseRegexOptions;
 using regexp_util::TryParseConstantPattern;
 
+static constexpr idx_t REGEXP_EXTRACT_CHECK_MATCHES = 1 << 10;
+
 unique_ptr<FunctionLocalState>
 RegexpExtractAll::InitLocalState(ExpressionState &state, const BoundFunctionExpression &expr, FunctionData *bind_data) {
 	auto &info = bind_data->Cast<RegexpBaseBindData>();
 	if (info.constant_pattern) {
 		return make_uniq<RegexLocalState>(info, true);
 	}
-	return nullptr;
+	return make_uniq<RegexPatternCacheState>(info);
 }
 
 unique_ptr<FunctionLocalState> RegexpExtractAllStruct::InitLocalState(ExpressionState &state,
@@ -54,8 +56,8 @@ bool ExtractAll(duckdb_re2::StringPiece &input, duckdb_re2::RE2 &pattern, idx_t 
 }
 
 template <class CB>
-idx_t ExtractAllMatches(const string_t &string, duckdb_re2::RE2 &pattern, int32_t group, RegexStringPieceArgs &args,
-                        CB &&emit) {
+idx_t ExtractAllMatches(ExpressionState &state, const string_t &string, duckdb_re2::RE2 &pattern, int32_t group,
+                        RegexStringPieceArgs &args, CB &&emit) {
 	if (group < 0) {
 		return 0;
 	}
@@ -72,7 +74,9 @@ idx_t ExtractAllMatches(const string_t &string, duckdb_re2::RE2 &pattern, int32_
 			throw InvalidInputException("Pattern has %d groups. Cannot access group %d", args.size, group);
 		}
 		emit(args.group_buffer[group]);
-		count++;
+		if (++count % REGEXP_EXTRACT_CHECK_MATCHES == 0) {
+			state.InterruptCheck();
+		}
 		if (startpos > input.size()) {
 			// Empty match found at the end of the string
 			break;
@@ -96,12 +100,11 @@ int32_t GetGroupIndex(DataChunk &args, idx_t row, int32_t &result) {
 }
 
 duckdb_re2::RE2 &GetPattern(const RegexpBaseBindData &info, ExpressionState &state,
-                            unique_ptr<duckdb_re2::RE2> &pattern_p) {
+                            optional_ptr<duckdb_re2::RE2> pattern_p) {
 	if (info.constant_pattern) {
 		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexLocalState>();
 		return lstate.constant_pattern;
 	}
-	D_ASSERT(pattern_p);
 	return *pattern_p;
 }
 
@@ -121,9 +124,11 @@ void RegexpExtractAll::Execute(DataChunk &args, ExpressionState &state, Vector &
 	StringVector::AddHeapReference(ListVector::GetChildMutable(result), strings);
 
 	unique_ptr<RegexStringPieceArgs> non_const_args;
-	unique_ptr<duckdb_re2::RE2> stored_re;
+	optional_ptr<RegexPatternCache> cache;
+	optional_ptr<duckdb_re2::RE2> stored_re;
 	if (!info.constant_pattern) {
 		non_const_args = make_uniq<RegexStringPieceArgs>();
+		cache = &ExecuteFunctionState::GetFunctionState(state)->Cast<RegexPatternCacheState>().cache;
 	} else {
 		// Verify that the constant pattern is valid
 		auto &re = GetPattern(info, state, stored_re);
@@ -141,8 +146,7 @@ void RegexpExtractAll::Execute(DataChunk &args, ExpressionState &state, Vector &
 			if (!pattern_entry.IsValid()) {
 				pattern_valid = false;
 			} else {
-				auto pattern_strpiece = CreateStringPiece(pattern_entry.GetValue());
-				stored_re = make_uniq<duckdb_re2::RE2>(pattern_strpiece, info.options);
+				stored_re = &cache->Get(CreateStringPiece(pattern_entry.GetValue()));
 				auto group_count_p = stored_re->NumberOfCapturingGroups();
 				if (group_count_p == -1) {
 					throw InvalidInputException("Pattern failed to parse, error: '%s'", stored_re->error());
@@ -162,7 +166,7 @@ void RegexpExtractAll::Execute(DataChunk &args, ExpressionState &state, Vector &
 		                   : *non_const_args;
 		auto &string_val = string_entry.GetValue();
 		auto list = list_writer.WriteDynamicList();
-		ExtractAllMatches(string_val, re, group_index, groups, [&](const duckdb_re2::StringPiece &match_group) {
+		ExtractAllMatches(state, string_val, re, group_index, groups, [&](const duckdb_re2::StringPiece &match_group) {
 			auto &child_writer = list.WriteElement();
 			if (match_group.empty()) {
 				if (match_group.data() == nullptr) {
@@ -197,7 +201,7 @@ static inline bool ExtractAllStruct(duckdb_re2::StringPiece &input, duckdb_re2::
 	return true;
 }
 
-static list_entry_t ExtractStructAllSingleTuple(const string_t &string_val, duckdb_re2::RE2 &re,
+static list_entry_t ExtractStructAllSingleTuple(ExpressionState &state, const string_t &string_val, duckdb_re2::RE2 &re,
                                                 vector<duckdb_re2::StringPiece> &group_spans,
                                                 vector<Vector> &child_entries, Vector &result) {
 	const idx_t group_count = child_entries.size();
@@ -232,6 +236,9 @@ static list_entry_t ExtractStructAllSingleTuple(const string_t &string_val, duck
 			}
 		}
 		current_list_size++;
+		if ((current_list_size - result_entry.offset) % REGEXP_EXTRACT_CHECK_MATCHES == 0) {
+			state.InterruptCheck();
+		}
 		if (startpos > input_piece.size()) {
 			break; // empty match at end
 		}
@@ -280,7 +287,7 @@ void RegexpExtractAllStruct::Execute(DataChunk &args, ExpressionState &state, Ve
 		}
 		auto &string_val = string_entry.GetValue();
 		auto result_list =
-		    ExtractStructAllSingleTuple(string_val, lstate.constant_pattern, group_spans, child_entries, result);
+		    ExtractStructAllSingleTuple(state, string_val, lstate.constant_pattern, group_spans, child_entries, result);
 		list_entries.WriteValue(result_list);
 	}
 }

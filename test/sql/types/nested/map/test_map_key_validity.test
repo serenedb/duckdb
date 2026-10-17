@@ -1,0 +1,59 @@
+# name: test/sql/types/nested/map/test_map_key_validity.test
+# group: [map]
+
+statement error
+SELECT MAP {INTERVAL '1 month': 1, INTERVAL '30 days': 2}
+----
+Map keys must be unique
+
+statement error
+SELECT map([[INTERVAL '1 day'], [INTERVAL '24 hours']], [1, 2])
+----
+Map keys must be unique
+
+statement error
+SELECT map([{'a': -0.0::DOUBLE}, {'a': 0.0::DOUBLE}], [1, 2])
+----
+Map keys must be unique
+
+statement error
+SELECT map([1, 1, NULL], [1, 2, 3])
+----
+Map keys must be unique
+
+statement error
+SELECT map([1, NULL, 1], [1, 2, 3])
+----
+Map keys can not be NULL
+
+statement error
+SELECT map(k, v) FROM (VALUES ([1, 2], [3, 4]), ([5, 5], [6, 7])) t(k, v)
+----
+Map keys must be unique
+
+query I
+SELECT TRY_CAST(m AS MAP(INTEGER, INTEGER)) FROM (VALUES (MAP {1.5::DOUBLE: 1, 2.0: 2}), (MAP {1.2::DOUBLE: 1, 1.4: 2}), (MAP {3.0::DOUBLE: 3})) t(m)
+----
+NULL
+NULL
+{3=3}
+
+statement error
+SELECT CAST(MAP {1.2::DOUBLE: 1, 1.4: 2} AS MAP(INTEGER, INTEGER))
+----
+Map keys must be unique
+
+statement error
+SELECT CAST('{a=1, b=2, a=3}' AS MAP(VARCHAR, INTEGER))
+----
+Map keys must be unique
+
+query I
+SELECT sum(cardinality(CAST(map(range(200000), range(200000)) AS MAP(BIGINT, VARCHAR)))) FROM range(3)
+----
+600000
+
+query II
+SELECT count(*), sum(cardinality(map(range(i % 50), range(i % 50)))) FROM range(20000) t(i)
+----
+20000	490000

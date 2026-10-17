@@ -20,9 +20,9 @@ BoundWindowExpression::BoundWindowExpression(LogicalType return_type, unique_ptr
       distinct(false) {
 }
 
-bool BoundWindowExpression::IsVolatile() const {
+bool BoundWindowExpression::IsNodeVolatile() const {
 	auto stability = aggregate ? aggregate->GetStability() : window->GetStability();
-	return stability == FunctionStability::VOLATILE || Expression::IsVolatile();
+	return stability == FunctionStability::VOLATILE;
 }
 
 string BoundWindowExpression::ToString() const {

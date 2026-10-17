@@ -20,6 +20,7 @@ class ColumnDataCollection;
 //! in column 0 of `chunk`; whenever the chunk fills up it is flushed to `collection`
 //! and reset. The caller flushes the final partial chunk.
 void AppendExplainLines(const string &text, DataChunk &chunk, ColumnDataCollection &collection);
+void AppendExplainOutput(const string &text, bool split_lines, DataChunk &chunk, ColumnDataCollection &collection);
 
 class PhysicalExplainAnalyze : public PhysicalOperator {
 public:

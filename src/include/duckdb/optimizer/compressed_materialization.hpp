@@ -20,6 +20,7 @@ class LogicalOperator;
 class Expression;
 class BoundColumnRefExpression;
 class BoundFunctionExpression;
+class ColumnBindingReplacer;
 struct JoinCondition;
 
 enum class CompressedMaterializationType : uint8_t {
@@ -104,7 +105,8 @@ private:
 	static constexpr double JOIN_CARDINALITY_RATIO_THRESHOLD = 8;
 
 public:
-	CompressedMaterialization(Optimizer &optimizer, LogicalOperator &root, statistics_map_t &statistics_map);
+	CompressedMaterialization(Optimizer &optimizer, LogicalOperator &root, statistics_map_t &statistics_map,
+	                          bool &types_resolved, const vector<reference<unique_ptr<LogicalOperator>>> &path);
 
 	void Compress(unique_ptr<LogicalOperator> &op);
 
@@ -135,9 +137,11 @@ private:
 	void CreateProjections(unique_ptr<LogicalOperator> &op, CompressedMaterializationInfo &info);
 	bool TryCompressChild(CompressedMaterializationInfo &info, const CMChildInfo &child_info,
 	                      vector<unique_ptr<CompressExpression>> &compress_expressions);
-	void CreateCompressProjection(unique_ptr<LogicalOperator> &child_op,
+	void CreateCompressProjection(LogicalOperator &materializing_op, unique_ptr<LogicalOperator> &child_op,
 	                              vector<unique_ptr<CompressExpression>> compress_exprs,
 	                              CompressedMaterializationInfo &info, CMChildInfo &child_info);
+	void ReplaceAbove(ColumnBindingReplacer &replacer, optional_ptr<LogicalOperator> first,
+	                  LogicalOperator &replaced_subtree);
 	void CreateDecompressProjection(unique_ptr<LogicalOperator> &op, CompressedMaterializationInfo &info);
 	unique_ptr<Expression> CreateRestoreExpression(unique_ptr<Expression> input, const CMBindingInfo &binding_info,
 	                                               const BaseStatistics &stats);
@@ -176,6 +180,9 @@ private:
 	optional_ptr<LogicalOperator> root;
 	//! The map of ColumnBinding -> statistics for the various nodes
 	statistics_map_t &statistics_map;
+	bool &types_resolved;
+	const vector<reference<unique_ptr<LogicalOperator>>> &path;
+	optional_ptr<LogicalOperator> materializing_parent;
 	column_binding_set_t bucketed_groups;
 };
 

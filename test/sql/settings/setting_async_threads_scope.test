@@ -1,5 +1,5 @@
 # name: test/sql/settings/setting_async_threads_scope.test
-# description: A session value of async_threads caps that session's queries, SET GLOBAL async_threads sizes the pool
+# description: A session value of async_threads overrides the global value for that session's queries
 # group: [settings]
 
 require parquet
@@ -37,9 +37,9 @@ SELECT current_setting('async_threads')
 100
 
 statement error con1
-SET async_threads = -1
+SET async_threads = -2
 ----
-<REGEX>:Syntax Error.*Cannot have negative async_threads.*
+<REGEX>:Invalid Input Error.*async_threads must be -1 \(automatic\), 0 or a positive number.*
 
 query I con1
 SELECT current_setting('async_threads')

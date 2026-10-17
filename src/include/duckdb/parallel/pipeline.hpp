@@ -46,8 +46,6 @@ enum class ExternalInputEventState : uint8_t {
 };
 
 class PipelineTask : public ExecutorTask {
-	static constexpr const idx_t PARTIAL_CHUNK_COUNT = 50;
-
 public:
 	explicit PipelineTask(Pipeline &pipeline_p, shared_ptr<Event> event_p);
 
@@ -144,7 +142,7 @@ public:
 	void Ready();
 	void Reset();
 	void ResetSink();
-	void ResetSinkForReschedule();
+	void ResetSinkForReschedule(idx_t thread_count);
 	void ResetOperatorsForReschedule(reference_set_t<PhysicalOperator> &reset_operators);
 	void ResetSourceForReschedule();
 	void ResetSource(bool force);

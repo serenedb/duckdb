@@ -1694,7 +1694,7 @@ bool CopyFileLifecycleExecutor::WorkOnTask(bool throw_error) {
 
 void CopyFileLifecycleExecutor::WorkOnTaskOrYield() {
 	if (!WorkOnTask()) {
-		TaskScheduler::YieldThread();
+		executor.WaitForProgress();
 	}
 }
 
@@ -1706,7 +1706,7 @@ void CopyFileLifecycleExecutor::WaitForTaskSlot(CopyFileLifecycleWaitMode mode) 
 		if (async_threads == 0 || mode == CopyFileLifecycleWaitMode::DRAIN) {
 			WorkOnTaskOrYield();
 		} else {
-			TaskScheduler::YieldThread();
+			executor.WaitForProgress();
 		}
 	}
 }
@@ -2920,7 +2920,7 @@ public:
 				partitioned_copy.Flush(execution_context, interrupt_state);
 			} else {
 				if (!partitioned_copy.DrainDelayedPartitions(execution_context, interrupt_state)) {
-					TaskScheduler::YieldThread();
+					partitioned_copy.copy_gstate.lifecycle_executor.WorkOnTaskOrYield();
 				}
 			}
 		}

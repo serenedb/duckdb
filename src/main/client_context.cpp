@@ -8,6 +8,7 @@
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/common/progress_bar/progress_bar.hpp"
 #include "duckdb/common/serializer/buffered_file_writer.hpp"
+#include "duckdb/common/time_point.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/execution/column_binding_resolver.hpp"
@@ -27,6 +28,7 @@
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/main/query_result.hpp"
 #include "duckdb/main/relation.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
@@ -140,7 +142,8 @@ struct DebugClientContextState : public ClientContextState {
 
 ClientContext::ClientContext(shared_ptr<DatabaseInstance> database)
     : db(std::move(database)), interrupt_state(ClientInterruptState::NOT_INTERRUPTED), transaction(*this),
-      connection_id(DConstants::INVALID_INDEX) {
+      connection_id(DConstants::INVALID_INDEX),
+      scheduler_account(TaskScheduler::GetScheduler(*db).CreateAccount(SchedulerClass::FOREGROUND)) {
 	registered_state = make_uniq<RegisteredStateManager>();
 #ifdef DEBUG
 	registered_state->GetOrCreate<DebugClientContextState>("debug_client_context_state");
@@ -996,25 +999,10 @@ void ClientContext::SuppressInterrupts() {
 }
 
 void ClientContext::InterruptCheck() const {
-	// Counter for throttling timeout checks - only check every N iterations
-	static constexpr uint32_t TIMEOUT_CHECK_INTERVAL = 256;
-	thread_local uint32_t timeout_check_counter = 0;
-
 	if (interrupt_state.load(std::memory_order_relaxed) == ClientInterruptState::INTERRUPTED) {
 		throw InterruptException();
 	}
-	// Only check timeout every N calls to avoid expensive steady_clock::now() syscall
-	if (query_deadline.IsValid() && ++timeout_check_counter % TIMEOUT_CHECK_INTERVAL == 0) {
-		DeadlineCheck();
-	}
-}
-
-void ClientContext::DeadlineCheck() const {
-	if (!query_deadline.IsValid()) {
-		return;
-	}
-	auto now = NumericCast<idx_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
-	if (now >= query_deadline.GetIndex()) {
+	if (query_deadline.IsValid() && static_cast<idx_t>(TimePoint::Now()) >= query_deadline.GetIndex()) {
 		throw InterruptException("Query exceeded maximum execution time");
 	}
 }

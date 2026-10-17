@@ -108,6 +108,9 @@ public:
 	TableIndex prune_index;
 	bool need_prune = false;
 
+	TableIndex lateral_index;
+	bool lateral_aliases_by_value = false;
+
 public:
 	TableIndex GetRootIndex() override {
 		return need_prune ? prune_index : projection_index;

@@ -10,59 +10,59 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/atomic.hpp"
-#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/array.hpp"
-#include "duckdb/common/reference_map.hpp"
-#include "duckdb/common/enums/task_scheduler_type.hpp"
+#include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/parallel/task_scheduler_token.hpp"
-
-#ifdef DUCKDB_NO_THREADS
-#include "duckdb/common/queue.hpp"
-#endif
 
 namespace duckdb {
 
 class Task;
-class TaskSchedulerQueue;
-struct ConcurrentQueueWrapper;
-struct QueueProducerToken;
 
 class TaskSchedulerQueue {
 public:
-	explicit TaskSchedulerQueue(TaskSchedulerType pool_type_p);
-	~TaskSchedulerQueue();
+	TaskSchedulerQueue();
 
 public:
-	TaskSchedulerType GetPoolType();
 	void Enqueue(ProducerToken &token, shared_ptr<Task> task);
-	void EnqueueBulk(ProducerToken &token, vector<shared_ptr<Task>> &tasks);
+	//! Dequeues a task enqueued by this producer, return whether a was found and assigned to `task`.
 	bool DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task);
 	bool Dequeue(shared_ptr<Task> &task);
-	idx_t GetTasksInQueue() const;
-	idx_t GetApproxSize() const;
-	idx_t GetProducerCount() const;
+	void Charge(SchedulerAccount &account, double cost);
+	void RemoveToken(ProducerToken &token);
 	idx_t GetTaskCountForProducer(ProducerToken &token) const;
 
-#ifndef DUCKDB_NO_THREADS
-	ConcurrentQueueWrapper &GetQueue();
-#else
-	void RemoveToken(QueueProducerToken &token);
-#endif
+	idx_t GetTasksInQueue() const {
+		return queued.load(std::memory_order_relaxed);
+	}
 
 private:
-	friend class TaskScheduler;
+	struct AccountList {
+		SchedulerAccount *head = nullptr;
+		SchedulerAccount *tail = nullptr;
+	};
 
-	//! Dequeues a task enqueued by this producer, return whether a was found and assigned to `task`.
-	bool DequeueFromProducerLocked(ProducerToken &token, shared_ptr<Task> &task) DUCKDB_REQUIRES(token.producer_lock);
+	struct ClassState {
+		double weight = 1;
+		double vruntime = 0;
+		bool active = false;
+		AccountList fresh;
+		AccountList backlog;
+	};
 
-	const TaskSchedulerType pool_type;
-#ifndef DUCKDB_NO_THREADS
-	unique_ptr<ConcurrentQueueWrapper> queue;
-	atomic<idx_t> tasks_in_queue {0};
-#else
-	reference_map_t<QueueProducerToken, queue<shared_ptr<Task>>> q;
-	mutable mutex qlock;
-#endif
+	ClassState &GetClass(SchedulerAccount &account);
+	optional_ptr<ClassState> PickClass();
+	void Activate(SchedulerAccount &account);
+	void Deactivate(SchedulerAccount &account);
+	static SchedulerAccount &NextAccount(ClassState &state);
+	static void PushBack(AccountList &list, SchedulerAccount &account);
+	static void Erase(AccountList &list, SchedulerAccount &account);
+	static void Append(ProducerToken &producer);
+	static void Unlink(ProducerToken &producer);
+	void TakeFront(ProducerToken &producer, shared_ptr<Task> &task);
+
+	array<ClassState, 2> classes;
+	double root_vruntime = 0;
+	atomic<idx_t> queued {0};
 };
 
 } // namespace duckdb

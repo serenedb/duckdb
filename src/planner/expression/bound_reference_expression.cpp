@@ -34,8 +34,8 @@ bool BoundReferenceExpression::Equals(const BaseExpression &other_p) const {
 	return other.index == index;
 }
 
-hash_t BoundReferenceExpression::Hash() const {
-	return CombineHash(Expression::Hash(), duckdb::Hash<idx_t>(index));
+hash_t BoundReferenceExpression::NodeHash() const {
+	return CombineHash(Expression::NodeHash(), duckdb::Hash<idx_t>(index));
 }
 
 unique_ptr<Expression> BoundReferenceExpression::Copy() const {

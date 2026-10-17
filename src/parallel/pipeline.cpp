@@ -45,7 +45,7 @@ TaskExecutionResult PipelineTask::ExecuteTask(TaskExecutionMode mode) {
 	pipeline_executor->SetTaskForInterrupts(shared_from_this());
 
 	if (mode == TaskExecutionMode::PROCESS_PARTIAL) {
-		auto res = pipeline_executor->Execute(PARTIAL_CHUNK_COUNT);
+		auto res = pipeline_executor->Execute(TaskExecutionMode::PROCESS_PARTIAL);
 
 		switch (res) {
 		case PipelineExecuteResult::NOT_FINISHED:
@@ -56,7 +56,7 @@ TaskExecutionResult PipelineTask::ExecuteTask(TaskExecutionMode mode) {
 			break;
 		}
 	} else {
-		auto res = pipeline_executor->Execute();
+		auto res = pipeline_executor->Execute(TaskExecutionMode::PROCESS_ALL);
 		switch (res) {
 		case PipelineExecuteResult::NOT_FINISHED:
 			throw InternalException("Execute without limit should not return NOT_FINISHED");
@@ -354,7 +354,7 @@ void Pipeline::ResetSink() {
 	}
 }
 
-void Pipeline::ResetSinkForReschedule() {
+void Pipeline::ResetSinkForReschedule(idx_t thread_count) {
 	if (!sink) {
 		return;
 	}
@@ -366,7 +366,7 @@ void Pipeline::ResetSinkForReschedule() {
 	auto &client = GetClientContext();
 	auto allow_reuse = Settings::Get<EnableCachingOperatorsSetting>(client);
 	if (allow_reuse && sink->sink_state && sink->sink_state->SupportsReuse()) {
-		sink->sink_state->Reset(client);
+		sink->sink_state->ResetForThreads(client, thread_count);
 		return;
 	}
 	sink->sink_state = sink->GetGlobalSinkState(client);

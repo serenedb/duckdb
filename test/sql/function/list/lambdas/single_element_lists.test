@@ -1,0 +1,53 @@
+# name: test/sql/function/list/lambdas/single_element_lists.test
+# description: Lambdas over one-element lists and lambdas that capture dictionary vectors
+# group: [lambdas]
+
+statement ok
+SET lambda_syntax='DISABLE_SINGLE_ARROW'
+
+query III
+SELECT sum(list_transform([i], lambda x: x * 3)[1]), sum(list_transform([i], lambda x, k: x + k)[1]), sum(list_transform([i], lambda x: x + j)[1]) FROM (SELECT i, i % 7 AS j FROM range(10000) t(i))
+----
+149985000	50005000	50024994
+
+query II
+SELECT count(*) FILTER (WHERE v IS NULL), sum(v) FROM (SELECT list_transform([CASE WHEN i % 3 = 0 THEN NULL ELSE i END], lambda x: x + 1)[1] AS v FROM range(9999) t(i))
+----
+3333	33333333
+
+query I
+SELECT sum(list_transform([i], lambda a: list_transform([a * 2], lambda b: list_transform([b + a], lambda c: c * 10)[1])[1])[1]) FROM range(5000) t(i)
+----
+374925000
+
+query I
+SELECT sum(list_sum(list_transform([1, 2, 3], lambda x: x * v))) FROM (SELECT list_extract([i, i + 1], 2) AS v FROM range(5000) t(i))
+----
+75015000
+
+query I
+SELECT sum(list_sum(list_transform([1, 2, 3], lambda x: list_sum(list_transform([i, i + 1], lambda y: x * y + j))))) FROM (SELECT i, i % 5 AS j FROM range(2000) t(i))
+----
+24024000
+
+query II
+SELECT sum(list_value(i)[1]), count(list_value(CASE WHEN i % 2 = 0 THEN i END)[1]) FROM range(10000) t(i)
+----
+49995000	5000
+
+query II
+SELECT list_value(42)[1], [NULL::INTEGER][1]
+----
+42	NULL
+
+# reading index 1 of a lambda over a one-element list binds the lambda parameter to that element
+query II
+EXPLAIN SELECT list_transform([i], lambda x: x * 3)[1] FROM range(3) t(i)
+----
+physical_plan	<REGEX>:.*invoke\(lambda x.*
+
+query IIII
+SELECT list_transform([NULL::INTEGER], lambda x: coalesce(x, 7))[1], list_filter([i], lambda x: x > 0)[1], list_transform([i], lambda x: x + 1)[2], list_transform([i, 5], lambda x: x + 1)[1] FROM range(2) t(i) ORDER BY i
+----
+7	NULL	NULL	1
+7	1	NULL	2

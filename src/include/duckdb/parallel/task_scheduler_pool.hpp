@@ -8,38 +8,34 @@
 
 #pragma once
 
-#include "duckdb/common/enums/task_scheduler_type.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/atomic.hpp"
+#include "duckdb/common/vector.hpp"
 
 namespace duckdb {
 
 class TaskScheduler;
 class DatabaseInstance;
-struct LightWeightSemaphoreWrapper;
-struct QueueProducerToken;
 struct TaskSchedulerThread;
+struct TaskSchedulerSpare;
 
 class TaskSchedulerPool {
 public:
-	explicit TaskSchedulerPool(DatabaseInstance &db, TaskSchedulerType pool_type);
+	explicit TaskSchedulerPool(DatabaseInstance &db);
 	~TaskSchedulerPool();
 
 public:
 	void SetThreads(idx_t n);
 	idx_t NumberOfThreads();
 	void RelaunchThreads(TaskScheduler &scheduler, bool destroy);
-	void Signal(idx_t n);
-#ifndef DUCKDB_NO_THREADS
-	void Wait();
-	bool Wait(int64_t timeout_usecs);
-#endif
+	bool SpawnSpare(TaskScheduler &scheduler);
 
 private:
+	void ReapSpares();
+	void StopSpares(TaskScheduler &scheduler);
+
 	DatabaseInstance &db;
-	//! The type of this pool
-	const TaskSchedulerType pool_type;
 	//! The active background threads of the task scheduler
 	vector<unique_ptr<TaskSchedulerThread>> threads;
 	//! Markers used by the various threads, if the markers are set to "false" the thread execution is stopped
@@ -48,10 +44,9 @@ private:
 	atomic<idx_t> requested_thread_count;
 	//! The amount of threads currently running
 	atomic<idx_t> current_thread_count;
-#ifndef DUCKDB_NO_THREADS
-	//! Semaphore to signal threads in this pool to wake up and execute a task
-	unique_ptr<LightWeightSemaphoreWrapper> semaphore;
-#endif
+	mutex spare_lock;
+	atomic<bool> spares_stopped {false};
+	vector<unique_ptr<TaskSchedulerSpare>> spares;
 };
 
 }; // namespace duckdb

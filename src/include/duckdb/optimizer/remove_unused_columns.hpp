@@ -151,6 +151,9 @@ private:
 
 	RemoveUnusedColumns &root;
 	unique_ptr<unordered_map<TableIndex, MaterializedCTEInfo>> root_cte_map;
+	unordered_map<TableIndex, unordered_set<TableIndex>> cte_readers;
+	optional_ptr<LogicalOperator> cte_region;
+	unordered_map<TableIndex, unordered_set<ProjectionIndex>> pending_cte_ref_pruning;
 	column_binding_map_t<vector<ColumnBinding>> projection_map_replacements;
 	struct PrunedViewColumn {
 		ColumnBinding binding;
@@ -161,6 +164,10 @@ private:
 	column_binding_map_t<vector<PrunedViewColumn>> secure_view_replacements;
 
 private:
+	void PruneOperator(unique_ptr<LogicalOperator> &op_ref);
+	void PruneCTEReferences(LogicalOperator &subtree,
+	                        const unordered_map<TableIndex, unordered_set<ProjectionIndex>> &pruned,
+	                        bool apply_secure_views);
 	template <class T>
 	void ClearUnusedExpressions(vector<T> &list, TableIndex table_idx, bool replace = true);
 	void RecordSecureViewReplacement(ColumnBinding old_binding, ColumnBinding new_binding,
@@ -190,13 +197,14 @@ private:
 
 class CTERefPruner : public LogicalOperatorVisitor {
 public:
-	CTERefPruner(const TableIndex table_index, const unordered_set<ProjectionIndex> &referenced_columns);
+	CTERefPruner(const TableIndex table_index, const unordered_set<ProjectionIndex> &columns);
+	explicit CTERefPruner(const unordered_map<TableIndex, unordered_set<ProjectionIndex>> &columns);
 
 	void VisitOperator(LogicalOperator &op) override;
 
 private:
-	const TableIndex cte_index;
-	const unordered_set<ProjectionIndex> &referenced_columns;
+	unordered_map<TableIndex, unordered_set<ProjectionIndex>> own_referenced_columns;
+	const unordered_map<TableIndex, unordered_set<ProjectionIndex>> &referenced_columns;
 	column_binding_map_t<vector<ColumnBinding>> projection_map_replacements;
 
 public:

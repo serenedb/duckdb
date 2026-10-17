@@ -104,3 +104,14 @@ statement error
 SELECT i, CASE WHEN i%2=0 THEN {'i': [1,2,3]} ELSE {'i': ['hello']} END FROM range(6) tbl(i)
 ----
 an explicit cast is required
+
+statement ok
+CREATE TABLE case_structs AS SELECT i, {'a': i, 'b': repeat('s', i % 17)} AS s FROM range(3000) t(i)
+
+query III
+SELECT sum((CASE WHEN i % 3 = 0 THEN s WHEN i % 3 = 1 THEN NULL ELSE {'a': -i, 'b': 'x'} END).a),
+	max((CASE WHEN i % 2 = 0 THEN s ELSE {'a': 0, 'b': 'zz'} END).b),
+	count(CASE WHEN i % 5 = 0 THEN s END)
+FROM case_structs
+----
+-2000	zz	600

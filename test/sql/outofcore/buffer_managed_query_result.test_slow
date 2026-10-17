@@ -11,7 +11,7 @@ statement ok
 set temp_directory='';
 
 statement ok
-create table range as from range(100_000_000);
+create table range as from range_st(100_000_000);
 
 # test batched
 statement error

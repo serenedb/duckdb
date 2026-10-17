@@ -180,7 +180,7 @@ bool QueryGraphManager::Build(JoinOrderOptimizer &optimizer, LogicalOperator &op
 	auto extraction = relation_manager.ExtractEdges(op, filter_operators, set_manager);
 	filters_and_bindings = std::move(extraction.filters);
 	join_operators = std::move(extraction.join_operators);
-	JoinOrderConflictDetector::Build(join_operators, set_manager, relation_manager.relation_mapping);
+	JoinOrderConflictDetector::Build(join_operators, set_manager, relation_manager.relation_mapping, context);
 	for (auto &join_operator : join_operators) {
 		if (!JoinOrderConflictDetector::MustApplyAsOperator(*join_operator)) {
 			continue;

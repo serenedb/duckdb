@@ -7,7 +7,7 @@ void FSSTPrimitives::ThrowInvalidCompressedString() {
 	throw DataCorruptionException("Failed to decompress FSST string - escape code has no following byte");
 }
 
-[[noreturn]] static void ThrowFSSTDecodedStringTooLarge() {
+void FSSTPrimitives::ThrowDecodedStringTooLarge() {
 	throw DataCorruptionException("Failed to decompress FSST string - decoded size exceeds the output buffer");
 }
 
@@ -24,7 +24,7 @@ string FSSTPrimitives::DecompressValue(void *duckdb_fsst_decoder, const char *co
 
 	// The decoder reports the full string length even when the output buffer is too small.
 	if (decompressed_string_size > decompress_buffer.size()) {
-		ThrowFSSTDecodedStringTooLarge();
+		ThrowDecodedStringTooLarge();
 	}
 	return string(char_ptr_cast(decompress_buffer.data()), decompressed_string_size);
 }

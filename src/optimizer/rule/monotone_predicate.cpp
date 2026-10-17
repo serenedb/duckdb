@@ -904,7 +904,7 @@ private:
 		if (constants.empty()) {
 			return nullptr;
 		}
-		unique_ptr<Expression> result;
+		auto result = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_OR);
 		for (auto &constant : constants) {
 			Bounds bounds;
 			const auto guess = search->Guess(constant);
@@ -916,9 +916,12 @@ private:
 			if (!range) {
 				return nullptr;
 			}
-			result = result ? Disjoin(std::move(result), std::move(range)) : std::move(range);
+			result->GetChildrenMutable().push_back(std::move(range));
 		}
-		return result;
+		if (result->GetChildren().size() == 1) {
+			return std::move(result->GetChildrenMutable()[0]);
+		}
+		return std::move(result);
 	}
 
 	ClientContext &context;

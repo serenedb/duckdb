@@ -12,6 +12,7 @@
 #include "duckdb/main/http/http_util.hpp"
 #include "duckdb/main/http/http_retry_budget.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 
 namespace duckdb {
 
@@ -218,6 +219,7 @@ unique_ptr<HTTPResponse> HTTPUtil::SendRequestOnce(BaseRequest &request, HTTPCli
 }
 
 unique_ptr<HTTPResponse> HTTPUtil::SendRequest(BaseRequest &request, unique_ptr<HTTPClient> &client) {
+	TaskScheduler::BlockingScope blocking;
 	const auto initial_cache_policy =
 	    request.params.transport_manager ? HTTPClientCachePolicy::BYPASS_CACHE : HTTPClientCachePolicy::DEFAULT;
 	if (!client) {

@@ -67,8 +67,8 @@ bool BoundParameterExpression::Equals(const BaseExpression &other_p) const {
 	return identifier == other.identifier;
 }
 
-hash_t BoundParameterExpression::Hash() const {
-	hash_t result = Expression::Hash();
+hash_t BoundParameterExpression::NodeHash() const {
+	hash_t result = Expression::NodeHash();
 	result = CombineHash(duckdb::Hash(identifier.c_str(), identifier.size()), result);
 	return result;
 }

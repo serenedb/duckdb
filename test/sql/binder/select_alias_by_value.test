@@ -1,0 +1,74 @@
+# name: test/sql/binder/select_alias_by_value.test
+# description: A SELECT alias referenced by a later expression of the same list reads the computed value
+# group: [binder]
+
+query I
+SELECT bool_and(r2 = r * 2) FROM (SELECT random() AS r, r * 2 AS r2 FROM range(1000))
+----
+true
+
+query II
+SELECT (SELECT 1) AS x, x + 1
+----
+1	2
+
+query II
+SELECT (SELECT 1) AS x, alias.x
+----
+1	1
+
+query III
+SELECT (SELECT max(i) FROM range(10) t(i)) AS m, m + 1, m * 2
+----
+9	10	18
+
+statement error
+SELECT (SELECT 1) AS x, sum(x)
+----
+but the expression has a subquery
+
+statement error
+SELECT random() AS r, sum(r) OVER ()
+----
+expression has side effects
+
+query III
+SELECT x % 3 AS a, a + 1 AS b, count(*) AS c FROM range(10) t(x) GROUP BY ALL ORDER BY a
+----
+0	1	4
+1	2	3
+2	3	3
+
+query III
+SELECT x % 3 AS a, a * 10 + x % 2 AS b, count(*) FROM range(12) t(x) GROUP BY ALL ORDER BY ALL
+----
+0	0	2
+0	1	2
+1	10	2
+1	11	2
+2	20	2
+2	21	2
+
+query II
+SELECT x % 3 AS a, a + sum(x) FROM range(10) t(x) GROUP BY ALL ORDER BY a
+----
+0	18
+1	13
+2	17
+
+query II
+SELECT count(*) AS c, c + 1 FROM range(10) GROUP BY ALL
+----
+10	11
+
+statement error
+SELECT random() < 2 AS r, r AND x > 0 AS b, count(*) FROM range(3) t(x) GROUP BY ALL
+----
+expression has side effects
+
+query II
+SELECT a30, count(*) FROM (SELECT x AS a0, a0 + a0 AS a1, a1 + a1 AS a2, a2 + a2 AS a3, a3 + a3 AS a4, a4 + a4 AS a5, a5 + a5 AS a6, a6 + a6 AS a7, a7 + a7 AS a8, a8 + a8 AS a9, a9 + a9 AS a10, a10 + a10 AS a11, a11 + a11 AS a12, a12 + a12 AS a13, a13 + a13 AS a14, a14 + a14 AS a15, a15 + a15 AS a16, a16 + a16 AS a17, a17 + a17 AS a18, a18 + a18 AS a19, a19 + a19 AS a20, a20 + a20 AS a21, a21 + a21 AS a22, a22 + a22 AS a23, a23 + a23 AS a24, a24 + a24 AS a25, a25 + a25 AS a26, a26 + a26 AS a27, a27 + a27 AS a28, a28 + a28 AS a29, a29 + a29 AS a30 FROM range(3) t(x) GROUP BY ALL) GROUP BY ALL ORDER BY ALL
+----
+0	1
+1073741824	1
+2147483648	1

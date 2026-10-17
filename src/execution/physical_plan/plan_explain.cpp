@@ -52,17 +52,18 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalExplain &op) {
 		}
 	}
 
-	// Pack the plan strings into the result columns. PG shape: a single "QUERY PLAN"
-	// column with one row per plan line; DuckDB native shape: two columns {key, value}
-	// with one row per plan section.
 	auto &allocator = Allocator::Get(context);
 	auto collection = make_uniq<ColumnDataCollection>(context, op.types, ColumnDataAllocatorType::IN_MEMORY_ALLOCATOR);
 
 	DataChunk chunk;
 	chunk.Initialize(allocator, op.types);
 	if (op.output_shape == ExplainFormatShape::PG) {
+		bool split_lines = renderer && renderer->RendersLines();
 		for (idx_t i = 0; i < values.size(); i++) {
-			AppendExplainLines(values[i], chunk, *collection);
+			if (split_lines && values.size() > 1) {
+				AppendExplainLines(keys[i], chunk, *collection);
+			}
+			AppendExplainOutput(values[i], split_lines, chunk, *collection);
 		}
 	} else {
 		for (idx_t i = 0; i < keys.size(); i++) {

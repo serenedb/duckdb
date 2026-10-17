@@ -78,3 +78,55 @@ statement error
 select REPLACE(1, 2, 3, 4)
 ----
 <REGEX>:.*Binder Error: No function matches.*
+
+# rows without a match return their input, per-row and constant needles
+statement ok
+CREATE TABLE replace_rows(s VARCHAR, n VARCHAR, r VARCHAR)
+
+statement ok
+INSERT INTO replace_rows VALUES ('a long string that has no match', 'zz', '-'),
+	('a long string with one zz inside', 'zz', '-'), ('a long string with an empty needle', '', '-'),
+	('short', 'a needle longer than its haystack', '-'), ('multi-byte äöü characters äöü', 'äöü', 'ae'),
+	('overlapping aaaa', 'aa', 'b'), (NULL, 'zz', '-'), ('a long string with a NULL needle', NULL, '-')
+
+query T
+SELECT replace(s, n, r) FROM replace_rows
+----
+a long string that has no match
+a long string with one - inside
+a long string with an empty needle
+short
+multi-byte ae characters ae
+overlapping bb
+NULL
+NULL
+
+query T
+SELECT replace(s, 'zz', '+') FROM replace_rows
+----
+a long string that has no match
+a long string with one + inside
+a long string with an empty needle
+short
+multi-byte äöü characters äöü
+overlapping aaaa
+NULL
+a long string with a NULL needle
+
+statement ok
+CREATE TABLE replaced AS SELECT replace(s, 'zz', '+') AS s FROM replace_rows ORDER BY s
+
+statement ok
+DROP TABLE replace_rows
+
+query T
+SELECT s FROM replaced ORDER BY s
+----
+a long string that has no match
+a long string with a NULL needle
+a long string with an empty needle
+a long string with one + inside
+multi-byte äöü characters äöü
+overlapping aaaa
+short
+NULL

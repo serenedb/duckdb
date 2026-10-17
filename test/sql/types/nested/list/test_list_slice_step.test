@@ -284,3 +284,31 @@ statement error
 SELECT ([1,2,3,4,5])[1:[1]:2];
 ----
 Binder Error: The upper and lower bounds of the slice must be a BIGINT
+
+# slices of a constant list select more elements than the list holds across all rows
+query IIII
+SELECT count(*), sum(len(l[1:5:2])), max(l[2:4]), sum(len(l[2:-1:2])) FROM (SELECT [1, 2, 3, 4, 5] AS l FROM range(3000))
+----
+3000	9000	[2, 3, 4]	6000
+
+query II
+SELECT sum(len(r[2:-1:2])), max(r[2:-1:2]) FROM (SELECT range(i % 7) AS r FROM range(3000) t(i))
+----
+3854	[1, 3, 5]
+
+# a slice leaves its input list unchanged for the other expressions that read it
+statement ok
+CREATE TABLE sliced AS SELECT [i, i + 1, i + 2, i + 3] AS l FROM range(3) t(i)
+
+query IIII
+SELECT l, l[2:3], l[1:4:2], l FROM sliced
+----
+[0, 1, 2, 3]	[1, 2]	[0, 2]	[0, 1, 2, 3]
+[1, 2, 3, 4]	[2, 3]	[1, 3]	[1, 2, 3, 4]
+[2, 3, 4, 5]	[3, 4]	[2, 4]	[2, 3, 4, 5]
+
+query III
+SELECT l[2:3], l[-1:1:-1], list_sum(l) FROM (VALUES ([1, 2, 3, 4]), ([5, 6, 7, 8])) t(l)
+----
+[2, 3]	[4, 3, 2, 1]	10
+[6, 7]	[8, 7, 6, 5]	26

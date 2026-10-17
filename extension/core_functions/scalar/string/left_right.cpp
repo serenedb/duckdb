@@ -51,6 +51,7 @@ static void LeftFunction(DataChunk &args, ExpressionState &state, Vector &result
 
 	BinaryExecutor::Execute<string_t, int64_t, string_t>(
 	    str_vec, pos_vec, result, [&](string_t str, int64_t pos) { return LeftScalarFunction<OP>(result, str, pos); });
+	StringVector::AddHeapReference(result, str_vec);
 }
 
 static unique_ptr<BaseStatistics> LeftPropagateStats(ClientContext &context, FunctionStatisticsInput &input) {
@@ -112,6 +113,7 @@ static void RightFunction(DataChunk &args, ExpressionState &state, Vector &resul
 	const auto &pos_vec = args.data[1];
 	BinaryExecutor::Execute<string_t, int64_t, string_t>(
 	    str_vec, pos_vec, result, [&](string_t str, int64_t pos) { return RightScalarFunction<OP>(result, str, pos); });
+	StringVector::AddHeapReference(result, str_vec);
 }
 
 ScalarFunction RightFun::GetFunction() {

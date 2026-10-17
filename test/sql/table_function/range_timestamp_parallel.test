@@ -1,0 +1,46 @@
+# name: test/sql/table_function/range_timestamp_parallel.test
+# description: A constant timestamp range whose step has no months is generated on all threads, in order
+# group: [table_function]
+
+statement ok
+SET threads=16
+
+query III
+SELECT count(*), min(t), max(t) FROM range(TIMESTAMP '2024-01-01', TIMESTAMP '2024-08-01', INTERVAL '1 second') g(t)
+----
+18403200	2024-01-01 00:00:00	2024-07-31 23:59:59
+
+query II
+SELECT count(*), sum(epoch_us(t) - epoch_us(TIMESTAMP '2024-01-01')) // 1000000 FROM generate_series(TIMESTAMP '2024-01-01', TIMESTAMP '2024-08-01', INTERVAL '1 day 1 second') g(t)
+----
+213	1950761778
+
+query I
+SELECT count(*) FROM generate_series(TIMESTAMP '2024-08-01', TIMESTAMP '2024-01-01', INTERVAL '-90 minutes') g(t)
+----
+3409
+
+statement ok
+CREATE TABLE t AS SELECT range AS v FROM range(TIMESTAMP '2024-01-01', TIMESTAMP '2024-01-01' + INTERVAL '300000 seconds', INTERVAL '1 second')
+
+query I
+SELECT count(*) FROM t WHERE epoch_us(v) - epoch_us(TIMESTAMP '2024-01-01') <> rowid * 1000000
+----
+0
+
+query II
+SELECT row_group_id, sum(count) FROM pragma_storage_info('t') WHERE column_path = '[0]' GROUP BY ALL ORDER BY ALL
+----
+0	122880
+1	122880
+2	54240
+
+query I
+SELECT v FROM (SELECT range AS v FROM range(TIMESTAMP '2024-01-01', TIMESTAMP '2024-02-01', INTERVAL '1 second')) LIMIT 1
+----
+2024-01-01 00:00:00
+
+query II
+SELECT count(*), max(t) FROM range(TIMESTAMP '2024-01-31', TIMESTAMP '2024-12-31', INTERVAL '1 month') g(t)
+----
+12	2024-12-29 00:00:00

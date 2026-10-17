@@ -2,15 +2,140 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/common/error_data.hpp"
+#include "duckdb/common/string_map_set.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
+#include "duckdb/common/vector/map_vector.hpp"
+#include "duckdb/common/vector/vector_iterator.hpp"
+#include "duckdb/common/vector/vector_writer.hpp"
+
+#include <absl/container/flat_hash_set.h>
 
 namespace duckdb {
 
+namespace {
+
+struct CoalesceState : public ExpressionState {
+	CoalesceState(const Expression &expr, ExpressionExecutorState &root) : ExpressionState(expr, root) {
+	}
+
+	void Reserve(idx_t count) {
+		if (count <= capacity) {
+			return;
+		}
+		capacity = MaxValue<idx_t>(count, STANDARD_VECTOR_SIZE);
+		sel_a.Initialize(capacity);
+		sel_b.Initialize(capacity);
+		slice_sel.Initialize(capacity);
+		result_sel.Initialize(capacity);
+	}
+
+	idx_t capacity = 0;
+	SelectionVector sel_a;
+	SelectionVector sel_b;
+	SelectionVector slice_sel;
+	SelectionVector result_sel;
+};
+
+constexpr idx_t IN_SET_THRESHOLD = 16;
+
+bool InSetSupportsType(const LogicalType &type) {
+	switch (type.id()) {
+	case LogicalTypeId::BOOLEAN:
+	case LogicalTypeId::TINYINT:
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+	case LogicalTypeId::HUGEINT:
+	case LogicalTypeId::UTINYINT:
+	case LogicalTypeId::USMALLINT:
+	case LogicalTypeId::UINTEGER:
+	case LogicalTypeId::UBIGINT:
+	case LogicalTypeId::UHUGEINT:
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DOUBLE:
+	case LogicalTypeId::DECIMAL:
+	case LogicalTypeId::DATE:
+	case LogicalTypeId::TIME:
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_SEC:
+	case LogicalTypeId::TIMESTAMP_MS:
+	case LogicalTypeId::TIMESTAMP_NS:
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::INTERVAL:
+	case LogicalTypeId::VARCHAR:
+	case LogicalTypeId::BLOB:
+	case LogicalTypeId::UUID:
+	case LogicalTypeId::ENUM:
+		return true;
+	default:
+		return false;
+	}
+}
+
+struct InState : public ExpressionState {
+	InState(const Expression &expr, ExpressionExecutorState &root) : ExpressionState(expr, root) {
+	}
+
+	void Initialize(const BoundOperatorExpression &expr) {
+		initialized = true;
+		auto &children = expr.GetChildren();
+		auto &type = children[0]->GetReturnType();
+		if (children.size() - 1 < IN_SET_THRESHOLD || !InSetSupportsType(type) || !HasContext()) {
+			return;
+		}
+		for (idx_t i = 1; i < children.size(); i++) {
+			if (!children[i]->IsFoldable() || children[i]->GetReturnType() != type) {
+				return;
+			}
+		}
+		Vector values(type, children.size() - 1);
+		for (idx_t i = 1; i < children.size(); i++) {
+			auto value = ExpressionExecutor::EvaluateScalar(GetContext(), *children[i]);
+			list_has_null = list_has_null || value.IsNull();
+			values.Append(value, VectorAppendMode::ALLOW_RESIZE);
+		}
+		keys = make_uniq<Vector>(LogicalType::BLOB, values.size());
+		MapVector::CreateKeySortKeys(values, *keys);
+		auto list_keys = keys->Values<string_t>();
+		auto validity = values.Validity();
+		for (idx_t i = 0; i < values.size(); i++) {
+			if (validity.IsValid(i)) {
+				set.insert(list_keys[i].GetValue());
+			}
+		}
+		use_set = true;
+	}
+
+	bool initialized = false;
+	bool use_set = false;
+	bool list_has_null = false;
+	unique_ptr<Vector> keys;
+	absl::flat_hash_set<string_t, StringHash, StringEquality> set;
+};
+
+} // namespace
+
 unique_ptr<ExpressionState> ExpressionExecutor::InitializeState(const BoundOperatorExpression &expr,
                                                                 ExpressionExecutorState &root) {
-	auto result = make_uniq<ExpressionState>(expr, root);
+	unique_ptr<ExpressionState> result;
+	const auto expression_type = expr.GetExpressionType();
+	const bool is_in =
+	    expression_type == ExpressionType::COMPARE_IN || expression_type == ExpressionType::COMPARE_NOT_IN;
+	if (expression_type == ExpressionType::OPERATOR_COALESCE) {
+		result = make_uniq<CoalesceState>(expr, root);
+	} else if (is_in) {
+		result = make_uniq<InState>(expr, root);
+	} else {
+		result = make_uniq<ExpressionState>(expr, root);
+	}
 	for (auto &child : expr.GetChildren()) {
 		result->AddChild(*child);
+	}
+	if (is_in) {
+		for (idx_t i = 0; i < 3; i++) {
+			result->types.push_back(LogicalType::BOOLEAN);
+			result->initialize.push_back(true);
+		}
 	}
 
 	result->Finalize();
@@ -23,37 +148,61 @@ void ExpressionExecutor::Execute(const BoundOperatorExpression &expr, Expression
 	// IN has n children
 	auto expression_type = expr.GetExpressionType();
 	if (expression_type == ExpressionType::COMPARE_IN || expression_type == ExpressionType::COMPARE_NOT_IN) {
-		if (expr.GetChildren().size() < 2) {
+		auto &children = expr.GetChildren();
+		if (children.size() < 2) {
 			throw InvalidInputException("IN needs at least two children");
 		}
-
-		Vector left(expr.GetChildren()[0]->GetReturnType());
+		auto &in_state = state->Cast<InState>();
+		if (!in_state.initialized) {
+			in_state.Initialize(expr);
+		}
+		auto &chunk = state->intermediate_chunk;
+		chunk.Reset();
+		auto &left = chunk.data[0];
 		// eval left side
-		Execute(*expr.GetChildren()[0], state->child_states[0].get(), sel, count, left);
+		Execute(*children[0], state->child_states[0].get(), sel, count, left);
 
-		// init result to false
-		Vector intermediate(LogicalType::BOOLEAN);
-		intermediate.Reference(Value::BOOLEAN(false), count_t(count));
+		if (in_state.use_set && left.GetVectorType() != VectorType::CONSTANT_VECTOR) {
+			Vector left_keys(LogicalType::BLOB, count);
+			MapVector::CreateKeySortKeys(left, left_keys);
+			auto keys = left_keys.Values<string_t>();
+			auto validity = left.Validity();
+			const bool in = expression_type == ExpressionType::COMPARE_IN;
+			auto writer = FlatVector::Writer<bool>(result, count);
+			for (idx_t i = 0; i < count; i++) {
+				if (!validity.IsValid(i)) {
+					writer.WriteNull();
+				} else if (in_state.set.contains(keys[i].GetValue())) {
+					writer.WriteValue(in);
+				} else if (in_state.list_has_null) {
+					writer.WriteNull();
+				} else {
+					writer.WriteValue(!in);
+				}
+			}
+			return;
+		}
+
+		auto &comp_res = chunk.data[children.size()];
+		Vector intermediate(LogicalType::BOOLEAN, 0);
 
 		// in rhs is a list of constants
 		// for every child, OR the result of the comparison with the left
 		// to get the overall result.
-		for (idx_t child = 1; child < expr.GetChildren().size(); child++) {
-			Vector vector_to_check(expr.GetChildren()[child]->GetReturnType());
-			Vector comp_res(LogicalType::BOOLEAN);
+		for (idx_t child = 1; child < children.size(); child++) {
+			auto &vector_to_check = chunk.data[child];
 
-			Execute(*expr.GetChildren()[child], state->child_states[child].get(), sel, count, vector_to_check);
-			VectorOperations::Equals(left, vector_to_check, comp_res);
-
+			Execute(*children[child], state->child_states[child].get(), sel, count, vector_to_check);
+			auto &accumulator = chunk.data[children.size() + 1 + child % 2];
 			if (child == 1) {
 				// first child: move to result
-				intermediate.Reference(comp_res);
+				VectorOperations::Equals(left, vector_to_check, accumulator);
 			} else {
 				// otherwise OR together
-				Vector new_result(LogicalType::BOOLEAN);
-				VectorOperations::Or(intermediate, comp_res, new_result);
-				intermediate.Reference(new_result);
+				VectorOperations::Equals(left, vector_to_check, comp_res);
+				VectorOperations::Or(intermediate, comp_res, accumulator);
 			}
+			intermediate.Reference(accumulator);
 		}
 		if (expression_type == ExpressionType::COMPARE_NOT_IN) {
 			// NOT IN: invert result
@@ -63,16 +212,19 @@ void ExpressionExecutor::Execute(const BoundOperatorExpression &expr, Expression
 			result.Reference(intermediate);
 		}
 	} else if (expression_type == ExpressionType::OPERATOR_COALESCE) {
-		SelectionVector sel_a(count);
-		SelectionVector sel_b(count);
-		SelectionVector slice_sel(count);
-		SelectionVector result_sel(count);
+		auto &coalesce_state = state->Cast<CoalesceState>();
+		coalesce_state.Reserve(count);
+		auto &sel_a = coalesce_state.sel_a;
+		auto &sel_b = coalesce_state.sel_b;
+		auto &slice_sel = coalesce_state.slice_sel;
+		auto &result_sel = coalesce_state.result_sel;
 		SelectionVector *next_sel = &sel_a;
 		const SelectionVector *current_sel = sel;
 		idx_t remaining_count = count;
 		idx_t next_count;
+		state->intermediate_chunk.Reset();
 		for (idx_t child = 0; child < expr.GetChildren().size(); child++) {
-			Vector vector_to_check(expr.GetChildren()[child]->GetReturnType());
+			auto &vector_to_check = state->intermediate_chunk.data[child];
 			Execute(*expr.GetChildren()[child], state->child_states[child].get(), current_sel, remaining_count,
 			        vector_to_check);
 
@@ -114,11 +266,7 @@ void ExpressionExecutor::Execute(const BoundOperatorExpression &expr, Expression
 		Vector try_result(result.GetType());
 		try {
 			Execute(*expr.GetChildren()[0], &child_state, sel, count, try_result);
-			if (try_result.GetVectorType() == VectorType::CONSTANT_VECTOR) {
-				result.Reference(try_result);
-				return;
-			}
-			VectorOperations::Copy(try_result, result, count, 0, 0);
+			result.Reference(try_result);
 			return;
 		} catch (std::exception &ex) {
 			ErrorData error(ex);

@@ -1,6 +1,7 @@
 #include "duckdb/optimizer/join_order/join_order_operator.hpp"
 
 #include "duckdb/common/assert.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
@@ -240,8 +241,12 @@ static void SimplifyConflictRules(JoinOrderOperator &op, JoinRelationSetManager 
 
 void JoinOrderConflictDetector::Build(vector<unique_ptr<JoinOrderOperator>> &operators,
                                       JoinRelationSetManager &set_manager,
-                                      const unordered_map<TableIndex, RelationIndex> &relation_mapping) {
+                                      const unordered_map<TableIndex, RelationIndex> &relation_mapping,
+                                      optional_ptr<ClientContext> context) {
 	for (auto &op : operators) {
+		if (context) {
+			context->InterruptCheck();
+		}
 		D_ASSERT(!JoinRelationSet::Intersects(op->left_relations, op->right_relations));
 		BuildConflictRules(*op, set_manager, relation_mapping);
 		op->must_apply_as_operator = op->type != JoinOrderOperatorType::CROSS_PRODUCT &&

@@ -477,11 +477,15 @@ def generate_member_hash(member, indent='\t'):
 def generate_base_hash(base_entry):
     lines = [
         'hash_t ParsedExpression::Hash() const {',
-        '\thash_t hash = duckdb::Hash<uint32_t>(static_cast<uint32_t>(expression_class));',
-        '\thash = CombineHash(hash, duckdb::Hash<uint32_t>(static_cast<uint32_t>(type)));',
+        '\thash_t hash = NodeHash();',
         '\tParsedExpressionIterator::EnumerateChildren(',
-        '\t    *this, [&](const ParsedExpression &child) { hash = CombineHash(hash, child.Hash()); });',
+        '\t    *this, [&](const ParsedExpression &child) { hash += duckdb::Hash<hash_t>(child.Hash()); });',
         '\treturn hash;',
+        '}',
+        '',
+        'hash_t ParsedExpression::NodeHash() const {',
+        '\thash_t hash = duckdb::Hash<uint32_t>(static_cast<uint32_t>(expression_class));',
+        '\treturn CombineHash(hash, duckdb::Hash<uint32_t>(static_cast<uint32_t>(type)));',
         '}',
     ]
     return lines
@@ -499,8 +503,8 @@ def generate_subclass_hash(entry):
         return []
 
     lines = [
-        f'hash_t {class_name}::Hash() const {{',
-        '\thash_t hash = ParsedExpression::Hash();',
+        f'hash_t {class_name}::NodeHash() const {{',
+        '\thash_t hash = ParsedExpression::NodeHash();',
     ]
     lines.extend(extra)
     lines.append('\treturn hash;')

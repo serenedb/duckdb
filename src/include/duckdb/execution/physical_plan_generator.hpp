@@ -99,6 +99,11 @@ public:
 	//! Materialized CTE ids must be collected.
 	unordered_map<TableIndex, vector<const_reference<PhysicalOperator>>> materialized_ctes;
 	unordered_map<TableIndex, OrderPreservationType> materialized_cte_orders;
+	struct MaterializedCTEShape {
+		bool definition_has_side_effects;
+		bool contains_recursive_cte;
+	};
+	unordered_map<TableIndex, MaterializedCTEShape> materialized_cte_shapes;
 	//! The index for duplicate eliminated joins.
 	idx_t delim_index = 0;
 	//! Tracks whether we are planning the recursive member of a recursive CTE.
@@ -201,6 +206,7 @@ private:
 	ClientContext &context;
 	unique_ptr<PhysicalPlan> physical_plan;
 	reference_set_t<const PhysicalOperator> non_repeatable_operators;
+	bool subtree_has_side_effects = false;
 
 private:
 	PhysicalOperator &CreatePlanInternal(LogicalOperator &op);

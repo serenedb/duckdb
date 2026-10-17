@@ -95,6 +95,16 @@ public:
 		return result;
 	}
 
+	vector<InterruptState> TakeBlockedTasks(idx_t max_count) DUCKDB_REQUIRES(lock) {
+		vector<InterruptState> result;
+		result.reserve(MinValue<idx_t>(max_count, blocked_tasks.size()));
+		while (result.size() < max_count && !blocked_tasks.empty()) {
+			result.push_back(std::move(blocked_tasks.back()));
+			blocked_tasks.pop_back();
+		}
+		return result;
+	}
+
 	//! Unblock all tasks (must hold the lock)
 	bool UnblockTasks() DUCKDB_REQUIRES(lock) {
 		if (blocked_tasks.empty()) {

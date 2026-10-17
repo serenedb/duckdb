@@ -49,7 +49,8 @@ BoundStatement Binder::BindNode(QueryNode &node) {
 		if (IsDMLQueryNode(cte_type)) {
 			++dml_cte_count;
 		}
-		bound_ctes.push_back(current_binder.get().PrepareCTE(cte.first, *cte.second));
+		auto continues_chain = !bound_ctes.empty();
+		bound_ctes.push_back(current_binder.get().PrepareCTE(cte.first, *cte.second, continues_chain));
 		current_binder = *bound_ctes.back().child_binder;
 	}
 	BoundStatement result;
@@ -149,7 +150,7 @@ void CTEBindState::Bind(CTEBinding &binding) {
 	QueryResult::DeduplicateColumns(names);
 }
 
-BoundCTEData Binder::PrepareCTE(const Identifier &ctename, CommonTableExpressionInfo &statement) {
+BoundCTEData Binder::PrepareCTE(const Identifier &ctename, CommonTableExpressionInfo &statement, bool continues_chain) {
 	BoundCTEData result;
 
 	// first recursively visit the materialized CTE operations
@@ -170,7 +171,17 @@ BoundCTEData Binder::PrepareCTE(const Identifier &ctename, CommonTableExpression
 	// as we are binding a CTE currently, we take precedence over the existing binding.
 	// This implements the CTE shadowing behavior.
 	auto cte_binding = make_uniq<CTEBinding>(BindingAlias(ctename), result.cte_bind_state, result.setop_index);
-	result.child_binder->bind_context.AddCTEBinding(std::move(cte_binding));
+	auto &binding = *cte_binding;
+	auto &child = *result.child_binder;
+	child.bind_context.AddCTEBinding(std::move(cte_binding));
+	if (continues_chain) {
+		D_ASSERT(cte_chain);
+		child.cte_chain = cte_chain;
+		child.cte_chain_position = cte_chain_position + 1;
+	} else {
+		child.cte_chain = make_shared_ptr<CTEChain>(child);
+	}
+	child.cte_chain->bindings[binding.GetBindingAlias().GetAlias()].emplace_back(child.cte_chain_position, binding);
 	return result;
 }
 

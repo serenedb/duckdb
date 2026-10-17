@@ -1,0 +1,14 @@
+# name: test/optimizer/common_subplan_names.test
+# description: Common subplans of the same size become CTEs in the order the plan reaches them, on every run
+# group: [optimizer]
+
+statement ok
+CREATE TABLE t AS SELECT range AS a, range % 5 AS b FROM range(100)
+
+statement ok
+PRAGMA explain_output = PHYSICAL_ONLY;
+
+query II
+EXPLAIN SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT 1) FROM t WHERE b = 0)) FROM t WHERE b = 1)) FROM t WHERE b = 2)) FROM t WHERE b = 3)) FROM t WHERE b = 4)) FROM t WHERE b = 0)) FROM t WHERE b = 1)) FROM t WHERE b = 2)
+----
+2 values hashing to bef2191d058fe6599bdfd15897af33ce

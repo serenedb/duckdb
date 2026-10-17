@@ -1,0 +1,31 @@
+# name: test/sql/table_function/range_row_group_layout.test
+# description: An ordered insert from a parallel range fills whole row groups
+# group: [table_function]
+
+statement ok
+SET threads=16
+
+statement ok
+CREATE TABLE t AS SELECT range AS v FROM range(300000)
+
+query I
+SELECT count(*) FROM t WHERE rowid <> v
+----
+0
+
+query II
+SELECT row_group_id, sum(count) FROM pragma_storage_info('t') WHERE column_path = '[0]' GROUP BY ALL ORDER BY ALL
+----
+0	122880
+1	122880
+2	54240
+
+statement ok
+CREATE TABLE g AS SELECT generate_series AS v FROM generate_series(0, 299999)
+
+query II
+SELECT row_group_id, sum(count) FROM pragma_storage_info('g') WHERE column_path = '[0]' GROUP BY ALL ORDER BY ALL
+----
+0	122880
+1	122880
+2	54240

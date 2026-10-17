@@ -56,9 +56,11 @@ bool ApproxQuantileCoding::Decode(const double &source, dtime_tz_t &target) {
 		micros -= int64_t(dtime_tz_t::encode_offset(offset) * dtime_tz_t::OFFSET_MICROS);
 		target = dtime_tz_t(dtime_t(micros), offset);
 	} else if (source < 0) {
-		target = Value::MinimumValue(LogicalTypeId::TIME_TZ).GetValue<dtime_tz_t>();
+		static const auto minimum = Value::MinimumValue(LogicalTypeId::TIME_TZ).GetValue<dtime_tz_t>();
+		target = minimum;
 	} else {
-		target = Value::MaximumValue(LogicalTypeId::TIME_TZ).GetValue<dtime_tz_t>();
+		static const auto maximum = Value::MaximumValue(LogicalTypeId::TIME_TZ).GetValue<dtime_tz_t>();
+		target = maximum;
 	}
 
 	return decoded;
