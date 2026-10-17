@@ -478,8 +478,10 @@ shared_ptr<GlobalSourceState> Pipeline::GetSourceState() {
 }
 
 void Pipeline::SetSourceState(shared_ptr<GlobalSourceState> state) {
-	annotated_lock_guard<annotated_mutex> guard(source_state_lock);
-	source_state = std::move(state);
+	{
+		annotated_lock_guard<annotated_mutex> guard(source_state_lock);
+		std::swap(source_state, state);
+	}
 }
 
 void Pipeline::FinishSourceAndPreventBlocking(ClientContext &context) {
@@ -743,10 +745,12 @@ const vector<reference<PhysicalOperator>> &Pipeline::GetIntermediateOperators() 
 }
 
 void Pipeline::ClearSource() {
+	shared_ptr<GlobalSourceState> state;
 	{
 		annotated_lock_guard<annotated_mutex> source_guard(source_state_lock);
-		source_state.reset();
+		std::swap(source_state, state);
 	}
+	state.reset();
 	ResetBatchIndexes();
 }
 
