@@ -10,7 +10,6 @@
 #include "duckdb/parallel/task_scheduler_queue.hpp"
 #include "duckdb/storage/block_allocator.hpp"
 
-#include <absl/container/inlined_vector.h>
 #ifndef DUCKDB_NO_THREADS
 #include "lightweightsemaphore.h"
 #include "duckdb/common/thread.hpp"
@@ -30,8 +29,7 @@
 
 namespace duckdb {
 
-static constexpr int64_t MIN_SLICE_NANOS = 1000000;
-static constexpr double SLICE_ESTIMATE_NANOS = 1000000;
+static constexpr int64_t MIN_SLICE_NANOS = TaskSchedulerQueue::TURN_NANOS;
 static constexpr int64_t INITIAL_FLUSH_WAIT = 500000;
 
 struct SchedulerWorker {
@@ -40,10 +38,11 @@ struct SchedulerWorker {
 
 	TaskScheduler &scheduler;
 	const bool spare;
-#ifndef DUCKDB_NO_THREADS
-	duckdb_moodycamel::LightweightSemaphore semaphore;
-#endif
 	shared_ptr<SchedulerAccount> account;
+	shared_ptr<SchedulerAccount> handoff;
+	int64_t bound_used = 0;
+	bool rotate = false;
+	bool arrival_leave = false;
 	idx_t idle_phase = 0;
 	int64_t slice_start = 0;
 	int64_t blocked_ticks = 0;
@@ -53,20 +52,12 @@ struct SchedulerWorker {
 	bool holds_slot = false;
 	bool released_slot = false;
 	bool must_yield = false;
-	bool idle = false;
-	bool woken = false;
-};
-
-struct SchedulerWakeList {
-	absl::InlinedVector<SchedulerWorker *, 8> workers;
-	idx_t spawn = 0;
-};
-
-struct SchedulerSlice {
-	shared_ptr<SchedulerAccount> account;
-	shared_ptr<Task> requeue;
-	int64_t used = 0;
-	bool pending = false;
+	bool retired = false;
+	idx_t index = DConstants::INVALID_INDEX;
+	atomic<bool> woken {false};
+#ifndef DUCKDB_NO_THREADS
+	duckdb_moodycamel::LightweightSemaphore semaphore;
+#endif
 };
 
 static thread_local SchedulerWorker *current_worker = nullptr; // NOLINT
@@ -77,19 +68,15 @@ static int64_t MinSliceTicks() {
 	return ticks;
 }
 
-ProducerToken::ProducerToken(TaskScheduler &scheduler_p, shared_ptr<SchedulerAccount> account_p)
-    : scheduler(scheduler_p), account(std::move(account_p)) {
-}
-
-ProducerToken::~ProducerToken() {
-	scheduler.RemoveProducer(*this);
-}
-
 TaskScheduler::BlockingScope::BlockingScope() : worker(current_worker) {
 	if (!worker || worker->blocking_depth++ > 0) {
 		return;
 	}
 	worker->blocked_since = TimePoint::Now();
+	worker->scheduler.ReleaseClaims(*worker);
+	if (worker->account) {
+		worker->scheduler.queue.Detach(*worker->account);
+	}
 	if (worker->holds_slot) {
 		worker->scheduler.ReleaseSlot(*worker);
 	}
@@ -100,6 +87,9 @@ TaskScheduler::BlockingScope::~BlockingScope() {
 		return;
 	}
 	worker->blocked_ticks += TimePoint::Now() - worker->blocked_since;
+	if (worker->account) {
+		worker->scheduler.queue.Attach(*worker->account);
+	}
 	if (worker->released_slot) {
 		worker->scheduler.ReacquireSlot(*worker);
 	}
@@ -116,8 +106,7 @@ TaskScheduler::DriverSlice::~DriverSlice() {
 }
 
 TaskScheduler::TaskScheduler(DatabaseInstance &db)
-    : db(db), pool(make_uniq<TaskSchedulerPool>(db)),
-      background_account(make_shared_ptr<SchedulerAccount>(SchedulerClass::BACKGROUND)) {
+    : db(db), pool(make_uniq<TaskSchedulerPool>(db)), background_account(CreateAccount(SchedulerClass::BACKGROUND)) {
 }
 
 void TaskScheduler::Join() {
@@ -146,7 +135,7 @@ TaskScheduler &TaskScheduler::GetScheduler(DatabaseInstance &db) {
 }
 
 shared_ptr<SchedulerAccount> TaskScheduler::CreateAccount(SchedulerClass scheduler_class) {
-	return make_shared_ptr<SchedulerAccount>(scheduler_class);
+	return make_shared_ptr<SchedulerAccount>(queue, scheduler_class);
 }
 
 unique_ptr<ProducerToken> TaskScheduler::CreateProducer() {
@@ -155,14 +144,6 @@ unique_ptr<ProducerToken> TaskScheduler::CreateProducer() {
 
 unique_ptr<ProducerToken> TaskScheduler::CreateProducer(shared_ptr<SchedulerAccount> account) {
 	return make_uniq<ProducerToken>(*this, account ? std::move(account) : background_account);
-}
-
-void TaskScheduler::RemoveProducer(ProducerToken &producer) {
-	if (!producer.runnable.load(std::memory_order_acquire)) {
-		return;
-	}
-	const annotated_lock_guard<annotated_mutex> guard(lock);
-	queue.RemoveToken(producer);
 }
 
 void TaskScheduler::ScheduleTask(ProducerToken &token, shared_ptr<Task> task) {
@@ -184,22 +165,28 @@ void TaskScheduler::ScheduleTasks(ProducerToken &producer, vector<shared_ptr<Tas
 
 void TaskScheduler::Enqueue(ProducerToken &producer, shared_ptr<Task> *tasks, idx_t count,
                             TaskSchedulerType pool_type) {
-	const bool blocking = pool_type != TaskSchedulerType::REGULAR;
-	SchedulerWakeList wake;
+	if (count == 0) {
+		return;
+	}
+	const bool blocking =
+	    pool_type != TaskSchedulerType::REGULAR || producer.account->scheduler_class == SchedulerClass::BACKGROUND;
+	bool activated;
+	bool keep_claim;
 	{
 		const annotated_lock_guard<annotated_mutex> producer_guard(producer.producer_lock);
-		{
-			const annotated_lock_guard<annotated_mutex> guard(lock);
-			for (idx_t i = 0; i < count; i++) {
-				tasks[i]->token = producer;
-				tasks[i]->blocking = blocking;
-				queue.Enqueue(producer, std::move(tasks[i]));
-			}
-			WakeIdle(count, wake);
+		for (idx_t i = 0; i < count; i++) {
+			tasks[i]->token = producer;
+			tasks[i]->blocking = blocking;
 		}
+		keep_claim = !blocking && count == 1 && current_worker && !current_worker->rotate &&
+		             current_worker->account.get() == producer.account.get();
+		activated = queue.Enqueue(producer, tasks, count, keep_claim);
 		producer.producer_cv.Signal();
 	}
-	Wake(wake);
+	if (activated) {
+		queue.Publish(*producer.account);
+	}
+	Wake(count, producer.account.get());
 }
 
 bool TaskScheduler::GetTaskFromProducer(ProducerToken &token, shared_ptr<Task> &task) {
@@ -208,75 +195,84 @@ bool TaskScheduler::GetTaskFromProducer(ProducerToken &token, shared_ptr<Task> &
 }
 
 bool TaskScheduler::GetTaskFromProducerLocked(ProducerToken &token, shared_ptr<Task> &task) {
-	const annotated_lock_guard<annotated_mutex> guard(lock);
 	return queue.DequeueFromProducer(token, task);
 }
 
-idx_t TaskScheduler::SpareLimit() const {
-	return MaxValue<idx_t>(4 * target.load(std::memory_order_relaxed), 8);
-}
-
-void TaskScheduler::WakeIdle(idx_t count, SchedulerWakeList &wake) {
-	const auto slots = target.load(std::memory_order_relaxed);
-	const auto busy = running.load(std::memory_order_relaxed) + waking;
-	auto available = slots > busy ? slots - busy : 0;
-	const auto queued = queue.GetTasksInQueue();
-	count = MinValue<idx_t>(count, queued > waking ? queued - waking : 0);
-	for (auto list : {&idle, &idle_spares}) {
-		while (count > 0 && available > 0 && !list->empty()) {
-			auto &worker = *list->back();
-			list->pop_back();
-			worker.idle = false;
-			worker.woken = true;
-			waking++;
-			wake.workers.push_back(&worker);
-			count--;
-			available--;
-		}
-	}
-	while (count > 0 && available > 0 && blocked > 0 && spares < SpareLimit()) {
-		spares++;
-		wake.spawn++;
-		count--;
-		available--;
-	}
-}
-
-void TaskScheduler::RemoveIdle(SchedulerWorker &worker) {
-	auto &list = worker.spare ? idle_spares : idle;
-	list.erase(std::find(list.begin(), list.end(), &worker));
-	worker.idle = false;
-}
-
-void TaskScheduler::Wake(SchedulerWakeList &wake) {
+void TaskScheduler::Wake(idx_t count, optional_ptr<SchedulerAccount> account) {
 #ifndef DUCKDB_NO_THREADS
-	for (auto worker : wake.workers) {
+	static thread_local vector<SchedulerWorker *> wake_list;
+	const auto slots = target.load(std::memory_order_relaxed);
+	const auto pending = waking.load(std::memory_order_relaxed);
+	const auto busy = running.load(std::memory_order_relaxed) + pending;
+	const auto queued = queue.GetTasksInQueue();
+	count = MinValue<idx_t>(count, slots > busy ? slots - busy : 0);
+	count = MinValue<idx_t>(count, queued > pending ? queued - pending : 0);
+	idx_t index;
+	while (count != 0 && idle_count.load(std::memory_order_seq_cst) != 0 && ClaimIdle(index)) {
+		idle_count.fetch_sub(1, std::memory_order_relaxed);
+		auto &worker = *workers[index].load(std::memory_order_acquire);
+		if (account) {
+			worker.handoff = account->shared_from_this();
+		}
+		worker.woken.store(true, std::memory_order_release);
+		waking.fetch_add(1, std::memory_order_relaxed);
+		wake_list.push_back(&worker);
+		count--;
+	}
+	for (auto worker : wake_list) {
 		worker->semaphore.signal();
 	}
+	wake_list.clear();
+	while (count > 0 && SpawnSpare()) {
+		count--;
+	}
 #endif
-	for (idx_t i = 0; i < wake.spawn; i++) {
-		if (!pool->SpawnSpare(*this)) {
-			const annotated_lock_guard<annotated_mutex> guard(lock);
-			spares--;
+}
+
+bool TaskScheduler::SpawnSpare() {
+	auto current = spares.load(std::memory_order_relaxed);
+	while (current < blocked.load(std::memory_order_relaxed)) {
+		if (spares.compare_exchange_weak(current, current + 1, std::memory_order_relaxed)) {
+			if (!pool->SpawnSpare(*this)) {
+				spares.fetch_sub(1, std::memory_order_relaxed);
+				return false;
+			}
+			return true;
 		}
 	}
+	return false;
+}
+
+bool TaskScheduler::RetireSpare(SchedulerWorker &worker, bool force) {
+	auto current = spares.load(std::memory_order_relaxed);
+	while (force || current > blocked.load(std::memory_order_relaxed)) {
+		if (spares.compare_exchange_weak(current, current - 1, std::memory_order_relaxed)) {
+			worker.retired = true;
+			return true;
+		}
+	}
+	return false;
 }
 
 void TaskScheduler::WakeAll() {
-	SchedulerWakeList wake;
-	{
-		const annotated_lock_guard<annotated_mutex> guard(lock);
-		for (auto list : {&idle, &idle_spares}) {
-			for (auto worker : *list) {
-				worker->idle = false;
-				worker->woken = true;
-				waking++;
-				wake.workers.push_back(worker);
-			}
-			list->clear();
+#ifndef DUCKDB_NO_THREADS
+	vector<SchedulerWorker *> wake_list;
+	for (idx_t word = 0; word < WORKER_WORDS; word++) {
+		auto bits = idle_bits[word].exchange(0, std::memory_order_seq_cst);
+		while (bits) {
+			const auto bit = static_cast<idx_t>(__builtin_ctzll(bits));
+			bits &= bits - 1;
+			idle_count.fetch_sub(1, std::memory_order_relaxed);
+			auto worker = workers[word * 64 + bit].load(std::memory_order_acquire);
+			worker->woken.store(true, std::memory_order_release);
+			waking.fetch_add(1, std::memory_order_relaxed);
+			wake_list.push_back(worker);
 		}
 	}
-	Wake(wake);
+	for (auto worker : wake_list) {
+		worker->semaphore.signal();
+	}
+#endif
 }
 
 void TaskScheduler::SetTargetThreads(idx_t count) {
@@ -285,115 +281,256 @@ void TaskScheduler::SetTargetThreads(idx_t count) {
 	}
 }
 
-void TaskScheduler::FinishSlice(SchedulerWorker &worker, SchedulerSlice &slice) {
-	if (worker.holds_slot) {
-		running.fetch_sub(1, std::memory_order_relaxed);
-		worker.holds_slot = false;
+void TaskScheduler::Leave(SchedulerWorker &worker) {
+	if (!worker.account) {
+		return;
 	}
-	queue.Charge(*slice.account, TimePoint::ToNanos(slice.used) - SLICE_ESTIMATE_NANOS);
-	if (slice.requeue) {
-		auto &producer = *slice.requeue->token;
-		queue.Enqueue(producer, std::move(slice.requeue));
+	queue.Charge(*worker.account, TimePoint::ToNanos(worker.bound_used));
+	queue.Leave(*worker.account);
+	worker.account.reset();
+	worker.bound_used = 0;
+	worker.rotate = false;
+}
+
+bool TaskScheduler::Rebind(SchedulerWorker &worker) {
+	Leave(worker);
+	const bool arrival = worker.arrival_leave;
+	if (!arrival && (!queue.HasListed() || !queue.HasQueuedTasks())) {
+		return false;
+	}
+	{
+		const annotated_lock_guard<annotated_mutex> guard(queue.lock);
+		worker.account = queue.Select();
+	}
+	if (arrival) {
+		worker.arrival_leave = false;
+		queue.Arrived();
+	}
+	return worker.account != nullptr;
+}
+
+void TaskScheduler::ReleaseClaims(SchedulerWorker &worker) {
+	if (worker.account && queue.Unclaim(*worker.account)) {
+		Wake(1, worker.account.get());
 	}
 }
 
-bool TaskScheduler::TryAcquire(SchedulerWorker &worker, shared_ptr<Task> &task, SchedulerWakeList &wake) {
-	if (worker.woken) {
-		worker.woken = false;
-		waking--;
+void TaskScheduler::Unbind(SchedulerWorker &worker) {
+	Leave(worker);
+	if (worker.arrival_leave) {
+		{
+			const annotated_lock_guard<annotated_mutex> guard(queue.lock);
+			queue.Refresh();
+		}
+		worker.arrival_leave = false;
+		queue.Arrived();
 	}
-	const auto slots = target.load(std::memory_order_relaxed);
-	const auto busy = running.load(std::memory_order_relaxed);
-	if (busy < slots && worker.spare && !idle.empty()) {
-		WakeIdle(1, wake);
-	} else if (busy < slots && queue.Dequeue(task)) {
-		if (worker.idle) {
-			RemoveIdle(worker);
+}
+
+bool TaskScheduler::TakeTask(SchedulerWorker &worker, shared_ptr<Task> &task) {
+	if (worker.spare && RetireSpare(worker, false)) {
+		Unbind(worker);
+		return false;
+	}
+	if (worker.handoff) {
+		if (!worker.account) {
+			worker.account = std::move(worker.handoff);
+			queue.Attach(*worker.account);
 		}
-		worker.idle_phase = 0;
-		running.fetch_add(1, std::memory_order_relaxed);
-		worker.holds_slot = true;
-		worker.account = task->token->account;
-		queue.Charge(*worker.account, SLICE_ESTIMATE_NANOS);
-		if (queue.GetTasksInQueue() > 0) {
-			WakeIdle(1, wake);
+		worker.handoff.reset();
+	}
+	if (worker.rotate && !Rebind(worker)) {
+		return false;
+	}
+	while (true) {
+		if (running.load(std::memory_order_relaxed) >= target.load(std::memory_order_relaxed)) {
+			Unbind(worker);
+			return false;
 		}
+		if (worker.account && queue.Dequeue(*worker.account, task)) {
+			const auto busy = running.fetch_add(1, std::memory_order_relaxed) + 1;
+			worker.holds_slot = true;
+			worker.idle_phase = 0;
+			if (queue.GetTasksInQueue() > 0 && waking.load(std::memory_order_relaxed) == 0 &&
+			    busy < target.load(std::memory_order_relaxed)) {
+				Wake(1, worker.account.get());
+			}
+			return true;
+		}
+		if (!Rebind(worker)) {
+			return false;
+		}
+	}
+}
+
+void TaskScheduler::RunTask(SchedulerWorker &worker, shared_ptr<Task> &task) {
+	worker.in_task = true;
+	worker.must_yield = false;
+	worker.blocked_ticks = 0;
+	TaskExecutionResult result;
+	const bool blocking = task->blocking;
+	if (blocking) {
+		ReleaseSlot(worker);
+		worker.blocking_depth++;
+		result = task->Execute(TaskExecutionMode::PROCESS_PARTIAL);
+		worker.blocking_depth--;
+		worker.released_slot = false;
+		blocked.fetch_sub(1, std::memory_order_relaxed);
+	} else {
+		worker.slice_start = TimePoint::Now();
+		result = task->Execute(TaskExecutionMode::PROCESS_PARTIAL);
+		worker.bound_used += MaxValue<int64_t>(TimePoint::Now() - worker.slice_start - worker.blocked_ticks, 0);
+		if (worker.holds_slot) {
+			running.fetch_sub(1, std::memory_order_relaxed);
+			worker.holds_slot = false;
+		}
+	}
+	worker.in_task = false;
+	if (!blocking && worker.bound_used >= MinSliceTicks()) {
+		queue.Charge(*worker.account, TimePoint::ToNanos(worker.bound_used));
+		worker.bound_used = 0;
+	}
+	if (!blocking && !worker.rotate) {
+		worker.rotate = CheckLeave(worker, 0);
+	}
+	switch (result) {
+	case TaskExecutionResult::TASK_FINISHED:
+	case TaskExecutionResult::TASK_ERROR:
+		task.reset();
+		break;
+	case TaskExecutionResult::TASK_BLOCKED:
+		task->Deschedule();
+		task.reset();
+		break;
+	case TaskExecutionResult::TASK_NOT_FINISHED: {
+		auto &producer = *task->token;
+		const auto pool_type = task->blocking ? TaskSchedulerType::ASYNC : TaskSchedulerType::REGULAR;
+		Enqueue(producer, &task, 1, pool_type);
+		task.reset();
+		break;
+	}
+	}
+}
+
+bool TaskScheduler::CheckLeave(SchedulerWorker &worker, int64_t slice) {
+	auto &account = *worker.account;
+	const auto mine = account.bound.load(std::memory_order_relaxed);
+	const auto used = account.vruntime.load(std::memory_order_relaxed) + TimePoint::ToNanos(worker.bound_used + slice);
+	if (queue.HasArrivals() && (mine >= 2 || used > queue.Floor() + MIN_SLICE_NANOS) && queue.TakeArrival()) {
+		worker.arrival_leave = true;
 		return true;
 	}
-	if (!worker.idle) {
-		worker.idle = true;
-		(worker.spare ? idle_spares : idle).push_back(&worker);
+	const auto top = queue.Top();
+	const auto top_bound = top & TaskSchedulerQueue::NO_TOP;
+	if (top_bound == TaskSchedulerQueue::NO_TOP || queue.TopAccount() == &account) {
+		return false;
+	}
+	if (top_bound + 1 < mine || (top_bound + 1 == mine && used > queue.TopKey() + MIN_SLICE_NANOS)) {
+		return queue.Reserve(top);
 	}
 	return false;
 }
 
-bool TaskScheduler::AcquireTask(SchedulerWorker &worker, shared_ptr<Task> &task, SchedulerSlice &slice) {
-	SchedulerWakeList wake;
-	bool acquired;
-	if (slice.requeue) {
-		auto &producer = *slice.requeue->token;
-		{
-			const annotated_lock_guard<annotated_mutex> producer_guard(producer.producer_lock);
-			{
-				const annotated_lock_guard<annotated_mutex> guard(lock);
-				FinishSlice(worker, slice);
-				acquired = TryAcquire(worker, task, wake);
-			}
-			producer.producer_cv.Signal();
-		}
-	} else {
-		const annotated_lock_guard<annotated_mutex> guard(lock);
-		if (slice.pending) {
-			FinishSlice(worker, slice);
-		}
-		acquired = TryAcquire(worker, task, wake);
+void TaskScheduler::ReleaseSlot(SchedulerWorker &worker) {
+	running.fetch_sub(1, std::memory_order_relaxed);
+	worker.holds_slot = false;
+	worker.released_slot = true;
+	blocked.fetch_add(1, std::memory_order_relaxed);
+	if (queue.GetTasksInQueue() > 0) {
+		Wake(1, worker.account.get());
 	}
-	slice.pending = false;
-	slice.account.reset();
-	Wake(wake);
-	return acquired;
 }
 
-void TaskScheduler::FlushSlice(SchedulerWorker &worker, SchedulerSlice &slice) {
-	if (!slice.pending) {
+void TaskScheduler::ReacquireSlot(SchedulerWorker &worker) {
+	worker.must_yield = running.fetch_add(1, std::memory_order_relaxed) >= target.load(std::memory_order_relaxed);
+	worker.holds_slot = true;
+	worker.released_slot = false;
+	blocked.fetch_sub(1, std::memory_order_relaxed);
+}
+
+bool TaskScheduler::Register(SchedulerWorker &worker) {
+	for (idx_t word = 0; word < WORKER_WORDS; word++) {
+		auto bits = registered[word].load(std::memory_order_relaxed);
+		while (~bits) {
+			const auto bit = static_cast<idx_t>(__builtin_ctzll(~bits));
+			const auto mask = uint64_t(1) << bit;
+			bits = registered[word].fetch_or(mask, std::memory_order_acq_rel);
+			if (!(bits & mask)) {
+				worker.index = word * 64 + bit;
+				workers[worker.index].store(&worker, std::memory_order_release);
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+void TaskScheduler::Unregister(SchedulerWorker &worker) {
+	if (worker.index == DConstants::INVALID_INDEX) {
 		return;
 	}
-	if (slice.requeue) {
-		auto &producer = *slice.requeue->token;
-		const annotated_lock_guard<annotated_mutex> producer_guard(producer.producer_lock);
-		{
-			const annotated_lock_guard<annotated_mutex> guard(lock);
-			FinishSlice(worker, slice);
-		}
-		producer.producer_cv.Signal();
-	} else {
-		const annotated_lock_guard<annotated_mutex> guard(lock);
-		FinishSlice(worker, slice);
+	workers[worker.index].store(nullptr, std::memory_order_relaxed);
+	registered[worker.index / 64].fetch_and(~(uint64_t(1) << (worker.index % 64)), std::memory_order_release);
+	worker.index = DConstants::INVALID_INDEX;
+}
+
+bool TaskScheduler::ClearIdle(idx_t index) {
+	const auto mask = uint64_t(1) << (index % 64);
+	return idle_bits[index / 64].fetch_and(~mask, std::memory_order_seq_cst) & mask;
+}
+
+bool TaskScheduler::ClaimIdle(idx_t &index) {
+	const auto hint = last_idle.load(std::memory_order_relaxed);
+	if (ClearIdle(hint)) {
+		index = hint;
+		return true;
 	}
-	slice.pending = false;
-	slice.account.reset();
+	for (idx_t word = 0; word < WORKER_WORDS; word++) {
+		auto bits = idle_bits[word].load(std::memory_order_relaxed);
+		while (bits) {
+			const auto bit = static_cast<idx_t>(__builtin_ctzll(bits));
+			const auto mask = uint64_t(1) << bit;
+			const auto old = idle_bits[word].fetch_and(~mask, std::memory_order_seq_cst);
+			if (old & mask) {
+				index = word * 64 + bit;
+				return true;
+			}
+			bits = old & ~mask;
+		}
+	}
+	return false;
 }
 
 bool TaskScheduler::Park(SchedulerWorker &worker) {
 #ifndef DUCKDB_NO_THREADS
 	static constexpr int64_t SPARE_IDLE_WAIT = 5000000;
-	if (worker.spare) {
-		if (worker.semaphore.wait(SPARE_IDLE_WAIT)) {
+	if (worker.retired) {
+		return false;
+	}
+	idle_bits[worker.index / 64].fetch_or(uint64_t(1) << (worker.index % 64), std::memory_order_seq_cst);
+	idle_count.fetch_add(1, std::memory_order_seq_cst);
+	last_idle.store(worker.index, std::memory_order_relaxed);
+	const auto busy = running.load(std::memory_order_relaxed) + waking.load(std::memory_order_relaxed);
+	if (queue.HasQueuedTasks() && busy < target.load(std::memory_order_relaxed)) {
+		if (ClearIdle(worker.index)) {
+			idle_count.fetch_sub(1, std::memory_order_relaxed);
 			return true;
 		}
-		{
-			const annotated_lock_guard<annotated_mutex> guard(lock);
-			if (worker.idle) {
-				RemoveIdle(worker);
+		worker.semaphore.wait();
+	} else if (!worker.semaphore.wait(worker.spare ? SPARE_IDLE_WAIT : IdleWaitMicros(worker))) {
+		if (ClearIdle(worker.index)) {
+			idle_count.fetch_sub(1, std::memory_order_relaxed);
+			if (worker.spare) {
+				RetireSpare(worker, true);
 				return false;
 			}
+			IdleTimeout(worker);
+			return true;
 		}
 		worker.semaphore.wait();
-		return true;
 	}
-	if (!worker.semaphore.wait(IdleWaitMicros(worker))) {
-		IdleTimeout(worker);
-	}
+	worker.woken.store(false, std::memory_order_relaxed);
+	waking.fetch_sub(1, std::memory_order_relaxed);
 	return true;
 #else
 	return false;
@@ -432,67 +569,6 @@ void TaskScheduler::IdleTimeout(SchedulerWorker &worker) {
 	worker.idle_phase = 2;
 }
 
-void TaskScheduler::RunTask(SchedulerWorker &worker, shared_ptr<Task> &task, SchedulerSlice &slice) {
-	worker.in_task = true;
-	worker.must_yield = false;
-	worker.blocked_ticks = 0;
-	TaskExecutionResult result;
-	int64_t used = 0;
-	if (task->blocking) {
-		ReleaseSlot(worker);
-		worker.blocking_depth++;
-		result = task->Execute(TaskExecutionMode::PROCESS_PARTIAL);
-		worker.blocking_depth--;
-		const annotated_lock_guard<annotated_mutex> guard(lock);
-		worker.released_slot = false;
-		blocked--;
-	} else {
-		worker.slice_start = TimePoint::Now();
-		result = task->Execute(TaskExecutionMode::PROCESS_PARTIAL);
-		used = MaxValue<int64_t>(TimePoint::Now() - worker.slice_start - worker.blocked_ticks, 0);
-	}
-	worker.in_task = false;
-	switch (result) {
-	case TaskExecutionResult::TASK_FINISHED:
-	case TaskExecutionResult::TASK_ERROR:
-		task.reset();
-		break;
-	case TaskExecutionResult::TASK_BLOCKED:
-		task->Deschedule();
-		task.reset();
-		break;
-	case TaskExecutionResult::TASK_NOT_FINISHED:
-		slice.requeue = std::move(task);
-		break;
-	}
-	slice.account = std::move(worker.account);
-	slice.used = used;
-	slice.pending = true;
-}
-
-void TaskScheduler::ReleaseSlot(SchedulerWorker &worker) {
-	SchedulerWakeList wake;
-	{
-		const annotated_lock_guard<annotated_mutex> guard(lock);
-		running.fetch_sub(1, std::memory_order_relaxed);
-		worker.holds_slot = false;
-		worker.released_slot = true;
-		blocked++;
-		if (queue.GetTasksInQueue() > 0) {
-			WakeIdle(1, wake);
-		}
-	}
-	Wake(wake);
-}
-
-void TaskScheduler::ReacquireSlot(SchedulerWorker &worker) {
-	const annotated_lock_guard<annotated_mutex> guard(lock);
-	worker.must_yield = running.fetch_add(1, std::memory_order_relaxed) >= target.load(std::memory_order_relaxed);
-	worker.holds_slot = true;
-	worker.released_slot = false;
-	blocked--;
-}
-
 bool TaskScheduler::ShouldYield() {
 	auto worker = current_worker;
 	if (!worker) {
@@ -501,46 +577,52 @@ bool TaskScheduler::ShouldYield() {
 	if (!worker->in_task || worker->blocking_depth > 0 || !worker->account) {
 		return false;
 	}
-	if (worker->must_yield) {
+	if (worker->must_yield || worker->rotate) {
 		return true;
 	}
-	if (TimePoint::Now() - worker->slice_start - worker->blocked_ticks < MinSliceTicks()) {
-		return false;
+	auto &scheduler = worker->scheduler;
+	if (worker->spare &&
+	    scheduler.spares.load(std::memory_order_relaxed) > scheduler.blocked.load(std::memory_order_relaxed)) {
+		worker->rotate = true;
+		return true;
 	}
-	const auto queued = worker->scheduler.queue.GetTasksInQueue();
-	return queued > worker->account->queued_tasks.load(std::memory_order_relaxed);
+	const auto slice = TimePoint::Now() - worker->slice_start - worker->blocked_ticks;
+	if (worker->scheduler.CheckLeave(*worker, slice)) {
+		worker->rotate = true;
+		return true;
+	}
+	if (slice >= MinSliceTicks()) {
+		worker->scheduler.ReleaseClaims(*worker);
+	}
+	return false;
 }
 
 void TaskScheduler::WorkerLoop(atomic<bool> *marker, bool spare) {
 #ifndef DUCKDB_NO_THREADS
 	SchedulerWorker worker(*this, spare);
+	if (!Register(worker)) {
+		if (spare) {
+			spares.fetch_sub(1, std::memory_order_relaxed);
+		}
+		return;
+	}
 	current_worker = &worker;
 	shared_ptr<Task> task;
-	SchedulerSlice slice;
 	// loop until the marker is set to false
 	while (*marker) {
-		if (AcquireTask(worker, task, slice)) {
-			RunTask(worker, task, slice);
+		if (TakeTask(worker, task)) {
+			RunTask(worker, task);
 			continue;
 		}
 		if (!*marker || !Park(worker)) {
 			break;
 		}
 	}
-	FlushSlice(worker, slice);
-	{
-		const annotated_lock_guard<annotated_mutex> guard(lock);
-		if (worker.idle) {
-			RemoveIdle(worker);
-		}
-		if (worker.woken) {
-			worker.woken = false;
-			waking--;
-		}
-		if (spare) {
-			spares--;
-		}
+	Unbind(worker);
+	if (spare && !worker.retired) {
+		spares.fetch_sub(1, std::memory_order_relaxed);
 	}
+	Unregister(worker);
 	current_worker = nullptr;
 	// this thread will exit, flush all of its outstanding allocations
 	const auto &block_allocator = BlockAllocator::Get(db);
@@ -567,13 +649,20 @@ idx_t TaskScheduler::ExecuteTasks(atomic<bool> *marker, idx_t max_tasks) {
 	// loop until the marker is set to false
 	while (*marker && completed_tasks < max_tasks) {
 		shared_ptr<Task> task;
-		{
-			const annotated_lock_guard<annotated_mutex> guard(lock);
-			if (!queue.Dequeue(task)) {
-				return completed_tasks;
-			}
+		shared_ptr<SchedulerAccount> account;
+		if (queue.HasListed()) {
+			const annotated_lock_guard<annotated_mutex> guard(queue.lock);
+			account = queue.Select();
+		}
+		if (!account) {
+			return completed_tasks;
+		}
+		if (!queue.Dequeue(*account, task)) {
+			queue.Leave(*account);
+			return completed_tasks;
 		}
 		auto execute_result = task->Execute(TaskExecutionMode::PROCESS_ALL);
+		queue.Leave(*account);
 
 		switch (execute_result) {
 		case TaskExecutionResult::TASK_FINISHED:
@@ -636,7 +725,6 @@ idx_t TaskScheduler::GetNumberOfTasks() const {
 }
 
 idx_t TaskScheduler::GetTaskCountForProducer(ProducerToken &token) const {
-	const annotated_lock_guard<annotated_mutex> guard(lock);
 	return queue.GetTaskCountForProducer(token);
 }
 
@@ -668,12 +756,11 @@ void TaskScheduler::SetAsyncThreads(idx_t n) {
 }
 
 void TaskScheduler::Signal(idx_t n) {
-	SchedulerWakeList wake;
-	{
-		const annotated_lock_guard<annotated_mutex> guard(lock);
-		WakeIdle(n, wake);
+#ifndef DUCKDB_NO_THREADS
+	if (n != 0) {
+		Wake(n, nullptr);
 	}
-	Wake(wake);
+#endif
 }
 
 void TaskScheduler::YieldThread() {

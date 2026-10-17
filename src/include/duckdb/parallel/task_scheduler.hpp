@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/array.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/mutex.hpp"
@@ -25,8 +26,6 @@ class DatabaseInstance;
 class TaskScheduler;
 class TaskSchedulerPool;
 struct SchedulerWorker;
-struct SchedulerWakeList;
-struct SchedulerSlice;
 
 //! The TaskScheduler is responsible for managing tasks and threads
 class TaskScheduler {
@@ -126,22 +125,26 @@ private:
 	friend class TaskSchedulerPool;
 
 	void Enqueue(ProducerToken &producer, shared_ptr<Task> *tasks, idx_t count, TaskSchedulerType pool_type);
-	void RemoveProducer(ProducerToken &producer);
 	void WorkerLoop(atomic<bool> *marker, bool spare);
-	bool AcquireTask(SchedulerWorker &worker, shared_ptr<Task> &task, SchedulerSlice &slice);
-	bool TryAcquire(SchedulerWorker &worker, shared_ptr<Task> &task, SchedulerWakeList &wake) DUCKDB_REQUIRES(lock);
-	void FlushSlice(SchedulerWorker &worker, SchedulerSlice &slice);
+	bool TakeTask(SchedulerWorker &worker, shared_ptr<Task> &task);
+	void Leave(SchedulerWorker &worker);
+	bool Rebind(SchedulerWorker &worker);
+	void Unbind(SchedulerWorker &worker);
+	void ReleaseClaims(SchedulerWorker &worker);
 	bool Park(SchedulerWorker &worker);
-	void RunTask(SchedulerWorker &worker, shared_ptr<Task> &task, SchedulerSlice &slice);
-	void FinishSlice(SchedulerWorker &worker, SchedulerSlice &slice) DUCKDB_REQUIRES(lock);
+	void RunTask(SchedulerWorker &worker, shared_ptr<Task> &task);
+	bool CheckLeave(SchedulerWorker &worker, int64_t slice);
 	void ReleaseSlot(SchedulerWorker &worker);
 	void ReacquireSlot(SchedulerWorker &worker);
-	void WakeIdle(idx_t count, SchedulerWakeList &wake) DUCKDB_REQUIRES(lock);
-	void RemoveIdle(SchedulerWorker &worker) DUCKDB_REQUIRES(lock);
-	void Wake(SchedulerWakeList &wake);
+	void Wake(idx_t count, optional_ptr<SchedulerAccount> account);
+	bool Register(SchedulerWorker &worker);
+	void Unregister(SchedulerWorker &worker);
+	bool ClearIdle(idx_t index);
+	bool ClaimIdle(idx_t &index);
+	bool SpawnSpare();
+	bool RetireSpare(SchedulerWorker &worker, bool force);
 	void WakeAll();
 	void SetTargetThreads(idx_t count);
-	idx_t SpareLimit() const;
 	int64_t IdleWaitMicros(SchedulerWorker &worker);
 	void IdleTimeout(SchedulerWorker &worker);
 
@@ -150,13 +153,17 @@ private:
 	//! Lock for modifying the thread count
 	mutex thread_lock;
 	unique_ptr<TaskSchedulerPool> pool;
-	mutable annotated_mutex lock;
 	TaskSchedulerQueue queue;
-	vector<SchedulerWorker *> idle DUCKDB_GUARDED_BY(lock);
-	vector<SchedulerWorker *> idle_spares DUCKDB_GUARDED_BY(lock);
-	idx_t waking DUCKDB_GUARDED_BY(lock) = 0;
-	idx_t blocked DUCKDB_GUARDED_BY(lock) = 0;
-	idx_t spares DUCKDB_GUARDED_BY(lock) = 0;
+	static constexpr idx_t MAX_WORKERS = 2048;
+	static constexpr idx_t WORKER_WORDS = MAX_WORKERS / 64;
+	array<atomic<SchedulerWorker *>, MAX_WORKERS> workers {};
+	array<atomic<uint64_t>, WORKER_WORDS> registered {};
+	array<atomic<uint64_t>, WORKER_WORDS> idle_bits {};
+	atomic<idx_t> last_idle {0};
+	atomic<idx_t> idle_count {0};
+	atomic<idx_t> waking {0};
+	atomic<idx_t> blocked {0};
+	atomic<idx_t> spares {0};
 	atomic<idx_t> running {0};
 	atomic<idx_t> target {0};
 	atomic<idx_t> async_threads {0};

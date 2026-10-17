@@ -10,7 +10,6 @@
 
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/common.hpp"
-#include "duckdb/common/deque.hpp"
 #include "duckdb/common/mutex.hpp"
 
 namespace duckdb {
@@ -20,25 +19,40 @@ class Task;
 class TaskScheduler;
 class TaskSchedulerQueue;
 struct ProducerToken;
+struct SchedulerAccountTasks;
+struct SchedulerProducerTasks;
 
 enum class SchedulerClass : uint8_t { FOREGROUND, BACKGROUND };
 
-class SchedulerAccount {
+class SchedulerAccount : public enable_shared_from_this<SchedulerAccount> {
 public:
-	explicit SchedulerAccount(SchedulerClass scheduler_class);
+	SchedulerAccount(TaskSchedulerQueue &queue, SchedulerClass scheduler_class);
+	~SchedulerAccount();
 
 private:
 	friend class TaskSchedulerQueue;
 	friend class TaskScheduler;
+	friend struct ProducerToken;
 
+	TaskSchedulerQueue &queue;
 	const SchedulerClass scheduler_class;
-	double deficit;
-	SchedulerAccount *prev_active = nullptr;
-	SchedulerAccount *next_active = nullptr;
-	bool fresh = false;
-	ProducerToken *runnable_head = nullptr;
-	ProducerToken *runnable_tail = nullptr;
-	atomic<idx_t> queued_tasks {0};
+	unique_ptr<SchedulerAccountTasks> tasks;
+	atomic<int64_t> queued_tasks {0};
+	atomic<idx_t> bound {0};
+	atomic<bool> listed {false};
+	atomic<bool> claimed {false};
+	atomic<bool> rekey_pending {false};
+	atomic<bool> arriving {false};
+	shared_ptr<SchedulerAccount> inbox_self;
+	SchedulerAccount *inbox_next = nullptr;
+	shared_ptr<SchedulerAccount> rekey_self;
+	SchedulerAccount *rekey_next = nullptr;
+	atomic<int64_t> vruntime {0};
+	int64_t key = 0;
+	idx_t level = DConstants::INVALID_INDEX;
+	idx_t heap_index = DConstants::INVALID_INDEX;
+	SchedulerAccount *bucket_prev = nullptr;
+	SchedulerAccount *bucket_next = nullptr;
 };
 
 struct ProducerToken {
@@ -56,10 +70,7 @@ private:
 
 	TaskScheduler &scheduler;
 	shared_ptr<SchedulerAccount> account;
-	deque<shared_ptr<Task>> tasks;
-	ProducerToken *prev_runnable = nullptr;
-	ProducerToken *next_runnable = nullptr;
-	atomic<bool> runnable {false};
+	unique_ptr<SchedulerProducerTasks> tasks;
 };
 
 } // namespace duckdb
