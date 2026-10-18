@@ -56,6 +56,20 @@ void Binder::VerifySereneDBCompression(Catalog &catalog, const ColumnDefinition 
 	}
 }
 
+static bool CompressesLeaves(const Catalog &catalog, DBConfig &config, const CreateTableInfo &info,
+                             const LogicalType &type, CompressionType compression_type) {
+	auto leaves = catalog.CompressionLeafTypes(info, type);
+	if (leaves.empty()) {
+		return false;
+	}
+	for (auto leaf : leaves) {
+		if (!config.TryGetCompressionFunction(compression_type, leaf)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageManager> storage_manager,
                                   DBConfig &config, BoundCreateTableInfo &info) {
 	auto &base = info.base->Cast<CreateTableInfo>();
@@ -97,7 +111,7 @@ static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageMa
 			continue;
 		}
 		auto compression_method = config.TryGetCompressionFunction(compression_type, physical_type);
-		if (!compression_method) {
+		if (!compression_method && !CompressesLeaves(catalog, config, base, logical_type, compression_type)) {
 			throw BinderException("Can't compress column %s with type '%s' (physical: %s) using compression type '%s'",
 			                      col.Name(), logical_type.ToString(), EnumUtil::ToString(physical_type),
 			                      CompressionTypeToString(compression_type));
