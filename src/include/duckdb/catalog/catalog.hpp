@@ -21,6 +21,7 @@
 #include "duckdb/common/optional.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/reference_map.hpp"
+#include "duckdb/parser/column_definition.hpp"
 #include "duckdb/parser/query_error_context.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
@@ -61,6 +62,7 @@ struct MetadataBlockInfo;
 class AttachedDatabase;
 class ClientContext;
 class QueryContext;
+class StorageManager;
 class Transaction;
 
 class AggregateFunctionCatalogEntry;
@@ -176,9 +178,9 @@ public:
 	                                row_t row_start, ErrorData &error) {
 		return false;
 	}
-	virtual bool SupportsSereneDBCompression() const {
-		return false;
-	}
+	virtual bool VerifyColumnCompression(ClientContext &context, optional_ptr<StorageManager> storage_manager,
+	                                     const CreateTableInfo &info, const ColumnDefinition &column,
+	                                     const LogicalType &type) const;
 
 	virtual void Initialize(bool load_builtin) = 0;
 	virtual void Initialize(optional_ptr<ClientContext> context, bool load_builtin);
