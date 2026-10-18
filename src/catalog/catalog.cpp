@@ -1993,6 +1993,22 @@ void Catalog::Initialize(optional_ptr<ClientContext> context, bool load_builtin)
 void Catalog::FinalizeLoad(optional_ptr<ClientContext> context) {
 }
 
+bool Catalog::VerifyColumnCompression(ClientContext &context, optional_ptr<StorageManager> storage_manager,
+                                      const CreateTableInfo &info, const ColumnDefinition &column,
+                                      const LogicalType &type) const {
+	if (IsSereneDBCompressionType(column.CompressionType())) {
+		throw BinderException(
+		    "Can't compress column %s using compression type '%s', that type is only available on SereneDB tables",
+		    column.Name(), CompressionTypeToString(column.CompressionType()));
+	}
+	if (column.CompressionLevel() != 0) {
+		throw BinderException(
+		    "Can't set compression_level on column %s, compression options are only available on SereneDB tables",
+		    column.Name());
+	}
+	return false;
+}
+
 void Catalog::OnDetach(ClientContext &context) {
 }
 
