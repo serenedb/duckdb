@@ -385,7 +385,10 @@ void RegisterGeometryConstructors(TypeConstructorSet &set) {
 
 } // namespace
 
-extern "C" __attribute__((weak)) const duckdb::DefaultType *duckdb_external_types(duckdb::idx_t *count);
+extern "C" __attribute__((weak)) const duckdb::DefaultType *duckdb_external_types(duckdb::idx_t *count) {
+	*count = 0;
+	return nullptr;
+}
 
 namespace {
 
@@ -495,15 +498,11 @@ optional_ptr<const DefaultType> TryGetDefaultTypeEntry(const Identifier &name) {
 	static const auto type_index = [] {
 		case_insensitive_map_view_t<const DefaultType *> m;
 		auto &internal_types = GetBuiltinTypes();
-		if (duckdb_external_types) {
-			idx_t count = 0;
-			const auto *external_types = duckdb_external_types(&count);
-			m.reserve(internal_types.size() + count);
-			for (idx_t i = 0; i < count; i++) {
-				m.try_emplace(external_types[i].name, &external_types[i]);
-			}
-		} else {
-			m.reserve(internal_types.size());
+		idx_t count = 0;
+		const auto *external_types = duckdb_external_types(&count);
+		m.reserve(internal_types.size() + count);
+		for (idx_t i = 0; i < count; i++) {
+			m.try_emplace(external_types[i].name, &external_types[i]);
 		}
 		for (auto &type : internal_types) {
 			m.try_emplace(type.name, &type);
@@ -575,12 +574,10 @@ vector<Identifier> DefaultTypeGenerator::GetDefaultEntries() {
 	for (auto &type : internal_types) {
 		result.emplace_back(StringUtil::Lower(type.name));
 	}
-	if (duckdb_external_types) {
-		idx_t count = 0;
-		const auto *external_types = duckdb_external_types(&count);
-		for (idx_t i = 0; i < count; i++) {
-			result.emplace_back(StringUtil::Lower(external_types[i].name));
-		}
+	idx_t count = 0;
+	const auto *external_types = duckdb_external_types(&count);
+	for (idx_t i = 0; i < count; i++) {
+		result.emplace_back(StringUtil::Lower(external_types[i].name));
 	}
 	return result;
 }
