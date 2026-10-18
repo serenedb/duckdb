@@ -41,31 +41,25 @@ static void CreateColumnDependencyManager(BoundCreateTableInfo &info) {
 	}
 }
 
-void Binder::VerifySereneDBCompression(Catalog &catalog, const ColumnDefinition &column) {
-	if (catalog.SupportsSereneDBCompression()) {
-		return;
-	}
-	if (IsSereneDBCompressionType(column.CompressionType())) {
-		throw BinderException(
-		    "Can't compress column %s using compression type '%s', that type is only available on SereneDB tables",
-		    column.Name(), CompressionTypeToString(column.CompressionType()));
-	}
-	if (column.CompressionLevel() != 0) {
-		throw BinderException(
-		    "Can't set compression_level on column %s, compression options are only available on SereneDB tables",
-		    column.Name());
-	}
-}
-
 static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageManager> storage_manager,
                                   DBConfig &config, BoundCreateTableInfo &info) {
 	auto &base = info.base->Cast<CreateTableInfo>();
 	auto &catalog = info.schema.ParentCatalog();
 	for (auto &col : base.columns.Logical()) {
-		Binder::VerifySereneDBCompression(catalog, col);
 		auto compression_type = col.CompressionType();
-		if (catalog.SupportsSereneDBCompression() &&
-		    (IsSereneDBCompressionType(compression_type) || compression_type == CompressionType::COMPRESSION_FSST)) {
+		auto logical_type = col.GetType();
+		if (logical_type.id() == LogicalTypeId::UNBOUND && logical_type.HasAlias()) {
+			// Resolve user type if possible
+			const auto type_entry = Catalog::GetEntry<TypeCatalogEntry>(
+			    context,
+			    QualifiedName(Identifier::InvalidCatalog(), Identifier::InvalidSchema(),
+			                  Identifier(logical_type.GetAlias())),
+			    OnEntryNotFound::RETURN_NULL);
+			if (type_entry) {
+				logical_type = type_entry->user_type;
+			}
+		}
+		if (catalog.VerifyColumnCompression(context, storage_manager, base, col, logical_type)) {
 			continue;
 		}
 		auto compression_availability_result = CompressionTypeIsAvailable(compression_type, storage_manager);
@@ -79,18 +73,6 @@ static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageMa
 				throw BinderException(
 				    "Can't compress using user-provided compression type '%s', that type is not available yet",
 				    CompressionTypeToString(compression_type));
-			}
-		}
-		auto logical_type = col.GetType();
-		if (logical_type.id() == LogicalTypeId::UNBOUND && logical_type.HasAlias()) {
-			// Resolve user type if possible
-			const auto type_entry = Catalog::GetEntry<TypeCatalogEntry>(
-			    context,
-			    QualifiedName(Identifier::InvalidCatalog(), Identifier::InvalidSchema(),
-			                  Identifier(logical_type.GetAlias())),
-			    OnEntryNotFound::RETURN_NULL);
-			if (type_entry) {
-				logical_type = type_entry->user_type;
 			}
 		}
 		auto physical_type = logical_type.InternalType();
