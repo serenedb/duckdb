@@ -192,6 +192,10 @@ sentinels = {
     "CompressionType": ["ENUM_SIZE", "COMPRESSION_SERENEDB_COUNT"],
 }
 
+internal = {
+    "CompressionType": ["COMPRESSION_COL_SEQUENCE", "COMPRESSION_COL_NUMERIC"],
+}
+
 
 def remove_prefix(str, prefix):
     if str.startswith(prefix):
@@ -229,7 +233,7 @@ for hpp_file in hpp_files:
             enum_values = {}
             for member in re.finditer(r"(\w+)(\s*\=\s*-?\w*)?", s):
                 key = member.group(1)
-                if key in sentinels.get(enum_name, ()):
+                if key in sentinels.get(enum_name, ()) or key in internal.get(enum_name, ()):
                     continue
                 strings = [key]
                 if enum_name in overrides and key in overrides[enum_name]:
