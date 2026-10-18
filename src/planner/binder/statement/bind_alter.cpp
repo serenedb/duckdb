@@ -337,12 +337,6 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			                            catalog.GetSchema(context, stmt.info->Cast<SetSchemaInfo>().new_schema));
 		}
 	}
-	if (stmt.info->type == AlterType::ALTER_TABLE) {
-		auto &table_info = stmt.info->Cast<AlterTableInfo>();
-		if (table_info.alter_table_type == AlterTableType::ADD_COLUMN) {
-			VerifySereneDBCompression(catalog, table_info.Cast<AddColumnInfo>().new_column);
-		}
-	}
 
 	if (catalog.IsSystemCatalog()) {
 		throw BinderException("Can not comment on System Catalog entries");
