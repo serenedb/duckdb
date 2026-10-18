@@ -8,6 +8,21 @@ DeleteQueryNode::DeleteQueryNode() : QueryNode(QueryNodeType::DELETE_QUERY_NODE)
 }
 
 string DeleteQueryNode::ToString() const {
+	if (is_truncate) {
+		string result = "TRUNCATE ";
+		if (truncate_group.empty()) {
+			result += table->ToString();
+		} else {
+			result += StringUtil::Join(truncate_group, ", ", [](const auto &target) { return target->ToString(); });
+		}
+		if (truncate_restart_identity) {
+			result += " RESTART IDENTITY";
+		}
+		if (truncate_cascade) {
+			result += " CASCADE";
+		}
+		return result;
+	}
 	string result;
 	result = cte_map.ToString();
 	result += "DELETE FROM ";

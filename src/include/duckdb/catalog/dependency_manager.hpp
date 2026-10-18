@@ -103,7 +103,8 @@ public:
 
 	//! Get the order of entries needed by EXPORT, the objects with no dependencies are exported first
 	void ReorderEntries(catalog_entry_vector_t &entries);
-	void ReorderEntries(catalog_entry_vector_t &entries, ClientContext &context);
+	void ReorderEntries(catalog_entry_vector_t &entries, ClientContext &context,
+	                    const catalog_entry_map_t<reference<CatalogEntry>> &creators);
 
 	static bool CanDepend(Catalog &dependent, Catalog &subject);
 	void ScanDependentEntries(CatalogTransaction transaction, CatalogEntry &object,
@@ -151,8 +152,10 @@ public:
 
 private:
 	void ReorderEntry(CatalogTransaction transaction, CatalogEntry &entry, catalog_entry_set_t &visited,
-	                  catalog_entry_vector_t &order, bool allow_internal);
-	void ReorderEntries(catalog_entry_vector_t &entries, CatalogTransaction transaction, bool allow_internal);
+	                  catalog_entry_vector_t &order, bool allow_internal,
+	                  const catalog_entry_map_t<reference<CatalogEntry>> &creators);
+	void ReorderEntries(catalog_entry_vector_t &entries, CatalogTransaction transaction, bool allow_internal,
+	                    const catalog_entry_map_t<reference<CatalogEntry>> &creators);
 	void AddObject(CatalogTransaction transaction, CatalogEntry &object, const LogicalDependencyList &dependencies);
 	void VerifyExistence(CatalogTransaction transaction, DependencyEntry &object);
 	void VerifyCommitDrop(CatalogTransaction transaction, VisibilityBound visibility_bound, CatalogEntry &object);

@@ -39,6 +39,7 @@ void Binder::BindJobSchedule(JobSchedule &schedule, unique_ptr<JobScheduleInfo> 
 SchemaCatalogEntry &Binder::BindCreateJobInfo(CreateJobInfo &info) {
 	auto &schema = BindCreateSchema(info);
 	BindJobSchedule(info.schedule, info.parsed_schedule);
+	info.SetBody(info.body->ToString());
 	return schema;
 }
 

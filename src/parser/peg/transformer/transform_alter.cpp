@@ -285,9 +285,9 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformSetSequenceOption(
 			    owner.Name().empty() || !owner.Schema().empty() ? owner.Schema() : Identifier::DefaultSchema();
 			auto ownership = make_uniq<ChangeOwnershipInfo>(CatalogType::SEQUENCE_ENTRY, "", "", "", schema,
 			                                                owner.Name(), OnEntryNotFound::THROW_EXCEPTION);
-			for (auto part : {&owner.Catalog(), &owner.Schema(), &owner.Name()}) {
-				if (!part->empty()) {
-					ownership->owner_path.push_back(*part);
+			for (auto &part : owner.Path()) {
+				if (!part.empty()) {
+					ownership->owner_path.push_back(part);
 				}
 			}
 			owned_info = std::move(ownership);

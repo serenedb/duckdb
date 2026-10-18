@@ -12,6 +12,10 @@ PEGTransformerFactory::TransformCreateJobStmt(PEGTransformer &transformer, const
 	if (statement->type == StatementType::TRANSACTION_STATEMENT) {
 		throw ParserException("CREATE JOB body cannot be a transaction statement");
 	}
+	if (statement->type == StatementType::MULTI_STATEMENT) {
+		throw ParserException("CREATE JOB body cannot be a statement that runs as several statements");
+	}
+	transformer.PivotEntryCheck("job");
 	if (transformer.ParamCount() > 0) {
 		throw ParserException("CREATE JOB cannot have parameters");
 	}

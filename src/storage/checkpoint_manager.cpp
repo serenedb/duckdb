@@ -552,6 +552,9 @@ void WriteCatalogEntries(WriteAheadLog &log, DuckCatalog &catalog) {
 			}
 			ChangeOwnershipInfo ownership(owned.type, catalog.GetName(), owned.ParentSchemaName(), owned.name,
 			                              owner.ParentSchemaName(), owner.name, OnEntryNotFound::THROW_EXCEPTION);
+			ownership.SetQualifiedName(
+			    QualifiedName::FromCatalogSchema(catalog.GetName(), owned.ParentSchemaPath(), owned.name));
+			ownership.oid = owned.oid;
 			log.WriteAlter(owned, ownership);
 		}
 	}

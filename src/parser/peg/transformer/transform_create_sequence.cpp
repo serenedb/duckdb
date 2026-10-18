@@ -118,9 +118,9 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateSequenceStmt(
 		} else if (option.first == "owned") {
 			auto owned_by = unique_ptr_cast<SequenceOption, QualifiedSequenceOption>(std::move(option.second));
 			auto &owner = owned_by->qualified_name;
-			for (auto part : {&owner.Catalog(), &owner.Schema(), &owner.Name()}) {
-				if (!part->empty()) {
-					info->owned_by.push_back(*part);
+			for (auto &part : owner.Path()) {
+				if (!part.empty()) {
+					info->owned_by.push_back(part);
 				}
 			}
 		} else {

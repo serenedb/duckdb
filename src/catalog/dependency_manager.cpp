@@ -1176,26 +1176,32 @@ void DependencyManager::OrderDrop(CatalogTransaction transaction, CatalogEntry &
 	order.push_back(entry);
 }
 
-void DependencyManager::ReorderEntries(catalog_entry_vector_t &entries, ClientContext &context) {
+void DependencyManager::ReorderEntries(catalog_entry_vector_t &entries, ClientContext &context,
+                                       const catalog_entry_map_t<reference<CatalogEntry>> &creators) {
 	auto transaction = catalog.GetCatalogTransaction(context);
 	// Read all the entries visible to this snapshot. Internal entries are not exported
-	ReorderEntries(entries, transaction, false);
+	ReorderEntries(entries, transaction, false, creators);
 }
 
 void DependencyManager::ReorderEntries(catalog_entry_vector_t &entries) {
 	// Read all committed entries. A checkpoint writes internal entries too
 	CatalogTransaction transaction(catalog.GetDatabase(), MAX_COMMIT_ID, VisibilityBound::Before(MAX_COMMIT_ID));
-	ReorderEntries(entries, transaction, true);
+	ReorderEntries(entries, transaction, true, catalog_entry_map_t<reference<CatalogEntry>>());
 }
 
 void DependencyManager::ReorderEntry(CatalogTransaction transaction, CatalogEntry &entry, catalog_entry_set_t &visited,
-                                     catalog_entry_vector_t &order, bool allow_internal) {
+                                     catalog_entry_vector_t &order, bool allow_internal,
+                                     const catalog_entry_map_t<reference<CatalogEntry>> &creators) {
 	auto &catalog_entry = *LookupEntry(transaction, entry);
 	if (visited.count(catalog_entry) || (!allow_internal && catalog_entry.internal)) {
 		// Already seen and ordered appropriately
 		return;
 	}
 	visited.insert(catalog_entry);
+	auto creator = creators.find(catalog_entry);
+	if (creator != creators.end()) {
+		ReorderEntry(transaction, creator->second, visited, order, allow_internal, creators);
+	}
 
 	// Check if there are any entries that this entry depends on, those are written first
 	catalog_entry_vector_t dependents;
@@ -1206,7 +1212,7 @@ void DependencyManager::ReorderEntry(CatalogTransaction transaction, CatalogEntr
 		}
 	});
 	for (auto &dep : dependents) {
-		ReorderEntry(transaction, dep, visited, order, allow_internal);
+		ReorderEntry(transaction, dep, visited, order, allow_internal, creators);
 	}
 
 	// Then write the entry
@@ -1214,11 +1220,12 @@ void DependencyManager::ReorderEntry(CatalogTransaction transaction, CatalogEntr
 }
 
 void DependencyManager::ReorderEntries(catalog_entry_vector_t &entries, CatalogTransaction transaction,
-                                       bool allow_internal) {
+                                       bool allow_internal,
+                                       const catalog_entry_map_t<reference<CatalogEntry>> &creators) {
 	catalog_entry_vector_t reordered;
 	catalog_entry_set_t visited;
 	for (auto &entry : entries) {
-		ReorderEntry(transaction, entry, visited, reordered, allow_internal);
+		ReorderEntry(transaction, entry, visited, reordered, allow_internal, creators);
 	}
 	// If this would fail, that means there are more entries that we somehow reached through the dependency manager
 	// but those entries should not actually be visible to this transaction

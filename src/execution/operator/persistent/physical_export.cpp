@@ -1,6 +1,7 @@
 #include "duckdb/execution/operator/persistent/physical_export.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/extension_type_info.hpp"
@@ -11,6 +12,8 @@
 #include "duckdb/parallel/pipeline.hpp"
 #include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
@@ -167,7 +170,50 @@ static string SequenceSetval(const CreateSequenceInfo &info, const QualifiedName
 	       (is_called ? "true" : "false") + ");\n";
 }
 
-static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entries,
+static optional_ptr<const ColumnDefinition> OwningColumn(TableCatalogEntry &table, CatalogEntry &sequence) {
+	auto &columns = table.GetColumns();
+	for (auto &dependency : table.dependencies.Set()) {
+		if (dependency.entry.type != CatalogType::SEQUENCE_ENTRY || dependency.entry.name != sequence.name ||
+		    dependency.entry.schema_path != sequence.ParentSchemaPath()) {
+			continue;
+		}
+		for (auto &column : columns.Logical()) {
+			if (dependency.subdependencies.contains(SubDependency {AlterTableType::SET_DEFAULT, column.Name()})) {
+				return column;
+			}
+		}
+	}
+	if (columns.LogicalColumnCount() == 0) {
+		return nullptr;
+	}
+	return columns.GetColumn(LogicalIndex(0));
+}
+
+static void WriteOwnedSequences(stringstream &ss, ClientContext &context, TableCatalogEntry &table,
+                                const reference_set_t<CatalogEntry> &skip) {
+	auto &catalog = table.ParentCatalog();
+	auto dependencies = catalog.GetDependencyManager();
+	if (!dependencies || catalog.Compatibility() != SqlCompatibility::POSTGRES) {
+		return;
+	}
+	for (auto &owned_ref : dependencies->OwnedEntries(catalog.GetCatalogTransaction(context), table)) {
+		auto &owned = owned_ref.get();
+		if (owned.type != CatalogType::SEQUENCE_ENTRY || owned.internal || skip.contains(owned)) {
+			continue;
+		}
+		auto column = OwningColumn(table, owned);
+		if (!column) {
+			continue;
+		}
+		ChangeOwnershipInfo ownership(CatalogType::SEQUENCE_ENTRY, Identifier(), Identifier(), owned.name,
+		                              Identifier(), Identifier(), OnEntryNotFound::THROW_EXCEPTION);
+		ownership.SetQualifiedName(QualifiedName(owned.ParentSchemaPath(), owned.name));
+		ownership.owner_path = {table.name, column->Name()};
+		ss << ownership.ToString() << '\n';
+	}
+}
+
+static void WriteCatalogEntries(stringstream &ss, ClientContext &context, catalog_entry_vector_t &entries,
                                 const reference_set_t<CatalogEntry> &skip) {
 	unordered_map<idx_t, QualifiedName> user_types;
 	for (auto &entry : entries) {
@@ -175,11 +221,13 @@ static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entrie
 			user_types.emplace(entry.get().oid, QualifiedName(entry.get().ParentSchemaPath(), entry.get().name));
 		}
 	}
+	string at_end;
 	for (auto &entry : entries) {
 		if (entry.get().internal || skip.contains(entry.get())) {
 			continue;
 		}
 		auto create_info = entry.get().GetInfo();
+		OwnedJobsExport jobs;
 		if (create_info->type == CatalogType::TABLE_ENTRY) {
 			auto &columns = create_info->Cast<CreateTableInfo>().columns;
 			for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
@@ -201,6 +249,8 @@ static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entrie
 					QualifyUserTypes(type, user_types);
 				}
 			}
+		} else if (create_info->type == CatalogType::INDEX_ENTRY) {
+			jobs = entry.get().Cast<IndexCatalogEntry>().ExportOwnedJobs(context, create_info->Cast<CreateIndexInfo>());
 		}
 		string setval;
 		if (create_info->type == CatalogType::SEQUENCE_ENTRY) {
@@ -221,7 +271,13 @@ static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entrie
 		ss << '\n';
 		ss << setval;
 		WriteComments(ss, entry.get());
+		ss << jobs.after_index;
+		at_end += jobs.at_end;
+		if (entry.get().type == CatalogType::TABLE_ENTRY) {
+			WriteOwnedSequences(ss, context, entry.get().Cast<TableCatalogEntry>(), skip);
+		}
 	}
+	ss << at_end;
 	ss << '\n';
 }
 
@@ -359,29 +415,71 @@ void PhysicalExport::ExtractEntries(ClientContext &context, vector<reference<Sch
 	}
 }
 
-static reference_set_t<CatalogEntry> CreatedByTarget(ClientContext &context, catalog_entry_vector_t &entries) {
+static catalog_entry_map_t<reference<CatalogEntry>> CreatedByOwner(ClientContext &context,
+                                                                  catalog_entry_vector_t &entries) {
+	catalog_entry_map_t<reference<CatalogEntry>> result;
+	for (auto &entry : entries) {
+		auto &owner = entry.get();
+		if (owner.type != CatalogType::TABLE_ENTRY && owner.type != CatalogType::INDEX_ENTRY) {
+			continue;
+		}
+		auto dependencies = owner.ParentCatalog().GetDependencyManager();
+		if (!dependencies) {
+			continue;
+		}
+		for (auto &owned : dependencies->OwnedEntries(owner.ParentCatalog().GetCatalogTransaction(context), owner)) {
+			const bool created = owned.get().type == CatalogType::JOB_ENTRY ||
+			                     (owner.type == CatalogType::TABLE_ENTRY &&
+			                      owner.Cast<TableCatalogEntry>().NumbersRowsWith(owned.get()));
+			if (created) {
+				result.emplace(owned, owner);
+			}
+		}
+	}
+	return result;
+}
+
+static catalog_entry_map_t<reference<CatalogEntry>>
+WrittenAfter(ClientContext &context, catalog_entry_vector_t &entries,
+             const catalog_entry_map_t<reference<CatalogEntry>> &by_owner) {
+	auto result = by_owner;
+	for (auto &entry : entries) {
+		auto &job = entry.get();
+		if (job.type != CatalogType::JOB_ENTRY || by_owner.contains(job)) {
+			continue;
+		}
+		auto transaction = job.ParentCatalog().GetCatalogTransaction(context);
+		auto index = job.ParentSchema(transaction).GetEntry(transaction, CatalogType::INDEX_ENTRY, job.name);
+		if (index) {
+			result.emplace(job, *index);
+		}
+	}
+	return result;
+}
+
+static reference_set_t<CatalogEntry> CreatedByTarget(catalog_entry_vector_t &entries,
+                                                     const catalog_entry_map_t<reference<CatalogEntry>> &by_owner) {
 	reference_set_t<CatalogEntry> result;
 	for (auto &entry : entries) {
 		if (entry.get().type == CatalogType::SCHEMA_ENTRY &&
 		    entry.get().name == entry.get().ParentCatalog().GetDefaultSchema()) {
 			result.insert(entry.get());
-			continue;
-		}
-		if (entry.get().type != CatalogType::TABLE_ENTRY) {
-			continue;
-		}
-		auto &table = entry.get().Cast<TableCatalogEntry>();
-		auto dependencies = table.ParentCatalog().GetDependencyManager();
-		if (!dependencies) {
-			continue;
-		}
-		for (auto &owned : dependencies->OwnedEntries(table.ParentCatalog().GetCatalogTransaction(context), table)) {
-			if (table.NumbersRowsWith(owned.get())) {
-				result.insert(owned.get());
-			}
 		}
 	}
+	for (auto &created : by_owner) {
+		result.insert(created.first);
+	}
 	return result;
+}
+
+static void AddJobs(ClientContext &context, Catalog &catalog, catalog_entry_vector_t &entries) {
+	for (auto &schema : catalog.GetSchemas(context)) {
+		schema.get().Scan(context, CatalogType::JOB_ENTRY, [&](CatalogEntry &entry) {
+			if (!entry.internal) {
+				entries.push_back(entry);
+			}
+		});
+	}
 }
 
 static void AddEntries(catalog_entry_vector_t &all_entries, catalog_entry_vector_t &to_add) {
@@ -441,14 +539,16 @@ SourceResultType PhysicalExport::GetDataInternal(ExecutionContext &context, Data
 
 	catalog_entry_vector_t catalog_entries;
 	catalog_entries = GetNaiveExportOrder(context.client, catalog);
+	AddJobs(ccontext, catalog, catalog_entries);
+	const auto by_owner = CreatedByOwner(ccontext, catalog_entries);
 	auto dependency_manager = catalog.GetDependencyManager();
 	if (dependency_manager) {
-		dependency_manager->ReorderEntries(catalog_entries, ccontext);
+		dependency_manager->ReorderEntries(catalog_entries, ccontext, WrittenAfter(ccontext, catalog_entries, by_owner));
 	}
 
 	// write the schema.sql file
 	stringstream ss;
-	WriteCatalogEntries(ss, catalog_entries, CreatedByTarget(ccontext, catalog_entries));
+	WriteCatalogEntries(ss, ccontext, catalog_entries, CreatedByTarget(catalog_entries, by_owner));
 	WriteStringStreamToFile(fs, ss, fs.JoinPath(info->file_path, "schema.sql"));
 
 	// write the load.sql file

@@ -24,6 +24,8 @@
 
 #include <absl/algorithm/container.h>
 
+#include <span>
+
 namespace duckdb {
 
 void CatalogEntryMap::AddEntry(unique_ptr<CatalogEntry> entry) {
@@ -291,14 +293,16 @@ static CatalogEntry &ColumnOwner(CatalogTransaction transaction, Catalog &catalo
 	}
 	auto &table_name = path[path.size() - 2];
 	auto &column_name = path.back();
-	const auto sequence_schema = sequence.ParentSchemaPath(transaction).back();
-	const auto schema_name = path.size() > 2 ? path[path.size() - 3] : sequence_schema;
+	const auto schema_path = sequence.ParentSchemaPath(transaction);
+	const auto qualification = std::span(path).first(path.size() - 2);
 	IdentifierEquality equals(catalog.IsCaseSensitive());
-	if (!equals(schema_name, sequence_schema)) {
+	const bool with_catalog =
+	    qualification.size() > schema_path.size() && equals(qualification.front(), catalog.GetName());
+	if (!qualification.empty() &&
+	    !absl::c_equal(with_catalog ? qualification.subspan(1) : qualification, schema_path, equals)) {
 		throw CatalogException("sequence must be in same schema as table it is linked to");
 	}
-	auto schema = catalog.GetSchema(transaction, schema_name, OnEntryNotFound::RETURN_NULL);
-	auto owner = schema ? schema->GetEntry(transaction, CatalogType::TABLE_ENTRY, table_name) : nullptr;
+	auto owner = sequence.ParentSchema(transaction).GetEntry(transaction, CatalogType::TABLE_ENTRY, table_name);
 	if (!owner) {
 		throw CatalogException("relation \"%s\" does not exist", table_name.GetIdentifierName());
 	}
@@ -314,6 +318,17 @@ static CatalogEntry &ColumnOwner(CatalogTransaction transaction, Catalog &catalo
 		throw CatalogException("sequence must have same owner as table it is linked to");
 	}
 	return *owner;
+}
+
+static optional_ptr<SchemaCatalogEntry> OwnerSchema(CatalogTransaction transaction, Catalog &catalog,
+                                                    CatalogEntry &entry, const ChangeOwnershipInfo &info) {
+	if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+		auto &schema = entry.ParentSchema(transaction);
+		if (IdentifierEquality(catalog.IsCaseSensitive())(info.owner_schema, schema.name)) {
+			return schema;
+		}
+	}
+	return catalog.GetSchema(transaction, info.owner_schema, OnEntryNotFound::RETURN_NULL);
 }
 
 bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipInfo &info) {
@@ -338,7 +353,7 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 		return true;
 	}
 	optional_ptr<CatalogEntry> owner_entry;
-	auto schema = catalog.GetSchema(transaction, info.owner_schema, OnEntryNotFound::RETURN_NULL);
+	auto schema = OwnerSchema(transaction, catalog, *entry, info);
 	if (schema) {
 		vector<CatalogType> entry_types {CatalogType::TABLE_ENTRY, CatalogType::SEQUENCE_ENTRY,
 		                                 CatalogType::INDEX_ENTRY};
