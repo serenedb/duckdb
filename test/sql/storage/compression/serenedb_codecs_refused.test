@@ -1,0 +1,36 @@
+# name: test/sql/storage/compression/serenedb_codecs_refused.test
+# description: The columnstore's codecs and compression options are refused on DuckDB tables
+# group: [compression]
+
+statement error
+CREATE TABLE t (s VARCHAR USING COMPRESSION dict_lz4);
+----
+that type is only available on SereneDB tables
+
+statement error
+CREATE TABLE t (s VARCHAR USING COMPRESSION zstd(compression_level = 3));
+----
+compression options are only available on SereneDB tables
+
+statement ok
+CREATE TABLE t (s VARCHAR USING COMPRESSION zstd);
+
+statement error
+ALTER TABLE t ADD COLUMN u VARCHAR USING COMPRESSION lz4;
+----
+that type is only available on SereneDB tables
+
+statement error
+ALTER TABLE t ALTER COLUMN s SET COMPRESSION dict_zxc;
+----
+that type is only available on SereneDB tables
+
+statement error
+ALTER TABLE t ALTER COLUMN s SET COMPRESSION zstd(compression_level = 3);
+----
+compression options are only available on SereneDB tables
+
+statement error
+CREATE TEMPORARY TABLE tt (s VARCHAR USING COMPRESSION zxc);
+----
+that type is only available on SereneDB tables
