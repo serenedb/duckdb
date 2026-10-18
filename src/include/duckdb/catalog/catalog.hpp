@@ -178,6 +178,9 @@ public:
 	virtual bool SupportsSereneDBCompression() const {
 		return false;
 	}
+	virtual vector<PhysicalType> CompressionLeafTypes(const CreateTableInfo &info, const LogicalType &type) const {
+		return {};
+	}
 
 	virtual void Initialize(bool load_builtin) = 0;
 	virtual void Initialize(optional_ptr<ClientContext> context, bool load_builtin);
