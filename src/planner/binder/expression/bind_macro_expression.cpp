@@ -11,6 +11,7 @@
 #include "duckdb/common/enums/expression_type.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
+#include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
@@ -871,7 +872,9 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 			if (!bound || (scan.has_parameter && bound->GetReturnType().id() == LogicalTypeId::UNKNOWN)) {
 				continue;
 			}
-			if (bound->IsFoldable()) {
+			if (bound->IsFoldable() && !TypeVisitor::Contains(bound->GetReturnType(), [](const LogicalType &type) {
+				    return type.HasAlias();
+			    })) {
 				Value value;
 				if (ExpressionExecutor::TryEvaluateFoldable(context, *bound, value, MAX_ARGUMENT_LITERAL_SIZE)) {
 					argument = ConstantExpression::FromValue(value);
