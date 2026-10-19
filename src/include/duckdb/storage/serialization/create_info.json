@@ -928,7 +928,7 @@
         "id": 203,
         "name": "body",
         "type": "string",
-        "serialize_property": "body->ToString()"
+        "serialize_property": "BodyToString(body)"
       }
     ],
     "methods": {

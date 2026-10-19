@@ -2,17 +2,38 @@
 
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parser.hpp"
 
 namespace duckdb {
 
+bool CreateJobInfo::IsScript(const vector<unique_ptr<SQLStatement>> &body) {
+	return body.size() != 1 || body[0]->type == StatementType::MULTI_STATEMENT;
+}
+
+string CreateJobInfo::BodyToString(const vector<unique_ptr<SQLStatement>> &body) {
+	if (!IsScript(body)) {
+		return body[0]->ToString();
+	}
+	return StringUtil::Join(body, "", [](const unique_ptr<SQLStatement> &statement) {
+		D_ASSERT(!statement->query.empty());
+		return statement->query;
+	});
+}
+
+vector<unique_ptr<SQLStatement>> CreateJobInfo::CopyBody(const vector<unique_ptr<SQLStatement>> &body) {
+	vector<unique_ptr<SQLStatement>> result;
+	result.reserve(body.size());
+	for (auto &statement : body) {
+		result.push_back(statement->Copy());
+	}
+	return result;
+}
+
 void CreateJobInfo::SetBody(const string &sql) {
 	auto parser = Parser::GetBuiltinParser();
 	parser.ParseQuery(sql);
-	if (parser.statements.size() != 1) {
-		throw ParserException("Job body must be a single statement: %s", sql);
-	}
-	body = std::move(parser.statements[0]);
+	body = std::move(parser.statements);
 }
 
 unique_ptr<CreateInfo> CreateJobInfo::Copy() const {
@@ -20,7 +41,7 @@ unique_ptr<CreateInfo> CreateJobInfo::Copy() const {
 	CopyProperties(*result);
 	result->schedule = schedule;
 	result->suspended = suspended;
-	result->body = body->Copy();
+	result->body = CopyBody(body);
 	result->parsed_schedule = parsed_schedule ? parsed_schedule->Copy() : nullptr;
 	return std::move(result);
 }
@@ -61,7 +82,8 @@ string CreateJobInfo::ToString() const {
 	if (suspended) {
 		result += " SUSPENDED";
 	}
-	return result + " AS " + body->ToString() + ";";
+	auto body_sql = BodyToString(body);
+	return result + " AS " + (IsScript(body) ? KeywordHelper::WriteQuoted(body_sql) : body_sql) + ";";
 }
 
 } // namespace duckdb

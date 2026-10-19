@@ -19,11 +19,14 @@ struct CreateJobInfo : public CreateInfo {
 	CreateJobInfo() : CreateInfo(CatalogType::JOB_ENTRY) {
 	}
 
+	static bool IsScript(const vector<unique_ptr<SQLStatement>> &body);
+	static string BodyToString(const vector<unique_ptr<SQLStatement>> &body);
+	static vector<unique_ptr<SQLStatement>> CopyBody(const vector<unique_ptr<SQLStatement>> &body);
 	void SetBody(const string &sql);
 
 	JobSchedule schedule;
 	bool suspended = false;
-	unique_ptr<SQLStatement> body;
+	vector<unique_ptr<SQLStatement>> body;
 	unique_ptr<JobScheduleInfo> parsed_schedule;
 
 public:

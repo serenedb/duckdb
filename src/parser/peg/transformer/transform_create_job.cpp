@@ -1,7 +1,9 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
+#include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/statement/multi_statement.hpp"
 
 namespace duckdb {
 
@@ -9,21 +11,47 @@ unique_ptr<CreateStatement>
 PEGTransformerFactory::TransformCreateJobStmt(PEGTransformer &transformer, const optional<bool> &if_not_exists,
                                               const QualifiedName &qualified_name, JobScheduleInfo job_schedule,
                                               const optional<bool> &job_suspended, unique_ptr<SQLStatement> statement) {
-	if (statement->type == StatementType::TRANSACTION_STATEMENT) {
-		throw ParserException("CREATE JOB body cannot be a transaction statement");
+	if (statement->type == StatementType::MULTI_STATEMENT && statement->query.empty()) {
+		throw ParserException(
+		    "CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$");
 	}
 	if (transformer.ParamCount() > 0) {
 		throw ParserException("CREATE JOB cannot have parameters");
 	}
 	auto result = make_uniq<CreateStatement>();
 	auto info = make_uniq<CreateJobInfo>();
+	if (statement->type == StatementType::MULTI_STATEMENT) {
+		info->body = std::move(statement->Cast<MultiStatement>().statements);
+	} else {
+		info->body.push_back(std::move(statement));
+	}
+	if (info->body.size() == 1 && info->body[0]->type == StatementType::TRANSACTION_STATEMENT) {
+		throw ParserException("CREATE JOB body cannot be a transaction statement");
+	}
 	info->SetQualifiedName(qualified_name);
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
 	info->parsed_schedule = make_uniq<JobScheduleInfo>(std::move(job_schedule));
 	info->suspended = job_suspended && *job_suspended;
-	info->body = std::move(statement);
 	result->info = std::move(info);
 	return result;
+}
+
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformJobScript(PEGTransformer &transformer,
+                                                                   const string &string_literal) {
+	auto parser = Parser::GetBuiltinParser();
+	parser.ParseQuery(string_literal);
+	if (parser.statements.empty()) {
+		throw ParserException("CREATE JOB body cannot be empty");
+	}
+	for (auto &statement : parser.statements) {
+		if (!statement->named_param_map.empty()) {
+			throw ParserException("CREATE JOB cannot have parameters");
+		}
+	}
+	auto script = make_uniq<MultiStatement>();
+	script->statements = std::move(parser.statements);
+	script->query = string_literal;
+	return std::move(script);
 }
 
 JobScheduleInfo PEGTransformerFactory::TransformJobEvery(PEGTransformer &transformer,
