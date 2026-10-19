@@ -147,7 +147,8 @@ enum class StorageVersion : uint64_t {
     V2_0_0 = 69ULL << 32,
     DUCKDB_LATEST = V2_0_0,
     SERENEDB_V1 = V2_0_0 + 1,
-    SERENEDB_LATEST = SERENEDB_V1,
+    SERENEDB_V2 = V2_0_0 + 2,
+    SERENEDB_LATEST = SERENEDB_V2,
     DEPRECATED = 999ULL << 32,
     INVALID = 0
 };
