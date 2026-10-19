@@ -810,6 +810,10 @@ OperatorResultType PipelineExecutor::Execute(DataChunk &input, DataChunk &result
 			if (current_idx == initial_idx) {
 				// if we got no output from the scan, we are done
 				break;
+			} else if (!in_process_operators.empty()) {
+				// an earlier operator has more output but gave none so far
+				// let's make a round trip to check possible yielding.
+				return OperatorResultType::HAVE_MORE_OUTPUT;
 			} else {
 				// if we got no output from an intermediate op
 				// we go back and try to pull data from the source again
