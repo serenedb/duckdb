@@ -139,6 +139,9 @@ public:
 	}
 	//! Return the version number of the file.
 	StorageVersion GetVersionNumber() const;
+	StorageVersion GetFileStorageVersion() const {
+		return file_storage_version;
+	}
 	//! Return the database identifier.
 	data_ptr_t GetDBIdentifier() {
 		return options.db_identifier;
@@ -226,6 +229,7 @@ private:
 	atomic<uint64_t> iteration_count;
 	//! The storage manager options
 	StorageManagerOptions options;
+	StorageVersion file_storage_version = StorageVersion::INVALID;
 	//! Lock for performing various operations in the single file block manager
 	mutex single_file_block_lock;
 };

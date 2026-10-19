@@ -895,7 +895,11 @@ void SingleFileStorageManager::CreateCheckpoint(QueryContext context, Checkpoint
 	auto &config = DBConfig::Get(db);
 	// We only need to checkpoint if there is anything in the WAL.
 	auto wal_size = GetWALSize();
-	if (wal_size > 0 || config.options.force_checkpoint || options.action == CheckpointAction::ALWAYS_CHECKPOINT) {
+	const bool raises_version =
+	    !InMemory() && IsSereneDBStorageVersion(GetStorageVersion()) &&
+	    block_manager->Cast<SingleFileBlockManager>().GetFileStorageVersion() < GetStorageVersion();
+	if (wal_size > 0 || config.options.force_checkpoint || options.action == CheckpointAction::ALWAYS_CHECKPOINT ||
+	    raises_version) {
 		try {
 			// Start timing the checkpoint.
 			auto client_context = context.GetClientContext();

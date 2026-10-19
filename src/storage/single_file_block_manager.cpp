@@ -616,6 +616,7 @@ void SingleFileBlockManager::CreateNewDatabase(QueryContext context) {
 
 	// ensure that writing to disk is completed before returning
 	handle->Sync();
+	file_storage_version = options.storage_version;
 	// we start with h2 as active_header, this way our initial write will be in h1
 	iteration_count = 0;
 	active_header = 1;
@@ -837,6 +838,7 @@ void SingleFileBlockManager::Initialize(const DatabaseHeader &header, const opti
 	meta_block = header.meta_block;
 	iteration_count = header.iteration;
 	max_block = NumericCast<block_id_t>(header.block_count);
+	file_storage_version = header.storage_compatibility;
 	if (options.storage_version != StorageVersion::INVALID) {
 		// storage version specified explicitly - use requested storage version
 		auto requested_compat_version = options.storage_version;
@@ -1423,6 +1425,7 @@ void SingleFileBlockManager::WriteHeader(QueryContext context, DatabaseHeader he
 	active_header = 1 - active_header;
 	//! Ensure the header write ends up on disk
 	handle->Sync();
+	file_storage_version = header.storage_compatibility;
 	set<block_id_t> fully_freed_blocks;
 	{
 		unique_lock<mutex> release_lock(single_file_block_lock);
