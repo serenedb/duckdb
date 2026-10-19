@@ -184,6 +184,8 @@ public:
 	DUCKDB_API void SuppressInterrupts();
 	DUCKDB_API void CancelTransaction();
 
+	//! Whether the running query is past its deadline
+	DUCKDB_API bool DeadlinePassed() const;
 	//! Check for interrupt or timeout, throws InterruptException if triggered
 	DUCKDB_API void InterruptCheck() const;
 
