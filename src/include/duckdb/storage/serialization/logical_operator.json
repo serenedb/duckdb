@@ -607,6 +607,18 @@
     "members": []
   },
   {
+    "class": "LogicalLookupJoin",
+    "base": "LogicalOperator",
+    "enum": "LOGICAL_LOOKUP_JOIN",
+    "members": [
+      {
+        "id": 200,
+        "name": "expressions",
+        "type": "vector<Expression*>"
+      }
+    ]
+  },
+  {
     "class": "LogicalSetOperation",
     "base": "LogicalOperator",
     "enum": [

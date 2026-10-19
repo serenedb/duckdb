@@ -26,6 +26,9 @@ OrderPreservationType PhysicalPlanGenerator::OrderPreservationRecursive(Physical
 			child_idx++;
 			continue;
 		}
+		if (op.type == PhysicalOperatorType::LOOKUP_JOIN && child_idx == 1) {
+			break;
+		}
 		auto child_preservation = OrderPreservationRecursive(child);
 		if (child_preservation != OrderPreservationType::INSERTION_ORDER) {
 			return child_preservation;

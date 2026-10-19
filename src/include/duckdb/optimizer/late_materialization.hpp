@@ -10,6 +10,7 @@
 
 #include "duckdb/common/constants.hpp"
 #include "duckdb/optimizer/remove_unused_columns.hpp"
+#include "duckdb/planner/column_binding_map.hpp"
 #include "duckdb/common/table_column.hpp"
 
 namespace duckdb {
@@ -26,11 +27,16 @@ public:
 	unique_ptr<LogicalOperator> Optimize(unique_ptr<LogicalOperator> op);
 
 private:
-	bool TryLateMaterialization(unique_ptr<LogicalOperator> &op);
+	bool TryLateMaterialization(unique_ptr<LogicalOperator> &op, bool semi_join);
+	bool SupportsLookup(LogicalGet &get, vector<bool> &fetchable);
+	bool TryLookupJoin(unique_ptr<LogicalOperator> &op, LogicalGet &get,
+	                   const vector<reference<LogicalOperator>> &source_operators,
+	                   const column_binding_set_t &required_columns, const vector<bool> &fetchable);
+	void LoadRowIdColumns(LogicalGet &get);
+	vector<unique_ptr<Expression>> ConstructFinalProjection(LogicalGet &lhs_get, const vector<ColumnBinding> &lhs_columns,
+	                                                        const vector<reference<LogicalOperator>> &source_operators);
 
-	unique_ptr<LogicalGet> ConstructLHS(LogicalGet &get);
-	vector<ColumnBinding> ConstructRHS(unique_ptr<LogicalOperator> &op);
-	vector<idx_t> GetOrInsertRowIds(LogicalGet &get);
+	vector<ColumnBinding> ConstructRHS(unique_ptr<LogicalOperator> &op, const vector<ProjectionIndex> &carried);
 
 	void ReplaceTopLevelTableIndex(LogicalOperator &op, TableIndex new_index);
 	void ReplaceTableReferences(unique_ptr<Expression> &expr, TableIndex new_table_index);

@@ -161,6 +161,7 @@ protected:
 	PhysicalOperator &CreatePlan(LogicalFilter &op);
 	PhysicalOperator &CreatePlan(LogicalGet &op);
 	PhysicalOperator &CreatePlan(LogicalLimit &op);
+	PhysicalOperator &CreatePlan(LogicalLookupJoin &op);
 	PhysicalOperator &CreatePlan(LogicalMergeInto &op);
 	PhysicalOperator &CreatePlan(LogicalOrder &op);
 	PhysicalOperator &CreatePlan(LogicalTopN &op);

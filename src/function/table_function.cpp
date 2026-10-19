@@ -113,6 +113,8 @@ BoundTableFunction::BoundTableFunction(shared_ptr<const TableFunction> function_
 	set_scan_order = function.set_scan_order;
 	consume_top_n = function.consume_top_n;
 	set_partitions_to_scan = function.set_partitions_to_scan;
+	supports_lookup = function.supports_lookup;
+	get_lookup_function = function.get_lookup_function;
 	serialize = function.serialize;
 	deserialize = function.deserialize;
 	verify_serialization = function.verify_serialization;

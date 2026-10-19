@@ -1229,6 +1229,114 @@ vector<column_t> TableScanGetRowIdColumns(ClientContext &context, optional_ptr<F
 	return result;
 }
 
+struct TableLookupLocalState : public LocalTableFunctionState {
+	vector<StorageIndex> column_ids;
+	vector<idx_t> output_to_fetch;
+	DataChunk scratch;
+	DataChunk local_rows;
+	unique_ptr<TableScanState> scan_state;
+	ColumnFetchState fetch_state;
+	vector<row_t> committed_ids;
+	vector<idx_t> committed_positions;
+	vector<idx_t> local_positions;
+	unsafe_unique_array<idx_t> survivor_idx;
+};
+
+static unique_ptr<LocalTableFunctionState> TableLookupInitLocal(ExecutionContext &context,
+                                                                TableFunctionInitInput &input,
+                                                                GlobalTableFunctionState *) {
+	auto &bind_data = input.bind_data->Cast<TableScanBindData>();
+	auto result = make_uniq<TableLookupLocalState>();
+	vector<LogicalType> types;
+	for (auto &column_index : input.column_indexes) {
+		D_ASSERT(!column_index.IsVirtualColumn());
+		result->column_ids.push_back(bind_data.table.GetStorageIndex(column_index));
+		types.push_back(column_index.HasType() ? column_index.GetScanType()
+		                                       : bind_data.table.GetColumn(column_index.ToLogical()).Type());
+	}
+	if (input.projection_ids.empty()) {
+		for (idx_t c = 0; c < types.size(); c++) {
+			result->output_to_fetch.push_back(c);
+		}
+	} else {
+		result->output_to_fetch = input.projection_ids;
+	}
+	result->scratch.Initialize(context.client, types);
+	result->local_rows.Initialize(context.client, types);
+	result->survivor_idx = make_unsafe_uniq_array_uninitialized<idx_t>(STANDARD_VECTOR_SIZE);
+	return std::move(result);
+}
+
+static OperatorResultType TableLookupFunction(ExecutionContext &context, TableFunctionInput &data, DataChunk &input,
+                                              DataChunk &output) {
+	auto &bind_data = data.bind_data->Cast<TableScanBindData>();
+	auto &state = data.local_state->Cast<TableLookupLocalState>();
+	auto &table = bind_data.table.Cast<DuckTableEntry>();
+	auto &storage = table.GetStorage();
+	auto &transaction = DuckTransaction::Get(context.client, table.ParentCatalog());
+
+	state.committed_ids.clear();
+	state.committed_positions.clear();
+	state.local_positions.clear();
+	auto row_ids = input.data[0].Values<row_t>();
+	for (idx_t i = 0; i < input.size(); i++) {
+		if (row_ids[i].GetValue() >= MAX_ROW_ID) {
+			state.local_positions.push_back(i);
+		} else {
+			state.committed_positions.push_back(i);
+		}
+	}
+	std::sort(state.committed_positions.begin(), state.committed_positions.end(),
+	          [&](idx_t a, idx_t b) { return row_ids[a].GetValue() < row_ids[b].GetValue(); });
+	for (auto position : state.committed_positions) {
+		state.committed_ids.push_back(row_ids[position].GetValue());
+	}
+	auto found = storage.LookupScan(transaction, context.client, state.column_ids, nullptr, state.committed_ids.data(),
+	                                state.committed_ids.data() + state.committed_ids.size(), state.survivor_idx.get(),
+	                                state.output_to_fetch.data(), state.scratch, output, state.scan_state);
+	for (idx_t r = 0; r < found; r++) {
+		data.pk_survivors[r] = state.committed_positions[state.survivor_idx[r]];
+	}
+	if (!state.local_positions.empty()) {
+		const auto local_count = state.local_positions.size();
+		Vector local_ids(LogicalType::ROW_TYPE, local_count);
+		{
+			auto writer = FlatVector::Writer<row_t>(local_ids, local_count);
+			for (auto position : state.local_positions) {
+				writer.WriteValue(row_ids[position].GetValue());
+			}
+		}
+		state.local_rows.Reset();
+		LocalStorage::Get(transaction)
+		    .FetchChunk(storage, local_ids, local_count, state.column_ids, state.local_rows, state.fetch_state);
+		if (state.local_rows.size() != local_count) {
+			throw InternalException("Lookup of transaction-local rows returned %llu rows for %llu row ids",
+			                        state.local_rows.size(), local_count);
+		}
+		for (idx_t c = 0; c < output.ColumnCount(); c++) {
+			VectorOperations::Copy(state.local_rows.data[state.output_to_fetch[c]], output.data[c], local_count, 0,
+			                       found);
+		}
+		for (idx_t k = 0; k < local_count; k++) {
+			data.pk_survivors[found + k] = state.local_positions[k];
+		}
+		found += local_count;
+	}
+	output.SetChildCardinality(found);
+	return OperatorResultType::NEED_MORE_INPUT;
+}
+
+static bool TableScanSupportsLookup(ClientContext &, const LogicalGet &get, vector<bool> &) {
+	return get.bind_data->Cast<TableScanBindData>().table.IsDuckTable();
+}
+
+static TableFunction TableScanGetLookupFunction(ClientContext &, const LogicalGet &) {
+	TableFunction lookup;
+	lookup.init_local = TableLookupInitLocal;
+	lookup.in_out_function = TableLookupFunction;
+	return lookup;
+}
+
 void SetScanOrder(ClientContext &context, unique_ptr<RowGroupOrderOptions> order_options,
                   optional_ptr<FunctionData> bind_data_p) {
 	auto &bind_data = bind_data_p->Cast<TableScanBindData>();
@@ -1312,6 +1420,8 @@ TableFunction TableScanFunction::GetFunction() {
 	scan_function.pushdown_expression = TableScanPushdownExpression;
 	scan_function.get_virtual_columns = TableScanGetVirtualColumns;
 	scan_function.get_row_id_columns = TableScanGetRowIdColumns;
+	scan_function.supports_lookup = TableScanSupportsLookup;
+	scan_function.get_lookup_function = TableScanGetLookupFunction;
 	scan_function.set_scan_order = SetScanOrder;
 	scan_function.set_partitions_to_scan = SetPartitionsToScan;
 	scan_function.supports_pushdown_extract = TableSupportsPushdownExtract;

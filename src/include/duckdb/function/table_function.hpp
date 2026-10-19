@@ -464,6 +464,11 @@ typedef bool (*table_function_consume_top_n_t)(ClientContext &context, FunctionD
 typedef void (*table_function_set_partitions_to_scan_t)(vector<idx_t> partition_indices,
                                                         optional_ptr<FunctionData> bind_data);
 
+typedef bool (*table_function_supports_lookup_t)(ClientContext &context, const LogicalGet &get,
+                                                 vector<bool> &fetchable);
+
+typedef TableFunction (*table_function_get_lookup_function_t)(ClientContext &context, const LogicalGet &source);
+
 //! When to call init_global to initialize the table function
 enum class TableFunctionInitialization { INITIALIZE_ON_EXECUTE, INITIALIZE_ON_SCHEDULE };
 
@@ -586,6 +591,8 @@ public:
 	table_function_consume_top_n_t consume_top_n = nullptr;
 	//! (Optional) restricts the scan to a specific subset of partitions (by index in get_partition_stats order)
 	table_function_set_partitions_to_scan_t set_partitions_to_scan = nullptr;
+	table_function_supports_lookup_t supports_lookup = nullptr;
+	table_function_get_lookup_function_t get_lookup_function = nullptr;
 
 	table_function_serialize_t serialize;
 	table_function_deserialize_t deserialize;
