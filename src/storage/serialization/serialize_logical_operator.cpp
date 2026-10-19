@@ -158,6 +158,9 @@ unique_ptr<LogicalOperator> LogicalOperator::Deserialize(Deserializer &deseriali
 	case LogicalOperatorType::LOGICAL_LOAD:
 		result = LogicalLoad::Deserialize(deserializer);
 		break;
+	case LogicalOperatorType::LOGICAL_LOOKUP_JOIN:
+		result = LogicalLookupJoin::Deserialize(deserializer);
+		break;
 	case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE:
 		result = LogicalMaterializedCTE::Deserialize(deserializer);
 		break;
@@ -694,6 +697,17 @@ void LogicalLoad::Serialize(Serializer &serializer) const {
 unique_ptr<LogicalOperator> LogicalLoad::Deserialize(Deserializer &deserializer) {
 	auto info = deserializer.ReadPropertyWithDefault<unique_ptr<ParseInfo>>(200, "info");
 	auto result = duckdb::unique_ptr<LogicalLoad>(new LogicalLoad(std::move(info)));
+	return std::move(result);
+}
+
+void LogicalLookupJoin::Serialize(Serializer &serializer) const {
+	LogicalOperator::Serialize(serializer);
+	serializer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(200, "expressions", expressions);
+}
+
+unique_ptr<LogicalOperator> LogicalLookupJoin::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<LogicalLookupJoin>(new LogicalLookupJoin());
+	deserializer.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(200, "expressions", result->expressions);
 	return std::move(result);
 }
 
