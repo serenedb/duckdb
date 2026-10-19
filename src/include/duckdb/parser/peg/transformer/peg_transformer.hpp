@@ -1682,6 +1682,12 @@ public:
 	static void InitializeCreateJobStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCreateJobStmtTrampoline(PEGTransformer &transformer,
 	                                                                       GeneratedTransformProcess &process);
+	static void InitializeJobBodyTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobBodyTrampoline(PEGTransformer &transformer,
+	                                                                 GeneratedTransformProcess &process);
+	static void InitializeJobScriptTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeJobScriptTrampoline(PEGTransformer &transformer,
+	                                                                   GeneratedTransformProcess &process);
 	static void InitializeJobScheduleTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeJobScheduleTrampoline(PEGTransformer &transformer,
 	                                                                     GeneratedTransformProcess &process);
@@ -5306,6 +5312,7 @@ public:
 	TransformCreateJobStmt(PEGTransformer &transformer, const optional<bool> &if_not_exists,
 	                       const QualifiedName &qualified_name, JobScheduleInfo job_schedule,
 	                       const optional<bool> &job_suspended, unique_ptr<SQLStatement> statement);
+	static unique_ptr<SQLStatement> TransformJobScript(PEGTransformer &transformer, const string &string_literal);
 	static JobScheduleInfo TransformJobEvery(PEGTransformer &transformer, unique_ptr<ParsedExpression> job_interval,
 	                                         optional<unique_ptr<ParsedExpression>> job_offset,
 	                                         optional<unique_ptr<ParsedExpression>> job_randomize,

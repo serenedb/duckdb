@@ -223,7 +223,7 @@ void CreateJobInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<Identifier>(200, "name", qualified_name.Name());
 	serializer.WriteProperty<JobSchedule>(201, "schedule", schedule);
 	serializer.WritePropertyWithDefault<bool>(202, "suspended", suspended);
-	serializer.WritePropertyWithDefault<string>(203, "body", body->ToString());
+	serializer.WritePropertyWithDefault<string>(203, "body", BodyToString(body));
 }
 
 unique_ptr<CreateInfo> CreateJobInfo::Deserialize(Deserializer &deserializer) {

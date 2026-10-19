@@ -994,7 +994,10 @@ DefArgKeyword <- ReservedKeyword
 DefArgStringLiteral <- StringLiteral
 NoneLiteral <- 'NONE'
 
-CreateJobStmt <- 'JOB' IfNotExists? QualifiedName JobSchedule JobSuspended? 'AS' Statement
+CreateJobStmt <- 'JOB' IfNotExists? QualifiedName JobSchedule JobSuspended? 'AS' JobBody
+
+JobBody <- JobScript / Statement
+JobScript <- StringLiteral
 
 JobSchedule <- JobEvery / JobAfter
 JobEvery <- 'EVERY' JobInterval JobOffset? JobRandomize? JobConcurrent?

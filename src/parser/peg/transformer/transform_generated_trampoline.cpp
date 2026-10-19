@@ -794,6 +794,10 @@ static const TransformFrameOps NONE_LITERAL_OPS = {"NoneLiteral",
 static const TransformFrameOps CREATE_JOB_STMT_OPS = {"CreateJobStmt",
                                                       &PEGTransformerFactory::InitializeCreateJobStmtTrampoline,
                                                       &PEGTransformerFactory::FinalizeCreateJobStmtTrampoline};
+static const TransformFrameOps JOB_BODY_OPS = {"JobBody", &PEGTransformerFactory::InitializeJobBodyTrampoline,
+                                               &PEGTransformerFactory::FinalizeJobBodyTrampoline, true};
+static const TransformFrameOps JOB_SCRIPT_OPS = {"JobScript", &PEGTransformerFactory::InitializeJobScriptTrampoline,
+                                                 &PEGTransformerFactory::FinalizeJobScriptTrampoline};
 static const TransformFrameOps JOB_SCHEDULE_OPS = {"JobSchedule",
                                                    &PEGTransformerFactory::InitializeJobScheduleTrampoline,
                                                    &PEGTransformerFactory::FinalizeJobScheduleTrampoline, true};
@@ -3898,6 +3902,8 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"DefArgStringLiteral", &DEF_ARG_STRING_LITERAL_OPS},
 	    {"NoneLiteral", &NONE_LITERAL_OPS},
 	    {"CreateJobStmt", &CREATE_JOB_STMT_OPS},
+	    {"JobBody", &JOB_BODY_OPS},
+	    {"JobScript", &JOB_SCRIPT_OPS},
 	    {"JobSchedule", &JOB_SCHEDULE_OPS},
 	    {"JobEvery", &JOB_EVERY_OPS},
 	    {"JobAfter", &JOB_AFTER_OPS},
@@ -10104,10 +10110,43 @@ PEGTransformerFactory::FinalizeCreateJobStmtTrampoline(PEGTransformer &transform
 	if (process.child_results[3]) {
 		job_suspended = process.TakeResult<bool>(3);
 	}
-	auto statement = process.TakeResult<unique_ptr<SQLStatement>>(4);
+	auto job_body = process.TakeResult<unique_ptr<SQLStatement>>(4);
 	auto result = TransformCreateJobStmt(transformer, if_not_exists, qualified_name, std::move(job_schedule),
-	                                     job_suspended, std::move(statement));
+	                                     job_suspended, std::move(job_body));
 	return transformer.MakeResult<unique_ptr<CreateStatement>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeJobBodyTrampoline(PEGTransformer &transformer,
+                                                        GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto &choice_result = choice_pr.GetResult();
+	process.ReserveChildSlots(1);
+	auto child_rule = choice_result.GetRule();
+	auto has_transform_process = child_rule && child_rule->transform_process;
+	if (!has_transform_process) {
+		throw InternalException("No transform process registered for rule '%s'", choice_result.Name());
+	}
+	process.PushChild({*child_rule, choice_result}, 0);
+}
+
+arena_ptr<TransformResultValue> PEGTransformerFactory::FinalizeJobBodyTrampoline(PEGTransformer &transformer,
+                                                                                 GeneratedTransformProcess &process) {
+	auto result = process.TakeResult<unique_ptr<SQLStatement>>(0);
+	return transformer.MakeResult<unique_ptr<SQLStatement>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeJobScriptTrampoline(PEGTransformer &transformer,
+                                                          GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue> PEGTransformerFactory::FinalizeJobScriptTrampoline(PEGTransformer &transformer,
+                                                                                   GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto string_literal = TransformStringLiteral(transformer, list_pr.GetChild(0));
+	auto result = TransformJobScript(transformer, string_literal);
+	return transformer.MakeResult<unique_ptr<SQLStatement>>(std::move(result));
 }
 
 void PEGTransformerFactory::InitializeJobScheduleTrampoline(PEGTransformer &transformer,
