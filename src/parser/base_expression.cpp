@@ -42,6 +42,9 @@ static int FigureColnameInternal(const BaseExpression &expr, string &name) {
 			name = "count";
 		} else if (name == "trim") {
 			name = "btrim";
+		} else if ((name == "quantile_cont" || name == "quantile_disc") && function.GetArguments().size() == 1 &&
+		           function.OrderBy() && function.OrderBy()->orders.size() == 1) {
+			name = name == "quantile_cont" ? "percentile_cont" : "percentile_disc";
 		}
 		return 2;
 	}

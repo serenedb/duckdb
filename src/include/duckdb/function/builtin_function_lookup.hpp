@@ -37,6 +37,9 @@ shared_ptr<const AggregateFunction> TryGetBuiltinAggregateFunction(ClientContext
 shared_ptr<const WindowFunction> GetBuiltinWindowFunction(ClientContext &context, const Identifier &name,
                                                           const vector<LogicalType> &arguments);
 
+unique_ptr<Expression> BindBuiltinScalarExpression(ClientContext &context, const Identifier &name,
+                                                   vector<unique_ptr<Expression>> children);
+
 //! Look up a built-in scalar function as GetBuiltinScalarFunction does, and bind it to the given children
 unique_ptr<BoundFunctionExpression> BindBuiltinScalarFunction(ClientContext &context, const Identifier &name,
                                                               vector<unique_ptr<Expression>> children);

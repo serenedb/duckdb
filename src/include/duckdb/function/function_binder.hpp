@@ -174,6 +174,12 @@ public:
 	                                                     vector<pair<Identifier, unique_ptr<Expression>>> arguments,
 	                                                     ErrorData &error, bool is_operator = false,
 	                                                     optional_ptr<Binder> binder = nullptr);
+	DUCKDB_API optional_idx SelectScalarFunction(const ScalarFunctionCatalogEntry &function,
+	                                             vector<pair<Identifier, unique_ptr<Expression>>> &arguments,
+	                                             ErrorData &error);
+	DUCKDB_API unique_ptr<Expression> BindScalarFunction(const ScalarFunctionCatalogEntry &function, idx_t overload,
+	                                                     vector<pair<Identifier, unique_ptr<Expression>>> arguments,
+	                                                     bool is_operator, optional_ptr<Binder> binder);
 
 	DUCKDB_API unique_ptr<Expression> BindScalarFunction(shared_ptr<const ScalarFunction> function,
 	                                                     vector<unique_ptr<Expression>> children,

@@ -1,5 +1,6 @@
 #include "duckdb/planner/column_qualifier.hpp"
 
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -34,9 +35,21 @@ static const case_insensitive_map_view_t<std::string_view> value_functions {
     {"user", "user"},
 };
 
-static std::string_view GetSQLValueFunctionName(const Identifier &column_name) {
+static const case_insensitive_map_view_t<std::string_view> postgres_value_functions {
+    {"system_user", "system_user"},
+};
+
+static std::string_view GetSQLValueFunctionName(ClientContext &context, const Identifier &column_name) {
 	auto it = value_functions.find(column_name.GetIdentifierName());
-	return it != value_functions.end() ? it->second : std::string_view {};
+	if (it != value_functions.end()) {
+		return it->second;
+	}
+	auto postgres_it = postgres_value_functions.find(column_name.GetIdentifierName());
+	if (postgres_it == postgres_value_functions.end() ||
+	    Catalog::DefaultCompatibility(context) != SqlCompatibility::POSTGRES) {
+		return {};
+	}
+	return postgres_it->second;
 }
 
 unique_ptr<ParsedExpression> Binder::GetSQLValueFunction(const Identifier &column_name) {
@@ -51,7 +64,7 @@ unique_ptr<ParsedExpression> Binder::GetSQLValueFunction(const Identifier &colum
 		}
 	}
 
-	auto value_function = GetSQLValueFunctionName(column_name);
+	auto value_function = GetSQLValueFunctionName(context, column_name);
 	if (value_function.empty()) {
 		return nullptr;
 	}

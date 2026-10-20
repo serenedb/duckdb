@@ -1,0 +1,21 @@
+# name: test/sql/table_function/table_function_in_select.test
+# description: Without PostgreSQL compatibility a table function in a select list returns its first column
+# group: [table_function]
+
+statement ok
+CREATE TABLE t(a INTEGER, b VARCHAR)
+
+query I
+SELECT pragma_table_info('t') ORDER BY 1
+----
+0
+1
+
+statement ok
+CREATE MACRO pairs(n) AS TABLE SELECT i, i * 10 AS j FROM range(n) t(i)
+
+query II
+SELECT (pairs(2)).i, (pairs(2)).j
+----
+0	0
+1	10

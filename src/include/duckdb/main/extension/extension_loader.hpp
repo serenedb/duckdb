@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/function_set.hpp"
@@ -110,13 +111,16 @@ public:
 	//! Returns a reference to the function in the catalog - throws an exception if it does not exist
 	DUCKDB_API ScalarFunctionCatalogEntry &GetFunction(const Identifier &name);
 	DUCKDB_API TableFunctionCatalogEntry &GetTableFunction(const Identifier &name);
+	DUCKDB_API AggregateFunctionCatalogEntry &GetAggregateFunction(const Identifier &name);
 	DUCKDB_API optional_ptr<CatalogEntry> TryGetFunction(const Identifier &name);
 	DUCKDB_API optional_ptr<CatalogEntry> TryGetTableFunction(const Identifier &name);
+	DUCKDB_API optional_ptr<CatalogEntry> TryGetAggregateFunction(const Identifier &name);
 
 	//! Add a function overload
 	DUCKDB_API void AddFunctionOverload(ScalarFunction function);
 	DUCKDB_API void AddFunctionOverload(ScalarFunctionSet function);
 	DUCKDB_API void AddFunctionOverload(TableFunctionSet function);
+	DUCKDB_API void AddFunctionOverload(AggregateFunction function);
 
 	//! Registers a new type
 	DUCKDB_API void RegisterType(string type_name, LogicalType type,

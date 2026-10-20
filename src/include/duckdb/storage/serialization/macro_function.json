@@ -47,6 +47,20 @@
         "type": "string",
         "default": "string()",
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16488,
+        "name": "is_procedure",
+        "type": "bool",
+        "default": "false",
+        "version": "serenedb_v1"
+      },
+      {
+        "id": 16489,
+        "name": "parameter_modes",
+        "type": "string",
+        "default": "\"\"",
+        "version": "serenedb_v1"
       }
     ],
     "finalize_deserialization": [

@@ -83,6 +83,7 @@ void ParseIterator::EnsureTokenized() {
 		// Tokenize the full input once. Subsequent Peek/HasMore calls walk through the iterator;
 		// we never re-tokenize. Tokenization is grammar-free.
 		ParserTokenizerBehavior behavior(sql, tokens);
+		behavior.question_mark_operators = context.GetParserOptions().question_mark_operators;
 		CompiledGrammar::Get(context).GetTokenizer().TokenizeInput(behavior);
 		token_iterator = make_uniq<TokenIterator>(TokenIterator::FromTokenizer(tokens));
 	}

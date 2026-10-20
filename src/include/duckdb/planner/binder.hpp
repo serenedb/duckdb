@@ -596,7 +596,8 @@ private:
 	                             virtual_column_map_t virtual_columns = virtual_column_map_t(),
 	                             optional_ptr<vector<column_t>> bound_virtual_columns = nullptr);
 
-	unique_ptr<QueryNode> BindTableMacro(FunctionExpression &function, MacroCatalogEntry &macro_func, idx_t depth);
+	unique_ptr<QueryNode> BindTableMacro(FunctionExpression &function, MacroCatalogEntry &macro_func, idx_t depth,
+	                                     optional_ptr<MacroFunction> &definition);
 
 	BoundStatement BindCTE(const Identifier &ctename, CommonTableExpressionInfo &info);
 

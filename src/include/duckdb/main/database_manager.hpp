@@ -40,7 +40,8 @@ public:
 	explicit DatabaseManager(DatabaseInstance &db);
 	~DatabaseManager();
 
-	static constexpr idx_t FIRST_OID = 65536;
+	static constexpr idx_t FIRST_SYSTEM_OID = 393216;
+	static constexpr idx_t FIRST_OID = 524288;
 
 public:
 	static DatabaseManager &Get(DatabaseInstance &db);
@@ -130,6 +131,7 @@ public:
 	idx_t NextOid(idx_t count = 1) {
 		return next_oid.fetch_add(count, std::memory_order_relaxed);
 	}
+	idx_t NextSystemOid(idx_t count = 1);
 	idx_t ClaimOid(idx_t oid) {
 		for (auto current = next_oid.load(); current <= oid;) {
 			if (next_oid.compare_exchange_weak(current, oid + 1)) {
@@ -173,6 +175,7 @@ private:
 	//! The next object id handed out by the NextOid method
 	atomic<idx_t> next_oid;
 	atomic<idx_t> next_catalog_change {0};
+	atomic<idx_t> next_system_oid;
 	mutex committed_prepared_lock;
 	map<hugeint_t, vector<pair<idx_t, idx_t>>> committed_prepared;
 	//! The current query number

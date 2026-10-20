@@ -1,3 +1,5 @@
+#include "duckdb/catalog/catalog.hpp"
+#include "duckdb/common/operator/add.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
 
@@ -32,6 +34,7 @@ static int64_t CharLength(const char *data, idx_t size) {
 	return length;
 }
 
+template <bool POSTGRES>
 void OverlayFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto count = args.size();
 
@@ -62,7 +65,7 @@ void OverlayFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 				result_data.WriteNull();
 				continue;
 			}
-			if (count_entry.GetValue() >= 0) {
+			if (POSTGRES || count_entry.GetValue() >= 0) {
 				char_count = count_entry.GetValue();
 			}
 		}
@@ -73,10 +76,15 @@ void OverlayFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto repl_size = repl.GetSize();
 		auto start = start_entry.GetValue();
 
+		int64_t end_pos;
+		if (POSTGRES) {
+			end_pos = PostgresOverlayEnd(start, char_count);
+		} else {
+			end_pos = (char_count > 0 && start > NumericLimits<int64_t>::Maximum() - char_count)
+			              ? NumericLimits<int64_t>::Maximum()
+			              : start + char_count;
+		}
 		idx_t byte_start = CharPosToByte(input_ptr, input_size, start);
-		int64_t end_pos = (char_count > 0 && start > NumericLimits<int64_t>::Maximum() - char_count)
-		                      ? NumericLimits<int64_t>::Maximum()
-		                      : start + char_count;
 		idx_t byte_end = CharPosToByte(input_ptr, input_size, end_pos);
 		idx_t after_size = input_size - byte_end;
 		idx_t blob_size = byte_start + repl_size + after_size;
@@ -92,19 +100,40 @@ void OverlayFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 }
 
+unique_ptr<FunctionData> OverlayBind(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	if (Catalog::DefaultCompatibility(context) == SqlCompatibility::POSTGRES) {
+		auto &function = input.GetBoundFunction();
+		function.SetFunctionCallback(OverlayFunction<true>);
+		function.SetFallible();
+	}
+	return nullptr;
+}
+
 } // namespace
+
+int64_t PostgresOverlayEnd(int64_t start, int64_t count) {
+	if (start <= 0) {
+		throw InvalidInputException("negative substring length not allowed");
+	}
+	int64_t end;
+	if (!TryAddOperator::Operation(start, count, end)) {
+		throw OutOfRangeException("integer out of range");
+	}
+	return end;
+}
 
 ScalarFunctionSet OverlayFun::GetFunctions() {
 	ScalarFunctionSet overlay_set("overlay");
 
-	ScalarFunction three_arg({}, LogicalType::VARCHAR, OverlayFunction);
+	ScalarFunction three_arg({}, LogicalType::VARCHAR, OverlayFunction<false>, OverlayBind);
 	three_arg.GetSignature()
 	    .AddParameter("string", LogicalType::VARCHAR)
 	    .AddParameter("replacement", LogicalType::VARCHAR)
 	    .AddParameter("start", LogicalType::BIGINT);
 	overlay_set.AddFunction(three_arg);
 
-	ScalarFunction four_arg({}, LogicalType::VARCHAR, OverlayFunction);
+	ScalarFunction four_arg({}, LogicalType::VARCHAR, OverlayFunction<false>, OverlayBind);
 	four_arg.GetSignature()
 	    .AddParameter("string", LogicalType::VARCHAR)
 	    .AddParameter("replacement", LogicalType::VARCHAR)

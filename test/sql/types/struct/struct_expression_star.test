@@ -1,0 +1,119 @@
+# name: test/sql/types/struct/struct_expression_star.test
+# description: (expression).* in the select list expands a struct expression into one column per field
+# group: [struct]
+
+statement ok
+CREATE TABLE tbl AS SELECT {'a': 1, 'b': 'x'} AS s, 10 AS k
+
+query II
+SELECT (s).* FROM tbl
+----
+1	x
+
+query IIII
+SELECT k, (s).*, k + 1 FROM tbl
+----
+10	1	x	11
+
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT (s).* FROM tbl)
+----
+a	INTEGER
+b	VARCHAR
+
+query II
+SELECT (struct_pack(a := 1, b := 2)).*
+----
+1	2
+
+query I
+SELECT ({'a': {'b': 1}}).*
+----
+{'b': 1}
+
+query II
+SELECT (t).* FROM (VALUES (1, 2)) t(a, b)
+----
+1	2
+
+statement ok
+CREATE VIEW v AS SELECT (s).* FROM tbl
+
+query II
+SELECT a, b FROM v
+----
+1	x
+
+statement error
+SELECT (k).* FROM tbl
+----
+<REGEX>:Binder Error.*not a struct.*
+
+statement error
+SELECT abs((s).*) FROM tbl
+----
+<REGEX>:Binder Error.*STAR expression is not supported here.*
+
+statement ok
+CREATE SEQUENCE seq
+
+statement ok
+CREATE MACRO numbered(n) AS TABLE SELECT nextval('seq') AS v, i FROM range(n) t(i)
+
+query II
+SELECT (numbered(3)).*
+----
+1	0
+2	1
+3	2
+
+query I
+SELECT currval('seq')
+----
+3
+
+statement ok
+CREATE MACRO acl_items(acl) AS TABLE SELECT split_part(x, '=', 1) AS grantee, split_part(x, '=', 2) AS privilege_type FROM unnest(acl) t(x)
+
+statement ok
+CREATE TABLE cls(relname VARCHAR, relacl VARCHAR[])
+
+statement ok
+INSERT INTO cls VALUES ('t1', ['alice=r', 'bob=w']), ('t2', NULL), ('t3', ['carol=a'])
+
+query III
+SELECT relname, grantee, prtype FROM (SELECT relname, (acl_items(relacl)).* FROM cls) pr (relname, grantee, prtype) ORDER BY ALL
+----
+t1	alice	r
+t1	bob	w
+t3	carol	a
+
+query II
+SELECT (NULL::STRUCT(a INTEGER, b INTEGER)).*;
+----
+NULL	NULL
+
+query II
+SELECT (CASE WHEN 1 = 0 THEN {'a': 1, 'b': 2} END).*;
+----
+NULL	NULL
+
+query II
+SELECT unnest(NULL::STRUCT(a INTEGER, b INTEGER));
+----
+NULL	NULL
+
+query II
+SELECT * FROM struct_pack(a := 1, b := 'x');
+----
+1	x
+
+query I
+SELECT s.b FROM struct_pack(a := 1, b := 'x') AS s;
+----
+x
+
+query I
+SELECT * FROM abs(-3);
+----
+3

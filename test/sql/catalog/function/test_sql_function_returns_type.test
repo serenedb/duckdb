@@ -1,0 +1,187 @@
+# name: test/sql/catalog/function/test_sql_function_returns_type.test
+# description: A SQL function returns its RETURNS type, reached from its body by a cast
+# group: [function]
+
+statement ok
+CREATE FUNCTION widened() RETURNS BIGINT LANGUAGE sql RETURN 1;
+
+query T
+SELECT typeof(widened());
+----
+BIGINT
+
+statement ok
+CREATE FUNCTION as_text() RETURNS VARCHAR LANGUAGE sql RETURN 42;
+
+query T
+SELECT as_text();
+----
+42
+
+statement ok
+CREATE FUNCTION rounded() RETURNS INTEGER LANGUAGE sql RETURN 4.7;
+
+query I
+SELECT rounded();
+----
+5
+
+statement ok
+CREATE FUNCTION to_bool() RETURNS BOOLEAN LANGUAGE sql RETURN 1;
+
+query I
+SELECT to_bool();
+----
+true
+
+statement error
+CREATE FUNCTION renamed_fields() RETURNS STRUCT(a INTEGER) LANGUAGE sql AS 'SELECT {''b'': 1}';
+----
+STRUCT to STRUCT cast must have at least one matching member
+
+statement ok
+CREATE FUNCTION pair() RETURNS TABLE(a BIGINT, b VARCHAR) LANGUAGE sql AS 'SELECT 1, 42';
+
+query TT
+SELECT typeof(a), b FROM pair();
+----
+BIGINT	42
+
+statement ok
+CREATE FUNCTION numbers() RETURNS SETOF BIGINT LANGUAGE sql AS 'SELECT 1 UNION ALL SELECT 2';
+
+query TI
+SELECT typeof(numbers), numbers FROM numbers() ORDER BY 2;
+----
+BIGINT	1
+BIGINT	2
+
+query T
+SELECT typeof(n) FROM widened() AS t(n);
+----
+BIGINT
+
+statement ok
+CREATE TYPE mood AS ENUM ('sad', 'ok');
+
+statement ok
+CREATE FUNCTION moods(mood) RETURNS SETOF mood LANGUAGE sql AS 'SELECT $1';
+
+query T
+SELECT * FROM moods('ok'::mood);
+----
+ok
+
+statement ok
+CREATE FUNCTION as_text_list() RETURNS VARCHAR[] LANGUAGE sql AS 'SELECT [1, 2]';
+
+query T
+SELECT as_text_list();
+----
+[1, 2]
+
+statement ok
+CREATE FUNCTION rounded_list() RETURNS INTEGER[] LANGUAGE sql AS 'SELECT [1.6]';
+
+query T
+SELECT rounded_list();
+----
+[2]
+
+statement ok
+CREATE FUNCTION time_as_interval() RETURNS INTERVAL LANGUAGE sql AS 'SELECT TIME ''01:02:03''';
+
+query T
+SELECT time_as_interval();
+----
+01:02:03
+
+statement ok
+CREATE FUNCTION in_seconds() RETURNS TIMESTAMP_S LANGUAGE sql AS 'SELECT TIMESTAMP ''2024-01-01 10:00:00''';
+
+query T
+SELECT in_seconds();
+----
+2024-01-01 10:00:00
+
+statement ok
+CREATE FUNCTION pair_of(x INTEGER, OUT b BIGINT, OUT c VARCHAR) LANGUAGE sql RETURN (x, x);
+
+query IT
+SELECT * FROM pair_of(3);
+----
+3	3
+
+statement ok
+CREATE FUNCTION wide_numeric() RETURNS DECIMAL(4,2) LANGUAGE sql AS 'SELECT 12345';
+
+query I
+SELECT wide_numeric();
+----
+12345.000
+
+statement ok
+CREATE FUNCTION wide_numerics() RETURNS SETOF DECIMAL(3,1) LANGUAGE sql AS 'SELECT 12345';
+
+query I
+SELECT * FROM wide_numerics();
+----
+12345.000
+
+statement ok
+CREATE FUNCTION wide_numeric_list() RETURNS DECIMAL(4,2)[] LANGUAGE sql AS 'SELECT [123.456]';
+
+query I
+SELECT wide_numeric_list();
+----
+[123.456]
+
+statement ok
+CREATE FUNCTION scaled_list() RETURNS DECIMAL(4,2)[] LANGUAGE sql AS 'SELECT [1.23456]';
+
+query I
+SELECT scaled_list();
+----
+[1.23456]
+
+statement ok
+CREATE FUNCTION precise() RETURNS TIMESTAMP(0) LANGUAGE sql AS 'SELECT TIMESTAMP ''2024-01-01 10:00:00.123456''';
+
+query T
+SELECT precise();
+----
+2024-01-01 10:00:00.123456
+
+statement ok
+CREATE FUNCTION wide_out(OUT a DECIMAL(4,2), OUT b INTEGER) LANGUAGE sql AS 'SELECT 123.456, 1';
+
+query I
+SELECT wide_out();
+----
+{'a': 123.456, 'b': 1}
+
+statement ok
+CREATE FUNCTION doubled_rows(x INTEGER) RETURNS SETOF INTEGER RETURN x * 2;
+
+statement ok
+CREATE FUNCTION one_row_table() RETURNS TABLE(a INTEGER) RETURN 5;
+
+statement ok
+CREATE FUNCTION pair_rows(OUT a INTEGER, OUT b VARCHAR) RETURNS SETOF record RETURN (1, 'x');
+
+query TT
+SELECT function_name, function_type FROM duckdb_functions() WHERE function_name IN ('doubled_rows', 'one_row_table', 'pair_rows') ORDER BY 1;
+----
+doubled_rows	table_macro
+one_row_table	table_macro
+pair_rows	table_macro
+
+query III
+SELECT doubled_rows(21), (SELECT * FROM doubled_rows(4)), (SELECT a FROM one_row_table());
+----
+42	8	5
+
+query IT
+SELECT * FROM pair_rows();
+----
+1	x

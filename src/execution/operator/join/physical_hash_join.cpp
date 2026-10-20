@@ -310,8 +310,19 @@ static bool BuildSideHasMultipleSources(const PhysicalOperator &op) {
 	case PhysicalOperatorType::RECURSIVE_RECURRING_CTE_SCAN:
 		// CTE producers are not children of their scans and may forward different dictionaries.
 		return true;
-	case PhysicalOperatorType::HASH_JOIN:
-		return op.Cast<PhysicalHashJoin>().HasMultipleSources();
+	case PhysicalOperatorType::HASH_JOIN: {
+		auto &join = op.Cast<PhysicalHashJoin>();
+		return PropagatesBuildSide(join.join_type) || join.HasMultipleSources();
+	}
+	case PhysicalOperatorType::NESTED_LOOP_JOIN:
+	case PhysicalOperatorType::PIECEWISE_MERGE_JOIN:
+	case PhysicalOperatorType::IE_JOIN:
+	case PhysicalOperatorType::BLOCKWISE_NL_JOIN:
+	case PhysicalOperatorType::ASOF_JOIN:
+		if (PropagatesBuildSide(op.Cast<PhysicalJoin>().join_type)) {
+			return true;
+		}
+		break;
 	default:
 		break;
 	}

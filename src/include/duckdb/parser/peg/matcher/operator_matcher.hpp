@@ -53,10 +53,8 @@ private:
 		if (mode == OperatorMatcherMode::GENERIC_PRECEDENCE && HasSpecialPrecedence(token_text)) {
 			return false;
 		}
-		for (auto &c : token_text) {
-			if (c != '#' && !Tokenizer::CharacterIsOperator(c)) {
-				return false;
-			}
+		if (!Tokenizer::IsOperatorText(token_text)) {
+			return false;
 		}
 		state.token_iterator.Advance();
 		state.UpdateMaxTokenIndex();

@@ -134,7 +134,7 @@ static void NegatePercentileFractions(ClientContext &context, unique_ptr<Express
 	}
 
 	Value value = ExpressionExecutor::EvaluateScalar(context, *bound);
-	if (value.type().id() == LogicalTypeId::LIST) {
+	if (value.type().id() == LogicalTypeId::LIST && !value.IsNull()) {
 		vector<Value> values;
 		for (const auto &element_val : ListValue::GetChildren(value)) {
 			values.push_back(NegatePercentileValue(element_val, desc));
