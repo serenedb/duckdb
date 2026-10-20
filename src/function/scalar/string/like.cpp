@@ -633,6 +633,10 @@ bool HasNonAsciiLoweringToAscii(const char *data, idx_t size) {
 }
 
 struct ILikePattern {
+	bool MustLower(const string_t &str, idx_t ascii_end) const {
+		return !ascii || HasNonAsciiLoweringToAscii(str.GetData() + ascii_end, str.GetSize() - ascii_end);
+	}
+
 	template <class READER = StandardCharacterReader>
 	bool Match(string_t &str) {
 		if (!has_escape) {
@@ -680,7 +684,7 @@ struct ILikeMatcher {
 	}
 
 	DUCKDB_NOINLINE bool MatchNonAscii(string_t &str, idx_t ascii_end, ILikeBuffer &lowered_str) {
-		if (lowered.ascii && !HasNonAsciiLoweringToAscii(str.GetData() + ascii_end, str.GetSize() - ascii_end)) {
+		if (!lowered.MustLower(str, ascii_end)) {
 			return MatchUnlowered(str);
 		}
 		return MatchLowered(str, lowered_str);
@@ -733,10 +737,8 @@ template <bool KNOWN_ASCII>
 bool ILikeOperatorFunction(ILikeLocalState &lstate, string_t str, string_t pattern, string_t escape) {
 	auto pat_lcase = lstate.LowerPattern(pattern, escape);
 	if (!KNOWN_ASCII) {
-		auto data = str.GetData();
-		auto size = str.GetSize();
-		auto ascii_end = FirstNonAscii(data, size);
-		if (ascii_end != size && (!pat_lcase.ascii || HasNonAsciiLoweringToAscii(data + ascii_end, size - ascii_end))) {
+		auto ascii_end = FirstNonAscii(str.GetData(), str.GetSize());
+		if (ascii_end != str.GetSize() && pat_lcase.MustLower(str, ascii_end)) {
 			auto str_lcase = lstate.str.Lower(str);
 			return pat_lcase.Match(str_lcase);
 		}
