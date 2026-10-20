@@ -22,7 +22,8 @@
 namespace duckdb {
 
 DatabaseManager::DatabaseManager(DatabaseInstance &db)
-    : db(db), next_oid(FIRST_OID), current_query_number(1), current_transaction_id(0), remote_catalog_count(0) {
+    : db(db), next_oid(FIRST_OID), next_system_oid(FIRST_SYSTEM_OID), current_query_number(1),
+      current_transaction_id(0), remote_catalog_count(0) {
 	system = make_shared_ptr<AttachedDatabase>(db);
 	auto &config = DBConfig::GetConfig(db);
 	path_manager = config.path_manager;
@@ -37,6 +38,15 @@ DatabaseManager::~DatabaseManager() {
 
 DatabaseManager &DatabaseManager::Get(AttachedDatabase &db) {
 	return DatabaseManager::Get(db.GetDatabase());
+}
+
+idx_t DatabaseManager::NextSystemOid(idx_t count) {
+	auto oid = next_system_oid.fetch_add(count, std::memory_order_relaxed);
+	if (oid + count > FIRST_OID) {
+		throw InternalException("The system catalog ran out of object ids: it holds %llu of %llu",
+		                        oid - FIRST_SYSTEM_OID, FIRST_OID - FIRST_SYSTEM_OID);
+	}
+	return oid;
 }
 
 void DatabaseManager::InitializeSystemCatalog() {

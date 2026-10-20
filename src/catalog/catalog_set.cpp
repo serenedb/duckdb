@@ -927,7 +927,7 @@ void CatalogSet::ScanWithReturn(ClientContext &context, const std::function<bool
 
 bool CatalogSet::IsEmpty() {
 	lock_guard<mutex> lock(catalog_lock);
-	return map.Entries().empty();
+	return !defaults && map.Entries().empty();
 }
 
 void CatalogSet::ScanWithPrefix(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback,

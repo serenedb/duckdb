@@ -240,6 +240,11 @@
         "name": "with_ordinality",
         "type": "OrdinalityType",
         "default": "OrdinalityType::WITHOUT_ORDINALITY"
+      },
+      {
+        "id": 16587,
+        "name": "column_types",
+        "type": "vector<LogicalType>"
       }
     ]
   },

@@ -1,5 +1,6 @@
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 
 namespace duckdb {
 
@@ -11,7 +12,18 @@ string TableFunctionRef::ToString() const {
 	if (with_ordinality == OrdinalityType::WITH_ORDINALITY) {
 		result += " WITH ORDINALITY";
 	}
-	return BaseToString(result, column_name_alias);
+	if (column_types.empty()) {
+		return BaseToString(result, column_name_alias);
+	}
+	result += alias.empty() ? " AS (" : " AS " + SQLIdentifier(alias) + "(";
+	for (idx_t i = 0; i < column_types.size(); i++) {
+		if (i > 0) {
+			result += ", ";
+		}
+		result += SQLIdentifier(column_name_alias[i]) + " " + column_types[i].ToString();
+	}
+	result += ")";
+	return result + SampleToString();
 }
 
 bool TableFunctionRef::Equals(const TableRef &other_p) const {
@@ -19,7 +31,7 @@ bool TableFunctionRef::Equals(const TableRef &other_p) const {
 		return false;
 	}
 	auto &other = other_p.Cast<TableFunctionRef>();
-	return bind_info == other.bind_info && function->Equals(*other.function);
+	return bind_info == other.bind_info && function->Equals(*other.function) && column_types == other.column_types;
 }
 
 const unique_ptr<ParsedExpression> &TableFunctionRef::SerializableFunction() const {
@@ -36,6 +48,7 @@ unique_ptr<TableRef> TableFunctionRef::Copy() {
 	copy->bind_info = bind_info;
 	copy->column_name_alias = column_name_alias;
 	copy->with_ordinality = with_ordinality;
+	copy->column_types = column_types;
 	CopyProperties(*copy);
 
 	return std::move(copy);

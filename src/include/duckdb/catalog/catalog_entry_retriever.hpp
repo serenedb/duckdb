@@ -11,10 +11,12 @@
 #include <functional>
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/parser/query_error_context.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
 
 namespace duckdb {
@@ -24,6 +26,24 @@ class Catalog;
 class CatalogEntry;
 
 using catalog_entry_callback_t = std::function<void(CatalogEntry &)>;
+
+struct ResolvedSearchEntry {
+	ResolvedSearchEntry(Catalog &catalog, Identifier schema) : catalog(catalog), schema(std::move(schema)) {
+	}
+
+	reference<Catalog> catalog;
+	Identifier schema;
+	optional<CatalogTransaction> transaction;
+	optional_ptr<SchemaCatalogEntry> schema_entry;
+	bool empty = false;
+	bool indexes = true;
+};
+
+struct ResolvedSearchPath {
+	CatalogType type;
+	Identifier schema;
+	vector<ResolvedSearchEntry> entries;
+};
 
 // Wraps the Catalog::GetEntry method
 class CatalogEntryRetriever {
@@ -79,6 +99,8 @@ public:
 	void SetAtClause(optional_ptr<BoundAtClause> at_clause);
 
 private:
+	friend class Catalog;
+
 	optional_ptr<CatalogEntry> ReturnAndCallback(optional_ptr<CatalogEntry> result);
 
 private:
@@ -87,6 +109,8 @@ private:
 	ClientContext &context;
 	shared_ptr<CatalogSearchPath> search_path;
 	optional_ptr<BoundAtClause> at_clause;
+	vector<ResolvedSearchPath> resolved_paths;
+	optional<bool> default_tables;
 };
 
 } // namespace duckdb

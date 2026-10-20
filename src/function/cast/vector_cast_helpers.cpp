@@ -271,7 +271,8 @@ static inline bool ValueStateTransition(StringCastInputState &input_state, optio
 static constexpr idx_t NESTED_CAST_CHECK_BYTES = 1 << 20;
 
 template <class OP>
-static bool SplitStringListInternal(const string_t &input, OP &state, const CastParameters &parameters) {
+static bool SplitStringListInternal(const string_t &input, char array_delimiter, OP &state,
+                                    const CastParameters &parameters) {
 	const char *buf = input.GetData();
 	idx_t len = input.GetSize();
 	idx_t pos = 0;
@@ -286,6 +287,7 @@ static bool SplitStringListInternal(const string_t &input, OP &state, const Cast
 		return false;
 	}
 	const char close_bracket = buf[pos] == '[' ? ']' : '}';
+	const char delimiter = buf[pos] == '[' ? ',' : array_delimiter;
 
 	//! Skip the opening bracket
 	pos++;
@@ -295,7 +297,7 @@ static bool SplitStringListInternal(const string_t &input, OP &state, const Cast
 		optional_idx start_pos;
 		idx_t end_pos;
 
-		while (pos < len && (buf[pos] != ',' && buf[pos] != close_bracket)) {
+		while (pos < len && (buf[pos] != delimiter && buf[pos] != close_bracket)) {
 			if (!ValueStateTransition(input_state, start_pos, end_pos)) {
 				return false;
 			}
@@ -328,15 +330,16 @@ static bool SplitStringListInternal(const string_t &input, OP &state, const Cast
 	return (pos == len);
 }
 
-bool VectorStringToList::SplitStringList(const string_t &input, string_t *child_data, idx_t &child_start, Vector &child,
-                                         const CastParameters &parameters) {
+bool VectorStringToList::SplitStringList(const string_t &input, char array_delimiter, string_t *child_data,
+                                         idx_t &child_start, Vector &child, const CastParameters &parameters) {
 	SplitStringListOperation state(child_data, child_start, child);
-	return SplitStringListInternal<SplitStringListOperation>(input, state, parameters);
+	return SplitStringListInternal<SplitStringListOperation>(input, array_delimiter, state, parameters);
 }
 
-idx_t VectorStringToList::CountPartsList(const string_t &input, const CastParameters &parameters) {
+idx_t VectorStringToList::CountPartsList(const string_t &input, char array_delimiter,
+                                         const CastParameters &parameters) {
 	CountPartOperation state;
-	SplitStringListInternal<CountPartOperation>(input, state, parameters);
+	SplitStringListInternal<CountPartOperation>(input, array_delimiter, state, parameters);
 	return state.count;
 }
 

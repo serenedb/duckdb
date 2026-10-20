@@ -9,14 +9,7 @@ namespace duckdb {
 
 uint8_t MatcherToken::ComputeClasses() const {
 	uint8_t result = 0;
-	bool operator_text = true;
-	for (auto c : text) {
-		if (c != '#' && !Tokenizer::CharacterIsOperator(c)) {
-			operator_text = false;
-			break;
-		}
-	}
-	if (operator_text) {
+	if (Tokenizer::IsOperatorText(text)) {
 		result |= MatcherTokenClass::OPERATOR;
 	}
 	if (text.empty()) {
@@ -62,7 +55,20 @@ bool Tokenizer::IsCompoundColonToken(std::string_view sql, idx_t pos, idx_t &tok
 	return true;
 }
 
-bool Tokenizer::IsHashOperatorToken(std::string_view sql, idx_t pos, idx_t &token_length) {
+bool Tokenizer::IsOperatorText(std::string_view text) {
+	if (text == "?") {
+		return false;
+	}
+	for (auto c : text) {
+		if (c != '#' && c != '?' && !CharacterIsOperator(c)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool Tokenizer::IsSingleByteOperatorPrefix(std::string_view sql, idx_t pos, bool question_mark_operators,
+                                           idx_t &token_length) {
 	const auto rest = sql.substr(pos);
 	switch (rest[0]) {
 	case '<':
@@ -77,6 +83,19 @@ bool Tokenizer::IsHashOperatorToken(std::string_view sql, idx_t pos, idx_t &toke
 			return true;
 		}
 		if (rest.starts_with("#>") || rest.starts_with("##")) {
+			token_length = 2;
+			return true;
+		}
+		return false;
+	case '?':
+		if (!question_mark_operators) {
+			return false;
+		}
+		if (rest.starts_with("?-|") || rest.starts_with("?||")) {
+			token_length = 3;
+			return true;
+		}
+		if (rest.starts_with("?#") || rest.starts_with("?-") || rest.starts_with("?|")) {
 			token_length = 2;
 			return true;
 		}
@@ -326,7 +345,7 @@ bool Tokenizer::TokenizeInputInternal(TokenizerBehavior &behavior) const {
 				last_pos = i + 1;
 				break;
 			}
-			if (IsHashOperatorToken(sql, i, token_length)) {
+			if (IsSingleByteOperatorPrefix(sql, i, behavior.question_mark_operators, token_length)) {
 				tokens.emplace_back(sql.substr(i, token_length), last_pos, TokenType::OPERATOR);
 				i += token_length - 1;
 				last_pos = i + 1;

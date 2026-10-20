@@ -1,10 +1,13 @@
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/algorithm.hpp"
+#include "duckdb/common/operator/add.hpp"
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "utf8proc.hpp"
@@ -268,7 +271,13 @@ struct SubstringGraphemeOp {
 	}
 };
 
-template <class OP>
+struct SubstringASCIIOp {
+	static string_t Substring(Vector &result, string_t input, int64_t offset, int64_t length) {
+		return SubstringASCII(result, input, offset, length);
+	}
+};
+
+template <class OP, bool POSTGRES>
 void SubstringFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	const auto &input_vector = args.data[0];
 	const auto &offset_vector = args.data[1];
@@ -278,32 +287,18 @@ void SubstringFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 		TernaryExecutor::Execute<string_t, int64_t, int64_t, string_t>(
 		    input_vector, offset_vector, length_vector, result,
 		    [&](string_t input_string, int64_t offset, int64_t length) {
+			    if (POSTGRES) {
+				    PostgresSubstringBounds(offset, length);
+			    }
 			    return OP::Substring(result, input_string, offset, length);
 		    });
 	} else {
 		BinaryExecutor::Execute<string_t, int64_t, string_t>(
 		    input_vector, offset_vector, result, [&](string_t input_string, int64_t offset) {
+			    if (POSTGRES) {
+				    offset = MaxValue<int64_t>(offset, 1);
+			    }
 			    return OP::Substring(result, input_string, offset, NumericLimits<uint32_t>::Maximum());
-		    });
-	}
-	StringVector::AddHeapReference(result, input_vector);
-}
-
-void SubstringFunctionASCII(DataChunk &args, ExpressionState &state, Vector &result) {
-	const auto &input_vector = args.data[0];
-	const auto &offset_vector = args.data[1];
-	if (args.ColumnCount() == 3) {
-		const auto &length_vector = args.data[2];
-
-		TernaryExecutor::Execute<string_t, int64_t, int64_t, string_t>(
-		    input_vector, offset_vector, length_vector, result,
-		    [&](string_t input_string, int64_t offset, int64_t length) {
-			    return SubstringASCII(result, input_string, offset, length);
-		    });
-	} else {
-		BinaryExecutor::Execute<string_t, int64_t, string_t>(
-		    input_vector, offset_vector, result, [&](string_t input_string, int64_t offset) {
-			    return SubstringASCII(result, input_string, offset, NumericLimits<uint32_t>::Maximum());
 		    });
 	}
 	StringVector::AddHeapReference(result, input_vector);
@@ -328,24 +323,23 @@ void PropagateStrictFunctionValidity(BaseStatistics &result, const vector<BaseSt
 	}
 }
 
-unique_ptr<FunctionData> SubstringBind(BindScalarFunctionInput &input) {
+void SetSubstringErrorMode(BindScalarFunctionInput &input, bool postgres) {
 	auto offset = input.TryGetConstant(1);
 	if (!offset || offset->IsNull()) {
-		return nullptr;
+		return;
 	}
 	auto offset_value = offset->DefaultCastAs(LogicalType::BIGINT).GetValue<int64_t>();
 	int64_t length_value = NumericLimits<uint32_t>::Maximum();
 	if (input.GetArguments().size() == 3) {
 		auto length = input.TryGetConstant(2);
 		if (!length || length->IsNull()) {
-			return nullptr;
+			return;
 		}
 		length_value = length->DefaultCastAs(LogicalType::BIGINT).GetValue<int64_t>();
 	}
-	if (SubstringInSupportedRange(offset_value, length_value)) {
+	if (SubstringInSupportedRange(offset_value, length_value) && (!postgres || length_value >= 0)) {
 		input.GetBoundFunction().SetErrorMode(FunctionErrors::CANNOT_ERROR);
 	}
-	return nullptr;
 }
 
 bool TryGetConstantInt64(const Expression &expression, int64_t &result) {
@@ -427,13 +421,14 @@ unique_ptr<BaseStatistics> SubstringStatsFromSharedPrefix(FunctionStatisticsInpu
 	return result;
 }
 
+template <bool POSTGRES>
 unique_ptr<BaseStatistics> SubstringPropagateStats(ClientContext &context, FunctionStatisticsInput &input) {
 	auto &child_stats = input.child_stats;
 	auto &expr = input.expr;
 	// can only propagate stats if the children have stats
 	// we only care about the stats of the first child (i.e. the string)
 	if (!StringStats::CanContainUnicode(child_stats[0])) {
-		expr.FunctionMutable().SetFunctionCallback(SubstringFunctionASCII);
+		expr.FunctionMutable().SetFunctionCallback(SubstringFunction<SubstringASCIIOp, POSTGRES>);
 	}
 	return SubstringStatsFromSharedPrefix(input);
 }
@@ -442,7 +437,7 @@ unique_ptr<BaseStatistics> SubstringGraphemePropagateStats(ClientContext &contex
 	auto &child_stats = input.child_stats;
 	auto &expr = input.expr;
 	if (!StringStats::CanContainUnicode(child_stats[0])) {
-		expr.FunctionMutable().SetFunctionCallback(SubstringFunctionASCII);
+		expr.FunctionMutable().SetFunctionCallback(SubstringFunction<SubstringASCIIOp, false>);
 	}
 	if (!StringStats::HasMaxStringLength(input.child_stats[0])) {
 		return nullptr;
@@ -453,21 +448,49 @@ unique_ptr<BaseStatistics> SubstringGraphemePropagateStats(ClientContext &contex
 	return result.ToUnique();
 }
 
+unique_ptr<FunctionData> SubstringBind(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	const auto postgres = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
+	                      SqlCompatibility::POSTGRES;
+	if (postgres) {
+		auto &function = input.GetBoundFunction();
+		function.SetFunctionCallback(SubstringFunction<SubstringUnicodeOp, true>);
+		function.SetStatisticsCallback(SubstringPropagateStats<true>);
+	}
+	SetSubstringErrorMode(input, postgres);
+	return nullptr;
+}
+
+unique_ptr<FunctionData> SubstringGraphemeBind(BindScalarFunctionInput &input) {
+	SetSubstringErrorMode(input, false);
+	return nullptr;
+}
+
 } // namespace
+
+void PostgresSubstringBounds(int64_t &offset, int64_t &length) {
+	if (length < 0) {
+		throw InvalidInputException("negative substring length not allowed");
+	}
+	int64_t end;
+	const auto to_end = !TryAddOperator::Operation(offset, length, end);
+	offset = MaxValue<int64_t>(offset, 1);
+	length = to_end ? NumericLimits<uint32_t>::Maximum() : MaxValue<int64_t>(end - offset, 0);
+}
 
 ScalarFunctionSet SubstringFun::GetFunctions() {
 	ScalarFunctionSet substr("substring");
 
-	ScalarFunction three_arg({}, LogicalType::VARCHAR, SubstringFunction<SubstringUnicodeOp>, SubstringBind,
-	                         SubstringPropagateStats);
+	ScalarFunction three_arg({}, LogicalType::VARCHAR, SubstringFunction<SubstringUnicodeOp, false>, SubstringBind,
+	                         SubstringPropagateStats<false>);
 	three_arg.GetSignature()
 	    .AddParameter("string", LogicalType::VARCHAR)
 	    .AddParameter("start", LogicalType::BIGINT)
 	    .AddParameter("length", LogicalType::BIGINT);
 	substr.AddFunction(three_arg);
 
-	ScalarFunction two_arg({}, LogicalType::VARCHAR, SubstringFunction<SubstringUnicodeOp>, SubstringBind,
-	                       SubstringPropagateStats);
+	ScalarFunction two_arg({}, LogicalType::VARCHAR, SubstringFunction<SubstringUnicodeOp, false>, SubstringBind,
+	                       SubstringPropagateStats<false>);
 	two_arg.GetSignature().AddParameter("string", LogicalType::VARCHAR).AddParameter("start", LogicalType::BIGINT);
 	substr.AddFunction(two_arg);
 
@@ -479,16 +502,16 @@ ScalarFunctionSet SubstringFun::GetFunctions() {
 ScalarFunctionSet SubstringGraphemeFun::GetFunctions() {
 	ScalarFunctionSet substr_grapheme("substring_grapheme");
 
-	ScalarFunction three_arg({}, LogicalType::VARCHAR, SubstringFunction<SubstringGraphemeOp>, SubstringBind,
-	                         SubstringGraphemePropagateStats);
+	ScalarFunction three_arg({}, LogicalType::VARCHAR, SubstringFunction<SubstringGraphemeOp, false>,
+	                         SubstringGraphemeBind, SubstringGraphemePropagateStats);
 	three_arg.GetSignature()
 	    .AddParameter("string", LogicalType::VARCHAR)
 	    .AddParameter("start", LogicalType::BIGINT)
 	    .AddParameter("length", LogicalType::BIGINT);
 	substr_grapheme.AddFunction(three_arg);
 
-	ScalarFunction two_arg({}, LogicalType::VARCHAR, SubstringFunction<SubstringGraphemeOp>, SubstringBind,
-	                       SubstringGraphemePropagateStats);
+	ScalarFunction two_arg({}, LogicalType::VARCHAR, SubstringFunction<SubstringGraphemeOp, false>,
+	                       SubstringGraphemeBind, SubstringGraphemePropagateStats);
 	two_arg.GetSignature().AddParameter("string", LogicalType::VARCHAR).AddParameter("start", LogicalType::BIGINT);
 	substr_grapheme.AddFunction(two_arg);
 

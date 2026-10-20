@@ -59,6 +59,9 @@ public:
 	Value GetColumnComment(idx_t column_index);
 	//! Returns the bound name of a visible column
 	Identifier ResolveColumnName(const Identifier &column_name) const;
+	const Identifier &ColumnName(const ViewColumnInfo &columns, idx_t i) const {
+		return i < aliases.size() ? aliases[i] : columns.names[i];
+	}
 
 public:
 	unique_ptr<CreateInfo> GetInfo() const override;

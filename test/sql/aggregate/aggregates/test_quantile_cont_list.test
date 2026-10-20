@@ -35,9 +35,10 @@ FROM quantiles
 ----
 ['2021-04-15 03:45:00+00', '2021-07-28 07:30:00+00', '2021-11-09 11:15:00+00']
 
-statement error
+query I
 SELECT quantile_cont(interval (r/100) second, [0.25, 0.5, 0.75]) FROM quantiles
 ----
+['00:41:39.75', '01:23:19.5', '02:04:59.25']
 
 # single GROUP
 query R

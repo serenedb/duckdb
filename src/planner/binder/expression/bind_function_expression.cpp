@@ -5,10 +5,14 @@
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/function_binder.hpp"
+#include "duckdb/main/database_manager.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/lambda_expression.hpp"
 #include "duckdb/parser/srf_utils.hpp"
@@ -257,7 +261,7 @@ BindResult ExpressionBinder::TryBindLambdaOrJson(FunctionExpression &function, i
 	                  json_bind_result.error.RawMessage());
 }
 
-CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
+optional_ptr<CatalogEntry> ExpressionBinder::TryBindFunction(FunctionExpression &function) {
 	QueryErrorContext error_context(function.GetQueryLocation());
 
 	ColumnQualifier qualifier(binder);
@@ -280,12 +284,38 @@ CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
 			func = table_func;
 		}
 	}
+	return func;
+}
+
+CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
+	auto func = TryBindFunction(function);
 	if (!func) {
 		// not a table function - rebind to throw a real catalog-missing error
+		QueryErrorContext error_context(function.GetQueryLocation());
 		EntryLookupInfo function_lookup(CatalogType::SCALAR_FUNCTION_ENTRY, function.GetQualifiedName(), error_context);
 		func = GetCatalogEntry(function_lookup, OnEntryNotFound::THROW_EXCEPTION);
 	}
 	return *func;
+}
+
+unique_ptr<TypeExpression> ExpressionBinder::FunctionStyleCastType(FunctionExpression &function) {
+	if (Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() !=
+	    SqlCompatibility::POSTGRES) {
+		return nullptr;
+	}
+	auto &arguments = function.GetArguments();
+	if (arguments.size() != 1 || !arguments[0].GetName().empty() || function.IsOperator() || function.Distinct() ||
+	    function.Filter() || !function.OrderBy()->orders.empty()) {
+		return nullptr;
+	}
+	auto entry = GetTypeEntry(function.GetQualifiedName(), QueryErrorContext(function.GetQueryLocation()),
+	                          OnEntryNotFound::RETURN_NULL);
+	if (!entry || entry->Cast<TypeCatalogEntry>().user_type.id() == LogicalTypeId::INVALID) {
+		return nullptr;
+	}
+	auto type = make_uniq<TypeExpression>(function.GetQualifiedName(), vector<unique_ptr<ParsedExpression>>());
+	type->SetQueryLocation(function.GetQueryLocation());
+	return type;
 }
 
 //! Runs `fun` with the select-list set-returning rewrite disabled, so a nested
@@ -311,7 +341,19 @@ static BindResult BindWithoutSetReturningExpansionImpl(ExpressionBinder &binder,
 
 BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t depth,
                                             unique_ptr<ParsedExpression> &expr_ptr) {
-	reference<CatalogEntry> func = BindFunction(function);
+	auto entry = TryBindFunction(function);
+	if (!entry) {
+		auto cast_type = FunctionStyleCastType(function);
+		if (cast_type) {
+			auto cast = make_uniq<CastExpression>(std::move(cast_type),
+			                                      std::move(function.GetArgumentsMutable()[0].GetExpressionMutable()));
+			cast->SetAlias(function.GetAlias().empty() ? function.FunctionName() : function.GetAlias());
+			cast->SetQueryLocation(function.GetQueryLocation());
+			expr_ptr = std::move(cast);
+			return BindExpression(expr_ptr, depth, false);
+		}
+	}
+	reference<CatalogEntry> func = entry ? *entry : BindFunction(function);
 
 	// PG compat: in a SELECT list, if the scalar lookup won but a table
 	// function with the same name exists, prefer the table function so it
@@ -337,6 +379,7 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 	switch (func.get().type) {
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
 	case CatalogType::WINDOW_FUNCTION_ENTRY:
+	case CatalogType::MACRO_ENTRY:
 		break;
 	default:
 		if (function.Distinct() || function.Filter() || !function.OrderBy()->orders.empty()) {
@@ -389,25 +432,30 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 	case CatalogType::WINDOW_FUNCTION_ENTRY:
 		// window function
 		return BindWindow(function, func.get().Cast<WindowFunctionCatalogEntry>(), depth);
-	case CatalogType::TABLE_FUNCTION_ENTRY: {
-		// PG compat: table functions in SELECT -> unnest their results as rows.
-		// Routes through SelectBinder::BindUnnest, sharing BoundUnnestNode with other SRFs.
-		auto unnest_func = make_uniq<FunctionExpression>("unnest", vector<unique_ptr<ParsedExpression>> {});
-		unnest_func->GetArgumentsMutable().push_back(WrapTableFuncAsList(function.Copy()));
-		unnest_func->SetAlias(function.GetAlias().empty() ? function.FunctionName() : function.GetAlias());
-		expr_ptr = std::move(unnest_func);
-		return BindExpression(expr_ptr, depth, false);
-	}
+	case CatalogType::TABLE_FUNCTION_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY: {
 		// PG-compat: procedures with a table body are catalogued as TABLE_MACRO.
-		// `SELECT proc()` for a procedure (CALL-only) must surface the canonical
-		// PG error rather than the generic "Unsupported catalog type" fallthrough.
-		auto &table_macro = func.get().Cast<TableMacroCatalogEntry>();
-		if (table_macro.is_procedure) {
+		// `SELECT proc()` for a procedure (CALL-only) must surface the canonical PG error.
+		if (func.get().type == CatalogType::TABLE_MACRO_ENTRY &&
+		    func.get().Cast<TableMacroCatalogEntry>().is_procedure) {
 			throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
 			                      function.FunctionName().GetIdentifierName());
 		}
-		throw InvalidInputException("Unsupported catalog type when binding function");
+		// PG compat: table functions in SELECT -> unnest their results as rows.
+		// Routes through SelectBinder::BindUnnest, sharing BoundUnnestNode with other SRFs.
+		const bool whole_row =
+		    func.get().type == CatalogType::TABLE_MACRO_ENTRY ||
+		    Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
+		        SqlCompatibility::POSTGRES;
+		auto unnest_func = make_uniq<FunctionExpression>("unnest", vector<unique_ptr<ParsedExpression>> {});
+		unnest_func->GetArgumentsMutable().push_back(WrapTableFuncAsList(function.Copy(), whole_row));
+		if (whole_row) {
+			unnest_func->GetArgumentsMutable().emplace_back(Identifier("set_returning"),
+			                                                ConstantExpression::Boolean(true));
+		}
+		unnest_func->SetAlias(function.GetAlias().empty() ? function.FunctionName() : function.GetAlias());
+		expr_ptr = std::move(unnest_func);
+		return BindExpression(expr_ptr, depth, false);
 	}
 	default:
 		throw InvalidInputException("Unsupported catalog type when binding function");
@@ -480,11 +528,20 @@ BindResult ExpressionBinder::BindFunction(FunctionExpression &function, ScalarFu
 	}
 
 	FunctionBinder function_binder(binder);
-	auto result = function_binder.BindScalarFunction(func, std::move(arguments), error, function.IsOperator(), &binder);
-	if (!result) {
+	auto overload = function_binder.SelectScalarFunction(func, arguments, error);
+	if (!overload.IsValid()) {
+		auto cast_type = FunctionStyleCastType(function);
+		if (cast_type) {
+			auto cast = BoundCastExpression::AddCastToType(context, std::move(arguments[0].second),
+			                                               binder.BindLogicalType(*cast_type));
+			cast->SetAlias(function.GetAlias().empty() ? function.FunctionName() : function.GetAlias());
+			return BindResult(std::move(cast));
+		}
 		error.AddQueryLocation(function);
 		error.Throw();
 	}
+	auto result = function_binder.BindScalarFunction(func, overload.GetIndex(), std::move(arguments),
+	                                                 function.IsOperator(), &binder);
 	if (result->GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
 		auto &bound_function = result->Cast<BoundFunctionExpression>();
 		if (bound_function.Function().GetStability() == FunctionStability::CONSISTENT_WITHIN_QUERY) {
@@ -679,6 +736,10 @@ BindResult ExpressionBinder::BindWindow(FunctionExpression &expr, WindowFunction
 
 BindResult ExpressionBinder::BindUnnest(FunctionExpression &expr, idx_t depth, bool root_expression) {
 	return BindUnsupportedExpression(expr, depth, UnsupportedUnnestMessage());
+}
+
+BindResult ExpressionBinder::BindStar(StarExpression &expr, idx_t depth, bool root_expression) {
+	return BindResult(BinderException::Unsupported(expr, "STAR expression is not supported here"));
 }
 
 void ExpressionBinder::ThrowIfUnnestInLambda(const ColumnBinding &column_binding) {

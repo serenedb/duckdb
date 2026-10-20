@@ -176,6 +176,11 @@ statement error
 SELECT percentile_cont(CASE 1 WHEN 2 THEN 3 END) WITHIN GROUP (ORDER BY 1 DESC);
 ----
 
+statement error
+SELECT percentile_disc(NULL::DOUBLE[]) WITHIN GROUP (ORDER BY 1 DESC);
+----
+must not be NULL
+
 # Negative fractions are not allowed
 
 foreach sense ASC DESC

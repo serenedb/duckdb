@@ -248,6 +248,7 @@ void Parser::ParseQuery(std::string_view query_p) {
 	const auto query = NormalizeSQLString(query_p, stripped);
 	vector<MatcherToken> tokens;
 	ParserTokenizerBehavior behavior(query, tokens);
+	behavior.question_mark_operators = options.question_mark_operators;
 	auto &tokenizer = GetGrammar().GetTokenizer();
 	tokenizer.TokenizeInput(behavior);
 	auto token_iterator = TokenIterator::FromTokenizer(tokens);

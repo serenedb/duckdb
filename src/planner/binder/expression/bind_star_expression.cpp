@@ -54,6 +54,9 @@ StarExpressionType Binder::FindStarExpression(unique_ptr<ParsedExpression> &expr
 	}
 	if (expr->GetExpressionClass() == ExpressionClass::STAR) {
 		auto &current_star = expr->Cast<StarExpression>();
+		if (current_star.Expression() && !current_star.IsColumns()) {
+			return StarExpressionType::NONE;
+		}
 		if (StarExpression::IsStar(*expr)) {
 			if (is_root) {
 				D_ASSERT(!in_columns);

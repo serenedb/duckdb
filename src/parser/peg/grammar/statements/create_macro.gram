@@ -13,7 +13,8 @@ ReturnMacroBody <- 'RETURN' Expression
 MacroDefinitionBody <- TableMacroDefinition / ScalarMacroDefinition
 
 MacroParameters <- List(MacroParameter)
-MacroParameter <- NamedParameter / SimpleParameter
+MacroParameter <- NamedParameter / ModeParameter / SimpleParameter
+ModeParameter <- FuncArgMode TypeFuncName Type?
 SimpleParameter <- TypeFuncName Type?
 
 ScalarMacroDefinition <- Expression

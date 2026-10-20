@@ -127,13 +127,19 @@ shared_ptr<CatalogVersions> CatalogOidIndex::Find(idx_t oid) const {
 }
 
 optional_ptr<CatalogEntry> CatalogOidIndex::GetVisible(idx_t oid, const SnapshotView &view) const {
+	auto entry = GetVisibleOwner(oid, view);
+	return entry && entry->oid == oid ? entry : nullptr;
+}
+
+optional_ptr<CatalogEntry> CatalogOidIndex::GetVisibleOwner(idx_t oid, const SnapshotView &view) const {
 	auto object = Find(oid);
 	return object ? object->GetVisible(view) : nullptr;
 }
 
 optional_ptr<CatalogEntry> CatalogOidIndex::GetCommitted(idx_t oid) const {
 	auto object = Find(oid);
-	return object ? object->GetCommitted() : nullptr;
+	auto entry = object ? object->GetCommitted() : nullptr;
+	return entry && entry->oid == oid ? entry : nullptr;
 }
 
 shared_ptr<CatalogVersions> CatalogOidIndex::GetOrCreate(const CatalogEntry &object) {
@@ -149,11 +155,36 @@ shared_ptr<CatalogVersions> CatalogOidIndex::GetOrCreate(const CatalogEntry &obj
 	return slot;
 }
 
+void CatalogOidIndex::AddAliases(const CatalogEntry &version, const shared_ptr<CatalogVersions> &object_versions) {
+	auto oids = version.GetSubObjectOids();
+	if (oids.empty()) {
+		return;
+	}
+	absl::MutexLock guard(lock);
+	for (auto oid : oids) {
+		if (versions.try_emplace(oid, object_versions).second) {
+			object_versions->aliases.push_back(oid);
+		}
+	}
+}
+
+void CatalogOidIndex::Erase(unordered_map<idx_t, shared_ptr<CatalogVersions>>::iterator it) {
+	for (auto alias : it->second->aliases) {
+		auto alias_it = versions.find(alias);
+		if (alias_it != versions.end() && alias_it->second == it->second) {
+			versions.erase(alias_it);
+		}
+	}
+	versions.erase(it);
+}
+
 void CatalogOidIndex::Install(CatalogEntry &version, const CatalogEntry &object) {
 	if (!IsIndexed(object)) {
 		return;
 	}
-	GetOrCreate(object)->Install(version);
+	auto object_versions = GetOrCreate(object);
+	object_versions->Install(version);
+	AddAliases(version, object_versions);
 }
 
 void CatalogOidIndex::Commit(CatalogEntry &version, const CatalogEntry &object) {
@@ -187,7 +218,7 @@ void CatalogOidIndex::Rollback(CatalogEntry &version, const CatalogEntry &object
 	}
 	it->second->Rollback(version);
 	if (it->second->IsEmpty()) {
-		versions.erase(it);
+		Erase(it);
 	}
 }
 
@@ -202,7 +233,7 @@ void CatalogOidIndex::Unlink(CatalogEntry &version) {
 	}
 	it->second->Unlink(version);
 	if (it->second->IsEmpty()) {
-		versions.erase(it);
+		Erase(it);
 	}
 }
 

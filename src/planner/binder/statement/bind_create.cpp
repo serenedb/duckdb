@@ -7,6 +7,7 @@
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/default/default_types.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
@@ -37,6 +38,7 @@
 #include "duckdb/parser/common_table_expression_info.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/planner/binder.hpp"
@@ -62,6 +64,75 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 
 namespace duckdb {
+
+static bool IsTimestampType(const LogicalTypeId type) {
+	return type == LogicalTypeId::TIMESTAMP || type == LogicalTypeId::TIMESTAMP_TZ ||
+	       type == LogicalTypeId::TIMESTAMP_SEC || type == LogicalTypeId::TIMESTAMP_MS ||
+	       type == LogicalTypeId::TIMESTAMP_NS;
+}
+
+static bool IsRecordType(const LogicalType &type) {
+	return type.id() == LogicalTypeId::STRUCT || type.id() == LogicalTypeId::TUPLE;
+}
+
+static bool IsAssignmentCast(ClientContext &context, const LogicalType &source, const LogicalType &target) {
+	if (IsRecordType(source) && IsRecordType(target)) {
+		auto &source_fields = StructType::GetChildTypes(source);
+		auto &target_fields = StructType::GetChildTypes(target);
+		if (source_fields.size() != target_fields.size()) {
+			return false;
+		}
+		for (idx_t i = 0; i < source_fields.size(); i++) {
+			if (!IsAssignmentCast(context, source_fields[i].second, target_fields[i].second)) {
+				return false;
+			}
+		}
+		return true;
+	}
+	if (source.id() == LogicalTypeId::LIST && target.id() == LogicalTypeId::LIST) {
+		return IsAssignmentCast(context, ListType::GetChildType(source), ListType::GetChildType(target));
+	}
+	if (source.id() == LogicalTypeId::ARRAY && target.id() == LogicalTypeId::ARRAY) {
+		return IsAssignmentCast(context, ArrayType::GetChildType(source), ArrayType::GetChildType(target));
+	}
+	if (CastFunctionSet::ImplicitCastCost(context, source, target) >= 0) {
+		return true;
+	}
+	if (source.IsNumeric() && target.IsNumeric()) {
+		return true;
+	}
+	if (target.id() == LogicalTypeId::VARCHAR && (!target.HasAlias() || target.GetAlias() == "name")) {
+		return true;
+	}
+	const auto from = source.id();
+	const auto to = target.id();
+	if (IsTimestampType(from)) {
+		const bool zoned = from == LogicalTypeId::TIMESTAMP_TZ;
+		return to == LogicalTypeId::DATE || to == LogicalTypeId::TIME ||
+		       (IsTimestampType(to) && zoned == (to == LogicalTypeId::TIMESTAMP_TZ)) ||
+		       (zoned && (to == LogicalTypeId::TIMESTAMP || to == LogicalTypeId::TIME_TZ));
+	}
+	if (from == LogicalTypeId::TIME) {
+		return to == LogicalTypeId::INTERVAL || to == LogicalTypeId::TIME_TZ;
+	}
+	return (from == LogicalTypeId::TIME_TZ || from == LogicalTypeId::INTERVAL) && to == LogicalTypeId::TIME;
+}
+
+static LogicalType WithoutTypmod(const LogicalType &type) {
+	if (type.HasAlias()) {
+		return type;
+	}
+	if (type.id() == LogicalTypeId::DECIMAL) {
+		return DefaultTypeGenerator::TryDefaultBind("decimal", {});
+	}
+	if (type.id() == LogicalTypeId::LIST) {
+		return LogicalType::LIST(WithoutTypmod(ListType::GetChildType(type)));
+	}
+	if (type.id() == LogicalTypeId::ARRAY) {
+		return LogicalType::ARRAY(WithoutTypmod(ArrayType::GetChildType(type)), ArrayType::GetSize(type));
+	}
+	return type;
+}
 
 static unique_ptr<CommonTableExpressionInfo> MakeTriggerValidationCTE(const TableCatalogEntry &table) {
 	auto alias_select = make_uniq<SelectNode>();
@@ -643,8 +714,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			    base.GetFunctionName().GetIdentifierName());
 		}
 
-		auto this_macro_binding =
-		    make_uniq<DummyBinding>(dummy_types, dummy_names, base.GetFunctionName().GetIdentifierName());
+		auto this_macro_binding = make_uniq<DummyBinding>(dummy_types, dummy_names, string());
 		macro_binding = this_macro_binding.get();
 
 		// bind it to verify the function was defined correctly
@@ -662,7 +732,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			if (actual == expected) {
 				return true;
 			}
-			return CastFunctionSet::ImplicitCastCost(context, actual, expected) >= 0;
+			return IsAssignmentCast(context, actual, expected);
 		};
 		if (info.type == CatalogType::MACRO_ENTRY) {
 			BoundSelectNode sel_node;
@@ -680,6 +750,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				// so downstream consumers (pg_proc, serialization) see real IDs.
 				for (auto &rt : ret_types) {
 					BindLogicalType(rt);
+					rt = WithoutTypmod(rt);
 				}
 				// PG-compat: RETURNS VOID functions evaluate to a single NULL row
 				// regardless of body. Replace the stored body with a NULL constant
@@ -708,8 +779,18 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 						    *query_node, [&dummy_binder](unique_ptr<ParsedExpression> &child) {
 							    ExpressionBinder::QualifyColumnNames(*dummy_binder, child);
 						    });
+						if (ret_types.size() > 1) {
+							auto &record = query_node->Cast<SelectNode>().from_table->Cast<SubqueryRef>();
+							auto body = record.subquery->node->Copy();
+							const auto columns = CreateBinder(context, this)->Bind(*body).types.size();
+							if (columns != ret_types.size()) {
+								throw BinderException("return type mismatch in function declared to return record\n"
+								                      "DETAIL: Final statement returns too %s columns.",
+								                      columns > ret_types.size() ? "many" : "few");
+							}
+						}
 						auto bound = dummy_binder->Bind(*query_node);
-						auto &resolved = ret_types[0];
+						const auto resolved = function->ResultType();
 						const bool is_void_return =
 						    resolved.id() == LogicalTypeId::SQLNULL && resolved.GetAlias() == "void";
 						if (!is_void_return) {
@@ -740,18 +821,13 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				}
 				// Validate scalar RETURN expr (non-subquery body).
 				if (!ret_types.empty() && bind_result.expression) {
-					auto &resolved = ret_types[0];
+					const auto resolved = function->ResultType();
 					auto &actual = bind_result.expression->GetReturnType();
 					if (!types_compatible(actual, resolved)) {
 						throw BinderException("return type mismatch in function declared to return %s\n"
 						                      "DETAIL: Actual return type is %s.",
 						                      StringUtil::Lower(resolved.ToString()),
 						                      StringUtil::Lower(actual.ToString()));
-					}
-					if (ret_types.size() != 1) {
-						throw BinderException("return type mismatch in function declared to return %s\n"
-						                      "DETAIL: Final statement must return exactly one column.",
-						                      StringUtil::Lower(resolved.ToString()));
 					}
 				}
 			} catch (const std::exception &ex) {
@@ -771,22 +847,21 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				    ExpressionBinder::QualifyColumnNames(*dummy_binder, child);
 			    });
 			try {
+				auto &declared = function->return_types;
+				for (auto &dt : declared) {
+					dummy_binder->BindLogicalType(dt);
+					dt = WithoutTypmod(dt);
+				}
 				auto bound = dummy_binder->Bind(*query_node);
 				if (should_create_dependencies && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
 					ViewColumnDependencies(catalog, dependencies).VisitOperator(*bound.plan);
 				}
 
 				// Validate declared return types against actual query output.
-				auto &declared = function->return_types;
 				if (!declared.empty() && bound.types.size() > 0) {
 					// is_scalar: RETURNS <type> (single scalar return, stored as TABLE_MACRO)
 					bool is_scalar = declared.size() == 1 && info.type == CatalogType::TABLE_MACRO_ENTRY;
 					bool is_table = declared.size() > 1 || (declared.size() == 1 && !is_scalar);
-
-					// Resolve unbound types (grammar produces UNBOUND type ids)
-					for (auto &dt : declared) {
-						dummy_binder->BindLogicalType(dt);
-					}
 
 					// PG-compat: RETURNS VOID accepts any body shape (PG discards the
 					// result and emits a single NULL row).

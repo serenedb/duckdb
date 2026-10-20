@@ -189,7 +189,8 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 			return entry.role == info.target_role && entry.scope == info.default_scope &&
 			       entry.objtype == info.default_objtype;
 		});
-		const auto baseline = Permissions::AclDefault(info.default_objtype, info.target_role);
+		const auto baseline = info.default_scope == 0 ? Permissions::AclDefault(info.default_objtype, info.target_role)
+		                                              : vector<AclItem> {};
 		auto row_acl = row == defaults.end() ? baseline : row->acl;
 		Apply(row_acl, info.target_role, Permissions::AllPrivileges(info.default_objtype), info.privileges, info);
 		if (row_acl == baseline) {

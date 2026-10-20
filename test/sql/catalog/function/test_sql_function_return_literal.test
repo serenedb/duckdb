@@ -1,0 +1,19 @@
+# name: test/sql/catalog/function/test_sql_function_return_literal.test
+# description: RETURN of a string literal in a LANGUAGE sql function returns the literal; only AS takes a body text
+# group: [function]
+
+statement ok
+CREATE FUNCTION greeting() RETURNS VARCHAR LANGUAGE sql RETURN 'hello';
+
+query T
+SELECT greeting();
+----
+hello
+
+statement ok
+CREATE FUNCTION answer() RETURNS INTEGER LANGUAGE sql AS 'SELECT 42';
+
+query I
+SELECT answer();
+----
+42

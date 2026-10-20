@@ -310,14 +310,22 @@ static bool BuildSideHasMultipleSources(const PhysicalOperator &op) {
 	case PhysicalOperatorType::RECURSIVE_RECURRING_CTE_SCAN:
 		// CTE producers are not children of their scans and may forward different dictionaries.
 		return true;
-	case PhysicalOperatorType::HASH_JOIN:
-		return op.Cast<PhysicalHashJoin>().HasMultipleSources();
+	case PhysicalOperatorType::HASH_JOIN: {
+		auto &join = op.Cast<PhysicalHashJoin>();
+		return PropagatesBuildSide(join.join_type) || join.HasMultipleSources();
+	}
 	default:
 		break;
 	}
 	if (op.IsSink() && op.children.size() == 1) {
 		// Single-input sinks materialize their input and become the source of a new pipeline.
 		return false;
+	}
+	if ((op.type == PhysicalOperatorType::NESTED_LOOP_JOIN || op.type == PhysicalOperatorType::PIECEWISE_MERGE_JOIN ||
+	     op.type == PhysicalOperatorType::IE_JOIN || op.type == PhysicalOperatorType::BLOCKWISE_NL_JOIN ||
+	     op.type == PhysicalOperatorType::ASOF_JOIN) &&
+	    PropagatesBuildSide(op.Cast<PhysicalJoin>().join_type)) {
+		return true;
 	}
 	for (const auto &child : op.children) {
 		if (BuildSideHasMultipleSources(child.get())) {

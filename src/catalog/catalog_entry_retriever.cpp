@@ -89,6 +89,7 @@ void CatalogEntryRetriever::Inherit(const CatalogEntryRetriever &parent) {
 	this->callback = parent.callback;
 	this->search_path = parent.search_path;
 	this->at_clause = parent.at_clause;
+	resolved_paths.clear();
 }
 
 const CatalogSearchPath &CatalogEntryRetriever::GetSearchPath() const {
@@ -125,6 +126,7 @@ void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries) {
 	}
 
 	this->search_path = make_shared_ptr<CatalogSearchPath>(context, std::move(new_path));
+	resolved_paths.clear();
 }
 
 optional_ptr<BoundAtClause> CatalogEntryRetriever::GetAtClause() const {
