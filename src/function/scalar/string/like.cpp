@@ -395,10 +395,12 @@ private:
 				literal += ch;
 				continue;
 			}
+			// special character, push a constant pattern
 			if (!literal.empty()) {
 				segments.emplace_back(std::move(literal));
 				literal.clear();
 			}
+			// sample_size
 			if (i == 0) {
 				has_start_percentage = true;
 			}
@@ -576,6 +578,7 @@ void LikeMatchPatterns(LikeLocalState &lstate, const Vector &strings, const Vect
 			return;
 		}
 	}
+	// use generic like matcher
 	if (has_escape) {
 		BinaryExecutor::Execute<string_t, string_t, bool>(strings, patterns, result,
 		                                                  [&](string_t str, string_t pattern) {
