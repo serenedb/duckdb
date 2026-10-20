@@ -50,6 +50,7 @@ public:
 	void WriteDelete(DataChunk &chunk);
 	void WriteTruncateTable();
 	void WriteAdoptSegments(const vector<string> &segments);
+	void WriteDeleteRowRanges(const vector<row_t> &starts, const vector<idx_t> &counts);
 
 private:
 	friend class WriteAheadLog;
