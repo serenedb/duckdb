@@ -2182,10 +2182,17 @@ void WriteAheadLogDeserializer::ReplayAdoptSegments() {
 }
 
 void WriteAheadLogDeserializer::ReplayDeleteRowRanges() {
-	auto starts = deserializer.ReadProperty<vector<row_t>>(101, "starts");
-	auto counts = deserializer.ReadProperty<vector<idx_t>>(102, "counts");
+	const auto entry = WALDeleteRowRanges::Deserialize(deserializer);
+	const auto &starts = entry.starts;
+	const auto &counts = entry.counts;
 	if (starts.empty() || starts.size() != counts.size()) {
 		throw DataCorruptionException("Corrupt WAL: row ranges with mismatched starts and counts");
+	}
+	for (idx_t i = 0; i < starts.size(); i++) {
+		if (starts[i] < 0 || counts[i] == 0 ||
+		    counts[i] > static_cast<idx_t>(NumericLimits<row_t>::Maximum() - starts[i])) {
+			throw DataCorruptionException("Corrupt WAL: row range out of bounds");
+		}
 	}
 	if (DeserializeOnly()) {
 		return;
