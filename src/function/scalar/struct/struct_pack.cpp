@@ -11,7 +11,7 @@
 
 namespace duckdb {
 
-static void StructPackFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+void StructPackFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 #ifdef DEBUG
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<VariableReturnBindData>();

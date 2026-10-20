@@ -53,6 +53,8 @@ struct MapUtil {
 	static void ReinterpretMap(Vector &target, const Vector &other);
 };
 
+void StructPackFunction(DataChunk &args, ExpressionState &state, Vector &result);
+
 struct VariableReturnBindData : public FunctionData {
 	LogicalType stype;
 
