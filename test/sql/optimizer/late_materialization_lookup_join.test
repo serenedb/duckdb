@@ -1,0 +1,147 @@
+# name: test/sql/optimizer/late_materialization_lookup_join.test
+# description: Late materialization of table scans through a LOOKUP_JOIN
+# group: [optimizer]
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
+CREATE TABLE lj AS SELECT
+    i AS id,
+    i % 7 AS grp,
+    md5(i::VARCHAR) || md5((i + 1)::VARCHAR) AS payload,
+    {'a': i, 'b': 'v' || i::VARCHAR} AS s,
+    [i, i + 1, i + 2] AS l
+FROM range(20000) t(i);
+
+statement ok
+CHECKPOINT;
+
+query II
+EXPLAIN SELECT * FROM lj ORDER BY id DESC LIMIT 3;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*TOP_N.*
+
+query II
+EXPLAIN SELECT * FROM lj ORDER BY id DESC LIMIT 3;
+----
+physical_plan	<!REGEX>:.*ORDER_BY.*
+
+query IIIII
+SELECT id, grp, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR), s, l FROM lj ORDER BY id DESC LIMIT 3;
+----
+19999	0	true	{'a': 19999, 'b': v19999}	[19999, 20000, 20001]
+19998	6	true	{'a': 19998, 'b': v19998}	[19998, 19999, 20000]
+19997	5	true	{'a': 19997, 'b': v19997}	[19997, 19998, 19999]
+
+query I
+SELECT count(*) FROM (SELECT * FROM lj ORDER BY grp, id DESC LIMIT 40) WHERE payload <> md5(id::VARCHAR) || md5((id + 1)::VARCHAR) OR s.a <> id OR l[2] <> id + 1
+----
+0
+
+query II
+EXPLAIN SELECT * FROM lj LIMIT 5;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+query II
+EXPLAIN SELECT * FROM lj LIMIT 5000 OFFSET 7;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+query IIII
+SELECT count(*), min(id), max(id), bool_and(payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR)) FROM (SELECT * FROM lj LIMIT 5000 OFFSET 7);
+----
+5000	7	5006	true
+
+query I
+SELECT bool_and(id = rn + 6) FROM (SELECT id, row_number() OVER () AS rn FROM (SELECT * FROM lj LIMIT 5000 OFFSET 7));
+----
+true
+
+query II
+EXPLAIN SELECT * FROM lj USING SAMPLE 3 ROWS;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+query II
+SELECT count(*), bool_and(payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR)) FROM (SELECT * FROM lj USING SAMPLE 3 ROWS);
+----
+3	true
+
+query IIIII
+SELECT rowid, id, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR), s, l FROM lj ORDER BY id LIMIT 2;
+----
+0	0	true	{'a': 0, 'b': v0}	[0, 1, 2]
+1	1	true	{'a': 1, 'b': v1}	[1, 2, 3]
+
+query II
+SELECT s.b, l FROM lj WHERE grp = 3 ORDER BY id DESC LIMIT 2;
+----
+v19995	[19995, 19996, 19997]
+v19988	[19988, 19989, 19990]
+
+statement ok
+SET preserve_insertion_order = false;
+
+query II
+SELECT count(*), bool_and(payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR)) FROM (SELECT * FROM lj LIMIT 3000 OFFSET 5);
+----
+3000	true
+
+statement ok
+RESET preserve_insertion_order;
+
+statement ok
+SET threads = 1;
+
+query III
+SELECT id, s.b, l[3] FROM lj ORDER BY id DESC LIMIT 2;
+----
+19999	v19999	20001
+19998	v19998	20000
+
+statement ok
+RESET threads;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO lj SELECT i, 100, 'local' || i::VARCHAR, {'a': i, 'b': 'local'}, [i] FROM range(30000, 30003) t(i);
+
+statement ok
+UPDATE lj SET payload = 'updated' WHERE id = 19999;
+
+statement ok
+DELETE FROM lj WHERE id = 19998;
+
+query III
+SELECT id, CASE WHEN payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR) THEN 'original' ELSE payload END, s.b FROM lj ORDER BY id DESC LIMIT 5;
+----
+30002	local30002	local
+30001	local30001	local
+30000	local30000	local
+19999	updated	v19999
+19997	original	v19997
+
+query II
+SELECT id, payload FROM lj WHERE grp = 100 OR id = 19999 ORDER BY id LIMIT 10 OFFSET 1;
+----
+30000	local30000
+30001	local30001
+30002	local30002
+
+statement ok
+ROLLBACK;
+
+query II
+SELECT id, s.b FROM lj ORDER BY id DESC LIMIT 2;
+----
+19999	v19999
+19998	v19998
+
+query II
+EXPLAIN SELECT id FROM lj ORDER BY id LIMIT 2;
+----
+physical_plan	<!REGEX>:.*LOOKUP_JOIN.*

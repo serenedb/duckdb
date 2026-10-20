@@ -35,14 +35,14 @@ SELECT s, x FROM lm_pushdown_extract WHERE s.a = 1 ORDER BY id LIMIT 1
 statement ok
 SET disabled_optimizers = '';
 
-# The query must actually be executed as a late materialization (rowid equality join)
+# The query must actually be executed as a late materialization (rowid lookup)
 statement ok
 PRAGMA explain_output = OPTIMIZED_ONLY
 
 query II
 EXPLAIN SELECT s, x FROM lm_pushdown_extract WHERE s.a = 1 ORDER BY id LIMIT 1
 ----
-logical_opt	<REGEX>:.*COMPARISON_JOIN.*rowid = rowid.*
+logical_opt	<REGEX>:.*LOOKUP_JOIN.*
 
 statement ok
 PRAGMA explain_output = PHYSICAL_ONLY

@@ -12,11 +12,11 @@ statement ok
 SET explain_output='optimized_only'
 
 # Top N optimization
-# this gets turned into a row-id join
+# this gets turned into a row-id lookup
 query II
 explain SELECT * FROM test ORDER BY j DESC LIMIT 2;
 ----
-logical_opt	<REGEX>:.*COMPARISON_JOIN.*
+logical_opt	<REGEX>:.*LOOKUP_JOIN.*
 
 query IIII
 SELECT * FROM test ORDER BY j DESC LIMIT 2;
@@ -27,7 +27,7 @@ SELECT * FROM test ORDER BY j DESC LIMIT 2;
 query II
 explain SELECT * FROM test ORDER BY j, i LIMIT 2;
 ----
-logical_opt	<REGEX>:.*COMPARISON_JOIN.*
+logical_opt	<REGEX>:.*LOOKUP_JOIN.*
 
 query IIII
 SELECT * FROM test ORDER BY j, i LIMIT 2;
@@ -35,17 +35,17 @@ SELECT * FROM test ORDER BY j, i LIMIT 2;
 0	1	2	0
 1	2	3	-1
 
-# this does not, we cannot remove any columns by turning it into a row-id join
+# this does not, we cannot remove any columns by turning it into a row-id lookup
 query II
 explain SELECT i FROM test ORDER BY i LIMIT 2;
 ----
-logical_opt	<!REGEX>:.*COMPARISON_JOIN.*
+logical_opt	<!REGEX>:.*LOOKUP_JOIN.*
 
 # we cannot do this with volatile expressions
 query II
 explain SELECT * FROM (SELECT i + random() AS i, j, k, l FROM test) ORDER BY i LIMIT 2;
 ----
-logical_opt	<!REGEX>:.*COMPARISON_JOIN.*
+logical_opt	<!REGEX>:.*LOOKUP_JOIN.*
 
 # top-n with expressions
 query IIII
@@ -65,7 +65,7 @@ SELECT * FROM (SELECT 100 + i i, 1000 + j j, 10000 + k k, 100000 + l l FROM (SEL
 query II
 explain SELECT * FROM test LIMIT 2 OFFSET 2;
 ----
-logical_opt	<REGEX>:.*COMPARISON_JOIN.*
+logical_opt	<REGEX>:.*LOOKUP_JOIN.*
 
 query IIII
 SELECT * FROM test LIMIT 2 OFFSET 2;
@@ -77,13 +77,13 @@ SELECT * FROM test LIMIT 2 OFFSET 2;
 query II
 explain SELECT * FROM test USING SAMPLE 2 ROWS
 ----
-logical_opt	<REGEX>:.*COMPARISON_JOIN.*
+logical_opt	<REGEX>:.*LOOKUP_JOIN.*
 
-# we can only use joins when we are sampling rows
+# we can only use lookups when we are sampling rows
 query II
 explain SELECT * FROM test USING SAMPLE 10%
 ----
-logical_opt	<!REGEX>:.*COMPARISON_JOIN.*
+logical_opt	<!REGEX>:.*LOOKUP_JOIN.*
 
 # order on expression
 query IIII
@@ -137,7 +137,7 @@ SET late_materialization_max_rows=0
 query II
 explain SELECT * FROM test ORDER BY j DESC LIMIT 2;
 ----
-logical_opt	<!REGEX>:.*COMPARISON_JOIN.*
+logical_opt	<REGEX>:.*LOOKUP_JOIN.*
 
 statement ok
 RESET late_materialization_max_rows
@@ -145,4 +145,4 @@ RESET late_materialization_max_rows
 query II
 explain SELECT * FROM test ORDER BY j DESC LIMIT 2;
 ----
-logical_opt	<REGEX>:.*COMPARISON_JOIN.*
+logical_opt	<REGEX>:.*LOOKUP_JOIN.*

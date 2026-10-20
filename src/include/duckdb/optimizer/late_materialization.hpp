@@ -33,7 +33,7 @@ private:
 	                   const vector<reference<LogicalOperator>> &source_operators,
 	                   const column_binding_set_t &required_columns, const vector<bool> &fetchable);
 	void LoadRowIdColumns(LogicalGet &get);
-	vector<unique_ptr<Expression>> ConstructFinalProjection(LogicalGet &lhs_get, const vector<ColumnBinding> &lhs_columns,
+	vector<unique_ptr<Expression>> ConstructFinalProjection(LogicalGet &lhs_get, idx_t lhs_columns,
 	                                                        const vector<reference<LogicalOperator>> &source_operators);
 
 	vector<ColumnBinding> ConstructRHS(unique_ptr<LogicalOperator> &op, const vector<ProjectionIndex> &carried);

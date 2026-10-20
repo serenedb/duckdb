@@ -14,12 +14,20 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalLookupJoin &op) {
 	if (source.type != PhysicalOperatorType::TABLE_SCAN) {
 		throw InternalException("LOOKUP_JOIN source must be planned as a table scan");
 	}
+	auto &source_scan = source.Cast<PhysicalTableScan>();
+	source_scan.estimated_cardinality = ids.estimated_cardinality;
+	if (lookup.to_string) {
+		source_scan.function.to_string = lookup.to_string;
+	}
+	if (lookup.to_string_value) {
+		source_scan.function.to_string_value = lookup.to_string_value;
+	}
 	vector<idx_t> row_id_columns;
 	for (auto &expr : op.expressions) {
-		row_id_columns.push_back(expr->Cast<BoundReferenceExpression>().index);
+		row_id_columns.push_back(expr->Cast<BoundReferenceExpression>().Index());
 	}
-	return Make<PhysicalLookupJoin>(op.types, ids, source.Cast<PhysicalTableScan>(), std::move(lookup),
-	                                std::move(row_id_columns), op.estimated_cardinality);
+	return Make<PhysicalLookupJoin>(op.types, ids, source_scan, std::move(lookup), std::move(row_id_columns),
+	                                ids.estimated_cardinality);
 }
 
 } // namespace duckdb

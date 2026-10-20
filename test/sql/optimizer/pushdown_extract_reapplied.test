@@ -85,7 +85,7 @@ PRAGMA explain_output = OPTIMIZED_ONLY
 query II
 EXPLAIN SELECT (v.ms::STRUCT(b VARCHAR, a VARCHAR)).b FROM nested_extract ORDER BY v.id LIMIT 1
 ----
-logical_opt	<REGEX>:.*rowid = rowid.*
+logical_opt	<REGEX>:.*LOOKUP_JOIN.*
 
 statement ok
 PRAGMA explain_output = PHYSICAL_ONLY

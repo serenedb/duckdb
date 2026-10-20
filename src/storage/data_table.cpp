@@ -334,7 +334,7 @@ idx_t DataTable::LookupScan(DuckTransaction &transaction, ClientContext &context
 		state = make_uniq<TableScanState>();
 		state->Initialize(column_ids, &context, table_filters);
 		state->table_state.row_groups = row_groups->GetRowGroups();
-		state->table_state.Initialize(QueryContext(), row_groups->GetTypes());
+		state->table_state.Initialize(QueryContext(context), row_groups->GetTypes());
 	}
 	auto &ts = state->table_state;
 	ts.pk_lookups_it = pk_begin;

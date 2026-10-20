@@ -21,6 +21,7 @@
 #include "duckdb/planner/operator/logical_distinct.hpp"
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/planner/operator/logical_lookup_join.hpp"
 #include "duckdb/planner/operator/logical_order.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/operator/logical_recursive_cte.hpp"
@@ -684,6 +685,22 @@ void RemoveUnusedColumns::PruneOperator(unique_ptr<LogicalOperator> &op_ref) {
 	}
 	case LogicalOperatorType::LOGICAL_ANY_JOIN:
 		break;
+	case LogicalOperatorType::LOGICAL_LOOKUP_JOIN: {
+		if (analyze || everything_referenced) {
+			break;
+		}
+		auto source_index = op.Cast<LogicalLookupJoin>().GetSource().table_index;
+		bool fetches = false;
+		for (auto &entry : column_references) {
+			fetches = fetches || entry.first.table_index == source_index;
+		}
+		if (fetches) {
+			break;
+		}
+		op_ref = std::move(op.children[0]);
+		VisitOperator(op_ref);
+		return;
+	}
 	case LogicalOperatorType::LOGICAL_UNION: {
 		auto &setop = op.Cast<LogicalSetOperation>();
 		if (analyze) {

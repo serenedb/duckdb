@@ -1,5 +1,5 @@
 # name: test/sql/optimizer/late_materialization_table_filters.test
-# description: Test that late materialization copies table_filters to LHS scan
+# description: Test late materialization of scans with table filters
 # group: [optimizer]
 
 statement ok
@@ -40,10 +40,6 @@ SELECT count(*) FROM lm_test WHERE grp = 1
 ----
 1000
 
-# Enable late materialization
-statement ok
-SET late_materialization_max_rows = 100;
-
 # Core correctness test: results must be the same with and without late materialization
 query I
 SELECT count(*) FROM (
@@ -58,7 +54,6 @@ SELECT count(*) FROM (
 ----
 20
 
-# Verify the query plan shows filters on LHS TABLE_SCAN
 query II
 EXPLAIN
 SELECT id, grp, ts, payload1, payload2, payload3, payload4, payload5
@@ -69,7 +64,7 @@ WHERE grp = 1
 ORDER BY ts
 LIMIT 20;
 ----
-physical_plan	<REGEX>:.*HASH_JOIN.*SEMI.*
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*grp.*
 
 # Verify result correctness: grp=1 when i%100=0, so i=100,200,300...
 query III
@@ -87,7 +82,7 @@ LIMIT 3
 
 # Compare with no late materialization - results must be identical
 statement ok
-SET late_materialization_max_rows = 0;
+SET disabled_optimizers = 'late_materialization';
 
 query III
 SELECT id, grp, ts
@@ -104,7 +99,7 @@ LIMIT 3
 
 # Verify payload columns are also correct
 statement ok
-SET late_materialization_max_rows = 100;
+SET disabled_optimizers = '';
 
 query I
 SELECT payload1 = md5(id::VARCHAR || 'p1')
@@ -117,21 +112,11 @@ LIMIT 1
 ----
 true
 
-# ─────────────────────────────────────────────────────────────
-# Test: ORDER BY + LIMIT without WHERE (dynamic filter must NOT be copied to LHS)
-# The TOP_N optimizer pushes a dynamic boundary filter into the RHS scan.
-# If this filter were copied to the LHS, it would use a stale boundary
-# and incorrectly filter out rows.
-# ─────────────────────────────────────────────────────────────
-
-statement ok
-SET late_materialization_max_rows = 100;
-
 query II
 EXPLAIN SELECT id, grp, ts, payload1, payload2, payload3, payload4, payload5
 FROM lm_test ORDER BY ts LIMIT 3;
 ----
-physical_plan	<REGEX>:.*HASH_JOIN.*SEMI.*
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
 
 query III
 SELECT id, grp, ts
@@ -141,17 +126,11 @@ FROM lm_test ORDER BY ts LIMIT 3
 2	3	2024-01-01 00:02:00
 3	4	2024-01-01 00:03:00
 
-# ─────────────────────────────────────────────────────────────
-# Test: WHERE on a different column than ORDER BY
-# The WHERE filter (grp = 1) should be copied to the LHS as an optional
-# filter for zone-map pruning. The dynamic filter on ts must NOT be copied.
-# ─────────────────────────────────────────────────────────────
-
 query II
 EXPLAIN SELECT id, grp, ts, payload1
 FROM lm_test WHERE grp = 1 ORDER BY ts LIMIT 3;
 ----
-physical_plan	<REGEX>:.*HASH_JOIN.*SEMI.*SEQ_SCAN.*optional.*grp.*
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*grp.*
 
 query III
 SELECT id, grp, ts
@@ -161,13 +140,16 @@ FROM lm_test WHERE grp = 1 ORDER BY ts LIMIT 3
 200	1	2024-01-01 03:20:00
 300	1	2024-01-01 05:00:00
 
-# ─────────────────────────────────────────────────────────────
-# Test: WHERE on the same column as ORDER BY
-# When WHERE and TOP_N dynamic filter are on the same column, they are
-# ANDed together. The entire column filter is skipped on the LHS because
-# it contains a dynamic filter. This loses zone-map pruning for the
-# WHERE condition on that column, but guarantees correctness.
-# ─────────────────────────────────────────────────────────────
+query III
+SELECT id, grp, ts
+FROM lm_test WHERE ts >= TIMESTAMP '2024-03-01' ORDER BY ts LIMIT 3
+----
+86400	1	2024-03-01 00:00:00
+86401	2	2024-03-01 00:01:00
+86402	3	2024-03-01 00:02:00
+
+statement ok
+SET disabled_optimizers = 'late_materialization';
 
 query III
 SELECT id, grp, ts
@@ -178,30 +160,13 @@ FROM lm_test WHERE ts >= TIMESTAMP '2024-03-01' ORDER BY ts LIMIT 3
 86402	3	2024-03-01 00:02:00
 
 statement ok
-SET late_materialization_max_rows = 0;
-
-query III
-SELECT id, grp, ts
-FROM lm_test WHERE ts >= TIMESTAMP '2024-03-01' ORDER BY ts LIMIT 3
-----
-86400	1	2024-03-01 00:00:00
-86401	2	2024-03-01 00:01:00
-86402	3	2024-03-01 00:02:00
-
-# ─────────────────────────────────────────────────────────────
-# Test: WHERE on both same and different columns from ORDER BY
-# grp filter should be copied to LHS; ts filter should be skipped
-# (because it is ANDed with the dynamic filter on ts).
-# ─────────────────────────────────────────────────────────────
-
-statement ok
-SET late_materialization_max_rows = 100;
+SET disabled_optimizers = '';
 
 query II
 EXPLAIN SELECT id, grp, ts, payload1
 FROM lm_test WHERE grp = 1 AND ts >= TIMESTAMP '2024-03-01' ORDER BY ts LIMIT 3;
 ----
-physical_plan	<REGEX>:.*HASH_JOIN.*SEMI.*SEQ_SCAN.*optional.*grp.*
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*grp.*
 
 query III
 SELECT id, grp, ts
@@ -212,7 +177,7 @@ FROM lm_test WHERE grp = 1 AND ts >= TIMESTAMP '2024-03-01' ORDER BY ts LIMIT 3
 86600	1	2024-03-01 03:20:00
 
 statement ok
-SET late_materialization_max_rows = 0;
+SET disabled_optimizers = 'late_materialization';
 
 query III
 SELECT id, grp, ts

@@ -28,6 +28,8 @@ public:
 		return children[1]->Cast<LogicalGet>();
 	}
 
+	idx_t EstimateCardinality(ClientContext &context) override;
+
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<LogicalOperator> Deserialize(Deserializer &deserializer);
 };

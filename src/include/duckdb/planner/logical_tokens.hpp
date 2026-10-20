@@ -39,6 +39,7 @@ class LogicalGet;
 class LogicalInsert;
 class LogicalJoin;
 class LogicalLimit;
+class LogicalLookupJoin;
 class LogicalMergeInto;
 class LogicalOrder;
 class LogicalPivot;

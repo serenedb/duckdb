@@ -12,6 +12,7 @@
 #include "duckdb/planner/operator/logical_sample.hpp"
 #include "duckdb/planner/operator/logical_top_n.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
@@ -70,6 +71,15 @@ vector<ColumnBinding> LateMaterialization::ConstructRHS(unique_ptr<LogicalOperat
 		case LogicalOperatorType::LOGICAL_PROJECTION: {
 			auto &proj = op.Cast<LogicalProjection>();
 			for (idx_t c = 0; c < bindings.size(); c++) {
+				auto existing = std::find_if(proj.expressions.begin(), proj.expressions.end(), [&](const auto &expr) {
+					return expr->GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF &&
+					       expr->template Cast<BoundColumnRefExpression>().Binding() == bindings[c];
+				});
+				if (existing != proj.expressions.end()) {
+					bindings[c] = ColumnBinding(proj.table_index,
+					                            ProjectionIndex(NumericCast<idx_t>(existing - proj.expressions.begin())));
+					continue;
+				}
 				auto column_ref = make_uniq<BoundColumnRefExpression>(names[c], types[c], bindings[c]);
 				bindings[c] = ColumnBinding(proj.table_index,
 				                            ColumnBinding::PushExpression(proj.expressions, std::move(column_ref)));
@@ -195,7 +205,7 @@ void LateMaterialization::LoadRowIdColumns(LogicalGet &get) {
 }
 
 vector<unique_ptr<Expression>>
-LateMaterialization::ConstructFinalProjection(LogicalGet &lhs_get, const vector<ColumnBinding> &lhs_columns,
+LateMaterialization::ConstructFinalProjection(LogicalGet &lhs_get, idx_t lhs_columns,
                                               const vector<reference<LogicalOperator>> &source_operators) {
 	vector<unique_ptr<Expression>> final_proj_list;
 	// construct the final projection list from either (1) the root projection, or (2) the logical get
@@ -214,8 +224,8 @@ LateMaterialization::ConstructFinalProjection(LogicalGet &lhs_get, const vector<
 		}
 	} else {
 		// if we have no projection directly construct the columns from the root get
-		for (auto &binding : lhs_columns) {
-			final_proj_list.push_back(GetExpression(lhs_get, binding.column_index));
+		for (idx_t i = 0; i < lhs_columns; i++) {
+			final_proj_list.push_back(GetExpression(lhs_get, ProjectionIndex(i)));
 		}
 	}
 	return final_proj_list;
@@ -234,11 +244,11 @@ bool LateMaterialization::SupportsLookup(LogicalGet &get, vector<bool> &fetchabl
 bool LateMaterialization::TryLookupJoin(unique_ptr<LogicalOperator> &op, LogicalGet &get,
                                         const vector<reference<LogicalOperator>> &source_operators,
                                         const column_binding_set_t &required_columns, const vector<bool> &fetchable) {
-	bool fetches_any = false;
-	for (idx_t i = 0; i < fetchable.size() && !fetches_any; i++) {
-		fetches_any = fetchable[i] && !required_columns.count(ColumnBinding(get.table_index, ProjectionIndex(i)));
+	vector<bool> fetched(fetchable.size());
+	for (idx_t i = 0; i < fetchable.size(); i++) {
+		fetched[i] = fetchable[i] && !required_columns.count(ColumnBinding(get.table_index, ProjectionIndex(i)));
 	}
-	if (!fetches_any) {
+	if (std::find(fetched.begin(), fetched.end(), true) == fetched.end()) {
 		return false;
 	}
 	LoadRowIdColumns(get);
@@ -246,14 +256,22 @@ bool LateMaterialization::TryLookupJoin(unique_ptr<LogicalOperator> &op, Logical
 	auto source = LateMaterializationHelper::CreateLHSGet(get, optimizer.binder);
 	source->table_filters.ClearFilters();
 	auto source_index = source->table_index;
-	auto final_proj_list = ConstructFinalProjection(*source, source->GetColumnBindings(), source_operators);
+	auto final_proj_list = ConstructFinalProjection(*source, source->GetColumnIds().size(), source_operators);
+	if (source_operators.empty() && !get.projection_ids.empty()) {
+		for (idx_t i = 0; i < final_proj_list.size(); i++) {
+			if (std::find(get.projection_ids.begin(), get.projection_ids.end(), ProjectionIndex(i)) ==
+			    get.projection_ids.end()) {
+				final_proj_list[i] = make_uniq<BoundConstantExpression>(Value(final_proj_list[i]->GetReturnType()));
+			}
+		}
+	}
 
 	vector<ProjectionIndex> carried;
 	for (auto &expr : final_proj_list) {
 		ExpressionIterator::VisitExpression<BoundColumnRefExpression>(
 		    *expr, [&](const BoundColumnRefExpression &colref) {
 			    auto &binding = colref.Binding();
-			    if (binding.table_index == source_index && !fetchable[binding.column_index] &&
+			    if (binding.table_index == source_index && !fetched[binding.column_index] &&
 			        std::find(carried.begin(), carried.end(), binding.column_index) == carried.end()) {
 				    carried.push_back(binding.column_index);
 			    }
@@ -273,7 +291,7 @@ bool LateMaterialization::TryLookupJoin(unique_ptr<LogicalOperator> &op, Logical
 		ExpressionIterator::VisitExpressionMutable<BoundColumnRefExpression>(
 		    expr, [&](BoundColumnRefExpression &colref, unique_ptr<Expression> &) {
 			    auto &binding = colref.BindingMutable();
-			    if (binding.table_index != source_index || fetchable[binding.column_index]) {
+			    if (binding.table_index != source_index || fetched[binding.column_index]) {
 				    return;
 			    }
 			    auto entry = std::find(carried.begin(), carried.end(), binding.column_index);
@@ -395,7 +413,7 @@ bool LateMaterialization::TryLateMaterialization(unique_ptr<LogicalOperator> &op
 	// insert the row-id column on the left hand side
 	auto &lhs_get = *lhs;
 	auto lhs_index = lhs_get.table_index;
-	auto lhs_columns = lhs_get.GetColumnBindings();
+	auto lhs_columns = lhs_get.GetColumnIds().size();
 	auto lhs_row_indexes = LateMaterializationHelper::GetOrInsertRowIds(lhs_get, row_id_column_ids, row_id_columns);
 	vector<ColumnBinding> lhs_bindings;
 	for (auto &lhs_row_index : lhs_row_indexes) {

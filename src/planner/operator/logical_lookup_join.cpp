@@ -11,4 +11,11 @@ LogicalLookupJoin::LogicalLookupJoin(unique_ptr<LogicalOperator> ids, unique_ptr
 	}
 }
 
+idx_t LogicalLookupJoin::EstimateCardinality(ClientContext &context) {
+	if (!has_estimated_cardinality) {
+		SetEstimatedCardinality(children[0]->EstimateCardinality(context));
+	}
+	return estimated_cardinality;
+}
+
 } // namespace duckdb
