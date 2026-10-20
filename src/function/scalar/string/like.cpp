@@ -273,7 +273,7 @@ struct LikeSegment {
 
 struct LikeMatcher : public FunctionData {
 	LikeMatcher(string like_pattern_p, bool has_escape, char escape, vector<LikeSegment> segments,
-	            bool has_start_percentage, bool has_end_percentage, unique_ptr<duckdb_re2::SegmentPlan> plan_p)
+	            bool has_start_percentage, bool has_end_percentage, shared_ptr<const duckdb_re2::SegmentPlan> plan_p)
 	    : like_pattern(std::move(like_pattern_p)), has_escape(has_escape), escape(escape),
 	      segments(std::move(segments)), has_start_percentage(has_start_percentage),
 	      has_end_percentage(has_end_percentage), plan(std::move(plan_p)) {
@@ -352,11 +352,8 @@ struct LikeMatcher : public FunctionData {
 	}
 
 	unique_ptr<FunctionData> Copy() const override {
-		if (plan) {
-			return CreateLikeMatcher(like_pattern, has_escape, escape);
-		}
 		return make_uniq<LikeMatcher>(like_pattern, has_escape, escape, segments, has_start_percentage,
-		                              has_end_percentage, nullptr);
+		                              has_end_percentage, plan);
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
@@ -381,9 +378,10 @@ private:
 			}
 			if (ch == '_') {
 				if (!single_characters) {
+					// underscore: could not create efficient like matcher
 					return nullptr;
 				}
-				unique_ptr<duckdb_re2::SegmentPlan> plan(
+				shared_ptr<const duckdb_re2::SegmentPlan> plan(
 				    duckdb_re2::SegmentPlan::MakeLike(like_pattern, has_escape, escape, true));
 				if (!plan) {
 					return nullptr;
@@ -424,7 +422,7 @@ private:
 	vector<LikeSegment> segments;
 	bool has_start_percentage;
 	bool has_end_percentage;
-	unique_ptr<duckdb_re2::SegmentPlan> plan;
+	shared_ptr<const duckdb_re2::SegmentPlan> plan;
 };
 
 unique_ptr<FunctionData> LikeBindFunction(BindScalarFunctionInput &input) {
@@ -661,6 +659,8 @@ struct ILikeMatcher {
 			memcpy(copy, lowered.pattern.GetData(), size);
 			lowered.pattern = string_t(copy, UnsafeNumericCast<uint32_t>(size));
 		}
+		// Build a case-insensitive matcher from the lowercased pattern. Returns null for patterns with '_' or only
+		// '%'; in that case we fall back to the generic matcher on the lowercased values.
 		matcher = LikeMatcher::CreateLiteralMatcher(string(lowered.pattern.GetData(), size), lowered.has_escape,
 		                                            lowered.escape);
 	}
