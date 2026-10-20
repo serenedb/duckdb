@@ -739,9 +739,9 @@ void WALEntryBuffer::WriteTruncateTable() {
 	entry_count++;
 }
 
-void WALEntryBuffer::WriteAdoptSegments(const vector<string> &segments) {
+void WALEntryBuffer::WriteAdoptSegments(vector<string> segments) {
 	WriteAheadLogSerializer serializer(database, stream, WALType::ADOPT_SEGMENTS);
-	serializer.WriteEntry(WALAdoptSegments {segments});
+	serializer.WriteEntry(WALAdoptSegments {std::move(segments)});
 	serializer.End();
 	entry_count++;
 }

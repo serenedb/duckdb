@@ -49,7 +49,7 @@ public:
 	void WriteInsert(DataChunk &chunk, idx_t row_start);
 	void WriteDelete(DataChunk &chunk);
 	void WriteTruncateTable();
-	void WriteAdoptSegments(const vector<string> &segments);
+	void WriteAdoptSegments(vector<string> segments);
 	void WriteDeleteRowRanges(vector<row_t> starts, vector<idx_t> counts);
 
 private:
