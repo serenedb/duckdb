@@ -33,15 +33,15 @@ struct LikeString {
 };
 
 static void AddCharacter(char chr, LikeString &ret, bool contains) {
-	// if we are not converting into a contains, and the string has LIKE special characters
-	// then don't return a possible LIKE match
-	// same if the character is a control character
-	if (iscntrl(static_cast<unsigned char>(chr)) || (!contains && (chr == '%' || chr == '_'))) {
+	// if the character is a control character, then don't return a possible LIKE match
+	if (iscntrl(static_cast<unsigned char>(chr))) {
 		ret.exists = false;
 		return;
 	}
-	auto run_as_str {chr};
-	ret.like_string += run_as_str;
+	if (!contains && (chr == '%' || chr == '_' || chr == '\\')) {
+		ret.like_string += '\\';
+	}
+	ret.like_string += chr;
 }
 
 static void AddCodepoint(int32_t codepoint, LikeString &ret, bool contains) {
