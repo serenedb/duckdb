@@ -123,6 +123,11 @@ public:
 		return freed;
 	}
 
+	void SetCapacity(idx_t new_max_total_weight) {
+		max_total_weight = new_max_total_weight;
+		EvictIfNeeded(0);
+	}
+
 	idx_t Capacity() const {
 		return max_total_weight;
 	}
@@ -203,7 +208,7 @@ private:
 		}
 	}
 
-	const idx_t max_total_weight;
+	idx_t max_total_weight;
 	idx_t current_total_weight;
 	EntryMap entry_map;
 	list<Key> lru_list;

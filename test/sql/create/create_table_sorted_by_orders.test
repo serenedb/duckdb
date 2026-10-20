@@ -1,0 +1,24 @@
+# name: test/sql/create/create_table_sorted_by_orders.test
+# description: SORTED BY keys with ASC/DESC and NULLS FIRST/LAST, and CREATE INDEX ... SORTED BY
+# group: [create]
+
+statement error
+CREATE TABLE integers(i INTEGER, j INTEGER) SORTED BY (i DESC NULLS FIRST, j);
+----
+<REGEX>:.*SORTED BY is not supported for tables in a duckdb catalog.*
+
+statement error
+CREATE TABLE integers SORTED BY (i ASC NULLS LAST) AS SELECT range i FROM range(10);
+----
+<REGEX>:.*SORTED BY is not supported for tables in a duckdb catalog.*
+
+statement ok
+CREATE TABLE integers(i INTEGER, j INTEGER);
+
+statement error
+CREATE INDEX i_index ON integers (i) SORTED BY (j DESC);
+----
+<REGEX>:.*SORTED BY is not supported for ART indexes.*
+
+statement ok
+CREATE INDEX i_index ON integers (i DESC NULLS FIRST, j);

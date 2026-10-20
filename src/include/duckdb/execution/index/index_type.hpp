@@ -215,6 +215,7 @@ public:
 	// rebuild during WAL replay would bind such an index too early and fault.
 	bool defer_implicit_bind = false;
 	bool remaps_columns = false;
+	bool supports_sorted_by = false;
 };
 
 } // namespace duckdb

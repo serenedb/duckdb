@@ -40,11 +40,47 @@ static void CreateColumnDependencyManager(BoundCreateTableInfo &info) {
 	}
 }
 
+void Binder::VerifySereneDBCompression(Catalog &catalog, const ColumnDefinition &column) {
+	if (catalog.SupportsSereneDBCompression()) {
+		return;
+	}
+	if (IsSereneDBCompressionType(column.CompressionType())) {
+		throw BinderException(
+		    "Can't compress column %s using compression type '%s', that type is only available on SereneDB tables",
+		    column.Name(), CompressionTypeToString(column.CompressionType()));
+	}
+	if (column.CompressionLevel() != 0) {
+		throw BinderException(
+		    "Can't set compression_level on column %s, compression options are only available on SereneDB tables",
+		    column.Name());
+	}
+}
+
+static bool CompressesLeaves(const Catalog &catalog, DBConfig &config, const CreateTableInfo &info,
+                             const LogicalType &type, CompressionType compression_type) {
+	auto leaves = catalog.CompressionLeafTypes(info, type);
+	if (leaves.empty()) {
+		return false;
+	}
+	for (auto leaf : leaves) {
+		if (!config.TryGetCompressionFunction(compression_type, leaf)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageManager> storage_manager,
                                   DBConfig &config, BoundCreateTableInfo &info) {
 	auto &base = info.base->Cast<CreateTableInfo>();
+	auto &catalog = info.schema.ParentCatalog();
 	for (auto &col : base.columns.Logical()) {
+		Binder::VerifySereneDBCompression(catalog, col);
 		auto compression_type = col.CompressionType();
+		if (catalog.SupportsSereneDBCompression() &&
+		    (IsSereneDBCompressionType(compression_type) || compression_type == CompressionType::COMPRESSION_FSST)) {
+			continue;
+		}
 		auto compression_availability_result = CompressionTypeIsAvailable(compression_type, storage_manager);
 		if (!compression_availability_result.IsAvailable()) {
 			if (compression_availability_result.IsDeprecated()) {
@@ -75,7 +111,7 @@ static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageMa
 			continue;
 		}
 		auto compression_method = config.TryGetCompressionFunction(compression_type, physical_type);
-		if (!compression_method) {
+		if (!compression_method && !CompressesLeaves(catalog, config, base, logical_type, compression_type)) {
 			throw BinderException("Can't compress column %s with type '%s' (physical: %s) using compression type '%s'",
 			                      col.Name(), logical_type.ToString(), EnumUtil::ToString(physical_type),
 			                      CompressionTypeToString(compression_type));
