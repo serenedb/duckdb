@@ -119,10 +119,17 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalCreateIndex &op) {
 	auto &schema = op.table.ParentSchema(context);
 	auto entry = GetNameHolder(context, schema, op.info->GetIndexName());
 	if (entry) {
-		if (op.info->on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT) {
+		if (op.info->on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
+			return Make<PhysicalDummyScan>(op.types, op.estimated_cardinality);
+		}
+		if (op.info->on_conflict != OnCreateConflict::REPLACE_ON_CONFLICT) {
 			throw CatalogException::EntryAlreadyExists(entry->type, op.info->GetIndexName());
 		}
-		return Make<PhysicalDummyScan>(op.types, op.estimated_cardinality);
+		if (entry->type != CatalogType::INDEX_ENTRY) {
+			throw CatalogException("Existing object %s is of type %s, trying to replace with type %s",
+			                       op.info->GetIndexName(), CatalogTypeToString(entry->type),
+			                       CatalogTypeToString(CatalogType::INDEX_ENTRY));
+		}
 	}
 
 	// Ensure that all expressions contain valid scalar functions.
