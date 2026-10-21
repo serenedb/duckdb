@@ -1061,8 +1061,12 @@ void ClientContext::InterruptCheck() const {
 		throw InterruptException();
 	}
 	if (query_deadline.IsValid() && static_cast<idx_t>(TimePoint::Now()) >= query_deadline.GetIndex()) {
-		throw InterruptException("Query exceeded maximum execution time");
+		ThrowDeadlineExceeded();
 	}
+}
+
+void ClientContext::ThrowDeadlineExceeded() {
+	throw InterruptException("Query exceeded maximum execution time");
 }
 
 void ClientContext::CancelTransaction() {
