@@ -132,7 +132,16 @@ optional_ptr<CatalogEntry> RemotePushdownOptimizer::LookupEntry(const Identifier
 		qualification.push_back(catalog_name);
 	}
 	if (schema_path.empty()) {
-		qualification.emplace_back(DEFAULT_SCHEMA);
+		auto catalog = catalog_name.empty() ? nullptr : Catalog::GetCatalogEntry(binder.context, catalog_name);
+		if (!catalog) {
+			qualification.emplace_back(DEFAULT_SCHEMA);
+		} else {
+			auto default_schema = catalog->GetDefaultSchema();
+			if (!default_schema) {
+				return nullptr;
+			}
+			qualification.push_back(*default_schema);
+		}
 	} else {
 		qualification.insert(qualification.end(), schema_path.begin(), schema_path.end());
 	}
