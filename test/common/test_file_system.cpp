@@ -528,6 +528,62 @@ TEST_CASE("re-register subsystem", "[file_system]") {
 	REQUIRE_THROWS(vfs.RegisterSubSystem(std::move(second_local_filesystem)));
 }
 
+namespace {
+
+class PrefixFileSystem : public LocalFileSystem {
+public:
+	explicit PrefixFileSystem(string name_p) : name(std::move(name_p)) {
+	}
+
+	string GetName() const override {
+		return name;
+	}
+
+	bool CanHandleFile(const string &fpath) override {
+		return StringUtil::StartsWith(fpath, name + "://");
+	}
+
+private:
+	string name;
+};
+
+} // namespace
+
+TEST_CASE("Path calls run while filesystems are registered and disabled", "[file_system]") {
+	VirtualFileSystem vfs;
+	constexpr idx_t file_systems = 16;
+	atomic<bool> done {false};
+	atomic<idx_t> shrunk {0};
+	vector<std::thread> readers;
+	for (idx_t t = 0; t < 4; t++) {
+		readers.emplace_back([&]() {
+			idx_t seen = 0;
+			while (!done.load()) {
+				auto names = vfs.ListSubSystems();
+				if (names.size() < seen) {
+					shrunk++;
+				}
+				seen = names.size();
+				vfs.IsDisabledForPath("fs3://file");
+				vfs.SubSystemIsDisabled("fs7");
+			}
+		});
+	}
+	for (idx_t i = 0; i < file_systems; i++) {
+		vfs.RegisterSubSystem(make_uniq<PrefixFileSystem>("fs" + std::to_string(i)));
+	}
+	vfs.SetDisabledFileSystems({"fs3"});
+	vfs.SetDisabledFileSystems({"fs3", "fs7"});
+	done = true;
+	for (auto &reader : readers) {
+		reader.join();
+	}
+	REQUIRE(shrunk == 0);
+	REQUIRE(vfs.ListSubSystems().size() == file_systems);
+	REQUIRE(vfs.IsDisabledForPath("fs3://file"));
+	REQUIRE(vfs.SubSystemIsDisabled("fs7"));
+}
+
 struct CanonicalizationTest {
 	CanonicalizationTest(string a_p, string b_p, string description_p)
 	    : a(std::move(a_p)), b(std::move(b_p)), description(std::move(description_p)) {
