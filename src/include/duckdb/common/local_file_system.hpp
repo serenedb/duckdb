@@ -81,6 +81,8 @@ public:
 	//! Sync a file handle to disk
 	void FileSync(FileHandle &handle) override;
 	FileSyncParallelism SyncParallelism(FileHandle &handle) override;
+	void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) override;
+	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr) override;
 	//! Close and remove an incomplete output file
 	void AbortFileWrite(FileHandle &handle) override;
 

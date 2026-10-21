@@ -44,6 +44,8 @@ public:
 	void Truncate(FileHandle &handle, int64_t new_size) override;
 
 	void FileSync(FileHandle &handle) override;
+	void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) override;
+	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr) override;
 
 	// need to look up correct fs for this
 	FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
