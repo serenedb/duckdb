@@ -40,7 +40,7 @@ class DatabaseFileSystem;
 struct DatabaseCacheEntry;
 class LogManager;
 class MetricsManager;
-class ExternalFileCache;
+class BlockCache;
 class ResultSetManager;
 
 class DatabaseInstance : public enable_shared_from_this<DatabaseInstance> {
@@ -62,7 +62,10 @@ public:
 	DUCKDB_API ExternalResourcesManager &GetExternalResourcesManager();
 	DUCKDB_API FileSystem &GetFileSystem();
 	DUCKDB_API FileSystem &GetLocalFileSystem();
-	DUCKDB_API ExternalFileCache &GetExternalFileCache();
+	//! The block cache, created on first use
+	DUCKDB_API BlockCache &GetBlockCache();
+	//! The block cache when it was created
+	DUCKDB_API optional_ptr<BlockCache> TryGetBlockCache();
 	DUCKDB_API ResultSetManager &GetResultSetManager();
 	DUCKDB_API TaskScheduler &GetScheduler();
 	DUCKDB_API ObjectCache &GetObjectCache();
@@ -124,7 +127,9 @@ private:
 	unique_ptr<LocalDatabaseFileSystem> local_db_file_system;
 	unique_ptr<LogManager> log_manager;
 	unique_ptr<MetricsManager> metrics_manager;
-	unique_ptr<ExternalFileCache> external_file_cache;
+	mutex block_cache_lock;
+	unique_ptr<BlockCache> block_cache;
+	atomic<BlockCache *> block_cache_ptr {nullptr};
 	unique_ptr<ResultSetManager> result_set_manager;
 
 	duckdb_ext_api_v1 (*create_api_v1)();
