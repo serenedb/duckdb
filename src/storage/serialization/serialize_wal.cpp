@@ -234,12 +234,14 @@ WALCreateView WALCreateView::Deserialize(Deserializer &deserializer) {
 void WALDeleteRowRanges::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<row_t>>(101, "starts", starts);
 	serializer.WritePropertyWithDefault<vector<idx_t>>(102, "counts", counts);
+	serializer.WritePropertyWithDefault<vector<uint64_t>>(103, "positions", positions);
 }
 
 WALDeleteRowRanges WALDeleteRowRanges::Deserialize(Deserializer &deserializer) {
 	WALDeleteRowRanges result;
 	deserializer.ReadPropertyWithDefault<vector<row_t>>(101, "starts", result.starts);
 	deserializer.ReadPropertyWithDefault<vector<idx_t>>(102, "counts", result.counts);
+	deserializer.ReadPropertyWithDefault<vector<uint64_t>>(103, "positions", result.positions);
 	return result;
 }
 

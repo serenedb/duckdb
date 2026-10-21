@@ -840,6 +840,11 @@
         "id": 102,
         "name": "counts",
         "type": "vector<idx_t>"
+      },
+      {
+        "id": 103,
+        "name": "positions",
+        "type": "vector<uint64_t>"
       }
     ]
   }

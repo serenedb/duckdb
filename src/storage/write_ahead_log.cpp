@@ -746,10 +746,10 @@ void WALEntryBuffer::WriteAdoptSegments(vector<string> segments) {
 	entry_count++;
 }
 
-void WALEntryBuffer::WriteDeleteRowRanges(vector<row_t> starts, vector<idx_t> counts) {
-	D_ASSERT(!starts.empty() && starts.size() == counts.size());
+void WALEntryBuffer::WriteDeleteRowRanges(const WALDeleteRowRanges &entry) {
+	D_ASSERT(!entry.starts.empty() && entry.starts.size() == entry.counts.size());
 	WriteAheadLogSerializer serializer(database, stream, WALType::DELETE_ROW_RANGES);
-	serializer.WriteEntry(WALDeleteRowRanges {std::move(starts), std::move(counts)});
+	serializer.WriteEntry(entry);
 	serializer.End();
 	entry_count++;
 }

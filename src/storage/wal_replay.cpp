@@ -2185,8 +2185,12 @@ void WriteAheadLogDeserializer::ReplayDeleteRowRanges() {
 	const auto entry = WALDeleteRowRanges::Deserialize(deserializer);
 	const auto &starts = entry.starts;
 	const auto &counts = entry.counts;
+	const auto &positions = entry.positions;
 	if (starts.empty() || starts.size() != counts.size()) {
 		throw DataCorruptionException("Corrupt WAL: row ranges with mismatched starts and counts");
+	}
+	if (!positions.empty() && positions.size() != starts.size()) {
+		throw DataCorruptionException("Corrupt WAL: row ranges with mismatched starts and positions");
 	}
 	for (idx_t i = 0; i < starts.size(); i++) {
 		if (starts[i] < 0 || counts[i] == 0 ||
@@ -2198,7 +2202,7 @@ void WriteAheadLogDeserializer::ReplayDeleteRowRanges() {
 		return;
 	}
 	if (!state.current_table && state.current_log_table) {
-		state.current_log_table->ReplayDeleteRanges(context, starts, counts);
+		state.current_log_table->ReplayDeleteRanges(context, entry);
 		return;
 	}
 	if (!state.current_table && state.table_storage) {
