@@ -168,9 +168,6 @@ IndexRemovalType CommitState::GetIndexRemovalType(ActiveTransactionState transac
 
 void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, CommitInfo &info) {
 	auto &drop_state = *info.drop_state;
-	if (entry.temporary || entry.Parent().temporary) {
-		return;
-	}
 
 	// look at the type of the parent entry
 	auto &parent = entry.Parent();
