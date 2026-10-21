@@ -300,6 +300,7 @@ shared_ptr<FileHandle> CachingFileHandle::GetFileHandle() {
 	// Request parallel access on the underlying filesystem handle to avoid races in implementations that
 	// require explicit opt-in for concurrent pread-style access (e.g., HTTPFS).
 	auto internal_flags = flags | FileFlags::FILE_FLAGS_PARALLEL_ACCESS;
+	internal_flags.SetCachingMode(CachingMode::NO_CACHING);
 	file_handle = caching_file_system.file_system.OpenFile(path, internal_flags, opener);
 	// Snapshot the metadata with a single Stats call, avoiding repeated metadata lookups (e.g., fstat)
 	validation_info = GetValidationInfo(caching_file_system.file_system, *file_handle);
