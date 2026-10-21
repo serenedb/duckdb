@@ -5,12 +5,14 @@
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
 #include "duckdb/common/limits.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/cast_rules.hpp"
 #include "duckdb/function/type_constructor.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -278,6 +280,32 @@ MultipleCandidateException(const Identifier &catalog_name, const Identifier &sch
 	return optional_idx();
 }
 
+static bool IsOperatorName(const Identifier &name) {
+	auto &text = name.GetIdentifierName();
+	return !text.empty() && std::all_of(text.begin(), text.end(), StringUtil::CharacterIsOperator);
+}
+
+template <class T>
+static optional_idx UnknownOperandMatch(optional_ptr<ClientContext> context, const Identifier &name,
+                                        const FunctionSet<T> &functions, const vector<idx_t> &candidate_functions,
+                                        const vector<LogicalType> &arguments) {
+	if (!context || arguments.size() != 2 || arguments[0].IsUnknown() == arguments[1].IsUnknown() ||
+	    !IsOperatorName(name) ||
+	    Catalog::GetCatalog(*context, DatabaseManager::GetDefaultDatabase(*context)).Compatibility() !=
+	        SqlCompatibility::POSTGRES) {
+		return optional_idx();
+	}
+	auto &operand = arguments[0].IsUnknown() ? arguments[1] : arguments[0];
+	for (auto f_idx : candidate_functions) {
+		auto &sig = functions.functions[f_idx]->GetSignature();
+		if (sig.GetParameterCount() == 2 && !sig.IsVariadic() && sig.GetParameter(0).GetType() == operand &&
+		    sig.GetParameter(1).GetType() == operand) {
+			return f_idx;
+		}
+	}
+	return optional_idx();
+}
+
 template <class T>
 optional_idx FunctionOverloads::Select(optional_ptr<ClientContext> context, const Identifier &name,
                                        const FunctionSet<T> &functions, const vector<LogicalType> &arguments,
@@ -291,6 +319,10 @@ optional_idx FunctionOverloads::Select(optional_ptr<ClientContext> context, cons
 		// Multiple candidates, check if there are any unknown arguments.
 		for (auto &arg_type : arguments) {
 			if (arg_type.IsUnknown()) {
+				auto match = UnknownOperandMatch(context, name, functions, candidate_functions, arguments);
+				if (match.IsValid()) {
+					return match;
+				}
 				// We cannot resolve the parameters to a function.
 				throw ParameterNotResolvedException();
 			}
