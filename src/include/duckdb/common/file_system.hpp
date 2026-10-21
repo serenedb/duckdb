@@ -137,6 +137,8 @@ public:
 	DUCKDB_API void Reset();
 	DUCKDB_API idx_t SeekPosition();
 	DUCKDB_API void Sync();
+	//! Starts writing back [location, location + nr_bytes), already written, so a later Sync waits less
+	DUCKDB_API void HintWriteback(idx_t location, idx_t nr_bytes);
 	DUCKDB_API void Truncate(int64_t new_size);
 	//! Abandon an incomplete write without publishing any buffered or staged data.
 	DUCKDB_API void AbortWrite();
@@ -292,6 +294,11 @@ public:
 	//! Sync a file handle to disk
 	DUCKDB_API virtual void FileSync(FileHandle &handle);
 	DUCKDB_API virtual FileSyncParallelism SyncParallelism(FileHandle &handle);
+	//! Starts writing back [location, location + nr_bytes) of a file being written; does nothing by default
+	DUCKDB_API virtual void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes);
+	//! Makes the names of the files created, moved or removed in [directory] durable; a filesystem without
+	//! directory entries has nothing to sync
+	DUCKDB_API virtual void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr);
 	//! Abandon an incomplete write represented by this file handle.
 	DUCKDB_API virtual void AbortFileWrite(FileHandle &handle);
 	//! Sets the working directory
