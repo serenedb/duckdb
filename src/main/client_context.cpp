@@ -1043,14 +1043,6 @@ void ClientContext::WarnUser(const string &message) {
 
 ABSL_CONST_INIT static mutex await_mutex(absl::kConstInit);
 
-static absl::Duration TimeLeft(const optional_idx &deadline) {
-	if (!deadline.IsValid()) {
-		return absl::InfiniteDuration();
-	}
-	auto left = static_cast<int64_t>(deadline.GetIndex()) - TimePoint::Now();
-	return absl::Nanoseconds(TimePoint::ToNanos(left));
-}
-
 void ClientContext::InterruptFromSignal() {
 	ClientInterruptState expected = ClientInterruptState::NOT_INTERRUPTED;
 	interrupt_state.compare_exchange_strong(expected, ClientInterruptState::INTERRUPTED);
@@ -1072,7 +1064,7 @@ void ClientContext::Notify() {
 }
 
 void ClientContext::Block(const absl::Condition &ready) {
-	while (!await_mutex.AwaitWithTimeout(ready, TimeLeft(query_deadline)) || IsInterrupted()) {
+	while (!await_mutex.AwaitWithTimeout(ready, TimePoint::Until(query_deadline)) || IsInterrupted()) {
 		InterruptCheck();
 	}
 }
@@ -1098,12 +1090,16 @@ void ClientContext::InterruptCheck() const {
 		throw InterruptException();
 	}
 	if (DeadlinePassed(query_deadline)) {
-		throw InterruptException("Query exceeded maximum execution time");
+		ThrowDeadlineExceeded();
 	}
 }
 
 bool ClientContext::InterruptPending() const {
 	return IsInterrupted() || DeadlinePassed(query_deadline);
+}
+
+void ClientContext::ThrowDeadlineExceeded() {
+	throw InterruptException("Query exceeded maximum execution time");
 }
 
 void ClientContext::CancelTransaction() {
