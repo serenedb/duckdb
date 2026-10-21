@@ -82,6 +82,16 @@ public:
 		GetFileSystem().FileSync(handle);
 	}
 
+	void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) override {
+		GetFileSystem().HintWriteback(handle, location, nr_bytes);
+	}
+
+	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) override {
+		VerifyNoOpener(opener);
+		VerifyCanAccessDirectory(directory);
+		GetFileSystem().SyncDirectory(directory, GetOpener());
+	}
+
 	FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
 	                                 optional_ptr<ErrorData> error) override {
 		VerifyNoOpener(opener);

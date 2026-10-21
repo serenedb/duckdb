@@ -890,6 +890,37 @@ void LocalFileSystem::FileSync(FileHandle &handle) {
 	throw IOException("Could not fsync file \"%s\": %s", handle.GetPath(), strerror(errno));
 }
 
+void LocalFileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
+#ifdef __linux__
+	::sync_file_range(handle.Cast<UnixFileHandle>().fd, NumericCast<off64_t>(location), NumericCast<off64_t>(nr_bytes),
+	                  SYNC_FILE_RANGE_WRITE);
+#endif
+}
+
+void LocalFileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
+	auto db = FileOpener::TryGetDatabase(opener);
+	if (db && Settings::Get<FsyncModeSetting>(*db) == FileSyncMode::NONE) {
+		return;
+	}
+	auto path = ExpandPath(directory, opener);
+	int fd = ::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd == -1) {
+		throw IOException({{"errno", std::to_string(errno)}}, "Could not open directory \"%s\" to sync it: %s", path,
+		                  strerror(errno));
+	}
+	const bool synced = ::fsync(fd) == 0;
+	const int sync_errno = errno;
+	::close(fd);
+	if (synced) {
+		return;
+	}
+	if (sync_errno == EIO) {
+		throw FatalException("fsync of directory \"%s\" failed", path);
+	}
+	throw IOException({{"errno", std::to_string(sync_errno)}}, "Could not fsync directory \"%s\": %s", path,
+	                  strerror(sync_errno));
+}
+
 FileSyncParallelism LocalFileSystem::SyncParallelism(FileHandle &handle) {
 #if defined(__linux__)
 	struct statfs fs_info;
@@ -992,10 +1023,18 @@ public:
 	void Sync() override;
 	bool Trim(idx_t offset, idx_t length) override;
 	void Close() override;
+	void Advise(MappedFileAccess access) override;
+	void Prefetch(idx_t location, idx_t nr_bytes) override;
 
 private:
 	int fd;
 };
+
+namespace {
+
+constexpr idx_t WILL_NEED_CHUNK = 32 * 1024;
+
+} // namespace
 
 UnixMemoryMappedFile::UnixMemoryMappedFile(string path_p, FileOpenFlags flags_p, int fd_p, data_ptr_t data_p,
                                            idx_t size_p)
@@ -1040,6 +1079,37 @@ void UnixMemoryMappedFile::Close() {
 	if (fd != -1) {
 		close(fd);
 		fd = -1;
+	}
+}
+
+void UnixMemoryMappedFile::Advise(MappedFileAccess access) {
+	if (data == nullptr || size == 0) {
+		return;
+	}
+	int advice = MADV_NORMAL;
+	if (access == MappedFileAccess::SEQUENTIAL) {
+		advice = MADV_SEQUENTIAL;
+	} else if (access == MappedFileAccess::RANDOM) {
+		advice = MADV_RANDOM;
+	}
+	::madvise(data, size, advice);
+}
+
+void UnixMemoryMappedFile::Prefetch(idx_t location, idx_t nr_bytes) {
+	if (location >= size) {
+		return;
+	}
+	nr_bytes = MinValue(nr_bytes, size - location);
+	for (idx_t at = 0; at < nr_bytes; at += WILL_NEED_CHUNK) {
+		const auto chunk = MinValue(WILL_NEED_CHUNK, nr_bytes - at);
+#ifdef __APPLE__
+		radvisory advice;
+		advice.ra_offset = NumericCast<off_t>(location + at);
+		advice.ra_count = NumericCast<int>(chunk);
+		::fcntl(fd, F_RDADVISE, &advice);
+#else
+		::posix_fadvise(fd, NumericCast<off_t>(location + at), NumericCast<off_t>(chunk), POSIX_FADV_WILLNEED);
+#endif
 	}
 }
 
@@ -1730,6 +1800,12 @@ void LocalFileSystem::FileSync(FileHandle &handle) {
 	if (FlushFileBuffers(hFile) == 0) {
 		throw IOException("Could not flush file handle to disk!");
 	}
+}
+
+void LocalFileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
+}
+
+void LocalFileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
 }
 
 FileSyncParallelism LocalFileSystem::SyncParallelism(FileHandle &handle) {

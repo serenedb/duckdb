@@ -14,6 +14,12 @@ MemoryMappedFile::MemoryMappedFile(string path_p, FileOpenFlags flags_p, data_pt
 MemoryMappedFile::~MemoryMappedFile() {
 }
 
+void MemoryMappedFile::Advise(MappedFileAccess access) {
+}
+
+void MemoryMappedFile::Prefetch(idx_t location, idx_t nr_bytes) {
+}
+
 const_data_ptr_t MemoryMappedFile::GetData(idx_t location, idx_t nr_bytes) const {
 	if (location + nr_bytes > size) {
 		throw IOException("MemoryMappedFile::GetData: out-of-bounds access in file \"%s\" "

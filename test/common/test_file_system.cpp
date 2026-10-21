@@ -5,6 +5,7 @@
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/fstream.hpp"
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/common/opener_file_system.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -590,6 +591,51 @@ TEST_CASE("Path calls run while filesystems are registered and disabled", "[file
 	REQUIRE(vfs.ListSubSystems().size() == file_systems);
 	REQUIRE(vfs.IsDisabledForPath("fs3://file"));
 	REQUIRE(vfs.SubSystemIsDisabled("fs7"));
+}
+
+TEST_CASE("Mapped files take read-ahead hints", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("mapped_file_hints.bin");
+	constexpr idx_t size = 1024 * 1024;
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		vector<data_t> data(size, 7);
+		handle->Write(QueryContext(), data.data(), size, 0);
+	}
+	auto mapped = fs.MemoryMapFile(path, FileFlags::FILE_FLAGS_READ, MMapOptions());
+	REQUIRE(mapped->Size() == size);
+	mapped->Advise(MappedFileAccess::RANDOM);
+	mapped->Advise(MappedFileAccess::SEQUENTIAL);
+	mapped->Advise(MappedFileAccess::NORMAL);
+	mapped->Prefetch(0, size);
+	mapped->Prefetch(size + 10, 100);
+	idx_t sum = 0;
+	for (idx_t offset = 0; offset < size; offset += 512) {
+		sum += mapped->GetData(offset, 1)[0];
+	}
+	REQUIRE(sum == 7 * size / 512);
+	mapped->Close();
+	fs.RemoveFile(path);
+}
+
+TEST_CASE("Directory syncs and writeback hints reach the local filesystem", "[file_system]") {
+	LocalFileSystem fs;
+	auto directory = TestCreatePath("sync_directory");
+	fs.CreateDirectory(directory);
+	auto path = fs.JoinPath(directory, "written.bin");
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		vector<data_t> data(64 * 1024, 3);
+		handle->Write(QueryContext(), data.data(), data.size(), 0);
+		handle->HintWriteback(0, data.size());
+		handle->Sync();
+	}
+	fs.SyncDirectory(directory);
+	REQUIRE_THROWS_AS(fs.SyncDirectory(fs.JoinPath(directory, "missing")), IOException);
+
+	VirtualFileSystem vfs;
+	vfs.SyncDirectory(directory);
+	fs.RemoveDirectory(directory);
 }
 
 struct CanonicalizationTest {
