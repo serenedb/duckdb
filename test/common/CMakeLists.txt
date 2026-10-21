@@ -3,6 +3,7 @@ add_library_unity(
   OBJECT
   caching_test_utils.cpp
   test_async_file_writer.cpp
+  test_block_cache.cpp
   test_managed_async_task_queue.cpp
   test_bit_utils.cpp
   test_cast.cpp

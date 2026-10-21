@@ -41,7 +41,7 @@ true
 statement ok
 select l_orderkey from lineitem;
 
-# with block-aligned caching, we should have multiple 16KiB blocks
+# the cache holds the whole blocks the column's pages lie in
 query I
 select round(sum(nr_bytes) / 1048576) from duckdb_external_file_cache();
 ----
@@ -65,15 +65,13 @@ select round(sum(nr_bytes) / 1048576) from duckdb_external_file_cache();
 ----
 47.0
 
-# shows up in duckdb_memory under its own tag
-# this is higher than the sum of nr_bytes above because each 16KiB block has a buffer header
-# and is rounded up to sector size - with many small blocks the per-block overhead adds up
+# shows up in duckdb_memory under its own tag: one frame per cached block, with no header
 query I
 select round(memory_usage_bytes / 1048576) from duckdb_memory() where tag = 'EXTERNAL_FILE_CACHE';
 ----
-58.0
+47.0
 
-# set the memory so low that blocks should be unloaded
+# set the memory so low that the cache gives its frames back
 statement ok
 set memory_limit='512KiB';
 
@@ -81,11 +79,16 @@ set memory_limit='512KiB';
 statement ok
 set memory_limit='500mb';
 
-# some blocks should now be unloaded
+# blocks of a local file are dropped, never spilled: reading the file again costs as much
 query I
-select count(*) > 0 from duckdb_external_file_cache() where loaded = false;
+select memory_usage_bytes <= 524288 from duckdb_memory() where tag = 'EXTERNAL_FILE_CACHE';
 ----
 true
+
+query I
+select count(*) from duckdb_external_file_cache() where loaded = false;
+----
+0
 
 # disabling the file cache should empty it
 statement ok
