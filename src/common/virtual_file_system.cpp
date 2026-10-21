@@ -282,6 +282,14 @@ void VirtualFileSystem::FileSync(FileHandle &handle) {
 	handle.file_system.FileSync(handle);
 }
 
+void VirtualFileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
+	handle.file_system.HintWriteback(handle, location, nr_bytes);
+}
+
+void VirtualFileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
+	FindFileSystem(directory, opener).SyncDirectory(directory, opener);
+}
+
 // need to look up correct fs for this
 FileExistence VirtualFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
                                                     optional_ptr<ErrorData> error) {

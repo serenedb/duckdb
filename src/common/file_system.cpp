@@ -711,6 +711,12 @@ FileSyncParallelism FileSystem::SyncParallelism(FileHandle &handle) {
 	return FileSyncParallelism::SERIAL;
 }
 
+void FileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
+}
+
+void FileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
+}
+
 void FileSystem::AbortFileWrite(FileHandle &handle) {
 	handle.Close();
 }
@@ -998,6 +1004,10 @@ idx_t FileHandle::GetFileSize() {
 
 void FileHandle::Sync() {
 	file_system.FileSync(*this);
+}
+
+void FileHandle::HintWriteback(idx_t location, idx_t nr_bytes) {
+	file_system.HintWriteback(*this, location, nr_bytes);
 }
 
 void FileHandle::Truncate(int64_t new_size) {
