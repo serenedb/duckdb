@@ -136,7 +136,7 @@ private:
 	//! CREATE carries is analyzed: the pushdown decision is made by the target catalog alone
 	CatalogPushdownResult RewriteCreateInfo(CreateInfo &info, const CatalogPushdownResult &target);
 	//! Resolve the catalog that the target of a DDL statement lives in
-	CatalogPushdownResult ResolveDDLTarget(const QualifiedName &name, DDLTarget target, CatalogType entry_type);
+	CatalogPushdownResult ResolveDDLTarget(QualifiedName &name, DDLTarget target, CatalogType entry_type);
 	//! Resolve an explicitly named catalog to a remote reference, or Unknown if it is local / missing
 	CatalogPushdownResult ResolveRemoteCatalog(const Identifier &catalog_name, RemoteCapability capability);
 	//! Give the resolved catalog the chance to veto pushing down this statement as a whole
