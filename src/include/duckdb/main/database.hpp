@@ -41,6 +41,7 @@ struct DatabaseCacheEntry;
 class LogManager;
 class MetricsManager;
 class BlockCache;
+class MemoryFileSystem;
 class ResultSetManager;
 
 class DatabaseInstance : public enable_shared_from_this<DatabaseInstance> {
@@ -66,6 +67,8 @@ public:
 	DUCKDB_API BlockCache &GetBlockCache();
 	//! The block cache when it was created
 	DUCKDB_API optional_ptr<BlockCache> TryGetBlockCache();
+	//! The filesystem of memory:// paths that the default virtual filesystem routes to
+	DUCKDB_API MemoryFileSystem &GetMemoryFileSystem();
 	DUCKDB_API ResultSetManager &GetResultSetManager();
 	DUCKDB_API TaskScheduler &GetScheduler();
 	DUCKDB_API ObjectCache &GetObjectCache();
@@ -130,6 +133,8 @@ private:
 	mutex block_cache_lock;
 	unique_ptr<BlockCache> block_cache;
 	atomic<BlockCache *> block_cache_ptr {nullptr};
+	//! The memory:// filesystem registered with the default virtual filesystem, whose files live in the block cache
+	optional_ptr<MemoryFileSystem> memory_file_system;
 	unique_ptr<ResultSetManager> result_set_manager;
 
 	duckdb_ext_api_v1 (*create_api_v1)();

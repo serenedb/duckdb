@@ -61,6 +61,7 @@ add_library_unity(
   pipe_file_system.cpp
   process_util.cpp
   local_file_system.cpp
+  memory_file_system.cpp
   memory_mapped_file.cpp
   error_data.cpp
   opener_file_system.cpp
