@@ -1,0 +1,17 @@
+# name: test/sql/prepared/prepare_unknown_operand.test
+# description: Outside PostgreSQL mode a parameter operand of an overloaded operator is bound from its value at EXECUTE
+# group: [prepared]
+
+statement ok
+CREATE TABLE ints(i INTEGER)
+
+statement ok
+INSERT INTO ints VALUES (1)
+
+statement ok
+PREPARE p AS SELECT i + $1 FROM ints
+
+query I
+EXECUTE p(2.5)
+----
+3.5
