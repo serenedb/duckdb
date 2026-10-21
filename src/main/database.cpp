@@ -37,7 +37,7 @@
 #include "duckdb/storage/block_allocator.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/compression/empty_validity.hpp"
-#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
+#include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/object_cache.hpp"
 #include "duckdb/storage/shared_object_cache.hpp"
 #include "duckdb/storage/standard_buffer_manager.hpp"
@@ -97,13 +97,20 @@ DatabaseInstance::~DatabaseInstance() {
 	connection_manager.reset();
 	object_cache.reset();
 	shared_object_cache.reset();
+	if (block_cache) {
+		block_cache->StopFetching();
+	}
 	scheduler.reset();
 	db_manager.reset();
 
 	// stop the log manager, after this point Logger calls are unsafe.
 	log_manager.reset();
 
-	external_file_cache.reset();
+	if (block_cache) {
+		GetBufferPool().SetBlockCache(nullptr);
+		block_cache_ptr.store(nullptr, std::memory_order_release);
+		block_cache.reset();
+	}
 	result_set_manager.reset();
 
 	buffer_manager.reset();
@@ -362,8 +369,6 @@ void DatabaseInstance::InitializeInstance(const char *database_path, DBConfig *u
 
 	metrics_manager = make_uniq<MetricsManager>();
 
-	bool enable_external_file_cache = Settings::Get<EnableExternalFileCacheSetting>(config);
-	external_file_cache = make_uniq<ExternalFileCache>(*this, enable_external_file_cache);
 	result_set_manager = make_uniq<ResultSetManager>(*this);
 
 	scheduler = make_uniq<TaskScheduler>(*this);
@@ -489,8 +494,25 @@ FileSystem &LocalDatabaseFileSystem::GetFileSystem() const {
 	return local_fs;
 }
 
-ExternalFileCache &DatabaseInstance::GetExternalFileCache() {
-	return *external_file_cache;
+BlockCache &DatabaseInstance::GetBlockCache() {
+	auto cache = block_cache_ptr.load(std::memory_order_acquire);
+	if (cache) {
+		return *cache;
+	}
+	lock_guard<mutex> guard(block_cache_lock);
+	if (!block_cache) {
+		block_cache = make_uniq<BlockCache>(*this, BlockCache::ConfiguredCapacity(*this));
+		block_cache->SetEnabled(Settings::Get<EnableExternalFileCacheSetting>(*this));
+		block_cache->SetSpill(Settings::Get<ExternalFileCacheSpillPathSetting>(*this),
+		                      config.options.external_file_cache_spill_size);
+		GetBufferPool().SetBlockCache(block_cache.get());
+		block_cache_ptr.store(block_cache.get(), std::memory_order_release);
+	}
+	return *block_cache;
+}
+
+optional_ptr<BlockCache> DatabaseInstance::TryGetBlockCache() {
+	return block_cache_ptr.load(std::memory_order_acquire);
 }
 
 ResultSetManager &DatabaseInstance::GetResultSetManager() {
