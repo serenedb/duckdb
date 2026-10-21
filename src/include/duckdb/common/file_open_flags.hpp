@@ -64,8 +64,8 @@ public:
 	}
 
 	inline FileOpenFlags operator|(const FileOpenFlags &b) const {
-		FileOpenFlags result(flags | b.flags, MergeLock(lock, b.lock), MergeCompression(compression, b.compression));
-		result.request_sizing = MergeRequestSizing(request_sizing, b.request_sizing);
+		FileOpenFlags result = *this;
+		result |= b;
 		return result;
 	}
 	inline FileOpenFlags &operator|=(const FileOpenFlags &b) {

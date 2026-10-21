@@ -528,6 +528,14 @@ TEST_CASE("re-register subsystem", "[file_system]") {
 	REQUIRE_THROWS(vfs.RegisterSubSystem(std::move(second_local_filesystem)));
 }
 
+TEST_CASE("Combined open flags keep the caching mode", "[file_system]") {
+	FileOpenFlags cached(FileFlags::FILE_FLAGS_READ);
+	cached.SetCachingMode(CachingMode::ALWAYS_CACHE);
+	REQUIRE((cached | FileFlags::FILE_FLAGS_PARALLEL_ACCESS).GetCachingMode() == CachingMode::ALWAYS_CACHE);
+	REQUIRE((FileOpenFlags(FileFlags::FILE_FLAGS_PARALLEL_ACCESS) | cached).GetCachingMode() ==
+	        CachingMode::ALWAYS_CACHE);
+}
+
 namespace {
 
 class PrefixFileSystem : public LocalFileSystem {
