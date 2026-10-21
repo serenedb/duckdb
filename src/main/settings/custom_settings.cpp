@@ -36,7 +36,7 @@
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/planner/expression_binder.hpp"
-#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
+#include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/storage_manager.hpp"
@@ -674,34 +674,76 @@ void EnableExternalAccessSetting::OnSet(SettingCallbackInfo &info, Value &input)
 //===----------------------------------------------------------------------===//
 void EnableExternalFileCacheSetting::OnSet(SettingCallbackInfo &info, Value &input) {
 	if (info.db) {
-		ExternalFileCache::Get(*info.db).SetEnabled(input.GetValue<bool>());
+		info.db->GetBlockCache().SetEnabled(input.GetValue<bool>());
 	}
 }
 
 //===----------------------------------------------------------------------===//
-// External File Cache Block Sizes
+// External File Cache Size
 //===----------------------------------------------------------------------===//
-static void ValidateExternalFileCacheBlockSize(const char *name, const Value &input) {
-	const auto bytes = input.GetValue<uint64_t>();
-	if (bytes == 0) {
-		throw InvalidInputException("Invalid option for %s: value must be positive", string(name));
+static void ApplyExternalFileCacheSize(DatabaseInstance *db) {
+	if (!db) {
+		return;
 	}
-	if (!IsPowerOfTwo(bytes)) {
-		throw InvalidInputException("Invalid option for %s: block size must be a power of two, got %llu", string(name),
-		                            bytes);
+	auto cache = db->TryGetBlockCache();
+	if (cache) {
+		cache->SetCapacity(BlockCache::ConfiguredCapacity(*db));
 	}
 }
 
-void ExternalFileCacheLocalMaxBlockSizeSetting::OnSet(SettingCallbackInfo &info, Value &input) {
-	ValidateExternalFileCacheBlockSize(Name, input);
+void ExternalFileCacheSizeSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+	config.options.external_file_cache_size = DBConfig::ParseMemoryLimit(input.ToString());
+	ApplyExternalFileCacheSize(db);
 }
 
-void ExternalFileCacheRemoteMaxBlockSizeSetting::OnSet(SettingCallbackInfo &info, Value &input) {
-	ValidateExternalFileCacheBlockSize(Name, input);
+void ExternalFileCacheSizeSetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
+	config.options.external_file_cache_size = DConstants::INVALID_INDEX;
+	ApplyExternalFileCacheSize(db);
 }
 
-void ExternalFileCacheRemoteMinBlockSizeSetting::OnSet(SettingCallbackInfo &info, Value &input) {
-	ValidateExternalFileCacheBlockSize(Name, input);
+Value ExternalFileCacheSizeSetting::GetSetting(const ClientContext &context) {
+	return Value(StringUtil::BytesToHumanReadableString(BlockCache::ConfiguredCapacity(*context.db)));
+}
+
+//===----------------------------------------------------------------------===//
+// External File Cache Spill
+//===----------------------------------------------------------------------===//
+void ExternalFileCacheSpillPathSetting::OnSet(SettingCallbackInfo &info, Value &input) {
+	if (!info.db) {
+		return;
+	}
+	auto cache = info.db->TryGetBlockCache();
+	if (cache) {
+		cache->SetSpill(input.ToString(), info.config.options.external_file_cache_spill_size);
+	}
+}
+
+void ExternalFileCacheSpillSizeSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+	config.options.external_file_cache_spill_size = DBConfig::ParseMemoryLimit(input.ToString());
+	if (!db) {
+		return;
+	}
+	auto cache = db->TryGetBlockCache();
+	if (cache) {
+		cache->SetSpill(Settings::Get<ExternalFileCacheSpillPathSetting>(*db),
+		                config.options.external_file_cache_spill_size);
+	}
+}
+
+void ExternalFileCacheSpillSizeSetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
+	config.options.external_file_cache_spill_size = 0;
+	if (!db) {
+		return;
+	}
+	auto cache = db->TryGetBlockCache();
+	if (cache) {
+		cache->SetSpill(Settings::Get<ExternalFileCacheSpillPathSetting>(*db), 0);
+	}
+}
+
+Value ExternalFileCacheSpillSizeSetting::GetSetting(const ClientContext &context) {
+	return Value(
+	    StringUtil::BytesToHumanReadableString(DBConfig::GetConfig(context).options.external_file_cache_spill_size));
 }
 
 //===----------------------------------------------------------------------===//

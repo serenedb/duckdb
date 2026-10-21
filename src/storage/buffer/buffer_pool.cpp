@@ -7,6 +7,7 @@
 #include "duckdb/parallel/concurrentqueue.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/storage/block_allocator.hpp"
+#include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/object_cache.hpp"
 #include "duckdb/storage/temporary_memory_manager.hpp"
 
@@ -390,9 +391,32 @@ BufferPool::EvictionResult BufferPool::EvictBlocks(QueryContext context, MemoryT
 		}
 	}
 
+	if (block_cache) {
+		auto cache_result = EvictBlockCacheFrames(tag, extra_memory, memory_limit);
+		if (cache_result.success) {
+			return cache_result;
+		}
+	}
+
 	// Evict object cache, which is usually used to cache metadata and configs, when flushing buffer blocks alone is not
 	// enough to limit overall memory consumption.
 	return EvictObjectCacheEntries(tag, extra_memory, memory_limit);
+}
+
+BufferPool::EvictionResult BufferPool::EvictBlockCacheFrames(MemoryTag tag, idx_t extra_memory, idx_t memory_limit) {
+	TempBufferPoolReservation r(tag, *this, extra_memory);
+	const idx_t used = memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH);
+	if (used > memory_limit) {
+		block_cache->EvictToReduceMemory(used - memory_limit);
+	}
+	if (memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH) > memory_limit) {
+		r.Resize(0);
+		return {false, std::move(r)};
+	}
+	if (extra_memory > allocator_bulk_deallocation_flush_threshold) {
+		FlushAllocator(extra_memory);
+	}
+	return {true, std::move(r)};
 }
 
 BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context, EvictionQueue &queue, MemoryTag tag,

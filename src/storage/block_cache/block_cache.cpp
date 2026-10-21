@@ -1,0 +1,1469 @@
+#include "duckdb/storage/block_cache/block_cache.hpp"
+
+#include "duckdb/common/allocator.hpp"
+#include "duckdb/common/enums/destroy_buffer_upon.hpp"
+#include "duckdb/common/exception.hpp"
+#include "duckdb/common/helper.hpp"
+#include "duckdb/common/numeric_utils.hpp"
+#include "duckdb/common/unordered_set.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/main/database.hpp"
+#include "duckdb/parallel/task.hpp"
+#include "duckdb/storage/buffer/block_handle.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
+
+#include <absl/base/dynamic_annotations.h>
+#include <cstring>
+
+#ifndef _WIN32
+#include <sys/mman.h>
+#endif
+
+namespace duckdb {
+
+namespace {
+
+constexpr uint64_t PIN_MASK = (1ULL << 22) - 1;
+constexpr uint64_t FLAG_PREFETCHED = 1ULL << 22;
+constexpr uint64_t FLAG_LOADING = 1ULL << 23;
+constexpr uint64_t FLAG_LOADED = 1ULL << 24;
+constexpr uint64_t FLAG_FAILED = 1ULL << 25;
+constexpr uint64_t FLAG_EVICTING = 1ULL << 26;
+constexpr uint64_t FLAG_PROBATION = 1ULL << 27;
+constexpr uint64_t FLAG_HOT = 1ULL << 28;
+constexpr uint64_t FLAG_UNBACKED = 1ULL << 29;
+constexpr uint64_t FLAG_SPILLED = 1ULL << 30;
+constexpr uint64_t FLAG_LOCAL = 1ULL << 31;
+constexpr uint64_t VERSION_ONE = 1ULL << 32;
+constexpr uint64_t VERSION_MASK = ~(VERSION_ONE - 1);
+constexpr uint64_t STABLE_MASK = VERSION_MASK | FLAG_LOADED | FLAG_EVICTING | FLAG_FAILED;
+constexpr uint64_t UNPINNABLE = FLAG_EVICTING | FLAG_FAILED;
+
+constexpr idx_t SAMPLE_SIZE = 8;
+constexpr idx_t EVICTION_ATTEMPTS = 64;
+constexpr idx_t ACQUIRE_ATTEMPTS = 4;
+constexpr idx_t HUGE_PAGE_SIZE = 2ULL * 1024ULL * 1024ULL;
+constexpr idx_t MAX_IN_FLIGHT = 16 * BlockCache::MAX_FILE_IN_FLIGHT;
+
+uint64_t Pins(uint64_t state) {
+	return state & PIN_MASK;
+}
+
+uint64_t Referenced(uint64_t state) {
+	if (state & FLAG_PREFETCHED) {
+		return state & ~FLAG_PREFETCHED;
+	}
+	return (state & ~FLAG_PROBATION) | FLAG_HOT;
+}
+
+uint64_t Mix(uint64_t value) {
+	value ^= value >> 33;
+	value *= 0xff51afd7ed558ccdULL;
+	value ^= value >> 33;
+	value *= 0xc4ceb9fe1a85ec53ULL;
+	value ^= value >> 33;
+	return value;
+}
+
+void Pause() {
+#if defined(__x86_64__) || defined(_M_X64)
+	__builtin_ia32_pause();
+#elif defined(__aarch64__)
+	asm volatile("yield");
+#endif
+}
+
+void LockBucket(BlockCacheBucket &bucket) {
+	auto version = bucket.version.load(std::memory_order_relaxed);
+	while (true) {
+		if (!(version & 1) && bucket.version.compare_exchange_weak(version, version + 1, std::memory_order_acquire,
+		                                                           std::memory_order_relaxed)) {
+			return;
+		}
+		Pause();
+		version = bucket.version.load(std::memory_order_relaxed);
+	}
+}
+
+void UnlockBucket(BlockCacheBucket &bucket) {
+	bucket.version.fetch_add(1, std::memory_order_release);
+}
+
+void CopyOptimistic(data_ptr_t target, const_data_ptr_t source, idx_t size) {
+	ABSL_ANNOTATE_IGNORE_READS_BEGIN();
+	memcpy(target, source, size);
+	ABSL_ANNOTATE_IGNORE_READS_END();
+}
+
+data_ptr_t MapRegion(idx_t size) {
+#ifdef _WIN32
+	return Allocator::DefaultAllocator().AllocateData(size);
+#else
+	const auto mapped = mmap(nullptr, size + HUGE_PAGE_SIZE, PROT_READ | PROT_WRITE,
+	                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+	if (mapped == MAP_FAILED) {
+		throw OutOfMemoryException("Could not reserve %s of address space for the block cache",
+		                           StringUtil::BytesToHumanReadableString(size));
+	}
+	const auto base = reinterpret_cast<uintptr_t>(mapped);
+	const auto aligned = AlignValue<uintptr_t, HUGE_PAGE_SIZE>(base);
+	if (aligned > base) {
+		munmap(mapped, aligned - base);
+	}
+	const auto end = base + size + HUGE_PAGE_SIZE;
+	if (end > aligned + size) {
+		munmap(reinterpret_cast<void *>(aligned + size), end - aligned - size);
+	}
+#ifdef MADV_HUGEPAGE
+	madvise(reinterpret_cast<void *>(aligned), size, MADV_HUGEPAGE);
+#endif
+	return reinterpret_cast<data_ptr_t>(aligned);
+#endif
+}
+
+void UnmapRegion(data_ptr_t region, idx_t size) {
+#ifdef _WIN32
+	Allocator::DefaultAllocator().FreeData(region, size);
+#else
+	munmap(region, size);
+#endif
+}
+
+void DiscardFrame(data_ptr_t frame, idx_t size) {
+#ifndef _WIN32
+	madvise(frame, size, MADV_DONTNEED);
+#endif
+}
+
+} // namespace
+
+//===--------------------------------------------------------------------===//
+// BlockCachePin
+//===--------------------------------------------------------------------===//
+
+BlockCachePin::BlockCachePin(BlockCache &cache_p, BlockCacheEntry &entry_p, data_ptr_t data_p, idx_t size_p)
+    : cache(&cache_p), entry(&entry_p), data(data_p), size(size_p) {
+}
+
+BlockCachePin::~BlockCachePin() {
+	Reset();
+}
+
+BlockCachePin::BlockCachePin(BlockCachePin &&other) noexcept
+    : cache(other.cache), entry(other.entry), data(other.data), size(other.size), buffer(std::move(other.buffer)) {
+	other.cache = nullptr;
+	other.entry = nullptr;
+	other.data = nullptr;
+	other.size = 0;
+}
+
+BlockCachePin &BlockCachePin::operator=(BlockCachePin &&other) noexcept {
+	if (this != &other) {
+		Reset();
+		cache = other.cache;
+		entry = other.entry;
+		data = other.data;
+		size = other.size;
+		buffer = std::move(other.buffer);
+		other.cache = nullptr;
+		other.entry = nullptr;
+		other.data = nullptr;
+		other.size = 0;
+	}
+	return *this;
+}
+
+void BlockCachePin::Reset() {
+	if (entry) {
+		cache->Unpin(*entry);
+	}
+	cache = nullptr;
+	entry = nullptr;
+	data = nullptr;
+	size = 0;
+	buffer.Destroy();
+}
+
+//===--------------------------------------------------------------------===//
+// BlockCacheFile
+//===--------------------------------------------------------------------===//
+
+BlockCacheFile::BlockCacheFile(BlockCache &cache_p, string path_p, uint32_t number_p, bool unbacked_p,
+                               BlockCacheFileInfo info_p, shared_ptr<FileHandle> source_p)
+    : cache(cache_p), path(std::move(path_p)), number(number_p), size(info_p.validation.file_size),
+      unbacked(unbacked_p), local(!unbacked_p && info_p.on_disk), info(std::move(info_p)), source(std::move(source_p)) {
+}
+
+BlockCacheFile::~BlockCacheFile() {
+	if (unbacked) {
+		cache.ReleaseUnbacked(number, BlockCount());
+	} else {
+		cache.CloseFile(*this);
+	}
+}
+
+bool BlockCacheFile::HasSource() const {
+	annotated_lock_guard<annotated_mutex> guard(source_lock);
+	return source != nullptr;
+}
+
+void BlockCacheFile::SetSource(shared_ptr<FileHandle> handle) {
+	annotated_lock_guard<annotated_mutex> guard(source_lock);
+	if (!source) {
+		source = std::move(handle);
+	}
+}
+
+shared_ptr<FileHandle> BlockCacheFile::Source() const {
+	annotated_lock_guard<annotated_mutex> guard(source_lock);
+	if (!source) {
+		throw InternalException("The block cache has no source to read \"%s\" from", path);
+	}
+	return source;
+}
+
+idx_t BlockCacheFile::BlockCount() const {
+	return (GetSize() + BlockCache::BLOCK_SIZE - 1) / BlockCache::BLOCK_SIZE;
+}
+
+idx_t BlockCacheFile::BlockBytes(idx_t block) const {
+	const auto file_size = GetSize();
+	const auto start = block * BlockCache::BLOCK_SIZE;
+	return start >= file_size ? 0 : MinValue(BlockCache::BLOCK_SIZE, file_size - start);
+}
+
+//===--------------------------------------------------------------------===//
+// BlockCacheFetchTask
+//===--------------------------------------------------------------------===//
+
+class BlockCacheFetchTask : public Task {
+public:
+	BlockCacheFetchTask(BlockCache &cache_p, shared_ptr<BlockCacheFile> file_p, BlockCache::Run run_p,
+	                    vector<optional_ptr<BlockCacheEntry>> entries_p, idx_t bytes_p)
+	    : cache(cache_p), file(std::move(file_p)), run(run_p), entries(std::move(entries_p)), bytes(bytes_p) {
+	}
+
+	~BlockCacheFetchTask() override {
+		if (!done) {
+			for (auto &entry : entries) {
+				if (entry) {
+					cache.FinishLoad(*entry, false, false);
+				}
+			}
+			Finish();
+		}
+	}
+
+	TaskExecutionResult Execute(TaskExecutionMode mode) override {
+		try {
+			cache.Fetch(*file, run, entries);
+		} catch (std::exception &) { // NOLINT
+		}
+		Finish();
+		return TaskExecutionResult::TASK_FINISHED;
+	}
+
+	string TaskType() const override {
+		return "BlockCacheFetchTask";
+	}
+
+private:
+	void Finish() {
+		done = true;
+		for (auto &entry : entries) {
+			if (entry) {
+				cache.Unpin(*entry);
+			}
+		}
+		file->in_flight.fetch_sub(bytes, std::memory_order_relaxed);
+		cache.FinishFetchTask(bytes);
+	}
+
+	BlockCache &cache;
+	shared_ptr<BlockCacheFile> file;
+	BlockCache::Run run;
+	vector<optional_ptr<BlockCacheEntry>> entries;
+	idx_t bytes;
+	bool done = false;
+};
+
+//===--------------------------------------------------------------------===//
+// BlockCache
+//===--------------------------------------------------------------------===//
+
+BlockCache::BlockCache(DatabaseInstance &db_p, idx_t capacity)
+    : db(db_p), buffer_pool(BufferManager::GetBufferManager(db_p).GetBufferPool()), spill(BLOCK_SIZE) {
+	frame_count = NumericCast<uint32_t>(MaxValue<idx_t>(1, capacity / BLOCK_SIZE));
+	region_size = frame_count * BLOCK_SIZE;
+	region = MapRegion(region_size);
+	frame_owner = unique_ptr<atomic<BlockCacheEntry *>[]>(new atomic<BlockCacheEntry *>[frame_count]);
+	for (idx_t i = 0; i < frame_count; i++) {
+		frame_owner[i].store(nullptr, std::memory_order_relaxed);
+	}
+	idx_t bucket_count = 1;
+	while (bucket_count < 2 * idx_t(frame_count)) {
+		bucket_count *= 2;
+	}
+	buckets = unique_ptr<BlockCacheBucket[]>(new BlockCacheBucket[bucket_count]);
+	bucket_mask = NumericCast<uint32_t>(bucket_count - 1);
+	pool = unique_ptr<BlockCacheEntry[]>(new BlockCacheEntry[frame_count]);
+	free_frames.reserve(frame_count);
+	free_pool.reserve(frame_count);
+	for (uint32_t i = frame_count; i > 0; i--) {
+		free_frames.push_back(i - 1);
+		free_pool.push_back(i - 1);
+	}
+	capacity_frames = frame_count;
+}
+
+BlockCache::~BlockCache() {
+	StopFetching();
+	const auto used = used_frames.load(std::memory_order_relaxed);
+	if (used) {
+		buffer_pool.UpdateUsedMemory(MemoryTag::EXTERNAL_FILE_CACHE, -NumericCast<int64_t>(used * BLOCK_SIZE));
+	}
+	UnmapRegion(region, region_size);
+}
+
+BlockCache &BlockCache::Get(DatabaseInstance &db) {
+	return db.GetBlockCache();
+}
+
+idx_t BlockCache::ConfiguredCapacity(DatabaseInstance &db) {
+	const auto configured = db.config.options.external_file_cache_size;
+	if (configured != DConstants::INVALID_INDEX) {
+		return configured;
+	}
+	return BufferManager::GetBufferManager(db).GetBufferPool().GetMaxMemory() / 4;
+}
+
+uint64_t BlockCache::MakeKey(uint32_t file, idx_t block) {
+	D_ASSERT(block <= NumericLimits<uint32_t>::Maximum());
+	return (uint64_t(file) << 32) | block;
+}
+
+BlockCacheBucket &BlockCache::BucketFor(uint64_t key) const {
+	return buckets[Mix(key) & bucket_mask];
+}
+
+data_ptr_t BlockCache::FrameData(uint32_t frame) const {
+	return region + idx_t(frame) * BLOCK_SIZE;
+}
+
+void BlockCache::CountHit(const BlockCacheEntry &entry) {
+	hits[(reinterpret_cast<uintptr_t>(&entry) / sizeof(BlockCacheEntry)) % COUNTER_SHARDS].value.fetch_add(
+	    1, std::memory_order_relaxed);
+}
+
+uint32_t BlockCache::WaitStripe(const BlockCacheEntry &entry) {
+	return NumericCast<uint32_t>((reinterpret_cast<uintptr_t>(&entry) / sizeof(BlockCacheEntry)) % WAIT_STRIPES);
+}
+
+shared_ptr<BlockCacheFile> BlockCache::OpenFile(const string &path, const BlockCacheFileInfo &current, bool validate,
+                                                shared_ptr<FileHandle> source) {
+	FileRecord opened;
+	optional<FileRecord> replaced;
+	bool sweep = false;
+	{
+		annotated_lock_guard<annotated_mutex> guard(file_lock);
+		auto &record = files[path];
+		if (record.number == 0) {
+			record = FileRecord {next_file_number++, current, 0};
+			if (files.size() >= sweep_at) {
+				sweep = true;
+				sweep_at = NumericLimits<idx_t>::Maximum();
+			}
+		} else {
+			const bool expired = !validate && record.info.validation.IsExpired();
+			if (validate || expired) {
+				const bool valid =
+				    !expired && CacheValidation::IsValid(validate, record.info.validation, current.validation);
+				if (valid) {
+					const auto preserved = record.info.validation.cache_valid_until;
+					record.info = current;
+					if (!CacheValidation::HasValidationMetadata(current.validation)) {
+						record.info.validation.cache_valid_until = preserved;
+					}
+				} else {
+					replaced = record;
+					record = FileRecord {next_file_number++, current, 0};
+				}
+			}
+		}
+		record.opens++;
+		opened = record;
+	}
+	if (replaced) {
+		DropBlocks(replaced->number, (replaced->info.validation.file_size + BLOCK_SIZE - 1) / BLOCK_SIZE);
+	}
+	if (sweep) {
+		SweepFiles();
+	}
+	return make_shared_ptr<BlockCacheFile>(*this, path, opened.number, false, std::move(opened.info),
+	                                       std::move(source));
+}
+
+void BlockCache::CloseFile(const BlockCacheFile &file) {
+	annotated_lock_guard<annotated_mutex> guard(file_lock);
+	auto entry = files.find(file.path);
+	if (entry != files.end() && entry->second.number == file.number) {
+		D_ASSERT(entry->second.opens > 0);
+		entry->second.opens--;
+	}
+}
+
+void BlockCache::SweepFiles() {
+	unordered_set<uint32_t> cached;
+	const auto high = high_water.load(std::memory_order_acquire);
+	for (idx_t frame = 0; frame < high; frame++) {
+		auto entry = frame_owner[frame].load(std::memory_order_acquire);
+		if (entry) {
+			cached.insert(static_cast<uint32_t>(entry->key.load(std::memory_order_relaxed) >> 32));
+		}
+	}
+	for (auto key : spill.Keys()) {
+		cached.insert(static_cast<uint32_t>(key >> 32));
+	}
+	annotated_lock_guard<annotated_mutex> guard(file_lock);
+	for (auto entry = files.begin(); entry != files.end();) {
+		if (entry->second.opens == 0 && cached.find(entry->second.number) == cached.end()) {
+			files.erase(entry++);
+		} else {
+			++entry;
+		}
+	}
+	sweep_at = MaxValue<idx_t>(MIN_SWEEP_RECORDS, 2 * files.size());
+}
+
+bool BlockCache::TryGetFile(const string &path, BlockCacheFileInfo &result) {
+	annotated_lock_guard<annotated_mutex> guard(file_lock);
+	auto entry = files.find(path);
+	if (entry == files.end() || entry->second.info.validation.IsExpired()) {
+		return false;
+	}
+	result = entry->second.info;
+	return true;
+}
+
+void BlockCache::ForbidReuse(BlockCacheFile &file) {
+	{
+		annotated_lock_guard<annotated_mutex> guard(file_lock);
+		auto entry = files.find(file.path);
+		if (entry == files.end() || entry->second.number != file.number) {
+			return;
+		}
+		files.erase(entry);
+	}
+	DropFile(file);
+}
+
+shared_ptr<BlockCacheFile> BlockCache::CreateUnbackedFile(const string &path) {
+	uint32_t number;
+	{
+		annotated_lock_guard<annotated_mutex> guard(file_lock);
+		number = next_file_number++;
+		live_unbacked.insert(number);
+	}
+	return make_shared_ptr<BlockCacheFile>(*this, path, number, true, BlockCacheFileInfo(), nullptr);
+}
+
+void BlockCache::ReleaseUnbacked(uint32_t number, idx_t block_count) {
+	{
+		annotated_lock_guard<annotated_mutex> guard(file_lock);
+		live_unbacked.erase(number);
+	}
+	DropBlocks(number, block_count);
+}
+
+bool BlockCache::IsLiveUnbacked(uint32_t number) const {
+	annotated_lock_guard<annotated_mutex> guard(file_lock);
+	return live_unbacked.find(number) != live_unbacked.end();
+}
+
+void BlockCache::ForgetFile(const string &path) {
+	FileRecord record;
+	{
+		annotated_lock_guard<annotated_mutex> guard(file_lock);
+		auto entry = files.find(path);
+		if (entry == files.end()) {
+			return;
+		}
+		record = entry->second;
+		files.erase(entry);
+	}
+	DropBlocks(record.number, (record.info.validation.file_size + BLOCK_SIZE - 1) / BLOCK_SIZE);
+}
+
+void BlockCache::DropFile(BlockCacheFile &file) {
+	DropBlocks(file.number, file.BlockCount());
+}
+
+void BlockCache::DropBlocks(uint32_t number, idx_t block_count) {
+	spill.EraseFile(number);
+	const auto high = high_water.load(std::memory_order_acquire);
+	if (block_count > high) {
+		for (idx_t frame = 0; frame < high; frame++) {
+			auto entry = frame_owner[frame].load(std::memory_order_acquire);
+			if (!entry) {
+				continue;
+			}
+			const auto key = entry->key.load(std::memory_order_relaxed);
+			if (static_cast<uint32_t>(key >> 32) == number) {
+				DropEntry(*entry, key, true);
+			}
+		}
+		return;
+	}
+	for (idx_t block = 0; block < block_count; block++) {
+		const auto key = MakeKey(number, block);
+		auto entry = FindEntry(key);
+		if (entry) {
+			DropEntry(*entry, key, true);
+		}
+	}
+}
+
+void BlockCache::DropEntry(BlockCacheEntry &entry, uint64_t key, bool drop_unbacked) {
+	auto state = entry.state.load(std::memory_order_acquire);
+	while ((state & (FLAG_LOADING | FLAG_LOADED)) && !(state & UNPINNABLE) &&
+	       entry.key.load(std::memory_order_relaxed) == key && (drop_unbacked || !(state & FLAG_UNBACKED))) {
+		if (Pins(state) == 0) {
+			uint32_t frame;
+			if (TryEvict(entry, state, frame, false)) {
+				ReleaseFrame(frame);
+				return;
+			}
+		} else if (entry.state.compare_exchange_weak(state, state | FLAG_FAILED, std::memory_order_acq_rel,
+		                                             std::memory_order_acquire)) {
+			return;
+		}
+		state = entry.state.load(std::memory_order_acquire);
+	}
+}
+
+BlockCacheEntry *BlockCache::FindEntry(uint64_t key) const {
+	auto &bucket = BucketFor(key);
+	while (true) {
+		const auto version = bucket.version.load(std::memory_order_acquire);
+		if (version & 1) {
+			Pause();
+			continue;
+		}
+		bool consistent = true;
+		auto entry = &bucket.first;
+		for (idx_t steps = 0;; steps++) {
+			const auto state = entry->state.load(std::memory_order_acquire);
+			if (entry->key.load(std::memory_order_relaxed) == key && !(state & UNPINNABLE)) {
+				return entry;
+			}
+			const auto next = entry->next.load(std::memory_order_acquire);
+			if (next == 0) {
+				break;
+			}
+			if (steps > frame_count) {
+				consistent = false;
+				break;
+			}
+			entry = &pool[next - 1];
+		}
+		if (!consistent) {
+			continue;
+		}
+		std::atomic_thread_fence(std::memory_order_acquire);
+		if (bucket.version.load(std::memory_order_relaxed) == version) {
+			return nullptr;
+		}
+	}
+}
+
+bool BlockCache::PinPresent(uint64_t key, BlockCachePin &result) {
+	auto &bucket = BucketFor(key);
+	while (true) {
+		const auto version = bucket.version.load(std::memory_order_acquire);
+		if (version & 1) {
+			Pause();
+			continue;
+		}
+		BlockCacheEntry *found = nullptr;
+		uint64_t state = 0;
+		bool consistent = true;
+		auto entry = &bucket.first;
+		for (idx_t steps = 0;; steps++) {
+			state = entry->state.load(std::memory_order_acquire);
+			if (entry->key.load(std::memory_order_relaxed) == key && !(state & UNPINNABLE)) {
+				found = entry;
+				break;
+			}
+			const auto next = entry->next.load(std::memory_order_acquire);
+			if (next == 0) {
+				break;
+			}
+			if (steps > frame_count) {
+				consistent = false;
+				break;
+			}
+			entry = &pool[next - 1];
+		}
+		if (!consistent) {
+			continue;
+		}
+		if (!found) {
+			std::atomic_thread_fence(std::memory_order_acquire);
+			if (bucket.version.load(std::memory_order_relaxed) != version) {
+				continue;
+			}
+			return false;
+		}
+		if (Pins(state) == PIN_MASK) {
+			throw InternalException("Too many pins of one block cache block");
+		}
+		auto desired = state + 1;
+		if (state & FLAG_LOADED) {
+			desired = Referenced(desired);
+		}
+		if (!found->state.compare_exchange_weak(state, desired, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+			continue;
+		}
+		result = BlockCachePin(*this, *found, nullptr, 0);
+		if (desired & FLAG_LOADED) {
+			result.data = FrameData(found->frame.load(std::memory_order_relaxed));
+			result.size = found->valid.load(std::memory_order_acquire);
+			CountHit(*found);
+		}
+		return true;
+	}
+}
+
+bool BlockCache::AwaitLoad(BlockCachePin &pin) {
+	auto &entry = *pin.entry;
+	WaitForLoad(entry);
+	auto state = entry.state.load(std::memory_order_acquire);
+	if (!(state & FLAG_LOADED)) {
+		pin.Reset();
+		return false;
+	}
+	while (!(state & (FLAG_HOT | UNPINNABLE)) &&
+	       !entry.state.compare_exchange_weak(state, Referenced(state), std::memory_order_acq_rel,
+	                                          std::memory_order_acquire)) {
+	}
+	pin.data = FrameData(entry.frame.load(std::memory_order_relaxed));
+	pin.size = entry.valid.load(std::memory_order_acquire);
+	CountHit(entry);
+	return true;
+}
+
+bool BlockCache::Lookup(uint64_t key, BlockCachePin &result, bool wait_for_load) {
+	while (PinPresent(key, result)) {
+		if (result.data) {
+			return true;
+		}
+		if (!wait_for_load) {
+			result.Reset();
+			return false;
+		}
+		if (AwaitLoad(result)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool BlockCache::IsCached(BlockCacheFile &file, idx_t offset, idx_t size) const {
+	const auto file_size = file.GetSize();
+	if (size == 0 || offset >= file_size) {
+		return true;
+	}
+	const auto last = (MinValue(offset + size, file_size) - 1) / BLOCK_SIZE;
+	for (auto block = offset / BLOCK_SIZE; block <= last; block++) {
+		if (!FindEntry(MakeKey(file.number, block))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+uint64_t BlockCache::FileFlags(const BlockCacheFile &file) {
+	if (file.unbacked) {
+		return FLAG_UNBACKED;
+	}
+	return file.local ? FLAG_LOCAL : 0;
+}
+
+optional_ptr<BlockCacheEntry> BlockCache::InsertLoading(uint64_t key, uint32_t frame, uint64_t flags) {
+	const auto bucket_index = NumericCast<uint32_t>(Mix(key) & bucket_mask);
+	auto &bucket = buckets[bucket_index];
+	LockBucket(bucket);
+	for (auto entry = &bucket.first;;) {
+		if (entry->key.load(std::memory_order_relaxed) == key &&
+		    !(entry->state.load(std::memory_order_relaxed) & UNPINNABLE)) {
+			UnlockBucket(bucket);
+			return nullptr;
+		}
+		const auto next = entry->next.load(std::memory_order_relaxed);
+		if (next == 0) {
+			break;
+		}
+		entry = &pool[next - 1];
+	}
+	BlockCacheEntry *slot;
+	uint32_t pool_index = 0;
+	if (bucket.first.key.load(std::memory_order_relaxed) == 0) {
+		slot = &bucket.first;
+	} else {
+		{
+			annotated_lock_guard<annotated_mutex> guard(frame_lock);
+			D_ASSERT(!free_pool.empty());
+			pool_index = free_pool.back();
+			free_pool.pop_back();
+		}
+		slot = &pool[pool_index];
+		slot->next.store(bucket.first.next.load(std::memory_order_relaxed), std::memory_order_relaxed);
+	}
+	slot->key.store(key, std::memory_order_relaxed);
+	slot->frame.store(frame, std::memory_order_relaxed);
+	slot->valid.store(0, std::memory_order_relaxed);
+	slot->bucket.store(bucket_index, std::memory_order_relaxed);
+	const auto version = (slot->state.load(std::memory_order_relaxed) & VERSION_MASK) + VERSION_ONE;
+	slot->state.store(version | FLAG_LOADING | FLAG_PROBATION | flags | 1, std::memory_order_release);
+	if (slot != &bucket.first) {
+		bucket.first.next.store(pool_index + 1, std::memory_order_release);
+	}
+	frame_owner[frame].store(slot, std::memory_order_release);
+	UnlockBucket(bucket);
+	return slot;
+}
+
+void BlockCache::Unpin(BlockCacheEntry &entry) {
+	const auto previous = entry.state.fetch_sub(1, std::memory_order_acq_rel);
+	D_ASSERT(Pins(previous) > 0);
+	if (Pins(previous) == 1 && (previous & FLAG_FAILED)) {
+		const auto frame = entry.frame.load(std::memory_order_relaxed);
+		frame_owner[frame].store(nullptr, std::memory_order_relaxed);
+		Unlink(entry);
+		ReleaseFrame(frame);
+	}
+}
+
+void BlockCache::Unlink(BlockCacheEntry &entry) {
+	auto &bucket = buckets[entry.bucket.load(std::memory_order_relaxed)];
+	LockBucket(bucket);
+	entry.key.store(0, std::memory_order_relaxed);
+	if (&entry != &bucket.first) {
+		const auto index = NumericCast<uint32_t>(&entry - pool.get());
+		auto previous = &bucket.first;
+		while (previous->next.load(std::memory_order_relaxed) != index + 1) {
+			previous = &pool[previous->next.load(std::memory_order_relaxed) - 1];
+		}
+		previous->next.store(entry.next.load(std::memory_order_relaxed), std::memory_order_release);
+		annotated_lock_guard<annotated_mutex> guard(frame_lock);
+		free_pool.push_back(index);
+	}
+	entry.state.store(entry.state.load(std::memory_order_relaxed) & VERSION_MASK, std::memory_order_release);
+	UnlockBucket(bucket);
+}
+
+bool BlockCache::TakeFreeFrame(uint32_t &frame) {
+	{
+		annotated_lock_guard<annotated_mutex> guard(frame_lock);
+		if (free_frames.empty()) {
+			return false;
+		}
+		frame = free_frames.back();
+		free_frames.pop_back();
+	}
+	used_frames.fetch_add(1, std::memory_order_relaxed);
+	auto reserved =
+	    buffer_pool.EvictBlocks(QueryContext(), MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE, buffer_pool.GetMaxMemory());
+	if (!reserved.success) {
+		used_frames.fetch_sub(1, std::memory_order_relaxed);
+		annotated_lock_guard<annotated_mutex> guard(frame_lock);
+		free_frames.push_back(frame);
+		return false;
+	}
+	reserved.reservation.size = 0;
+	auto high = high_water.load(std::memory_order_relaxed);
+	while (high <= frame && !high_water.compare_exchange_weak(high, frame + 1, std::memory_order_relaxed)) {
+	}
+	return true;
+}
+
+bool BlockCache::AcquireFrame(uint32_t &frame) {
+	for (idx_t attempt = 0; attempt < ACQUIRE_ATTEMPTS; attempt++) {
+		if (used_frames.load(std::memory_order_relaxed) < capacity_frames.load(std::memory_order_relaxed) &&
+		    TakeFreeFrame(frame)) {
+			return true;
+		}
+		if (EvictOne(frame)) {
+			return true;
+		}
+	}
+	return TakeFreeFrame(frame);
+}
+
+void BlockCache::ReleaseFrame(uint32_t frame) {
+	DiscardFrame(FrameData(frame), BLOCK_SIZE);
+	{
+		annotated_lock_guard<annotated_mutex> guard(frame_lock);
+		free_frames.push_back(frame);
+	}
+	used_frames.fetch_sub(1, std::memory_order_relaxed);
+	buffer_pool.UpdateUsedMemory(MemoryTag::EXTERNAL_FILE_CACHE, -NumericCast<int64_t>(BLOCK_SIZE));
+}
+
+bool BlockCache::EvictOne(uint32_t &frame) {
+	const auto high = high_water.load(std::memory_order_relaxed);
+	if (high == 0) {
+		return false;
+	}
+	auto seed = Mix(sampler_seed.fetch_add(1, std::memory_order_relaxed) + 1);
+	for (idx_t attempt = 0; attempt < EVICTION_ATTEMPTS; attempt++) {
+		BlockCacheEntry *victim = nullptr;
+		uint64_t victim_state = 0;
+		for (idx_t i = 0; i < SAMPLE_SIZE; i++) {
+			seed = Mix(seed + i + 1);
+			auto candidate = frame_owner[seed % high].load(std::memory_order_acquire);
+			if (!candidate) {
+				continue;
+			}
+			auto state = candidate->state.load(std::memory_order_acquire);
+			if (Pins(state) != 0 || !(state & FLAG_LOADED) || (state & (FLAG_LOADING | UNPINNABLE))) {
+				continue;
+			}
+			if ((state & FLAG_UNBACKED) && !(state & FLAG_SPILLED) && !CanSpillUnbacked() &&
+			    IsLiveUnbacked(static_cast<uint32_t>(candidate->key.load(std::memory_order_relaxed) >> 32))) {
+				continue;
+			}
+			if (state & FLAG_PROBATION) {
+				victim = candidate;
+				victim_state = state;
+				break;
+			}
+			if (state & FLAG_HOT) {
+				candidate->state.compare_exchange_weak(state, state & ~FLAG_HOT, std::memory_order_relaxed);
+				continue;
+			}
+			if (!victim) {
+				victim = candidate;
+				victim_state = state;
+			}
+		}
+		if (victim && TryEvict(*victim, victim_state, frame, true)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool BlockCache::TryEvict(BlockCacheEntry &entry, uint64_t state, uint32_t &frame, bool keep_copy) {
+	if (Pins(state) != 0 || !(state & FLAG_LOADED) || (state & (FLAG_LOADING | UNPINNABLE))) {
+		return false;
+	}
+	if (!entry.state.compare_exchange_strong(state, state | FLAG_EVICTING, std::memory_order_acq_rel,
+	                                         std::memory_order_relaxed)) {
+		return false;
+	}
+	const auto key = entry.key.load(std::memory_order_relaxed);
+	frame = entry.frame.load(std::memory_order_relaxed);
+	if (keep_copy && (state & FLAG_UNBACKED) && !IsLiveUnbacked(static_cast<uint32_t>(key >> 32))) {
+		keep_copy = false;
+		spill.Erase(key);
+	}
+	if (keep_copy && !(state & (FLAG_SPILLED | FLAG_LOCAL))) {
+		const bool unbacked = state & FLAG_UNBACKED;
+		const bool written = (unbacked || spill.SpillsBacked()) && spill.Write(key, FrameData(frame), unbacked);
+		if (unbacked && !written) {
+			entry.state.fetch_and(~FLAG_EVICTING, std::memory_order_release);
+			return false;
+		}
+		if (written) {
+			spilled.fetch_add(1, std::memory_order_relaxed);
+		}
+	}
+	frame_owner[frame].store(nullptr, std::memory_order_relaxed);
+	Unlink(entry);
+	evictions.fetch_add(1, std::memory_order_relaxed);
+	return true;
+}
+
+void BlockCache::FinishLoad(BlockCacheEntry &entry, bool loaded, bool keep) {
+	const auto outcome = loaded && keep ? FLAG_LOADED : FLAG_FAILED;
+	auto state = entry.state.load(std::memory_order_relaxed);
+	while (!entry.state.compare_exchange_weak(state, (state & ~FLAG_LOADING) | outcome, std::memory_order_acq_rel,
+	                                          std::memory_order_relaxed)) {
+	}
+	auto &lock = wait_locks[WaitStripe(entry)];
+	lock.Lock();
+	lock.Unlock();
+}
+
+void BlockCache::WaitForLoad(BlockCacheEntry &entry) {
+	while (entry.state.load(std::memory_order_acquire) & FLAG_LOADING) {
+		shared_ptr<Task> task;
+		if (!TakeFetchTask(task)) {
+			break;
+		}
+		task->Execute(TaskExecutionMode::PROCESS_ALL);
+	}
+	auto &lock = wait_locks[WaitStripe(entry)];
+	TaskScheduler::BlockingScope blocking;
+	lock.LockWhen(absl::Condition(
+	    +[](BlockCacheEntry *waited) { return !(waited->state.load(std::memory_order_acquire) & FLAG_LOADING); },
+	    &entry));
+	lock.Unlock();
+}
+
+bool BlockCache::CanSpillUnbacked() {
+	if (unbacked_spill_ready.load(std::memory_order_acquire)) {
+		return true;
+	}
+	if (!spill.IsConfigured()) {
+		auto &buffer_manager = BufferManager::GetBufferManager(db);
+		if (!buffer_manager.HasTemporaryDirectory()) {
+			return false;
+		}
+		auto &fs = FileSystem::GetFileSystem(db);
+		const auto &directory = buffer_manager.GetTemporaryDirectory();
+		try {
+			if (!fs.DirectoryExists(directory)) {
+				fs.CreateDirectory(directory);
+			}
+			spill.Configure(fs, fs.JoinPath(directory, "duckdb_block_cache.spill"), 0);
+		} catch (std::exception &) { // NOLINT
+			return false;
+		}
+	}
+	unbacked_spill_ready.store(true, std::memory_order_release);
+	return true;
+}
+
+void BlockCache::Clear() {
+	spill.EraseBacked();
+	const auto high = high_water.load(std::memory_order_acquire);
+	for (idx_t index = 0; index < high; index++) {
+		auto entry = frame_owner[index].load(std::memory_order_acquire);
+		if (entry) {
+			DropEntry(*entry, entry->key.load(std::memory_order_relaxed), false);
+		}
+	}
+}
+
+void BlockCache::SetEnabled(bool enabled_p) {
+	if (enabled.exchange(enabled_p) && !enabled_p) {
+		Clear();
+	}
+}
+
+bool BlockCache::ReadSpilled(uint64_t key, BlockCacheEntry &entry, idx_t nr_bytes) {
+	if (!spill.Read(key, FrameData(entry.frame.load(std::memory_order_relaxed)))) {
+		return false;
+	}
+	entry.valid.store(NumericCast<uint32_t>(nr_bytes), std::memory_order_release);
+	entry.state.fetch_or(FLAG_SPILLED, std::memory_order_relaxed);
+	spill_reads.fetch_add(1, std::memory_order_relaxed);
+	return true;
+}
+
+void BlockCache::Fetch(BlockCacheFile &file, const Run &run, vector<optional_ptr<BlockCacheEntry>> &entries) {
+	D_ASSERT(entries.size() == run.block_count);
+	vector<bool> pending(entries.size(), false);
+	idx_t first_pending = entries.size();
+	idx_t last_pending = 0;
+	bool shareable = true;
+	try {
+		TaskScheduler::BlockingScope blocking;
+		for (idx_t i = 0; i < entries.size(); i++) {
+			if (!entries[i]) {
+				continue;
+			}
+			const auto block = run.first_block + i;
+			if (ReadSpilled(MakeKey(file.number, block), *entries[i], file.BlockBytes(block))) {
+				FinishLoad(*entries[i], true, true);
+				continue;
+			}
+			pending[i] = true;
+			first_pending = MinValue(first_pending, i);
+			last_pending = i;
+		}
+		if (first_pending < entries.size()) {
+			if (file.IsUnbacked()) {
+				throw InternalException("A block of the in-memory file \"%s\" is missing from the block cache",
+				                        file.path);
+			}
+			const auto start = (run.first_block + first_pending) * BLOCK_SIZE;
+			const auto end = MinValue(file.GetSize(), (run.first_block + last_pending + 1) * BLOCK_SIZE);
+			auto source = file.Source();
+			if (first_pending == last_pending) {
+				source->Read(FrameData(entries[first_pending]->frame.load(std::memory_order_relaxed)), end - start,
+				             start);
+			} else {
+				auto buffer = Allocator::DefaultAllocator().Allocate(end - start);
+				source->Read(buffer.get(), end - start, start);
+				for (idx_t i = first_pending; i <= last_pending; i++) {
+					if (pending[i]) {
+						const auto block_bytes = file.BlockBytes(run.first_block + i);
+						memcpy(FrameData(entries[i]->frame.load(std::memory_order_relaxed)),
+						       buffer.get() + (i - first_pending) * BLOCK_SIZE, block_bytes);
+					}
+				}
+			}
+			const auto valid_until = source->file_system.GetCacheValidUntil(*source);
+			shareable = !valid_until || *valid_until != timestamp_t::ninfinity();
+			fetches.fetch_add(1, std::memory_order_relaxed);
+			fetched_bytes.fetch_add(end - start, std::memory_order_relaxed);
+		}
+	} catch (...) {
+		for (idx_t i = 0; i < entries.size(); i++) {
+			if (pending[i] || (entries[i] && (entries[i]->state.load(std::memory_order_relaxed) & FLAG_LOADING))) {
+				FinishLoad(*entries[i], false, false);
+			}
+		}
+		throw;
+	}
+	for (idx_t i = 0; i < entries.size(); i++) {
+		if (!pending[i]) {
+			continue;
+		}
+		entries[i]->valid.store(NumericCast<uint32_t>(file.BlockBytes(run.first_block + i)), std::memory_order_release);
+		FinishLoad(*entries[i], true, shareable);
+	}
+}
+
+BlockCachePin BlockCache::Pin(const shared_ptr<BlockCacheFile> &file_p, idx_t block) {
+	auto &file = *file_p;
+	if (block >= file.BlockCount()) {
+		throw InternalException("Block %llu of \"%s\" lies past its end", block, file.path);
+	}
+	const auto key = MakeKey(file.number, block);
+	while (true) {
+		BlockCachePin result;
+		if (Lookup(key, result, true)) {
+			return result;
+		}
+		uint32_t frame;
+		if (!AcquireFrame(frame)) {
+			return ReadPrivate(file, block);
+		}
+		auto entry = InsertLoading(key, frame, FileFlags(file));
+		if (!entry) {
+			ReleaseFrame(frame);
+			continue;
+		}
+		misses.fetch_add(1, std::memory_order_relaxed);
+		vector<optional_ptr<BlockCacheEntry>> entries {entry};
+		try {
+			Fetch(file, Run {block, 1}, entries);
+		} catch (...) {
+			Unpin(*entry);
+			throw;
+		}
+		return BlockCachePin(*this, *entry, FrameData(frame), entry->valid.load(std::memory_order_acquire));
+	}
+}
+
+BlockCachePin BlockCache::ReadPrivate(BlockCacheFile &file, idx_t block) {
+	const auto nr_bytes = file.BlockBytes(block);
+	auto buffer = BufferManager::GetBufferManager(db).Allocate(MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE);
+	buffer.GetBlockHandle()->GetMemory().SetDestroyBufferUpon(DestroyBufferUpon::UNPIN);
+	if (!spill.Read(MakeKey(file.number, block), buffer.GetDataMutable())) {
+		if (file.IsUnbacked()) {
+			throw InternalException("A block of the in-memory file \"%s\" is missing from the block cache", file.path);
+		}
+		TaskScheduler::BlockingScope blocking;
+		file.Source()->Read(buffer.GetDataMutable(), nr_bytes, block * BLOCK_SIZE);
+		fetches.fetch_add(1, std::memory_order_relaxed);
+		fetched_bytes.fetch_add(nr_bytes, std::memory_order_relaxed);
+	}
+	misses.fetch_add(1, std::memory_order_relaxed);
+	BlockCachePin result;
+	result.data = buffer.GetDataMutable();
+	result.size = nr_bytes;
+	result.buffer = std::move(buffer);
+	return result;
+}
+
+BlockCachePin BlockCache::TryPin(BlockCacheFile &file, idx_t block) {
+	BlockCachePin result;
+	Lookup(MakeKey(file.number, block), result, false);
+	return result;
+}
+
+vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &file_p, idx_t offset, idx_t size) {
+	auto &file = *file_p;
+	vector<BlockCachePin> result;
+	const auto file_size = file.GetSize();
+	if (size == 0 || offset >= file_size) {
+		return result;
+	}
+	const auto end = MinValue(offset + size, file_size);
+	const auto first = offset / BLOCK_SIZE;
+	const auto count = (end - 1) / BLOCK_SIZE - first + 1;
+	result.resize(count);
+	for (idx_t i = 0; i < count; i++) {
+		PinPresent(MakeKey(file.number, first + i), result[i]);
+	}
+	idx_t next = 0;
+	while (next < count) {
+		if (result[next].IsValid()) {
+			next++;
+			continue;
+		}
+		Run run {first + next, 0};
+		vector<optional_ptr<BlockCacheEntry>> entries;
+		idx_t gap = 0;
+		for (idx_t i = next; i < count && (run.block_count + 1) * BLOCK_SIZE <= MAX_REQUEST; i++) {
+			if (!result[i].IsValid()) {
+				uint32_t frame;
+				if (!AcquireFrame(frame)) {
+					break;
+				}
+				auto entry = InsertLoading(MakeKey(file.number, first + i), frame, FileFlags(file));
+				if (!entry) {
+					ReleaseFrame(frame);
+					break;
+				}
+				result[i] = BlockCachePin(*this, *entry, nullptr, 0);
+				entries.push_back(entry);
+				run.block_count++;
+				gap = 0;
+				misses.fetch_add(1, std::memory_order_relaxed);
+				continue;
+			}
+			if ((gap + 1) * BLOCK_SIZE > MERGE_GAP) {
+				break;
+			}
+			gap++;
+			entries.push_back(nullptr);
+			run.block_count++;
+		}
+		while (!entries.empty() && !entries.back()) {
+			entries.pop_back();
+			run.block_count--;
+		}
+		if (entries.empty()) {
+			result[next] = Pin(file_p, first + next);
+			next++;
+			continue;
+		}
+		Fetch(file, run, entries);
+		for (idx_t i = 0; i < run.block_count; i++) {
+			if (entries[i]) {
+				auto &pin = result[run.first_block - first + i];
+				pin.data = FrameData(entries[i]->frame.load(std::memory_order_relaxed));
+				pin.size = entries[i]->valid.load(std::memory_order_acquire);
+			}
+		}
+		next = run.first_block - first + run.block_count;
+	}
+	for (idx_t i = 0; i < count; i++) {
+		auto &pin = result[i];
+		if (!pin.data && !(pin.IsValid() && AwaitLoad(pin))) {
+			pin = Pin(file_p, first + i);
+		}
+	}
+	return result;
+}
+
+vector<BlockCachePin> BlockCache::TryPinRange(BlockCacheFile &file, idx_t offset, idx_t size) {
+	vector<BlockCachePin> result;
+	const auto file_size = file.GetSize();
+	if (size == 0 || offset >= file_size) {
+		return result;
+	}
+	const auto first = offset / BLOCK_SIZE;
+	const auto last = (MinValue(offset + size, file_size) - 1) / BLOCK_SIZE;
+	result.reserve(last - first + 1);
+	for (auto block = first; block <= last; block++) {
+		BlockCachePin pin;
+		if (!Lookup(MakeKey(file.number, block), pin, false)) {
+			result.clear();
+			break;
+		}
+		result.push_back(std::move(pin));
+	}
+	return result;
+}
+
+bool BlockCache::TryRead(BlockCacheFile &file, idx_t offset, data_ptr_t buffer, idx_t size) {
+	const auto in_block = offset % BLOCK_SIZE;
+	if (in_block + size > BLOCK_SIZE) {
+		return false;
+	}
+	const auto key = MakeKey(file.number, offset / BLOCK_SIZE);
+	auto &bucket = BucketFor(key);
+	for (idx_t attempt = 0; attempt < 4; attempt++) {
+		BlockCacheEntry *found = nullptr;
+		uint64_t state = 0;
+		auto entry = &bucket.first;
+		for (idx_t steps = 0; steps <= frame_count; steps++) {
+			state = entry->state.load(std::memory_order_acquire);
+			if (entry->key.load(std::memory_order_relaxed) == key && (state & FLAG_LOADED) && !(state & UNPINNABLE)) {
+				found = entry;
+				break;
+			}
+			const auto next = entry->next.load(std::memory_order_acquire);
+			if (next == 0) {
+				break;
+			}
+			entry = &pool[next - 1];
+		}
+		if (!found || in_block + size > found->valid.load(std::memory_order_acquire)) {
+			return false;
+		}
+		CopyOptimistic(buffer, FrameData(found->frame.load(std::memory_order_relaxed)) + in_block, size);
+		std::atomic_thread_fence(std::memory_order_acquire);
+		if ((found->state.load(std::memory_order_relaxed) & STABLE_MASK) == (state & STABLE_MASK)) {
+			CountHit(*found);
+			return true;
+		}
+	}
+	return false;
+}
+
+ProducerToken &BlockCache::Producer() {
+	annotated_lock_guard<annotated_mutex> guard(fetch_lock);
+	if (!producer) {
+		producer = TaskScheduler::GetScheduler(db).CreateProducer();
+	}
+	return *producer;
+}
+
+void BlockCache::FinishFetchTask(idx_t bytes) {
+	in_flight.fetch_sub(bytes, std::memory_order_relaxed);
+	annotated_lock_guard<annotated_mutex> guard(fetch_lock);
+	pending_tasks--;
+}
+
+bool BlockCache::TakeFetchTask(shared_ptr<Task> &task) {
+	annotated_lock_guard<annotated_mutex> guard(fetch_lock);
+	return producer && TaskScheduler::GetScheduler(db).GetTaskFromProducer(*producer, task);
+}
+
+void BlockCache::StopFetching() {
+	{
+		annotated_lock_guard<annotated_mutex> guard(fetch_lock);
+		stopped = true;
+	}
+	while (true) {
+		shared_ptr<Task> task;
+		if (!TakeFetchTask(task)) {
+			break;
+		}
+	}
+	annotated_unique_lock<annotated_mutex> guard(fetch_lock);
+	while (pending_tasks != 0) {
+		fetch_lock.Await(absl::Condition(
+		    +[](BlockCache *cache) DUCKDB_NO_THREAD_SAFETY_ANALYSIS { return cache->pending_tasks == 0; }, this));
+	}
+	producer.reset();
+}
+
+void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file_p, idx_t offset, idx_t size) {
+	auto &file = *file_p;
+	const auto file_size = file.GetSize();
+	if (file.IsUnbacked() || size == 0 || offset >= file_size) {
+		return;
+	}
+	size = MinValue(size, file_size - offset);
+	const auto last = (offset + size - 1) / BLOCK_SIZE;
+	auto block = offset / BLOCK_SIZE;
+	while (block <= last) {
+		while (block <= last && FindEntry(MakeKey(file.number, block))) {
+			block++;
+		}
+		if (block > last) {
+			return;
+		}
+		Run run {block, 0};
+		vector<optional_ptr<BlockCacheEntry>> entries;
+		idx_t gap = 0;
+		idx_t bytes = 0;
+		bool exhausted = false;
+		while (block <= last && (run.block_count + 1) * BLOCK_SIZE <= MAX_REQUEST) {
+			const auto key = MakeKey(file.number, block);
+			if (!FindEntry(key)) {
+				const auto block_bytes = file.BlockBytes(block);
+				if (file.in_flight.load(std::memory_order_relaxed) + bytes + block_bytes > MAX_FILE_IN_FLIGHT ||
+				    in_flight.load(std::memory_order_relaxed) + bytes + block_bytes > MAX_IN_FLIGHT) {
+					exhausted = true;
+					break;
+				}
+				uint32_t frame;
+				if (!AcquireFrame(frame)) {
+					exhausted = true;
+					break;
+				}
+				auto entry = InsertLoading(key, frame, FileFlags(file) | FLAG_PREFETCHED);
+				if (entry) {
+					entries.push_back(entry);
+					run.block_count++;
+					bytes += block_bytes;
+					gap = 0;
+					block++;
+					misses.fetch_add(1, std::memory_order_relaxed);
+					continue;
+				}
+				ReleaseFrame(frame);
+			}
+			if ((gap + 1) * BLOCK_SIZE > MERGE_GAP) {
+				break;
+			}
+			gap++;
+			entries.push_back(nullptr);
+			run.block_count++;
+			block++;
+		}
+		while (!entries.empty() && !entries.back()) {
+			entries.pop_back();
+			run.block_count--;
+		}
+		if (!entries.empty()) {
+			ScheduleFetch(file_p, run, std::move(entries), bytes);
+		}
+		if (exhausted) {
+			return;
+		}
+	}
+}
+
+void BlockCache::ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run &run,
+                               vector<optional_ptr<BlockCacheEntry>> entries, idx_t bytes) {
+	bool accepted;
+	{
+		annotated_lock_guard<annotated_mutex> guard(fetch_lock);
+		accepted = !stopped;
+		if (accepted) {
+			pending_tasks++;
+		}
+	}
+	if (!accepted) {
+		for (auto &entry : entries) {
+			if (entry) {
+				FinishLoad(*entry, false, false);
+				Unpin(*entry);
+			}
+		}
+		return;
+	}
+	file->in_flight.fetch_add(bytes, std::memory_order_relaxed);
+	in_flight.fetch_add(bytes, std::memory_order_relaxed);
+	auto task = make_shared_ptr<BlockCacheFetchTask>(*this, file, run, std::move(entries), bytes);
+	auto &scheduler = TaskScheduler::GetScheduler(db);
+	auto &producer_token = Producer();
+	const auto pool = scheduler.NumberOfAsyncThreads() == 0 ? TaskSchedulerType::REGULAR : TaskSchedulerType::ASYNC;
+	scheduler.ScheduleTask(producer_token, std::move(task), pool);
+}
+
+BlockCachePin BlockCache::CreateBlock(BlockCacheFile &file, idx_t block) {
+	D_ASSERT(file.IsUnbacked());
+	const auto key = MakeKey(file.number, block);
+	uint32_t frame;
+	if (!AcquireFrame(frame)) {
+		throw OutOfMemoryException("The block cache has no free frame for a block of \"%s\"", file.path);
+	}
+	auto entry = InsertLoading(key, frame, FLAG_UNBACKED);
+	if (!entry) {
+		ReleaseFrame(frame);
+		throw InternalException("Block %llu of \"%s\" is written twice", block, file.path);
+	}
+	memset(FrameData(frame), 0, BLOCK_SIZE);
+	entry->valid.store(NumericCast<uint32_t>(BLOCK_SIZE), std::memory_order_release);
+	FinishLoad(*entry, true, true);
+	return BlockCachePin(*this, *entry, FrameData(frame), BLOCK_SIZE);
+}
+
+void BlockCache::SetUnbackedSize(BlockCacheFile &file, idx_t size) {
+	D_ASSERT(file.IsUnbacked());
+	file.size.store(size, std::memory_order_release);
+}
+
+idx_t BlockCache::EvictToReduceMemory(idx_t target) {
+	idx_t freed = 0;
+	while (freed < target) {
+		uint32_t frame;
+		if (!EvictOne(frame)) {
+			break;
+		}
+		ReleaseFrame(frame);
+		freed += BLOCK_SIZE;
+	}
+	return freed;
+}
+
+void BlockCache::SetCapacity(idx_t capacity) {
+	capacity_frames.store(MinValue<idx_t>(frame_count, capacity / BLOCK_SIZE), std::memory_order_relaxed);
+	while (used_frames.load(std::memory_order_relaxed) > capacity_frames.load(std::memory_order_relaxed)) {
+		uint32_t frame;
+		if (!EvictOne(frame)) {
+			break;
+		}
+		ReleaseFrame(frame);
+	}
+}
+
+void BlockCache::SetSpill(const string &path, idx_t size) {
+	if (path.empty() && !spill.IsConfigured()) {
+		return;
+	}
+	spill.Configure(FileSystem::GetFileSystem(db), path, size);
+	unbacked_spill_ready.store(spill.IsConfigured(), std::memory_order_release);
+}
+
+BlockCacheStatistics BlockCache::GetStatistics() const {
+	BlockCacheStatistics result;
+	result.capacity = capacity_frames.load(std::memory_order_relaxed) * BLOCK_SIZE;
+	result.used = used_frames.load(std::memory_order_relaxed) * BLOCK_SIZE;
+	for (auto &shard : hits) {
+		result.hits += shard.value.load(std::memory_order_relaxed);
+	}
+	result.misses = misses.load(std::memory_order_relaxed);
+	result.fetched_bytes = fetched_bytes.load(std::memory_order_relaxed);
+	result.fetches = fetches.load(std::memory_order_relaxed);
+	result.evictions = evictions.load(std::memory_order_relaxed);
+	result.spilled = spilled.load(std::memory_order_relaxed);
+	result.spill_reads = spill_reads.load(std::memory_order_relaxed);
+	return result;
+}
+
+vector<CachedFileInformation> BlockCache::GetBlockInformation() const {
+	unordered_map<uint32_t, pair<string, idx_t>> paths;
+	{
+		annotated_lock_guard<annotated_mutex> guard(file_lock);
+		for (auto &file : files) {
+			paths[file.second.number] = make_pair(file.first, file.second.info.validation.file_size);
+		}
+	}
+	vector<CachedFileInformation> result;
+	unordered_set<uint64_t> in_memory;
+	const auto high = high_water.load(std::memory_order_relaxed);
+	for (idx_t frame = 0; frame < high; frame++) {
+		auto entry = frame_owner[frame].load(std::memory_order_acquire);
+		if (!entry) {
+			continue;
+		}
+		const auto state = entry->state.load(std::memory_order_acquire);
+		const auto key = entry->key.load(std::memory_order_relaxed);
+		if (!(state & FLAG_LOADED) || key == 0) {
+			continue;
+		}
+		auto path = paths.find(static_cast<uint32_t>(key >> 32));
+		if (path == paths.end()) {
+			continue;
+		}
+		in_memory.insert(key);
+		result.push_back({path->second.first, entry->valid.load(std::memory_order_relaxed),
+		                  (key & 0xFFFFFFFFULL) * BLOCK_SIZE, true, spill.Contains(key)});
+	}
+	for (auto key : spill.Keys()) {
+		auto path = paths.find(static_cast<uint32_t>(key >> 32));
+		if (path == paths.end() || in_memory.find(key) != in_memory.end()) {
+			continue;
+		}
+		const idx_t location = (key & 0xFFFFFFFFULL) * BLOCK_SIZE;
+		const auto file_size = path->second.second;
+		const auto nr_bytes = location >= file_size ? 0 : MinValue(BLOCK_SIZE, file_size - location);
+		result.push_back({path->second.first, nr_bytes, location, false, true});
+	}
+	return result;
+}
+
+} // namespace duckdb

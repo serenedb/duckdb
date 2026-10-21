@@ -1,5 +1,5 @@
 # name: test/sql/storage/external_file_cache/internal_issue_10700.test
-# description: Internal issue 10700 - Reloading spilled external cache blocks preserves their buffer type
+# description: Internal issue 10700 - Spilled external file cache blocks are read back after the memory limit shrinks
 # group: [external_file_cache]
 
 require parquet
@@ -9,7 +9,10 @@ require httpfs
 require skip_reload
 
 statement ok
-SET external_file_cache_spill=true;
+SET external_file_cache_spill_path='{TEST_DIR}/internal_issue_10700.spill';
+
+statement ok
+SET external_file_cache_spill_size='1GB';
 
 statement ok
 SET memory_limit='200MB';

@@ -22,7 +22,7 @@ void FileBufferHandleGroup::CopyTo(data_ptr_t dest, idx_t nr_bytes) const {
 		if (to_copy == 0) {
 			continue;
 		}
-		memcpy(dest + copied, mh.handle.Ptr() + mh.start_offset, to_copy);
+		memcpy(dest + copied, mh.data, to_copy);
 		copied += to_copy;
 	}
 	if (copied != nr_bytes) {
@@ -35,7 +35,7 @@ const_data_ptr_t FileBufferHandleGroup::Ptr() const {
 	if (handles.size() != 1) {
 		throw InternalException("FileBufferHandleGroup::Ptr() requires exactly one handle, got %llu", handles.size());
 	}
-	return handles[0].handle.Ptr() + handles[0].start_offset;
+	return handles[0].data;
 }
 
 } // namespace duckdb

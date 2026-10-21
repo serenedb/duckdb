@@ -23,9 +23,4 @@ enum class CachingMode : uint8_t {
 	NO_CACHING = 2,
 };
 
-enum class RequestSizing : uint8_t {
-	BY_CACHE = 0,
-	BY_READER = 1,
-};
-
 } // namespace duckdb
