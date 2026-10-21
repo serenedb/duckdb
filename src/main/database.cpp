@@ -37,6 +37,7 @@
 #include "duckdb/storage/block_allocator.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/compression/empty_validity.hpp"
+#include "duckdb/common/memory_file_system.hpp"
 #include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/object_cache.hpp"
 #include "duckdb/storage/shared_object_cache.hpp"
@@ -106,6 +107,9 @@ DatabaseInstance::~DatabaseInstance() {
 	// stop the log manager, after this point Logger calls are unsafe.
 	log_manager.reset();
 
+	if (memory_file_system) {
+		memory_file_system->Clear();
+	}
 	if (block_cache) {
 		GetBufferPool().SetBlockCache(nullptr);
 		block_cache_ptr.store(nullptr, std::memory_order_release);
@@ -515,6 +519,13 @@ optional_ptr<BlockCache> DatabaseInstance::TryGetBlockCache() {
 	return block_cache_ptr.load(std::memory_order_acquire);
 }
 
+MemoryFileSystem &DatabaseInstance::GetMemoryFileSystem() {
+	if (!memory_file_system) {
+		throw InternalException("The database has no memory:// filesystem");
+	}
+	return *memory_file_system;
+}
+
 ResultSetManager &DatabaseInstance::GetResultSetManager() {
 	return *result_set_manager;
 }
@@ -575,6 +586,9 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 		config.file_system = std::move(new_config.file_system);
 	} else {
 		config.file_system = make_uniq<VirtualFileSystem>(FileSystem::CreateLocal());
+		auto memory_fs = make_uniq<MemoryFileSystem>(*this);
+		memory_file_system = memory_fs.get();
+		config.file_system->RegisterSubSystem(std::move(memory_fs));
 	}
 	config.http_transport_manager->Initialize(config);
 	if (database_path && !Settings::Get<EnableExternalAccessSetting>(*this)) {
