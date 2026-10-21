@@ -439,15 +439,21 @@ bool TableIndexList::HasBufferedReplays() const {
 	return false;
 }
 
-bool TableIndexList::NameIsUnique(const string &name) const {
+bool TableIndexList::NameIsUnique(const string &name, optional_ptr<const unordered_set<idx_t>> dropped,
+                                  optional_idx replaced) const {
 	annotated_lock_guard lock(index_entries_lock);
 	// Only covers PK, FK, and UNIQUE indexes.
 	// is_unique also covers primary-key indexes.
 	for (const auto &entry : index_entries) {
 		auto index_info = entry->GetStorageInfo();
-		if ((index_info.is_unique || index_info.is_foreign) && entry->GetName() == name) {
-			return false;
+		if (!(index_info.is_unique || index_info.is_foreign) || entry->GetName() != name) {
+			continue;
 		}
+		const auto oid = entry->GetIndexOid();
+		if ((replaced.IsValid() && replaced.GetIndex() == oid) || (dropped && dropped->contains(oid))) {
+			continue;
+		}
+		return false;
 	}
 	return true;
 }

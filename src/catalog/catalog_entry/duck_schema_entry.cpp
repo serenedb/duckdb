@@ -50,6 +50,7 @@
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
+#include "duckdb/transaction/local_storage.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/parser/parsed_data/create_window_function_info.hpp"
 
@@ -417,6 +418,22 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction trans
 	return CreateIndex(transaction, info, relation);
 }
 
+static bool IndexNameIsUnique(CatalogTransaction transaction, DuckSchemaEntry &schema, const CreateIndexInfo &info,
+                              TableCatalogEntry &table) {
+	optional_ptr<const unordered_set<idx_t>> dropped;
+	if (transaction.transaction) {
+		dropped = &LocalStorage::Get(transaction.transaction->Cast<DuckTransaction>()).DroppedIndexes();
+	}
+	optional_idx replaced;
+	if (info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		auto entry = schema.GetCatalogSet(CatalogType::INDEX_ENTRY).GetEntry(transaction, info.GetIndexName());
+		if (entry) {
+			replaced = entry->oid;
+		}
+	}
+	return table.GetStorage().IndexNameIsUnique(info.GetIndexName().GetIdentifierName(), dropped, replaced);
+}
+
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
                                                         CatalogEntry &relation) {
 	info.table_oid = relation.oid;
@@ -427,7 +444,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction trans
 	// concurrency-safe name checks against other INDEX catalog entries happens in the catalog
 	if (info.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT && !catalog.UsesCatalogLog() &&
 	    relation.type == CatalogType::TABLE_ENTRY && relation.Cast<TableCatalogEntry>().IsDuckTable() &&
-	    !relation.Cast<TableCatalogEntry>().GetStorage().IndexNameIsUnique(info.GetIndexName().GetIdentifierName())) {
+	    !IndexNameIsUnique(transaction, *this, info, relation.Cast<TableCatalogEntry>())) {
 		throw CatalogException("An index with the name " + info.GetIndexName() + " already exists!");
 	}
 

@@ -269,9 +269,10 @@ public:
 
 	//! Scans the next chunk for the CREATE INDEX operator
 	bool CreateIndexScan(TableScanState &state, DataChunk &result);
-	//! Returns true, if the index name is unique (i.e., no PK, UNIQUE, FK constraint has the same name)
+	//! Returns true, if the index name is unique (i.e., no PK, UNIQUE, FK constraint other than the dropped indexes
+	//! and the replaced one has the same name)
 	//! FIXME: This is only necessary until we treat all indexes as catalog entries, allowing to alter constraints
-	bool IndexNameIsUnique(const string &name);
+	bool IndexNameIsUnique(const string &name, optional_ptr<const unordered_set<idx_t>> dropped, optional_idx replaced);
 
 	//! Initialize constraint verification state
 	unique_ptr<ConstraintState> InitializeConstraintState(TableCatalogEntry &table,

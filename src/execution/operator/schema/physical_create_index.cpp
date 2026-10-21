@@ -156,10 +156,9 @@ SinkFinalizeType PhysicalCreateIndex::Finalize(Pipeline &pipeline, Event &event,
 	auto check_mode = ConstraintCheckMode::DEFAULT;
 	idx_t index_oid = DConstants::INVALID_INDEX;
 	if (!alter_table_info) {
-		// Ensure that the index does not yet exist in the catalog.
-		auto entry =
-		    schema.GetEntry(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, info->GetIndexName());
-		if (entry) {
+		// Ensure that the index does not yet exist in the catalog, unless it is replaced.
+		if (info->on_conflict != OnCreateConflict::REPLACE_ON_CONFLICT &&
+		    schema.GetEntry(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, info->GetIndexName())) {
 			if (info->on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT) {
 				throw CatalogException("Index with name %s already exists!", info->GetIndexName());
 			}
