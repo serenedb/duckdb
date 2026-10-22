@@ -22,7 +22,8 @@ struct MemoryFile;
 
 //! Files that exist only in memory, under memory:// paths, written once from start to end. The instance a database
 //! registers keeps them in unbacked blocks of its block cache, which spill instead of being dropped, so they can grow
-//! past the cache; a private instance keeps each file in one heap allocation, which maps in place.
+//! past the cache, until Compact moves a file into one buffer-managed allocation that maps in place; a private
+//! instance keeps each file in one heap allocation, which maps in place.
 class MemoryFileSystem : public FileSystem {
 public:
 	static constexpr const char *PREFIX = "memory://";
@@ -35,7 +36,7 @@ public:
 
 	unique_ptr<FileHandle> OpenFile(const string &path, FileOpenFlags flags,
 	                                optional_ptr<FileOpener> opener = nullptr) override;
-	//! Maps a heap file; a file in blocks is read with GetBlockFile instead
+	//! Maps a heap or compacted file, which stays pinned while mapped; a file in blocks is read with GetBlockFile
 	unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                           const MMapOptions &options,
 	                                           optional_ptr<FileOpener> opener = nullptr) override;
@@ -70,8 +71,12 @@ public:
 	string GetName() const override;
 	string PathSeparator(const string &path) override;
 
-	//! The block cache's view of a file of a registered instance, whose blocks a reader pins; null for a heap file
+	//! The block cache's view of a file of a registered instance, whose blocks a reader pins; null for a heap or
+	//! compacted file
 	shared_ptr<BlockCacheFile> GetBlockFile(const string &path);
+	//! Copies a closed file of a registered instance from its blocks into one buffer-managed allocation, which spills
+	//! only while nothing maps it; readers that pinned its blocks keep them until they close
+	void Compact(const string &path);
 	//! Removes every file; the database calls it before its block cache goes
 	void Clear();
 

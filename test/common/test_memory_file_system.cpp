@@ -130,6 +130,61 @@ TEST_CASE("Heap memory files map in place, block files do not", "[memory_file_sy
 	REQUIRE(grown->Size() == 1);
 }
 
+TEST_CASE("Compacted memory files map in place", "[memory_file_system]") {
+	DuckDB db(nullptr);
+	MemoryFileSystem fs(*db.instance);
+	auto &cache = BlockCache::Get(*db.instance);
+	for (const idx_t size : {idx_t(0), idx_t(1), MEMORY_BLOCK, 5 * MEMORY_BLOCK + 123}) {
+		const auto path = "memory://compact/f" + to_string(size);
+		WriteFile(fs, path, size);
+		auto blocks = fs.GetBlockFile(path);
+		REQUIRE(blocks);
+		fs.Compact(path);
+		REQUIRE(!fs.GetBlockFile(path));
+		REQUIRE(ReadsBack(fs, path, size));
+		auto mapped = fs.MemoryMapFile(OpenFileInfo(path), FileFlags::FILE_FLAGS_READ, MMapOptions());
+		REQUIRE(mapped);
+		REQUIRE(mapped->Size() == size);
+		if (size == 0) {
+			continue;
+		}
+		REQUIRE(HoldsBytes(mapped->GetData(0, size), 0, size));
+		auto pin = cache.Pin(blocks, 0);
+		REQUIRE(HoldsBytes(pin.Ptr(), 0, MinValue(size, MEMORY_BLOCK)));
+		fs.Compact(path);
+		fs.RemoveFile(path);
+		REQUIRE(HoldsBytes(mapped->GetData(0, size), 0, size));
+	}
+	auto writer = fs.OpenFile("memory://compact/open", FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE);
+	REQUIRE_THROWS(fs.Compact("memory://compact/open"));
+	REQUIRE_THROWS(fs.Compact("memory://compact/missing"));
+
+	MemoryFileSystem heap;
+	WriteFile(heap, "memory://heap.bin", MEMORY_BLOCK + 1);
+	heap.Compact("memory://heap.bin");
+	REQUIRE(ReadsBack(heap, "memory://heap.bin", MEMORY_BLOCK + 1));
+}
+
+TEST_CASE("Compacted memory files spill while nothing maps them", "[memory_file_system]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("SET memory_limit='48MB'"));
+	REQUIRE_NO_FAIL(con.Query("SET temp_directory='" + TestCreatePath("memory_file_compact_spill") + "'"));
+	auto &fs = FileSystem::GetFileSystem(*db.instance);
+	auto &memory = db.instance->GetMemoryFileSystem();
+	constexpr idx_t size = 64 * MEMORY_BLOCK + 5;
+	for (idx_t i = 0; i < 3; i++) {
+		const auto path = "memory://compact_spill/f" + to_string(i);
+		WriteFile(fs, path, size, MEMORY_BLOCK);
+		memory.Compact(path);
+	}
+	for (idx_t i = 0; i < 3; i++) {
+		const auto path = "memory://compact_spill/f" + to_string(i);
+		auto mapped = memory.MemoryMapFile(OpenFileInfo(path), FileFlags::FILE_FLAGS_READ, MMapOptions());
+		REQUIRE(HoldsBytes(mapped->GetData(0, size), 0, size));
+	}
+}
+
 TEST_CASE("Memory directories list, move and remove files", "[memory_file_system]") {
 	DuckDB db(nullptr);
 	MemoryFileSystem fs(*db.instance);
