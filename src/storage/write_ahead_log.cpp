@@ -722,17 +722,6 @@ void WALEntryBuffer::WriteInsert(DataChunk &chunk, idx_t row_start) {
 	entry_count++;
 }
 
-void WALEntryBuffer::WriteDelete(DataChunk &chunk) {
-	D_ASSERT(chunk.size() > 0);
-	D_ASSERT(chunk.ColumnCount() == 1 && chunk.data[0].GetType() == LogicalType::ROW_TYPE);
-	chunk.Verify(database.GetDatabase());
-
-	WriteAheadLogSerializer serializer(database, stream, WALType::DELETE_TUPLE);
-	serializer.WriteProperty(101, "chunk", chunk);
-	serializer.End();
-	entry_count++;
-}
-
 void WALEntryBuffer::WriteTruncateTable() {
 	WriteAheadLogSerializer serializer(database, stream, WALType::TRUNCATE_TABLE);
 	serializer.End();

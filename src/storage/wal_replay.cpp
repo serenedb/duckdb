@@ -2099,10 +2099,6 @@ void WriteAheadLogDeserializer::ReplayDelete() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	if (!state.current_table && state.current_log_table) {
-		state.current_log_table->ReplayDelete(context, chunk);
-		return;
-	}
 	if (!state.current_table && state.table_storage) {
 		return;
 	}
