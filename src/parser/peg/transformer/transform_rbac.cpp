@@ -187,6 +187,9 @@ CatalogType GrantObjectType(const string &keyword) {
 	if (keyword == "FOREIGN SERVER") {
 		return CatalogType::FOREIGN_SERVER_ENTRY;
 	}
+	if (keyword == "TABLESPACE") {
+		return CatalogType::TABLESPACE_ENTRY;
+	}
 	throw ParserException("unrecognized privilege object type %s", keyword);
 }
 

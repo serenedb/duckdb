@@ -9,9 +9,12 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateIndexStmt(
     const optional<Identifier> &index_name, unique_ptr<BaseTableRef> base_table_name,
     const optional<Identifier> &index_type, IndexColumnsDefinition index_columns,
     optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
-    optional<unique_ptr<ParsedExpression>> where_clause) {
+    const optional<Identifier> &tablespace_clause, optional<unique_ptr<ParsedExpression>> where_clause) {
 	auto result = make_uniq<CreateStatement>();
 	auto index_info = make_uniq<CreateIndexInfo>();
+	if (tablespace_clause) {
+		index_info->tablespace = *tablespace_clause;
+	}
 	index_info->constraint_type = unique_index ? IndexConstraintType::UNIQUE : IndexConstraintType::NONE;
 	index_info->on_conflict =
 	    if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
