@@ -38,6 +38,8 @@ AclMode Permissions::AllPrivileges(CatalogType acl_class) {
 	case CatalogType::TYPE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 		return AclMode::Usage;
+	case CatalogType::TABLESPACE_ENTRY:
+		return AclMode::Create;
 	default:
 		return AclMode::NoRights;
 	}

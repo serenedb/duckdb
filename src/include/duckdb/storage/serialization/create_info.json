@@ -104,6 +104,13 @@
         "name": "schema_oid",
         "type": "idx_t",
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16487,
+        "name": "tablespace_oid",
+        "type": "idx_t",
+        "default": 0,
+        "version": "serenedb_v1"
       }
     ],
     "methods": {
@@ -682,6 +689,32 @@
         "id": 204,
         "name": "options",
         "type": "case_insensitive_map_t<string>"
+      }
+    ],
+    "methods": {
+      "SetName": [
+        "name"
+      ]
+    }
+  },
+  {
+    "class": "CreateTablespaceInfo",
+    "base": "CreateInfo",
+    "enum": "TABLESPACE_ENTRY",
+    "includes": [
+      "duckdb/parser/parsed_data/create_tablespace_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 200,
+        "name": "name",
+        "serialize_property": "qualified_name.Name()",
+        "type": "Identifier"
+      },
+      {
+        "id": 201,
+        "name": "location",
+        "type": "string"
       }
     ],
     "methods": {

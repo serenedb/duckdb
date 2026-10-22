@@ -167,6 +167,8 @@ string PhysicalOperatorToString(PhysicalOperatorType type) {
 		return "CREATE_FOREIGN_SERVER";
 	case PhysicalOperatorType::CREATE_TOKENIZER:
 		return "CREATE_TOKENIZER";
+	case PhysicalOperatorType::CREATE_TABLESPACE:
+		return "CREATE_TABLESPACE";
 	case PhysicalOperatorType::ATTACH:
 		return "ATTACH";
 	case PhysicalOperatorType::DETACH:

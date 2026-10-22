@@ -72,6 +72,7 @@ public:
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeDatabaseEntry(CreateDatabaseInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeForeignServerEntry(CreateForeignServerInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeSubscriptionEntry(CreateSubscriptionInfo &info);
+	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeTablespaceEntry(CreateTablespaceInfo &info);
 	DUCKDB_API virtual unique_ptr<StandardEntry> MakeTokenizerEntry(CatalogTransaction transaction,
 	                                                                DuckSchemaEntry &schema, CreateTokenizerInfo &info);
 	DUCKDB_API virtual unique_ptr<StandardEntry> MakeJobEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
@@ -88,6 +89,9 @@ public:
 	                                                         CreateSubscriptionInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateReplicationOrigin(CatalogTransaction transaction,
 	                                                              CreateReplicationOriginInfo &info);
+	DUCKDB_API optional_ptr<CatalogEntry> CreateTablespace(CatalogTransaction transaction,
+	                                                       CreateTablespaceInfo &info) override;
+	DUCKDB_API void DropTablespace(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropRole(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropDatabase(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropForeignServer(CatalogTransaction transaction, DropInfo &info) override;
@@ -169,6 +173,7 @@ private:
 	unique_ptr<CatalogSet> foreign_servers;
 	unique_ptr<CatalogSet> subscriptions;
 	unique_ptr<CatalogSet> replication_origins;
+	unique_ptr<CatalogSet> tablespaces;
 
 	//! Identifies whether the db is encrypted
 	bool is_encrypted = false;

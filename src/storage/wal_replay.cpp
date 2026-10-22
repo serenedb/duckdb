@@ -29,6 +29,7 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_tablespace_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_replication_origin_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
@@ -385,6 +386,9 @@ protected:
 
 	void ReplayCreateForeignServer();
 	void ReplayDropForeignServer();
+
+	void ReplayCreateTablespace();
+	void ReplayDropTablespace();
 
 	void ReplayCreateSubscription();
 	void ReplayDropSubscription();
@@ -1045,6 +1049,12 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::DROP_FOREIGN_SERVER:
 		ReplayDropForeignServer();
 		break;
+	case WALType::CREATE_TABLESPACE:
+		ReplayCreateTablespace();
+		break;
+	case WALType::DROP_TABLESPACE:
+		ReplayDropTablespace();
+		break;
 	case WALType::CREATE_SUBSCRIPTION:
 		ReplayCreateSubscription();
 		break;
@@ -1166,6 +1176,7 @@ static bool ReplayHasSchemaPath(const CatalogEntry &entry) {
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SUBSCRIPTION_ENTRY:
 	case CatalogType::REPLICATION_ORIGIN_ENTRY:
+	case CatalogType::TABLESPACE_ENTRY:
 		return false;
 	default:
 		return true;
@@ -1695,6 +1706,28 @@ void WriteAheadLogDeserializer::ReplayDropForeignServer() {
 		return;
 	}
 	catalog.Cast<DuckCatalog>().DuckCatalog::DropForeignServer(catalog.GetCatalogTransaction(context), info);
+}
+
+void WriteAheadLogDeserializer::ReplayCreateTablespace() {
+	auto wal_entry = WALCreateTablespace::Deserialize(deserializer);
+	auto &info = wal_entry.tablespace;
+	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DuckCatalog::CreateTablespace(catalog.GetCatalogTransaction(context),
+	                                                          info->Cast<CreateTablespaceInfo>());
+}
+
+void WriteAheadLogDeserializer::ReplayDropTablespace() {
+	auto entry = WALDropTablespace::Deserialize(deserializer);
+	DropInfo info;
+	info.type = CatalogType::TABLESPACE_ENTRY;
+	info.SetName(std::move(entry.name));
+	if (DeserializeOnly()) {
+		return;
+	}
+	catalog.Cast<DuckCatalog>().DuckCatalog::DropTablespace(catalog.GetCatalogTransaction(context), info);
 }
 
 void WriteAheadLogDeserializer::ReplayCreateSubscription() {

@@ -92,6 +92,7 @@ enum class LogicalOperatorType : uint8_t {
 	LOGICAL_CREATE_ROLE = 140,
 	LOGICAL_CREATE_FOREIGN_SERVER = 141,
 	LOGICAL_CREATE_TOKENIZER = 142,
+	LOGICAL_CREATE_TABLESPACE = 143,
 
 	// -----------------------------
 	// Explain

@@ -166,6 +166,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlanInternal(LogicalOperator &op)
 	case LogicalOperatorType::LOGICAL_CREATE_ROLE:
 	case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
 	case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
+	case LogicalOperatorType::LOGICAL_CREATE_TABLESPACE:
 		return CreatePlan(op.Cast<LogicalCreate>());
 	case LogicalOperatorType::LOGICAL_PRAGMA:
 		return CreatePlan(op.Cast<LogicalPragma>());
