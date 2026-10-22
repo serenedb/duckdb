@@ -589,6 +589,16 @@ WALReplicationLsn WALReplicationLsn::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
+void WALRowPositionMaps::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<string>(101, "maps", maps);
+}
+
+WALRowPositionMaps WALRowPositionMaps::Deserialize(Deserializer &deserializer) {
+	WALRowPositionMaps result;
+	deserializer.ReadPropertyWithDefault<string>(101, "maps", result.maps);
+	return result;
+}
+
 void WALSequenceValue::Serialize(Serializer &serializer) const {
 	if (!serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<Identifier>(101, "schema", LegacySchema());

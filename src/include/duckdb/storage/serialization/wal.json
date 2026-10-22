@@ -842,5 +842,16 @@
         "type": "vector<idx_t>"
       }
     ]
+  },
+  {
+    "class": "WALRowPositionMaps",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "maps",
+        "type": "string"
+      }
+    ]
   }
 ]

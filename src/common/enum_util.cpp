@@ -7782,6 +7782,7 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 		{ static_cast<uint32_t>(WALType::TRUNCATE_TABLE), "TRUNCATE_TABLE" },
 		{ static_cast<uint32_t>(WALType::ADOPT_SEGMENTS), "ADOPT_SEGMENTS" },
 		{ static_cast<uint32_t>(WALType::DELETE_ROW_RANGES), "DELETE_ROW_RANGES" },
+		{ static_cast<uint32_t>(WALType::ROW_POSITION_MAPS), "ROW_POSITION_MAPS" },
 		{ static_cast<uint32_t>(WALType::WAL_VERSION), "WAL_VERSION" },
 		{ static_cast<uint32_t>(WALType::CHECKPOINT), "CHECKPOINT" },
 		{ static_cast<uint32_t>(WALType::WAL_FLUSH), "WAL_FLUSH" },
@@ -7793,12 +7794,12 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<WALType>(WALType value) {
-	return StringUtil::EnumToString(GetWALTypeValues(), 50, "WALType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetWALTypeValues(), 51, "WALType", static_cast<uint32_t>(value));
 }
 
 template<>
 WALType EnumUtil::FromString<WALType>(std::string_view value) {
-	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 50, "WALType", value));
+	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 51, "WALType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetWindowAggregationModeValues() {

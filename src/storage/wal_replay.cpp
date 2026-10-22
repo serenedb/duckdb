@@ -298,6 +298,7 @@ protected:
 		case WALType::TRUNCATE_TABLE:
 		case WALType::ADOPT_SEGMENTS:
 		case WALType::DELETE_ROW_RANGES:
+		case WALType::ROW_POSITION_MAPS:
 			return true;
 		default:
 			return false;
@@ -402,6 +403,7 @@ protected:
 	void ReplayTruncateTable();
 	void ReplayAdoptSegments();
 	void ReplayDeleteRowRanges();
+	void ReplayRowPositionMaps();
 	void ReplayCheckpoint();
 
 private:
@@ -1074,6 +1076,9 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 		break;
 	case WALType::DELETE_ROW_RANGES:
 		ReplayDeleteRowRanges();
+		break;
+	case WALType::ROW_POSITION_MAPS:
+		ReplayRowPositionMaps();
 		break;
 	default:
 		throw InternalException("Invalid WAL entry type!");
@@ -2200,6 +2205,24 @@ void WriteAheadLogDeserializer::ReplayDeleteRowRanges() {
 		return;
 	}
 	throw DataCorruptionException("Corrupt WAL: row ranges without a log table");
+}
+
+void WriteAheadLogDeserializer::ReplayRowPositionMaps() {
+	auto entry = WALRowPositionMaps::Deserialize(deserializer);
+	if (entry.maps.empty()) {
+		throw DataCorruptionException("Corrupt WAL: empty row position maps");
+	}
+	if (DeserializeOnly()) {
+		return;
+	}
+	if (!state.current_table && state.current_log_table) {
+		state.current_log_table->ReplayRowPositionMaps(context, std::move(entry.maps));
+		return;
+	}
+	if (!state.current_table && state.table_storage) {
+		return;
+	}
+	throw DataCorruptionException("Corrupt WAL: row position maps without a log table");
 }
 
 void WriteAheadLogDeserializer::ReplayCheckpoint() {

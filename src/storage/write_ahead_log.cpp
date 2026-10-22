@@ -743,6 +743,14 @@ void WALEntryBuffer::WriteDeleteRowRanges(const WALDeleteRowRanges &entry) {
 	entry_count++;
 }
 
+void WALEntryBuffer::WriteRowPositionMaps(string maps) {
+	D_ASSERT(!maps.empty());
+	WriteAheadLogSerializer serializer(database, stream, WALType::ROW_POSITION_MAPS);
+	serializer.WriteEntry(WALRowPositionMaps {std::move(maps)});
+	serializer.End();
+	entry_count++;
+}
+
 void WriteAheadLog::WriteUpdate(DataChunk &chunk, const vector<column_t> &column_indexes) {
 	D_ASSERT(chunk.size() > 0);
 	D_ASSERT(chunk.ColumnCount() == 2);

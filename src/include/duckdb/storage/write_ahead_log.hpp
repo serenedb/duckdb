@@ -51,6 +51,7 @@ public:
 	void WriteTruncateTable();
 	void WriteAdoptSegments(vector<string> segments);
 	void WriteDeleteRowRanges(const WALDeleteRowRanges &entry);
+	void WriteRowPositionMaps(string maps);
 
 private:
 	friend class WriteAheadLog;

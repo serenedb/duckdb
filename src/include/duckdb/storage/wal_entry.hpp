@@ -481,4 +481,11 @@ struct WALDeleteRowRanges {
 	static WALDeleteRowRanges Deserialize(Deserializer &deserializer);
 };
 
+struct WALRowPositionMaps {
+	string maps;
+
+	void Serialize(Serializer &serializer) const;
+	static WALRowPositionMaps Deserialize(Deserializer &deserializer);
+};
+
 } // namespace duckdb
