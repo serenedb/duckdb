@@ -467,6 +467,50 @@ shared_ptr<BlockCacheFile> BlockCache::CreateUnbackedFile(const string &path) {
 	return make_shared_ptr<BlockCacheFile>(*this, path, number, true, BlockCacheFileInfo(), nullptr);
 }
 
+shared_ptr<BlockCacheFile> BlockCache::CreateWrittenFile(const string &path, const BlockCacheFileInfo &info) {
+	uint32_t number;
+	optional<FileRecord> replaced;
+	bool sweep = false;
+	{
+		annotated_lock_guard<annotated_mutex> guard(file_lock);
+		auto &record = files[path];
+		if (record.number != 0) {
+			replaced = record;
+		} else if (files.size() >= sweep_at) {
+			sweep = true;
+			sweep_at = NumericLimits<idx_t>::Maximum();
+		}
+		record = FileRecord {next_file_number++, info, 1};
+		number = record.number;
+	}
+	if (replaced) {
+		DropBlocks(replaced->number, (replaced->info.validation.file_size + BLOCK_SIZE - 1) / BLOCK_SIZE);
+	}
+	if (sweep) {
+		SweepFiles();
+	}
+	return make_shared_ptr<BlockCacheFile>(*this, path, number, false, info, nullptr);
+}
+
+void BlockCache::FinishWrittenFile(BlockCacheFile &file, idx_t size, bool published) {
+	D_ASSERT(!file.IsUnbacked());
+	file.size.store(size, std::memory_order_release);
+	{
+		annotated_lock_guard<annotated_mutex> guard(file_lock);
+		auto entry = files.find(file.path);
+		if (entry != files.end() && entry->second.number == file.number) {
+			if (published) {
+				entry->second.info.validation.file_size = size;
+			} else {
+				files.erase(entry);
+			}
+		}
+	}
+	if (!published) {
+		DropFile(file);
+	}
+}
+
 void BlockCache::ReleaseUnbacked(uint32_t number, idx_t block_count) {
 	{
 		annotated_lock_guard<annotated_mutex> guard(file_lock);
@@ -1354,13 +1398,13 @@ void BlockCache::ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run
 }
 
 BlockCachePin BlockCache::CreateBlock(BlockCacheFile &file, idx_t block) {
-	D_ASSERT(file.IsUnbacked());
+	D_ASSERT(file.IsUnbacked() || !file.HasSource());
 	const auto key = MakeKey(file.number, block);
 	uint32_t frame;
 	if (!AcquireFrame(frame)) {
 		throw OutOfMemoryException("The block cache has no free frame for a block of \"%s\"", file.path);
 	}
-	auto entry = InsertLoading(key, frame, FLAG_UNBACKED);
+	auto entry = InsertLoading(key, frame, file.IsUnbacked() ? FLAG_UNBACKED : 0);
 	if (!entry) {
 		ReleaseFrame(frame);
 		throw InternalException("Block %llu of \"%s\" is written twice", block, file.path);
@@ -1369,6 +1413,12 @@ BlockCachePin BlockCache::CreateBlock(BlockCacheFile &file, idx_t block) {
 	entry->valid.store(NumericCast<uint32_t>(BLOCK_SIZE), std::memory_order_release);
 	FinishLoad(*entry, true, true);
 	return BlockCachePin(*this, *entry, FrameData(frame), BLOCK_SIZE);
+}
+
+void BlockCache::TrimBlock(BlockCachePin &pin, idx_t size) {
+	D_ASSERT(pin.entry && size <= BLOCK_SIZE);
+	pin.entry->valid.store(NumericCast<uint32_t>(size), std::memory_order_release);
+	pin.size = size;
 }
 
 void BlockCache::SetUnbackedSize(BlockCacheFile &file, idx_t size) {
