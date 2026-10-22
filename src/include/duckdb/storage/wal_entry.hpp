@@ -473,12 +473,11 @@ struct WALAdoptSegments {
 	static WALAdoptSegments Deserialize(Deserializer &deserializer);
 };
 
-struct WALDeleteRowRanges {
-	vector<uint64_t> starts;
-	vector<idx_t> counts;
+struct WALDeleteRowPositions {
+	string positions;
 
 	void Serialize(Serializer &serializer) const;
-	static WALDeleteRowRanges Deserialize(Deserializer &deserializer);
+	static WALDeleteRowPositions Deserialize(Deserializer &deserializer);
 };
 
 struct WALRowPositionMaps {

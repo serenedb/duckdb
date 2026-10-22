@@ -297,7 +297,7 @@ protected:
 		case WALType::DELETE_TUPLE:
 		case WALType::TRUNCATE_TABLE:
 		case WALType::ADOPT_SEGMENTS:
-		case WALType::DELETE_ROW_RANGES:
+		case WALType::DELETE_ROW_POSITIONS:
 		case WALType::ROW_POSITION_MAPS:
 			return true;
 		default:
@@ -402,7 +402,7 @@ protected:
 	void ReplayUpdate();
 	void ReplayTruncateTable();
 	void ReplayAdoptSegments();
-	void ReplayDeleteRowRanges();
+	void ReplayDeleteRowPositions();
 	void ReplayRowPositionMaps();
 	void ReplayCheckpoint();
 
@@ -1074,8 +1074,8 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::ADOPT_SEGMENTS:
 		ReplayAdoptSegments();
 		break;
-	case WALType::DELETE_ROW_RANGES:
-		ReplayDeleteRowRanges();
+	case WALType::DELETE_ROW_POSITIONS:
+		ReplayDeleteRowPositions();
 		break;
 	case WALType::ROW_POSITION_MAPS:
 		ReplayRowPositionMaps();
@@ -2181,29 +2181,22 @@ void WriteAheadLogDeserializer::ReplayAdoptSegments() {
 	throw DataCorruptionException("Corrupt WAL: segments without a log table");
 }
 
-void WriteAheadLogDeserializer::ReplayDeleteRowRanges() {
-	const auto entry = WALDeleteRowRanges::Deserialize(deserializer);
-	const auto &starts = entry.starts;
-	const auto &counts = entry.counts;
-	if (starts.empty() || starts.size() != counts.size()) {
-		throw DataCorruptionException("Corrupt WAL: row ranges with mismatched starts and counts");
-	}
-	for (idx_t i = 0; i < starts.size(); i++) {
-		if (counts[i] == 0 || counts[i] > NumericLimits<uint64_t>::Maximum() - starts[i]) {
-			throw DataCorruptionException("Corrupt WAL: row range out of bounds");
-		}
+void WriteAheadLogDeserializer::ReplayDeleteRowPositions() {
+	auto entry = WALDeleteRowPositions::Deserialize(deserializer);
+	if (entry.positions.empty()) {
+		throw DataCorruptionException("Corrupt WAL: empty row position delete");
 	}
 	if (DeserializeOnly()) {
 		return;
 	}
 	if (!state.current_table && state.current_log_table) {
-		state.current_log_table->ReplayDeleteRanges(context, entry);
+		state.current_log_table->ReplayDeleteRowPositions(context, std::move(entry.positions));
 		return;
 	}
 	if (!state.current_table && state.table_storage) {
 		return;
 	}
-	throw DataCorruptionException("Corrupt WAL: row ranges without a log table");
+	throw DataCorruptionException("Corrupt WAL: row position delete without a log table");
 }
 
 void WriteAheadLogDeserializer::ReplayRowPositionMaps() {

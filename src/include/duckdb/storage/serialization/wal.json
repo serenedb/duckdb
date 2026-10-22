@@ -828,18 +828,13 @@
     ]
   },
   {
-    "class": "WALDeleteRowRanges",
+    "class": "WALDeleteRowPositions",
     "pointer_type": "none",
     "members": [
       {
         "id": 101,
-        "name": "starts",
-        "type": "vector<uint64_t>"
-      },
-      {
-        "id": 102,
-        "name": "counts",
-        "type": "vector<idx_t>"
+        "name": "positions",
+        "type": "string"
       }
     ]
   },

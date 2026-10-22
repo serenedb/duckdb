@@ -39,7 +39,6 @@ class Transaction;
 class TransactionManager;
 class WriteAheadLogDeserializer;
 struct PersistentCollectionData;
-struct WALDeleteRowRanges;
 
 enum class WALInitState { NO_WAL, UNINITIALIZED, UNINITIALIZED_REQUIRES_TRUNCATE, INITIALIZED };
 
@@ -50,7 +49,7 @@ public:
 	void WriteInsert(DataChunk &chunk);
 	void WriteTruncateTable();
 	void WriteAdoptSegments(vector<string> segments);
-	void WriteDeleteRowRanges(const WALDeleteRowRanges &entry);
+	void WriteDeleteRowPositions(string positions);
 	void WriteRowPositionMaps(string maps);
 
 private:
