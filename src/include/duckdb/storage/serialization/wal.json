@@ -834,17 +834,12 @@
       {
         "id": 101,
         "name": "starts",
-        "type": "vector<row_t>"
+        "type": "vector<uint64_t>"
       },
       {
         "id": 102,
         "name": "counts",
         "type": "vector<idx_t>"
-      },
-      {
-        "id": 103,
-        "name": "positions",
-        "type": "vector<uint64_t>"
       }
     ]
   }

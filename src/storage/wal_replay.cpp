@@ -2185,16 +2185,11 @@ void WriteAheadLogDeserializer::ReplayDeleteRowRanges() {
 	const auto entry = WALDeleteRowRanges::Deserialize(deserializer);
 	const auto &starts = entry.starts;
 	const auto &counts = entry.counts;
-	const auto &positions = entry.positions;
 	if (starts.empty() || starts.size() != counts.size()) {
 		throw DataCorruptionException("Corrupt WAL: row ranges with mismatched starts and counts");
 	}
-	if (!positions.empty() && positions.size() != starts.size()) {
-		throw DataCorruptionException("Corrupt WAL: row ranges with mismatched starts and positions");
-	}
 	for (idx_t i = 0; i < starts.size(); i++) {
-		if (starts[i] < 0 || counts[i] == 0 ||
-		    counts[i] > static_cast<idx_t>(NumericLimits<row_t>::Maximum() - starts[i])) {
+		if (counts[i] == 0 || counts[i] > NumericLimits<uint64_t>::Maximum() - starts[i]) {
 			throw DataCorruptionException("Corrupt WAL: row range out of bounds");
 		}
 	}
