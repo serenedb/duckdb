@@ -291,6 +291,69 @@ TEST_CASE("Block cache drops pinned blocks of a forgotten file with their last p
 	REQUIRE_FALSE(cache.TryGetFile(file.path, info));
 }
 
+namespace {
+
+void WriteBlocks(BlockCache &cache, BlockCacheFile &file, idx_t size) {
+	for (idx_t block = 0; block * BLOCK < size; block++) {
+		auto pin = cache.CreateBlock(file, block);
+		const auto bytes = MinValue<idx_t>(BLOCK, size - block * BLOCK);
+		for (idx_t i = 0; i < bytes; i++) {
+			pin.GetDataMutable()[i] = ExpectedByte(block * BLOCK + i);
+		}
+		if (bytes < BLOCK) {
+			cache.TrimBlock(pin, bytes);
+		}
+	}
+}
+
+shared_ptr<BlockCacheFile> OpenToRead(BlockCache &cache, CountingSourceFileSystem &fs, const TestFile &file) {
+	shared_ptr<FileHandle> handle =
+	    fs.OpenFile(file.path, FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_PARALLEL_ACCESS);
+	BlockCacheFileInfo info;
+	info.validation.file_size = handle->GetFileSize();
+	return cache.OpenFile(file.path, info, false, std::move(handle));
+}
+
+} // namespace
+
+TEST_CASE("Block cache shares the blocks a writer created once the file is published", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 64 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_written.bin", 2 * BLOCK + 100);
+	{
+		auto written = cache.CreateWrittenFile(file.path, BlockCacheFileInfo());
+		WriteBlocks(cache, *written, 2 * BLOCK + 100);
+		cache.FinishWrittenFile(*written, 2 * BLOCK + 100, true);
+	}
+	auto cached = OpenToRead(cache, fs, file);
+	REQUIRE(cached->GetSize() == 2 * BLOCK + 100);
+	for (idx_t block = 0; block < 3; block++) {
+		auto pin = cache.Pin(cached, block);
+		REQUIRE(pin.Size() == (block == 2 ? 100 : BLOCK));
+		REQUIRE(HoldsExpectedBytes(pin, block));
+	}
+	REQUIRE(fs.ReadCount() == 0);
+}
+
+TEST_CASE("Block cache drops the blocks of a written file that is abandoned", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 64 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_abandoned.bin", 2 * BLOCK);
+	{
+		auto written = cache.CreateWrittenFile(file.path, BlockCacheFileInfo());
+		WriteBlocks(cache, *written, 2 * BLOCK);
+		REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
+		cache.FinishWrittenFile(*written, 2 * BLOCK, false);
+	}
+	REQUIRE(cache.GetStatistics().used == 0);
+	auto cached = OpenToRead(cache, fs, file);
+	auto pin = cache.Pin(cached, 1);
+	REQUIRE(HoldsExpectedBytes(pin, 1));
+	REQUIRE(fs.ReadCount() == 1);
+}
+
 TEST_CASE("Block cache forgets files no one opens and holds no block of", "[block_cache]") {
 	DuckDB db(nullptr);
 	BlockCache cache(*db.instance, 64 * BLOCK);

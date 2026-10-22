@@ -79,7 +79,7 @@ public:
 	const_data_ptr_t Ptr() const {
 		return data;
 	}
-	//! Writable bytes of a block of an unbacked file, which only its writer pins
+	//! Writable bytes of a block its writer created, which only that writer pins
 	data_ptr_t GetDataMutable() const {
 		return data;
 	}
@@ -194,6 +194,11 @@ public:
 	void ForbidReuse(BlockCacheFile &file);
 	//! A file whose blocks exist only in the cache and its spill tier
 	shared_ptr<BlockCacheFile> CreateUnbackedFile(const string &path);
+	//! A file the caller writes under [path], replacing earlier opens of [path]: its writer creates the blocks, and
+	//! once FinishWrittenFile publishes it, opens of [path] share them like fetched blocks
+	shared_ptr<BlockCacheFile> CreateWrittenFile(const string &path, const BlockCacheFileInfo &info);
+	//! Ends the write of [file] at [size] bytes; a published file keeps its blocks, an abandoned one drops them
+	void FinishWrittenFile(BlockCacheFile &file, idx_t size, bool published);
 	//! Drops the blocks of every open of [path]; current pins keep their bytes
 	void ForgetFile(const string &path);
 	//! Drops the blocks of [file], which no one reads anymore
@@ -213,8 +218,10 @@ public:
 	bool IsCached(BlockCacheFile &file, idx_t offset, idx_t size) const;
 	//! Starts fetching the missing blocks of [offset, offset + size) and returns
 	void Prefetch(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
-	//! Pins a new, zeroed block [block] of the unbacked [file] for its writer
+	//! Pins a new, zeroed block [block] of the unbacked or written [file] for its writer
 	BlockCachePin CreateBlock(BlockCacheFile &file, idx_t block);
+	//! Ends the block its writer still pins after its first [size] bytes, where its file ends
+	void TrimBlock(BlockCachePin &pin, idx_t size);
 	//! Extends the unbacked [file] to [size] bytes once its blocks are written
 	void SetUnbackedSize(BlockCacheFile &file, idx_t size);
 
