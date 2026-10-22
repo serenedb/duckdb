@@ -9,7 +9,8 @@ namespace duckdb {
 // CREATE DATABASE foo [WITH (BLOCK_SIZE = n, ROW_GROUP_SIZE = n)] -> ATTACH '' AS foo (TYPE serenedb, ...)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement(
     PEGTransformer &transformer, const optional<bool> &if_not_exists, const Identifier &catalog_name,
-    optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list) {
+    optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
+    const optional<Identifier> &database_tablespace) {
 	auto result = make_uniq<AttachStatement>();
 	auto info = make_uniq<AttachInfo>();
 	info->name = catalog_name;
@@ -32,6 +33,9 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement
 			}
 			info->options[name] = value;
 		}
+	}
+	if (database_tablespace) {
+		info->options["tablespace"] = Value(database_tablespace->GetIdentifierName());
 	}
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
 	result->info = std::move(info);

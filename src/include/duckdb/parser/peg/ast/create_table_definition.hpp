@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
@@ -17,5 +18,6 @@ struct CreateTableDefinition {
 	vector<string> null_conflict_columns;
 	vector<string> duplicate_default_columns;
 	vector<Identifier> serial_columns;
+	optional<Identifier> tablespace;
 };
 } // namespace duckdb
