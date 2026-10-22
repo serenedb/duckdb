@@ -5,9 +5,13 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
 
 #include <cerrno>
 #include <cstring>
+#ifndef _WIN32
+#include <sys/mman.h>
+#endif
 
 namespace duckdb {
 
@@ -22,6 +26,8 @@ struct MemoryFile {
 	annotated_mutex lock;
 	//! A file of a registered instance, in unbacked block cache blocks
 	shared_ptr<BlockCacheFile> blocks DUCKDB_GUARDED_BY(lock);
+	//! A compacted file of a registered instance, in one buffer-managed allocation
+	shared_ptr<BlockHandle> span DUCKDB_GUARDED_BY(lock);
 	//! A heap file
 	unique_ptr<data_t[]> heap DUCKDB_GUARDED_BY(lock);
 	idx_t capacity DUCKDB_GUARDED_BY(lock) = 0;
@@ -33,6 +39,19 @@ namespace {
 
 unordered_map<string, string> ErrnoInfo(int error) {
 	return {{"errno", std::to_string(error)}};
+}
+
+constexpr uintptr_t HUGE_PAGE_SIZE = 2ULL * 1024ULL * 1024ULL;
+
+void AdviseHugePages(data_ptr_t data, idx_t size) {
+#if !defined(_WIN32) && defined(MADV_HUGEPAGE)
+	const auto start = reinterpret_cast<uintptr_t>(data);
+	const auto begin = AlignValue<uintptr_t, HUGE_PAGE_SIZE>(start);
+	const auto end = AlignValueFloor<uintptr_t, HUGE_PAGE_SIZE>(start + size);
+	if (end > begin) {
+		madvise(reinterpret_cast<void *>(begin), end - begin, MADV_HUGEPAGE);
+	}
+#endif
 }
 
 class MemoryFileHandle : public FileHandle {
@@ -79,12 +98,15 @@ public:
 		return false;
 	}
 	void Close() override {
+		pin.Destroy();
 		file.reset();
 		data = nullptr;
 		size = 0;
 	}
 
 	shared_ptr<MemoryFile> file;
+	//! Keeps a compacted file in memory while it is mapped
+	BufferHandle pin;
 };
 
 } // namespace
@@ -185,17 +207,29 @@ unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo 
 		}
 		throw IOException(ErrnoInfo(ENOENT), "Cannot open file \"%s\": No such file or directory", path.path);
 	}
-	annotated_lock_guard<annotated_mutex> guard(file->lock);
-	if (file->blocks) {
-		throw NotImplementedException("\"%s\" is held in block cache blocks, which are read with GetBlockFile",
-		                              path.path);
+	shared_ptr<BlockHandle> span;
+	{
+		annotated_lock_guard<annotated_mutex> guard(file->lock);
+		if (file->blocks) {
+			throw NotImplementedException("\"%s\" is held in block cache blocks, which are read with GetBlockFile",
+			                              path.path);
+		}
+		if (file->writers != 0) {
+			throw IOException("Cannot map file \"%s\": it is still open for writing", path.path);
+		}
+		if (!file->span) {
+			const auto size = file->size.load(std::memory_order_acquire);
+			auto result = make_uniq<MemoryFileMapping>(file->path, flags, file->heap.get(), size);
+			result->file = file;
+			return std::move(result);
+		}
+		span = file->span;
 	}
-	if (file->writers != 0) {
-		throw IOException("Cannot map file \"%s\": it is still open for writing", path.path);
-	}
-	const auto size = file->size.load(std::memory_order_acquire);
-	auto result = make_uniq<MemoryFileMapping>(file->path, flags, file->heap.get(), size);
-	result->file = file;
+	auto pin = BufferManager::GetBufferManager(*db).Pin(span);
+	auto result = make_uniq<MemoryFileMapping>(file->path, flags, pin.GetDataMutable(),
+	                                           file->size.load(std::memory_order_acquire));
+	result->file = std::move(file);
+	result->pin = std::move(pin);
 	return std::move(result);
 }
 
@@ -206,6 +240,38 @@ shared_ptr<BlockCacheFile> MemoryFileSystem::GetBlockFile(const string &path) {
 	}
 	annotated_lock_guard<annotated_mutex> guard(file->lock);
 	return file->blocks;
+}
+
+void MemoryFileSystem::Compact(const string &path) {
+	auto file = Find(path);
+	if (!file) {
+		throw IOException(ErrnoInfo(ENOENT), "Cannot compact file \"%s\": No such file or directory", path);
+	}
+	shared_ptr<BlockCacheFile> blocks;
+	{
+		annotated_lock_guard<annotated_mutex> guard(file->lock);
+		if (file->writers != 0) {
+			throw IOException("Cannot compact file \"%s\": it is still open for writing", path);
+		}
+		blocks = file->blocks;
+	}
+	if (!blocks) {
+		return;
+	}
+	const auto size = file->size.load(std::memory_order_acquire);
+	auto &cache = BlockCache::Get(*db);
+	auto span =
+	    BufferManager::GetBufferManager(*db).Allocate(MemoryTag::IN_MEMORY_TABLE, MaxValue<idx_t>(size, 1), false);
+	AdviseHugePages(span.GetDataMutable(), size);
+	for (idx_t offset = 0; offset < size; offset += BlockCache::BLOCK_SIZE) {
+		auto pin = cache.Pin(blocks, offset / BlockCache::BLOCK_SIZE);
+		memcpy(span.GetDataMutable() + offset, pin.Ptr(), MinValue(size - offset, BlockCache::BLOCK_SIZE));
+	}
+	annotated_lock_guard<annotated_mutex> guard(file->lock);
+	if (file->blocks == blocks) {
+		file->span = span.GetBlockHandle();
+		file->blocks.reset();
+	}
 }
 
 void MemoryFileSystem::Clear() {
@@ -283,6 +349,7 @@ void MemoryFileSystem::Read(FileHandle &handle_p, void *buffer, int64_t nr_bytes
 	}
 	auto target = data_ptr_cast(buffer);
 	shared_ptr<BlockCacheFile> blocks;
+	shared_ptr<BlockHandle> span;
 	{
 		annotated_lock_guard<annotated_mutex> guard(file.lock);
 		if (file.heap) {
@@ -290,6 +357,12 @@ void MemoryFileSystem::Read(FileHandle &handle_p, void *buffer, int64_t nr_bytes
 			return;
 		}
 		blocks = file.blocks;
+		span = file.span;
+	}
+	if (span) {
+		auto pin = BufferManager::GetBufferManager(*db).Pin(span);
+		memcpy(target, pin.Ptr() + location, bytes);
+		return;
 	}
 	auto &cache = BlockCache::Get(*db);
 	idx_t done = 0;
