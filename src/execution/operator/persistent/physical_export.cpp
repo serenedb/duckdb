@@ -173,8 +173,7 @@ static string SequenceSetval(const CreateSequenceInfo &info, const QualifiedName
 }
 
 static bool CreatedByOwner(CatalogEntry &owner, CatalogEntry &owned) {
-	return owned.type == CatalogType::JOB_ENTRY ||
-	       (owner.type == CatalogType::TABLE_ENTRY && owner.Cast<TableCatalogEntry>().NumbersRowsWith(owned));
+	return owned.type == CatalogType::JOB_ENTRY;
 }
 
 static AlterJobInfo AlterJob(AlterJobType type, const CatalogEntry &job, const Identifier &name) {
