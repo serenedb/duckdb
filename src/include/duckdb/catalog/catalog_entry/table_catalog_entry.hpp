@@ -139,9 +139,6 @@ public:
 	virtual optional_ptr<TableLogStorage> GetLogStorage() {
 		return nullptr;
 	}
-	virtual bool NumbersRowsWith(const CatalogEntry &sequence) const {
-		return false;
-	}
 
 	DUCKDB_API static string ColumnsToSQL(const ColumnList &columns, const vector<unique_ptr<Constraint>> &constraints);
 
