@@ -941,7 +941,8 @@ void BlockCache::FinishLoad(BlockCacheEntry &entry, bool loaded, bool keep) {
 }
 
 void BlockCache::WaitForLoad(BlockCacheEntry &entry) {
-	while (entry.state.load(std::memory_order_acquire) & FLAG_LOADING) {
+	while (TaskScheduler::GetScheduler(db).NumberOfThreads() == 0 &&
+	       entry.state.load(std::memory_order_acquire) & FLAG_LOADING) {
 		shared_ptr<Task> task;
 		if (!TakeFetchTask(task)) {
 			break;
