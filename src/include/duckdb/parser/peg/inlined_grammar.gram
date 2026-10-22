@@ -11,6 +11,9 @@ Statement <-
 	DropTSDictionaryStatement /
 	CreateServerStatement /
 	DropServerStatement /
+	CreateTablespaceStatement /
+	DropTablespaceStatement /
+	AlterTablespaceStatement /
 	DropSubscriptionStatement /
 	AlterSubscriptionStatement /
 	CreateRoleStatement /
@@ -960,11 +963,11 @@ SchemaOrData <- CopySchema / CopyData
 CopySchema <- 'SCHEMA'
 CopyData <- 'DATA'
 
-CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName WithList?
+CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName WithList? DatabaseTablespace?
 DropDatabaseStatement <- 'DROP' 'DATABASE' IfExists? CatalogName DropDatabaseForce? DropBehavior?
 DropDatabaseForce <- '(' 'FORCE' ')'
 
-CreateIndexStmt <- UniqueIndex? 'INDEX' IfNotExists? IndexName? 'ON' BaseTableName IndexType? IndexColumns WithList? WhereClause?
+CreateIndexStmt <- UniqueIndex? 'INDEX' IfNotExists? IndexName? 'ON' BaseTableName IndexType? IndexColumns WithList? TablespaceClause? WhereClause?
 
 IndexColumns <- IndexKeyColumns / IncludeClause
 IndexKeyColumns <- Parens(List(IndexElement)) IncludeClause?
@@ -1124,10 +1127,10 @@ Persistent <- 'PERSISTENT'
 TempPersistent <- 'TEMP'
 TemporaryPersistent <- 'TEMPORARY'
 
-CreateTableStmt <- 'TABLE' IfNotExists? QualifiedName CreateTableDefinition CommitAction?
+CreateTableStmt <- 'TABLE' IfNotExists? QualifiedName CreateTableDefinition CommitAction? TablespaceClause?
 CreateTableDefinition <- CreateTableAs / CreateColumnList
 
-CreateTableAs <- IdentifierList? PartitionSortedOptions? WithList? 'AS' Statement WithData?
+CreateTableAs <- IdentifierList? PartitionSortedOptions? WithList? TablespaceClause? 'AS' Statement WithData?
 PartitionSortedOptions <- PartitionOptSortedOptions / SortedOptPartitionOptions
 PartitionOptSortedOptions <- PartitionOptions SortedOptions?
 SortedOptPartitionOptions <- SortedOptions PartitionOptions?
@@ -2060,7 +2063,7 @@ PasswordNullOption  <- 'PASSWORD' 'NULL'
 # before the native AlterStatement so OWNER TO is intercepted (DuckDB's alter
 # binder does not support ownership changes).
 AlterOwnerStatement <- 'ALTER' OwnerObjectType QualifiedName 'OWNER' 'TO' OwnerRoleSpec
-OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB'
+OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB' / 'TABLESPACE'
 OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
 
 # ALTER DEFAULT PRIVILEGES [FOR ROLE r,...] [IN SCHEMA s,...] (GRANT|REVOKE) ...
@@ -2121,7 +2124,7 @@ OptionBool <- 'TRUE' / 'FALSE'
 
 RoleOrUser <- 'ROLE' / 'USER'
 # Object class for GRANT/REVOKE ... ON <type> name. Absent defaults to TABLE.
-GrantObjType <- ForeignServerObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN'
+GrantObjType <- ForeignServerObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN' / 'TABLESPACE'
 ForeignServerObjType <- 'FOREIGN' 'SERVER'
 # PUBLIC is the pseudo-role; otherwise a normal role identifier.
 Grantee <- 'PUBLIC' / ColId
@@ -2451,6 +2454,13 @@ VariableList <- List(SetValue)
 SetValue <- SetValueOn / SetValueOff / Expression
 SetValueOn <- 'ON'
 SetValueOff <- 'OFF'
+
+CreateTablespaceStatement <- 'CREATE' 'TABLESPACE' ColId TablespaceOwner? 'LOCATION' StringLiteral
+TablespaceOwner <- 'OWNER' OwnerRoleSpec
+DropTablespaceStatement <- 'DROP' 'TABLESPACE' IfExists? ColId
+AlterTablespaceStatement <- 'ALTER' 'TABLESPACE' ColId 'RENAME' 'TO' ColId
+TablespaceClause <- 'TABLESPACE' ColId
+DatabaseTablespace <- 'WITH'? 'TABLESPACE' '='? ColId
 
 TransactionStatement <- BeginTransaction / RollbackTransaction / CommitTransaction
 

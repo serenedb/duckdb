@@ -179,6 +179,16 @@ WALCreateTableMacro WALCreateTableMacro::Deserialize(Deserializer &deserializer)
 	return result;
 }
 
+void WALCreateTablespace::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "tablespace", tablespace);
+}
+
+WALCreateTablespace WALCreateTablespace::Deserialize(Deserializer &deserializer) {
+	WALCreateTablespace result;
+	deserializer.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(101, "tablespace", result.tablespace);
+	return result;
+}
+
 void WALCreateTokenizer::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<unique_ptr<CreateInfo>>(101, "tokenizer", tokenizer);
 }
@@ -459,6 +469,16 @@ WALDropTableMacro WALDropTableMacro::Deserialize(Deserializer &deserializer) {
 	if (result.qualified_name.Path().empty()) {
 		result.qualified_name = QualifiedName(vector<Identifier> {std::move(schema)}, std::move(name));
 	}
+	return result;
+}
+
+void WALDropTablespace::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+}
+
+WALDropTablespace WALDropTablespace::Deserialize(Deserializer &deserializer) {
+	WALDropTablespace result;
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
 	return result;
 }
 
