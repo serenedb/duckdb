@@ -402,6 +402,20 @@ struct WALDropForeignServer {
 	static WALDropForeignServer Deserialize(Deserializer &deserializer);
 };
 
+struct WALCreateTablespace {
+	unique_ptr<CreateInfo> tablespace;
+
+	void Serialize(Serializer &serializer) const;
+	static WALCreateTablespace Deserialize(Deserializer &deserializer);
+};
+
+struct WALDropTablespace {
+	Identifier name;
+
+	void Serialize(Serializer &serializer) const;
+	static WALDropTablespace Deserialize(Deserializer &deserializer);
+};
+
 struct WALCreateSubscription {
 	unique_ptr<CreateInfo> subscription;
 

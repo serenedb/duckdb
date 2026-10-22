@@ -1557,5 +1557,20 @@
         "default": "Identifier()"
       }
     ]
+  },
+  {
+    "class": "AlterTablespaceInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_TABLESPACE",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_tablespace_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
+        "name": "new_name",
+        "type": "Identifier"
+      }
+    ]
   }
 ]

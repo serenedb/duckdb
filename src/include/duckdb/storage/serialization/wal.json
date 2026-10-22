@@ -694,6 +694,28 @@
     ]
   },
   {
+    "class": "WALCreateTablespace",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "tablespace",
+        "type": "CreateInfo*"
+      }
+    ]
+  },
+  {
+    "class": "WALDropTablespace",
+    "pointer_type": "none",
+    "members": [
+      {
+        "id": 101,
+        "name": "name",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
     "class": "WALCreateSubscription",
     "pointer_type": "none",
     "members": [
