@@ -85,6 +85,9 @@ SQLStatement:
     - AlterTableRowSecurityStatement
     - CreateServerStatement
     - DropServerStatement
+    - CreateTablespaceStatement
+    - DropTablespaceStatement
+    - AlterTablespaceStatement
     - CallStatement
     - CheckpointStatement
     - CommentStatement
@@ -1976,6 +1979,8 @@ IdentifierType:
     - DotIdentifier
     - IdentifierDot
     - ExtensionAlias
+    - TablespaceClause
+    - DatabaseTablespace
 
 matcher_rule_overrides:
   Identifier:
@@ -2168,6 +2173,7 @@ excluded_rules:
   - PrivilegeColumns
   - ServerOptions
   - ServerOption
+  - TablespaceOwner
   - Program
   - TopLevelStatement
   - Statement
