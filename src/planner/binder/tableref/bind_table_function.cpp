@@ -442,11 +442,16 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 		}
 		if (func_catalog_ptr && func_catalog_ptr->type != CatalogType::MACRO_ENTRY) {
 			auto select = make_uniq<SelectNode>();
-			select->select_list.push_back(ref.function->Copy());
+			auto column = ref.function->Copy();
+			if (!ref.alias.empty() && ref.column_name_alias.empty()) {
+				column->SetAlias(ref.alias);
+			}
+			select->select_list.push_back(std::move(column));
 			select->from_table = make_uniq<EmptyTableRef>();
 			auto subquery = make_uniq<SelectStatement>();
 			subquery->node = std::move(select);
 			SubqueryRef subquery_ref(std::move(subquery), ref.alias.empty() ? fexpr.FunctionName() : ref.alias);
+			subquery_ref.column_name_alias = ref.column_name_alias;
 			subquery_ref.query_location = ref.query_location;
 			return Bind(subquery_ref);
 		}
