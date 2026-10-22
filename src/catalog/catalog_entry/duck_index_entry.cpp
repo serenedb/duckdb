@@ -24,7 +24,7 @@ void DuckIndexEntry::Rollback(CatalogEntry &prev_entry) {
 	if (!info || !info->info) {
 		return;
 	}
-	if (prev_entry.type == CatalogType::INVALID) {
+	if (CreatedObject(prev_entry)) {
 		info->info->GetIndexes().RemoveIndex(oid);
 	}
 }
