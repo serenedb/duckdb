@@ -1,5 +1,7 @@
 #include "catch.hpp"
 #include "test_helpers.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/http/http_util.hpp"
 #include "duckdb/common/local_file_system.hpp"
 
@@ -7,6 +9,38 @@
 #include <map>
 
 using namespace duckdb;
+
+namespace {
+
+class ConfiguredTemporaryCatalog : public DuckCatalog {
+public:
+	explicit ConfiguredTemporaryCatalog(AttachedDatabase &db) : DuckCatalog(db) {
+	}
+
+	string GetCatalogType() override {
+		return "configured_temporary";
+	}
+};
+
+unique_ptr<Catalog> CreateConfiguredTemporaryCatalog(AttachedDatabase &db) {
+	return make_uniq<ConfiguredTemporaryCatalog>(db);
+}
+
+} // namespace
+
+TEST_CASE("A database configures the catalog of temporary objects", "[api]") {
+	DBConfig config;
+	config.create_temporary_catalog = CreateConfiguredTemporaryCatalog;
+	DuckDB db(nullptr, &config);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("CREATE TEMP TABLE t AS SELECT 42 AS i"));
+	auto result = con.Query("SELECT i FROM t");
+	REQUIRE(CHECK_COLUMN(result, 0, {42}));
+	result = con.Query("SELECT type FROM duckdb_databases() WHERE database_name = 'temp'");
+	REQUIRE(CHECK_COLUMN(result, 0, {"configured_temporary"}));
+	result = con.Query("SELECT type FROM duckdb_databases() WHERE database_name = 'memory'");
+	REQUIRE(CHECK_COLUMN(result, 0, {"duckdb"}));
+}
 
 class FileCleaner {
 public:

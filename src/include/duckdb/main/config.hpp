@@ -69,10 +69,15 @@ class DatabaseFilePathManager;
 class ExtensionCallbackManager;
 class TypeManager;
 
+class AttachedDatabase;
+class Catalog;
+
 struct CompressionFunctionSet;
 struct DatabaseCacheEntry;
 struct DBConfig;
 struct SettingLookupResult;
+
+typedef unique_ptr<Catalog> (*create_temporary_catalog_t)(AttachedDatabase &db);
 
 //! NOTE: DBConfigOptions is mostly deprecated.
 //! If you want to add a setting that can be set by the user, add it as a generic setting to `settings.json`.
@@ -212,6 +217,8 @@ public:
 	shared_ptr<DatabaseCacheEntry> db_cache_entry;
 	//! Reference to the database file path manager
 	shared_ptr<DatabaseFilePathManager> path_manager;
+	//! Creates the catalog of each connection's temporary objects instead of a DuckCatalog
+	create_temporary_catalog_t create_temporary_catalog = nullptr;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
 
