@@ -39,9 +39,6 @@ protected:
 	BindResult BindExpression(unique_ptr<ParsedExpression> &expr_ptr, idx_t depth,
 	                          bool root_expression = false) override;
 	string UnsupportedAggregateMessage() override;
-	bool CanShareMacroArguments() const override {
-		return false;
-	}
 
 private:
 	// Only for WAL replay.

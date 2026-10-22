@@ -881,8 +881,9 @@ void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, Scala
 				shared_arguments.clear();
 			}
 		}
+		const auto lambda_depth = lambda_bindings ? lambda_bindings->size() : 0;
 		for (auto i : shared_positions) {
-			auto name = "0_macro_argument_" + to_string(binder.global_binder_state->shared_macro_arguments++);
+			auto name = "0_macro_argument_" + to_string(lambda_depth) + "_" + to_string(shared_names.size());
 			positional_arguments[i] = make_uniq<ColumnRefExpression>(Identifier(name));
 			shared_names.push_back(std::move(name));
 		}

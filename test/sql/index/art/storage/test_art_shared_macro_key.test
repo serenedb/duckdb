@@ -1,0 +1,34 @@
+# name: test/sql/index/art/storage/test_art_shared_macro_key.test
+# description: A key that calls a macro using its argument twice is named as written, also after a restart
+# group: [storage]
+
+load __TEST_DIR__/test_art_shared_macro_key.db
+
+statement ok
+CREATE MACRO slashed(x) AS x || '/' || x;
+
+statement ok
+CREATE TABLE tbl (id INTEGER, s VARCHAR);
+
+statement ok
+CREATE UNIQUE INDEX idx ON tbl ((slashed(lower(tbl.s))));
+
+statement ok
+INSERT INTO tbl VALUES (1, 'Ab'), (2, 'Cd');
+
+statement error
+INSERT INTO tbl VALUES (3, 'aB');
+----
+Constraint Error: Duplicate key "slashed(lower(s)): ab/ab" violates unique constraint.
+
+restart
+
+statement error
+INSERT INTO tbl VALUES (4, 'AB');
+----
+Constraint Error: Duplicate key "slashed(lower(s)): ab/ab" violates unique constraint.
+
+query I
+SELECT id FROM tbl WHERE slashed(lower(s)) = 'cd/cd';
+----
+2

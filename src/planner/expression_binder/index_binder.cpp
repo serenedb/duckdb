@@ -41,9 +41,11 @@ unique_ptr<BoundIndex> IndexBinder::BindIndex(const UnboundIndex &unbound_index)
 	// bind the parsed expressions to create unbound expressions
 	vector<unique_ptr<Expression>> unbound_expressions;
 	unbound_expressions.reserve(parsed_expressions.size() + 1);
-	for (auto &expr : parsed_expressions) {
-		auto copy = expr->Copy();
-		unbound_expressions.push_back(Bind(copy));
+	for (idx_t i = 0; i < parsed_expressions.size(); i++) {
+		auto copy = parsed_expressions[i]->Copy();
+		auto key = Bind(copy);
+		key->SetAlias(create_info.ExpressionName(i));
+		unbound_expressions.push_back(std::move(key));
 	}
 	if (create_info.where_clause) {
 		IndexBinder where_binder(binder, context, table, info);
@@ -140,9 +142,12 @@ unique_ptr<LogicalOperator> IndexBinder::BindCreateIndex(ClientContext &context,
 	};
 	SetCatalogLookupCallback(lookup_callback);
 
+	D_ASSERT(create_index_info->expressions.size() == create_index_info->parsed_expressions.size());
 	vector<unique_ptr<Expression>> expressions;
-	for (auto &expr : create_index_info->expressions) {
-		expressions.push_back(BindKey(expr));
+	for (idx_t i = 0; i < create_index_info->expressions.size(); i++) {
+		auto key = BindKey(create_index_info->expressions[i]);
+		key->SetAlias(create_index_info->ExpressionName(i));
+		expressions.push_back(std::move(key));
 	}
 
 	unique_ptr<Expression> bound_where;
