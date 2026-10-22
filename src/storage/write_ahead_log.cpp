@@ -711,13 +711,12 @@ WALEntryBuffer::WALEntryBuffer(AttachedDatabase &database, idx_t capacity)
                                  NextPowerOfTwo(MaxValue<idx_t>(capacity, MemoryStream::DEFAULT_INITIAL_CAPACITY))) {
 }
 
-void WALEntryBuffer::WriteInsert(DataChunk &chunk, idx_t row_start) {
+void WALEntryBuffer::WriteInsert(DataChunk &chunk) {
 	D_ASSERT(chunk.size() > 0);
 	chunk.Verify(database.GetDatabase());
 
 	WriteAheadLogSerializer serializer(database, stream, WALType::INSERT_TUPLE);
 	serializer.WriteProperty(101, "chunk", chunk);
-	serializer.WriteProperty(16486, "row_start", row_start);
 	serializer.End();
 	entry_count++;
 }

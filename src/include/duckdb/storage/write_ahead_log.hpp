@@ -47,7 +47,7 @@ class WALEntryBuffer {
 public:
 	WALEntryBuffer(AttachedDatabase &database, idx_t capacity);
 
-	void WriteInsert(DataChunk &chunk, idx_t row_start);
+	void WriteInsert(DataChunk &chunk);
 	void WriteTruncateTable();
 	void WriteAdoptSegments(vector<string> segments);
 	void WriteDeleteRowRanges(const WALDeleteRowRanges &entry);

@@ -2025,12 +2025,11 @@ void WriteAheadLogDeserializer::ReplayUseTable() {
 void WriteAheadLogDeserializer::ReplayInsert() {
 	DataChunk chunk;
 	deserializer.ReadObject(101, "chunk", [&](Deserializer &object) { chunk.Deserialize(object); });
-	auto row_start = deserializer.ReadPropertyWithDefault<optional_idx>(16486, "row_start");
 	if (DeserializeOnly()) {
 		return;
 	}
 	if (!state.current_table && state.current_log_table) {
-		state.current_log_table->ReplayInsert(context, chunk, row_start);
+		state.current_log_table->ReplayInsert(context, chunk);
 		return;
 	}
 	if (!state.current_table && state.table_storage) {
