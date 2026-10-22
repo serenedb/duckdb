@@ -407,6 +407,14 @@ optional_ptr<CatalogEntry> Catalog::CreateForeignServer(CatalogTransaction trans
 	throw NotImplementedException("CREATE SERVER is not supported by a %s catalog", GetCatalogType());
 }
 
+optional_ptr<CatalogEntry> Catalog::CreateTablespace(CatalogTransaction transaction, CreateTablespaceInfo &info) {
+	throw NotImplementedException("CREATE TABLESPACE is not supported by a %s catalog", GetCatalogType());
+}
+
+void Catalog::DropTablespace(CatalogTransaction transaction, DropInfo &info) {
+	throw NotImplementedException("DROP TABLESPACE is not supported by a %s catalog", GetCatalogType());
+}
+
 void Catalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
 	throw NotImplementedException("DROP ROLE is not supported by a %s catalog", GetCatalogType());
 }
@@ -549,6 +557,10 @@ void Catalog::DropEntry(ClientContext &context, DropInfo &info) {
 	}
 	if (info.type == CatalogType::FOREIGN_SERVER_ENTRY) {
 		DropForeignServer(GetCatalogTransaction(context), info);
+		return;
+	}
+	if (info.type == CatalogType::TABLESPACE_ENTRY) {
+		DropTablespace(GetCatalogTransaction(context), info);
 		return;
 	}
 
