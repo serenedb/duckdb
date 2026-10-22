@@ -42,7 +42,7 @@ unique_ptr<CatalogTransaction> FileOpener::TryGetCatalogTransaction(optional_ptr
 
 	auto db = opener->TryGetDatabase();
 	if (db) {
-		return make_uniq<CatalogTransaction>(CatalogTransaction::GetSystemTransaction(*db));
+		return make_uniq<CatalogTransaction>(CatalogTransaction::GetCommittedTransaction(*db));
 	}
 	return nullptr;
 }
