@@ -847,6 +847,9 @@ void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, Scala
 				try {
 					bound = BindChild(parsed, depth, error);
 				} catch (const ParameterNotResolvedException &) {
+					if (!scan.has_parameter) {
+						throw;
+					}
 					continue;
 				}
 			}
