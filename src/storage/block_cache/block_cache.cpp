@@ -893,7 +893,7 @@ bool BlockCache::CanSpillUnbacked() {
 			if (!fs.DirectoryExists(directory)) {
 				fs.CreateDirectory(directory);
 			}
-			spill.Configure(fs, fs.JoinPath(directory, "duckdb_block_cache.spill"), 0);
+			spill.ConfigureDefault(fs, fs.JoinPath(directory, "duckdb_block_cache.spill"));
 		} catch (std::exception &) { // NOLINT
 			return false;
 		}
@@ -1337,9 +1337,6 @@ void BlockCache::SetCapacity(idx_t capacity) {
 }
 
 void BlockCache::SetSpill(const string &path, idx_t size) {
-	if (path.empty() && !spill.IsConfigured()) {
-		return;
-	}
 	spill.Configure(FileSystem::GetFileSystem(db), path, size);
 	unbacked_spill_ready.store(spill.IsConfigured(), std::memory_order_release);
 }
