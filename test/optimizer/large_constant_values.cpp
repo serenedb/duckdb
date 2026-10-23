@@ -7,7 +7,15 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 
+#include <absl/base/config.h>
+
 using namespace duckdb;
+
+#if defined(ABSL_HAVE_ADDRESS_SANITIZER) || defined(ABSL_HAVE_MEMORY_SANITIZER) || defined(ABSL_HAVE_THREAD_SANITIZER)
+static constexpr auto kDeadlineStop = std::chrono::seconds(30);
+#else
+static constexpr auto kDeadlineStop = std::chrono::seconds(2);
+#endif
 
 static const Expression &ProjectedExpression(const LogicalOperator &plan) {
 	reference<const LogicalOperator> op = plan;
@@ -125,6 +133,6 @@ TEST_CASE("Kernels that build one huge value stop at the query deadline", "[opti
 		auto elapsed = std::chrono::steady_clock::now() - start;
 		REQUIRE(result->HasError());
 		REQUIRE(StringUtil::Contains(result->GetError(), "maximum execution time"));
-		REQUIRE(elapsed < std::chrono::seconds(2));
+		REQUIRE(elapsed < kDeadlineStop);
 	}
 }
