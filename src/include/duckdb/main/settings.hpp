@@ -2546,6 +2546,20 @@ struct ProgressBarTimeSetting {
 	static Value GetSetting(const ClientContext &context);
 };
 
+struct QuestionMarkOperatorsSetting {
+	using RETURN_TYPE = bool;
+	static constexpr const char *Name = "question_mark_operators";
+	static constexpr const char *Description = "Whether ?# ?- ?| ?-| and ?|| are operators, as in PostgreSQL, instead "
+	                                           "of a ? parameter followed by an operator.";
+	static constexpr const char *InputType = "BOOLEAN";
+	static constexpr bool IsDebug = false;
+	static constexpr bool IsDeprecated = false;
+	static constexpr bool NoResetAll = false;
+	static constexpr const char *DefaultValue = "false";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
 struct ReadAheadDepthSetting {
 	using RETURN_TYPE = int64_t;
 	static constexpr const char *Name = "read_ahead_depth";
