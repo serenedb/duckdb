@@ -234,7 +234,7 @@ public:
 	shared_ptr<BlockCacheFile> CreateUnbackedFile(const string &path);
 	//! A file the caller writes under [path], replacing earlier opens of [path]: its writer creates the blocks, and
 	//! once FinishWrittenFile publishes it, opens of [path] share them like fetched blocks
-	shared_ptr<BlockCacheFile> CreateWrittenFile(const string &path, const BlockCacheFileInfo &info);
+	shared_ptr<BlockCacheFile> CreateWrittenFile(const string &path);
 	//! Ends the write of [file] at [size] bytes; a published file keeps its blocks, an abandoned one drops them
 	void FinishWrittenFile(BlockCacheFile &file, idx_t size, bool published);
 	//! Drops the blocks of every open of [path]; current pins keep their bytes
