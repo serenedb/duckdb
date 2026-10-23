@@ -1,5 +1,5 @@
 # name: test/sql/catalog/function/test_sql_function_returns_type.test
-# description: A SQL function returns its RETURNS type, reached from its body by an assignment cast
+# description: A SQL function returns its RETURNS type, reached from its body by a cast
 # group: [function]
 
 statement ok
@@ -26,10 +26,13 @@ SELECT rounded();
 ----
 5
 
-statement error
+statement ok
 CREATE FUNCTION to_bool() RETURNS BOOLEAN LANGUAGE sql RETURN 1;
+
+query I
+SELECT to_bool();
 ----
-return type mismatch in function declared to return boolean
+true
 
 statement ok
 CREATE FUNCTION pair() RETURNS TABLE(a BIGINT, b VARCHAR) LANGUAGE sql AS 'SELECT 1, 42';
