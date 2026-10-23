@@ -138,7 +138,7 @@ void BlockCachePin::Unpin() {
 BlockCacheFile::BlockCacheFile(BlockCache &cache_p, string path_p, uint32_t number_p, bool unbacked_p,
                                BlockCacheFileInfo info_p, shared_ptr<FileHandle> source_p)
     : cache(cache_p), path(std::move(path_p)), number(number_p), size(info_p.validation.file_size),
-      unbacked(unbacked_p), local(!unbacked_p && info_p.on_disk), info(std::move(info_p)), source(std::move(source_p)) {
+      unbacked(unbacked_p), info(std::move(info_p)), source(std::move(source_p)) {
 }
 
 BlockCacheFile::~BlockCacheFile() {
@@ -651,7 +651,7 @@ uint64_t BlockCache::FileFlags(const BlockCacheFile &file) {
 	if (file.unbacked) {
 		return FLAG_UNBACKED;
 	}
-	return file.local ? FLAG_LOCAL : 0;
+	return file.info.on_disk ? FLAG_LOCAL : 0;
 }
 
 optional_ptr<BlockCacheEntry> BlockCache::InsertLoading(uint64_t key, uint32_t frame, uint64_t flags) {
