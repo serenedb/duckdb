@@ -752,6 +752,7 @@ private:
 			totals.assertions.failed++;
 			auto ended = WIFSIGNALED(test.status) ? " was terminated by signal " + std::to_string(WTERMSIG(test.status))
 			                                      : " exited with status " + std::to_string(WEXITSTATUS(test.status));
+			test.newline_owed = true;
 			Emit(test, test.name + " (pid " + std::to_string(test.pid) + ")" + ended +
 			               (reported ? " after" : " before") + " reporting its result");
 		}
