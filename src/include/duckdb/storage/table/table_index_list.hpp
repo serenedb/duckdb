@@ -79,8 +79,9 @@ public:
 	void SyncColumnLayout(IndexTypeSet &index_types, const vector<idx_t> &old_column_oids,
 	                      const vector<idx_t> &new_column_oids);
 	void RenameIndex(idx_t index_oid, const Identifier &new_name);
-	//! Returns true, if the index name does not exist.
-	bool NameIsUnique(const string &name) const;
+	//! Returns true, if no index has the name other than the dropped ones and the replaced one.
+	bool NameIsUnique(const string &name, optional_ptr<const unordered_set<idx_t>> dropped,
+	                  optional_idx replaced) const;
 	//! Returns true if an index with the given name exists.
 	bool Contains(const Identifier &name) const;
 	//! Returns shared ownership of the stable logical index entry matching the name.

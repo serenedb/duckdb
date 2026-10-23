@@ -167,6 +167,10 @@ void CatalogEntry::Verify(Catalog &catalog_p) {
 void CatalogEntry::Rollback(CatalogEntry &prev_entry) {
 }
 
+bool CatalogEntry::CreatedObject(const CatalogEntry &prev_entry) {
+	return prev_entry.type == CatalogType::INVALID || prev_entry.type == CatalogType::DELETED_ENTRY;
+}
+
 void CatalogEntry::OnDrop() {
 }
 

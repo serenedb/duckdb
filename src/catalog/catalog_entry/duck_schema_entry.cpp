@@ -50,6 +50,7 @@
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
+#include "duckdb/transaction/local_storage.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/parser/parsed_data/create_window_function_info.hpp"
 
@@ -297,10 +298,6 @@ static vector<SerialSequence> CreateSerialSequences(CatalogTransaction transacti
 	if (info.serial_sequences.empty()) {
 		return created;
 	}
-	if (table.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT &&
-	    schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, table.GetTableName())) {
-		return created;
-	}
 	for (auto &serial : info.serial_sequences) {
 		CreateSequenceInfo sequence_info;
 		sequence_info.SetQualifiedName(schema.GetQualifiedName(serial.name));
@@ -322,7 +319,17 @@ static vector<SerialSequence> CreateSerialSequences(CatalogTransaction transacti
 	return created;
 }
 
+static bool SkipsTakenName(DuckSchemaEntry &schema, CatalogTransaction transaction, CatalogType type,
+                           OnCreateConflict on_conflict, const Identifier &name) {
+	return on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT &&
+	       schema.GetCatalogSet(type).GetNamespaceEntry(transaction, name);
+}
+
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) {
+	if (SkipsTakenName(*this, transaction, CatalogType::TABLE_ENTRY, info.Base().on_conflict,
+	                   info.Base().GetTableName())) {
+		return nullptr;
+	}
 	auto serial_sequences = CreateSerialSequences(transaction, *this, info);
 	auto table = catalog.Cast<DuckCatalog>().MakeTableEntry(transaction, *this, info);
 	for (auto &serial : serial_sequences) {
@@ -439,16 +446,26 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateSequence(CatalogTransaction tr
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateType(CatalogTransaction transaction, CreateTypeInfo &info) {
+	if (SkipsTakenName(*this, transaction, CatalogType::TYPE_ENTRY, info.on_conflict, info.GetQualifiedName().Name())) {
+		return nullptr;
+	}
 	auto type_entry = make_uniq<TypeCatalogEntry>(catalog, *this, info);
 	return AddEntry(transaction, std::move(type_entry), info.on_conflict);
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTokenizer(CatalogTransaction transaction, CreateTokenizerInfo &info) {
+	if (SkipsTakenName(*this, transaction, CatalogType::TOKENIZER_ENTRY, info.on_conflict,
+	                   info.GetQualifiedName().Name())) {
+		return nullptr;
+	}
 	auto tokenizer = catalog.Cast<DuckCatalog>().MakeTokenizerEntry(transaction, *this, info);
 	return AddEntry(transaction, std::move(tokenizer), info.on_conflict);
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateJob(CatalogTransaction transaction, CreateJobInfo &info) {
+	if (SkipsTakenName(*this, transaction, CatalogType::JOB_ENTRY, info.on_conflict, info.GetQualifiedName().Name())) {
+		return nullptr;
+	}
 	auto job = catalog.Cast<DuckCatalog>().MakeJobEntry(transaction, *this, info);
 	return AddEntry(transaction, std::move(job), info.on_conflict);
 }
@@ -467,8 +484,27 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction trans
 	return CreateIndex(transaction, info, relation);
 }
 
+static bool IndexNameIsUnique(CatalogTransaction transaction, DuckSchemaEntry &schema, const CreateIndexInfo &info,
+                              TableCatalogEntry &table) {
+	optional_ptr<const unordered_set<idx_t>> dropped;
+	if (transaction.transaction) {
+		dropped = &LocalStorage::Get(transaction.transaction->Cast<DuckTransaction>()).DroppedIndexes();
+	}
+	optional_idx replaced;
+	if (info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		auto entry = schema.GetCatalogSet(CatalogType::INDEX_ENTRY).GetEntry(transaction, info.GetIndexName());
+		if (entry) {
+			replaced = entry->oid;
+		}
+	}
+	return table.GetStorage().IndexNameIsUnique(info.GetIndexName().GetIdentifierName(), dropped, replaced);
+}
+
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
                                                         CatalogEntry &relation) {
+	if (SkipsTakenName(*this, transaction, CatalogType::INDEX_ENTRY, info.on_conflict, info.GetIndexName())) {
+		return nullptr;
+	}
 	info.table_oid = relation.oid;
 	// indexes do not require CASCADE to be dropped, they are simply always dropped along with the table
 	info.dependencies.AddDependency(relation, DependencyDependentFlags());
@@ -477,7 +513,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction trans
 	// concurrency-safe name checks against other INDEX catalog entries happens in the catalog
 	if (info.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT && !catalog.UsesCatalogLog() &&
 	    relation.type == CatalogType::TABLE_ENTRY && relation.Cast<TableCatalogEntry>().IsDuckTable() &&
-	    !relation.Cast<TableCatalogEntry>().GetStorage().IndexNameIsUnique(info.GetIndexName().GetIdentifierName())) {
+	    !IndexNameIsUnique(transaction, *this, info, relation.Cast<TableCatalogEntry>())) {
 		throw CatalogException("An index with the name " + info.GetIndexName() + " already exists!");
 	}
 

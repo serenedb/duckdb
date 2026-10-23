@@ -65,6 +65,23 @@ optional_ptr<CatalogEntry> SchemaCatalogEntry::GetEntry(CatalogTransaction trans
 	return LookupEntry(transaction, lookup_info);
 }
 
+optional_ptr<CatalogEntry> SchemaCatalogEntry::GetNameHolder(CatalogTransaction transaction, CatalogType type,
+                                                             const Identifier &name) {
+	auto entry = GetEntry(transaction, type, name);
+	if (entry || ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES) {
+		return entry;
+	}
+	for (const auto relation : {CatalogType::TABLE_ENTRY, CatalogType::INDEX_ENTRY, CatalogType::SEQUENCE_ENTRY}) {
+		if (relation != type) {
+			entry = GetEntry(transaction, relation, name);
+			if (entry) {
+				return entry;
+			}
+		}
+	}
+	return nullptr;
+}
+
 //! This should not be used, it's only implemented to not put the burden of implementing it on every derived class of
 //! SchemaCatalogEntry
 CatalogSet::EntryLookup SchemaCatalogEntry::LookupEntryDetailed(CatalogTransaction transaction,

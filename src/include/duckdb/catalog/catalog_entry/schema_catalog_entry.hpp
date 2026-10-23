@@ -147,6 +147,8 @@ public:
 
 	DUCKDB_API optional_ptr<CatalogEntry> GetEntry(CatalogTransaction transaction, CatalogType type,
 	                                               const Identifier &name);
+	DUCKDB_API optional_ptr<CatalogEntry> GetNameHolder(CatalogTransaction transaction, CatalogType type,
+	                                                    const Identifier &name);
 
 	//! Drops an entry from the schema
 	virtual void DropEntry(ClientContext &context, DropInfo &info) = 0;

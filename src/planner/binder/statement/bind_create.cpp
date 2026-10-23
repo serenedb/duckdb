@@ -1111,9 +1111,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		}
 		if (stmt.info->on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 			CatalogTransaction transaction(schema.ParentCatalog(), context);
-			auto existing_entry = schema.GetEntry(transaction, CatalogType::VIEW_ENTRY, base.GetViewName());
-			if (existing_entry && existing_entry->type == CatalogType::VIEW_ENTRY) {
-				// IF EXISTS and the view already exists - avoid binding
+			if (schema.GetNameHolder(transaction, CatalogType::VIEW_ENTRY, base.GetViewName())) {
+				// IF NOT EXISTS and the name is taken - avoid binding
 				base.binding_mode = CreateViewBindingMode::SKIP_BINDING;
 			}
 		}
